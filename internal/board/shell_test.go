@@ -308,3 +308,250 @@ func TestShellHoverOutlineIsThemeAware(t *testing.T) {
 		t.Error("overlay.js does not clear the previously hovered element")
 	}
 }
+
+// shellRule returns the body of one CSS rule in index.html, from its selector to
+// the closing brace, so a test can pin a single rule instead of matching the
+// whole stylesheet around it.
+func shellRule(src, selector string) string {
+	start := strings.Index(src, selector+" {")
+	if start < 0 {
+		return ""
+	}
+	rest := src[start:]
+	end := strings.Index(rest, "}")
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
+}
+
+// shellFunc returns one top-level function from a shell script, up to the
+// closing brace at the file's own indentation. The three shell scripts keep
+// their top-level functions at two spaces, so that brace ends the function and
+// not one of its nested blocks.
+func shellFunc(src, signature string) string {
+	start := strings.Index(src, signature)
+	if start < 0 {
+		return ""
+	}
+	rest := src[start:]
+	end := strings.Index(rest, "\n  }")
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
+}
+
+// TestShellCommentPanelIsContentSized pins the compact panel. A panel anchored
+// to the bottom of the window is as tall as the window however few comments it
+// holds, which leaves a column of empty panel over the board. It has to be as
+// tall as its content, capped, with the list scrolling inside the cap. The
+// canvas is in no case narrowed by it.
+func TestShellCommentPanelIsContentSized(t *testing.T) {
+	data, err := readShellFile("index.html")
+	if err != nil {
+		t.Fatalf("read shell index.html: %v", err)
+	}
+	src := string(data)
+	panel := shellRule(src, "#comments")
+	if panel == "" {
+		t.Fatal("index.html has no rule for the comments panel")
+	}
+	if !strings.Contains(panel, "max-height:") {
+		t.Error("the comments panel has no max-height, so it cannot size to its content")
+	}
+	if !strings.Contains(panel, "overflow-y: auto;") {
+		t.Error("the comments panel does not scroll the list once it reaches its cap")
+	}
+	// The stretch the round removed: a bottom edge turns the panel into a
+	// full-height column whatever the comment count.
+	if strings.Contains(panel, "bottom:") {
+		t.Errorf("the comments panel is still anchored to the bottom of the window: %q",
+			strings.TrimSpace(panel))
+	}
+	// And the canvas keeps the whole width: a panel that took its room from the
+	// frame would move the board out from under the pointer.
+	if !strings.Contains(src, "#frame { display: block; width: 100%;") {
+		t.Error("index.html no longer gives the canvas the full width")
+	}
+}
+
+// TestShellDrawsPinsOnlyInCommentMode pins the clean board. Outside comment mode
+// the board carries nothing of the overlay's, and the pins come back whole when
+// mode returns -- including the notes added from the command line, which reach
+// the shell through the same document the pins are drawn from.
+func TestShellDrawsPinsOnlyInCommentMode(t *testing.T) {
+	overlay, err := readShellFile("overlay.js")
+	if err != nil {
+		t.Fatalf("read shell overlay.js: %v", err)
+	}
+	o := string(overlay)
+	// The overlay holds the notes it is sent and draws them in one place, and
+	// that place refuses while mode is off: the layer goes back off the board
+	// rather than sitting there empty over it.
+	draw := shellFunc(o, "function draw() {")
+	for _, want := range []string{"if (!mode) {", "pinLayer = null;"} {
+		if !strings.Contains(draw, want) {
+			t.Errorf("overlay.js draw does not carry %q, which the mode gate needs", want)
+		}
+	}
+	if !strings.Contains(shellFunc(o, "function setMode(on)"), "draw();") {
+		t.Error("overlay.js setMode does not redraw, so pins could not come back with the mode")
+	}
+	if !strings.Contains(o, "pinLayer.parentNode.removeChild(pinLayer)") {
+		t.Error("overlay.js does not take the pin layer off the board when mode ends")
+	}
+
+	shell, err := readShellFile("comments.js")
+	if err != nil {
+		t.Fatalf("read shell comments.js: %v", err)
+	}
+	c := string(shell)
+	// The shell sends the annotations from exactly one place, and that place
+	// refuses to send while mode is off. A poll or a re-announce that lands
+	// mid-session must not draw pins onto a clean board either.
+	if got := strings.Count(c, "relevo.pins"); got != 2 {
+		t.Errorf("comments.js sends pins from %d places, want the gated send and the mode-off clear only", got)
+	}
+	if !strings.Contains(shellFunc(c, "function postPins()"), "if (!mode) return;") {
+		t.Error("comments.js postPins does not refuse to send the pins while mode is off")
+	}
+	if !strings.Contains(shellFunc(c, "function postPins()"), "annotations: (doc && doc.annotations) || []") {
+		t.Error("comments.js postPins does not send the annotations it holds")
+	}
+	// Mode off clears what is on the board, and mode on sends the whole
+	// document, so the command line's notes are drawn with the rest.
+	setMode := shellFunc(c, "function setMode(on)")
+	if !strings.Contains(setMode, "postPins();") {
+		t.Error("comments.js setMode does not send the pins when mode turns on")
+	}
+	if !strings.Contains(setMode, "annotations: []") {
+		t.Error("comments.js setMode does not take the pins back off the board when mode turns off")
+	}
+	if !strings.Contains(shellFunc(c, "function adopt(next)"), "postPins();") {
+		t.Error("comments.js adopt does not send the pins through the gated path")
+	}
+}
+
+// TestShellGroupsCommentsIntoThreads pins the thread view. Notes are grouped by
+// their anchor for presentation only -- one pin, one row, one card per anchor,
+// the file still flat and the posting shape unchanged -- and the card's reply
+// box posts onto the anchor of the thread it answers.
+func TestShellGroupsCommentsIntoThreads(t *testing.T) {
+	list, err := readShellFile("commentlist.js")
+	if err != nil {
+		t.Fatalf("read shell commentlist.js: %v", err)
+	}
+	l := string(list)
+	// The list never writes: a reply is still an ordinary entry, posted by
+	// comments.js through the same endpoint.
+	if strings.Contains(l, "fetch(") {
+		t.Error("commentlist.js fetches, which would make the rendering half a second writer")
+	}
+	for _, want := range []string{
+		"function threads() {",
+		`var key = "$" + (entry.selector || "");`,
+		"function threadById(id) {",
+		"function addRow(thread) {",
+		"function openCard(id, x, y) {",
+		"cardEl.appendChild(replyBox(thread));",
+		"onReply(anchorOf(thread), text);",
+		"setReplyHandler: setReplyHandler,",
+		"clearReply: clearReply",
+	} {
+		if !strings.Contains(l, want) {
+			t.Errorf("commentlist.js does not carry %q, which the thread view needs", want)
+		}
+	}
+	// One row per thread: the row is built from the thread's first note and
+	// never walks the entries itself.
+	row := shellFunc(l, "function addRow(thread) {")
+	if !strings.Contains(row, "thread.entries[0]") {
+		t.Error("commentlist.js addRow does not show the thread's first note")
+	}
+	if strings.Contains(row, "for (var") {
+		t.Error("commentlist.js addRow walks the entries, so a thread would get one row per note")
+	}
+	// The card carries the whole thread, entries in file order.
+	card := shellFunc(l, "function openCard(id, x, y) {")
+	if !strings.Contains(card, "for (var i = 0; i < thread.entries.length; i++)") {
+		t.Error("commentlist.js openCard does not list the thread's entries")
+	}
+	if !strings.Contains(card, "threadById(id)") {
+		t.Error("commentlist.js openCard does not resolve the handle to a thread")
+	}
+
+	shell, err := readShellFile("comments.js")
+	if err != nil {
+		t.Fatalf("read shell comments.js: %v", err)
+	}
+	c := string(shell)
+	// The reply posts the anchor it was handed, not the last pick, and posts it
+	// through the shape the API already takes.
+	for _, want := range []string{
+		"list.setReplyHandler(post);",
+		"function post(anchor, text) {",
+		"selector: anchor.selector,",
+		"x: anchor.x,",
+		"y: anchor.y,",
+		"text: text",
+	} {
+		if !strings.Contains(c, want) {
+			t.Errorf("comments.js does not carry %q, which a thread-anchored reply needs", want)
+		}
+	}
+	// And the selector readout the reply path writes to is declared: the toggle,
+	// the pick and the post-adopt all name it, so an undeclared one was a
+	// ReferenceError on each of them.
+	if !strings.Contains(c, `var selEl = document.getElementById("comment-selector");`) {
+		t.Error("comments.js does not declare selEl, so every write to the selector readout throws")
+	}
+}
+
+// TestShellPinsAreDotsWithAccessibleNames pins the dot. A pin names a thread
+// rather than counting it, so nothing on the board renumbers itself every time a
+// note arrives -- but a dot still has to say what it is to a reader who cannot
+// see it, and the colour variants still mark a board-level and an orphan thread.
+func TestShellPinsAreDotsWithAccessibleNames(t *testing.T) {
+	data, err := readShellFile("overlay.js")
+	if err != nil {
+		t.Fatalf("read shell overlay.js: %v", err)
+	}
+	src := string(data)
+	// The badge it replaced: an ordinal on the pin, and the wide box that held
+	// the digits.
+	if strings.Contains(src, "pin.textContent = String(") {
+		t.Error("overlay.js still numbers the pins")
+	}
+	if strings.Contains(src, "min-width:1.35em") {
+		t.Error("overlay.js still sizes the pin to hold a number")
+	}
+	// The dot, its accessible name, and the colour variants kept.
+	for _, want := range []string{
+		".relevo-pin{",
+		"border-radius:50%",
+		".relevo-board-pin{",
+		".relevo-orphan-pin{",
+		`pin.setAttribute("aria-label", name);`,
+		"pin.title = name;",
+		`pin.type = "button";`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("overlay.js does not carry %q, which the dot needs", want)
+		}
+	}
+	// The name carries the thread: what its first note says, and how many there
+	// are when the thread is more than one note.
+	drawPin := shellFunc(src, "function drawPin(thread, el, index) {")
+	if !strings.Contains(drawPin, `var name = thread.entries[0].text || "";`) {
+		t.Error("overlay.js drawPin does not name the pin after the thread's first note")
+	}
+	if !strings.Contains(drawPin, `thread.entries.length + " comments: "`) {
+		t.Error("overlay.js drawPin does not say how many notes the thread holds")
+	}
+	// One pin per anchor, not one per note.
+	if !strings.Contains(shellFunc(src, "function setPins(entries)"),
+		`var key = "$" + (entry.selector || "");`) {
+		t.Error("overlay.js does not group the pins by anchor, so one thread would get one pin per note")
+	}
+}

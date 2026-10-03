@@ -1,13 +1,9 @@
 // comments.js -- the shell's comment mode: the toggle, the floating panes, the
 // draft box, and the banner for a board that moved under an open draft.
 //
-// This file runs in the shell document, the same origin as the API and the only
-// place the token lives. It posts through the token and treats every message
-// from the frame as a claim about what was clicked. The drawing lives in
-// commentlist.js, loaded before this file, which publishes window.__relevoList;
-// this file owns everything that writes. shell.js publishes tokenFromFragment,
-// render, load and showBanner on window.__relevo, so the files share one token
-// read and one board read.
+// It runs in the shell document, the same origin as the API and the only place
+// the token lives, and treats every message from the frame as a claim. Drawing
+// lives in commentlist.js; everything that writes happens here.
 (function () {
   "use strict";
 
@@ -31,12 +27,13 @@
   var closeBtn = document.getElementById("comments-close");
   var postBtn = document.getElementById("comment-post");
   var draftEl = document.getElementById("comment-draft");
+  var selEl = document.getElementById("comment-selector");
   var applyBtn = document.getElementById("banner-apply");
   var bannerEl = document.getElementById("banner");
 
   // setMode turns comment mode on and off. Off takes the listeners back out of
-  // the frame, closes the card and clears the pending pick, so nothing is left
-  // half-armed on a board nobody is commenting on.
+  // the frame, closes the card, drops the pins and clears the pick, so nothing
+  // is left half-armed on a board nobody is commenting on.
   function setMode(on) {
     mode = on === true;
     commentBtn.classList.toggle("on", mode);
@@ -44,14 +41,15 @@
     pane.classList.toggle("open", mode);
     postToFrame({ type: "relevo.mode", on: mode });
     if (mode) {
+      postPins();
       draftEl.focus();
       return;
     }
     list.closeCard();
     picked = null;
     selEl.textContent = "";
-    // Focus returns to the toggle rather than staying on a button inside a pane
-    // that is no longer there.
+    postToFrame({ type: "relevo.pins", annotations: [] });
+    // Focus returns to the toggle rather than to a button in a pane that is gone.
     commentBtn.focus();
   }
 
@@ -60,28 +58,32 @@
     if (frame && frame.contentWindow) frame.contentWindow.postMessage(msg, "*");
   }
 
-  // requestPoints asks the frame where it drew the pins. A card opened from the
-  // list has no coordinate of its own, and only the frame can see its pins.
+  // postPins sends the annotations only in comment mode: out of it the board
+  // carries no pins.
+  function postPins() {
+    if (!mode) return;
+    postToFrame({ type: "relevo.pins", annotations: (doc && doc.annotations) || [] });
+  }
+
+  // requestPoints asks the frame where it drew the pins: only the frame can see them.
   function requestPoints() {
+    if (!mode) return;
     postToFrame({ type: "relevo.points" });
   }
 
   // onFrameMessage accepts a message only when it came from our own frame. The
   // check is ev.source against the frame's contentWindow, not a shape test: the
-  // board's own scripts share this frame, so the source is the only
-  // identification there is.
+  // board's own scripts share this frame, so the source is the only identification.
   function onFrameMessage(ev) {
     var frame = document.getElementById("frame");
     if (!frame || ev.source !== frame.contentWindow) return;
     var msg = ev.data;
     if (!msg || typeof msg !== "object") return;
     if (msg.type === "relevo.overlayReady") {
-      // The frame announces itself only once its overlay is listening. Anything
-      // sent at render time was posted into a document that did not exist yet
-      // and was lost, so mode and pins are both re-sent here. This is what makes
-      // a re-render land the pins without a reload.
+      // The frame announces itself only once its overlay is listening, so
+      // anything sent at render time went into a document that did not exist yet.
       postToFrame({ type: "relevo.mode", on: mode });
-      postToFrame({ type: "relevo.pins", annotations: (doc && doc.annotations) || [] });
+      postPins();
       return;
     }
     if (msg.type === "relevo.pick") {
@@ -97,8 +99,7 @@
       return;
     }
     if (msg.type === "relevo.pin") {
-      // A pin was clicked on the board. Open that thread's card at the pin, and
-      // mark the matching list row so the two views stay in step.
+      // A pin was clicked: open that thread's card and mark its list row.
       list.setPoints([]);
       list.openCard(msg.id, msg.x, msg.y);
     }
@@ -106,8 +107,7 @@
   window.addEventListener("message", onFrameMessage);
 
   // openDraft takes a pick and opens the draft box. The selector is shown, not
-  // editable: the overlay built it from the clicked element, and the shell does
-  // not second-guess it.
+  // edited: the overlay built it and is not second-guessed.
   function openDraft(selector, x, y) {
     picked = { selector: selector, x: x, y: y };
     draft = "";
@@ -117,20 +117,18 @@
     draftEl.focus();
   }
 
-  // setDirty marks a draft worth keeping, which is what makes the poll show the
-  // banner instead of re-rendering the frame under the user.
   function setDirty(on) {
     dirty = on === true;
     pane.classList.toggle("dirty", dirty);
   }
 
-  function post() {
-    if (!picked) return;
+  function post(anchor, text) {
+    if (!anchor) return;
     var body = JSON.stringify({
-      selector: picked.selector,
-      x: picked.x,
-      y: picked.y,
-      text: draftEl.value
+      selector: anchor.selector,
+      x: anchor.x,
+      y: anchor.y,
+      text: text
     });
     fetch("api/annotations", {
       method: "POST",
@@ -142,8 +140,7 @@
       body: body
     }).then(function (res) {
       if (res.status === 409) {
-        // Someone or something appended between the read and this post. The
-        // draft is kept and the banner offers the update; nothing is merged.
+        // Something appended between the read and this post: the draft is kept.
         setDirty(true);
         showStale();
         return;
@@ -151,24 +148,28 @@
       if (!res.ok) throw new Error("the server answered " + res.status);
       return res.json();
     }).then(function (posted) {
-      // The post worked. The entry joins the document the list and the pins
-      // both read from; there is no refresh to call, only the state to adopt.
+      // The post worked: the entry joins the document the pins and the list read.
       if (!posted) return;
       aetag = posted.annotationsEtag || aetag;
       if (doc) doc.annotations = (doc.annotations || []).concat([posted.annotation]);
-      picked = null;
       setDirty(false);
-      draftEl.value = "";
-      selEl.textContent = "";
-      postToFrame({ type: "relevo.pins", annotations: (doc && doc.annotations) || [] });
+      // Only the box this post came out of is emptied: a reply leaves an open draft
+      // alone, and a first post leaves the card's reply alone.
+      if (picked === anchor) {
+        picked = null;
+        draftEl.value = "";
+        selEl.textContent = "";
+      } else {
+        list.clearReply();
+      }
+      postPins();
       list.setDocument(doc);
     }).catch(function (err) {
       api.setStatus("could not post the comment: " + err.message);
     });
   }
 
-  // startPolling asks for the board every two seconds with the etags already
-  // held: a 204 means nothing moved, anything else is the whole document again.
+  // startPolling asks for the board every two seconds with the etags held.
   function startPolling() {
     if (polling) return;
     polling = setInterval(poll, POLL_MS);
@@ -195,9 +196,6 @@
     });
   }
 
-  // onBoardDocument applies a fresh document or holds it back: a clean page
-  // takes it straight away, a page with a draft open is told and keeps what it
-  // was writing. Nothing is ever merged into a draft.
   function onBoardDocument(next) {
     if (!dirty) {
       adopt(next);
@@ -210,15 +208,14 @@
   // adopt installs a document as the current one and draws it.
   //
   // The frame is re-rendered only when the board itself moved. A new annotations
-  // etag redraws the pins and nothing else: re-rendering on every comment would
-  // tear down the whole document -- losing scroll position, the page's own state
-  // and the click in flight -- to show a change that is only pins.
+  // etag redraws the pins and nothing else: re-rendering on every comment tears
+  // down the whole document -- scroll position, page state, the click in flight.
   function adopt(next) {
     var boardMoved = !doc || next.isNew || (next.html || "") !== (doc.html || "");
     doc = next;
     aetag = next.annotationsEtag || "";
     if (boardMoved) api.render(next.html);
-    postToFrame({ type: "relevo.pins", annotations: next.annotations || [] });
+    postPins();
     list.setDocument(doc);
     requestPoints();
     if (next.external && next.external.length) {
@@ -230,8 +227,7 @@
     }
   }
 
-  // showStale names the change and offers the update without taking it. The
-  // draft underneath is untouched.
+  // showStale names the change and offers the update without taking it.
   function showStale() {
     bannerEl.textContent =
       "the board changed on disk -- your draft is kept; apply to take the update";
@@ -239,8 +235,8 @@
     applyBtn.style.display = "inline-block";
   }
 
-  // apply takes the held-back document and clears the banner. The draft stays:
-  // applying the board is not applying the comment.
+  // apply takes the held-back document and clears the banner. Applying the board
+  // is not applying the comment.
   function apply() {
     applyBtn.style.display = "none";
     bannerEl.className = "";
@@ -253,9 +249,12 @@
 
   commentBtn.addEventListener("click", function () { setMode(!mode); });
   closeBtn.addEventListener("click", function () { setMode(false); });
-  postBtn.addEventListener("click", post);
+  postBtn.addEventListener("click", function () { post(picked, draftEl.value); });
   applyBtn.addEventListener("click", apply);
   draftEl.addEventListener("input", function () { draft = draftEl.value; });
+
+  // The card's reply box posts here too, onto the anchor of the thread it answers.
+  list.setReplyHandler(post);
 
   // Escape unwinds one layer at a time: the card if open, then the panel.
   document.addEventListener("keydown", function (ev) {
@@ -268,15 +267,14 @@
     if (mode) setMode(false);
   });
 
-  // A click on the canvas is a pick, not a dismissal: the frame owns that
-  // gesture. A click on the chrome around the frame is a dismissal.
+  // A click on the canvas is a pick, not a dismissal: the frame owns that gesture.
   document.addEventListener("click", function (ev) {
     if (!mode) return;
     var frame = document.getElementById("frame");
     if (frame && frame.contains(ev.target)) return;
     if (pane.contains(ev.target)) return;
-    // The toggle opened the panel with this same click as it bubbles up; it
-    // must not dismiss what it just opened.
+    // The toggle opened the panel with this same click as it bubbles up, so it must
+    // not dismiss what it just opened.
     if (commentBtn.contains(ev.target)) return;
     if (list.cardOpen()) {
       list.closeCard();
@@ -285,13 +283,12 @@
     setMode(false);
   });
 
-  // boot takes the first board document shell.js publishes, so the files share
-  // one read and one token rather than each fetching.
+  // boot takes the first board document shell.js publishes, so one read serves all.
   function boot() {
     if (api.onDocument) api.onDocument(function (next) {
       doc = next;
       aetag = next.annotationsEtag || "";
-      postToFrame({ type: "relevo.pins", annotations: next.annotations || [] });
+      postPins();
       list.setDocument(doc);
       requestPoints();
       startPolling();
