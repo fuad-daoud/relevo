@@ -24,6 +24,15 @@ const (
 	OpencodeConfirmWindow  = 3 * time.Second
 	OpencodeConfirmPoll    = 250 * time.Millisecond
 	DefaultFallbackAfter   = 30 * time.Second
+
+	// OpencodePushHorizon is how long an opencode payload may keep being POSTed
+	// before Deliver gives up on it. It is opencode's own and it is long: an
+	// opencode mastermind has no collector on the pane path, so a give-up here
+	// hands the payload to nothing that would deliver it -- it only makes the
+	// entry visible to a human. Thirty minutes rides out a service restart or a
+	// closed laptop, and still bounds the wait.
+	OpencodePushHorizon = 30 * time.Minute
+
 	// opencodeClockSkew tolerates opencode's clock reading slightly behind
 	// the releaser's when comparing a session row's timestamp against the
 	// entry's queuedAt. It is agy's value, so both routes tolerate the same
@@ -37,13 +46,15 @@ const (
 // session back out of opencode's sqlite db, because a 2xx from the wrong
 // server process is not evidence anything arrived.
 type OpencodeDeliverer struct {
-	Client        *http.Client // nil -> &http.Client{Timeout: OpencodeRequestTimeout}
-	StateFiles    []string     // candidate service.json files, tried in order
-	DBPath        string       // $XDG_DATA_HOME/opencode/opencode.db
-	Exec          usage.Exec   // the sqlite3 shell-out; nil -> OutcomeNotMine
-	Now           func() time.Time
-	Alive         func(pid int) bool // nil -> the same rule the claim store uses
-	FallbackAfter time.Duration      // zero -> DefaultFallbackAfter
+	Client     *http.Client // nil -> &http.Client{Timeout: OpencodeRequestTimeout}
+	StateFiles []string     // candidate service.json files, tried in order
+	DBPath     string       // $XDG_DATA_HOME/opencode/opencode.db
+	Exec       usage.Exec   // the sqlite3 shell-out; nil -> OutcomeNotMine
+	Now        func() time.Time
+	Alive      func(pid int) bool // nil -> the same rule the claim store uses
+	// FallbackAfter is the give-up horizon; zero -> OpencodePushHorizon. agy
+	// shares the 30s DefaultFallbackAfter instead, and that default is not moved.
+	FallbackAfter time.Duration
 
 	// gaveUp rate-limits the give-up log line.
 	gaveUp giveUpLog
@@ -85,22 +96,32 @@ func (d *OpencodeDeliverer) client() *http.Client {
 	return &http.Client{Timeout: OpencodeRequestTimeout}
 }
 
+// fallbackAfter is the give-up horizon: opencode's own long one, because an
+// opencode give-up has nowhere to hand the payload but a human. The shared
+// 30s DefaultFallbackAfter stays where agy reads it.
 func (d *OpencodeDeliverer) fallbackAfter() time.Duration {
 	if d.FallbackAfter > 0 {
 		return d.FallbackAfter
 	}
-	return DefaultFallbackAfter
+	return OpencodePushHorizon
 }
 
 // Deliver implements MasterMindDeliverer's push half for opencode
 // masterminds.
 //
 // The step order is fixed and non-obvious: guards, origin, seen, pastFallback,
-// service resolution, POST. The read-back runs before the give-up gate, so a
-// payload whose text is already in the session is confirmed at any age -- a
-// late-admitted payload must not be failed by the fallback before it is ever
-// read. The gate stays above the service checks, so a dead service past the
-// window still gives up.
+// service resolution, the single POST. The read-back runs before the give-up
+// gate, so a payload whose text is already in the session is confirmed at any
+// age -- a late-admitted payload must not be failed by the horizon before it
+// is ever read. The gate stays above the service checks, so a dead service past
+// the window still gives up.
+//
+// The POST is single-shot per call: Deliver never sleeps between POSTs, because
+// the caller's lock is a global one over the whole state root and one tick
+// holds it across the send. An opencode that is down for a moment is therefore
+// ridden out across ticks, not within one: a refused POST reports
+// OutcomeUnavailable, which leaves the entry pending, and the next tick POSTs
+// again under the same horizon. Only the horizon ends the retries for good.
 //
 // A 2xx is admission, not delivery: Deliver returns OutcomeAdmitted without
 // reading the session back, and the caller records that admit before calling
@@ -155,24 +176,7 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, mastermind store.Endpoi
 		return OutcomeUnavailable, "opencode service url is not loopback", nil
 	}
 
-	req, err := d.buildRequest(ctx, svc, mastermind.SessionID, payload)
-	if err != nil {
-		return OutcomeNotMine, "", fmt.Errorf("build opencode request: %w", err)
-	}
-
-	resp, err := d.client().Do(req)
-	if err != nil {
-		return OutcomeUnavailable, "post: " + firstErrorLine(err), nil
-	}
-	_, _ = io.Copy(io.Discard, resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return OutcomeUnavailable, fmt.Sprintf("post: %d", resp.StatusCode), nil
-	}
-
-	// The 2xx only proves the service queued the prompt: the caller marks
-	// the entry admitted and reads the session back through Confirm.
-	return OutcomeAdmitted, "posted; awaiting the session", nil
+	return d.post(ctx, svc, mastermind.SessionID, payload)
 }
 
 // Confirm implements MasterMindDeliverer's read-back half for opencode
@@ -230,6 +234,49 @@ func (d *OpencodeDeliverer) pastFallback(sessionID, payload string, queuedAt tim
 		slog.Info("opencode push not confirmed; payload stays pending for the background wait", "session", sessionID, "reason", reason)
 	}
 	return OutcomeNotMine, reason, true
+}
+
+// post POSTs the payload once and reports what the single attempt made of it.
+// It is the whole per-call send: there is no backoff and no wait between
+// attempts, so one Deliver can never hold the caller's global lock for the
+// horizon's sake.
+//
+// A refused POST is a reason, not a give-up: the payload stays pending, the
+// next tick POSTs it again under the same horizon, and only the horizon ends
+// the retries. A 2xx ends the call and the caller confirms it.
+func (d *OpencodeDeliverer) post(ctx context.Context, svc opencodeService, sessionID, payload string) (Outcome, string, error) {
+	took, reason, err := d.postOnce(ctx, svc, sessionID, payload)
+	if err != nil {
+		return OutcomeNotMine, "", err
+	}
+	if took {
+		// The 2xx only proves the service queued the prompt: the caller marks
+		// the entry admitted and reads the session back through Confirm, in this
+		// same tick.
+		return OutcomeAdmitted, "posted; awaiting the session", nil
+	}
+	return OutcomeUnavailable, reason, nil
+}
+
+// postOnce POSTs the payload once. took reports whether the service took it; a
+// service that refused it is a reason string, because an opencode that is down
+// or busy is OutcomeUnavailable rather than a bug in relevo.
+func (d *OpencodeDeliverer) postOnce(ctx context.Context, svc opencodeService, sessionID, payload string) (bool, string, error) {
+	req, err := d.buildRequest(ctx, svc, sessionID, payload)
+	if err != nil {
+		return false, "", fmt.Errorf("build opencode request: %w", err)
+	}
+
+	resp, err := d.client().Do(req)
+	if err != nil {
+		return false, "post: " + firstErrorLine(err), nil
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, fmt.Sprintf("post: %d", resp.StatusCode), nil
+	}
+	return true, "", nil
 }
 
 // confirm polls the session until the origin is seen in it, the confirm
