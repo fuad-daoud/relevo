@@ -209,6 +209,21 @@ func TestWaitOutcome(t *testing.T) {
 		}
 	})
 
+	t.Run("a marked close consumed by a chain is WaitClosed (0)", func(t *testing.T) {
+		b := store.Binding{Round: 1}
+		entries := []store.LogEntry{
+			{
+				Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+				Path: "/x/001-report.md", Note: "gate=pass consumed by chain rev-1", Confirmed: true,
+			},
+		}
+		got := WaitOutcome(b, entries, 1, noQuestion)
+		want := WaitResult{Code: WaitClosed, Line: "/x/001-report.md", Done: true}
+		if got != want {
+			t.Errorf("WaitOutcome = %+v, want %+v", got, want)
+		}
+	})
+
 	t.Run("marked close refused by scope is WaitHalted (5)", func(t *testing.T) {
 		b := store.Binding{Round: 1}
 		entries := []store.LogEntry{
