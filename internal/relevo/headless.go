@@ -729,7 +729,7 @@ func stallLimitGateRecorded(rt Runtime, b store.Binding) bool {
 // round is a stray relevo stops.
 func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, error) {
 	if b.Round > b.RoundCap {
-		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s of %d", b.Name, ErrRoundCap, b.RoundCap))
+		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: %s of %d", b.Name, ErrRoundCap, b.RoundCap))
 	}
 
 	// Render what the builder has streamed since the last tick before
@@ -1104,7 +1104,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		}
 		if err != nil {
 			b = abandonSessionID(b, oldKind, sess)
-			return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder lost to a daemon restart and could not be relaunched: %v", b.Name, err))
+			return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: builder lost to a daemon restart and could not be relaunched: %v", b.Name, err))
 		}
 		b = next
 		// The new process has StreamSessionID "": reapable waits until it
@@ -1130,7 +1130,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// The escape halt comes before gateOnLimit: a limit line in the log of
 	// an escaped round must not turn a halt into a switch (#192).
 	if escapeCheck(ctx, rt, b, false) == EscapeHalt {
-		return haltBinding(ctx, rt, b, escapeDiagnosis(b, codeText))
+		return haltAndSettle(ctx, rt, tx, b, escapeDiagnosis(b, codeText))
 	}
 
 	next, _, handled, err := gateOnLimit(ctx, rt, tx, b, limitText(ctx, rt, b), false)
@@ -1139,7 +1139,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	}
 
 	if isDenial {
-		return haltBinding(ctx, rt, b, fmt.Sprintf(
+		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
 			"%s: builder exited (code %s) %s after a permission denial (%q); not switched -- re-send with a higher tier (relevo send --name %s --file <plan> --tier edit|yolo [--allow-yolo]) or extend the harness's allow list; log: %s",
 			b.Name, codeText, withoutArtifact(b.Shape), denialLine, b.Name, showCommand(b.Name, b.Round, "log")))
 	}
@@ -1155,11 +1155,11 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	}
 
 	if b.Shape == store.ShapeReader && codeText == "0" {
-		return haltBinding(ctx, rt, b, readerUndeliveredReason(rt, b, nudgesSincePlan(entries, b.Round)))
+		return haltAndSettle(ctx, rt, tx, b, readerUndeliveredReason(rt, b, nudgesSincePlan(entries, b.Round)))
 	}
 
 	if !switchable {
-		return haltBinding(ctx, rt, b, fmt.Sprintf("%s: builder exited (code %s) %s; see %s", b.Name, codeText, withoutArtifact(b.Shape), showCommand(b.Name, b.Round, "log")))
+		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: builder exited (code %s) %s; see %s", b.Name, codeText, withoutArtifact(b.Shape), showCommand(b.Name, b.Round, "log")))
 	}
 	// The exclusion is appended to the b that switchBuilder receives so the
 	// replacement inherits it and the field is persisted with the switch

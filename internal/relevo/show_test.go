@@ -1125,10 +1125,10 @@ func seedShowClaimStore(t *testing.T, rt Runtime) {
 	}
 }
 
-// TestShowLiveClaimsPendingMasterMindPayload pins #673: a plain (non-peek)
-// live read claims the oldest pending mastermind-bound payload through the
-// same delivery.Pull the cockpit calls with "tui", stamped with route "show",
-// and discards the pulled text -- the requested section is still what Show
+// TestShowLiveClaimsPendingMasterMindPayload pins the claim rule a plain
+// (non-peek) live report read follows: it claims the pending mastermind-bound
+// report for the very round it printed, stamped with route "show", and
+// discards the pulled text -- the requested section is still what Show
 // returns.
 func TestShowLiveClaimsPendingMasterMindPayload(t *testing.T) {
 	t.Parallel()
@@ -1224,5 +1224,131 @@ func TestShowDoesNotClaimAdmittedPayload(t *testing.T) {
 		if e.Confirmed {
 			t.Error("an admitted entry must not be confirmed by a plain show")
 		}
+	}
+}
+
+// claimRoute returns the route of the confirmed mastermind-bound entry of name,
+// and whether one exists.
+func claimRoute(t *testing.T, rt Runtime, name string) (string, bool) {
+	t.Helper()
+	entries, err := rt.Store.ReadLog(name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for _, e := range entries {
+		if e.Direction == store.DirToMasterMind && e.Confirmed {
+			return e.Route, true
+		}
+	}
+	return "", false
+}
+
+// TestShowClaimsOnlyTheRoundItPrinted pins the rule from both sides: a report
+// read of a round the pending payload is not on claims nothing and leaves the
+// payload pending, and a report read of the payload's own round claims it. A
+// payload is not the content of some other round's report, so reading that
+// report must not consume it.
+func TestShowClaimsOnlyTheRoundItPrinted(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedShowClaimStore(t, rt)
+
+	// Round 2 has no file and no payload: the report read fails on the
+	// missing file but resolves round 2, which is not the payload's round.
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 2), []byte("# round 2 report\n"), 0o644); err != nil {
+		t.Fatalf("write round 2 report: %v", err)
+	}
+	if err := rt.Store.AppendLog("webshop", store.LogEntry{
+		Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true,
+	}); err != nil {
+		t.Fatalf("AppendLog prompt: %v", err)
+	}
+
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "webshop", Round: 2, Section: ShowReport})
+	if err != nil {
+		t.Fatalf("Show round 2: %v", err)
+	}
+	if res.Text != "# round 2 report\n" {
+		t.Errorf("Text = %q, want round 2's report", res.Text)
+	}
+	if _, confirmed := claimRoute(t, rt, "webshop"); confirmed {
+		t.Error("a report read of round 2 confirmed round 1's pending payload")
+	}
+
+	// The payload's own round is what claims it.
+	if _, err := Show(context.Background(), rt, ShowOptions{Name: "webshop", Round: 1, Section: ShowReport}); err != nil {
+		t.Fatalf("Show round 1: %v", err)
+	}
+	if route, confirmed := claimRoute(t, rt, "webshop"); !confirmed || route != "show" {
+		t.Errorf("confirmed/route = %v/%q, want true/\"show\"", confirmed, route)
+	}
+}
+
+// TestShowOtherSectionsNeverClaim pins the rest of the rule: every section that
+// is not the report or the output prints something the pending report payload
+// is not, so each of them leaves it pending.
+func TestShowOtherSectionsNeverClaim(t *testing.T) {
+	t.Parallel()
+
+	for _, section := range []ShowSection{ShowPrompt, ShowDiff, ShowDrift, ShowLog, ShowTranscript, ShowGate} {
+		t.Run(string(section), func(t *testing.T) {
+			rt := routeRuntime(t)
+			seedShowClaimStore(t, rt)
+
+			// The reads print whatever they can and the payload survives.
+			if _, err := Show(context.Background(), rt, ShowOptions{Name: "webshop", Section: section}); err != nil {
+				t.Fatalf("Show --%s: %v", section, err)
+			}
+			if _, confirmed := claimRoute(t, rt, "webshop"); confirmed {
+				t.Errorf("show --%s confirmed the pending report payload", section)
+			}
+			if _, found, err := delivery.Pull(context.Background(), rt.Store, "webshop", "wait"); err != nil || !found {
+				t.Errorf("Pull after show --%s = found %v, err %v; want the payload still pending", section, found, err)
+			}
+		})
+	}
+}
+
+// TestShowFailedReadClaimsNothing pins the failed-read half: an out-of-range
+// round is an error, and the payload it could not print stays pending for the
+// route that pushes it.
+func TestShowFailedReadClaimsNothing(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedShowClaimStore(t, rt)
+
+	if _, err := Show(context.Background(), rt, ShowOptions{Name: "webshop", Round: 9, Section: ShowReport}); err == nil {
+		t.Fatal("Show on an out-of-range round must be an error")
+	}
+	if _, confirmed := claimRoute(t, rt, "webshop"); confirmed {
+		t.Error("a failed show confirmed the pending payload")
+	}
+	if _, found, err := delivery.Pull(context.Background(), rt.Store, "webshop", "wait"); err != nil || !found {
+		t.Errorf("Pull after a failed show = found %v, err %v; want the payload still pending", found, err)
+	}
+}
+
+// TestShowMissingReportClaimsNothing pins that a claim needs printed content: a
+// report read that found no file resolved Missing, so it confirms nothing.
+func TestShowMissingReportClaimsNothing(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedShowClaimStore(t, rt)
+	if err := os.Remove(rt.Store.ReportPath("webshop", 1)); err != nil {
+		t.Fatalf("remove report: %v", err)
+	}
+
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "webshop", Section: ShowReport})
+	if err != nil {
+		t.Fatalf("Show: %v", err)
+	}
+	if !res.Missing {
+		t.Fatalf("Missing = false, want the absent report to read as Missing (Text %q)", res.Text)
+	}
+	if _, confirmed := claimRoute(t, rt, "webshop"); confirmed {
+		t.Error("a show that printed no report confirmed the pending payload")
 	}
 }

@@ -541,14 +541,14 @@ func fetchCatchUpGate(ctx context.Context, rt Runtime, b store.Binding, view rem
 func applyCatchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, cf *catchUpFetch) (store.Binding, *catchUpAck, error) {
 	if cf.Abort {
 		if cf.BundleErr != nil {
-			return applyCatchUpBundleFailure(ctx, rt, b, view, cf)
+			return applyCatchUpBundleFailure(ctx, rt, tx, b, view, cf)
 		}
 		return b, nil, nil
 	}
 	// A reader's listing was over the cap: nothing was downloaded, so the
 	// round asks for a human exactly as the client-side close does.
 	if cf.ArtifactCap != "" {
-		next, err := haltBinding(ctx, rt, b, cf.ArtifactCap)
+		next, err := haltAndSettle(ctx, rt, tx, b, cf.ArtifactCap)
 		return next, nil, err
 	}
 	if cf.ReportMissing && view.Stopped == "" {
@@ -556,13 +556,13 @@ func applyCatchUp(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		if b.Shape == store.ShapeReader {
 			missing = fmt.Sprintf("without its %s file", readerOutputLabel(rt, b))
 		}
-		next, err := haltBinding(ctx, rt, b, fmt.Sprintf("%s: %s closed round %d %s", b.Name, b.Builder.Server, view.ClosedRound, missing))
+		next, err := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: %s closed round %d %s", b.Name, b.Builder.Server, view.ClosedRound, missing))
 		return next, nil, err
 	}
 	if !applyCatchUpFiles(rt, tx, b, view, cf) {
 		return b, nil, nil
 	}
-	next, stop, err := applyCatchUpAbsorb(ctx, rt, b, view, cf)
+	next, stop, err := applyCatchUpAbsorb(ctx, rt, tx, b, view, cf)
 	if stop {
 		return next, nil, err
 	}
