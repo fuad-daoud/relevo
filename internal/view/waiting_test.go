@@ -150,7 +150,7 @@ func TestWaitingOnHalts(t *testing.T) {
 }
 
 // TestWaitingOnBrokenWithoutAProcess pins the PID clause of the switchable
-// test (#965). A mid-round switch whose replacement failed to spawn leaves the
+// test. A mid-round switch whose replacement failed to spawn leaves the
 // candidate and the RoundStartedAt stamp behind with no process at all, and
 // no tick retries it -- so this binding is waiting on a human, not on the
 // daemon, exactly as it was before the daemon gave up on it silently.

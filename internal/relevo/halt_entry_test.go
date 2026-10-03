@@ -305,11 +305,11 @@ func TestBrokenHaltsQueueOnlyWhenNotSwitchable(t *testing.T) {
 	})
 }
 
-// TestMidRoundSwitchSpawnFailureHaltsAndWaits is the #965 regression, end to
-// end through switchBuilder: a mid-round switch whose replacement cannot be
-// resolved leaves StateBroken with no process, and that binding owes its
-// MasterMind one halt entry -- which wait then pulls, so the wait answers
-// needs-you instead of running out its clock.
+// TestMidRoundSwitchSpawnFailureHaltsAndWaits is the regression for the broken
+// switch, end to end through switchBuilder: a mid-round switch whose
+// replacement cannot be resolved leaves StateBroken with no process, and that
+// binding owes its MasterMind one halt entry -- which wait then pulls, so the
+// wait answers needs-you instead of running out its clock.
 //
 // Before the predicate learned about the PID the round was "switchable"
 // (candidate set, RoundStartedAt stamped, nothing running) and nothing was

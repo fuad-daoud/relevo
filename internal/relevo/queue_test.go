@@ -196,11 +196,12 @@ func TestAdmitSpawnFailure(t *testing.T) {
 //
 // Mutation check: drop the `gatedBuilder` branch in queue.go (always call
 // startRound) and this fails on BuilderCandidate staying "agy/other/m".
-// TestAdmitSwitchFailureRecordsNoStart pins #965's second half: when the
-// switch Admit performs cannot resolve a replacement, switchBuilder queues
-// the binding's halt entry and returns -- with no process and no error. Admit
-// must not stamp RoundStartedAt or log "started after ... queued" for a round
-// that never began, and must not leave the binding switchable again.
+// TestAdmitSwitchFailureRecordsNoStart pins the guard half of this change:
+// when the switch Admit performs cannot resolve a replacement, switchBuilder
+// queues the binding's halt entry and returns -- with no process and no
+// error. Admit must not stamp RoundStartedAt or log "started after ... queued"
+// for a round that never began, and must not leave the binding switchable
+// again.
 //
 // Mutation check: delete the `b.Builder.PID == 0` guard in queue.go and this
 // fails on RoundStartedAt no longer being zero and the started note appearing.
@@ -265,11 +266,11 @@ func TestAdmitSwitchFailureRecordsNoStart(t *testing.T) {
 	}
 }
 
-// TestAdmitSpawnFailureQueuesAHaltEntry pins #966: Admit halts through the
-// shared path, so a spawn failure owes its MasterMind the same one entry every
-// other NEEDS YOU owes. It used to set State and Halt by hand and queue
-// nothing -- the binding read as needs-you with no payload, and a MasterMind
-// with no push route was never told at all.
+// TestAdmitSpawnFailureQueuesAHaltEntry pins Admit's halt entry: it halts
+// through the shared path, so a spawn failure owes its MasterMind the same one
+// entry every other NEEDS YOU owes. It used to set State and Halt by hand and
+// queue nothing -- the binding read as needs-you with no payload, and a
+// MasterMind with no push route was never told at all.
 //
 // Mutation check: restore the hand-set State/Halt block in queue.go and this
 // fails on haltEntries = 0 and on the empty wait payload.

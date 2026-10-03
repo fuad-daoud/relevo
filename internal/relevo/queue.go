@@ -24,7 +24,7 @@ var ErrNotQueued = errors.New("round is not queued")
 // The stamp and the note are written only for a start that actually produced a
 // process; the admission itself always happens. A switch whose replacement
 // could not be resolved leaves the binding broken with nothing running, and
-// recording that as a started round is what used to hide the fault (#965).
+// recording that as a started round is what used to hide the fault.
 func Admit(ctx context.Context, rt Runtime, name string) error {
 	var b store.Binding
 	admitted := false
