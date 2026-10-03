@@ -226,7 +226,7 @@ func PromoteWithAnnotations(src, dst string, force bool) (copiedAnnotations bool
 		}
 		return false, nil
 	}
-	ann, err := os.ReadFile(srcAnn)
+	ann, err := loadAnnotationsForCopy(srcAnn)
 	if err != nil {
 		return false, err
 	}
@@ -251,22 +251,20 @@ func checkPromoteTarget(path string, force bool) error {
 }
 
 // loadAnnotationsForCopy reads an annotations file whole, under the same cap as
-// a board, so an oversized file is refused rather than copied in part.
-func loadAnnotationsForCopy(path string) (data []byte, etag string, isNew bool, err error) {
+// a board, so an oversized file is refused rather than copied in part. The
+// symlink refusal is done by the caller, before anything is written, so that
+// path stays a single rule rather than two.
+func loadAnnotationsForCopy(path string) ([]byte, error) {
 	fi, err := os.Lstat(path)
 	if err != nil {
-		return nil, "", false, err
+		return nil, err
 	}
 	if fi.Mode()&os.ModeSymlink != 0 {
-		return nil, "", false, fmt.Errorf("%w: %s is a symlink", ErrInvalid, path)
+		return nil, fmt.Errorf("%w: %s is a symlink", ErrInvalid, path)
 	}
 	if fi.Size() > maxBody {
-		return nil, "", false, fmt.Errorf("%s is %d bytes, over the %d byte cap",
+		return nil, fmt.Errorf("%s is %d bytes, over the %d byte cap",
 			path, fi.Size(), maxBody)
 	}
-	data, err = os.ReadFile(path)
-	if err != nil {
-		return nil, "", false, err
-	}
-	return data, Etag(data), false, nil
+	return os.ReadFile(path)
 }

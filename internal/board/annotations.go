@@ -131,7 +131,7 @@ func AppendAnnotation(boardPath string, req AnnotationRequest, ifMatch *string) 
 	}
 	out, err := spliceAnnotation(data, line)
 	if err != nil {
-		return Annotation{}, "", fmt.Errorf("%w: %s: %v", ErrInvalid, path, err)
+		return Annotation{}, "", fmt.Errorf("%w: %s: %w", ErrInvalid, path, err)
 	}
 	if err := writeAtomic(path, out); err != nil {
 		return Annotation{}, "", err
@@ -182,7 +182,7 @@ func parseAnnotations(path string, data []byte) ([]Annotation, error) {
 	for i, raw := range raws {
 		a, err := parseAnnotation(raw)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %s: annotation %d (%s): %v", ErrInvalid, path, i, a.ID, err)
+			return nil, fmt.Errorf("%w: %s: annotation %d (%s): %w", ErrInvalid, path, i, a.ID, err)
 		}
 		out = append(out, a)
 	}
