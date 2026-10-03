@@ -415,5 +415,3 @@ func TestSendChainRoundRefusedWhenReportPresentWithNoOpenRound(t *testing.T) {
 		t.Errorf("err = %q, want it to name 001-report.md", err)
 	}
 }
-
-

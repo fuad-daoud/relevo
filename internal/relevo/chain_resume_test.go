@@ -1003,4 +1003,3 @@ func TestChainResumeAlreadyConvertedRowSkipsConversion(t *testing.T) {
 		t.Errorf("workflow changed on resume: got %s, want %s", after.WorkflowJSON, before.WorkflowJSON)
 	}
 }
-

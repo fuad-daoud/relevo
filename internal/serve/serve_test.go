@@ -2576,8 +2576,6 @@ func TestWriteSendErrorAnswersRoundHaltedWhenBindingHalted(t *testing.T) {
 	}
 }
 
-
-
 func TestGetBindingRunningHasLive(t *testing.T) {
 	env := setupTestEnv(t)
 
