@@ -1,9 +1,11 @@
 package relevo
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -34,7 +36,7 @@ type chainCloseWF struct {
 // the engine's stopped event. Otherwise it parses the actor's declared
 // outcomes, keys its artifacts and closes the step halted when a declared
 // artifact is missing.
-func chainEventFromCloseWF(rt Runtime, tx *store.Tx, c db.ChainRow, b store.Binding, wf chainCloseWF) (workflow.Event, error) {
+func chainEventFromCloseWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, b store.Binding, wf chainCloseWF) (workflow.Event, error) {
 	st, err := chainWorkflowState(c)
 	if err != nil {
 		return workflow.Event{}, err
@@ -79,6 +81,17 @@ func chainEventFromCloseWF(rt Runtime, tx *store.Tx, c db.ChainRow, b store.Bind
 			tail, _, _ := reporttail.ParseWithReason(wf.Body)
 			ev.Reason = chain.BuilderHaltReason(tail, wf.Note, wf.Outcome)
 			ev.HaltReason = fmt.Sprintf("builder halted on plan %d: %s", c.Plan, ev.Reason)
+			return ev, nil
+		}
+		// A done close over a tree that still holds uncommitted work carries no
+		// round forward: the diff it seals is not the work the builder left, so
+		// advancing would hand the next member a step that looks complete and is
+		// not. The gate names where the work actually is.
+		if reason := chainDirtyCloseReason(ctx, rt, c, b, round); reason != "" {
+			ev.Status = reporttail.OutcomeHalted
+			ev.Reason = reason
+			ev.HaltReason = reason
+			return ev, nil
 		}
 	}
 
@@ -90,6 +103,76 @@ func chainEventFromCloseWF(rt Runtime, tx *store.Tx, c db.ChainRow, b store.Bind
 	}
 	ev.Artifacts = artifacts
 	return ev, nil
+}
+
+// chainDirtyCloseReason is the dirty gate's answer for one writer close: the
+// halt wording when the round must not advance, and "" when it may. A clean
+// tree, a member the gate does not cover, and a clean read all give "".
+//
+// A git error is not a clean tree. The gate decides in band and never fails the
+// close it reads, exactly as escapeCheck does: the wording says the tree could
+// not be read, so the trace never records an unread tree as a finished round.
+func chainDirtyCloseReason(ctx context.Context, rt Runtime, c db.ChainRow, b store.Binding, round int) string {
+	if !chainDirtyGateApplies(rt, b) {
+		return ""
+	}
+	dirty, err := rt.Git.Dirty(ctx, b.CWD)
+	if err != nil {
+		slog.Warn("chain dirty gate skipped", "binding", b.Name, "round", round, "err", err)
+		return chainDirtyUnreadReason(c, b, round, err)
+	}
+	if !dirty {
+		return ""
+	}
+	return chainDirtyReason(rt, c, b, round, chainDirtySummary(ctx, rt, b))
+}
+
+// chainDirtyGateApplies reports whether the dirty gate covers this close. Only
+// the writer close that owns its tree does: a reader runs in a scratch copy, a
+// placed writer is mirror-only and its closed tree is the pulled result commit,
+// and a served binding's tree belongs to the server that cut the round ref.
+func chainDirtyGateApplies(rt Runtime, b store.Binding) bool {
+	if b.Shape == store.ShapeReader {
+		return false
+	}
+	if b.Serve != nil || b.Builder.Remote() {
+		return false
+	}
+	return rt.Git != nil && b.CWD != ""
+}
+
+// chainDirtyReason is the halt wording for a round that left work behind: what
+// is uncommitted, the snapshot ref that is its only durable copy, and the diff
+// key the store sealed for the round.
+func chainDirtyReason(rt Runtime, c db.ChainRow, b store.Binding, round int, summary string) string {
+	return fmt.Sprintf("round %d of %s closed done with %s left uncommitted in %s and no commit to carry it: the chain does not advance over uncommitted work; commit it, or recover it from %s (sealed diff: %s)",
+		round, c.Name, summary, b.CWD, chainRoundSnapshotRef(b, round), rt.Store.DiffPath(b.Name, round))
+}
+
+// chainDirtyUnreadReason is the halt wording for a tree the gate could not
+// read: it names the same evidence, and says plainly that the tree state is
+// unknown rather than reporting it clean.
+func chainDirtyUnreadReason(c db.ChainRow, b store.Binding, round int, err error) string {
+	return fmt.Sprintf("round %d of %s closed done but its tree %s could not be read (%v), so the chain cannot tell a finished round from uncommitted work and does not advance on the guess; commit the round, or recover it from %s",
+		round, c.Name, b.CWD, err, chainRoundSnapshotRef(b, round))
+}
+
+// chainDirtySummary is the one-line count of what is uncommitted. A stat that
+// cannot be read falls back to naming nothing counted rather than a number it
+// does not have.
+func chainDirtySummary(ctx context.Context, rt Runtime, b store.Binding) string {
+	stat, err := rt.Git.DiffWorktreeStat(ctx, b.CWD, b.RoundBaselineTree)
+	if err != nil || stat.Empty() {
+		return "changes"
+	}
+	return fmt.Sprintf("%d files changed (+%d/-%d)", stat.FilesChanged, stat.Insertions, stat.Deletions)
+}
+
+// chainRoundSnapshotRef is the ref that holds a round's uncommitted work: the
+// same namespace the remote allow-list admits and the remote note names, keyed
+// on the closing writer and the round that closed.
+func chainRoundSnapshotRef(b store.Binding, round int) string {
+	return fmt.Sprintf("refs/relevo/%s/round-%d", b.Name, round)
 }
 
 // chainCloseArtifacts keys a closing round's artifacts: a writer exposes its

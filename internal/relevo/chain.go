@@ -151,7 +151,7 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if wf == nil {
 		return b, nil
 	}
-	fev, ferr := chainEventFromCloseWF(rt, tx, c, b, *wf)
+	fev, ferr := chainEventFromCloseWF(ctx, rt, tx, c, b, *wf)
 	if ferr != nil {
 		return b, ferr
 	}
