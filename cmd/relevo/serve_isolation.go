@@ -35,14 +35,19 @@ func serveProcRunner(stateRoot string) (*proc.Runner, error) {
 	return r, nil
 }
 
-// resolveIsolation parses the configured serve.isolation and wraps base in its
-// boundary. A mode this build cannot run, a mode the running euid cannot serve,
-// an unknown value, or a container mode whose runtime is not installed is
-// returned as an error naming serve.isolation, so cmdServeRun can refuse it
-// with not_available before any side effect: fail closed, never start and warn.
-// base is the process runner every mode starts through, already carrying the
-// state tmp dir the caller computed.
-func resolveIsolation(raw string, euid int, base spawn.Runner) (spawn.Runner, isolate.Mode, error) {
+// resolveIsolation parses the configured serve.isolation and wraps its boundary
+// around the base runner. A mode this build cannot run, a mode the running euid
+// cannot serve, an unknown value, or a container mode whose runtime is not
+// installed is returned as an error naming serve.isolation, so cmdServeRun can
+// refuse it with not_available before any side effect: fail closed, never start
+// and warn. The base runner is built here from the machine state root, already
+// carrying its tmp dir, so the caller passes one string and the wrap order
+// (base before boundary) cannot be reordered by accident.
+func resolveIsolation(raw string, euid int, stateRoot string) (spawn.Runner, isolate.Mode, error) {
+	base, err := serveProcRunner(stateRoot)
+	if err != nil {
+		return nil, "", err
+	}
 	mode, err := isolate.Parse(raw)
 	if err != nil {
 		return nil, "", err
