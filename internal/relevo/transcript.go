@@ -342,3 +342,23 @@ func openTranscriptRound(rt Runtime, b store.Binding) (round int, found bool, er
 	}
 	return b.Round, found, nil
 }
+
+// openRoundTranscriptRound reports whether an explicit --round transcript read
+// may name the round it asks for. A server-chain member installs its rounds only
+// at close, so the round in flight is outside the prompt-entry range that
+// bounds an explicit --round; when the requested round is that open round and
+// the open round has a readable transcript, it is answered from the same mirror
+// the default reads. Any other round, an open round with no readable
+// transcript, and every section that is not a transcript report false, so the
+// caller's out-of-range refusal stands. RoundTranscript owns the read, so this
+// adds no call Show did not already make and no network round trip.
+func openRoundTranscriptRound(rt Runtime, b store.Binding, section ShowSection, round int) (bool, error) {
+	if section != ShowTranscript {
+		return false, nil
+	}
+	open, found, err := openTranscriptRound(rt, b)
+	if err != nil {
+		return false, err
+	}
+	return found && round == open, nil
+}
