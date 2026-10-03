@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -37,6 +38,28 @@ func (s *Server) isolationView(v remote.BuildersView) remote.BuildersView {
 	return v
 }
 
+// goneStep is the next step for a row whose backing binding is gone.
+//
+// It is not `serve gc` or `serve unbind` for either shape: those walk
+// Store.List() (GCAbandoned) or Store.Load(name) (AdminUnbind), and a row that
+// is already gone from the store is in neither -- so naming them would hand a
+// human a verb that cannot clear the reference.
+//
+// A chain row (Role "chain", Chain non-nil) is a row in the chains table whose
+// members are all gone; it is cleared by the chain verb, which re-creates the
+// members a resume needs. An ordinary row was deleted between the list and the
+// read, so it names the owner it belonged to instead: there is no verb that
+// brings a deleted binding back, and saying so is the honest next step.
+func goneStep(row *view.BindingStatus, label string) string {
+	if row.Chain != nil {
+		return fmt.Sprintf("relevo chain --resume --name %s", row.Name)
+	}
+	if label != "" {
+		return fmt.Sprintf("%s/%s is gone from the store; nothing to clear", label, row.Name)
+	}
+	return row.Name + " is gone from the store; nothing to clear"
+}
+
 // AdminStatus returns every owner who has a bindings directory, sorted by
 // Label, plus the builder census. Every queued row gains its Queued position
 // and a "queued <age> (<ahead> ahead)" BuilderStatus.
@@ -70,6 +93,7 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.Builders
 		}
 		ownerPath := filepath.Join(bindingsDir, entry.Name())
 		rt := s.runtimeAt(ownerPath)
+		label := s.clients.LabelOf(id)
 		rep, err := relevo.Status(ctx, rt)
 		if err != nil {
 			return nil, remote.BuildersView{}, err
@@ -80,7 +104,20 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.Builders
 			// Only a client request counts as contact: no RoundStartedAt fallback.
 			b, err := rt.Store.Load(row.Name)
 			if err != nil {
-				return nil, remote.BuildersView{}, err
+				// A row whose binding is gone is a stale reference, not a
+				// failure of the read: the row was built from the List
+				// snapshot, and what it named has since been deleted or is a
+				// chain whose members are all gone. Keep the row, mark it, and
+				// carry on -- one stale reference must not fail the census for
+				// every other owner. Every other error still returns as before.
+				if !errors.Is(err, store.ErrNotFound) {
+					return nil, remote.BuildersView{}, err
+				}
+				row.Gone = true
+				row.GoneStep = goneStep(row, label)
+				// A gone row has no Serve facts and is not queued work, so it
+				// contributes to neither LastSeen nor the queue.
+				continue
 			}
 			if b.Serve != nil && b.Serve.LastSeen.After(lastSeen) {
 				lastSeen = b.Serve.LastSeen
@@ -93,7 +130,6 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.Builders
 			row.Queued = &remote.QueueView{Position: i + 1, Ahead: i, Running: c.Running, Cap: builders.Cap, Since: q.QueuedAt}
 			row.BuilderStatus = fmt.Sprintf("queued %s (%d ahead)", view.AgeText(now.Sub(q.QueuedAt)), i)
 		}
-		label := s.clients.LabelOf(id)
 		owners = append(owners, OwnerStatus{
 			Owner:    id,
 			Label:    label,

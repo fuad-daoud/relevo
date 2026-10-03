@@ -343,3 +343,61 @@ func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	next, err = switchBuilder(ctx, rt, tx, b, "rate-limited: "+m.Line, closeOld, false)
 	return next, m, true, err
 }
+
+// gateOnOutage is the exit path's answer to a provider-side outage (#931): the
+// builder's own tail says the PROVIDER failed, not the builder, so the exit
+// earns the same timed gate a rate limit earns -- one rate_limited ledger entry
+// whose note keeps the cause, then the builder switched uncounted, for the same
+// reason gateOnLimit does not count: a provider that cannot serve is not a
+// builder that failed, so it must not spend the round's switch budget. The
+// candidate stays eligible once the provider recovers, where the until-cleared
+// exclusion would keep locking it out of the round.
+//
+// handled is false when the tail names no provider outage. That is the whole
+// point of the split: the caller's own classification of the exit -- for the
+// headless path, the until-cleared #191 exclusion a genuine crash earns -- is
+// left exactly as it was, which is why the gate is offered only at that
+// decision and never earlier in the precedence order.
+//
+// Unlike gateOnLimit there is no report-on-disk branch: every call site is
+// already past the report close, so a report never reaches here and the same
+// observation cannot be recorded twice. A ledger write that fails is reported
+// and the switch proceeds anyway, exactly as gateOnLimit does.
+func gateOnOutage(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, text string) (next store.Binding, handled bool, err error) {
+	switchable := b.BuilderCandidate != "" && !b.RoundStartedAt.IsZero()
+	if !switchable {
+		return b, false, nil
+	}
+
+	now := rt.Now()
+	m, ok := availability.MatchOutage(text, now, rt.Policy.LimitGateDefault())
+	if !ok {
+		return b, false, nil
+	}
+
+	// The gate lands on the login that hit it, exactly as a limit does, so
+	// another login of the same provider stays usable.
+	subject := availability.ProviderOf(b.BuilderCandidate)
+	if b.BuilderAccount != "" && subject != "" {
+		subject = account.GateKey(subject, b.BuilderAccount)
+	}
+	entry := availability.Entry{
+		Kind:    availability.RateLimited,
+		Subject: subject,
+		At:      now,
+		Until:   m.Until,
+		Note:    m.Line,
+		Source:  "relevo",
+		Binding: b.Name,
+	}
+	if err := availability.AppendEntryLocked(AvailabilityDeps(rt), entry); err != nil {
+		fmt.Fprintf(os.Stderr, "relevo: could not record provider outage gate: %v\n", err)
+	}
+
+	slog.Warn("provider outage",
+		"binding", b.Name, "round", b.Round, "provider", entry.Subject,
+		"until", m.Until, "parsed", m.Parsed, "line", m.Line)
+
+	next, err = switchBuilder(ctx, rt, tx, b, "provider outage: "+m.Line, false, false)
+	return next, true, err
+}
