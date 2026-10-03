@@ -194,8 +194,8 @@ func TestRoundOpenIn(t *testing.T) {
 
 // TestCandidateSendRefusedExceptOnAHaltedServedBinding pins the one exception
 // to the --candidate refusal: an open round is refused on every binding
-// except a served one halted in NEEDS YOU, where `stop` is refused and the
-// candidate is the only lever that continues the round.
+// except a served one halted in NEEDS YOU, where the candidate continues the
+// round without stopping first (`stop` on the halted round works too).
 func TestCandidateSendRefusedExceptOnAHaltedServedBinding(t *testing.T) {
 	t.Parallel()
 
