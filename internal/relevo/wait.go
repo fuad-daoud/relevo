@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/delivery"
@@ -88,6 +89,30 @@ func DefaultWaitRound(b store.Binding, entries []store.LogEntry) int {
 	return round
 }
 
+// unmarkedNote reports whether a report entry's note says the round closed
+// without its completion marker, which is what WaitUnmarked (2) means.
+//
+// A note is only ever that claim when it carries one of the no-marker tokens
+// themselves: "unmarked" (the builder exited after its report but never wrote
+// the marker), "scraped" (the body is a terminal capture, not the builder's
+// own file), or "noreport" (the marker is there but no report). Notes are
+// space-joined, so each token is matched as a whole word and a join like
+// "noreport stopped" still reads as unmarked.
+//
+// Every other note an annotated marked close carries -- "gate=<result>",
+// "stopped", "scope=ok", "escaped", "uncommitted work at refs/relevo/...",
+// "consumed by chain ..." -- describes a close that did happen, so a
+// non-empty note alone is never enough to call a round unmarked.
+func unmarkedNote(note string) bool {
+	for _, tok := range strings.Fields(note) {
+		switch tok {
+		case "unmarked", noteScraped, "noreport":
+			return true
+		}
+	}
+	return false
+}
+
 // WaitOutcome classifies one binding's round into a WaitResult, per spec
 // §4.6. Pure apart from questionOf. The report entry for round is checked
 // before State == done and before view.WaitingOn, so an earlier round's close is
@@ -99,7 +124,7 @@ func WaitOutcome(b store.Binding, entries []store.LogEntry, round int, questionO
 		// also 5 -- the mastermind has to read why either way.
 		if e.Outcome == reporttail.OutcomeHalted || e.Outcome == reporttail.OutcomeBlocked {
 			code = WaitHalted
-		} else if e.Note != "" {
+		} else if unmarkedNote(e.Note) {
 			code = WaitUnmarked
 		}
 		line := e.Path
