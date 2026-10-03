@@ -939,6 +939,121 @@ func TestChainResumeOverAReportlessNewerRoundClosesStoppedAndReRuns(t *testing.T
 	assertStopCloseOnRound(t, rt, "shop", manual)
 }
 
+// TestChainResumeOnAWorkflowlessChainNeverInternal pins the row the engine's
+// own conversion cannot leave behind: `chain --resume` read its missing workflow
+// or its missing engine state as a plain error, which the CLI reports as
+// internal. A row with no workflow is migrated through the same single-row
+// conversion the daemon's start-up sweep runs; a row that still carries neither
+// a workflow nor a state is refused in the input class, naming its own reason
+// and the command that reads it.
+func TestChainResumeOnAWorkflowlessChainNeverInternal(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a row with no workflow is migrated", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stripChainEngine(t, rt, true)
+
+		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+			t.Fatalf("ChainResume over a legacy row: %v", err)
+		}
+
+		row := chainStoredRow(t, rt, "shop")
+		if row.Status != string(chain.StatusRunning) || len(row.WorkflowJSON) == 0 || len(row.StateJSON) == 0 {
+			t.Errorf("chain = status %q with %d workflow bytes and %d state bytes, want it migrated and running",
+				row.Status, len(row.WorkflowJSON), len(row.StateJSON))
+		}
+	})
+
+	t.Run("an unconvertible row is refused, not internal", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stripChainEngine(t, rt, true)
+		// Settings the conversion reads and cannot parse: the migration cannot
+		// bring this row onto the engine, which is what halts it in the sweep.
+		corruptChainSettings(t, rt, "shop")
+
+		_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
+		if err == nil {
+			t.Fatal("ChainResume over an unconvertible row = nil, want a refusal")
+		}
+		assertResumeRefusedNotInternal(t, err)
+	})
+
+	t.Run("a row with no engine state is refused, not internal", func(t *testing.T) {
+		t.Parallel()
+
+		rt, _ := chainRuntime(t)
+		stripChainEngine(t, rt, false)
+
+		_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
+		if err == nil {
+			t.Fatal("ChainResume over a state-less row = nil, want a refusal")
+		}
+		assertResumeRefusedNotInternal(t, err)
+	})
+}
+
+// stripChainEngine leaves the chain row as one that predates the workflow
+// engine: its engine state is gone and, with dropWorkflow, so is its
+// definition, leaving the legacy columns and the row's own reason as all it
+// holds.
+func stripChainEngine(t *testing.T, rt Runtime, dropWorkflow bool) {
+	t.Helper()
+
+	startedChain(t, rt, ChainOptions{})
+	chainBuilderClose(t, rt, "shop", chainHaltedBody("stuck"))
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		c, err := tx.Chain("shop")
+		if err != nil {
+			return err
+		}
+		c.StateJSON = nil
+		if dropWorkflow {
+			c.WorkflowJSON = nil
+			c.Status = string(chain.StatusHalted)
+			c.Reason = "could not convert to a workflow: chain shop: unknown legacy step"
+		}
+		c.UpdatedAt = rt.Now().UTC()
+		return tx.ChainPut(c)
+	}); err != nil {
+		t.Fatalf("strip the engine columns: %v", err)
+	}
+}
+
+// corruptChainSettings writes settings no chain conversion can read.
+func corruptChainSettings(t *testing.T, rt Runtime, name string) {
+	t.Helper()
+
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		c, err := tx.Chain(name)
+		if err != nil {
+			return err
+		}
+		c.SettingsJSON = []byte("not json")
+		c.UpdatedAt = rt.Now().UTC()
+		return tx.ChainPut(c)
+	}); err != nil {
+		t.Fatalf("corrupt the chain settings: %v", err)
+	}
+}
+
+// assertResumeRefusedNotInternal pins the class of a resume refusal: the input
+// class, so the CLI reports it as refused or conflict and never as an internal
+// failure, and it names the command that reads the row.
+func assertResumeRefusedNotInternal(t *testing.T, err error) {
+	t.Helper()
+
+	if !errors.Is(err, ErrRefused) {
+		t.Fatalf("refusal %v is not in the input class: errors.Is(err, ErrRefused) is false, so the CLI reads it as internal", err)
+	}
+	if !strings.Contains(err.Error(), "relevo status shop") {
+		t.Errorf("refusal %q names no working next step", err)
+	}
+}
+
 // assertStopCloseOnRound pins that the given round was closed the way a stop
 // closes one -- a report entry noting no report was written, an unstructured
 // outcome and the stop entry beside it -- and returns the report entry's path,

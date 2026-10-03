@@ -41,15 +41,14 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	if err := closeDeadMemberRound(ctx, rt, c); err != nil {
 		return ChainResult{}, err
 	}
-	def, err := chainWorkflowDef(c)
+	// The row's engine definition and state, migrated onto the engine when the
+	// row still predates it and refused in the input class when it carries
+	// neither, so a resume never answers internal on a row a human can read.
+	c, def, before, err := chainResumeWorkflowRow(rt, c)
 	if err != nil {
 		return ChainResult{}, err
 	}
 	set, err := resumeSettings(rt, c, opts)
-	if err != nil {
-		return ChainResult{}, err
-	}
-	before, err := chainWorkflowState(c)
 	if err != nil {
 		return ChainResult{}, err
 	}
