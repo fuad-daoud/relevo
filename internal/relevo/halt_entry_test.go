@@ -555,7 +555,7 @@ func TestHaltEntryDoesNotDisturbTheAdmittedReadBack(t *testing.T) {
 	// The binding goes done, and the halt entry is admitted by a route before
 	// the state changed: the one state ConfirmAdmitted exists for.
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		halted, err := haltBinding(context.Background(), rt, tx, b, "webshop: builder exited (code 1)")
+		halted, err := haltBinding(context.Background(), rt, tx, b, b.Round, "webshop: builder exited (code 1)")
 		if err != nil {
 			return err
 		}
