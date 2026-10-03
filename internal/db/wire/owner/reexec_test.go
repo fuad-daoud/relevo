@@ -85,30 +85,69 @@ func helperDSN(path string) string {
 	return "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 }
 
-// helperListener adopts the inherited descriptor when one is present, else
-// binds the socket.
-func helperListener() (net.Listener, error) {
+// helperListener adopts the inherited descriptor when one is present, else binds
+// the socket, and reports whether it adopted: only an adopting image has to
+// prove it is serving before the test is told about it.
+func helperListener() (net.Listener, bool, error) {
 	if fd := os.Getenv("RELEVO_LISTEN_FD"); fd != "" {
 		n, err := strconv.Atoi(fd)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		ln, err := Adopt(n)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		if adopted := os.Getenv(helperAdoptEnv); adopted != "" {
-			_ = os.WriteFile(adopted, []byte("adopted\n"), 0o600)
-		}
-		return ln, nil
+		return ln, true, nil
 	}
-	return Listen(os.Getenv(helperRootEnv))
+	ln, err := Listen(os.Getenv(helperRootEnv))
+	if err != nil {
+		return nil, false, err
+	}
+	return ln, false, nil
+}
+
+// probeServing completes one round trip through sock. It cannot finish before
+// the image's accept loop has taken a connection and answered its handshake, so
+// an adopting image runs it before writing its adopted marker: a test waiting
+// for that marker then dials into a listener already serving, never into one
+// still between Adopt and Accept.
+func probeServing(sock string) error {
+	// The probe is the readiness proof the test waits on, so it must not
+	// become a second two-second flake of its own under load.
+	client.SetHandshakeTimeout(10 * time.Second)
+	db, err := sql.Open(client.DriverName, sock)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+	var one int
+	return db.QueryRow(`SELECT 1`).Scan(&one)
+}
+
+// announceAdoption tells the test that this image took the listener over, but
+// only after it has served a round trip: the marker then means the accept loop
+// is live rather than merely that the descriptor was adopted.
+func announceAdoption() {
+	marker := os.Getenv(helperAdoptEnv)
+	if marker == "" {
+		return
+	}
+	sock, err := SocketPath(os.Getenv(helperRootEnv))
+	if err == nil {
+		err = probeServing(sock)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "helper probe:", err)
+		os.Exit(1)
+	}
+	_ = os.WriteFile(marker, []byte("adopted\n"), 0o600)
 }
 
 // runReexecHelper is the test binary acting as its own daemon: bind or adopt,
 // serve until SIGUSR1, then drain, hand the listener over and exec itself.
 func runReexecHelper() {
-	ln, err := helperListener()
+	ln, adopted, err := helperListener()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "helper listener:", err)
 		os.Exit(1)
@@ -127,6 +166,13 @@ func runReexecHelper() {
 	signal.Notify(sig, syscall.SIGUSR1)
 
 	go func() { _ = srv.Serve(ln) }()
+
+	// An image that adopted says so only after it has served a round trip, so
+	// the marker means the accept loop is live rather than merely that the
+	// descriptor was taken over.
+	if adopted {
+		announceAdoption()
+	}
 
 	// The reap wiring runs before the ready marker: a test that drives the
 	// forced registration must find the hook and the grace already installed.
@@ -178,6 +224,13 @@ func runReexecHelper() {
 		os.Exit(1)
 	}
 	env := setEnv(os.Environ(), "RELEVO_LISTEN_FD", strconv.Itoa(int(f.Fd())))
+	// The forced abandoned statement belongs to the pre-exec image alone: it
+	// is what drives the reap that leads here. Left in the environment it would
+	// be inherited, so every later image would register the same never-closing
+	// statement, fire its own reap a grace later and exec again -- turning the
+	// image that is supposed to serve into one that drains and drops the
+	// test's query instead. Clearing it here is what makes the new image stable.
+	env = setEnv(env, helperForceEnv, "")
 	if err := syscall.Exec(os.Args[0], []string{os.Args[0]}, env); err != nil {
 		fmt.Fprintln(os.Stderr, "helper exec:", err)
 		os.Exit(1)
