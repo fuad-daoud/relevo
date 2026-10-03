@@ -267,9 +267,11 @@ func runGC(delete, dryRun bool, mastermindRef string, all, asJSON bool) error {
 	return nil
 }
 
-// gcResolver is gcScope's production resolve function: the same input
-// mastermindFilter (mastermind.go:517) builds, plus Flag, closed over rt. It never
-// calls mastermind.Init: unbind --done never registers a mastermind (#482).
+// gcResolver is the production resolver every scope-shaped verb shares: the
+// input mastermind.Resolve reads, closed over rt, with the caller's --mastermind
+// as the flag. It never calls mastermind.Init: resolving a mastermind never
+// registers one. A runtime with no registry is a resolve error, not a miss, so
+// a caller can refuse rather than fall back.
 func gcResolver(rt relevo.Runtime) func(ref string) (mastermind.Record, error) {
 	return func(ref string) (mastermind.Record, error) {
 		if rt.MasterMinds == nil {
