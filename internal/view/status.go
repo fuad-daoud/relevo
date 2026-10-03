@@ -450,13 +450,6 @@ func RoundFacts(entries []store.LogEntry) (start, end time.Time, u *usage.Usage)
 // DisplayState collapses the stored states into the words the human cares
 // about. needs_you and broken both mean "a human must act"; paused means the
 // worktree was released deliberately and bind --resume brings it back.
-//
-// It produces no HELD: the held delivery state is gone, and no state maps to
-// that word any more. The HELD branches in sort.go, statusline.go and the ui
-// stay as the tolerant render path for a row that carries the word anyway --
-// a Display is a plain string on a row that reaches the renderers from
-// several builders, and an unrecognised word must still render rather than
-// disappear. Each of them is pinned by a test, so none is free to drop.
 func DisplayState(s store.State) string {
 	switch s {
 	case store.StateNeedsYou, store.StateBroken:

@@ -67,10 +67,6 @@ func stateStyle(display string) lipgloss.Style {
 	switch display {
 	case "NEEDS YOU":
 		return stateNeedsYouStyle
-	// HELD: DisplayState never produces it; kept so a row carrying the word
-	// keeps its colour instead of falling through to plain.
-	case "HELD":
-		return stateHeldStyle
 	case "ACTIVE":
 		return stateActiveStyle
 	case "PAUSED":

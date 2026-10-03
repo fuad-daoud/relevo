@@ -280,11 +280,6 @@ func rowStatus(b BindingStatus, needsYou, reportIn bool) (status, tone string) {
 		return "NEEDS YOU", "needs"
 	}
 	if b.Display != "" && b.Display != "ACTIVE" {
-		// HELD: DisplayState never produces it; kept so a row that carries
-		// it reads HELD in its own colour rather than as a bare word.
-		if b.Display == "HELD" {
-			return b.Display, "held"
-		}
 		return b.Display, "quiet"
 	}
 	if reportIn && b.LastPayload != nil {
