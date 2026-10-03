@@ -2498,6 +2498,16 @@ func TestStopOnHaltedBindingPerformsStop(t *testing.T) {
 		t.Errorf("second stop code = %q, want %q", errBody.Code, remote.CodeNothingToStop)
 	}
 
+	// The stop closed round 1 but the close is un-acked, so the view still
+	// owes the client that close (RoundStateOf reports closed while
+	// ClosedRound > AckedRound). A real client collects it before resending;
+	// model the ack here, then the resend sees a clean slate.
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds/1/ack", nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+	if ackView := decodeView(t, body); ackView.AckedRound != 1 {
+		t.Fatalf("acked_round = %d, want 1", ackView.AckedRound)
+	}
+
 	outRef := "refs/relevo/api/out"
 	bundleBytes := snapshotRef(t, env, env.clientDir, outRef)
 	formBytes, ct := makeRoundForm(t, 2, "# Plan B", bundleBytes)
