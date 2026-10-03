@@ -100,10 +100,55 @@ func poolForPick(pick AccountPick, token string) []account.Account {
 	return pick.Set.Pool(account.Kind(ref.Harness), ref.Provider)
 }
 
+// switchLine renders one switch entry's report line from that entry's own
+// note -- the reason and the resolution switchEntry already stores, and nothing
+// else. Every path that records a switch (a rate limit, an exit without a
+// report, a lost daemon, a nudge's resume, a remote server's own switch) writes
+// the whole fact into the note, so rendering the note renders the switch
+// whatever shape it took; a note this round has never seen is still named rather
+// than dropped. "" for an entry with no note: a switch with nothing recorded
+// about it has nothing to say.
+func switchLine(note string) string {
+	if note == "" {
+		return ""
+	}
+	return "Switch: " + note
+}
+
+// switchLines renders the switch entries of one round, in log order, as the
+// lines queueReport appends to that round's report payload. A round that
+// switched twice reports both switches, in the order they happened.
+//
+// Only the round being closed counts: a switch on an earlier round was named in
+// that round's report, and one on a later round is not this payload's fact.
+// Nudge entries are excluded by note, the same exclusion store.HasKind applies,
+// so a nudge is never mistaken for a switch. Pure.
+func switchLines(entries []store.LogEntry, round int) []string {
+	var out []string
+	for _, e := range entries {
+		if e.Round != round || e.Kind != store.KindSwitch || e.Note == nudgeNote {
+			continue
+		}
+		if line := switchLine(e.Note); line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
 // switchEntry is the log record of one builder switch: why the switch
 // happened, and what ExplainResolution says about the pick that replaced
 // the builder (spec §3.3, §4.4). Always Confirmed and DirToMasterMind, the same
 // reasoning as pickEntry: a switch is never a pending payload.
+//
+// The rule that follows from Confirmed is the whole of a switch's delivery: a
+// switch needs no action, because the round already moved on to the new
+// builder and the next tick continues from there. Queuing one anyway would buy
+// a mid-round turn on a runner and a second payload in the same delivery the
+// report arrives in, for a fact the report already carries. So a switch entry
+// is status, and its trace to the mastermind is the switch line in the closing
+// round's report -- switchLine below, appended by queueReport. No new stored
+// fact is added for it: the note written here is what that line renders.
 func switchEntry(now time.Time, round int, reason string, res Resolution, u *usage.Usage) store.LogEntry {
 	return store.LogEntry{
 		TS: now.UTC(), Round: round, Direction: store.DirToMasterMind,
