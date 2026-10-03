@@ -447,6 +447,7 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 	var (
 		gates  db.KV
 		claims delivery.ClaimStore
+		waits  delivery.WaitClaimStore
 		runLog hooks.RunLog
 	)
 	if openGates {
@@ -456,6 +457,7 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		}
 		gates = d
 		claims = &delivery.KVClaims{KV: db.TxKV{DB: d}}
+		waits = &delivery.KVWaitClaims{KV: db.TxKV{DB: d}}
 		runLog = hooksRunLog(st)
 	}
 
@@ -511,6 +513,7 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		Transport:          remote.NewBundleTransport(gitClient, tmpDir),
 		Roles:              harness.OSRoleChecker(),
 		Channels:           claims,
+		Waits:              waits,
 		ProcStart:          procStartUnix,
 		OpencodeSession:    opencodeSession,
 		OpencodeSessionDir: opencodeSessionDir,
