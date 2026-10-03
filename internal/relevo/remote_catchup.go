@@ -38,6 +38,7 @@ type catchUpAck struct {
 	View         remote.BindingView // the closed-round facts the report entry is built from
 	HaveReport   bool               // a report temp was renamed into place
 	HaveDiff     bool               // the diff body was stored
+	GatePath     string             // where the fetched acceptance check's log landed, "" if none arrived
 }
 
 // matches reports whether b is still the binding the ack was for: same name,
@@ -117,7 +118,7 @@ func applyCatchUpFiles(rt Runtime, tx *store.Tx, b store.Binding, view remote.Bi
 			return false
 		}
 	}
-	gatePath := rt.Store.GateLogPath(name, n)
+	gatePath := cf.GatePath
 	if cf.GateTemp != "" {
 		if err := os.Rename(cf.GateTemp, gatePath); err != nil {
 			slog.Warn("write gate failed", "path", gatePath, "err", err)
@@ -217,17 +218,23 @@ func clearAbsorbHalt(b store.Binding) store.Binding {
 }
 
 // remoteGateRecord is the closed remote round's gate record for its report
-// entry: the view's result with the locally fetched log path, or nil when the
+// entry: the view's result with the log this client fetched, or nil when the
 // server ran no check. The record carries no Command -- the chain's repair text
 // names the member's own Gate -- because the server's command is not part of
 // the view. A nil record reads as chain.GateNone: the round ran no check.
-func remoteGateRecord(rt Runtime, b store.Binding, a *catchUpAck) *store.GateRecord {
+//
+// The log path is the one the fetch installed its bytes at, and a fetch that
+// brought no log names none. A gate result the server reported without sending
+// its log still reaches the entry, because the result is the fact the mirror's
+// chain maps red and green from; what it does not get is a path that reads as
+// a log and opens nothing.
+func remoteGateRecord(a *catchUpAck) *store.GateRecord {
 	if a.View.GateResult == "" {
 		return nil
 	}
 	return &store.GateRecord{
 		Result:  a.View.GateResult,
-		LogPath: rt.Store.GateLogPath(b.Name, a.View.ClosedRound),
+		LogPath: a.GatePath,
 	}
 }
 
@@ -266,7 +273,7 @@ func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 		// sent none rather than reading a record the client does not have.
 		u = remoteNoUsage(rt, b, b.RoundStartedAt, rt.Now().UTC())
 	}
-	next, err := queueReport(ctx, rt, tx, b, entries, reportPathFor(rt, b), payload, note, remoteGateRecord(rt, b, a), u, a.View.Rusage, a.View.PriorTokens, a.View.ReportOutcome, a.View.Stopped != "", scopeVerdict{})
+	next, err := queueReport(ctx, rt, tx, b, entries, reportPathFor(rt, b), payload, note, remoteGateRecord(a), u, a.View.Rusage, a.View.PriorTokens, a.View.ReportOutcome, a.View.Stopped != "", scopeVerdict{})
 	if err != nil {
 		return b, err
 	}

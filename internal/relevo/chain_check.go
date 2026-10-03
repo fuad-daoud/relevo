@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -342,12 +344,10 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	}
 }
 
-// chainTickPlacedCheck re-tries a placed writer's check that was left awaiting
-// when its round's gate record had not been pulled yet. A running workflow chain
-// that awaits a check step with no run of its own, on a writer member placed on a
-// server, answers from the writer's newest closed round's gate record once the
-// pull has installed it; until then it stays where it is. Every other chain is
-// left alone, so a local check (which has its own row) is never touched here.
+// chainTickPlacedCheck advances a placed writer's check run. When the check has
+// a run id, it polls GetCheck for the awaited run and feeds check_closed once
+// settled. When the check has no run id, it falls back to answering from the
+// writer's newest closed round's gate record once pulled.
 func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow) error {
 	if len(c.WorkflowJSON) == 0 || c.Status != string(chain.StatusRunning) {
 		return nil
@@ -356,9 +356,8 @@ func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	if err != nil {
 		return err
 	}
-	// Only a check awaiting is answered here: a run step has a member, and a
-	// check already given a run has nothing left to look for.
-	if st.Awaiting.Step == "" || st.Awaiting.Member != "" || st.Awaiting.Run != 0 {
+	// Only a check awaiting is answered here: a run step has a member.
+	if st.Awaiting.Step == "" || st.Awaiting.Member != "" {
 		return nil
 	}
 	def, err := chainWorkflowDef(c)
@@ -377,8 +376,55 @@ func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	if lerr != nil || !b.Builder.Remote() {
 		return nil
 	}
-	act := workflow.Action{Kind: workflow.ActionRunCheck, Step: st.Awaiting.Step, Command: step.Check}
-	return chainFlowPullCheck(ctx, rt, tx, c, def, st, &st, workflow.Event{}, act, member)
+	if st.Awaiting.Run == 0 {
+		act := workflow.Action{Kind: workflow.ActionRunCheck, Step: st.Awaiting.Step, Command: step.Check}
+		return chainFlowPullCheck(ctx, rt, tx, c, def, st, &st, workflow.Event{}, act, member)
+	}
+	if rt.Remote == nil {
+		return nil
+	}
+	view, err := rt.Remote.GetCheck(ctx, b.Builder.Server, b.Name, chainCheckID(st.Awaiting.Run))
+	if err != nil {
+		var httpErr *client.HTTPError
+		if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
+			reason := httpErr.Body.Message
+			if reason == "" {
+				reason = httpErr.Error()
+			}
+			before := st
+			st.Status = workflow.StatusHalted
+			st.Reason = fmt.Sprintf("check %s: %s", st.Awaiting.Step, reason)
+			return chainTerminalWF(ctx, rt, tx, c, def, before, st, workflow.Event{}, workflow.Action{Kind: workflow.ActionHalt, Reason: st.Reason})
+		}
+		return nil
+	}
+	if view.Result == "" {
+		return nil
+	}
+	logTarget, round, err := chainCheckLogTarget(tx, c)
+	if err != nil {
+		return err
+	}
+	logKey := rt.Store.CheckLogPath(logTarget, round, st.Awaiting.Run)
+	if err := tx.PutRoundFile(logTarget, round, logKey, []byte(view.LogTail)); err != nil {
+		return err
+	}
+	saved, err := tx.Chain(c.Name)
+	if err != nil {
+		return err
+	}
+	before, err := chainWorkflowState(saved)
+	if err != nil {
+		return err
+	}
+	return chainAdvance(ctx, rt, tx, saved, workflow.Event{
+		Kind:      workflow.EventCheckClosed,
+		Step:      st.Awaiting.Step,
+		Run:       st.Awaiting.Run,
+		Result:    chainCheckResult(view.Result),
+		Log:       logKey,
+		RepeatRed: chainRepeatRedCheck(rt, saved, before, st.Awaiting.Step, logKey),
+	})
 }
 
 // chainCheckSpec is the gate-runner spec for one chain check: the chain's tree,

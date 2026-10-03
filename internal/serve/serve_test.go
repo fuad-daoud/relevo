@@ -355,7 +355,7 @@ func TestWhoAmI(t *testing.T) {
 	if len(who.Transports) != 1 || who.Transports[0] != "git-bundle" {
 		t.Fatalf("Transports = %v, want [git-bundle]", who.Transports)
 	}
-	wantFeatures := []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement, remote.FeatureAccounts, remote.FeatureChainMember, remote.FeatureChain, remote.FeatureIsolation}
+	wantFeatures := []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement, remote.FeatureAccounts, remote.FeatureChainMember, remote.FeatureChain, remote.FeatureIsolation, remote.FeatureWorkflow, remote.FeatureCheck}
 	if !slices.Equal(who.Features, wantFeatures) {
 		t.Fatalf("Features = %v, want %v", who.Features, wantFeatures)
 	}

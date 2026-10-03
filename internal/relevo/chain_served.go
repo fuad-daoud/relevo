@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
@@ -47,6 +48,12 @@ type ServedChainRequest struct {
 	// keyed by part, written onto each member as its Link.
 	ClientInstallation string
 	ClientBindingIDs   map[string]string
+	// Workflow is the custom workflow definition, or nil when the create is
+	// settings-only.
+	Workflow []byte
+	// ClientActorIDs are the client's link facts, keyed by actor name, written
+	// onto each member as its Link.
+	ClientActorIDs map[string]string
 }
 
 // servedPick is one member's resolved launch: the candidate token the server's
@@ -78,8 +85,9 @@ type servedFacts struct {
 	regate       int
 	// writerCap is the scaled cap the writer member runs under, computed from
 	// the chain's plan count and its correction and repair budgets.
-	writerCap int
-	now       time.Time
+	writerCap  int
+	now        time.Time
+	isWorkflow bool
 }
 
 // ServedChainPlan is everything a served chain's read-only preflight resolved:
@@ -105,7 +113,10 @@ type ServedChainPlan struct {
 // PickServedCandidateFor / ResolveServedTierFor.
 func ServedChainPreflight(rt Runtime, req ServedChainRequest) (ServedChainPlan, error) {
 	if err := store.ValidName(req.Name); err != nil {
-		return ServedChainPlan{}, err
+		return ServedChainPlan{}, refuse("%s", err)
+	}
+	if len(req.Workflow) > 0 {
+		return servedChainPreflightWorkflow(rt, req)
 	}
 	if len(req.Name) > chainMaxNameLen {
 		return ServedChainPlan{}, fmt.Errorf("chain name %q exceeds %d characters (the longest member suffix is -plan)", req.Name, chainMaxNameLen)
@@ -138,6 +149,48 @@ func ServedChainPreflight(rt Runtime, req ServedChainRequest) (ServedChainPlan, 
 	return ServedChainPlan{req: req, def: def, settings: settings, members: members, picks: picks}, nil
 }
 
+// servedChainPreflightWorkflow validates a custom workflow request before
+// anything exists: parses the definition, enforces no file seeds, validates
+// against the server's actors and shipped seeds, derives members, and resolves
+// a pick for each member.
+func servedChainPreflightWorkflow(rt Runtime, req ServedChainRequest) (ServedChainPlan, error) {
+	def, err := workflow.Parse(req.Workflow)
+	if err != nil {
+		return ServedChainPlan{}, refuse("%s", err)
+	}
+	for _, step := range def.Steps {
+		if strings.HasPrefix(step.Seed, "file:") {
+			return ServedChainPlan{}, refuse("file seeds must be inlined by the client")
+		}
+	}
+	given := workflow.Given{Plans: len(req.Plans) > 0}
+	if err := chainValidateWorkflow(rt, def, given); err != nil {
+		return ServedChainPlan{}, err
+	}
+	actors := rt.RoleRegistry().WorkflowActors()
+	planned, err := chainMemberNames(req.Name, def, actors)
+	if err != nil {
+		return ServedChainPlan{}, err
+	}
+	keeper := chainWriterKeeper(def, workflow.UsedActors(def), actors)
+	if cap := chainNameCap(req.Name, planned); len(req.Name) > cap {
+		return ServedChainPlan{}, refuse("chain name %q exceeds %d characters (the longest member suffix is %s)", req.Name, cap, longestMemberSuffix(req.Name, planned))
+	}
+	members := chainWorkflowMembers(def, planned, keeper)
+	if err := chainFreeNames(rt, members); err != nil {
+		return ServedChainPlan{}, err
+	}
+	picks := make(map[string]servedPick, len(members))
+	for _, m := range members {
+		pick, err := servedActorPick(rt, m.actor)
+		if err != nil {
+			return ServedChainPlan{}, err
+		}
+		picks[m.part] = pick
+	}
+	return ServedChainPlan{req: req, def: def, settings: chainSettingsFromWire(req.Settings), members: members, picks: picks}, nil
+}
+
 // ServedChainCreate creates the chain a preflight resolved, all-or-none through
 // the row: it builds every member in the served shape, writes the chain row
 // with the shipped default resolved onto the wire settings and the engine's
@@ -151,14 +204,20 @@ func ServedChainPreflight(rt Runtime, req ServedChainRequest) (ServedChainPlan, 
 func ServedChainCreate(ctx context.Context, rt Runtime, plan ServedChainPlan, worktree string) (ChainResult, error) {
 	req := plan.req
 	name := req.Name
+	clientIDs := req.ClientBindingIDs
+	isWorkflow := len(req.Workflow) > 0
+	if isWorkflow {
+		clientIDs = req.ClientActorIDs
+	}
 	facts := servedFacts{
 		owner: req.Owner, repoID: req.RepoID, worktree: worktree, bare: req.Bare,
 		base: req.Base, feature: req.Feature, ticket: req.Ticket,
 		authorName: req.AuthorName, authorEmail: req.AuthorEmail,
-		installation: req.ClientInstallation, clientIDs: req.ClientBindingIDs,
+		installation: req.ClientInstallation, clientIDs: clientIDs,
 		gate: plan.settings.Gate, regate: plan.settings.Regate,
-		writerCap: chainWriterRoundCap(len(req.Plans), plan.settings),
-		now:       rt.Now().UTC(),
+		writerCap:  chainWriterRoundCap(len(req.Plans), plan.settings),
+		now:        rt.Now().UTC(),
+		isWorkflow: isWorkflow,
 	}
 	built := make([]store.Binding, 0, len(plan.members))
 	for _, m := range plan.members {
@@ -203,6 +262,10 @@ func servedChainMember(m chainMember, pick servedPick, f servedFacts) store.Bind
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	linkKey := m.part
+	if f.isWorkflow {
+		linkKey = m.actor
+	}
 	b := store.Binding{
 		Name:             m.name,
 		Owner:            f.owner,
@@ -211,7 +274,7 @@ func servedChainMember(m chainMember, pick servedPick, f servedFacts) store.Bind
 		Base:             f.base,
 		Builder:          store.Endpoint{Kind: pick.kind, Mode: store.ModeHeadless, AgentName: m.name},
 		BuilderCandidate: pick.token,
-		Link:             servedMemberLink(m.part, f.installation, f.clientIDs),
+		Link:             servedMemberLink(linkKey, f.installation, f.clientIDs),
 		Tier:             pick.tier,
 		Role:             normRole(m.actor),
 		Shape:            m.shape,
@@ -238,12 +301,12 @@ func servedChainMember(m chainMember, pick servedPick, f servedFacts) store.Bind
 }
 
 // servedMemberLink is the link a served member carries: nil when the client
-// sent neither an installation nor an id for the part, exactly as servedLink
-// leaves a lone served binding nil.
-func servedMemberLink(part, installation string, ids map[string]string) *store.RemoteLink {
+// sent neither an installation nor an id for the member key, exactly as
+// servedLink leaves a lone served binding nil.
+func servedMemberLink(key, installation string, ids map[string]string) *store.RemoteLink {
 	id := ""
 	if ids != nil {
-		id = ids[part]
+		id = ids[key]
 	}
 	if installation == "" && id == "" {
 		return nil
@@ -353,6 +416,15 @@ func ServedChainView(rt Runtime, name string, recordID func(string) string, inst
 		f := workflow.LegacyView(def, st)
 		view.Phase, view.Step = f.Phase, f.Step
 		view.Plan, view.Plans, view.Corrections = f.Plan, f.Plans, f.Corrections
+		if view.Plans < 1 {
+			view.Plan, view.Plans = 1, 1
+		}
+	}
+	if len(c.WorkflowJSON) > 0 {
+		view.Workflow = c.WorkflowJSON
+	}
+	if len(c.StateJSON) > 0 {
+		view.State = c.StateJSON
 	}
 	for _, member := range chainMembersOf(c) {
 		b, err := rt.Store.Load(member)
