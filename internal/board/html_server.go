@@ -42,9 +42,10 @@ type HTMLServer struct {
 // entry names a file this package embeds, so the server reads nothing the
 // allowlist did not name.
 var shellScripts = map[string]bool{
-	"shell.js":    true,
-	"comments.js": true,
-	"overlay.js":  true,
+	"shell.js":       true,
+	"comments.js":    true,
+	"commentlist.js": true,
+	"overlay.js":     true,
 }
 
 // boardDoc is GET /api/board's body. Html is a string rather than raw JSON
@@ -72,6 +73,7 @@ func (s *HTMLServer) Handler() http.Handler {
 	mux.HandleFunc("/api/annotations", s.handleAnnotations)
 	mux.HandleFunc("/shell.js", s.handleShellScript)
 	mux.HandleFunc("/comments.js", s.handleShellScript)
+	mux.HandleFunc("/commentlist.js", s.handleShellScript)
 	mux.HandleFunc("/overlay.js", s.handleShellScript)
 	mux.HandleFunc("/", s.handleIndex)
 

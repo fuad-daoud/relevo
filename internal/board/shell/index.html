@@ -5,7 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>relevo board</title>
 <style>
-:root { color-scheme: light dark; }
+:root {
+  color-scheme: light dark;
+  --relevo-accent: #2a6fb5;
+  --relevo-surface: Canvas;
+  --relevo-edge: rgba(128, 128, 128, 0.45);
+  --relevo-shadow: rgba(0, 0, 0, 0.3);
+}
+@media (prefers-color-scheme: dark) {
+  :root { --relevo-accent: #6fb0f0; --relevo-shadow: rgba(0, 0, 0, 0.6); }
+}
 body {
   margin: 0;
   font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -21,25 +30,69 @@ body {
 #banner.on { display: block; }
 #status { padding: 8px 12px; color: #666; }
 
-/* Comment mode. The list pane takes its room from the frame, not from the page,
-   so turning it on does not move the board out from under the pointer. */
+/* The canvas is the whole page, in comment mode as much as out of it. Nothing
+   below narrows #frame, so opening or closing a panel cannot move the board out
+   from under the pointer -- that is the whole reason the panes float. */
+#frame { display: block; width: 100%; height: calc(100vh - 4rem); border: 0; }
+
+/* All-comments panel: a floating pane over the canvas, not a dock beside it. */
 #comments {
   display: none;
   position: fixed;
-  top: 2.6rem;
-  right: 0;
-  bottom: 0;
+  z-index: 20;
+  top: 3.4rem;
+  right: 12px;
+  bottom: 12px;
   width: 20rem;
-  max-width: 40vw;
+  max-width: calc(100vw - 24px);
   overflow-y: auto;
   padding: 10px 12px;
-  background: Canvas;
-  border-left: 1px solid rgba(128, 128, 128, 0.4);
+  background: var(--relevo-surface);
+  border: 1px solid var(--relevo-edge);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px var(--relevo-shadow);
   box-sizing: border-box;
 }
 #comments.open { display: block; }
-#frame { display: block; width: 100%; height: calc(100vh - 4rem); border: 0; }
-#comments.open ~ #frame { width: calc(100% - 20rem); }
+
+#comment-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+#comment-panel-title { font-size: 11px; text-transform: uppercase; color: #666; }
+#comments-close, #thread-close {
+  border: 1px solid var(--relevo-edge);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+#comments-close:hover, #thread-close:hover { border-color: var(--relevo-accent); }
+
+/* One thread card at a time, anchored beside the pin it belongs to. */
+#thread-card {
+  display: none;
+  position: fixed;
+  z-index: 21;
+  width: 18rem;
+  max-width: calc(100vw - 16px);
+  padding: 8px 10px;
+  background: var(--relevo-surface);
+  border: 1px solid var(--relevo-edge);
+  border-left: 3px solid var(--relevo-accent);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px var(--relevo-shadow);
+  box-sizing: border-box;
+}
+#thread-card.open { display: block; }
+#thread-card .relevo-text { margin: 2px 0 4px; }
+#thread-close { float: right; }
 
 #comment-toggle {
   padding: 4px 10px;
@@ -50,7 +103,7 @@ body {
   font: inherit;
   cursor: pointer;
 }
-#comment-toggle.on { background: #2a6fb5; border-color: #2a6fb5; color: #fff; }
+#comment-toggle.on { background: var(--relevo-accent); border-color: var(--relevo-accent); color: #fff; }
 #banner-apply { margin-left: 8px; padding: 2px 8px; cursor: pointer; }
 
 #comment-selector {
@@ -80,7 +133,7 @@ body {
   font: inherit;
   cursor: pointer;
 }
-.relevo-row.focused { border-color: #2a6fb5; }
+.relevo-row.focused { border-color: var(--relevo-accent); }
 .relevo-row.orphan { opacity: 0.75; }
 .relevo-by { display: block; font-size: 11px; color: #666; }
 .relevo-text { display: block; }
@@ -91,18 +144,24 @@ body {
 </head>
 <body>
 <div id="bar">
-  <button id="comment-toggle" type="button" aria-pressed="false">Comment</button>
+  <button id="comment-toggle" type="button" aria-pressed="false" aria-controls="comments">Comment</button>
   <button id="banner-apply" type="button" style="display:none">Apply</button>
 </div>
 <div id="banner"></div>
 <div id="status">loading board&hellip;</div>
 <aside id="comments" aria-label="comments">
+  <div id="comment-panel-head">
+    <span id="comment-panel-title">all comments</span>
+    <button id="comments-close" type="button" aria-label="close comments">&times;</button>
+  </div>
   <div id="comment-selector"></div>
   <textarea id="comment-draft" placeholder="say something about this element"></textarea>
   <button id="comment-post" type="button">Post</button>
   <div id="comment-list"></div>
 </aside>
+<section id="thread-card" aria-label="comment thread"></section>
 <script src="shell.js"></script>
+<script src="commentlist.js"></script>
 <script src="comments.js"></script>
 </body>
 </html>

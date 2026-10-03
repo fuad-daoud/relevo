@@ -2,6 +2,7 @@ package board
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -37,7 +38,7 @@ func TestShellPostAdoptsTheEntry(t *testing.T) {
 // early and turn the rest of the file into board markup. The tag is written in
 // two halves in shell.js for the same reason; here it must simply not appear.
 func TestOverlayHasNoScriptCloseTag(t *testing.T) {
-	for _, name := range []string{"overlay.js", "comments.js", "shell.js"} {
+	for _, name := range []string{"overlay.js", "comments.js", "commentlist.js", "shell.js"} {
 		data, err := readShellFile(name)
 		if err != nil {
 			t.Fatalf("read shell %s: %v", name, err)
@@ -72,7 +73,7 @@ func TestShellAcceptsOnlyFrameMessages(t *testing.T) {
 		t.Error("comments.js does not return early on a message from another source")
 	}
 	// And the token must never be sent into the frame, or a board could read it.
-	for _, name := range []string{"shell.js", "comments.js", "overlay.js"} {
+	for _, name := range []string{"shell.js", "comments.js", "commentlist.js", "overlay.js"} {
 		src, err := readShellFile(name)
 		if err != nil {
 			t.Fatalf("read shell %s: %v", name, err)
@@ -168,5 +169,136 @@ func TestShellAssetsServedAreTheOnesShipped(t *testing.T) {
 		if _, err := readShellFile(name); err != nil {
 			t.Errorf("the allowlist serves %s, which the shell does not embed", name)
 		}
+	}
+}
+
+// TestShellShipsEveryScriptItLoads pins the other half of the same seam from the
+// page's side: a script tag in index.html that the allowlist does not name is a
+// 404 on every load. Reading the tags rather than a hand-written list is what
+// catches a file added to the page and forgotten in the server.
+func TestShellShipsEveryScriptItLoads(t *testing.T) {
+	data, err := readShellFile("index.html")
+	if err != nil {
+		t.Fatalf("read shell index.html: %v", err)
+	}
+	for _, tag := range regexp.MustCompile(`src="([^"]+)"`).FindAllStringSubmatch(string(data), -1) {
+		src := tag[1]
+		if !shellScripts[src] {
+			t.Errorf("index.html loads %q, which the shellScripts allowlist does not serve", src)
+		}
+	}
+}
+
+// TestShellCommentUIStateText pins the copy of the five states a reader can be
+// left looking at. These are the strings a board with no notes, an unreadable
+// annotations file, a draft that the disk moved under, no board at all, or a
+// failed read produces, and each one says something the reader cannot work out
+// from the page itself.
+func TestShellCommentUIStateText(t *testing.T) {
+	cases := []struct {
+		file string
+		want string
+	}{
+		// The empty list: no notes at all, which is not the same as notes that
+		// have not loaded yet.
+		{"commentlist.js", "no comments yet"},
+		// The annotations file could not be read, and the reason is shown.
+		{"commentlist.js", "comments could not be read: "},
+		// The dirty banner: the board moved, the draft is kept, Apply takes it.
+		{"comments.js", "the board changed on disk -- your draft is kept; apply to take the update"},
+		// No board at this path yet, naming the path rather than failing blank.
+		{"shell.js", "no board yet at "},
+		// The board could not be read, and so could the token be missing.
+		{"shell.js", "could not load the board: "},
+		{"shell.js", "no board token in the URL fragment; reopen the printed board URL"},
+	}
+	for _, c := range cases {
+		data, err := readShellFile(c.file)
+		if err != nil {
+			t.Fatalf("read shell %s: %v", c.file, err)
+		}
+		if !strings.Contains(string(data), c.want) {
+			t.Errorf("shell/%s does not carry the state text %q", c.file, c.want)
+		}
+	}
+}
+
+// TestShellFloatsTheCommentPanes pins the layout decision itself. A panel that
+// took its room from the frame would move the board out from under the pointer
+// the moment it opened, which is what the floating panes exist to avoid: no
+// rule may narrow #frame, and neither pane may be laid out as a dock.
+func TestShellFloatsTheCommentPanes(t *testing.T) {
+	data, err := readShellFile("index.html")
+	if err != nil {
+		t.Fatalf("read shell index.html: %v", err)
+	}
+	src := string(data)
+	// The old dock rule: the frame gave up 20rem whenever the pane opened.
+	for _, banned := range []string{
+		"#comments.open ~ #frame",
+		"calc(100% - 20rem)",
+	} {
+		if strings.Contains(src, banned) {
+			t.Errorf("index.html still carries %q, which narrows the canvas when the pane opens", banned)
+		}
+	}
+	// The frame is full width, and both panes float over it rather than beside.
+	for _, want := range []string{
+		"#frame { display: block; width: 100%;",
+		"#comments {",
+		"#thread-card {",
+		"position: fixed",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("index.html does not carry %q, which the floating layout needs", want)
+		}
+	}
+	// One card at a time, and a way out of each: Escape, and a close control on
+	// both the panel and the card.
+	for _, want := range []string{
+		`id="comments-close"`,
+		`id="thread-card"`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("index.html does not carry %q, which the floating layout needs", want)
+		}
+	}
+	comments, err := readShellFile("comments.js")
+	if err != nil {
+		t.Fatalf("read shell comments.js: %v", err)
+	}
+	for _, want := range []string{`ev.key !== "Escape"`, "list.closeCard()"} {
+		if !strings.Contains(string(comments), want) {
+			t.Errorf("comments.js does not carry %q, which the floating layout needs", want)
+		}
+	}
+}
+
+// TestShellHoverOutlineIsThemeAware pins the restyled hover: a fixed blue
+// outline reads as a bug on a board that is itself dark, so the accent is the
+// system Highlight colour. The negative offset is what keeps the outline out of
+// layout, and the pointer cursor is part of the same declaration.
+func TestShellHoverOutlineIsThemeAware(t *testing.T) {
+	data, err := readShellFile("overlay.js")
+	if err != nil {
+		t.Fatalf("read shell overlay.js: %v", err)
+	}
+	src := string(data)
+	if !strings.Contains(src, "outline:2px solid Highlight;") {
+		t.Error("overlay.js does not draw the hover outline in the theme-aware Highlight colour")
+	}
+	if !strings.Contains(src, "outline-offset:-2px") {
+		t.Error("overlay.js does not keep the outline out of layout with a negative offset")
+	}
+	if !strings.Contains(src, "cursor:pointer") {
+		t.Error("overlay.js does not show a pointer over the element that would be commented on")
+	}
+	if strings.Contains(src, ".relevo-hover{outline:2px solid #2a6fb5") {
+		t.Error("overlay.js still carries the flat-blue hover outline")
+	}
+	// Exactly one element is outlined at a time: the old node is cleared before
+	// the new one is marked, so hovering across the board does not stack rings.
+	if !strings.Contains(src, `hovered.classList.remove("relevo-hover")`) {
+		t.Error("overlay.js does not clear the previously hovered element")
 	}
 }
