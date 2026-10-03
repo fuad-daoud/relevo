@@ -195,11 +195,65 @@ func TestPassAfterRedNeedsATraceVisibleOverride(t *testing.T) {
 	}
 }
 
-// fixReviewState walks the shipped default with one plan through a whole
-// review phase and into the security phase, up to the fix-review send. Its
-// fixCheck argument is what the security phase's own check reports: green
-// reaches fix-review directly, red buys one fix-repair round and reaches it
-// over that budget.
+// advance feeds one event to Next and asserts the single action it produced is
+// the kind and step the walk expects.
+func advance(t *testing.T, def Definition, s State, e Event, wantKind ActionKind, wantStep string) State {
+	t.Helper()
+	s, actions := Next(def, s, e)
+	a := only(t, actions)
+	if a.Kind != wantKind || a.Step != wantStep {
+		t.Fatalf("%s action = %+v, want a %s to %s", e.Step, a, wantKind, wantStep)
+	}
+	return s
+}
+
+// checkRun feeds a check result and asserts the send it routed to, using the
+// check's run id the way the chain engine fills it in.
+func checkRun(t *testing.T, def Definition, s State, step string, run int, result, send string) State {
+	t.Helper()
+	s.Awaiting.Run = run
+	e := Event{Kind: EventCheckClosed, Step: step, Run: run, Result: result, Log: fmt.Sprintf("L%d", run)}
+	return advance(t, def, s, e, ActionSend, send)
+}
+
+// stepClose feeds a run close for a step whose actor is the given member, and
+// asserts the send it routed to.
+func stepClose(t *testing.T, def Definition, s State, step, member string, outcomes map[string]string, send string) State {
+	t.Helper()
+	e := Event{Kind: EventStepClosed, Step: step, Member: member, Status: "done", Outcomes: outcomes}
+	return advance(t, def, s, e, ActionSend, send)
+}
+
+// firstPhaseReview walks the shipped default with one plan up to the first
+// reviewer's send: the plan is built, its check goes red twice, and the single
+// repair round the budget buys runs out on the second red, so the run reaches
+// the reviewer with the gate still red.
+func firstPhaseReview(t *testing.T, def Definition, s State) State {
+	t.Helper()
+	e := Event{Kind: EventStepClosed, Step: "build", Member: "builder", Round: 0, Status: "done"}
+	s = advance(t, def, s, e, ActionRunCheck, "check")
+	s = checkRun(t, def, s, "check", 1, "red", "repair")
+	s = advance(t, def, s, Event{Kind: EventStepClosed, Step: "repair", Member: "builder", Status: "done"}, ActionRunCheck, "check")
+	return checkRun(t, def, s, "check", 2, "red", "review")
+}
+
+// securityPhaseReview walks on from the first reviewer's send into the security
+// phase, up to the security phase's own fix-check running.
+func securityPhaseReview(t *testing.T, def Definition, s State) State {
+	t.Helper()
+	pass := Event{Kind: EventStepClosed, Step: "review", Member: "reviewer", Status: "done",
+		Outcomes: map[string]string{"verdict": "pass"}, Override: "the failure is in the vendored fixture"}
+	s = advance(t, def, s, pass, ActionSend, "scan")
+	s = stepClose(t, def, s, "scan", "security", map[string]string{"findings": "1"}, "fix-plan")
+	s = stepClose(t, def, s, "fix-plan", "lite-planner", nil, "fix-build")
+	e := Event{Kind: EventStepClosed, Step: "fix-build", Member: "builder", Status: "done"}
+	return advance(t, def, s, e, ActionRunCheck, "fix-check")
+}
+
+// fixReviewState walks the shipped default through a whole review phase and
+// into the security phase, up to the fix-review send. Its fixCheck argument is
+// what the security phase's own check reports: green reaches fix-review
+// directly, red buys one fix-repair round and reaches it over that budget.
 //
 // The first phase's check is left recorded red, answered by the reviewer's
 // override: the reviewer passed over it, so the entry is stale by the time the
@@ -211,75 +265,15 @@ func fixReviewState(t *testing.T, fixCheck string) (Definition, State) {
 	if a := only(t, actions); a.Kind != ActionSend || a.Step != "build" {
 		t.Fatalf("start action = %+v, want a send to build", a)
 	}
-	s, actions = Next(def, s, Event{Kind: EventStepClosed, Step: "build", Member: "builder", Round: 0, Status: "done"})
-	if a := only(t, actions); a.Kind != ActionRunCheck || a.Step != "check" {
-		t.Fatalf("build close action = %+v, want a check run", a)
-	}
-
-	// Two reds: the first buys the single repair round, the second is over the
-	// budget and reaches the reviewer with the gate still red.
-	for run := 1; run <= 2; run++ {
-		s.Awaiting.Run = run
-		s, actions = Next(def, s, Event{Kind: EventCheckClosed, Step: "check", Run: run, Result: "red", Log: fmt.Sprintf("L%d", run)})
-		if run == 1 {
-			if a := only(t, actions); a.Kind != ActionSend || a.Step != "repair" {
-				t.Fatalf("first red action = %+v, want a send to repair", a)
-			}
-			s, actions = Next(def, s, Event{Kind: EventStepClosed, Step: "repair", Member: "builder", Status: "done"})
-			if a := only(t, actions); a.Kind != ActionRunCheck || a.Step != "check" {
-				t.Fatalf("repair close action = %+v, want a check run", a)
-			}
-			continue
-		}
-		if a := only(t, actions); a.Kind != ActionSend || a.Step != "review" {
-			t.Fatalf("red past the budget action = %+v, want a send to review", a)
-		}
-	}
-
-	// The reviewer passes on a recorded override, which answers that red and
-	// carries the run on to the security phase.
-	s, actions = Next(def, s, Event{Kind: EventStepClosed, Step: "review", Member: "reviewer", Status: "done",
-		Outcomes: map[string]string{"verdict": "pass"}, Override: "the failure is in the vendored fixture"})
-	if a := only(t, actions); a.Kind != ActionSend || a.Step != "scan" {
-		t.Fatalf("review pass action = %+v, want a send to scan", a)
-	}
-
-	// A finding is planned and built, and its own check runs.
-	s, actions = Next(def, s, Event{Kind: EventStepClosed, Step: "scan", Member: "security", Status: "done",
-		Outcomes: map[string]string{"findings": "1"}})
-	if a := only(t, actions); a.Kind != ActionSend || a.Step != "fix-plan" {
-		t.Fatalf("scan action = %+v, want a send to fix-plan", a)
-	}
-	s, actions = Next(def, s, Event{Kind: EventStepClosed, Step: "fix-plan", Member: "lite-planner", Status: "done"})
-	if a := only(t, actions); a.Kind != ActionSend || a.Step != "fix-build" {
-		t.Fatalf("fix-plan action = %+v, want a send to fix-build", a)
-	}
-	s, actions = Next(def, s, Event{Kind: EventStepClosed, Step: "fix-build", Member: "builder", Status: "done"})
-	if a := only(t, actions); a.Kind != ActionRunCheck || a.Step != "fix-check" {
-		t.Fatalf("fix-build action = %+v, want a fix-check run", a)
-	}
-
-	s.Awaiting.Run = 3
-	s, actions = Next(def, s, Event{Kind: EventCheckClosed, Step: "fix-check", Run: 3, Result: fixCheck, Log: "L3"})
+	s = firstPhaseReview(t, def, s)
+	s = securityPhaseReview(t, def, s)
 	if fixCheck == "green" {
-		if a := only(t, actions); a.Kind != ActionSend || a.Step != "fix-review" {
-			t.Fatalf("green fix-check action = %+v, want a send to fix-review", a)
-		}
-		return def, s
+		return def, checkRun(t, def, s, "fix-check", 3, "green", "fix-review")
 	}
-	if a := only(t, actions); a.Kind != ActionSend || a.Step != "fix-repair" {
-		t.Fatalf("red fix-check action = %+v, want a send to fix-repair", a)
-	}
-	s, actions = Next(def, s, Event{Kind: EventStepClosed, Step: "fix-repair", Member: "builder", Status: "done"})
-	if a := only(t, actions); a.Kind != ActionRunCheck || a.Step != "fix-check" {
-		t.Fatalf("fix-repair close action = %+v, want a check run", a)
-	}
-	s.Awaiting.Run = 4
-	s, actions = Next(def, s, Event{Kind: EventCheckClosed, Step: "fix-check", Run: 4, Result: "red", Log: "L4"})
-	if a := only(t, actions); a.Kind != ActionSend || a.Step != "fix-review" {
-		t.Fatalf("red fix-check past the budget action = %+v, want a send to fix-review", a)
-	}
-	return def, s
+	s = checkRun(t, def, s, "fix-check", 3, "red", "fix-repair")
+	repair := Event{Kind: EventStepClosed, Step: "fix-repair", Member: "builder", Status: "done"}
+	s = advance(t, def, s, repair, ActionRunCheck, "fix-check")
+	return def, checkRun(t, def, s, "fix-check", 4, "red", "fix-review")
 }
 
 // TestCrossPhasePassAfterRedAdvancesOnItsOwnGreenCheck pins the gate's scope
