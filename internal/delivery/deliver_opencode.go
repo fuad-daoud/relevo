@@ -24,6 +24,11 @@ const (
 	OpencodeConfirmWindow  = 3 * time.Second
 	OpencodeConfirmPoll    = 250 * time.Millisecond
 	DefaultFallbackAfter   = 30 * time.Second
+	// opencodeClockSkew tolerates opencode's clock reading slightly behind
+	// the releaser's when comparing a session row's timestamp against the
+	// entry's queuedAt. It is agy's value, so both routes tolerate the same
+	// drift and a row stamped a hair before the queue time still counts.
+	opencodeClockSkew = agyClockSkew
 )
 
 // OpencodeDeliverer is the MasterMindDeliverer for opencode masterminds
@@ -116,8 +121,10 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, mastermind store.Endpoi
 
 	// Already there? A previous tick may have delivered and crashed before
 	// confirming. Check before the give-up gate, so a payload admitted late is
-	// still confirmed, and so a retry never double-posts.
-	alreadySeen, err := d.seen(ctx, mastermind.SessionID, origin)
+	// still confirmed, and so a retry never double-posts. The read-back is
+	// bounded by queuedAt, so it answers for this entry: a row an earlier
+	// entry left in the session is not this payload's.
+	alreadySeen, err := d.seen(ctx, mastermind.SessionID, origin, queuedAt)
 	if err != nil {
 		return OutcomeUnavailable, "sqlite3: " + firstErrorLine(err), nil
 	}
@@ -171,7 +178,9 @@ func (d *OpencodeDeliverer) Deliver(ctx context.Context, mastermind store.Endpoi
 // Confirm implements MasterMindDeliverer's read-back half for opencode
 // masterminds: it polls the session for the payload's origin and never POSTs,
 // so a payload admitted by an earlier tick is confirmed rather than sent twice.
-func (d *OpencodeDeliverer) Confirm(ctx context.Context, mastermind store.Endpoint, payload string, _ time.Time) (Outcome, string, error) {
+// queuedAt bounds the poll the same way it bounds Deliver's read-back, so a
+// turn an earlier entry left in the session cannot confirm this one.
+func (d *OpencodeDeliverer) Confirm(ctx context.Context, mastermind store.Endpoint, payload string, queuedAt time.Time) (Outcome, string, error) {
 	if mastermind.Kind != "opencode" {
 		return OutcomeNotMine, "", nil
 	}
@@ -181,13 +190,14 @@ func (d *OpencodeDeliverer) Confirm(ctx context.Context, mastermind store.Endpoi
 	if !validSessionID(mastermind.SessionID) {
 		return OutcomeNotMine, "no opencode session id", nil
 	}
-	return d.confirm(ctx, mastermind.SessionID, firstPayloadLine(payload))
+	return d.confirm(ctx, mastermind.SessionID, firstPayloadLine(payload), queuedAt)
 }
 
 // ConfirmOnce is the read-back for a repeat tick: one look at the session, no
 // poll and never a POST. An origin the single query does not find leaves the
-// payload admitted for the next tick.
-func (d *OpencodeDeliverer) ConfirmOnce(ctx context.Context, mastermind store.Endpoint, payload string, _ time.Time) (Outcome, string, error) {
+// payload admitted for the next tick. It carries the entry's own queuedAt, so
+// the one read-back is bounded to the rows this entry could have written.
+func (d *OpencodeDeliverer) ConfirmOnce(ctx context.Context, mastermind store.Endpoint, payload string, queuedAt time.Time) (Outcome, string, error) {
 	if mastermind.Kind != "opencode" {
 		return OutcomeNotMine, "", nil
 	}
@@ -198,7 +208,7 @@ func (d *OpencodeDeliverer) ConfirmOnce(ctx context.Context, mastermind store.En
 		return OutcomeNotMine, "no opencode session id", nil
 	}
 
-	seen, err := d.seen(ctx, mastermind.SessionID, firstPayloadLine(payload))
+	seen, err := d.seen(ctx, mastermind.SessionID, firstPayloadLine(payload), queuedAt)
 	if err != nil {
 		return OutcomeUnavailable, "sqlite3: " + firstErrorLine(err), nil
 	}
@@ -226,10 +236,10 @@ func (d *OpencodeDeliverer) pastFallback(sessionID, payload string, queuedAt tim
 // window closes, or the context ends. A window that closes without the origin
 // is not a failed delivery: the payload is already admitted, so it reports
 // OutcomeAdmitted and the caller keeps the admit for a later read-back.
-func (d *OpencodeDeliverer) confirm(ctx context.Context, sessionID, origin string) (Outcome, string, error) {
+func (d *OpencodeDeliverer) confirm(ctx context.Context, sessionID, origin string, queuedAt time.Time) (Outcome, string, error) {
 	deadline := time.Now().Add(OpencodeConfirmWindow)
 	for {
-		seen, err := d.seen(ctx, sessionID, origin)
+		seen, err := d.seen(ctx, sessionID, origin, queuedAt)
 		if err != nil {
 			return OutcomeUnavailable, "sqlite3: " + firstErrorLine(err), nil
 		}
@@ -343,14 +353,21 @@ func (d *OpencodeDeliverer) tableSet(ctx context.Context) (map[string]bool, erro
 // work and is consumed, so a user turn or a queued message is what proves the
 // session received it. OpenCode 2.0.14 keeps user turns in session_message,
 // while the part/message tables only hold pre-2.0 turns; any of them counts.
-// A failing sqlite3 is not seen and not a Go error -- the call site turns it
-// into OutcomeUnavailable.
-func (d *OpencodeDeliverer) seen(ctx context.Context, sessionID, origin string) (bool, error) {
+//
+// The read-back answers for one entry: a row stamped before the entry's
+// queuedAt (less opencodeClockSkew) is another entry's turn and does not
+// count. Without that bound a second findings payload for a reused binding
+// name -- whose origin line names no round -- matches the first forever, and a
+// rebound round-1 report identical to the previous incarnation's matches too.
+// A zero queuedAt skips the bound. A failing sqlite3 is not seen and not a Go
+// error -- the call site turns it into OutcomeUnavailable.
+func (d *OpencodeDeliverer) seen(ctx context.Context, sessionID, origin string, queuedAt time.Time) (bool, error) {
 	tables, err := d.tableSet(ctx)
 	if err != nil {
 		return false, err
 	}
-	out, err := d.Exec.Run(ctx, "sqlite3", "-readonly", d.DBPath, opencodeConfirmQuery(sessionID, origin, tables["session_inbox"]))
+	query := opencodeConfirmQuery(sessionID, origin, tables["session_inbox"], queuedAt)
+	out, err := d.Exec.Run(ctx, "sqlite3", "-readonly", d.DBPath, query)
 	if err != nil {
 		return false, err
 	}
@@ -367,26 +384,43 @@ func (d *OpencodeDeliverer) seen(ctx context.Context, sessionID, origin string) 
 // user row in OpenCode 2.0's session_message, or a queued message in
 // session_inbox. The counts are summed, so any matching row confirms.
 // ' is doubled in all interpolated values, the SQL string-literal escape.
-func opencodeConfirmQuery(sessionID, origin string, hasInbox bool) string {
+//
+// A non-zero queuedAt bounds every counted row at queuedAt-opencodeClockSkew,
+// in the epoch milliseconds all three time_created columns hold. part carries
+// no clock, so the legacy pair's bound rides on the joined message row. A zero
+// queuedAt emits the unbounded query, so a caller with no queue time keeps
+// matching rows of any age.
+func opencodeConfirmQuery(sessionID, origin string, hasInbox bool, queuedAt time.Time) string {
 	sid := strings.ReplaceAll(sessionID, "'", "''")
 	org := strings.ReplaceAll(origin, "'", "''")
+
+	bound, joinedBound := "", ""
+	if !queuedAt.IsZero() {
+		notBefore := queuedAt.Add(-opencodeClockSkew).UnixMilli()
+		bound = fmt.Sprintf(" and time_created >= %d", notBefore)
+		joinedBound = fmt.Sprintf(" and m.time_created >= %d", notBefore)
+	}
+
 	query := fmt.Sprintf(
 		"select (select count(*) from part p join message m on m.id = p.message_id"+
 			" where p.session_id = '%s'"+
 			" and json_extract(m.data, '$.role') = 'user'"+
 			" and json_extract(p.data, '$.type') = 'text'"+
-			" and json_extract(p.data, '$.text') like '%%%s%%')"+
+			" and json_extract(p.data, '$.text') like '%%%s%%'"+
+			"%s)"+
 			" + (select count(*) from session_message"+
 			" where session_id = '%s'"+
 			" and type = 'user'"+
-			" and json_extract(data, '$.text') like '%%%s%%')",
-		sid, org, sid, org)
+			" and json_extract(data, '$.text') like '%%%s%%'"+
+			"%s)",
+		sid, org, joinedBound, sid, org, bound)
 	if hasInbox {
 		query += fmt.Sprintf(
 			" + (select count(*) from session_inbox"+
 				" where session_id = '%s'"+
-				" and payload like '%%%s%%')",
-			sid, org)
+				" and payload like '%%%s%%'"+
+				"%s)",
+			sid, org, bound)
 	}
 	return query
 }

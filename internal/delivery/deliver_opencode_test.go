@@ -21,6 +21,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
+// opencodeRowMS is a session row's time_created stamp. OpenCode writes all
+// three counted columns in epoch milliseconds, so the read-back's bound
+// compares them against the entry's queuedAt in the same unit.
+const opencodeRowMS = "1789021109130"
+
 // fakeSqliteExec is the fake usage.Exec deliver_opencode_test.go controls
 // directly: it records every query and answers seen()'s "select count(*)"
 // with a count that flips from 0 to 1 once callNumber reaches seenFrom (0
@@ -662,7 +667,7 @@ func TestOpencodeConfirmSeen(t *testing.T) {
 	const origin = "relevo: round 1 to builder"
 
 	tables := []string{
-		"create table message (id text, data text)",
+		"create table message (id text, session_id text, time_created integer, data text)",
 		"create table part (id text, message_id text, session_id text, data text)",
 		"create table session_message (id text, session_id text, type text, seq integer, time_created integer, time_updated integer, data text)",
 	}
@@ -678,33 +683,33 @@ func TestOpencodeConfirmSeen(t *testing.T) {
 			name: "session_inbox row whose payload carries the origin -> seen",
 			stmts: append(append([]string{}, tables...),
 				"create table session_inbox (id text, session_id text, type text, payload text, delivery text, enqueued_seq integer, time_created integer)",
-				"insert into session_inbox values ('inbox1', 'ses_x', 'message', '{\"text\":\""+origin+"\"}', 'queue', 0, 1)"),
+				"insert into session_inbox values ('inbox1', 'ses_x', 'message', '{\"text\":\""+origin+"\"}', 'queue', 0, "+opencodeRowMS+")"),
 			want: true,
 		},
 		{
 			name: "db with no session_inbox table still works",
 			stmts: append(append([]string{}, tables...),
-				"insert into session_message values ('m1', 'ses_x', 'user', 0, 1, 1, '"+v2UserText+"')"),
+				"insert into session_message values ('m1', 'ses_x', 'user', 0, '"+opencodeRowMS+"', 1, '"+v2UserText+"')"),
 			want: true,
 		},
 		{
 			name: "session_message user row containing the origin -> seen",
 			stmts: append(append([]string{}, tables...),
-				"insert into session_message values ('m1', 'ses_x', 'user', 0, 1, 1, '"+v2UserText+"')"),
+				"insert into session_message values ('m1', 'ses_x', 'user', 0, '"+opencodeRowMS+"', 1, '"+v2UserText+"')"),
 			want: true,
 		},
 		{
 			name: "legacy part/message user row containing the origin -> seen",
 			stmts: append(append([]string{}, tables...),
-				`insert into message values ('msg1', '{"role":"user"}')`,
+				"insert into message values ('msg1', 'ses_x', '"+opencodeRowMS+"', '{\"role\":\"user\"}')",
 				"insert into part values ('p1', 'msg1', 'ses_x', '"+userText+"')"),
 			want: true,
 		},
 		{
 			name: "assistant row containing the origin -> not seen",
 			stmts: append(append([]string{}, tables...),
-				"insert into session_message values ('m1', 'ses_x', 'assistant', 0, 1, 1, '"+v2UserText+"')",
-				`insert into message values ('msg1', '{"role":"assistant"}')`,
+				"insert into session_message values ('m1', 'ses_x', 'assistant', 0, '"+opencodeRowMS+"', 1, '"+v2UserText+"')",
+				"insert into message values ('msg1', 'ses_x', '"+opencodeRowMS+"', '{\"role\":\"assistant\"}')",
 				"insert into part values ('p1', 'msg1', 'ses_x', '"+userText+"')"),
 			want: false,
 		},
@@ -715,7 +720,7 @@ func TestOpencodeConfirmSeen(t *testing.T) {
 			db := sqliteFixture(t, tc.stmts...)
 			d := &OpencodeDeliverer{DBPath: db, Exec: cliExec{}}
 
-			got, err := d.seen(context.Background(), "ses_x", origin)
+			got, err := d.seen(context.Background(), "ses_x", origin, time.Time{})
 			if err != nil {
 				t.Fatalf("seen: %v", err)
 			}
@@ -777,7 +782,7 @@ func TestOpencodeDeliverPostsOnce(t *testing.T) {
 	dir := t.TempDir()
 	stateFile := writeOpencodeServiceFile(t, dir, srv.URL, "pw", 1)
 	db := sqliteFixture(t,
-		"create table message (id text, data text)",
+		"create table message (id text, session_id text, time_created integer, data text)",
 		"create table part (id text, message_id text, session_id text, data text)",
 		"create table session_message (id text, session_id text, type text, seq integer, time_created integer, time_updated integer, data text)",
 		"create table session_inbox (id text, session_id text, type text, payload text, delivery text, enqueued_seq integer, time_created integer)",
@@ -813,7 +818,7 @@ func TestOpencodeDeliverPostsOnce(t *testing.T) {
 	// Once the row appears in session_inbox, the read-back reports delivered
 	// with no new POST.
 	out, err := exec.Command("sqlite3", db,
-		"insert into session_inbox values ('inbox1', 'ses_abc123', 'message', '"+payload1+"', 'queue', 0, 100)").CombinedOutput()
+		"insert into session_inbox values ('inbox1', 'ses_abc123', 'message', '"+payload1+"', 'queue', 0, '"+strconv.FormatInt(startTime.UnixMilli(), 10)+"')").CombinedOutput()
 	if err != nil {
 		t.Fatalf("insert session_inbox: %v: %s", err, out)
 	}
@@ -829,6 +834,129 @@ func TestOpencodeDeliverPostsOnce(t *testing.T) {
 	opencodeDeliverWant(t, d, payload2, "/x/002-report.md", startTime, OutcomeAdmitted, "posted; awaiting the session")
 	if got := opencodePosts(&mu, &posts); got != 2 {
 		t.Fatalf("after payload 2, got %d POSTs, want 2", got)
+	}
+}
+
+// TestOpencodeConfirmQueryBoundsRowsByQueuedAt pins the read-back's time bound:
+// a non-zero queuedAt puts the not-before stamp on all three counted sources
+// (the legacy pair's rides on the joined message row, which is the only one of
+// the two that has a clock), and a zero queuedAt emits today's unbounded query.
+// The ' escape and the hasInbox gate are the same either way.
+func TestOpencodeConfirmQueryBoundsRowsByQueuedAt(t *testing.T) {
+	t.Parallel()
+
+	queuedAt := time.UnixMilli(1789021109130)
+	notBefore := strconv.FormatInt(queuedAt.Add(-opencodeClockSkew).UnixMilli(), 10)
+
+	unbounded := opencodeConfirmQuery("ses_x", "origin", true, time.Time{})
+	if strings.Contains(unbounded, "time_created") {
+		t.Errorf("a zero queuedAt emitted a time bound: %q", unbounded)
+	}
+	if !strings.Contains(unbounded, "session_inbox") {
+		t.Errorf("unbounded query = %q, want the inbox source a 2.0 database has", unbounded)
+	}
+
+	bounded := opencodeConfirmQuery("ses_x", "origin", true, queuedAt)
+	if !strings.Contains(bounded, "and m.time_created >= "+notBefore) {
+		t.Errorf("bounded query = %q, want the legacy join bounded on m.time_created", bounded)
+	}
+	if n := strings.Count(bounded, "time_created >= "+notBefore); n != 3 {
+		t.Errorf("bounded query bounds %d sources, want 3: %q", n, bounded)
+	}
+	if n := strings.Count(bounded, "like '%origin%'"); n != 3 {
+		t.Errorf("bounded query matches the origin on %d sources, want 3: %q", n, bounded)
+	}
+	if strings.Contains(opencodeConfirmQuery("ses_x", "origin", false, queuedAt), "session_inbox") {
+		t.Error("a database without session_inbox must not be queried for one")
+	}
+	quoted := opencodeConfirmQuery("ses_x", "o'rigin", true, queuedAt)
+	if !strings.Contains(quoted, "like '%o''rigin%'") {
+		t.Errorf("quoted query = %q, want the ' doubled", quoted)
+	}
+}
+
+// TestOpencodeDeliverIgnoresOlderMatchingRow pins the bound against a real
+// database. Two consult findings payloads for one binding name carry
+// byte-identical origin lines -- the findings origin names no round -- so the
+// first entry's row would answer "already present" for the second one forever.
+// With the bound the older row does not count, the second entry POSTs once, and
+// each entry retried with its own queuedAt still confirms its own row without a
+// second POST.
+func TestOpencodeDeliverIgnoresOlderMatchingRow(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		posts++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	stateFile := writeOpencodeServiceFile(t, dir, srv.URL, "pw", 1)
+	db := sqliteFixture(t,
+		"create table message (id text, session_id text, time_created integer, data text)",
+		"create table part (id text, message_id text, session_id text, data text)",
+		"create table session_message (id text, session_id text, type text, seq integer, time_created integer, time_updated integer, data text)",
+		"create table session_inbox (id text, session_id text, type text, payload text, delivery text, enqueued_seq integer, time_created integer)",
+	)
+
+	firstAt := time.Unix(1000, 0)
+	secondAt := firstAt.Add(time.Hour)
+	curTime := firstAt
+	d := &OpencodeDeliverer{
+		StateFiles: []string{stateFile},
+		DBPath:     db,
+		Exec:       cliExec{},
+		Alive:      aliveAlways,
+		Now:        func() time.Time { return curTime },
+	}
+
+	// Both payloads are consult findings about the same runner, so their origin
+	// lines are byte-identical and only the queue time tells them apart.
+	origin := `relevo: consult · to MasterMind · about runner "ev-903-fix" (not the human)`
+	payload1 := origin + "\n\nfindings 1"
+	payload2 := origin + "\n\nfindings 2"
+
+	enqueue := func(id, payload string, at time.Time) {
+		t.Helper()
+		out, err := exec.Command("sqlite3", db,
+			"insert into session_inbox values ('"+id+"', 'ses_abc123', 'message', '"+payload+"', 'queue', 0, "+
+				strconv.FormatInt(at.UnixMilli(), 10)+")").CombinedOutput()
+		if err != nil {
+			t.Fatalf("enqueue %s: %v: %s", id, err, out)
+		}
+	}
+
+	// The first entry is admitted by its own POST and takes the session.
+	opencodeDeliverWant(t, d, payload1, "/x/001-findings.md", firstAt, OutcomeAdmitted, "posted; awaiting the session")
+	enqueue("inbox1", payload1, firstAt)
+	if got := opencodePosts(&mu, &posts); got != 1 {
+		t.Fatalf("after the first entry, got %d POSTs, want 1", got)
+	}
+
+	// The same entry retried with its own queuedAt still finds its own row.
+	opencodeDeliverWant(t, d, payload1, "/x/001-findings.md", firstAt, OutcomeDelivered, "already present")
+	if got := opencodePosts(&mu, &posts); got != 1 {
+		t.Fatalf("after the first entry's retry, got %d POSTs, want 1", got)
+	}
+
+	// A second findings payload for the same runner, queued an hour later, must
+	// not be answered by the first entry's row: it POSTs and is admitted.
+	curTime = secondAt
+	opencodeDeliverWant(t, d, payload2, "/x/002-findings.md", secondAt, OutcomeAdmitted, "posted; awaiting the session")
+	if got := opencodePosts(&mu, &posts); got != 2 {
+		t.Fatalf("after the second entry, got %d POSTs, want 2", got)
+	}
+
+	// And once the session holds its own row, its retry confirms without a POST.
+	enqueue("inbox2", payload2, secondAt)
+	opencodeDeliverWant(t, d, payload2, "/x/002-findings.md", secondAt, OutcomeDelivered, "already present")
+	if got := opencodePosts(&mu, &posts); got != 2 {
+		t.Fatalf("after the second entry's retry, got %d POSTs, want 2: a retry never re-sends", got)
 	}
 }
 
@@ -877,7 +1005,7 @@ func TestOpencodeConfirmOnceNeverPosts(t *testing.T) {
 	dir := t.TempDir()
 	stateFile := writeOpencodeServiceFile(t, dir, srv.URL, "pw", 1)
 	db := sqliteFixture(t,
-		"create table message (id text, data text)",
+		"create table message (id text, session_id text, time_created integer, data text)",
 		"create table part (id text, message_id text, session_id text, data text)",
 		"create table session_message (id text, session_id text, type text, seq integer, time_created integer, time_updated integer, data text)",
 		"create table session_inbox (id text, session_id text, type text, payload text, delivery text, enqueued_seq integer, time_created integer)",
