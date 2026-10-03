@@ -426,9 +426,10 @@ func (s *Server) resolveOwner(owner string) (remote.ClientID, error) {
 // store.New creates nothing on its own, so locking through it cannot make an
 // uninitialised root report as initialised.
 func ledgerRuntime(s *Server) relevo.Runtime {
+	cfg := s.live()
 	return relevo.Runtime{
-		Candidates: s.cfg.Candidates,
-		Policy:     s.cfg.Policy,
+		Candidates: cfg.Candidates,
+		Policy:     cfg.Policy,
 		Store:      store.New(s.cfg.Root),
 		Gates:      s.gates,
 		Now:        s.cfg.Now,
