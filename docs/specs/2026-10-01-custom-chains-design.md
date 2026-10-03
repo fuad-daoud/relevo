@@ -470,10 +470,12 @@ fixed parts.
 
 - **A check on a placed writer.** When a writer's tree is on a server (slice 2
   placement), its check runs there.
-  - This needs `POST /v1/bindings/{n}/checks`, behind a new server feature,
-    `check`.
+  - It runs through `POST /v1/bindings/{n}/checks`, behind a new server feature,
+    `check`, and the client reads it back from `GET /v1/bindings/{n}/checks/{id}`.
   - The client refuses to start a placed chain that has a `check` step if the
     server lacks `check`. The refusal names the server and the feature.
+  - A server without `check` keeps a chain started before the route working: the
+    check is answered from the gate record the writer's round pulls back.
 - **A `--server` chain** carries the definition in `CreateChainRequest`, in
   place of `settings`.
   - The server validates it against its own actors and resolves `shipped:`
@@ -678,10 +680,11 @@ The W2 rounds settled these. They override the sections they name.
    - A custom param with no default is required.
 3. **A repeated red skips the repair budget.** When a red check's output signature equals the previous red's within the same plan (the same `for-each` item), the repair step counts as over budget and its `then` is taken. This is the legacy behaviour; it never crosses plans.
 4. **A `for-each` resets its budget scope only on `next`.** An `empty` keeps the counts. That is how a finished chain keeps its last plan's correction count.
-5. **A placed writer's check (section 6.3, until W4).**
-   - It is answered from the gate record its served round pulls back. The served binding keeps `Gate = <the check command>` and `Regate = 0`; repair is the workflow's step.
-   - One distinct check command per placed writer is supported.
-   - A resume that changes the gate of a chain with a placed writer is refused until W4 adds the server route.
+5. **A placed writer's check (section 6.3).**
+   - On a server with `check`, the client mints the run id and posts the check itself, so each check step is its own run and any number of distinct commands is supported. It polls the run and closes the step from the polled result, sealing the returned tail as the step's log.
+   - On a server without `check`, a chain started before that route is still answered from the gate record its served round pulls back. The served binding keeps `Gate = <the one check command>` and `Regate = 0`; repair is the workflow's step.
+   - A server that cannot be reached leaves the chain awaiting its run, because the check may well be running there. A run the server no longer holds halts the chain.
+   - A resume that changes the gate of a chain with a placed writer is allowed once the server has `check`, and pushes the binding's gate through `POST /v1/bindings/{n}/gate`. Without the feature it is refused, naming the server and the feature.
 6. **Converting old rows (section 8).** `ConvertLegacyChains` converts each row in its own transaction. A row that cannot convert is halted with the reason, and the rest still convert.
 7. **`file:` seeds** must be regular files inside the workflow's directory. Symlinks, and symlinked directories that resolve outside it, are refused.
 

@@ -45,10 +45,15 @@ var ErrChainDone = errors.New("the chain is done")
 // any binding, and that member's stopped close raises the chain's `stopped`
 // event, which marks the chain stopped and queues its one end delivery.
 //
-// A chain that is not running has nothing to stop: ErrNothingToStop, the answer
-// `relevo stop` already gives and the CLI reports as exit 0. When the awaited
-// member has no open round, nothing would ever raise the event, so the chain is
-// stopped directly under the state lock instead.
+// A chain that is not running is stopped through its member: the awaited
+// member's open round -- a manual round a human sent while the chain was down --
+// is ended the way any binding's round is, because that round is the only work
+// the chain still has and its builder may carry the chain's own name, so this
+// verb is the only route to it. A chain with no open member round has nothing to
+// stop: ErrNothingToStop, the answer `relevo stop` already gives and the CLI
+// reports as exit 0. When a running chain's awaited member has no open round,
+// nothing would ever raise the event, so the chain is stopped directly under the
+// state lock instead.
 //
 // A chain waiting on fork children is stopped the same way and then takes its
 // children down with it, so no child is left running under a parent that has
@@ -65,7 +70,7 @@ func ChainStop(ctx context.Context, rt Runtime, name string) (StopResult, error)
 		return chainServerStop(ctx, rt, c)
 	}
 	if c.Status != string(chain.StatusRunning) {
-		return StopResult{}, ErrNothingToStop
+		return chainStopHaltedMember(ctx, rt, c)
 	}
 	res, err := chainStopWorkflow(ctx, rt, c)
 	if err != nil {
@@ -75,6 +80,30 @@ func ChainStop(ctx context.Context, rt Runtime, name string) (StopResult, error)
 		return StopResult{}, err
 	}
 	return res, nil
+}
+
+// chainStopHaltedMember stops the awaited member's round on a chain that has
+// already left running. The member may carry the chain's own name, so
+// `relevo stop <member>` resolves to this very verb and the round is reachable
+// only from here; ending it is what keeps a halted chain with an open manual
+// round from having no working command at all -- the resume refuses the open
+// round, so without this a human is left with nothing to run. A chain with no
+// open member round has nothing to stop, which stays the answer it has always
+// been.
+func chainStopHaltedMember(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult, error) {
+	member, _, ok := chainAwaited(rt.Store, c)
+	if !ok {
+		return StopResult{}, ErrNothingToStop
+	}
+	b, err := rt.Store.Load(member)
+	if err != nil {
+		return StopResult{}, ErrNothingToStop
+	}
+	entries, err := rt.Store.ReadLog(member)
+	if err != nil || !roundOpenIn(entries, b.Round) {
+		return StopResult{}, ErrNothingToStop
+	}
+	return Stop(ctx, rt, member, StopOptions{})
 }
 
 // chainStopWorkflow stops a workflow chain's awaited member. The actor the

@@ -161,6 +161,10 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// A check a workflow chain started is advanced here, next to the sweep: its
 	// end feeds check_closed through the same driver, under the same lock.
 	d.safely("chain check sweep", func() { tickChainChecks(ctx, d.rt) })
+	// A served binding's own check is advanced here, beside that sweep, because
+	// a check is not a round: it runs when a client asks, and outlives the round
+	// it was asked in, so it cannot wait on a round's completion marker.
+	d.safely("served check sweep", func() { tickServedChecks(ctx, d.rt) })
 
 	if len(bindings) == 0 {
 		return nil
@@ -342,7 +346,15 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 			return nil
 		}
 
-		return tx.Save(next)
+		if err := tx.Save(next); err != nil {
+			return err
+		}
+		// Announced only once the write above committed (#909). This is the
+		// single commit point for the daemon path, so a save that failed or
+		// was skipped announces nothing and the next tick that commits the
+		// same transition announces it exactly once.
+		emitCommitted(ctx, d.rt, loaded, next)
+		return nil
 	})
 	if err != nil {
 		return err

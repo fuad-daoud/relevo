@@ -2197,10 +2197,7 @@ func TestReconcileNeedsYouGoesStale(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := reconcile(t, rt, b)
-	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
+	got := tickCommit(t, rt, b)
 	if !got.StaleSince.Equal(haltedAt) {
 		t.Fatalf("StaleSince = %s, want the halt time %s", got.StaleSince, haltedAt)
 	}
@@ -2216,10 +2213,7 @@ func TestReconcileNeedsYouGoesStale(t *testing.T) {
 	}
 
 	// A second tick is not a second episode.
-	got2, err := reconcile(t, rt, got)
-	if err != nil {
-		t.Fatalf("Reconcile (second tick): %v", err)
-	}
+	got2 := tickCommit(t, rt, got)
 	if !got2.StaleSince.Equal(haltedAt) {
 		t.Errorf("StaleSince after a second tick = %s, want it unchanged at %s", got2.StaleSince, haltedAt)
 	}

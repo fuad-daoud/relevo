@@ -113,12 +113,50 @@ func (p Per) names(id string) bool {
 // passes the rendered max. A repeated-red event counts as over budget, so the
 // same failure the last repair already saw buys no second repair. The target is
 // zero when the step is still under.
+//
+// A budget a red check reaches buys no round at all when its rendered max is
+// zero, so its then target would be reached with the failure it was meant to fix
+// never attempted. In that case the run halts and names the zero budget: a red
+// check reaches a human rather than the next step in the graph.
+//
+// A budget that no check's red edge names is left alone even at zero -- it is
+// not standing in for work a red check left undone -- as is a budget whose
+// target is done or a halt, which says what happens next without claiming the
+// work was done, and a budget with room, which reaches its target only after
+// its own rounds have run and re-checked.
 func applyBudget(def Definition, s State, id string, b *Budget) (State, Target) {
 	s.Visits[id]++
+	if renderLimit(def, b.Max) < 1 && redBudgetArm(def, id) && b.Then.Kind == TargetStep {
+		return s, HaltTarget(zeroBudgetReason(id, b))
+	}
 	if s.repeatRed || s.Visits[id] > renderLimit(def, b.Max) {
 		return s, b.Then
 	}
 	return s, Target{}
+}
+
+// redBudgetArm reports whether any check step's red edge names id, which is what
+// makes id a repair arm: the step a failed check would spend a budget on.
+func redBudgetArm(def Definition, id string) bool {
+	for _, name := range sortedKeys(def.Steps) {
+		step := def.Steps[name]
+		if step.Check == "" {
+			continue
+		}
+		for _, edge := range []string{"red", "result=red"} {
+			if t, ok := step.On[edge]; ok && t.Kind == TargetStep && t.Step == id {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// zeroBudgetReason names the step whose budget renders to zero and what the run
+// therefore cannot do, so a halt reads as the budget it is rather than as a
+// generic stop.
+func zeroBudgetReason(id string, b *Budget) string {
+	return id + " has no budget left (" + b.Max.Text() + " renders to 0), so the failure it was meant to fix is unaddressed; the run halts rather than continuing past it. Raise the budget, or rerun the check by hand"
 }
 
 // renderLimit reads a budget's max, rendering a param reference. A reference

@@ -158,6 +158,9 @@ func TestChainRemoteBuilderE2E(t *testing.T) {
 	// pass (0). Round 1's red check routes to the repair step, which runs round
 	// 2; that round's green check seeds the reviewer.
 	gateExit := map[int]int{1: 2, 2: 0, 3: 0}
+	// checks counts the served checks this loop has scripted, so each is
+	// scripted the exit of the round whose check it is.
+	checks := 0
 
 	daemon := relevo.NewDaemon(rt, 200*time.Millisecond)
 	deadline := time.Now().Add(chainRemoteDeadline)
@@ -173,7 +176,18 @@ func TestChainRemoteBuilderE2E(t *testing.T) {
 			if spec, ok := runner.runningSpec(); ok {
 				switch {
 				case isGateSpec(spec):
-					runner.completeGate(t, serverStore.GateLogPath(builderName, sb.Round), chainRemoteGateExit(gateExit, sb.Round))
+					// A placed writer's check is its own run on the server with
+					// its own log, and it is keyed to the round it follows rather
+					// than to the binding's round by the time it lands. So the
+					// round's own gate is scripted by that round, and a served
+					// check by the round whose check it is: the same exits, in
+					// the same order.
+					round := sb.Round
+					if isServedCheckSpec(spec) {
+						checks++
+						round = checks
+					}
+					runner.completeGate(t, spec.LogPath, chainRemoteGateExit(gateExit, round))
 				default:
 					if _, statErr := os.Stat(serverStore.DonePath(builderName, sb.Round)); statErr != nil {
 						finishRound(t, serverRT, builderName, sb.Round, fmt.Sprintf("round %d done", sb.Round))
