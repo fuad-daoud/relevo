@@ -42,6 +42,45 @@ func chainWorkflowState(c db.ChainRow) (workflow.State, error) {
 	return st, nil
 }
 
+// chainResumeWorkflowRow is the resume path's read of a chain row's engine
+// definition and state. The sweep that migrates pre-engine rows runs at daemon
+// start, so a verb can meet a row the sweep could not finish: it is halted with
+// the reason the conversion named and carries neither a workflow nor a state.
+// Reading such a row as a plain error left `chain --resume` answering internal
+// on a chain the human can still look at.
+//
+// A row with no workflow is migrated here, through the same single-row
+// conversion the sweep runs, so a chain the sweep simply has not reached yet
+// resumes as any other. Whatever still lacks a workflow or a state is refused in
+// the input class instead, naming the row's own reason and the command that
+// reads it.
+func chainResumeWorkflowRow(rt Runtime, c db.ChainRow) (db.ChainRow, workflow.Definition, workflow.State, error) {
+	if len(c.WorkflowJSON) == 0 {
+		fresh, err := convertLegacyChainRow(rt, c.Name)
+		if err != nil {
+			return c, workflow.Definition{}, workflow.State{}, err
+		}
+		c = fresh
+	}
+	def, derr := chainWorkflowDef(c)
+	st, serr := chainWorkflowState(c)
+	if derr == nil && serr == nil {
+		return c, def, st, nil
+	}
+	why := derr
+	if why == nil {
+		why = serr
+	}
+	if c.Reason != "" {
+		return c, workflow.Definition{}, workflow.State{}, refuse(
+			"chain %s cannot be resumed: %v; its own reason reads %q -- `relevo status %s` shows it",
+			c.Name, why, c.Reason, c.Name)
+	}
+	return c, workflow.Definition{}, workflow.State{}, refuse(
+		"chain %s cannot be resumed: %v; this row predates the workflow engine and carries nothing to migrate -- `relevo status %s` shows what it holds",
+		c.Name, why, c.Name)
+}
+
 // chainFlowMembers returns a chain's member rows, in creation order: the actors
 // it runs and the bindings that run them.
 func chainFlowMembers(tx *store.Tx, c db.ChainRow) ([]db.ChainMemberRow, error) {

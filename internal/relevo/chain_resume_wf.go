@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"strconv"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -40,29 +41,14 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	if err := closeDeadMemberRound(ctx, rt, c); err != nil {
 		return ChainResult{}, err
 	}
-	// A legacy chain row written before custom chains carries no workflow:
-	// convert it onto the engine through the pure conversion before reading
-	// its definition. A row that cannot convert is halted with the conversion
-	// failure and left without a workflow, so chainWorkflowDef keeps the refusal.
-	if len(c.WorkflowJSON) == 0 {
-		if err := convertLegacyChain(rt, c.Name); err != nil {
-			return ChainResult{}, err
-		}
-		reloaded, err := rt.Store.Chain(c.Name)
-		if err != nil {
-			return ChainResult{}, err
-		}
-		c = reloaded
-	}
-	def, err := chainWorkflowDef(c)
+	// The row's engine definition and state, migrated onto the engine when the
+	// row still predates it and refused in the input class when it carries
+	// neither, so a resume never answers internal on a row a human can read.
+	c, def, before, err := chainResumeWorkflowRow(rt, c)
 	if err != nil {
 		return ChainResult{}, err
 	}
 	set, err := resumeSettings(rt, c, opts)
-	if err != nil {
-		return ChainResult{}, err
-	}
-	before, err := chainWorkflowState(c)
 	if err != nil {
 		return ChainResult{}, err
 	}
@@ -266,6 +252,12 @@ func chainResumeFlagParams(def workflow.Definition, rt Runtime, opts ResumeOptio
 // event through the same close path a live close uses, reading the round's
 // stored report entry and its own stream. No newer round means no event, and
 // the resume re-runs the step.
+//
+// A newer round whose report file is not on disk routes nothing either: a stop
+// close records the round as stopped without a report, so that round is already
+// closed as stopped and there is no body to review. Such a round leaves no event
+// and the resume re-runs the step; only a store failure other than the missing
+// report is an error.
 func chainResumeClosed(rt Runtime, tx *store.Tx, c db.ChainRow, st workflow.State) (*workflow.Event, error) {
 	if st.Awaiting.Member == "" || st.Awaiting.Round <= 0 {
 		return nil, nil
@@ -283,6 +275,9 @@ func chainResumeClosed(rt Runtime, tx *store.Tx, c db.ChainRow, st workflow.Stat
 		return nil, nil
 	}
 	body, err := rt.Store.ReadFile(entry.Path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
