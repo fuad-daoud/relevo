@@ -249,7 +249,7 @@ func TestWorkflowCloseMissingArtifactHalts(t *testing.T) {
 		if cerr != nil {
 			return cerr
 		}
-		ev, cerr = chainEventFromCloseWF(rt, tx, c, b, chainCloseWF{
+		ev, cerr = chainEventFromCloseWF(context.Background(), rt, tx, c, b, chainCloseWF{
 			Body: []byte("the review\n```relevo\nverdict: pass\n```\n"), Path: "", Outcome: "done",
 		})
 		return cerr

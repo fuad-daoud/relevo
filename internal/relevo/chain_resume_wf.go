@@ -117,7 +117,7 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 			return fmt.Errorf("encode chain %s settings: %w", row.Name, err)
 		}
 		row.SettingsJSON = settingsJSON
-		closed, err := chainResumeClosed(rt, tx, row, before)
+		closed, err := chainResumeClosed(ctx, rt, tx, row, before)
 		if err != nil {
 			return err
 		}
@@ -243,7 +243,7 @@ func chainResumeFlagParams(def workflow.Definition, rt Runtime, opts ResumeOptio
 // event through the same close path a live close uses, reading the round's
 // stored report entry and its own stream. No newer round means no event, and
 // the resume re-runs the step.
-func chainResumeClosed(rt Runtime, tx *store.Tx, c db.ChainRow, st workflow.State) (*workflow.Event, error) {
+func chainResumeClosed(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, st workflow.State) (*workflow.Event, error) {
 	if st.Awaiting.Member == "" || st.Awaiting.Round <= 0 {
 		return nil, nil
 	}
@@ -272,7 +272,7 @@ func chainResumeClosed(rt Runtime, tx *store.Tx, c db.ChainRow, st workflow.Stat
 	// it to: a reader's block lives in its stream, and the artifacts belong to
 	// the closed round.
 	b.Round = newest
-	ev, err := chainEventFromCloseWF(rt, tx, c, b, chainCloseWF{
+	ev, err := chainEventFromCloseWF(ctx, rt, tx, c, b, chainCloseWF{
 		Body: body, Path: entry.Path, Outcome: entry.Outcome, Round: newest,
 	})
 	if err != nil {
