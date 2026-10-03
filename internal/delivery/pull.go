@@ -20,15 +20,22 @@ func Pull(ctx context.Context, st *store.Store, name, route string) (text string
 }
 
 // PullMatching is Pull's conditional form: it claims the oldest claimable
-// mastermind payload for name with route only when match accepts that entry,
-// and answers found false without confirming anything when it does not. The
-// claimable scan is unchanged, so an entry a push route already admitted is
-// still not claimable here and an older undelivered entry still comes first --
-// a read may confirm a payload, never reorder or bypass the queue.
+// mastermind payload for name with route THAT MATCH ACCEPTS, scanning past the
+// claimable entries it does not, and answers found false without confirming
+// anything when it accepts none. The claimable scan is unchanged, so an entry a
+// push route already admitted is still not claimable here.
+//
+// Scanning past is what lets a read confirm a payload a stale halt or an older
+// findings entry sits ahead of; stopping at the first claimable entry would
+// leave that payload to be delivered again. The scan is in log order and takes
+// the FIRST entry match accepts, and every entry it rejects is left pending and
+// unconfirmed, so a read may confirm a payload but never reorder or bypass the
+// queue: what is left is still delivered oldest first.
 //
 // match is the caller's answer to "did this read print that entry?", so a
 // reader that printed one section claims only the payload that section is.
-// A nil match accepts every entry, which is what Pull passes.
+// A nil match accepts every entry, which is what Pull passes -- and then the
+// first claimable entry is the claim, exactly as Pull has always claimed it.
 func PullMatching(ctx context.Context, st *store.Store, name, route string, match func(store.LogEntry) bool) (text string, found bool, err error) {
 	return pullMatching(ctx, st, name, route, match)
 }
@@ -59,23 +66,23 @@ func retryBusy(ctx context.Context, delays []time.Duration, sleep func(time.Dura
 	return err
 }
 
-// pullMatching returns the oldest claimable entry's text for name and marks it
-// delivered with route, WITHOUT pushing anything -- but only when match accepts
-// that entry. A nil match claims it unconditionally, which is what the removed
-// pull verb did and what the helper `relevo wait` calls once its round has
-// ended: the CLI prints the result to stdout and the mastermind reads it as
-// tool output.
+// pullMatching returns the oldest claimable entry match accepts for name, and
+// marks that one delivered with route, WITHOUT pushing anything. A nil match
+// accepts every entry, which is what the removed pull verb did and what the
+// helper `relevo wait` calls once its round has ended: the CLI prints the
+// result to stdout and the mastermind reads it as tool output.
 //
 // The text is PushText(entry, <name's binding>, st.ReadFile): the stored payload (origin
 // line first) plus a blank line plus the report file's text, capped at
 // MaxPushBytes. found is false when nothing is pending and when match rejects
-// the entry, so a rejecting caller confirms nothing and reads no text.
+// every claimable entry, so a rejecting caller confirms nothing and reads no
+// text.
 //
 // The lock and confirm step is wrapped in retryBusy: other relevo processes
 // and the daemon hold the database concurrently, so a busy begin is retried
-// with a short backoff rather than failing the delivery outright. The match
-// decision runs inside the lock, on the entry the scan just returned, so what
-// is decided and what is confirmed cannot come apart.
+// with a short backoff rather than failing the delivery outright. The scan, the
+// match decision and the confirm all run inside the lock, on the log the scan
+// just read, so what is decided and what is confirmed cannot come apart.
 func pullMatching(ctx context.Context, st *store.Store, name, route string, match func(store.LogEntry) bool) (text string, found bool, err error) {
 	var entry store.LogEntry
 
@@ -83,22 +90,26 @@ func pullMatching(ctx context.Context, st *store.Store, name, route string, matc
 	// this very payload right now, and only one of us may claim it.
 	err = retryBusy(ctx, busyRetryDelays, nil, func() error {
 		return st.WithLock(func(tx *store.Tx) error {
-			pending, idx, ok, err := tx.ClaimableForMasterMind(name)
+			// Every claimable entry in log order, so the scan can pass the ones
+			// match rejects and take the first it accepts. Round 0 is every
+			// round: the claim is this read's own payload, not a waited round's
+			// through-window.
+			pending, err := tx.ClaimableForMasterMindThrough(name, 0)
 			if err != nil {
 				return err
 			}
-			if !ok {
+			for _, p := range pending {
+				if match != nil && !match(p.Entry) {
+					continue
+				}
+				if err := tx.ConfirmIndex(name, p.Idx, route); err != nil {
+					return err
+				}
+
+				entry, found = p.Entry, true
+
 				return nil
 			}
-			if match != nil && !match(pending) {
-				return nil
-			}
-			if err := tx.ConfirmIndex(name, idx, route); err != nil {
-				return err
-			}
-
-			entry, found = pending, true
-
 			return nil
 		})
 	})

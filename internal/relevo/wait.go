@@ -302,7 +302,16 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 	// the loop already makes, so registering costs no extra read: a wait that
 	// resolves on its first pass still holds a registration, because the write
 	// happens before the loop and the release after it.
-	registration := registerWait(rt, opts.Names, start)
+	//
+	// A --peek wait does not register at all: it never collects (see the
+	// delivery arm below), so it is not the wait a status row's WaitLive means.
+	// Only a wait that will collect counts as live, and a peeking script or loop
+	// must not hold a stranded pull payload at REPORT IN instead of NEEDS YOU.
+	// The zero registration holds nothing, so release and refresh stay no-ops.
+	var registration waitRegistration
+	if !opts.Peek {
+		registration = registerWait(rt, opts.Names, start)
+	}
 	defer registration.release()
 
 	for {

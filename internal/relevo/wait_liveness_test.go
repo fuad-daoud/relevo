@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // fakeWaitClaims is the map-backed delivery.WaitClaimStore the wait-liveness
@@ -251,6 +252,88 @@ func TestStatusRowWaitLive(t *testing.T) {
 			t.Error("WaitLive = true with no wait store, want false")
 		}
 	})
+}
+
+// TestWaitPeekDoesNotRegister: a --peek wait never collects, so it
+// must not register as a live wait. The registration is the status row's one
+// fact about whether a payload is about to be collected, and a peeking script or
+// loop holding one would keep a stranded pull-route report at REPORT IN instead
+// of NEEDS YOU, for as long as it keeps peeking.
+func TestWaitPeekDoesNotRegister(t *testing.T) {
+	waits := newFakeWaitClaims()
+	rt := waitLivenessRuntime(t, waits)
+	seedOpenRound(t, rt, "webshop")
+
+	clock := baseTime
+	_, res, err := Wait(context.Background(), rt, WaitOptions{
+		Names: []string{"webshop"}, Round: 1, Peek: true,
+		Timeout: time.Minute, Interval: time.Millisecond,
+		now:   func() time.Time { clock = clock.Add(100 * time.Millisecond); return clock },
+		sleep: func(context.Context, time.Duration) error { return nil },
+	})
+	if err != nil {
+		t.Fatalf("Wait --peek: %v", err)
+	}
+	if res.Code != WaitTimeout {
+		t.Errorf("exit code = %d, want WaitTimeout so the loop ran several passes", res.Code)
+	}
+	if waits.live("webshop") {
+		t.Error("a peek wait is held as live, want no registration at all")
+	}
+	if len(waits.events) != 0 {
+		t.Errorf("events = %v, want no write and no remove from a peek wait", waits.events)
+	}
+}
+
+// TestPeekWaitDoesNotSuppressNeedsYou is the end of that chain: a peek wait
+// plus a pending pull payload past the grace reads NEEDS YOU. The peek runs on
+// the binding and registers nothing, so the
+// status row reports no live wait, and the graced pull arm has nothing to hold
+// the row back -- the same row with a collecting wait registered stays REPORT IN.
+func TestPeekWaitDoesNotSuppressNeedsYou(t *testing.T) {
+	waits := newFakeWaitClaims()
+	rt := waitLivenessRuntime(t, waits)
+	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+
+	// The round is closed by the seeded report, so the peek resolves on its
+	// first pass -- which is exactly the shape that must still not register.
+	if _, _, err := Wait(context.Background(), rt, WaitOptions{
+		Names: []string{"webshop"}, Round: 1, Peek: true,
+		Timeout: time.Millisecond, Interval: time.Millisecond,
+	}); err != nil {
+		t.Fatalf("Wait --peek: %v", err)
+	}
+
+	// The pending payload is the report the peek left behind. Age it past the
+	// pull grace: Pending.TS is the payload's own stamp, so the row is aged by
+	// advancing the clock the statusline reads rather than by rewriting state.
+	// Thirty minutes is well past the two-minute grace and is the same age
+	// TestStatusLineRowsPullGrace uses for its escalating fixture.
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if len(rep.Bindings) != 1 {
+		t.Fatalf("status has %d rows, want 1", len(rep.Bindings))
+	}
+	row := rep.Bindings[0]
+	if row.WaitLive {
+		t.Fatal("WaitLive = true after a peek wait, want false: only a collecting wait registers")
+	}
+	if row.MasterMindRoute != "pull" {
+		t.Fatalf("MasterMindRoute = %q, want pull for the fixture", row.MasterMindRoute)
+	}
+	if row.Pending == nil {
+		t.Fatal("Pending = nil, want the peeked payload still pending")
+	}
+
+	rows := view.StatusLineRows(rep, row.Pending.TS.Add(30*time.Minute))
+	if len(rows) != 1 {
+		t.Fatalf("len(rows) = %d, want 1", len(rows))
+	}
+	if !rows[0].NeedsYou {
+		t.Errorf("NeedsYou = %v, want true: a peeking loop must not hide a stranded payload", rows[0].NeedsYou)
+	}
 }
 
 // errorWaitClaims is a wait store whose every read fails.
