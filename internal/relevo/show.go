@@ -65,6 +65,8 @@ type ShowOptions struct {
 	// the payload for the route that pushes it. `show --owner` sets it too,
 	// so the admin's read of another owner's binding stays read-only.
 	Peek bool
+	// ArchivedOnly skips a live binding of the same name: history rows show closed rounds.
+	ArchivedOnly bool
 	// FindingsID is the consult whose findings --findings names (§4.2). It is
 	// meaningful only with Section == ShowFindings.
 	FindingsID string
@@ -123,7 +125,7 @@ func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error)
 	}
 
 	b, err := rt.Store.Load(opts.Name)
-	if err == nil {
+	if err == nil && !opts.ArchivedOnly { // history rows skip live bindings: a rebind may reuse the name
 		res, err := showLive(rt, b, opts)
 		if err != nil {
 			return ShowResult{}, err
@@ -145,7 +147,7 @@ func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error)
 		}
 		return res, nil
 	}
-	if !errors.Is(err, store.ErrNotFound) {
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return ShowResult{}, err
 	}
 
