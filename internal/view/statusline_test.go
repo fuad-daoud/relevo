@@ -1567,6 +1567,11 @@ func TestStatusLineRowsPending(t *testing.T) {
 // TestStatusLineRowsLiveRouteNeverStalls pins the inverted rule: a pending
 // payload on a live push route is never NEEDS YOU, however old it is. Only a
 // route relevo cannot push (pull, or a route that is not live) needs the human.
+//
+// The ages land on Pending.TS, which is where the age the rule reads comes
+// from. Age carried only on LastPayload.TS would leave this pin vacuous: the
+// live-route arm is reached with the age it is given, and a fixture whose age
+// never reaches the rule cannot fail if the rule starts reading age.
 func TestStatusLineRowsLiveRouteNeverStalls(t *testing.T) {
 	t.Parallel()
 
@@ -1580,7 +1585,7 @@ func TestStatusLineRowsLiveRouteNeverStalls(t *testing.T) {
 				Display:             "ACTIVE",
 				MasterMindRoute:     "deliverer",
 				MasterMindRouteLive: true,
-				Pending:             &PendingInfo{Round: 3, Kind: store.KindReport},
+				Pending:             &PendingInfo{Round: 3, Kind: store.KindReport, TS: now.Add(-age)},
 				LastPayload: &LastEvent{
 					Round:     3,
 					Kind:      store.KindReport,
@@ -1605,37 +1610,151 @@ func TestStatusLineRowsLiveRouteNeverStalls(t *testing.T) {
 	}
 }
 
-func TestStatusLineRowsPull(t *testing.T) {
+// pullRow is a pending report on a pull route, aged by age, with the wait
+// liveness reported as waitLive. The pending entry's own TS is what ages. It is
+// shared by the two graced-pull tests below so both pin the same fixture.
+func pullRow(now time.Time, age time.Duration, waitLive bool) BindingStatus {
+	return BindingStatus{
+		Name:            "worker",
+		Round:           4,
+		Display:         "ACTIVE",
+		MasterMindRoute: "pull",
+		WaitLive:        waitLive,
+		Pending:         &PendingInfo{Round: 3, Kind: store.KindReport, TS: now.Add(-age)},
+		LastPayload: &LastEvent{
+			Round:     3,
+			Kind:      store.KindReport,
+			Direction: store.DirToMasterMind,
+			TS:        now.Add(-age),
+		},
+	}
+}
+
+// TestStatusLineRowsPullGrace pins the graced pull arm. A pull route is
+// a route, not a fault: the background `relevo wait` is how a tools-mode
+// mastermind collects its report, so a fresh pending payload on pull reads
+// REPORT IN rather than escalating the human's attention the instant the report
+// lands. It escalates only once the payload has aged past the grace with no wait
+// registered to collect it.
+func TestStatusLineRowsPullGrace(t *testing.T) {
 	t.Parallel()
 
 	now := baseTime
 
-	t.Run("pending report, route pull -> needs_you true at once", func(t *testing.T) {
-		b := BindingStatus{
-			Name:            "worker",
-			Round:           4,
-			Display:         "ACTIVE",
-			MasterMindRoute: "pull",
-			Pending:         &PendingInfo{Round: 3, Kind: store.KindReport},
-			LastPayload: &LastEvent{
-				Round:     3,
-				Kind:      store.KindReport,
-				Direction: store.DirToMasterMind,
-				TS:        now,
-			},
+	t.Run("fresh pending report, route pull, no wait -> needs_you false, report_in false, status 'report in'", func(t *testing.T) {
+		b := pullRow(now, 0, false)
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
 		}
+		if rows[0].NeedsYou {
+			t.Errorf("NeedsYou = %v, want false: a just-landed report is not yet the human's problem", rows[0].NeedsYou)
+		}
+		if rows[0].ReportIn {
+			t.Errorf("ReportIn = %v, want false (still pending)", rows[0].ReportIn)
+		}
+		if rows[0].Status != "report in" {
+			t.Errorf("Status = %q, want %q", rows[0].Status, "report in")
+		}
+	})
+
+	// Inside the grace is still not a fault, not merely at the boundary: the
+	// grace is a window, so a payload a second old reads the same as a fresh one.
+	t.Run("pending report inside the grace, route pull, no wait -> needs_you false", func(t *testing.T) {
+		b := pullRow(now, pullGrace-time.Second, false)
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
+		}
+		if rows[0].NeedsYou {
+			t.Errorf("NeedsYou = %v, want false inside the grace", rows[0].NeedsYou)
+		}
+	})
+
+	t.Run("aged pending report, route pull, no wait -> needs_you true", func(t *testing.T) {
+		b := pullRow(now, 30*time.Minute, false)
 		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
 		if len(rows) != 1 {
 			t.Fatalf("len(rows) = %d, want 1", len(rows))
 		}
 		if !rows[0].NeedsYou {
-			t.Errorf("NeedsYou = %v, want true (a pull route cannot be pushed to)", rows[0].NeedsYou)
+			t.Errorf("NeedsYou = %v, want true: the payload is past the grace and no wait will collect it", rows[0].NeedsYou)
+		}
+	})
+
+	// The liveness hook is what keeps an aged payload off NEEDS YOU, so it has
+	// to be read: same age, same route, no wait, different answer.
+	t.Run("aged pending report, route pull, live wait -> needs_you false", func(t *testing.T) {
+		b := pullRow(now, 30*time.Minute, true)
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
+		}
+		if rows[0].NeedsYou {
+			t.Errorf("NeedsYou = %v, want false: a live wait is about to collect this payload", rows[0].NeedsYou)
 		}
 		if rows[0].ReportIn {
 			t.Errorf("ReportIn = %v, want false (still pending)", rows[0].ReportIn)
 		}
 	})
 
+}
+
+// TestStatusLineRowsPullGraceBoundaries pins the cases that bound the graced
+// pull arm from outside: the grace belongs to pull alone, an absent age
+// is not an old age, and the binding's own NEEDS YOU display outranks both.
+//
+// It shares pullRow with TestStatusLineRowsPullGrace, which pins the window
+// itself.
+func TestStatusLineRowsPullGraceBoundaries(t *testing.T) {
+	t.Parallel()
+
+	now := baseTime
+
+	// The liveness hook must not leak onto a live push route: that route is
+	// never NEEDS YOU whatever the wait says, and NEEDS YOU is not the answer a
+	// non-live non-pull route is waiting for either.
+	t.Run("aged pending report, route deliverer not live, no wait -> needs_you true (unchanged)", func(t *testing.T) {
+		b := pullRow(now, 30*time.Minute, false)
+		b.MasterMindRoute = "deliverer"
+		b.MasterMindRouteLive = false
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
+		}
+		if !rows[0].NeedsYou {
+			t.Errorf("NeedsYou = %v, want true: only pull gets the grace", rows[0].NeedsYou)
+		}
+	})
+
+	// A pending entry with no TS is a row written before the field existed: it
+	// has no age, so it must not escalate on the absence of evidence.
+	t.Run("pending report with no pending TS, route pull -> needs_you false", func(t *testing.T) {
+		b := pullRow(now, 0, false)
+		b.Pending.TS = time.Time{}
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
+		}
+		if rows[0].NeedsYou {
+			t.Errorf("NeedsYou = %v, want false: a zero pending TS is no age, not an old age", rows[0].NeedsYou)
+		}
+	})
+
+	// NEEDS YOU from the binding's own display outranks the route entirely: a
+	// pull row whose display already says NEEDS YOU escalates whatever the
+	// grace and the wait say.
+	t.Run("NEEDS YOU display on a fresh pull pending -> needs_you true", func(t *testing.T) {
+		b := pullRow(now, 0, false)
+		b.Display = "NEEDS YOU"
+		rows := StatusLineRows(Report{Bindings: []BindingStatus{b}}, now)
+		if len(rows) != 1 {
+			t.Fatalf("len(rows) = %d, want 1", len(rows))
+		}
+		if !rows[0].NeedsYou {
+			t.Errorf("NeedsYou = %v, want true: the display word wins regardless of route", rows[0].NeedsYou)
+		}
+	})
 }
 
 func TestStatusLineRowsNeedsYou(t *testing.T) {
@@ -1724,9 +1843,13 @@ var srrRep = Report{Bindings: []BindingStatus{
 		BuilderCandidate:    "agy",
 		MasterMindRoute:     "pull",
 		MasterMindRouteLive: false,
-		Pending:             &PendingInfo{Round: 6, Kind: store.KindReport},
-		RoundStart:          srrNow.Add(-7 * time.Minute),
-		LastPayload:         &LastEvent{TS: srrNow.Add(-2 * time.Minute), Round: 6, Kind: store.KindReport, Direction: store.DirToMasterMind},
+		// The pending payload is past pullGrace with no wait registered, so
+		// this pull row is the NEEDS YOU one. A pull row inside the grace
+		// would read REPORT IN instead; the grace pins live in
+		// TestStatusLineRowsPullGrace.
+		Pending:     &PendingInfo{Round: 6, Kind: store.KindReport, TS: srrNow.Add(-8 * time.Minute)},
+		RoundStart:  srrNow.Add(-7 * time.Minute),
+		LastPayload: &LastEvent{TS: srrNow.Add(-8 * time.Minute), Round: 6, Kind: store.KindReport, Direction: store.DirToMasterMind},
 	},
 	{
 		Name:             "stuck",
