@@ -631,3 +631,5 @@ func (d *haltDeliverer) Confirm(_ context.Context, _ store.Endpoint, _ string, _
 func (d *haltDeliverer) ConfirmOnce(_ context.Context, _ store.Endpoint, _ string, _ time.Time) (delivery.Outcome, string, error) {
 	return delivery.OutcomeDelivered, "", nil
 }
+
+func (d *haltDeliverer) AdmitHorizon() time.Duration { return 0 }

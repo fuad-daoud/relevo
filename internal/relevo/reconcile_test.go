@@ -201,6 +201,8 @@ func (d *doneReadBackDeliverer) ConfirmOnce(context.Context, store.Endpoint, str
 	return delivery.OutcomeAdmitted, "posted; awaiting the session", nil
 }
 
+func (d *doneReadBackDeliverer) AdmitHorizon() time.Duration { return 0 }
+
 // TestReconcileDoneConfirmsAnAdmittedPayload pins the delivery gap (#830): a
 // done binding skips the reconciler's own delivery step, but an entry a push
 // route admitted before the state changed must still be settled by a
