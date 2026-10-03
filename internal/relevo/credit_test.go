@@ -390,6 +390,48 @@ func TestCreditNoMatchLeavesOtherGatesUntouched(t *testing.T) {
 	}
 }
 
+// TestCreditStallRepeatTickRecordsOnce is the repeat-tick contract. The
+// stalled-live scan runs on every tick for as long as the stall holds, so a
+// credit tail without the guard would record a fresh entry each time. The
+// existing one-entry-per-round guard keys on the round, not on the class, so it
+// already covers this -- the test pins that, because a gate that re-recorded
+// would be the one thing that could make an until-cleared gate time out by
+// accident.
+func TestCreditStallRepeatTickRecordsOnce(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := accountRotateSetup(t, fr)
+	rt = at(rt, 10*time.Minute)
+	b = stallAlive(t, rt, b, jsonlLine(t, "opencode-errors/results.jsonl", 1), true)
+	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile (first tick): %v", err)
+	}
+	rl := rateLimitedEntries(loadLedger(t, rt))
+	if len(rl) != 1 {
+		t.Fatalf("rate_limited entries after the first tick = %+v, want exactly one", rl)
+	}
+	if !rl[0].Until.IsZero() {
+		t.Fatalf("Until = %v, want the zero value on the first tick too", rl[0].Until)
+	}
+
+	got, err = reconcile(t, at(rt, 12*time.Minute), got)
+	if err != nil {
+		t.Fatalf("Reconcile (second tick): %v", err)
+	}
+	if rl := rateLimitedEntries(loadLedger(t, rt)); len(rl) != 1 {
+		t.Errorf("rate_limited entries after the second tick = %+v, want still one: a repeat tick carries no new fact", rl)
+	}
+	if got.BuilderCandidate != b.BuilderCandidate || got.Builder.PID != b.Builder.PID {
+		t.Errorf("the repeat tick moved the builder: candidate=%q pid=%d", got.BuilderCandidate, got.Builder.PID)
+	}
+}
+
 // TestCreditGateIsNotAReportPresentPath pins the last case in the plan: the
 // credit classification keeps the report-on-disk branch. With a report on disk
 // the gate is recorded but nothing is switched, because the round closes as it
