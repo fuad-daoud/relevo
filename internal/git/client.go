@@ -132,8 +132,15 @@ func (c *Client) run(ctx context.Context, dir string, env []string, args ...stri
 
 	err := cmd.Run()
 	if err != nil {
+		// A timeout names the argv it killed. The bare ctx.Err() it returned
+		// before was indistinguishable from any other deadline, so a caller
+		// whose slow subcall blew the per-command budget could not tell a
+		// rev-parse from a bundle create from a merge-base -- the whole call
+		// surfaced as one anonymous "context deadline exceeded". Wrapping
+		// ctx.Err() keeps errors.Is(err, context.DeadlineExceeded) true for
+		// the probing call sites, so the added argv costs them nothing.
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), ctx.Err())
 		}
 		if errors.Is(err, exec.ErrNotFound) {
 			return nil, ErrGitUnavailable

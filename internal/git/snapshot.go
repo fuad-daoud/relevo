@@ -146,8 +146,10 @@ func (c *Client) diffPatch(ctx context.Context, dir, from, to string) ([]byte, b
 		return nil, false, fmt.Errorf("git diff stdout pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
+		// A diff that ran out of time names the rev range it was reading, for
+		// the same reason run does: an argv-less deadline is undiagnosable.
 		if errors.Is(ctxTimeout.Err(), context.DeadlineExceeded) {
-			return nil, false, ctxTimeout.Err()
+			return nil, false, fmt.Errorf("git diff %s %s: %w", from, to, ctxTimeout.Err())
 		}
 		if errors.Is(err, exec.ErrNotFound) {
 			return nil, false, ErrGitUnavailable
@@ -170,7 +172,7 @@ func (c *Client) diffPatch(ctx context.Context, dir, from, to string) ([]byte, b
 
 	if err := cmd.Wait(); err != nil {
 		if errors.Is(ctxTimeout.Err(), context.DeadlineExceeded) {
-			return nil, false, ctxTimeout.Err()
+			return nil, false, fmt.Errorf("git diff %s %s: %w", from, to, ctxTimeout.Err())
 		}
 		outStr := strings.TrimSpace(stderr.String())
 		if strings.Contains(strings.ToLower(outStr), "not a git repository") {
