@@ -701,7 +701,7 @@ func TestOpencodeConfirmSeen(t *testing.T) {
 		{
 			name: "legacy part/message user row containing the origin -> seen",
 			stmts: append(append([]string{}, tables...),
-				`insert into message values ('msg1', 'ses_x', '"+opencodeRowMS+"', '{"role":"user"}')`,
+				"insert into message values ('msg1', 'ses_x', '"+opencodeRowMS+"', '{\"role\":\"user\"}')",
 				"insert into part values ('p1', 'msg1', 'ses_x', '"+userText+"')"),
 			want: true,
 		},
@@ -709,7 +709,7 @@ func TestOpencodeConfirmSeen(t *testing.T) {
 			name: "assistant row containing the origin -> not seen",
 			stmts: append(append([]string{}, tables...),
 				"insert into session_message values ('m1', 'ses_x', 'assistant', 0, '"+opencodeRowMS+"', 1, '"+v2UserText+"')",
-				`insert into message values ('msg1', 'ses_x', '"+opencodeRowMS+"', '{"role":"assistant"}')`,
+				"insert into message values ('msg1', 'ses_x', '"+opencodeRowMS+"', '{\"role\":\"assistant\"}')",
 				"insert into part values ('p1', 'msg1', 'ses_x', '"+userText+"')"),
 			want: false,
 		},
