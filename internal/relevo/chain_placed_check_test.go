@@ -343,6 +343,67 @@ func TestResumeGateOnPlacedWriterCallsSetGate(t *testing.T) {
 	}
 }
 
+// TestResumeGateOnPlacedWriterSkipsSetGateWhenRoundIsOpen pins that a resume
+// refused for an open round pushes no gate: the server must not be told to run
+// the next check under a command the chain's own settings never took, because
+// the refusal leaves those settings exactly as they were.
+func TestResumeGateOnPlacedWriterSkipsSetGateWhenRoundIsOpen(t *testing.T) {
+	t.Parallel()
+
+	fr := chainCheckFake()
+	rt, _, _ := chainRemoteRuntime(t, fr)
+	startFlowChain(t, rt, flowGateParamWorkflow)
+	advanceRemoteChain(t, rt, 2)
+	haltRemoteChain(t, rt)
+
+	// The awaited round is still open: its prompt went out and no report came
+	// back, so the resume has to refuse rather than overwrite the round in
+	// flight.
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.AppendLog("shop", store.LogEntry{
+			TS: baseTime, Round: 2, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+			Path: "/x/prompt-2.md",
+		})
+	}); err != nil {
+		t.Fatalf("append the open round's prompt: %v", err)
+	}
+
+	fr.calls = nil
+	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Gate: "make other"})
+	var open *RoundOpenError
+	if !errors.As(err, &open) {
+		t.Fatalf("ChainResume = %v, want the open round's refusal", err)
+	}
+	if slices.Contains(fr.calls, "SetGate:zen:shop") {
+		t.Errorf("calls = %v, want no gate route call for a refused resume", fr.calls)
+	}
+}
+
+// TestResumeGateOnPlacedWriterSkipsSetGateOnBadParam pins the same for a
+// refusal that happens before the transaction even opens: a --param the
+// workflow has no slot for is refused, and the gate the resume carried must
+// never reach the server either.
+func TestResumeGateOnPlacedWriterSkipsSetGateOnBadParam(t *testing.T) {
+	t.Parallel()
+
+	fr := chainCheckFake()
+	rt, _, _ := chainRemoteRuntime(t, fr)
+	startFlowChain(t, rt, flowGateParamWorkflow)
+	advanceRemoteChain(t, rt, 2)
+	haltRemoteChain(t, rt)
+
+	fr.calls = nil
+	_, err := ChainResume(context.Background(), rt, ResumeOptions{
+		Name: "shop", Gate: "make other", Params: map[string]string{"nosuchparam": "x"},
+	})
+	if !errors.Is(err, ErrRefused) {
+		t.Fatalf("ChainResume = %v, want ErrRefused for a param the workflow has no slot for", err)
+	}
+	if slices.Contains(fr.calls, "SetGate:zen:shop") {
+		t.Errorf("calls = %v, want no gate route call for a refused resume", fr.calls)
+	}
+}
+
 // TestPlacedCheckHaltsWhenTheServerHasNoSuchRun pins a lost run: a check the
 // server no longer holds is a chain that can never settle, so the chain halts
 // and says which check it was.

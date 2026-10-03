@@ -137,16 +137,20 @@ func chainResumeChangesGate(opts ResumeOptions) bool {
 	return ok
 }
 
-// resumeRemoteGateRefusal applies a resume's gate change to a chain whose
-// writer member is placed remotely. That binding runs its own check on the
-// server, so a gate the client only wrote to the chain row would be silently
-// ignored there: with the server's check feature the resume is allowed and the
-// binding's gate and repair budget are pushed to it through the gate route.
-// Without the feature the change cannot be delivered at all, so the resume is
-// refused and the refusal names the server and the feature it lacks. A missing
-// writer record is left to the resume's own failure, exactly as the base
-// refusal left it.
-func resumeRemoteGateRefusal(ctx context.Context, rt Runtime, c db.ChainRow, opts ResumeOptions) error {
+// resumeRemoteGateRefusal refuses a resume's gate change on a chain whose
+// writer member is placed remotely, when the server cannot take it. That
+// binding runs its own check on the server, so a gate the client only wrote to
+// the chain row would be silently ignored there: with the server's check
+// feature the change is deliverable through the gate route, without it the
+// change cannot be delivered at all, so the resume is refused and the refusal
+// names the server and the feature it lacks. A missing writer record is left to
+// the resume's own failure, exactly as the base refusal left it.
+//
+// This is the feature probe alone: the route call that delivers the change
+// waits for every other resume refusal to clear, in resumeRemoteGatePush, so a
+// resume this function lets through cannot leave the server ahead of a resume
+// that then aborts.
+func resumeRemoteGateRefusal(ctx context.Context, rt Runtime, c db.ChainRow) error {
 	member := c.Builder
 	if member == "" {
 		if rows, err := rt.Store.ChainMembers(c.Name); err == nil && len(rows) > 0 {
@@ -170,9 +174,36 @@ func resumeRemoteGateRefusal(ctx context.Context, rt Runtime, c db.ChainRow, opt
 	if !hasFeature(who, remote.FeatureCheck) {
 		return refuse("chain %s: server %s lacks the %q feature, so a served binding's gate cannot be changed", c.Name, b.Builder.Server, remote.FeatureCheck)
 	}
-	// A binding with no gate of its own has nothing for the route to update, so
-	// the check travelling in the check request is the whole of the answer.
-	if b.Gate == "" {
+	return nil
+}
+
+// resumeRemoteGatePush delivers a resume's gate change to the server that runs
+// a placed writer's binding, through the gate route: the binding's new gate and,
+// when the resume also changed it, its repair budget. It resolves the same
+// writer member resumeRemoteGateRefusal refused over, and is a no-op for a
+// binding that runs on this machine.
+//
+// The call sits here, after the resume's transaction has committed and after
+// every other refusal has cleared, because it is the one part of the resume
+// the server cannot take back: a push made earlier would leave the server
+// running the next check under a gate the chain's own settings never took. A
+// binding with no gate of its own has nothing for the route to update, so the
+// check travelling in the check request is the whole of the answer.
+func resumeRemoteGatePush(ctx context.Context, rt Runtime, c db.ChainRow, opts ResumeOptions) error {
+	member := c.Builder
+	if member == "" {
+		if rows, err := rt.Store.ChainMembers(c.Name); err == nil && len(rows) > 0 {
+			member = rows[0].Binding
+		}
+	}
+	if member == "" || rt.Remote == nil {
+		return nil
+	}
+	b, err := rt.Store.Load(member)
+	if err != nil {
+		return nil
+	}
+	if !b.Builder.Remote() || b.Gate == "" {
 		return nil
 	}
 	set, err := resumeSettings(rt, c, opts)
