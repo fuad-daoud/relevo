@@ -673,6 +673,49 @@ func streamLastActivity(rt Runtime, b store.Binding) time.Time {
 	return last
 }
 
+// stallLimitGateRecorded reports whether this stalled round has already
+// recorded its rate-limit gate (#905 follow-up). gateOnLimit writes the ledger
+// entry before it looks for the round's report, so a stalled live builder whose
+// round already produced a report was re-recording the same gate on every tick
+// for as long as the stall held -- and with a reset the scan reads relative to
+// now ("resets in 23m", or no reset at all and the fallback), each record moved
+// Until forward, so every other binding on the same candidate or account stayed
+// gated indefinitely. A repeat tick carries no new fact about the provider, so
+// it must not record again: one entry per round is the whole observation, and
+// the tick falls through to deliverAndSettle exactly as a tail that matched
+// nothing does.
+//
+// Scoped to the current round by RoundStartedAt, which a switch restarts, so a
+// new round gates afresh. The report is required to be on disk because that is
+// the only shape that reaches here without having switched: a match with no
+// report ends the tick in gateOnLimit -> switchBuilder, and the replacement
+// starts with a fresh RoundStartedAt. Without the report a gate-on-limit tick
+// is the existing single-tick switch path, unchanged.
+func stallLimitGateRecorded(rt Runtime, b store.Binding) bool {
+	if rt.Gates == nil {
+		return false
+	}
+	if _, _, ok, _ := rt.Store.StatFile(rt.Store.ReportPath(b.Name, b.Round)); !ok {
+		return false
+	}
+	l, err := availability.LoadLedger(rt.Gates)
+	if err != nil {
+		// An unreadable ledger is not evidence the gate was already recorded,
+		// the same rule gateOnLimit writes under: it records and reports.
+		return false
+	}
+	for _, e := range l.Entries {
+		if e.Kind != availability.RateLimited || e.Binding != b.Name {
+			continue
+		}
+		if e.At.Before(b.RoundStartedAt) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // reconcileHeadless is one tick of a headless binding (spec §5.1). Reconcile
 // hands off here right after the DONE gate; the pane path never runs for a
 // headless endpoint and this never runs for a pane one.
@@ -828,7 +871,11 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// through to deliverAndSettle exactly as before. Escape and denial
 		// text keep their precedence at exit -- this scan is limit patterns
 		// only, and never reads anything the exit path would have handled.
-		if !next.StalledSince.IsZero() {
+		//
+		// A repeat tick on the same stall reads the same unchanged tail, so
+		// it must not record the same gate again: stallLimitGateRecorded
+		// skips the whole block once this round has recorded one.
+		if !next.StalledSince.IsZero() && !stallLimitGateRecorded(rt, next) {
 			gated, _, handled, gerr := gateOnLimit(ctx, rt, tx, next, limitText(ctx, rt, next), true)
 			if gerr != nil {
 				return next, gerr
