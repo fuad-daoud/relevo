@@ -751,7 +751,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// gets, and it rides the report that would have been delivered anyway.
 	// A round that never switched appends nothing, so its payload is exactly
 	// what it was before this existed.
-	for _, line := range switchLines(entries, closedRound) {
+	for _, line := range switchLines(entries, closedRound, payloadNamesSwitches(payload)) {
 		payload = payload + "\n" + line
 	}
 

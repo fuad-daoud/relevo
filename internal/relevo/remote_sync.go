@@ -20,6 +20,15 @@ import (
 
 const unreachableGrace = 30 * time.Minute
 
+// pollSwitchNotePrefix marks the switch entry a poll writes when the server
+// reports a candidate other than the one this client recorded. The entry names
+// what this client observed, not what the round did: the round's own switch
+// history ships in the closed round's view and is rendered from there, so this
+// note is excluded from the report's switch lines rather than naming the same
+// switch a second time. A server that ships no switch history leaves the entry
+// as the only record of the switch there is.
+const pollSwitchNotePrefix = "switched on "
+
 // checkedOutWarned records the bindings whose "checked out" hint catchUp has
 // already logged at Info in this process, so the hint does not repeat on every
 // SyncRemote (#253). Process-local on purpose: the daemon and `relevo wait` are
@@ -278,7 +287,7 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 		b.Builder.Kind = kind
 		if err := tx.AppendLog(name, store.LogEntry{
 			TS: now, Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindSwitch,
-			Note:      fmt.Sprintf("switched on %s: %s -> %s", server, prev, view.Candidate),
+			Note:      fmt.Sprintf("%s%s: %s -> %s", pollSwitchNotePrefix, server, prev, view.Candidate),
 			Confirmed: true,
 		}); err != nil {
 			return b, false, err
