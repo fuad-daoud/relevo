@@ -326,13 +326,13 @@ func queueHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, e
 // haltAndSettle is haltBinding plus the delivery attempt, and it is what every
 // halt path that ENDS a reconcile tick calls.
 //
-// A halt path returns straight out of the tick. That is harmless as long as a
-// halt writes nothing, and it is not any more: the halt queues an entry, and a
-// tick that returns without a delivery attempt leaves that entry pending with
-// nothing scheduled to take it. The halted binding is reconciled again on the
-// next tick, so the entry is not lost forever -- but "eventually, if the next
-// tick happens to halt again" is not a notification. So the halt path attempts
-// delivery itself, through the same route every other payload takes.
+// A halt path returns straight out of the tick, and it has to deliver on the
+// way: the halt queues an entry, and a tick that returns without a delivery
+// attempt leaves that entry pending with nothing scheduled to take it. The halted
+// binding is reconciled again on the next tick, so the entry is not lost forever
+// -- but "eventually, if the next tick happens to halt again" is not a
+// notification. So the halt path attempts delivery itself, through the same
+// route every other payload takes.
 //
 // It is safe where the tick already delivered: DeliverPending on a binding with
 // nothing pending returns Empty without touching the log, so calling this ahead
