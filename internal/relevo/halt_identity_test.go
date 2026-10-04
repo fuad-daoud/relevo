@@ -615,6 +615,88 @@ func TestOwedHaltEntryIsQueuedOnALaterTick(t *testing.T) {
 	}
 }
 
+// TestFreshAttemptDropsTheOwedHaltMarker pins that a fresh attempt carries no
+// notification from the halt it replaces. A re-send and a rebind each clear the
+// halt's text, its stamp and its state word; the owed marker is the one field
+// that says "this binding still has a halt to tell its MasterMind about", and
+// leaving it behind makes the next tick queue that old halt -- filed under the
+// round that raised it, which is a round the fresh attempt has already left.
+func TestFreshAttemptDropsTheOwedHaltMarker(t *testing.T) {
+	t.Parallel()
+
+	t.Run("re-send", func(t *testing.T) {
+		t.Parallel()
+
+		rt, b := sentBinding(t)
+		fillLogLeavingRoom(t, rt, b.Name, 2)
+		owed := closeWithUnwritableHaltEntry(t, rt, b)
+		if owed.OwedHalt == nil {
+			t.Fatal("OwedHalt is nil, want the owed entry as the fixture")
+		}
+		freeLogRoom(t, rt, b.Name)
+		endProcess(t, rt, owed)
+
+		if _, err := Send(context.Background(), rt, b.Name, writePlan(t, "again"), SendOptions{}); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+		stored, err := rt.Store.Load(b.Name)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if stored.Halt != "" || stored.HaltNotifiedRound != 0 {
+			t.Fatalf("halt = %q notified %d, want the re-send's own reset as the fixture", stored.Halt, stored.HaltNotifiedRound)
+		}
+		if stored.OwedHalt != nil {
+			t.Errorf("OwedHalt = %+v, want nil: the re-send answers the halt the marker is about", stored.OwedHalt)
+		}
+
+		got, err := reconcileAndSave(t, rt, stored)
+		if err != nil {
+			t.Fatalf("the tick after the re-send: %v", err)
+		}
+		if halts := haltEntriesFor(t, rt, b.Name); len(halts) != 0 {
+			t.Errorf("halt entries = %d, want 0: %+v", len(halts), halts)
+		}
+		if got.State != store.StateActive {
+			t.Errorf("state = %q, want active: nothing has halted the new round", got.State)
+		}
+	})
+
+	t.Run("rebind", func(t *testing.T) {
+		t.Parallel()
+
+		rt := newRuntime(t)
+		existing := store.Binding{
+			Name:             "webshop",
+			CWD:              "/repo",
+			Round:            3,
+			State:            store.StateNeedsYou,
+			MasterMind:       store.Endpoint{Kind: "claude", SessionID: "sess-architect"},
+			Builder:          store.Endpoint{Mode: store.ModeHeadless, Kind: "opencode"},
+			BuilderCandidate: testOpencodeRef,
+			Halt:             "round 3 needs a hand",
+			HaltAt:           baseTime,
+			OwedHalt:         &store.OwedHalt{Round: 3, Text: "round 3 needs a hand"},
+		}
+		if err := rt.Store.Save(existing); err != nil {
+			t.Fatalf("seed existing binding: %v", err)
+		}
+
+		if _, err := Bind(context.Background(), rt, BindOptions{
+			Name: "webshop", Resume: true, Rebind: true, Candidate: testOpencodeRef, MasterMindID: testMasterMindName, CWD: "/repo",
+		}); err != nil {
+			t.Fatalf("Bind --resume --rebind: %v", err)
+		}
+		saved, err := rt.Store.Load("webshop")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if saved.OwedHalt != nil {
+			t.Errorf("OwedHalt = %+v, want nil: the replacement builder answers the halt", saved.OwedHalt)
+		}
+	})
+}
+
 // reconcileAndSave runs one tick the way the daemon does -- the stored binding
 // under the lock, then saved -- which is the only sequence in which the marker
 // a tick clears can be seen to be cleared.

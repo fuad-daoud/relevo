@@ -4338,6 +4338,146 @@ func TestUnreachableHaltsClearOnQueuedView(t *testing.T) {
 	}
 }
 
+// TestUnreachableHaltClearsBeforeNeedsYouHalt pins that a server answering
+// "needs you" ends the unreachable episode too. The round over there is visible
+// again, so the halt's only reason is gone -- but the view carries a reason of
+// its own, and that reason is what the MasterMind must be told.
+//
+// Without the clear the server's halt is deduped away: the unreachable episode
+// already stamped HaltNotifiedRound for this round, so haltBinding queues
+// nothing and writes no reason, and the binding sits on NEEDS YOU quoting a halt
+// the server has just contradicted.
+func TestUnreachableHaltClearsBeforeNeedsYouHalt(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.RoundTimeoutMS = 1000
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WithLock(func(tx *store.Tx) error {
+		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: fmt.Errorf("%w: dial tcp: connection refused", client.ErrUnreachable)}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got := unreachableHaltedBinding(t, rt, b)
+
+	fr.getBindingErr = nil
+	fr.getBindingResp = remote.BindingView{RoundState: remote.RoundNeedsYou, Halt: "stuck at a dialog"}
+
+	got, err := reconcile(t, at(rt, 31*time.Minute), got)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Halt != "stuck at a dialog" {
+		t.Errorf("Halt = %q, want the server's halt text, not the unreachable one", got.Halt)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you: the server's halt is its own halt", got.State)
+	}
+	halts := haltEntriesFor(t, rt, b.Name)
+	if len(halts) != 2 {
+		t.Fatalf("halt entries = %d, want 2: the unreachable halt and the server's", len(halts))
+	}
+	if halts[1].Note != "stuck at a dialog" {
+		t.Errorf("second halt entry = %q, want the server's reason", halts[1].Note)
+	}
+}
+
+// owedHaltBinding puts a remote binding in the state a close leaves behind when
+// its halt entry could not be written: the halt text, the per-round notification
+// stamp and the marker are all on disk, and the entry is not.
+//
+// A remote binding rather than a closed headless round because the marker has to
+// be paired with a tick that still has work after queueing the entry, and the
+// server-side switch is the shortest such step: it appends a switch entry of its
+// own, so a full log refuses it while the owed halt -- which queued earlier in the
+// same tick -- still fits.
+func owedHaltBinding(t *testing.T, st *store.Store) store.Binding {
+	t.Helper()
+
+	b := remoteBinding("zen")
+	b.State = store.StateNeedsYou
+	b.Halt = "round 1 changed internal/other.go outside actor"
+	b.HaltAt = baseTime
+	b.HaltNotifiedRound = b.Round
+	b.OwedHalt = &store.OwedHalt{Round: 1, Text: b.Halt}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// daemonTick runs one tick the way the daemon does: the stored binding under the
+// lock, reconciled, and saved only if the reconcile returned nothing. A tick that
+// fails therefore leaves the log's entries behind and none of its binding writes.
+func daemonTick(t *testing.T, rt Runtime, name string) error {
+	t.Helper()
+	return rt.Store.WithLock(func(tx *store.Tx) error {
+		cur, err := tx.Load(name)
+		if err != nil {
+			return err
+		}
+		next, err := Reconcile(context.Background(), rt, tx, cur)
+		if err != nil {
+			return err
+		}
+		return tx.Save(next)
+	})
+}
+
+// TestOwedHaltRetryAfterAFailedTickWritesOneEntry pins that the owed entry's
+// retry is idempotent. Writing the entry and clearing the marker are the same
+// tick's two halves, and only the entry half is on disk until the save commits:
+// a tick that fails below queueOwedHalt leaves the marker behind, and the next
+// tick read it and wrote a second halt for a round already notified.
+func TestOwedHaltRetryAfterAFailedTickWritesOneEntry(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := owedHaltBinding(t, st)
+
+	fr := &fakeRemote{getBindingResp: remote.BindingView{RoundState: remote.RoundIdle, Candidate: "test/other"}}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	// Room for the owed halt's entry alone, so the switch entry the rest of the
+	// tick writes is the one the cap refuses.
+	fillLogLeavingRoom(t, rt, b.Name, 1)
+
+	if err := daemonTick(t, rt, b.Name); err == nil {
+		t.Fatal("the tick was meant to fail after the owed entry was queued")
+	}
+	if halts := haltEntriesFor(t, rt, b.Name); len(halts) != 1 {
+		t.Fatalf("halt entries after the failed tick = %d, want 1: the owed entry is written before the save", len(halts))
+	}
+	// The failed tick saved nothing, so the marker a human would be told about is
+	// still on disk -- which is what the next tick reads.
+	stored, err := st.Load(b.Name)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if stored.OwedHalt == nil {
+		t.Fatal("stored OwedHalt is nil, want the failed tick to have left the marker behind")
+	}
+
+	freeLogRoom(t, rt, b.Name)
+	if err := daemonTick(t, rt, b.Name); err != nil {
+		t.Fatalf("the next tick: %v", err)
+	}
+	halts := haltEntriesFor(t, rt, b.Name)
+	if len(halts) != 1 {
+		t.Fatalf("halt entries after the next tick = %d, want 1: the retry is the entry already written, not a second one", len(halts))
+	}
+	if halts[0].Round != 1 || halts[0].Note != b.Halt {
+		t.Errorf("halt entry = round %d %q, want round 1 %q", halts[0].Round, halts[0].Note, b.Halt)
+	}
+}
+
 // TestUnreachableClearLeavesOtherHalts pins the other half of the clear's scope:
 // a halt the server has not contradicted stays. The unreachable halt is the
 // only one whose reason a running or queued view disproves, so a removed

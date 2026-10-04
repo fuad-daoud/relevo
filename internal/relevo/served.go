@@ -12,7 +12,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
-	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -130,16 +129,9 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 	}
 	var ackedRound int
 	var closedRound int
-	var priorTokens *usage.Tokens
 	if b.Serve != nil {
 		ackedRound = b.Serve.AckedRound
 		closedRound = b.Serve.ClosedRound
-		if closedRound > 0 {
-			pt := view.PriorTokensOf(entries, closedRound)
-			if pt.Total() > 0 {
-				priorTokens = &pt
-			}
-		}
 	}
 	return remote.BindingView{
 		ID:             recordID,
@@ -171,7 +163,7 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 		Feature:        b.Feature,
 		Ticket:         b.Ticket,
 		Usage:          facts.Usage,
-		PriorTokens:    priorTokens,
+		PriorTokens:    facts.PriorTokens,
 		Rusage:         facts.Rusage,
 		StalledSince:   b.StalledSince,
 	}
@@ -179,9 +171,10 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 
 // servedRoundFacts is the per-round scan ServedView used to run for its
 // ClosedRound: round n's report outcome, note, usage and rusage; its gate
-// result; its diff note, commit count and tree; its switch history; and how it
-// was stopped. n <= 0 yields the zero value. Every field names the newest entry
-// for round n of its kind, the order the original scans walked.
+// result; its diff note, commit count and tree; its switch history; its own
+// prior tokens; and how it was stopped. n <= 0 yields the zero value. Every
+// field names the newest entry for round n of its kind, the order the original
+// scans walked.
 func servedRoundFacts(entries []store.LogEntry, n int) remote.ClosedRoundView {
 	var f remote.ClosedRoundView
 	if n <= 0 {
@@ -221,6 +214,12 @@ func servedRoundFacts(entries []store.LogEntry, n int) remote.ClosedRoundView {
 		if e.Round == n && e.Kind == store.KindSwitch && e.Note != nudgeNote && e.Note != "" {
 			f.Switches = append(f.Switches, e.Note)
 		}
+	}
+	// priorTokens is the round's own earlier segments: the sum view.PriorTokensOf
+	// walks for n. Nil when the round used none, so a client keys each round's
+	// figure off that round rather than off the newest closed one.
+	if pt := view.PriorTokensOf(entries, n); pt.Total() > 0 {
+		f.PriorTokens = &pt
 	}
 	// stopped is how the round was stopped: the newest KindStop entry for n
 	// whose note names one ("stopped/killed", "stopped/reaped", "stopped/gone"

@@ -368,8 +368,10 @@ func filledClosedRoundView() ClosedRoundView {
 		DiffNote:    "refactored remote wire",
 		DiffCommits: 2,
 		DiffTree:    "5555666677778888999900001111222233334444",
+		DirtyCommit: "4444555566667777888899990000111122223333",
 		Usage:       &u,
 		Rusage:      &rusage,
+		PriorTokens: &usage.Tokens{In: 100, CacheRead: 200, CacheWrite: 50, Out: 25},
 	}
 }
 
