@@ -132,17 +132,28 @@ func (d *DB) swapInVacuum(sibling string) error {
 // requireDrainedWAL refuses the swap while the write-ahead log still holds
 // pages: renaming the database over the file would drop them.
 func requireDrainedWAL(path string) error {
+	n, err := walBytes(path)
+	if err != nil {
+		return fmt.Errorf("db: vacuum: stat -wal: %w", err)
+	}
+	if n == 0 {
+		return nil
+	}
+	return fmt.Errorf("db: vacuum: the -wal still holds %d bytes: %w", n, ErrInvalid)
+}
+
+// walBytes reports how many bytes the write-ahead log beside path still holds.
+// An absent log holds none, which is the same answer an empty one gives: the two
+// callers differ in what they do about it, not in what they measure.
+func walBytes(path string) (int64, error) {
 	fi, err := os.Stat(path + "-wal")
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil
+			return 0, nil
 		}
-		return fmt.Errorf("db: vacuum: stat -wal: %w", err)
+		return 0, err
 	}
-	if fi.Size() == 0 {
-		return nil
-	}
-	return fmt.Errorf("db: vacuum: the -wal still holds %d bytes: %w", fi.Size(), ErrInvalid)
+	return fi.Size(), nil
 }
 
 // reopenOriginal restores d's pool after a failed vacuum, joining a reopen
