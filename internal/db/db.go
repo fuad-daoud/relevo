@@ -74,6 +74,11 @@ type DB struct {
 	// onClosed, when set, runs after this handle's pool is closed. The test
 	// owner hop uses it to learn that a dialled client handle is gone.
 	onClosed func()
+
+	// local is the machine-local file beside this handle, opened by OpenSplit
+	// and nil on every other handle. The two run the same migrations, so it is
+	// the destination for the rows that never leave this machine.
+	local *DB
 }
 
 // Options tunes OpenWith. A negative value is treated as 0, which selects the
@@ -285,6 +290,12 @@ func ping(sqlDB *sql.DB) error {
 // the pool close errors: leaving the flock held after a failed close would wedge
 // every later opener.
 func (d *DB) Close() error {
+	if local := d.local; local != nil {
+		d.local = nil
+		if lerr := local.Close(); lerr != nil {
+			return fmt.Errorf("db: close local file: %w", lerr)
+		}
+	}
 	path := d.path
 	d.path = ""
 	if path != "" && !d.readOnly {
