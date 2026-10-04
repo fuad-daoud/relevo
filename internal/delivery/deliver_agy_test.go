@@ -911,3 +911,117 @@ func TestDeliverPendingAgyDeliversViaDeliverer(t *testing.T) {
 		t.Error("the mastermind-bound log entry was not confirmed")
 	}
 }
+
+// TestAgyDeliverSentButUnreadPastFallbackIsNotMine pins the give-up gate ABOVE
+// the "sent but not yet read" admit: an entry queued past the window whose
+// message is in the inbox and still unread is NOT admitted. It is the outcome
+// the caller turns back into an admission -- a fresh admit stamp plus Confirm's
+// full window under the state lock, every tick -- so honouring it past the
+// window re-admits the entry in the same pass and the entry never becomes
+// claimable. Nothing is sent either: the inbox already holds the payload.
+func TestAgyDeliverSentButUnreadPastFallbackIsNotMine(t *testing.T) {
+	t.Parallel()
+
+	d, fake, home := newAgyRig(t)
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	d.Now = func() time.Time { return now }
+	d.FallbackAfter = time.Second
+
+	queuedAt := now.Add(-2 * time.Second)
+	writeAgyMessage(t, home, "m-unread", agyTestConv, agyTestPayload, queuedAt, false)
+
+	out, reason, err := d.Deliver(context.Background(),
+		store.Endpoint{Kind: "agy", SessionID: agyTestConv}, agyTestPayload, "/x/001-report.md", queuedAt)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if out != OutcomeNotMine {
+		t.Errorf("outcome = %v (reason %q), want OutcomeNotMine: an entry past the window must not be re-admitted", out, reason)
+	}
+	if want := "agy push gave up after 1s"; reason != want {
+		t.Errorf("reason = %q, want %q", reason, want)
+	}
+	if fake.calls != 0 {
+		t.Errorf("sent %d times for a message already in the inbox; want 0", fake.calls)
+	}
+}
+
+// TestDeliverPendingAgyExpiredAdmitGoesToPullNotReAdmitted is the end-to-end
+// regression, over a REAL agy inbox in the "sent but unread" state: the entry
+// was admitted, the admit outlived agy's horizon, and the message is sitting in
+// the inbox unclaimed by the session. The tick must NOT re-admit it. It clears
+// the admit, hands the entry to the pull route -- where a reader can claim it --
+// and returns without polling Confirm, so it does not hold the state lock for
+// the confirm window.
+func TestDeliverPendingAgyExpiredAdmitGoesToPullNotReAdmitted(t *testing.T) {
+	t.Parallel()
+
+	d, fake, home := newAgyRig(t)
+	// An hour ahead of the admit stamp the store just wrote, so that stamp is
+	// already an hour old by this clock. The clock keeps advancing in real time:
+	// a frozen one would never close Confirm's deadline, so a regression here
+	// would hang the package instead of failing it after one confirm window.
+	now := func() time.Time { return time.Now().UTC().Add(time.Hour) }
+	d.Now = now
+	d.FallbackAfter = time.Minute      // agy's admit horizon == its give-up window
+	d.ConfirmWindow = AgyConfirmWindow // the 3s poll an admit would trigger
+	d.ConfirmPoll = AgyConfirmPoll
+
+	// The real inbox state: the payload arrived, agy never marked it read.
+	queuedAt := now().Add(-2 * time.Minute)
+	writeAgyMessage(t, home, "m-expired", agyTestConv, agyTestPayload, now(), false)
+
+	rt := Deps{
+		Store:      store.New(t.TempDir()),
+		Now:        now,
+		Deliverers: map[string]MasterMindDeliverer{"agy": d},
+	}
+
+	b := store.Binding{
+		Name:         "webshop",
+		CWD:          "/repo/webshop",
+		Round:        1,
+		State:        store.StateActive,
+		MasterMind:   store.Endpoint{Kind: "agy", SessionID: agyTestConv},
+		MasterMindID: "pl_aaaaaaaabbbb",
+		Builder:      store.Endpoint{Mode: store.ModeHeadless},
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		if err := tx.Save(b); err != nil {
+			return err
+		}
+		return Queue(context.Background(), rt, tx, b.Name, store.LogEntry{
+			Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+			Payload: agyTestPayload, TS: queuedAt,
+		})
+	}); err != nil {
+		t.Fatalf("seed %s: %v", b.Name, err)
+	}
+	admit(t, rt, b.Name) // an earlier tick sent the payload and stamped the admit
+
+	start := time.Now()
+	_, got := deliverOnce(t, rt, b)
+	held := time.Since(start)
+
+	if got.Delivered {
+		t.Errorf("Delivered = true (route %q), want the unread entry handed back", got.Route)
+	}
+	if got.Route != "pull" {
+		t.Errorf("route = %q, want pull: an expired admit must leave the entry claimable", got.Route)
+	}
+	if got.Reason != "agy push gave up after 1m0s" {
+		t.Errorf("reason = %q, want the give-up reason", got.Reason)
+	}
+	if fake.calls != 0 {
+		t.Errorf("sent %d times; want 0: the payload is already in the inbox", fake.calls)
+	}
+	if held >= d.ConfirmWindow {
+		t.Errorf("the tick held the state lock for %s, want under the %s confirm window: an expired admit must not be re-admitted and polled", held, d.ConfirmWindow)
+	}
+	if admitOf(t, rt, b.Name) != nil {
+		t.Error("the expired admit is still stamped: the entry is not claimable for the background wait")
+	}
+	if _, pending, err := rt.Store.PendingForMasterMind(b.Name); err != nil || !pending {
+		t.Errorf("pending = %v (err %v), want the entry still pending and claimable", pending, err)
+	}
+}
