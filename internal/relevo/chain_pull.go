@@ -261,6 +261,8 @@ func chainRoundView(mv remote.ChainMemberView, r int) remote.BindingView {
 		v.ReportOutcome = cr.ReportOutcome
 		v.GateResult = cr.GateResult
 		v.Stopped = cr.Stopped
+		v.ReportNote = cr.ReportNote
+		v.Switches = cr.Switches
 		v.DiffNote = cr.DiffNote
 		v.DiffCommits = cr.DiffCommits
 		v.DiffTree = cr.DiffTree

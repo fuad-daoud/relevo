@@ -332,3 +332,121 @@ func TestServerSwitchLinesFollowTheDiff(t *testing.T) {
 		t.Errorf("switch line at %d precedes the diff line at %d in %q, want the switch after the diff", switchAt, diffAt, payload)
 	}
 }
+
+// remoteCloseReport closes a remote round with the given server switches through
+// the whole catch-up report path -- applyCatchUpReport, which is queueReport's
+// only remote caller -- and returns the report entry's stored payload.
+//
+// The binding's log already carries a poll-observed switch entry for the closed
+// round, the entry applyRemoteView writes when it sees the server running a
+// different candidate. That is the duplication this pins: the poll saw the same
+// switch the server's own history records, so the payload must name it once.
+func remoteCloseReport(t *testing.T, serverSwitches ...string) string {
+	t.Helper()
+
+	rt, _ := seedHeadless(t, newFakeRunner())
+	b := remoteClosedBinding(t, rt)
+	// The poll that observed the switch ran against a remote binding, so the
+	// mode is the one a served round carries.
+	b.Builder.Mode = store.ModeRemote
+	const closed = 1
+	writeRoundReport(t, rt, b, closed)
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", b.Name)
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.AppendLog(b.Name, store.LogEntry{
+			Round: closed, Direction: store.DirToMasterMind, Kind: store.KindSwitch, Confirmed: true,
+			Note: "switched on zen: agy/test/m -> claude/test/m",
+		})
+	}); err != nil {
+		t.Fatalf("append the poll's switch entry: %v", err)
+	}
+
+	view := remote.BindingView{ClosedRound: closed, Switches: serverSwitches}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		cur, err := tx.Load(b.Name)
+		if err != nil {
+			return err
+		}
+		_, err = applyCatchUpReport(context.Background(), rt, tx, cur, &catchUpAck{
+			Server: "zen", Name: b.Name, Round: closed, BindingRound: cur.Round, View: view,
+		})
+		return err
+	}); err != nil {
+		t.Fatalf("applyCatchUpReport: %v", err)
+	}
+
+	entries, err := rt.Store.ReadLog(b.Name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	e, ok := lastReportEntry(entries, closed)
+	if !ok {
+		t.Fatal("no report entry for the closed round")
+	}
+	return e.Payload
+}
+
+// TestARemoteCloseNamesEachServerSwitchOnce: the round took one switch on the
+// server and this client observed the same one through a poll, so its log
+// holds that observation as a switch entry of its own. The server's history is
+// the record and the payload already names it from there, so the poll's entry
+// must not name it a second time: one switch, one line.
+func TestARemoteCloseNamesEachServerSwitchOnce(t *testing.T) {
+	t.Parallel()
+
+	const reason = "switched builder (rate-limited: 429 too many requests): picked agy/test/m for builder: order #2"
+
+	lines := switchPayloadLines(remoteCloseReport(t, reason))
+
+	if len(lines) != 1 {
+		t.Fatalf("switch lines = %q, want the round's one switch named exactly once", lines)
+	}
+	if lines[0] != "Switch: "+reason {
+		t.Errorf("switch line = %q, want the server's own switch reason", lines[0])
+	}
+}
+
+// TestARemoteABAStillNamesEveryServerSwitchOnce: the round rotated and came
+// back to its first candidate, which one poll can never see whole. The server
+// ships all three switches and the payload names each of them once -- the
+// duplication used to double every one of them, and to quadruple an A-B-A.
+func TestARemoteABAStillNamesEveryServerSwitchOnce(t *testing.T) {
+	t.Parallel()
+
+	const (
+		first  = "switched builder (rate-limited: 429 too many requests): picked agy/test/m for builder: order #2"
+		second = "switched builder (rate-limited: 429 too many requests): picked claude/test/m for builder: order #5"
+		third  = "switched builder (rate-limited: 429 too many requests): picked agy/test/m for builder: order #2"
+	)
+
+	lines := switchPayloadLines(remoteCloseReport(t, first, second, third))
+
+	if len(lines) != 3 {
+		t.Fatalf("switch lines = %q, want each of the round's three switches named once", lines)
+	}
+	for i, reason := range []string{first, second, third} {
+		if lines[i] != "Switch: "+reason {
+			t.Errorf("switch line %d = %q, want %q in the order the round took them", i, lines[i], reason)
+		}
+	}
+}
+
+// TestARemoteCloseWithNoServerSwitchesStillNamesThePollsSwitch: a server from
+// before the switch history shipped sends none, so the entry this client's own
+// poll wrote is the only record of the switch there is. It is named then: an
+// absent history is not a reason to drop what is known.
+func TestARemoteCloseWithNoServerSwitchesStillNamesThePollsSwitch(t *testing.T) {
+	t.Parallel()
+
+	payload := remoteCloseReport(t)
+
+	lines := switchPayloadLines(payload)
+	if len(lines) != 1 {
+		t.Fatalf("switch lines = %q, want the poll's own switch named", lines)
+	}
+	if lines[0] != "Switch: switched on zen: agy/test/m -> claude/test/m" {
+		t.Errorf("switch line = %q, want the poll's switch entry", lines[0])
+	}
+}

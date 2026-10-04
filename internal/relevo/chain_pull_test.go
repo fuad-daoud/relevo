@@ -306,6 +306,55 @@ func TestChainPullSavesTheRoundsBeforeAFailedInstall(t *testing.T) {
 	}
 }
 
+// TestChainPullInstallsEachRoundsOwnNoteAndSwitches pins the per-round facts a
+// chain pull copies: a member that closed two rounds, one unmarked with a
+// switch of its own and one marked with a different switch, installs each round
+// with its own note and its own switch line. A pull that installed both rounds
+// from the newest round's facts would read the older round as marked and name a
+// switch it never took.
+func TestChainPullInstallsEachRoundsOwnNoteAndSwitches(t *testing.T) {
+	t.Parallel()
+
+	const (
+		firstNote  = "unmarked"
+		secondNote = "gate=fail"
+		firstSw    = "switched builder (rate-limited: 429): picked agy/test/m for builder: order #2"
+		secondSw   = "switched builder (exited (code 1) without a report): picked claude/test/m for builder: order #5"
+	)
+	view := chainPullView("shop", string(chain.StatusRunning), 2, 0, 0)
+	builder := &view.Members[0]
+	builder.Rounds[0].ReportNote = firstNote
+	builder.Rounds[0].Switches = []string{firstSw}
+	builder.Rounds[1].ReportNote = secondNote
+	builder.Rounds[1].Switches = []string{secondSw}
+	fr := chainPullFake(view)
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	pullRounds(t, rt, "shop")
+
+	entries := chainLog(t, rt, "shop")
+	for _, c := range []struct {
+		round   int
+		note    string
+		switch_ string
+	}{
+		{1, firstNote, firstSw},
+		{2, secondNote, secondSw},
+	} {
+		e, ok := lastReportEntry(entries, c.round)
+		if !ok {
+			t.Fatalf("no report entry for round %d: %+v", c.round, entries)
+		}
+		if !strings.Contains(e.Note, c.note) {
+			t.Errorf("round %d report note = %q, want it to carry %q", c.round, e.Note, c.note)
+		}
+		if lines := switchPayloadLines(e.Payload); len(lines) != 1 || lines[0] != "Switch: "+c.switch_ {
+			t.Errorf("round %d switch lines = %q, want only its own %q", c.round, lines, c.switch_)
+		}
+	}
+}
+
 // countLogEntries counts a binding's entries of one shape for one round.
 func countLogEntries(entries []store.LogEntry, round int, dir store.Direction, kind store.Kind) int {
 	n := 0
