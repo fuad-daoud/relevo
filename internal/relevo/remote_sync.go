@@ -217,22 +217,8 @@ func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		}
 	}
 	if errors.Is(err, client.ErrUnreachable) {
-		if b.RemoteUnreachableSince.IsZero() {
-			b.RemoteUnreachableSince = now
-			slog.Warn(fmt.Sprintf("%s unreachable", server), "server", server, "binding", name)
-		}
-		b.Builder.RemoteStatus = "unreachable"
-
-		entries, rerr := tx.ReadLog(name)
-		roundOpen := rerr == nil && store.RoundOpen(entries, b.Round)
-
-		dur := now.Sub(b.RemoteUnreachableSince).Truncate(time.Second)
-		if roundOpen && now.Sub(b.RemoteUnreachableSince) > roundBudget(b)+unreachableGrace {
-			b, err := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: %s unreachable for %s; round %d may still be running there",
-				name, server, dur, b.Round))
-			return b, false, err
-		}
-		return b, false, nil
+		b, err := applyRemoteUnreachable(ctx, rt, tx, b, now)
+		return b, false, err
 	}
 	if errors.Is(err, client.ErrCertChanged) {
 		if b.Builder.RemoteStatus != "cert" {
@@ -308,6 +294,10 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 			return b, false, nil
 		}
 	}
+
+	// A view that came back answers the only question the unreachable halt
+	// asked, so that halt goes before the switch reads the round.
+	b = clearUnreachableHalt(view.RoundState, b)
 
 	switch view.RoundState {
 	case remote.RoundQueued:
