@@ -505,9 +505,10 @@ func TestHaltEntryReachesADelivererNotWait(t *testing.T) {
 
 // TestHaltTextArrivesAfterAPendingReport is case (e): the halt entry is
 // appended, so it is the newer of the two, and the report must not be jumped.
-// PullPendingThrough reads oldest first and Pull picks the oldest claimable
-// entry, so this is a property of append order -- but it is the property that
-// would break first if the halt were written anywhere other than at the halt.
+// PullPendingThrough confirms both and reads oldest first, so the report is
+// never skipped -- and the wait renders the round's own report as the main text
+// with the halt under its own header, whichever of the two the log appended
+// last.
 func TestHaltTextArrivesAfterAPendingReport(t *testing.T) {
 	t.Parallel()
 
@@ -536,8 +537,14 @@ func TestHaltTextArrivesAfterAPendingReport(t *testing.T) {
 	if reportAt < 0 || haltAt < 0 {
 		t.Fatalf("Wait Payload = %q, want both the report and the halt text", res.Payload)
 	}
-	if reportAt > haltAt {
-		t.Errorf("Wait Payload puts the halt at %d and the report at %d, want the report first", haltAt, reportAt)
+	// The halt's header names the round and the report follows it as the main
+	// text: the report is the round's own result, and a halt ahead of it reads
+	// as the reason the round stopped rather than as its content.
+	if want := delivery.HaltHeader(1); !strings.Contains(res.Payload, want) {
+		t.Errorf("Wait Payload = %q, want the halt under its own header %q", res.Payload, want)
+	}
+	if haltAt > reportAt {
+		t.Errorf("Wait Payload puts the halt at %d and the report at %d, want the report as the main text", haltAt, reportAt)
 	}
 }
 
