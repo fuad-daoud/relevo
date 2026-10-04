@@ -223,16 +223,19 @@ func TestMaxSwitchesZeroHalts(t *testing.T) {
 	}
 }
 
-// TestExhaustionAfterResendStillSaysWhy pins #250 item 2: the second halt of
-// a re-sent round still records its reason (Halt is always set, not only on
-// the notifying branch), and a human's re-send is a fresh attempt -- it
-// resets the round's switch budget and notification dedup, so the next
-// exhaustion in the same round records its reason again.
+// TestExhaustionAfterResendStillSaysWhy pins #250 item 2: a human's re-send is
+// a fresh attempt -- it resets the round's switch budget and the notification
+// dedup -- so the next exhaustion in the same round records its reason again.
 //
-// Mutation check: move the `b.Halt =` line in haltBinding back inside the
-// `if b.HaltNotifiedRound != b.Round` guard and this test must fail, because
-// the second halt below would leave Halt empty (HaltNotifiedRound is
-// already back at b.Round from the first halt's dedup).
+// The reason is recorded on the notifying branch only, and a re-send is what
+// makes the second exhaustion notify: Send clears the stamp along with Halt, so
+// the second halt below enters the guard either way and Halt is set.
+//
+// Mutation check: write `b.Halt =` outside the `if b.HaltNotifiedRound !=
+// b.Round` guard in haltBinding and the last assertion below must fail: a
+// deduped halt queues no entry, so a reason written on that path is one no
+// entry ever carried. See TestDedupedRoundCapHaltKeepsNotifiedArtifactCapReason
+// for the cross-halt stamp that makes this cost something.
 func TestExhaustionAfterResendStillSaysWhy(t *testing.T) {
 	t.Parallel()
 
@@ -306,32 +309,33 @@ func TestExhaustionAfterResendStillSaysWhy(t *testing.T) {
 	// means the two exhaustion halts above enter the notify guard either
 	// way and cannot, by themselves, distinguish Halt being set inside vs.
 	// outside it). Call haltBinding directly with the round already
-	// notified (dedup active, guard skipped) and confirm it still records
-	// Halt without renotifying.
+	// notified (dedup active, guard skipped) and confirm it leaves the
+	// notified reason standing rather than replacing it with a reason no
+	// entry carries.
 	if got.HaltNotifiedRound != got.Round {
 		t.Fatalf("test setup: HaltNotifiedRound = %d, want %d (round already notified)", got.HaltNotifiedRound, got.Round)
 	}
-	got.Halt = ""
+	notifiedHalt := got.Halt
 	beforeNotified := got.HaltNotifiedRound
 	deduped := haltOnce(t, rt, got, "webshop: deduped halt check")
-	if deduped.Halt == "" {
-		t.Error("Halt is empty on a deduped halt, want the reason recorded")
+	if deduped.Halt != notifiedHalt {
+		t.Errorf("Halt = %q after a deduped halt, want the notified reason %q unchanged", deduped.Halt, notifiedHalt)
 	}
 	if deduped.HaltNotifiedRound != beforeNotified {
 		t.Errorf("HaltNotifiedRound = %d after a deduped halt, want unchanged %d", deduped.HaltNotifiedRound, beforeNotified)
 	}
 }
 
-// TestRepeatedHaltKeepsHaltAt pins the fix in this round: HaltAt marks when
-// a halt begins, not every tick that repeats it. haltBinding called three
-// times with the same message keeps HaltAt at the first call's time; a
-// different message restamps it; and clearing Halt by hand (as Send does)
-// and repeating the same message restamps it too, since that is a fresh
-// halt beginning from the caller's point of view.
+// TestRepeatedHaltKeepsHaltAt pins HaltAt's rule: HaltAt marks when the
+// notified halt began, not every tick that repeats it. haltBinding called
+// three times with the same message keeps HaltAt at the first call's time; a
+// deduped halt is a repeat by definition and so leaves Halt and HaltAt
+// standing; and a fresh notification -- the stamp cleared as the round
+// advance does -- restamps it even when the text is unchanged.
 //
-// Mutation check: stamp HaltAt unconditionally (round 1's behavior) and the
-// first assertion below fails, since the second and third calls would each
-// advance it by a minute.
+// Mutation check: stamp HaltAt unconditionally (writing it outside the
+// HaltNotifiedRound guard) and the fourth call's assertion below fails,
+// since it would advance by a minute.
 func TestRepeatedHaltKeepsHaltAt(t *testing.T) {
 	t.Parallel()
 
@@ -356,27 +360,32 @@ func TestRepeatedHaltKeepsHaltAt(t *testing.T) {
 		t.Errorf("HaltAt = %v after a third repeated halt, want unchanged %v", third.HaltAt, firstHaltAt)
 	}
 
-	// A different message is a new halt: HaltAt restamps to that call's time.
+	// A different message is still a repeat, not a fresh notification: the
+	// round is already notified, so this halt queues nothing and the reason
+	// the mastermind was given stands.
 	fourth := haltOnce(t, at(rt, 3*time.Minute), third, "webshop: different reason")
-	wantFourthHaltAt := baseTime.Add(3 * time.Minute)
-	if !fourth.HaltAt.Equal(wantFourthHaltAt) {
-		t.Errorf("HaltAt = %v after a new-text halt, want %v", fourth.HaltAt, wantFourthHaltAt)
+	if !fourth.HaltAt.Equal(firstHaltAt) {
+		t.Errorf("HaltAt = %v after a deduped new-text halt, want unchanged %v", fourth.HaltAt, firstHaltAt)
 	}
-	if fourth.Halt != "different reason" {
-		t.Errorf("Halt = %q after a new-text halt, want %q", fourth.Halt, "different reason")
+	if fourth.Halt != "same reason" {
+		t.Errorf("Halt = %q after a deduped new-text halt, want the notified %q", fourth.Halt, "same reason")
 	}
 
-	// Halt cleared by hand (as Send does) and the same message again is,
-	// from haltBinding's point of view, a new halt beginning: HaltAt
-	// restamps even though the text matches what it was before clearing.
+	// A fresh notification -- the stamp cleared as the round advance does --
+	// is a new halt from haltBinding's point of view: HaltAt restamps even
+	// though the text matches what it was before the advance.
 	fourth.Halt = ""
+	fourth.HaltNotifiedRound = 0
 	fifth := haltOnce(t, at(rt, 4*time.Minute), fourth, "webshop: different reason")
 	wantFifthHaltAt := baseTime.Add(4 * time.Minute)
 	if !fifth.HaltAt.Equal(wantFifthHaltAt) {
-		t.Errorf("HaltAt = %v after a cleared-then-repeated halt, want %v", fifth.HaltAt, wantFifthHaltAt)
+		t.Errorf("HaltAt = %v after a fresh notification, want %v", fifth.HaltAt, wantFifthHaltAt)
 	}
 	if fifth.Halt != "different reason" {
-		t.Errorf("Halt = %q after a cleared-then-repeated halt, want %q", fifth.Halt, "different reason")
+		t.Errorf("Halt = %q after a fresh notification, want %q", fifth.Halt, "different reason")
+	}
+	if fifth.HaltNotifiedRound != fifth.Round {
+		t.Errorf("HaltNotifiedRound = %d after a fresh notification, want %d", fifth.HaltNotifiedRound, fifth.Round)
 	}
 }
 

@@ -249,14 +249,26 @@ func reconcileWith(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 // binding, and file under the round whose artifact size or scope verdict caused
 // the halt. It is threaded rather than inferred for that reason -- see
 // closedRoundHalt.
+//
+// The reason is written inside the notification guard rather than beside it.
+// The guard is what decides whether this halt is told to anyone, and a halt it
+// dedupes queues no entry -- so a reason written on that path is one no entry
+// ever carried. That is not only a lost line: a post-advance halt (the reader
+// artifact cap, a scope refusal) stamps the key with the round the binding has
+// just advanced to, so the next tick's halt of that round -- the round cap, the
+// round timeout -- finds the key already equal, is deduped, and would otherwise
+// overwrite the reason the mastermind actually received with a reason nothing
+// says. HaltAt is written with it for the same reason: it marks when the
+// notified halt began.
 func haltBinding(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entryRound int, message string) (store.Binding, error) {
 	text := strings.TrimPrefix(message, b.Name+": ")
-	if b.Halt != text || b.HaltAt.IsZero() {
-		b.HaltAt = rt.Now().UTC()
-	}
-	b.Halt = text
 
 	if b.HaltNotifiedRound != b.Round {
+		if b.Halt != text || b.HaltAt.IsZero() {
+			b.HaltAt = rt.Now().UTC()
+		}
+		b.Halt = text
+
 		slog.Info("binding halted", "binding", b.Name, "round", b.Round, "reason", message)
 
 		b.HaltNotifiedRound = b.Round
