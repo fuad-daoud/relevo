@@ -344,7 +344,7 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (view.BindingSt
 		// A report a running chain consumed is already read: the chain's own
 		// end delivery is the mastermind's copy of it, so the member row must
 		// not keep painting REPORT IN for a round nobody is waiting on.
-		if strings.Contains(entries[i].Note, "consumed by chain ") {
+		if strings.Contains(entries[i].Note, view.ConsumedNoteMarker) {
 			break
 		}
 		viewedAt, ok := rt.Store.ViewedAt(b.Name)
