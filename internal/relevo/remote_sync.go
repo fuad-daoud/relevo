@@ -339,7 +339,9 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 		applyDrift(rt, tx, name, b.Round, f.Drift)
 		return b, false, nil
 
-	case remote.RoundNeedsYou:
+	// A broken round shares this arm: no builder behind it means a human is what
+	// it waits on, and a close outranks a break, so it owes no catch-up here.
+	case remote.RoundNeedsYou, remote.RoundBroken:
 		b.StalledSince = view.StalledSince
 		// Catch-up first, halt second. A halt and a close are not exclusive on
 		// the wire: a round that closed and then halted again reports both, and
@@ -369,7 +371,7 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 				return next, true, nil
 			}
 		}
-		b, err := haltAndSettle(ctx, rt, tx, b, name+": "+view.Halt)
+		b, err := haltAndSettle(ctx, rt, tx, b, name+": "+remoteHaltText(view.RoundState, view.Halt))
 		return b, false, err
 
 	case remote.RoundClosed:

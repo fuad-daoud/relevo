@@ -106,3 +106,26 @@ func clearUnreachableHalt(state remote.RoundState, b store.Binding) store.Bindin
 	b.State = store.StateActive
 	return b
 }
+
+// remoteHaltText is the reason a halting view halts this binding for.
+//
+// The server's own text is what a halt is for: it names the switch that failed
+// and what it failed with, which is the only account of the break that exists.
+// A served binding ships that text for a broken round, so the break arrives
+// named -- but not always: a server predating the field omits it, and so does a
+// break from a writer with nothing to say. A broken view with no text still owes
+// the one entry a halt owes, and haltBinding given an empty one files an entry
+// whose payload says nothing at all, so the fallback supplies the reason instead.
+//
+// Only a broken view is second-guessed. Every other halting word carries a text
+// the server means, and second-guessing one would replace a real reason with a
+// guess.
+//
+// The caller passes this to haltAndSettle, which prefixes the binding name and
+// strips it back off for b.Halt.
+func remoteHaltText(state remote.RoundState, halt string) string {
+	if state == remote.RoundBroken && halt == "" {
+		return "the server's builder for this round is gone; rebind before sending"
+	}
+	return halt
+}

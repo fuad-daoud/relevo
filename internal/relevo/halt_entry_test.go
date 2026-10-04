@@ -369,6 +369,21 @@ func TestMidRoundSwitchSpawnFailureHaltsAndWaits(t *testing.T) {
 		t.Fatalf("pid = %d, want 0: a switch that spawned nothing", next.Builder.PID)
 	}
 
+	// The binding keeps the reason it queued. A served binding ships its Halt to
+	// its owner, and without one the owner is told only that the round broke --
+	// not which switch failed and not why, so there is nothing to act on. It is
+	// name-stripped the way haltBinding records one, so the wire text is the same
+	// line a human reads here.
+	if !strings.Contains(next.Halt, "switching to opencode/second/m") {
+		t.Errorf("Halt = %q, want it to name the failed switch", next.Halt)
+	}
+	if strings.HasPrefix(next.Halt, "webshop: ") {
+		t.Errorf("Halt = %q, want the binding name stripped as haltBinding strips it", next.Halt)
+	}
+	if got := ServedView(next, nil, "", ""); got.Halt != next.Halt {
+		t.Errorf("ServedView Halt = %q, want the binding's own reason %q", got.Halt, next.Halt)
+	}
+
 	got := haltEntries(t, rt, "webshop")
 	if len(got) != 1 {
 		t.Fatalf("halt entries = %d, want exactly 1: %+v", len(got), got)
