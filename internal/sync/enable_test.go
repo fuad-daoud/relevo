@@ -115,6 +115,11 @@ func realPreflight(t *testing.T) (*db.DB, Local, func() db.Preflight) {
 // uses, so this fixture writes the row the check reads.
 const compressMarkKey = "zstd-compress.v1"
 
+// remoteFixture is the remote the enable fixtures name. It is a libsql URL the
+// validator accepts, so the --url path every fixture now walks is the one a
+// first-run user takes rather than a special case only the remote tests reach.
+const remoteFixture = "libsql://relevo-test-org.turso.io"
+
 // enableFixture builds an enabler over a fake remote whose answers the test
 // sets, and hands back both so a test can read the open it asked for and the
 // calls the seed decision made.
@@ -129,8 +134,9 @@ func enableFixture(t *testing.T, in SeedInput) (*Enabler, *Fake, *OpenConfig) {
 		Local:           local,
 		Preflight:       preflight,
 		LocalHasHistory: func() (bool, error) { return in.LocalHasHistory, nil },
-		CloudEmpty:      func(context.Context, []byte) (bool, error) { return in.CloudEmpty, nil },
+		CloudEmpty:      func(context.Context, Settings, []byte) (bool, error) { return in.CloudEmpty, nil },
 		Intake:          TokenIntake{FromStdin: true, Stdin: []byte(tokenFixture)},
+		RemoteURL:       remoteFixture,
 		Open: func(_ context.Context, cfg OpenConfig) (SyncClient, error) {
 			opened = cfg
 			opened.AuthToken = nil
@@ -207,6 +213,115 @@ func TestEnableRefusesBadTokenSource(t *testing.T) {
 			t.Errorf("stored token = %q, want the environment's", stored)
 		}
 	})
+}
+
+// TestEnableStoresAndOpensTheFlaggedRemote pins the whole of --url: an enable
+// that named a remote writes it into the machine-local section, and the open it
+// then makes carries that same remote rather than an empty one.
+//
+// The two halves are one behavior. Storing without opening would leave a
+// section claiming a remote no handle ever used, and opening without storing
+// would make the enable depend on a flag the next push cannot see -- so the
+// assertion reads both the section and the open the fake was handed.
+func TestEnableStoresAndOpensTheFlaggedRemote(t *testing.T) {
+	t.Parallel()
+
+	enabler, _, opened := enableFixture(t, SeedInput{LocalHasHistory: true, CloudEmpty: true})
+
+	res, err := enabler.Enable(context.Background())
+	if err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+
+	stored, err := ReadSettings(enabler.Local)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if stored.RemoteURL != remoteFixture {
+		t.Errorf("stored remote_url = %q, want %q", stored.RemoteURL, remoteFixture)
+	}
+	if opened.RemoteURL != remoteFixture {
+		t.Errorf("the open's RemoteURL = %q, want the stored %q", opened.RemoteURL, remoteFixture)
+	}
+	if res.RemoteURL != remoteFixture {
+		t.Errorf("result RemoteURL = %q, want %q", res.RemoteURL, remoteFixture)
+	}
+}
+
+// TestEnableRefusesAContradictingRemoteURL pins that --url never silently
+// repoints a machine. The stored remote is one this installation has been
+// pushing to; overwriting it with a second URL would move every row to a
+// database the user did not name, so the enable refuses and the refusal names
+// both so the reader can tell which is which.
+func TestEnableRefusesAContradictingRemoteURL(t *testing.T) {
+	t.Parallel()
+
+	const other = "libsql://somewhere-else.turso.io"
+
+	enabler, fake, _ := enableFixture(t, SeedInput{LocalHasHistory: true, CloudEmpty: true})
+	if err := PutSettings(enabler.Local, Settings{RemoteURL: remoteFixture}, tokenNow); err != nil {
+		t.Fatalf("PutSettings: %v", err)
+	}
+	enabler.RemoteURL = other
+
+	_, err := enabler.Enable(context.Background())
+	if !errors.Is(err, ErrRemoteConflict) {
+		t.Fatalf("Enable with a contradicting --url = %v, want ErrRemoteConflict", err)
+	}
+	for _, want := range []string{remoteFixture, other} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if len(fake.Calls) != 0 {
+		t.Errorf("the fake recorded %v, want no calls from a refused enable", fake.Calls)
+	}
+	stored, err := ReadSettings(enabler.Local)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if stored.RemoteURL != remoteFixture {
+		t.Errorf("a refused enable changed the stored remote to %q", stored.RemoteURL)
+	}
+}
+
+// TestEnableRefusesWithNoRemoteAnywhere pins the first-run refusal: a machine
+// with no stored remote and no --url has nothing to open, and the message names
+// the flag rather than sending the reader to the config document.
+func TestEnableRefusesWithNoRemoteAnywhere(t *testing.T) {
+	t.Parallel()
+
+	enabler, fake, _ := enableFixture(t, SeedInput{LocalHasHistory: true, CloudEmpty: true})
+	enabler.RemoteURL = ""
+
+	_, err := enabler.Enable(context.Background())
+	if !errors.Is(err, ErrNoRemote) {
+		t.Fatalf("Enable with no remote anywhere = %v, want ErrNoRemote", err)
+	}
+	if !strings.Contains(err.Error(), "--url") {
+		t.Errorf("the refusal does not name the flag: %v", err)
+	}
+	if len(fake.Calls) != 0 {
+		t.Errorf("the fake recorded %v, want no calls from a refused enable", fake.Calls)
+	}
+}
+
+// TestEnableRefusesAnInvalidRemoteURL pins that --url is checked by the same
+// validator the section is, so a value the stored path would refuse cannot be
+// reached by typing it on a command line.
+func TestEnableRefusesAnInvalidRemoteURL(t *testing.T) {
+	t.Parallel()
+
+	enabler, fake, _ := enableFixture(t, SeedInput{LocalHasHistory: true, CloudEmpty: true})
+	enabler.RemoteURL = "not a url"
+
+	_, err := enabler.Enable(context.Background())
+	if !errors.Is(err, db.ErrInvalid) {
+		t.Fatalf("Enable with a garbage --url = %v, want the invalid refusal", err)
+	}
+	if len(fake.Calls) != 0 {
+		t.Errorf("the fake recorded %v, want no calls from a refused enable", fake.Calls)
+	}
 }
 
 // TestTokenNeverLeavesMachineOnARefusal pins the one promise the token surface
@@ -304,8 +419,9 @@ func TestExistingDBUploadThenEnable(t *testing.T) {
 			Local:           local,
 			Preflight:       preflight,
 			LocalHasHistory: func() (bool, error) { return true, nil },
-			CloudEmpty:      func(context.Context, []byte) (bool, error) { return false, nil },
+			CloudEmpty:      func(context.Context, Settings, []byte) (bool, error) { return false, nil },
 			Intake:          TokenIntake{FromStdin: true, Stdin: []byte(tokenFixture)},
+			RemoteURL:       remoteFixture,
 			SeedCopy: func(path string) error {
 				copies = append(copies, path)
 				return shared.SeedCopy(path)
@@ -427,7 +543,7 @@ func TestReEnableIsFreshEnable(t *testing.T) {
 	// The remote now holds what this machine pushed, so the second enable meets
 	// history on both sides. A resume would carry the first run's decision
 	// across and push again; the fresh path re-decides and refuses.
-	enabler.CloudEmpty = func(context.Context, []byte) (bool, error) { return false, nil }
+	enabler.CloudEmpty = func(context.Context, Settings, []byte) (bool, error) { return false, nil }
 	if _, err := enabler.Enable(context.Background()); !errors.Is(err, ErrSeedUploadRequired) {
 		t.Fatalf("the second enable = %v, want the fresh seed decision to refuse", err)
 	}

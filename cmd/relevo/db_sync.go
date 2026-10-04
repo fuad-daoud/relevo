@@ -18,13 +18,17 @@ import (
 // states sync can be moved between plus the two one-shot calls; every one of
 // them writes machine-local rows, so none of them takes a flag the dispatcher
 // itself would parse.
-const dbSyncUsage = "usage: relevo db sync enable [--token-stdin] [--seed-uploaded] [--timeout D] [--json]\n" +
+const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [--seed-uploaded] [--timeout D] [--json]\n" +
 	"       relevo db sync disable [--timeout D] [--json]\n" +
 	"       relevo db sync status [--json]\n" +
 	"       relevo db sync push [--timeout D] [--json]\n" +
 	"       relevo db sync pull [--timeout D] [--json]\n\n" +
 	"enable runs the checks, decides how the remote is seeded and marks this\n" +
-	"machine on. --token-stdin reads the turso.token from standard input and\n" +
+	"machine on. --url names the remote and stores it in the machine-local sync\n" +
+	"section; a stored remote that --url contradicts refuses, and with neither\n" +
+	"enable refuses naming --url. Writing the section by hand stays the advanced\n" +
+	"route: `relevo config set sync '{\"remote_url\":\"...\"}'`.\n" +
+	"--token-stdin reads the turso.token from standard input and\n" +
 	"beats " + relevosync.EnvToken + "; with neither, enable refuses. The value is\n" +
 	"stored in the machine-local file and appears in no log, no error and no\n" +
 	"payload. --seed-uploaded says the documented turso db import already ran\n" +
@@ -73,6 +77,7 @@ func cmdDBSync(args []string) error {
 // dbSyncEnableFlagValues holds the pointers `db sync enable` parses into.
 type dbSyncEnableFlagValues struct {
 	asJSON       *bool
+	remoteURL    *string
 	tokenStdin   *bool
 	seedUploaded *bool
 	timeout      *time.Duration
@@ -83,6 +88,7 @@ type dbSyncEnableFlagValues struct {
 func dbSyncEnableFlagSet(fs *flag.FlagSet) *dbSyncEnableFlagValues {
 	v := &dbSyncEnableFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the document the enable produced")
+	v.remoteURL = fs.String("url", "", "the remote to sync with, stored in the machine-local sync section")
 	v.tokenStdin = fs.Bool("token-stdin", false, "read the turso.token from standard input")
 	v.seedUploaded = fs.Bool("seed-uploaded", false, "the documented turso db import already ran against the seed copy a previous enable named")
 	v.timeout = fs.Duration("timeout", dbSyncDefaultTimeout, "bound the remote probe and the open")
@@ -163,8 +169,16 @@ type dbSyncStatusDoc struct {
 // did, and for disable the warning a failed final push produces. It carries the
 // seed case by name rather than as a number so an agent reading it does not have
 // to know the order the cases are declared in.
+// dbSyncOutcomeDoc is what enable and disable print under --json: what the run
+// did, and for disable the warning a failed final push produces. It carries the
+// seed case by name rather than as a number so an agent reading it does not have
+// to know the order the cases are declared in. RemoteURL is what enable stored,
+// and never the token: the URL is the thing a caller needs to open the same
+// remote, and the token is the one value on this surface that must not be
+// printed.
 type dbSyncOutcomeDoc struct {
 	Enabled   bool     `json:"enabled"`
+	RemoteURL string   `json:"remote_url,omitempty"`
 	SeedCase  string   `json:"seed_case,omitempty"`
 	Seed      string   `json:"seed,omitempty"`
 	Applied   bool     `json:"applied,omitempty"`
@@ -215,14 +229,15 @@ func cmdDBSyncEnable(args []string) error {
 		Local:           local,
 		Preflight:       func() db.Preflight { return db.EnablePreflight(shared) },
 		LocalHasHistory: func() (bool, error) { return db.HasSharedHistory(shared) },
-		CloudEmpty: func(ctx context.Context, token []byte) (bool, error) {
-			return relevosyncCloudEmpty(ctx, settings, token)
+		CloudEmpty: func(ctx context.Context, st relevosync.Settings, token []byte) (bool, error) {
+			return relevosyncCloudEmpty(ctx, st, token)
 		},
 		SeedCopy:     func(path string) error { return shared.SeedCopy(path) },
 		SeedPath:     dbSyncSeedPath(),
 		Open:         dbSyncOpener(settings),
 		Intake:       intake,
 		SeedUploaded: *v.seedUploaded,
+		RemoteURL:    *v.remoteURL,
 		Timeout:      *v.timeout,
 	}
 
@@ -232,10 +247,11 @@ func cmdDBSyncEnable(args []string) error {
 	}
 	if *v.asJSON {
 		return printDoc(dbSyncOutcomeDoc{
-			Enabled:  true,
-			SeedCase: string(res.Case),
-			Seed:     res.Seed,
-			Applied:  res.Applied,
+			Enabled:   true,
+			RemoteURL: res.RemoteURL,
+			SeedCase:  string(res.Case),
+			Seed:      res.Seed,
+			Applied:   res.Applied,
 		})
 	}
 	fmt.Printf("sync enabled on this machine (seed: %s)\n", res.Case)
@@ -402,6 +418,10 @@ func dbSyncClassify(err error) error {
 		return failNext(codeRefused, "relevo db sync status", "%v", err)
 	case errors.Is(err, relevosync.ErrNoToken):
 		return fail(codeUsage, "%v", err)
+	case errors.Is(err, relevosync.ErrNoRemote):
+		return fail(codeUsage, "%v", err)
+	case errors.Is(err, relevosync.ErrRemoteConflict):
+		return fail(codeRefused, "%v", err)
 	case errors.Is(err, relevosync.ErrSeedUploadRequired):
 		return failNext(codeRefused, "relevo db sync status", "%v", err)
 	case errors.Is(err, relevosync.ErrAuthRefused):

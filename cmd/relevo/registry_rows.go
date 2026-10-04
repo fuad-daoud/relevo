@@ -328,8 +328,8 @@ var registry = []verbEntry{
 	{
 		Name:    "db sync enable",
 		Summary: "run the checks, decide how the remote is seeded and mark this machine on",
-		Args:    "[--token-stdin] [--seed-uploaded] [--timeout D] [--json]",
-		Flags:   []string{"--json", "--seed-uploaded", "--timeout", "--token-stdin"},
+		Args:    "[--url URL] [--token-stdin] [--seed-uploaded] [--timeout D] [--json]",
+		Flags:   []string{"--json", "--seed-uploaded", "--timeout", "--token-stdin", "--url"},
 		Output:  "json:DbSyncOutcomeDoc",
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"config_invalid", "conflict", "internal", "refused", "remote_auth", "remote_unreachable", "usage"},

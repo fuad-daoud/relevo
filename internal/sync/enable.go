@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -37,6 +38,18 @@ var (
 	// word, so enable writes the seed copy the documented upload path takes and
 	// refuses, naming that path.
 	ErrSeedUploadRequired = errors.New("sync: this database has history the remote has not seen")
+
+	// ErrNoRemote is an enable that named no remote on either route. A hand-
+	// written section is the advanced route, so the refusal names the flag first
+	// and the section second rather than sending a first-run reader to a config
+	// document to discover where sync keeps its settings.
+	ErrNoRemote = errors.New("sync: no remote is configured on this machine: pass --url or set the " + SectionSettings + " section's remote_url")
+
+	// ErrRemoteConflict is a --url that contradicts the remote the section
+	// already holds. Enabling would then move this machine's rows somewhere the
+	// user did not ask for, so it refuses and names both remotes rather than
+	// picking a winner.
+	ErrRemoteConflict = errors.New("sync: --url names a remote this machine is not pointed at")
 )
 
 // EnvToken is the environment variable an enable reads a token from when
@@ -185,12 +198,15 @@ type Enabler struct {
 	// remote with. Nil refuses.
 	LocalHasHistory func() (bool, error)
 	// CloudEmpty reports whether the remote holds nothing yet. It is handed the
-	// token to reach the remote with, because the enable has resolved it and not
-	// yet stored it: storing it before the seed decision would leave a
-	// credential behind on an enable that goes on to refuse. Nil refuses -- the
-	// seed matrix cannot be entered without the answer, and guessing would push
-	// this machine's history over a remote that already had some.
-	CloudEmpty func(context.Context, []byte) (bool, error)
+	// settings this enable resolved and the token to reach the remote with,
+	// because the enable has resolved the token and not yet stored it: storing
+	// it before the seed decision would leave a credential behind on an enable
+	// that goes on to refuse. The settings are handed rather than read back
+	// because the caller cannot know the remote --url named until the enable has
+	// resolved it. Nil refuses -- the seed matrix cannot be entered without the
+	// answer, and guessing would push this machine's history over a remote that
+	// already had some.
+	CloudEmpty func(context.Context, Settings, []byte) (bool, error)
 	// SeedCopy writes the copy the documented upload path takes. Nil means the
 	// existing-history case has nothing to hand that path and refuses for it.
 	SeedCopy func(path string) error
@@ -206,6 +222,11 @@ type Enabler struct {
 	// only thing that turns the existing-history case from a refusal into an
 	// enable.
 	SeedUploaded bool
+	// RemoteURL is the remote --url named, empty when the flag was not passed.
+	// An empty value is not a request to use whatever is stored: the enable
+	// still needs a remote from somewhere, and ResolveRemote is where a machine
+	// with neither is refused.
+	RemoteURL string
 	// Now stamps the mark. Nil means time.Now.
 	Now func() time.Time
 	// Timeout bounds the probe and the open. Zero means DefaultTimeout.
@@ -219,6 +240,11 @@ type EnableResult struct {
 	Case SeedCase
 	// Seed is the seed copy that was written, empty when none was.
 	Seed string
+	// RemoteURL is the remote this machine is pointed at now, whether --url
+	// named it or the section already held it. It is on the result rather than
+	// left to the caller to re-read so that what a caller reports is the remote
+	// the enable actually opened, not the one the section held a moment earlier.
+	RemoteURL string
 	// Applied is whether the pull rebased anything.
 	Applied bool
 }
@@ -240,6 +266,11 @@ func (e *Enabler) Enable(ctx context.Context) (EnableResult, error) {
 		return EnableResult{}, err
 	}
 
+	settings, err := e.resolveRemote()
+	if err != nil {
+		return EnableResult{}, err
+	}
+
 	if e.Preflight == nil {
 		return EnableResult{}, fmt.Errorf("sync: enable: no preflight to run: %w", db.ErrInvalid)
 	}
@@ -251,7 +282,7 @@ func (e *Enabler) Enable(ctx context.Context) (EnableResult, error) {
 	if err != nil {
 		return EnableResult{}, err
 	}
-	cloudEmpty, err := e.cloudEmpty(ctx, token)
+	cloudEmpty, err := e.cloudEmpty(ctx, settings, token)
 	if err != nil {
 		return EnableResult{}, err
 	}
@@ -280,13 +311,54 @@ func (e *Enabler) Enable(ctx context.Context) (EnableResult, error) {
 		return EnableResult{Case: decision.Case}, err
 	}
 
-	client, err := e.openClient(ctx, decision, token)
+	client, err := e.openClient(ctx, decision, settings, token)
 	if err != nil {
-		return EnableResult{Case: decision.Case}, err
+		return EnableResult{Case: decision.Case, RemoteURL: settings.RemoteURL}, err
 	}
-	out := EnableResult{Case: decision.Case}
+	out := EnableResult{Case: decision.Case, RemoteURL: settings.RemoteURL}
 	out.Applied = e.runSeed(ctx, client, decision)
 	return out, nil
+}
+
+// resolveRemote decides which remote this enable will use, and stores a --url
+// the section does not already hold.
+//
+// The store happens here rather than at the mark so that a refusal further down
+// -- a preflight, a seed case, an unreachable remote -- leaves a machine with
+// the remote it was pointed at and sync still off. The remote is not a
+// credential and is not a decision the enable made, so writing it is not the
+// same kind of step as the token: the mark is what makes the machine sync, and
+// nothing before it does.
+//
+// A --url that contradicts the stored remote refuses rather than overwriting.
+// Silently repointing a machine at a second remote would move its rows to a
+// database the user did not name, and the refusal names both so the reader can
+// see which is which.
+func (e *Enabler) resolveRemote() (Settings, error) {
+	settings, err := ReadSettings(e.Local)
+	if err != nil {
+		return Settings{}, err
+	}
+	flagged := strings.TrimSpace(e.RemoteURL)
+	switch {
+	case flagged == "" && settings.RemoteURL == "":
+		return Settings{}, ErrNoRemote
+	case flagged == "":
+		return settings, nil
+	case !validRemoteURL(flagged):
+		return Settings{}, fmt.Errorf("sync: --url is not a remote URL: %w", db.ErrInvalid)
+	case settings.RemoteURL == "":
+		settings.RemoteURL = flagged
+		if err := PutSettings(e.Local, settings, e.now()); err != nil {
+			return Settings{}, err
+		}
+		return settings, nil
+	case settings.RemoteURL == flagged:
+		return settings, nil
+	default:
+		return Settings{}, fmt.Errorf("%w: the %s section holds %q, --url named %q",
+			ErrRemoteConflict, SectionSettings, settings.RemoteURL, flagged)
+	}
 }
 
 // runSeed makes the calls the decision asked for, in push-then-pull order so
@@ -319,11 +391,16 @@ func (e *Enabler) runSeed(ctx context.Context, client SyncClient, decision SeedD
 // A missing opener is a refusal rather than a nil client: a client that was never
 // built cannot be pushed or pulled through, and the mark is already written by
 // then, so the machine must be told rather than left looking enabled and idle.
-func (e *Enabler) openClient(ctx context.Context, decision SeedDecision, token []byte) (SyncClient, error) {
+func (e *Enabler) openClient(ctx context.Context, decision SeedDecision, settings Settings, token []byte) (SyncClient, error) {
 	if e.Open == nil {
 		return nil, fmt.Errorf("sync: enable: no opener for the remote: %w", db.ErrInvalid)
 	}
-	return e.Open(ctx, OpenConfig{BootstrapIfEmpty: decision.Bootstrap, AuthToken: token})
+	return e.Open(ctx, OpenConfig{
+		BootstrapIfEmpty: decision.Bootstrap,
+		RemoteURL:        settings.RemoteURL,
+		Namespace:        settings.Namespace,
+		AuthToken:        token,
+	})
 }
 
 // localHasHistory reports whether this machine holds rows worth seeding with.
@@ -334,13 +411,13 @@ func (e *Enabler) localHasHistory() (bool, error) {
 	return e.LocalHasHistory()
 }
 
-// cloudEmpty reports whether the remote holds nothing yet, with the token the
-// enable resolved to reach it with.
-func (e *Enabler) cloudEmpty(ctx context.Context, token []byte) (bool, error) {
+// cloudEmpty reports whether the remote holds nothing yet, with the settings
+// the enable resolved and the token it resolved to reach it with.
+func (e *Enabler) cloudEmpty(ctx context.Context, settings Settings, token []byte) (bool, error) {
 	if e.CloudEmpty == nil {
 		return false, fmt.Errorf("sync: enable: no way to read the remote: %w", db.ErrInvalid)
 	}
-	return e.CloudEmpty(ctx, token)
+	return e.CloudEmpty(ctx, settings, token)
 }
 
 func (e *Enabler) now() time.Time {
@@ -389,9 +466,9 @@ func MarkEnabled(l Local, enabled bool, now time.Time) error {
 		return err
 	}
 	settings.Enabled = enabled
-	body, err := json.Marshal(settings)
+	body, err := encodeSettings(settings)
 	if err != nil {
-		return fmt.Errorf("sync: encode the %s section: %w", SectionSettings, err)
+		return err
 	}
 	marker, err := json.Marshal(enabled)
 	if err != nil {
@@ -409,4 +486,35 @@ func MarkEnabled(l Local, enabled bool, now time.Time) error {
 		return err
 	}
 	return nil
+}
+
+// PutSettings writes the sync section on its own, without the enabled marker.
+// The two rows MarkEnabled writes together carry the mark, so this is the
+// advanced route: what enable uses to store a --url before the mark, because a
+// remote is not a decision the enable made and a refusal after it must leave
+// the machine pointed at the right remote with sync still off.
+func PutSettings(l Local, settings Settings, now time.Time) error {
+	body, err := encodeSettings(settings)
+	if err != nil {
+		return err
+	}
+	if err := l.Tx(func(t *db.Tx) error {
+		if err := t.ConfigPut(SectionSettings, body, now.UTC()); err != nil {
+			return fmt.Errorf("sync: write the %s section: %w", SectionSettings, err)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+// encodeSettings is the one place a Settings becomes a section body, so the two
+// writers cannot disagree about what a section looks like on disk.
+func encodeSettings(settings Settings) ([]byte, error) {
+	body, err := json.Marshal(settings)
+	if err != nil {
+		return nil, fmt.Errorf("sync: encode the %s section: %w", SectionSettings, err)
+	}
+	return body, nil
 }

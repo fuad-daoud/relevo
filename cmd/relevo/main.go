@@ -73,9 +73,10 @@ Commands:
             when it runs; use it instead of sqlite3, which the daemon's lock
             keeps out
   db sync   enable|disable|status|push|pull
-            turn this machine's cloud sync on and off; the token is read with
-            --token-stdin and stored in the machine-local file, never in the
-            database that leaves this machine (stop the daemon first)
+            turn this machine's cloud sync on and off; enable names the remote
+            with --url and reads the token with --token-stdin, both stored in the
+            machine-local file, never in the database that leaves this machine
+            (stop the daemon first)
   chain     start a chain: build, review and correct across an ordered list of plans
               --plan F (repeatable) --feature L | --no-feature [--security[=false]] [--base R]
   update    replace this release binary with the latest release, checksum-verified [--check] [--to vX.Y.Z] [--release]

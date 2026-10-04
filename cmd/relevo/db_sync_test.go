@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -30,7 +31,7 @@ func TestDBSyncUsageNamesEveryVerb(t *testing.T) {
 			t.Errorf("the usage text does not name %q:\n%s", verb, dbSyncUsage)
 		}
 	}
-	for _, want := range []string{"--token-stdin", "TURSO_TOKEN", "turso.token", "turso db import"} {
+	for _, want := range []string{"--url", "--token-stdin", "TURSO_TOKEN", "turso.token", "turso db import", "config set sync"} {
 		if !strings.Contains(dbSyncUsage, want) {
 			t.Errorf("the usage text does not mention %q:\n%s", want, dbSyncUsage)
 		}
@@ -49,6 +50,9 @@ func TestDBSyncFlagSetsAreTheDocumentedOnes(t *testing.T) {
 	if *enable.tokenStdin || *enable.seedUploaded || *enable.asJSON {
 		t.Errorf("enable defaults = %v/%v/%v, want every flag off",
 			*enable.tokenStdin, *enable.seedUploaded, *enable.asJSON)
+	}
+	if *enable.remoteURL != "" {
+		t.Errorf("enable --url default = %q, want empty: a machine with no flag takes the stored remote", *enable.remoteURL)
 	}
 	if *enable.timeout != dbSyncDefaultTimeout {
 		t.Errorf("enable --timeout default = %s, want %s", *enable.timeout, dbSyncDefaultTimeout)
@@ -80,11 +84,14 @@ func TestDBSyncFlagsParseAfterAPositional(t *testing.T) {
 	fs := flag.NewFlagSet("db sync enable", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	v := dbSyncEnableFlagSet(fs)
-	if err := parseFlags(fs, []string{"--json", "--token-stdin", "--timeout", "3s", "--seed-uploaded"}); err != nil {
+	if err := parseFlags(fs, []string{"--json", "--url", "libsql://x-org.turso.io", "--token-stdin", "--timeout", "3s", "--seed-uploaded"}); err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
 	if !*v.asJSON || !*v.tokenStdin || !*v.seedUploaded {
 		t.Errorf("flags = %v/%v/%v, want all three on", *v.asJSON, *v.tokenStdin, *v.seedUploaded)
+	}
+	if *v.remoteURL != "libsql://x-org.turso.io" {
+		t.Errorf("--url = %q, want the URL passed", *v.remoteURL)
 	}
 	if v.timeout.String() != "3s" {
 		t.Errorf("--timeout = %s, want 3s", v.timeout)
@@ -138,6 +145,69 @@ func TestDBSyncDBUsageNamesTheSubVerbs(t *testing.T) {
 	}
 }
 
+// TestDBSyncClassifyNamesTheRemoteRefusals pins that the two remote refusals
+// reach the user under codes a script can branch on, and that neither is
+// reported as an internal failure. Both name their own fix -- the flag, and the
+// two conflicting remotes -- so a reader who acts on the message is not sent to
+// report a defect instead.
+func TestDBSyncClassifyNamesTheRemoteRefusals(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		err  error
+		code errorCode
+	}{
+		{relevosync.ErrNoRemote, codeUsage},
+		{relevosync.ErrRemoteConflict, codeRefused},
+	} {
+		classified := dbSyncClassify(tc.err)
+
+		var got *cliError
+		if !errors.As(classified, &got) {
+			t.Errorf("%v classified = %v, want a cliError", tc.err, classified)
+			continue
+		}
+		if got.code != tc.code {
+			t.Errorf("%v classified as %q, want %q", tc.err, got.code, tc.code)
+		}
+		if got.code == codeInternal {
+			t.Errorf("%v is reported as an internal failure", tc.err)
+		}
+		if !strings.Contains(got.Error(), tc.err.Error()) {
+			t.Errorf("%v lost its message in classification: %q", tc.err, got.Error())
+		}
+	}
+}
+
+// TestDBSyncEnableDocumentCarriesTheRemoteNotTheToken pins the JSON half of the
+// --url promise: the document names the remote enable stored, because that is
+// what a caller needs to reach the same remote, and never a token. The token
+// surface is the one thing on this output that must stay unprintable, and this
+// document is the one a script reads back.
+func TestDBSyncEnableDocumentCarriesTheRemoteNotTheToken(t *testing.T) {
+	t.Parallel()
+
+	const token = "eyJhbGciOiJIUzI1NiJ9.db-sync-cli-fixture.signature"
+	body, err := json.Marshal(dbSyncOutcomeDoc{
+		Enabled:   true,
+		RemoteURL: "libsql://x-org.turso.io",
+		SeedCase:  string(relevosync.SeedEmptyCloud),
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	if !strings.Contains(string(body), `"remote_url":"libsql://x-org.turso.io"`) {
+		t.Errorf("the enable document does not carry the stored remote: %s", body)
+	}
+	if strings.Contains(string(body), token) {
+		t.Errorf("the enable document carries a token: %s", body)
+	}
+	if strings.Contains(string(body), "token") {
+		t.Errorf("the enable document has a token field at all: %s", body)
+	}
+}
+
 // TestDBSyncTokenNeverReachesAnIntakeRefusal pins the one thing the CLI adds to
 // the token's promise: every refusal the sync verbs can raise is classified
 // without the value reaching the line the user sees, and without the message
@@ -150,6 +220,8 @@ func TestDBSyncTokenNeverReachesAnIntakeRefusal(t *testing.T) {
 		relevosync.ErrNoToken,
 		relevosync.ErrAlreadyEnabled,
 		relevosync.ErrSeedUploadRequired,
+		relevosync.ErrNoRemote,
+		relevosync.ErrRemoteConflict,
 		fmt.Errorf("relevo db sync enable: %w", relevosync.ErrNoToken),
 	} {
 		classified := dbSyncClassify(err)

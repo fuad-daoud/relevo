@@ -234,7 +234,7 @@ func dbSyncOpener(settings relevosync.Settings) relevosync.Opener {
 // the enable has resolved it and deliberately not stored it yet.
 func relevosyncCloudEmpty(ctx context.Context, settings relevosync.Settings, token []byte) (bool, error) {
 	if settings.RemoteURL == "" {
-		return false, fail(codeRefused, "relevo db sync enable: no remote is configured on this machine; set the sync section's remote_url first")
+		return false, fail(codeRefused, "relevo db sync enable: no remote is configured on this machine; pass --url")
 	}
 	handle, err := relevosync.OpenRemote(ctx, relevosync.OpenConfig{
 		Path:             machineDBPath(),
