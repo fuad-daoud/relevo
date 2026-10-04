@@ -117,6 +117,11 @@ func peekRef(b store.Binding, e store.LogEntry) string {
 // -- reduced to its peek pointer. Either way every confirmed entry is
 // represented, which is the whole point: confirming every entry and printing a
 // path for them all drops the content of each one the caller never sees.
+//
+// A halt entry is the exception: its text is the reason a human is needed, it is
+// short, and a report that eats the budget first would otherwise reduce it to a
+// pointer at the exact moment it matters most. So a halt's text is written whole
+// whatever budget is left, and it does not spend budget the report still needs.
 func oversizeWaitBody(st *store.Store, name string, round int, res relevo.WaitResult) string {
 	binding := delivery.BindingFor(st, name)
 
@@ -130,19 +135,25 @@ func oversizeWaitBody(st *store.Store, name string, round int, res relevo.WaitRe
 			Text:  res.Payload,
 		}}
 	}
+	waited := delivered[len(delivered)-1].Entry.Round
 
 	budget := maxWaitOutputBytes
 	var b strings.Builder
 	for i, d := range delivered {
 		last := i == len(delivered)-1
 		ref := peekRef(binding, d.Entry)
+		header := ""
+		if len(delivered) > 1 && !last {
+			header = delivery.EntryHeader(d.Entry, waited)
+		}
 		switch text := d.Text; {
-		case len(text) <= budget:
-			budget -= len(text)
-			if len(delivered) > 1 && !last {
-				b.WriteString(delivery.EarlierHeader(d.Entry.Round, d.Entry.Path))
-			}
+		case d.Entry.Kind == store.KindHalt:
+			b.WriteString(header)
 			b.WriteString(text)
+		case len(text) <= budget:
+			b.WriteString(header)
+			b.WriteString(text)
+			budget -= len(text)
 		case budget > len(ref)+1:
 			b.WriteString(delivery.TruncateTo(text, budget, fmt.Sprintf("%d bytes", budget), ref))
 			budget = 0
