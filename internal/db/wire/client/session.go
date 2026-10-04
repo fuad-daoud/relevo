@@ -28,6 +28,11 @@ type conn struct {
 	conns  int
 	// adHoc is the marker every handshake this connection opens carries.
 	adHoc bool
+	// hasLocal is the owner's answer to whether it serves a machine-local file.
+	hasLocal bool
+	// scope is the file every request on this connection reaches, fixed by the
+	// handshake: one connection never mixes the shared file and the local one.
+	scope string
 	// dead is set from the caller's goroutine and read from a cancel
 	// AfterFunc, so it is atomic rather than a plain flag.
 	dead atomic.Bool
@@ -63,6 +68,7 @@ func (c *conn) handshake(ctx context.Context) error {
 		// package that owns the migrations.
 		SchemaKnow: 0,
 		AdHoc:      c.adHoc,
+		Scope:      c.scope,
 	}
 	if err := c.send(wire.KindHello, hello, nil); err != nil {
 		return err
@@ -83,6 +89,7 @@ func (c *conn) handshake(ctx context.Context) error {
 		}
 		c.have, c.know, c.origin = m.SchemaHave, m.SchemaKnow, m.Origin
 		c.pid, c.conns = m.PID, m.Conns
+		c.hasLocal = m.HasLocal
 		return nil
 	case wire.KindRefuse:
 		var r wire.Refusal

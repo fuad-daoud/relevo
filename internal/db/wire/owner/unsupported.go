@@ -26,6 +26,9 @@ func (*Server) Serve(net.Listener) error {
 // Close does nothing.
 func (*Server) Close() error { return nil }
 
+// ServeLocal does nothing off unix: the server never serves anything here.
+func (s *Server) ServeLocal(*sql.DB) *Server { return s }
+
 // ConnCount is always 0 off unix: there is no server and no socket a client
 // could hold open.
 func (*Server) ConnCount() int { return 0 }

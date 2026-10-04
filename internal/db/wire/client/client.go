@@ -27,39 +27,52 @@ func init() { sql.Register(DriverName, &Driver{}) }
 // info is what welcome carries: the served database's schema version, the
 // owner's embedded maximum, and the installation id a scoped handle needs.
 // The value is unexported because the exported handshake is the Info function,
-// which cannot share its name.
+// which cannot share its name. HasLocal says the owner serves a machine-local
+// file beside the shared one, which is what tells a dial it may attach one.
 type info struct {
-	Have   int
-	Know   int
-	Origin string
-	PID    int
-	Conns  int
+	Have     int
+	Know     int
+	Origin   string
+	PID      int
+	Conns    int
+	HasLocal bool
 }
 
 // Driver opens one wire connection per database/sql pooled connection.
 type Driver struct{}
 
-func (d *Driver) Open(name string) (driver.Conn, error) { return openConn(name, false) }
+func (d *Driver) Open(name string) (driver.Conn, error) {
+	return openConn(name, false, wire.ScopeShared)
+}
 
 // Connector dials sock and marks every handshake it opens ad-hoc, which a plain
 // sql.Open(DriverName, sock) never does. A pool built from it with sql.OpenDB
 // reaches the owner on the ad-hoc read path, which the owner may refuse while it
 // reaps an abandoned statement.
 func Connector(sock string, adHoc bool) driver.Connector {
-	return &connector{sock: sock, adHoc: adHoc}
+	return ScopedConnector(sock, adHoc, wire.ScopeShared)
+}
+
+// ScopedConnector is Connector for one of the owner's two files: the shared
+// database, or the machine-local file beside it. The scope goes in the
+// handshake, so every pooled connection this connector opens is answered from
+// that one file and a caller can never mix the two within a pool.
+func ScopedConnector(sock string, adHoc bool, scope string) driver.Connector {
+	return &connector{sock: sock, adHoc: adHoc, scope: scope}
 }
 
 // connector is the driver.Connector sql.OpenDB pools from.
 type connector struct {
 	sock  string
 	adHoc bool
+	scope string
 }
 
 // Connect opens one pooled connection. The handshake budget bounds dial plus
 // handshake, exactly as Driver.Open does; the caller's context does not, so a
 // pool that opens a connection mid-request keeps the same two-second bound.
 func (c *connector) Connect(context.Context) (driver.Conn, error) {
-	return openConn(c.sock, c.adHoc)
+	return openConn(c.sock, c.adHoc, c.scope)
 }
 
 func (c *connector) Driver() driver.Driver { return &Driver{} }
@@ -76,7 +89,7 @@ func Info(ctx context.Context, sock string) (info, error) {
 	if err := c.handshake(ctx); err != nil {
 		return info{}, err
 	}
-	return info{Have: c.have, Know: c.know, Origin: c.origin, PID: c.pid, Conns: c.conns}, nil
+	return info{Have: c.have, Know: c.know, Origin: c.origin, PID: c.pid, Conns: c.conns, HasLocal: c.hasLocal}, nil
 }
 
 func dialSock(ctx context.Context, sock string) (net.Conn, error) {
@@ -87,14 +100,14 @@ func dialSock(ctx context.Context, sock string) (net.Conn, error) {
 	return d.DialContext(ctx, "unix", sock)
 }
 
-func openConn(sock string, adHoc bool) (driver.Conn, error) {
+func openConn(sock string, adHoc bool, scope string) (driver.Conn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), handshakeBudget)
 	defer cancel()
 	nc, err := dialSock(ctx, sock)
 	if err != nil {
 		return nil, err
 	}
-	c := &conn{nc: nc, w: wire.NewConn(nc), adHoc: adHoc}
+	c := &conn{nc: nc, w: wire.NewConn(nc), adHoc: adHoc, scope: scope}
 	if err := c.handshake(ctx); err != nil {
 		_ = nc.Close()
 		return nil, err

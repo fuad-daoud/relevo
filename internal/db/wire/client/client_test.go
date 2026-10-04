@@ -216,6 +216,147 @@ func sawHello(t *testing.T, l net.Listener) <-chan bool {
 	return got
 }
 
+// sawHelloScope is sawHello for the scope: it reports the whole hello's scope,
+// and answers a welcome carrying the has-local bit the caller names. The scope
+// and that bit are the two halves of the split as the protocol carries it, so a
+// test that only checked one of them would pass with the other broken.
+func sawHelloScope(t *testing.T, l net.Listener, hasLocal bool) <-chan string {
+	t.Helper()
+	got := make(chan string, 1)
+	go func() {
+		nc, err := l.Accept()
+		if err != nil {
+			got <- ""
+			return
+		}
+		defer func() { _ = nc.Close() }()
+		w := wire.NewConn(nc)
+		frame, err := w.Read()
+		if err != nil {
+			got <- ""
+			return
+		}
+		var h wire.Hello
+		if _, err := wire.Decode(frame, &h); err != nil {
+			got <- ""
+			return
+		}
+		got <- h.Scope
+		payload, err := wire.Encode(wire.KindWelcome, &wire.Welcome{
+			Header:   wire.Header{Type: wire.TypeWelcome},
+			Proto:    wire.Proto,
+			Version:  wire.Version,
+			HasLocal: hasLocal,
+		}, nil)
+		if err == nil {
+			_ = w.Write(payload)
+		}
+	}()
+	return got
+}
+
+// TestScopedConnectorSendsItsScope pins the handshake bit a dialed local handle
+// depends on: the scope travels in the hello, so the owner knows which of its two
+// files to answer from before the first statement arrives. A connector that
+// dropped it would have every local read answered from the shared file, which is
+// the failure the split exists to make impossible.
+func TestScopedConnectorSendsItsScope(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		scope string
+		want  string
+	}{
+		{"local", wire.ScopeLocal, wire.ScopeLocal},
+		{"shared", wire.ScopeShared, wire.ScopeShared},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l, sock := shortListener(t)
+			got := sawHelloScope(t, l, true)
+			pool := sql.OpenDB(client.ScopedConnector(sock, false, tc.scope))
+			t.Cleanup(func() { _ = pool.Close() })
+			if err := pool.Ping(); err != nil {
+				t.Fatalf("ping the scoped pool: %v", err)
+			}
+			if scope := <-got; scope != tc.want {
+				t.Errorf("the hello carried scope %q, want %q", scope, tc.want)
+			}
+		})
+	}
+}
+
+// TestThePlainConnectorAsksForTheSharedFile pins the default: a pool built the
+// ordinary way speaks to the shared file even when the owner has a local one
+// beside it, so every existing call site keeps reaching exactly what it reached
+// before the scope existed.
+func TestThePlainConnectorAsksForTheSharedFile(t *testing.T) {
+	l, sock := shortListener(t)
+	got := sawHelloScope(t, l, true)
+	pool := sql.OpenDB(client.Connector(sock, false))
+	t.Cleanup(func() { _ = pool.Close() })
+	if err := pool.Ping(); err != nil {
+		t.Fatalf("ping the plain pool: %v", err)
+	}
+	if scope := <-got; scope != wire.ScopeShared {
+		t.Errorf("the plain connector's hello carried scope %q, want %q", scope, wire.ScopeShared)
+	}
+}
+
+// TestInfoReportsWhetherTheOwnerHasALocalFile pins the other half: the handshake
+// answer tells a dial whether attaching a local handle is possible at all. A
+// false there on an owner that has one would leave every owner-routed reader
+// without the sync rows, which is the gap this closes.
+func TestInfoReportsWhetherTheOwnerHasALocalFile(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		hasLocal bool
+	}{
+		{"an owner with a local file", true},
+		{"an owner with only the shared file", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sock := welcomesWithHasLocal(t, tc.hasLocal)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			info, err := client.Info(ctx, sock)
+			if err != nil {
+				t.Fatalf("Info: %v", err)
+			}
+			if info.HasLocal != tc.hasLocal {
+				t.Errorf("Info.HasLocal = %t, want %t", info.HasLocal, tc.hasLocal)
+			}
+		})
+	}
+}
+
+// welcomesWithHasLocal binds a socket whose owner answers one handshake with the
+// has-local bit the caller names, so a client-side reading of that bit can be
+// pinned without standing up a database.
+func welcomesWithHasLocal(t *testing.T, hasLocal bool) string {
+	t.Helper()
+	l, sock := shortListener(t)
+	go func() {
+		nc, err := l.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = nc.Close() }()
+		w := wire.NewConn(nc)
+		if _, err := w.Read(); err != nil {
+			return
+		}
+		payload, err := wire.Encode(wire.KindWelcome, &wire.Welcome{
+			Header:   wire.Header{Type: wire.TypeWelcome},
+			Proto:    wire.Proto,
+			Version:  wire.Version,
+			HasLocal: hasLocal,
+		}, nil)
+		if err == nil {
+			_ = w.Write(payload)
+		}
+	}()
+	return sock
+}
+
 // TestConnectorMarksItsHelloAdHoc pins the ad-hoc marker: a pool built from
 // client.Connector sends the bit in its handshake, and a plain
 // sql.Open(client.DriverName, ...) never does. The fake owner answers the

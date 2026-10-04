@@ -23,11 +23,28 @@ type Header struct {
 	ID   int    `json:"id"`
 }
 
+// The two files one owner serves, named by the scope a connection asks for.
+// A connection that names none is served the shared file, which is what a
+// client predating the field expects.
+const (
+	// ScopeShared is the file that leaves this machine.
+	ScopeShared = "shared"
+	// ScopeLocal is the machine-local file beside it, the one every row that
+	// must not sync lives in.
+	ScopeLocal = "local"
+)
+
 // Hello opens the handshake; SchemaKnow is this client's highest embedded
 // migration, carried as information for the owner. AdHoc marks a connection on
 // the ad-hoc read path (`db query`), which the owner may refuse while it is
 // reaping an abandoned statement; it is additive, so an owner that predates the
 // bit ignores it and a client that predates it never sends one.
+//
+// Scope names which of the owner's files this connection speaks to, and is
+// additive for the same reason: a client that predates it sends none and is
+// served the shared file, and an owner that predates it serves the shared file
+// to everyone. A client therefore never mistakes the shared file for the local
+// one across an upgrade window -- it attaches no local handle at all.
 type Hello struct {
 	Header
 	Proto      string `json:"proto"`
@@ -35,11 +52,17 @@ type Hello struct {
 	ExeID      string `json:"exe_id"`
 	SchemaKnow int    `json:"schema_know"`
 	AdHoc      bool   `json:"ad_hoc"`
+	Scope      string `json:"scope,omitempty"`
 }
 
 // Welcome answers Hello. SchemaHave is the served database's version and
 // SchemaKnow the owner's embedded maximum; Origin is the installation id every
 // scoped query needs, which a client must not read from the file.
+//
+// HasLocal says the owner serves a machine-local file beside the shared one, so
+// a client may open a second connection scoped to it. It is false on an owner
+// opened without one, and on an owner that predates the field, which is what
+// keeps an old owner from being asked for a file it does not have.
 type Welcome struct {
 	Header
 	Proto      string   `json:"proto"`
@@ -51,6 +74,7 @@ type Welcome struct {
 	PID        int      `json:"pid"`
 	Conns      int      `json:"conns"`
 	Features   []string `json:"features"`
+	HasLocal   bool     `json:"has_local"`
 }
 
 // Refusal answers Hello when the owner will not serve: a protocol mismatch or
