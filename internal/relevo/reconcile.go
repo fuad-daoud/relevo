@@ -342,16 +342,51 @@ func closeHaltOrOwe(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 // It is keyed on the marker alone, which is why it runs on a binding whose
 // HaltNotifiedRound already equals its Round -- that stamp is what the failed
 // queue left behind, and this is the tick that makes it true.
+//
+// The marker clears the moment the entry is written, but this tick's own save is
+// what makes that stick, and the tick can still fail below here: the entry is
+// already on disk while the binding is not. The next tick reads the same marker
+// and would write a second halt for the same round, so the retry checks the log
+// for the entry first and only the marker is cleared when it is already there.
 func queueOwedHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, error) {
 	if b.OwedHalt == nil {
 		return b, nil
 	}
 	owed := *b.OwedHalt
-	if err := queueHalt(ctx, rt, tx, b, owed.Round, owed.Text); err != nil {
-		return b, fmt.Errorf("queue owed halt for round %d: %w", owed.Round, err)
+	if !haltEntryWritten(tx, b.Name, owed) {
+		if err := queueHalt(ctx, rt, tx, b, owed.Round, owed.Text); err != nil {
+			return b, fmt.Errorf("queue owed halt for round %d: %w", owed.Round, err)
+		}
 	}
 	b.OwedHalt = nil
 	return b, nil
+}
+
+// haltEntryWritten reports whether the owed halt's entry is already in the log,
+// so a retry after a tick that wrote the entry and then failed to save does not
+// queue it a second time.
+//
+// The round and the reason together are the identity: the reason is what the
+// entry's Note carries and what b.Halt shows a human, and the round is what a
+// MasterMind waits on, so an entry matching both is the one this marker owes. A
+// different reason for the same round is a different halt and is still queued --
+// which is what a server's own halt for a round the unreachable episode already
+// notified is.
+func haltEntryWritten(tx *store.Tx, name string, owed store.OwedHalt) bool {
+	if tx == nil {
+		return false
+	}
+	entries, err := tx.ReadLog(name)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.Kind == store.KindHalt && e.Direction == store.DirToMasterMind &&
+			e.Round == owed.Round && e.Note == owed.Text {
+			return true
+		}
+	}
+	return false
 }
 
 // queueHalt writes the one to_planner entry a halt owes the MasterMind for its
