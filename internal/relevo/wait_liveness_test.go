@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -161,6 +162,85 @@ func TestWaitRefreshesWhilePolling(t *testing.T) {
 	// One write before the loop plus one per pass: several writes, not one.
 	if len(waits.events) < polls+1 {
 		t.Errorf("events = %v over %d polls, want a refresh on each pass", waits.events, polls)
+	}
+}
+
+// TestWaitKeepsRegistrationLiveDuringSlowSync pins that the registration is
+// re-stamped while a remote sync runs, not only between passes. A single sync
+// is allowed longer than the registration's whole TTL, so a wait that refreshes
+// once per pass leaves the row looking dead while it is plainly still polling --
+// and the statusline then escalates a payload that is about to be collected.
+//
+// The remote fetch blocks until a second write reaches the wait store, so the
+// re-stamp can only have come from the ticker running under the sync.
+func TestWaitKeepsRegistrationLiveDuringSlowSync(t *testing.T) {
+	waits := newFakeWaitClaims()
+	rt := waitLivenessRuntime(t, waits)
+	seedOpenRound(t, rt, "webshop")
+
+	// The binding must be a remote one for the wait's sync to have anything to
+	// fetch. The first fetch holds its pass open until the ticker has written
+	// again, and checks from inside that open pass that the row still reads live:
+	// a re-stamp that only landed between passes could not be seen from here.
+	var checked bool
+	fr := &fakeRemote{beforeCall: func(call string) {
+		if checked || !strings.HasPrefix(call, "GetBinding:") {
+			return
+		}
+		checked = true
+		deadline := time.After(10 * time.Second)
+		for len(waits.events) < 2 {
+			select {
+			case <-deadline:
+				t.Error("no re-stamp reached the wait store during the sync")
+				return
+			case <-time.After(time.Millisecond):
+			}
+		}
+		if _, err := waits.Live("webshop", baseTime); err != nil {
+			t.Errorf("Live during the sync: %v", err)
+		}
+		if !waits.live("webshop") {
+			t.Error("registration reads as dead while the wait is still syncing")
+		}
+	}}
+	rt.Remote = fr
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.Save(store.Binding{
+			Name:       "webshop",
+			CWD:        "/repo/webshop",
+			Round:      1,
+			State:      store.StateActive,
+			Builder:    store.Endpoint{Mode: store.ModeRemote, Server: "zen"},
+			MasterMind: store.Endpoint{Kind: "claude", SessionID: "sess"},
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A tick of a millisecond, so the ticker fires many times over a fetch that
+	// waits on real wall-clock time rather than the injected poll clock. The
+	// poll clock still advances a step per call, or the loop never reaches its
+	// timeout and the test runs forever.
+	clock := baseTime
+	_, res, err := Wait(context.Background(), rt, WaitOptions{
+		Names: []string{"webshop"}, Round: 1,
+		Timeout: 20 * time.Second, Interval: time.Millisecond,
+		syncRefresh: time.Millisecond,
+		now:         func() time.Time { clock = clock.Add(100 * time.Millisecond); return clock },
+		sleep:       func(context.Context, time.Duration) error { return nil },
+	})
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if res.Code != WaitTimeout {
+		t.Errorf("exit code = %d, want WaitTimeout so the loop ran to its timeout", res.Code)
+	}
+
+	// The write the fetch waited for is the pin: one registration before the
+	// loop, and at least one more while the sync was still in flight.
+	if len(waits.events) < 2 {
+		t.Errorf("events = %v, want a re-stamp while the sync ran", waits.events)
 	}
 }
 
