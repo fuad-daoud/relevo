@@ -266,8 +266,10 @@ func chainRoundView(mv remote.ChainMemberView, r int) remote.BindingView {
 		v.DiffNote = cr.DiffNote
 		v.DiffCommits = cr.DiffCommits
 		v.DiffTree = cr.DiffTree
+		v.DirtyCommit = cr.DirtyCommit
 		v.Usage = cr.Usage
 		v.Rusage = cr.Rusage
+		v.PriorTokens = cr.PriorTokens
 		break
 	}
 	return v
