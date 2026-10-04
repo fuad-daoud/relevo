@@ -20,15 +20,19 @@ import (
 )
 
 // dbUsage is what a bare `relevo db` prints: the verb only dispatches
-// subcommands, and query is the one there is.
-const dbUsage = "usage: relevo db query '<SQL>' [--json] [--limit N] [--timeout D] [--max-bytes N]\n\n" +
+// subcommands, and it has two of them.
+const dbUsage = "usage: relevo db query '<SQL>' [--json] [--limit N] [--timeout D] [--max-bytes N]\n" +
+	"       relevo db sync <enable|disable|status|push|pull>\n\n" +
 	"One read-only statement: SELECT, WITH or a read-only PRAGMA. RECURSIVE is\n" +
 	"refused as a cheap first line, not as the guarantee: SQLite decides recursion\n" +
 	"structurally, so a runaway statement is ended by the owner, which refuses\n" +
 	"ad-hoc reads and reaps the daemon. --limit caps the rows printed (default\n" +
 	"1000); --max-bytes caps the value bytes held (default 16777216, 16 MiB, at\n" +
 	"most 67108864, the owner's ad-hoc value ceiling); --timeout bounds dial, open\n" +
-	"and read (default 10s, at most 12s).\n"
+	"and read (default 10s, at most 12s).\n\n" +
+	"sync turns this machine's cloud sync on and off. It writes the machine-local\n" +
+	"file beside the database, so the daemon must not be running; run `relevo db\n" +
+	"sync --help` for the verbs.\n"
 
 // The db query defaults: a row cap and a byte cap that keep a broad SELECT
 // from filling memory, and a hold budget that leaves the owner's own open-lock
@@ -88,6 +92,8 @@ func cmdDB(args []string) error {
 	switch {
 	case len(args) > 0 && args[0] == "query":
 		return cmdDBQuery(args[1:])
+	case len(args) > 0 && args[0] == "sync":
+		return cmdDBSync(args[1:])
 	}
 	fmt.Fprint(os.Stderr, dbUsage)
 	return errUsagePrinted

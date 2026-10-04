@@ -31,6 +31,7 @@ var dispatchers = []dispatcher{
 	{"config server", "config_server.go", "configServer"},
 	{"config workflow", "config_workflow.go", "configWorkflow"},
 	{"db", "db_query.go", "cmdDB"},
+	{"db sync", "db_sync.go", "cmdDBSync"},
 	{"mastermind", "mastermind.go", "cmdMasterMind"},
 	{"serve", "serve.go", "cmdServe"},
 }
