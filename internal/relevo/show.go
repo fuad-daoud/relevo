@@ -141,7 +141,7 @@ func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error)
 		// never claim: nothing is pending there.
 		if !opts.Peek {
 			if _, _, perr := delivery.PullMatching(ctx, rt.Store, opts.Name, "show",
-				claimPrinted(opts.Section, res)); perr != nil {
+				claimPrinted(rt.Store, opts.Section, res, opts.FindingsID)); perr != nil {
 				return ShowResult{}, perr
 			}
 		}
