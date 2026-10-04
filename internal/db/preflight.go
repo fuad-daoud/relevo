@@ -47,9 +47,30 @@ type Preflight struct {
 // OK reports whether every check passed.
 func (p Preflight) OK() bool { return len(p.Refusals) == 0 }
 
+// preflightRefusedError is what Err returns: the refusals' own sentences, joined,
+// with the refusal class attached underneath them.
+//
+// It is a type rather than a sentinel folded into the format string so the line a
+// reader sees stays exactly the sentence the refusals make. The class is there
+// for a caller to branch on; spelling it in the message would only repeat what
+// the CLI already prints as the error code. It unwraps to the joined refusals, so
+// a sentinel one of them carries stays reachable underneath.
+type preflightRefusedError struct{ err error }
+
+func (e *preflightRefusedError) Error() string { return e.err.Error() }
+
+func (e *preflightRefusedError) Unwrap() error { return e.err }
+
+// Is reports the refusal class.
+func (e *preflightRefusedError) Is(target error) bool { return target == ErrPreflightRefused }
+
 // Err joins the refusals into the one error an enable path can return, or nil
 // when every check passed. The count is in the message so a caller that shows
-// one line still says how much is left to fix.
+// one line still says how much is left to fix, and every refusal keeps its own
+// wording and its own fix inside that line.
+//
+// The error matches ErrPreflightRefused, so a caller classifies it as the
+// refusal it is instead of reading the prose to work out that nothing failed.
 func (p Preflight) Err() error {
 	if p.OK() {
 		return nil
@@ -58,7 +79,9 @@ func (p Preflight) Err() error {
 	for i, r := range p.Refusals {
 		errs[i] = fmt.Errorf("db: enable: %w", r)
 	}
-	return fmt.Errorf("db: enable preflight: %d checks refused: %w", len(p.Refusals), errors.Join(errs...))
+	return &preflightRefusedError{
+		err: fmt.Errorf("db: enable preflight: %d checks refused: %w", len(p.Refusals), errors.Join(errs...)),
+	}
 }
 
 // refuse records a check that did not pass.

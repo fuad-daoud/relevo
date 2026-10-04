@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
@@ -191,4 +192,45 @@ func parseInto[V any](t *testing.T, name string, install func(*flag.FlagSet) V) 
 		t.Fatalf("parseFlags: %v", err)
 	}
 	return v
+}
+
+// TestDBSyncClassifyReportsAPreflightRefusalAsRefused pins that an enable
+// preflight refusal reaches the user as a refusal and not as an internal
+// failure. Nothing broke on that path: the database is simply not ready to have
+// its rows leave the machine, and every fix it names is a command or a flag the
+// reader can run. `internal` is the one code the catalog points at
+// `relevo bugreport` from, so a refusal classified as internal sends the reader
+// to report a defect instead of to the fix its own message just named.
+func TestDBSyncClassifyReportsAPreflightRefusalAsRefused(t *testing.T) {
+	t.Parallel()
+
+	const fix = "run the origin backfill (BackfillOriginOnce) or upgrade before enabling sync"
+	preflight := db.Preflight{Refusals: []db.PreflightRefusal{{
+		Check:  "empty origin",
+		Detail: "repo=22 mastermind=112 rows with no origin must be stamped before two machines share this file; " + fix,
+	}}}
+	classified := dbSyncClassify(preflight.Err())
+
+	var got *cliError
+	if !errors.As(classified, &got) {
+		t.Fatalf("classified = %v, want a cliError", classified)
+	}
+	if got.code != codeRefused {
+		t.Errorf("code = %q, want %q", got.code, codeRefused)
+	}
+	if got.code == codeInternal {
+		t.Error("the refusal is reported as an internal failure")
+	}
+	if got.next == "relevo bugreport" || strings.Contains(got.next, "bugreport") {
+		t.Errorf("next = %q, want no bug report on a refusal", got.next)
+	}
+	if !strings.Contains(got.Error(), fix) {
+		t.Errorf("the classified refusal %q dropped the fix it names", got.Error())
+	}
+	if !strings.Contains(got.Error(), "repo=22 mastermind=112") {
+		t.Errorf("the classified refusal %q dropped the counts it names", got.Error())
+	}
+	if !errors.Is(classified, db.ErrPreflightRefused) {
+		t.Errorf("the classified error no longer matches the refusal it came from: %v", classified)
+	}
 }

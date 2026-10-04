@@ -380,3 +380,93 @@ func TestUpsertRepoAndMasterMindAreScopedByOrigin(t *testing.T) {
 		t.Errorf("second upsert of one origin's session = %q, want %q", againMMA, mmA)
 	}
 }
+
+// TestBackfillOriginOnceStampsEveryGateTable pins the pass against the gate it
+// exists for: one empty-origin row in each table the gate counts becomes this
+// installation's, so every count the gate reports is zero afterwards and the
+// gate itself passes. A table the pass left out would leave its count standing
+// and the enable refusal would name a fix that could not clear it.
+func TestBackfillOriginOnceStampsEveryGateTable(t *testing.T) {
+	d := directOpenTestDB(t)
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	seedOneEmptyOriginRowPerTable(t, d)
+
+	before, err := CountEmptyOrigins(d)
+	if err != nil {
+		t.Fatalf("CountEmptyOrigins before the pass: %v", err)
+	}
+	for _, table := range before.Tables {
+		if table.Rows != 1 {
+			t.Fatalf("%s holds %d unstamped rows before the pass, want 1", table.Table, table.Rows)
+		}
+	}
+	if EnablePreflight(d).OK() {
+		t.Fatal("the preflight passes on a database holding an unstamped row in every table")
+	}
+
+	stats, ran, err := BackfillOriginOnce(d, "01ORIGIN", now)
+	if err != nil {
+		t.Fatalf("BackfillOriginOnce: %v", err)
+	}
+	if !ran {
+		t.Fatal("first run reported ran = false")
+	}
+
+	reported := map[string]int64{
+		"binding_record": stats.BindingRecords,
+		"binding":        stats.Bindings,
+		"repo":           stats.Repos,
+		"mastermind":     stats.Masterminds,
+		"chains":         stats.Chains,
+	}
+	after, err := CountEmptyOrigins(d)
+	if err != nil {
+		t.Fatalf("CountEmptyOrigins after the pass: %v", err)
+	}
+	for _, table := range after.Tables {
+		if table.Rows != 0 {
+			t.Errorf("%s holds %d unstamped rows after the pass, want 0", table.Table, table.Rows)
+		}
+		if got, ok := reported[table.Table]; !ok || got != 1 {
+			t.Errorf("the pass reported %d row(s) stamped in %s, want 1", got, table.Table)
+		}
+	}
+	if !after.Empty() {
+		t.Errorf("counts after the pass = %s, want none", after)
+	}
+
+	// One pass, one marker: a second run stamps nothing and reports no rows,
+	// which is what makes the retry after a failure safe.
+	second, ran, err := BackfillOriginOnce(d, "01ORIGIN", now)
+	if err != nil {
+		t.Fatalf("second BackfillOriginOnce: %v", err)
+	}
+	if ran {
+		t.Error("second run reported ran = true, want a no-op")
+	}
+	if second.BindingRecords != 0 || second.Repos != 0 || second.Masterminds != 0 || second.Chains != 0 {
+		t.Errorf("the no-op run reported rows: %+v", second)
+	}
+}
+
+// TestBackfillTablesMatchTheOriginGate pins the two lists against each other.
+// The gate decides whether an enable is refused, so a table it counts that the
+// backfill does not stamp is a refusal no fix can clear; and a table the
+// backfill stamps that the gate does not count is a row moved for nothing. Every
+// table must also report into the stats, or the daemon's log line would
+// understate what the pass did.
+func TestBackfillTablesMatchTheOriginGate(t *testing.T) {
+	tables := backfillTables()
+	if len(tables) != len(originGateTables) {
+		t.Fatalf("the backfill stamps %v, the gate counts %v", tables, originGateTables)
+	}
+	stats := OriginBackfillStats{}
+	for i, table := range originGateTables {
+		if tables[i] != table {
+			t.Errorf("the backfill stamps %d %q, the gate counts %q", i, tables[i], table)
+		}
+		if stats.countFor(table) == nil {
+			t.Errorf("%s has no stats field, so its rows would not be reported", table)
+		}
+	}
+}

@@ -29,6 +29,17 @@ var ErrLocked = errors.New("database is locked by another process")
 // and mark.
 var ErrNotConverted = errors.New("relevo.db is not converted yet; start the daemon once")
 
+// ErrPreflightRefused reports that an enable's preflight checks found a
+// precondition this database does not meet. It is a refusal rather than a
+// failure: nothing went wrong, the database is simply not ready to have its rows
+// leave this machine, and every message the refusal carries names the fix.
+//
+// The sentinel is what lets a caller tell the two apart without reading prose. A
+// refusal is answered by doing something -- running a named pass, re-running
+// with a named flag -- while an internal failure is answered by reporting a
+// defect, and pointing a refusal at a bug report sends the reader to neither.
+var ErrPreflightRefused = errors.New("enable preflight refused")
+
 // IsTransient reports whether err is a transient database failure that a caller
 // may retry: SQLite busy (ErrBusy or code 5) or SQLite I/O error (code 10).
 // Permanent failures (not found, constraint, schema mismatch, corrupt, misuse)

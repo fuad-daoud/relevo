@@ -63,7 +63,7 @@ func TestEnableRefusesEmptyOrigin(t *testing.T) {
 	}
 
 	// The gate only counts, so the rows stay until something stamps them; the
-	// next open's gate then passes on the counts alone.
+	// pass the refusal names is that something, and its own counts reach zero.
 	stampEveryOrigin(t, d, "inst-a")
 	stamped, err := CountEmptyOrigins(d)
 	if err != nil {
@@ -99,15 +99,11 @@ func seedOneEmptyOriginRowPerTable(t *testing.T, d *DB) {
 	}
 }
 
-// stampEveryOrigin fills in the origin the gate counts, on the tables the
-// backfill does not itself reach.
+// stampEveryOrigin clears the origin the gate counts, by running the pass the
+// gate's own refusal names. There is nothing to reach for besides that pass: a
+// table outside it would leave a count standing that the fix text cannot clear.
 func stampEveryOrigin(t *testing.T, d *DB, origin string) {
 	t.Helper()
-	for _, table := range []string{"repo", "mastermind", "chains"} {
-		if _, err := d.sqlDB.Exec(`UPDATE `+table+` SET origin = ? WHERE origin = ''`, origin); err != nil {
-			t.Fatalf("stamp %s: %v", table, err)
-		}
-	}
 	if _, _, err := BackfillOriginOnce(d, origin, time.Now()); err != nil {
 		t.Fatalf("BackfillOriginOnce: %v", err)
 	}
@@ -336,5 +332,51 @@ func assertSeedIsAWholeDatabase(t *testing.T, seed string) {
 	}
 	if empty != 0 {
 		t.Errorf("the seed copy holds %d plain rows, want a converted history", empty)
+	}
+}
+
+// TestPreflightErrIsARefusalNotAFailure pins the class Err hands a caller: the
+// joined error matches ErrPreflightRefused so a caller can branch on it, while
+// the line it renders is still exactly the sentence the refusals make. The class
+// is for the caller; repeating it in the message would only duplicate the code
+// the CLI already prints.
+func TestPreflightErrIsARefusalNotAFailure(t *testing.T) {
+	d := directOpenTestDB(t)
+	seedOneEmptyOriginRowPerTable(t, d)
+	for _, name := range []string{"client.key", "typesafe"} {
+		if err := d.Tx(func(t *Tx) error { return t.SecretPut(name, []byte(name), time.Now()) }); err != nil {
+			t.Fatalf("SecretPut %s: %v", name, err)
+		}
+	}
+
+	preflight := EnablePreflight(d)
+	err := preflight.Err()
+	if err == nil {
+		t.Fatal("Err() = nil, want the refusals")
+	}
+	if !errors.Is(err, ErrPreflightRefused) {
+		t.Errorf("errors.Is(Err(), ErrPreflightRefused) = false for %v", err)
+	}
+	if !strings.HasPrefix(err.Error(), "db: enable preflight: ") {
+		t.Errorf("Err() = %q, want the preflight's own sentence", err)
+	}
+
+	// Every refusal keeps its own wording and its own fix: the fix is the whole
+	// reason the line is worth reading.
+	for _, r := range preflight.Refusals {
+		if !strings.Contains(err.Error(), r.Detail) {
+			t.Errorf("Err() dropped the %s refusal's own text: %v", r.Check, err)
+		}
+	}
+	for _, fix := range []string{fixEmptyOrigin, fixSharedSecs, fixCompress} {
+		if !strings.Contains(err.Error(), fix) {
+			t.Errorf("Err() = %v, want it to name the fix %q", err, fix)
+		}
+	}
+
+	// A preflight that passed is no error at all, so the class cannot be
+	// mistaken for one.
+	if passing := (Preflight{}); passing.Err() != nil {
+		t.Errorf("Err() on a passing preflight = %v, want nil", passing.Err())
 	}
 }

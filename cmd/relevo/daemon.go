@@ -324,14 +324,15 @@ func cmdDaemon(args []string) error {
 		}
 	}
 
-	// The installation's own row, then the origin backfill, run next to the
-	// other run-once passes. The row is the projection other machines read to
-	// label this installation; the backfill stamps this installation's id on
-	// rows written before the origin column existed, and records itself in kv,
-	// so every later start is a no-op. A failure never stops the daemon: a
-	// machine with no database still runs, and the next start retries.
+	// The installation's own row, then the local split and the origin backfill,
+	// run next to the other run-once passes. The row is the projection other
+	// machines read to label this installation; the two passes behind it are the
+	// ones the enable preflight refuses on by name, so running them here is what
+	// gives a refusal its fix. A failure never stops the daemon: a machine with
+	// no database still runs, and the next start retries.
 	if rt.DB != nil {
-		inst, ierr := installation.Load(filepath.Dir(rt.Store.DBPath()))
+		dir := filepath.Dir(rt.Store.DBPath())
+		inst, ierr := installation.Load(dir)
 		if ierr != nil {
 			slog.Warn("relevo daemon: installation file unavailable", "err", ierr)
 		} else {
@@ -341,16 +342,7 @@ func cmdDaemon(args []string) error {
 				slog.Warn("relevo daemon: installation row skipped", "err", terr)
 			}
 
-			bstats, bran, berr := db.BackfillOriginOnce(rt.DB, inst.ID, time.Now())
-			if berr != nil {
-				slog.Warn("relevo daemon: origin backfill skipped", "err", berr)
-			} else if bran {
-				slog.Info("relevo daemon: origin backfill",
-					"done_at", bstats.DoneAt,
-					"origin", bstats.Origin,
-					"binding_records", bstats.BindingRecords,
-					"bindings", bstats.Bindings)
-			}
+			daemonEnablePath(rt.DB, dir, inst.ID, time.Now())
 		}
 	}
 
