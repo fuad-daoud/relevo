@@ -106,6 +106,19 @@ func splitFileBytes(t *testing.T, path string) map[string][]byte {
 	return out
 }
 
+// splitLocalFile names the local file a split open created, in either mode. A
+// direct open reports the path it is open on; a handle that came back through
+// the owner hop carries no path of its own, so there the name the split was
+// asked for is the only one pointing at the file -- and it is the same name the
+// direct handle reports, so the assertion is the same in both modes.
+func splitLocalFile(t *testing.T, path string, local *DB) string {
+	t.Helper()
+	if p := local.Path(); p != "" {
+		return p
+	}
+	return SplitPath(path)
+}
+
 // TestSplitOpen pins that one split open yields two files at the same schema
 // version: the same migrations run on both, so placement is a routing
 // decision and never a schema fork.
@@ -124,7 +137,7 @@ func TestSplitOpen(t *testing.T) {
 	if got := SplitPath(path); got != filepath.Join(filepath.Dir(path), "relevo-local.db") {
 		t.Errorf("SplitPath = %s, want the -local name beside the database", got)
 	}
-	if _, serr := os.Stat(local.path); serr != nil {
+	if _, serr := os.Stat(splitLocalFile(t, path, local)); serr != nil {
 		t.Fatalf("stat the local file: %v", serr)
 	}
 
