@@ -299,11 +299,16 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		}
 		b.State = store.StateBroken
 		slog.Warn("builder switch failed", "binding", b.Name, "round", b.Round, "pick", res.Token(), "err", err)
+		reason := fmt.Sprintf("%s: builder %s; switching to %s failed: %v", b.Name, b.BuilderCandidate, res.Token(), err)
+		// The binding keeps the reason, name-stripped the way haltBinding records
+		// one. A served binding ships its Halt to its owner, so an empty one left
+		// the owner told only that the round broke: not which switch failed, not
+		// why, and nothing for the human to act on beyond the state word itself.
+		b.Halt = strings.TrimPrefix(reason, b.Name+": ")
 		// A broken binding no route will fix owes the MasterMind the same entry
 		// a halt does; queueBrokenHalt skips only the ones a later tick can
 		// still switch, and without a process this is not one of them.
-		next, qerr := queueBrokenHalt(ctx, rt, tx, b,
-			fmt.Sprintf("%s: builder %s; switching to %s failed: %v", b.Name, b.BuilderCandidate, res.Token(), err))
+		next, qerr := queueBrokenHalt(ctx, rt, tx, b, reason)
 		if qerr != nil {
 			return b, qerr
 		}

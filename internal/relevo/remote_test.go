@@ -1969,6 +1969,33 @@ func TestSendRemoteHaltedIsAnError(t *testing.T) {
 		_, err := Send(context.Background(), rt, "api", planFile, SendOptions{})
 		assertNothingWritten(t, st, err, "could not start", "already switched 2 time(s)")
 	})
+
+	// A server that refuses a different plan on a broken binding answers 409
+	// round_open and puts the reason in the message. The client must report
+	// that reason, not a claim that the round is running.
+	t.Run("409 round_open on a broken binding", func(t *testing.T) {
+		fr := &fakeRemote{
+			startRoundErr: &client.HTTPError{
+				Status: 409,
+				Body: remote.ErrorBody{
+					Code:    remote.CodeRoundOpen,
+					Message: `binding "api" is broken; rebind before sending`,
+				},
+			},
+		}
+		rt, st := newRT(t, fr)
+
+		planFile := filepath.Join(t.TempDir(), "plan.md")
+		if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := Send(context.Background(), rt, "api", planFile, SendOptions{})
+		assertNothingWritten(t, st, err, "could not start", "is broken; rebind before sending")
+		if strings.Contains(err.Error(), "is running") {
+			t.Errorf("Send error = %q, want no claim that the round is running", err.Error())
+		}
+	})
 }
 
 // TestSendRemoteTierPassedToStartRound pins that a Send with a Tier option

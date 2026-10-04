@@ -129,7 +129,11 @@ func remoteShip(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 				// proceed as success
 				view.RoundState = remote.RoundRunning
 			} else if httpErr.Status == 409 && httpErr.Body.Code == remote.CodeRoundOpen {
-				return remoteShipped{}, fmt.Errorf("round %d is running on %s", b.Round, server)
+				// round_open is the server's refusal to start the round as
+				// asked: a running or queued round, or a binding that cannot
+				// start at all. Its message says which, so it is reported as
+				// given rather than restated as "running".
+				return remoteShipped{}, fmt.Errorf("%s: round %d could not start on %s: %s", name, b.Round, server, httpErr.Body.Message)
 			} else if httpErr.Status == 409 && httpErr.Body.Code == remote.CodeRoundHalted {
 				return remoteShipped{}, fmt.Errorf("%s: round %d could not start on %s: %s", name, b.Round, server, httpErr.Body.Message)
 			} else if httpErr.Status == 422 && httpErr.Body.Code == remote.CodeTierAboveMax {
