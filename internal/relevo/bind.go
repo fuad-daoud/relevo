@@ -476,6 +476,10 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 			b.HaltNotifiedRound = 0
 			b.Halt = ""
 			b.HaltAt = time.Time{}
+			// The owed notification goes with the halt: the replacement builder
+			// is a fresh attempt, and an entry the replaced round still owed
+			// would be notified as a halt of a round nobody is running.
+			b.OwedHalt = nil
 			b.BuilderScreen = ""
 			b.BuilderScreenAt = time.Time{}
 			b.RoundClosedTree = ""

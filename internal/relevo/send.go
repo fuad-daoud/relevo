@@ -684,6 +684,10 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		// A human re-send is a fresh attempt: the next halt in this round
 		// notifies again, and the round gets a full switch budget.
 		b.HaltNotifiedRound = 0
+		// An owed notification goes with the halt it was about: the re-send is
+		// the human answering that halt, so the entry it still owes would land
+		// under a round the human has already moved past.
+		b.OwedHalt = nil
 		b.RoundSwitches = 0
 		b.RoundExcluded = nil
 		b.RoundOOMKills = 0
