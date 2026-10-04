@@ -4191,6 +4191,222 @@ func TestReconcileRemoteUnreachablePastBudgetHalts(t *testing.T) {
 	}
 }
 
+// unreachableHaltedBinding halts b through the unreachable arm and returns it
+// once the binding is NEEDS YOU for that reason alone. Every clearing test
+// starts here: a binding that was never halted would clear trivially, and one
+// halted for any other reason is the case that must not clear at all.
+func unreachableHaltedBinding(t *testing.T, rt Runtime, b store.Binding) store.Binding {
+	t.Helper()
+	// The first unreachable tick only stamps when the outage began, so the halt
+	// lands on the second one: both are part of the fixture.
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	got, err = reconcile(t, at(rt, 31*time.Minute), got)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	// The halt is checked against the literal text rather than through
+	// unreachableHalted: the fixture must not be established by the predicate
+	// the tests below mutate, or a broken predicate would fail here and hide
+	// whether the clear itself still works.
+	if got.State != store.StateNeedsYou ||
+		!strings.Contains(got.Halt, "unreachable for") ||
+		!strings.Contains(got.Halt, "may still be running there") {
+		t.Fatalf("state = %s, halt = %q, want the unreachable halt as the fixture", got.State, got.Halt)
+	}
+	return got
+}
+
+// TestUnreachableHaltsClearOnRunningView pins that a server answering with a
+// running round ends the unreachable episode: the halt's only reason was that
+// the server could not be seen, and a running round over there disproves it.
+// Without the clear, `wait` answers needs_you on a round a human can watch move.
+func TestUnreachableHaltsClearOnRunningView(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.RoundTimeoutMS = 1000
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WithLock(func(tx *store.Tx) error {
+		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: fmt.Errorf("%w: dial tcp: connection refused", client.ErrUnreachable)}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got := unreachableHaltedBinding(t, rt, b)
+
+	// The server answers again, and the round over there is running.
+	fr.getBindingErr = nil
+	fr.getBindingResp = remote.BindingView{RoundState: remote.RoundRunning}
+	fr.roundFileFromResp = io.NopCloser(strings.NewReader("builder log line 1\n"))
+
+	got, err := reconcile(t, at(rt, 31*time.Minute), got)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateActive {
+		t.Errorf("state = %s, want active: a running view answers the halt's only question", got.State)
+	}
+	if got.Halt != "" || !got.HaltAt.IsZero() {
+		t.Errorf("Halt = %q at %v, want both cleared", got.Halt, got.HaltAt)
+	}
+	// The stamp goes with the text, so an outage that starts again halts and
+	// queues its own entry rather than staying silent for a notified round.
+	if got.HaltNotifiedRound != 0 {
+		t.Errorf("HaltNotifiedRound = %d, want 0 so the next halt is its own episode", got.HaltNotifiedRound)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := WaitOutcome(got, entries, 1, func(string, int) string { return "" }); r.Code == WaitNeedsYou {
+		t.Errorf("WaitOutcome = %+v, want no needs_you on a visibly running round", r)
+	}
+}
+
+// TestUnreachableHaltsClearOnQueuedView pins the same clear for a queued round.
+// Queued is not running, but it is the same answer to the same question: the
+// server accepted the round and holds it, so nothing over there needs a human.
+func TestUnreachableHaltsClearOnQueuedView(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.RoundTimeoutMS = 1000
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WithLock(func(tx *store.Tx) error {
+		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: fmt.Errorf("%w: dial tcp: connection refused", client.ErrUnreachable)}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got := unreachableHaltedBinding(t, rt, b)
+
+	fr.getBindingErr = nil
+	fr.getBindingResp = remote.BindingView{RoundState: remote.RoundQueued}
+
+	got, err := reconcile(t, at(rt, 31*time.Minute), got)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateActive {
+		t.Errorf("state = %s, want active: a queued view answers the halt's only question", got.State)
+	}
+	if got.Halt != "" || !got.HaltAt.IsZero() || got.HaltNotifiedRound != 0 {
+		t.Errorf("halt = %q at %v notified %d, want all three cleared", got.Halt, got.HaltAt, got.HaltNotifiedRound)
+	}
+}
+
+// TestUnreachableClearLeavesOtherHalts pins the other half of the clear's scope:
+// a halt the server has not contradicted stays. The unreachable halt is the
+// only one whose reason a running or queued view disproves, so a removed
+// binding must still read NEEDS YOU after the server answers.
+func TestUnreachableClearLeavesOtherHalts(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no such binding"}}}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou || !strings.Contains(got.Halt, "binding removed by the server admin") {
+		t.Fatalf("state = %s, halt = %q, want the 404 halt as the fixture", got.State, got.Halt)
+	}
+
+	fr.getBindingErr = nil
+	fr.getBindingResp = remote.BindingView{RoundState: remote.RoundRunning}
+	fr.roundFileFromResp = io.NopCloser(strings.NewReader("builder log line 1\n"))
+
+	got, err = reconcile(t, rt, got)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you: a removed binding is not the unreachable halt's to clear", got.State)
+	}
+	if !strings.Contains(got.Halt, "binding removed by the server admin") {
+		t.Errorf("Halt = %q, want the 404 halt left alone", got.Halt)
+	}
+}
+
+// TestSyncRemoteClearsUnreachableHalt pins the clear on the path with no daemon
+// running. SyncRemote is what `wait` and `status` call when there is no daemon
+// to reconcile on a tick, so a fix that only reached the daemon's reconcile would
+// leave the laptop this audit is about asking for a human forever.
+func TestSyncRemoteClearsUnreachableHalt(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.RoundTimeoutMS = 1000
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WithLock(func(tx *store.Tx) error {
+		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: fmt.Errorf("%w: dial tcp: connection refused", client.ErrUnreachable)}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	// Two passes at two clocks: the first stamps the outage's start, the second
+	// is the one past the budget that halts.
+	for _, clock := range []Runtime{rt, at(rt, 31*time.Minute)} {
+		if _, err := SyncRemote(context.Background(), clock); err != nil {
+			t.Fatalf("SyncRemote: %v", err)
+		}
+	}
+	halted, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if halted.State != store.StateNeedsYou || !strings.Contains(halted.Halt, "unreachable for") {
+		t.Fatalf("state = %s, halt = %q, want the unreachable halt as the fixture", halted.State, halted.Halt)
+	}
+
+	fr.getBindingErr = nil
+	fr.getBindingResp = remote.BindingView{RoundState: remote.RoundRunning}
+	fr.roundFileFromResp = io.NopCloser(strings.NewReader("builder log line 1\n"))
+
+	if _, err := SyncRemote(context.Background(), at(rt, 31*time.Minute)); err != nil {
+		t.Fatalf("SyncRemote: %v", err)
+	}
+	got, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != store.StateActive {
+		t.Errorf("state = %s, want active after SyncRemote sees the round running", got.State)
+	}
+	if got.Halt != "" || !got.HaltAt.IsZero() || got.HaltNotifiedRound != 0 {
+		t.Errorf("halt = %q at %v notified %d, want all three cleared", got.Halt, got.HaltAt, got.HaltNotifiedRound)
+	}
+}
+
 func TestReconcileRemote401Halts(t *testing.T) {
 	t.Parallel()
 
