@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/store"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
@@ -137,6 +138,54 @@ func openDBSync() (shared *db.DB, local *db.DB, err error) {
 	if err != nil {
 		_ = shared.Close()
 		return nil, nil, failWrap(codeInternal, err, "open %s", db.SplitPath(path))
+	}
+	return shared, local, nil
+}
+
+// openDBSyncStatus reaches the rows the read-only status verb answers from: it
+// dials the owner on the machine socket and takes the machine-local file off
+// the dialled handle.
+//
+// That is the whole of what separates status from the writing verbs, and every
+// part of it follows from status writing nothing. openDBSync opens the file
+// directly because the Turso driver needs a real path to open, which means
+// taking the lock the daemon holds and refusing with `conflict` while it runs --
+// a correct price for a verb that writes, and a wrong one for a verb that reads
+// three local rows. status has no driver to open, so it takes the owner's local
+// scope instead, and the daemon running is the case it is built for rather than
+// the one it refuses. Nothing here starts a daemon either: a status that had to
+// bring one up would answer a question about the machine by changing it.
+//
+// The local handle is not optional, and refusing without one is the point. An
+// owner that serves none is refused rather than answered from the shared file --
+// the same rule RefuseNoLocal enforces on the wire. The shared file holds no
+// sync section and no token, so a silent downgrade would report a configured
+// machine as unconfigured and an enabled one as off, which is exactly the
+// answer the split between the two files exists to make impossible.
+func openDBSyncStatus() (shared *db.DB, local *db.DB, err error) {
+	path := machineDBPath()
+	if path == "" {
+		return nil, nil, fail(codeRefused, "no state root: set XDG_STATE_HOME or HOME")
+	}
+	if !fileExists(path) {
+		return nil, nil, fail(codeRefused, "no relevo.db at %s", path)
+	}
+	root, err := store.DefaultRoot()
+	if err != nil {
+		return nil, nil, failWrap(codeRefused, err, "relevo db sync status: no state root")
+	}
+	sock, err := ownerSocket(root)
+	if err != nil {
+		return nil, nil, failWrap(codeRefused, err, "relevo db sync status: no owner socket for this root")
+	}
+	shared, err = dialOwner(context.Background(), root, verbDialBudget)
+	if err != nil {
+		return nil, nil, failWrap(codeRefused, err, "relevo db sync status: the owner at %s did not answer", sock)
+	}
+	local, err = relevosync.LocalHandle(shared)
+	if err != nil {
+		_ = shared.Close()
+		return nil, nil, dbSyncClassify(err)
 	}
 	return shared, local, nil
 }

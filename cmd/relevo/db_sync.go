@@ -313,6 +313,13 @@ func cmdDBSyncDisable(args []string) error {
 // cmdDBSyncStatus answers what this machine is set to be. It reads the local
 // marks and nothing else, so it answers with the network blackholed and no
 // handle open.
+//
+// It reaches them through the owner (openDBSyncStatus) rather than through
+// openDBSync, and the difference is the point of the verb: a status that opened
+// the file directly could only answer while the daemon was stopped, so the one
+// question a machine could always ask about itself was the one question a
+// running daemon refused to answer. Every byte below is unchanged by the route:
+// what it prints is a function of the document alone.
 func cmdDBSyncStatus(args []string) error {
 	fs := flag.NewFlagSet("db sync status", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -324,7 +331,7 @@ func cmdDBSyncStatus(args []string) error {
 		return fail(codeUsage, "relevo db sync status takes no arguments, got %d", fs.NArg())
 	}
 
-	shared, local, err := openDBSync()
+	shared, local, err := openDBSyncStatus()
 	if err != nil {
 		return err
 	}
@@ -352,12 +359,21 @@ func cmdDBSyncStatus(args []string) error {
 	if *v.asJSON {
 		return printDoc(doc)
 	}
+	fmt.Print(dbSyncStatusLine(doc))
+	return nil
+}
+
+// dbSyncStatusLine is the one line `db sync status` prints, as a function of the
+// document and nothing else. Pulling it out of the verb is what lets the mapping
+// be pinned by bytes: the route a row arrived over is then nowhere in the line,
+// so a table of documents renders to the exact same table of strings whichever
+// handle the rows came out of.
+func dbSyncStatusLine(doc dbSyncStatusDoc) string {
 	state := "off"
 	if doc.Enabled {
 		state = "on"
 	}
-	fmt.Printf("sync %s (remote: %s, token: %s)\n", state, orNone(doc.RemoteURL), presentOrAbsent(doc.TokenPresent))
-	return nil
+	return fmt.Sprintf("sync %s (remote: %s, token: %s)\n", state, orNone(doc.RemoteURL), presentOrAbsent(doc.TokenPresent))
 }
 
 // dbSyncSeedPath is where the seed copy an existing-history enable writes lands:
