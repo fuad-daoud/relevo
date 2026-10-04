@@ -4311,6 +4311,57 @@ func TestUnreachableHaltsClearOnQueuedView(t *testing.T) {
 	}
 }
 
+// TestUnreachableHaltClearsBeforeNeedsYouHalt pins that a server answering
+// "needs you" ends the unreachable episode too. The round over there is visible
+// again, so the halt's only reason is gone -- but the view carries a reason of
+// its own, and that reason is what the MasterMind must be told.
+//
+// Without the clear the server's halt is deduped away: the unreachable episode
+// already stamped HaltNotifiedRound for this round, so haltBinding queues
+// nothing and writes no reason, and the binding sits on NEEDS YOU quoting a halt
+// the server has just contradicted.
+func TestUnreachableHaltClearsBeforeNeedsYouHalt(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.RoundTimeoutMS = 1000
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WithLock(func(tx *store.Tx) error {
+		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: fmt.Errorf("%w: dial tcp: connection refused", client.ErrUnreachable)}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got := unreachableHaltedBinding(t, rt, b)
+
+	fr.getBindingErr = nil
+	fr.getBindingResp = remote.BindingView{RoundState: remote.RoundNeedsYou, Halt: "stuck at a dialog"}
+
+	got, err := reconcile(t, at(rt, 31*time.Minute), got)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Halt != "stuck at a dialog" {
+		t.Errorf("Halt = %q, want the server's halt text, not the unreachable one", got.Halt)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you: the server's halt is its own halt", got.State)
+	}
+	halts := haltEntriesFor(t, rt, b.Name)
+	if len(halts) != 2 {
+		t.Fatalf("halt entries = %d, want 2: the unreachable halt and the server's", len(halts))
+	}
+	if halts[1].Note != "stuck at a dialog" {
+		t.Errorf("second halt entry = %q, want the server's reason", halts[1].Note)
+	}
+}
+
 // TestUnreachableClearLeavesOtherHalts pins the other half of the clear's scope:
 // a halt the server has not contradicted stays. The unreachable halt is the
 // only one whose reason a running or queued view disproves, so a removed

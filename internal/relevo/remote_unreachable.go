@@ -75,13 +75,23 @@ func unreachableHalted(b store.Binding) bool {
 	return strings.Contains(b.Halt, unreachableHaltMarker)
 }
 
-// clearUnreachableHalt drops the unreachable halt once the server answers again
-// with a round that is visibly running or queued.
+// clearUnreachableHalt drops the unreachable halt once the server answers again:
+// a round that is visibly running or queued disproves the halt's reason outright,
+// and a needs-you view supersedes it, because the halt it carries is the
+// server's own statement about the round.
 //
-// The halt's only reason was "we cannot see the server", and a running or queued
-// view disproves exactly that: the round is alive over there. Leaving the binding
-// on NEEDS YOU until the server closes the round makes `wait` answer needs-you
-// on a round a human can see progressing.
+// The running and queued answer is the negative one -- the round is alive over
+// there, so nothing about it needs a human. Needs-you needs the positive one:
+// the server is answering, it has looked at the round, and it has said a human
+// is needed with a reason of its own. Left in place, that reason would never be
+// told: the unreachable episode already stamped HaltNotifiedRound for this
+// round, so the server's halt is deduped away and the binding sits on NEEDS YOU
+// quoting a halt the server has just contradicted.
+//
+// The halt's only reason was "we cannot see the server", and a view that came
+// back disproves exactly that. Leaving the binding on NEEDS YOU until the server
+// closes the round makes `wait` answer needs-you on a round a human can see
+// progressing.
 //
 // The stamp is cleared with the text, not left behind, so a server that drops out
 // again is a new episode: its halt finds HaltNotifiedRound back at zero and
@@ -92,7 +102,7 @@ func unreachableHalted(b store.Binding) bool {
 // each of them is answered by its own path. The cleared state is Active, matching
 // what a binding with no halt at all carries.
 func clearUnreachableHalt(state remote.RoundState, b store.Binding) store.Binding {
-	if state != remote.RoundRunning && state != remote.RoundQueued {
+	if !unreachableHaltDisproven(state) {
 		return b
 	}
 	if b.State != store.StateNeedsYou || !unreachableHalted(b) {
@@ -105,4 +115,16 @@ func clearUnreachableHalt(state remote.RoundState, b store.Binding) store.Bindin
 	b.HaltNotifiedRound = 0
 	b.State = store.StateActive
 	return b
+}
+
+// unreachableHaltDisproven is the set of round states whose arriving view
+// answers the unreachable halt's question. Split out so the clearing rules are
+// one predicate rather than a condition growing arms inside the function that
+// reads it.
+func unreachableHaltDisproven(state remote.RoundState) bool {
+	switch state {
+	case remote.RoundRunning, remote.RoundQueued, remote.RoundNeedsYou:
+		return true
+	}
+	return false
 }
