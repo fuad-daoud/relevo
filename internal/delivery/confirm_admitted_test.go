@@ -138,7 +138,9 @@ func TestConfirmAdmittedWithNothingPendingIsNoop(t *testing.T) {
 // not a settlement, so it is cleared -- which is what puts the entry back into
 // the claimable scans, so the background wait can take it. This path must NEVER
 // push: a binding whose state already changed does not get a new payload, and
-// its Deliver and ConfirmOnce counts are the proof.
+// its Deliver and Confirm counts are the proof. The one read-back it still takes
+// is the ConfirmOnce that looks for a payload the session did already receive;
+// here the session has not taken it, so the entry stays for the wait.
 func TestConfirmAdmittedExpiredAdmitBecomesWaitClaimableWithoutPushing(t *testing.T) {
 	t.Parallel()
 
@@ -148,7 +150,7 @@ func TestConfirmAdmittedExpiredAdmitBecomesWaitClaimableWithoutPushing(t *testin
 	b.State = store.StateDone
 	rt.Now = agedClock(time.Hour) // an hour of wall clock: past the stub's minute
 
-	stub := &stubDeliverer{horizon: time.Minute, onceOutcome: OutcomeDelivered}
+	stub := &stubDeliverer{horizon: time.Minute, onceOutcome: OutcomeAdmitted, onceReason: "posted; awaiting the session"}
 	rt.Deliverers = map[string]MasterMindDeliverer{"opencode": stub}
 
 	_, got := confirmAdmittedOnce(t, rt, b)
@@ -158,9 +160,12 @@ func TestConfirmAdmittedExpiredAdmitBecomesWaitClaimableWithoutPushing(t *testin
 	if got.Route != "pull" {
 		t.Errorf("Route = %q, want pull: the background wait is the route that takes it", got.Route)
 	}
-	if stub.calls != 0 || stub.confirmCalls != 0 || stub.onceCalls != 0 {
-		t.Fatalf("deliverer calls = deliver %d, confirm %d, confirmOnce %d; want 0, 0, 0",
-			stub.calls, stub.confirmCalls, stub.onceCalls)
+	if stub.calls != 0 || stub.confirmCalls != 0 {
+		t.Fatalf("deliverer calls = deliver %d, confirm %d; want 0, 0: this path never pushes",
+			stub.calls, stub.confirmCalls)
+	}
+	if stub.onceCalls != 1 {
+		t.Fatalf("ConfirmOnce calls = %d, want 1: an expired admit is read back once before the wait takes it", stub.onceCalls)
 	}
 
 	if admitOf(t, rt, b.Name) != nil {
@@ -180,6 +185,58 @@ func TestConfirmAdmittedExpiredAdmitBecomesWaitClaimableWithoutPushing(t *testin
 	}
 	if _, pending, err := rt.Store.PendingForMasterMind(b.Name); err != nil || !pending {
 		t.Errorf("the entry must stay pending for the wait: pending=%v err=%v", pending, err)
+	}
+}
+
+// TestConfirmAdmittedExpiredAdmitConfirmsAnArrivedPayloadWithoutPushing pins
+// the other half of the expired-admit branch: an admit past its horizon says
+// the read-back has not settled the entry yet, not that the payload was never
+// received. So the cleared admit is followed by the same one read-back, and a
+// payload the session already took is confirmed instead of handed back as
+// claimable -- which is what keeps the background wait from showing the same
+// payload twice, once pushed and once pulled. The read-back confirms, it does
+// not send: Deliver is never called.
+func TestConfirmAdmittedExpiredAdmitConfirmsAnArrivedPayloadWithoutPushing(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	b := seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "opencode")
+	admit(t, rt, b.Name)
+	b.State = store.StateDone
+	rt.Now = agedClock(time.Hour) // an hour of wall clock: past the stub's minute
+
+	stub := &stubDeliverer{horizon: time.Minute, onceOutcome: OutcomeDelivered, onceReason: "the session took it"}
+	rt.Deliverers = map[string]MasterMindDeliverer{"opencode": stub}
+
+	_, got := confirmAdmittedOnce(t, rt, b)
+	if !got.Delivered || got.Route != "deliverer:opencode" {
+		t.Fatalf("Delivery = %+v, want delivered by deliverer:opencode", got)
+	}
+	if stub.calls != 0 || stub.confirmCalls != 0 {
+		t.Fatalf("deliverer calls = deliver %d, confirm %d; want 0, 0: the read-back confirms, it does not send",
+			stub.calls, stub.confirmCalls)
+	}
+	if stub.onceCalls != 1 {
+		t.Fatalf("ConfirmOnce calls = %d, want 1: one read-back settles the expired admit", stub.onceCalls)
+	}
+
+	if admitOf(t, rt, b.Name) != nil {
+		t.Error("an expired admit must be cleared even when the payload was confirmed")
+	}
+	if _, pending, err := rt.Store.PendingForMasterMind(b.Name); err != nil || pending {
+		t.Errorf("a payload the session already took must be confirmed: pending=%v err=%v", pending, err)
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		_, _, found, err := tx.ClaimableForMasterMind(b.Name)
+		if err != nil {
+			return err
+		}
+		if found {
+			t.Error("a confirmed entry must not stay claimable: the wait would show it a second time")
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("ClaimableForMasterMind: %v", err)
 	}
 }
 
