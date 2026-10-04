@@ -116,6 +116,21 @@ type OOMRequeue struct {
 	PeakBytes int64 `json:"peak_bytes,omitempty"`
 }
 
+// OwedHalt is one halt notification a binding still owes its MasterMind: the
+// round the entry is filed under and the text it carries.
+//
+// It exists because the binding log's append can fail after a round has already
+// been reported. The round close is committed to the log before the halt that
+// follows it, so a failed halt entry cannot be retried by closing the round
+// again; the close records what it owes here instead and a later tick writes it.
+type OwedHalt struct {
+	// Round is the round that closed, which is not the binding's current round:
+	// a halt that fires after the advance is about the round that just ended.
+	Round int `json:"round"`
+	// Text is the halt reason as the binding records it, name-stripped.
+	Text string `json:"text"`
+}
+
 type ServeFacts struct {
 	RepoID       string    `json:"repo_id"`
 	BareRepo     string    `json:"bare_repo"`
@@ -210,6 +225,12 @@ type Binding struct {
 	// harmless.
 	Halt   string    `json:"halt,omitempty"`
 	HaltAt time.Time `json:"halt_at,omitempty"`
+
+	// OwedHalt is the halt notification whose entry could not be written when
+	// the halt was decided. Non-nil only in that window: the next tick queues
+	// the entry and clears it, so a binding carrying one has halted and asked
+	// for a human without having said so in the log yet.
+	OwedHalt *OwedHalt `json:"owed_halt,omitempty"`
 
 	RoundSwitches int `json:"round_switches,omitempty"`
 

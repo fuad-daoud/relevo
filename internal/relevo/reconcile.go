@@ -201,6 +201,15 @@ func reconcileWith(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		return b, err
 	}
 
+	// A halt notification a close could not write is retried here, before
+	// anything reads the round: it is the only thing this binding still owes,
+	// and the round it is about has already advanced, so nothing below would
+	// reach it. It sits ahead of the DONE gate because a binding finished or
+	// paused after the halt still owes its MasterMind the entry.
+	if b, err = queueOwedHalt(ctx, rt, tx, b); err != nil {
+		return b, err
+	}
+
 	if b.State == store.StateDone || b.State == store.StatePaused {
 		// No new push may start for a done or paused binding, but a payload a
 		// push route admitted before the state changed must still be settled.
@@ -278,6 +287,59 @@ func haltBinding(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 // stamp, and a halt of the new round is a new notification.
 func closedRoundHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, closedRound int, message string) (store.Binding, error) {
 	return haltBinding(ctx, rt, tx, b, closedRound, message)
+}
+
+// closeHaltOrOwe halts the binding for a round that has already closed, and
+// records the notification as owed when the entry cannot be written.
+//
+// The halt itself is never in question: the binding keeps the text, the stamp
+// and the state word whatever the log says, because the caller saves what it
+// returns and a caller that returned the failure instead would save nothing at
+// all -- the round close that precedes this halt has already appended the
+// round's report, and a log that refuses one append may well have taken the
+// rest. The round would stay closed on disk with the binding still on it, and
+// no later tick would decide to halt it again.
+//
+// The owed entry is keyed on its own binding field rather than on
+// HaltNotifiedRound: the failed tick stamped that, so re-entering haltBinding
+// would queue nothing, and the marker is what a later tick reads to know the
+// notification is still outstanding.
+func closeHaltOrOwe(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, closedRound int, message string) store.Binding {
+	next, err := closedRoundHalt(ctx, rt, tx, b, closedRound, message)
+	if err == nil {
+		return next
+	}
+	slog.Warn("halt entry owed to a later tick", "binding", b.Name, "round", closedRound, "err", err)
+	// haltBinding returns before the state word when the queue fails, on the
+	// understanding that its caller saves nothing. This caller goes on, so the
+	// halt is finished here: next.Halt is the name-stripped text the entry
+	// would have carried, and the stamp it already set is what keeps the owed
+	// entry from being queued twice.
+	next.State = store.StateNeedsYou
+	next.OwedHalt = &store.OwedHalt{Round: closedRound, Text: next.Halt}
+	return next
+}
+
+// queueOwedHalt writes the entry a close owed and clears the marker, so the
+// halt is notified exactly once however long the log refused.
+//
+// A failure here is returned, and the caller saves nothing: the marker is
+// already on disk from the tick that set it, so a log that is still refusing
+// costs the notification a tick rather than losing it.
+//
+// It is keyed on the marker alone, which is why it runs on a binding whose
+// HaltNotifiedRound already equals its Round -- that stamp is what the failed
+// queue left behind, and this is the tick that makes it true.
+func queueOwedHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, error) {
+	if b.OwedHalt == nil {
+		return b, nil
+	}
+	owed := *b.OwedHalt
+	if err := queueHalt(ctx, rt, tx, b, owed.Round, owed.Text); err != nil {
+		return b, fmt.Errorf("queue owed halt for round %d: %w", owed.Round, err)
+	}
+	b.OwedHalt = nil
+	return b, nil
 }
 
 // queueHalt writes the one to_planner entry a halt owes the MasterMind for its
@@ -911,33 +973,24 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// default wait still sitting on this round would never pull an N+1 entry
 	// (closedRoundHalt).
 	//
-	// A halt whose entry cannot be written is returned, not dropped. The dedup
-	// key is stamped before the queue, so swallowing the error here would save
-	// the stamp with no entry behind it -- and a binding whose
-	// HaltNotifiedRound already equals its Round queues nothing ever again, so
-	// the notification would be lost for good rather than retried. Returning
-	// it ends the tick unsaved: the next tick re-closes the round, halts again
-	// under the same condition and queues the entry.
+	// A halt whose entry cannot be written is owed to a later tick, not
+	// returned: the report entry above is already on disk whatever this
+	// returns, so returning the error would leave the tick unsaved with the
+	// binding still at N -- and the next tick would find the round closed,
+	// take the idle branch, never halt again, and refuse every send with
+	// ErrReportPending.
 	if b.Shape == store.ShapeReader {
 		if over, total := artifactCapExceeded(rt.Store, b, closedRound, rt.Policy.ArtifactMaxBytes()); over {
-			next, herr := closedRoundHalt(ctx, rt, tx, b, closedRound, artifactCapReason(total, rt.Policy.ArtifactMaxBytes()))
-			b = next
-			if herr != nil {
-				return b, herr
-			}
+			b = closeHaltOrOwe(ctx, rt, tx, b, closedRound, artifactCapReason(total, rt.Policy.ArtifactMaxBytes()))
 		}
 	}
 
 	// A scope refusal asks for a human, exactly where the reader artifact
 	// cap does: after the round has advanced, naming the offending file
-	// (#801). Filed under closedRound, and its failed queue surfaced, for the
+	// (#801). Filed under closedRound, and its failed queue owed, for the
 	// reasons the cap halt above gives.
 	if verdict.Refused {
-		next, herr := closedRoundHalt(ctx, rt, tx, b, closedRound, scopeHaltText(b, closedRound, verdict))
-		b = next
-		if herr != nil {
-			return b, herr
-		}
+		b = closeHaltOrOwe(ctx, rt, tx, b, closedRound, scopeHaltText(b, closedRound, verdict))
 	}
 
 	// The round has advanced, so the chain may now move: the close is mapped

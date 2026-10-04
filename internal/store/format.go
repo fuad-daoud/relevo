@@ -5,7 +5,10 @@ import (
 	"fmt"
 )
 
-// BindingFormat is the format of the Binding JSON this binary writes. It is 14
+// BindingFormat is the format of the Binding JSON this binary writes. It is 15
+// because owed_halt records a halt notification a round close could not write:
+// a build that knows 14 would load the binding and rewrite it without that
+// field, so the owed entry would be lost rather than retried. It is 14
 // because check_run records a served binding's check run: a build that knows 13
 // would load the binding and rewrite it without that field, and the check the
 // daemon is advancing would vanish from under it. (13 was oom_requeue gaining
@@ -25,9 +28,9 @@ import (
 // failure run, which restarts from zero. Stamping a field would lock that older
 // relevo out of loading the binding. Bump BindingFormat whenever Binding's JSON
 // shape changes in a way that must lock an older relevo out.
-const BindingFormat = 14
+const BindingFormat = 15
 
-// recordFormat is the format to write b at. Every record is format 14: the
+// recordFormat is the format to write b at. Every record is format 15: the
 // binary writes and migrates the out/ layout, which an older relevo cannot
 // serve.
 func recordFormat(b Binding) int {
