@@ -55,17 +55,25 @@ type CreateChainRequest struct {
 // ClosedRoundView is one closed member round's facts: the facts BindingView
 // carries for ClosedRound, but for any round.
 type ClosedRoundView struct {
-	Round         int           `json:"round"`
-	ReportOutcome string        `json:"report_outcome,omitempty"`
-	GateResult    string        `json:"gate_result,omitempty"`
-	Stopped       string        `json:"stopped,omitempty"`
-	ReportNote    string        `json:"report_note,omitempty"`
-	Switches      []string      `json:"switches,omitempty"`
-	DiffNote      string        `json:"diff_note,omitempty"`
-	DiffCommits   int           `json:"diff_commits,omitempty"`
-	DiffTree      string        `json:"diff_tree,omitempty"`
-	Usage         *usage.Usage  `json:"usage,omitempty"`
-	Rusage        *store.Rusage `json:"rusage,omitempty"`
+	Round         int      `json:"round"`
+	ReportOutcome string   `json:"report_outcome,omitempty"`
+	GateResult    string   `json:"gate_result,omitempty"`
+	Stopped       string   `json:"stopped,omitempty"`
+	ReportNote    string   `json:"report_note,omitempty"`
+	Switches      []string `json:"switches,omitempty"`
+	DiffNote      string   `json:"diff_note,omitempty"`
+	DiffCommits   int      `json:"diff_commits,omitempty"`
+	DiffTree      string   `json:"diff_tree,omitempty"`
+	// DirtyCommit is the round's uncommitted work at
+	// refs/relevo/<name>/round-<Round>, "" when the round closed clean. The
+	// server retains it for the round it last closed only, so an older round
+	// ships "" rather than another round's commit.
+	DirtyCommit string        `json:"dirty_commit,omitempty"`
+	Usage       *usage.Usage  `json:"usage,omitempty"`
+	Rusage      *store.Rusage `json:"rusage,omitempty"`
+	// PriorTokens is the tokens the server's earlier builders in this round
+	// used. Nil when zero, and nil from a server older than the field.
+	PriorTokens *usage.Tokens `json:"prior_tokens,omitempty"`
 }
 
 // ChainMemberView is one chain member: its part and binding name, the actor it
