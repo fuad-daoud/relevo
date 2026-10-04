@@ -97,6 +97,19 @@ func OpenSplit(path string, o Options) (*DB, error) {
 // nothing else needs it.
 func (d *DB) Local() *DB { return d.local }
 
+// Origin is the installation id this handle scopes its own writes to, or "" on
+// a handle opened before the origin column existed. A reader that has to tell
+// this machine's rows from another installation's asks here rather than
+// re-deriving it, so the one place that knows the answer stays the only place
+// that has it.
+func (d *DB) Origin() string { return d.origin }
+
+// Path is the file this handle is open on, the shared one when it was opened
+// split. A driver that has to open the same file under its own name -- the
+// sync client is handed a path, not a handle -- reads it here rather than
+// reconstructing a name that could disagree with the one actually open.
+func (d *DB) Path() string { return d.path }
+
 // splitFile names which of the two files a scope's rows live in.
 type splitFile int
 

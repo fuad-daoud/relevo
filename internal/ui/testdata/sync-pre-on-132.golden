@@ -1,0 +1,34 @@
+  ◆ relevo    sync                                                                                             v0.13.0-28    14:02  
+                                                                                                                                    
+   sync:off   off on this machine                                                                                                   
+                                                                                                                                    
+   remote         libsql://relevo-abc123.turso.io                                                                                   
+   token          present · value never displayed                                                                                   
+   reachability   reachability untested                                                                                             
+   first upload   ~2.1 GB on the wire from 1.6 GB local (est., BLOBs cost a third more)                                             
+                                                                                                                                    
+   WHAT SYNCS                                                                                                                       
+     +  binding_record, binding_event                                                                                               
+     +  chains, chain_event, chain_member, chain_check                                                                              
+     +  round_file                                                                                                                  
+     +  installation (the directory projection)                                                                                     
+     +  repo, mastermind, binding, round, event, artifact                                                                           
+                                                                                                                                    
+   NEVER SYNCS                                                                                                                      
+     ×  every secret, including turso.token                                                                                         
+     ×  every machine-local kv namespace (sync.*, planner/*, ledger, …)                                                             
+     ×  every config section, this one included                                                                                     
+     ×  this machine's own installation identity                                                                                    
+                                                                                                                                    
+   ON ENABLE  uploads every shared row to                                                                                           
+               libsql://relevo-abc123.turso.io                                                                                      
+               nothing leaves this machine until you confirm it there                                                               
+                                                                                                                                    
+   INSTALLATIONS                                                                                                                    
+     LABEL             ID                LAST SEEN                                                                                  
+     laptop            01INSTALLATION    2026-09-16                                                                                 
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+
+ p  push      l  pull      t  test      e  edit      d  disable      :  command      ?  all keys      q  quit                       

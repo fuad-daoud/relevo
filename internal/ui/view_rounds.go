@@ -300,6 +300,12 @@ func execLine(line string, env Env, p prefs) tea.Cmd {
 		}
 		v, init := newServersView(env)
 		return rootThen(init, v)
+	case "sync":
+		if env.Actions == nil {
+			return notice("the config views need relevo ui on this machine")
+		}
+		v, init := newSyncView(env)
+		return rootThen(init, v)
 	case "settings":
 		if env.Actions == nil {
 			return notice("the config views need relevo ui on this machine")

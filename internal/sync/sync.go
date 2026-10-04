@@ -136,6 +136,41 @@ func ReadState(kv db.KV) (State, error) {
 	return s, nil
 }
 
+// ReadAttention returns the message the attention marker carries, or "" when
+// no marker is set. The message is the fixed text Runner wrote, never a body
+// the remote chose, so a caller can render it on a screen or put it in a log
+// without asking what a remote was allowed to say.
+func ReadAttention(kv db.KV) (string, error) {
+	var a attention
+	if err := marker(kv, KeyAttention, &a); err != nil {
+		return "", err
+	}
+	return a.Message, nil
+}
+
+// ReadSnapshot returns what the remote last reported, and whether a measured
+// tick ever recorded it. The pair is the whole answer, because a machine that
+// has measured nothing and a machine whose change set is empty are both a zero
+// Stats, and only the marker distinguishes them.
+func ReadSnapshot(kv db.KV) (Stats, bool, error) {
+	// The presence test is its own read rather than a side effect of the decode:
+	// a measured Stats is not required to be non-zero, so an empty remote and an
+	// unmeasured machine are the same bytes and only the marker's existence
+	// tells them apart.
+	body, ok, err := kv.KVGet(KeyStats)
+	if err != nil {
+		return Stats{}, false, fmt.Errorf("sync: marker %s: %w", KeyStats, err)
+	}
+	if !ok {
+		return Stats{}, false, nil
+	}
+	var s Stats
+	if err := json.Unmarshal(body, &s); err != nil {
+		return Stats{}, false, fmt.Errorf("sync: marker %s: %w", KeyStats, err)
+	}
+	return s, true, nil
+}
+
 // marker reads one key out of kv into out, which must be a pointer. An absent
 // key is not an error: it leaves out at the zero value the caller reads as the
 // marker's default.
