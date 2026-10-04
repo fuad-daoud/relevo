@@ -278,6 +278,40 @@ func TestRoundStateOf(t *testing.T) {
 	}
 }
 
+// TestRoundStateOfBroken pins the broken arm: a binding whose builder is gone
+// reports broken with its round open, and an un-acked close still outranks it,
+// so a broken binding whose close the owner has not collected reports closed.
+//
+// Mutation check: delete the broken arm from RoundStateOf and the first case
+// fails; the closed case passes either way.
+func TestRoundStateOfBroken(t *testing.T) {
+	t.Parallel()
+
+	entries := []store.LogEntry{
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
+	}
+
+	open := store.Binding{
+		State: store.StateBroken,
+		Round: 1,
+	}
+	if got := RoundStateOf(open, entries); got != remote.RoundBroken {
+		t.Fatalf("broken + open round: got %v, want %v", got, remote.RoundBroken)
+	}
+
+	closed := store.Binding{
+		State: store.StateBroken,
+		Round: 2,
+		Serve: &store.ServeFacts{
+			ClosedRound: 1,
+			AckedRound:  0,
+		},
+	}
+	if got := RoundStateOf(closed, entries); got != remote.RoundClosed {
+		t.Fatalf("broken + un-acked close: got %v, want %v (close outranks broken)", got, remote.RoundClosed)
+	}
+}
+
 // TestRoundStateOfQueued pins #285: an open plan entry with a non-zero
 // QueuedAt is queued, not running; zero QueuedAt is running as before; and
 // needs_you still wins over queued, exactly as it wins over running.

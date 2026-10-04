@@ -33,6 +33,12 @@ func RoundStateOf(b store.Binding, entries []store.LogEntry) remote.RoundState {
 	if b.State == store.StateNeedsYou {
 		return remote.RoundNeedsYou
 	}
+	// A broken builder has no process to run the round, whatever the entries
+	// say about it, so it outranks the open-round arms below -- but not the
+	// close above, which the owner is still owed.
+	if b.State == store.StateBroken {
+		return remote.RoundBroken
+	}
 	open := store.RoundOpen(entries, b.Round)
 	if open && !b.QueuedAt.IsZero() {
 		return remote.RoundQueued
@@ -103,8 +109,10 @@ func closeServedRound(ctx context.Context, rt Runtime, b store.Binding) store.Bi
 // both are "" for a caller that holds neither.
 func ServedView(b store.Binding, entries []store.LogEntry, recordID, installation string) remote.BindingView {
 	rState := RoundStateOf(b, entries)
+	// A halted or broken binding ships its reason: without it the client shows
+	// the state word and nothing to act on.
 	var halt string
-	if b.State == store.StateNeedsYou {
+	if b.State == store.StateNeedsYou || b.State == store.StateBroken {
 		halt = b.Halt
 	}
 	var resultCommit, dirtyCommit string
