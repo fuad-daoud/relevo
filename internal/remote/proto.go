@@ -67,6 +67,10 @@ const (
 	// RoundQueued is a round accepted by the server with no builder process
 	// yet: staged, waiting for a slot under serve.max_builders (#285).
 	RoundQueued RoundState = "queued"
+	// RoundBroken is a round whose builder is gone: the server holds the round
+	// but has no process for it. Additive on the wire -- a client predating the
+	// word reads it as unknown and waits, exactly as it does for RoundQueued.
+	RoundBroken RoundState = "broken"
 )
 
 // WhoAmI represents the response to an authentication identity check.
