@@ -30,6 +30,7 @@ var commands = []command{
 	{"workflows", "", "shipped and saved workflows", false},
 	{"agents", "", "agent definitions per harness", false},
 	{"servers", "", "remote builders' servers, and their health", false},
+	{"sync", "", "cloud sync: status, installations, bindings", false},
 	{"settings", "", "limits, checks and timings", false},
 	{"audit", "", "config revisions, and roll back", false},
 	{"log", "", "this session's action results", false},

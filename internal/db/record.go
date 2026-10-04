@@ -184,6 +184,32 @@ func (d *DB) RecordListArchived(owner string) ([]Record, error) {
 
 // RecordGetByID returns the row with this id, live or archived, so an archive
 // source can read a record when it holds the id rather than the name.
+// RecordListUnlinked returns every remote binding row that carries no link at
+// all -- both link columns NULL, the shape migration 015 leaves every row
+// written before it in, and every binding created by or against an older
+// relevo. Name-ordered.
+//
+// It is a read and never a repair: there is no backfill for it to perform and
+// this method deliberately performs none, so a row stays unlinked until it is
+// bound again on purpose. The link columns are read as NULL rather than
+// compared to a sentinel, so a row whose link was half written is still listed
+// rather than silently treated as bound.
+func (d *DB) RecordListUnlinked() ([]Record, error) {
+	rows, err := d.sqlDB.QueryContext(context.Background(),
+		`SELECT `+recordCols+` FROM binding_record WHERE link_origin IS NULL AND link_id IS NULL
+			ORDER BY name ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("db: record list unlinked: %w", mapBusy(err))
+	}
+	out, err := collectRows(rows, scanRecord)
+	if err != nil {
+		return nil, fmt.Errorf("db: record list unlinked: %w", err)
+	}
+	return out, nil
+}
+
+// RecordGetByID returns the row with this id, live or archived, so an archive
+// source can read a record when it holds the id rather than the name.
 func (d *DB) RecordGetByID(id string) (Record, bool, error) {
 	r, err := scanRecord(d.sqlDB.QueryRowContext(context.Background(),
 		`SELECT `+recordCols+` FROM binding_record WHERE id = ?`, id))

@@ -263,7 +263,9 @@ func openDB(path string) (*db.DB, error) {
 
 // openDBDirect opens path itself, ensuring its directory exists (Open's
 // precondition) and minting the installation file beside it. It is the opener
-// the daemon and the tests use.
+// the daemon and the tests use. The machine-local file beside the shared
+// database is opened with it and runs the same migrations, so the split is a
+// placement decision rather than a schema fork.
 func openDBDirect(path string) (*db.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create %s: %w", filepath.Dir(path), err)
@@ -272,7 +274,7 @@ func openDBDirect(path string) (*db.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	return db.OpenWith(path, db.Options{Origin: inst.ID})
+	return db.OpenSplit(path, db.Options{Origin: inst.ID})
 }
 
 // newRuntimePeek constructs the runtime `relevo daemon --preflight` and

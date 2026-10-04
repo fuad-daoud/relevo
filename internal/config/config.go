@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
@@ -33,11 +34,12 @@ const (
 	Servers    Section = "servers"
 	Hooks      Section = "hooks"
 	Workflows  Section = "workflows"
+	Sync       Section = "sync"
 )
 
 // Sections is the order an import checks and stores the sections, and the
 // order EncodeDoc and DiffDocs render them.
-var Sections = []Section{Candidates, Agents, Actors, Accounts, Policy, Roles, Prices, Servers, Hooks, Workflows}
+var Sections = []Section{Candidates, Agents, Actors, Accounts, Policy, Roles, Prices, Servers, Hooks, Workflows, Sync}
 
 // sectionFile maps a section to the file it is imported from.
 var sectionFile = map[Section]string{
@@ -396,6 +398,9 @@ func Validate(sec Section, body []byte) ([]string, error) {
 		return nil, nil
 	case Workflows:
 		_, err := parseWorkflows(body)
+		return nil, err
+	case Sync:
+		_, err := sync.ParseSettings(body)
 		return nil, err
 	default:
 		return nil, fmt.Errorf("unknown config section %q", sec)

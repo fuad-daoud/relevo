@@ -169,6 +169,13 @@ func (m Model) headerView(env Env) string {
 	if n > 0 {
 		rightParts = append(rightParts, chip(chipWarnStyle.Bold(true), "● "+needsYouCount(n)))
 	}
+	// The sync chip joins the needs-you chip rather than competing with it: both
+	// can be true at once and a header that could show only one would be hiding
+	// one of them. It is asked of the stack rather than kept on Env, so a
+	// cockpit with no :sync open says nothing about sync.
+	if s := m.syncAttention(); s != "" {
+		rightParts = append(rightParts, chip(chipWarnStyle.Bold(true), "● "+s))
+	}
 	if sv := shortVersion(m.opts.Version); sv != "" {
 		rightParts = append(rightParts, faintStyle.Render(sv))
 	}
@@ -176,6 +183,26 @@ func (m Model) headerView(env Env) string {
 	right := strings.Join(rightParts, "    ") + "  "
 
 	return fit(spread(left, right, env.Width), env.Width)
+}
+
+// syncAttention is the header's sync phrase, or "" when there is nothing to
+// say. The view that knows the state names the phrase, because only it can tell
+// a remote that answered from one that did not: the header asks, it does not
+// re-read a marker and draw its own conclusion.
+//
+// A machine that is fine and a machine that was never turned on are both
+// silent. Only the two states a human can act on speak.
+func (m Model) syncAttention() string {
+	var v syncToker
+	for _, view := range m.stack {
+		if st, ok := view.(syncToker); ok {
+			v = st
+		}
+	}
+	if v == nil {
+		return ""
+	}
+	return v.SyncAttention()
 }
 
 // contextView is row 2: the top view's context, spread to width (§5.3).

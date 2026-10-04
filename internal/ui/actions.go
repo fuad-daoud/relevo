@@ -92,6 +92,29 @@ type Actions interface {
 	WorkflowDefinition(name string) (workflow.Definition, error)
 	WorkflowActors() map[string]workflow.ActorInfo
 	WorkflowSave(ctx context.Context, name, source string, def workflow.Definition) Result
+
+	// The sync view (S5). SyncSnapshot is every value the view renders that no
+	// key changes: the machine-local state and its token, the settings, the
+	// snapshot the last measured tick recorded, the installation directory and
+	// the remote bindings that carry no link. It is read off the update loop
+	// and holds no handle, so the view can draw it with the network blackholed.
+	//
+	// The token is reported only as present or absent. Its value never leaves
+	// the function that read it: a snapshot that could render a credential is a
+	// snapshot that can leak one into a screen or a log.
+	SyncSnapshot() (SyncSnapshot, error)
+	// SyncPush and SyncPull are S3's two calls, each bounded the way the CLI
+	// verb bounds it.
+	SyncPush(ctx context.Context) Result
+	SyncPull(ctx context.Context) Result
+	// SyncTest asks the remote for its stats without changing a byte here.
+	SyncTest(ctx context.Context) Result
+	// SyncDisable is S4's turn-off, run whole and in the order its contract
+	// fixes.
+	SyncDisable(ctx context.Context) Result
+	// SyncEditor is the user's editor on the sync section, like AgentEditor
+	// and Shell return the command rather than running it.
+	SyncEditor() (*exec.Cmd, error)
 }
 
 // BindInput is one b key's answers (§3): the new binding's name, the

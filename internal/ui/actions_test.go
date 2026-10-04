@@ -114,6 +114,17 @@ type fakeActions struct {
 
 	saveResult Result
 
+	// The sync view (S5): the snapshot to answer with, the outcome every verb
+	// returns, and the calls the view made, in order. One entry per verb is what
+	// pins that a key made exactly one call rather than none or two. Reads are
+	// counted apart, because a re-read after a Refresh is not a call on anything.
+	syncs      []syncCall
+	syncReads  int
+	snap       SyncSnapshot
+	snapErr    error
+	syncResult Result
+	editorErr  error
+
 	result   Result
 	shellCmd *exec.Cmd
 	shellErr error
@@ -340,6 +351,44 @@ func (f *fakeActions) WorkflowActors() map[string]workflow.ActorInfo { return f.
 func (f *fakeActions) WorkflowSave(_ context.Context, name, source string, def workflow.Definition) Result {
 	f.saves = append(f.saves, workflowSaveCall{name: name, source: source, def: def})
 	return f.saveResult
+}
+
+// The sync view (S5): the snapshot SyncSnapshot answers with, the scripted
+// outcome of each verb, and one recorded call per verb so a test can pin that
+// a key made exactly one.
+type syncCall struct{ verb string }
+
+// SyncSnapshot is recorded apart from the verbs: a read is what the view does
+// before and after every key, and counting it as a call would make "one call"
+// mean something different here than in every other view's key test.
+func (f *fakeActions) SyncSnapshot() (SyncSnapshot, error) {
+	f.syncReads++
+	return f.snap, f.snapErr
+}
+
+func (f *fakeActions) SyncPush(_ context.Context) Result {
+	f.syncs = append(f.syncs, syncCall{verb: "push"})
+	return f.syncResult
+}
+
+func (f *fakeActions) SyncPull(_ context.Context) Result {
+	f.syncs = append(f.syncs, syncCall{verb: "pull"})
+	return f.syncResult
+}
+
+func (f *fakeActions) SyncTest(_ context.Context) Result {
+	f.syncs = append(f.syncs, syncCall{verb: "test"})
+	return f.syncResult
+}
+
+func (f *fakeActions) SyncDisable(_ context.Context) Result {
+	f.syncs = append(f.syncs, syncCall{verb: "disable"})
+	return f.syncResult
+}
+
+func (f *fakeActions) SyncEditor() (*exec.Cmd, error) {
+	f.syncs = append(f.syncs, syncCall{verb: "edit"})
+	return exec.Command("true"), f.editorErr
 }
 
 // key is one rune keypress, as the tests send them.

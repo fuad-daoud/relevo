@@ -190,7 +190,8 @@ func cmdDaemon(args []string) error {
 	// runtime's store (gates, claims, run log, daemon.json, the release cache)
 	// and the agy deliverer's creds store. Nothing in the daemon dials the
 	// owner, and the owner never opens a second handle of its own. Clients
-	// still hold their own dialled connections.
+	// still hold their own dialled connections. The open brings the
+	// machine-local file beside it along, at the same schema version.
 	//
 	// Closing is explicit rather than a bare defer: the re-exec path closes the
 	// DB itself before syscall.Exec, and the deferred pass must then do
