@@ -67,6 +67,20 @@ type Daemon struct {
 	// It is process state on purpose: a restart mirrors everything once, and a
 	// change the daemon never saw cannot hide behind a revision it wrote.
 	ingestSeen map[string]string
+
+	// syncMu guards the two fields below, which are the whole of the state a
+	// sync trigger shares between the two goroutines that can start one.
+	syncMu sync.Mutex
+	// syncInFlight is whether a sync this daemon started is still running. A
+	// second trigger arriving while one is in flight is dropped rather than
+	// queued: the network is the slow part, and piling attempts behind it
+	// only makes the backlog worse.
+	syncInFlight bool
+	// syncLast is when the idle window last opened. The zero time means no
+	// window has run yet, so a fresh daemon syncs once and then settles.
+	syncLast time.Time
+	// syncNow is the clock the idle window reads. Nil means time.Now.
+	syncNow func() time.Time
 }
 
 // NewDaemon returns a Daemon ticking at interval, floored at minInterval.
@@ -207,6 +221,11 @@ func (d *Daemon) Tick(ctx context.Context) error {
 
 	d.safely("refresh", func() { d.refreshRelease(ctx) })
 
+	// The idle-tick sync. It sits with the other non-binding phases, where
+	// safely contains a failure to the phase and the next tick tries again,
+	// and it is a no-op on a machine with no sync wired at all.
+	d.safely("turso sync", func() { d.idleSync(ctx) })
+
 	return nil
 }
 
@@ -297,6 +316,10 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 	pre := d.prefetchRemote(ctx, b)
 	defer pre.release()
 
+	// sealed is how many files this tick's seal pass moved into the database.
+	// It is read after the lock is released, which is the only place a sync
+	// may be started from.
+	var sealed int
 	err = d.rt.Store.WithLock(func(tx *store.Tx) error {
 		loaded, err := tx.Load(name)
 		if errors.Is(err, store.ErrNotFound) {
@@ -332,7 +355,7 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 		} else if moved > 0 {
 			slog.Info("out layout: migrated runner files into out/", "binding", name, "files", moved)
 		}
-		sealRounds(d.rt.Store, tx, loaded, d.rt.Policy.ArtifactMaxBytes())
+		sealed = sealRounds(d.rt.Store, tx, loaded, d.rt.Policy.ArtifactMaxBytes())
 
 		fresh := backfillMasterMindID(d.rt, loaded)
 
@@ -358,6 +381,14 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 	})
 	if err != nil {
 		return err
+	}
+	// A seal that moved bytes is the moment worth syncing on: the bulk of what
+	// a machine has to hand another machine is a round's files. The sync is
+	// started here rather than inside the seal or the lock above, and is not
+	// waited on, because the seal is already committed and neither it nor the
+	// tick may wait on a network.
+	if sealed > 0 {
+		d.queueSync(ctx)
 	}
 	if pre != nil && pre.Settle != nil {
 		return settleCatchUp(ctx, d.rt, pre.Settle, true)
@@ -482,11 +513,17 @@ func sweepReaderScratch(ctx context.Context, rt Runtime, bindings []store.Bindin
 // artifactMaxBytes is policy.artifact_max_mb in bytes: a round whose artifact
 // directory is over it is left on disk (§3.4), so nothing is dropped, until a
 // later tick sees the cap raised.
-func sealRounds(st *store.Store, tx *store.Tx, b store.Binding, artifactMaxBytes int64) {
+//
+// The return is how many files were sealed, which is what tells the caller
+// whether this pass moved bytes at all. Nothing else about the pass changes:
+// the same rounds are considered, the same lines are logged, and the same
+// directories are removed.
+func sealRounds(st *store.Store, tx *store.Tx, b store.Binding, artifactMaxBytes int64) int {
+	sealed := 0
 	rounds, err := st.RoundsOnDisk(b.Name)
 	if err != nil {
 		slog.Warn("seal: list rounds", "binding", b.Name, "err", err)
-		return
+		return sealed
 	}
 	for _, r := range rounds {
 		drained := st.StreamDrained(b, r)
@@ -503,6 +540,7 @@ func sealRounds(st *store.Store, tx *store.Tx, b store.Binding, artifactMaxBytes
 			continue
 		}
 		if n > 0 {
+			sealed += n
 			slog.Info("seal", "binding", b.Name, "round", r, "files", n)
 		}
 	}
@@ -523,6 +561,7 @@ func sealRounds(st *store.Store, tx *store.Tx, b store.Binding, artifactMaxBytes
 			_ = os.Remove(st.Dir(b.Name))
 		}
 	}
+	return sealed
 }
 
 // safely runs one of Tick's non-binding phases, recovering a panic so that a
