@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,7 +19,12 @@ import (
 // a binding name means live, absent means not. kept records every write and
 // removal in order, so a test can pin that the registration is refreshed while
 // the poll runs and dropped when it exits.
+//
+// Every field is behind the mutex because a wait that keeps its registration
+// live writes it from a ticker goroutine, so a test reading the log is reading
+// across a goroutine boundary.
 type fakeWaitClaims struct {
+	mu      sync.Mutex
 	held    map[string]delivery.WaitClaim
 	events  []string
 	removed []string
@@ -29,6 +35,8 @@ func newFakeWaitClaims() *fakeWaitClaims {
 }
 
 func (f *fakeWaitClaims) Live(name string, _ time.Time) (*delivery.WaitClaim, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	c, ok := f.held[name]
 	if !ok {
 		return nil, nil
@@ -37,12 +45,16 @@ func (f *fakeWaitClaims) Live(name string, _ time.Time) (*delivery.WaitClaim, er
 }
 
 func (f *fakeWaitClaims) Write(c delivery.WaitClaim, _ time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.held[c.Name] = c
 	f.events = append(f.events, "write:"+c.Name)
 	return nil
 }
 
 func (f *fakeWaitClaims) Remove(name string, pid int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if c, ok := f.held[name]; ok && c.PID == pid {
 		delete(f.held, name)
 		f.removed = append(f.removed, name)
@@ -52,8 +64,34 @@ func (f *fakeWaitClaims) Remove(name string, pid int) error {
 }
 
 func (f *fakeWaitClaims) live(name string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	_, ok := f.held[name]
 	return ok
+}
+
+// writes reports how many writes have landed, under the lock: a wait that keeps
+// itself live writes from a ticker, so a test reading the count is reading
+// across a goroutine boundary.
+func (f *fakeWaitClaims) writes() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.events)
+}
+
+// written returns a copy of the event log, for the same reason writes counts
+// under the lock.
+func (f *fakeWaitClaims) written() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.events...)
+}
+
+// removedNames returns a copy of the removal log.
+func (f *fakeWaitClaims) removedNames() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.removed...)
 }
 
 // waitLivenessRuntime is a Runtime with a wait store wired and the wait seams
@@ -111,11 +149,12 @@ func TestWaitRegistersAndReleases(t *testing.T) {
 		t.Fatalf("Wait: %v", err)
 	}
 
-	if len(waits.events) == 0 || waits.events[0] != "write:webshop" {
-		t.Errorf("events = %v, want a registration written before the first poll", waits.events)
+	events := waits.written()
+	if len(events) == 0 || events[0] != "write:webshop" {
+		t.Errorf("events = %v, want a registration written before the first poll", events)
 	}
-	if len(waits.removed) != 1 || waits.removed[0] != "webshop" {
-		t.Errorf("removed = %v, want exactly one removal of webshop on exit", waits.removed)
+	if removed := waits.removedNames(); len(removed) != 1 || removed[0] != "webshop" {
+		t.Errorf("removed = %v, want exactly one removal of webshop on exit", removed)
 	}
 	if waits.live("webshop") {
 		t.Error("registration still held after Wait returned, want it released")
@@ -160,8 +199,8 @@ func TestWaitRefreshesWhilePolling(t *testing.T) {
 	}
 
 	// One write before the loop plus one per pass: several writes, not one.
-	if len(waits.events) < polls+1 {
-		t.Errorf("events = %v over %d polls, want a refresh on each pass", waits.events, polls)
+	if n := waits.writes(); n < polls+1 {
+		t.Errorf("writes = %d over %d polls, want a refresh on each pass", n, polls)
 	}
 }
 
@@ -189,7 +228,7 @@ func TestWaitKeepsRegistrationLiveDuringSlowSync(t *testing.T) {
 		}
 		checked = true
 		deadline := time.After(10 * time.Second)
-		for len(waits.events) < 2 {
+		for waits.writes() < 2 {
 			select {
 			case <-deadline:
 				t.Error("no re-stamp reached the wait store during the sync")
@@ -239,8 +278,8 @@ func TestWaitKeepsRegistrationLiveDuringSlowSync(t *testing.T) {
 
 	// The write the fetch waited for is the pin: one registration before the
 	// loop, and at least one more while the sync was still in flight.
-	if len(waits.events) < 2 {
-		t.Errorf("events = %v, want a re-stamp while the sync ran", waits.events)
+	if n := waits.writes(); n < 2 {
+		t.Errorf("writes = %d, want a re-stamp while the sync ran", n)
 	}
 }
 
@@ -276,7 +315,9 @@ func TestStatusRowWaitLive(t *testing.T) {
 		waits := newFakeWaitClaims()
 		rt := waitLivenessRuntime(t, waits)
 		b := seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+		waits.mu.Lock()
 		waits.held[b.Name] = delivery.WaitClaim{Name: b.Name, PID: os.Getpid(), SeenAt: baseTime}
+		waits.mu.Unlock()
 
 		rep, err := Status(context.Background(), rt)
 		if err != nil {
@@ -360,8 +401,8 @@ func TestWaitPeekDoesNotRegister(t *testing.T) {
 	if waits.live("webshop") {
 		t.Error("a peek wait is held as live, want no registration at all")
 	}
-	if len(waits.events) != 0 {
-		t.Errorf("events = %v, want no write and no remove from a peek wait", waits.events)
+	if events := waits.written(); len(events) != 0 {
+		t.Errorf("events = %v, want no write and no remove from a peek wait", events)
 	}
 }
 
