@@ -153,6 +153,7 @@ if printf '%s' "$out" | grep -qF 'su -s /bin/sh -c'; then :; else
 fi
 plan_create
 carries 'the clone names the --repo URL' 'https://example.com/relevo.git'
+carries 'the clone starts in the sandbox home' 'cd /home/rv-demo && git clone'
 carries 'the checkout names a ref' 'git checkout'
 run sh "$script" create demo --port 7801 "$repo" --ref release/1.0 "$dry"
 if ! printf '%s' "$out" | grep -qF "git checkout 'release/1.0'"; then

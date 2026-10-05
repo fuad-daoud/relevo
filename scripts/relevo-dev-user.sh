@@ -215,8 +215,10 @@ cmd_create() {
 	# Step 4: the clone, the build and the service, all as the user and under a
 	# clean environment. The checkout is never shared with the caller: a shared
 	# work tree means a shared index, so a sandbox's checkout would fight the
-	# developer's over branches, fetch refusals and hook execution.
-	run_as_user "$_user" "$uid" "git clone '$repo' /home/$_user/src/relevo"
+	# developer's over branches, fetch refusals and hook execution. The clone
+	# starts in the sandbox home because git stats its working directory on
+	# startup, and the caller's directory is untraversable to the sandbox.
+	run_as_user "$_user" "$uid" "cd /home/$_user && git clone '$repo' /home/$_user/src/relevo"
 	run_as_user "$_user" "$uid" "cd /home/$_user/src/relevo && git checkout '$ref' && make service"
 
 	# Step 5: the marker, so doctor can tell this account is a sandbox. It is
