@@ -246,6 +246,10 @@ func remoteRecord(rt Runtime, tx *store.Tx, b store.Binding, ship remoteShipped,
 	// A human re-send is a fresh attempt: the next halt in this round notifies
 	// again, and the round gets a full switch budget.
 	cur.HaltNotifiedRound = 0
+	// An owed notification goes with the halt it was about: the re-send is the
+	// human answering that halt, so the entry it still owes would land under a
+	// round the human has already moved past.
+	cur.OwedHalt = nil
 	cur.RoundSwitches = 0
 	cur.RoundExcluded = nil
 	cur.RoundOOMKills = 0
