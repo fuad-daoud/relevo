@@ -430,6 +430,79 @@ func TestAdmitSwitchFailureCarriesTheSwitchReason(t *testing.T) {
 	}
 }
 
+// TestAdmitSwitchFailureWithAFailingHaltAppendLeavesNoSilentHalt pins that a
+// switch failure whose entry cannot be written never reads as notified.
+//
+// haltBindingKind stamps the per-round key before it queues the entry, so a
+// failed append left a binding that already carried a reason, a stamp and no
+// entry. Admit's spawn-failure branch read that reason as "the switch already
+// halted this", saved Active with QueuedAt cleared, and returned -- and nothing
+// retried it. The round sat active with nothing running and a halt nobody was
+// told about, and the next tick returned at the no-process branch.
+func TestAdmitSwitchFailureWithAFailingHaltAppendLeavesNoSilentHalt(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt := newRuntime(t)
+	rt.Runner = fr
+	rt.Candidates = candidateSet(t, `[{"harness":"claude","provider":"first","model":"m","roles":["builder","reviewer"]},
+	  {"harness":"opencode","provider":"second","model":"m","roles":["builder"]}]`)
+	rt.Policy = orderOf("builder", "claude/first/m", "opencode/second/m")
+
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: "claude/first/m", MasterMindID: testMasterMindName, CWD: "/repo",
+	}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true}); err != nil {
+		t.Fatalf("Send(Defer): %v", err)
+	}
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "claude/first/m", time.Time{}, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	// One entry of room: the switch's own audit entry fits, the halt entry that
+	// follows it does not.
+	fillLogLeavingRoom(t, rt, "webshop", 1)
+	// The replacement resolves and the spawn does not, which is the path that
+	// halts through haltAndSettle and hands Admit a binding that reads as
+	// already halted.
+	fr.startErr = errors.New("boom: no such binary")
+
+	if err := Admit(context.Background(), rt, "webshop"); err == nil {
+		t.Fatal("Admit: err = nil, want the spawn failure after the switch")
+	}
+
+	got, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.State == store.StateActive && got.Halt != "" {
+		t.Errorf("binding = active with halt %q, want no halt on a binding no tick will retry", got.Halt)
+	}
+	if got.HaltNotifiedRound == got.Round && len(haltEntries(t, rt, "webshop")) == 0 {
+		t.Errorf("binding = notified for round %d with no halt entry, want an unnotified halt a retry can queue",
+			got.Round)
+	}
+
+	freeLogRoom(t, rt, "webshop")
+	if err := Admit(context.Background(), rt, "webshop"); err != nil {
+		t.Fatalf("second Admit: %v", err)
+	}
+
+	halts := haltEntries(t, rt, "webshop")
+	if len(halts) != 1 {
+		t.Fatalf("halt entries = %d, want exactly 1 once the log has room again: %+v", len(halts), halts)
+	}
+	got, err = rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load after: %v", err)
+	}
+	if got.State == store.StateActive {
+		t.Errorf("state = active with halt %q, want the binding to have settled the failure", got.Halt)
+	}
+}
+
 func TestAdmitGatedSwitches(t *testing.T) {
 	t.Parallel()
 
