@@ -32,6 +32,11 @@ func (s UploadShape) Satisfied() bool { return s.Failing() == "" }
 
 // Failing names the first assertion that does not hold, or the empty string
 // when all three do. The order is the order the upload path makes them in.
+//
+// This is the assertion the seed copy makes of itself, after it has prepared
+// the shape it can bring about: there it is the last word on what was written.
+// The enable preflight asks UnfixableBySeed instead, because it runs before
+// anything has prepared anything.
 func (s UploadShape) Failing() string {
 	switch {
 	case s.JournalMode != seedJournalMode:
@@ -40,6 +45,23 @@ func (s UploadShape) Failing() string {
 		return fmt.Sprintf("page_size is %d, not %d", s.PageSize, seedPageSize)
 	case s.WALBytes != 0:
 		return fmt.Sprintf("the write-ahead log still holds %d bytes", s.WALBytes)
+	}
+	return ""
+}
+
+// UnfixableBySeed names the first assertion the seed path cannot bring about, or
+// the empty string when it can reach the whole shape on its own.
+//
+// It is one assertion, and the split is by what prepareUploadShape does rather
+// than by what looks wrong: it sets the journal mode and drains the log, so
+// neither is a shape a user has to clear by hand. A page size is fixed when the
+// file is created and no pragma changes one, so it is the only refusal the
+// preflight can honestly make -- the other two were refusals naming a fix the
+// enable path was about to perform on itself, which is how a live database with
+// the right pragmas and an ordinary undrained log came to be refused.
+func (s UploadShape) UnfixableBySeed() string {
+	if s.PageSize != seedPageSize {
+		return fmt.Sprintf("page_size is %d, not %d", s.PageSize, seedPageSize)
 	}
 	return ""
 }

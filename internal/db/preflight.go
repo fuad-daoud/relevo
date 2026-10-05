@@ -8,9 +8,14 @@ import (
 
 // The enable preflight. Four checks stand between a database and an enable, and
 // each one refuses with the fix it names: the origin gate, the shared file's
-// secret table, the finished compress pass, and the shape the upload path
+// secret table, the finished compress pass, and the page size the upload path
 // asserts. Every refusal is reported rather than only the first, so one run
 // names every fix the user owes before the next run.
+//
+// A check only refuses on what the user has to do. Where a fix is a pass the
+// enable path is about to run itself -- the seed copy brings about the journal
+// mode and drains the log -- the check stays quiet, because a refusal naming a
+// fix the next step performs is a dead end rather than a fix.
 
 // The four checks, as they name themselves in a refusal.
 const (
@@ -26,7 +31,7 @@ const (
 	fixEmptyOrigin = "run the origin backfill (BackfillOriginOnce) or upgrade before enabling sync"
 	fixSharedSecs  = "run the local split (SplitOnce) so the secret table moves into the machine-local file"
 	fixCompress    = "run the zstd compress pass (CompressHistoryOnce) before enabling sync"
-	fixUploadShape = "the seed copy (SeedCopy) drains the log; a page size no pragma can change needs a rebuilt database"
+	fixUploadShape = "the seed copy (SeedCopy) sets the journal mode and drains the log itself; a page size no pragma can change needs the database rebuilt at 4096 bytes"
 )
 
 // PreflightRefusal is one check that refused, with the fix it names.
@@ -139,8 +144,17 @@ func (p *Preflight) refuseSharedSecrets(d *DB) {
 // finish. The marker is the pass's own record of having converted its columns;
 // without it the seed copy would upload plain bodies, and the conversion would
 // then have to run again against a database two machines already hold.
+//
+// It is read from the machine-local file, which is where the pass wrote it
+// (CompressHistoryOnce goes through LocalOrSelf). Reading the shared handle
+// instead asked a question about a file the marker was never in: post-split the
+// pass finished, the marker landed local, and this check went on refusing a
+// database the pass had already converted. The two markers this file holds are
+// split by purpose, not by accident -- the shared-secrets check above reads the
+// shared handle because it is what guards an upload, while this one records that
+// a local pass ran and belongs to the local file.
 func (p *Preflight) refuseCompressIncomplete(d *DB) {
-	if _, ok, err := d.KVGet(compressKVKey); err != nil {
+	if _, ok, err := d.LocalOrSelf().KVGet(compressKVKey); err != nil {
 		p.unanswerable(checkCompressDone, err, fixCompress)
 		return
 	} else if !ok {
@@ -148,15 +162,19 @@ func (p *Preflight) refuseCompressIncomplete(d *DB) {
 	}
 }
 
-// refuseUploadShape refuses on the first of the three assertions the upload path
-// makes, naming which one failed and what its own fix is.
+// refuseUploadShape refuses only on a shape the seed path cannot bring about,
+// naming which one it is and what its own fix is. It reads the live file, so it
+// is asking the prepared copy's question too early: the journal mode and the
+// log are set and drained by SeedCopy.prepareUploadShape as part of the seed,
+// and refusing on them named a fix the very next step performs. A page size is
+// the one assertion no pragma can reach, so it is the one that refuses.
 func (p *Preflight) refuseUploadShape(d *DB) {
 	shape, err := d.UploadShape()
 	if err != nil {
 		p.unanswerable(checkUploadShape, err, fixUploadShape)
 		return
 	}
-	if failing := shape.Failing(); failing != "" {
+	if failing := shape.UnfixableBySeed(); failing != "" {
 		p.refuse(checkUploadShape, failing+"; "+fixUploadShape)
 	}
 }

@@ -115,9 +115,8 @@ func (s *OriginBackfillStats) noteTwin(table, index string, dropped, halted int6
 }
 
 // BackfillOriginOnce stamps this installation's origin on the shared rows that
-// predate the origin column, once per database. An existing kv row means an
-// earlier pass finished, so ran is false. The update needs no backup: it is
-// additive, and reversing it is setting the column back to ”.
+// predate the origin column, once per database. The update needs no backup: it
+// is additive, and reversing it is setting the column back to ”.
 //
 // It reaches every table the origin gate counts, because the gate is the only
 // definition of that set: a table the pass left alone would hold rows the gate
@@ -142,13 +141,29 @@ func (s *OriginBackfillStats) noteTwin(table, index string, dropped, halted int6
 // next start resumes: it finds the settled tables holding nothing to stamp, so it
 // re-stamps nothing, skips nothing, and stamps only what is left.
 //
+// The marker is a record, not the decision. It is verified against the gate
+// before it is trusted: an older, narrower pass over fewer tables left one
+// behind on a database the five-table pass had never seen, and reading it as
+// "already done" skipped the whole 5-table pass while the gate still counted
+// unstamped rows. So a marker whose gate counts are not empty is stale and is
+// ignored, and the pass runs (resume) over what remains. The once-only
+// guarantee is unchanged and does not rest on the marker: a second run over a
+// settled database finds every table already stamped, so it stamps zero rows.
+//
 // Until it runs, the origin IN (?, ”) rule keeps an old row visible to this
 // installation, so a database works whether or not the pass has run yet.
 func BackfillOriginOnce(d *DB, origin string, now time.Time) (stats OriginBackfillStats, ran bool, err error) {
 	local := d.LocalOrSelf()
-	if _, ok, kerr := local.KVGet(originBackfillKVKey); kerr != nil {
-		return OriginBackfillStats{}, false, fmt.Errorf("origin backfill: kv get %s: %w", originBackfillKVKey, kerr)
-	} else if ok {
+	// A marker is only believed once the gate agrees it is finished. One written
+	// by the older narrower pass sits on a database this pass has never stamped,
+	// and trusting it skipped the work while the gate still counted rows; so the
+	// counts decide, and a marker over a database that still holds unstamped rows
+	// is stale and the pass runs (resume) to finish it.
+	settled, err := backfillSettled(local, d)
+	if err != nil {
+		return OriginBackfillStats{}, false, err
+	}
+	if settled {
 		return OriginBackfillStats{}, false, nil
 	}
 
@@ -211,6 +226,27 @@ func BackfillOriginOnce(d *DB, origin string, now time.Time) (stats OriginBackfi
 		return stats, false, fmt.Errorf("origin backfill: record the pass: %w", mapBusy(verr))
 	}
 	return stats, true, nil
+}
+
+// backfillSettled reports whether a recorded pass is finished, which is the one
+// question this pass asks before it does anything: the marker is read from the
+// machine-local file it is written to, and it is believed only once the gate
+// agrees with it. A marker absent means the pass has to run, since it is the
+// pass that writes one; a marker present is believed only over counts that are
+// empty. That second half is the fix: a marker left by an older, narrower pass
+// over a wider set of tables used to short-circuit a database the gate still
+// counted rows in, so the pass skipped forever over work it had never done.
+func backfillSettled(local, d *DB) (bool, error) {
+	if _, ok, err := local.KVGet(originBackfillKVKey); err != nil {
+		return false, fmt.Errorf("origin backfill: kv get %s: %w", originBackfillKVKey, err)
+	} else if !ok {
+		return false, nil
+	}
+	counts, err := CountEmptyOrigins(d)
+	if err != nil {
+		return false, fmt.Errorf("origin backfill: counts: %w", mapBusy(err))
+	}
+	return counts.Empty(), nil
 }
 
 // putOriginBackfillStats writes the marker to the machine-local file it is read

@@ -129,23 +129,19 @@ func TestSyncVerbOverOwnerEndToEnd(t *testing.T) {
 		putVerbSection(t, f.local, "libsql://example.invalid")
 		// The preflight is one of the checks enable runs, and it refuses a
 		// database whose compress pass has not finished. This fixture writes the
-		// marker's row directly rather than running the pass, because the pass
-		// records its marker through LocalOrSelf while the preflight reads it
-		// from the shared handle -- a split asymmetry that predates this change
-		// and is not S7's to settle. What enable must do is run the check and
-		// refuse when it fails, which the refusal cases below cover.
-		putVerbMarker(t, f.shared, "zstd-compress.v1", `{"done_at":"1970-01-01T00:00:00Z"}`)
-		// The other preflight check is the upload shape, which refuses while the
-		// write-ahead log still holds bytes. A seed copy drains it, which is the
-		// very step the existing-history enable case performs, so this fixture
-		// performs it too rather than asserting a shape no real machine has.
-		seed := filepath.Join(t.TempDir(), "seed.db")
-		if err := f.shared.SeedCopy(seed); err != nil {
-			t.Fatalf("SeedCopy: %v", err)
-		}
-		if err := os.Remove(seed); err != nil {
-			t.Fatalf("remove the seed copy: %v", err)
-		}
+		// marker's row directly rather than running the pass, because what enable
+		// must do is run the check and refuse when it fails, which the refusal
+		// cases below cover. The row goes to the machine-local file, which is
+		// where CompressHistoryOnce records it and where the check reads it: a
+		// pass and a check that name the same marker have to name the same file,
+		// or the pass finishes and the check refuses forever over the database it
+		// converted.
+		putVerbMarker(t, f.shared.LocalOrSelf(), "zstd-compress.v1", `{"done_at":"1970-01-01T00:00:00Z"}`)
+		// The upload-shape check no longer refuses on a write-ahead log that still
+		// holds bytes: the seed copy drains it as part of writing the copy, which
+		// is the very step the existing-history enable case below performs. So
+		// this fixture does not drain anything to reach a shape no real machine
+		// sits in.
 		res := f.runner.Run(ctx, &wire.SyncVerb{
 			Verb: wire.SyncVerbEnable,
 		}, []byte(verbFixtureToken))

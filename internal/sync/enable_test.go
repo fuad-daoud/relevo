@@ -90,11 +90,17 @@ func seedFixture(t *testing.T) (*db.DB, Local, func() db.Preflight) {
 // subject is a refusal the checks actually raise. It writes the compress mark
 // the checks read and then reaches the asserted upload shape the way a machine
 // does: with a seed copy, which is the remedy the check's own message names.
+//
+// The mark goes to the machine-local file, which is where CompressHistoryOnce
+// records it. Writing it through the shared handle would satisfy a check reading
+// the wrong file: post-split the pass's marker and the check that reads it have
+// to be on the same side of the split, or a database the pass converted goes on
+// being refused.
 func realPreflight(t *testing.T) (*db.DB, Local, func() db.Preflight) {
 	t.Helper()
 
 	shared, local := openTestSplit(t)
-	if err := shared.KVPut(compressMarkKey, []byte(`{"at":"2026-10-04T09:00:00Z"}`)); err != nil {
+	if err := shared.LocalOrSelf().KVPut(compressMarkKey, []byte(`{"at":"2026-10-04T09:00:00Z"}`)); err != nil {
 		t.Fatalf("write the compress mark: %v", err)
 	}
 	drain := filepath.Join(ownedDir(t), "drain.db")

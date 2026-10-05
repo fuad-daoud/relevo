@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"slices"
@@ -449,6 +450,101 @@ func TestBackfillOriginOnceStampsEveryGateTable(t *testing.T) {
 	if second.BindingRecords != 0 || second.Repos != 0 || second.Masterminds != 0 || second.Chains != 0 {
 		t.Errorf("the no-op run reported rows: %+v", second)
 	}
+}
+
+// TestBackfillIgnoresAStaleMarkerOverUnstampedRows pins that the marker is
+// verified against the gate rather than trusted. An older, narrower pass over
+// fewer tables recorded one, and the split moved that row into the machine-local
+// file with everything else; the new code found it and skipped, so a database
+// with an unstamped row in all five tables sat at a silent skip forever --
+// neither a success line nor a skip warning, just a gate that never cleared.
+// So a marker whose counts are not empty is stale, and the pass runs to finish
+// the work.
+func TestBackfillIgnoresAStaleMarkerOverUnstampedRows(t *testing.T) {
+	d := directOpenTestDB(t)
+	now := time.Date(2026, 10, 5, 9, 0, 0, 0, time.UTC)
+	const origin = "01M3ORIGINORIGINORIGINORIGIN"
+
+	seedOneEmptyOriginRowPerTable(t, d)
+
+	// The stale marker: written by the older pass, and sitting in the local file
+	// where the new code reads it from.
+	local := d.LocalOrSelf()
+	if err := putOriginBackfillStats(local, OriginBackfillStats{DoneAt: now, Origin: origin}); err != nil {
+		t.Fatalf("seed the stale marker: %v", err)
+	}
+	if _, ok, err := local.KVGet(originBackfillKVKey); err != nil || !ok {
+		t.Fatalf("the stale marker is not in the local file: (%v, %v)", ok, err)
+	}
+
+	// The gate counts what the marker claims is finished.
+	before, err := CountEmptyOrigins(d)
+	if err != nil {
+		t.Fatalf("CountEmptyOrigins: %v", err)
+	}
+	if before.Empty() {
+		t.Fatal("the counts are empty, so there is no stale marker to disagree with")
+	}
+
+	stats, ran, err := BackfillOriginOnce(d, origin, now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("BackfillOriginOnce over the stale marker: %v", err)
+	}
+	if !ran {
+		t.Fatal("a stale marker over unstamped rows was trusted, so the 5-table pass was skipped")
+	}
+	reported := map[string]int64{
+		"binding_record": stats.BindingRecords,
+		"binding":        stats.Bindings,
+		"repo":           stats.Repos,
+		"mastermind":     stats.Masterminds,
+		"chains":         stats.Chains,
+	}
+	for _, table := range before.Tables {
+		if got := reported[table.Table]; got != 1 {
+			t.Errorf("the pass reported %d row(s) stamped in %s, want 1", got, table.Table)
+		}
+	}
+
+	// The gate clears, and the marker is rewritten to say so.
+	after, err := CountEmptyOrigins(d)
+	if err != nil {
+		t.Fatalf("CountEmptyOrigins after the pass: %v", err)
+	}
+	if !after.Empty() {
+		t.Errorf("counts after the pass = %s, want none", after)
+	}
+	if stamped := recordedBackfill(t, local); stamped != 5 {
+		t.Errorf("the rewritten marker records %d stamped rows, want 5", stamped)
+	}
+
+	// The once-only guarantee does not rest on the marker: a second run over the
+	// settled database finds nothing to stamp, so it stamps zero rows.
+	second, ran, err := BackfillOriginOnce(d, origin, now.Add(2*time.Hour))
+	if err != nil {
+		t.Fatalf("second BackfillOriginOnce: %v", err)
+	}
+	if ran {
+		t.Error("the second run reported ran = true, want a no-op")
+	}
+	if second.Stamped() != 0 {
+		t.Errorf("the second run reported %d rows stamped, want 0", second.Stamped())
+	}
+}
+
+// recordedBackfill is how many rows the marker in the machine-local file says
+// the pass moved.
+func recordedBackfill(t *testing.T, local *DB) int64 {
+	t.Helper()
+	value, ok, err := local.KVGet(originBackfillKVKey)
+	if err != nil || !ok {
+		t.Fatalf("kv row %s = (_, %v, %v), want it recorded", originBackfillKVKey, ok, err)
+	}
+	var recorded OriginBackfillStats
+	if err := json.Unmarshal(value, &recorded); err != nil {
+		t.Fatalf("unmarshal the recorded marker: %v", err)
+	}
+	return recorded.Stamped()
 }
 
 // TestBackfillTablesMatchTheOriginGate pins the two lists against each other.
