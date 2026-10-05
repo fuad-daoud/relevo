@@ -327,8 +327,11 @@ cmd_destroy() {
 	stop_user_unit "$_user" "$_duid" relevo.service
 	stop_user_unit "$_user" "$_duid" relevo-serve.service
 	# Terminate the sessions first, so the user manager -- and the units above
-	# -- are gone before the account is removed.
-	plan loginctl terminate-user "$_user"
+	# -- are gone before the account is removed. A dormant sandbox has no
+	# sessions to terminate and no running manager, so both steps are
+	# best-effort: userdel below is the backstop that fails loudly if a
+	# process is really left behind.
+	plan loginctl terminate-user "$_user" || true
 	plan loginctl disable-linger "$_user"
 	# -r removes the home with the account. This is the whole rollback: a
 	# sandbox's state, its clone and its credentials all live under that home.
