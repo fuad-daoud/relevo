@@ -103,18 +103,32 @@ func unreachableHalted(b store.Binding) bool {
 // again is a new episode: its halt finds HaltNotifiedRound back at zero and
 // queues its own entry rather than staying silent for a round already notified.
 //
-// Only the unreachable halt is touched. A server view.Halt, a 404, an auth halt
-// and a local halt all say something the server has not yet contradicted, and
-// each of them is answered by its own path. The cleared state is Active, matching
-// what a binding with no halt at all carries.
+// Two halts are answered by a view rather than by a path of their own: the
+// unreachable one, which the kind names, and the broken-round halt this binding
+// was given by the server saying its builder was gone. Every other halt -- a 404,
+// a revoked key, a clock skewed past the auth grace, a local halt -- says
+// something no arriving view has contradicted, and each is answered by its own
+// path. The cleared state is Active, matching what a binding with no halt at all
+// carries.
+//
+// A view whose own reason is a halt is not among them: a needs-you view that
+// carries one is answered by the server's halt replacing the unreachable one,
+// because the unreachable episode already stamped HaltNotifiedRound for this
+// round and the server's own reason would otherwise be deduped away. The same
+// stamp is why a needs-you view does not clear a broken halt here: the reason it
+// carries is the account of what the round needs, and it belongs on the binding
+// in place of the break rather than under it.
 func clearUnreachableHalt(state remote.RoundState, b store.Binding) store.Binding {
 	if !unreachableHaltDisproven(state) {
 		return b
 	}
-	if b.State != store.StateNeedsYou || !unreachableHalted(b) {
+	if b.State != store.StateNeedsYou {
 		return b
 	}
-	slog.Info("unreachable halt cleared: the server is answering again",
+	if !unreachableHalted(b) && !brokenHaltedOnRunning(b, state) {
+		return b
+	}
+	slog.Info("remote halt cleared: the server is answering again",
 		"binding", b.Name, "round", b.Round, "reason", b.Halt)
 	b.Halt = ""
 	b.HaltAt = time.Time{}
@@ -145,7 +159,7 @@ func clearUnreachableHalt(state remote.RoundState, b store.Binding) store.Bindin
 // strips it back off for b.Halt.
 func remoteHaltText(state remote.RoundState, halt string) string {
 	if state == remote.RoundBroken && halt == "" {
-		return "the server's builder for this round is gone; rebind before sending"
+		return brokenHaltText
 	}
 	return halt
 }
@@ -160,4 +174,30 @@ func unreachableHaltDisproven(state remote.RoundState) bool {
 		return true
 	}
 	return false
+}
+
+// brokenHaltText is the reason a broken-round halt gets when the server named no
+// reason of its own. It is a constant of this file rather than a builder of
+// arbitrary text, so it can be compared against b.Halt whole: a broken-round halt
+// carrying it is one this file wrote, and nothing a server sends can be mistaken
+// for it by quoting a word from inside it.
+const brokenHaltText = "the server's builder for this round is gone; rebind before sending"
+
+// brokenHaltedOnRunning reports whether b.Halt is the fallback broken-round halt
+// and the arriving view says the round is running again.
+//
+// The halt's claim was that nothing was running the round, and a running round
+// over there is that thing seen again, so the view contradicts it outright. Only
+// this one halt: the server's own named reason for a break is its statement
+// about the round and stays until the server replaces it, and a 404, a revoked
+// key, a clock skewed past the auth grace or a local halt say something no
+// running round has contradicted.
+//
+// Queued does not clear it and needs-you does not either. Queued is the server
+// holding a round with no builder behind it, which is the halt's own claim
+// uncontradicted; needs-you carries a reason the MasterMind has to be told, and
+// needsYou above already stops this for the unreachable halt on the same
+// grounds.
+func brokenHaltedOnRunning(b store.Binding, state remote.RoundState) bool {
+	return b.Halt == brokenHaltText && state == remote.RoundRunning
 }
