@@ -200,6 +200,13 @@ func (t *Tx) assertMasterMindKeyFree(id, kind, session string) error {
 // byte.
 const sqliteConstraint = 19
 
+// sqliteConstraintUnique is SQLITE_CONSTRAINT_UNIQUE, the extended code a UNIQUE
+// index violation reports. It is separate from sqliteConstraint because the two
+// refusals are decided differently: a UNIQUE failure on a repoint means the live
+// row already holds what the pointer would bring, which is a row for a person,
+// while the base code alone says only that some constraint was hit.
+const sqliteConstraintUnique = 2062
+
 // mapMasterMindKey turns a sqlite constraint violation into ErrInvalid. It
 // matches any error carrying the code, so a value rebuilt on the client from
 // the wire maps the same way the driver's own error does.

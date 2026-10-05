@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/dbtest"
 )
 
 // daemonPassNow is the passes' stamp in the startup fixture: a fixed time so a
@@ -206,4 +210,86 @@ func findPreSplitBackup(t *testing.T, dir string) string {
 		return ""
 	}
 	return matches[0]
+}
+
+// captureJournal points the default logger at a buffer for the duration of the
+// test and hands back the text it wrote, so a test can read the line a start
+// actually emits rather than the one it means to emit.
+func captureJournal(t *testing.T) func() string {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf.String
+}
+
+// TestDaemonStartupJournalsAHaltSeparatelyFromASkip pins the two outcomes apart in
+// the journal, which is where the field read them as one.
+//
+// A pass that stopped on rows it will not decide alone and a pass that had
+// nothing to do were both logged as "origin backfill skipped", carrying
+// stamped=0 and stale_rows_dropped=0 either way -- which is why the reported line
+// could not be told from a stall. A halt now gets its own line, and it names the
+// tables and how many rows in each are waiting on a person, so the line says what
+// a person has to decide without saying what any row holds.
+func TestDaemonStartupJournalsAHaltSeparatelyFromASkip(t *testing.T) {
+	d := openDaemonPassSplit(t)
+	const created = "2026-09-01T10:00:00.000Z"
+	const dir = "/home/fuad/projects/x/.git"
+	raw := dbtest.RawOpen(t, d.Path())
+
+	// A stale repo row with a stamped twin over the same checkout, and a binding
+	// that already holds a round number 1 -- so moving the round onto the live
+	// binding collides and the row cannot be settled by the pass.
+	for _, row := range []struct{ id, stamp, url string }{
+		{"r-stale", "", "https://o/a.git"},
+		{"r-live", "01ORIGIN", "https://o/b.git"},
+	} {
+		if _, err := raw.Exec(`INSERT INTO repo (id, origin, origin_url, common_dir, first_seen)
+			VALUES (?, ?, ?, ?, ?)`, row.id, row.stamp, row.url, dir, created); err != nil {
+			t.Fatalf("insert %s: %v", row.id, err)
+		}
+	}
+	for _, row := range []struct{ id, stamp string }{
+		{"b-stale", ""}, {"b-live", "01ORIGIN"},
+	} {
+		if _, err := raw.Exec(`INSERT INTO binding (id, origin, name, repo_id, cwd, created_at, builder_mode, ingest_source)
+			VALUES (?, ?, 'api', NULL, '/work', ?, 'runner', 'manual')`, row.id, row.stamp, created); err != nil {
+			t.Fatalf("insert %s: %v", row.id, err)
+		}
+	}
+	for _, row := range []struct{ id, binding string }{
+		{"rd-stale", "b-stale"}, {"rd-live", "b-live"},
+	} {
+		if _, err := raw.Exec(`INSERT INTO round (id, binding_id, number, started_at, outcome, switches)
+			VALUES (?, ?, 1, ?, 'green', 0)`, row.id, row.binding, created); err != nil {
+			t.Fatalf("insert %s: %v", row.id, err)
+		}
+	}
+
+	read := captureJournal(t)
+	daemonEnablePath(d, t.TempDir(), "01ORIGIN", daemonPassNow)
+	line := read()
+
+	if !strings.Contains(line, "origin backfill halted on rows a person must decide") {
+		t.Errorf("a pass that halted on a row it would not decide alone logged no halt line:\n%s", line)
+	}
+	if strings.Contains(line, "origin backfill skipped") {
+		t.Errorf("a halt was also logged as a skip, which is the line the field could not tell apart:\n%s", line)
+	}
+	// The line names the table and the count, so it is actionable, and it carries
+	// no row's contents: the paths and record bodies in this fixture must not
+	// appear in a line that may be uploaded.
+	if !strings.Contains(line, "rows_halted_by_table") || !strings.Contains(line, "binding=1") {
+		t.Errorf("the halt line does not name the table and how many rows it holds:\n%s", line)
+	}
+	if !strings.Contains(line, "rows_halted=1") {
+		t.Errorf("the halt line does not count the rows waiting on a person:\n%s", line)
+	}
+	for _, secret := range []string{dir, "/work", "rd-stale", "b-stale"} {
+		if strings.Contains(line, secret) {
+			t.Errorf("the halt line carries %q, want table and count only:\n%s", secret, line)
+		}
+	}
 }

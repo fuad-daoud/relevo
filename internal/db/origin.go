@@ -66,6 +66,22 @@ func (s OriginBackfillStats) Halted() int64 {
 	return n
 }
 
+// HaltedByTable is the same halt counted per table, so a journal line says which
+// table is waiting on a person and how many rows in it, rather than only a total
+// that names no table. It reports tables and counts, never a row's contents.
+func (s OriginBackfillStats) HaltedByTable() map[string]int64 {
+	byTable := make(map[string]int64, len(s.Twins))
+	for _, t := range s.Twins {
+		if t.Halted > 0 {
+			byTable[t.Table] += t.Halted
+		}
+	}
+	if len(byTable) == 0 {
+		return nil
+	}
+	return byTable
+}
+
 // backfillTables is every table the pass stamps, in the order it stamps them.
 //
 // It is spelled out here rather than read from originGateTables so the pass's
@@ -128,12 +144,13 @@ func (s *OriginBackfillStats) noteTwin(table, index string, dropped, halted int6
 // It moves the set one table at a time, each in its own transaction, and settles
 // that table's stale twins before it stamps anything. A row whose stamp would
 // collide with a row this installation already stamped is not a reason to give up
-// on the pass: on a mirror table the stale row loses to the stamped live row and
-// is dropped (see the twin rule in origin_twin.go), and only where the rule
-// declines -- a binding_record twin, or a stale row history still points at --
-// does the row stay unstamped and halt the pass for a person. Either way the
-// other rows in that table, and every table already done, keep the stamps they
-// have; the pass is a resume, not an all-or-nothing.
+// on the pass: on a mirror table the stale row loses to the stamped live row, so
+// everything naming it is repointed at the live id and then it is dropped (see
+// the twin rule in origin_twin.go and the repoint in origin_repoint.go), and only
+// where the rule declines -- a binding_record twin, or a reference that cannot
+// move -- does the row stay unstamped and halt for a person. Either way the pass
+// continues past that row: the other rows in that table, and every table already
+// done, keep the stamps they have; the pass is a resume, not an all-or-nothing.
 //
 // The marker is written last, to the machine-local file (never the shared
 // one), in a write of its own, and only once the gate counts nothing
@@ -263,39 +280,41 @@ func putOriginBackfillStats(local *DB, stats OriginBackfillStats) error {
 }
 
 // settleTwins is the twin rule applied to one table: every stale row whose stamp
-// would collide is dropped for the stamped live row the rule says it loses to,
-// and the ids of the ones left standing come back so the table's stamp skips
-// them. It returns the ids still unstamped, in the order the indexes gave them,
-// so a halt names the same rows on every run over the same database.
+// would collide is repointed at the stamped live row the rule says it loses to and
+// then dropped, and the ids of the ones left standing come back so the table's
+// stamp skips them. It returns the ids still unstamped, in the order the indexes
+// gave them, so a halt names the same rows on every run over the same database.
 //
-// A drop gets a transaction of its own, so a row the database refuses to remove
-// costs that one row and nothing else -- not the table's clean rows, and not the
-// tables already stamped.
+// A row gets a transaction of its own, so a row the pass cannot settle -- a
+// reference that will not move, or a record the rule declines to touch -- costs
+// that one row and nothing else: not the table's clean rows, not the rows already
+// settled, and not the tables already stamped. The pass continues past it, which
+// is what keeps a halt from presenting as a whole pass that did nothing.
 func settleTwins(d *DB, table, origin string, rule twinRule, stats *OriginBackfillStats) (halted []string, err error) {
 	seen := map[string]bool{}
 	for _, key := range twinKeysFor(table) {
-		ids, qerr := collidingRowIDs(d.sqlDB, table, origin, key)
+		pairs, qerr := collidingRowPairs(d.sqlDB, table, origin, key)
 		if qerr != nil {
 			return nil, fmt.Errorf("origin backfill: %s %s: %w", table, key.name, mapBusy(qerr))
 		}
-		for _, id := range ids {
+		for _, pair := range pairs {
 			// A row can collide on more than one of its table's indexes; it is
 			// one row either way, and it is settled once.
-			if seen[id] {
+			if seen[pair.stale] {
 				continue
 			}
-			seen[id] = true
+			seen[pair.stale] = true
 			if rule == twinHaltForHuman {
-				halted = append(halted, id)
+				halted = append(halted, pair.stale)
 				stats.noteTwin(table, key.name, 0, 1)
 				continue
 			}
-			refused, derr := dropStaleRow(d, table, id)
+			haltedRow, derr := settleStaleRow(d, table, pair.stale, pair.live)
 			if derr != nil {
 				return nil, derr
 			}
-			if refused {
-				halted = append(halted, id)
+			if haltedRow {
+				halted = append(halted, pair.stale)
 				stats.noteTwin(table, key.name, 0, 1)
 				continue
 			}

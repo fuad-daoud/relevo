@@ -52,6 +52,23 @@ func daemonEnablePath(d *db.DB, backupDir, origin string, now time.Time) {
 	// journal that may be uploaded.
 	bstats, bran, berr := db.BackfillOriginOnce(d, origin, now)
 	if berr != nil {
+		// A pass that stopped on rows it will not decide alone is not the same
+		// event as a pass that had nothing to do, and one line for both is what
+		// let a halt over referenced rows read as a pass that settled nothing:
+		// stamped=0 and dropped=0 look alike whichever it was. So a pass that
+		// halted gets its own line, naming the tables and how many rows in each
+		// are waiting on a person, and the stall it really was keeps the skip
+		// line it always had.
+		if bstats.Halted() > 0 {
+			slog.Warn("relevo daemon: origin backfill halted on rows a person must decide",
+				"err", berr,
+				"stamped", bstats.Stamped(),
+				"stale_rows_dropped", bstats.Dropped(),
+				"rows_halted", bstats.Halted(),
+				"rows_halted_by_table", bstats.HaltedByTable(),
+				"rows_left_unstamped", bstats.LeftUnstamped)
+			return
+		}
 		slog.Warn("relevo daemon: origin backfill skipped", "err", berr,
 			"stamped", bstats.Stamped(),
 			"stale_rows_dropped", bstats.Dropped(),
