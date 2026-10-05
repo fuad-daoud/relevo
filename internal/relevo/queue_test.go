@@ -266,6 +266,76 @@ func TestAdmitSwitchFailureRecordsNoStart(t *testing.T) {
 	}
 }
 
+// TestAdmitSwitchFailureQueuesOneHaltAfterAFailedQueue pins the switch
+// failure's halt entry against a queue that cannot write it: the first Admit
+// records the reason on the binding and owes the entry, and the next Admit --
+// once the log has room again -- writes exactly one.
+//
+// switchBuilder set b.Halt before it queued the entry, so a queue that failed
+// left a binding that read as already halted: Admit's spawn-failure branch kept
+// that reason, zeroed QueuedAt, and wrote nothing, and nothing retried it. The
+// entry the switch owed its MasterMind was never queued at all.
+//
+// Mutation check: restore the b.Halt assignment above queueBrokenHalt in
+// switch.go and this fails on the second Admit refusing (QueuedAt zeroed) with
+// no halt entry anywhere in the log.
+func TestAdmitSwitchFailureQueuesOneHaltAfterAFailedQueue(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt := newRuntime(t)
+	rt.Runner = fr
+	// Two providers, so gating the first leaves the second reachable, and the
+	// read tier the binding carries is one opencode refuses.
+	rt.Candidates = candidateSet(t, `[{"harness":"claude","provider":"first","model":"m","roles":["builder","reviewer"]},
+	  {"harness":"opencode","provider":"second","model":"m","roles":["builder"]}]`)
+	rt.Policy = orderOf("builder", "claude/first/m", "opencode/second/m")
+
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: "claude/first/m", MasterMindID: testMasterMindName, CWD: "/repo", Tier: "read",
+	}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true}); err != nil {
+		t.Fatalf("Send(Defer): %v", err)
+	}
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "claude/first/m", time.Time{}, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	// A log with no room left is the one queue fault a binding cannot write
+	// past, and this test needs nothing else appended.
+	fillLogLeavingRoom(t, rt, "webshop", 0)
+
+	if err := Admit(context.Background(), rt, "webshop"); err == nil {
+		t.Fatal("Admit: err = nil, want the queue failure the full log answers")
+	}
+	if halts := haltEntries(t, rt, "webshop"); len(halts) != 0 {
+		t.Fatalf("halt entries = %d, want 0 while the log is full: %+v", len(halts), halts)
+	}
+
+	freeLogRoom(t, rt, "webshop")
+	if err := Admit(context.Background(), rt, "webshop"); err != nil {
+		t.Fatalf("second Admit: %v", err)
+	}
+
+	halts := haltEntries(t, rt, "webshop")
+	if len(halts) != 1 {
+		t.Fatalf("halt entries = %d, want exactly 1: the switch failure owes its MasterMind one: %+v", len(halts), halts)
+	}
+
+	got, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !got.QueuedAt.IsZero() {
+		t.Errorf("QueuedAt = %v, want zero", got.QueuedAt)
+	}
+	if got.HaltNotifiedRound != got.Round {
+		t.Errorf("HaltNotifiedRound = %d, want %d: the dedup key must be stamped", got.HaltNotifiedRound, got.Round)
+	}
+}
+
 // TestAdmitSpawnFailureQueuesAHaltEntry pins Admit's halt entry: it halts
 // through the shared path, so a spawn failure owes its MasterMind the same one
 // entry every other NEEDS YOU owes. It used to set State and Halt by hand and
