@@ -197,9 +197,10 @@ before 'the serve unit stops before the account goes' \
 	'systemctl --user disable --now relevo-serve.service' 'userdel -r rv-demo'
 before 'the sessions are terminated before lingering is disabled' \
 	'loginctl terminate-user rv-demo' 'loginctl disable-linger rv-demo'
-# Session termination is best-effort: a dormant sandbox has no sessions, and
-# userdel is the backstop that fails loudly if a process is really left.
-carries 'session termination does not abort the destroy' 'loginctl terminate-user rv-demo || true'
+# Session termination is best-effort at runtime (`|| true`): a dormant
+# sandbox has no sessions, and userdel is the backstop. That tolerance is
+# invisible in --dry-run -- the plan prints the bare command -- so it is
+# verified by a live destroy, not pinned here; order still is.
 before 'lingering is disabled before the account goes' \
 	'loginctl disable-linger rv-demo' 'userdel -r rv-demo'
 before 'the account goes last' 'loginctl terminate-user rv-demo' 'userdel -r rv-demo'
