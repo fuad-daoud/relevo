@@ -286,27 +286,43 @@ func haltBinding(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 func haltBindingKind(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entryRound int, message, kind string) (store.Binding, error) {
 	text := strings.TrimPrefix(message, b.Name+": ")
 
-	if b.HaltNotifiedRound != b.Round {
-		if b.Halt != text || b.HaltAt.IsZero() {
-			b.HaltAt = rt.Now().UTC()
-		}
-		b.Halt = text
-		b.RemoteHaltKind = kind
+	if b.HaltNotifiedRound != b.Round || supersedesRemoteHalt(b.RemoteHaltKind, kind) {
+		// The fields are written on a copy the entry is queued against, and only
+		// adopted once the queue succeeds: the stamp is what says this halt was
+		// told, so a binding whose append failed has to read as untold or the
+		// next attempt dedupes against an entry that does not exist. The callers
+		// that go on after such a failure stamp it themselves -- closeHaltOrOwe,
+		// which owns the owed entry, is the one.
+		halted := stampHalt(b, text, kind, rt.Now().UTC())
 
 		slog.Info("binding halted", "binding", b.Name, "round", b.Round, "reason", message)
 
-		b.HaltNotifiedRound = b.Round
-
-		// Queued after the key is stamped, not before: the stamp is the dedup,
-		// so an entry written and then re-entered would queue twice.
-		if err := queueHalt(ctx, rt, tx, b, entryRound, text); err != nil {
+		if err := queueHalt(ctx, rt, tx, halted, entryRound, text); err != nil {
 			return b, err
 		}
+
+		halted.HaltNotifiedRound = halted.Round
+		b = halted
 	}
 
 	b.State = store.StateNeedsYou
 
 	return b, nil
+}
+
+// stampHalt writes the fields a halt carries -- the reason a human reads, when
+// it began, the kind naming its episode and the state word -- on a copy of b.
+//
+// HaltAt moves only when the reason changed or none was recorded: a repeat halt
+// of the same text is the same halt, and its start is when it first began.
+func stampHalt(b store.Binding, text, kind string, now time.Time) store.Binding {
+	if b.Halt != text || b.HaltAt.IsZero() {
+		b.HaltAt = now.UTC()
+	}
+	b.Halt = text
+	b.RemoteHaltKind = kind
+	b.State = store.StateNeedsYou
+	return b
 }
 
 // clearHaltFields drops the halt a binding carries, every field of it: the
@@ -352,8 +368,8 @@ func closedRoundHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 // no later tick would decide to halt it again.
 //
 // The owed entry is keyed on its own binding field rather than on
-// HaltNotifiedRound: the failed tick stamped that, so re-entering haltBinding
-// would queue nothing, and the marker is what a later tick reads to know the
+// HaltNotifiedRound: re-entering haltBinding would queue nothing once the key
+// below is stamped, so the marker is what a later tick reads to know the
 // notification is still outstanding.
 func closeHaltOrOwe(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, closedRound int, message string) store.Binding {
 	next, err := closedRoundHalt(ctx, rt, tx, b, closedRound, message)
@@ -361,13 +377,15 @@ func closeHaltOrOwe(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		return next
 	}
 	slog.Warn("halt entry owed to a later tick", "binding", b.Name, "round", closedRound, "err", err)
-	// haltBinding returns before the state word when the queue fails, on the
-	// understanding that its caller saves nothing. This caller goes on, so the
-	// halt is finished here: next.Halt is the name-stripped text the entry
-	// would have carried, and the stamp it already set is what keeps the owed
-	// entry from being queued twice.
-	next.State = store.StateNeedsYou
-	next.OwedHalt = &store.OwedHalt{Round: closedRound, Text: next.Halt}
+	// haltBinding writes nothing when the queue fails, on the understanding that
+	// its caller saves nothing. This caller goes on and saves, so the halt is
+	// finished here: the fields the entry would have carried are stamped, and
+	// with them the key -- which is what keeps the owed entry from being queued
+	// twice by a halt of the same round arriving before the retry.
+	text := strings.TrimPrefix(message, next.Name+": ")
+	next = stampHalt(next, text, "", rt.Now().UTC())
+	next.HaltNotifiedRound = next.Round
+	next.OwedHalt = &store.OwedHalt{Round: closedRound, Text: text}
 	return next
 }
 
@@ -536,8 +554,13 @@ func bindingSwitchable(b store.Binding) bool {
 // queueBrokenHalt is the broken-binding half of queueHalt. A binding that is
 // StateBroken and not switchable is waiting on a human, exactly as a halted one
 // is, so it owes the same entry -- under the same per-round key, because a
-// broken binding's Halt is empty and it never passes through haltBinding to
-// stamp one.
+// broken binding never passes through haltBinding to stamp one.
+//
+// reason is the named-prefixed text the caller logs, and it is stripped here the
+// way haltBinding strips it: the entry's Note has to be the same string b.Halt
+// records, or the owed-entry retry that reads the note back does not recognise
+// the entry it is looking for, and the reason the entry carries is not the one a
+// human reads on the binding.
 //
 // It returns the binding because the dedup stamp is part of the answer: the
 // caller saves what comes back, and the next tick must see the same
@@ -553,7 +576,8 @@ func queueBrokenHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 	if b.HaltNotifiedRound == b.Round {
 		return b, false, nil
 	}
-	if err := queueHalt(ctx, rt, tx, b, b.Round, reason); err != nil {
+	text := strings.TrimPrefix(reason, b.Name+": ")
+	if err := queueHalt(ctx, rt, tx, b, b.Round, text); err != nil {
 		return b, false, err
 	}
 	b.HaltNotifiedRound = b.Round

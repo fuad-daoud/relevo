@@ -35,7 +35,13 @@ func RoundStateOf(b store.Binding, entries []store.LogEntry) remote.RoundState {
 	// A broken builder has no process to run the round, whatever the entries
 	// say about it, so it outranks the open-round arms below -- but not the
 	// close above, which the owner is still owed.
-	if b.State == store.StateBroken {
+	//
+	// A switchable break is not that: the server retries it on its next tick
+	// and deliberately notifies nobody about it, so reporting it broken makes
+	// the owner halt on a fallback reason of its own and queue an entry for a
+	// fault the daemon is about to fix. It falls through to the open-round
+	// arms, which is what it was before the break.
+	if b.State == store.StateBroken && !bindingSwitchable(b) {
 		return remote.RoundBroken
 	}
 	open := store.RoundOpen(entries, b.Round)

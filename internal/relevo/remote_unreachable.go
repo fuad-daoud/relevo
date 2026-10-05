@@ -79,8 +79,9 @@ func unreachableHaltText(server string, dur time.Duration, round int) string {
 // The broken halt is answered by running or queued and by nothing else: a
 // needs-you view's reason is the account of what the round needs, and it belongs
 // on the binding in place of the break rather than under it -- so such a view
-// halts the binding afresh, through haltBindingKind, and stamps its own kind
-// over the break's.
+// halts the binding afresh, through haltBindingKind, which treats a different
+// kind as a new notification (supersedesRemoteHalt) and stamps its own kind over
+// the break's.
 //
 // The clear is by the kind alone and never by the text. A server names a reason
 // for a broken round when it has one, so matching the fallback text cleared only
@@ -99,8 +100,8 @@ func clearUnreachableHalt(state remote.RoundState, b store.Binding) store.Bindin
 	if !haltEpisodeAnswered(state, b.RemoteHaltKind) {
 		return b
 	}
-	slog.Info("remote halt cleared: the server is answering again",
-		"binding", b.Name, "round", b.Round, "reason", b.Halt)
+	slog.Info("remote halt cleared: the server's view answers the episode",
+		"binding", b.Name, "round", b.Round, "kind", b.RemoteHaltKind, "reason", b.Halt)
 	b = clearHaltFields(b)
 	b.State = store.StateActive
 	return b
@@ -117,6 +118,26 @@ func haltEpisodeAnswered(state remote.RoundState, kind string) bool {
 		return state == remote.RoundRunning || state == remote.RoundQueued
 	}
 	return false
+}
+
+// supersedesRemoteHalt reports whether a halt naming kind replaces the episode
+// already stamped on the binding, so the per-round notification key does not
+// silence it.
+//
+// The key dedups one observation of one round. A broken or unreachable halt is
+// not that: it is a guess the server makes from what it can see, and the very
+// next view can contradict it with the reason the round actually needs. A
+// binding left on the fallback reason shows a human advice they cannot follow --
+// a remote binding refuses a rebind -- and never hears the account of the fault.
+//
+// Only a change of episode re-notifies. The same kind again is the same
+// observation, told once, and a halt with no kind replacing one that had none is
+// no change at all.
+func supersedesRemoteHalt(stamped, kind string) bool {
+	if stamped == "" || stamped == kind {
+		return false
+	}
+	return stamped == store.HaltKindUnreachable || stamped == store.HaltKindBroken
 }
 
 // haltKindFor names the episode a halting view belongs to. Only a broken view
@@ -166,8 +187,13 @@ func unreachableHaltDisproven(state remote.RoundState) bool {
 }
 
 // brokenHaltText is the reason a broken-round halt gets when the server named no
-// reason of its own. It is a constant of this file rather than a builder of
-// arbitrary text, so a reader of the halt sees the same sentence every time; the
-// kind, not this text, is what says the halt came from a broken view, so nothing
-// compares a halt against it.
-const brokenHaltText = "the server's builder for this round is gone; rebind before sending"
+// reason of its own. It is a constant rather than a builder of arbitrary text, so
+// a reader of the halt sees the same sentence every time; the kind, not this
+// text, is what says the halt came from a broken view, and only the load
+// migration reads it back, to name the kind a record written before the field
+// did not carry.
+//
+// It is store's constant because that migration is the other half of it: the
+// sentence written and the sentence recovered have to be one, or a break
+// recorded before the field is not recognised on the next load.
+const brokenHaltText = store.BrokenHaltText
