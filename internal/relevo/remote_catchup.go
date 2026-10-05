@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -210,9 +209,7 @@ func clearAbsorbHalt(b store.Binding) store.Binding {
 	}
 	b.RemoteAbsorbFailures = 0
 	b.RemoteBundleFailures = 0
-	b.Halt = ""
-	b.HaltAt = time.Time{}
-	b.HaltNotifiedRound = 0
+	b = clearHaltFields(b)
 	b.State = store.StateActive
 	return b
 }

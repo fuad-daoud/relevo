@@ -269,6 +269,21 @@ func reconcileWith(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 // says. HaltAt is written with it for the same reason: it marks when the
 // notified halt began.
 func haltBinding(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entryRound int, message string) (store.Binding, error) {
+	return haltBindingKind(ctx, rt, tx, b, entryRound, message, "")
+}
+
+// haltBindingKind is haltBinding for a halt that names the episode behind it.
+// The kind is stamped inside the notification guard, not on the binding handed
+// in: a halt the guard dedupes queues no entry and tells nobody, so a kind set
+// for it would attach itself to a reason that already went out and answer for
+// an episode that never did. Every halt that does notify stamps its own kind,
+// the empty one included, so a kind left by an earlier episode is replaced by
+// the kind this halt actually is.
+//
+// The stamping cannot move out to the caller for the reason HaltAt cannot:
+// haltAndSettle reads the binding this returns, and a field set on the result
+// never reaches disk.
+func haltBindingKind(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entryRound int, message, kind string) (store.Binding, error) {
 	text := strings.TrimPrefix(message, b.Name+": ")
 
 	if b.HaltNotifiedRound != b.Round {
@@ -276,6 +291,7 @@ func haltBinding(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 			b.HaltAt = rt.Now().UTC()
 		}
 		b.Halt = text
+		b.RemoteHaltKind = kind
 
 		slog.Info("binding halted", "binding", b.Name, "round", b.Round, "reason", message)
 
@@ -291,6 +307,22 @@ func haltBinding(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	b.State = store.StateNeedsYou
 
 	return b, nil
+}
+
+// clearHaltFields drops the halt a binding carries, every field of it: the
+// reason a human reads, the time it began, the per-round notification key and
+// the kind naming the episode. Clearing a halt means clearing all four, because
+// each answers a question the binding no longer has. A kind left behind names
+// an episode for a halt that is gone: unreachableHalted then answers for a
+// binding with no unreachable halt at all, and the next answering view clears a
+// halt nothing wrote. A key left behind silences the next halt of the round it
+// still names.
+func clearHaltFields(b store.Binding) store.Binding {
+	b.Halt = ""
+	b.HaltAt = time.Time{}
+	b.HaltNotifiedRound = 0
+	b.RemoteHaltKind = ""
+	return b
 }
 
 // closedRoundHalt is haltBinding for a caller whose b.Round has already moved
@@ -461,7 +493,14 @@ func queueHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, e
 // report from the middle of its own close, before the chain bookkeeping below
 // the halt has run.
 func haltAndSettle(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, message string) (store.Binding, error) {
-	next, err := haltBinding(ctx, rt, tx, b, b.Round, message)
+	return haltAndSettleKind(ctx, rt, tx, b, message, "")
+}
+
+// haltAndSettleKind is haltAndSettle for a halt that names the episode behind
+// it: the kind travels with the halt into haltBindingKind, so it is stamped
+// only when the halt actually notifies.
+func haltAndSettleKind(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, message, kind string) (store.Binding, error) {
+	next, err := haltBindingKind(ctx, rt, tx, b, b.Round, message, kind)
 	if err != nil {
 		return next, err
 	}
@@ -972,10 +1011,10 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	b.RoundStartedAt = time.Time{}
 
 	// A halt notified for the old round says nothing about the new one, so the
-	// next round that goes wrong gets its own single notification.
-	b.HaltNotifiedRound = 0
-	b.Halt = ""
-	b.HaltAt = time.Time{}
+	// next round that goes wrong gets its own single notification. The clear
+	// takes the kind with the rest: a kind left from an unreachable episode
+	// would answer for a halt the new round never had.
+	b = clearHaltFields(b)
 	// A switch counted against the old round says nothing about the new one,
 	// and neither does an exclusion recorded against it (#191).
 	b.RoundSwitches = 0

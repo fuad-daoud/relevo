@@ -770,8 +770,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			// round is still stopped: the next send is refused with 409
 			// round_halted naming a switch that has already been replaced, and
 			// the round classifies as halted for as long as the binding lives.
-			b.Halt = ""
-			b.HaltAt = time.Time{}
+			b = clearHaltFields(b)
 		}
 		return deliverAndSettle(ctx, rt, tx, b)
 	}

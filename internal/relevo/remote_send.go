@@ -247,11 +247,10 @@ func remoteRecord(rt Runtime, tx *store.Tx, b store.Binding, ship remoteShipped,
 	cur.QueuedAt = time.Time{}
 	cur.FinishPending = true
 	cur.State = store.StateActive
-	cur.Halt = ""
-	cur.HaltAt = time.Time{}
-	// A human re-send is a fresh attempt: the next halt in this round notifies
-	// again, and the round gets a full switch budget.
-	cur.HaltNotifiedRound = 0
+	// The halt that stopped the previous attempt goes with the attempt, all of
+	// it: reason, stamp and the kind naming its episode. A human re-send is a
+	// fresh attempt, so the next halt in this round notifies again.
+	cur = clearHaltFields(cur)
 	// An owed notification goes with the halt it was about: the re-send is the
 	// human answering that halt, so the entry it still owes would land under a
 	// round the human has already moved past.

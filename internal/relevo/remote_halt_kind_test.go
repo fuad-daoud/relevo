@@ -1,6 +1,7 @@
 package relevo
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -91,6 +92,159 @@ func TestUnreachableHaltStillCarriesItsKind(t *testing.T) {
 	got := unreachableHaltedBinding(t, rt, b)
 	if got.RemoteHaltKind != store.HaltKindUnreachable {
 		t.Fatalf("RemoteHaltKind = %q, want %q on the halt this file writes", got.RemoteHaltKind, store.HaltKindUnreachable)
+	}
+}
+
+// TestUnreachableKindNotStampedOnADedupedHalt pins the stamp's own guard: a
+// halt the notification key dedupes tells nobody, so the kind must not attach
+// itself to the reason that already went out. Stamped outside the guard it named
+// the episode of a halt that was never the one on the binding, and the answering
+// view then cleared a halt this arm did not write.
+//
+// The server's own needs-you halt notifies first and stamps the round; the
+// server then goes silent past the budget and grace, which is exactly the
+// unreachable arm's trigger, but the round has already told its MasterMind.
+//
+// Mutation target: move the kind stamp out of the HaltNotifiedRound guard in
+// haltBindingKind and this reads unreachable for a halt the server sent.
+func TestUnreachableKindNotStampedOnADedupedHalt(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.RoundTimeoutMS = 1000
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WithLock(func(tx *store.Tx) error {
+		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	const reason = "the plan needs a human: the scope widened"
+	fr := &fakeRemote{getBindingResp: remote.BindingView{RoundState: remote.RoundNeedsYou, Halt: reason}}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.HaltNotifiedRound != got.Round {
+		t.Fatalf("HaltNotifiedRound = %d, want %d as the fixture", got.HaltNotifiedRound, got.Round)
+	}
+
+	// The server is silent past the budget and grace: the unreachable arm fires,
+	// and the round's own halt dedupes it.
+	fr.getBindingResp = remote.BindingView{}
+	fr.getBindingErr = fmt.Errorf("%w: dial tcp: connection refused", client.ErrUnreachable)
+	got, err = reconcile(t, rt, got)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	got, err = reconcile(t, at(rt, 31*time.Minute), got)
+	if err != nil {
+		t.Fatalf("Reconcile past the grace: %v", err)
+	}
+
+	if got.RemoteHaltKind != "" {
+		t.Errorf("RemoteHaltKind = %q, want empty: the unreachable halt was deduped, so it named no episode", got.RemoteHaltKind)
+	}
+	if got.Halt != reason {
+		t.Errorf("Halt = %q, want the server's reason %q untouched", got.Halt, reason)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Errorf("State = %q, want needs_you", got.State)
+	}
+}
+
+// TestStaleUnreachableKindDoesNotWipeALaterServerHalt pins the round-advance
+// clear: a halt notified for the old round says nothing about the new one, and
+// the kind that named its episode goes with it. Left behind, the kind answered
+// for a halt the new round never had, and the first running view cleared the
+// server's own reason off the binding -- which then re-halted and requeued the
+// same reason on every poll.
+//
+// The scenario is the two staleness paths in one sequence: the unreachable
+// episode ends at the round close, the new round gets the server's own needs-you
+// reason, and a running view leaves that reason standing with the one entry it
+// was told in.
+func TestStaleUnreachableKindDoesNotWipeALaterServerHalt(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.RoundTimeoutMS = 1000
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WithLock(func(tx *store.Tx) error {
+		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: fmt.Errorf("%w: dial tcp: connection refused", client.ErrUnreachable)}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got := unreachableHaltedBinding(t, rt, b)
+	if err := st.Save(got); err != nil {
+		t.Fatal(err)
+	}
+
+	// The server answers with round 1 closed: the close advances the binding to
+	// round 2, and the halt -- with the kind that named its episode -- has no
+	// say over the round that follows.
+	rt2 := Runtime{Store: st, Remote: stoppedRoundRemote("killed", ""), Now: func() time.Time { return baseTime }}
+	if _, err := SyncRemote(context.Background(), rt2); err != nil {
+		t.Fatalf("SyncRemote: %v", err)
+	}
+	got, err := st.Load("api")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2: the closed round advances", got.Round)
+	}
+	if got.Halt != "" || got.RemoteHaltKind != "" {
+		t.Fatalf("halt %q kind %q, want both cleared with the round they were about", got.Halt, got.RemoteHaltKind)
+	}
+
+	// Round 2 carries the server's own reason.
+	const reason = "the reviewer needs a human: the patch touches the schema"
+	fr3 := &fakeRemote{getBindingResp: remote.BindingView{RoundState: remote.RoundNeedsYou, Halt: reason}}
+	rt3 := Runtime{Store: st, Remote: fr3, Now: func() time.Time { return baseTime }}
+
+	got, err = reconcile(t, rt3, got)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou || got.Halt != reason {
+		t.Fatalf("binding = %q/%q, want needs_you on the server's reason", got.State, got.Halt)
+	}
+	if got.RemoteHaltKind != "" {
+		t.Errorf("RemoteHaltKind = %q, want empty: this halt names no unreachable episode", got.RemoteHaltKind)
+	}
+
+	// A running view answers nothing the server's reason asks, so the reason
+	// stands -- and because it stands, the round is already notified and the
+	// same needs-you view does not queue a second entry.
+	fr3.getBindingResp = remote.BindingView{RoundState: remote.RoundRunning}
+	fr3.roundFileFromResp = io.NopCloser(strings.NewReader("builder log line 1\n"))
+	got, err = reconcile(t, at(rt3, time.Minute), got)
+	if err != nil {
+		t.Fatalf("Reconcile on the running view: %v", err)
+	}
+	if got.State != store.StateNeedsYou || got.Halt != reason {
+		t.Errorf("binding = %q/%q, want the server's reason left standing on a running round", got.State, got.Halt)
+	}
+
+	fr3.getBindingResp = remote.BindingView{RoundState: remote.RoundNeedsYou, Halt: reason}
+	if _, err := reconcile(t, at(rt3, 2*time.Minute), got); err != nil {
+		t.Fatalf("Reconcile on the repeat needs-you view: %v", err)
+	}
+	if halts := haltEntriesFor(t, rt3, "api"); len(halts) != 2 {
+		t.Errorf("halt entries = %d, want 2: the unreachable episode's one and the server's reason's one, with no wipe-requeue", len(halts))
 	}
 }
 

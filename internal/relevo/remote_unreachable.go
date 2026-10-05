@@ -44,11 +44,11 @@ func applyRemoteUnreachable(ctx context.Context, rt Runtime, tx *store.Tx, b sto
 
 	dur := now.Sub(b.RemoteUnreachableSince)
 	if roundOpen && dur > roundBudget(b)+unreachableGrace {
-		// The kind is stamped before the halt, not after it returns: haltAndSettle
-		// reads the binding it is handed, so a kind set on its result would never
-		// reach disk.
-		b.RemoteHaltKind = store.HaltKindUnreachable
-		return haltAndSettle(ctx, rt, tx, b, name+": "+unreachableHaltText(server, dur, b.Round))
+		// The kind rides the halt into the notification guard rather than being
+		// stamped here: a halt already notified for this round stamps nothing,
+		// and a kind set regardless would name this episode for the reason that
+		// did go out.
+		return haltAndSettleKind(ctx, rt, tx, b, name+": "+unreachableHaltText(server, dur, b.Round), store.HaltKindUnreachable)
 	}
 	return b, nil
 }
@@ -130,13 +130,10 @@ func clearUnreachableHalt(state remote.RoundState, b store.Binding) store.Bindin
 	}
 	slog.Info("remote halt cleared: the server is answering again",
 		"binding", b.Name, "round", b.Round, "reason", b.Halt)
-	b.Halt = ""
-	b.HaltAt = time.Time{}
-	b.HaltNotifiedRound = 0
-	// The kind goes with the text it named: a binding carrying it with no halt
-	// would answer unreachableHalted for a halt it no longer has, and the next
-	// unreachable arm would clear nothing while the field said otherwise.
-	b.RemoteHaltKind = ""
+	// The kind goes with the text it named, through the one helper: a binding
+	// carrying it with no halt would answer unreachableHalted for a halt it no
+	// longer has.
+	b = clearHaltFields(b)
 	b.State = store.StateActive
 	return b
 }
