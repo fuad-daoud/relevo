@@ -135,11 +135,48 @@ type fleetView struct {
 	filtering  bool            // the '/' filter input is open and owns every key (A4)
 	filter     textinput.Model // the filter input: the same widget as the cmdline (A4)
 	filterText string          // the applied filter text, kept after the input closes (A4)
+
+	// memo holds the rows this cycle computed, and the key they were computed
+	// from. A fleetView is a value, so the pointer is what survives the copies
+	// Update hands back and the shell keeps on its stack.
+	memo *rowsMemo
 }
 
 // newFleetView builds the table, sorted by attention or by name.
 func newFleetView(attention bool) fleetView {
-	return fleetView{attention: attention, filter: newFilterInput()}
+	return fleetView{attention: attention, filter: newFilterInput(), memo: &rowsMemo{}}
+}
+
+// rowsKey is what a row set was computed from: the report it was read off (its
+// first row, its length and when it arrived), the filter in force, the done
+// fold and the sort order. Any one of those changing means the rows are stale.
+type rowsKey struct {
+	report    *view.BindingStatus
+	rows      int
+	statusAt  time.Time
+	filter    string
+	showDone  bool
+	attention bool
+}
+
+// rowsMemo is the fleet's one row set per cycle. Update, the window, the card
+// and the list all read it, so a frame sorts the report once instead of once
+// per reader. sorts counts the computations, one SortRows each, so a test can
+// pin how often a frame really sorts.
+type rowsMemo struct {
+	key   rowsKey
+	rows  []view.BindingStatus
+	sorts int
+}
+
+// firstRow names a report's slice by its first element, so two reports can be
+// told apart. The memo holds the pointer, so the backing array stays live and
+// no later slice can be handed the same address.
+func firstRow(rows []view.BindingStatus) *view.BindingStatus {
+	if len(rows) == 0 {
+		return nil
+	}
+	return &rows[0]
 }
 
 // withActions marks whether the shell has an Actions seam, so Keys() shows
@@ -158,9 +195,35 @@ func newFilterInput() textinput.Model {
 }
 
 // rows returns visible rows in GROUP order with fold and filter applied (§4, §5.1).
+// The set is computed once per cycle and shared: every reader in a frame --
+// Update, the window, the card, the list -- reads the memo.
 func (f fleetView) rows(env Env) []view.BindingStatus {
-	sorted := view.SortRows(env.Report.Bindings, f.attention)
-	q := f.activeFilter()
+	if f.memo == nil {
+		return fleetRows(env.Report.Bindings, f.attention, f.activeFilter(), f.showDone)
+	}
+	key := rowsKey{
+		report:    firstRow(env.Report.Bindings),
+		rows:      len(env.Report.Bindings),
+		statusAt:  env.StatusAt,
+		filter:    f.activeFilter(),
+		showDone:  f.showDone,
+		attention: f.attention,
+	}
+	if f.memo.key == key {
+		return f.memo.rows
+	}
+	f.memo.key = key
+	f.memo.rows = fleetRows(env.Report.Bindings, f.attention, key.filter, f.showDone)
+	f.memo.sorts++
+	return f.memo.rows
+}
+
+// fleetRows is the sort, the filter and the group fold a report's rows go
+// through, in the order a human reads them: what needs a decision, then what
+// is working, then what is idle, then what is held, then the rest, and the
+// done rows last unless the fold is open or a filter is narrowing the list.
+func fleetRows(bindings []view.BindingStatus, attention bool, q string, showDone bool) []view.BindingStatus {
+	sorted := view.SortRows(bindings, attention)
 	var needsYou, working, idle, held, other, done []view.BindingStatus
 	for _, b := range sorted {
 		if q != "" && !fleetRowMatches(b, q) {
@@ -187,7 +250,7 @@ func (f fleetView) rows(env Env) []view.BindingStatus {
 	out = append(out, idle...)
 	out = append(out, held...)
 	out = append(out, other...)
-	if f.showDone || q != "" {
+	if showDone || q != "" {
 		out = append(out, done...)
 	}
 	return out
@@ -808,71 +871,141 @@ type fleetLine struct {
 	row  int
 }
 
-// fleetListLines renders the grouped sections and fold line (§2.3, §5.2).
-func (f fleetView) fleetListLines(env Env, width int) []fleetLine {
-	rows := f.rows(env)
+// fleetSlotKind says what a list line is, so a line the frame will not paint
+// can be laid out without being rendered.
+type fleetSlotKind int
+
+const (
+	slotBlank fleetSlotKind = iota
+	slotSection
+	slotRow
+	slotQuote
+	slotFold
+)
+
+// fleetSlot is one line of the fleet list before it is painted: what it is,
+// and the facts its painter needs. Laying the list out and painting it are
+// separate steps, so the window can be chosen on the layout and only the lines
+// inside it are ever rendered.
+type fleetSlot struct {
+	kind  fleetSlotKind
+	row   int        // the row this line belongs to; -1 for a section, blank or fold line
+	group fleetGroup // lineRow: the section the row is drawn in
+	count int        // lineSection: how many rows the section holds
+	quote string     // lineQuote: the waiting line under a NEEDS YOU row
+}
+
+// fleetListSlots lays out the grouped sections and fold line (§2.3, §5.2)
+// without painting any of them: one slot per drawn line, carrying the row it
+// belongs to.
+func (f fleetView) fleetListSlots(env Env, rows []view.BindingStatus) []fleetSlot {
+	q := f.activeFilter()
 	groups := []fleetGroup{groupNeedsYou, groupWorking, groupIdle, groupHeld, groupOther}
-	if f.showDone || f.activeFilter() != "" {
+	if f.showDone || q != "" {
 		groups = append(groups, groupDone)
 	}
 
-	type groupEntry struct {
-		b        view.BindingStatus
-		rowIndex int
-	}
-	grouped := map[fleetGroup][]groupEntry{}
-	for i, b := range rows {
-		g := groupOf(b)
-		grouped[g] = append(grouped[g], groupEntry{b, i})
+	grouped := map[fleetGroup][]int{}
+	for i := range rows {
+		g := groupOf(rows[i])
+		grouped[g] = append(grouped[g], i)
 	}
 
-	var list []fleetLine
+	var slots []fleetSlot
 	for _, g := range groups {
-		entries := grouped[g]
-		if len(entries) == 0 {
+		idx := grouped[g]
+		if len(idx) == 0 {
 			continue
 		}
-		meta := groupMetas[g]
-		hint := meta.hint
-		if g == groupDone {
-			hint = ". hide"
-		}
-		sec := "    " + chip(meta.pill, meta.label) + "  " + faintStyle.Render(fmt.Sprintf("%d", len(entries)))
-		if hint != "" {
-			sec += "    " + faintStyle.Italic(true).Render(hint)
-		}
-		list = append(list, fleetLine{text: fit(sec, width), row: -1})
+		slots = append(slots, fleetSlot{kind: slotSection, row: -1, group: g, count: len(idx)})
 
-		for _, e := range entries {
-			rowText := fleetRowLine(e.b, g, e.rowIndex == f.cursor, env.Now, width)
-			list = append(list, fleetLine{text: rowText, row: e.rowIndex})
-
-			if e.b.Display == "NEEDS YOU" && e.b.Waiting != nil && e.b.Waiting.Line != "" {
-				quote := "        " + faintStyle.Render("╰ ") + mutedStyle.Italic(true).Render(e.b.Waiting.Line)
-				if e.rowIndex == f.cursor {
-					quote = selBandStyle.Render(fit(quote, width))
-				} else {
-					quote = fit(quote, width)
-				}
-				list = append(list, fleetLine{text: quote, row: e.rowIndex})
+		for _, i := range idx {
+			slots = append(slots, fleetSlot{kind: slotRow, row: i, group: g})
+			if w := rows[i].Waiting; rows[i].Display == "NEEDS YOU" && w != nil && w.Line != "" {
+				slots = append(slots, fleetSlot{kind: slotQuote, row: i, group: g, quote: w.Line})
 			}
 		}
-		list = append(list, fleetLine{text: fit("", width), row: -1})
+		slots = append(slots, fleetSlot{kind: slotBlank, row: -1})
 	}
 
-	if !f.showDone && f.activeFilter() == "" {
-		var doneRows []view.BindingStatus
-		for _, b := range env.Report.Bindings {
-			if b.Display == "DONE" {
-				doneRows = append(doneRows, b)
-			}
-		}
-		if len(doneRows) > 0 {
-			foldText := doneFoldLine(doneRows, env.Now, width)
-			list = append(list, fleetLine{text: foldText, row: -1})
-		}
+	if !f.showDone && q == "" && anyDone(env.Report.Bindings) {
+		slots = append(slots, fleetSlot{kind: slotFold, row: -1})
 	}
 
+	return slots
+}
+
+// paintSlot renders one list line at width.
+func (f fleetView) paintSlot(s fleetSlot, rows []view.BindingStatus, env Env, width int) string {
+	switch s.kind {
+	case slotSection:
+		return fit(sectionLine(s.group, s.count), width)
+	case slotRow:
+		return fleetRowLine(rows[s.row], s.group, s.row == f.cursor, env.Now, width)
+	case slotQuote:
+		return quoteLine(s.quote, s.row == f.cursor, width)
+	case slotFold:
+		return doneFoldLine(doneRows(env.Report.Bindings), env.Now, width)
+	}
+	return fit("", width)
+}
+
+// sectionLine is a section's header: its pill, how many rows it holds, and the
+// hint that says what the section is for.
+func sectionLine(g fleetGroup, count int) string {
+	meta := groupMetas[g]
+	hint := meta.hint
+	if g == groupDone {
+		hint = ". hide"
+	}
+	sec := "    " + chip(meta.pill, meta.label) + "  " + faintStyle.Render(fmt.Sprintf("%d", count))
+	if hint != "" {
+		sec += "    " + faintStyle.Italic(true).Render(hint)
+	}
+	return sec
+}
+
+// quoteLine is the second line under a NEEDS YOU row, carrying the builder's
+// question; on the cursor's row it wears the selection band.
+func quoteLine(quote string, selected bool, width int) string {
+	line := "        " + faintStyle.Render("╰ ") + mutedStyle.Italic(true).Render(quote)
+	if selected {
+		return selBandStyle.Render(fit(line, width))
+	}
+	return fit(line, width)
+}
+
+// doneRows is a report's DONE rows, for the fold line's summary.
+func doneRows(bindings []view.BindingStatus) []view.BindingStatus {
+	var out []view.BindingStatus
+	for i := range bindings {
+		if bindings[i].Display == "DONE" {
+			out = append(out, bindings[i])
+		}
+	}
+	return out
+}
+
+// anyDone reports whether a report holds a DONE row at all, so a fleet with
+// nothing finished draws no fold line.
+func anyDone(bindings []view.BindingStatus) bool {
+	for i := range bindings {
+		if bindings[i].Display == "DONE" {
+			return true
+		}
+	}
+	return false
+}
+
+// fleetListLines renders every line of the grouped sections and fold line
+// (§2.3, §5.2). A frame paints one window of them; this is the whole list.
+func (f fleetView) fleetListLines(env Env, width int) []fleetLine {
+	rows := f.rows(env)
+	slots := f.fleetListSlots(env, rows)
+	list := make([]fleetLine, 0, len(slots))
+	for _, s := range slots {
+		list = append(list, fleetLine{text: f.paintSlot(s, rows, env, width), row: s.row})
+	}
 	return list
 }
 
@@ -912,12 +1045,25 @@ func (f fleetView) tableHeight(env Env) int {
 // windowTopLines is the first line to draw so every line of the cursor's row is
 // visible in height lines, moving top as little as possible.
 func (f fleetView) windowTopLines(lines []fleetLine, height int) int {
-	if height <= 0 || len(lines) <= height {
+	return windowTopIndex(len(lines), height, f.cursor, f.top, func(i int) int { return lines[i].row })
+}
+
+// windowTopSlots is windowTopLines over a laid-out list: the window is chosen
+// on the layout, before a single line is rendered.
+func (f fleetView) windowTopSlots(slots []fleetSlot, height int) int {
+	return windowTopIndex(len(slots), height, f.cursor, f.top, func(i int) int { return slots[i].row })
+}
+
+// windowTopIndex is the window rule itself: the first of n lines to draw so the
+// cursor's row is wholly inside the next height lines, moved as little as
+// possible. rowOf names the row a line belongs to.
+func windowTopIndex(n, height, cursor, top int, rowOf func(int) int) int {
+	if height <= 0 || n <= height {
 		return 0
 	}
 	first, last := -1, -1
-	for i, l := range lines {
-		if l.row == f.cursor {
+	for i := 0; i < n; i++ {
+		if rowOf(i) == cursor {
 			if first < 0 {
 				first = i
 			}
@@ -927,9 +1073,8 @@ func (f fleetView) windowTopLines(lines []fleetLine, height int) int {
 	if first < 0 {
 		return 0
 	}
-	top := f.top
-	if top > len(lines)-height {
-		top = len(lines) - height
+	if top > n-height {
+		top = n - height
 	}
 	if top < 0 {
 		top = 0
@@ -944,8 +1089,32 @@ func (f fleetView) windowTopLines(lines []fleetLine, height int) int {
 }
 
 func (f fleetView) windowTop(rows []view.BindingStatus, env Env) int {
-	lines := f.fleetListLines(env, env.Width)
-	return f.windowTopLines(lines, f.tableHeight(env))
+	slots := f.fleetListSlots(env, rows)
+	return f.windowTopSlots(slots, f.tableHeight(env))
+}
+
+// fleetWindowLines renders only the lines of the list a frame of listH lines
+// paints, padded out to listH. The window is chosen on the layout, so a line
+// that falls outside it is never rendered.
+func (f fleetView) fleetWindowLines(env Env, width, listH int) []string {
+	rows := f.rows(env)
+	slots := f.fleetListSlots(env, rows)
+	start := f.windowTopSlots(slots, listH)
+	end := len(slots)
+	if listH > 0 && start+listH < end {
+		end = start + listH
+	}
+
+	window := make([]string, 0, listH)
+	if start < len(slots) {
+		for _, s := range slots[start:end] {
+			window = append(window, f.paintSlot(s, rows, env, width))
+		}
+	}
+	for len(window) < listH {
+		window = append(window, fit("", width))
+	}
+	return window
 }
 
 // Body renders the card, grouped list, done fold and gated line (§2.3, §5.2).
@@ -971,22 +1140,7 @@ func (f fleetView) Body(env Env, width, height int) string {
 		listH = 0
 	}
 
-	list := f.fleetListLines(env, width)
-	start := f.windowTopLines(list, listH)
-	end := len(list)
-	if listH > 0 && start+listH < end {
-		end = start + listH
-	}
-
-	var window []string
-	if start < len(list) {
-		for _, l := range list[start:end] {
-			window = append(window, l.text)
-		}
-	}
-	for len(window) < listH {
-		window = append(window, fit("", width))
-	}
+	window := f.fleetWindowLines(env, width, listH)
 
 	var out []string
 	out = append(out, fixed...)
