@@ -64,78 +64,70 @@ func unreachableHaltText(server string, dur time.Duration, round int) string {
 		server, store.UnreachableHaltMarker, dur.Truncate(time.Second), round)
 }
 
-// unreachableHalted reports whether this binding is NEEDS YOU because the server
-// could not be reached, which is to say whether RemoteHaltKind names the
-// unreachable episode.
+// clearUnreachableHalt drops a remote halt once the server answers again. What
+// the arriving view has to answer is the claim the halt's own episode made, and
+// the kind names that episode, so the kind picks the rule.
 //
-// The field, not the text: a halt reaching this binding from the server carries
-// whatever reason the server sent, and a builder's raw failure lines can contain
-// this episode's marker by coincidence. Every other halt on a remote binding --
-// a removed binding, a revoked key, a clock skewed past the auth grace, the
-// server's own view.Halt -- names no kind at all, so each of them is left alone
-// here for the same reason and by the same test.
+// A running or queued view answers either claim negatively: the round is alive
+// over there, so nothing about it needs a human. The unreachable halt is also
+// answered by a needs-you or broken view, because a server that has looked at
+// the round and says a human is needed, or that its builder is gone, has
+// contradicted the only thing the outage said -- and left in place that reason
+// would never be told, because the unreachable episode already stamped
+// HaltNotifiedRound for this round.
 //
-// The migration in store's decode is what keeps an episode recorded before the
-// field existed recognisable: an older record's halt text is read there, once.
-func unreachableHalted(b store.Binding) bool {
-	return b.RemoteHaltKind == store.HaltKindUnreachable
-}
-
-// clearUnreachableHalt drops the unreachable halt once the server answers again:
-// a round that is visibly running or queued disproves the halt's reason outright,
-// and a needs-you or broken view supersedes it, because the halt it carries is
-// the server's own statement about the round.
+// The broken halt is answered by running or queued and by nothing else: a
+// needs-you view's reason is the account of what the round needs, and it belongs
+// on the binding in place of the break rather than under it -- so such a view
+// halts the binding afresh, through haltBindingKind, and stamps its own kind
+// over the break's.
 //
-// The running and queued answer is the negative one -- the round is alive over
-// there, so nothing about it needs a human. Needs-you and broken need the
-// positive one: the server is answering, it has looked at the round, and it has
-// said a human is needed with a reason of its own. Left in place, that reason
-// would never be told: the unreachable episode already stamped HaltNotifiedRound
-// for this round, so the server's halt is deduped away and the binding sits on
-// NEEDS YOU quoting a halt the server has just contradicted.
+// The clear is by the kind alone and never by the text. A server names a reason
+// for a broken round when it has one, so matching the fallback text cleared only
+// the breaks a server with nothing to say produced; a named reason, which is
+// every current server's, stayed until the server replaced it, and `wait`
+// answered needs-you on a round a human could watch move.
 //
-// The halt's only reason was "we cannot see the server", and a view that came
-// back disproves exactly that. Leaving the binding on NEEDS YOU until the server
-// closes the round makes `wait` answer needs-you on a round a human can see
-// progressing.
-//
-// The stamp is cleared with the text, not left behind, so a server that drops out
-// again is a new episode: its halt finds HaltNotifiedRound back at zero and
-// queues its own entry rather than staying silent for a round already notified.
-//
-// Two halts are answered by a view rather than by a path of their own: the
-// unreachable one, which the kind names, and the broken-round halt this binding
-// was given by the server saying its builder was gone. Every other halt -- a 404,
-// a revoked key, a clock skewed past the auth grace, a local halt -- says
-// something no arriving view has contradicted, and each is answered by its own
-// path. The cleared state is Active, matching what a binding with no halt at all
-// carries.
-//
-// A view whose own reason is a halt is not among them: a needs-you view that
-// carries one is answered by the server's halt replacing the unreachable one,
-// because the unreachable episode already stamped HaltNotifiedRound for this
-// round and the server's own reason would otherwise be deduped away. The same
-// stamp is why a needs-you view does not clear a broken halt here: the reason it
-// carries is the account of what the round needs, and it belongs on the binding
-// in place of the break rather than under it.
+// The stamp is cleared with the halt, so a server that drops out or breaks again
+// is a new episode: its halt finds HaltNotifiedRound back at zero and queues its
+// own entry rather than staying silent for a round already notified. The cleared
+// state is Active, matching what a binding with no halt at all carries.
 func clearUnreachableHalt(state remote.RoundState, b store.Binding) store.Binding {
-	if !unreachableHaltDisproven(state) {
-		return b
-	}
 	if b.State != store.StateNeedsYou {
 		return b
 	}
-	if !unreachableHalted(b) && !brokenHaltedOnRunning(b, state) {
+	if !haltEpisodeAnswered(state, b.RemoteHaltKind) {
 		return b
 	}
 	slog.Info("remote halt cleared: the server is answering again",
 		"binding", b.Name, "round", b.Round, "reason", b.Halt)
-	// The kind goes with the text it named, through the one helper: a binding
-	// carrying it with no halt would answer unreachableHalted for a halt it no
-	// longer has.
 	b = clearHaltFields(b)
 	b.State = store.StateActive
 	return b
+}
+
+// haltEpisodeAnswered reports whether the arriving view answers the claim the
+// halt's episode made. The kind names the episode; a halt that names none was
+// not written by a path this file clears, whatever its text happens to be.
+func haltEpisodeAnswered(state remote.RoundState, kind string) bool {
+	switch kind {
+	case store.HaltKindUnreachable:
+		return unreachableHaltDisproven(state)
+	case store.HaltKindBroken:
+		return state == remote.RoundRunning || state == remote.RoundQueued
+	}
+	return false
+}
+
+// haltKindFor names the episode a halting view belongs to. Only a broken view
+// names one: every other halting word -- needs-you included -- carries the
+// server's own statement about the round, and no view this file writes may clear
+// it.
+func haltKindFor(state remote.RoundState) string {
+	if state == remote.RoundBroken {
+		return store.HaltKindBroken
+	}
+	return ""
 }
 
 // remoteHaltText is the reason a halting view halts this binding for.
@@ -175,26 +167,7 @@ func unreachableHaltDisproven(state remote.RoundState) bool {
 
 // brokenHaltText is the reason a broken-round halt gets when the server named no
 // reason of its own. It is a constant of this file rather than a builder of
-// arbitrary text, so it can be compared against b.Halt whole: a broken-round halt
-// carrying it is one this file wrote, and nothing a server sends can be mistaken
-// for it by quoting a word from inside it.
+// arbitrary text, so a reader of the halt sees the same sentence every time; the
+// kind, not this text, is what says the halt came from a broken view, so nothing
+// compares a halt against it.
 const brokenHaltText = "the server's builder for this round is gone; rebind before sending"
-
-// brokenHaltedOnRunning reports whether b.Halt is the fallback broken-round halt
-// and the arriving view says the round is running again.
-//
-// The halt's claim was that nothing was running the round, and a running round
-// over there is that thing seen again, so the view contradicts it outright. Only
-// this one halt: the server's own named reason for a break is its statement
-// about the round and stays until the server replaces it, and a 404, a revoked
-// key, a clock skewed past the auth grace or a local halt say something no
-// running round has contradicted.
-//
-// Queued does not clear it and needs-you does not either. Queued is the server
-// holding a round with no builder behind it, which is the halt's own claim
-// uncontradicted; needs-you carries a reason the MasterMind has to be told, and
-// needsYou above already stops this for the unreachable halt on the same
-// grounds.
-func brokenHaltedOnRunning(b store.Binding, state remote.RoundState) bool {
-	return b.Halt == brokenHaltText && state == remote.RoundRunning
-}

@@ -313,8 +313,7 @@ func haltBindingKind(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 // reason a human reads, the time it began, the per-round notification key and
 // the kind naming the episode. Clearing a halt means clearing all four, because
 // each answers a question the binding no longer has. A kind left behind names
-// an episode for a halt that is gone: unreachableHalted then answers for a
-// binding with no unreachable halt at all, and the next answering view clears a
+// an episode for a halt that is gone: the next answering view then clears a
 // halt nothing wrote. A key left behind silences the next halt of the round it
 // still names.
 func clearHaltFields(b store.Binding) store.Binding {

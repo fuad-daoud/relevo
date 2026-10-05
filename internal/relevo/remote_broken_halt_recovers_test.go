@@ -22,8 +22,8 @@ func brokenHaltedBinding(t *testing.T, rt Runtime, b store.Binding) store.Bindin
 	if got.State != store.StateNeedsYou {
 		t.Fatalf("state = %s, want needs_you on a broken round as the fixture", got.State)
 	}
-	if got.RemoteHaltKind != "" {
-		t.Fatalf("RemoteHaltKind = %q, want empty: a broken halt is the server's, not an unreachable episode", got.RemoteHaltKind)
+	if got.RemoteHaltKind != store.HaltKindBroken {
+		t.Fatalf("RemoteHaltKind = %q, want %q: the halt came from a broken view", got.RemoteHaltKind, store.HaltKindBroken)
 	}
 	return got
 }
@@ -83,16 +83,16 @@ func TestBrokenFallbackHaltClearsOnRunningView(t *testing.T) {
 	}
 }
 
-// TestServerReasonBrokenHaltSurvivesARunningView pins that the clear is this
-// file's fallback halt and not every halt a broken view produces. A named reason
-// is the server's statement about the round and the server owns it: a running
-// round says the builder is back, not that the switch that failed is no longer a
-// thing anyone needs told. The server replaces it, and until it does the entry
-// the MasterMind reads stands.
+// TestServerReasonBrokenHaltClearsOnRunningView pins the recovery for a break the
+// server named. The clear is the kind the halt carries, not the text it happens
+// to hold: the fallback-only scoping cleared only a break a server with nothing
+// to say produced, and every current server names its reason -- so the binding
+// sat on NEEDS YOU until the server replaced it, and `wait` answered needs-you on
+// a round a human could watch move.
 //
-// Mutation target: match the broken view's state rather than its fallback text
-// and this clears a reason the server sent.
-func TestServerReasonBrokenHaltSurvivesARunningView(t *testing.T) {
+// Mutation target: match the fallback text (the old brokenHaltedOnRunning) and
+// this stays needs-you.
+func TestServerReasonBrokenHaltClearsOnRunningView(t *testing.T) {
 	t.Parallel()
 
 	st := store.New(t.TempDir())
@@ -116,23 +116,34 @@ func TestServerReasonBrokenHaltSurvivesARunningView(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if got.State != store.StateNeedsYou {
-		t.Errorf("State = %q, want needs_you: the server's own reason is the server's to replace", got.State)
+	if got.State != store.StateActive {
+		t.Errorf("State = %q, want active: a running round is the builder the halt said was gone", got.State)
 	}
-	if got.Halt != "builder claude; switching to codex failed: exit status 1" {
-		t.Errorf("Halt = %q, want the server's reason left in place", got.Halt)
+	if got.Halt != "" || !got.HaltAt.IsZero() {
+		t.Errorf("Halt = %q at %v, want both cleared", got.Halt, got.HaltAt)
+	}
+	if got.RemoteHaltKind != "" {
+		t.Errorf("RemoteHaltKind = %q, want empty once the break is cleared", got.RemoteHaltKind)
+	}
+	if got.HaltNotifiedRound != 0 {
+		t.Errorf("HaltNotifiedRound = %d, want 0 so the next break is its own episode", got.HaltNotifiedRound)
+	}
+
+	entries, err := st.ReadLog("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := WaitOutcome(got, entries, 1, func(string, int) string { return "" }); r.Code == WaitNeedsYou {
+		t.Errorf("WaitOutcome = %+v, want no needs_you on a visibly running round", r)
 	}
 }
 
-// TestBrokenHaltSurvivesAQueuedView pins the bound of the new clear: a queued
-// round is not proof the builder came back. The server is answering and holding
-// the round, but nothing is running it, which is what the break said -- so the
-// halt stands until a running view or the server's own reason replaces it.
-//
-// Mutation target: widen the running condition to the whole of
-// unreachableHaltDisproven and this clears a break on a round that is still
-// stuck.
-func TestBrokenHaltSurvivesAQueuedView(t *testing.T) {
+// TestBrokenHaltClearsOnAQueuedView pins the other half of the new bound: a
+// queued round ends the break too. The server is answering and holding the round
+// to run it, which contradicts the claim the break made -- that nothing would
+// run it -- so the binding relays to the queue rather than sitting on NEEDS YOU
+// while its round waits for a slot.
+func TestBrokenHaltClearsOnAQueuedView(t *testing.T) {
 	t.Parallel()
 
 	st := store.New(t.TempDir())
@@ -152,11 +163,11 @@ func TestBrokenHaltSurvivesAQueuedView(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if got.State != store.StateNeedsYou {
-		t.Errorf("State = %q, want needs_you: a queued round is not proof the builder came back", got.State)
+	if got.State != store.StateActive {
+		t.Errorf("State = %q, want active: a queued round is the server holding the round to run it", got.State)
 	}
-	if got.Halt == "" {
-		t.Error("Halt = \"\", want the break left in place")
+	if got.Halt != "" {
+		t.Errorf("Halt = %q, want the break cleared", got.Halt)
 	}
 }
 

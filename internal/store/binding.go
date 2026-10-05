@@ -19,11 +19,21 @@ const (
 // because its server could not be reached for longer than the round's budget
 // plus the grace.
 //
+// HaltKindBroken names the episode that put a remote binding on NEEDS YOU
+// because the server reported a round whose builder is gone. The server ships a
+// reason for that break when it has one and omits it otherwise, so the halt text
+// is either the server's own account or the fallback this file writes; the kind
+// is what says the halt came from a broken view either way, and an answering
+// view clears it by that and never by the text.
+//
 // The kind is the episode's identity and the halt text is only the reason a
 // human reads, and the two are kept apart on purpose: a halt written by the
 // server or by a human may quote the same phrase, so text cannot say which
 // episodes an answering view is allowed to clear.
-const HaltKindUnreachable = "unreachable"
+const (
+	HaltKindUnreachable = "unreachable"
+	HaltKindBroken      = "broken"
+)
 
 // haltKindFormat is the format that records Binding.RemoteHaltKind. A record
 // written before it has no kind on disk and named its episode in the halt text
