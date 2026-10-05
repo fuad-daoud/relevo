@@ -371,7 +371,7 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 				return next, true, nil
 			}
 		}
-		b, err := haltAndSettle(ctx, rt, tx, b, name+": "+remoteHaltText(view.RoundState, view.Halt))
+		b, err := haltAndSettleKind(ctx, rt, tx, b, name+": "+remoteHaltText(view.RoundState, view.Halt), haltKindFor(view.RoundState))
 		return b, false, err
 
 	case remote.RoundClosed:

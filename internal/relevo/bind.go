@@ -473,9 +473,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 			}
 			b.BuilderCandidate = res.Token() // "" when adopting a pane
 			b.BuilderAccount = res.Account
-			b.HaltNotifiedRound = 0
-			b.Halt = ""
-			b.HaltAt = time.Time{}
+			b = clearHaltFields(b)
 			// The owed notification goes with the halt: the replacement builder
 			// is a fresh attempt, and an entry the replaced round still owed
 			// would be notified as a halt of a round nobody is running.

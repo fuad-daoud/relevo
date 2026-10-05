@@ -388,6 +388,48 @@ func TestAdmitSpawnFailureQueuesAHaltEntry(t *testing.T) {
 	}
 }
 
+// TestAdmitSwitchFailureCarriesTheSwitchReason pins what a failed switch says
+// when the entry it owes cannot be written. switchBuilder returns the binding
+// with no Halt in that case -- the entry the reason would have carried was never
+// queued -- so Admit's spawn-failure halt is what runs, and it names only the
+// append that failed. Admit runs in the daemon, where that error is the fault's
+// only report, so the switch the round actually broke on has to ride it.
+//
+// Mutation check: drop the reason from the error switchBuilder returns and this
+// fails on the Admit error naming no switch.
+func TestAdmitSwitchFailureCarriesTheSwitchReason(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	rt.Candidates = candidateSet(t, `[{"harness":"claude","provider":"first","model":"m","roles":["builder","reviewer"]},
+	  {"harness":"opencode","provider":"second","model":"m","roles":["builder"]}]`)
+	rt.Policy = orderOf("builder", "claude/first/m", "opencode/second/m")
+
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: "claude/first/m", MasterMindID: testMasterMindName, CWD: "/repo", Tier: "read",
+	}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true}); err != nil {
+		t.Fatalf("Send(Defer): %v", err)
+	}
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "claude/first/m", time.Time{}, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	// A log with no room left: the entry the broken switch owes cannot be
+	// queued, which is the case that hands the reason to Admit's own halt.
+	fillLogLeavingRoom(t, rt, "webshop", 0)
+
+	err := Admit(context.Background(), rt, "webshop")
+	if err == nil {
+		t.Fatal("Admit: err = nil, want the switch failure and the halt it could not queue")
+	}
+	if !strings.Contains(err.Error(), "switching to") {
+		t.Errorf("Admit error = %q, want it to carry the switch the round broke on", err)
+	}
+}
+
 func TestAdmitGatedSwitches(t *testing.T) {
 	t.Parallel()
 

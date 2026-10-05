@@ -303,21 +303,29 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		// A broken binding no route will fix owes the MasterMind the same entry
 		// a halt does; queueBrokenHalt skips only the ones a later tick can
 		// still switch, and without a process this is not one of them.
-		next, qerr := queueBrokenHalt(ctx, rt, tx, b, reason)
+		next, queued, qerr := queueBrokenHalt(ctx, rt, tx, b, reason)
 		if qerr != nil {
+			// The switch reason rides the error: the entry cannot be queued
+			// here, so Admit's own spawn-failure halt is what runs, and a bare
+			// queue error left that halt naming only the failed append rather
+			// than the switch the round actually broke on.
+			//
 			// Halt is written only once the entry is queued. A binding that
 			// came back halted with the entry unwritten is one Admit reads as
 			// already halted -- it keeps its reason and queues nothing -- and
 			// nothing else retries it, so the reason the switch recorded would
 			// be the only account of the fault, in the state word alone.
-			return b, qerr
+			return b, fmt.Errorf("%s: %w", reason, qerr)
 		}
 		// The binding keeps the reason, name-stripped the way haltBinding
-		// records one. A served binding ships its Halt to its owner, so an
-		// empty one left the owner told only that the round broke: not which
-		// switch failed, not why, and nothing for the human to act on beyond
-		// the state word itself.
-		next.Halt = strings.TrimPrefix(reason, b.Name+": ")
+		// records one, only when the entry that carries it was queued. A
+		// served binding ships its Halt to its owner, so an empty one left the
+		// owner told only that the round broke: not which switch failed, not
+		// why, and nothing for the human to act on beyond the state word
+		// itself. A skipped binding keeps whatever reason it already had.
+		if queued {
+			next.Halt = strings.TrimPrefix(reason, b.Name+": ")
+		}
 		return deliverAndSettle(ctx, rt, tx, next)
 	}
 
