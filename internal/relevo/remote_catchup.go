@@ -332,3 +332,24 @@ func catchUpPayload(b store.Binding, view remote.BindingView, haveReport bool, c
 	}
 	return payload, note
 }
+
+// chainRoundFacts is one closed-round entry of a chain member view, completed
+// from the member's binding view for the round that view itself describes: the
+// server keeps the uncommitted work and the prior tokens of the round it last
+// closed on the binding view and, on a server older than both fields, nowhere
+// else, so a client that read the entry alone would install that round as
+// clean and bill it for nothing. Every other round's entry is the whole record
+// -- the server ships no older figures to complete it from -- and is returned
+// untouched, which is what keeps the newest round's values off the older ones.
+func chainRoundFacts(cr remote.ClosedRoundView, view remote.BindingView) remote.ClosedRoundView {
+	if cr.Round != view.ClosedRound {
+		return cr
+	}
+	if cr.DirtyCommit == "" {
+		cr.DirtyCommit = view.DirtyCommit
+	}
+	if cr.PriorTokens == nil {
+		cr.PriorTokens = view.PriorTokens
+	}
+	return cr
+}

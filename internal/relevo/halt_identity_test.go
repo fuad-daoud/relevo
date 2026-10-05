@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -616,11 +617,12 @@ func TestOwedHaltEntryIsQueuedOnALaterTick(t *testing.T) {
 }
 
 // TestFreshAttemptDropsTheOwedHaltMarker pins that a fresh attempt carries no
-// notification from the halt it replaces. A re-send and a rebind each clear the
-// halt's text, its stamp and its state word; the owed marker is the one field
-// that says "this binding still has a halt to tell its MasterMind about", and
-// leaving it behind makes the next tick queue that old halt -- filed under the
-// round that raised it, which is a round the fresh attempt has already left.
+// notification from the halt it replaces. A local re-send, a remote re-send and
+// a rebind each clear the halt's text, its stamp and its state word; the owed
+// marker is the one field that says "this binding still has a halt to tell its
+// MasterMind about", and leaving it behind makes the next tick queue that old
+// halt -- filed under the round that raised it, which is a round the fresh
+// attempt has already left.
 func TestFreshAttemptDropsTheOwedHaltMarker(t *testing.T) {
 	t.Parallel()
 
@@ -693,6 +695,70 @@ func TestFreshAttemptDropsTheOwedHaltMarker(t *testing.T) {
 		}
 		if saved.OwedHalt != nil {
 			t.Errorf("OwedHalt = %+v, want nil: the replacement builder answers the halt", saved.OwedHalt)
+		}
+	})
+
+	t.Run("remote re-send", func(t *testing.T) {
+		t.Parallel()
+
+		const head = "1111111111111111111111111111111111111111"
+		st := store.New(t.TempDir())
+		b := remoteBinding("zen")
+		b.OwedHalt = &store.OwedHalt{Round: 1, Text: "round 1 needs a hand"}
+		if err := st.Save(b); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		fr := &fakeRemote{
+			startRoundResp: remote.BindingView{RoundState: remote.RoundRunning},
+			// The tick after the send reads a queued view, which the apply
+			// answers with the status word alone.
+			getBindingResp: remote.BindingView{RoundState: remote.RoundQueued},
+		}
+		rt := Runtime{
+			Store:  st,
+			Git:    &fakeGit{refSHA: map[string]string{"refs/heads/relevo/api": head}},
+			Remote: fr,
+			Transport: &fakeTransport{snapshotResp: remote.Snapshot{
+				Heads: map[string]string{"refs/relevo/api/out": head},
+			}},
+			Now: func() time.Time { return baseTime },
+		}
+
+		planFile := filepath.Join(t.TempDir(), "plan.md")
+		if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Send(context.Background(), rt, "api", planFile, SendOptions{}); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+		stored, err := st.Load("api")
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if stored.OwedHalt != nil {
+			t.Errorf("OwedHalt = %+v, want nil: the remote re-send answers the halt the marker is about", stored.OwedHalt)
+		}
+
+		var got store.Binding
+		if err := st.WithLock(func(tx *store.Tx) error {
+			cur, err := tx.Load("api")
+			if err != nil {
+				return err
+			}
+			next, err := Reconcile(context.Background(), rt, tx, cur)
+			if err != nil {
+				return err
+			}
+			got = next
+			return tx.Save(next)
+		}); err != nil {
+			t.Fatalf("the tick after the remote re-send: %v", err)
+		}
+		if halts := haltEntriesFor(t, rt, "api"); len(halts) != 0 {
+			t.Errorf("halt entries = %d, want 0: %+v", len(halts), halts)
+		}
+		if got.State != store.StateActive {
+			t.Errorf("state = %q, want active: nothing has halted the new round", got.State)
 		}
 	})
 }
