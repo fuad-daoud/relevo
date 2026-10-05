@@ -536,8 +536,13 @@ func bindingSwitchable(b store.Binding) bool {
 // queueBrokenHalt is the broken-binding half of queueHalt. A binding that is
 // StateBroken and not switchable is waiting on a human, exactly as a halted one
 // is, so it owes the same entry -- under the same per-round key, because a
-// broken binding's Halt is empty and it never passes through haltBinding to
-// stamp one.
+// broken binding never passes through haltBinding to stamp one.
+//
+// reason is the named-prefixed text the caller logs, and it is stripped here the
+// way haltBinding strips it: the entry's Note has to be the same string b.Halt
+// records, or the owed-entry retry that reads the note back does not recognise
+// the entry it is looking for, and the reason the entry carries is not the one a
+// human reads on the binding.
 //
 // It returns the binding because the dedup stamp is part of the answer: the
 // caller saves what comes back, and the next tick must see the same
@@ -553,7 +558,8 @@ func queueBrokenHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 	if b.HaltNotifiedRound == b.Round {
 		return b, false, nil
 	}
-	if err := queueHalt(ctx, rt, tx, b, b.Round, reason); err != nil {
+	text := strings.TrimPrefix(reason, b.Name+": ")
+	if err := queueHalt(ctx, rt, tx, b, b.Round, text); err != nil {
 		return b, false, err
 	}
 	b.HaltNotifiedRound = b.Round

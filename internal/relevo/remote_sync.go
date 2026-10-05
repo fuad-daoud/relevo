@@ -294,6 +294,10 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 		}
 	}
 
+	// A view that came back answers the only question the unreachable halt asked,
+	// so that halt goes first -- above the observe branch, which never gated it.
+	b = clearUnreachableHalt(view.RoundState, b)
+
 	// A member of a server chain observes the live round only: a close, an
 	// idle round or a wait for a human -- needs_you or broken -- is the chain
 	// pull's to install and ack, so this apply writes the status word and stops.
@@ -303,10 +307,6 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 			return b, false, nil
 		}
 	}
-
-	// A view that came back answers the only question the unreachable halt
-	// asked, so that halt goes before the switch reads the round.
-	b = clearUnreachableHalt(view.RoundState, b)
 
 	switch view.RoundState {
 	case remote.RoundQueued:

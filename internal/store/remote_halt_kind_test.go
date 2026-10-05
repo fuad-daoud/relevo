@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"strconv"
 	"testing"
 )
 
@@ -67,6 +68,51 @@ func TestDecodeLeavesAnOlderUnrelatedHaltUnnamed(t *testing.T) {
 		"zen: binding removed by the server admin",
 		"api: round 1 has run past 30m0s",
 		"api: reader found no output file",
+	} {
+		t.Run(halt, func(t *testing.T) {
+			quoted, err := json.Marshal(halt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := decodeJSON[Binding](t, `{"format":15,"name":"api","cwd":"/repo/api","state":"needs_you","halt":`+string(quoted)+`}`)
+			if got.RemoteHaltKind != "" {
+				t.Errorf("RemoteHaltKind = %q for halt %q, want empty", got.RemoteHaltKind, halt)
+			}
+		})
+	}
+}
+
+// TestDecodeGivesAnOlderBrokenHaltItsKind pins the migration's broken half: a
+// break recorded before the field is recognised by the fallback text it was
+// given, and reading the record names the kind. Left unnamed, such a binding
+// stays NEEDS YOU until its round closes or is re-sent -- the answering view
+// that would clear it asks the field and finds nothing there.
+func TestDecodeGivesAnOlderBrokenHaltItsKind(t *testing.T) {
+	got := decodeJSON[Binding](t, `{
+  "format": 15,
+  "name": "api",
+  "cwd": "/repo/api",
+  "runner": {"kind": "opencode", "server": "zen"},
+  "actor": "builder",
+  "state": "needs_you",
+  "halt": `+strconv.Quote(BrokenHaltText)+`,
+  "halt_notified_round": 1
+}`)
+	if got.RemoteHaltKind != HaltKindBroken {
+		t.Fatalf("RemoteHaltKind = %q, want %q for a break the old format recorded", got.RemoteHaltKind, HaltKindBroken)
+	}
+}
+
+// TestDecodeLeavesABrokenHaltTheServerNamedAlone pins the other side of the
+// text match: only the fallback this binary wrote is recovered. A server that
+// ships its own reason for a break produced a different sentence, and the kind
+// is what says the halt came from a broken view either way -- so a record whose
+// text merely resembles one must not claim the episode.
+func TestDecodeLeavesABrokenHaltTheServerNamedAlone(t *testing.T) {
+	for _, halt := range []string{
+		"",
+		"builder claude; switching to codex failed: exit status 1",
+		"the builder is broken",
 	} {
 		t.Run(halt, func(t *testing.T) {
 			quoted, err := json.Marshal(halt)

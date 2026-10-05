@@ -100,8 +100,8 @@ func clearUnreachableHalt(state remote.RoundState, b store.Binding) store.Bindin
 	if !haltEpisodeAnswered(state, b.RemoteHaltKind) {
 		return b
 	}
-	slog.Info("remote halt cleared: the server is answering again",
-		"binding", b.Name, "round", b.Round, "reason", b.Halt)
+	slog.Info("remote halt cleared: the server's view answers the episode",
+		"binding", b.Name, "round", b.Round, "kind", b.RemoteHaltKind, "reason", b.Halt)
 	b = clearHaltFields(b)
 	b.State = store.StateActive
 	return b
@@ -187,8 +187,13 @@ func unreachableHaltDisproven(state remote.RoundState) bool {
 }
 
 // brokenHaltText is the reason a broken-round halt gets when the server named no
-// reason of its own. It is a constant of this file rather than a builder of
-// arbitrary text, so a reader of the halt sees the same sentence every time; the
-// kind, not this text, is what says the halt came from a broken view, so nothing
-// compares a halt against it.
-const brokenHaltText = "the server's builder for this round is gone; rebind before sending"
+// reason of its own. It is a constant rather than a builder of arbitrary text, so
+// a reader of the halt sees the same sentence every time; the kind, not this
+// text, is what says the halt came from a broken view, and only the load
+// migration reads it back, to name the kind a record written before the field
+// did not carry.
+//
+// It is store's constant because that migration is the other half of it: the
+// sentence written and the sentence recovered have to be one, or a break
+// recorded before the field is not recognised on the next load.
+const brokenHaltText = store.BrokenHaltText

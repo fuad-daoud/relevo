@@ -48,6 +48,17 @@ const haltKindFormat = 16
 // haltKindFormat, the one case where the kind is not on disk to be read.
 const UnreachableHaltMarker = "unreachable for"
 
+// BrokenHaltText is the reason a broken-round halt gets when the server named no
+// reason of its own. It lives here, beside the migration that recovers
+// HaltKindBroken from it, so the sentence written and the sentence read are one
+// constant.
+//
+// The kind, not this text, is what says a halt came from a broken view; this is
+// read only for a record written before haltKindFormat, and only on an exact
+// match, because a server that named its own reason for a break wrote a
+// different sentence and that halt is not this one.
+const BrokenHaltText = "the server's builder for this round is gone; rebind before sending"
+
 // RepoRef identifies the git repository a binding works in; nil means it could
 // not be determined and never fails the caller.
 type RepoRef struct {
@@ -388,12 +399,13 @@ type Binding struct {
 	Serve *ServeFacts `json:"serve,omitempty"`
 
 	RemoteUnreachableSince time.Time `json:"remote_unreachable_since,omitempty"`
-	// RemoteHaltKind is HaltKindUnreachable while b.Halt is an unreachable
-	// halt, and empty for every halt of any other origin -- the server's own
-	// view.Halt, a 404, a revoked key, a local halt. That separation is the
-	// whole field: Halt is free text that reaches this binding from the server
-	// as well as from here, so matching on it takes a halt it did not write
-	// for one it did.
+	// RemoteHaltKind names the episode behind a halt this file's own paths wrote:
+	// HaltKindUnreachable while b.Halt is an unreachable halt, HaltKindBroken while
+	// it is one a broken view wrote, and empty for every halt of any other
+	// origin -- the server's own view.Halt, a 404, a revoked key, a local halt.
+	// That separation is the whole field: Halt is free text that reaches this
+	// binding from the server as well as from here, so matching on it takes a
+	// halt it did not write for one it did.
 	RemoteHaltKind string `json:"remote_halt_kind,omitempty"`
 
 	RemoteAbsorbFailures int `json:"remote_absorb_failures,omitempty"`
@@ -483,13 +495,25 @@ func (b *Binding) UnmarshalJSON(raw []byte) error {
 	// the text and the kind disagree about.
 	//
 	// Bounded by the format rather than by the key's absence: at this format a
-	// record with no kind is a binding that has no unreachable halt, and reading
+	// record with no kind is a binding that has no remote halt, and reading
 	// its text would find nothing anyway -- but only because this binary writes
-	// every unreachable halt with the marker, which is the property the marker
-	// test above stops depending on elsewhere. The format bound is what makes
-	// the migration stop mattering once every record is written at this one.
-	if out.Format < haltKindFormat && strings.Contains(out.Halt, UnreachableHaltMarker) {
-		out.RemoteHaltKind = HaltKindUnreachable
+	// every unreachable halt with the marker and every broken halt with the
+	// fallback, which is the property the two text tests below stop depending on
+	// elsewhere. The format bound is what makes the migration stop mattering once
+	// every record is written at this one.
+	//
+	// The two tests are deliberately unlike each other. The unreachable text is a
+	// builder's failure lines, which can quote the marker anywhere, so it is a
+	// containment; the broken text is a fixed sentence this binary writes whole,
+	// so it is an equality -- a server that named its own reason for a break wrote
+	// a different one, and naming that episode is not this migration's to do.
+	if out.Format < haltKindFormat {
+		switch {
+		case out.RemoteHaltKind == "" && strings.Contains(out.Halt, UnreachableHaltMarker):
+			out.RemoteHaltKind = HaltKindUnreachable
+		case out.RemoteHaltKind == "" && out.Halt == BrokenHaltText:
+			out.RemoteHaltKind = HaltKindBroken
+		}
 	}
 	*b = out
 	return nil
