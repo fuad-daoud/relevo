@@ -4,16 +4,36 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
+
+// unusedProvider is a provider name the test candidate set does not hold, so a
+// rate limit on it shows up in the report's unused-provider gates.
+const unusedProvider = "absent-provider"
+
+// badLedgerKV is a kv handle whose ledger row will not decode.
+type badLedgerKV struct{ inner db.KV }
+
+func (b *badLedgerKV) KVGet(key string) ([]byte, bool, error) {
+	if key == "ledger" {
+		return []byte("not json"), true, nil
+	}
+	return b.inner.KVGet(key)
+}
+
+func (b *badLedgerKV) KVPut(key string, value []byte) error { return b.inner.KVPut(key, value) }
+
+func (b *badLedgerKV) KVDelete(key string) error { return b.inner.KVDelete(key) }
 
 // countingKV is a db.KV that records every key read, so a test can pin how many
 // times one report touches a kv row. Writes pass straight through.
@@ -110,6 +130,74 @@ func TestStatusReadsTheLedgerOnce(t *testing.T) {
 	}
 	if len(rep.Unused) != 0 {
 		t.Errorf("Unused = %+v, want none from an empty ledger", rep.Unused)
+	}
+}
+
+// TestStatusLedgerProjectionsMatchTheSeparateLoads is the byte-identical case
+// for step 1 on a ledger that actually holds entries: the report's Gated and
+// Unused must equal what the two separate LoadLedger calls produced. It is the
+// check an empty ledger cannot make -- with nothing in the ledger, both paths
+// are empty and the test would pass even if one projection were dropped.
+func TestStatusLedgerProjectionsMatchTheSeparateLoads(t *testing.T) {
+	rt, kv := bulkRuntime(t, "webshop")
+
+	// One rate limit against a configured candidate but on a subject the
+	// candidate set does not hold, so the entry lands in Unused and not in
+	// Gated: unusedProvider is not one of the three providers
+	// testCandidatesJSON names.
+	if _, err := availability.Unavailable(
+		AvailabilityDeps(rt), testOpencodeRef, time.Time{}, "rate-limited", unusedProvider,
+	); err != nil {
+		t.Fatalf("seed the ledger: %v", err)
+	}
+	kv.reads = map[string]int{}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if got := kv.reads["ledger"]; got != 1 {
+		t.Errorf("ledger key: %d reads, want exactly 1 per Status", got)
+	}
+
+	// The two projections the report shares one load for.
+	wantGated := availability.Gates(AvailabilityDeps(rt))
+	wantUnused := UnusedProviderGates(rt)
+	if !reflect.DeepEqual(rep.Gated, wantGated) {
+		t.Errorf("Gated = %+v, want the separate Gates projection %+v", rep.Gated, wantGated)
+	}
+	if !reflect.DeepEqual(rep.Unused, wantUnused) {
+		t.Errorf("Unused = %+v, want the separate UnusedProviderGates projection %+v", rep.Unused, wantUnused)
+	}
+	// A ledger with an entry in it must actually reach the report, or the two
+	// comparisons above would both be comparing empties.
+	if len(rep.Unused) == 0 {
+		t.Errorf("Unused is empty: the seeded ledger entry did not reach the report")
+	}
+}
+
+// TestStatusSurvivesALedgerLoadError pins the ledger's error case: a kv row
+// that will not decode leaves both projections empty and does not fail the
+// report. A load failure is a bookkeeping file's problem, not status's.
+func TestStatusSurvivesALedgerLoadError(t *testing.T) {
+	rt, _ := bulkRuntime(t, "webshop")
+	// The db validates JSON on the way in, so the undecodable row is handed to
+	// the reader by a handle that returns bad bytes for the ledger key. A real
+	// store can hold such a row -- a hand-edited or older one.
+	rt.Gates = &badLedgerKV{inner: rt.Gates}
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status with an unreadable ledger: %v", err)
+	}
+	if len(rep.Bindings) != 1 {
+		t.Errorf("rows = %d, want 1", len(rep.Bindings))
+	}
+	if len(rep.Gated) != 0 {
+		t.Errorf("Gated = %+v, want none from an unreadable ledger", rep.Gated)
+	}
+	if len(rep.Unused) != 0 {
+		t.Errorf("Unused = %+v, want none from an unreadable ledger", rep.Unused)
 	}
 }
 
