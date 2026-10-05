@@ -1061,48 +1061,60 @@ Only meaningful **after Phase 2**, since the fleet path no longer calls
 
 ---
 
-## Perf appendix (Phase 0 baseline, this machine, 2026-10-05)
+## Perf appendix (Phase 0 baseline, re-recorded on this machine, 2026-10-05)
 
-Machine: Intel Core Ultra 7 155H, Linux, Go 1.27.1. Binary built from `6dab64a2`.
-Store: `~/.local/state/relevo/relevo.db`, schema 21.
+Machine: Intel Core Ultra 7 155H, Linux/amd64, Go 1.27.1. Binary built from
+`b30dac03` -- the plan commit, whose code is `6dab64a2` plus this document.
+Store: `~/.local/state/relevo/relevo.db`, schema 21, read through `relevo db
+query` (the daemon's lock keeps `sqlite3` out).
 
 | Table | Rows |
 |---|---|
-| `binding` | 1132 |
-| `binding_record` | 1041 |
-| `binding_event` | 5727 |
-| `event` | 6133 |
+| `binding` | 1134 |
+| `binding_record` | 1043 |
+| `binding_event` | 5737 |
+| `event` | 6143 |
 | `kv` | 427 |
 | `mastermind` | 166 |
 | `chains` / `chain_member` / `chain_event` | 67 / 211 / 91 |
-| `round_file` | 7546 |
+| `round_file` | 7559 |
 
-Fleet shape: **487 bindings built**, 23 shown after the DONE rule (464 DONE,
-20 ACTIVE, 3 NEEDS YOU), 6 distinct masterminds, largest `pl_orsgv3tzeswf` at 38.
+Fleet shape: **718 live bindings** in the store (575 `final_state='done'`),
+**26 rows** returned by `status --all-masterminds --json` after the DONE rule,
+165 distinct `binding.mastermind_id` values. The store has grown since the
+plan was written (1134 bindings against 1132, 7559 round files against 7546),
+so the counts above are the floor every later phase's numbers compare against.
 
-### Wall probes (seconds, 3 runs each)
+The narrow scope `opencode-3` (`mm_rp6bfnoam275`) resolves to **4 rows** and
+is the P2 scope below.
+
+### Wall probes (seconds, 6 runs each: first 3 cold, last 3 warm)
 
 | Probe | Cold | Warm | Note |
 |---|---|---|---|
-| P1 `status --all-masterminds --json` | 4.667 / 4.646 / 4.520 | 4.727 / 4.697 / 4.598 | matches the issue's ~4.6s |
-| P2 `status --mastermind <id> --json` (1 row) | 4.567 / 4.618 / 4.589 | - | **identical to P1** -- the defect: 1 row costs 487 builds |
-| P3 `status --chains` | 0.072 / 0.070 / 0.083 | - | not a usable probe here: no live chain output, so `chains_doc.go:70-72` returns before building |
-| `status --line --json` (statusline) | 0.070 / 0.065 / 0.069 | - | `MasterMindStatus` already narrows (`statusline.go:20-29`) -- this is why it is fast, and it is the shape Phase 1 copies |
+| P1 `status --all-masterminds --json` | 4.931 / 4.822 / 7.152 | 7.477 / 7.169 / 6.909 | drifts up across the run: the store is live and this round's own fleet writes to it. The first two runs match the issue's ~4.6s |
+| P2 `status --mastermind opencode-3 --json` (4 rows) | 4.847 / 4.759 / 4.871 | 4.826 / 4.946 / 4.783 | **flat at P1** -- the defect reproduces: 4 rows cost the whole fleet's build |
+| P3 `status --chains` | 0.0467 / 0.0435 / 0.0450 | 0.0415 / 0.0392 / 0.0437 | not a usable probe here: no live chain output, so `chains_doc.go:70-72` returns before building |
+| `status --line --json` (statusline) | 0.0415 / 0.0389 / 0.0410 | 0.0470 / 0.0445 / 0.0473 | `MasterMindStatus` already narrows (`statusline.go:20-29`) -- this is why it is fast, and it is the shape Phase 1 copies |
 
-### Frame profile (160x50, `-benchtime 200x`)
+P1's drift is the reason P2 is read as a flat line rather than a single number:
+P2 never rises, so the two are the same work either way.
+
+### Frame profile (160x50, `-benchtime 300x`)
 
 | Benchmark | rows=30 | rows=64 |
 |---|---|---|
-| `Body` | 0.704 ms, 339 KB, 1808 allocs | **1.285 ms, 675 KB, 3492 allocs** |
-| `rows()` | 0.048 ms, 109 KB, 11 allocs | 0.102 ms, 227 KB, 12 allocs |
-| `fleetListLines` | 0.396 ms, 205 KB, 1569 allocs | 0.819 ms, 426 KB, 3272 allocs |
-| `view.SortRows` | 0.018 ms, 28 KB, 4 allocs | 0.034 ms, 58 KB, 4 allocs |
+| `Body` | 0.750 ms, 372 KB, 1815 allocs | **1.389 ms, 738 KB, 3413 allocs** |
+| `rows()` | 0.071 ms, 121 KB, 22 allocs | 0.175 ms, 249 KB, 26 allocs |
+| `fleetListLines` | 0.442 ms, 227 KB, 1563 allocs | 0.965 ms, 466 KB, 3169 allocs |
+| `view.SortRows` | 0.040 ms, 28 KB, 4 allocs | 0.110 ms, 58 KB, 4 allocs |
 
-pprof of `Body` at 64 rows: `lipgloss.Style.Render` **42% cumulative**
-(`applyBorder` 24%, `applyMargins` 6%), `fleetRowLine` **56% cumulative**,
-`fleetView.rows` 12%, `ansi.stringWidth` 10%. The issue's "~39% `Style.Render`"
-is confirmed; the profile says the win is in **rendering lines nobody sees**,
-not in the sort.
+pprof of `Body` at 64 rows (`-cpuprofile`, 300 iterations):
+`fleetListLines` **68% cumulative**, `fleetRowLine` **41%**,
+`lipgloss.Style.Render` **33%** (`applyMargins` 11%, `applyBorder` 8%),
+`ansi.stringWidth` 14%, `view.SortRows.func1` 6%. The issue's "~39%
+`Style.Render`" is confirmed in class; the profile says the win is in
+**rendering lines nobody sees**, not in the sort.
 
 ### Statement count
 
