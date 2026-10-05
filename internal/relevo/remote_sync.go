@@ -295,11 +295,11 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 	}
 
 	// A member of a server chain observes the live round only: a close, an
-	// idle round or a need for a human is the chain pull's to install and
-	// ack, so this per-binding apply writes the status word above and stops.
+	// idle round or a wait for a human -- needs_you or broken -- is the chain
+	// pull's to install and ack, so this apply writes the status word and stops.
 	if f.Observe {
 		switch view.RoundState {
-		case remote.RoundNeedsYou, remote.RoundClosed, remote.RoundIdle:
+		case remote.RoundNeedsYou, remote.RoundClosed, remote.RoundIdle, remote.RoundBroken:
 			return b, false, nil
 		}
 	}
