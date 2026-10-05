@@ -2,11 +2,14 @@ package ui
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
@@ -46,16 +49,80 @@ func assertNoDetailFigures(t *testing.T, where string, row view.BindingStatus) {
 	}
 }
 
+// figureGit is the one git call a live diff makes: a stat with a shape, for any
+// dir. The embedded interface is nil on purpose -- liveStat only ever reaches
+// DiffWorktreeStat.
+type figureGit struct{ relevo.Git }
+
+func (figureGit) DiffWorktreeStat(context.Context, string, string) (git.Stat, error) {
+	return git.Stat{FilesChanged: 3, Insertions: 7, Deletions: 2}, nil
+}
+
+// figureUsage is the one usage read a live row makes: one sample to fold.
+type figureUsage struct{ usage.Reader }
+
+func (figureUsage) Peek(context.Context, usage.Source) ([]usage.Sample, string) {
+	return []usage.Sample{{Tokens: usage.Tokens{In: 11, Out: 5}}}, ""
+}
+
+// figureBinding is a headless binding whose row carries all three detail
+// figures: a round is open with a baseline to diff, a builder kind to price,
+// and a log to tail. It is the fixture the fleet gate's test needs: without
+// figures to lose, the gate would be invisible and a fleet row's nils would
+// prove nothing.
+func figureBinding(t *testing.T, st *store.Store, name string) store.Binding {
+	t.Helper()
+	b := newTestBinding(name)
+	b.Builder.Mode = store.ModeHeadless
+	b.Builder.Kind = "opencode"
+	b.RoundStartedAt = railNow.Add(-time.Minute)
+	b.RoundBaselineTree = "baseline-" + name
+	b.CWD = t.TempDir()
+	b.Builder.LogPath = st.BuilderLogPath(name, b.Round)
+	if err := os.MkdirAll(filepath.Dir(b.Builder.LogPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b.Builder.LogPath, []byte("l1\nl2\nl3\nl4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// assertHasDetailFigures is assertNoDetailFigures' counterpart: it pins that the
+// fixture really does carry all three, so a fleet row's nils are the gate's
+// doing and not the fixture's emptiness.
+func assertHasDetailFigures(t *testing.T, where string, row view.BindingStatus) {
+	t.Helper()
+	if row.Live == nil {
+		t.Errorf("%s: Live = nil, want the fixture's diff", where)
+	}
+	if row.LiveUsage == nil {
+		t.Errorf("%s: LiveUsage = nil, want the fixture's figure", where)
+	}
+	if row.Headless == nil || len(row.Headless.Tail) == 0 {
+		t.Errorf("%s: Headless = %+v, want the fixture's tail", where, row.Headless)
+	}
+}
+
 // TestFleetReportCarriesNoDetailFigures: every fleet entry point builds its
 // report with the detail figures off, so a refresh pays for no git diff, no
-// usage peek and no log tail.
+// usage peek and no log tail. The same runtime with the figures on really does
+// carry all three, so the fleet's nils are the gate's doing, not the fixture's.
 func TestFleetReportCarriesNoDetailFigures(t *testing.T) {
 	st := store.New(t.TempDir())
-	b := newTestBinding("webshop")
-	if err := st.Save(b); err != nil {
+	if err := st.Save(figureBinding(t, st, "fleet-figures")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rt := relevo.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st, Git: figureGit{}, Usage: figureUsage{}}
+
+	on, err := relevo.Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status with detail on: %v", err)
+	}
+	if len(on.Bindings) != 1 {
+		t.Fatalf("detail-on rows = %d, want 1", len(on.Bindings))
+	}
+	assertHasDetailFigures(t, "detail on", on.Bindings[0])
 
 	for _, tc := range []struct {
 		name string
@@ -73,7 +140,7 @@ func TestFleetReportCarriesNoDetailFigures(t *testing.T) {
 		}
 		assertNoDetailFigures(t, tc.name, rep.Bindings[0])
 		// The non-live row is untouched: it is still the row the store holds.
-		if rep.Bindings[0].Name != "webshop" || rep.Bindings[0].Round != 2 {
+		if rep.Bindings[0].Name != "fleet-figures" || rep.Bindings[0].Round != 2 {
 			t.Errorf("%s: row = %+v, want the store's own row", tc.name, rep.Bindings[0])
 		}
 	}
@@ -114,39 +181,49 @@ func TestDetailFetchReturnsTheRowsOwnRow(t *testing.T) {
 	}
 }
 
-// TestDetailPaneRestoresAllThreeFigures: the pane's own row fetch lands, and the
-// round head shows the live usage and the renderers show the diff and the tail
-// -- while the fleet row itself still carries none of the three.
+// TestDetailPaneRestoresAllThreeFigures: the pane's own row fetch -- the real
+// fetchStatusRow over relevo.StatusRow -- lands with the figures the fleet gate
+// dropped, and the round head shows the live usage while the renderers show the
+// diff and the tail -- while the fleet row itself still carries none of the
+// three.
 func TestDetailPaneRestoresAllThreeFigures(t *testing.T) {
 	st := store.New(t.TempDir())
-	if err := st.Save(newTestBinding("webshop")); err != nil {
+	if err := st.Save(figureBinding(t, st, "pane-figures")); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	rt := relevo.Runtime{Store: st}
+	rt := relevo.Runtime{Store: st, Git: figureGit{}, Usage: figureUsage{}}
+	src := mastermindSource{rt}
 
 	fleet := view.Report{Bindings: []view.BindingStatus{
-		{Name: "webshop", Round: 2, Display: "ACTIVE", BuilderKind: "opencode", BuilderStatus: "working"},
+		{Name: "pane-figures", Round: 2, Display: "ACTIVE", BuilderKind: "opencode", BuilderStatus: "working"},
 	}}
 	assertNoDetailFigures(t, "fleet row", fleet.Bindings[0])
 
-	rv := newTestRound(t, rt, fleet, "webshop", 0)
+	rv := newTestRound(t, rt, fleet, "pane-figures", 0)
 
-	// The reply a fetch issues against a runtime with git and a usage reader
-	// wired: internal/relevo's TestStatusRowCarriesTheDetailFigures pins that
-	// the single-row entry point really does build all three. Here the row the
-	// fetch answers with stands in for it.
-	next, _ := rv.Update(detailRowMsg{key: "webshop", row: ptrRow(detailRow("webshop"))},
-		testEnv(mastermindSource{rt}, fleet, 140, 40))
+	// The fetch the pane issues for itself, driven for real: mutation "StatusRow
+	// builds its row with the option off as well" must break this test, so the
+	// reply is the fetch's own, not a hand-built stand-in.
+	msg, ok := fetchStatusRow(context.Background(), src, "pane-figures")().(detailRowMsg)
+	if !ok {
+		t.Fatal("fetchStatusRow must answer a detailRowMsg")
+	}
+	if msg.err != nil || msg.row == nil {
+		t.Fatalf("msg = %+v, want a full-detail row", msg)
+	}
+	assertHasDetailFigures(t, "the fetched row", *msg.row)
+
+	next, _ := rv.Update(msg, testEnv(src, fleet, 140, 40))
 	rv = next.(roundView)
 
-	b := row(rv.pane.report, "webshop")
+	b := row(rv.pane.report, "pane-figures")
 	if b == nil {
 		t.Fatal("the pane lost the row it is pointed at")
 	}
 	if b.Live == nil || b.LiveUsage == nil {
 		t.Fatalf("Live %+v LiveUsage %+v, want the fetched figures", b.Live, b.LiveUsage)
 	}
-	if b.Headless == nil || len(b.Headless.Tail) != 2 {
+	if b.Headless == nil || len(b.Headless.Tail) != 3 {
 		t.Fatalf("Headless = %+v, want the fetched tail", b.Headless)
 	}
 
