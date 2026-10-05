@@ -376,6 +376,60 @@ func TestChainPullInstallsEachRoundsOwnFacts(t *testing.T) {
 	}
 }
 
+// TestChainPullInstallsTheNewestRoundFromTheMemberView pins the fallback a
+// server older than the uncommitted-work and prior-tokens fields needs: it
+// carries both on the member view and sends neither in the round it lists. The
+// newest round installs with the two figures that view holds, and an older one
+// installs clean -- the server keeps no older figures, so a fallback that
+// reached past the newest round would read the newest round's values as an
+// older round's own.
+//
+// Mutation: drop the chainRoundFacts call (or the fallback inside it) from
+// chainRoundView and the newest round installs as clean and unbilled.
+func TestChainPullInstallsTheNewestRoundFromTheMemberView(t *testing.T) {
+	t.Parallel()
+
+	newestPrior := usage.Tokens{In: 222, Out: 22}
+	view := chainPullView("shop", string(chain.StatusRunning), 2, 0, 0)
+	builder := &view.Members[0]
+	builder.View.DirtyCommit = "dirty-commit-2"
+	builder.View.PriorTokens = &newestPrior
+	// Neither round entry carries the two fields, the way a server that
+	// predates them answers: the round list is empty of both.
+	fr := chainPullFake(view)
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	pullRounds(t, rt, "shop")
+
+	entries := chainLog(t, rt, "shop")
+	for _, c := range []struct {
+		round int
+		prior *usage.Tokens
+	}{
+		{1, nil},
+		{2, &newestPrior},
+	} {
+		e, ok := lastReportEntry(entries, c.round)
+		if !ok {
+			t.Fatalf("no report entry for round %d: %+v", c.round, entries)
+		}
+		if c.prior == nil {
+			if e.PriorTokens != nil {
+				t.Errorf("round %d report entry PriorTokens = %+v, want nil: an older round has no figures to fall back to", c.round, *e.PriorTokens)
+			}
+		} else if e.PriorTokens == nil {
+			t.Errorf("round %d report entry PriorTokens = nil, want %+v", c.round, *c.prior)
+		} else if *e.PriorTokens != *c.prior {
+			t.Errorf("round %d report entry PriorTokens = %+v, want %+v", c.round, *e.PriorTokens, *c.prior)
+		}
+		dirty := fmt.Sprintf("uncommitted work at refs/relevo/shop/round-%d", c.round)
+		if got := strings.Contains(e.Note, dirty); got != (c.prior != nil) {
+			t.Errorf("round %d report note = %q, want the uncommitted-work clause: %v", c.round, e.Note, c.prior != nil)
+		}
+	}
+}
+
 // countLogEntries counts a binding's entries of one shape for one round.
 func countLogEntries(entries []store.LogEntry, round int, dir store.Direction, kind store.Kind) int {
 	n := 0
