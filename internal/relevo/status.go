@@ -58,17 +58,49 @@ func waitLive(rt Runtime, name string) bool {
 	return err == nil && c != nil
 }
 
+// statusConfig is what Status's options carry: whether the detail figures are
+// built at all.
+type statusConfig struct {
+	detail bool
+}
+
+// StatusOption is one option on Status. The only one today is Detail.
+type StatusOption func(*statusConfig)
+
+// Detail turns the detail figures -- Live, LiveUsage and Headless.Tail -- on
+// or off. They default ON, so a caller that passes no option keeps exactly
+// today's row: `relevo status`, `status --json` and the statusline all draw
+// all three. The fleet is the one caller that passes false, because it paints
+// no pixel from any of them while each costs a git diff, a usage peek or a
+// log read per row per tick. The detail pane reads those three from
+// StatusRow instead.
+func Detail(on bool) StatusOption {
+	return func(c *statusConfig) { c.detail = on }
+}
+
+// statusConfigOf folds opts over the default: the detail figures are on.
+func statusConfigOf(opts []StatusOption) statusConfig {
+	cfg := statusConfig{detail: true}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	return cfg
+}
+
 // Status builds every row from the store and what relevo can determine
 // locally: the mastermind record, a live channel claim and the configured
 // deliverers. Only store failures fail the call. Each chain's member rows
 // are replaced by the chain's own row (applyChains).
-func Status(ctx context.Context, rt Runtime) (view.Report, error) {
+//
+// Detail(false) leaves Live, LiveUsage and Headless.Tail nil on every row;
+// every other field is exactly what the same store read returns with them on.
+func Status(ctx context.Context, rt Runtime, opts ...StatusOption) (view.Report, error) {
 	bindings, err := rt.Store.List()
 	if err != nil {
 		return view.Report{}, err
 	}
 
-	rep, err := buildReport(ctx, rt, bindings)
+	rep, err := buildReportWith(ctx, rt, bindings, statusConfigOf(opts))
 	if err != nil {
 		return view.Report{}, err
 	}
@@ -79,10 +111,30 @@ func Status(ctx context.Context, rt Runtime) (view.Report, error) {
 	return applyChains(rt.Store, rep, chains), nil
 }
 
+// StatusRow is one binding's row with the detail figures on: the counterpart
+// to a fleet report built with Detail(false), for the surface that opens a
+// single row and does draw all three. Only store failures fail the call --
+// a binding the store does not hold is the store's own error, so the caller
+// can tell an unresolvable key from a row that is merely thin.
+func StatusRow(ctx context.Context, rt Runtime, name string) (view.BindingStatus, error) {
+	b, err := rt.Store.Load(name)
+	if err != nil {
+		return view.BindingStatus{}, err
+	}
+	return statusRow(ctx, rt, b, statusConfig{detail: true})
+}
+
+// buildReport is buildReportWith and the detail figures on, which is what every
+// caller outside Status wants: the chains reader and the server-chain view both
+// render rows that name a diff, a usage figure and a log tail.
 func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding) (view.Report, error) {
+	return buildReportWith(ctx, rt, bindings, statusConfig{detail: true})
+}
+
+func buildReportWith(ctx context.Context, rt Runtime, bindings []store.Binding, cfg statusConfig) (view.Report, error) {
 	rows := make([]view.BindingStatus, 0, len(bindings))
 	for _, b := range bindings {
-		row, err := statusRow(ctx, rt, b)
+		row, err := statusRow(ctx, rt, b, cfg)
 		if err != nil {
 			return view.Report{}, err
 		}
@@ -115,7 +167,11 @@ func bindingShape(b store.Binding) string {
 // statusRow is read-only, so it reaches the store through the self-locking
 // *store.Store methods directly rather than a *store.Tx: there is no
 // load-modify-save here for WithLock to protect.
-func statusRow(ctx context.Context, rt Runtime, b store.Binding) (view.BindingStatus, error) {
+//
+// cfg.detail gates the three figures no fleet pixel reads: Live, LiveUsage and
+// the headless log tail. With them off nothing calls git, the usage reader or
+// the log at all -- the gate is on the call, not on the value.
+func statusRow(ctx context.Context, rt Runtime, b store.Binding, cfg statusConfig) (view.BindingStatus, error) {
 	row := view.BindingStatus{
 		Name: b.Name, CWD: b.CWD, Round: b.Round,
 		State: string(b.State), Display: view.DisplayState(b.State),
@@ -176,7 +232,7 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (view.BindingSt
 	}
 
 	if b.Builder.Headless() {
-		row.BuilderStatus, row.Headless = headlessStatus(ctx, rt, b)
+		row.BuilderStatus, row.Headless = headlessStatus(ctx, rt, b, cfg.detail)
 	} else if b.Builder.Remote() {
 		row.Server = b.Builder.Server
 		row.BuilderStatus = b.Builder.RemoteStatus
@@ -309,12 +365,13 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (view.BindingSt
 	// A round that is still running gets its figure read live:
 	// after Spend is set, so the recorded sums stay exactly what the log
 	// entries give. rt.Now is nil in some test runtimes; the clock falls
-	// back to the wall.
+	// back to the wall. A caller that asked for no detail figures never
+	// reaches the reader at all.
 	now := time.Now()
 	if rt.Now != nil {
 		now = rt.Now()
 	}
-	if !b.Builder.Remote() {
+	if cfg.detail && !b.Builder.Remote() {
 		row.LiveUsage = peekUsage(ctx, rt, b, now)
 	}
 	row.Dirty = row.LastClose != nil && row.LastClose.Tree == "dirty" && b.RoundStartedAt.IsZero()
@@ -323,7 +380,7 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding) (view.BindingSt
 	// while a round is open. liveStat degrades to nil on its own -- no Git
 	// wired, no baseline recorded, or the git read failed -- so this never
 	// fails the row.
-	if !b.Builder.Remote() {
+	if cfg.detail && !b.Builder.Remote() {
 		row.Live = liveStat(ctx, rt, b)
 	}
 

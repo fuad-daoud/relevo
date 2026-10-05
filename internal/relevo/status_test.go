@@ -422,7 +422,7 @@ func TestDoneReportsGoneWorktree(t *testing.T) {
 func TestStatusRowBranch(t *testing.T) {
 	rt, b := sentBinding(t)
 	b.Branch = "relevo/webshop"
-	row, err := statusRow(context.Background(), rt, b)
+	row, err := statusRow(context.Background(), rt, b, statusConfig{detail: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,7 +430,7 @@ func TestStatusRowBranch(t *testing.T) {
 		t.Errorf("Branch = %q", row.Branch)
 	}
 	b.Branch = ""
-	row, _ = statusRow(context.Background(), rt, b)
+	row, _ = statusRow(context.Background(), rt, b, statusConfig{detail: true})
 	if row.Branch != "" {
 		t.Errorf("--cwd binding Branch = %q, want empty", row.Branch)
 	}
@@ -445,7 +445,7 @@ func TestStatusRowAlwaysNamesTheActor(t *testing.T) {
 	rt, b := sentBinding(t)
 	b.Role = ""
 
-	row, err := statusRow(context.Background(), rt, b)
+	row, err := statusRow(context.Background(), rt, b, statusConfig{detail: true})
 	if err != nil {
 		t.Fatalf("statusRow: %v", err)
 	}
@@ -460,7 +460,7 @@ func TestStatusRowAlwaysNamesTheActor(t *testing.T) {
 func TestStatusRowCarriesTheShape(t *testing.T) {
 	rt, b := sentBinding(t)
 
-	writer, err := statusRow(context.Background(), rt, b)
+	writer, err := statusRow(context.Background(), rt, b, statusConfig{detail: true})
 	if err != nil {
 		t.Fatalf("statusRow: %v", err)
 	}
@@ -476,7 +476,7 @@ func TestStatusRowCarriesTheShape(t *testing.T) {
 	}
 
 	b.Shape = store.ShapeReader
-	reader, err := statusRow(context.Background(), rt, b)
+	reader, err := statusRow(context.Background(), rt, b, statusConfig{detail: true})
 	if err != nil {
 		t.Fatalf("statusRow: %v", err)
 	}
@@ -510,7 +510,7 @@ func TestStatusRowWaiting(t *testing.T) {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
-	row, err := statusRow(context.Background(), rt, b)
+	row, err := statusRow(context.Background(), rt, b, statusConfig{detail: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -521,7 +521,7 @@ func TestStatusRowWaiting(t *testing.T) {
 		t.Errorf("Hint = %q", row.Waiting.Hint)
 	}
 	b.State = store.StateActive
-	row, _ = statusRow(context.Background(), rt, b)
+	row, _ = statusRow(context.Background(), rt, b, statusConfig{detail: true})
 	if row.Waiting != nil {
 		t.Errorf("active row view.Waiting = %+v, want nil", row.Waiting)
 	}
@@ -535,7 +535,7 @@ func TestStatusRowGatingShowsAge(t *testing.T) {
 		Round: b.Round, Command: "make check",
 	}
 
-	row, err := statusRow(context.Background(), rt, b)
+	row, err := statusRow(context.Background(), rt, b, statusConfig{detail: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1613,7 +1613,7 @@ func TestStatusRowRemoteUsesLiveNotLocalReaders(t *testing.T) {
 		Now:   func() time.Time { return baseTime },
 	}
 
-	row, err := statusRow(context.Background(), rt, b)
+	row, err := statusRow(context.Background(), rt, b, statusConfig{detail: true})
 	if err != nil {
 		t.Fatalf("statusRow: %v", err)
 	}
@@ -1663,7 +1663,7 @@ func TestSpendIncludesSwitchSegments(t *testing.T) {
 	}
 
 	rt := Runtime{Store: st, Now: func() time.Time { return baseTime.Add(5 * time.Minute) }}
-	row, err := statusRow(context.Background(), rt, b)
+	row, err := statusRow(context.Background(), rt, b, statusConfig{detail: true})
 	if err != nil {
 		t.Fatalf("statusRow: %v", err)
 	}

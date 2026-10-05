@@ -498,10 +498,21 @@ func TestOpenRoundReplyNeverBeatsPush(t *testing.T) {
 	if initCmd == nil {
 		t.Fatal("expected init cmd from pushMsg")
 	}
-	initMsg := initCmd()
-	tMsg, ok := initMsg.(tabMsg)
-	if !ok {
-		t.Fatalf("expected tabMsg from init cmd, got %T", initMsg)
+	// Opening a round issues its visible tab's fetch and the pane's own
+	// detail-row fetch side by side, so the command may be a batch. Only a
+	// tabMsg carries the plan tab's content, and the detail reply is a
+	// detailRowMsg that no tab arm reads -- which is what this pins: neither
+	// can be mistaken for the push.
+	var tMsg tabMsg
+	var found bool
+	for _, msg := range batchMsgs(initCmd) {
+		if t, ok := msg.(tabMsg); ok {
+			tMsg, found = t, true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected a tabMsg among the open's fetches, got %T", initCmd())
 	}
 
 	res, _ = m.Update(tMsg)
@@ -517,6 +528,22 @@ func TestOpenRoundReplyNeverBeatsPush(t *testing.T) {
 	if rv.pane.tabInFlight {
 		t.Error("tabInFlight must be false")
 	}
+}
+
+// batchMsgs runs cmd and, when it is a tea.Batch, every command in it, so a
+// test can look for one message among a batch rather than assume the batch is
+// one message.
+func batchMsgs(cmd tea.Cmd) []tea.Msg {
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return []tea.Msg{msg}
+	}
+	out := make([]tea.Msg, 0, len(batch))
+	for _, c := range batch {
+		out = append(out, c())
+	}
+	return out
 }
 
 func TestFrameBlankRowUnderHeader(t *testing.T) {
