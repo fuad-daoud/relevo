@@ -4389,6 +4389,57 @@ func TestUnreachableHaltClearsBeforeNeedsYouHalt(t *testing.T) {
 	}
 }
 
+// TestUnreachableHaltClearsBeforeBrokenHalt pins the same clear for a broken
+// view. A broken round is the server naming a break of its own, so it is a reason
+// the way "needs you" is: the round over there is visible again, which is the only
+// question the unreachable halt asked, and the break that came back with it is the
+// reason that must reach the MasterMind.
+//
+// Without the clear the break is deduped away -- the unreachable episode already
+// stamped HaltNotifiedRound for this round -- so no entry is written and the
+// binding keeps quoting a halt the server has just contradicted.
+func TestUnreachableHaltClearsBeforeBrokenHalt(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	b.RoundTimeoutMS = 1000
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WithLock(func(tx *store.Tx) error {
+		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingErr: fmt.Errorf("%w: dial tcp: connection refused", client.ErrUnreachable)}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got := unreachableHaltedBinding(t, rt, b)
+
+	fr.getBindingErr = nil
+	fr.getBindingResp = remote.BindingView{RoundState: remote.RoundBroken, Halt: "the builder's machine was rebooted mid-round"}
+
+	got, err := reconcile(t, at(rt, 31*time.Minute), got)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.Halt != "the builder's machine was rebooted mid-round" {
+		t.Errorf("Halt = %q, want the server's break text, not the unreachable one", got.Halt)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you: the break is its own halt", got.State)
+	}
+	halts := haltEntriesFor(t, rt, b.Name)
+	if len(halts) != 2 {
+		t.Fatalf("halt entries = %d, want 2: the unreachable halt and the server's", len(halts))
+	}
+	if halts[1].Note != "the builder's machine was rebooted mid-round" {
+		t.Errorf("second halt entry = %q, want the server's reason", halts[1].Note)
+	}
+}
+
 // owedHaltBinding puts a remote binding in the state a close leaves behind when
 // its halt entry could not be written: the halt text, the per-round notification
 // stamp and the marker are all on disk, and the entry is not.

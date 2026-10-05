@@ -77,16 +77,16 @@ func unreachableHalted(b store.Binding) bool {
 
 // clearUnreachableHalt drops the unreachable halt once the server answers again:
 // a round that is visibly running or queued disproves the halt's reason outright,
-// and a needs-you view supersedes it, because the halt it carries is the
-// server's own statement about the round.
+// and a needs-you or broken view supersedes it, because the halt it carries is
+// the server's own statement about the round.
 //
 // The running and queued answer is the negative one -- the round is alive over
-// there, so nothing about it needs a human. Needs-you needs the positive one:
-// the server is answering, it has looked at the round, and it has said a human
-// is needed with a reason of its own. Left in place, that reason would never be
-// told: the unreachable episode already stamped HaltNotifiedRound for this
-// round, so the server's halt is deduped away and the binding sits on NEEDS YOU
-// quoting a halt the server has just contradicted.
+// there, so nothing about it needs a human. Needs-you and broken need the
+// positive one: the server is answering, it has looked at the round, and it has
+// said a human is needed with a reason of its own. Left in place, that reason
+// would never be told: the unreachable episode already stamped HaltNotifiedRound
+// for this round, so the server's halt is deduped away and the binding sits on
+// NEEDS YOU quoting a halt the server has just contradicted.
 //
 // The halt's only reason was "we cannot see the server", and a view that came
 // back disproves exactly that. Leaving the binding on NEEDS YOU until the server
@@ -146,7 +146,7 @@ func remoteHaltText(state remote.RoundState, halt string) string {
 // reads it.
 func unreachableHaltDisproven(state remote.RoundState) bool {
 	switch state {
-	case remote.RoundRunning, remote.RoundQueued, remote.RoundNeedsYou:
+	case remote.RoundRunning, remote.RoundQueued, remote.RoundNeedsYou, remote.RoundBroken:
 		return true
 	}
 	return false
