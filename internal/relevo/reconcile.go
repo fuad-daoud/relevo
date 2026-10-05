@@ -286,7 +286,7 @@ func haltBinding(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 func haltBindingKind(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entryRound int, message, kind string) (store.Binding, error) {
 	text := strings.TrimPrefix(message, b.Name+": ")
 
-	if b.HaltNotifiedRound != b.Round {
+	if b.HaltNotifiedRound != b.Round || supersedesRemoteHalt(b.RemoteHaltKind, kind) {
 		if b.Halt != text || b.HaltAt.IsZero() {
 			b.HaltAt = rt.Now().UTC()
 		}

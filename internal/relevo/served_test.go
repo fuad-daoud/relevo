@@ -312,6 +312,44 @@ func TestRoundStateOfBroken(t *testing.T) {
 	}
 }
 
+// TestRoundStateOfSwitchableBrokenReportsRunning pins the guard on the broken
+// arm: only a break the server will not fix by itself goes on the wire as
+// broken. A switchable one the server retries on its next tick is routine, and
+// a laptop told broken halts with its own fallback reason and queues an entry
+// for it -- advice the laptop cannot follow on a remote binding.
+//
+// Mutation check: drop the !bindingSwitchable(b) guard and this reads broken.
+func TestRoundStateOfSwitchableBrokenReportsRunning(t *testing.T) {
+	t.Parallel()
+
+	entries := []store.LogEntry{
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
+	}
+
+	switchable := store.Binding{
+		State:            store.StateBroken,
+		Round:            1,
+		BuilderCandidate: "claude/first/m",
+		RoundStartedAt:   time.Unix(1_700_000_000, 0),
+		Builder:          store.Endpoint{PID: 4242},
+	}
+	if got := RoundStateOf(switchable, entries); got != remote.RoundRunning {
+		t.Fatalf("switchable broken: got %v, want %v: the daemon still fixes this one", got, remote.RoundRunning)
+	}
+
+	// No process behind it: nothing retries the switch, so it is broken for the
+	// owner, and the reason is the only account of the fault there is.
+	stuck := switchable
+	stuck.Builder = store.Endpoint{}
+	stuck.Halt = "builder claude; switching to codex failed: exit status 1"
+	if got := RoundStateOf(stuck, entries); got != remote.RoundBroken {
+		t.Fatalf("broken with no process: got %v, want %v", got, remote.RoundBroken)
+	}
+	if got := ServedView(stuck, entries, "", ""); got.Halt != stuck.Halt {
+		t.Errorf("view halt = %q, want the binding's own reason %q", got.Halt, stuck.Halt)
+	}
+}
+
 // TestRoundStateOfQueued pins #285: an open plan entry with a non-zero
 // QueuedAt is queued, not running; zero QueuedAt is running as before; and
 // needs_you still wins over queued, exactly as it wins over running.

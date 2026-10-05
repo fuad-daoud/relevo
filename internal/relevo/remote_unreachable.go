@@ -79,8 +79,9 @@ func unreachableHaltText(server string, dur time.Duration, round int) string {
 // The broken halt is answered by running or queued and by nothing else: a
 // needs-you view's reason is the account of what the round needs, and it belongs
 // on the binding in place of the break rather than under it -- so such a view
-// halts the binding afresh, through haltBindingKind, and stamps its own kind
-// over the break's.
+// halts the binding afresh, through haltBindingKind, which treats a different
+// kind as a new notification (supersedesRemoteHalt) and stamps its own kind over
+// the break's.
 //
 // The clear is by the kind alone and never by the text. A server names a reason
 // for a broken round when it has one, so matching the fallback text cleared only
@@ -117,6 +118,26 @@ func haltEpisodeAnswered(state remote.RoundState, kind string) bool {
 		return state == remote.RoundRunning || state == remote.RoundQueued
 	}
 	return false
+}
+
+// supersedesRemoteHalt reports whether a halt naming kind replaces the episode
+// already stamped on the binding, so the per-round notification key does not
+// silence it.
+//
+// The key dedups one observation of one round. A broken or unreachable halt is
+// not that: it is a guess the server makes from what it can see, and the very
+// next view can contradict it with the reason the round actually needs. A
+// binding left on the fallback reason shows a human advice they cannot follow --
+// a remote binding refuses a rebind -- and never hears the account of the fault.
+//
+// Only a change of episode re-notifies. The same kind again is the same
+// observation, told once, and a halt with no kind replacing one that had none is
+// no change at all.
+func supersedesRemoteHalt(stamped, kind string) bool {
+	if stamped == "" || stamped == kind {
+		return false
+	}
+	return stamped == store.HaltKindUnreachable || stamped == store.HaltKindBroken
 }
 
 // haltKindFor names the episode a halting view belongs to. Only a broken view

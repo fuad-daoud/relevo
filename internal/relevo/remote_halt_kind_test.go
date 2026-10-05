@@ -18,6 +18,151 @@ import (
 // output mentions the unreachable episode's marker produces this text.
 const serverHaltQuotingTheMarker = "zen unreachable for 31m0s; round 1 may still be running there"
 
+// TestNeedsYouReasonReplacesABrokenHalt pins that a halt of a different episode
+// is told, not deduped against the one already on the binding.
+//
+// A broken view halts with the fallback reason -- advice the laptop cannot
+// follow, since a remote binding refuses a rebind. The server's next tick
+// answers needs_you with the real reason, and the per-round dedup dropped it:
+// status and `wait` kept showing the fallback and nobody was ever told what
+// actually broke.
+func TestNeedsYouReasonReplacesABrokenHalt(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{getBindingResp: remote.BindingView{RoundState: remote.RoundBroken}}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile on the broken view: %v", err)
+	}
+	if got.RemoteHaltKind != store.HaltKindBroken {
+		t.Fatalf("RemoteHaltKind = %q, want %q on a broken view's halt", got.RemoteHaltKind, store.HaltKindBroken)
+	}
+	if halts := haltEntriesFor(t, rt, b.Name); len(halts) != 1 {
+		t.Fatalf("halt entries = %d, want exactly 1 for the break: %+v", len(halts), halts)
+	}
+
+	const reason = "the reviewer needs a human: the patch touches the schema"
+	fr.getBindingResp = remote.BindingView{RoundState: remote.RoundNeedsYou, Halt: reason}
+	got, err = reconcile(t, at(rt, time.Minute), got)
+	if err != nil {
+		t.Fatalf("Reconcile on the needs_you view: %v", err)
+	}
+
+	if got.Halt != reason {
+		t.Errorf("Halt = %q, want the server's own reason %q", got.Halt, reason)
+	}
+	if got.RemoteHaltKind != "" {
+		t.Errorf("RemoteHaltKind = %q, want empty: a needs_you halt names no episode of this file", got.RemoteHaltKind)
+	}
+	halts := haltEntriesFor(t, rt, b.Name)
+	if len(halts) != 2 {
+		t.Fatalf("halt entries = %d, want 2: the break's and the reason's: %+v", len(halts), halts)
+	}
+	if halts[1].Note != reason {
+		t.Errorf("new entry note = %q, want the reason the MasterMind has to read", halts[1].Note)
+	}
+}
+
+// TestSameReasonHaltsOnceAcrossViews pins the dedup still holds: only a change of
+// episode re-notifies. The same reason twice is one observation, told once.
+func TestSameReasonHaltsOnceAcrossViews(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	const reason = "the reviewer needs a human: the patch touches the schema"
+	fr := &fakeRemote{getBindingResp: remote.BindingView{RoundState: remote.RoundNeedsYou, Halt: reason}}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got := b
+	var err error
+	for i := 1; i <= 3; i++ {
+		got, err = reconcile(t, at(rt, time.Duration(i)*time.Minute), got)
+		if err != nil {
+			t.Fatalf("Reconcile poll %d: %v", i, err)
+		}
+		if halts := haltEntriesFor(t, rt, b.Name); len(halts) != 1 {
+			t.Fatalf("poll %d: halt entries = %d, want 1 across three polls of the same reason", i, len(halts))
+		}
+	}
+}
+
+// TestSwitchableBreakFlapQueuesNoHalt pins the wire half of the same rule: a
+// server whose break it is about to retry reports running, and a round that
+// flaps between the two never reaches the laptop as a halt at all.
+//
+// Mutation check: drop the !bindingSwitchable(b) guard in RoundStateOf and the
+// broken window arrives here as a fallback halt with an entry.
+func TestSwitchableBreakFlapQueuesNoHalt(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.WithLock(func(tx *store.Tx) error {
+		return tx.AppendLog("api", store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt})
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The server's own binding, broken the way a failed switch leaves it: the
+	// round is open, the candidate and the round clock are the ones it had, and
+	// the state word says broken. bindingSwitchable says the next tick retries
+	// it, so the view it serves is running.
+	server := store.Binding{
+		Name:             "api",
+		State:            store.StateBroken,
+		Round:            1,
+		BuilderCandidate: "claude/first/m",
+		RoundStartedAt:   baseTime.Add(-time.Minute),
+		Builder:          store.Endpoint{PID: 4242},
+		Serve:            &store.ServeFacts{},
+	}
+	entries := []store.LogEntry{
+		{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt},
+	}
+	view := ServedView(server, entries, "", "")
+	if view.RoundState != remote.RoundRunning {
+		t.Fatalf("served round state = %q, want %q: the server retries this break itself", view.RoundState, remote.RoundRunning)
+	}
+
+	fr := &fakeRemote{getBindingResp: remote.BindingView{
+		RoundState:   view.RoundState,
+		Halt:         view.Halt,
+		StalledSince: view.StalledSince,
+	}, roundFileFromResp: io.NopCloser(strings.NewReader("builder log line 1\n"))}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	got := b
+	var err error
+	for i := 1; i <= 4; i++ {
+		got, err = reconcile(t, at(rt, time.Duration(i)*time.Minute), got)
+		if err != nil {
+			t.Fatalf("Reconcile poll %d: %v", i, err)
+		}
+		if halts := haltEntriesFor(t, rt, b.Name); len(halts) != 0 {
+			t.Fatalf("poll %d: halt entries = %d, want none for a break the server retries", i, len(halts))
+		}
+		if got.State == store.StateNeedsYou {
+			t.Fatalf("poll %d: State = %q, want active: nothing here waits on a human", i, got.State)
+		}
+	}
+}
+
 // TestServerHaltQuotingTheMarkerStaysPut pins that the unreachable episode is
 // recognised by its own field and not by its text. The needs-you clear runs on
 // every view that arrives, so a halt whose text quotes the marker was cleared by

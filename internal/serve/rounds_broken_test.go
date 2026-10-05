@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -29,6 +30,12 @@ func setServedBindingBroken(t *testing.T, env *testEnv, name, halt string) {
 		}
 		b.State = store.StateBroken
 		b.Halt = halt
+		// The process goes with the state word. A binding that keeps its pid and
+		// its round clock is one the server's next tick will retry, so it goes
+		// on the wire as running -- a break the daemon is about to fix, which
+		// these tests are not about.
+		b.Builder.PID = 0
+		b.RoundStartedAt = time.Time{}
 		return tx.Save(b)
 	}); err != nil {
 		t.Fatalf("break binding: %v", err)
