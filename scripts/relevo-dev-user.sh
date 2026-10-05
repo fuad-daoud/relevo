@@ -62,6 +62,18 @@ run_as_user() {
 		su -s /bin/sh -c "$*" "$_user"
 }
 
+# stop_user_unit stops one user unit as the sandbox account on its own bus.
+# Root has no user manager, so a bare `systemctl --user` run as root cannot
+# connect; the runtime dir addresses the account's bus instead. A missing unit
+# is not an error: terminate-user ends anything left, and destroy's contract
+# is that the account goes away.
+stop_user_unit() {
+	_user=$1
+	_uid=$2
+	_unit=$3
+	plan env XDG_RUNTIME_DIR="/run/user/$_uid" su -s /bin/sh -c "systemctl --user disable --now $_unit || true" "$_user"
+}
+
 # valid_name enforces the name rule: a short lowercase token, so the user is
 # rv-<name>, the home is /home/rv-<name>, and the socket path stays inside the
 # sun_path limit.
@@ -303,9 +315,17 @@ cmd_destroy() {
 	note "destroying sandbox $_name (user $_user)"
 
 	# Stop the units before the account goes: a user manager that outlives its
-	# user would keep a daemon running with no home to resolve.
-	plan systemctl --user disable --now relevo.service
-	plan systemctl --user disable --now relevo-serve.service
+	# user would keep a daemon running with no home to resolve. The uid is
+	# only known once the account exists, so under --dry-run it stands in as
+	# the literal <uid> the printed command carries.
+	if [ "$dry_run" -eq 1 ]; then
+		_duid='<uid>'
+		note "id -u $_user"
+	else
+		_duid=$(id -u "$_user")
+	fi
+	stop_user_unit "$_user" "$_duid" relevo.service
+	stop_user_unit "$_user" "$_duid" relevo-serve.service
 	# Terminate the sessions first, so the user manager -- and the units above
 	# -- are gone before the account is removed.
 	plan loginctl terminate-user "$_user"

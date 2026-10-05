@@ -200,6 +200,9 @@ before 'the sessions are terminated before lingering is disabled' \
 before 'lingering is disabled before the account goes' \
 	'loginctl disable-linger rv-demo' 'userdel -r rv-demo'
 before 'the account goes last' 'loginctl terminate-user rv-demo' 'userdel -r rv-demo'
+# The unit stop runs as the sandbox account on its own bus: a bare
+# `systemctl --user` as root cannot connect, which aborted a real destroy.
+carries 'the unit stop addresses the sandbox bus as the sandbox account' 'XDG_RUNTIME_DIR=/run/user/<uid> su -s /bin/sh'
 
 # destroy refuses a name that is not a sandbox token, so it can never be aimed
 # at an ordinary account.
