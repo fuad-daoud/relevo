@@ -74,6 +74,11 @@ type Store struct {
 	// set it.
 	logCap int
 
+	// onReadLog, when set, observes every log decode on the read path. It is
+	// a test seam: production leaves it nil, and the count is how a test pins
+	// "one log read per binding".
+	onReadLog func(name string)
+
 	// shared is the machine-database handle a NewShared store borrows: the
 	// caller owns its lifetime, and the store never closes it. Nil for a New
 	// store, which opens <root>/relevo.db lazily.
@@ -118,6 +123,10 @@ func NewShared(root, owner string, d *db.DB) *Store {
 // a shared one. Callers that write a row the store itself scopes -- a chain row,
 // which no prepareSave stamps -- carry it so the row stays readable.
 func (s *Store) Owner() string { return s.owner }
+
+// SetReadLogHook installs fn to observe each log decode on the read path,
+// with the binding name. It is a test seam: production never sets it.
+func (s *Store) SetReadLogHook(fn func(name string)) { s.onReadLog = fn }
 
 // SetTenantChown installs the chown callback the store calls with each
 // directory it creates under a tenant-owned root. The server sets it per

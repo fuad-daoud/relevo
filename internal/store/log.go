@@ -432,6 +432,9 @@ func encodeEvent(e LogEntry, seq int) (db.RecordEvent, error) {
 // readLog returns every entry in order; a binding with no record yields nil,
 // nil, the result a missing log.jsonl gave before the database.
 func (s *Store) readLog(name string) ([]LogEntry, error) {
+	if s.onReadLog != nil {
+		s.onReadLog(name)
+	}
 	d, err := s.dbForRead()
 	if err != nil {
 		return nil, err

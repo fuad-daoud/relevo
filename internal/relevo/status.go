@@ -393,7 +393,8 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, cfg statusConfi
 
 	// The unread marker: the newest report entry is newer than the
 	// binding's .viewed stamp, or there is no stamp at all and a report
-	// exists.
+	// exists. The stamp rides the binding List/Load already read, so the
+	// marker costs no second RecordGet.
 	for i := len(entries) - 1; i >= 0; i-- {
 		if entries[i].Kind != store.KindReport {
 			continue
@@ -404,22 +405,22 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, cfg statusConfi
 		if strings.Contains(entries[i].Note, "consumed by chain ") {
 			break
 		}
-		viewedAt, ok := rt.Store.ViewedAt(b.Name)
-		if !ok || entries[i].TS.After(viewedAt) {
+		if b.ViewedAt == nil || entries[i].TS.After(*b.ViewedAt) {
 			row.Unread = true
 		}
 		break
 	}
 
-	pending, found, err := rt.Store.PendingForMasterMind(b.Name)
-	if err != nil {
-		return view.BindingStatus{}, err
-	}
-	if found {
-		// TS is the pending entry's own write time, so the row can say how
-		// long the payload has been waiting for a collector. The log entry
-		// already carries it; it was simply dropped on the way to the row.
-		row.Pending = &view.PendingInfo{Round: pending.Round, Kind: pending.Kind, TS: pending.TS}
+	// Pending is the oldest unconfirmed to-mastermind payload, derived from
+	// the entries already decoded above rather than paid for with a second
+	// store read: the rule is pendingForMasterMind's, asked of the log in
+	// hand. TS is the pending entry's own write time, so the row can say how
+	// long the payload has been waiting for a collector.
+	for _, e := range entries {
+		if e.Direction == store.DirToMasterMind && !e.Confirmed {
+			row.Pending = &view.PendingInfo{Round: e.Round, Kind: e.Kind, TS: e.TS}
+			break
+		}
 	}
 
 	// The newest reviewer verdict, while it judged the round just closed:
