@@ -166,6 +166,32 @@ func TestAnOpenWithNoRoleRefuses(t *testing.T) {
 	}
 }
 
+// TestTheGateSaysWhichFieldIsMissing pins the refusal's own sentence.
+//
+// The refusal names the path and says the open could not say whether it may
+// create membership, so a reader of the message can tell a caller that forgot to
+// name a role from a caller that named the wrong one. It is the only thing in
+// this package that can tell them apart: both refusals wrap ErrNotSynced, so a
+// caller classifying by sentinel alone sees one class where there are two.
+//
+// The path is in the sentence rather than formatted from the config, so a
+// credential on the same config cannot reach it.
+func TestTheGateSaysWhichFieldIsMissing(t *testing.T) {
+	t.Parallel()
+
+	const path = "/tmp/never-opened.db"
+	err := checkOpenRole(OpenConfig{Path: path})
+	if err == nil {
+		t.Fatal("an open with no role was accepted")
+	}
+	if !strings.Contains(err.Error(), "no role for "+path) {
+		t.Errorf("the refusal does not name the path whose role is missing: %v", err)
+	}
+	if !strings.Contains(err.Error(), "may create membership") {
+		t.Errorf("the refusal does not say what the open could not decide: %v", err)
+	}
+}
+
 // TestRoleDecidesWhetherMembershipMayBeCreated pins what each role permits. The
 // seed open is the one that may create membership, because it is the enable
 // that creates it; the scratch open may because its file is disposable; and

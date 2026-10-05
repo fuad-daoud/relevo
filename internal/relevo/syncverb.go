@@ -406,6 +406,13 @@ func (v *VerbRunner) cloudEmpty(token []byte) func(context.Context, relevosync.S
 // handed the live path by a later edit that changes only one of them.
 func (v *VerbRunner) probeConfig(settings relevosync.Settings, token []byte, scratch string) relevosync.OpenConfig {
 	return relevosync.OpenConfig{
+		// The role is named here rather than left for the opener to fill in,
+		// because this builder is where the file is decided: it names a
+		// throwaway, and a throwaway is the one file whose membership the driver
+		// may create without asking. An open that named no role refuses at the
+		// gate, and a probe is the one call on this path whose refusal would stop
+		// an enable the user typed correctly.
+		Role:      relevosync.OpenScratch,
 		Path:      scratch,
 		RemoteURL: settings.RemoteURL,
 		// Namespace and client name are the live ones, so the probe asks the
@@ -455,6 +462,20 @@ func verbClassify(err error) string {
 		return wire.SyncCodeSeedUploadRequired
 	case errors.Is(err, relevosync.ErrAuthRefused):
 		return wire.SyncCodeAuthRefused
+	case errors.Is(err, relevosync.ErrNotSynced):
+		// The open's role gate refused, so this file is not a member of a sync.
+		// It is a refusal rather than an internal failure because a reader can
+		// act on it: the fix is to turn sync on, which is a command. Classifying
+		// it as internal would point the reader at `relevo bugreport` for
+		// something they did right.
+		//
+		// The same sentinel answers an open that named no role at all, which is
+		// a defect in this tree rather than on the reader's machine. It is still
+		// not internal: an unset role reaches the reader with a path and a
+		// sentence saying membership was not created, and no exit code makes that
+		// sentence actionable. The refusal class is the honest one either way,
+		// and the message is what says which of the two happened.
+		return wire.SyncCodeInvalid
 	case errors.Is(err, db.ErrPreflightRefused):
 		return wire.SyncCodePreflightRefused
 	case errors.Is(err, db.ErrLocked):
