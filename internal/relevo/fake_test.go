@@ -149,6 +149,7 @@ type fakeGit struct {
 
 	worktreeStat         git.Stat
 	worktreeStatErr      error
+	worktreeStatFunc     func(ctx context.Context, dir, tree string) (git.Stat, error)
 	worktreeStatCalls    int
 	lastWorktreeStatDir  string
 	lastWorktreeStatTree string
@@ -341,6 +342,9 @@ func (f *fakeGit) DiffWorktreeStat(ctx context.Context, dir, tree string) (git.S
 	f.lastWorktreeStatTree = tree
 	if f.worktreeStatErr != nil {
 		return git.Stat{}, f.worktreeStatErr
+	}
+	if f.worktreeStatFunc != nil {
+		return f.worktreeStatFunc(ctx, dir, tree)
 	}
 	return f.worktreeStat, nil
 }
