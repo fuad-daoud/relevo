@@ -262,7 +262,7 @@ func TestBackfillResolvesStaleRepoTwinsThatBindingsName(t *testing.T) {
 		liveSeen = "2026-09-20T10:00:00.000Z"
 		dir      = "/home/fuad/projects/relevo-site/.git"
 	)
-	seedRepoTwin(t, d, "r-stale", liveID, "https://github.com/fuad-daoud/relay-site", liveURL, dir, liveSeen)
+	seedRepoTwin(t, d, "r-stale", liveID, "https://github.com/fuad-daoud/legacy-site", liveURL, dir, liveSeen)
 	// A third stamped repo row over a different checkout. It is not a twin of
 	// anything here, so nothing may be repointed at it: a live row the pair did
 	// not name is the one wrong id that would still satisfy the foreign key, and
