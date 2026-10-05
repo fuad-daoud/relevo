@@ -155,7 +155,13 @@ func remoteShip(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 	// needs_you view for a round that could not start, rather than the 409
 	// round_halted handled above; treat it the same way. Nothing is
 	// written: the human's re-send must not look like it succeeded.
-	if view.RoundState == remote.RoundNeedsYou {
+	//
+	// A broken view is the same refusal by another route. A server holds a
+	// broken round as an open one, so an identical re-send is the 200 no-op
+	// it is for a running round and carries the broken view back. That view
+	// says no round started; recording a prompt for it would reset the round
+	// and file the next halt twice with the same text.
+	if view.RoundState == remote.RoundNeedsYou || view.RoundState == remote.RoundBroken {
 		return remoteShipped{}, fmt.Errorf("%s: round %d could not start on %s: %s", name, b.Round, server, orText(view.Halt, "no reason given"))
 	}
 
