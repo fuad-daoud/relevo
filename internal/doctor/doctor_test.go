@@ -35,6 +35,7 @@ type fakeEnv struct {
 	lookPaths     map[string]string // binary -> path
 	existingFiles map[string]bool   // path -> exists
 	fileContents  map[string]string // path -> content; absent reads as empty
+	fileOwners    map[string]uint32 // path -> owning uid; absent reads as unknown
 	homeDir       string
 	homeErr       error
 	versions      map[string]string // binary path -> version output
@@ -91,6 +92,13 @@ func (f *fakeEnv) Stat(path string) error {
 		return nil
 	}
 	return os.ErrNotExist
+}
+
+// StatOwner answers with owners[path]; a path absent from the map reads as a
+// file the platform does not carry an owner for.
+func (f *fakeEnv) StatOwner(path string) (uint32, bool) {
+	uid, ok := f.fileOwners[path]
+	return uid, ok
 }
 
 func (f *fakeEnv) ReadFile(path string) ([]byte, error) {

@@ -507,6 +507,10 @@ func (s *stubDoctorEnv) Stat(path string) error {
 	return s.statErr
 }
 
+// StatOwner satisfies doctor.Env. No test in this file asserts on an owner, so
+// it reports no owner and every owner-sensitive row reads as "not established".
+func (s *stubDoctorEnv) StatOwner(string) (uint32, bool) { return 0, false }
+
 // ReleaseState satisfies doctor.Env (#293). These tests assert on severities
 // and fix commands for the other rows, so every release state here reads as
 // "no usable cache": the release row is SevOK/not checked and cannot mask one.
