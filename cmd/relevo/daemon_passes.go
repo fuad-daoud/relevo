@@ -22,10 +22,14 @@ import (
 // has nothing the user can do about it.
 //
 // The backfill runs second: it stamps this installation's id on every row
-// written before the origin column existed, and records itself in kv last
-// inside its own transaction, so a failure anywhere before that marker leaves
-// the next start retrying from the top. It is additive and needs no backup of
-// its own.
+// written before the origin column existed, one table at a time, and records
+// itself in kv last, only once nothing anywhere is left unstamped. So a start
+// that halted partway leaves no marker and the next one resumes: it stamps only
+// what is left and neither re-stamps nor skips what already moved. A stale row
+// whose stamp would collide with a row this installation already stamped is
+// settled before the table is stamped -- dropped for the live row on a mirror
+// table, left for a person on the record table -- so one colliding pair no longer
+// rolls back the rest. It is additive and needs no backup of its own.
 //
 // Neither failure stops the daemon. A machine with no database still runs, and a
 // pass that failed is retried on the next start.
@@ -41,9 +45,17 @@ func daemonEnablePath(d *db.DB, backupDir, origin string, now time.Time) {
 			"kv_keys_moved", sstats.KVKeysMoved)
 	}
 
+	// Both lines name the table and the counts, never a row's contents: a stale
+	// twin is reported as how many rows in which table were dropped for the
+	// stamped live row, and a halt as which table still holds how many. What a
+	// row held is a working tree path or a record body, and neither belongs in a
+	// journal that may be uploaded.
 	bstats, bran, berr := db.BackfillOriginOnce(d, origin, now)
 	if berr != nil {
-		slog.Warn("relevo daemon: origin backfill skipped", "err", berr)
+		slog.Warn("relevo daemon: origin backfill skipped", "err", berr,
+			"stamped", bstats.Stamped(),
+			"stale_rows_dropped", bstats.Dropped(),
+			"rows_left_unstamped", bstats.LeftUnstamped)
 	} else if bran {
 		slog.Info("relevo daemon: origin backfill",
 			"done_at", bstats.DoneAt,
@@ -52,6 +64,8 @@ func daemonEnablePath(d *db.DB, backupDir, origin string, now time.Time) {
 			"bindings", bstats.Bindings,
 			"repos", bstats.Repos,
 			"masterminds", bstats.Masterminds,
-			"chains", bstats.Chains)
+			"chains", bstats.Chains,
+			"stale_rows_dropped", bstats.Dropped(),
+			"twins", bstats.Twins)
 	}
 }
