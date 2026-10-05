@@ -541,19 +541,23 @@ func bindingSwitchable(b store.Binding) bool {
 //
 // It returns the binding because the dedup stamp is part of the answer: the
 // caller saves what comes back, and the next tick must see the same
-// HaltNotifiedRound key haltBinding uses for its own log line.
-func queueBrokenHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reason string) (store.Binding, error) {
+// HaltNotifiedRound key haltBinding uses for its own log line. The bool reports
+// whether an entry was actually queued, so a caller that writes the reason onto
+// the binding does it only when an entry carries that reason: a binding the
+// daemon can still switch, or one already notified this round, queues nothing
+// and must keep whatever reason it already had.
+func queueBrokenHalt(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, reason string) (store.Binding, bool, error) {
 	if bindingSwitchable(b) {
-		return b, nil
+		return b, false, nil
 	}
 	if b.HaltNotifiedRound == b.Round {
-		return b, nil
+		return b, false, nil
 	}
 	if err := queueHalt(ctx, rt, tx, b, b.Round, reason); err != nil {
-		return b, err
+		return b, false, err
 	}
 	b.HaltNotifiedRound = b.Round
-	return b, nil
+	return b, true, nil
 }
 
 // checkRoundTimeout flags a builder that has been working past its budget. It
