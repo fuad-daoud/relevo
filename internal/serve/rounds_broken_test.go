@@ -110,6 +110,73 @@ func TestRoundStartBrokenDifferentPlanIs409(t *testing.T) {
 	}
 }
 
+// TestRoundStartBrokenPriorRoundSamePlanIs200 pins the prior round's half of
+// the retry: a resend of the plan the server already accepted for round N-1 is
+// the no-op whatever round N is doing now, broken included.
+//
+// The broken arm sat above the b.Round-1 retry arm, so this request -- one the
+// server has already taken and answered 201 to -- was refused 409, which the
+// client maps to a hard error and no retry. The client that lost the first
+// response had no way back.
+func TestRoundStartBrokenPriorRoundSamePlanIs200(t *testing.T) {
+	env := setupTestEnv(t)
+
+	bundleBytes := createAndAbsorb(t, env, "api")
+	formBytes, ct := makeRoundForm(t, 1, "# Plan 1", bundleBytes)
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	requireStatus(t, resp, body, http.StatusCreated)
+
+	// Close round 1 so the binding sits on round 2, which is the pair this
+	// request names: an accepted resend of the round before the current one.
+	finishRound(t, env, env.runtime(t), "api", 1)
+	// Ack it too, so the view reads the break rather than the close the owner
+	// has not settled yet: RoundStateOf ranks the close above the break.
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds/1/ack", nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+
+	setServedBindingBroken(t, env, "api", "builder claude; switching to codex failed: exit status 1")
+
+	b, err := env.runtime(t).Store.Load("api")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.Round != 2 {
+		t.Fatalf("Round = %d, want 2: the resend names b.Round-1", b.Round)
+	}
+
+	entriesBefore, err := env.runtime(t).Store.ReadLog("api")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	before := startedSpecs(env)
+
+	resendBytes, resendCT := makeRoundForm(t, 1, "# Plan 1", nil)
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", resendBytes, resendCT)
+	requireStatus(t, resp, body, http.StatusOK)
+
+	got := decodeView(t, body)
+	if got.RoundState != remote.RoundBroken {
+		t.Errorf("round_state = %q, want %q", got.RoundState, remote.RoundBroken)
+	}
+	if got.Round != b.Round {
+		t.Errorf("view round = %d, want the binding's own round %d", got.Round, b.Round)
+	}
+	if got.Halt != b.Halt {
+		t.Errorf("view halt = %q, want the binding's own reason %q", got.Halt, b.Halt)
+	}
+
+	entriesAfter, err := env.runtime(t).Store.ReadLog("api")
+	if err != nil {
+		t.Fatalf("ReadLog after: %v", err)
+	}
+	if len(entriesAfter) != len(entriesBefore) {
+		t.Errorf("log entries = %d, want %d (an identical retry appends nothing)", len(entriesAfter), len(entriesBefore))
+	}
+	if after := startedSpecs(env); len(after) != len(before) {
+		t.Errorf("runner starts = %d, want %d (an identical retry starts no builder)", len(after), len(before))
+	}
+}
+
 // TestWriteSendErrorBrokenIs409Not500 pins the mapping itself, which the
 // open-round checks now make hard to reach over HTTP: a broken binding is
 // refused before Send in every request shape they cover, but Send re-checks the

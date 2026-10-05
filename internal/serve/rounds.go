@@ -136,13 +136,17 @@ func roundStartDecisionOf(rt relevo.Runtime, b store.Binding, entries []store.Lo
 	if st == remote.RoundRunning {
 		return startOpen, "round is running"
 	}
+	// The identical retry is checked before the broken arm because an already
+	// accepted resend is the no-op whatever state the binding is in now: the
+	// broken arm answers it 409, which the client maps to a hard error, for a
+	// round the server already took.
+	if reqRound == b.Round-1 && sameSavedPlan(rt, b.Name, b.Round-1, planText) {
+		return startRetry, ""
+	}
 	if st == remote.RoundBroken {
 		return startOpen, "round is broken; rebind before sending"
 	}
 	if reqRound != b.Round {
-		if reqRound == b.Round-1 && sameSavedPlan(rt, b.Name, b.Round-1, planText) {
-			return startRetry, ""
-		}
 		return startStarted, fmt.Sprintf("round %d already started with a different plan", reqRound)
 	}
 	return startProceed, ""
