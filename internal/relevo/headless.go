@@ -765,6 +765,13 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		}
 		if b.State == store.StateBroken {
 			b.State = store.StateActive
+			// The fault that broke the binding is over, so the halt that
+			// recorded it goes with it. Left in place it reads as the reason the
+			// round is still stopped: the next send is refused with 409
+			// round_halted naming a switch that has already been replaced, and
+			// the round classifies as halted for as long as the binding lives.
+			b.Halt = ""
+			b.HaltAt = time.Time{}
 		}
 		return deliverAndSettle(ctx, rt, tx, b)
 	}
