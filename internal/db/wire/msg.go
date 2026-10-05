@@ -14,6 +14,9 @@ const (
 	TypeClose   = "close"
 	TypeCancel  = "cancel"
 	TypeError   = "error"
+
+	TypeSyncVerb   = "sync_verb"
+	TypeSyncResult = "sync_result"
 )
 
 // Header is the part every control message shares: its type and the request id
@@ -132,4 +135,115 @@ type Close struct {
 // Cancel interrupts the request with this id.
 type Cancel struct {
 	Header
+}
+
+// The sync verbs a client asks the owner to run. They are named rather than
+// numbered so a captured stream reads on its own, and they are a closed set:
+// an owner refuses a name it does not know rather than guessing.
+const (
+	SyncVerbEnable  = "enable"
+	SyncVerbDisable = "disable"
+	SyncVerbPush    = "push"
+	SyncVerbPull    = "pull"
+)
+
+// The refusal codes a SyncResult carries. They are a closed set and every one is
+// fixed text written in this repository: the owner names the class and the
+// caller maps it onto its own exit code, so a failure is never classified by
+// reading prose, and no remote-chosen body and no credential can reach a
+// message. A new class is added here rather than invented at a call site.
+const (
+	// SyncCodeInvalid is a refusal the caller cannot fix by reading a message:
+	// a malformed section, a missing opener, a build with no sync driver.
+	SyncCodeInvalid = "invalid"
+	// SyncCodeNoToken is an enable with no token on either route.
+	SyncCodeNoToken = "no_token"
+	// SyncCodeNoRemote is an enable that named no remote on either route.
+	SyncCodeNoRemote = "no_remote"
+	// SyncCodeAlreadyEnabled is a machine already syncing.
+	SyncCodeAlreadyEnabled = "already_enabled"
+	// SyncCodeRemoteConflict is a --url that contradicts the stored remote.
+	SyncCodeRemoteConflict = "remote_conflict"
+	// SyncCodeSeedUploadRequired is history on this side that the remote has
+	// not seen, which last-push-wins would drop.
+	SyncCodeSeedUploadRequired = "seed_upload_required"
+	// SyncCodePreflightRefused is the enable preflight's own answer: the checks
+	// that decide whether this database may leave the machine.
+	SyncCodePreflightRefused = "preflight_refused"
+	// SyncCodeAuthRefused is the one failure a retry cannot fix: the remote
+	// rejected this installation's token.
+	SyncCodeAuthRefused = "auth_refused"
+	// SyncCodeRemoteUnreachable is a remote that did not answer in the bound.
+	SyncCodeRemoteUnreachable = "remote_unreachable"
+	// SyncCodeInternal is a failure with no class of its own -- the daemon's
+	// own bug, or a hook that panicked or reported nothing.
+	SyncCodeInternal = "internal"
+)
+
+// SyncVerb asks the owner to run one sync verb against the handles the owner
+// already has open. The client ships the settings body and the token bytes
+// because those are what the caller's route produced; the owner performs the
+// verb against its own shared and machine-local handles rather than opening a
+// second pair.
+//
+// The token travels in the frame's raw tail and never in this header. That is
+// the whole of the redaction rule on this surface: the header is the part a
+// reader of a captured stream, a log or an error sees, and a field that never
+// holds the value is a rule that cannot be forgotten at a call site. No error
+// on either end formats the tail, and no response carries the value back --
+// TokenPresent is the only thing a response says about it.
+type SyncVerb struct {
+	Header
+	// Verb is one of the SyncVerb names above.
+	Verb string `json:"verb"`
+	// RemoteURL is the remote `--url` named, empty when the flag was not passed.
+	// The remote already stored is not carried: it is a row in the
+	// machine-local file the owner already has open, so it reads it there
+	// rather than trusting a body a client sent.
+	RemoteURL string `json:"remote_url,omitempty"`
+	// SeedUploaded reports that the documented upload already ran.
+	SeedUploaded bool `json:"seed_uploaded,omitempty"`
+	// SeedPath is where an existing-history enable writes the copy the
+	// documented upload path takes.
+	SeedPath string `json:"seed_path,omitempty"`
+	// TimeoutMS bounds the verb's network work in milliseconds. Zero selects
+	// the package default on the owner side.
+	TimeoutMS int64 `json:"timeout_ms,omitempty"`
+}
+
+// SyncResult is the owner's answer to one verb: what the run did, in the shape
+// the caller reports. It carries no credential on any field -- TokenPresent is a
+// bool precisely so a caller can say whether a token exists without a way to
+// say what it was.
+type SyncResult struct {
+	Header
+	// OK is whether the verb completed. A refusal sets it false and carries a
+	// Code the caller maps, so the classification happens where the codes live
+	// rather than in prose a reader has to decode.
+	OK bool `json:"ok"`
+	// Code is the refusal class, empty on success. It is one of the sync
+	// sentinels' names rather than free text, so the owner never chooses how a
+	// caller reads a failure.
+	Code string `json:"code,omitempty"`
+	// Message is the refusal's own text. Every one of these is fixed text
+	// written in this repository; none of them is the token and none of them is
+	// a body the remote chose.
+	Message string `json:"message,omitempty"`
+	// TokenPresent says whether a token is stored, never what it holds.
+	TokenPresent bool `json:"token_present,omitempty"`
+	// Applied is whether a pull rebased anything.
+	Applied bool `json:"applied,omitempty"`
+	// SeedCase names which of the three seed situations an enable found.
+	SeedCase string `json:"seed_case,omitempty"`
+	// Seed is the copy an existing-history enable wrote.
+	Seed string `json:"seed,omitempty"`
+	// RemoteURL is the remote the enable stored.
+	RemoteURL string `json:"remote_url,omitempty"`
+	// Steps is the order a disable took, which is its contract.
+	Steps []string `json:"steps,omitempty"`
+	// FinalPush is whether the best-effort final push landed.
+	FinalPush bool `json:"final_push"`
+	// Warning is what a disable's final push hit, kept as a warning rather
+	// than a failure.
+	Warning string `json:"warning,omitempty"`
 }

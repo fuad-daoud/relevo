@@ -97,6 +97,28 @@ func Info(ctx context.Context, sock string) (info, error) {
 	return answer, nil
 }
 
+// SyncVerb dials sock, performs the handshake and sends one sync verb, closing
+// the connection when the owner has answered.
+//
+// It is a standalone function rather than a method on a pooled handle because a
+// verb needs no pinned connection: the owner runs it against the handles it
+// already holds. Going through a database/sql pool would take a slot for the
+// life of the call and hand the owner a connection the request never uses.
+func SyncVerb(ctx context.Context, sock string, verb *wire.SyncVerb, token []byte) (*wire.SyncResult, error) {
+	nc, err := dialSock(ctx, sock)
+	if err != nil {
+		return nil, err
+	}
+	c := &conn{nc: nc, w: wire.NewConn(nc)}
+	if err := c.handshake(ctx); err != nil {
+		_ = nc.Close()
+		return nil, err
+	}
+	res, err := c.SyncVerb(ctx, verb, token)
+	_ = c.Close()
+	return res, err
+}
+
 func dialSock(ctx context.Context, sock string) (net.Conn, error) {
 	if dialer != nil {
 		return dialer(ctx, sock)

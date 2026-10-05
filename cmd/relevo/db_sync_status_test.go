@@ -384,6 +384,11 @@ func TestDBSyncStatusDaemonChild(t *testing.T) {
 		t.Fatalf("child serve: %v, %v", srv, err)
 	}
 	defer func() { _ = srv.Close() }()
+	// The daemon serves the verb surface, which is what the writer verbs reach
+	// now. The executor here is a fake one: this test is about which process
+	// opens the file and who answers, not about reaching a remote, so the verb
+	// answers from a script and the assertions are about the route.
+	installTestVerbHook(srv, d)
 
 	// The listener is bound, so a dial from the parent will connect; the handshake
 	// is answered on accept, which Serve is already doing.
@@ -469,32 +474,15 @@ func TestDBSyncStatusAnswersWhileTheDaemonRuns(t *testing.T) {
 	}
 }
 
-// TestDBSyncWritersStillRefuseWhileTheDaemonRuns pins the other half of the
-// split: the direct open the writing verbs need is untouched, so `enable` and
-// `push` still refuse with the same conflict and the same `relevo daemon stop`
-// hint. enable and push are the two call sites -- the verb that opens the handle
-// itself and dbSyncOneShot, which pull share -- so covering them leaves no writer
-// unaccounted for. Routing status through the owner must not have softened this
-// into a write over a handle a daemon is serving.
-func TestDBSyncWritersStillRefuseWhileTheDaemonRuns(t *testing.T) {
-	startSyncStatusDaemon(t, dbSyncStatusCases[2])
-
-	for _, verb := range []struct {
-		name string
-		run  func() error
-	}{
-		{"enable", func() error { return cmdDBSyncEnable(nil) }},
-		{"push", func() error { return cmdDBSyncPush(nil) }},
-	} {
-		t.Run(verb.name, func(t *testing.T) {
-			_, _, err := captureOutput(t, func() error { return verb.run() })
-			ce := requireCLIError(t, err, codeConflict, "relevo daemon stop")
-			if !strings.Contains(ce.message, "the daemon must not be running") {
-				t.Errorf("message = %q, want the daemon named", ce.message)
-			}
-		})
-	}
-}
+// The test that used to live here -- TestDBSyncWritersStillRefuseWhileTheDaemonRuns
+// -- pinned the direct open the writing verbs needed, and asserted they refused
+// with `conflict` and a `relevo daemon stop` hint while a daemon held the file.
+// S7 removes that open: the verbs ride the owner's socket and the daemon runs
+// them, so the case the old test pinned is now the case they are built for. Its
+// successor is TestSyncWritersSucceedWhileTheDaemonRuns, in db_sync_verb_test.go,
+// which asserts the opposite of the same setup -- and the mutation that catches
+// a reintroduced direct open is that test, since the old open would meet the
+// lock and return the conflict this change removes.
 
 // TestDBSyncStatusRefusesAnOwnerThatServesNoLocalFile pins the half of the
 // split that a routed read must not lose. An owner built before the local scope

@@ -6,8 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/wire"
+	"github.com/fuad-daoud/relevo/internal/db/wire/client"
 	"github.com/fuad-daoud/relevo/internal/store"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
@@ -18,23 +21,24 @@ import (
 // in the other.
 // cmdDBSyncPush sends this machine's local change set.
 func cmdDBSyncPush(args []string) error {
-	return dbSyncOneShot("db sync push", args, dbSyncPushFlagSet, func(ctx context.Context, client relevosync.SyncClient) (bool, error) {
-		return false, client.Push(ctx)
-	})
+	return dbSyncOneShot("db sync push", args, dbSyncPushFlagSet, wire.SyncVerbPush)
 }
 
 // cmdDBSyncPull fetches the remote's changes and rebases the local ones on top.
 func cmdDBSyncPull(args []string) error {
-	return dbSyncOneShot("db sync pull", args, dbSyncPullFlagSet, func(ctx context.Context, client relevosync.SyncClient) (bool, error) {
-		return client.Pull(ctx)
-	})
+	return dbSyncOneShot("db sync pull", args, dbSyncPullFlagSet, wire.SyncVerbPull)
 }
 
-// dbSyncOneShot is the body push and pull share: open the handle the settings
-// and the token name, make the one call, and let the process exit with the
-// handle. The two verbs differ only in the call, so they share every other step
-// rather than being two near-copies that can drift apart.
-func dbSyncOneShot(name string, args []string, set func(*flag.FlagSet) *dbSyncCallFlagValues, call func(context.Context, relevosync.SyncClient) (bool, error)) error {
+// dbSyncOneShot is the body push and pull share: dial the owner, read the
+// local settings and the stored token, send one verb, and print what it says.
+// The two verbs differ only in the name, so they share every other step rather
+// than being two near-copies that can drift apart.
+//
+// Nothing here opens a Turso handle. The daemon holds the file under its lock
+// and performs the verb with its own handles, which is what removes the stop
+// dance: a writer no longer competes for the lock it would have had to hold, so
+// it never meets the conflict the old direct open mapped.
+func dbSyncOneShot(name string, args []string, set func(*flag.FlagSet) *dbSyncCallFlagValues, verb string) error {
 	fs := flag.NewFlagSet("relevo "+name, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	v := set(fs)
@@ -45,27 +49,23 @@ func dbSyncOneShot(name string, args []string, set func(*flag.FlagSet) *dbSyncCa
 		return fail(codeUsage, "relevo %s takes no arguments, got %d", name, fs.NArg())
 	}
 
-	shared, local, err := openDBSync()
+	shared, err := dialSyncVerb()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = shared.Close() }()
 
-	handle, err := dbSyncHandle(name, local)
+	ctx, cancel := context.WithTimeout(context.Background(), *v.timeout)
+	defer cancel()
+
+	res, err := sendSyncVerb(ctx, shared, verb, dbSyncVerbOptions{Timeout: *v.timeout})
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), *v.timeout)
-	defer cancel()
-	applied, err := call(ctx, handle)
-	if err != nil {
-		return failWrap(codeRefused, err, "relevo %s", name)
-	}
 	if *v.asJSON {
-		return printDoc(dbSyncCallDoc{Applied: applied})
+		return printDoc(dbSyncCallDoc{Applied: res.Applied})
 	}
-	if applied {
+	if res.Applied {
 		fmt.Printf("relevo %s applied\n", name)
 		return nil
 	}
@@ -73,73 +73,118 @@ func dbSyncOneShot(name string, args []string, set func(*flag.FlagSet) *dbSyncCa
 	return nil
 }
 
-// dbSyncHandle opens the handle the machine-local settings and token name, and
-// refuses when either is missing. A push or a pull with no remote or no token
-// has nothing to reach and nothing to authenticate with, and saying which one
-// is missing is the whole difference between a refusal the user can act on and
-// one they have to guess at.
-func dbSyncHandle(name string, local *db.DB) (relevosync.SyncClient, error) {
-	settings, err := relevosync.ReadSettings(local)
+// dialSyncVerb reaches the owner serving this root, which is the only route a
+// sync verb has: the daemon opens the file, so the client dials.
+//
+// The local file is not attached and is not needed here. The verb reads the
+// settings and the token itself, on the daemon's side, with the daemon's own
+// handles -- so the token never travels between two processes at all, and this
+// client holds nothing but the socket.
+func dialSyncVerb() (*db.DB, error) {
+	root, err := store.DefaultRoot()
 	if err != nil {
-		return nil, failWrap(codeConfigInvalid, err, "relevo %s", name)
+		return nil, failWrap(codeRefused, err, "relevo db sync: no state root")
 	}
-	if settings.RemoteURL == "" {
-		return nil, fail(codeRefused, "relevo %s: no remote is configured on this machine; run `relevo db sync enable`", name)
-	}
-	token, hasToken, err := relevosync.ReadToken(local)
+	shared, err := dialOwner(context.Background(), root, verbDialBudget)
 	if err != nil {
-		return nil, failWrap(codeConfigInvalid, err, "relevo %s", name)
+		sock, _ := ownerSocket(root)
+		return nil, failWrap(codeRefused, err, "relevo db sync: the owner at %s did not answer", sock)
 	}
-	if !hasToken {
-		return nil, fail(codeRefused, "relevo %s: no %s on this machine; run `relevo db sync enable --token-stdin`", name, relevosync.SecretToken)
-	}
-
-	handle, err := relevosync.OpenRemote(context.Background(), relevosync.OpenConfig{
-		Path:             machineDBPath(),
-		RemoteURL:        settings.RemoteURL,
-		Namespace:        settings.Namespace,
-		ClientName:       dbSyncClientName,
-		AuthToken:        token,
-		BootstrapIfEmpty: false,
-	})
-	if err != nil {
-		return nil, dbSyncClassify(err)
-	}
-	return handle, nil
+	return shared, nil
 }
 
-// openDBSync opens the shared database and names the machine-local file beside
-// it, which is where every row a sync verb writes lives.
-//
-// The open is direct rather than through the owner, and that is a constraint
-// rather than a choice: the machine-local file is this machine's own, and the
-// owner's dial surface is the shared file alone, so there is no owner path to a
-// local write. It also means the daemon must not be running -- the file lock is
-// what says so -- which is the same requirement the seed upload path has, since
-// an upload reads the very file this verb writes.
-func openDBSync() (shared *db.DB, local *db.DB, err error) {
-	path := machineDBPath()
-	if path == "" {
-		return nil, nil, fail(codeRefused, "no state root: set XDG_STATE_HOME or HOME")
-	}
-	if !fileExists(path) {
-		return nil, nil, fail(codeRefused, "no relevo.db at %s", path)
-	}
+// dbSyncVerbOptions is what a verb request carries beyond its name: the flags
+// the caller parsed, and nothing the daemon can read for itself.
+type dbSyncVerbOptions struct {
+	// RemoteURL is `--url`, empty when the flag was not passed.
+	RemoteURL string
+	// SeedUploaded reports that the documented upload already ran.
+	SeedUploaded bool
+	// Timeout bounds the verb's network work. Zero selects the daemon's own.
+	Timeout time.Duration
+}
 
-	shared, err = openDBDirect(path)
+// sendSyncVerb sends one verb over the framed surface and classifies the answer.
+//
+// The refusal arrives as a result rather than as an error, so the mapping from
+// the owner's code onto this CLI's exit codes happens here -- in one place, on
+// the closed set of codes -- rather than in the owner, which does not know what
+// a caller calls a failure. The token is not an argument: the daemon reads the
+// stored one with its own local handle, so no credential crosses this call.
+func sendSyncVerb(ctx context.Context, shared *db.DB, verb string, opts dbSyncVerbOptions) (*wire.SyncResult, error) {
+	return sendSyncVerbToken(ctx, shared, verb, nil, opts)
+}
+
+// sendSyncVerbToken is sendSyncVerb for the one verb that carries a credential.
+//
+// The token is the frame's raw tail and nothing else. It is not logged, not
+// formatted into an error and not sent back: the owner's only token field is a
+// bool, so there is no code path on either end that can print the value even by
+// accident. The socket lives under the 0700 state root and every peer passes the
+// uid check, so sender and daemon are the same user on the same machine, and
+// the value crosses the stream between them and nowhere else.
+func sendSyncVerbToken(ctx context.Context, shared *db.DB, verb string, token []byte, opts dbSyncVerbOptions) (*wire.SyncResult, error) {
+	req := &wire.SyncVerb{
+		Header:       wire.Header{Type: wire.TypeSyncVerb},
+		Verb:         verb,
+		RemoteURL:    opts.RemoteURL,
+		SeedUploaded: opts.SeedUploaded,
+		TimeoutMS:    opts.Timeout.Milliseconds(),
+	}
+	res, err := shared.SyncVerb(ctx, req, token)
 	if err != nil {
-		if errors.Is(err, db.ErrLocked) {
-			return nil, nil, failNext(codeConflict, "relevo daemon stop",
-				"relevo.db is held (%s.lock); sync writes the machine-local file beside it, so the daemon must not be running", path)
+		return nil, dbSyncVerbTransport(err)
+	}
+	if verr := client.VerbError(res); verr != nil {
+		return nil, dbSyncVerbRefusal(verb, verr)
+	}
+	return res, nil
+}
+
+// dbSyncVerbRefusal maps the owner's refusal code onto this CLI's exit codes. It
+// is the one place a verb failure becomes a code, and it is total over the
+// closed set the owner can send: an unknown code is an internal failure rather
+// than a silent success, so a code added on the wire without a mapping here
+// shows up as a refusal instead of as nothing.
+//
+// The messages pass through untouched. They are fixed text written in this
+// repository, and every one of them names the fix.
+func dbSyncVerbRefusal(verb string, err error) error {
+	var refusal *client.VerbRefusal
+	if !errors.As(err, &refusal) {
+		return dbSyncClassify(err)
+	}
+	name := "relevo db sync " + verb
+	switch refusal.Code {
+	case wire.SyncCodeNoToken, wire.SyncCodeNoRemote:
+		return fail(codeUsage, "%s", refusal.Message)
+	case wire.SyncCodeAlreadyEnabled, wire.SyncCodeSeedUploadRequired:
+		return failNext(codeRefused, "relevo db sync status", "%s", refusal.Message)
+	case wire.SyncCodeAuthRefused:
+		return fail(codeRemoteAuth, "%s", refusal.Message)
+	case wire.SyncCodePreflightRefused, wire.SyncCodeRemoteConflict,
+		wire.SyncCodeRemoteUnreachable, wire.SyncCodeInvalid:
+		return fail(codeRefused, "%s", refusal.Message)
+	}
+	_ = name
+	return failWrap(codeInternal, err, "relevo db sync %s", verb)
+}
+
+// dbSyncVerbTransport classifies a verb that never reached a refusal: the owner
+// was gone, was shutting down, or does not speak the verb surface at all.
+//
+// An owner without the verb is the refusal that names the upgrade, and it is
+// refused rather than internal: the caller can act on it by upgrading the
+// daemon, which is exactly what a refusal is for.
+func dbSyncVerbTransport(err error) error {
+	var refused *wire.Refusal
+	if errors.As(err, &refused) {
+		if refused.Code == wire.RefuseNoSyncVerb {
+			return fail(codeRefused, "%s", refused.Message)
 		}
-		return nil, nil, failWrap(codeInternal, err, "open %s", path)
+		return fail(codeRefused, "relevo db sync: %s", refused.Message)
 	}
-	local, err = relevosync.LocalHandle(shared)
-	if err != nil {
-		_ = shared.Close()
-		return nil, nil, failWrap(codeInternal, err, "open %s", db.SplitPath(path))
-	}
-	return shared, local, nil
+	return failWrap(codeRefused, err, "relevo db sync")
 }
 
 // openDBSyncStatus reaches the rows the read-only status verb answers from: it
@@ -147,14 +192,14 @@ func openDBSync() (shared *db.DB, local *db.DB, err error) {
 // the dialled handle.
 //
 // That is the whole of what separates status from the writing verbs, and every
-// part of it follows from status writing nothing. openDBSync opens the file
-// directly because the Turso driver needs a real path to open, which means
-// taking the lock the daemon holds and refusing with `conflict` while it runs --
-// a correct price for a verb that writes, and a wrong one for a verb that reads
-// three local rows. status has no driver to open, so it takes the owner's local
-// scope instead, and the daemon running is the case it is built for rather than
-// the one it refuses. Nothing here starts a daemon either: a status that had to
-// bring one up would answer a question about the machine by changing it.
+// part of it follows from status writing nothing. The writers no longer open the
+// file at all: they send a verb and the daemon performs it with the handles it
+// already holds, so neither needs the lock the daemon is keeping. status still
+// reads the three local rows itself, over the owner's local scope, because a
+// read is what it does and a verb would be a request for the daemon to change
+// something in order to describe the machine. Nothing here starts a daemon
+// either: a status that had to bring one up would answer a question about the
+// machine by changing it.
 //
 // The local handle is not optional, and refusing without one is the point. An
 // owner that serves none is refused rather than answered from the shared file --
@@ -190,66 +235,9 @@ func openDBSyncStatus() (shared *db.DB, local *db.DB, err error) {
 	return shared, local, nil
 }
 
-// dbSyncOpenConfig is the open config the settings and the stored token describe.
-// bootstrap says whether this open may take the remote's initial state, which is
-// only ever true for a machine with no history to lose.
-func dbSyncOpenConfig(settings relevosync.Settings, local *db.DB, token []byte, bootstrap bool) relevosync.OpenConfig {
-	return relevosync.OpenConfig{
-		Path:             machineDBPath(),
-		RemoteURL:        settings.RemoteURL,
-		Namespace:        settings.Namespace,
-		ClientName:       dbSyncClientName,
-		AuthToken:        token,
-		BootstrapIfEmpty: bootstrap,
-	}
-}
-
-// dbSyncOpener is the opener enable builds its handle with. It fills in what
-// only this machine knows -- the file, the remote, the namespace and the client
-// name -- and leaves the bootstrap decision and the token exactly as the enable
-// path put them, so neither is decided twice.
-func dbSyncOpener(settings relevosync.Settings) relevosync.Opener {
-	return func(ctx context.Context, cfg relevosync.OpenConfig) (relevosync.SyncClient, error) {
-		if settings.RemoteURL == "" {
-			return nil, fmt.Errorf("sync: enable: no remote is configured on this machine: %w", db.ErrInvalid)
-		}
-		cfg.Path = machineDBPath()
-		cfg.RemoteURL = settings.RemoteURL
-		cfg.Namespace = settings.Namespace
-		cfg.ClientName = dbSyncClientName
-		return relevosync.OpenRemote(ctx, cfg)
-	}
-}
-
-// relevosyncCloudEmpty reports whether the remote holds nothing yet.
-//
-// It answers by opening the remote with the bootstrap explicitly off and asking
-// whether a pull brought anything back: a remote with nothing in it applies no
-// changes, and a remote with something in it applies at least one. The pull is
-// the only question the driver's own surface answers about a remote's contents,
-// so it is the whole of the probe -- and it runs before anything is marked, so a
-// refusal here leaves the machine untouched.
-//
-// The token arrives as an argument rather than out of the local file, because
-// the enable has resolved it and deliberately not stored it yet.
-func relevosyncCloudEmpty(ctx context.Context, settings relevosync.Settings, token []byte) (bool, error) {
-	if settings.RemoteURL == "" {
-		return false, fail(codeRefused, "relevo db sync enable: no remote is configured on this machine; pass --url")
-	}
-	handle, err := relevosync.OpenRemote(ctx, relevosync.OpenConfig{
-		Path:             machineDBPath(),
-		RemoteURL:        settings.RemoteURL,
-		Namespace:        settings.Namespace,
-		ClientName:       dbSyncClientName,
-		AuthToken:        token,
-		BootstrapIfEmpty: false,
-	})
-	if err != nil {
-		return false, dbSyncClassify(err)
-	}
-	applied, err := handle.Pull(ctx)
-	if err != nil {
-		return false, failWrap(codeRemoteUnreachable, err, "relevo db sync enable: read the remote")
-	}
-	return !applied, nil
-}
+// dbSyncOpenConfig is gone with the direct open: the daemon builds the config
+// its enable path decided, so there is no second copy of that decision here.
+// dbSyncOpener and relevosyncCloudEmpty are gone for the same reason -- both
+// existed only to let a CLI process open a remote, which is precisely what the
+// verb surface removes. Their bodies now live in internal/relevo, against the
+// daemon's own handles.

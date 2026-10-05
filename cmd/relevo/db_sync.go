@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
@@ -192,8 +193,17 @@ type dbSyncCallDoc struct {
 	Applied bool `json:"applied"`
 }
 
-// cmdDBSyncEnable runs the enable path: the token from its two routes, the
-// checks, the seed decision, the mark, and the open.
+// cmdDBSyncEnable runs the enable path through the daemon.
+//
+// The token is resolved here and nowhere else: --token-stdin beats
+// TURSO_TOKEN, and the value is handed straight to the verb request. It is not
+// stored, logged, formatted into an error or echoed: the daemon puts it into the
+// local file with its own handles, and the only thing this process ever holds
+// it for is the length of the call below.
+//
+// Everything else -- the already-on read, the preflight, the seed decision, the
+// mark and the open -- happens on the daemon's side with its own handles, which
+// is why enable no longer needs the daemon stopped.
 func cmdDBSyncEnable(args []string) error {
 	fs := flag.NewFlagSet("db sync enable", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -205,60 +215,79 @@ func cmdDBSyncEnable(args []string) error {
 		return fail(codeUsage, "relevo db sync enable takes no arguments, got %d", fs.NArg())
 	}
 
-	shared, local, err := openDBSync()
+	token, err := dbSyncEnableToken(*v.tokenStdin)
+	if err != nil {
+		return err
+	}
+
+	shared, err := dialSyncVerb()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = shared.Close() }()
 
-	settings, err := relevosync.ReadSettings(local)
-	if err != nil {
-		return failWrap(codeConfigInvalid, err, "relevo db sync enable")
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), *v.timeout+verbDialSlack)
+	defer cancel()
 
-	intake := relevosync.TokenIntake{EnvValue: dbSyncGetenv(relevosync.EnvToken)}
-	if *v.tokenStdin {
-		token, err := io.ReadAll(dbSyncTokenStdin)
-		if err != nil {
-			return failWrap(codeUsage, err, "relevo db sync enable --token-stdin")
-		}
-		intake.FromStdin, intake.Stdin = true, token
-	}
-
-	enabler := &relevosync.Enabler{
-		Local:           local,
-		Preflight:       func() db.Preflight { return db.EnablePreflight(shared) },
-		LocalHasHistory: func() (bool, error) { return db.HasSharedHistory(shared) },
-		CloudEmpty: func(ctx context.Context, st relevosync.Settings, token []byte) (bool, error) {
-			return relevosyncCloudEmpty(ctx, st, token)
-		},
-		SeedCopy:     func(path string) error { return shared.SeedCopy(path) },
-		SeedPath:     dbSyncSeedPath(),
-		Open:         dbSyncOpener(settings),
-		Intake:       intake,
-		SeedUploaded: *v.seedUploaded,
+	res, err := sendSyncVerbToken(ctx, shared, wire.SyncVerbEnable, token, dbSyncVerbOptions{
 		RemoteURL:    *v.remoteURL,
+		SeedUploaded: *v.seedUploaded,
 		Timeout:      *v.timeout,
-	}
-
-	res, err := enabler.Enable(context.Background())
+	})
 	if err != nil {
-		return dbSyncClassify(err)
+		return err
 	}
 	if *v.asJSON {
 		return printDoc(dbSyncOutcomeDoc{
 			Enabled:   true,
 			RemoteURL: res.RemoteURL,
-			SeedCase:  string(res.Case),
+			SeedCase:  res.SeedCase,
 			Seed:      res.Seed,
 			Applied:   res.Applied,
 		})
 	}
-	fmt.Printf("sync enabled on this machine (seed: %s)\n", res.Case)
+	fmt.Printf("sync enabled on this machine (seed: %s)\n", res.SeedCase)
 	return nil
 }
 
-// cmdDBSyncDisable runs the turn-off in the order the contract fixes.
+// verbDialSlack is what the local bound adds on top of the caller's timeout, so
+// the daemon's own budget and this client's wait for it are both covered: the
+// caller asked for the verb's work to take at most its timeout, and the process
+// that carries it needs a little longer to hand the answer back.
+const verbDialSlack = 5 * time.Second
+
+// dbSyncEnableToken resolves the token from its two routes. The flag beats the
+// environment, so a script that pipes a token cannot be overridden by whatever
+// the environment happens to carry.
+//
+// Neither route yielding anything is ErrNoToken, and this is the one fixed line
+// that says so: the routes are named, the attempt is not. Every line out of
+// enable can end up in a log, so nothing here says which route was tried or what
+// either of them held.
+func dbSyncEnableToken(fromStdin bool) ([]byte, error) {
+	intake := relevosync.TokenIntake{EnvValue: dbSyncGetenv(relevosync.EnvToken)}
+	if fromStdin {
+		token, err := io.ReadAll(dbSyncTokenStdin)
+		if err != nil {
+			return nil, failWrap(codeUsage, err, "relevo db sync enable --token-stdin")
+		}
+		intake.FromStdin, intake.Stdin = true, token
+	}
+	token, _, err := intake.Resolve()
+	if err != nil {
+		return nil, fail(codeUsage, "%v", err)
+	}
+	return token, nil
+}
+
+// cmdDBSyncDisable runs the turn-off through the daemon, in the order the
+// contract fixes.
+//
+// No token is read here and none is passed: the daemon reads the stored one with
+// its own local handle and decides whether there is anything a final push could
+// do. A machine with no token or no remote pays no dial to find that out, and
+// one whose remote will not open still turns sync off -- which is the whole
+// reason the final push is best-effort.
 func cmdDBSyncDisable(args []string) error {
 	fs := flag.NewFlagSet("db sync disable", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -270,57 +299,29 @@ func cmdDBSyncDisable(args []string) error {
 		return fail(codeUsage, "relevo db sync disable takes no arguments, got %d", fs.NArg())
 	}
 
-	shared, local, err := openDBSync()
+	shared, err := dialSyncVerb()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = shared.Close() }()
 
-	settings, err := relevosync.ReadSettings(local)
-	if err != nil {
-		return failWrap(codeConfigInvalid, err, "relevo db sync disable")
-	}
-	token, hasToken, err := relevosync.ReadToken(local)
-	if err != nil {
-		return failWrap(codeConfigInvalid, err, "relevo db sync disable")
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), *v.timeout+verbDialSlack)
+	defer cancel()
 
-	disabler := &relevosync.Disabler{Local: local, Timeout: *v.timeout}
-	if hasToken && settings.RemoteURL != "" {
-		// The handle is opened only when there is something to push through and
-		// something to push with. A machine with no token or no remote has
-		// nothing a final push could do, so the turn-off does not open one and
-		// does not pay a dial to find out.
-		handle, oerr := relevosync.OpenRemote(context.Background(), dbSyncOpenConfig(settings, local, token, true))
-		if oerr != nil {
-			// A remote that will not open is the strongest reason of all to stop
-			// syncing, so the turn-off continues without a handle rather than
-			// refusing and leaving the machine pushing at a dead remote.
-			fmt.Fprintf(os.Stderr, "relevo db sync disable: the final push will be skipped: %v\n", oerr)
-		} else {
-			disabler.Client = handle
-			disabler.Close = func() error { return nil }
-		}
-	}
-
-	res, err := disabler.Disable(context.Background())
+	res, err := sendSyncVerb(ctx, shared, wire.SyncVerbDisable, dbSyncVerbOptions{Timeout: *v.timeout})
 	if err != nil {
-		return dbSyncClassify(err)
-	}
-	warning := ""
-	if res.FinalPushErr != nil {
-		warning = res.FinalPushErr.Error()
+		return err
 	}
 	if *v.asJSON {
 		return printDoc(dbSyncOutcomeDoc{
 			Enabled:   false,
 			Steps:     res.Steps,
 			FinalPush: res.FinalPush,
-			Warning:   warning,
+			Warning:   res.Warning,
 		})
 	}
-	if warning != "" {
-		fmt.Fprintf(os.Stderr, "relevo db sync disable: %s\n", warning)
+	if res.Warning != "" {
+		fmt.Fprintf(os.Stderr, "relevo db sync disable: %s\n", res.Warning)
 	}
 	fmt.Println("sync disabled on this machine; local files unchanged and still servable")
 	return nil
@@ -330,12 +331,10 @@ func cmdDBSyncDisable(args []string) error {
 // marks and nothing else, so it answers with the network blackholed and no
 // handle open.
 //
-// It reaches them through the owner (openDBSyncStatus) rather than through
-// openDBSync, and the difference is the point of the verb: a status that opened
-// the file directly could only answer while the daemon was stopped, so the one
-// question a machine could always ask about itself was the one question a
-// running daemon refused to answer. Every byte below is unchanged by the route:
-// what it prints is a function of the document alone.
+// It reaches them through the owner (openDBSyncStatus) and reads them itself
+// rather than asking for a verb, and that is the whole of what S7 does not move:
+// status is a description of the machine, so it stays a read. Every byte below is
+// unchanged by that -- what it prints is a function of the document alone.
 func cmdDBSyncStatus(args []string) error {
 	fs := flag.NewFlagSet("db sync status", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

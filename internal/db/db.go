@@ -58,6 +58,11 @@ type DB struct {
 	// test asserts about the switch.
 	route string
 
+	// sock is the owner socket a dialled handle opened, empty on a direct one.
+	// It is separate from route because a request that needs the owner itself
+	// rather than a statement -- a sync verb -- needs the socket to dial.
+	sock string
+
 	// path is the file a direct handle opened; empty on a dialled handle. It is
 	// what Vacuum reopens and what the per-path handle count keys on.
 	path string

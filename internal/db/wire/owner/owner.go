@@ -72,6 +72,24 @@ type Server struct {
 	// only way to end a statement the engine cannot interrupt.
 	OnAbandoned func()
 
+	// OnSyncVerb, when set, runs one sync verb against the handles the server
+	// already holds. It is the daemon's executor, so a client asks for enable,
+	// push, pull or disable and the work happens with the owner's own direct
+	// handles rather than a second open in the caller's process -- which is
+	// what removes the file-lock conflict the writing verbs used to meet.
+	//
+	// The request carries the settings body and the token bytes; the hook is
+	// handed both and is trusted to keep the token out of every message, log
+	// line and response it produces. The socket is under the 0700 state root
+	// and every peer passes the uid check above, so the caller and this process
+	// are the same user on the same machine; the token crosses the stream and
+	// nothing else.
+	//
+	// Nil refuses the verb (RefuseNoSyncVerb) rather than accepting it and
+	// doing nothing, so an owner with no executor installed cannot be read as a
+	// machine whose sync silently stopped working.
+	OnSyncVerb func(ctx context.Context, verb *wire.SyncVerb, token []byte) *wire.SyncResult
+
 	// reapMu guards the abandoned-statement registrations: every finish channel
 	// the server is still waiting on, and whether the hook already ran.
 	reapMu      sync.Mutex

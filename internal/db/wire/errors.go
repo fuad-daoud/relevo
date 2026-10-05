@@ -50,6 +50,12 @@ const (
 	// that does not exist on this owner, and answering from the shared file
 	// would return the rows the split keeps out of it.
 	RefuseNoLocal = "no_local_file"
+	// RefuseNoSyncVerb answers a sync verb on an owner built without a sync
+	// executor: the daemon installs one, and a caller that reached an owner
+	// without it cannot be answered rather than silently no-opped. It is
+	// additive -- an owner that predates the verb never sees one -- so the
+	// client that sent it is new enough to be told what to do about it.
+	RefuseNoSyncVerb = "no_sync_verb"
 )
 
 // coder is anything exposing a SQLite result code, which is both the modernc

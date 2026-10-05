@@ -76,6 +76,11 @@ type Daemon struct {
 	// queued: the network is the slow part, and piling attempts behind it
 	// only makes the backlog worse.
 	syncInFlight bool
+	// syncIdle is signalled whenever syncInFlight goes false, so a caller
+	// waiting for the slot -- a sync verb -- is woken rather than polling. It is
+	// created once in NewDaemon and never replaced, which is what lets Wait
+	// and the triggers share one lock and one condition.
+	syncIdle *sync.Cond
 	// syncLast is when the idle window last opened. The zero time means no
 	// window has run yet, so a fresh daemon syncs once and then settles.
 	syncLast time.Time
@@ -88,10 +93,12 @@ func NewDaemon(rt Runtime, interval time.Duration) *Daemon {
 	if interval < minInterval {
 		interval = minInterval
 	}
-	return &Daemon{
+	d := &Daemon{
 		rt:       rt,
 		interval: interval,
 	}
+	d.syncIdle = sync.NewCond(&d.syncMu)
+	return d
 }
 
 // WithRefresh installs a per-tick refresh on the daemon. nil (the default)
@@ -108,6 +115,50 @@ func (d *Daemon) WithRefresh(f func(Runtime) Runtime) *Daemon {
 func (d *Daemon) WithUpgrade(f func(ctx context.Context) bool) *Daemon {
 	d.upgrade = f
 	return d
+}
+
+// WaitSyncSlot runs fn with this daemon's sync to itself, waiting its turn
+// rather than dropping the work.
+//
+// It is the same guard the seal hook and the idle window take, and a sync verb
+// takes it the same way. The difference is what a caller does when the slot is
+// already held: queueSync drops a second trigger, because a tick is cheap to
+// lose and piling attempts behind a slow network does not make the backlog
+// smaller. A verb is not that -- somebody asked for it explicitly and is waiting
+// for the answer -- so it waits for the in-flight attempt to finish and then
+// runs.
+//
+// The wait is a condition rather than a poll, and the slot is released in a
+// defer, so a verb that panics still frees it: a stuck flag would wedge every
+// later sync on this machine and the statusline would keep reading a marker no
+// tick writes again.
+func (d *Daemon) WaitSyncSlot(fn func()) {
+	d.syncMu.Lock()
+	for d.syncInFlight {
+		d.syncIdle.Wait()
+	}
+	d.syncInFlight = true
+	d.syncMu.Unlock()
+
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("turso sync panicked", "panic", r, "stack", string(debug.Stack()))
+		}
+		d.syncMu.Lock()
+		d.syncInFlight = false
+		d.signalIdleLocked()
+		d.syncMu.Unlock()
+	}()
+	fn()
+}
+
+// signalIdleLocked wakes everything waiting for the sync slot. It is called
+// with syncMu held, from every site that ends a sync, so a waiter is released
+// whichever kind of sync finished.
+func (d *Daemon) signalIdleLocked() {
+	if d.syncIdle != nil {
+		d.syncIdle.Broadcast()
+	}
 }
 
 // Run ticks until ctx is cancelled. A failing tick is logged and retried on

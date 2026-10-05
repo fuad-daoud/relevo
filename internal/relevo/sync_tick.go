@@ -42,6 +42,9 @@ func (d *Daemon) queueSync(ctx context.Context) {
 			}
 			d.syncMu.Lock()
 			d.syncInFlight = false
+			// A verb may be waiting for the slot this attempt held; it has to be
+			// woken here or it waits for a trigger that already ended.
+			d.signalIdleLocked()
 			d.syncMu.Unlock()
 		}()
 		d.runSync(ctx)

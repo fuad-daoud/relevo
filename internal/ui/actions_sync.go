@@ -10,6 +10,9 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/wire"
+	"github.com/fuad-daoud/relevo/internal/db/wire/client"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
@@ -159,17 +162,54 @@ func missingSyncRemotes(remoteURL string, hasToken bool) error {
 	}
 }
 
+// verbRunner is the executor every cockpit sync action drives. It is the same
+// value the daemon installs as the owner's OnSyncVerb hook, built the same way
+// over the same handles, so the cockpit and `relevo db sync` cannot drift into
+// two different answers for the same verb -- there is one set of verbs'
+// semantics in the tree and both callers reach it.
+//
+// There is no Serialize guard here: the cockpit is a client of the same machine
+// the daemon serves, so a verb it asks for is serialized daemon-side, and a
+// second guard in this process would only queue work against itself.
+func (a *mastermindActions) verbRunner() (*relevo.VerbRunner, error) {
+	if err := a.ready(); err != nil {
+		return nil, err
+	}
+	shared := a.runtime().DB
+	local, err := relevosync.LocalHandle(shared)
+	if err != nil {
+		return nil, err
+	}
+	return &relevo.VerbRunner{
+		Shared:     shared,
+		Local:      local,
+		Path:       shared.Path(),
+		Runner:     a.runtime().Sync,
+		ClientName: syncClientName,
+	}, nil
+}
+
+// runVerb drives one verb and turns a refusal into the action's own error shape.
+func (a *mastermindActions) runVerb(ctx context.Context, runner *relevo.VerbRunner, verb string) (*wire.SyncResult, Result) {
+	ctx, cancel := syncCtx(ctx)
+	defer cancel()
+	res := runner.Run(ctx, &wire.SyncVerb{Header: wire.Header{Type: wire.TypeSyncVerb}, Verb: verb}, nil)
+	if err := client.VerbError(res); err != nil {
+		return nil, syncErrResult(verb, err)
+	}
+	return res, Result{}
+}
+
 // SyncPush sends this machine's local change set. The result re-reads, so the
 // view shows what the remote measured rather than what the push assumed.
 func (a *mastermindActions) SyncPush(ctx context.Context) Result {
-	h, err := a.openSync()
+	runner, err := a.verbRunner()
 	if err != nil {
 		return syncErrResult("push", err)
 	}
-	ctx, cancel := syncCtx(ctx)
-	defer cancel()
-	if err := h.Client.Push(ctx); err != nil {
-		return syncErrResult("push", err)
+	_, bad := a.runVerb(ctx, runner, wire.SyncVerbPush)
+	if bad.Err != nil {
+		return bad
 	}
 	return Result{Text: "pushed this machine's change set", Refresh: true}
 }
@@ -178,17 +218,15 @@ func (a *mastermindActions) SyncPush(ctx context.Context) Result {
 // applied flag becomes words, because "nothing to apply" is the answer a user
 // needs and a boolean is not one.
 func (a *mastermindActions) SyncPull(ctx context.Context) Result {
-	h, err := a.openSync()
+	runner, err := a.verbRunner()
 	if err != nil {
 		return syncErrResult("pull", err)
 	}
-	ctx, cancel := syncCtx(ctx)
-	defer cancel()
-	applied, err := h.Client.Pull(ctx)
-	if err != nil {
-		return syncErrResult("pull", err)
+	res, bad := a.runVerb(ctx, runner, wire.SyncVerbPull)
+	if bad.Err != nil {
+		return bad
 	}
-	if !applied {
+	if !res.Applied {
 		return Result{Text: "pulled: the remote had nothing to apply", Refresh: true}
 	}
 	return Result{Text: "pulled and applied the remote's changes", Refresh: true}
@@ -196,6 +234,11 @@ func (a *mastermindActions) SyncPull(ctx context.Context) Result {
 
 // SyncTest opens a handle and asks the remote for its stats. It changes no byte
 // here, so a test is safe against a remote a user only wants to ask about.
+//
+// It is the one sync action that does not go through the executor, and that is
+// because it is not a verb: it asks the remote a question and reports the
+// answer, rather than moving a change set or turning sync on or off. The other
+// three drive the executor so there is one set of verbs' semantics.
 func (a *mastermindActions) SyncTest(ctx context.Context) Result {
 	h, err := a.openSync()
 	if err != nil {
@@ -214,34 +257,21 @@ func (a *mastermindActions) SyncTest(ctx context.Context) Result {
 }
 
 // SyncDisable runs S4's turn-off whole: the same four steps, in the order its
-// contract fixes, over the same handle the CLI verb opens. The final push stays
-// best-effort, so a remote that cannot be reached is a warning on a successful
-// turn-off rather than a refusal to leave.
+// contract fixes, through the same executor the CLI verb drives. The final push
+// stays best-effort, so a remote that cannot be reached is a warning on a
+// successful turn-off rather than a refusal to leave.
 func (a *mastermindActions) SyncDisable(ctx context.Context) Result {
-	if err := a.ready(); err != nil {
-		return syncErrResult("disable", err)
-	}
-	rt := a.runtime()
-	local, err := relevosync.LocalHandle(rt.DB)
+	runner, err := a.verbRunner()
 	if err != nil {
 		return syncErrResult("disable", err)
 	}
-	disabler := &relevosync.Disabler{Local: local}
-
-	// The handle is opened only when there is both something to push through and
-	// something to push with, exactly as the CLI verb decides it: a machine with
-	// no token or no remote must not pay a dial to find that out.
-	if h, herr := a.openSync(); herr == nil {
-		disabler.Client = h.Client
-	}
-
-	res, err := disabler.Disable(ctx)
-	if err != nil {
-		return syncErrResult("disable", err)
+	res, bad := a.runVerb(ctx, runner, wire.SyncVerbDisable)
+	if bad.Err != nil {
+		return bad
 	}
 	text := "sync off on this machine; local files unchanged and still servable"
-	if res.FinalPushErr != nil {
-		text += " · the final push was skipped: " + res.FinalPushErr.Error()
+	if res.Warning != "" {
+		text += " · the final push was skipped: " + res.Warning
 	}
 	return Result{Text: text, Refresh: true}
 }

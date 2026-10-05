@@ -124,6 +124,15 @@ const (
 	KindClose   byte = 9
 	KindCancel  byte = 10
 	KindError   byte = 11
+	// KindSyncVerb asks the owner to run one sync verb -- enable, push, pull or
+	// disable -- against the handles the owner already holds, so the daemon does
+	// the work instead of a client that had to open the file itself. It is
+	// additive: an owner that predates it has never heard of the byte, and a
+	// client that predates it never sends one.
+	KindSyncVerb byte = 12
+	// KindSyncResult answers KindSyncVerb. It is a kind of its own rather than a
+	// Done, because a verb reports what the run did rather than rows affected.
+	KindSyncResult byte = 13
 )
 
 // Encode builds a frame: the kind byte, a little-endian 4-byte header length,

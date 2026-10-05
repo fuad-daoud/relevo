@@ -84,6 +84,7 @@ func dialContext(ctx context.Context, sock string, o Options, adoptOrigin bool) 
 		origin:     origin,
 		beginRetry: retry,
 		route:      "owner " + sock,
+		sock:       sock,
 	}
 	// The owner serves the machine-local file beside the shared one, so the
 	// dial path attaches it exactly as a direct open does. That is the whole of
@@ -120,6 +121,33 @@ func dialLocal(sock string, o Options, have, know int, retry time.Duration, orig
 		beginRetry: retry,
 		route:      "owner " + sock + " local",
 	}
+}
+
+// Sock is the owner socket this handle dialled, empty on a direct open. It is
+// what a request that needs the owner itself rather than a statement -- a sync
+// verb -- dials: the verb runs against the owner's own handles, so it needs
+// the stream, not this handle's pool.
+func (d *DB) Sock() string { return d.sock }
+
+// SyncVerb runs one sync verb against the owner serving this handle, which is
+// how a client asks the daemon to do the work: the owner runs it with the
+// handles it already holds, so this process never opens the file and never
+// takes the lock the daemon is holding.
+//
+// The token travels inside the framed request and is not formatted into any
+// error, log line or result on the way; the only token field on the answer is a
+// bool. A handle opened directly has no socket and refuses rather than opening
+// one: the verb exists precisely so the writing verbs stop needing a direct
+// open, and a fallback would put that open back.
+func (d *DB) SyncVerb(ctx context.Context, verb *wire.SyncVerb, token []byte) (*wire.SyncResult, error) {
+	if d.sock == "" {
+		return nil, fmt.Errorf("db: sync verb: this handle did not dial an owner: %w", ErrOpen)
+	}
+	res, err := client.SyncVerb(ctx, d.sock, verb, token)
+	if err != nil {
+		return nil, fmt.Errorf("db: sync verb %s: %w: %w", verb.Verb, ErrOpen, err)
+	}
+	return res, nil
 }
 
 // NewOwner serves d on a listener the caller opened, and the machine-local

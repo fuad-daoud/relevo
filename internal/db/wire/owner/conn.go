@@ -125,6 +125,10 @@ func (c *conn) loop() error {
 			if err := c.start(kind, frame); err != nil {
 				return err
 			}
+		case wire.KindSyncVerb:
+			if err := c.startVerb(frame); err != nil {
+				return err
+			}
 		case wire.KindNext:
 			if r := c.current(); r != nil {
 				r.signalNext()
