@@ -206,9 +206,14 @@ func reconcileWith(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	// and the round it is about has already advanced, so nothing below would
 	// reach it. It sits ahead of the DONE gate because a binding finished or
 	// paused after the halt still owes its MasterMind the entry.
-	if b, err = queueOwedHalt(ctx, rt, tx, b); err != nil {
-		return b, err
-	}
+	//
+	// A failure here is held rather than returned at once, because the DONE
+	// gate below settles a payload no other route can take and a log refusing
+	// one append would otherwise repeat the refusal every tick and settle
+	// nothing. queueOwedHalt leaves the marker on the binding it returns, so
+	// the owed entry stays owed and a later tick writes it; the tick still
+	// reports the failure, and reports it after the settle has run.
+	b, owedErr := queueOwedHalt(ctx, rt, tx, b)
 
 	if b.State == store.StateDone || b.State == store.StatePaused {
 		// No new push may start for a done or paused binding, but a payload a
@@ -217,7 +222,10 @@ func reconcileWith(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		if b, _, derr = delivery.ConfirmAdmitted(ctx, deliveryDeps(rt), tx, b); derr != nil {
 			return b, derr
 		}
-		return b, nil
+		return b, owedErr
+	}
+	if owedErr != nil {
+		return b, owedErr
 	}
 
 	if b.Builder.Remote() {
