@@ -75,7 +75,10 @@ func ReadChainsScope(ctx context.Context, rt Runtime, sc Scope) (ChainsDoc, erro
 	if err != nil {
 		return ChainsDoc{}, err
 	}
-	rep, _ := buildReport(ctx, rt, bindings)
+	rep, err := buildReport(ctx, rt, chainScopeBindings(rt, bindings, chains, sc))
+	if err != nil {
+		return ChainsDoc{}, err
+	}
 	repByName := make(map[string]view.BindingStatus, len(rep.Bindings))
 	for _, b := range rep.Bindings {
 		repByName[b.Name] = b
