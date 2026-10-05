@@ -81,6 +81,111 @@ func TestChainSweepHaltsOnAMemberNeedsYou(t *testing.T) {
 	}
 }
 
+// TestChainSweepHaltsOnABrokenMember pins the broken arm: a member whose
+// builder is gone and has no live process behind it can send no close, so the
+// sweep ends the chain with that member's reason.
+//
+// Without the arm a chain whose member broke waited forever. The member's own
+// owner -- a mirror of this chain -- observes the round and writes the status
+// word and stops, and its sweep skips a chain that runs on a server, so nothing
+// on that side ends the chain either: it never terminated and wait never
+// returned.
+//
+// A member that is broken but still switchable is left alone: the daemon is
+// about to bring its builder back by itself, and a chain halted for a fault
+// that resolves itself is a chain stopped for nothing.
+func TestChainSweepHaltsOnABrokenMember(t *testing.T) {
+	t.Parallel()
+
+	const reason = "builder claude; switching to codex failed: exit status 1"
+	rt, _ := chainRuntime(t)
+	chainToReviewer(t, rt)
+
+	rev := chainBinding(t, rt, "shop-rev")
+	rev.State = store.StateBroken
+	rev.Halt = reason
+	// The candidate and the started round survive a switch whose replacement
+	// failed to resolve, so the state left behind looks switchable; the missing
+	// process is what makes it not so.
+	rev.BuilderCandidate = testClaudeRef
+	rev.RoundStartedAt = baseTime
+	rev.Builder.PID = 0
+	if err := rt.Store.Save(rev); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	tickChains(context.Background(), rt)
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusHalted) {
+		t.Fatalf("chain status = %q, want halted: no close will come from a member with no builder", row.Status)
+	}
+	if row.Reason != reason {
+		t.Errorf("halt reason = %q, want the member's reason %q", row.Reason, reason)
+	}
+	if pending := chainPendingChain(t, rt, "shop"); len(pending) != 1 {
+		t.Errorf("pending chain deliveries = %d, want the one end delivery", len(pending))
+	}
+}
+
+// TestChainSweepLeavesASwitchableBrokenMemberAlone pins the bound of the broken
+// arm. The same binding with a live process is one the daemon will fix by
+// itself, so the chain keeps waiting on it rather than halting.
+func TestChainSweepLeavesASwitchableBrokenMemberAlone(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	chainToReviewer(t, rt)
+
+	rev := chainBinding(t, rt, "shop-rev")
+	rev.State = store.StateBroken
+	rev.Halt = "the reviewer asks for a human"
+	rev.BuilderCandidate = testClaudeRef
+	rev.RoundStartedAt = baseTime
+	rev.Builder.PID = 4242
+	if err := rt.Store.Save(rev); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	tickChains(context.Background(), rt)
+
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusRunning) {
+		t.Errorf("chain status = %q, want running: the daemon is about to bring the builder back", row.Status)
+	}
+	if pending := chainPendingChain(t, rt, "shop"); len(pending) != 0 {
+		t.Errorf("pending chain deliveries = %d, want none", len(pending))
+	}
+}
+
+// TestChainSweepHaltsOnAReasonlessBrokenMember pins that a break which
+// recorded no reason of its own still ends the chain with something a human
+// can act on, rather than a halted row carrying an empty reason.
+func TestChainSweepHaltsOnAReasonlessBrokenMember(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	chainToReviewer(t, rt)
+
+	rev := chainBinding(t, rt, "shop-rev")
+	rev.State = store.StateBroken
+	// No process behind it: with one the daemon would still bring the builder
+	// back and the chain would be waiting on the daemon, not on a human.
+	rev.Builder.PID = 0
+	if err := rt.Store.Save(rev); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	tickChains(context.Background(), rt)
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusHalted) {
+		t.Fatalf("chain status = %q, want halted", row.Status)
+	}
+	if row.Reason != "member shop-rev broken" {
+		t.Errorf("halt reason = %q, want the member named as broken", row.Reason)
+	}
+}
+
 // TestChainSweepLeavesHaltedChainsAlone pins the second tick: the halt is
 // terminal, so the sweep writes no second trace row and queues no second end
 // delivery.
