@@ -32,8 +32,8 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"--token-stdin reads the turso.token from standard input and\n" +
 	"beats " + relevosync.EnvToken + "; with neither, enable refuses. The value is\n" +
 	"stored in the machine-local file and appears in no log, no error and no\n" +
-	"payload. --seed-uploaded says the documented turso db import already ran\n" +
-	"against the seed copy a previous enable named.\n" +
+	"payload. --seed-uploaded says the documented `turso db import <file>`\n" +
+	"already ran against the seed copy a previous enable named.\n" +
 	"disable makes one last bounded push attempt, marks this machine off,\n" +
 	"forgets the token and closes the handle. Local files keep every row and\n" +
 	"stay servable, and the remote is left alone.\n"
@@ -91,7 +91,7 @@ func dbSyncEnableFlagSet(fs *flag.FlagSet) *dbSyncEnableFlagValues {
 	v.asJSON = fs.Bool("json", false, "print the document the enable produced")
 	v.remoteURL = fs.String("url", "", "the remote to sync with, stored in the machine-local sync section")
 	v.tokenStdin = fs.Bool("token-stdin", false, "read the turso.token from standard input")
-	v.seedUploaded = fs.Bool("seed-uploaded", false, "the documented turso db import already ran against the seed copy a previous enable named")
+	v.seedUploaded = fs.Bool("seed-uploaded", false, "the documented `turso db import <file>` already ran against the seed copy a previous enable named")
 	v.timeout = fs.Duration("timeout", dbSyncDefaultTimeout, "bound the remote probe and the open")
 	return v
 }

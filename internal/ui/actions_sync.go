@@ -135,6 +135,11 @@ func (a *mastermindActions) openSync() (syncHandle, error) {
 
 	openCtx, cancel := syncCtx(context.Background())
 	client, err := relevosync.OpenRemote(openCtx, relevosync.OpenConfig{
+		// A connection test asks the remote a question; it never creates sync
+		// membership. A machine whose file is not already a member refuses here,
+		// which is the right answer for a test: it reports the machine is not
+		// syncing rather than joining it to a remote as a side effect of asking.
+		Role:             relevosync.OpenMember,
 		Path:             rt.DB.Path(),
 		RemoteURL:        settings.RemoteURL,
 		Namespace:        settings.Namespace,

@@ -310,8 +310,14 @@ func (v *VerbRunner) openRemote(ctx context.Context, cfg relevosync.OpenConfig) 
 // openConfig is the open the settings and the handed token describe. bootstrap
 // is the caller's decision: an enable's seed matrix has already made it, and a
 // push or pull must never take the remote's initial state.
+//
+// Every open it builds names the live file as a member, never as a bare one: the
+// only caller is the turn-off's final push, and by then an enable has joined this
+// file to the remote. A file that is not a member refuses there rather than being
+// made into one, because a turn-off has no business turning a file into a member.
 func (v *VerbRunner) openConfig(settings relevosync.Settings, token []byte, bootstrap bool) relevosync.OpenConfig {
 	return relevosync.OpenConfig{
+		Role:             relevosync.OpenMember,
 		Path:             v.Path,
 		RemoteURL:        settings.RemoteURL,
 		Namespace:        settings.Namespace,
@@ -337,6 +343,11 @@ func (v *VerbRunner) opener(token []byte) relevosync.Opener {
 		if cfg.RemoteURL == "" {
 			return nil, errors.New("sync: enable: no remote is configured on this machine")
 		}
+		// This is the enable's own open and the only one allowed to create sync
+		// membership: the seed matrix has already decided whether the remote's
+		// state may be taken or this machine's history is the seed, so creating
+		// the membership is the point rather than an accident of the open.
+		cfg.Role = relevosync.OpenSeed
 		cfg.Path = v.Path
 		cfg.ClientName = v.ClientName
 		cfg.AuthToken = token
@@ -346,12 +357,19 @@ func (v *VerbRunner) opener(token []byte) relevosync.Opener {
 
 // cloudEmpty reports whether the remote holds nothing yet.
 //
-// It answers by opening the remote with the bootstrap explicitly off and asking
-// whether a pull brought anything back: a remote with nothing in it applies no
-// changes, and a remote with something in it applies at least one. The pull is
-// the only question the driver's own surface answers about a remote's contents,
-// so it is the whole of the probe -- and it runs before anything is marked, so a
-// refusal here leaves the machine untouched.
+// It answers by opening the remote against a file of its own and asking whether
+// a pull brought anything back: a remote with nothing in it applies no changes,
+// and a remote with something in it applies at least one. The pull is the only
+// question the driver's own surface answers about a remote's contents, so it is
+// the whole of the probe -- and it runs before anything is marked, so a refusal
+// here leaves the machine untouched.
+//
+// The file is a throwaway, and that is the whole safety of this probe. A pull
+// rewrites the file it was given: pointed at this machine's live database with a
+// remote holding nothing, it applied the remote's emptiness over the history and
+// left a skeleton where the database had been. The live path is therefore never
+// named here at all, and the probe's answer is taken on a file created for the
+// question and deleted after it.
 //
 // The token arrives as an argument rather than out of the local file because the
 // enable has resolved it and deliberately not stored it yet.
@@ -360,7 +378,13 @@ func (v *VerbRunner) cloudEmpty(token []byte) func(context.Context, relevosync.S
 		if st.RemoteURL == "" {
 			return false, errors.New("sync: enable: no remote is configured on this machine; pass --url")
 		}
-		handle, err := v.openRemote(ctx, v.openConfig(st, token, false))
+		scratch, err := relevosync.NewThrowaway(v.Path)
+		if err != nil {
+			return false, err
+		}
+		defer scratch.Release()
+
+		handle, err := v.openRemote(ctx, v.probeConfig(st, token, scratch.Path))
 		if err != nil {
 			return false, err
 		}
@@ -369,6 +393,30 @@ func (v *VerbRunner) cloudEmpty(token []byte) func(context.Context, relevosync.S
 			return false, err
 		}
 		return !applied, nil
+	}
+}
+
+// probeConfig is the open the emptiness probe makes: the settings and token the
+// enable resolved, against the throwaway file rather than the live one.
+//
+// It is a separate builder from openConfig on purpose. openConfig names the live
+// path, and a probe that reused it would put the live database back in reach of
+// the one call whose whole job is to ask the remote a question -- which is how
+// the live file was destroyed. The two are separate so the probe cannot be
+// handed the live path by a later edit that changes only one of them.
+func (v *VerbRunner) probeConfig(settings relevosync.Settings, token []byte, scratch string) relevosync.OpenConfig {
+	return relevosync.OpenConfig{
+		Path:      scratch,
+		RemoteURL: settings.RemoteURL,
+		// Namespace and client name are the live ones, so the probe asks the
+		// remote the question a real open would ask rather than a question about
+		// some other namespace.
+		Namespace:  settings.Namespace,
+		ClientName: v.ClientName,
+		AuthToken:  token,
+		// Bootstrap stays off for the same reason it always was: the question is
+		// what a pull brings back, so nothing may be taken before it is asked.
+		BootstrapIfEmpty: false,
 	}
 }
 

@@ -300,8 +300,8 @@ func (e *Enabler) Enable(ctx context.Context) (EnableResult, error) {
 			return EnableResult{Case: decision.Case}, fmt.Errorf("sync: enable: seed copy: %w", err)
 		}
 		return EnableResult{Case: decision.Case, Seed: e.SeedPath}, fmt.Errorf(
-			"%w; upload %s with turso db import --from-file, then re-run this verb with --seed-uploaded",
-			ErrSeedUploadRequired, e.SeedPath)
+			"%w; upload %s with `turso db import %s`, then re-run this verb with --seed-uploaded",
+			ErrSeedUploadRequired, e.SeedPath, e.SeedPath)
 	}
 
 	if err := SetToken(e.Local, token, e.now()); err != nil {

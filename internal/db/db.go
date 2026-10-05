@@ -124,6 +124,14 @@ func OpenRaw(path string) (*sql.DB, error) {
 	return openPool(path, time.Duration(busyTimeoutMS)*time.Millisecond, false)
 }
 
+// OpenRawReadOnly opens path read-only the way OpenRaw opens it writable, and
+// for the same reason: no migration, no owner hop, no handle count. It is how a
+// caller asks a question about a file it does not hold -- whether it carries a
+// given table -- without taking the handle a live owner already has.
+func OpenRawReadOnly(path string) (*sql.DB, error) {
+	return openPool(path, time.Duration(busyTimeoutMS)*time.Millisecond, true)
+}
+
 // open routes through the test-only owner hop when one is installed, and opens
 // the file directly otherwise.
 func open(path string, o Options) (*DB, error) {
