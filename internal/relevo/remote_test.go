@@ -1970,6 +1970,30 @@ func TestSendRemoteHaltedIsAnError(t *testing.T) {
 		assertNothingWritten(t, st, err, "could not start", "already switched 2 time(s)")
 	})
 
+	// A server holds a broken round as an open one, so an identical re-send is
+	// the same no-op it is for a running round: a 200 that carries the broken
+	// view back. The client must read that view as the refusal it is rather
+	// than as a send that started -- the round did not start, so recording a
+	// prompt for it and resetting the round would file the human's next halt a
+	// second time with the same text.
+	t.Run("200 broken view (identical re-send)", func(t *testing.T) {
+		fr := &fakeRemote{
+			startRoundResp: remote.BindingView{
+				RoundState: remote.RoundBroken,
+				Halt:       "round is broken; rebind before sending",
+			},
+		}
+		rt, st := newRT(t, fr)
+
+		planFile := filepath.Join(t.TempDir(), "plan.md")
+		if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := Send(context.Background(), rt, "api", planFile, SendOptions{})
+		assertNothingWritten(t, st, err, "could not start", "is broken; rebind before sending")
+	})
+
 	// A server that refuses a different plan on a broken binding answers 409
 	// round_open and puts the reason in the message. The client must report
 	// that reason, not a claim that the round is running.
