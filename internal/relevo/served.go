@@ -341,8 +341,10 @@ func liveViewOf(row view.BindingStatus, b store.Binding, at time.Time) *remote.L
 }
 
 // ServedLive returns the live view of an owned binding's running round (spec §3.1).
+// It is the one single-row surface a client reads, and every figure it carries
+// (usage, tail, diff) is a detail figure, so the row is built with them on.
 func ServedLive(ctx context.Context, rt Runtime, b store.Binding) (*remote.LiveView, error) {
-	row, err := statusRow(ctx, rt, b)
+	row, err := statusRow(ctx, rt, b, statusConfig{detail: true})
 	if err != nil {
 		return nil, err
 	}

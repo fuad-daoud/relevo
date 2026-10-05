@@ -1456,13 +1456,18 @@ const statusTailLines = 3
 // Alive check, then, for an exited process, the trailer's code. No Runner
 // means relevo cannot say. A live process whose stream has gone quiet
 // (binding.StalledSince, #252) reads "stalled <age>" in place of "working".
-func headlessStatus(ctx context.Context, rt Runtime, b store.Binding) (string, *view.HeadlessInfo) {
+//
+// detail false builds no tail: the read is a whole-file logTail or a 64 KiB
+// window per row per tick, and the fleet path paints none of it. The flag
+// reaches here rather than the call site so the read is never made and then
+// thrown away.
+func headlessStatus(ctx context.Context, rt Runtime, b store.Binding, detail bool) (string, *view.HeadlessInfo) {
 	e := b.Builder
 	info := &view.HeadlessInfo{PID: e.PID, LogPath: e.LogPath}
 	if e.StartedAt != 0 {
 		info.StartedAt = time.Unix(e.StartedAt, 0)
 	}
-	if e.LogPath != "" {
+	if detail && e.LogPath != "" {
 		if tail := builderTail(rt, b, statusTailLines); tail != "" {
 			info.Tail = strings.Split(tail, "\n")
 		}

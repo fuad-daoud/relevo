@@ -3,6 +3,7 @@ package delivery
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -53,6 +54,17 @@ type ClaimStore interface {
 	Remove(mastermind string, pid int) error
 }
 
+// ClaimBulk is the optional whole-namespace read a ClaimStore may also
+// implement: one pass over the claim rows instead of one read per mastermind.
+// A status report resolves every row's channel route from the returned map; a
+// store that does not implement it is read one mastermind at a time.
+type ClaimBulk interface {
+	// LiveAll returns every live claim keyed by mastermind id. A row that is
+	// stale or unparseable is removed, exactly as Live removes it, and is
+	// absent from the map.
+	LiveAll(now time.Time) (map[string]*Claim, error)
+}
+
 // KVClaims is the ClaimStore over the store root database's kv rows: one
 // `claim/<mastermind-id>` row per mastermind.
 type KVClaims struct {
@@ -66,6 +78,8 @@ type KVClaims struct {
 }
 
 var _ ClaimStore = (*KVClaims)(nil)
+
+var _ ClaimBulk = (*KVClaims)(nil)
 
 func (c *KVClaims) alive(pid int) bool {
 	if c.Alive != nil {
@@ -114,6 +128,31 @@ func (c *KVClaims) liveFrom(kv db.KVTx, mastermindID string, now time.Time) (*Cl
 	// failing the read over -- the caller already has its answer, "not live".
 	_ = kv.KVDelete(claimKey(mastermindID))
 	return nil, nil
+}
+
+// LiveAll implements ClaimBulk: every live claim keyed by mastermind id, with
+// each stale row removed exactly as Live removes it. A pane-keyed row from an
+// older version is skipped, never rewritten, exactly as Live skips it.
+func (c *KVClaims) LiveAll(now time.Time) (map[string]*Claim, error) {
+	keys, err := c.KV.KVKeys(claimKeyPrefix)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]*Claim, len(keys))
+	for _, key := range keys {
+		id := strings.TrimPrefix(key, claimKeyPrefix)
+		if mastermind.ValidID(id) != nil {
+			continue
+		}
+		claim, err := c.liveFrom(c.KV, id, now)
+		if err != nil {
+			return nil, err
+		}
+		if claim != nil {
+			out[id] = claim
+		}
+	}
+	return out, nil
 }
 
 // Write implements ClaimStore.

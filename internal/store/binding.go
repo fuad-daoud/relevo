@@ -185,6 +185,14 @@ type Binding struct {
 	// shape; save refuses to overwrite a Format it does not know.
 	Format int `json:"format,omitempty"`
 
+	// ViewedAt is the binding's .viewed stamp as read from its record: nil
+	// when the record carries none. It is not part of the stored document --
+	// the record's own viewed_at column is its home -- so it is excluded from
+	// the JSON this struct marshals. List and Load fill it from the row they
+	// just read, so a reader that already has the binding needs no second
+	// RecordGet to learn the stamp.
+	ViewedAt *time.Time `json:"-"`
+
 	Name string `json:"name"`
 	CWD  string `json:"cwd"`
 	// MasterMind's json key is the historical "planner": bind.json keys are
