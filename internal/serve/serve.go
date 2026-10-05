@@ -197,7 +197,8 @@ func New(cfg Config) (*Server, error) {
 	if removed, err := sweepTmp(tmpDir, time.Hour, cfg.Now()); err != nil {
 		slog.Warn("temp sweep failed", "dir", tmpDir, "removed", removed, "err", err)
 	}
-	clients, err := LoadClients(cfg.DB)
+	local := cfg.DB.LocalOrSelf()
+	clients, err := LoadClients(local)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +212,7 @@ func New(cfg Config) (*Server, error) {
 		nonces:    nonces,
 		transport: transport,
 		audiences: append([]string(nil), cfg.Audiences...),
-		gates:     db.PrefixKV{KV: cfg.DB, Prefix: "serve."},
+		gates:     db.PrefixKV{KV: local, Prefix: "serve."},
 		stores:    map[string]*store.Store{},
 		liveCache: newLiveCache(),
 	}, nil

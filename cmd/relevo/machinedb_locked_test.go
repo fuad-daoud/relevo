@@ -39,9 +39,11 @@ func TestPeekReadsConfigThroughTheOwnerWhenTheFileIsHeld(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
 	served := startTestOwner(t, root)
 
-	// Seed a candidate through the direct handle the owner serves, so a config
-	// read that reaches the database sees a non-default value.
-	if err := served.db.Tx(func(tx *db.Tx) error {
+	// Seed a candidate into the machine-local file through the direct handle
+	// the owner serves, so a config read that reaches the database sees a
+	// non-default value. Config lives in the local file, so the shared file
+	// would be a row no reader looks for.
+	if err := served.db.Local().Tx(func(tx *db.Tx) error {
 		return tx.ConfigPut("candidates", []byte(`[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`), time.Now().UTC())
 	}); err != nil {
 		t.Fatalf("seed candidates: %v", err)

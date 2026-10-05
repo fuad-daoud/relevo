@@ -564,8 +564,11 @@ func (d *DB) AppendTranscript(ownerKind, ownerID string, recs []TranscriptRecord
 	return added, err
 }
 
+// SaveCursor writes the ingest cursor to this handle's machine-local file, the
+// file Cursor reads it from: an offset into a file on this machine says nothing
+// on another one.
 func (d *DB) SaveCursor(c Cursor) error {
-	return d.Tx(func(t *Tx) error {
+	return d.LocalOrSelf().Tx(func(t *Tx) error {
 		return t.SaveCursor(c)
 	})
 }

@@ -57,7 +57,7 @@ func seedSecondOwner(t *testing.T, root, label string) (*store.Store, remote.Cli
 	}
 	defer d.Close()
 
-	clients, err := serve.LoadClients(d)
+	clients, err := serve.LoadClients(d.LocalOrSelf())
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestServeContractStatusJSON(t *testing.T) {
 	}
 	defer d.Close()
 
-	clients, err := serve.LoadClients(d)
+	clients, err := serve.LoadClients(d.LocalOrSelf())
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}

@@ -85,6 +85,86 @@ func TestDaemonStartupRunsTheLocalSplit(t *testing.T) {
 	}
 }
 
+// TestDaemonStartupConvergesRowsWrittenAfterTheSplit pins the startup wiring
+// for the converge pass. Another installation sharing the database can write a
+// machine-local row into the shared file after the split has run, and the
+// readers on this machine are bound to the local file; so a later start has to
+// pick that row up rather than trust a marker written before it existed. The
+// marker itself is not re-stamped, so a start that converges twice leaves one
+// marker and the second start's own backup to show for it.
+func TestDaemonStartupConvergesRowsWrittenAfterTheSplit(t *testing.T) {
+	d := openDaemonPassSplit(t)
+	seed := []struct {
+		name, value, key, body string
+	}{
+		{"serve.tls.cert", "certificate-from-another-installation", "serve.daemon", `{"pid":1}`},
+		{"client.key", "pem-from-another-installation", "serve.clients", `["stray"]`},
+	}
+	for _, s := range seed {
+		if err := d.Tx(func(tx *db.Tx) error { return tx.SecretPut(s.name, []byte(s.value), daemonPassNow) }); err != nil {
+			t.Fatalf("seed secret %s: %v", s.name, err)
+		}
+		if err := d.KVPut(s.key, []byte(s.body)); err != nil {
+			t.Fatalf("seed kv %s: %v", s.key, err)
+		}
+	}
+
+	backups := t.TempDir()
+	daemonEnablePath(d, backups, "01ORIGIN", daemonPassNow)
+	// The strays are gone, so the next one written lands in a pair whose marker
+	// is already there. That is the case the startup wiring has to reach: a
+	// second start, not the first.
+	for _, s := range seed {
+		if err := d.Tx(func(tx *db.Tx) error { return tx.SecretPut(s.name, []byte(s.value), daemonPassNow) }); err != nil {
+			t.Fatalf("seed the later secret %s: %v", s.name, err)
+		}
+		if err := d.KVPut(s.key, []byte(s.body)); err != nil {
+			t.Fatalf("seed the later kv %s: %v", s.key, err)
+		}
+	}
+
+	// The converge pass backs the shared file up before it moves anything, and
+	// the backup name carries the start's second, so the second start gets its
+	// own.
+	daemonEnablePath(d, backups, "01ORIGIN", daemonPassNow.Add(time.Hour))
+
+	for _, s := range seed {
+		if _, ok, err := d.SecretGet(s.name); err != nil {
+			t.Fatalf("SecretGet(%s) on the shared handle: %v", s.name, err)
+		} else if ok {
+			t.Errorf("the stray secret %s is still readable on the shared file", s.name)
+		}
+		if _, ok, err := d.KVGet(s.key); err != nil {
+			t.Fatalf("KVGet(%s) on the shared handle: %v", s.key, err)
+		} else if ok {
+			t.Errorf("the stray key %s is still readable on the shared file", s.key)
+		}
+		value, ok, err := d.Local().SecretGet(s.name)
+		if err != nil || !ok {
+			t.Errorf("the local file's %s = %q, %t, %v; want the stray row", s.name, value, ok, err)
+		}
+	}
+
+	// A third start has nothing left to converge, so it takes no second backup
+	// for this pass and leaves the marker exactly where the first start put it.
+	before, ok, err := d.Local().KVGet("split-local.v1")
+	if err != nil || !ok {
+		t.Fatalf("read the split marker: %v (present %t)", err, ok)
+	}
+	third := t.TempDir()
+	daemonEnablePath(d, third, "01ORIGIN", daemonPassNow.Add(2*time.Hour))
+	if path := findPreSplitBackup(t, third); path != "" {
+		t.Errorf("a start with nothing to converge backed the shared file up: %s", path)
+	}
+	after, _, err := d.Local().KVGet("split-local.v1")
+	if err != nil {
+		t.Fatalf("re-read the split marker: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Errorf("the marker changed on a later start:\nbefore %s\nafter  %s", before, after)
+	}
+}
+
 // TestDaemonStartupStampsOriginsToo pins the other half of the same startup
 // path: the passes beside the split stamp this installation's origin on the rows
 // an older database wrote, so the origin gate has nothing left to refuse on.

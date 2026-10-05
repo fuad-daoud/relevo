@@ -15,6 +15,13 @@ import (
 // WithLock alone and DaemonRunning never call it, so a lock-only or path-only
 // store opens no database.
 //
+// The open is the split pair, so the handle carries the machine-local file
+// beside it. The bindings, chains and events this store reads and writes stay
+// on the shared file; what the local file carries is that a machine-local
+// surface bound through this handle -- gates, claims, the run log, the
+// registry -- finds the file the split moved its rows into, instead of
+// answering from a handle that names no local file at all.
+//
 // A database whose schema is newer than this binary's is refused with
 // db.ErrNewerSchema.
 func (s *Store) dbForWrite() (*db.DB, error) {
@@ -53,7 +60,7 @@ func (s *Store) dbForWrite() (*db.DB, error) {
 			s.dbErr = fmt.Errorf("open store db %s: %w", s.DBPath(), err)
 			return
 		}
-		d, err := db.OpenWith(s.DBPath(), db.Options{Origin: inst.ID})
+		d, err := db.OpenSplit(s.DBPath(), db.Options{Origin: inst.ID})
 		if err != nil {
 			s.dbErr = fmt.Errorf("open store db %s: %w", s.DBPath(), err)
 			return

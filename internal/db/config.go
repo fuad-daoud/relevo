@@ -157,20 +157,27 @@ func (d *DB) SecretNames() ([]string, error) {
 }
 
 // SecretStore adapts a *DB to the secret surface a caller with no transaction
-// handle needs: a put or delete opens its own short transaction.
+// handle needs: a put or delete opens its own short transaction. Its methods
+// bind the machine-local file rather than the field's handle, so every literal
+// that names a shared handle still reads this machine's secrets out of the
+// local file after the split.
 type SecretStore struct{ DB *DB }
 
-func (s SecretStore) SecretGet(name string) ([]byte, bool, error) { return s.DB.SecretGet(name) }
+// store is the file this store's rows live in: the machine-local one beside DB
+// when it carries one, and DB itself otherwise.
+func (s SecretStore) store() *DB { return s.DB.LocalOrSelf() }
+
+func (s SecretStore) SecretGet(name string) ([]byte, bool, error) { return s.store().SecretGet(name) }
 
 func (s SecretStore) SecretPut(name string, value []byte, now time.Time) error {
-	return s.DB.Tx(func(t *Tx) error { return t.SecretPut(name, value, now) })
+	return s.store().Tx(func(t *Tx) error { return t.SecretPut(name, value, now) })
 }
 
 func (s SecretStore) SecretDelete(name string) error {
-	return s.DB.Tx(func(t *Tx) error { return t.SecretDelete(name) })
+	return s.store().Tx(func(t *Tx) error { return t.SecretDelete(name) })
 }
 
-func (s SecretStore) SecretNames() ([]string, error) { return s.DB.SecretNames() }
+func (s SecretStore) SecretNames() ([]string, error) { return s.store().SecretNames() }
 
 // ConfigImportRecord appends one imported file to the audit trail, so the
 // import is reconstructable after the file itself is deleted.
@@ -195,6 +202,35 @@ const ReadOnlyHoldBudget = 12 * time.Second
 // os.ErrNotExist.
 func OpenReadOnly(path string) (*DB, error) {
 	return OpenReadOnlyWith(path, Options{})
+}
+
+// OpenReadOnlySplit opens path read-only with the machine-local file beside it
+// attached, so a read-only reader of machine-local rows -- a peek verb's config
+// load -- finds the file the split moved them into instead of reading the shared
+// file and reporting every section absent.
+//
+// A local file that does not exist leaves the handle without one rather than
+// failing the open: the split has not run on this machine yet, so there is
+// nothing local to read and the shared file is the whole database.
+func OpenReadOnlySplit(path string, o Options) (*DB, error) {
+	shared, err := OpenReadOnlyWith(path, o)
+	if err != nil {
+		return nil, err
+	}
+	local, err := OpenReadOnlyWith(SplitPath(path), o)
+	if err != nil {
+		// A machine that has not split yet has no local file, and every local
+		// row it has is in the shared file, so the open still answers.
+		if errors.Is(err, os.ErrNotExist) {
+			return shared, nil
+		}
+		if cerr := shared.Close(); cerr != nil {
+			return nil, errors.Join(err, cerr)
+		}
+		return nil, err
+	}
+	shared.local = local
+	return shared, nil
 }
 
 // OpenReadOnlyWith opens path read-only like OpenReadOnly, with o.Origin set

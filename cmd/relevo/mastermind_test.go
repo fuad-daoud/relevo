@@ -19,19 +19,22 @@ import (
 )
 
 // mastermindRegistryAt is a registry over the database the state root holds, for
-// a test that inspects what a verb wrote without building a runtime.
+// a test that inspects what a verb wrote without building a runtime. It opens
+// the split pair and binds the local file, the way the production registry
+// does: a registry over the shared handle would seed rows where no reader looks
+// for them.
 func mastermindRegistryAt(t *testing.T, state string) *mastermind.DBRegistry {
 	t.Helper()
 	dir := filepath.Join(state, "relevo")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("MkdirAll %s: %v", dir, err)
 	}
-	d, err := db.Open(filepath.Join(dir, "relevo.db"))
+	d, err := db.OpenSplit(filepath.Join(dir, "relevo.db"), db.Options{})
 	if err != nil {
 		t.Fatalf("open relevo.db: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	return &mastermind.DBRegistry{KV: db.TxKV{DB: d}}
+	return &mastermind.DBRegistry{KV: db.TxKV{DB: d.LocalOrSelf()}}
 }
 
 // mastermindConsentRepo makes a git repository, stores an answer for it in the
@@ -75,7 +78,7 @@ func mastermindRepoConsent(t *testing.T, state, repoDir string) db.Consent {
 	if err != nil {
 		t.Fatalf("EvalSymlinks: %v", err)
 	}
-	d, err := db.Open(filepath.Join(state, "relevo", "relevo.db"))
+	d, err := db.OpenSplit(filepath.Join(state, "relevo", "relevo.db"), db.Options{})
 	if err != nil {
 		t.Fatalf("open relevo.db: %v", err)
 	}
@@ -95,7 +98,7 @@ func mastermindSetRepoConsent(t *testing.T, state, repoDir string, c db.Consent)
 	if err != nil {
 		t.Fatalf("EvalSymlinks: %v", err)
 	}
-	d, err := db.Open(filepath.Join(state, "relevo", "relevo.db"))
+	d, err := db.OpenSplit(filepath.Join(state, "relevo", "relevo.db"), db.Options{})
 	if err != nil {
 		t.Fatalf("open relevo.db: %v", err)
 	}
@@ -124,7 +127,7 @@ func mastermindSessionConsent(t *testing.T, state, kind, session string, c db.Co
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("MkdirAll %s: %v", dir, err)
 	}
-	d, err := db.Open(filepath.Join(dir, "relevo.db"))
+	d, err := db.OpenSplit(filepath.Join(dir, "relevo.db"), db.Options{})
 	if err != nil {
 		t.Fatalf("open relevo.db: %v", err)
 	}
@@ -137,7 +140,7 @@ func mastermindSessionConsent(t *testing.T, state, kind, session string, c db.Co
 // mastermindSessionConsentAt reads a session's own answer back.
 func mastermindSessionConsentAt(t *testing.T, state, kind, session string) db.Consent {
 	t.Helper()
-	d, err := db.Open(filepath.Join(state, "relevo", "relevo.db"))
+	d, err := db.OpenSplit(filepath.Join(state, "relevo", "relevo.db"), db.Options{})
 	if err != nil {
 		t.Fatalf("open relevo.db: %v", err)
 	}
@@ -152,7 +155,7 @@ func mastermindSessionConsentAt(t *testing.T, state, kind, session string) db.Co
 // mastermindSessionToldAt reads the status token a session was last told.
 func mastermindSessionToldAt(t *testing.T, state, kind, session string) (string, bool) {
 	t.Helper()
-	d, err := db.Open(filepath.Join(state, "relevo", "relevo.db"))
+	d, err := db.OpenSplit(filepath.Join(state, "relevo", "relevo.db"), db.Options{})
 	if err != nil {
 		t.Fatalf("open relevo.db: %v", err)
 	}

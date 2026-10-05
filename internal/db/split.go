@@ -97,6 +97,22 @@ func OpenSplit(path string, o Options) (*DB, error) {
 // nothing else needs it.
 func (d *DB) Local() *DB { return d.local }
 
+// LocalOrSelf is the file a machine-local reader binds: the machine-local file
+// beside this handle when it carries one, and the handle itself otherwise. It
+// is the one place the two files are told apart for reading, so every
+// exclusively machine-local surface -- config, secrets, and the local kv
+// namespaces -- binds through it rather than deciding per call site, and a
+// handle opened without a local file keeps answering exactly as it did.
+//
+// A shared-history reader must not call it: those rows mean something on every
+// machine and belong on the shared file.
+func (d *DB) LocalOrSelf() *DB {
+	if d.local != nil {
+		return d.local
+	}
+	return d
+}
+
 // Origin is the installation id this handle scopes its own writes to, or "" on
 // a handle opened before the origin column existed. A reader that has to tell
 // this machine's rows from another installation's asks here rather than
@@ -216,15 +232,25 @@ var splitBeforeTable = func(table string) error { return nil }
 // nothing moved and no marker -- then each table's rows are copied and
 // deleted, and the marker is written last, so a failure anywhere before it
 // leaves the next start retrying from the top.
+//
+// A finished marker does not stop a row written to the shared file afterwards.
+// Another installation sharing this database can still write a machine-local
+// row into it, and the readers here are bound to the local file and would never
+// see it again. So a pass whose marker is already present converges instead of
+// returning: it moves whatever local-scoped rows are left, and backs up first
+// only when there is something to move. The marker is never written again, so
+// the pass that already finished is not re-stamped and no second backup appears
+// on a start that has nothing to move.
 func SplitOnce(d *DB, backupDir string, now time.Time) (stats SplitStats, ran bool, err error) {
 	local := d.Local()
 	if local == nil {
 		return SplitStats{}, false, fmt.Errorf("split: %s was opened without a local file: %w", d.path, ErrInvalid)
 	}
+	finished := false
 	if _, ok, kerr := local.KVGet(splitKVKey); kerr != nil {
 		return SplitStats{}, false, fmt.Errorf("split: kv get %s: %w", splitKVKey, kerr)
 	} else if ok {
-		return SplitStats{}, false, nil
+		finished = true
 	}
 
 	stats = SplitStats{DoneAt: now}
@@ -233,6 +259,11 @@ func SplitOnce(d *DB, backupDir string, now time.Time) (stats SplitStats, ran bo
 		return SplitStats{}, false, err
 	}
 	if !have {
+		if finished {
+			// Nothing left to converge and the marker is already there: a start
+			// with nothing to do writes nothing at all.
+			return SplitStats{}, false, nil
+		}
 		return stats, true, putSplitStats(local, stats)
 	}
 
@@ -241,6 +272,12 @@ func SplitOnce(d *DB, backupDir string, now time.Time) (stats SplitStats, ran bo
 		return SplitStats{}, false, berr
 	}
 	stats.BackupPath = backupPath
+	if finished {
+		// The marker's own DoneAt and backup name belong to the pass that ran
+		// before this one; a converge pass reports what it moved under its own
+		// stamp and leaves the marker exactly as the first pass wrote it.
+		stats.DoneAt = time.Time{}
+	}
 
 	for _, tbl := range splitTables() {
 		if herr := splitBeforeTable(tbl.name); herr != nil {
@@ -258,6 +295,9 @@ func SplitOnce(d *DB, backupDir string, now time.Time) (stats SplitStats, ran bo
 	}
 	stats.KVKeysMoved = moved
 
+	if finished {
+		return stats, true, nil
+	}
 	if err := putSplitStats(local, stats); err != nil {
 		return SplitStats{}, false, err
 	}

@@ -483,6 +483,9 @@ func TestTickRefreshesOncePastTTL(t *testing.T) {
 				t.Fatalf("open store db: %v", err)
 			}
 			defer mdb.Close()
+			// The cache is machine-local, so the fixture seeds and reads the
+			// file the pass reads it from.
+			mdb = mdb.LocalOrSelf()
 			if tc.seed {
 				if err := release.Save(mdb, release.Cache{
 					Latest:    "v0.7.0",
@@ -542,6 +545,9 @@ func TestTickSurvivesFetchError(t *testing.T) {
 			t.Fatalf("open store db: %v", merr)
 		}
 		defer mdb.Close()
+		// The cache is machine-local, so the fixture reads the file the pass
+		// writes.
+		mdb = mdb.LocalOrSelf()
 		if _, ok, err := release.Load(mdb); err != nil || ok {
 			t.Errorf("cache = (_, %v, %v), want no record: a failed fetch saves nothing", ok, err)
 		}
@@ -558,6 +564,7 @@ func TestTickSurvivesFetchError(t *testing.T) {
 			t.Fatalf("open store db: %v", merr)
 		}
 		defer mdb.Close()
+		mdb = mdb.LocalOrSelf()
 		stale := release.Cache{Latest: "v0.7.0", CheckedAt: now.Add(-2 * release.TTL), Source: "test"}
 		if err := release.Save(mdb, stale); err != nil {
 			t.Fatalf("seed cache: %v", err)
@@ -718,7 +725,7 @@ func TestRefreshReleaseSuccessClearsTheBackoff(t *testing.T) {
 		t.Fatalf("open store db: %v", merr)
 	}
 	defer mdb.Close()
-	cached, ok, err := release.Load(mdb)
+	cached, ok, err := release.Load(mdb.LocalOrSelf())
 	if err != nil || !ok {
 		t.Fatalf("release.Load = (ok %v, err %v), want the fetched answer saved", ok, err)
 	}

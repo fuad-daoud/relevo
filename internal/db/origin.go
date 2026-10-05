@@ -10,7 +10,9 @@ import (
 
 // originBackfillKVKey is the kv key a finished origin backfill is recorded
 // under. Its presence makes the pass one-time; a failure leaves no key, so the
-// next daemon start retries.
+// next daemon start retries. It is machine-local: the pass stamps this
+// machine's installation id onto the shared rows, and a shared marker would
+// tell another installation's pass there was nothing here to stamp.
 const originBackfillKVKey = "origin-backfill.v1"
 
 // OriginBackfillTwin is one index's share of a pass: how many stale rows it
@@ -134,15 +136,17 @@ func (s *OriginBackfillStats) noteTwin(table, index string, dropped, halted int6
 // other rows in that table, and every table already done, keep the stamps they
 // have; the pass is a resume, not an all-or-nothing.
 //
-// The marker is written last, in a transaction of its own, and only once the
-// gate counts nothing anywhere. So a pass that halted leaves no marker and the
+// The marker is written last, to the machine-local file (never the shared
+// one), in a write of its own, and only once the gate counts nothing
+// anywhere. So a pass that halted leaves no marker and the
 // next start resumes: it finds the settled tables holding nothing to stamp, so it
 // re-stamps nothing, skips nothing, and stamps only what is left.
 //
 // Until it runs, the origin IN (?, ”) rule keeps an old row visible to this
 // installation, so a database works whether or not the pass has run yet.
 func BackfillOriginOnce(d *DB, origin string, now time.Time) (stats OriginBackfillStats, ran bool, err error) {
-	if _, ok, kerr := d.KVGet(originBackfillKVKey); kerr != nil {
+	local := d.LocalOrSelf()
+	if _, ok, kerr := local.KVGet(originBackfillKVKey); kerr != nil {
 		return OriginBackfillStats{}, false, fmt.Errorf("origin backfill: kv get %s: %w", originBackfillKVKey, kerr)
 	} else if ok {
 		return OriginBackfillStats{}, false, nil
@@ -203,17 +207,23 @@ func BackfillOriginOnce(d *DB, origin string, now time.Time) (stats OriginBackfi
 	}
 
 	marker := stats
-	verr := d.Tx(func(t *Tx) error {
-		value, merr := json.Marshal(marker)
-		if merr != nil {
-			return fmt.Errorf("origin backfill: marshal stats: %w", merr)
-		}
-		return t.KVPut(originBackfillKVKey, value)
-	})
-	if verr != nil {
+	if verr := putOriginBackfillStats(local, marker); verr != nil {
 		return stats, false, fmt.Errorf("origin backfill: record the pass: %w", mapBusy(verr))
 	}
 	return stats, true, nil
+}
+
+// putOriginBackfillStats writes the marker to the machine-local file it is read
+// from.
+func putOriginBackfillStats(local *DB, stats OriginBackfillStats) error {
+	value, err := json.Marshal(stats)
+	if err != nil {
+		return fmt.Errorf("origin backfill: marshal stats: %w", err)
+	}
+	if err := local.KVPut(originBackfillKVKey, value); err != nil {
+		return fmt.Errorf("origin backfill: kv put %s: %w", originBackfillKVKey, err)
+	}
+	return nil
 }
 
 // settleTwins is the twin rule applied to one table: every stale row whose stamp

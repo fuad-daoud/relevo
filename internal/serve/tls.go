@@ -30,20 +30,24 @@ const (
 )
 
 // SecretStore is the secret surface the TLS helpers read and write: the DB's
-// table.
+// table. Its methods bind the machine-local file beside DB rather than DB
+// itself, so every literal that names a shared handle still reads this
+// machine's certificate out of the local file after the split.
 type SecretStore struct {
 	DB *db.DB
 }
+
+func (s SecretStore) store() *db.DB { return s.DB.LocalOrSelf() }
 
 func (s SecretStore) SecretGet(name string) ([]byte, bool, error) {
 	if s.DB == nil {
 		return nil, false, nil
 	}
-	return s.DB.SecretGet(name)
+	return s.store().SecretGet(name)
 }
 
 func (s SecretStore) SecretPut(name string, value []byte, now time.Time) error {
-	return s.DB.Tx(func(t *db.Tx) error { return t.SecretPut(name, value, now) })
+	return s.store().Tx(func(t *db.Tx) error { return t.SecretPut(name, value, now) })
 }
 
 // FingerprintOf returns "sha256:" + lower-case hex of sha256(der).
@@ -153,7 +157,7 @@ func InitTLS(secrets SecretStore, hosts []string, now time.Time) (string, error)
 		return "", err
 	}
 	if err := secrets.SecretPut(tlsCertSecret, certPEM, now); err != nil {
-		_ = secrets.DB.Tx(func(t *db.Tx) error { return t.SecretDelete(tlsKeySecret) })
+		_ = secrets.store().Tx(func(t *db.Tx) error { return t.SecretDelete(tlsKeySecret) })
 		return "", err
 	}
 

@@ -377,7 +377,7 @@ func cmdUI(args []string) error {
 	// (P3b plan §4.4).
 	var prefsKV db.KV
 	if rt.DB != nil {
-		prefsKV = rt.DB
+		prefsKV = rt.DB.LocalOrSelf()
 	}
 
 	return ui.Run(ctx, rt, ui.Options{

@@ -264,6 +264,10 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 		return
 	}
 
+	// The release cache is this machine's last answer; the split put it in
+	// the local file.
+	mdb = mdb.LocalOrSelf()
+
 	cached, ok, err := release.Load(mdb)
 	if err != nil {
 		slog.Debug("release check: read cache", "err", err)

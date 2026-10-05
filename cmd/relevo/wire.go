@@ -38,15 +38,14 @@ func resolveHooksConfig(hooksMap map[string][][]string, log hooks.RunLog) (hooks
 	}, nil
 }
 
-// hooksRunLog is the machine database's hook run log: the kv row every hook
-// run and webhook failure is recorded in (P3b round 2 §4.4). A store whose
-// database cannot be opened gets a nil log, which records nothing.
-func hooksRunLog(st *store.Store) hooks.RunLog {
-	d, err := st.DB()
-	if err != nil {
+// hooksRunLog is the hook run log over d's machine-local file: the kv row every
+// hook run and webhook failure is recorded in. A nil log records nothing, so a
+// caller with no database open wires the nil it already gets from a nil handle.
+func hooksRunLog(d *db.DB) hooks.RunLog {
+	if d == nil {
 		return nil
 	}
-	return hooks.NewKVLog(db.TxKV{DB: d})
+	return hooks.NewKVLog(db.TxKV{DB: d.LocalOrSelf()})
 }
 
 // newHooksDispatcher wires the local hooks.d script dispatcher, and, when
@@ -319,7 +318,7 @@ const (
 // var so a test can make a held file's open fail with db.ErrLocked without a
 // real second process.
 var openReadOnlyDB = func(path string, o db.Options) (*db.DB, error) {
-	return db.OpenReadOnlyWith(path, o)
+	return db.OpenReadOnlySplit(path, o)
 }
 
 // loadConfigReadOnly reads config without creating, migrating or writing
@@ -457,10 +456,16 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		if err != nil {
 			return relevo.Runtime{}, err
 		}
-		gates = d
-		claims = &delivery.KVClaims{KV: db.TxKV{DB: d}}
-		waits = &delivery.KVWaitClaims{KV: db.TxKV{DB: d}}
-		runLog = hooksRunLog(st)
+		// Gates, latency, the claims and the run log are all this machine's own
+		// records -- a pid, a listen address, a row about a round that ran here
+		// -- so they bind the machine-local file. The binding happens once, here,
+		// rather than in each surface, so a surface added later cannot reach the
+		// shared file by accident.
+		local := d.LocalOrSelf()
+		gates = local
+		claims = &delivery.KVClaims{KV: db.TxKV{DB: local}}
+		waits = &delivery.KVWaitClaims{KV: db.TxKV{DB: local}}
+		runLog = hooksRunLog(d)
 	}
 
 	hooksCfg, err := resolveHooksConfig(L.Hooks, runLog)

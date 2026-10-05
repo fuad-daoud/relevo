@@ -406,7 +406,11 @@ func cmdDaemon(args []string) error {
 	if err != nil {
 		return err
 	}
-	hooksCfg, err := resolveHooksConfig(loaded.Hooks, hooksRunLog(rt.Store))
+	log, lerr := rt.Store.DB()
+	if lerr != nil {
+		log = nil
+	}
+	hooksCfg, err := resolveHooksConfig(loaded.Hooks, hooksRunLog(log))
 	if err != nil {
 		return err
 	}

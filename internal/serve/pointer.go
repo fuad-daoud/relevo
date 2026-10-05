@@ -22,13 +22,15 @@ type DaemonPointer struct {
 	StartedAt time.Time `json:"started_at"`
 }
 
-// WriteDaemonPointer records the running daemon in the serve.daemon row.
+// WriteDaemonPointer records the running daemon in the serve.daemon row. The
+// row names a pid, a state root and a listen address on this machine, so it is
+// written to -- and read from -- the machine-local file.
 func WriteDaemonPointer(d *db.DB, p DaemonPointer) error {
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
 		return fmt.Errorf("write daemon pointer: %w", err)
 	}
-	if err := d.KVPut(daemonKVKey, data); err != nil {
+	if err := d.LocalOrSelf().KVPut(daemonKVKey, data); err != nil {
 		return fmt.Errorf("write daemon pointer: %w", err)
 	}
 	return nil
@@ -39,7 +41,7 @@ func ReadDaemonPointer(d *db.DB) (p DaemonPointer, ok bool, err error) {
 	if d == nil {
 		return DaemonPointer{}, false, nil
 	}
-	data, ok, err := d.KVGet(daemonKVKey)
+	data, ok, err := d.LocalOrSelf().KVGet(daemonKVKey)
 	if err != nil {
 		return DaemonPointer{}, false, fmt.Errorf("read daemon pointer: %w", err)
 	}
@@ -57,7 +59,7 @@ func RemoveDaemonPointer(d *db.DB) error {
 	if d == nil {
 		return nil
 	}
-	return d.KVDelete(daemonKVKey)
+	return d.LocalOrSelf().KVDelete(daemonKVKey)
 }
 
 // Initialised reports whether root has any serve state marker: the clients kv

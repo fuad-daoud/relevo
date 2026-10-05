@@ -111,7 +111,7 @@ func (e *realEnv) LoadManifest() (map[string]string, error) {
 	if d == nil {
 		return map[string]string{}, nil
 	}
-	return harness.ReadManifest(d)
+	return harness.ReadManifest(d.LocalOrSelf())
 }
 
 func (e *realEnv) BinaryVersion(ctx context.Context, path string) (string, error) {
@@ -156,7 +156,7 @@ func (e *realEnv) ReleaseState() (string, string, bool, release.Kind) {
 	if err != nil || d == nil {
 		return e.self.Version, "", false, kind
 	}
-	cached, ok, err := release.Load(d)
+	cached, ok, err := release.Load(d.LocalOrSelf())
 	if err != nil {
 		return e.self.Version, "", false, kind
 	}

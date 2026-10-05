@@ -102,10 +102,13 @@ func (t *Tx) SetRepoConsent(ref Repo, c Consent, now time.Time) (string, error) 
 }
 
 // SessionConsent reads a session's own answer: ConsentUnset for a session that
-// has not answered, for one relevo has never seen, or for a session with no
+// has not answered, for one relever never seen, or for a session with no
 // row at all. The repository's answer is not consulted here.
+//
+// The row is this machine's: a session answered a prompt on this machine, and
+// the answer says nothing about a session of the same id elsewhere.
 func (d *DB) SessionConsent(kind, sessionID string) (Consent, error) {
-	return sessionConsent(context.Background(), d.sqlDB, kind, sessionID)
+	return sessionConsent(context.Background(), d.LocalOrSelf().sqlDB, kind, sessionID)
 }
 
 func sessionConsent(ctx context.Context, q queryer, kind, sessionID string) (Consent, error) {
@@ -132,6 +135,7 @@ func (d *DB) SetSessionConsent(kind, sessionID string, c Consent, now time.Time)
 	if err := c.Valid(); err != nil {
 		return err
 	}
+	d = d.LocalOrSelf()
 	var answer, at any
 	if c != ConsentUnset {
 		answer, at = string(c), formatTime(now)
@@ -161,9 +165,10 @@ func (d *DB) SetSessionConsent(kind, sessionID string, c Consent, now time.Time)
 
 // SessionTold reads the status token last delivered to a session. ok is false
 // when no baseline was ever written: a session from before this table existed,
-// or one whose baseline write did not happen.
+// or one whose baseline write did not happen. The baseline is this machine's
+// and lives with the consent beside it.
 func (d *DB) SessionTold(kind, sessionID string) (told string, ok bool, err error) {
-	return sessionTold(context.Background(), d.sqlDB, kind, sessionID)
+	return sessionTold(context.Background(), d.LocalOrSelf().sqlDB, kind, sessionID)
 }
 
 func sessionTold(ctx context.Context, q queryer, kind, sessionID string) (string, bool, error) {
@@ -186,6 +191,7 @@ func sessionTold(ctx context.Context, q queryer, kind, sessionID string) (string
 // creating the row when relevo has not seen the session. An empty told clears
 // the baseline, so the next read reports "never told".
 func (d *DB) SetSessionTold(kind, sessionID, told string, now time.Time) error {
+	d = d.LocalOrSelf()
 	var val, at any
 	if told != "" {
 		val, at = told, formatTime(now)
@@ -217,7 +223,7 @@ func (d *DB) SetSessionTold(kind, sessionID, told string, now time.Time) error {
 // one write, so reset returns the session to the repository's answer and the
 // next status read becomes a fresh baseline.
 func (d *DB) ClearSessionConsent(kind, sessionID string) error {
-	return d.Tx(func(t *Tx) error {
+	return d.LocalOrSelf().Tx(func(t *Tx) error {
 		if _, err := t.exec(
 			`UPDATE session_consent SET answer = NULL, answer_at = NULL, told = NULL, told_at = NULL WHERE harness_kind = ? AND session_id = ?`,
 			kind, sessionID); err != nil {
