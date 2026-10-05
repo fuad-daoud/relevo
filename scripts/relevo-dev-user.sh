@@ -335,7 +335,12 @@ cmd_destroy() {
 	plan loginctl disable-linger "$_user"
 	# -r removes the home with the account. This is the whole rollback: a
 	# sandbox's state, its clone and its credentials all live under that home.
-	plan userdel -r "$_user"
+	# userdel fails when the account never received mail, after removing it;
+	# only a surviving account is a real failure.
+	plan userdel -r "$_user" || true
+	if [ "$dry_run" -eq 0 ] && id "$_user" >/dev/null 2>&1; then
+		die "userdel failed and $_user still exists"
+	fi
 }
 
 cmd_list() {
