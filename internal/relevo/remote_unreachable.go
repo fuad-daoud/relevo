@@ -4,20 +4,19 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// unreachableHaltMarker is the phrase every unreachable-past-budget halt text
-// carries, and the whole of how one is recognised again later. The text is the
-// identity: a binding records which server was unreachable and for how long, and
-// nothing else about the episode, so a marker is all the clear path has to
-// match on. A dedicated store.Binding field would say the same thing with a
-// format bump and a migration for every existing row.
-const unreachableHaltMarker = "unreachable for"
+// The halt text is the reason a human reads, not the episode's identity. A
+// server's own view.Halt reaches b.Halt through haltBinding like every other
+// halt, and a builder's raw failure lines can quote any phrase -- including this
+// one -- so recognising an unreachable halt by its text made the server's halt
+// answer to a question only this file may answer, and cleared it on the next
+// view. store.Binding.RemoteHaltKind names the episode instead; the text is
+// built from the marker and nothing reads it back.
 
 // applyRemoteUnreachable is the unreachable arm of a failed fetch: stamp when the
 // outage began, report it as the status, and halt once an open round has been
@@ -45,6 +44,10 @@ func applyRemoteUnreachable(ctx context.Context, rt Runtime, tx *store.Tx, b sto
 
 	dur := now.Sub(b.RemoteUnreachableSince)
 	if roundOpen && dur > roundBudget(b)+unreachableGrace {
+		// The kind is stamped before the halt, not after it returns: haltAndSettle
+		// reads the binding it is handed, so a kind set on its result would never
+		// reach disk.
+		b.RemoteHaltKind = store.HaltKindUnreachable
 		return haltAndSettle(ctx, rt, tx, b, name+": "+unreachableHaltText(server, dur, b.Round))
 	}
 	return b, nil
@@ -58,21 +61,24 @@ func applyRemoteUnreachable(ctx context.Context, rt Runtime, tx *store.Tx, b sto
 // binding name; b.Halt keeps what this returns.
 func unreachableHaltText(server string, dur time.Duration, round int) string {
 	return fmt.Sprintf("%s %s %s; round %d may still be running there",
-		server, unreachableHaltMarker, dur.Truncate(time.Second), round)
+		server, store.UnreachableHaltMarker, dur.Truncate(time.Second), round)
 }
 
-// unreachableHalted reports whether b.Halt is the halt unreachableHaltText
-// writes, which is to say whether this binding is NEEDS YOU because the server
-// could not be reached.
+// unreachableHalted reports whether this binding is NEEDS YOU because the server
+// could not be reached, which is to say whether RemoteHaltKind names the
+// unreachable episode.
 //
-// Recognising the halt by its text is deliberate. Every other halt on a remote
-// binding -- a removed binding, a revoked key, a clock skewed past the auth
-// grace, the server's own view.Halt -- has a different reason and a different
-// owner, so the ones this must leave alone do not match. The builder and this
-// predicate share unreachableHaltMarker, so a wording change moves both at once
-// and the two cannot drift into disagreeing about which halts clear.
+// The field, not the text: a halt reaching this binding from the server carries
+// whatever reason the server sent, and a builder's raw failure lines can contain
+// this episode's marker by coincidence. Every other halt on a remote binding --
+// a removed binding, a revoked key, a clock skewed past the auth grace, the
+// server's own view.Halt -- names no kind at all, so each of them is left alone
+// here for the same reason and by the same test.
+//
+// The migration in store's decode is what keeps an episode recorded before the
+// field existed recognisable: an older record's halt text is read there, once.
 func unreachableHalted(b store.Binding) bool {
-	return strings.Contains(b.Halt, unreachableHaltMarker)
+	return b.RemoteHaltKind == store.HaltKindUnreachable
 }
 
 // clearUnreachableHalt drops the unreachable halt once the server answers again:
@@ -113,6 +119,10 @@ func clearUnreachableHalt(state remote.RoundState, b store.Binding) store.Bindin
 	b.Halt = ""
 	b.HaltAt = time.Time{}
 	b.HaltNotifiedRound = 0
+	// The kind goes with the text it named: a binding carrying it with no halt
+	// would answer unreachableHalted for a halt it no longer has, and the next
+	// unreachable arm would clear nothing while the field said otherwise.
+	b.RemoteHaltKind = ""
 	b.State = store.StateActive
 	return b
 }

@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -13,6 +14,29 @@ const (
 	ShapeWriter = "writer"
 	ShapeReader = "reader"
 )
+
+// HaltKindUnreachable names the episode that put a remote binding on NEEDS YOU
+// because its server could not be reached for longer than the round's budget
+// plus the grace.
+//
+// The kind is the episode's identity and the halt text is only the reason a
+// human reads, and the two are kept apart on purpose: a halt written by the
+// server or by a human may quote the same phrase, so text cannot say which
+// episodes an answering view is allowed to clear.
+const HaltKindUnreachable = "unreachable"
+
+// haltKindFormat is the format that records Binding.RemoteHaltKind. A record
+// written before it has no kind on disk and named its episode in the halt text
+// alone, so that text is read once, on load, to recover the kind it cannot
+// carry. Reading it there and nowhere else is what keeps a halt this binary did
+// not decide from being taken for one it did.
+const haltKindFormat = 16
+
+// UnreachableHaltMarker is the phrase an unreachable halt's text carries. It
+// names the sentence a binding records, not the episode behind it: the kind is
+// the episode, and this phrase is read only for a record written before
+// haltKindFormat, the one case where the kind is not on disk to be read.
+const UnreachableHaltMarker = "unreachable for"
 
 // RepoRef identifies the git repository a binding works in; nil means it could
 // not be determined and never fails the caller.
@@ -346,7 +370,15 @@ type Binding struct {
 	Serve *ServeFacts `json:"serve,omitempty"`
 
 	RemoteUnreachableSince time.Time `json:"remote_unreachable_since,omitempty"`
-	RemoteAbsorbFailures   int       `json:"remote_absorb_failures,omitempty"`
+	// RemoteHaltKind is HaltKindUnreachable while b.Halt is an unreachable
+	// halt, and empty for every halt of any other origin -- the server's own
+	// view.Halt, a 404, a revoked key, a local halt. That separation is the
+	// whole field: Halt is free text that reaches this binding from the server
+	// as well as from here, so matching on it takes a halt it did not write
+	// for one it did.
+	RemoteHaltKind string `json:"remote_halt_kind,omitempty"`
+
+	RemoteAbsorbFailures int `json:"remote_absorb_failures,omitempty"`
 
 	// RemoteBundleFailures counts the consecutive round-bundle fetches that
 	// failed. The apply half owns it -- the fetch half runs without the state
@@ -426,6 +458,20 @@ func (b *Binding) UnmarshalJSON(raw []byte) error {
 	// A record with no shape predates A5, when only writers could be bound.
 	if out.Shape == "" {
 		out.Shape = ShapeWriter
+	}
+	// A record written before haltKindFormat carries its remote halt episode in
+	// the halt text alone. It is the one place the text is read, and it runs on
+	// the load rather than the save so a binding never polls with the mismatch
+	// the text and the kind disagree about.
+	//
+	// Bounded by the format rather than by the key's absence: at this format a
+	// record with no kind is a binding that has no unreachable halt, and reading
+	// its text would find nothing anyway -- but only because this binary writes
+	// every unreachable halt with the marker, which is the property the marker
+	// test above stops depending on elsewhere. The format bound is what makes
+	// the migration stop mattering once every record is written at this one.
+	if out.Format < haltKindFormat && strings.Contains(out.Halt, UnreachableHaltMarker) {
+		out.RemoteHaltKind = HaltKindUnreachable
 	}
 	*b = out
 	return nil

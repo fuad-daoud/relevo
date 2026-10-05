@@ -5,7 +5,11 @@ import (
 	"fmt"
 )
 
-// BindingFormat is the format of the Binding JSON this binary writes. It is 15
+// BindingFormat is the format of the Binding JSON this binary writes. It is 16
+// because remote_halt_kind names the remote halt episode a binding is carrying,
+// where the halt text used to name it: the text reaches a binding from the
+// server as well as from here, so an older relevo reading it would take a halt
+// it did not write for one it did. It is 15
 // because owed_halt records a halt notification a round close could not write:
 // a build that knows 14 would load the binding and rewrite it without that
 // field, so the owed entry would be lost rather than retried. It is 14
@@ -28,9 +32,9 @@ import (
 // failure run, which restarts from zero. Stamping a field would lock that older
 // relevo out of loading the binding. Bump BindingFormat whenever Binding's JSON
 // shape changes in a way that must lock an older relevo out.
-const BindingFormat = 15
+const BindingFormat = 16
 
-// recordFormat is the format to write b at. Every record is format 15: the
+// recordFormat is the format to write b at. Every record is format 16: the
 // binary writes and migrates the out/ layout, which an older relevo cannot
 // serve.
 func recordFormat(b Binding) int {
