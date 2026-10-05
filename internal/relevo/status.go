@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/consult"
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
@@ -21,14 +22,24 @@ import (
 // live reports whether that route can push right now. A pull route is never
 // live: the daemon cannot see whether the background wait's `relevo wait` is
 // running, which is exactly why pull is a route and not a fault.
-func mastermindRoute(rt Runtime, b store.Binding) (route string, live bool) {
-	if rt.Channels != nil && b.MasterMindID != "" {
-		now := time.Now()
-		if rt.Now != nil {
-			now = rt.Now()
-		}
-		if c, err := rt.Channels.Live(b.MasterMindID, now); err == nil && c != nil {
-			return "channel", true
+//
+// claims is the report's one bulk load when the store offers one, keyed by
+// mastermind id; nil means no bulk surface, so the claim is read here. Either
+// way every failure reads as not live.
+func mastermindRoute(rt Runtime, b store.Binding, claims map[string]*delivery.Claim) (route string, live bool) {
+	if b.MasterMindID != "" {
+		if claims != nil {
+			if c := claims[b.MasterMindID]; c != nil {
+				return "channel", true
+			}
+		} else if rt.Channels != nil {
+			now := time.Now()
+			if rt.Now != nil {
+				now = rt.Now()
+			}
+			if c, err := rt.Channels.Live(b.MasterMindID, now); err == nil && c != nil {
+				return "channel", true
+			}
 		}
 	}
 	if b.MasterMind.Kind != "" {
@@ -46,7 +57,13 @@ func mastermindRoute(rt Runtime, b store.Binding) (route string, live bool) {
 // row, a read error. That is the deliberate direction -- a false positive would
 // hold back an escalation on a payload nobody is collecting, and a false
 // negative only costs the grace window before the row escalates on its own.
-func waitLive(rt Runtime, name string) bool {
+//
+// waits is the report's one bulk load when the store offers one, keyed by
+// binding name; nil means no bulk surface, so the registration is read here.
+func waitLive(rt Runtime, name string, waits map[string]*delivery.WaitClaim) bool {
+	if waits != nil {
+		return waits[name] != nil
+	}
 	if rt.Waits == nil {
 		return false
 	}
@@ -124,6 +141,12 @@ func StatusRow(ctx context.Context, rt Runtime, name string) (view.BindingStatus
 	return statusRow(ctx, rt, b, statusConfig{detail: true})
 }
 
+// statusRow is one binding's row with no report-wide bulk read: the single-row
+// path, which resolves each fact with its own store call.
+func statusRow(ctx context.Context, rt Runtime, b store.Binding, cfg statusConfig) (view.BindingStatus, error) {
+	return statusRowWith(ctx, rt, b, cfg, nil)
+}
+
 // buildReport is buildReportWith and the detail figures on, which is what every
 // caller outside Status wants: the chains reader and the server-chain view both
 // render rows that name a diff, a usage figure and a log tail.
@@ -132,9 +155,10 @@ func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding) (vie
 }
 
 func buildReportWith(ctx context.Context, rt Runtime, bindings []store.Binding, cfg statusConfig) (view.Report, error) {
+	loads := loadRows(rt, bindings)
 	rows := make([]view.BindingStatus, 0, len(bindings))
 	for _, b := range bindings {
-		row, err := statusRow(ctx, rt, b, cfg)
+		row, err := statusRowWith(ctx, rt, b, cfg, loads)
 		if err != nil {
 			return view.Report{}, err
 		}
@@ -148,8 +172,11 @@ func buildReportWith(ctx context.Context, rt Runtime, bindings []store.Binding, 
 	rows = view.SortRows(rows, true)
 
 	rep := view.Report{Bindings: rows}
-	rep.Gated = availability.Gates(AvailabilityDeps(rt))
-	rep.Unused = UnusedProviderGates(rt)
+	// The ledger is one kv row projected twice -- the candidate gates and the
+	// unused provider gates -- so it is read and decoded once for the report.
+	l := loadLedgerOnce(rt)
+	rep.Gated = availability.GatesFrom(AvailabilityDeps(rt), l)
+	rep.Unused = UnusedProviderGatesFrom(rt, l)
 	return rep, nil
 }
 
@@ -171,7 +198,10 @@ func bindingShape(b store.Binding) string {
 // cfg.detail gates the three figures no fleet pixel reads: Live, LiveUsage and
 // the headless log tail. With them off nothing calls git, the usage reader or
 // the log at all -- the gate is on the call, not on the value.
-func statusRow(ctx context.Context, rt Runtime, b store.Binding, cfg statusConfig) (view.BindingStatus, error) {
+//
+// loads is the report's shared bulk read. It is nil on the single-row path,
+// which reads each fact directly.
+func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusConfig, loads *rowLoads) (view.BindingStatus, error) {
 	row := view.BindingStatus{
 		Name: b.Name, CWD: b.CWD, Round: b.Round,
 		State: string(b.State), Display: view.DisplayState(b.State),
@@ -208,17 +238,13 @@ func statusRow(ctx context.Context, rt Runtime, b store.Binding, cfg statusConfi
 		}
 	}
 
-	row.MasterMindRoute, row.MasterMindRouteLive = mastermindRoute(rt, b)
-	row.WaitLive = waitLive(rt, b.Name)
+	row.MasterMindRoute, row.MasterMindRouteLive = mastermindRoute(rt, b, loads.claimMap())
+	row.WaitLive = waitLive(rt, b.Name, loads.waitMap())
 
 	// MasterMindName is the record's name, so `status --json` and a status row
 	// can say "mastermind architect-1" without a second lookup by the reader.
 	// A Runtime with no registry (tests) or a forgotten record leaves it "".
-	if b.MasterMindID != "" && rt.MasterMinds != nil {
-		if rec, err := rt.MasterMinds.Get(b.MasterMindID); err == nil {
-			row.MasterMindName = rec.Name
-		}
-	}
+	row.MasterMindName = loads.masterMindName(rt, b)
 
 	// A binding landed since its last send says so until the branch
 	// moves again.
