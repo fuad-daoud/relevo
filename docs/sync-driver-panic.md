@@ -125,6 +125,58 @@ of every driver call in the seed path — see
 `TestEveryDriverCallInTheSeedPathIsBounded` in `internal/sync/enable_test.go`.
 Dropping either threshold back to the driver's unbounded default fails them.
 
+## Why per-connection capture wedged a lived-in machine
+
+Asking the capture pragma on every connection of every writable pool over a
+member file was reverted, because a build doing it took a healthy machine down
+within minutes: new connections piled up inside the connect path, reads and
+ingest failed `busy`, and a revert to the pre-capture binary restored service.
+
+The trigger is that the pragma is a **write**.
+`PRAGMA capture_data_changes_conn('full,turso_cdc')` installs the connection's
+capture state and creates the capture tables if they are absent, so it queues
+for the database's single write slot. Put on a path every connection takes, it
+turns connection setup into a write transaction competing with whatever the
+daemon is already writing. While that slot is not free, a connect waits out the
+whole `busy_timeout` and then fails `busy` — and the failure names the pragma,
+not the read that asked for the connection.
+
+Evidence is in `internal/db/capture_pragma_test.go`, over scratch files only:
+
+- `TestCapturePragmaIsAWrite` holds a write transaction open on one connection
+  and asks a second connection for a configuring pragma and then for the
+  capture pragma. The first returns immediately; the second waits the full
+  five seconds and fails `database is busy: database is locked`.
+- `TestCapturePragmaOnThePoolOpenPathFailsReadsUnderWriteLockSaturation` runs one
+  scenario twelve ways, crossing the pragma on and off the open path, whether the
+  capture tables are already present, and three writer shapes. With the pragma
+  off, every read is immediate whatever the writer is doing. With it on and the
+  write slot held, every read spends the whole busy timeout and fails `busy`. The
+  capture tables being present or absent changes nothing, so CDC state left by an
+  earlier open is not the trigger.
+- `TestCapturePragmaBlockTracksTheWriteSlotNotTheWal` builds the log a lived-in
+  file has and a fixture does not — a reader pinning its snapshot,
+  `wal_autocheckpoint = 1`, and a 1.9MB log that cannot be backfilled — and asks
+  for the pragma over it twice. Free write slot: immediate. Held write slot: the
+  full busy timeout, then `busy`. The block tracks the write slot, not the log,
+  so the un-backfillable frames left by an earlier checkpoint failure are not the
+  trigger either.
+
+What made it a wedge rather than a slowdown is the pool around it. `openPool`
+sets no `SetMaxOpenConns`, so nothing bounds how many connections can be opening
+at once, and the reverted revision dropped idle retention on a member's pool,
+which spends a fresh connect — and so a fresh capture pragma — on every read
+instead of once per connection. A read that is fast on its own therefore costs a
+write transaction's worth of contention, and the contention it creates is paid
+back by the tick writer, which then fails `busy` in turn. That is the loop the
+field report saw: reads failing `busy` while writes that were already succeeding
+stop succeeding.
+
+Two consequences for any future attempt at this. A pragma that writes does not
+belong on a path every connection takes, however cheap it looks on a quiet file.
+And a pool that opens connections in a hot path wants a bound on how many can be
+opening, whatever it opens them for.
+
 ## What is still unknown
 
 - **The exact trigger.** Whether the failing case is the 211MB download, the
