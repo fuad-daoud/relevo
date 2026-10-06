@@ -125,6 +125,14 @@ cmd_create() {
 	done
 
 	_sb=$(sandbox_dir "$_name")
+	# create reads the host config to seed the sandbox, so it must run from a
+	# normal shell: inside a sandbox shell XDG_STATE_HOME already points at a
+	# sandbox, and the seed would copy the sandbox into itself.
+	case "${XDG_STATE_HOME:-}:${XDG_CONFIG_HOME:-}" in
+	*relevo-sandboxes/*)
+		die "XDG_STATE_HOME or XDG_CONFIG_HOME points inside a sandbox; run create from a normal shell, not a sandbox shell"
+		;;
+	esac
 	if [ "$dry_run" -eq 1 ]; then
 		plan test -e "$_sb"
 	elif [ -e "$_sb" ]; then
@@ -207,12 +215,47 @@ cmd_create() {
 		# sandbox without seeded candidates or with a failing doctor is still
 		# a working sandbox, and the warning names the manual repair.
 		_sbenv="XDG_STATE_HOME=$_sb/state XDG_CONFIG_HOME=$_sb/config XDG_DATA_HOME=$_sb/data XDG_CACHE_HOME=$_sb/cache CLAUDE_CONFIG_DIR=$_sb/claude CODEX_HOME=$_sb/codex"
-		# The env assignments travel as arguments to env, so --dry-run prints
-		# the exact environment the real run executes under.
-		# shellcheck disable=SC2086 # the split is the point: _sbenv is a list of
-		# VAR=value words for env, so the sandboxed binary runs contained.
-		plan env $_sbenv "$_sb/bin/relevo" config init --no-agents ||
-			note "the config seed failed; run 'relevo config init --no-agents' inside the sandbox"
+		# The env assignments travel as arguments to env (the split below is
+		# deliberate), so --dry-run prints the exact environment the real run
+		# executes under.
+		# Seed the sandbox config from the host's, section by section: a whole
+		# export cannot be imported as-is (export carries a "sync" section
+		# import refuses), so every set section travels by get/set and anything
+		# unset is skipped. The host side runs through PATH, the sandbox side
+		# through the absolute binary path, so neither lookup can reach the
+		# wrong relevo. Secrets never travel this way -- export omits them --
+		# so remote placements need `config secret set` inside afterwards, and
+		# gates start clean.
+		#
+		# The database check comes first so a host with no database never runs
+		# a get: even a read-only get mints a state tree (database, locks, the
+		# turso library) as a side effect, which would put fresh files outside
+		# the sandbox on a machine that never configured relevo. The path rule
+		# mirrors store.DefaultRoot.
+		_hostdb="${XDG_STATE_HOME:-$HOME/.local/state}/relevo/relevo.db"
+		_seeded=0
+		if [ ! -f "$_hostdb" ]; then
+			note "no host database at $_hostdb, so no config to copy; the sandbox starts unseeded"
+		else
+			for _s in candidates policy actors agents servers; do
+				if _val=$(relevo config get "$_s" 2>/dev/null); then
+					# shellcheck disable=SC2086 # _sbenv is a list of VAR=value
+					# words for env, as above.
+					if plan env $_sbenv "$_sb/bin/relevo" config set "$_s" "$_val"; then
+						_seeded=1
+					else
+						note "seeding $_s failed; set it by hand inside the sandbox"
+					fi
+				else
+					note "no host $_s to copy; skipping"
+				fi
+			done
+			if [ "$_seeded" -eq 0 ]; then
+				# shellcheck disable=SC2086 # same list as above.
+				plan env $_sbenv "$_sb/bin/relevo" config init --no-agents ||
+					note "the config seed failed; run 'relevo config init --no-agents' inside the sandbox"
+			fi
+		fi
 		# shellcheck disable=SC2086 # same list as above.
 		plan env $_sbenv "$_sb/bin/relevo" doctor ||
 			note "doctor reported failures above; a fresh sandbox starts every harness logged out"

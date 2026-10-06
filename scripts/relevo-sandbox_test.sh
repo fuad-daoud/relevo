@@ -19,11 +19,12 @@ trap 'rm -rf "$root" "$home" 2>/dev/null || :' EXIT
 
 fail=0
 
-# sb runs the script with the temp root and a HOME of its own, so a real
-# ~/.claude/.credentials.json on the developer's machine is never copied and
-# never asserted about. It captures output and status.
+# sb runs the script with a temp root and temp XDG_* and HOME, so every read
+# lands in a temp dir: the developer's real ~/.claude is never copied, the
+# real machine database is never read, and no assertion depends on the machine
+# running the suite. It captures output and status.
 sb() {
-	out=$(RELEVO_SANDBOX_ROOT="$root" HOME="$home" "$@" 2>&1) && got=0 || got=$?
+	out=$(RELEVO_SANDBOX_ROOT="$root" HOME="$home" XDG_STATE_HOME="$root/xdg-state" XDG_CONFIG_HOME="$root/xdg-config" XDG_DATA_HOME="$root/xdg-data" "$@" 2>&1) && got=0 || got=$?
 }
 
 
@@ -273,10 +274,12 @@ carries 'list reports the creation time the marker records' "$created"
 absent 'list does not name the markerless directory' 'plain'
 
 # --dry-run writes nothing: a plan that created the sandbox would make the
-# refusals above pass for the wrong reason.
+# refusals above pass for the wrong reason. The XDG_* overrides keep the
+# host-side reads hermetic: without them the seed would read the machine
+# running the suite instead of nothing.
 rm -rf "$root/dry"
 before=$(find "$root" -mindepth 1 -maxdepth 1 | sort | tr '\n' ' ')
-RELEVO_SANDBOX_ROOT="$root" HOME="$home" sh "$script" create dry --dry-run >/dev/null
+RELEVO_SANDBOX_ROOT="$root" HOME="$home" XDG_STATE_HOME="$root/xdg-state" XDG_CONFIG_HOME="$root/xdg-config" XDG_DATA_HOME="$root/xdg-data" sh "$script" create dry --dry-run >/dev/null
 after=$(find "$root" -mindepth 1 -maxdepth 1 | sort | tr '\n' ' ')
 if [ "$before" != "$after" ]; then
 	echo "FAIL: create --dry-run changed the root from [$before] to [$after]"
@@ -286,9 +289,11 @@ if [ -d "$root/dry" ]; then
 	echo "FAIL: create --dry-run made $root/dry"
 	fail=1
 fi
-# The plan still names every action a real create performs.
-plan_out=$(RELEVO_SANDBOX_ROOT="$root" HOME="$home" sh "$script" create dry --dry-run 2>&1)
-for want in "$root/dry/state" 'chmod 0700' "$root/dry/env.sh" "$root/dry/sandbox" 'config init --no-agents' 'bin/relevo doctor'; do
+# The plan still names every action a real create performs. With no host
+# database there is nothing to copy, so the plan says so and the seed steps
+# stay out of it.
+plan_out=$(RELEVO_SANDBOX_ROOT="$root" HOME="$home" XDG_STATE_HOME="$root/xdg-state" XDG_CONFIG_HOME="$root/xdg-config" XDG_DATA_HOME="$root/xdg-data" sh "$script" create dry --dry-run 2>&1)
+for want in "$root/dry/state" 'chmod 0700' "$root/dry/env.sh" "$root/dry/sandbox" 'no host database' 'bin/relevo doctor'; do
 	if ! printf '%s' "$plan_out" | grep -qF -- "$want"; then
 		echo "FAIL: the create plan names no \"$want\": $plan_out"
 		fail=1
@@ -309,6 +314,65 @@ fi
 # skips both and says so.
 sb "$script" create skipsb "$nb"
 carries 'a --no-build create skips the seed and the doctor' 'no config seed and no doctor run'
+
+# A create from inside a sandbox shell is refused: the host-side reads would
+# resolve into that sandbox, so the seed would copy the sandbox into itself.
+nest_out=$(RELEVO_SANDBOX_ROOT="$root" HOME="$home" XDG_STATE_HOME="$root/relevo-sandboxes/nested/state" sh "$script" create nested --dry-run 2>&1) && nest_got=0 || nest_got=$?
+if [ "$nest_got" -eq 0 ]; then
+	echo "FAIL: create from a sandbox shell succeeds (exit 0): $nest_out"
+	fail=1
+fi
+if ! printf '%s' "$nest_out" | grep -qF 'not a sandbox shell'; then
+	echo "FAIL: the nested-shell refusal names nothing useful: $nest_out"
+	fail=1
+fi
+
+# A stub host relevo answering one section proves the copy path: the value it
+# returns must reach the sandbox-side set verbatim, the other sections print
+# skip notes, and a seeded sandbox skips the init fallback. The empty database
+# file stands in for a host database whose sections are all unset: reads fail
+# against it, so the loop is exercised without a real machine database.
+mkdir -p "$root/stubbin" "$root/xdg-state/relevo"
+cat > "$root/stubbin/relevo" <<'EOF'
+#!/bin/sh
+# stub host relevo for the seed loop: answers one section, accepts every set
+# (the sandbox-side binary is exercised by the dry-run plan, not executed).
+if [ "$1 $2" = "config get" ]; then
+	case $3 in
+	candidates) printf '[{"stub":1}]' ;;
+	servers) printf '{"s":2}' ;;
+	*) exit 1 ;;
+	esac
+elif [ "$1 $2" = "config set" ]; then
+	exit 0
+else
+	exit 1
+fi
+EOF
+chmod +x "$root/stubbin/relevo"
+: > "$root/xdg-state/relevo/relevo.db"
+stub_out=$(RELEVO_SANDBOX_ROOT="$root" HOME="$home" XDG_STATE_HOME="$root/xdg-state" XDG_CONFIG_HOME="$root/xdg-config" XDG_DATA_HOME="$root/xdg-data" PATH="$root/stubbin:$PATH" sh "$script" create stubbed --dry-run 2>&1)
+if ! printf '%s' "$stub_out" | grep -qF 'config set candidates [{"stub":1}]'; then
+	echo "FAIL: the seed does not carry the host value verbatim: $stub_out"
+	fail=1
+fi
+if ! printf '%s' "$stub_out" | grep -qF 'config set servers {"s":2}'; then
+	echo "FAIL: the seed drops the servers section: $stub_out"
+	fail=1
+fi
+if ! printf '%s' "$stub_out" | grep -qF 'no host policy to copy; skipping'; then
+	echo "FAIL: unset sections print no skip note: $stub_out"
+	fail=1
+fi
+if printf '%s' "$stub_out" | grep -qF 'config init --no-agents'; then
+	echo "FAIL: a seeded sandbox still plans the init fallback: $stub_out"
+	fail=1
+fi
+
+# A host database with no set sections falls back to the starter: the empty
+# file reads as unset for every section, so the init line returns.
+sb "$script" create emptydb --dry-run
+carries 'an empty host database plans the init fallback' 'config init --no-agents'
 
 # A non-absolute RELEVO_SANDBOX_ROOT is refused: every safety check below
 # compares a path against the root as a prefix, and a relative root makes that

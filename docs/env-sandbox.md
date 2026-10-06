@@ -23,9 +23,13 @@ toolchain to hand.
 
 `create` also finishes the harness setup: it copies the claude login, config
 and agent definitions plus the codex login and config (never session data),
-seeds candidates with `config init --no-agents` through the sandbox binary,
-and runs `doctor` once. Both steps tolerate failure with a warning and the
-manual repair; `--no-build` skips them along with the build.
+copies your tuned candidates, policy, actors, agents and servers section by
+section with `config get`/`config set`, and runs `doctor` once. A section you
+never set is skipped; a host with no database falls back to `config init
+--no-agents`. Secrets never travel (export omits them), so remote placements
+need `config secret set` inside afterwards, and gates start clean. Steps that
+fail warn with the manual repair instead of failing the create; `--no-build`
+skips seed and check along with the build.
 
 Inside the shell, everything resolves under
 `~/.local/share/relevo-sandboxes/demo/`:
@@ -92,16 +96,22 @@ again, or log in inside the sandbox, when a sandboxed run starts failing
 authentication. An expired host login fails everywhere at once -- that is never
 a sandbox problem, and re-login fixes both sides.
 
-opencode is the other direction. A fresh `XDG_CONFIG_HOME` starts opencode
-logged out, because that is where its own credential lives, and there is no
-opencode per-process home variable to redirect (only claude and codex have one).
-So inside a fresh sandbox, log opencode in once:
+opencode is the other direction. A second opencode service cannot start while
+yours runs: opencode pins its managed port, so the sandbox instance retries
+your port and never binds. Attach the sandbox to your running service instead,
+by copying its address and your login into the sandbox (same user, re-copyable):
 
 ```
-opencode
-# then, inside the sandbox:
-relevo doctor
+mkdir -p <sandbox>/state/opencode <sandbox>/data/opencode
+cp ~/.local/state/opencode/service.json <sandbox>/state/opencode/service.json
+cp ~/.local/share/opencode/auth.json <sandbox>/data/opencode/auth.json
 ```
+
+Sessions then land in your own opencode database -- shared, like agy -- while
+everything relevo-side stays isolated. If your service ever restarts, its
+password rotates, so copy `service.json` again. A first `opencode auth list`
+inside a fresh sandbox can time out while it settles; retry once before
+debugging further.
 
 `relevo doctor` is the check to run after any sandbox setup: it reports which
 harnesses are installed, which are logged in and where each resolves.
