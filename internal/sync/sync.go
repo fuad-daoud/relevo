@@ -26,6 +26,11 @@ const (
 	KeyBacklog   = "sync.backlog"
 	KeyLastTick  = "sync.last_tick"
 	KeyAttention = "sync.attention"
+	// KeySeeding marks the window in which an enable has written the mark and
+	// has not yet finished its first round. It is the only thing that tells a
+	// machine whose enable died half way through from a machine that is syncing,
+	// because the mark is written before the first push and cannot say which.
+	KeySeeding = "sync.seeding"
 )
 
 // LocalHandle is the machine-local file beside d, or an error on a handle

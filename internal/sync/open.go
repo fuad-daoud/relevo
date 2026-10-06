@@ -98,7 +98,52 @@ type OpenConfig struct {
 	// It is false only where the seed matrix already decided the first call is a
 	// push, and every such decision pulls explicitly afterwards.
 	BootstrapIfEmpty bool
+	// PullBytesThreshold is the floor in bytes one of the open's pull requests
+	// carries. Zero is the driver's own default: the whole first transfer in a
+	// single round trip. The seed path sets it because the first transfer of a
+	// seed is the largest this tree ever asks for, and a driver call that
+	// carries all of it at once is the shape whose failure cannot be caught from
+	// here -- see OpenRemote for what that failure is.
+	PullBytesThreshold int
+	// PushOperationsThreshold is the number of local operations one of the
+	// open's push requests carries. Zero is the driver's own default: the entire
+	// change set in one batch, split only on transaction boundaries once the
+	// batch has grown this large.
+	PushOperationsThreshold int
 }
+
+// The bounds the seed path puts on one driver call. They are the driver's own
+// knobs, named here so the seed decision is the one place that sets them and a
+// later edit cannot leave one of them at the default by accident.
+//
+// The values are deliberately modest: a remote holding a freshly imported seed
+// is tens or hundreds of megabytes, and a call that carries all of it at once is
+// the one whose failure aborts the process rather than returning an error (see
+// OpenRemote). Neither bound is a claim about where the driver breaks -- that is
+// not observable from this side of the C ABI -- so they are a bound on the work
+// one call may be asked to do, not a reproduction of a failure.
+const (
+	// SeedPullBytes is the floor in bytes for one pull request on the seed path.
+	SeedPullBytes = 4 << 20
+	// SeedPushOperations is how many local operations one push request carries
+	// on the seed path.
+	SeedPushOperations = 4096
+)
+
+// DriverVersion is the sync driver this tree is built against, named so a test
+// can pin it and a reader can tell which behaviour a report is about.
+//
+// It is deliberately the version that is in go.mod, and deliberately not moved
+// past it. The driver can abort the whole process from inside its WAL: a frame
+// lookup asked for a position outside the live frame range is answered by a
+// process-killing assertion rather than an error, so no Go recover can catch it
+// and a first pull of a large seed is the call that triggers it. Upstream
+// replaced that assertion with a returned error, but on a branch that has not
+// shipped in a release, so no published version carries it. Until one does, this
+// constant stays as it is and the seed path bounds how much one driver call is
+// asked to carry. docs/sync-driver-panic.md holds the evidence and the shape
+// that is still unknown.
+const DriverVersion = "turso.tech/database/tursogo v0.8.1"
 
 // Opener builds the handle one open config describes. It is a function rather
 // than an interface because there is exactly one thing to do with it -- hand it

@@ -210,6 +210,13 @@ type Enabler struct {
 	// SeedCopy writes the copy the documented upload path takes. Nil means the
 	// existing-history case has nothing to hand that path and refuses for it.
 	SeedCopy func(path string) error
+	// SeedExists reports whether the seed copy is already on disk. It is what
+	// makes a second seed demand idempotent: a refusal that already wrote the copy
+	// leaves it there, so an enable that runs again finds it and names the same
+	// file rather than failing on a path that is not empty.
+	//
+	// Nil reports false, which is the driver's own behaviour: the copy is written.
+	SeedExists func(string) (bool, error)
 	// SeedPath is where that copy is written.
 	SeedPath string
 	// Open builds the handle the decision asked for. Nil refuses.
@@ -258,7 +265,13 @@ func (e *Enabler) Enable(ctx context.Context) (EnableResult, error) {
 		return EnableResult{}, err
 	}
 	if state.Enabled {
-		return EnableResult{}, ErrAlreadyEnabled
+		seeding, err := ReadSeeding(e.Local)
+		if err != nil {
+			return EnableResult{}, err
+		}
+		if !seeding {
+			return EnableResult{}, ErrAlreadyEnabled
+		}
 	}
 
 	token, _, err := e.Intake.Resolve()
@@ -266,7 +279,7 @@ func (e *Enabler) Enable(ctx context.Context) (EnableResult, error) {
 		return EnableResult{}, err
 	}
 
-	settings, err := e.resolveRemote()
+	settings, err := e.resolveRemote(state.Enabled)
 	if err != nil {
 		return EnableResult{}, err
 	}
@@ -293,17 +306,12 @@ func (e *Enabler) Enable(ctx context.Context) (EnableResult, error) {
 	})
 
 	if decision.NeedsUpload {
-		if e.SeedCopy == nil {
-			return EnableResult{Case: decision.Case}, ErrSeedUploadRequired
-		}
-		if err := e.SeedCopy(e.SeedPath); err != nil {
-			return EnableResult{Case: decision.Case}, fmt.Errorf("sync: enable: seed copy: %w", err)
-		}
-		return EnableResult{Case: decision.Case, Seed: e.SeedPath}, fmt.Errorf(
-			"%w; upload %s with `turso db import %s`, then re-run this verb with --seed-uploaded",
-			ErrSeedUploadRequired, e.SeedPath, e.SeedPath)
+		return EnableResult{Case: decision.Case, Seed: e.SeedPath}, e.demandSeedUpload()
 	}
 
+	if err := MarkSeeding(e.Local, e.now()); err != nil {
+		return EnableResult{Case: decision.Case}, err
+	}
 	if err := SetToken(e.Local, token, e.now()); err != nil {
 		return EnableResult{Case: decision.Case}, err
 	}
@@ -313,10 +321,16 @@ func (e *Enabler) Enable(ctx context.Context) (EnableResult, error) {
 
 	client, err := e.openClient(ctx, decision, settings, token)
 	if err != nil {
+		// The window stays open: the mark is on and no round ever ran, which is
+		// the state this marker exists to describe. The next enable re-runs it.
 		return EnableResult{Case: decision.Case, RemoteURL: settings.RemoteURL}, err
 	}
 	out := EnableResult{Case: decision.Case, RemoteURL: settings.RemoteURL}
 	out.Applied = e.runSeed(ctx, client, decision)
+	// The round ran, so the window closes. A round that ran and failed to move
+	// anything is still a round: the machine is on, its seed decision was made,
+	// and the driver is the thing to report against on the next tick.
+	ClearSeeding(e.Local)
 	return out, nil
 }
 
@@ -330,11 +344,21 @@ func (e *Enabler) Enable(ctx context.Context) (EnableResult, error) {
 // same kind of step as the token: the mark is what makes the machine sync, and
 // nothing before it does.
 //
-// A --url that contradicts the stored remote refuses rather than overwriting.
-// Silently repointing a machine at a second remote would move its rows to a
-// database the user did not name, and the refusal names both so the reader can
-// see which is which.
-func (e *Enabler) resolveRemote() (Settings, error) {
+// A --url that contradicts the stored remote refuses rather than overwriting,
+// but only while this machine is on. Silently repointing a machine that is
+// syncing at a second remote would move its rows to a database the user did not
+// name, and the refusal names both so the reader can see which is which.
+//
+// A machine that is off is a different case, and it is the one the seed detour
+// strands people in. The documented upload creates a *new* cloud database rather
+// than filling the one --url names, so the remote to sync with changes and the
+// section still holds the old one. There is no sequence of verbs that reaches the
+// new remote while the contradiction refusal stands: disable leaves the stored
+// remote in place by design, so the next enable refuses, and the reader is left
+// with a machine that cannot be pointed anywhere. An off machine has no push in
+// flight and no handle open, so a --url naming a different remote is not a silent
+// repoint -- it is the enable being told where to go, which is what the flag is.
+func (e *Enabler) resolveRemote(enabled bool) (Settings, error) {
 	settings, err := ReadSettings(e.Local)
 	if err != nil {
 		return Settings{}, err
@@ -347,17 +371,25 @@ func (e *Enabler) resolveRemote() (Settings, error) {
 		return settings, nil
 	case !validRemoteURL(flagged):
 		return Settings{}, fmt.Errorf("sync: --url is not a remote URL: %w", db.ErrInvalid)
+	case settings.RemoteURL == flagged:
+		return settings, nil
 	case settings.RemoteURL == "":
 		settings.RemoteURL = flagged
 		if err := PutSettings(e.Local, settings, e.now()); err != nil {
 			return Settings{}, err
 		}
 		return settings, nil
-	case settings.RemoteURL == flagged:
-		return settings, nil
-	default:
+	case enabled:
 		return Settings{}, fmt.Errorf("%w: the %s section holds %q, --url named %q",
 			ErrRemoteConflict, SectionSettings, settings.RemoteURL, flagged)
+	default:
+		// This machine is off and the flag is repointing it. One write, and not the
+		// case the refusal above is about.
+		settings.RemoteURL = flagged
+		if err := PutSettings(e.Local, settings, e.now()); err != nil {
+			return Settings{}, err
+		}
+		return settings, nil
 	}
 }
 
@@ -400,6 +432,15 @@ func (e *Enabler) openClient(ctx context.Context, decision SeedDecision, setting
 		RemoteURL:        settings.RemoteURL,
 		Namespace:        settings.Namespace,
 		AuthToken:        token,
+		// The enable is the only open that moves a whole database, so it is the
+		// only one that bounds a single driver call. The first push after this
+		// open carries this machine's entire unpushed change set and the first
+		// pull can carry the remote's entire state, and a driver call asked to do
+		// all of that at once is the shape whose failure this side cannot catch.
+		// See DriverVersion for what that failure is and why the version is not
+		// moved instead.
+		PullBytesThreshold:      SeedPullBytes,
+		PushOperationsThreshold: SeedPushOperations,
 	})
 }
 

@@ -57,6 +57,12 @@ func newRoleFixture(t *testing.T) *roleFixture {
 	if err := relevosync.SetToken(local, []byte(verbFixtureToken), time.Unix(0, 0).UTC()); err != nil {
 		t.Fatalf("SetToken: %v", err)
 	}
+	// The live file is marked as a member, which is the state a final push runs
+	// in: the turn-off only opens a handle for a file the driver has joined,
+	// because an unjoined file has nothing a push could carry. A fake opener never
+	// joins anything, so the tables a real open would have written are written
+	// here.
+	markVerbSyncMember(t, path)
 
 	f := &roleFixture{shared: shared, local: local}
 	f.runner = &VerbRunner{
@@ -74,6 +80,24 @@ func newRoleFixture(t *testing.T) *roleFixture {
 		},
 	}
 	return f
+}
+
+// markVerbSyncMember writes the marker tables a real driver open leaves in a file
+// it joined, so a fixture can be in the state a post-enable machine is in.
+//
+// The names are the ones the sync package reads: membership is decided by the
+// presence of one of them, so writing any of them is what makes the file a member.
+func markVerbSyncMember(t *testing.T, path string) {
+	t.Helper()
+
+	raw, err := db.OpenRaw(path)
+	if err != nil {
+		t.Fatalf("OpenRaw: %v", err)
+	}
+	defer func() { _ = raw.Close() }()
+	if _, err := raw.Exec(`CREATE TABLE IF NOT EXISTS turso_cdc (change_id INTEGER PRIMARY KEY AUTOINCREMENT)`); err != nil {
+		t.Fatalf("write the sync marker table: %v", err)
+	}
 }
 
 // TestTheProbeOpenArrivesCarryingScratch pins the emptiness probe's role.
@@ -111,6 +135,130 @@ func TestTheProbeOpenArrivesCarryingScratch(t *testing.T) {
 	}
 	if probe.Path == f.runner.Path {
 		t.Errorf("the probe's open named the live file %s", probe.Path)
+	}
+}
+
+// TestTheTurnOffReachesTheUserWithNothingOpen pins the wedged machine's way out,
+// at the layer where it was stuck.
+//
+// A driver that aborts the process inside its first pull leaves the daemon gone,
+// the mark on, and no handle: the enable wrote the mark before its first round and
+// the round never finished. The verbs answer for that machine as follows. Push and
+// pull refuse, because there is no handle to drive and the refusal already says
+// so. Enable re-runs, because the seeding window is open -- that is the fix on
+// this path. And disable completes with no handle and no network at all: this
+// machine's file was never joined, so the turn-off opens nothing, marks off,
+// forgets the token and closes nothing.
+//
+// The opener counts its calls, so "no network" is asserted rather than assumed: a
+// turn-off that dialed a remote it cannot use to push nothing would fail here.
+func TestTheTurnOffReachesTheUserWithNothingOpen(t *testing.T) {
+	f := newRoleFixture(t)
+	// The fixture's live file is marked as a member, which is what lets the
+	// turn-off find something to push. This machine's file is the other shape: a
+	// driver that aborted left it unjoined.
+	unmarkVerbSyncMember(t, f.runner.Path)
+
+	// The wedged state: marked on, window open, nothing joined.
+	if err := relevosync.MarkEnabled(f.local, true, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("MarkEnabled: %v", err)
+	}
+	if err := relevosync.MarkSeeding(f.local, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("MarkSeeding: %v", err)
+	}
+
+	opens := 0
+	f.runner.Open = func(context.Context, relevosync.OpenConfig) (relevosync.SyncClient, error) {
+		opens++
+		return &relevosync.Fake{}, nil
+	}
+	// The daemon's runner holds no client, which is what "no handle open" means
+	// on this path: the driver aborted, so the handle it would have opened is
+	// gone with the process that held it.
+	f.runner.Runner.Client = nil
+	ctx := context.Background()
+
+	for _, verb := range []string{wire.SyncVerbPush, wire.SyncVerbPull} {
+		res := f.runner.Run(ctx, &wire.SyncVerb{Verb: verb}, nil)
+		if res.OK {
+			t.Errorf("%s answered OK on a machine with no handle open", verb)
+		}
+	}
+
+	res := f.runner.Run(ctx, &wire.SyncVerb{Verb: wire.SyncVerbDisable}, nil)
+	if !res.OK {
+		t.Fatalf("disable refused on a wedged machine: %s", res.Message)
+	}
+	if opens != 0 {
+		t.Errorf("the turn-off made %d opens, want none: it has no handle and nothing to push", opens)
+	}
+	if len(res.Steps) != 4 {
+		t.Errorf("steps = %v, want all four", res.Steps)
+	}
+	if res.FinalPush {
+		t.Error("the turn-off reported a final push against a file no driver joined")
+	}
+	on, err := relevosync.Enabled(f.local)
+	if err != nil {
+		t.Fatalf("Enabled: %v", err)
+	}
+	if on {
+		t.Error("the turn-off left the machine marked on")
+	}
+	if _, ok, err := relevosync.ReadToken(f.local); err != nil {
+		t.Fatalf("ReadToken: %v", err)
+	} else if ok {
+		t.Error("the turn-off left the token in place")
+	}
+	if seeding, err := relevosync.ReadSeeding(f.local); err != nil {
+		t.Fatalf("ReadSeeding: %v", err)
+	} else if seeding {
+		t.Error("the turn-off left the seeding window open")
+	}
+
+	// And the machine it leaves behind can be pointed at a different remote, which is
+	// the seed detour's own escape: the documented upload created a new cloud
+	// database while the section still names the old one, so the sequence that has to
+	// work is disable and then enable --url <the new one>. The turn-off above made the
+	// machine off, which is what lets the flag repoint rather than refuse.
+	putVerbMarker(t, f.shared.LocalOrSelf(), "zstd-compress.v1", `{"at":"1970-01-01T00:00:00Z"}`)
+	res = f.runner.Run(ctx, &wire.SyncVerb{
+		Header:    wire.Header{Type: wire.TypeSyncVerb},
+		Verb:      wire.SyncVerbEnable,
+		RemoteURL: "libsql://relevo-seed.turso.io",
+	}, []byte(verbFixtureToken))
+	if !res.OK {
+		t.Fatalf("an enable after the turn-off, naming another remote, refused: %s", res.Message)
+	}
+	if res.RemoteURL != "libsql://relevo-seed.turso.io" {
+		t.Errorf("the enable opened %q, want the remote it was named", res.RemoteURL)
+	}
+	settings, err := relevosync.ReadSettings(f.local)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if settings.RemoteURL != "libsql://relevo-seed.turso.io" {
+		t.Errorf("the section holds %q after the repoint, want the remote it was named", settings.RemoteURL)
+	}
+}
+
+// unmarkVerbSyncMember drops the marker tables a real driver open leaves, which
+// puts the file back into the shape a driver that aborted mid-enable leaves it.
+func unmarkVerbSyncMember(t *testing.T, path string) {
+	t.Helper()
+
+	raw, err := db.OpenRaw(path)
+	if err != nil {
+		t.Fatalf("OpenRaw: %v", err)
+	}
+	defer func() { _ = raw.Close() }()
+	if _, err := raw.Exec(`DROP TABLE IF EXISTS turso_cdc`); err != nil {
+		t.Fatalf("drop the sync marker table: %v", err)
+	}
+	if joined, err := relevosync.HasSyncMarker(path); err != nil {
+		t.Fatalf("HasSyncMarker after dropping: %v", err)
+	} else if joined {
+		t.Fatal("the file still reads as a member after dropping its marker table")
 	}
 }
 

@@ -27,18 +27,26 @@ import (
 // The token is converted to a string because that is the driver's field type.
 // It goes into the config and into nothing else: no error on this path formats
 // the config, so a driver error cannot carry the value out with it.
+//
+// The two thresholds are carried through rather than decided here, because the
+// call they bound is not this function's: it is the first push and pull the
+// handle makes afterwards. Only the enable's own open sets them, because only
+// the enable's open moves a whole database for the first time; every later open
+// moves one round of changes.
 func OpenRemote(ctx context.Context, cfg OpenConfig) (SyncClient, error) {
 	if err := checkOpenRole(cfg); err != nil {
 		return nil, err
 	}
 	bootstrap := cfg.BootstrapIfEmpty
 	handle, err := turso.NewTursoSyncDb(ctx, turso.TursoSyncDbConfig{
-		Path:             cfg.Path,
-		RemoteUrl:        cfg.RemoteURL,
-		Namespace:        cfg.Namespace,
-		AuthToken:        string(cfg.AuthToken),
-		ClientName:       cfg.ClientName,
-		BootstrapIfEmpty: &bootstrap,
+		Path:                    cfg.Path,
+		RemoteUrl:               cfg.RemoteURL,
+		Namespace:               cfg.Namespace,
+		AuthToken:               string(cfg.AuthToken),
+		ClientName:              cfg.ClientName,
+		BootstrapIfEmpty:        &bootstrap,
+		PullBytesThreshold:      cfg.PullBytesThreshold,
+		PushOperationsThreshold: cfg.PushOperationsThreshold,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sync: open the remote: %w", err)

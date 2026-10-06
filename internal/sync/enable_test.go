@@ -165,6 +165,13 @@ func TestEnableRefusesAlreadyEnabled(t *testing.T) {
 	if err := MarkEnabled(enabler.Local, true, tokenNow); err != nil {
 		t.Fatalf("MarkEnabled: %v", err)
 	}
+	// The seeding window is closed, which is what a marked-on machine whose first
+	// round finished looks like: the mark is on and the round is over.
+	if seeding, err := ReadSeeding(enabler.Local); err != nil {
+		t.Fatalf("ReadSeeding: %v", err)
+	} else if seeding {
+		t.Fatal("the fixture's window is open, so it models a crashed enable rather than a syncing machine")
+	}
 
 	if _, err := enabler.Enable(context.Background()); !errors.Is(err, ErrAlreadyEnabled) {
 		t.Fatalf("Enable on an enabled machine = %v, want ErrAlreadyEnabled", err)
@@ -172,6 +179,127 @@ func TestEnableRefusesAlreadyEnabled(t *testing.T) {
 	if len(fake.Calls) != 0 {
 		t.Errorf("the fake recorded %v, want no calls from a refused enable", fake.Calls)
 	}
+}
+
+// wedgedFixture is the machine a crashed enable leaves: the mark is on, the
+// seeding window is open because the first round never finished, and no handle
+// and no remote handle exist. It is the shape the enable's own re-entry has to
+// be drivable from, so it is a fixture rather than a description.
+func wedgedFixture(t *testing.T, in SeedInput) (*Enabler, *Fake) {
+	t.Helper()
+
+	enabler, fake, _ := enableFixture(t, in)
+	if err := MarkEnabled(enabler.Local, true, tokenNow); err != nil {
+		t.Fatalf("MarkEnabled: %v", err)
+	}
+	if err := MarkSeeding(enabler.Local, tokenNow); err != nil {
+		t.Fatalf("MarkSeeding: %v", err)
+	}
+	return enabler, fake
+}
+
+// TestTheSeedOpenAsksTheDriverForBoundedCalls pins the avoidance this round made
+// for the driver's process-killing abort.
+//
+// The seed open is the only open in the tree that moves a whole database: the
+// first push after it carries every unpushed local change and the first pull can
+// carry the remote's entire state. Both thresholds are the driver's own knobs for
+// splitting those transfers, and both are set here rather than left at the
+// driver's default of one request for all of it. Drop either back to zero and
+// this fails, which is what keeps the fix from being undone by an edit that
+// only rebuilds the OpenConfig literal.
+func TestTheSeedOpenAsksTheDriverForBoundedCalls(t *testing.T) {
+	t.Parallel()
+
+	enabler, _, opened := enableFixture(t, SeedInput{LocalHasHistory: true, CloudEmpty: true})
+	if _, err := enabler.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+
+	if opened.PullBytesThreshold != SeedPullBytes {
+		t.Errorf("the seed open's PullBytesThreshold = %d, want %d", opened.PullBytesThreshold, SeedPullBytes)
+	}
+	if opened.PushOperationsThreshold != SeedPushOperations {
+		t.Errorf("the seed open's PushOperationsThreshold = %d, want %d", opened.PushOperationsThreshold, SeedPushOperations)
+	}
+	// Bounding a call only helps if the bytes are in pieces rather than in one,
+	// so the bound has to be a real number and not the zero that means "all of it
+	// at once" to the driver.
+	if opened.PullBytesThreshold <= 0 || opened.PushOperationsThreshold <= 0 {
+		t.Errorf("the seed open left a threshold unset, which is the driver's unbounded default: %+v", opened)
+	}
+}
+
+// TestEveryDriverCallInTheSeedPathIsBounded pins the same avoidance across all
+// three arms of the seed matrix rather than on the one arm the fixture above
+// happened to reach. The bound belongs to the enable's open, so an arm that
+// bootstraps and an arm that pushes must carry it equally; a decision that
+// rebuilt the config for one case would otherwise lose the bound silently.
+func TestEveryDriverCallInTheSeedPathIsBounded(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		in   SeedInput
+	}{
+		{"new machine", SeedInput{}},
+		{"empty cloud", SeedInput{LocalHasHistory: true, CloudEmpty: true}},
+		{"existing db, uploaded", SeedInput{LocalHasHistory: true, SeedUploaded: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			enabler, _, opened := enableFixture(t, tc.in)
+			enabler.SeedUploaded = tc.in.SeedUploaded
+			if _, err := enabler.Enable(context.Background()); err != nil {
+				t.Fatalf("Enable: %v", err)
+			}
+			if opened.PullBytesThreshold != SeedPullBytes || opened.PushOperationsThreshold != SeedPushOperations {
+				t.Errorf("the open carried %d/%d, want %d/%d",
+					opened.PullBytesThreshold, opened.PushOperationsThreshold,
+					SeedPullBytes, SeedPushOperations)
+			}
+		})
+	}
+}
+
+// TestDriverVersionIsTheOneThePanicWasSeenOn pins the version, so a bump cannot
+// happen without something saying what it is claiming.
+//
+// The driver aborts the process from inside its WAL, so a version bump is not a
+// routine dependency update: it is either the fix landing or a new unknown. The
+// constant is what makes that decision deliberate, and the go.mod version is
+// what it must agree with.
+func TestDriverVersionIsTheOneThePanicWasSeenOn(t *testing.T) {
+	t.Parallel()
+
+	if !strings.Contains(DriverVersion, "v0.8.1") {
+		t.Errorf("DriverVersion = %q; the panic was seen on v0.8.1 and a version change has to be a deliberate one", DriverVersion)
+	}
+	mod := goModText(t)
+	if !strings.Contains(mod, "turso.tech/database/tursogo "+strings.Fields(DriverVersion)[1]) {
+		t.Errorf("go.mod does not require %s:\n%s", DriverVersion, mod)
+	}
+}
+
+// goModText reads the module file from the package's own directory upwards, so
+// the assertion above reads the bytes the build resolves against.
+func goModText(t *testing.T) string {
+	t.Helper()
+
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	for i := 0; i < 4; i++ {
+		body, rerr := os.ReadFile(filepath.Join(dir, "go.mod"))
+		if rerr == nil {
+			return string(body)
+		}
+		dir = filepath.Dir(dir)
+	}
+	t.Fatal("no go.mod above this package")
+	return ""
 }
 
 // TestEnableRefusesBadTokenSource pins the two refusals a token can come from.
@@ -255,16 +383,21 @@ func TestEnableStoresAndOpensTheFlaggedRemote(t *testing.T) {
 }
 
 // TestEnableRefusesAContradictingRemoteURL pins that --url never silently
-// repoints a machine. The stored remote is one this installation has been
-// pushing to; overwriting it with a second URL would move every row to a
+// repoints a machine that is syncing. The stored remote is one this installation
+// has been pushing to; overwriting it with a second URL would move every row to a
 // database the user did not name, so the enable refuses and the refusal names
 // both so the reader can tell which is which.
+//
+// The machine is marked on with its seeding window still open, because that is
+// the only shape in which the enable path reaches a remote resolution at all
+// while this machine is on -- and reaching it is exactly the hazard. A machine
+// that is off is repointed instead, which the repoint test below pins.
 func TestEnableRefusesAContradictingRemoteURL(t *testing.T) {
 	t.Parallel()
 
 	const other = "libsql://somewhere-else.turso.io"
 
-	enabler, fake, _ := enableFixture(t, SeedInput{LocalHasHistory: true, CloudEmpty: true})
+	enabler, fake := wedgedFixture(t, SeedInput{LocalHasHistory: true, CloudEmpty: true})
 	if err := PutSettings(enabler.Local, Settings{RemoteURL: remoteFixture}, tokenNow); err != nil {
 		t.Fatalf("PutSettings: %v", err)
 	}
@@ -288,6 +421,70 @@ func TestEnableRefusesAContradictingRemoteURL(t *testing.T) {
 	}
 	if stored.RemoteURL != remoteFixture {
 		t.Errorf("a refused enable changed the stored remote to %q", stored.RemoteURL)
+	}
+}
+
+// TestAnOffMachineTakesTheRemoteItIsNamed pins the repoint, which is the only way
+// out of the seed detour.
+//
+// The documented upload runs `turso db import <seed>`, and that command creates a
+// new cloud database rather than filling the one --url names. So the remote to
+// sync with is not the remote the section holds, and the reader has to be able to
+// say so. Before this, the contradiction refusal fired whatever state the machine
+// was in, and because disable leaves the stored remote in place by design, no
+// sequence of verbs could reach the new one: disable then enable --url was a
+// refusal with no way past it.
+//
+// The machine is off here, which is what makes the write safe: nothing is in
+// flight and no handle is open, so there is no push to redirect. The enabled case
+// is the sibling test above, and it still refuses.
+func TestAnOffMachineTakesTheRemoteItIsNamed(t *testing.T) {
+	t.Parallel()
+
+	const other = "libsql://relevo-seed.turso.io"
+
+	enabler, _, opened := enableFixture(t, SeedInput{LocalHasHistory: true, CloudEmpty: true})
+	if err := PutSettings(enabler.Local, Settings{RemoteURL: remoteFixture}, tokenNow); err != nil {
+		t.Fatalf("PutSettings: %v", err)
+	}
+	if on, _ := Enabled(enabler.Local); on {
+		t.Fatal("the fixture is marked on, so it is not the case under test")
+	}
+	enabler.RemoteURL = other
+
+	res, err := enabler.Enable(context.Background())
+	if err != nil {
+		t.Fatalf("an off machine named a different remote = %v, want the repoint", err)
+	}
+	if res.RemoteURL != other {
+		t.Errorf("the enable opened %q, want the remote it was named %q", res.RemoteURL, other)
+	}
+	if opened.RemoteURL != other {
+		t.Errorf("the open named %q, want %q", opened.RemoteURL, other)
+	}
+	stored, err := ReadSettings(enabler.Local)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if stored.RemoteURL != other {
+		t.Errorf("the section still holds %q after the repoint, want %q", stored.RemoteURL, other)
+	}
+}
+
+// TestAnOffMachineWithNoStoredRemoteTakesTheFlag pins the first-run arm of the
+// same rule, which existed before and must keep working: with nothing stored, the
+// flag is simply written.
+func TestAnOffMachineWithNoStoredRemoteTakesTheFlag(t *testing.T) {
+	t.Parallel()
+
+	enabler, _, opened := enableFixture(t, SeedInput{LocalHasHistory: true, CloudEmpty: true})
+	enabler.RemoteURL = remoteFixture
+
+	if _, err := enabler.Enable(context.Background()); err != nil {
+		t.Fatalf("a first-run enable = %v, want the flag stored", err)
+	}
+	if opened.RemoteURL != remoteFixture {
+		t.Errorf("the open named %q, want %q", opened.RemoteURL, remoteFixture)
 	}
 }
 
@@ -376,6 +573,179 @@ func TestTokenNeverLeavesMachineOnARefusal(t *testing.T) {
 				t.Errorf("the refusal names the %q route the token came by: %v", route, err)
 			}
 		})
+	}
+}
+
+// TestACrashedSeedEnableIsRerunnable pins the escape from the wedged machine: the
+// mark is on, the first round never finished, and the enable runs again instead
+// of refusing "already enabled".
+//
+// This is the shape a driver that aborts the process leaves behind. The mark is
+// written before the first push and the first pull, so a process that dies inside
+// one of them leaves a machine that reads as syncing and has never synced -- and
+// before this, with no verb that would accept it, the machine stayed that way.
+// The refusal is kept for a marked-on machine whose round finished, which is the
+// other test in this file.
+func TestACrashedSeedEnableIsRerunnable(t *testing.T) {
+	t.Parallel()
+
+	enabler, fake := wedgedFixture(t, SeedInput{LocalHasHistory: true, CloudEmpty: true})
+
+	res, err := enabler.Enable(context.Background())
+	if err != nil {
+		t.Fatalf("re-running a crashed seed enable = %v, want it to proceed", err)
+	}
+	if res.Case != SeedEmptyCloud {
+		t.Errorf("case = %q, want the seed decided afresh as %q", res.Case, SeedEmptyCloud)
+	}
+	if len(fake.Calls) == 0 {
+		t.Error("the re-run made no driver call, so it did not sync anything")
+	}
+	// The window closes: the round ran, so this machine is no longer the crashed
+	// one, and a further enable must be refused as already-enabled.
+	if seeding, err := ReadSeeding(enabler.Local); err != nil {
+		t.Fatalf("ReadSeeding after the re-run: %v", err)
+	} else if seeding {
+		t.Error("the window is still open after a round that ran")
+	}
+	if _, err := enabler.Enable(context.Background()); !errors.Is(err, ErrAlreadyEnabled) {
+		t.Errorf("a third enable = %v, want ErrAlreadyEnabled now that the round finished", err)
+	}
+}
+
+// TestACrashedSeedEnableMakesNoSecondMark pins the idempotence the wedged machine
+// needs: re-running the enable writes the mark again and it is the same mark, so
+// a machine that reads as on stays on rather than acquiring a second row.
+func TestACrashedSeedEnableMakesNoSecondMark(t *testing.T) {
+	t.Parallel()
+
+	enabler, _ := wedgedFixture(t, SeedInput{LocalHasHistory: true, CloudEmpty: true})
+	if _, err := enabler.Enable(context.Background()); err != nil {
+		t.Fatalf("re-running a crashed seed enable: %v", err)
+	}
+
+	on, err := Enabled(enabler.Local)
+	if err != nil {
+		t.Fatalf("Enabled: %v", err)
+	}
+	if !on {
+		t.Error("the re-run left the machine marked off, so a crash turned sync off rather than on")
+	}
+	settings, err := ReadSettings(enabler.Local)
+	if err != nil {
+		t.Fatalf("ReadSettings: %v", err)
+	}
+	if !settings.Enabled {
+		t.Error("the section does not read enabled after the re-run")
+	}
+	// One token, still the one this enable resolved: the re-run replaced it rather
+	// than leaving a second credential behind.
+	stored, ok, err := ReadToken(enabler.Local)
+	if err != nil || !ok {
+		t.Fatalf("ReadToken = %v, %v", ok, err)
+	}
+	if string(stored) != tokenFixture {
+		t.Errorf("stored token = %q, want the one the re-run resolved", stored)
+	}
+}
+
+// TestAnEnableWhoseOpenFailedLeavesTheMachineRerunnable pins the other half of
+// the window: an open that fails is a round that never ran, so the mark is on and
+// the window stays open, and the next enable tries again rather than refusing.
+func TestAnEnableWhoseOpenFailedLeavesTheMachineRerunnable(t *testing.T) {
+	t.Parallel()
+
+	enabler, _, _ := enableFixture(t, SeedInput{LocalHasHistory: true, CloudEmpty: true})
+	enabler.Open = nil
+
+	if _, err := enabler.Enable(context.Background()); !errors.Is(err, db.ErrInvalid) {
+		t.Fatalf("an enable with no opener = %v, want the invalid refusal", err)
+	}
+	if on, _ := Enabled(enabler.Local); !on {
+		t.Fatal("the mark was not written, so the failed open did not wedge the machine")
+	}
+	seeding, err := ReadSeeding(enabler.Local)
+	if err != nil {
+		t.Fatalf("ReadSeeding: %v", err)
+	}
+	if !seeding {
+		t.Error("the window closed even though no round ran; this machine is now wedged")
+	}
+
+	// And with an opener it proceeds, which is the whole point of the window.
+	enabler.Open = func(_ context.Context, cfg OpenConfig) (SyncClient, error) {
+		return &Fake{}, nil
+	}
+	if _, err := enabler.Enable(context.Background()); err != nil {
+		t.Fatalf("re-running after a failed open = %v, want it to proceed", err)
+	}
+	if seeding, err := ReadSeeding(enabler.Local); err != nil {
+		t.Fatalf("ReadSeeding after the re-run: %v", err)
+	} else if seeding {
+		t.Error("the window is still open after a round that ran")
+	}
+}
+
+// TestASecondSeedDemandNamesTheCopyAlreadyThere pins the other half of a wedged
+// seed: an enable that already wrote its copy and refused for the upload must, on
+// a second run, name the same copy rather than refusing to overwrite it.
+//
+// The copy's own writer refuses an existing path, so an enable that did not check
+// first would answer "already exists" -- a reason the reader cannot act on, where
+// the fix is the upload command the refusal already carries. The refusal's own
+// text is asserted, because the sentence is what a reader pastes into a shell.
+func TestASecondSeedDemandNamesTheCopyAlreadyThere(t *testing.T) {
+	t.Parallel()
+
+	seedPath := filepath.Join(ownedDir(t), "seed.db")
+	var copies int
+	shared, local, preflight := realPreflight(t)
+
+	enabler := &Enabler{
+		Local:           local,
+		Preflight:       preflight,
+		LocalHasHistory: func() (bool, error) { return true, nil },
+		CloudEmpty:      func(context.Context, Settings, []byte) (bool, error) { return false, nil },
+		Intake:          TokenIntake{FromStdin: true, Stdin: []byte(tokenFixture)},
+		RemoteURL:       remoteFixture,
+		SeedPath:        seedPath,
+		SeedCopy: func(path string) error {
+			copies++
+			return shared.SeedCopy(path)
+		},
+		SeedExists: func(path string) (bool, error) {
+			_, err := os.Stat(path)
+			if err == nil {
+				return true, nil
+			}
+			if errors.Is(err, os.ErrNotExist) {
+				return false, nil
+			}
+			return false, err
+		},
+		Now: func() time.Time { return tokenNow },
+	}
+
+	res, err := enabler.Enable(context.Background())
+	if !errors.Is(err, ErrSeedUploadRequired) {
+		t.Fatalf("the first enable = %v, want the upload refusal", err)
+	}
+	if copies != 1 {
+		t.Fatalf("the first enable wrote %d copies, want one", copies)
+	}
+
+	res, err = enabler.Enable(context.Background())
+	if !errors.Is(err, ErrSeedUploadRequired) {
+		t.Fatalf("the second enable = %v, want the same upload refusal", err)
+	}
+	if copies != 1 {
+		t.Errorf("the second enable wrote %d copies in total, want the one already there", copies)
+	}
+	if res.Seed != seedPath {
+		t.Errorf("the second refusal names seed %q, want %q", res.Seed, seedPath)
+	}
+	if !strings.Contains(err.Error(), seedPath) {
+		t.Errorf("the second refusal does not name the copy already on disk: %v", err)
 	}
 }
 

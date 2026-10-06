@@ -196,6 +196,35 @@ func TestDisableClosesTheHandleLast(t *testing.T) {
 	}
 }
 
+// TestDisableClosesTheSeedingWindow pins that the turn-off removes the marker
+// that says a first round never finished.
+//
+// Without this, a machine whose enable died would be marked off with the window
+// still open, and the next enable -- which is off, so it re-enters the path --
+// would treat itself as re-running a crashed round rather than making a fresh
+// decision. The window is a local row, so this costs no handle and no network.
+func TestDisableClosesTheSeedingWindow(t *testing.T) {
+	t.Parallel()
+
+	disabler, local := disableFixture(t, &Fake{})
+	if err := MarkSeeding(local, tokenNow); err != nil {
+		t.Fatalf("MarkSeeding: %v", err)
+	}
+	if seeding, err := ReadSeeding(local); err != nil || !seeding {
+		t.Fatalf("the fixture's window is not open: %v, %v", seeding, err)
+	}
+
+	if _, err := disabler.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+
+	if seeding, err := ReadSeeding(local); err != nil {
+		t.Fatalf("ReadSeeding after disable: %v", err)
+	} else if seeding {
+		t.Error("the window survived the turn-off, so the next enable reads itself as a crashed round")
+	}
+}
+
 // TestDisableWithoutAHandleStillTurnsOff pins the machine with nothing open. A
 // turn-off has no client to push through, so the attempt is skipped rather than
 // failed: the machine is off, holds no token, and the report says the push did

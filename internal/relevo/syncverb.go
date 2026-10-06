@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -137,6 +138,7 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, token []by
 		LocalHasHistory: func() (bool, error) { return db.HasSharedHistory(v.Shared) },
 		CloudEmpty:      v.cloudEmpty(token),
 		SeedCopy:        func(path string) error { return v.Shared.SeedCopy(path) },
+		SeedExists:      v.seedExists,
 		SeedPath:        v.seedPathFor(verb),
 		Open:            v.opener(token),
 		// The token arrived by the framed request rather than by the enable
@@ -167,12 +169,17 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, token []by
 // bounded final push, mark off, delete the token, close -- against the daemon's
 // own handles.
 //
-// The final push handle is opened only when there is both something to push
-// through and something to push with. A machine with no token or no remote has
-// nothing a final push could do, so the turn-off does not open one and does not
-// pay a dial to find out; a remote that will not open is the strongest reason
-// of all to stop syncing, so the turn-off continues without a handle rather than
-// refusing and leaving the machine pushing at a dead remote.
+// The final push handle is opened only when there is something to push through,
+// something to push with, and something in this file for a push to carry. A
+// machine with no token or no remote has nothing a final push could do, so the
+// turn-off does not open one and does not pay a dial to find out; a remote that
+// will not open is the strongest reason of all to stop syncing, so the turn-off
+// continues without a handle rather than refusing and leaving the machine pushing
+// at a dead remote; and a file the driver never joined has nothing to carry, so
+// asking the remote for a handle to push an empty change set over it costs a dial
+// and can only fail. The last of those three is the machine whose enable died
+// before its first open, and it is the one that most needs this verb to complete
+// with no handle and no network at all.
 func (v *VerbRunner) disable(ctx context.Context, verb *wire.SyncVerb, token []byte) *wire.SyncResult {
 	settings, err := relevosync.ReadSettings(v.Local)
 	if err != nil {
@@ -186,7 +193,13 @@ func (v *VerbRunner) disable(ctx context.Context, verb *wire.SyncVerb, token []b
 	}
 
 	disabler := &relevosync.Disabler{Local: v.Local, Timeout: verbTimeout(verb)}
-	if len(token) > 0 && settings.RemoteURL != "" {
+	// A file the driver never joined has nothing a final push could carry, and
+	// asking anyway costs a dial to find out -- on a machine whose enable died
+	// before its first open, which is exactly the machine that most needs its
+	// turn-off to complete. The membership read is this file's own schema and
+	// reaches no remote, so the turn-off below runs with no handle and no
+	// network at all.
+	if len(token) > 0 && settings.RemoteURL != "" && v.joined() {
 		handle, oerr := v.openRemote(ctx, v.openConfig(settings, token, true))
 		if oerr != nil {
 			fmtStderr("relevo db sync disable: the final push will be skipped: %v", oerr)
@@ -244,6 +257,25 @@ func (v *VerbRunner) pushPull(ctx context.Context, verb *wire.SyncVerb) *wire.Sy
 	return &wire.SyncResult{OK: true, Applied: out.Applied}
 }
 
+// joined reports whether the daemon's shared file carries the sync driver's
+// marker tables, which is the only evidence available that an enable ever got as
+// far as joining this file to a remote.
+//
+// It answers true when it cannot tell, so a file this cannot read is treated as
+// joined and the turn-off still attempts its final push. That is the direction
+// that pushes a machine's rows rather than the one that silently drops them.
+func (v *VerbRunner) joined() bool {
+	if v.Path == "" {
+		return true
+	}
+	ok, err := relevosync.HasSyncMarker(v.Path)
+	if err != nil {
+		slog.Warn("relevo db sync: read the sync marker tables", "err", err)
+		return true
+	}
+	return ok
+}
+
 // checkReachable refuses when there is no remote or no token to reach it with.
 //
 // It names which half is missing rather than reporting that something is
@@ -285,6 +317,25 @@ func (v *VerbRunner) storedToken() ([]byte, bool) {
 		return nil, false
 	}
 	return value, true
+}
+
+// seedExists reports whether the seed copy is already on disk.
+//
+// It is what makes a second seed demand idempotent. A first enable that refuses
+// for the upload leaves its copy behind, so an enable that runs again -- because
+// the machine was wedged, or because the reader re-ran the command -- finds the
+// same file rather than refusing to overwrite it. A stat answers it; nothing here
+// reads the copy.
+func (v *VerbRunner) seedExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, os.ErrNotExist):
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
 // seedPathFor is the path a seed copy lands on, defaulting to the daemon's own

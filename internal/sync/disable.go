@@ -82,6 +82,12 @@ func (d *Disabler) Disable(ctx context.Context) (DisableResult, error) {
 	d.finalPush(ctx, &out)
 
 	out.Steps = append(out.Steps, stepMarkOff)
+	// The seeding marker goes in the same step as the mark, and not after the
+	// token: a machine left marked off with the window still open reads as an
+	// unfinished enable to the next enable, which would re-run a seed decision
+	// the reader never saw the first half of. It is one local row, so it costs no
+	// handle and no network, which is the whole contract of this path.
+	ClearSeeding(d.Local)
 	if err := MarkEnabled(d.Local, false, d.now()); err != nil {
 		return out, fmt.Errorf("sync: disable: %w", err)
 	}

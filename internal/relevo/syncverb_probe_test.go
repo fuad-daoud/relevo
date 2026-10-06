@@ -591,6 +591,9 @@ func TestLivePathIsNamedOnlyByTheAllowlistedOpens(t *testing.T) {
 	// allowed to mention the live path as a location, never as an open.
 	allow["cloudEmpty"] = true
 	allow["probeConfig"] = true
+	// joined reads the live path's own marker tables to decide whether the
+	// turn-off has anything to push. It opens nothing, so it is allowed the path.
+	allow["joined"] = true
 
 	body := probeSource(t, "syncverb.go")
 	var offenders []string
