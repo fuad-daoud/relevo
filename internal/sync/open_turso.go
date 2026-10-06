@@ -5,6 +5,7 @@ package sync
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	turso "turso.tech/database/tursogo"
 )
@@ -33,9 +34,26 @@ import (
 // handle makes afterwards. Only the enable's own open sets them, because only
 // the enable's open moves a whole database for the first time; every later open
 // moves one round of changes.
+//
+// ConvergeSidecars runs between the role check and the driver. The sidecar is
+// the one file beside the database that the engine reads and nothing else does,
+// so a torn one is invisible to every read this repository makes and fatal to
+// every push and pull; converging it here is what puts the two in agreement
+// before the driver is the one holding both.
 func OpenRemote(ctx context.Context, cfg OpenConfig) (SyncClient, error) {
 	if err := checkOpenRole(cfg); err != nil {
 		return nil, err
+	}
+	// The path is converged before the driver is handed it, and here because
+	// here is the only place that hands it over: a sidecar the engine cannot
+	// parse refuses every push and pull from inside the engine, long after the
+	// query path has stopped being able to tell. Naming it here is what makes
+	// the removal happen before the refusal rather than after it.
+	if repair, err := ConvergeSidecars(cfg.Path); err != nil {
+		return nil, err
+	} else if repair.Path != "" {
+		slog.Warn("sync: the changes sidecar was incomplete and was removed; the next open rebuilds it",
+			"path", repair.Path, "bytes", repair.Bytes, "orphan_table", repair.OrphanTable)
 	}
 	bootstrap := cfg.BootstrapIfEmpty
 	handle, err := turso.NewTursoSyncDb(ctx, turso.TursoSyncDbConfig{
