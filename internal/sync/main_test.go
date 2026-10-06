@@ -29,7 +29,9 @@ func TestMain(m *testing.M) {
 	}
 	for _, env := range []string{"TURSO_TMPDIR", "SQLITE_TMPDIR"} {
 		if os.Getenv(env) == "" {
-			os.Setenv(env, dir)
+			if err := os.Setenv(env, dir); err != nil {
+				panic("sync test scratch: " + err.Error())
+			}
 		}
 	}
 	os.Exit(m.Run())

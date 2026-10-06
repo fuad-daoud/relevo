@@ -344,6 +344,13 @@ func (e *Enabler) Enable(ctx context.Context) (EnableResult, error) {
 		// the state this marker exists to describe. The next enable re-runs it.
 		return EnableResult{Case: decision.Case, RemoteURL: settings.RemoteURL}, err
 	}
+	return e.finishSeed(ctx, client, decision, settings)
+}
+
+// finishSeed runs the seed round the decision asked for and closes the window
+// around its outcome. Split out of Enable for the function-length gate; the
+// order below is the contract, not an arrangement.
+func (e *Enabler) finishSeed(ctx context.Context, client SyncClient, decision SeedDecision, settings Settings) (EnableResult, error) {
 	out := EnableResult{Case: decision.Case, RemoteURL: settings.RemoteURL}
 	applied, err := e.runSeed(ctx, client, decision)
 	if err != nil {
