@@ -69,7 +69,21 @@ func openPool(path string, busy time.Duration, readOnly bool) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("db: open %s: connector: %w: %w", path, ErrOpen, err)
 	}
-	pool := sql.OpenDB(repairConnector{Connector: &pragmaConnector{base: conn, pragmas: openPragmas(readOnly)}})
+	pool := sql.OpenDB(repairConnector{Connector: &pragmaConnector{
+		base:    conn,
+		pragmas: openPragmas(path, readOnly),
+		path:    path,
+		capture: !readOnly,
+	}})
+	if !readOnly {
+		// A file that is already a member when this pool opens must capture from
+		// its first connection, and one that becomes a member later has to be
+		// reachable so this pool can be made to. The read answers both.
+		if member, err := IsSyncMember(path); err == nil && member {
+			MarkSyncMember(path)
+		}
+		registerMemberPool(path, pool)
+	}
 	if fresh && !readOnly {
 		if err := markFreshDatabase(pool); err != nil {
 			_ = pool.Close()
@@ -87,21 +101,48 @@ func freshDatabase(path string) (bool, error) {
 	return fresh, err
 }
 
-// openPragmas is the per-connection pragma sequence: WAL always, and then the
-// guard that matches the handle's mode.
-func openPragmas(readOnly bool) []string {
+// openPragmas is the per-connection pragma sequence: WAL always, the guard that
+// matches the handle's mode, and -- on a file the sync engine has joined -- the
+// capture pragma.
+//
+// The capture pragma is per connection rather than per file, which is why it
+// belongs here and not somewhere the push path runs: a change made on a
+// connection that has not asked for it is not captured into the table the push
+// reads, so rows written through this pool would sit in the database and never
+// reach the remote while every push reported success.
+func openPragmas(path string, readOnly bool) []string {
 	if readOnly {
 		return []string{"PRAGMA journal_mode = wal", "PRAGMA query_only = 1", "PRAGMA temp_store = MEMORY"}
 	}
 	return []string{"PRAGMA journal_mode = wal", "PRAGMA foreign_keys = ON", "PRAGMA temp_store = MEMORY"}
 }
 
+// capturePragmas is the extra per-connection sequence a member file's writable
+// pool carries, asked for on every connect rather than decided once at open.
+//
+// It is asked per connection because the file can become a member while this
+// pool is already open -- the sync engine is what makes it one, through an open
+// of its own -- so a decision made at start-up would be right about the file and
+// wrong about the pool by the time the first push runs.
+func capturePragmas(path string) []string {
+	if isSyncMember(path) {
+		return []string{captureChangesPragma}
+	}
+	return nil
+}
+
 // pragmaConnector runs pragmas on every new driver connection before
 // database/sql can use it. Turso's DSN has no _pragma option, and the mode word
 // and per-handle guards must hold on each pooled connection, not just the first.
+//
+// path is the file this pool is over, kept so the capture pragma can be asked
+// for on each connect rather than frozen at open. capture is false on a
+// read-only pool, where the pragma is a write and the connection refuses it.
 type pragmaConnector struct {
 	base    driver.Connector
 	pragmas []string
+	path    string
+	capture bool
 }
 
 func (c *pragmaConnector) Connect(ctx context.Context) (driver.Conn, error) {
@@ -114,13 +155,26 @@ func (c *pragmaConnector) Connect(ctx context.Context) (driver.Conn, error) {
 		_ = conn.Close()
 		return nil, fmt.Errorf("db: %s connection cannot run pragmas: %w", engineName, ErrOpen)
 	}
-	for _, p := range c.pragmas {
+	for _, p := range c.pragmaSequence() {
 		if _, err := ex.ExecContext(ctx, p, nil); err != nil {
 			_ = conn.Close()
 			return nil, fmt.Errorf("db: %s: %w", p, err)
 		}
 	}
 	return conn, nil
+}
+
+// pragmaSequence is this connect's full list: the ones fixed for the handle, then
+// whatever the file turns out to need now.
+func (c *pragmaConnector) pragmaSequence() []string {
+	if !c.capture {
+		return c.pragmas
+	}
+	extra := capturePragmas(c.path)
+	if len(extra) == 0 {
+		return c.pragmas
+	}
+	return append(append([]string{}, c.pragmas...), extra...)
 }
 
 func (c *pragmaConnector) Driver() driver.Driver { return c.base.Driver() }

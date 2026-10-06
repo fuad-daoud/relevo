@@ -113,6 +113,11 @@ func (d *DB) Vacuum() error {
 }
 
 // vacuumAllowed refuses the handle kinds a vacuum cannot swap under.
+//
+// A sync member is refused here rather than at the checkpoint below it, because
+// the swap is the worse of the two: renaming a fresh file over the database
+// discards the write-ahead log the sync engine holds a watermark into, and
+// leaves the engine addressing a file that is not the one it opened.
 func (d *DB) vacuumAllowed() error {
 	switch {
 	case d.served:
@@ -122,7 +127,7 @@ func (d *DB) vacuumAllowed() error {
 	case handleCount(d.path) > 1:
 		return fmt.Errorf("db: vacuum: %d direct handles are open on %s: %w", handleCount(d.path), d.path, ErrInvalid)
 	}
-	return nil
+	return d.requireWritableMember("vacuum")
 }
 
 // swapInVacuum replaces the database file with the vacuumed sibling and reopens

@@ -319,6 +319,7 @@ func (d *DB) Close() error {
 		_ = d.walCheckpoint()
 	}
 	closeErr := d.sqlDB.Close()
+	unregisterMemberPool(path, d.sqlDB)
 	if path != "" {
 		// The path and its flock are released only after the pool is closed,
 		// so a concurrent opener cannot win the flock while this handle's own
