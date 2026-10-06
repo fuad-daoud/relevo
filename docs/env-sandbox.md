@@ -27,9 +27,11 @@ copies your tuned candidates, policy, actors, agents and servers section by
 section with `config get`/`config set`, and runs `doctor` once. A section you
 never set is skipped; a host with no database falls back to `config init
 --no-agents`. Secrets never travel (export omits them), so remote placements
-need `config secret set` inside afterwards, and gates start clean. Steps that
-fail warn with the manual repair instead of failing the create; `--no-build`
-skips seed and check along with the build.
+need `config secret set` inside afterwards, and gates start clean. A host with
+candidates but no actors section still yields working binds through the
+built-in fallback -- only the candidates view reads `off`, which needs no
+manual step. Steps that fail warn with the manual repair instead of failing
+the create; `--no-build` skips seed and check along with the build.
 
 Inside the shell, everything resolves under
 `~/.local/share/relevo-sandboxes/demo/`:
