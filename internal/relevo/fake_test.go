@@ -790,6 +790,17 @@ type fakeRunner struct {
 	exitPaths []string
 	rusages   map[int]spawn.ProcRusage
 
+	// aliveCalls counts single-handle Alive probes and batchCalls the batched
+	// ones, with batchSizes recording how many handles each batch carried. A
+	// test compares the two to prove a refresh forks once rather than once per
+	// row.
+	aliveCalls int
+	batchCalls int
+	batchSizes []int
+	// batchErr makes the batched probe fail, the way a ps that cannot run does:
+	// the caller must fall back to Alive rather than read every row as dead.
+	batchErr error
+
 	// scopeActive is the answer ScopeActive gives per unit base name; a
 	// missing key is false. scopeQueries records every unit asked for, in
 	// order, so a test can prove that no probe ran.
@@ -852,20 +863,51 @@ func (f *fakeRunner) Start(_ context.Context, spec spawn.ProcSpec) (spawn.ProcHa
 }
 
 func (f *fakeRunner) Alive(_ context.Context, h spawn.ProcHandle) (bool, error) {
+	f.aliveCalls++
 	if f.onAlive != nil {
 		f.onAlive()
 	}
 	if f.aliveErr != nil {
 		return false, f.aliveErr
 	}
-	seq := f.alive[h.PID]
+	return f.answerFor(h.PID), nil
+}
+
+// AliveBatch is the batched half of Alive, so a test can prove a report probes
+// once for many rows rather than once per row. It answers exactly what Alive
+// would answer for each handle -- same scripted sequence, same aliveErr -- so a
+// test written against either sees the same words. It answers from the script
+// directly rather than through Alive, so aliveCalls counts only the
+// single-handle probes a test is measuring.
+func (f *fakeRunner) AliveBatch(_ context.Context, handles []spawn.ProcHandle) (map[int]spawn.AliveFact, error) {
+	f.batchCalls++
+	f.batchSizes = append(f.batchSizes, len(handles))
+	if f.batchErr != nil {
+		return nil, f.batchErr
+	}
+	if f.aliveErr != nil {
+		return nil, f.aliveErr
+	}
+	out := make(map[int]spawn.AliveFact, len(handles))
+	for _, h := range handles {
+		if f.answerFor(h.PID) {
+			out[h.PID] = spawn.AliveFact{StartedAt: h.StartedAt, State: "S"}
+		}
+	}
+	return out, nil
+}
+
+// answerFor is Alive's scripted answer without its probe counting, so the
+// batched and single-handle paths read the same script the same way.
+func (f *fakeRunner) answerFor(pid int) bool {
+	seq := f.alive[pid]
 	if len(seq) == 0 {
-		return false, nil
+		return false
 	}
 	if len(seq) > 1 {
-		f.alive[h.PID] = seq[1:]
+		f.alive[pid] = seq[1:]
 	}
-	return seq[0], nil
+	return seq[0]
 }
 
 func (f *fakeRunner) ExitCode(_ context.Context, h spawn.ProcHandle, path string) (int, bool) {

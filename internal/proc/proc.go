@@ -330,30 +330,6 @@ func handleFor(ctx context.Context, pid int) spawn.ProcHandle {
 	return spawn.ProcHandle{PID: pid, StartedAt: started.Truncate(time.Second)}
 }
 
-// Alive reports whether the handle's process exists, is not a zombie, and
-// started within a second of when the handle says. A missing pid is (false,
-// nil); only ps itself failing to run is an error.
-func (r *Runner) Alive(ctx context.Context, h spawn.ProcHandle) (bool, error) {
-	if h.PID <= 0 {
-		return false, nil
-	}
-	started, state, err := psInfo(ctx, h.PID)
-	if errors.Is(err, errNoProcess) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if strings.HasPrefix(state, "Z") {
-		return false, nil
-	}
-	diff := started.Sub(h.StartedAt)
-	if diff < 0 {
-		diff = -diff
-	}
-	return diff <= time.Second, nil
-}
-
 // ExitCode reads the trailer the supervisor appended, if it is the stream's last
 // line. A kill recorded for this handle returns ok=false regardless of what the
 // stream ends with.
