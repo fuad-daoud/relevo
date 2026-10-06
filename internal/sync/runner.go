@@ -84,10 +84,11 @@ func (r *Runner) Enabled() bool {
 // whose mark is on.
 //
 // Nil-receiver safe, like Enabled: a missing runner has nothing to ensure.
-// A machine whose mark is off drops any cached client and reports false, so a
-// disable takes effect on the next attempt without any teardown call. A mark
-// that cannot be read is treated as on, mirroring On: skipping on a transient
-// read error would quietly stop syncing a machine that is meant to be syncing.
+// A machine whose mark is off reports false without opening anything; a mark
+// that cannot be read is treated as on, mirroring On. Dropping a stale client
+// is the callers' job (enable and disable both do it): with a preset client
+// this check short-circuits before reading the mark, which keeps every
+// existing caller on today's path.
 //
 // The open runs under DefaultTimeout on top of the caller's context, so a
 // blackholed dial costs one bounded wait wherever Ensure is called from —
@@ -110,7 +111,6 @@ func (r *Runner) Ensure(ctx context.Context, open func(context.Context) (SyncCli
 		return false
 	}
 	if state, err := ReadState(r.Local); err == nil && !state.Enabled {
-		r.Client = nil
 		return false
 	}
 	octx, cancel := context.WithTimeout(ctx, DefaultTimeout)
