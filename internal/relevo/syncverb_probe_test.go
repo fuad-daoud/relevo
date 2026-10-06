@@ -598,6 +598,10 @@ func TestLivePathIsNamedOnlyByTheAllowlistedOpens(t *testing.T) {
 	// goes through openRemote, which is covered by the opener allow-listing
 	// in the role tests rather than here.
 	allow["memberOpener"] = true
+	// openConfig builds the member open the turn-off's final push drives.
+	// It names the live path as the open itself, which is its whole purpose;
+	// the role tests pin that it asks as a member and never for anything else.
+	allow["openConfig"] = true
 
 	body := probeSource(t, "syncverb.go")
 	var offenders []string
