@@ -594,6 +594,11 @@ func TestLivePathIsNamedOnlyByTheAllowlistedOpens(t *testing.T) {
 	// joined reads the live path's own marker tables to decide whether the
 	// turn-off has anything to push. It opens nothing, so it is allowed the path.
 	allow["joined"] = true
+	// memberOpener reads the same marker tables to refuse an unjoined file
+	// before any dial. It names v.Path only for that read; the open itself
+	// goes through openRemote, which is covered by the opener allow-listing
+	// in the role tests rather than here.
+	allow["memberOpener"] = true
 
 	body := probeSource(t, "syncverb.go")
 	var offenders []string

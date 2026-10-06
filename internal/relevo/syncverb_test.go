@@ -91,6 +91,11 @@ func TestSyncVerbOverOwnerEndToEnd(t *testing.T) {
 	f := newVerbFixture(t)
 	ctx := context.Background()
 
+	// The verbs under test drive a joined machine: enable joins it in
+	// production, and these subtests start past that. The unjoined refusal
+	// belongs to the turn-off test, not this one.
+	joinFixtureFile(t, f.shared.Path())
+
 	t.Run("push", func(t *testing.T) {
 		f.runner.Runner.Client = f.client
 		f.runner.Runner.Local = f.local
@@ -671,6 +676,9 @@ func TestSyncVerbNeverOpensASecondHandle(t *testing.T) {
 	if err := relevosync.SetToken(local, []byte(verbFixtureToken), time.Unix(0, 0).UTC()); err != nil {
 		t.Fatalf("SetToken: %v", err)
 	}
+	// The verbs under test drive a joined machine; the unjoined refusal is
+	// the turn-off test's case.
+	joinFixtureFile(t, first.Path())
 	f := &relevosync.Fake{}
 	runner := &VerbRunner{
 		Shared: first,

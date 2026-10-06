@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -168,8 +169,19 @@ func TestTheTurnOffReachesTheUserWithNothingOpen(t *testing.T) {
 	}
 
 	opens := 0
-	f.runner.Open = func(context.Context, relevosync.OpenConfig) (relevosync.SyncClient, error) {
+	joined, _ := relevosync.HasSyncMarker(f.shared.Path())
+	f.runner.Open = func(_ context.Context, cfg relevosync.OpenConfig) (relevosync.SyncClient, error) {
 		opens++
+		// Mirror the production gate: only a seed open may create membership,
+		// so a member open on a file no driver joined refuses. The fixture's
+		// fake used to open anything, which let a push succeed here for no
+		// reason closer to production than the fake itself; with lazy client
+		// building, that permissiveness would turn a wedged machine's refusal
+		// into a drive. Seed and scratch opens stay allowed: the re-enable
+		// below joins through seed, and probes are disposable by construction.
+		if !joined && cfg.Role != relevosync.OpenSeed && cfg.Role != relevosync.OpenScratch {
+			return nil, errors.New("sync: this file is not a member of a sync yet")
+		}
 		return &relevosync.Fake{}, nil
 	}
 	// The daemon's runner holds no client, which is what "no handle open" means

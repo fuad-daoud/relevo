@@ -25,12 +25,6 @@ const syncWindow = 5 * time.Minute
 // queued. Attempts piling up behind a slow network do not make the backlog
 // smaller, and the seal path must stay cheap enough to run every tick.
 func (d *Daemon) queueSync(ctx context.Context) {
-	// The mark gates before anything opens or drives: a machine turned off
-	// after its client was built must not sync on seal, and the gate is what
-	// makes that true for a runner another path constructed.
-	if !d.rt.Sync.On() {
-		return
-	}
 	r, ok := d.tickRunner(ctx)
 	if !ok {
 		return

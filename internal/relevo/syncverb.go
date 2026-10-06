@@ -255,7 +255,9 @@ func (v *VerbRunner) dropRunner() {
 // memberOpener opens the member a push or pull drives: the stored settings
 // and token, validated locally before any dial, over the role-gated member
 // open. A machine with no remote or no token fails here, fast and without a
-// dial, which is what keeps a refusal off the network.
+// dial, which is what keeps a refusal off the network. A file no driver
+// joined fails here too, for the same reason: opening it would dial a remote
+// about a file whose membership was never established.
 func (v *VerbRunner) memberOpener() func(context.Context) (relevosync.SyncClient, error) {
 	return func(ctx context.Context) (relevosync.SyncClient, error) {
 		settings, err := relevosync.ReadSettings(v.Local)
@@ -265,6 +267,9 @@ func (v *VerbRunner) memberOpener() func(context.Context) (relevosync.SyncClient
 		token, ok := v.storedToken()
 		if !ok {
 			return nil, errors.New("sync: no token stored on this machine")
+		}
+		if joined, err := relevosync.HasSyncMarker(v.Path); err != nil || !joined {
+			return nil, errors.New("sync: this file is not a member of a sync yet")
 		}
 		return v.openRemote(ctx, v.openConfig(settings, token, false))
 	}
@@ -286,6 +291,10 @@ func (v *VerbRunner) pushPull(ctx context.Context, verb *wire.SyncVerb) *wire.Sy
 	if err := v.checkReachable(); err != nil {
 		return verbRefusal(wire.SyncCodeInvalid, err)
 	}
+	// No mark gate here: Ensure consults the mark only on a cache miss, and a
+	// preset client drives without reading it — which is what keeps every
+	// caller that hands this runner a client on today's path. The membership
+	// check inside memberOpener is the fast refusal for unjoined files.
 	r, ok := v.ensureRunner(ctx)
 	if !ok {
 		return &wire.SyncResult{
