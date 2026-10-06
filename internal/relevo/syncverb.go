@@ -484,6 +484,11 @@ func (v *VerbRunner) probeConfig(settings relevosync.Settings, token []byte, scr
 		Namespace:  settings.Namespace,
 		ClientName: v.ClientName,
 		AuthToken:  token,
+		// The probe asks one question -- does the remote hold anything -- so
+		// it carries one chunk's worth of pull, not the whole remote. Without
+		// this bound the probe downloads the entire remote state to answer it,
+		// which outlasts the verb timeout against any real-sized database.
+		PullBytesThreshold: relevosync.ProbePullBytes,
 		// Bootstrap stays off for the same reason it always was: the question is
 		// what a pull brings back, so nothing may be taken before it is asked.
 		BootstrapIfEmpty: false,

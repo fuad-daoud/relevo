@@ -708,3 +708,18 @@ func probeCountRows(t *testing.T, d *db.DB) int {
 	}
 	return live
 }
+
+// TestProbePullIsBounded pins that the emptiness probe carries a pull bound:
+// it asks whether the remote holds anything, so one chunk answers it. An
+// unbounded probe downloads the entire remote state to answer, which outlasts
+// the verb timeout against any real-sized database.
+func TestProbePullIsBounded(t *testing.T) {
+	v := &VerbRunner{ClientName: "relevo"}
+	cfg := v.probeConfig(relevosync.Settings{RemoteURL: "libsql://example.invalid"}, []byte("token"), t.TempDir())
+	if cfg.PullBytesThreshold != relevosync.ProbePullBytes {
+		t.Errorf("probe pull threshold = %d, want ProbePullBytes %d", cfg.PullBytesThreshold, relevosync.ProbePullBytes)
+	}
+	if cfg.PullBytesThreshold <= 0 {
+		t.Error("probe pull threshold is not positive: the probe would pull unbounded")
+	}
+}

@@ -128,6 +128,11 @@ const (
 	// SeedPushOperations is how many local operations one push request carries
 	// on the seed path.
 	SeedPushOperations = 4096
+	// ProbePullBytes is the floor in bytes for the emptiness probe's pull. The
+	// probe only asks whether the remote holds anything, so one chunk answers
+	// it; without a bound the probe pulls the whole remote, and against a
+	// hundreds-of-megabytes database that outlasts every timeout on the path.
+	ProbePullBytes = 1 << 20
 )
 
 // DriverVersion is the sync driver this tree is built against, named so a test
