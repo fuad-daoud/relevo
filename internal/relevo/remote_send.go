@@ -129,7 +129,11 @@ func remoteShip(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 				// proceed as success
 				view.RoundState = remote.RoundRunning
 			} else if httpErr.Status == 409 && httpErr.Body.Code == remote.CodeRoundOpen {
-				return remoteShipped{}, fmt.Errorf("round %d is running on %s", b.Round, server)
+				// round_open is the server's refusal to start the round as
+				// asked: a running or queued round, or a binding that cannot
+				// start at all. Its message says which, so it is reported as
+				// given rather than restated as "running".
+				return remoteShipped{}, fmt.Errorf("%s: round %d could not start on %s: %s", name, b.Round, server, httpErr.Body.Message)
 			} else if httpErr.Status == 409 && httpErr.Body.Code == remote.CodeRoundHalted {
 				return remoteShipped{}, fmt.Errorf("%s: round %d could not start on %s: %s", name, b.Round, server, httpErr.Body.Message)
 			} else if httpErr.Status == 422 && httpErr.Body.Code == remote.CodeTierAboveMax {
@@ -151,7 +155,13 @@ func remoteShip(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 	// needs_you view for a round that could not start, rather than the 409
 	// round_halted handled above; treat it the same way. Nothing is
 	// written: the human's re-send must not look like it succeeded.
-	if view.RoundState == remote.RoundNeedsYou {
+	//
+	// A broken view is the same refusal by another route. A server holds a
+	// broken round as an open one, so an identical re-send is the 200 no-op
+	// it is for a running round and carries the broken view back. That view
+	// says no round started; recording a prompt for it would reset the round
+	// and file the next halt twice with the same text.
+	if view.RoundState == remote.RoundNeedsYou || view.RoundState == remote.RoundBroken {
 		return remoteShipped{}, fmt.Errorf("%s: round %d could not start on %s: %s", name, b.Round, server, orText(view.Halt, "no reason given"))
 	}
 
@@ -237,11 +247,14 @@ func remoteRecord(rt Runtime, tx *store.Tx, b store.Binding, ship remoteShipped,
 	cur.QueuedAt = time.Time{}
 	cur.FinishPending = true
 	cur.State = store.StateActive
-	cur.Halt = ""
-	cur.HaltAt = time.Time{}
-	// A human re-send is a fresh attempt: the next halt in this round notifies
-	// again, and the round gets a full switch budget.
-	cur.HaltNotifiedRound = 0
+	// The halt that stopped the previous attempt goes with the attempt, all of
+	// it: reason, stamp and the kind naming its episode. A human re-send is a
+	// fresh attempt, so the next halt in this round notifies again.
+	cur = clearHaltFields(cur)
+	// An owed notification goes with the halt it was about: the re-send is the
+	// human answering that halt, so the entry it still owes would land under a
+	// round the human has already moved past.
+	cur.OwedHalt = nil
 	cur.RoundSwitches = 0
 	cur.RoundExcluded = nil
 	cur.RoundOOMKills = 0

@@ -125,6 +125,22 @@ func (s *Server) admitLocked(ctx context.Context) error {
 		err := relevo.Admit(ctx, s.runtimeAt(q.OwnerRoot), q.Name)
 		switch {
 		case err == nil:
+			// Admit succeeds for a round it started nothing for: a switch
+			// whose replacement could not be resolved leaves the binding
+			// broken with no process and returns no error, because that fault
+			// is a halt entry owed and not a return value. Counting it as a
+			// start would under-admit the rest of the pass by one, so the
+			// count follows the binding's own state after the admit: a
+			// process is what census counts as a builder.
+			after, lerr := s.ownerStore(q.OwnerRoot).Load(q.Name)
+			if lerr != nil {
+				slog.Warn(fmt.Sprintf("admit owner=%s binding=%s: could not re-read the binding: %v", q.Owner, q.Name, lerr))
+				continue
+			}
+			if after.Builder.PID == 0 {
+				slog.Warn(fmt.Sprintf("admit owner=%s binding=%s: no process started; the slot stays free", q.Owner, q.Name))
+				continue
+			}
 			running++
 			slog.Info(fmt.Sprintf("admitted owner=%s binding=%s running=%d/%d", q.Owner, q.Name, running, limit))
 		case errors.Is(err, relevo.ErrNotQueued):

@@ -63,7 +63,11 @@ func goneStep(row *view.BindingStatus, label string) string {
 // AdminStatus returns every owner who has a bindings directory, sorted by
 // Label, plus the builder census. Every queued row gains its Queued position
 // and a "queued <age> (<ahead> ahead)" BuilderStatus.
-func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.BuildersView, error) {
+//
+// opts reach the per-owner Status, so a caller that paints no detail figure
+// (the ui's fleet source) pays for none of them. They default to on, which
+// keeps `relevo serve admin` and every other caller on today's rows.
+func AdminStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) ([]OwnerStatus, remote.BuildersView, error) {
 	builders := s.isolationView(remote.BuildersView{Cap: s.cap()})
 
 	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
@@ -94,7 +98,7 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.Builders
 		ownerPath := filepath.Join(bindingsDir, entry.Name())
 		rt := s.runtimeAt(ownerPath)
 		label := s.clients.LabelOf(id)
-		rep, err := relevo.Status(ctx, rt)
+		rep, err := relevo.Status(ctx, rt, opts...)
 		if err != nil {
 			return nil, remote.BuildersView{}, err
 		}
@@ -147,8 +151,12 @@ func AdminStatus(ctx context.Context, s *Server) ([]OwnerStatus, remote.Builders
 
 // FlatStatus is the whole fleet as one report, Owner/OwnerLabel stamped on each
 // row. Gated is the first owner's slice: the ledger is server-wide.
-func FlatStatus(ctx context.Context, s *Server) (view.Report, error) {
-	owners, _, err := AdminStatus(ctx, s)
+//
+// opts reach AdminStatus's per-owner Status, so the ui's fleet source can turn
+// the detail figures off; they default to on, which keeps every other caller on
+// today's identical rows.
+func FlatStatus(ctx context.Context, s *Server, opts ...relevo.StatusOption) (view.Report, error) {
+	owners, _, err := AdminStatus(ctx, s, opts...)
 	if err != nil {
 		return view.Report{}, err
 	}

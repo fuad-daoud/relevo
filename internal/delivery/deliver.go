@@ -112,10 +112,11 @@ func DeliverPending(ctx context.Context, d Deps, tx *store.Tx, b store.Binding) 
 // entry is not claimable (ClaimableForMasterMind excludes it), so neither the
 // background wait nor a reader can take it.
 //
-// An admit past the route's horizon is the one case that settles nothing: it is
-// cleared and handed back as the pull route, which is what makes the entry
-// claimable for the background wait. It never pushes -- a binding whose state
-// already changed must not get a new payload.
+// An admit past the route's horizon is the one case that is not settled by the
+// read-back alone: the admit is cleared so the entry is claimable for the
+// background wait, and then the same one read-back runs -- a payload the
+// session did already receive is confirmed rather than claimed. It never pushes
+// -- a binding whose state already changed must not get a new payload.
 func ConfirmAdmitted(ctx context.Context, d Deps, tx *store.Tx, b store.Binding) (store.Binding, Delivery, error) {
 	pending, idx, found, err := tx.PendingForMasterMind(b.Name)
 	if err != nil {
@@ -140,6 +141,20 @@ func ConfirmAdmitted(ctx context.Context, d Deps, tx *store.Tx, b store.Binding)
 		// claimable again so the wait can take it.
 		if err := expireAdmit(tx, b, pending, idx, age); err != nil {
 			return b, Delivery{}, err
+		}
+		// Clearing says the read-back has not settled this entry, not that the
+		// session never received the payload: it may have arrived before the
+		// horizon ran out. So the same one read-back runs here, and it confirms
+		// rather than sends. An entry confirmed by it is no longer claimable,
+		// which is what keeps the wait from showing one payload twice, once
+		// pushed and once pulled.
+		text, _ := PushText(pending, b, d.Store.ReadFile)
+		out, reason, err := del.ConfirmOnce(ctx, b.MasterMind, text, pending.TS)
+		if err != nil {
+			return b, Delivery{}, fmt.Errorf("confirm to mastermind: %w", err)
+		}
+		if out == OutcomeDelivered {
+			return deliveryOf(tx, b, idx, "deliverer:"+kind, out, reason, pending.Round)
 		}
 		return b, Delivery{
 			Route:  "pull",

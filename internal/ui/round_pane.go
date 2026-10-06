@@ -156,6 +156,37 @@ func (p *roundPane) startFetch() tea.Cmd {
 	}
 }
 
+// detailFetch is the pane's own row fetch: the one row this pane is pointed at,
+// built with the detail figures the fleet report leaves nil (Live, LiveUsage,
+// Headless.Tail), so opening a row shows all three without the fleet paying for
+// them on every tick. It is issued once, on the open: there is one row on
+// screen, and it is the only one that ever draws a figure.
+func (p roundPane) detailFetch() tea.Cmd {
+	if p.detail.name == "" {
+		return nil
+	}
+	return fetchStatusRow(p.ctx, p.src, p.detail.name)
+}
+
+// batchCmds joins commands into one, dropping the nil ones: the pane issues
+// its tab fetch and its detail-row fetch side by side on the open.
+func batchCmds(cmds ...tea.Cmd) tea.Cmd {
+	out := make([]tea.Cmd, 0, len(cmds))
+	for _, c := range cmds {
+		if c != nil {
+			out = append(out, c)
+		}
+	}
+	switch len(out) {
+	case 0:
+		return nil
+	case 1:
+		return out[0]
+	default:
+		return tea.Batch(out...)
+	}
+}
+
 // pointDetailAt re-targets the pane at the row keyed: key, round
 // (paneRound), lastLogTS from row.Last, every cache cleared, every
 // parked scroll zeroed. The active tab is kept -- a human reading diffs
@@ -215,7 +246,7 @@ func (p roundPane) pointDetailAt(key string) (roundPane, tea.Cmd) {
 		p.detail.lastLogTS = r.Last.TS
 	}
 	p.fillViewport()
-	if cmd := p.startFetch(); cmd != nil {
+	if cmd := batchCmds(p.startFetch(), p.detailFetch()); cmd != nil {
 		return p, cmd
 	}
 	return p, nil

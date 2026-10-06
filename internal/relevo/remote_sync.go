@@ -20,6 +20,15 @@ import (
 
 const unreachableGrace = 30 * time.Minute
 
+// pollSwitchNotePrefix marks the switch entry a poll writes when the server
+// reports a candidate other than the one this client recorded. The entry names
+// what this client observed, not what the round did: the round's own switch
+// history ships in the closed round's view and is rendered from there, so this
+// note is excluded from the report's switch lines rather than naming the same
+// switch a second time. A server that ships no switch history leaves the entry
+// as the only record of the switch there is.
+const pollSwitchNotePrefix = "switched on "
+
 // checkedOutWarned records the bindings whose "checked out" hint catchUp has
 // already logged at Info in this process, so the hint does not repeat on every
 // SyncRemote (#253). Process-local on purpose: the daemon and `relevo wait` are
@@ -278,26 +287,26 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 		b.Builder.Kind = kind
 		if err := tx.AppendLog(name, store.LogEntry{
 			TS: now, Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindSwitch,
-			Note:      fmt.Sprintf("switched on %s: %s -> %s", server, prev, view.Candidate),
+			Note:      fmt.Sprintf("%s%s: %s -> %s", pollSwitchNotePrefix, server, prev, view.Candidate),
 			Confirmed: true,
 		}); err != nil {
 			return b, false, err
 		}
 	}
 
+	// A view that came back answers the only question the unreachable halt asked,
+	// so that halt goes first -- above the observe branch, which never gated it.
+	b = clearUnreachableHalt(view.RoundState, b)
+
 	// A member of a server chain observes the live round only: a close, an
-	// idle round or a need for a human is the chain pull's to install and
-	// ack, so this per-binding apply writes the status word above and stops.
+	// idle round or a wait for a human -- needs_you or broken -- is the chain
+	// pull's to install and ack, so this apply writes the status word and stops.
 	if f.Observe {
 		switch view.RoundState {
-		case remote.RoundNeedsYou, remote.RoundClosed, remote.RoundIdle:
+		case remote.RoundNeedsYou, remote.RoundClosed, remote.RoundIdle, remote.RoundBroken:
 			return b, false, nil
 		}
 	}
-
-	// A view that came back answers the only question the unreachable halt
-	// asked, so that halt goes before the switch reads the round.
-	b = clearUnreachableHalt(view.RoundState, b)
 
 	switch view.RoundState {
 	case remote.RoundQueued:
@@ -330,7 +339,9 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 		applyDrift(rt, tx, name, b.Round, f.Drift)
 		return b, false, nil
 
-	case remote.RoundNeedsYou:
+	// A broken round shares this arm: no builder behind it means a human is what
+	// it waits on, and a close outranks a break, so it owes no catch-up here.
+	case remote.RoundNeedsYou, remote.RoundBroken:
 		b.StalledSince = view.StalledSince
 		// Catch-up first, halt second. A halt and a close are not exclusive on
 		// the wire: a round that closed and then halted again reports both, and
@@ -360,7 +371,7 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 				return next, true, nil
 			}
 		}
-		b, err := haltAndSettle(ctx, rt, tx, b, name+": "+view.Halt)
+		b, err := haltAndSettleKind(ctx, rt, tx, b, name+": "+remoteHaltText(view.RoundState, view.Halt), haltKindFor(view.RoundState))
 		return b, false, err
 
 	case remote.RoundClosed:

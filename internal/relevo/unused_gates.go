@@ -22,6 +22,18 @@ func UnusedProviderGates(rt Runtime) []view.ProviderGate {
 		return nil
 	}
 
+	return UnusedProviderGatesFrom(rt, l)
+}
+
+// UnusedProviderGatesFrom is UnusedProviderGates with the ledger already
+// loaded: a status report that also builds the candidate gates reads the kv row
+// once and projects both from the one Ledger. A nil gates store or candidate
+// set is still nil.
+func UnusedProviderGatesFrom(rt Runtime, l availability.Ledger) []view.ProviderGate {
+	if rt.Gates == nil || rt.Candidates == nil {
+		return nil
+	}
+
 	used := make(map[string]bool)
 	for _, p := range rt.Candidates.Providers() {
 		used[p] = true

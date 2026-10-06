@@ -12,7 +12,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
-	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -32,6 +31,18 @@ func RoundStateOf(b store.Binding, entries []store.LogEntry) remote.RoundState {
 	}
 	if b.State == store.StateNeedsYou {
 		return remote.RoundNeedsYou
+	}
+	// A broken builder has no process to run the round, whatever the entries
+	// say about it, so it outranks the open-round arms below -- but not the
+	// close above, which the owner is still owed.
+	//
+	// A switchable break is not that: the server retries it on its next tick
+	// and deliberately notifies nobody about it, so reporting it broken makes
+	// the owner halt on a fallback reason of its own and queue an entry for a
+	// fault the daemon is about to fix. It falls through to the open-round
+	// arms, which is what it was before the break.
+	if b.State == store.StateBroken && !bindingSwitchable(b) {
+		return remote.RoundBroken
 	}
 	open := store.RoundOpen(entries, b.Round)
 	if open && !b.QueuedAt.IsZero() {
@@ -103,8 +114,10 @@ func closeServedRound(ctx context.Context, rt Runtime, b store.Binding) store.Bi
 // both are "" for a caller that holds neither.
 func ServedView(b store.Binding, entries []store.LogEntry, recordID, installation string) remote.BindingView {
 	rState := RoundStateOf(b, entries)
+	// A halted or broken binding ships its reason: without it the client shows
+	// the state word and nothing to act on.
 	var halt string
-	if b.State == store.StateNeedsYou {
+	if b.State == store.StateNeedsYou || b.State == store.StateBroken {
 		halt = b.Halt
 	}
 	var resultCommit, dirtyCommit string
@@ -122,16 +135,9 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 	}
 	var ackedRound int
 	var closedRound int
-	var priorTokens *usage.Tokens
 	if b.Serve != nil {
 		ackedRound = b.Serve.AckedRound
 		closedRound = b.Serve.ClosedRound
-		if closedRound > 0 {
-			pt := view.PriorTokensOf(entries, closedRound)
-			if pt.Total() > 0 {
-				priorTokens = &pt
-			}
-		}
 	}
 	return remote.BindingView{
 		ID:             recordID,
@@ -163,7 +169,7 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 		Feature:        b.Feature,
 		Ticket:         b.Ticket,
 		Usage:          facts.Usage,
-		PriorTokens:    priorTokens,
+		PriorTokens:    facts.PriorTokens,
 		Rusage:         facts.Rusage,
 		StalledSince:   b.StalledSince,
 	}
@@ -171,9 +177,10 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 
 // servedRoundFacts is the per-round scan ServedView used to run for its
 // ClosedRound: round n's report outcome, note, usage and rusage; its gate
-// result; its diff note, commit count and tree; its switch history; and how it
-// was stopped. n <= 0 yields the zero value. Every field names the newest entry
-// for round n of its kind, the order the original scans walked.
+// result; its diff note, commit count and tree; its switch history; its own
+// prior tokens; and how it was stopped. n <= 0 yields the zero value. Every
+// field names the newest entry for round n of its kind, the order the original
+// scans walked.
 func servedRoundFacts(entries []store.LogEntry, n int) remote.ClosedRoundView {
 	var f remote.ClosedRoundView
 	if n <= 0 {
@@ -213,6 +220,12 @@ func servedRoundFacts(entries []store.LogEntry, n int) remote.ClosedRoundView {
 		if e.Round == n && e.Kind == store.KindSwitch && e.Note != nudgeNote && e.Note != "" {
 			f.Switches = append(f.Switches, e.Note)
 		}
+	}
+	// priorTokens is the round's own earlier segments: the sum view.PriorTokensOf
+	// walks for n. Nil when the round used none, so a client keys each round's
+	// figure off that round rather than off the newest closed one.
+	if pt := view.PriorTokensOf(entries, n); pt.Total() > 0 {
+		f.PriorTokens = &pt
 	}
 	// stopped is how the round was stopped: the newest KindStop entry for n
 	// whose note names one ("stopped/killed", "stopped/reaped", "stopped/gone"
@@ -334,8 +347,10 @@ func liveViewOf(row view.BindingStatus, b store.Binding, at time.Time) *remote.L
 }
 
 // ServedLive returns the live view of an owned binding's running round (spec §3.1).
+// It is the one single-row surface a client reads, and every figure it carries
+// (usage, tail, diff) is a detail figure, so the row is built with them on.
 func ServedLive(ctx context.Context, rt Runtime, b store.Binding) (*remote.LiveView, error) {
-	row, err := statusRow(ctx, rt, b)
+	row, err := statusRow(ctx, rt, b, statusConfig{detail: true})
 	if err != nil {
 		return nil, err
 	}

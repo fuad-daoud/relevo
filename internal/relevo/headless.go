@@ -765,6 +765,12 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		}
 		if b.State == store.StateBroken {
 			b.State = store.StateActive
+			// The fault that broke the binding is over, so the halt that
+			// recorded it goes with it. Left in place it reads as the reason the
+			// round is still stopped: the next send is refused with 409
+			// round_halted naming a switch that has already been replaced, and
+			// the round classifies as halted for as long as the binding lives.
+			b = clearHaltFields(b)
 		}
 		return deliverAndSettle(ctx, rt, tx, b)
 	}
@@ -1450,13 +1456,18 @@ const statusTailLines = 3
 // Alive check, then, for an exited process, the trailer's code. No Runner
 // means relevo cannot say. A live process whose stream has gone quiet
 // (binding.StalledSince, #252) reads "stalled <age>" in place of "working".
-func headlessStatus(ctx context.Context, rt Runtime, b store.Binding) (string, *view.HeadlessInfo) {
+//
+// detail false builds no tail: the read is a whole-file logTail or a 64 KiB
+// window per row per tick, and the fleet path paints none of it. The flag
+// reaches here rather than the call site so the read is never made and then
+// thrown away.
+func headlessStatus(ctx context.Context, rt Runtime, b store.Binding, detail bool) (string, *view.HeadlessInfo) {
 	e := b.Builder
 	info := &view.HeadlessInfo{PID: e.PID, LogPath: e.LogPath}
 	if e.StartedAt != 0 {
 		info.StartedAt = time.Unix(e.StartedAt, 0)
 	}
-	if e.LogPath != "" {
+	if detail && e.LogPath != "" {
 		if tail := builderTail(rt, b, statusTailLines); tail != "" {
 			info.Tail = strings.Split(tail, "\n")
 		}

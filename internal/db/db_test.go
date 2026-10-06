@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -805,4 +806,136 @@ func TestRoundAccountRoundTrips(t *testing.T) {
 			}
 		}
 	}
+}
+
+// The shape of the shared-read precondition: how many readers share one *DB,
+// how many reads each runs, and how much of one record's log is on the path.
+const (
+	concurrentReaders    = 8
+	concurrentReadIters  = 200
+	concurrentReadEvents = 3
+)
+
+// concurrentRead is the single-threaded truth every concurrent reader must keep
+// returning: the seeded record, its whole log, and the seeded kv document.
+type concurrentRead struct {
+	owner, name, key string
+	recordID         string
+	recordJSON       string
+	kv               string
+	events           int
+}
+
+// TestConcurrentReadsShareOneDB pins the precondition that lets a report build
+// its rows concurrently: reads on one *DB are safe. The read path goes straight
+// to the pool with no *Tx and no dedicated *sql.Conn, so eight goroutines reading
+// the same record, log and kv row never contend for the write lock.
+//
+// The short begin window below is the pin, not a speed-up. A read path that
+// reached BEGIN IMMEDIATE would serialise eight readers on the write lock and
+// fail the test rather than quietly waiting out the contention it created.
+func TestConcurrentReadsShareOneDB(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	d, err := OpenWith(path, Options{BusyTimeout: 100 * time.Millisecond, BeginRetry: time.Millisecond})
+	if err != nil {
+		t.Fatalf("OpenWith: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	want := seedConcurrentRead(t, d)
+
+	var wg sync.WaitGroup
+	errs := make([]error, concurrentReaders)
+	for j := range errs {
+		wg.Add(1)
+		go func(j int) {
+			defer wg.Done()
+			errs[j] = readRepeatedly(d, want)
+		}(j)
+	}
+	wg.Wait()
+
+	for j, err := range errs {
+		if err != nil {
+			t.Fatalf("reader %d: %v", j, err)
+		}
+	}
+	// A read path that handed out a Tx or held a dedicated connection would
+	// leave one checked out once every reader is done.
+	if inUse := d.sqlDB.Stats().InUse; inUse != 0 {
+		t.Errorf("connections in use after %d readers finished = %d, want 0", concurrentReaders, inUse)
+	}
+}
+
+// seedConcurrentRead writes the one record, log and kv document every reader
+// re-reads, then pins the single-threaded truth it will be checked against.
+func seedConcurrentRead(t *testing.T, d *DB) concurrentRead {
+	t.Helper()
+	want := concurrentRead{
+		owner: "owner", name: "reader", key: "read.probe",
+		recordJSON: `{"name":"reader"}`, kv: `{"n":7}`,
+		events: concurrentReadEvents,
+	}
+	id, err := d.RecordPut(Record{
+		Owner: want.owner, Name: want.name, State: "ACTIVE", Round: 1, JSON: want.recordJSON,
+	})
+	if err != nil {
+		t.Fatalf("RecordPut: %v", err)
+	}
+	want.recordID = id
+	for seq := 1; seq <= concurrentReadEvents; seq++ {
+		e := RecordEvent{
+			Seq: seq, TS: time.Now(), Round: 1,
+			Direction: "to_mastermind", Kind: "report",
+			JSON: fmt.Sprintf(`{"seq":%d}`, seq),
+		}
+		if err := d.EventAppend(id, e); err != nil {
+			t.Fatalf("EventAppend #%d: %v", seq, err)
+		}
+	}
+	if err := d.KVPut(want.key, []byte(want.kv)); err != nil {
+		t.Fatalf("KVPut: %v", err)
+	}
+	if err := checkConcurrentRead(d, want); err != nil {
+		t.Fatalf("single-threaded baseline: %v", err)
+	}
+	return want
+}
+
+// readRepeatedly runs one reader's whole share of the reads.
+func readRepeatedly(d *DB, want concurrentRead) error {
+	for i := range concurrentReadIters {
+		if err := checkConcurrentRead(d, want); err != nil {
+			return fmt.Errorf("iteration %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// checkConcurrentRead is one reader's single pass: RecordGet, EventsOf and
+// KVGet, each held to exactly what the setup wrote. It is the same check the
+// single-threaded baseline runs, so a value that drifts fails either way.
+func checkConcurrentRead(d *DB, want concurrentRead) error {
+	r, ok, err := d.RecordGet(want.owner, want.name)
+	if err != nil {
+		return fmt.Errorf("RecordGet: %w", err)
+	}
+	if !ok || r.ID != want.recordID || r.JSON != want.recordJSON {
+		return fmt.Errorf("RecordGet = (id %q, found %v, json %q), want the seeded row", r.ID, ok, r.JSON)
+	}
+	events, err := d.EventsOf(want.recordID, 0)
+	if err != nil {
+		return fmt.Errorf("EventsOf: %w", err)
+	}
+	if len(events) != want.events {
+		return fmt.Errorf("EventsOf returned %d events, want %d", len(events), want.events)
+	}
+	value, ok, err := d.KVGet(want.key)
+	if err != nil {
+		return fmt.Errorf("KVGet: %w", err)
+	}
+	if !ok || string(value) != want.kv {
+		return fmt.Errorf("KVGet = (%q, found %v), want the seeded document", value, ok)
+	}
+	return nil
 }

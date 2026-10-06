@@ -248,9 +248,9 @@ func setChainMemberColumn(c *db.ChainRow, part, name string) {
 
 // chainRoundView is the closed-round facts of round r as the catch-up reads
 // them: the member's binding view, its ClosedRound set to r and every other
-// closed-round fact taken from the view's Round r. That is what makes one
-// member's older rounds installable by the same code a single closed round
-// uses.
+// closed-round fact taken from the view's Round r, the newest one completed
+// by chainRoundFacts. That is what makes one member's older rounds
+// installable by the same code a single closed round uses.
 func chainRoundView(mv remote.ChainMemberView, r int) remote.BindingView {
 	v := mv.View
 	v.ClosedRound = r
@@ -258,14 +258,19 @@ func chainRoundView(mv remote.ChainMemberView, r int) remote.BindingView {
 		if cr.Round != r {
 			continue
 		}
+		cr = chainRoundFacts(cr, mv.View)
 		v.ReportOutcome = cr.ReportOutcome
 		v.GateResult = cr.GateResult
 		v.Stopped = cr.Stopped
+		v.ReportNote = cr.ReportNote
+		v.Switches = cr.Switches
 		v.DiffNote = cr.DiffNote
 		v.DiffCommits = cr.DiffCommits
 		v.DiffTree = cr.DiffTree
+		v.DirtyCommit = cr.DirtyCommit
 		v.Usage = cr.Usage
 		v.Rusage = cr.Rusage
+		v.PriorTokens = cr.PriorTokens
 		break
 	}
 	return v
