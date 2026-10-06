@@ -382,7 +382,7 @@ func cmdDaemon(args []string) error {
 	if err != nil {
 		slog.Warn("relevo daemon: owner socket not served", "err", err)
 	}
-	installSyncVerbHook(srv, &rt, d)
+	installSyncVerbHook(srv, d)
 	info := store.DaemonInfo{
 		Version:    buildVersion(),
 		PID:        os.Getpid(),
@@ -499,7 +499,7 @@ func cmdDaemon(args []string) error {
 	// is served before it is built. Rebind it now with the guard: from here a
 	// verb and a seal or idle tick are serialized against each other, which is
 	// what keeps one machine's markers from being written twice at once.
-	installSyncVerbSerializing(daemon, srv, &rt, d)
+	installSyncVerbSerializing(daemon, srv, d)
 	err = daemon.Run(ctx)
 	if errors.Is(err, relevo.ErrReexec) {
 		// Drain the owner first: an open transaction must be able to commit

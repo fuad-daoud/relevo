@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"runtime/debug"
 	"time"
+
+	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
 // syncWindow is the shortest gap between two idle-window syncs. A tick arriving
@@ -23,7 +25,8 @@ const syncWindow = 5 * time.Minute
 // queued. Attempts piling up behind a slow network do not make the backlog
 // smaller, and the seal path must stay cheap enough to run every tick.
 func (d *Daemon) queueSync(ctx context.Context) {
-	if !d.rt.Sync.Enabled() {
+	r, ok := d.tickRunner(ctx)
+	if !ok {
 		return
 	}
 
@@ -47,8 +50,25 @@ func (d *Daemon) queueSync(ctx context.Context) {
 			d.signalIdleLocked()
 			d.syncMu.Unlock()
 		}()
-		d.runSync(ctx)
+		d.runSyncOn(ctx, r)
 	}()
+}
+
+// tickRunner reports the runner one background attempt drives. When the owner
+// serves verbs, that runner is shared with them: a client built lazily for a
+// verb is reused by the tick and vice versa, so the daemon holds one remote
+// handle no matter which trigger asked first. Otherwise the tick drives rt.Sync
+// exactly as before, which keeps every existing caller — and the nil runner of
+// a runtime that never configured sync — on today's path.
+func (d *Daemon) tickRunner(ctx context.Context) (*relevosync.Runner, bool) {
+	if v := d.syncVerbs; v != nil {
+		return v.ensureRunner(ctx)
+	}
+	r := d.rt.Sync
+	if r == nil || !r.Enabled() {
+		return nil, false
+	}
+	return r, true
 }
 
 // idleSync runs the window's one push-then-pull, or does nothing at all.
@@ -79,8 +99,8 @@ func (d *Daemon) idleSync(ctx context.Context) {
 // runSync is the shared body of both triggers. The runner has already written
 // the markers for the outcome by the time this returns, so all that is left is
 // to say what happened once, at a level a human reads.
-func (d *Daemon) runSync(ctx context.Context) {
-	out := d.rt.Sync.SyncOnce(ctx)
+func (d *Daemon) runSyncOn(ctx context.Context, r *relevosync.Runner) {
+	out := r.SyncOnce(ctx)
 	if out.Err != nil {
 		slog.Warn("turso sync failed", "err", out.Err, "attention", out.Attention)
 		return

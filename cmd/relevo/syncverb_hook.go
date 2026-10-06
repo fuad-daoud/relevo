@@ -28,11 +28,11 @@ import (
 //
 // A nil server, or a handle with no local file, leaves the hook uninstalled and
 // the owner refuses the verb rather than answering as though sync had run.
-func installSyncVerbHook(srv *owner.Server, rt *relevo.Runtime, d *db.DB) {
+func installSyncVerbHook(srv *owner.Server, d *db.DB) {
 	if srv == nil || d == nil {
 		return
 	}
-	runner := newVerbRunner(rt, d)
+	runner := newVerbRunner(d)
 	if runner == nil {
 		return
 	}
@@ -43,7 +43,11 @@ func installSyncVerbHook(srv *owner.Server, rt *relevo.Runtime, d *db.DB) {
 // serves and the cockpit's actions run are the same value over the same handles.
 // A handle with no local file yields nil: there is no row sync could own, and a
 // runner built without one would have to be handed a nil seam.
-func newVerbRunner(rt *relevo.Runtime, d *db.DB) *relevo.VerbRunner {
+//
+// The Runner starts clientless on purpose: the first attempt that needs it
+// builds the client through Ensure, so construction never dials and a restart
+// never pays a network call for a machine whose mark may be off.
+func newVerbRunner(d *db.DB) *relevo.VerbRunner {
 	if d == nil {
 		return nil
 	}
@@ -60,7 +64,7 @@ func newVerbRunner(rt *relevo.Runtime, d *db.DB) *relevo.VerbRunner {
 		Shared:     d,
 		Local:      local,
 		Path:       d.Path(),
-		Runner:     rt.Sync,
+		Runner:     &relevosync.Runner{Local: local},
 		ClientName: dbSyncClientName,
 	}
 }
@@ -73,14 +77,15 @@ func newVerbRunner(rt *relevo.Runtime, d *db.DB) *relevo.VerbRunner {
 // It is called once the Daemon exists, which is after the owner is served, so
 // that the guard a verb waits on is the guard the seal hook and the idle tick
 // already take.
-func installSyncVerbSerializing(d *relevo.Daemon, srv *owner.Server, rt *relevo.Runtime, handle *db.DB) {
+func installSyncVerbSerializing(d *relevo.Daemon, srv *owner.Server, handle *db.DB) {
 	if srv == nil || handle == nil {
 		return
 	}
-	runner := newVerbRunner(rt, handle)
+	runner := newVerbRunner(handle)
 	if runner == nil {
 		return
 	}
 	runner.Serialize = d.WaitSyncSlot
+	d.SetSyncVerbs(runner)
 	srv.OnSyncVerb = runner.OwnerVerb
 }

@@ -86,6 +86,21 @@ type Daemon struct {
 	syncLast time.Time
 	// syncNow is the clock the idle window reads. Nil means time.Now.
 	syncNow func() time.Time
+	// syncVerbs is the verb runner the owner serves, set once the Daemon
+	// exists. Nil (the default) keeps today's behaviour: the tick drives
+	// rt.Sync exactly as before. When set, the tick drives the runner it
+	// shares with the verbs, so a client built lazily for one is reused by
+	// the other instead of each path opening its own. Set through
+	// SetSyncVerbs: cmd/relevo owns the hook installation while this type
+	// owns the field.
+	syncVerbs *VerbRunner
+}
+
+// SetSyncVerbs shares the owner's verb runner with the tick, so background
+// attempts reuse the client a verb built lazily (and vice versa) instead of
+// each path opening its own handle to the same remote.
+func (d *Daemon) SetSyncVerbs(v *VerbRunner) {
+	d.syncVerbs = v
 }
 
 // NewDaemon returns a Daemon ticking at interval, floored at minInterval.

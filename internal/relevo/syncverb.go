@@ -155,6 +155,10 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, token []by
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
+	// The stored token or remote may have changed under any previously cached
+	// client, so the next attempt rebuilds rather than reusing it. One extra
+	// dial per enable is cheaper than a lifecycle for the old handle.
+	v.dropRunner()
 	return &wire.SyncResult{
 		OK:           true,
 		RemoteURL:    res.RemoteURL,
@@ -213,11 +217,57 @@ func (v *VerbRunner) disable(ctx context.Context, verb *wire.SyncVerb, token []b
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
+	// The mark is off, so no later attempt may drive the old client: drop it
+	// now rather than letting it outlive the state that governs it.
+	v.dropRunner()
 	out := &wire.SyncResult{OK: true, Steps: res.Steps, FinalPush: res.FinalPush}
 	if res.FinalPushErr != nil {
 		out.Warning = res.FinalPushErr.Error()
 	}
 	return out
+}
+
+// ensureRunner reports the runner push and pull drive, building its client
+// the first time through memberOpener. A machine whose mark is off, or whose
+// open fails, has no runner and gets false with nothing opened and nothing
+// cached. Callers hold the verb guard across the whole verb, so two Ensures
+// never overlap on one VerbRunner; the cockpit's instance is never shared.
+func (v *VerbRunner) ensureRunner(ctx context.Context) (*relevosync.Runner, bool) {
+	if v.Runner == nil {
+		v.Runner = &relevosync.Runner{Local: v.Local}
+	}
+	if !v.Runner.Ensure(ctx, v.memberOpener()) {
+		return nil, false
+	}
+	return v.Runner, true
+}
+
+// dropRunner forgets the runner's client so the next attempt rebuilds it.
+// Enable calls it after success (the stored token or remote may have changed
+// under the old handle) and disable calls it after success (the machine is
+// off, and a cached client would outlive the mark that governs it).
+func (v *VerbRunner) dropRunner() {
+	if v.Runner != nil {
+		v.Runner.Client = nil
+	}
+}
+
+// memberOpener opens the member a push or pull drives: the stored settings
+// and token, validated locally before any dial, over the role-gated member
+// open. A machine with no remote or no token fails here, fast and without a
+// dial, which is what keeps a refusal off the network.
+func (v *VerbRunner) memberOpener() func(context.Context) (relevosync.SyncClient, error) {
+	return func(ctx context.Context) (relevosync.SyncClient, error) {
+		settings, err := relevosync.ReadSettings(v.Local)
+		if err != nil {
+			return nil, err
+		}
+		token, ok := v.storedToken()
+		if !ok {
+			return nil, errors.New("sync: no token stored on this machine")
+		}
+		return v.openRemote(ctx, v.openConfig(settings, token, false))
+	}
 }
 
 // pushPull runs one bounded push-then-pull through the daemon's runner, so a
@@ -236,14 +286,15 @@ func (v *VerbRunner) pushPull(ctx context.Context, verb *wire.SyncVerb) *wire.Sy
 	if err := v.checkReachable(); err != nil {
 		return verbRefusal(wire.SyncCodeInvalid, err)
 	}
-	if v.Runner == nil || !v.Runner.Enabled() {
+	r, ok := v.ensureRunner(ctx)
+	if !ok {
 		return &wire.SyncResult{
 			OK:      false,
 			Code:    wire.SyncCodeInvalid,
 			Message: "sync: this machine has no remote handle open",
 		}
 	}
-	out := v.Runner.SyncOnce(ctx)
+	out := r.SyncOnce(ctx)
 	if out.Err != nil {
 		// The runner has already recorded the failure in the markers; the verb
 		// reports the same class the tick would, so a caller and the statusline

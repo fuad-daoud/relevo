@@ -78,6 +78,51 @@ func (r *Runner) Enabled() bool {
 	return r != nil && r.Client != nil && r.Local != nil
 }
 
+// Ensure reports whether there is a client to drive, building one through
+// open the first time. It is how a runner that starts clientless becomes usable
+// without a restart: the mark decides, and the open only runs for a machine
+// whose mark is on.
+//
+// Nil-receiver safe, like Enabled: a missing runner has nothing to ensure.
+// A machine whose mark is off drops any cached client and reports false, so a
+// disable takes effect on the next attempt without any teardown call. A mark
+// that cannot be read is treated as on, mirroring On: skipping on a transient
+// read error would quietly stop syncing a machine that is meant to be syncing.
+//
+// The open runs under DefaultTimeout on top of the caller's context, so a
+// blackholed dial costs one bounded wait wherever Ensure is called from —
+// including a seal path that must stay cheap. Callers pass an open that
+// validates locally (settings, token) before any dial, so a refusal is fast
+// and a dial only happens for a machine that has something to reach with.
+//
+// One instance belongs to one driver at a time: the daemon's verb guard and
+// its in-flight drop mean two Ensures never overlap on the same instance, and
+// the cockpit's instance is never shared. Sharing one Runner across drivers
+// without that serialization would race the Client swap below.
+func (r *Runner) Ensure(ctx context.Context, open func(context.Context) (SyncClient, error)) bool {
+	if r == nil {
+		return false
+	}
+	if r.Enabled() {
+		return true
+	}
+	if r.Local == nil || open == nil {
+		return false
+	}
+	if state, err := ReadState(r.Local); err == nil && !state.Enabled {
+		r.Client = nil
+		return false
+	}
+	octx, cancel := context.WithTimeout(ctx, DefaultTimeout)
+	defer cancel()
+	c, err := open(octx)
+	if err != nil {
+		return false
+	}
+	r.Client = c
+	return true
+}
+
 // On reports whether this machine's sync is turned on as the local marker says.
 // A machine that never turned sync on has nothing to poll the network for, so
 // it is skipped rather than driven once a window against a marker reading off.

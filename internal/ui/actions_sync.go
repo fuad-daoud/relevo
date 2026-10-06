@@ -189,7 +189,7 @@ func (a *mastermindActions) verbRunner() (*relevo.VerbRunner, error) {
 		Shared:     shared,
 		Local:      local,
 		Path:       shared.Path(),
-		Runner:     a.runtime().Sync,
+		Runner:     &relevosync.Runner{Local: local},
 		ClientName: syncClientName,
 	}, nil
 }
