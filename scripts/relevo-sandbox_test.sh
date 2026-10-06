@@ -4,7 +4,7 @@
 # Every create runs with RELEVO_SANDBOX_ROOT pointed at a temp dir and
 # --no-build, so the suite needs no toolchain, no network and never touches the
 # developer's real ~/.local/share/relevo-sandboxes. What it pins is the safety
-# that matters: the refusals, the 0700 layout, the marker, and the seven exports
+# that matters: the refusals, the 0700 layout, the marker, and the eight exports
 # in env.sh -- specifically that every one of them resolves under the sandbox
 # root and never under the caller's home.
 set -eu
@@ -158,7 +158,7 @@ else
 	fi
 fi
 
-# env.sh is the sandbox. All seven exports must name a path under the sandbox
+# env.sh is the sandbox. All eight exports must name a path under the sandbox
 # root: this is what makes store.DefaultRoot resolve into the sandbox rather than
 # the developer's ~/.local/state.
 if [ ! -f "$sbx/env.sh" ]; then
@@ -166,6 +166,7 @@ if [ ! -f "$sbx/env.sh" ]; then
 	fail=1
 else
 	for pair in \
+		"SB=$sbx" \
 		"XDG_STATE_HOME=$sbx/state" \
 		"XDG_CONFIG_HOME=$sbx/config" \
 		"XDG_DATA_HOME=$sbx/data" \
@@ -287,7 +288,7 @@ if [ -d "$root/dry" ]; then
 fi
 # The plan still names every action a real create performs.
 plan_out=$(RELEVO_SANDBOX_ROOT="$root" HOME="$home" sh "$script" create dry --dry-run 2>&1)
-for want in "$root/dry/state" 'chmod 0700' "$root/dry/env.sh" "$root/dry/sandbox"; do
+for want in "$root/dry/state" 'chmod 0700' "$root/dry/env.sh" "$root/dry/sandbox" 'config init --no-agents' 'bin/relevo doctor'; do
 	if ! printf '%s' "$plan_out" | grep -qF -- "$want"; then
 		echo "FAIL: the create plan names no \"$want\": $plan_out"
 		fail=1
@@ -303,6 +304,11 @@ if [ ! -d "$root/other" ]; then
 	echo "FAIL: destroy --dry-run removed $root/other"
 	fail=1
 fi
+
+# Without a build there is no binary to seed or check with, so --no-build
+# skips both and says so.
+sb "$script" create skipsb "$nb"
+carries 'a --no-build create skips the seed and the doctor' 'no config seed and no doctor run'
 
 # A non-absolute RELEVO_SANDBOX_ROOT is refused: every safety check below
 # compares a path against the root as a prefix, and a relative root makes that
@@ -345,6 +351,42 @@ if [ -f "$root/nologin/claude/.credentials.json" ]; then
 	echo "FAIL: create copied credentials the temp HOME does not have"
 	fail=1
 fi
+
+# With logins present, create copies the login and config files plus the agent
+# definitions, and leaves every data directory behind: transcripts must land
+# in the sandbox, never leak out of it through a copied directory.
+mkdir -p "$home/.claude/agents" "$home/.claude/projects/sess1" "$home/.codex"
+printf '{"token":"x"}' > "$home/.claude/.credentials.json"
+printf '{}' > "$home/.claude/settings.json"
+printf '{}' > "$home/.claude/settings.shared.json"
+printf 'hook' > "$home/.claude/agents/executor.md"
+printf 'transcript' > "$home/.claude/projects/sess1/chat.jsonl"
+printf 'history' > "$home/.claude/history.jsonl"
+printf '{"t":"y"}' > "$home/.codex/auth.json"
+printf 'cfg' > "$home/.codex/config.toml"
+printf 'data' > "$home/.codex/goals_1.sqlite"
+sb "$script" create logins "$nb"
+for want in \
+	"$root/logins/claude/.credentials.json" \
+	"$root/logins/claude/settings.json" \
+	"$root/logins/claude/settings.shared.json" \
+	"$root/logins/claude/agents/executor.md" \
+	"$root/logins/codex/auth.json" \
+	"$root/logins/codex/config.toml"; do
+	if [ ! -f "$want" ]; then
+		echo "FAIL: create copied no $want"
+		fail=1
+	fi
+done
+for want in \
+	"$root/logins/claude/projects" \
+	"$root/logins/claude/history.jsonl" \
+	"$root/logins/codex/goals_1.sqlite"; do
+	if [ -e "$want" ]; then
+		echo "FAIL: create copied session data $want"
+		fail=1
+	fi
+done
 
 # The help text states the three things the script never does, so the guarantee
 # is readable without reading the code.

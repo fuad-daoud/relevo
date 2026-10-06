@@ -5,15 +5,16 @@
 # sandbox instead of the developer's own home.
 #
 # Isolation is not built here; it falls out of the exports. Everything a
-# process writes goes through one of those seven variables, so pointing them at
+# process writes goes through one of those variables, so pointing them at
 # <root>/<name> is the whole mechanism. This script only wraps it into one
 # command and adds the refusals that make it hard to misuse.
 #
 # What it never does, deliberately: it never touches ~/.local/bin, never runs
-# `make install` or `make service`, and never runs `relevo config agents`. The
-# binary lands in <root>/<name>/bin, ahead of PATH, so the sandbox's own
-# binary is the one a sandboxed shell finds; the install and the harness logins
-# stay the developer's own work.
+# `make install` or `make service`, and never installs harness definitions
+# into the caller's home (it copies the already-installed claude and codex
+# definitions into the sandbox instead). The binary lands in
+# <root>/<name>/bin, ahead of PATH, so the sandbox's own binary is the one a
+# sandboxed shell finds.
 #
 # Usage:
 #   relevo-sandbox.sh create <name> [--no-build] [--dry-run]
@@ -153,19 +154,43 @@ cmd_create() {
 		done
 	fi
 
-	# The claude credentials are copied when present and warned about when not:
-	# the copy is what lets a sandbox reuse your existing login instead of
-	# asking for a new one, but it is a copy of a rotating secret, so it can be
-	# stale by the time the sandbox runs.
-	_creds="$HOME/.claude/.credentials.json"
-	if [ -f "$_creds" ]; then
-		plan cp "$_creds" "$_sb/claude/.credentials.json"
+	# Login, config and definition files, copied when present and never
+	# installed: installing would write the caller's own home, while a copy
+	# reads it and writes only the sandbox. Session data (projects/,
+	# history.jsonl, todos and the rest) is never copied, so transcripts stay
+	# in the sandbox and out of the developer home. A copy is of a rotating
+	# secret and can be stale; re-login and re-copy when the harness reports
+	# an expired session.
+	_login=0
+	for _f in .credentials.json settings.json settings.shared.json; do
+		if [ -f "$HOME/.claude/$_f" ]; then
+			plan cp "$HOME/.claude/$_f" "$_sb/claude/$_f"
+			_login=1
+		fi
+	done
+	# The agent definitions are what a claude builder resolves its --agent
+	# against; without them it fails with `--agent 'plan-executor' not found`.
+	if [ -d "$HOME/.claude/agents" ]; then
+		plan mkdir -p "$_sb/claude/agents"
+		plan cp -r "$HOME/.claude/agents/." "$_sb/claude/agents/"
 	else
-		note "no $_creds to copy; log the claude harness in inside the sandbox before using it"
+		note "no $HOME/.claude/agents to copy; install the definitions into the sandbox before using the claude harness"
+	fi
+	# codex mirrors claude: its login plus its config, never its data.
+	if [ -d "${CODEX_HOME:-$HOME/.codex}" ]; then
+		for _f in auth.json config.toml; do
+			if [ -f "${CODEX_HOME:-$HOME/.codex}/$_f" ]; then
+				plan cp "${CODEX_HOME:-$HOME/.codex}/$_f" "$_sb/codex/$_f"
+				_login=1
+			fi
+		done
+	fi
+	if [ "$_login" -eq 0 ]; then
+		note "no harness login found to copy; log the claude harness in inside the sandbox before using it"
 	fi
 
 	if [ "$no_build" -eq 1 ]; then
-		note "skipping the build (--no-build): $_sb/bin stays empty"
+		note "skipping the build (--no-build): $_sb/bin stays empty, so no config seed and no doctor run"
 	else
 		plan mkdir -p "$_sb/bin"
 		note "go build -o $_sb/bin/relevo ./cmd/relevo   (in $_src)"
@@ -174,6 +199,23 @@ cmd_create() {
 				die "the build failed; nothing is usable in $_sb yet"
 			chmod 0700 "$_sb/bin/relevo"
 		fi
+		# Seed and check run through the sandbox binary under the sandbox
+		# exports, addressed by absolute path so no PATH lookup can reach the
+		# developer's installed relevo. --no-agents keeps the seed in the
+		# sandbox database: definitions arrived above by copy, and installing
+		# them would write the caller's home. Both steps tolerate failure: a
+		# sandbox without seeded candidates or with a failing doctor is still
+		# a working sandbox, and the warning names the manual repair.
+		_sbenv="XDG_STATE_HOME=$_sb/state XDG_CONFIG_HOME=$_sb/config XDG_DATA_HOME=$_sb/data XDG_CACHE_HOME=$_sb/cache CLAUDE_CONFIG_DIR=$_sb/claude CODEX_HOME=$_sb/codex"
+		# The env assignments travel as arguments to env, so --dry-run prints
+		# the exact environment the real run executes under.
+		# shellcheck disable=SC2086 # the split is the point: _sbenv is a list of
+		# VAR=value words for env, so the sandboxed binary runs contained.
+		plan env $_sbenv "$_sb/bin/relevo" config init --no-agents ||
+			note "the config seed failed; run 'relevo config init --no-agents' inside the sandbox"
+		# shellcheck disable=SC2086 # same list as above.
+		plan env $_sbenv "$_sb/bin/relevo" doctor ||
+			note "doctor reported failures above; a fresh sandbox starts every harness logged out"
 	fi
 
 	# The marker is what makes this directory a sandbox. destroy refuses any
@@ -190,14 +232,15 @@ cmd_create() {
 	note ""
 	note "sandbox $_name is ready. Enter it with:"
 	note "  $prog shell $_name"
-	note "and run 'relevo doctor' inside it: a fresh XDG_CONFIG_HOME starts every harness logged out."
+	note "claude and codex arrive logged in when your home had their logins; opencode starts logged out until you log it in inside."
 }
 
-# write_env_sh writes the export recipe that is the sandbox. Seven exports, all
+# write_env_sh writes the export recipe that is the sandbox. Eight exports, all
 # under the sandbox root: XDG_STATE_HOME is what store.DefaultRoot reads, the
 # other three XDG_ roots follow the same base, CLAUDE_CONFIG_DIR and CODEX_HOME
-# are the two per-process homes, and PATH puts the sandbox's own binary first so
-# a sandboxed shell cannot reach the developer's ~/.local/bin/relevo by accident.
+# are the two per-process homes, SB is the sandbox path itself for scripts, and
+# PATH puts the sandbox's own binary first so a sandboxed shell cannot reach
+# the developer's ~/.local/bin/relevo by accident.
 write_env_sh() {
 	_sb=$1
 	note "write $_sb/env.sh"
@@ -205,6 +248,7 @@ write_env_sh() {
 		{
 			printf '# %s/env.sh -- sourced by %s shell. Every path a sandboxed process\n' "$_sb" "$prog"
 			printf '# resolves lands under the sandbox root, never the developer home.\n'
+			printf 'export SB=%s\n' "$_sb"
 			printf 'export XDG_STATE_HOME=%s/state\n' "$_sb"
 			printf 'export XDG_CONFIG_HOME=%s/config\n' "$_sb"
 			printf 'export XDG_DATA_HOME=%s/data\n' "$_sb"
@@ -321,8 +365,9 @@ CLAUDE_CONFIG_DIR and CODEX_HOME all point inside it. The isolation is the
 exports; this script wraps them into one command.
 
   create <name>   make <root>/<name> with bin/ state/ config/ data/ cache/
-                  claude/ codex/ env.sh, a sandbox marker, and a build of
-                  ./cmd/relevo from the invoking checkout. Copies
+                  claude/ codex/ env.sh, a sandbox marker, a build of
+                  ./cmd/relevo from the invoking checkout, copied claude and
+                  codex logins, and a seeded config. Copies
                   ~/.claude/.credentials.json when present.
                   --no-build skips the build (no toolchain needed).
   shell <name>    exec \$SHELL with env.sh sourced, so the session, its daemon

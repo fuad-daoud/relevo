@@ -3,7 +3,7 @@
 An env sandbox is a directory under `~/.local/share/relevo-sandboxes` whose
 `XDG_*`, `CLAUDE_CONFIG_DIR` and `CODEX_HOME` all point inside it. Nothing else
 is involved: the isolation is the exports, and everything a process writes goes
-through one of those seven variables. `scripts/relevo-sandbox.sh` wraps them
+through one of those eight variables. `scripts/relevo-sandbox.sh` wraps them
 into one command and adds the refusals that make it hard to misuse.
 
 It needs no root, no account and no systemd unit. The stronger per-user flow is
@@ -21,6 +21,12 @@ scripts/relevo-sandbox.sh shell demo
 builds the binary out of it. `--no-build` skips that step when there is no
 toolchain to hand.
 
+`create` also finishes the harness setup: it copies the claude login, config
+and agent definitions plus the codex login and config (never session data),
+seeds candidates with `config init --no-agents` through the sandbox binary,
+and runs `doctor` once. Both steps tolerate failure with a warning and the
+manual repair; `--no-build` skips them along with the build.
+
 Inside the shell, everything resolves under
 `~/.local/share/relevo-sandboxes/demo/`:
 
@@ -32,6 +38,7 @@ Inside the shell, everything resolves under
 | `XDG_CACHE_HOME` | `<sandbox>/cache` | anything that follows the XDG cache base |
 | `CLAUDE_CONFIG_DIR` | `<sandbox>/claude` | the claude harness: its settings, its `agents/` and its credentials |
 | `CODEX_HOME` | `<sandbox>/codex` | the codex harness: its config and its per-agent profiles |
+| `SB` | `<sandbox>` | the sandbox path itself, for scripts |
 | `PATH` | `<sandbox>/bin` first | the sandbox's own `relevo` build, ahead of the developer's `~/.local/bin` |
 
 The layout under `<sandbox>/` is `bin/ state/ config/ data/ cache/ claude/
@@ -49,12 +56,11 @@ relevo status
 
 ## Two standing rules
 
-**Never run `relevo config agents` from inside a sandbox.** The sandboxed binary
-would write harness definitions into the sandbox's config root, where the
-developer's own harnesses never read them, and would report a clean install that
-nothing outside the sandbox can see. Run `relevo config agents` outside, against
-your own install, and let the sandbox inherit the result through
-`CLAUDE_CONFIG_DIR`/`CODEX_HOME` only when you have copied credentials in.
+**Never run `relevo config agents` from inside a sandbox by hand.** It resolves
+harness homes through your real `HOME`, so it would write your own
+definitions with the sandbox binary's shipped copies. `create` copies the
+already-installed definitions into the sandbox instead; that is the only
+direction definitions ever travel.
 
 **One `relevo serve --listen` per sandbox.** `--listen` defaults to `:7777`, which
 is the production serve's port on this host. Two serves on one port means the
@@ -70,16 +76,21 @@ other than the one its sandbox was made for.
 
 ## Credentials
 
-`create` copies `~/.claude/.credentials.json` into `<sandbox>/claude/` when that
-file exists, and warns when it does not. The copy is what lets a sandbox reuse
-an existing login instead of asking for a new one.
+`create` copies the claude login (`.credentials.json`), its config
+(`settings.json`, `settings.shared.json`) and its `agents/` definitions into
+`<sandbox>/claude/`, plus the codex login (`auth.json`), config
+(`config.toml`) and definitions into `<sandbox>/codex/`. Session data --
+`projects/`, `history.jsonl`, todos, databases -- is never copied, so a
+sandbox reuses your login without inheriting your sessions. Anything absent is
+skipped with a warning naming the manual step.
 
 The caveat is a race, and it is the operator's to know about: the credentials
 file is a rotating secret on the host, and the copy is a snapshot. If the host
 rotates after the copy, the sandbox keeps using the older snapshot until it
 expires, and a sandbox created before a rotation never sees the new one. Copy
-again, or log in inside the sandbox, when a sandboxed claude run starts
-failing authentication.
+again, or log in inside the sandbox, when a sandboxed run starts failing
+authentication. An expired host login fails everywhere at once -- that is never
+a sandbox problem, and re-login fixes both sides.
 
 opencode is the other direction. A fresh `XDG_CONFIG_HOME` starts opencode
 logged out, because that is where its own credential lives, and there is no
@@ -102,6 +113,16 @@ sandbox and your own sessions. agy inside a sandbox therefore reads and writes
 the same files as agy outside it. Treat agy-backed runs as shared, or do not use
 agy in a sandbox.
 
+The sandbox daemon refreshes harness definitions in your home. The first
+command that touches the sandbox database spawns the sandbox's own daemon, and
+every daemon refreshes missing or drifted shipped definitions on start -- into
+your real `HOME`, because harness homes resolve there. In practice this is a
+byte-identical rewrite when both binaries ship the same definitions, your edited
+files are always kept, and the script's own copies mean claude and codex rarely
+need it; but a sandbox built from a branch that changes agent definitions will
+update your installed copies to that branch's versions. That refresh belongs to
+relevo core, not to this script, and this paragraph is its warning label.
+
 The other limitation is what the sandbox does not separate: the checkout. Two
 sandboxes sharing one git work tree share one `.git`, which means they fight over
 branches, `git fetch` refusals and `git remote prune`. For a test that needs two
@@ -110,10 +131,11 @@ sandboxes on the same repo at once, use the per-user flow instead.
 ## What the script never does
 
 `scripts/relevo-sandbox.sh` never touches `~/.local/bin`, never runs `make
-install` or `make service`, and never runs `relevo config agents`. The binary
-lands in `<sandbox>/bin`, ahead of `PATH`, so the sandbox's own build is the one
-a sandboxed shell finds. Installing and logging the harnesses in stay your own
-work, against your own install.
+install` or `make service`, and never installs harness definitions into your
+home -- it copies the already-installed claude and codex definitions into the
+sandbox instead, and seeds candidates with `config init --no-agents`, which
+writes only the sandbox database. The binary lands in `<sandbox>/bin`, ahead
+of `PATH`, so the sandbox's own build is the one a sandboxed shell finds.
 
 ## Listing and rollback
 
