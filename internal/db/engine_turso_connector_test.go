@@ -47,7 +47,7 @@ func (c stubConnector) Driver() driver.Driver                        { return c.
 // handed to database/sql without its pragmas.
 func TestPragmaConnectorRefusesAConnectionWithoutExecContext(t *testing.T) {
 	conn := &plainConn{}
-	pc := &pragmaConnector{base: stubConnector{conn: conn}, pragmas: openPragmas(t.TempDir(), false)}
+	pc := &pragmaConnector{base: stubConnector{conn: conn}, pragmas: openPragmas(false)}
 
 	if _, err := pc.Connect(context.Background()); !errors.Is(err, ErrOpen) {
 		t.Fatalf("Connect of a connection without ExecContext = %v, want ErrOpen", err)
@@ -62,7 +62,7 @@ func TestPragmaConnectorRefusesAConnectionWithoutExecContext(t *testing.T) {
 // error instead of returning a connection with only some pragmas applied.
 func TestPragmaConnectorClosesAConnectionWhosePragmaFails(t *testing.T) {
 	conn := &refusingExecConn{}
-	pc := &pragmaConnector{base: stubConnector{conn: conn}, pragmas: openPragmas(t.TempDir(), false)}
+	pc := &pragmaConnector{base: stubConnector{conn: conn}, pragmas: openPragmas(false)}
 
 	if _, err := pc.Connect(context.Background()); err == nil {
 		t.Fatal("Connect succeeded although the connection refused its pragma")

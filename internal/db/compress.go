@@ -301,9 +301,6 @@ func finishCompress(d *DB, stats CompressStats) CompressStats {
 // walCheckpoint truncates the write-ahead log, which is what lets the
 // conversion shrink the database file rather than only the -wal.
 func (d *DB) walCheckpoint() error {
-	if err := d.requireWritableMember("wal checkpoint"); err != nil {
-		return err
-	}
 	if _, err := d.sqlDB.ExecContext(context.Background(), `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
 		return fmt.Errorf("db: wal checkpoint: %w", mapBusy(err))
 	}

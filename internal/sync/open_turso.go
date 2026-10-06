@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/fuad-daoud/relevo/internal/db"
 	turso "turso.tech/database/tursogo"
 )
 
@@ -52,11 +51,5 @@ func OpenRemote(ctx context.Context, cfg OpenConfig) (SyncClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sync: open the remote: %w", err)
 	}
-	// The open is what turns a bare file into a member, so it is the one place
-	// that knows the file is one now. Recording it is what makes the database
-	// package's own connections capture their changes: turso captures per
-	// connection, so a pool opened before this call would go on writing rows the
-	// push cannot see.
-	db.MarkSyncMember(cfg.Path)
 	return NewTurso(handle), nil
 }
