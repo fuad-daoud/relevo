@@ -835,11 +835,14 @@ func TestExistingDBUploadThenEnable(t *testing.T) {
 	if res.Case != SeedExistingDB {
 		t.Errorf("case = %q, want %q", res.Case, SeedExistingDB)
 	}
+	// The uploaded arm pushes only: the upload already carried every row, and
+	// a pull in that state asks the driver to apply remote frames against a
+	// local log that shares no ancestry with them.
 	if len(fake.Calls) == 0 || fake.Calls[0] != "push" {
 		t.Errorf("calls = %v, want a push first", fake.Calls)
 	}
-	if !contains(fake.Calls, "pull") {
-		t.Errorf("calls = %v, want a pull after the skipped bootstrap", fake.Calls)
+	if contains(fake.Calls, "pull") {
+		t.Errorf("calls = %v, want no pull after an uploaded seed", fake.Calls)
 	}
 }
 
@@ -938,4 +941,50 @@ func contains(calls []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestUploadedSeedArmPushesWithoutPulling pins the one arm where the pull is
+// deliberately absent: the remote came from a file import sharing no WAL
+// ancestry with this file, and pulling there aborts the process inside the
+// driver where no Go recover reaches. The upload already carried every row,
+// so the push is the whole of what this arm owes.
+func TestUploadedSeedArmPushesWithoutPulling(t *testing.T) {
+	t.Parallel()
+
+	enabler, fake, _ := enableFixture(t, SeedInput{LocalHasHistory: true, CloudEmpty: false})
+	enabler.SeedUploaded = true
+
+	res, err := enabler.Enable(context.Background())
+	if err != nil {
+		t.Fatalf("Enable after the upload: %v", err)
+	}
+	if res.Case != SeedExistingDB {
+		t.Errorf("case = %q, want %q", res.Case, SeedExistingDB)
+	}
+	if len(fake.Calls) != 1 || fake.Calls[0] != "push" {
+		t.Errorf("calls = %v, want exactly one push and no pull", fake.Calls)
+	}
+}
+
+// TestSeedFailureIsReportedNotRecorded pins that a seed that did not land is
+// reported, never recorded as done: the enable returns the failure, the
+// seeding window stays open, and the machine re-runs instead of reading as
+// synced.
+func TestSeedFailureIsReportedNotRecorded(t *testing.T) {
+	t.Parallel()
+
+	enabler, fake, _ := enableFixture(t, SeedInput{LocalHasHistory: true, CloudEmpty: true})
+	fake.PushErr = errors.New("sync: push refused in test")
+
+	_, err := enabler.Enable(context.Background())
+	if err == nil {
+		t.Fatal("Enable with a failing push reported OK over rows that never landed")
+	}
+	seeding, serr := ReadSeeding(enabler.Local)
+	if serr != nil {
+		t.Fatalf("ReadSeeding: %v", serr)
+	}
+	if !seeding {
+		t.Error("a failed seed closed the window; the machine is no longer re-runnable")
+	}
 }

@@ -141,7 +141,9 @@ type SeedInput struct {
 // that follow it. Every arm sets Pull when Bootstrap is false, which is the
 // driver's own rule -- an open that skipped the bootstrap owes the caller a
 // pull -- so no decision in this file can be the false-then-forgets-the-pull
-// one.
+// one. The one exception is the arm whose remote was filled by an upload rather
+// than by this machine's own push, and its pull is the one call shape that has
+// aborted the process.
 type SeedDecision struct {
 	// Case is which of the three situations this is.
 	Case SeedCase
@@ -177,7 +179,24 @@ func DecideSeed(in SeedInput) SeedDecision {
 	case in.SeedUploaded:
 		// The upload put this database's history on the remote, so the push that
 		// follows carries only what changed since.
-		return SeedDecision{Case: SeedExistingDB, Bootstrap: false, Pull: true, Push: true}
+		//
+		// There is deliberately no pull here, and this is the one place the
+		// driver's rule above is set aside. `turso db import` wrote the remote as
+		// a fresh database from a file rather than as this machine's change
+		// stream, so the remote's frames and this file's write-ahead log share no
+		// ancestry. A pull in that state asks the driver to apply remote frames
+		// against a local log whose checkpointed prefix has already moved past
+		// them, and the WAL reader asserts rather than returning -- turso_assert!
+		// in find_frame, which aborts the process across the C ABI where no Go
+		// recover can reach it. The push is the whole of what this arm owes: the
+		// upload already carried every row, so the pull has nothing to bring that
+		// the push has not already sent, and its only effect is to reach the
+		// aborting call.
+		//
+		// The remote may have moved since the upload, and the tick's own
+		// push-then-pull picks that up on the next window -- through a WAL whose
+		// ancestry this machine's push established.
+		return SeedDecision{Case: SeedExistingDB, Bootstrap: false, Push: true}
 	default:
 		return SeedDecision{Case: SeedExistingDB, Bootstrap: false, Pull: true, NeedsUpload: true}
 	}
@@ -326,7 +345,15 @@ func (e *Enabler) Enable(ctx context.Context) (EnableResult, error) {
 		return EnableResult{Case: decision.Case, RemoteURL: settings.RemoteURL}, err
 	}
 	out := EnableResult{Case: decision.Case, RemoteURL: settings.RemoteURL}
-	out.Applied = e.runSeed(ctx, client, decision)
+	applied, err := e.runSeed(ctx, client, decision)
+	if err != nil {
+		// The mark is written but the seed is not, so this machine reads as
+		// half-enabled and re-running the verb is what completes it. That is the
+		// recoverable answer; answering OK over a seed that did not land is what
+		// leaves a caller believing the rows are on the remote.
+		return EnableResult{Case: decision.Case, RemoteURL: settings.RemoteURL}, err
+	}
+	out.Applied = applied
 	// The round ran, so the window closes. A round that ran and failed to move
 	// anything is still a round: the machine is on, its seed decision was made,
 	// and the driver is the thing to report against on the next tick.
@@ -395,24 +422,25 @@ func (e *Enabler) resolveRemote(enabled bool) (Settings, error) {
 
 // runSeed makes the calls the decision asked for, in push-then-pull order so
 // the pull has the fewest unpushed local changes to roll back and replay. It
-// returns whether the pull applied anything.
-func (e *Enabler) runSeed(ctx context.Context, client SyncClient, decision SeedDecision) bool {
+// returns whether the pull applied anything, and the first failure it hit:
+// a seed that did not land must be reported, never recorded as done.
+func (e *Enabler) runSeed(ctx context.Context, client SyncClient, decision SeedDecision) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, e.timeout())
 	defer cancel()
 
 	if decision.Push {
 		if err := client.Push(ctx); err != nil {
-			return false
+			return false, err
 		}
 	}
 	if !decision.Pull {
-		return false
+		return false, nil
 	}
 	applied, err := client.Pull(ctx)
 	if err != nil {
-		return false
+		return false, err
 	}
-	return applied
+	return applied, nil
 }
 
 // openClient builds the handle the decision asked for, with the token the
