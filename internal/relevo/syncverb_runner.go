@@ -54,4 +54,3 @@ func (v *VerbRunner) memberOpener() func(context.Context) (relevosync.SyncClient
 		return v.openRemote(ctx, v.openConfig(settings, token, false))
 	}
 }
-
