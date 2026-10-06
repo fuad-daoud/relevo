@@ -91,6 +91,13 @@ func (d *Disabler) Disable(ctx context.Context) (DisableResult, error) {
 	if err := MarkEnabled(d.Local, false, d.now()); err != nil {
 		return out, fmt.Errorf("sync: disable: %w", err)
 	}
+	// The seeded marker goes with the mark, in the same breath. Leaving it would
+	// make the next enable's already-on read a lie: the mark says this machine
+	// is off and the marker says its last enable finished, so a re-enable would
+	// be refused by a fact about a machine that is no longer syncing.
+	if err := d.Local.KVDelete(KeySeeded); err != nil {
+		return out, fmt.Errorf("sync: disable: clear the %s marker: %w", KeySeeded, err)
+	}
 
 	out.Steps = append(out.Steps, stepDeleteToke)
 	if err := DeleteToken(d.Local); err != nil {

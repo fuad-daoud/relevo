@@ -23,6 +23,7 @@ type Local = *db.DB
 // rather than by a per-key decision, and a second machine never sees one.
 const (
 	KeyEnabled   = "sync.enabled"
+	KeySeeded    = "sync.seeded"
 	KeyBacklog   = "sync.backlog"
 	KeyLastTick  = "sync.last_tick"
 	KeyAttention = "sync.attention"
@@ -139,6 +140,33 @@ func ReadState(kv db.KV) (State, error) {
 	s.LastTickOK = t.OK
 	s.Attention = a.Message != ""
 	return s, nil
+}
+
+// Seeded reports whether this machine's enabled mark was written by an enable
+// that went on to make its seed calls.
+//
+// The enabled mark alone cannot say, because it is written before the handle
+// opens -- so every refusal before it leaves a machine untouched -- and a
+// process that dies between the two leaves a mark no verb can clear. This row is
+// what tells the two apart: an enable that wrote both finished, and one that
+// wrote only the mark is re-runnable rather than wedged.
+func Seeded(kv db.KV) (bool, error) {
+	var seeded bool
+	if err := marker(kv, KeySeeded, &seeded); err != nil {
+		return false, err
+	}
+	return seeded, nil
+}
+
+// MarkSeeded records that an enable's seed calls completed. It is a row beside
+// the enabled mark rather than a field in the section because the two are
+// written at different times and only the second may be missing.
+func MarkSeeded(kv db.KV) error {
+	body, err := json.Marshal(true)
+	if err != nil {
+		return fmt.Errorf("sync: encode the %s marker: %w", KeySeeded, err)
+	}
+	return kv.KVPut(KeySeeded, body)
 }
 
 // ReadAttention returns the message the attention marker carries, or "" when

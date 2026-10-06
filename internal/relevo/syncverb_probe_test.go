@@ -582,9 +582,8 @@ func TestLivePathIsNamedOnlyByTheAllowlistedOpens(t *testing.T) {
 	// Each entry is an open entitled to name the live file, with the role it
 	// must be asking for. A probe is not among them: it names a throwaway.
 	allow := map[string]bool{
-		"openConfig": true, // the turn-off's final push: a member
-		"opener":     true, // the enable's own open: the seed
-		"seedPath":   true, // where the seed copy lands, beside the live file
+		"opener":   true, // the enable's own open: the seed
+		"seedPath": true, // where the seed copy lands, beside the live file
 	}
 	// cloudEmpty names v.Path only to place the throwaway beside it, and
 	// probeConfig is the open that names the scratch file instead. Both are

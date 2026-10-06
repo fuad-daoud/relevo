@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // disableFixture is a machine that has been enabled: the token stored and the
@@ -222,6 +224,108 @@ func TestDisableClosesTheSeedingWindow(t *testing.T) {
 		t.Fatalf("ReadSeeding after disable: %v", err)
 	} else if seeding {
 		t.Error("the window survived the turn-off, so the next enable reads itself as a crashed round")
+	}
+}
+
+// TestDisableCompletesTheWedgedMachine pins the escape out of the machine a
+// crashed enable left: marked on, token stored, and no handle because the enable
+// died before opening one.
+//
+// The fixture is built by hand rather than by provoking the crash, because a
+// panic across the C ABI is exactly what cannot be produced in a test. What is
+// pinned is that a turn-off over that state completes with no handle and no
+// network, marks the machine off, and forgets the token -- and that the seeded
+// marker goes with the mark, so the next enable is a fresh decision rather than
+// one refused by a fact about a machine that stopped syncing.
+//
+// Before the marker existed, a machine in this state had no escape at all:
+// enable refused as already enabled and the turn-off had nothing to push through.
+func TestDisableCompletesTheWedgedMachine(t *testing.T) {
+	t.Parallel()
+
+	_, local := openTestSplit(t)
+	// Everything a crashed enable leaves: the remote stored, the token stored,
+	// the mark on, and no seeded row because the seed never completed.
+	if err := PutSettings(local, Settings{RemoteURL: "libsql://example.invalid"}, tokenNow); err != nil {
+		t.Fatalf("PutSettings: %v", err)
+	}
+	if err := SetToken(local, []byte(tokenFixture), tokenNow); err != nil {
+		t.Fatalf("SetToken: %v", err)
+	}
+	if err := MarkEnabled(local, true, tokenNow); err != nil {
+		t.Fatalf("MarkEnabled: %v", err)
+	}
+	if on, err := Enabled(local); err != nil || !on {
+		t.Fatalf("the fixture is not marked on: %v, %v", on, err)
+	}
+
+	// No client and no Close: a machine with nothing open.
+	disabler := &Disabler{Local: local, Now: func() time.Time { return tokenNow }, Timeout: time.Second}
+	res, err := disabler.Disable(context.Background())
+	if err != nil {
+		t.Fatalf("Disable over a wedged machine: %v", err)
+	}
+	if res.FinalPush {
+		t.Error("a machine with no handle reported a successful final push")
+	}
+	if res.FinalPushErr != nil {
+		t.Errorf("a skipped push was reported as a failure: %v", res.FinalPushErr)
+	}
+	// All four steps still ran, so the report reads whole even though one was
+	// skipped rather than performed.
+	if len(res.Steps) != 4 {
+		t.Errorf("steps = %v, want all four", res.Steps)
+	}
+	if on, _ := Enabled(local); on {
+		t.Error("the machine is still marked on")
+	}
+	if _, ok, _ := ReadToken(local); ok {
+		t.Error("the token survived the turn-off")
+	}
+}
+
+// TestDisableClearsTheSeededMarker pins that the marker does not outlive the
+// sync it described.
+//
+// This is the case the wedged fixture cannot reach, because a machine with no
+// seeded marker has none to leave behind: it is a machine whose enable finished,
+// turned off, and then asked again. With the marker left in place the next
+// enable reads a finished enable over a machine that is no longer syncing and
+// refuses -- so a user who turned sync off and back on would be stuck by a fact
+// about the run before last.
+func TestDisableClearsTheSeededMarker(t *testing.T) {
+	t.Parallel()
+
+	disabler, local := disableFixture(t, &Fake{})
+	if err := MarkSeeded(local); err != nil {
+		t.Fatalf("MarkSeeded: %v", err)
+	}
+	if seeded, _ := Seeded(local); !seeded {
+		t.Fatal("the fixture is not seeded, so there is nothing for the turn-off to clear")
+	}
+
+	if _, err := disabler.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+	if seeded, _ := Seeded(local); seeded {
+		t.Error("the seeded marker outlived the turn-off")
+	}
+
+	// And the turn-off really is reversible: an enable over the cleared marker
+	// runs the whole path rather than refusing as already enabled.
+	enabler := &Enabler{
+		Local:           local,
+		Preflight:       func() db.Preflight { return db.Preflight{} },
+		LocalHasHistory: func() (bool, error) { return true, nil },
+		CloudEmpty:      func(context.Context, Settings, []byte) (bool, error) { return true, nil },
+		Intake:          TokenIntake{FromStdin: true, Stdin: []byte(tokenFixture)},
+		RemoteURL:       "libsql://example.invalid",
+		Open:            func(context.Context, OpenConfig) (SyncClient, error) { return &Fake{}, nil },
+		Now:             func() time.Time { return tokenNow },
+		Timeout:         time.Second,
+	}
+	if _, err := enabler.Enable(context.Background()); err != nil {
+		t.Fatalf("Enable after the turn-off: %v", err)
 	}
 }
 
