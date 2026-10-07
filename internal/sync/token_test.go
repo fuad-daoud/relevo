@@ -2,6 +2,7 @@ package sync
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,6 +87,78 @@ func TestTokenNeverLeavesMachine(t *testing.T) {
 	}
 	if !bytes.Contains(localBytes, []byte(tokenFixture)) {
 		t.Error("the token value is not in the local file, so the shared-file check is vacuous")
+	}
+}
+
+// TestTokenIntakePrefersTheFlagAndFallsThroughToTheEnvironment pins the whole
+// of the intake's rule, which is the only thing left deciding which token a
+// machine would store: the flag beats the environment, an empty pipe is not a
+// reason to ignore a token the environment is carrying, a flag that was never
+// passed never shadows an environment that was set, and neither route yielding
+// anything is one fixed refusal naming both routes and never the attempt.
+func TestTokenIntakePrefersTheFlagAndFallsThroughToTheEnvironment(t *testing.T) {
+	t.Parallel()
+
+	const envToken = "environment-route-token"
+	for _, tc := range []struct {
+		name       string
+		intake     TokenIntake
+		wantSource TokenSource
+		wantRefuse bool
+	}{
+		{
+			name:       "the flag wins over the environment",
+			intake:     TokenIntake{FromStdin: true, Stdin: []byte(tokenFixture), EnvValue: envToken},
+			wantSource: TokenSourceStdin,
+		},
+		{
+			name:       "an empty pipe falls through to the environment",
+			intake:     TokenIntake{FromStdin: true, Stdin: []byte("  \n"), EnvValue: envToken},
+			wantSource: TokenSourceEnv,
+		},
+		{
+			name:       "a flag that was never passed does not shadow the environment",
+			intake:     TokenIntake{EnvValue: envToken},
+			wantSource: TokenSourceEnv,
+		},
+		{
+			name:       "neither route yielding anything refuses",
+			intake:     TokenIntake{FromStdin: true, Stdin: []byte(" \n"), EnvValue: " "},
+			wantSource: TokenSourceNone,
+			wantRefuse: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			value, source, err := tc.intake.Resolve()
+			if tc.wantRefuse {
+				if !errors.Is(err, ErrNoToken) {
+					t.Fatalf("Resolve = %v, want ErrNoToken", err)
+				}
+				if source != TokenSourceNone {
+					t.Errorf("a refusal named the route %q", source)
+				}
+				// The refusal is one line that names the two routes and not the
+				// attempt, so a reader cannot tell which of them was tried.
+				if msg := err.Error(); strings.Count(msg, "--token-stdin") != 1 || strings.Count(msg, EnvToken) != 1 {
+					t.Errorf("the refusal does not name both routes once: %q", msg)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			if source != tc.wantSource {
+				t.Errorf("route = %q, want %q", source, tc.wantSource)
+			}
+			if len(value) == 0 {
+				t.Error("Resolve returned no token")
+			}
+			if string(value) != strings.TrimSpace(string(value)) {
+				t.Errorf("the stored token is not trimmed: %q", value)
+			}
+		})
 	}
 }
 

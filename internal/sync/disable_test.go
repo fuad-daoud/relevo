@@ -4,18 +4,42 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/fuad-daoud/relevo/internal/db"
 )
+
+// blackhole answers nothing until its context expires, which is what a remote
+// that accepts a connection and then goes silent looks like from here. It is
+// the client a test needs to prove the turn-off's bound is load-bearing.
+type blackhole struct {
+	calls atomic.Int64
+	// block is how long a call pretends to work before answering. It is set far
+	// past any timeout under test, so the context is always what ends the call.
+	block time.Duration
+}
+
+func (b *blackhole) wait(ctx context.Context) error {
+	b.calls.Add(1)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(b.block):
+		return nil
+	}
+}
+
+func (b *blackhole) Push(ctx context.Context) error           { return b.wait(ctx) }
+func (b *blackhole) Pull(ctx context.Context) (bool, error)   { return false, b.wait(ctx) }
+func (b *blackhole) Stats(ctx context.Context) (Stats, error) { return Stats{}, b.wait(ctx) }
+func (b *blackhole) Checkpoint(ctx context.Context) error     { return b.wait(ctx) }
 
 // disableFixture is a machine that has been enabled: the token stored and the
 // mark written, so a turn-off under test has something real to take away.
 func disableFixture(t *testing.T, client SyncClient) (*Disabler, Local) {
 	t.Helper()
 
-	_, local := openTestSplit(t)
+	_, _, local := openSplit(t)
 	if err := SetToken(local, []byte(tokenFixture), tokenNow); err != nil {
 		t.Fatalf("SetToken: %v", err)
 	}
@@ -198,54 +222,19 @@ func TestDisableClosesTheHandleLast(t *testing.T) {
 	}
 }
 
-// TestDisableClosesTheSeedingWindow pins that the turn-off removes the marker
-// that says a first round never finished.
-//
-// Without this, a machine whose enable died would be marked off with the window
-// still open, and the next enable -- which is off, so it re-enters the path --
-// would treat itself as re-running a crashed round rather than making a fresh
-// decision. The window is a local row, so this costs no handle and no network.
-func TestDisableClosesTheSeedingWindow(t *testing.T) {
-	t.Parallel()
-
-	disabler, local := disableFixture(t, &Fake{})
-	if err := MarkSeeding(local, tokenNow); err != nil {
-		t.Fatalf("MarkSeeding: %v", err)
-	}
-	if seeding, err := ReadSeeding(local); err != nil || !seeding {
-		t.Fatalf("the fixture's window is not open: %v, %v", seeding, err)
-	}
-
-	if _, err := disabler.Disable(context.Background()); err != nil {
-		t.Fatalf("Disable: %v", err)
-	}
-
-	if seeding, err := ReadSeeding(local); err != nil {
-		t.Fatalf("ReadSeeding after disable: %v", err)
-	} else if seeding {
-		t.Error("the window survived the turn-off, so the next enable reads itself as a crashed round")
-	}
-}
-
 // TestDisableCompletesTheWedgedMachine pins the escape out of the machine a
 // crashed enable left: marked on, token stored, and no handle because the enable
 // died before opening one.
 //
-// The fixture is built by hand rather than by provoking the crash, because a
-// panic across the C ABI is exactly what cannot be produced in a test. What is
-// pinned is that a turn-off over that state completes with no handle and no
-// network, marks the machine off, and forgets the token -- and that the seeded
-// marker goes with the mark, so the next enable is a fresh decision rather than
-// one refused by a fact about a machine that stopped syncing.
-//
-// Before the marker existed, a machine in this state had no escape at all:
-// enable refused as already enabled and the turn-off had nothing to push through.
+// What is pinned is that a turn-off over that state completes with no handle and
+// no network, marks the machine off, and forgets the token. A machine that no
+// enable can finish is still a machine a reader has to be able to stop syncing.
 func TestDisableCompletesTheWedgedMachine(t *testing.T) {
 	t.Parallel()
 
-	_, local := openTestSplit(t)
-	// Everything a crashed enable leaves: the remote stored, the token stored,
-	// the mark on, and no seeded row because the seed never completed.
+	_, _, local := openSplit(t)
+	// Everything a crashed enable leaves: the remote stored, the token stored
+	// and the mark on, with nothing open behind it.
 	if err := PutSettings(local, Settings{RemoteURL: "libsql://example.invalid"}, tokenNow); err != nil {
 		t.Fatalf("PutSettings: %v", err)
 	}
@@ -281,51 +270,6 @@ func TestDisableCompletesTheWedgedMachine(t *testing.T) {
 	}
 	if _, ok, _ := ReadToken(local); ok {
 		t.Error("the token survived the turn-off")
-	}
-}
-
-// TestDisableClearsTheSeededMarker pins that the marker does not outlive the
-// sync it described.
-//
-// This is the case the wedged fixture cannot reach, because a machine with no
-// seeded marker has none to leave behind: it is a machine whose enable finished,
-// turned off, and then asked again. With the marker left in place the next
-// enable reads a finished enable over a machine that is no longer syncing and
-// refuses -- so a user who turned sync off and back on would be stuck by a fact
-// about the run before last.
-func TestDisableClearsTheSeededMarker(t *testing.T) {
-	t.Parallel()
-
-	disabler, local := disableFixture(t, &Fake{})
-	if err := MarkSeeded(local); err != nil {
-		t.Fatalf("MarkSeeded: %v", err)
-	}
-	if seeded, _ := Seeded(local); !seeded {
-		t.Fatal("the fixture is not seeded, so there is nothing for the turn-off to clear")
-	}
-
-	if _, err := disabler.Disable(context.Background()); err != nil {
-		t.Fatalf("Disable: %v", err)
-	}
-	if seeded, _ := Seeded(local); seeded {
-		t.Error("the seeded marker outlived the turn-off")
-	}
-
-	// And the turn-off really is reversible: an enable over the cleared marker
-	// runs the whole path rather than refusing as already enabled.
-	enabler := &Enabler{
-		Local:           local,
-		Preflight:       func() db.Preflight { return db.Preflight{} },
-		LocalHasHistory: func() (bool, error) { return true, nil },
-		CloudEmpty:      func(context.Context, Settings, []byte) (bool, error) { return true, nil },
-		Intake:          TokenIntake{FromStdin: true, Stdin: []byte(tokenFixture)},
-		RemoteURL:       "libsql://example.invalid",
-		Open:            func(context.Context, OpenConfig) (SyncClient, error) { return &Fake{}, nil },
-		Now:             func() time.Time { return tokenNow },
-		Timeout:         time.Second,
-	}
-	if _, err := enabler.Enable(context.Background()); err != nil {
-		t.Fatalf("Enable after the turn-off: %v", err)
 	}
 }
 

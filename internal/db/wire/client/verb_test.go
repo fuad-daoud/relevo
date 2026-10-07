@@ -189,7 +189,6 @@ func TestClientSyncVerbAcceptsTheOwnersResult(t *testing.T) {
 		reply: &wire.SyncResult{
 			OK:           true,
 			Applied:      true,
-			SeedCase:     "empty_cloud",
 			RemoteURL:    "libsql://example.invalid",
 			TokenPresent: true,
 		},
@@ -205,7 +204,7 @@ func TestClientSyncVerbAcceptsTheOwnersResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a successful verb returned an error: %v", err)
 	}
-	if !res.OK || !res.Applied || res.SeedCase != "empty_cloud" {
+	if !res.OK || !res.Applied || res.RemoteURL != "libsql://example.invalid" {
 		t.Errorf("result = %+v, want the owner's own fields", res)
 	}
 	if !res.TokenPresent {

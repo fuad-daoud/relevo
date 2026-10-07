@@ -400,8 +400,6 @@ func dbSyncClassify(err error) error {
 		return fail(codeUsage, "%v", err)
 	case errors.Is(err, relevosync.ErrRemoteConflict):
 		return fail(codeRefused, "%v", err)
-	case errors.Is(err, relevosync.ErrSeedUploadRequired):
-		return failNext(codeRefused, "relevo db sync status", "%v", err)
 	case errors.Is(err, relevosync.ErrAuthRefused):
 		return fail(codeRemoteAuth, "%v", err)
 	case errors.Is(err, db.ErrPreflightRefused):

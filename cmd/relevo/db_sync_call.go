@@ -155,7 +155,7 @@ func dbSyncVerbRefusal(verb string, err error) error {
 	switch refusal.Code {
 	case wire.SyncCodeNoToken, wire.SyncCodeNoRemote:
 		return fail(codeUsage, "%s", refusal.Message)
-	case wire.SyncCodeAlreadyEnabled, wire.SyncCodeSeedUploadRequired:
+	case wire.SyncCodeAlreadyEnabled:
 		return failNext(codeRefused, "relevo db sync status", "%s", refusal.Message)
 	case wire.SyncCodeAuthRefused:
 		return fail(codeRemoteAuth, "%s", refusal.Message)

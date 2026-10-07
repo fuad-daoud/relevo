@@ -80,16 +80,17 @@ func newVerbFixture(t *testing.T) *verbFixture {
 	return fx
 }
 
-// TestSyncVerbRefusesTheThreeVerbsWithTheNamedError is this round's own pin:
-// enable, push and pull keep their names and keep answering on the owner
-// socket, and they refuse with the one named error rather than opening a
-// handle. Status and the turn-off are the two that still mean something, and
-// they are pinned by their own tests.
+// TestSyncVerbsRefuseWhenStubbed pins the three verbs that would move a change
+// set: enable, push and pull keep their names and keep answering on the owner
+// socket, and each returns the one named error rather than opening a handle.
+// Status and the turn-off are the two that still mean something, and they are
+// pinned by their own tests.
 //
-// The mutation is letting one of the three through: a verb that opened a
-// handle would record an open on the fixture, and a verb that succeeded would
-// say so here.
-func TestSyncVerbRefusesTheThreeVerbsWithTheNamedError(t *testing.T) {
+// The mutation is routing enable past the refusal to whatever decision used to
+// come next: a verb that reached an engine would record an open on the fixture,
+// one that succeeded would say so here, and one that refused with a different
+// error would miss the string this test names.
+func TestSyncVerbsRefuseWhenStubbed(t *testing.T) {
 	f := newVerbFixture(t)
 	ctx := context.Background()
 
@@ -577,7 +578,6 @@ func TestSyncVerbClassificationIsTotal(t *testing.T) {
 		{relevosync.ErrNoRemote, wire.SyncCodeNoRemote},
 		{relevosync.ErrAlreadyEnabled, wire.SyncCodeAlreadyEnabled},
 		{relevosync.ErrRemoteConflict, wire.SyncCodeRemoteConflict},
-		{relevosync.ErrSeedUploadRequired, wire.SyncCodeSeedUploadRequired},
 		{relevosync.ErrAuthRefused, wire.SyncCodeAuthRefused},
 		{relevosync.ErrRemoteRefused, wire.SyncCodeRemoteRefused},
 		{relevosync.ErrRemoteSchema, wire.SyncCodeRemoteSchemaMissing},

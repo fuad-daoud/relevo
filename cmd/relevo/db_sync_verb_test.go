@@ -37,7 +37,6 @@ func installTestVerbHook(srv *owner.Server, d *db.DB) {
 		res := &wire.SyncResult{OK: true, TokenPresent: true}
 		switch verb.Verb {
 		case wire.SyncVerbEnable:
-			res.SeedCase = "empty_cloud"
 			res.RemoteURL = verb.RemoteURL
 		case wire.SyncVerbPush:
 			res.Applied = true

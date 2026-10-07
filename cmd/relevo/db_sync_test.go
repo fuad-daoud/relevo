@@ -262,7 +262,6 @@ func TestDBSyncTokenNeverReachesAnIntakeRefusal(t *testing.T) {
 	for _, err := range []error{
 		relevosync.ErrNoToken,
 		relevosync.ErrAlreadyEnabled,
-		relevosync.ErrSeedUploadRequired,
 		relevosync.ErrNoRemote,
 		relevosync.ErrRemoteConflict,
 		fmt.Errorf("relevo db sync enable: %w", relevosync.ErrNoToken),

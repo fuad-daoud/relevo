@@ -27,8 +27,6 @@ func verbClassify(err error) string {
 		return wire.SyncCodeAlreadyEnabled
 	case errors.Is(err, relevosync.ErrRemoteConflict):
 		return wire.SyncCodeRemoteConflict
-	case errors.Is(err, relevosync.ErrSeedUploadRequired):
-		return wire.SyncCodeSeedUploadRequired
 	case errors.Is(err, relevosync.ErrAuthRefused):
 		return wire.SyncCodeAuthRefused
 	case errors.Is(err, relevosync.ErrRemoteSchema):
@@ -44,20 +42,6 @@ func verbClassify(err error) string {
 		// the message names the constraint and the call, and the reader's answer
 		// is a change set this machine can push, not a defect report.
 		return wire.SyncCodeRemoteRefused
-	case errors.Is(err, relevosync.ErrNotSynced):
-		// The open's role gate refused, so this file is not a member of a sync.
-		// It is a refusal rather than an internal failure because a reader can
-		// act on it: the fix is to turn sync on, which is a command. Classifying
-		// it as internal would point the reader at `relevo bugreport` for
-		// something they did right.
-		//
-		// The same sentinel answers an open that named no role at all, which is
-		// a defect in this tree rather than on the reader's machine. It is still
-		// not internal: an unset role reaches the reader with a path and a
-		// sentence saying membership was not created, and no exit code makes that
-		// sentence actionable. The refusal class is the honest one either way,
-		// and the message is what says which of the two happened.
-		return wire.SyncCodeInvalid
 	case errors.Is(err, db.ErrPreflightRefused):
 		return wire.SyncCodePreflightRefused
 	case errors.Is(err, db.ErrContended):

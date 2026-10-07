@@ -251,8 +251,6 @@ type SyncResult struct {
 	TokenPresent bool `json:"token_present,omitempty"`
 	// Applied is whether a pull rebased anything.
 	Applied bool `json:"applied,omitempty"`
-	// SeedCase names which of the three seed situations an enable found.
-	SeedCase string `json:"seed_case,omitempty"`
 	// Seed is the copy an existing-history enable wrote.
 	Seed string `json:"seed,omitempty"`
 	// Backfilled is how many rows the pre-capture backfill put into the change

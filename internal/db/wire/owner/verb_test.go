@@ -107,14 +107,14 @@ func TestOwnerRunsAVerbThroughTheHook(t *testing.T) {
 		mu.Lock()
 		gotVerb, gotToken = verb.Verb, string(token)
 		mu.Unlock()
-		return &wire.SyncResult{OK: true, Applied: true, SeedCase: "new_machine", TokenPresent: true}
+		return &wire.SyncResult{OK: true, Applied: true, TokenPresent: true}
 	})
 
 	res, err := o.send(t, wire.SyncVerbEnable, []byte(ownerVerbToken))
 	if err != nil {
 		t.Fatalf("enable: %v", err)
 	}
-	if !res.OK || !res.Applied || res.SeedCase != "new_machine" {
+	if !res.OK || !res.Applied || !res.TokenPresent {
 		t.Errorf("result = %+v, want the hook's own", res)
 	}
 	mu.Lock()

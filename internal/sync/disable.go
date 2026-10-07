@@ -29,8 +29,8 @@ const (
 	stepClose      = "close handle"
 )
 
-// Disabler runs one turn-off. It holds the same seams an Enabler does, so a
-// turn-off is as fake-drivable as an enable and no test here needs a remote.
+// Disabler runs one turn-off. Every input it cannot answer for itself is a
+// field, so the whole path is drivable with no remote and no handle.
 type Disabler struct {
 	// Local is the machine-local file: the section, the mark and the token all
 	// live there.
@@ -82,21 +82,8 @@ func (d *Disabler) Disable(ctx context.Context) (DisableResult, error) {
 	d.finalPush(ctx, &out)
 
 	out.Steps = append(out.Steps, stepMarkOff)
-	// The seeding marker goes in the same step as the mark, and not after the
-	// token: a machine left marked off with the window still open reads as an
-	// unfinished enable to the next enable, which would re-run a seed decision
-	// the reader never saw the first half of. It is one local row, so it costs no
-	// handle and no network, which is the whole contract of this path.
-	ClearSeeding(d.Local)
 	if err := MarkEnabled(d.Local, false, d.now()); err != nil {
 		return out, fmt.Errorf("sync: disable: %w", err)
-	}
-	// The seeded marker goes with the mark, in the same breath. Leaving it would
-	// make the next enable's already-on read a lie: the mark says this machine
-	// is off and the marker says its last enable finished, so a re-enable would
-	// be refused by a fact about a machine that is no longer syncing.
-	if err := d.Local.KVDelete(KeySeeded); err != nil {
-		return out, fmt.Errorf("sync: disable: clear the %s marker: %w", KeySeeded, err)
 	}
 
 	out.Steps = append(out.Steps, stepDeleteToke)
