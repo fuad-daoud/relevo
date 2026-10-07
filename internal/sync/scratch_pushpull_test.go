@@ -23,6 +23,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -237,6 +238,84 @@ func TestThePushCarriesTheRowsWrittenBeforeCaptureWasOn(t *testing.T) {
 		t.Fatalf("the push carried %d of the %d rows written before capture was on", got, preRows)
 	}
 	t.Logf("the push carried %d rows written before capture was on", got)
+}
+
+// TestThePushCarriesAParentAndAChildInTheOrderTheRemoteAccepts is the fault
+// this round found, against a real remote: a parent table and a child table
+// whose rows the change set carried child-first, which the remote refuses with a
+// FOREIGN KEY constraint failure.
+//
+// The tables are named so the alphabetical order the walk used to take puts the
+// child first, so the test is the field error this round reproduced rather than a
+// shape that happens to pass. It is run twice over the same remote: the second
+// pass is the case that failed even when the walk got the order right by name,
+// because a rewrite of rows the remote already holds carries a delete of a parent
+// the remote still has children for.
+func TestThePushCarriesAParentAndAChildInTheOrderTheRemoteAccepts(t *testing.T) {
+	url, token := scratchRemote(t)
+	ctx, cancel := scratchCtx(t)
+	defer cancel()
+	dir := t.TempDir()
+	live := filepath.Join(dir, "relevo.db")
+
+	// The tables are named per run because the scratch remote outlives the test:
+	// a fixed name would make a second run's rows land beside the first run's and
+	// the counts below would read as a doubled rewrite.
+	stamp := strconv.FormatInt(time.Now().UnixNano(), 10)
+	parent, child := "sxp_"+stamp, "sxc_"+stamp
+	client, synced := openSyncHandle(t, live, url, token)
+	for _, stmt := range []string{
+		`CREATE TABLE IF NOT EXISTS ` + parent + ` (id TEXT PRIMARY KEY, v TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS ` + child + ` (id TEXT PRIMARY KEY, parent_id TEXT NOT NULL REFERENCES ` + parent + `(id))`,
+	} {
+		if _, err := synced.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+
+	// The rows this machine wrote before capture was on: in the file, in no
+	// change set, and with the child naming a parent the remote has never seen.
+	pre, err := db.OpenRaw(live)
+	if err != nil {
+		t.Fatalf("open the bare pool: %v", err)
+	}
+	run := strconv.FormatInt(time.Now().UnixNano(), 10)
+	if _, err := pre.Exec(`INSERT INTO `+parent+` (id, v) VALUES (?, 'parent')`, run+"p"); err != nil {
+		t.Fatalf("seed the parent: %v", err)
+	}
+	if _, err := pre.Exec(`INSERT INTO `+child+` (id, parent_id) VALUES (?, ?)`, run+"c", run+"p"); err != nil {
+		t.Fatalf("seed the child: %v", err)
+	}
+	if err := pre.Close(); err != nil {
+		t.Fatalf("close the bare pool: %v", err)
+	}
+
+	// A fresh machine-local file per pass, so the marker does not say the walk is
+	// done: the second pass is a second rewrite of rows the first one carried.
+	for pass := 1; pass <= 2; pass++ {
+		local, err := db.Open(filepath.Join(dir, "local-"+strconv.Itoa(pass)+".db"))
+		if err != nil {
+			t.Fatalf("open the machine-local file: %v", err)
+		}
+		res, err := relevosync.Backfill(ctx, local, live)
+		if err != nil {
+			t.Fatalf("pass %d: Backfill: %v", pass, err)
+		}
+		if res.Rows < 2 {
+			t.Fatalf("pass %d: the backfill recorded %d rows, want the parent and the child", pass, res.Rows)
+		}
+		if err := client.Push(ctx); err != nil {
+			t.Fatalf("pass %d: the push reported a failure: %v", pass, err)
+		}
+		peer := openPeer(t, dir, "after-"+strconv.Itoa(pass)+".db", url, token)
+		if got, want := countTable(t, peer, parent), 1; got != want {
+			t.Errorf("pass %d: the remote holds %d parent rows, want %d", pass, got, want)
+		}
+		if got, want := countTable(t, peer, child), 1; got != want {
+			t.Errorf("pass %d: the remote holds %d child rows, want %d", pass, got, want)
+		}
+		_ = local.Close()
+	}
 }
 
 // TestARemoteOnlyLearnsATableTheSyncEngineCreated is the limit the two tests above

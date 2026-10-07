@@ -272,10 +272,15 @@ func (v *VerbRunner) pushPull(ctx context.Context, verb *wire.SyncVerb) *wire.Sy
 	if out.Err != nil {
 		// The runner has already recorded the failure in the markers; the verb
 		// reports the same class the tick would, so a caller and the statusline
-		// read one answer.
-		code := wire.SyncCodeRemoteUnreachable
-		if out.Attention {
-			code = wire.SyncCodeAuthRefused
+		// read one answer. A remote that refused a statement is classified by the
+		// same table every other refusal on this path goes through, so the two
+		// routes onto a push cannot answer differently for one fault.
+		code := verbClassify(out.Err)
+		if code == wire.SyncCodeInternal {
+			code = wire.SyncCodeRemoteUnreachable
+			if out.Attention {
+				code = wire.SyncCodeAuthRefused
+			}
 		}
 		return &wire.SyncResult{OK: false, Code: code, Message: out.Err.Error()}
 	}
@@ -524,53 +529,6 @@ func verbTimeout(verb *wire.SyncVerb) time.Duration {
 // so a refusal a caller can act on keeps the wording the package gave it.
 func verbRefusal(code string, err error) *wire.SyncResult {
 	return &wire.SyncResult{OK: false, Code: code, Message: err.Error()}
-}
-
-// classify maps a sync package error onto the closed set of refusal codes. The
-// mapping is by sentinel rather than by message, so a wording change cannot
-// change which code a caller maps and no remote-chosen body can name a class.
-func verbClassify(err error) string {
-	switch {
-	case errors.Is(err, relevosync.ErrNoToken):
-		return wire.SyncCodeNoToken
-	case errors.Is(err, relevosync.ErrNoRemote):
-		return wire.SyncCodeNoRemote
-	case errors.Is(err, relevosync.ErrAlreadyEnabled):
-		return wire.SyncCodeAlreadyEnabled
-	case errors.Is(err, relevosync.ErrRemoteConflict):
-		return wire.SyncCodeRemoteConflict
-	case errors.Is(err, relevosync.ErrSeedUploadRequired):
-		return wire.SyncCodeSeedUploadRequired
-	case errors.Is(err, relevosync.ErrAuthRefused):
-		return wire.SyncCodeAuthRefused
-	case errors.Is(err, relevosync.ErrNotSynced):
-		// The open's role gate refused, so this file is not a member of a sync.
-		// It is a refusal rather than an internal failure because a reader can
-		// act on it: the fix is to turn sync on, which is a command. Classifying
-		// it as internal would point the reader at `relevo bugreport` for
-		// something they did right.
-		//
-		// The same sentinel answers an open that named no role at all, which is
-		// a defect in this tree rather than on the reader's machine. It is still
-		// not internal: an unset role reaches the reader with a path and a
-		// sentence saying membership was not created, and no exit code makes that
-		// sentence actionable. The refusal class is the honest one either way,
-		// and the message is what says which of the two happened.
-		return wire.SyncCodeInvalid
-	case errors.Is(err, db.ErrPreflightRefused):
-		return wire.SyncCodePreflightRefused
-	case errors.Is(err, db.ErrContended):
-		// A busy database is a refusal, not a defect: what held the step was
-		// another writer that has since ended, and the reader's answer is to run
-		// the verb again. Classifying it as internal would send that reader to
-		// `relevo bugreport` for a machine that is working.
-		return wire.SyncCodeContended
-	case errors.Is(err, db.ErrLocked):
-		return wire.SyncCodeRemoteUnreachable
-	case errors.Is(err, db.ErrInvalid):
-		return wire.SyncCodeInvalid
-	}
-	return wire.SyncCodeInternal
 }
 
 // fmtStderr writes one advisory line from the daemon. A verb's own refusal is

@@ -180,6 +180,19 @@ const (
 	// it is a writer that ends on its own, so a retry answers this and a defect
 	// report does not.
 	SyncCodeContended = "contended"
+	// SyncCodeRemoteRefused is a remote that refused a statement of this
+	// machine's change set -- a constraint it enforces that the rows reached it
+	// in an order it cannot apply. The remote is answering rather than failing,
+	// so the caller's way out is a change set this machine can push and not a
+	// defect report.
+	SyncCodeRemoteRefused = "remote_refused"
+	// SyncCodeRemoteSchemaMissing is a remote with no table for the rows this
+	// machine is pushing: the engine never taught it this database's schema. It
+	// is its own class because the fix is a different one from a constraint
+	// refusal -- DDL over the sync connection rather than a re-recorded row --
+	// and a reader sent to `relevo bugreport` for it would be reporting a driver
+	// boundary as a defect.
+	SyncCodeRemoteSchemaMissing = "remote_schema_missing"
 	// SyncCodeInternal is a failure with no class of its own -- the daemon's
 	// own bug, or a hook that panicked or reported nothing.
 	SyncCodeInternal = "internal"

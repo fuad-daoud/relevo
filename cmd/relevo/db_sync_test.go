@@ -295,6 +295,66 @@ func TestDBSyncVerbRefusalNamesTheVerbToRunAgain(t *testing.T) {
 	}
 }
 
+// TestDBSyncRemoteRefusalIsRefusedNotInternal pins what a reader sees for the
+// fault this round found: a push the remote refused on a constraint. It is a
+// refusal naming the constraint, and the next hint is a command rather than
+// `relevo bugreport` -- a remote with enforced foreign keys refusing rows is not
+// a defect in this tree, and sending a reader to report one is the wrong answer
+// to a message that already says what the remote refused on.
+func TestDBSyncRemoteRefusalIsRefusedNotInternal(t *testing.T) {
+	t.Parallel()
+
+	const message = "sync: push: the remote refused this machine's change set: FOREIGN KEY constraint " +
+		"failed on the remote, which refused this machine's rows in the order the change set carried them"
+	classified := dbSyncVerbRefusal(wire.SyncVerbPush, &client.VerbRefusal{
+		Code:    wire.SyncCodeRemoteRefused,
+		Message: message,
+	})
+
+	var got *cliError
+	if !errors.As(classified, &got) {
+		t.Fatalf("classified = %v, want a cliError", classified)
+	}
+	if got.code != codeRefused {
+		t.Errorf("code = %q, want %q", got.code, codeRefused)
+	}
+	if strings.Contains(got.next, "bugreport") {
+		t.Errorf("next = %q, want no bug report on a remote refusal", got.next)
+	}
+	if !strings.Contains(got.Error(), "FOREIGN KEY") {
+		t.Errorf("the classified refusal %q dropped the constraint the remote refused on", got.Error())
+	}
+}
+
+// TestDBSyncRemoteWithoutTheTableIsRefused pins the other remote refusal: the
+// remote has no table for the rows this machine is pushing. It is refused, and
+// its message says the schema rather than the row order, because the two have
+// different fixes and the reader is the one who has to choose between them.
+func TestDBSyncRemoteWithoutTheTableIsRefused(t *testing.T) {
+	t.Parallel()
+
+	const message = "sync: push: the remote has no table to write this machine's rows to, so it refused " +
+		"the statement: the remote was never taught this database's schema"
+	classified := dbSyncVerbRefusal(wire.SyncVerbPush, &client.VerbRefusal{
+		Code:    wire.SyncCodeRemoteSchemaMissing,
+		Message: message,
+	})
+
+	var got *cliError
+	if !errors.As(classified, &got) {
+		t.Fatalf("classified = %v, want a cliError", classified)
+	}
+	if got.code != codeRefused {
+		t.Errorf("code = %q, want %q", got.code, codeRefused)
+	}
+	if strings.Contains(got.next, "bugreport") {
+		t.Errorf("next = %q, want no bug report on a remote that never learned the schema", got.next)
+	}
+	if !strings.Contains(got.Error(), "schema") {
+		t.Errorf("the classified refusal %q does not say the remote was never taught this schema", got.Error())
+	}
+}
+
 // TestDBSyncClassifyPassesCodedFailuresThrough pins that a refusal the frame
 // already raised keeps its code. Re-wrapping one would report a refusal the verb
 // chose deliberately as an internal failure, with its own message quoted twice.

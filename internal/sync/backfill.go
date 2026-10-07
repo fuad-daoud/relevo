@@ -32,13 +32,17 @@ import (
 // rides the change set it is describing.
 const KeyBackfill = "sync.backfill"
 
-// The bounds one backfill puts on itself. The batch is how many rows one
-// transaction records; the budget is how many rows the whole pass will record in
-// one run. Both exist so a large database cannot turn the moment a file becomes a
-// member into an unbounded write: what the budget leaves undone is what the next
-// attempt's marker resumes from.
+// The bounds one backfill puts on itself. The batch is how many rows of one
+// table one rewrite records; the budget is how many rows the whole pass will
+// record in one run. Both exist so a large database cannot turn the moment a
+// file becomes a member into an unbounded write: what the budget leaves undone is
+// what the next attempt's marker resumes from.
 const (
-	// BackfillBatch is how many rows one backfill transaction records.
+	// BackfillBatch is how many rows of one table one rewrite records. A group's
+	// rewrite takes this many per table, and a group holds the tables that
+	// reference one another, so one call records up to this times the group's
+	// table count -- which is why the pass divides the budget across the group
+	// rather than spending all of it on the first table.
 	BackfillBatch = 256
 	// BackfillBudget is how many rows one enable's backfill records before it
 	// stops and leaves the rest to the next attempt.
@@ -152,26 +156,26 @@ func Backfill(ctx context.Context, kv db.KV, path string) (BackfillResult, error
 	}
 	defer func() { _ = capture.Close() }()
 
-	tables, err := capture.Tables(ctx)
+	groups, err := capture.Groups(ctx)
 	if err != nil {
 		return out, fmt.Errorf("sync: backfill %s: %w", path, err)
 	}
-	for _, table := range tables {
+	for _, group := range groups {
 		if err := ctx.Err(); err != nil {
 			return out, fmt.Errorf("sync: backfill %s: %w", path, err)
 		}
-		rows, done, err := backfillTable(ctx, kv, capture, &marker, table, BackfillBudget-out.Rows)
+		rows, done, err := backfillGroup(ctx, kv, capture, &marker, group, BackfillBudget-out.Rows)
 		if err != nil {
 			return out, err
 		}
 		out.Rows += rows
 		if done {
-			out.Tables++
+			out.Tables += len(group.Tables)
 			continue
 		}
 		out.Exhausted = true
 		slog.Info("sync: the change-set backfill stopped on its budget; the rest is left to the next attempt",
-			"path", path, "rows", out.Rows, "table", table, "budget", BackfillBudget)
+			"path", path, "rows", out.Rows, "group", group.Key, "budget", BackfillBudget)
 		return out, WriteBackfill(kv, marker)
 	}
 	marker.Complete = true
@@ -179,46 +183,118 @@ func Backfill(ctx context.Context, kv db.KV, path string) (BackfillResult, error
 		return out, err
 	}
 	slog.Info("sync: the change-set backfill recorded this machine's pre-capture rows",
-		"path", path, "rows", marker.Rows, "tables", len(tables))
+		"path", path, "rows", marker.Rows, "groups", len(groups))
 	return out, nil
 }
 
-// backfillTable walks one table's rows into the change set, one batch at a time,
-// and reports how many it recorded and whether it reached the end.
-func backfillTable(ctx context.Context, kv db.KV, capture *db.CaptureConn, marker *backfillMarker,
-	table string, budget int64) (int64, bool, error) {
-	progress := marker.Tables[table]
-	if progress.Done {
-		return 0, true, nil
-	}
+// backfillGroup rewrites one foreign-key-closed group into the change set, one
+// bounded call at a time, and reports how many rows it recorded and whether it
+// reached the end.
+//
+// The unit is the group rather than the table because one table order cannot
+// serve both halves of a rewrite: the deletes want the children first and the
+// inserts want the parents first, so the two halves are separate passes over
+// the group. A group is closed over the references between its tables, so the
+// rows a remote holds outside the group are never the ones that refuse. See
+// db.Rerecord for the recorded order itself.
+func backfillGroup(ctx context.Context, kv db.KV, capture *db.CaptureConn, marker *backfillMarker,
+	group db.CaptureGroup, budget int64) (int64, bool, error) {
 	var rows int64
 	for {
 		if budget <= 0 {
-			marker.Tables[table] = backfillProgress{At: progress.At, Done: false}
+			storeGroupProgress(marker, group, db.GroupPass{})
 			return rows, false, nil
 		}
-		batch := int64(BackfillBatch)
-		if budget < batch {
-			batch = budget
-		}
-		res, err := capture.Backfill(ctx, table, progress.At, int(batch))
+		batch := groupBatch(budget, len(group.Tables))
+		res, err := capture.Rerecord(ctx, group, groupRowids(marker, group), int(batch))
 		if err != nil {
-			return rows, false, fmt.Errorf("sync: backfill %s: %w", table, err)
+			return rows, false, fmt.Errorf("sync: backfill %s: %w", group.Key, err)
 		}
-		rows += res.Rows
-		marker.Rows += res.Rows
-		progress.At = res.NextRowID
-		if res.Rows < batch {
-			progress.Done = true
-			marker.Tables[table] = progress
+		rows += countedRows(res)
+		marker.Rows += countedRows(res)
+		budget -= countedRows(res)
+		if groupRewritten(res) {
+			storeGroupProgress(marker, group, res)
 			return rows, true, WriteBackfill(kv, *marker)
 		}
-		budget -= res.Rows
-		// The marker is written per batch rather than per table so a crash costs
-		// one repeated batch, which the remote absorbs as the same row twice.
+		// The marker is written per call rather than per group so a crash costs
+		// one repeated call, which the remote absorbs as the same row twice.
+		storeGroupProgress(marker, group, res)
 		if err := WriteBackfill(kv, *marker); err != nil {
 			return rows, false, err
 		}
+	}
+}
+
+// groupRowids is where each table of the group resumes: the marker's rowid, or
+// the beginning of the table where the marker names none.
+func groupRowids(marker *backfillMarker, group db.CaptureGroup) map[string]int64 {
+	from := make(map[string]int64, len(group.Tables))
+	for _, table := range group.Tables {
+		from[table] = marker.Tables[table].At
+	}
+	return from
+}
+
+// countedRows is how many rows one call's rewrite recorded.
+func countedRows(res db.GroupPass) int64 {
+	var rows int64
+	for _, table := range res.Tables {
+		rows += table.Rows
+	}
+	return rows
+}
+
+// groupBatch is how many rows of each table of the group one call takes, so the
+// whole call stays inside the budget left: a rewrite takes this many from every
+// table of the group, and the group holds the tables that reference one another,
+// so the whole group's share is what the budget has to cover. One row a table is
+// the floor, because a call that took nothing would not move the walk at all.
+func groupBatch(budget int64, tables int) int64 {
+	if tables < 1 {
+		tables = 1
+	}
+	batch := budget / int64(tables)
+	if batch > BackfillBatch {
+		batch = BackfillBatch
+	}
+	if batch < 1 {
+		batch = 1
+	}
+	return batch
+}
+
+// groupRewritten reports whether one call reached the end of every table of the
+// group, which is the only way a group is finished: a table that still has rows
+// left takes the whole group round again.
+func groupRewritten(res db.GroupPass) bool {
+	for _, table := range res.Tables {
+		if !table.Done {
+			return false
+		}
+	}
+	return len(res.Tables) > 0
+}
+
+// storeGroupProgress writes one call's per-table rowids into the marker, so a
+// later call resumes from them. A nil res marks the group as not yet walked,
+// which is what a call that ran out of budget before recording anything stores.
+func storeGroupProgress(marker *backfillMarker, group db.CaptureGroup, res db.GroupPass) {
+	byTable := make(map[string]db.TablePass, len(res.Tables))
+	for _, table := range res.Tables {
+		byTable[table.Table] = table
+	}
+	for _, table := range group.Tables {
+		pass, ok := byTable[table]
+		if !ok {
+			continue
+		}
+		progress := marker.Tables[table]
+		progress.At = pass.NextRowID
+		if pass.Done {
+			progress.Done = true
+		}
+		marker.Tables[table] = progress
 	}
 }
 

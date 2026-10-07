@@ -169,6 +169,14 @@ func dbSyncVerbRefusal(verb string, err error) error {
 		// The database was busy and nothing was written. The verb is idempotent
 		// over that, so the next hint is the verb itself rather than a report.
 		return failNext(codeRefused, "relevo db sync "+verb, "%s", refusal.Message)
+	case wire.SyncCodeRemoteRefused, wire.SyncCodeRemoteSchemaMissing:
+		// The remote refused the statement this machine's change set carried, and
+		// said which call and which constraint. It is a refusal: the reader is
+		// told the constraint rather than sent to `relevo bugreport` for a remote
+		// doing what a remote with enforced foreign keys is supposed to do. The
+		// next hint is the status verb, which says what this machine is set to be
+		// -- the remote's half of that is where the answer is.
+		return failNext(codeRefused, "relevo db sync status", "%s", refusal.Message)
 	}
 	_ = name
 	return failWrap(codeInternal, err, "relevo db sync %s", verb)

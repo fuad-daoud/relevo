@@ -50,15 +50,15 @@ func TestTheCaptureConnectionRecordsWhatThePoolDoesNot(t *testing.T) {
 		t.Fatalf("the seeded row is already in the change set (%d changes), so the gap this closes is not there", got)
 	}
 
-	res, err := capture.Backfill(context.Background(), "ticks", -1, 16)
+	recorded, _, err := rewriteTable(context.Background(), capture, "ticks", -1, 16)
 	if err != nil {
-		t.Fatalf("backfill: %v", err)
+		t.Fatalf("rewrite: %v", err)
 	}
-	if res.Rows != 1 {
-		t.Errorf("the backfill recorded %d rows, want 1", res.Rows)
+	if recorded != 1 {
+		t.Errorf("the rewrite recorded %d rows, want 1", recorded)
 	}
 	if got := captureChanges(t, pool, "ticks"); got == 0 {
-		t.Error("the backfill left the change set empty, so the row the seed wrote is still in no change set")
+		t.Error("the rewrite left the change set empty, so the row the seed wrote is still in no change set")
 	}
 
 	// The row is still the row: a backfill that rewrote it into something else
@@ -72,11 +72,47 @@ func TestTheCaptureConnectionRecordsWhatThePoolDoesNot(t *testing.T) {
 	}
 }
 
-// TestTheBackfillWalksATableInBoundedBatches pins the batch and offset contract:
-// each batch takes at most limit rows, each resumes after the last rowid the
+// rewriteTable is one rewrite of a single table's rows over the capture
+// connection, which is what a file with one table is: the group's own order for
+// one table is that table. It returns how many rows the rewrite recorded and the
+// rowid a later one resumes at.
+func rewriteTable(ctx context.Context, capture *captureConn, table string, from int64, limit int) (int64, int64, error) {
+	pass, err := rerecordOver(ctx, capture.Conn(),
+		CaptureGroup{Key: table, Tables: []string{table}}, map[string]int64{table: from}, limit)
+	if err != nil {
+		return 0, 0, err
+	}
+	rows, next := tookRowsOf(pass, table, from)
+	return rows, next, nil
+}
+
+// rewriteTableOver is rewriteTable over a borrowed connection, which is the shape
+// a caller outside this package has.
+func rewriteTableOver(ctx context.Context, capture *CaptureConn, table string, from int64, limit int) (int64, int64, error) {
+	pass, err := capture.Rerecord(ctx, CaptureGroup{Key: table, Tables: []string{table}},
+		map[string]int64{table: from}, limit)
+	if err != nil {
+		return 0, 0, err
+	}
+	rows, next := tookRowsOf(pass, table, from)
+	return rows, next, nil
+}
+
+// tookRowsOf is one table's rows and next rowid out of a group rewrite.
+func tookRowsOf(pass GroupPass, table string, from int64) (int64, int64) {
+	for _, took := range pass.Tables {
+		if took.Table == table {
+			return took.Rows, took.NextRowID
+		}
+	}
+	return 0, from
+}
+
+// TestTheRewriteWalksATableInBoundedBatches pins the batch and offset contract:
+// each call takes at most limit rows, each resumes after the last rowid the
 // previous one reached, and the walk finishes with every row recorded exactly
 // once.
-func TestTheBackfillWalksATableInBoundedBatches(t *testing.T) {
+func TestTheRewriteWalksATableInBoundedBatches(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "batched.db")
 	pool, err := OpenRaw(path)
 	if err != nil {
@@ -104,19 +140,19 @@ func TestTheBackfillWalksATableInBoundedBatches(t *testing.T) {
 		total   int64
 	)
 	for {
-		res, err := capture.Backfill(context.Background(), "ticks", at, 3)
+		rows, next, err := rewriteTable(context.Background(), capture, "ticks", at, 3)
 		if err != nil {
-			t.Fatalf("backfill batch %d: %v", batches, err)
+			t.Fatalf("rewrite batch %d: %v", batches, err)
 		}
 		batches++
-		total += res.Rows
-		if res.Rows < 3 {
+		total += rows
+		if rows < 3 {
 			break
 		}
-		if res.NextRowID <= at {
-			t.Fatalf("batch %d reported next rowid %d, want it past %d", batches, res.NextRowID, at)
+		if next <= at {
+			t.Fatalf("batch %d reported next rowid %d, want it past %d", batches, next, at)
 		}
-		at = res.NextRowID
+		at = next
 		if batches > 10 {
 			t.Fatal("the walk did not finish")
 		}
@@ -129,10 +165,10 @@ func TestTheBackfillWalksATableInBoundedBatches(t *testing.T) {
 	}
 }
 
-// TestTheBackfillResumesFromTheMarker pins resumability: a second pass over a
-// table the first pass finished records nothing, which is what makes the offset
-// a safe place to store. A batch that re-recorded a finished range would
-// double every row on the remote.
+// TestTheRewriteResumesFromItsOffset pins resumability: a call over a table the
+// previous call finished records nothing, which is what makes the offset a safe
+// place to store. A call that re-recorded a finished range would double every
+// row on the remote.
 func TestTheBackfillResumesFromTheMarker(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "resume.db")
 	pool, err := OpenRaw(path)
@@ -155,18 +191,18 @@ func TestTheBackfillResumesFromTheMarker(t *testing.T) {
 	}
 	defer func() { _ = capture.Close() }()
 
-	first, err := capture.Backfill(context.Background(), "ticks", -1, 16)
+	_, firstNext, err := rewriteTable(context.Background(), capture, "ticks", -1, 16)
 	if err != nil {
-		t.Fatalf("first backfill: %v", err)
+		t.Fatalf("the first rewrite: %v", err)
 	}
 	afterFirst := captureChanges(t, pool, "ticks")
 
-	second, err := capture.Backfill(context.Background(), "ticks", first.NextRowID, 16)
+	resumed, _, err := rewriteTable(context.Background(), capture, "ticks", firstNext, 16)
 	if err != nil {
-		t.Fatalf("resumed backfill: %v", err)
+		t.Fatalf("the resumed rewrite: %v", err)
 	}
-	if second.Rows != 0 {
-		t.Errorf("the resumed batch recorded %d rows, want 0", second.Rows)
+	if resumed != 0 {
+		t.Errorf("the resumed call recorded %d rows, want 0", resumed)
 	}
 	if got := captureChanges(t, pool, "ticks"); got != afterFirst {
 		t.Errorf("the change set grew from %d to %d on a resume past the last row", afterFirst, got)

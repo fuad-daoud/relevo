@@ -50,9 +50,13 @@ func NewTurso(db *turso.TursoSyncDb) *Turso { return &Turso{db: db} }
 var _ SyncClient = (*Turso)(nil)
 
 // Push sends the local change set.
+//
+// A refusal the remote answers with is classed here, once, so every caller above
+// this one sees a class it can branch on rather than the driver's prose. The
+// message names the call and the reason; nothing the remote chose reaches it.
 func (t *Turso) Push(ctx context.Context) error {
 	if err := t.db.Push(ctx); err != nil {
-		return fmt.Errorf("sync: push: %w", err)
+		return classifyRemoteRefusal("push", fmt.Errorf("sync: push: %w", err))
 	}
 	return nil
 }
@@ -74,6 +78,13 @@ func (t *Turso) Pull(ctx context.Context) (bool, error) {
 	applied, err := t.db.Pull(ctx)
 	if err == nil {
 		return applied, nil
+	}
+	// The refusal classes are read before the watermark is: a remote that
+	// refused a statement is not a stale watermark, and the invalidation must not
+	// spend a rebuild on one.
+	err = classifyRemoteRefusal("pull", err)
+	if errors.Is(err, ErrRemoteRefused) || errors.Is(err, ErrRemoteSchema) {
+		return false, err
 	}
 	retry, rerr := t.invalidateAndReopen(ctx, err)
 	if rerr != nil {

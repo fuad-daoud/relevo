@@ -25,8 +25,6 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 	"sync"
 )
 
@@ -297,99 +295,6 @@ func (c *captureConn) Conn() *sql.Conn {
 	return c.conn
 }
 
-// BackfillResult is what one backfill batch moved into the change set.
-type BackfillResult struct {
-	// Rows is how many rows the batch recorded.
-	Rows int64
-	// NextRowID is the rowid the next batch starts at. It is the row after the
-	// last one this batch covered, so a caller stores it and resumes there; it
-	// equals the rowid the batch was given when the batch found nothing, so a
-	// finished walk stores where it finished rather than restarting.
-	NextRowID int64
-}
-
-// Backfill records up to limit rows of one table, starting at rowid from, into
-// the change set. A negative from is the beginning: rowid 0 is a real rowid, so
-// the walk's start cannot be spelled as an offset above the first row.
-//
-// It records them by rewriting each row as itself -- INSERT OR REPLACE of the
-// row's own values, which the driver records as the delete-and-insert pair that
-// an upsert is -- rather than by writing turso_cdc directly. That is the only
-// surface the driver offers: its Go bindings and the shared library it links
-// export no capture, cdc or backfill call at all, and the only control is the
-// pragma this connection already carries. A row recorded this way is a real
-// write the engine captured, so its change_id, its change_type and its payload
-// are the engine's own and cannot drift from what the engine would have written
-// had capture been on when the row was first made.
-//
-// A rewrite of an identical row is idempotent against the remote, so a batch
-// interrupted between its commit and its mark being written costs one repeated
-// batch rather than a lost or doubled row. That is what makes the offset a
-// resume point rather than a correctness requirement.
-//
-// The batch is one transaction: the whole batch is in the change set or none of
-// it is, so a crash never leaves a half-batch that the next offset would skip.
-func (c *captureConn) Backfill(ctx context.Context, table string, from int64, limit int) (BackfillResult, error) {
-	conn := c.Conn()
-	if conn == nil {
-		return BackfillResult{}, fmt.Errorf("db: %s: no capture connection: %w", table, ErrInvalid)
-	}
-	return backfillOver(ctx, conn, table, from, limit)
-}
-
-// backfillOver is one batch over a connection the caller already holds: the
-// connection under the capture pragma, and nothing else. It is separated from the
-// holders so the batch is the same work whether the connection arrived from the
-// path's held one or from a caller's own open.
-func backfillOver(ctx context.Context, conn *sql.Conn, table string, from int64, limit int) (BackfillResult, error) {
-	if from < 0 {
-		from = 0
-	}
-	columns, err := backfillColumns(ctx, conn, table)
-	if err != nil {
-		return BackfillResult{}, err
-	}
-	if len(columns) == 0 {
-		return BackfillResult{NextRowID: from}, nil
-	}
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return BackfillResult{}, fmt.Errorf("db: %s: backfill begin: %w", table, mapBusy(err))
-	}
-	defer func() { _, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK") }()
-
-	res, err := conn.ExecContext(ctx, backfillStmt(table, columns), from, limit)
-	if err != nil {
-		return BackfillResult{}, fmt.Errorf("db: %s: backfill: %w", table, mapBusy(err))
-	}
-	rows, err := res.RowsAffected()
-	if err != nil {
-		return BackfillResult{}, fmt.Errorf("db: %s: backfill rows: %w", table, err)
-	}
-	last, err := highestRowID(ctx, conn, table, from, limit)
-	if err != nil {
-		return BackfillResult{}, err
-	}
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return BackfillResult{}, fmt.Errorf("db: %s: backfill commit: %w", table, mapBusy(err))
-	}
-	return BackfillResult{Rows: rows, NextRowID: last + 1}, nil
-}
-
-// backfillStmt is the rewrite one batch runs: the table's own columns, read back
-// out of itself, in rowid order from the rowid the walk is at. The limit is
-// bound rather than inlined so the batch size is the caller's to set, and the
-// order is explicit because the position is only meaningful if the batches do
-// not overlap.
-func backfillStmt(table string, columns []string) string {
-	quoted := make([]string, len(columns))
-	for i, c := range columns {
-		quoted[i] = `"` + c + `"`
-	}
-	list := strings.Join(quoted, ", ")
-	return "INSERT OR REPLACE INTO `" + table + "` (" + list + ") " +
-		"SELECT " + list + " FROM `" + table + "` WHERE rowid >= ? ORDER BY rowid LIMIT ?"
-}
-
 // backfillColumns is one table's column names in declaration order, so a rewrite
 // names the same columns the table has.
 func backfillColumns(ctx context.Context, conn *sql.Conn, table string) ([]string, error) {
@@ -410,38 +315,6 @@ func backfillColumns(ctx context.Context, conn *sql.Conn, table string) ([]strin
 		return nil, fmt.Errorf("db: %s: read the columns: %w", table, err)
 	}
 	return columns, nil
-}
-
-// highestRowID is the top of the range the batch covered, so the next batch
-// resumes after it rather than over the rows this one already recorded.
-//
-// The batch's own LIMIT is what bounds the answer: the limit-th row above the
-// offset is the last row the batch touched. A batch that did not fill its limit
-// reached the end of the table, so the table's own maximum past the offset is
-// the right answer then -- reporting the offset instead would leave the walk
-// re-reading the same last page forever.
-func highestRowID(ctx context.Context, conn *sql.Conn, table string, from int64, limit int) (int64, error) {
-	var last sql.NullInt64
-	err := conn.QueryRowContext(ctx,
-		"SELECT rowid FROM `"+table+"` WHERE rowid >= ? ORDER BY rowid LIMIT 1 OFFSET "+strconv.Itoa(limit-1),
-		from).Scan(&last)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		// Fewer than limit rows are left, so this batch covered them all and the
-		// table's own maximum above the start is the real end of the range.
-	case err != nil:
-		return 0, fmt.Errorf("db: %s: the batch's last row: %w", table, mapBusy(err))
-	default:
-		return last.Int64, nil
-	}
-	err = conn.QueryRowContext(ctx, "SELECT MAX(rowid) FROM `"+table+"` WHERE rowid >= ?", from).Scan(&last)
-	if err != nil {
-		return 0, fmt.Errorf("db: %s: the batch's last row: %w", table, mapBusy(err))
-	}
-	if !last.Valid {
-		return from - 1, nil
-	}
-	return last.Int64, nil
 }
 
 // CaptureTables is every table the driver syncs from a member file: the file's
@@ -499,17 +372,6 @@ func (c *CaptureConn) Tables(ctx context.Context) ([]string, error) {
 	}
 	defer release()
 	return CaptureTables(ctx, conn)
-}
-
-// Backfill is one batch of one table's rows into the change set, starting at the
-// rowid the walk is at.
-func (c *CaptureConn) Backfill(ctx context.Context, table string, fromRowID int64, limit int) (BackfillResult, error) {
-	conn, release, err := c.held.acquire(ctx)
-	if err != nil {
-		return BackfillResult{}, stepError(table, "the backfill", err)
-	}
-	defer release()
-	return backfillOver(ctx, conn, table, fromRowID, limit)
 }
 
 // Close gives the connection back to the path. It closes nothing a handle still

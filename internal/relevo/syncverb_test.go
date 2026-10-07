@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -641,6 +642,8 @@ func TestSyncVerbClassificationIsTotal(t *testing.T) {
 		{relevosync.ErrRemoteConflict, wire.SyncCodeRemoteConflict},
 		{relevosync.ErrSeedUploadRequired, wire.SyncCodeSeedUploadRequired},
 		{relevosync.ErrAuthRefused, wire.SyncCodeAuthRefused},
+		{relevosync.ErrRemoteRefused, wire.SyncCodeRemoteRefused},
+		{relevosync.ErrRemoteSchema, wire.SyncCodeRemoteSchemaMissing},
 		{db.ErrPreflightRefused, wire.SyncCodePreflightRefused},
 		{db.ErrContended, wire.SyncCodeContended},
 		{db.ErrInvalid, wire.SyncCodeInvalid},
@@ -650,6 +653,79 @@ func TestSyncVerbClassificationIsTotal(t *testing.T) {
 		if got := verbClassify(tc.err); got != tc.want {
 			t.Errorf("classify(%v) = %q, want %q", tc.err, got, tc.want)
 		}
+	}
+}
+
+// TestARemoteRefusalIsAClassNotAnInternal pins the classification a remote's
+// refusal gets on the push route, where the round's fault showed up: a push the
+// remote refused was reported as an internal failure, which pointed the reader at
+// `relevo bugreport` for a remote doing what a remote with enforced foreign keys
+// does. Both classes the driver can produce here are refusals, and neither is
+// internal.
+func TestARemoteRefusalIsAClassNotAnInternal(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"a constraint refusal", relevosync.ErrRemoteRefused, wire.SyncCodeRemoteRefused},
+		{"a remote without the table", relevosync.ErrRemoteSchema, wire.SyncCodeRemoteSchemaMissing},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := verbClassify(tc.err); got == wire.SyncCodeInternal {
+				t.Errorf("verbClassify(%v) = internal, want %q", tc.err, tc.want)
+			} else if got != tc.want {
+				t.Errorf("verbClassify(%v) = %q, want %q", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestARemoteRefusalOnThePushVerbIsARefusal pins the answer a caller actually
+// gets, not just the classification: a push the remote refused with a constraint
+// carries its own code and says what was refused, so neither the owner nor the
+// CLI above it can read it as a defect. It is the route this round's failure
+// took -- the runner's own error, not a verb-time one -- so it is the assertion
+// that the fix reaches the path a user hits.
+func TestARemoteRefusalOnThePushVerbIsARefusal(t *testing.T) {
+	f := newVerbFixture(t)
+	joinFixtureFile(t, f.shared.Path())
+	f.runner.Runner.Client = f.client
+	f.runner.Runner.Local = f.local
+	f.client.PushErr = fmt.Errorf("sync: push: %w", relevosync.ErrRemoteRefused)
+
+	res := f.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbPush}, nil)
+	if res.OK {
+		t.Fatal("the push reported success although the remote refused it")
+	}
+	if res.Code != wire.SyncCodeRemoteRefused {
+		t.Errorf("code = %q, want %q: a remote that refused a statement is not internal and not unreachable",
+			res.Code, wire.SyncCodeRemoteRefused)
+	}
+	if strings.Contains(res.Message, "internal") {
+		t.Errorf("the message is %q, want it never to read as a defect", res.Message)
+	}
+}
+
+// TestAMissingRemoteTableOnThePushVerbIsItsOwnCode pins that the schema limit
+// reaches the caller as its own class rather than as the ordering fault: the two
+// have different fixes, so a caller that cannot tell them apart would send a
+// reader to change the row order when the remote has never heard of the table.
+func TestAMissingRemoteTableOnThePushVerbIsItsOwnCode(t *testing.T) {
+	f := newVerbFixture(t)
+	joinFixtureFile(t, f.shared.Path())
+	f.runner.Runner.Client = f.client
+	f.runner.Runner.Local = f.local
+	f.client.PushErr = fmt.Errorf("sync: push: %w", relevosync.ErrRemoteSchema)
+
+	res := f.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbPush}, nil)
+	if res.Code != wire.SyncCodeRemoteSchemaMissing {
+		t.Errorf("code = %q, want %q", res.Code, wire.SyncCodeRemoteSchemaMissing)
+	}
+	if res.Code == wire.SyncCodeRemoteRefused {
+		t.Error("the missing-table refusal was classified as the row-order refusal")
 	}
 }
 

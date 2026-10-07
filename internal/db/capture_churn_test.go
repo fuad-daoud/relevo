@@ -142,12 +142,12 @@ func TestABackfillOverAChurningFileRecordsRealChanges(t *testing.T) {
 	}
 	defer func() { _ = capture.Close() }()
 
-	res, err := capture.Backfill(ctx, "ticks", -1, 16)
+	rows, _, err := rewriteTableOver(ctx, capture, "ticks", -1, 16)
 	if err != nil {
-		t.Fatalf("the backfill over a churning file: %v", err)
+		t.Fatalf("the rewrite over a churning file: %v", err)
 	}
-	if res.Rows != 8 {
-		t.Errorf("the backfill recorded %d rows, want 8", res.Rows)
+	if rows != 8 {
+		t.Errorf("the rewrite recorded %d rows, want 8", rows)
 	}
 	if got := capturedChanges(t, path, "ticks"); got == 0 {
 		t.Error("the backfill left the change set empty, so the pre-capture rows are still in no change set")
@@ -233,16 +233,16 @@ func TestTheWalkBatchesOverAChurningFile(t *testing.T) {
 		total   int64
 	)
 	for {
-		res, err := capture.Backfill(ctx, "ticks", at, 8)
+		rows, next, err := rewriteTableOver(ctx, capture, "ticks", at, 8)
 		if err != nil {
-			t.Fatalf("backfill batch %d over a churning file: %v", batches, err)
+			t.Fatalf("rewrite batch %d over a churning file: %v", batches, err)
 		}
 		batches++
-		total += res.Rows
-		if res.Rows < 8 {
+		total += rows
+		if rows < 8 {
 			break
 		}
-		at = res.NextRowID
+		at = next
 		if batches > 20 {
 			t.Fatal("the walk did not finish")
 		}
@@ -271,8 +271,8 @@ func TestAFinishedWalkLeavesTheDaemonsWritesAlone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the capture open over a file the daemon is writing: %v", err)
 	}
-	if _, err := capture.Backfill(ctx, "ticks", -1, 16); err != nil {
-		t.Fatalf("the backfill: %v", err)
+	if _, _, err := rewriteTableOver(ctx, capture, "ticks", -1, 16); err != nil {
+		t.Fatalf("the rewrite: %v", err)
 	}
 	if err := capture.Close(); err != nil {
 		t.Fatalf("close the borrowed connection: %v", err)

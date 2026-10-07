@@ -108,6 +108,156 @@ func TestTheBackfillPutsPreCaptureRowsIntoTheChangeSet(t *testing.T) {
 	}
 }
 
+// TestTheBackfillRecordsParentsBeforeChildren pins the order the change set has
+// to carry for a remote with foreign keys enforced, across the re-land boundary:
+// rows a machine wrote before capture was on are in the file and in no change
+// set, and the pass that puts them there has to put the parent before the child.
+//
+// The tables are named so the alphabetical order the pass used to take walks the
+// child first, which is the order the remote refuses. The assertion reads the
+// change set the engine recorded, which is the order the push sends.
+func TestTheBackfillRecordsParentsBeforeChildren(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	seedReferencingMember(t, path)
+	local := seedLocal(t)
+
+	res, err := Backfill(context.Background(), local, path)
+	if err != nil {
+		t.Fatalf("Backfill: %v", err)
+	}
+	if res.Rows < 2 {
+		t.Fatalf("the backfill recorded %d rows, want the parent and the child", res.Rows)
+	}
+
+	order := changeSetOrder(t, path)
+	parent := indexOf(order, "fk_parent", "insert")
+	child := indexOf(order, "fk_child", "insert")
+	if parent < 0 || child < 0 {
+		t.Fatalf("the change set carries %v, want an insert for each table", order)
+	}
+	if parent > child {
+		t.Errorf("the parent's insert is at %d and the child's at %d, so the remote meets the child's row before the row it names: %v",
+			parent, child, order)
+	}
+}
+
+// TestTheBackfillDeletesChildrenBeforeParents pins the other half, which is the
+// one that refused even when the tables were named in order: a rewrite of rows
+// the remote already holds carries a delete of a parent the remote still has
+// children for.
+func TestTheBackfillDeletesChildrenBeforeParents(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	seedReferencingMember(t, path)
+	local := seedLocal(t)
+
+	if _, err := Backfill(context.Background(), local, path); err != nil {
+		t.Fatalf("Backfill: %v", err)
+	}
+	// A second pass over a fresh machine-local file, so the marker does not say
+	// the walk is finished: this is the same rows recorded again, which is what
+	// a machine whose enable ran twice would do.
+	second := seedLocal(t)
+	if _, err := Backfill(context.Background(), second, path); err != nil {
+		t.Fatalf("the second Backfill: %v", err)
+	}
+
+	order := changeSetOrder(t, path)
+	// The second pass's own entries are the last of each kind, so the positions
+	// compared are taken from the tail rather than the first the file ever held.
+	childDelete := lastIndexOf(order, "fk_child", "delete")
+	parentDelete := lastIndexOf(order, "fk_parent", "delete")
+	if childDelete < 0 || parentDelete < 0 {
+		t.Fatalf("the second pass recorded no deletes: %v", order)
+	}
+	if childDelete > parentDelete {
+		t.Errorf("the child's delete is at %d and the parent's at %d, so the remote meets the parent's delete while it still holds the child: %v",
+			childDelete, parentDelete, order)
+	}
+}
+
+// seedReferencingMember writes a parent and a child table with a row in each, the
+// way a machine wrote them before capture was on: through the file's own pool,
+// which records nothing.
+func seedReferencingMember(t *testing.T, path string) {
+	t.Helper()
+	pool, err := db.OpenRaw(path)
+	if err != nil {
+		t.Fatalf("open the shared file's pool: %v", err)
+	}
+	defer func() { _ = pool.Close() }()
+	for _, stmt := range []string{
+		`CREATE TABLE fk_parent (id TEXT PRIMARY KEY, v TEXT NOT NULL)`,
+		`CREATE TABLE fk_child (id TEXT PRIMARY KEY, parent_id TEXT NOT NULL REFERENCES fk_parent(id))`,
+	} {
+		if _, err := pool.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	if _, err := pool.Exec(`INSERT INTO fk_parent (id, v) VALUES ('p1', 'parent')`); err != nil {
+		t.Fatalf("seed the parent: %v", err)
+	}
+	if _, err := pool.Exec(`INSERT INTO fk_child (id, parent_id) VALUES ('c1', 'p1')`); err != nil {
+		t.Fatalf("seed the child: %v", err)
+	}
+}
+
+// changeSetOrder is the change set as the push reads it: one entry per table and
+// half, in the order the engine recorded them.
+func changeSetOrder(t *testing.T, path string) []string {
+	t.Helper()
+	pool, err := db.OpenRawReadOnly(path)
+	if err != nil {
+		t.Fatalf("open the member read-only: %v", err)
+	}
+	defer func() { _ = pool.Close() }()
+	rows, err := pool.Query(`SELECT table_name, change_type FROM turso_cdc ` +
+		`WHERE table_name IS NOT NULL ORDER BY change_id`)
+	if err != nil {
+		t.Fatalf("read the change set: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var order []string
+	for rows.Next() {
+		var table string
+		var kind int
+		if err := rows.Scan(&table, &kind); err != nil {
+			t.Fatalf("read a change set row: %v", err)
+		}
+		half := "insert"
+		if kind < 0 {
+			half = "delete"
+		}
+		order = append(order, table+":"+half)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("the change set rows: %v", err)
+	}
+	return order
+}
+
+// indexOf is where the change set first names this table and half, or -1.
+func indexOf(order []string, table, half string) int {
+	want := table + ":" + half
+	for i, entry := range order {
+		if entry == want {
+			return i
+		}
+	}
+	return -1
+}
+
+// lastIndexOf is where the change set last names this table and half, or -1. A
+// second pass appends to the same change set, so the pass under test is the tail.
+func lastIndexOf(order []string, table, half string) int {
+	want := table + ":" + half
+	for i := len(order) - 1; i >= 0; i-- {
+		if order[i] == want {
+			return i
+		}
+	}
+	return -1
+}
+
 // TestASecondBackfillOverTheSameFileRecordsNothing pins resumability from the
 // other end: once the marker is cleared a finished walk does not run again, so a
 // later enable does not re-record a database whose rows are all captured.
