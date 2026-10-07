@@ -14,12 +14,12 @@ import (
 const cdcTable = "turso" + "_cdc"
 
 // TestOpenHasNoCapturePool pins that opening the machine database asks the
-// engine for no change capture at all. The pragma that used to do that was a
-// write, so it queued for the single write slot and turned every read on a
-// busy database into a busy timeout; its tables were also the driver's marker
-// that this file was a remote's member, which is exactly what a local record
-// must never be. So the assertion is on the file itself: a scratch database
-// comes up with no such table, and its writes go through the pool.
+// engine for no change capture at all. The capture pragma is a write, so it
+// queues for the single write slot and turns every read on a busy database into
+// a busy timeout; its tables mark a file as a remote's member, which is exactly
+// what a local record must never be. So the assertion is on the file itself: a
+// scratch database comes up with no capture table, and its writes go through the
+// pool.
 func TestOpenHasNoCapturePool(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	d := directOpen(t, path, Options{Origin: "inst-a"})
@@ -53,7 +53,7 @@ func TestOpenHasNoCapturePool(t *testing.T) {
 // driverPrivateNames are the sync driver's own file and table names. Nothing in
 // this tree may reach for them: they are the driver's surface rather than
 // SQLite's, so a file spelled against them breaks on a driver that renames one,
-// and they are how a local record came to look joined to a remote.
+// and a local record must never be built against them.
 var driverPrivateNames = []string{
 	cdcTable,
 	"-" + "info",
@@ -71,8 +71,9 @@ func TestNoDriverPrivateNames(t *testing.T) {
 			return walkErr
 		}
 		if d.IsDir() {
-			// The design docs name the driver on purpose: they are the record of
-			// what it was called and why the tree stopped using it.
+			// The design docs name the driver on purpose, so the walk skips
+			// them: the constraint holds for code, not for the prose that
+			// documents the driver.
 			if d.Name() == "docs" || d.Name() == ".git" {
 				return fs.SkipDir
 			}
