@@ -602,6 +602,11 @@ func TestLivePathIsNamedOnlyByTheAllowlistedOpens(t *testing.T) {
 	// It names the live path as the open itself, which is its whole purpose;
 	// the role tests pin that it asks as a member and never for anything else.
 	allow["openConfig"] = true
+	// backfill walks the live file's own tables over the dedicated capture
+	// connection, which is the one connection whose writes reach the change set.
+	// It names v.Path as that walk's target, which is its whole purpose, and it
+	// opens nothing: the sync package owns the connection.
+	allow["backfill"] = true
 
 	body := probeSource(t, "syncverb.go")
 	var offenders []string

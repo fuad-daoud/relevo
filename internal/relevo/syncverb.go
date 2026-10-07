@@ -140,6 +140,7 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, token []by
 		SeedCopy:        func(path string) error { return v.Shared.SeedCopy(path) },
 		SeedExists:      v.seedExists,
 		SeedPath:        v.seedPathFor(verb),
+		Backfill:        v.backfill(),
 		Open:            v.opener(token),
 		// The token arrived by the framed request rather than by the enable
 		// reading stdin or the environment itself: the client's route already
@@ -166,6 +167,18 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, token []by
 		Seed:         res.Seed,
 		Applied:      res.Applied,
 		TokenPresent: true,
+		Backfilled:   res.Backfill.Rows,
+	}
+}
+
+// backfill is the pass that puts the rows this machine wrote before capture was
+// turned on into the change set. It walks the shared file's own tables over the
+// dedicated capture connection, one bounded batch at a time, resuming from a
+// marker in the machine-local file, so a pass that dies half way through costs
+// one repeated batch rather than a lost row.
+func (v *VerbRunner) backfill() func(context.Context) (relevosync.BackfillResult, error) {
+	return func(ctx context.Context) (relevosync.BackfillResult, error) {
+		return relevosync.Backfill(ctx, v.Local, v.Path)
 	}
 }
 

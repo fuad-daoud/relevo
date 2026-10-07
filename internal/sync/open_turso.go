@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	turso "turso.tech/database/tursogo"
 )
 
@@ -56,6 +57,18 @@ func OpenRemote(ctx context.Context, cfg OpenConfig) (SyncClient, error) {
 			"path", repair.Path, "bytes", repair.Bytes, "orphan_table", repair.OrphanTable)
 	}
 	bootstrap := cfg.BootstrapIfEmpty
+	newHandle := func(ctx context.Context) (*turso.TursoSyncDb, error) {
+		return turso.NewTursoSyncDb(ctx, turso.TursoSyncDbConfig{
+			Path:                    cfg.Path,
+			RemoteUrl:               cfg.RemoteURL,
+			Namespace:               cfg.Namespace,
+			AuthToken:               string(cfg.AuthToken),
+			ClientName:              cfg.ClientName,
+			BootstrapIfEmpty:        &bootstrap,
+			PullBytesThreshold:      cfg.PullBytesThreshold,
+			PushOperationsThreshold: cfg.PushOperationsThreshold,
+		})
+	}
 	handle, err := turso.NewTursoSyncDb(ctx, turso.TursoSyncDbConfig{
 		Path:                    cfg.Path,
 		RemoteUrl:               cfg.RemoteURL,
@@ -69,5 +82,20 @@ func OpenRemote(ctx context.Context, cfg OpenConfig) (SyncClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sync: open the remote: %w", err)
 	}
-	return NewTurso(handle), nil
+	// The client keeps the path and a way to rebuild itself, because the file it
+	// was handed is the file whose log a stale revert watermark constrains. The
+	// engine reads that watermark out of the sidecar when it opens, so undoing
+	// one means opening again over the same config rather than retrying through
+	// a handle that has already cached what is about to change.
+	// The driver turns a bare file into a member inside the open above and says
+	// nothing about it, so this is the one place that knows the file is one now.
+	// Recording it is what makes the database package's own connections carry
+	// their writes into the change set the push reads: turso captures per
+	// connection, so a write on a connection without the pragma is a row no push
+	// can send.
+	db.MarkSyncMember(cfg.Path)
+	client := NewTurso(handle)
+	client.path = cfg.Path
+	client.Reopen = func(ctx context.Context) (syncDatabase, error) { return newHandle(ctx) }
+	return client, nil
 }

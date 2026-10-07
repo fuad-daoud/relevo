@@ -104,104 +104,6 @@ func (i TokenIntake) Resolve() ([]byte, TokenSource, error) {
 	return nil, TokenSourceNone, ErrNoToken
 }
 
-// SeedCase names which of the three situations an enable found. The three want
-// opposite things from the remote, so the case is decided before any handle is
-// opened rather than discovered afterwards.
-type SeedCase string
-
-const (
-	// SeedEmptyCloud is a database with history meeting a remote that holds
-	// nothing: the first push is the seed and nothing is ever fetched.
-	SeedEmptyCloud SeedCase = "empty_cloud"
-	// SeedExistingDB is a database with history meeting a remote that already
-	// holds data. History on both sides is the only case that cannot proceed on
-	// its own, because last-push-wins drops one of them silently.
-	SeedExistingDB SeedCase = "existing_db"
-	// SeedNewMachine is a machine holding no history at all: the remote is the
-	// only source, so the open bootstraps and the state is pulled in.
-	SeedNewMachine SeedCase = "new_machine"
-)
-
-// SeedInput is everything the seed decision turns on. It is three facts rather
-// than a database handle so the decision is a pure function a test can drive
-// without a remote or a file.
-type SeedInput struct {
-	// LocalHasHistory is whether this machine's shared database holds rows a
-	// push would carry.
-	LocalHasHistory bool
-	// CloudEmpty is whether the remote holds nothing yet.
-	CloudEmpty bool
-	// SeedUploaded reports that the documented Turso upload already ran against
-	// the seed copy a previous enable wrote, so the history on both sides is
-	// this machine's own rather than two histories that disagree.
-	SeedUploaded bool
-}
-
-// SeedDecision is what the seed matrix decided: the open it wants and the calls
-// that follow it. Every arm sets Pull when Bootstrap is false, which is the
-// driver's own rule -- an open that skipped the bootstrap owes the caller a
-// pull -- so no decision in this file can be the false-then-forgets-the-pull
-// one. The one exception is the arm whose remote was filled by an upload rather
-// than by this machine's own push, and its pull is the one call shape that has
-// aborted the process.
-type SeedDecision struct {
-	// Case is which of the three situations this is.
-	Case SeedCase
-	// Bootstrap is what the open's BootstrapIfEmpty must carry. It is a plain
-	// bool because the decision is total: no case here wants the pointer left
-	// unset, so the driver's own default never decides for us.
-	Bootstrap bool
-	// Pull is whether an explicit pull follows the open.
-	Pull bool
-	// Push is whether a push follows the open.
-	Push bool
-	// NeedsUpload is whether the case cannot proceed until the seed copy has
-	// been uploaded through the documented path.
-	NeedsUpload bool
-}
-
-// DecideSeed is the whole seed matrix. A machine with no history bootstraps,
-// because the remote is the only source of anything it will ever hold. A
-// machine with history and an empty remote pushes, because that push is the
-// seed and there is nothing to fetch. History on both sides is the one case
-// that refuses, and it refuses until the upload has happened.
-func DecideSeed(in SeedInput) SeedDecision {
-	switch {
-	case !in.LocalHasHistory:
-		// The pull is made explicit even though the bootstrap already performs
-		// one: a remote that changes between the open and the mark must not
-		// leave this machine a round behind with no call that says so.
-		return SeedDecision{Case: SeedNewMachine, Bootstrap: true, Pull: true}
-	case in.CloudEmpty:
-		// A pull against an empty remote costs one round trip and changes
-		// nothing, and it is what an open that skipped the bootstrap owes.
-		return SeedDecision{Case: SeedEmptyCloud, Bootstrap: false, Pull: true, Push: true}
-	case in.SeedUploaded:
-		// The upload put this database's history on the remote, so the push that
-		// follows carries only what changed since.
-		//
-		// There is deliberately no pull here, and this is the one place the
-		// driver's rule above is set aside. `turso db import` wrote the remote as
-		// a fresh database from a file rather than as this machine's change
-		// stream, so the remote's frames and this file's write-ahead log share no
-		// ancestry. A pull in that state asks the driver to apply remote frames
-		// against a local log whose checkpointed prefix has already moved past
-		// them, and the WAL reader asserts rather than returning -- turso_assert!
-		// in find_frame, which aborts the process across the C ABI where no Go
-		// recover can reach it. The push is the whole of what this arm owes: the
-		// upload already carried every row, so the pull has nothing to bring that
-		// the push has not already sent, and its only effect is to reach the
-		// aborting call.
-		//
-		// The remote may have moved since the upload, and the tick's own
-		// push-then-pull picks that up on the next window -- through a WAL whose
-		// ancestry this machine's push established.
-		return SeedDecision{Case: SeedExistingDB, Bootstrap: false, Push: true}
-	default:
-		return SeedDecision{Case: SeedExistingDB, Bootstrap: false, Pull: true, NeedsUpload: true}
-	}
-}
-
 // Enabler runs one enable: the already-on read, the token, the preflight, the
 // seed decision, the mark, and the open. Every input it cannot answer for
 // itself is a field, so the whole path is drivable with no remote and no file.
@@ -238,6 +140,18 @@ type Enabler struct {
 	SeedExists func(string) (bool, error)
 	// SeedPath is where that copy is written.
 	SeedPath string
+	// Backfill records the rows this machine wrote before capture was turned on
+	// into the change set. It runs at the moment the file becomes a member, after
+	// the seed decision and before the first push, because that is the only
+	// moment at which a row written before capture can still be carried by the
+	// push that follows: no pragma placement recovers a row that is already in
+	// the database and in no change set.
+	//
+	// Nil runs no backfill, which is what a caller with no file to walk takes.
+	// A failure is reported rather than swallowed -- a backfill that did not run
+	// leaves rows the push cannot carry, and saying so is the difference between
+	// a machine that knows it is behind and one that reports success forever.
+	Backfill func(context.Context) (BackfillResult, error)
 	// Open builds the handle the decision asked for. Nil refuses.
 	Open func(context.Context, OpenConfig) (SyncClient, error)
 	// Intake is the token this enable will store and the routes it may have
@@ -273,6 +187,9 @@ type EnableResult struct {
 	RemoteURL string
 	// Applied is whether the pull rebased anything.
 	Applied bool
+	// Backfill is what the pre-capture backfill recorded, zero when it did not
+	// run.
+	Backfill BackfillResult
 }
 
 // Enable runs the enable path in order. Each step refuses before the next one
@@ -344,14 +261,24 @@ func (e *Enabler) Enable(ctx context.Context) (EnableResult, error) {
 		// the state this marker exists to describe. The next enable re-runs it.
 		return EnableResult{Case: decision.Case, RemoteURL: settings.RemoteURL}, err
 	}
-	return e.finishSeed(ctx, client, decision, settings)
+
+	// The open above is what turned this file into a member, so this is the first
+	// moment at which a row this machine wrote before capture was on can still be
+	// carried. It runs before the seed round because the seed round is the first
+	// push, and a row recorded after that push waits for the next one.
+	backfilled, err := e.runBackfill(ctx)
+	if err != nil {
+		return EnableResult{Case: decision.Case, RemoteURL: settings.RemoteURL}, err
+	}
+	return e.finishSeed(ctx, client, decision, settings, backfilled)
 }
 
 // finishSeed runs the seed round the decision asked for and closes the window
 // around its outcome. Split out of Enable for the function-length gate; the
 // order below is the contract, not an arrangement.
-func (e *Enabler) finishSeed(ctx context.Context, client SyncClient, decision SeedDecision, settings Settings) (EnableResult, error) {
-	out := EnableResult{Case: decision.Case, RemoteURL: settings.RemoteURL}
+func (e *Enabler) finishSeed(ctx context.Context, client SyncClient, decision SeedDecision,
+	settings Settings, backfilled BackfillResult) (EnableResult, error) {
+	out := EnableResult{Case: decision.Case, RemoteURL: settings.RemoteURL, Backfill: backfilled}
 	applied, err := e.runSeed(ctx, client, decision)
 	if err != nil {
 		// The mark is written but the seed is not, so this machine reads as
@@ -366,6 +293,17 @@ func (e *Enabler) finishSeed(ctx context.Context, client SyncClient, decision Se
 	// and the driver is the thing to report against on the next tick.
 	ClearSeeding(e.Local)
 	return out, nil
+}
+
+// runBackfill records the rows this machine wrote before capture was on. A
+// missing backfill is not a failure: the enable's own decision is still a seed
+// decision and the pass is only there to close a gap the driver cannot close
+// itself.
+func (e *Enabler) runBackfill(ctx context.Context) (BackfillResult, error) {
+	if e.Backfill == nil {
+		return BackfillResult{}, nil
+	}
+	return e.Backfill(ctx)
 }
 
 // resolveRemote decides which remote this enable will use, and stores a --url

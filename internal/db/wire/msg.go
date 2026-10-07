@@ -237,6 +237,10 @@ type SyncResult struct {
 	SeedCase string `json:"seed_case,omitempty"`
 	// Seed is the copy an existing-history enable wrote.
 	Seed string `json:"seed,omitempty"`
+	// Backfilled is how many rows the pre-capture backfill put into the change
+	// set: the rows this machine had written before capture was on, which no
+	// push could otherwise carry.
+	Backfilled int64 `json:"backfilled,omitempty"`
 	// RemoteURL is the remote the enable stored.
 	RemoteURL string `json:"remote_url,omitempty"`
 	// Steps is the order a disable took, which is its contract.

@@ -1,9 +1,10 @@
 # The sync driver's process-killing abort, and what this tree does about it
 
-This is the evidence behind `internal/sync.DriverVersion` and the two transfer
-thresholds on the seed open. It records what was found, what was changed, and
-what is still unknown, so the next person to look at a driver bump does not have
-to repeat the search.
+This is the evidence behind `internal/sync.DriverVersion`, the two transfer
+thresholds on the seed open, the dedicated capture connection and the stale
+watermark invalidation. It records what was found, what was changed, and what is
+still unknown, so the next person to look at a driver bump does not have to
+repeat the search.
 
 ## What was observed
 
@@ -177,6 +178,16 @@ belong on a path every connection takes, however cheap it looks on a quiet file.
 And a pool that opens connections in a hot path wants a bound on how many can be
 opening, whatever it opens them for.
 
+Both are now what the tree does. The pragma is asked once, on one connection
+opened for the purpose over a file the sync engine has joined, and never on the
+pool path -- `openPragmas` and `pragmaConnector` carry no trace of it and a test
+guards that. A member handle's transactions run over that one connection, because
+turso captures per connection and a write on any other one is a row no push can
+send. `openPool` bounds its open connections, sized from the daemon's measured
+fan-out, so a contended write slot costs a bounded wait and an error rather than
+a connect per caller. The section below records what the driver's capture surface
+does and does not offer, which is what the rest of the re-land rests on.
+
 ## What is still unknown
 
 - **The exact trigger.** Whether the failing case is the 211MB download, the
@@ -214,3 +225,77 @@ fixed here with tests:
   one the section holds. The contradiction refusal now applies while a machine is
   on; an off machine takes the remote it is named. The refusal for the enabled
   case is unchanged.
+## What the re-land found about the driver's capture surface
+
+Read off the driver this tree builds against --
+`turso.tech/database/tursogo v0.8.1` and
+`github.com/tursodatabase/turso-go-platform-libs v0.8.1`, library sha
+`6119c6f0` -- and measured against a scratch cloud database.
+
+**There is no backfill call.** `go list -m all` resolves two turso modules, and
+neither exports anything for capture beyond the pragma. `bindings_sync.go`
+exports the sync operations and nothing about change capture;
+`nm -D --defined-only` over `libturso_sync_sdk_kit.so` lists thirty-one
+`turso_sync_*` symbols, none of them capture, cdc or backfill. The only control
+the driver has is:
+
+```
+PRAGMA capture_data_changes_conn('<off|id|before|after|full>',<cdc-table>)
+```
+
+with modes `off`, `id`, `before`, `after` and `full` accepted, and `full` the one
+this tree uses. So the backfill pass rewrites each row as itself over a
+connection carrying that pragma -- `INSERT OR REPLACE INTO t (cols) SELECT cols
+FROM t WHERE rowid >= ? ORDER BY rowid LIMIT ?` -- and the engine records the
+resulting delete/insert pair itself. The rows in `turso_cdc` are therefore the
+engine's own: its `change_id`, its `change_type`, its payloads. Nothing in this
+tree writes to `turso_cdc` directly.
+
+**Capture is per connection, and provably so.** One database, two connections in
+one pool: a connection given the pragma has every write recorded in
+`turso_cdc`; a second connection in the same pool over the same file, never given
+it, has its writes in the table and in no change set. This is the whole reason
+the pragma cannot live on the open path and the reason a member handle's
+transactions run over one held capture connection instead.
+
+**A no-op write is not recorded.** `UPDATE t SET c = c WHERE <pk> = ?` on a
+capturing connection records `change_type = 0` with a full before and after, but
+that applies as an *update* on the remote and would not create a row the remote
+does not have. The backfill uses `INSERT OR REPLACE` of the row's own values
+instead, which the engine records as the delete-and-insert pair an upsert is.
+
+**A remote only learns a table the sync engine created.** Measured on a scratch
+database: a table created through this package's own pool never reaches a remote
+that has not seen it, whether the file was bare or already a member, and whether
+the push came after a bootstrap or not -- and the push of that table's rows then
+fails on the remote with `SQLITE_UNKNOWN: no such table`. Replaying the same DDL
+over a connection the sync engine owns is a no-op locally and does not teach the
+remote anything, because the engine syncs the schema change it made and a no-op is
+not one. A table created *on* a sync-owned connection does reach the remote,
+schema and rows together. The round's push assertions are written against that
+shape, and this is the limit that bounds them.
+
+**The `-info` sidecar is JSON, and its fields are readable.** A member's
+`<path>-info` carries `version`, `client_unique_id`, `revert_since_wal_watermark`
+(an integer), `revert_since_wal_salt` (a sequence -- an integer there is refused
+with `invalid type: integer ... expected a sequence`), the last push and pull
+times, the pushed hints, `remote_pull_protocol` and `saved_configuration`. The
+invalidation rewrites that file in place through a temporary file and a rename,
+clearing the watermark and its salt and carrying every other field across
+byte-for-byte, because `client_unique_id` and the generation are what make the
+next open a continuation rather than a bootstrap over a live file.
+
+**There is no `wal_max_frame` to read.** `PRAGMA wal_max_frame` returns no rows
+and `pragma_wal_max_frame` is not a table. The engine's own answer is a
+checkpoint, and a checkpoint is the write that moves the backfill floor a reader
+may be pinned below -- the abort this document is about. The frame count is
+therefore computed from the log file's own bytes: a WAL is a 32-byte header
+followed by frames of `24 + page_size`, and the page size is in the header at
+offset 8. Measured against `PRAGMA wal_checkpoint(PASSIVE)`, which reports the
+same `log` count, the arithmetic agrees.
+
+**A `TursoSyncDb` cannot be closed.** The bindings wrap
+`turso_sync_database_deinit`, which is unexported, so a handle this package built
+is dropped rather than closed when a stale watermark forces the client to rebuild
+it. Nothing drives the old handle again, so it never writes the sidecar back; what
+it still holds is the file descriptor the engine opened, until the process ends.

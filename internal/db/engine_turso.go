@@ -38,6 +38,25 @@ const (
 // cacheEnv is the directory the loader extracts the embedded library into.
 const cacheEnv = "TURSO_GO_CACHE_DIR"
 
+// maxOpenConns bounds how many connections one pool may have open at once.
+//
+// Database/sql opens a connection per concurrent caller until this bound, so
+// without it a burst of requests is a burst of connects -- and a connect on a
+// member file has to queue for the database's single write slot to install its
+// capture state, so the unbounded form is what turns a contended write slot
+// into thousands of blocked connects rather than one that surfaces as an error.
+//
+// The number is the daemon's own measured fan-out, not a guess. Sampling
+// `Stats().OpenConnections` on the shared pool while the served request paths
+// ran concurrently against it gave a peak of 9 open connections at 128
+// concurrent clients; the store's own concurrent readers and writers, which is
+// what an idle tick plus a served request amount to, peaked at 15. Eight times
+// the measured ceiling leaves room for every caller the daemon admits at once
+// while still refusing the pile-up, and the bound is a pool ceiling rather than
+// a queue: past it a caller waits on database/sql's own semaphore instead of
+// opening a connection, so the failure is a bounded wait and then an error.
+const maxOpenConns = 128
+
 // openPool opens a pool on path with Turso. Turso parses no `file:` URI and
 // ends the path at the first `?`, so a path carrying one would silently open
 // another file: that is refused. Settings that modernc takes in the DSN are
@@ -65,11 +84,13 @@ func openPool(path string, busy time.Duration, readOnly bool) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("db: open %s: read the header: %w: %w", path, ErrOpen, err)
 	}
-	conn, err := turso.NewConnector(fmt.Sprintf("%s?_busy_timeout=%d", path, busy.Milliseconds()))
+	conn, err := newTursoConnector(path, busy.Milliseconds())
 	if err != nil {
 		return nil, fmt.Errorf("db: open %s: connector: %w: %w", path, ErrOpen, err)
 	}
 	pool := sql.OpenDB(repairConnector{Connector: &pragmaConnector{base: conn, pragmas: openPragmas(readOnly)}})
+	pool.SetMaxOpenConns(maxOpenConns)
+	pool.SetMaxIdleConns(maxOpenConns)
 	if fresh && !readOnly {
 		if err := markFreshDatabase(pool); err != nil {
 			_ = pool.Close()
@@ -77,6 +98,16 @@ func openPool(path string, busy time.Duration, readOnly bool) (*sql.DB, error) {
 		}
 	}
 	return pool, nil
+}
+
+// newTursoConnector is the engine's connector for a path, so the handle's pool
+// and the capture pool open the same file the same way.
+func newTursoConnector(path string, busyMS int64) (driver.Connector, error) {
+	conn, err := turso.NewConnector(fmt.Sprintf("%s?_busy_timeout=%d", path, busyMS))
+	if err != nil {
+		return nil, fmt.Errorf("db: open %s: connector: %w: %w", path, ErrOpen, err)
+	}
+	return conn, nil
 }
 
 // freshDatabase reports whether path has no SQLite header yet: absent, empty or
