@@ -44,6 +44,22 @@ type captureConn struct {
 	conn *sql.Conn
 }
 
+// stepError is what one bounded step of the capture surface reports when it does
+// not finish. The step's own name is in the message, so a reader is told whether
+// the pool, the pragma or the recorded batch ran out of time rather than being
+// left to guess from a path.
+//
+// A step that gave up on the write slot, or on its own deadline, carries
+// ErrContended: what holds it is a transaction that ends, so the failure is
+// retryable and must not reach a reader as a defect.
+func stepError(what, step string, err error) error {
+	mapped := mapBusy(err)
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(mapped, ErrBusy) {
+		return fmt.Errorf("db: %s: %s: %w: %w", what, step, ErrContended, mapped)
+	}
+	return fmt.Errorf("db: %s: %s: %w", what, step, mapped)
+}
+
 // capturePools holds the one-connection pools capture connections are drawn
 // from, one per member path. A pool of its own rather than the handle's is what
 // keeps a capturing connection out of the pool a query borrows from.
@@ -63,15 +79,15 @@ var capturePools = struct {
 func openCaptureConnection(ctx context.Context, path string, busy int64) (*captureConn, error) {
 	pool, err := capturePoolFor(path, busy)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("db: %s: the capture pool: %w", path, mapBusy(err))
 	}
 	conn, err := pool.Conn(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("db: %s: the capture connection: %w", path, mapBusy(err))
+		return nil, stepError(path, "the capture connection", err)
 	}
 	if _, err := conn.ExecContext(ctx, captureChangesPragma); err != nil {
 		_ = conn.Close()
-		return nil, fmt.Errorf("db: %s: the capture pragma: %w", path, mapBusy(err))
+		return nil, stepError(path, "the capture pragma", err)
 	}
 	return &captureConn{conn: conn}, nil
 }
@@ -91,30 +107,107 @@ var captureHeld = struct {
 	byPath map[string]*heldCapture
 }{byPath: map[string]*heldCapture{}}
 
-// heldCapture is one path's capture connection and the lock that serialises the
-// writers over it.
+// heldCapture is one path's capture connection and the gate that serialises
+// everything written over it.
+//
+// The gate is a one-token channel rather than a mutex because every caller waits
+// on it under a deadline: a mutex would hold a caller past any bound it set, and
+// the one caller that cannot be allowed to wait without end is a daemon write
+// that the backfill's own batch is holding the connection for.
 type heldCapture struct {
-	mu   sync.Mutex
+	gate chan struct{}
 	conn *captureConn
+	// borrows counts the open captures over this connection. pinned says a db
+	// handle writes through it, so the connection outlives the borrows: a
+	// borrow alone releases what it opened when the last one lets go.
+	borrows int
+	pinned  bool
+}
+
+func newHeldCapture(conn *captureConn) *heldCapture {
+	h := &heldCapture{conn: conn, gate: make(chan struct{}, 1)}
+	h.gate <- struct{}{}
+	return h
+}
+
+// acquire takes the connection for one writer, and the func that hands it back.
+// A caller that gave up waiting is told so rather than left holding a token.
+func (h *heldCapture) acquire(ctx context.Context) (*sql.Conn, func(), error) {
+	select {
+	case <-h.gate:
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	}
+	conn := h.conn.Conn()
+	if conn == nil {
+		h.gate <- struct{}{}
+		return nil, nil, fmt.Errorf("the capture connection is closed: %w", ErrOpen)
+	}
+	return conn, func() { h.gate <- struct{}{} }, nil
 }
 
 // captureConnFor is the held capture connection over a member path, opening it if
 // this is the first writer. It is a no-op for a file that is not a member: a
 // non-member's writer goes back to the pool.
-func captureConnFor(path string, busyMS int64) (*heldCapture, error) {
+func captureConnFor(ctx context.Context, path string, busyMS int64) (*heldCapture, error) {
 	captureHeld.Lock()
 	defer captureHeld.Unlock()
 	held, ok := captureHeld.byPath[path]
 	if ok && held.conn != nil {
+		held.pinned = true
 		return held, nil
 	}
-	conn, err := openCaptureConnection(context.Background(), path, busyMS)
+	conn, err := openCaptureConnection(ctx, path, busyMS)
 	if err != nil {
 		return nil, err
 	}
-	held = &heldCapture{conn: conn}
+	held = newHeldCapture(conn)
+	held.pinned = true
 	captureHeld.byPath[path] = held
 	return held, nil
+}
+
+// borrowCapture is the held capture connection counted as a borrow: the caller
+// puts rows into the change set over it and gives it back on Close.
+//
+// It is the held connection rather than a second one because the capture pool is
+// a single connection wide and that connection is checked out for as long as the
+// file is a member: a second open of the same pool waits for a slot the holder
+// has no reason to release, so the walk would time out on a database nobody was
+// fighting over. Sharing it also puts the walk behind the same gate the daemon's
+// own writes take, so the two are serialised instead of racing for the write
+// slot.
+func borrowCapture(ctx context.Context, path string, busyMS int64) (*CaptureConn, error) {
+	captureHeld.Lock()
+	defer captureHeld.Unlock()
+	held, ok := captureHeld.byPath[path]
+	if !ok || held.conn == nil {
+		conn, err := openCaptureConnection(ctx, path, busyMS)
+		if err != nil {
+			return nil, err
+		}
+		held = newHeldCapture(conn)
+		captureHeld.byPath[path] = held
+	}
+	held.borrows++
+	return &CaptureConn{held: held, path: path}, nil
+}
+
+// releaseBorrow gives a borrowed connection back, and closes it when nothing
+// else is using it. A connection a handle writes through is left alone: that
+// handle closes it with its own pool.
+func releaseBorrow(path string, held *heldCapture) error {
+	captureHeld.Lock()
+	held.borrows--
+	closeIt := held.borrows == 0 && !held.pinned && held.conn != nil
+	if closeIt {
+		delete(captureHeld.byPath, path)
+	}
+	captureHeld.Unlock()
+	if !closeIt {
+		return nil
+	}
+	return held.conn.Close()
 }
 
 // releaseHeldCapture closes a path's held capture connection, so it does not
@@ -127,8 +220,11 @@ func releaseHeldCapture(path string) error {
 	if !ok {
 		return nil
 	}
-	held.mu.Lock()
-	defer held.mu.Unlock()
+	// The gate token is taken out of the channel before the connection closes, so
+	// a writer already over it finishes rather than running a statement on a
+	// closed connection. The entry is gone from the map, so the token is not put
+	// back.
+	<-held.gate
 	if err := held.conn.Close(); err != nil {
 		return fmt.Errorf("db: %s: close the capture connection: %w", path, err)
 	}
@@ -238,6 +334,14 @@ func (c *captureConn) Backfill(ctx context.Context, table string, from int64, li
 	if conn == nil {
 		return BackfillResult{}, fmt.Errorf("db: %s: no capture connection: %w", table, ErrInvalid)
 	}
+	return backfillOver(ctx, conn, table, from, limit)
+}
+
+// backfillOver is one batch over a connection the caller already holds: the
+// connection under the capture pragma, and nothing else. It is separated from the
+// holders so the batch is the same work whether the connection arrived from the
+// path's held one or from a caller's own open.
+func backfillOver(ctx context.Context, conn *sql.Conn, table string, from int64, limit int) (BackfillResult, error) {
 	if from < 0 {
 		from = 0
 	}
@@ -373,25 +477,48 @@ func CaptureTables(ctx context.Context, conn *sql.Conn) ([]string, error) {
 // joined, so a caller outside this package can put rows in the change set. The
 // pragma is asked on the connection this returns and nowhere else, which is what
 // keeps it off the pool path every read takes.
+//
+// It is the path's held connection rather than one of its own: see borrowCapture.
 func OpenCapture(ctx context.Context, path string, busyMS int64) (*CaptureConn, error) {
-	c, err := openCaptureConnection(ctx, path, busyMS)
-	if err != nil {
-		return nil, err
-	}
-	return &CaptureConn{captureConn: c}, nil
+	return borrowCapture(ctx, path, busyMS)
 }
 
 // CaptureConn is the held capture connection as a caller outside this package
-// sees it.
-type CaptureConn struct{ *captureConn }
+// sees it. Each of its calls takes the gate, so a walk over a file the daemon is
+// writing to is serialised against those writes rather than racing them.
+type CaptureConn struct {
+	held *heldCapture
+	path string
+}
 
 // Tables is the file's own application tables, the ones a backfill walks.
 func (c *CaptureConn) Tables(ctx context.Context) ([]string, error) {
-	return CaptureTables(ctx, c.Conn())
+	conn, release, err := c.held.acquire(ctx)
+	if err != nil {
+		return nil, stepError(c.path, "the backfill's table list", err)
+	}
+	defer release()
+	return CaptureTables(ctx, conn)
 }
 
 // Backfill is one batch of one table's rows into the change set, starting at the
 // rowid the walk is at.
 func (c *CaptureConn) Backfill(ctx context.Context, table string, fromRowID int64, limit int) (BackfillResult, error) {
-	return c.captureConn.Backfill(ctx, table, fromRowID, limit)
+	conn, release, err := c.held.acquire(ctx)
+	if err != nil {
+		return BackfillResult{}, stepError(table, "the backfill", err)
+	}
+	defer release()
+	return backfillOver(ctx, conn, table, fromRowID, limit)
+}
+
+// Close gives the connection back to the path. It closes nothing a handle still
+// writes through, so a walk that finished cannot take the daemon's writes with it.
+func (c *CaptureConn) Close() error {
+	if c == nil || c.held == nil {
+		return nil
+	}
+	held := c.held
+	c.held = nil
+	return releaseBorrow(c.path, held)
 }

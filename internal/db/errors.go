@@ -29,6 +29,16 @@ var ErrLocked = errors.New("database is locked by another process")
 // and mark.
 var ErrNotConverted = errors.New("relevo.db is not converted yet; start the daemon once")
 
+// ErrContended reports that a bounded step could not get what it needed because
+// the database was busy -- the write slot was held, or a connection the step was
+// waiting on was not free -- and gave up at the end of its bound.
+//
+// It is a retryable refusal rather than a defect: what holds the step is another
+// writer that ends on its own, so the answer is to run the command again. It
+// names the file and the step in the message that wraps it, which is what a
+// reader needs to tell this apart from a build that cannot do the job at all.
+var ErrContended = errors.New("the database is busy; nothing was written, so retry")
+
 // ErrPreflightRefused reports that an enable's preflight checks found a
 // precondition this database does not meet. It is a refusal rather than a
 // failure: nothing went wrong, the database is simply not ready to have its rows

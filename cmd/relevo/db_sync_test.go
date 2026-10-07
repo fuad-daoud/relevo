@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/wire"
+	"github.com/fuad-daoud/relevo/internal/db/wire/client"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
@@ -228,6 +231,67 @@ func TestDBSyncTokenNeverReachesAnIntakeRefusal(t *testing.T) {
 		if strings.Contains(classified.Error(), fixture) {
 			t.Errorf("a refusal carries the token value: %v", classified)
 		}
+	}
+}
+
+// TestDBSyncClassifyReportsABusyDatabaseAsRefused pins that a database too busy
+// to finish a bounded step reaches the reader as a refusal naming the file and
+// the step, never as an internal failure pointing at `relevo bugreport`. Nothing
+// was written, the hold was another writer, and the verb may be run again -- so
+// the honest next hint is the verb itself.
+func TestDBSyncClassifyReportsABusyDatabaseAsRefused(t *testing.T) {
+	t.Parallel()
+
+	contended := fmt.Errorf("sync: backfill %s: db: %s: the capture connection: %w: %w",
+		"/state/relevo/relevo.db", "/state/relevo/relevo.db", db.ErrContended, context.DeadlineExceeded)
+	classified := dbSyncClassify(contended)
+
+	var got *cliError
+	if !errors.As(classified, &got) {
+		t.Fatalf("classified = %v, want a cliError", classified)
+	}
+	if got.code != codeRefused {
+		t.Errorf("code = %q, want %q", got.code, codeRefused)
+	}
+	if strings.Contains(got.next, "bugreport") {
+		t.Errorf("next = %q, want no bug report on a busy database", got.next)
+	}
+	if !strings.Contains(got.Error(), "/state/relevo/relevo.db") {
+		t.Errorf("the classified refusal %q dropped the file it names", got.Error())
+	}
+	if !strings.Contains(got.Error(), "the capture connection") {
+		t.Errorf("the classified refusal %q dropped the step it names", got.Error())
+	}
+	if !errors.Is(classified, db.ErrContended) {
+		t.Errorf("the classified error no longer matches the contention it came from: %v", classified)
+	}
+}
+
+// TestDBSyncVerbRefusalNamesTheVerbToRunAgain pins the verb-surface half: the
+// code the owner sends for a busy database reaches the user as a refusal whose
+// next hint is the verb, not a report.
+func TestDBSyncVerbRefusalNamesTheVerbToRunAgain(t *testing.T) {
+	t.Parallel()
+
+	const message = "sync: backfill /state/relevo/relevo.db: db: /state/relevo/relevo.db: " +
+		"the capture connection: the database is busy; nothing was written, so retry: context deadline exceeded"
+	classified := dbSyncVerbRefusal(wire.SyncVerbEnable, &client.VerbRefusal{
+		Code:    wire.SyncCodeContended,
+		Message: message,
+	})
+
+	var got *cliError
+	if !errors.As(classified, &got) {
+		t.Fatalf("classified = %v, want a cliError", classified)
+	}
+	if got.code != codeRefused {
+		t.Errorf("code = %q, want %q", got.code, codeRefused)
+	}
+	if got.next != "relevo db sync enable" {
+		t.Errorf("next = %q, want the verb to run again", got.next)
+	}
+	if !strings.Contains(got.Error(), "the capture connection") {
+		t.Errorf("the classified refusal %q dropped the step it names", got.Error())
 	}
 }
 

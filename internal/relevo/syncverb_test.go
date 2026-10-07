@@ -642,6 +642,7 @@ func TestSyncVerbClassificationIsTotal(t *testing.T) {
 		{relevosync.ErrSeedUploadRequired, wire.SyncCodeSeedUploadRequired},
 		{relevosync.ErrAuthRefused, wire.SyncCodeAuthRefused},
 		{db.ErrPreflightRefused, wire.SyncCodePreflightRefused},
+		{db.ErrContended, wire.SyncCodeContended},
 		{db.ErrInvalid, wire.SyncCodeInvalid},
 		{errors.New("something else"), wire.SyncCodeInternal},
 	}

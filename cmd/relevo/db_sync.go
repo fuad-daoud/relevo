@@ -431,6 +431,10 @@ func dbSyncClassify(err error) error {
 		// flag that clears it. A bug report has no fix in it, so this code must
 		// never be the one the catalog points at `relevo bugreport` from.
 		return failWrap(codeRefused, err, "relevo db sync enable")
+	case errors.Is(err, db.ErrContended):
+		// A busy database is a refusal the reader can act on: nothing was
+		// written, the hold was another writer, and the verb may be run again.
+		return failWrap(codeRefused, err, "relevo db sync")
 	case errors.Is(err, db.ErrInvalid), errors.Is(err, db.ErrLocked):
 		return failWrap(codeRefused, err, "relevo db sync")
 	}

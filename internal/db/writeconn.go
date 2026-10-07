@@ -10,7 +10,6 @@ package db
 import (
 	"context"
 	"database/sql"
-	"fmt"
 )
 
 // writeConn is the connection one transaction runs over, and the func that hands
@@ -30,20 +29,18 @@ func (d *DB) writeConn(ctx context.Context) (*sql.Conn, func() error, error) {
 		}
 		return conn, conn.Close, nil
 	}
-	held, err := captureConnFor(d.path, int64(d.busy.Milliseconds()))
+	held, err := captureConnFor(ctx, d.path, int64(d.busy.Milliseconds()))
 	if err != nil {
 		return nil, nil, err
 	}
 	// One writer at a time over the one connection: two transactions on one
 	// connection would interleave their BEGIN and COMMIT.
-	held.mu.Lock()
-	conn := held.conn.Conn()
-	if conn == nil {
-		held.mu.Unlock()
-		return nil, nil, fmt.Errorf("the capture connection is closed: %w", ErrOpen)
+	conn, release, err := held.acquire(ctx)
+	if err != nil {
+		return nil, nil, err
 	}
 	return conn, func() error {
-		held.mu.Unlock()
+		release()
 		return nil
 	}, nil
 }

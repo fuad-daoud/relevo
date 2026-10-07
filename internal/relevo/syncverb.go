@@ -559,6 +559,12 @@ func verbClassify(err error) string {
 		return wire.SyncCodeInvalid
 	case errors.Is(err, db.ErrPreflightRefused):
 		return wire.SyncCodePreflightRefused
+	case errors.Is(err, db.ErrContended):
+		// A busy database is a refusal, not a defect: what held the step was
+		// another writer that has since ended, and the reader's answer is to run
+		// the verb again. Classifying it as internal would send that reader to
+		// `relevo bugreport` for a machine that is working.
+		return wire.SyncCodeContended
 	case errors.Is(err, db.ErrLocked):
 		return wire.SyncCodeRemoteUnreachable
 	case errors.Is(err, db.ErrInvalid):

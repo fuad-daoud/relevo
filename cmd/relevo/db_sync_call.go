@@ -165,6 +165,10 @@ func dbSyncVerbRefusal(verb string, err error) error {
 	case wire.SyncCodePreflightRefused, wire.SyncCodeRemoteConflict,
 		wire.SyncCodeRemoteUnreachable, wire.SyncCodeInvalid:
 		return fail(codeRefused, "%s", refusal.Message)
+	case wire.SyncCodeContended:
+		// The database was busy and nothing was written. The verb is idempotent
+		// over that, so the next hint is the verb itself rather than a report.
+		return failNext(codeRefused, "relevo db sync "+verb, "%s", refusal.Message)
 	}
 	_ = name
 	return failWrap(codeInternal, err, "relevo db sync %s", verb)

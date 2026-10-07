@@ -145,6 +145,9 @@ func Backfill(ctx context.Context, kv db.KV, path string) (BackfillResult, error
 
 	capture, err := db.OpenCapture(ctx, path, captureBusyMS)
 	if err != nil {
+		// A busy database is reported as itself rather than folded into a generic
+		// failure: the pass wrote nothing, a retry answers it, and the sentinel is
+		// what lets a caller classify it without reading the message.
 		return out, fmt.Errorf("sync: backfill %s: %w", path, err)
 	}
 	defer func() { _ = capture.Close() }()

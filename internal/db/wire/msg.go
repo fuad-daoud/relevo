@@ -175,6 +175,11 @@ const (
 	SyncCodeAuthRefused = "auth_refused"
 	// SyncCodeRemoteUnreachable is a remote that did not answer in the bound.
 	SyncCodeRemoteUnreachable = "remote_unreachable"
+	// SyncCodeContended is the local database refusing a bounded step because it
+	// was busy: the write slot was held, or a connection was not free. What held
+	// it is a writer that ends on its own, so a retry answers this and a defect
+	// report does not.
+	SyncCodeContended = "contended"
 	// SyncCodeInternal is a failure with no class of its own -- the daemon's
 	// own bug, or a hook that panicked or reported nothing.
 	SyncCodeInternal = "internal"
