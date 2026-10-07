@@ -124,6 +124,9 @@ index sqlite_autoindex_transcript_1 transcript
 index transcript_owner_seq_uidx transcript
 CREATE UNIQUE INDEX IF NOT EXISTS transcript_owner_seq_uidx ON transcript (owner_kind, owner_id, seq)
 
+table __turso_internal_seq___turso_internal_autoincrement_sync_outbox __turso_internal_seq___turso_internal_autoincrement_sync_outbox
+CREATE TABLE "__turso_internal_seq___turso_internal_autoincrement_sync_outbox"(value INTEGER PRIMARY KEY,is_called INTEGER,start INTEGER,inc INTEGER,min INTEGER,max INTEGER,cycle INTEGER)
+
 table artifact artifact
 CREATE TABLE artifact (id TEXT PRIMARY KEY, round_id TEXT NOT NULL REFERENCES round (id), kind TEXT NOT NULL, consult_id TEXT NOT NULL DEFAULT '', text TEXT NOT NULL, bytes INTEGER NOT NULL, sha256 TEXT NOT NULL, captured_at TEXT NOT NULL)
 
@@ -193,7 +196,148 @@ CREATE TABLE secret (name TEXT PRIMARY KEY, value BLOB NOT NULL, updated_at TEXT
 table session_consent session_consent
 CREATE TABLE session_consent (harness_kind TEXT NOT NULL, session_id TEXT NOT NULL, answer TEXT, answer_at TEXT, told TEXT, told_at TEXT, PRIMARY KEY (harness_kind, session_id))
 
+table sqlite_sequence sqlite_sequence
+CREATE TABLE sqlite_sequence(name,seq)
+
+table sync_outbox sync_outbox
+CREATE TABLE sync_outbox (seq INTEGER PRIMARY KEY AUTOINCREMENT, tbl TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, origin TEXT)
+
 table transcript transcript
 CREATE TABLE transcript (id TEXT PRIMARY KEY, owner_kind TEXT NOT NULL, owner_id TEXT NOT NULL, seq INTEGER NOT NULL, ts TEXT, record_json TEXT NOT NULL, rendered TEXT NOT NULL, record_json_codec INTEGER NOT NULL DEFAULT 0, rendered_codec INTEGER NOT NULL DEFAULT 0)
 
-schema_versions have=21 know=21
+trigger sync_outbox_artifact_del artifact
+CREATE TRIGGER IF NOT EXISTS sync_outbox_artifact_del AFTER DELETE ON artifact BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('artifact', json_array (OLD.id), 'delete', (SELECT origin FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = OLD.round_id))); END
+
+trigger sync_outbox_artifact_ins artifact
+CREATE TRIGGER IF NOT EXISTS sync_outbox_artifact_ins AFTER INSERT ON artifact BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('artifact', json_array (NEW.id), 'insert', (SELECT origin FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = NEW.round_id))); END
+
+trigger sync_outbox_artifact_upd artifact
+CREATE TRIGGER IF NOT EXISTS sync_outbox_artifact_upd AFTER UPDATE ON artifact BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('artifact', json_array (NEW.id), 'update', (SELECT origin FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = NEW.round_id))); END
+
+trigger sync_outbox_binding_del binding
+CREATE TRIGGER IF NOT EXISTS sync_outbox_binding_del AFTER DELETE ON binding BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding', json_array (OLD.id), 'delete', OLD.origin); END
+
+trigger sync_outbox_binding_event_del binding_event
+CREATE TRIGGER IF NOT EXISTS sync_outbox_binding_event_del AFTER DELETE ON binding_event BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding_event', json_array (OLD.record_id, OLD.seq), 'delete', (SELECT origin FROM binding_record WHERE id = OLD.record_id)); END
+
+trigger sync_outbox_binding_event_ins binding_event
+CREATE TRIGGER IF NOT EXISTS sync_outbox_binding_event_ins AFTER INSERT ON binding_event BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding_event', json_array (NEW.record_id, NEW.seq), 'insert', (SELECT origin FROM binding_record WHERE id = NEW.record_id)); END
+
+trigger sync_outbox_binding_event_upd binding_event
+CREATE TRIGGER IF NOT EXISTS sync_outbox_binding_event_upd AFTER UPDATE ON binding_event BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding_event', json_array (NEW.record_id, NEW.seq), 'update', (SELECT origin FROM binding_record WHERE id = NEW.record_id)); END
+
+trigger sync_outbox_binding_ins binding
+CREATE TRIGGER IF NOT EXISTS sync_outbox_binding_ins AFTER INSERT ON binding BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding', json_array (NEW.id), 'insert', NEW.origin); END
+
+trigger sync_outbox_binding_record_del binding_record
+CREATE TRIGGER IF NOT EXISTS sync_outbox_binding_record_del AFTER DELETE ON binding_record BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding_record', json_array (OLD.id), 'delete', OLD.origin); END
+
+trigger sync_outbox_binding_record_ins binding_record
+CREATE TRIGGER IF NOT EXISTS sync_outbox_binding_record_ins AFTER INSERT ON binding_record BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding_record', json_array (NEW.id), 'insert', NEW.origin); END
+
+trigger sync_outbox_binding_record_upd binding_record
+CREATE TRIGGER IF NOT EXISTS sync_outbox_binding_record_upd AFTER UPDATE ON binding_record BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding_record', json_array (NEW.id), 'update', NEW.origin); END
+
+trigger sync_outbox_binding_upd binding
+CREATE TRIGGER IF NOT EXISTS sync_outbox_binding_upd AFTER UPDATE ON binding BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding', json_array (NEW.id), 'update', NEW.origin); END
+
+trigger sync_outbox_chain_check_del chain_check
+CREATE TRIGGER IF NOT EXISTS sync_outbox_chain_check_del AFTER DELETE ON chain_check BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('chain_check', json_array (OLD.chain_id, OLD.run), 'delete', (SELECT origin FROM chains WHERE id = OLD.chain_id)); END
+
+trigger sync_outbox_chain_check_ins chain_check
+CREATE TRIGGER IF NOT EXISTS sync_outbox_chain_check_ins AFTER INSERT ON chain_check BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('chain_check', json_array (NEW.chain_id, NEW.run), 'insert', (SELECT origin FROM chains WHERE id = NEW.chain_id)); END
+
+trigger sync_outbox_chain_check_upd chain_check
+CREATE TRIGGER IF NOT EXISTS sync_outbox_chain_check_upd AFTER UPDATE ON chain_check BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('chain_check', json_array (NEW.chain_id, NEW.run), 'update', (SELECT origin FROM chains WHERE id = NEW.chain_id)); END
+
+trigger sync_outbox_chain_event_del chain_event
+CREATE TRIGGER IF NOT EXISTS sync_outbox_chain_event_del AFTER DELETE ON chain_event BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('chain_event', json_array (OLD.chain_id, OLD.seq), 'delete', (SELECT origin FROM chains WHERE id = OLD.chain_id)); END
+
+trigger sync_outbox_chain_event_ins chain_event
+CREATE TRIGGER IF NOT EXISTS sync_outbox_chain_event_ins AFTER INSERT ON chain_event BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('chain_event', json_array (NEW.chain_id, NEW.seq), 'insert', (SELECT origin FROM chains WHERE id = NEW.chain_id)); END
+
+trigger sync_outbox_chain_event_upd chain_event
+CREATE TRIGGER IF NOT EXISTS sync_outbox_chain_event_upd AFTER UPDATE ON chain_event BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('chain_event', json_array (NEW.chain_id, NEW.seq), 'update', (SELECT origin FROM chains WHERE id = NEW.chain_id)); END
+
+trigger sync_outbox_chain_member_del chain_member
+CREATE TRIGGER IF NOT EXISTS sync_outbox_chain_member_del AFTER DELETE ON chain_member BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('chain_member', json_array (OLD.chain_id, OLD.binding), 'delete', (SELECT origin FROM chains WHERE id = OLD.chain_id)); END
+
+trigger sync_outbox_chain_member_ins chain_member
+CREATE TRIGGER IF NOT EXISTS sync_outbox_chain_member_ins AFTER INSERT ON chain_member BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('chain_member', json_array (NEW.chain_id, NEW.binding), 'insert', (SELECT origin FROM chains WHERE id = NEW.chain_id)); END
+
+trigger sync_outbox_chain_member_upd chain_member
+CREATE TRIGGER IF NOT EXISTS sync_outbox_chain_member_upd AFTER UPDATE ON chain_member BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('chain_member', json_array (NEW.chain_id, NEW.binding), 'update', (SELECT origin FROM chains WHERE id = NEW.chain_id)); END
+
+trigger sync_outbox_chains_del chains
+CREATE TRIGGER IF NOT EXISTS sync_outbox_chains_del AFTER DELETE ON chains BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('chains', json_array (OLD.id), 'delete', OLD.origin); END
+
+trigger sync_outbox_chains_ins chains
+CREATE TRIGGER IF NOT EXISTS sync_outbox_chains_ins AFTER INSERT ON chains BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('chains', json_array (NEW.id), 'insert', NEW.origin); END
+
+trigger sync_outbox_chains_upd chains
+CREATE TRIGGER IF NOT EXISTS sync_outbox_chains_upd AFTER UPDATE ON chains BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('chains', json_array (NEW.id), 'update', NEW.origin); END
+
+trigger sync_outbox_event_del event
+CREATE TRIGGER IF NOT EXISTS sync_outbox_event_del AFTER DELETE ON event BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('event', json_array (OLD.id), 'delete', (SELECT origin FROM binding WHERE id = OLD.binding_id)); END
+
+trigger sync_outbox_event_ins event
+CREATE TRIGGER IF NOT EXISTS sync_outbox_event_ins AFTER INSERT ON event BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('event', json_array (NEW.id), 'insert', (SELECT origin FROM binding WHERE id = NEW.binding_id)); END
+
+trigger sync_outbox_event_upd event
+CREATE TRIGGER IF NOT EXISTS sync_outbox_event_upd AFTER UPDATE ON event BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('event', json_array (NEW.id), 'update', (SELECT origin FROM binding WHERE id = NEW.binding_id)); END
+
+trigger sync_outbox_installation_del installation
+CREATE TRIGGER IF NOT EXISTS sync_outbox_installation_del AFTER DELETE ON installation BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('installation', json_array (OLD.id), 'delete', OLD.id); END
+
+trigger sync_outbox_installation_ins installation
+CREATE TRIGGER IF NOT EXISTS sync_outbox_installation_ins AFTER INSERT ON installation BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('installation', json_array (NEW.id), 'insert', NEW.id); END
+
+trigger sync_outbox_installation_upd installation
+CREATE TRIGGER IF NOT EXISTS sync_outbox_installation_upd AFTER UPDATE ON installation BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('installation', json_array (NEW.id), 'update', NEW.id); END
+
+trigger sync_outbox_mastermind_del mastermind
+CREATE TRIGGER IF NOT EXISTS sync_outbox_mastermind_del AFTER DELETE ON mastermind BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('mastermind', json_array (OLD.id), 'delete', OLD.origin); END
+
+trigger sync_outbox_mastermind_ins mastermind
+CREATE TRIGGER IF NOT EXISTS sync_outbox_mastermind_ins AFTER INSERT ON mastermind BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('mastermind', json_array (NEW.id), 'insert', NEW.origin); END
+
+trigger sync_outbox_mastermind_upd mastermind
+CREATE TRIGGER IF NOT EXISTS sync_outbox_mastermind_upd AFTER UPDATE ON mastermind BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('mastermind', json_array (NEW.id), 'update', NEW.origin); END
+
+trigger sync_outbox_repo_del repo
+CREATE TRIGGER IF NOT EXISTS sync_outbox_repo_del AFTER DELETE ON repo BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('repo', json_array (OLD.id), 'delete', OLD.origin); END
+
+trigger sync_outbox_repo_ins repo
+CREATE TRIGGER IF NOT EXISTS sync_outbox_repo_ins AFTER INSERT ON repo BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('repo', json_array (NEW.id), 'insert', NEW.origin); END
+
+trigger sync_outbox_repo_upd repo
+CREATE TRIGGER IF NOT EXISTS sync_outbox_repo_upd AFTER UPDATE ON repo BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('repo', json_array (NEW.id), 'update', NEW.origin); END
+
+trigger sync_outbox_round_del round
+CREATE TRIGGER IF NOT EXISTS sync_outbox_round_del AFTER DELETE ON round BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('round', json_array (OLD.id), 'delete', (SELECT origin FROM binding WHERE id = OLD.binding_id)); END
+
+trigger sync_outbox_round_file_del round_file
+CREATE TRIGGER IF NOT EXISTS sync_outbox_round_file_del AFTER DELETE ON round_file BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('round_file', json_array (OLD.record_id, OLD.name), 'delete', (SELECT origin FROM binding_record WHERE id = OLD.record_id)); END
+
+trigger sync_outbox_round_file_ins round_file
+CREATE TRIGGER IF NOT EXISTS sync_outbox_round_file_ins AFTER INSERT ON round_file BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('round_file', json_array (NEW.record_id, NEW.name), 'insert', (SELECT origin FROM binding_record WHERE id = NEW.record_id)); END
+
+trigger sync_outbox_round_file_upd round_file
+CREATE TRIGGER IF NOT EXISTS sync_outbox_round_file_upd AFTER UPDATE ON round_file BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('round_file', json_array (NEW.record_id, NEW.name), 'update', (SELECT origin FROM binding_record WHERE id = NEW.record_id)); END
+
+trigger sync_outbox_round_ins round
+CREATE TRIGGER IF NOT EXISTS sync_outbox_round_ins AFTER INSERT ON round BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('round', json_array (NEW.id), 'insert', (SELECT origin FROM binding WHERE id = NEW.binding_id)); END
+
+trigger sync_outbox_round_upd round
+CREATE TRIGGER IF NOT EXISTS sync_outbox_round_upd AFTER UPDATE ON round BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('round', json_array (NEW.id), 'update', (SELECT origin FROM binding WHERE id = NEW.binding_id)); END
+
+trigger sync_outbox_transcript_del transcript
+CREATE TRIGGER IF NOT EXISTS sync_outbox_transcript_del AFTER DELETE ON transcript BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('transcript', json_array (OLD.id), 'delete', CASE OLD.owner_kind WHEN 'round' THEN (SELECT origin FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = OLD.owner_id)) WHEN 'mastermind' THEN (SELECT origin FROM mastermind WHERE id = OLD.owner_id) ELSE NULL END); END
+
+trigger sync_outbox_transcript_ins transcript
+CREATE TRIGGER IF NOT EXISTS sync_outbox_transcript_ins AFTER INSERT ON transcript BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('transcript', json_array (NEW.id), 'insert', CASE NEW.owner_kind WHEN 'round' THEN (SELECT origin FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = NEW.owner_id)) WHEN 'mastermind' THEN (SELECT origin FROM mastermind WHERE id = NEW.owner_id) ELSE NULL END); END
+
+trigger sync_outbox_transcript_upd transcript
+CREATE TRIGGER IF NOT EXISTS sync_outbox_transcript_upd AFTER UPDATE ON transcript BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('transcript', json_array (NEW.id), 'update', CASE NEW.owner_kind WHEN 'round' THEN (SELECT origin FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = NEW.owner_id)) WHEN 'mastermind' THEN (SELECT origin FROM mastermind WHERE id = NEW.owner_id) ELSE NULL END); END
+
+schema_versions have=22 know=22
