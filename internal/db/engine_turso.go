@@ -18,8 +18,8 @@ import (
 	turso_libs "github.com/tursodatabase/turso-go-platform-libs"
 	turso "turso.tech/database/tursogo"
 
-	// The default build keeps the old driver linked: round 2's one-time
-	// conversion opens it to read a pre-swap database.
+	// This build links a second driver as well, so one binary can open a
+	// database written by the other engine.
 	_ "modernc.org/sqlite"
 )
 

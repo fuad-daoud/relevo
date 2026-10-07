@@ -35,9 +35,8 @@ func cmdDBSyncPull(args []string) error {
 // than being two near-copies that can drift apart.
 //
 // Nothing here opens a Turso handle. The daemon holds the file under its lock
-// and performs the verb with its own handles, which is what removes the stop
-// dance: a writer no longer competes for the lock it would have had to hold, so
-// it never meets the conflict the old direct open mapped.
+// and performs the verb with its own handles, so a writer here never competes
+// for the lock and never meets the conflict a direct open would produce.
 func dbSyncOneShot(name string, args []string, set func(*flag.FlagSet) *dbSyncCallFlagValues, verb string) error {
 	fs := flag.NewFlagSet("relevo "+name, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -201,7 +200,7 @@ func dbSyncVerbTransport(err error) error {
 // the dialled handle.
 //
 // That is the whole of what separates status from the writing verbs, and every
-// part of it follows from status writing nothing. The writers no longer open the
+// part of it follows from status writing nothing. The writers do not open the
 // file at all: they send a verb and the daemon performs it with the handles it
 // already holds, so neither needs the lock the daemon is keeping. status still
 // reads the three local rows itself, over the owner's local scope, because a

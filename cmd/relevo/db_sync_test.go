@@ -302,7 +302,7 @@ func TestDBSyncClassifyReportsABusyDatabaseAsRefused(t *testing.T) {
 		t.Errorf("the classified refusal %q dropped the step it names", got.Error())
 	}
 	if !errors.Is(classified, db.ErrContended) {
-		t.Errorf("the classified error no longer matches the contention it came from: %v", classified)
+		t.Errorf("the classified error does not match the contention it came from: %v", classified)
 	}
 }
 
@@ -466,6 +466,6 @@ func TestDBSyncClassifyReportsAPreflightRefusalAsRefused(t *testing.T) {
 		t.Errorf("the classified refusal %q dropped the counts it names", got.Error())
 	}
 	if !errors.Is(classified, db.ErrPreflightRefused) {
-		t.Errorf("the classified error no longer matches the refusal it came from: %v", classified)
+		t.Errorf("the classified error does not match the refusal it came from: %v", classified)
 	}
 }

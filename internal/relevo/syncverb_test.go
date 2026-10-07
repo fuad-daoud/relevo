@@ -86,10 +86,10 @@ func newVerbFixture(t *testing.T) *verbFixture {
 // Status and the turn-off are the two that still mean something, and they are
 // pinned by their own tests.
 //
-// The mutation is routing enable past the refusal to whatever decision used to
-// come next: a verb that reached an engine would record an open on the fixture,
-// one that succeeded would say so here, and one that refused with a different
-// error would miss the string this test names.
+// The mutation is routing enable past the refusal to an answer of its own: a
+// verb that reached an engine would record an open on the fixture, one that
+// succeeded would say so here, and one that refused with a different error
+// would miss the string this test names.
 func TestSyncVerbsRefuseWhenStubbed(t *testing.T) {
 	f := newVerbFixture(t)
 	ctx := context.Background()
@@ -169,7 +169,7 @@ func TestSyncVerbNamesAreTheClosedSet(t *testing.T) {
 	for _, verb := range []string{wire.SyncVerbEnable, wire.SyncVerbDisable, wire.SyncVerbPush, wire.SyncVerbPull} {
 		res := f.runner.Run(context.Background(), &wire.SyncVerb{Verb: verb}, nil)
 		if res.Code == wire.SyncCodeInvalid && res.Message == "sync: no such verb" {
-			t.Errorf("the executor no longer knows the verb %q", verb)
+			t.Errorf("the executor does not know the verb %q", verb)
 		}
 	}
 
@@ -292,13 +292,13 @@ func TestSyncVerbResultNeverCarriesTheToken(t *testing.T) {
 // bounded or otherwise. The guarantee rests on two facts: the seal writes its
 // round in one transaction, and the push batches on transaction boundaries.
 //
-// What this test pins is the consequence that matters and that no test pinned
-// before: an observer reading while a seal commits sees the round whole or not
-// at all, and serializing the reader against the seal -- the worst case a pause
-// would produce -- changes nothing observable. If a verb ran its push inline on
-// the connection that took the request, rather than through the daemon's
-// serialized executor, the guarantee would depend on that connection's timing
-// instead of on the transaction boundary, and this test is what catches it.
+// What this test pins is the consequence that matters: an observer reading
+// while a seal commits sees the round whole or not at all, and serializing the
+// reader against the seal -- the worst case a pause would produce -- changes
+// nothing observable. If a verb ran its push inline on the connection that took
+// the request, rather than through the daemon's serialized executor, the
+// guarantee would depend on that connection's timing instead of on the
+// transaction boundary, and this test is what catches it.
 func TestSyncConcurrentSealThenPushWholeOrAbsent(t *testing.T) {
 	for _, round := range []int{1, 2, 3, 4, 5, 6, 7, 8} {
 		observed := runSealThenPush(t, round)

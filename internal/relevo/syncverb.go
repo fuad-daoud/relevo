@@ -13,9 +13,8 @@ import (
 // VerbRunner runs one sync verb against handles a process already holds.
 //
 // It is what the owner's OnSyncVerb hook calls and what the cockpit's sync
-// actions call, so there is exactly one set of verbs' semantics in the tree: the
-// owner hook does not reimplement anything the cockpit does, and neither
-// reimplements the CLI's old direct-open path. It runs against the daemon's
+// actions call, so there is exactly one set of verbs' semantics in the tree and
+// no caller opens the database itself to run one. It runs against the daemon's
 // shared and machine-local handles -- the pair already open under the lock --
 // so a client asking for a verb never opens a file and never competes for the
 // lock the daemon is holding.

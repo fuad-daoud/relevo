@@ -15,9 +15,9 @@ import (
 
 // ErrSyncUnavailable is the one refusal the verbs that would move bytes raise
 // while this build carries no sync engine. The verbs keep their names, keep
-// their place on the owner socket and keep answering; what they no longer do is
-// reach a remote, so they refuse with this rather than with a fault the reader
-// would look for on their own machine. Status and the turn-off are unaffected:
+// their place on the owner socket and keep answering; none of them reaches a
+// remote, so each refuses with this rather than with a fault the reader would
+// look for on their own machine. Status and the turn-off are unaffected:
 // neither of them moves a change set.
 var ErrSyncUnavailable = errors.New("sync is not available in this build")
 

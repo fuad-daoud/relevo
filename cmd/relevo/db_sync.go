@@ -14,26 +14,23 @@ import (
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
-// dbSyncUsage is what a bare `relevo db sync` prints. The verbs are the four
-// states sync can be moved between plus the two one-shot calls; every one of
-// them writes machine-local rows, so none of them takes a flag the dispatcher
-// itself would parse.
+// dbSyncUsage is what a bare `relevo db sync` prints. It names the four states
+// sync can be moved between plus the two one-shot calls, and each verb parses
+// its own flags rather than leaving them to the dispatcher.
 const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [--timeout D] [--json]\n" +
 	"       relevo db sync disable [--timeout D] [--json]\n" +
 	"       relevo db sync status [--json]\n" +
 	"       relevo db sync push [--timeout D] [--json]\n" +
 	"       relevo db sync pull [--timeout D] [--json]\n\n" +
 	"enable, push and pull refuse in this build: there is no sync engine behind\n" +
-	"them, and they would rather say so than open something. disable still runs\n" +
+	"them, and they would rather say so than open something. The flags above are\n" +
+	"still parsed, so a script that passes them keeps working. disable still runs\n" +
 	"whole, and status still reports what this machine is set to be.\n" +
-	"--url names the remote and stores it in the machine-local sync\n" +
-	"section; a stored remote that --url contradicts refuses, and with neither\n" +
-	"enable refuses. Writing the section by hand stays the advanced\n" +
+	"Writing the machine-local sync section by hand stays the advanced\n" +
 	"route: `relevo config set sync '{\"remote_url\":\"...\"}'`.\n" +
 	"--token-stdin reads the turso.token from standard input and\n" +
-	"beats " + relevosync.EnvToken + "; with neither, enable refuses. The value is\n" +
-	"stored in the machine-local file and appears in no log, no error and no\n" +
-	"payload.\n" +
+	"beats " + relevosync.EnvToken + "; with neither, enable refuses. The value\n" +
+	"appears in no log, no error and no payload.\n" +
 	"disable marks this machine off, forgets the token and closes the handle.\n" +
 	"Local files keep every row and stay servable, and the remote is left alone.\n"
 
@@ -192,7 +189,7 @@ type dbSyncCallDoc struct {
 //
 // Everything else -- the already-on read, the preflight, the seed decision, the
 // mark and the open -- happens on the daemon's side with its own handles, which
-// is why enable no longer needs the daemon stopped.
+// is why this command needs no daemon stopped and no file lock of its own.
 func cmdDBSyncEnable(args []string) error {
 	fs := flag.NewFlagSet("db sync enable", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

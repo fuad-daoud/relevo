@@ -144,11 +144,10 @@ func TestClientSyncVerbShipsTheRequest(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if _, err := client.SyncVerb(ctx, sock, &wire.SyncVerb{
-		Header:       wire.Header{Type: wire.TypeSyncVerb},
-		Verb:         wire.SyncVerbEnable,
-		RemoteURL:    "libsql://example.invalid",
-		SeedUploaded: true,
-		TimeoutMS:    1500,
+		Header:    wire.Header{Type: wire.TypeSyncVerb},
+		Verb:      wire.SyncVerbEnable,
+		RemoteURL: "libsql://example.invalid",
+		TimeoutMS: 1500,
 	}, []byte(verbToken)); err != nil {
 		t.Fatalf("SyncVerb: %v", err)
 	}
@@ -158,9 +157,6 @@ func TestClientSyncVerbShipsTheRequest(t *testing.T) {
 	}
 	if s.handedVerb.RemoteURL != "libsql://example.invalid" {
 		t.Errorf("remote = %q, want the one the caller named", s.handedVerb.RemoteURL)
-	}
-	if !s.handedVerb.SeedUploaded {
-		t.Error("seed_uploaded did not survive the trip")
 	}
 	if s.handedVerb.TimeoutMS != 1500 {
 		t.Errorf("timeout = %d, want 1500", s.handedVerb.TimeoutMS)

@@ -260,42 +260,55 @@ func migratedWithForeignKeys(t *testing.T) *sql.DB {
 	return sqlDB
 }
 
+// The origin each root is seeded with. They are distinct on purpose: a shared
+// value would let a trigger that reads an owner from the wrong table pass, so
+// every child a shape below asserts is attributed to the parent that owns it
+// and to nothing else.
+const (
+	repoOrigin          = "instP"
+	bindingOrigin       = "instB"
+	mastermindOrigin    = "instM"
+	bindingRecordOrigin = "instR"
+	chainsOrigin        = "instC"
+	installationID      = "instI"
+)
+
 // seedRoots writes one row into each root table the shapes below descend from,
 // so a child has a parent to resolve its owner through, and returns the outbox
 // mark that separates the fixture's own entries from the shape's.
-func seedRoots(t *testing.T, sqlDB *sql.DB, origin string) int {
+func seedRoots(t *testing.T, sqlDB *sql.DB) int {
 	t.Helper()
 	execAll(t, sqlDB,
-		`INSERT INTO repo (id, origin_url, common_dir, first_seen, origin) VALUES ('r1', 'u', '/c', 't', '`+origin+`')`,
-		`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin) VALUES ('b1', 'n', '/x', 'headless', 't', '', '`+origin+`')`,
-		`INSERT INTO "mastermind" (id, harness_kind, session_id, first_seen, last_seen, origin) VALUES ('m1', 'agy', 's', 't', 't', '`+origin+`')`,
+		`INSERT INTO repo (id, origin_url, common_dir, first_seen, origin) VALUES ('r1', 'u', '/c', 't', '`+repoOrigin+`')`,
+		`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin) VALUES ('b1', 'n', '/x', 'headless', 't', '', '`+bindingOrigin+`')`,
+		`INSERT INTO "mastermind" (id, harness_kind, session_id, first_seen, last_seen, origin) VALUES ('m1', 'agy', 's', 't', 't', '`+mastermindOrigin+`')`,
 		`INSERT INTO chains (id, name, status, phase, step, plan, plans, plan_paths, builder, created_at, updated_at, origin)
-		 VALUES ('c1', 'n', 'open', 'p', 's', 1, 1, '[]', 'b', 't', 't', '`+origin+`')`,
+		 VALUES ('c1', 'n', 'open', 'p', 's', 1, 1, '[]', 'b', 't', 't', '`+chainsOrigin+`')`,
 	)
 	return outboxMark(t, sqlDB)
 }
 
 // testInsertShape pins the plain write: one entry, keyed on the primary key,
-// attributed to the root row's own origin. An installation names itself, since
-// its id is its installation id.
+// attributed to the row's own id. An installation names itself, since its id is
+// its installation id.
 func testInsertShape(t *testing.T) {
 	sqlDB := migratedWithForeignKeys(t)
-	mark := seedRoots(t, sqlDB, "instA")
+	mark := seedRoots(t, sqlDB)
 	execAll(t, sqlDB,
-		`INSERT INTO installation (id, label, first_seen, last_seen) VALUES ('instB', 'other', 't', 't')`,
+		`INSERT INTO installation (id, label, first_seen, last_seen) VALUES ('`+installationID+`', 'self', 't', 't')`,
 	)
-	wantEntries(t, sqlDB, mark, `installation ["instB"] insert instB`)
+	wantEntries(t, sqlDB, mark, `installation ["`+installationID+`"] insert `+installationID)
 }
 
 // testUpdateShape pins that an update reports the row it wrote, not the row it
-// replaced: the replaced key no longer exists once the statement commits.
+// replaced: the replaced key is gone once the statement commits.
 func testUpdateShape(t *testing.T) {
 	sqlDB := migratedWithForeignKeys(t)
-	mark := seedRoots(t, sqlDB, "instA")
+	mark := seedRoots(t, sqlDB)
 	execAll(t, sqlDB,
 		`UPDATE repo SET origin_url = 'u2' WHERE id = 'r1'`,
 	)
-	wantEntries(t, sqlDB, mark, `repo ["r1"] update instA`)
+	wantEntries(t, sqlDB, mark, `repo ["r1"] update `+repoOrigin)
 }
 
 // testUpsertShape pins the replace: it is one write of one row, so it records
@@ -303,25 +316,25 @@ func testUpdateShape(t *testing.T) {
 // row twice and make an importer re-apply a delete for a row it still holds.
 func testUpsertShape(t *testing.T) {
 	sqlDB := migratedWithForeignKeys(t)
-	mark := seedRoots(t, sqlDB, "instA")
+	mark := seedRoots(t, sqlDB)
 	execAll(t, sqlDB,
-		`INSERT OR REPLACE INTO repo (id, origin_url, common_dir, first_seen, origin) VALUES ('r1', 'u2', '/c', 't', 'instA')`,
+		`INSERT OR REPLACE INTO repo (id, origin_url, common_dir, first_seen, origin) VALUES ('r1', 'u2', '/c', 't', '`+repoOrigin+`')`,
 	)
-	wantEntries(t, sqlDB, mark, `repo ["r1"] insert instA`)
+	wantEntries(t, sqlDB, mark, `repo ["r1"] insert `+repoOrigin)
 }
 
 // testDeleteShape pins that a delete reports the row it removed and keeps its
 // owner: the row is gone, so a reader cannot look the origin up afterwards.
 func testDeleteShape(t *testing.T) {
 	sqlDB := migratedWithForeignKeys(t)
-	mark := seedRoots(t, sqlDB, "instA")
+	mark := seedRoots(t, sqlDB)
 	execAll(t, sqlDB,
-		`INSERT INTO repo (id, origin_url, common_dir, first_seen, origin) VALUES ('r2', 'u2', '/c2', 't', 'instA')`,
+		`INSERT INTO repo (id, origin_url, common_dir, first_seen, origin) VALUES ('r2', 'u2', '/c2', 't', '`+repoOrigin+`')`,
 		`DELETE FROM repo WHERE id = 'r2'`,
 	)
 	wantEntries(t, sqlDB, mark,
-		`repo ["r2"] insert instA`,
-		`repo ["r2"] delete instA`,
+		`repo ["r2"] insert `+repoOrigin,
+		`repo ["r2"] delete `+repoOrigin,
 	)
 }
 
@@ -332,10 +345,10 @@ func testDeleteShape(t *testing.T) {
 // reader skips it.
 func testCascadeShape(t *testing.T) {
 	sqlDB := migratedWithForeignKeys(t)
-	mark := seedRoots(t, sqlDB, "instA")
+	mark := seedRoots(t, sqlDB)
 	execAll(t, sqlDB,
 		`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin)
-		 VALUES ('rec1', 'o', 'n', 'open', 1, '/x', '{}', 't', 't', 'instA')`,
+		 VALUES ('rec1', 'o', 'n', 'open', 1, '/x', '{}', 't', 't', '`+bindingRecordOrigin+`')`,
 		`INSERT INTO binding_event (record_id, seq, ts, round, direction, kind, confirmed, entry_json)
 		 VALUES ('rec1', 1, 't', 1, 'out', 'k', 1, '{}')`,
 		`INSERT INTO round_file (record_id, name, round, body, bytes, sha256, mtime, sealed_at)
@@ -347,43 +360,80 @@ func testCascadeShape(t *testing.T) {
 	wantEntries(t, sqlDB, deleting,
 		`binding_event ["rec1",1] delete NULL`,
 		`round_file ["rec1","f"] delete NULL`,
-		`binding_record ["rec1"] delete instA`,
+		`binding_record ["rec1"] delete `+bindingRecordOrigin,
 	)
 	wantEntries(t, sqlDB, mark,
-		`binding_record ["rec1"] insert instA`,
-		`binding_event ["rec1",1] insert instA`,
-		`round_file ["rec1","f"] insert instA`,
+		`binding_record ["rec1"] insert `+bindingRecordOrigin,
+		`binding_event ["rec1",1] insert `+bindingRecordOrigin,
+		`round_file ["rec1","f"] insert `+bindingRecordOrigin,
 		`binding_event ["rec1",1] delete NULL`,
 		`round_file ["rec1","f"] delete NULL`,
-		`binding_record ["rec1"] delete instA`,
+		`binding_record ["rec1"] delete `+bindingRecordOrigin,
 	)
 }
 
-// testInheritedOriginShape pins owner resolution for the children that have no
-// origin column: a grandchild through two hops, a transcript by the kind of
-// table its owner id names, and a child of a live parent resolving through it.
+// testInheritedOriginShape pins owner resolution for the rows that carry no
+// origin column: a child reads its owner through its parent, a grandchild
+// through two hops, and a transcript through the table its owner id names.
+//
+// Every root here names a different installation, so each entry below is
+// attributed by the parent that owns it and by nothing else: a trigger that read
+// an owner from the wrong table records a value this list does not carry, and
+// the shape fails.
 func testInheritedOriginShape(t *testing.T) {
 	sqlDB := migratedWithForeignKeys(t)
-	mark := seedRoots(t, sqlDB, "instA")
+	mark := outboxMark(t, sqlDB)
 	execAll(t, sqlDB,
+		// The roots, each naming its own installation.
+		`INSERT INTO repo (id, origin_url, common_dir, first_seen, origin) VALUES ('r1', 'u', '/c', 't', '`+repoOrigin+`')`,
+		`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin) VALUES ('b1', 'n', '/x', 'headless', 't', '', '`+bindingOrigin+`')`,
+		`INSERT INTO "mastermind" (id, harness_kind, session_id, first_seen, last_seen, origin) VALUES ('m1', 'agy', 's', 't', 't', '`+mastermindOrigin+`')`,
+		`INSERT INTO chains (id, name, status, phase, step, plan, plans, plan_paths, builder, created_at, updated_at, origin)
+		 VALUES ('c1', 'n', 'open', 'p', 's', 1, 1, '[]', 'b', 't', 't', '`+chainsOrigin+`')`,
+		`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin)
+		 VALUES ('rec1', 'o', 'n', 'open', 1, '/x', '{}', 't', 't', '`+bindingRecordOrigin+`')`,
+		`INSERT INTO installation (id, label, first_seen, last_seen) VALUES ('`+installationID+`', 'self', 't', 't')`,
+		// The binding's own children, and a grandchild of it.
 		`INSERT INTO round (id, binding_id, number, started_at, outcome, switches) VALUES ('rd1', 'b1', 1, 't', 'done', 0)`,
+		`INSERT INTO event (id, binding_id, seq, ts, kind, direction, confirmed, late, entry_json)
+		 VALUES ('e1', 'b1', 1, 't', 'k', 'out', 1, 0, '{}')`,
 		`INSERT INTO artifact (id, round_id, kind, text, bytes, sha256, captured_at) VALUES ('a1', 'rd1', 'log', 'x', 1, 's', 't')`,
+		// A transcript names the table its owner id is an id in, so the two
+		// below resolve through different roots and must differ.
 		`INSERT INTO transcript (id, owner_kind, owner_id, seq, record_json, rendered) VALUES ('tr1', 'round', 'rd1', 1, '{}', 'x')`,
 		`INSERT INTO transcript (id, owner_kind, owner_id, seq, record_json, rendered) VALUES ('tr2', 'mastermind', 'm1', 1, '{}', 'x')`,
-		`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin)
-		 VALUES ('rec1', 'o', 'n', 'open', 1, '/x', '{}', 't', 't', 'instA')`,
+		// The record's children.
+		`INSERT INTO binding_event (record_id, seq, ts, round, direction, kind, confirmed, entry_json)
+		 VALUES ('rec1', 1, 't', 1, 'out', 'k', 1, '{}')`,
 		`INSERT INTO round_file (record_id, name, round, body, bytes, sha256, mtime, sealed_at)
 		 VALUES ('rec1', 'f', 1, X'00', 1, 's', 't', 't')`,
+		// The chain's children.
+		`INSERT INTO chain_event (chain_id, seq, ts, phase, step, member, round, event, action)
+		 VALUES ('c1', 1, 't', 'p', 's', 'm', 1, '{}', '{}')`,
+		`INSERT INTO chain_member (chain_id, binding, actor, seq) VALUES ('c1', 'b1', 'builder', 1)`,
+		`INSERT INTO chain_check (chain_id, run, step, visit, command, created_at)
+		 VALUES ('c1', 1, 's', 1, 'echo', 0)`,
+		// A delete of a live child, which still resolves through its parent.
 		`DELETE FROM round_file WHERE record_id = 'rec1' AND name = 'f'`,
 	)
 	wantEntries(t, sqlDB, mark,
-		`round ["rd1"] insert instA`,
-		`artifact ["a1"] insert instA`,
-		`transcript ["tr1"] insert instA`,
-		`transcript ["tr2"] insert instA`,
-		`binding_record ["rec1"] insert instA`,
-		`round_file ["rec1","f"] insert instA`,
-		`round_file ["rec1","f"] delete instA`,
+		`repo ["r1"] insert `+repoOrigin,
+		`binding ["b1"] insert `+bindingOrigin,
+		`mastermind ["m1"] insert `+mastermindOrigin,
+		`chains ["c1"] insert `+chainsOrigin,
+		`binding_record ["rec1"] insert `+bindingRecordOrigin,
+		`installation ["`+installationID+`"] insert `+installationID,
+		`round ["rd1"] insert `+bindingOrigin,
+		`event ["e1"] insert `+bindingOrigin,
+		`artifact ["a1"] insert `+bindingOrigin,
+		`transcript ["tr1"] insert `+bindingOrigin,
+		`transcript ["tr2"] insert `+mastermindOrigin,
+		`binding_event ["rec1",1] insert `+bindingRecordOrigin,
+		`round_file ["rec1","f"] insert `+bindingRecordOrigin,
+		`chain_event ["c1",1] insert `+chainsOrigin,
+		`chain_member ["c1","b1"] insert `+chainsOrigin,
+		`chain_check ["c1",1] insert `+chainsOrigin,
+		`round_file ["rec1","f"] delete `+bindingRecordOrigin,
 	)
 }
 
@@ -392,7 +442,7 @@ func testInheritedOriginShape(t *testing.T) {
 // reach the log by way of a trigger.
 func testLocalOnlyShape(t *testing.T) {
 	sqlDB := migratedWithForeignKeys(t)
-	mark := seedRoots(t, sqlDB, "instA")
+	mark := seedRoots(t, sqlDB)
 
 	for _, tbl := range localOnlyWrites {
 		execAll(t, sqlDB, tbl.stmt)

@@ -164,9 +164,6 @@ const (
 	SyncCodeAlreadyEnabled = "already_enabled"
 	// SyncCodeRemoteConflict is a --url that contradicts the stored remote.
 	SyncCodeRemoteConflict = "remote_conflict"
-	// SyncCodeSeedUploadRequired is history on this side that the remote has
-	// not seen, which last-push-wins would drop.
-	SyncCodeSeedUploadRequired = "seed_upload_required"
 	// SyncCodePreflightRefused is the enable preflight's own answer: the checks
 	// that decide whether this database may leave the machine.
 	SyncCodePreflightRefused = "preflight_refused"
@@ -219,11 +216,6 @@ type SyncVerb struct {
 	// machine-local file the owner already has open, so it reads it there
 	// rather than trusting a body a client sent.
 	RemoteURL string `json:"remote_url,omitempty"`
-	// SeedUploaded reports that the documented upload already ran.
-	SeedUploaded bool `json:"seed_uploaded,omitempty"`
-	// SeedPath is where an existing-history enable writes the copy the
-	// documented upload path takes.
-	SeedPath string `json:"seed_path,omitempty"`
 	// TimeoutMS bounds the verb's network work in milliseconds. Zero selects
 	// the package default on the owner side.
 	TimeoutMS int64 `json:"timeout_ms,omitempty"`
@@ -251,12 +243,6 @@ type SyncResult struct {
 	TokenPresent bool `json:"token_present,omitempty"`
 	// Applied is whether a pull rebased anything.
 	Applied bool `json:"applied,omitempty"`
-	// Seed is the copy an existing-history enable wrote.
-	Seed string `json:"seed,omitempty"`
-	// Backfilled is how many rows the pre-capture backfill put into the change
-	// set: the rows this machine had written before capture was on, which no
-	// push could otherwise carry.
-	Backfilled int64 `json:"backfilled,omitempty"`
 	// RemoteURL is the remote the enable stored.
 	RemoteURL string `json:"remote_url,omitempty"`
 	// Steps is the order a disable took, which is its contract.

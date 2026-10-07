@@ -49,18 +49,16 @@ func installTestVerbHook(srv *owner.Server, d *db.DB) {
 	}
 }
 
-// TestSyncWritersSucceedWhileTheDaemonRuns is the successor to the test that
-// pinned the opposite. A daemon in another process holds relevo.db under its
-// lock, and enable, push, pull and disable all still succeed -- because none of
-// them opens the file any more. Each verb dials the owner and asks it to
-// perform the work with the handles the daemon already has.
+// TestSyncWritersSucceedWhileTheDaemonRuns pins that enable, push, pull and
+// disable all succeed while a daemon holds relevo.db under its lock. Each verb
+// dials the owner and asks it to perform the work with the handles the daemon
+// already has, so none of them opens the file itself.
 //
-// This is the stop dance's whole removal, so the test is shaped so that
-// reintroducing the old path fails it: a writer that opens the file directly
+// The test is shaped so that a writer that opens the file directly fails it: it
 // meets the lock this daemon is holding and returns codeConflict naming
 // `relevo daemon stop`, which is neither a success nor the refusal this verb
-// now answers with. A refusal of any other class also fails, because the point
-// is that the daemon running is the case these verbs are built for.
+// answers with. A refusal of any other class also fails, because the point is
+// that the daemon running is the case these verbs are built for.
 func TestSyncWritersSucceedWhileTheDaemonRuns(t *testing.T) {
 	startSyncStatusDaemon(t, dbSyncStatusCases[2])
 
@@ -94,16 +92,15 @@ func TestSyncWritersSucceedWhileTheDaemonRuns(t *testing.T) {
 }
 
 // TestSyncWritersNeverReturnConflict pins by name that no sync writer reaches
-// codeConflict any more.
+// codeConflict.
 //
-// The conflict existed because the CLI competed with the daemon for the file
-// lock. With the verb surface there is no second open, so there is no
-// genuinely foreign holder left to name with `conflict` -- a held file with no
-// answering owner reads as the owner-unavailable refusal, which is `refused`.
-// A test that only checked the happy path would not notice conflict creeping
-// back in on an error path, so this walks every writer with no daemon running
-// at all: the case that used to be a lock conflict and is now a refusal naming
-// the socket.
+// With the verb surface there is no second open, so no writer competes with the
+// daemon for the file lock and no genuinely foreign holder is left to name with
+// `conflict` -- a held file with no answering owner reads as the
+// owner-unavailable refusal, which is `refused`. A test that only checked the
+// happy path would not notice conflict creeping back in on an error path, so
+// this walks every writer with no daemon running at all: a held file and no
+// owner, which is the case that a direct open would answer with a conflict.
 func TestSyncWritersNeverReturnConflict(t *testing.T) {
 	root := shortStateRoot(t)
 	t.Setenv("XDG_STATE_HOME", root)
