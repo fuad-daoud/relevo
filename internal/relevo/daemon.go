@@ -84,6 +84,10 @@ type Daemon struct {
 	// syncLast is when the idle window last opened. The zero time means no
 	// window has run yet, so a fresh daemon syncs once and then settles.
 	syncLast time.Time
+	// outboxTruncatedAt is when the outbox was last emptied while sync was
+	// off. The zero time means it never has been, so a fresh daemon empties it
+	// on its first tick and then settles onto the interval.
+	outboxTruncatedAt time.Time
 	// syncNow is the clock the idle window reads. Nil means time.Now.
 	syncNow func() time.Time
 	// syncVerbs is the verb runner the owner serves, set once the Daemon
@@ -245,6 +249,12 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// a check is not a round: it runs when a client asks, and outlives the round
 	// it was asked in, so it cannot wait on a round's completion marker.
 	d.safely("served check sweep", func() { tickServedChecks(ctx, d.rt) })
+
+	// The outbox is emptied here, while the machine's sync is off, and before
+	// the no-bindings early return: a machine with no binding is exactly the
+	// one still collecting entries nobody will drain, so returning first would
+	// leave it growing for exactly as long as it stays idle.
+	d.safely("outbox truncate", func() { d.truncateOutbox() })
 
 	if len(bindings) == 0 {
 		return nil
