@@ -98,8 +98,6 @@ func dialSyncVerb() (*db.DB, error) {
 type dbSyncVerbOptions struct {
 	// RemoteURL is `--url`, empty when the flag was not passed.
 	RemoteURL string
-	// SeedUploaded reports that the documented upload already ran.
-	SeedUploaded bool
 	// Timeout bounds the verb's network work. Zero selects the daemon's own.
 	Timeout time.Duration
 }
@@ -125,11 +123,10 @@ func sendSyncVerb(ctx context.Context, shared *db.DB, verb string, opts dbSyncVe
 // the value crosses the stream between them and nowhere else.
 func sendSyncVerbToken(ctx context.Context, shared *db.DB, verb string, token []byte, opts dbSyncVerbOptions) (*wire.SyncResult, error) {
 	req := &wire.SyncVerb{
-		Header:       wire.Header{Type: wire.TypeSyncVerb},
-		Verb:         verb,
-		RemoteURL:    opts.RemoteURL,
-		SeedUploaded: opts.SeedUploaded,
-		TimeoutMS:    opts.Timeout.Milliseconds(),
+		Header:    wire.Header{Type: wire.TypeSyncVerb},
+		Verb:      verb,
+		RemoteURL: opts.RemoteURL,
+		TimeoutMS: opts.Timeout.Milliseconds(),
 	}
 	res, err := shared.SyncVerb(ctx, req, token)
 	if err != nil {

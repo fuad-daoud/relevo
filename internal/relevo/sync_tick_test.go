@@ -13,6 +13,13 @@ import (
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
+// The tests here pin what the daemon's sync triggers do now that no engine
+// stands behind them: they are still called from the tick and from the seal,
+// and they open nothing. A trigger that stopped being called would be a hole
+// the next engine is wired into without anyone noticing, and a trigger that
+// opened a handle would put a network back on a path the round exists to keep
+// off it.
+
 // syncBlackhole answers nothing until its context expires, which is what a
 // network that accepts a connection and then goes silent looks like from here.
 // block is set past any timeout under test, so the context always ends the
@@ -105,10 +112,9 @@ func sealableReader(t *testing.T, client relevosync.SyncClient) Runtime {
 }
 
 // TestSyncNeverBlocksSeal is the load-bearing property of the whole seam: a
-// seal commits its files and returns while the remote it is syncing to accepts
-// the connection and goes silent. The round's outcome cannot depend on a
-// network, so the tick is timed against a bound rather than merely checked for
-// correctness.
+// seal commits its files and returns whether or not any remote is answering.
+// The round's outcome cannot depend on a network, so the tick is timed against
+// a bound rather than merely checked for correctness.
 func TestSyncNeverBlocksSeal(t *testing.T) {
 	t.Parallel()
 
@@ -127,6 +133,9 @@ func TestSyncNeverBlocksSeal(t *testing.T) {
 	if took > 10*time.Second {
 		t.Errorf("the tick took %v, so the seal waited on the network", took)
 	}
+	if got := b.calls.Load(); got != 0 {
+		t.Errorf("the tick called a blackholed remote %d times, want none", got)
+	}
 
 	// The seal itself is unaffected: the files are in the database and gone
 	// from disk, which is the whole of what sealing means.
@@ -144,9 +153,13 @@ func TestSyncNeverBlocksSeal(t *testing.T) {
 	waitSyncIdle(t, NewDaemon(rt, time.Second))
 }
 
-// TestSyncSealQueuesOnePushThenPull pins the seal trigger itself: a seal that
-// moved bytes drives exactly one bounded push-then-pull, in that order.
-func TestSyncSealQueuesOnePushThenPull(t *testing.T) {
+// TestSyncSealOpensNoHandle pins the seal trigger itself: a seal that moved
+// bytes drives nothing at all. The trigger is still on the path -- this runs it
+// through the real tick -- and what it does now is open no handle.
+//
+// The mutation is putting the drive back: a trigger that handed the round to a
+// client would record calls on the fake, and this is what would fail.
+func TestSyncSealOpensNoHandle(t *testing.T) {
 	t.Parallel()
 
 	f := &relevosync.Fake{}
@@ -158,20 +171,19 @@ func TestSyncSealQueuesOnePushThenPull(t *testing.T) {
 	}
 	waitSyncIdle(t, d)
 
-	want := []string{"push", "pull", "stats"}
-	if len(f.Calls) < len(want) {
-		t.Fatalf("calls = %v, want at least %v", f.Calls, want)
+	if len(f.Calls) != 0 {
+		t.Errorf("a seal that moved bytes drove %v, want nothing", f.Calls)
 	}
-	for i, name := range want {
-		if f.Calls[i] != name {
-			t.Fatalf("calls = %v, want them to start with %v", f.Calls, want)
-		}
+	if _, ok, err := rt.Sync.Local.KVGet(relevosync.KeyLastTick); err != nil {
+		t.Fatalf("KVGet(last tick): %v", err)
+	} else if ok {
+		t.Error("a seal wrote a tick marker")
 	}
 }
 
 // TestSyncSealIsQuietWhenItSealedNothing pins the other half of the trigger: a
-// tick that sealed no bytes has nothing new to hand another machine, so it does
-// not drive the network at all.
+// tick that sealed no bytes has nothing new to hand another machine either, so
+// it drives nothing as well.
 func TestSyncSealIsQuietWhenItSealedNothing(t *testing.T) {
 	t.Parallel()
 
@@ -182,11 +194,6 @@ func TestSyncSealIsQuietWhenItSealedNothing(t *testing.T) {
 	rt.Sync = &relevosync.Runner{Client: f, Local: local}
 
 	d := NewDaemon(rt, time.Second)
-	// Sync is off as far as the idle window is concerned, so the only thing
-	// that could drive the fake is the seal.
-	if err := rt.Sync.Local.KVPut(relevosync.KeyEnabled, []byte(`false`)); err != nil {
-		t.Fatalf("KVPut(enabled): %v", err)
-	}
 	if err := d.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
@@ -197,126 +204,82 @@ func TestSyncSealIsQuietWhenItSealedNothing(t *testing.T) {
 	}
 }
 
-// TestSyncIdleTickRunsOncePerWindow pins the idle window: the first tick syncs,
-// a tick inside the window does not, and a tick past it does again. The clock
-// is injected so the window is tested rather than waited out.
-func TestSyncIdleTickRunsOncePerWindow(t *testing.T) {
+// TestSyncIdleTickIsAReachableNoOp pins the idle window from the tick's own
+// side: the window is still on the tick, it is still callable, and it opens
+// nothing. It is called directly here as well as through Tick so that a trigger
+// removed from the tick would fail the reachability half and a handle added to
+// it would fail the no-open half.
+func TestSyncIdleTickIsAReachableNoOp(t *testing.T) {
 	t.Parallel()
 
-	f := &relevosync.Fake{}
-	local := syncLocal(t)
-	now := time.Date(2026, 10, 4, 10, 0, 0, 0, time.UTC)
-	d := NewDaemon(Runtime{Sync: &relevosync.Runner{Client: f, Local: local}}, time.Second)
-	d.syncNow = func() time.Time { return now }
-
-	d.idleSync(context.Background())
-	waitSyncIdle(t, d)
-	if got := len(f.Calls); got != 3 {
-		t.Fatalf("calls after the first window = %d, want 3 (push, pull, stats)", got)
-	}
-
-	// A tick two seconds later is inside the window and does nothing at all.
-	now = now.Add(2 * time.Second)
-	d.idleSync(context.Background())
-	waitSyncIdle(t, d)
-	if got := len(f.Calls); got != 3 {
-		t.Errorf("calls after a tick inside the window = %d, want 3", got)
-	}
-
-	// A tick past the window drives it again.
-	now = now.Add(syncWindow)
-	d.idleSync(context.Background())
-	waitSyncIdle(t, d)
-	if got := len(f.Calls); got != 6 {
-		t.Errorf("calls after the window reopened = %d, want 6", got)
-	}
-}
-
-// TestSyncIdleTickSkipsWhenThereIsNothingToDrive pins the skip paths: a machine
-// with no seam wired and a machine whose marker says sync is off both cost the
-// window nothing.
-func TestSyncIdleTickSkipsWhenThereIsNothingToDrive(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name string
-		// build returns the runtime the daemon runs with, so a row can wire no
-		// seam at all as easily as a half-wired one.
-		build func(t *testing.T) Runtime
+	for _, tc := range []struct {
+		name  string
+		build func(t *testing.T) (*Daemon, *relevosync.Fake, relevosync.Local)
 	}{
 		{
-			name:  "no seam wired at all",
-			build: func(*testing.T) Runtime { return Runtime{} },
-		},
-		{
-			name: "no client behind the seam",
-			build: func(t *testing.T) Runtime {
-				return Runtime{Sync: &relevosync.Runner{Local: syncLocal(t)}}
-			},
-		},
-		{
-			name: "sync turned off by its marker",
-			build: func(t *testing.T) Runtime {
+			name: "a runtime with a client behind the seam",
+			build: func(t *testing.T) (*Daemon, *relevosync.Fake, relevosync.Local) {
+				f := &relevosync.Fake{}
 				local := syncLocal(t)
-				if err := local.KVPut(relevosync.KeyEnabled, []byte(`false`)); err != nil {
-					t.Fatalf("KVPut(enabled): %v", err)
-				}
-				return Runtime{Sync: &relevosync.Runner{
-					Client: &relevosync.Fake{},
-					Local:  local,
-				}}
+				return NewDaemon(Runtime{Sync: &relevosync.Runner{Client: f, Local: local}}, time.Second), f, local
 			},
 		},
-	}
-
-	for _, tc := range cases {
+		{
+			name: "a runtime with no seam at all",
+			build: func(*testing.T) (*Daemon, *relevosync.Fake, relevosync.Local) {
+				return NewDaemon(Runtime{}, time.Second), nil, nil
+			},
+		},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			rt := tc.build(t)
-			var f *relevosync.Fake
-			if rt.Sync != nil {
-				f, _ = rt.Sync.Client.(*relevosync.Fake)
-			}
-			d := NewDaemon(rt, time.Second)
+			d, f, local := tc.build(t)
 
 			d.idleSync(context.Background())
 			waitSyncIdle(t, d)
-
 			if f != nil && len(f.Calls) != 0 {
-				t.Errorf("a skipped window called the remote: %v", f.Calls)
+				t.Errorf("the idle window drove %v, want nothing", f.Calls)
 			}
-			// Nothing ran, so no marker was written over the ones the fixture
-			// set up.
-			if rt.Sync != nil && rt.Sync.Local != nil {
-				if _, ok, err := rt.Sync.Local.KVGet(relevosync.KeyLastTick); err != nil {
+			if local != nil {
+				if _, ok, err := local.KVGet(relevosync.KeyLastTick); err != nil {
 					t.Fatalf("KVGet(last tick): %v", err)
 				} else if ok {
-					t.Error("a skipped window wrote a tick marker")
+					t.Error("the idle window wrote a tick marker")
 				}
 			}
 		})
 	}
 }
 
-// TestSyncWritesTheMarkersATickLeavesBehind pins the join of the two halves: a
-// trigger runs the shared body, and the runner's markers are what the statusline
-// will read back.
-func TestSyncWritesTheMarkersATickLeavesBehind(t *testing.T) {
+// TestSyncTickWithVerbsOpensNoHandle pins the shared-runner half: a daemon whose
+// owner serves the verbs still runs both triggers through Tick, and neither
+// opens a handle on the runner the verbs share.
+func TestSyncTickWithVerbsOpensNoHandle(t *testing.T) {
 	t.Parallel()
 
-	f := &relevosync.Fake{Reported: relevosync.Stats{CdcOperations: 3, Revision: "rev-1"}}
+	f := &relevosync.Fake{}
 	local := syncLocal(t)
+	opens := 0
+	runner := &VerbRunner{
+		Local: local,
+		Path:  filepath.Join(t.TempDir(), "relevo.db"),
+		Open: func(context.Context, relevosync.OpenConfig) (relevosync.SyncClient, error) {
+			opens++
+			return f, nil
+		},
+	}
 	d := NewDaemon(Runtime{Sync: &relevosync.Runner{Client: f, Local: local}}, time.Second)
+	d.SetSyncVerbs(runner)
 
 	d.idleSync(context.Background())
+	d.queueSync(context.Background())
 	waitSyncIdle(t, d)
 
-	token, err := relevosync.StatusToken(local)
-	if err != nil {
-		t.Fatalf("StatusToken: %v", err)
+	if opens != 0 {
+		t.Errorf("the tick opened %d handles, want none", opens)
 	}
-	if token != relevosync.TokenOK {
-		t.Errorf("token = %q, want %q", token, relevosync.TokenOK)
+	if len(f.Calls) != 0 {
+		t.Errorf("the tick drove %v, want nothing", f.Calls)
 	}
 }
 

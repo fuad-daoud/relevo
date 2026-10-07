@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -69,15 +68,6 @@ type SyncSnapshot struct {
 // far as the remote is concerned.
 const syncClientName = "relevo"
 
-// syncHandle is the handle every cockpit sync action opens. It is the only
-// value in this file that can reach a network, which is what lets SyncSnapshot
-// and every Body below be written as though no network existed.
-type syncHandle struct {
-	Client relevosync.SyncClient
-	local  relevosync.Local
-	path   string
-}
-
 // ready is the one guard every action shares: a nil adapter is not the only way
 // to have no runtime, because the holder itself is nil until the first load. A
 // cockpit that has not started yet must get an error rather than a panic -- a
@@ -104,67 +94,6 @@ func syncCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 		return context.WithCancel(ctx)
 	}
 	return context.WithTimeout(ctx, relevosync.DefaultTimeout)
-}
-
-// openSync opens the handle the machine-local settings and token name, or says
-// which of the two is missing. A push, a pull or a test with no remote or no
-// token has nothing to reach and nothing to authenticate with, and naming the
-// missing one is the whole difference between a refusal a user can act on and
-// one they have to guess at.
-func (a *mastermindActions) openSync() (syncHandle, error) {
-	var h syncHandle
-	if err := a.ready(); err != nil {
-		return h, err
-	}
-	rt := a.runtime()
-	local, err := relevosync.LocalHandle(rt.DB)
-	if err != nil {
-		return h, err
-	}
-	settings, err := relevosync.ReadSettings(local)
-	if err != nil {
-		return h, err
-	}
-	token, ok, err := relevosync.ReadToken(local)
-	if err != nil {
-		return h, err
-	}
-	if settings.RemoteURL == "" || !ok {
-		return h, missingSyncRemotes(settings.RemoteURL, ok)
-	}
-
-	openCtx, cancel := syncCtx(context.Background())
-	client, err := relevosync.OpenRemote(openCtx, relevosync.OpenConfig{
-		// A connection test asks the remote a question; it never creates sync
-		// membership. A machine whose file is not already a member refuses here,
-		// which is the right answer for a test: it reports the machine is not
-		// syncing rather than joining it to a remote as a side effect of asking.
-		Role:             relevosync.OpenMember,
-		Path:             rt.DB.Path(),
-		RemoteURL:        settings.RemoteURL,
-		Namespace:        settings.Namespace,
-		ClientName:       syncClientName,
-		AuthToken:        token,
-		BootstrapIfEmpty: false,
-	})
-	cancel()
-	if err != nil {
-		return h, err
-	}
-	return syncHandle{Client: client, local: local, path: rt.DB.Path()}, nil
-}
-
-// missingSyncRemotes says which half of the pair is absent, so one refusal
-// covers both cases with the right noun.
-func missingSyncRemotes(remoteURL string, hasToken bool) error {
-	switch {
-	case remoteURL == "" && !hasToken:
-		return fmt.Errorf("sync: no remote and no %s on this machine", relevosync.SecretToken)
-	case remoteURL == "":
-		return fmt.Errorf("sync: no remote is configured on this machine; set the sync section's remote_url")
-	default:
-		return fmt.Errorf("sync: no %s on this machine", relevosync.SecretToken)
-	}
 }
 
 // verbRunner is the executor every cockpit sync action drives. It is the same
@@ -237,28 +166,20 @@ func (a *mastermindActions) SyncPull(ctx context.Context) Result {
 	return Result{Text: "pulled and applied the remote's changes", Refresh: true}
 }
 
-// SyncTest opens a handle and asks the remote for its stats. It changes no byte
-// here, so a test is safe against a remote a user only wants to ask about.
+// SyncTest asks the remote whether it is there. It changes no byte here, so a
+// test is safe against a remote a user only wants to ask about -- but this build
+// carries no engine that could ask, so it answers with the same named refusal
+// the verbs give rather than opening a handle and dialling.
 //
 // It is the one sync action that does not go through the executor, and that is
 // because it is not a verb: it asks the remote a question and reports the
 // answer, rather than moving a change set or turning sync on or off. The other
 // three drive the executor so there is one set of verbs' semantics.
-func (a *mastermindActions) SyncTest(ctx context.Context) Result {
-	h, err := a.openSync()
-	if err != nil {
+func (a *mastermindActions) SyncTest(context.Context) Result {
+	if err := a.ready(); err != nil {
 		return syncErrResult("test connection", err)
 	}
-	ctx, cancel := syncCtx(ctx)
-	defer cancel()
-	stats, err := h.Client.Stats(ctx)
-	if err != nil {
-		return syncErrResult("test connection", err)
-	}
-	return Result{
-		Text:    fmt.Sprintf("reachable · %d unpushed · revision %s", stats.CdcOperations, syncOr(stats.Revision, syncDash)),
-		Refresh: true,
-	}
+	return syncErrResult("test connection", relevosync.ErrSyncUnavailable)
 }
 
 // SyncDisable runs S4's turn-off whole: the same four steps, in the order its

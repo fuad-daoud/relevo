@@ -267,6 +267,56 @@ func TestSyncUnlinkedMatchesFixture(t *testing.T) {
 	}
 }
 
+// TestSyncViewRendersOff pins the state this machine is actually in: with no
+// markers written -- nothing enables sync in this build, so nothing writes them
+// -- the view renders the off state and the screen says so in the one token a
+// reader can act on.
+//
+// It asserts the I/O half as well as the pixels, because "renders off" is only
+// half the property: a view that got there by reading something would still
+// draw the right words. The seam is present and would answer, so a render path
+// that reached for it would be recorded rather than silently nil-panicking.
+func TestSyncViewRendersOff(t *testing.T) {
+	fa := syncFake(syncBaseSnapshot())
+	m := goldenActionModel(t, 132, 34, fa, view.Report{})
+	m = drain(t, m, execLine("sync", m.env(), m.prefs))
+
+	v := m.top().(syncView)
+	if v.SyncToken() != relevosync.TokenOff {
+		t.Errorf("token = %q, want %q", v.SyncToken(), relevosync.TokenOff)
+	}
+	if got := v.SyncAttention(); got != "" {
+		t.Errorf("an off machine carries a header phrase %q, want none", got)
+	}
+
+	fa.syncs, fa.syncReads = nil, 0
+	screen := plain(stripANSI(m.View()))
+	v.Body(m.env(), 132, 34)
+	if len(fa.syncs) != 0 || fa.syncReads != 0 {
+		t.Errorf("rendering the off state reached the seam: %v, %d reads", fa.syncs, fa.syncReads)
+	}
+	if !strings.Contains(screen, "sync:off") {
+		t.Errorf("the screen does not carry the off token:\n%s", screen)
+	}
+	if !strings.Contains(screen, "off on this machine") {
+		t.Errorf("the screen does not say what state the machine is in:\n%s", screen)
+	}
+	if !strings.Contains(screen, "NO ENGINE") {
+		t.Errorf("the off form still offers an enable that refuses:\n%s", screen)
+	}
+
+	// A view handed a snapshot directly, with no seam in reach at all, renders
+	// the same state: a snapshot is a value and needs nothing to arrive with.
+	detached := syncView{loaded: true}
+	if got := detached.SyncToken(); got != relevosync.TokenOff {
+		t.Errorf("an empty snapshot reads as %q, want %q", got, relevosync.TokenOff)
+	}
+	env := Env{Ctx: t.Context(), Now: syncNow, Width: 132, Height: 34, Loaded: true}
+	if n := len(strings.Split(detached.Body(env, 132, 34), "\n")); n != 34 {
+		t.Errorf("%d lines, want 34", n)
+	}
+}
+
 // TestSyncRendersWithNoNetworkHandle pins the view's safety property: it draws
 // from the snapshot it was handed and from nothing else, on a shell that has an
 // Actions seam within reach of a dial.

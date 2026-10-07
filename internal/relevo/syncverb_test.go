@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -18,10 +17,10 @@ import (
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
-// The tests here drive the verb executor over a real split pair with the sync
-// package's own fake in place of a remote. None of them reaches a network,
-// spawns a harness or opens a second file: the executor runs against handles the
-// test already holds, which is the property these tests exist to pin.
+// The tests here drive the verb executor over a real split pair. None of them
+// reaches a network, spawns a harness or opens a second file: the executor runs
+// against handles the test already holds, which is the property these tests
+// exist to pin.
 //
 // The token fixtures are long and unmistakable on purpose. Several of these
 // tests assert the value never appears in a log, an error or a result, and a
@@ -32,18 +31,20 @@ import (
 // greps for exactly this string.
 const verbFixtureToken = "FIXTURE-TOKEN-8f3a2c91d4e7b605a1c2d3e4f5061728"
 
-// verbFixture is one executor over a real split pair, plus the fake client its
-// verbs drive.
+// verbFixture is one executor over a real split pair, plus the fake client and
+// the opener it was handed.
 type verbFixture struct {
 	runner *VerbRunner
 	shared *db.DB
 	local  relevosync.Local
 	client *relevosync.Fake
+	// opens is every remote handle a run asked for. Nothing opens one in this
+	// build, so this is what a handle added back would be recorded in.
+	opens int
 }
 
-// newVerbFixture builds an executor over a fresh split pair. The fake is
-// installed as the opener's client so an enable reaches no driver: the seed
-// decision still runs, and the calls it decides are the ones the fake records.
+// newVerbFixture builds an executor over a fresh split pair. The opener is the
+// seam a remote would arrive through, and the fixture counts what asks for one.
 func newVerbFixture(t *testing.T) *verbFixture {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "relevo.db")
@@ -57,135 +58,124 @@ func newVerbFixture(t *testing.T) *verbFixture {
 		t.Fatalf("LocalHandle: %v", err)
 	}
 	// A configured machine: a remote in the section and a token stored beside
-	// it. Every verb except enable needs both to have anything to do, and the
-	// refusal for a machine with neither is pinned separately.
+	// it. A machine with neither is a different question and nothing on this
+	// path answers it any more.
 	putVerbSection(t, local, "libsql://example.invalid")
 	if err := relevosync.SetToken(local, []byte(verbFixtureToken), time.Unix(0, 0).UTC()); err != nil {
 		t.Fatalf("SetToken: %v", err)
 	}
 	f := &relevosync.Fake{}
-	r := &VerbRunner{
+	fx := &verbFixture{shared: shared, local: local, client: f}
+	fx.runner = &VerbRunner{
 		Shared: shared,
 		Local:  local,
 		Path:   shared.Path(),
 		Runner: &relevosync.Runner{Client: f, Local: local},
-		// The opener is the sync package's fake, so an enable's open reaches no
-		// driver. Everything else on the path -- the preflight, the seed
-		// decision, the mark -- is the real code over real handles.
 		Open: func(context.Context, relevosync.OpenConfig) (relevosync.SyncClient, error) {
+			fx.opens++
 			return f, nil
 		},
 		ClientName: "relevo",
 	}
-	return &verbFixture{runner: r, shared: shared, local: local, client: f}
+	return fx
 }
 
-// TestSyncVerbOverOwnerEndToEnd pins that all four verbs run and answer through
-// one executor, and that each produces the answer its caller reports.
+// TestSyncVerbRefusesTheThreeVerbsWithTheNamedError is this round's own pin:
+// enable, push and pull keep their names and keep answering on the owner
+// socket, and they refuse with the one named error rather than opening a
+// handle. Status and the turn-off are the two that still mean something, and
+// they are pinned by their own tests.
 //
-// Every verb is driven the way the owner drives it -- a request name, the
-// settings body, the token -- so this is the whole path minus the socket. The
-// socket itself is covered where it exists, in the wire and cmd/relevo suites;
-// what is being pinned here is that the daemon-side semantics are today's
-// semantics relocated, not a second set of them.
-func TestSyncVerbOverOwnerEndToEnd(t *testing.T) {
+// The mutation is letting one of the three through: a verb that opened a
+// handle would record an open on the fixture, and a verb that succeeded would
+// say so here.
+func TestSyncVerbRefusesTheThreeVerbsWithTheNamedError(t *testing.T) {
 	f := newVerbFixture(t)
 	ctx := context.Background()
 
-	// The verbs under test drive a joined machine: enable joins it in
-	// production, and these subtests start past that. The unjoined refusal
-	// belongs to the turn-off test, not this one.
-	joinFixtureFile(t, f.shared.Path())
+	for _, verb := range []string{wire.SyncVerbEnable, wire.SyncVerbPush, wire.SyncVerbPull} {
+		t.Run(verb, func(t *testing.T) {
+			f.opens, f.client.Calls = 0, nil
+			res := f.runner.Run(ctx, &wire.SyncVerb{Verb: verb}, []byte(verbFixtureToken))
+			if res.OK {
+				t.Fatalf("%s reported success: %+v", verb, res)
+			}
+			if res.Message != relevosync.ErrSyncUnavailable.Error() {
+				t.Errorf("%s said %q, want the one named error", verb, res.Message)
+			}
+			if res.Code == "" {
+				t.Errorf("%s refused with no code, so a caller cannot map it", verb)
+			}
+			if res.Code == wire.SyncCodeInternal {
+				t.Errorf("%s is classified as a defect to report, want a refusal", verb)
+			}
+			if f.opens != 0 {
+				t.Errorf("%s opened %d handles, want none", verb, f.opens)
+			}
+			if len(f.client.Calls) != 0 {
+				t.Errorf("%s drove %v, want nothing", verb, f.client.Calls)
+			}
+		})
+	}
+}
 
-	t.Run("push", func(t *testing.T) {
-		f.runner.Runner.Client = f.client
-		f.runner.Runner.Local = f.local
-		f.client.Calls = nil
-		res := f.runner.Run(ctx, &wire.SyncVerb{Verb: wire.SyncVerbPush}, nil)
-		if !res.OK {
-			t.Fatalf("push refused: %s", res.Message)
-		}
-		// SyncOnce is push-then-pull then stats: the daemon's one order, which a
-		// verb must not become a second order for.
-		want := []string{"push", "pull", "stats"}
-		if strings.Join(f.client.Calls, ",") != strings.Join(want, ",") {
-			t.Errorf("push ran %v, want %v", f.client.Calls, want)
-		}
-	})
+// TestSyncVerbDisableStillRuns pins that the turn-off is untouched by the stub:
+// it is the one verb that only writes machine-local rows, so it still marks the
+// machine off, forgets the token and reports its steps in the contract's order.
+//
+// It is what a reader reaches for when they want sync to stop, and it is the
+// way out of a machine that was on when the engine went away.
+func TestSyncVerbDisableStillRuns(t *testing.T) {
+	f := newVerbFixture(t)
+	ctx := context.Background()
+	if err := relevosync.MarkEnabled(f.local, true, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("MarkEnabled: %v", err)
+	}
 
-	t.Run("pull", func(t *testing.T) {
-		f.client.Calls = nil
-		f.client.Applied = true
-		res := f.runner.Run(ctx, &wire.SyncVerb{Verb: wire.SyncVerbPull}, nil)
-		if !res.OK {
-			t.Fatalf("pull refused: %s", res.Message)
-		}
-		if !res.Applied {
-			t.Error("pull reported applied=false against a fake that applied something")
-		}
-	})
+	f.opens = 0
+	res := f.runner.Run(ctx, &wire.SyncVerb{Verb: wire.SyncVerbDisable}, nil)
+	if !res.OK {
+		t.Fatalf("disable refused: %s", res.Message)
+	}
+	if got := strings.Join(res.Steps, ","); got != "final push,mark off,delete token,close handle" {
+		t.Errorf("steps = %q, want the contract's four in order", got)
+	}
+	if res.FinalPush {
+		t.Error("the turn-off reported a final push although nothing opened a handle")
+	}
+	if f.opens != 0 {
+		t.Errorf("the turn-off opened %d handles, want none", f.opens)
+	}
+	on, err := relevosync.Enabled(f.local)
+	if err != nil {
+		t.Fatalf("Enabled: %v", err)
+	}
+	if on {
+		t.Error("disable answered OK but left the machine marked on")
+	}
+	if _, ok, err := relevosync.ReadToken(f.local); err != nil {
+		t.Fatalf("ReadToken: %v", err)
+	} else if ok {
+		t.Error("disable left the token in place")
+	}
+}
 
-	t.Run("enable", func(t *testing.T) {
-		// A machine with no history meets a remote holding nothing: the
-		// new_machine case, which bootstraps and pulls. The section names the
-		// remote, exactly as a machine configured by a hand-written section or a
-		// previous enable would carry it -- an enable with neither a stored
-		// remote nor --url is refused, which is the sibling case below.
-		f.client.Calls = nil
-		putVerbSection(t, f.local, "libsql://example.invalid")
-		// The preflight is one of the checks enable runs, and it refuses a
-		// database whose compress pass has not finished. This fixture writes the
-		// marker's row directly rather than running the pass, because what enable
-		// must do is run the check and refuse when it fails, which the refusal
-		// cases below cover. The row goes to the machine-local file, which is
-		// where CompressHistoryOnce records it and where the check reads it: a
-		// pass and a check that name the same marker have to name the same file,
-		// or the pass finishes and the check refuses forever over the database it
-		// converted.
-		putVerbMarker(t, f.shared.LocalOrSelf(), "zstd-compress.v1", `{"done_at":"1970-01-01T00:00:00Z"}`)
-		// The upload-shape check no longer refuses on a write-ahead log that still
-		// holds bytes: the seed copy drains it as part of writing the copy, which
-		// is the very step the existing-history enable case below performs. So
-		// this fixture does not drain anything to reach a shape no real machine
-		// sits in.
-		res := f.runner.Run(ctx, &wire.SyncVerb{
-			Verb: wire.SyncVerbEnable,
-		}, []byte(verbFixtureToken))
-		if !res.OK {
-			t.Fatalf("enable refused: %s", res.Message)
+// TestSyncVerbNamesAreTheClosedSet pins that the surface did not change shape
+// while its answers did: every name the dispatcher routes is still answered,
+// and a name outside the set is still refused rather than run.
+func TestSyncVerbNamesAreTheClosedSet(t *testing.T) {
+	f := newVerbFixture(t)
+	for _, verb := range []string{wire.SyncVerbEnable, wire.SyncVerbDisable, wire.SyncVerbPush, wire.SyncVerbPull} {
+		res := f.runner.Run(context.Background(), &wire.SyncVerb{Verb: verb}, nil)
+		if res.Code == wire.SyncCodeInvalid && res.Message == "sync: no such verb" {
+			t.Errorf("the executor no longer knows the verb %q", verb)
 		}
-		if res.SeedCase == "" {
-			t.Error("enable reported no seed case, so a caller cannot say what it found")
-		}
-		on, err := relevosync.Enabled(f.local)
-		if err != nil {
-			t.Fatalf("Enabled: %v", err)
-		}
-		if !on {
-			t.Error("enable answered OK but left the machine marked off")
-		}
-	})
+	}
 
-	t.Run("disable", func(t *testing.T) {
-		res := f.runner.Run(ctx, &wire.SyncVerb{Verb: wire.SyncVerbDisable}, nil)
-		if !res.OK {
-			t.Fatalf("disable refused: %s", res.Message)
-		}
-		on, err := relevosync.Enabled(f.local)
-		if err != nil {
-			t.Fatalf("Enabled: %v", err)
-		}
-		if on {
-			t.Error("disable answered OK but left the machine marked on")
-		}
-	})
-
-	t.Run("an unknown verb is refused rather than run", func(t *testing.T) {
-		res := f.runner.Run(ctx, &wire.SyncVerb{Verb: "delete-everything"}, nil)
-		if res.OK || res.Code != wire.SyncCodeInvalid {
-			t.Errorf("an unknown verb answered %+v, want an invalid refusal", res)
-		}
-	})
+	res := f.runner.Run(context.Background(), &wire.SyncVerb{Verb: "delete-everything"}, nil)
+	if res.OK || res.Code != wire.SyncCodeInvalid {
+		t.Errorf("an unknown verb answered %+v, want an invalid refusal", res)
+	}
 }
 
 // putVerbSection writes the machine-local sync section, which is where a remote
@@ -198,31 +188,47 @@ func putVerbSection(t *testing.T, local relevosync.Local, remote string) {
 	}
 }
 
-// putVerbMarker writes one kv row, which is how a pass records that it finished.
-func putVerbMarker(t *testing.T, k relevosync.Local, key, value string) {
-	t.Helper()
-	if err := k.KVPut(key, []byte(value)); err != nil {
-		t.Fatalf("KVPut(%s): %v", key, err)
-	}
-}
-
-// TestSyncDisableOverOwnerKeepsFourSteps pins the order the contract fixes,
-// through the owner.
+// TestSyncVerbOverOwnerNeverOpensASecondHandle pins the lock contract from the
+// executor's side: running a verb opens no file.
 //
-// The order is the whole of the turn-off's safety: the push comes first so a
-// machine does not leave with an unsent round, and the token goes after the mark
-// so a machine marked off is not holding a credential the next enable would
-// inherit. A swap of the last two is invisible in the result -- both still run --
-// so only the step list can catch it.
-func TestSyncDisableOverOwnerKeepsFourSteps(t *testing.T) {
-	f := newVerbFixture(t)
-	res := f.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbDisable}, nil)
-	if !res.OK {
-		t.Fatalf("disable refused: %s", res.Message)
+// The daemon holds the shared database under a lock, and a writer that opened it
+// again would either fail or, worse, succeed on a platform without the lock.
+// This asserts it by holding the file open in this process and running every
+// verb: the fact that they answer at all is the proof, because a second direct
+// open of the same file would have met the lock this handle holds.
+func TestSyncVerbOverOwnerNeverOpensASecondHandle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	first, err := db.OpenSplit(path, db.Options{})
+	if err != nil {
+		t.Fatalf("OpenSplit: %v", err)
 	}
-	want := "final push,mark off,delete token,close handle"
-	if got := strings.Join(res.Steps, ","); got != want {
-		t.Errorf("steps = %q, want %q", got, want)
+	t.Cleanup(func() { _ = first.Close() })
+
+	local, err := relevosync.LocalHandle(first)
+	if err != nil {
+		t.Fatalf("LocalHandle: %v", err)
+	}
+	putVerbSection(t, local, "libsql://example.invalid")
+	if err := relevosync.SetToken(local, []byte(verbFixtureToken), time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetToken: %v", err)
+	}
+	f := &relevosync.Fake{}
+	runner := &VerbRunner{
+		Shared:     first,
+		Local:      local,
+		Path:       first.Path(),
+		Runner:     &relevosync.Runner{Client: f, Local: local},
+		ClientName: "relevo",
+	}
+
+	for _, verb := range []string{wire.SyncVerbEnable, wire.SyncVerbPush, wire.SyncVerbPull, wire.SyncVerbDisable} {
+		res := runner.Run(context.Background(), &wire.SyncVerb{Verb: verb}, nil)
+		if res.Code == wire.SyncCodeInternal {
+			t.Errorf("%s met the lock this handle holds: %s", verb, res.Message)
+		}
+	}
+	if len(f.Calls) != 0 {
+		t.Errorf("a verb drove %v with the file held, want nothing", f.Calls)
 	}
 }
 
@@ -240,18 +246,8 @@ func TestSyncTokenAbsentFromBothEndsLogs(t *testing.T) {
 	logs, restore := captureSyncLogs(t)
 	defer restore()
 
-	// A verb that fails is the harder case: an error path is where a token
-	// would be formatted by accident, because it is the path that formats
-	// something.
-	f.client.PushErr = errors.New("the remote refused the connection")
-	f.client.PullErr = f.client.PushErr
-	f.client.StatsErr = f.client.PushErr
-	f.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbPush}, nil)
-
-	// And a verb that succeeds, on a fresh fixture, so a success path is covered
-	// too.
-	ok := newVerbFixture(t)
-	ok.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbEnable}, []byte(verbFixtureToken))
+	f.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbEnable}, []byte(verbFixtureToken))
+	f.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbDisable}, nil)
 
 	if strings.Contains(logs.String(), verbFixtureToken) {
 		t.Errorf("the fixture token reached a log line:\n%s", logs.String())
@@ -286,8 +282,8 @@ func TestSyncVerbResultNeverCarriesTheToken(t *testing.T) {
 	}
 }
 
-// TestSyncConcurrentSealThenPushWholeOrAbsent is the pin on the guarantee that a
-// push captures whole committed seal transactions only.
+// TestSyncConcurrentSealThenPushWholeOrAbsent is the pin on the guarantee that
+// a push captures whole committed seal transactions only.
 //
 // A round sealing
 // concurrently with a push is either fully present or fully absent on every
@@ -366,7 +362,7 @@ func runSealThenPush(t *testing.T, round int) string {
 	// The seal: every row of the round inside one transaction, which is what
 	// makes the round atomic to any reader that has not seen it yet.
 	err = d.Tx(func(tx *db.Tx) error {
-		for i := 0; i < roundRows; i++ {
+		for i := range roundRows {
 			key := "round-" + string(rune('a'+i))
 			if err := tx.KVPut(key, []byte(`"sealed"`)); err != nil {
 				return err
@@ -398,11 +394,11 @@ func captureSyncLogs(t *testing.T) (*strings.Builder, func()) {
 // TestSyncVerbSerializesWithTheDaemonGuard pins that a verb and a daemon trigger
 // cannot interleave.
 //
-// Both record the same markers and both hold the same remote handle, so two of
-// them at once would write each other's outcomes and leave a machine whose
-// last-tick marker describes an attempt that never finished. The guard is the
-// daemon's existing one: a verb waits its turn rather than being dropped,
-// because somebody asked for it explicitly.
+// Both record the same markers and both hold the same local file, so two of them
+// at once would write each other's outcomes and leave a machine whose marker
+// describes an attempt that never finished. The guard is the daemon's existing
+// one: a verb waits its turn rather than being dropped, because somebody asked
+// for it explicitly.
 func TestSyncVerbSerializesWithTheDaemonGuard(t *testing.T) {
 	f := newVerbFixture(t)
 	d := NewDaemon(Runtime{Sync: f.runner.Runner}, time.Second)
@@ -438,16 +434,16 @@ func TestSyncVerbSerializesWithTheDaemonGuard(t *testing.T) {
 	f.runner.Runner.Client = probed
 
 	var wg sync.WaitGroup
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			f.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbPush}, nil)
+			f.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbDisable}, nil)
 		}()
 	}
 	// The daemon's own triggers run in the same window, which is the case the
 	// guard exists for.
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		d.queueSync(context.Background())
 	}
 	wg.Wait()
@@ -489,12 +485,12 @@ func (p *overlapProbe) Checkpoint(ctx context.Context) error {
 
 // TestSyncStatusUnchanged pins that status did not move.
 //
-// Status is the one verb S7 does not touch: it keeps its owner-local-scope read
-// path and prints a function of the document alone. This asserts the document is
-// still derived only from the local rows -- the section, the mark and the token's
-// presence -- and that the token's value is still not one of them, since that is
-// the field a future change to route status through a verb would most likely
-// start carrying.
+// Status is a read of the machine-local rows and never was a verb: it keeps its
+// owner-local-scope read path and prints a function of the document alone. This
+// asserts the document is still derived only from the local rows -- the section,
+// the mark and the token's presence -- and that the token's value is still not
+// one of them, since that is the field a future change to route status through
+// a verb would most likely start carrying.
 func TestSyncStatusUnchanged(t *testing.T) {
 	f := newVerbFixture(t)
 	if err := relevosync.SetToken(f.local, []byte(verbFixtureToken), time.Unix(0, 0).UTC()); err != nil {
@@ -539,20 +535,16 @@ func TestSyncStatusUnchanged(t *testing.T) {
 // which is the one path that formats something by design.
 //
 // Every refusal the executor can produce is driven here, and every message is
-// searched for the fixture. A preflight refusal is the interesting one: its text
-// is a joined set of per-check refusals, so it is the message most likely to
-// grow a field by accident.
+// searched for the fixture. A refusal a caller can act on keeps the wording the
+// sync package gave it, so this also pins that the stub refusal is the package's
+// own error rather than a sentence written here.
 func TestSyncVerbRefusalNeverCarriesTheToken(t *testing.T) {
 	f := newVerbFixture(t)
 	cases := []*wire.SyncVerb{
 		// No token on either route.
 		{Verb: wire.SyncVerbEnable},
-		// No remote on either route.
-		{Verb: wire.SyncVerbEnable},
 		// A remote this machine is not pointed at.
 		{Verb: wire.SyncVerbEnable, RemoteURL: "libsql://elsewhere.invalid"},
-		// A stored section that will not parse.
-		{Verb: wire.SyncVerbDisable},
 		// A verb that does not exist.
 		{Verb: "nope"},
 	}
@@ -567,61 +559,6 @@ func TestSyncVerbRefusalNeverCarriesTheToken(t *testing.T) {
 		if strings.Contains(res.Message, verbFixtureToken) {
 			t.Errorf("the %s refusal carries the token: %s", verb.Verb, res.Message)
 		}
-	}
-}
-
-// TestSyncVerbNamesWhichHalfIsMissing pins the refusal a push or pull gives on
-// a machine that cannot reach anything.
-//
-// It is a separate test because this is the one message a user acts on directly:
-// "no remote" and "no turso.token" have two different fixes, and a refusal that
-// reported only that something was missing would leave the reader guessing which
-// one they had. The wording is the one the CLI used before the verbs moved, kept
-// exactly, so a message somebody has already read does not change under them.
-func TestSyncVerbNamesWhichHalfIsMissing(t *testing.T) {
-	cases := []struct {
-		name    string
-		remote  string
-		token   bool
-		want    string
-		notWant string
-	}{
-		{name: "neither", want: "no remote and no " + relevosync.SecretToken},
-		{name: "no remote", token: true, want: "no remote is configured", notWant: relevosync.SecretToken},
-		{name: "no token", remote: "libsql://example.invalid", want: "no " + relevosync.SecretToken},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newVerbFixture(t)
-			// A bare machine: the section and the token are what the case omits.
-			if err := relevosync.PutSettings(f.local, relevosync.Settings{}, time.Unix(0, 0).UTC()); err != nil {
-				t.Fatalf("clear the section: %v", err)
-			}
-			if err := relevosync.DeleteToken(f.local); err != nil {
-				t.Fatalf("delete the token: %v", err)
-			}
-			if tc.remote != "" {
-				putVerbSection(t, f.local, tc.remote)
-			}
-			if tc.token {
-				if err := relevosync.SetToken(f.local, []byte(verbFixtureToken), time.Unix(0, 0).UTC()); err != nil {
-					t.Fatalf("SetToken: %v", err)
-				}
-			}
-
-			for _, verb := range []string{wire.SyncVerbPush, wire.SyncVerbPull} {
-				res := f.runner.Run(context.Background(), &wire.SyncVerb{Verb: verb}, nil)
-				if res.OK {
-					t.Fatalf("%s succeeded with nothing to reach", verb)
-				}
-				if !strings.Contains(res.Message, tc.want) {
-					t.Errorf("%s said %q, want it to name %q", verb, res.Message, tc.want)
-				}
-				if tc.notWant != "" && strings.Contains(res.Message, tc.notWant) {
-					t.Errorf("%s said %q, want it not to name %q", verb, res.Message, tc.notWant)
-				}
-			}
-		})
 	}
 }
 
@@ -657,10 +594,10 @@ func TestSyncVerbClassificationIsTotal(t *testing.T) {
 }
 
 // TestARemoteRefusalIsAClassNotAnInternal pins the classification a remote's
-// refusal gets on the push route, where the round's fault showed up: a push the
-// remote refused was reported as an internal failure, which pointed the reader at
+// refusal gets, where the round's failure showed up: a push the remote refused
+// was reported as an internal failure, which pointed the reader at
 // `relevo bugreport` for a remote doing what a remote with enforced foreign keys
-// does. Both classes the driver can produce here are refusals, and neither is
+// does. Both classes the driver can produce are refusals, and neither is
 // internal.
 func TestARemoteRefusalIsAClassNotAnInternal(t *testing.T) {
 	t.Parallel()
@@ -681,109 +618,6 @@ func TestARemoteRefusalIsAClassNotAnInternal(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestARemoteRefusalOnThePushVerbIsARefusal pins the answer a caller actually
-// gets, not just the classification: a push the remote refused with a constraint
-// carries its own code and says what was refused, so neither the owner nor the
-// CLI above it can read it as a defect. It is the route this round's failure
-// took -- the runner's own error, not a verb-time one -- so it is the assertion
-// that the fix reaches the path a user hits.
-func TestARemoteRefusalOnThePushVerbIsARefusal(t *testing.T) {
-	f := newVerbFixture(t)
-	joinFixtureFile(t, f.shared.Path())
-	f.runner.Runner.Client = f.client
-	f.runner.Runner.Local = f.local
-	f.client.PushErr = fmt.Errorf("sync: push: %w", relevosync.ErrRemoteRefused)
-
-	res := f.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbPush}, nil)
-	if res.OK {
-		t.Fatal("the push reported success although the remote refused it")
-	}
-	if res.Code != wire.SyncCodeRemoteRefused {
-		t.Errorf("code = %q, want %q: a remote that refused a statement is not internal and not unreachable",
-			res.Code, wire.SyncCodeRemoteRefused)
-	}
-	if strings.Contains(res.Message, "internal") {
-		t.Errorf("the message is %q, want it never to read as a defect", res.Message)
-	}
-}
-
-// TestAMissingRemoteTableOnThePushVerbIsItsOwnCode pins that the schema limit
-// reaches the caller as its own class rather than as the ordering fault: the two
-// have different fixes, so a caller that cannot tell them apart would send a
-// reader to change the row order when the remote has never heard of the table.
-func TestAMissingRemoteTableOnThePushVerbIsItsOwnCode(t *testing.T) {
-	f := newVerbFixture(t)
-	joinFixtureFile(t, f.shared.Path())
-	f.runner.Runner.Client = f.client
-	f.runner.Runner.Local = f.local
-	f.client.PushErr = fmt.Errorf("sync: push: %w", relevosync.ErrRemoteSchema)
-
-	res := f.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbPush}, nil)
-	if res.Code != wire.SyncCodeRemoteSchemaMissing {
-		t.Errorf("code = %q, want %q", res.Code, wire.SyncCodeRemoteSchemaMissing)
-	}
-	if res.Code == wire.SyncCodeRemoteRefused {
-		t.Error("the missing-table refusal was classified as the row-order refusal")
-	}
-}
-
-// TestSyncVerbNeverOpensASecondHandle pins the lock contract from the executor's
-// side: running a verb opens no file.
-//
-// The daemon holds the shared database under a lock, and a writer that opened it
-// again would either fail or, worse, succeed on a platform without the lock. This
-// asserts it by holding the file open in this process and running a full verb:
-// the fact that the verb answers at all is the proof, because a second direct
-// open of the same file would have met the lock this handle holds.
-func TestSyncVerbNeverOpensASecondHandle(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "relevo.db")
-	first, err := db.OpenSplit(path, db.Options{})
-	if err != nil {
-		t.Fatalf("OpenSplit: %v", err)
-	}
-	t.Cleanup(func() { _ = first.Close() })
-
-	local, err := relevosync.LocalHandle(first)
-	if err != nil {
-		t.Fatalf("LocalHandle: %v", err)
-	}
-	putVerbSection(t, local, "libsql://example.invalid")
-	if err := relevosync.SetToken(local, []byte(verbFixtureToken), time.Unix(0, 0).UTC()); err != nil {
-		t.Fatalf("SetToken: %v", err)
-	}
-	// The verbs under test drive a joined machine; the unjoined refusal is
-	// the turn-off test's case.
-	joinFixtureFile(t, first.Path())
-	f := &relevosync.Fake{}
-	runner := &VerbRunner{
-		Shared: first,
-		Local:  local,
-		Path:   first.Path(),
-		Runner: &relevosync.Runner{Client: f, Local: local},
-		Open: func(context.Context, relevosync.OpenConfig) (relevosync.SyncClient, error) {
-			return f, nil
-		},
-		ClientName: "relevo",
-	}
-
-	for _, verb := range []string{wire.SyncVerbPush, wire.SyncVerbPull, wire.SyncVerbDisable} {
-		res := runner.Run(context.Background(), &wire.SyncVerb{Verb: verb}, nil)
-		if !res.OK {
-			t.Errorf("%s refused with the file held: %s", verb, res.Message)
-		}
-	}
-
-	// The seed copy is the one verb step that writes outside the two files, so
-	// it is the one that would show a handle reaching for a path it does not own.
-	// It works here precisely because this handle opened the file: the daemon's
-	// pair is direct, and a dialled handle has no path to copy from at all --
-	// which is the refusal the client used to meet instead of a daemon to ask.
-	if err := first.SeedCopy(filepath.Join(t.TempDir(), "seed.db")); err != nil {
-		t.Errorf("SeedCopy from the daemon's own direct handle: %v", err)
-	}
-
 }
 
 // TestSyncVerbTimeoutBoundsTheWork pins that a caller may bound the verb, and
@@ -823,40 +657,20 @@ func TestSyncVerbRunnerNeedsALocalFile(t *testing.T) {
 	}
 }
 
-// TestSyncVerbSeedPathIsFixed pins that the seed copy lands in one place, so a
-// refusal naming it names the same file every time.
-func TestSyncVerbSeedPathIsFixed(t *testing.T) {
-	r := &VerbRunner{Path: filepath.Join("/state", "relevo.db")}
-	got := r.seedPath()
-	want := filepath.Join("/state", "relevo-seed.db")
-	if got != want {
-		t.Errorf("seedPath = %q, want %q", got, want)
-	}
-	// A request that names one is obeyed, so the documented upload path can be
-	// pointed elsewhere without changing the default.
-	named := r.seedPathFor(&wire.SyncVerb{SeedPath: "/other/seed.db"})
-	if named != "/other/seed.db" {
-		t.Errorf("a named seed path was ignored: %q", named)
-	}
-}
-
 // TestSyncVerbWritesNoLogsItself pins that the executor's own logging says
 // nothing a verb carried.
 //
-// The executor logs one advisory line, for a final push that could not be made,
-// and it logs the reason. That reason is a driver's own error, which is a body
-// the remote chose -- so this pins that the line is a warning carrying an error
-// rather than the request, and that the daemon never logs the verb body.
+// The executor logs nothing on a path that refuses, so this is the assertion
+// that a refusal is not dressed up as a fault: a verb that logged its own
+// request, or its own reason, would show up here.
 func TestSyncVerbWritesNoLogsItself(t *testing.T) {
 	f := newVerbFixture(t)
 	buf, restore := captureSyncLogs(t)
 	defer restore()
 
-	// A push against a fake with no remote opens nothing, so nothing is logged
-	// at all: a verb that logs its own request would show up here.
 	f.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbPush}, nil)
 	if buf.Len() != 0 {
-		t.Errorf("a plain push logged %q, want nothing", buf.String())
+		t.Errorf("a refused push logged %q, want nothing", buf.String())
 	}
 }
 

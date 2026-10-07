@@ -20,13 +20,13 @@
      ×  every config section, this one included                                                                                     
      ×  this machine's own installation identity                                                                                    
                                                                                                                                     
-   ON ENABLE  uploads every shared row to                                                                                           
-               libsql://relevo-abc123.turso.io                                                                                      
-               nothing leaves this machine until you confirm it there                                                               
+   NO ENGINE  enable, push and pull refuse in this build                                                                            
+               nothing leaves this machine, and no remote is contacted                                                              
                                                                                                                                     
    INSTALLATIONS                                                                                                                    
      LABEL             ID                LAST SEEN                                                                                  
      laptop            01INSTALLATION    2026-09-16                                                                                 
+                                                                                                                                    
                                                                                                                                     
                                                                                                                                     
                                                                                                                                     

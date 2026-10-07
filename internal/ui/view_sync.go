@@ -157,17 +157,16 @@ func (v syncView) Keys() []KeyHelp {
 // HelpKeys is the help overlay's key list: the same set.
 func (v syncView) HelpKeys() []KeyHelp { return v.Keys() }
 
-// OffKeys are the keys that do not apply right now. A push or a pull with no
-// remote has nothing to reach, and offering the key anyway turns a typo into an
-// error line the user has to read past.
+// OffKeys are the keys that do not apply right now. Nothing about a machine's
+// configuration changes that in this build: push, pull and test all refuse
+// whatever the section says, so the footer stops advertising them and a press
+// cannot turn into a refusal the user has to read past. The editor and the
+// turn-off still work and stay on the footer.
 func (v syncView) OffKeys(env Env) []string {
 	if !v.actions {
 		return nil
 	}
-	if v.snap.RemoteURL == "" || !v.snap.TokenSet {
-		return []string{"p", "l", "t"}
-	}
-	return nil
+	return []string{"p", "l", "t"}
 }
 
 // Context is the state line: what sync is doing, and how much of this machine
@@ -292,16 +291,14 @@ func (v syncView) preOnLines() []string {
 	return append(lines, v.installationLines()...)
 }
 
-// to fill.
+// confirmLines says what enabling would have done, and that there is nothing to
+// do here. This build carries no engine, so no row leaves this machine and no
+// membership is ever created: the line is here so the form does not read as an
+// offer it cannot keep.
 func (v syncView) confirmLines() []string {
-	target := v.snap.RemoteURL
-	if target == "" {
-		target = "no remote"
-	}
 	return []string{
-		"   " + warnStyle.Bold(true).Render("ON ENABLE") + "  uploads every shared row to",
-		"               " + accentStyle.Render(target),
-		"               " + mutedStyle.Render("nothing leaves this machine until you confirm it there"),
+		"   " + warnStyle.Bold(true).Render("NO ENGINE") + "  enable, push and pull refuse in this build",
+		"               " + mutedStyle.Render("nothing leaves this machine, and no remote is contacted"),
 	}
 }
 
@@ -309,7 +306,7 @@ func (v syncView) confirmLines() []string {
 // value is not read by this view and could not be rendered if it were.
 func (v syncView) tokenPhrase() string {
 	if !v.snap.TokenSet {
-		return "absent · run `relevo db sync enable --token-stdin`"
+		return "absent · nothing reads it while sync is off"
 	}
 	return "present · value never displayed"
 }

@@ -6,11 +6,20 @@ package sync
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 )
+
+// ErrSyncUnavailable is the one refusal the verbs that would move bytes raise
+// while this build carries no sync engine. The verbs keep their names, keep
+// their place on the owner socket and keep answering; what they no longer do is
+// reach a remote, so they refuse with this rather than with a fault the reader
+// would look for on their own machine. Status and the turn-off are unaffected:
+// neither of them moves a change set.
+var ErrSyncUnavailable = errors.New("sync is not available in this build")
 
 // Every row sync reads is one that must never sync, so all of them bind to the
 // machine-local file beside the shared database. A shared handle writes config,

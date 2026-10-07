@@ -197,24 +197,27 @@ func TestSyncSnapshotCarriesTheSnapshotAndItsAbsence(t *testing.T) {
 	}
 }
 
-// TestSyncActionsRefuseWithoutARemoteOrAToken pins the two refusals by name. A
-// push against a machine with no remote has nothing to reach and one against a
-// machine with no token has nothing to authenticate with, and the difference
-// between the two messages is the difference between a refusal a user can act
-// on and one they have to guess at.
-func TestSyncActionsRefuseWithoutARemoteOrAToken(t *testing.T) {
+// TestSyncActionsRefuseWithoutAnEngine pins the one answer every action that
+// would reach a remote now gives. A build with no sync engine behind them has
+// nothing to push, nothing to pull and nothing to ask, so all three refuse with
+// the sync package's named error rather than opening a handle and dialling --
+// and none of them reaches a network to find out.
+//
+// It is the same refusal whatever the machine looks like, which is the point: a
+// remote a machine names and a remote it does not are the same question here,
+// because neither is reachable.
+func TestSyncActionsRefuseWithoutAnEngine(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		setup func(t *testing.T, a *mastermindActions)
-		want  string
 	}{
-		{"neither", func(t *testing.T, a *mastermindActions) {}, "no remote and no " + relevosync.SecretToken},
-		{"no token", func(t *testing.T, a *mastermindActions) {
-			writeSyncSettings(t, a, relevosync.Settings{RemoteURL: syncRemote}, "")
-		}, "no " + relevosync.SecretToken},
-		{"no remote", func(t *testing.T, a *mastermindActions) {
+		{"neither a remote nor a token", func(t *testing.T, a *mastermindActions) {}},
+		{"a token and no remote", func(t *testing.T, a *mastermindActions) {
 			writeSyncSettings(t, a, relevosync.Settings{}, syncSecretValue)
-		}, "no remote is configured"},
+		}},
+		{"a remote and no token", func(t *testing.T, a *mastermindActions) {
+			writeSyncSettings(t, a, relevosync.Settings{RemoteURL: syncRemote}, "")
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := syncRealActions(t)
@@ -229,11 +232,11 @@ func TestSyncActionsRefuseWithoutARemoteOrAToken(t *testing.T) {
 			} {
 				res := verb.call(context.Background())
 				if res.Err == nil {
-					t.Errorf("%s succeeded with nothing to reach", verb.name)
+					t.Errorf("%s succeeded with no engine behind it", verb.name)
 					continue
 				}
-				if !strings.Contains(res.Err.Error(), tc.want) {
-					t.Errorf("%s said %q, want it to name %q", verb.name, res.Err, tc.want)
+				if res.Err.Error() != relevosync.ErrSyncUnavailable.Error() {
+					t.Errorf("%s said %q, want the one named error", verb.name, res.Err)
 				}
 			}
 		})

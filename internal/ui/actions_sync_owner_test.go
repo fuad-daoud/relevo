@@ -168,8 +168,11 @@ func TestSyncSnapshotOverTheOwnerRouteShowsRealValues(t *testing.T) {
 	if got := v.SyncToken(); got != relevosync.TokenOK {
 		t.Errorf("the view's own token = %q, want %q", got, relevosync.TokenOK)
 	}
-	if got, want := v.OffKeys(Env{Actions: a}), 0; len(got) != want {
-		t.Errorf("OffKeys = %v, want none on a machine with a remote and a token", got)
+	// Push, pull and test are off the footer whatever the section says: this
+	// build has no engine behind them, so a machine configured with a remote and
+	// a token refuses exactly as a bare one does.
+	if got, want := v.OffKeys(Env{Actions: a}), []string{"p", "l", "t"}; len(got) != len(want) {
+		t.Errorf("OffKeys = %v, want the three verbs this build refuses", got)
 	}
 }
 

@@ -34,10 +34,51 @@ func TestDBSyncUsageNamesEveryVerb(t *testing.T) {
 			t.Errorf("the usage text does not name %q:\n%s", verb, dbSyncUsage)
 		}
 	}
-	for _, want := range []string{"--url", "--token-stdin", "TURSO_TOKEN", "turso.token", "turso db import", "config set sync"} {
+	for _, want := range []string{"--url", "--token-stdin", "TURSO_TOKEN", "turso.token", "config set sync"} {
 		if !strings.Contains(dbSyncUsage, want) {
 			t.Errorf("the usage text does not mention %q:\n%s", want, dbSyncUsage)
 		}
+	}
+}
+
+// TestSyncStatusReportsOff is the off state as a reader meets it: `db sync
+// status` on a machine that never enabled anything prints one line saying off,
+// and the line is a function of the document alone.
+//
+// It is a pure function over the document on purpose. Status reaches the rows
+// through the owner, and the bytes it prints must not depend on which handle
+// they travelled over -- so the mapping is driven here with a document built in
+// the test, with no owner, no socket and no network, and the same document must
+// produce the same line every time. A renderer that reached for a handle, or
+// that read the mark instead of the document, could not be pinned this way.
+func TestSyncStatusReportsOff(t *testing.T) {
+	t.Parallel()
+
+	off := dbSyncStatusDoc{}
+	if got, want := dbSyncStatusLine(off), "sync off (remote: (none), token: absent)\n"; got != want {
+		t.Errorf("line = %q, want the off line %q", got, want)
+	}
+
+	// A machine that carries a remote and a token but was never turned on is
+	// still off, and the line says which of the two halves it does have: that
+	// is the whole difference between a reader who can act and one who guesses.
+	configured := dbSyncStatusDoc{RemoteURL: "libsql://example.invalid", Namespace: "default", TokenPresent: true}
+	if got, want := dbSyncStatusLine(configured), "sync off (remote: libsql://example.invalid, token: present)\n"; got != want {
+		t.Errorf("line = %q, want %q", got, want)
+	}
+
+	// The document is the whole input: the same one renders the same line on
+	// every call. And it says off in the document itself, not only in the line,
+	// so an agent reading --json is told the same thing a human is.
+	if dbSyncStatusLine(off) != dbSyncStatusLine(off) {
+		t.Error("the off line is not a function of the document")
+	}
+	body, err := json.Marshal(off)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if got, want := string(body), `{"enabled":false,"token_present":false}`; got != want {
+		t.Errorf("the off document = %q, want the golden %q", got, want)
 	}
 }
 
@@ -50,9 +91,9 @@ func TestDBSyncFlagSetsAreTheDocumentedOnes(t *testing.T) {
 	t.Parallel()
 
 	enable := parseInto(t, "db sync enable", dbSyncEnableFlagSet)
-	if *enable.tokenStdin || *enable.seedUploaded || *enable.asJSON {
-		t.Errorf("enable defaults = %v/%v/%v, want every flag off",
-			*enable.tokenStdin, *enable.seedUploaded, *enable.asJSON)
+	if *enable.tokenStdin || *enable.asJSON {
+		t.Errorf("enable defaults = %v/%v, want every flag off",
+			*enable.tokenStdin, *enable.asJSON)
 	}
 	if *enable.remoteURL != "" {
 		t.Errorf("enable --url default = %q, want empty: a machine with no flag takes the stored remote", *enable.remoteURL)
@@ -87,11 +128,11 @@ func TestDBSyncFlagsParseAfterAPositional(t *testing.T) {
 	fs := flag.NewFlagSet("db sync enable", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	v := dbSyncEnableFlagSet(fs)
-	if err := parseFlags(fs, []string{"--json", "--url", "libsql://x-org.turso.io", "--token-stdin", "--timeout", "3s", "--seed-uploaded"}); err != nil {
+	if err := parseFlags(fs, []string{"--json", "--url", "libsql://x-org.turso.io", "--token-stdin", "--timeout", "3s"}); err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	if !*v.asJSON || !*v.tokenStdin || !*v.seedUploaded {
-		t.Errorf("flags = %v/%v/%v, want all three on", *v.asJSON, *v.tokenStdin, *v.seedUploaded)
+	if !*v.asJSON || !*v.tokenStdin {
+		t.Errorf("flags = %v/%v, want both on", *v.asJSON, *v.tokenStdin)
 	}
 	if *v.remoteURL != "libsql://x-org.turso.io" {
 		t.Errorf("--url = %q, want the URL passed", *v.remoteURL)
@@ -194,7 +235,6 @@ func TestDBSyncEnableDocumentCarriesTheRemoteNotTheToken(t *testing.T) {
 	body, err := json.Marshal(dbSyncOutcomeDoc{
 		Enabled:   true,
 		RemoteURL: "libsql://x-org.turso.io",
-		SeedCase:  string(relevosync.SeedEmptyCloud),
 	})
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
