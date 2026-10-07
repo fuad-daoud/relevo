@@ -320,10 +320,6 @@ func (d *DB) Close() error {
 	}
 	closeErr := d.sqlDB.Close()
 	if path != "" {
-		// The held capture connection is over the same file, so it is released
-		// with the pool rather than outliving the handle that opened it.
-		_ = releaseHeldCapture(path)
-		_ = closeCapturePool(path)
 		// The path and its flock are released only after the pool is closed,
 		// so a concurrent opener cannot win the flock while this handle's own
 		// connections still hold the engine's file lock.
@@ -382,17 +378,16 @@ func (d *DB) Tx(fn func(*Tx) error) error {
 }
 
 func (d *DB) tx(ctx context.Context, fn func(*Tx) error) (err error) {
-	// A member's writes go over the one connection carrying the capture pragma,
-	// because a row written on any other connection is in the database and in no
-	// change set: no push can carry it and every push still reports success. The
-	// pool keeps serving reads, which need no write slot and so never pay for the
-	// pragma.
-	conn, release, err := d.writeConn(ctx)
+	// A write borrows a pooled connection and gives it back, like a read. There
+	// is no dedicated write path: change tracking is SQL triggers into the local
+	// outbox, so they fire for every connection the pool hands out and every
+	// writer, migrations and client-socket writes included.
+	conn, err := d.sqlDB.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("db: tx: %w", err)
 	}
 	defer func() {
-		if cerr := release(); cerr != nil && err == nil {
+		if cerr := conn.Close(); cerr != nil && err == nil {
 			err = fmt.Errorf("db: tx close: %w", cerr)
 		}
 	}()
@@ -415,8 +410,8 @@ func (d *DB) tx(ctx context.Context, fn func(*Tx) error) (err error) {
 		if restartingRefusal(beginErr) && time.Since(start) < retryFor {
 			// The connection refused the request without running it, so closing
 			// it reports the refusal again rather than a failure of this attempt.
-			_ = release()
-			conn, release, err = d.writeConn(ctx)
+			_ = conn.Close()
+			conn, err = d.sqlDB.Conn(ctx)
 			if err != nil {
 				return fmt.Errorf("db: tx: %w", err)
 			}

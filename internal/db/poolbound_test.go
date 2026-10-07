@@ -17,8 +17,8 @@ import (
 // TestThePoolBoundsItsOpenConnections pins the ceiling openPool puts on a pool,
 // and that a caller past it waits rather than opening another connection. The
 // wait is the whole point: without a ceiling every concurrent caller opens its
-// own, and on a member file each of those connects has to queue for the
-// database's single write slot to install its capture state.
+// own, and each of those connects pays the file's own open cost against a
+// database that has a single write slot behind it.
 func TestThePoolBoundsItsOpenConnections(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bounded.db")
 	pool, err := OpenRaw(path)
@@ -115,53 +115,6 @@ func TestABlockedOpenSurfacesAsAnError(t *testing.T) {
 	}
 	if got := pool.Stats().OpenConnections; got > maxOpenConns {
 		t.Errorf("the pool opened %d connections while a caller was blocked, want at most %d", got, maxOpenConns)
-	}
-}
-
-// TestACaptureOpenIsBoundedWhenTheWriteSlotIsHeld pins the same bound on the
-// capture connection: the pragma is a write, so a capture open over a file
-// whose write slot is held must fail rather than wait without end, and it must
-// leave no connection behind.
-func TestACaptureOpenIsBoundedWhenTheWriteSlotIsHeld(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "capture-blocked.db")
-	pool, err := OpenRaw(path)
-	if err != nil {
-		t.Fatalf("open the pool: %v", err)
-	}
-	defer func() { _ = pool.Close() }()
-	if _, err := pool.Exec(`CREATE TABLE ticks (id INTEGER PRIMARY KEY)`); err != nil {
-		t.Fatalf("create: %v", err)
-	}
-
-	holder, err := pool.Conn(context.Background())
-	if err != nil {
-		t.Fatalf("holder: %v", err)
-	}
-	defer func() { _ = holder.Close() }()
-	if _, err := holder.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
-		t.Fatalf("begin: %v", err)
-	}
-	if _, err := holder.ExecContext(context.Background(), `INSERT INTO ticks DEFAULT VALUES`); err != nil {
-		t.Fatalf("held insert: %v", err)
-	}
-	defer func() { _, _ = holder.ExecContext(context.Background(), "ROLLBACK") }()
-
-	done := make(chan error, 1)
-	go func() {
-		c, err := openCaptureConnection(context.Background(), path, 200)
-		if err == nil {
-			_ = c.Close()
-		}
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("the capture open succeeded while another connection held the write slot")
-		}
-		t.Logf("the capture open under a held write slot: %v", err)
-	case <-time.After(20 * time.Second):
-		t.Fatal("the capture open neither returned nor failed")
 	}
 }
 

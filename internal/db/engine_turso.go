@@ -41,10 +41,10 @@ const cacheEnv = "TURSO_GO_CACHE_DIR"
 // maxOpenConns bounds how many connections one pool may have open at once.
 //
 // Database/sql opens a connection per concurrent caller until this bound, so
-// without it a burst of requests is a burst of connects -- and a connect on a
-// member file has to queue for the database's single write slot to install its
-// capture state, so the unbounded form is what turns a contended write slot
-// into thousands of blocked connects rather than one that surfaces as an error.
+// without it a burst of requests is a burst of connects -- and every connect
+// pays the file's own open cost against a database that has a single write
+// slot behind it, so the unbounded form is what turns a busy write slot into
+// thousands of blocked connects rather than one that surfaces as an error.
 //
 // The number is the daemon's own measured fan-out, not a guess. Sampling
 // `Stats().OpenConnections` on the shared pool while the served request paths
@@ -100,8 +100,8 @@ func openPool(path string, busy time.Duration, readOnly bool) (*sql.DB, error) {
 	return pool, nil
 }
 
-// newTursoConnector is the engine's connector for a path, so the handle's pool
-// and the capture pool open the same file the same way.
+// newTursoConnector is the engine's connector for a path: the DSN the pool
+// opens with, busy timeout included.
 func newTursoConnector(path string, busyMS int64) (driver.Connector, error) {
 	conn, err := turso.NewConnector(fmt.Sprintf("%s?_busy_timeout=%d", path, busyMS))
 	if err != nil {
