@@ -362,6 +362,102 @@ func TestTheBackfillIsBounded(t *testing.T) {
 	}
 }
 
+// TestABackfillOverAGroupThatTakesMoreThanOneCallConverges pins the shape every
+// other fixture misses: a group whose walk needs more than one call, so its small
+// table is walked to the end long before its large one is.
+//
+// A pass that hands a finished table back to the rewrite records that table
+// again on every call and every pass, so the marker's rows run to a multiple of
+// the database's own and the walk never converges. The child here is four rows
+// and the parent is larger than the budget, so the child is done in the first
+// call and must not be named again by the twenty-odd calls after it.
+func TestABackfillOverAGroupThatTakesMoreThanOneCallConverges(t *testing.T) {
+	if testing.Short() {
+		t.Skip("the walk writes more than the budget")
+	}
+	const children = 4
+	const parents = BackfillBudget + 8
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	seedReferencingRows(t, path, parents, children)
+	local := seedLocal(t)
+
+	var total int64
+	for pass := range 8 {
+		marker, _, err := ReadBackfill(local)
+		if err != nil {
+			t.Fatalf("pass %d: ReadBackfill: %v", pass+1, err)
+		}
+		if marker.Complete {
+			break
+		}
+		res, err := Backfill(context.Background(), local, path)
+		if err != nil {
+			t.Fatalf("pass %d: Backfill: %v", pass+1, err)
+		}
+		total += res.Rows
+		if res.Rows == 0 {
+			t.Fatalf("pass %d recorded nothing and left the walk at %+v", pass+1, marker.Tables)
+		}
+	}
+
+	marker, ok, err := ReadBackfill(local)
+	if err != nil {
+		t.Fatalf("ReadBackfill: %v", err)
+	}
+	if !ok || !marker.Complete {
+		t.Fatalf("the walk did not converge in 8 passes: %+v", marker.Tables)
+	}
+
+	// The walk records every row once, so the marker's total is the database's own
+	// row count rather than a multiple of it.
+	if want := int64(parents + children); total != want {
+		t.Errorf("the walk recorded %d rows over every pass, want the %d the file holds, so finished tables were recorded again", total, want)
+	}
+
+	// The finished table keeps where it got to: a resume point reset to zero is
+	// what hands the table back to the rewrite.
+	if at := marker.Tables["fk_child"].At; at != children+1 {
+		t.Errorf("the finished table's resume point is %d, want %d, so it is walked again from its first row", at, children+1)
+	}
+
+	// And the change set says the same thing the marker does: each row of the
+	// small table was recorded once, as the delete and the insert of one rewrite.
+	if got, want := changeSetRows(t, path, "fk_child"), 2*children; got != want {
+		t.Errorf("the change set holds %d rows for the finished table, want %d, so it was rewritten more than once", got, want)
+	}
+}
+
+// seedReferencingRows writes a parent table with the given number of rows and a
+// child table with its own, every child naming a parent row that is there, so
+// the two tables are one foreign-key-closed group whose walk takes as many calls
+// as their sizes ask for.
+func seedReferencingRows(t *testing.T, path string, parents, children int) {
+	t.Helper()
+	pool, err := db.OpenRaw(path)
+	if err != nil {
+		t.Fatalf("open the shared file's pool: %v", err)
+	}
+	defer func() { _ = pool.Close() }()
+	for _, stmt := range []string{
+		`CREATE TABLE fk_parent (id INTEGER PRIMARY KEY, v TEXT NOT NULL)`,
+		`CREATE TABLE fk_child (id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL REFERENCES fk_parent(id))`,
+	} {
+		if _, err := pool.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	for i := range parents {
+		if _, err := pool.Exec(`INSERT INTO fk_parent (id, v) VALUES (?, ?)`, i+1, "parent"); err != nil {
+			t.Fatalf("seed parent %d: %v", i, err)
+		}
+	}
+	for i := range children {
+		if _, err := pool.Exec(`INSERT INTO fk_child (id, parent_id) VALUES (?, ?)`, i+1, 1); err != nil {
+			t.Fatalf("seed child %d: %v", i, err)
+		}
+	}
+}
+
 // TestTheEnableRunsTheBackfillBeforeItsFirstPush pins the ordering, which is the
 // whole of where the pass belongs: after the seed decision, before the first
 // push. A pass that ran after the push would leave its rows for the next one, and

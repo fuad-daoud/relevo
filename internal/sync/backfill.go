@@ -205,8 +205,16 @@ func backfillGroup(ctx context.Context, kv db.KV, capture *db.CaptureConn, marke
 			storeGroupProgress(marker, group, db.GroupPass{})
 			return rows, false, nil
 		}
-		batch := groupBatch(budget, len(group.Tables))
-		res, err := capture.Rerecord(ctx, group, groupRowids(marker, group), int(batch))
+		// The rewrite takes the whole group, so a table the marker says was walked
+		// to its end is left out of it: handed back, it would be read from its
+		// first row again and recorded once more per call, and the walk would
+		// never reach the end of the tables that are not finished.
+		pending := pendingGroup(marker, group)
+		if len(pending.Tables) == 0 {
+			return rows, true, WriteBackfill(kv, *marker)
+		}
+		batch := groupBatch(budget, len(pending.Tables))
+		res, err := capture.Rerecord(ctx, pending, groupRowids(marker, pending), int(batch))
 		if err != nil {
 			return rows, false, fmt.Errorf("sync: backfill %s: %w", group.Key, err)
 		}
@@ -224,6 +232,20 @@ func backfillGroup(ctx context.Context, kv db.KV, capture *db.CaptureConn, marke
 			return rows, false, err
 		}
 	}
+}
+
+// pendingGroup is the group without the tables the marker says were walked to
+// their end, in the group's own order, so a call over it touches only the tables
+// that still have rows to record.
+func pendingGroup(marker *backfillMarker, group db.CaptureGroup) db.CaptureGroup {
+	pending := db.CaptureGroup{Key: group.Key}
+	for _, table := range group.Tables {
+		if marker.Tables[table].Done {
+			continue
+		}
+		pending.Tables = append(pending.Tables, table)
+	}
+	return pending
 }
 
 // groupRowids is where each table of the group resumes: the marker's rowid, or
@@ -290,6 +312,15 @@ func storeGroupProgress(marker *backfillMarker, group db.CaptureGroup, res db.Gr
 			continue
 		}
 		progress := marker.Tables[table]
+		// A call that took no rows reports the end of the table with the zero
+		// value as its rowid, because there was no last row to put one after.
+		// Storing that would move a finished table's resume point back to its
+		// first row, which is what a walk that never converges looks like.
+		if pass.Done && pass.NextRowID == 0 && progress.At > 0 {
+			progress.Done = true
+			marker.Tables[table] = progress
+			continue
+		}
 		progress.At = pass.NextRowID
 		if pass.Done {
 			progress.Done = true
