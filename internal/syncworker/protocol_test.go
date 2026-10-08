@@ -131,6 +131,11 @@ func responseWireCases() []wireCase {
 			wire:  `{"id":"3","ok":false,"error":"no hello yet"}`,
 		},
 		{
+			name:  "response carrying a marked refusal",
+			value: Response{ID: "3", OK: false, Error: "not a relevo sync log", Code: CodeRemote},
+			wire:  `{"id":"3","ok":false,"error":"not a relevo sync log","code":"remote"}`,
+		},
+		{
 			name: "response carrying a head page",
 			value: Response{ID: "4", OK: true, Head: []HeadRow{
 				{Tbl: "task", PK: `["t-1"]`, Seq: 7, Hash: "abc123"},

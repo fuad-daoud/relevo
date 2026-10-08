@@ -171,18 +171,160 @@ func TestCancelledWorkerIsRestartedNeverReused(t *testing.T) {
 	}
 }
 
+// TestCancelInterruptsACallInFlight pins the stop a cancel gives a call that is
+// already running: it returns without waiting the call out, the interrupted
+// call comes back, and the next call starts a fresh process rather than the one
+// the cancel killed.
+func TestCancelInterruptsACallInFlight(t *testing.T) {
+	cfg := fakeWorkerCfg(modeHangOnce)
+	cfg.Timeout = 10 * time.Second
+	s := newSupervisor(t, cfg, breakerOver(newMemKV()))
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.Stats()
+		done <- err
+	}()
+
+	first := waitForWorker(t, s)
+
+	start := time.Now()
+	s.Cancel()
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Errorf("Cancel took %s while a call was in flight, want it not to wait for the call", elapsed)
+	}
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("the cancelled call came back as a success")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the cancelled call did not come back")
+	}
+	if s.current() != nil {
+		t.Error("Cancel left a worker to reuse")
+	}
+
+	if _, err := s.Head("origin-a"); err != nil {
+		t.Fatalf("the call after a cancel: %v", err)
+	}
+	if second := s.current().cmd.Process.Pid; first == second {
+		t.Errorf("the call after a cancel reused worker %d, want a fresh process", first)
+	}
+}
+
+// waitForWorker returns the pid of the worker a call is running on, and fails
+// when the supervisor starts none within the grace.
+func waitForWorker(t *testing.T, s *Supervisor) int {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if c := s.current(); c != nil && c.cmd.Process != nil {
+			return c.cmd.Process.Pid
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("the supervisor started no worker for the call")
+	return 0
+}
+
 // TestSupervisorRefusalIsNotADeath pins that a worker which answers and declines
-// is healthy: the refusal travels back and the breaker stays unlatched, because
-// counting it would latch a machine whose remote is working.
+// with no class is healthy: the refusal travels back and the breaker stays
+// unlatched, because counting it would latch a machine whose remote is working.
 func TestSupervisorRefusalIsNotADeath(t *testing.T) {
 	b := breakerOver(newMemKV())
-	s := newSupervisor(t, fakeWorkerCfg(modeRefuse), b)
+	s := newSupervisor(t, fakeWorkerCfg(modeRefuseTransient), b)
 
 	if _, err := s.Stats(); !errors.Is(err, ErrRefused) {
 		t.Fatalf("Stats over a refusing worker = %v, want the refusal", err)
 	}
 	if got, _ := b.Deaths(); got != 0 {
 		t.Errorf("deaths = %d, want a refusal left uncounted", got)
+	}
+	if latched, _ := b.Latched(); latched {
+		t.Error("a refusal a later attempt can get past latched the machine")
+	}
+}
+
+// TestSupervisorLatchesOnAPermanentRefusal pins the pipe's permanent-refusal
+// path end to end: the worker's marked class reaches the breaker as the
+// sentinel it names, which latches with the fixed cause and the sync:err token
+// instead of waiting out three deaths it can already predict.
+func TestSupervisorLatchesOnAPermanentRefusal(t *testing.T) {
+	kv := newMemKV()
+	if err := kv.KVPut(relevosync.KeyEnabled, []byte("true")); err != nil {
+		t.Fatalf("enable the machine: %v", err)
+	}
+	b := breakerOver(kv)
+	s := newSupervisor(t, fakeWorkerCfg(modeRefuseVerbs), b)
+
+	if _, err := s.Stats(); !errors.Is(err, relevosync.ErrRemoteRefused) {
+		t.Fatalf("Stats = %v, want the permanent sentinel", err)
+	}
+	if latched, _ := b.Latched(); !latched {
+		t.Fatal("a permanent refusal did not latch the machine")
+	}
+	if got, _ := b.Deaths(); got != 0 {
+		t.Errorf("deaths = %d, want the refusal latched instead of counted", got)
+	}
+	want := "sync: the remote refused this machine's sync log"
+	if cause, _ := b.LatchCause(); cause != want {
+		t.Errorf("latch cause = %q, want %q", cause, want)
+	}
+	if tok, _ := relevosync.StatusToken(kv); tok != relevosync.TokenErr {
+		t.Errorf("token = %q, want %q", tok, relevosync.TokenErr)
+	}
+}
+
+// TestSupervisorLatchesOnARefusedHandshake pins the case where the refusal
+// meets the worker at its first call: a handshake the remote refuses
+// permanently latches the same way a refused verb does, with no death counted.
+func TestSupervisorLatchesOnARefusedHandshake(t *testing.T) {
+	b := breakerOver(newMemKV())
+	s := newSupervisor(t, fakeWorkerCfg(modeRefuse), b)
+
+	if _, err := s.Stats(); !errors.Is(err, relevosync.ErrRemoteRefused) {
+		t.Fatalf("Stats over a refused handshake = %v, want the permanent sentinel", err)
+	}
+	if latched, _ := b.Latched(); !latched {
+		t.Error("a handshake refused permanently did not latch the machine")
+	}
+	if got, _ := b.Deaths(); got != 0 {
+		t.Errorf("deaths = %d, want none", got)
+	}
+}
+
+// TestSupervisorLatchesOnEveryVerbRefusedPermanently pins that the latch does
+// not depend on which verb met the refusal: every call the pipe carries is
+// declined the same way and reaches the same latch.
+func TestSupervisorLatchesOnEveryVerbRefusedPermanently(t *testing.T) {
+	calls := map[string]func(*Supervisor) error{
+		"export": func(s *Supervisor) error {
+			_, err := s.Append([]synclog.Entry{{
+				Origin: "origin-a", Table: "task", PK: `["t"]`, Op: synclog.OpUpsert,
+				SchemaVersion: 3, Body: []byte(`{"title":"mine"}`), At: pinnedAt,
+			}})
+			return err
+		},
+		"pull":  func(s *Supervisor) error { _, err := s.Pull(nil); return err },
+		"head":  func(s *Supervisor) error { _, err := s.Head("origin-a"); return err },
+		"stats": func(s *Supervisor) error { _, err := s.Stats(); return err },
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			b := breakerOver(newMemKV())
+			s := newSupervisor(t, fakeWorkerCfg(modeRefuseVerbs), b)
+
+			if err := call(s); !errors.Is(err, relevosync.ErrRemoteRefused) {
+				t.Fatalf("%s = %v, want the permanent sentinel", name, err)
+			}
+			if latched, _ := b.Latched(); !latched {
+				t.Errorf("%s did not latch the machine", name)
+			}
+			if got, _ := b.Deaths(); got != 0 {
+				t.Errorf("deaths = %d, want none", got)
+			}
+		})
 	}
 }
 
@@ -253,7 +395,7 @@ func TestSupervisorReportsAccountingFailures(t *testing.T) {
 			s := newSupervisor(t, fakeWorkerCfg(tc.mode), breakerOver(tc.kv))
 			var err error
 			if tc.settle != nil {
-				err = s.settle(tc.settle)
+				err = s.settle(nil, tc.settle)
 			} else {
 				_, err = s.Stats()
 			}

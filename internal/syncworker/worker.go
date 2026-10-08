@@ -221,7 +221,8 @@ func checkEntry(e Entry) error {
 
 // refuse turns an error into the reply that carries it. The daemon reads the
 // reason off the pipe rather than out of the worker's stderr, which is the
-// daemon's log and is not a channel it reads back.
+// daemon's log and is not a channel it reads back. The class travels beside the
+// reason so a refusal that will repeat is acted on without parsing its words.
 func refuse(req Request, err error) Response {
-	return Response{ID: req.ID, OK: false, Error: err.Error()}
+	return Response{ID: req.ID, OK: false, Error: err.Error(), Code: RefusalCodeOf(err)}
 }

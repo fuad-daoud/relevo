@@ -16,8 +16,10 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 	"github.com/fuad-daoud/relevo/internal/syncworker"
 )
@@ -33,6 +35,12 @@ var (
 	// and counting it as a death would latch a breaker over a remote that is
 	// answering perfectly well.
 	ErrRefused = errors.New("the sync worker refused")
+
+	// errCancelled is a call a deliberate Cancel stopped. It is its own error
+	// because a stopped call is not a fault: the supervisor clears the in-call
+	// marker and leaves the death count alone, so a machine somebody stopped by
+	// hand is not backed off as if its worker had died.
+	errCancelled = errors.New("the call was cancelled")
 )
 
 // defaultTimeout bounds one call. It is long enough for a driver to push or
@@ -112,6 +120,9 @@ type Client struct {
 	waitErr  chan error
 	finished chan struct{}
 	nextID   int
+	// cancelled says a Cancel stopped this client, so a call it was in the
+	// middle of is released as a deliberate stop rather than counted as a miss.
+	cancelled atomic.Bool
 }
 
 // The client is the daemon's transport over the pipe. Naming it here means a
@@ -265,6 +276,9 @@ func (c *Client) call(req syncworker.Request) (syncworker.Response, error) {
 // while holding it.
 func (c *Client) callLocked(req syncworker.Request) (syncworker.Response, error) {
 	if c.isGone() {
+		if c.cancelled.Load() {
+			return syncworker.Response{}, fmt.Errorf("syncpipe: %w", errCancelled)
+		}
 		return syncworker.Response{}, c.gone()
 	}
 	c.nextID++
@@ -275,12 +289,12 @@ func (c *Client) callLocked(req syncworker.Request) (syncworker.Response, error)
 		return syncworker.Response{}, fmt.Errorf("syncpipe: marshal %s: %w", req.Verb, err)
 	}
 	if _, err := c.requests.Write(append(line, '\n')); err != nil {
-		return syncworker.Response{}, c.miss(fmt.Errorf("write %s: %w", req.Verb, err))
+		return syncworker.Response{}, c.fail(fmt.Errorf("write %s: %w", req.Verb, err))
 	}
 
 	resp, err := c.readReply()
 	if err != nil {
-		return syncworker.Response{}, c.miss(err)
+		return syncworker.Response{}, c.fail(err)
 	}
 	// The id is what makes a reply this request's. A reply that names another
 	// one means the pipe is out of step, and every later reply would be read
@@ -290,9 +304,25 @@ func (c *Client) callLocked(req syncworker.Request) (syncworker.Response, error)
 			"reply %s answers request %s", resp.ID, req.ID))
 	}
 	if !resp.OK {
-		return resp, fmt.Errorf("%w: %s", ErrRefused, resp.Error)
+		return resp, refusalError(resp)
 	}
 	return resp, nil
+}
+
+// refusalError is the error a reply the worker declined becomes: the worker's
+// own reason under ErrRefused, and the daemon's sentinel for the class the
+// worker marked. A refusal with no class stays a refusal alone, which the
+// breaker leaves to the ordinary call path rather than latching on.
+func refusalError(resp syncworker.Response) error {
+	refused := fmt.Errorf("%w: %s", ErrRefused, resp.Error)
+	switch resp.Code {
+	case syncworker.CodeSchema:
+		return fmt.Errorf("%w: %w", refused, relevosync.ErrRemoteSchema)
+	case syncworker.CodeRemote:
+		return fmt.Errorf("%w: %w", refused, relevosync.ErrRemoteRefused)
+	default:
+		return refused
+	}
 }
 
 // readReply reads one reply line, giving up after the timeout.
@@ -330,6 +360,25 @@ func (c *Client) readReply() (syncworker.Response, error) {
 	case <-timer.C:
 		return syncworker.Response{}, fmt.Errorf("no reply within %s", c.cfg.Timeout)
 	}
+}
+
+// fail reports a call that did not come back. A call this client was cancelled
+// during is named as such, so the supervisor drops the worker without counting
+// a death; every other failure is the miss it was.
+func (c *Client) fail(cause error) error {
+	if c.cancelled.Load() {
+		return fmt.Errorf("syncpipe: %w", errCancelled)
+	}
+	return c.miss(cause)
+}
+
+// cancel stops the worker this client drives without taking the call lock, so a
+// caller waiting on a call in flight is released rather than made to wait the
+// call out. The lock is what a call holds for its whole life, so taking it here
+// would be the wait itself.
+func (c *Client) cancel() {
+	c.cancelled.Store(true)
+	c.kill()
 }
 
 // miss ends the worker and reports why, so the breaker can count this call. The

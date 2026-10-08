@@ -96,6 +96,11 @@ type Response struct {
 	OK bool `json:"ok"`
 	// Error is the refusal's own words, and empty on success.
 	Error string `json:"error,omitempty"`
+	// Code is the class of a refusal the worker answered with, and empty on
+	// success and on a refusal a later attempt can still get past. The daemon
+	// reads the class rather than the reason's words, so a remote's own text
+	// never decides how a refusal is classified.
+	Code RefusalCode `json:"code,omitempty"`
 	// Entries is what an export numbered, a pull read, or a head read and did
 	// not fit the fields below.
 	Entries []Entry `json:"entries,omitempty"`
@@ -104,6 +109,65 @@ type Response struct {
 	// Stats is what the log holds, on stats alone.
 	Stats *Stats `json:"stats,omitempty"`
 }
+
+// RefusalCode is the class of a refusal the worker answered with. It is the
+// worker's own vocabulary: the daemon maps each class to a sentinel of its own,
+// so a refusal crosses the pipe as a word this package chose rather than as
+// anything the remote said.
+type RefusalCode string
+
+const (
+	// CodeRemote is a remote that refused this machine's work in a way a later
+	// attempt cannot get past: the remote is not this log, or it refused the
+	// statement itself.
+	CodeRemote RefusalCode = "remote"
+	// CodeSchema is a remote that has no table for this machine's rows. It is
+	// its own class because its fix is the schema rather than a re-recorded
+	// row.
+	CodeSchema RefusalCode = "schema"
+)
+
+// RefusalError is an error a backend marked with the class of refusal it is, so
+// a refusal that will repeat carries that fact to the daemon instead of being
+// read as a transient fault.
+type RefusalError interface {
+	error
+	// RefusalCode is the class the worker puts on the wire.
+	RefusalCode() RefusalCode
+}
+
+// MarkRefusal returns err marked with the class of refusal it is. An empty
+// class leaves the error alone, and an unmarked refusal is one the daemon reads
+// as a fault a later attempt can still get past.
+func MarkRefusal(code RefusalCode, err error) error {
+	if code == "" {
+		return err
+	}
+	return &markedRefusal{code: code, err: err}
+}
+
+// RefusalCodeOf returns the class err was marked with, and empty when it
+// carries none.
+func RefusalCodeOf(err error) RefusalCode {
+	var marked RefusalError
+	if errors.As(err, &marked) {
+		return marked.RefusalCode()
+	}
+	return ""
+}
+
+// markedRefusal is err carrying the class a backend marked it with. The reason
+// stays the same error, so the refusal's own words cross the pipe verbatim.
+type markedRefusal struct {
+	code RefusalCode
+	err  error
+}
+
+func (m *markedRefusal) Error() string { return m.err.Error() }
+
+func (m *markedRefusal) Unwrap() error { return m.err }
+
+func (m *markedRefusal) RefusalCode() RefusalCode { return m.code }
 
 // Entry is one log entry as it travels the pipe. Its JSON names are the remote
 // table's own columns, so what crosses the pipe is what the log stores and a

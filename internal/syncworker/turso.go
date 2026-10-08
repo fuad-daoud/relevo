@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -149,7 +150,7 @@ func (b *TursoBackend) createLog(ctx context.Context) error {
 		return fmt.Errorf("syncworker: create the log: %w", err)
 	}
 	if err := b.driver.Push(ctx); err != nil {
-		return fmt.Errorf("syncworker: push the new log: %w", err)
+		return fmt.Errorf("syncworker: push the new log: %w", markDriverRefusal(err))
 	}
 	return nil
 }
@@ -181,7 +182,7 @@ func (b *TursoBackend) Append(entries []Entry) ([]Entry, error) {
 		return nil, err
 	}
 	if err := b.driver.Push(ctx); err != nil {
-		return nil, fmt.Errorf("syncworker: push: %w", err)
+		return nil, fmt.Errorf("syncworker: push: %w", markDriverRefusal(err))
 	}
 	return written, nil
 }
@@ -270,7 +271,7 @@ func (b *TursoBackend) Pull(marks map[string]int) ([]Entry, error) {
 	}
 	ctx := context.Background()
 	if err := b.driver.Pull(ctx); err != nil {
-		return nil, fmt.Errorf("syncworker: pull: %w", err)
+		return nil, fmt.Errorf("syncworker: pull: %w", markDriverRefusal(err))
 	}
 	entries, err := b.readEntries(ctx, marks)
 	if err != nil {
@@ -379,7 +380,7 @@ func (b *TursoBackend) Stats() (Stats, error) {
 	}
 	ctx := context.Background()
 	if err := b.driver.Stats(ctx); err != nil {
-		return Stats{}, fmt.Errorf("syncworker: driver stats: %w", err)
+		return Stats{}, fmt.Errorf("syncworker: driver stats: %w", markDriverRefusal(err))
 	}
 	var s Stats
 	if err := b.db.QueryRowContext(ctx,
@@ -475,8 +476,34 @@ func readFormat(ctx context.Context, db *sql.DB) (string, error) {
 // errNotALog is the refusal a remote that is not this log gets. It names the URL
 // because the operator's next move is to check which database the machine is
 // pointed at, and a refusal that did not would send them elsewhere to find out.
+// Every later attempt meets the same remote, so the class says so.
 func errNotALog(url string) error {
-	return fmt.Errorf("sync: refusing remote %s: it is not a relevo sync log", url)
+	return MarkRefusal(CodeRemote,
+		fmt.Errorf("sync: refusing remote %s: it is not a relevo sync log", url))
+}
+
+// The shape the engine's own refusal takes: the call failed to execute SQL, and
+// -- when this machine's table is the one missing -- which table it was. The
+// worker matches the shape itself rather than sharing internal/sync's
+// classifier, because the class is a word this package owns and the worker may
+// not reach that package's database.
+const (
+	remoteRefusalMarker = "failed to execute sql"
+	remoteMissingTable  = "no such table"
+)
+
+// markDriverRefusal returns err marked with the class of remote refusal it is,
+// and every other error unchanged. A missing table is its own class because its
+// fix is the schema; any other refused statement repeats until the change set
+// changes, and both meet the same remote on every later attempt.
+func markDriverRefusal(err error) error {
+	if !strings.Contains(err.Error(), remoteRefusalMarker) {
+		return err
+	}
+	if strings.Contains(err.Error(), remoteMissingTable) {
+		return MarkRefusal(CodeSchema, err)
+	}
+	return MarkRefusal(CodeRemote, err)
 }
 
 // bodyHash is the digest head carries for a row: the sha256 of the body's

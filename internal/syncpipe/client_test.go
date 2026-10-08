@@ -7,9 +7,11 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 	"github.com/fuad-daoud/relevo/internal/syncworker"
 )
@@ -24,12 +26,24 @@ const (
 	// modeHang answers the handshake and then never answers again, which is what
 	// a driver wedged inside a call looks like from the daemon's side.
 	modeHang = "hang"
+	// modeHangOnce answers the handshake and never answers its first stats
+	// call, then answers everything else. A worker started after that one is a
+	// new process whose first stats call is still to come, so it answers, which
+	// is how a fresh process is told from a reused one.
+	modeHangOnce = "hang-once"
 	// modeDie answers the handshake and exits, which is what a driver abort
 	// looks like from the daemon's side.
 	modeDie = "die"
-	// modeRefuse answers every verb with a refusal, which is what a remote
-	// refusing the log looks like from the daemon's side.
+	// modeRefuse refuses the handshake with a class that repeats, which is what
+	// a remote that is not a relevo log looks like from the daemon's side.
 	modeRefuse = "refuse"
+	// modeRefuseVerbs answers the handshake and then refuses every verb with a
+	// class that repeats, which is a remote that accepted the pipe and then
+	// refused the log.
+	modeRefuseVerbs = "refuse-verbs"
+	// modeRefuseTransient answers the handshake and then refuses every verb
+	// with no class, which is a refusal a later attempt can still get past.
+	modeRefuseTransient = "refuse-transient"
 	// modeWrongID answers the handshake for a request that is not the one it
 	// read, which is what a crossed pipe looks like from the daemon's side.
 	modeWrongID = "wrong-id"
@@ -67,6 +81,11 @@ func runFakeWorker(mode string) int {
 		for {
 			time.Sleep(time.Hour)
 		}
+	case modeHangOnce:
+		if err := syncworker.Serve(os.Stdin, os.Stdout, &hangOnceBackend{}); err != nil {
+			return 1
+		}
+		return 0
 	case modeDie:
 		if !answerHandshake(sameID) {
 			return 1
@@ -86,7 +105,17 @@ func runFakeWorker(mode string) int {
 	case modeStaleID:
 		return serveStaleID()
 	case modeRefuse:
-		if err := syncworker.Serve(os.Stdin, os.Stdout, refusingBackend{}); err != nil {
+		if err := syncworker.Serve(os.Stdin, os.Stdout, refusingBackend{code: syncworker.CodeRemote}); err != nil {
+			return 1
+		}
+		return 0
+	case modeRefuseVerbs:
+		if err := syncworker.Serve(os.Stdin, os.Stdout, verbsRefusingBackend{code: syncworker.CodeRemote}); err != nil {
+			return 1
+		}
+		return 0
+	case modeRefuseTransient:
+		if err := syncworker.Serve(os.Stdin, os.Stdout, verbsRefusingBackend{}); err != nil {
 			return 1
 		}
 		return 0
@@ -193,31 +222,84 @@ func (normalBackend) Stats() (syncworker.Stats, error) {
 
 func (normalBackend) Close() error { return nil }
 
-// refusingBackend opens nothing and refuses everything, in the words a remote
-// would use. The reason is what a caller acts on, so it is the thing pinned.
-type refusingBackend struct{}
-
+// errRemoteRefused is the reason a refused remote carries, in the words a
+// remote would use. The reason is what a caller acts on, so it is the thing
+// pinned; the class beside it is what the daemon classifies on.
 var errRemoteRefused = errors.New("remote refused: that database is not a relevo log")
 
-func (refusingBackend) Open(syncworker.Spec) error { return errRemoteRefused }
+// refusingBackend refuses every verb, the handshake included, with the class it
+// carries. An empty class is a refusal a later attempt can still get past; a
+// non-empty one is a refusal that repeats.
+type refusingBackend struct{ code syncworker.RefusalCode }
 
-func (refusingBackend) Append([]syncworker.Entry) ([]syncworker.Entry, error) {
-	return nil, errRemoteRefused
+func (r refusingBackend) fail() error { return syncworker.MarkRefusal(r.code, errRemoteRefused) }
+
+func (r refusingBackend) Open(syncworker.Spec) error { return r.fail() }
+
+func (r refusingBackend) Append([]syncworker.Entry) ([]syncworker.Entry, error) {
+	return nil, r.fail()
 }
 
-func (refusingBackend) Pull(map[string]int) ([]syncworker.Entry, error) {
-	return nil, errRemoteRefused
+func (r refusingBackend) Pull(map[string]int) ([]syncworker.Entry, error) {
+	return nil, r.fail()
 }
 
-func (refusingBackend) Head(string, string, int) ([]syncworker.HeadRow, error) {
-	return nil, errRemoteRefused
+func (r refusingBackend) Head(string, string, int) ([]syncworker.HeadRow, error) {
+	return nil, r.fail()
 }
 
-func (refusingBackend) Stats() (syncworker.Stats, error) {
-	return syncworker.Stats{}, errRemoteRefused
+func (r refusingBackend) Stats() (syncworker.Stats, error) {
+	return syncworker.Stats{}, r.fail()
 }
 
-func (refusingBackend) Close() error { return nil }
+func (r refusingBackend) Close() error { return nil }
+
+// verbsRefusingBackend answers the handshake and then refuses every verb with
+// the class it carries, which is what a remote that accepted the pipe and then
+// refused the log looks like from the daemon's side.
+type verbsRefusingBackend struct{ code syncworker.RefusalCode }
+
+func (verbsRefusingBackend) Open(syncworker.Spec) error { return nil }
+
+func (r verbsRefusingBackend) fail() error { return syncworker.MarkRefusal(r.code, errRemoteRefused) }
+
+func (r verbsRefusingBackend) Append([]syncworker.Entry) ([]syncworker.Entry, error) {
+	return nil, r.fail()
+}
+
+func (r verbsRefusingBackend) Pull(map[string]int) ([]syncworker.Entry, error) {
+	return nil, r.fail()
+}
+
+func (r verbsRefusingBackend) Head(string, string, int) ([]syncworker.HeadRow, error) {
+	return nil, r.fail()
+}
+
+func (r verbsRefusingBackend) Stats() (syncworker.Stats, error) {
+	return syncworker.Stats{}, r.fail()
+}
+
+func (r verbsRefusingBackend) Close() error { return nil }
+
+// hangOnceBackend answers everything but its first stats call, which it never
+// answers. A worker started after a cancel is a new process with its own first
+// call, so it answers, which is how a fresh process is told from a reused one.
+type hangOnceBackend struct {
+	normalBackend
+	mu   sync.Mutex
+	hung bool
+}
+
+func (b *hangOnceBackend) Stats() (syncworker.Stats, error) {
+	b.mu.Lock()
+	first := !b.hung
+	b.hung = true
+	b.mu.Unlock()
+	if first {
+		time.Sleep(time.Hour)
+	}
+	return b.normalBackend.Stats()
+}
 
 // handshake is what every test starts a worker with: an origin, a remote and a
 // token that reaches the worker over the pipe and nowhere else.
@@ -404,6 +486,45 @@ func TestFakeWorkerRefusalSurfacesTheCause(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not a relevo log") {
 		t.Errorf("Start = %v, want the refusal's own reason", err)
+	}
+	if !relevosync.IsPermanentRefusal(err) {
+		t.Errorf("Start = %v, want a refusal the breaker can latch on rather than retry", err)
+	}
+}
+
+// TestRefusalErrorCarriesTheClassSentinel pins what a declined reply becomes:
+// the worker's reason under ErrRefused, and the daemon's sentinel for the class
+// the worker marked. A refusal with no class stays a refusal alone, which the
+// breaker leaves to the ordinary call path rather than latching on.
+func TestRefusalErrorCarriesTheClassSentinel(t *testing.T) {
+	cases := map[string]struct {
+		code      syncworker.RefusalCode
+		want      error
+		permanent bool
+	}{
+		"a remote refusal": {
+			code: syncworker.CodeRemote, want: relevosync.ErrRemoteRefused, permanent: true,
+		},
+		"a schema refusal": {
+			code: syncworker.CodeSchema, want: relevosync.ErrRemoteSchema, permanent: true,
+		},
+		"a refusal a later attempt can get past": {
+			code: "", want: nil, permanent: false,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := refusalError(syncworker.Response{OK: false, Error: "the worker refused", Code: tc.code})
+			if !errors.Is(err, ErrRefused) {
+				t.Fatalf("err = %v, want errors.Is(err, ErrRefused)", err)
+			}
+			if tc.want != nil && !errors.Is(err, tc.want) {
+				t.Errorf("err = %v, want errors.Is(err, %v)", err, tc.want)
+			}
+			if got := relevosync.IsPermanentRefusal(err); got != tc.permanent {
+				t.Errorf("IsPermanentRefusal = %v, want %v", got, tc.permanent)
+			}
+		})
 	}
 }
 

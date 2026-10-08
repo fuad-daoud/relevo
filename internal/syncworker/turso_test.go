@@ -275,6 +275,9 @@ func TestWorkerRefusesARemoteThatIsNotALog(t *testing.T) {
 			if resp.OK {
 				t.Fatalf("hello = %+v, want a refusal", resp)
 			}
+			if resp.Code != CodeRemote {
+				t.Errorf("code = %q, want %q: the refusal repeats on every attempt", resp.Code, CodeRemote)
+			}
 			if !strings.Contains(resp.Error, "libsql://remote.example") {
 				t.Errorf("refusal %q does not name the remote", resp.Error)
 			}
@@ -811,6 +814,9 @@ func TestWorkerCarriesEveryBackendRefusal(t *testing.T) {
 		resp := w.ask(req)
 		if resp.OK || !strings.Contains(resp.Error, "backend refused") {
 			t.Errorf("%s = %+v, want the backend's refusal", req.Verb, resp)
+		}
+		if resp.Code != "" {
+			t.Errorf("%s carried code %q, want none: the backend marked no class", req.Verb, resp.Code)
 		}
 	}
 }

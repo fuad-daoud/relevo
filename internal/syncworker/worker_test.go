@@ -479,6 +479,89 @@ func TestWorkerCarriesABackendRefusalVerbatim(t *testing.T) {
 	}
 }
 
+// TestWorkerMarksOnlyARefusalThatRepeats pins the class the worker puts on a
+// refusal: a backend that marks one as repeating travels with its class, and a
+// refusal with no class stays unmarked, which is what leaves it to the ordinary
+// call path rather than a latch.
+func TestWorkerMarksOnlyARefusalThatRepeats(t *testing.T) {
+	cases := map[string]struct {
+		fail error
+		want RefusalCode
+	}{
+		"a refusal that repeats": {
+			fail: MarkRefusal(CodeRemote, errors.New("remote refused: not a relevo log")),
+			want: CodeRemote,
+		},
+		"a schema refusal that repeats": {
+			fail: MarkRefusal(CodeSchema, errors.New("the remote has no table")),
+			want: CodeSchema,
+		},
+		"a refusal a later attempt can get past": {
+			fail: errors.New("another origin's entry"),
+			want: "",
+		},
+		"a refusal marked with no class": {
+			fail: MarkRefusal("", errors.New("another origin's entry")),
+			want: "",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			w := startWorker(t, refusingBackend{fail: tc.fail})
+			w.askHello()
+			resp := w.ask(Request{ID: "1", Verb: VerbStats})
+			if resp.OK {
+				t.Fatalf("stats = %+v, want a refusal", resp)
+			}
+			if resp.Code != tc.want {
+				t.Errorf("code = %q, want %q", resp.Code, tc.want)
+			}
+		})
+	}
+}
+
+// TestWorkerMarksADriverRefusalItCannotGetPast pins the class the worker puts
+// on the engine's own refusal: a statement the remote will not execute repeats
+// until the change set changes, and a missing table keeps its own class because
+// its fix is the schema. A remote merely unreachable stays unmarked, so it is
+// left to the ordinary call path.
+func TestWorkerMarksADriverRefusalItCannotGetPast(t *testing.T) {
+	cases := map[string]struct {
+		push error
+		want RefusalCode
+	}{
+		"a missing table": {
+			push: errors.New("sync engine: failed to execute sql: no such table: log"),
+			want: CodeSchema,
+		},
+		"another refusal of the statement": {
+			push: errors.New("sync engine: failed to execute sql: FOREIGN KEY constraint failed"),
+			want: CodeRemote,
+		},
+		"a remote that cannot be reached": {
+			push: errors.New("no remote"),
+			want: "",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			driver := &localDriver{path: tempReplica(t)}
+			b := backendFor(t, driver, "origin-a")
+			driver.pushErr = tc.push
+			w := startWorker(t, b)
+			w.askHello()
+			resp := w.ask(Request{ID: "1", Verb: VerbExport,
+				Entries: []Entry{upsertEntry("origin-a", "board", `["b"]`, `{"title":"one"}`)}})
+			if resp.OK {
+				t.Fatalf("export = %+v, want a refusal", resp)
+			}
+			if resp.Code != tc.want {
+				t.Errorf("code = %q, want %q", resp.Code, tc.want)
+			}
+		})
+	}
+}
+
 // TestWorkerClosesTheBackendWhenThePipeEnds pins the lifecycle the daemon
 // depends on: the pipe ending is the daemon going away, and a replica still
 // open is the next worker locked out of it.

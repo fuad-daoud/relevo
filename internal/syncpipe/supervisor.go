@@ -22,8 +22,13 @@ type Supervisor struct {
 	cfg     Config
 	breaker *relevosync.Breaker
 
-	mu     sync.Mutex
-	client *Client
+	// mu serializes calls: one call runs at a time because the pipe carries one
+	// request at a time.
+	mu sync.Mutex
+	// clientMu guards client, and is separate from mu so Cancel can reach the
+	// worker a call is blocked on without waiting that call out.
+	clientMu sync.Mutex
+	client   *Client
 }
 
 // NewSupervisor returns a supervisor that starts workers from cfg and keeps
@@ -88,13 +93,18 @@ func (s *Supervisor) Stats() (synclog.Stats, error) {
 	return out, err
 }
 
-// Cancel stops the current worker and keeps nothing to reuse. A cancelled call
-// is a deliberate stop, not a fault, so it is not counted; the next call starts
-// a fresh process rather than driving a pipe whose other end is gone.
+// Cancel stops the current worker and keeps nothing to reuse. It does not take
+// the call lock, so a cancel issued while a call is in flight returns at once:
+// the kill releases that call, which settles once on the deliberate-stop path
+// and is not counted as a death. The next call starts a fresh process rather
+// than driving a pipe whose other end is gone.
 func (s *Supervisor) Cancel() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.drop()
+	c := s.current()
+	if c == nil {
+		return
+	}
+	s.forget(c)
+	c.cancel()
 }
 
 // Close stops the worker for good. It is what the daemon runs on shutdown and
@@ -102,12 +112,7 @@ func (s *Supervisor) Cancel() {
 func (s *Supervisor) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.client == nil {
-		return nil
-	}
-	err := s.client.Close()
-	s.client = nil
-	return err
+	return s.drop()
 }
 
 // drive runs one call through the current worker under the breaker's
@@ -119,28 +124,30 @@ func (s *Supervisor) drive(verb string, fn func(*Client) error) error {
 	}
 	c, err := s.worker()
 	if err != nil {
-		return s.settle(err)
+		return s.settle(nil, err)
 	}
-	return s.settle(fn(c))
+	return s.settle(c, fn(c))
 }
 
 // worker returns the running worker, starting one if none is open.
 func (s *Supervisor) worker() (*Client, error) {
-	if s.client != nil {
-		return s.client, nil
+	if c := s.current(); c != nil {
+		return c, nil
 	}
 	c, err := Start(s.cfg)
 	if err != nil {
 		return nil, err
 	}
-	s.client = c
+	s.install(c)
 	return c, nil
 }
 
 // settle records what the call did. A reply -- success or refusal -- clears the
 // in-call marker and keeps the worker; a call that did not come back drops the
-// worker and counts the death the marker names.
-func (s *Supervisor) settle(err error) error {
+// worker and counts the death the marker names. A call stopped by Cancel is the
+// one deliberate stop: it clears the marker so the next start does not count it,
+// and leaves the death count alone.
+func (s *Supervisor) settle(c *Client, err error) error {
 	switch {
 	case err == nil:
 		if eerr := s.breaker.End(); eerr != nil {
@@ -155,8 +162,14 @@ func (s *Supervisor) settle(err error) error {
 			return errors.Join(err, rerr)
 		}
 		return err
+	case errors.Is(err, errCancelled):
+		s.forget(c)
+		if eerr := s.breaker.End(); eerr != nil {
+			return errors.Join(err, eerr)
+		}
+		return err
 	default:
-		s.client = nil
+		s.forget(c)
 		if oerr := s.breaker.Observe(); oerr != nil {
 			return errors.Join(err, oerr)
 		}
@@ -164,10 +177,38 @@ func (s *Supervisor) settle(err error) error {
 	}
 }
 
-// drop kills the current worker and forgets it.
-func (s *Supervisor) drop() {
-	if s.client != nil {
-		_ = s.client.Close()
+// current returns the worker a call would use, without waiting for one in
+// flight: Cancel reaches a blocked call's worker this way instead of through mu.
+func (s *Supervisor) current() *Client {
+	s.clientMu.Lock()
+	defer s.clientMu.Unlock()
+	return s.client
+}
+
+// install makes c the worker calls use.
+func (s *Supervisor) install(c *Client) {
+	s.clientMu.Lock()
+	s.client = c
+	s.clientMu.Unlock()
+}
+
+// forget drops c as the worker calls use, leaving any other worker in place.
+func (s *Supervisor) forget(c *Client) {
+	s.clientMu.Lock()
+	if s.client == c {
 		s.client = nil
 	}
+	s.clientMu.Unlock()
+}
+
+// drop stops the current worker for good and forgets it. The shutdown request
+// comes first so a worker that honours it exits cleanly; a worker a call holds
+// is reached by Cancel instead, which kills it without the call lock.
+func (s *Supervisor) drop() error {
+	c := s.current()
+	if c == nil {
+		return nil
+	}
+	s.forget(c)
+	return c.Close()
 }
