@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 )
 
 // Spec is what hello tells the worker, and the only way it ever learns what it
@@ -101,6 +102,31 @@ func (s *server) loop(r *bufio.Reader, w *bufio.Writer) error {
 	}
 }
 
+// verbHandlers is every request verb this pipe speaks, mapped to the method that
+// serves it. The set lives in one table so it is enumerable: the server
+// dispatches from it, and a caller that has to classify every verb can walk it
+// rather than keep a second list in step.
+var verbHandlers = map[Verb]func(*server, Request) Response{
+	VerbHello:    (*server).hello,
+	VerbExport:   (*server).export,
+	VerbPull:     (*server).pull,
+	VerbHead:     (*server).head,
+	VerbStats:    (*server).stats,
+	VerbShutdown: (*server).shutdown,
+}
+
+// Verbs returns every request verb this pipe speaks, sorted for a stable order.
+// It is derived from the dispatch table rather than written beside it, so a verb
+// the worker serves is always one this list names.
+func Verbs() []Verb {
+	out := make([]Verb, 0, len(verbHandlers))
+	for verb := range verbHandlers {
+		out = append(out, verb)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
 // dispatch answers one request. A verb it refuses is answered with a reply and
 // the pipe carries on: the daemon asked a question, and a question with an
 // answer it did not expect is not a broken pipe.
@@ -108,23 +134,15 @@ func (s *server) dispatch(req Request) Response {
 	if s.spec == nil && req.Verb != VerbHello {
 		return refuse(req, ErrNoHello)
 	}
-	switch req.Verb {
-	case VerbHello:
-		return s.hello(req)
-	case VerbExport:
-		return s.export(req)
-	case VerbPull:
-		return s.pull(req)
-	case VerbHead:
-		return s.head(req)
-	case VerbStats:
-		return s.stats(req)
-	case VerbShutdown:
-		return Response{ID: req.ID, OK: true}
-	default:
+	handle, ok := verbHandlers[req.Verb]
+	if !ok {
 		return refuse(req, fmt.Errorf("%w: verb %q", ErrProtocol, req.Verb))
 	}
+	return handle(s, req)
 }
+
+// shutdown ends the pipe after this reply, which the loop reads.
+func (s *server) shutdown(req Request) Response { return Response{ID: req.ID, OK: true} }
 
 // hello opens the backend for the rest of the pipe and takes the origin every
 // later request is checked against. A version the worker does not speak is

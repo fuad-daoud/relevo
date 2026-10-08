@@ -592,20 +592,37 @@ func waitForExit(t *testing.T, c *Client, grace time.Duration) bool {
 	return false
 }
 
-// TestCallBoundIsByKind pins the kind-to-bound map: every data verb gets the
-// transfer-sized bound and every control verb the short one. A data verb handed
-// the short bound again would time out a bootstrap or a pull the driver is
-// still transferring.
-func TestCallBoundIsByKind(t *testing.T) {
+// TestCallBoundClassifiesEveryProtocolVerb pins the kind-to-bound map against
+// the protocol's own verb set: every verb the pipe speaks has a bound, and the
+// data verbs keep the transfer-sized one. The walk is over syncworker.Verbs, so
+// a verb added to the protocol is covered here without a second list to keep in
+// step, and an unclassified verb fails rather than silently taking a default
+// bound. A data verb handed the short bound again would time out a bootstrap or
+// a pull the driver is still transferring.
+func TestCallBoundClassifiesEveryProtocolVerb(t *testing.T) {
+	for _, verb := range syncworker.Verbs() {
+		if _, err := callBound(verb); err != nil {
+			t.Errorf("callBound(%s) is unclassified: %v", verb, err)
+		}
+	}
 	for _, verb := range []syncworker.Verb{syncworker.VerbHello, syncworker.VerbExport, syncworker.VerbPull} {
-		if got := callBound(verb); got != dataCallTimeout {
-			t.Errorf("callBound(%s) = %s, want the data bound %s", verb, got, dataCallTimeout)
+		if got, err := callBound(verb); err != nil || got != dataCallTimeout {
+			t.Errorf("callBound(%s) = %s, %v; want the data bound %s", verb, got, err, dataCallTimeout)
 		}
 	}
 	for _, verb := range []syncworker.Verb{syncworker.VerbStats, syncworker.VerbHead, syncworker.VerbShutdown} {
-		if got := callBound(verb); got != controlCallTimeout {
-			t.Errorf("callBound(%s) = %s, want the control bound %s", verb, got, controlCallTimeout)
+		if got, err := callBound(verb); err != nil || got != controlCallTimeout {
+			t.Errorf("callBound(%s) = %s, %v; want the control bound %s", verb, got, err, controlCallTimeout)
 		}
+	}
+}
+
+// TestCallBoundRefusesAnUnclassifiedVerb pins the fail-closed default: a verb
+// the map does not name is refused rather than handed the control bound, so a
+// new data verb cannot silently get the short one.
+func TestCallBoundRefusesAnUnclassifiedVerb(t *testing.T) {
+	if got, err := callBound(syncworker.Verb("compact")); err == nil {
+		t.Errorf("callBound(compact) = %s, nil; want an unclassified refusal", got)
 	}
 }
 

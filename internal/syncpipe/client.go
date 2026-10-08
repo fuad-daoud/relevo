@@ -57,23 +57,27 @@ const (
 
 // callBound is the bound one call runs under, by the kind of work it moves. It
 // is keyed by verb rather than passed at each call site so a new verb has to
-// say which kind it is, and a guard test fails if a data verb is handed the
-// short bound again.
-func callBound(verb syncworker.Verb) time.Duration {
+// say which kind it is. A verb it does not name is refused rather than handed a
+// default bound: a data verb that silently took the short bound would time out
+// a transfer the driver was still moving, and a control verb handed the long
+// one would park a caller behind a call that answers at once.
+func callBound(verb syncworker.Verb) (time.Duration, error) {
 	switch verb {
 	case syncworker.VerbHello, syncworker.VerbExport, syncworker.VerbPull:
-		return dataCallTimeout
+		return dataCallTimeout, nil
+	case syncworker.VerbHead, syncworker.VerbStats, syncworker.VerbShutdown:
+		return controlCallTimeout, nil
 	default:
-		return controlCallTimeout
+		return 0, fmt.Errorf("syncpipe: verb %q is neither a data nor a control call", verb)
 	}
 }
 
 // bound is the bound one call runs under: the caller's override when one was
 // set, the kind's own otherwise. A test shortens it so a call that overruns is
 // reached without waiting the real bound out.
-func (c *Client) bound(verb syncworker.Verb) time.Duration {
+func (c *Client) bound(verb syncworker.Verb) (time.Duration, error) {
 	if c.cfg.Timeout > 0 {
-		return c.cfg.Timeout
+		return c.cfg.Timeout, nil
 	}
 	return callBound(verb)
 }
@@ -374,7 +378,10 @@ func (c *Client) readReply(verb syncworker.Verb) (syncworker.Response, error) {
 		got <- result{line: line, err: err}
 	}()
 
-	bound := c.bound(verb)
+	bound, err := c.bound(verb)
+	if err != nil {
+		return syncworker.Response{}, err
+	}
 	timer := time.NewTimer(bound)
 	defer timer.Stop()
 	select {

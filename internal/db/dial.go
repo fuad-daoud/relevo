@@ -139,6 +139,11 @@ func (d *DB) Sock() string { return d.sock }
 // bool. A handle opened directly has no socket and refuses rather than opening
 // one: the verb exists precisely so the writing verbs stop needing a direct
 // open, and a fallback would put that open back.
+//
+// The error keeps the client's own classification: a verb whose frame reached
+// the owner and whose reply the caller's deadline ended stays marked as such
+// through this wrap, so a caller can tell a request in progress from one that
+// never arrived.
 func (d *DB) SyncVerb(ctx context.Context, verb *wire.SyncVerb, token []byte) (*wire.SyncResult, error) {
 	if d.sock == "" {
 		return nil, fmt.Errorf("db: sync verb: this handle did not dial an owner: %w", ErrOpen)

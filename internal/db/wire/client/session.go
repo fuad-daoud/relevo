@@ -366,6 +366,14 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 	}
 }
 
+// ErrAwaitingReply is a sync verb whose frame reached the owner but whose reply
+// did not come back before the caller's own deadline. The owner holds the
+// request and may still be running it, so a caller reads this as work in
+// progress rather than as a request that never arrived. The context error that
+// ended the wait is wrapped with it, so errors.Is still finds
+// context.DeadlineExceeded.
+var ErrAwaitingReply = errors.New("the sync verb was sent and no reply arrived")
+
 // SyncVerb sends one sync verb to the owner and returns its answer.
 //
 // It is a request of its own rather than an Exec, because the owner runs the
@@ -388,6 +396,13 @@ func (c *conn) SyncVerb(ctx context.Context, verb *wire.SyncVerb, token []byte) 
 
 	kind, frame, err := c.await(ctx, id)
 	if err != nil {
+		// A wait the caller's own context ended, after the frame was written,
+		// is marked as such: the request was delivered, so a caller must not
+		// read it as one that never arrived. Everything before the write -- a
+		// dial, a handshake, a failed send -- stays a plain error.
+		if cerr := ctx.Err(); cerr != nil && errors.Is(err, cerr) {
+			return nil, fmt.Errorf("sync verb %s: %w: %w", verb.Verb, ErrAwaitingReply, cerr)
+		}
 		return nil, err
 	}
 	switch kind {

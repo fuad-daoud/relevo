@@ -626,3 +626,17 @@ func TestWorkerPackageDoesNotImportInternalDB(t *testing.T) {
 		}
 	}
 }
+
+// TestVerbsNamesEveryDispatchedVerb pins the exported verb set to what the
+// worker serves: it is derived from the dispatch table, so a caller that has to
+// classify every verb walks the pipe's own set rather than a list that can
+// drift from it.
+func TestVerbsNamesEveryDispatchedVerb(t *testing.T) {
+	names := make([]string, 0, len(Verbs()))
+	for _, verb := range Verbs() {
+		names = append(names, string(verb))
+	}
+	if got := strings.Join(names, ","); got != "export,head,hello,pull,shutdown,stats" {
+		t.Errorf("Verbs() = %q, want the pipe's own verb set", got)
+	}
+}

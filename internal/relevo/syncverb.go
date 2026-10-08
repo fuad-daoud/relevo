@@ -66,6 +66,12 @@ type VerbRunner struct {
 	joinMu      sync.Mutex
 	joinClient  synclog.LogTransport
 	joinStopped bool
+
+	// clientMu guards the runner's Client, the steady worker a queued disable or
+	// retry must release before it waits for the slot. It is separate from
+	// joinMu because a preempt reads the client outside the slot while the verb
+	// inside the slot is the one that replaces it.
+	clientMu sync.Mutex
 }
 
 // Run performs one verb and answers with what it did.
@@ -83,14 +89,19 @@ func (v *VerbRunner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte)
 	case wire.SyncVerbPull:
 		return v.runGuarded(func() *wire.SyncResult { return v.pull(ctx) })
 	case wire.SyncVerbRetry:
+		// A retry is sent exactly when a call has stopped answering, so it
+		// releases that call before it queues: the slot it is clearing is held
+		// by the very call it must not wait out.
+		v.preempt()
 		return v.runGuarded(func() *wire.SyncResult { return v.retry() })
 	case wire.SyncVerbProbe:
 		return v.runGuarded(func() *wire.SyncResult { return v.probe(ctx) })
 	case wire.SyncVerbDisable:
-		// A disable is the one verb that must not queue behind an enable's
-		// join: a joined machine reads off for the whole join and the join can
-		// run for the whole import bound. The preempt releases it, so the
-		// disable runs in seconds rather than waiting a bound out.
+		// A disable must not queue behind a call that can run for the whole
+		// data-call bound: a joined machine reads off for the whole join, and a
+		// pull or a steady tick against a blackholed remote holds the slot just
+		// as long. The preempt releases whatever is in flight, so the disable
+		// runs in seconds rather than waiting a bound out.
 		v.preempt()
 		return v.runGuarded(func() *wire.SyncResult { return v.disable(ctx, verb) })
 	default:
@@ -167,24 +178,52 @@ func (v *VerbRunner) beginJoin() {
 	v.joinMu.Unlock()
 }
 
-// preempt releases the join this runner is driving, so a disable does not queue
-// behind a join that can run for the whole import bound. It marks the join
-// stopped before cancelling it, so an enable the release lets finish its last
-// step still leaves the mark off; a runner with no join in flight is left
-// alone, which keeps every other verb on the daemon's ordinary serialization.
+// preempt releases whatever transport this runner has in flight, so a disable or
+// a retry does not queue behind a call that can run for the whole data-call
+// bound. It reaches two transports: the join an enable is driving, and the
+// runner's steady worker, which is what a push, pull or steady tick drives. It
+// marks a join stopped before cancelling it, so an enable the release lets
+// finish its last step still leaves the mark off; a runner with neither in
+// flight is left alone, which keeps every other verb on the daemon's ordinary
+// serialization.
 func (v *VerbRunner) preempt() {
 	v.joinMu.Lock()
-	t := v.joinClient
-	if t != nil {
+	join := v.joinClient
+	if join != nil {
 		v.joinStopped = true
 	}
 	v.joinMu.Unlock()
-	if t == nil {
+
+	steady := v.steadyTransport()
+	for _, transport := range []synclog.LogTransport{join, steady} {
+		if cancel := cancelTransport(transport); cancel != nil {
+			cancel()
+		}
+	}
+}
+
+// steadyTransport is the worker the runner drives steady calls through, which is
+// the transport a queued disable or retry must release before it waits for the
+// slot. A runner with no worker reports nil, and cancelTransport then has
+// nothing to cancel.
+func (v *VerbRunner) steadyTransport() synclog.LogTransport {
+	if v.Runner == nil {
+		return nil
+	}
+	v.clientMu.Lock()
+	defer v.clientMu.Unlock()
+	return v.Runner.Client
+}
+
+// setClient records the worker the runner drives steady calls through, under the
+// same lock a preempt reads it with. A runner with no holder is left alone.
+func (v *VerbRunner) setClient(transport synclog.LogTransport) {
+	if v.Runner == nil {
 		return
 	}
-	if cancel := cancelTransport(t); cancel != nil {
-		cancel()
-	}
+	v.clientMu.Lock()
+	v.Runner.Client = transport
+	v.clientMu.Unlock()
 }
 
 // push drains this machine's outbox into the log: the export half of the steady
@@ -261,16 +300,14 @@ func (v *VerbRunner) drive(ctx context.Context) (synclog.LogTransport, error) {
 	if v.Shared == nil {
 		return nil, fmt.Errorf("sync: no shared database: %w", db.ErrInvalid)
 	}
-	if v.Runner != nil && v.Runner.Client != nil && transportReady(v.Runner.Client) {
-		return v.Runner.Client, nil
+	if client := v.steadyTransport(); client != nil && transportReady(client) {
+		return client, nil
 	}
 	transport, err := v.openTransport(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if v.Runner != nil {
-		v.Runner.Client = transport
-	}
+	v.setClient(transport)
 	return transport, nil
 }
 
@@ -327,9 +364,7 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, token []by
 		}
 		return verbRefusal(verbClassify(err), err)
 	}
-	if v.Runner != nil {
-		v.Runner.Client = enabler.Transport
-	}
+	v.setClient(enabler.Transport)
 	return &wire.SyncResult{OK: true, Applied: true, RemoteURL: res.Remote, TokenPresent: true}
 }
 
@@ -341,8 +376,8 @@ func (v *VerbRunner) openTransport(ctx context.Context) (synclog.LogTransport, e
 	if v.Open != nil {
 		return v.Open(ctx)
 	}
-	if v.Runner != nil && v.Runner.Client != nil {
-		return v.Runner.Client, nil
+	if client := v.steadyTransport(); client != nil {
+		return client, nil
 	}
 	return nil, fmt.Errorf("sync: no log transport is installed: %w", db.ErrInvalid)
 }
@@ -464,9 +499,7 @@ func cancelTransport(transport synclog.LogTransport) func() {
 // turn-off calls it last: the machine is off, and a cached client would outlive
 // the mark that governs it.
 func (v *VerbRunner) dropClient() error {
-	if v.Runner != nil {
-		v.Runner.Client = nil
-	}
+	v.setClient(nil)
 	return nil
 }
 

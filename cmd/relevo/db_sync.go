@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
+	"github.com/fuad-daoud/relevo/internal/db/wire/client"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
@@ -295,11 +296,14 @@ func cmdDBSyncEnable(args []string) error {
 const enableContinuesLine = "sync enable: the join is still running in the daemon; `relevo db sync status` shows it"
 
 // enableContinuesInDaemon reports whether a failed enable call is the client's
-// own bound running out rather than the daemon refusing the join. A deadline
-// here is a join in progress, not a failure: the daemon finishes it either way,
-// and re-running enable resumes it if the daemon restarted.
+// own bound running out after the frame reached the daemon, rather than a
+// request the daemon never received. A reply wait the caller's deadline ended
+// is a join in progress: the daemon holds the verb and finishes it either way,
+// and re-running enable resumes it if the daemon restarted. A deadline from the
+// dial, the handshake, or a frame only partly written is a real failure -- no
+// join was ever started, so there is nothing to report as still running.
 func enableContinuesInDaemon(err error) bool {
-	return errors.Is(err, context.DeadlineExceeded)
+	return errors.Is(err, client.ErrAwaitingReply) && errors.Is(err, context.DeadlineExceeded)
 }
 
 // verbDialSlack is what the local bound adds on top of the caller's timeout, so

@@ -862,3 +862,110 @@ func TestDisableStopsAnInFlightDaemonJoin(t *testing.T) {
 		t.Error("an off machine with no join still opened a transport")
 	}
 }
+
+// hungSteadyPull builds a fixture whose runner drives a worker that hangs on its
+// first pull, with the daemon's guard installed and the machine marked on, so a
+// test can hold the sync slot with a steady pull rather than a join.
+func hungSteadyPull(t *testing.T) (*verbFixture, *hangingJoin, *relevosync.Breaker) {
+	t.Helper()
+	f := newVerbFixture(t)
+	if err := relevosync.MarkEnabled(f.local, true, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("MarkEnabled: %v", err)
+	}
+	d := NewDaemon(Runtime{Sync: f.runner.Runner}, time.Hour)
+	f.runner.Serialize = d.WaitSyncSlot
+
+	breaker := relevosync.NewBreaker(f.local)
+	hung := newHangingJoin(breaker)
+	f.runner.Runner.Client = hung
+	return f, hung, breaker
+}
+
+// waitForHungPull blocks until the fixture's worker is inside its hung pull, so
+// a test can be sure the sync slot is held before it issues its verb.
+func waitForHungPull(t *testing.T, hung *hangingJoin) {
+	t.Helper()
+	select {
+	case <-hung.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the pull did not reach its worker")
+	}
+}
+
+// TestDisableStopsAHungSteadyPullAtTheDaemon pins the disable-during-a-hung-
+// steady-pull contract at the daemon's own guard: a pull against a worker that
+// has stopped answering holds the sync slot, and a disable issued then releases
+// that call before it queues, so the disable runs in seconds rather than waiting
+// the data-call bound out. The released call settles as a deliberate stop, so
+// the breaker counts no death, and the machine is left off.
+func TestDisableStopsAHungSteadyPullAtTheDaemon(t *testing.T) {
+	f, hung, breaker := hungSteadyPull(t)
+	ctx := context.Background()
+
+	pullDone := make(chan *wire.SyncResult, 1)
+	go func() { pullDone <- f.runner.Run(ctx, &wire.SyncVerb{Verb: wire.SyncVerbPull}, nil) }()
+	waitForHungPull(t, hung)
+
+	done := make(chan *wire.SyncResult, 1)
+	go func() { done <- f.runner.Run(ctx, &wire.SyncVerb{Verb: wire.SyncVerbDisable}, nil) }()
+	select {
+	case res := <-done:
+		if !res.OK {
+			t.Fatalf("disable refused: %s", res.Message)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the disable queued behind the hung pull instead of stopping it")
+	}
+	<-pullDone
+
+	if !hung.wasCancelled() {
+		t.Error("the hung pull's worker was never cancelled")
+	}
+	if deaths, err := breaker.Deaths(); err != nil || deaths != 0 {
+		t.Errorf("breaker deaths = %d, %v; want the deliberate stop uncounted", deaths, err)
+	}
+	if on, err := relevosync.Enabled(f.local); err != nil || on {
+		t.Errorf("Enabled = %v, %v; want the released pull to leave the machine off", on, err)
+	}
+	// The disable dropped the runner's worker, so the next call opens a fresh
+	// one through the wiring's opener rather than driving the killed pipe.
+	f.opens = 0
+	if res := f.runner.Run(ctx, &wire.SyncVerb{Verb: wire.SyncVerbPull}, nil); !res.OK {
+		t.Fatalf("the pull after the disable refused: %s", res.Message)
+	}
+	if f.opens != 1 {
+		t.Errorf("the next pull opened %d workers, want a fresh one", f.opens)
+	}
+}
+
+// TestRetryStopsAHungSteadyPullAtTheDaemon pins the retry half of the same
+// contract: a retry is sent precisely because a call has stopped answering, so
+// it releases the hung call before it queues rather than waiting the data-call
+// bound out for a slot the call it is clearing holds.
+func TestRetryStopsAHungSteadyPullAtTheDaemon(t *testing.T) {
+	f, hung, breaker := hungSteadyPull(t)
+	ctx := context.Background()
+
+	pullDone := make(chan *wire.SyncResult, 1)
+	go func() { pullDone <- f.runner.Run(ctx, &wire.SyncVerb{Verb: wire.SyncVerbPull}, nil) }()
+	waitForHungPull(t, hung)
+
+	done := make(chan *wire.SyncResult, 1)
+	go func() { done <- f.runner.Run(ctx, &wire.SyncVerb{Verb: wire.SyncVerbRetry}, nil) }()
+	select {
+	case res := <-done:
+		if !res.OK {
+			t.Fatalf("retry refused: %s", res.Message)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the retry queued behind the hung pull instead of stopping it")
+	}
+	<-pullDone
+
+	if !hung.wasCancelled() {
+		t.Error("the hung pull's worker was never cancelled")
+	}
+	if deaths, err := breaker.Deaths(); err != nil || deaths != 0 {
+		t.Errorf("breaker deaths = %d, %v; want the deliberate stop uncounted", deaths, err)
+	}
+}
