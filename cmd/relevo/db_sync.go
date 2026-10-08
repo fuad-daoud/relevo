@@ -34,10 +34,10 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"disable marks this machine off, forgets the token and closes the handle.\n" +
 	"Local files keep every row and stay servable, and the remote is left alone.\n"
 
-// The client name the remote is told this client is called. It is fixed rather
-// than configurable because it is identification, not a setting, and a
-// per-machine value would make the remote's view of a fleet unreadable.
-const dbSyncClientName = "relevo"
+// The name the remote is told this client is called. It is fixed rather than
+// configurable because it is identification, not a setting, and a per-machine
+// value would make the remote's view of a fleet unreadable.
+const dbSyncHandleName = "relevo"
 
 // The default bound on one sync verb. It is the runner's own bound: a machine
 // that cannot reach its remote must be able to stop syncing, and to ask for a

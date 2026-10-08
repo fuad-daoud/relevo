@@ -29,6 +29,14 @@ const (
 	stepClose      = "close handle"
 )
 
+// pusher is the one call the turn-off's final attempt makes: hand the machine's
+// pending rows over before the mark goes off. It is a single call rather than a
+// whole transport because the turn-off reads and lists nothing; a machine with
+// nothing to hand over through is skipped rather than failed.
+type pusher interface {
+	Push(ctx context.Context) error
+}
+
 // Disabler runs one turn-off. Every input it cannot answer for itself is a
 // field, so the whole path is drivable with no remote and no handle.
 type Disabler struct {
@@ -38,7 +46,7 @@ type Disabler struct {
 	// Client is the handle the final push goes through. Nil means this machine
 	// has no handle open, so there is nothing to push through and the attempt
 	// is skipped rather than failed.
-	Client SyncClient
+	Client pusher
 	// Close releases the handle. Nil means the caller has nothing to close, and
 	// the step is recorded and skipped so the order still reads whole.
 	Close func() error

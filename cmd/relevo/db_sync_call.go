@@ -243,9 +243,7 @@ func openDBSyncStatus() (shared *db.DB, local *db.DB, err error) {
 	return shared, local, nil
 }
 
-// dbSyncOpenConfig is gone with the direct open: the daemon builds the config
-// its enable path decided, so there is no second copy of that decision here.
-// dbSyncOpener and relevosyncCloudEmpty are gone for the same reason -- both
-// existed only to let a CLI process open a remote, which is precisely what the
-// verb surface removes. Their bodies now live in internal/relevo, against the
-// daemon's own handles.
+// The CLI holds no remote open. The daemon builds the handle its enable path
+// decided, so there is no second copy of that decision here: the verb surface
+// is what removes a direct open from a client process, and the bodies that
+// would have done it live in internal/relevo, against the daemon's own handles.

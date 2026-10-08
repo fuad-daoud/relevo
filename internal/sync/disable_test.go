@@ -29,14 +29,25 @@ func (b *blackhole) wait(ctx context.Context) error {
 	}
 }
 
-func (b *blackhole) Push(ctx context.Context) error           { return b.wait(ctx) }
-func (b *blackhole) Pull(ctx context.Context) (bool, error)   { return false, b.wait(ctx) }
-func (b *blackhole) Stats(ctx context.Context) (Stats, error) { return Stats{}, b.wait(ctx) }
-func (b *blackhole) Checkpoint(ctx context.Context) error     { return b.wait(ctx) }
+func (b *blackhole) Push(ctx context.Context) error { return b.wait(ctx) }
+
+// pushFake records the final-push calls a turn-off makes and serves the one
+// scripted failure a test names.
+type pushFake struct {
+	// Calls is every push the turn-off made, in order.
+	Calls []string
+	// Err is what a push fails with; nil is a success.
+	Err error
+}
+
+func (f *pushFake) Push(context.Context) error {
+	f.Calls = append(f.Calls, "push")
+	return f.Err
+}
 
 // disableFixture is a machine that has been enabled: the token stored and the
 // mark written, so a turn-off under test has something real to take away.
-func disableFixture(t *testing.T, client SyncClient) (*Disabler, Local) {
+func disableFixture(t *testing.T, client pusher) (*Disabler, Local) {
 	t.Helper()
 
 	_, _, local := openSplit(t)
@@ -62,7 +73,7 @@ func disableFixture(t *testing.T, client SyncClient) (*Disabler, Local) {
 func TestDisableKeepsLocalUsable(t *testing.T) {
 	t.Parallel()
 
-	disabler, local := disableFixture(t, &Fake{})
+	disabler, local := disableFixture(t, &pushFake{})
 	// A local marker that has nothing to do with sync, to show the turn-off is
 	// not a wipe of the machine-local file.
 	if err := local.KVPut("ledger.round", []byte(`{"round":7}`)); err != nil {
@@ -98,7 +109,7 @@ func TestDisableKeepsLocalUsable(t *testing.T) {
 func TestDisableFinalPushFailureStillDisables(t *testing.T) {
 	t.Parallel()
 
-	fake := &Fake{PushErr: errors.New("dial tcp: no route to host")}
+	fake := &pushFake{Err: errors.New("dial tcp: no route to host")}
 	disabler, local := disableFixture(t, fake)
 
 	res, err := disabler.Disable(context.Background())
@@ -130,7 +141,7 @@ func TestDisableFinalPushFailureStillDisables(t *testing.T) {
 func TestDisableDeletesToken(t *testing.T) {
 	t.Parallel()
 
-	fake := &Fake{}
+	fake := &pushFake{}
 	disabler, local := disableFixture(t, fake)
 
 	res, err := disabler.Disable(context.Background())
@@ -166,7 +177,7 @@ func TestDisableDeletesToken(t *testing.T) {
 func TestDisableRunsTheFourStepsInOrder(t *testing.T) {
 	t.Parallel()
 
-	fake := &Fake{PushErr: errors.New("the remote is unreachable")}
+	fake := &pushFake{Err: errors.New("the remote is unreachable")}
 	closed := 0
 	disabler, _ := disableFixture(t, fake)
 	disabler.Close = func() error { closed++; return nil }
@@ -199,7 +210,7 @@ func TestDisableClosesTheHandleLast(t *testing.T) {
 	t.Parallel()
 
 	closed := 0
-	disabler, local := disableFixture(t, &Fake{})
+	disabler, local := disableFixture(t, &pushFake{})
 	disabler.Close = func() error { closed++; return errors.New("the handle is busy") }
 
 	res, err := disabler.Disable(context.Background())

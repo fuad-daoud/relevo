@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
 // The tests here drive the verb executor over a real split pair. None of them
@@ -37,8 +38,8 @@ type verbFixture struct {
 	runner *VerbRunner
 	shared *db.DB
 	local  relevosync.Local
-	client *relevosync.Fake
-	// opens is every remote handle a run asked for. Nothing opens one in this
+	client *recordTransport
+	// opens is every transport a run asked for. Nothing opens one in this
 	// build, so this is what a handle added back would be recorded in.
 	opens int
 }
@@ -64,14 +65,14 @@ func newVerbFixture(t *testing.T) *verbFixture {
 	if err := relevosync.SetToken(local, []byte(verbFixtureToken), time.Unix(0, 0).UTC()); err != nil {
 		t.Fatalf("SetToken: %v", err)
 	}
-	f := &relevosync.Fake{}
+	f := &recordTransport{}
 	fx := &verbFixture{shared: shared, local: local, client: f}
 	fx.runner = &VerbRunner{
 		Shared: shared,
 		Local:  local,
 		Path:   shared.Path(),
 		Runner: &relevosync.Runner{Client: f, Local: local},
-		Open: func(context.Context, relevosync.OpenConfig) (relevosync.SyncClient, error) {
+		Open: func(context.Context) (synclog.LogTransport, error) {
 			fx.opens++
 			return f, nil
 		},
@@ -213,7 +214,7 @@ func TestSyncVerbOverOwnerNeverOpensASecondHandle(t *testing.T) {
 	if err := relevosync.SetToken(local, []byte(verbFixtureToken), time.Unix(0, 0).UTC()); err != nil {
 		t.Fatalf("SetToken: %v", err)
 	}
-	f := &relevosync.Fake{}
+	f := &recordTransport{}
 	runner := &VerbRunner{
 		Shared:     first,
 		Local:      local,
@@ -410,7 +411,7 @@ func TestSyncVerbSerializesWithTheDaemonGuard(t *testing.T) {
 	// The client every attempt drives records its own entry and exit, so two
 	// attempts at once are observable rather than inferred. The fake sleeps a
 	// little inside each call so an unguarded runner really does overlap.
-	probed := &overlapProbe{Fake: relevosync.Fake{}}
+	probed := &overlapProbe{}
 	probed.onEnter = func() {
 		mu.Lock()
 		concurrent++
@@ -456,32 +457,20 @@ func TestSyncVerbSerializesWithTheDaemonGuard(t *testing.T) {
 	}
 }
 
-// overlapProbe is a sync client whose calls report entry and exit, so a test can
-// see whether two attempts ever overlapped.
+// overlapProbe is a log transport whose append reports entry and exit, so a
+// test can see whether two attempts ever overlapped.
 type overlapProbe struct {
-	relevosync.Fake
+	recordTransport
 	onEnter func()
 	onHold  func()
 	onExit  func()
 }
 
-func (p *overlapProbe) Push(ctx context.Context) error {
+func (p *overlapProbe) Append(entries []synclog.Entry) ([]synclog.Entry, error) {
 	p.onEnter()
 	p.onHold()
 	p.onExit()
-	return p.Fake.Push(ctx)
-}
-
-func (p *overlapProbe) Pull(ctx context.Context) (bool, error) {
-	return p.Fake.Pull(ctx)
-}
-
-func (p *overlapProbe) Stats(ctx context.Context) (relevosync.Stats, error) {
-	return p.Fake.Stats(ctx)
-}
-
-func (p *overlapProbe) Checkpoint(ctx context.Context) error {
-	return p.Fake.Checkpoint(ctx)
+	return p.recordTransport.Append(entries)
 }
 
 // TestSyncStatusUnchanged pins that status did not move.

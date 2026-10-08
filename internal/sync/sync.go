@@ -75,6 +75,18 @@ type attention struct {
 	Message string    `json:"message"`
 }
 
+// Stats is what the remote reports about the local change set: the operations a
+// push has not sent yet, the last successful push and pull, the bytes each way,
+// and the server revision. The revision is opaque and must never be parsed.
+type Stats struct {
+	CdcOperations        int64  `json:"cdc_operations"`
+	LastPullUnixTime     int64  `json:"last_pull_unix_time"`
+	LastPushUnixTime     int64  `json:"last_push_unix_time"`
+	NetworkSentBytes     int64  `json:"network_sent_bytes"`
+	NetworkReceivedBytes int64  `json:"network_received_bytes"`
+	Revision             string `json:"revision"`
+}
+
 // The four tokens the statusline shows, one per state that needs a human. The
 // renderer formats them; detail lives in the sync view.
 const (

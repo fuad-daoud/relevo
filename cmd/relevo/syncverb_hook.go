@@ -65,7 +65,7 @@ func newVerbRunner(d *db.DB) *relevo.VerbRunner {
 		Local:      local,
 		Path:       d.Path(),
 		Runner:     &relevosync.Runner{Local: local},
-		ClientName: dbSyncClientName,
+		ClientName: dbSyncHandleName,
 	}
 }
 

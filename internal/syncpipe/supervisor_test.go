@@ -111,6 +111,35 @@ func TestSupervisorDrivesEveryVerb(t *testing.T) {
 	}
 }
 
+// TestDaemonBuildsOnePipeClient pins that a daemon's transport constructs one
+// pipe client however many calls it carries: two calls in a row drive the same
+// worker process, so a verb and a tick sharing the supervisor share one client
+// rather than each starting its own. The mutation is building a client per
+// call, which leaves the second call on a different process.
+func TestDaemonBuildsOnePipeClient(t *testing.T) {
+	s := newSupervisor(t, fakeWorkerCfg(modeNormal), breakerOver(newMemKV()))
+
+	if _, err := s.Stats(); err != nil {
+		t.Fatalf("the first call: %v", err)
+	}
+	first := s.current()
+	if first == nil || first.cmd.Process == nil {
+		t.Fatal("the first call left no worker")
+	}
+
+	if _, err := s.Pull(nil); err != nil {
+		t.Fatalf("the second call: %v", err)
+	}
+	second := s.current()
+	if second == nil || second.cmd.Process == nil {
+		t.Fatal("the second call left no worker")
+	}
+	if first.cmd.Process.Pid != second.cmd.Process.Pid {
+		t.Errorf("calls ran on workers %d and %d, want one client for one daemon",
+			first.cmd.Process.Pid, second.cmd.Process.Pid)
+	}
+}
+
 // TestWorkerDeathIsCounted pins that a worker which exits mid-call is dropped
 // and counted, so the daemon neither keeps serving it nor loses the death.
 func TestWorkerDeathIsCounted(t *testing.T) {
