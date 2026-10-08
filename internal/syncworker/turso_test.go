@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -371,6 +372,77 @@ func TestPullReturnsOnlyEntriesPastTheMarks(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("pull past the highest sequence = %+v, want nothing", got)
+	}
+}
+
+// TestPullReadsOnlyWhatIsPastTheMarks pins that a pull narrows its read in SQL
+// per origin: one mark filter per origin, so the log is not read whole and
+// filtered here, bounded to one page. An origin with no mark is read from its
+// first sequence. The backend reads through that statement, so an entry at or
+// below a mark does not come back even when the mark sits inside its batch.
+func TestPullReadsOnlyWhatIsPastTheMarks(t *testing.T) {
+	t.Parallel()
+	origins := []string{"origin-b", "origin-c"}
+	query, args := pullQuery(origins, map[string]int{"origin-b": 7}, 100)
+
+	if got := strings.Count(query, "(origin = ? AND seq > ?)"); got != len(origins) {
+		t.Fatalf("the pull filters %d origins in SQL, want one clause per origin:\n%s", got, query)
+	}
+	if !strings.Contains(query, "ORDER BY origin, seq") || !strings.Contains(query, "LIMIT ?") {
+		t.Fatalf("the pull is not ordered and bounded:\n%s", query)
+	}
+	want := []any{"origin-b", 7, "origin-c", 0, 100}
+	if !reflect.DeepEqual(args, want) {
+		t.Errorf("pull args = %v, want %v", args, want)
+	}
+
+	path := tempReplica(t)
+	a := backendFor(t, &localDriver{path: path}, "origin-a")
+	b := backendFor(t, &localDriver{path: path}, "origin-b")
+	if _, err := b.Append([]Entry{
+		upsertEntry("origin-b", "board", `["b1"]`, `{"title":"one"}`),
+		upsertEntry("origin-b", "board", `["b2"]`, `{"title":"two"}`),
+	}); err != nil {
+		t.Fatalf("append batch one: %v", err)
+	}
+	if _, err := b.Append([]Entry{upsertEntry("origin-b", "task", `["t"]`, `{"title":"three"}`)}); err != nil {
+		t.Fatalf("append batch two: %v", err)
+	}
+
+	got, err := a.Pull(map[string]int{"origin-b": 1})
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	assertSeqs(t, got, 3)
+}
+
+// TestPullCompletesABatchThePageCut pins that a page small enough to end inside
+// a batch still returns the batch whole: a batch is applied whole and the mark
+// moves to its tail, so half of one would let the next pull drop the other half
+// as though the mark covered it.
+func TestPullCompletesABatchThePageCut(t *testing.T) {
+	t.Parallel()
+	path := tempReplica(t)
+	a := backendFor(t, &localDriver{path: path}, "origin-a")
+	b := backendFor(t, &localDriver{path: path}, "origin-b")
+	a.page = 2
+	if _, err := b.Append([]Entry{
+		upsertEntry("origin-b", "board", `["b1"]`, `{"title":"one"}`),
+		upsertEntry("origin-b", "board", `["b2"]`, `{"title":"two"}`),
+		upsertEntry("origin-b", "board", `["b3"]`, `{"title":"three"}`),
+	}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	got, err := a.Pull(nil)
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	assertSeqs(t, got, 1, 2, 3)
+	for _, e := range got {
+		if e.Batch != 1 {
+			t.Errorf("entry %d carries batch %d, want the one batch kept whole", e.Seq, e.Batch)
+		}
 	}
 }
 
