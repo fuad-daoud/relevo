@@ -542,7 +542,7 @@ func (d *Daemon) safely(phase string, f func()) {
 // binding written before Binding.MasterMindID existed has no id, but its
 // MasterMind.SessionID still names the harness session the mastermind registered
 // with. When the registry knows that (kind, session), the record's id is set
-// on the binding, under the lock tickOne already holds, so the channel lookup,
+// on the binding, under the lock tickOne already holds, so the claim lookup,
 // the forget guard and the status row all key on the mastermind. A miss, a DONE
 // binding, an empty session and a Runtime with no registry all leave the
 // binding exactly as it was.

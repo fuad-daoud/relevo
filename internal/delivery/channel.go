@@ -35,7 +35,7 @@ type Claim struct {
 
 // ErrClaimHeld reports that a different live claim already exists for a
 // mastermind.
-var ErrClaimHeld = errors.New("mastermind already has a live channel")
+var ErrClaimHeld = errors.New("mastermind already has a live push claim")
 
 // ClaimStore is what the daemon and relevo mcp share. A nil ClaimStore on a
 // Runtime means "no claims exist"; DeliverPending's guard treats it that way.
@@ -56,7 +56,7 @@ type ClaimStore interface {
 
 // ClaimBulk is the optional whole-namespace read a ClaimStore may also
 // implement: one pass over the claim rows instead of one read per mastermind.
-// A status report resolves every row's channel route from the returned map; a
+// A status report resolves every row's push route from the returned map; a
 // store that does not implement it is read one mastermind at a time.
 type ClaimBulk interface {
 	// LiveAll returns every live claim keyed by mastermind id. A row that is

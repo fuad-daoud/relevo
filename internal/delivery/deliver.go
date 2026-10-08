@@ -14,7 +14,7 @@ import (
 type Delivery struct {
 	Delivered bool
 	Empty     bool // nothing was pending for this binding
-	// Route is how this attempt would deliver, or did: "channel",
+	// Route is how this attempt would deliver, or did: "push",
 	// "deliverer:<kind>" or "wait". "wait" is a route, not a fault: the entry
 	// stays pending for the background wait, which is how a Claude Code
 	// mastermind in tools mode gets its report.
@@ -52,10 +52,10 @@ func Queue(_ context.Context, d Deps, tx *store.Tx, name string, e store.LogEntr
 // DeliverPending attempts the oldest pending payload for one binding against
 // the routes, in order:
 //
-//  1. the channel: a live claim for b.MasterMindID. The claim holder's own poll
-//     pushes the entry and confirms it with route=channel, so this returns
-//     without touching the log -- confirming here would empty the mailbox
-//     before the channel reader saw it.
+//  1. the push claim: a live claim for b.MasterMindID. The claim holder's own
+//     `relevo push` loop writes the entry and confirms it with route=push, so
+//     this returns without touching the log -- confirming here would empty the
+//     mailbox before the push holder wrote it.
 //  2. d.Deliverers[b.MasterMind.Kind]: a deliverer that reports OutcomeNotMine
 //     leaves the entry pending with its reason; it no longer falls through to
 //     a pane (there is none).
@@ -65,6 +65,8 @@ func Queue(_ context.Context, d Deps, tx *store.Tx, name string, e store.LogEntr
 //
 // An entry the deliverer already admitted is no longer a pending one to push:
 // it is only read back, so a route that admitted it can never send it twice.
+// An entry a dead push holder admitted for a no-deliverer mastermind is
+// orphaned and is cleared here so it is claimable again.
 //
 // The caller holds the state lock across pending -> deliver -> confirm and
 // passes tx in: `relevo wait` runs the same sequence from another process, and
@@ -79,13 +81,17 @@ func DeliverPending(ctx context.Context, d Deps, tx *store.Tx, b store.Binding) 
 		return b, Delivery{Empty: true, Reason: "nothing pending"}, nil
 	}
 
+	if err := clearOrphanAdmit(d, tx, b, pending, idx); err != nil {
+		return b, Delivery{}, err
+	}
+
 	if d.Channels != nil && b.MasterMindID != "" {
 		c, err := d.Channels.Live(b.MasterMindID, d.Now())
 		if err != nil {
-			return b, Delivery{}, fmt.Errorf("channel claim: %w", err)
+			return b, Delivery{}, fmt.Errorf("push claim: %w", err)
 		}
 		if c != nil {
-			return b, Delivery{Route: "channel", Reason: "mastermind has a channel", Round: pending.Round}, nil
+			return b, Delivery{Route: "push", Reason: "mastermind has a push claim", Round: pending.Round}, nil
 		}
 	}
 
@@ -124,6 +130,9 @@ func ConfirmAdmitted(ctx context.Context, d Deps, tx *store.Tx, b store.Binding)
 	}
 	if !found {
 		return b, Delivery{Empty: true, Reason: "nothing pending"}, nil
+	}
+	if err := clearOrphanAdmit(d, tx, b, pending, idx); err != nil {
+		return b, Delivery{}, err
 	}
 	if pending.AdmittedAt == nil {
 		return b, Delivery{Route: "pull", Reason: "the pending entry was not admitted", Round: pending.Round}, nil
@@ -171,8 +180,8 @@ func ConfirmAdmitted(ctx context.Context, d Deps, tx *store.Tx, b store.Binding)
 	return deliveryOf(tx, b, idx, route, out, reason, pending.Round)
 }
 
-// deliverViaDeliverer runs one deliverer attempt for an entry the channel check
-// did not take: Deliver when nobody has pushed the payload yet, Confirm when the
+// deliverViaDeliverer runs one deliverer attempt for an entry the push claim
+// check did not take: Deliver when nobody has pushed the payload yet, Confirm
 // push of this same tick admitted it, and ConfirmOnce -- one read-back, no poll
 // -- when an earlier tick already admitted it. The read-back runs inside the
 // caller's lock, so no reader can claim or print the entry while it is being
