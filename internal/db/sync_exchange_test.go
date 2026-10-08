@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"path/filepath"
 	"testing"
 )
 
@@ -90,4 +91,52 @@ func sqlImportMark(t *testing.T, sqlDB *sql.DB, origin string) (int, bool, error
 		return 0, false, err
 	}
 	return seq, true, nil
+}
+
+// TestImportMarkThroughTheSeam pins that the mark methods the importer calls
+// read and write the table the migration created: a mark set through the Tx is
+// visible to the *DB read, and a mark set on one origin leaves another's alone.
+func TestImportMarkThroughTheSeam(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	if _, found, err := d.ImportMark("instX"); err != nil {
+		t.Fatalf("ImportMark on a fresh file: %v", err)
+	} else if found {
+		t.Error("a fresh file reports a mark for an origin that never wrote one")
+	}
+
+	if err := d.Tx(func(tx *Tx) error { return tx.SetImportMark("instX", 5) }); err != nil {
+		t.Fatalf("set mark inside a Tx: %v", err)
+	}
+	seq, found, err := d.ImportMark("instX")
+	if err != nil {
+		t.Fatalf("ImportMark: %v", err)
+	}
+	if !found || seq != 5 {
+		t.Errorf("ImportMark reads (%d, %t), want (5, true)", seq, found)
+	}
+
+	if err := d.Tx(func(tx *Tx) error { return tx.SetImportMark("instX", 9) }); err != nil {
+		t.Fatalf("move the mark inside a Tx: %v", err)
+	}
+	var rows int
+	if err := d.Tx(func(tx *Tx) error {
+		seq, found, err := tx.ImportMark("instX")
+		if err != nil {
+			return err
+		}
+		if !found || seq != 9 {
+			t.Errorf("the Tx reads (%d, %t), want (9, true)", seq, found)
+		}
+		return tx.queryRow(`SELECT COUNT(*) FROM sync_import_mark`).Scan(&rows)
+	}); err != nil {
+		t.Fatalf("read the mark back inside the Tx that wrote it: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("sync_import_mark holds %d rows after two writes for one origin, want 1", rows)
+	}
 }
