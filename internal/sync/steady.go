@@ -95,14 +95,16 @@ func (r *Runner) SyncOnce(ctx context.Context, shared *db.DB) SteadyResult {
 // import, so the file learns what the others wrote.
 func (r *Runner) attempt(ctx context.Context, shared *db.DB) SteadyResult {
 	var out SteadyResult
-	if err := within(ctx, r.Client, r.stepTimeout(), func() error {
-		res, err := synclog.NewExporter(shared, r.Client).Export()
+	t := NewStopTransport(r.Client)
+	defer r.Track(t)()
+	if err := within(ctx, t, r.stepTimeout(), func() error {
+		res, err := synclog.NewExporter(shared, t).Export()
 		out.Exported = res.Appended
 		return err
 	}); err != nil {
 		return r.failed(out, err)
 	}
-	imported, err := r.drainImport(ctx, shared)
+	imported, err := r.drainImport(ctx, shared, t)
 	if err != nil {
 		return r.failed(out, err)
 	}
@@ -111,15 +113,37 @@ func (r *Runner) attempt(ctx context.Context, shared *db.DB) SteadyResult {
 	return out
 }
 
+// Track records t as the work in flight until the returned release runs, so
+// Stop can end it from outside the sync slot that work holds.
+func (r *Runner) Track(t *StopTransport) (release func()) {
+	if r == nil {
+		return func() {}
+	}
+	r.active.Store(t)
+	return func() { r.active.CompareAndSwap(t, nil) }
+}
+
+// Stop ends the work in flight, if there is any: a steady attempt or a push or
+// pull verb. A disable or retry calls it before it waits for the sync slot, so
+// it does not wait out work that can run for a whole data-step bound.
+func (r *Runner) Stop() {
+	if r == nil {
+		return
+	}
+	if t := r.active.Load(); t != nil {
+		t.Stop()
+	}
+}
+
 // drainImport reads the other origins page by page, each Import under the step
 // bound, until a run moves no mark or the attempt's own deadline passes.
-func (r *Runner) drainImport(ctx context.Context, shared *db.DB) (synclog.ImportResult, error) {
+func (r *Runner) drainImport(ctx context.Context, shared *db.DB, t *StopTransport) (synclog.ImportResult, error) {
 	deadline := time.Now().Add(SteadyImportDeadline)
 	return drainImport(func() (synclog.ImportResult, error) {
 		var res synclog.ImportResult
-		err := within(ctx, r.Client, r.stepTimeout(), func() error {
+		err := within(ctx, t, r.stepTimeout(), func() error {
 			var ierr error
-			res, ierr = synclog.NewImporter(shared, r.Client).Import()
+			res, ierr = synclog.NewImporter(shared, t).Import()
 			return ierr
 		})
 		return res, err
@@ -153,11 +177,11 @@ func (r *Runner) failed(out SteadyResult, err error) SteadyResult {
 }
 
 // within runs one step and gives up on it after the bound. A step that outlives
-// the bound is a worker that stopped answering: the worker is cancelled, which
-// is what releases the call it was waiting on, and the step is reported as
-// timed out. The cancel makes the call come back and this waits for it, so no
-// call a previous step left behind runs beside the next one.
-func within(ctx context.Context, client synclog.LogTransport, bound time.Duration, step func() error) error {
+// the bound is a worker that stopped answering: the step's transport is
+// stopped, which cancels the call it was waiting on and refuses every call
+// after it, and the step is reported as timed out. This waits for the step to
+// come back, so no call a previous step left behind runs beside the next one.
+func within(ctx context.Context, t *StopTransport, bound time.Duration, step func() error) error {
 	done := make(chan error, 1)
 	go func() { done <- step() }()
 
@@ -167,11 +191,11 @@ func within(ctx context.Context, client synclog.LogTransport, bound time.Duratio
 	case err := <-done:
 		return err
 	case <-ctx.Done():
-		cancelWorker(client)
+		t.Stop()
 		<-done
 		return ctx.Err()
 	case <-timer.C:
-		cancelWorker(client)
+		t.Stop()
 		<-done
 		return errStepTimedOut
 	}

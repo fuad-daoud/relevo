@@ -200,6 +200,9 @@ func (v *VerbRunner) preempt() {
 			cancel()
 		}
 	}
+	// The cancels above release the call in flight; the stop ends the push,
+	// pull or steady attempt that would otherwise go on through a fresh worker.
+	v.Runner.Stop()
 }
 
 // steadyTransport is the worker the runner drives steady calls through, which is
@@ -234,7 +237,9 @@ func (v *VerbRunner) push(ctx context.Context) *wire.SyncResult {
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
-	res, err := synclog.NewExporter(v.Shared, transport).Export()
+	stop := relevosync.NewStopTransport(transport)
+	defer v.Runner.Track(stop)()
+	res, err := synclog.NewExporter(v.Shared, stop).Export()
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
@@ -250,7 +255,9 @@ func (v *VerbRunner) pull(ctx context.Context) *wire.SyncResult {
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
-	res, err := synclog.NewImporter(v.Shared, transport).Import()
+	stop := relevosync.NewStopTransport(transport)
+	defer v.Runner.Track(stop)()
+	res, err := synclog.NewImporter(v.Shared, stop).Import()
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
@@ -333,6 +340,10 @@ func transportReady(transport synclog.LogTransport) bool {
 func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, token []byte) *wire.SyncResult {
 	v.beginJoin()
 	opened := false
+	// The join drives its transport through a stop of its own, so a disable's
+	// preempt ends the whole join rather than one call of it: the supervisor
+	// would otherwise start a fresh worker for the join's next call.
+	var stop *relevosync.StopTransport
 	enabler := &relevosync.Enabler{
 		Request: relevosync.EnableRequest{
 			Local:  v.Local,
@@ -342,14 +353,16 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, token []by
 		},
 		Open: func() (synclog.LogTransport, error) {
 			transport, err := v.openTransport(ctx)
-			if err == nil {
-				// Published before the join, because a joined machine reads
-				// off until the join finishes and a disable has to reach the
-				// transport while the join is still in flight.
-				v.publishJoin(transport)
-				opened = v.Open != nil
+			if err != nil {
+				return transport, err
 			}
-			return transport, err
+			// Published before the join, because a joined machine reads off
+			// until the join finishes and a disable has to reach the transport
+			// while the join is still in flight.
+			stop = relevosync.NewStopTransport(transport)
+			v.publishJoin(stop)
+			opened = v.Open != nil
+			return stop, nil
 		},
 		Stopped: v.joinWasStopped,
 		Now:     time.Now,
@@ -364,7 +377,11 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, token []by
 		}
 		return verbRefusal(verbClassify(err), err)
 	}
-	v.setClient(enabler.Transport)
+	client := enabler.Transport
+	if stop != nil {
+		client = stop.Inner()
+	}
+	v.setClient(client)
 	return &wire.SyncResult{OK: true, Applied: true, RemoteURL: res.Remote, TokenPresent: true}
 }
 
@@ -465,13 +482,30 @@ func (v *VerbRunner) disableTransport(ctx context.Context) synclog.LogTransport 
 // exportThrough adapts one log export to the turn-off's single best-effort
 // call. A machine with no shared file or no transport yields nil, which the
 // turn-off reads as nothing to hand over through.
+//
+// The export runs under the turn-off's own bound: when it ends, the export's
+// transport is stopped, which cancels the call in flight and refuses the
+// batches after it, so a slow remote costs the turn-off its bound rather than
+// a data call's.
 func exportThrough(shared *db.DB, transport synclog.LogTransport) func(context.Context) error {
 	if shared == nil || transport == nil {
 		return nil
 	}
-	return func(context.Context) error {
-		_, err := synclog.NewExporter(shared, transport).Export()
-		return err
+	return func(ctx context.Context) error {
+		stop := relevosync.NewStopTransport(transport)
+		done := make(chan error, 1)
+		go func() {
+			_, err := synclog.NewExporter(shared, stop).Export()
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			return err
+		case <-ctx.Done():
+			stop.Stop()
+			<-done
+			return ctx.Err()
+		}
 	}
 }
 

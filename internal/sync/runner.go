@@ -4,11 +4,12 @@ package sync
 // a pipe client provides and the machine-local kv the markers are written
 // through, and it carries the bound one attempt would run under and the marker
 // keys the statusline reads back. The client is built where the wiring is built
-// and installed here, so the daemon and the cockpit hand around one holder
-// rather than build a client each.
+// and installed here, so every daemon path that drives sync hands around one
+// holder rather than build a client each.
 
 import (
 	"errors"
+	"sync/atomic"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -40,6 +41,10 @@ type Runner struct {
 	// which is the bound production runs under; a test shortens it so a step
 	// that overruns is reached without waiting the real bound out.
 	Timeout time.Duration
+
+	// active is the transport the work in flight drives, so Stop can end it
+	// from outside the sync slot that work holds.
+	active atomic.Pointer[StopTransport]
 }
 
 // Enabled reports whether there is anything to drive. A machine with no client

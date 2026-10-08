@@ -52,7 +52,12 @@ func verbClassify(err error) string {
 		return wire.SyncCodeContended
 	case errors.Is(err, db.ErrLocked):
 		return wire.SyncCodeRemoteUnreachable
-	case errors.Is(err, db.ErrInvalid):
+	case errors.Is(err, db.ErrInvalid),
+		errors.Is(err, relevosync.ErrStopped),
+		errors.Is(err, relevosync.ErrEnableStopped):
+		// A stop is what a disable asked for, so the enable or one-shot it
+		// ended answers with a refusal rather than sending its caller to
+		// `relevo bugreport`.
 		return wire.SyncCodeInvalid
 	}
 	return wire.SyncCodeInternal
