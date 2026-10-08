@@ -145,6 +145,18 @@ var dbSyncStatusCases = []dbSyncStatusCase{
 		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true,\n  \"latched\": true,\n  \"latch_cause\": \"the remote refused the stored credential\"\n}\n",
 	},
 	{
+		name:      "on, an origin held by a newer schema",
+		enabled:   true,
+		tickOK:    true,
+		held:      []string{"relevo on this machine is older than zen, which writes schema 5: upgrade this machine to follow it (mark rests at 3)"},
+		remote:    syncStatusRemote,
+		namespace: syncStatusNamespace,
+		token:     syncStatusSecret,
+		wantToken: relevosync.TokenBehind,
+		wantLine:  "sync on (remote: " + syncStatusRemote + ", token: present) · held: relevo on this machine is older than zen, which writes schema 5: upgrade this machine to follow it (mark rests at 3)\n",
+		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true,\n  \"held_origins\": [\n    \"relevo on this machine is older than zen, which writes schema 5: upgrade this machine to follow it (mark rests at 3)\"\n  ]\n}\n",
+	},
+	{
 		name:      "off, with an attention marker still set",
 		attention: "the remote refused the stored credential",
 		wantToken: relevosync.TokenOff,
