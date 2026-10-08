@@ -264,8 +264,9 @@ func (r *Reconciler) inspectUpsert(out *[]Entry, tbl string, row db.ExchangeRow)
 }
 
 // nextDeletes fills out with deletes until it holds limit of them or head runs
-// out: the head rows the walk did not find, walked children-first and key-ordered
-// so the order an importer needs holds across chunks.
+// out: the head rows the walk did not find, walked children-first, with the keys
+// of one table taken in descending order, so the order an importer needs holds
+// across chunks.
 //
 // A head row is read back from the file before it is dropped. The walk already
 // found every owned row head names, so this is the check that separates a head row
@@ -279,7 +280,10 @@ func (r *Reconciler) nextDeletes(tx *db.Tx, limit int) ([]Entry, error) {
 			return out, nil
 		}
 		// Head is walked the other way round: a child is removed before the
-		// parent it hangs off, which is the order an importer needs.
+		// parent it hangs off, which is the order an importer needs. That holds
+		// across tables by the reversed table order and inside one table by the
+		// descending key order, so a fork goes before the binding it forked
+		// from.
 		tbl := tables[len(tables)-1-r.cursor.table]
 		keys := r.head.unseen(tbl, r.cursor.after, r.seen)
 		if len(keys) == 0 {
@@ -350,8 +354,8 @@ type headIndex struct {
 }
 
 // newHeadIndex indexes the head rows the transport returned, sorting each table's
-// keys so a walk of one table reads them in the order the local page reads its
-// own rows, which is what lets a delete cursor continue after a key.
+// keys ascending so the upsert walk matches the local page's own key order and
+// the delete walk has one order to take in reverse.
 func newHeadIndex(head []HeadRow) *headIndex {
 	index := &headIndex{
 		hashes: make(map[rowKey]string, len(head)),
@@ -382,13 +386,17 @@ func (h *headIndex) holds(key rowKey, hash string) bool {
 	return ok && held == hash
 }
 
-// unseen returns tbl's head keys the walk has not found locally, after the cursor
-// key, in key order. The order is what lets the delete phase resume from a cursor
-// and still emit a child before its parent.
+// unseen returns tbl's head keys the walk has not found locally, before the
+// cursor key, in descending key order. The order is what lets the delete phase
+// resume from a cursor and still emit a child before its parent within one table:
+// a fork is created after its source and carries the higher key, so descending
+// proposes the fork first.
 func (h *headIndex) unseen(tbl, after string, seen map[rowKey]bool) []string {
 	var out []string
-	for _, pk := range h.keys[tbl] {
-		if pk <= after {
+	keys := h.keys[tbl]
+	for i := len(keys) - 1; i >= 0; i-- {
+		pk := keys[i]
+		if after != "" && pk >= after {
 			continue
 		}
 		if seen[rowKey{table: tbl, pk: pk}] {

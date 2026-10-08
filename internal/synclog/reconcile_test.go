@@ -257,6 +257,61 @@ func TestReconcileOrdersDeletesChildrenFirst(t *testing.T) {
 	}
 }
 
+// A fork pair is two rows of one table, and the delete phase has to remove the
+// fork before its source even there. The fork is created after the source and
+// carries the higher key, so descending within the table proposes it first; an
+// importer removing the source first is refused by the fork that still hangs off
+// it, drops the whole batch and leaves both rows behind.
+func TestReconcileOrdersSameTableDeletesChildFirst(t *testing.T) {
+	t.Parallel()
+	d, path := exporterFile(t, "m1")
+	peer, _ := peerFile(t, "m2")
+	seed(t, path,
+		insertForkedBinding("01A", "", "m1"),
+		insertForkedBinding("01B", "01A", "m1"),
+	)
+
+	log := NewMemTransport("m1")
+	if _, err := reconciler(d, &recording{MemTransport: log}).Reconcile(); err != nil {
+		t.Fatalf("reconcile the settled fork: %v", err)
+	}
+	settled, err := NewImporter(peer, log.OnLog("m2")).Import()
+	if err != nil {
+		t.Fatalf("import the settled fork: %v", err)
+	}
+	if len(settled.Dropped) != 0 {
+		t.Fatalf("Dropped = %+v, want the peer to take both bindings", settled.Dropped)
+	}
+
+	seed(t, path,
+		`DELETE FROM binding WHERE id = '01B'`,
+		`DELETE FROM binding WHERE id = '01A'`,
+	)
+
+	r := &recording{MemTransport: log}
+	got, err := reconciler(d, r).Reconcile()
+	if err != nil {
+		t.Fatalf("reconcile after both removals: %v", err)
+	}
+	if got.Deletes != 2 || got.Upserts != 0 {
+		t.Fatalf("reconcile = %+v, want two deletes and nothing else", got)
+	}
+	if shape := r.shape(); shape != `binding ["01B"] delete|binding ["01A"] delete` {
+		t.Fatalf("appended = %q, want the fork removed before the binding it forked from", shape)
+	}
+
+	back, err := NewImporter(peer, log.OnLog("m2")).Import()
+	if err != nil {
+		t.Fatalf("import the deletes: %v", err)
+	}
+	if len(back.Dropped) != 0 {
+		t.Fatalf("Dropped = %+v, want the deletes applied rather than refused", back.Dropped)
+	}
+	if have := sharedRows(t, peer); have != "" {
+		t.Fatalf("the peer holds %q, want both bindings removed", have)
+	}
+}
+
 // A run reads the file in bounded pages rather than in one query per table: no
 // read hands back more rows than the page size, however many rows the table
 // holds. This is what keeps a file whose history dwarfs a chunk from being held
