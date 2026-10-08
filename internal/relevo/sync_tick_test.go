@@ -49,32 +49,26 @@ func (r *recordTransport) Stats() (synclog.Stats, error) {
 	return synclog.Stats{}, nil
 }
 
-// syncBlackhole accepts a call and then goes silent, which is what a network
-// that accepts a connection and then stops answering looks like from here. It
-// counts what was driven through it, so a trigger that reached it is visible
-// rather than only slow, and it can be cancelled the way a worker is when its
-// step runs past the bound.
+// syncBlackhole accepts a call and then goes silent until it is cancelled,
+// which is what a network that accepts a connection and then stops answering
+// looks like from here. It counts what was driven through it, so a trigger that
+// reached it is visible rather than only slow, and it can be cancelled the way
+// a worker is when its step runs past the bound.
 type syncBlackhole struct {
 	calls atomic.Int64
-	block time.Duration
 	dead  chan struct{}
 	once  sync.Once
 }
 
-// newSyncBlackhole is a blackhole whose calls block for block unless it is
-// cancelled first.
-func newSyncBlackhole(block time.Duration) *syncBlackhole {
-	return &syncBlackhole{block: block, dead: make(chan struct{})}
+// newSyncBlackhole is a blackhole whose calls block until it is cancelled.
+func newSyncBlackhole() *syncBlackhole {
+	return &syncBlackhole{dead: make(chan struct{})}
 }
 
 func (b *syncBlackhole) wait() error {
 	b.calls.Add(1)
-	select {
-	case <-time.After(b.block):
-		return nil
-	case <-b.dead:
-		return errors.New("the worker was cancelled")
-	}
+	<-b.dead
+	return errors.New("the worker was cancelled")
 }
 
 func (b *syncBlackhole) Append([]synclog.Entry) ([]synclog.Entry, error) { return nil, b.wait() }
@@ -157,11 +151,11 @@ func sealableReader(t *testing.T, client synclog.LogTransport) Runtime {
 func TestSealTriggersASyncWithoutBlockingTheSeal(t *testing.T) {
 	t.Parallel()
 
-	b := newSyncBlackhole(time.Minute)
+	b := newSyncBlackhole()
 	rt := sealableReader(t, b)
-	// The step bound the worker is given, short so the cancelling half of the
-	// trigger is reached and the blackhole does not linger.
-	rt.Sync.Timeout = 50 * time.Millisecond
+	// The step bound is longer than the bound the tick is timed against, so a
+	// tick that waited on the network would spend it here and be seen waiting.
+	rt.Sync.Timeout = time.Minute
 
 	d := NewDaemon(rt, time.Second)
 	start := time.Now()
@@ -169,7 +163,7 @@ func TestSealTriggersASyncWithoutBlockingTheSeal(t *testing.T) {
 		t.Fatalf("Tick with a blackholed remote: %v", err)
 	}
 	took := time.Since(start)
-	if took > 10*time.Second {
+	if took > 5*time.Second {
 		t.Errorf("the tick took %v, so the seal waited on the network", took)
 	}
 
@@ -188,10 +182,17 @@ func TestSealTriggersASyncWithoutBlockingTheSeal(t *testing.T) {
 
 	// The trigger handed the round's bytes to the pipeline: the remote was
 	// reached, and it was reached after the seal committed.
-	waitSyncIdle(t, d)
+	deadline := time.Now().Add(5 * time.Second)
+	for b.calls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
 	if got := b.calls.Load(); got == 0 {
 		t.Error("the seal trigger never reached the pipeline")
 	}
+	// Release the worker the blackhole is holding, so the attempt ends rather
+	// than waiting its own bound out.
+	b.Cancel()
+	waitSyncIdle(t, d)
 }
 
 // farBody is one binding row as a body, so an entry seeded for another origin
