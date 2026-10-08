@@ -446,6 +446,56 @@ func TestPullCompletesABatchThePageCut(t *testing.T) {
 	}
 }
 
+// TestPullMakesProgressOnEveryOrigin pins that a page is bounded per origin, so
+// one origin with a full page of pending rows cannot starve the origins that
+// sort after it: the later origin's rows past its mark still come back.
+func TestPullMakesProgressOnEveryOrigin(t *testing.T) {
+	t.Parallel()
+	path := tempReplica(t)
+	a := backendFor(t, &localDriver{path: path}, "origin-a")
+	b := backendFor(t, &localDriver{path: path}, "origin-b")
+	c := backendFor(t, &localDriver{path: path}, "origin-c")
+	a.page = 3
+	// origin-b sorts first and alone fills a page, and its mark stays put, so a
+	// pull that ran one global LIMIT would spend the whole page on it.
+	if _, err := b.Append([]Entry{
+		upsertEntry("origin-b", "board", `["b1"]`, `{"title":"one"}`),
+		upsertEntry("origin-b", "board", `["b2"]`, `{"title":"two"}`),
+		upsertEntry("origin-b", "board", `["b3"]`, `{"title":"three"}`),
+		upsertEntry("origin-b", "board", `["b4"]`, `{"title":"four"}`),
+	}); err != nil {
+		t.Fatalf("append origin-b: %v", err)
+	}
+	// origin-c sorts after and has rows both at and past its mark, so a pull
+	// that never reached it would report nothing of it.
+	if _, err := c.Append([]Entry{
+		upsertEntry("origin-c", "board", `["c1"]`, `{"title":"one"}`),
+		upsertEntry("origin-c", "board", `["c2"]`, `{"title":"two"}`),
+	}); err != nil {
+		t.Fatalf("append origin-c first: %v", err)
+	}
+	if _, err := c.Append([]Entry{
+		upsertEntry("origin-c", "board", `["c3"]`, `{"title":"three"}`),
+		upsertEntry("origin-c", "board", `["c4"]`, `{"title":"four"}`),
+	}); err != nil {
+		t.Fatalf("append origin-c second: %v", err)
+	}
+
+	got, err := a.Pull(map[string]int{"origin-b": 0, "origin-c": 2})
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	var later []int
+	for _, e := range got {
+		if e.Origin == "origin-c" {
+			later = append(later, e.Seq)
+		}
+	}
+	if !reflect.DeepEqual(later, []int{3, 4}) {
+		t.Fatalf("origin-c past its mark returned %v, want [3 4]: a full page of origin-b starved it", later)
+	}
+}
+
 // TestHeadPagesInSeqOrder pins head paging: pages ascend by sequence, cover the
 // head once, end when it is spent, and never carry another origin's rows.
 func TestHeadPagesInSeqOrder(t *testing.T) {

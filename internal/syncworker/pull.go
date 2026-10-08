@@ -6,43 +6,46 @@ import (
 	"strings"
 )
 
-// pullPageSize bounds one pull's read. The importer asks again for whatever the
-// page left, so an origin's log far larger than a round is read in bounded
-// statements rather than one result holding every other origin's history. It
-// sits above the size one append writes, so a page normally ends on a batch
-// boundary; when it does not, the read completes that batch rather than hand
-// back half of it.
+// pullPageSize bounds one pull's read per origin. The importer calls Pull once
+// per run, so a backlog larger than a page drains one page per sync tick rather
+// than in a loop inside Import; within one pull, an origin's log far larger than
+// a page is read in bounded statements rather than one result holding every
+// other origin's history. It sits above the size one append writes, so a page
+// normally ends on a batch boundary; when it does not, the read completes that
+// batch rather than hand back half of it.
 const pullPageSize = 1024
 
-// readEntries reads every other origin's log rows past that origin's mark, in
-// origin then sequence order, bounded to one page. The mark is applied in SQL
-// per origin, so a log whose history is mostly applied is not read whole and
-// filtered here.
-//
-// A page that fills may end inside the last batch it read, so that batch is
-// completed before the entries are returned. A batch is applied whole and the
-// mark moves to its tail, so handing back half of one would let the next pull
-// drop the other half as though the mark already covered it.
+// readEntries reads every other origin's log rows past that origin's mark, one
+// page per origin in origin then sequence order. Reading a page per origin is
+// what keeps an origin that fills its page from crowding out the origins that
+// sort after it, and the mark is applied in SQL per origin, so a log whose
+// history is mostly applied is not read whole and filtered here.
 func (b *TursoBackend) readEntries(ctx context.Context, marks map[string]int) ([]Entry, error) {
 	origins, err := b.otherOrigins(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if len(origins) == 0 {
-		return nil, nil
-	}
-	entries, err := b.readPage(ctx, origins, marks)
-	if err != nil {
-		return nil, err
-	}
-	if len(entries) >= b.page && len(entries) > 0 {
-		last := entries[len(entries)-1]
-		query, args := restOfBatchQuery(last)
-		more, err := b.scanEntries(ctx, query, args)
+	var entries []Entry
+	for _, origin := range origins {
+		page, err := b.readPage(ctx, origin, marks)
 		if err != nil {
 			return nil, err
 		}
-		entries = append(entries, more...)
+		// A page that fills may end inside the last batch read for this origin,
+		// so that batch is completed before the entries are returned. A batch is
+		// applied whole and the mark moves to its tail, so handing back half of
+		// one would let the next pull drop the other half as though the mark
+		// already covered it.
+		if len(page) >= b.page && len(page) > 0 {
+			last := page[len(page)-1]
+			query, args := restOfBatchQuery(last)
+			more, err := b.scanEntries(ctx, query, args)
+			if err != nil {
+				return nil, err
+			}
+			page = append(page, more...)
+		}
+		entries = append(entries, page...)
 	}
 	return pastMarks(entries, marks), nil
 }
@@ -71,16 +74,16 @@ func (b *TursoBackend) otherOrigins(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-// readPage reads one page of the pull's rows.
-func (b *TursoBackend) readPage(ctx context.Context, origins []string, marks map[string]int) ([]Entry, error) {
-	query, args := pullQuery(origins, marks, b.page)
+// readPage reads one page of one origin's pull rows.
+func (b *TursoBackend) readPage(ctx context.Context, origin string, marks map[string]int) ([]Entry, error) {
+	query, args := pullQuery([]string{origin}, marks, b.page)
 	return b.scanEntries(ctx, query, args)
 }
 
-// pullQuery builds the one SELECT a pull runs: each origin's rows past that
-// origin's own mark, in origin then sequence order, bounded to limit. The marks
-// are bound per origin so no mark is spliced into the statement, and an origin
-// with no mark is read from its first sequence.
+// pullQuery builds the SELECT a pull runs for one or more origins: their rows
+// past each origin's own mark, in origin then sequence order, bounded to limit.
+// The marks are bound per origin so no mark is spliced into the statement, and an
+// origin with no mark is read from its first sequence.
 func pullQuery(origins []string, marks map[string]int, limit int) (string, []any) {
 	clauses := make([]string, 0, len(origins))
 	args := make([]any, 0, len(origins)*2+1)
