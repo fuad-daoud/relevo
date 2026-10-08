@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -699,4 +700,111 @@ func exprField(fields []string, _ int) (string, bool) {
 // a trigger body is about the names and the structure rather than the spacing.
 func tightSQL(expr string) string {
 	return strings.ReplaceAll(expr, " ", "")
+}
+
+// TestImportMarkMigrationAppliesFreshAndUpgraded pins that the mark table reaches
+// both kinds of file: one created by this build, and one an earlier build left
+// behind. The upgraded file must not have the table before it is opened, or the
+// migration would be applying to a file that never needed it.
+func TestImportMarkMigrationAppliesFreshAndUpgraded(t *testing.T) {
+	t.Run("a file this build creates", func(t *testing.T) {
+		d := openTestDB(t)
+		if err := d.Tx(func(tx *Tx) error { return tx.SetImportMark("instX", 4) }); err != nil {
+			t.Fatalf("write a mark on a fresh file: %v", err)
+		}
+	})
+
+	t.Run("a file migrated before the table existed", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "relevo.db")
+		old := migrateThrough(t, path, importMarkMigration-1)
+		if _, err := old.Exec(`SELECT 1 FROM sync_import_mark`); err == nil {
+			t.Error("the mark table exists on a file that predates its migration")
+		}
+		if err := old.Close(); err != nil {
+			t.Fatalf("close the pre-migration file: %v", err)
+		}
+
+		d, err := Open(path)
+		if err != nil {
+			t.Fatalf("Open the upgraded file: %v", err)
+		}
+		t.Cleanup(func() { _ = d.Close() })
+		if err := d.Tx(func(tx *Tx) error { return tx.SetImportMark("instX", 4) }); err != nil {
+			t.Fatalf("write a mark on the upgraded file: %v", err)
+		}
+	})
+}
+
+// TestImportMarkSurvivesBackupRestore pins the property the mark's home is chosen
+// for: a mark lives in the same file as the rows it describes, so a copy of that
+// file comes back with a mark that matches the rows it holds. A mark kept
+// anywhere else could come back ahead of the rows and skip them for good.
+func TestImportMarkSurvivesBackupRestore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := d.Tx(func(tx *Tx) error { return tx.SetImportMark("instX", 11) }); err != nil {
+		t.Fatalf("write the mark: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	restored := filepath.Join(t.TempDir(), "restored.db")
+	copyFile(t, path, restored)
+	r, err := Open(restored)
+	if err != nil {
+		t.Fatalf("Open the copy: %v", err)
+	}
+	t.Cleanup(func() { _ = r.Close() })
+
+	if seq, found, err := r.ImportMark("instX"); err != nil || !found || seq != 11 {
+		t.Errorf("the restored file reads (%d, %t, %v), want (11, true, nil)", seq, found, err)
+	}
+	// The restored file's mark and rows are the ones the backup held, so the
+	// entries that came after the backup are the ones it must re-apply rather
+	// than skip.
+	if _, found, err := r.ImportMark("instY"); err != nil || found {
+		t.Errorf("an origin the backup never marked reads (found=%t, %v), want (false, nil)", found, err)
+	}
+}
+
+// migrateThrough applies only the migrations up to version last to path, so a
+// test can stand up a file as an earlier build left it and then let the current
+// one open it.
+func migrateThrough(t *testing.T, path string, last int) *sql.DB {
+	t.Helper()
+	sqlDB := rawSQLDB(t, path)
+	names, err := migrationNames(migrationFiles)
+	if err != nil {
+		t.Fatalf("migrationNames: %v", err)
+	}
+	for _, name := range names {
+		n, err := migrationNumber(name)
+		if err != nil {
+			t.Fatalf("migrationNumber %s: %v", name, err)
+		}
+		if n > last {
+			break
+		}
+		if err := applyOneMigration(sqlDB, migrationFiles, name, n); err != nil {
+			t.Fatalf("apply %s: %v", name, err)
+		}
+	}
+	return sqlDB
+}
+
+// copyFile copies src to dst, so a test can stand up a backup of a file the
+// handle has already closed.
+func copyFile(t *testing.T, src, dst string) {
+	t.Helper()
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("read %s: %v", src, err)
+	}
+	if err := os.WriteFile(dst, data, 0o644); err != nil {
+		t.Fatalf("write %s: %v", dst, err)
+	}
 }

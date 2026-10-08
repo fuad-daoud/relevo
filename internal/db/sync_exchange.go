@@ -15,6 +15,10 @@ import (
 // outbox contents and the rows they name in a single consistent read, and every
 // *DB form opens that transaction itself.
 
+// importMarkMigration is the schema version that creates sync_import_mark. It is
+// named so a test can stand up a file as the build before it left one.
+const importMarkMigration = 23
+
 // ImportMark returns how far origin's entries have been applied: the sequence
 // number of the last entry applied from that origin's log. found is false when
 // origin has no mark, which is what a machine that has never imported from it
