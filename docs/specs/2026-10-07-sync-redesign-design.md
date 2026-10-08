@@ -148,6 +148,62 @@ Remote tables, created by the worker over a sync connection on first use:
   in every CI test). A second implementation over `relevo serve` is possible
   without touching R1/R2; see §7.
 
+## 3a. Exchange details (R2)
+
+Settled before R2 was planned (2026-10-08):
+
+1. **Package.** The exchange logic lives in a new package
+   `internal/synclog` (codec, exporter, importer, reconcile, the
+   `LogTransport` interface and its in-memory fake). SQL stays in
+   `internal/db`: `synclog` calls `internal/db` methods, it does not open its
+   own connections or embed SQL strings that belong to the db package.
+2. **Entry.** One log entry is `origin, seq, tbl, pk, op, schema_version,
+   body, at`. `op` is `upsert` or `delete`. `pk` is the same `json_array(...)`
+   text the outbox records. `body` is the row as JSON, column name to value,
+   with a type-preserving encoding: BLOB values (zstd-compressed transcript and
+   round-file bodies, migration 013) must come back as BLOB, integers as
+   integers, NULL as NULL. A delete carries no body.
+3. **Transport interface.** `LogTransport` has: append this origin's entries
+   (the transport assigns `seq` as max(seq for that origin) + 1, so a
+   `relevo.db` restored from a backup never reuses a number); read entries of
+   other origins after per-origin marks; read `head` (latest seq and body hash
+   per row) for one origin; stats. The in-memory fake implements exactly the
+   spec §2 semantics, including `head`. R3 will implement it over Turso.
+4. **Exporter.** Drains `sync_outbox` in `seq` order. Skips (and deletes) rows
+   whose `origin` is NULL or is not this installation: that also stops an
+   imported row from echoing back. Coalesces repeated entries for the same
+   `(tbl, pk)` within a batch, keeping the first position and the row's state
+   at export time. Reads the current row: present -> `upsert` with body,
+   absent -> `delete`. Deletes drained outbox rows only after the transport
+   accepted the batch (at-least-once; re-export is safe because import is an
+   idempotent upsert).
+5. **Importer.** Applies other origins' entries in `seq` order, one
+   transaction per batch, foreign keys ON. Upsert is
+   `INSERT ... ON CONFLICT(<pk>) DO UPDATE SET ...` on the table's primary
+   key. NEVER `INSERT OR REPLACE`: REPLACE deletes the old row first, and
+   `binding_event`, `round_file` and `chain_*` children have `ON DELETE
+   CASCADE`, so replacing a parent would silently delete its children. Delete is by
+   primary key; a delete already applied is a no-op. Unknown columns in a body
+   are ignored, missing ones take the column default. An entry whose
+   `schema_version` is newer than this binary's holds that origin's mark (no
+   later entry of that origin applies) and is reported, not skipped.
+6. **Import marks** live in `relevo.db` in a new local-only table (next free
+   migration number, e.g. `sync_import_mark(origin TEXT PRIMARY KEY, seq
+   INTEGER NOT NULL)`), updated in the same transaction as the batch it
+   covers, so restoring `relevo.db` from a backup rewinds them consistently.
+   It is not a shared table: no outbox triggers, not in `SharedTables`.
+7. **Reconcile.** For this origin's rows, walking `SharedTables` in order
+   (parents first), compare each row's body hash with `head` and emit an
+   upsert for every difference or missing row and a delete for every `head`
+   row that is gone locally. Chunked and resumable (resuming from `head` is
+   enough: a re-run emits only what still differs). Enumerating "this
+   origin's rows" for a child table needs the same owner resolution the
+   triggers use; put it in `internal/db` beside `SharedTables` so the triggers
+   and reconcile cannot drift (a test compares them).
+8. **Ordering guarantee.** Entries of one origin are applied in seq order and
+   were exported in commit order, so parents precede children. Reconcile walks
+   parents first for the same reason.
+
 ## 4. Flows
 
 - **Enable / join.** Preflight (origin gate, token) → worker bootstraps
