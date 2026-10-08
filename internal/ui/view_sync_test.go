@@ -59,14 +59,8 @@ func syncPostOnSnapshot() SyncSnapshot {
 	snap.State = relevosync.State{Enabled: true, Backlog: 3, LastTickOK: true}
 	snap.Token = relevosync.Token(snap.State)
 	snap.Measured = true
-	snap.Stats = relevosync.Stats{
-		CdcOperations:        3,
-		LastPushUnixTime:     syncNow.Add(-2 * time.Minute).Unix(),
-		LastPullUnixTime:     syncNow.Add(-5 * time.Minute).Unix(),
-		NetworkSentBytes:     1_284_000,
-		NetworkReceivedBytes: 842_000,
-		Revision:             "rev-7f3a91c2",
-	}
+	snap.LastExport = syncNow.Add(-2 * time.Minute)
+	snap.LastImport = syncNow.Add(-time.Minute)
 	return snap
 }
 
@@ -155,11 +149,11 @@ func TestSyncPreOnFormGolden(t *testing.T) {
 }
 
 // TestSyncPostOnStatusGolden pins the status block a machine sees once sync is
-// on: the token, the unpushed count, both stamps, the bytes each way, the
-// revision and the first-upload progress, all rendered from one snapshot that
-// arrived as a message.
+// on: the token, the unpushed count, both exchange stamps and the
+// first-upload progress, all rendered from one snapshot that arrived as a
+// message.
 //
-// The mutation is zeroing CdcOperations: the behind-count line is derived from
+// The mutation is zeroing the backlog: the behind-count line is derived from
 // the snapshot's backlog, so a view that stopped reading it would hold this
 // golden still and lose the number a user acts on.
 func TestSyncPostOnStatusGolden(t *testing.T) {
@@ -167,7 +161,7 @@ func TestSyncPostOnStatusGolden(t *testing.T) {
 	assertSyncGolden(t, "sync-post-on-132", m, 132, 34)
 
 	body := plain(m.top().Body(m.env(), 132, 34))
-	for _, want := range []string{"sync:ok", "3 operations", "1.3 MB", "842.0 kB", "rev-7f3a91c2", "complete"} {
+	for _, want := range []string{"sync:ok", "3 operations", "complete"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("post-on body is missing %q:\n%s", want, body)
 		}
@@ -592,7 +586,6 @@ func dumpSyncSnapshot(s SyncSnapshot) string {
 	b.WriteString(s.RemoteURL + "\n")
 	b.WriteString(s.Settings.RemoteURL + " " + s.Settings.Namespace + "\n")
 	b.WriteString(s.Attention + "\n")
-	b.WriteString(s.Stats.Revision + "\n")
 	b.WriteString(s.OwnID + "\n")
 	b.WriteString(fmt.Sprintf("tokenSet=%t measured=%t unknown=%t\n", s.TokenSet, s.Measured, s.Unknown))
 	for _, in := range s.Installation {

@@ -167,10 +167,11 @@ func TestSyncSnapshotReportsAttention(t *testing.T) {
 	}
 }
 
-// TestSyncSnapshotCarriesTheSnapshotAndItsAbsence pins the pair the post-on block
-// reads: the remote's report, and whether there ever was one. A machine that has
-// measured nothing must not be drawn as a machine with nothing to send.
-func TestSyncSnapshotCarriesTheSnapshotAndItsAbsence(t *testing.T) {
+// TestSyncSnapshotCarriesTheExchangeTimesAndItsAbsence pins the pair the
+// post-on block reads: whether a completed attempt has ever stamped the
+// exchange times, and the times themselves. A machine that has measured nothing
+// must not be drawn as a machine with nothing to send.
+func TestSyncSnapshotCarriesTheExchangeTimesAndItsAbsence(t *testing.T) {
 	a := syncRealActions(t)
 	local := writeSyncSettings(t, a, relevosync.Settings{Enabled: true, RemoteURL: syncRemote}, syncSecretValue)
 
@@ -185,23 +186,23 @@ func TestSyncSnapshotCarriesTheSnapshotAndItsAbsence(t *testing.T) {
 	if err := local.KVPut(relevosync.KeyBacklog, []byte("7")); err != nil {
 		t.Fatalf("write the backlog marker: %v", err)
 	}
-	if err := local.KVPut(relevosync.KeyStats, []byte(`{"cdc_operations":7,"network_sent_bytes":2048,"revision":"rev-1"}`)); err != nil {
-		t.Fatalf("write the snapshot marker: %v", err)
+	if err := local.KVPut(relevosync.KeyTimes, []byte(`{"export":"2026-10-04T12:00:00Z","import":"2026-10-04T12:01:00Z"}`)); err != nil {
+		t.Fatalf("write the times marker: %v", err)
 	}
 	snap, err = a.SyncSnapshot()
 	if err != nil {
 		t.Fatalf("SyncSnapshot after the markers: %v", err)
 	}
-	if !snap.Measured || snap.State.Backlog != 7 || snap.Stats.Revision != "rev-1" {
-		t.Errorf("the snapshot did not reach the view: %+v", snap)
+	if !snap.Measured || snap.State.Backlog != 7 || snap.LastExport.IsZero() {
+		t.Errorf("the exchange times did not reach the view: %+v", snap)
 	}
 }
 
-// TestSyncSnapshotCarriesTheR4Fields pins that the read side of ':sync' carries
-// what this round added: a latched breaker and its cause, the backlog, the last
-// exchange times and the import's trouble. A view cannot draw what the snapshot
-// never carried.
-func TestSyncSnapshotCarriesTheR4Fields(t *testing.T) {
+// TestSyncSnapshotCarriesTheLatchBacklogTimesAndTrouble pins that the read side
+// of ':sync' carries the state a human acts on: a latched breaker and its
+// cause, the backlog, the last exchange times and the import's trouble. A view
+// cannot draw what the snapshot never carried.
+func TestSyncSnapshotCarriesTheLatchBacklogTimesAndTrouble(t *testing.T) {
 	a := syncRealActions(t)
 	local := writeSyncSettings(t, a, relevosync.Settings{Enabled: true, RemoteURL: syncRemote}, syncSecretValue)
 
@@ -236,113 +237,6 @@ func TestSyncSnapshotCarriesTheR4Fields(t *testing.T) {
 	}
 	if len(snap.Trouble.Held) != 1 {
 		t.Errorf("the held origin did not reach the snapshot: %+v", snap.Trouble)
-	}
-}
-
-// TestSyncActionsRefuseWithoutARemoteOrToken pins the refusal every action that
-// would reach a remote gives on a machine that has no remote, no token, or
-// neither. The verbs carry no build-wide "unavailable" answer: push, pull and
-// test each open the worker the stored rows build, and a machine with a row
-// missing refuses with the sentence that names it.
-//
-// None of them starts a process or reaches a network to find that out: the
-// opener refuses on the machine-local rows before a worker is built.
-func TestSyncActionsRefuseWithoutARemoteOrToken(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		setup func(t *testing.T, a *mastermindActions)
-	}{
-		{"neither a remote nor a token", func(t *testing.T, a *mastermindActions) {}},
-		{"a token and no remote", func(t *testing.T, a *mastermindActions) {
-			writeSyncSettings(t, a, relevosync.Settings{}, syncSecretValue)
-		}},
-		{"a remote and no token", func(t *testing.T, a *mastermindActions) {
-			writeSyncSettings(t, a, relevosync.Settings{RemoteURL: syncRemote}, "")
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			a := syncRealActions(t)
-			tc.setup(t, a)
-			for _, verb := range []struct {
-				name string
-				call func(context.Context) Result
-			}{
-				{"push", a.SyncPush},
-				{"pull", a.SyncPull},
-				{"test", a.SyncTest},
-			} {
-				res := verb.call(context.Background())
-				if res.Err == nil {
-					t.Errorf("%s succeeded with no remote or token to reach", verb.name)
-					continue
-				}
-				if !strings.Contains(res.Err.Error(), "remote") && !strings.Contains(res.Err.Error(), "token") {
-					t.Errorf("%s said %q, want the missing remote or token named", verb.name, res.Err)
-				}
-			}
-		})
-	}
-}
-
-// TestSyncDisableRunsS4TurnOffWhole pins that the d key's action is S4's own
-// turn-off and not a re-implementation: the enabled marker goes, the token goes,
-// and every local row is still there afterwards.
-func TestSyncDisableRunsS4TurnOffWhole(t *testing.T) {
-	a := syncRealActions(t)
-	shared := a.runtime().DB
-	local := writeSyncSettings(t, a, relevosync.Settings{Enabled: true, RemoteURL: syncRemote}, syncSecretValue)
-	if _, err := shared.RecordPut(db.Record{
-		Owner: "alice", Name: "webshop", State: "open", JSON: "{}",
-		CreatedAt: syncNow, UpdatedAt: syncNow,
-	}); err != nil {
-		t.Fatalf("seed a record: %v", err)
-	}
-	// The record is here to prove the turn-off keeps it, not to be pushed: the
-	// outbox it filled is emptied so the final export has nothing to hand over,
-	// and this test starts no worker behind the fixture's remote.
-	if err := shared.TruncateOutbox(); err != nil {
-		t.Fatalf("TruncateOutbox: %v", err)
-	}
-
-	res := a.SyncDisable(context.Background())
-	if res.Err != nil {
-		t.Fatalf("SyncDisable: %v (%s)", res.Err, res.Text)
-	}
-	if !res.Refresh {
-		t.Errorf("a turn-off does not ask for a re-read: %q", res.Text)
-	}
-
-	snap, err := a.SyncSnapshot()
-	if err != nil {
-		t.Fatalf("SyncSnapshot: %v", err)
-	}
-	if snap.State.Enabled || snap.Token != relevosync.TokenOff {
-		t.Errorf("sync is still on after the turn-off: %+v", snap)
-	}
-	if snap.TokenSet {
-		t.Errorf("the token survived the turn-off")
-	}
-	// The record lives in the shared file and a turn-off touches nothing there.
-	rows, err := shared.RecordList("alice")
-	if err != nil {
-		t.Fatalf("RecordList: %v", err)
-	}
-	if len(rows) != 1 {
-		t.Errorf("the turn-off changed the shared records: %d rows", len(rows))
-	}
-	if _, ok, err := relevosync.ReadToken(local); err != nil || ok {
-		t.Errorf("the token is still in the local file (ok=%t err=%v)", ok, err)
-	}
-}
-
-// TestSyncDisableWithoutSyncIsNotAnError pins that turning sync off on a machine
-// that never had it on still succeeds. A turn-off is idempotent, and refusing it
-// would leave a user with no way to clear a section they no longer want.
-func TestSyncDisableWithoutSyncIsNotAnError(t *testing.T) {
-	a := syncRealActions(t)
-	res := a.SyncDisable(context.Background())
-	if res.Err != nil {
-		t.Fatalf("SyncDisable on a machine that never enabled: %v", res.Err)
 	}
 }
 
@@ -457,31 +351,6 @@ func TestSyncSnapshotOnAHandleWithNoLocalFile(t *testing.T) {
 	}
 	if snap.RemoteURL != "" || snap.TokenSet || snap.Measured {
 		t.Errorf("a handle with no local file reported local state: %+v", snap)
-	}
-}
-
-// TestSyncDisableRefusesALockedLocalFile pins that a turn-off which cannot write
-// the mark reports the refusal rather than reporting success. The steps are
-// ordered so the mark is written before the token is deleted; a failure there
-// leaves the token, and saying "sync disabled" then would be a lie a user acts
-// on.
-func TestSyncDisableRefusesALockedLocalFile(t *testing.T) {
-	a := syncRealActions(t)
-	local := writeSyncSettings(t, a, relevosync.Settings{Enabled: true, RemoteURL: syncRemote}, syncSecretValue)
-
-	// A read-only local file makes every write fail.
-	if err := os.Chmod(local.Path(), 0o400); err != nil {
-		t.Skipf("cannot make the local file read-only: %v", err)
-	}
-	if os.Geteuid() == 0 {
-		t.Skip("running as root, which ignores the mode")
-	}
-	res := a.SyncDisable(context.Background())
-	if res.Err == nil {
-		t.Skip("the write succeeded despite the mode")
-	}
-	if !strings.Contains(res.Text, "disable failed") {
-		t.Errorf("a refused turn-off reported %q", res.Text)
 	}
 }
 

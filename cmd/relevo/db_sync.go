@@ -197,6 +197,12 @@ type dbSyncStatusDoc struct {
 	HeldOrigins []string `json:"held_origins,omitempty"`
 	Dropped     []string `json:"dropped,omitempty"`
 	Gaps        []string `json:"gaps,omitempty"`
+	// Joining says a join is in progress and JoinSince is when it began, read
+	// from the machine-local join marker. The daemon finishes the join whether
+	// the enable that started it waited or not, so a machine can be joining
+	// while reading off.
+	Joining   bool   `json:"joining,omitempty"`
+	JoinSince string `json:"join_since,omitempty"`
 }
 
 // dbSyncOutcomeDoc is what enable and disable print under --json: what the run
@@ -211,6 +217,9 @@ type dbSyncOutcomeDoc struct {
 	Steps     []string `json:"steps,omitempty"`
 	FinalPush bool     `json:"final_push"`
 	Warning   string   `json:"warning,omitempty"`
+	// Joining says the CLI's own bound ran out while the daemon kept joining,
+	// so the enable exited without a refusal.
+	Joining bool `json:"joining,omitempty"`
 }
 
 // dbSyncCallDoc is what push and pull print under --json.
@@ -259,7 +268,14 @@ func cmdDBSyncEnable(args []string) error {
 		Timeout:   *v.timeout,
 	})
 	if err != nil {
-		return err
+		if !enableContinuesInDaemon(err) {
+			return err
+		}
+		if *v.asJSON {
+			return printDoc(dbSyncOutcomeDoc{Joining: true})
+		}
+		fmt.Println(enableContinuesLine)
+		return nil
 	}
 	if *v.asJSON {
 		return printDoc(dbSyncOutcomeDoc{
@@ -270,6 +286,20 @@ func cmdDBSyncEnable(args []string) error {
 	}
 	fmt.Println("sync enabled on this machine")
 	return nil
+}
+
+// enableContinuesLine is what an enable prints when the client's own wait runs
+// out before the daemon's reply. The join is not abandoned: the daemon performs
+// it with its own handles and does not stop when this process gives up on the
+// reply, so the line says where to watch it and how to resume it.
+const enableContinuesLine = "sync enable: the join is still running in the daemon; `relevo db sync status` shows it"
+
+// enableContinuesInDaemon reports whether a failed enable call is the client's
+// own bound running out rather than the daemon refusing the join. A deadline
+// here is a join in progress, not a failure: the daemon finishes it either way,
+// and re-running enable resumes it if the daemon restarted.
+func enableContinuesInDaemon(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded)
 }
 
 // verbDialSlack is what the local bound adds on top of the caller's timeout, so
@@ -434,6 +464,13 @@ func cmdDBSyncStatus(args []string) error {
 		Dropped:      state.Trouble.Dropped,
 		Gaps:         state.Trouble.Gaps,
 	}
+	// A join in progress is a read of the machine-local marker, so status can
+	// show one with the network blackholed and no worker open.
+	if progress, joining, err := relevosync.ReadJoin(local); err != nil {
+		return dbSyncClassify(err)
+	} else if joining {
+		doc.Joining, doc.JoinSince = true, statusStamp(progress.At)
+	}
 	if *v.asJSON {
 		return printDoc(doc)
 	}
@@ -461,6 +498,9 @@ func dbSyncStatusLine(doc dbSyncStatusDoc) string {
 // the last exchange measured and what it could not apply.
 func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 	var b strings.Builder
+	if doc.Joining {
+		fmt.Fprintf(&b, " · joining since %s", doc.JoinSince)
+	}
 	if doc.Latched {
 		fmt.Fprintf(&b, " · latched: %s", doc.LatchCause)
 	}

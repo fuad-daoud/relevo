@@ -34,7 +34,7 @@ github.com/fuad-daoud/relevo/internal/pick 48.4
 github.com/fuad-daoud/relevo/internal/policy 97.2
 github.com/fuad-daoud/relevo/internal/proc 89.9
 github.com/fuad-daoud/relevo/internal/release 88.2
-github.com/fuad-daoud/relevo/internal/relevo 85.4
+github.com/fuad-daoud/relevo/internal/relevo 85.7
 github.com/fuad-daoud/relevo/internal/remote 87.5
 github.com/fuad-daoud/relevo/internal/remote/client 75.4
 github.com/fuad-daoud/relevo/internal/reporttail 97.5
@@ -45,7 +45,7 @@ github.com/fuad-daoud/relevo/internal/setup 93.8
 github.com/fuad-daoud/relevo/internal/spawn 60.0
 github.com/fuad-daoud/relevo/internal/stats 98.1
 github.com/fuad-daoud/relevo/internal/store 81.6
-github.com/fuad-daoud/relevo/internal/sync 76.8
+github.com/fuad-daoud/relevo/internal/sync 78.1
 github.com/fuad-daoud/relevo/internal/synclog 94.5
 github.com/fuad-daoud/relevo/internal/syncpipe 91.2
 github.com/fuad-daoud/relevo/internal/syncworker 92.9

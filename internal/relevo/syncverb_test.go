@@ -86,9 +86,9 @@ func newVerbFixture(t *testing.T) *verbFixture {
 // the other origins' entries and imports them. Each runs against the transport
 // the fixture installed, and neither refuses.
 //
-// The mutation is routing a one-shot back to a stub refusal: a verb that never
-// drove the transport records no call here, and one that refused would miss the
-// OK this test names.
+// The mutation is routing a one-shot away from the transport: a verb that never
+// drove it records no call here, and one that refused would miss the OK this
+// test names.
 func TestSyncPushAndPullMoveTheLog(t *testing.T) {
 	f := newVerbFixture(t)
 	ctx := context.Background()
@@ -136,9 +136,9 @@ func called(r *recordTransport, name string) bool {
 	return false
 }
 
-// TestSyncVerbEnableJoins pins that enable is no longer a stub: it runs the
-// preflight, drives the log through the opener the wiring installed, marks the
-// machine on, clears its join marker and leaves the worker on the runner. The
+// TestSyncVerbEnableJoins pins enable whole: it runs the preflight, drives the
+// log through the opener the wiring installed, marks the machine on, clears its
+// join marker and leaves the worker on the runner. The
 // origin gate is made to pass and the opener hands back the in-memory log, so
 // no worker starts and no network is reached.
 func TestSyncVerbEnableJoins(t *testing.T) {
@@ -185,9 +185,9 @@ func TestSyncVerbEnableJoins(t *testing.T) {
 	}
 }
 
-// TestSyncVerbDisableStillRuns pins that the turn-off is untouched by the stub:
-// it is the one verb that only writes machine-local rows, so it still marks the
-// machine off, forgets the token and reports its steps in the contract's order.
+// TestSyncVerbDisableStillRuns pins the turn-off's contract: it is the one verb
+// that only writes machine-local rows, so it marks the machine off, forgets the
+// token and reports its steps in the contract's order.
 //
 // It is what a reader reaches for when they want sync to stop, and it is the
 // way out of a machine that was on when the engine went away.
@@ -590,8 +590,8 @@ func TestSyncStatusUnchanged(t *testing.T) {
 //
 // Every refusal the executor can produce is driven here, and every message is
 // searched for the fixture. A refusal a caller can act on keeps the wording the
-// sync package gave it, so this also pins that the stub refusal is the package's
-// own error rather than a sentence written here.
+// sync package gave it, so this also pins that the refusal is the package's own
+// error rather than a sentence written here.
 func TestSyncVerbRefusalNeverCarriesTheToken(t *testing.T) {
 	f := newVerbFixture(t)
 	cases := []*wire.SyncVerb{

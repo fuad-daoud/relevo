@@ -329,17 +329,12 @@ func (v syncView) postOnLines(width int) []string {
 	lines = append(lines, syncLine("sync", v.SyncToken()+" · "+v.statePhrase(), syncTokenStyle(v.SyncToken())))
 	lines = append(lines, syncLine("remote", syncOr(v.snap.RemoteURL, "not configured"), mutedStyle))
 	lines = append(lines, syncLine("unpushed", v.backlogPhrase(), mutedStyle))
-	lines = append(lines, syncLine("last push", v.stampPhrase(v.snap.Stats.LastPushUnixTime, v.now), mutedStyle))
-	lines = append(lines, syncLine("last pull", v.stampPhrase(v.snap.Stats.LastPullUnixTime, v.now), mutedStyle))
 	if !v.snap.LastExport.IsZero() {
 		lines = append(lines, syncLine("last export", v.localStampPhrase(v.snap.LastExport), mutedStyle))
 	}
 	if !v.snap.LastImport.IsZero() {
 		lines = append(lines, syncLine("last import", v.localStampPhrase(v.snap.LastImport), mutedStyle))
 	}
-	lines = append(lines, syncLine("sent", v.bytesPhrase(v.snap.Stats.NetworkSentBytes), mutedStyle))
-	lines = append(lines, syncLine("received", v.bytesPhrase(v.snap.Stats.NetworkReceivedBytes), mutedStyle))
-	lines = append(lines, syncLine("revision", syncOr(v.snap.Stats.Revision, syncDash), mutedStyle))
 	lines = append(lines, syncLine("first upload", v.uploadProgress(), mutedStyle))
 	if v.snap.Attention != "" {
 		lines = append(lines, "")
@@ -390,38 +385,18 @@ func (v syncView) backlogPhrase() string {
 	return fmt.Sprintf("%d operations", v.snap.State.Backlog)
 }
 
-// stampPhrase renders one of the remote's unix times as an age beside its clock,
-// and the placeholder when the remote has never reported one. An absent stamp is
-// "never", not "just now": a zero unix time is 1970, and reading it as an age of
-// fifty years would be a true statement about the wrong thing.
-func (v syncView) stampPhrase(unix int64, now time.Time) string {
-	if unix <= 0 {
-		return syncDash + " never"
-	}
-	return fmt.Sprintf("%s · %s", unixAge(unix, now), unixClock(unix))
-}
-
-// bytesPhrase renders a byte count, or the placeholder when the remote has
-// reported none.
-func (v syncView) bytesPhrase(n int64) string {
-	if n <= 0 {
-		return syncDash
-	}
-	return syncBytes(n)
-}
-
-// uploadProgress is where the first upload stands. It is complete only once the
-// remote has reported a push time: a machine with a backlog measured has not
-// uploaded anything, and reporting progress from the backlog would be reading a
-// change set as a completed transfer.
+// uploadProgress is where the first upload stands. It is complete only once a
+// completed attempt has stamped its export: a machine that has exchanged
+// nothing has not uploaded anything, and reporting progress from the backlog
+// would be reading a change set as a completed transfer.
 func (v syncView) uploadProgress() string {
 	switch {
 	case !v.snap.Measured:
 		return syncDash + " not started"
-	case v.snap.Stats.LastPushUnixTime <= 0:
+	case v.snap.LastExport.IsZero():
 		return "pending · nothing has been pushed yet"
 	default:
-		return "complete · " + unixAge(v.snap.Stats.LastPushUnixTime, v.now)
+		return "complete · " + unixAge(v.snap.LastExport.Unix(), v.now)
 	}
 }
 

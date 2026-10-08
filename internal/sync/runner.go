@@ -26,11 +26,6 @@ var ErrAuthRefused = errors.New("sync: the remote refused this installation's to
 // remote that never answers costs one bounded wait rather than a hung round.
 const DefaultTimeout = 20 * time.Second
 
-// KeyStats is the snapshot of what the remote last reported, kept where the sync
-// view will read it. The statusline never reads this key: it reads one marker at
-// a time and formats a token.
-const KeyStats = "sync.stats"
-
 // Runner is the remote seam. It holds the log transport a pipe client provides,
 // so a transport method cannot be lost without the tree failing to build, and a
 // caller installs one because the wiring around it is installed unconditionally.

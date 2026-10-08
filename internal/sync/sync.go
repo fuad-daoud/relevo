@@ -102,18 +102,6 @@ func (t Trouble) Empty() bool {
 	return len(t.Held) == 0 && len(t.Dropped) == 0 && len(t.Gaps) == 0
 }
 
-// Stats is what the remote reports about the local change set: the operations a
-// push has not sent yet, the last successful push and pull, the bytes each way,
-// and the server revision. The revision is opaque and must never be parsed.
-type Stats struct {
-	CdcOperations        int64  `json:"cdc_operations"`
-	LastPullUnixTime     int64  `json:"last_pull_unix_time"`
-	LastPushUnixTime     int64  `json:"last_push_unix_time"`
-	NetworkSentBytes     int64  `json:"network_sent_bytes"`
-	NetworkReceivedBytes int64  `json:"network_received_bytes"`
-	Revision             string `json:"revision"`
-}
-
 // The four tokens the statusline shows, one per state that needs a human. The
 // renderer formats them; detail lives in the sync view.
 const (
@@ -233,6 +221,36 @@ func WriteTrouble(kv db.KV, t Trouble) error {
 	return nil
 }
 
+// ClearDroppedTrouble removes the cumulative dropped reports a machine carries.
+// A dropped batch moves the origin's mark past it, so the drop is never offered
+// again and only a reader can act on it; the report therefore accumulates until
+// the operator's retry says they have seen it. Held and gap reports are per-run
+// and are left where they are.
+func ClearDroppedTrouble(kv db.KV) error {
+	var tr Trouble
+	if err := marker(kv, KeyTrouble, &tr); err != nil {
+		return err
+	}
+	if len(tr.Dropped) == 0 {
+		return nil
+	}
+	tr.Dropped = nil
+	if tr.Held == nil && tr.Gaps == nil {
+		if err := kv.KVDelete(KeyTrouble); err != nil {
+			return fmt.Errorf("sync: trouble marker: %w", err)
+		}
+		return nil
+	}
+	body, err := json.Marshal(tr)
+	if err != nil {
+		return fmt.Errorf("sync: trouble marker: %w", err)
+	}
+	if err := kv.KVPut(KeyTrouble, body); err != nil {
+		return fmt.Errorf("sync: trouble marker: %w", err)
+	}
+	return nil
+}
+
 // KeyInCall is the marker a pipe call writes before it asks for anything and
 // clears when its reply arrives. A marker left behind names a call that never
 // came back, which is the one death a daemon that was itself killed cannot
@@ -308,29 +326,6 @@ func ClearLatch(kv db.KV) error {
 		return fmt.Errorf("sync: attention marker: %w", err)
 	}
 	return nil
-}
-
-// ReadSnapshot returns what the remote last reported, and whether a measured
-// tick ever recorded it. The pair is the whole answer, because a machine that
-// has measured nothing and a machine whose change set is empty are both a zero
-// Stats, and only the marker distinguishes them.
-func ReadSnapshot(kv db.KV) (Stats, bool, error) {
-	// The presence test is its own read rather than a side effect of the decode:
-	// a measured Stats is not required to be non-zero, so an empty remote and an
-	// unmeasured machine are the same bytes and only the marker's existence
-	// tells them apart.
-	body, ok, err := kv.KVGet(KeyStats)
-	if err != nil {
-		return Stats{}, false, fmt.Errorf("sync: marker %s: %w", KeyStats, err)
-	}
-	if !ok {
-		return Stats{}, false, nil
-	}
-	var s Stats
-	if err := json.Unmarshal(body, &s); err != nil {
-		return Stats{}, false, fmt.Errorf("sync: marker %s: %w", KeyStats, err)
-	}
-	return s, true, nil
 }
 
 // marker reads one key out of kv into out, which must be a pointer. An absent

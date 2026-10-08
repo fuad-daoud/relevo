@@ -43,10 +43,40 @@ var (
 	errCancelled = errors.New("the call was cancelled")
 )
 
-// defaultTimeout bounds one call. It is long enough for a driver to push or
-// pull over a slow link and short enough that a worker wedged inside one
-// becomes a counted death rather than a daemon that never ticks again.
-const defaultTimeout = 30 * time.Second
+// The bounds one call runs under, by the kind of work it moves. A data call --
+// hello, export, pull -- moves a transfer: the first bootstrap or join export
+// is a whole database, which docs/sync-driver-panic.md measured at ~300 MB, and
+// on a ~1 MB/s link that is five minutes before any margin; the 4 MB
+// PullBytesThreshold and the 256-entry appends with ~1 MB bodies are the same
+// transfer in smaller pieces. A control call -- stats, head, shutdown -- reads
+// a page or a marker and answers at once, so it keeps the short bound.
+const (
+	dataCallTimeout    = 10 * time.Minute
+	controlCallTimeout = 30 * time.Second
+)
+
+// callBound is the bound one call runs under, by the kind of work it moves. It
+// is keyed by verb rather than passed at each call site so a new verb has to
+// say which kind it is, and a guard test fails if a data verb is handed the
+// short bound again.
+func callBound(verb syncworker.Verb) time.Duration {
+	switch verb {
+	case syncworker.VerbHello, syncworker.VerbExport, syncworker.VerbPull:
+		return dataCallTimeout
+	default:
+		return controlCallTimeout
+	}
+}
+
+// bound is the bound one call runs under: the caller's override when one was
+// set, the kind's own otherwise. A test shortens it so a call that overruns is
+// reached without waiting the real bound out.
+func (c *Client) bound(verb syncworker.Verb) time.Duration {
+	if c.cfg.Timeout > 0 {
+		return c.cfg.Timeout
+	}
+	return callBound(verb)
+}
 
 // Config is how a worker is started and what it is started for.
 type Config struct {
@@ -69,7 +99,9 @@ type Config struct {
 	Origin string
 	URL    string
 	Token  string
-	// Timeout bounds one call. Zero means defaultTimeout.
+	// Timeout overrides the kind's own call bound for every call. Zero maps
+	// each verb to its kind's bound; a test shortens it so a call that overruns
+	// is reached without waiting the real bound out.
 	Timeout time.Duration
 	// OnMiss reports a worker that stopped answering a call it had accepted, so
 	// the breaker can count it and back off. A refusal is not a miss and does
@@ -92,9 +124,6 @@ func (c Config) withDefaults() (Config, error) {
 	}
 	if c.Stderr == nil {
 		c.Stderr = os.Stderr
-	}
-	if c.Timeout <= 0 {
-		c.Timeout = defaultTimeout
 	}
 	return c, nil
 }
@@ -292,7 +321,7 @@ func (c *Client) callLocked(req syncworker.Request) (syncworker.Response, error)
 		return syncworker.Response{}, c.fail(fmt.Errorf("write %s: %w", req.Verb, err))
 	}
 
-	resp, err := c.readReply()
+	resp, err := c.readReply(req.Verb)
 	if err != nil {
 		return syncworker.Response{}, c.fail(err)
 	}
@@ -331,7 +360,7 @@ func refusalError(resp syncworker.Response) error {
 // the way a timed-out call recovers is to kill the worker: the pipe is about to
 // have no other end, and a deadline the goroutine were still holding would be a
 // reason for the next worker to be refused as well.
-func (c *Client) readReply() (syncworker.Response, error) {
+func (c *Client) readReply(verb syncworker.Verb) (syncworker.Response, error) {
 	type result struct {
 		line []byte
 		err  error
@@ -345,7 +374,8 @@ func (c *Client) readReply() (syncworker.Response, error) {
 		got <- result{line: line, err: err}
 	}()
 
-	timer := time.NewTimer(c.cfg.Timeout)
+	bound := c.bound(verb)
+	timer := time.NewTimer(bound)
 	defer timer.Stop()
 	select {
 	case out := <-got:
@@ -358,7 +388,7 @@ func (c *Client) readReply() (syncworker.Response, error) {
 		}
 		return resp, nil
 	case <-timer.C:
-		return syncworker.Response{}, fmt.Errorf("no reply within %s", c.cfg.Timeout)
+		return syncworker.Response{}, fmt.Errorf("no reply within %s", bound)
 	}
 }
 

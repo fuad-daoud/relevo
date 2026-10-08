@@ -12,10 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/db/wire/client"
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
-	"github.com/fuad-daoud/relevo/internal/synclog"
-	"github.com/fuad-daoud/relevo/internal/syncpipe"
 )
 
 // SyncSnapshot is the whole read side of the :sync view: what the machine is
@@ -36,11 +33,10 @@ type SyncSnapshot struct {
 	Settings relevosync.Settings
 	// TokenSet is whether a token is stored. The value is never here.
 	TokenSet bool
-	// Stats is what the remote last reported, and Measured says whether a tick
-	// has ever recorded it. A machine that has measured nothing shows
-	// placeholders rather than zeros, because a zero backlog and no backlog
-	// read identically and mean opposite things.
-	Stats    relevosync.Stats
+	// Measured says whether a completed attempt has ever stamped the exchange
+	// times. A machine that has measured nothing shows placeholders rather than
+	// zeros, because a zero backlog and no backlog read identically and mean
+	// opposite things.
 	Measured bool
 	// Attention is the message the attention marker carries, when one does.
 	Attention string
@@ -72,12 +68,6 @@ type SyncSnapshot struct {
 	Unknown   bool
 }
 
-// syncClientName is the client name this machine's sync handle registers under,
-// the same string `relevo db sync` passes. It is fixed rather than derived from
-// the host so a push from the cockpit and a push from the CLI are one client as
-// far as the remote is concerned.
-const syncClientName = "relevo"
-
 // ready is the one guard every action shares: a nil adapter is not the only way
 // to have no runtime, because the holder itself is nil until the first load. A
 // cockpit that has not started yet must get an error rather than a panic -- a
@@ -106,59 +96,42 @@ func syncCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, relevosync.DefaultTimeout)
 }
 
-// verbRunner is the executor every cockpit sync action drives. It is the same
-// value the daemon installs as the owner's OnSyncVerb hook, built the same way
-// over the same handles, so the cockpit and `relevo db sync` cannot drift into
-// two different answers for the same verb -- there is one set of verbs'
-// semantics in the tree and both callers reach it.
+// syncVerb sends one sync verb to the daemon that owns this machine's database
+// and answers with what it did. It is the one route every cockpit sync action
+// takes: the daemon holds the shared file under its lock and runs the verb with
+// the handles it already has, so the cockpit never builds a worker, never opens
+// relevo-sync.db and never starts a second sync engine on the file the daemon's
+// own worker holds.
 //
-// There is no Serialize guard here: the cockpit is a client of the same machine
-// the daemon serves, so a verb it asks for is serialized daemon-side, and a
-// second guard in this process would only queue work against itself.
-func (a *mastermindActions) verbRunner() (*relevo.VerbRunner, error) {
+// The call rides the owner socket, exactly as `relevo db sync` sends one. A
+// handle that did not dial an owner refuses rather than opening the file itself:
+// a direct open would be the lock conflict this route exists to remove, and a
+// cockpit that ran the verb locally would import into relevo.db and delete the
+// replica out from under the daemon's worker.
+func (a *mastermindActions) syncVerb(ctx context.Context, verb string) (*wire.SyncResult, error) {
 	if err := a.ready(); err != nil {
 		return nil, err
 	}
-	shared := a.runtime().DB
-	local, err := relevosync.LocalHandle(shared)
+	ctx, cancel := syncCtx(ctx)
+	defer cancel()
+	res, err := a.runtime().DB.SyncVerb(ctx, &wire.SyncVerb{
+		Header: wire.Header{Type: wire.TypeSyncVerb},
+		Verb:   verb,
+	}, nil)
 	if err != nil {
 		return nil, err
 	}
-	runner := &relevo.VerbRunner{
-		Shared:      shared,
-		Local:       local,
-		Path:        shared.Path(),
-		ReplicaPath: syncpipe.ReplicaPath(shared.Path()),
-		Runner:      syncpipe.NewSyncRunner(syncpipe.Config{}, local),
-		ClientName:  syncClientName,
+	if verr := client.VerbError(res); verr != nil {
+		return nil, verr
 	}
-	runner.Open = func(context.Context) (synclog.LogTransport, error) {
-		return syncpipe.OpenSupervisor(shared, local)
-	}
-	return runner, nil
-}
-
-// runVerb drives one verb and turns a refusal into the action's own error shape.
-func (a *mastermindActions) runVerb(ctx context.Context, runner *relevo.VerbRunner, verb string) (*wire.SyncResult, Result) {
-	ctx, cancel := syncCtx(ctx)
-	defer cancel()
-	res := runner.Run(ctx, &wire.SyncVerb{Header: wire.Header{Type: wire.TypeSyncVerb}, Verb: verb}, nil)
-	if err := client.VerbError(res); err != nil {
-		return nil, syncErrResult(verb, err)
-	}
-	return res, Result{}
+	return res, nil
 }
 
 // SyncPush sends this machine's local change set. The result re-reads, so the
 // view shows what the remote measured rather than what the push assumed.
 func (a *mastermindActions) SyncPush(ctx context.Context) Result {
-	runner, err := a.verbRunner()
-	if err != nil {
+	if _, err := a.syncVerb(ctx, wire.SyncVerbPush); err != nil {
 		return syncErrResult("push", err)
-	}
-	_, bad := a.runVerb(ctx, runner, wire.SyncVerbPush)
-	if bad.Err != nil {
-		return bad
 	}
 	return Result{Text: "pushed this machine's change set", Refresh: true}
 }
@@ -167,13 +140,9 @@ func (a *mastermindActions) SyncPush(ctx context.Context) Result {
 // applied flag becomes words, because "nothing to apply" is the answer a user
 // needs and a boolean is not one.
 func (a *mastermindActions) SyncPull(ctx context.Context) Result {
-	runner, err := a.verbRunner()
+	res, err := a.syncVerb(ctx, wire.SyncVerbPull)
 	if err != nil {
 		return syncErrResult("pull", err)
-	}
-	res, bad := a.runVerb(ctx, runner, wire.SyncVerbPull)
-	if bad.Err != nil {
-		return bad
 	}
 	if !res.Applied {
 		return Result{Text: "pulled: the remote had nothing to apply", Refresh: true}
@@ -189,13 +158,7 @@ func (a *mastermindActions) SyncPull(ctx context.Context) Result {
 // builds is the one a later push or pull reuses, and there is one set of
 // verbs' semantics in the tree.
 func (a *mastermindActions) SyncTest(ctx context.Context) Result {
-	runner, err := a.verbRunner()
-	if err != nil {
-		return syncErrResult("test connection", err)
-	}
-	ctx, cancel := syncCtx(ctx)
-	defer cancel()
-	if err := runner.Probe(ctx); err != nil {
+	if _, err := a.syncVerb(ctx, wire.SyncVerbProbe); err != nil {
 		return syncErrResult("test connection", err)
 	}
 	return Result{Text: "the remote answered", Refresh: true}
@@ -206,13 +169,9 @@ func (a *mastermindActions) SyncTest(ctx context.Context) Result {
 // export stays best-effort, so a remote that cannot be reached is a warning on
 // a successful turn-off rather than a refusal to leave.
 func (a *mastermindActions) SyncDisable(ctx context.Context) Result {
-	runner, err := a.verbRunner()
+	res, err := a.syncVerb(ctx, wire.SyncVerbDisable)
 	if err != nil {
 		return syncErrResult("disable", err)
-	}
-	res, bad := a.runVerb(ctx, runner, wire.SyncVerbDisable)
-	if bad.Err != nil {
-		return bad
 	}
 	text := "sync off on this machine; local files unchanged and still servable"
 	if res.Warning != "" {
@@ -267,6 +226,10 @@ func (a *mastermindActions) SyncSnapshot() (SyncSnapshot, error) {
 	if state, err := relevosync.ReadState(local); err == nil {
 		snap.State, snap.Token = state, relevosync.Token(state)
 		snap.LastExport, snap.LastImport, snap.Trouble = state.LastExport, state.LastImport, state.Trouble
+		// Measured is the completed attempt's own stamp, so the pair the view
+		// gates on is written by the pipeline that measured it rather than by a
+		// value nothing records.
+		snap.Measured = !state.LastExport.IsZero() || !state.LastImport.IsZero()
 	} else {
 		// A marker that will not parse still has a token, and the token says
 		// off: the mark that turns it on did not read, so nothing has enabled it.
@@ -274,9 +237,6 @@ func (a *mastermindActions) SyncSnapshot() (SyncSnapshot, error) {
 	}
 	if msg, err := relevosync.ReadAttention(local); err == nil {
 		snap.Attention = msg
-	}
-	if stats, measured, err := relevosync.ReadSnapshot(local); err == nil {
-		snap.Stats, snap.Measured = stats, measured
 	}
 	return snap, nil
 }

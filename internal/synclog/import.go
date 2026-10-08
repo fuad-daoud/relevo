@@ -69,6 +69,16 @@ type ImportResult struct {
 	Gaps []Gap
 }
 
+// Moved reports whether a run moved any origin's mark: it applied an entry or
+// dropped a batch past one. A run that only held an origin or reported a gap
+// moved nothing -- a hold and a gap recur for as long as they are true -- so a
+// drain loop stops on it rather than re-reading the same entries until a
+// deadline. Batches is not the test: a dropped batch moves the mark through
+// past() without incrementing it.
+func (r ImportResult) Moved() bool {
+	return r.Applied > 0 || len(r.Dropped) > 0
+}
+
 // Hold is one origin stopped at an entry this machine's schema cannot read. The
 // origin's mark rests at the last entry applied before it, which is also the
 // point its later entries are re-read from.

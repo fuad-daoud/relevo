@@ -74,6 +74,8 @@ func (v *VerbRunner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte)
 		return v.runGuarded(func() *wire.SyncResult { return v.pull(ctx) })
 	case wire.SyncVerbRetry:
 		return v.runGuarded(func() *wire.SyncResult { return v.retry() })
+	case wire.SyncVerbProbe:
+		return v.runGuarded(func() *wire.SyncResult { return v.probe(ctx) })
 	case wire.SyncVerbDisable:
 		return v.runGuarded(func() *wire.SyncResult { return v.disable(ctx, verb) })
 	default:
@@ -148,6 +150,17 @@ func (v *VerbRunner) retry() *wire.SyncResult {
 			fmt.Errorf("sync: retry: no runner is installed: %w", db.ErrInvalid))
 	}
 	if err := v.Runner.Retry(); err != nil {
+		return verbRefusal(verbClassify(err), err)
+	}
+	return &wire.SyncResult{OK: true}
+}
+
+// probe is the test-connection verb: it drives the same worker a verb does and
+// reads its stats, which moves no change set in this file. It is a verb rather
+// than a direct call so the cockpit reaches it over the owner socket like every
+// other action, and the daemon's one worker is the one that answers.
+func (v *VerbRunner) probe(ctx context.Context) *wire.SyncResult {
+	if err := v.Probe(ctx); err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
 	return &wire.SyncResult{OK: true}
@@ -293,6 +306,7 @@ func (v *VerbRunner) disable(ctx context.Context, verb *wire.SyncVerb) *wire.Syn
 		Stop:        stopTransport(transport),
 		ReplicaPath: v.ReplicaPath,
 		Drop:        v.dropClient,
+		Cancel:      cancelTransport(transport),
 		Timeout:     verbTimeout(verb),
 	}
 	res, err := disabler.Disable(ctx)
@@ -343,6 +357,18 @@ func stopTransport(transport synclog.LogTransport) func() error {
 		return nil
 	}
 	return func() error { return closeTransportErr(transport) }
+}
+
+// cancelTransport releases a data call a transport has in flight, when it can.
+// The supervisor's Cancel kills the worker without taking its call lock, so a
+// turn-off issued while a pull is hung returns at once and the released call
+// settles as a deliberate stop rather than a counted death.
+func cancelTransport(transport synclog.LogTransport) func() {
+	canceller, ok := transport.(interface{ Cancel() })
+	if !ok {
+		return nil
+	}
+	return canceller.Cancel
 }
 
 // dropClient forgets the runner's client so the next attempt rebuilds it. The

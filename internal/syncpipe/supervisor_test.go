@@ -1,6 +1,7 @@
 package syncpipe
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -455,5 +456,47 @@ func TestSupervisorReportsAccountingFailures(t *testing.T) {
 				t.Fatal("the supervisor swallowed an accounting failure")
 			}
 		})
+	}
+}
+
+// TestDisableCancelsAHungPullWithoutCountingADeath pins the turn-off's escape
+// from a transfer that will not end: a disable issued while a pull is hung
+// cancels the worker through the supervisor's Cancel, returns promptly, and
+// leaves the breaker's death count alone -- the released call settles as a
+// deliberate stop, not as a worker that died.
+func TestDisableCancelsAHungPullWithoutCountingADeath(t *testing.T) {
+	local := syncLocal(t)
+	b := breakerOver(newMemKV())
+	cfg := fakeWorkerCfg(modeHangOnce)
+	cfg.Timeout = 30 * time.Second
+	s := newSupervisor(t, cfg, b)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.Pull(nil)
+		done <- err
+	}()
+	waitForWorker(t, s)
+
+	d := &relevosync.Disabler{
+		Local:   local,
+		Cancel:  s.Cancel,
+		Timeout: time.Second,
+		Now:     func() time.Time { return pinnedAt },
+	}
+	start := time.Now()
+	if _, err := d.Disable(context.Background()); err != nil {
+		t.Fatalf("Disable during a hung pull: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("Disable took %s, want the cancel to release the pull at once", elapsed)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the cancelled pull did not come back")
+	}
+	if got, err := b.Deaths(); err != nil || got != 0 {
+		t.Errorf("deaths = %d, %v; want the deliberate stop left uncounted", got, err)
 	}
 }

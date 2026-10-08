@@ -146,6 +146,11 @@ const (
 	SyncVerbPush    = "push"
 	SyncVerbPull    = "pull"
 	SyncVerbRetry   = "retry"
+	// SyncVerbProbe asks the owner's log whether it answers without moving a
+	// change set. It is a verb so the cockpit reaches a test connection over the
+	// owner socket like every other action, rather than opening a worker of its
+	// own.
+	SyncVerbProbe = "probe"
 )
 
 // The refusal codes a SyncResult carries. They are a closed set and every one is

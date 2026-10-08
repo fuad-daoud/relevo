@@ -3,31 +3,44 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
-	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
-// The gap this file closes: the :sync adapter had only ever been tested against
-// a handle opened directly, and the cockpit's handle is dialled. Every read the
-// post-on block draws comes out of the machine-local file, so a route that
-// carried no local file reported a machine that had never enabled sync. These
-// tests drive the real adapter over the real owner protocol against a real split
-// pair, so the value on the screen is the one a running daemon would serve.
+// Every cockpit sync action is a client of the daemon: it sends its verb over
+// the owner socket and the daemon runs it with the handles it already holds.
+// These tests drive the real adapter over the real owner protocol against a
+// real split pair, so the value on the screen -- and the verb that moved it --
+// is the one a running daemon would serve, and a cockpit that built its own
+// worker would record no verb here at all.
 
-// syncOwnerActions opens a split pair, serves it on a socket short enough for
-// sun_path, and returns the real Actions over a dialled handle -- the shape the
-// cockpit has when the daemon is running.
+// syncOwnerActions opens a split pair and serves it on a socket short enough
+// for sun_path, installing the production-shaped verb hook. It returns the real
+// Actions over a dialled handle -- the shape the cockpit has when the daemon is
+// running.
 func syncOwnerActions(t *testing.T) (*mastermindActions, *db.DB) {
+	t.Helper()
+	return syncOwnerActionsWithHook(t, nil)
+}
+
+// syncOwnerActionsWithHook is syncOwnerActions over a caller's hook, or the
+// production-shaped runner when hook is nil. A test that wants to see which
+// verb arrived installs a recording hook; every other test uses the runner.
+func syncOwnerActionsWithHook(t *testing.T, hook func(context.Context, *wire.SyncVerb, []byte) *wire.SyncResult) (*mastermindActions, *db.DB) {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "rvo-")
 	if err != nil {
@@ -46,6 +59,10 @@ func syncOwnerActions(t *testing.T) (*mastermindActions, *db.DB) {
 		t.Fatalf("listen %s: %v", sock, err)
 	}
 	srv := db.NewOwner(shared)
+	if hook == nil {
+		hook = newOwnerVerbRunner(t, shared).OwnerVerb
+	}
+	srv.OnSyncVerb = hook
 	go func() { _ = srv.Serve(ln) }()
 
 	dialled, err := db.Dial(sock)
@@ -64,6 +81,44 @@ func syncOwnerActions(t *testing.T) (*mastermindActions, *db.DB) {
 		t.Fatal("the dialled handle carries no machine-local file, so this test cannot reach the post-on block at all")
 	}
 	return &mastermindActions{live: newLiveRuntime(relevo.Runtime{DB: dialled})}, dialled
+}
+
+// newOwnerVerbRunner is the daemon-shaped executor the served owner installs: a
+// VerbRunner over the same handles, whose opener refuses on the machine-local
+// rows exactly as the supervisor opener does. A machine with a remote and a
+// token reaches the generic error below rather than a worker, because no ui
+// test may spawn one; a machine missing either refuses with the same sentence
+// the real daemon gives.
+func newOwnerVerbRunner(t *testing.T, shared *db.DB) *relevo.VerbRunner {
+	t.Helper()
+	local, err := relevosync.LocalHandle(shared)
+	if err != nil {
+		t.Fatalf("LocalHandle: %v", err)
+	}
+	return &relevo.VerbRunner{
+		Shared:      shared,
+		Local:       local,
+		Path:        shared.Path(),
+		ReplicaPath: filepath.Join(filepath.Dir(shared.Path()), "relevo-sync.db"),
+		ClientName:  "relevo",
+		Open: func(context.Context) (synclog.LogTransport, error) {
+			settings, err := relevosync.ReadSettings(local)
+			if err != nil {
+				return nil, err
+			}
+			if settings.RemoteURL == "" {
+				return nil, relevosync.ErrNoRemote
+			}
+			token, ok, err := relevosync.ReadToken(local)
+			if err != nil {
+				return nil, err
+			}
+			if !ok || len(bytes.TrimSpace(token)) == 0 {
+				return nil, relevosync.ErrNoToken
+			}
+			return nil, fmt.Errorf("ui test: no worker is built")
+		},
+	}
 }
 
 // writeOwnerSyncSettings seeds the local file the way an enable and a measured
@@ -92,12 +147,85 @@ func writeOwnerSyncSettings(t *testing.T, dialled *db.DB, st relevosync.Settings
 	}
 }
 
-// TestSyncSnapshotOverTheOwnerRouteShowsRealValues is the post-on capture the
-// S5 round could not take: the real adapter, over a real socket, against a real
-// split pair, with the markers an enable and a measured tick leave behind. Every
-// value the post-on block draws has to come back as itself -- the remote, the
-// backlog, the stamps, the byte counts, the revision -- because the alternative
-// is a screen that says a configured machine has nothing configured.
+// TestCockpitActionsReachTheOwnerVerbHook is the pin for the one writer: every
+// cockpit action sends its verb to the daemon's hook rather than building a
+// sync worker of its own. A local runner would never record a verb here, and a
+// second worker on the replica the daemon's worker holds is the failure this
+// route removes.
+func TestCockpitActionsReachTheOwnerVerbHook(t *testing.T) {
+	var mu sync.Mutex
+	var seen []string
+	hook := func(_ context.Context, v *wire.SyncVerb, _ []byte) *wire.SyncResult {
+		mu.Lock()
+		seen = append(seen, v.Verb)
+		mu.Unlock()
+		return &wire.SyncResult{OK: true, Applied: true}
+	}
+	a, _ := syncOwnerActionsWithHook(t, hook)
+
+	for _, call := range []func(context.Context) Result{
+		a.SyncPush, a.SyncPull, a.SyncTest, a.SyncDisable,
+	} {
+		if res := call(context.Background()); res.Err != nil {
+			t.Fatalf("an action refused over the owner hook: %v (%s)", res.Err, res.Text)
+		}
+	}
+	want := []string{wire.SyncVerbPush, wire.SyncVerbPull, wire.SyncVerbProbe, wire.SyncVerbDisable}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(seen, ",") != strings.Join(want, ",") {
+		t.Errorf("the owner saw %v, want %v", seen, want)
+	}
+}
+
+// TestSyncActionsRefuseWithoutARemoteOrToken pins the refusal every action that
+// would reach a remote gives on a machine that has no remote, no token, or
+// neither. The daemon's opener refuses on the machine-local rows before a
+// worker is built, and the refusal crosses the socket to the cockpit with the
+// sentence that names the missing row.
+func TestSyncActionsRefuseWithoutARemoteOrToken(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, dialled *db.DB)
+	}{
+		{"neither a remote nor a token", func(t *testing.T, dialled *db.DB) {}},
+		{"a token and no remote", func(t *testing.T, dialled *db.DB) {
+			writeOwnerSyncSettings(t, dialled, relevosync.Settings{Enabled: true}, syncSecretValue)
+		}},
+		{"a remote and no token", func(t *testing.T, dialled *db.DB) {
+			writeOwnerSyncSettings(t, dialled, relevosync.Settings{Enabled: true, RemoteURL: syncRemote}, "")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, dialled := syncOwnerActions(t)
+			tc.setup(t, dialled)
+			for _, verb := range []struct {
+				name string
+				call func(context.Context) Result
+			}{
+				{"push", a.SyncPush},
+				{"pull", a.SyncPull},
+				{"test", a.SyncTest},
+			} {
+				res := verb.call(context.Background())
+				if res.Err == nil {
+					t.Errorf("%s succeeded with no remote or token to reach", verb.name)
+					continue
+				}
+				if !strings.Contains(res.Err.Error(), "remote") && !strings.Contains(res.Err.Error(), "token") {
+					t.Errorf("%s said %q, want the missing remote or token named", verb.name, res.Err)
+				}
+			}
+		})
+	}
+}
+
+// TestSyncSnapshotOverTheOwnerRouteShowsRealValues is the post-on capture over
+// the real adapter, a real socket and a real split pair, with the markers an
+// enable and a measured attempt leave behind. Every value the post-on block
+// draws has to come back as itself -- the remote, the backlog, the stamps --
+// because the alternative is a screen that says a configured machine has
+// nothing configured.
 func TestSyncSnapshotOverTheOwnerRouteShowsRealValues(t *testing.T) {
 	a, dialled := syncOwnerActions(t)
 	writeOwnerSyncSettings(t, dialled, relevosync.Settings{Enabled: true, RemoteURL: syncRemote, Namespace: "default"}, syncSecretValue)
@@ -105,20 +233,8 @@ func TestSyncSnapshotOverTheOwnerRouteShowsRealValues(t *testing.T) {
 	if err := local.KVPut(relevosync.KeyBacklog, []byte("3")); err != nil {
 		t.Fatalf("write the backlog marker: %v", err)
 	}
-	stats := relevosync.Stats{
-		CdcOperations:        3,
-		LastPushUnixTime:     syncNow.Add(-2 * time.Minute).Unix(),
-		LastPullUnixTime:     syncNow.Add(-5 * time.Minute).Unix(),
-		NetworkSentBytes:     1_284_000,
-		NetworkReceivedBytes: 842_000,
-		Revision:             "rev-7f3a91c2",
-	}
-	body, err := json.Marshal(stats)
-	if err != nil {
-		t.Fatalf("encode the snapshot: %v", err)
-	}
-	if err := local.KVPut(relevosync.KeyStats, body); err != nil {
-		t.Fatalf("write the snapshot marker: %v", err)
+	if err := local.KVPut(relevosync.KeyTimes, []byte(`{"export":"2026-10-04T12:00:00Z","import":"2026-10-04T12:01:00Z"}`)); err != nil {
+		t.Fatalf("write the times marker: %v", err)
 	}
 
 	snap, err := a.SyncSnapshot()
@@ -140,8 +256,8 @@ func TestSyncSnapshotOverTheOwnerRouteShowsRealValues(t *testing.T) {
 	if snap.State.Backlog != 3 {
 		t.Errorf("backlog = %d, want 3", snap.State.Backlog)
 	}
-	if snap.Stats != stats {
-		t.Errorf("stats over the owner route = %+v, want %+v", snap.Stats, stats)
+	if snap.LastExport.IsZero() || snap.LastImport.IsZero() {
+		t.Errorf("the exchange times did not reach the cockpit: %v %v", snap.LastExport, snap.LastImport)
 	}
 
 	// The rendered body, not just the snapshot: the screen is what a user reads,
@@ -151,9 +267,6 @@ func TestSyncSnapshotOverTheOwnerRouteShowsRealValues(t *testing.T) {
 	for _, want := range []string{
 		syncRemote,
 		"3 operations",
-		"rev-7f3a91c2",
-		"1.3 MB",
-		"842.0 kB",
 		relevosync.TokenOK,
 	} {
 		if !strings.Contains(joined, want) {
@@ -167,12 +280,6 @@ func TestSyncSnapshotOverTheOwnerRouteShowsRealValues(t *testing.T) {
 	}
 	if got := v.SyncToken(); got != relevosync.TokenOK {
 		t.Errorf("the view's own token = %q, want %q", got, relevosync.TokenOK)
-	}
-	// Push, pull and test are off the footer whatever the section says: this
-	// build has no engine behind them, so a machine configured with a remote and
-	// a token refuses exactly as a bare one does.
-	if got, want := v.OffKeys(Env{Actions: a}), []string{"p", "l", "t"}; len(got) != len(want) {
-		t.Errorf("OffKeys = %v, want the three verbs this build refuses", got)
 	}
 }
 
@@ -198,6 +305,39 @@ func TestSyncDisableOverTheOwnerRouteTurnsSyncOff(t *testing.T) {
 	}
 	if snap.TokenSet {
 		t.Error("the token survived the turn-off over the owner route")
+	}
+}
+
+// TestSyncDisableClearsTheJoinMarker pins that a turn-off takes the join marker
+// with the mark: a machine that is off is not joining, and a marker left behind
+// would have status show a join on a machine that is not moving.
+func TestSyncDisableClearsTheJoinMarker(t *testing.T) {
+	a, dialled := syncOwnerActions(t)
+	writeOwnerSyncSettings(t, dialled, relevosync.Settings{Enabled: true, RemoteURL: syncRemote}, syncSecretValue)
+	local := dialled.Local()
+	if err := relevosync.WriteJoin(local, syncNow); err != nil {
+		t.Fatalf("WriteJoin: %v", err)
+	}
+	if _, ok, err := relevosync.ReadJoin(local); err != nil || !ok {
+		t.Fatalf("the join marker was not written: (ok %v, err %v)", ok, err)
+	}
+
+	if res := a.SyncDisable(context.Background()); res.Err != nil {
+		t.Fatalf("SyncDisable: %v (%s)", res.Err, res.Text)
+	}
+	if _, ok, err := relevosync.ReadJoin(local); err != nil || ok {
+		t.Errorf("the turn-off left the join marker behind: (ok %v, err %v)", ok, err)
+	}
+}
+
+// TestSyncDisableWithoutSyncIsNotAnError pins that turning sync off on a machine
+// that never had it on still succeeds. A turn-off is idempotent, and refusing it
+// would leave a user with no way to clear a section they want gone.
+func TestSyncDisableWithoutSyncIsNotAnError(t *testing.T) {
+	a, _ := syncOwnerActions(t)
+	res := a.SyncDisable(context.Background())
+	if res.Err != nil {
+		t.Fatalf("SyncDisable on a machine that never enabled: %v", res.Err)
 	}
 }
 

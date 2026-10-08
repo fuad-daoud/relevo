@@ -25,12 +25,20 @@ var errNoSync = errors.New("sync: no client and no local file to drive")
 // driving the one that stopped answering.
 var errStepTimedOut = errors.New("sync: a step ran past its deadline")
 
-// StepTimeout bounds one network step of the steady pipeline. A step that
-// outlives it is a worker that stopped answering rather than a slow remote, so
-// the worker is cancelled and the step reported instead of holding the next
-// tick. It is below the pipe client's own call timeout, so the deliberate stop
-// is taken before the transport gives up on its own.
-const StepTimeout = 20 * time.Second
+// StepTimeout bounds one data step of the steady pipeline. A step that outlives
+// it is a worker that stopped answering rather than a slow remote, so the
+// worker is cancelled and the step reported instead of holding the next tick.
+// It sits just below the pipe client's transfer-sized call bound, so the
+// deliberate cancel is taken first and the step is released as a stop rather
+// than left for the transport to time out and count as a death.
+const StepTimeout = 9 * time.Minute
+
+// SteadyImportDeadline bounds one attempt's import loop. It sits under the
+// 5-minute idle window so two attempts never overlap: an attempt still
+// importing when the next window opens would otherwise drive the one worker
+// from two triggers. A stop at this bound is not an error; the next tick
+// continues from the marks this one moved.
+const SteadyImportDeadline = 4 * time.Minute
 
 // SteadyResult is what one attempt moved, in the shape the trigger logs it.
 type SteadyResult struct {
@@ -94,15 +102,28 @@ func (r *Runner) attempt(ctx context.Context, shared *db.DB) SteadyResult {
 	}); err != nil {
 		return r.failed(out, err)
 	}
-	if err := within(ctx, r.Client, r.stepTimeout(), func() error {
-		res, err := synclog.NewImporter(shared, r.Client).Import()
-		out.Applied = res.Applied
-		out.Trouble = troubleFrom(res)
-		return err
-	}); err != nil {
+	imported, err := r.drainImport(ctx, shared)
+	if err != nil {
 		return r.failed(out, err)
 	}
+	out.Applied = imported.Applied
+	out.Trouble = troubleFrom(imported)
 	return out
+}
+
+// drainImport reads the other origins page by page, each Import under the step
+// bound, until a run moves no mark or the attempt's own deadline passes.
+func (r *Runner) drainImport(ctx context.Context, shared *db.DB) (synclog.ImportResult, error) {
+	deadline := time.Now().Add(SteadyImportDeadline)
+	return drainImport(func() (synclog.ImportResult, error) {
+		var res synclog.ImportResult
+		err := within(ctx, r.Client, r.stepTimeout(), func() error {
+			var ierr error
+			res, ierr = synclog.NewImporter(shared, r.Client).Import()
+			return ierr
+		})
+		return res, err
+	}, deadline, time.Now)
 }
 
 // troubleFrom is the importer's report as the marker stores it: each trouble in
@@ -186,8 +207,38 @@ func (r *Runner) record(out SteadyResult) {
 		return
 	}
 	r.put(KeyBacklog, int64(0))
-	r.put(KeyTrouble, out.Trouble)
+	r.putTrouble(out.Trouble)
 	r.put(KeyTimes, Times{Export: now, Import: now})
+}
+
+// maxDroppedReports caps the cumulative dropped list. It is a report a reader
+// scrolls, not a log: the newest reports are the ones still worth acting on, so
+// a machine that drops for a long time keeps the tail rather than growing a
+// marker without bound.
+const maxDroppedReports = 50
+
+// putTrouble writes the attempt's report, carrying dropped reports forward. A
+// dropped batch has already had its origin's mark moved past it, so it is never
+// offered again and only a reader can act on it; a later clean attempt must not
+// erase it. Held and gap reports are per-run because they recur while they are
+// true, so they are written as this attempt found them.
+func (r *Runner) putTrouble(t Trouble) {
+	var prior Trouble
+	if err := marker(r.Local, KeyTrouble, &prior); err != nil {
+		slog.Warn("sync: read the trouble marker", "err", err)
+	} else {
+		t.Dropped = capDropped(append(prior.Dropped, t.Dropped...))
+	}
+	r.put(KeyTrouble, t)
+}
+
+// capDropped keeps the newest dropped reports, dropping the oldest when the
+// list grows past the cap.
+func capDropped(list []string) []string {
+	if len(list) <= maxDroppedReports {
+		return list
+	}
+	return list[len(list)-maxDroppedReports:]
 }
 
 // put writes one marker, logging a failure rather than folding it into the

@@ -60,6 +60,11 @@ type Disabler struct {
 	// Drop releases the client the worker was driven through. Nil means the
 	// caller keeps no client and the step is skipped.
 	Drop func() error
+	// Cancel releases any data call in flight, so a turn-off issued while a
+	// pull is hung does not wait it out. Nil means no worker is reachable. A
+	// cancelled call is a deliberate stop rather than a death, so the breaker
+	// count is unchanged.
+	Cancel func()
 	// Now stamps the mark. Nil means time.Now.
 	Now func() time.Time
 	// Timeout bounds the final export. It is the reason the attempt is
@@ -100,12 +105,22 @@ type DisableResult struct {
 // is worth telling the user about rather than reporting a clean turn-off.
 func (d *Disabler) Disable(ctx context.Context) (DisableResult, error) {
 	var out DisableResult
+	// A data call already in flight is released before anything else: the final
+	// export cannot run while a pull holds the worker, and a disable issued
+	// while a join runs is exactly the stop that join has to honour.
+	d.cancel()
 	out.Steps = append(out.Steps, stepFinalPush)
 	d.finalPush(ctx, &out)
 
 	out.Steps = append(out.Steps, stepMarkOff)
 	if err := MarkEnabled(d.Local, false, d.now()); err != nil {
 		return out, fmt.Errorf("sync: disable: %w", err)
+	}
+	// The join marker goes with the mark: a machine that is off is not joining,
+	// and a marker left behind would have status show a join on a machine that
+	// is not moving.
+	if err := ClearJoin(d.Local); err != nil {
+		return out, fmt.Errorf("sync: disable: clear the join marker: %w", err)
 	}
 
 	out.Steps = append(out.Steps, stepDeleteToke)
@@ -191,6 +206,13 @@ func deleteReplica(path string) ([]string, error) {
 		deleted = append(deleted, full)
 	}
 	return deleted, nil
+}
+
+// cancel releases any data call in flight, when the caller installed a cancel.
+func (d *Disabler) cancel() {
+	if d.Cancel != nil {
+		d.Cancel()
+	}
 }
 
 func (d *Disabler) now() time.Time {

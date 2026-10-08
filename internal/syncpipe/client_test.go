@@ -591,3 +591,30 @@ func waitForExit(t *testing.T, c *Client, grace time.Duration) bool {
 	}
 	return false
 }
+
+// TestCallBoundIsByKind pins the kind-to-bound map: every data verb gets the
+// transfer-sized bound and every control verb the short one. A data verb handed
+// the short bound again would time out a bootstrap or a pull the driver is
+// still transferring.
+func TestCallBoundIsByKind(t *testing.T) {
+	for _, verb := range []syncworker.Verb{syncworker.VerbHello, syncworker.VerbExport, syncworker.VerbPull} {
+		if got := callBound(verb); got != dataCallTimeout {
+			t.Errorf("callBound(%s) = %s, want the data bound %s", verb, got, dataCallTimeout)
+		}
+	}
+	for _, verb := range []syncworker.Verb{syncworker.VerbStats, syncworker.VerbHead, syncworker.VerbShutdown} {
+		if got := callBound(verb); got != controlCallTimeout {
+			t.Errorf("callBound(%s) = %s, want the control bound %s", verb, got, controlCallTimeout)
+		}
+	}
+}
+
+// TestSteadyStepBoundSitsBelowTheDataCallBound pins the deliberate stop: the
+// steady pipeline's step bound must fire before the transport's own call bound,
+// so a hung step is cancelled and released rather than left for the transport
+// to time out and count as a death.
+func TestSteadyStepBoundSitsBelowTheDataCallBound(t *testing.T) {
+	if relevosync.StepTimeout >= dataCallTimeout {
+		t.Errorf("sync.StepTimeout = %s, want below the %s data call bound", relevosync.StepTimeout, dataCallTimeout)
+	}
+}

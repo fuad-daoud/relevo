@@ -59,6 +59,8 @@ type dbSyncStatusCase struct {
 	attention string
 	backlog   int64
 	held      []string
+	dropped   []string
+	gaps      []string
 	remote    string
 	namespace string
 	token     string
@@ -216,8 +218,8 @@ func seedSyncStatusLocal(t *testing.T, local *db.DB, tc dbSyncStatusCase) {
 			t.Fatalf("write the attention marker: %v", err)
 		}
 	}
-	if len(tc.held) > 0 {
-		body, err := json.Marshal(relevosync.Trouble{Held: tc.held})
+	if len(tc.held) > 0 || len(tc.dropped) > 0 || len(tc.gaps) > 0 {
+		body, err := json.Marshal(relevosync.Trouble{Held: tc.held, Dropped: tc.dropped, Gaps: tc.gaps})
 		if err != nil {
 			t.Fatalf("encode the trouble marker: %v", err)
 		}
@@ -615,10 +617,10 @@ func startSyncStatusDaemon(t *testing.T, tc dbSyncStatusCase) {
 	}
 }
 
-// TestDBSyncStatusAnswersWhileTheDaemonRuns is the bug this round exists for: a
-// daemon in another process holds relevo.db, and the verb still answers, with the
-// bytes the same state prints with no daemon at all. The refusal it used to meet
-// is the whole of what this change removes.
+// TestDBSyncStatusAnswersWhileTheDaemonRuns pins that a daemon in another
+// process holding relevo.db does not stop status: the verb answers with the
+// bytes the same state prints with no daemon at all, because the read rides the
+// owner's socket rather than opening the file.
 func TestDBSyncStatusAnswersWhileTheDaemonRuns(t *testing.T) {
 	tc := dbSyncStatusCases[2] // on, no backlog
 	startSyncStatusDaemon(t, tc)
@@ -632,15 +634,10 @@ func TestDBSyncStatusAnswersWhileTheDaemonRuns(t *testing.T) {
 	}
 }
 
-// The test that used to live here -- TestDBSyncWritersStillRefuseWhileTheDaemonRuns
-// -- pinned the direct open the writing verbs needed, and asserted they refused
-// with `conflict` and a `relevo daemon stop` hint while a daemon held the file.
-// S7 removes that open: the verbs ride the owner's socket and the daemon runs
-// them, so the case the old test pinned is now the case they are built for. Its
-// successor is TestSyncWritersSucceedWhileTheDaemonRuns, in db_sync_verb_test.go,
-// which asserts the opposite of the same setup -- and the mutation that catches
-// a reintroduced direct open is that test, since the old open would meet the
-// lock and return the conflict this change removes.
+// TestSyncWritersSucceedWhileTheDaemonRuns, in db_sync_verb_test.go, pins the
+// other half of the same setup: a writing verb rides the owner's socket and
+// succeeds while a daemon holds the file. A reintroduced direct open would meet
+// the lock and return the conflict that test asserts against.
 
 // TestDBSyncStatusRefusesAnOwnerThatServesNoLocalFile pins the half of the
 // split that a routed read must not lose. An owner built before the local scope
@@ -728,6 +725,86 @@ func TestDBSyncStatusRefusesWithNoOwnerAndNamesTheSocket(t *testing.T) {
 		t.Errorf("message = %q, want it to name the socket %s", ce.message, machineSocketPath(t))
 	}
 	if strings.Contains(ce.message, "daemon stop") {
-		t.Errorf("message = %q, want no `daemon stop` hint: status no longer needs the daemon to stop", ce.message)
+		t.Errorf("message = %q, want no `daemon stop` hint: a routed read never asks the daemon to stop", ce.message)
+	}
+}
+
+// TestStatusNamesDroppedBatchesAndGaps pins that the two trouble reports besides
+// a hold reach the status surface on both shapes: the text line names the
+// dropped batch and the gap, and --json carries both arrays. A document that
+// dropped either field would leave a reader with a machine that looks caught up
+// when a batch and the entries behind a hole are still waiting on them.
+func TestStatusNamesDroppedBatchesAndGaps(t *testing.T) {
+	tc := dbSyncStatusCase{
+		name:      "held, dropped and gapped",
+		enabled:   true,
+		tickOK:    true,
+		remote:    syncStatusRemote,
+		namespace: syncStatusNamespace,
+		token:     syncStatusSecret,
+		held:      []string{"relevo on this machine is older than zen, which writes schema 5: upgrade it (mark rests at 3)"},
+		dropped:   []string{"dropped a batch of 4 entries from m2: unreadable body"},
+		gaps:      []string{"m3 is held at 6: a batch reaches 9, want 7; the entries in between have not arrived"},
+	}
+	serveSyncStatus(t, tc)
+
+	text, _, err := captureOutput(t, func() error { return cmdDBSyncStatus(nil) })
+	if err != nil {
+		t.Fatalf("cmdDBSyncStatus: %v", err)
+	}
+	for _, want := range []string{"held:", "dropped:", "gap:", "unreadable body", "want 7"} {
+		if !strings.Contains(string(text), want) {
+			t.Errorf("status line %q is missing %q", string(text), want)
+		}
+	}
+
+	jsonOut, _, err := captureOutput(t, func() error { return cmdDBSyncStatus([]string{"--json"}) })
+	if err != nil {
+		t.Fatalf("cmdDBSyncStatus --json: %v", err)
+	}
+	var doc dbSyncStatusDoc
+	if err := json.Unmarshal(jsonOut, &doc); err != nil {
+		t.Fatalf("decode the document: %v", err)
+	}
+	if len(doc.HeldOrigins) != 1 || len(doc.Dropped) != 1 || len(doc.Gaps) != 1 {
+		t.Errorf("document = %+v, want one held, one dropped and one gap", doc)
+	}
+}
+
+// TestStatusShowsAJoinInProgress pins that a join the daemon is running appears
+// on the status surface with its start time, on both shapes. The join marker is
+// machine-local, so status can show one with no worker open.
+func TestStatusShowsAJoinInProgress(t *testing.T) {
+	tc := dbSyncStatusCase{
+		name:      "joining",
+		enabled:   true,
+		tickOK:    true,
+		remote:    syncStatusRemote,
+		namespace: syncStatusNamespace,
+		token:     syncStatusSecret,
+	}
+	serveSyncStatus(t, tc)
+	if err := relevosync.WriteJoin(dialledLocal(t), syncStatusNow); err != nil {
+		t.Fatalf("WriteJoin: %v", err)
+	}
+
+	text, _, err := captureOutput(t, func() error { return cmdDBSyncStatus(nil) })
+	if err != nil {
+		t.Fatalf("cmdDBSyncStatus: %v", err)
+	}
+	if !strings.Contains(string(text), "joining since 2026-10-04T12:00:00Z") {
+		t.Errorf("status line %q does not show the join in progress", string(text))
+	}
+
+	jsonOut, _, err := captureOutput(t, func() error { return cmdDBSyncStatus([]string{"--json"}) })
+	if err != nil {
+		t.Fatalf("cmdDBSyncStatus --json: %v", err)
+	}
+	var doc dbSyncStatusDoc
+	if err := json.Unmarshal(jsonOut, &doc); err != nil {
+		t.Fatalf("decode the document: %v", err)
+	}
+	if !doc.Joining || doc.JoinSince != "2026-10-04T12:00:00Z" {
+		t.Errorf("document joining = %t since %q, want the marker's start", doc.Joining, doc.JoinSince)
 	}
 }

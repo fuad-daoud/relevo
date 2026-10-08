@@ -261,7 +261,7 @@ func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (EnableRes
 			return res, err
 		}
 	}
-	imported, err := synclog.NewImporter(e.Request.Shared, transport).Import()
+	imported, err := e.drainImport(transport)
 	res.Imported = imported
 	if err != nil {
 		return res, fmt.Errorf("sync: enable: import: %w", err)
@@ -275,6 +275,23 @@ func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (EnableRes
 		return res, err
 	}
 	return res, nil
+}
+
+// JoinImportDeadline bounds the join's import loop. The join reads every other
+// origin's history, which on a large remote is many pages, so the loop runs
+// long by design; the bound exists so a backlog that will not finish stops the
+// join at the import and lets it reconcile and enable, with the remaining
+// origins draining on the steady ticks that follow. A stop at this bound is not
+// an error: the marks moved so far stand and the next run resumes from them.
+const JoinImportDeadline = 30 * time.Minute
+
+// drainImport reads the other origins page by page until a run moves no mark or
+// the join's own deadline passes.
+func (e *Enabler) drainImport(transport synclog.LogTransport) (synclog.ImportResult, error) {
+	deadline := e.now().Add(JoinImportDeadline)
+	return drainImport(func() (synclog.ImportResult, error) {
+		return synclog.NewImporter(e.Request.Shared, transport).Import()
+	}, deadline, e.now)
 }
 
 // reconcile exports this origin's history one bounded chunk at a time. Each
