@@ -252,9 +252,22 @@ func prepareEngine(dir string) error {
 	return enginePrepareErr
 }
 
-// prepareTempDir creates dir/tmp owner-only and sets TURSO_TMPDIR and
-// SQLITE_TMPDIR to it when not already set in the environment, so the library's
-// temp files land beside the database instead of in /tmp.
+// tempDirMu guards pinnedTempDir, and tempDirEnv names the variables
+// prepareTempDir points at the database's own temp directory.
+var (
+	tempDirMu     sync.Mutex
+	pinnedTempDir string
+)
+
+var tempDirEnv = []string{"TURSO_TMPDIR", "SQLITE_TMPDIR"}
+
+// prepareTempDir creates dir/tmp owner-only and points TURSO_TMPDIR and
+// SQLITE_TMPDIR at it, so the library's temp files land beside the database
+// instead of in /tmp. A value this process pinned earlier is re-pointed at the
+// database being opened now, because that earlier directory belongs to a
+// different file and may be gone: re-creating it would write into a directory
+// its owner is entitled to have deleted. A value the environment already
+// carried is left exactly as it is, since that is the operator's choice.
 func prepareTempDir(dir string) error {
 	tmpDir := filepath.Join(dir, "tmp")
 	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
@@ -263,15 +276,26 @@ func prepareTempDir(dir string) error {
 	if err := os.Chmod(tmpDir, 0o700); err != nil {
 		return fmt.Errorf("chmod %s: %w", tmpDir, err)
 	}
-	for _, env := range []string{"TURSO_TMPDIR", "SQLITE_TMPDIR"} {
-		if val, ok := os.LookupEnv(env); !ok || val == "" {
-			if err := os.Setenv(env, tmpDir); err != nil {
-				return fmt.Errorf("set %s: %w", env, err)
-			}
-		} else {
+
+	tempDirMu.Lock()
+	defer tempDirMu.Unlock()
+	for _, env := range tempDirEnv {
+		val, ok := os.LookupEnv(env)
+		switch {
+		case !ok || val == "":
+			// unset: this process decides where temp files land
+		case val == pinnedTempDir:
+			// pinned by an earlier open of another file: follow this one
+		default:
+			// the operator set it; make sure it exists and leave it alone
 			_ = os.MkdirAll(val, 0o700)
+			continue
+		}
+		if err := os.Setenv(env, tmpDir); err != nil {
+			return fmt.Errorf("set %s: %w", env, err)
 		}
 	}
+	pinnedTempDir = tmpDir
 	return nil
 }
 
