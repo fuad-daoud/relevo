@@ -311,7 +311,7 @@ var registry = []verbEntry{
 	{
 		Name:    "db sync",
 		Summary: "turn this machine's cloud sync on and off; the daemon must not be running",
-		Args:    "enable|disable|status|push|pull",
+		Args:    "enable|disable|retry|status|push|pull",
 		Flags:   []string{},
 		Exit:    []int{0, 2},
 		Errors:  []string{},
@@ -351,6 +351,15 @@ var registry = []verbEntry{
 		Output:  "json:DbSyncCallDoc",
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"config_invalid", "internal", "refused", "remote_auth", "remote_unreachable", "usage"},
+	},
+	{
+		Name:    "db sync retry",
+		Summary: "clear a latched breaker and drop the worker so the next tick starts a fresh one",
+		Args:    "[--json]",
+		Flags:   []string{"--json"},
+		Output:  "json:DbSyncCallDoc",
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"config_invalid", "internal", "refused", "usage"},
 	},
 	{
 		Name:    "db sync status",

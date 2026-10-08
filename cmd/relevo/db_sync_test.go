@@ -29,7 +29,7 @@ import (
 func TestDBSyncUsageNamesEveryVerb(t *testing.T) {
 	t.Parallel()
 
-	for _, verb := range []string{"enable", "disable", "status", "push", "pull"} {
+	for _, verb := range []string{"enable", "disable", "retry", "status", "push", "pull"} {
 		if !strings.Contains(dbSyncUsage, "relevo db sync "+verb) {
 			t.Errorf("the usage text does not name %q:\n%s", verb, dbSyncUsage)
 		}
@@ -112,6 +112,11 @@ func TestDBSyncFlagSetsAreTheDocumentedOnes(t *testing.T) {
 		t.Error("status --json defaults on, want the human line")
 	}
 
+	retry := parseInto(t, "db sync retry", dbSyncRetryFlagSet)
+	if *retry.asJSON {
+		t.Error("retry --json defaults on, want the human line")
+	}
+
 	push := parseInto(t, "db sync push", dbSyncPushFlagSet)
 	pull := parseInto(t, "db sync pull", dbSyncPullFlagSet)
 	if *push.timeout != *pull.timeout {
@@ -150,7 +155,7 @@ func TestDBSyncFlagsParseAfterAPositional(t *testing.T) {
 // below run sequentially with the rest of the package's capturing tests rather
 // than in parallel: two of them at once would each write into the other's pipe.
 func TestDBSyncRoutesEveryVerb(t *testing.T) {
-	for _, verb := range []string{"enable", "disable", "status", "push", "pull", "bogus"} {
+	for _, verb := range []string{"enable", "disable", "retry", "status", "push", "pull", "bogus"} {
 		t.Run(verb, func(t *testing.T) {
 			_, _, err := captureOutput(t, func() error { return run([]string{"db", "sync", verb, "--nope"}) })
 			if err == nil {

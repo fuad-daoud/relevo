@@ -41,7 +41,7 @@ func installTestVerbHook(srv *owner.Server, d *db.DB) {
 		case wire.SyncVerbPush:
 			res.Applied = true
 		case wire.SyncVerbDisable:
-			res.Steps = []string{"final push", "mark off", "delete token", "close handle"}
+			res.Steps = []string{"final export", "mark off", "delete token", "stop worker", "delete replica", "drop client"}
 			res.FinalPush = true
 		}
 		_ = len(token)
@@ -68,6 +68,7 @@ func TestSyncWritersSucceedWhileTheDaemonRuns(t *testing.T) {
 	}{
 		{"push", func() error { return cmdDBSyncPush(nil) }},
 		{"pull", func() error { return cmdDBSyncPull(nil) }},
+		{"retry", func() error { return cmdDBSyncRetry(nil) }},
 		{"disable", func() error { return cmdDBSyncDisable(nil) }},
 	} {
 		t.Run(verb.name, func(t *testing.T) {
@@ -114,6 +115,7 @@ func TestSyncWritersNeverReturnConflict(t *testing.T) {
 	}{
 		{"push", func() error { return cmdDBSyncPush(nil) }},
 		{"pull", func() error { return cmdDBSyncPull(nil) }},
+		{"retry", func() error { return cmdDBSyncRetry(nil) }},
 		{"disable", func() error { return cmdDBSyncDisable(nil) }},
 	} {
 		t.Run(verb.name, func(t *testing.T) {

@@ -14,28 +14,31 @@ import (
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
-// dbSyncUsage is what a bare `relevo db sync` prints. It names the four states
-// sync can be moved between plus the two one-shot calls, and each verb parses
+// dbSyncUsage is what a bare `relevo db sync` prints. It names the states
+// sync can be moved between plus the three one-shot calls, and each verb parses
 // its own flags rather than leaving them to the dispatcher.
 const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [--timeout D] [--json]\n" +
 	"       relevo db sync disable [--timeout D] [--json]\n" +
+	"       relevo db sync retry [--json]\n" +
 	"       relevo db sync status [--json]\n" +
 	"       relevo db sync push [--timeout D] [--json]\n" +
 	"       relevo db sync pull [--timeout D] [--json]\n\n" +
 	"enable joins this machine to the remote: it checks the origin gate, stores\n" +
 	"the token and the remote, then imports the other origins and exports this\n" +
 	"one's history before the mark goes on. An interrupted enable resumes.\n" +
-	"push and pull refuse in this build: there is no steady-state pipeline behind\n" +
-	"them yet, and they would rather say so than open something. The flags above\n" +
-	"are still parsed, so a script that passes them keeps working. disable still\n" +
-	"runs whole, and status still reports what this machine is set to be.\n" +
+	"push drains this machine's outbox into the log and pull reads the other\n" +
+	"origins' entries and imports them; each is the half of the steady exchange\n" +
+	"it names. retry clears a latched breaker and drops the worker, so the next\n" +
+	"tick starts a fresh one.\n" +
 	"Writing the machine-local sync section by hand stays the advanced\n" +
 	"route: `relevo config set sync '{\"remote_url\":\"...\"}'`.\n" +
 	"--token-stdin reads the turso.token from standard input and\n" +
 	"beats " + relevosync.EnvToken + "; with neither, enable refuses. The value\n" +
 	"appears in no log, no error and no payload.\n" +
-	"disable marks this machine off, forgets the token and closes the handle.\n" +
-	"Local files keep every row and stay servable, and the remote is left alone.\n"
+	"disable marks this machine off, forgets the token, stops the worker,\n" +
+	"deletes relevo-sync.db and the driver's files beside it, and drops the\n" +
+	"handle. Local files keep every row and stay servable, and the remote is\n" +
+	"left alone.\n"
 
 // The name the remote is told this client is called. It is fixed rather than
 // configurable because it is identification, not a setting, and a per-machine
@@ -60,6 +63,8 @@ func cmdDBSync(args []string) error {
 		return cmdDBSyncEnable(args[1:])
 	case len(args) > 0 && args[0] == "disable":
 		return cmdDBSyncDisable(args[1:])
+	case len(args) > 0 && args[0] == "retry":
+		return cmdDBSyncRetry(args[1:])
 	case len(args) > 0 && args[0] == "status":
 		return cmdDBSyncStatus(args[1:])
 	case len(args) > 0 && args[0] == "push":
@@ -104,7 +109,19 @@ type dbSyncDisableFlagValues struct {
 func dbSyncDisableFlagSet(fs *flag.FlagSet) *dbSyncDisableFlagValues {
 	v := &dbSyncDisableFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the document the disable produced")
-	v.timeout = fs.Duration("timeout", dbSyncDefaultTimeout, "bound the final push")
+	v.timeout = fs.Duration("timeout", dbSyncDefaultTimeout, "bound the final export")
+	return v
+}
+
+// dbSyncRetryFlagValues holds the pointers `db sync retry` parses into.
+type dbSyncRetryFlagValues struct {
+	asJSON *bool
+}
+
+// dbSyncRetryFlagSet defines that flag on fs and returns what it parses into.
+func dbSyncRetryFlagSet(fs *flag.FlagSet) *dbSyncRetryFlagValues {
+	v := &dbSyncRetryFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the document the retry produced")
 	return v
 }
 
@@ -164,7 +181,7 @@ type dbSyncStatusDoc struct {
 }
 
 // dbSyncOutcomeDoc is what enable and disable print under --json: what the run
-// did, and for disable the warning a failed final push produces. RemoteURL is
+// did, and for disable the warning a failed final export produces. RemoteURL is
 // what enable stored, and never the token: the URL is the thing a caller needs
 // to open the same remote, and the token is the one value on this surface that
 // must not be printed.
@@ -270,10 +287,10 @@ func dbSyncEnableToken(fromStdin bool) ([]byte, error) {
 // contract fixes.
 //
 // No token is read here and none is passed: the daemon reads the stored one with
-// its own local handle and decides whether there is anything a final push could
+// its own local handle and decides whether there is anything a final export could
 // do. A machine with no token or no remote pays no dial to find that out, and
 // one whose remote will not open still turns sync off -- which is the whole
-// reason the final push is best-effort.
+// reason the final export is best-effort.
 func cmdDBSyncDisable(args []string) error {
 	fs := flag.NewFlagSet("db sync disable", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -310,6 +327,39 @@ func cmdDBSyncDisable(args []string) error {
 		fmt.Fprintf(os.Stderr, "relevo db sync disable: %s\n", res.Warning)
 	}
 	fmt.Println("sync disabled on this machine; local files unchanged and still servable")
+	return nil
+}
+
+// cmdDBSyncRetry clears a latched breaker through the daemon. It writes no
+// remote and moves no change set, so it needs no token and no timeout: the work
+// is the daemon's own local write, and the answer takes no network.
+func cmdDBSyncRetry(args []string) error {
+	fs := flag.NewFlagSet("db sync retry", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	v := dbSyncRetryFlagSet(fs)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fail(codeUsage, "relevo db sync retry takes no arguments, got %d", fs.NArg())
+	}
+
+	shared, err := dialSyncVerb()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = shared.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), dbSyncDefaultTimeout+verbDialSlack)
+	defer cancel()
+
+	if _, err := sendSyncVerb(ctx, shared, wire.SyncVerbRetry, dbSyncVerbOptions{}); err != nil {
+		return err
+	}
+	if *v.asJSON {
+		return printDoc(dbSyncCallDoc{Applied: true})
+	}
+	fmt.Println("sync retry: the latch is cleared and the worker will restart")
 	return nil
 }
 
