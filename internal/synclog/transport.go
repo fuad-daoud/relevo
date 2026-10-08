@@ -16,6 +16,14 @@ type LogTransport interface {
 	// refused: an installation appends only for the rows it owns, and the
 	// refusal is what stops two machines writing the same row.
 	//
+	// The rule above is the transport's, and it is not the only one. A transport
+	// only knows what origin an entry claims; which rows that origin owns is a
+	// question about the reader's own file, and so the importer answers it again
+	// for itself before it writes anything. An entry that names a row the reader
+	// resolves to another installation is refused there even when it arrived
+	// through an honest transport, so the ownership rule does not rest on the
+	// appender being honest.
+	//
 	// A batch is one unit for a reader: the entries it wrote share a Batch, the
 	// sequence number of the first of them, and a reader applies whole batches.
 	Append(entries []Entry) ([]Entry, error)
@@ -25,6 +33,14 @@ type LogTransport interface {
 	// with no mark is read from the start of its log. A batch that begins at or
 	// before the mark is not split: the reader either has the whole batch or
 	// none of it.
+	//
+	// The sequence numbers and the origin an entry carries are the transport's
+	// to hand out, and the reader does not take them on trust: an entry at or
+	// below the mark it already holds is not applied again, and a mark is only
+	// ever written forward from the entries that were actually applied. A
+	// transport that answers with a sequence behind the mark, or one far ahead
+	// of it, therefore cannot rewind this machine's rows or skip the entries
+	// behind it.
 	Pull(marks map[string]int) ([]Entry, error)
 
 	// Head returns the latest entry per row of one origin: the row, the

@@ -66,10 +66,14 @@ func tablesIn(t *testing.T, d *db.DB) string {
 	return strings.Join(out, "|")
 }
 
-// An entry naming a table this machine does not share is refused. The table name
-// reaches SQL, and the only names allowed to are the ones the db package has
-// already classified as shared -- a table name from a remote is exactly the input
-// a query is built from.
+// An entry naming a table this machine does not share is not applied. The table
+// name reaches SQL, and the only names allowed to are the ones the db package
+// has already classified as shared -- a table name from a remote is exactly the
+// input a query is built from.
+//
+// The batch is dropped rather than failed on: an import that returned an error
+// here would leave the mark where it was, so the same entry would be offered
+// again on every run and refuse itself again for as long as the log holds it.
 func TestImporterRefusesUnknownTable(t *testing.T) {
 	t.Parallel()
 	peer, _ := peerFile(t, "m2")
@@ -80,15 +84,27 @@ func TestImporterRefusesUnknownTable(t *testing.T) {
 		Op: OpDelete, SchemaVersion: 23,
 	})
 
-	_, err := NewImporter(peer, log.OnLog("m2")).Import()
-	if err == nil {
-		t.Fatal("importing an entry for a table that is not shared succeeded, want it refused")
+	got, err := NewImporter(peer, log.OnLog("m2")).Import()
+	if err != nil {
+		t.Fatalf("importing an entry for a table that is not shared: %v", err)
 	}
-	if !strings.Contains(err.Error(), "shared table") {
-		t.Fatalf("the refusal is %q, want it to name the table as unshared", err)
+	if got.Applied != 0 || got.Batches != 0 {
+		t.Fatalf("import = %+v, want nothing applied", got)
 	}
-	if seq, found, err := peer.ImportMark("m1"); err != nil || found {
-		t.Fatalf("ImportMark = (%d, %t, %v), want no mark for a batch that was refused", seq, found, err)
+	if len(got.Dropped) != 1 {
+		t.Fatalf("Dropped = %+v, want the unshared-table batch reported as dropped", got.Dropped)
+	}
+	if !strings.Contains(got.Dropped[0].Reason, "shared table") {
+		t.Fatalf("the drop reads %q, want it to name the table as unshared", got.Dropped[0])
+	}
+	// The mark moved past the drop, so nothing behind it is offered again.
+	if seq, found, err := peer.ImportMark("m1"); err != nil || !found || seq != 1 {
+		t.Fatalf("ImportMark = (%d, %t, %v), want the mark past the dropped batch", seq, found, err)
+	}
+	if again, err := NewImporter(peer, log.OnLog("m2")).Import(); err != nil {
+		t.Fatalf("import again after the drop: %v", err)
+	} else if again.Applied != 0 || len(again.Dropped) != 0 {
+		t.Fatalf("the second import = %+v, want the dropped batch not re-read", again)
 	}
 }
 

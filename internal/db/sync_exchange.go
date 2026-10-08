@@ -48,6 +48,13 @@ func importMark(ctx context.Context, q queryer, origin string) (int, bool, error
 // applied from origin's log. It replaces any earlier mark for the origin in
 // place, so one origin keeps one mark however many rounds have written it.
 //
+// The mark only ever moves forward. A sequence at or below the one already
+// stored is not written at all, so a replayed batch, an out-of-order pull, or a
+// transport that answers with a sequence behind this machine's own mark cannot
+// rewind what this file has applied and have the entries behind it offered again
+// as though they were new. The guard is in the statement rather than in the
+// caller, so every path that persists a mark gets it.
+//
 // It is written in the same transaction as the batch that moved the mark, which
 // is the property that makes a restore from a backup consistent: the file comes
 // back with the rows and the marks in the same state, so the entries that
@@ -57,12 +64,15 @@ func (d *DB) SetImportMark(origin string, seq int) error {
 }
 
 func (t *Tx) SetImportMark(origin string, seq int) error {
-	// OR REPLACE is right here and wrong for a shared row. The mark table has
-	// no trigger, no foreign key and nothing that references it, so replacing
-	// the row deletes one mark row and writes another; replacing a shared row
-	// instead deletes that row first and cascades to its children, which is why
-	// the importer writes those with a conflict clause instead.
-	if _, err := t.exec(`INSERT OR REPLACE INTO sync_import_mark (origin, seq) VALUES (?, ?)`, origin, seq); err != nil {
+	// An upsert rather than OR REPLACE: the mark table has no trigger, no
+	// foreign key and nothing that references it, so either form leaves one mark
+	// row per origin. The difference is the direction this one refuses to move.
+	// Replacing a shared row the way it replaces a mark would delete that row
+	// first and cascade to its children, which is why the importer writes those
+	// with a conflict clause instead.
+	if _, err := t.exec(`INSERT INTO sync_import_mark (origin, seq) VALUES (?, ?)
+		ON CONFLICT(origin) DO UPDATE SET seq = excluded.seq
+		WHERE excluded.seq > sync_import_mark.seq`, origin, seq); err != nil {
 		return fmt.Errorf("db: set import mark %s: %w", origin, mapBusy(err))
 	}
 	return nil

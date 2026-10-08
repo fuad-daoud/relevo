@@ -265,12 +265,15 @@ func TestImporterIgnoresUnknownColumns(t *testing.T) {
 // the row it describes is one this machine's schema still holds a value for:
 // naming the column as NULL instead would erase a value the writer has and the
 // body merely left out.
+//
+// The one column the body does not decide is the owner. It is resolved from this
+// file rather than read out of the body, so the row lands under the origin whose
+// entries were applied -- which is what makes the entry it came from still be the
+// owner of it on the next import.
 func TestImporterDefaultsMissingColumns(t *testing.T) {
 	t.Parallel()
 	peer, _ := peerFile(t, "m2")
 	log := NewMemTransport("m1")
-	// origin is declared NOT NULL DEFAULT ''; a body that does not name it
-	// leaves the row holding that default rather than nothing.
 	entryFor(t, log, Entry{
 		Table: "binding", PK: `["01A"]`, Op: OpUpsert, SchemaVersion: knownVersion(t, peer),
 		Body: bodyFor(t, map[string]any{
@@ -286,10 +289,42 @@ func TestImporterDefaultsMissingColumns(t *testing.T) {
 	if got.Applied != 1 {
 		t.Fatalf("import = %+v, want the one entry applied", got)
 	}
-	if origin := columnOf(t, peer, `SELECT origin FROM binding WHERE id = '01A'`); origin != "" {
-		t.Fatalf("the binding's origin = %q, want the column's declared default", origin)
+	if origin := columnOf(t, peer, `SELECT origin FROM binding WHERE id = '01A'`); origin != "m1" {
+		t.Fatalf("the binding's origin = %q, want the owner this machine resolved", origin)
 	}
 	if cwd := columnOf(t, peer, `SELECT cwd FROM binding WHERE id = '01A'`); cwd != "/x" {
 		t.Fatalf("the binding's cwd = %q, want the value the body carried", cwd)
 	}
+	// The declared default is still what a column neither the body nor the owner
+	// rule names takes, so the default path is not narrowed to this one column.
+	if got := lookup(t, sharedColumn(t, peer, "binding", `["01A"]`), "builder_mode"); got != "local" {
+		t.Fatalf("builder_mode = %v, want the value the body carried", got)
+	}
+}
+
+// sharedColumn reads one column of one row through the exchange seam, so a case
+// can assert on a column whose value is not text.
+func sharedColumn(t *testing.T, d *db.DB, tbl, pk string) db.ExchangeRow {
+	t.Helper()
+	row, found, err := d.ReadExchangeRow(tbl, pk)
+	if err != nil || !found {
+		t.Fatalf("read %s %s: found=%t, %v", tbl, pk, found, err)
+	}
+	return row
+}
+
+// lookup is the column read out of a row the exchange seam returned.
+func lookup(t *testing.T, row db.ExchangeRow, column string) string {
+	t.Helper()
+	for _, col := range row.Columns {
+		if col.Name == column {
+			text, ok := col.Value.(string)
+			if !ok {
+				t.Fatalf("%s.%s = %v, want text", row.Table, column, col.Value)
+			}
+			return text
+		}
+	}
+	t.Fatalf("row %s %s carries no %s column", row.Table, row.PK, column)
+	return ""
 }

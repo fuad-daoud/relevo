@@ -43,7 +43,7 @@ func TestExchangeUpsertInsertsThenUpdatesInPlace(t *testing.T) {
 		"id": "b1", "name": "b1", "cwd": "/first", "builder_mode": "local",
 		"created_at": "t", "ingest_source": "manual", "origin": "instX",
 	}
-	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", row) }); err != nil {
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instX", row) }); err != nil {
 		t.Fatalf("upsert an absent row: %v", err)
 	}
 	if got := value(t, exchangeRow(t, d, "binding", `["b1"]`), "cwd"); got != "/first" {
@@ -51,7 +51,7 @@ func TestExchangeUpsertInsertsThenUpdatesInPlace(t *testing.T) {
 	}
 
 	row["cwd"] = "/second"
-	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", row) }); err != nil {
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instX", row) }); err != nil {
 		t.Fatalf("upsert a row already there: %v", err)
 	}
 	if got := value(t, exchangeRow(t, d, "binding", `["b1"]`), "cwd"); got != "/second" {
@@ -77,7 +77,7 @@ func TestExchangeUpsertInsertsThenUpdatesInPlace(t *testing.T) {
 func TestExchangeUpsertKeepsCascadedChildren(t *testing.T) {
 	d := openTestDB(t)
 	if err := d.Tx(func(tx *Tx) error {
-		return tx.ExchangeUpsert("binding_record", map[string]any{
+		return tx.ExchangeUpsert("binding_record", "instX", map[string]any{
 			"id": "r1", "owner": "o", "name": "n", "state": "open", "round": 1,
 			"cwd": "/z", "record_json": "{}", "created_at": "t", "updated_at": "t", "origin": "instX",
 		})
@@ -85,7 +85,7 @@ func TestExchangeUpsertKeepsCascadedChildren(t *testing.T) {
 		t.Fatalf("upsert the record: %v", err)
 	}
 	if err := d.Tx(func(tx *Tx) error {
-		return tx.ExchangeUpsert("round_file", map[string]any{
+		return tx.ExchangeUpsert("round_file", "instX", map[string]any{
 			"record_id": "r1", "name": "f", "round": 1, "body": []byte{0, 1},
 			"bytes": 2, "sha256": "s", "mtime": "t", "sealed_at": "t",
 		})
@@ -97,7 +97,7 @@ func TestExchangeUpsertKeepsCascadedChildren(t *testing.T) {
 		"id": "r1", "owner": "o", "name": "n", "state": "closed", "round": 1,
 		"cwd": "/moved", "record_json": "{}", "created_at": "t", "updated_at": "t", "origin": "instX",
 	}
-	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding_record", record) }); err != nil {
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding_record", "instX", record) }); err != nil {
 		t.Fatalf("upsert the record again: %v", err)
 	}
 
@@ -117,7 +117,7 @@ func TestExchangeUpsertKeepsCascadedChildren(t *testing.T) {
 func TestExchangeUpsertIgnoresUnknownAndKeepsOmittedColumns(t *testing.T) {
 	d := openTestDB(t)
 	if err := d.Tx(func(tx *Tx) error {
-		return tx.ExchangeUpsert("binding", map[string]any{
+		return tx.ExchangeUpsert("binding", "instX", map[string]any{
 			"id": "b1", "name": "b1", "cwd": "/first", "branch": "main",
 			"builder_mode": "local", "created_at": "t", "ingest_source": "manual", "origin": "instX",
 		})
@@ -125,7 +125,7 @@ func TestExchangeUpsertIgnoresUnknownAndKeepsOmittedColumns(t *testing.T) {
 		t.Fatalf("upsert the binding: %v", err)
 	}
 	if err := d.Tx(func(tx *Tx) error {
-		return tx.ExchangeUpsert("binding", map[string]any{
+		return tx.ExchangeUpsert("binding", "instX", map[string]any{
 			"id": "b1", "name": "b1", "cwd": "/second",
 			"builder_mode": "local", "created_at": "t", "ingest_source": "manual", "origin": "instX",
 		})
@@ -153,7 +153,7 @@ func TestExchangeUpsertIgnoresUnknownAndKeepsOmittedColumns(t *testing.T) {
 func TestExchangeUpsertBindsEveryValue(t *testing.T) {
 	d := openTestDB(t)
 	err := d.Tx(func(tx *Tx) error {
-		return tx.ExchangeUpsert("binding", map[string]any{
+		return tx.ExchangeUpsert("binding", "instX", map[string]any{
 			"id": "b1", "name": "b1", "cwd": "/x'); DROP TABLE binding; --",
 			"builder_mode": "local", "created_at": "t", "ingest_source": "manual", "origin": "instX",
 		})
@@ -182,11 +182,96 @@ func TestExchangeUpsertRefusesAnUnplaceableBody(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert(c.tbl, c.values) })
+			err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert(c.tbl, "instX", c.values) })
 			if err == nil {
 				t.Fatalf("upsert %s with %v succeeded, want the body refused", c.tbl, c.values)
 			}
 		})
+	}
+}
+
+// The owner a row ends up carrying is the one the caller resolved, and never the
+// one the body claimed. A body may name the owner column, but it comes from a
+// machine this one does not control: taking its word for who owns a row would let
+// one installation take another's rows out of its hands by writing them again.
+func TestExchangeUpsertTakesTheOwnerNotTheBody(t *testing.T) {
+	d := openTestDB(t)
+	body := map[string]any{
+		"id": "b1", "name": "b1", "cwd": "/x", "builder_mode": "local",
+		"created_at": "t", "ingest_source": "manual", "origin": "thief",
+	}
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instX", body) }); err != nil {
+		t.Fatalf("upsert a body naming an owner of its own: %v", err)
+	}
+	if got := value(t, exchangeRow(t, d, "binding", `["b1"]`), "origin"); got != "instX" {
+		t.Fatalf("origin = %v, want the owner the caller resolved rather than the body's", got)
+	}
+
+	// Writing it again under the same owner changes nothing, and the caller's
+	// map is not rewritten behind its back either.
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instX", body) }); err != nil {
+		t.Fatalf("upsert the binding again: %v", err)
+	}
+	if got := value(t, exchangeRow(t, d, "binding", `["b1"]`), "origin"); got != "instX" {
+		t.Fatalf("origin = %v, want the owner's own value", got)
+	}
+	if body["origin"] != "thief" {
+		t.Fatalf("the caller's body now holds origin %v, want it left as it was", body["origin"])
+	}
+
+	// A child names no owner of its own: it resolves through its parent, so the
+	// owner rule for it has no column and the caller's owner reaches no column
+	// of the row at all.
+	if err := d.Tx(func(tx *Tx) error {
+		if err := tx.ExchangeUpsert("binding_record", "instX", map[string]any{
+			"id": "r1", "owner": "o", "name": "n", "state": "open", "round": 1,
+			"cwd": "/z", "record_json": "{}", "created_at": "t", "updated_at": "t",
+		}); err != nil {
+			return err
+		}
+		return tx.ExchangeUpsert("round_file", "instX", map[string]any{
+			"record_id": "r1", "name": "f", "round": 1, "body": []byte{0, 1},
+			"bytes": 2, "sha256": "s", "mtime": "t", "sealed_at": "t",
+		})
+	}); err != nil {
+		t.Fatalf("upsert a child row: %v", err)
+	}
+	if got := value(t, exchangeRow(t, d, "binding_record", `["r1"]`), "origin"); got != "instX" {
+		t.Fatalf("the record's origin = %v, want the owner the caller resolved", got)
+	}
+	for _, col := range exchangeRow(t, d, "round_file", `["r1","f"]`).Columns {
+		if col.Name == "origin" {
+			t.Fatal("the child row grew an origin column, want its owner to resolve through the parent")
+		}
+	}
+	if ownerColumn("round_file") != "" || ownerColumn("binding") != "origin" {
+		t.Fatalf("the owner columns are %q and %q, want none for the child and origin for the root",
+			ownerColumn("round_file"), ownerColumn("binding"))
+	}
+}
+
+// A mark only ever moves forward. A sequence at or below the one already stored
+// is not written at all, so a replayed batch, an out-of-order pull, or a
+// transport answering with a number behind this machine's own mark cannot rewind
+// what has been applied.
+func TestSetImportMarkNeverMovesBackward(t *testing.T) {
+	d := openTestDB(t)
+	if err := d.Tx(func(tx *Tx) error { return tx.SetImportMark("instX", 9) }); err != nil {
+		t.Fatalf("set the mark: %v", err)
+	}
+	for _, seq := range []int{4, 9} {
+		if err := d.Tx(func(tx *Tx) error { return tx.SetImportMark("instX", seq) }); err != nil {
+			t.Fatalf("set the mark to %d: %v", seq, err)
+		}
+		if have, found, err := d.ImportMark("instX"); err != nil || !found || have != 9 {
+			t.Fatalf("ImportMark after setting %d = (%d, %t, %v), want it resting at 9", seq, have, found, err)
+		}
+	}
+	if err := d.Tx(func(tx *Tx) error { return tx.SetImportMark("instX", 11) }); err != nil {
+		t.Fatalf("move the mark forward: %v", err)
+	}
+	if seq, _, err := d.ImportMark("instX"); err != nil || seq != 11 {
+		t.Fatalf("ImportMark = %d (%v), want it moved forward", seq, err)
 	}
 }
 
@@ -196,7 +281,7 @@ func TestExchangeUpsertRefusesAnUnplaceableBody(t *testing.T) {
 func TestExchangeDeleteRemovesOneRowAndIsIdempotent(t *testing.T) {
 	d := openTestDB(t)
 	if err := d.Tx(func(tx *Tx) error {
-		return tx.ExchangeUpsert("binding", map[string]any{
+		return tx.ExchangeUpsert("binding", "instX", map[string]any{
 			"id": "b1", "name": "b1", "cwd": "/x",
 			"builder_mode": "local", "created_at": "t", "ingest_source": "manual", "origin": "instX",
 		})

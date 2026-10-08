@@ -30,7 +30,14 @@ import (
 // the column's declared default and on update it keeps what the file already
 // holds. Naming it as NULL instead would erase a value this machine has and the
 // other machine merely did not mention.
-func (t *Tx) ExchangeUpsert(tbl string, values map[string]any) error {
+//
+// owner is the installation the row belongs to, and it is a parameter rather
+// than something read out of values: a body may name the owner column, but what
+// it says there is a claim from a machine this one does not control, and a claim
+// is not a fact about this file. The caller resolves the owner from this
+// machine's own rows and passes it here, so a forged body cannot move a row
+// between owners.
+func (t *Tx) ExchangeUpsert(tbl, owner string, values map[string]any) error {
 	shared := sharedTable(tbl)
 	if shared == nil {
 		return fmt.Errorf("db: exchange upsert: %q is not a shared table: %w", tbl, ErrInvalid)
@@ -39,14 +46,65 @@ func (t *Tx) ExchangeUpsert(tbl string, values map[string]any) error {
 	if err != nil {
 		return err
 	}
-	named, args, err := upsertColumns(shared.PrimaryKey, columns, values)
+	named, args, err := upsertColumns(shared.PrimaryKey, columns, ownedValues(tbl, owner, values))
 	if err != nil {
 		return fmt.Errorf("db: exchange upsert %s: %w", tbl, err)
 	}
 	if _, err := t.exec(upsertStatement(shared.Name, named, shared.PrimaryKey), args...); err != nil {
-		return fmt.Errorf("db: exchange upsert %s: %w", tbl, mapBusy(err))
+		return fmt.Errorf("db: exchange upsert %s: %w", tbl, mapRefused(mapBusy(err)))
 	}
 	return nil
+}
+
+// ownedValues is the values an upsert writes with the owner column set from the
+// owner the caller resolved, whatever the body carried there. A table whose rows
+// name their owner in a column of their own takes the caller's owner; a child
+// resolves through its parent and has no owner column of its own, so its values
+// pass through as they are. The map is copied rather than edited so the caller's
+// body is not rewritten behind its back.
+func ownedValues(tbl, owner string, values map[string]any) map[string]any {
+	column := ownerColumn(tbl)
+	if column == "" {
+		return values
+	}
+	out := make(map[string]any, len(values)+1)
+	for name, value := range values {
+		out[name] = value
+	}
+	out[column] = owner
+	return out
+}
+
+// ownerColumn is the column one shared table's rows carry their owner in, and
+// empty for a table whose rows resolve through a parent and therefore have none
+// of their own. Only the owner rules can answer it, which is why a writer asks
+// this package for the column rather than naming it.
+func ownerColumn(tbl string) string {
+	rule, ok := OwnerRules[tbl]
+	if !ok || len(rule.hops) != 0 || len(rule.kinds) != 0 {
+		return ""
+	}
+	return rule.owner
+}
+
+// mapRefused turns a constraint the engine refused into ErrInvalid: a foreign
+// key whose parent is not here, a unique index the row collides with. The values
+// broke it from a machine this one does not control, so the constraint is the
+// log's answer rather than this file's failure, and a caller can treat it as it
+// treats any other body it cannot act on rather than as an outage of its own.
+func mapRefused(err error) error {
+	if err == nil {
+		return nil
+	}
+	if code, _, ok := errCode(err); ok && code&0xff == sqliteConstraint {
+		return fmt.Errorf("%w: %w", ErrInvalid, err)
+	}
+	// A value rebuilt on the client from the wire can arrive without its code,
+	// which is the same reason mapBusy also matches on the text.
+	if strings.Contains(strings.ToLower(err.Error()), "constraint") {
+		return fmt.Errorf("%w: %w", ErrInvalid, err)
+	}
+	return err
 }
 
 // ExchangeDelete removes one row by its primary key. A row that is already gone
@@ -64,7 +122,7 @@ func (t *Tx) ExchangeDelete(tbl, pk string) error {
 	where, args := keyWhere(shared.PrimaryKey, keys)
 	query := "DELETE FROM " + quoteIdent(shared.Name) + " WHERE " + where
 	if _, err := t.exec(query, args...); err != nil {
-		return fmt.Errorf("db: exchange delete %s %s: %w", tbl, pk, mapBusy(err))
+		return fmt.Errorf("db: exchange delete %s %s: %w", tbl, pk, mapRefused(mapBusy(err)))
 	}
 	return nil
 }

@@ -1,0 +1,274 @@
+package synclog
+
+import (
+	"testing"
+)
+
+// How far a mark moves, and what it refuses to move. The mark is the one thing
+// standing between this machine and the entries behind it, and the sequence it
+// is given comes from a transport rather than from this file, so the importer
+// does not take it on trust: a mark is written from the entries that were
+// actually applied, and only forwards.
+
+// scriptedLog answers a pull with entries a test wrote rather than with the
+// log's own. It models a transport that hands over a sequence or an origin
+// nobody assigned, which is the input these cases are about. Everything else is
+// forwarded, so an importer that decides to ask for a head or an append still
+// reaches the log underneath.
+type scriptedLog struct {
+	*MemTransport
+	pulls [][]Entry
+}
+
+func (s scriptedLog) Pull(map[string]int) ([]Entry, error) {
+	var out []Entry
+	for _, batch := range s.pulls {
+		out = append(out, batch...)
+	}
+	return out, nil
+}
+
+// A batch claiming a sequence far past anything the log holds applies nothing,
+// because every entry in it names a row somebody else owns. The mark is left
+// exactly where it was and the genuine entries behind the fabricated sequence
+// still import: a mark written over entries that were never applied would hide
+// them for good, because a mark that has jumped forward is never read past again.
+func TestImportLeavesTheMarkAloneAfterAFabricatedJump(t *testing.T) {
+	t.Parallel()
+	peer, _ := victim(t)
+	know := knownVersion(t, peer)
+	// The jump names the reader's own binding under an origin that does not own
+	// it, so the ownership gate refuses it and nothing takes effect.
+	log := scriptedLog{MemTransport: NewMemTransport("m2"), pulls: [][]Entry{
+		{
+			{Origin: "m1", Batch: 1000000, Seq: 1000000, Table: "binding", PK: `["01A"]`,
+				Op: OpDelete, SchemaVersion: know},
+		},
+		{
+			{Origin: "m3", Batch: 1, Seq: 1, Table: "binding", PK: `["01B"]`,
+				Op: OpUpsert, SchemaVersion: know,
+				Body: bodyFor(t, map[string]any{
+					"id": "01B", "name": "01B", "cwd": "/real",
+					"builder_mode": "local", "created_at": "t", "ingest_source": "manual", "origin": "m3",
+				})},
+		},
+	}}
+
+	got, err := NewImporter(peer, log).Import()
+	if err != nil {
+		t.Fatalf("import with a fabricated sequence: %v", err)
+	}
+	if got.Applied != 1 {
+		t.Fatalf("import = %+v, want only the genuine entry applied", got)
+	}
+	if _, found, err := peer.ImportMark("m1"); err != nil || found {
+		t.Fatalf("the mark for m1 = (found=%t, %v), want none: nothing was applied for it", found, err)
+	}
+	if seq, found, err := peer.ImportMark("m3"); err != nil || !found || seq != 1 {
+		t.Fatalf("the mark for m3 = (%d, %t, %v), want the applied entry's sequence", seq, found, err)
+	}
+	if have := sharedRows(t, peer); have != `binding ["01A"]|binding ["01B"]` {
+		t.Fatalf("the peer holds %q, want both bindings", have)
+	}
+
+	// The entries behind the fabricated sequence are still readable, which is the
+	// point: the mark never moved past them.
+	more := scriptedLog{MemTransport: NewMemTransport("m2"), pulls: [][]Entry{{
+		{Origin: "m3", Batch: 2, Seq: 2, Table: "binding", PK: `["01B"]`,
+			Op: OpUpsert, SchemaVersion: know,
+			Body: bodyFor(t, map[string]any{
+				"id": "01B", "name": "01B", "cwd": "/later",
+				"builder_mode": "local", "created_at": "t", "ingest_source": "manual", "origin": "m3",
+			})},
+	}}}
+	again, err := NewImporter(peer, more).Import()
+	if err != nil {
+		t.Fatalf("import the entries behind the fabricated jump: %v", err)
+	}
+	if again.Applied != 1 {
+		t.Fatalf("the second import = %+v, want the genuine entry applied", again)
+	}
+	if cwd := columnOf(t, peer, `SELECT cwd FROM binding WHERE id = '01B'`); cwd != "/later" {
+		t.Fatalf("the binding's cwd = %q, want the later genuine value", cwd)
+	}
+}
+
+// A batch handed over again at a sequence this machine has already applied
+// changes nothing and moves no mark. Replaying it would rewrite rows with content
+// the log has since moved past, because an import takes the last write it is
+// offered rather than the last one that was written.
+func TestImportIgnoresAReplayedBatch(t *testing.T) {
+	t.Parallel()
+	theirs, theirPath := exporterFile(t, "m1")
+	peer, _ := peerFile(t, "m2")
+	seed(t, theirPath, insertBinding("01A", "m1"), insertBinding("01B", "m1"))
+
+	log := NewMemTransport("m1")
+	writer := &recording{MemTransport: log}
+	importFrom(t, peer, log, theirs, writer)
+	before := sharedRows(t, peer)
+	marks, err := peer.ImportMarks()
+	if err != nil {
+		t.Fatalf("read the marks after the first import: %v", err)
+	}
+	if marks["m1"] != 2 {
+		t.Fatalf("marks = %v, want m1 applied through sequence 2", marks)
+	}
+
+	// The same entries, at the sequence numbers they had, offered again.
+	replayed := scriptedLog{MemTransport: log, pulls: [][]Entry{writer.appended()}}
+	got, err := NewImporter(peer, replayed).Import()
+	if err != nil {
+		t.Fatalf("import the replayed batch: %v", err)
+	}
+	if got.Applied != 0 || got.Batches != 0 || len(got.Dropped) != 0 {
+		t.Fatalf("import = %+v, want the replayed batch ignored", got)
+	}
+	if have := sharedRows(t, peer); have != before {
+		t.Fatalf("the peer holds %q, want the first import's %q", have, before)
+	}
+	after, err := peer.ImportMarks()
+	if err != nil {
+		t.Fatalf("read the marks after the replay: %v", err)
+	}
+	if after["m1"] != marks["m1"] {
+		t.Fatalf("the mark moved to %d, want it resting at %d", after["m1"], marks["m1"])
+	}
+}
+
+// A batch this machine could not apply writes no mark at all, whatever kept it
+// from applying. A hold leaves the mark on the batch before it so an upgraded
+// machine resumes from there, and a refused claim leaves it where it was so the
+// genuine entries behind it are still offered.
+func TestImportWritesNoMarkForABatchItDidNotApply(t *testing.T) {
+	t.Parallel()
+	peer, _ := victim(t)
+	know := knownVersion(t, peer)
+	log := scriptedLog{MemTransport: NewMemTransport("m2"), pulls: [][]Entry{
+		[]Entry{
+			// Held: written by a binary this build does not know.
+			{Origin: "m1", Batch: 1, Seq: 1, Table: "binding", PK: `["01A"]`,
+				Op: OpUpsert, SchemaVersion: know + 1,
+				Body: bodyFor(t, map[string]any{"id": "01A", "name": "01A", "cwd": "/ahead"})},
+		},
+		// Refused: a claim on the reader's own row.
+		[]Entry{
+			{Origin: "m3", Batch: 1, Seq: 1, Table: "binding", PK: `["01A"]`,
+				Op: OpDelete, SchemaVersion: know},
+		},
+	}}
+
+	got, err := NewImporter(peer, log).Import()
+	if err != nil {
+		t.Fatalf("import with a held and a refused batch: %v", err)
+	}
+	if len(got.Held) != 1 || got.Held[0].Origin != "m1" {
+		t.Fatalf("Held = %+v, want m1 held", got.Held)
+	}
+	if len(got.Dropped) != 1 || got.Dropped[0].Origin != "m3" {
+		t.Fatalf("Dropped = %+v, want m3's batch dropped", got.Dropped)
+	}
+	marks, err := peer.ImportMarks()
+	if err != nil {
+		t.Fatalf("read the marks: %v", err)
+	}
+	if len(marks) != 0 {
+		t.Fatalf("marks = %v, want none: neither origin had an entry applied", marks)
+	}
+	if cwd := columnOf(t, peer, `SELECT cwd FROM binding WHERE id = '01A'`); cwd != "/x" {
+		t.Fatalf("the binding's cwd = %q, want the file left as it was", cwd)
+	}
+}
+
+// Ordinary progress moves the mark to the last sequence each batch carried, one
+// origin at a time. This is the whole of what the mark is for, so it is pinned
+// here as well as in the import cases that happen to exercise it.
+func TestImportMovesTheMarkWithEachBatch(t *testing.T) {
+	t.Parallel()
+	theirs, theirPath := exporterFile(t, "m1")
+	peer, _ := peerFile(t, "m2")
+	seed(t, theirPath,
+		insertBinding("01A", "m1"),
+		insertRound("02A", "01A"),
+		insertRecord("03A", "m1"),
+	)
+	other, otherPath := exporterFile(t, "m3")
+	seed(t, otherPath, insertBinding("04A", "m3"))
+
+	log := NewMemTransport("m1")
+	if _, err := exporter(theirs, &recording{MemTransport: log}).Export(); err != nil {
+		t.Fatalf("export m1's rows: %v", err)
+	}
+	if _, err := exporter(other, &recording{MemTransport: log.OnLog("m3")}).Export(); err != nil {
+		t.Fatalf("export m3's rows: %v", err)
+	}
+
+	got, err := NewImporter(peer, log.OnLog("m2")).Import()
+	if err != nil {
+		t.Fatalf("import both origins: %v", err)
+	}
+	if got.Applied != 4 || got.Batches != 2 {
+		t.Fatalf("import = %+v, want both origins' batches applied", got)
+	}
+	marks, err := peer.ImportMarks()
+	if err != nil {
+		t.Fatalf("read the marks: %v", err)
+	}
+	if marks["m1"] != 3 || marks["m3"] != 1 {
+		t.Fatalf("marks = %v, want m1 at the last sequence of its batch and m3 at its own", marks)
+	}
+
+	// A second run has nothing left to read, so neither mark moves.
+	again, err := NewImporter(peer, log.OnLog("m2")).Import()
+	if err != nil {
+		t.Fatalf("import again: %v", err)
+	}
+	if again.Applied != 0 || again.Batches != 0 {
+		t.Fatalf("the second import = %+v, want nothing left to apply", again)
+	}
+	rest, err := peer.ImportMarks()
+	if err != nil {
+		t.Fatalf("read the marks after the second run: %v", err)
+	}
+	if rest["m1"] != 3 || rest["m3"] != 1 {
+		t.Fatalf("marks = %v, want both left where the first run put them", rest)
+	}
+}
+
+// The mark is the highest sequence a batch carries, not the last entry read: a
+// transport handing entries back out of order must not be able to lower what this
+// machine records, because a lower mark offers the entries behind it again.
+func TestTailIsTheHighestSequenceInABatch(t *testing.T) {
+	t.Parallel()
+	batch := []Entry{{Seq: 4}, {Seq: 9}, {Seq: 6}}
+	if got := tail(batch); got != 9 {
+		t.Fatalf("tail = %d, want the highest sequence in the batch", got)
+	}
+	if got := tail(nil); got != 0 {
+		t.Fatalf("tail of no batch = %d, want nothing", got)
+	}
+}
+
+// An entry at or below the mark its origin has reached is not offered to the
+// importer again, whatever its batch number says. Both decide it, because the
+// transport hands back whole batches and a batch that began before the mark is a
+// batch whose order this machine has already followed.
+func TestReplayedReadsBothTheSequenceAndTheBatch(t *testing.T) {
+	t.Parallel()
+	marks := map[string]int{"m1": 5}
+	for _, c := range []struct {
+		name  string
+		entry Entry
+		want  bool
+	}{
+		{"past the mark", Entry{Origin: "m1", Seq: 6, Batch: 6}, false},
+		{"at the mark", Entry{Origin: "m1", Seq: 5, Batch: 5}, true},
+		{"behind the mark in a batch past it", Entry{Origin: "m1", Seq: 4, Batch: 6}, true},
+		{"past the mark in a batch behind it", Entry{Origin: "m1", Seq: 6, Batch: 5}, true},
+		{"an origin with no mark", Entry{Origin: "m3", Seq: 1, Batch: 1}, false},
+	} {
+		if got := replayed(marks, c.entry); got != c.want {
+			t.Fatalf("replayed(%s) = %t, want %t", c.name, got, c.want)
+		}
+	}
+}
