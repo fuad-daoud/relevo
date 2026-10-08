@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -467,4 +468,208 @@ func tableColumnNames(t *testing.T, d *DB, tbl string) []string {
 		t.Fatalf("read the columns of %s: %v", tbl, err)
 	}
 	return names
+}
+
+// TestOwnerResolutionMatchesTriggers pins the Go owner rules against the live
+// trigger bodies. The triggers are the resolution SQL itself and are immutable
+// once applied, so a rule that names a different parent, a different key or a
+// different column than its trigger would attribute a child's rows to the wrong
+// installation. Comparing against the applied body rather than against another
+// hand-written copy is what keeps the two from drifting apart.
+func TestOwnerResolutionMatchesTriggers(t *testing.T) {
+	sqlDB := migratedSQLDB(t)
+	bodies := triggerBodies(t, sqlDB)
+
+	for _, table := range SharedTables {
+		rule, ok := OwnerRules[table.Name]
+		if !ok {
+			t.Errorf("OwnerRules has no rule for the shared table %s", table.Name)
+			continue
+		}
+		for _, op := range outboxOps {
+			alias := "NEW"
+			if op.Name == "delete" {
+				alias = "OLD"
+			}
+			name := "sync_outbox_" + table.Name + op.Suffix
+			body, ok := bodies[name]
+			if !ok {
+				t.Errorf("%s is missing", name)
+				continue
+			}
+			got, ok := triggerOwnerExpr(body)
+			if !ok {
+				t.Errorf("%s writes no origin expression", name)
+				continue
+			}
+			want := tightSQL(ownerExpression(rule, alias))
+			if got != want {
+				t.Errorf("%s resolves the owner as\n  %s\nwant\n  %s", name, got, want)
+			}
+		}
+	}
+
+	if len(OwnerRules) != len(SharedTables) {
+		t.Errorf("OwnerRules holds %d rules for %d shared tables", len(OwnerRules), len(SharedTables))
+	}
+}
+
+// TestResolveOwnerFindsTheOwningInstallation pins that the rules resolve against
+// the rows themselves, not just that they read like the triggers: every child
+// resolves to the origin of the root that owns it, and a row whose parent is
+// gone resolves to no owner rather than to a neighbouring root's.
+func TestResolveOwnerFindsTheOwningInstallation(t *testing.T) {
+	d := openTestDB(t)
+	sharedRowFixture(t, d)
+
+	cases := []struct {
+		tbl string
+		pk  string
+	}{
+		{"repo", `["r1"]`},
+		{"mastermind", `["m1"]`},
+		{"binding_record", `["rec1"]`},
+		{"installation", `["instI"]`},
+		{"binding", `["b1"]`},
+		{"chains", `["c1"]`},
+		{"binding_event", `["rec1",1]`},
+		{"round_file", `["rec1","report.md"]`},
+		{"chain_event", `["c1",1]`},
+		{"chain_member", `["c1","b1"]`},
+		{"chain_check", `["c1",1]`},
+		{"round", `["rd1"]`},
+		{"event", `["e1"]`},
+		{"artifact", `["a1"]`},
+		{"transcript", `["t1"]`},
+	}
+	for _, c := range cases {
+		owner, found, err := d.ResolveOwner(c.tbl, c.pk)
+		if err != nil {
+			t.Errorf("resolve the owner of %s %s: %v", c.tbl, c.pk, err)
+			continue
+		}
+		if !found {
+			t.Errorf("%s %s resolves to no owner, want the origin its parent carries", c.tbl, c.pk)
+			continue
+		}
+		if !strings.HasPrefix(owner, "inst") {
+			t.Errorf("%s %s resolves to %q, which is not an installation id", c.tbl, c.pk, owner)
+		}
+	}
+
+	// Each child resolves to its own parent's origin, not to a root that merely
+	// shares its shape: the origins are distinct precisely so that reading an
+	// owner from the wrong table is visible.
+	for _, c := range []struct{ tbl, pk, want string }{
+		{"binding_event", `["rec1",1]`, bindingRecordOrigin},
+		{"round_file", `["rec1","report.md"]`, bindingRecordOrigin},
+		{"chain_event", `["c1",1]`, chainsOrigin},
+		{"chain_member", `["c1","b1"]`, chainsOrigin},
+		{"chain_check", `["c1",1]`, chainsOrigin},
+		{"round", `["rd1"]`, bindingOrigin},
+		{"event", `["e1"]`, bindingOrigin},
+		{"artifact", `["a1"]`, bindingOrigin},
+		{"transcript", `["t1"]`, bindingOrigin},
+		{"installation", `["instI"]`, installationID},
+	} {
+		got, found, err := d.ResolveOwner(c.tbl, c.pk)
+		if err != nil || !found || got != c.want {
+			t.Errorf("%s %s resolves to (%q, %t, %v), want (%s, true, nil)", c.tbl, c.pk, got, found, err, c.want)
+		}
+	}
+
+	// A transcript owned by a mastermind resolves to that session's origin, and
+	// a kind this build does not write resolves to no owner at all rather than
+	// to whichever root happens to share the id.
+	if err := d.Tx(func(tx *Tx) error {
+		_, err := tx.exec(`INSERT INTO transcript (id, owner_kind, owner_id, seq, record_json, rendered)
+			VALUES ('t2', 'mastermind', 'm1', 1, '{}', '')`)
+		return err
+	}); err != nil {
+		t.Fatalf("write a mastermind transcript: %v", err)
+	}
+	if got, found, err := d.ResolveOwner("transcript", `["t2"]`); err != nil || !found || got != mastermindOrigin {
+		t.Errorf("a mastermind transcript resolves to (%q, %t, %v), want (%s, true, nil)", got, found, err, mastermindOrigin)
+	}
+	if err := d.Tx(func(tx *Tx) error {
+		_, err := tx.exec(`INSERT INTO transcript (id, owner_kind, owner_id, seq, record_json, rendered)
+			VALUES ('t3', 'unknown_kind', 'm1', 1, '{}', '')`)
+		return err
+	}); err != nil {
+		t.Fatalf("write a transcript of an unknown kind: %v", err)
+	}
+	if _, found, err := d.ResolveOwner("transcript", `["t3"]`); err != nil || found {
+		t.Errorf("a transcript of an unknown kind resolves to (found=%t, %v), want (false, nil)", found, err)
+	}
+
+	// A row whose parent is gone has no owner to resolve to. A transcript has no
+	// foreign key on its owner_id, so it is the one shared table a row can
+	// outlive its parent in, and that row must read as unowned rather than as
+	// owned by whichever root happens to share the id.
+	if err := d.Tx(func(tx *Tx) error {
+		_, err := tx.exec(`INSERT INTO transcript (id, owner_kind, owner_id, seq, record_json, rendered)
+			VALUES ('t4', 'round', 'no_such_round', 1, '{}', '')`)
+		return err
+	}); err != nil {
+		t.Fatalf("write a transcript whose round is gone: %v", err)
+	}
+	if _, found, err := d.ResolveOwner("transcript", `["t4"]`); err != nil || found {
+		t.Errorf("a row whose parent is gone resolves to (found=%t, %v), want (false, nil)", found, err)
+	}
+
+	if _, found, err := d.ResolveOwner("repo", `["nope"]`); err != nil || found {
+		t.Errorf("an absent row resolves to (found=%t, %v), want (false, nil)", found, err)
+	}
+	if _, _, err := d.ResolveOwner("kv", `["probe"]`); !errors.Is(err, ErrInvalid) {
+		t.Errorf("resolving a table that does not share gives %v, want ErrInvalid", err)
+	}
+}
+
+// triggerOwnerExpr returns the origin expression a trigger body writes: the
+// fourth value of its INSERT, which is where the resolved installation goes.
+// Spaces are dropped first because the engine rewrites a call's open paren with
+// one before it, so the text a trigger holds is not the text migration 022 wrote.
+func triggerOwnerExpr(body string) (string, bool) {
+	tight := strings.ReplaceAll(body, " ", "")
+	open := strings.Index(tight, "VALUES(")
+	if open < 0 {
+		return "", false
+	}
+	rest := tight[open+len("VALUES("):]
+
+	var fields []string
+	depth, start := 0, 0
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case '(':
+			depth++
+		case ')':
+			if depth == 0 {
+				fields = append(fields, rest[start:i])
+				return exprField(fields, len(fields))
+			}
+			depth--
+		case ',':
+			if depth == 0 {
+				fields = append(fields, rest[start:i])
+				start = i + 1
+			}
+		}
+	}
+	return "", false
+}
+
+// exprField returns the origin expression among an INSERT's four fields: the
+// table, the key, the operation and then the owner the trigger resolved.
+func exprField(fields []string, _ int) (string, bool) {
+	if len(fields) < 4 {
+		return "", false
+	}
+	return fields[3], true
+}
+
+// tightSQL drops every space from a rendered expression, so a comparison against
+// a trigger body is about the names and the structure rather than the spacing.
+func tightSQL(expr string) string {
+	return strings.ReplaceAll(expr, " ", "")
 }
