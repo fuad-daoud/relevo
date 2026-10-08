@@ -368,6 +368,53 @@ func TestStatusNamesTheHeldOrigin(t *testing.T) {
 	}
 }
 
+// TestStatusLineSanitizesTroubleFragments pins the render-time rule at the
+// human sink: a control byte in an import-trouble sentence -- which arrived over
+// the shared sync log -- is made inert on the line `db sync status` prints,
+// while the benign text around it and the JSON document stay as the marker
+// wrote them.
+// Mutation: drop the sanitize.Text calls in dbSyncStatusDetails.
+func TestStatusLineSanitizesTroubleFragments(t *testing.T) {
+	doc := dbSyncStatusDoc{
+		Enabled:      true,
+		RemoteURL:    syncStatusRemote,
+		TokenPresent: true,
+		HeldOrigins:  []string{"zen\x1b[2J\x07 wrote schema 5"},
+		Dropped:      []string{"dropped a batch from m2\x07: unreadable"},
+		Gaps:         []string{"m3\x1b]52;c;Zm9v\x07 is held at 7"},
+	}
+
+	line := dbSyncStatusLine(doc)
+	for _, r := range []rune{'\x1b', '\x07', '\x0b', '\x0c', '\r'} {
+		if strings.ContainsRune(line, r) {
+			t.Errorf("the status line still carries %q: %q", r, line)
+		}
+	}
+	// The benign text survives and the replacement rune marks where the control
+	// was, so dropping a fragment cannot pass for making it inert.
+	for _, want := range []string{"zen", "wrote schema 5", "m2", "is held at 7", "\uFFFD"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the status line %q is missing %q", line, want)
+		}
+	}
+
+	// The JSON path is untouched: the encoder escapes the control byte rather
+	// than rewriting the fragment, so a consumer still reads what the marker
+	// carried.
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal the status document: %v", err)
+	}
+	for _, want := range []string{`\u001b`, `\u0007`, `\u001b]52;c;Zm9v\u0007`} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("the JSON document %s is missing the escaped %q", data, want)
+		}
+	}
+	if strings.Contains(string(data), "\uFFFD") {
+		t.Errorf("the JSON document %s was sanitized", data)
+	}
+}
+
 // dialledLocal dials the owner the current environment's root serves and returns
 // its machine-local file -- the handle the routed verb reads through.
 func dialledLocal(t *testing.T) *db.DB {

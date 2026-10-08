@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
@@ -473,13 +474,13 @@ func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 		fmt.Fprintf(&b, " · imported: %s", doc.LastImport)
 	}
 	for _, held := range doc.HeldOrigins {
-		fmt.Fprintf(&b, " · held: %s", held)
+		fmt.Fprintf(&b, " · held: %s", sanitize.Text(held))
 	}
 	for _, dropped := range doc.Dropped {
-		fmt.Fprintf(&b, " · dropped: %s", dropped)
+		fmt.Fprintf(&b, " · dropped: %s", sanitize.Text(dropped))
 	}
 	for _, gap := range doc.Gaps {
-		fmt.Fprintf(&b, " · gap: %s", gap)
+		fmt.Fprintf(&b, " · gap: %s", sanitize.Text(gap))
 	}
 	return b.String()
 }
