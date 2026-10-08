@@ -2,7 +2,6 @@ package db
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -21,51 +20,68 @@ type fkParent struct {
 // Only a shared parent is followed, and only one whose key is a single column
 // this machine can name: the reference gives one parent key value, and a parent
 // keyed by several columns cannot be placed from it.
+//
+// The parents come out parents-first. The exporter's table sort orders one table
+// against another but cannot order two rows of the same table, and a shared table
+// can reference itself -- a binding forked from a binding -- so a chain that
+// stays in one table has to arrive source-first here, or an importer would refuse
+// the whole batch for a parent it was never sent.
 func (t *Tx) pendingParents(window []DrainedEntry, tail int) ([]DrainedEntry, error) {
 	seen := make(map[string]bool, len(window))
-	queue := make([]DrainedEntry, 0, len(window))
+	for _, d := range window {
+		if d.Row != nil {
+			seen[d.Table+"\x00"+d.PK] = true
+		}
+	}
+	fks := make(map[string][]fkParent)
+	var pulled []DrainedEntry
 	for _, d := range window {
 		if d.Row == nil {
 			continue
 		}
-		seen[d.Table+"\x00"+d.PK] = true
-		queue = append(queue, d)
-	}
-	fks := make(map[string][]fkParent)
-	var pulled []DrainedEntry
-	for len(queue) > 0 {
-		d := queue[0]
-		queue = queue[1:]
-		refs, err := t.parentRefs(fks, d.Table)
-		if err != nil {
+		if err := t.followParents(fks, d, tail, seen, &pulled); err != nil {
 			return nil, err
-		}
-		for _, ref := range refs {
-			value, ok := exchangeValue(*d.Row, ref.column)
-			if !ok || value == nil {
-				continue
-			}
-			pk, err := keyText(value)
-			if err != nil {
-				return nil, err
-			}
-			key := ref.table + "\x00" + pk
-			if seen[key] {
-				continue
-			}
-			entry, err := t.pullParent(ref.table, pk, tail)
-			if err != nil {
-				return nil, err
-			}
-			if entry == nil {
-				continue
-			}
-			seen[key] = true
-			pulled = append(pulled, *entry)
-			queue = append(queue, *entry)
 		}
 	}
 	return pulled, nil
+}
+
+// followParents pulls the pending parents d names and their own pending parents,
+// appending each after the parents it needs so pulled comes out parents-first. A
+// parent already in seen -- a window row or one pulled earlier -- is not followed
+// again, which is also what makes a cycle of references terminate.
+func (t *Tx) followParents(cache map[string][]fkParent, d DrainedEntry, tail int, seen map[string]bool, pulled *[]DrainedEntry) error {
+	refs, err := t.parentRefs(cache, d.Table)
+	if err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		value, ok := exchangeValue(*d.Row, ref.column)
+		if !ok || value == nil {
+			continue
+		}
+		pk, err := t.keyText(value)
+		if err != nil {
+			return err
+		}
+		key := ref.table + "\x00" + pk
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		entry, err := t.pullParent(ref.table, pk, tail)
+		if err != nil {
+			return err
+		}
+		if entry == nil {
+			continue
+		}
+		if err := t.followParents(cache, *entry, tail, seen, pulled); err != nil {
+			return err
+		}
+		*pulled = append(*pulled, *entry)
+	}
+	return nil
 }
 
 // parentRefs returns tbl's references into shared tables, reading and caching
@@ -169,13 +185,16 @@ func exchangeValue(row ExchangeRow, name string) (any, bool) {
 	return nil, false
 }
 
-// keyText renders one key value as the json_array text the outbox and the log
-// use to name a row, so a parent pulled by a reference carries the same key
-// spelling as every other entry.
-func keyText(value any) (string, error) {
-	raw, err := json.Marshal([]any{value})
-	if err != nil {
+// keyText renders one key value the way the outbox records it, so a parent
+// pulled by a reference carries the same key spelling as the entry that named it
+// and the raw-text comparison in outboxPast finds it. The rendering is SQLite's
+// json_array -- the function the outbox triggers write -- rather than Go's
+// json.Marshal, which escapes HTML characters and the line separators and would
+// spell a key holding <, >, & or U+2028/29 as different text.
+func (t *Tx) keyText(value any) (string, error) {
+	var text string
+	if err := t.conn.QueryRowContext(t.ctx, `SELECT json_array(?)`, value).Scan(&text); err != nil {
 		return "", fmt.Errorf("db: key value %v: %w", value, ErrInvalid)
 	}
-	return string(raw), nil
+	return text, nil
 }

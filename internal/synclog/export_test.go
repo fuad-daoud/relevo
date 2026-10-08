@@ -137,6 +137,18 @@ func insertBinding(id, origin string) string {
 		VALUES ('%s', '%s', '/x', 'local', 't', 'manual', '%s')`, id, id, origin)
 }
 
+// insertForkedBinding writes a binding forked from a named one, so a case has a
+// shared table's self-reference, which the exporter's table sort cannot order. An
+// empty parent writes a plain binding of the origin.
+func insertForkedBinding(id, parent, origin string) string {
+	forked := "NULL"
+	if parent != "" {
+		forked = "'" + parent + "'"
+	}
+	return fmt.Sprintf(`INSERT INTO binding (id, name, forked_from_binding_id, cwd, builder_mode, created_at, ingest_source, origin)
+		VALUES ('%s', '%s', %s, '/x', 'local', 't', 'manual', '%s')`, id, id, forked, origin)
+}
+
 // One owned insert travels as one upsert carrying the row, and the outbox entry
 // that recorded it is gone once the transport has taken it. An entry left
 // behind would be read again on every pass; one deleted before the append would
@@ -550,6 +562,121 @@ func TestDrainCarriesAPendingParentPastTheWindow(t *testing.T) {
 		t.Fatalf("the peer's round points at %q, want the parent the child was re-pointed to", binding)
 	}
 	if have := sharedRows(t, peer); !strings.Contains(have, `binding ["P2"]`) {
+		t.Fatalf("the peer holds %q, want the pulled parent present", have)
+	}
+}
+
+// A pulled chain of one table reaches the batch parents-first. A binding forked
+// from another binding is a real self-reference, and the closure can pull both in
+// one drain; the exporter's table sort orders tables but cannot order two rows of
+// one table, so the closure itself has to hand the source before the fork or the
+// peer refuses the batch for a parent it was never sent.
+//
+// P1 and its fork P2 are created after the cut, and the window of one takes the
+// round's re-point, whose snapshot names P2. Both bindings lie past the window,
+// so the closure pulls them; the peer holds neither, so the order is the whole
+// difference between a batch it takes and one it drops.
+func TestDrainOrdersPulledParentsParentsFirst(t *testing.T) {
+	t.Parallel()
+	theirs, theirPath := exporterFile(t, "m1")
+	peer, _ := peerFile(t, "m2")
+	seed(t, theirPath,
+		insertBinding("P0", "m1"),
+		insertRound("C", "P0"),
+	)
+
+	log := NewMemTransport("m1")
+	importFrom(t, peer, log, theirs, &recording{MemTransport: log})
+
+	// A write to the child, then the fork chain it is re-pointed into: P1, then
+	// P2 forked from P1, then the re-point. The window of one takes the child's
+	// update; P1 and P2 lie past it.
+	seed(t, theirPath,
+		`UPDATE round SET outcome = 'changed' WHERE id = 'C'`,
+		insertForkedBinding("P1", "", "m1"),
+		insertForkedBinding("P2", "P1", "m1"),
+		`UPDATE round SET binding_id = 'P2' WHERE id = 'C'`,
+	)
+
+	r := &recording{MemTransport: log}
+	e := exporter(theirs, r)
+	e.batch = 1
+	first, err := e.ExportBatch()
+	if err != nil {
+		t.Fatalf("export one window: %v", err)
+	}
+	if first.Appended != 3 {
+		t.Fatalf("the batch carried %d entries (%s), want the child and both pulled parents",
+			first.Appended, r.shape())
+	}
+	if shape := r.shape(); shape != `binding ["P1"] upsert|binding ["P2"] upsert|round ["C"] upsert` {
+		t.Fatalf("appended = %q, want the fork's source before the fork", shape)
+	}
+
+	got, err := NewImporter(peer, log.OnLog("m2")).Import()
+	if err != nil {
+		t.Fatalf("import the batch: %v", err)
+	}
+	if len(got.Dropped) != 0 {
+		t.Fatalf("Dropped = %+v, want the batch applied: a same-table parent must precede its child", got.Dropped)
+	}
+	if have := sharedRows(t, peer); !strings.Contains(have, `binding ["P1"]`) || !strings.Contains(have, `binding ["P2"]`) {
+		t.Fatalf("the peer holds %q, want both pulled parents present", have)
+	}
+}
+
+// The pending-parent lookup compares the parent's key with the text the outbox
+// stored. The outbox spells a key with SQLite's json_array, so the drain has to
+// spell it the same way: Go's json.Marshal escapes <, >, & and the line
+// separators, and a key holding one of them would name the row with different
+// text, miss the outbox entry, and let the child travel alone.
+func TestDrainPullsAParentWhoseKeyNeedsNoEscaping(t *testing.T) {
+	t.Parallel()
+	theirs, theirPath := exporterFile(t, "m1")
+	peer, _ := peerFile(t, "m2")
+	seed(t, theirPath,
+		insertBinding("P<1&2>", "m1"),
+		insertRound("C", "P<1&2>"),
+	)
+
+	log := NewMemTransport("m1")
+	importFrom(t, peer, log, theirs, &recording{MemTransport: log})
+	if have := sharedRows(t, peer); !strings.Contains(have, `binding ["P<1&2>"]`) {
+		t.Fatalf("the peer holds %q, want the parent and child the first import carried", have)
+	}
+
+	// The child's update comes first, its resulting state names the later
+	// parent, and the parent itself follows. The window of one takes the child's
+	// update and leaves the parent to the closure.
+	seed(t, theirPath,
+		`UPDATE round SET outcome = 'changed' WHERE id = 'C'`,
+		insertBinding("P<3&4>", "m1"),
+		`UPDATE round SET binding_id = 'P<3&4>' WHERE id = 'C'`,
+	)
+
+	r := &recording{MemTransport: log}
+	e := exporter(theirs, r)
+	e.batch = 1
+	first, err := e.ExportBatch()
+	if err != nil {
+		t.Fatalf("export one window: %v", err)
+	}
+	if first.Appended != 2 {
+		t.Fatalf("the batch carried %d entries (%s), want the child and the parent it points at",
+			first.Appended, r.shape())
+	}
+
+	got, err := NewImporter(peer, log.OnLog("m2")).Import()
+	if err != nil {
+		t.Fatalf("import the batch: %v", err)
+	}
+	if len(got.Dropped) != 0 {
+		t.Fatalf("Dropped = %+v, want the batch applied: the parent must be pulled, not missed", got.Dropped)
+	}
+	if binding := columnOf(t, peer, `SELECT binding_id FROM round WHERE id = 'C'`); binding != "P<3&4>" {
+		t.Fatalf("the peer's round points at %q, want the parent the child was re-pointed to", binding)
+	}
+	if have := sharedRows(t, peer); !strings.Contains(have, `binding ["P<3&4>"]`) {
 		t.Fatalf("the peer holds %q, want the pulled parent present", have)
 	}
 }
