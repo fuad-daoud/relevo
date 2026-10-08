@@ -123,6 +123,9 @@ index sqlite_autoindex_secret_1 secret
 index sqlite_autoindex_session_consent_1 session_consent
 
 
+index sqlite_autoindex_sync_import_mark_1 sync_import_mark
+
+
 index sqlite_autoindex_transcript_1 transcript
 
 
@@ -431,6 +434,12 @@ CREATE TABLE session_consent (
 table sqlite_sequence sqlite_sequence
 CREATE TABLE sqlite_sequence(name,seq)
 
+table sync_import_mark sync_import_mark
+CREATE TABLE sync_import_mark (
+    origin TEXT PRIMARY KEY,
+    seq INTEGER NOT NULL
+)
+
 table sync_outbox sync_outbox
 CREATE TABLE sync_outbox (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -715,4 +724,4 @@ CREATE TRIGGER sync_outbox_transcript_upd AFTER UPDATE ON transcript BEGIN
         END);
 END
 
-schema_versions have=22 know=22
+schema_versions have=23 know=23

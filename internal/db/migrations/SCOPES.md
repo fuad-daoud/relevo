@@ -11,7 +11,8 @@ Migrations 001-021 are the whole series this classifies. A migration that
 adds only columns or indexes adds no table, so every table in the series is
 listed below. Migration 022 is the first outside it: it adds `sync_outbox` and
 the triggers, which are machine-local like the sections below, and it changes
-no table's scope. The rules a migration must follow are in
+no table's scope. Migration 023 adds `sync_import_mark`, machine-local like the
+outbox, and changes no table's scope either. The rules a migration must follow are in
 [`README.md`](README.md); the file that created a table is its history.
 
 ## Shared history
@@ -87,6 +88,10 @@ These are the destination for the second, local-only database file.
   keyed by `seq`. The rows are about shared history but they are this
   machine's own record of it, and the log itself is what another machine
   receives, so it does not sync: a row travels in the log, not as one.
+- `sync_import_mark`: how far this machine has applied each other
+  installation's entries, one row per origin. It is progress rather than
+  history, so it carries no trigger and stays here; two machines sharing a
+  mark would each believe the other had applied the entries between them.
 - the installation file, `<state root>/installation.json`: this installation's
   id, label and creation stamp.
 
