@@ -71,6 +71,12 @@ func runFakeWorker(mode string) int {
 		if !answerHandshake(sameID) {
 			return 1
 		}
+		// Read the next request and exit without answering it: the worker dies
+		// mid-call, so the client's read meets the closed pipe rather than a
+		// process that was already gone when the call was written.
+		if _, err := readLine(os.Stdin); err != nil {
+			return 1
+		}
 		return 0
 	case modeWrongID:
 		if !answerHandshake(otherID) {
