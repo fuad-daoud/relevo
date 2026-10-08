@@ -1,13 +1,13 @@
 package sync
 
-// The runner is the seam a remote is driven through. What stands behind it is a
-// log transport: in production the daemon's pipe client, in a test an in-memory
-// transport. The runner itself holds the one construction site for that client,
-// the bound one attempt would run under, and the marker keys the statusline
-// reads back.
+// The runner is the seam a remote is driven through. It holds the log transport
+// a pipe client provides and the machine-local kv the markers are written
+// through, and it carries the bound one attempt would run under and the marker
+// keys the statusline reads back. The client is built where the wiring is built
+// and installed here, so the daemon and the cockpit hand around one holder
+// rather than build a client each.
 
 import (
-	"context"
 	"errors"
 	"time"
 
@@ -48,44 +48,4 @@ type Runner struct {
 // queueing work that can only fail.
 func (r *Runner) Enabled() bool {
 	return r != nil && r.Client != nil && r.Local != nil
-}
-
-// Ensure reports whether there is a client to drive, building one through open
-// the first time and reusing it after. It is the one place a runner's client is
-// constructed, so a daemon holds a single pipe client however many triggers ask
-// for one.
-//
-// Nil-receiver safe, like Enabled: a missing runner has nothing to ensure. A
-// machine whose mark is off reports false without opening anything; a mark that
-// cannot be read is treated as on, mirroring Enabled, because skipping on a
-// transient read error would quietly stop syncing a machine meant to be
-// syncing. A preset client short-circuits before the mark is read, so an
-// already-built runner is reused rather than rebuilt.
-//
-// The open runs under DefaultTimeout on top of the caller's context, so a
-// blackholed dial costs one bounded wait wherever Ensure is called from,
-// including a seal path that must stay cheap. An open that fails caches
-// nothing, so a later attempt tries again rather than driving a half-built
-// client.
-func (r *Runner) Ensure(ctx context.Context, open func(context.Context) (synclog.LogTransport, error)) bool {
-	if r == nil {
-		return false
-	}
-	if r.Enabled() {
-		return true
-	}
-	if r.Local == nil || open == nil {
-		return false
-	}
-	if state, err := ReadState(r.Local); err == nil && !state.Enabled {
-		return false
-	}
-	octx, cancel := context.WithTimeout(ctx, DefaultTimeout)
-	defer cancel()
-	c, err := open(octx)
-	if err != nil {
-		return false
-	}
-	r.Client = c
-	return true
 }

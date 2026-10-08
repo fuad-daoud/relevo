@@ -37,6 +37,19 @@ func NewSupervisor(cfg Config, b *relevosync.Breaker) *Supervisor {
 	return &Supervisor{cfg: cfg, breaker: b}
 }
 
+// NewSyncRunner returns the daemon's sync holder: a runner whose log transport
+// is a supervisor that starts workers from cfg and accounts for them through the
+// machine-local kv local names. It is the one place a pipe client is
+// constructed, so a daemon holds a single worker however many calls it carries.
+// cfg names what the worker is started with; a caller leaves it empty until an
+// enable has decided the remote, because construction alone starts no process.
+func NewSyncRunner(cfg Config, local relevosync.Local) *relevosync.Runner {
+	return &relevosync.Runner{
+		Client: NewSupervisor(cfg, relevosync.NewBreaker(local)),
+		Local:  local,
+	}
+}
+
 // The supervisor is the transport the exchange drives. Naming it here means a
 // method the transport needs cannot be lost without the tree failing to build.
 var _ synclog.LogTransport = (*Supervisor)(nil)

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -85,6 +86,22 @@ func newSupervisor(t *testing.T, cfg Config, b *relevosync.Breaker) *Supervisor 
 // of its writes.
 func breakerOver(kv db.KV) *relevosync.Breaker { return relevosync.NewBreaker(kv) }
 
+// syncLocal opens the machine-local file a holder's breaker writes its markers
+// into, so a test drives the daemon's holder rather than a bare supervisor.
+func syncLocal(t *testing.T) relevosync.Local {
+	t.Helper()
+	shared, err := db.OpenSplit(filepath.Join(t.TempDir(), "relevo.db"), db.Options{})
+	if err != nil {
+		t.Fatalf("db.OpenSplit: %v", err)
+	}
+	t.Cleanup(func() { _ = shared.Close() })
+	local, err := relevosync.LocalHandle(shared)
+	if err != nil {
+		t.Fatalf("LocalHandle: %v", err)
+	}
+	return local
+}
+
 // TestSupervisorDrivesEveryVerb pins the transport surface: each verb reaches
 // the worker and returns what it answered, so the exchange can be handed the
 // supervisor for any of its four calls.
@@ -111,15 +128,21 @@ func TestSupervisorDrivesEveryVerb(t *testing.T) {
 	}
 }
 
-// TestDaemonBuildsOnePipeClient pins that a daemon's transport constructs one
-// pipe client however many calls it carries: two calls in a row drive the same
-// worker process, so a verb and a tick sharing the supervisor share one client
-// rather than each starting its own. The mutation is building a client per
-// call, which leaves the second call on a different process.
+// TestDaemonBuildsOnePipeClient pins that the daemon's holder constructs one
+// pipe client however many calls it carries: two calls in a row, driven through
+// the holder rather than a bare supervisor, reach the same worker process, so a
+// verb and a tick sharing the holder share one client rather than each starting
+// its own. The mutation is building a client per call, which leaves the second
+// call on a different process.
 func TestDaemonBuildsOnePipeClient(t *testing.T) {
-	s := newSupervisor(t, fakeWorkerCfg(modeNormal), breakerOver(newMemKV()))
+	runner := NewSyncRunner(fakeWorkerCfg(modeNormal), syncLocal(t))
+	s, ok := runner.Client.(*Supervisor)
+	if !ok {
+		t.Fatalf("the holder's transport = %T, want the supervisor", runner.Client)
+	}
+	t.Cleanup(func() { _ = s.Close() })
 
-	if _, err := s.Stats(); err != nil {
+	if _, err := runner.Client.Stats(); err != nil {
 		t.Fatalf("the first call: %v", err)
 	}
 	first := s.current()
@@ -127,7 +150,7 @@ func TestDaemonBuildsOnePipeClient(t *testing.T) {
 		t.Fatal("the first call left no worker")
 	}
 
-	if _, err := s.Pull(nil); err != nil {
+	if _, err := runner.Client.Pull(nil); err != nil {
 		t.Fatalf("the second call: %v", err)
 	}
 	second := s.current()
