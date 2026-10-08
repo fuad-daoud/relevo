@@ -28,8 +28,8 @@ import (
 // what is left and neither re-stamps nor skips what already moved. A stale row
 // whose stamp would collide with a row this installation already stamped is
 // settled before the table is stamped -- dropped for the live row on a mirror
-// table, left for a person on the record table -- so one colliding pair no longer
-// rolls back the rest. It is additive and needs no backup of its own.
+// table, left for a person on the record table -- so one colliding pair cannot
+// roll back the rest. It is additive and needs no backup of its own.
 //
 // Neither failure stops the daemon. A machine with no database still runs, and a
 // pass that failed is retried on the next start.

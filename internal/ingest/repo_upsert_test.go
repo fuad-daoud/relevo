@@ -53,10 +53,10 @@ func countWhere(t *testing.T, path, query string, args ...any) int {
 
 // seedDirOnlyRepo is the state the origin backfill leaves behind: one repo row
 // for the checkout, holding the common dir and no origin URL. It is the row the
-// upsert has to find, and it is why every later ingest of a binding whose
-// bind.json names this checkout used to end in a unique violation instead of a
-// write -- the bind.json carries both keys, the row carried one of them, and the
-// lookup read only the one the row did not have.
+// upsert has to find: a bind.json naming this checkout carries both keys while
+// the row carries one, and a lookup that read only the key the row lacks would
+// end every later ingest of such a binding in a unique violation instead of a
+// write.
 func seedDirOnlyRepo(t *testing.T, d *db.DB) string {
 	t.Helper()
 	id, err := d.UpsertRepo(db.Repo{CommonDir: strPtr(fixtureRepoDir), FirstSeen: ingestSeenAt})

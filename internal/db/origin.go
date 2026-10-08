@@ -250,9 +250,10 @@ func BackfillOriginOnce(d *DB, origin string, now time.Time) (stats OriginBackfi
 // machine-local file it is written to, and it is believed only once the gate
 // agrees with it. A marker absent means the pass has to run, since it is the
 // pass that writes one; a marker present is believed only over counts that are
-// empty. That second half is the fix: a marker left by an older, narrower pass
-// over a wider set of tables used to short-circuit a database the gate still
-// counted rows in, so the pass skipped forever over work it had never done.
+// empty. That second half is what keeps the marker honest: a marker a narrower
+// pass left over a wider set of tables would otherwise short-circuit a database
+// the gate still counts rows in, and the pass would skip forever over work it
+// had never done.
 func backfillSettled(local, d *DB) (bool, error) {
 	if _, ok, err := local.KVGet(originBackfillKVKey); err != nil {
 		return false, fmt.Errorf("origin backfill: kv get %s: %w", originBackfillKVKey, err)

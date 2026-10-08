@@ -75,8 +75,8 @@ type Server struct {
 	// OnSyncVerb, when set, runs one sync verb against the handles the server
 	// already holds. It is the daemon's executor, so a client asks for enable,
 	// push, pull or disable and the work happens with the owner's own direct
-	// handles rather than a second open in the caller's process -- which is
-	// what removes the file-lock conflict the writing verbs used to meet.
+	// handles rather than a second open in the caller's process, so a writing
+	// verb never contends with the daemon for the file lock.
 	//
 	// The request carries the settings body and the token bytes; the hook is
 	// handed both and is trusted to keep the token out of every message, log
