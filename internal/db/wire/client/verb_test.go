@@ -35,6 +35,9 @@ type scriptedVerbOwner struct {
 	// dropAfterHello closes the socket instead of answering, which is what an
 	// owner that does not know the kind does.
 	dropAfterHello bool
+	// silent takes the request and never answers it, which is an owner still
+	// running a verb when the caller's own deadline passes.
+	silent bool
 	// handed records the request header and raw tail the owner received.
 	handedVerb  wire.SyncVerb
 	handedToken string
@@ -85,6 +88,10 @@ func (s *scriptedVerbOwner) serve(l net.Listener) {
 	}
 	s.handedToken = string(raw)
 	s.once.Do(func() { close(s.ready) })
+	if s.silent {
+		<-s.release
+		return
+	}
 
 	// The answer goes out before any hold, so a test that only wants the reply
 	// is not waiting on a channel that is closed at cleanup.
@@ -389,5 +396,55 @@ func TestClientSyncVerbRefusesAnUndialledSocket(t *testing.T) {
 	}, nil)
 	if err == nil {
 		t.Fatalf("an unserved socket reported %+v, want an error", res)
+	}
+}
+
+// TestClientSyncVerbMarksADeliveredRequestAwaitingItsReply pins the line between
+// a request the owner holds and one it never received: a deadline that ends the
+// wait for a reply, after the frame was written, is marked as awaiting a reply,
+// and a deadline that ends the handshake is not. Enable reads the mark as a join
+// still running in the daemon, so the second case must not carry it.
+func TestClientSyncVerbMarksADeliveredRequestAwaitingItsReply(t *testing.T) {
+	s := &scriptedVerbOwner{silent: true, ready: make(chan struct{}), release: make(chan struct{})}
+	sock := verbSocket(t, s)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	_, err := client.SyncVerb(ctx, sock, &wire.SyncVerb{
+		Header: wire.Header{Type: wire.TypeSyncVerb},
+		Verb:   wire.SyncVerbEnable,
+	}, []byte(verbToken))
+	if !errors.Is(err, client.ErrAwaitingReply) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("a delivered request whose reply never came = %v, want ErrAwaitingReply and the deadline", err)
+	}
+
+	// An owner that accepts and never greets: the deadline ends the handshake,
+	// and no request was ever written.
+	mute := t.TempDir() + "/mute.sock"
+	l, err := net.Listen("unix", mute)
+	if err != nil {
+		t.Fatalf("listen %s: %v", mute, err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	hold := make(chan struct{})
+	t.Cleanup(func() { close(hold) })
+	go func() {
+		nc, err := l.Accept()
+		if err != nil {
+			return
+		}
+		<-hold
+		_ = nc.Close()
+	}()
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel2()
+	_, err = client.SyncVerb(ctx2, mute, &wire.SyncVerb{
+		Header: wire.Header{Type: wire.TypeSyncVerb},
+		Verb:   wire.SyncVerbEnable,
+	}, []byte(verbToken))
+	if err == nil {
+		t.Fatal("an owner that never greeted answered the verb")
+	}
+	if errors.Is(err, client.ErrAwaitingReply) {
+		t.Errorf("a request never written = %v, want no ErrAwaitingReply", err)
 	}
 }
