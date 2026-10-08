@@ -54,6 +54,11 @@ func NewSyncRunner(cfg Config, local relevosync.Local) *relevosync.Runner {
 // method the transport needs cannot be lost without the tree failing to build.
 var _ synclog.LogTransport = (*Supervisor)(nil)
 
+// Ready reports whether this supervisor names a remote and a token, so a caller
+// can tell a worker an enable built from the placeholder a daemon holds before
+// one did. It reads the config and starts nothing.
+func (s *Supervisor) Ready() bool { return s.cfg.URL != "" && s.cfg.Token != "" }
+
 // Append writes one batch of this origin's entries.
 func (s *Supervisor) Append(entries []synclog.Entry) ([]synclog.Entry, error) {
 	s.mu.Lock()

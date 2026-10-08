@@ -174,9 +174,9 @@ func TestTokenReachesNoClientCall(t *testing.T) {
 		t.Fatalf("SetToken: %v", err)
 	}
 
-	f := &pushFake{}
-	if err := f.Push(t.Context()); err != nil {
-		t.Fatalf("Push: %v", err)
+	f := &exportFake{}
+	if err := f.Export(t.Context()); err != nil {
+		t.Fatalf("Export: %v", err)
 	}
 
 	for _, name := range f.Calls {

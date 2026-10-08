@@ -524,7 +524,7 @@ func (v syncView) disableCmd(env Env) tea.Cmd {
 		danger: true,
 		title:  "Turn sync off for " + accentStyle.Bold(true).Render(target) + "?",
 		lines: []string{
-			pad("final push", 13) + "one last attempt, bounded; a remote that does not answer does not refuse",
+			pad("final export", 13) + "one last attempt, bounded; a remote that does not answer does not refuse",
 			pad("kept", 13) + "every local file and row, still servable",
 			pad("remote", 13) + "left alone; you delete that with Turso's own tooling",
 		},

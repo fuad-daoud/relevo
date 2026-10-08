@@ -49,7 +49,7 @@ type verbFixture struct {
 func newVerbFixture(t *testing.T) *verbFixture {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "relevo.db")
-	shared, err := db.OpenSplit(path, db.Options{})
+	shared, err := db.OpenSplit(path, db.Options{Origin: "m1"})
 	if err != nil {
 		t.Fatalf("db.OpenSplit: %v", err)
 	}
@@ -81,44 +81,59 @@ func newVerbFixture(t *testing.T) *verbFixture {
 	return fx
 }
 
-// TestSyncPushAndPullRefuseWhenStubbed pins the two one-shots that have no
-// pipeline behind them: push and pull keep their names and keep answering on
-// the owner socket, and each returns the one named error rather than opening a
-// handle. Enable joined this round, and status and the turn-off are the two
-// others that mean something; each is pinned by its own test.
+// TestSyncPushAndPullMoveTheLog pins the two one-shots that run half the steady
+// exchange each: push drains this machine's outbox into the log, and pull reads
+// the other origins' entries and imports them. Each runs against the transport
+// the fixture installed, and neither refuses.
 //
-// The mutation is routing a one-shot past the refusal to an answer of its own:
-// a verb that reached an engine would record an open on the fixture, one that
-// succeeded would say so here, and one that refused with a different error
-// would miss the string this test names.
-func TestSyncPushAndPullRefuseWhenStubbed(t *testing.T) {
+// The mutation is routing a one-shot back to a stub refusal: a verb that never
+// drove the transport records no call here, and one that refused would miss the
+// OK this test names.
+func TestSyncPushAndPullMoveTheLog(t *testing.T) {
 	f := newVerbFixture(t)
 	ctx := context.Background()
-
-	for _, verb := range []string{wire.SyncVerbPush, wire.SyncVerbPull} {
-		t.Run(verb, func(t *testing.T) {
-			f.opens, f.client.Calls = 0, nil
-			res := f.runner.Run(ctx, &wire.SyncVerb{Verb: verb}, []byte(verbFixtureToken))
-			if res.OK {
-				t.Fatalf("%s reported success: %+v", verb, res)
-			}
-			if res.Message != relevosync.ErrSyncUnavailable.Error() {
-				t.Errorf("%s said %q, want the one named error", verb, res.Message)
-			}
-			if res.Code == "" {
-				t.Errorf("%s refused with no code, so a caller cannot map it", verb)
-			}
-			if res.Code == wire.SyncCodeInternal {
-				t.Errorf("%s is classified as a defect to report, want a refusal", verb)
-			}
-			if f.opens != 0 {
-				t.Errorf("%s opened %d handles, want none", verb, f.opens)
-			}
-			if len(f.client.Calls) != 0 {
-				t.Errorf("%s drove %v, want nothing", verb, f.client.Calls)
-			}
-		})
+	// A row this machine owns, so the export has something to hand over.
+	if _, err := f.shared.RecordPut(db.Record{
+		Owner: "m1", Name: "webshop", State: "open", JSON: "{}",
+		CreatedAt: time.Unix(0, 0).UTC(), UpdatedAt: time.Unix(0, 0).UTC(),
+	}); err != nil {
+		t.Fatalf("seed an owned row: %v", err)
 	}
+
+	f.opens, f.client.Calls = 0, nil
+	push := f.runner.Run(ctx, &wire.SyncVerb{Verb: wire.SyncVerbPush}, nil)
+	if !push.OK {
+		t.Fatalf("push refused: %s", push.Message)
+	}
+	if !push.Applied {
+		t.Error("push handed the log nothing, want the seeded row")
+	}
+	if !called(f.client, "append") {
+		t.Errorf("push drove %v, want an append", f.client.Calls)
+	}
+
+	f.client.Calls = nil
+	pull := f.runner.Run(ctx, &wire.SyncVerb{Verb: wire.SyncVerbPull}, nil)
+	if !pull.OK {
+		t.Fatalf("pull refused: %s", pull.Message)
+	}
+	if !called(f.client, "pull") {
+		t.Errorf("pull drove %v, want a pull", f.client.Calls)
+	}
+	if f.opens != 0 {
+		t.Errorf("a one-shot opened %d handles, want none: the runner's worker is reused", f.opens)
+	}
+}
+
+// called reports whether a transport recorded the named call, so a test can say
+// one-shots drove the log without depending on the order they did it in.
+func called(r *recordTransport, name string) bool {
+	for _, c := range r.Calls {
+		if c == name {
+			return true
+		}
+	}
+	return false
 }
 
 // TestSyncVerbEnableJoins pins that enable is no longer a stub: it runs the
@@ -188,11 +203,11 @@ func TestSyncVerbDisableStillRuns(t *testing.T) {
 	if !res.OK {
 		t.Fatalf("disable refused: %s", res.Message)
 	}
-	if got := strings.Join(res.Steps, ","); got != "final push,mark off,delete token,close handle" {
-		t.Errorf("steps = %q, want the contract's four in order", got)
+	if got := strings.Join(res.Steps, ","); got != "final export,mark off,delete token,stop worker,delete replica,drop client" {
+		t.Errorf("steps = %q, want the contract's six in order", got)
 	}
-	if res.FinalPush {
-		t.Error("the turn-off reported a final push although nothing opened a handle")
+	if !res.FinalPush {
+		t.Error("the turn-off skipped the final export on an enabled machine holding a client")
 	}
 	if f.opens != 0 {
 		t.Errorf("the turn-off opened %d handles, want none", f.opens)
@@ -216,7 +231,7 @@ func TestSyncVerbDisableStillRuns(t *testing.T) {
 // and a name outside the set is still refused rather than run.
 func TestSyncVerbNamesAreTheClosedSet(t *testing.T) {
 	f := newVerbFixture(t)
-	for _, verb := range []string{wire.SyncVerbEnable, wire.SyncVerbDisable, wire.SyncVerbPush, wire.SyncVerbPull} {
+	for _, verb := range []string{wire.SyncVerbEnable, wire.SyncVerbDisable, wire.SyncVerbPush, wire.SyncVerbPull, wire.SyncVerbRetry} {
 		res := f.runner.Run(context.Background(), &wire.SyncVerb{Verb: verb}, nil)
 		if res.Code == wire.SyncCodeInvalid && res.Message == "sync: no such verb" {
 			t.Errorf("the executor does not know the verb %q", verb)
@@ -272,14 +287,14 @@ func TestSyncVerbOverOwnerNeverOpensASecondHandle(t *testing.T) {
 		ClientName: "relevo",
 	}
 
-	for _, verb := range []string{wire.SyncVerbEnable, wire.SyncVerbPush, wire.SyncVerbPull, wire.SyncVerbDisable} {
+	for _, verb := range []string{wire.SyncVerbEnable, wire.SyncVerbPush, wire.SyncVerbPull, wire.SyncVerbRetry, wire.SyncVerbDisable} {
 		res := runner.Run(context.Background(), &wire.SyncVerb{Verb: verb}, nil)
 		if res.Code == wire.SyncCodeInternal {
 			t.Errorf("%s met the lock this handle holds: %s", verb, res.Message)
 		}
 	}
-	if len(f.Calls) != 0 {
-		t.Errorf("a verb drove %v with the file held, want nothing", f.Calls)
+	if !called(f, "pull") {
+		t.Errorf("no verb drove the injected log, so the held file was never the one answerable: %v", f.Calls)
 	}
 }
 

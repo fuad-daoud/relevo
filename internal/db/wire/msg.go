@@ -145,6 +145,7 @@ const (
 	SyncVerbDisable = "disable"
 	SyncVerbPush    = "push"
 	SyncVerbPull    = "pull"
+	SyncVerbRetry   = "retry"
 )
 
 // The refusal codes a SyncResult carries. They are a closed set and every one is
@@ -247,9 +248,9 @@ type SyncResult struct {
 	RemoteURL string `json:"remote_url,omitempty"`
 	// Steps is the order a disable took, which is its contract.
 	Steps []string `json:"steps,omitempty"`
-	// FinalPush is whether the best-effort final push landed.
+	// FinalPush is whether the best-effort final export landed.
 	FinalPush bool `json:"final_push"`
-	// Warning is what a disable's final push hit, kept as a warning rather
+	// Warning is what a disable's final export hit, kept as a warning rather
 	// than a failure.
 	Warning string `json:"warning,omitempty"`
 }

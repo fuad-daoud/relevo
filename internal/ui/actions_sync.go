@@ -117,11 +117,12 @@ func (a *mastermindActions) verbRunner() (*relevo.VerbRunner, error) {
 		return nil, err
 	}
 	runner := &relevo.VerbRunner{
-		Shared:     shared,
-		Local:      local,
-		Path:       shared.Path(),
-		Runner:     syncpipe.NewSyncRunner(syncpipe.Config{}, local),
-		ClientName: syncClientName,
+		Shared:      shared,
+		Local:       local,
+		Path:        shared.Path(),
+		ReplicaPath: syncpipe.ReplicaPath(shared.Path()),
+		Runner:      syncpipe.NewSyncRunner(syncpipe.Config{}, local),
+		ClientName:  syncClientName,
 	}
 	runner.Open = func(context.Context) (synclog.LogTransport, error) {
 		return syncpipe.OpenSupervisor(shared, local)
@@ -173,25 +174,29 @@ func (a *mastermindActions) SyncPull(ctx context.Context) Result {
 }
 
 // SyncTest asks the remote whether it is there. It changes no byte here, so a
-// test is safe against a remote a user only wants to ask about -- but this build
-// carries no engine that could ask, so it answers with the same named refusal
-// the verbs give rather than opening a handle and dialling.
+// test is safe against a remote a user only wants to ask about: it opens the
+// same worker a verb does and asks it for the log's stats, which is a read.
 //
-// It is the one sync action that does not go through the executor, and that is
-// because it is not a verb: it asks the remote a question and reports the
-// answer, rather than moving a change set or turning sync on or off. The other
-// three drive the executor so there is one set of verbs' semantics.
-func (a *mastermindActions) SyncTest(context.Context) Result {
-	if err := a.ready(); err != nil {
+// It runs through the same executor the other actions do, so the worker it
+// builds is the one a later push or pull reuses, and there is one set of
+// verbs' semantics in the tree.
+func (a *mastermindActions) SyncTest(ctx context.Context) Result {
+	runner, err := a.verbRunner()
+	if err != nil {
 		return syncErrResult("test connection", err)
 	}
-	return syncErrResult("test connection", relevosync.ErrSyncUnavailable)
+	ctx, cancel := syncCtx(ctx)
+	defer cancel()
+	if err := runner.Probe(ctx); err != nil {
+		return syncErrResult("test connection", err)
+	}
+	return Result{Text: "the remote answered", Refresh: true}
 }
 
-// SyncDisable runs S4's turn-off whole: the same four steps, in the order its
-// contract fixes, through the same executor the CLI verb drives. The final push
-// stays best-effort, so a remote that cannot be reached is a warning on a
-// successful turn-off rather than a refusal to leave.
+// SyncDisable runs S4's turn-off whole: the same six steps, in the order its
+// contract fixes, through the same executor the CLI verb drives. The final
+// export stays best-effort, so a remote that cannot be reached is a warning on
+// a successful turn-off rather than a refusal to leave.
 func (a *mastermindActions) SyncDisable(ctx context.Context) Result {
 	runner, err := a.verbRunner()
 	if err != nil {
@@ -203,7 +208,7 @@ func (a *mastermindActions) SyncDisable(ctx context.Context) Result {
 	}
 	text := "sync off on this machine; local files unchanged and still servable"
 	if res.Warning != "" {
-		text += " · the final push was skipped: " + res.Warning
+		text += " · the final export was skipped: " + res.Warning
 	}
 	return Result{Text: text, Refresh: true}
 }

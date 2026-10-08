@@ -65,11 +65,12 @@ func newVerbRunner(d *db.DB) *relevo.VerbRunner {
 		return nil
 	}
 	runner := &relevo.VerbRunner{
-		Shared:     d,
-		Local:      local,
-		Path:       d.Path(),
-		Runner:     syncpipe.NewSyncRunner(syncpipe.Config{}, local),
-		ClientName: dbSyncHandleName,
+		Shared:      d,
+		Local:       local,
+		Path:        d.Path(),
+		ReplicaPath: syncpipe.ReplicaPath(d.Path()),
+		Runner:      syncpipe.NewSyncRunner(syncpipe.Config{}, local),
+		ClientName:  dbSyncHandleName,
 	}
 	// The opener reads the machine-local rows at the moment an enable runs, so
 	// the worker it builds is pointed at the remote and token the enable just

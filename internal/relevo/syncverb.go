@@ -23,23 +23,24 @@ import (
 //
 // Enable runs whole: the preflight decides the remote and the token, the runner
 // opens the log transport, and the join bootstraps, imports and reconcile-
-// exports before the mark goes on. The push and pull one-shots have no pipeline
-// behind them yet and refuse with the sync package's one named error rather
-// than opening anything. The turn-off still runs whole, because it only writes
-// machine-local rows, and status is not a verb at all -- it is a read of the
-// same local rows.
+// exports before the mark goes on. Push and pull are the two halves of the
+// steady exchange, each run alone. Retry clears a breaker latch. The turn-off
+// runs whole, deleting the replica the worker owns; status is not a verb at all
+// -- it is a read of the same local rows.
 //
 // A verb is serialized against the daemon's own sync triggers through the same
 // guard: one push-then-pull at a time per daemon, whatever asked for it.
 type VerbRunner struct {
-	// Shared is the daemon's direct shared handle. The verbs that refuse leave
-	// it alone, and the turn-off needs no row in it.
+	// Shared is the daemon's direct shared handle.
 	Shared *db.DB
 	// Local is the machine-local file beside it, where the settings, the token
 	// and the mark live.
 	Local relevosync.Local
 	// Path is the shared file's path.
 	Path string
+	// ReplicaPath is the worker's replica file beside the shared one. The
+	// turn-off deletes it and the driver files named after it.
+	ReplicaPath string
 	// Runner is the daemon's sync runner. An enable that finishes leaves the
 	// worker it built here, so the daemon holds one transport however many calls
 	// it carries.
@@ -67,8 +68,12 @@ func (v *VerbRunner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte)
 	switch verb.Verb {
 	case wire.SyncVerbEnable:
 		return v.runGuarded(func() *wire.SyncResult { return v.enable(ctx, verb, token) })
-	case wire.SyncVerbPush, wire.SyncVerbPull:
-		return v.runGuarded(func() *wire.SyncResult { return v.unavailable() })
+	case wire.SyncVerbPush:
+		return v.runGuarded(func() *wire.SyncResult { return v.push(ctx) })
+	case wire.SyncVerbPull:
+		return v.runGuarded(func() *wire.SyncResult { return v.pull(ctx) })
+	case wire.SyncVerbRetry:
+		return v.runGuarded(func() *wire.SyncResult { return v.retry() })
 	case wire.SyncVerbDisable:
 		return v.runGuarded(func() *wire.SyncResult { return v.disable(ctx, verb) })
 	default:
@@ -104,16 +109,89 @@ func (v *VerbRunner) runGuarded(fn func() *wire.SyncResult) *wire.SyncResult {
 	return out
 }
 
-// unavailable is what the push and pull one-shots answer while no pipeline
-// stands behind them.
-//
-// They refuse rather than fall back, and the sentence says what is true rather
-// than what went wrong: nothing about this machine refused them. The code is the
-// invalid-verb class, which the CLI reports as a refusal rather than as a
-// defect to file, because a reader who typed a correct command has nothing to
-// report.
-func (v *VerbRunner) unavailable() *wire.SyncResult {
-	return verbRefusal(wire.SyncCodeInvalid, relevosync.ErrSyncUnavailable)
+// push drains this machine's outbox into the log: the export half of the steady
+// exchange, run alone for a caller who asked for it. It appends only rows this
+// installation owns, so an imported row never travels back.
+func (v *VerbRunner) push(ctx context.Context) *wire.SyncResult {
+	transport, err := v.drive(ctx)
+	if err != nil {
+		return verbRefusal(verbClassify(err), err)
+	}
+	res, err := synclog.NewExporter(v.Shared, transport).Export()
+	if err != nil {
+		return verbRefusal(verbClassify(err), err)
+	}
+	return &wire.SyncResult{OK: true, Applied: res.Appended > 0}
+}
+
+// pull reads every origin but this one and applies it: the import half of the
+// steady exchange, run alone. A batch this machine cannot act on is dropped by
+// the importer rather than failing the call, so one unreadable entry cannot
+// stop every other origin.
+func (v *VerbRunner) pull(ctx context.Context) *wire.SyncResult {
+	transport, err := v.drive(ctx)
+	if err != nil {
+		return verbRefusal(verbClassify(err), err)
+	}
+	res, err := synclog.NewImporter(v.Shared, transport).Import()
+	if err != nil {
+		return verbRefusal(verbClassify(err), err)
+	}
+	return &wire.SyncResult{OK: true, Applied: res.Applied > 0}
+}
+
+// retry clears a latched breaker and drops the worker, so the next attempt
+// tries a fresh process rather than the one that stopped answering.
+func (v *VerbRunner) retry() *wire.SyncResult {
+	if v.Runner == nil {
+		return verbRefusal(wire.SyncCodeInvalid,
+			fmt.Errorf("sync: retry: no runner is installed: %w", db.ErrInvalid))
+	}
+	if err := v.Runner.Retry(); err != nil {
+		return verbRefusal(verbClassify(err), err)
+	}
+	return &wire.SyncResult{OK: true}
+}
+
+// Probe asks the log whether it answers: it drives the same worker a verb does
+// and reads its stats, which moves no change set in this file.
+func (v *VerbRunner) Probe(ctx context.Context) error {
+	transport, err := v.drive(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = transport.Stats()
+	return err
+}
+
+// drive returns the log a one-shot drives. A worker an enable left on the
+// runner is reused, so a push or pull after an enable drives the same process;
+// a machine whose runner holds only the placeholder opens one through the
+// wiring's opener and keeps it, so the next call and the tick share it.
+func (v *VerbRunner) drive(ctx context.Context) (synclog.LogTransport, error) {
+	if v.Shared == nil {
+		return nil, fmt.Errorf("sync: no shared database: %w", db.ErrInvalid)
+	}
+	if v.Runner != nil && v.Runner.Client != nil && transportReady(v.Runner.Client) {
+		return v.Runner.Client, nil
+	}
+	transport, err := v.openTransport(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if v.Runner != nil {
+		v.Runner.Client = transport
+	}
+	return transport, nil
+}
+
+// transportReady reports whether a transport names a remote. A supervisor built
+// before an enable refuses until one did, so a caller can tell it from the
+// worker an enable left behind; a transport that cannot answer is taken as
+// ready, because only the placeholder knows it has nothing behind it.
+func transportReady(transport synclog.LogTransport) bool {
+	r, ok := transport.(interface{ Ready() bool })
+	return !ok || r.Ready()
 }
 
 // enable runs one join through the sync package: the preflight decides the
@@ -170,29 +248,36 @@ func (v *VerbRunner) openTransport(ctx context.Context) (synclog.LogTransport, e
 	if v.Runner != nil && v.Runner.Client != nil {
 		return v.Runner.Client, nil
 	}
-	return nil, fmt.Errorf("sync: enable: no log transport is installed: %w", db.ErrInvalid)
+	return nil, fmt.Errorf("sync: no log transport is installed: %w", db.ErrInvalid)
 }
 
 // closeTransport releases a transport that can release itself, so a worker a
 // failed enable started does not outlive it. A transport with no close holds no
 // process and is left to its owner.
 func closeTransport(transport synclog.LogTransport) {
-	if transport == nil {
-		return
-	}
-	if closer, ok := transport.(interface{ Close() error }); ok {
-		_ = closer.Close()
-	}
+	_ = closeTransportErr(transport)
 }
 
-// disable runs the turn-off in the order its contract fixes -- mark off, forget
-// the token -- against the daemon's own machine-local handle.
+// closeTransportErr is closeTransport with its failure, so a caller that reports
+// what it did can say whether the close worked.
+func closeTransportErr(transport synclog.LogTransport) error {
+	if transport == nil {
+		return nil
+	}
+	if closer, ok := transport.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
+// disable runs the turn-off in the order its contract fixes, against the
+// daemon's own machine-local handle.
 //
-// There is no final push, because there is no handle to push through: this
-// build opens no remote at all, so the attempt is skipped rather than made
-// against something that does not exist. The step is still recorded, so the
-// order a caller reads back is the order the contract fixes, and a machine that
-// leaves does so with every local row intact and still servable.
+// The final export drives the worker the stored rows build, and only while the
+// machine is on: a machine that is off has nothing to hand over, so the step is
+// recorded and skipped. The worker is stopped before its replica goes, and the
+// client is dropped last so a later attempt rebuilds it rather than driving a
+// state that is gone.
 func (v *VerbRunner) disable(ctx context.Context, verb *wire.SyncVerb) *wire.SyncResult {
 	// The section is read only to refuse a machine whose stored settings will
 	// not parse before anything else happens. Nothing here reads it again: the
@@ -201,15 +286,19 @@ func (v *VerbRunner) disable(ctx context.Context, verb *wire.SyncVerb) *wire.Syn
 		return verbRefusal(wire.SyncCodeInvalid, err)
 	}
 
-	disabler := &relevosync.Disabler{Local: v.Local, Timeout: verbTimeout(verb)}
+	transport := v.disableTransport(ctx)
+	disabler := &relevosync.Disabler{
+		Local:       v.Local,
+		FinalExport: exportThrough(v.Shared, transport),
+		Stop:        stopTransport(transport),
+		ReplicaPath: v.ReplicaPath,
+		Drop:        v.dropClient,
+		Timeout:     verbTimeout(verb),
+	}
 	res, err := disabler.Disable(ctx)
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
-	// The mark is off, so no later attempt may drive anything an old enable left
-	// behind: drop the runner's client now rather than letting it outlive the
-	// state that governs it.
-	v.dropRunner()
 	out := &wire.SyncResult{OK: true, Steps: res.Steps, FinalPush: res.FinalPush}
 	if res.FinalPushErr != nil {
 		out.Warning = res.FinalPushErr.Error()
@@ -217,17 +306,53 @@ func (v *VerbRunner) disable(ctx context.Context, verb *wire.SyncVerb) *wire.Syn
 	return out
 }
 
-// dropRunner forgets the runner's client so the next attempt rebuilds it. The
-// turn-off calls it after success: the machine is off, and a cached client
-// would outlive the mark that governs it. A client that can release itself is
-// closed first, so the worker a verb started goes with the state that asked for
-// it rather than holding the replica against the next enable.
-func (v *VerbRunner) dropRunner() {
-	if v.Runner == nil || v.Runner.Client == nil {
-		return
+// disableTransport is the log the turn-off's final export drives: the worker
+// the machine's stored rows build, or nothing when sync is off or no worker can
+// be built, because a machine with nothing behind it has nothing to hand over.
+func (v *VerbRunner) disableTransport(ctx context.Context) synclog.LogTransport {
+	on, err := relevosync.Enabled(v.Local)
+	if err != nil || !on {
+		return nil
 	}
-	closeTransport(v.Runner.Client)
-	v.Runner.Client = nil
+	if v.Runner != nil && v.Runner.Client != nil && transportReady(v.Runner.Client) {
+		return v.Runner.Client
+	}
+	transport, err := v.openTransport(ctx)
+	if err != nil {
+		return nil
+	}
+	return transport
+}
+
+// exportThrough adapts one log export to the turn-off's single best-effort
+// call. A machine with no shared file or no transport yields nil, which the
+// turn-off reads as nothing to hand over through.
+func exportThrough(shared *db.DB, transport synclog.LogTransport) func(context.Context) error {
+	if shared == nil || transport == nil {
+		return nil
+	}
+	return func(context.Context) error {
+		_, err := synclog.NewExporter(shared, transport).Export()
+		return err
+	}
+}
+
+// stopTransport stops the worker behind a transport, when there is one.
+func stopTransport(transport synclog.LogTransport) func() error {
+	if transport == nil {
+		return nil
+	}
+	return func() error { return closeTransportErr(transport) }
+}
+
+// dropClient forgets the runner's client so the next attempt rebuilds it. The
+// turn-off calls it last: the machine is off, and a cached client would outlive
+// the mark that governs it.
+func (v *VerbRunner) dropClient() error {
+	if v.Runner != nil {
+		v.Runner.Client = nil
+	}
+	return nil
 }
 
 // verbTimeout is the bound a verb's network work runs under. Zero selects the

@@ -197,16 +197,15 @@ func TestSyncSnapshotCarriesTheSnapshotAndItsAbsence(t *testing.T) {
 	}
 }
 
-// TestSyncActionsRefuseWithoutAnEngine pins the one answer every action that
-// would reach a remote now gives. A build with no sync engine behind them has
-// nothing to push, nothing to pull and nothing to ask, so all three refuse with
-// the sync package's named error rather than opening a handle and dialling --
-// and none of them reaches a network to find out.
+// TestSyncActionsRefuseWithoutARemoteOrToken pins the refusal every action that
+// would reach a remote gives on a machine that has no remote, no token, or
+// neither. The verbs carry no build-wide "unavailable" answer: push, pull and
+// test each open the worker the stored rows build, and a machine with a row
+// missing refuses with the sentence that names it.
 //
-// It is the same refusal whatever the machine looks like, which is the point: a
-// remote a machine names and a remote it does not are the same question here,
-// because neither is reachable.
-func TestSyncActionsRefuseWithoutAnEngine(t *testing.T) {
+// None of them starts a process or reaches a network to find that out: the
+// opener refuses on the machine-local rows before a worker is built.
+func TestSyncActionsRefuseWithoutARemoteOrToken(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		setup func(t *testing.T, a *mastermindActions)
@@ -232,11 +231,11 @@ func TestSyncActionsRefuseWithoutAnEngine(t *testing.T) {
 			} {
 				res := verb.call(context.Background())
 				if res.Err == nil {
-					t.Errorf("%s succeeded with no engine behind it", verb.name)
+					t.Errorf("%s succeeded with no remote or token to reach", verb.name)
 					continue
 				}
-				if res.Err.Error() != relevosync.ErrSyncUnavailable.Error() {
-					t.Errorf("%s said %q, want the one named error", verb.name, res.Err)
+				if !strings.Contains(res.Err.Error(), "remote") && !strings.Contains(res.Err.Error(), "token") {
+					t.Errorf("%s said %q, want the missing remote or token named", verb.name, res.Err)
 				}
 			}
 		})
@@ -255,6 +254,12 @@ func TestSyncDisableRunsS4TurnOffWhole(t *testing.T) {
 		CreatedAt: syncNow, UpdatedAt: syncNow,
 	}); err != nil {
 		t.Fatalf("seed a record: %v", err)
+	}
+	// The record is here to prove the turn-off keeps it, not to be pushed: the
+	// outbox it filled is emptied so the final export has nothing to hand over,
+	// and this test starts no worker behind the fixture's remote.
+	if err := shared.TruncateOutbox(); err != nil {
+		t.Fatalf("TruncateOutbox: %v", err)
 	}
 
 	res := a.SyncDisable(context.Background())

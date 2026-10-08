@@ -3,10 +3,14 @@ package sync
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // blackhole answers nothing until its context expires, which is what a remote
@@ -29,25 +33,25 @@ func (b *blackhole) wait(ctx context.Context) error {
 	}
 }
 
-func (b *blackhole) Push(ctx context.Context) error { return b.wait(ctx) }
+func (b *blackhole) Export(ctx context.Context) error { return b.wait(ctx) }
 
-// pushFake records the final-push calls a turn-off makes and serves the one
+// exportFake records the final-export calls a turn-off makes and serves the one
 // scripted failure a test names.
-type pushFake struct {
-	// Calls is every push the turn-off made, in order.
+type exportFake struct {
+	// Calls is every export the turn-off made, in order.
 	Calls []string
-	// Err is what a push fails with; nil is a success.
+	// Err is what the export fails with; nil is a success.
 	Err error
 }
 
-func (f *pushFake) Push(context.Context) error {
-	f.Calls = append(f.Calls, "push")
+func (f *exportFake) Export(context.Context) error {
+	f.Calls = append(f.Calls, "export")
 	return f.Err
 }
 
 // disableFixture is a machine that has been enabled: the token stored and the
 // mark written, so a turn-off under test has something real to take away.
-func disableFixture(t *testing.T, client pusher) (*Disabler, Local) {
+func disableFixture(t *testing.T, export func(context.Context) error) (*Disabler, Local) {
 	t.Helper()
 
 	_, _, local := openSplit(t)
@@ -58,10 +62,10 @@ func disableFixture(t *testing.T, client pusher) (*Disabler, Local) {
 		t.Fatalf("MarkEnabled: %v", err)
 	}
 	return &Disabler{
-		Local:   local,
-		Client:  client,
-		Now:     func() time.Time { return tokenNow },
-		Timeout: time.Second,
+		Local:       local,
+		FinalExport: export,
+		Now:         func() time.Time { return tokenNow },
+		Timeout:     time.Second,
 	}, local
 }
 
@@ -73,7 +77,8 @@ func disableFixture(t *testing.T, client pusher) (*Disabler, Local) {
 func TestDisableKeepsLocalUsable(t *testing.T) {
 	t.Parallel()
 
-	disabler, local := disableFixture(t, &pushFake{})
+	fake := &exportFake{}
+	disabler, local := disableFixture(t, fake.Export)
 	// A local marker that has nothing to do with sync, to show the turn-off is
 	// not a wipe of the machine-local file.
 	if err := local.KVPut("ledger.round", []byte(`{"round":7}`)); err != nil {
@@ -102,34 +107,35 @@ func TestDisableKeepsLocalUsable(t *testing.T) {
 }
 
 // TestDisableFinalPushFailureStillDisables pins the first step's whole
-// contract. The final push is best-effort and bounded: a remote that cannot be
-// reached is the reason a machine leaves, and a turn-off that refused to finish
-// would leave it pushing at a remote it cannot reach. The failure is kept as a
-// warning so the caller can say so, and the other three steps still run.
+// contract. The final export is best-effort and bounded: a remote that cannot
+// be reached is the reason a machine leaves, and a turn-off that refused to
+// finish would leave it pushing at a remote it cannot reach. The failure is
+// kept as a warning so the caller can say so, and the other five steps still
+// run.
 func TestDisableFinalPushFailureStillDisables(t *testing.T) {
 	t.Parallel()
 
-	fake := &pushFake{Err: errors.New("dial tcp: no route to host")}
-	disabler, local := disableFixture(t, fake)
+	fake := &exportFake{Err: errors.New("dial tcp: no route to host")}
+	disabler, local := disableFixture(t, fake.Export)
 
 	res, err := disabler.Disable(context.Background())
 	if err != nil {
 		t.Fatalf("Disable with an unreachable remote = %v, want the rest to run", err)
 	}
 	if res.FinalPush {
-		t.Error("the final push reported success against a failing remote")
+		t.Error("the final export reported success against a failing remote")
 	}
 	if res.FinalPushErr == nil {
 		t.Error("the failure was dropped instead of reported as a warning")
 	}
-	if len(res.Steps) != 4 {
-		t.Fatalf("steps = %v, want all four", res.Steps)
+	if len(res.Steps) != 6 {
+		t.Fatalf("steps = %v, want all six", res.Steps)
 	}
 	if on, _ := Enabled(local); on {
-		t.Error("a failed final push left the machine marked on")
+		t.Error("a failed final export left the machine marked on")
 	}
 	if _, ok, _ := ReadToken(local); ok {
-		t.Error("a failed final push left the token in place")
+		t.Error("a failed final export left the token in place")
 	}
 }
 
@@ -141,8 +147,8 @@ func TestDisableFinalPushFailureStillDisables(t *testing.T) {
 func TestDisableDeletesToken(t *testing.T) {
 	t.Parallel()
 
-	fake := &pushFake{}
-	disabler, local := disableFixture(t, fake)
+	fake := &exportFake{}
+	disabler, local := disableFixture(t, fake.Export)
 
 	res, err := disabler.Disable(context.Background())
 	if err != nil {
@@ -170,23 +176,24 @@ func TestDisableDeletesToken(t *testing.T) {
 	}
 }
 
-// TestDisableRunsTheFourStepsInOrder pins the whole order as one thing, and the
-// final push's failure as something that does not reorder it. It is the order
+// TestDisableRunsTheSixStepsInOrder pins the whole order as one thing, and the
+// final export's failure as something that does not reorder it. It is the order
 // the turn-off exists to guarantee, so it is pinned once as a sequence rather
 // than only in pairs.
-func TestDisableRunsTheFourStepsInOrder(t *testing.T) {
+func TestDisableRunsTheSixStepsInOrder(t *testing.T) {
 	t.Parallel()
 
-	fake := &pushFake{Err: errors.New("the remote is unreachable")}
-	closed := 0
-	disabler, _ := disableFixture(t, fake)
-	disabler.Close = func() error { closed++; return nil }
+	fake := &exportFake{Err: errors.New("the remote is unreachable")}
+	stopped, dropped := 0, 0
+	disabler, _ := disableFixture(t, fake.Export)
+	disabler.Stop = func() error { stopped++; return nil }
+	disabler.Drop = func() error { dropped++; return nil }
 
 	res, err := disabler.Disable(context.Background())
 	if err != nil {
 		t.Fatalf("Disable: %v", err)
 	}
-	want := []string{stepFinalPush, stepMarkOff, stepDeleteToke, stepClose}
+	want := []string{stepFinalPush, stepMarkOff, stepDeleteToke, stepStopWorker, stepDeleteReplica, stepDropClient}
 	if len(res.Steps) != len(want) {
 		t.Fatalf("steps = %v, want %v", res.Steps, want)
 	}
@@ -195,41 +202,110 @@ func TestDisableRunsTheFourStepsInOrder(t *testing.T) {
 			t.Fatalf("steps = %v, want %v", res.Steps, want)
 		}
 	}
-	if !res.Closed || closed != 1 {
-		t.Errorf("the handle was closed %d times, want exactly once", closed)
+	if !res.Stopped || stopped != 1 {
+		t.Errorf("the worker was stopped %d times, want exactly once", stopped)
 	}
-	if len(fake.Calls) != 1 || fake.Calls[0] != "push" {
-		t.Errorf("the client recorded %v, want exactly the final push", fake.Calls)
+	if !res.Dropped || dropped != 1 {
+		t.Errorf("the client was dropped %d times, want exactly once", dropped)
+	}
+	if len(fake.Calls) != 1 || fake.Calls[0] != "export" {
+		t.Errorf("the client recorded %v, want exactly the final export", fake.Calls)
 	}
 }
 
-// TestDisableClosesTheHandleLast pins that closing is the last step and that a
-// close failure is reported rather than swallowed: a caller told the turn-off
-// worked must not be holding a handle it believes was released.
-func TestDisableClosesTheHandleLast(t *testing.T) {
+// TestDisableDropsTheClientLast pins that dropping the client is the last step
+// and that a failure there is reported rather than swallowed: a caller told the
+// turn-off worked must not be holding a client it believes was released.
+func TestDisableDropsTheClientLast(t *testing.T) {
 	t.Parallel()
 
-	closed := 0
-	disabler, local := disableFixture(t, &pushFake{})
-	disabler.Close = func() error { closed++; return errors.New("the handle is busy") }
+	dropped := 0
+	disabler, local := disableFixture(t, (&exportFake{}).Export)
+	disabler.Drop = func() error { dropped++; return errors.New("the client is busy") }
 
 	res, err := disabler.Disable(context.Background())
 	if err == nil {
-		t.Fatal("Disable with a failing close returned nil, want the failure reported")
+		t.Fatal("Disable with a failing drop returned nil, want the failure reported")
 	}
-	if closed != 1 {
-		t.Errorf("the close was attempted %d times, want once", closed)
+	if dropped != 1 {
+		t.Errorf("the drop was attempted %d times, want once", dropped)
 	}
-	if len(res.Steps) != 4 || res.Steps[3] != stepClose {
-		t.Errorf("steps = %v, want the close last", res.Steps)
+	if len(res.Steps) != 6 || res.Steps[5] != stepDropClient {
+		t.Errorf("steps = %v, want the drop last", res.Steps)
 	}
-	// The steps before it still ran, so a machine whose handle will not close is
+	// The steps before it still ran, so a machine whose client will not drop is
 	// still off and still holds no token.
 	if on, _ := Enabled(local); on {
-		t.Error("a failing close left the machine marked on")
+		t.Error("a failing drop left the machine marked on")
 	}
 	if _, ok, _ := ReadToken(local); ok {
-		t.Error("a failing close left the token in place")
+		t.Error("a failing drop left the token in place")
+	}
+}
+
+// TestDisableDeletesReplicaAndTokenButKeepsImportedRows is the turn-off's whole
+// blast radius on one machine: the replica and the driver's files named after
+// it go, the token goes, the mark goes -- and the shared file keeps every row,
+// because a row imported from another origin is read-only history once this
+// machine stops syncing.
+//
+// The mutation is a deletion that stops at the replica's own name or that
+// reaches past its prefix: the driver files survive, or a row the shared file
+// holds is taken with them.
+func TestDisableDeletesReplicaAndTokenButKeepsImportedRows(t *testing.T) {
+	t.Parallel()
+
+	sharedPath, shared, local := openSplit(t)
+	if _, err := shared.RecordPut(db.Record{
+		Owner: "alice", Name: "webshop", State: "open", JSON: "{}",
+		CreatedAt: tokenNow, UpdatedAt: tokenNow,
+	}); err != nil {
+		t.Fatalf("seed an imported row: %v", err)
+	}
+	if err := SetToken(local, []byte(tokenFixture), tokenNow); err != nil {
+		t.Fatalf("SetToken: %v", err)
+	}
+	if err := MarkEnabled(local, true, tokenNow); err != nil {
+		t.Fatalf("MarkEnabled: %v", err)
+	}
+
+	replica := filepath.Join(filepath.Dir(sharedPath), "relevo-sync.db")
+	files := []string{replica, replica + "-wal", replica + "-shm", replica + ".lock"}
+	for _, name := range files {
+		if err := os.WriteFile(name, []byte("driver bytes"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	d := &Disabler{Local: local, ReplicaPath: replica, Now: func() time.Time { return tokenNow }, Timeout: time.Second}
+	res, err := d.Disable(context.Background())
+	if err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+	if len(res.Deleted) != len(files) {
+		t.Errorf("deleted %v, want the replica and its three driver files", res.Deleted)
+	}
+	for _, name := range files {
+		if _, err := os.Stat(name); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s survived the turn-off: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(sharedPath); err != nil {
+		t.Errorf("the shared file went with the replica: %v", err)
+	}
+	if on, _ := Enabled(local); on {
+		t.Error("the machine is still marked on")
+	}
+	if _, ok, _ := ReadToken(local); ok {
+		t.Error("the token survived the turn-off")
+	}
+
+	rows, err := shared.RecordList("alice")
+	if err != nil {
+		t.Fatalf("RecordList: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Errorf("the turn-off left %d shared rows, want the one it imported", len(rows))
 	}
 }
 
@@ -259,22 +335,22 @@ func TestDisableCompletesTheWedgedMachine(t *testing.T) {
 		t.Fatalf("the fixture is not marked on: %v, %v", on, err)
 	}
 
-	// No client and no Close: a machine with nothing open.
+	// No export, no stop and no drop: a machine with nothing open.
 	disabler := &Disabler{Local: local, Now: func() time.Time { return tokenNow }, Timeout: time.Second}
 	res, err := disabler.Disable(context.Background())
 	if err != nil {
 		t.Fatalf("Disable over a wedged machine: %v", err)
 	}
 	if res.FinalPush {
-		t.Error("a machine with no handle reported a successful final push")
+		t.Error("a machine with no handle reported a successful final export")
 	}
 	if res.FinalPushErr != nil {
-		t.Errorf("a skipped push was reported as a failure: %v", res.FinalPushErr)
+		t.Errorf("a skipped export was reported as a failure: %v", res.FinalPushErr)
 	}
-	// All four steps still ran, so the report reads whole even though one was
+	// All six steps still ran, so the report reads whole even though one was
 	// skipped rather than performed.
-	if len(res.Steps) != 4 {
-		t.Errorf("steps = %v, want all four", res.Steps)
+	if len(res.Steps) != 6 {
+		t.Errorf("steps = %v, want all six", res.Steps)
 	}
 	if on, _ := Enabled(local); on {
 		t.Error("the machine is still marked on")
@@ -285,9 +361,9 @@ func TestDisableCompletesTheWedgedMachine(t *testing.T) {
 }
 
 // TestDisableWithoutAHandleStillTurnsOff pins the machine with nothing open. A
-// turn-off has no client to push through, so the attempt is skipped rather than
-// failed: the machine is off, holds no token, and the report says the push did
-// not happen instead of claiming it did.
+// turn-off has no export to make, so the attempt is skipped rather than failed:
+// the machine is off, holds no token, and the report says the export did not
+// happen instead of claiming it did.
 func TestDisableWithoutAHandleStillTurnsOff(t *testing.T) {
 	t.Parallel()
 
@@ -298,10 +374,10 @@ func TestDisableWithoutAHandleStillTurnsOff(t *testing.T) {
 		t.Fatalf("Disable with no handle: %v", err)
 	}
 	if res.FinalPush {
-		t.Error("a machine with no handle reported a successful final push")
+		t.Error("a machine with no handle reported a successful final export")
 	}
 	if res.FinalPushErr != nil {
-		t.Errorf("a skipped push was reported as a failure: %v", res.FinalPushErr)
+		t.Errorf("a skipped export was reported as a failure: %v", res.FinalPushErr)
 	}
 	if on, _ := Enabled(local); on {
 		t.Error("the machine is still marked on")
@@ -315,7 +391,7 @@ func TestDisableFinalPushIsBounded(t *testing.T) {
 	t.Parallel()
 
 	hole := &blackhole{block: time.Hour}
-	disabler, _ := disableFixture(t, hole)
+	disabler, _ := disableFixture(t, hole.Export)
 	disabler.Timeout = 20 * time.Millisecond
 
 	start := time.Now()
@@ -326,9 +402,9 @@ func TestDisableFinalPushIsBounded(t *testing.T) {
 		t.Fatalf("Disable against a blackholed remote: %v", err)
 	}
 	if elapsed > 5*time.Second {
-		t.Errorf("the final push took %s, want the bound to end it", elapsed)
+		t.Errorf("the final export took %s, want the bound to end it", elapsed)
 	}
 	if res.FinalPushErr == nil {
-		t.Error("a blackholed push was reported as a success")
+		t.Error("a blackholed export was reported as a success")
 	}
 }
