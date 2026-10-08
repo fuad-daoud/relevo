@@ -41,6 +41,10 @@ type Runner struct {
 	// Local is the machine-local kv the markers are written through, so a
 	// marker can never reach the file that leaves this machine.
 	Local db.KV
+	// Timeout bounds one step of the steady pipeline. Zero means StepTimeout,
+	// which is the bound production runs under; a test shortens it so a step
+	// that overruns is reached without waiting the real bound out.
+	Timeout time.Duration
 }
 
 // Enabled reports whether there is anything to drive. A machine with no client
