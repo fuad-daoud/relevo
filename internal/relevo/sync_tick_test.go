@@ -2,8 +2,11 @@ package relevo
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,16 +17,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
-// The tests here pin what the daemon's sync triggers do now that no pipeline
-// stands behind them: they are still called from the tick and from the seal,
-// and they open nothing. A trigger that stopped being called would be a hole
-// the next pipeline is wired into without anyone noticing, and a trigger that
-// opened a handle would put a network back on a path the round exists to keep
-// off it.
+// The tests here drive the whole tick rather than the phase: a trigger removed
+// from it fails them. What they pin is that the seal and the idle window each
+// hand the runner to the steady pipeline, that the seal path never waits on the
+// network, and that a worker which ran past its step is cancelled rather than
+// driven again.
 
-// recordTransport is the log transport a trigger test hands the runner, so a
-// test can pin that a trigger drove nothing: it names every call it was driven
-// through and answers each with a zero.
+// recordTransport is the log transport a fixture hands a runner: it answers
+// every call with a zero, so a test can look at what was driven through it.
 type recordTransport struct {
 	Calls []string
 }
@@ -51,22 +52,39 @@ func (r *recordTransport) Stats() (synclog.Stats, error) {
 // syncBlackhole accepts a call and then goes silent, which is what a network
 // that accepts a connection and then stops answering looks like from here. It
 // counts what was driven through it, so a trigger that reached it is visible
-// rather than only slow. block is set past any deadline under test.
+// rather than only slow, and it can be cancelled the way a worker is when its
+// step runs past the bound.
 type syncBlackhole struct {
 	calls atomic.Int64
 	block time.Duration
+	dead  chan struct{}
+	once  sync.Once
+}
+
+// newSyncBlackhole is a blackhole whose calls block for block unless it is
+// cancelled first.
+func newSyncBlackhole(block time.Duration) *syncBlackhole {
+	return &syncBlackhole{block: block, dead: make(chan struct{})}
 }
 
 func (b *syncBlackhole) wait() error {
 	b.calls.Add(1)
-	time.Sleep(b.block)
-	return nil
+	select {
+	case <-time.After(b.block):
+		return nil
+	case <-b.dead:
+		return errors.New("the worker was cancelled")
+	}
 }
 
 func (b *syncBlackhole) Append([]synclog.Entry) ([]synclog.Entry, error) { return nil, b.wait() }
 func (b *syncBlackhole) Pull(map[string]int) ([]synclog.Entry, error)    { return nil, b.wait() }
 func (b *syncBlackhole) Head(string) ([]synclog.HeadRow, error)          { return nil, b.wait() }
 func (b *syncBlackhole) Stats() (synclog.Stats, error)                   { return synclog.Stats{}, b.wait() }
+
+// Cancel releases every call waiting on the blackhole, which is what killing
+// the worker behind a call does.
+func (b *syncBlackhole) Cancel() { b.once.Do(func() { close(b.dead) }) }
 
 // syncLocal opens a machine-local file for a runner to write its markers into,
 // already carrying the marker that says sync is on.
@@ -131,30 +149,28 @@ func sealableReader(t *testing.T, client synclog.LogTransport) Runtime {
 	return rt
 }
 
-// TestSyncNeverBlocksSeal is the load-bearing property of the whole seam: a
-// seal commits its files and returns whether or not any remote is answering.
-// The round's outcome cannot depend on a network, so the tick is timed against
-// a bound rather than merely checked for correctness.
-func TestSyncNeverBlocksSeal(t *testing.T) {
+// TestSealTriggersASyncWithoutBlockingTheSeal is the load-bearing property of
+// the whole seam: a seal commits its files and returns whether or not any
+// remote is answering, and the pipeline it starts runs off the seal path. The
+// tick is timed against a bound rather than merely checked for correctness, and
+// the blackhole is reached after the seal committed rather than during it.
+func TestSealTriggersASyncWithoutBlockingTheSeal(t *testing.T) {
 	t.Parallel()
 
-	b := &syncBlackhole{block: time.Minute}
+	b := newSyncBlackhole(time.Minute)
 	rt := sealableReader(t, b)
+	// The step bound the worker is given, short so the cancelling half of the
+	// trigger is reached and the blackhole does not linger.
+	rt.Sync.Timeout = 50 * time.Millisecond
 
+	d := NewDaemon(rt, time.Second)
 	start := time.Now()
-	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+	if err := d.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick with a blackholed remote: %v", err)
 	}
 	took := time.Since(start)
-
-	// Generous next to what a seal costs, and far below the runner's own
-	// timeout: a seal that waited on the network would spend that whole
-	// timeout here and blow straight through this.
 	if took > 10*time.Second {
 		t.Errorf("the tick took %v, so the seal waited on the network", took)
-	}
-	if got := b.calls.Load(); got != 0 {
-		t.Errorf("the tick called a blackholed remote %d times, want none", got)
 	}
 
 	// The seal itself is unaffected: the files are in the database and gone
@@ -170,48 +186,106 @@ func TestSyncNeverBlocksSeal(t *testing.T) {
 		t.Errorf("the sealed stream is still on disk: %v", err)
 	}
 
-	waitSyncIdle(t, NewDaemon(rt, time.Second))
-}
-
-// TestSyncSealOpensNoHandle pins the seal trigger itself: a seal that moved
-// bytes drives nothing at all. The trigger is still on the path -- this runs it
-// through the real tick -- and what it does now is open no handle.
-//
-// The mutation is putting the drive back: a trigger that handed the round to a
-// client would record calls on the fake, and this is what would fail.
-func TestSyncSealOpensNoHandle(t *testing.T) {
-	t.Parallel()
-
-	f := &recordTransport{}
-	rt := sealableReader(t, f)
-	d := NewDaemon(rt, time.Second)
-
-	if err := d.Tick(context.Background()); err != nil {
-		t.Fatalf("Tick: %v", err)
-	}
+	// The trigger handed the round's bytes to the pipeline: the remote was
+	// reached, and it was reached after the seal committed.
 	waitSyncIdle(t, d)
-
-	if len(f.Calls) != 0 {
-		t.Errorf("a seal that moved bytes drove %v, want nothing", f.Calls)
-	}
-	if _, ok, err := rt.Sync.Local.KVGet(relevosync.KeyLastTick); err != nil {
-		t.Fatalf("KVGet(last tick): %v", err)
-	} else if ok {
-		t.Error("a seal wrote a tick marker")
+	if got := b.calls.Load(); got == 0 {
+		t.Error("the seal trigger never reached the pipeline")
 	}
 }
 
-// TestSyncSealIsQuietWhenItSealedNothing pins the other half of the trigger: a
-// tick that sealed no bytes has nothing new to hand another machine either, so
-// it drives nothing as well.
-func TestSyncSealIsQuietWhenItSealedNothing(t *testing.T) {
+// farBody is one binding row as a body, so an entry seeded for another origin
+// carries the columns the table's insert needs and imports like a real write.
+func farBody(t *testing.T, id string) []byte {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"id": id, "name": id, "cwd": "/far", "builder_mode": "local",
+		"created_at": "t", "ingest_source": "manual",
+	})
+	if err != nil {
+		t.Fatalf("encode the far row: %v", err)
+	}
+	return body
+}
+
+// seedFar appends one other origin's entry to the log, so an import has
+// something to apply.
+func seedFar(t *testing.T, log *synclog.MemTransport, origin, id string, schema int) {
+	t.Helper()
+	entry, err := synclog.NewUpsert(origin, "binding", `["`+id+`"]`, schema, farBody(t, id), baseTime)
+	if err != nil {
+		t.Fatalf("build the far entry: %v", err)
+	}
+	if _, err := log.OnLog(origin).Append([]synclog.Entry{entry}); err != nil {
+		t.Fatalf("append the far entry: %v", err)
+	}
+}
+
+// tickTransport is the log a tick drives: it forwards to the in-memory log and
+// records which calls the pipeline made through it.
+type tickTransport struct {
+	synclog.LogTransport
+	mu    sync.Mutex
+	calls []string
+}
+
+func (t *tickTransport) note(name string) {
+	t.mu.Lock()
+	t.calls = append(t.calls, name)
+	t.mu.Unlock()
+}
+
+func (t *tickTransport) Append(entries []synclog.Entry) ([]synclog.Entry, error) {
+	t.note("append")
+	return t.LogTransport.Append(entries)
+}
+
+func (t *tickTransport) Pull(marks map[string]int) ([]synclog.Entry, error) {
+	t.note("pull")
+	return t.LogTransport.Pull(marks)
+}
+
+func (t *tickTransport) called(name string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, c := range t.calls {
+		if c == name {
+			return true
+		}
+	}
+	return false
+}
+
+// TestIdleWindowReachesThePipelineThroughTheRealTick pins the idle path from
+// the tick's own side: the window is on the tick, and when it opens it drains
+// the outbox into the log and imports what the other origins wrote. Removing
+// the window from the tick, or wiring it to a no-op, leaves the remote
+// untouched and this failing.
+func TestIdleWindowReachesThePipelineThroughTheRealTick(t *testing.T) {
 	t.Parallel()
 
 	repo := readerRepo(t)
 	rt, _ := bindReader(t, repo)
-	f := &recordTransport{}
-	local := syncLocal(t)
-	rt.Sync = &relevosync.Runner{Client: f, Local: local}
+	mdb, err := rt.Store.DB()
+	if err != nil {
+		t.Fatalf("store db: %v", err)
+	}
+	local, err := relevosync.LocalHandle(mdb)
+	if err != nil {
+		t.Fatalf("LocalHandle: %v", err)
+	}
+	if err := relevosync.MarkEnabled(local, true, baseTime); err != nil {
+		t.Fatalf("MarkEnabled: %v", err)
+	}
+
+	// The other machine's entry waits in the same log the tick reads, so the
+	// pipeline's import has something to apply.
+	log := synclog.NewMemTransport("m2")
+	_, known := mdb.SchemaVersions()
+	seedFar(t, log, "m2", "far-1", known)
+
+	spy := &tickTransport{LogTransport: log.OnLog(mdb.Origin())}
+	rt.Sync = &relevosync.Runner{Client: spy, Local: local}
 
 	d := NewDaemon(rt, time.Second)
 	if err := d.Tick(context.Background()); err != nil {
@@ -219,87 +293,133 @@ func TestSyncSealIsQuietWhenItSealedNothing(t *testing.T) {
 	}
 	waitSyncIdle(t, d)
 
-	if len(f.Calls) != 0 {
-		t.Errorf("a tick that sealed nothing called the remote: %v", f.Calls)
+	if !spy.called("append") {
+		t.Error("the idle window exported nothing")
+	}
+	if !spy.called("pull") {
+		t.Error("the idle window imported nothing")
+	}
+	if got, ok, err := mdb.ImportMark("m2"); err != nil || !ok || got == 0 {
+		t.Errorf("import mark for m2 = (%d, %v, %v), want the far entry applied", got, ok, err)
 	}
 }
 
-// TestSyncIdleTickIsAReachableNoOp pins the idle window from the tick's own
-// side: the window is still on the tick, it is still callable, and it opens
-// nothing. It is called directly here as well as through Tick so that a trigger
-// removed from the tick would fail the reachability half and a handle added to
-// it would fail the no-open half.
-func TestSyncIdleTickIsAReachableNoOp(t *testing.T) {
-	t.Parallel()
+// restartTransport models a worker a cancelled call killed: the first append
+// waits on the worker until it is cancelled, and every call after that runs on
+// a fresh worker, so a reused worker shows up as a repeated id.
+type restartTransport struct {
+	synclog.LogTransport
+	dead    chan struct{}
+	once    sync.Once
+	mu      sync.Mutex
+	workers int
+	kill    bool
+	calls   []int
+}
 
-	for _, tc := range []struct {
-		name  string
-		build func(t *testing.T) (*Daemon, *recordTransport, relevosync.Local)
-	}{
-		{
-			name: "a runtime with a client behind the seam",
-			build: func(t *testing.T) (*Daemon, *recordTransport, relevosync.Local) {
-				f := &recordTransport{}
-				local := syncLocal(t)
-				return NewDaemon(Runtime{Sync: &relevosync.Runner{Client: f, Local: local}}, time.Second), f, local
-			},
-		},
-		{
-			name: "a runtime with no seam at all",
-			build: func(*testing.T) (*Daemon, *recordTransport, relevosync.Local) {
-				return NewDaemon(Runtime{}, time.Second), nil, nil
-			},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			d, f, local := tc.build(t)
+func newRestartTransport(inner synclog.LogTransport) *restartTransport {
+	return &restartTransport{LogTransport: inner, dead: make(chan struct{})}
+}
 
-			d.idleSync(context.Background())
-			waitSyncIdle(t, d)
-			if f != nil && len(f.Calls) != 0 {
-				t.Errorf("the idle window drove %v, want nothing", f.Calls)
-			}
-			if local != nil {
-				if _, ok, err := local.KVGet(relevosync.KeyLastTick); err != nil {
-					t.Fatalf("KVGet(last tick): %v", err)
-				} else if ok {
-					t.Error("the idle window wrote a tick marker")
-				}
-			}
-		})
+func (r *restartTransport) Append(entries []synclog.Entry) ([]synclog.Entry, error) {
+	r.mu.Lock()
+	if r.kill || r.workers == 0 {
+		r.workers++
+		r.kill = false
+	}
+	id := r.workers
+	r.calls = append(r.calls, id)
+	r.mu.Unlock()
+
+	if id == 1 {
+		<-r.dead
+		return nil, errors.New("the worker was cancelled")
+	}
+	return r.LogTransport.Append(entries)
+}
+
+func (r *restartTransport) Cancel() {
+	r.mu.Lock()
+	r.kill = true
+	first := r.workers <= 1
+	r.mu.Unlock()
+	if first {
+		r.once.Do(func() { close(r.dead) })
 	}
 }
 
-// TestSyncTickWithVerbsOpensNoHandle pins the shared-runner half: a daemon whose
-// owner serves the verbs still runs both triggers through Tick, and neither
-// opens a handle on the runner the verbs share.
-func TestSyncTickWithVerbsOpensNoHandle(t *testing.T) {
+func (r *restartTransport) firstWorker() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.calls) == 0 {
+		return 0
+	}
+	return r.calls[0]
+}
+
+func (r *restartTransport) lastWorker() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.calls) == 0 {
+		return 0
+	}
+	return r.calls[len(r.calls)-1]
+}
+
+func (r *restartTransport) wasCancelled() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.kill
+}
+
+// TestTickRestartsACancelledWorker pins the steady path's half of the worker's
+// life: a step that ran past its bound cancels the worker behind it, and the
+// next tick starts a fresh process rather than driving the cancelled one. The
+// window is advanced between the two ticks so both reach the idle path.
+func TestTickRestartsACancelledWorker(t *testing.T) {
 	t.Parallel()
 
-	f := &recordTransport{}
-	local := syncLocal(t)
-	opens := 0
-	runner := &VerbRunner{
-		Local: local,
-		Path:  filepath.Join(t.TempDir(), "relevo.db"),
-		Open: func(context.Context) (synclog.LogTransport, error) {
-			opens++
-			return f, nil
-		},
+	repo := readerRepo(t)
+	rt, _ := bindReader(t, repo)
+	mdb, err := rt.Store.DB()
+	if err != nil {
+		t.Fatalf("store db: %v", err)
 	}
-	d := NewDaemon(Runtime{Sync: &relevosync.Runner{Client: f, Local: local}}, time.Second)
-	d.SetSyncVerbs(runner)
+	local, err := relevosync.LocalHandle(mdb)
+	if err != nil {
+		t.Fatalf("LocalHandle: %v", err)
+	}
+	if err := relevosync.MarkEnabled(local, true, baseTime); err != nil {
+		t.Fatalf("MarkEnabled: %v", err)
+	}
 
-	d.idleSync(context.Background())
-	d.queueSync(context.Background())
+	client := newRestartTransport(synclog.NewMemTransport("m2").OnLog(mdb.Origin()))
+	rt.Sync = &relevosync.Runner{Client: client, Local: local}
+	rt.Sync.Timeout = 50 * time.Millisecond
+
+	now := baseTime
+	d := NewDaemon(rt, time.Second)
+	d.syncNow = func() time.Time { return now }
+
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("first Tick: %v", err)
+	}
 	waitSyncIdle(t, d)
-
-	if opens != 0 {
-		t.Errorf("the tick opened %d handles, want none", opens)
+	first := client.firstWorker()
+	if first == 0 {
+		t.Fatal("the first tick drove no worker")
 	}
-	if len(f.Calls) != 0 {
-		t.Errorf("the tick drove %v, want nothing", f.Calls)
+	if !client.wasCancelled() {
+		t.Fatal("the overrun worker was not cancelled")
+	}
+
+	now = now.Add(syncWindow + time.Minute)
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("second Tick: %v", err)
+	}
+	waitSyncIdle(t, d)
+	if second := client.lastWorker(); second == first {
+		t.Errorf("the call after the cancel reused worker %d, want a fresh one", first)
 	}
 }
 

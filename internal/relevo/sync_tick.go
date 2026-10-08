@@ -3,8 +3,10 @@ package relevo
 import (
 	"context"
 	"log/slog"
+	"runtime/debug"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/store"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
@@ -14,17 +16,126 @@ import (
 // carry weeks of entries between two ticks.
 const outboxTruncateInterval = 5 * time.Minute
 
-// queueSync is the seal trigger's half of the sync seam. This build has no sync
-// engine, so there is no change set to hand on and it does nothing: it takes no
-// slot, starts no goroutine and opens no handle, and a seal costs only what the
-// seal itself costs.
-func (d *Daemon) queueSync(context.Context) {}
+// syncWindow is the shortest gap between two idle-window syncs. A tick arriving
+// sooner sees the window closed and does nothing. The window exists to catch
+// edits no round produced -- a config row, an installation touch, a confirm --
+// so polling the network on every interval would buy nothing and cost a round
+// latency each time.
+const syncWindow = 5 * time.Minute
 
-// idleSync is the window trigger's half of the sync seam. The window exists to
-// catch edits no round produced, by polling the network on an interval; with no
-// engine there is nothing to poll and nothing to catch, so it opens no handle
-// and writes no marker.
-func (d *Daemon) idleSync(context.Context) {}
+// queueSync hands a sync to the background and returns at once. The seal that
+// triggered it has already committed, so the round is on disk either way: a
+// network that never answers delays the other machines' copy of it and nothing
+// else.
+//
+// A trigger arriving while one is already in flight is dropped rather than
+// queued. Attempts piling up behind a slow network do not make the backlog
+// smaller, and the seal path must stay cheap enough to run every tick.
+func (d *Daemon) queueSync(ctx context.Context) {
+	// The store is read here rather than inside the goroutine, so a refresh
+	// that replaces the runtime mid-attempt cannot hand the pipeline a second
+	// handle to the same file.
+	st := d.rt.Store
+	if st == nil {
+		return
+	}
+	runner := d.syncRunner()
+	// The enabled marker is the gate both triggers share: a machine that never
+	// turned sync on must not drive a transport, and a seal is no exception.
+	if !runner.On() {
+		return
+	}
+
+	d.syncMu.Lock()
+	if d.syncInFlight {
+		d.syncMu.Unlock()
+		return
+	}
+	d.syncInFlight = true
+	d.syncMu.Unlock()
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("turso sync panicked", "panic", r, "stack", string(debug.Stack()))
+			}
+			d.syncMu.Lock()
+			d.syncInFlight = false
+			// A verb may be waiting for the slot this attempt held; it has to be
+			// woken here or it waits for a trigger that already ended.
+			d.signalIdleLocked()
+			d.syncMu.Unlock()
+		}()
+		d.runSync(ctx, runner, st)
+	}()
+}
+
+// idleSync runs the window's one pipeline, or does nothing at all.
+//
+// The window is measured from the last attempt this daemon opened rather than
+// from the last one that succeeded: the breaker owns the backoff, so a failed
+// attempt is retried by the next window or by the next seal, and this window
+// only decides when to ask.
+func (d *Daemon) idleSync(ctx context.Context) {
+	runner := d.syncRunner()
+	if !runner.On() {
+		return
+	}
+
+	now := d.syncClock()()
+	d.syncMu.Lock()
+	closed := !d.syncLast.IsZero() && now.Sub(d.syncLast) < syncWindow
+	if !closed {
+		d.syncLast = now
+	}
+	d.syncMu.Unlock()
+	if closed {
+		return
+	}
+	d.queueSync(ctx)
+}
+
+// runSync is the shared body of both triggers: it drives the steady pipeline
+// over the shared file and says what happened once, at a level a human reads.
+//
+// It asks Enabled here rather than before the slot was taken: a verb replaces
+// the runner's transport under the same slot, and this read is what the slot is
+// for.
+func (d *Daemon) runSync(ctx context.Context, runner *relevosync.Runner, st *store.Store) {
+	if !runner.Enabled() {
+		return
+	}
+	shared, err := st.DB()
+	if err != nil {
+		slog.Warn("sync: open the shared database", "err", err)
+		return
+	}
+	out := runner.SyncOnce(ctx, shared)
+	if out.Err != nil {
+		slog.Warn("sync failed", "err", out.Err, "attention", out.Attention)
+		return
+	}
+	slog.Info("sync", "exported", out.Exported, "applied", out.Applied)
+}
+
+// syncRunner is the runner the tick drives: the one the owner's verbs share
+// when the owner is served, so a client built lazily for a verb is reused by
+// the tick rather than each path opening its own; otherwise the runtime's own
+// seam, which is what a test hands a daemon.
+func (d *Daemon) syncRunner() *relevosync.Runner {
+	if d.syncVerbs != nil && d.syncVerbs.Runner != nil {
+		return d.syncVerbs.Runner
+	}
+	return d.rt.Sync
+}
+
+// syncClock is the daemon's injectable now, for the idle window.
+func (d *Daemon) syncClock() func() time.Time {
+	if d.syncNow != nil {
+		return d.syncNow
+	}
+	return time.Now
+}
 
 // truncateOutbox empties the machine's outbox on a window while its own local
 // mark says sync is off.

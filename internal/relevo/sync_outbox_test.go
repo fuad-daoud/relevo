@@ -84,13 +84,13 @@ func TestSyncOutboxTruncatesWhileOff(t *testing.T) {
 	}
 }
 
-// TestSyncOutboxKeptWhileOn pins the half that must never regress: a machine
-// whose mark says sync is on keeps every entry, because those entries are what
-// its drain reads.
+// TestOutboxTruncationStaysOffWhileOn pins the half that must never regress: a
+// machine whose mark says sync is on keeps every entry, because those entries
+// are what its drain reads and the tick's truncation is the off-state path.
 //
 // The mutation is inverting the enabled check, which truncates an on-state
 // machine's log and leaves this failing on a non-zero count.
-func TestSyncOutboxKeptWhileOn(t *testing.T) {
+func TestOutboxTruncationStaysOffWhileOn(t *testing.T) {
 	t.Parallel()
 
 	rt, raw := outboxRuntime(t)
