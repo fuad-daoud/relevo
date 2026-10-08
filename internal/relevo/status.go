@@ -155,7 +155,7 @@ func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding) (vie
 }
 
 func buildReportWith(ctx context.Context, rt Runtime, bindings []store.Binding, cfg statusConfig) (view.Report, error) {
-	loads := loadRows(rt, bindings)
+	loads := loadRows(ctx, rt, bindings)
 	rows := make([]view.BindingStatus, 0, len(bindings))
 	for _, b := range bindings {
 		row, err := statusRowWith(ctx, rt, b, cfg, loads)
@@ -258,7 +258,7 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 	}
 
 	if b.Builder.Headless() {
-		row.BuilderStatus, row.Headless = headlessStatus(ctx, rt, b, cfg.detail)
+		row.BuilderStatus, row.Headless = headlessStatus(ctx, rt, b, cfg.detail, loads.aliveMap())
 	} else if b.Builder.Remote() {
 		row.Server = b.Builder.Server
 		row.BuilderStatus = b.Builder.RemoteStatus
