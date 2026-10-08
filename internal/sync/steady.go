@@ -43,6 +43,9 @@ type SteadyResult struct {
 	Err error
 	// Attention is whether Err is one a human has to act on.
 	Attention bool
+	// Trouble is what the attempt's import reported besides applied entries:
+	// an origin a newer writer held, a batch a refusal dropped, a sequence gap.
+	Trouble Trouble
 }
 
 // On reports whether this machine's sync is turned on as the local marker says.
@@ -94,11 +97,29 @@ func (r *Runner) attempt(ctx context.Context, shared *db.DB) SteadyResult {
 	if err := within(ctx, r.Client, r.stepTimeout(), func() error {
 		res, err := synclog.NewImporter(shared, r.Client).Import()
 		out.Applied = res.Applied
+		out.Trouble = troubleFrom(res)
 		return err
 	}); err != nil {
 		return r.failed(out, err)
 	}
 	return out
+}
+
+// troubleFrom is the importer's report as the marker stores it: each trouble in
+// the importer's own sentence, so a status surface names the installation and
+// the sequence a reader has to act on without re-deriving either.
+func troubleFrom(res synclog.ImportResult) Trouble {
+	var t Trouble
+	for _, held := range res.Held {
+		t.Held = append(t.Held, held.String())
+	}
+	for _, drop := range res.Dropped {
+		t.Dropped = append(t.Dropped, drop.String())
+	}
+	for _, gap := range res.Gaps {
+		t.Gaps = append(t.Gaps, gap.String())
+	}
+	return t
 }
 
 // failed is the result every error path takes: the counts already moved are
@@ -154,9 +175,10 @@ func (r *Runner) stepTimeout() time.Duration {
 }
 
 // record writes the markers one attempt leaves. The tick marker goes on every
-// path, so a machine that gave up says so; the backlog is written only once the
-// export emptied the outbox, because that is the point the count is known to be
-// zero. The latch belongs to the breaker and is never touched here.
+// path, so a machine that gave up says so; the backlog, the trouble report and
+// the exchange times go on only once the attempt finished, because those are
+// the facts a completed attempt measured. The latch belongs to the breaker and
+// is never touched here.
 func (r *Runner) record(out SteadyResult) {
 	now := time.Now().UTC()
 	r.put(KeyLastTick, tick{At: now, OK: out.Err == nil})
@@ -164,6 +186,8 @@ func (r *Runner) record(out SteadyResult) {
 		return
 	}
 	r.put(KeyBacklog, int64(0))
+	r.put(KeyTrouble, out.Trouble)
+	r.put(KeyTimes, Times{Export: now, Import: now})
 }
 
 // put writes one marker, logging a failure rather than folding it into the

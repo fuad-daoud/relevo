@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -170,14 +171,31 @@ var dbSyncTokenStdin io.Reader = os.Stdin
 // the same reason, and it is the only place the environment is read.
 var dbSyncGetenv = os.Getenv
 
-// dbSyncStatusDoc is `db sync status --json`: what this machine is set to be.
-// TokenPresent is a bool because the value is the one thing on this surface that
-// must never be printed.
+// dbSyncStatusDoc is `db sync status --json`: what this machine is set to be,
+// what its last exchange measured, and which origins need a human. TokenPresent
+// is a bool because the value is the one thing on this surface that must never
+// be printed.
 type dbSyncStatusDoc struct {
 	Enabled      bool   `json:"enabled"`
 	RemoteURL    string `json:"remote_url,omitempty"`
 	Namespace    string `json:"namespace,omitempty"`
 	TokenPresent bool   `json:"token_present"`
+	// Latched and LatchCause describe a breaker that stopped the machine until
+	// `relevo db sync retry`.
+	Latched    bool   `json:"latched,omitempty"`
+	LatchCause string `json:"latch_cause,omitempty"`
+	// Backlog is the count of this machine's operations the last attempt left
+	// unsent.
+	Backlog int64 `json:"backlog,omitempty"`
+	// LastExport and LastImport are the UTC instants the last completed
+	// exchange stamped, empty when it never completed one.
+	LastExport string `json:"last_export,omitempty"`
+	LastImport string `json:"last_import,omitempty"`
+	// HeldOrigins, Dropped and Gaps are the last import's report: an origin a
+	// newer writer held, a batch a refusal dropped, a sequence gap a hole left.
+	HeldOrigins []string `json:"held_origins,omitempty"`
+	Dropped     []string `json:"dropped,omitempty"`
+	Gaps        []string `json:"gaps,omitempty"`
 }
 
 // dbSyncOutcomeDoc is what enable and disable print under --json: what the run
@@ -396,16 +414,24 @@ func cmdDBSyncStatus(args []string) error {
 	if err != nil {
 		return failWrap(codeConfigInvalid, err, "relevo db sync status")
 	}
-	on, err := relevosync.Enabled(local)
+	state, err := relevosync.ReadState(local)
 	if err != nil {
 		return dbSyncClassify(err)
 	}
 
 	doc := dbSyncStatusDoc{
-		Enabled:      on,
+		Enabled:      state.Enabled,
 		RemoteURL:    settings.RemoteURL,
 		Namespace:    settings.Namespace,
 		TokenPresent: hasToken,
+		Latched:      state.Attention,
+		LatchCause:   state.LatchCause,
+		Backlog:      state.Backlog,
+		LastExport:   statusStamp(state.LastExport),
+		LastImport:   statusStamp(state.LastImport),
+		HeldOrigins:  state.Trouble.Held,
+		Dropped:      state.Trouble.Dropped,
+		Gaps:         state.Trouble.Gaps,
 	}
 	if *v.asJSON {
 		return printDoc(doc)
@@ -424,7 +450,49 @@ func dbSyncStatusLine(doc dbSyncStatusDoc) string {
 	if doc.Enabled {
 		state = "on"
 	}
-	return fmt.Sprintf("sync %s (remote: %s, token: %s)\n", state, orNone(doc.RemoteURL), presentOrAbsent(doc.TokenPresent))
+	line := fmt.Sprintf("sync %s (remote: %s, token: %s)", state, orNone(doc.RemoteURL), presentOrAbsent(doc.TokenPresent))
+	return line + dbSyncStatusDetails(doc) + "\n"
+}
+
+// dbSyncStatusDetails is the tail of the status line: each fact a reader can act
+// on, in a fixed order and only when it is set. A latch comes first because it
+// is the one state that stops the machine until a human acts; the rest is what
+// the last exchange measured and what it could not apply.
+func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
+	var b strings.Builder
+	if doc.Latched {
+		fmt.Fprintf(&b, " · latched: %s", doc.LatchCause)
+	}
+	if doc.Backlog > 0 {
+		fmt.Fprintf(&b, " · backlog: %d", doc.Backlog)
+	}
+	if doc.LastExport != "" {
+		fmt.Fprintf(&b, " · exported: %s", doc.LastExport)
+	}
+	if doc.LastImport != "" {
+		fmt.Fprintf(&b, " · imported: %s", doc.LastImport)
+	}
+	for _, held := range doc.HeldOrigins {
+		fmt.Fprintf(&b, " · held: %s", held)
+	}
+	for _, dropped := range doc.Dropped {
+		fmt.Fprintf(&b, " · dropped: %s", dropped)
+	}
+	for _, gap := range doc.Gaps {
+		fmt.Fprintf(&b, " · gap: %s", gap)
+	}
+	return b.String()
+}
+
+// statusStamp renders a recorded moment as the UTC RFC 3339 instant a reader
+// can compare, or "" when nothing was ever recorded. A zero time is not 1970
+// here: it is a moment that never happened, and printing it as one would be a
+// true statement about the wrong thing.
+func statusStamp(at time.Time) string {
+	if at.IsZero() {
+		return ""
+	}
+	return at.UTC().Format(time.RFC3339)
 }
 
 // dbSyncClassify maps a failure out of the sync package onto the frame's codes.

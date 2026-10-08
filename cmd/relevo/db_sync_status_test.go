@@ -58,6 +58,7 @@ type dbSyncStatusCase struct {
 	tickOK    bool
 	attention string
 	backlog   int64
+	held      []string
 	remote    string
 	namespace string
 	token     string
@@ -106,8 +107,8 @@ var dbSyncStatusCases = []dbSyncStatusCase{
 		namespace: syncStatusNamespace,
 		token:     syncStatusSecret,
 		wantToken: relevosync.TokenOK,
-		wantLine:  "sync on (remote: " + syncStatusRemote + ", token: present)\n",
-		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true\n}\n",
+		wantLine:  "sync on (remote: " + syncStatusRemote + ", token: present) · backlog: 100\n",
+		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true,\n  \"backlog\": 100\n}\n",
 	},
 	{
 		name:      "on, a backlog over the threshold",
@@ -118,8 +119,8 @@ var dbSyncStatusCases = []dbSyncStatusCase{
 		namespace: syncStatusNamespace,
 		token:     syncStatusSecret,
 		wantToken: relevosync.TokenBehind,
-		wantLine:  "sync on (remote: " + syncStatusRemote + ", token: present)\n",
-		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true\n}\n",
+		wantLine:  "sync on (remote: " + syncStatusRemote + ", token: present) · backlog: 101\n",
+		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true,\n  \"backlog\": 101\n}\n",
 	},
 	{
 		name:      "on, a tick that failed with no backlog",
@@ -140,15 +141,15 @@ var dbSyncStatusCases = []dbSyncStatusCase{
 		namespace: syncStatusNamespace,
 		token:     syncStatusSecret,
 		wantToken: relevosync.TokenErr,
-		wantLine:  "sync on (remote: " + syncStatusRemote + ", token: present)\n",
-		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true\n}\n",
+		wantLine:  "sync on (remote: " + syncStatusRemote + ", token: present) · latched: the remote refused the stored credential\n",
+		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true,\n  \"latched\": true,\n  \"latch_cause\": \"the remote refused the stored credential\"\n}\n",
 	},
 	{
 		name:      "off, with an attention marker still set",
 		attention: "the remote refused the stored credential",
 		wantToken: relevosync.TokenOff,
-		wantLine:  "sync off (remote: (none), token: absent)\n",
-		wantDoc:   "{\n  \"enabled\": false,\n  \"token_present\": false\n}\n",
+		wantLine:  "sync off (remote: (none), token: absent) · latched: the remote refused the stored credential\n",
+		wantDoc:   "{\n  \"enabled\": false,\n  \"token_present\": false,\n  \"latched\": true,\n  \"latch_cause\": \"the remote refused the stored credential\"\n}\n",
 	},
 }
 
@@ -203,6 +204,15 @@ func seedSyncStatusLocal(t *testing.T, local *db.DB, tc dbSyncStatusCase) {
 			t.Fatalf("write the attention marker: %v", err)
 		}
 	}
+	if len(tc.held) > 0 {
+		body, err := json.Marshal(relevosync.Trouble{Held: tc.held})
+		if err != nil {
+			t.Fatalf("encode the trouble marker: %v", err)
+		}
+		if err := local.KVPut(relevosync.KeyTrouble, body); err != nil {
+			t.Fatalf("write the trouble marker: %v", err)
+		}
+	}
 }
 
 // serveSyncStatus opens a split pair on a fresh state root, seeds it, and serves
@@ -232,9 +242,9 @@ func directSyncStatus(t *testing.T, tc dbSyncStatusCase) *db.DB {
 	return d.Local()
 }
 
-// readSyncStatusDoc is the three reads the verb makes, off whichever local
-// handle it is handed. It is the whole of what the route can move: same rows
-// out, same document.
+// readSyncStatusDoc is the reads the verb makes, off whichever local handle it
+// is handed. It is the whole of what the route can move: same rows out, same
+// document.
 func readSyncStatusDoc(t *testing.T, local *db.DB) dbSyncStatusDoc {
 	t.Helper()
 	settings, err := relevosync.ReadSettings(local)
@@ -245,15 +255,104 @@ func readSyncStatusDoc(t *testing.T, local *db.DB) dbSyncStatusDoc {
 	if err != nil {
 		t.Fatalf("ReadToken: %v", err)
 	}
-	on, err := relevosync.Enabled(local)
+	state, err := relevosync.ReadState(local)
 	if err != nil {
-		t.Fatalf("Enabled: %v", err)
+		t.Fatalf("ReadState: %v", err)
 	}
 	return dbSyncStatusDoc{
-		Enabled:      on,
+		Enabled:      state.Enabled,
 		RemoteURL:    settings.RemoteURL,
 		Namespace:    settings.Namespace,
 		TokenPresent: hasToken,
+		Latched:      state.Attention,
+		LatchCause:   state.LatchCause,
+		Backlog:      state.Backlog,
+		LastExport:   statusStamp(state.LastExport),
+		LastImport:   statusStamp(state.LastImport),
+		HeldOrigins:  state.Trouble.Held,
+		Dropped:      state.Trouble.Dropped,
+		Gaps:         state.Trouble.Gaps,
+	}
+}
+
+// statusLineWithEveryR4Field is the document behind the ordering cases: a latch,
+// a backlog, both exchange times and a held origin, all set at once.
+func statusLineWithEveryR4Field() dbSyncStatusDoc {
+	return dbSyncStatusDoc{
+		Enabled:      true,
+		RemoteURL:    syncStatusRemote,
+		TokenPresent: true,
+		Latched:      true,
+		LatchCause:   "the remote refused this machine's sync log",
+		Backlog:      relevosync.BacklogThreshold + 1,
+		LastExport:   "2026-10-04T12:00:00Z",
+		LastImport:   "2026-10-04T12:01:00Z",
+		HeldOrigins:  []string{"relevo on this machine is older than zen, which writes schema 5: upgrade this machine to follow it (mark rests at 3)"},
+	}
+}
+
+// TestStatusLineShowsLatchBacklogTimesAndHeldOrigins pins the document-to-line
+// mapping for every field this surface added. The order is part of the contract
+// -- the latch is the one state that stops the machine, so it reads first -- and
+// the test fails if any field is missing or the order is wrong.
+func TestStatusLineShowsLatchBacklogTimesAndHeldOrigins(t *testing.T) {
+	line := dbSyncStatusLine(statusLineWithEveryR4Field())
+	for _, want := range []string{
+		"latched: the remote refused this machine's sync log",
+		"backlog: 101",
+		"exported: 2026-10-04T12:00:00Z",
+		"imported: 2026-10-04T12:01:00Z",
+		"held: relevo on this machine is older than zen",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("status line %q is missing %q", line, want)
+		}
+	}
+	at := -1
+	for _, marker := range []string{"latched:", "backlog:", "exported:", "imported:", "held:"} {
+		i := strings.Index(line, marker)
+		if i < 0 {
+			t.Fatalf("status line %q has no %q", line, marker)
+		}
+		if i <= at {
+			t.Errorf("%q is out of order in %q", marker, line)
+		}
+		at = i
+	}
+}
+
+// TestStatusLineOmitsWhatNeverHappened pins the other half: a machine with no
+// latch, no backlog and no recorded exchange renders the plain line, so a reader
+// is not shown a field that claims a measurement that never happened.
+func TestStatusLineOmitsWhatNeverHappened(t *testing.T) {
+	line := dbSyncStatusLine(dbSyncStatusDoc{Enabled: true, RemoteURL: syncStatusRemote})
+	for _, word := range []string{"latched", "backlog", "exported", "imported", "held", "dropped", "gap"} {
+		if strings.Contains(line, word) {
+			t.Errorf("a machine with nothing recorded rendered %q (has %q)", line, word)
+		}
+	}
+}
+
+// TestStatusNamesTheHeldOrigin pins that an origin a newer schema held is
+// reported on the status surface rather than skipped: the hold reaches the local
+// trouble marker, and the sentence the importer wrote reaches the line this
+// machine prints.
+func TestStatusNamesTheHeldOrigin(t *testing.T) {
+	tc := dbSyncStatusCase{
+		name:      "held",
+		enabled:   true,
+		tickOK:    true,
+		remote:    syncStatusRemote,
+		namespace: syncStatusNamespace,
+		token:     syncStatusSecret,
+		held:      []string{"relevo on this machine is older than zen, which writes schema 5: upgrade this machine to follow it (mark rests at 3)"},
+	}
+	doc := readSyncStatusDoc(t, directSyncStatus(t, tc))
+	if len(doc.HeldOrigins) != 1 {
+		t.Fatalf("the hold did not reach the document: %+v", doc)
+	}
+	if line := dbSyncStatusLine(doc); !strings.Contains(line, "zen") {
+		t.Errorf("the status line does not name the held origin: %q", line)
 	}
 }
 

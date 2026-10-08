@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -224,5 +225,44 @@ func TestSteadyStopsWhenTheCallerCancels(t *testing.T) {
 	}
 	if !client.cancelled() {
 		t.Error("a cancelled step left its worker running")
+	}
+}
+
+// TestSteadyRecordsTheImportTroubleAndTimes pins that a hold the importer
+// reports is written to the local trouble marker rather than dropped: a newer
+// schema's entries stop an origin, the attempt still succeeds -- a hold is a
+// report, not a failure -- the marker names the writer's schema, and both
+// exchange times are stamped.
+func TestSteadyRecordsTheImportTroubleAndTimes(t *testing.T) {
+	t.Parallel()
+	shared, local := joinPair(t, "m1")
+	seedJoin(t, shared, joinBinding("b1", "m1"))
+
+	log := synclog.NewMemTransport("m1")
+	_, known := shared.SchemaVersions()
+	seedFar(t, log, "m2", "b2", known+1)
+
+	runner := &Runner{Client: log, Local: local, Timeout: time.Second}
+	res := runner.SyncOnce(context.Background(), shared)
+	if res.Err != nil {
+		t.Fatalf("SyncOnce: %v", res.Err)
+	}
+	if len(res.Trouble.Held) != 1 {
+		t.Fatalf("Trouble.Held = %+v, want the held origin", res.Trouble)
+	}
+
+	body, ok, err := local.KVGet(KeyTrouble)
+	if err != nil || !ok {
+		t.Fatalf("read the trouble marker: (ok %v, err %v)", ok, err)
+	}
+	var tr Trouble
+	if err := json.Unmarshal(body, &tr); err != nil {
+		t.Fatalf("decode the trouble marker: %v", err)
+	}
+	if len(tr.Held) != 1 || !strings.Contains(tr.Held[0], "schema") {
+		t.Errorf("trouble marker = %+v, want the held origin's report", tr)
+	}
+	if _, ok, err := local.KVGet(KeyTimes); err != nil || !ok {
+		t.Errorf("the exchange times were not stamped: (ok %v, err %v)", ok, err)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
@@ -43,6 +44,13 @@ type SyncSnapshot struct {
 	Measured bool
 	// Attention is the message the attention marker carries, when one does.
 	Attention string
+	// LastExport and LastImport are when the steady pipeline last finished each
+	// half of the exchange, zero when it never has.
+	LastExport time.Time
+	LastImport time.Time
+	// Trouble is what the last import reported besides applied entries: an
+	// origin a newer writer held, a batch a refusal dropped, a sequence gap.
+	Trouble relevosync.Trouble
 	// RemoteURL is the configured remote, empty when this machine has none.
 	RemoteURL string
 	// Installation is the directory: one row per installation that has written
@@ -258,6 +266,7 @@ func (a *mastermindActions) SyncSnapshot() (SyncSnapshot, error) {
 	}
 	if state, err := relevosync.ReadState(local); err == nil {
 		snap.State, snap.Token = state, relevosync.Token(state)
+		snap.LastExport, snap.LastImport, snap.Trouble = state.LastExport, state.LastImport, state.Trouble
 	} else {
 		// A marker that will not parse still has a token, and the token says
 		// off: the mark that turns it on did not read, so nothing has enabled it.

@@ -621,3 +621,26 @@ func TestSyncViewRefusesAnUnreadableSection(t *testing.T) {
 		t.Errorf("%d lines, want 34", n)
 	}
 }
+
+// TestSyncViewShowsImportTrouble pins that the read side's new fields are drawn
+// rather than merely carried: the two exchange times and the three kinds of
+// import trouble -- an origin a newer schema held, a batch a refusal dropped and
+// a sequence gap. Each names the origin, because that is what a reader acts on.
+func TestSyncViewShowsImportTrouble(t *testing.T) {
+	snap := syncPostOnSnapshot()
+	snap.LastExport = syncNow.Add(-2 * time.Minute)
+	snap.LastImport = syncNow.Add(-30 * time.Second)
+	snap.Trouble = relevosync.Trouble{
+		Held:    []string{"relevo on this machine is older than zen, which writes schema 5"},
+		Dropped: []string{"dropped a batch from m2: unreadable body"},
+		Gaps:    []string{"m3 is held at 7"},
+	}
+
+	env := Env{Ctx: t.Context(), Now: syncNow, Width: 200, Height: 60, Loaded: true}
+	body := plain(syncView{snap: snap, loaded: true, actions: true}.Body(env, 200, 60))
+	for _, want := range []string{"last export", "last import", "IMPORT TROUBLE", "zen", "m2", "m3"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the sync view does not show %q:\n%s", want, body)
+		}
+	}
+}

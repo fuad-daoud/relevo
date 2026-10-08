@@ -2,6 +2,7 @@ package sync
 
 import (
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 )
@@ -77,6 +78,24 @@ var statuslineCases = []struct {
 		want: TokenErr,
 	},
 	{
+		name: "import trouble is behind",
+		markers: map[string]string{
+			KeyEnabled:  `true`,
+			KeyLastTick: `{"at":"2026-10-04T09:00:00Z","ok":true}`,
+			KeyTrouble:  `{"held":["m2 is held at 3"]}`,
+		},
+		want: TokenBehind,
+	},
+	{
+		name: "a latch outranks import trouble",
+		markers: map[string]string{
+			KeyEnabled:   `true`,
+			KeyAttention: `{"at":"2026-10-04T09:05:00Z","message":"sync: the worker stopped answering three times in a row"}`,
+			KeyTrouble:   `{"gaps":["m3 is held at 7"]}`,
+		},
+		want: TokenErr,
+	},
+	{
 		name: "a backlog at the threshold is still ok",
 		markers: map[string]string{
 			KeyEnabled:  `true`,
@@ -108,7 +127,7 @@ func TestStatuslineReadsLocalOnly(t *testing.T) {
 	_, _, local := openSplit(t)
 
 	for _, tc := range statuslineCases {
-		for _, key := range []string{KeyEnabled, KeyBacklog, KeyLastTick, KeyAttention} {
+		for _, key := range []string{KeyEnabled, KeyBacklog, KeyLastTick, KeyAttention, KeyTimes, KeyTrouble} {
 			if err := local.KVDelete(key); err != nil {
 				t.Fatalf("KVDelete(%s): %v", key, err)
 			}
@@ -164,6 +183,21 @@ func TestTokenIsTheWholeMapping(t *testing.T) {
 			TokenErr,
 		},
 		{
+			"behind on import trouble",
+			State{Enabled: true, LastTickOK: true, Trouble: Trouble{Held: []string{"m2 is held at 3"}}},
+			TokenBehind,
+		},
+		{
+			"err outranks import trouble",
+			State{Enabled: true, Attention: true, Trouble: Trouble{Gaps: []string{"m3 is held at 7"}}},
+			TokenErr,
+		},
+		{
+			"off outranks import trouble",
+			State{Trouble: Trouble{Dropped: []string{"a batch was dropped"}}},
+			TokenOff,
+		},
+		{
 			"off outranks err",
 			State{Attention: true},
 			TokenOff,
@@ -173,5 +207,42 @@ func TestTokenIsTheWholeMapping(t *testing.T) {
 		if got := Token(tc.in); got != tc.want {
 			t.Errorf("%s: token = %q, want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestStatuslineReadsTheLatchBacklogTimesAndTrouble pins that every marker this
+// surface added reaches State: the latch cause, the backlog, both exchange times
+// and the import's three kinds of trouble. The token still comes out of the
+// latch, because a latched machine is stopped until a human acts whatever else
+// its markers say.
+func TestStatuslineReadsTheLatchBacklogTimesAndTrouble(t *testing.T) {
+	t.Parallel()
+
+	_, _, local := openSplit(t)
+	putMarker(t, local, KeyEnabled, `true`)
+	putMarker(t, local, KeyAttention, `{"at":"2026-10-04T09:05:00Z","message":"sync: the worker stopped answering three times in a row"}`)
+	putMarker(t, local, KeyBacklog, `4200`)
+	putMarker(t, local, KeyTimes, `{"export":"2026-10-04T09:00:00Z","import":"2026-10-04T09:01:00Z"}`)
+	putMarker(t, local, KeyTrouble, `{"held":["m2 is held at 3"],"dropped":["dropped a batch"],"gaps":["m3 is held at 7"]}`)
+
+	state, err := ReadState(local)
+	if err != nil {
+		t.Fatalf("ReadState: %v", err)
+	}
+	if !state.Attention || state.LatchCause != "sync: the worker stopped answering three times in a row" {
+		t.Errorf("the latch did not reach State: %+v", state)
+	}
+	if state.Backlog != 4200 {
+		t.Errorf("backlog = %d, want 4200", state.Backlog)
+	}
+	export, importAt := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC), time.Date(2026, 10, 4, 9, 1, 0, 0, time.UTC)
+	if !state.LastExport.Equal(export) || !state.LastImport.Equal(importAt) {
+		t.Errorf("exchange times = %v, %v, want %v, %v", state.LastExport, state.LastImport, export, importAt)
+	}
+	if len(state.Trouble.Held) != 1 || len(state.Trouble.Dropped) != 1 || len(state.Trouble.Gaps) != 1 {
+		t.Errorf("the import trouble did not reach State: %+v", state.Trouble)
+	}
+	if got, err := StatusToken(local); err != nil || got != TokenErr {
+		t.Errorf("StatusToken = %q (%v), want %q", got, err, TokenErr)
 	}
 }

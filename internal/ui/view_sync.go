@@ -331,6 +331,12 @@ func (v syncView) postOnLines(width int) []string {
 	lines = append(lines, syncLine("unpushed", v.backlogPhrase(), mutedStyle))
 	lines = append(lines, syncLine("last push", v.stampPhrase(v.snap.Stats.LastPushUnixTime, v.now), mutedStyle))
 	lines = append(lines, syncLine("last pull", v.stampPhrase(v.snap.Stats.LastPullUnixTime, v.now), mutedStyle))
+	if !v.snap.LastExport.IsZero() {
+		lines = append(lines, syncLine("last export", v.localStampPhrase(v.snap.LastExport), mutedStyle))
+	}
+	if !v.snap.LastImport.IsZero() {
+		lines = append(lines, syncLine("last import", v.localStampPhrase(v.snap.LastImport), mutedStyle))
+	}
 	lines = append(lines, syncLine("sent", v.bytesPhrase(v.snap.Stats.NetworkSentBytes), mutedStyle))
 	lines = append(lines, syncLine("received", v.bytesPhrase(v.snap.Stats.NetworkReceivedBytes), mutedStyle))
 	lines = append(lines, syncLine("revision", syncOr(v.snap.Stats.Revision, syncDash), mutedStyle))
@@ -339,11 +345,39 @@ func (v syncView) postOnLines(width int) []string {
 		lines = append(lines, "")
 		lines = append(lines, "   "+errorStyle.Render(v.snap.Attention))
 	}
+	lines = append(lines, v.troubleLines()...)
 	lines = append(lines, "")
 	lines = append(lines, v.installationLines()...)
 	lines = append(lines, "")
 	lines = append(lines, v.unlinkedLines(width)...)
 	return lines
+}
+
+// troubleLines is what the last import could not apply, one line per report:
+// an origin a newer writer held, a batch a refusal dropped, a sequence gap.
+// Nothing is drawn when the import had no trouble, so a healthy machine's
+// status block stays the block it was.
+func (v syncView) troubleLines() []string {
+	if v.snap.Trouble.Empty() {
+		return nil
+	}
+	out := []string{"", "   " + warnStyle.Bold(true).Render("IMPORT TROUBLE")}
+	for _, held := range v.snap.Trouble.Held {
+		out = append(out, "     "+warnStyle.Render("held    ")+mutedStyle.Render(held))
+	}
+	for _, dropped := range v.snap.Trouble.Dropped {
+		out = append(out, "     "+warnStyle.Render("dropped ")+mutedStyle.Render(dropped))
+	}
+	for _, gap := range v.snap.Trouble.Gaps {
+		out = append(out, "     "+warnStyle.Render("gap     ")+mutedStyle.Render(gap))
+	}
+	return out
+}
+
+// localStampPhrase renders one of the pipeline's own stamps the way the
+// remote's are rendered, so both read alike on one screen.
+func (v syncView) localStampPhrase(at time.Time) string {
+	return fmt.Sprintf("%s · %s", unixAge(at.Unix(), v.now), unixClock(at.Unix()))
 }
 
 // backlogPhrase is the unpushed count, or the placeholder when no tick has ever

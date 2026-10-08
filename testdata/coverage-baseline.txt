@@ -1,5 +1,5 @@
 # measured with go1.27 linux/amd64
-github.com/fuad-daoud/relevo/cmd/relevo 70.2
+github.com/fuad-daoud/relevo/cmd/relevo 70.5
 github.com/fuad-daoud/relevo/internal/account 97.6
 github.com/fuad-daoud/relevo/internal/agentsrc 92.4
 github.com/fuad-daoud/relevo/internal/availability 86.4
@@ -45,7 +45,7 @@ github.com/fuad-daoud/relevo/internal/setup 93.8
 github.com/fuad-daoud/relevo/internal/spawn 60.0
 github.com/fuad-daoud/relevo/internal/stats 98.1
 github.com/fuad-daoud/relevo/internal/store 81.6
-github.com/fuad-daoud/relevo/internal/sync 75.7
+github.com/fuad-daoud/relevo/internal/sync 76.8
 github.com/fuad-daoud/relevo/internal/synclog 94.5
 github.com/fuad-daoud/relevo/internal/syncpipe 91.2
 github.com/fuad-daoud/relevo/internal/syncworker 92.9

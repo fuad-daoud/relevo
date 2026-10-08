@@ -197,6 +197,48 @@ func TestSyncSnapshotCarriesTheSnapshotAndItsAbsence(t *testing.T) {
 	}
 }
 
+// TestSyncSnapshotCarriesTheR4Fields pins that the read side of ':sync' carries
+// what this round added: a latched breaker and its cause, the backlog, the last
+// exchange times and the import's trouble. A view cannot draw what the snapshot
+// never carried.
+func TestSyncSnapshotCarriesTheR4Fields(t *testing.T) {
+	a := syncRealActions(t)
+	local := writeSyncSettings(t, a, relevosync.Settings{Enabled: true, RemoteURL: syncRemote}, syncSecretValue)
+
+	if err := local.KVPut(relevosync.KeyAttention, []byte(`{"at":"2026-10-04T12:00:00Z","message":"sync: the worker stopped answering three times in a row"}`)); err != nil {
+		t.Fatalf("write the latch marker: %v", err)
+	}
+	if err := local.KVPut(relevosync.KeyBacklog, []byte("11")); err != nil {
+		t.Fatalf("write the backlog marker: %v", err)
+	}
+	if err := local.KVPut(relevosync.KeyTimes, []byte(`{"export":"2026-10-04T12:00:00Z","import":"2026-10-04T12:01:00Z"}`)); err != nil {
+		t.Fatalf("write the times marker: %v", err)
+	}
+	if err := local.KVPut(relevosync.KeyTrouble, []byte(`{"held":["m2 is held at 3"]}`)); err != nil {
+		t.Fatalf("write the trouble marker: %v", err)
+	}
+
+	snap, err := a.SyncSnapshot()
+	if err != nil {
+		t.Fatalf("SyncSnapshot: %v", err)
+	}
+	if snap.Token != relevosync.TokenErr {
+		t.Errorf("token = %q, want %q", snap.Token, relevosync.TokenErr)
+	}
+	if !snap.State.Attention || snap.State.LatchCause != "sync: the worker stopped answering three times in a row" {
+		t.Errorf("the latch did not reach the snapshot: %+v", snap.State)
+	}
+	if snap.State.Backlog != 11 {
+		t.Errorf("backlog = %d, want 11", snap.State.Backlog)
+	}
+	if snap.LastExport.IsZero() || snap.LastImport.IsZero() {
+		t.Errorf("the exchange times did not reach the snapshot: %v %v", snap.LastExport, snap.LastImport)
+	}
+	if len(snap.Trouble.Held) != 1 {
+		t.Errorf("the held origin did not reach the snapshot: %+v", snap.Trouble)
+	}
+}
+
 // TestSyncActionsRefuseWithoutARemoteOrToken pins the refusal every action that
 // would reach a remote gives on a machine that has no remote, no token, or
 // neither. The verbs carry no build-wide "unavailable" answer: push, pull and
