@@ -30,6 +30,7 @@ github.com/fuad-daoud/relevo/internal/jsonshape 90.5
 github.com/fuad-daoud/relevo/internal/mastermind 85.7
 github.com/fuad-daoud/relevo/internal/mcp 81.5
 github.com/fuad-daoud/relevo/internal/patch 100.0
+github.com/fuad-daoud/relevo/internal/pathscope 86.1
 github.com/fuad-daoud/relevo/internal/pick 48.4
 github.com/fuad-daoud/relevo/internal/policy 97.2
 github.com/fuad-daoud/relevo/internal/proc 89.9
@@ -45,7 +46,10 @@ github.com/fuad-daoud/relevo/internal/setup 93.8
 github.com/fuad-daoud/relevo/internal/spawn 60.0
 github.com/fuad-daoud/relevo/internal/stats 98.1
 github.com/fuad-daoud/relevo/internal/store 81.6
+github.com/fuad-daoud/relevo/internal/sync 75.7
 github.com/fuad-daoud/relevo/internal/synclog 94.5
+github.com/fuad-daoud/relevo/internal/syncpipe 84.6
+github.com/fuad-daoud/relevo/internal/syncworker 91.3
 github.com/fuad-daoud/relevo/internal/transcript 93.5
 github.com/fuad-daoud/relevo/internal/ui 81.8
 github.com/fuad-daoud/relevo/internal/ui/dash 86.5
