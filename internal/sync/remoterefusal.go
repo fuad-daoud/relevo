@@ -33,6 +33,15 @@ var ErrRemoteRefused = errors.New("sync: the remote refused the SQL in this chan
 // message to find out.
 var ErrRemoteSchema = errors.New("sync: the remote has no table for this machine's change set")
 
+// IsPermanentRefusal reports whether err is a remote refusal that will repeat on
+// every attempt: the remote has no table for this machine's rows, or it refused
+// the change set in a way that re-sending it cannot fix. A breaker latches the
+// machine on one of these rather than waiting out three deaths it can already
+// predict.
+func IsPermanentRefusal(err error) bool {
+	return errors.Is(err, ErrRemoteSchema) || errors.Is(err, ErrRemoteRefused)
+}
+
 // The driver shapes this matches on. They are the SQLite result codes the engine
 // puts beside its message, so each is one code rather than a sentence and a
 // remote that words its refusal differently is still classified.
