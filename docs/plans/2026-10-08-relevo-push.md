@@ -173,3 +173,30 @@ longer woken when a builder needs it. Restore it in RunPush:
 Focused `go test ./internal/delivery/...` while iterating; then `make check`
 and `make e2e`. Report: per-fix status, tests by name, both mutation checks
 with the failing test, `git diff --stat aee7eb92..HEAD`.
+
+## Round 3
+
+# Round 3: pin the orphan-admit clear on the ConfirmAdmitted path
+
+Same branch, on top of 5cf89280; new commit only (no amend/rebase/force-push).
+Append a "## Round 3" section holding this plan verbatim to
+`docs/plans/2026-10-08-relevo-push.md` in the same commit.
+
+The MasterMind's mutation check found this unpinned: deleting the
+`clearOrphanAdmit(d, tx, b, pending, idx)` call from `ConfirmAdmitted`
+(`internal/delivery/deliver.go`, the done/paused path) leaves every test in
+`./internal/delivery/` and `./internal/relevo/` green.
+
+- Add one test in `internal/delivery` (next to
+  `TestDeliverPendingClearsOrphanedAdmit`): a Claude-kind (no deliverer)
+  MasterMind's binding has an admitted, unconfirmed mastermind-bound entry and
+  NO live push claim; `ConfirmAdmitted` must clear the admit so the entry is
+  claimable again (and must not confirm it). Add the mirror case: with a LIVE
+  push claim, `ConfirmAdmitted` leaves the entry admitted.
+- Mutation check: delete that call from `ConfirmAdmitted`; the new test must
+  fail. Revert. Then flip the live-claim condition in `clearOrphanAdmit`; the
+  mirror test must fail. Revert.
+- No production code change is expected. If the test shows one is needed,
+  stop and report instead of changing behaviour.
+- `go test ./internal/delivery/...`, then `make check` and `make e2e`. Report
+  the test names, both mutation results, and `git diff --stat 5cf89280..HEAD`.

@@ -170,6 +170,81 @@ func TestDeliverPendingClearsOrphanedAdmit(t *testing.T) {
 	}
 }
 
+// TestConfirmAdmittedClearsOrphanedAdmit is the orphan case on the done/paused
+// path: a mastermind with no deliverer (a Claude kind) has an admitted,
+// unconfirmed entry and NO live push claim, so the admit is orphaned.
+// ConfirmAdmitted must clear it -- which is what makes the entry claimable
+// again -- and must not confirm it. Removing the clearOrphanAdmit call from
+// ConfirmAdmitted makes this fail.
+func TestConfirmAdmittedClearsOrphanedAdmit(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	rt.Channels = fakeClaimStore{} // no live claim: the holder is gone
+	b := seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+	b.State = store.StateDone
+	admitEntryAt(t, rt, "webshop")
+
+	if n := claimableCount(t, rt, "webshop"); n != 0 {
+		t.Fatalf("claimable while admitted = %d, want 0", n)
+	}
+
+	_, got := confirmAdmittedOnce(t, rt, b)
+	if got.Delivered {
+		t.Fatalf("Delivery = %+v, want nothing delivered for an orphaned admit", got)
+	}
+	if admitOf(t, rt, b.Name) != nil {
+		t.Error("ConfirmAdmitted must clear the orphaned admit")
+	}
+	if n := claimableCount(t, rt, "webshop"); n != 1 {
+		t.Errorf("claimable after ConfirmAdmitted = %d, want the entry back", n)
+	}
+	entries, err := rt.Store.ReadLog(b.Name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	for _, e := range entries {
+		if e.Direction == store.DirToMasterMind && e.Confirmed {
+			t.Error("an orphaned admit must not be confirmed by ConfirmAdmitted")
+		}
+	}
+	if _, pending, err := rt.Store.PendingForMasterMind(b.Name); err != nil || !pending {
+		t.Errorf("the orphaned entry must stay unconfirmed: pending=%v err=%v", pending, err)
+	}
+}
+
+// TestConfirmAdmittedKeepsAdmitWithALiveClaim is the mirror of the orphan
+// case: while the push claim IS live the holder owns the entry, so the same
+// admit is left in place and the entry is not confirmed either. Flipping the
+// live-claim condition in clearOrphanAdmit makes this fail.
+func TestConfirmAdmittedKeepsAdmitWithALiveClaim(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	rt.Channels = fakeClaimStore{testClaimMasterMind: &Claim{MasterMind: testClaimMasterMind, PID: 1, SeenAt: rt.Now()}}
+	b := seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+	b.State = store.StateDone
+	admitEntryAt(t, rt, "webshop")
+
+	if n := claimableCount(t, rt, "webshop"); n != 0 {
+		t.Fatalf("claimable while admitted = %d, want 0", n)
+	}
+
+	_, got := confirmAdmittedOnce(t, rt, b)
+	if got.Delivered {
+		t.Fatalf("Delivery = %+v, want nothing delivered while the claim is live", got)
+	}
+	if admitOf(t, rt, b.Name) == nil {
+		t.Error("a live claim owns the entry: ConfirmAdmitted must leave the admit in place")
+	}
+	if n := claimableCount(t, rt, "webshop"); n != 0 {
+		t.Errorf("claimable with a live claim = %d, want the entry still admitted", n)
+	}
+	if _, pending, err := rt.Store.PendingForMasterMind(b.Name); err != nil || !pending {
+		t.Errorf("the entry must stay pending for the live holder: pending=%v err=%v", pending, err)
+	}
+}
+
 // TestRunPushRestartResendsUnackedEntry: a holder that starts after a crash
 // clears the dead holder's admit and re-sends the entry with a fresh line.
 func TestRunPushRestartResendsUnackedEntry(t *testing.T) {
