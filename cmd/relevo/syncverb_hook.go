@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire/owner"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/synclog"
 	"github.com/fuad-daoud/relevo/internal/syncpipe"
 )
 
@@ -47,7 +49,8 @@ func installSyncVerbHook(srv *owner.Server, d *db.DB) {
 //
 // The runner is built holding the pipe client, so the daemon has one place a
 // worker is constructed. The client starts no process until a call drives it,
-// so the wiring installs it while the verbs still refuse.
+// and the opener below replaces it with one pointed at the remote and token an
+// enable stored.
 func newVerbRunner(d *db.DB) *relevo.VerbRunner {
 	if d == nil {
 		return nil
@@ -61,13 +64,20 @@ func newVerbRunner(d *db.DB) *relevo.VerbRunner {
 		slog.Warn("relevo daemon: sync verbs are not served", "err", err)
 		return nil
 	}
-	return &relevo.VerbRunner{
+	runner := &relevo.VerbRunner{
 		Shared:     d,
 		Local:      local,
 		Path:       d.Path(),
 		Runner:     syncpipe.NewSyncRunner(syncpipe.Config{}, local),
 		ClientName: dbSyncHandleName,
 	}
+	// The opener reads the machine-local rows at the moment an enable runs, so
+	// the worker it builds is pointed at the remote and token the enable just
+	// stored rather than the empty section the daemon started with.
+	runner.Open = func(context.Context) (synclog.LogTransport, error) {
+		return syncpipe.OpenSupervisor(d, local)
+	}
+	return runner
 }
 
 // installSyncVerbSerializing rebinds the owner's verb hook with the daemon's

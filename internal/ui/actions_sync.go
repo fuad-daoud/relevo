@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire/client"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/synclog"
 	"github.com/fuad-daoud/relevo/internal/syncpipe"
 )
 
@@ -115,13 +116,17 @@ func (a *mastermindActions) verbRunner() (*relevo.VerbRunner, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &relevo.VerbRunner{
+	runner := &relevo.VerbRunner{
 		Shared:     shared,
 		Local:      local,
 		Path:       shared.Path(),
 		Runner:     syncpipe.NewSyncRunner(syncpipe.Config{}, local),
 		ClientName: syncClientName,
-	}, nil
+	}
+	runner.Open = func(context.Context) (synclog.LogTransport, error) {
+		return syncpipe.OpenSupervisor(shared, local)
+	}
+	return runner, nil
 }
 
 // runVerb drives one verb and turns a refusal into the action's own error shape.

@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -20,9 +21,11 @@ import (
 // so a client asking for a verb never opens a file and never competes for the
 // lock the daemon is holding.
 //
-// Three of the four verbs move a change set, and this build carries no engine
-// that could: they refuse with the sync package's one named error rather than
-// opening anything. The turn-off still runs whole, because it only writes
+// Enable runs whole: the preflight decides the remote and the token, the runner
+// opens the log transport, and the join bootstraps, imports and reconcile-
+// exports before the mark goes on. The push and pull one-shots have no pipeline
+// behind them yet and refuse with the sync package's one named error rather
+// than opening anything. The turn-off still runs whole, because it only writes
 // machine-local rows, and status is not a verb at all -- it is a read of the
 // same local rows.
 //
@@ -37,12 +40,14 @@ type VerbRunner struct {
 	Local relevosync.Local
 	// Path is the shared file's path.
 	Path string
-	// Runner is the daemon's sync runner. Nothing drives it while the verbs
-	// refuse; it is kept so the wiring the daemon installs stays one value.
+	// Runner is the daemon's sync runner. An enable that finishes leaves the
+	// worker it built here, so the daemon holds one transport however many calls
+	// it carries.
 	Runner *relevosync.Runner
-	// Open builds the log transport a verb would drive. Nothing opens one while
-	// the verbs refuse; the seam is kept so the executor has exactly one place
-	// a transport is reached from when the verbs move bytes.
+	// Open builds the log transport an enable drives once the preflight has
+	// decided the remote. It is the one place a worker is constructed for a
+	// verb, so the remote and the token it is built from are the ones just
+	// stored.
 	Open func(context.Context) (synclog.LogTransport, error)
 	// Serialize runs fn under the daemon's in-flight sync guard. Nil runs it
 	// inline, which is what a cockpit wants: it is not the daemon and has no
@@ -60,7 +65,9 @@ type VerbRunner struct {
 // that does not exist rather than a machine failing to sync.
 func (v *VerbRunner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte) *wire.SyncResult {
 	switch verb.Verb {
-	case wire.SyncVerbEnable, wire.SyncVerbPush, wire.SyncVerbPull:
+	case wire.SyncVerbEnable:
+		return v.runGuarded(func() *wire.SyncResult { return v.enable(ctx, verb, token) })
+	case wire.SyncVerbPush, wire.SyncVerbPull:
 		return v.runGuarded(func() *wire.SyncResult { return v.unavailable() })
 	case wire.SyncVerbDisable:
 		return v.runGuarded(func() *wire.SyncResult { return v.disable(ctx, verb) })
@@ -97,8 +104,8 @@ func (v *VerbRunner) runGuarded(fn func() *wire.SyncResult) *wire.SyncResult {
 	return out
 }
 
-// unavailable is what the three verbs that would move a change set answer in a
-// build with no engine behind them.
+// unavailable is what the push and pull one-shots answer while no pipeline
+// stands behind them.
 //
 // They refuse rather than fall back, and the sentence says what is true rather
 // than what went wrong: nothing about this machine refused them. The code is the
@@ -107,6 +114,75 @@ func (v *VerbRunner) runGuarded(fn func() *wire.SyncResult) *wire.SyncResult {
 // report.
 func (v *VerbRunner) unavailable() *wire.SyncResult {
 	return verbRefusal(wire.SyncCodeInvalid, relevosync.ErrSyncUnavailable)
+}
+
+// enable runs one join through the sync package: the preflight decides the
+// remote and the token, the runner opens the log transport, and the pipeline
+// bootstraps, imports every other origin and reconcile-exports this origin's
+// history before the mark goes on.
+//
+// The transport is opened after the preflight and only for a run that passed
+// it, so a machine with no token, no remote or a failing origin gate never
+// starts a worker. A run that fails closes the transport it opened, because a
+// worker left behind holds the replica open against the next one; a run that
+// finishes leaves it on the runner, where the daemon can drive it again.
+func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, token []byte) *wire.SyncResult {
+	opened := false
+	enabler := &relevosync.Enabler{
+		Request: relevosync.EnableRequest{
+			Local:  v.Local,
+			Shared: v.Shared,
+			URL:    verb.RemoteURL,
+			Token:  token,
+		},
+		Open: func() (synclog.LogTransport, error) {
+			transport, err := v.openTransport(ctx)
+			if err == nil && v.Open != nil {
+				opened = true
+			}
+			return transport, err
+		},
+		Now: time.Now,
+	}
+	res, err := enabler.Enable()
+	if err != nil {
+		// Only a transport this enable opened is closed: one taken from the
+		// runner belongs to whatever built it and must not be torn down here.
+		if opened {
+			closeTransport(enabler.Transport)
+		}
+		return verbRefusal(verbClassify(err), err)
+	}
+	if v.Runner != nil {
+		v.Runner.Client = enabler.Transport
+	}
+	return &wire.SyncResult{OK: true, Applied: true, RemoteURL: res.Remote, TokenPresent: true}
+}
+
+// openTransport returns the log an enable drives: the opener the wiring
+// installed, or a client the runner already holds. A runner with neither has no
+// way to reach a remote, so the enable refuses rather than opening something of
+// its own.
+func (v *VerbRunner) openTransport(ctx context.Context) (synclog.LogTransport, error) {
+	if v.Open != nil {
+		return v.Open(ctx)
+	}
+	if v.Runner != nil && v.Runner.Client != nil {
+		return v.Runner.Client, nil
+	}
+	return nil, fmt.Errorf("sync: enable: no log transport is installed: %w", db.ErrInvalid)
+}
+
+// closeTransport releases a transport that can release itself, so a worker a
+// failed enable started does not outlive it. A transport with no close holds no
+// process and is left to its owner.
+func closeTransport(transport synclog.LogTransport) {
+	if transport == nil {
+		return
+	}
+	if closer, ok := transport.(interface{ Close() error }); ok {
+		_ = closer.Close()
+	}
 }
 
 // disable runs the turn-off in the order its contract fixes -- mark off, forget
@@ -141,14 +217,17 @@ func (v *VerbRunner) disable(ctx context.Context, verb *wire.SyncVerb) *wire.Syn
 	return out
 }
 
-// dropRunner forgets the runner's client so the next attempt rebuilds it.
-// Enable calls it after success (the stored token or remote may have changed
-// under the old handle) and disable calls it after success (the machine is off,
-// and a cached client would outlive the mark that governs it).
+// dropRunner forgets the runner's client so the next attempt rebuilds it. The
+// turn-off calls it after success: the machine is off, and a cached client
+// would outlive the mark that governs it. A client that can release itself is
+// closed first, so the worker a verb started goes with the state that asked for
+// it rather than holding the replica against the next enable.
 func (v *VerbRunner) dropRunner() {
-	if v.Runner != nil {
-		v.Runner.Client = nil
+	if v.Runner == nil || v.Runner.Client == nil {
+		return
 	}
+	closeTransport(v.Runner.Client)
+	v.Runner.Client = nil
 }
 
 // verbTimeout is the bound a verb's network work runs under. Zero selects the

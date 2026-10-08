@@ -22,10 +22,13 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"       relevo db sync status [--json]\n" +
 	"       relevo db sync push [--timeout D] [--json]\n" +
 	"       relevo db sync pull [--timeout D] [--json]\n\n" +
-	"enable, push and pull refuse in this build: there is no sync engine behind\n" +
-	"them, and they would rather say so than open something. The flags above are\n" +
-	"still parsed, so a script that passes them keeps working. disable still runs\n" +
-	"whole, and status still reports what this machine is set to be.\n" +
+	"enable joins this machine to the remote: it checks the origin gate, stores\n" +
+	"the token and the remote, then imports the other origins and exports this\n" +
+	"one's history before the mark goes on. An interrupted enable resumes.\n" +
+	"push and pull refuse in this build: there is no steady-state pipeline behind\n" +
+	"them yet, and they would rather say so than open something. The flags above\n" +
+	"are still parsed, so a script that passes them keeps working. disable still\n" +
+	"runs whole, and status still reports what this machine is set to be.\n" +
 	"Writing the machine-local sync section by hand stays the advanced\n" +
 	"route: `relevo config set sync '{\"remote_url\":\"...\"}'`.\n" +
 	"--token-stdin reads the turso.token from standard input and\n" +

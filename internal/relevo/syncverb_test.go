@@ -81,21 +81,21 @@ func newVerbFixture(t *testing.T) *verbFixture {
 	return fx
 }
 
-// TestSyncVerbsRefuseWhenStubbed pins the three verbs that would move a change
-// set: enable, push and pull keep their names and keep answering on the owner
-// socket, and each returns the one named error rather than opening a handle.
-// Status and the turn-off are the two that still mean something, and they are
-// pinned by their own tests.
+// TestSyncPushAndPullRefuseWhenStubbed pins the two one-shots that have no
+// pipeline behind them: push and pull keep their names and keep answering on
+// the owner socket, and each returns the one named error rather than opening a
+// handle. Enable joined this round, and status and the turn-off are the two
+// others that mean something; each is pinned by its own test.
 //
-// The mutation is routing enable past the refusal to an answer of its own: a
-// verb that reached an engine would record an open on the fixture, one that
+// The mutation is routing a one-shot past the refusal to an answer of its own:
+// a verb that reached an engine would record an open on the fixture, one that
 // succeeded would say so here, and one that refused with a different error
 // would miss the string this test names.
-func TestSyncVerbsRefuseWhenStubbed(t *testing.T) {
+func TestSyncPushAndPullRefuseWhenStubbed(t *testing.T) {
 	f := newVerbFixture(t)
 	ctx := context.Background()
 
-	for _, verb := range []string{wire.SyncVerbEnable, wire.SyncVerbPush, wire.SyncVerbPull} {
+	for _, verb := range []string{wire.SyncVerbPush, wire.SyncVerbPull} {
 		t.Run(verb, func(t *testing.T) {
 			f.opens, f.client.Calls = 0, nil
 			res := f.runner.Run(ctx, &wire.SyncVerb{Verb: verb}, []byte(verbFixtureToken))
@@ -118,6 +118,55 @@ func TestSyncVerbsRefuseWhenStubbed(t *testing.T) {
 				t.Errorf("%s drove %v, want nothing", verb, f.client.Calls)
 			}
 		})
+	}
+}
+
+// TestSyncVerbEnableJoins pins that enable is no longer a stub: it runs the
+// preflight, drives the log through the opener the wiring installed, marks the
+// machine on, clears its join marker and leaves the worker on the runner. The
+// origin gate is made to pass and the opener hands back the in-memory log, so
+// no worker starts and no network is reached.
+func TestSyncVerbEnableJoins(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	shared, err := db.OpenSplit(path, db.Options{Origin: "m1"})
+	if err != nil {
+		t.Fatalf("db.OpenSplit: %v", err)
+	}
+	t.Cleanup(func() { _ = shared.Close() })
+	local, err := relevosync.LocalHandle(shared)
+	if err != nil {
+		t.Fatalf("LocalHandle: %v", err)
+	}
+	if _, _, err := db.CompressHistoryOnce(shared, t.TempDir(), time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("CompressHistoryOnce: %v", err)
+	}
+	log := synclog.NewMemTransport("m1")
+	runner := &VerbRunner{
+		Shared: shared,
+		Local:  local,
+		Path:   shared.Path(),
+		Runner: &relevosync.Runner{Local: local},
+		Open:   func(context.Context) (synclog.LogTransport, error) { return log, nil },
+	}
+	res := runner.Run(context.Background(), &wire.SyncVerb{
+		Verb:      wire.SyncVerbEnable,
+		RemoteURL: "libsql://join.invalid",
+	}, []byte(verbFixtureToken))
+	if !res.OK {
+		t.Fatalf("enable refused: %s", res.Message)
+	}
+	if res.RemoteURL != "libsql://join.invalid" {
+		t.Errorf("enable stored remote %q, want the one the verb named", res.RemoteURL)
+	}
+	on, err := relevosync.Enabled(local)
+	if err != nil || !on {
+		t.Fatalf("Enabled = %v, %v; want the mark on", on, err)
+	}
+	if _, ok, err := relevosync.ReadJoin(local); err != nil || ok {
+		t.Errorf("join marker = (ok %v, err %v), want none after a finished join", ok, err)
+	}
+	if runner.Runner.Client == nil {
+		t.Error("the enable left no worker on the runner")
 	}
 }
 

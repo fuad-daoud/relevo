@@ -1,11 +1,11 @@
 package sync
 
-// The machine-local half of an enable: the token it would store, the section it
-// would point at a remote, and the mark that says the machine is on. This build
-// carries no sync engine, so no enable runs and none of these rows is written by
-// a verb; they stay because the turn-off, the status read and the editor all
-// read and write exactly them, and a machine must be able to leave a sync it was
-// once in and to be told what it is set to be.
+// The machine-local half of an enable: the token it stores, the section it
+// points at a remote, and the mark that says the machine is on. Every one of
+// them lives in the file beside the shared database, so none can leave with a
+// change set. The turn-off, the status read and the editor all read and write
+// exactly them, which is why they share a file with the enable rather than a
+// package of their own.
 
 import (
 	"bytes"
@@ -17,13 +17,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// The refusals the enable surface still answers with. They are sentinels so a
-// caller branches on the class while the message names the fix.
+// The refusals the enable surface answers with. They are sentinels so a caller
+// branches on the class while the message names the fix.
 var (
-	// ErrAlreadyEnabled is a machine already syncing. There is no resume: a
-	// machine that wants to start over turns sync off first and runs the whole
-	// path again, so whatever the first run decided can never be inherited from
-	// a run whose inputs have since changed.
+	// ErrAlreadyEnabled is a machine already syncing. An enable that stopped
+	// before the join finished left the machine off, so a second enable resumes
+	// it rather than inheriting a half-join; a machine that is on refuses until
+	// it is turned off, because the mark is the one thing an enable never
+	// overrides.
 	ErrAlreadyEnabled = errors.New("sync: already enabled on this machine")
 
 	// ErrNoToken is an intake with no token on either route. The message names
