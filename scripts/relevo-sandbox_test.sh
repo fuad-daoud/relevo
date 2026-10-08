@@ -100,6 +100,15 @@ refuses 'an over-long name is refused' 'invalid sandbox name' \
 	sh "$script" create abcdefghijklmn "$nb"
 refuses 'an empty name is refused' 'create needs a name' \
 	sh "$script" create
+# Ranges in a case pattern follow the locale's collating order, where a-z can
+# also match uppercase: the refusal must hold under an explicit UTF-8 locale,
+# which is the macOS-runner shape that once let Demo through.
+for _loc in C C.utf8 en_US.utf8; do
+	LC_ALL=$_loc sh "$script" create Demo "$nb" >/dev/null 2>&1 && {
+		echo "FAIL: an uppercase name is accepted under LC_ALL=$_loc"
+		fail=1
+	} || :
+done
 refuses 'an unknown subcommand is refused' 'unknown subcommand' \
 	sh "$script" frobnicate
 

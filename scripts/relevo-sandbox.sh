@@ -52,11 +52,29 @@ root() {
 
 # valid_name enforces ^[a-z][a-z0-9-]{0,12}$: a short lowercase token, so the
 # directory under the root cannot carry a slash or a dot-dot, and every path
-# built from it is one component long.
+# built from it is one component long. The range match runs under LC_ALL=C:
+# ranges follow the locale's collating order, where a-z can also match
+# uppercase (seen on macOS runners), and byte semantics is what the rule
+# means. No `local` in POSIX sh, so the temporaries carry a _vn_ prefix
+# nothing else in this script uses.
 valid_name() {
+	if [ -z "${LC_ALL+x}" ]; then
+		_vn_unset=1
+	else
+		_vn_unset=0
+		_vn_old=$LC_ALL
+	fi
+	LC_ALL=C
 	case $1 in
-	'' | *[!a-z0-9-]* | [0-9]* | -*) return 1 ;;
+	'' | *[!a-z0-9-]* | [0-9]* | -*) _vn_rc=1 ;;
+	*) _vn_rc=0 ;;
 	esac
+	if [ "$_vn_unset" -eq 1 ]; then
+		unset LC_ALL
+	else
+		LC_ALL=$_vn_old
+	fi
+	[ "$_vn_rc" -eq 0 ] || return 1
 	[ "${#1}" -ge 1 ] && [ "${#1}" -le 13 ] || return 1
 	return 0
 }

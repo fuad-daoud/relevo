@@ -112,6 +112,15 @@ plan_destroy() {
 # A name that is not a short lowercase token is refused, and named.
 refuses 'an uppercase name is refused' 'invalid sandbox name' \
 	sh "$script" create Demo --port 7801 "$repo" "$dry"
+# Ranges in a case pattern follow the locale's collating order, where a-z can
+# also match uppercase: the refusal must hold under an explicit UTF-8 locale,
+# which is the macOS-runner shape that once let Demo through.
+for _loc in C C.utf8 en_US.utf8; do
+	LC_ALL=$_loc sh "$script" create Demo --port 7801 "$repo" "$dry" >/dev/null 2>&1 && {
+		echo "FAIL: an uppercase name is accepted under LC_ALL=$_loc"
+		fail=1
+	} || :
+done
 refuses 'a leading digit is refused' 'invalid sandbox name' \
 	sh "$script" create 9demo "$repo" "$dry"
 refuses 'a name with a slash is refused' 'invalid sandbox name' \
