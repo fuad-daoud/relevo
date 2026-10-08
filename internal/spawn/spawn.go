@@ -158,6 +158,30 @@ type Runner interface {
 	Rusage(ctx context.Context, h ProcHandle, streamPath string) (ProcRusage, bool)
 }
 
+// AliveFact is what a batch liveness probe reports about one process: the start
+// time and state ps read for it. A handle is alive against a fact by the same
+// rule Alive applies -- same start time within a second, not a zombie -- so a
+// caller that batches gets the answers it would have got one handle at a time.
+type AliveFact struct {
+	StartedAt time.Time
+	State     string
+}
+
+// AliveBatchProber is the optional half of a Runner that answers Alive for many
+// handles with one probe. A status refresh paints every headless row at once and
+// each Alive is a ps fork, so the fleet path batches them into a single fork.
+// Callers type-assert Runtime.Runner to it; a Runner that lacks it falls back to
+// one Alive call per handle, which is slower but answers identically.
+type AliveBatchProber interface {
+	// AliveBatch reports a fact per pid ps listed. A pid ps did not list is
+	// absent from the map, which reads as not alive -- the same answer the
+	// single-handle path gives for a missing process. An error means the probe
+	// itself failed (ps did not run), not that a process is gone: callers that
+	// cannot batch, or whose batch failed, must fall back to Alive so a broken
+	// ps is never read as a dead builder.
+	AliveBatch(ctx context.Context, handles []ProcHandle) (map[int]AliveFact, error)
+}
+
 // ScopeProber is the optional half of a Runner that can say whether a systemd
 // scope unit is still occupying its name. Callers type-assert Runtime.Runner to
 // it; a Runner that lacks it, or whose probe errors, is treated as "no scope is

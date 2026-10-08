@@ -442,7 +442,7 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 	gitClient := git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes)
 
 	// Gates and latency live in the store root's database (P3b plan §4.5).
-	// The channel claims, the mastermind registry and the hooks run log live in
+	// The push claims, the mastermind registry and the hooks run log live in
 	// the same database (P3b round 2 §4.1-§4.4), so `relevo daemon --preflight`
 	// and `--check`, which pass openGates false, open no database at all.
 	var (

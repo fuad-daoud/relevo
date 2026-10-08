@@ -83,6 +83,12 @@ const headlessLogLines = 5000
 
 type tickMsg time.Time
 
+// watchdogMsg is the first fetch's time-box: it fires one poll interval after
+// Init and says only that the first status has not landed yet. It carries no
+// report, so a slow Source.Status can never merge a partial one -- the fleet
+// keeps painting the bounded loading state until the whole status arrives.
+type watchdogMsg time.Time
+
 // statusMsg carries one fleet refresh...
 type statusMsg struct {
 	report view.Report

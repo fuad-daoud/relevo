@@ -5,14 +5,12 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/mastermind"
-	"github.com/fuad-daoud/relevo/internal/mcp"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-// TestMCPResolveKindAndMode pins the flag rules: only the empty kind and
-// opencode exist, and an opencode server always serves tools, never the Claude
-// channel.
-func TestMCPResolveKindAndMode(t *testing.T) {
+// TestMCPResolveKind pins the flag rule: only the empty kind and opencode
+// exist as a server kind.
+func TestMCPResolveKind(t *testing.T) {
 	if kind, err := mcpResolveKind(""); err != nil || kind != "" {
 		t.Errorf("mcpResolveKind(\"\") = %q, %v, want empty", kind, err)
 	}
@@ -21,16 +19,6 @@ func TestMCPResolveKindAndMode(t *testing.T) {
 	}
 	if _, err := mcpResolveKind("claude"); err == nil {
 		t.Error("claude must not be accepted as a server kind")
-	}
-
-	if mode, err := mcpResolveMode("opencode", "auto"); err != nil || mode != mcp.ModeTools {
-		t.Errorf("opencode auto mode = %v, %v, want tools", mode, err)
-	}
-	if _, err := mcpResolveMode("opencode", "channel"); err == nil {
-		t.Error("an opencode server must refuse --mode channel")
-	}
-	if mode, err := mcpResolveMode("", "tools"); err != nil || mode != mcp.ModeTools {
-		t.Errorf("claude tools mode = %v, %v", mode, err)
 	}
 }
 

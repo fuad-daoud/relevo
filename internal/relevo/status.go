@@ -16,7 +16,7 @@ import (
 )
 
 // mastermindRoute decides how a pending report reaches a binding mastermind:
-// the live channel claim first, then the configured
+// the live push claim first, then the configured
 // deliverer for the mastermind kind, else "pull".
 //
 // live reports whether that route can push right now. A pull route is never
@@ -30,7 +30,7 @@ func mastermindRoute(rt Runtime, b store.Binding, claims map[string]*delivery.Cl
 	if b.MasterMindID != "" {
 		if claims != nil {
 			if c := claims[b.MasterMindID]; c != nil {
-				return "channel", true
+				return "push", true
 			}
 		} else if rt.Channels != nil {
 			now := time.Now()
@@ -38,7 +38,7 @@ func mastermindRoute(rt Runtime, b store.Binding, claims map[string]*delivery.Cl
 				now = rt.Now()
 			}
 			if c, err := rt.Channels.Live(b.MasterMindID, now); err == nil && c != nil {
-				return "channel", true
+				return "push", true
 			}
 		}
 	}
@@ -105,7 +105,7 @@ func statusConfigOf(opts []StatusOption) statusConfig {
 }
 
 // Status builds every row from the store and what relevo can determine
-// locally: the mastermind record, a live channel claim and the configured
+// locally: the mastermind record, a live push claim and the configured
 // deliverers. Only store failures fail the call. Each chain's member rows
 // are replaced by the chain's own row (applyChains).
 //
@@ -155,7 +155,7 @@ func buildReport(ctx context.Context, rt Runtime, bindings []store.Binding) (vie
 }
 
 func buildReportWith(ctx context.Context, rt Runtime, bindings []store.Binding, cfg statusConfig) (view.Report, error) {
-	loads := loadRows(rt, bindings)
+	loads := loadRows(ctx, rt, bindings)
 	rows := make([]view.BindingStatus, 0, len(bindings))
 	for _, b := range bindings {
 		row, err := statusRowWith(ctx, rt, b, cfg, loads)
@@ -258,7 +258,7 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 	}
 
 	if b.Builder.Headless() {
-		row.BuilderStatus, row.Headless = headlessStatus(ctx, rt, b, cfg.detail)
+		row.BuilderStatus, row.Headless = headlessStatus(ctx, rt, b, cfg.detail, loads.aliveMap())
 	} else if b.Builder.Remote() {
 		row.Server = b.Builder.Server
 		row.BuilderStatus = b.Builder.RemoteStatus

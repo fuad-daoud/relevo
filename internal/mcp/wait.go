@@ -231,7 +231,10 @@ func (v *RelevoVerbs) waitOnTarget(ctx context.Context, session string, a WaitAr
 	return relevo.WaitOwned(ctx, v.RT, id, a.Round, timeout, interval)
 }
 
-// Wait blocks until a round closes, needs attention, or times out.
+// Wait blocks until a round closes, needs attention, or times out. While this
+// MasterMind's push claim is live the holder is writing the report into the
+// session, so the wait delivers nothing: it reports the outcome line plus
+// "delivered by the mod" and claims or confirms no entry.
 func (v *RelevoVerbs) Wait(ctx context.Context, session string, a WaitArgs) (any, error) {
 	if err := validateWaitArgs(a); err != nil {
 		return nil, err
@@ -253,6 +256,10 @@ func (v *RelevoVerbs) Wait(ctx context.Context, session string, a WaitArgs) (any
 		interval = time.Second
 	}
 
+	if v.pushClaimLive(session, a.Name) {
+		return v.waitDeliveredByMod(ctx, session, a, timeout, interval)
+	}
+
 	name, res, err := v.waitOnTarget(ctx, session, a, timeout, interval)
 	if errors.Is(err, context.Canceled) {
 		target := a.Name
@@ -270,4 +277,95 @@ func (v *RelevoVerbs) Wait(ctx context.Context, session string, a WaitArgs) (any
 		target = a.Name
 	}
 	return formatWaitResult(v.RT.Store, target, v.waitRoundLine(target, a.Round, res.Round), res), nil
+}
+
+// pushClaimLive reports whether a live push claim covers the wait's target: the
+// named binding's mastermind, or this call's own mastermind.
+func (v *RelevoVerbs) pushClaimLive(session, name string) bool {
+	if v.RT.Channels == nil {
+		return false
+	}
+	id := ""
+	if name != "" {
+		if v.RT.Store != nil {
+			if b, err := v.RT.Store.Load(name); err == nil {
+				id = b.MasterMindID
+			}
+		}
+	} else {
+		id, _ = v.masterMindFor(session)
+	}
+	if id == "" {
+		return false
+	}
+	now := time.Now()
+	if v.RT.Now != nil {
+		now = v.RT.Now()
+	}
+	c, err := v.RT.Channels.Live(id, now)
+	return err == nil && c != nil
+}
+
+// waitDeliveredByMod is the wait under a live push claim: it polls through
+// relevo.Wait with Peek, so it claims and confirms nothing, and appends the
+// note that tells the model the report is already in its transcript.
+func (v *RelevoVerbs) waitDeliveredByMod(ctx context.Context, session string, a WaitArgs, timeout, interval time.Duration) (any, error) {
+	opts := relevo.WaitOptions{Round: a.Round, Timeout: timeout, Interval: interval, Peek: true}
+	if a.Name != "" {
+		opts.Names = []string{a.Name}
+	} else {
+		id, err := v.masterMindFor(session)
+		if err != nil {
+			return nil, err
+		}
+		names, err := v.ownedNames(id)
+		if err != nil {
+			return nil, err
+		}
+		if len(names) == 0 {
+			return nil, fmt.Errorf("no active bindings for mastermind %s", id)
+		}
+		opts.Names = names
+	}
+
+	name, res, err := relevo.Wait(ctx, v.RT, opts)
+	if errors.Is(err, context.Canceled) {
+		target := a.Name
+		if target == "" {
+			target, _ = v.masterMindFor(session)
+		}
+		return fmt.Sprintf("%s round %d cancelled", target, v.waitRoundLine(target, a.Round, 0)), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	target := name
+	if target == "" {
+		target = a.Name
+	}
+	out := formatWaitResult(v.RT.Store, target, v.waitRoundLine(target, a.Round, res.Round), res)
+	if res.Code == relevo.WaitTimeout || res.Code == relevo.WaitGone {
+		return out, nil
+	}
+	return out + "\ndelivered by the mod", nil
+}
+
+// ownedNames lists a mastermind's active bindings, the same set WaitOwned
+// polls when no name came in.
+func (v *RelevoVerbs) ownedNames(masterMindID string) ([]string, error) {
+	if v.RT.Store == nil {
+		return nil, errors.New("wait: store is required")
+	}
+	all, err := v.RT.Store.List()
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, b := range all {
+		if b.MasterMindID == masterMindID && b.State != store.StateDone {
+			names = append(names, b.Name)
+		}
+	}
+	return names, nil
 }

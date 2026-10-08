@@ -62,53 +62,24 @@ func callSend(t *testing.T, mode Mode, res any) string {
 	return result.Content[0].Text
 }
 
-// TestMCPSendResultDependsOnMode covers the two mode-specific shapes of a
-// send tool result.
-func TestMCPSendResultDependsOnMode(t *testing.T) {
+// TestMCPSendResultPointsAtWait covers the one send result shape: a Claude
+// server has no push, so the result points at the wait tool.
+func TestMCPSendResultPointsAtWait(t *testing.T) {
 	res := sendResult{SendResult: relevo.SendResult{Round: 1}, WaitBudget: "24h0m0s"}
-	tests := []struct {
-		name  string
-		mode  Mode
-		check func(t *testing.T, text string)
-	}{
-		{"tools mode points at the wait tool", ModeTools, func(t *testing.T, text string) {
-			want := "wait tool:\n  wait(name: \"webshop\", timeout: \"24h0m0s\")"
-			if !strings.HasSuffix(text, want) {
-				t.Fatalf("send result text = %q, want it to end with:\n%s", text, want)
-			}
-			if strings.Contains(text, "run_in_background") || strings.Contains(text, "relevo wait") {
-				t.Fatalf("tools-mode send result must carry no background shell block, got %q", text)
-			}
-		}},
-		{"channel mode has no wait line", ModeChannel, func(t *testing.T, text string) {
-			if strings.Contains(text, "wait tool") || strings.Contains(text, "relevo wait") {
-				t.Fatalf("channel-mode send result must carry no wait line, got %q", text)
-			}
-		}},
+	text := callSend(t, ModeTools, res)
+	want := "wait tool:\n  wait(name: \"webshop\", timeout: \"24h0m0s\")"
+	if !strings.HasSuffix(text, want) {
+		t.Fatalf("send result text = %q, want it to end with:\n%s", text, want)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tt.check(t, callSend(t, tt.mode, res))
-		})
+	if strings.Contains(text, "run_in_background") || strings.Contains(text, "relevo wait") {
+		t.Fatalf("send result must carry no background shell block, got %q", text)
 	}
 }
 
-func TestMCPInstructionsDependOnMode(t *testing.T) {
-	channel := InstructionsFor(ModeChannel, "")
+func TestMCPInstructionsTools(t *testing.T) {
 	tools := InstructionsFor(ModeTools, "")
 
-	if channel == tools {
-		t.Fatal("the two modes must be told different things")
-	}
-	for _, word := range []string{"broken", "orphaned"} {
-		if strings.Contains(strings.ToLower(channel), word) {
-			t.Errorf("channel instructions must not mention %q", word)
-		}
-	}
-	if strings.Contains(channel, "background wait") || strings.Contains(channel, "wait tool") {
-		t.Error("channel instructions must not describe a wait")
-	}
-	for _, want := range []string{"wait tool", "still-open", "needs-you", "status(name)"} {
+	for _, want := range []string{"wait tool", "still-open", "needs-you", "status(name)", "delivered by the mod"} {
 		if !strings.Contains(tools, want) {
 			t.Errorf("tools instructions must mention %q", want)
 		}
@@ -116,22 +87,17 @@ func TestMCPInstructionsDependOnMode(t *testing.T) {
 	if strings.Contains(tools, "run_in_background") {
 		t.Error("tools instructions must not teach the background shell wait")
 	}
-	if strings.Contains(tools, "this pane") || strings.Contains(channel, "this pane") {
+	if strings.Contains(tools, "this pane") {
 		t.Error(`instructions must say "this mastermind", not "this pane"`)
 	}
-	for _, tt := range []struct {
-		name, text string
-	}{{"channel", channel}, {"tools", tools}} {
-		if !strings.HasSuffix(tt.text, mastermind.Guide()) {
-			t.Errorf("%s instructions do not end with the guide", tt.name)
-		}
+	if !strings.HasSuffix(tools, mastermind.Guide()) {
+		t.Error("tools instructions do not end with the guide")
 	}
 
-	// initialize serves the mode's text when no override is set.
+	// initialize serves the tools text when no override is set.
 	srv := &Server{Verbs: &fakeVerbs{}, Version: "test", Mode: ModeTools}
-	res := srv.initializeResult()
-	if res["instructions"] != tools {
-		t.Error("initialize must serve the tools-mode text when Mode is ModeTools")
+	if res := srv.initializeResult(); res["instructions"] != tools {
+		t.Error("initialize must serve the tools text")
 	}
 }
 

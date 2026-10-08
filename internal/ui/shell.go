@@ -41,6 +41,11 @@ type Model struct {
 	statusAt       time.Time
 	started        bool // opts.Start has been executed (after the first status)
 
+	// firstFetchSlow is set by the watchdog when the first status outran one
+	// poll interval. It is cleared by the refetch it triggers, so the re-fire
+	// happens once per slow first load and never again.
+	firstFetchSlow bool
+
 	width, height int
 	ready         bool // the first WindowSizeMsg has arrived
 	now           func() time.Time
@@ -147,11 +152,21 @@ func tick(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
-// Init fetches the first status and arms the tick.
+// watchdog is the first fetch's time-box: one timer, armed alongside the
+// first fetch, that says whether that fetch outran a poll interval. It
+// carries no report, so a slow Source.Status cannot merge a partial one.
+func watchdog(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(t time.Time) tea.Msg { return watchdogMsg(t) })
+}
+
+// Init fetches the first status and arms the tick. The watchdog goes out with
+// it, so a first fetch that has not landed by the time the first tick was due
+// is known to be slow rather than merely late.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		fetchStatus(m.ctx, m.src),
 		tick(m.opts.Interval),
+		watchdog(m.opts.Interval),
 	)
 }
 
@@ -184,6 +199,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case statusMsg:
 		return m.updateStatus(msg)
+
+	case watchdogMsg:
+		return m.onWatchdog()
 
 	case pushMsg:
 		m.stack = append(m.stack, msg.v)
@@ -248,7 +266,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // updateStatus stores a statusMsg as today, then runs the start command
-// once the first one has arrived (§5.2).
+// once the first one has arrived (§5.2). A status the watchdog called slow
+// refetches on landing rather than waiting out the tick interval, so the
+// first paint is never followed by an interval of stale rows.
 func (m Model) updateStatus(msg statusMsg) (tea.Model, tea.Cmd) {
 	m.statusInFlight = false
 	if msg.err != nil {
@@ -261,12 +281,29 @@ func (m Model) updateStatus(msg statusMsg) (tea.Model, tea.Cmd) {
 	}
 	next, cmd := m.updateStack(msg)
 	m = next.(Model)
-	var start tea.Cmd
+	var start, refetch tea.Cmd
 	if !m.started && m.opts.Start != "" {
 		m.started = true
 		start = execLine(m.opts.Start, m.env(), m.prefs)
 	}
-	return m, tea.Batch(cmd, start)
+	if m.firstFetchSlow {
+		// The re-fire is on landing, so it cannot slow the slow path: this
+		// fetch has already returned. The single-flight guard stays set
+		// across it, so the tick in between starts no second one.
+		m.firstFetchSlow = false
+		m.statusInFlight = true
+		refetch = fetchStatus(m.ctx, m.src)
+	}
+	return m, tea.Batch(cmd, start, refetch)
+}
+
+// onWatchdog records that the first fetch outlived one poll interval, and
+// paints nothing new: env.Loaded is still false, so the fleet is already
+// drawing its bounded loading state and the watchdog carries no report to
+// merge into it.
+func (m Model) onWatchdog() (tea.Model, tea.Cmd) {
+	m.firstFetchSlow = !m.statusLoaded
+	return m, nil
 }
 
 // finishAction applies one actionMsg (§4.3, §6): the notice is the first

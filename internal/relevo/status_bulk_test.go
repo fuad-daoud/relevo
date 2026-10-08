@@ -245,7 +245,7 @@ func TestRouteAndWaitLiveSurviveAMissingBulkEntry(t *testing.T) {
 	rt, _ := bulkRuntime(t, "held", "orphan")
 
 	// Both rows carry a configured deliverer, so a missing claim row drops the
-	// route from "channel" to "deliverer" and the liveness with it.
+	// route from "push" to "deliverer" and the liveness with it.
 	rt.Deliverers = map[string]delivery.MasterMindDeliverer{"claude": &haltDeliverer{}}
 	for _, name := range []string{"held", "orphan"} {
 		b := openActiveBinding(name)
@@ -269,8 +269,8 @@ func TestRouteAndWaitLiveSurviveAMissingBulkEntry(t *testing.T) {
 
 	rows := statusOrFail(t, rt)
 	held := rowNamed(t, rows, "held")
-	if held.MasterMindRoute != "channel" || !held.MasterMindRouteLive {
-		t.Errorf("held: route = %q live = %v, want channel/live", held.MasterMindRoute, held.MasterMindRouteLive)
+	if held.MasterMindRoute != "push" || !held.MasterMindRouteLive {
+		t.Errorf("held: route = %q live = %v, want push/live", held.MasterMindRoute, held.MasterMindRouteLive)
 	}
 	if !held.WaitLive {
 		t.Errorf("held: WaitLive = false, want true from the bulk wait map")
@@ -361,8 +361,8 @@ func TestStatusSurvivesABulkLoadError(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want 1: a bulk-load error must not fail the report", len(rows))
 	}
-	if rows[0].MasterMindRoute == "channel" {
-		t.Errorf("route = channel with a failed bulk load, want not live")
+	if rows[0].MasterMindRoute == "push" {
+		t.Errorf("route = push with a failed bulk load, want not live")
 	}
 	if rows[0].WaitLive {
 		t.Errorf("WaitLive = true with a failed bulk load, want false")
