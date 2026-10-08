@@ -7,6 +7,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire/owner"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/syncpipe"
 )
 
 // installSyncVerbHook makes the owner's socket the way a client asks for a sync
@@ -44,9 +45,9 @@ func installSyncVerbHook(srv *owner.Server, d *db.DB) {
 // A handle with no local file yields nil: there is no row sync could own, and a
 // runner built without one would have to be handed a nil seam.
 //
-// The Runner starts clientless on purpose: the first attempt that needs it
-// builds the client through Ensure, so construction never dials and a restart
-// never pays a network call for a machine whose mark may be off.
+// The runner is built holding the pipe client, so the daemon has one place a
+// worker is constructed. The client starts no process until a call drives it,
+// so the wiring installs it while the verbs still refuse.
 func newVerbRunner(d *db.DB) *relevo.VerbRunner {
 	if d == nil {
 		return nil
@@ -64,8 +65,8 @@ func newVerbRunner(d *db.DB) *relevo.VerbRunner {
 		Shared:     d,
 		Local:      local,
 		Path:       d.Path(),
-		Runner:     &relevosync.Runner{Local: local},
-		ClientName: dbSyncClientName,
+		Runner:     syncpipe.NewSyncRunner(syncpipe.Config{}, local),
+		ClientName: dbSyncHandleName,
 	}
 }
 

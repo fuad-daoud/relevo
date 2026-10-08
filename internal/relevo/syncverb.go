@@ -8,6 +8,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/db/wire/client"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
 // VerbRunner runs one sync verb against handles a process already holds.
@@ -36,13 +37,13 @@ type VerbRunner struct {
 	Local relevosync.Local
 	// Path is the shared file's path.
 	Path string
-	// Runner is the daemon's sync runner. Nothing drives it while sync is a
-	// stub; it is kept so the wiring the daemon installs stays one value.
+	// Runner is the daemon's sync runner. Nothing drives it while the verbs
+	// refuse; it is kept so the wiring the daemon installs stays one value.
 	Runner *relevosync.Runner
-	// Open builds a remote handle. Nothing opens one while sync is a stub; the
-	// seam is kept so the executor has exactly one place a remote is reached
-	// from when there is an engine to reach.
-	Open relevosync.Opener
+	// Open builds the log transport a verb would drive. Nothing opens one while
+	// the verbs refuse; the seam is kept so the executor has exactly one place
+	// a transport is reached from when the verbs move bytes.
+	Open func(context.Context) (synclog.LogTransport, error)
 	// Serialize runs fn under the daemon's in-flight sync guard. Nil runs it
 	// inline, which is what a cockpit wants: it is not the daemon and has no
 	// trigger to be serialized against.

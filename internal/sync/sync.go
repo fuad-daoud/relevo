@@ -75,6 +75,18 @@ type attention struct {
 	Message string    `json:"message"`
 }
 
+// Stats is what the remote reports about the local change set: the operations a
+// push has not sent yet, the last successful push and pull, the bytes each way,
+// and the server revision. The revision is opaque and must never be parsed.
+type Stats struct {
+	CdcOperations        int64  `json:"cdc_operations"`
+	LastPullUnixTime     int64  `json:"last_pull_unix_time"`
+	LastPushUnixTime     int64  `json:"last_push_unix_time"`
+	NetworkSentBytes     int64  `json:"network_sent_bytes"`
+	NetworkReceivedBytes int64  `json:"network_received_bytes"`
+	Revision             string `json:"revision"`
+}
+
 // The four tokens the statusline shows, one per state that needs a human. The
 // renderer formats them; detail lives in the sync view.
 const (
@@ -155,6 +167,83 @@ func ReadAttention(kv db.KV) (string, error) {
 		return "", err
 	}
 	return a.Message, nil
+}
+
+// KeyInCall is the marker a pipe call writes before it asks for anything and
+// clears when its reply arrives. A marker left behind names a call that never
+// came back, which is the one death a daemon that was itself killed cannot
+// otherwise count.
+const KeyInCall = "sync.incall"
+
+// InCall is what the in-call marker holds. The number is what lets a leftover
+// marker be counted exactly once: a start counts the call only while its number
+// is past the highest one already counted.
+type InCall struct {
+	At   time.Time `json:"at"`
+	Verb string    `json:"verb"`
+	N    int       `json:"n"`
+}
+
+// WriteInCall writes the in-call marker before a pipe call goes out.
+func WriteInCall(kv db.KV, call InCall) error {
+	body, err := json.Marshal(call)
+	if err != nil {
+		return fmt.Errorf("sync: in-call marker: %w", err)
+	}
+	if err := kv.KVPut(KeyInCall, body); err != nil {
+		return fmt.Errorf("sync: in-call marker: %w", err)
+	}
+	return nil
+}
+
+// ClearInCall removes the in-call marker once a reply has arrived.
+func ClearInCall(kv db.KV) error {
+	if err := kv.KVDelete(KeyInCall); err != nil {
+		return fmt.Errorf("sync: in-call marker: %w", err)
+	}
+	return nil
+}
+
+// ReadInCall returns the in-call marker a call left behind, and whether one is
+// set. An unreadable marker is a failure rather than an absent one: a machine
+// whose marker cannot be read must not be reported as having no call in flight.
+func ReadInCall(kv db.KV) (InCall, bool, error) {
+	body, ok, err := kv.KVGet(KeyInCall)
+	if err != nil {
+		return InCall{}, false, fmt.Errorf("sync: in-call marker: %w", err)
+	}
+	if !ok {
+		return InCall{}, false, nil
+	}
+	var call InCall
+	if err := json.Unmarshal(body, &call); err != nil {
+		return InCall{}, false, fmt.Errorf("sync: in-call marker: %w", err)
+	}
+	return call, true, nil
+}
+
+// SetAttention writes the marker that makes the statusline read sync:err. The
+// message is fixed text written in this tree: the statusline and the sync view
+// both show it, and neither a worker's nor a remote's own words may reach them.
+func SetAttention(kv db.KV, message string, at time.Time) error {
+	body, err := json.Marshal(attention{At: at.UTC(), Message: message})
+	if err != nil {
+		return fmt.Errorf("sync: attention marker: %w", err)
+	}
+	if err := kv.KVPut(KeyAttention, body); err != nil {
+		return fmt.Errorf("sync: attention marker: %w", err)
+	}
+	return nil
+}
+
+// ClearLatch removes the latched-error marker. It is the one path that unlatches
+// a machine: the retry verb runs it, and neither a tick nor a call clears the
+// marker on its own.
+func ClearLatch(kv db.KV) error {
+	if err := kv.KVDelete(KeyAttention); err != nil {
+		return fmt.Errorf("sync: attention marker: %w", err)
+	}
+	return nil
 }
 
 // ReadSnapshot returns what the remote last reported, and whether a measured

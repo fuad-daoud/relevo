@@ -1,16 +1,18 @@
 package sync
 
-// The runner is the seam a remote would be driven through. This build carries no
-// sync engine, so nothing builds a client and nothing drives one: what is left
-// is the shape the daemon and the cockpit install, the bound one attempt would
-// run under, and the marker keys the statusline reads back. They stay so the
-// wiring has one place to come back to rather than a new one beside it.
+// The runner is the seam a remote is driven through. It holds the log transport
+// a pipe client provides and the machine-local kv the markers are written
+// through, and it carries the bound one attempt would run under and the marker
+// keys the statusline reads back. The client is built where the wiring is built
+// and installed here, so the daemon and the cockpit hand around one holder
+// rather than build a client each.
 
 import (
 	"errors"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
 // ErrAuthRefused is the one failure a retry cannot fix: the remote rejected this
@@ -29,14 +31,13 @@ const DefaultTimeout = 20 * time.Second
 // a time and formats a token.
 const KeyStats = "sync.stats"
 
-// Runner is the remote seam, and nothing else: there is no engine in this build
-// to drive through it, so no field here is written by a tick. A caller installs
-// one because the wiring around it is installed unconditionally, and a machine
-// that once synced must still be able to be told what it is set to be.
+// Runner is the remote seam. It holds the log transport a pipe client provides,
+// so a transport method cannot be lost without the tree failing to build, and a
+// caller installs one because the wiring around it is installed unconditionally.
 type Runner struct {
-	// Client is the remote seam. Nil means sync is off, and nothing reads it
-	// while it is.
-	Client SyncClient
+	// Client is the transport the log is exchanged over. Nil means no client is
+	// open, and nothing reads it while it is.
+	Client synclog.LogTransport
 	// Local is the machine-local kv the markers are written through, so a
 	// marker can never reach the file that leaves this machine.
 	Local db.KV

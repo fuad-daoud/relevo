@@ -128,6 +128,12 @@ func isPeekArgs(args []string) bool {
 	if args[0] == "bugreport" || args[0] == "db" || args[0] == "board" {
 		return true
 	}
+	// The sync worker holds no handle on any of this installation's databases,
+	// so it must not install a route that would open one, nor capture the agy
+	// credentials that capture itself opens and can migrate.
+	if args[0] == "sync-worker" {
+		return true
+	}
 	return args[0] == "daemon" && hasArg(args[1:], "--check", "--preflight")
 }
 

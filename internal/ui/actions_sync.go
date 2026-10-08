@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire/client"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/syncpipe"
 )
 
 // SyncSnapshot is the whole read side of the :sync view: what the machine is
@@ -118,7 +119,7 @@ func (a *mastermindActions) verbRunner() (*relevo.VerbRunner, error) {
 		Shared:     shared,
 		Local:      local,
 		Path:       shared.Path(),
-		Runner:     &relevosync.Runner{Local: local},
+		Runner:     syncpipe.NewSyncRunner(syncpipe.Config{}, local),
 		ClientName: syncClientName,
 	}, nil
 }

@@ -164,8 +164,8 @@ func TestTokenIntakePrefersTheFlagAndFallsThroughToTheEnvironment(t *testing.T) 
 
 // TestTokenReachesNoClientCall pins the third surface the value could cross: a
 // client is handed a context and nothing else, so a token has no argument to
-// travel in, and driving a whole tick's calls leaves no trace of one in what
-// the client recorded.
+// travel in, and the calls a turn-off makes leave no trace of one in what the
+// client recorded.
 func TestTokenReachesNoClientCall(t *testing.T) {
 	t.Parallel()
 
@@ -174,20 +174,9 @@ func TestTokenReachesNoClientCall(t *testing.T) {
 		t.Fatalf("SetToken: %v", err)
 	}
 
-	f := &Fake{}
-	var client SyncClient = f
-	ctx := t.Context()
-	if err := client.Push(ctx); err != nil {
+	f := &pushFake{}
+	if err := f.Push(t.Context()); err != nil {
 		t.Fatalf("Push: %v", err)
-	}
-	if _, err := client.Pull(ctx); err != nil {
-		t.Fatalf("Pull: %v", err)
-	}
-	if _, err := client.Stats(ctx); err != nil {
-		t.Fatalf("Stats: %v", err)
-	}
-	if err := client.Checkpoint(ctx); err != nil {
-		t.Fatalf("Checkpoint: %v", err)
 	}
 
 	for _, name := range f.Calls {

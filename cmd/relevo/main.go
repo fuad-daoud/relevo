@@ -268,6 +268,8 @@ func run(args []string) error {
 		return cmdGate(args[1:])
 	case "serve":
 		return cmdServe(args[1:])
+	case "sync-worker":
+		return cmdSyncWorker(args[1:])
 	default:
 		// The verbs P2b folded into `relevo config`, and the verbs P4a merged
 		// into bind/show/unbind/status, name their replacement rather than the

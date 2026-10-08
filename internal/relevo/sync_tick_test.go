@@ -11,42 +11,62 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
-// The tests here pin what the daemon's sync triggers do now that no engine
+// The tests here pin what the daemon's sync triggers do now that no pipeline
 // stands behind them: they are still called from the tick and from the seal,
 // and they open nothing. A trigger that stopped being called would be a hole
-// the next engine is wired into without anyone noticing, and a trigger that
+// the next pipeline is wired into without anyone noticing, and a trigger that
 // opened a handle would put a network back on a path the round exists to keep
 // off it.
 
-// syncBlackhole answers nothing until its context expires, which is what a
-// network that accepts a connection and then goes silent looks like from here.
-// block is set past any timeout under test, so the context always ends the
-// call.
+// recordTransport is the log transport a trigger test hands the runner, so a
+// test can pin that a trigger drove nothing: it names every call it was driven
+// through and answers each with a zero.
+type recordTransport struct {
+	Calls []string
+}
+
+func (r *recordTransport) Append([]synclog.Entry) ([]synclog.Entry, error) {
+	r.Calls = append(r.Calls, "append")
+	return nil, nil
+}
+
+func (r *recordTransport) Pull(map[string]int) ([]synclog.Entry, error) {
+	r.Calls = append(r.Calls, "pull")
+	return nil, nil
+}
+
+func (r *recordTransport) Head(string) ([]synclog.HeadRow, error) {
+	r.Calls = append(r.Calls, "head")
+	return nil, nil
+}
+
+func (r *recordTransport) Stats() (synclog.Stats, error) {
+	r.Calls = append(r.Calls, "stats")
+	return synclog.Stats{}, nil
+}
+
+// syncBlackhole accepts a call and then goes silent, which is what a network
+// that accepts a connection and then stops answering looks like from here. It
+// counts what was driven through it, so a trigger that reached it is visible
+// rather than only slow. block is set past any deadline under test.
 type syncBlackhole struct {
 	calls atomic.Int64
 	block time.Duration
 }
 
-func (b *syncBlackhole) wait(ctx context.Context) error {
+func (b *syncBlackhole) wait() error {
 	b.calls.Add(1)
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(b.block):
-		return nil
-	}
+	time.Sleep(b.block)
+	return nil
 }
 
-func (b *syncBlackhole) Push(ctx context.Context) error { return b.wait(ctx) }
-func (b *syncBlackhole) Pull(ctx context.Context) (bool, error) {
-	return false, b.wait(ctx)
-}
-func (b *syncBlackhole) Stats(ctx context.Context) (relevosync.Stats, error) {
-	return relevosync.Stats{}, b.wait(ctx)
-}
-func (b *syncBlackhole) Checkpoint(ctx context.Context) error { return b.wait(ctx) }
+func (b *syncBlackhole) Append([]synclog.Entry) ([]synclog.Entry, error) { return nil, b.wait() }
+func (b *syncBlackhole) Pull(map[string]int) ([]synclog.Entry, error)    { return nil, b.wait() }
+func (b *syncBlackhole) Head(string) ([]synclog.HeadRow, error)          { return nil, b.wait() }
+func (b *syncBlackhole) Stats() (synclog.Stats, error)                   { return synclog.Stats{}, b.wait() }
 
 // syncLocal opens a machine-local file for a runner to write its markers into,
 // already carrying the marker that says sync is on.
@@ -87,7 +107,7 @@ func waitSyncIdle(t *testing.T, d *Daemon) {
 // sealableReader brings a bound reader round to the point where the daemon tick
 // seals it: the round is two behind and its stream is drained. It returns the
 // runtime with the sync seam already wired.
-func sealableReader(t *testing.T, client relevosync.SyncClient) Runtime {
+func sealableReader(t *testing.T, client synclog.LogTransport) Runtime {
 	t.Helper()
 	repo := readerRepo(t)
 	rt, b := bindReader(t, repo)
@@ -162,7 +182,7 @@ func TestSyncNeverBlocksSeal(t *testing.T) {
 func TestSyncSealOpensNoHandle(t *testing.T) {
 	t.Parallel()
 
-	f := &relevosync.Fake{}
+	f := &recordTransport{}
 	rt := sealableReader(t, f)
 	d := NewDaemon(rt, time.Second)
 
@@ -189,7 +209,7 @@ func TestSyncSealIsQuietWhenItSealedNothing(t *testing.T) {
 
 	repo := readerRepo(t)
 	rt, _ := bindReader(t, repo)
-	f := &relevosync.Fake{}
+	f := &recordTransport{}
 	local := syncLocal(t)
 	rt.Sync = &relevosync.Runner{Client: f, Local: local}
 
@@ -214,19 +234,19 @@ func TestSyncIdleTickIsAReachableNoOp(t *testing.T) {
 
 	for _, tc := range []struct {
 		name  string
-		build func(t *testing.T) (*Daemon, *relevosync.Fake, relevosync.Local)
+		build func(t *testing.T) (*Daemon, *recordTransport, relevosync.Local)
 	}{
 		{
 			name: "a runtime with a client behind the seam",
-			build: func(t *testing.T) (*Daemon, *relevosync.Fake, relevosync.Local) {
-				f := &relevosync.Fake{}
+			build: func(t *testing.T) (*Daemon, *recordTransport, relevosync.Local) {
+				f := &recordTransport{}
 				local := syncLocal(t)
 				return NewDaemon(Runtime{Sync: &relevosync.Runner{Client: f, Local: local}}, time.Second), f, local
 			},
 		},
 		{
 			name: "a runtime with no seam at all",
-			build: func(*testing.T) (*Daemon, *relevosync.Fake, relevosync.Local) {
+			build: func(*testing.T) (*Daemon, *recordTransport, relevosync.Local) {
 				return NewDaemon(Runtime{}, time.Second), nil, nil
 			},
 		},
@@ -257,13 +277,13 @@ func TestSyncIdleTickIsAReachableNoOp(t *testing.T) {
 func TestSyncTickWithVerbsOpensNoHandle(t *testing.T) {
 	t.Parallel()
 
-	f := &relevosync.Fake{}
+	f := &recordTransport{}
 	local := syncLocal(t)
 	opens := 0
 	runner := &VerbRunner{
 		Local: local,
 		Path:  filepath.Join(t.TempDir(), "relevo.db"),
-		Open: func(context.Context, relevosync.OpenConfig) (relevosync.SyncClient, error) {
+		Open: func(context.Context) (synclog.LogTransport, error) {
 			opens++
 			return f, nil
 		},
@@ -290,7 +310,7 @@ func TestSyncDoesNotChangeTheSealStore(t *testing.T) {
 	t.Parallel()
 
 	sealedWithout := sealAndCount(t, nil)
-	sealedWith := sealAndCount(t, &relevosync.Fake{})
+	sealedWith := sealAndCount(t, &recordTransport{})
 
 	if sealedWithout != sealedWith {
 		t.Errorf("files sealed without a sync seam = %d, with one = %d", sealedWithout, sealedWith)
@@ -302,7 +322,7 @@ func TestSyncDoesNotChangeTheSealStore(t *testing.T) {
 
 // sealAndCount runs one tick over a sealable round and returns how many files
 // the seal moved into the database.
-func sealAndCount(t *testing.T, client relevosync.SyncClient) int {
+func sealAndCount(t *testing.T, client synclog.LogTransport) int {
 	t.Helper()
 	repo := readerRepo(t)
 	rt, b := bindReader(t, repo)
