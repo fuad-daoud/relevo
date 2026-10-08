@@ -1,0 +1,267 @@
+package synclog
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/db"
+)
+
+// The reconciler's contract is the batch it hands the log when the log and the
+// file disagree: every row this machine owns whose body the log does not already
+// carry, parents first, and every row the log carries for this machine that the
+// file no longer holds, children first. A run that finds nothing appends
+// nothing.
+//
+// The cases run against a real file and the same fake the exporter and importer
+// use, so a head a reconcile reads is a head the transport really maintains.
+
+func TestReconcileEmitsOnlyDifferences(t *testing.T) {
+	t.Parallel()
+	d, path := exporterFile(t, "m1")
+	seed(t, path,
+		insertBinding("01A", "m1"),
+		insertRound("02A", "01A"),
+		insertBinding("01B", "m1"),
+	)
+
+	// An empty log against a populated file proposes every owned row. The
+	// parents-first order is what an importer needs: the round names a binding
+	// the same batch carries, and the foreign keys are on.
+	first := &recording{MemTransport: NewMemTransport("m1")}
+	got, err := reconciler(d, first).Reconcile()
+	if err != nil {
+		t.Fatalf("reconcile against an empty log: %v", err)
+	}
+	if got.Batches != 1 || got.Upserts != 3 || got.Deletes != 0 {
+		t.Fatalf("reconcile = %+v, want one batch of three upserts", got)
+	}
+	if shape := first.shape(); shape != `binding ["01A"] upsert|binding ["01B"] upsert|round ["02A"] upsert` {
+		t.Fatalf("appended = %q, want both bindings ahead of the round", shape)
+	}
+
+	// A second run finds nothing: every row's body hash is what the first run
+	// wrote into head. A reconcile that re-proposed unchanged rows would append
+	// the same batch forever, and every importer would pay for it.
+	second := &recording{MemTransport: first.MemTransport}
+	again, err := reconciler(d, second).Reconcile()
+	if err != nil {
+		t.Fatalf("reconcile the unchanged file: %v", err)
+	}
+	if again.Batches != 0 || again.Upserts != 0 || again.Deletes != 0 {
+		t.Fatalf("reconcile = %+v, want nothing appended for a file head already carries", again)
+	}
+	if shape := second.shape(); shape != "" {
+		t.Fatalf("appended %q on the second run, want nothing", shape)
+	}
+}
+
+// A row that changed and a row that appeared are the two differences a run
+// after a converged one can find, and each is proposed once: the changed row as
+// an upsert and the vanished one as a delete, children before parents so the
+// importer's foreign keys hold.
+func TestReconcileEmitsOneDeleteAndOneUpsertAfterTheChange(t *testing.T) {
+	t.Parallel()
+	d, path := exporterFile(t, "m1")
+	seed(t, path,
+		insertBinding("01A", "m1"),
+		insertBinding("01B", "m1"),
+		insertBinding("01C", "m1"),
+		insertRound("02A", "01C"),
+	)
+
+	log := NewMemTransport("m1")
+	settled := &recording{MemTransport: log}
+	if _, err := reconciler(d, settled).Reconcile(); err != nil {
+		t.Fatalf("reconcile the settled file: %v", err)
+	}
+
+	seed(t, path,
+		`UPDATE binding SET cwd = '/moved' WHERE id = '01B'`,
+		`DELETE FROM binding WHERE id = '01A'`,
+	)
+
+	changed := &recording{MemTransport: log}
+	got, err := reconciler(d, changed).Reconcile()
+	if err != nil {
+		t.Fatalf("reconcile after the change: %v", err)
+	}
+	if got.Batches != 1 || got.Upserts != 1 || got.Deletes != 1 {
+		t.Fatalf("reconcile = %+v, want one upsert and one delete", got)
+	}
+	// The round and the binding it names are both untouched, so neither is a
+	// difference: only the changed row and the removed one are, and the upsert
+	// leads the batch because a parent is written before a removal.
+	if shape := changed.shape(); shape != `binding ["01B"] upsert|binding ["01A"] delete` {
+		t.Fatalf("appended = %q, want the changed binding and the removed one", shape)
+	}
+	body, err := DecodeBody(changed.appended()[0].Body)
+	if err != nil {
+		t.Fatalf("read the appended body: %v", err)
+	}
+	if body["cwd"] != "/moved" {
+		t.Fatalf("appended cwd = %v, want the value the row holds now", body["cwd"])
+	}
+}
+
+// The outbox and head answer different questions, so reconcile is not redundant
+// with an export: a file whose writes were exported before the log knew about
+// them proposes them anyway. Here the outbox is emptied first, so anything
+// reconcile emits came from head's side of the comparison rather than from a
+// pending write.
+func TestReconcileProposesRowsTheOutboxNoLongerHolds(t *testing.T) {
+	t.Parallel()
+	d, path := exporterFile(t, "m1")
+	seed(t, path, insertBinding("01A", "m1"))
+	if _, err := exporter(d, &recording{MemTransport: NewMemTransport("m1")}).Export(); err != nil {
+		t.Fatalf("export through a log of its own: %v", err)
+	}
+	if out := outboxRows(t, d); out != "" {
+		t.Fatalf("outbox after the export = %q, want it empty", out)
+	}
+
+	// The log this machine reaches holds nothing of its own, so the row is a row
+	// it owns that the log has never heard of. The outbox cannot say so: it is
+	// empty, and an export would propose nothing.
+	fresh := &recording{MemTransport: NewMemTransport("m1")}
+	got, err := reconciler(d, fresh).Reconcile()
+	if err != nil {
+		t.Fatalf("reconcile with an empty outbox: %v", err)
+	}
+	if got.Upserts != 1 {
+		t.Fatalf("reconcile = %+v, want the one owned row the outbox no longer holds", got)
+	}
+	if shape := fresh.shape(); shape != `binding ["01A"] upsert` {
+		t.Fatalf("appended = %q, want the binding the outbox had cleared", shape)
+	}
+}
+
+// A run stops at the chunk size and is finished by the next one, so a file with
+// more rows than one batch carries emits them all without any batch being split
+// mid-way. The order across the batches is the same as a single batch's, which is
+// what lets an importer apply them in sequence.
+func TestReconcileChunksBeyondOneBatch(t *testing.T) {
+	t.Parallel()
+	d, path := exporterFile(t, "m1")
+	for _, id := range []string{"01A", "01B", "01C", "01D", "01E"} {
+		seed(t, path, insertBinding(id, "m1"))
+	}
+
+	r := &recording{MemTransport: NewMemTransport("m1")}
+	e := reconciler(d, r)
+	e.chunk = 2
+	got, err := e.Reconcile()
+	if err != nil {
+		t.Fatalf("reconcile in chunks: %v", err)
+	}
+	if got.Batches != 3 || got.Upserts != 5 {
+		t.Fatalf("reconcile = %+v, want five upserts across three appends", got)
+	}
+	if sizes := batchSizes(r); sizes != "2,2,1" {
+		t.Fatalf("batch sizes = %q, want 2,2,1", sizes)
+	}
+	// Every entry of one append carries that append's number, so a reader can
+	// apply a batch whole.
+	for _, batch := range r.batches {
+		for _, e := range batch {
+			if e.Batch != batch[0].Batch {
+				t.Fatalf("a batch mixes batch numbers %d and %d, want one per append",
+					batch[0].Batch, e.Batch)
+			}
+		}
+	}
+}
+
+// batchSizes is each recorded batch's length, joined, so a case can say how the
+// differences were divided rather than only how many there were.
+func batchSizes(r *recording) string {
+	var out []string
+	for _, batch := range r.batches {
+		out = append(out, itoa(len(batch)))
+	}
+	return strings.Join(out, ",")
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var digits []byte
+	for n > 0 {
+		digits = append([]byte{byte('0' + n%10)}, digits...)
+		n /= 10
+	}
+	return string(digits)
+}
+
+// A row another installation owns is not this machine's to propose, so a
+// reconcile of a file holding one proposes nothing for it. The same shape the
+// exporter skips is skipped here, which is what stops an imported row from
+// echoing back across the log through the other path.
+func TestReconcileSkipsRowsAnotherInstallationOwns(t *testing.T) {
+	t.Parallel()
+	d, path := exporterFile(t, "m1")
+	seed(t, path,
+		insertBinding("01A", "m2"),
+		insertBinding("01B", "m1"),
+	)
+
+	r := &recording{MemTransport: NewMemTransport("m1")}
+	got, err := reconciler(d, r).Reconcile()
+	if err != nil {
+		t.Fatalf("reconcile a file holding a foreign row: %v", err)
+	}
+	if got.Upserts != 1 {
+		t.Fatalf("reconcile = %+v, want only this machine's own binding", got)
+	}
+	if shape := r.shape(); shape != `binding ["01B"] upsert` {
+		t.Fatalf("appended = %q, want the other machine's binding left alone", shape)
+	}
+}
+
+// A head row this file no longer holds is a delete, and the deletes of one batch
+// run children first: a child removed ahead of the parent it hangs off is the
+// order the foreign keys of the original tables require, since a parent removed
+// first would have the child's delete refused.
+func TestReconcileOrdersDeletesChildrenFirst(t *testing.T) {
+	t.Parallel()
+	d, path := exporterFile(t, "m1")
+	seed(t, path,
+		insertBinding("01A", "m1"),
+		insertRound("02A", "01A"),
+	)
+
+	log := NewMemTransport("m1")
+	if _, err := reconciler(d, &recording{MemTransport: log}).Reconcile(); err != nil {
+		t.Fatalf("reconcile the settled file: %v", err)
+	}
+
+	// Both rows go, and the round's removal has to reach the log before the
+	// binding's: an importer removing the binding first is refused by the very
+	// foreign key the round still holds it under.
+	seed(t, path,
+		`DELETE FROM round WHERE id = '02A'`,
+		`DELETE FROM binding WHERE id = '01A'`,
+	)
+
+	r := &recording{MemTransport: log}
+	got, err := reconciler(d, r).Reconcile()
+	if err != nil {
+		t.Fatalf("reconcile after both removals: %v", err)
+	}
+	if got.Deletes != 2 || got.Upserts != 0 {
+		t.Fatalf("reconcile = %+v, want two deletes and nothing else", got)
+	}
+	if shape := r.shape(); shape != `round ["02A"] delete|binding ["01A"] delete` {
+		t.Fatalf("appended = %q, want the round removed before the binding", shape)
+	}
+}
+
+// reconciler returns a reconciler over d writing to the given log, with the clock
+// fixed so an entry's timestamp is a value rather than the moment the test
+// happened to run.
+func reconciler(d *db.DB, t LogTransport) *Reconciler {
+	e := NewReconciler(d, t)
+	e.now = syncClock
+	return e
+}
