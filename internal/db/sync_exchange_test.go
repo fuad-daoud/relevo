@@ -145,32 +145,47 @@ func TestImportMarkThroughTheSeam(t *testing.T) {
 	}
 }
 
-// sharedRowFixture writes one row into every shared table, with a BLOB whose
-// bytes are not text, so a row read has to return the stored bytes rather than a
-// rendering of them. It returns each row's primary key in the outbox's spelling.
+// seededSharedKeys is one seeded row per shared table, each with its primary key
+// in the outbox's json_array spelling. It covers every entry of SharedTables, so
+// a table added to that list without a row here is a compile-time mismatch rather
+// than a silent gap in what the exchange tests read.
+var seededSharedKeys = []struct {
+	tbl string
+	pk  string
+}{
+	{"repo", `["r1"]`},
+	{"mastermind", `["m1"]`},
+	{"binding_record", `["rec1"]`},
+	{"installation", `["instI"]`},
+	{"binding", `["b1"]`},
+	{"chains", `["c1"]`},
+	{"binding_event", `["rec1",1]`},
+	{"round_file", `["rec1","report.md"]`},
+	{"chain_event", `["c1",1]`},
+	{"chain_member", `["c1","b1"]`},
+	{"chain_check", `["c1",1]`},
+	{"round", `["rd1"]`},
+	{"event", `["e1"]`},
+	{"artifact", `["a1"]`},
+	{"transcript", `["t1"]`},
+}
+
+// sharedRowFixture writes the row each entry of seededSharedKeys names, with BLOB
+// columns whose bytes are not text, so a row read has to return the stored bytes
+// rather than a rendering of them.
 func sharedRowFixture(t *testing.T, d *DB) map[string]string {
 	t.Helper()
-	keys := map[string]string{
-		"repo":           `["r1"]`,
-		"mastermind":     `["m1"]`,
-		"binding_record": `["rec1"]`,
-		"installation":   `["instI"]`,
-		"binding":        `["b1"]`,
-		"chains":         `["c1"]`,
-		"binding_event":  `["rec1",1]`,
-		"round_file":     `["rec1","report.md"]`,
-		"chain_event":    `["c1",1]`,
-		"chain_member":   `["c1","b1"]`,
-		"chain_check":    `["c1",1]`,
-		"round":          `["rd1"]`,
-		"event":          `["e1"]`,
-		"artifact":       `["a1"]`,
-		"transcript":     `["t1"]`,
+	if len(seededSharedKeys) != len(SharedTables) {
+		t.Fatalf("the fixture seeds %d rows for %d shared tables", len(seededSharedKeys), len(SharedTables))
 	}
 	if err := d.Tx(func(t *Tx) error {
 		return execTxAll(t, seedSharedRows()...)
 	}); err != nil {
 		t.Fatalf("seed one row per shared table: %v", err)
+	}
+	keys := make(map[string]string, len(seededSharedKeys))
+	for _, k := range seededSharedKeys {
+		keys[k.tbl] = k.pk
 	}
 	return keys
 }
@@ -324,98 +339,126 @@ func TestOutboxDrainIsOneSnapshot(t *testing.T) {
 
 // TestExchangeRowReadCoversSharedTables pins that every shared table can be read
 // by primary key: the row comes back with every column the schema declares, in
-// schema order, and a BLOB column comes back as the bytes on disk rather than as
-// text. A compressed body read as its decompressed rendering would let a
-// re-export write bytes the other machine never held.
+// schema order, and each value in the type the file holds it as. A compressed
+// body read as its decompressed rendering would let a re-export write bytes the
+// other machine never held.
 func TestExchangeRowReadCoversSharedTables(t *testing.T) {
 	d := openTestDB(t)
 	keys := sharedRowFixture(t, d)
 
-	for _, table := range SharedTables {
-		row, found, err := d.ReadExchangeRow(table.Name, keys[table.Name])
-		if err != nil {
-			t.Errorf("read %s %s: %v", table.Name, keys[table.Name], err)
-			continue
+	t.Run("every shared table reads its seeded row in schema order", func(t *testing.T) {
+		for _, table := range SharedTables {
+			wantSchemaColumns(t, d, table, keys[table.Name])
 		}
-		if !found {
-			t.Errorf("%s %s reads as absent, want the seeded row", table.Name, keys[table.Name])
-			continue
-		}
-		want := tableColumnNames(t, d, table.Name)
-		got := make([]string, len(row.Columns))
-		for i, c := range row.Columns {
-			got[i] = c.Name
-		}
-		if len(got) != len(want) {
-			t.Errorf("%s returns %d columns, want the schema's %d", table.Name, len(got), len(want))
-			continue
-		}
-		for i := range got {
-			if got[i] != want[i] {
-				t.Errorf("%s column %d is %s, want %s: the read must follow schema order", table.Name, i, got[i], want[i])
-			}
-		}
-	}
+	})
 
-	// The three codec-tagged columns and their bodies are stored bytes, and the
-	// read must hand back those bytes rather than a text rendering.
-	rowFile, _, err := d.ReadExchangeRow("round_file", `["rec1","report.md"]`)
-	if err != nil {
-		t.Fatalf("read round_file: %v", err)
-	}
-	if got := exchangeColumn(t, rowFile, "body"); !bytes.Equal(got.([]byte), []byte{0x00, 0x28, 0xB8, 0x0B, 0xFD, 0xFF, 0xFF}) {
-		t.Errorf("round_file body reads %#v, want the stored bytes", got)
-	}
-	if got := exchangeColumn(t, rowFile, "body_codec"); got != int64(1) {
-		t.Errorf("round_file body_codec reads %#v, want the integer 1", got)
-	}
+	t.Run("a compressed body reads as its stored bytes", func(t *testing.T) {
+		wantBytes(t, d, "round_file", `["rec1","report.md"]`, "body", []byte{0x00, 0x28, 0xB8, 0x0B, 0xFD, 0xFF, 0xFF})
+		wantInteger(t, d, "round_file", `["rec1","report.md"]`, "body_codec", 1)
 
-	rowTranscript, _, err := d.ReadExchangeRow("transcript", `["t1"]`)
-	if err != nil {
-		t.Fatalf("read transcript: %v", err)
-	}
-	if got := exchangeColumn(t, rowTranscript, "record_json"); !bytes.Equal(got.([]byte), []byte{0x7B, 0x7D, 0xFF}) {
-		t.Errorf("transcript record_json reads %#v, want the stored bytes", got)
-	}
-	if got := exchangeColumn(t, rowTranscript, "rendered"); !bytes.Equal(got.([]byte), []byte{0x0A, 0x1B}) {
-		t.Errorf("transcript rendered reads %#v, want the stored bytes", got)
-	}
-	if got := exchangeColumn(t, rowTranscript, "record_json_codec"); got != int64(1) {
-		t.Errorf("transcript record_json_codec reads %#v, want the integer 1", got)
-	}
+		wantBytes(t, d, "transcript", `["t1"]`, "record_json", []byte{0x7B, 0x7D, 0xFF})
+		wantBytes(t, d, "transcript", `["t1"]`, "rendered", []byte{0x0A, 0x1B})
+		wantInteger(t, d, "transcript", `["t1"]`, "record_json_codec", 1)
+		wantInteger(t, d, "transcript", `["t1"]`, "rendered_codec", 1)
+	})
 
-	// A NULL column stays a nil rather than becoming an empty string, because
-	// the two mean different things to a writer replaying the row.
-	rowChain, _, err := d.ReadExchangeRow("chains", `["c1"]`)
-	if err != nil {
-		t.Fatalf("read chains: %v", err)
-	}
-	if got := exchangeColumn(t, rowChain, "plan"); got != int64(1) {
-		t.Errorf("an INTEGER column reads %#v, want the integer 1", got)
-	}
-	rowBinding, _, err := d.ReadExchangeRow("binding", `["b1"]`)
-	if err != nil {
-		t.Fatalf("read binding: %v", err)
-	}
-	if got := exchangeColumn(t, rowBinding, "archived_at"); got != nil {
-		t.Errorf("a NULL column reads %#v, want nil", got)
-	}
+	t.Run("an integer stays an integer and a NULL stays a NULL", func(t *testing.T) {
+		// A NULL has to stay distinguishable from an empty string: the two mean
+		// different things to a writer replaying the row.
+		wantInteger(t, d, "chains", `["c1"]`, "plan", 1)
+		wantValue(t, d, "binding", `["b1"]`, "archived_at", nil)
+	})
 
-	// A key the table does not have reads as absent rather than as a row.
-	if _, found, err := d.ReadExchangeRow("repo", `["nope"]`); err != nil {
-		t.Errorf("read a key with no row: %v", err)
-	} else if found {
-		t.Error("a key with no row reads as present")
+	t.Run("a key that names no row or is not a shared key is refused", func(t *testing.T) {
+		if _, found, err := d.ReadExchangeRow("repo", `["nope"]`); err != nil {
+			t.Errorf("read a key with no row: %v", err)
+		} else if found {
+			t.Error("a key with no row reads as present")
+		}
+		if _, _, err := d.ReadExchangeRow("kv", `["probe"]`); !errors.Is(err, ErrInvalid) {
+			t.Errorf("reading a table that does not share gives %v, want ErrInvalid", err)
+		}
+		if _, _, err := d.ReadExchangeRow("repo", `not json`); !errors.Is(err, ErrInvalid) {
+			t.Errorf("reading a key that is not JSON gives %v, want ErrInvalid", err)
+		}
+		if _, _, err := d.ReadExchangeRow("chain_event", `["c1"]`); !errors.Is(err, ErrInvalid) {
+			t.Errorf("a key with too few values gives %v, want ErrInvalid", err)
+		}
+	})
+}
+
+// wantSchemaColumns asserts that reading a shared table's seeded row returns
+// exactly the columns the schema declares, in the order it declares them. A read
+// that named its own columns instead would drop a column a migration had added
+// and would export the row without it.
+func wantSchemaColumns(t *testing.T, d *DB, table SharedTable, pk string) {
+	t.Helper()
+	row, found, err := d.ReadExchangeRow(table.Name, pk)
+	if err != nil {
+		t.Errorf("read %s %s: %v", table.Name, pk, err)
+		return
 	}
-	if _, _, err := d.ReadExchangeRow("kv", `["probe"]`); !errors.Is(err, ErrInvalid) {
-		t.Errorf("reading a table that does not share gives %v, want ErrInvalid", err)
+	if !found {
+		t.Errorf("%s %s reads as absent, want the seeded row", table.Name, pk)
+		return
 	}
-	if _, _, err := d.ReadExchangeRow("repo", `not json`); !errors.Is(err, ErrInvalid) {
-		t.Errorf("reading a key that is not JSON gives %v, want ErrInvalid", err)
+	want := tableColumnNames(t, d, table.Name)
+	if len(row.Columns) != len(want) {
+		t.Errorf("%s returns %d columns, want the schema's %d", table.Name, len(row.Columns), len(want))
+		return
 	}
-	if _, _, err := d.ReadExchangeRow("chain_event", `["c1"]`); !errors.Is(err, ErrInvalid) {
-		t.Errorf("a key with too few values gives %v, want ErrInvalid", err)
+	for i, col := range row.Columns {
+		if col.Name != want[i] {
+			t.Errorf("%s column %d is %s, want %s: the read must follow schema order", table.Name, i, col.Name, want[i])
+		}
 	}
+}
+
+// wantBytes asserts that one column reads back as exactly these bytes, which is
+// what a BLOB column holds on disk.
+func wantBytes(t *testing.T, d *DB, tbl, pk, column string, want []byte) {
+	t.Helper()
+	got := readExchangeColumn(t, d, tbl, pk, column)
+	blob, isBlob := got.([]byte)
+	if !isBlob {
+		t.Errorf("%s.%s reads %#v of type %T, want the stored bytes %v", tbl, column, got, got, want)
+		return
+	}
+	if !bytes.Equal(blob, want) {
+		t.Errorf("%s.%s reads %#v, want the stored bytes %#v", tbl, column, blob, want)
+	}
+}
+
+// wantInteger asserts that one column reads back as an integer rather than as
+// text or a float, so a consumer can tell a count from a label.
+func wantInteger(t *testing.T, d *DB, tbl, pk, column string, want int64) {
+	t.Helper()
+	got := readExchangeColumn(t, d, tbl, pk, column)
+	if got != want {
+		t.Errorf("%s.%s reads %#v of type %T, want the integer %d", tbl, column, got, got, want)
+	}
+}
+
+// wantValue asserts that one column reads back as exactly this value, which is
+// how a NULL is pinned: nil rather than an empty string.
+func wantValue(t *testing.T, d *DB, tbl, pk, column string, want any) {
+	t.Helper()
+	if got := readExchangeColumn(t, d, tbl, pk, column); got != want {
+		t.Errorf("%s.%s reads %#v, want %#v", tbl, column, got, want)
+	}
+}
+
+// readExchangeColumn reads one row and returns one of its columns' values.
+func readExchangeColumn(t *testing.T, d *DB, tbl, pk, column string) any {
+	t.Helper()
+	row, found, err := d.ReadExchangeRow(tbl, pk)
+	if err != nil {
+		t.Fatalf("read %s %s: %v", tbl, pk, err)
+	}
+	if !found {
+		t.Fatalf("%s %s reads as absent, want the seeded row", tbl, pk)
+	}
+	return exchangeColumn(t, row, column)
 }
 
 // findDrained returns the entry naming tbl and pk, and fails the test when no
@@ -514,52 +557,29 @@ func TestOwnerResolutionMatchesTriggers(t *testing.T) {
 	}
 }
 
-// TestResolveOwnerFindsTheOwningInstallation pins that the rules resolve against
+// TestResolveOwnerAttributesEachRowToItsRoot pins that the rules resolve against
 // the rows themselves, not just that they read like the triggers: every child
-// resolves to the origin of the root that owns it, and a row whose parent is
-// gone resolves to no owner rather than to a neighbouring root's.
-func TestResolveOwnerFindsTheOwningInstallation(t *testing.T) {
+// resolves to the origin of the root that owns it. The origins are distinct
+// precisely so that reading an owner from the wrong table is visible here.
+func TestResolveOwnerAttributesEachRowToItsRoot(t *testing.T) {
 	d := openTestDB(t)
 	sharedRowFixture(t, d)
 
-	cases := []struct {
-		tbl string
-		pk  string
-	}{
-		{"repo", `["r1"]`},
-		{"mastermind", `["m1"]`},
-		{"binding_record", `["rec1"]`},
-		{"installation", `["instI"]`},
-		{"binding", `["b1"]`},
-		{"chains", `["c1"]`},
-		{"binding_event", `["rec1",1]`},
-		{"round_file", `["rec1","report.md"]`},
-		{"chain_event", `["c1",1]`},
-		{"chain_member", `["c1","b1"]`},
-		{"chain_check", `["c1",1]`},
-		{"round", `["rd1"]`},
-		{"event", `["e1"]`},
-		{"artifact", `["a1"]`},
-		{"transcript", `["t1"]`},
-	}
-	for _, c := range cases {
-		owner, found, err := d.ResolveOwner(c.tbl, c.pk)
+	for _, key := range seededSharedKeys {
+		owner, found, err := d.ResolveOwner(key.tbl, key.pk)
 		if err != nil {
-			t.Errorf("resolve the owner of %s %s: %v", c.tbl, c.pk, err)
+			t.Errorf("resolve the owner of %s %s: %v", key.tbl, key.pk, err)
 			continue
 		}
 		if !found {
-			t.Errorf("%s %s resolves to no owner, want the origin its parent carries", c.tbl, c.pk)
+			t.Errorf("%s %s resolves to no owner, want the origin its parent carries", key.tbl, key.pk)
 			continue
 		}
 		if !strings.HasPrefix(owner, "inst") {
-			t.Errorf("%s %s resolves to %q, which is not an installation id", c.tbl, c.pk, owner)
+			t.Errorf("%s %s resolves to %q, which is not an installation id", key.tbl, key.pk, owner)
 		}
 	}
 
-	// Each child resolves to its own parent's origin, not to a root that merely
-	// shares its shape: the origins are distinct precisely so that reading an
-	// owner from the wrong table is visible.
 	for _, c := range []struct{ tbl, pk, want string }{
 		{"binding_event", `["rec1",1]`, bindingRecordOrigin},
 		{"round_file", `["rec1","report.md"]`, bindingRecordOrigin},
@@ -570,6 +590,13 @@ func TestResolveOwnerFindsTheOwningInstallation(t *testing.T) {
 		{"event", `["e1"]`, bindingOrigin},
 		{"artifact", `["a1"]`, bindingOrigin},
 		{"transcript", `["t1"]`, bindingOrigin},
+		{"repo", `["r1"]`, repoOrigin},
+		{"mastermind", `["m1"]`, mastermindOrigin},
+		{"binding_record", `["rec1"]`, bindingRecordOrigin},
+		{"binding", `["b1"]`, bindingOrigin},
+		{"chains", `["c1"]`, chainsOrigin},
+		// An installation's id is its own installation id, so its row names
+		// itself rather than reading an origin column.
 		{"installation", `["instI"]`, installationID},
 	} {
 		got, found, err := d.ResolveOwner(c.tbl, c.pk)
@@ -577,42 +604,29 @@ func TestResolveOwnerFindsTheOwningInstallation(t *testing.T) {
 			t.Errorf("%s %s resolves to (%q, %t, %v), want (%s, true, nil)", c.tbl, c.pk, got, found, err, c.want)
 		}
 	}
+}
 
-	// A transcript owned by a mastermind resolves to that session's origin, and
-	// a kind this build does not write resolves to no owner at all rather than
-	// to whichever root happens to share the id.
-	if err := d.Tx(func(tx *Tx) error {
-		_, err := tx.exec(`INSERT INTO transcript (id, owner_kind, owner_id, seq, record_json, rendered)
-			VALUES ('t2', 'mastermind', 'm1', 1, '{}', '')`)
-		return err
-	}); err != nil {
-		t.Fatalf("write a mastermind transcript: %v", err)
-	}
+// TestResolveOwnerRefusesToGuess pins the two cases where resolution has no
+// answer and must say so rather than pick the nearest plausible root: an
+// owner_kind this build does not write, and a row whose parent is already gone.
+// A transcript has no foreign key on its owner_id, so it is the one shared table
+// a row can outlive its parent in, and that row must read as unowned rather than
+// as owned by whichever root happens to share the id.
+func TestResolveOwnerRefusesToGuess(t *testing.T) {
+	d := openTestDB(t)
+	sharedRowFixture(t, d)
+
+	writeTranscript(t, d, "t2", "mastermind", "m1")
 	if got, found, err := d.ResolveOwner("transcript", `["t2"]`); err != nil || !found || got != mastermindOrigin {
 		t.Errorf("a mastermind transcript resolves to (%q, %t, %v), want (%s, true, nil)", got, found, err, mastermindOrigin)
 	}
-	if err := d.Tx(func(tx *Tx) error {
-		_, err := tx.exec(`INSERT INTO transcript (id, owner_kind, owner_id, seq, record_json, rendered)
-			VALUES ('t3', 'unknown_kind', 'm1', 1, '{}', '')`)
-		return err
-	}); err != nil {
-		t.Fatalf("write a transcript of an unknown kind: %v", err)
-	}
+
+	writeTranscript(t, d, "t3", "unknown_kind", "m1")
 	if _, found, err := d.ResolveOwner("transcript", `["t3"]`); err != nil || found {
 		t.Errorf("a transcript of an unknown kind resolves to (found=%t, %v), want (false, nil)", found, err)
 	}
 
-	// A row whose parent is gone has no owner to resolve to. A transcript has no
-	// foreign key on its owner_id, so it is the one shared table a row can
-	// outlive its parent in, and that row must read as unowned rather than as
-	// owned by whichever root happens to share the id.
-	if err := d.Tx(func(tx *Tx) error {
-		_, err := tx.exec(`INSERT INTO transcript (id, owner_kind, owner_id, seq, record_json, rendered)
-			VALUES ('t4', 'round', 'no_such_round', 1, '{}', '')`)
-		return err
-	}); err != nil {
-		t.Fatalf("write a transcript whose round is gone: %v", err)
-	}
+	writeTranscript(t, d, "t4", "round", "no_such_round")
 	if _, found, err := d.ResolveOwner("transcript", `["t4"]`); err != nil || found {
 		t.Errorf("a row whose parent is gone resolves to (found=%t, %v), want (false, nil)", found, err)
 	}
@@ -622,6 +636,19 @@ func TestResolveOwnerFindsTheOwningInstallation(t *testing.T) {
 	}
 	if _, _, err := d.ResolveOwner("kv", `["probe"]`); !errors.Is(err, ErrInvalid) {
 		t.Errorf("resolving a table that does not share gives %v, want ErrInvalid", err)
+	}
+}
+
+// writeTranscript adds one transcript row of the given owner kind.
+func writeTranscript(t *testing.T, d *DB, id, kind, ownerID string) {
+	t.Helper()
+	err := d.Tx(func(tx *Tx) error {
+		_, err := tx.exec(`INSERT INTO transcript (id, owner_kind, owner_id, seq, record_json, rendered)
+			VALUES (?, ?, ?, 1, '{}', '')`, id, kind, ownerID)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("write transcript %s of kind %s: %v", id, kind, err)
 	}
 }
 
