@@ -17,8 +17,8 @@ import (
 // under the lock, opened once in this function's caller. The hook runs every
 // verb against that pair, so a client asking for enable, push, pull or disable
 // never opens the file and never competes for the lock this process is holding.
-// A writer verb used to need the daemon stopped precisely because it wanted a
-// second direct open; there is no second open left to need that.
+// A writer verb opens nothing itself, so it needs no stop to free a second open
+// for it.
 //
 // Nothing here re-decides what a verb means: the hook is a VerbRunner, which is
 // the same value the cockpit's sync actions drive. Serializing it against the

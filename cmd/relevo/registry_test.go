@@ -40,7 +40,7 @@ var dispatchers = []dispatcher{
 // whose arms name a replacement instead of running something, plus ask, whose
 // arm says the same, and the verbs only the daemon runs, which are absent
 // from the usage text and the registry on purpose. The set is test-local
-// because the code no longer carries a map for them.
+// because the code carries no map for them.
 var removedCases = map[string]bool{
 	"ask":               true,
 	"config roles-init": true,
