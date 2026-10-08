@@ -461,3 +461,37 @@ func insertRound(id, bindingID string) string {
 	return fmt.Sprintf(`INSERT INTO round (id, binding_id, number, started_at, outcome, switches)
 		VALUES ('%s', '%s', 1, 't', 'done', 0)`, id, bindingID)
 }
+
+// insertEvent is a child of a round, which is itself a child of a binding, so it
+// names two parents by key. It is the deepest row the import cases hold, which is
+// what makes an order that writes parents late visible as a foreign-key refusal.
+func insertEvent(id, bindingID, roundID string, seq int) string {
+	return fmt.Sprintf(`INSERT INTO event (id, binding_id, round_id, seq, ts, kind, direction,
+		confirmed, late, entry_json)
+		VALUES ('%s', '%s', '%s', %d, 't', 'note', 'in', 1, 0, '{}')`, id, bindingID, roundID, seq)
+}
+
+// insertRecord is the root the CASCADE cases hang rows from: binding_event and
+// round_file both reference it and both cascade from it, so a removal of the
+// record takes them on the peer too.
+func insertRecord(id, origin string) string {
+	return fmt.Sprintf(`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json,
+		created_at, updated_at, origin)
+		VALUES ('%s', 'o', 'n', 'open', 1, '/z', '{}', 't', 't', '%s')`, id, origin)
+}
+
+// insertEvent writes one binding_event of a record, keyed by the record and its
+// own sequence.
+func insertRecordEvent(recordID string, seq int) string {
+	return fmt.Sprintf(`INSERT INTO binding_event (record_id, seq, ts, round, direction, kind,
+		confirmed, entry_json)
+		VALUES ('%s', %d, 't', 1, 'in', 'note', 1, '{}')`, recordID, seq)
+}
+
+// insertRoundFile writes one round_file of a record. The body is a BLOB, so a
+// case that carries one across also carries the codec column beside it and
+// proves the compressed bytes travel as stored rather than decompressed.
+func insertRoundFile(recordID, name string, round int) string {
+	return fmt.Sprintf(`INSERT INTO round_file (record_id, name, round, body, bytes, sha256, mtime, sealed_at)
+		VALUES ('%s', '%s', %d, X'0001', 1, 's', 't', 't')`, recordID, name, round)
+}
