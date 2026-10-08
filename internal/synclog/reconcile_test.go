@@ -328,7 +328,7 @@ func TestReconcileReadsBoundedPages(t *testing.T) {
 	e.chunk = 2
 	inner := e.readPage
 	reads := 0
-	e.readPage = func(tx *db.Tx, tbl, after string, limit int) ([]db.ExchangeRow, error) {
+	e.readPage = func(tx *db.Tx, tbl string, after int64, limit int) ([]db.ExchangeRow, error) {
 		if limit > e.chunk {
 			t.Errorf("a read asked for %d rows, want at most the page size %d", limit, e.chunk)
 		}
@@ -386,7 +386,7 @@ func TestReconcileInspectsEachRowOnce(t *testing.T) {
 	e.chunk = 2
 	inner := e.readPage
 	read := map[string]int{}
-	e.readPage = func(tx *db.Tx, tbl, after string, limit int) ([]db.ExchangeRow, error) {
+	e.readPage = func(tx *db.Tx, tbl string, after int64, limit int) ([]db.ExchangeRow, error) {
 		rows, err := inner(tx, tbl, after, limit)
 		if err != nil {
 			return nil, err

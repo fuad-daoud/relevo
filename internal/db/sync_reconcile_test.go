@@ -1,7 +1,9 @@
 package db
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -21,7 +23,7 @@ import (
 func ownedKeysOf(t *testing.T, d *DB, tbl, origin string) string {
 	t.Helper()
 	var out []string
-	after := ""
+	var after int64
 	for {
 		rows, err := d.SharedOwnedRowPage(tbl, origin, after, 2)
 		if err != nil {
@@ -33,7 +35,7 @@ func ownedKeysOf(t *testing.T, d *DB, tbl, origin string) string {
 		if len(rows) < 2 {
 			return strings.Join(out, ";")
 		}
-		after = rows[len(rows)-1].PK
+		after = rows[len(rows)-1].RowID
 	}
 }
 
@@ -131,7 +133,7 @@ func TestSharedOwnedRowPageReturnsStoredValues(t *testing.T) {
 	d := openTestDB(t)
 	sharedRowFixture(t, d)
 
-	rows, err := d.SharedOwnedRowPage("round_file", "instR", "", 100)
+	rows, err := d.SharedOwnedRowPage("round_file", "instR", 0, 100)
 	if err != nil {
 		t.Fatalf("SharedOwnedRowPage round_file: %v", err)
 	}
@@ -164,10 +166,10 @@ func TestSharedOwnedRowPageRefusesATableItCannotWalk(t *testing.T) {
 	d := openTestDB(t)
 	sharedRowFixture(t, d)
 
-	if _, err := d.SharedOwnedRowPage("sync_outbox", "instR", "", 10); !errors.Is(err, ErrInvalid) {
+	if _, err := d.SharedOwnedRowPage("sync_outbox", "instR", 0, 10); !errors.Is(err, ErrInvalid) {
 		t.Errorf("SharedOwnedRowPage on an unshared table = %v, want ErrInvalid", err)
 	}
-	if _, err := d.SharedOwnedRowPage("no_such_table", "instR", "", 10); !errors.Is(err, ErrInvalid) {
+	if _, err := d.SharedOwnedRowPage("no_such_table", "instR", 0, 10); !errors.Is(err, ErrInvalid) {
 		t.Errorf("SharedOwnedRowPage on an unknown table = %v, want ErrInvalid", err)
 	}
 }
@@ -192,14 +194,14 @@ func TestSharedOwnedRowPageBoundsTheRead(t *testing.T) {
 		t.Fatalf("seed three bindings: %v", err)
 	}
 
-	rows, err := d.SharedOwnedRowPage("binding", "instB", "", 2)
+	rows, err := d.SharedOwnedRowPage("binding", "instB", 0, 2)
 	if err != nil {
 		t.Fatalf("SharedOwnedRowPage: %v", err)
 	}
 	if len(rows) != 2 {
 		t.Fatalf("a page of two returned %d rows, want two", len(rows))
 	}
-	empty, err := d.SharedOwnedRowPage("binding", "instB", "", 0)
+	empty, err := d.SharedOwnedRowPage("binding", "instB", 0, 0)
 	if err != nil {
 		t.Fatalf("SharedOwnedRowPage with a zero page: %v", err)
 	}
@@ -208,8 +210,61 @@ func TestSharedOwnedRowPageBoundsTheRead(t *testing.T) {
 	}
 }
 
-// A later page starts after the key the previous one ended on, so a walk sees
-// each row once and neither repeats a row nor skips one. The cursor is the key
+// A page reads only the rows its own statement walks: the plan for a page's
+// SELECT uses the table's rowid order and stops at the page rather than sorting
+// every row -- bodies included -- to answer an order on the key expression. A
+// plan that carried a temporary B-tree for the order would be the whole-table
+// sort that paging by rowid exists to avoid.
+func TestSharedOwnedRowPageReadsOnlyItsOwnRows(t *testing.T) {
+	t.Parallel()
+	d := openTestDB(t)
+	sharedRowFixture(t, d)
+
+	shared := sharedTable("binding")
+	if shared == nil {
+		t.Fatal("binding is not a shared table")
+	}
+	columns, err := exchangeColumns(context.Background(), d.sqlDB, "binding")
+	if err != nil {
+		t.Fatalf("exchangeColumns: %v", err)
+	}
+	query, args := ownedRowPageQuery(*shared, OwnerRules["binding"], columns, "instB", 0, 2)
+
+	rows, err := d.sqlDB.QueryContext(context.Background(), "EXPLAIN QUERY PLAN "+query, args...)
+	if err != nil {
+		t.Fatalf("explain the page query: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	names, err := rows.Columns()
+	if err != nil {
+		t.Fatalf("plan columns: %v", err)
+	}
+	var plan []string
+	for rows.Next() {
+		values := make([]any, len(names))
+		dest := make([]any, len(names))
+		for i := range values {
+			dest[i] = &values[i]
+		}
+		if err := rows.Scan(dest...); err != nil {
+			t.Fatalf("scan the plan: %v", err)
+		}
+		plan = append(plan, fmt.Sprint(values[len(values)-1]))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read the plan: %v", err)
+	}
+	joined := strings.Join(plan, "\n")
+	if !strings.Contains(joined, "binding") {
+		t.Fatalf("the page's plan does not walk the table:\n%s", joined)
+	}
+	if strings.Contains(joined, "SORTER") || strings.Contains(joined, "B-TREE") {
+		t.Errorf("a page sorts every row to answer its order:\n%s", joined)
+	}
+}
+
+// A later page starts after the rowid the previous one ended on, so a walk sees
+// each row once and neither repeats a row nor skips one. The cursor is the rowid
 // itself rather than an offset, so a write between two pages cannot shift a row
 // across the boundary.
 func TestSharedOwnedRowPageContinuesAfterTheCursor(t *testing.T) {
@@ -229,14 +284,14 @@ func TestSharedOwnedRowPageContinuesAfterTheCursor(t *testing.T) {
 		t.Fatalf("seed three bindings: %v", err)
 	}
 
-	first, err := d.SharedOwnedRowPage("binding", "instB", "", 2)
+	first, err := d.SharedOwnedRowPage("binding", "instB", 0, 2)
 	if err != nil {
 		t.Fatalf("SharedOwnedRowPage: %v", err)
 	}
 	if got := keysOfRows(first); got != `["b1"];["b2"]` {
 		t.Fatalf("the first page = %q, want the two lowest keys", got)
 	}
-	second, err := d.SharedOwnedRowPage("binding", "instB", first[len(first)-1].PK, 2)
+	second, err := d.SharedOwnedRowPage("binding", "instB", first[len(first)-1].RowID, 2)
 	if err != nil {
 		t.Fatalf("SharedOwnedRowPage after the cursor: %v", err)
 	}
@@ -254,11 +309,11 @@ func keysOfRows(rows []ExchangeRow) string {
 	return strings.Join(out, ";")
 }
 
-// Both rows of the same table under one owner come back in key order and a row
-// under another owner is left out. The order is what makes a walk's output a
-// sequence rather than a set: two rows of one table reaching an importer in
-// either order still apply, but the walk's own output should not depend on the
-// order the query engine happened to return them in.
+// Both rows of the same table under one owner come back in the table's rowid
+// order and a row under another owner is left out. The order is what makes a
+// walk's output a sequence rather than a set: two rows of one table reaching an
+// importer in either order still apply, but the walk's own output should not
+// depend on the order the query engine happened to return them in.
 func TestSharedOwnedRowPageOrdersAndExcludesForeignRows(t *testing.T) {
 	t.Parallel()
 	d := openTestDB(t)
@@ -278,8 +333,8 @@ func TestSharedOwnedRowPageOrdersAndExcludesForeignRows(t *testing.T) {
 		t.Fatalf("seed three more bindings: %v", err)
 	}
 
-	if got := ownedKeysOf(t, d, "binding", "instB"); got != `["b0"];["b1"];["b2"]` {
-		t.Errorf("instB's bindings = %q, want its three in key order and the other installation's left out", got)
+	if got := ownedKeysOf(t, d, "binding", "instB"); got != `["b1"];["b2"];["b0"]` {
+		t.Errorf("instB's bindings = %q, want its three in rowid order and the other installation's left out", got)
 	}
 	if got := ownedKeysOf(t, d, "binding", "instZ"); got != `["b3"]` {
 		t.Errorf("instZ's bindings = %q, want only its own", got)
@@ -296,7 +351,7 @@ func TestSharedOwnedRowPageReadsInsideTheCallersTransaction(t *testing.T) {
 
 	var got string
 	err := d.Tx(func(t *Tx) error {
-		rows, err := t.SharedOwnedRowPage("binding", "instB", "", 100)
+		rows, err := t.SharedOwnedRowPage("binding", "instB", 0, 100)
 		if err != nil {
 			return err
 		}

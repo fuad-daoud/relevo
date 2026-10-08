@@ -49,10 +49,10 @@ type Reconciler struct {
 	chunk     int
 	now       func() time.Time
 
-	// readPage reads one key-ordered page of a table's owned rows inside the
+	// readPage reads one rowid-ordered page of a table's owned rows inside the
 	// chunk's read transaction. It is a field so a test can count the pages a run
 	// reads and the rows each one returned.
-	readPage func(tx *db.Tx, tbl, after string, limit int) ([]db.ExchangeRow, error)
+	readPage func(tx *db.Tx, tbl string, after int64, limit int) ([]db.ExchangeRow, error)
 
 	// Run state: head as it stood when the run began, where the walk stopped, and
 	// the head rows the walk has found locally so far.
@@ -62,12 +62,18 @@ type Reconciler struct {
 }
 
 // reconcileCursor is where a chunked run resumes: which phase it is in, which
-// table it was walking, and the last key it read there. The next page continues
-// after that key, so each row is read once per run however many chunks it takes.
+// table it was walking, and where it stopped there. The next page continues
+// after that point, so each row is read once per run however many chunks it
+// takes.
+//
+// The two phases stop in different currencies. The upsert walk pages the file,
+// so it carries the last rowid it read; the delete walk pages head's keys, so it
+// carries the last key it emitted.
 type reconcileCursor struct {
 	phase int
 	table int
 	after string
+	rowID int64
 }
 
 // NewReconciler returns the reconciler for one installation's file and the log
@@ -84,7 +90,7 @@ func NewReconciler(d *db.DB, t LogTransport) *Reconciler {
 		schema:    have,
 		chunk:     defaultReconcileChunk,
 		now:       time.Now,
-		readPage: func(tx *db.Tx, tbl, after string, limit int) ([]db.ExchangeRow, error) {
+		readPage: func(tx *db.Tx, tbl string, after int64, limit int) ([]db.ExchangeRow, error) {
 			return tx.SharedOwnedRowPage(tbl, origin, after, limit)
 		},
 		seen: make(map[rowKey]bool),
@@ -198,8 +204,9 @@ func (r *Reconciler) differences(limit int) ([]Entry, error) {
 }
 
 // nextUpserts fills out with upserts until it holds limit of them or the walk
-// leaves the upsert phase. It pages each table through SharedOwnedRowPage in key
-// order and stops where the chunk filled, so the next chunk resumes after it.
+// leaves the upsert phase. It pages each table through SharedOwnedRowPage in
+// rowid order and stops where the chunk filled, so the next chunk resumes after
+// it.
 func (r *Reconciler) nextUpserts(tx *db.Tx, limit int) ([]Entry, error) {
 	var out []Entry
 	tables := SharedTablesInOrder()
@@ -213,7 +220,7 @@ func (r *Reconciler) nextUpserts(tx *db.Tx, limit int) ([]Entry, error) {
 		// from leaving fetched rows behind: the chunk can only fill on the last
 		// row of such a page, so no row is fetched and then read again.
 		remaining := limit - len(out)
-		page, err := r.readPage(tx, tbl, r.cursor.after, remaining)
+		page, err := r.readPage(tx, tbl, r.cursor.rowID, remaining)
 		if err != nil {
 			return nil, err
 		}
@@ -221,7 +228,7 @@ func (r *Reconciler) nextUpserts(tx *db.Tx, limit int) ([]Entry, error) {
 			if err := r.inspectUpsert(&out, tbl, row); err != nil {
 				return nil, err
 			}
-			r.cursor.after = row.PK
+			r.cursor.rowID = row.RowID
 			if len(out) == limit {
 				return out, nil
 			}
@@ -229,6 +236,7 @@ func (r *Reconciler) nextUpserts(tx *db.Tx, limit int) ([]Entry, error) {
 		if len(page) < remaining {
 			r.cursor.table++
 			r.cursor.after = ""
+			r.cursor.rowID = 0
 		}
 	}
 	return out, nil

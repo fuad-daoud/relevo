@@ -91,6 +91,12 @@ type ExchangeRow struct {
 	Table string
 	// PK is the primary key the row was read by, as the outbox records it.
 	PK string
+	// RowID is the row's position in its own table, which is what a paged walk
+	// carries between pages. It is local to one file: a rowid says nothing about
+	// another installation's table, which is what a cursor needs to be, and it is
+	// the one ordering an index serves, so paging by it reads a page of rows
+	// rather than sorting the table to find them.
+	RowID int64
 	// Columns are the row's columns in schema order, keyed by name.
 	Columns []ExchangeColumn
 }
