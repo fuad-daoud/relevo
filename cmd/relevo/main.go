@@ -56,9 +56,10 @@ Commands:
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
               --done clears every binding the MasterMind marked DONE [--delete] [--dry-run]
   daemon    run the long-running reconciler (daemon stop stops the daemon this CLI started)
-  mcp       run an MCP server over stdio for a Claude Code MasterMind pane: status/send/show/gate/done
-            as tools; in channel mode (auto-detected, or --mode channel) also pushes reports and
-            NEEDS YOU into the session instead of typing them into its pane
+  mcp       run an MCP server over stdio for a Claude Code MasterMind: status/send/wait/done/show/gate
+            as tools
+  push      hold this MasterMind's push claim and write each round event to stdout as NDJSON,
+            confirming on an "ack <seq>" line from stdin
   doctor    preflight check: plugin, daemon, harness binaries, roles
   bugreport assemble a local, redacted bug-report bundle and print the gh line
   board     open a local Excalidraw whiteboard: this MasterMind's live board, or a repo scene
@@ -243,6 +244,8 @@ func run(args []string) error {
 		return cmdDaemon(args[1:])
 	case "mcp":
 		return cmdMCP(args[1:])
+	case "push":
+		return cmdPush(args[1:])
 	case "doctor":
 		return cmdDoctor(args[1:])
 	case "bugreport":

@@ -1136,7 +1136,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 
 // deliverAndSettle attempts any pending delivery. The binding is left pending
 // when no route can take the payload -- DeliverPending records why, and
-// `relevo wait` or the channel's own poll delivers it later (#303 §5.4).
+// `relevo wait` or the push holder's own drain delivers it later (#303 §5.4).
 func deliverAndSettle(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (store.Binding, error) {
 	if b.Owner != "" {
 		// Owned by a remote client: there is no mastermind. Payloads stay

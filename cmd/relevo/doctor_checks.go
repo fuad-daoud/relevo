@@ -285,7 +285,7 @@ const staleMasterMindAge = 7 * 24 * time.Hour
 
 // mastermindCheckInput gathers §4.8's mastermind-row facts: which masterminds exist,
 // whether this process runs inside Claude Code, and whether the resolved
-// mastermind has a live channel claim. Every read is best-effort -- a fact relevo
+// mastermind has a live push claim. Every read is best-effort -- a fact relevo
 // cannot establish reads as absent, and the checks say "not checked" rather
 // than guessing. Home comes from $HOME so the row reads the same directory
 // cmd/relevo's TestMain isolated.

@@ -16,7 +16,7 @@ import (
 )
 
 // mastermindRoute decides how a pending report reaches a binding mastermind:
-// the live channel claim first, then the configured
+// the live push claim first, then the configured
 // deliverer for the mastermind kind, else "pull".
 //
 // live reports whether that route can push right now. A pull route is never
@@ -30,7 +30,7 @@ func mastermindRoute(rt Runtime, b store.Binding, claims map[string]*delivery.Cl
 	if b.MasterMindID != "" {
 		if claims != nil {
 			if c := claims[b.MasterMindID]; c != nil {
-				return "channel", true
+				return "push", true
 			}
 		} else if rt.Channels != nil {
 			now := time.Now()
@@ -38,7 +38,7 @@ func mastermindRoute(rt Runtime, b store.Binding, claims map[string]*delivery.Cl
 				now = rt.Now()
 			}
 			if c, err := rt.Channels.Live(b.MasterMindID, now); err == nil && c != nil {
-				return "channel", true
+				return "push", true
 			}
 		}
 	}
@@ -105,7 +105,7 @@ func statusConfigOf(opts []StatusOption) statusConfig {
 }
 
 // Status builds every row from the store and what relevo can determine
-// locally: the mastermind record, a live channel claim and the configured
+// locally: the mastermind record, a live push claim and the configured
 // deliverers. Only store failures fail the call. Each chain's member rows
 // are replaced by the chain's own row (applyChains).
 //

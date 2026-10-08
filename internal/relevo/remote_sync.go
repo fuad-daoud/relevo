@@ -503,7 +503,7 @@ func settleCatchUp(ctx context.Context, rt Runtime, a *catchUpAck, reconcile boo
 // is still relaying (not store.StateDone), so `relevo status`, `relevo wait`
 // and each `relevo wait` iteration collect a closed round without the daemon
 // running (spec §2.2). It never delivers: it calls observeRemote directly,
-// not reconcileRemote, so a payload stays pending for the daemon, the channel
+// not reconcileRemote, so a payload stays pending for the daemon, the push holder
 // or `relevo wait` to take.
 //
 // synced counts bindings whose stored state actually changed under the

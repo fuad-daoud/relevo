@@ -152,11 +152,11 @@ func TestDeliverPendingDelivererNotMineStaysPending(t *testing.T) {
 	}
 }
 
-// TestDeliverPendingChannelByMasterMindID keeps the surviving channel route:
+// TestDeliverPendingPushByMasterMindID keeps the surviving push route:
 // with a live claim for the binding's mastermind id, DeliverPending hands the
-// entry to the channel -- it stays pending for the claim holder's own poll,
-// which is what pushes and confirms it with route=channel.
-func TestDeliverPendingChannelByMasterMindID(t *testing.T) {
+// entry to the holder -- it stays pending for the holder's own drain, which is
+// what pushes and confirms it with route=push.
+func TestDeliverPendingPushByMasterMindID(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
@@ -165,14 +165,14 @@ func TestDeliverPendingChannelByMasterMindID(t *testing.T) {
 
 	_, got := deliverOnce(t, rt, b)
 
-	if got.Route != "channel" {
-		t.Errorf("Route = %q, want channel", got.Route)
+	if got.Route != "push" {
+		t.Errorf("Route = %q, want push", got.Route)
 	}
 	if got.Delivered {
-		t.Error("the channel's own drain confirms the entry; DeliverPending must not")
+		t.Error("the holder's own drain confirms the entry; DeliverPending must not")
 	}
 	if _, found, err := rt.Store.PendingForMasterMind("webshop"); err != nil || !found {
-		t.Errorf("the entry must stay pending for the channel reader (found=%v err=%v)", found, err)
+		t.Errorf("the entry must stay pending for the push holder (found=%v err=%v)", found, err)
 	}
 }
 
@@ -433,10 +433,10 @@ func TestDeliverYieldsToLiveClaim(t *testing.T) {
 
 	next, got := deliverOnce(t, rt, b)
 	if got.Delivered || got.Route == "" || got.Empty {
-		t.Fatalf("want the all-false channel handoff, got %+v", got)
+		t.Fatalf("want the all-false push handoff, got %+v", got)
 	}
-	if got.Route != "channel" {
-		t.Errorf("Route = %q, want channel", got.Route)
+	if got.Route != "push" {
+		t.Errorf("Route = %q, want push", got.Route)
 	}
 	if next.State != wantState {
 		t.Errorf("State = %q, want unchanged %q", next.State, wantState)
@@ -448,7 +448,7 @@ func TestDeliverYieldsToLiveClaim(t *testing.T) {
 
 // TestDeliverIgnoresStaleClaim proves the guard is inert when the claim
 // store answers "not live" (or knows nothing about the mastermind): delivery
-// falls through to the pull route exactly as it did before the channel
+// falls through to the pull route exactly as it did before the push claim
 // existed.
 func TestDeliverIgnoresStaleClaim(t *testing.T) {
 	t.Parallel()

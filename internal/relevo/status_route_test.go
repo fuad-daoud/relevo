@@ -41,14 +41,14 @@ func TestStatusJSONHasRouteFields(t *testing.T) {
 		t.Errorf("mastermind_id = %q, want the binding's mastermind id", doc.Bindings[0].MasterMindID)
 	}
 
-	// A live channel claim turns the same row into the channel route.
+	// A live push claim turns the same row into the push route.
 	rt.Channels = fakeClaimStore{"pl_aaaaaaaabbbb": &delivery.Claim{MasterMind: "pl_aaaaaaaabbbb", PID: 1}}
 	doc = statusDoc(t, rt)
-	if doc.Bindings[0].MasterMindRoute != "channel" {
-		t.Errorf("mastermind_route = %q, want channel with a live claim", doc.Bindings[0].MasterMindRoute)
+	if doc.Bindings[0].MasterMindRoute != "push" {
+		t.Errorf("mastermind_route = %q, want push with a live claim", doc.Bindings[0].MasterMindRoute)
 	}
 	if !doc.Bindings[0].MasterMindRouteLive {
-		t.Error("mastermind_route_live must be true for a live channel")
+		t.Error("mastermind_route_live must be true for a live push claim")
 	}
 }
 

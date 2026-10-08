@@ -14,7 +14,7 @@ import (
 )
 
 // rowLoads is one report's bulk read of the facts statusRow would otherwise
-// fetch once per row: the mastermind records, the live channel claims and the
+// fetch once per row: the mastermind records, the live push claims and the
 // wait registrations. A nil *rowLoads is the single-row path, which reads each
 // fact directly.
 type rowLoads struct {
@@ -127,7 +127,7 @@ func loadMasterMinds(rt Runtime, bindings []store.Binding) map[string]mastermind
 	return out
 }
 
-// loadClaimMap is the report's one channel-claim read. ok is false when the
+// loadClaimMap is the report's one push-claim read. ok is false when the
 // store has no bulk surface, and each row then reads its claim directly. A
 // read error reads as no live claim at all -- the empty map is authoritative --
 // because a claims read must never fail the report, and every failure has

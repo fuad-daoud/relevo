@@ -116,7 +116,7 @@ func decodeResponse(t *testing.T, line []byte) Response {
 	return resp
 }
 
-func TestServerInitializePinsProtocolVersionAndAdvertisesChannel(t *testing.T) {
+func TestServerInitializePinsProtocolVersion(t *testing.T) {
 	out := runServer(t, &fakeVerbs{}, []string{
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2026-07-28"}}`,
 	})
@@ -141,12 +141,11 @@ func TestServerInitializePinsProtocolVersionAndAdvertisesChannel(t *testing.T) {
 	if !ok {
 		t.Fatalf("capabilities = %#v", result["capabilities"])
 	}
-	exp, ok := caps["experimental"].(map[string]any)
-	if !ok {
-		t.Fatalf("capabilities.experimental = %#v", caps["experimental"])
+	if _, ok := caps["tools"]; !ok {
+		t.Errorf("capabilities must contain tools, got %#v", caps)
 	}
-	if _, ok := exp["claude/channel"]; !ok {
-		t.Errorf("capabilities.experimental must contain claude/channel, got %#v", exp)
+	if _, ok := caps["experimental"]; ok {
+		t.Errorf("capabilities must not advertise experimental, got %#v", caps)
 	}
 }
 
@@ -169,7 +168,6 @@ func TestServerToolsListOrderAndStrictSchemasPerMode(t *testing.T) {
 		wantOrder []string
 	}{
 		{"tools mode adds wait after send", ModeTools, "", []string{"status", "send", "wait", "done", "show", "gate"}},
-		{"channel mode lists the five base verbs", ModeChannel, "", []string{"status", "send", "done", "show", "gate"}},
 		{"opencode lists the five base verbs", ModeTools, "opencode", []string{"status", "send", "done", "show", "gate"}},
 	}
 	for _, tt := range tests {
@@ -350,41 +348,6 @@ func TestServerOnInitializedFiresAfterNotification(t *testing.T) {
 	}
 }
 
-func TestServerPushEmitsNotificationAndDropsBadKey(t *testing.T) {
-	var out bytes.Buffer
-	srv := &Server{Verbs: &fakeVerbs{}}
-	srv.out = &out
-
-	if err := srv.Push(context.Background(), "hello", map[string]string{"binding": "judge", "bad-key": "x"}); err != nil {
-		t.Fatalf("Push: %v", err)
-	}
-
-	var note struct {
-		JSONRPC string `json:"jsonrpc"`
-		Method  string `json:"method"`
-		Params  struct {
-			Content string            `json:"content"`
-			Meta    map[string]string `json:"meta"`
-		} `json:"params"`
-	}
-	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &note); err != nil {
-		t.Fatalf("unmarshal push: %v", err)
-	}
-	if note.Method != "notifications/claude/channel" {
-		t.Errorf("method = %q, want notifications/claude/channel", note.Method)
-	}
-	if note.Params.Content != "hello" {
-		t.Errorf("content = %q, want %q", note.Params.Content, "hello")
-	}
-	if _, ok := note.Params.Meta["bad-key"]; ok {
-		t.Errorf("meta must drop the non-identifier key, got %+v", note.Params.Meta)
-	}
-	if note.Params.Meta["binding"] != "judge" {
-		t.Errorf("meta must keep the identifier key, got %+v", note.Params.Meta)
-	}
-}
-
-// TestServerAppendsNoticeToToolResults: a verb error's result gets the notice block exactly as a success does.
 func TestServerAppendsNoticeToToolResults(t *testing.T) {
 	const notice = "note: relevo was upgraded to v0.8.0; this session's relevo MCP server is still v0.7.0. Reconnect it (/mcp) or restart the session to load the new version."
 
