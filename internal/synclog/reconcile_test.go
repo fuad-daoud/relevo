@@ -10,7 +10,7 @@ import (
 // The reconciler's contract is the batch it hands the log when the log and the
 // file disagree: every row this machine owns whose body the log does not already
 // carry, parents first, and every row the log carries for this machine that the
-// file no longer holds, children first. A run that finds nothing appends
+// file does not hold, children first. A run that finds nothing appends
 // nothing.
 //
 // The cases run against a real file and the same fake the exporter and importer
@@ -129,7 +129,7 @@ func TestReconcileProposesRowsTheOutboxNoLongerHolds(t *testing.T) {
 		t.Fatalf("reconcile with an empty outbox: %v", err)
 	}
 	if got.Upserts != 1 {
-		t.Fatalf("reconcile = %+v, want the one owned row the outbox no longer holds", got)
+		t.Fatalf("reconcile = %+v, want the one owned row the outbox does not hold", got)
 	}
 	if shape := fresh.shape(); shape != `binding ["01A"] upsert` {
 		t.Fatalf("appended = %q, want the binding the outbox had cleared", shape)
@@ -219,7 +219,7 @@ func TestReconcileSkipsRowsAnotherInstallationOwns(t *testing.T) {
 	}
 }
 
-// A head row this file no longer holds is a delete, and the deletes of one batch
+// A head row this file does not hold is a delete, and the deletes of one batch
 // run children first: a child removed ahead of the parent it hangs off is the
 // order the foreign keys of the original tables require, since a parent removed
 // first would have the child's delete refused.

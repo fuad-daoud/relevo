@@ -220,7 +220,7 @@ func TestExporterCoalescesRepeatedEntries(t *testing.T) {
 	}
 }
 
-// A row the file no longer holds is a delete, and it carries no body: the key
+// A row the file does not hold is a delete, and it carries no body: the key
 // already names the row to remove, and a body beside it could disagree with the
 // key about whether the row is there at all.
 func TestExporterEmitsDeleteForAbsentRow(t *testing.T) {

@@ -113,8 +113,8 @@ func TestImportRefusesAnUnapplicableEntry(t *testing.T) {
 
 // One origin's poison entry does not stop the origins beside it. The two writers
 // are m1 and m3 and the reader is m2, so a run that aborted on m1's entry would
-// never reach m3's batches at all -- which is the state a single un-appliable
-// entry used to leave every peer in, permanently.
+// never reach m3's batches at all -- the permanent stall one un-appliable entry
+// must not leave every peer in.
 func TestImportDropsOneOriginAndKeepsTheOther(t *testing.T) {
 	t.Parallel()
 	peer, _ := peerFile(t, "m2")

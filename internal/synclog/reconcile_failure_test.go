@@ -10,7 +10,7 @@ import (
 
 // What reconcile does when the exchange underneath it refuses: a transport that
 // cannot answer head, a transport that will not take an append, and a file that
-// is no longer readable.
+// is not readable.
 //
 // Each of these is a failure a machine actually meets -- a remote that is down, a
 // log that refuses an origin's entries, a file restored underneath an open handle

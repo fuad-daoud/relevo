@@ -259,7 +259,7 @@ func TestRestoreFromBackupConverges(t *testing.T) {
 
 	// What the file lost, reconcile proposes as a delete: the log holds a row for
 	// this origin that the restored file does not, and the only honest reading of
-	// that is that this machine no longer has it. The proposal carries the
+	// that is that this machine does not hold it. The proposal carries the
 	// binding's key and no body, because there is no row left to encode one from.
 	reconciled, err := NewReconciler(restored, log.OnLog("m1")).Reconcile()
 	if err != nil {

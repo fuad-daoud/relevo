@@ -35,7 +35,7 @@ const (
 // was refused, or whose rows a migration rewrote, has to ask: is the log missing
 // anything I own, and does it still hold anything I have dropped? Reconcile asks
 // the log directly and emits the rows whose body hash differs from head, plus the
-// deletes for head rows this file no longer holds.
+// deletes for head rows this file does not hold.
 //
 // A run walks the file once, in key-ordered pages, and keeps where it stopped
 // between chunks, so a table larger than a chunk is read once rather than
@@ -270,7 +270,7 @@ func (r *Reconciler) inspectUpsert(out *[]Entry, tbl string, row db.ExchangeRow)
 // A head row is read back from the file before it is dropped. The walk already
 // found every owned row head names, so this is the check that separates a head row
 // the file holds under another installation, which is not this walk's to remove,
-// from one this file no longer holds.
+// from one this file does not hold.
 func (r *Reconciler) nextDeletes(tx *db.Tx, limit int) ([]Entry, error) {
 	var out []Entry
 	tables := SharedTablesInOrder()

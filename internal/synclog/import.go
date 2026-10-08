@@ -285,7 +285,7 @@ func (i *Importer) applyBatch(batch []Entry, marks map[string]int) (int, *Hold, 
 // covers them commit together or neither does.
 //
 // handled counts the entries that did their work, which includes an entry
-// naming a row this file no longer holds: a delete that finds nothing has still
+// naming a row this file does not hold: a delete that finds nothing has still
 // been applied, which is what keeps a re-read batch from stalling.
 func (i *Importer) applyEntries(batch []Entry, marks map[string]int) (int, error) {
 	origin := batch[0].Origin

@@ -1,6 +1,7 @@
 package synclog
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -229,6 +230,11 @@ func TestHeldEntriesApplyAfterTheUpgrade(t *testing.T) {
 // migration added is what a body carries and this machine has not got; the row
 // it describes is still a row this machine can write, so refusing the entry
 // would lose a change this build could have kept most of.
+//
+// The row is checked column by column, and the columns the body never named are
+// checked as NULL with it: an import that wrote the body's values and also
+// invented a column for every key it did not recognize would pass a case that
+// looked only at the values the body carried.
 func TestImporterIgnoresUnknownColumns(t *testing.T) {
 	t.Parallel()
 	peer, _ := peerFile(t, "m2")
@@ -238,7 +244,8 @@ func TestImporterIgnoresUnknownColumns(t *testing.T) {
 		Body: bodyFor(t, map[string]any{
 			"id": "01A", "name": "01A", "cwd": "/x",
 			"builder_mode": "local", "created_at": "t", "ingest_source": "manual", "origin": "m1",
-			// Columns a newer migration of the writer's schema declares.
+			// Columns a newer migration of the writer's schema declares, and one
+			// name no schema declares at all.
 			"transcript_codec": "zstd", "last_seen_by": "m2",
 		}),
 	})
@@ -250,34 +257,62 @@ func TestImporterIgnoresUnknownColumns(t *testing.T) {
 	if got.Applied != 1 {
 		t.Fatalf("import = %+v, want the one entry applied", got)
 	}
-	if cwd := columnOf(t, peer, `SELECT cwd FROM binding WHERE id = '01A'`); cwd != "/x" {
-		t.Fatalf("the binding's cwd = %q, want the value the body carried", cwd)
+	assertColumns(t, peer, "binding", `["01A"]`, map[string]string{
+		"id": "01A", "name": "01A", "cwd": "/x", "builder_mode": "local",
+		"created_at": "t", "ingest_source": "manual", "origin": "m1",
+	})
+	// The unknown names are absent from the file's declaration rather than
+	// named in the statement: an importer that invented them would be writing
+	// to a schema it does not have.
+	columns := tableColumns(t, peer, "binding")
+	if !strings.Contains(columns, "id TEXT") {
+		t.Fatalf("the binding's columns are %q, want the table's own declaration", columns)
 	}
-	// The unknown columns are absent from the file rather than written: an
-	// importer that invented them would be writing to a schema it does not have.
-	if !strings.Contains(tableColumns(t, peer, "binding"), "id TEXT") {
-		t.Fatalf("the binding's columns are %q, want the table's own declaration", tableColumns(t, peer, "binding"))
+	if strings.Contains(columns, "transcript_codec") || strings.Contains(columns, "last_seen_by") {
+		t.Fatalf("the binding's columns are %q, want the body's invented names absent", columns)
 	}
 }
 
 // A body missing a column this machine's schema declares applies with that
-// column's default. A writer that dropped a column sends bodies without it, and
-// the row it describes is one this machine's schema still holds a value for:
-// naming the column as NULL instead would erase a value the writer has and the
-// body merely left out.
+// column's default on an insert and leaves the column alone on an update. A
+// writer that dropped a column sends bodies without it, and the row it describes
+// is one this machine's schema still holds a value for: naming the column as NULL
+// on either path would erase a value the writer has and the body merely left out.
 //
-// The one column the body does not decide is the owner. It is resolved from this
-// file rather than read out of the body, so the row lands under the origin whose
-// entries were applied -- which is what makes the entry it came from still be the
-// owner of it on the next import.
+// The rows are checked column by column, so the insert path is pinned on the
+// column it defaulted and the update path on the column it kept. The one column
+// the body does not decide is the owner. It is resolved from this file rather
+// than read out of the body, so the row lands under the origin whose entries were
+// applied -- which is what makes the entry it came from still be the owner of it
+// on the next import.
 func TestImporterDefaultsMissingColumns(t *testing.T) {
 	t.Parallel()
 	peer, _ := peerFile(t, "m2")
 	log := NewMemTransport("m1")
+	known := knownVersion(t, peer)
+
+	// Two entries for one row: the first names values the second leaves out, so
+	// the update path is what a body's silence has to survive. A second row is
+	// inserted with the same silence, so the insert path is checked too.
 	entryFor(t, log, Entry{
-		Table: "binding", PK: `["01A"]`, Op: OpUpsert, SchemaVersion: knownVersion(t, peer),
+		Table: "binding", PK: `["01A"]`, Op: OpUpsert, SchemaVersion: known,
+		Body: bodyFor(t, map[string]any{
+			"id": "01A", "name": "01A", "cwd": "/x", "builder_mode": "local",
+			"created_at": "t", "ingest_source": "manual", "origin": "m1",
+			"ticket": "#473", "final_state": "done",
+		}),
+	})
+	entryFor(t, log, Entry{
+		Table: "binding", PK: `["01A"]`, Op: OpUpsert, SchemaVersion: known,
 		Body: bodyFor(t, map[string]any{
 			"id": "01A", "name": "01A", "cwd": "/x",
+			"builder_mode": "local", "created_at": "t", "ingest_source": "manual",
+		}),
+	})
+	entryFor(t, log, Entry{
+		Table: "binding", PK: `["01B"]`, Op: OpUpsert, SchemaVersion: known,
+		Body: bodyFor(t, map[string]any{
+			"id": "01B", "name": "01B", "cwd": "/x",
 			"builder_mode": "local", "created_at": "t", "ingest_source": "manual",
 		}),
 	})
@@ -286,20 +321,18 @@ func TestImporterDefaultsMissingColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import a body omitting a defaulted column: %v", err)
 	}
-	if got.Applied != 1 {
-		t.Fatalf("import = %+v, want the one entry applied", got)
+	if got.Applied != 3 {
+		t.Fatalf("import = %+v, want all three entries applied", got)
 	}
-	if origin := columnOf(t, peer, `SELECT origin FROM binding WHERE id = '01A'`); origin != "m1" {
-		t.Fatalf("the binding's origin = %q, want the owner this machine resolved", origin)
-	}
-	if cwd := columnOf(t, peer, `SELECT cwd FROM binding WHERE id = '01A'`); cwd != "/x" {
-		t.Fatalf("the binding's cwd = %q, want the value the body carried", cwd)
-	}
-	// The declared default is still what a column neither the body nor the owner
-	// rule names takes, so the default path is not narrowed to this one column.
-	if got := lookup(t, sharedColumn(t, peer, "binding", `["01A"]`), "builder_mode"); got != "local" {
-		t.Fatalf("builder_mode = %v, want the value the body carried", got)
-	}
+	assertColumns(t, peer, "binding", `["01A"]`, map[string]string{
+		"id": "01A", "name": "01A", "cwd": "/x", "builder_mode": "local",
+		"created_at": "t", "ingest_source": "manual", "origin": "m1",
+		"ticket": "#473", "final_state": "done",
+	})
+	assertColumns(t, peer, "binding", `["01B"]`, map[string]string{
+		"id": "01B", "name": "01B", "cwd": "/x", "builder_mode": "local",
+		"created_at": "t", "ingest_source": "manual", "origin": "m1",
+	})
 }
 
 // sharedColumn reads one column of one row through the exchange seam, so a case
@@ -313,18 +346,41 @@ func sharedColumn(t *testing.T, d *db.DB, tbl, pk string) db.ExchangeRow {
 	return row
 }
 
-// lookup is the column read out of a row the exchange seam returned.
-func lookup(t *testing.T, row db.ExchangeRow, column string) string {
+// assertColumns checks every column of one row against want, and requires every
+// column the expectations leave out to be NULL. A case that checked only the
+// columns a body named would pass an import that also wrote the columns it did
+// not know; the whole row is what the exchange either reproduces or does not.
+func assertColumns(t *testing.T, d *db.DB, tbl, pk string, want map[string]string) {
 	t.Helper()
+	row := sharedColumn(t, d, tbl, pk)
+	seen := make(map[string]bool, len(want))
 	for _, col := range row.Columns {
-		if col.Name == column {
-			text, ok := col.Value.(string)
-			if !ok {
-				t.Fatalf("%s.%s = %v, want text", row.Table, column, col.Value)
-			}
-			return text
+		expected, named := want[col.Name]
+		if !named {
+			expected = "<null>"
+		} else {
+			seen[col.Name] = true
+		}
+		if have := renderValue(col.Value); have != expected {
+			t.Fatalf("%s.%s = %s, want %s", tbl, col.Name, have, expected)
 		}
 	}
-	t.Fatalf("row %s %s carries no %s column", row.Table, row.PK, column)
-	return ""
+	for name := range want {
+		if !seen[name] {
+			t.Fatalf("the %s row carries no %s column", tbl, name)
+		}
+	}
+}
+
+// renderValue spells one stored column value for a comparison, with NULL kept
+// distinct from an empty text value and a BLOB shown as the bytes it holds.
+func renderValue(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return "<null>"
+	case []byte:
+		return string(x)
+	default:
+		return fmt.Sprint(x)
+	}
 }
