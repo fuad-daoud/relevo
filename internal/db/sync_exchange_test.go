@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // TestImportMarkTableIsLocalOnly pins that the import mark is about this
@@ -282,60 +284,187 @@ func TestOutboxDrainIsOrderedAndDeletable(t *testing.T) {
 	}
 }
 
-// TestOutboxDrainIsOneSnapshot pins that a drain reads the outbox and the rows
-// it names from one transaction. A write that lands between two drains must show
-// up whole in the second and not at all in the first: a drain that read the
-// entries in one transaction and the rows in another would report the row's
-// state after a write the entries it drained predates.
+// competingRepoWrite is the write that contends with the drain: it moves the
+// repo row the fixture seeded, so whichever state the drain read is visible.
+const competingRepoWrite = `UPDATE repo SET origin_url = 'after' WHERE id = 'r1'`
+
+// TestOutboxDrainIsOneSnapshot pins that a drain holds the write lock from its
+// first outbox read through its last row read, so every entry in the batch and
+// the row state it names were the state of one moment. A drain that read the
+// entries in one transaction and their rows in another would report each entry
+// against a row a write committed between the two reads had already moved, so
+// the batch would carry a state no moment held.
+//
+// The proof is the lock, not two drains with a write between them: no
+// arrangement of complete sequential drains can observe a write landing inside
+// one drain. The first half holds a transaction that runs the drain open and
+// points a competing write's BEGIN IMMEDIATE at that lock -- the write has to
+// fail busy with its body never run. The second half puts a competing write in
+// flight for the whole of the drain instead, because that is the half a split
+// drain can slip past: its second transaction takes the write lock again
+// before the drain returns, so a writer held off until the drain is over never
+// learns the lock was let go in the middle.
 func TestOutboxDrainIsOneSnapshot(t *testing.T) {
-	d := openTestDB(t)
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	d := openExchangeDB(t, path)
 	sharedRowFixture(t, d)
-
-	if err := d.Tx(func(tx *Tx) error {
-		_, err := tx.exec(`UPDATE repo SET origin_url = 'before' WHERE id = 'r1'`)
-		return err
-	}); err != nil {
-		t.Fatalf("write before the first drain: %v", err)
+	if err := exchangeWrite(d, `UPDATE repo SET origin_url = 'before' WHERE id = 'r1'`); err != nil {
+		t.Fatalf("write before the drain: %v", err)
 	}
 
-	first, err := d.DrainOutbox(1000)
+	drained, err := drainUnderTwoRivals(t, d, path)
 	if err != nil {
-		t.Fatalf("first DrainOutbox: %v", err)
+		t.Fatalf("the drain: %v", err)
 	}
-	firstRepo := findDrained(t, first, "repo", `["r1"]`)
-	if got := exchangeColumn(t, *firstRepo.Row, "origin_url"); got != "before" {
-		t.Errorf("the first drain reads origin_url %v, want before", got)
+	if len(drained) == 0 {
+		t.Fatal("the drain returned no entries")
+	}
+	repo := findDrained(t, drained, "repo", `["r1"]`)
+	if repo.Row == nil {
+		t.Fatal("the drained repo entry carries no row state")
+	}
+	if got := exchangeColumn(t, *repo.Row, "origin_url"); got != "before" {
+		t.Errorf("the drained repo row reads origin_url %v, want before: the row state is the one the drain's own transaction saw", got)
+	}
+}
+
+// drainUnderTwoRivals runs one drain on d inside a transaction it opens itself,
+// and pushes two classes of competing write at the write lock that transaction
+// holds. A fail-fast rival must be turned away at once; a rival that samples the
+// lock as fast as the file will answer keeps asking for the whole of the drain,
+// which is the half a split drain cannot survive, because its second transaction
+// takes the lock back before the drain returns.
+func drainUnderTwoRivals(t *testing.T, d *DB, path string) ([]DrainedEntry, error) {
+	t.Helper()
+	failFast := openExchangeRival(t, path, time.Millisecond)
+	// A one-nanosecond retry window gives up on the first busy BEGIN, so a rival
+	// built on it samples the lock every time the file answers rather than once
+	// per backoff -- which is the difference between missing the window a split
+	// drain leaves open and landing in it. Three of them narrow the remaining
+	// race further.
+	var samplers []*DB
+	for i := 0; i < 3; i++ {
+		samplers = append(samplers, openExchangeRival(t, path, time.Nanosecond))
 	}
 
-	// The write lands between the drains. It both changes the row the first
-	// drain read and appends an entry the first drain did not return.
-	if err := d.Tx(func(tx *Tx) error {
-		_, err := tx.exec(`UPDATE repo SET origin_url = 'after' WHERE id = 'r1'`)
+	// competingRan is read from inside the drain's own transaction, before its
+	// COMMIT, so the question it answers -- did a write get in while the drain
+	// was running -- is asked of a moment the drain can still speak for.
+	var competingRan int32
+	holding := make(chan struct{})
+	release := make(chan struct{})
+	stop := make(chan struct{})
+	drainDone := make(chan error, 1)
+	var drained []DrainedEntry
+	go func() {
+		drainDone <- d.Tx(func(tx *Tx) error {
+			// BEGIN IMMEDIATE has the write lock from here on, and the drain
+			// below runs inside it.
+			close(holding)
+			<-release
+			var derr error
+			drained, derr = tx.DrainOutbox(1000)
+			if atomic.LoadInt32(&competingRan) != 0 {
+				t.Errorf("a competing write ran while the drain held the write lock: the drain let the lock go between its entry read and its row reads")
+			}
+			return derr
+		})
+	}()
+	<-holding
+
+	ran := false
+	cerr := failFast.Tx(func(tx *Tx) error {
+		ran = true
+		_, err := tx.exec(competingRepoWrite)
 		return err
-	}); err != nil {
-		t.Fatalf("write between drains: %v", err)
+	})
+	if !errors.Is(cerr, ErrBusy) {
+		t.Errorf("the competing write = %v, want errors.Is(..., ErrBusy): the drain holds the write lock across both its reads", cerr)
+	}
+	if ran {
+		t.Error("the competing write's body ran while the drain held the write lock")
 	}
 
-	if err := d.DeleteDrainedOutbox(first[len(first)-1].Seq); err != nil {
-		t.Fatalf("delete what the first drain drained: %v", err)
+	// Each rival hammers BEGIN IMMEDIATE for as long as the drain runs.
+	spun := make(chan struct{}, len(samplers))
+	spinRivals(samplers, &competingRan, stop, spun)
+	// Let the sampler reach the lock before the drain is let run, so it is
+	// contending rather than starting afterwards.
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+	derr := <-drainDone
+	close(stop)
+	for range samplers {
+		<-spun
 	}
-	second, err := d.DrainOutbox(1000)
+	if derr != nil {
+		return nil, derr
+	}
+
+	// Busy, then success: the same write lands once the drain has let the lock
+	// go, which is what makes the failures above the drain's lock rather than a
+	// handle that cannot write at all.
+	if err := exchangeWrite(failFast, competingRepoWrite); err != nil {
+		t.Fatalf("the competing write after the drain: %v", err)
+	}
+	return drained, nil
+}
+
+// spinRivals hammers BEGIN IMMEDIATE at the write lock from each of rivals until
+// stop closes, so a drain that lets the lock go between its two reads is caught
+// at the moment it does. A rival whose body runs marks ran, which the drain
+// reads from inside its own transaction before it commits. Each rival sends to
+// spun as it stops.
+func spinRivals(rivals []*DB, ran *int32, stop <-chan struct{}, spun chan<- struct{}) {
+	for _, rival := range rivals {
+		go func() {
+			for {
+				select {
+				case <-stop:
+					spun <- struct{}{}
+					return
+				default:
+				}
+				_ = rival.Tx(func(tx *Tx) error {
+					atomic.StoreInt32(ran, 1)
+					_, err := tx.exec(competingRepoWrite)
+					return err
+				})
+			}
+		}()
+	}
+}
+
+// openExchangeDB opens path for the drain that will run on it.
+func openExchangeDB(t *testing.T, path string) *DB {
+	t.Helper()
+	d, err := Open(path)
 	if err != nil {
-		t.Fatalf("second DrainOutbox: %v", err)
+		t.Fatalf("Open: %v", err)
 	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
 
-	secondRepo := findDrained(t, second, "repo", `["r1"]`)
-	if got := exchangeColumn(t, *secondRepo.Row, "origin_url"); got != "after" {
-		t.Errorf("the second drain reads origin_url %v, want after: the row's state moved with the write", got)
+// openExchangeRival opens a second handle on path whose busy waits are short: a
+// small retry gives up almost at once, so a busy answer is the drain's lock
+// rather than a long wait, and a large one is still contending afterwards.
+func openExchangeRival(t *testing.T, path string, retry time.Duration) *DB {
+	t.Helper()
+	d, err := OpenWith(path, Options{BusyTimeout: 20 * time.Millisecond, BeginRetry: retry})
+	if err != nil {
+		t.Fatalf("OpenWith: %v", err)
 	}
-	if len(second) != 1 {
-		t.Errorf("the second drain returned %d entries, want 1: the write between drains is the only new entry", len(second))
-	}
-	for _, e := range first {
-		if e.Seq >= second[0].Seq {
-			t.Errorf("the first drain returned seq %d, which the second also returned", e.Seq)
-		}
-	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
+
+// exchangeWrite runs one statement in a transaction of its own.
+func exchangeWrite(d *DB, query string) error {
+	return d.Tx(func(tx *Tx) error {
+		_, err := tx.exec(query)
+		return err
+	})
 }
 
 // TestExchangeRowReadCoversSharedTables pins that every shared table can be read
