@@ -94,9 +94,9 @@ func TestApplyBatchSkipsAnEmptyBatch(t *testing.T) {
 	t.Parallel()
 	peer, _ := peerFile(t, "m2")
 	i := NewImporter(peer, NewMemTransport("m1"))
-	applied, err := i.applyBatch(nil)
-	if err != nil || applied != 0 {
-		t.Fatalf("applyBatch(nil) = (%d, %v), want nothing applied and no error", applied, err)
+	applied, hold, err := i.applyBatch(nil)
+	if err != nil || applied != 0 || hold != nil {
+		t.Fatalf("applyBatch(nil) = (%d, %+v, %v), want nothing applied, no hold and no error", applied, hold, err)
 	}
 	if marks, err := peer.ImportMarks(); err != nil || len(marks) != 0 {
 		t.Fatalf("marks = %v (%v), want none written for an empty batch", marks, err)
