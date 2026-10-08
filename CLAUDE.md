@@ -49,6 +49,18 @@ without the logic is not pinning anything.
 The step-by-step runbook -- temp space, where the suite runs, merging,
 deploying, running chains -- is `docs/runbook.md`.
 
+## Testing in isolation
+
+Never `make install` a test build over the developer's install: it shares one
+database, one daemon and one binary path with production, so concurrent
+versions corrupt each other and there is no rollback. Two flows exist:
+
+- Default, no root: `scripts/relevo-sandbox.sh create <name>`, then
+  `scripts/relevo-sandbox.sh shell <name>`. The sandbox carries an isolated
+  binary, database, daemon and harness homes. See `docs/env-sandbox.md`.
+- Full UID separation: `scripts/relevo-dev-user.sh`, which needs root. See
+  `docs/dev-sandbox.md`.
+
 ## Conventions
 
 - Specs live in `docs/specs/YYYY-MM-DD-<topic>-design.md`. Implementation
