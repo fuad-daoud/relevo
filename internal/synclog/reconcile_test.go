@@ -257,6 +257,129 @@ func TestReconcileOrdersDeletesChildrenFirst(t *testing.T) {
 	}
 }
 
+// A run reads the file in bounded pages rather than in one query per table: no
+// read hands back more rows than the page size, however many rows the table
+// holds. This is what keeps a file whose history dwarfs a chunk from being held
+// in memory whole.
+func TestReconcileReadsBoundedPages(t *testing.T) {
+	t.Parallel()
+	d, path := exporterFile(t, "m1")
+	for _, id := range []string{"01A", "01B", "01C", "01D", "01E"} {
+		seed(t, path, insertBinding(id, "m1"))
+	}
+
+	r := &recording{MemTransport: NewMemTransport("m1")}
+	e := reconciler(d, r)
+	e.chunk = 2
+	inner := e.readPage
+	reads := 0
+	e.readPage = func(tx *db.Tx, tbl, after string, limit int) ([]db.ExchangeRow, error) {
+		if limit > e.chunk {
+			t.Errorf("a read asked for %d rows, want at most the page size %d", limit, e.chunk)
+		}
+		rows, err := inner(tx, tbl, after, limit)
+		if err != nil {
+			return nil, err
+		}
+		reads++
+		if len(rows) > e.chunk {
+			t.Errorf("a read returned %d rows, want no more than the page size %d", len(rows), e.chunk)
+		}
+		return rows, nil
+	}
+	got, err := e.Reconcile()
+	if err != nil {
+		t.Fatalf("reconcile in bounded pages: %v", err)
+	}
+	if got.Upserts != 5 {
+		t.Fatalf("reconcile = %+v, want the five bindings proposed", got)
+	}
+	if reads < 3 {
+		t.Fatalf("the run read %d pages, want the five rows spread over more than two", reads)
+	}
+}
+
+// A multi-chunk run reads each row once: the cursor carries from chunk to chunk,
+// so the walk continues where it stopped instead of restarting the table. A run
+// that restarted would read the rows of every earlier chunk again, which is
+// exactly the whole-history re-read this walk is shaped to avoid.
+//
+// The run starts from a settled log and changes a few rows, so the pages it walks
+// carry rows that need no proposal beside rows that do. A page is bounded by what
+// the chunk still needs, so a chunk that fills mid-page fills on the page's last
+// row and no fetched row is left to be read again.
+func TestReconcileInspectsEachRowOnce(t *testing.T) {
+	t.Parallel()
+	d, path := exporterFile(t, "m1")
+	ids := []string{"01A", "01B", "01C", "01D", "01E"}
+	for _, id := range ids {
+		seed(t, path, insertBinding(id, "m1"))
+	}
+
+	log := NewMemTransport("m1")
+	if _, err := reconciler(d, &recording{MemTransport: log}).Reconcile(); err != nil {
+		t.Fatalf("reconcile the settled file: %v", err)
+	}
+	seed(t, path,
+		`UPDATE binding SET cwd = '/a' WHERE id = '01A'`,
+		`UPDATE binding SET cwd = '/c' WHERE id = '01C'`,
+		`UPDATE binding SET cwd = '/e' WHERE id = '01E'`,
+	)
+
+	r := &recording{MemTransport: log}
+	e := reconciler(d, r)
+	e.chunk = 2
+	inner := e.readPage
+	read := map[string]int{}
+	e.readPage = func(tx *db.Tx, tbl, after string, limit int) ([]db.ExchangeRow, error) {
+		rows, err := inner(tx, tbl, after, limit)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			read[row.Table+" "+row.PK]++
+		}
+		return rows, nil
+	}
+	got, err := e.Reconcile()
+	if err != nil {
+		t.Fatalf("reconcile across chunks: %v", err)
+	}
+	if got.Upserts != 3 || got.Batches < 2 {
+		t.Fatalf("reconcile = %+v, want the three changed rows over more than one chunk", got)
+	}
+	for _, id := range ids {
+		if n := read[`binding ["`+id+`"]`]; n != 1 {
+			t.Errorf("the run read binding [%q] %d times, want once", id, n)
+		}
+	}
+}
+
+// A head row the file still holds under another installation is not this walk's
+// to remove: the row is present, so no delete for it travels back to the machine
+// that owns it. The walk did not find it, because it resolves to the other
+// installation, so the presence check is what keeps it from being dropped.
+func TestReconcileLeavesAHeadRowTheFileStillHolds(t *testing.T) {
+	t.Parallel()
+	d, path := exporterFile(t, "m1")
+	seed(t, path, insertBinding("01A", "m2"))
+
+	log := NewMemTransport("m1")
+	appendBatch(t, log, upsert(t, "01A", knownVersion(t, d)))
+
+	r := &recording{MemTransport: log}
+	got, err := reconciler(d, r).Reconcile()
+	if err != nil {
+		t.Fatalf("reconcile a head row the file holds under another installation: %v", err)
+	}
+	if got.Upserts != 0 || got.Deletes != 0 {
+		t.Fatalf("reconcile = %+v, want nothing proposed for a row the other installation owns", got)
+	}
+	if shape := r.shape(); shape != "" {
+		t.Fatalf("appended = %q, want the foreign installation's row left alone", shape)
+	}
+}
+
 // reconciler returns a reconciler over d writing to the given log, with the clock
 // fixed so an entry's timestamp is a value rather than the moment the test
 // happened to run.

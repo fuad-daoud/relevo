@@ -12,7 +12,19 @@ import (
 // reconcile batch is one transport append, so the size is the granularity a
 // remote sees and the work a refused append repeats. It matches the exporter's
 // drain, so the two paths put the same amount in one write.
+//
+// It is also the bound a local read uses: a page asks for no more rows than the
+// chunk still needs, so a chunk that fills does so on its page's last row and no
+// fetched row is left to be read twice. One number serves both.
 const defaultReconcileChunk = 256
+
+// The two phases of a chunked run. Upserts run first, parents-first, because an
+// importer needs a row's parent in place before the row; deletes run second,
+// children-first, so a child is gone before the parent it hangs off.
+const (
+	phaseUpserts = iota
+	phaseDeletes
+)
 
 // Reconciler compares what this installation's file holds against what the log
 // already holds for it, and appends the difference.
@@ -25,9 +37,10 @@ const defaultReconcileChunk = 256
 // the log directly and emits the rows whose body hash differs from head, plus the
 // deletes for head rows this file no longer holds.
 //
-// Every run recomputes from head rather than from a cursor of its own, so a run
-// that stops half way is finished by the next one, and a row it already proposed
-// is not proposed twice: the append it made is what head now carries.
+// A run walks the file once, in key-ordered pages, and keeps where it stopped
+// between chunks, so a table larger than a chunk is read once rather than
+// restarted. Head is read once for the run and held, which is what lets the
+// delete phase name the rows the walk did not find without asking the file again.
 type Reconciler struct {
 	db        *db.DB
 	transport LogTransport
@@ -35,6 +48,26 @@ type Reconciler struct {
 	schema    int
 	chunk     int
 	now       func() time.Time
+
+	// readPage reads one key-ordered page of a table's owned rows inside the
+	// chunk's read transaction. It is a field so a test can count the pages a run
+	// reads and the rows each one returned.
+	readPage func(tx *db.Tx, tbl, after string, limit int) ([]db.ExchangeRow, error)
+
+	// Run state: head as it stood when the run began, where the walk stopped, and
+	// the head rows the walk has found locally so far.
+	head   *headIndex
+	cursor reconcileCursor
+	seen   map[rowKey]bool
+}
+
+// reconcileCursor is where a chunked run resumes: which phase it is in, which
+// table it was walking, and the last key it read there. The next page continues
+// after that key, so each row is read once per run however many chunks it takes.
+type reconcileCursor struct {
+	phase int
+	table int
+	after string
 }
 
 // NewReconciler returns the reconciler for one installation's file and the log
@@ -43,13 +76,18 @@ type Reconciler struct {
 // whether it can understand the entries.
 func NewReconciler(d *db.DB, t LogTransport) *Reconciler {
 	have, _ := d.SchemaVersions()
+	origin := d.Origin()
 	return &Reconciler{
 		db:        d,
 		transport: t,
-		origin:    d.Origin(),
+		origin:    origin,
 		schema:    have,
 		chunk:     defaultReconcileChunk,
 		now:       time.Now,
+		readPage: func(tx *db.Tx, tbl, after string, limit int) ([]db.ExchangeRow, error) {
+			return tx.SharedOwnedRowPage(tbl, origin, after, limit)
+		},
+		seen: make(map[rowKey]bool),
 	}
 }
 
@@ -67,11 +105,12 @@ type ReconcileResult struct {
 // Reconcile compares the whole file against head and appends every difference,
 // in as many batches as the differences need.
 //
-// A pass that finds nothing ends the run: the log already holds everything this
-// file does, so there is nothing left to propose. A pass that appended something
-// runs again, because the append moved head, and the rows it wrote are the rows
-// the next pass compares against.
+// A run is one walk of the file: the cursor and the rows the walk has found
+// carry from chunk to chunk, so a table is read once and the run ends when the
+// walk does rather than when an append changed head. A second call on the same
+// reconciler starts a new walk.
 func (r *Reconciler) Reconcile() (ReconcileResult, error) {
+	r.reset()
 	var total ReconcileResult
 	for {
 		one, err := r.ReconcileBatch()
@@ -87,9 +126,17 @@ func (r *Reconciler) Reconcile() (ReconcileResult, error) {
 	}
 }
 
+// reset starts a run from the first row and an unread head, so a run does not
+// resume a walk an earlier call already finished.
+func (r *Reconciler) reset() {
+	r.head = nil
+	r.cursor = reconcileCursor{}
+	r.seen = make(map[rowKey]bool)
+}
+
 // ReconcileBatch appends one batch of the differences it finds, up to the chunk
-// size, as a single transport call. It appends nothing when the file and head
-// already agree, and one batch when they do not.
+// size, as a single transport call. It appends nothing when the walk is finished,
+// and one batch when it is not.
 func (r *Reconciler) ReconcileBatch() (ReconcileResult, error) {
 	entries, err := r.differences(r.chunk)
 	if err != nil {
@@ -116,129 +163,215 @@ func (r *Reconciler) ReconcileBatch() (ReconcileResult, error) {
 // longer holds, deletes children first.
 //
 // The order is the exporter's, and for the same reason: an importer applies a
-// batch with the foreign keys on, so a parent has to be in place before the
-// child naming it, and a child has to be gone before its parent is removed.
-// Cutting the batch to the chunk size can only shorten that order, never
-// rearrange it, so a chunked run emits the same sequence a single one would.
+// batch with the foreign keys on, so a parent has to be in place before the child
+// naming it, and a child has to be gone before its parent is removed. Cutting the
+// batch to the chunk size can only shorten that order, never rearrange it, so a
+// chunked run emits the same sequence a single one would.
+//
+// Every read one chunk makes runs in one transaction, so the rows it compares are
+// the state at one moment and a row cannot arrive before a parent it references.
 func (r *Reconciler) differences(limit int) ([]Entry, error) {
-	head, err := r.transport.Head(r.origin)
-	if err != nil {
-		return nil, fmt.Errorf("read head: %w", err)
-	}
-	known := newHeadIndex(head)
-	upserts, deletes, err := r.walk(known)
-	if err != nil {
+	if err := r.ensureHead(); err != nil {
 		return nil, err
 	}
-	out := make([]Entry, 0, len(upserts)+len(deletes))
-	for _, group := range [][]Entry{upserts, deletes} {
-		for _, e := range group {
+	var out []Entry
+	err := r.db.Tx(func(tx *db.Tx) error {
+		upserts, err := r.nextUpserts(tx, limit)
+		if err != nil {
+			return err
+		}
+		out = upserts
+		if len(out) == limit {
+			return nil
+		}
+		deletes, err := r.nextDeletes(tx, limit-len(out))
+		if err != nil {
+			return err
+		}
+		out = append(out, deletes...)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read owned rows: %w", err)
+	}
+	return out, nil
+}
+
+// nextUpserts fills out with upserts until it holds limit of them or the walk
+// leaves the upsert phase. It pages each table through SharedOwnedRowPage in key
+// order and stops where the chunk filled, so the next chunk resumes after it.
+func (r *Reconciler) nextUpserts(tx *db.Tx, limit int) ([]Entry, error) {
+	var out []Entry
+	tables := SharedTablesInOrder()
+	for r.cursor.phase == phaseUpserts && len(out) < limit {
+		if r.cursor.table >= len(tables) {
+			r.cursor = reconcileCursor{phase: phaseDeletes}
+			return out, nil
+		}
+		tbl := tables[r.cursor.table]
+		// Reading no more than the chunk still needs is what keeps the cursor
+		// from leaving fetched rows behind: the chunk can only fill on the last
+		// row of such a page, so no row is fetched and then read again.
+		remaining := limit - len(out)
+		page, err := r.readPage(tx, tbl, r.cursor.after, remaining)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range page {
+			if err := r.inspectUpsert(&out, tbl, row); err != nil {
+				return nil, err
+			}
+			r.cursor.after = row.PK
 			if len(out) == limit {
 				return out, nil
 			}
-			out = append(out, e)
+		}
+		if len(page) < remaining {
+			r.cursor.table++
+			r.cursor.after = ""
 		}
 	}
 	return out, nil
 }
 
-// walk is one pass over the shared tables in the order SharedTables lists them:
-// the entries to propose for the rows this installation owns.
-//
-// The deletes come back reversed, because the walk's own order is the
-// parents-first order an upsert needs and the opposite of what a delete needs: a
-// row has to be removed before the parent it hangs off.
-func (r *Reconciler) walk(known *headIndex) (upserts, deletes []Entry, err error) {
-	for _, tbl := range SharedTablesInOrder() {
-		rows, err := r.db.SharedOwnedRows(tbl, r.origin)
-		if err != nil {
-			return nil, nil, fmt.Errorf("read %s: %w", tbl, err)
-		}
-		if upserts, err = r.appendUpserts(upserts, tbl, rows, known); err != nil {
-			return nil, nil, err
-		}
-		if deletes, err = r.appendDeletes(deletes, tbl, known); err != nil {
-			return nil, nil, err
-		}
+// inspectUpsert compares one local row against head. A row head names with the
+// same hash is left alone but recorded as still here; every other row is proposed
+// as an upsert. The body is encoded once and both the comparison and the entry use
+// it, so the hash is taken over the bytes that travel rather than a digest of a
+// body the log never saw.
+func (r *Reconciler) inspectUpsert(out *[]Entry, tbl string, row db.ExchangeRow) error {
+	key := rowKey{table: tbl, pk: row.PK}
+	if r.head.names(key) {
+		r.seen[key] = true
 	}
-	slices.Reverse(deletes)
-	return upserts, deletes, nil
+	body, err := EncodeBody(row)
+	if err != nil {
+		return err
+	}
+	hash, err := BodyHash(body)
+	if err != nil {
+		return err
+	}
+	if r.head.holds(key, hash) {
+		return nil
+	}
+	entry, err := NewUpsert(r.origin, tbl, row.PK, r.schema, body, r.now())
+	if err != nil {
+		return err
+	}
+	*out = append(*out, entry)
+	return nil
 }
 
-// appendUpserts adds one entry per row of tbl whose body hash head does not
-// carry. A row head names with the same hash is left alone, and a row head does
-// not name at all is proposed whole: the log has no record of it, which is what a
-// file restored from a backup looks like, since the rows come back with the file
-// but not with the log's memory of them.
+// nextDeletes fills out with deletes until it holds limit of them or head runs
+// out: the head rows the walk did not find, walked children-first and key-ordered
+// so the order an importer needs holds across chunks.
 //
-// The body is encoded once and both the comparison and the entry use it. The hash
-// has to be taken over the bytes that travel, or the comparison would be against a
-// digest of a body the log never saw.
-func (r *Reconciler) appendUpserts(out []Entry, tbl string, rows []db.ExchangeRow, known *headIndex) ([]Entry, error) {
-	for _, row := range rows {
-		body, err := EncodeBody(row)
-		if err != nil {
-			return nil, err
+// A head row is read back from the file before it is dropped. The walk already
+// found every owned row head names, so this is the check that separates a head row
+// the file holds under another installation, which is not this walk's to remove,
+// from one this file no longer holds.
+func (r *Reconciler) nextDeletes(tx *db.Tx, limit int) ([]Entry, error) {
+	var out []Entry
+	tables := SharedTablesInOrder()
+	for r.cursor.phase == phaseDeletes && len(out) < limit {
+		if r.cursor.table >= len(tables) {
+			return out, nil
 		}
-		hash, err := BodyHash(body)
-		if err != nil {
-			return nil, err
-		}
-		if known.holds(rowKey{table: tbl, pk: row.PK}, hash) {
+		// Head is walked the other way round: a child is removed before the
+		// parent it hangs off, which is the order an importer needs.
+		tbl := tables[len(tables)-1-r.cursor.table]
+		keys := r.head.unseen(tbl, r.cursor.after, r.seen)
+		if len(keys) == 0 {
+			r.cursor.table++
+			r.cursor.after = ""
 			continue
 		}
-		entry, err := NewUpsert(r.origin, tbl, row.PK, r.schema, body, r.now())
-		if err != nil {
-			return nil, err
+		for _, pk := range keys {
+			entry, err := r.deleteFor(tx, tbl, pk)
+			if err != nil {
+				return nil, err
+			}
+			r.cursor.after = pk
+			if entry == nil {
+				continue
+			}
+			out = append(out, *entry)
+			if len(out) == limit {
+				return out, nil
+			}
 		}
-		out = append(out, entry)
+		r.cursor.table++
+		r.cursor.after = ""
 	}
 	return out, nil
 }
 
-// appendDeletes adds one entry per head row of tbl this file no longer holds. A
-// row head names is one the log believes this origin wrote, so its absence here is
-// a change the log has not been told about.
-func (r *Reconciler) appendDeletes(out []Entry, tbl string, known *headIndex) ([]Entry, error) {
-	for _, pk := range known.of(tbl) {
-		_, found, err := r.db.ReadExchangeRow(tbl, pk)
-		if err != nil {
-			return nil, fmt.Errorf("read %s %s: %w", tbl, pk, err)
-		}
-		if found {
-			continue
-		}
-		entry, err := NewDelete(r.origin, tbl, pk, r.schema, r.now())
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, entry)
+// deleteFor is the delete for one head row the walk did not find, or nil when the
+// file does hold the row: a head row the file holds under another installation is
+// not this walk's to remove. Reading the key back also surfaces a head key this
+// schema cannot parse, which no delete could name correctly.
+func (r *Reconciler) deleteFor(tx *db.Tx, tbl, pk string) (*Entry, error) {
+	_, found, err := tx.ReadExchangeRow(tbl, pk)
+	if err != nil {
+		return nil, fmt.Errorf("read %s %s: %w", tbl, pk, err)
 	}
-	return out, nil
+	if found {
+		return nil, nil
+	}
+	entry, err := NewDelete(r.origin, tbl, pk, r.schema, r.now())
+	if err != nil {
+		return nil, err
+	}
+	return &entry, nil
+}
+
+// ensureHead reads head once for the run and holds it. Holding it is what lets
+// the delete phase compare against the state the walk compared against, and it
+// keeps a chunked run to one head read rather than one per chunk.
+func (r *Reconciler) ensureHead() error {
+	if r.head != nil {
+		return nil
+	}
+	head, err := r.transport.Head(r.origin)
+	if err != nil {
+		return fmt.Errorf("read head: %w", err)
+	}
+	r.head = newHeadIndex(head)
+	return nil
 }
 
 // headIndex is one origin's head: every row it names, keyed for a hash
-// comparison and grouped by table so a walk of one table reads only that table's
-// rows.
+// comparison and grouped by table in key order so a walk of one table reads only
+// that table's rows and a delete phase resumes from a key.
 type headIndex struct {
 	hashes map[rowKey]string
 	keys   map[string][]string
 }
 
-// newHeadIndex indexes the head rows the transport returned, keeping the order it
-// returned them in. The order is kept rather than sorted because the walk reverses
-// the deletes it gathers, and that reversal is the only ordering this needs.
+// newHeadIndex indexes the head rows the transport returned, sorting each table's
+// keys so a walk of one table reads them in the order the local page reads its
+// own rows, which is what lets a delete cursor continue after a key.
 func newHeadIndex(head []HeadRow) *headIndex {
 	index := &headIndex{
 		hashes: make(map[rowKey]string, len(head)),
-		keys:   make(map[string][]string, len(head)),
+		keys:   make(map[string][]string),
 	}
 	for _, row := range head {
 		key := rowKey{table: row.Table, pk: row.PK}
 		index.hashes[key] = row.Hash
 		index.keys[row.Table] = append(index.keys[row.Table], row.PK)
 	}
+	for _, keys := range index.keys {
+		slices.Sort(keys)
+	}
 	return index
+}
+
+// names reports whether head lists the row at all, whatever hash it carries.
+func (h *headIndex) names(key rowKey) bool {
+	_, ok := h.hashes[key]
+	return ok
 }
 
 // holds reports whether head names the row and carries this hash for it. A row
@@ -249,5 +382,19 @@ func (h *headIndex) holds(key rowKey, hash string) bool {
 	return ok && held == hash
 }
 
-// of is the keys head holds for one table, in the order head listed them.
-func (h *headIndex) of(tbl string) []string { return h.keys[tbl] }
+// unseen returns tbl's head keys the walk has not found locally, after the cursor
+// key, in key order. The order is what lets the delete phase resume from a cursor
+// and still emit a child before its parent.
+func (h *headIndex) unseen(tbl, after string, seen map[rowKey]bool) []string {
+	var out []string
+	for _, pk := range h.keys[tbl] {
+		if pk <= after {
+			continue
+		}
+		if seen[rowKey{table: tbl, pk: pk}] {
+			continue
+		}
+		out = append(out, pk)
+	}
+	return out
+}

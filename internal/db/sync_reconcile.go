@@ -7,42 +7,50 @@ import (
 	"strings"
 )
 
-// The enumerate-a-table seam reconcile walks: the rows of one shared table that
-// one installation owns, in key order, each row carrying every column the table
-// declares. It is the read that turns "this origin's rows" into something a
-// walk can step over, and it resolves ownership in SQL through the same
-// expression the outbox triggers write, so the rows a reconcile walks are the
-// rows an export of the same origin would have drained.
+// The enumerate-a-table seam reconcile walks: one bounded, key-ordered page of
+// the rows of one shared table that one installation owns, each row carrying
+// every column the table declares. It is the read that turns "this origin's rows"
+// into something a walk can step over in pages rather than load whole, and it
+// resolves ownership in SQL through the same expression the outbox triggers
+// write, so the rows a reconcile walks are the rows an export of the same origin
+// would have drained.
 
-// SharedOwnedRows returns every row of tbl that origin owns, in primary-key
-// order. A child resolves through the parent it names, the way its trigger
-// does, so a row whose parent is already gone resolves to no owner and is not
-// returned: the parent's own delete carries that removal to every importer.
-func (d *DB) SharedOwnedRows(tbl, origin string) ([]ExchangeRow, error) {
-	return sharedOwnedRows(context.Background(), d.sqlDB, tbl, origin)
+// SharedOwnedRowPage returns up to limit rows of tbl that origin owns, in
+// primary-key order, starting just after the key after names. The key cursor is
+// the last key the previous page returned, so a walk continues where it stopped
+// instead of rescanning the table: no call reads a table whole.
+//
+// An empty after names the first page. The order and the cursor are over the
+// same json_array text the outbox and head carry, so a page boundary never lands
+// between two keys or repeats one.
+func (d *DB) SharedOwnedRowPage(tbl, origin, after string, limit int) ([]ExchangeRow, error) {
+	return sharedOwnedRowPage(context.Background(), d.sqlDB, tbl, origin, after, limit)
 }
 
-func (t *Tx) SharedOwnedRows(tbl, origin string) ([]ExchangeRow, error) {
-	return sharedOwnedRows(t.ctx, t.conn, tbl, origin)
+func (t *Tx) SharedOwnedRowPage(tbl, origin, after string, limit int) ([]ExchangeRow, error) {
+	return sharedOwnedRowPage(t.ctx, t.conn, tbl, origin, after, limit)
 }
 
-func sharedOwnedRows(ctx context.Context, q queryer, tbl, origin string) ([]ExchangeRow, error) {
+func sharedOwnedRowPage(ctx context.Context, q queryer, tbl, origin, after string, limit int) ([]ExchangeRow, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
 	shared := sharedTable(tbl)
 	if shared == nil {
-		return nil, fmt.Errorf("db: shared owned rows: %q is not a shared table: %w", tbl, ErrInvalid)
+		return nil, fmt.Errorf("db: shared owned row page: %q is not a shared table: %w", tbl, ErrInvalid)
 	}
 	rule, ok := OwnerRules[tbl]
 	if !ok {
-		return nil, fmt.Errorf("db: shared owned rows: %s has no owner rule: %w", tbl, ErrInvalid)
+		return nil, fmt.Errorf("db: shared owned row page: %s has no owner rule: %w", tbl, ErrInvalid)
 	}
 	columns, err := exchangeColumns(ctx, q, tbl)
 	if err != nil {
 		return nil, err
 	}
-	query, args := ownedRowsQuery(*shared, rule, columns, origin)
+	query, args := ownedRowPageQuery(*shared, rule, columns, origin, after, limit)
 	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("db: shared owned rows %s: %w", tbl, mapBusy(err))
+		return nil, fmt.Errorf("db: shared owned row page %s: %w", tbl, mapBusy(err))
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -55,29 +63,29 @@ func sharedOwnedRows(ctx context.Context, q queryer, tbl, origin string) ([]Exch
 		out = append(out, row)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("db: shared owned rows %s: %w", tbl, mapBusy(err))
+		return nil, fmt.Errorf("db: shared owned row page %s: %w", tbl, mapBusy(err))
 	}
 	return out, nil
 }
 
-// ownedRowsQuery builds the one SELECT a walk runs: the key as the outbox spells
-// it, every column by name, and the table restricted to the rows whose owner
-// resolves to origin. The table and column names come from SharedTables and
-// OwnerRules; the owner is bound.
-func ownedRowsQuery(shared SharedTable, rule ownerRule, columns []string, origin string) (string, []any) {
-	keys := joinQuoted(shared.PrimaryKey)
+// ownedRowPageQuery builds the one SELECT a page runs: the key as the outbox
+// spells it, every column by name, and the table restricted to the rows whose
+// owner resolves to origin and whose key sits past the cursor. The table and
+// column names come from SharedTables and OwnerRules; the owner, the cursor and
+// the page size are bound.
+func ownedRowPageQuery(shared SharedTable, rule ownerRule, columns []string, origin, after string, limit int) (string, []any) {
+	key := "json_array(" + joinQuoted(shared.PrimaryKey) + ")"
 	quoted := make([]string, len(columns))
 	for i, col := range columns {
 		quoted[i] = quoteIdent(col)
 	}
-	// The key is json_array of the key columns because that is the spelling the
-	// outbox records and the log's head holds, so a key this returns compares to
-	// a head row as the same string rather than as two shapes of one key.
-	query := "SELECT json_array(" + keys + "), " + strings.Join(quoted, ", ") +
+	query := "SELECT " + key + ", " + strings.Join(quoted, ", ") +
 		" FROM " + quoteIdent(shared.Name) +
 		" WHERE " + ownerExpression(rule, quoteIdent(shared.Name)) + " = ?" +
-		" ORDER BY " + keys
-	return query, []any{origin}
+		" AND " + key + " > ?" +
+		" ORDER BY " + key +
+		" LIMIT ?"
+	return query, []any{origin, after, limit}
 }
 
 // scanOwnedRow turns one result row into an exchange row, reading the leading
@@ -87,7 +95,7 @@ func ownedRowsQuery(shared SharedTable, rule ownerRule, columns []string, origin
 func scanOwnedRow(rows *sql.Rows, tbl string) (ExchangeRow, error) {
 	names, err := rows.Columns()
 	if err != nil {
-		return ExchangeRow{}, fmt.Errorf("db: shared owned rows %s: %w", tbl, mapBusy(err))
+		return ExchangeRow{}, fmt.Errorf("db: shared owned row page %s: %w", tbl, mapBusy(err))
 	}
 	values := make([]any, len(names))
 	dest := make([]any, len(names))
@@ -95,11 +103,11 @@ func scanOwnedRow(rows *sql.Rows, tbl string) (ExchangeRow, error) {
 		dest[i] = &values[i]
 	}
 	if err := rows.Scan(dest...); err != nil {
-		return ExchangeRow{}, fmt.Errorf("db: shared owned rows %s: %w", tbl, mapBusy(err))
+		return ExchangeRow{}, fmt.Errorf("db: shared owned row page %s: %w", tbl, mapBusy(err))
 	}
 	pk, ok := values[0].(string)
 	if !ok {
-		return ExchangeRow{}, fmt.Errorf("db: shared owned rows %s: key is %T, want text: %w",
+		return ExchangeRow{}, fmt.Errorf("db: shared owned row page %s: key is %T, want text: %w",
 			tbl, values[0], ErrInvalid)
 	}
 	row := ExchangeRow{Table: tbl, PK: pk, Columns: make([]ExchangeColumn, len(names)-1)}

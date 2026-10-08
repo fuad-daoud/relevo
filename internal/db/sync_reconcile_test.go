@@ -6,27 +6,35 @@ import (
 	"testing"
 )
 
-// The enumerate-a-table seam's contract: it returns one installation's own rows
-// of a shared table, in key order, with every column the table declares, and it
-// resolves ownership the way the outbox triggers do rather than by a second rule.
+// The paged-enumerate seam's contract: it returns one installation's own rows of
+// a shared table, in key order, with every column the table declares, one bounded
+// page at a time, and it resolves ownership the way the outbox triggers do rather
+// than by a second rule.
 //
 // The fixture seeds one row per shared table under a different owner each, so a
 // walk has something to find in every table and something to leave alone in every
 // other.
 
-// ownedKeysOf is the "table pk" a walk returned, joined, so a case can say which
-// rows it found without counting one table at a time.
+// ownedKeysOf is the "table pk" a full walk returned, joined, so a case can say
+// which rows it found without counting one table at a time. The walk reads small
+// pages so the paging itself is on the path every case exercises.
 func ownedKeysOf(t *testing.T, d *DB, tbl, origin string) string {
 	t.Helper()
-	rows, err := d.SharedOwnedRows(tbl, origin)
-	if err != nil {
-		t.Fatalf("SharedOwnedRows %s for %s: %v", tbl, origin, err)
-	}
 	var out []string
-	for _, row := range rows {
-		out = append(out, row.PK)
+	after := ""
+	for {
+		rows, err := d.SharedOwnedRowPage(tbl, origin, after, 2)
+		if err != nil {
+			t.Fatalf("SharedOwnedRowPage %s for %s: %v", tbl, origin, err)
+		}
+		for _, row := range rows {
+			out = append(out, row.PK)
+		}
+		if len(rows) < 2 {
+			return strings.Join(out, ";")
+		}
+		after = rows[len(rows)-1].PK
 	}
-	return strings.Join(out, ";")
 }
 
 // seededOwner is the installation each seeded row belongs to. It is written out
@@ -56,7 +64,7 @@ var seededOwner = map[string]string{
 // Every shared table returns its own installation's row and nobody else's, and
 // the key comes back in the outbox's own spelling so it compares against a head
 // row as one string.
-func TestSharedOwnedRowsFindsEachTablesOwnRow(t *testing.T) {
+func TestSharedOwnedRowPageFindsEachTablesOwnRow(t *testing.T) {
 	t.Parallel()
 	d := openTestDB(t)
 	seeded := sharedRowFixture(t, d)
@@ -65,7 +73,7 @@ func TestSharedOwnedRowsFindsEachTablesOwnRow(t *testing.T) {
 		owner := seededOwner[seeded.tbl]
 		got := ownedKeysOf(t, d, seeded.tbl, owner)
 		if got != seeded.pk {
-			t.Errorf("SharedOwnedRows %s for %s = %q, want %q", seeded.tbl, owner, got, seeded.pk)
+			t.Errorf("SharedOwnedRowPage %s for %s = %q, want %q", seeded.tbl, owner, got, seeded.pk)
 		}
 	}
 	if len(seeded) != len(SharedTables) {
@@ -77,7 +85,7 @@ func TestSharedOwnedRowsFindsEachTablesOwnRow(t *testing.T) {
 // walk for the root's owner finds the child and a walk for any other
 // installation does not. This is the case a Go-side owner rule that stopped at
 // the parent, or that read the child's own column, would get wrong.
-func TestSharedOwnedRowsResolvesAChildThroughItsParent(t *testing.T) {
+func TestSharedOwnedRowPageResolvesAChildThroughItsParent(t *testing.T) {
 	t.Parallel()
 	d := openTestDB(t)
 	sharedRowFixture(t, d)
@@ -102,7 +110,7 @@ func TestSharedOwnedRowsResolvesAChildThroughItsParent(t *testing.T) {
 // The installation table resolves to its own id rather than reading an origin
 // column, because a row of it is the installation. A walk for any other
 // installation must not find it.
-func TestSharedOwnedRowsTreatsAnInstallationAsItsOwnOwner(t *testing.T) {
+func TestSharedOwnedRowPageTreatsAnInstallationAsItsOwnOwner(t *testing.T) {
 	t.Parallel()
 	d := openTestDB(t)
 	sharedRowFixture(t, d)
@@ -115,17 +123,17 @@ func TestSharedOwnedRowsTreatsAnInstallationAsItsOwnOwner(t *testing.T) {
 	}
 }
 
-// A walk returns the row's stored values, BLOB columns as the bytes on disk, so
+// A page returns the row's stored values, BLOB columns as the bytes on disk, so
 // the body built from it is what the file holds rather than a rendering of it. A
 // compressed body that came back as text would not survive a recompression.
-func TestSharedOwnedRowsReturnsStoredValues(t *testing.T) {
+func TestSharedOwnedRowPageReturnsStoredValues(t *testing.T) {
 	t.Parallel()
 	d := openTestDB(t)
 	sharedRowFixture(t, d)
 
-	rows, err := d.SharedOwnedRows("round_file", "instR")
+	rows, err := d.SharedOwnedRowPage("round_file", "instR", "", 100)
 	if err != nil {
-		t.Fatalf("SharedOwnedRows round_file: %v", err)
+		t.Fatalf("SharedOwnedRowPage round_file: %v", err)
 	}
 	if len(rows) != 1 {
 		t.Fatalf("round_file returned %d rows, want the one the fixture wrote", len(rows))
@@ -151,25 +159,107 @@ func TestSharedOwnedRowsReturnsStoredValues(t *testing.T) {
 // A table no shared table names, and a shared table with no owner rule, are both
 // refused rather than walked: a name reaching SQL has to be one this package
 // already classified.
-func TestSharedOwnedRowsRefusesATableItCannotWalk(t *testing.T) {
+func TestSharedOwnedRowPageRefusesATableItCannotWalk(t *testing.T) {
 	t.Parallel()
 	d := openTestDB(t)
 	sharedRowFixture(t, d)
 
-	if _, err := d.SharedOwnedRows("sync_outbox", "instR"); !errors.Is(err, ErrInvalid) {
-		t.Errorf("SharedOwnedRows on an unshared table = %v, want ErrInvalid", err)
+	if _, err := d.SharedOwnedRowPage("sync_outbox", "instR", "", 10); !errors.Is(err, ErrInvalid) {
+		t.Errorf("SharedOwnedRowPage on an unshared table = %v, want ErrInvalid", err)
 	}
-	if _, err := d.SharedOwnedRows("no_such_table", "instR"); !errors.Is(err, ErrInvalid) {
-		t.Errorf("SharedOwnedRows on an unknown table = %v, want ErrInvalid", err)
+	if _, err := d.SharedOwnedRowPage("no_such_table", "instR", "", 10); !errors.Is(err, ErrInvalid) {
+		t.Errorf("SharedOwnedRowPage on an unknown table = %v, want ErrInvalid", err)
 	}
 }
 
-// A second row of the same table under the same owner is returned too, in key
-// order, and a row under another owner is left out. The order is what makes a
-// walk's output a sequence rather than a set: two rows of one table reaching an
-// importer in either order still apply, but the walk's own output should not
-// depend on the order the query engine happened to return them in.
-func TestSharedOwnedRowsOrdersAndExcludesForeignRows(t *testing.T) {
+// A page holds no more rows than it was asked for, so a table far larger than a
+// page is walked in bounded reads rather than loaded whole. A page of zero is
+// empty rather than an unbounded read.
+func TestSharedOwnedRowPageBoundsTheRead(t *testing.T) {
+	t.Parallel()
+	d := openTestDB(t)
+	err := d.Tx(func(t *Tx) error {
+		return execTxAll(t,
+			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
+			 VALUES ('b1', 'n1', '/x', 'headless', 't', '', 'instB')`,
+			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
+			 VALUES ('b2', 'n2', '/x', 'headless', 't', '', 'instB')`,
+			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
+			 VALUES ('b3', 'n3', '/x', 'headless', 't', '', 'instB')`,
+		)
+	})
+	if err != nil {
+		t.Fatalf("seed three bindings: %v", err)
+	}
+
+	rows, err := d.SharedOwnedRowPage("binding", "instB", "", 2)
+	if err != nil {
+		t.Fatalf("SharedOwnedRowPage: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("a page of two returned %d rows, want two", len(rows))
+	}
+	empty, err := d.SharedOwnedRowPage("binding", "instB", "", 0)
+	if err != nil {
+		t.Fatalf("SharedOwnedRowPage with a zero page: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("a zero-sized page returned %d rows, want none", len(empty))
+	}
+}
+
+// A later page starts after the key the previous one ended on, so a walk sees
+// each row once and neither repeats a row nor skips one. The cursor is the key
+// itself rather than an offset, so a write between two pages cannot shift a row
+// across the boundary.
+func TestSharedOwnedRowPageContinuesAfterTheCursor(t *testing.T) {
+	t.Parallel()
+	d := openTestDB(t)
+	err := d.Tx(func(t *Tx) error {
+		return execTxAll(t,
+			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
+			 VALUES ('b1', 'n1', '/x', 'headless', 't', '', 'instB')`,
+			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
+			 VALUES ('b2', 'n2', '/x', 'headless', 't', '', 'instB')`,
+			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
+			 VALUES ('b3', 'n3', '/x', 'headless', 't', '', 'instB')`,
+		)
+	})
+	if err != nil {
+		t.Fatalf("seed three bindings: %v", err)
+	}
+
+	first, err := d.SharedOwnedRowPage("binding", "instB", "", 2)
+	if err != nil {
+		t.Fatalf("SharedOwnedRowPage: %v", err)
+	}
+	if got := keysOfRows(first); got != `["b1"];["b2"]` {
+		t.Fatalf("the first page = %q, want the two lowest keys", got)
+	}
+	second, err := d.SharedOwnedRowPage("binding", "instB", first[len(first)-1].PK, 2)
+	if err != nil {
+		t.Fatalf("SharedOwnedRowPage after the cursor: %v", err)
+	}
+	if got := keysOfRows(second); got != `["b3"]` {
+		t.Fatalf("the page after the cursor = %q, want the rest", got)
+	}
+}
+
+// keysOfRows is one page's keys joined, so a case can name the rows a page held.
+func keysOfRows(rows []ExchangeRow) string {
+	var out []string
+	for _, row := range rows {
+		out = append(out, row.PK)
+	}
+	return strings.Join(out, ";")
+}
+
+// Both rows of the same table under one owner come back in key order and a row
+// under another owner is left out. The order is what makes a walk's output a
+// sequence rather than a set: two rows of one table reaching an importer in
+// either order still apply, but the walk's own output should not depend on the
+// order the query engine happened to return them in.
+func TestSharedOwnedRowPageOrdersAndExcludesForeignRows(t *testing.T) {
 	t.Parallel()
 	d := openTestDB(t)
 	sharedRowFixture(t, d)
@@ -199,14 +289,14 @@ func TestSharedOwnedRowsOrdersAndExcludesForeignRows(t *testing.T) {
 // The *Tx form reads inside the caller's transaction, so a reconcile that walks
 // and compares can hold the rows and head's view in one consistent read rather
 // than seeing a row change between the walk and the comparison.
-func TestSharedOwnedRowsReadsInsideTheCallersTransaction(t *testing.T) {
+func TestSharedOwnedRowPageReadsInsideTheCallersTransaction(t *testing.T) {
 	t.Parallel()
 	d := openTestDB(t)
 	sharedRowFixture(t, d)
 
 	var got string
 	err := d.Tx(func(t *Tx) error {
-		rows, err := t.SharedOwnedRows("binding", "instB")
+		rows, err := t.SharedOwnedRowPage("binding", "instB", "", 100)
 		if err != nil {
 			return err
 		}
