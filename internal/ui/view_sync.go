@@ -363,13 +363,13 @@ func (v syncView) troubleLines() []string {
 	}
 	out := []string{"", "   " + warnStyle.Bold(true).Render("IMPORT TROUBLE")}
 	for _, held := range v.snap.Trouble.Held {
-		out = append(out, "     "+warnStyle.Render("held    ")+mutedStyle.Render(held))
+		out = append(out, "     "+warnStyle.Render("held    ")+mutedStyle.Render(sanitizeText(held)))
 	}
 	for _, dropped := range v.snap.Trouble.Dropped {
-		out = append(out, "     "+warnStyle.Render("dropped ")+mutedStyle.Render(dropped))
+		out = append(out, "     "+warnStyle.Render("dropped ")+mutedStyle.Render(sanitizeText(dropped)))
 	}
 	for _, gap := range v.snap.Trouble.Gaps {
-		out = append(out, "     "+warnStyle.Render("gap     ")+mutedStyle.Render(gap))
+		out = append(out, "     "+warnStyle.Render("gap     ")+mutedStyle.Render(sanitizeText(gap)))
 	}
 	return out
 }

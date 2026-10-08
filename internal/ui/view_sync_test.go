@@ -644,3 +644,29 @@ func TestSyncViewShowsImportTrouble(t *testing.T) {
 		}
 	}
 }
+
+// TestSyncViewSanitizesImportTrouble pins the TUI sink of the same finding: a
+// control byte in a trouble sentence -- which arrived over the shared sync log
+// -- renders inert in the IMPORT TROUBLE block, and the benign text around it
+// survives so the fragment cannot be passed off as merely dropped.
+// Mutation: drop the sanitizeText calls in troubleLines.
+func TestSyncViewSanitizesImportTrouble(t *testing.T) {
+	snap := syncPostOnSnapshot()
+	snap.Trouble = relevosync.Trouble{
+		Held:    []string{"zen\x1b[2J\x07 wrote schema 5"},
+		Dropped: []string{"dropped a batch from m2\x07: unreadable"},
+		Gaps:    []string{"m3\x1b]52;c;Zm9v\x07 is held at 7"},
+	}
+
+	env := Env{Ctx: t.Context(), Now: syncNow, Width: 200, Height: 60, Loaded: true}
+	body := plain(syncView{snap: snap, loaded: true, actions: true}.Body(env, 200, 60))
+	if !strings.Contains(body, "IMPORT TROUBLE") {
+		t.Fatalf("the trouble block is not on screen, so nothing was pinned:\n%s", body)
+	}
+	assertNoControlBytes(t, "the sync view", body)
+	for _, want := range []string{"zen", "wrote schema 5", "m2", "is held at 7", "\uFFFD"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the sync view is missing %q:\n%s", want, body)
+		}
+	}
+}
