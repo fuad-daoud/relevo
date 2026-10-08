@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -240,5 +241,359 @@ func TestConfirmedChannelRouteRowRenders(t *testing.T) {
 	}
 	if n := claimableCount(t, rt, "webshop"); n != 0 {
 		t.Errorf("a confirmed channel row must not be claimable, got %d", n)
+	}
+}
+
+// seedBinding saves an own binding with no log entry, so a step sees only its
+// state.
+func seedBinding(t *testing.T, rt Deps, name, mastermindID string, state store.State) store.Binding {
+	t.Helper()
+	b := store.Binding{
+		Name:         name,
+		CWD:          "/repo/" + name,
+		Round:        1,
+		State:        state,
+		MasterMind:   store.Endpoint{Kind: "claude", SessionID: "sess"},
+		MasterMindID: mastermindID,
+		Builder:      store.Endpoint{Mode: store.ModeHeadless},
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error { return tx.Save(b) }); err != nil {
+		t.Fatalf("seed binding %s: %v", name, err)
+	}
+	return b
+}
+
+// setBindingState rewrites one saved binding's state.
+func setBindingState(t *testing.T, rt Deps, name string, state store.State) {
+	t.Helper()
+	b, err := rt.Store.Load(name)
+	if err != nil {
+		t.Fatalf("load %s: %v", name, err)
+	}
+	b.State = state
+	if err := rt.Store.WithLock(func(tx *store.Tx) error { return tx.Save(b) }); err != nil {
+		t.Fatalf("save %s: %v", name, err)
+	}
+}
+
+// stepRun is a pushRun a test can drive one step at a time: an in-memory out
+// and empty per-step state.
+func stepRun(t *testing.T, rt Deps) (*pushRun, *bytes.Buffer) {
+	t.Helper()
+	out := &bytes.Buffer{}
+	p := &pushRun{
+		d:            rt,
+		mastermindID: testClaimMasterMind,
+		out:          out,
+		unacked:      map[pushAdmit]struct{}{},
+		last:         map[string]store.State{},
+	}
+	return p, out
+}
+
+// stepOnce runs one step and returns the lines it wrote.
+func stepOnce(t *testing.T, p *pushRun, out *bytes.Buffer) []PushEvent {
+	t.Helper()
+	out.Reset()
+	if _, err := p.step(context.Background()); err != nil {
+		t.Fatalf("step: %v", err)
+	}
+	return decodePushLines(t, out.Bytes())
+}
+
+// decodePushLines decodes every NDJSON line in raw.
+func decodePushLines(t *testing.T, raw []byte) []PushEvent {
+	t.Helper()
+	var evs []PushEvent
+	sc := bufio.NewScanner(bytes.NewReader(raw))
+	for sc.Scan() {
+		var ev PushEvent
+		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
+			t.Fatalf("decode push line %q: %v", sc.Text(), err)
+		}
+		evs = append(evs, ev)
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatalf("scan push lines: %v", err)
+	}
+	return evs
+}
+
+// pushEventChan decodes NDJSON push lines into a channel until the reader
+// errors or EOF.
+func pushEventChan(r *bufio.Reader) <-chan PushEvent {
+	out := make(chan PushEvent)
+	go func() {
+		defer close(out)
+		for {
+			line, err := r.ReadBytes('\n')
+			if err != nil {
+				return
+			}
+			var ev PushEvent
+			if err := json.Unmarshal(line, &ev); err != nil {
+				return
+			}
+			out <- ev
+		}
+	}()
+	return out
+}
+
+// waitPushEvent returns the next push event or fails the test on timeout.
+func waitPushEvent(t *testing.T, events <-chan PushEvent, timeout time.Duration) PushEvent {
+	t.Helper()
+	select {
+	case ev, ok := <-events:
+		if !ok {
+			t.Fatal("push event stream closed")
+		}
+		return ev
+	case <-time.After(timeout):
+		t.Fatal("timed out waiting for a push event")
+		return PushEvent{}
+	}
+}
+
+// TestNextAdmittedReturnsAdmittedEntry: the find-and-admit helper hands back an
+// entry it has already admitted, so no reader may claim it.
+func TestNextAdmittedReturnsAdmittedEntry(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+
+	b, entry, idx, found, err := nextAdmitted(rt, testClaimMasterMind)
+	if err != nil {
+		t.Fatalf("nextAdmitted: %v", err)
+	}
+	if !found || b.Name != "webshop" || idx != 0 || entry.Kind != store.KindReport {
+		t.Fatalf("nextAdmitted = %+v entry=%+v idx=%d found=%v", b, entry, idx, found)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(entries) != 1 || entries[0].AdmittedAt == nil {
+		t.Fatalf("the returned entry is not admitted: %+v", entries)
+	}
+	if n := claimableCount(t, rt, "webshop"); n != 0 {
+		t.Errorf("claimable after nextAdmitted = %d, want 0", n)
+	}
+}
+
+// TestNextAdmittedSkipsConfirmedEntry: an entry a reader confirmed before the
+// helper runs is never returned.
+func TestNextAdmittedSkipsConfirmedEntry(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+	if err := rt.Store.ConfirmIndex("webshop", 0, "wait"); err != nil {
+		t.Fatalf("ConfirmIndex: %v", err)
+	}
+
+	_, _, _, found, err := nextAdmitted(rt, testClaimMasterMind)
+	if err != nil {
+		t.Fatalf("nextAdmitted: %v", err)
+	}
+	if found {
+		t.Error("nextAdmitted returned an entry a reader already confirmed")
+	}
+}
+
+// TestRunPushNeverPullsAndWritesOneEntry pins the one-lock find-and-admit: a
+// reader that runs in the seam between a split scan and admit must find
+// nothing, because the entry is already admitted. Moving the admit out to a
+// second lock lets the reader claim the entry the holder also writes, and this
+// test fails.
+func TestRunPushNeverPullsAndWritesOneEntry(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	rt.Channels = fakeClaimStore{}
+	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+
+	ackIn, ackWriter := io.Pipe()
+	lineOut, lineWriter := io.Pipe()
+	defer func() { _ = ackIn.Close() }()
+	defer func() { _ = lineOut.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	type pullResult struct {
+		n   int
+		err error
+	}
+	pulled := make(chan pullResult, 1)
+	seam := func() {
+		delivered, err := PullPendingThroughEntries(ctx, rt.Store, "webshop", "wait", 0)
+		pulled <- pullResult{n: len(delivered), err: err}
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- runPush(ctx, rt, testClaimMasterMind, ackIn, lineWriter, seam) }()
+
+	ev := readPushLine(t, bufio.NewReader(lineOut))
+	if ev.Binding != "webshop" || ev.Kind != string(store.KindReport) {
+		t.Fatalf("push line = %+v, want the webshop report", ev)
+	}
+
+	got := <-pulled
+	if got.err != nil {
+		t.Fatalf("reader pull: %v", got.err)
+	}
+	if got.n != 0 {
+		t.Fatalf("a reader pulled %d entries the holder also wrote", got.n)
+	}
+
+	_ = ackWriter.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunPush did not return on stdin EOF")
+	}
+}
+
+// TestPushStateLineOnEnteringNeedsYou pins the transition rule: running ->
+// needs_you writes exactly one state line, and staying in needs_you writes no
+// second one. A transition check that ignores old_state writes on every poll
+// and fails this test.
+func TestPushStateLineOnEnteringNeedsYou(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedBinding(t, rt, "webshop", testClaimMasterMind, store.StateActive)
+	p, out := stepRun(t, rt)
+
+	if evs := stepOnce(t, p, out); len(evs) != 0 {
+		t.Fatalf("active wrote %+v, want no line", evs)
+	}
+
+	setBindingState(t, rt, "webshop", store.StateNeedsYou)
+	evs := stepOnce(t, p, out)
+	if len(evs) != 1 {
+		t.Fatalf("running -> needs_you wrote %d lines, want 1: %+v", len(evs), evs)
+	}
+	ev := evs[0]
+	if ev.Kind != "state" || ev.State != "needs_you" || ev.Seq != 0 {
+		t.Errorf("state event = %+v, want kind state seq 0 state needs_you", ev)
+	}
+	if ev.Binding != "webshop" || ev.Round != 1 || ev.OldState != "active" {
+		t.Errorf("state event = %+v, want webshop round 1 old_state active", ev)
+	}
+	if !strings.Contains(ev.Text, "NEEDS YOU") {
+		t.Errorf("state text = %q, want the NEEDS YOU label", ev.Text)
+	}
+
+	if evs := stepOnce(t, p, out); len(evs) != 0 {
+		t.Fatalf("staying in needs_you wrote a second line: %+v", evs)
+	}
+}
+
+// TestPushStateLineOnLeavingAndReturningUnhealthy: needs_you -> running ->
+// broken announces the second unhealthy state in its own line, after the
+// healthy one reset the transition.
+func TestPushStateLineOnLeavingAndReturningUnhealthy(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedBinding(t, rt, "webshop", testClaimMasterMind, store.StateNeedsYou)
+	p, out := stepRun(t, rt)
+
+	if evs := stepOnce(t, p, out); len(evs) != 1 || evs[0].State != "needs_you" {
+		t.Fatalf("first sight needs_you wrote %+v, want one needs_you line", evs)
+	}
+	setBindingState(t, rt, "webshop", store.StateActive)
+	if evs := stepOnce(t, p, out); len(evs) != 0 {
+		t.Fatalf("needs_you -> active wrote %+v, want no line", evs)
+	}
+	setBindingState(t, rt, "webshop", store.StateBroken)
+	evs := stepOnce(t, p, out)
+	if len(evs) != 1 || evs[0].State != "broken" || evs[0].OldState != "active" {
+		t.Fatalf("active -> broken wrote %+v, want one broken line from active", evs)
+	}
+	if !strings.Contains(evs[0].Text, "BROKEN") {
+		t.Errorf("state text = %q, want the BROKEN label", evs[0].Text)
+	}
+}
+
+// TestPushStateLineConfirmsNothing: a state line carries seq 0 and leaves the
+// log untouched -- it is not an entry, so it is never confirmed or admitted.
+func TestPushStateLineConfirmsNothing(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedBinding(t, rt, "webshop", testClaimMasterMind, store.StateActive)
+	p, out := stepRun(t, rt)
+
+	setBindingState(t, rt, "webshop", store.StateNeedsYou)
+	evs := stepOnce(t, p, out)
+	if len(evs) != 1 || evs[0].Seq != 0 || evs[0].Kind != "state" {
+		t.Fatalf("state line = %+v, want one seq 0 state line", evs)
+	}
+
+	entries, err := rt.Store.ReadLog("webshop")
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("a state line wrote a log entry: %+v", entries)
+	}
+	if n := claimableCount(t, rt, "webshop"); n != 0 {
+		t.Errorf("claimable after a state line = %d, want 0", n)
+	}
+}
+
+// TestRunPushStateLineWaitsForEntryAck keeps the state lines in the single
+// writer's between-entry slot: while an entry waits for its ack no state line
+// is written, and the transition is announced only once the entry is
+// confirmed.
+func TestRunPushStateLineWaitsForEntryAck(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	rt.Channels = fakeClaimStore{}
+	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+	setBindingState(t, rt, "webshop", store.StateNeedsYou)
+
+	ackIn, ackWriter := io.Pipe()
+	lineOut, lineWriter := io.Pipe()
+	defer func() { _ = ackIn.Close() }()
+	defer func() { _ = lineOut.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- RunPush(ctx, rt, testClaimMasterMind, ackIn, lineWriter) }()
+
+	events := pushEventChan(bufio.NewReader(lineOut))
+	ev := waitPushEvent(t, events, 2*time.Second)
+	if ev.Kind != string(store.KindReport) {
+		t.Fatalf("first line = %+v, want the report entry", ev)
+	}
+
+	// The entry is unacked: no state line may slip in while awaitAck blocks.
+	select {
+	case got := <-events:
+		t.Fatalf("a state line arrived while an entry awaited its ack: %+v", got)
+	case <-time.After(pushPollEvery + 200*time.Millisecond):
+	}
+
+	if _, err := fmt.Fprintf(ackWriter, "ack %d\n", ev.Seq); err != nil {
+		t.Fatalf("write ack: %v", err)
+	}
+	state := waitPushEvent(t, events, 2*time.Second)
+	if state.Kind != "state" || state.State != "needs_you" {
+		t.Fatalf("after the ack got %+v, want the needs_you state line", state)
+	}
+
+	_ = ackWriter.Close()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunPush did not return on stdin EOF")
 	}
 }

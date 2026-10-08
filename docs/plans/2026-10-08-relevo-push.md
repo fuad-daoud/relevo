@@ -111,3 +111,65 @@ Focused command while iterating: `go test` on the package being changed (e.g. `g
 5. `scripts/check-comments.allow` stale lines: verify they name files that do
    not exist before removing; removing a stale allow line is fine, adding one
    is not.
+
+## Round 2
+
+# Round 2: two fixes to `relevo push` (internal/delivery/pushrun.go)
+
+Same branch, on top of aee7eb92. New commit(s) only: no amend, rebase or
+force-push. CLAUDE.md and docs/runbook.md bind as before. Append a "Round 2"
+section to `docs/plans/2026-10-08-relevo-push.md` holding this plan verbatim,
+in the same commit as the code.
+
+## Fix 1: find and admit in ONE lock (double delivery)
+
+`pushRun.step` calls `nextClaimable` (which reads under `Store.WithLock` via
+`claimableOne`) and then `admitAndWrite`, which calls `Store.AdmitIndex` under
+a SECOND lock. A CLI `relevo wait` (non-peek, `PullPendingThroughEntries`) that
+runs between the two takes and confirms the entry, then RunPush admits that
+already-confirmed entry and writes it to stdout: the report reaches the
+session twice.
+
+- Make the scan and the admit one transaction: inside a single
+  `d.Store.WithLock`, `tx.ClaimableForMasterMind(name)` then, when found,
+  `tx.AdmitIndex(name, idx)`. Only after that lock is released, write the
+  NDJSON line. Keep admit-before-write.
+- Keep the scan order (bindings by name, oldest claimable first).
+- Test (internal/delivery): a pure unit test of the new helper proving the
+  entry it returns is already admitted when the helper returns, and a test
+  that an entry confirmed by a reader before the helper runs is never
+  returned. Mutation check: move the admit back out of the lock (a second
+  `WithLock`) and name the test that fails; if no deterministic test can
+  fail on that mutation, add a seam (a hook func in the pushRun struct that
+  runs between scan and admit, nil in production) and use it to run a reader
+  pull at that point, asserting the entry is never both pulled and written.
+
+## Fix 2: restore state events (lost wake-ups)
+
+The deleted `drain.go` also pushed a state event when a binding of this
+MasterMind transitioned into `needs_you` or `broken` (`pushState`,
+`isChannelState`, `stateEventContent`, `channelStateLabel` in origin/main's
+internal/delivery/drain.go). RunPush dropped it, so an idle session is no
+longer woken when a builder needs it. Restore it in RunPush:
+
+- Remember each own binding's last-seen state across polls (as `DrainState.Last`
+  did, dropping bindings that disappear). On a transition into `needs_you` or
+  `broken` -- including first sight in one of those states -- write one NDJSON
+  line: `{"seq":0,"binding":...,"round":...,"kind":"state","state":"needs_you",
+  "old_state":"...","text":<stateEventContent>}`. Add `state` and `old_state`
+  to `PushEvent` with `omitempty`.
+- A state line expects NO ack (seq 0); it is not a log entry and confirms
+  nothing. Rename the label helper away from "channel" (e.g. `stateLabel`).
+- State lines are written from the same loop, between entries, never while
+  `awaitAck` is blocked waiting on an entry's ack (keep it single-writer).
+- Tests: a binding moving running -> needs_you yields exactly one state line;
+  staying in needs_you yields no second line; needs_you -> running -> broken
+  yields a second line; a state line is never confirmed or admitted.
+- Mutation: make the transition check ignore `old_state` (push every poll)
+  and name the test that fails.
+
+## Finish
+
+Focused `go test ./internal/delivery/...` while iterating; then `make check`
+and `make e2e`. Report: per-fix status, tests by name, both mutation checks
+with the failing test, `git diff --stat aee7eb92..HEAD`.

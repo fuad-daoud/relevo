@@ -16,13 +16,16 @@ import (
 )
 
 // PushEvent is one NDJSON line `relevo push` writes: the entry's identity and
-// the text the mod should act on.
+// the text the mod should act on. A state line carries Seq 0 and Kind "state"
+// with the transition's State and OldState instead of a log entry.
 type PushEvent struct {
-	Seq     int    `json:"seq"`
-	Binding string `json:"binding"`
-	Round   int    `json:"round"`
-	Kind    string `json:"kind"`
-	Text    string `json:"text"`
+	Seq      int    `json:"seq"`
+	Binding  string `json:"binding"`
+	Round    int    `json:"round"`
+	Kind     string `json:"kind"`
+	State    string `json:"state,omitempty"`
+	OldState string `json:"old_state,omitempty"`
+	Text     string `json:"text"`
 }
 
 // pushRefreshEvery is how often a held claim's SeenAt is refreshed: a third of
@@ -50,6 +53,13 @@ type pushAdmit struct {
 // the claim is released. A second holder gets ErrClaimHeld from the claim
 // write and must not drain.
 func RunPush(ctx context.Context, d Deps, mastermindID string, in io.Reader, out io.Writer) error {
+	return runPush(ctx, d, mastermindID, in, out, nil)
+}
+
+// runPush is RunPush with a test seam: claimSeam, when non-nil, runs between a
+// claim and the write of its line, where a split scan and admit would leave the
+// entry claimable by a reader. Production passes nil.
+func runPush(ctx context.Context, d Deps, mastermindID string, in io.Reader, out io.Writer, claimSeam func()) error {
 	if d.Store == nil {
 		return errors.New("push: nil store")
 	}
@@ -81,7 +91,15 @@ func RunPush(ctx context.Context, d Deps, mastermindID string, in io.Reader, out
 	defer cancel()
 	go refreshPushClaim(runCtx, d, claim)
 
-	p := &pushRun{d: d, mastermindID: mastermindID, out: out, lines: pushLines(runCtx, in), unacked: map[pushAdmit]struct{}{}}
+	p := &pushRun{
+		d:            d,
+		mastermindID: mastermindID,
+		out:          out,
+		lines:        pushLines(runCtx, in),
+		unacked:      map[pushAdmit]struct{}{},
+		last:         map[string]store.State{},
+		claimSeam:    claimSeam,
+	}
 	defer clearUnackedAdmits(d, p.unacked)
 	return p.run(runCtx)
 }
@@ -93,6 +111,12 @@ type pushRun struct {
 	out          io.Writer
 	lines        <-chan string
 	unacked      map[pushAdmit]struct{}
+	// last is each own binding's last-seen state, so a state line marks a
+	// transition rather than every poll.
+	last map[string]store.State
+	// claimSeam, nil in production, runs between a claim and its write. A test
+	// uses it to try a reader pull in the gap a split scan and admit would open.
+	claimSeam func()
 }
 
 // run drains entries until stdin EOF or ctx is done. Each entry is admitted
@@ -126,27 +150,31 @@ func (p *pushRun) run(ctx context.Context) error {
 	}
 }
 
-// step sends at most one claimable entry, blocking for its ack. sent reports
-// whether an entry was found.
+// step sends at most one claimable entry, blocking for its ack; when none is
+// claimable it writes the state transitions it saw. sent reports whether an
+// entry was found.
 func (p *pushRun) step(ctx context.Context) (sent bool, err error) {
-	b, entry, idx, found, err := nextClaimable(p.d, p.mastermindID)
-	if err != nil || !found {
+	b, entry, idx, found, err := nextAdmitted(p.d, p.mastermindID)
+	if err != nil {
 		return false, err
 	}
-	if err := p.admitAndWrite(b, entry, idx); err != nil {
+	if !found {
+		return false, p.writeStateLines()
+	}
+	if p.claimSeam != nil {
+		p.claimSeam()
+	}
+	if err := p.writeEntry(b, entry, idx); err != nil {
 		return true, err
 	}
 	return true, p.awaitAck(ctx, b.Name, idx, entry.Seq)
 }
 
-// admitAndWrite hides the entry from every reader, then writes its NDJSON
-// line. The admit is FIRST so a crash between the write and the ack leaves the
-// entry admitted rather than claimable by a reader who has not seen it.
-func (p *pushRun) admitAndWrite(b store.Binding, e store.LogEntry, idx int) error {
-	if err := p.d.Store.AdmitIndex(b.Name, idx); err != nil {
-		return err
-	}
-
+// writeEntry writes one already-admitted entry's NDJSON line and remembers it
+// as unacked. The admit happened before this write, so a crash between the two
+// leaves the entry admitted rather than claimable by a reader who has not seen
+// it.
+func (p *pushRun) writeEntry(b store.Binding, e store.LogEntry, idx int) error {
 	text, _ := PushText(e, b, p.d.Store.ReadFile)
 	text = truncatePushText(text, LogRef(b, e))
 	raw, err := json.Marshal(PushEvent{Seq: e.Seq, Binding: b.Name, Round: e.Round, Kind: string(e.Kind), Text: text})
@@ -158,6 +186,58 @@ func (p *pushRun) admitAndWrite(b store.Binding, e store.LogEntry, idx int) erro
 	}
 	p.unacked[pushAdmit{binding: b.Name, idx: idx}] = struct{}{}
 	return nil
+}
+
+// writeStateLines writes one line for each own binding that just entered
+// needs_you or broken, and remembers every own binding's state for the next
+// step. It runs only between entries -- step reaches it when nothing is
+// claimable, never while awaitAck waits -- so the loop stays the one writer. A
+// binding that disappeared is dropped from memory: recreated under the same
+// name, it announces its state fresh.
+func (p *pushRun) writeStateLines() error {
+	all, err := p.d.Store.List()
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]bool)
+	for _, b := range all {
+		if b.MasterMindID != p.mastermindID || b.Owner != "" {
+			continue
+		}
+		seen[b.Name] = true
+		prev, wasSeen := p.last[b.Name]
+		if (!wasSeen || prev != b.State) && isStateEvent(b.State) {
+			if err := p.writeState(b); err != nil {
+				return err
+			}
+		}
+		p.last[b.Name] = b.State
+	}
+	for name := range p.last {
+		if !seen[name] {
+			delete(p.last, name)
+		}
+	}
+	return nil
+}
+
+// writeState writes one state line. It carries seq 0 and kind state: it expects
+// no ack, is not a log entry and confirms nothing.
+func (p *pushRun) writeState(b store.Binding) error {
+	raw, err := json.Marshal(PushEvent{
+		Seq:      0,
+		Binding:  b.Name,
+		Round:    b.Round,
+		Kind:     "state",
+		State:    string(b.State),
+		OldState: string(p.last[b.Name]),
+		Text:     stateEventContent(b),
+	})
+	if err != nil {
+		return err
+	}
+	_, err = p.out.Write(append(raw, '\n'))
+	return err
 }
 
 // awaitAck waits for the `ack <seq>` line matching seq and confirms the entry
@@ -214,9 +294,11 @@ func pushLines(ctx context.Context, in io.Reader) <-chan string {
 	return out
 }
 
-// nextClaimable returns the oldest claimable entry across the mastermind's own
-// bindings, in binding-name order.
-func nextClaimable(d Deps, mastermindID string) (store.Binding, store.LogEntry, int, bool, error) {
+// nextAdmitted returns the oldest claimable entry across the mastermind's own
+// bindings, in binding-name order, with the entry already admitted: the scan
+// and the admit run in one lock, so no reader can confirm the entry between
+// finding it and hiding it from the claimable scans.
+func nextAdmitted(d Deps, mastermindID string) (store.Binding, store.LogEntry, int, bool, error) {
 	all, err := d.Store.List()
 	if err != nil {
 		return store.Binding{}, store.LogEntry{}, 0, false, err
@@ -230,7 +312,7 @@ func nextClaimable(d Deps, mastermindID string) (store.Binding, store.LogEntry, 
 	sort.Slice(mine, func(i, j int) bool { return mine[i].Name < mine[j].Name })
 
 	for _, b := range mine {
-		entry, idx, found, err := claimableOne(d, b.Name)
+		entry, idx, found, err := claimAndAdmitOne(d, b.Name)
 		if err != nil {
 			return store.Binding{}, store.LogEntry{}, 0, false, err
 		}
@@ -241,9 +323,10 @@ func nextClaimable(d Deps, mastermindID string) (store.Binding, store.LogEntry, 
 	return store.Binding{}, store.LogEntry{}, 0, false, nil
 }
 
-// claimableOne reads one binding's oldest claimable entry under the state lock,
-// the same scan a reader uses, so an admitted entry is never returned.
-func claimableOne(d Deps, name string) (store.LogEntry, int, bool, error) {
+// claimAndAdmitOne reads one binding's oldest claimable entry and admits it
+// under one lock: the read and the admit are a single transaction, so a reader
+// can never claim and confirm the entry between them.
+func claimAndAdmitOne(d Deps, name string) (store.LogEntry, int, bool, error) {
 	var (
 		entry store.LogEntry
 		idx   int
@@ -252,7 +335,10 @@ func claimableOne(d Deps, name string) (store.LogEntry, int, bool, error) {
 	err := d.Store.WithLock(func(tx *store.Tx) error {
 		var err error
 		entry, idx, found, err = tx.ClaimableForMasterMind(name)
-		return err
+		if err != nil || !found {
+			return err
+		}
+		return tx.AdmitIndex(name, idx)
 	})
 	return entry, idx, found, err
 }
