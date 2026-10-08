@@ -264,10 +264,12 @@ func updateHead(ctx context.Context, tx *sql.Tx, e Entry) error {
 	return nil
 }
 
-// Pull applies the remote's changes to the replica, then returns every other
-// origin's entries past the mark given for it. A batch that begins at or before
-// a mark is skipped whole: the importer applies whole batches, and half of one
-// would apply an order the exporter never wrote.
+// Pull applies the remote's changes to the replica, then returns one page per
+// origin of every other origin's entries past the mark given for it. The importer
+// calls Pull once per run, so a backlog larger than a page drains one page per
+// sync tick. A batch that begins at or before a mark is skipped whole: the
+// importer applies whole batches, and half of one would apply an order the
+// exporter never wrote.
 func (b *TursoBackend) Pull(marks map[string]int) ([]Entry, error) {
 	if err := b.ready(); err != nil {
 		return nil, err

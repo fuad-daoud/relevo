@@ -37,9 +37,10 @@ type Backend interface {
 	// already holds, and returns them numbered. Entries of another origin are
 	// refused: an installation appends only for the rows it owns.
 	Append(entries []Entry) ([]Entry, error)
-	// Pull returns one page of every other origin's entries past the mark given
-	// for it, in sequence order and in whole batches; a caller pulls again for
-	// the rest. An origin with no mark is read from the start of its log.
+	// Pull returns one page per origin of every other origin's entries past the
+	// mark given for it, in sequence order and in whole batches. The importer
+	// calls Pull once per run, so a backlog larger than a page drains one page
+	// per sync tick. An origin with no mark is read from the start of its log.
 	Pull(marks map[string]int) ([]Entry, error)
 	// Head returns a page of one origin's latest entry per row, starting after
 	// the given key. An empty after starts at the beginning and a limit of zero
