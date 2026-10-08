@@ -738,3 +738,127 @@ func TestSyncVerbFixtureTokenIsDistinct(t *testing.T) {
 		t.Fatal("unreachable")
 	}
 }
+
+// hangingJoin is a sync log whose first pull hangs until it is cancelled, so a
+// test can hold an enable's join open and watch a disable reach it. Its pull
+// accounts through a real breaker the way the supervisor does, and a cancel
+// releases it as a deliberate stop: the shape the pipe gives a hung pull.
+type hangingJoin struct {
+	breaker *relevosync.Breaker
+	entered chan struct{}
+	cancel  chan struct{}
+
+	once       sync.Once
+	cancelOnce sync.Once
+	mu         sync.Mutex
+	cancelled  bool
+}
+
+// errJoinStopped is what the fake's hung pull returns once it is cancelled.
+var errJoinStopped = errors.New("test: the join's pull was stopped")
+
+func newHangingJoin(b *relevosync.Breaker) *hangingJoin {
+	return &hangingJoin{
+		breaker: b,
+		entered: make(chan struct{}),
+		cancel:  make(chan struct{}),
+	}
+}
+
+func (j *hangingJoin) Append(entries []synclog.Entry) ([]synclog.Entry, error) {
+	return entries, nil
+}
+func (j *hangingJoin) Head(string) ([]synclog.HeadRow, error) { return nil, nil }
+func (j *hangingJoin) Stats() (synclog.Stats, error)          { return synclog.Stats{}, nil }
+
+func (j *hangingJoin) Pull(map[string]int) ([]synclog.Entry, error) {
+	if err := j.breaker.Begin("pull"); err != nil {
+		return nil, err
+	}
+	j.once.Do(func() { close(j.entered) })
+	<-j.cancel
+	_ = j.breaker.End()
+	return nil, errJoinStopped
+}
+
+func (j *hangingJoin) Cancel() {
+	j.mu.Lock()
+	j.cancelled = true
+	j.mu.Unlock()
+	j.cancelOnce.Do(func() { close(j.cancel) })
+}
+
+func (j *hangingJoin) wasCancelled() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.cancelled
+}
+
+var _ synclog.LogTransport = (*hangingJoin)(nil)
+
+// TestDisableStopsAnInFlightDaemonJoin pins the disable-during-a-join contract
+// at the daemon's own guard: a disable issued while an enable's join runs in
+// the daemon reaches the join's in-flight transport while the machine is still
+// off, stops the join's worker, returns promptly rather than queuing behind the
+// join's import bound, leaves the machine off, clears the join marker, and
+// leaves the breaker's deaths at zero.
+func TestDisableStopsAnInFlightDaemonJoin(t *testing.T) {
+	f := newVerbFixture(t)
+	if _, _, err := db.CompressHistoryOnce(f.shared, t.TempDir(), time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("CompressHistoryOnce: %v", err)
+	}
+	d := NewDaemon(Runtime{Sync: f.runner.Runner}, time.Hour)
+	f.runner.Serialize = d.WaitSyncSlot
+
+	breaker := relevosync.NewBreaker(f.local)
+	join := newHangingJoin(breaker)
+	f.runner.Open = func(context.Context) (synclog.LogTransport, error) { return join, nil }
+
+	ctx := context.Background()
+	enableDone := make(chan struct{})
+	go func() {
+		defer close(enableDone)
+		f.runner.Run(ctx, &wire.SyncVerb{Verb: wire.SyncVerbEnable}, []byte(verbFixtureToken))
+	}()
+
+	select {
+	case <-join.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the join did not reach its pull")
+	}
+
+	// The join runs while the enabled mark is still off, so the disable has to
+	// reach the join's own transport rather than the enabled-gated one.
+	if c := cancelTransport(f.runner.disableTransport(ctx)); c == nil {
+		t.Error("a disable during a join reaches no cancel for the join's transport")
+	}
+
+	done := make(chan *wire.SyncResult, 1)
+	go func() { done <- f.runner.Run(ctx, &wire.SyncVerb{Verb: wire.SyncVerbDisable}, nil) }()
+	select {
+	case res := <-done:
+		if !res.OK {
+			t.Fatalf("disable refused: %s", res.Message)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the disable queued behind the join instead of stopping it")
+	}
+	<-enableDone
+
+	if !join.wasCancelled() {
+		t.Error("the join's worker was never cancelled")
+	}
+	if on, err := relevosync.Enabled(f.local); err != nil || on {
+		t.Errorf("Enabled = %v, %v; want the released join to leave the machine off", on, err)
+	}
+	if _, ok, err := relevosync.ReadJoin(f.local); err != nil || ok {
+		t.Errorf("join marker = (ok %v, err %v); want it cleared by the disable", ok, err)
+	}
+	if deaths, err := breaker.Deaths(); err != nil || deaths != 0 {
+		t.Errorf("breaker deaths = %d, %v; want the deliberate stop uncounted", deaths, err)
+	}
+	// Off and no join: nothing to reach, so the disable opens no transport.
+	if f.runner.disableTransport(ctx) != nil {
+		t.Error("an off machine with no join still opened a transport")
+	}
+}

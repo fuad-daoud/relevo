@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -56,6 +57,15 @@ type VerbRunner struct {
 	Serialize func(fn func())
 	// ClientName is what the remote is told this client is called.
 	ClientName string
+
+	// joinMu guards joinClient and joinStopped: the one sync a disable must be
+	// able to reach before the machine is marked on. An enable publishes its
+	// join transport here once the preflight has chosen the remote, because a
+	// joined machine reads off for the whole join and a disable arriving
+	// mid-join would otherwise find no transport to stop.
+	joinMu      sync.Mutex
+	joinClient  synclog.LogTransport
+	joinStopped bool
 }
 
 // Run performs one verb and answers with what it did.
@@ -77,6 +87,11 @@ func (v *VerbRunner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte)
 	case wire.SyncVerbProbe:
 		return v.runGuarded(func() *wire.SyncResult { return v.probe(ctx) })
 	case wire.SyncVerbDisable:
+		// A disable is the one verb that must not queue behind an enable's
+		// join: a joined machine reads off for the whole join and the join can
+		// run for the whole import bound. The preempt releases it, so the
+		// disable runs in seconds rather than waiting a bound out.
+		v.preempt()
 		return v.runGuarded(func() *wire.SyncResult { return v.disable(ctx, verb) })
 	default:
 		return &wire.SyncResult{
@@ -109,6 +124,67 @@ func (v *VerbRunner) runGuarded(fn func() *wire.SyncResult) *wire.SyncResult {
 		}
 	}
 	return out
+}
+
+// publishJoin records the transport an enable's join drives, so a disable that
+// arrives before the join finishes reaches it while the machine is still off.
+func (v *VerbRunner) publishJoin(t synclog.LogTransport) {
+	v.joinMu.Lock()
+	v.joinClient = t
+	v.joinMu.Unlock()
+}
+
+// clearJoin forgets the join transport once the enable that published it has
+// settled, so a later disable does not try to stop a worker already gone.
+func (v *VerbRunner) clearJoin(t synclog.LogTransport) {
+	v.joinMu.Lock()
+	if v.joinClient == t {
+		v.joinClient = nil
+	}
+	v.joinMu.Unlock()
+}
+
+// joinTransport is the transport an enable's join is driving, or nil.
+func (v *VerbRunner) joinTransport() synclog.LogTransport {
+	v.joinMu.Lock()
+	defer v.joinMu.Unlock()
+	return v.joinClient
+}
+
+// joinWasStopped reports whether a disable released the join this runner is
+// driving, which is what keeps the released enable from marking the machine on.
+func (v *VerbRunner) joinWasStopped() bool {
+	v.joinMu.Lock()
+	defer v.joinMu.Unlock()
+	return v.joinStopped
+}
+
+// beginJoin clears a stop a previous disable left, so a fresh enable is not
+// held back by -- or kept off because of -- a stop aimed at an earlier join.
+func (v *VerbRunner) beginJoin() {
+	v.joinMu.Lock()
+	v.joinStopped = false
+	v.joinMu.Unlock()
+}
+
+// preempt releases the join this runner is driving, so a disable does not queue
+// behind a join that can run for the whole import bound. It marks the join
+// stopped before cancelling it, so an enable the release lets finish its last
+// step still leaves the mark off; a runner with no join in flight is left
+// alone, which keeps every other verb on the daemon's ordinary serialization.
+func (v *VerbRunner) preempt() {
+	v.joinMu.Lock()
+	t := v.joinClient
+	if t != nil {
+		v.joinStopped = true
+	}
+	v.joinMu.Unlock()
+	if t == nil {
+		return
+	}
+	if cancel := cancelTransport(t); cancel != nil {
+		cancel()
+	}
 }
 
 // push drains this machine's outbox into the log: the export half of the steady
@@ -218,6 +294,7 @@ func transportReady(transport synclog.LogTransport) bool {
 // worker left behind holds the replica open against the next one; a run that
 // finishes leaves it on the runner, where the daemon can drive it again.
 func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, token []byte) *wire.SyncResult {
+	v.beginJoin()
 	opened := false
 	enabler := &relevosync.Enabler{
 		Request: relevosync.EnableRequest{
@@ -228,14 +305,20 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, token []by
 		},
 		Open: func() (synclog.LogTransport, error) {
 			transport, err := v.openTransport(ctx)
-			if err == nil && v.Open != nil {
-				opened = true
+			if err == nil {
+				// Published before the join, because a joined machine reads
+				// off until the join finishes and a disable has to reach the
+				// transport while the join is still in flight.
+				v.publishJoin(transport)
+				opened = v.Open != nil
 			}
 			return transport, err
 		},
-		Now: time.Now,
+		Stopped: v.joinWasStopped,
+		Now:     time.Now,
 	}
 	res, err := enabler.Enable()
+	v.clearJoin(enabler.Transport)
 	if err != nil {
 		// Only a transport this enable opened is closed: one taken from the
 		// runner belongs to whatever built it and must not be torn down here.
@@ -324,6 +407,12 @@ func (v *VerbRunner) disable(ctx context.Context, verb *wire.SyncVerb) *wire.Syn
 // the machine's stored rows build, or nothing when sync is off or no worker can
 // be built, because a machine with nothing behind it has nothing to hand over.
 func (v *VerbRunner) disableTransport(ctx context.Context) synclog.LogTransport {
+	// A join in flight is reached first, whatever the enabled mark says: the
+	// joined machine reads off for the whole join, so the gate below would
+	// find no transport and leave the join's worker running.
+	if t := v.joinTransport(); t != nil {
+		return t
+	}
 	on, err := relevosync.Enabled(v.Local)
 	if err != nil || !on {
 		return nil

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -364,5 +365,48 @@ func TestEnableRefusedRemoteWritesNoMark(t *testing.T) {
 	}
 	if _, ok, _ := ReadJoin(local); ok {
 		t.Error("the refused enable left a join marker behind")
+	}
+}
+
+// stoppedLog is the in-memory log with a pull that stops the enable on its
+// first call, the way a disable's preempt does, and then lets the pipeline
+// reach its last step: a stop that lands mid-join must keep the enabled mark
+// off rather than write it and clear it again.
+type stoppedLog struct {
+	*synclog.MemTransport
+	once sync.Once
+	stop func()
+}
+
+func (s *stoppedLog) Pull(marks map[string]int) ([]synclog.Entry, error) {
+	s.once.Do(s.stop)
+	return s.MemTransport.Pull(marks)
+}
+
+// TestACancelledJoinDoesNotTurnTheMachineOn pins the other half of the
+// disable-during-a-join contract: a join a stop released must not run its
+// trailing MarkEnabled(true) when it settles. The transport flips the stop
+// during the join's first pull, so the pipeline is free to finish and only the
+// guard keeps the machine off.
+func TestACancelledJoinDoesNotTurnTheMachineOn(t *testing.T) {
+	shared, local := joinPair(t, "m1")
+	passGate(t, shared)
+
+	stopped := false
+	log := &stoppedLog{
+		MemTransport: synclog.NewMemTransport("m1"),
+		stop:         func() { stopped = true },
+	}
+	_, err := (&Enabler{
+		Request:   EnableRequest{Local: local, Shared: shared, URL: joinRemote, Token: []byte(joinToken)},
+		Transport: log,
+		Stopped:   func() bool { return stopped },
+		Now:       func() time.Time { return time.Unix(0, 0).UTC() },
+	}).Enable()
+	if !errors.Is(err, ErrEnableStopped) {
+		t.Fatalf("Enable = %v, want ErrEnableStopped for a join a stop released", err)
+	}
+	if on, err := Enabled(local); err != nil || on {
+		t.Fatalf("Enabled = %v, %v; want the released machine left off", on, err)
 	}
 }

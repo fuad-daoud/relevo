@@ -13,12 +13,18 @@ package sync
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
+
+// ErrEnableStopped reports an enable a disable released before it could turn
+// the machine on. It is not a failure of the remote: the machine was told to
+// stop, and answering as a success would say sync is on when the mark is off.
+var ErrEnableStopped = errors.New("sync: the enable was stopped before it turned the machine on")
 
 // KeyJoin is the marker an enable leaves while its join runs and removes when
 // the join finishes. It is machine-local by its namespace, so a second machine
@@ -170,6 +176,12 @@ type Enabler struct {
 	// Open leaves it here, so the wiring that installed Open can hand the same
 	// worker to whatever drives sync next.
 	Transport synclog.LogTransport
+	// Stopped reports whether the enable has been released by a disable since
+	// it began. A join released that way must not turn the machine on when it
+	// settles: the machine was told to stop, so the mark stays off even when
+	// the pipeline had already reached its last step before the stop landed.
+	// Nil means nothing can stop the run mid-flight.
+	Stopped func() bool
 	// Now stamps the join marker and the enabled mark. Nil means time.Now.
 	Now func() time.Time
 }
@@ -197,6 +209,12 @@ func (e *Enabler) Enable() (EnableResult, error) {
 	res.Remote = plan.Remote
 	if err != nil {
 		return res, err
+	}
+	// A join a disable released must not turn the machine on when it settles:
+	// the stop may land after the pipeline's last step, and the mark is what a
+	// reader trusts, so it is withheld rather than written and cleared again.
+	if e.Stopped != nil && e.Stopped() {
+		return res, ErrEnableStopped
 	}
 	if err := MarkEnabled(e.Request.Local, true, now); err != nil {
 		return res, err
