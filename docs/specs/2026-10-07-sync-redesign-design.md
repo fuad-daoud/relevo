@@ -157,8 +157,9 @@ Settled before R2 was planned (2026-10-08):
    `LogTransport` interface and its in-memory fake). SQL stays in
    `internal/db`: `synclog` calls `internal/db` methods, it does not open its
    own connections or embed SQL strings that belong to the db package.
-2. **Entry.** One log entry is `origin, seq, tbl, pk, op, schema_version,
-   body, at`. `op` is `upsert` or `delete`. `pk` is the same `json_array(...)`
+2. **Entry.** One log entry is `origin, seq, batch, tbl, pk, op,
+   schema_version, body, at`. `batch` is the seq of the first entry of the
+   append that wrote it, so a reader can tell where one atomic batch ends. `op` is `upsert` or `delete`. `pk` is the same `json_array(...)`
    text the outbox records. `body` is the row as JSON, column name to value,
    with a type-preserving encoding: BLOB values (zstd-compressed transcript and
    round-file bodies, migration 013) must come back as BLOB, integers as
@@ -169,16 +170,23 @@ Settled before R2 was planned (2026-10-08):
    other origins after per-origin marks; read `head` (latest seq and body hash
    per row) for one origin; stats. The in-memory fake implements exactly the
    spec §2 semantics, including `head`. R3 will implement it over Turso.
-4. **Exporter.** Drains `sync_outbox` in `seq` order. Skips (and deletes) rows
-   whose `origin` is NULL or is not this installation: that also stops an
-   imported row from echoing back. Coalesces repeated entries for the same
-   `(tbl, pk)` within a batch, keeping the first position and the row's state
-   at export time. Reads the current row: present -> `upsert` with body,
-   absent -> `delete`. Deletes drained outbox rows only after the transport
-   accepted the batch (at-least-once; re-export is safe because import is an
-   idempotent upsert).
+4. **Exporter.** Drains `sync_outbox` in `seq` order and reads the current
+   state of every drained row **in the same read transaction**, so one export
+   batch is a consistent snapshot: any parent a row's state references is
+   either already exported or in this batch. Skips (and deletes) rows whose
+   `origin` is NULL or is not this installation: that also stops an imported
+   row from echoing back. Coalesces repeated entries for the same `(tbl, pk)`
+   within the batch to one entry with the snapshot state: present -> `upsert`
+   with body, absent -> `delete`. Orders the batch upserts first in
+   `SharedTables` order (parents before children), then deletes in reverse
+   order (children before parents), and appends it as one transport call,
+   which the transport writes atomically. Deletes drained outbox rows only
+   after the transport accepted the batch (at-least-once; re-export is safe
+   because import is an idempotent upsert). Column values are exported as
+   stored: compressed BLOBs and their `*_codec` columns travel verbatim.
 5. **Importer.** Applies other origins' entries in `seq` order, one
-   transaction per batch, foreign keys ON. Upsert is
+   transaction per export batch (never splitting a batch, several whole
+   batches may share a transaction), foreign keys ON. Upsert is
    `INSERT ... ON CONFLICT(<pk>) DO UPDATE SET ...` on the table's primary
    key. NEVER `INSERT OR REPLACE`: REPLACE deletes the old row first, and
    `binding_event`, `round_file` and `chain_*` children have `ON DELETE
@@ -200,9 +208,11 @@ Settled before R2 was planned (2026-10-08):
    origin's rows" for a child table needs the same owner resolution the
    triggers use; put it in `internal/db` beside `SharedTables` so the triggers
    and reconcile cannot drift (a test compares them).
-8. **Ordering guarantee.** Entries of one origin are applied in seq order and
-   were exported in commit order, so parents precede children. Reconcile walks
-   parents first for the same reason.
+8. **Ordering guarantee.** Each export batch is a consistent snapshot sorted
+   parents first for upserts and children first for deletes, and the importer
+   applies whole batches in seq order, so a row never arrives before a parent
+   it references. Reconcile emits its batches the same way: upserts
+   parents-first, deletes children-first.
 
 ## 3b. Worker details (R3)
 
