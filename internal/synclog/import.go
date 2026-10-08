@@ -114,17 +114,19 @@ func (d Drop) String() string {
 }
 
 // Gap is one origin the log handed a batch to out of order: the batch starts
-// past the sequence the origin's mark rests at, so the entries in between have
-// not arrived. The origin holds where it stands rather than skipping to the
-// batch, because advancing the mark over the hole would silently lose whatever
-// the missing entries carried.
+// past the sequence the origin's mark rests at, or jumps past one inside itself,
+// so the entries in between have not arrived. The origin holds where it stands
+// rather than skipping to the batch, because advancing the mark over the hole
+// would silently lose whatever the missing entries carried.
 type Gap struct {
 	// Origin is the installation whose batch starts past its mark.
 	Origin string
 	// Want is the first sequence the origin's next batch has to carry: its mark
 	// plus one.
 	Want int
-	// Got is the first sequence the batch that arrived actually carries.
+	// Got is the sequence in the batch that did not follow the one before it:
+	// the batch's own first when it begins late, or the entry that jumps inside
+	// it.
 	Got int
 }
 
@@ -132,17 +134,15 @@ type Gap struct {
 // where it is being held, and the sequence that arrived ahead of the one it
 // expected.
 func (g Gap) String() string {
-	return fmt.Sprintf("%s is held at %d: a batch starts at %d, want %d; the entries in between have not arrived",
+	return fmt.Sprintf("%s is held at %d: a batch reaches %d, want %d; the entries in between have not arrived",
 		g.Origin, g.Want-1, g.Got, g.Want)
 }
 
 // errNotOwner reports an entry whose claimed origin is not the owner of the row
 // it names. It is an ErrInvalid refusal under a second name, so the code that
 // drops a batch it cannot apply can tell this one apart from a body it merely
-// does not understand: a batch dropped for an unreadable body is moved past,
-// while one dropped for a forged claim moves no mark at all. The sequence behind
-// a claim this machine refused is not progress, and recording progress over it
-// would hide every genuine entry that follows.
+// does not understand. Both are moved past: a batch left resting at the origin's
+// mark would sit at mark+1 forever and hold every batch behind it as a gap.
 var errNotOwner = errors.New("the entry names a row another installation owns")
 
 // Import pulls every origin's entries this file has not applied and writes them.
@@ -159,10 +159,11 @@ var errNotOwner = errors.New("the entry names a row another installation owns")
 //
 // Four things stop a batch, and none of them stops the run: a writer ahead of
 // this build holds its own origin where it stopped, a batch that begins past the
-// origin's mark holds it and is reported as a gap, a batch this machine cannot
-// act on is dropped and moved past, and a batch naming a row somebody else owns
-// is dropped with the mark resting. Only a failure of this machine's own -- a log
-// that will not answer, a file that is busy -- ends the import with an error.
+// origin's mark -- or jumps inside itself -- holds it and is reported as a gap,
+// and a batch this machine cannot act on, whether its body is unreadable or it
+// names a row somebody else owns, is dropped and moved past. Only a failure of
+// this machine's own -- a log that will not answer, a file that is busy -- ends
+// the import with an error.
 func (i *Importer) Import() (ImportResult, error) {
 	marks, err := i.db.ImportMarks()
 	if err != nil {
@@ -183,12 +184,14 @@ func (i *Importer) Import() (ImportResult, error) {
 			continue
 		}
 		// Sequence numbers per origin are contiguous by construction, so a
-		// batch has to begin exactly where the origin's mark left off. A batch
-		// that begins later is a hole: applying it would advance the mark over
-		// the entries in between and lose them for good, so the origin holds
-		// and the hole is reported.
-		if want := marks[origin] + 1; batch[0].Seq != want {
-			total.Gaps = append(total.Gaps, Gap{Origin: origin, Want: want, Got: batch[0].Seq})
+		// batch has to carry exactly the sequences from the origin's mark on. A
+		// batch that begins later, or that jumps past a sequence inside itself,
+		// is a hole: applying it would advance the mark over the entries in
+		// between and lose them for good, so the origin holds and the hole is
+		// reported.
+		want := marks[origin] + 1
+		if got, broken := firstHole(batch, want); broken {
+			total.Gaps = append(total.Gaps, Gap{Origin: origin, Want: want, Got: got})
 			held[origin] = true
 			continue
 		}
@@ -242,11 +245,10 @@ func (i *Importer) labels() (map[string]string, error) {
 // mark inside the batch, and the transport hands back whole batches past the mark
 // -- so every later run would skip the rest of it and the entries this machine
 // cannot read would never arrive. A batch this machine refuses outright is
-// dropped and the mark moves past it, because re-reading it would refuse it
-// again for as long as the log holds it. A batch naming a row another
-// installation owns is dropped with the mark resting, because the sequence
-// behind a forged claim is not progress and a mark over it would hide every
-// genuine entry behind it.
+// dropped and the mark moves past it, whether its body is one this machine
+// cannot read or it claims a row another installation owns: re-reading it would
+// refuse it again for as long as the log holds it, and leaving it at the mark
+// would hold every batch behind it as a gap.
 //
 // marks is how far each origin has been applied, read from the file and kept
 // current as the run goes, so a batch behind one already applied writes nothing.
@@ -266,14 +268,11 @@ func (i *Importer) applyBatch(batch []Entry, marks map[string]int) (int, *Hold, 
 		return 0, nil, nil, err
 	}
 	drop := &Drop{Origin: origin, Seq: tail(batch), Reason: err.Error()}
-	if errors.Is(err, errNotOwner) {
-		return 0, nil, drop, nil
-	}
-	// The batch was refused for a body this machine cannot read, so the
-	// transaction that would have carried its rows rolled back and the mark it
-	// would have moved with them went with it. The mark moves here instead, in a
-	// transaction of its own: without that the batch would be offered again on
-	// every run and refuse itself again for as long as the log holds it.
+	// The batch was refused, so the transaction that would have carried its rows
+	// rolled back and the mark it would have moved with them went with it. The
+	// mark moves here instead, in a transaction of its own: without that the
+	// batch would be offered again on every run and refuse itself again for as
+	// long as the log holds it.
 	if err := i.past(batch, marks); err != nil {
 		return 0, nil, nil, err
 	}
@@ -492,6 +491,21 @@ func batches(entries []Entry, marks map[string]int) [][]Entry {
 func replayed(marks map[string]int, e Entry) bool {
 	mark := marks[e.Origin]
 	return e.Seq <= mark || e.Batch <= mark
+}
+
+// firstHole is the first sequence in a batch that does not follow the one before
+// it, and whether the batch has one. A batch is applicable whole only when its
+// entries run want, want+1, ... with nothing missing: a hole at the batch's head
+// or between two of its entries would advance the mark over the sequences it
+// skipped, and the transport has no way to hand them back. The batch is sorted
+// by sequence before this runs.
+func firstHole(batch []Entry, want int) (int, bool) {
+	for i, e := range batch {
+		if e.Seq != want+i {
+			return e.Seq, true
+		}
+	}
+	return 0, false
 }
 
 // tail is the highest sequence a batch carries, which is the mark that covers it.

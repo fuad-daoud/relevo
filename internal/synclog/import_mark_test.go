@@ -139,11 +139,11 @@ func TestImportIgnoresAReplayedBatch(t *testing.T) {
 	}
 }
 
-// A batch this machine could not apply writes no mark at all, whatever kept it
-// from applying. A hold leaves the mark on the batch before it so an upgraded
-// machine resumes from there, and a refused claim leaves it where it was so the
-// genuine entries behind it are still offered.
-func TestImportWritesNoMarkForABatchItDidNotApply(t *testing.T) {
+// A batch a newer binary wrote writes no mark, so an upgraded machine resumes
+// from the entry before it. A batch this machine refuses outright is a different
+// thing: it moves the mark past itself, or the refusal would sit at the origin's
+// mark and hold every batch behind it forever.
+func TestImportWritesNoMarkForAHeldBatch(t *testing.T) {
 	t.Parallel()
 	peer, _ := victim(t)
 	know := knownVersion(t, peer)
@@ -175,8 +175,8 @@ func TestImportWritesNoMarkForABatchItDidNotApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read the marks: %v", err)
 	}
-	if len(marks) != 0 {
-		t.Fatalf("marks = %v, want none: neither origin had an entry applied", marks)
+	if len(marks) != 1 || marks["m3"] != 1 {
+		t.Fatalf("marks = %v, want only m3 moved past the batch it refused", marks)
 	}
 	if cwd := columnOf(t, peer, `SELECT cwd FROM binding WHERE id = '01A'`); cwd != "/x" {
 		t.Fatalf("the binding's cwd = %q, want the file left as it was", cwd)
@@ -297,6 +297,79 @@ func TestImportHoldsOnAGapInsteadOfSkipping(t *testing.T) {
 	}
 	if seq, found, err := peer.ImportMark("m1"); err != nil || !found || seq != 1 {
 		t.Fatalf("ImportMark for m1 = (%d, %t, %v), want the genuine entry's sequence", seq, found, err)
+	}
+	if have := sharedRows(t, peer); have != `binding ["01A"]|binding ["01C"]` {
+		t.Fatalf("the peer holds %q, want the genuine rows and not the forged one", have)
+	}
+}
+
+// A batch is applied only when every entry is contiguous from the mark. A batch
+// whose head lands on the expected sequence but whose second entry jumps far past
+// it is the same hole as one that begins late: applying it would advance the mark
+// over the sequences it skipped and hide them for good. The origin holds, and the
+// genuine batch that later runs from the mark still applies.
+func TestImportHoldsWhenABatchJumpsInsideItself(t *testing.T) {
+	t.Parallel()
+	peer, _ := peerFile(t, "m2")
+	know := knownVersion(t, peer)
+	jump := scriptedLog{MemTransport: NewMemTransport("m2"), pulls: [][]Entry{
+		{
+			{Origin: "m1", Batch: 1, Seq: 1, Table: "binding", PK: `["01A"]`,
+				Op: OpUpsert, SchemaVersion: know,
+				Body: bodyFor(t, map[string]any{
+					"id": "01A", "name": "01A", "cwd": "/a",
+					"builder_mode": "local", "created_at": "t", "ingest_source": "manual", "origin": "m1",
+				})},
+			{Origin: "m1", Batch: 1, Seq: 1000000, Table: "binding", PK: `["01B"]`,
+				Op: OpUpsert, SchemaVersion: know,
+				Body: bodyFor(t, map[string]any{
+					"id": "01B", "name": "01B", "cwd": "/forged",
+					"builder_mode": "local", "created_at": "t", "ingest_source": "manual", "origin": "m1",
+				})},
+		},
+	}}
+
+	got, err := NewImporter(peer, jump).Import()
+	if err != nil {
+		t.Fatalf("import a batch that jumps inside itself: %v", err)
+	}
+	if got.Applied != 0 {
+		t.Fatalf("import = %+v, want nothing applied for a hole inside the batch", got)
+	}
+	if len(got.Gaps) != 1 || got.Gaps[0].Origin != "m1" || got.Gaps[0].Got != 1000000 {
+		t.Fatalf("Gaps = %+v, want m1 held at the sequence it jumped to", got.Gaps)
+	}
+	if _, found, err := peer.ImportMark("m1"); err != nil || found {
+		t.Fatalf("the mark for m1 (found=%t, %v), want none: nothing was applied", found, err)
+	}
+
+	// The log is honest from here: the genuine entries run from the mark, so the
+	// whole batch is contiguous and applies.
+	honest := scriptedLog{MemTransport: NewMemTransport("m2"), pulls: [][]Entry{
+		{
+			{Origin: "m1", Batch: 1, Seq: 1, Table: "binding", PK: `["01A"]`,
+				Op: OpUpsert, SchemaVersion: know,
+				Body: bodyFor(t, map[string]any{
+					"id": "01A", "name": "01A", "cwd": "/a",
+					"builder_mode": "local", "created_at": "t", "ingest_source": "manual", "origin": "m1",
+				})},
+			{Origin: "m1", Batch: 2, Seq: 2, Table: "binding", PK: `["01C"]`,
+				Op: OpUpsert, SchemaVersion: know,
+				Body: bodyFor(t, map[string]any{
+					"id": "01C", "name": "01C", "cwd": "/c",
+					"builder_mode": "local", "created_at": "t", "ingest_source": "manual", "origin": "m1",
+				})},
+		},
+	}}
+	again, err := NewImporter(peer, honest).Import()
+	if err != nil {
+		t.Fatalf("import the genuine batch: %v", err)
+	}
+	if again.Applied != 2 || len(again.Gaps) != 0 {
+		t.Fatalf("import = %+v, want the genuine entries applied with no gap", again)
+	}
+	if seq, found, err := peer.ImportMark("m1"); err != nil || !found || seq != 2 {
+		t.Fatalf("ImportMark = (%d, %t, %v), want the mark at the genuine tail", seq, found, err)
 	}
 	if have := sharedRows(t, peer); have != `binding ["01A"]|binding ["01C"]` {
 		t.Fatalf("the peer holds %q, want the genuine rows and not the forged one", have)

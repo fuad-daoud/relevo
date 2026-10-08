@@ -51,11 +51,54 @@ func TestImporterRefusesACrossOriginDelete(t *testing.T) {
 	if have := sharedRows(t, peer); have != `binding ["01A"]|binding ["01B"]` {
 		t.Fatalf("the peer holds %q, want both bindings still standing", have)
 	}
-	// No mark moves for a batch that named somebody else's row: the sequence
-	// behind a forged claim is not progress, and a mark over it would hide every
-	// genuine entry of that origin behind it.
-	if seq, found, err := peer.ImportMark("m1"); err != nil || found {
-		t.Fatalf("ImportMark = (%d, %t, %v), want no mark for a forged claim", seq, found, err)
+	// The refused batch is moved past like any other drop: left resting at the
+	// mark it would sit at mark+1 forever and hold every batch behind it as a
+	// gap, so the next batch of m1 has to start above it.
+	if seq, found, err := peer.ImportMark("m1"); err != nil || !found || seq != 1 {
+		t.Fatalf("ImportMark = (%d, %t, %v), want the mark moved past the refused batch", seq, found, err)
+	}
+}
+
+// A batch refused for a claim on another installation's row is moved past, so
+// the next batch of that origin is not held behind it forever: the refused batch
+// is not offered again and the genuine one that follows applies.
+func TestImportAdvancesPastARefusedBatch(t *testing.T) {
+	t.Parallel()
+	peer, _ := victim(t)
+	know := knownVersion(t, peer)
+	log := scriptedLog{MemTransport: NewMemTransport("m2"), pulls: [][]Entry{
+		{
+			{Origin: "m1", Batch: 1, Seq: 1, Table: "binding", PK: `["01A"]`,
+				Op: OpDelete, SchemaVersion: know},
+		},
+		{
+			{Origin: "m1", Batch: 2, Seq: 2, Table: "binding", PK: `["01C"]`,
+				Op: OpUpsert, SchemaVersion: know,
+				Body: bodyFor(t, map[string]any{
+					"id": "01C", "name": "01C", "cwd": "/real",
+					"builder_mode": "local", "created_at": "t", "ingest_source": "manual", "origin": "m1",
+				})},
+		},
+	}}
+
+	got, err := NewImporter(peer, log).Import()
+	if err != nil {
+		t.Fatalf("import a refusal then a genuine batch: %v", err)
+	}
+	if len(got.Gaps) != 0 {
+		t.Fatalf("Gaps = %+v, want the refused batch moved past rather than held", got.Gaps)
+	}
+	if len(got.Dropped) != 1 || got.Dropped[0].Origin != "m1" {
+		t.Fatalf("Dropped = %+v, want the cross-origin delete dropped", got.Dropped)
+	}
+	if got.Applied != 1 {
+		t.Fatalf("import = %+v, want the genuine batch applied", got)
+	}
+	if seq, found, err := peer.ImportMark("m1"); err != nil || !found || seq != 2 {
+		t.Fatalf("ImportMark = (%d, %t, %v), want the mark moved past both batches", seq, found, err)
+	}
+	if have := sharedRows(t, peer); have != `binding ["01A"]|binding ["01B"]|binding ["01C"]` {
+		t.Fatalf("the peer holds %q, want the refused delete not applied and the genuine row present", have)
 	}
 }
 
@@ -90,8 +133,8 @@ func TestImporterRefusesACrossOriginUpsert(t *testing.T) {
 	if origin := columnOf(t, peer, `SELECT origin FROM binding WHERE id = '01A'`); origin != "m2" {
 		t.Fatalf("the binding's origin = %q, want the owner this file resolves", origin)
 	}
-	if _, found, err := peer.ImportMark("m1"); err != nil || found {
-		t.Fatalf("the mark was written for m1 (found=%t, %v), want none for a forged claim", found, err)
+	if seq, found, err := peer.ImportMark("m1"); err != nil || !found || seq != 1 {
+		t.Fatalf("ImportMark = (%d, %t, %v), want the mark moved past the refused batch", seq, found, err)
 	}
 }
 
