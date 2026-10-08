@@ -159,9 +159,10 @@ Settled before R2 was planned (2026-10-08):
    own connections or embed SQL strings that belong to the db package.
 2. **Entry.** One log entry is `origin, seq, batch, tbl, pk, op,
    schema_version, body, at`. `batch` is the seq of the first entry of the
-   append that wrote it, so a reader can tell where one atomic batch ends. `op` is `upsert` or `delete`. `pk` is the same `json_array(...)`
-   text the outbox records. `body` is the row as JSON, column name to value,
-   with a type-preserving encoding: BLOB values (zstd-compressed transcript and
+   append that wrote it, so a reader can tell where one atomic batch ends.
+   `op` is `upsert` or `delete`. `pk` is the same `json_array(...)` text the
+   outbox records. `body` is the row as JSON, column name to value, with a
+   type-preserving encoding: BLOB values (zstd-compressed transcript and
    round-file bodies, migration 013) must come back as BLOB, integers as
    integers, NULL as NULL. A delete carries no body.
 3. **Transport interface.** `LogTransport` has: append this origin's entries
