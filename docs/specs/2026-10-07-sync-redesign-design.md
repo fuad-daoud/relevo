@@ -204,6 +204,63 @@ Settled before R2 was planned (2026-10-08):
    were exported in commit order, so parents precede children. Reconcile walks
    parents first for the same reason.
 
+## 3b. Worker details (R3)
+
+1. **Process.** `relevo sync-worker` is a hidden subcommand. The daemon
+   starts it as a child process of its own executable and talks JSON lines
+   over the child's stdin and stdout, one request in flight at a time, each
+   with an id. The child's stderr goes to the daemon log. The token reaches
+   the worker in the first request over the pipe, never in argv or the
+   environment.
+2. **Ownership.** The worker opens only `relevo-sync.db`, beside `relevo.db`
+   in the state directory, through `turso.NewTursoSyncDb` with
+   `BootstrapIfEmpty` true, and runs every statement through
+   `TursoSyncDb.Connect()`. Its package does not import `internal/db`, and a
+   test pins that with `go list -deps`. It never checkpoints, vacuums, copies
+   or edits the replica or the driver's files.
+3. **Remote schema.** On first use against an empty remote the worker creates
+   `log`, `head` and `meta` (spec §2) over a sync connection and pushes, so
+   the remote learns them.
+4. **Requests.** `hello(version, origin, token, url)`, `export(entries)`:
+   one replica transaction assigns `seq = max + 1` for the origin, appends to
+   `log`, updates `head`, then `Push`; the reply comes only after the push
+   succeeded, so the daemon deletes outbox rows only for entries the remote
+   holds. `pull(marks)`: `Pull`, then the entries of other origins past their
+   marks. `head(origin, after, limit)`: a page of `head` rows for reconcile.
+   `stats`. `shutdown`.
+5. **Breaker.** Before each request the daemon writes an in-call marker in
+   `relevo-local.db`; it clears it on the reply. A worker that dies or misses
+   its deadline is killed and counted, and so is a marker found uncleared at
+   daemon start. Backoff doubles from one minute. Three consecutive deaths
+   latch `sync:err` with the cause until `relevo db sync retry`. A remote
+   refusal classified as permanent latches the same way. A cancelled worker
+   is restarted, never reused.
+6. **Transport.** The daemon's `synclog.LogTransport` implementation is a
+   client of this pipe. CI tests drive it against a fake worker (the test
+   binary re-executed in a worker mode that can be told to die, hang or
+   refuse); a test against a real Turso database runs only when
+   `RELEVO_SCRATCH_SYNC_URL` and `RELEVO_SCRATCH_SYNC_TOKEN` are set.
+
+## 3c. Wiring details (R4)
+
+1. **Enable.** Preflight (origin gate, token, remote URL from the `sync`
+   section or `--url`), then start the worker, bootstrap the replica, import
+   every other origin, and reconcile-export this origin's history in chunks.
+   Progress is a `sync.join` marker in `relevo-local.db`; an interrupted
+   enable resumes. The mark goes on only when the join finished.
+2. **Steady state.** While on: after a round seals and on the 5-minute idle
+   window, drain the outbox, export, pull, import. The runtime wires the
+   runner so the idle path runs in production, and a test drives the real
+   `Tick` to prove it. Outbox truncation stays off while on.
+3. **Disable.** Stop the worker, mark off, delete the token, delete
+   `relevo-sync.db` and the driver's files beside it. `relevo.db` keeps every
+   imported row.
+4. **Status.** `relevo db sync status`, the statusline token and `:sync` show
+   on/off, a latched breaker and its cause, the outbox backlog, the last
+   export and import times, and any origin held by a newer schema version.
+   `relevo db sync retry` clears a latch. `ErrSyncUnavailable` goes away.
+5. **CLI tests** stay pure: no harness, no network, no worker process.
+
 ## 4. Flows
 
 - **Enable / join.** Preflight (origin gate, token) → worker bootstraps
