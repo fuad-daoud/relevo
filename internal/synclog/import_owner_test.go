@@ -204,3 +204,67 @@ func TestImporterGatesAChildOnItsParent(t *testing.T) {
 		t.Fatalf("the peer holds %q, want the record and its child written", have)
 	}
 }
+
+// An entry from one installation may not place a child under another
+// installation's parent. The child is new here, so the gate before the write has
+// no owner to check; the owner is resolved again after the write, and the row is
+// refused and rolled back rather than becoming the other installation's history.
+func TestImportRefusesAChildUnderAnotherOrigin(t *testing.T) {
+	t.Parallel()
+	peer, _ := peerFile(t, "m2")
+	seed(t, peer.Path(), insertBinding("01B", "m3"))
+	log := NewMemTransport("m1")
+	entryFor(t, log, Entry{
+		Origin: "m1", Table: "round", PK: `["02A"]`, Op: OpUpsert,
+		SchemaVersion: knownVersion(t, peer),
+		Body: bodyFor(t, map[string]any{
+			"id": "02A", "binding_id": "01B", "number": 1,
+			"started_at": "t", "outcome": "done", "switches": 0,
+		}),
+	})
+
+	got, err := NewImporter(peer, log.OnLog("m2")).Import()
+	if err != nil {
+		t.Fatalf("import a child under another origin's parent: %v", err)
+	}
+	if got.Applied != 0 || len(got.Dropped) != 1 {
+		t.Fatalf("import = %+v, want the entry refused", got)
+	}
+	if have := sharedRows(t, peer); have != `binding ["01B"]` {
+		t.Fatalf("the peer holds %q, want no child under another installation's parent", have)
+	}
+}
+
+// A child may not be re-pointed at another installation's parent. The gate
+// before the write passes against the parent the child had; the owner resolved
+// after the write is the one that decides, so a re-point that would move the
+// child under a stranger is refused and the row is left where it was.
+func TestImportRefusesRepointingAChildToAnotherOrigin(t *testing.T) {
+	t.Parallel()
+	peer, _ := peerFile(t, "m2")
+	seed(t, peer.Path(),
+		insertBinding("01A", "m3"),
+		insertBinding("01B", "m4"),
+		insertRound("02A", "01A"),
+	)
+	log := NewMemTransport("m1")
+	entryFor(t, log.OnLog("m3"), Entry{
+		Origin: "m3", Table: "round", PK: `["02A"]`, Op: OpUpsert,
+		SchemaVersion: knownVersion(t, peer),
+		Body: bodyFor(t, map[string]any{
+			"id": "02A", "binding_id": "01B", "number": 1,
+			"started_at": "t", "outcome": "done", "switches": 0,
+		}),
+	})
+
+	got, err := NewImporter(peer, log.OnLog("m2")).Import()
+	if err != nil {
+		t.Fatalf("import a re-point at another origin's parent: %v", err)
+	}
+	if got.Applied != 0 || len(got.Dropped) != 1 {
+		t.Fatalf("import = %+v, want the re-point refused", got)
+	}
+	if binding := columnOf(t, peer, `SELECT binding_id FROM round WHERE id = '02A'`); binding != "01A" {
+		t.Fatalf("the peer's round points at %q, want it left under its own parent", binding)
+	}
+}

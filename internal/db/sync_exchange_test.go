@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -432,6 +433,105 @@ func spinRivals(rivals []*DB, ran *int32, stop <-chan struct{}, spun chan<- stru
 				})
 			}
 		}()
+	}
+}
+
+// TestDrainOutboxIsOneTransaction pins the wrapper's whole guarantee rather than
+// only its transaction body: the entries and the rows they name are read under
+// one write lock, so no write commits between the two reads. A wrapper that read
+// the entries in one transaction and the rows in another would let a competing
+// writer in between, and the batch would report each entry against a row state
+// from a later moment than the entry list.
+//
+// The proof is the pool, not a race: the drain's handle allows one connection at
+// a time, and a competing transaction waits on that pool. A one-transaction
+// wrapper holds the connection from its entry read through its row reads and
+// never gives the waiter a turn, so it returns at once. A wrapper split in two
+// returns the connection between them, the waiter takes it and holds it, and the
+// second transaction waits out the holder -- which is the delay measured here.
+func TestDrainOutboxIsOneTransaction(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	d := openTestDBAt(t, path)
+	seedDrainBacklog(t, d, 1000)
+	d.sqlDB.SetMaxOpenConns(1)
+
+	for attempt := 0; attempt < 3; attempt++ {
+		held, err := drainWhilePoolHeld(d, 1000)
+		if err != nil {
+			t.Fatalf("DrainOutbox under a pool waiter = %v, want one transaction across both its reads", err)
+		}
+		if held > 2*time.Second {
+			t.Fatalf("DrainOutbox took %s while a waiter held the pool, want one transaction: a split drain waits out the holder", held)
+		}
+	}
+}
+
+// drainWhilePoolHeld runs one drain while a competing transaction waits on the
+// same one-connection pool. It returns how long the drain took. The waiter is
+// started just after the drain, so it queues behind the drain's first
+// transaction; a drain that is one transaction keeps the connection and never
+// lets the waiter run, and a drain that is two lets the waiter take the
+// connection in between and waits out its hold.
+func drainWhilePoolHeld(d *DB, limit int) (time.Duration, error) {
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		_, err := d.DrainOutbox(limit)
+		done <- err
+	}()
+	// Let the drain take the pool's one connection before the waiter asks: the
+	// waiter must queue behind it, not race it for the connection.
+	time.Sleep(time.Millisecond)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = d.Tx(func(tx *Tx) error {
+			select {
+			case <-stop:
+			case <-time.After(5 * time.Second):
+			}
+			return nil
+		})
+	}()
+	err := <-done
+	held := time.Since(start)
+	close(stop)
+	wg.Wait()
+	return held, err
+}
+
+// openTestDBAt opens path as the test's own file.
+func openTestDBAt(t *testing.T, path string) *DB {
+	t.Helper()
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
+
+// seedDrainBacklog writes one repo row behind a backlog of outbox entries, so a
+// drain reads a window long enough to hold its transaction across more than the
+// entry read.
+func seedDrainBacklog(t *testing.T, d *DB, writes int) {
+	t.Helper()
+	err := d.Tx(func(tx *Tx) error {
+		if _, err := tx.exec(`INSERT INTO repo (id, origin_url, common_dir, first_seen, origin)
+			VALUES ('r0', 'u', '/c', 't', 'instP')`); err != nil {
+			return err
+		}
+		for i := 1; i < writes; i++ {
+			if _, err := tx.exec(`UPDATE repo SET origin_url = ? WHERE id = 'r0'`, fmt.Sprintf("u%d", i)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("seed the drain backlog: %v", err)
 	}
 }
 

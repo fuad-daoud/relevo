@@ -1,6 +1,8 @@
 package synclog
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -28,11 +30,12 @@ func (s scriptedLog) Pull(map[string]int) ([]Entry, error) {
 	return out, nil
 }
 
-// A batch claiming a sequence far past anything the log holds applies nothing,
-// because every entry in it names a row somebody else owns. The mark is left
-// exactly where it was and the genuine entries behind the fabricated sequence
-// still import: a mark written over entries that were never applied would hide
-// them for good, because a mark that has jumped forward is never read past again.
+// A batch claiming a sequence far past anything the log holds applies nothing:
+// it is a hole in that origin's log, so the origin holds rather than skipping to
+// it. The mark is left exactly where it was and the genuine entries behind the
+// fabricated sequence still import: a mark written over entries that were never
+// applied would hide them for good, because a mark that has jumped forward is
+// never read past again.
 func TestImportLeavesTheMarkAloneAfterAFabricatedJump(t *testing.T) {
 	t.Parallel()
 	peer, _ := victim(t)
@@ -246,6 +249,89 @@ func TestTailIsTheHighestSequenceInABatch(t *testing.T) {
 	}
 	if got := tail(nil); got != 0 {
 		t.Fatalf("tail of no batch = %d, want nothing", got)
+	}
+}
+
+// A batch that begins past the origin's mark is a hole, not progress. Sequence
+// numbers per origin are contiguous by construction, so a batch far ahead means
+// the entries in between have not arrived; the origin holds where it is and the
+// hole is reported, and the forged batch writes nothing. The genuine entries the
+// origin did send still apply, because the mark never moved over them.
+func TestImportHoldsOnAGapInsteadOfSkipping(t *testing.T) {
+	t.Parallel()
+	peer, _ := peerFile(t, "m2")
+	know := knownVersion(t, peer)
+	log := scriptedLog{MemTransport: NewMemTransport("m2"), pulls: [][]Entry{
+		{{Origin: "m1", Batch: 1, Seq: 1, Table: "binding", PK: `["01A"]`,
+			Op: OpUpsert, SchemaVersion: know,
+			Body: bodyFor(t, map[string]any{
+				"id": "01A", "name": "01A", "cwd": "/real",
+				"builder_mode": "local", "created_at": "t", "ingest_source": "manual", "origin": "m1",
+			})}},
+		{{Origin: "m1", Batch: 1000000, Seq: 1000000, Table: "binding", PK: `["01B"]`,
+			Op: OpUpsert, SchemaVersion: know,
+			Body: bodyFor(t, map[string]any{
+				"id": "01B", "name": "01B", "cwd": "/forged",
+				"builder_mode": "local", "created_at": "t", "ingest_source": "manual", "origin": "m1",
+			})}},
+		{{Origin: "m3", Batch: 1, Seq: 1, Table: "binding", PK: `["01C"]`,
+			Op: OpUpsert, SchemaVersion: know,
+			Body: bodyFor(t, map[string]any{
+				"id": "01C", "name": "01C", "cwd": "/other",
+				"builder_mode": "local", "created_at": "t", "ingest_source": "manual", "origin": "m3",
+			})}},
+	}}
+
+	got, err := NewImporter(peer, log).Import()
+	if err != nil {
+		t.Fatalf("import with a gap in one origin: %v", err)
+	}
+	if got.Applied != 2 {
+		t.Fatalf("import = %+v, want the genuine batches applied and the forged one held", got)
+	}
+	if len(got.Gaps) != 1 || got.Gaps[0].Origin != "m1" || got.Gaps[0].Got != 1000000 {
+		t.Fatalf("Gaps = %+v, want m1 held at the forged sequence", got.Gaps)
+	}
+	if !strings.Contains(got.Gaps[0].String(), "m1") {
+		t.Fatalf("the gap reads %q, want it to name the held origin", got.Gaps[0])
+	}
+	if seq, found, err := peer.ImportMark("m1"); err != nil || !found || seq != 1 {
+		t.Fatalf("ImportMark for m1 = (%d, %t, %v), want the genuine entry's sequence", seq, found, err)
+	}
+	if have := sharedRows(t, peer); have != `binding ["01A"]|binding ["01C"]` {
+		t.Fatalf("the peer holds %q, want the genuine rows and not the forged one", have)
+	}
+}
+
+// A dropped batch moves the mark only forwards. A batch whose tail is behind the
+// mark writes nothing: the sequence behind it is not progress, and rewinding
+// would have the entries above it offered again as though they were new.
+func TestImportNeverRewindsAMarkWhenDropping(t *testing.T) {
+	t.Parallel()
+	peer, _ := peerFile(t, "m2")
+	if err := peer.SetImportMark("m1", 5); err != nil {
+		t.Fatalf("set the mark: %v", err)
+	}
+	i := NewImporter(peer, NewMemTransport("m1"))
+	marks := map[string]int{"m1": 5}
+	// A body this machine cannot read, in a batch whose tail is behind the mark.
+	batch := []Entry{{
+		Origin: "m1", Batch: 3, Seq: 3, Table: "binding", PK: `["b1"]`,
+		Op: OpUpsert, SchemaVersion: i.known, Body: json.RawMessage(`{`),
+	}}
+
+	applied, hold, drop, err := i.applyBatch(batch, marks)
+	if err != nil {
+		t.Fatalf("apply a batch behind the mark: %v", err)
+	}
+	if drop == nil || applied != 0 || hold != nil {
+		t.Fatalf("applyBatch = (%d, %+v, %+v, %v), want the unreadable batch dropped", applied, hold, drop, err)
+	}
+	if marks["m1"] != 5 {
+		t.Fatalf("the in-memory mark = %d, want it left at 5", marks["m1"])
+	}
+	if seq, found, err := peer.ImportMark("m1"); err != nil || !found || seq != 5 {
+		t.Fatalf("ImportMark = (%d, %t, %v), want the mark left at 5", seq, found, err)
 	}
 }
 

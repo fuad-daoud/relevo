@@ -495,3 +495,61 @@ func insertRoundFile(recordID, name string, round int) string {
 	return fmt.Sprintf(`INSERT INTO round_file (record_id, name, round, body, bytes, sha256, mtime, sealed_at)
 		VALUES ('%s', '%s', %d, X'0001', 1, 's', 't', 't')`, recordID, name, round)
 }
+
+// A drain closes over a parent its own window cannot carry. A child whose
+// snapshot points at a parent written after the window's entries would otherwise
+// travel alone, and the importer applying it with the foreign keys on would
+// refuse the batch for a parent it was never sent -- a refusal that repeats for
+// as long as the log holds the batch, so that origin would never import again.
+//
+// The window is one entry: it takes the child's update, whose snapshot already
+// points at the later parent, while the parent's own entry lies past the window.
+// The drain pulls the parent in with its snapshot state, so the batch applies
+// whole and the parent is present on the peer afterwards.
+func TestDrainCarriesAPendingParentPastTheWindow(t *testing.T) {
+	t.Parallel()
+	theirs, theirPath := exporterFile(t, "m1")
+	peer, _ := peerFile(t, "m2")
+	seed(t, theirPath, insertBinding("P1", "m1"), insertRound("C", "P1"))
+
+	log := NewMemTransport("m1")
+	importFrom(t, peer, log, theirs, &recording{MemTransport: log})
+	if have := sharedRows(t, peer); have != `binding ["P1"]|round ["C"]` {
+		t.Fatalf("the peer holds %q, want the parent and child the first import carried", have)
+	}
+
+	// A write to the child that names the later parent only in its resulting
+	// state, then the parent itself, then the re-point. The window of one takes
+	// the child's update first.
+	seed(t, theirPath,
+		`UPDATE round SET outcome = 'changed' WHERE id = 'C'`,
+		insertBinding("P2", "m1"),
+		`UPDATE round SET binding_id = 'P2' WHERE id = 'C'`,
+	)
+
+	r := &recording{MemTransport: log}
+	e := exporter(theirs, r)
+	e.batch = 1
+	first, err := e.ExportBatch()
+	if err != nil {
+		t.Fatalf("export one window: %v", err)
+	}
+	if first.Appended != 2 {
+		t.Fatalf("the batch carried %d entries (%s), want the child and the parent it points at",
+			first.Appended, r.shape())
+	}
+
+	got, err := NewImporter(peer, log.OnLog("m2")).Import()
+	if err != nil {
+		t.Fatalf("import the batch: %v", err)
+	}
+	if len(got.Dropped) != 0 {
+		t.Fatalf("Dropped = %+v, want the batch applied: a missing parent must be pulled in, not refused", got.Dropped)
+	}
+	if binding := columnOf(t, peer, `SELECT binding_id FROM round WHERE id = 'C'`); binding != "P2" {
+		t.Fatalf("the peer's round points at %q, want the parent the child was re-pointed to", binding)
+	}
+	if have := sharedRows(t, peer); !strings.Contains(have, `binding ["P2"]`) {
+		t.Fatalf("the peer holds %q, want the pulled parent present", have)
+	}
+}

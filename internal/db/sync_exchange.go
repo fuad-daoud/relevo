@@ -285,6 +285,14 @@ type DrainedEntry struct {
 // point in time held. Holding the write lock for the whole read closes that
 // window -- another writer cannot commit while the drain runs, so every entry in
 // one drain is the state at one moment.
+//
+// The batch is closed over the parents its own rows reference. A child whose
+// snapshot points at a parent whose outbox entries all lie past the window would
+// otherwise travel alone, and an importer applying it with the foreign keys on
+// would refuse the batch for a parent it was never sent. Such a parent is pulled
+// in here with its snapshot state, and followed in turn. Its own later outbox
+// entries stay where they are and travel in their own batch, which is harmless
+// because import is an idempotent upsert.
 func (d *DB) DrainOutbox(limit int) ([]DrainedEntry, error) {
 	var out []DrainedEntry
 	err := d.Tx(func(t *Tx) error {
@@ -296,23 +304,34 @@ func (d *DB) DrainOutbox(limit int) ([]DrainedEntry, error) {
 }
 
 func (t *Tx) DrainOutbox(limit int) ([]DrainedEntry, error) {
-	entries, err := t.readOutbox(limit)
+	window, err := t.readOutbox(limit)
 	if err != nil {
 		return nil, err
 	}
-	for i := range entries {
-		row, found, rerr := t.ReadExchangeRow(entries[i].Table, entries[i].PK)
+	for i := range window {
+		row, found, rerr := t.ReadExchangeRow(window[i].Table, window[i].PK)
 		if rerr != nil {
 			// An entry naming a table this file does not share is a defect in
 			// the schema rather than a row to skip: reading it is what found
 			// it, so the drain reports it instead of dropping a change.
-			return nil, fmt.Errorf("db: drain outbox entry %d: %w", entries[i].Seq, rerr)
+			return nil, fmt.Errorf("db: drain outbox entry %d: %w", window[i].Seq, rerr)
 		}
 		if found {
-			entries[i].Row = &row
+			window[i].Row = &row
 		}
 	}
-	return entries, nil
+	if len(window) == 0 {
+		return nil, nil
+	}
+	// The window's last sequence is the cut the exporter clears the outbox to.
+	// The pulled parents are prepended rather than appended so the window's own
+	// entries stay last and that cut keeps naming the window's tail: a parent's
+	// later outbox entry has to survive for its own batch.
+	pulled, err := t.pendingParents(window, window[len(window)-1].Seq)
+	if err != nil {
+		return nil, err
+	}
+	return append(pulled, window...), nil
 }
 
 // readOutbox returns up to limit entries from the head of the change log, in

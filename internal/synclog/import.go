@@ -62,6 +62,11 @@ type ImportResult struct {
 	// silently passed over so whoever has to act on it can tell which entry it
 	// was.
 	Dropped []Drop
+	// Gaps are the origins the log left a hole in: a batch that starts past the
+	// sequence the origin stopped at. The origin holds for the run and the gap
+	// is reported, so nothing below it is skipped and the missing batch is read
+	// again once it arrives.
+	Gaps []Gap
 }
 
 // Hold is one origin stopped at an entry this machine's schema cannot read. The
@@ -108,6 +113,29 @@ func (d Drop) String() string {
 	return fmt.Sprintf("dropped a batch of %d entries from %s: %s", d.Seq, d.Origin, d.Reason)
 }
 
+// Gap is one origin the log handed a batch to out of order: the batch starts
+// past the sequence the origin's mark rests at, so the entries in between have
+// not arrived. The origin holds where it stands rather than skipping to the
+// batch, because advancing the mark over the hole would silently lose whatever
+// the missing entries carried.
+type Gap struct {
+	// Origin is the installation whose batch starts past its mark.
+	Origin string
+	// Want is the first sequence the origin's next batch has to carry: its mark
+	// plus one.
+	Want int
+	// Got is the first sequence the batch that arrived actually carries.
+	Got int
+}
+
+// String is the report a gap reads as to whoever has to act on it: the origin,
+// where it is being held, and the sequence that arrived ahead of the one it
+// expected.
+func (g Gap) String() string {
+	return fmt.Sprintf("%s is held at %d: a batch starts at %d, want %d; the entries in between have not arrived",
+		g.Origin, g.Want-1, g.Got, g.Want)
+}
+
 // errNotOwner reports an entry whose claimed origin is not the owner of the row
 // it names. It is an ErrInvalid refusal under a second name, so the code that
 // drops a batch it cannot apply can tell this one apart from a body it merely
@@ -129,8 +157,9 @@ var errNotOwner = errors.New("the entry names a row another installation owns")
 // remove, a row another installation owns. The owner comes from this file and
 // never from the body, which is why a forged origin in a body changes nothing.
 //
-// Three things stop a batch, and none of them stops the run: a writer ahead of
-// this build holds its own origin where it stopped, a batch this machine cannot
+// Four things stop a batch, and none of them stops the run: a writer ahead of
+// this build holds its own origin where it stopped, a batch that begins past the
+// origin's mark holds it and is reported as a gap, a batch this machine cannot
 // act on is dropped and moved past, and a batch naming a row somebody else owns
 // is dropped with the mark resting. Only a failure of this machine's own -- a log
 // that will not answer, a file that is busy -- ends the import with an error.
@@ -151,6 +180,16 @@ func (i *Importer) Import() (ImportResult, error) {
 	for _, batch := range batches(entries, marks) {
 		origin := batch[0].Origin
 		if held[origin] {
+			continue
+		}
+		// Sequence numbers per origin are contiguous by construction, so a
+		// batch has to begin exactly where the origin's mark left off. A batch
+		// that begins later is a hole: applying it would advance the mark over
+		// the entries in between and lose them for good, so the origin holds
+		// and the hole is reported.
+		if want := marks[origin] + 1; batch[0].Seq != want {
+			total.Gaps = append(total.Gaps, Gap{Origin: origin, Want: want, Got: batch[0].Seq})
+			held[origin] = true
 			continue
 		}
 		applied, hold, drop, err := i.applyBatch(batch, marks)
@@ -282,15 +321,18 @@ func (i *Importer) mark(tx *db.Tx, marks map[string]int, origin string, seq int,
 // It is the other half of dropping: without it the refused batch would be offered
 // again on every run and would refuse itself again for as long as the log holds
 // it, which is the state a reader cannot recover from on its own.
+//
+// Like mark, it only moves forward. A dropped batch whose tail is at or behind
+// the mark moves nothing, so a transport handing a batch back out of order
+// cannot rewind the mark and have the entries behind it offered again as though
+// they were new.
 func (i *Importer) past(batch []Entry, marks map[string]int) error {
 	origin, seq := batch[0].Origin, tail(batch)
-	if err := i.db.SetImportMark(origin, seq); err != nil {
-		return err
+	if seq <= marks[origin] {
+		return nil
 	}
-	if seq > marks[origin] {
-		marks[origin] = seq
-	}
-	return nil
+	marks[origin] = seq
+	return i.db.SetImportMark(origin, seq)
 }
 
 // refused reports whether a batch that failed to apply is one this machine may
@@ -360,7 +402,29 @@ func applyEntry(tx *db.Tx, e Entry) (bool, error) {
 	if err := tx.ExchangeUpsert(e.Table, e.Origin, values); err != nil {
 		return false, fmt.Errorf("synclog: import %s %s: %w", e.Table, e.PK, err)
 	}
+	if err := ownsAfterWrite(tx, e); err != nil {
+		return false, err
+	}
 	return true, nil
+}
+
+// ownsAfterWrite resolves the row's owner again once it is written, inside the
+// same transaction, and refuses it unless that owner is the entry's origin. The
+// gate before the write cannot answer for a row this file did not hold -- a new
+// child -- nor for the parent a row was just re-pointed at, because both are
+// facts about the write itself. A child that landed under another installation's
+// parent would otherwise become that parent's history, and a forged entry could
+// move a row out of the hands of the installation that reconciles it.
+func ownsAfterWrite(tx *db.Tx, e Entry) error {
+	owner, found, err := tx.ResolveOwner(e.Table, e.PK)
+	if err != nil {
+		return fmt.Errorf("synclog: import %s %s: %w", e.Table, e.PK, err)
+	}
+	if !found || owner == e.Origin {
+		return nil
+	}
+	return fmt.Errorf("synclog: import %s %s: landed under %s, not %s: %w: %w",
+		e.Table, e.PK, owner, e.Origin, errNotOwner, ErrInvalid)
 }
 
 // owns is the gate an entry passes before it is written: the owner this
