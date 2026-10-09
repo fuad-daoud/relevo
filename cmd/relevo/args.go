@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
@@ -285,6 +286,16 @@ func writeError(err error) error {
 		return fail(codeRoundNotFound, "%v", err)
 	case errors.Is(err, store.ErrNotFound):
 		return fail(codeBindingNotFound, "%v", err)
+	case errors.Is(err, delivery.ErrAckForeignBinding):
+		return fail(codeMastermindMismatch, "%v", err)
+	case errors.Is(err, delivery.ErrAckUnknownSeq):
+		return fail(codePushSeqNotFound, "%v", err)
+	case errors.Is(err, delivery.ErrAckAlreadyConfirmed):
+		return fail(codePushAlreadyConfirm, "%v", err)
+	case errors.Is(err, delivery.ErrAckNotAdmitted):
+		return fail(codePushNotAdmitted, "%v", err)
+	case errors.Is(err, delivery.ErrAckNoClaim):
+		return fail(codePushNoClaim, "%v", err)
 	case errors.Is(err, relevo.ErrSeedOverCap):
 		return failNext(codeUsage, "trim the seed or pass --force", "%v", err)
 	case errors.Is(err, relevo.ErrRoundCap):

@@ -1,15 +1,12 @@
 package delivery
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"sort"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -35,9 +32,15 @@ const pushRefreshEvery = 3 * time.Second
 // pushPollEvery is how often RunPush rescans its bindings for a claimable entry.
 const pushPollEvery = 500 * time.Millisecond
 
-// errPushStop ends the drain cleanly: stdin reached EOF or the context was
-// cancelled. It is never returned to a caller.
-var errPushStop = errors.New("push: stdin closed")
+// pushConfirmPollEvery is how often awaitConfirm re-reads the entry it wrote.
+// Only the one-shot ack verb can confirm an admitted entry while this claim is
+// live, so the entry's own Confirmed flag is the whole signal -- no message
+// channel is needed.
+const pushConfirmPollEvery = 100 * time.Millisecond
+
+// errPushStop ends the drain cleanly: the context was cancelled or the claim
+// was lost to another holder. It is never returned to a caller.
+var errPushStop = errors.New("push: stopped")
 
 // pushAdmit is one entry RunPush wrote but has not seen acked; on exit its
 // admit is cleared so the entry is pending again.
@@ -47,19 +50,19 @@ type pushAdmit struct {
 }
 
 // RunPush holds mastermindID's push claim and drains its mailbox to out as
-// NDJSON lines, confirming each entry on the matching `ack <seq>` line from
-// in. stdin EOF, ctx cancellation or an error ends it cleanly: the admits it
-// wrote but never saw acked are cleared so the entries are pending again, and
-// the claim is released. A second holder gets ErrClaimHeld from the claim
-// write and must not drain.
-func RunPush(ctx context.Context, d Deps, mastermindID string, in io.Reader, out io.Writer) error {
-	return runPush(ctx, d, mastermindID, in, out, nil)
+// NDJSON lines, waiting for each entry to be confirmed by `relevo push --ack`.
+// It reads no stdin: the ack is a separate process, so the mod never has to
+// drive a pipe. ctx cancellation, losing the claim or an error ends it
+// cleanly, and the claim is released. A second holder gets ErrClaimHeld from
+// the claim write and must not drain.
+func RunPush(ctx context.Context, d Deps, mastermindID string, out io.Writer) error {
+	return runPush(ctx, d, mastermindID, out, nil)
 }
 
 // runPush is RunPush with a test seam: claimSeam, when non-nil, runs between a
 // claim and the write of its line, where a split scan and admit would leave the
 // entry claimable by a reader. Production passes nil.
-func runPush(ctx context.Context, d Deps, mastermindID string, in io.Reader, out io.Writer, claimSeam func()) error {
+func runPush(ctx context.Context, d Deps, mastermindID string, out io.Writer, claimSeam func()) error {
 	if d.Store == nil {
 		return errors.New("push: nil store")
 	}
@@ -95,12 +98,21 @@ func runPush(ctx context.Context, d Deps, mastermindID string, in io.Reader, out
 		d:            d,
 		mastermindID: mastermindID,
 		out:          out,
-		lines:        pushLines(runCtx, in),
 		unacked:      map[pushAdmit]struct{}{},
 		last:         map[string]store.State{},
 		claimSeam:    claimSeam,
 	}
-	defer clearUnackedAdmits(d, p.unacked)
+	// The admits this holder wrote are cleared on the way out -- except when it
+	// stops because it lost the claim. Then a successor may already have run
+	// clearStaleAdmits and be writing a line for the very same entry, and
+	// clearing it here would make that entry claimable while the successor is
+	// delivering it. The successor's own clear, or clearOrphanAdmit once no
+	// claim is live, returns it to pending instead.
+	defer func() {
+		if !p.claimLost {
+			clearUnackedAdmits(d, p.unacked)
+		}
+	}()
 	return p.run(runCtx)
 }
 
@@ -109,7 +121,6 @@ type pushRun struct {
 	d            Deps
 	mastermindID string
 	out          io.Writer
-	lines        <-chan string
 	unacked      map[pushAdmit]struct{}
 	// last is each own binding's last-seen state, so a state line marks a
 	// transition rather than every poll.
@@ -117,11 +128,14 @@ type pushRun struct {
 	// claimSeam, nil in production, runs between a claim and its write. A test
 	// uses it to try a reader pull in the gap a split scan and admit would open.
 	claimSeam func()
+	// claimLost records that the run ended on losing the claim rather than on
+	// ctx or an error, which is the one exit that must not clear its own admits.
+	claimLost bool
 }
 
-// run drains entries until stdin EOF or ctx is done. Each entry is admitted
-// and written before the loop blocks for its ack, so an entry is never
-// claimable by a reader while the mod is about to read it.
+// run drains entries until ctx is done or the claim is lost. Each entry is
+// admitted and written before the loop blocks for its confirm, so an entry is
+// never claimable by a reader while the mod is about to read it.
 func (p *pushRun) run(ctx context.Context) error {
 	ticker := time.NewTicker(pushPollEvery)
 	defer ticker.Stop()
@@ -141,16 +155,16 @@ func (p *pushRun) run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case _, ok := <-p.lines:
-			if !ok {
+		case <-ticker.C:
+			if !p.claimHeld() {
+				p.claimLost = true
 				return nil
 			}
-		case <-ticker.C:
 		}
 	}
 }
 
-// step sends at most one claimable entry, blocking for its ack; when none is
+// step sends at most one claimable entry, blocking for its confirm; when none is
 // claimable it writes the state transitions it saw. sent reports whether an
 // entry was found.
 func (p *pushRun) step(ctx context.Context) (sent bool, err error) {
@@ -167,7 +181,7 @@ func (p *pushRun) step(ctx context.Context) (sent bool, err error) {
 	if err := p.writeEntry(b, entry, idx); err != nil {
 		return true, err
 	}
-	return true, p.awaitAck(ctx, b.Name, idx, entry.Seq)
+	return true, p.awaitConfirm(ctx, b.Name, idx)
 }
 
 // writeEntry writes one already-admitted entry's NDJSON line and remembers it
@@ -240,26 +254,57 @@ func (p *pushRun) writeState(b store.Binding) error {
 	return err
 }
 
-// awaitAck waits for the `ack <seq>` line matching seq and confirms the entry
-// with route "push". Any other line is ignored.
-func (p *pushRun) awaitAck(ctx context.Context, name string, idx, seq int) error {
+// awaitConfirm polls the entry this holder wrote until it is confirmed by the
+// ack verb, its admit is cleared by someone else, or the run stops. It never
+// confirms: the entry is the ack verb's to settle, and the holder only waits
+// for that answer to arrive.
+//
+// The poll ends on AdmittedAt == nil as well as Confirmed, because an admit
+// cleared under the holder (the orphan clear, another writer) makes the entry
+// claimable again and every further ack for it would be refused as not
+// admitted. Dropping it from unacked lets the next step re-admit and re-send it
+// with a fresh line.
+func (p *pushRun) awaitConfirm(ctx context.Context, name string, idx int) error {
+	ticker := time.NewTicker(pushConfirmPollEvery)
+	defer ticker.Stop()
+
 	for {
-		select {
-		case <-ctx.Done():
-			return errPushStop
-		case line, ok := <-p.lines:
-			if !ok {
-				return errPushStop
-			}
-			if n, match := ackSeq(line); match && n == seq {
-				if err := p.d.Store.ConfirmIndex(name, idx, "push"); err != nil {
-					return err
-				}
+		entries, err := p.d.Store.ReadLog(name)
+		if err != nil {
+			return err
+		}
+		if idx < len(entries) {
+			if entries[idx].Confirmed || entries[idx].AdmittedAt == nil {
 				delete(p.unacked, pushAdmit{binding: name, idx: idx})
 				return nil
 			}
 		}
+
+		select {
+		case <-ctx.Done():
+			return errPushStop
+		case <-ticker.C:
+			if !p.claimHeld() {
+				p.claimLost = true
+				return errPushStop
+			}
+		}
 	}
+}
+
+// claimHeld reports whether this process still holds the push claim. A Live
+// error is treated as held: a transient store failure must not end a live
+// holder's drain, and the claim's own TTL is what decides a real loss.
+func (p *pushRun) claimHeld() bool {
+	if p.d.Channels == nil {
+		return false
+	}
+	var now time.Time
+	if p.d.Now != nil {
+		now = p.d.Now()
+	}
+	c, err := p.d.Channels.Live(p.mastermindID, now)
+	return err != nil || (c != nil && c.PID == os.Getpid())
 }
 
 // refreshPushClaim keeps the held claim live for as long as the holder runs.
@@ -275,23 +320,6 @@ func refreshPushClaim(ctx context.Context, d Deps, claim Claim) {
 			_ = d.Channels.Write(claim, claim.SeenAt)
 		}
 	}
-}
-
-// pushLines reads in line by line into a channel; the channel closes at EOF.
-func pushLines(ctx context.Context, in io.Reader) <-chan string {
-	out := make(chan string)
-	go func() {
-		defer close(out)
-		sc := bufio.NewScanner(in)
-		for sc.Scan() {
-			select {
-			case out <- sc.Text():
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return out
 }
 
 // nextAdmitted returns the oldest claimable entry across the mastermind's own
@@ -389,19 +417,6 @@ func clearUnackedAdmits(d Deps, unacked map[pushAdmit]struct{}) {
 	for a := range unacked {
 		_ = d.Store.ClearAdmitIndex(a.binding, a.idx)
 	}
-}
-
-// ackSeq parses an `ack <seq>` stdin line.
-func ackSeq(line string) (int, bool) {
-	f := strings.Fields(line)
-	if len(f) != 2 || f[0] != "ack" {
-		return 0, false
-	}
-	n, err := strconv.Atoi(f[1])
-	if err != nil {
-		return 0, false
-	}
-	return n, true
 }
 
 // clearOrphanAdmit clears an admitted entry no route can settle: the

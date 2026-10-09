@@ -163,13 +163,14 @@ func TestHeadlessE2E(t *testing.T) {
 	}
 
 	// 5.4: the report arrives as a push line carrying the report's own text
-	// (PushText expands the file a report entry points at). The test acks it.
+	// (PushText expands the file a report entry points at). The test acks it
+	// the way the mod does, through the one-shot ack verb.
 	ev := pusher.waitEvent(t, pushBinding, "report", notifyDeadline)
 	if !strings.Contains(ev.Text, fakeReportText) {
 		t.Fatalf("the kind=\"report\" push line for %s does not carry the fake report's text:\n%s",
 			pushBinding, ev.Text)
 	}
-	pusher.ack(t, ev.Seq)
+	pusher.ack(t, ev)
 
 	// -- 6. pull / done -----------------------------------------------------
 	// The push holder confirms the entry it acked (route=push), so pull has
@@ -677,12 +678,14 @@ func runMasterMindHook(t *testing.T, reg *mastermind.DBRegistry, now func() time
 // --- the in-process MCP client ----------------------------------------------
 
 // pushClient is the test's end of a `relevo push` session: it reads the NDJSON
-// lines the holder writes and acks them on stdin.
+// lines the holder writes and acks them the way the mod does, through
+// delivery.AckPush.
 type pushClient struct {
-	t      *testing.T
-	in     *io.PipeWriter
-	mu     sync.Mutex
-	events []delivery.PushEvent
+	t            *testing.T
+	deps         delivery.Deps
+	mastermindID string
+	mu           sync.Mutex
+	events       []delivery.PushEvent
 }
 
 // mcpClient is the test's end of a `relevo mcp` stdio session: it writes
@@ -697,13 +700,12 @@ type mcpClient struct {
 	waiters map[int]chan map[string]any
 }
 
-// startPush starts one relevo push holder in-process over a pipe pair: RunPush
-// reads acks from one end and writes NDJSON lines to the other, and the client
-// does the reverse.
+// startPush starts one relevo push holder in-process over one pipe: RunPush
+// writes NDJSON lines the test reads, and the test acks through delivery.AckPush
+// rather than through a second pipe.
 func startPush(t *testing.T, ctx context.Context, rt relevo.Runtime, mastermindID string) *pushClient {
 	t.Helper()
 
-	pushIn, clientWrite := io.Pipe()   // the test writes acks; the holder reads
 	clientRead, holderOut := io.Pipe() // the holder writes; the test reads
 	deps := delivery.Deps{
 		Store:       rt.Store,
@@ -712,9 +714,9 @@ func startPush(t *testing.T, ctx context.Context, rt relevo.Runtime, mastermindI
 		Deliverers:  rt.Deliverers,
 		MasterMinds: rt.MasterMinds,
 	}
-	go func() { _ = delivery.RunPush(ctx, deps, mastermindID, pushIn, holderOut) }()
+	go func() { _ = delivery.RunPush(ctx, deps, mastermindID, holderOut) }()
 
-	c := &pushClient{t: t, in: clientWrite}
+	c := &pushClient{t: t, deps: deps, mastermindID: mastermindID}
 	go c.read(clientRead)
 
 	// Wait for RunPush to take the claim before the test proceeds: the holder
@@ -732,9 +734,8 @@ func startPush(t *testing.T, ctx context.Context, rt relevo.Runtime, mastermindI
 	}
 
 	t.Cleanup(func() {
-		// Closing the ack side turns the holder's stdin read into an EOF;
-		// closing the line side unblocks the reader goroutine.
-		_ = clientWrite.Close()
+		// Closing the line side unblocks the reader goroutine; the holder
+		// itself ends on the scenario's context cancel.
 		_ = clientRead.Close()
 	})
 	return c
@@ -779,11 +780,11 @@ func (c *pushClient) waitEvent(t *testing.T, binding, kind string, timeout time.
 	}
 }
 
-// ack writes the `ack <seq>` line that confirms one push event.
-func (c *pushClient) ack(t *testing.T, seq int) {
+// ack confirms one push event the way `relevo push --ack <binding> <seq>` does.
+func (c *pushClient) ack(t *testing.T, ev delivery.PushEvent) {
 	t.Helper()
-	if _, err := fmt.Fprintf(c.in, "ack %d\n", seq); err != nil {
-		t.Fatalf("write ack %d: %v", seq, err)
+	if _, err := delivery.AckPush(c.deps, c.mastermindID, ev.Binding, ev.Seq); err != nil {
+		t.Fatalf("AckPush(%s, %d): %v", ev.Binding, ev.Seq, err)
 	}
 }
 
