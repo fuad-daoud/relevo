@@ -280,3 +280,38 @@ func TestUpsertRepoSeparatesOrigins(t *testing.T) {
 		t.Errorf("repo rows = %d, want 2: one per origin", n)
 	}
 }
+
+func TestUpsertRepoFollowsRemoteRename(t *testing.T) {
+	d := openTestDB(t)
+	const oldURL = "https://github.com/o/old"
+	id := upsertRepo(t, d, Repo{OriginURL: ptr(oldURL), CommonDir: ptr(repoDir), FirstSeen: repoSeenAt})
+
+	got := upsertRepo(t, d, Repo{OriginURL: ptr(repoURL), CommonDir: ptr(repoDir), FirstSeen: repoSeenAt})
+	if got != id {
+		t.Errorf("UpsertRepo id = %s, want the dir's row %s", got, id)
+	}
+	if n := countRepos(t, d); n != 1 {
+		t.Errorf("repo rows = %d, want 1", n)
+	}
+	if row := readRepoRow(t, d, id); row.originURL.V != repoURL {
+		t.Errorf("origin_url = %q, want the renamed %q", row.originURL.V, repoURL)
+	}
+}
+
+func TestUpsertRepoURLHitWinsOverRenamedDirRow(t *testing.T) {
+	d := openTestDB(t)
+	const oldURL = "https://github.com/o/old"
+	dirRow := upsertRepo(t, d, Repo{OriginURL: ptr(oldURL), CommonDir: ptr(repoDir), FirstSeen: repoSeenAt})
+	urlRow := upsertRepo(t, d, Repo{OriginURL: ptr(repoURL), CommonDir: ptr("/other/.git"), FirstSeen: repoSeenAt})
+
+	got := upsertRepo(t, d, Repo{OriginURL: ptr(repoURL), CommonDir: ptr(repoDir), FirstSeen: repoSeenAt})
+	if got != urlRow {
+		t.Errorf("UpsertRepo id = %s, want the URL's row %s", got, urlRow)
+	}
+	if n := countRepos(t, d); n != 2 {
+		t.Errorf("repo rows = %d, want 2: no merge", n)
+	}
+	if row := readRepoRow(t, d, dirRow); row.originURL.V != oldURL {
+		t.Errorf("the dir's row origin_url = %q, want it left at %q", row.originURL.V, oldURL)
+	}
+}

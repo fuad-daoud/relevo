@@ -125,6 +125,12 @@ func isPeekArgs(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
+	// db rename-repo writes, so it must reach the database through the owner
+	// like any other writer; the direct open its db siblings take is refused
+	// while the daemon holds the lock.
+	if args[0] == "db" && len(args) > 1 && args[1] == "rename-repo" {
+		return false
+	}
 	if args[0] == "bugreport" || args[0] == "db" || args[0] == "board" {
 		return true
 	}
