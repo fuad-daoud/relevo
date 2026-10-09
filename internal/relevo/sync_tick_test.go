@@ -396,7 +396,11 @@ func TestTickRestartsACancelledWorker(t *testing.T) {
 
 	client := newRestartTransport(synclog.NewMemTransport("m2").OnLog(mdb.Origin()))
 	rt.Sync = &relevosync.Runner{Client: client, Local: local}
-	rt.Sync.Timeout = 50 * time.Millisecond
+	// The bound has to outlast the export's way to its first append, or the
+	// cancel lands before any worker exists and the call it was meant for
+	// starts after it: the first append waits for the cancel either way, so a
+	// longer bound costs only this much test time.
+	rt.Sync.Timeout = 500 * time.Millisecond
 
 	now := baseTime
 	d := NewDaemon(rt, time.Second)
@@ -414,6 +418,9 @@ func TestTickRestartsACancelledWorker(t *testing.T) {
 		t.Fatal("the overrun worker was not cancelled")
 	}
 
+	// The second tick is about which worker the next call reaches, not about
+	// the bound, so its bound is one no runner can overrun.
+	rt.Sync.Timeout = time.Minute
 	now = now.Add(syncWindow + time.Minute)
 	if err := d.Tick(context.Background()); err != nil {
 		t.Fatalf("second Tick: %v", err)
