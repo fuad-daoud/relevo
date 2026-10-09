@@ -835,8 +835,8 @@ type fakeRunner struct {
 	scopeStopErr error
 
 	// refuseBusyScope makes Start fail the way systemd-run does when the unit
-	// it was asked to create is already loaded, rather than silently
-	// succeeding the way a scope-blind fake would (#1058). Off by default, so
+	// it was asked to create is already loaded, rather than silently succeeding
+	// the way a fake that never models scope-busy would. Off by default, so
 	// every other test's Start is unaffected.
 	refuseBusyScope bool
 

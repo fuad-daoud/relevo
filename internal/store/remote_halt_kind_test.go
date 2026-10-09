@@ -149,10 +149,10 @@ func TestSaveKeepsTheHaltKind(t *testing.T) {
 	}
 }
 
-// format16BrokenRecordJSON is the record the #1035/#1043 window actually wrote:
-// format 16 raised, the kind two hours later, so a build in between wrote the
-// broken sentence whole with no kind beside it (#1051). Both existing tests
-// load format 15, which is why the gap survived.
+// format16BrokenRecordJSON is the record that window actually wrote:
+// format 16 raised, the kind added later, so a build in between wrote the
+// broken sentence whole with no kind beside it. Both existing tests load
+// format 15, which is why the gap survived.
 const format16BrokenRecordJSON = `{
   "format": 16,
   "name": "api",

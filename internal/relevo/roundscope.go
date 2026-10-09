@@ -106,7 +106,7 @@ const (
 )
 
 // freeRoundScope makes b's own round scope unit available to a replacement
-// process, and is what a switch-resend calls before it starts one (#1058).
+// process, and is what a switch-resend calls before it starts one.
 //
 // The replacement is the SAME round on the same binding, so it asks systemd for
 // the same unit name the process it replaces is still using. systemd-run

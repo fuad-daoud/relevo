@@ -19,7 +19,7 @@ import (
 //
 // Payload is what Done delivered on the way out: every unconfirmed
 // to-MasterMind entry that was still pending when the human ran `relevo done`,
-// rendered and joined exactly as `relevo wait` renders it (#1051). Empty when
+// rendered and joined exactly as `relevo wait` renders it. Empty when
 // nothing was pending.
 //
 // Joined, and not the per-entry split wait carries, so DoneResult stays
@@ -110,7 +110,7 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		// PushText applies.
 		//
 		// Best effort, like wait's own delivery: a Done that has already
-		// stopped the relay must not be undone by a payload that would not
+		// stopped the server must not be undone by a payload that would not
 		// read. The entries stay pending on a failure, which is the state this
 		// verb existed to leave behind -- the human can run `relevo wait` first.
 		all, perr := tx.ClaimableForMasterMindThrough(name, 0)

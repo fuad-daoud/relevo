@@ -51,9 +51,9 @@ var ErrReportPending = refusalSentinel("the round's output is on disk but not ye
 var ErrScopeActive = refusalSentinel("this round's builder scope is still running")
 
 // isScopeBusy reports whether a Start error is the host refusing this round's
-// scope unit rather than the candidate failing to run: systemd-run's own text,
-// "Unit X.scope was already loaded" (#1058) and its variant about an existing
-// fragment file. Both are text matching because systemd surfaces the collision
+// scope unit rather than the candidate failing to run: systemd-run's own
+// already-loaded wording, and its variant about an existing fragment file.
+// Both are text matching because systemd surfaces the collision
 // as a wrapped command error, not as a sentinel this binary can type.
 //
 // A host-side collision says nothing about the candidate, which is exactly
@@ -400,7 +400,7 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		// (which the lost-builder path would answer with a fresh relaunch).
 		//
 		// A scope collision is the host's, for the same reason and with the
-		// same consequence (#1058). freeRoundScope is the primary guard -- it
+		// same consequence. freeRoundScope is the primary guard -- it
 		// ends the unit before a switch's replacement asks for it -- but a
 		// scope that loads between the probe and the Start still arrives here
 		// as an ordinary error, and a runner that fails to *start* for a host

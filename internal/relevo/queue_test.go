@@ -559,7 +559,7 @@ func TestAdmitGatedSwitches(t *testing.T) {
 // failingConfirmDeliverer admits a payload and then fails the read-back, which
 // is the shape that leaves switchBuilder's queueBrokenHalt entry queued, the
 // per-round key stamped, and the binding settled Broken with the delivery
-// error returned -- the state #1051's Admit check has to recognise.
+// error returned -- the state the Admit already-halted check has to recognise.
 type failingConfirmDeliverer struct {
 	deliverCalls int
 }

@@ -274,8 +274,8 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 
 	// The replacement is the SAME round, so it asks systemd for the same scope
-	// unit the process it replaces was using (#1058). A scope that is still
-	// loaded -- killed above and still deactivating, or already gone and only
+	// unit the process it replaces was using. A scope that is still loaded --
+	// killed above and still deactivating, or already gone and only
 	// awaiting the reaper, which is the outage path's case because it switches
 	// with closeOld=false -- makes systemd-run refuse the Start with "Unit ...
 	// was already loaded", and that refusal reads downstream as a candidate
@@ -417,7 +417,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 }
 
 // hostStartError reports whether a startRound failure is the host refusing the
-// spawn rather than the candidate failing to run (#1058): the three classes
+// spawn rather than the candidate failing to run: the three classes that
 // startProcess already declines to record as a spawn failure -- a scope-unit
 // collision, a tenant-boundary refusal and a runner that is gone -- plus the
 // lost-builder resume path's own refusal. Each is an operator's problem, so a

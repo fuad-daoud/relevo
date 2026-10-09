@@ -518,11 +518,11 @@ func (b *Binding) UnmarshalJSON(raw []byte) error {
 	// fixed sentence this binary writes WHOLE, and it writes it only with the
 	// kind already stamped (grep HaltKindBroken -- every write site sets it), so
 	// a record whose Halt equals that sentence and whose kind is empty can only
-	// be a pre-kind one. That window was real: #1035 raised the format to 16
-	// and #1043 added the kind two hours later, so builds in between wrote the
-	// broken text at format 16 with no kind (#1051). A server that named its own
-	// reason for a break wrote a different sentence, and naming that episode is
-	// not this migration's to do.
+	// be a pre-kind one. That window was real: the format was raised to 16
+	// before the kind was added, so builds in between wrote the broken text at
+	// format 16 with no kind. A server that named its own reason for a break
+	// wrote a different sentence, and naming that episode is not this
+	// migration's to do.
 	if out.Format < haltKindFormat && out.RemoteHaltKind == "" && strings.Contains(out.Halt, UnreachableHaltMarker) {
 		out.RemoteHaltKind = HaltKindUnreachable
 	}

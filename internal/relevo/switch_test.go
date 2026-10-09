@@ -538,11 +538,11 @@ func TestSwitchKeepsTheStreamCursor(t *testing.T) {
 	}
 }
 
-// busyScopeRuntime is the #1058 setup in one call: a headless round in flight,
-// scopes turned on, and this round's unit still reported loaded -- the state a
-// provider outage leaves behind, since the old process is gone and systemd is
-// only awaiting the reaper. It returns the runtime, the binding and the unit
-// base name.
+// busyScopeRuntime is the scope-busy setup in one call: a headless round in
+// flight, scopes turned on, and this round's unit still reported loaded -- the
+// state a provider outage leaves behind, since the old process is gone and
+// systemd is only awaiting the reaper. It returns the runtime, the binding and
+// the unit base name.
 func busyScopeRuntime(t *testing.T) (Runtime, store.Binding, string) {
 	t.Helper()
 	fr := newFakeRunner()
@@ -552,8 +552,9 @@ func busyScopeRuntime(t *testing.T) (Runtime, store.Binding, string) {
 	unit := scopeUnitName(b)
 	fr.scopeActive = map[string]bool{unit: true}
 	// systemd-run refuses a Start against a loaded unit, and a unit asked to
-	// stop takes a moment to unload. Both are what makes #1058 an outage and
-	// not a flag day: without them the fake would let any switch through.
+	// stop takes a moment to unload. Both are what make a dropped-connection
+	// outage hit the resend path rather than a flag day: without them the fake
+	// would let any switch through.
 	fr.refuseBusyScope = true
 	fr.lingerProbes = 3
 	return rt, b, unit
@@ -643,7 +644,7 @@ func TestSwitchDefersWhileTheOldScopeIsBusy(t *testing.T) {
 	}
 }
 
-// scopeCollisionErr is systemd-run's own refusal text (#1058), verbatim in
+// scopeCollisionErr is systemd-run's own refusal text, verbatim in
 // shape: the transient scope could not be started because the unit was already
 // loaded -- the old round's scope, still reaping.
 var scopeCollisionErr = errors.New("Failed to start transient scope unit: Unit relevo-round-local-webshop-1.scope was already loaded: hostfailure")
