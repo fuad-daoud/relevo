@@ -104,10 +104,10 @@ refuses 'an empty name is refused' 'create needs a name' \
 # also match uppercase: the refusal must hold under an explicit UTF-8 locale,
 # which is the macOS-runner shape that once let Demo through.
 for _loc in C C.utf8 en_US.utf8; do
-	LC_ALL=$_loc sh "$script" create Demo "$nb" >/dev/null 2>&1 && {
+	if LC_ALL=$_loc sh "$script" create Demo "$nb" >/dev/null 2>&1; then
 		echo "FAIL: an uppercase name is accepted under LC_ALL=$_loc"
 		fail=1
-	} || :
+	fi
 done
 refuses 'an unknown subcommand is refused' 'unknown subcommand' \
 	sh "$script" frobnicate
