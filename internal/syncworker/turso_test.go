@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -989,3 +990,28 @@ var (
 	_ syncDb        = (*fakeSyncDb)(nil)
 	_ Backend       = (refusingBackend{})
 )
+
+// TestWorkerSQLUsesNoUpsert pins the head update to an update-then-insert. On a
+// sync connection the engine refused an upsert landing on an existing head row
+// as a corrupt record while a plain update of that row went through, and only
+// a real replica shows it: the local file every other test here uses never
+// does. So the guard is on the SQL itself -- no statement the worker sends may
+// use ON CONFLICT.
+func TestWorkerSQLUsesNoUpsert(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("list the package files: %v", err)
+	}
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if strings.Contains(strings.ToUpper(string(src)), "ON CONFLICT") {
+			t.Errorf("%s sends ON CONFLICT, which a sync connection can refuse on an existing row", name)
+		}
+	}
+}

@@ -255,9 +255,26 @@ func updateHead(ctx context.Context, tx *sql.Tx, e Entry) error {
 	if err != nil {
 		return fmt.Errorf("syncworker: hash %s %s: %w", e.Tbl, e.PK, err)
 	}
+	// An update, then an insert when it moved nothing, rather than one upsert:
+	// on a sync connection the engine can refuse an upsert that lands on an
+	// existing head row as a corrupt record, while a plain update of the same
+	// row goes through. The worker is the replica's only writer, so the two
+	// statements in one transaction cannot race another insert of the row.
+	res, err := tx.ExecContext(ctx,
+		"UPDATE head SET seq = ?, hash = ? WHERE origin = ? AND tbl = ? AND pk = ?",
+		e.Seq, hash, e.Origin, e.Tbl, e.PK)
+	if err != nil {
+		return fmt.Errorf("syncworker: head %s %s: %w", e.Tbl, e.PK, err)
+	}
+	moved, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("syncworker: head %s %s: %w", e.Tbl, e.PK, err)
+	}
+	if moved > 0 {
+		return nil
+	}
 	if _, err := tx.ExecContext(ctx,
-		"INSERT INTO head (origin, tbl, pk, seq, hash) VALUES (?, ?, ?, ?, ?) "+
-			"ON CONFLICT(origin, tbl, pk) DO UPDATE SET seq = excluded.seq, hash = excluded.hash",
+		"INSERT INTO head (origin, tbl, pk, seq, hash) VALUES (?, ?, ?, ?, ?)",
 		e.Origin, e.Tbl, e.PK, e.Seq, hash); err != nil {
 		return fmt.Errorf("syncworker: head %s %s: %w", e.Tbl, e.PK, err)
 	}

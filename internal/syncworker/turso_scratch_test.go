@@ -81,6 +81,36 @@ func TestScratchRemoteExportPullRoundTrip(t *testing.T) {
 	}
 }
 
+// TestScratchRemoteMovesAHeadRowTwice pins the second write of one row on a
+// real sync connection. The first append inserts the row's head; every later
+// append of that row has to move the head it already holds, which is the path
+// a sync connection's own change capture refuses for an upsert that updates.
+func TestScratchRemoteMovesAHeadRowTwice(t *testing.T) {
+	url := os.Getenv("RELEVO_SCRATCH_SYNC_URL")
+	token := os.Getenv("RELEVO_SCRATCH_SYNC_TOKEN")
+	if url == "" || token == "" {
+		t.Skip("set RELEVO_SCRATCH_SYNC_URL and RELEVO_SCRATCH_SYNC_TOKEN to run against a scratch remote")
+	}
+	origin := "scratch-head-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	b := openScratch(t, filepath.Join(t.TempDir(), "h.db"), origin, url, token)
+
+	first, err := b.Append([]Entry{upsertEntry(origin, "board", `["twice"]`, `{"title":"first"}`)})
+	if err != nil {
+		t.Fatalf("first append: %v", err)
+	}
+	second, err := b.Append([]Entry{upsertEntry(origin, "board", `["twice"]`, `{"title":"second"}`)})
+	if err != nil {
+		t.Fatalf("second append of the same row: %v", err)
+	}
+	head, err := b.Head(origin, "", 0)
+	if err != nil {
+		t.Fatalf("head: %v", err)
+	}
+	if len(head) != 1 || head[0].Seq != second[0].Seq || head[0].Seq == first[0].Seq {
+		t.Errorf("head = %+v, want one row at the second append's seq %d", head, second[0].Seq)
+	}
+}
+
 // openScratch opens one installation's backend against the real remote through
 // the production driver.
 func openScratch(t *testing.T, replicaPath, origin, url, token string) *TursoBackend {
