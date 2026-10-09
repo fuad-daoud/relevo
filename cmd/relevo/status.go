@@ -274,6 +274,9 @@ func runStatusline(asJSON bool, mastermindRef string) error {
 		if root, rerr := store.DefaultRoot(); rerr == nil {
 			fmt.Print(view.RenderBoardLine(boardBlockFor(root, sc.MasterMindID, boardProcStart), rec.Name, columns))
 		}
+		if relevo.PushLive(rt, sc.MasterMindID) {
+			return nil
+		}
 		rep, err := relevo.MasterMindStatus(context.Background(), rt, sc.MasterMindID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "relevo status --line: %v\n", err)
@@ -284,6 +287,7 @@ func runStatusline(asJSON bool, mastermindRef string) error {
 	}
 
 	doc := view.StatusLineDoc{Now: time.Now().UTC(), Rows: []view.StatusLineRow{}}
+	doc.PushLive = relevo.PushLive(rt, sc.MasterMindID)
 	doc.MasterMind = &view.StatusLineMasterMind{ID: sc.MasterMindID, Name: rec.Name}
 	if root, rerr := store.DefaultRoot(); rerr == nil {
 		doc.Board = boardBlockFor(root, sc.MasterMindID, boardProcStart)
