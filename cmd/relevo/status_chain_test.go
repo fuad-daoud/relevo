@@ -1,13 +1,16 @@
 package main
 
 import (
+	"encoding/json"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // seedChainContractFixture seeds one mastermind-owned chain beside a binding
@@ -115,5 +118,34 @@ func TestStatusChainLineContract(t *testing.T) {
 			t.Fatalf("%v: %v (stderr: %s)", c.args, err, stderr)
 		}
 		assertGolden(t, c.golden, normalize(stdout, fx.roots...))
+	}
+}
+
+// TestStatuslineJSONCarriesGates pins the doc's gates: the machine's live
+// gates, with the provider split out of the token and an empty until for a
+// gate that lasts until cleared. No harness is spawned and nothing reaches the
+// network.
+func TestStatuslineJSONCarriesGates(t *testing.T) {
+	fx := seedStatusFixture(t)
+	t.Setenv("RELEVO_MASTERMIND", fx.mastermindID)
+	for _, args := range [][]string{
+		{"config", "set", "candidates", `[{"harness":"claude","provider":"p","model":"m","roles":["builder"]}]`},
+		{"gate", "claude/p/m", "--reason", "flaky"},
+	} {
+		if _, stderr, err := captureOutput(t, func() error { return run(args) }); err != nil {
+			t.Fatalf("%v: %v (stderr: %s)", args, err, stderr)
+		}
+	}
+	stdout, stderr, err := captureOutput(t, func() error { return run([]string{"status", "--line", "--json"}) })
+	if err != nil {
+		t.Fatalf("status --line --json: %v (stderr: %s)", err, stderr)
+	}
+	var doc view.StatusLineDoc
+	if err := json.Unmarshal(stdout, &doc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := view.StatusLineGate{Token: "claude/p/m", Provider: "p", Until: "", Reason: "flaky"}
+	if !slices.Contains(doc.Gates, want) {
+		t.Fatalf("gates = %+v, want one to be %+v", doc.Gates, want)
 	}
 }

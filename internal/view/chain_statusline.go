@@ -37,7 +37,7 @@ func statusLineRowOfChain(b BindingStatus) StatusLineRow {
 	if pending := ChainPendingSegment(*b.Chain); pending != "" {
 		mid += " · " + pending
 	}
-	return StatusLineRow{
+	row := StatusLineRow{
 		Name:     b.Name,
 		Chain:    mid,
 		Display:  display,
@@ -50,4 +50,8 @@ func statusLineRowOfChain(b BindingStatus) StatusLineRow {
 
 		ChainProgress: chainProgressOf(*b.Chain),
 	}
+	if tone == "needs" {
+		row.Next = haltNext(b.Name, 0, nil, b.Detail)
+	}
+	return row
 }

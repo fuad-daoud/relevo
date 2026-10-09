@@ -344,6 +344,7 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 			break
 		}
 	}
+	setNextInputs(rt, &row, entries)
 	for i := len(entries) - 1; i >= 0; i-- {
 		if e := entries[i]; e.Kind == store.KindDiff {
 			row.LastClose = &view.CloseInfo{Round: e.Round, Commits: e.Commits, Tree: e.Tree}

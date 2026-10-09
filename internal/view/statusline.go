@@ -467,6 +467,7 @@ type StatusLineRow struct {
 	Activity string `json:"activity,omitempty"`
 	// ChainProgress is set only on a chain's stand-in row.
 	ChainProgress *ChainProgress `json:"chain_progress,omitempty"`
+	Next          *Next          `json:"next,omitempty"`
 }
 
 // StatusLineDoc is the top-level document emitted by relevo status --line --json.
@@ -476,6 +477,7 @@ type StatusLineDoc struct {
 	Now        time.Time             `json:"now"`
 	Rows       []StatusLineRow       `json:"rows"`
 	PushLive   bool                  `json:"push_live"`
+	Gates      []StatusLineGate      `json:"gates,omitempty"`
 }
 
 // StatusLineRows produces one StatusLineRow per r.Bindings entry, in order.
@@ -543,7 +545,6 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 	toMasterMindPayload := b.LastPayload != nil &&
 		b.LastPayload.Direction == store.DirToMasterMind &&
 		(b.LastPayload.Kind == store.KindReport || b.LastPayload.Kind == store.KindQuestion)
-
 	// A payload still waiting on the mastermind is only a fault when relevo
 	// cannot push it; which route that is lives in pendingStalled.
 	pending := b.Pending != nil
@@ -587,5 +588,6 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 		Tone:        tone,
 		Reason:      reason,
 		Activity:    ActivityWord(b),
+		Next:        nextOf(b, tone),
 	}
 }

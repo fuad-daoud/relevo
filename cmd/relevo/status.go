@@ -294,6 +294,7 @@ func runStatusline(asJSON bool, mastermindRef string) error {
 	}
 	if rep, err := relevo.MasterMindStatus(context.Background(), rt, sc.MasterMindID); err == nil {
 		doc.Rows = view.StatusLineRows(rep, rt.Now())
+		doc.Gates = view.StatusLineGates(rep.Gated)
 		for i, text := range view.PlainStatusLineRows(doc.Rows, 0) {
 			doc.Rows[i].Text = text
 		}
