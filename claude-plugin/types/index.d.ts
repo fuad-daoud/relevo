@@ -19,6 +19,8 @@ export type StatusRow = {
   chain_progress?: StatusChainProgress | null
   candidate?: string
   next?: StatusNext
+  halt?: string
+  report_round?: number
 }
 
 export type StatusDoc = {

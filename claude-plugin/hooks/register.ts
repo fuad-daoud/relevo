@@ -323,7 +323,12 @@ function detail(r: StatusRow): string {
     const l = r.live
     return l ? `delivered · +${l.added}/-${l.removed} in ${l.files}` : 'delivered'
   }
-  return r.reason
+  return r.halt || r.reason
+}
+
+// A report row names the round that reported, not the binding's next round.
+function shownRound(r: StatusRow): number {
+  return r.tone === 'report' && r.report_round ? r.report_round : r.round
 }
 
 function stateWord(r: StatusRow, now: string): string {
@@ -468,7 +473,7 @@ export const register: Register = (on) => {
       const tone = r.tone === 'needs' ? AMBER : TEAL
       const tint = r.tone === 'needs' ? AMBER_TINT : TEAL_TINT
       let room = cols
-      const head = button(r, `● ${r.name} r${r.round}`, room)
+      const head = button(r, `● ${r.name} r${shownRound(r)}`, room)
       room -= head.width + 1
       const state = fit(stateWord(r, doc.now), Math.max(0, room))
       room -= state.length + 1

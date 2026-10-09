@@ -562,6 +562,27 @@ describe('band', () => {
     expect(await texts(ui)).toContain('+2 more · /relevo:status')
   })
 
+  test('a halted row shows what it waits on, not the last event', async ($, on) => {
+    const f = fakes(on, {
+      doc: () =>
+        mkdoc([row('b', { tone: 'needs', status: 'NEEDS YOU', reason: 'prompt sent', halt: 'builder exited without a report' })]),
+    })
+    await startSession($)
+    await f.clock.settle()
+    const all = await texts(await mount($, 'terminal'))
+    expect(all).toContain('builder exited without a report')
+    expect(all).not.toContain('prompt sent')
+  })
+
+  test('a report row names the round that reported, not the next round', async ($, on) => {
+    const f = fakes(on, {
+      doc: () => mkdoc([row('p', { tone: 'report', status: 'ARTIFACT IN', round: 2, report_round: 1 })]),
+    })
+    await startSession($)
+    await f.clock.settle()
+    expect((await labels(await mount($, 'terminal')))[0]).toBe('● p r1')
+  })
+
   test('a report row names the delivered diff from live', async ($, on) => {
     const f = fakes(on, {
       doc: () =>
