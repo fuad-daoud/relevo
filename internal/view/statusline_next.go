@@ -63,6 +63,13 @@ func nextOf(b BindingStatus, tone string) *Next {
 			Text:  fmt.Sprintf("Answer %s r%d's question %q: ", b.Name, p.Round, capLine(q, 120)),
 		}
 	}
+	if tone == "report" && toMasterMind && p.Kind == store.KindReport && b.Shape == store.ShapeReader {
+		// A reader's round ends in an artifact to review, not a diff to check.
+		return &Next{
+			Label: "review the output",
+			Text:  fmt.Sprintf("Review %s r%d's output: relevo show %s --round %d --output", b.Name, p.Round, b.Name, p.Round),
+		}
+	}
 	if tone == "report" && toMasterMind && p.Kind == store.KindReport {
 		text := fmt.Sprintf("Verify %s r%d: run make check, then compare relevo show %s --round %d --diff",
 			b.Name, p.Round, b.Name, p.Round)

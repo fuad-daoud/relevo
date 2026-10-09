@@ -31,6 +31,8 @@ func TestStatusLineNextByTone(t *testing.T) {
 		{"report", BindingStatus{Name: "x", Round: 4, Display: "ACTIVE", LastPayload: report, PromptPath: "/s/003-prompt.md"},
 			"make check, compare the diff",
 			"Verify x r3: run make check, then compare relevo show x --round 3 --diff against /s/003-prompt.md"},
+		{"reader report", BindingStatus{Name: "p", Round: 2, Display: "ACTIVE", Shape: store.ShapeReader, LastPayload: &LastEvent{Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport}},
+			"review the output", "Review p r2's output: relevo show p --round 2 --output"},
 		{"halt", BindingStatus{Name: "x", Round: 2, Display: "NEEDS YOU",
 			Waiting: &Waiting{Cause: "halted", Line: "boom", Hint: "relevo status --name x"}},
 			"resolve the halt", "Resolve x r2 (halted: boom): run relevo status --name x"},
