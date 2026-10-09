@@ -10,7 +10,7 @@ UNAME_S := $(shell uname -s)
 BUILD_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo devel)
 LDFLAGS := -X main.version=$(if $(VERSION),$(VERSION),$(BUILD_VERSION))
 
-.PHONY: check check-static check-scripts check-test lint build install service uninstall release release-bump release-tag jev board-assets
+.PHONY: check check-static check-scripts check-test lint build install service uninstall release release-bump release-tag jev board-assets mod-test
 
 # lint runs golangci-lint with .golangci.yml. The binary is not vendored and
 # CI installs it in a setup step, so a machine without it still gets the rest
@@ -53,6 +53,11 @@ check-static:
 	sh scripts/check-name.sh
 	sh scripts/check-board-theme.sh
 	$(MAKE) check-scripts
+
+# mod-test validates and tests the Claude Code mod. Local only: CI has no claude.
+mod-test:
+	claude plugin validate claude-plugin
+	claude plugin test claude-plugin
 
 check-scripts:
 	@if command -v shellcheck >/dev/null 2>&1; then \
