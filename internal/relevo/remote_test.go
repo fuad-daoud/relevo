@@ -359,9 +359,13 @@ type fakeTransport struct {
 	snapshotCalls []snapshotCall
 	snapshotResp  remote.Snapshot
 	snapshotErr   error
-	absorbCalls   []absorbCall
-	absorbResp    map[string]string
-	absorbErr     error
+	// snapshotErrFirst, when set, fails only the first Snapshot call and lets
+	// every later one answer snapshotResp, so a test can show what one retry
+	// buys (#959).
+	snapshotErrFirst error
+	absorbCalls      []absorbCall
+	absorbResp       map[string]string
+	absorbErr        error
 
 	beforeAbsorb func()
 }
@@ -382,6 +386,9 @@ func (f *fakeTransport) Snapshot(ctx context.Context, repo string, refs []string
 	f.snapshotCalls = append(f.snapshotCalls, snapshotCall{Repo: repo, Refs: refs, Since: since})
 	if f.snapshotErr != nil {
 		return remote.Snapshot{}, f.snapshotErr
+	}
+	if f.snapshotErrFirst != nil && len(f.snapshotCalls) == 1 {
+		return remote.Snapshot{}, f.snapshotErrFirst
 	}
 	return f.snapshotResp, nil
 }
@@ -2430,6 +2437,73 @@ func TestSendRemoteTierAboveMaxWraps(t *testing.T) {
 	}
 }
 
+// TestSendRemoteSnapshotDeadlineRetriesOnce pins #959's fix: a `git bundle
+// create` that outruns the per-command budget keeps context.DeadlineExceeded
+// all the way out of Snapshot, and remoteShip answers that transient miss with
+// exactly one retry -- succeeding when the second attempt fits, and still
+// failing the same way (never looping) when it does not.
+func TestSendRemoteSnapshotDeadlineRetriesOnce(t *testing.T) {
+	t.Parallel()
+
+	sendFixture := func(t *testing.T, ft *fakeTransport) (Runtime, string) {
+		t.Helper()
+		st := store.New(t.TempDir())
+		b := remoteBinding("zen")
+		if err := st.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		fg := &fakeGit{
+			refSHA: map[string]string{
+				"refs/heads/relevo/api": "1111111111111111111111111111111111111111",
+			},
+		}
+		fr := &fakeRemote{
+			startRoundResp: remote.BindingView{RoundState: remote.RoundRunning},
+		}
+		rt := Runtime{Store: st, Git: fg, Remote: fr, Transport: ft, Now: time.Now}
+
+		planFile := filepath.Join(t.TempDir(), "plan.md")
+		if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return rt, planFile
+	}
+
+	deadline := fmt.Errorf("git bundle create /tmp/x.bundle: %w", context.DeadlineExceeded)
+
+	t.Run("second attempt succeeds", func(t *testing.T) {
+		t.Parallel()
+		ft := &fakeTransport{
+			snapshotErrFirst: deadline,
+			snapshotResp: remote.Snapshot{
+				Heads: map[string]string{"refs/relevo/api/out": "1111111111111111111111111111111111111111"},
+			},
+		}
+		rt, planFile := sendFixture(t, ft)
+
+		if _, err := Send(context.Background(), rt, "api", planFile, SendOptions{}); err != nil {
+			t.Fatalf("Send: %v, want the deadline retried", err)
+		}
+		if len(ft.snapshotCalls) != 2 {
+			t.Fatalf("snapshotCalls = %d, want 2 (one failure, one retry)", len(ft.snapshotCalls))
+		}
+	})
+
+	t.Run("second attempt fails too", func(t *testing.T) {
+		t.Parallel()
+		ft := &fakeTransport{snapshotErr: deadline}
+		rt, planFile := sendFixture(t, ft)
+
+		_, err := Send(context.Background(), rt, "api", planFile, SendOptions{})
+		if err == nil || !strings.Contains(err.Error(), "snapshot refs/relevo/api/out:") {
+			t.Fatalf("Send err = %v, want the snapshot <ref>: context deadline exceeded failure", err)
+		}
+		if len(ft.snapshotCalls) != 2 {
+			t.Fatalf("snapshotCalls = %d, want 2: one retry, never a loop", len(ft.snapshotCalls))
+		}
+	})
+}
+
 func TestSendRemoteFirstSendFullBundle(t *testing.T) {
 	t.Parallel()
 
@@ -2828,6 +2902,40 @@ func TestUnbindRemote404Proceeds(t *testing.T) {
 	}
 	if !foundUnbind {
 		t.Fatalf("server Unbind never called: %v", fr.calls)
+	}
+}
+
+// TestDoneRemote404Proceeds pins #1060: a served binding the server has
+// already released (settled and GC'd, or lost to a server state reset) answers
+// done with a bare 404. That is not a failure -- the binding is gone where it
+// matters -- so Done settles the record locally instead of wrapping the wire's
+// "not found" into an internal error and filing a bug.
+func TestDoneRemote404Proceeds(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.New(t.TempDir())
+	b := remoteBinding("zen")
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	fr := &fakeRemote{doneErr: &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: remote.CodeNotFound, Message: "not found"}}}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	if _, err := Done(ctx, rt, "api"); err != nil {
+		t.Fatalf("Done: %v, want a 404 to proceed locally", err)
+	}
+
+	reloaded, err := st.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.State != store.StateDone {
+		t.Fatalf("state = %s, want done: a released binding must settle locally", reloaded.State)
+	}
+	if !slices.Contains(fr.calls, "Done:zen:api") {
+		t.Fatalf("server Done never called: %v", fr.calls)
 	}
 }
 
