@@ -460,11 +460,16 @@ func TestDrainOutboxIsOneTransaction(t *testing.T) {
 		if err != nil {
 			t.Fatalf("DrainOutbox under a pool waiter = %v, want one transaction across both its reads", err)
 		}
-		if held > 2*time.Second {
-			t.Fatalf("DrainOutbox took %s while a waiter held the pool, want one transaction: a split drain waits out the holder", held)
+		if held >= waiterHold {
+			t.Fatalf("DrainOutbox took %s while a waiter held the pool for %s, want one transaction: a split drain waits out the holder", held, waiterHold)
 		}
 	}
 }
+
+// waiterHold is how long the competing transaction keeps the pool. A split drain
+// waits out all of it, so the bound sits there rather than on a guess at drain
+// speed: a 1000-entry drain takes over 2s on CI's macOS runners.
+const waiterHold = 5 * time.Second
 
 // drainWhilePoolHeld runs one drain while a competing transaction waits on the
 // same one-connection pool. It returns how long the drain took. The waiter is
@@ -490,7 +495,7 @@ func drainWhilePoolHeld(d *DB, limit int) (time.Duration, error) {
 		_ = d.Tx(func(tx *Tx) error {
 			select {
 			case <-stop:
-			case <-time.After(5 * time.Second):
+			case <-time.After(waiterHold):
 			}
 			return nil
 		})
