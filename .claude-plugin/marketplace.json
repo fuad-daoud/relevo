@@ -3,6 +3,6 @@
   "owner": {"name": "Fuad Daoud"},
   "description": "relevo's Claude Code plugin: make a session the MasterMind that hands plans to builder agents and gets their reports back",
   "plugins": [
-    {"name": "relevo", "source": "./claude-plugin", "description": "MasterMind/builder handoff for Claude Code: builder reports and NEEDS YOU stops pushed into this session; status/send/show/gate/done as tools", "version": "0.15.0"}
+    {"name": "relevo", "source": "./claude-plugin", "description": "MasterMind/builder handoff for Claude Code: builder reports and NEEDS YOU stops pushed into this session; status/send/show/gate/done as tools", "version": "0.16.0"}
   ]
 }
