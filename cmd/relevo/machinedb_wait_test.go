@@ -422,6 +422,7 @@ func TestRouteStartWaitExemptions(t *testing.T) {
 		{"board url", []string{"board", "url"}, routeNone, verbDialBudget, 0},
 		{"db query", []string{"db", "query", "SELECT 1"}, routeNone, verbDialBudget, 0},
 		{"db rename-repo", []string{"db", "rename-repo", "--from", "a", "--to", "b"}, routeOwner, verbDialBudget, ownerStartWait},
+		{"db relabel", []string{"db", "relabel", "--binding", "x", "--feature", "y"}, routeOwner, verbDialBudget, ownerStartWait},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

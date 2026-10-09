@@ -65,6 +65,7 @@ var verbFlagSets = map[string]func(*flag.FlagSet){
 	"daemon":               installer(daemonFlagSet),
 	"db":                   dbFlagSet,
 	"db query":             installer(dbQueryFlagSet),
+	"db relabel":           installer(dbRelabelFlagSet),
 	"db rename-repo":       installer(dbRenameRepoFlagSet),
 	"db sync":              dbSyncFlagSet,
 	"db sync disable":      installer(dbSyncDisableFlagSet),

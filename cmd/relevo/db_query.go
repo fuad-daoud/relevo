@@ -23,7 +23,8 @@ import (
 // subcommands, and it has three of them.
 const dbUsage = "usage: relevo db query '<SQL>' [--json] [--limit N] [--timeout D] [--max-bytes N]\n" +
 	"       relevo db sync <enable|disable|status|push|pull>\n" +
-	"       relevo db rename-repo --from <url> --to <url> [--adopt-cwd <prefix>]... [--dry-run] [--json]\n\n" +
+	"       relevo db rename-repo --from <url> --to <url> [--adopt-cwd <prefix>]... [--dry-run] [--json]\n" +
+	"       relevo db relabel (--file <tsv> | --binding <id> --feature <label>) [--overwrite] [--dry-run] [--json]\n\n" +
 	"One read-only statement: SELECT, WITH or a read-only PRAGMA. RECURSIVE is\n" +
 	"refused as a cheap first line, not as the guarantee: SQLite decides recursion\n" +
 	"structurally, so a runaway statement is ended by the owner, which refuses\n" +
@@ -37,7 +38,11 @@ const dbUsage = "usage: relevo db query '<SQL>' [--json] [--limit N] [--timeout 
 	"rename-repo folds the repo row of a renamed remote into the row of its new\n" +
 	"URL, or renames it, and rewrites the tickets and records that name the old\n" +
 	"owner/repo. --adopt-cwd P (repeatable) attaches repo-less bindings whose cwd\n" +
-	"is P or beneath it. --dry-run prints the counts and writes nothing.\n"
+	"is P or beneath it. --dry-run prints the counts and writes nothing.\n\n" +
+	"relabel sets the feature label of finished bindings by id, from a file of\n" +
+	"<id><TAB><label> lines or from --binding with --feature. A binding that\n" +
+	"already carries a different label is skipped unless --overwrite is given;\n" +
+	"an unknown id refuses the whole batch. --dry-run lists what would change.\n"
 
 // The db query defaults: a row cap and a byte cap that keep a broad SELECT
 // from filling memory, and a hold budget that leaves the owner's own open-lock
@@ -72,6 +77,7 @@ var dbQueryOut io.Writer
 func dbFlagSet(fs *flag.FlagSet) {
 	dbQueryFlagSet(fs)
 	dbRenameRepoOwnFlags(fs)
+	dbRelabelOwnFlags(fs)
 }
 
 // dbQueryFlagValues holds the pointers db query parses into.
@@ -102,6 +108,8 @@ func cmdDB(args []string) error {
 		return cmdDBSync(args[1:])
 	case len(args) > 0 && args[0] == "rename-repo":
 		return cmdDBRenameRepo(args[1:])
+	case len(args) > 0 && args[0] == "relabel":
+		return cmdDBRelabel(args[1:])
 	}
 	fmt.Fprint(os.Stderr, dbUsage)
 	return errUsagePrinted
