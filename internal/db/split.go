@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -113,6 +114,23 @@ func (d *DB) LocalOrSelf() *DB {
 	return d
 }
 
+// SplitDone reports whether the split-local pass finished on this handle's
+// files: the marker sits in the machine-local file, so a handle opened
+// without one, or on files the pass never ran on, reports false. Callers
+// that must not follow a binary which cannot read the split ask here
+// rather than re-deriving the marker read.
+func (d *DB) SplitDone() bool {
+	if d == nil {
+		return false
+	}
+	local := d.Local()
+	if local == nil {
+		return false
+	}
+	_, ok, err := local.KVGet(splitKVKey)
+	return err == nil && ok
+}
+
 // Origin is the installation id this handle scopes its own writes to, or "" on
 // a handle opened before the origin column existed. A reader that has to tell
 // this machine's rows from another installation's asks here rather than
@@ -166,6 +184,12 @@ type SplitStats struct {
 	BackupPath  string    `json:"backup_path,omitempty"`
 	RowsMoved   int64     `json:"rows_moved"`
 	KVKeysMoved int64     `json:"kv_keys_moved"`
+	// Conflicts counts shared rows whose local counterpart already held
+	// different content: the pass keeps the local row and only converges
+	// the stray away, so a conflicting row is moved but never overwritten.
+	// ConflictKeys names them, most capped, never their contents.
+	Conflicts    int64    `json:"conflicts"`
+	ConflictKeys []string `json:"conflict_keys,omitempty"`
 }
 
 // splitTable names one local table, the columns its rows carry, and the
@@ -283,13 +307,13 @@ func SplitOnce(d *DB, backupDir string, now time.Time) (stats SplitStats, ran bo
 		if herr := splitBeforeTable(tbl.name); herr != nil {
 			return SplitStats{}, false, herr
 		}
-		moved, merr := splitMoveTable(d, local, tbl)
+		moved, merr := splitMoveTable(d, local, tbl, &stats)
 		if merr != nil {
 			return SplitStats{}, false, merr
 		}
 		stats.RowsMoved += moved
 	}
-	moved, merr := splitMoveKeys(d, local)
+	moved, merr := splitMoveKeys(d, local, &stats)
 	if merr != nil {
 		return SplitStats{}, false, merr
 	}
@@ -337,8 +361,11 @@ func anySplitCandidate(d *DB) (bool, error) {
 // splitMoveTable copies one table's rows into the local file and then deletes
 // them from the shared one. The copy is committed first, so a failure between
 // the two leaves the rows in both files and the retry's insert-or-replace
-// converges on one.
-func splitMoveTable(shared, local *DB, tbl splitTable) (int64, error) {
+// converges on one. A shared row whose local counterpart already holds
+// different content is a conflict, not a retry: the pass keeps the local row
+// -- it is what the running system read and wrote -- converges the stray
+// away, and counts the conflict for the log instead of overwriting.
+func splitMoveTable(shared, local *DB, tbl splitTable, stats *SplitStats) (int64, error) {
 	rows, err := splitReadRows(shared, tbl)
 	if err != nil {
 		return 0, err
@@ -346,7 +373,7 @@ func splitMoveTable(shared, local *DB, tbl splitTable) (int64, error) {
 	if len(rows) == 0 {
 		return 0, nil
 	}
-	if err := local.Tx(func(t *Tx) error { return splitInsertRows(t, tbl, rows) }); err != nil {
+	if err := local.Tx(func(t *Tx) error { return splitInsertRows(t, tbl, rows, stats) }); err != nil {
 		return 0, fmt.Errorf("split: %s into the local file: %w", tbl.name, mapBusy(err))
 	}
 	if err := shared.Tx(func(t *Tx) error { return splitDeleteRows(t, tbl, rows) }); err != nil {
@@ -383,11 +410,22 @@ func splitReadRows(d *DB, tbl splitTable) ([][]any, error) {
 }
 
 // splitInsertRows upserts the moved rows into the local file's table. Replace
-// rather than insert, so a retry after a partial pass converges.
-func splitInsertRows(t *Tx, tbl splitTable, rows [][]any) error {
+// rather than insert, so a retry after a partial pass converges. A row the
+// local file already holds with different content is left alone and counted:
+// the local row is live, the shared one a stray, and replacing would swap
+// what the running system reads under it.
+func splitInsertRows(t *Tx, tbl splitTable, rows [][]any, stats *SplitStats) error {
 	marks := strings.TrimSuffix(strings.Repeat("?,", len(tbl.columns)), ",")
 	query := "INSERT OR REPLACE INTO " + tbl.name + " (" + strings.Join(tbl.columns, ", ") + ") VALUES (" + marks + ")"
 	for _, row := range rows {
+		existing, ok, err := splitReadTxRow(t, tbl, row)
+		if err != nil {
+			return err
+		}
+		if ok && !splitRowsEqual(tbl, existing, row) {
+			stats.addConflict(tbl.name + "/" + splitRowKey(tbl, row))
+			continue
+		}
 		if _, err := t.exec(query, row...); err != nil {
 			return err
 		}
@@ -421,8 +459,11 @@ func splitKeyWhere(tbl splitTable) string {
 }
 
 // splitMoveKeys moves the kv rows the allowlist routes to the local file,
-// reading the value out of the shared file before deleting it there.
-func splitMoveKeys(shared, local *DB) (int64, error) {
+// reading the value out of the shared file before deleting it there. A key
+// the local file already holds with a different document is a conflict: the
+// local document stays, the stray is still converged away, and the conflict
+// is counted for the log.
+func splitMoveKeys(shared, local *DB, stats *SplitStats) (int64, error) {
 	keys, err := shared.KVKeys("")
 	if err != nil {
 		return 0, err
@@ -439,7 +480,11 @@ func splitMoveKeys(shared, local *DB) (int64, error) {
 		if !ok {
 			continue
 		}
-		if perr := local.KVPut(key, value); perr != nil {
+		if existing, lok, lerr := local.KVGet(key); lerr != nil {
+			return moved, lerr
+		} else if lok && !bytes.Equal(existing, value) {
+			stats.addConflict("kv/" + key)
+		} else if perr := local.KVPut(key, value); perr != nil {
 			return moved, fmt.Errorf("split: kv %s into the local file: %w", key, perr)
 		}
 		if derr := shared.KVDelete(key); derr != nil {

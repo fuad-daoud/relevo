@@ -221,7 +221,7 @@ func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 			return b, false, nil
 		}
 		if httpErr.Status == 404 {
-			b, err := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: %s: binding removed by the server admin", name, server))
+			b, err := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: %s: binding not found on the server (deleted there, or this machine's key changed)", name, server))
 			return b, false, err
 		}
 	}
