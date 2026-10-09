@@ -51,20 +51,23 @@ under `~/.cache`; keep it on any rebuild.
 
 ## Installing and deploying
 
-- Laptop: `make install` runs the whole suite and can fail silently. Confirm
-  the merge commit is in HEAD first, then build with
-  `go build -ldflags "-X main.version=$(git describe --tags --always --dirty)"`,
-  `install` the binary to `~/.local/bin/relevo.new`, and atomically `mv` it
-  into place.
-- A dev sandbox needs no root: `scripts/relevo-sandbox.sh` points the `XDG_*`
-  and harness homes at a directory, and [env-sandbox.md](env-sandbox.md) has the
-  recipe. Separate Unix users are the stronger flow for UID-separation tests;
-  create, list and destroy those with `scripts/relevo-dev-user.sh`, and see
-  [dev-sandbox.md](dev-sandbox.md).
-- zen: `scp` the binary to `~/.local/bin/relevo.new`, `mv` it into place,
-  then `systemctl --user restart relevo-serve`. Serve reads config only at
-  start, so a config change alone never lands without the restart.
-- contabo: `~/projects/servers/contabo/srv.fish deploy relevo-serve ~/.local/bin/relevo-build`.
+- Only a tagged release is ever installed on the laptop, zen or contabo. A
+  merge to main is not a deploy; the next release carries it. A branch, a main
+  head or any other untagged build runs only in a sandbox.
+- Testing a branch or main: `scripts/relevo-sandbox.sh` points the `XDG_*`
+  and harness homes at a directory, needs no root, and
+  [env-sandbox.md](env-sandbox.md) has the recipe. Separate Unix users are the
+  stronger flow for UID-separation tests; create, list and destroy those with
+  `scripts/relevo-dev-user.sh`, and see [dev-sandbox.md](dev-sandbox.md).
+- Laptop: `relevo update --to vX.Y.Z` installs the checksum-verified release
+  binary atomically; `--release` is needed once to replace a local build.
+  `relevo version` must print the bare tag afterwards.
+- zen: run the same `relevo update` over ssh (its shell is fish), then
+  `systemctl --user restart relevo-serve`. Serve reads config only at start, so
+  a config change alone never lands without the restart.
+- contabo: download the tag's linux archive from the GitHub release, verify it
+  against `checksums.txt`, and deploy that binary with
+  `~/projects/servers/contabo/srv.fish deploy relevo-serve <binary>`.
 - Deploy only when no chain round runs on that server.
 
 ## Running chains

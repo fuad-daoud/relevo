@@ -28,8 +28,6 @@ follows is what is specific to this machine and this repo.
 - A headless round's output is its stream
   `~/.local/state/relevo/<name>/NNN-runner.jsonl` (stderr included; sealed into the
   database after the round). Read it rendered with `relevo show <name> --round N --transcript`.
-  A round from before the stream rename is `NNN-builder.jsonl`, which readers fall back to.
-  Rounds from before builder-log round 2 (#478) also have `NNN-builder.log`.
 - When a builder reports a usage limit mid-round, `relevo gate <token>` is
   enough: the daemon switches and resends. Do not rebind by hand unless
   `relevo status` says `NEEDS YOU`.
@@ -51,6 +49,10 @@ deploying, running chains -- is `docs/runbook.md`.
 
 ## Testing in isolation
 
+The laptop, zen and contabo only ever run a tagged release (`docs/runbook.md`,
+"Installing and deploying"); every untagged build -- a branch, main's head, a
+test build -- runs only in a sandbox.
+
 Never `make install` a test build over the developer's install: it shares one
 database, one daemon and one binary path with production, so concurrent
 versions corrupt each other and there is no rollback. Two flows exist:
@@ -64,8 +66,7 @@ versions corrupt each other and there is no rollback. Two flows exist:
 ## Conventions
 
 - Specs live in `docs/specs/YYYY-MM-DD-<topic>-design.md`. Implementation
-  plans live in `docs/plans/YYYY-MM-DD-<name>.md`, a directory introduced by
-  #45 -- follow it or drop it, it has no history behind it yet.
+  plans live in `docs/plans/YYYY-MM-DD-<name>.md`.
 - State lives in `$XDG_STATE_HOME/relevo` (default `~/.local/state/relevo`);
   config resolves via `$XDG_CONFIG_HOME` (default `~/.config`).
   Compose relevo config paths through `userConfigRoot()` (`cmd/relevo/main.go`),
@@ -108,10 +109,3 @@ versions corrupt each other and there is no rollback. Two flows exist:
   `cmd/relevo` must not execute a subcommand that spawns a harness or reaches
   the network; test the rule as a pure function in `internal/relevo` instead.
   Say so in any plan step that adds a CLI test.
-- A cmd/relevo test never reads the user's real config, state or data, and
-  never sees the calling harness: the package's TestMain points HOME,
-  XDG_CONFIG_HOME, XDG_STATE_HOME and XDG_DATA_HOME at a temp root and
-  unsets CLAUDECODE, CLAUDE_*, RELEVO_*, ANTIGRAVITY_* and TYPESAFE_API_KEY
-  (#235, #463). A test that needs its own config writes it under a
-  t.TempDir() it sets as XDG_CONFIG_HOME; a test that needs a harness
-  variable t.Setenv's it.
