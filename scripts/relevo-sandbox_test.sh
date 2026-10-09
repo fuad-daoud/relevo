@@ -257,7 +257,19 @@ if command -v flock >/dev/null 2>&1; then
 		fail=1
 	fi
 else
+	# Without flock there is no lock to hold, but demo must still go: the
+	# list test below expects an empty root, and on a machine with no flock
+	# nothing else removes it.
 	echo "skip: the held-lock refusal (no flock on this machine)"
+	sb "$script" destroy demo
+	if [ "$got" -ne 0 ]; then
+		echo "FAIL: destroy without a lock exits $got: $out"
+		fail=1
+	fi
+	if [ -d "$sbx" ]; then
+		echo "FAIL: destroy left $sbx behind"
+		fail=1
+	fi
 fi
 
 # list names the sandboxes present under the root, and reports the root when
