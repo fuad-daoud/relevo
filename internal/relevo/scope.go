@@ -36,7 +36,13 @@ func ScopeReport(rep view.Report, sc Scope) view.Report {
 	if sc.Named || sc.All {
 		return rep
 	}
-	return view.HideDone(rep)
+	// A report built through ScopedStatus carries the rows it hid before it
+	// built anything, and finds no DONE row left to remove here. Adding the two
+	// counts keeps that number; a full report carries none, so it is unchanged.
+	before := rep.DoneHidden
+	out := view.HideDone(rep)
+	out.DoneHidden += before
+	return out
 }
 
 // scopeBinding is ScopeReport's predicate one step earlier, where the rows do

@@ -85,26 +85,6 @@ func TestServerListingGating(t *testing.T) {
 		}
 	})
 
-	t.Run("channel mode omits wait and refuses calls", func(t *testing.T) {
-		srv := &Server{Verbs: &fakeVerbs{}, Version: "test", Mode: ModeChannel}
-		tools := ToolsFor(srv.Mode, srv.Kind)
-		if len(tools) != 5 || hasTool(tools, "wait") {
-			t.Fatalf("channel mode tools = %+v, want 5 tools without wait", tools)
-		}
-
-		out := serveOnce(t, srv, []string{
-			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"wait","arguments":{"name":"webshop"}}}`,
-		})
-		lines := splitLines(out)
-		if len(lines) != 1 {
-			t.Fatalf("want 1 line, got %d", len(lines))
-		}
-		resp := decodeResponse(t, lines[0])
-		if resp.Error == nil || resp.Error.Code != CodeInvalidParams {
-			t.Fatalf("channel mode wait call must return CodeInvalidParams, got %+v", resp.Error)
-		}
-	})
-
 	t.Run("opencode omits wait and refuses calls", func(t *testing.T) {
 		srv := &Server{Verbs: &fakeVerbs{}, Version: "test", Mode: ModeTools, Kind: "opencode"}
 		tools := ToolsFor(srv.Mode, srv.Kind)

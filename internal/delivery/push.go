@@ -157,3 +157,36 @@ func TruncateTo(text string, budget int, label, ref string) string {
 
 	return kept + fmt.Sprintf("[truncated at %s -- full text: %s]", label, ref)
 }
+
+// isStateEvent reports whether s is one of the states a push announces: a
+// binding stalled on a human decision, or one whose builder is gone.
+func isStateEvent(s store.State) bool {
+	switch s {
+	case store.StateNeedsYou, store.StateBroken:
+		return true
+	default:
+		return false
+	}
+}
+
+// stateEventContent is the body of a state line: the state in the reader's
+// words, the binding's Halt reason when it has one, and the next steps.
+func stateEventContent(b store.Binding) string {
+	var reason string
+	if b.Halt != "" {
+		reason = " -- " + b.Halt
+	}
+	return fmt.Sprintf("%s round %d: %s%s\nrun relevo status --name %s, then send or stop.",
+		b.Name, b.Round, stateLabel(b.State), reason, b.Name)
+}
+
+func stateLabel(s store.State) string {
+	switch s {
+	case store.StateNeedsYou:
+		return "NEEDS YOU"
+	case store.StateBroken:
+		return "BROKEN"
+	default:
+		return strings.ToUpper(string(s))
+	}
+}

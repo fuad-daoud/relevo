@@ -1,6 +1,6 @@
 // Package delivery gets a mastermind its queued payloads: it appends them, picks
 // the route that carries each one, and drains a mastermind's mailbox over a live
-// channel.
+// push claim.
 package delivery
 
 import (

@@ -263,7 +263,7 @@ type Runtime struct {
 	HeldCPUs func(tx *store.Tx, self string) ([]int, error)
 
 	// Channels arbitrates a mastermind's mailbox between the daemon and a live
-	// `relevo mcp` channel (docs/specs/2026-09-21-mastermind-channel-design.md).
+	// `relevo push` holder (docs/specs/2026-09-21-mastermind-channel-design.md).
 	// Nil means no claims exist, so DeliverPending leaves the entry pending
 	// for `relevo wait`; cmd/relevo wires delivery.KVClaims.
 	Channels delivery.ClaimStore

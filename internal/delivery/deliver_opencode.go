@@ -106,6 +106,13 @@ func (d *OpencodeDeliverer) fallbackAfter() time.Duration {
 	return OpencodePushHorizon
 }
 
+// AdmitHorizon reports opencode's own long horizon: an admitted payload whose
+// text never shows up in the session stops being an admit after this long, so
+// the entry is delivered again instead of blocking its binding's queue forever.
+func (d *OpencodeDeliverer) AdmitHorizon() time.Duration {
+	return d.fallbackAfter()
+}
+
 // Deliver implements MasterMindDeliverer's push half for opencode
 // masterminds.
 //

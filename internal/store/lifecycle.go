@@ -397,7 +397,12 @@ func (s *Store) load(name string) (Binding, error) {
 	if !ok {
 		return Binding{}, fmt.Errorf("%s: %w", name, ErrNotFound)
 	}
-	return decodeBinding([]byte(rec.JSON), name)
+	b, err := decodeBinding([]byte(rec.JSON), name)
+	if err != nil {
+		return Binding{}, err
+	}
+	b.ViewedAt = rec.ViewedAt
+	return b, nil
 }
 
 // decodeBinding turns a binding's JSON into a Binding.
@@ -443,6 +448,9 @@ func (s *Store) list() ([]Binding, error) {
 		if err != nil {
 			return nil, err
 		}
+		// The stamp rides the row already read, so no reader pays a second
+		// RecordGet for a fact List already holds.
+		b.ViewedAt = rec.ViewedAt
 		bindings = append(bindings, b)
 	}
 

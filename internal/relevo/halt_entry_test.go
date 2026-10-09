@@ -220,7 +220,7 @@ func TestBrokenHaltsQueueOnlyWhenNotSwitchable(t *testing.T) {
 		var next store.Binding
 		if err := rt.Store.WithLock(func(tx *store.Tx) error {
 			var err error
-			next, err = queueBrokenHalt(context.Background(), rt, tx, b, "builder claude; no candidate could be resolved")
+			next, _, err = queueBrokenHalt(context.Background(), rt, tx, b, "builder claude; no candidate could be resolved")
 			if err != nil {
 				return err
 			}
@@ -242,7 +242,7 @@ func TestBrokenHaltsQueueOnlyWhenNotSwitchable(t *testing.T) {
 
 		// The same key gates a repeat, exactly as haltBinding's does.
 		if err := rt.Store.WithLock(func(tx *store.Tx) error {
-			_, err := queueBrokenHalt(context.Background(), rt, tx, next, "the same broken round again")
+			_, _, err := queueBrokenHalt(context.Background(), rt, tx, next, "the same broken round again")
 			return err
 		}); err != nil {
 			t.Fatalf("second queueBrokenHalt: %v", err)
@@ -259,7 +259,7 @@ func TestBrokenHaltsQueueOnlyWhenNotSwitchable(t *testing.T) {
 		b.Builder.PID = 4242
 
 		if err := rt.Store.WithLock(func(tx *store.Tx) error {
-			_, err := queueBrokenHalt(context.Background(), rt, tx, b, "builder claude; switching to codex failed")
+			_, _, err := queueBrokenHalt(context.Background(), rt, tx, b, "builder claude; switching to codex failed")
 			return err
 		}); err != nil {
 			t.Fatalf("queueBrokenHalt: %v", err)
@@ -283,7 +283,7 @@ func TestBrokenHaltsQueueOnlyWhenNotSwitchable(t *testing.T) {
 		var next store.Binding
 		if err := rt.Store.WithLock(func(tx *store.Tx) error {
 			var err error
-			next, err = queueBrokenHalt(context.Background(), rt, tx, b, "builder claude; switching to codex failed: exit status 1")
+			next, _, err = queueBrokenHalt(context.Background(), rt, tx, b, "builder claude; switching to codex failed: exit status 1")
 			if err != nil {
 				return err
 			}
@@ -369,6 +369,21 @@ func TestMidRoundSwitchSpawnFailureHaltsAndWaits(t *testing.T) {
 		t.Fatalf("pid = %d, want 0: a switch that spawned nothing", next.Builder.PID)
 	}
 
+	// The binding keeps the reason it queued. A served binding ships its Halt to
+	// its owner, and without one the owner is told only that the round broke --
+	// not which switch failed and not why, so there is nothing to act on. It is
+	// name-stripped the way haltBinding records one, so the wire text is the same
+	// line a human reads here.
+	if !strings.Contains(next.Halt, "switching to opencode/second/m") {
+		t.Errorf("Halt = %q, want it to name the failed switch", next.Halt)
+	}
+	if strings.HasPrefix(next.Halt, "webshop: ") {
+		t.Errorf("Halt = %q, want the binding name stripped as haltBinding strips it", next.Halt)
+	}
+	if got := ServedView(next, nil, "", ""); got.Halt != next.Halt {
+		t.Errorf("ServedView Halt = %q, want the binding's own reason %q", got.Halt, next.Halt)
+	}
+
 	got := haltEntries(t, rt, "webshop")
 	if len(got) != 1 {
 		t.Fatalf("halt entries = %d, want exactly 1: %+v", len(got), got)
@@ -393,6 +408,62 @@ func TestMidRoundSwitchSpawnFailureHaltsAndWaits(t *testing.T) {
 	}
 	if !strings.Contains(res.Payload, "switching to") {
 		t.Errorf("Wait Payload = %q, want the queued switch failure", res.Payload)
+	}
+}
+
+// TestSwitchFailureLeavesASwitchableBindingsReasonAlone pins the other half of
+// the broken switch: when queueBrokenHalt queues nothing -- here because the
+// binding still has a live process, so a later tick can still switch it and
+// view.WaitingOn does not call it waiting -- switchBuilder must not write the
+// switch reason onto the binding. Written anyway it put a reason on the binding
+// that no entry carried, and a served binding shipped its owner a halt the
+// MasterMind was never told about.
+//
+// Mutation target: restore the unconditional next.Halt assignment in switch.go
+// and this fails on a reason the switchable binding was never notified about.
+func TestSwitchFailureLeavesASwitchableBindingsReasonAlone(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	rt.Candidates = candidateSet(t, `[{"harness":"claude","provider":"first","model":"m","roles":["builder","reviewer"]},
+	  {"harness":"opencode","provider":"second","model":"m","roles":["builder"]}]`)
+	rt.Policy = orderOf("builder", "claude/first/m", "opencode/second/m")
+
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: "claude/first/m", MasterMindID: testMasterMindName, CWD: "/repo", Tier: "read",
+	}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "claude/first/m", time.Time{}, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	var next store.Binding
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		loaded, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		if loaded.Builder.PID == 0 {
+			t.Fatal("the fixture needs a live process for the daemon to fix the binding with")
+		}
+		next, err = switchBuilder(context.Background(), rt, tx, loaded, "rate-limited: 429 too many requests", false, false)
+		return err
+	}); err != nil {
+		t.Fatalf("switchBuilder: %v", err)
+	}
+
+	if next.State != store.StateBroken {
+		t.Fatalf("state = %q, want %q", next.State, store.StateBroken)
+	}
+	if next.Halt != "" {
+		t.Errorf("Halt = %q, want empty: no entry carried the reason, and the daemon can still switch the binding", next.Halt)
+	}
+	if got := haltEntries(t, rt, "webshop"); len(got) != 0 {
+		t.Errorf("halt entries = %d, want 0 for a switchable broken binding: %+v", len(got), got)
 	}
 }
 
@@ -505,9 +576,10 @@ func TestHaltEntryReachesADelivererNotWait(t *testing.T) {
 
 // TestHaltTextArrivesAfterAPendingReport is case (e): the halt entry is
 // appended, so it is the newer of the two, and the report must not be jumped.
-// PullPendingThrough reads oldest first and Pull picks the oldest claimable
-// entry, so this is a property of append order -- but it is the property that
-// would break first if the halt were written anywhere other than at the halt.
+// PullPendingThrough confirms both and reads oldest first, so the report is
+// never skipped -- and the wait renders the round's own report as the main text
+// with the halt under its own header, whichever of the two the log appended
+// last.
 func TestHaltTextArrivesAfterAPendingReport(t *testing.T) {
 	t.Parallel()
 
@@ -536,8 +608,14 @@ func TestHaltTextArrivesAfterAPendingReport(t *testing.T) {
 	if reportAt < 0 || haltAt < 0 {
 		t.Fatalf("Wait Payload = %q, want both the report and the halt text", res.Payload)
 	}
-	if reportAt > haltAt {
-		t.Errorf("Wait Payload puts the halt at %d and the report at %d, want the report first", haltAt, reportAt)
+	// The halt's header names the round and the report follows it as the main
+	// text: the report is the round's own result, and a halt ahead of it reads
+	// as the reason the round stopped rather than as its content.
+	if want := delivery.HaltHeader(1); !strings.Contains(res.Payload, want) {
+		t.Errorf("Wait Payload = %q, want the halt under its own header %q", res.Payload, want)
+	}
+	if haltAt > reportAt {
+		t.Errorf("Wait Payload puts the halt at %d and the report at %d, want the report as the main text", haltAt, reportAt)
 	}
 }
 
@@ -555,7 +633,7 @@ func TestHaltEntryDoesNotDisturbTheAdmittedReadBack(t *testing.T) {
 	// The binding goes done, and the halt entry is admitted by a route before
 	// the state changed: the one state ConfirmAdmitted exists for.
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		halted, err := haltBinding(context.Background(), rt, tx, b, "webshop: builder exited (code 1)")
+		halted, err := haltBinding(context.Background(), rt, tx, b, b.Round, "webshop: builder exited (code 1)")
 		if err != nil {
 			return err
 		}
@@ -631,3 +709,5 @@ func (d *haltDeliverer) Confirm(_ context.Context, _ store.Endpoint, _ string, _
 func (d *haltDeliverer) ConfirmOnce(_ context.Context, _ store.Endpoint, _ string, _ time.Time) (delivery.Outcome, string, error) {
 	return delivery.OutcomeDelivered, "", nil
 }
+
+func (d *haltDeliverer) AdmitHorizon() time.Duration { return 0 }

@@ -186,10 +186,15 @@ func (c *Client) diffPatch(ctx context.Context, dir, from, to string) ([]byte, b
 
 // DiffWorktreeStat compares a tree object against dir's current working tree
 // (staged changes included) and returns just the stat, with no patch body.
+//
+// One command, not two. A `rev-parse --git-dir` probe ahead of the numstat
+// forked a git child whose output was thrown away: only its error was read,
+// and `diff --numstat` fails the same way on the same directory, so the probe
+// bought nothing and doubled the fork count of every live-diff read. The
+// numstat path still reports a directory that is not a repository as
+// ErrNotRepo -- run classifies the child's stderr -- so a caller that
+// distinguishes the two reads the same answer off one command.
 func (c *Client) DiffWorktreeStat(ctx context.Context, dir, tree string) (Stat, error) {
-	if _, err := c.run(ctx, dir, nil, "rev-parse", "--git-dir"); err != nil {
-		return Stat{}, err
-	}
 	return c.numstat(ctx, dir, "diff", "--numstat", tree)
 }
 

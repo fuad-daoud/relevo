@@ -319,7 +319,7 @@ func statusRowForTest(t *testing.T, rt Runtime, b store.Binding) view.BindingSta
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("save binding: %v", err)
 	}
-	row, err := statusRow(context.Background(), rt, b)
+	row, err := statusRow(context.Background(), rt, b, statusConfig{detail: true})
 	if err != nil {
 		t.Fatalf("statusRow: %v", err)
 	}

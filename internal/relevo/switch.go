@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/account"
@@ -100,6 +101,21 @@ func poolForPick(pick AccountPick, token string) []account.Account {
 	return pick.Set.Pool(account.Kind(ref.Harness), ref.Provider)
 }
 
+// switchLinePrefix is what marks a payload line as one round's switch line, so
+// payloadNamesSwitches reads a payload the way a reader of it does.
+const switchLinePrefix = "Switch: "
+
+// payloadNamesSwitches reports whether a payload already carries switch lines
+// rendered from a closed round's own switch history. Pure.
+func payloadNamesSwitches(payload string) bool {
+	for _, line := range strings.Split(payload, "\n") {
+		if strings.HasPrefix(line, switchLinePrefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // switchLine renders one switch entry's report line from that entry's own
 // note -- the reason and the resolution switchEntry already stores, and nothing
 // else. Every path that records a switch (a rate limit, an exit without a
@@ -112,7 +128,7 @@ func switchLine(note string) string {
 	if note == "" {
 		return ""
 	}
-	return "Switch: " + note
+	return switchLinePrefix + note
 }
 
 // switchLines renders the switch entries of one round, in log order, as the
@@ -122,11 +138,23 @@ func switchLine(note string) string {
 // Only the round being closed counts: a switch on an earlier round was named in
 // that round's report, and one on a later round is not this payload's fact.
 // Nudge entries are excluded by note, the same exclusion store.HasKind applies,
-// so a nudge is never mistaken for a switch. Pure.
-func switchLines(entries []store.LogEntry, round int) []string {
+// so a nudge is never mistaken for a switch.
+//
+// A remote round's switches are the server's record, not the log's: the closed
+// round's view carries the round's whole history and the caller's payload has
+// already named it. The entry a poll writes when it observes the server running
+// a different candidate is that same switch as this client happened to see it,
+// so naming it here too says the switch twice -- an A-B-A four times. Such an
+// entry is excluded by note prefix, the way the nudge is excluded by note, and
+// only when the payload already names a switch: a server that ships no switch
+// history leaves the poll's entry as the only record there is. Pure.
+func switchLines(entries []store.LogEntry, round int, serverSwitch bool) []string {
 	var out []string
 	for _, e := range entries {
 		if e.Round != round || e.Kind != store.KindSwitch || e.Note == nudgeNote {
+			continue
+		}
+		if serverSwitch && strings.HasPrefix(e.Note, pollSwitchNotePrefix) {
 			continue
 		}
 		if line := switchLine(e.Note); line != "" {
@@ -271,13 +299,32 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		}
 		b.State = store.StateBroken
 		slog.Warn("builder switch failed", "binding", b.Name, "round", b.Round, "pick", res.Token(), "err", err)
+		reason := fmt.Sprintf("%s: builder %s; switching to %s failed: %v", b.Name, b.BuilderCandidate, res.Token(), err)
 		// A broken binding no route will fix owes the MasterMind the same entry
 		// a halt does; queueBrokenHalt skips only the ones a later tick can
 		// still switch, and without a process this is not one of them.
-		next, qerr := queueBrokenHalt(ctx, rt, tx, b,
-			fmt.Sprintf("%s: builder %s; switching to %s failed: %v", b.Name, b.BuilderCandidate, res.Token(), err))
+		next, queued, qerr := queueBrokenHalt(ctx, rt, tx, b, reason)
 		if qerr != nil {
-			return b, qerr
+			// The switch reason rides the error: the entry cannot be queued
+			// here, so Admit's own spawn-failure halt is what runs, and a bare
+			// queue error left that halt naming only the failed append rather
+			// than the switch the round actually broke on.
+			//
+			// Halt is written only once the entry is queued. A binding that
+			// came back halted with the entry unwritten is one Admit reads as
+			// already halted -- it keeps its reason and queues nothing -- and
+			// nothing else retries it, so the reason the switch recorded would
+			// be the only account of the fault, in the state word alone.
+			return b, fmt.Errorf("%s: %w", reason, qerr)
+		}
+		// The binding keeps the reason, name-stripped the way haltBinding
+		// records one, only when the entry that carries it was queued. A
+		// served binding ships its Halt to its owner, so an empty one left the
+		// owner told only that the round broke: not which switch failed, not
+		// why, and nothing for the human to act on beyond the state word
+		// itself. A skipped binding keeps whatever reason it already had.
+		if queued {
+			next.Halt = strings.TrimPrefix(reason, b.Name+": ")
 		}
 		return deliverAndSettle(ctx, rt, tx, next)
 	}

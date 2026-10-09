@@ -71,10 +71,19 @@ func chainSweep(ctx context.Context, rt Runtime, tx *store.Tx, name string) erro
 }
 
 // chainSweepFlow decides a workflow chain: it walks chain_member in creation
-// order, and the first member whose record is gone, or that sits NEEDS YOU,
-// ends the chain with that member's reason. A chain member is the binding a
-// step's actor runs on, so the workflow's members are read from chain_member,
-// not from the four legacy columns.
+// order, and the first member whose record is gone, that sits NEEDS YOU, or
+// that is broken with nothing able to bring its builder back, ends the chain
+// with that member's reason. A chain member is the binding a step's actor runs
+// on, so the workflow's members are read from chain_member, not from the four
+// legacy columns.
+//
+// Broken is an arm of its own because the binding a member's break leaves is
+// not one any later round can move: a member whose builder is gone and has no
+// live process behind it has no close coming, so a chain waiting on it waits
+// forever. Its owner is a mirror of this chain -- the member observes the round
+// and writes the status word, and leaves the fault to the chain, whose end the
+// pull delivers once -- so nothing on the owner's side ends the chain, and the
+// sweep here is the only thing that can.
 func chainSweepFlow(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow) error {
 	rows, err := chainFlowMembers(tx, c)
 	if err != nil {
@@ -88,11 +97,26 @@ func chainSweepFlow(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 		if lerr != nil {
 			return lerr
 		}
-		if mb.State == store.StateNeedsYou {
+		switch {
+		case mb.State == store.StateNeedsYou:
 			return chainSweepFlowHalt(ctx, rt, tx, c, mb.Halt)
+		case mb.State == store.StateBroken && !bindingSwitchable(mb):
+			return chainSweepFlowHalt(ctx, rt, tx, c, chainSweepBrokenReason(m.Binding, mb.Halt))
 		}
 	}
 	return nil
+}
+
+// chainSweepBrokenReason is the reason a chain ends on a broken member: the
+// member's own halt when it recorded one, and the member named as broken when
+// it did not. A break with no reason is reachable -- the field is only written
+// once a switch has something to say -- and an empty chain reason is a halted
+// row with nothing on it to act on.
+func chainSweepBrokenReason(name, halt string) string {
+	if halt != "" {
+		return halt
+	}
+	return fmt.Sprintf("member %s broken", name)
 }
 
 // chainSweepFlowHalt ends a workflow chain the sweep found unable to move: the

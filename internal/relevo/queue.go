@@ -87,8 +87,13 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 			//
 			// A binding that came back already halted keeps its reason: the
 			// switch paths halt with a fuller text than "spawn failed", and
-			// the entry carrying it is already queued.
-			if b.Halt != "" {
+			// the entry carrying it is already queued. What says so is the
+			// notification, not the presence of a reason -- a halt whose entry
+			// the log refused reads as carrying a reason with nothing behind
+			// it, and saving that leaves the round active with nothing running
+			// and no halt anyone was told about. A binding the switch never
+			// finished keeps State Active and falls through to the halt below.
+			if b.State == store.StateNeedsYou && b.HaltNotifiedRound == b.Round {
 				b.QueuedAt = time.Time{}
 				if saveErr := tx.Save(b); saveErr != nil {
 					return fmt.Errorf("%v; and saving NEEDS YOU failed: %w", startErr, saveErr)

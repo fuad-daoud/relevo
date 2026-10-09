@@ -114,11 +114,11 @@ func waitToolSpec() ToolSpec {
 	}
 }
 
-// ToolsFor returns the tool list for mode and kind: tools mode for Claude Code
-// includes wait; channel mode and opencode list the five base verbs.
+// ToolsFor returns the tool list for kind: a Claude Code server includes wait,
+// while an opencode server lists the five base verbs.
 func ToolsFor(mode Mode, kind string) []ToolSpec {
 	base := Tools()
-	if mode == ModeTools && kind != "opencode" {
+	if kind != "opencode" {
 		return []ToolSpec{
 			base[0], // status
 			base[1], // send

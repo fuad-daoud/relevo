@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -303,6 +304,129 @@ func TestChainPullSavesTheRoundsBeforeAFailedInstall(t *testing.T) {
 	}
 	if got := countLogEntries(chainLog(t, rt, "shop"), 1, store.DirToMasterMind, store.KindReport); got != 1 {
 		t.Errorf("after a second pass, round 1 report entries = %d, want still 1", got)
+	}
+}
+
+// TestChainPullInstallsEachRoundsOwnFacts pins the per-round facts a chain pull
+// copies: a member that closed two rounds, one unmarked with a switch, prior
+// tokens and clean work of its own and one marked with a different switch, other
+// prior tokens and uncommitted work, installs each round with its own facts. A
+// pull that installed both rounds from the newest round's facts would read the
+// older round as marked, name a switch it never took, bill it for the newer
+// round's tokens, and tell it has uncommitted work it never left.
+//
+// Mutation: drop PriorTokens or DirtyCommit from the copy in chainRoundView and
+// round 1 records round 2's figures.
+func TestChainPullInstallsEachRoundsOwnFacts(t *testing.T) {
+	t.Parallel()
+
+	const (
+		firstNote  = "unmarked"
+		secondNote = "gate=fail"
+		firstSw    = "switched builder (rate-limited: 429): picked agy/test/m for builder: order #2"
+		secondSw   = "switched builder (exited (code 1) without a report): picked claude/test/m for builder: order #5"
+	)
+	firstPrior := usage.Tokens{In: 111, Out: 11}
+	secondPrior := usage.Tokens{In: 222, Out: 22}
+	view := chainPullView("shop", string(chain.StatusRunning), 2, 0, 0)
+	builder := &view.Members[0]
+	builder.Rounds[0].ReportNote = firstNote
+	builder.Rounds[0].Switches = []string{firstSw}
+	builder.Rounds[0].PriorTokens = &firstPrior
+	builder.Rounds[1].ReportNote = secondNote
+	builder.Rounds[1].Switches = []string{secondSw}
+	builder.Rounds[1].PriorTokens = &secondPrior
+	builder.Rounds[1].DirtyCommit = "dirty-commit-2"
+	fr := chainPullFake(view)
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	pullRounds(t, rt, "shop")
+
+	entries := chainLog(t, rt, "shop")
+	for _, c := range []struct {
+		round   int
+		note    string
+		switch_ string
+		prior   usage.Tokens
+		dirty   bool
+	}{
+		{1, firstNote, firstSw, firstPrior, false},
+		{2, secondNote, secondSw, secondPrior, true},
+	} {
+		e, ok := lastReportEntry(entries, c.round)
+		if !ok {
+			t.Fatalf("no report entry for round %d: %+v", c.round, entries)
+		}
+		if !strings.Contains(e.Note, c.note) {
+			t.Errorf("round %d report note = %q, want it to carry %q", c.round, e.Note, c.note)
+		}
+		if lines := switchPayloadLines(e.Payload); len(lines) != 1 || lines[0] != "Switch: "+c.switch_ {
+			t.Errorf("round %d switch lines = %q, want only its own %q", c.round, lines, c.switch_)
+		}
+		if e.PriorTokens == nil {
+			t.Errorf("round %d report entry PriorTokens = nil, want %+v", c.round, c.prior)
+		} else if *e.PriorTokens != c.prior {
+			t.Errorf("round %d report entry PriorTokens = %+v, want %+v", c.round, *e.PriorTokens, c.prior)
+		}
+		dirty := fmt.Sprintf("uncommitted work at refs/relevo/shop/round-%d", c.round)
+		if got := strings.Contains(e.Note, dirty); got != c.dirty {
+			t.Errorf("round %d report note = %q, want the uncommitted-work clause: %v", c.round, e.Note, c.dirty)
+		}
+	}
+}
+
+// TestChainPullInstallsTheNewestRoundFromTheMemberView pins the fallback a
+// server older than the uncommitted-work and prior-tokens fields needs: it
+// carries both on the member view and sends neither in the round it lists. The
+// newest round installs with the two figures that view holds, and an older one
+// installs clean -- the server keeps no older figures, so a fallback that
+// reached past the newest round would read the newest round's values as an
+// older round's own.
+//
+// Mutation: drop the chainRoundFacts call (or the fallback inside it) from
+// chainRoundView and the newest round installs as clean and unbilled.
+func TestChainPullInstallsTheNewestRoundFromTheMemberView(t *testing.T) {
+	t.Parallel()
+
+	newestPrior := usage.Tokens{In: 222, Out: 22}
+	view := chainPullView("shop", string(chain.StatusRunning), 2, 0, 0)
+	builder := &view.Members[0]
+	builder.View.DirtyCommit = "dirty-commit-2"
+	builder.View.PriorTokens = &newestPrior
+	// Neither round entry carries the two fields, the way a server that
+	// predates them answers: the round list is empty of both.
+	fr := chainPullFake(view)
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	pullRounds(t, rt, "shop")
+
+	entries := chainLog(t, rt, "shop")
+	for _, c := range []struct {
+		round int
+		prior *usage.Tokens
+	}{
+		{1, nil},
+		{2, &newestPrior},
+	} {
+		e, ok := lastReportEntry(entries, c.round)
+		if !ok {
+			t.Fatalf("no report entry for round %d: %+v", c.round, entries)
+		}
+		if c.prior == nil {
+			if e.PriorTokens != nil {
+				t.Errorf("round %d report entry PriorTokens = %+v, want nil: an older round has no figures to fall back to", c.round, *e.PriorTokens)
+			}
+		} else if e.PriorTokens == nil {
+			t.Errorf("round %d report entry PriorTokens = nil, want %+v", c.round, *c.prior)
+		} else if *e.PriorTokens != *c.prior {
+			t.Errorf("round %d report entry PriorTokens = %+v, want %+v", c.round, *e.PriorTokens, *c.prior)
+		}
+		dirty := fmt.Sprintf("uncommitted work at refs/relevo/shop/round-%d", c.round)
+		if got := strings.Contains(e.Note, dirty); got != (c.prior != nil) {
+			t.Errorf("round %d report note = %q, want the uncommitted-work clause: %v", c.round, e.Note, c.prior != nil)
+		}
 	}
 }
 

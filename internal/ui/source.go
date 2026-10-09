@@ -44,8 +44,12 @@ type mastermindSource struct {
 	rt relevo.Runtime
 }
 
+// Status is the fleet refresh with the detail figures left off: the fleet
+// paints no pixel from Live, LiveUsage or Headless.Tail, and each costs a git
+// diff, a usage peek or a log read per row on every tick. The detail pane
+// reads all three from its own single-row fetch.
 func (s mastermindSource) Status(ctx context.Context) (view.Report, error) {
-	return relevo.Status(ctx, s.rt)
+	return relevo.Status(ctx, s.rt, relevo.Detail(false))
 }
 
 func (s mastermindSource) Runtime(key string) (relevo.Runtime, string, bool) {
@@ -77,8 +81,11 @@ func ServerSource(srv *serve.Server) Source {
 	return serverSource{srv: srv}
 }
 
+// Status is the fleet refresh with the detail figures left off, as on
+// mastermindSource: the fleet view draws none of them and the detail pane's
+// own fetch supplies them per row.
 func (s serverSource) Status(ctx context.Context) (view.Report, error) {
-	return serve.FlatStatus(ctx, s.srv)
+	return serve.FlatStatus(ctx, s.srv, relevo.Detail(false))
 }
 
 func (s serverSource) Runtime(key string) (relevo.Runtime, string, bool) {

@@ -8,38 +8,33 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"regexp"
 	"sync"
 	"time"
 )
 
-// ProtocolVersion is what initialize always answers: Claude Code refuses a channel that negotiates a newer one.
+// ProtocolVersion is what initialize always answers.
 const ProtocolVersion = "2025-06-18"
 
-// ServerName is this server's name and the channel event's "source" attribute.
+// ServerName is this server's name in serverInfo.
 const ServerName = "relevo"
 
-// Mode is whether this process claims the pane and pushes events, or only serves tools.
+// Mode is the served surface. relevo mcp serves tools only, so ModeTools is
+// its one value; the type remains so callers name the surface explicitly.
 type Mode int
 
 const (
 	// ModeTools serves tools/list and tools/call only; it pushes nothing.
 	ModeTools Mode = iota
-	// ModeChannel additionally claims its pane and drains its mailbox.
-	ModeChannel
 )
 
 // maxLineBytes bounds one JSON-RPC line: a report payload can be large.
 const maxLineBytes = 16 << 20
 
-// metaKeyPattern is what Claude Code accepts as a meta key: an identifier.
-var metaKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
-// Server is relevo mcp's JSON-RPC 2.0 loop over stdio; it implements delivery.Pusher via Push.
+// Server is relevo mcp's JSON-RPC 2.0 loop over stdio.
 type Server struct {
 	Verbs   Verbs
 	Version string // serverInfo.version
-	// Mode picks the instructions text when Instructions is empty.
+	// Mode names the served surface; it is ModeTools.
 	Mode Mode
 	// Kind is the harness this server runs under: "" is Claude Code, and
 	// "opencode" selects the opencode instructions and drops the wait command
@@ -65,7 +60,7 @@ type Server struct {
 	loggerOnce sync.Once
 
 	// out is the transport's outbound side, set once at the top of Serve; the
-	// request loop and the poll goroutine (via Push) both write to it through writeMu.
+	// request loop and the wait goroutines both write to it through writeMu.
 	out     io.Writer
 	writeMu sync.Mutex
 }
@@ -201,8 +196,7 @@ func (s *Server) initializeResult() map[string]any {
 	return map[string]any{
 		"protocolVersion": ProtocolVersion,
 		"capabilities": map[string]any{
-			"tools":        map[string]any{},
-			"experimental": map[string]any{"claude/channel": map[string]any{}},
+			"tools": map[string]any{},
 		},
 		"serverInfo": map[string]any{
 			"name":    ServerName,
@@ -249,7 +243,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req Request) {
 	}
 
 	if params.Name == "wait" {
-		if s.Mode != ModeTools || s.Kind == "opencode" {
+		if s.Kind == "opencode" {
 			s.writeResponse(Response{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: CodeInvalidParams, Message: fmt.Sprintf("unknown tool %q", params.Name)}})
 			return
 		}
@@ -400,10 +394,9 @@ func (s *Server) callTool(ctx context.Context, name string, raw json.RawMessage,
 		if rpcErr != nil || err != nil || a.DryRun {
 			return out, rpcErr
 		}
-		// Claude's tools mode gets no push, so the result points at the wait
-		// tool; channel mode already gets the event, and an opencode mastermind
-		// gets the report as a new turn.
-		if s.Mode == ModeTools && s.Kind != "opencode" {
+		// An opencode mastermind gets the report as a new turn; every other
+		// Claude server gets no push, so the result points at the wait tool.
+		if s.Kind != "opencode" {
 			return appendWaitPointer(out, a.Name, budgetOf(res)), nil
 		}
 		return out, nil
@@ -480,34 +473,4 @@ func (s *Server) writeLine(raw []byte) {
 	if _, err := s.out.Write(append(raw, '\n')); err != nil {
 		s.log().Printf("write: %v", err)
 	}
-}
-
-// Push implements delivery.Pusher, writing one notifications/claude/channel
-// line; a meta key that is not a legal identifier is dropped and logged.
-func (s *Server) Push(ctx context.Context, content string, meta map[string]string) error {
-	clean := make(map[string]string, len(meta))
-	for k, v := range meta {
-		if metaKeyPattern.MatchString(k) {
-			clean[k] = v
-		} else {
-			s.log().Printf("dropping non-identifier meta key %q", k)
-		}
-	}
-
-	note := Notification{
-		JSONRPC: "2.0",
-		Method:  "notifications/claude/channel",
-		Params:  map[string]any{"content": content, "meta": clean},
-	}
-	raw, err := json.Marshal(note)
-	if err != nil {
-		return err
-	}
-
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if _, err := s.out.Write(append(raw, '\n')); err != nil {
-		return err
-	}
-	return nil
 }

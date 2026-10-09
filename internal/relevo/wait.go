@@ -216,6 +216,10 @@ type WaitOptions struct {
 	Timeout  time.Duration // > 0; the CLI defaults 10m
 	Interval time.Duration // poll period; the CLI passes 1s; tests pass something small
 	Peek     bool          // --peek: report the outcome only, deliver nothing
+	// syncRefresh overrides how often the registration is re-stamped while a
+	// remote sync runs. Zero takes delivery.WaitTTL/3; only a test sets it, so
+	// it can run the ticker faster than a real wait ever would.
+	syncRefresh time.Duration
 
 	reader waitReader
 	now    func() time.Time
@@ -289,6 +293,67 @@ func (r waitRegistration) refresh(now time.Time) {
 	}
 }
 
+// keepLiveDuring runs sync with the registration re-stamped on a ticker for as
+// long as sync takes, then stops ticking.
+//
+// The ticker exists because one remote sync can outlast the registration's whole
+// TTL on its own -- a single remote request is allowed half a minute -- so
+// refreshing between passes is not enough: a pass that runs long leaves the row
+// unreadable while the wait is plainly still running, and the statusline
+// escalates a payload that is about to be collected. Ticking under the sync
+// makes the registration describe the wait rather than the pass.
+//
+// The ticker stops when sync returns, so the wait holds no goroutine after its
+// own loop is done, and it is not started at all for a registration that holds
+// nothing: a --peek wait registers nothing, and a Runtime with no wait store has
+// nothing to keep fresh.
+//
+// Writes stay best-effort, as refresh's are: the registration records who is
+// polling, and a store that refuses a re-stamp must not fail the wait.
+func (r waitRegistration) keepLiveDuring(now func() time.Time, every time.Duration, sync func()) {
+	if r.store == nil || len(r.names) == 0 {
+		sync()
+		return
+	}
+	stop := make(chan struct{})
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				r.refresh(now())
+			}
+		}
+	}()
+	sync()
+	close(stop)
+	<-stopped
+}
+
+// syncRemoteKeepingWaitLive is the poll loop's one remote sync, run with the
+// wait registration kept fresh across it.
+func syncRemoteKeepingWaitLive(ctx context.Context, rt Runtime, reg waitRegistration, every time.Duration) {
+	reg.keepLiveDuring(rt.Now, every, func() { _, _, _ = SyncRemoteUnlessDaemon(ctx, rt) })
+}
+
+// waitSyncRefreshEvery is how often keepLiveDuring re-stamps under a sync.
+//
+// A third of delivery.WaitTTL, because the TTL is the deadline a registration
+// has to beat and a tick a whole TTL wide races the expiry it exists to stay
+// ahead of. A third leaves two missed ticks of slack for a slow write before
+// the row reads as dead.
+func waitSyncRefreshEvery(set time.Duration) time.Duration {
+	if set > 0 {
+		return set
+	}
+	return delivery.WaitTTL / 3
+}
+
 // release drops the registration. It is deferred for the whole wait, so every
 // exit path -- a delivered round, a timeout, an error -- leaves no row behind
 // that would read as a live wait.
@@ -357,7 +422,7 @@ func Wait(ctx context.Context, rt Runtime, opts WaitOptions) (name string, res W
 		// otherwise see the round's state go stale. Advisory: a sync error
 		// does not stop the poll, since the loop below re-reads the store
 		// either way.
-		_, _, _ = SyncRemoteUnlessDaemon(ctx, rt)
+		syncRemoteKeepingWaitLive(ctx, rt, registration, waitSyncRefreshEvery(opts.syncRefresh))
 
 		for _, n := range opts.Names {
 			b, err := retryer.load(ctx, n)

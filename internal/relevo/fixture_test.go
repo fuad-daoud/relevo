@@ -59,7 +59,7 @@ func haltOnce(t *testing.T, rt Runtime, b store.Binding, message string) store.B
 	var next store.Binding
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		var err error
-		next, err = haltBinding(context.Background(), rt, tx, b, message)
+		next, err = haltBinding(context.Background(), rt, tx, b, b.Round, message)
 		return err
 	}); err != nil {
 		t.Fatalf("haltBinding(%q): %v", message, err)

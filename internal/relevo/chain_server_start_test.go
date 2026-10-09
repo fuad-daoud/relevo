@@ -495,6 +495,91 @@ func assertServerChainMemberLive(t *testing.T, rt Runtime, logBody string) {
 	}
 }
 
+// TestServerChainMemberBrokenNotifiesOnce pins the one-notification rule for a
+// member whose round went broken on the server. The member observes the round:
+// it writes the status word and stops, leaving the fault to the chain, whose end
+// the server reports and the pull delivers once. A member that halted its own
+// binding on the way there notified the same fault twice -- its own halt entry
+// beside the chain's end delivery -- and this machine's sweep cannot be the one
+// to make that single: it skips a chain that runs on a server, so no arm of it
+// ends this chain from here.
+//
+// The first view is what a real server holds the moment the member breaks: the
+// chain is still running, because the server's own sweep is what ends it and
+// has not run yet. Nothing is notified by that pass, and nothing may be -- the
+// chain has not ended, so there is nothing to deliver. The server's sweep then
+// halts the chain with the member's reason, and that end is the one delivery.
+// A fake that reported the chain already halted skipped the whole gap this
+// test is about: it never showed that a broken member and a running chain
+// between them notify nobody, which is what left wait hanging.
+//
+// Mutation: drop remote.RoundBroken from the observe early return and the member
+// halts itself, so the fault carries two notifications.
+func TestServerChainMemberBrokenNotifiesOnce(t *testing.T) {
+	t.Parallel()
+
+	const reason = "builder claude; switching to codex failed: exit status 1"
+	view := chainPullView("shop", string(chain.StatusRunning), 0, 0, 0)
+	fr := chainPullFake(view)
+	fr.getBindingResp = remote.BindingView{
+		Name: "shop", Round: 1, RoundState: remote.RoundBroken, Halt: reason,
+	}
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	// One read path's pass: every member observes its view, then the pull
+	// collects whatever the server's own chain row says.
+	if _, err := SyncRemote(context.Background(), rt); err != nil {
+		t.Fatalf("SyncRemote: %v", err)
+	}
+
+	for _, name := range []string{"shop", "shop-rev", "shop-plan"} {
+		if halts := haltEntriesFor(t, rt, name); len(halts) != 0 {
+			t.Errorf("member %s halt entries = %d, want 0: %+v", name, len(halts), halts)
+		}
+	}
+	if b := chainBinding(t, rt, "shop"); b.State == store.StateNeedsYou {
+		t.Errorf("member state = %q, want it left to the chain: the chain's end is the notification", b.State)
+	}
+	// The chain has not ended server-side, so the mirror has nothing to end on
+	// and nothing to tell its MasterMind.
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusRunning) {
+		t.Errorf("mirror status = %q, want running: the server's chain has not ended", row.Status)
+	}
+	if pending := chainPendingChain(t, rt, "shop"); len(pending) != 0 {
+		t.Errorf("pending chain deliveries = %d, want 0: the chain is still running over there: %+v", len(pending), pending)
+	}
+
+	// The server's own sweep now ends the chain, and the next pass collects
+	// that end: the one notification the fault owes.
+	view.Status = string(chain.StatusHalted)
+	view.Reason = reason
+	fr.getChainResp = view
+	if _, err := SyncRemote(context.Background(), rt); err != nil {
+		t.Fatalf("SyncRemote after the server's sweep: %v", err)
+	}
+
+	for _, name := range []string{"shop", "shop-rev", "shop-plan"} {
+		if halts := haltEntriesFor(t, rt, name); len(halts) != 0 {
+			t.Errorf("member %s halt entries = %d, want 0: %+v", name, len(halts), halts)
+		}
+	}
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {
+		t.Errorf("mirror status = %q, want the halted status the server reported", row.Status)
+	}
+	if pending := chainPendingChain(t, rt, "shop"); len(pending) != 1 {
+		t.Fatalf("pending chain deliveries = %d, want the one end delivery: %+v", len(pending), pending)
+	}
+
+	// A second pass over the same terminal view adds nothing.
+	if _, err := SyncRemote(context.Background(), rt); err != nil {
+		t.Fatalf("the second SyncRemote: %v", err)
+	}
+	if pending := chainPendingChain(t, rt, "shop"); len(pending) != 1 {
+		t.Errorf("pending chain deliveries = %d, want still 1: %+v", len(pending), pending)
+	}
+}
+
 // TestChainSweepAndPendingSendSkipServerChains pins the two chain-level
 // guards: a member in NEEDS YOU does not halt a server chain here, and a
 // staged builder round is not shipped by this machine.

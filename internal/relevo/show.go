@@ -105,7 +105,8 @@ type ShowResult struct {
 // not live, against the newest archived record of that name and its sealed
 // round files and log; and finally against rt.DB, for a binding the live
 // store never held (docs/specs/2026-09-20-persistence-design.md §5.7). It
-// returns store.ErrNotFound, wrapped, when opts.Name is none of the three.
+// returns store.ErrNotFound, wrapped, when opts.Name is none of the three --
+// including a live name whose database row was never archived.
 func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error) {
 	if opts.Name == "" {
 		return ShowResult{}, fmt.Errorf("show: a binding name is required")
@@ -125,6 +126,9 @@ func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error)
 	}
 
 	b, err := rt.Store.Load(opts.Name)
+	// live is whether the live store holds the name now: it is what tells the
+	// database fallback apart from a name the live store never held.
+	live := err == nil
 	if err == nil && !opts.ArchivedOnly { // history rows skip live bindings: a rebind may reuse the name
 		res, err := showLive(rt, b, opts)
 		if err != nil {
@@ -141,7 +145,7 @@ func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error)
 		// never claim: nothing is pending there.
 		if !opts.Peek {
 			if _, _, perr := delivery.PullMatching(ctx, rt.Store, opts.Name, "show",
-				claimPrinted(opts.Section, res)); perr != nil {
+				claimPrinted(rt.Store, opts.Section, res, opts.FindingsID)); perr != nil {
 				return ShowResult{}, perr
 			}
 		}
@@ -175,6 +179,14 @@ func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error)
 			return ShowResult{}, derr
 		}
 		if found {
+			// A name the live store holds whose database row was never archived
+			// has no history to read: those mirror rows are that live binding's
+			// current rounds, and showDB reports them with Live false, so a
+			// history read would paint the live state as sealed history. A row
+			// carrying an archive timestamp is a real history row and answers.
+			if live && binding.ArchivedAt == nil {
+				return ShowResult{}, fmt.Errorf("binding %q is live and has no archived record (live or in the database): %w", opts.Name, store.ErrNotFound)
+			}
 			return showDB(rt, binding, opts)
 		}
 	}
@@ -332,20 +344,16 @@ func showSections(rt Runtime, name string, round int, actor, shape, output strin
 	switch opts.Section {
 	case ShowPrompt:
 		res.Text, res.Missing, err = read(rt.Store.PromptPath(name, round))
-	case ShowReport:
-		// reportPathFor: a reader's report is its artifact directory's
-		// output file, read through the artifact helper so a live, sealed
-		// or archived round all answer; a writer's is the flat
-		// NNN-report.md.
-		if shape == store.ShapeReader {
+	case ShowReport, ShowOutput:
+		// reportPathFor: a reader's report is its artifact directory's output
+		// file, read through the artifact helper so a live, sealed or archived
+		// round all answer; --output is that same file whatever the shape, and
+		// a writer's report is the flat NNN-report.md.
+		if shape == store.ShapeReader || opts.Section == ShowOutput {
 			var text []byte
 			text, err = readOutput(rt, name, round, actor, output)
 			if err == nil {
-				if text == nil {
-					res.Missing = true
-				} else {
-					res.Text = string(text)
-				}
+				res.Text, res.Missing = string(text), text == nil
 			}
 		} else {
 			res.Text, res.Missing, err = read(rt.Store.ReportPath(name, round))
@@ -354,16 +362,6 @@ func showSections(rt Runtime, name string, round int, actor, shape, output strin
 		res.Text, res.Missing, err = read(rt.Store.DiffPath(name, round))
 	case ShowDrift:
 		res.Text, res.Missing, err = read(rt.Store.DriftPath(name, round))
-	case ShowOutput:
-		var text []byte
-		text, err = readOutput(rt, name, round, actor, output)
-		if err == nil {
-			if text == nil {
-				res.Missing = true
-			} else {
-				res.Text = string(text)
-			}
-		}
 	case ShowArtifacts:
 		if opts.ArtifactRel != "" {
 			// --artifact: one file's bytes, raw. An unlisted rel is
@@ -386,11 +384,7 @@ func showSections(rt Runtime, name string, round int, actor, shape, output strin
 		var found bool
 		text, _, found, err = RoundTranscript(rt.Store, name, round, live, readBytes)
 		if err == nil {
-			if found {
-				res.Text = string(text)
-			} else {
-				res.Missing = true
-			}
+			res.Text, res.Missing = string(text), !found
 		}
 	case ShowGate:
 		// The round's gate log. Live, it is read through rt.Store.ReadFile,

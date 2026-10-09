@@ -201,6 +201,8 @@ func (d *doneReadBackDeliverer) ConfirmOnce(context.Context, store.Endpoint, str
 	return delivery.OutcomeAdmitted, "posted; awaiting the session", nil
 }
 
+func (d *doneReadBackDeliverer) AdmitHorizon() time.Duration { return 0 }
+
 // TestReconcileDoneConfirmsAnAdmittedPayload pins the delivery gap (#830): a
 // done binding skips the reconciler's own delivery step, but an entry a push
 // route admitted before the state changed must still be settled by a
@@ -241,6 +243,82 @@ func TestReconcileDoneConfirmsAnAdmittedPayload(t *testing.T) {
 	}
 	if _, pending, err := rt.Store.PendingForMasterMind(b.Name); err != nil || pending {
 		t.Errorf("the admitted payload must be confirmed: pending=%v err=%v", pending, err)
+	}
+}
+
+// TestReconcileDoneSettlesAnAdmittedPayloadWhenTheOwedHaltCannotBeWritten pins
+// the tick order: the owed halt is retried ahead of the DONE gate, but a log
+// that refuses its append must not strand a payload a push route already
+// admitted. ConfirmAdmitted is the only settle such an entry has -- an admitted
+// entry is not claimable -- and it confirms in place rather than appending, so
+// it still lands on a log that is at its cap. The owed entry itself stays owed,
+// so the tick reports the failure and a later tick writes the entry.
+func TestReconcileDoneSettlesAnAdmittedPayloadWhenTheOwedHaltCannotBeWritten(t *testing.T) {
+	t.Parallel()
+
+	rt, b := queuedBinding(t)
+	b.State = store.StateDone
+	b.Halt = "round 1 needs a hand"
+	b.HaltNotifiedRound = b.Round
+	b.OwedHalt = &store.OwedHalt{Round: 1, Text: b.Halt}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("save done: %v", err)
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		_, idx, found, err := tx.PendingForMasterMind(b.Name)
+		if err != nil {
+			return err
+		}
+		if !found {
+			t.Fatal("no queued payload to admit")
+		}
+		return tx.AdmitIndex(b.Name, idx)
+	}); err != nil {
+		t.Fatalf("admit: %v", err)
+	}
+
+	stub := &doneReadBackDeliverer{delivered: true}
+	rt.Deliverers = map[string]delivery.MasterMindDeliverer{b.MasterMind.Kind: stub}
+
+	// Room for no append at all, so the owed halt's own entry is the append the
+	// cap refuses.
+	fillLogLeavingRoom(t, rt, b.Name, 0)
+
+	if _, err := reconcile(t, rt, b); err == nil {
+		t.Fatal("the tick must still report the owed halt it could not write")
+	}
+	if stub.deliverCalls != 0 {
+		t.Errorf("Deliver calls = %d, want 0: a done binding is only read back", stub.deliverCalls)
+	}
+	if stub.onceCalls != 1 {
+		t.Errorf("ConfirmOnce calls = %d, want 1: the owed halt's failure must not skip the settle", stub.onceCalls)
+	}
+	if _, pending, err := rt.Store.PendingForMasterMind(b.Name); err != nil || pending {
+		t.Errorf("the admitted payload must be settled: pending=%v err=%v", pending, err)
+	}
+	if halts := haltEntriesFor(t, rt, b.Name); len(halts) != 0 {
+		t.Errorf("halt entries = %d, want 0: the log was already full: %+v", len(halts), halts)
+	}
+
+	// Room again, and the next tick writes the owed entry: the settle above did
+	// not consume it.
+	freeLogRoom(t, rt, b.Name)
+	if _, err := reconcileAndSave(t, rt, b); err != nil {
+		t.Fatalf("the tick after the log had room: %v", err)
+	}
+	halts := haltEntriesFor(t, rt, b.Name)
+	if len(halts) != 1 {
+		t.Fatalf("halt entries = %d, want 1: the owed entry is still owed: %+v", len(halts), halts)
+	}
+	if halts[0].Round != 1 || halts[0].Note != b.Halt {
+		t.Errorf("halt entry = round %d %q, want round 1 %q", halts[0].Round, halts[0].Note, b.Halt)
+	}
+	stored, err := rt.Store.Load(b.Name)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if stored.OwedHalt != nil {
+		t.Errorf("OwedHalt = %+v, want nil: the entry is written, so nothing is owed", stored.OwedHalt)
 	}
 }
 

@@ -29,11 +29,11 @@ func equalNames(a, b []string) bool {
 func TestAttentionRankPaused(t *testing.T) {
 	t.Parallel()
 
-	if attentionRank["PAUSED"] <= attentionRank["ACTIVE"] {
-		t.Errorf("PAUSED rank %d must follow ACTIVE rank %d", attentionRank["PAUSED"], attentionRank["ACTIVE"])
+	if rankOf("PAUSED") <= rankOf("ACTIVE") {
+		t.Errorf("PAUSED rank %d must follow ACTIVE rank %d", rankOf("PAUSED"), rankOf("ACTIVE"))
 	}
-	if attentionRank["PAUSED"] >= attentionRank["DONE"] {
-		t.Errorf("PAUSED rank %d must precede DONE rank %d", attentionRank["PAUSED"], attentionRank["DONE"])
+	if rankOf("PAUSED") >= rankOf("DONE") {
+		t.Errorf("PAUSED rank %d must precede DONE rank %d", rankOf("PAUSED"), rankOf("DONE"))
 	}
 
 	rows := []BindingStatus{

@@ -13,7 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -263,6 +266,108 @@ func TestAdmitAfterSlotFrees(t *testing.T) {
 	}
 	if !strings.HasPrefix(queueNotes[1], "started after ") || !strings.HasSuffix(queueNotes[1], "queued") {
 		t.Errorf("B second queue note = %q, want %q...%q", queueNotes[1], "started after ", "queued")
+	}
+}
+
+// TestAdmitDoesNotCountARoundThatNeverStarted: a queued round whose gated
+// candidate's replacement refuses the round's tier is admitted with no process
+// and no error, so that start must not advance the pass's running count -- the
+// round queued behind it takes the slot the failed switch left free.
+func TestAdmitDoesNotCountARoundThatNeverStarted(t *testing.T) {
+	env := setupTestEnv(t, func(cfg *Config) {
+		cfg.MaxBuilders = 1
+		cfg.Candidates = switchCandidateSet(t)
+		cfg.Policy = policy.Policy{Order: map[string][]string{
+			"builder": {testBuilderToken, "opencode/other/m"},
+		}}
+	})
+	ownerB := addOwner(t, env, "bob")
+	ownerC := addOwner(t, env, "carol")
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+
+	// B queues at tier read, which the opencode replacement refuses; C queues
+	// at the default tier, which the same replacement takes.
+	sendRoundAtTier(t, env, ownerB, "# Plan B", "read")
+	sendRoundAtTier(t, env, ownerC, "# Plan C", "")
+
+	// Gate the one candidate both queued rounds carry, so each admit has to
+	// switch rather than start in place.
+	if _, err := availability.Unavailable(relevo.AvailabilityDeps(env.runtime(t)), testBuilderToken, time.Now().Add(time.Hour), "quota"); err != nil {
+		t.Fatalf("record gate: %v", err)
+	}
+
+	rtA := testRuntime(t, env.srv, env.id)
+	bA, err := rtA.Store.Load("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeRound(t, rtA, "api", bA.Builder.PID, env.runner)
+
+	if err := env.srv.Tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	bB, err := testRuntime(t, env.srv, ownerB.id).Store.Load("api")
+	if err != nil {
+		t.Fatalf("load B: %v", err)
+	}
+	if bB.Builder.PID != 0 {
+		t.Errorf("B PID = %d, want 0: the switch had no replacement opencode would take", bB.Builder.PID)
+	}
+	if bB.State != store.StateBroken {
+		t.Errorf("B state = %q, want %q", bB.State, store.StateBroken)
+	}
+	requireRoundState(t, testRuntime(t, env.srv, ownerC.id), "api", remote.RoundRunning)
+}
+
+// switchCandidateSet is the default candidate plus one opencode candidate, so a
+// gate on the first leaves a replacement for the policy order to pick.
+func switchCandidateSet(t *testing.T) *candidate.Set {
+	t.Helper()
+	body := `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]},
+	           {"harness":"opencode","provider":"other","model":"m","roles":["builder"]}]`
+	path := filepath.Join(t.TempDir(), "candidates.json")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	set, err := candidate.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return set
+}
+
+// sendRoundAtTier is sendRound for owner's own repo with an explicit round
+// tier, which is what decides whether the replacement a switch picks can be
+// launched at all.
+func sendRoundAtTier(t *testing.T, env *testEnv, o ownerEnv, plan, tier string) {
+	t.Helper()
+	ctx := context.Background()
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     o.repoID,
+		BaseCommit: o.headSHA,
+		Role:       "builder",
+	})
+	resp, body := doSigned(t, env.ts, o.kp, "POST", "/v1/bindings", createBody, "application/json")
+	requireCreated(t, resp, body, string(o.id))
+
+	outRef := "refs/relevo/api/out"
+	if err := env.gitClient.UpdateRef(ctx, o.clientDir, outRef, o.headSHA, ""); err != nil {
+		t.Fatalf("updateRef out: %v", err)
+	}
+	bundleBytes := snapshotRef(t, env, o.clientDir, outRef)
+
+	formBytes, ct := makeRoundFormWithTier(t, 1, plan, tier, bundleBytes)
+	resp, body = doSigned(t, env.ts, o.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("round start status = %d, want 201; body: %s", resp.StatusCode, string(body))
+	}
+	if view := decodeView(t, body); view.RoundState != remote.RoundQueued {
+		t.Fatalf("round_state = %q, want queued", view.RoundState)
 	}
 }
 

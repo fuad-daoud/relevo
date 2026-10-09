@@ -762,3 +762,152 @@ func TestPullPendingThroughEntriesSkipsAdmitted(t *testing.T) {
 		}
 	}
 }
+
+// TestJoinDeliveredLabelsAnEntryWithNoPath pins the label of an entry that
+// names no file. A halt wrote no artifact, so its Path is empty on purpose; the
+// header interpolated it unconditionally and rendered "not delivered earlier
+// ()" -- a label that named nothing while implying that it had. The label is
+// the halted one, since a halt of the waited round is not a report that went
+// undelivered.
+func TestJoinDeliveredLabelsAnEntryWithNoPath(t *testing.T) {
+	t.Parallel()
+
+	got := JoinDelivered([]Delivered{
+		{Entry: store.LogEntry{Round: 1, Kind: store.KindHalt}, Text: "halting: the round ran past its budget"},
+		{Entry: store.LogEntry{Round: 1, Kind: store.KindReport, Path: "/repo/.relevo/webshop/001-report.md"}, Text: "round 1 done"},
+	})
+
+	if strings.Contains(got, "()") {
+		t.Errorf("an entry with no path rendered empty parens:\n%s", got)
+	}
+	if !strings.Contains(got, "── round 1: halted ──\n") {
+		t.Errorf("the label does not name the entry's round:\n%s", got)
+	}
+	if !strings.Contains(got, "halting: the round ran past its budget") {
+		t.Errorf("the entry's own text is missing:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "round 1 done") {
+		t.Errorf("the waited entry is not last:\n%s", got)
+	}
+
+	// The path still renders when there is one: the label names the file for
+	// every kind that has one.
+	withPath := EarlierHeader(1, "/repo/.relevo/webshop/001-report.md")
+	if !strings.Contains(withPath, "(/repo/.relevo/webshop/001-report.md)") {
+		t.Errorf("EarlierHeader with a path = %q, want it to name the file", withPath)
+	}
+}
+
+// TestPullPendingThroughDeliversAReportAndItsHaltAsTheWaitedRound pins the
+// shape a closed-round halt produces: the round's report and the halt that
+// stopped it are both pending, the halt queued after the report. Log order ends
+// on the halt, so a reader that took the last entry as the round's own text
+// printed the report under a "not delivered earlier" header and the halt as the
+// main text. The report is the main text and the halt sits under its own
+// header.
+func TestPullPendingThroughDeliversAReportAndItsHaltAsTheWaitedRound(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	dir := t.TempDir()
+	r1 := filepath.Join(dir, "001-report.md")
+	r2 := filepath.Join(dir, "002-report.md")
+	if err := os.WriteFile(r1, []byte("round 1 body\n"), 0o644); err != nil {
+		t.Fatalf("write round 1 report: %v", err)
+	}
+	if err := os.WriteFile(r2, []byte("round 2 body\n"), 0o644); err != nil {
+		t.Fatalf("write round 2 report: %v", err)
+	}
+
+	const halt = "scope refusal: the plan names a path outside the repo"
+	b := store.Binding{
+		Name: "webshop", CWD: "/repo/webshop", Round: 2, State: store.StateActive,
+		MasterMind: store.Endpoint{Kind: "claude", SessionID: "sess"}, MasterMindID: "pl_aaaaaaaabbbb",
+		Builder: store.Endpoint{Mode: store.ModeHeadless},
+	}
+	// Log order: round 1's report, then round 2's report, then the halt the
+	// round's close queued behind it.
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		if err := tx.Save(b); err != nil {
+			return err
+		}
+		for _, e := range []store.LogEntry{
+			{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "round 1 report", Path: r1},
+			{Round: 2, Direction: store.DirToMasterMind, Kind: store.KindReport, Payload: "round 2 report", Path: r2},
+			{Round: 2, Direction: store.DirToMasterMind, Kind: store.KindHalt, Note: halt, Payload: halt},
+		} {
+			if err := tx.AppendLog("webshop", e); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed report and halt: %v", err)
+	}
+
+	text, found, err := PullPendingThrough(context.Background(), rt.Store, "webshop", "wait", 2)
+	if err != nil {
+		t.Fatalf("PullPendingThrough: %v", err)
+	}
+	if !found {
+		t.Fatal("PullPendingThrough found nothing, want the report and the halt")
+	}
+
+	// Each entry's own text already ends in a newline, and the join puts a
+	// blank line between entries on top of it.
+	want := fmt.Sprintf("── round 1: not delivered earlier (%s) ──\n", r1) +
+		"round 1 report\n\nround 1 body\n\n\n" +
+		"── round 2: halted ──\n" + halt + "\n\n" +
+		"round 2 report\n\nround 2 body\n"
+	if text != want {
+		t.Errorf("PullPendingThrough =\n%q\nwant\n%q", text, want)
+	}
+}
+
+// TestReportLastLeavesTheOtherShapesAlone pins that the ordering touches only
+// the case it is for: one entry, a round with no halt, and a round whose only
+// pending entry is its halt all come back as they went in.
+func TestReportLastLeavesTheOtherShapesAlone(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		delivered []Delivered
+	}{
+		{
+			name:      "one entry",
+			delivered: []Delivered{{Entry: store.LogEntry{Round: 2, Kind: store.KindReport}, Text: "round 2 done"}},
+		},
+		{
+			name: "an earlier round and the waited report",
+			delivered: []Delivered{
+				{Entry: store.LogEntry{Round: 1, Kind: store.KindReport}, Text: "round 1 done"},
+				{Entry: store.LogEntry{Round: 2, Kind: store.KindReport}, Text: "round 2 done"},
+			},
+		},
+		{
+			name: "a round whose only entry is its halt",
+			delivered: []Delivered{
+				{Entry: store.LogEntry{Round: 1, Kind: store.KindReport}, Text: "round 1 done"},
+				{Entry: store.LogEntry{Round: 2, Kind: store.KindHalt}, Text: "halted"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := ReportLast(tt.delivered)
+			if len(got) != len(tt.delivered) {
+				t.Fatalf("ReportLast returned %d entries, want %d", len(got), len(tt.delivered))
+			}
+			for i, d := range got {
+				w := tt.delivered[i]
+				if d.Entry.Round != w.Entry.Round || d.Entry.Kind != w.Entry.Kind ||
+					d.Entry.Path != w.Entry.Path || d.Text != w.Text {
+					t.Errorf("entry %d = %+v, want %+v", i, d, w)
+				}
+			}
+		})
+	}
+}

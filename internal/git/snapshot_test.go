@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -144,6 +145,82 @@ func TestDiffWorktreeStat(t *testing.T) {
 
 	if _, err := client.DiffWorktreeStat(ctx, t.TempDir(), tree); !errors.Is(err, ErrNotRepo) {
 		t.Fatalf("DiffWorktreeStat outside a repo: got %v, want ErrNotRepo", err)
+	}
+}
+
+// countingGit installs a git shim that appends each invocation's argv to a log
+// and then execs the real git, so a test can count the children one client call
+// forks. It returns the shim to hand NewClient and the log to read back.
+func countingGit(t *testing.T) (bin, log string) {
+	t.Helper()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not on PATH")
+	}
+	dir := t.TempDir()
+	bin = filepath.Join(dir, "git-shim")
+	log = filepath.Join(dir, "argv.log")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + log + "\nexec " + real + " \"$@\"\n"
+	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+		t.Fatalf("write git shim: %v", err)
+	}
+	return bin, log
+}
+
+// gitArgv is every argv the counting shim recorded, in order. A shim that never
+// ran leaves no log, which reads as zero children rather than a failure.
+func gitArgv(t *testing.T, log string) []string {
+	t.Helper()
+	out, err := os.ReadFile(log)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatalf("read argv log: %v", err)
+	}
+	var got []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if line != "" {
+			got = append(got, line)
+		}
+	}
+	return got
+}
+
+// TestDiffWorktreeStatForksOneGit pins the fork count of one live-diff read to
+// exactly one git child, and the not-a-repository answer to the same single
+// child: a `rev-parse --git-dir` probe ahead of the numstat forked a second
+// child whose output was thrown away, because only its error was read and
+// `diff --numstat` fails the same way on the same directory. Restoring the
+// probe makes both cases report two children.
+func TestDiffWorktreeStatForksOneGit(t *testing.T) {
+	ctx := context.Background()
+	repoDir, _ := initRepoWithCommit(t, "a.txt", "hello\n")
+	bin, log := countingGit(t)
+	client := NewClient(bin, 5*time.Second, DefaultMaxPatchBytes)
+
+	tree := strings.TrimSpace(runGit(t, repoDir, "write-tree"))
+	writeGitFile(t, repoDir, "a.txt", "hello\nworld\n")
+
+	stat, err := client.DiffWorktreeStat(ctx, repoDir, tree)
+	if err != nil {
+		t.Fatalf("DiffWorktreeStat dirty: %v", err)
+	}
+	if stat.FilesChanged != 1 || stat.Insertions != 1 {
+		t.Fatalf("unexpected stat: %+v", stat)
+	}
+	if got, want := gitArgv(t, log), []string{"diff --numstat " + tree}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("git children = %v, want exactly %v", got, want)
+	}
+
+	// Outside a repository the one child is enough to say so.
+	plain := t.TempDir()
+	if _, err := client.DiffWorktreeStat(ctx, plain, tree); !errors.Is(err, ErrNotRepo) {
+		t.Fatalf("DiffWorktreeStat outside a repo: got %v, want ErrNotRepo", err)
+	}
+	got := gitArgv(t, log)
+	if len(got) != 2 || got[1] != "diff --numstat "+tree {
+		t.Fatalf("git children after a non-repo read = %v, want the one numstat child", got)
 	}
 }
 

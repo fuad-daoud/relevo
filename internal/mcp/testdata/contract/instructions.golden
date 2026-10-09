@@ -9,8 +9,8 @@ like this:
     wait(name: "<binding>", timeout: "<budget>")
 
 Call wait and it blocks until the round closes, needs attention, or its
-timeout elapses. The result is the round's output text -- the same payload a
-channel event would have carried -- and it marks the entry delivered.
+timeout elapses. The result is the round's output text -- the same payload the
+CLI prints -- and it marks the entry delivered.
 
 Omit name to wait on every active binding this MasterMind owns, and round to
 wait for a specific round; omitting round waits for the newest planned one.
@@ -28,6 +28,9 @@ Act on it like this:
     wait longer.
   - An outcome line with no payload text: another route already delivered the
     output; nothing is owed.
+  - An outcome line that says "delivered by the mod": a push holder already
+    wrote the report into this transcript, so read and act on it there instead
+    of waiting for the text again.
 
 A very long payload comes back as the outcome line plus a "relevo show"
 command instead of the text; run it to read the whole report.

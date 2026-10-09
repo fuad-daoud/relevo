@@ -57,7 +57,7 @@
       "tokens": "2k tok",
       "last_kind": "prompt",
       "last_ts": "2026-09-24T20:13:00Z",
-      "route": "channel",
+      "route": "push",
       "actor": "designer",
       "status": "prompt sent",
       "tone": "phase",

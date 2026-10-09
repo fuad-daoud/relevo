@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -13,6 +14,50 @@ const (
 	ShapeWriter = "writer"
 	ShapeReader = "reader"
 )
+
+// HaltKindUnreachable names the episode that put a remote binding on NEEDS YOU
+// because its server could not be reached for longer than the round's budget
+// plus the grace.
+//
+// HaltKindBroken names the episode that put a remote binding on NEEDS YOU
+// because the server reported a round whose builder is gone. The server ships a
+// reason for that break when it has one and omits it otherwise, so the halt text
+// is either the server's own account or the fallback this file writes; the kind
+// is what says the halt came from a broken view either way, and an answering
+// view clears it by that and never by the text.
+//
+// The kind is the episode's identity and the halt text is only the reason a
+// human reads, and the two are kept apart on purpose: a halt written by the
+// server or by a human may quote the same phrase, so text cannot say which
+// episodes an answering view is allowed to clear.
+const (
+	HaltKindUnreachable = "unreachable"
+	HaltKindBroken      = "broken"
+)
+
+// haltKindFormat is the format that records Binding.RemoteHaltKind. A record
+// written before it has no kind on disk and named its episode in the halt text
+// alone, so that text is read once, on load, to recover the kind it cannot
+// carry. Reading it there and nowhere else is what keeps a halt this binary did
+// not decide from being taken for one it did.
+const haltKindFormat = 16
+
+// UnreachableHaltMarker is the phrase an unreachable halt's text carries. It
+// names the sentence a binding records, not the episode behind it: the kind is
+// the episode, and this phrase is read only for a record written before
+// haltKindFormat, the one case where the kind is not on disk to be read.
+const UnreachableHaltMarker = "unreachable for"
+
+// BrokenHaltText is the reason a broken-round halt gets when the server named no
+// reason of its own. It lives here, beside the migration that recovers
+// HaltKindBroken from it, so the sentence written and the sentence read are one
+// constant.
+//
+// The kind, not this text, is what says a halt came from a broken view; this is
+// read only for a record written before haltKindFormat, and only on an exact
+// match, because a server that named its own reason for a break wrote a
+// different sentence and that halt is not this one.
+const BrokenHaltText = "the server's builder for this round is gone; rebind before sending"
 
 // RepoRef identifies the git repository a binding works in; nil means it could
 // not be determined and never fails the caller.
@@ -116,6 +161,21 @@ type OOMRequeue struct {
 	PeakBytes int64 `json:"peak_bytes,omitempty"`
 }
 
+// OwedHalt is one halt notification a binding still owes its MasterMind: the
+// round the entry is filed under and the text it carries.
+//
+// It exists because the binding log's append can fail after a round has already
+// been reported. The round close is committed to the log before the halt that
+// follows it, so a failed halt entry cannot be retried by closing the round
+// again; the close records what it owes here instead and a later tick writes it.
+type OwedHalt struct {
+	// Round is the round that closed, which is not the binding's current round:
+	// a halt that fires after the advance is about the round that just ended.
+	Round int `json:"round"`
+	// Text is the halt reason as the binding records it, name-stripped.
+	Text string `json:"text"`
+}
+
 type ServeFacts struct {
 	RepoID       string    `json:"repo_id"`
 	BareRepo     string    `json:"bare_repo"`
@@ -135,6 +195,14 @@ type Binding struct {
 	// Format is the on-disk format: 0 (a missing key) is format 1, today's
 	// shape; save refuses to overwrite a Format it does not know.
 	Format int `json:"format,omitempty"`
+
+	// ViewedAt is the binding's .viewed stamp as read from its record: nil
+	// when the record carries none. It is not part of the stored document --
+	// the record's own viewed_at column is its home -- so it is excluded from
+	// the JSON this struct marshals. List and Load fill it from the row they
+	// just read, so a reader that already has the binding needs no second
+	// RecordGet to learn the stamp.
+	ViewedAt *time.Time `json:"-"`
 
 	Name string `json:"name"`
 	CWD  string `json:"cwd"`
@@ -210,6 +278,12 @@ type Binding struct {
 	// harmless.
 	Halt   string    `json:"halt,omitempty"`
 	HaltAt time.Time `json:"halt_at,omitempty"`
+
+	// OwedHalt is the halt notification whose entry could not be written when
+	// the halt was decided. Non-nil only in that window: the next tick queues
+	// the entry and clears it, so a binding carrying one has halted and asked
+	// for a human without having said so in the log yet.
+	OwedHalt *OwedHalt `json:"owed_halt,omitempty"`
 
 	RoundSwitches int `json:"round_switches,omitempty"`
 
@@ -325,7 +399,16 @@ type Binding struct {
 	Serve *ServeFacts `json:"serve,omitempty"`
 
 	RemoteUnreachableSince time.Time `json:"remote_unreachable_since,omitempty"`
-	RemoteAbsorbFailures   int       `json:"remote_absorb_failures,omitempty"`
+	// RemoteHaltKind names the episode behind a halt this file's own paths wrote:
+	// HaltKindUnreachable while b.Halt is an unreachable halt, HaltKindBroken while
+	// it is one a broken view wrote, and empty for every halt of any other
+	// origin -- the server's own view.Halt, a 404, a revoked key, a local halt.
+	// That separation is the whole field: Halt is free text that reaches this
+	// binding from the server as well as from here, so matching on it takes a
+	// halt it did not write for one it did.
+	RemoteHaltKind string `json:"remote_halt_kind,omitempty"`
+
+	RemoteAbsorbFailures int `json:"remote_absorb_failures,omitempty"`
 
 	// RemoteBundleFailures counts the consecutive round-bundle fetches that
 	// failed. The apply half owns it -- the fetch half runs without the state
@@ -405,6 +488,32 @@ func (b *Binding) UnmarshalJSON(raw []byte) error {
 	// A record with no shape predates A5, when only writers could be bound.
 	if out.Shape == "" {
 		out.Shape = ShapeWriter
+	}
+	// A record written before haltKindFormat carries its remote halt episode in
+	// the halt text alone. It is the one place the text is read, and it runs on
+	// the load rather than the save so a binding never polls with the mismatch
+	// the text and the kind disagree about.
+	//
+	// Bounded by the format rather than by the key's absence: at this format a
+	// record with no kind is a binding that has no remote halt, and reading
+	// its text would find nothing anyway -- but only because this binary writes
+	// every unreachable halt with the marker and every broken halt with the
+	// fallback, which is the property the two text tests below stop depending on
+	// elsewhere. The format bound is what makes the migration stop mattering once
+	// every record is written at this one.
+	//
+	// The two tests are deliberately unlike each other. The unreachable text is a
+	// builder's failure lines, which can quote the marker anywhere, so it is a
+	// containment; the broken text is a fixed sentence this binary writes whole,
+	// so it is an equality -- a server that named its own reason for a break wrote
+	// a different one, and naming that episode is not this migration's to do.
+	if out.Format < haltKindFormat {
+		switch {
+		case out.RemoteHaltKind == "" && strings.Contains(out.Halt, UnreachableHaltMarker):
+			out.RemoteHaltKind = HaltKindUnreachable
+		case out.RemoteHaltKind == "" && out.Halt == BrokenHaltText:
+			out.RemoteHaltKind = HaltKindBroken
+		}
 	}
 	*b = out
 	return nil

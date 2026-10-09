@@ -156,7 +156,7 @@ func TestMasterMindRowNamesChat(t *testing.T) {
 		if c == nil {
 			t.Fatal("the mastermind row is missing")
 		}
-		want := "MasterMind architect-1 (pl_aaaaaaaabbbb): tools mode: reports arrive through the blocking wait tool. For push, launch with `--dangerously-load-development-channels plugin:relevo@relevo`, or have an org admin add relevo to `allowedChannelPlugins`"
+		want := "MasterMind architect-1 (pl_aaaaaaaabbbb): tools mode: reports arrive through the blocking wait tool. For push, the session's mod runs `relevo push`"
 		if c.Detail != want {
 			t.Errorf("mastermind row detail = %q, want %q", c.Detail, want)
 		}
@@ -231,7 +231,7 @@ func TestDoctorPluginHookRow(t *testing.T) {
 }
 
 // TestDoctorMasterMindRowNoClaimIsInfo pins that a Claude Code mastermind with no
-// live channel claim is INFO, never FAIL: tools mode gets reports through the
+// live push claim is INFO, never FAIL: tools mode gets reports through the
 // blocking wait tool.
 func TestDoctorMasterMindRowNoClaimIsInfo(t *testing.T) {
 	rec := &mastermind.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
@@ -244,7 +244,7 @@ func TestDoctorMasterMindRowNoClaimIsInfo(t *testing.T) {
 	if c.Severity != SevInfo {
 		t.Fatalf("mastermind row = %v (%s), want INFO", c.Severity, c.Detail)
 	}
-	for _, want := range []string{"wait tool", "dangerously-load-development-channels plugin:relevo@relevo", "allowedChannelPlugins"} {
+	for _, want := range []string{"wait tool", "relevo push"} {
 		if !strings.Contains(c.Detail, want) {
 			t.Errorf("mastermind row detail %q must name %q", c.Detail, want)
 		}

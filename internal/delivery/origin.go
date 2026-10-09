@@ -16,6 +16,19 @@ func OriginLine(name string, round int, dir store.Direction, kind store.Kind) st
 	if kind == store.KindFindings {
 		return fmt.Sprintf("relevo: consult · to MasterMind · about runner %q (not the human)", name)
 	}
+	// A halt gets its own line because the read-backs key on the origin string
+	// alone: opencode's `LIKE '%origin%'` and agy's first-line equality both
+	// match a halt row and a report row of the same round when the two share a
+	// line, so a halt queued after a report's queuedAt confirms that report as
+	// "already present" without ever POSTing it. Findings above is the same
+	// kind-specific split, and needs no read-back change: differing first lines
+	// stop matching on their own.
+	//
+	// Neither line may contain the other, or the substring match still
+	// collides -- hence "halt" inserted mid-line rather than appended.
+	if kind == store.KindHalt {
+		return fmt.Sprintf("relevo: round %d · halt · to MasterMind · about runner %q (not the human)", round, name)
+	}
 	return fmt.Sprintf("relevo: round %d · to MasterMind · about runner %q (not the human)", round, name)
 }
 

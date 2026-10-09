@@ -73,12 +73,12 @@ type BindingStatus struct {
 	MasterMindChatLink  string `json:"mastermind_chat_link,omitempty"`
 	MasterMindKind      string `json:"mastermind_kind"`
 	// MasterMindRoute is how a pending report reaches this binding mastermind:
-	// "channel", "deliverer" or "pull". "pull" is a route, not a fault: it is
+	// "push", "deliverer" or "pull". "pull" is a route, not a fault: it is
 	// the background wait's `relevo wait`, which is how a Claude Code mastermind
 	// in tools mode gets its report.
 	MasterMindRoute string `json:"mastermind_route"`
 	// MasterMindRouteLive reports whether that route can push right now: a live
-	// channel claim, or a configured deliverer. A pull route is never live,
+	// push claim, or a configured deliverer. A pull route is never live,
 	// because the daemon cannot see whether a background wait is running.
 	MasterMindRouteLive bool `json:"mastermind_route_live"`
 	// WaitLive reports whether a `relevo wait` is polling this binding right
