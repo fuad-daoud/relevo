@@ -4,9 +4,10 @@
 # Every create runs with RELEVO_SANDBOX_ROOT pointed at a temp dir and
 # --no-build, so the suite needs no toolchain, no network and never touches the
 # developer's real ~/.local/share/relevo-sandboxes. What it pins is the safety
-# that matters: the refusals, the 0700 layout, the marker, and the eight exports
-# in env.sh -- specifically that every one of them resolves under the sandbox
-# root and never under the caller's home.
+# that matters: the refusals, the 0700 layout, the marker, and the nine exports
+# in env.sh -- specifically that every path export resolves under the sandbox
+# root and never under the caller's home, and that RELEVO_SANDBOX is the marker
+# a guard line tests.
 set -eu
 
 # shellcheck disable=SC1007 # CDPATH= scopes an empty CDPATH to this one command
@@ -168,14 +169,16 @@ else
 	fi
 fi
 
-# env.sh is the sandbox. All eight exports must name a path under the sandbox
-# root: this is what makes store.DefaultRoot resolve into the sandbox rather than
-# the developer's ~/.local/state.
+# env.sh is the sandbox. All eight path exports must name a path under the
+# sandbox root -- this is what makes store.DefaultRoot resolve into the sandbox
+# rather than the developer's ~/.local/state -- and the ninth, RELEVO_SANDBOX,
+# is the marker a guard line tests.
 if [ ! -f "$sbx/env.sh" ]; then
 	echo "FAIL: create wrote no env.sh at $sbx/env.sh"
 	fail=1
 else
 	for pair in \
+		"RELEVO_SANDBOX=demo" \
 		"SB=$sbx" \
 		"XDG_STATE_HOME=$sbx/state" \
 		"XDG_CONFIG_HOME=$sbx/config" \
@@ -209,6 +212,28 @@ else
 		echo "FAIL: sourcing env.sh resolves the state root to $resolved, want $sbx/state/relevo"
 		fail=1
 	fi
+
+	# The marker follows the same sourcing: inside the shell it is the sandbox
+	# name, and it is what a guard line tests to refuse running outside.
+	marker=$(RELEVO_SANDBOX_ROOT="$root" HOME="$home" sh -c '. "$1/env.sh"; printf "%s" "$RELEVO_SANDBOX"' sh "$sbx")
+	if [ "$marker" != "demo" ]; then
+		echo "FAIL: sourcing env.sh sets RELEVO_SANDBOX to '$marker', want demo"
+		fail=1
+	fi
+	# The guard line docs hand out: it must refuse where the marker is unset.
+	guard=$(RELEVO_SANDBOX_ROOT="$root" HOME="$home" sh -c \
+		'. "$1/env.sh"; test -n "$RELEVO_SANDBOX" || { echo "not in a sandbox" >&2; exit 1; }; echo ran' \
+		sh "$sbx" 2>&1) || true
+	if [ "$guard" != "ran" ]; then
+		echo "FAIL: the guard line did not pass inside the sandbox: $guard"
+		fail=1
+	fi
+	# Outside the sandbox the marker is unset -- sb never sets it -- so the
+	# guard line docs hand out must refuse. The line is quoted exactly as the
+	# docs hand it out, so shellcheck must read $RELEVO_SANDBOX unexpanded.
+	# shellcheck disable=SC2016
+	refuses 'guard line refuses outside a sandbox' 'not in a sandbox' \
+		sh -c 'test -n "$RELEVO_SANDBOX" || { echo "not in a sandbox" >&2; exit 1; }'
 fi
 
 # shell refuses a directory that is not a sandbox: a marker is required, so the

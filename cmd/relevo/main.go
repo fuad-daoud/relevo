@@ -217,6 +217,13 @@ func run(args []string) error {
 		captureAgyEnv()
 	}
 
+	// Inside an env sandbox, name the sandbox above the command's output: the
+	// exports are invisible in a transcript, so this is the only line that says
+	// which root the write landed in.
+	if name := sandboxBannerVerb(args); name != "" {
+		fmt.Fprintf(os.Stderr, "relevo: sandbox %s\n", name)
+	}
+
 	switch args[0] {
 	case "help", "-h", "--help":
 		return cmdHelp(args[1:])

@@ -15,10 +15,10 @@ import (
 // does, and every subcommand that replaced a top-level verb (§4.1).
 const configUsage = `usage: relevo config [--probe [token...]]
        relevo config export
-       relevo config import <file|->
+       relevo config import <file|-> [--force]
        relevo config get <section>[.<key>...]
-       relevo config set <section>[.<key>...] <json>
-       relevo config unset <section>[.<key>...]
+       relevo config set <section>[.<key>...] <json> [--force]
+       relevo config unset <section>[.<key>...] [--force]
        relevo config edit
        relevo config log [-n N] [--rev N] [--json]
        relevo config rollback <rev> [--yes] [-m <message>]

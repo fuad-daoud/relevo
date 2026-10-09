@@ -56,13 +56,15 @@ func configExport(args []string) error {
 // configImportFlagValues holds the pointer `config import` parses into.
 type configImportFlagValues struct {
 	asJSON *bool
+	force  *bool
 }
 
-// configImportFlagSet defines that flag on fs and returns what it parses into,
-// so the registry's parity test finds exactly one installer per verb.
+// configImportFlagSet defines those flags on fs and returns what they parse
+// into, so the registry's parity test finds exactly one installer per verb.
 func configImportFlagSet(fs *flag.FlagSet) *configImportFlagValues {
 	v := &configImportFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the document the import produced")
+	v.force = fs.Bool("force", false, "import candidates even when an actor still names a dropped one")
 	return v
 }
 
@@ -74,7 +76,7 @@ func configImportRun(args []string) error {
 	fs := flag.NewFlagSet("relevo config import", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	v := configImportFlagSet(fs)
-	asJSON := v.asJSON
+	asJSON, force := v.asJSON, v.force
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -103,6 +105,11 @@ func configImportRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	if body, ok := doc[config.Candidates]; ok {
+		if err := guardImportCandidatesDrop(rt, body, *force); err != nil {
+			return err
+		}
+	}
 	warnings, err := rt.Config.As("cli", "config import "+rest[0]).PutDoc(doc)
 	if err != nil {
 		return fail(codeConfigInvalid, "%v", err)
@@ -121,6 +128,33 @@ func configImportRun(args []string) error {
 		return printDoc(configImportDocOf(importSections(doc), warnings, version))
 	}
 	return nil
+}
+
+// guardImportCandidatesDrop refuses an import whose candidates section drops a
+// candidate an actor names. The document's own actors section wins over the
+// stored one, because PutDoc stores both in one revision; a document with no
+// actors section leaves the stored actors standing, so an actor naming a
+// dropped candidate is still caught. An actors-only import carries no
+// candidates and never reaches here: provisioning an actor before its
+// candidate is legitimate.
+func guardImportCandidatesDrop(rt relevo.Runtime, candidates json.RawMessage, force bool) error {
+	if force {
+		return nil
+	}
+	oldDoc, err := storedCandidatesDoc(rt)
+	if err != nil {
+		return err
+	}
+	newDoc := config.Doc{}
+	for name, stored := range oldDoc {
+		newDoc[name] = stored
+	}
+	newDoc[config.Candidates] = candidates
+	drops := config.DroppedActorCandidates(oldDoc, newDoc)
+	if len(drops) == 0 {
+		return nil
+	}
+	return fail(codeConflict, "%s; pass --force to drop it", drops[0])
 }
 
 // importSections names the sections a document carries, in config.Sections
