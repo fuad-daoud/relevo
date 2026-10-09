@@ -1,5 +1,8 @@
 // Delivers `relevo push` lines into the MasterMind's session.
+import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
+
+import type { StatusDoc, StatusRow } from '../types'
 
 type Engine = EngineInterface
 
@@ -14,6 +17,7 @@ type Io = {
   now: () => Promise<number>
   sleep: (ms: number) => Promise<void>
   every: Engine['clock']['every']
+  store: (doc: StatusDoc) => Promise<void>
 }
 
 type PushEvent = {
@@ -35,7 +39,13 @@ type Ctx = {
   delivered: Set<string>
 }
 
+const statusDoc = atom({ plugin: 'relevo', key: 'status' } as const, null)
+
 const RESOLVE_RETRY_MS = 10_000
+const POLL_MS = 5_000
+const POLL_SLOW_MS = 30_000
+const POLL_FAILS_BEFORE_SLOW = 3
+const MAX_INBOX = 3
 // Restart delay doubles from the floor to the cap; a child that ran for
 // STABLE_MS counts as healthy and drops the delay back to the floor.
 const BACKOFF_MIN_MS = 1_000
@@ -70,21 +80,62 @@ function parseEvent(line: string): PushEvent | undefined {
   return undefined
 }
 
-async function resolveIdentity(
-  io: Io,
-  sessionEnv: Record<string, string>,
-): Promise<string | undefined> {
+function parseDoc(stdout: string): StatusDoc | undefined {
   try {
-    const r = await io.run(['relevo', 'status', '--line', '--json'], {
-      env: sessionEnv,
-    })
-    if (r.exitCode !== 0) return undefined
-    const id = (JSON.parse(r.stdout) as { mastermind?: { id?: unknown } })
-      .mastermind?.id
-    return typeof id === 'string' && id !== '' ? id : undefined
+    const v = JSON.parse(stdout) as Partial<StatusDoc> | null
+    const id = v?.mastermind?.id
+    if (typeof id !== 'string' || id === '') return undefined
+    return {
+      ...v,
+      mastermind: { id, name: typeof v?.mastermind?.name === 'string' ? v.mastermind.name : id },
+      now: typeof v?.now === 'string' ? v.now : '',
+      rows: Array.isArray(v?.rows) ? v.rows : [],
+    }
   } catch {
     return undefined
   }
+}
+
+async function fetchDoc(io: Io, env: Record<string, string>): Promise<StatusDoc | undefined> {
+  try {
+    const r = await io.run(['relevo', 'status', '--line', '--json'], { env })
+    return r.exitCode === 0 ? parseDoc(r.stdout) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// A failed or stale poll keeps the last stored document. After
+// POLL_FAILS_BEFORE_SLOW failures in a row the next try waits POLL_SLOW_MS,
+// until one succeeds.
+function startPoller(ctx: Ctx): void {
+  let polling = false
+  let fails = 0
+  let nextAt = 0
+  const tick = async (): Promise<void> => {
+    if (polling) return
+    polling = true
+    try {
+      const now = await ctx.io.now()
+      if (now < nextAt) return
+      const doc = await fetchDoc(ctx.io, ctx.env)
+      if (doc !== undefined) {
+        await ctx.io.store(doc)
+        fails = 0
+        nextAt = 0
+        return
+      }
+      fails++
+      if (fails >= POLL_FAILS_BEFORE_SLOW) nextAt = now + POLL_SLOW_MS
+    } catch (err) {
+      ctx.io.log(`relevo status: poll failed: ${String(err)}`)
+    } finally {
+      polling = false
+    }
+  }
+  ctx.io.every(POLL_MS, () => {
+    void tick()
+  })
 }
 
 // A refusal is a returned drop/deny, never a throw; both count as not delivered.
@@ -196,10 +247,12 @@ async function start(ctx: Ctx): Promise<void> {
     if (resolving) return
     resolving = true
     try {
-      const id = await resolveIdentity(ctx.io, sessionEnv)
-      if (id === undefined) return
+      const doc = await fetchDoc(ctx.io, sessionEnv)
+      if (doc === undefined) return
       timer.cancel()
-      ctx.env = { ...sessionEnv, RELEVO_MASTERMIND: id }
+      ctx.env = { ...sessionEnv, RELEVO_MASTERMIND: doc.mastermind.id }
+      await ctx.io.store(doc)
+      startPoller(ctx)
       void supervise(ctx)
     } finally {
       resolving = false
@@ -209,6 +262,75 @@ async function start(ctx: Ctx): Promise<void> {
     void attempt()
   })
   await attempt()
+}
+
+// Waiting on the MasterMind is the server's `tone`, not `needs_you`/`report_in`:
+// a DONE-displayed row with an unconsumed report has tone `report` but
+// `needs_you` false, and `tone` is the one signal the status line itself draws.
+function isWaiting(r: StatusRow): boolean {
+  return r.tone === 'needs' || r.tone === 'report'
+}
+
+function parseTs(ts: unknown): number {
+  if (typeof ts !== 'string') return Number.NaN
+  return Date.parse(ts.replace(/(\.\d{3})\d+/, '$1'))
+}
+
+// Oldest `last_ts` first; a row with no readable time sorts last.
+function pickInbox(rows: StatusRow[], limit: number): { shown: StatusRow[]; more: number; rest: StatusRow[] } {
+  const key = (r: StatusRow): number => {
+    const t = parseTs(r.last_ts)
+    return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t
+  }
+  const waiting = rows
+    .filter(isWaiting)
+    .sort((a, b) => (key(a) === key(b) ? a.name.localeCompare(b.name) : key(a) < key(b) ? -1 : 1))
+  const shown = waiting.slice(0, limit)
+  const rest = rows.filter((r) => !isWaiting(r))
+  return { shown, more: waiting.length - shown.length, rest }
+}
+
+function age(row: StatusRow, now: string): string {
+  const s = Math.floor((parseTs(now) - parseTs(row.last_ts)) / 1000)
+  if (Number.isNaN(s) || s < 0) return '--'
+  if (s < 60) return `${s}s`
+  if (s < 3600) return `${Math.floor(s / 60)}m`
+  if (s < 86400) return `${Math.floor(s / 3600)}h`
+  return `${Math.floor(s / 86400)}d`
+}
+
+function detail(r: StatusRow): string {
+  if (r.tone === 'report') {
+    const l = r.live
+    return l ? `delivered · +${l.added}/-${l.removed} in ${l.files}` : 'delivered'
+  }
+  return r.reason
+}
+
+function inboxLabel(r: StatusRow, now: string): string {
+  const head = `● ${r.name} r${r.round}  ${r.status} · ${age(r, now)}`
+  const d = detail(r)
+  return d === '' ? head : `${head}  ${d}`
+}
+
+function chainText(r: StatusRow): string {
+  const p = r.chain_progress
+  if (p && p.total > 0) {
+    const done = Math.max(0, Math.min(p.done, p.total))
+    const bar = '■'.repeat(done) + '□'.repeat(p.total - done)
+    return `${bar} ${p.done}/${p.total}${p.phase ? ` ${p.phase}` : ''}`
+  }
+  return r.chain ?? ''
+}
+
+function railWord(r: StatusRow): string {
+  if (r.chain) return chainText(r)
+  return r.activity ? r.activity : r.status
+}
+
+function fit(text: string, cols: number): string {
+  if (cols <= 0) return ''
+  return text.length <= cols ? text : `${text.slice(0, Math.max(0, cols - 1))}…`
 }
 
 export const register: Register = (on) => {
@@ -225,6 +347,7 @@ export const register: Register = (on) => {
       now: () => $.clock.now(),
       sleep: (ms) => $.clock.sleep(ms),
       every: (ms, fn) => $.clock.every(ms, fn),
+      store: (doc) => update($, statusDoc, () => doc),
     }
     ctx.env = { CLAUDE_CODE_SESSION_ID: await $.session.id() }
     void start(ctx)
@@ -257,5 +380,56 @@ export const register: Register = (on) => {
       })
     }
     return result
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const doc = await read($, statusDoc)
+    if (e.props.hasSurvey || doc === null || doc.rows.length === 0) return next(e)
+
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const cols = e.props.bodyColumns
+    const { shown, more, rest } = pickInbox(doc.rows, Math.max(0, Math.min(MAX_INBOX, e.props.maxRows - 2)))
+    let digit = 0
+    const press = (name: string) => () => {
+      void $.prompt.fill({ text: `relevo show ${name} --report` })
+    }
+    const button = (r: StatusRow, label: string, room: number) => {
+      digit++
+      const hotkey = digit <= 9 ? String(digit) : undefined
+      const text = hotkey === undefined ? label : `${hotkey}: ${label}`
+      return h(Button, { key: `b${r.name}`, plain: true, hotkey, label: fit(text, room), onPress: press(r.name) })
+    }
+
+    const inbox = shown.map((r) => button(r, inboxLabel(r, doc.now), cols))
+    const rail: ReturnType<typeof button>[] = []
+    let used = fit(`relevo · ${doc.mastermind.name}`, cols).length
+    let hidden = 0
+    for (const r of rest) {
+      const label = `○ ${r.name} ${railWord(r)}`
+      const room = cols - used - 2
+      if (room < 4) {
+        hidden++
+        continue
+      }
+      const b = button(r, label, room)
+      used += 2 + Math.min(label.length + (digit <= 9 ? 3 : 0), room)
+      rail.push(b)
+    }
+
+    const head = h(Text, { wrap: 'truncate-end' }, fit(`relevo · ${doc.mastermind.name}`, cols))
+    const railRow = h(
+      Box,
+      { flexDirection: 'row', gap: 2 },
+      head,
+      ...rail,
+      hidden > 0 ? h(Text, { wrap: 'truncate-end' }, `+${hidden}`) : null,
+    )
+    return h(
+      Box,
+      { flexDirection: 'column' },
+      ...inbox,
+      more > 0 ? h(Text, { wrap: 'truncate-end' }, fit(`+${more} more · /relevo:status`, cols)) : null,
+      railRow,
+    )
   })
 }

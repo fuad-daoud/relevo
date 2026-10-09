@@ -8,6 +8,10 @@ type Opts = {
   submit?: (text: string) => unknown
   deny?: boolean
   ackExit?: () => number
+  // Overrides the status answer: a document, or 'fail' for a non-zero exit.
+  doc?: () => object | 'fail'
+  // Holds a poll (a status run under the resolved env) until it settles.
+  hold?: () => Promise<void>
 }
 
 // Fakes sit beneath the plugin: every call it makes lands here and is recorded.
@@ -21,6 +25,7 @@ function fakes(on: any, opts: Opts = {}) {
   const submits: string[] = []
   const appends = () => (session?.appended() ?? []).map((r: any) => r.message.content[0].text)
   const spawns: any[] = []
+  const fills: string[] = []
   const pipes: { push: (t: string) => void; end: () => void }[] = []
 
   on('session.id', () => ({ value: 'sess-1' }))
@@ -29,10 +34,16 @@ function fakes(on: any, opts: Opts = {}) {
     log.push(e.text)
     return { value: undefined }
   })
-  on('process.run', ($: any, e: any) => {
+  on('process.run', async ($: any, e: any) => {
     runs.push({ argv: e.argv, env: e.init?.env })
     if (e.argv[1] === 'status') {
       if (opts.status === 'reject') throw new Error('ENOENT')
+      if (e.init?.env?.RELEVO_MASTERMIND) await opts.hold?.()
+      if (opts.doc) {
+        const d = opts.doc()
+        if (d === 'fail') return { value: { ...RUN_OK, exitCode: 1 } }
+        return { value: { ...RUN_OK, stdout: JSON.stringify(d) } }
+      }
       return { value: opts.status === 'fail' ? { ...RUN_OK, exitCode: 1 } : STATUS_OK }
     }
     return { value: { ...RUN_OK, exitCode: opts.ackExit?.() ?? 0 } }
@@ -63,18 +74,23 @@ function fakes(on: any, opts: Opts = {}) {
       })
     }
   })
+  on('prompt.fill', ($: any, e: any) => {
+    fills.push(e.text)
+    return { isFilled: true, draft: e.text }
+  })
   on('prompt.submit', async ($: any, e: any) => {
     const out = await (opts.submit?.(e.text) ?? { text: e.text })
     if (!(out as any).drop) submits.push(e.text)
     return out
   })
   if (opts.deny) on('session.append', () => ({ deny: 'refused' }))
+  on('ui.render', () => ({ type: 'Text', props: {}, children: ['engine row'] }))
   on('turn.start', ($: any, e: any) => ({ turnId: e.turnId }))
   on('turn.step', async function* ($: any, e: any) {
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [] }
   })
   on('turn.complete', () => ({ text: '' }))
-  return { clock, log, runs, acks, statuses, submits, appends, spawns, pipes }
+  return { clock, log, runs, acks, statuses, fills, submits, appends, spawns, pipes }
 }
 
 const line = (o: object) => JSON.stringify(o) + '\n'
@@ -115,7 +131,7 @@ describe('identity', () => {
     expect(f.spawns[0].input).toBeUndefined()
     expect(f.spawns[0].env).toEqual({ RELEVO_MASTERMIND: 'mm-1', CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'sess-1' })
     await f.clock.advance(60_000)
-    expect(f.statuses()).toHaveLength(1)
+    expect(f.statuses().filter((r) => r.env?.RELEVO_MASTERMIND === undefined)).toHaveLength(1)
   })
 })
 
@@ -410,4 +426,201 @@ describe('state nudge wording', () => {
     await f.clock.settle()
     expect(f.submits).toEqual(['relevo: the report for b1 r2 is above -- act on it'])
   })
+})
+
+const NOW = '2026-10-09T12:00:00Z'
+const row = (name: string, o: object = {}) => ({
+  name,
+  round: 1,
+  status: 'working',
+  tone: 'phase',
+  reason: '',
+  last_ts: '2026-10-09T11:00:00Z',
+  ...o,
+})
+const mkdoc = (rows: object[]) => ({ mastermind: { id: 'mm-1', name: 'main' }, now: NOW, rows })
+const PROPS = { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 80, scroll: { bodyRows: 9 }, view: {} }
+const SURFACES = ['terminal', 'desktop'] as const
+const mount = ($: any, surface: string, props: object = {}) =>
+  $.ui.mount({ plugin: 'relevo', surface, component: 'AbovePrompt', props: { ...PROPS, ...props } })
+const labels = async (ui: any) => (await ui.findAll({ type: 'Button' })).map((b: any) => b.text as string)
+const texts = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((b: any) => b.text as string)
+
+describe('poller', () => {
+  test('first poll comes 5 s after resolve, with the resolved env', async ($, on) => {
+    const f = fakes(on, { doc: () => mkdoc([]) })
+    await startSession($)
+    await f.clock.settle()
+    const polls = () => f.statuses().filter((r) => r.env?.RELEVO_MASTERMIND === 'mm-1')
+    expect(polls()).toHaveLength(0)
+    await f.clock.advance(5_000)
+    expect(polls()).toHaveLength(1)
+    await f.clock.advance(5_000)
+    expect(polls()).toHaveLength(2)
+  })
+
+  test('no poll before identity resolves', async ($, on) => {
+    const f = fakes(on, { status: 'fail' })
+    await startSession($)
+    await f.clock.advance(4_000)
+    expect(f.statuses().every((r) => r.env?.RELEVO_MASTERMIND === undefined)).toBe(true)
+  })
+
+  test('backs off to 30 s after 3 failures and resets on one success', async ($, on) => {
+    let healthy = true
+    const f = fakes(on, { doc: () => (healthy ? mkdoc([]) : 'fail') })
+    await startSession($)
+    await f.clock.settle()
+    const polls = () => f.statuses().filter((r) => r.env?.RELEVO_MASTERMIND === 'mm-1').length
+    healthy = false
+    await f.clock.advance(15_000)
+    expect(polls()).toBe(3)
+    await f.clock.advance(25_000)
+    expect(polls()).toBe(3)
+    healthy = true
+    await f.clock.advance(5_000)
+    expect(polls()).toBe(4)
+    await f.clock.advance(5_000)
+    expect(polls()).toBe(5)
+  })
+
+  test('does not overlap a poll still in flight', async ($, on) => {
+    let release: (() => void) | undefined
+    const f = fakes(on, {
+      doc: () => mkdoc([]),
+      hold: () =>
+        new Promise<void>((r) => {
+          release = r
+        }),
+    })
+    await startSession($)
+    await f.clock.settle()
+    await f.clock.advance(5_000)
+    await f.clock.advance(10_000)
+    expect(f.statuses().filter((r) => r.env?.RELEVO_MASTERMIND === 'mm-1').length).toBe(1)
+    release?.()
+  })
+})
+
+describe('band', () => {
+  for (const surface of SURFACES) {
+    test(`${surface}: one waiting and one running draw one inbox row and one rail item, never both`, async ($, on) => {
+      const f = fakes(on, {
+        doc: () =>
+          mkdoc([
+            row('w1', { tone: 'needs', status: 'NEEDS YOU', reason: 'gate hit', round: 2, last_ts: '2026-10-09T11:55:00Z' }),
+            row('r1', { status: 'prompt sent', activity: 'working' }),
+          ]),
+      })
+      await startSession($)
+      await f.clock.settle()
+      const ui = await mount($, surface)
+      const all = await labels(ui)
+      expect(all).toHaveLength(2)
+      expect(all[0]).toBe('1: ● w1 r2  NEEDS YOU · 5m  gate hit')
+      expect(all[1]).toBe('2: ○ r1 working')
+      expect(all.filter((l) => l.includes('w1'))).toHaveLength(1)
+      expect(all.filter((l) => l.includes('r1'))).toHaveLength(1)
+      expect(await texts(ui)).toContain('relevo · main')
+    })
+  }
+
+  test('calm: every binding sits on the rail, status is the word without activity', async ($, on) => {
+    const f = fakes(on, { doc: () => mkdoc([row('a', { status: 'quiet 2m' }), row('b')]) })
+    await startSession($)
+    await f.clock.settle()
+    const ui = await mount($, 'terminal')
+    expect(await labels(ui)).toEqual(['1: ○ a quiet 2m', '2: ○ b working'])
+  })
+
+  test('inbox shows the oldest three first, then +N more', async ($, on) => {
+    const waiting = ['d', 'c', 'b', 'a', 'e'].map((n, i) =>
+      row(n, { tone: 'report', status: 'REPORT IN', last_ts: `2026-10-09T11:0${5 - i}:00Z` }),
+    )
+    const f = fakes(on, { doc: () => mkdoc(waiting) })
+    await startSession($)
+    await f.clock.settle()
+    const ui = await mount($, 'terminal')
+    const all = await labels(ui)
+    expect(all.map((l) => l.split(' ')[2])).toEqual(['e', 'a', 'b'])
+    expect(await texts(ui)).toContain('+2 more · /relevo:status')
+  })
+
+  test('a report row names the delivered diff from live', async ($, on) => {
+    const f = fakes(on, {
+      doc: () =>
+        mkdoc([row('w', { tone: 'report', status: 'REPORT IN', live: { files: 3, added: 10, removed: 2 } })]),
+    })
+    await startSession($)
+    await f.clock.settle()
+    expect((await labels(await mount($, 'terminal')))[0]).toBe('1: ● w r1  REPORT IN · 1h  delivered · +10/-2 in 3')
+  })
+
+  test('chain row draws the progress bar when present, the chain string when not', async ($, on) => {
+    const f = fakes(on, {
+      doc: () =>
+        mkdoc([
+          row('c1', { chain: 'chain x · plan 2/4', chain_progress: { done: 2, total: 4, phase: 'reviewing' } }),
+          row('c2', { chain: 'chain y · plan 1/3 · building' }),
+        ]),
+    })
+    await startSession($)
+    await f.clock.settle()
+    expect(await labels(await mount($, 'terminal'))).toEqual([
+      '1: ○ c1 ■■□□ 2/4 reviewing',
+      '2: ○ c2 chain y · plan 1/3 · building',
+    ])
+  })
+
+  test('a failed poll keeps the last document', async ($, on) => {
+    let healthy = true
+    const f = fakes(on, { doc: () => (healthy ? mkdoc([row('a')]) : 'fail') })
+    await startSession($)
+    await f.clock.settle()
+    healthy = false
+    await f.clock.advance(5_000)
+    expect(await labels(await mount($, 'terminal'))).toEqual(['1: ○ a working'])
+  })
+
+  const passthrough: [string, object | undefined, object][] = [
+    ['no bindings', { doc: () => mkdoc([]) }, {}],
+    ['a survey holds the band', { doc: () => mkdoc([row('a')]) }, { hasSurvey: true }],
+    ['relevo is missing', { status: 'reject' }, {}],
+  ]
+  for (const [name, opts, props] of passthrough) {
+    test(`passthrough: ${name} draws nothing of ours`, async ($, on) => {
+      const f = fakes(on, opts as Opts)
+      await startSession($)
+      await f.clock.settle()
+      for (const surface of SURFACES) {
+        const ui = await mount($, surface, props)
+        expect(await labels(ui)).toHaveLength(0)
+        expect(await texts(ui)).toEqual(['engine row'])
+      }
+    })
+  }
+
+  test('a narrow band truncates and never exceeds bodyColumns', async ($, on) => {
+    const f = fakes(on, {
+      doc: () => mkdoc([row('w', { tone: 'needs', status: 'NEEDS YOU', reason: 'a very long halt reason indeed' })]),
+    })
+    await startSession($)
+    await f.clock.settle()
+    for (const l of await labels(await mount($, 'terminal', { bodyColumns: 20 }))) {
+      expect(l.length).toBeLessThanOrEqual(20)
+    }
+  })
+
+  for (const surface of SURFACES) {
+    test(`${surface}: a press fills the draft with relevo show and sends nothing`, async ($, on) => {
+      const f = fakes(on, { doc: () => mkdoc([row('w', { tone: 'needs', status: 'NEEDS YOU' }), row('r')]) })
+      await startSession($)
+      await f.clock.settle()
+      const ui = await mount($, surface)
+      await ui.press({ key: 'bw' })
+      await ui.press({ key: 'br' })
+      expect(f.fills).toEqual(['relevo show w --report', 'relevo show r --report'])
+      expect(f.submits).toHaveLength(0)
+    })
+  }
 })
