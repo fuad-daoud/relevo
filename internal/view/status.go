@@ -107,8 +107,14 @@ type BindingStatus struct {
 	// Populated only for store.StateBroken, which covers three situations
 	// whose correct recoveries differ -- and in one of which the obvious
 	// recovery orphans a builder that is still running.
-	Detail string     `json:"detail,omitempty"`
-	Last   *LastEvent `json:"last,omitempty"`
+	Detail string `json:"detail,omitempty"`
+	// Question is the first line of the newest to-mastermind question, capped
+	// as Waiting lines are; PromptPath is the staged prompt of the round the
+	// newest payload answers. Both feed the statusline's next move and stay
+	// out of the pinned status document.
+	Question   string     `json:"-"`
+	PromptPath string     `json:"-"`
+	Last       *LastEvent `json:"last,omitempty"`
 	// LastSeq is the Seq of the newest log entry; 0 when the log is empty.
 	// No omitempty: a consumer reads 0 as "nothing yet".
 	LastSeq int `json:"last_seq"`
