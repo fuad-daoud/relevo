@@ -108,3 +108,11 @@ func haltLineOf(b BindingStatus, tone string) string {
 	}
 	return b.Waiting.Line
 }
+
+// withNextMove fills the row's next move and halt line, the two fields a
+// row waiting on the MasterMind carries for the band.
+func withNextMove(row StatusLineRow, b BindingStatus, tone string) StatusLineRow {
+	row.Next = nextOf(b, tone)
+	row.Halt = haltLineOf(b, tone)
+	return row
+}

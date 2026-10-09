@@ -566,7 +566,7 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 	} else if b.Detail != "" {
 		reason = b.Detail
 	}
-	return StatusLineRow{
+	return withNextMove(StatusLineRow{
 		Name:        b.Name,
 		Round:       b.Round,
 		Display:     b.Display,
@@ -589,7 +589,5 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 		Tone:        tone,
 		Reason:      reason,
 		Activity:    ActivityWord(b),
-		Next:        nextOf(b, tone),
-		Halt:        haltLineOf(b, tone),
-	}
+	}, b, tone)
 }
