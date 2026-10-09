@@ -260,6 +260,11 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// leave it growing for exactly as long as it stays idle.
 	d.safely("outbox truncate", func() { d.truncateOutbox() })
 
+	// The idle-tick sync runs before the no-bindings return too: a machine with
+	// no binding still pulls the others' work. It only queues an attempt, so the
+	// network never holds up the binding phases; their writes go out next tick.
+	d.safely("turso sync", func() { d.idleSync(ctx) })
+
 	if len(bindings) == 0 {
 		return nil
 	}
@@ -300,11 +305,6 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	d.safely("ingest", func() { d.ingestLiveBindings(ctx, fresh) })
 
 	d.safely("refresh", func() { d.refreshRelease(ctx) })
-
-	// The idle-tick sync. It sits with the other non-binding phases, where
-	// safely contains a failure to the phase and the next tick tries again,
-	// and it is a no-op on a machine with no sync wired at all.
-	d.safely("turso sync", func() { d.idleSync(ctx) })
 
 	return nil
 }

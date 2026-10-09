@@ -381,3 +381,18 @@ func TestSyncUnopenableRemoteIsRecordedAndReadsBehind(t *testing.T) {
 		t.Errorf("token after an unopenable remote = %q, want %q", got, relevosync.TokenBehind)
 	}
 }
+
+// TestSyncTickWithNoBindingStillPulls pins that the idle window is on the tick
+// for a machine with no binding of its own: such a machine still has to pull
+// what the other machines wrote, so the no-bindings return must not skip it.
+func TestSyncTickWithNoBindingStillPulls(t *testing.T) {
+	t.Parallel()
+	f := newLiveFixture(t)
+	if err := f.d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	waitSyncIdle(t, f.d)
+	if f.log.pulls.Load() == 0 {
+		t.Error("a tick on a machine with no binding started no sync attempt")
+	}
+}
