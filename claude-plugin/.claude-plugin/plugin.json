@@ -10,6 +10,7 @@
   "supportUrl": "https://github.com/fuad-daoud/relevo/issues",
   "privacyPolicyUrl": "https://relevo.sh/privacy",
   "license": "MIT",
+  "types": "./types/index.d.ts",
   "mcpServers": {
     "relevo": {"command": "${CLAUDE_PLUGIN_ROOT}/scripts/mcp.sh"}
   }
