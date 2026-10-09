@@ -207,15 +207,18 @@ func TestWatchDaemonIdleStaysWhileBusyAndReturnsOnCancel(t *testing.T) {
 }
 
 // TestDaemonActivityReadsTheSyncMarker pins the sampler's sync-on field against
-// a real store: the machine-local enabled mark decides it, and a machine that
-// never turned sync on is not kept alive.
+// a real store: the machine-local enabled mark decides it, a machine that never
+// turned sync on is not kept alive, and a marker the sampler cannot read keeps
+// the daemon up rather than letting it exit on a sample it never took.
 func TestDaemonActivityReadsTheSyncMarker(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		on   bool
+		name    string
+		on      bool
+		corrupt bool
 	}{
-		{"sync on", true},
-		{"sync off", false},
+		{"sync on", true, false},
+		{"sync off", false, false},
+		{"unreadable marker", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -228,9 +231,14 @@ func TestDaemonActivityReadsTheSyncMarker(t *testing.T) {
 			if err != nil {
 				t.Fatalf("LocalHandle: %v", err)
 			}
-			if tc.on {
+			if tc.on && !tc.corrupt {
 				if err := relevosync.MarkEnabled(local, true, time.Now()); err != nil {
 					t.Fatalf("MarkEnabled: %v", err)
+				}
+			}
+			if tc.corrupt {
+				if err := local.KVPut(relevosync.KeyLastAttempt, []byte(`"not an attempt"`)); err != nil {
+					t.Fatalf("KVPut: %v", err)
 				}
 			}
 			a := daemonActivityNow(root, nil, s)

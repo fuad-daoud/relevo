@@ -217,6 +217,28 @@ func TestSyncPullWindowIsHotAfterAppliedRowsAndColdOtherwise(t *testing.T) {
 	}
 }
 
+// TestSyncHotWindowCoolsAfterHotSince pins that the hot window ends: a machine
+// that applied rows once must not pull every hotWindow for the rest of its life.
+func TestSyncHotWindowCoolsAfterHotSince(t *testing.T) {
+	t.Parallel()
+	f := newLiveFixture(t)
+	f.d.syncMu.Lock()
+	defer f.d.syncMu.Unlock()
+	f.d.live.appliedAt = baseTime
+	for _, tc := range []struct {
+		after time.Duration
+		want  time.Duration
+	}{
+		{hotSince - time.Second, hotWindow},
+		{hotSince, coldWindow},
+		{24 * time.Hour, coldWindow},
+	} {
+		if got := f.d.pullWindowLocked(baseTime.Add(tc.after)); got != tc.want {
+			t.Errorf("window %v after rows applied = %v, want %v", tc.after, got, tc.want)
+		}
+	}
+}
+
 func TestSyncAppliedRowsTurnTheWindowHot(t *testing.T) {
 	t.Parallel()
 	f := newLiveFixture(t)
