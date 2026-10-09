@@ -248,7 +248,7 @@ func (t *Tx) planAdopt(p RenameRepoParams, pl *renamePlan) error {
 }
 
 // cwdUnderAny reports whether cwd is one of the prefixes or beneath one, by
-// whole path components: /a/relay matches /a/relay/x and not /a/relay-plugin.
+// whole path components: /a/oldname matches /a/oldname/x and not /a/oldname-plugin.
 func cwdUnderAny(cwd string, prefixes []string) bool {
 	for _, prefix := range prefixes {
 		prefix = strings.TrimRight(filepath.Clean(prefix), string(filepath.Separator))

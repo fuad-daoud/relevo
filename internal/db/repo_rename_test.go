@@ -215,11 +215,11 @@ func TestRenameRepoCarriesConsentWhenTargetUnset(t *testing.T) {
 }
 
 func TestAdoptCwdPrefixMatchesWholeComponents(t *testing.T) {
-	prefixes := []string{"/home/f/projects/relay/"}
+	prefixes := []string{"/home/f/projects/oldname/"}
 	for cwd, want := range map[string]bool{
-		"/home/f/projects/relay":             true,
-		"/home/f/projects/relay/x":           true,
-		"/home/f/projects/relay-plugin-lock": false,
+		"/home/f/projects/oldname":             true,
+		"/home/f/projects/oldname/x":           true,
+		"/home/f/projects/oldname-plugin-lock": false,
 		"/home/f/projects":                   false,
 	} {
 		if got := cwdUnderAny(cwd, prefixes); got != want {
@@ -230,13 +230,13 @@ func TestAdoptCwdPrefixMatchesWholeComponents(t *testing.T) {
 
 func TestRenameRepoAdoptsRepolessBindingsUnderPrefix(t *testing.T) {
 	f := seedRenameFixture(t)
-	for name, cwd := range map[string]string{"in": "/p/relay/x", "sibling": "/p/relay-other", "out": "/q"} {
+	for name, cwd := range map[string]string{"in": "/p/oldname/x", "sibling": "/p/oldname-other", "out": "/q"} {
 		b := newTestBinding(name, repoSeenAt.Add(time.Hour))
 		b.CWD = cwd
 		upsertBinding(t, f.d, b)
 	}
 	p := renameParams()
-	p.AdoptCWD = []string{"/p/relay"}
+	p.AdoptCWD = []string{"/p/oldname"}
 	c, err := f.d.RenameRepo(p)
 	if err != nil {
 		t.Fatalf("RenameRepo: %v", err)
@@ -279,12 +279,12 @@ func TestRenameRepoLeavesOtherOriginRows(t *testing.T) {
 	f := seedRenameFixture(t)
 	execRaw(t, f.d, `INSERT INTO repo (id, origin, origin_url, first_seen) VALUES ('OTHERREPO', 'OTHER', ?, '2026-10-01T00:00:00Z')`, oldRepoURL)
 	execRaw(t, f.d, `INSERT INTO binding (id, origin, name, repo_id, ticket, cwd, builder_mode, created_at, ingest_source)
-		VALUES ('OTHERBIND', 'OTHER', 'ob', 'OTHERREPO', 'o/old_repo#1', '/p/relay', 'headless', '2026-10-01T00:00:00Z', 'live')`)
+		VALUES ('OTHERBIND', 'OTHER', 'ob', 'OTHERREPO', 'o/old_repo#1', '/p/oldname', 'headless', '2026-10-01T00:00:00Z', 'live')`)
 	insertChain(t, f.d, "oc", "OTHER", "o/old_repo#2")
 	putOtherRecord(t, f.d)
 	before := dumpWhere(t, f.d, "OTHER")
 	p := renameParams()
-	p.AdoptCWD = []string{"/p/relay"}
+	p.AdoptCWD = []string{"/p/oldname"}
 	if _, err := f.d.RenameRepo(p); err != nil {
 		t.Fatalf("RenameRepo: %v", err)
 	}
@@ -355,13 +355,13 @@ func TestRenameRepoDryRunWritesNothing(t *testing.T) {
 	insertChain(t, f.d, "c1", renameOrigin, "o/old_repo#11")
 	putRecord(t, f.d, "r1", recordBefore)
 	b := newTestBinding("lonely", repoSeenAt.Add(time.Hour))
-	b.CWD = "/p/relay/x"
+	b.CWD = "/p/oldname/x"
 	upsertBinding(t, f.d, b)
 	before := dumpDB(t, f.d)
 
 	p := renameParams()
 	p.DryRun = true
-	p.AdoptCWD = []string{"/p/relay"}
+	p.AdoptCWD = []string{"/p/oldname"}
 	c, err := f.d.RenameRepo(p)
 	if err != nil {
 		t.Fatalf("RenameRepo: %v", err)
