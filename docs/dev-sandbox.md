@@ -1,9 +1,20 @@
 # Dev sandboxes as separate Unix users
 
-A dev sandbox is a real Unix account, not a directory under your own home.
-`rv-<name>` gets its own home at `/home/rv-<name>`, its own clone, its own
-state root, its own config, its own systemd user unit and its own harness
-credentials. `scripts/relevo-dev-user.sh` creates and destroys them.
+The default sandbox needs no root at all: `scripts/relevo-sandbox.sh` points
+`XDG_STATE_HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`,
+`CLAUDE_CONFIG_DIR` and `CODEX_HOME` at a directory under
+`~/.local/share/relevo-sandboxes`, and
+[env-sandbox.md](env-sandbox.md) has the recipe. It isolates paths, not uids.
+
+Reach for the per-user flow below when the test needs uid separation -- two
+sandboxes that must not see each other's files through permissions at all, or
+harness logins that must not be shareable. It costs an account, a systemd unit
+and root, so it is not the default.
+
+The per-user flow is this: `rv-<name>` is a real Unix account with its own home at
+`/home/rv-<name>`, its own clone, its own state root, its own config, its own
+systemd user unit and its own harness credentials.
+`scripts/relevo-dev-user.sh` creates and destroys them.
 
 Two sandboxes cannot collide on a branch, a socket, a port or a login, because
 none of those are shared.
