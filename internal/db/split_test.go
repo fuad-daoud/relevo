@@ -306,6 +306,97 @@ func TestSplitIsOneTime(t *testing.T) {
 	}
 }
 
+// TestSplitDonePinsTheGuardRead pins the read the re-exec guard stands on:
+// false before the pass, true once the marker is written, and false on a
+// handle with no local file.
+func TestSplitDonePinsTheGuardRead(t *testing.T) {
+	d, dir := openSplitTest(t)
+	if d.SplitDone() {
+		t.Error("SplitDone = true before the pass, want false")
+	}
+	seedSplitFixture(t, d)
+	if _, _, err := SplitOnce(d, dir, splitNow); err != nil {
+		t.Fatalf("SplitOnce: %v", err)
+	}
+	if !d.SplitDone() {
+		t.Error("SplitDone = false after the pass, want true")
+	}
+	var nilDB *DB
+	if nilDB.SplitDone() {
+		t.Error("SplitDone on a nil handle = true, want false")
+	}
+}
+
+// TestSplitKeepsLocalRowsOverDifferingStrays pins the conflict rule: a
+// shared stray whose local counterpart already holds different content is
+// converged away without overwriting the live row, and the pass counts and
+// names it. A stray carrying the same content under a new stamp is not a
+// conflict.
+func TestSplitKeepsLocalRowsOverDifferingStrays(t *testing.T) {
+	d, dir := openSplitTest(t)
+	seedSplitFixture(t, d)
+	if _, _, err := SplitOnce(d, dir, splitNow); err != nil {
+		t.Fatalf("SplitOnce: %v", err)
+	}
+
+	execShared := func(query string, args ...any) {
+		t.Helper()
+		if _, err := d.sqlDB.Exec(query, args...); err != nil {
+			t.Fatalf("%s: %v", query, err)
+		}
+	}
+	execShared(`INSERT OR REPLACE INTO secret (name, value, updated_at) VALUES (?, ?, ?)`,
+		"client.key", []byte("stray-bytes"), "2026-10-09T09:00:00.000Z")
+	execShared(`INSERT OR REPLACE INTO secret (name, value, updated_at) VALUES (?, ?, ?)`,
+		"typesafe", []byte("token"), "2026-10-09T10:00:00.000Z")
+	execShared(`INSERT OR REPLACE INTO kv (key, value_json, updated_at) VALUES (?, ?, ?)`,
+		"daemon", `{"pid":7}`, "2026-10-09T09:00:00.000Z")
+
+	stats, ran, err := SplitOnce(d, dir, splitNow.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("second SplitOnce: %v", err)
+	}
+	if !ran {
+		t.Error("second run reported ran = false, want true while strays wait")
+	}
+	if stats.Conflicts != 2 {
+		t.Errorf("conflicts = %d, want 2 (client.key and daemon)", stats.Conflicts)
+	}
+	wantKeys := []string{"secret/client.key", "kv/daemon"}
+	if len(stats.ConflictKeys) != len(wantKeys) {
+		t.Fatalf("conflict keys = %v, want %v", stats.ConflictKeys, wantKeys)
+	}
+	for i, want := range wantKeys {
+		if stats.ConflictKeys[i] != want {
+			t.Errorf("conflict key %d = %q, want %q", i, stats.ConflictKeys[i], want)
+		}
+	}
+
+	// The live rows kept their values.
+	if value, ok, err := d.Local().SecretGet("client.key"); err != nil || !ok {
+		t.Fatalf("local client.key = %q, %t, %v; want the live row", value, ok, err)
+	} else if string(value) != "pem-bytes" {
+		t.Errorf("local client.key = %q, want the live bytes, not the stray", value)
+	}
+	if value, ok, err := d.Local().KVGet("daemon"); err != nil || !ok {
+		t.Fatalf("local daemon = %q, %t, %v; want the live document", value, ok, err)
+	} else if string(value) != `{"pid":42}` {
+		t.Errorf("local daemon = %q, want the live document, not the stray", value)
+	}
+
+	// The strays are converged away all the same.
+	if _, ok, err := d.SecretGet("client.key"); err != nil {
+		t.Fatalf("shared client.key read: %v", err)
+	} else if ok {
+		t.Error("the conflicting shared client.key is still in the shared file")
+	}
+	if _, ok, err := d.KVGet("daemon"); err != nil {
+		t.Fatalf("shared daemon read: %v", err)
+	} else if ok {
+		t.Error("the conflicting shared daemon key is still in the shared file")
+	}
+}
+
 // TestSplitTakesBackupFirst pins the ordering: the backup exists beside the
 // database and holds the rows before the move, and a backup that cannot be
 // written converts nothing and records nothing.

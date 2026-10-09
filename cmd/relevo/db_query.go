@@ -20,9 +20,10 @@ import (
 )
 
 // dbUsage is what a bare `relevo db` prints: the verb only dispatches
-// subcommands, and it has two of them.
+// subcommands, and it has three of them.
 const dbUsage = "usage: relevo db query '<SQL>' [--json] [--limit N] [--timeout D] [--max-bytes N]\n" +
-	"       relevo db sync <enable|disable|status|push|pull>\n\n" +
+	"       relevo db sync <enable|disable|status|push|pull>\n" +
+	"       relevo db rename-repo --from <url> --to <url> [--adopt-cwd <prefix>]... [--dry-run] [--json]\n\n" +
 	"One read-only statement: SELECT, WITH or a read-only PRAGMA. RECURSIVE is\n" +
 	"refused as a cheap first line, not as the guarantee: SQLite decides recursion\n" +
 	"structurally, so a runaway statement is ended by the owner, which refuses\n" +
@@ -32,7 +33,11 @@ const dbUsage = "usage: relevo db query '<SQL>' [--json] [--limit N] [--timeout 
 	"and read (default 10s, at most 12s).\n\n" +
 	"sync turns this machine's cloud sync on and off. It writes the machine-local\n" +
 	"file beside the database, so the daemon must not be running; run `relevo db\n" +
-	"sync --help` for the verbs.\n"
+	"sync --help` for the verbs.\n\n" +
+	"rename-repo folds the repo row of a renamed remote into the row of its new\n" +
+	"URL, or renames it, and rewrites the tickets and records that name the old\n" +
+	"owner/repo. --adopt-cwd P (repeatable) attaches repo-less bindings whose cwd\n" +
+	"is P or beneath it. --dry-run prints the counts and writes nothing.\n"
 
 // The db query defaults: a row cap and a byte cap that keep a broad SELECT
 // from filling memory, and a hold budget that leaves the owner's own open-lock
@@ -66,6 +71,7 @@ var dbQueryOut io.Writer
 // exactly those.
 func dbFlagSet(fs *flag.FlagSet) {
 	dbQueryFlagSet(fs)
+	dbRenameRepoOwnFlags(fs)
 }
 
 // dbQueryFlagValues holds the pointers db query parses into.
@@ -94,6 +100,8 @@ func cmdDB(args []string) error {
 		return cmdDBQuery(args[1:])
 	case len(args) > 0 && args[0] == "sync":
 		return cmdDBSync(args[1:])
+	case len(args) > 0 && args[0] == "rename-repo":
+		return cmdDBRenameRepo(args[1:])
 	}
 	fmt.Fprint(os.Stderr, dbUsage)
 	return errUsagePrinted

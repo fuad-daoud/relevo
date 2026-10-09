@@ -94,6 +94,9 @@ func (t *Tx) upsertRepoBy(r Repo) (string, error) {
 	case byURL != "":
 		return t.fillRepo(byURL, byURL, byDir, r)
 	case byDir != "":
+		if err := t.followRename(byDir, *r.OriginURL); err != nil {
+			return "", err
+		}
 		return t.fillRepo(byDir, byURL, byDir, r)
 	default:
 		return t.insertRepo(r)
@@ -156,6 +159,25 @@ func (t *Tx) fillRepo(id, urlRow, dirRow string, r Repo) (string, error) {
 		}
 	}
 	return id, nil
+}
+
+// followRename moves the row id holds to url when the row already carries a
+// different, non-null origin URL: the checkout is the same and its remote was
+// renamed. The caller has established that no row of this origin holds url, so
+// the unique index cannot refuse the write. A row with no URL is left to
+// fillRepo.
+func (t *Tx) followRename(id, url string) error {
+	var held sql.Null[string]
+	if err := t.queryRow(`SELECT origin_url FROM repo WHERE id = ?`, id).Scan(&held); err != nil {
+		return fmt.Errorf("db: upsert repo: read the row to rename: %w", mapBusy(err))
+	}
+	if !held.Valid || held.V == url {
+		return nil
+	}
+	if _, err := t.exec(`UPDATE repo SET origin = ?, origin_url = ? WHERE id = ?`, t.origin, url, id); err != nil {
+		return fmt.Errorf("db: upsert repo: follow the renamed remote: %w", mapBusy(err))
+	}
+	return nil
 }
 
 // insertRepo is the record whose two keys this origin holds neither of. The
