@@ -26,6 +26,7 @@ function fakes(on: any, opts: Opts = {}) {
   const appends = () => (session?.appended() ?? []).map((r: any) => r.message.content[0].text)
   const spawns: any[] = []
   const fills: string[] = []
+  const toasts: string[] = []
   const pipes: { push: (t: string) => void; end: () => void }[] = []
 
   on('session.id', () => ({ value: 'sess-1' }))
@@ -74,6 +75,10 @@ function fakes(on: any, opts: Opts = {}) {
       })
     }
   })
+  on('ui.toast', ($: any, e: any) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
   on('prompt.fill', ($: any, e: any) => {
     fills.push(e.text)
     return { isFilled: true, draft: e.text }
@@ -90,7 +95,7 @@ function fakes(on: any, opts: Opts = {}) {
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [] }
   })
   on('turn.complete', () => ({ text: '' }))
-  return { clock, log, runs, acks, statuses, fills, submits, appends, spawns, pipes }
+  return { clock, log, runs, acks, statuses, fills, toasts, submits, appends, spawns, pipes }
 }
 
 const line = (o: object) => JSON.stringify(o) + '\n'
@@ -516,12 +521,10 @@ describe('band', () => {
       await f.clock.settle()
       const ui = await mount($, surface)
       const all = await labels(ui)
-      expect(all).toHaveLength(2)
-      expect(all[0]).toBe('● w1 r2  NEEDS YOU · 5m  gate hit')
-      expect(all[1]).toBe('○ r1 working')
-      expect(all.filter((l) => l.includes('w1'))).toHaveLength(1)
-      expect(all.filter((l) => l.includes('r1'))).toHaveLength(1)
-      expect(await texts(ui)).toContain('relevo · main')
+      expect(all).toEqual(['● w1 r2', '○ r1'])
+      const t = await texts(ui)
+      expect(t).toEqual(expect.arrayContaining(['needs you · 5m', 'gate hit', 'working', 'relevo · main']))
+      expect(t.filter((x) => x.includes('w1') || x.includes('r1'))).toHaveLength(0)
     })
   }
 
@@ -541,7 +544,8 @@ describe('band', () => {
     await startSession($)
     await f.clock.settle()
     const ui = await mount($, 'terminal')
-    expect(await labels(ui)).toEqual(['○ a quiet 2m', '○ b working'])
+    expect(await labels(ui)).toEqual(['○ a', '○ b'])
+    expect(await texts(ui)).toEqual(expect.arrayContaining(['quiet 2m', 'working']))
   })
 
   test('inbox shows the oldest three first, then +N more', async ($, on) => {
@@ -554,6 +558,7 @@ describe('band', () => {
     const ui = await mount($, 'terminal')
     const all = await labels(ui)
     expect(all.map((l) => l.split(' ')[1])).toEqual(['e', 'a', 'b'])
+    expect(all.some((l) => l.startsWith('→'))).toBe(false)
     expect(await texts(ui)).toContain('+2 more · /relevo:status')
   })
 
@@ -564,7 +569,9 @@ describe('band', () => {
     })
     await startSession($)
     await f.clock.settle()
-    expect((await labels(await mount($, 'terminal')))[0]).toBe('● w r1  REPORT IN · 1h  delivered · +10/-2 in 3')
+    const ui = await mount($, 'terminal')
+    expect((await labels(ui))[0]).toBe('● w r1')
+    expect(await texts(ui)).toEqual(expect.arrayContaining(['report in · 1h', 'delivered · +10/-2 in 3']))
   })
 
   test('chain row draws the progress bar when present, the chain string when not', async ($, on) => {
@@ -577,10 +584,21 @@ describe('band', () => {
     })
     await startSession($)
     await f.clock.settle()
-    expect(await labels(await mount($, 'terminal'))).toEqual([
-      '○ c1 ■■□□ 2/4 reviewing',
-      '○ c2 chain y · plan 1/3 · building',
-    ])
+    const ui = await mount($, 'terminal')
+    expect(await labels(ui)).toEqual(['○ c1', '○ c2'])
+    const t = await texts(ui)
+    expect(t).toEqual(expect.arrayContaining(['■■', '▣', '□', '2/4 reviewing', 'chain y · plan 1/3 · building']))
+  })
+
+  test('chain bar colors: done green, current bold, rest faint', async ($, on) => {
+    const f = fakes(on, { doc: () => mkdoc([row('c1', { chain_progress: { done: 1, total: 3 } })]) })
+    await startSession($)
+    await f.clock.settle()
+    const ui = await mount($, 'terminal')
+    const by = async (text: string) => (await ui.findAll({ type: 'Text' })).find((x: any) => x.text === text)
+    expect((await by('■')).props.color).toBe('#86d093')
+    expect((await by('▣')).props.bold).toBe(true)
+    expect((await by('□')).props.color).toBe('#66716d')
   })
 
   test('a failed poll keeps the last document', async ($, on) => {
@@ -590,7 +608,7 @@ describe('band', () => {
     await f.clock.settle()
     healthy = false
     await f.clock.advance(5_000)
-    expect(await labels(await mount($, 'terminal'))).toEqual(['○ a working'])
+    expect(await labels(await mount($, 'terminal'))).toEqual(['○ a'])
   })
 
   const passthrough: [string, object | undefined, object][] = [
@@ -634,4 +652,105 @@ describe('band', () => {
       expect(f.submits).toHaveLength(0)
     })
   }
+
+  test('an inbox row is tinted and toned by its kind, in lower case', async ($, on) => {
+    const f = fakes(on, {
+      doc: () =>
+        mkdoc([row('n', { tone: 'needs', status: 'NEEDS YOU' }), row('p', { tone: 'report', status: 'REPORT IN' })]),
+    })
+    await startSession($)
+    await f.clock.settle()
+    const ui = await mount($, 'terminal')
+    const boxes = (await ui.findAll({ type: 'Box' })).map((b: any) => b.props.backgroundColor).filter(Boolean)
+    expect(boxes).toEqual(['#2a2212', '#12282d'])
+    const t = await ui.findAll({ type: 'Text' })
+    expect(t.find((x: any) => x.text === 'needs you · 1h').props.color).toBe('#f0b452')
+    expect(t.find((x: any) => x.text === 'report in · 1h').props.color).toBe('#72c8d8')
+  })
+
+  for (const surface of SURFACES) {
+    test(`${surface}: the next button fills its text and sends nothing, only when next is present`, async ($, on) => {
+      const f = fakes(on, {
+        doc: () =>
+          mkdoc([
+            row('w', { tone: 'needs', status: 'NEEDS YOU', last_ts: '2026-10-09T10:00:00Z', next: { label: 'answer', text: 'relevo send w --file a.md' } }),
+            row('q', { tone: 'report', status: 'REPORT IN' }),
+          ]),
+      })
+      await startSession($)
+      await f.clock.settle()
+      const ui = await mount($, surface)
+      expect(await labels(ui)).toEqual(['● w r1', '→ answer', '● q r1'])
+      await ui.press({ key: 'nw' })
+      expect(f.fills).toEqual(['relevo send w --file a.md'])
+      expect(f.submits).toHaveLength(0)
+    })
+  }
+
+  test('a narrow band drops the next button text to fit', async ($, on) => {
+    const f = fakes(on, {
+      doc: () => mkdoc([row('w', { tone: 'needs', status: 'NEEDS YOU', reason: 'x', next: { label: 'answer the question', text: 't' } })]),
+    })
+    await startSession($)
+    await f.clock.settle()
+    for (const l of await labels(await mount($, 'terminal', { bodyColumns: 24 }))) {
+      expect(l.length).toBeLessThanOrEqual(24)
+    }
+  })
+})
+
+describe('toasts', () => {
+  const run = async ($: any, on: any, docs: object[]) => {
+    let i = 0
+    const f = fakes(on, { doc: () => docs[Math.min(i, docs.length - 1)] })
+    await startSession($)
+    await f.clock.settle()
+    for (; i < docs.length; i++) await f.clock.advance(5_000)
+    return f
+  }
+  const chain = (done: number, o: object = {}) =>
+    mkdoc([row('c', { chain_progress: { done, total: 3 }, candidate: 'claude', ...o })])
+
+  test('nothing toasts on the first poll', async ($, on) => {
+    const f = await run($, on, [{ ...chain(2), gates: [{ token: 'g', provider: 'p', until: '', reason: 'r' }] }])
+    expect(f.toasts).toEqual([])
+  })
+
+  test('chain moved toasts once per growth, and finished at the end', async ($, on) => {
+    const f = await run($, on, [chain(0), chain(1), chain(1), chain(3)])
+    expect(f.toasts).toEqual(['relevo: c chain moved to plan 2/3', 'relevo: c chain finished'])
+  })
+
+  test('a candidate change toasts once', async ($, on) => {
+    const f = await run($, on, [chain(0), chain(0, { candidate: 'codex' }), chain(0, { candidate: 'codex' })])
+    expect(f.toasts).toEqual(['relevo: c switched to codex'])
+  })
+
+  test('a gate set and lifted toast once each, with until or cleared', async ($, on) => {
+    const g = (until: string) => [{ token: 'tok', provider: 'p', until, reason: 'limit' }]
+    const f = await run($, on, [
+      { ...mkdoc([]), gates: [] },
+      { ...mkdoc([]), gates: g('') },
+      { ...mkdoc([]), gates: g('') },
+      { ...mkdoc([]), gates: [] },
+    ])
+    expect(f.toasts).toEqual(['relevo: gate set on tok until cleared: limit', 'relevo: gate lifted on tok'])
+  })
+
+  test('a gate with an until time names it; absent gates never toast', async ($, on) => {
+    const f = await run($, on, [
+      { ...mkdoc([]), gates: [] },
+      { ...mkdoc([]), gates: [{ token: 't', provider: 'p', until: '14:00', reason: 'r' }] },
+      mkdoc([]),
+    ])
+    expect(f.toasts).toEqual(['relevo: gate set on t until 14:00: r'])
+  })
+
+  test('an arriving report or question never toasts', async ($, on) => {
+    const f = await run($, on, [
+      mkdoc([row('w')]),
+      mkdoc([row('w', { tone: 'needs', status: 'NEEDS YOU' }), row('new', { tone: 'report', status: 'REPORT IN' })]),
+    ])
+    expect(f.toasts).toEqual([])
+  })
 })
