@@ -61,7 +61,7 @@ func serverChainMemberStore(s *store.Store, name string) bool {
 // runs on a server and is still running. Only then does the chain pull own
 // the member's closed rounds: a member of a done chain collects like any
 // other served binding, so a manual round sent after `chain done` still
-// closes on the client (#1056).
+// closes on the client.
 func serverChainMemberActive(s *store.Store, name string) bool {
 	c, err := s.ChainByMember(name)
 	if err != nil {

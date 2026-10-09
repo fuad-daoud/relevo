@@ -18,9 +18,9 @@ import (
 //
 // With the row done this is the shape a `send --name sync-r01` after `chain
 // done` leaves: chainPullServers skips a done mirror outright, so the
-// per-binding sync is the only collector that can close the round (#1056). With
-// the row running the chain pull is still the one collector, and the same member
-// must observe only.
+// per-binding sync is the only collector that can close the round. With the row
+// running the chain pull is still the one collector, and the same member must
+// observe only.
 func seedServerChainRound(t *testing.T, rt Runtime, name string, status chain.Status, round int) {
 	t.Helper()
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
@@ -68,7 +68,7 @@ func closedRoundServer(round int) *fakeRemote {
 // is installed, the round advances past it, the bundle is absorbed and the ack
 // goes out. The chain pull owns a running chain's rounds and skips a done
 // mirror entirely, so if the per-binding sync also observed this member the
-// round would sit ACTIVE forever and `wait` would time out (#1056).
+// round would sit ACTIVE forever and `wait` would time out.
 func TestDoneServerChainMemberCollectsCloseLikeAnyOther(t *testing.T) {
 	t.Parallel()
 

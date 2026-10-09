@@ -186,7 +186,7 @@ func TestStatusChainsTextSanitizesChainFields(t *testing.T) {
 
 // TestStatusChainsExhaustedPlansReadsLastPlan pins the chains-doc reader at the
 // CLI surface: a chain whose plans walk is exhausted reads its last plan, so
-// `status --chains` prints 6/6 rather than the reset 1/6 (#1057).
+// `status --chains` prints 6/6 rather than the reset 1/6.
 // Mutation: revert chainDocStepsAndFacts to the raw iterator.
 // The run reads only the local store: no remote is configured in this fixture,
 // so the test spawns no harness process and touches no network.

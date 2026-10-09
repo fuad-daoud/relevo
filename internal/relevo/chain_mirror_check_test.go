@@ -55,7 +55,7 @@ func seedMirrorChain(t *testing.T, rt Runtime, name string) {
 // driven from this machine: the server runs the gate as a local check row and
 // never creates a served run under the id the client mints, so a GetCheck here
 // would 404 and halt the mirror -- once per tick, with a false end delivery
-// each time -- while the server runs the gate normally (#1054).
+// each time -- while the server runs the gate normally.
 func TestMirrorChainCheckTickNeverPollsOrHalts(t *testing.T) {
 	t.Parallel()
 

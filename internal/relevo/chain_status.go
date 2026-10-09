@@ -86,8 +86,8 @@ func chainFlowFacts(f *view.ChainFacts, c db.ChainRow) {
 
 // chainFlowPlanPos is a plans walk's position for a status surface: the
 // exhausted walk reads as its last plan, exactly as workflow.LegacyView
-// projects it, so a chain past its plans (scan, security fixes, done)
-// reads 6/6 and not the reset 1/6 (#1057).
+// projects it, so a chain past its plans (scan, security fixes, done) reads 6/6
+// and not the reset 1/6.
 func chainFlowPlanPos(st workflow.State) (pos, total int) {
 	it := st.Iter["plans"]
 	pos, total = it.Index+1, len(it.Items)

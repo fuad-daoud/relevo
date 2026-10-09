@@ -182,7 +182,7 @@ func TestChainSegmentFlowOnATerminalChain(t *testing.T) {
 
 // TestChainSegmentFlowInTheSecurityPhasePastItsPlans pins the security-phase
 // line: a fix step after the plans walk is exhausted reads the plan it is
-// fixing, not the reset position that made it look like six fresh plans (#1057).
+// fixing, not the reset position that made it look like six fresh plans.
 func TestChainSegmentFlowInTheSecurityPhasePastItsPlans(t *testing.T) {
 	t.Parallel()
 

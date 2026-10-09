@@ -311,7 +311,7 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	// advance its checks from a mirror that has not been pulled. The pull
 	// installs the server's outcome, so a GetCheck this machine mints an id
 	// for would 404 (no such served check run) and halt the mirror on every
-	// tick while the server runs the gate normally (#1054).
+	// tick while the server runs the gate normally.
 	if chainOnServer(c) {
 		return nil
 	}

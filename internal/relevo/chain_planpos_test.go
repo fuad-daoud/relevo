@@ -66,7 +66,7 @@ func exhaustedPlansState(status workflow.Status, at string, n int) workflow.Stat
 // a chain past its plans reads its last plan, exactly as workflow.LegacyView
 // projects it and as the stored legacy columns record it. Reading the raw
 // iterator instead would clamp the reset's 0 to 1 and print "plans 1/6" on a
-// finished chain (#1057).
+// finished chain.
 func TestStatusDoneChainShowsFinalPlanCount(t *testing.T) {
 	rt := newRuntime(t)
 	newChainFixture(t, rt, "done")
