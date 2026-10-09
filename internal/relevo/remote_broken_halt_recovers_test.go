@@ -172,10 +172,10 @@ func TestBrokenHaltClearsOnAQueuedView(t *testing.T) {
 }
 
 // TestUnrelatedRemoteHaltSurvivesARunningView pins that the new clear is the
-// one fallback this file writes and not every halt on a remote binding. A 404 and
-// a revoked key say something a running round has not contradicted -- the admin
-// who removed the binding and the owner who revoked it are still the ones who
-// know -- and a running view answers neither question.
+// one fallback this file writes and not every halt on a remote binding. A 404
+// and a revoked key say something a running round has not contradicted -- the
+// binding the server does not know and the key the owner revoked are still
+// what they were -- and a running view answers neither question.
 func TestUnrelatedRemoteHaltSurvivesARunningView(t *testing.T) {
 	t.Parallel()
 
@@ -183,7 +183,7 @@ func TestUnrelatedRemoteHaltSurvivesARunningView(t *testing.T) {
 		name string
 		halt string
 	}{
-		{"removed by the admin", "api: zen: binding removed by the server admin"},
+		{"binding not found", "api: zen: binding not found on the server (deleted there, or this machine's key changed)"},
 		{"revoked key", "api: zen: key revoked"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

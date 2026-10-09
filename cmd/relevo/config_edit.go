@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -73,13 +74,15 @@ func configGet(args []string) error {
 // configSetFlagValues holds the pointer `config set` parses into.
 type configSetFlagValues struct {
 	asJSON *bool
+	force  *bool
 }
 
-// configSetFlagSet defines that flag on fs and returns what it parses into, so
-// the registry's parity test finds exactly one installer per verb.
+// configSetFlagSet defines those flags on fs and returns what they parse into,
+// so the registry's parity test finds exactly one installer per verb.
 func configSetFlagSet(fs *flag.FlagSet) *configSetFlagValues {
 	v := &configSetFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the document the write produced")
+	v.force = fs.Bool("force", false, "replace candidates even when an actor still names a dropped one")
 	return v
 }
 
@@ -91,7 +94,7 @@ func configSetRun(args []string) error {
 	fs := flag.NewFlagSet("relevo config set", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	v := configSetFlagSet(fs)
-	asJSON := v.asJSON
+	asJSON, force := v.asJSON, v.force
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -113,6 +116,9 @@ func configSetRun(args []string) error {
 	}
 
 	if len(keys) == 0 {
+		if err := guardCandidatesDrop(rt, sec, value, *force); err != nil {
+			return err
+		}
 		if _, err := rt.Config.As("cli", "config set "+path).Put(sec, value); err != nil {
 			return err
 		}
@@ -126,6 +132,9 @@ func configSetRun(args []string) error {
 		updated, err := setJSON(body, keys, value)
 		if err != nil {
 			return fail(codeConfigInvalid, "%s: %v", path, err)
+		}
+		if err := guardCandidatesDrop(rt, sec, updated, *force); err != nil {
+			return err
 		}
 		if _, err := rt.Config.As("cli", "config set "+path).Put(sec, updated); err != nil {
 			return err
@@ -147,12 +156,15 @@ func configSetRun(args []string) error {
 // configUnsetFlagValues holds the pointer `config unset` parses into.
 type configUnsetFlagValues struct {
 	asJSON *bool
+	force  *bool
 }
 
-// configUnsetFlagSet defines that flag on fs and returns what it parses into.
+// configUnsetFlagSet defines those flags on fs and returns what they parse
+// into.
 func configUnsetFlagSet(fs *flag.FlagSet) *configUnsetFlagValues {
 	v := &configUnsetFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the document the write produced")
+	v.force = fs.Bool("force", false, "drop the candidates section even when an actor still names one of them")
 	return v
 }
 
@@ -164,7 +176,7 @@ func configUnsetRun(args []string) error {
 	fs := flag.NewFlagSet("relevo config unset", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	v := configUnsetFlagSet(fs)
-	asJSON := v.asJSON
+	asJSON, force := v.asJSON, v.force
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -184,6 +196,13 @@ func configUnsetRun(args []string) error {
 		return err
 	}
 	if len(keys) == 0 {
+		// Dropping the whole candidates section is a drop of everything an
+		// actor names, so it takes the same guard as a replace. A key-level
+		// unset on the section is already refused below: its keys run through
+		// the array, which is not an object.
+		if err := guardCandidatesDrop(rt, sec, nil, *force); err != nil {
+			return err
+		}
 		if err := rt.Config.As("cli", "config unset "+path).Delete(sec); err != nil {
 			return err
 		}
@@ -474,6 +493,56 @@ func delAt(obj map[string]json.RawMessage, keys []string) (bool, error) {
 	}
 	obj[key] = encoded
 	return true, nil
+}
+
+// guardCandidatesDrop refuses a write of the candidates section that would
+// newly break an actor's reference to a candidate. body is the section's new
+// content, or nil when the write removes the section outright. Any other
+// section passes through untouched.
+//
+// The guard reads the stored candidates and actors bodies, overlays the write,
+// and asks config.DroppedActorCandidates what it newly drops. The refusal names
+// the first drop only, so the message stays one line; --force overrules it,
+// because a non-interactive script cannot answer a question.
+func guardCandidatesDrop(rt relevo.Runtime, sec config.Section, body []byte, force bool) error {
+	if sec != config.Candidates || force {
+		return nil
+	}
+	oldDoc, err := storedCandidatesDoc(rt)
+	if err != nil {
+		return err
+	}
+	newDoc := config.Doc{}
+	for name, stored := range oldDoc {
+		newDoc[name] = stored
+	}
+	if body == nil {
+		delete(newDoc, config.Candidates)
+	} else {
+		newDoc[config.Candidates] = body
+	}
+	drops := config.DroppedActorCandidates(oldDoc, newDoc)
+	if len(drops) == 0 {
+		return nil
+	}
+	return fail(codeConflict, "%s; pass --force to drop it", drops[0])
+}
+
+// storedCandidatesDoc reads the stored candidates and actors bodies as the old
+// side of the drop guard. An absent section is left out of the document, which
+// is the empty form the helper reads it as.
+func storedCandidatesDoc(rt relevo.Runtime) (config.Doc, error) {
+	doc := config.Doc{}
+	for _, sec := range []config.Section{config.Candidates, config.Actors} {
+		body, present, err := rt.Config.Body(sec)
+		if err != nil {
+			return nil, err
+		}
+		if present {
+			doc[sec] = body
+		}
+	}
+	return doc, nil
 }
 
 // rawJSONOrString is the value `config set` stores: raw is kept when it is

@@ -45,6 +45,7 @@ Inside the shell, everything resolves under
 | `CLAUDE_CONFIG_DIR` | `<sandbox>/claude` | the claude harness: its settings, its `agents/` and its credentials |
 | `CODEX_HOME` | `<sandbox>/codex` | the codex harness: its config and its per-agent profiles |
 | `SB` | `<sandbox>` | the sandbox path itself, for scripts |
+| `RELEVO_SANDBOX` | `<sandbox>/name` | marker: set iff inside the sandbox; scripts refuse to run without it |
 | `PATH` | `<sandbox>/bin` first | the sandbox's own `relevo` build, ahead of the developer's `~/.local/bin` |
 
 The layout under `<sandbox>/` is `bin/ state/ config/ data/ cache/ claude/
@@ -59,6 +60,22 @@ not `shell`:
 . ~/.local/share/relevo-sandboxes/demo/env.sh
 relevo status
 ```
+
+## The guard line
+
+`RELEVO_SANDBOX` is set iff the exports above are in force, so a script that
+was handed out to run *inside the sandbox* can tell whether it is. Any such
+script or documentation snippet starts with exactly this line, before it
+sources `env.sh` or does anything else:
+
+```sh
+test -n "$RELEVO_SANDBOX" || { echo 'not in a sandbox' >&2; exit 1; }
+```
+
+Outside a sandbox the variable is empty and the script stops, instead of
+running `config set` or `bind` against the developer's own state root because
+`env.sh` was never sourced. `relevo sandbox shell <name>` sets it for the whole
+session; nothing else sets it.
 
 ## Two standing rules
 

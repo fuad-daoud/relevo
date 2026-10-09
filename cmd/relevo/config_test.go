@@ -143,8 +143,10 @@ func TestConfigSetGetUnsetRoundTrip(t *testing.T) {
 		t.Errorf("get after unset = %v, want policy.order.builder: not set", err)
 	}
 
+	// The section replace above migrated the legacy roles to an actor naming
+	// candidate m, so dropping the whole section needs --force.
 	if _, _, err := captureOutput(t, func() error {
-		return run([]string{"config", "unset", "candidates"})
+		return run([]string{"config", "unset", "candidates", "--force"})
 	}); err != nil {
 		t.Fatalf("unset candidates: %v", err)
 	}
@@ -571,9 +573,12 @@ func TestConfigLogListsRevisions(t *testing.T) {
 func TestConfigLogRevShowsChanges(t *testing.T) {
 	initRoot(t)
 
+	// The first set migrates the legacy roles to an actor naming candidate m,
+	// so replacing the section with m2 drops a reference an actor still holds:
+	// --force is the explicit override.
 	for _, body := range []string{revCandidateA, revCandidateB} {
 		if _, stderr, err := captureOutput(t, func() error {
-			return run([]string{"config", "set", "candidates", body})
+			return run([]string{"config", "set", "candidates", body, "--force"})
 		}); err != nil {
 			t.Fatalf("set candidates: %v (stderr: %s)", err, stderr)
 		}
@@ -651,9 +656,12 @@ func TestConfigLogJSON(t *testing.T) {
 func TestConfigRollbackYes(t *testing.T) {
 	initRoot(t)
 
+	// The first set migrates the legacy roles to an actor naming candidate m,
+	// so replacing the section with m2 drops a reference an actor still holds:
+	// --force is the explicit override.
 	for _, body := range []string{revCandidateA, revCandidateB} {
 		if _, stderr, err := captureOutput(t, func() error {
-			return run([]string{"config", "set", "candidates", body})
+			return run([]string{"config", "set", "candidates", body, "--force"})
 		}); err != nil {
 			t.Fatalf("set candidates: %v (stderr: %s)", err, stderr)
 		}
@@ -699,9 +707,12 @@ func TestConfigRollbackYes(t *testing.T) {
 func TestConfigRollbackRefusesWithoutTerminal(t *testing.T) {
 	initRoot(t)
 
+	// The first set migrates the legacy roles to an actor naming candidate m,
+	// so replacing the section with m2 drops a reference an actor still holds:
+	// --force is the explicit override.
 	for _, body := range []string{revCandidateA, revCandidateB} {
 		if _, stderr, err := captureOutput(t, func() error {
-			return run([]string{"config", "set", "candidates", body})
+			return run([]string{"config", "set", "candidates", body, "--force"})
 		}); err != nil {
 			t.Fatalf("set candidates: %v (stderr: %s)", err, stderr)
 		}

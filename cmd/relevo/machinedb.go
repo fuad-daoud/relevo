@@ -125,6 +125,12 @@ func isPeekArgs(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
+	// db rename-repo writes, so it must reach the database through the owner
+	// like any other writer; the direct open its db siblings take is refused
+	// while the daemon holds the lock.
+	if args[0] == "db" && len(args) > 1 && args[1] == "rename-repo" {
+		return false
+	}
 	if args[0] == "bugreport" || args[0] == "db" || args[0] == "board" {
 		return true
 	}
@@ -242,4 +248,29 @@ func awaitStartingOwner(sock string, deadline time.Time, limit time.Duration) (*
 // several clients waiting on the same daemon do not retry in lockstep.
 func waitStep() time.Duration {
 	return time.Duration(25+rand.Intn(76)) * time.Millisecond
+}
+
+// sandboxBannerVerb returns the sandbox name to print above a command's
+// output, or "" for a command that gets no banner. It is empty outside a
+// sandbox (RELEVO_SANDBOX unset), for the peek verbs, for the read-only verbs
+// a caller runs constantly -- status --line runs on every prompt keystroke and
+// would otherwise fill the screen -- and for the read-only config subcommands,
+// so a `config get` in a pipeline stays pipelineable.
+func sandboxBannerVerb(args []string) string {
+	name := os.Getenv("RELEVO_SANDBOX")
+	if name == "" || len(args) == 0 || isPeekArgs(args) {
+		return ""
+	}
+	switch args[0] {
+	case "status", "show", "history", "doctor", "version", "help":
+		return ""
+	case "config":
+		switch {
+		case len(args) == 1:
+			return ""
+		case args[1] == "get", args[1] == "export", args[1] == "help":
+			return ""
+		}
+	}
+	return name
 }

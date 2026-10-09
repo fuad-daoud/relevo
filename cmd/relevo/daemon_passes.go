@@ -42,7 +42,16 @@ func daemonEnablePath(d *db.DB, backupDir, origin string, now time.Time) {
 			"done_at", sstats.DoneAt,
 			"backup_path", sstats.BackupPath,
 			"rows_moved", sstats.RowsMoved,
-			"kv_keys_moved", sstats.KVKeysMoved)
+			"kv_keys_moved", sstats.KVKeysMoved,
+			"conflicts", sstats.Conflicts)
+		// A conflict is a shared stray the pass would not overwrite with:
+		// the local row stayed, so names what kept its value and where the
+		// pre-split backup holds the stray it converged away. Names only,
+		// never contents: a conflicting row may be a secret.
+		for _, name := range sstats.ConflictKeys {
+			slog.Warn("relevo daemon: local split kept a local row over a shared stray",
+				"row", name, "backup_path", sstats.BackupPath)
+		}
 	}
 
 	// Both lines name the table and the counts, never a row's contents: a stale
