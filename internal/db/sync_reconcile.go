@@ -83,7 +83,9 @@ func sharedOwnedRowPage(ctx context.Context, q queryer, tbl, origin string, afte
 // Ordering by rowid is what keeps the read bounded: the rowid order is the
 // table's own index order, so the statement walks it from the cursor and stops
 // at limit rows, while an order on the key expression would sort every row of
-// the table to return a page of them.
+// the table to return a page of them. NOT INDEXED keeps every engine on that
+// walk: a planner that picks an index on origin instead has to sort the
+// origin's rows again for every page.
 func ownedRowPageQuery(shared SharedTable, rule ownerRule, columns []string, origin string, after int64, limit int) (string, []any) {
 	key := "json_array(" + joinQuoted(shared.PrimaryKey) + ")"
 	quoted := make([]string, len(columns))
@@ -91,7 +93,7 @@ func ownedRowPageQuery(shared SharedTable, rule ownerRule, columns []string, ori
 		quoted[i] = quoteIdent(col)
 	}
 	query := "SELECT rowid, " + key + ", " + strings.Join(quoted, ", ") +
-		" FROM " + quoteIdent(shared.Name) +
+		" FROM " + quoteIdent(shared.Name) + " NOT INDEXED" +
 		" WHERE " + ownerExpression(rule, quoteIdent(shared.Name)) + " = ?" +
 		" AND rowid > ?" +
 		" ORDER BY rowid" +

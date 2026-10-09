@@ -887,7 +887,7 @@ func writeTranscript(t *testing.T, d *DB, id, kind, ownerID string) {
 // Spaces are dropped first because the engine rewrites a call's open paren with
 // one before it, so the text a trigger holds is not the text migration 022 wrote.
 func triggerOwnerExpr(body string) (string, bool) {
-	tight := strings.ReplaceAll(body, " ", "")
+	tight := tightSQL(body)
 	open := strings.Index(tight, "VALUES(")
 	if open < 0 {
 		return "", false
@@ -925,10 +925,10 @@ func exprField(fields []string, _ int) (string, bool) {
 	return fields[3], true
 }
 
-// tightSQL drops every space from a rendered expression, so a comparison against
+// tightSQL drops all whitespace from a rendered expression, so a comparison against
 // a trigger body is about the names and the structure rather than the spacing.
 func tightSQL(expr string) string {
-	return strings.ReplaceAll(expr, " ", "")
+	return strings.Join(strings.Fields(expr), "")
 }
 
 // TestImportMarkMigrationAppliesFreshAndUpgraded pins that the mark table reaches

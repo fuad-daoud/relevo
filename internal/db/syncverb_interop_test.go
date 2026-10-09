@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -276,12 +277,7 @@ func interopOwner(t *testing.T, install func(*owner.Server)) (string, *rawIntero
 	}
 	t.Cleanup(func() { _ = handle.Close() })
 
-	sock := filepath.Join(t.TempDir(), "owner.sock")
-	ln, err := net.Listen("unix", sock)
-	if err != nil {
-		t.Fatalf("listen %s: %v", sock, err)
-	}
-	t.Cleanup(func() { _ = ln.Close() })
+	ln, sock := interopListener(t)
 
 	srv := db.NewOwner(handle)
 	if install != nil {
@@ -304,12 +300,7 @@ func interopEchoOwner(t *testing.T, hook func(context.Context, *wire.SyncVerb, [
 		t.Fatalf("db.OpenSplit: %v", err)
 	}
 	t.Cleanup(func() { _ = handle.Close() })
-	sock := filepath.Join(t.TempDir(), "echo.sock")
-	ln, err := net.Listen("unix", sock)
-	if err != nil {
-		t.Fatalf("listen %s: %v", sock, err)
-	}
-	t.Cleanup(func() { _ = ln.Close() })
+	ln, sock := interopListener(t)
 	srv := db.NewOwner(handle)
 	srv.OnSyncVerb = hook
 	go func() { _ = srv.Serve(ln) }()
@@ -364,4 +355,23 @@ func (r *rawInterop) read() (byte, []byte, error) {
 		return 0, nil, err
 	}
 	return kind, frame, nil
+}
+
+// interopListener binds the owner's socket directly under /tmp: a socket path is
+// limited to 104 bytes, and a t.TempDir() under macOS's long temp root is past
+// it.
+func interopListener(t *testing.T) (net.Listener, string) {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "rvo-")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "o.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("listen %s: %v", sock, err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	return ln, sock
 }

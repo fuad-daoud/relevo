@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -68,19 +69,47 @@ func execAll(t *testing.T, sqlDB *sql.DB, stmts ...string) {
 // entry a shape adds is a defect, and an entry it leaves out is a lost write.
 func wantEntries(t *testing.T, sqlDB *sql.DB, mark int, want ...string) {
 	t.Helper()
-	got := outboxRows(t, sqlDB, mark)
+	rendered := renderEntries(t, sqlDB, mark)
+	if strings.Join(rendered, " | ") != strings.Join(want, " | ") {
+		t.Errorf("sync_outbox holds\n  %s\nwant\n  %s",
+			strings.Join(rendered, " | "), strings.Join(want, " | "))
+	}
+}
 
+// renderEntries is the outbox past mark, one "table pk op origin" line per entry
+// in the order it was written.
+func renderEntries(t *testing.T, sqlDB *sql.DB, mark int) []string {
+	t.Helper()
 	var rendered []string
-	for _, e := range got {
+	for _, e := range outboxRows(t, sqlDB, mark) {
 		origin := "NULL"
 		if e.origin.Valid {
 			origin = e.origin.String
 		}
 		rendered = append(rendered, e.tbl+" "+e.pk+" "+e.op+" "+origin)
 	}
-	if strings.Join(rendered, " | ") != strings.Join(want, " | ") {
-		t.Errorf("sync_outbox holds\n  %s\nwant\n  %s",
-			strings.Join(rendered, " | "), strings.Join(want, " | "))
+	return rendered
+}
+
+// wantCascade checks the entries one cascading delete wrote: the children in
+// any order, then the parent. The order the engine removes sibling children in
+// is its own, and nothing reads it -- the exporter orders deletes itself -- but
+// every child has to be written before the parent's statement finishes.
+func wantCascade(t *testing.T, got []string, parent string, children ...string) {
+	t.Helper()
+	want := append(append([]string(nil), children...), parent)
+	if len(got) != len(want) || got[len(got)-1] != parent {
+		t.Errorf("cascade wrote\n  %s\nwant the children in any order, then\n  %s",
+			strings.Join(got, " | "), parent)
+		return
+	}
+	gotChildren := append([]string(nil), got[:len(got)-1]...)
+	sort.Strings(gotChildren)
+	sorted := append([]string(nil), children...)
+	sort.Strings(sorted)
+	if strings.Join(gotChildren, " | ") != strings.Join(sorted, " | ") {
+		t.Errorf("cascade wrote the children\n  %s\nwant\n  %s",
+			strings.Join(gotChildren, " | "), strings.Join(sorted, " | "))
 	}
 }
 
@@ -357,19 +386,23 @@ func testCascadeShape(t *testing.T) {
 	deleting := outboxMark(t, sqlDB)
 	execAll(t, sqlDB, `DELETE FROM binding_record WHERE id = 'rec1'`)
 
-	wantEntries(t, sqlDB, deleting,
-		`binding_event ["rec1",1] delete NULL`,
-		`round_file ["rec1","f"] delete NULL`,
-		`binding_record ["rec1"] delete `+bindingRecordOrigin,
-	)
-	wantEntries(t, sqlDB, mark,
-		`binding_record ["rec1"] insert `+bindingRecordOrigin,
-		`binding_event ["rec1",1] insert `+bindingRecordOrigin,
-		`round_file ["rec1","f"] insert `+bindingRecordOrigin,
-		`binding_event ["rec1",1] delete NULL`,
-		`round_file ["rec1","f"] delete NULL`,
-		`binding_record ["rec1"] delete `+bindingRecordOrigin,
-	)
+	children := []string{`binding_event ["rec1",1] delete NULL`, `round_file ["rec1","f"] delete NULL`}
+	parent := `binding_record ["rec1"] delete ` + bindingRecordOrigin
+	wantCascade(t, renderEntries(t, sqlDB, deleting), parent, children...)
+
+	// Seen from before the inserts, the cascade follows them and nothing else
+	// was written.
+	all := renderEntries(t, sqlDB, mark)
+	inserts := []string{
+		`binding_record ["rec1"] insert ` + bindingRecordOrigin,
+		`binding_event ["rec1",1] insert ` + bindingRecordOrigin,
+		`round_file ["rec1","f"] insert ` + bindingRecordOrigin,
+	}
+	if len(all) < len(inserts) || strings.Join(all[:len(inserts)], " | ") != strings.Join(inserts, " | ") {
+		t.Fatalf("sync_outbox holds\n  %s\nwant it to begin with\n  %s",
+			strings.Join(all, " | "), strings.Join(inserts, " | "))
+	}
+	wantCascade(t, all[len(inserts):], parent, children...)
 }
 
 // testInheritedOriginShape pins owner resolution for the rows that carry no

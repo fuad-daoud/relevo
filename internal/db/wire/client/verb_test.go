@@ -127,12 +127,7 @@ func (s *scriptedVerbOwner) serve(l net.Listener) {
 // verbSocket serves one scripted owner and returns its socket.
 func verbSocket(t *testing.T, s *scriptedVerbOwner) string {
 	t.Helper()
-	sock := t.TempDir() + "/owner.sock"
-	l, err := net.Listen("unix", sock)
-	if err != nil {
-		t.Fatalf("listen %s: %v", sock, err)
-	}
-	t.Cleanup(func() { _ = l.Close() })
+	l, sock := shortListener(t)
 	go s.serve(l)
 	t.Cleanup(func() { close(s.release) })
 	return sock
@@ -419,12 +414,7 @@ func TestClientSyncVerbMarksADeliveredRequestAwaitingItsReply(t *testing.T) {
 
 	// An owner that accepts and never greets: the deadline ends the handshake,
 	// and no request was ever written.
-	mute := t.TempDir() + "/mute.sock"
-	l, err := net.Listen("unix", mute)
-	if err != nil {
-		t.Fatalf("listen %s: %v", mute, err)
-	}
-	t.Cleanup(func() { _ = l.Close() })
+	l, mute := shortListener(t)
 	hold := make(chan struct{})
 	t.Cleanup(func() { close(hold) })
 	go func() {
