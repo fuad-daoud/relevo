@@ -9,10 +9,16 @@ type ChainProgress struct {
 }
 
 // chainProgressOf maps a fixed chain's Plan/Plans/Step and a flow chain's
-// PlanPos/PlanTotal/StepAt, the pairs ChainSegment prints.
+// PlanPos/PlanTotal/StepAt, the pairs ChainSegment prints. Those positions are
+// the plan being worked, 1-based, so Done is one less until the chain is done.
 func chainProgressOf(f ChainFacts) *ChainProgress {
+	pos, total, phase := f.Plan, f.Plans, f.Step
 	if f.StepAt != "" {
-		return &ChainProgress{Done: f.PlanPos, Total: f.PlanTotal, Phase: f.StepAt}
+		pos, total, phase = f.PlanPos, f.PlanTotal, f.StepAt
 	}
-	return &ChainProgress{Done: f.Plan, Total: f.Plans, Phase: f.Step}
+	done := pos - 1
+	if f.Status == "done" {
+		done = total
+	}
+	return &ChainProgress{Done: max(0, done), Total: total, Phase: phase}
 }

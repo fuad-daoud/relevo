@@ -81,7 +81,7 @@ func chainFlowFacts(f *view.ChainFacts, c db.ChainRow) {
 	if f.Check {
 		f.Round = st.Awaiting.Run
 	}
-	f.PlanTotal, f.PlanPos = chainFlowPlanPos(st)
+	f.PlanPos, f.PlanTotal = chainFlowPlanPos(st)
 }
 
 // chainFlowPlanPos is a plans walk's position for a status surface: the
