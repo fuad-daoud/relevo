@@ -87,6 +87,7 @@ func TestCatalogNextHints(t *testing.T) {
 		codeMastermindNotFound,
 		codeClientNotFound,
 		codeServerNotFound,
+		codeConfigInvalid,
 		codeInternal,
 	} {
 		entry, ok := catalog[code]

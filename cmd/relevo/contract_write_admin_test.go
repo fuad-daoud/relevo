@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -49,6 +50,7 @@ func TestContractWriteAdminErrorClasses(t *testing.T) {
 		{"store binding missing", fmt.Errorf("load: %w", store.ErrNotFound), codeBindingNotFound},
 		{"client unreachable", fmt.Errorf("whoami: %w", client.ErrUnreachable), codeRemoteUnreachable},
 		{"release offline", fmt.Errorf("latest: %w", release.ErrOffline), codeRemoteUnreachable},
+		{"config value refused", fmt.Errorf("config set actors: %w", config.ErrInvalidValue), codeConfigInvalid},
 		{"unclassified", errors.New("something nobody classified"), codeInternal},
 	}
 

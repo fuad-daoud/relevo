@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -119,6 +120,51 @@ func TestStoreRefusesDeletingAServerAnActorNames(t *testing.T) {
 	if err := s.Delete(Servers); err != nil {
 		t.Fatalf("Delete(servers) once no actor names one: %v", err)
 	}
+}
+
+// TestStoreRefusesAPlacementWhenServersNeverSeeded pins the sandbox case: the
+// actors section is written before the servers section it is checked against,
+// so a host whose builder places on zen refuses the write. The refusal carries
+// ErrInvalidValue, so a caller reports it as the value it handed over rather
+// than as a failure inside the store, and the text is the line the read path
+// would have refused with.
+func TestStoreRefusesAPlacementWhenServersNeverSeeded(t *testing.T) {
+	t.Parallel()
+
+	s := openStore(t)
+	seedSections(t, s, map[Section]string{
+		Candidates: placementCandidates,
+	})
+
+	_, err := s.Put(Actors, []byte(placementActor))
+	if err == nil {
+		t.Fatal("Put(actors) naming a server the document does not hold: want a refusal")
+	}
+	if !errors.Is(err, ErrInvalidValue) {
+		t.Errorf("errors.Is(%v, ErrInvalidValue) = false, want the refusal tagged as a value refusal", err)
+	}
+	want := `actors: builder.placement[0]: server "zen" is not in the servers section`
+	if got := err.Error(); got != want {
+		t.Errorf("error = %q, want %q", got, want)
+	}
+	if ok, err := s.Has(Actors); err != nil || ok {
+		t.Errorf("Has(actors) = (%v, %v), want the refusal to write nothing", ok, err)
+	}
+
+	// A body that does not parse is refused the same way, so a caller needs one
+	// probe rather than one per shape of bad input.
+	t.Run("malformed section body", func(t *testing.T) {
+		t.Parallel()
+
+		s := openStore(t)
+		_, err := s.Put(Actors, []byte(`{"builder":`))
+		if err == nil {
+			t.Fatal("Put(actors) with a malformed body: want a refusal")
+		}
+		if !errors.Is(err, ErrInvalidValue) {
+			t.Errorf("errors.Is(%v, ErrInvalidValue) = false, want the refusal tagged as a value refusal", err)
+		}
+	})
 }
 
 func TestCheckActorPlacementIgnoresTheLegacyRolesPath(t *testing.T) {

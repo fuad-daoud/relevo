@@ -23,7 +23,7 @@ toolchain to hand.
 
 `create` also finishes the harness setup: it copies the claude login, config
 and agent definitions plus the codex login and config (never session data),
-copies your tuned candidates, policy, actors, agents and servers section by
+copies your tuned candidates, policy, servers, actors and agents section by
 section with `config get`/`config set`, and runs `doctor` once. A section you
 never set is skipped; a host with no database falls back to `config init
 --no-agents`. Secrets never travel (export omits them), so remote placements

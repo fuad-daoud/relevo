@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
@@ -66,12 +68,39 @@ func decodeDoc(doc Doc) (Loaded, error) {
 	return L, nil
 }
 
-// validateProspective reports the error the next Load would return for doc,
-// unwrapped, so a writer refuses exactly what the read refuses and prints the
-// same line.
+// ErrInvalidValue marks a refusal of the value a writer was handed: the value
+// is what the store declined to keep, not a failure of the store. A caller can
+// probe it with errors.Is and report the refusal as the user's input rather
+// than as an internal error.
+var ErrInvalidValue = errors.New("invalid config value")
+
+// invalidValue is ErrInvalidValue carried alongside the refusal it was derived
+// from. Error returns the underlying text byte for byte, so wrapping never
+// reaches the line a caller prints, and Unwrap yields both the sentinel and
+// the original error, so a probe for either still succeeds under the wrapper.
+type invalidValue struct{ cause error }
+
+func (e invalidValue) Error() string { return e.cause.Error() }
+
+func (e invalidValue) Unwrap() []error { return []error{ErrInvalidValue, e.cause} }
+
+// invalidValueOf tags err as a refusal of a value, or returns nil unchanged so
+// the writers can wrap every refusal point without a nil guard at each one.
+func invalidValueOf(err error) error {
+	if err == nil {
+		return nil
+	}
+	return invalidValue{cause: err}
+}
+
+// validateProspective reports the error the next Load would return for doc, so
+// a writer refuses exactly what the read refuses and prints the same line. The
+// error carries ErrInvalidValue: refusing a document a write would have
+// produced is a statement about that value, and every writer refusal point
+// routes through here.
 func validateProspective(doc Doc) error {
 	_, err := decodeDoc(doc)
-	return err
+	return invalidValueOf(err)
 }
 
 // copyDoc returns doc with every body copied, so a writer can replace or drop a
