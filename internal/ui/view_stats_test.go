@@ -3242,3 +3242,249 @@ func TestStatsReposChildEnter(t *testing.T) {
 		})
 	}
 }
+
+// statsScratchPaths are the two scratch repos the scratch tests use: absolute
+// paths, which is how a repo with no origin_url keys itself.
+var (
+	statsScratchOne = "/tmp/relevo-scratch/alpha"
+	statsScratchTwo = "/tmp/relevo-scratch/beta/.git"
+)
+
+// statsScratchReport builds the scratch fixture through stats.Build over
+// absolute-path Repo keys, so the fold is exercised end to end and a stats
+// regression fails these too. It carries one remote repo and one repo-less
+// round beside the scratch pair, so the fold never sits alone in the table.
+func statsScratchReport() stats.Report {
+	s := func(v string) *string { return &v }
+	i64 := func(v int64) *int64 { return &v }
+	at := func(d int) time.Time { return time.Date(2026, 9, d, 12, 0, 0, 0, time.UTC) }
+	row := func(binding string, repo, feature *string, day int, in, out int64) db.RoundRow {
+		return db.RoundRow{
+			BindingID: binding, BindingName: binding, Repo: repo, Feature: feature,
+			StartedAt: at(day), Outcome: db.OutcomeReported,
+			InTokens: i64(in), OutTokens: i64(out),
+		}
+	}
+	one, two := s(statsScratchOne), s(statsScratchTwo)
+	remote := s("https://github.com/fuad-daoud/relevo")
+
+	rows := []db.RoundRow{
+		// alpha leads, so the children sort tokens desc puts it first.
+		row("b1", one, s("cockpit"), 20, 900_000, 100_000),
+		row("b1", one, nil, 21, 300_000, 30_000),
+		// beta: two rounds sharing one binding, so the fold's Bindings
+		// counts it once while each child counts its own.
+		row("b2", two, nil, 22, 200_000, 20_000),
+		row("b2", two, nil, 23, 150_000, 15_000),
+		// A remote repo and a repo-less round keep their own rows.
+		row("b3", remote, nil, 24, 50_000, 5_000),
+		row("b4", nil, nil, 24, 10_000, 1_000),
+	}
+	return stats.Build(stats.Inputs{
+		Rows: rows, Until: stScratchNow, Loc: time.UTC,
+		Since: stScratchNow.AddDate(0, 0, -29),
+	})
+}
+
+// stScratchNow is the scratch fixture's "now".
+var stScratchNow = time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+
+// statsScratchView is a repos-tab view over the scratch fixture.
+func statsScratchView(expanded ...string) statsView {
+	exp := map[string]bool{}
+	for _, k := range expanded {
+		exp[k] = true
+	}
+	return statsView{
+		window: "30d", loaded: true, rep: statsScratchReport(), tab: statsTabRepos,
+		expanded: exp,
+	}
+}
+
+// TestStatsScratchRowCollapsed pins the collapsed fold: one row reading
+// "scratch", no child path in the body, and the fold's own totals.
+func TestStatsScratchRowCollapsed(t *testing.T) {
+	v := statsScratchView()
+	rows := v.repoTabRows()
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want the fold, the remote repo and (none)", len(rows))
+	}
+	if rows[0].group.Key != stats.ScratchKey || rows[0].kind != kindRepo {
+		t.Fatalf("first row = %+v, want the fold repo row", rows[0])
+	}
+	if rows[0].group.Rounds != 4 || rows[0].group.Tokens != 1_715_000 {
+		t.Errorf("fold = %+v, want 4 rounds and 1,715,000 tokens", rows[0].group)
+	}
+
+	body := stripANSI(v.Body(statsTestEnv(t, 132, 40), 132, 40))
+	if !strings.Contains(body, "scratch") {
+		t.Errorf("repos tab missing the scratch row:\n%s", body)
+	}
+	for _, path := range []string{"alpha", "beta"} {
+		if strings.Contains(body, path) {
+			t.Errorf("collapsed fold leaked the %s child:\n%s", path, body)
+		}
+	}
+}
+
+// TestStatsScratchRowExpandsToItsRepos pins the expansion: one child per
+// scratch repo at depth 1 with the two-cell indent, ordered by tokens desc, each
+// parented to the fold.
+func TestStatsScratchRowExpandsToItsRepos(t *testing.T) {
+	v := statsScratchView(stats.ScratchKey)
+	rows := v.repoTabRows()
+	if len(rows) != 5 {
+		t.Fatalf("rows = %d, want the fold, two children, the remote repo and (none)", len(rows))
+	}
+	for _, r := range rows[1:3] {
+		if r.kind != kindRepo || r.parent != stats.ScratchKey {
+			t.Errorf("child = %+v, want a kindRepo row parented to the fold", r)
+		}
+		if r.feature != "" {
+			t.Errorf("child %q carries feature %q, want none (it is a leaf)", r.group.Key, r.feature)
+		}
+	}
+	if rows[1].group.Key != statsScratchOne || rows[2].group.Key != statsScratchTwo {
+		t.Errorf("children = %q, %q, want alpha then beta (tokens desc)",
+			rows[1].group.Key, rows[2].group.Key)
+	}
+
+	// depth 1 is the two-cell indent inside the three-cell gutter: a child row's
+	// name starts at cell 5, a repo row's at cell 3.
+	lines, _ := v.reposTabLines(statsTestEnv(t, 132, 40), 132)
+	child := stripANSI(lines[2])
+	if !strings.HasPrefix(child, "     "+"relevo-scratch/alpha") {
+		t.Errorf("child row %q, want its name two cells inside the gutter", child)
+	}
+	if !strings.HasPrefix(stripANSI(lines[1]), "   scratch") {
+		t.Errorf("fold row %q, want its name on the gutter", stripANSI(lines[1]))
+	}
+}
+
+// TestStatsScratchChildIsALeaf pins the existing child convention on a scratch
+// child: space collapses the fold, leaves the cursor on the fold row, and the
+// child names leave the body -- a child has nothing to expand.
+func TestStatsScratchChildIsALeaf(t *testing.T) {
+	m := statsReposShell(t, statsScratchReport(), stats.ScratchKey)
+	res, _ := m.Update(statsKey('j'))
+	m = res.(Model)
+	if got := m.top().(statsView).cursor[1]; got != 1 {
+		t.Fatalf("cursor = %d, want 1 (the first child)", got)
+	}
+
+	res, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = res.(Model)
+	v := m.top().(statsView)
+	if v.expanded[stats.ScratchKey] {
+		t.Error("space on a child must collapse the fold")
+	}
+	if got := v.cursor[1]; got != 0 {
+		t.Errorf("cursor = %d, want the fold row after collapsing", got)
+	}
+	body := stripANSI(v.Body(statsTestEnv(t, 132, 40), 132, 40))
+	for _, path := range []string{"alpha", "beta"} {
+		if strings.Contains(body, path) {
+			t.Errorf("collapsed fold still shows %s:\n%s", path, body)
+		}
+	}
+}
+
+// TestStatsScratchChildDetail pins a child's detail block: its short name and
+// full path on line 1, and its own totals rather than the fold's.
+func TestStatsScratchChildDetail(t *testing.T) {
+	v := statsScratchView(stats.ScratchKey)
+	v.cursor[1] = 1
+	lines, sel := v.reposTabLines(statsTestEnv(t, 132, 40), 132)
+	if sel < 0 || sel >= len(lines) {
+		t.Fatalf("sel = %d, want a line in the child's block", sel)
+	}
+	first := strings.TrimRight(stripANSI(lines[len(lines)-3]), " ")
+	if !strings.HasPrefix(first, "   relevo-scratch/alpha") {
+		t.Errorf("child detail line 1 = %q, want the short name", first)
+	}
+	if !strings.Contains(first, statsScratchOne) {
+		t.Errorf("child detail line 1 = %q, want the full path echoed", first)
+	}
+	if strings.Contains(first, stats.ScratchKey) {
+		t.Errorf("child detail line 1 = %q, want no fold key echo", first)
+	}
+	totals := stripANSI(lines[len(lines)-2])
+	if !strings.Contains(totals, "2 rounds") {
+		t.Errorf("child totals = %q, want its own 2 rounds, not the fold's 4", totals)
+	}
+}
+
+// TestStatsScratchRowEnterNotices pins the fold key's notice on both tables,
+// while a child falls to the default branch and filters on its own key.
+func TestStatsScratchRowEnterNotices(t *testing.T) {
+	t.Run("fold on the repos tab", func(t *testing.T) {
+		m := statsShell(t, 132, 40, "30d")
+		res, _ := m.Update(statsMsg{window: "30d", rep: statsScratchReport()})
+		m = res.(Model)
+		res, _ = m.Update(statsKey('5'))
+		m = res.(Model)
+		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = drain(t, res.(Model), cmd)
+		if _, ok := m.top().(roundsView); ok {
+			t.Fatal("the fold row must not push a rounds view")
+		}
+		if !strings.Contains(m.notice, "scratch repos cannot be filtered as one") {
+			t.Errorf("notice = %q", m.notice)
+		}
+	})
+
+	t.Run("fold on the overview", func(t *testing.T) {
+		m := statsShell(t, 132, 40, "30d")
+		res, _ := m.Update(statsMsg{window: "30d", rep: statsScratchReport()})
+		m = res.(Model)
+		res, _ = m.Update(statsKey('l'))
+		m = res.(Model)
+		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = drain(t, res.(Model), cmd)
+		if _, ok := m.top().(roundsView); ok {
+			t.Fatal("the overview's fold row must not push a rounds view")
+		}
+		if !strings.Contains(m.notice, "scratch repos cannot be filtered as one") {
+			t.Errorf("notice = %q", m.notice)
+		}
+	})
+
+	t.Run("child filters its own path", func(t *testing.T) {
+		m := statsReposShell(t, statsScratchReport(), stats.ScratchKey)
+		res, _ := m.Update(statsKey('j'))
+		m = res.(Model)
+		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = drain(t, res.(Model), cmd)
+		rv, ok := m.top().(roundsView)
+		if !ok {
+			t.Fatalf("enter on a child must push a rounds view, got %T", m.top())
+		}
+		want := `repo:"` + statsScratchOne + `" since:30d`
+		if got := rv.dash.QueryText(); got != want {
+			t.Errorf("QueryText = %q, want %q", got, want)
+		}
+	})
+}
+
+// TestStatsScratchOverviewRow pins the overview BUSIEST REPOS table: it reads
+// the same Repos, so it shows the fold as one row at the fold's tokens rank.
+func TestStatsScratchOverviewRow(t *testing.T) {
+	v := statsView{window: "30d", loaded: true, rep: statsScratchReport(), tab: statsTabOverview}
+	rows := v.overviewRepoRows()
+	if len(rows) != 3 {
+		t.Fatalf("overview repos = %d, want the fold, the remote repo and (none)", len(rows))
+	}
+	if rows[0].Key != stats.ScratchKey || rows[0].Tokens != 1_715_000 {
+		t.Errorf("first overview row = %+v, want the fold leading on tokens", rows[0].GroupRow)
+	}
+
+	body := stripANSI(v.Body(statsTestEnv(t, 132, 40), 132, 40))
+	if !strings.Contains(body, "scratch") {
+		t.Errorf("BUSIEST REPOS missing the scratch row:\n%s", body)
+	}
+	for _, path := range []string{"alpha", "beta"} {
+		if strings.Contains(body, path) {
+			t.Errorf("overview leaked the %s child:\n%s", path, body)
+		}
+	}
+}

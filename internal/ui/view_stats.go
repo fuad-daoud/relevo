@@ -652,6 +652,9 @@ func (v statsView) enter(env Env) (View, tea.Cmd) {
 	if key == "(none)" {
 		return v, notice("rounds with no repo cannot be filtered")
 	}
+	if key == stats.ScratchKey {
+		return v, notice("scratch repos cannot be filtered as one")
+	}
 	return v.roundsForRepo(env, key)
 }
 
@@ -697,6 +700,9 @@ func (v statsView) enterOverview(env Env) (View, tea.Cmd) {
 	key := rows[i].Key
 	if key == "(none)" {
 		return v, notice("rounds with no repo cannot be filtered")
+	}
+	if key == stats.ScratchKey {
+		return v, notice("scratch repos cannot be filtered as one")
 	}
 	return v.roundsForRepo(env, key)
 }
@@ -1649,10 +1655,13 @@ func statsMinWidth(w int) int {
 }
 
 // shortRepo delegates to dash.ShortRepo; the unrecorded "(none)" bucket reads
-// "(no repo)" (§3.3).
+// "(no repo)" and the scratch repos' fold "scratch" (§3.3).
 func shortRepo(key string) string {
 	if key == "(none)" {
 		return "(no repo)"
+	}
+	if key == stats.ScratchKey {
+		return "scratch"
 	}
 	return dash.ShortRepo(key)
 }
@@ -2662,6 +2671,9 @@ type repoTabRow struct {
 // labelled feature or a labelled ticket, so a featureless round's ticket stays
 // reachable; a repo with no labels at all has no children.
 func repoChildren(r stats.RepoRow) []repoTabRow {
+	if len(r.Scratch) > 0 {
+		return scratchRepoChildren(r)
+	}
 	var out []repoTabRow
 	for _, f := range reposByTokens(r.Features, func(f stats.FeatureRow) int64 { return f.Tokens }) {
 		out = append(out, repoTabRow{kind: kindFeature, group: f.GroupRow, parent: r.Key})
@@ -2675,6 +2687,18 @@ func repoChildren(r stats.RepoRow) []repoTabRow {
 	out = append(out, repoTabRow{kind: kindFeature, group: r.NoFeature.GroupRow, parent: r.Key})
 	for _, t := range reposByTokens(r.NoFeature.Tickets, func(g stats.GroupRow) int64 { return g.Tokens }) {
 		out = append(out, repoTabRow{kind: kindTicket, group: t, parent: r.Key, feature: "(none)"})
+	}
+	return out
+}
+
+// scratchRepoChildren is the fold row's child rows: one row per scratch repo by
+// tokens desc, each parented to the fold. They are leaf rows -- a repo has no
+// children of its own -- so a child expands to nothing.
+func scratchRepoChildren(r stats.RepoRow) []repoTabRow {
+	rows := reposByTokens(r.Scratch, func(s stats.RepoRow) int64 { return s.Tokens })
+	out := make([]repoTabRow, 0, len(rows))
+	for _, s := range rows {
+		out = append(out, repoTabRow{kind: kindRepo, group: s.GroupRow, parent: r.Key})
 	}
 	return out
 }
@@ -2836,7 +2860,9 @@ func (v statsView) statsGroupDetail(env Env, g stats.GroupRow, kind repoKind, wi
 		first += "   " + mutedStyle.Render("feature")
 	case kind == kindTicket && g.Key != "(none)":
 		first += "   " + mutedStyle.Render("ticket")
-	case g.Key != "(none)":
+	// The fold's key is a placeholder, not a repo, so it gets no echo; a
+	// child's is its own path and does.
+	case g.Key != "(none)" && g.Key != stats.ScratchKey:
 		first += "   " + mutedStyle.Render(g.Key)
 	}
 	out := []string{fit(first, w)}
