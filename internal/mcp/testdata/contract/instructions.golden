@@ -98,9 +98,10 @@ This is the guide to relevo, the tool that hands work between you and a runner.
 
 ## Output and errors
 
-- Every verb takes `--json`: stdout is then one document (`show --log` and a
-  transcript stream are NDJSON, one object per line), and the human output stays
-  the default.
+- Every verb that prints a result takes `--json`: stdout is then one document
+  (`show --log` and a transcript stream are NDJSON, one object per line), and
+  the human output stays the default. A verb that owns a stream or a terminal --
+  a server, a daemon, a TUI -- prints that instead.
 - A failure is data: human stderr is `relevo: <code>: <message>` then
   `next: <command>`; with `--json` it is
   `{"error":{"code":"<code>","message":"<message>","next":"<command>"}}`. Run

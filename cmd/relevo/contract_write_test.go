@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -55,6 +56,15 @@ func writeDocFixtures() []struct {
 			Round:            2,
 		}, "/w/alpha", "builder", "builder-1", false)},
 		{"send-json", sendDocOf("alpha", 3, "builder-1", "edit", false)},
+		// push --ack: the two idempotent paths differ in exactly one field, so
+		// both are here -- a mutation that drops the assignment must break one
+		// of these two goldens and no other.
+		{"push-ack-json", pushAckDocOf(delivery.AckResult{
+			Binding: "webshop", Seq: 4, Route: "push", AlreadyConfirmed: false,
+		})},
+		{"push-ack-json-retry", pushAckDocOf(delivery.AckResult{
+			Binding: "webshop", Seq: 4, Route: "push", AlreadyConfirmed: true,
+		})},
 		{"stop-json", stopDocOf("alpha", relevo.StopResult{Round: 3, Action: "killed"})},
 		{"done-json", doneDocOf("alpha", relevo.DoneResult{
 			WorktreeRemoved: "/w/alpha",
@@ -394,6 +404,13 @@ func TestContractWriteUnclassifiedIsInternal(t *testing.T) {
 		{"scope active", fmt.Errorf("send: %w", relevo.ErrScopeActive), codeRefused},
 		{"bare refusal", fmt.Errorf("chain: %w", relevo.ErrRefused), codeRefused},
 		{"round out of range", fmt.Errorf("show: %w", relevo.ErrRoundNotFound), codeRoundNotFound},
+		// The push ack refusals: each sentinel is one precondition the entry did
+		// not meet, and each earns its own code rather than falling into internal.
+		{"ack of another mastermind's binding", fmt.Errorf("ack: %w", delivery.ErrAckForeignBinding), codeMastermindMismatch},
+		{"ack of an unknown seq", fmt.Errorf("ack: %w", delivery.ErrAckUnknownSeq), codePushSeqNotFound},
+		{"ack of another route's entry", fmt.Errorf("ack: %w", delivery.ErrAckAlreadyConfirmed), codePushAlreadyConfirm},
+		{"ack of an unadmitted entry", fmt.Errorf("ack: %w", delivery.ErrAckNotAdmitted), codePushNotAdmitted},
+		{"ack with no live claim", fmt.Errorf("ack: %w", delivery.ErrAckNoClaim), codePushNoClaim},
 		{"unclassified", errors.New("something nobody classified"), codeInternal},
 	} {
 		t.Run(c.name, func(t *testing.T) {

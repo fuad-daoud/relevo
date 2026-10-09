@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
@@ -98,15 +97,13 @@ func TestWaitUnderPushClaimWhileHolderDrains(t *testing.T) {
 		t.Fatalf("Queue: %v", err)
 	}
 
-	ackIn, ackWriter := io.Pipe()
 	lineOut, lineWriter := io.Pipe()
-	defer func() { _ = ackIn.Close() }()
 	defer func() { _ = lineOut.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- delivery.RunPush(ctx, deps, mcpTestMasterMindA, ackIn, lineWriter) }()
+	go func() { done <- delivery.RunPush(ctx, deps, mcpTestMasterMindA, lineWriter) }()
 
 	ev := readPushEvent(t, lineOut)
 	if ev.Binding != "webshop" || ev.Kind != string(store.KindReport) {
@@ -124,16 +121,16 @@ func TestWaitUnderPushClaimWhileHolderDrains(t *testing.T) {
 		t.Fatalf("wait text = %q, want the closed line plus the mod note", text)
 	}
 
-	if _, err := fmt.Fprintf(ackWriter, "ack %d\n", ev.Seq); err != nil {
-		t.Fatalf("write ack: %v", err)
+	if _, err := delivery.AckPush(deps, mcpTestMasterMindA, "webshop", ev.Seq); err != nil {
+		t.Fatalf("AckPush: %v", err)
 	}
 	waitForSinglePushConfirm(t, s, "webshop")
 
-	_ = ackWriter.Close()
+	cancel()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("RunPush did not return on stdin EOF")
+		t.Fatal("RunPush did not return after its context was cancelled")
 	}
 }
 

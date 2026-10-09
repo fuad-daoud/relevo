@@ -3,6 +3,7 @@ package main
 import (
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -223,6 +224,29 @@ func gateSetDocOf(provider string, until time.Time, candidates int) GateDoc {
 // which counts the entries the clear lifted.
 func gateClearDocOf(provider string, candidates, removed int) GateDoc {
 	return GateDoc{Subject: provider, Candidates: candidates, Mode: "gated", Removed: &removed}
+}
+
+// PushAckDoc is `relevo push --ack --json`: the entry the ack settled, the
+// route it settled it on, and already_confirmed, which is true only on the
+// idempotent retry -- false when this run wrote the confirmation. That one
+// field is what tells a caller its first ack landed from one that found the
+// entry already settled by an earlier ack of the same route.
+type PushAckDoc struct {
+	Binding          string `json:"binding"`
+	Seq              int    `json:"seq"`
+	Route            string `json:"route"`
+	AlreadyConfirmed bool   `json:"already_confirmed"`
+}
+
+// pushAckDocOf is the ack document. The long form needs none: its stream is
+// already NDJSON, so --json changes nothing but a startup failure.
+func pushAckDocOf(res delivery.AckResult) PushAckDoc {
+	return PushAckDoc{
+		Binding:          res.Binding,
+		Seq:              res.Seq,
+		Route:            res.Route,
+		AlreadyConfirmed: res.AlreadyConfirmed,
+	}
 }
 
 // candidateLabel is the candidate a result document names: its short name when

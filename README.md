@@ -441,8 +441,13 @@ gives a MasterMind a name of your own.
   for a Claude Code MasterMind, serving the verbs as tools. See
   [Claude Code plugin](#claude-code-plugin).
 - `relevo push [--mastermind P]` — hold this MasterMind's push claim and write its
-  round events to the mod on stdout as NDJSON, confirming each on an `ack <seq>`
-  line from stdin.
+  round events to the mod on stdout as NDJSON. The holder reads nothing from
+  stdin: `relevo push --ack <binding> <seq>` confirms one entry the holder wrote
+  and exits 0, and the holder moves on once it sees that confirm. `--json` is
+  accepted on both routes; the holder's stream is already NDJSON, so on the ack
+  route it prints one document instead — `{"binding","seq","route",
+  "already_confirmed"}`, where `already_confirmed` is true only on an idempotent
+  retry. Without `--json` a successful ack stays silent.
 - `relevo mastermind init [--name N] [--kind K --session S] [--hook claude]`;
   `relevo mastermind list [--json]`; `relevo mastermind rename <id|name> <new-name>`;
   `relevo mastermind forget <id|name>` — register this MasterMind, or list, rename
@@ -2595,8 +2600,10 @@ after every exit except `WaitTimeout`; on a timeout, run `relevo status --name
 **Push is the opt-in upgrade.** A `relevo push` holder writes reports, consult
 answers and edge artifacts to the session's mod as NDJSON the moment the daemon
 has them, instead of the session fetching them with the wait. The session's mod
-starts the holder and acks each line; without a holder, `relevo mcp` serves the
-tools and reports arrive through the background wait above.
+starts the holder and acks each line with `relevo push --ack <binding> <seq>`,
+which confirms that entry and exits; the holder sees the confirm and sends the
+next line. Without a holder, `relevo mcp` serves the tools and reports arrive
+through the background wait above.
 
 **How reports arrive.** relevo identifies the MasterMind session itself -- the
 plugin's hook registers it, and `relevo mastermind list` shows the records -- so no
