@@ -508,6 +508,8 @@ describe('poller', () => {
 })
 
 describe('band', () => {
+  const heads = async (ui: any) => (await texts(ui)).filter((x: string) => x.startsWith('● '))
+
   for (const surface of SURFACES) {
     test(`${surface}: one waiting and one running draw one inbox row and one rail item, never both`, async ($, on) => {
       const f = fakes(on, {
@@ -520,23 +522,58 @@ describe('band', () => {
       await startSession($)
       await f.clock.settle()
       const ui = await mount($, surface)
-      const all = await labels(ui)
-      expect(all).toEqual(['● w1 r2', '○ r1'])
+      expect(await labels(ui)).toEqual(['→ show', '○ r1'])
       const t = await texts(ui)
-      expect(t).toEqual(expect.arrayContaining(['needs you · 5m', 'gate hit', 'working', 'relevo · main']))
-      expect(t.filter((x) => x.includes('w1') || x.includes('r1'))).toHaveLength(0)
+      expect(t).toEqual(expect.arrayContaining(['● w1 r2', 'needs you · 5m', 'gate hit', 'working', 'relevo · main']))
+      const all = [...t, ...(await labels(ui))]
+      expect(all.filter((x) => x.includes('w1'))).toHaveLength(1)
+      expect(all.filter((x) => x.includes('r1'))).toHaveLength(1)
     })
   }
 
-  test('the label never repeats the hotkey digit the surface draws beside it', async ($, on) => {
+  test('an inbox row draws its digit once, muted, and its move carries the hotkey', async ($, on) => {
     const f = fakes(on, {
-      doc: () => mkdoc([row('w1', { tone: 'needs', status: 'NEEDS YOU', reason: 'gate hit' }), row('r1', { activity: 'working' })]),
+      doc: () =>
+        mkdoc([
+          row('w1', { tone: 'needs', status: 'NEEDS YOU', next: { label: 'answer', text: 'a' } }),
+          row('w2', { tone: 'report', status: 'REPORT IN' }),
+          row('r1', { activity: 'working' }),
+        ]),
     })
     await startSession($)
     await f.clock.settle()
-    const buttons = await (await mount($, 'terminal')).findAll({ type: 'Button' })
-    expect(buttons.map((b: any) => b.props.hotkey)).toEqual(['1', '2'])
+    const ui = await mount($, 'terminal')
+    const buttons = await ui.findAll({ type: 'Button' })
+    const moves = buttons.filter((b: any) => String(b.props.label).startsWith('→'))
+    expect(moves.map((b: any) => b.props.hotkey)).toEqual(['1', '2'])
+    // Not plain: the terminal draws `[ label ]` and leaves the digit to the band.
+    expect(moves.every((b: any) => b.props.plain === undefined)).toBe(true)
     for (const b of buttons) expect(String(b.props.label)).not.toMatch(/^\d+:/)
+    const digits = (await ui.findAll({ type: 'Text' })).filter((x: any) => /^\d$/.test(x.text))
+    expect(digits.map((x: any) => [x.text, x.props.color])).toEqual([
+      ['1', '#66716d'],
+      ['2', '#66716d'],
+    ])
+    expect(buttons.find((b: any) => b.props.label === '○ r1').props.hotkey).toBeUndefined()
+  })
+
+  test('a name is bold and toned, and the columns line up across rows', async ($, on) => {
+    const f = fakes(on, {
+      doc: () =>
+        mkdoc([
+          row('api', { tone: 'needs', status: 'NEEDS YOU' }),
+          row('webshop', { tone: 'report', status: 'REPORT IN', round: 3, report_round: 3 }),
+        ]),
+    })
+    await startSession($)
+    await f.clock.settle()
+    const ui = await mount($, 'terminal')
+    const head = (await ui.findAll({ type: 'Text' })).find((x: any) => x.text === '● api r1')
+    expect(head.props).toEqual(expect.objectContaining({ bold: true, color: '#f0b452' }))
+    const widths = (await ui.findAll({ type: 'Box' })).map((b: any) => b.props.width).filter((w: unknown) => w !== undefined)
+    // Two fixed columns per row, the same widths on both rows.
+    expect(widths).toHaveLength(4)
+    expect(widths.slice(0, 2)).toEqual(widths.slice(2, 4))
   })
 
   test('calm: every binding sits on the rail, status is the word without activity', async ($, on) => {
@@ -548,17 +585,17 @@ describe('band', () => {
     expect(await texts(ui)).toEqual(expect.arrayContaining(['quiet 2m', 'working']))
   })
 
-  test('inbox shows the oldest three first, then +N more', async ($, on) => {
-    const waiting = ['d', 'c', 'b', 'a', 'e'].map((n, i) =>
-      row(n, { tone: 'report', status: 'REPORT IN', last_ts: `2026-10-09T11:0${5 - i}:00Z` }),
+  test('the inbox puts what needs you first, then oldest, three at most, then +N more', async ($, on) => {
+    const reports = ['d', 'c', 'b'].map((n, i) =>
+      row(n, { tone: 'report', status: 'REPORT IN', last_ts: `2026-10-09T11:0${3 - i}:00Z` }),
     )
-    const f = fakes(on, { doc: () => mkdoc(waiting) })
+    const f = fakes(on, {
+      doc: () => mkdoc([...reports, row('n', { tone: 'needs', status: 'NEEDS YOU', last_ts: '2026-10-09T11:09:00Z' }), row('e', { tone: 'report', status: 'REPORT IN', last_ts: '2026-10-09T11:00:00Z' })]),
+    })
     await startSession($)
     await f.clock.settle()
     const ui = await mount($, 'terminal')
-    const all = await labels(ui)
-    expect(all.map((l) => l.split(' ')[1])).toEqual(['e', 'a', 'b'])
-    expect(all.some((l) => l.startsWith('→'))).toBe(false)
+    expect((await heads(ui)).map((l: string) => l.split(' ')[1])).toEqual(['n', 'e', 'b'])
     expect(await texts(ui)).toContain('+2 more · /relevo:status')
   })
 
@@ -580,7 +617,7 @@ describe('band', () => {
     })
     await startSession($)
     await f.clock.settle()
-    expect((await labels(await mount($, 'terminal')))[0]).toBe('● p r1')
+    expect(await heads(await mount($, 'terminal'))).toEqual(['● p r1'])
   })
 
   test('a report row names the delivered diff from live', async ($, on) => {
@@ -591,24 +628,23 @@ describe('band', () => {
     await startSession($)
     await f.clock.settle()
     const ui = await mount($, 'terminal')
-    expect((await labels(ui))[0]).toBe('● w r1')
-    expect(await texts(ui)).toEqual(expect.arrayContaining(['report in · 1h', 'delivered · +10/-2 in 3']))
+    expect(await texts(ui)).toEqual(expect.arrayContaining(['● w r1', 'report in · 1h', 'delivered · +10/-2 in 3']))
   })
 
   test('chain row draws the progress bar when present, the chain string when not', async ($, on) => {
     const f = fakes(on, {
       doc: () =>
         mkdoc([
-          row('c1', { chain: 'chain x · plan 2/4', chain_progress: { done: 2, total: 4, phase: 'reviewing' } }),
+          row('c1', { chain: 'chain x · plan 3/4', chain_progress: { done: 2, total: 4, phase: 'reviewing' } }),
           row('c2', { chain: 'chain y · plan 1/3 · building' }),
         ]),
     })
     await startSession($)
     await f.clock.settle()
-    const ui = await mount($, 'terminal')
+    const ui = await mount($, 'terminal', { bodyColumns: 120 })
     expect(await labels(ui)).toEqual(['○ c1', '○ c2'])
     const t = await texts(ui)
-    expect(t).toEqual(expect.arrayContaining(['■■', '▣', '□', '2/4 reviewing', 'chain y · plan 1/3 · building']))
+    expect(t).toEqual(expect.arrayContaining(['chain ', '■■', '■', '3/4 reviewing', 'chain y · plan 1/3 · building']))
   })
 
   test('chain bar colors: done green, current bold, rest faint', async ($, on) => {
@@ -616,10 +652,12 @@ describe('band', () => {
     await startSession($)
     await f.clock.settle()
     const ui = await mount($, 'terminal')
-    const by = async (text: string) => (await ui.findAll({ type: 'Text' })).find((x: any) => x.text === text)
-    expect((await by('■')).props.color).toBe('#86d093')
-    expect((await by('▣')).props.bold).toBe(true)
-    expect((await by('□')).props.color).toBe('#66716d')
+    const bar = (await ui.findAll({ type: 'Text' })).filter((x: any) => x.text === '■')
+    expect(bar.map((x: any) => [x.props.color, x.props.bold])).toEqual([
+      ['#86d093', undefined],
+      [undefined, true],
+      ['#66716d', undefined],
+    ])
   })
 
   test('a failed poll keeps the last document', async ($, on) => {
@@ -701,7 +739,7 @@ describe('band', () => {
       await startSession($)
       await f.clock.settle()
       const ui = await mount($, surface)
-      expect(await labels(ui)).toEqual(['● w r1', '→ answer', '● q r1'])
+      expect(await labels(ui)).toEqual(['→ answer', '→ show'])
       await ui.press({ key: 'nw' })
       expect(f.fills).toEqual(['relevo send w --file a.md'])
       expect(f.submits).toHaveLength(0)
