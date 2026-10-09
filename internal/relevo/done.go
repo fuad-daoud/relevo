@@ -74,7 +74,17 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 				if errors.Is(derr, client.ErrUnreachable) {
 					return fmt.Errorf("%s unreachable: %w", b.Builder.Server, derr)
 				}
-				return fmt.Errorf("%s: %w", b.Builder.Server, derr)
+				// A 404 means the server already considers it gone -- the
+				// binding was settled and released, collected by its GC, or
+				// lost to a server state reset -- which is not a reason to
+				// refuse a done the human has already decided. Fall through
+				// and settle it locally, exactly as Unbind does. The same
+				// tradeoff is accepted there: a 404 raised by a foreign owner
+				// reading another tenant's binding is indistinguishable from
+				// "gone", and marks the local record done too.
+				if !is404(derr) {
+					return fmt.Errorf("%s: %w", b.Builder.Server, derr)
+				}
 			}
 		}
 
