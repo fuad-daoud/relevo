@@ -39,13 +39,22 @@ func openBoardRegistry() (*mastermind.DBRegistry, *db.DB, error) {
 		return nil, nil, fail(codeRefused, "no relevo.db at %s; name a MasterMind with --mastermind <id|name> or RELEVO_MASTERMIND", path)
 	}
 
+	// The registry binds the machine-local file: a record names a pid and a cwd
+	// on this machine, and the split moved those rows to the local file. The
+	// board reads through a dialled handle when the owner holds the file and
+	// through a read-only one otherwise, so the binding goes on the handle
+	// rather than on either path.
+	registry := func(d *db.DB) *mastermind.DBRegistry {
+		return &mastermind.DBRegistry{KV: db.TxKV{DB: d.LocalOrSelf()}}
+	}
+
 	ctx := context.Background()
 	if d, derr := dialOwnerAdHoc(ctx, root, verbDialBudget); derr == nil {
-		return &mastermind.DBRegistry{KV: db.TxKV{DB: d}}, d, nil
+		return registry(d), d, nil
 	}
 	d, err := openReadOnlyDB(path, db.Options{})
 	if err == nil {
-		return &mastermind.DBRegistry{KV: db.TxKV{DB: d}}, d, nil
+		return registry(d), d, nil
 	}
 	if errors.Is(err, db.ErrNotConverted) {
 		return nil, nil, failWrap(codeRefused, err, "open %s", path)
@@ -56,7 +65,7 @@ func openBoardRegistry() (*mastermind.DBRegistry, *db.DB, error) {
 	// The file is held, so the owner is the only reader. One more dial covers a
 	// daemon that bound its socket between the first attempt and the open.
 	if d, derr := dialOwnerAdHoc(ctx, root, verbDialBudget); derr == nil {
-		return &mastermind.DBRegistry{KV: db.TxKV{DB: d}}, d, nil
+		return registry(d), d, nil
 	}
 	if sock, sockErr := ownerSocket(root); sockErr != nil {
 		return nil, nil, failWrap(codeConflict, err, "relevo.db is locked (%s) and no owner socket is available: %v", path+".lock", sockErr)

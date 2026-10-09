@@ -67,6 +67,44 @@ type Daemon struct {
 	// It is process state on purpose: a restart mirrors everything once, and a
 	// change the daemon never saw cannot hide behind a revision it wrote.
 	ingestSeen map[string]string
+
+	// syncMu guards the two fields below, which are the whole of the state a
+	// sync trigger shares between the two goroutines that can start one.
+	syncMu sync.Mutex
+	// syncInFlight is whether a sync this daemon started is still running. A
+	// second trigger arriving while one is in flight is dropped rather than
+	// queued: the network is the slow part, and piling attempts behind it
+	// only makes the backlog worse.
+	syncInFlight bool
+	// syncIdle is signalled whenever syncInFlight goes false, so a caller
+	// waiting for the slot -- a sync verb -- is woken rather than polling. It is
+	// created once in NewDaemon and never replaced, which is what lets Wait
+	// and the triggers share one lock and one condition.
+	syncIdle *sync.Cond
+	// syncLast is when the idle window last opened. The zero time means no
+	// window has run yet, so a fresh daemon syncs once and then settles.
+	syncLast time.Time
+	// outboxTruncatedAt is when the outbox was last emptied while sync was
+	// off. The zero time means it never has been, so a fresh daemon empties it
+	// on its first tick and then settles onto the interval.
+	outboxTruncatedAt time.Time
+	// syncNow is the clock the idle window reads. Nil means time.Now.
+	syncNow func() time.Time
+	// syncVerbs is the verb runner the owner serves, set once the Daemon
+	// exists. Nil (the default) keeps today's behaviour: the tick drives
+	// rt.Sync exactly as before. When set, the tick drives the runner it
+	// shares with the verbs, so a client built lazily for one is reused by
+	// the other instead of each path opening its own. Set through
+	// SetSyncVerbs: cmd/relevo owns the hook installation while this type
+	// owns the field.
+	syncVerbs *VerbRunner
+}
+
+// SetSyncVerbs shares the owner's verb runner with the tick, so background
+// attempts reuse the client a verb built lazily (and vice versa) instead of
+// each path opening its own handle to the same remote.
+func (d *Daemon) SetSyncVerbs(v *VerbRunner) {
+	d.syncVerbs = v
 }
 
 // NewDaemon returns a Daemon ticking at interval, floored at minInterval.
@@ -74,10 +112,12 @@ func NewDaemon(rt Runtime, interval time.Duration) *Daemon {
 	if interval < minInterval {
 		interval = minInterval
 	}
-	return &Daemon{
+	d := &Daemon{
 		rt:       rt,
 		interval: interval,
 	}
+	d.syncIdle = sync.NewCond(&d.syncMu)
+	return d
 }
 
 // WithRefresh installs a per-tick refresh on the daemon. nil (the default)
@@ -94,6 +134,50 @@ func (d *Daemon) WithRefresh(f func(Runtime) Runtime) *Daemon {
 func (d *Daemon) WithUpgrade(f func(ctx context.Context) bool) *Daemon {
 	d.upgrade = f
 	return d
+}
+
+// WaitSyncSlot runs fn with this daemon's sync to itself, waiting its turn
+// rather than dropping the work.
+//
+// It is the same guard the seal hook and the idle window take, and a sync verb
+// takes it the same way. The difference is what a caller does when the slot is
+// already held: queueSync drops a second trigger, because a tick is cheap to
+// lose and piling attempts behind a slow network does not make the backlog
+// smaller. A verb is not that -- somebody asked for it explicitly and is waiting
+// for the answer -- so it waits for the in-flight attempt to finish and then
+// runs.
+//
+// The wait is a condition rather than a poll, and the slot is released in a
+// defer, so a verb that panics still frees it: a stuck flag would wedge every
+// later sync on this machine and the statusline would keep reading a marker no
+// tick writes again.
+func (d *Daemon) WaitSyncSlot(fn func()) {
+	d.syncMu.Lock()
+	for d.syncInFlight {
+		d.syncIdle.Wait()
+	}
+	d.syncInFlight = true
+	d.syncMu.Unlock()
+
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("turso sync panicked", "panic", r, "stack", string(debug.Stack()))
+		}
+		d.syncMu.Lock()
+		d.syncInFlight = false
+		d.signalIdleLocked()
+		d.syncMu.Unlock()
+	}()
+	fn()
+}
+
+// signalIdleLocked wakes everything waiting for the sync slot. It is called
+// with syncMu held, from every site that ends a sync, so a waiter is released
+// whichever kind of sync finished.
+func (d *Daemon) signalIdleLocked() {
+	if d.syncIdle != nil {
+		d.syncIdle.Broadcast()
+	}
 }
 
 // Run ticks until ctx is cancelled. A failing tick is logged and retried on
@@ -166,6 +250,12 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// it was asked in, so it cannot wait on a round's completion marker.
 	d.safely("served check sweep", func() { tickServedChecks(ctx, d.rt) })
 
+	// The outbox is emptied here, while the machine's sync is off, and before
+	// the no-bindings early return: a machine with no binding is exactly the
+	// one still collecting entries nobody will drain, so returning first would
+	// leave it growing for exactly as long as it stays idle.
+	d.safely("outbox truncate", func() { d.truncateOutbox() })
+
 	if len(bindings) == 0 {
 		return nil
 	}
@@ -207,6 +297,11 @@ func (d *Daemon) Tick(ctx context.Context) error {
 
 	d.safely("refresh", func() { d.refreshRelease(ctx) })
 
+	// The idle-tick sync. It sits with the other non-binding phases, where
+	// safely contains a failure to the phase and the next tick tries again,
+	// and it is a no-op on a machine with no sync wired at all.
+	d.safely("turso sync", func() { d.idleSync(ctx) })
+
 	return nil
 }
 
@@ -244,6 +339,10 @@ func (d *Daemon) refreshRelease(ctx context.Context) {
 		slog.Debug("release check: no database", "err", err)
 		return
 	}
+
+	// The release cache is this machine's last answer; the split put it in
+	// the local file.
+	mdb = mdb.LocalOrSelf()
 
 	cached, ok, err := release.Load(mdb)
 	if err != nil {
@@ -297,6 +396,10 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 	pre := d.prefetchRemote(ctx, b)
 	defer pre.release()
 
+	// sealed is how many files this tick's seal pass moved into the database.
+	// It is read after the lock is released, which is the only place a sync
+	// may be started from.
+	var sealed int
 	err = d.rt.Store.WithLock(func(tx *store.Tx) error {
 		loaded, err := tx.Load(name)
 		if errors.Is(err, store.ErrNotFound) {
@@ -332,7 +435,7 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 		} else if moved > 0 {
 			slog.Info("out layout: migrated runner files into out/", "binding", name, "files", moved)
 		}
-		sealRounds(d.rt.Store, tx, loaded, d.rt.Policy.ArtifactMaxBytes())
+		sealed = sealRounds(d.rt.Store, tx, loaded, d.rt.Policy.ArtifactMaxBytes())
 
 		fresh := backfillMasterMindID(d.rt, loaded)
 
@@ -358,6 +461,14 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 	})
 	if err != nil {
 		return err
+	}
+	// A seal that moved bytes is the moment worth syncing on: the bulk of what
+	// a machine has to hand another machine is a round's files. The sync is
+	// started here rather than inside the seal or the lock above, and is not
+	// waited on, because the seal is already committed and neither it nor the
+	// tick may wait on a network.
+	if sealed > 0 {
+		d.queueSync(ctx)
 	}
 	if pre != nil && pre.Settle != nil {
 		return settleCatchUp(ctx, d.rt, pre.Settle, true)
@@ -482,11 +593,17 @@ func sweepReaderScratch(ctx context.Context, rt Runtime, bindings []store.Bindin
 // artifactMaxBytes is policy.artifact_max_mb in bytes: a round whose artifact
 // directory is over it is left on disk (§3.4), so nothing is dropped, until a
 // later tick sees the cap raised.
-func sealRounds(st *store.Store, tx *store.Tx, b store.Binding, artifactMaxBytes int64) {
+//
+// The return is how many files were sealed, which is what tells the caller
+// whether this pass moved bytes at all. Nothing else about the pass changes:
+// the same rounds are considered, the same lines are logged, and the same
+// directories are removed.
+func sealRounds(st *store.Store, tx *store.Tx, b store.Binding, artifactMaxBytes int64) int {
+	sealed := 0
 	rounds, err := st.RoundsOnDisk(b.Name)
 	if err != nil {
 		slog.Warn("seal: list rounds", "binding", b.Name, "err", err)
-		return
+		return sealed
 	}
 	for _, r := range rounds {
 		drained := st.StreamDrained(b, r)
@@ -503,6 +620,7 @@ func sealRounds(st *store.Store, tx *store.Tx, b store.Binding, artifactMaxBytes
 			continue
 		}
 		if n > 0 {
+			sealed += n
 			slog.Info("seal", "binding", b.Name, "round", r, "files", n)
 		}
 	}
@@ -523,6 +641,7 @@ func sealRounds(st *store.Store, tx *store.Tx, b store.Binding, artifactMaxBytes
 			_ = os.Remove(st.Dir(b.Name))
 		}
 	}
+	return sealed
 }
 
 // safely runs one of Tick's non-binding phases, recovering a panic so that a

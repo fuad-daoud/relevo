@@ -28,6 +28,11 @@ type conn struct {
 	conns  int
 	// adHoc is the marker every handshake this connection opens carries.
 	adHoc bool
+	// hasLocal is the owner's answer to whether it serves a machine-local file.
+	hasLocal bool
+	// scope is the file every request on this connection reaches, fixed by the
+	// handshake: one connection never mixes the shared file and the local one.
+	scope string
 	// dead is set from the caller's goroutine and read from a cancel
 	// AfterFunc, so it is atomic rather than a plain flag.
 	dead atomic.Bool
@@ -63,6 +68,7 @@ func (c *conn) handshake(ctx context.Context) error {
 		// package that owns the migrations.
 		SchemaKnow: 0,
 		AdHoc:      c.adHoc,
+		Scope:      c.scope,
 	}
 	if err := c.send(wire.KindHello, hello, nil); err != nil {
 		return err
@@ -83,6 +89,7 @@ func (c *conn) handshake(ctx context.Context) error {
 		}
 		c.have, c.know, c.origin = m.SchemaHave, m.SchemaKnow, m.Origin
 		c.pid, c.conns = m.PID, m.Conns
+		c.hasLocal = m.HasLocal
 		return nil
 	case wire.KindRefuse:
 		var r wire.Refusal
@@ -356,6 +363,53 @@ func (c *conn) QueryContext(ctx context.Context, query string, args []driver.Nam
 		return nil, c.midRefuse(frame)
 	default:
 		return nil, c.connLost(fmt.Errorf("client: unexpected frame kind %d for query", kind))
+	}
+}
+
+// SyncVerb sends one sync verb to the owner and returns its answer.
+//
+// It is a request of its own rather than an Exec, because the owner runs the
+// verb against handles it already holds: there is no statement here to pin a
+// connection for, and a pinned connection would hold a pool slot the request
+// never uses. The token travels in the frame's raw tail and is handed straight
+// to the owner's hook -- it is never formatted into an error, never logged and
+// never sent back, and the only token field on the answer is a bool.
+//
+// A refusal arrives as the result itself rather than as an error, so a caller
+// classifies a failed verb by code. Only a lost connection is an error here.
+func (c *conn) SyncVerb(ctx context.Context, verb *wire.SyncVerb, token []byte) (*wire.SyncResult, error) {
+	if c.dead.Load() {
+		return nil, driver.ErrBadConn
+	}
+	id := c.newID()
+	if err := c.send(wire.KindSyncVerb, verb, token); err != nil {
+		return nil, c.badConn(err)
+	}
+
+	kind, frame, err := c.await(ctx, id)
+	if err != nil {
+		// A wait the caller's own context ended, after the frame was written,
+		// is marked as such: the request was delivered, so a caller must not
+		// read it as one that never arrived. Everything before the write -- a
+		// dial, a handshake, a failed send -- stays a plain error.
+		if cerr := ctx.Err(); cerr != nil && errors.Is(err, cerr) {
+			return nil, fmt.Errorf("sync verb %s: %w: %w", verb.Verb, ErrAwaitingReply, cerr)
+		}
+		return nil, err
+	}
+	switch kind {
+	case wire.KindSyncResult:
+		var m wire.SyncResult
+		if _, err := wire.Decode(frame, &m); err != nil {
+			return nil, c.connLost(err)
+		}
+		return &m, nil
+	case wire.KindError:
+		return nil, decodeError(frame)
+	case wire.KindRefuse:
+		return nil, c.midRefuse(frame)
+	default:
+		return nil, c.connLost(fmt.Errorf("client: unexpected frame kind %d for a sync verb", kind))
 	}
 }
 

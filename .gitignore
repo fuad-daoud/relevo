@@ -1,4 +1,5 @@
 /relevo
 /dist/*.tar.gz
 /.coverage.txt
+/.shard/
 board/node_modules/

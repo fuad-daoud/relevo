@@ -80,7 +80,9 @@ func (c *Clients) warnOnceLocked(err error) {
 	}
 }
 
-// LoadClients returns the client list held in kv's serve.clients row.
+// LoadClients returns the client list held in kv's serve.clients row. The
+// enrolled keys are this machine's, so a caller with a database passes
+// d.LocalOrSelf() and the row is found where the split put it.
 func LoadClients(kv db.KV) (*Clients, error) {
 	c := &Clients{kv: kv}
 	if err := c.refresh(); err != nil {

@@ -14,7 +14,8 @@ import (
 // compressKVKey is the kv key a finished pass is recorded under. Its presence
 // short-circuits later daemon starts, and it is written only after every batch,
 // the checkpoint and the vacuum, so a killed or failed pass retries from the
-// top on the next start.
+// top on the next start. It is machine-local: a shared copy would tell another
+// installation's pass that this machine's rows were already converted.
 const compressKVKey = "zstd-compress.v1"
 
 // compressBatchRows bounds one transaction's rows, keeping the write lock
@@ -73,7 +74,8 @@ func compressTables() []compressTable {
 // writes the stats; a checkpoint or vacuum failure is recorded in the stats
 // rather than returned, since the rows are converted either way.
 func CompressHistoryOnce(d *DB, backupDir string, now time.Time) (stats CompressStats, ran bool, err error) {
-	if _, ok, kerr := d.KVGet(compressKVKey); kerr != nil {
+	local := d.LocalOrSelf()
+	if _, ok, kerr := local.KVGet(compressKVKey); kerr != nil {
 		return CompressStats{}, false, fmt.Errorf("compress: kv get %s: %w", compressKVKey, kerr)
 	} else if ok {
 		return CompressStats{}, false, nil
@@ -86,7 +88,7 @@ func CompressHistoryOnce(d *DB, backupDir string, now time.Time) (stats Compress
 		return CompressStats{}, false, err
 	}
 	if !have {
-		if err := putCompressStats(d, stats); err != nil {
+		if err := putCompressStats(local, stats); err != nil {
 			return CompressStats{}, false, err
 		}
 		return stats, true, nil
@@ -107,7 +109,7 @@ func CompressHistoryOnce(d *DB, backupDir string, now time.Time) (stats Compress
 	}
 
 	stats = finishCompress(d, stats)
-	if err := putCompressStats(d, stats); err != nil {
+	if err := putCompressStats(local, stats); err != nil {
 		return CompressStats{}, false, err
 	}
 	return stats, true, nil

@@ -50,55 +50,6 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-// UpsertRepo inserts or updates r by its natural key within this handle's
-// origin: origin_url when set, else common_dir. A hit fills the other column
-// when it is null in the db and set on r.
-func (t *Tx) UpsertRepo(r Repo) (string, error) {
-	switch {
-	case r.OriginURL != nil:
-		return t.upsertRepoBy("origin_url", *r.OriginURL, r)
-	case r.CommonDir != nil:
-		return t.upsertRepoBy("common_dir", *r.CommonDir, r)
-	default:
-		return "", fmt.Errorf("db: upsert repo: Repo needs OriginURL or CommonDir: %w", ErrInvalid)
-	}
-}
-
-func (t *Tx) upsertRepoBy(col, val string, r Repo) (string, error) {
-	var id string
-	var originURL, commonDir sql.Null[string]
-	err := t.queryRow(`SELECT id, origin_url, common_dir FROM repo WHERE `+originScope+` AND `+col+` = ?`,
-		t.origin, val).
-		Scan(&id, &originURL, &commonDir)
-	if err == nil {
-		if !originURL.Valid && r.OriginURL != nil {
-			if _, err := t.exec(`UPDATE repo SET origin = ?, origin_url = ? WHERE id = ?`, t.origin, *r.OriginURL, id); err != nil {
-				return "", fmt.Errorf("db: upsert repo: fill origin_url: %w", mapBusy(err))
-			}
-		}
-		if !commonDir.Valid && r.CommonDir != nil {
-			if _, err := t.exec(`UPDATE repo SET origin = ?, common_dir = ? WHERE id = ?`, t.origin, *r.CommonDir, id); err != nil {
-				return "", fmt.Errorf("db: upsert repo: fill common_dir: %w", mapBusy(err))
-			}
-		}
-		return id, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("db: upsert repo: select: %w", mapBusy(err))
-	}
-
-	id = NewID()
-	firstSeen := r.FirstSeen
-	if firstSeen.IsZero() {
-		firstSeen = time.Now()
-	}
-	if _, err := t.exec(`INSERT INTO repo (id, origin, origin_url, common_dir, first_seen) VALUES (?, ?, ?, ?, ?)`,
-		id, t.origin, nullableString(r.OriginURL), nullableString(r.CommonDir), formatTime(firstSeen)); err != nil {
-		return "", fmt.Errorf("db: upsert repo: insert: %w", mapBusy(err))
-	}
-	return id, nil
-}
-
 // UpsertMasterMind inserts or updates p by its natural key within this
 // handle's origin: (harness_kind, session_id). When p.ID is set the record's
 // own id wins instead: ingest upserts by the id `relevo mastermind init`
@@ -199,6 +150,13 @@ func (t *Tx) assertMasterMindKeyFree(id, kind, session string) error {
 // possibly with an extended code, which is why mapMasterMindKey masks the low
 // byte.
 const sqliteConstraint = 19
+
+// sqliteConstraintUnique is SQLITE_CONSTRAINT_UNIQUE, the extended code a UNIQUE
+// index violation reports. It is separate from sqliteConstraint because the two
+// refusals are decided differently: a UNIQUE failure on a repoint means the live
+// row already holds what the pointer would bring, which is a row for a person,
+// while the base code alone says only that some constraint was hit.
+const sqliteConstraintUnique = 2062
 
 // mapMasterMindKey turns a sqlite constraint violation into ErrInvalid. It
 // matches any error carrying the code, so a value rebuilt on the client from
@@ -498,16 +456,6 @@ func (t *Tx) SaveCursor(c Cursor) error {
 
 // The *DB forms below wrap one Tx each.
 
-func (d *DB) UpsertRepo(r Repo) (string, error) {
-	var id string
-	err := d.Tx(func(t *Tx) error {
-		var err error
-		id, err = t.UpsertRepo(r)
-		return err
-	})
-	return id, err
-}
-
 func (d *DB) UpsertMasterMind(p MasterMind) (string, error) {
 	var id string
 	err := d.Tx(func(t *Tx) error {
@@ -564,8 +512,11 @@ func (d *DB) AppendTranscript(ownerKind, ownerID string, recs []TranscriptRecord
 	return added, err
 }
 
+// SaveCursor writes the ingest cursor to this handle's machine-local file, the
+// file Cursor reads it from: an offset into a file on this machine says nothing
+// on another one.
 func (d *DB) SaveCursor(c Cursor) error {
-	return d.Tx(func(t *Tx) error {
+	return d.LocalOrSelf().Tx(func(t *Tx) error {
 		return t.SaveCursor(c)
 	})
 }

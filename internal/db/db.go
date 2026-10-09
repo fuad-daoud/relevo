@@ -58,6 +58,11 @@ type DB struct {
 	// test asserts about the switch.
 	route string
 
+	// sock is the owner socket a dialled handle opened, empty on a direct one.
+	// It is separate from route because a request that needs the owner itself
+	// rather than a statement -- a sync verb -- needs the socket to dial.
+	sock string
+
 	// path is the file a direct handle opened; empty on a dialled handle. It is
 	// what Vacuum reopens and what the per-path handle count keys on.
 	path string
@@ -74,6 +79,11 @@ type DB struct {
 	// onClosed, when set, runs after this handle's pool is closed. The test
 	// owner hop uses it to learn that a dialled client handle is gone.
 	onClosed func()
+
+	// local is the machine-local file beside this handle, opened by OpenSplit
+	// and nil on every other handle. The two run the same migrations, so it is
+	// the destination for the rows that never leave this machine.
+	local *DB
 }
 
 // Options tunes OpenWith. A negative value is treated as 0, which selects the
@@ -112,6 +122,14 @@ func OpenWith(path string, o Options) (*DB, error) {
 // drive the driver directly.
 func OpenRaw(path string) (*sql.DB, error) {
 	return openPool(path, time.Duration(busyTimeoutMS)*time.Millisecond, false)
+}
+
+// OpenRawReadOnly opens path read-only the way OpenRaw opens it writable, and
+// for the same reason: no migration, no owner hop, no handle count. It is how a
+// caller asks a question about a file it does not hold -- whether it carries a
+// given table -- without taking the handle a live owner already has.
+func OpenRawReadOnly(path string) (*sql.DB, error) {
+	return openPool(path, time.Duration(busyTimeoutMS)*time.Millisecond, true)
 }
 
 // open routes through the test-only owner hop when one is installed, and opens
@@ -285,6 +303,12 @@ func ping(sqlDB *sql.DB) error {
 // the pool close errors: leaving the flock held after a failed close would wedge
 // every later opener.
 func (d *DB) Close() error {
+	if local := d.local; local != nil {
+		d.local = nil
+		if lerr := local.Close(); lerr != nil {
+			return fmt.Errorf("db: close local file: %w", lerr)
+		}
+	}
 	path := d.path
 	d.path = ""
 	if path != "" && !d.readOnly {
@@ -354,6 +378,10 @@ func (d *DB) Tx(fn func(*Tx) error) error {
 }
 
 func (d *DB) tx(ctx context.Context, fn func(*Tx) error) (err error) {
+	// A write borrows a pooled connection and gives it back, like a read. There
+	// is no dedicated write path: change tracking is SQL triggers into the local
+	// outbox, so they fire for every connection the pool hands out and every
+	// writer, migrations and client-socket writes included.
 	conn, err := d.sqlDB.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("db: tx: %w", err)
@@ -380,6 +408,8 @@ func (d *DB) tx(ctx context.Context, fn func(*Tx) error) (err error) {
 		// The owner refused the BEGIN before executing it, so a fresh
 		// connection retried inside the same window cannot apply it twice.
 		if restartingRefusal(beginErr) && time.Since(start) < retryFor {
+			// The connection refused the request without running it, so closing
+			// it reports the refusal again rather than a failure of this attempt.
 			_ = conn.Close()
 			conn, err = d.sqlDB.Conn(ctx)
 			if err != nil {

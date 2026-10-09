@@ -152,7 +152,7 @@ func cmdServeEnrollRun(args []string) error {
 	}
 	defer func() { _ = d.Close() }()
 
-	clients, err := serve.LoadClients(d)
+	clients, err := serve.LoadClients(d.LocalOrSelf())
 	if err != nil {
 		return err
 	}
@@ -207,7 +207,7 @@ func cmdServeRevokeRun(args []string) error {
 	}
 	defer func() { _ = d.Close() }()
 
-	clients, err := serve.LoadClients(d)
+	clients, err := serve.LoadClients(d.LocalOrSelf())
 	if err != nil {
 		return err
 	}

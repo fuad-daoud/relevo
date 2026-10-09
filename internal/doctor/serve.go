@@ -85,6 +85,10 @@ func ServeChecks(env Env, d *db.DB, serveRoot string, now time.Time, isolation, 
 	if d == nil {
 		return nil
 	}
+	// Every row below is this machine's -- a certificate, an enrolled key, a pid
+	// and a listen address -- so the checks bind the machine-local file. Read off
+	// the shared handle they would report a machine that serves nothing.
+	d = d.LocalOrSelf()
 	if _, ok, err := d.SecretGet("serve.tls.key"); err != nil || !ok {
 		return nil
 	}

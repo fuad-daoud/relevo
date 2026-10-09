@@ -46,7 +46,7 @@ func cmdServeClients(args []string) error {
 	}
 	defer func() { _ = d.Close() }()
 
-	clients, err := serve.LoadClients(d)
+	clients, err := serve.LoadClients(d.LocalOrSelf())
 	if err != nil {
 		return fail(codeInternal, "%v", err)
 	}
@@ -186,7 +186,7 @@ func cmdServeUI(args []string) error {
 	return ui.RunSource(ctx, ui.ServerSource(srv), ui.Options{
 		Interval: *interval,
 		Prefs: ui.PrefsStore{
-			KV:  srv.DB(),
+			KV:  srv.DB().LocalOrSelf(),
 			Key: "serve.ui",
 		},
 		PipeHint: "relevo serve ui needs a terminal; use relevo serve status when piping",

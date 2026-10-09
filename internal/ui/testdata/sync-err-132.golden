@@ -1,0 +1,34 @@
+  ◆ relevo    sync                                                                        ● sync · offline     v0.13.0-28    14:02  
+                                                                                                                                    
+   sync:err   needs you: the remote refused this installation's token                                                               
+                                                                                                                                    
+   sync           sync:err · needs you: the remote refused this installation's token                                                
+   remote         libsql://relevo-abc123.turso.io                                                                                   
+   unpushed       3 operations                                                                                                      
+   last export    2m ago · 14:00                                                                                                    
+   last import    1m ago · 14:01                                                                                                    
+   first upload   complete · 2m ago                                                                                                 
+                                                                                                                                    
+   the remote refused this installation's token                                                                                     
+                                                                                                                                    
+   INSTALLATIONS                                                                                                                    
+     LABEL             ID                LAST SEEN                                                                                  
+     laptop            01INSTALLATION    2026-09-16                                                                                 
+                                                                                                                                    
+   UNLINKED REMOTE BINDINGS  (0) · nothing backfills these; they re-bind on purpose                                                 
+     every remote binding carries a link                                                                                            
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+                                                                                                                                    
+
+ p  push      l  pull      t  test      e  edit      d  disable      :  command      ?  all keys      q  quit                       

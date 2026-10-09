@@ -453,11 +453,17 @@ const dedupeKVKey = "mirror-dedupe.v2"
 // the work: an existing kv row means an earlier run finished and ran is false; an
 // empty plan writes the stats and returns with no backup; otherwise the database is
 // backed up first (a failure returns the error with no deletes and no kv row), one
-// transaction deletes every planned row and writes the stats, and a VACUUM failure
-// is recorded in stats.VacuumErr rather than returned, since the rows are gone
-// either way.
+// transaction deletes every planned row, the marker is written last, and a VACUUM
+// failure is recorded in stats.VacuumErr rather than returned, since the rows are
+// gone either way.
+//
+// The marker is machine-local and the rows are shared history, so they are two
+// writes against two files rather than one transaction: the marker goes to the
+// local file the split put it in, because a shared copy would tell another
+// installation's pass that this machine's rows were already deduped.
 func DedupeMirrorOnce(d *db.DB, backupDir string, now time.Time) (stats DedupeStats, ran bool, err error) {
-	if _, ok, kerr := d.KVGet(dedupeKVKey); kerr != nil {
+	local := d.LocalOrSelf()
+	if _, ok, kerr := local.KVGet(dedupeKVKey); kerr != nil {
 		return DedupeStats{}, false, fmt.Errorf("dedupe: kv get %s: %w", dedupeKVKey, kerr)
 	} else if ok {
 		return DedupeStats{}, false, nil
@@ -471,8 +477,8 @@ func DedupeMirrorOnce(d *db.DB, backupDir string, now time.Time) (stats DedupeSt
 	stats.DoneAt = now
 
 	if len(plan.artifactIDs) == 0 && len(plan.transcriptOwners) == 0 {
-		if err := putDedupeStats(d, stats); err != nil {
-			return DedupeStats{}, false, err
+		if err := putDedupeStats(local, stats); err != nil {
+			return stats, false, err
 		}
 		return stats, true, nil
 	}
@@ -494,17 +500,20 @@ func DedupeMirrorOnce(d *db.DB, backupDir string, now time.Time) (stats DedupeSt
 				return derr
 			}
 		}
-		value, merr := json.Marshal(stats)
-		if merr != nil {
-			return fmt.Errorf("dedupe: marshal stats: %w", merr)
-		}
-		return tx.KVPut(dedupeKVKey, value)
+		return nil
 	}); err != nil {
 		return DedupeStats{}, false, err
 	}
 
 	if verr := d.Vacuum(); verr != nil {
 		stats.VacuumErr = verr.Error()
+	}
+	// Last, so a failure anywhere before it leaves the next pass retrying: the
+	// rows are already gone, so the retry plans nothing and writes the marker.
+	// An earlier pass's marker is never re-stamped, because the pass returns
+	// before here when it finds one.
+	if err := putDedupeStats(local, stats); err != nil {
+		return stats, false, err
 	}
 	return stats, true, nil
 }

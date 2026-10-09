@@ -31,14 +31,16 @@ var dispatchers = []dispatcher{
 	{"config server", "config_server.go", "configServer"},
 	{"config workflow", "config_workflow.go", "configWorkflow"},
 	{"db", "db_query.go", "cmdDB"},
+	{"db sync", "db_sync.go", "cmdDBSync"},
 	{"mastermind", "mastermind.go", "cmdMasterMind"},
 	{"serve", "serve.go", "cmdServe"},
 }
 
 // removedCases are the case labels that deliberately have no entry: the verbs
 // whose arms name a replacement instead of running something, plus ask, whose
-// arm says the same. The set is test-local because the code no longer carries
-// a map for them.
+// arm says the same, and the verbs only the daemon runs, which are absent
+// from the usage text and the registry on purpose. The set is test-local
+// because the code carries no map for them.
 var removedCases = map[string]bool{
 	"ask":               true,
 	"config roles-init": true,
@@ -49,6 +51,7 @@ var removedCases = map[string]bool{
 	"serve gates":       true,
 	"serve available":   true,
 	"serve unavailable": true,
+	"sync-worker":       true,
 }
 
 // funcBody returns the source text of the named top-level function in file.

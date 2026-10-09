@@ -2,8 +2,11 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -378,5 +381,570 @@ func TestUpsertRepoAndMasterMindAreScopedByOrigin(t *testing.T) {
 	}
 	if againMMA != mmA {
 		t.Errorf("second upsert of one origin's session = %q, want %q", againMMA, mmA)
+	}
+}
+
+// TestBackfillOriginOnceStampsEveryGateTable pins the pass against the gate it
+// exists for: one empty-origin row in each table the gate counts becomes this
+// installation's, so every count the gate reports is zero afterwards and the
+// gate itself passes. A table the pass left out would leave its count standing
+// and the enable refusal would name a fix that could not clear it.
+func TestBackfillOriginOnceStampsEveryGateTable(t *testing.T) {
+	d := directOpenTestDB(t)
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	seedOneEmptyOriginRowPerTable(t, d)
+
+	before, err := CountEmptyOrigins(d)
+	if err != nil {
+		t.Fatalf("CountEmptyOrigins before the pass: %v", err)
+	}
+	for _, table := range before.Tables {
+		if table.Rows != 1 {
+			t.Fatalf("%s holds %d unstamped rows before the pass, want 1", table.Table, table.Rows)
+		}
+	}
+	if EnablePreflight(d).OK() {
+		t.Fatal("the preflight passes on a database holding an unstamped row in every table")
+	}
+
+	stats, ran, err := BackfillOriginOnce(d, "01ORIGIN", now)
+	if err != nil {
+		t.Fatalf("BackfillOriginOnce: %v", err)
+	}
+	if !ran {
+		t.Fatal("first run reported ran = false")
+	}
+
+	reported := map[string]int64{
+		"binding_record": stats.BindingRecords,
+		"binding":        stats.Bindings,
+		"repo":           stats.Repos,
+		"mastermind":     stats.Masterminds,
+		"chains":         stats.Chains,
+	}
+	after, err := CountEmptyOrigins(d)
+	if err != nil {
+		t.Fatalf("CountEmptyOrigins after the pass: %v", err)
+	}
+	for _, table := range after.Tables {
+		if table.Rows != 0 {
+			t.Errorf("%s holds %d unstamped rows after the pass, want 0", table.Table, table.Rows)
+		}
+		if got, ok := reported[table.Table]; !ok || got != 1 {
+			t.Errorf("the pass reported %d row(s) stamped in %s, want 1", got, table.Table)
+		}
+	}
+	if !after.Empty() {
+		t.Errorf("counts after the pass = %s, want none", after)
+	}
+
+	// One pass, one marker: a second run stamps nothing and reports no rows,
+	// which is what makes the retry after a failure safe.
+	second, ran, err := BackfillOriginOnce(d, "01ORIGIN", now)
+	if err != nil {
+		t.Fatalf("second BackfillOriginOnce: %v", err)
+	}
+	if ran {
+		t.Error("second run reported ran = true, want a no-op")
+	}
+	if second.BindingRecords != 0 || second.Repos != 0 || second.Masterminds != 0 || second.Chains != 0 {
+		t.Errorf("the no-op run reported rows: %+v", second)
+	}
+}
+
+// TestBackfillIgnoresAStaleMarkerOverUnstampedRows pins that the marker is
+// verified against the gate rather than trusted. An older, narrower pass over
+// fewer tables recorded one, and the split moved that row into the machine-local
+// file with everything else; the new code found it and skipped, so a database
+// with an unstamped row in all five tables sat at a silent skip forever --
+// neither a success line nor a skip warning, just a gate that never cleared.
+// So a marker whose counts are not empty is stale, and the pass runs to finish
+// the work.
+func TestBackfillIgnoresAStaleMarkerOverUnstampedRows(t *testing.T) {
+	d := directOpenTestDB(t)
+	now := time.Date(2026, 10, 5, 9, 0, 0, 0, time.UTC)
+	const origin = "01M3ORIGINORIGINORIGINORIGIN"
+
+	seedOneEmptyOriginRowPerTable(t, d)
+
+	// The stale marker: written by the older pass, and sitting in the local file
+	// where the new code reads it from.
+	local := d.LocalOrSelf()
+	if err := putOriginBackfillStats(local, OriginBackfillStats{DoneAt: now, Origin: origin}); err != nil {
+		t.Fatalf("seed the stale marker: %v", err)
+	}
+	if _, ok, err := local.KVGet(originBackfillKVKey); err != nil || !ok {
+		t.Fatalf("the stale marker is not in the local file: (%v, %v)", ok, err)
+	}
+
+	// The gate counts what the marker claims is finished.
+	before, err := CountEmptyOrigins(d)
+	if err != nil {
+		t.Fatalf("CountEmptyOrigins: %v", err)
+	}
+	if before.Empty() {
+		t.Fatal("the counts are empty, so there is no stale marker to disagree with")
+	}
+
+	stats, ran, err := BackfillOriginOnce(d, origin, now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("BackfillOriginOnce over the stale marker: %v", err)
+	}
+	if !ran {
+		t.Fatal("a stale marker over unstamped rows was trusted, so the 5-table pass was skipped")
+	}
+	reported := map[string]int64{
+		"binding_record": stats.BindingRecords,
+		"binding":        stats.Bindings,
+		"repo":           stats.Repos,
+		"mastermind":     stats.Masterminds,
+		"chains":         stats.Chains,
+	}
+	for _, table := range before.Tables {
+		if got := reported[table.Table]; got != 1 {
+			t.Errorf("the pass reported %d row(s) stamped in %s, want 1", got, table.Table)
+		}
+	}
+
+	// The gate clears, and the marker is rewritten to say so.
+	after, err := CountEmptyOrigins(d)
+	if err != nil {
+		t.Fatalf("CountEmptyOrigins after the pass: %v", err)
+	}
+	if !after.Empty() {
+		t.Errorf("counts after the pass = %s, want none", after)
+	}
+	if stamped := recordedBackfill(t, local); stamped != 5 {
+		t.Errorf("the rewritten marker records %d stamped rows, want 5", stamped)
+	}
+
+	// The once-only guarantee does not rest on the marker: a second run over the
+	// settled database finds nothing to stamp, so it stamps zero rows.
+	second, ran, err := BackfillOriginOnce(d, origin, now.Add(2*time.Hour))
+	if err != nil {
+		t.Fatalf("second BackfillOriginOnce: %v", err)
+	}
+	if ran {
+		t.Error("the second run reported ran = true, want a no-op")
+	}
+	if second.Stamped() != 0 {
+		t.Errorf("the second run reported %d rows stamped, want 0", second.Stamped())
+	}
+}
+
+// recordedBackfill is how many rows the marker in the machine-local file says
+// the pass moved.
+func recordedBackfill(t *testing.T, local *DB) int64 {
+	t.Helper()
+	value, ok, err := local.KVGet(originBackfillKVKey)
+	if err != nil || !ok {
+		t.Fatalf("kv row %s = (_, %v, %v), want it recorded", originBackfillKVKey, ok, err)
+	}
+	var recorded OriginBackfillStats
+	if err := json.Unmarshal(value, &recorded); err != nil {
+		t.Fatalf("unmarshal the recorded marker: %v", err)
+	}
+	return recorded.Stamped()
+}
+
+// TestBackfillTablesMatchTheOriginGate pins the two lists against each other.
+// The gate decides whether an enable is refused, so a table it counts that the
+// backfill does not stamp is a refusal no fix can clear; and a table the
+// backfill stamps that the gate does not count is a row moved for nothing. Every
+// table must also report into the stats, or the daemon's log line would
+// understate what the pass did.
+//
+// It pins the twin rule's two tables the same way. A table the pass stamps with
+// no rule is a table whose collision still aborts the whole pass, which is the
+// failure this pass exists to stop; and a rule for a table the pass does not
+// stamp is a case no row can reach, so it is a rule that will never be exercised
+// and never tested.
+func TestBackfillTablesMatchTheOriginGate(t *testing.T) {
+	tables := backfillTables()
+	if len(tables) != len(originGateTables) {
+		t.Fatalf("the backfill stamps %v, the gate counts %v", tables, originGateTables)
+	}
+	stats := OriginBackfillStats{}
+	for i, table := range originGateTables {
+		if tables[i] != table {
+			t.Errorf("the backfill stamps %d %q, the gate counts %q", i, tables[i], table)
+		}
+		if stats.countFor(table) == nil {
+			t.Errorf("%s has no stats field, so its rows would not be reported", table)
+		}
+		if _, ok := backfillTwinRule[table]; !ok {
+			t.Errorf("%s has no twin rule, so a stale twin there still aborts the pass", table)
+		}
+		if len(twinKeysFor(table)) == 0 {
+			t.Errorf("%s has no unique index in backfillTwinKeys, so a twin there could not be found before the stamp raised it", table)
+		}
+	}
+	for table := range backfillTwinRule {
+		if !slices.Contains(tables, table) {
+			t.Errorf("backfillTwinRule carries %q, which the pass does not stamp", table)
+		}
+	}
+	for _, key := range backfillTwinKeys {
+		if !slices.Contains(tables, key.table) {
+			t.Errorf("backfillTwinKeys carries %s on %q, which the pass does not stamp", key.name, key.table)
+		}
+	}
+}
+
+// TestBackfillTwinKeysMatchTheSchema pins the index list against the schema it
+// is read from. A key the schema does not have is a case that can never be
+// reached, and a key the schema has but this list omits is exactly the collision
+// the field report found: one stale row silently aborting the whole pass.
+func TestBackfillTwinKeysMatchTheSchema(t *testing.T) {
+	d := directOpenTestDB(t)
+	for _, key := range backfillTwinKeys {
+		var sqlText string
+		err := d.sqlDB.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?`, key.name).Scan(&sqlText)
+		if err != nil {
+			t.Errorf("index %s is not in the schema: %v", key.name, err)
+			continue
+		}
+		for _, col := range key.cols {
+			if !strings.Contains(sqlText, col) {
+				t.Errorf("index %s does not key on %q, which the twin rule looks for", key.name, col)
+			}
+		}
+		if !strings.Contains(sqlText, "origin") {
+			t.Errorf("index %s does not key on origin, so no stamp can collide on it", key.name)
+		}
+	}
+
+	// Every unique index the schema holds over an origin-carrying table that the
+	// pass stamps is in the list: one left out is a collision nothing previews.
+	for _, table := range backfillTables() {
+		rows, err := d.sqlDB.Query(`SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql LIKE '%UNIQUE%'`, table)
+		if err != nil {
+			t.Fatalf("list indexes on %s: %v", table, err)
+		}
+		for rows.Next() {
+			var name, sqlText string
+			if err := rows.Scan(&name, &sqlText); err != nil {
+				t.Fatalf("scan index on %s: %v", table, err)
+			}
+			if !strings.Contains(sqlText, "origin") {
+				continue // keyed without origin: a stamp cannot change its key.
+			}
+			if !slices.ContainsFunc(backfillTwinKeys, func(k backfillTwinKey) bool { return k.name == name }) {
+				t.Errorf("%s holds unique index %s over origin, which backfillTwinKeys does not carry", table, name)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("iterate indexes on %s: %v", table, err)
+		}
+		_ = rows.Close()
+	}
+}
+
+// TestBackfillResolvesStaleRepoTwins is the field report's shape: one checkout
+// recorded twice, a stale ” repo row and this installation's stamped live row
+// holding the same common_dir across a rename. The pass completes rather than
+// aborting on the pair, the live row is left byte for byte as it was, the stale
+// row loses to it, and the other rows in the same table are stamped rather than
+// rolled back with the pair.
+func TestBackfillResolvesStaleRepoTwins(t *testing.T) {
+	d := directOpenTestDB(t)
+	now := time.Date(2026, 10, 5, 9, 0, 0, 0, time.UTC)
+	const origin = "01M3ORIGINORIGINORIGINORIGIN"
+
+	// The two URLs are the field report's own: one checkout recorded under its old
+	// name and one under its new, so the pair differs in origin_url and collides
+	// on common_dir.
+	dir := "/home/fuad/projects/relevo-site/.git"
+	staleURL := "https://github.com/fuad-daoud/relay-site" // name-guard: legacy
+	liveURL := "https://github.com/fuad-daoud/relevo-site"
+
+	if _, err := d.sqlDB.Exec(`INSERT INTO repo (id, origin, origin_url, common_dir, first_seen)
+		VALUES ('r-stale', '', ?, ?, '2026-09-01T10:00:00.000Z')`, staleURL, dir); err != nil {
+		t.Fatalf("insert the stale repo row: %v", err)
+	}
+	if _, err := d.sqlDB.Exec(`INSERT INTO repo (id, origin, origin_url, common_dir, first_seen)
+		VALUES ('r-live', ?, ?, ?, '2026-09-20T10:00:00.000Z')`, origin, liveURL, dir); err != nil {
+		t.Fatalf("insert the live repo row: %v", err)
+	}
+	// A clean row beside the pair, so the pass has something in this table that
+	// is only reachable if the pair did not roll the table back.
+	if _, err := d.sqlDB.Exec(`INSERT INTO repo (id, origin, origin_url, common_dir, first_seen)
+		VALUES ('r-clean', '', 'https://github.com/acme/other.git', '/home/fuad/projects/other/.git', '2026-09-02T10:00:00.000Z')`); err != nil {
+		t.Fatalf("insert the clean repo row: %v", err)
+	}
+
+	before, err := CountEmptyOrigins(d)
+	if err != nil {
+		t.Fatalf("CountEmptyOrigins before the pass: %v", err)
+	}
+	if before.Tables[2].Rows != 2 {
+		t.Fatalf("repo holds %d unstamped rows before the pass, want 2", before.Tables[2].Rows)
+	}
+
+	stats, ran, err := BackfillOriginOnce(d, origin, now)
+	if err != nil {
+		t.Fatalf("BackfillOriginOnce: %v", err)
+	}
+	if !ran {
+		t.Fatal("first run reported ran = false")
+	}
+	if stats.Repos != 1 {
+		t.Errorf("the pass reported %d repo rows stamped, want 1 (the clean one)", stats.Repos)
+	}
+	if stats.Dropped() != 1 {
+		t.Errorf("the pass dropped %d stale rows, want 1", stats.Dropped())
+	}
+	if stats.Halted() != 0 {
+		t.Errorf("the pass halted on %d rows, want 0", stats.Halted())
+	}
+
+	// The stale row is gone and the live row is untouched: the rule resolved in
+	// favour of the stamped row, not the other way round.
+	var staleLeft int
+	if err := d.sqlDB.QueryRow(`SELECT COUNT(*) FROM repo WHERE id = 'r-stale'`).Scan(&staleLeft); err != nil {
+		t.Fatalf("count the stale repo row: %v", err)
+	}
+	if staleLeft != 0 {
+		t.Error("the stale '' repo row survived the pass, want it dropped for the stamped live row")
+	}
+	var liveOrigin, liveURLGot, liveDir, liveSeen string
+	if err := d.sqlDB.QueryRow(`SELECT origin, origin_url, common_dir, first_seen FROM repo WHERE id = 'r-live'`).
+		Scan(&liveOrigin, &liveURLGot, &liveDir, &liveSeen); err != nil {
+		t.Fatalf("select the live repo row: %v", err)
+	}
+	if liveOrigin != origin || liveURLGot != liveURL || liveDir != dir || liveSeen != "2026-09-20T10:00:00.000Z" {
+		t.Errorf("the live repo row = origin %q url %q dir %q first_seen %q, want it byte-identical to what it was",
+			liveOrigin, liveURLGot, liveDir, liveSeen)
+	}
+
+	after, err := CountEmptyOrigins(d)
+	if err != nil {
+		t.Fatalf("CountEmptyOrigins after the pass: %v", err)
+	}
+	if !after.Empty() {
+		t.Errorf("counts after the pass = %s, want none: the gate would refuse an enable on a resolved database", after)
+	}
+}
+
+// TestBackfillHaltsOnABindingRecordTwin pins the case the rule declines. The
+// binding_record table is the system of record, so a twin there is not resolved
+// in code: the stale row stays unstamped, the live row is left alone, and the
+// pass returns an error naming the table and the surviving count. What the pass
+// did settle before the halt stays settled, which is the whole point of the
+// per-table transaction.
+func TestBackfillHaltsOnABindingRecordTwin(t *testing.T) {
+	d := directOpenTestDB(t)
+	now := time.Date(2026, 10, 5, 9, 0, 0, 0, time.UTC)
+	const origin = "01M3ORIGINORIGINORIGINORIGIN"
+
+	// The same live name twice: the '' row and this installation's stamped row.
+	for _, row := range []struct{ id, origin, state, cwd string }{
+		{"br-stale", "", "active", "/work/old"},
+		{"br-live", origin, "needs_you", "/work/live"},
+	} {
+		if _, err := d.sqlDB.Exec(`INSERT INTO binding_record (id, origin, owner, name, state, round, cwd, record_json, created_at, updated_at)
+			VALUES (?, ?, '', 'api', ?, 1, ?, '{}', '2026-09-01T10:00:00.000Z', '2026-09-01T10:00:00.000Z')`,
+			row.id, row.origin, row.state, row.cwd); err != nil {
+			t.Fatalf("insert %s: %v", row.id, err)
+		}
+	}
+	// A clean row in a later table, so the halt is shown not to roll it back.
+	upsertRepo(t, d, Repo{OriginURL: ptr("https://example.test/a.git"), FirstSeen: now})
+	if _, err := d.sqlDB.Exec(`UPDATE repo SET origin = '' WHERE origin_url = ?`, "https://example.test/a.git"); err != nil {
+		t.Fatalf("make the repo row unstamped: %v", err)
+	}
+
+	stats, ran, err := BackfillOriginOnce(d, origin, now)
+	if err == nil {
+		t.Fatal("the pass returned no error on a binding_record twin, want a halt for a person")
+	}
+	if ran {
+		t.Error("a halted pass reported ran = true, want false: it recorded nothing")
+	}
+	if !errors.Is(err, ErrInvalid) && !strings.Contains(err.Error(), "binding_record=1") {
+		t.Errorf("the halt names neither the table nor the surviving count: %v", err)
+	}
+	if stats.Halted() != 1 {
+		t.Errorf("the pass halted on %d rows, want 1", stats.Halted())
+	}
+	if stats.Dropped() != 0 {
+		t.Errorf("the pass dropped %d rows, want 0: binding_record is never deleted", stats.Dropped())
+	}
+	if len(stats.LeftUnstamped) != 1 || stats.LeftUnstamped["binding_record"] != 1 {
+		t.Errorf("LeftUnstamped = %v, want binding_record=1", stats.LeftUnstamped)
+	}
+
+	// Nothing was deleted: both records are still there, the stale one unstamped
+	// for a person to decide on and the live one exactly as it was.
+	var staleOrigin, liveOrigin, liveCWD string
+	if err := d.sqlDB.QueryRow(`SELECT origin FROM binding_record WHERE id = 'br-stale'`).Scan(&staleOrigin); err != nil {
+		t.Fatalf("select the stale record: %v", err)
+	}
+	if staleOrigin != "" {
+		t.Errorf("the stale record was stamped as %q, want it left unstamped for a person", staleOrigin)
+	}
+	if err := d.sqlDB.QueryRow(`SELECT origin, cwd FROM binding_record WHERE id = 'br-live'`).Scan(&liveOrigin, &liveCWD); err != nil {
+		t.Fatalf("select the live record: %v", err)
+	}
+	if liveOrigin != origin || liveCWD != "/work/live" {
+		t.Errorf("the live record = origin %q cwd %q, want it untouched", liveOrigin, liveCWD)
+	}
+	var records int
+	if err := d.sqlDB.QueryRow(`SELECT COUNT(*) FROM binding_record`).Scan(&records); err != nil {
+		t.Fatalf("count binding_record rows: %v", err)
+	}
+	if records != 2 {
+		t.Errorf("binding_record holds %d rows, want both: the record table is never deleted from", records)
+	}
+
+	assertHaltKeptTheSettledTables(t, d, stats, origin)
+}
+
+// assertHaltKeptTheSettledTables pins what a halt must not take with it: the
+// tables the pass settled before it stopped keep their stamps and are committed,
+// and no marker is written, so the next start resumes rather than declaring the
+// pass done over a database that still holds unstamped rows.
+func assertHaltKeptTheSettledTables(t *testing.T, d *DB, stats OriginBackfillStats, origin string) {
+	t.Helper()
+	if stats.Repos != 1 {
+		t.Errorf("the pass reported %d repo rows stamped, want 1: a halt must not roll back a settled table", stats.Repos)
+	}
+	var repoOrigin string
+	if err := d.sqlDB.QueryRow(`SELECT origin FROM repo`).Scan(&repoOrigin); err != nil {
+		t.Fatalf("select the repo row: %v", err)
+	}
+	if repoOrigin != origin {
+		t.Errorf("the repo row's origin = %q, want %q kept across the halt", repoOrigin, origin)
+	}
+	if _, ok, err := d.KVGet(originBackfillKVKey); err != nil || ok {
+		t.Errorf("kv row %s = (_, %v, %v), want it absent so the next start resumes", originBackfillKVKey, ok, err)
+	}
+}
+
+// TestBackfillResumesAfterAHalt pins that a second start over a half-finished
+// database picks the work up rather than starting over or skipping: the tables
+// the first pass settled report no rows to stamp, the row it left for a person is
+// still the only unstamped row, and once that row is stamped the pass records
+// itself.
+func TestBackfillResumesAfterAHalt(t *testing.T) {
+	d := directOpenTestDB(t)
+	now := time.Date(2026, 10, 5, 9, 0, 0, 0, time.UTC)
+	const origin = "01M3ORIGINORIGINORIGINORIGIN"
+
+	seedOneEmptyOriginRowPerTable(t, d)
+	if _, err := d.RecordPut(testRecord("api")); err != nil {
+		t.Fatalf("RecordPut the second record: %v", err)
+	}
+
+	first, ran, err := BackfillOriginOnce(d, origin, now)
+	if err != nil || !ran {
+		t.Fatalf("first BackfillOriginOnce = (_, %v, %v), want it to finish", ran, err)
+	}
+	if first.Stamped() != 6 {
+		t.Errorf("the first pass stamped %d rows, want 6 (five tables, one twice)", first.Stamped())
+	}
+	if _, ok, err := d.KVGet(originBackfillKVKey); err != nil || !ok {
+		t.Fatalf("kv row %s = (_, %v, %v), want it recorded", originBackfillKVKey, ok, err)
+	}
+
+	// A settled database: the second start has nothing to stamp and reports
+	// neither a re-stamp nor a skip.
+	second, ran, err := BackfillOriginOnce(d, origin, now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("second BackfillOriginOnce: %v", err)
+	}
+	if ran {
+		t.Error("the second start reported ran = true, want a no-op")
+	}
+	if second.Stamped() != 0 {
+		t.Errorf("the second start reported %d rows stamped, want 0", second.Stamped())
+	}
+
+	// A half-finished database: clear one table's stamps and drop the marker, the
+	// shape a pass interrupted before its last write leaves behind.
+	if _, err := d.sqlDB.Exec(`DELETE FROM kv WHERE key = ?`, originBackfillKVKey); err != nil {
+		t.Fatalf("clear the marker: %v", err)
+	}
+	if _, err := d.sqlDB.Exec(`UPDATE repo SET origin = ''`); err != nil {
+		t.Fatalf("unstamp the repo rows: %v", err)
+	}
+	third, ran, err := BackfillOriginOnce(d, origin, now.Add(2*time.Hour))
+	if err != nil {
+		t.Fatalf("third BackfillOriginOnce: %v", err)
+	}
+	if !ran {
+		t.Fatal("the resumed pass reported ran = false, want it to finish the work")
+	}
+	if third.Repos != 1 {
+		t.Errorf("the resumed pass reported %d repo rows stamped, want 1", third.Repos)
+	}
+	// The tables the first pass settled were not stamped again.
+	if third.BindingRecords != 0 || third.Bindings != 0 || third.Masterminds != 0 || third.Chains != 0 {
+		t.Errorf("the resumed pass re-stamped settled tables: %+v", third)
+	}
+	if _, ok, err := d.KVGet(originBackfillKVKey); err != nil || !ok {
+		t.Errorf("kv row %s = (_, %v, %v), want the resumed pass to record itself", originBackfillKVKey, ok, err)
+	}
+	after, err := CountEmptyOrigins(d)
+	if err != nil {
+		t.Fatalf("CountEmptyOrigins after the resumed pass: %v", err)
+	}
+	if !after.Empty() {
+		t.Errorf("counts after the resumed pass = %s, want none", after)
+	}
+}
+
+// TestCollidingRowIDsFindsOnlyRealTwins pins the query the rule rests on: it
+// names exactly the unstamped rows whose stamp would raise the unique index,
+// including a row that collides on both of its table's indexes, and it does not
+// name a row whose key is free or whose column the index's predicate leaves out.
+func TestCollidingRowIDsFindsOnlyRealTwins(t *testing.T) {
+	d := directOpenTestDB(t)
+	const origin = "01M3ORIGINORIGINORIGINORIGIN"
+	day := "2026-09-01T10:00:00.000Z"
+
+	seed := []struct {
+		id, origin, url, dir string
+		nullURL              bool
+	}{
+		{"r-twin-dir", "", "https://example.test/old.git", "/work/.git", false},
+		{"r-live-dir", origin, "https://example.test/new.git", "/work/.git", false},
+		{"r-twin-url", "", "https://example.test/same.git", "/other/.git", false},
+		{"r-live-url", origin, "https://example.test/same.git", "/another/.git", false},
+		// Both of its indexes at once, against one live row that keys alike on
+		// both: the same shape twice over, which is why the ids are deduped.
+		{"r-twin-both", "", "https://example.test/dup.git", "/dup/.git", false},
+		{"r-live-both", origin, "https://example.test/dup.git", "/dup/.git", false},
+		// A NULL never collides: neither index covers this row.
+		{"r-null", "", "", "/unique-null/.git", true},
+		// A third origin's live row is a different namespace: no collision.
+		{"r-other", "01OTHERORIGIN", "https://example.test/other.git", "/other-origin/.git", false},
+	}
+	for _, r := range seed {
+		var url any
+		if !r.nullURL {
+			url = r.url
+		}
+		if _, err := d.sqlDB.Exec(`INSERT INTO repo (id, origin, origin_url, common_dir, first_seen)
+			VALUES (?, ?, ?, ?, ?)`, r.id, r.origin, url, r.dir, day); err != nil {
+			t.Fatalf("insert %s: %v", r.id, err)
+		}
+	}
+
+	want := map[string][]string{
+		"repo_origin_origin_url_uidx": {"r-twin-url", "r-twin-both"},
+		"repo_origin_common_dir_uidx": {"r-twin-dir", "r-twin-both"},
+	}
+	for _, key := range twinKeysFor("repo") {
+		ids, err := collidingRowIDs(d.sqlDB, "repo", origin, key)
+		if err != nil {
+			t.Fatalf("collidingRowIDs on %s: %v", key.name, err)
+		}
+		slices.Sort(ids)
+		expect := want[key.name]
+		slices.Sort(expect)
+		if !slices.Equal(ids, expect) {
+			t.Errorf("%s: colliding ids = %v, want %v", key.name, ids, expect)
+		}
 	}
 }

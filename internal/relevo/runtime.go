@@ -30,6 +30,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
@@ -220,6 +221,13 @@ type Runtime struct {
 	Hooks     hooks.Dispatcher
 	Remote    RemoteClient
 	Transport remote.TreeTransport
+
+	// Sync is the machine-local sync seam: the bounded push-then-pull the
+	// daemon drives after a seal that wrote files and again on the idle
+	// window, with each outcome recorded in the local markers the statusline
+	// reads. Nil means this machine has no sync wired at all, so both
+	// triggers skip and the statusline reads markers nobody writes.
+	Sync *sync.Runner
 
 	// NewID mints a consult id. Nil means a crypto/rand id, so no production
 	// call site has to set it and tests can make ids deterministic.

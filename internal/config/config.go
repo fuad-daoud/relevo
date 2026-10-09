@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
@@ -33,11 +34,12 @@ const (
 	Servers    Section = "servers"
 	Hooks      Section = "hooks"
 	Workflows  Section = "workflows"
+	Sync       Section = "sync"
 )
 
 // Sections is the order an import checks and stores the sections, and the
 // order EncodeDoc and DiffDocs render them.
-var Sections = []Section{Candidates, Agents, Actors, Accounts, Policy, Roles, Prices, Servers, Hooks, Workflows}
+var Sections = []Section{Candidates, Agents, Actors, Accounts, Policy, Roles, Prices, Servers, Hooks, Workflows, Sync}
 
 // sectionFile maps a section to the file it is imported from.
 var sectionFile = map[Section]string{
@@ -105,7 +107,12 @@ type Store struct {
 	now     func() time.Time
 }
 
-func Open(d *db.DB) *Store { return &Store{db: d, now: time.Now} }
+// Open binds a config store to d's machine-local file, or to d itself on a
+// handle that carries none: every section and both secrets mean something only
+// on the machine that wrote them, so after the split they live in the local
+// file. Binding here rather than at each call site is what keeps a caller
+// holding a shared handle from reading its config back out of the shared file.
+func Open(d *db.DB) *Store { return &Store{db: d.LocalOrSelf(), now: time.Now} }
 
 // Load reads every section and both secrets. A stored body that does not parse
 // is an error: it cannot happen after a validated Put.
@@ -326,40 +333,6 @@ func loadHooks(doc Doc, L *Loaded) error {
 	return nil
 }
 
-func (s *Store) loadSecrets(L *Loaded) error {
-	key, ok, err := s.db.SecretGet(SecretClientKey)
-	if err != nil {
-		return err
-	}
-	if ok {
-		L.ClientKey = key
-	}
-	ts, ok, err := s.db.SecretGet(SecretTypesafe)
-	if err != nil {
-		return err
-	}
-	if ok {
-		L.Typesafe = string(ts)
-	}
-	return nil
-}
-
-func (s *Store) Body(sec Section) ([]byte, bool, error) {
-	return s.db.ConfigGet(string(sec))
-}
-
-// Has reports whether the section has a stored body.
-func (s *Store) Has(sec Section) (bool, error) {
-	_, ok, err := s.Body(sec)
-	return ok, err
-}
-
-func (s *Store) Secret(name string) ([]byte, bool, error) {
-	return s.db.SecretGet(name)
-}
-
-func (s *Store) Version() (int64, error) { return s.db.ConfigVersion() }
-
 // Validate parses body for sec, returning its warnings; an unknown section is
 // an error.
 func Validate(sec Section, body []byte) ([]string, error) {
@@ -396,6 +369,9 @@ func Validate(sec Section, body []byte) ([]string, error) {
 		return nil, nil
 	case Workflows:
 		_, err := parseWorkflows(body)
+		return nil, err
+	case Sync:
+		_, err := sync.ParseSettings(body)
 		return nil, err
 	default:
 		return nil, fmt.Errorf("unknown config section %q", sec)
@@ -591,4 +567,3 @@ func (s *Store) SecretDelete(name string) error {
 }
 
 // SecretNames returns every stored secret's name, sorted, never a value.
-func (s *Store) SecretNames() ([]string, error) { return s.db.SecretNames() }

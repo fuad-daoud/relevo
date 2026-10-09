@@ -73,6 +73,11 @@ Commands:
             read relevo.db with one read-only SQL statement, through the daemon
             when it runs; use it instead of sqlite3, which the daemon's lock
             keeps out
+  db sync   enable|disable|status|push|pull
+            turn this machine's cloud sync on and off; enable names the remote
+            with --url and reads the token with --token-stdin, both stored in the
+            machine-local file, never in the database that leaves this machine
+            (stop the daemon first)
   chain     start a chain: build, review and correct across an ordered list of plans
               --plan F (repeatable) --feature L | --no-feature [--security[=false]] [--base R]
   update    replace this release binary with the latest release, checksum-verified [--check] [--to vX.Y.Z] [--release]
@@ -189,8 +194,8 @@ func jsonRequested(args []string) bool {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		// A bare `relevo` on a terminal is `relevo ui` (round 3, step 3.1);
-		// it then falls through every guard below exactly as `ui` does.
+		// A bare `relevo` on a terminal is `relevo ui`; it then falls through
+		// every guard below exactly as `ui` does.
 		if uiArgs := bareArgs(isTerminal(os.Stdin), isTerminal(os.Stdout)); uiArgs != nil {
 			args = uiArgs
 		} else {
@@ -266,6 +271,8 @@ func run(args []string) error {
 		return cmdGate(args[1:])
 	case "serve":
 		return cmdServe(args[1:])
+	case "sync-worker":
+		return cmdSyncWorker(args[1:])
 	default:
 		// The verbs P2b folded into `relevo config`, and the verbs P4a merged
 		// into bind/show/unbind/status, name their replacement rather than the
@@ -279,9 +286,9 @@ func run(args []string) error {
 
 // removedVerbs names each removed verb and the form that replaces it: the
 // seven P2b folded into `relevo config` (§4.4), the seven P4a merged into
-// bind, show, unbind and status (§4.6), the P4a round 2 verbs folded into
-// wait and gate (§4.1, §4.3), and the three P3d folded into history and
-// doctor (P3d §4.6).
+// bind, show, unbind and status (§4.6), the P4a verbs folded into wait and
+// gate (§4.1, §4.3), and the three P3d folded into history and doctor
+// (P3d §4.6).
 var removedVerbs = map[string]string{
 	"init":       "relevo config init",
 	"candidates": "relevo config",
@@ -344,7 +351,7 @@ func cmdUI(args []string) error {
 	}
 
 	// A positional `:view` is refused with exit 2 before any runtime is
-	// built, so nothing touches the state directory (round 3, step 3.2).
+	// built, so nothing touches the state directory.
 	start, err := uiStart(fs.Args())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -375,7 +382,7 @@ func cmdUI(args []string) error {
 	// (P3b plan §4.4).
 	var prefsKV db.KV
 	if rt.DB != nil {
-		prefsKV = rt.DB
+		prefsKV = rt.DB.LocalOrSelf()
 	}
 
 	return ui.Run(ctx, rt, ui.Options{
@@ -391,9 +398,9 @@ func cmdUI(args []string) error {
 	})
 }
 
-// uiStart maps `relevo ui`'s positional args to the shell's start command
-// (round 3, step 3.2): an empty list starts at :fleet; otherwise the first
-// arg names a view after ':' and every arg is joined into its command line.
+// uiStart maps `relevo ui`'s positional args to the shell's start command: an
+// empty list starts at :fleet; otherwise the first arg names a view after ':'
+// and every arg is joined into its command line.
 // Pure, so a cmd test covers it without running the ui, which needs a
 // terminal.
 func uiStart(args []string) (string, error) {

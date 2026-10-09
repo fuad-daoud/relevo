@@ -53,9 +53,34 @@ What binds a migration:
   partial index on a foreign-key column: Turso mishandles both, so a
   migration must not rely on either.
 - `RETURNING`, `AUTOINCREMENT`, triggers and plain views are supported by
-  Turso and are not banned on its account. The phase-1 schema still avoids
+  Turso and are not banned on its account. The phase-1 schema still avoided
   triggers, FTS, virtual tables and generated columns as its own choice
-  (persistence spec, decision 2).
+  (persistence spec, decision 2); migration 022 adds the first triggers, and
+  they carry the outbox only. FTS, virtual tables and generated columns are
+  still avoided.
+
+## Triggers
+
+A trigger fires for every connection and every writer, so a migration that
+adds one changes what every later write records whether or not that writer
+knows. `022_sync_outbox.sql` is the only file that creates any:
+
+- One trigger per operation per shared table, named
+  `sync_outbox_<table>_<ins|upd|del>`. A reader enumerates the set from
+  `sqlite_schema`, and a table missing one is a gap rather than a slower
+  table.
+- A trigger writes one row and never raises. A statement that would otherwise
+  fail must keep failing on its own terms, not on a trigger's: the owning
+  installation is resolved with a scalar subquery, which yields NULL when the
+  parent row is already gone -- a child removed by a cascade -- and NULL is a
+  value the reader skips, not an error.
+- The engine rewrites a call's open paren with a space before it
+  (`json_array (x)`), so a test that reads a trigger body out of
+  `sqlite_schema` compares against the rewritten text.
+
+`AUTOINCREMENT` on `sync_outbox.seq` is what makes a delete followed by an
+insert of the same key still two entries, which is the ordering the drain
+depends on.
 
 ## Conversion
 

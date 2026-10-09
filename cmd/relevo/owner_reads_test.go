@@ -83,7 +83,9 @@ func seedServeOwnerState(t *testing.T, label string) (*store.Store, string) {
 	}
 	t.Cleanup(func() { _ = d.Close() })
 
-	clients, err := serve.LoadClients(d)
+	// The enrolled clients are machine-local, so the fixture reads the file the
+	// serve verbs enroll into.
+	clients, err := serve.LoadClients(d.LocalOrSelf())
 	if err != nil {
 		t.Fatalf("LoadClients: %v", err)
 	}

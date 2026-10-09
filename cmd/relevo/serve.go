@@ -236,7 +236,7 @@ func cmdServe(args []string) error {
 func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, reg *roles.Registry, root string, d *db.DB) relevo.Runtime {
 	var gates db.KV
 	if d != nil {
-		gates = db.PrefixKV{KV: d, Prefix: "serve."}
+		gates = db.PrefixKV{KV: d.LocalOrSelf(), Prefix: "serve."}
 	}
 	return relevo.Runtime{
 		Candidates:    candidates,

@@ -35,11 +35,16 @@ var ownerUID = os.Getuid()
 // Server serves one database handle. Construct it with New and run it with
 // Serve; Close stops it and drops every client.
 type Server struct {
-	dbh    *sql.DB
-	have   int
-	know   int
-	origin string
-	uid    int
+	dbh *sql.DB
+	// localDB is the machine-local file beside dbh, or nil when the owner was
+	// built without one. A connection asks for it by scope, so the owner never
+	// hands a client the shared file when it asked for the local one, and never
+	// hands the local one when the client asked for the shared file.
+	localDB *sql.DB
+	have    int
+	know    int
+	origin  string
+	uid     int
 
 	// codeOf resolves a driver error's sqlite result code. It is nil when the
 	// server was built without one: the wire's own CodeOf and ExtendedCodeOf
@@ -67,6 +72,24 @@ type Server struct {
 	// only way to end a statement the engine cannot interrupt.
 	OnAbandoned func()
 
+	// OnSyncVerb, when set, runs one sync verb against the handles the server
+	// already holds. It is the daemon's executor, so a client asks for enable,
+	// push, pull or disable and the work happens with the owner's own direct
+	// handles rather than a second open in the caller's process, so a writing
+	// verb never contends with the daemon for the file lock.
+	//
+	// The request carries the settings body and the token bytes; the hook is
+	// handed both and is trusted to keep the token out of every message, log
+	// line and response it produces. The socket is under the 0700 state root
+	// and every peer passes the uid check above, so the caller and this process
+	// are the same user on the same machine; the token crosses the stream and
+	// nothing else.
+	//
+	// Nil refuses the verb (RefuseNoSyncVerb) rather than accepting it and
+	// doing nothing, so an owner with no executor installed cannot be read as a
+	// machine whose sync silently stopped working.
+	OnSyncVerb func(ctx context.Context, verb *wire.SyncVerb, token []byte) *wire.SyncResult
+
 	// reapMu guards the abandoned-statement registrations: every finish channel
 	// the server is still waiting on, and whether the hook already ran.
 	reapMu      sync.Mutex
@@ -77,6 +100,10 @@ type Server struct {
 // New wraps a database handle, its schema versions and the installation id
 // every scoped query needs. codeOf maps a driver error onto a SQLite result
 // code; nil falls back to the wire's own CodeOf and ExtendedCodeOf.
+//
+// The served handle is the shared file; a machine-local file beside it is added
+// with ServeLocal, which is what lets an owner-routed reader reach the rows that
+// must never leave the machine.
 func New(dbh *sql.DB, have, know int, origin string, codeOf func(error) (int, int, bool)) *Server {
 	return &Server{
 		dbh:     dbh,
@@ -89,6 +116,31 @@ func New(dbh *sql.DB, have, know int, origin string, codeOf func(error) (int, in
 		maxLive: maxLiveConns,
 		sem:     make(chan struct{}, maxConns),
 	}
+}
+
+// ServeLocal adds the machine-local file beside the served one, so a connection
+// that asks for the local scope is answered from that file and one that does not
+// is answered from the shared file. It takes effect before Serve and never for a
+// running server: a scope decided per connection has to be settled before the
+// first one arrives, or two connections would be served different files.
+func (s *Server) ServeLocal(local *sql.DB) *Server {
+	s.localDB = local
+	return s
+}
+
+// hasLocal reports whether a machine-local file is served beside the shared one.
+// The welcome carries it so a dial knows whether attaching a local handle is
+// possible at all, and the handshake refuses a local scope when it is false.
+func (s *Server) hasLocal() bool { return s.localDB != nil }
+
+// poolFor names the file a connection speaks to: the local one for the local
+// scope, the shared one for everything else, including a client that named no
+// scope at all.
+func (s *Server) poolFor(local bool) *sql.DB {
+	if local && s.localDB != nil {
+		return s.localDB
+	}
+	return s.dbh
 }
 
 // errorCode resolves err's SQLite result code and extended code, preferring the

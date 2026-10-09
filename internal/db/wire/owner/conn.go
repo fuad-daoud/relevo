@@ -39,6 +39,11 @@ type conn struct {
 	// such a connection may be refused while the owner reaps a runaway
 	// statement, so every other verb keeps being served.
 	adHoc bool
+	// local is whether this connection asked for the machine-local file rather
+	// than the shared one. It is read from the handshake once and never changes
+	// for the life of the connection, so every request on it reaches the same
+	// file: a connection cannot start on one file and continue on the other.
+	local bool
 }
 
 type request struct {
@@ -84,6 +89,9 @@ func (c *conn) serve() error {
 		return c.refuse(wire.RefuseWrongProto, "protocol mismatch")
 	}
 	c.adHoc = hello.AdHoc
+	if err := c.claimScope(hello.Scope); err != nil {
+		return err
+	}
 	w := &wire.Welcome{
 		Header:     wire.Header{Type: wire.TypeWelcome},
 		Proto:      wire.Proto,
@@ -94,6 +102,7 @@ func (c *conn) serve() error {
 		Origin:     c.s.origin,
 		PID:        os.Getpid(),
 		Conns:      c.s.ConnCount(),
+		HasLocal:   c.s.hasLocal(),
 	}
 	if err := c.send(wire.KindWelcome, w, nil); err != nil {
 		return err
@@ -114,6 +123,10 @@ func (c *conn) loop() error {
 		switch kind {
 		case wire.KindExec, wire.KindQuery:
 			if err := c.start(kind, frame); err != nil {
+				return err
+			}
+		case wire.KindSyncVerb:
+			if err := c.startVerb(frame); err != nil {
 				return err
 			}
 		case wire.KindNext:
@@ -315,7 +328,7 @@ func (c *conn) pin(ctx context.Context) (*sql.Conn, error) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	pinned, err := c.s.dbh.Conn(ctx)
+	pinned, err := c.s.poolFor(c.local).Conn(ctx)
 	if err != nil {
 		<-c.s.sem
 		return nil, err

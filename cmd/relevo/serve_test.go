@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/serve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -424,7 +425,9 @@ func runServeInit(t *testing.T, args ...string) (string, error) {
 	return string(stdout), err
 }
 
-// serveSecret reads a secret from the machine database the serve verbs use.
+// serveSecret reads a secret from the machine database the serve verbs use. The
+// read goes through the secret store rather than the handle's own accessor,
+// because that is where the serve verbs read it: the local file after the split.
 func serveSecret(t *testing.T, name string) []byte {
 	t.Helper()
 	root, err := store.DefaultRoot()
@@ -437,7 +440,7 @@ func serveSecret(t *testing.T, name string) []byte {
 	}
 	defer func() { _ = d.Close() }()
 
-	val, ok, err := d.SecretGet(name)
+	val, ok, err := serve.SecretStore{DB: d}.SecretGet(name)
 	if err != nil {
 		t.Fatalf("SecretGet(%s): %v", name, err)
 	}

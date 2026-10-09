@@ -190,7 +190,8 @@ func cmdDaemon(args []string) error {
 	// runtime's store (gates, claims, run log, daemon.json, the release cache)
 	// and the agy deliverer's creds store. Nothing in the daemon dials the
 	// owner, and the owner never opens a second handle of its own. Clients
-	// still hold their own dialled connections.
+	// still hold their own dialled connections. The open brings the
+	// machine-local file beside it along, at the same schema version.
 	//
 	// Closing is explicit rather than a bare defer: the re-exec path closes the
 	// DB itself before syscall.Exec, and the deferred pass must then do
@@ -323,14 +324,15 @@ func cmdDaemon(args []string) error {
 		}
 	}
 
-	// The installation's own row, then the origin backfill, run next to the
-	// other run-once passes. The row is the projection other machines read to
-	// label this installation; the backfill stamps this installation's id on
-	// rows written before the origin column existed, and records itself in kv,
-	// so every later start is a no-op. A failure never stops the daemon: a
-	// machine with no database still runs, and the next start retries.
+	// The installation's own row, then the local split and the origin backfill,
+	// run next to the other run-once passes. The row is the projection other
+	// machines read to label this installation; the two passes behind it are the
+	// ones the enable preflight refuses on by name, so running them here is what
+	// gives a refusal its fix. A failure never stops the daemon: a machine with
+	// no database still runs, and the next start retries.
 	if rt.DB != nil {
-		inst, ierr := installation.Load(filepath.Dir(rt.Store.DBPath()))
+		dir := filepath.Dir(rt.Store.DBPath())
+		inst, ierr := installation.Load(dir)
 		if ierr != nil {
 			slog.Warn("relevo daemon: installation file unavailable", "err", ierr)
 		} else {
@@ -340,16 +342,7 @@ func cmdDaemon(args []string) error {
 				slog.Warn("relevo daemon: installation row skipped", "err", terr)
 			}
 
-			bstats, bran, berr := db.BackfillOriginOnce(rt.DB, inst.ID, time.Now())
-			if berr != nil {
-				slog.Warn("relevo daemon: origin backfill skipped", "err", berr)
-			} else if bran {
-				slog.Info("relevo daemon: origin backfill",
-					"done_at", bstats.DoneAt,
-					"origin", bstats.Origin,
-					"binding_records", bstats.BindingRecords,
-					"bindings", bstats.Bindings)
-			}
+			daemonEnablePath(rt.DB, dir, inst.ID, time.Now())
 		}
 	}
 
@@ -389,6 +382,7 @@ func cmdDaemon(args []string) error {
 	if err != nil {
 		slog.Warn("relevo daemon: owner socket not served", "err", err)
 	}
+	installSyncVerbHook(srv, d)
 	info := store.DaemonInfo{
 		Version:    buildVersion(),
 		PID:        os.Getpid(),
@@ -413,7 +407,11 @@ func cmdDaemon(args []string) error {
 	if err != nil {
 		return err
 	}
-	hooksCfg, err := resolveHooksConfig(loaded.Hooks, hooksRunLog(rt.Store))
+	log, lerr := rt.Store.DB()
+	if lerr != nil {
+		log = nil
+	}
+	hooksCfg, err := resolveHooksConfig(loaded.Hooks, hooksRunLog(log))
 	if err != nil {
 		return err
 	}
@@ -496,7 +494,13 @@ func cmdDaemon(args []string) error {
 	}
 
 	slog.Info("relevo daemon starting", "interval", *interval)
-	err = relevo.NewDaemon(rt, *interval).WithRefresh(watcher.Refresh).WithUpgrade(hook).Run(ctx)
+	daemon := relevo.NewDaemon(rt, *interval).WithRefresh(watcher.Refresh).WithUpgrade(hook)
+	// The verb hook was installed before this Daemon existed, because the owner
+	// is served before it is built. Rebind it now with the guard: from here a
+	// verb and a seal or idle tick are serialized against each other, which is
+	// what keeps one machine's markers from being written twice at once.
+	installSyncVerbSerializing(daemon, srv, d)
+	err = daemon.Run(ctx)
 	if errors.Is(err, relevo.ErrReexec) {
 		// Drain the owner first: an open transaction must be able to commit
 		// before closeDB takes the handle away. Then close explicitly what must

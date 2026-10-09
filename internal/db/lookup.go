@@ -214,8 +214,10 @@ func scanTranscript(s rowScanner) (TranscriptRecord, error) {
 	return r, nil
 }
 
+// Cursor reads the ingest cursor from this handle's machine-local file: a cursor
+// is a byte offset and a hash of one file on one machine.
 func (d *DB) Cursor(source string) (Cursor, bool, error) {
-	return getCursor(context.Background(), d.sqlDB, source)
+	return getCursor(context.Background(), d.LocalOrSelf().sqlDB, source)
 }
 
 func (t *Tx) Cursor(source string) (Cursor, bool, error) { return getCursor(t.ctx, t.conn, source) }

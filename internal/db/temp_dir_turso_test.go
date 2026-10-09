@@ -3,6 +3,7 @@
 package db
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -54,6 +55,43 @@ func TestPrepareTempDirPreservesExistingEnv(t *testing.T) {
 	}
 	if got := os.Getenv("SQLITE_TMPDIR"); got != customSQLite {
 		t.Errorf("SQLITE_TMPDIR = %q, want %q", got, customSQLite)
+	}
+}
+
+// A process opens more than one file, and the first one to open decides where
+// temp files land for all of them. When that first file's directory goes away --
+// a test's temporary directory, or a cache the owner prunes -- the next open
+// must follow its own database rather than write the dead path back into being.
+// Recreating it races the owner's deletion, which is how a directory ends up
+// being removed while it is still being filled.
+func TestPrepareTempDirFollowsTheCurrentDatabase(t *testing.T) {
+	t.Setenv("TURSO_TMPDIR", "")
+	t.Setenv("SQLITE_TMPDIR", "")
+	tempDirMu.Lock()
+	pinnedTempDir = ""
+	tempDirMu.Unlock()
+
+	first := t.TempDir()
+	if err := prepareTempDir(first); err != nil {
+		t.Fatalf("prepareTempDir(first): %v", err)
+	}
+	if err := os.RemoveAll(first); err != nil {
+		t.Fatalf("remove the first directory: %v", err)
+	}
+
+	second := t.TempDir()
+	if err := prepareTempDir(second); err != nil {
+		t.Fatalf("prepareTempDir(second): %v", err)
+	}
+
+	if _, err := os.Stat(first); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the removed directory %s exists again (stat err %v), want a later open to leave it deleted", first, err)
+	}
+	want := filepath.Join(second, "tmp")
+	for _, env := range []string{"TURSO_TMPDIR", "SQLITE_TMPDIR"} {
+		if got := os.Getenv(env); got != want {
+			t.Errorf("%s = %q, want the current database's temp dir %q", env, got, want)
+		}
 	}
 }
 

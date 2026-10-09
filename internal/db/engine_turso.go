@@ -18,8 +18,8 @@ import (
 	turso_libs "github.com/tursodatabase/turso-go-platform-libs"
 	turso "turso.tech/database/tursogo"
 
-	// The default build keeps the old driver linked: round 2's one-time
-	// conversion opens it to read a pre-swap database.
+	// This build links a second driver as well, so one binary can open a
+	// database written by the other engine.
 	_ "modernc.org/sqlite"
 )
 
@@ -37,6 +37,25 @@ const (
 
 // cacheEnv is the directory the loader extracts the embedded library into.
 const cacheEnv = "TURSO_GO_CACHE_DIR"
+
+// maxOpenConns bounds how many connections one pool may have open at once.
+//
+// Database/sql opens a connection per concurrent caller until this bound, so
+// without it a burst of requests is a burst of connects -- and every connect
+// pays the file's own open cost against a database that has a single write
+// slot behind it, so the unbounded form is what turns a busy write slot into
+// thousands of blocked connects rather than one that surfaces as an error.
+//
+// The number is the daemon's own measured fan-out, not a guess. Sampling
+// `Stats().OpenConnections` on the shared pool while the served request paths
+// ran concurrently against it gave a peak of 9 open connections at 128
+// concurrent clients; the store's own concurrent readers and writers, which is
+// what an idle tick plus a served request amount to, peaked at 15. Eight times
+// the measured ceiling leaves room for every caller the daemon admits at once
+// while still refusing the pile-up, and the bound is a pool ceiling rather than
+// a queue: past it a caller waits on database/sql's own semaphore instead of
+// opening a connection, so the failure is a bounded wait and then an error.
+const maxOpenConns = 128
 
 // openPool opens a pool on path with Turso. Turso parses no `file:` URI and
 // ends the path at the first `?`, so a path carrying one would silently open
@@ -65,11 +84,13 @@ func openPool(path string, busy time.Duration, readOnly bool) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("db: open %s: read the header: %w: %w", path, ErrOpen, err)
 	}
-	conn, err := turso.NewConnector(fmt.Sprintf("%s?_busy_timeout=%d", path, busy.Milliseconds()))
+	conn, err := newTursoConnector(path, busy.Milliseconds())
 	if err != nil {
 		return nil, fmt.Errorf("db: open %s: connector: %w: %w", path, ErrOpen, err)
 	}
 	pool := sql.OpenDB(repairConnector{Connector: &pragmaConnector{base: conn, pragmas: openPragmas(readOnly)}})
+	pool.SetMaxOpenConns(maxOpenConns)
+	pool.SetMaxIdleConns(maxOpenConns)
 	if fresh && !readOnly {
 		if err := markFreshDatabase(pool); err != nil {
 			_ = pool.Close()
@@ -77,6 +98,16 @@ func openPool(path string, busy time.Duration, readOnly bool) (*sql.DB, error) {
 		}
 	}
 	return pool, nil
+}
+
+// newTursoConnector is the engine's connector for a path: the DSN the pool
+// opens with, busy timeout included.
+func newTursoConnector(path string, busyMS int64) (driver.Connector, error) {
+	conn, err := turso.NewConnector(fmt.Sprintf("%s?_busy_timeout=%d", path, busyMS))
+	if err != nil {
+		return nil, fmt.Errorf("db: open %s: connector: %w: %w", path, ErrOpen, err)
+	}
+	return conn, nil
 }
 
 // freshDatabase reports whether path has no SQLite header yet: absent, empty or
@@ -221,9 +252,22 @@ func prepareEngine(dir string) error {
 	return enginePrepareErr
 }
 
-// prepareTempDir creates dir/tmp owner-only and sets TURSO_TMPDIR and
-// SQLITE_TMPDIR to it when not already set in the environment, so the library's
-// temp files land beside the database instead of in /tmp.
+// tempDirMu guards pinnedTempDir, and tempDirEnv names the variables
+// prepareTempDir points at the database's own temp directory.
+var (
+	tempDirMu     sync.Mutex
+	pinnedTempDir string
+)
+
+var tempDirEnv = []string{"TURSO_TMPDIR", "SQLITE_TMPDIR"}
+
+// prepareTempDir creates dir/tmp owner-only and points TURSO_TMPDIR and
+// SQLITE_TMPDIR at it, so the library's temp files land beside the database
+// instead of in /tmp. A value this process pinned earlier is re-pointed at the
+// database being opened now, because that earlier directory belongs to a
+// different file and may be gone: re-creating it would write into a directory
+// its owner is entitled to have deleted. A value the environment already
+// carried is left exactly as it is, since that is the operator's choice.
 func prepareTempDir(dir string) error {
 	tmpDir := filepath.Join(dir, "tmp")
 	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
@@ -232,15 +276,26 @@ func prepareTempDir(dir string) error {
 	if err := os.Chmod(tmpDir, 0o700); err != nil {
 		return fmt.Errorf("chmod %s: %w", tmpDir, err)
 	}
-	for _, env := range []string{"TURSO_TMPDIR", "SQLITE_TMPDIR"} {
-		if val, ok := os.LookupEnv(env); !ok || val == "" {
-			if err := os.Setenv(env, tmpDir); err != nil {
-				return fmt.Errorf("set %s: %w", env, err)
-			}
-		} else {
+
+	tempDirMu.Lock()
+	defer tempDirMu.Unlock()
+	for _, env := range tempDirEnv {
+		val, ok := os.LookupEnv(env)
+		switch {
+		case !ok || val == "":
+			// unset: this process decides where temp files land
+		case val == pinnedTempDir:
+			// pinned by an earlier open of another file: follow this one
+		default:
+			// the operator set it; make sure it exists and leave it alone
 			_ = os.MkdirAll(val, 0o700)
+			continue
+		}
+		if err := os.Setenv(env, tmpDir); err != nil {
+			return fmt.Errorf("set %s: %w", env, err)
 		}
 	}
+	pinnedTempDir = tmpDir
 	return nil
 }
 

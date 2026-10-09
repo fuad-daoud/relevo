@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/db/wire/client"
 	"github.com/fuad-daoud/relevo/internal/db/wire/owner"
 )
@@ -75,7 +76,7 @@ func dialContext(ctx context.Context, sock string, o Options, adoptOrigin bool) 
 	}
 
 	sqlDB := sql.OpenDB(client.Connector(sock, o.AdHoc))
-	return &DB{
+	handle := &DB{
 		sqlDB:      sqlDB,
 		have:       info.Have,
 		know:       know,
@@ -83,14 +84,88 @@ func dialContext(ctx context.Context, sock string, o Options, adoptOrigin bool) 
 		origin:     origin,
 		beginRetry: retry,
 		route:      "owner " + sock,
-	}, nil
+		sock:       sock,
+	}
+	// The owner serves the machine-local file beside the shared one, so the
+	// dial path attaches it exactly as a direct open does. That is the whole of
+	// the split as an owner-routed reader sees it: the handle names both files,
+	// the sync rows and the token are reachable, and nothing about the routing
+	// table changes -- handles move, rows stay where the classification put them.
+	//
+	// The attachment is the owner's own answer rather than a path computed here:
+	// the socket already belongs to one state root, so the local file it names is
+	// that root's companion and never another root's. A caller that wanted a
+	// different root's file has no way to name it here.
+	if info.HasLocal {
+		handle.local = dialLocal(sock, o, info.Have, know, retry, origin)
+	}
+	return handle, nil
 }
 
-// NewOwner serves d on a listener the caller opened. The owner and this
-// package share nothing else: the server takes the raw pool and the handle's
-// facts. The handle is marked served so a vacuum refuses to swap its pool out
-// from under the owner's clients.
+// dialLocal opens the machine-local file beside the shared one, over the same
+// socket and under the same options, as a handle of its own. It carries no path:
+// the owner knows which file its socket belongs to, and a name this process
+// rebuilt could disagree with the one actually open -- which is the mistake that
+// would point one root's reader at another's file.
+//
+// have is the shared file's version, which is the local file's too: both run the
+// same migration series on every open, so one handshake answers for both and
+// there is nothing to ask the owner twice.
+func dialLocal(sock string, o Options, have, know int, retry time.Duration, origin string) *DB {
+	return &DB{
+		sqlDB:      sql.OpenDB(client.ScopedConnector(sock, o.AdHoc, wire.ScopeLocal)),
+		have:       have,
+		know:       know,
+		newer:      have > know,
+		origin:     origin,
+		beginRetry: retry,
+		route:      "owner " + sock + " local",
+	}
+}
+
+// Sock is the owner socket this handle dialled, empty on a direct open. It is
+// what a request that needs the owner itself rather than a statement -- a sync
+// verb -- dials: the verb runs against the owner's own handles, so it needs
+// the stream, not this handle's pool.
+func (d *DB) Sock() string { return d.sock }
+
+// SyncVerb runs one sync verb against the owner serving this handle, which is
+// how a client asks the daemon to do the work: the owner runs it with the
+// handles it already holds, so this process never opens the file and never
+// takes the lock the daemon is holding.
+//
+// The token travels inside the framed request and is not formatted into any
+// error, log line or result on the way; the only token field on the answer is a
+// bool. A handle opened directly has no socket and refuses rather than opening
+// one: the verb exists precisely so the writing verbs stop needing a direct
+// open, and a fallback would put that open back.
+//
+// The error keeps the client's own classification: a verb whose frame reached
+// the owner and whose reply the caller's deadline ended stays marked as such
+// through this wrap, so a caller can tell a request in progress from one that
+// never arrived.
+func (d *DB) SyncVerb(ctx context.Context, verb *wire.SyncVerb, token []byte) (*wire.SyncResult, error) {
+	if d.sock == "" {
+		return nil, fmt.Errorf("db: sync verb: this handle did not dial an owner: %w", ErrOpen)
+	}
+	res, err := client.SyncVerb(ctx, d.sock, verb, token)
+	if err != nil {
+		return nil, fmt.Errorf("db: sync verb %s: %w: %w", verb.Verb, ErrOpen, err)
+	}
+	return res, nil
+}
+
+// NewOwner serves d on a listener the caller opened, and the machine-local
+// file beside it when d carries one. The owner and this package share nothing
+// else: the server takes the raw pools and the handle's facts. Both handles are
+// marked served so a vacuum refuses to swap either pool out from under the
+// owner's clients.
 func NewOwner(d *DB) *owner.Server {
 	d.served = true
-	return owner.New(d.sqlDB, d.have, d.know, d.origin, errCode)
+	srv := owner.New(d.sqlDB, d.have, d.know, d.origin, errCode)
+	if l := d.local; l != nil {
+		l.served = true
+		srv.ServeLocal(l.sqlDB)
+	}
+	return srv
 }

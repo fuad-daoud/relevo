@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // mkdirVacuumTemp creates the backup's temp directory. It is a var so a test can
@@ -37,7 +38,12 @@ func vacuumInto(pool *sql.DB, target string) error {
 
 	// Refuse a target the engine's VACUUM INTO literal cannot express before
 	// anything is created, so the failure names the destination the caller
-	// asked for rather than the private temp copy.
+	// asked for rather than the private temp copy. The quote refusal is the
+	// driver-independent half, checked here in Go so it is the same answer on
+	// either engine; the literal's own refusal follows it as defence in depth.
+	if err := refuseQuotedTarget(target); err != nil {
+		return err
+	}
 	if _, _, err := vacuumIntoStmt(target); err != nil {
 		return err
 	}
@@ -67,6 +73,20 @@ func vacuumInto(pool *sql.DB, target string) error {
 			return fmt.Errorf("db: vacuum into %s: file already exists: %w", target, ErrInvalid)
 		}
 		return fmt.Errorf("db: vacuum into %s: link: %w", target, err)
+	}
+	return nil
+}
+
+// refuseQuotedTarget refuses a target holding a quote character, which the
+// copy's literal form cannot express. It is answered here rather than left to
+// the engine because only one engine's literal can refuse: Turso's takes the
+// target as a literal and rejects a quote, while modernc's takes it as a
+// bound parameter and accepts one. Deciding in Go makes the refusal the same
+// whichever engine compiled the binary, and it still names the destination the
+// caller asked for rather than the private temp copy.
+func refuseQuotedTarget(target string) error {
+	if strings.Contains(target, "'") {
+		return fmt.Errorf("db: vacuum into %s: the path contains a quote: %w", target, ErrInvalid)
 	}
 	return nil
 }
@@ -132,17 +152,28 @@ func (d *DB) swapInVacuum(sibling string) error {
 // requireDrainedWAL refuses the swap while the write-ahead log still holds
 // pages: renaming the database over the file would drop them.
 func requireDrainedWAL(path string) error {
+	n, err := walBytes(path)
+	if err != nil {
+		return fmt.Errorf("db: vacuum: stat -wal: %w", err)
+	}
+	if n == 0 {
+		return nil
+	}
+	return fmt.Errorf("db: vacuum: the -wal still holds %d bytes: %w", n, ErrInvalid)
+}
+
+// walBytes reports how many bytes the write-ahead log beside path still holds.
+// An absent log holds none, which is the same answer an empty one gives: the two
+// callers differ in what they do about it, not in what they measure.
+func walBytes(path string) (int64, error) {
 	fi, err := os.Stat(path + "-wal")
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil
+			return 0, nil
 		}
-		return fmt.Errorf("db: vacuum: stat -wal: %w", err)
+		return 0, err
 	}
-	if fi.Size() == 0 {
-		return nil
-	}
-	return fmt.Errorf("db: vacuum: the -wal still holds %d bytes: %w", fi.Size(), ErrInvalid)
+	return fi.Size(), nil
 }
 
 // reopenOriginal restores d's pool after a failed vacuum, joining a reopen
