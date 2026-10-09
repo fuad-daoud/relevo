@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -96,7 +95,7 @@ func cmdDaemon(args []string) error {
 			// newRuntimePeek read and validated config only: it took no lock,
 			// opened no DB (which would migrate), started no process and made
 			// no network call, and this returns before the DB open below.
-			fmt.Printf("ok %s\n", buildVersion())
+			fmt.Printf("ok %s %s\n", buildVersion(), upgrade.SplitCapability)
 			return nil
 		}
 
@@ -423,20 +422,15 @@ func cmdDaemon(args []string) error {
 	// The watcher and its hook are the daemon's whole upgrade decision
 	// (#371 §4.3): debounce the new identity over two ticks, preflight it,
 	// then either re-exec or refuse and record the refusal.
+	// The split guard refuses a candidate that cannot read the local split:
+	// following one would flap the visible config across re-execs. The
+	// marker cannot appear later in this process's life, so reading it once
+	// here is current for every later tick.
 	up := &upgrade.Watcher{
-		Path:    exe,
-		Started: exeID,
-		Stat:    upgrade.ExeIdentity,
-		Preflight: func(ctx context.Context, path string) error {
-			out, perr := exec.CommandContext(ctx, path, "daemon", "--preflight").CombinedOutput()
-			if perr == nil {
-				return nil
-			}
-			if line := firstLine(string(out)); line != "" {
-				return errors.New(line)
-			}
-			return perr
-		},
+		Path:      exe,
+		Started:   exeID,
+		Stat:      upgrade.ExeIdentity,
+		Preflight: upgrade.SplitGuardPreflight(rt.DB != nil && rt.DB.SplitDone()),
 	}
 
 	hook := func(ctx context.Context) bool {

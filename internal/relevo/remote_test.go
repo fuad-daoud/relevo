@@ -4681,7 +4681,7 @@ func TestUnreachableClearLeavesOtherHalts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if got.State != store.StateNeedsYou || !strings.Contains(got.Halt, "binding removed by the server admin") {
+	if got.State != store.StateNeedsYou || !strings.Contains(got.Halt, "binding not found on the server") {
 		t.Fatalf("state = %s, halt = %q, want the 404 halt as the fixture", got.State, got.Halt)
 	}
 
@@ -4694,9 +4694,9 @@ func TestUnreachableClearLeavesOtherHalts(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if got.State != store.StateNeedsYou {
-		t.Errorf("state = %s, want needs_you: a removed binding is not the unreachable halt's to clear", got.State)
+		t.Errorf("state = %s, want needs_you: a missing binding is not the unreachable halt's to clear", got.State)
 	}
-	if !strings.Contains(got.Halt, "binding removed by the server admin") {
+	if !strings.Contains(got.Halt, "binding not found on the server") {
 		t.Errorf("Halt = %q, want the 404 halt left alone", got.Halt)
 	}
 }
@@ -4921,8 +4921,8 @@ func TestReconcileRemote404Halts(t *testing.T) {
 	if got.State != store.StateNeedsYou {
 		t.Fatalf("state = %s, want needs_you on 404", got.State)
 	}
-	if !strings.Contains(got.Halt, "binding removed by the server admin") {
-		t.Fatalf("Halt = %q, want the removed-by-admin message", got.Halt)
+	if !strings.Contains(got.Halt, "binding not found on the server") {
+		t.Fatalf("Halt = %q, want the not-found message", got.Halt)
 	}
 }
 
