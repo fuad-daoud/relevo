@@ -33,6 +33,11 @@ const (
 	codeClientNotFound     errorCode = "client_not_found"
 	codeServerNotFound     errorCode = "server_not_found"
 	codeRoundCap           errorCode = "round_cap"
+	codeMastermindMismatch errorCode = "mastermind_mismatch"
+	codePushSeqNotFound    errorCode = "push_seq_not_found"
+	codePushAlreadyConfirm errorCode = "push_already_confirmed"
+	codePushNotAdmitted    errorCode = "push_not_admitted"
+	codePushNoClaim        errorCode = "push_no_claim"
 	codeInternal           errorCode = "internal"
 )
 
@@ -68,6 +73,11 @@ var catalog = map[errorCode]catalogEntry{
 	codeClientNotFound:     {exit: 1, next: "relevo serve clients"},
 	codeServerNotFound:     {exit: 1, next: "relevo config server list"},
 	codeRoundCap:           {exit: 1, next: "relevo bind"},
+	codeMastermindMismatch: {exit: 1},
+	codePushSeqNotFound:    {exit: 1},
+	codePushAlreadyConfirm: {exit: 1},
+	codePushNotAdmitted:    {exit: 1},
+	codePushNoClaim:        {exit: 1},
 	codeInternal:           {exit: 1, next: "relevo bugreport"},
 }
 

@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -78,7 +80,7 @@ func admitEntryAt(t *testing.T, rt Deps, name string) {
 
 // TestRunPushAdmitsWritesConfirmsOnAck is the loop's required case: the entry is
 // admitted before its line is written, no reader may claim it while admitted,
-// and the matching ack is what confirms it with route=push.
+// and the ack verb is what confirms it with route=push.
 func TestRunPushAdmitsWritesConfirmsOnAck(t *testing.T) {
 	t.Parallel()
 
@@ -86,15 +88,13 @@ func TestRunPushAdmitsWritesConfirmsOnAck(t *testing.T) {
 	rt.Channels = fakeClaimStore{}
 	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 
-	ackIn, ackWriter := io.Pipe()
 	lineOut, lineWriter := io.Pipe()
-	defer func() { _ = ackIn.Close() }()
 	defer func() { _ = lineOut.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- RunPush(ctx, rt, testClaimMasterMind, ackIn, lineWriter) }()
+	go func() { done <- RunPush(ctx, rt, testClaimMasterMind, lineWriter) }()
 
 	ev := readPushLine(t, bufio.NewReader(lineOut))
 	if ev.Binding != "webshop" || ev.Kind != string(store.KindReport) || ev.Round != 1 {
@@ -113,32 +113,30 @@ func TestRunPushAdmitsWritesConfirmsOnAck(t *testing.T) {
 		t.Errorf("a wait must not pull an admitted entry: delivered=%d err=%v", len(delivered), err)
 	}
 
-	// The entry is not confirmed before its ack: only the ack line confirms it.
+	// The entry is not confirmed before the ack: only the ack verb confirms it.
 	// The pause lets a confirm-on-write mutation show itself.
 	time.Sleep(250 * time.Millisecond)
 	if entries, err := rt.Store.ReadLog("webshop"); err != nil || len(entries) != 1 || entries[0].Confirmed {
 		t.Fatalf("the entry must not be confirmed before its ack: %v (entries=%d)", err, len(entries))
 	}
 
-	if _, err := fmt.Fprintf(ackWriter, "ack %d\n", ev.Seq); err != nil {
-		t.Fatalf("write ack: %v", err)
+	if err := AckPush(rt, testClaimMasterMind, "webshop", ev.Seq); err != nil {
+		t.Fatalf("AckPush: %v", err)
 	}
 	pushWaitFor(t, 2*time.Second, func() bool {
 		entries, err := rt.Store.ReadLog("webshop")
 		return err == nil && len(entries) == 1 && entries[0].Confirmed && entries[0].Route == "push"
 	}, "the entry confirmed with route=push")
 
-	// stdin EOF ends the holder cleanly and releases the claim.
-	if err := ackWriter.Close(); err != nil {
-		t.Fatalf("close ack side: %v", err)
-	}
+	// Cancelling ctx ends the holder cleanly and releases the claim.
+	cancel()
 	select {
 	case err := <-done:
 		if err != nil {
 			t.Fatalf("RunPush: %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("RunPush did not return on stdin EOF")
+		t.Fatal("RunPush did not return after its context was cancelled")
 	}
 	if c, err := rt.Channels.Live(testClaimMasterMind, rt.Now()); err != nil || c != nil {
 		t.Errorf("the claim must be released on exit, got %+v (err %v)", c, err)
@@ -255,26 +253,24 @@ func TestRunPushRestartResendsUnackedEntry(t *testing.T) {
 	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 	admitEntryAt(t, rt, "webshop")
 
-	ackIn, ackWriter := io.Pipe()
 	lineOut, lineWriter := io.Pipe()
-	defer func() { _ = ackIn.Close() }()
 	defer func() { _ = lineOut.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- RunPush(ctx, rt, testClaimMasterMind, ackIn, lineWriter) }()
+	go func() { done <- RunPush(ctx, rt, testClaimMasterMind, lineWriter) }()
 
 	ev := readPushLine(t, bufio.NewReader(lineOut))
 	if ev.Binding != "webshop" || ev.Round != 1 {
 		t.Fatalf("restarted holder wrote %+v, want the webshop round 1 line", ev)
 	}
 
-	_ = ackWriter.Close()
+	cancel()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("RunPush did not return on stdin EOF")
+		t.Fatal("RunPush did not return after its context was cancelled")
 	}
 }
 
@@ -289,7 +285,7 @@ func TestRunPushSecondHolderRefused(t *testing.T) {
 	}
 	rt := Deps{Store: store.New(t.TempDir()), Now: func() time.Time { return baseTime }, Channels: claims}
 
-	err := RunPush(context.Background(), rt, testClaimMasterMind, strings.NewReader(""), io.Discard)
+	err := RunPush(context.Background(), rt, testClaimMasterMind, io.Discard)
 	if !errors.Is(err, ErrClaimHeld) {
 		t.Fatalf("RunPush with a held claim = %v, want ErrClaimHeld", err)
 	}
@@ -490,9 +486,7 @@ func TestRunPushNeverPullsAndWritesOneEntry(t *testing.T) {
 	rt.Channels = fakeClaimStore{}
 	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 
-	ackIn, ackWriter := io.Pipe()
 	lineOut, lineWriter := io.Pipe()
-	defer func() { _ = ackIn.Close() }()
 	defer func() { _ = lineOut.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -509,7 +503,7 @@ func TestRunPushNeverPullsAndWritesOneEntry(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- runPush(ctx, rt, testClaimMasterMind, ackIn, lineWriter, seam) }()
+	go func() { done <- runPush(ctx, rt, testClaimMasterMind, lineWriter, seam) }()
 
 	ev := readPushLine(t, bufio.NewReader(lineOut))
 	if ev.Binding != "webshop" || ev.Kind != string(store.KindReport) {
@@ -524,11 +518,11 @@ func TestRunPushNeverPullsAndWritesOneEntry(t *testing.T) {
 		t.Fatalf("a reader pulled %d entries the holder also wrote", got.n)
 	}
 
-	_ = ackWriter.Close()
+	cancel()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("RunPush did not return on stdin EOF")
+		t.Fatal("RunPush did not return after its context was cancelled")
 	}
 }
 
@@ -622,6 +616,260 @@ func TestPushStateLineConfirmsNothing(t *testing.T) {
 	}
 }
 
+// TestRunPushDeliversTwoEntriesInOrderAsAcked pins the ordering and the
+// one-entry-at-a-time rule with nothing to drive from stdin: two bindings'
+// entries arrive in binding-name order, no second line is written before the
+// first ack, and the holder is still running after the last one.
+func TestRunPushDeliversTwoEntriesInOrderAsAcked(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	rt.Channels = fakeClaimStore{}
+	seedPending(t, rt, "alpha", testClaimMasterMind, "claude")
+	seedPending(t, rt, "beta", testClaimMasterMind, "claude")
+
+	lineOut, lineWriter := io.Pipe()
+	defer func() { _ = lineOut.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- RunPush(ctx, rt, testClaimMasterMind, lineWriter) }()
+
+	events := pushEventChan(bufio.NewReader(lineOut))
+	first := waitPushEvent(t, events, 2*time.Second)
+	if first.Binding != "alpha" {
+		t.Fatalf("first line = %+v, want the alpha binding first", first)
+	}
+
+	// Unacked, the holder waits: the claim is still live and no beta line
+	// arrives, so the drain is one entry deep.
+	select {
+	case got := <-events:
+		t.Fatalf("a second line arrived before the first ack: %+v", got)
+	case <-time.After(pushPollEvery + 200*time.Millisecond):
+	}
+	if c, err := rt.Channels.Live(testClaimMasterMind, rt.Now()); err != nil || c == nil {
+		t.Errorf("the holder must still hold its claim between entries: %+v (err %v)", c, err)
+	}
+
+	if err := AckPush(rt, testClaimMasterMind, "alpha", first.Seq); err != nil {
+		t.Fatalf("AckPush alpha: %v", err)
+	}
+	second := waitPushEvent(t, events, 2*time.Second)
+	if second.Binding != "beta" {
+		t.Fatalf("second line = %+v, want the beta binding next", second)
+	}
+	if err := AckPush(rt, testClaimMasterMind, "beta", second.Seq); err != nil {
+		t.Fatalf("AckPush beta: %v", err)
+	}
+
+	for _, name := range []string{"alpha", "beta"} {
+		pushWaitFor(t, 2*time.Second, func() bool {
+			entries, err := rt.Store.ReadLog(name)
+			return err == nil && len(entries) == 1 && entries[0].Confirmed && entries[0].Route == "push"
+		}, name+" confirmed with route push")
+	}
+
+	// Every entry is delivered, so the only thing left that can end the holder
+	// is its context or its claim. A stdin EOF would end it here instead, and
+	// the holder would have no reason left to be alive.
+	select {
+	case err := <-done:
+		t.Fatalf("RunPush returned with no reason to stop: %v", err)
+	case <-time.After(pushPollEvery + 200*time.Millisecond):
+	}
+	if c, err := rt.Channels.Live(testClaimMasterMind, rt.Now()); err != nil || c == nil {
+		t.Errorf("the holder must still hold its claim after its last entry: %+v (err %v)", c, err)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunPush: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunPush did not return after its context was cancelled")
+	}
+}
+
+// TestRunPushCancelClearsUnackedAdmit: a holder cancelled with an entry written
+// but unacked clears that entry's admit, so it is claimable again.
+func TestRunPushCancelClearsUnackedAdmit(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	rt.Channels = fakeClaimStore{}
+	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+
+	lineOut, lineWriter := io.Pipe()
+	defer func() { _ = lineOut.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- RunPush(ctx, rt, testClaimMasterMind, lineWriter) }()
+
+	readPushLine(t, bufio.NewReader(lineOut))
+	if n := claimableCount(t, rt, "webshop"); n != 0 {
+		t.Fatalf("claimable while the holder waits for its ack = %d, want 0", n)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunPush: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunPush did not return after its context was cancelled")
+	}
+	if e := ackEntry(t, rt, "webshop", 0); e.Confirmed {
+		t.Error("a cancelled holder must not confirm the entry it wrote")
+	}
+	if n := claimableCount(t, rt, "webshop"); n != 1 {
+		t.Errorf("claimable after the holder exited = %d, want the entry back", n)
+	}
+}
+
+// guardedClaimStore is a ClaimStore a test may write to while a holder runs:
+// fakeClaimStore's map is unsynchronized, and taking a claim over from under a
+// live holder is exactly a cross-goroutine map write.
+type guardedClaimStore struct {
+	mu sync.Mutex
+	m  map[string]*Claim
+}
+
+func (g *guardedClaimStore) Live(mastermind string, now time.Time) (*Claim, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.m[mastermind], nil
+}
+
+func (g *guardedClaimStore) Write(c Claim, now time.Time) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.m == nil {
+		g.m = map[string]*Claim{}
+	}
+	g.m[c.MasterMind] = &c
+	return nil
+}
+
+func (g *guardedClaimStore) Remove(mastermind string, pid int) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.m, mastermind)
+	return nil
+}
+
+// takeOver replaces the stored claim with one owned by another pid, which is
+// how a successor holder takes the claim over.
+func (g *guardedClaimStore) takeOver(c Claim) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.m == nil {
+		g.m = map[string]*Claim{}
+	}
+	g.m[c.MasterMind] = &c
+}
+
+// TestRunPushEndsWhenItLosesTheClaim pins the guarded exit clear: another holder
+// takes the claim, so this one ends cleanly -- but it must NOT clear the admit
+// it wrote, because the successor may already be delivering that same entry.
+func TestRunPushEndsWhenItLosesTheClaim(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	claims := &guardedClaimStore{}
+	rt.Channels = claims
+	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+
+	lineOut, lineWriter := io.Pipe()
+	defer func() { _ = lineOut.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- RunPush(ctx, rt, testClaimMasterMind, lineWriter) }()
+
+	readPushLine(t, bufio.NewReader(lineOut))
+	pushWaitFor(t, 2*time.Second, func() bool {
+		c, err := claims.Live(testClaimMasterMind, rt.Now())
+		return err == nil && c != nil && c.PID == os.Getpid()
+	}, "the holder to take the claim")
+
+	// A successor takes the claim over; this holder is no longer the owner.
+	claims.takeOver(Claim{MasterMind: testClaimMasterMind, PID: os.Getpid() + 1, SeenAt: rt.Now()})
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunPush on claim loss = %v, want a clean nil return", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("RunPush did not return after losing the claim")
+	}
+
+	if e := ackEntry(t, rt, "webshop", 0); e.AdmittedAt == nil {
+		t.Error("a holder that lost its claim must leave the entry admitted for the successor's clear")
+	}
+	if n := claimableCount(t, rt, "webshop"); n != 0 {
+		t.Errorf("claimable after claim loss = %d, want 0: the successor owns the entry", n)
+	}
+}
+
+// TestRunPushReSendsEntryWhoseAdmitWasCleared pins the second exit awaitConfirm
+// has: an admit cleared by someone else makes the entry claimable again, so the
+// holder re-sends it instead of waiting on an ack that would now be refused.
+func TestRunPushReSendsEntryWhoseAdmitWasCleared(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	rt.Channels = fakeClaimStore{}
+	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+
+	lineOut, lineWriter := io.Pipe()
+	defer func() { _ = lineOut.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- RunPush(ctx, rt, testClaimMasterMind, lineWriter) }()
+
+	events := pushEventChan(bufio.NewReader(lineOut))
+	first := waitPushEvent(t, events, 2*time.Second)
+
+	// Someone clears the admit under the waiting holder: the entry is claimable
+	// again, and an ack for it would be refused as not admitted.
+	if err := rt.Store.ClearAdmitIndex("webshop", 0); err != nil {
+		t.Fatalf("ClearAdmitIndex: %v", err)
+	}
+
+	second := waitPushEvent(t, events, 3*time.Second)
+	if second.Seq != first.Seq || second.Binding != first.Binding {
+		t.Fatalf("re-sent line = %+v, want the same entry as %+v", second, first)
+	}
+	if err := AckPush(rt, testClaimMasterMind, "webshop", second.Seq); err != nil {
+		t.Fatalf("AckPush of the re-sent entry: %v", err)
+	}
+	pushWaitFor(t, 2*time.Second, func() bool {
+		entries, err := rt.Store.ReadLog("webshop")
+		return err == nil && len(entries) == 1 && entries[0].Confirmed && entries[0].Route == "push"
+	}, "the re-sent entry confirmed with route push")
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunPush: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunPush did not return after its context was cancelled")
+	}
+}
+
 // TestRunPushStateLineWaitsForEntryAck keeps the state lines in the single
 // writer's between-entry slot: while an entry waits for its ack no state line
 // is written, and the transition is announced only once the entry is
@@ -634,15 +882,13 @@ func TestRunPushStateLineWaitsForEntryAck(t *testing.T) {
 	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 	setBindingState(t, rt, "webshop", store.StateNeedsYou)
 
-	ackIn, ackWriter := io.Pipe()
 	lineOut, lineWriter := io.Pipe()
-	defer func() { _ = ackIn.Close() }()
 	defer func() { _ = lineOut.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- RunPush(ctx, rt, testClaimMasterMind, ackIn, lineWriter) }()
+	go func() { done <- RunPush(ctx, rt, testClaimMasterMind, lineWriter) }()
 
 	events := pushEventChan(bufio.NewReader(lineOut))
 	ev := waitPushEvent(t, events, 2*time.Second)
@@ -650,25 +896,25 @@ func TestRunPushStateLineWaitsForEntryAck(t *testing.T) {
 		t.Fatalf("first line = %+v, want the report entry", ev)
 	}
 
-	// The entry is unacked: no state line may slip in while awaitAck blocks.
+	// The entry is unacked: no state line may slip in while awaitConfirm waits.
 	select {
 	case got := <-events:
 		t.Fatalf("a state line arrived while an entry awaited its ack: %+v", got)
 	case <-time.After(pushPollEvery + 200*time.Millisecond):
 	}
 
-	if _, err := fmt.Fprintf(ackWriter, "ack %d\n", ev.Seq); err != nil {
-		t.Fatalf("write ack: %v", err)
+	if err := AckPush(rt, testClaimMasterMind, "webshop", ev.Seq); err != nil {
+		t.Fatalf("AckPush: %v", err)
 	}
 	state := waitPushEvent(t, events, 2*time.Second)
 	if state.Kind != "state" || state.State != "needs_you" {
 		t.Fatalf("after the ack got %+v, want the needs_you state line", state)
 	}
 
-	_ = ackWriter.Close()
+	cancel()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("RunPush did not return on stdin EOF")
+		t.Fatal("RunPush did not return after its context was cancelled")
 	}
 }

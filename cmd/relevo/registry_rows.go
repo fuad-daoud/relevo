@@ -455,10 +455,13 @@ var registry = []verbEntry{
 	{
 		Name:    "push",
 		Summary: "hold this MasterMind's push claim and write its round events to the mod on stdout",
-		Args:    "[--mastermind ID]",
-		Flags:   []string{"--mastermind"},
+		Args:    "[--ack <binding> <seq>] [--mastermind ID]",
+		Flags:   []string{"--ack", "--mastermind"},
 		Exit:    []int{0, 1, 2},
-		Errors:  []string{"usage"},
+		Errors: []string{
+			"binding_not_found", "internal", "mastermind_mismatch", "push_already_confirmed",
+			"push_no_claim", "push_not_admitted", "push_seq_not_found", "usage",
+		},
 	},
 	{
 		Name:    "send",

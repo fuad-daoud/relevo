@@ -58,8 +58,8 @@ Commands:
   daemon    run the long-running reconciler (daemon stop stops the daemon this CLI started)
   mcp       run an MCP server over stdio for a Claude Code MasterMind: status/send/wait/done/show/gate
             as tools
-  push      hold this MasterMind's push claim and write each round event to stdout as NDJSON,
-            confirming on an "ack <seq>" line from stdin
+  push      hold this MasterMind's push claim and write each round event to stdout as NDJSON;
+            "relevo push --ack <binding> <seq>" confirms one entry the holder wrote, then exits
   doctor    preflight check: plugin, daemon, harness binaries, roles
   bugreport assemble a local, redacted bug-report bundle and print the gh line
   board     open a local Excalidraw whiteboard: this MasterMind's live board, or a repo scene
