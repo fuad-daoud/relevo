@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -770,6 +771,10 @@ type fakeRunner struct {
 	killStreams []string
 
 	startErr error
+
+	// started counts the Start calls that got past startErr, so a test can
+	// order a scope end against the spawn that needed the unit free.
+	started  int
 	aliveErr error
 	killErr  error
 
@@ -820,9 +825,27 @@ type fakeRunner struct {
 	// scopeStops records every unit StopScope was asked to end, in order, so
 	// a test can prove that a scope was reaped -- or that none was.
 	scopeStops []string
+	// scopeStopsAt is the value of started when the scope end was recorded, so
+	// a test can pin that a unit was freed BEFORE the Start that needed it --
+	// an ordering the fake runner does not enforce by itself.
+	scopeStopsAt int
+
 	// scopeStopErr, when set, is what StopScope returns, so a test can pin
 	// the refusal when a scope cannot be ended.
 	scopeStopErr error
+
+	// refuseBusyScope makes Start fail the way systemd-run does when the unit
+	// it was asked to create is already loaded, rather than silently succeeding
+	// the way a fake that never models scope-busy would. Off by default, so
+	// every other test's Start is unaffected.
+	refuseBusyScope bool
+
+	// lingerProbes is how many more ScopeActive probes answer true after a
+	// StopScope, modelling a unit that is deactivating but not yet unloaded.
+	// Zero frees it at once, as a scope-blind fake does. lingerLeft is its
+	// countdown.
+	lingerProbes int
+	lingerLeft   int
 }
 
 func newFakeRunner() *fakeRunner {
@@ -852,7 +875,11 @@ func (f *fakeRunner) Start(_ context.Context, spec spawn.ProcSpec) (spawn.ProcHa
 	if f.startErr != nil {
 		return spawn.ProcHandle{}, f.startErr
 	}
+	if f.refuseBusyScope && spec.Scope != nil && f.scopeActive[spec.Scope.Unit] {
+		return spawn.ProcHandle{}, fmt.Errorf("Failed to start transient scope unit: Unit %s.scope was already loaded: test fixture", spec.Scope.Unit)
+	}
 	f.nextPID++
+	f.started++
 	h := spawn.ProcHandle{PID: f.nextPID, StartedAt: time.Unix(1_700_000_000+int64(f.nextPID), 0)}
 	f.specs = append(f.specs, spec)
 	f.handles = append(f.handles, h)
@@ -936,6 +963,18 @@ func (f *fakeRunner) Rusage(_ context.Context, h spawn.ProcHandle, _ string) (sp
 // scopes-off never probes.
 func (f *fakeRunner) ScopeActive(_ context.Context, unit string) (bool, error) {
 	f.scopeQueries = append(f.scopeQueries, unit)
+	// A unit told to stop answers true until its linger runs out: the host
+	// has been asked, not yet finished. The countdown ticks on the probe,
+	// which is what freeRoundScope polls.
+	if f.scopeActive[unit] && f.lingerLeft > 0 {
+		f.lingerLeft--
+		if f.lingerLeft == 0 {
+			// The reaper finished: the unit is unloaded.
+			delete(f.scopeActive, unit)
+			return false, nil
+		}
+		return true, nil
+	}
 	return f.scopeActive[unit], nil
 }
 
@@ -955,9 +994,19 @@ func (f *fakeRunner) ScopeResult(_ context.Context, unit string, since time.Time
 // and, unless a test scripted an error, clears that unit's active flag so a
 // later probe sees it gone.
 func (f *fakeRunner) StopScope(_ context.Context, unit string) error {
+	if len(f.scopeStops) == 0 {
+		f.scopeStopsAt = f.started
+	}
 	f.scopeStops = append(f.scopeStops, unit)
+	if f.lingerProbes > 0 {
+		f.lingerLeft = f.lingerProbes
+	}
 	if f.scopeStopErr != nil {
 		return f.scopeStopErr
+	}
+	if f.lingerLeft > 0 {
+		f.lingerLeft--
+		return nil
 	}
 	delete(f.scopeActive, unit)
 	return nil

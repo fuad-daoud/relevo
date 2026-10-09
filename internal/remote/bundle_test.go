@@ -481,3 +481,29 @@ func TestBundlePathUnderStateRoot(t *testing.T) {
 		t.Errorf("bundle path = %q, want prefix %q", remover.path, wantPrefix)
 	}
 }
+
+// TestSnapshotTimeoutSurfacesDeadlineExceeded pins #959's premise at the
+// transport half: git.Client bounds every git call by its own timeout, and a
+// blown budget keeps errors.Is(err, context.DeadlineExceeded) true all the way
+// out of Snapshot. The verb half above it can therefore probe for it, which is
+// what remoteShip's one retry-on-deadline does.
+func TestSnapshotTimeoutSurfacesDeadlineExceeded(t *testing.T) {
+	ctx := context.Background()
+	g := git.NewClient("git", time.Nanosecond, git.DefaultMaxPatchBytes)
+	transport := NewBundleTransport(g, t.TempDir())
+
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte("data\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "f.txt")
+	runGit(t, repo, "commit", "-m", "init")
+	head := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "update-ref", "refs/heads/main", head)
+
+	_, err := transport.Snapshot(ctx, repo, []string{"refs/heads/main"}, "")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Snapshot err = %v, want context.DeadlineExceeded to survive the timeout", err)
+	}
+}
