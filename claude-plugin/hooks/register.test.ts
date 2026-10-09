@@ -551,8 +551,8 @@ describe('band', () => {
     for (const b of buttons) expect(String(b.props.label)).not.toMatch(/^\d+:/)
     const digits = (await ui.findAll({ type: 'Text' })).filter((x: any) => /^\d$/.test(x.text))
     expect(digits.map((x: any) => [x.text, x.props.color])).toEqual([
-      ['1', '#66716d'],
-      ['2', '#66716d'],
+      ['1', 'subtle'],
+      ['2', 'subtle'],
     ])
     expect(buttons.find((b: any) => b.props.label === '○ r1').props.hotkey).toBeUndefined()
   })
@@ -569,7 +569,7 @@ describe('band', () => {
     await f.clock.settle()
     const ui = await mount($, 'terminal')
     const head = (await ui.findAll({ type: 'Text' })).find((x: any) => x.text === '● api r1')
-    expect(head.props).toEqual(expect.objectContaining({ bold: true, color: '#f0b452' }))
+    expect(head.props).toEqual(expect.objectContaining({ bold: true, color: 'warning' }))
     const widths = (await ui.findAll({ type: 'Box' })).map((b: any) => b.props.width).filter((w: unknown) => w !== undefined)
     // Two fixed columns per row, the same widths on both rows.
     expect(widths).toHaveLength(4)
@@ -654,9 +654,9 @@ describe('band', () => {
     const ui = await mount($, 'terminal')
     const bar = (await ui.findAll({ type: 'Text' })).filter((x: any) => x.text === '■')
     expect(bar.map((x: any) => [x.props.color, x.props.bold])).toEqual([
-      ['#86d093', undefined],
+      ['success', undefined],
       [undefined, true],
-      ['#66716d', undefined],
+      ['subtle', undefined],
     ])
   })
 
@@ -723,7 +723,7 @@ describe('band', () => {
     const boxes = (await ui.findAll({ type: 'Box' })).map((b: any) => b.props.backgroundColor).filter(Boolean)
     expect(boxes).toEqual(['#2a2212', '#12282d'])
     const t = await ui.findAll({ type: 'Text' })
-    expect(t.find((x: any) => x.text === 'needs you · 1h').props.color).toBe('#f0b452')
+    expect(t.find((x: any) => x.text === 'needs you · 1h').props.color).toBe('warning')
     expect(t.find((x: any) => x.text === 'report in · 1h').props.color).toBe('#72c8d8')
   })
 

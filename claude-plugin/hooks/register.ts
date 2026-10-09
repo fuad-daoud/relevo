@@ -48,15 +48,15 @@ const POLL_MS = 5_000
 const POLL_SLOW_MS = 30_000
 const POLL_FAILS_BEFORE_SLOW = 3
 const MAX_INBOX = 3
-const AMBER = '#f0b452'
+const AMBER = 'warning'
 const TEAL = '#72c8d8'
-const PHASE = '#aab4b0'
-const DIM = '#8a9591'
-const FAINT = '#66716d'
-const DONE_GREEN = '#86d093'
+const PHASE = 'inactive'
+const DIM = 'inactive'
+const FAINT = 'subtle'
+const DONE_GREEN = 'success'
 const AMBER_TINT = '#2a2212'
 const TEAL_TINT = '#12282d'
-const RULE = '#262d2b'
+const RULE = 'promptBorder'
 // Restart delay doubles from the floor to the cap; a child that ran for
 // STABLE_MS counts as healthy and drops the delay back to the floor.
 const BACKOFF_MIN_MS = 1_000
@@ -504,7 +504,7 @@ export const register: Register = (on) => {
         key(d),
         h(Box, { width: headW, flexShrink: 0 }, h(Text, { color: tone, bold: true, wrap: 'truncate-end' }, heads[i])),
         h(Box, { width: stateW, flexShrink: 0 }, h(Text, { color: tone, wrap: 'truncate-end' }, states[i])),
-        h(Box, { flexGrow: 1, flexShrink: 1, minWidth: 0 }, h(Text, { color: DIM, wrap: 'truncate-end' }, detail(r))),
+        h(Box, { flexGrow: 1, flexShrink: 1, minWidth: 0 }, h(Text, { color: r.tone === 'needs' ? undefined : DIM, wrap: 'truncate-end' }, detail(r))),
         h(Box, { flexShrink: 0 }, move),
       )
     })
