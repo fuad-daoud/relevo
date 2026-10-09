@@ -507,13 +507,27 @@ func (b *Binding) UnmarshalJSON(raw []byte) error {
 	// containment; the broken text is a fixed sentence this binary writes whole,
 	// so it is an equality -- a server that named its own reason for a break wrote
 	// a different one, and naming that episode is not this migration's to do.
-	if out.Format < haltKindFormat {
-		switch {
-		case out.RemoteHaltKind == "" && strings.Contains(out.Halt, UnreachableHaltMarker):
-			out.RemoteHaltKind = HaltKindUnreachable
-		case out.RemoteHaltKind == "" && out.Halt == BrokenHaltText:
-			out.RemoteHaltKind = HaltKindBroken
-		}
+	// The unreachable case is bounded by the format, because it is a
+	// containment: its text is a builder's failure lines, which can quote the
+	// marker anywhere, so at this format a no-kind record means there is no
+	// remote halt and reading its text would match nothing that is actually an
+	// unreachable halt -- unless a builder quoted the marker in an ordinary
+	// failure, which is exactly what must not be named one.
+	//
+	// The broken case is not, because it is an equality: BrokenHaltText is a
+	// fixed sentence this binary writes WHOLE, and it writes it only with the
+	// kind already stamped (grep HaltKindBroken -- every write site sets it), so
+	// a record whose Halt equals that sentence and whose kind is empty can only
+	// be a pre-kind one. That window was real: #1035 raised the format to 16
+	// and #1043 added the kind two hours later, so builds in between wrote the
+	// broken text at format 16 with no kind (#1051). A server that named its own
+	// reason for a break wrote a different sentence, and naming that episode is
+	// not this migration's to do.
+	if out.Format < haltKindFormat && out.RemoteHaltKind == "" && strings.Contains(out.Halt, UnreachableHaltMarker) {
+		out.RemoteHaltKind = HaltKindUnreachable
+	}
+	if out.RemoteHaltKind == "" && out.Halt == BrokenHaltText {
+		out.RemoteHaltKind = HaltKindBroken
 	}
 	*b = out
 	return nil

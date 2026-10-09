@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -552,5 +553,116 @@ func TestAdmitGatedSwitches(t *testing.T) {
 	last := entries[len(entries)-1]
 	if last.Kind != store.KindQueue || !strings.Contains(last.Note, "(switched: gated while queued)") {
 		t.Errorf("last entry = %+v, want a KindQueue note containing %q", last, "(switched: gated while queued)")
+	}
+}
+
+// failingConfirmDeliverer admits a payload and then fails the read-back, which
+// is the shape that leaves switchBuilder's queueBrokenHalt entry queued, the
+// per-round key stamped, and the binding settled Broken with the delivery
+// error returned -- the state #1051's Admit check has to recognise.
+type failingConfirmDeliverer struct {
+	deliverCalls int
+}
+
+func (d *failingConfirmDeliverer) Deliver(_ context.Context, _ store.Endpoint, _, _ string, _ time.Time) (delivery.Outcome, string, error) {
+	d.deliverCalls++
+	return delivery.OutcomeAdmitted, "posted; awaiting the session", nil
+}
+
+func (d *failingConfirmDeliverer) Confirm(_ context.Context, _ store.Endpoint, _ string, _ time.Time) (delivery.Outcome, string, error) {
+	return delivery.OutcomeNotMine, "", errors.New("session read-back failed")
+}
+
+func (d *failingConfirmDeliverer) ConfirmOnce(_ context.Context, _ store.Endpoint, _ string, _ time.Time) (delivery.Outcome, string, error) {
+	return delivery.OutcomeNotMine, "", errors.New("session read-back failed")
+}
+
+func (d *failingConfirmDeliverer) AdmitHorizon() time.Duration { return 0 }
+
+// TestAdmitKeepsAnAlreadyNotifiedBrokenHalt pins step 5's broken half: a
+// binding that comes back from the switch already Broken with this round's
+// notification key stamped must be recognised as already halted. Falling
+// through to haltAndSettle dedupes the entry, fails the delivery again, and
+// returns herr without saving -- so the round stays queued and the next tick
+// queues the same broken entry again: one duplicate per tick on a local OOM
+// re-admit (oom.go).
+//
+// The state cannot be staged by hand: Admit refuses anything that is not
+// State Active on entry, so it is produced by the switch's own resolve
+// failure plus a failing delivery, exactly as it happens in production.
+//
+// Mutation check: narrow the condition in queue.go back to StateNeedsYou
+// alone and the second Admit adds a second halt entry.
+func TestAdmitKeepsAnAlreadyNotifiedBrokenHalt(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt := newRuntime(t)
+	rt.Runner = fr
+	// Two providers, so gating the first leaves the second reachable, and the
+	// read tier the binding carries is one opencode refuses -- the resolve
+	// failure switchBuilder reports as broken.
+	rt.Candidates = candidateSet(t, `[{"harness":"claude","provider":"first","model":"m","roles":["builder","reviewer"]},
+	  {"harness":"opencode","provider":"second","model":"m","roles":["builder"]}]`)
+	rt.Policy = orderOf("builder", "claude/first/m", "opencode/second/m")
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: "claude/first/m", MasterMindID: testMasterMindName, CWD: "/repo", Tier: "read",
+	}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	stub := &failingConfirmDeliverer{}
+	master, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	rt.Deliverers = map[string]delivery.MasterMindDeliverer{master.MasterMind.Kind: stub}
+
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{Defer: true}); err != nil {
+		t.Fatalf("Send(Defer): %v", err)
+	}
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "claude/first/m", time.Time{}, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	// The first Admit reaches the broken state and returns the delivery error.
+	if err := Admit(context.Background(), rt, "webshop"); err == nil {
+		t.Fatal("Admit = nil, want the delivery error returned")
+	}
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if b.State != store.StateBroken {
+		t.Fatalf("state = %s, want broken: the fixture must reach the branch under test", b.State)
+	}
+	if b.HaltNotifiedRound != b.Round {
+		t.Fatalf("HaltNotifiedRound = %d, want this round %d: the fixture must be already notified", b.HaltNotifiedRound, b.Round)
+	}
+	halts := haltEntries(t, rt, "webshop")
+	if len(halts) != 1 {
+		t.Fatalf("halt entries = %d, want 1: the broken halt's own entry", len(halts))
+	}
+
+	// The next tick must add nothing. The daemon's idle path revives a broken
+	// binding back to Active, which is what puts it in front of Admit again
+	// with its stale key still stamped -- and that duplicate-per-tick is the
+	// defect this test exists to pin.
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		cur, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		cur.State = store.StateActive
+		cur.QueuedAt = baseTime
+		return tx.Save(cur)
+	}); err != nil {
+		t.Fatalf("stage re-queue: %v", err)
+	}
+	if err := Admit(context.Background(), rt, "webshop"); err == nil {
+		t.Fatal("second Admit = nil, want an error")
+	}
+	if halts := haltEntries(t, rt, "webshop"); len(halts) != 1 {
+		t.Errorf("halt entries = %d after the second Admit, want 1: a duplicate was queued for a halt already notified", len(halts))
 	}
 }

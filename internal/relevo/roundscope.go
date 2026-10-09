@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -90,5 +91,60 @@ func endEarlierRoundScope(ctx context.Context, rt Runtime, b store.Binding) erro
 	if reaped {
 		slog.Info("ended the previous round's scope before starting a new round", "binding", b.Name, "round", b.Round-1, "unit", unit)
 	}
+	return nil
+}
+
+// scopeUnloadDeadline and scopeUnloadTick bound the wait in freeRoundScope:
+// the window a scope gets to leave systemd after it was asked to stop, and how
+// often the host is asked whether it has. systemd unloads a scope that has no
+// processes left essentially at once, so the window is generous only for the
+// slow reaper, and the tick is short enough that a host that frees the unit
+// promptly is never waited on twice.
+const (
+	scopeUnloadDeadline = 5 * time.Second
+	scopeUnloadTick     = 50 * time.Millisecond
+)
+
+// freeRoundScope makes b's own round scope unit available to a replacement
+// process, and is what a switch-resend calls before it starts one (#1058).
+//
+// The replacement is the SAME round on the same binding, so it asks systemd for
+// the same unit name the process it replaces is still using. systemd-run
+// refuses that with "Unit ... was already loaded", and the refusal arrives as
+// an ordinary Start error, which the spawn path reads as a candidate failure.
+// So the unit is freed here first: probed, ended if loaded, then polled until
+// the host agrees it is gone. A scope that is not loaded, and a binding with
+// scopes off, are no-ops -- the round can start immediately.
+//
+// A unit still loaded after the deadline, and a runner that can see a scope but
+// not end one, are both ErrScopeActive: retryable, with nothing spawned, no
+// gate recorded and no candidate touched. The caller defers, and the next tick
+// tries the whole switch again once the host has finished reaping.
+//
+// Unlike endEarlierRoundScope this takes a binding rather than a unit, because
+// the caller has one and both of them derive the unit the same way -- endRoundScope
+// next to it, so a future send.go adoption moves no code.
+func freeRoundScope(ctx context.Context, rt Runtime, b store.Binding) error {
+	unit := scopeUnitName(b)
+	if !scopeRunning(ctx, rt, unit) {
+		return nil
+	}
+	if _, err := endScope(ctx, rt, unit); err != nil {
+		return fmt.Errorf("binding %q round %d: its scope %s.scope is still running and could not be ended; stop it with systemctl --user stop %s.scope, then retry: %w",
+			b.Name, b.Round, unit, unit, ErrScopeActive)
+	}
+	deadline := time.Now().Add(scopeUnloadDeadline)
+	for scopeRunning(ctx, rt, unit) {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("binding %q round %d: its scope %s.scope was asked to stop but is still loaded; stop it with systemctl --user stop %s.scope, then retry: %w",
+				b.Name, b.Round, unit, unit, ErrScopeActive)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(scopeUnloadTick):
+		}
+	}
+	slog.Info("freed the round's scope before starting its replacement", "binding", b.Name, "round", b.Round, "unit", unit)
 	return nil
 }
