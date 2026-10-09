@@ -1,3 +1,5 @@
+# Plan: fold remote-less scratch repos into one row in the stats Repos tab
+
 
 ## Behaviour
 
