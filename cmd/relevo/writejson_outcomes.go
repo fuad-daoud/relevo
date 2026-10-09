@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/release"
@@ -58,6 +59,10 @@ func outcomeError(err error) error {
 		return failWrap(codeRemoteUnreachable, err, "%v", err)
 	case errors.Is(err, release.ErrOffline):
 		return failWrap(codeRemoteUnreachable, err, "%v", err)
+	case errors.Is(err, config.ErrInvalidValue):
+		// A refused value is the caller's input, not a failure of the store, so
+		// it earns the config code rather than internal.
+		return failWrap(codeConfigInvalid, err, "%v", err)
 	default:
 		return fail(codeInternal, "%v", err)
 	}

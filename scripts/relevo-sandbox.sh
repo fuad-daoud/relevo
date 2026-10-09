@@ -250,12 +250,17 @@ cmd_create() {
 		# turso library) as a side effect, which would put fresh files outside
 		# the sandbox on a machine that never configured relevo. The path rule
 		# mirrors store.DefaultRoot.
+		#
+		# The seed order matters: an actor's placement is cross-checked against
+		# the servers section when it is written, so servers must be set before
+		# actors or a host that places on a remote server refuses the actors
+		# write and the sandbox silently starts without one.
 		_hostdb="${XDG_STATE_HOME:-$HOME/.local/state}/relevo/relevo.db"
 		_seeded=0
 		if [ ! -f "$_hostdb" ]; then
 			note "no host database at $_hostdb, so no config to copy; the sandbox starts unseeded"
 		else
-			for _s in candidates policy actors agents servers; do
+			for _s in candidates policy servers actors agents; do
 				if _val=$(relevo config get "$_s" 2>/dev/null); then
 					# shellcheck disable=SC2086 # _sbenv is a list of VAR=value
 					# words for env, as above.

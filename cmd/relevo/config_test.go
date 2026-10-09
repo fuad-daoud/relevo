@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/config"
 )
 
 // writeEditor writes an executable sh script (body after the shebang) into a
@@ -491,6 +493,37 @@ func TestConfigSecretUnknownNameExits2(t *testing.T) {
 	}
 	if !strings.Contains(ce.message, "typesafe") || !strings.Contains(ce.message, "client.key") {
 		t.Errorf("message = %q, want both allowed names", ce.message)
+	}
+}
+
+// TestConfigSetPlacementRefusalIsConfigInvalid pins the whole verb path for a
+// refused value: the store's refusal reaches the admin classifier carrying
+// ErrInvalidValue, so `config set` reports config_invalid with the command that
+// fixes it rather than internal and a bundle hint. The store's own text is the
+// line the placement cross-check refused with, unchanged.
+func TestConfigSetPlacementRefusalIsConfigInvalid(t *testing.T) {
+	initRoot(t)
+
+	if _, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "set", "candidates", `[{"harness":"claude","provider":"p","model":"m"}]`})
+	}); err != nil {
+		t.Fatalf("config set candidates: %v (stderr: %s)", err, stderr)
+	}
+
+	actors := `{"builder":{"agent":"plan-executor","candidates":["m"],"placement":["zen","local"]}}`
+	_, _, runErr := captureOutput(t, func() error {
+		return run([]string{"config", "set", "actors", actors})
+	})
+	ce := requireCLIError(t, runErr, codeConfigInvalid, "relevo config edit")
+	for _, want := range []string{"builder.placement[0]", `"zen"`, "is not in the servers section"} {
+		if !strings.Contains(ce.message, want) {
+			t.Errorf("message = %q, want it to contain %q", ce.message, want)
+		}
+	}
+	// The cause stays reachable, so a caller probing the store's sentinel still
+	// finds it under the code.
+	if !errors.Is(runErr, config.ErrInvalidValue) {
+		t.Errorf("errors.Is(%v, config.ErrInvalidValue) = false, want the sentinel reachable", runErr)
 	}
 }
 
