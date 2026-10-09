@@ -2,7 +2,7 @@
   "name": "relevo",
   "displayName": "relevo",
   "description": "MasterMind/builder handoff for Claude Code: builder reports and NEEDS YOU stops pushed into this session; status/send/show/gate/done as tools",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "author": {"name": "Fuad Daoud"},
   "repository": "https://github.com/fuad-daoud/relevo",
   "homepage": "https://relevo.sh",
