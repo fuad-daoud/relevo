@@ -48,14 +48,15 @@ const POLL_MS = 5_000
 const POLL_SLOW_MS = 30_000
 const POLL_FAILS_BEFORE_SLOW = 3
 const MAX_INBOX = 3
-const AMBER = '#f0b452'
+const AMBER = 'warning'
 const TEAL = '#72c8d8'
-const PHASE = '#aab4b0'
-const DIM = '#8a9591'
-const FAINT = '#66716d'
-const DONE_GREEN = '#86d093'
+const PHASE = 'inactive'
+const DIM = 'inactive'
+const FAINT = 'subtle'
+const DONE_GREEN = 'success'
 const AMBER_TINT = '#2a2212'
 const TEAL_TINT = '#12282d'
+const RULE = 'promptBorder'
 // Restart delay doubles from the floor to the cap; a child that ran for
 // STABLE_MS counts as healthy and drops the delay back to the floor.
 const BACKOFF_MIN_MS = 1_000
@@ -303,7 +304,12 @@ function pickInbox(rows: StatusRow[], limit: number): { shown: StatusRow[]; more
   }
   const waiting = rows
     .filter(isWaiting)
-    .sort((a, b) => (key(a) === key(b) ? a.name.localeCompare(b.name) : key(a) < key(b) ? -1 : 1))
+    // What needs the human comes before a report to verify; then oldest first.
+    .sort((a, b) => {
+      const urgency = Number(b.tone === 'needs') - Number(a.tone === 'needs')
+      if (urgency !== 0) return urgency
+      return key(a) === key(b) ? a.name.localeCompare(b.name) : key(a) < key(b) ? -1 : 1
+    })
   const shown = waiting.slice(0, limit)
   const rest = rows.filter((r) => !isWaiting(r))
   return { shown, more: waiting.length - shown.length, rest }
@@ -345,9 +351,9 @@ function chainBar(r: StatusRow): ChainBar | undefined {
   const running = done < p.total ? 1 : 0
   return {
     done: '■'.repeat(done),
-    current: '▣'.repeat(running),
-    rest: '□'.repeat(p.total - done - running),
-    tail: `${p.done}/${p.total}${p.phase ? ` ${p.phase}` : ''}`,
+    current: '■'.repeat(running),
+    rest: '■'.repeat(p.total - done - running),
+    tail: `${done + running}/${p.total}${p.phase ? ` ${p.phase}` : ''}`,
   }
 }
 
@@ -452,101 +458,104 @@ export const register: Register = (on) => {
 
     const { Box, Button, Text } = $.ui.resolve(e)
     const cols = e.props.bodyColumns
-    const { shown, more, rest } = pickInbox(doc.rows, Math.max(0, Math.min(MAX_INBOX, e.props.maxRows - 2)))
+    // One spare row for the rule above the band.
+    const { shown, more, rest } = pickInbox(doc.rows, Math.max(0, Math.min(MAX_INBOX, e.props.maxRows - 3)))
     let digit = 0
-    const press = (name: string) => () => {
+    const nextDigit = () => {
+      digit++
+      return digit <= 9 ? String(digit) : undefined
+    }
+    const show = (name: string) => () => {
       void $.prompt.fill({ text: `relevo show ${name} --report` })
     }
-    // Returns the node and the columns it takes. A plain Button with a hotkey is drawn
-    // as `1: label`, so the label must not repeat the digit.
-    const button = (r: StatusRow, label: string, room: number) => {
-      digit++
-      const hotkey = digit <= 9 ? String(digit) : undefined
-      const text = fit(label, hotkey === undefined ? room : Math.max(1, room - 3))
-      const node = h(Button, { key: `b${r.name}`, plain: true, hotkey, label: text, onPress: press(r.name) })
-      return { node, width: text.length + (hotkey === undefined ? 0 : 3) }
-    }
-    const txt = (text: string, props: object, room: number) =>
-      h(Text, { wrap: 'truncate-end', ...props }, fit(text, room))
+    const key = (d: string | undefined) => h(Text, { color: FAINT }, d ?? ' ')
 
-    const inbox = shown.map((r) => {
+    // Columns line up across inbox rows: each is as wide as its widest cell.
+    const heads = shown.map((r) => `● ${r.name} r${shownRound(r)}`)
+    const states = shown.map((r) => stateWord(r, doc.now))
+    const headW = Math.min(24, Math.max(0, ...heads.map((t) => t.length)))
+    const stateW = Math.min(18, Math.max(0, ...states.map((t) => t.length)))
+
+    // What the fixed columns leave: margin and padding 4, digit 1, four gaps of 2.
+    const free = cols - 4 - 1 - 8 - headW - stateW
+    // The move keeps its word over the detail but never squeezes the columns:
+    // a narrow band shortens it, `[ ]` taking 4.
+    const moveRoom = Math.max(6, Math.floor(free * 0.6)) - 4
+    const inbox = shown.map((r, i) => {
       const tone = r.tone === 'needs' ? AMBER : TEAL
       const tint = r.tone === 'needs' ? AMBER_TINT : TEAL_TINT
-      let room = cols
-      const head = button(r, `● ${r.name} r${shownRound(r)}`, room)
-      room -= head.width + 1
-      const state = fit(stateWord(r, doc.now), Math.max(0, room))
-      room -= state.length + 1
+      const d = nextDigit()
       const nx = r.next
-      const nextLabel = nx ? fit(`→ ${nx.label}`, Math.max(0, room)) : ''
-      room -= nextLabel === '' ? 0 : nextLabel.length + 1
-      const extra = fit(detail(r), Math.max(0, room))
+      // A non-plain Button draws `[ label ]` and not its hotkey, so the muted
+      // digit drawn beside it is the only one on screen.
+      const move = nx
+        ? h(Button, {
+            key: `n${r.name}`,
+            hotkey: d,
+            label: fit(`→ ${nx.label}`, moveRoom),
+            onPress: () => {
+              void $.prompt.fill({ text: nx.text })
+            },
+          })
+        : h(Button, { key: `b${r.name}`, hotkey: d, label: '→ show', onPress: show(r.name) })
       return h(
         Box,
-        { key: `i${r.name}`, flexDirection: 'row', gap: 1, backgroundColor: tint },
-        head.node,
-        state === '' ? null : h(Text, { color: tone }, state),
-        extra === '' ? null : h(Text, { color: DIM }, extra),
-        nx && nextLabel !== ''
-          ? h(Button, {
-              key: `n${r.name}`,
-              plain: true,
-              label: nextLabel,
-              onPress: () => {
-                void $.prompt.fill({ text: nx.text })
-              },
-            })
-          : null,
+        { key: `i${r.name}`, flexDirection: 'row', columnGap: 2, backgroundColor: tint, paddingX: 1, marginX: 1 },
+        key(d),
+        h(Box, { width: headW, flexShrink: 0 }, h(Text, { color: tone, bold: true, wrap: 'truncate-end' }, heads[i])),
+        h(Box, { width: stateW, flexShrink: 0 }, h(Text, { color: tone, wrap: 'truncate-end' }, states[i])),
+        h(Box, { flexGrow: 1, flexShrink: 1, minWidth: 0 }, h(Text, { color: r.tone === 'needs' ? undefined : DIM, wrap: 'truncate-end' }, detail(r))),
+        h(Box, { flexShrink: 0 }, move),
       )
     })
 
-    const title = fit(`relevo · ${doc.mastermind.name}`, cols)
+    const title = `relevo · ${doc.mastermind.name}`
     const rail: unknown[] = []
-    let used = title.length
+    let used = 2 + title.length
     let hidden = 0
     for (const r of rest) {
-      const room = cols - used - 2
-      if (room < 4) {
+      const bar = chainBar(r)
+      const word = bar ? `chain ${bar.done}${bar.current}${bar.rest} ${bar.tail}` : railWord(r)
+      const width = 2 + r.name.length + 1 + word.length
+      if (used + 3 + width > cols) {
         hidden++
         continue
       }
-      const b = button(r, `○ ${r.name}`, room)
-      const bar = chainBar(r)
-      const wordRoom = Math.max(0, room - b.width - 1)
-      const parts: unknown[] = [b.node]
-      let width = b.width
-      if (bar !== undefined) {
-        const glyphs = bar.done.length + bar.current.length + bar.rest.length
-        if (wordRoom >= glyphs) {
-          parts.push(
-            h(Text, { key: `d${r.name}`, color: DONE_GREEN }, bar.done),
-            h(Text, { key: `c${r.name}`, bold: true }, bar.current),
-            h(Text, { key: `r${r.name}`, color: FAINT }, bar.rest),
-            txt(bar.tail, { color: PHASE }, wordRoom - glyphs - 1),
-          )
-          width += 1 + Math.min(wordRoom, glyphs + 1 + bar.tail.length)
-        }
+      used += 3 + width
+      // No digit on the rail: a plain Button's hotkey would bring back the
+      // engine's accent `3:`, and a drawn digit with no hotkey would be dead.
+      const parts: unknown[] = [h(Button, { key: `b${r.name}`, plain: true, label: `○ ${r.name}`, onPress: show(r.name) })]
+      if (bar) {
+        parts.push(
+          h(
+            Box,
+            { key: `bar${r.name}`, flexDirection: 'row' },
+            h(Text, { color: DIM }, 'chain '),
+            h(Text, { color: DONE_GREEN }, bar.done),
+            h(Text, { bold: true }, bar.current),
+            h(Text, { color: FAINT }, bar.rest),
+          ),
+          h(Text, { color: PHASE }, bar.tail),
+        )
       } else {
-        const word = fit(railWord(r), wordRoom)
-        parts.push(h(Text, { color: PHASE }, word))
-        width += 1 + word.length
+        parts.push(h(Text, { color: PHASE }, railWord(r)))
       }
-      used += 2 + width
-      rail.push(h(Box, { key: `rail${r.name}`, flexDirection: 'row', gap: 1 }, ...parts))
+      rail.push(h(Box, { key: `rail${r.name}`, flexDirection: 'row', columnGap: 1 }, ...parts))
     }
 
     const railRow = h(
       Box,
-      { flexDirection: 'row', gap: 2 },
-      h(Text, { wrap: 'truncate-end', dimColor: true, bold: true }, title),
+      { flexDirection: 'row', columnGap: 3, paddingX: 2 },
+      h(Text, { color: DIM, bold: true, wrap: 'truncate-end' }, title),
       ...rail,
-      hidden > 0 ? h(Text, { wrap: 'truncate-end', color: DIM }, `+${hidden}`) : null,
+      hidden > 0 ? h(Text, { color: DIM }, `+${hidden}`) : null,
     )
     return h(
       Box,
       { flexDirection: 'column' },
+      h(Text, { color: RULE }, '─'.repeat(Math.max(0, cols))),
       ...inbox,
-      more > 0 ? txt(`+${more} more · /relevo:status`, { color: DIM }, cols) : null,
+      more > 0 ? h(Box, { paddingX: 1 }, h(Text, { color: DIM }, `+${more} more · /relevo:status`)) : null,
       railRow,
     )
   })

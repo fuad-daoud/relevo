@@ -90,6 +90,28 @@ func TestStatusDoneChainShowsFinalPlanCount(t *testing.T) {
 	}
 }
 
+// TestStatusChainShowsItsPlanThenTheTotal pins the order of the two counts on
+// a walk where they differ: the first of four plans reads 1/4, never 4/1.
+func TestStatusChainShowsItsPlanThenTheTotal(t *testing.T) {
+	rt := newRuntime(t)
+	newChainFixture(t, rt, "running")
+	st := workflow.State{Status: workflow.StatusRunning, At: "build",
+		Iter: map[string]workflow.Iter{"plans": {Index: 0, Items: []string{"a", "b", "c", "d"}}}}
+	setChainFlowState(t, rt, "x", "running", st, 1, 4)
+
+	rep, err := Status(context.Background(), rt)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	f := rep.Bindings[0].Chain
+	if f == nil {
+		t.Fatalf("row %q carries no chain facts", rep.Bindings[0].Name)
+	}
+	if f.PlanPos != 1 || f.PlanTotal != 4 {
+		t.Errorf("plan position = %d/%d, want 1/4", f.PlanPos, f.PlanTotal)
+	}
+}
+
 // TestStatusSecurityPhaseShowsFinalPlanCount pins the same projection while the
 // chain is still running past its plans: the security fix line reads the plan it
 // is fixing, not a plan index the reset invented.
