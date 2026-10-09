@@ -3,27 +3,58 @@ package delivery
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// fakeClaimStore is the map-backed ClaimStore the plan asks for: a claim
-// present for a mastermind id means live, absent means not.
-type fakeClaimStore map[string]*Claim
-
-func (f fakeClaimStore) Live(mastermind string, now time.Time) (*Claim, error) {
-	return f[mastermind], nil
+// fakeClaimStore is the ClaimStore the plan asks for: a claim present for a
+// mastermind id means live, absent means not.
+//
+// It is a mutex-guarded struct rather than a bare map because a test that runs
+// a holder has two goroutines on it: the holder's own refresh loop writes the
+// claim through Write while awaitConfirm reads it back through Live. Production
+// KVClaims is already safe; without the lock this fake is the only unsynchronized
+// map under -race, and the race report points at refreshPushClaim against
+// claimHeld.
+type fakeClaimStore struct {
+	mu sync.Mutex
+	m  map[string]*Claim
 }
 
-func (f fakeClaimStore) Write(c Claim, now time.Time) error {
-	f[c.MasterMind] = &c
+// newFakeClaimStore returns a fake store holding claims, keyed by each claim's
+// MasterMind. It replaces the map literal the fake used to be, so every site
+// builds one through the constructor.
+func newFakeClaimStore(claims ...*Claim) *fakeClaimStore {
+	f := &fakeClaimStore{m: map[string]*Claim{}}
+	for _, c := range claims {
+		f.m[c.MasterMind] = c
+	}
+	return f
+}
+
+func (f *fakeClaimStore) Live(mastermind string, now time.Time) (*Claim, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.m[mastermind], nil
+}
+
+func (f *fakeClaimStore) Write(c Claim, now time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.m == nil {
+		f.m = map[string]*Claim{}
+	}
+	f.m[c.MasterMind] = &c
 	return nil
 }
 
-func (f fakeClaimStore) Remove(mastermind string, pid int) error {
-	delete(f, mastermind)
+func (f *fakeClaimStore) Remove(mastermind string, pid int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.m, mastermind)
 	return nil
 }
 
@@ -160,7 +191,7 @@ func TestDeliverPendingPushByMasterMindID(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
-	rt.Channels = fakeClaimStore{"pl_aaaaaaaabbbb": &Claim{MasterMind: "pl_aaaaaaaabbbb", PID: 1}}
+	rt.Channels = newFakeClaimStore(&Claim{MasterMind: "pl_aaaaaaaabbbb", PID: 1})
 	b := seedPending(t, rt, "webshop", "pl_aaaaaaaabbbb", "claude")
 
 	_, got := deliverOnce(t, rt, b)
@@ -428,7 +459,7 @@ func TestDeliverYieldsToLiveClaim(t *testing.T) {
 
 	rt := routeRuntime(t)
 	b := seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
-	rt.Channels = fakeClaimStore{b.MasterMindID: &Claim{MasterMind: b.MasterMindID, PID: 1, SeenAt: rt.Now()}}
+	rt.Channels = newFakeClaimStore(&Claim{MasterMind: b.MasterMindID, PID: 1, SeenAt: rt.Now()})
 	wantState := b.State
 
 	next, got := deliverOnce(t, rt, b)
@@ -455,7 +486,7 @@ func TestDeliverIgnoresStaleClaim(t *testing.T) {
 
 	rt := routeRuntime(t)
 	b := seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
-	rt.Channels = fakeClaimStore{} // no entry for this mastermind: Live returns nil, nil
+	rt.Channels = newFakeClaimStore() // no entry for this mastermind: Live returns nil, nil
 
 	_, got := deliverOnce(t, rt, b)
 	if got.Delivered {

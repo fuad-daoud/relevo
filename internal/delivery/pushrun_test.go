@@ -85,7 +85,7 @@ func TestRunPushAdmitsWritesConfirmsOnAck(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
-	rt.Channels = fakeClaimStore{}
+	rt.Channels = newFakeClaimStore()
 	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 
 	lineOut, lineWriter := io.Pipe()
@@ -151,7 +151,7 @@ func TestDeliverPendingClearsOrphanedAdmit(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
-	rt.Channels = fakeClaimStore{} // no live claim: the holder is gone
+	rt.Channels = newFakeClaimStore() // no live claim: the holder is gone
 	b := seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 	admitEntryAt(t, rt, "webshop")
 
@@ -178,7 +178,7 @@ func TestConfirmAdmittedClearsOrphanedAdmit(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
-	rt.Channels = fakeClaimStore{} // no live claim: the holder is gone
+	rt.Channels = newFakeClaimStore() // no live claim: the holder is gone
 	b := seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 	b.State = store.StateDone
 	admitEntryAt(t, rt, "webshop")
@@ -219,7 +219,7 @@ func TestConfirmAdmittedKeepsAdmitWithALiveClaim(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
-	rt.Channels = fakeClaimStore{testClaimMasterMind: &Claim{MasterMind: testClaimMasterMind, PID: 1, SeenAt: rt.Now()}}
+	rt.Channels = newFakeClaimStore(&Claim{MasterMind: testClaimMasterMind, PID: 1, SeenAt: rt.Now()})
 	b := seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 	b.State = store.StateDone
 	admitEntryAt(t, rt, "webshop")
@@ -249,7 +249,7 @@ func TestRunPushRestartResendsUnackedEntry(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
-	rt.Channels = fakeClaimStore{}
+	rt.Channels = newFakeClaimStore()
 	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 	admitEntryAt(t, rt, "webshop")
 
@@ -483,7 +483,7 @@ func TestRunPushNeverPullsAndWritesOneEntry(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
-	rt.Channels = fakeClaimStore{}
+	rt.Channels = newFakeClaimStore()
 	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 
 	lineOut, lineWriter := io.Pipe()
@@ -624,7 +624,7 @@ func TestRunPushDeliversTwoEntriesInOrderAsAcked(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
-	rt.Channels = fakeClaimStore{}
+	rt.Channels = newFakeClaimStore()
 	seedPending(t, rt, "alpha", testClaimMasterMind, "claude")
 	seedPending(t, rt, "beta", testClaimMasterMind, "claude")
 
@@ -700,7 +700,7 @@ func TestRunPushCancelClearsUnackedAdmit(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
-	rt.Channels = fakeClaimStore{}
+	rt.Channels = newFakeClaimStore()
 	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 
 	lineOut, lineWriter := io.Pipe()
@@ -733,9 +733,10 @@ func TestRunPushCancelClearsUnackedAdmit(t *testing.T) {
 	}
 }
 
-// guardedClaimStore is a ClaimStore a test may write to while a holder runs:
-// fakeClaimStore's map is unsynchronized, and taking a claim over from under a
-// live holder is exactly a cross-goroutine map write.
+// guardedClaimStore is a ClaimStore a test may reach into while a holder runs:
+// taking a claim over from under a live holder is a cross-goroutine map write,
+// so it needs its own lock and a takeOver that reaches past the ClaimStore
+// interface.
 type guardedClaimStore struct {
 	mu sync.Mutex
 	m  map[string]*Claim
@@ -827,7 +828,7 @@ func TestRunPushReSendsEntryWhoseAdmitWasCleared(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
-	rt.Channels = fakeClaimStore{}
+	rt.Channels = newFakeClaimStore()
 	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 
 	lineOut, lineWriter := io.Pipe()
@@ -878,7 +879,7 @@ func TestRunPushStateLineWaitsForEntryAck(t *testing.T) {
 	t.Parallel()
 
 	rt := routeRuntime(t)
-	rt.Channels = fakeClaimStore{}
+	rt.Channels = newFakeClaimStore()
 	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 	setBindingState(t, rt, "webshop", store.StateNeedsYou)
 

@@ -134,3 +134,61 @@ and `relevo help --json` promise every verb takes `--json`; `push` does not.
   `already_confirmed` assignment; name the failing test.
 - `go test ./cmd/relevo/ ./internal/delivery/ -count=1`, then `make check`
   and `make e2e`. Report tests, the mutation, `git diff --stat ec1ed92c..HEAD`.
+
+## Round 3
+
+Same branch, on top of 3b46fb78; new commit only (no amend/rebase/force-push).
+Append a "## Round 3" section holding this plan verbatim to
+`docs/plans/2026-10-09-relevo-push-ack.md` in the same commit.
+
+### 1. Data race in the test claim store (required)
+
+The MasterMind's `make check` on zen failed `internal/delivery` under `-race`
+(intermittent; 3 reports, all the same pair):
+- write: `fakeClaimStore.Write` (`internal/delivery/deliver_test.go:21`) from
+  `refreshPushClaim` (`pushrun.go:320`, goroutine started at `pushrun.go:95`);
+- read: `fakeClaimStore` map access from `(*pushRun).claimHeld`
+  (`pushrun.go:306`) inside `awaitConfirm` (`pushrun.go:287`).
+`fakeClaimStore` is a bare map with value-receiver methods; `claimHeld` (new
+in this branch) reads it concurrently with the refresh goroutine. Production
+`KVClaims` is safe; this is test-only.
+
+- Make the fake safe for concurrent use (a mutex-guarded struct; update every
+  construction site). Do NOT change production code for this.
+- Proof: `go test -race -count=20 ./internal/delivery/` clean, and say how
+  long it took. Mutation: remove the lock; the same command must report the
+  race (quote one line of it).
+
+### 2. Split the --json exemptions (owner-approved)
+
+In `cmd/relevo/push_ack_json_test.go` replace the single exemption map with two:
+
+- `jsonExemptByDesign` (11): `board`, `config secret`, `config server`,
+  `config workflow`, `mastermind` (dispatch-only parents); `daemon`, `serve`,
+  `serve ui`, `ui`, `mcp`, `board url`, `mastermind notice` (own a stream or
+  terminal, or print the machine answer itself). Keep each reason.
+- `jsonNotYet` (8): `config rollback`, `board annotate`, `board comment`,
+  `board promote`, `config edit`, `config workflow add`, `config workflow
+  edit`, `config workflow rm`. Reason for each: "not yet converted" -- a write
+  verb can return what it wrote, as `push --ack --json` does.
+- A comment above `jsonNotYet` says the list only shrinks: a verb leaves it
+  when converted, and no verb is ever added (same rule CLAUDE.md gives lint
+  exclusions). Add a test that fails if `jsonNotYet` names a verb that DOES
+  take `--json` (so a converted verb must leave the list), and one that fails
+  if any name in either map is not a registry verb.
+- Count check: the two maps hold exactly the 19 verbs round 2 found; if the
+  tree now differs, stop and report.
+
+### 3. True guide line
+
+`internal/mastermind/guide.md:32` says every verb takes `--json`. Reword to a
+true statement in the guide's voice, e.g. "Every verb that prints a result
+takes `--json`", keeping the rest of the bullet. Regenerate whatever golden or
+shipped copy embeds the guide (find it; `scripts/agents-shipped.sh --write` if
+that is the mechanism) and say which.
+
+### Finish
+
+`go test ./cmd/relevo/ ./internal/delivery/ ./internal/mastermind/ -count=1`,
+the `-race -count=20` run, then `make check` and `make e2e`. Report each,
+the mutation, and `git diff --stat 3b46fb78..HEAD`.

@@ -226,39 +226,57 @@ func TestPushJSONFlagIsOnTheSurface(t *testing.T) {
 	}
 }
 
-// TestEveryRegistryVerbTakesJSON is the plan's guard: the guide tells every
-// agent that every verb takes --json, so the registry must say so too. It is
-// pure -- it reads the table and spawns nothing.
+// jsonExemptByDesign names the verbs whose job is to own a stream or a
+// terminal rather than print a document: a server, a daemon, a TUI, the
+// parent verbs that only dispatch to children which do take --json, and the
+// two verbs whose printed output already IS the machine answer. A verb here
+// will never take --json, because there is nothing for a document to replace.
 //
-// The exemptions below are the verbs whose job is to own a stream or a
-// terminal: a server, a daemon, a TUI and the parent verbs that only dispatch
-// cannot print a document instead of what they print. They are named here
-// rather than skipped silently, so a verb added to this list is a decision a
-// reader can see.
+// They are named rather than skipped silently, so a verb added to this list is
+// a decision a reader can see.
+var jsonExemptByDesign = map[string]string{
+	"board":             "opens a whiteboard; `board comments`, `board text` take --json",
+	"board url":         "prints a URL, which is already the machine answer",
+	"config secret":     "parent verb; `config secret set`/`rm`/`list` take --json",
+	"config server":     "parent verb; `config server add`/`rm`/`list`/`key` take --json",
+	"config workflow":   "parent verb; its children take --json",
+	"daemon":            "is the long-running reconciler",
+	"mastermind":        "parent verb; its children take --json",
+	"mastermind notice": "prints the notice text itself",
+	"mcp":               "is an MCP server speaking JSON-RPC over stdio",
+	"serve":             "is the remote-builder server (listener + daemon)",
+	"serve ui":          "is the web UI",
+	"ui":                "is the cockpit TUI",
+}
+
+// jsonNotYet names the verbs that print a human result a document could
+// replace, but have not been converted yet -- every one of them a write whose
+// answer is what it wrote.
+//
+// This list only shrinks: a verb leaves it when it is converted, and no verb is
+// ever added. The rule is the one CLAUDE.md gives lint exclusions, and
+// TestJSONNotYetHasNoConvertedVerb below enforces the leaving half of it.
+var jsonNotYet = map[string]string{
+	"board annotate":       "not yet converted",
+	"board comment":        "not yet converted",
+	"board promote":        "not yet converted",
+	"config edit":          "not yet converted",
+	"config rollback":      "not yet converted",
+	"config workflow add":  "not yet converted",
+	"config workflow edit": "not yet converted",
+	"config workflow rm":   "not yet converted",
+}
+
+// TestEveryRegistryVerbTakesJSON is the plan's guard: the guide tells every
+// agent that every verb that prints a result takes --json, so the registry must
+// say so too. It is pure -- it reads the table and spawns nothing.
 func TestEveryRegistryVerbTakesJSON(t *testing.T) {
-	// Verbs that are a stream or a terminal, not a document-producing command,
-	// plus the parent verbs that only dispatch to children which do.
-	exempt := map[string]string{
-		"board":                "opens a whiteboard; `board comments`, `board text` take --json",
-		"board annotate":       "appends a text element to a scene; no machine read-back",
-		"board comment":        "appends a comment; `board comments` takes --json",
-		"board promote":        "renames the live board; the scene has no document",
-		"board url":            "prints a URL, which is already the machine answer",
-		"config edit":          "opens an editor on the document; `config export --json` is the read",
-		"config rollback":      "prints the revisions it would restore; not yet converted",
-		"config secret":        "parent verb; `config secret set`/`rm`/`list` take --json",
-		"config server":        "parent verb; `config server add`/`rm`/`list`/`key` take --json",
-		"config workflow":      "parent verb; its children take --json",
-		"config workflow add":  "adds a workflow file; `config workflow show --json` is the read",
-		"config workflow edit": "edits a workflow file; `config workflow show --json` is the read",
-		"config workflow rm":   "removes a workflow file; `config workflow show --json` is the read",
-		"daemon":               "is the long-running reconciler",
-		"mastermind":           "parent verb; its children take --json",
-		"mastermind notice":    "prints the notice text itself",
-		"mcp":                  "is an MCP server speaking JSON-RPC over stdio",
-		"serve":                "is the remote-builder server (listener + daemon)",
-		"serve ui":             "is the web UI",
-		"ui":                   "is the cockpit TUI",
+	exempt := map[string]string{}
+	for name, reason := range jsonExemptByDesign {
+		exempt[name] = reason
+	}
+	for name, reason := range jsonNotYet {
+		exempt[name] = reason
 	}
 
 	for _, e := range registry {
@@ -272,7 +290,56 @@ func TestEveryRegistryVerbTakesJSON(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Errorf("verb %q does not take --json, but the guide promises every verb does", e.Name)
+			t.Errorf("verb %q does not take --json, but the guide promises every verb that prints a result does", e.Name)
 		}
+	}
+}
+
+// TestJSONNotYetHasNoConvertedVerb enforces the shrinking half of the rule
+// above jsonNotYet: a verb leaves the list the moment it takes --json, so
+// naming one here after its conversion is a stale entry. Converting a verb and
+// forgetting to delete its line makes this fail.
+func TestJSONNotYetHasNoConvertedVerb(t *testing.T) {
+	for name := range jsonNotYet {
+		e, ok := registryEntry(name)
+		if !ok {
+			t.Errorf("jsonNotYet names %q, which is not a registry verb", name)
+			continue
+		}
+		for _, f := range e.Flags {
+			if f == "--json" {
+				t.Errorf("verb %q takes --json, so it has been converted: delete it from jsonNotYet", name)
+			}
+		}
+	}
+}
+
+// TestJSONExemptionNamesAreRegistryVerbs pins that both maps name verbs that
+// exist. A typo in either map would otherwise buy a silent exemption for a
+// verb nobody can type.
+func TestJSONExemptionNamesAreRegistryVerbs(t *testing.T) {
+	for name := range jsonExemptByDesign {
+		if _, ok := registryEntry(name); !ok {
+			t.Errorf("jsonExemptByDesign names %q, which is not a registry verb", name)
+		}
+	}
+	for name := range jsonNotYet {
+		if _, ok := registryEntry(name); !ok {
+			t.Errorf("jsonNotYet names %q, which is not a registry verb", name)
+		}
+	}
+}
+
+// TestJSONExemptionCount pins the size of both maps, so a verb leaving one of
+// them has to be a deliberate edit rather than a silent deletion: today
+// jsonExemptByDesign holds 12 and jsonNotYet 8, which is every verb the
+// registry lists without --json. A count that moves is a verb converted or a
+// verb added, and either belongs in the change that moved it.
+func TestJSONExemptionCount(t *testing.T) {
+	if len(jsonExemptByDesign) != 12 {
+		t.Errorf("jsonExemptByDesign holds %d verbs, want 12", len(jsonExemptByDesign))
+	}
+	if len(jsonNotYet) != 8 {
+		t.Errorf("jsonNotYet holds %d verbs, want 8", len(jsonNotYet))
 	}
 }

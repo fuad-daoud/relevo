@@ -12,9 +12,9 @@ import (
 func ackRuntime(t *testing.T) Deps {
 	t.Helper()
 	rt := routeRuntime(t)
-	rt.Channels = fakeClaimStore{
-		testClaimMasterMind: &Claim{MasterMind: testClaimMasterMind, PID: 1, SeenAt: baseTime},
-	}
+	rt.Channels = newFakeClaimStore(
+		&Claim{MasterMind: testClaimMasterMind, PID: 1, SeenAt: baseTime},
+	)
 	return rt
 }
 
@@ -132,7 +132,7 @@ func TestAckPushIdempotentWithoutLiveClaim(t *testing.T) {
 	}
 
 	// The holder is gone: the claim is no longer live.
-	rt.Channels = fakeClaimStore{}
+	rt.Channels = newFakeClaimStore()
 	if _, err := AckPush(rt, testClaimMasterMind, "webshop", 1); err != nil {
 		t.Fatalf("retry without a live claim: %v, want nil", err)
 	}
@@ -185,7 +185,7 @@ func TestAckPushRefusesWithoutLiveClaim(t *testing.T) {
 	rt := ackRuntime(t)
 	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 	admitEntryAt(t, rt, "webshop")
-	rt.Channels = fakeClaimStore{}
+	rt.Channels = newFakeClaimStore()
 
 	_, err := AckPush(rt, testClaimMasterMind, "webshop", 1)
 	if !errors.Is(err, ErrAckNoClaim) {
