@@ -385,6 +385,7 @@ func cmdUI(args []string) error {
 		prefsKV = rt.DB.LocalOrSelf()
 	}
 
+	hintFreshen(false, nil)
 	return ui.Run(ctx, rt, ui.Options{
 		Interval: *interval,
 		Prefs: ui.PrefsStore{

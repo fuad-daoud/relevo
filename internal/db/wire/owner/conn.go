@@ -129,6 +129,8 @@ func (c *conn) loop() error {
 			if err := c.startVerb(frame); err != nil {
 				return err
 			}
+		case wire.KindSyncFreshen:
+			c.freshen()
 		case wire.KindNext:
 			if r := c.current(); r != nil {
 				r.signalNext()
@@ -162,12 +164,6 @@ func (c *conn) readHello() (*wire.Hello, error) {
 		return nil, err
 	}
 	return &h, nil
-}
-
-func (c *conn) current() *request {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.cur
 }
 
 // transactionOpen reports whether this connection is inside a transaction,

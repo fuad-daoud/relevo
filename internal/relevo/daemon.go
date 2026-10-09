@@ -72,10 +72,12 @@ type Daemon struct {
 	// sync trigger shares between the two goroutines that can start one.
 	syncMu sync.Mutex
 	// syncInFlight is whether a sync this daemon started is still running. A
-	// second trigger arriving while one is in flight is dropped rather than
-	// queued: the network is the slow part, and piling attempts behind it
-	// only makes the backlog worse.
+	// second trigger arriving while one is in flight sets live.dirty rather
+	// than starting another: the network is the slow part, and piling attempts
+	// behind it only makes the backlog worse.
 	syncInFlight bool
+	// live is the liveness state that qualifies the slot, guarded by syncMu.
+	live syncLiveness
 	// syncIdle is signalled whenever syncInFlight goes false, so a caller
 	// waiting for the slot -- a sync verb -- is woken rather than polling. It is
 	// created once in NewDaemon and never replaced, which is what lets Wait
@@ -141,11 +143,10 @@ func (d *Daemon) WithUpgrade(f func(ctx context.Context) bool) *Daemon {
 //
 // It is the same guard the seal hook and the idle window take, and a sync verb
 // takes it the same way. The difference is what a caller does when the slot is
-// already held: queueSync drops a second trigger, because a tick is cheap to
-// lose and piling attempts behind a slow network does not make the backlog
-// smaller. A verb is not that -- somebody asked for it explicitly and is waiting
-// for the answer -- so it waits for the in-flight attempt to finish and then
-// runs.
+// already held: queueSync marks the slot dirty for one rerun, because piling
+// attempts behind a slow network does not make the backlog smaller. A verb is
+// not that -- somebody asked for it explicitly and is waiting for the answer --
+// so it waits for the in-flight attempt to finish and then runs.
 //
 // The wait is a condition rather than a poll, and the slot is released in a
 // defer, so a verb that panics still frees it: a stuck flag would wedge every
@@ -165,6 +166,9 @@ func (d *Daemon) WaitSyncSlot(fn func()) {
 		}
 		d.syncMu.Lock()
 		d.syncInFlight = false
+		// A trigger that arrived while the verb held the slot is dropped: the
+		// verb moved the same data.
+		d.live.dirty = false
 		d.signalIdleLocked()
 		d.syncMu.Unlock()
 	}()

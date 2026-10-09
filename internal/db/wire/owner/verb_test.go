@@ -59,6 +59,13 @@ type servedVerbOwner struct {
 // to be refused from.
 func newServedVerbOwner(t *testing.T, hook func(context.Context, *wire.SyncVerb, []byte) *wire.SyncResult) *servedVerbOwner {
 	t.Helper()
+	return newServedOwner(t, hook, nil)
+}
+
+// newServedOwner is newServedVerbOwner with the freshen hook as well, both set
+// before the owner serves so no connection races an assignment.
+func newServedOwner(t *testing.T, hook func(context.Context, *wire.SyncVerb, []byte) *wire.SyncResult, freshen func()) *servedVerbOwner {
+	t.Helper()
 	path := t.TempDir() + "/relevo.db"
 	handle, err := db.OpenSplit(path, db.Options{})
 	if err != nil {
@@ -77,6 +84,7 @@ func newServedVerbOwner(t *testing.T, hook func(context.Context, *wire.SyncVerb,
 	if hook != nil {
 		srv.OnSyncVerb = hook
 	}
+	srv.OnSyncFreshen = freshen
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(func() { _ = srv.Close() })
 	return &servedVerbOwner{server: srv, srv: handle, sock: sock, ln: ln}

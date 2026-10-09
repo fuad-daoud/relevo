@@ -19,6 +19,9 @@ type Server struct {
 	// OnSyncVerb is the hook the daemon installs on every platform. A server
 	// that never serves never calls it.
 	OnSyncVerb func(ctx context.Context, verb *wire.SyncVerb, token []byte) *wire.SyncResult
+	// OnSyncFreshen is the hint hook, installed on every platform and never
+	// called here.
+	OnSyncFreshen func()
 }
 
 // New returns a server that refuses to serve.

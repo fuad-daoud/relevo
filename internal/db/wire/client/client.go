@@ -119,6 +119,26 @@ func SyncVerb(ctx context.Context, sock string, verb *wire.SyncVerb, token []byt
 	return res, err
 }
 
+// SyncFreshen dials sock and sends the hint that a reader wants current data. It
+// waits for no reply, because the owner sends none; the connection's close is
+// what orders the hint ahead of the hang-up. A refusal at the handshake or a
+// lost connection is the caller's to ignore: a hint nobody heard is a hint the
+// next read repeats.
+func SyncFreshen(ctx context.Context, sock string) error {
+	nc, err := dialSock(ctx, sock)
+	if err != nil {
+		return err
+	}
+	c := &conn{nc: nc, w: wire.NewConn(nc)}
+	if err := c.handshake(ctx); err != nil {
+		_ = nc.Close()
+		return err
+	}
+	err = c.send(wire.KindSyncFreshen, &wire.SyncFreshen{Header: wire.Header{Type: wire.TypeSyncFreshen}}, nil)
+	_ = c.Close()
+	return err
+}
+
 func dialSock(ctx context.Context, sock string) (net.Conn, error) {
 	if dialer != nil {
 		return dialer(ctx, sock)

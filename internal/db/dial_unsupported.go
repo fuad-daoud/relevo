@@ -39,5 +39,8 @@ func (d *DB) SyncVerb(context.Context, *wire.SyncVerb, []byte) (*wire.SyncResult
 	return nil, notHere()
 }
 
+// SyncFreshen refuses off unix for the same reason SyncVerb does.
+func (d *DB) SyncFreshen(context.Context) error { return notHere() }
+
 // NewOwner refuses off unix.
 func NewOwner(*DB) *owner.Server { return owner.New(nil, 0, 0, "", nil) }

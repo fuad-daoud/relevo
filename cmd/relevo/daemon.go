@@ -499,7 +499,7 @@ func cmdDaemon(args []string) error {
 	// is served before it is built. Rebind it now with the guard: from here a
 	// verb and a seal or idle tick are serialized against each other, which is
 	// what keeps one machine's markers from being written twice at once.
-	installSyncVerbSerializing(daemon, srv, d)
+	installSyncVerbSerializing(ctx, daemon, srv, d)
 	err = daemon.Run(ctx)
 	if errors.Is(err, relevo.ErrReexec) {
 		// Drain the owner first: an open transaction must be able to commit

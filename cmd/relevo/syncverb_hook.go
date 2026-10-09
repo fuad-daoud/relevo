@@ -89,7 +89,7 @@ func newVerbRunner(d *db.DB) *relevo.VerbRunner {
 // It is called once the Daemon exists, which is after the owner is served, so
 // that the guard a verb waits on is the guard the seal hook and the idle tick
 // already take.
-func installSyncVerbSerializing(d *relevo.Daemon, srv *owner.Server, handle *db.DB) {
+func installSyncVerbSerializing(ctx context.Context, d *relevo.Daemon, srv *owner.Server, handle *db.DB) {
 	if srv == nil || handle == nil {
 		return
 	}
@@ -100,4 +100,7 @@ func installSyncVerbSerializing(d *relevo.Daemon, srv *owner.Server, handle *db.
 	runner.Serialize = d.WaitSyncSlot
 	d.SetSyncVerbs(runner)
 	srv.OnSyncVerb = runner.OwnerVerb
+	// A reader's hint runs on the daemon's own context: the connection that
+	// carried it is gone by the time the attempt it queued is running.
+	srv.OnSyncFreshen = func() { d.Freshen(ctx) }
 }

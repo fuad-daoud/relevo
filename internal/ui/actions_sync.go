@@ -191,6 +191,13 @@ func (a *mastermindActions) SyncSnapshot() (SyncSnapshot, error) {
 	}
 	shared := a.runtime().DB
 
+	// Opening or refreshing the view is a read that wants current data, so the
+	// daemon is hinted. Best effort and bounded: a handle with no owner, or an
+	// owner that does not answer, costs the snapshot nothing.
+	hintCtx, cancelHint := context.WithTimeout(context.Background(), time.Second)
+	_ = shared.SyncFreshen(hintCtx)
+	cancelHint()
+
 	snap.OwnID = shared.Origin()
 	// Reachable is not read here and is not assumed either: no test has run in
 	// this process, which is its own state and says so rather than claiming a
