@@ -310,7 +310,7 @@ var registry = []verbEntry{
 	},
 	{
 		Name:    "db sync",
-		Summary: "turn this machine's cloud sync on and off; the daemon must not be running",
+		Summary: "turn this machine's cloud sync on and off, and drive or inspect it by hand",
 		Args:    "enable|disable|retry|status|push|pull",
 		Flags:   []string{},
 		Exit:    []int{0, 2},
