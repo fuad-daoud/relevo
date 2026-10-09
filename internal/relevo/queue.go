@@ -93,7 +93,14 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 			// it, and saving that leaves the round active with nothing running
 			// and no halt anyone was told about. A binding the switch never
 			// finished keeps State Active and falls through to the halt below.
-			if b.State == store.StateNeedsYou && b.HaltNotifiedRound == b.Round {
+			// Broken counts here for the same reason NeedsYou does, and is the
+			// case that actually reaches here: switchBuilder's resolve-failure
+			// path leaves a notified binding in StateBroken (queueBrokenHalt
+			// stamps the key, then deliverAndSettle can error), so a check on
+			// NeedsYou alone falls through to haltAndSettle, which dedupes,
+			// fails the delivery again and returns without saving -- leaving the
+			// round queued and queueing the same broken entry once per tick.
+			if b.HaltNotifiedRound == b.Round && (b.State == store.StateNeedsYou || b.State == store.StateBroken) {
 				b.QueuedAt = time.Time{}
 				if saveErr := tx.Save(b); saveErr != nil {
 					return fmt.Errorf("%v; and saving NEEDS YOU failed: %w", startErr, saveErr)

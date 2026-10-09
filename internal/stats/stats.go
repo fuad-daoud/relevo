@@ -42,8 +42,11 @@ type Report struct {
 	Accounts    []ScoreRow
 	Spend       Spend
 	Reliability Reliability
-	Repos       []RepoRow // key = RoundRow.Repo, "(none)" when nil, each with its features and their tickets
-	Outcomes    Outcomes
+	// Repos is keyed by RoundRow.Repo, "(none)" when nil, each with its features
+	// and their tickets. Every scratch repo folds into the one "(scratch)" row,
+	// which carries the aggregate and its repos in Scratch.
+	Repos    []RepoRow
+	Outcomes Outcomes
 }
 
 type TokenCounts struct {

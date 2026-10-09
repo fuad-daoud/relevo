@@ -393,7 +393,73 @@ func repoScopedRowCases() []groupRowCase {
 			},
 			check: checkGroupUnlabelledRepo,
 		},
-	}, ticketScopedRowCases()...)
+	}, append(ticketScopedRowCases(), scratchRowCases()...)...)
+}
+
+// scratchRowCases pins the fold: the scratch repos (absolute-path keys) gather
+// under one ScratchKey row, a remote repo keeps its own row beside it, a round
+// with no repo stays out of the fold, and each child keeps its own feature
+// buckets while the fold's stay zero.
+func scratchRowCases() []groupRowCase {
+	one := stStr("/tmp/one")
+	two := stStr("/tmp/two")
+	return []groupRowCase{
+		{
+			name: "scratch repos fold into one row",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: one, Feature: stStr("f1"), InTokens: stI64(10)},
+				{BindingID: "b2", Repo: two, InTokens: stI64(20)},
+			},
+			check: checkScratchFoldRow,
+		},
+		{
+			name: "scratch fold totals equal the sum of its repos",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: one, Feature: stStr("f1"), ReportOutcome: stStr("done"),
+					Commits: stInt(2), Outcome: db.OutcomeReported, InTokens: stI64(10)},
+				// The same binding in two scratch repos: Bindings counts it once.
+				{BindingID: "b1", Repo: two, ReportOutcome: stStr("halted"),
+					Commits: stInt(1), Outcome: db.OutcomeHalted, InTokens: stI64(20)},
+			},
+			landed: map[string]bool{"b1": true},
+			check:  checkScratchFoldTotals,
+		},
+		{
+			name: "a remote repo keeps its own row beside the fold",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: one, InTokens: stI64(10)},
+				{BindingID: "b2", Repo: stStr("https://github.com/o/r"), Feature: stStr("f1"),
+					Ticket: stStr("t1"), InTokens: stI64(100)},
+				{BindingID: "b3"},
+			},
+			check: checkScratchRemoteUnchanged,
+		},
+		{
+			name: "no scratch repo builds no fold row",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: stStr("https://github.com/o/r")},
+				{BindingID: "b2"},
+			},
+			check: checkScratchNoFold,
+		},
+		{
+			name: "a round with no repo is not scratch",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: one, InTokens: stI64(10)},
+				{BindingID: "b2", InTokens: stI64(5)},
+			},
+			check: checkScratchNoneNotFolded,
+		},
+		{
+			name: "scratch children keep their own feature buckets",
+			rows: []db.RoundRow{
+				{BindingID: "b1", Repo: one, Feature: stStr("f1"), InTokens: stI64(10)},
+				{BindingID: "b2", Repo: one, InTokens: stI64(5)},
+				{BindingID: "b3", Repo: two, Feature: stStr("f1"), InTokens: stI64(100)},
+			},
+			check: checkScratchChildFeatures,
+		},
+	}
 }
 
 // ticketScopedRowCases pins the labelled tickets nested under a repo's features
@@ -570,6 +636,160 @@ func checkGroupUnlabelledRepo(t *testing.T, rep Report) {
 	}
 	if b.NoFeature.Rounds != 2 || len(b.NoFeature.Tickets) != 0 {
 		t.Errorf("repo B (no feature) = %+v, want the whole 2 rounds and no tickets", b.NoFeature)
+	}
+}
+
+// checkScratchFoldRow pins the fold's shape: one ScratchKey row holding the
+// paths in Scratch, and the paths themselves gone from the top level.
+func checkScratchFoldRow(t *testing.T, rep Report) {
+	if len(rep.Repos) != 1 {
+		t.Fatalf("Repos = %+v, want only the fold row", rep.Repos)
+	}
+	fold := rep.Repos[0]
+	if fold.Key != ScratchKey {
+		t.Fatalf("fold key = %q, want %q", fold.Key, ScratchKey)
+	}
+	if fold.Rounds != 2 {
+		t.Errorf("fold Rounds = %d, want 2", fold.Rounds)
+	}
+	keys := make([]string, 0, len(fold.Scratch))
+	for _, s := range fold.Scratch {
+		keys = append(keys, s.Key)
+	}
+	if len(keys) != 2 || keys[0] != "/tmp/one" || keys[1] != "/tmp/two" {
+		t.Fatalf("fold Scratch keys = %v, want /tmp/one and /tmp/two", keys)
+	}
+}
+
+// checkScratchFoldTotals pins that the fold aggregates exactly as a plain group
+// would: rounds, tokens, halts, commits and done summed, and bindings distinct
+// across two children that share one.
+func checkScratchFoldTotals(t *testing.T, rep Report) {
+	if len(rep.Repos) != 1 {
+		t.Fatalf("Repos = %+v, want only the fold row", rep.Repos)
+	}
+	fold := rep.Repos[0]
+	if fold.Rounds != 2 || fold.Tokens != 30 {
+		t.Errorf("fold = %+v, want 2 rounds and 30 tokens", fold.GroupRow)
+	}
+	if fold.Bindings != 1 {
+		t.Errorf("fold Bindings = %d, want 1 (b1 in both repos)", fold.Bindings)
+	}
+	if fold.Landed != 1 {
+		t.Errorf("fold Landed = %d, want 1", fold.Landed)
+	}
+	if fold.Halted != 1 {
+		t.Errorf("fold Halted = %d, want 1 (the halted round)", fold.Halted)
+	}
+	if fold.Done != 1 || fold.ReportHalted != 1 {
+		t.Errorf("fold Done/ReportHalted = %d/%d, want 1/1", fold.Done, fold.ReportHalted)
+	}
+	if fold.Commits != 3 {
+		t.Errorf("fold Commits = %d, want 3 (2 + 1)", fold.Commits)
+	}
+	if len(fold.Scratch) != 2 {
+		t.Fatalf("fold Scratch = %+v, want two repos", fold.Scratch)
+	}
+	if fold.Scratch[0].Tokens != 10 || fold.Scratch[1].Tokens != 20 {
+		t.Errorf("child tokens = %d, %d, want 10 and 20", fold.Scratch[0].Tokens, fold.Scratch[1].Tokens)
+	}
+}
+
+// checkScratchRemoteUnchanged pins that a remote repo and the "(none)" bucket
+// keep their own rows, features and tickets beside the fold.
+func checkScratchRemoteUnchanged(t *testing.T, rep Report) {
+	byKey := map[string]RepoRow{}
+	for _, r := range rep.Repos {
+		byKey[r.Key] = r
+	}
+	fold, ok := byKey[ScratchKey]
+	if !ok || fold.Rounds != 1 {
+		t.Errorf("fold = %+v, want one round", fold)
+	}
+	remote := byKey["https://github.com/o/r"]
+	if remote.Key != "https://github.com/o/r" || remote.Rounds != 1 || remote.Tokens != 100 {
+		t.Errorf("remote repo = %+v, want its own key, 1 round and 100 tokens", remote)
+	}
+	if len(remote.Features) != 1 || remote.Features[0].Key != "f1" {
+		t.Fatalf("remote features = %+v, want f1", remote.Features)
+	}
+	if len(remote.Features[0].Tickets) != 1 || remote.Features[0].Tickets[0].Key != "t1" {
+		t.Errorf("remote f1 tickets = %+v, want t1", remote.Features[0].Tickets)
+	}
+	none := byKey["(none)"]
+	if none.Rounds != 1 || none.Tokens != 0 {
+		t.Errorf("(none) = %+v, want the one repo-less round", none)
+	}
+	if len(fold.Scratch) != 1 || fold.Scratch[0].Key != "/tmp/one" {
+		t.Errorf("fold Scratch = %+v, want /tmp/one alone", fold.Scratch)
+	}
+}
+
+// checkScratchNoFold pins that no scratch repo means no ScratchKey row and no
+// Scratch children anywhere.
+func checkScratchNoFold(t *testing.T, rep Report) {
+	for _, r := range rep.Repos {
+		if r.Key == ScratchKey {
+			t.Errorf("Repos carries a fold row with no scratch repo: %+v", r)
+		}
+		if len(r.Scratch) != 0 {
+			t.Errorf("repo %q has Scratch = %+v, want none", r.Key, r.Scratch)
+		}
+	}
+	if len(rep.Repos) != 2 {
+		t.Errorf("Repos = %+v, want the remote repo and (none)", rep.Repos)
+	}
+}
+
+// checkScratchNoneNotFolded pins that "(none)" (a nil Repo) is excluded by the
+// predicate itself, not by a branch: it keeps its own row beside the fold.
+func checkScratchNoneNotFolded(t *testing.T, rep Report) {
+	byKey := map[string]RepoRow{}
+	for _, r := range rep.Repos {
+		byKey[r.Key] = r
+	}
+	if len(rep.Repos) != 2 {
+		t.Fatalf("Repos = %+v, want the fold and (none)", rep.Repos)
+	}
+	fold := byKey[ScratchKey]
+	if fold.Rounds != 1 || len(fold.Scratch) != 1 || fold.Scratch[0].Key != "/tmp/one" {
+		t.Errorf("fold = %+v, want only /tmp/one", fold)
+	}
+	none := byKey["(none)"]
+	if none.Rounds != 1 || none.Tokens != 5 {
+		t.Errorf("(none) = %+v, want its own one round and 5 tokens", none)
+	}
+}
+
+// checkScratchChildFeatures pins that each child counts only its own feature
+// rows, while the fold's own feature buckets stay zero.
+func checkScratchChildFeatures(t *testing.T, rep Report) {
+	if len(rep.Repos) != 1 {
+		t.Fatalf("Repos = %+v, want only the fold row", rep.Repos)
+	}
+	fold := rep.Repos[0]
+	if len(fold.Features) != 0 || fold.NoFeature.Rounds != 0 {
+		t.Errorf("fold features = %+v and NoFeature = %+v, want both empty",
+			fold.Features, fold.NoFeature)
+	}
+	if len(fold.Scratch) != 2 {
+		t.Fatalf("fold Scratch = %+v, want two repos", fold.Scratch)
+	}
+	// groupRows order: rounds desc, then key asc, so /tmp/one leads with 2.
+	one := fold.Scratch[0]
+	if one.Key != "/tmp/one" || one.Rounds != 2 {
+		t.Fatalf("first child = %+v, want /tmp/one with 2 rounds", one.GroupRow)
+	}
+	if len(one.Features) != 1 || one.Features[0].Key != "f1" || one.Features[0].Rounds != 1 {
+		t.Errorf("one features = %+v, want f1 with its one round", one.Features)
+	}
+	if one.NoFeature.Rounds != 1 {
+		t.Errorf("one NoFeature = %+v, want its one unlabelled round", one.NoFeature)
+	}
+	two := fold.Scratch[1]
+	if two.Key != "/tmp/two" || two.Rounds != 1 || len(two.Features) != 1 ||
+		two.Features[0].Tokens != 100 {
+		t.Errorf("second child = %+v, want /tmp/two with f1 at 100 tokens", two)
 	}
 }
 

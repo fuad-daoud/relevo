@@ -65,7 +65,7 @@ func fetchRemote(ctx context.Context, rt Runtime, b store.Binding) remoteFetch {
 		return f
 	}
 
-	f.Observe = serverChainMemberStore(rt.Store, b.Name)
+	f.Observe = serverChainMemberActive(rt.Store, b.Name)
 
 	view, err := rt.Remote.GetBinding(ctx, f.Server, f.Name)
 	if err != nil {

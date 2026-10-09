@@ -50,6 +50,22 @@ var ErrReportPending = refusalSentinel("the round's output is on disk but not ye
 // was spawned and nothing was saved.
 var ErrScopeActive = refusalSentinel("this round's builder scope is still running")
 
+// isScopeBusy reports whether a Start error is the host refusing this round's
+// scope unit rather than the candidate failing to run: systemd-run's own
+// already-loaded wording, and its variant about an existing fragment file.
+// Both are text matching because systemd surfaces the collision
+// as a wrapped command error, not as a sentinel this binary can type.
+//
+// A host-side collision says nothing about the candidate, which is exactly
+// why startProcess must not treat one as a spawn failure.
+func isScopeBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "already loaded") || strings.Contains(msg, "has a fragment file")
+}
+
 // handleOf is the endpoint's stored process fields as the Runner's handle.
 // StartedAt is Unix seconds on the endpoint (store spec §3.1, amended).
 func handleOf(e store.Endpoint) spawn.ProcHandle {
@@ -382,7 +398,18 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		// A tenant-boundary refusal is the operator's to fix, not the
 		// candidate's: it neither gates the candidate nor is a spawnFailure
 		// (which the lost-builder path would answer with a fresh relaunch).
-		if errors.Is(err, spawn.ErrBoundarySetup) {
+		//
+		// A scope collision is the host's, for the same reason and with the
+		// same consequence. freeRoundScope is the primary guard -- it
+		// ends the unit before a switch's replacement asks for it -- but a
+		// scope that loads between the probe and the Start still arrives here
+		// as an ordinary error, and a runner that fails to *start* for a host
+		// reason has not proved the candidate cannot run. Gating it would gate
+		// a candidate that never ran, and the follow-on halt would then read
+		// "cannot switch: every candidate ... is gated". Returning a plain,
+		// non-spawnFailure error also keeps the lost-builder path from spending
+		// its one fresh attempt on a resume that would collide the same way.
+		if errors.Is(err, spawn.ErrBoundarySetup) || isScopeBusy(err) {
 			return b, fmt.Errorf("start headless builder for %q (%s): %w", b.Name, c.Ref().String(), err)
 		}
 		availability.RecordSpawnFailureLocked(AvailabilityDeps(rt), c.Ref().String(), b.Name, err)
@@ -1160,6 +1187,12 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			return b, err
 		}
 		b.State = store.StateActive
+		// The round is running again, so a halt the attempt lost to the daemon
+		// restart left goes with it, every field: the notification key it still
+		// carries dedups the next halt of this same round. OwedHalt is left
+		// alone -- a pending notification for an already closed round, still owed
+		// -- as the other revive paths leave it (bind.go).
+		b = clearHaltFields(b)
 		slog.Info("headless builder relaunched after daemon restart", "binding", b.Name, "round", b.Round, "candidate", b.BuilderCandidate)
 		return b, nil
 	}

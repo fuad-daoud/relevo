@@ -59,7 +59,7 @@ var catalog = map[errorCode]catalogEntry{
 	codeRoundNotFound:      {exit: 1, next: "relevo history"},
 	codeArtifactNotFound:   {exit: 1, next: "relevo history"},
 	codeConflict:           {exit: 1},
-	codeConfigInvalid:      {exit: 1},
+	codeConfigInvalid:      {exit: 1, next: "relevo config edit"},
 	codeConfigPathNotSet:   {exit: 1, next: "relevo config export"},
 	codeRevisionNotFound:   {exit: 1, next: "relevo config log"},
 	codePolicyRefused:      {exit: 1},

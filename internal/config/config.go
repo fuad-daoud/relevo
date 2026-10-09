@@ -408,13 +408,13 @@ func (s *Store) Put(sec Section, body []byte) ([]string, error) {
 	if sec == Candidates {
 		filled, _, err := fillCandidateNames(body)
 		if err != nil {
-			return nil, err
+			return nil, invalidValueOf(err)
 		}
 		body = filled
 	}
 	warnings, err := Validate(sec, body)
 	if err != nil {
-		return nil, err
+		return nil, invalidValueOf(err)
 	}
 	if err := s.db.Tx(func(t *db.Tx) error {
 		before, err := readSnapshot(t)
@@ -461,13 +461,13 @@ func (s *Store) Delete(sec Section) error {
 // would refuse is refused here.
 func (s *Store) PutDoc(doc map[Section]json.RawMessage) ([]string, error) {
 	if err := checkDocSections(doc); err != nil {
-		return nil, err
+		return nil, invalidValueOf(err)
 	}
 
 	if body, ok := doc[Candidates]; ok {
 		filled, _, err := fillCandidateNames(body)
 		if err != nil {
-			return nil, err
+			return nil, invalidValueOf(err)
 		}
 		doc[Candidates] = filled
 	}
@@ -480,7 +480,7 @@ func (s *Store) PutDoc(doc map[Section]json.RawMessage) ([]string, error) {
 		}
 		w, err := Validate(sec, body)
 		if err != nil {
-			return nil, err
+			return nil, invalidValueOf(err)
 		}
 		warnings = append(warnings, w...)
 	}
