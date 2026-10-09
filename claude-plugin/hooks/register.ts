@@ -396,8 +396,9 @@ export const register: Register = (on) => {
     const button = (r: StatusRow, label: string, room: number) => {
       digit++
       const hotkey = digit <= 9 ? String(digit) : undefined
-      const text = hotkey === undefined ? label : `${hotkey}: ${label}`
-      return h(Button, { key: `b${r.name}`, plain: true, hotkey, label: fit(text, room), onPress: press(r.name) })
+      // A plain Button with a hotkey is drawn as `1: label`; the label must not repeat the digit.
+      const width = hotkey === undefined ? room : Math.max(1, room - 3)
+      return h(Button, { key: `b${r.name}`, plain: true, hotkey, label: fit(label, width), onPress: press(r.name) })
     }
 
     const inbox = shown.map((r) => button(r, inboxLabel(r, doc.now), cols))

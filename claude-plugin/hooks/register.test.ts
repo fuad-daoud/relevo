@@ -517,20 +517,31 @@ describe('band', () => {
       const ui = await mount($, surface)
       const all = await labels(ui)
       expect(all).toHaveLength(2)
-      expect(all[0]).toBe('1: ● w1 r2  NEEDS YOU · 5m  gate hit')
-      expect(all[1]).toBe('2: ○ r1 working')
+      expect(all[0]).toBe('● w1 r2  NEEDS YOU · 5m  gate hit')
+      expect(all[1]).toBe('○ r1 working')
       expect(all.filter((l) => l.includes('w1'))).toHaveLength(1)
       expect(all.filter((l) => l.includes('r1'))).toHaveLength(1)
       expect(await texts(ui)).toContain('relevo · main')
     })
   }
 
+  test('the label never repeats the hotkey digit the surface draws beside it', async ($, on) => {
+    const f = fakes(on, {
+      doc: () => mkdoc([row('w1', { tone: 'needs', status: 'NEEDS YOU', reason: 'gate hit' }), row('r1', { activity: 'working' })]),
+    })
+    await startSession($)
+    await f.clock.settle()
+    const buttons = await (await mount($, 'terminal')).findAll({ type: 'Button' })
+    expect(buttons.map((b: any) => b.props.hotkey)).toEqual(['1', '2'])
+    for (const b of buttons) expect(String(b.props.label)).not.toMatch(/^\d+:/)
+  })
+
   test('calm: every binding sits on the rail, status is the word without activity', async ($, on) => {
     const f = fakes(on, { doc: () => mkdoc([row('a', { status: 'quiet 2m' }), row('b')]) })
     await startSession($)
     await f.clock.settle()
     const ui = await mount($, 'terminal')
-    expect(await labels(ui)).toEqual(['1: ○ a quiet 2m', '2: ○ b working'])
+    expect(await labels(ui)).toEqual(['○ a quiet 2m', '○ b working'])
   })
 
   test('inbox shows the oldest three first, then +N more', async ($, on) => {
@@ -542,7 +553,7 @@ describe('band', () => {
     await f.clock.settle()
     const ui = await mount($, 'terminal')
     const all = await labels(ui)
-    expect(all.map((l) => l.split(' ')[2])).toEqual(['e', 'a', 'b'])
+    expect(all.map((l) => l.split(' ')[1])).toEqual(['e', 'a', 'b'])
     expect(await texts(ui)).toContain('+2 more · /relevo:status')
   })
 
@@ -553,7 +564,7 @@ describe('band', () => {
     })
     await startSession($)
     await f.clock.settle()
-    expect((await labels(await mount($, 'terminal')))[0]).toBe('1: ● w r1  REPORT IN · 1h  delivered · +10/-2 in 3')
+    expect((await labels(await mount($, 'terminal')))[0]).toBe('● w r1  REPORT IN · 1h  delivered · +10/-2 in 3')
   })
 
   test('chain row draws the progress bar when present, the chain string when not', async ($, on) => {
@@ -567,8 +578,8 @@ describe('band', () => {
     await startSession($)
     await f.clock.settle()
     expect(await labels(await mount($, 'terminal'))).toEqual([
-      '1: ○ c1 ■■□□ 2/4 reviewing',
-      '2: ○ c2 chain y · plan 1/3 · building',
+      '○ c1 ■■□□ 2/4 reviewing',
+      '○ c2 chain y · plan 1/3 · building',
     ])
   })
 
@@ -579,7 +590,7 @@ describe('band', () => {
     await f.clock.settle()
     healthy = false
     await f.clock.advance(5_000)
-    expect(await labels(await mount($, 'terminal'))).toEqual(['1: ○ a working'])
+    expect(await labels(await mount($, 'terminal'))).toEqual(['○ a working'])
   })
 
   const passthrough: [string, object | undefined, object][] = [
