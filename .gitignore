@@ -4,3 +4,4 @@
 /.shard/
 board/node_modules/
 claude-plugin/.claude-plugin/types/
+claude-plugin/tsconfig.json
