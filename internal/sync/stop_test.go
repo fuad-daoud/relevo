@@ -3,7 +3,6 @@ package sync
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -141,42 +140,43 @@ func TestRunnerStopWithNoAttemptIsANoOp(t *testing.T) {
 	}
 }
 
-// TestSteadyBoundEndsAnExportBetweenItsBatches pins the step bound as a stop
-// rather than a worker cancel: an export of more than one batch whose first
-// append outlives the bound, and is then answered as a restarted worker would
-// answer it, must not go on to append its next batch.
-func TestSteadyBoundEndsAnExportBetweenItsBatches(t *testing.T) {
+// TestWithinStopsTheStepAtItsBound pins the step bound as a stop rather than a
+// worker cancel: a step whose first call outlives the bound, and is then
+// answered as a restarted worker would answer it, must not reach the worker
+// with its next call.
+func TestWithinStopsTheStepAtItsBound(t *testing.T) {
 	t.Parallel()
-	shared, local := joinPair(t, "m1")
-	rows := make([]string, 0, 300)
-	for i := range 300 {
-		rows = append(rows, joinBinding(fmt.Sprintf("b%03d", i), "m1"))
-	}
-	seedJoin(t, shared, rows...)
-
 	log := newRestartLog("m1")
-	runner := &Runner{Client: log, Local: local, Timeout: 2 * time.Second}
-	done := make(chan SteadyResult, 1)
-	go func() { done <- runner.SyncOnce(context.Background(), shared) }()
+	stop := NewStopTransport(log)
+	done := make(chan error, 1)
+	go func() {
+		done <- within(context.Background(), stop, 50*time.Millisecond, func() error {
+			if _, err := stop.Append(nil); err != nil {
+				return err
+			}
+			_, err := stop.Append(nil)
+			return err
+		})
+	}()
 
 	select {
 	case <-log.entered:
 	case <-time.After(10 * time.Second):
-		t.Fatal("the attempt never reached its export")
+		t.Fatal("the step never reached its first call")
 	}
-	// Past the bound, so the stop has landed while the append still waits.
-	time.Sleep(3 * time.Second)
+	// Past the bound, so the stop has landed while the first call still waits.
+	time.Sleep(300 * time.Millisecond)
 	close(log.release)
 
 	select {
-	case res := <-done:
-		if !errors.Is(res.Err, errStepTimedOut) {
-			t.Errorf("SyncOnce = %v, want the step reported as timed out", res.Err)
+	case err := <-done:
+		if !errors.Is(err, errStepTimedOut) {
+			t.Errorf("within = %v, want the step reported as timed out", err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("the timed-out attempt did not end")
+		t.Fatal("the timed-out step did not end")
 	}
 	if got := log.calls.Load(); got != 1 {
-		t.Errorf("%d calls reached the worker, want only the first batch's append", got)
+		t.Errorf("%d calls reached the worker, want only the one in flight at the bound", got)
 	}
 }

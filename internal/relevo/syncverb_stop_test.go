@@ -130,16 +130,18 @@ func TestDisableBoundsTheFinalExport(t *testing.T) {
 // sits between two calls when a disable lands. It counts the head reads that
 // reach it, which is where the join goes next.
 type heldJoin struct {
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
-	mu      sync.Mutex
-	heads   int
+	entered   chan struct{}
+	release   chan struct{}
+	cancelled chan struct{}
+	once      sync.Once
+	stopOnce  sync.Once
+	mu        sync.Mutex
+	heads     int
 }
 
 func (h *heldJoin) Append(entries []synclog.Entry) ([]synclog.Entry, error) { return entries, nil }
 func (h *heldJoin) Stats() (synclog.Stats, error)                           { return synclog.Stats{}, nil }
-func (h *heldJoin) Cancel()                                                 {}
+func (h *heldJoin) Cancel()                                                 { h.stopOnce.Do(func() { close(h.cancelled) }) }
 
 func (h *heldJoin) Pull(map[string]int) ([]synclog.Entry, error) {
 	h.once.Do(func() { close(h.entered) })
@@ -173,7 +175,7 @@ func TestDisableEndsAJoinBetweenItsCalls(t *testing.T) {
 	}
 	d := NewDaemon(Runtime{Sync: f.runner.Runner}, time.Hour)
 	f.runner.Serialize = d.WaitSyncSlot
-	join := &heldJoin{entered: make(chan struct{}), release: make(chan struct{})}
+	join := &heldJoin{entered: make(chan struct{}), release: make(chan struct{}), cancelled: make(chan struct{})}
 	f.runner.Open = func(context.Context) (synclog.LogTransport, error) { return join, nil }
 
 	enabled := make(chan *wire.SyncResult, 1)
@@ -190,9 +192,14 @@ func TestDisableEndsAJoinBetweenItsCalls(t *testing.T) {
 	go func() {
 		disabled <- f.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbDisable}, nil)
 	}()
-	// The disable preempts before it waits for the slot; give it the moment
-	// that takes, then let the held pull answer.
-	time.Sleep(100 * time.Millisecond)
+	// The disable preempts before it waits for the slot. The join's stop is in
+	// place before its worker is cancelled, so the cancel is the moment the
+	// held pull may answer.
+	select {
+	case <-join.cancelled:
+	case <-time.After(5 * time.Second):
+		t.Error("the disable never cancelled the join's worker")
+	}
 	close(join.release)
 
 	if res := <-enabled; res.OK {
@@ -215,9 +222,11 @@ func TestDisableEndsAJoinBetweenItsCalls(t *testing.T) {
 type heldPush struct {
 	entered chan struct{}
 	release chan struct{}
+	stopped chan struct{}
 	once    sync.Once
 	mu      sync.Mutex
 	appends int
+	cancels int
 }
 
 func (h *heldPush) Append(entries []synclog.Entry) ([]synclog.Entry, error) {
@@ -231,7 +240,18 @@ func (h *heldPush) Append(entries []synclog.Entry) ([]synclog.Entry, error) {
 func (h *heldPush) Pull(map[string]int) ([]synclog.Entry, error) { return nil, nil }
 func (h *heldPush) Head(string) ([]synclog.HeadRow, error)       { return nil, nil }
 func (h *heldPush) Stats() (synclog.Stats, error)                { return synclog.Stats{}, nil }
-func (h *heldPush) Cancel()                                      {}
+
+// Cancel counts the worker cancels. The preempt cancels the runner's worker
+// and then stops the push, whose stop cancels it again once the stop is in
+// place, so the second cancel is the moment the held append may answer.
+func (h *heldPush) Cancel() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.cancels++
+	if h.cancels == 2 {
+		close(h.stopped)
+	}
+}
 
 func (h *heldPush) appendCalls() int {
 	h.mu.Lock()
@@ -257,7 +277,7 @@ func TestDisableEndsAPushBetweenItsBatches(t *testing.T) {
 	}
 	d := NewDaemon(Runtime{Sync: f.runner.Runner}, time.Hour)
 	f.runner.Serialize = d.WaitSyncSlot
-	log := &heldPush{entered: make(chan struct{}), release: make(chan struct{})}
+	log := &heldPush{entered: make(chan struct{}), release: make(chan struct{}), stopped: make(chan struct{})}
 	f.runner.Runner.Client = log
 
 	pushed := make(chan *wire.SyncResult, 1)
@@ -274,9 +294,11 @@ func TestDisableEndsAPushBetweenItsBatches(t *testing.T) {
 	go func() {
 		disabled <- f.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbDisable}, nil)
 	}()
-	// The disable preempts before it waits for the slot; give it the moment
-	// that takes, then let the held append answer.
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-log.stopped:
+	case <-time.After(5 * time.Second):
+		t.Error("the disable never stopped the push")
+	}
 	close(log.release)
 
 	if res := <-pushed; res.OK {
