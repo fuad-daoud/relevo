@@ -449,12 +449,13 @@ func userTables(ctx context.Context, db *sql.DB) ([]string, error) {
 }
 
 // engineTable reports whether a table belongs to the database engine rather than
-// to whatever the remote holds. SQLite keeps sqlite_ tables, and the sync engine
-// keeps its change tracking in every replica -- turso_cdc, turso_cdc_version,
-// turso_sync_last_change_id and the __turso_internal_ family -- so a replica of
-// an empty remote is never empty. The match is in Go rather than in LIKE, whose
-// underscore matches any one character and whose ESCAPE the engine need not
-// support.
+// to whatever the remote holds. SQLite keeps its sqlite_ tables, and the sync
+// engine keeps its change tracking in every replica in tables of its own, all
+// named turso_ or __turso_internal_, so a replica of an empty remote is never
+// empty. The match is on those prefixes rather than on any one table, so an
+// engine that renames a table of its own still matches, and it is made in Go
+// rather than in LIKE, whose underscore matches any one character and whose
+// ESCAPE the engine need not support.
 func engineTable(name string) bool {
 	for _, prefix := range []string{"sqlite_", "turso_", "__turso_internal_"} {
 		if strings.HasPrefix(name, prefix) {

@@ -249,13 +249,15 @@ func TestFirstUseCreatesTheRemoteLogTables(t *testing.T) {
 	}
 }
 
-// engineTables are the tables a Turso sync connection keeps in every replica
-// for its own change tracking, as the driver creates them on first open.
+// engineTables stand in for the tables a sync connection keeps in every replica
+// for its own change tracking. They are named under the engine's prefixes
+// rather than after any one of the engine's tables, which is the whole of what
+// the filter matches on.
 var engineTables = []string{
-	"CREATE TABLE turso_cdc (change_id INTEGER PRIMARY KEY AUTOINCREMENT, change_time INTEGER, change_type INTEGER, table_name TEXT, id, before BLOB, after BLOB, updates BLOB)",
-	"CREATE TABLE turso_cdc_version (table_name TEXT PRIMARY KEY, version TEXT NOT NULL)",
-	"CREATE TABLE turso_sync_last_change_id (client_id TEXT PRIMARY KEY, pull_gen INTEGER, change_id INTEGER)",
-	"CREATE TABLE __turso_internal_seq___turso_internal_autoincrement_turso_cdc (name TEXT, seq INTEGER)",
+	"CREATE TABLE turso_change_log (id INTEGER PRIMARY KEY, body BLOB)",
+	"CREATE TABLE turso_change_version (table_name TEXT PRIMARY KEY, version TEXT NOT NULL)",
+	"CREATE TABLE turso_sync_state (client_id TEXT PRIMARY KEY, generation INTEGER)",
+	"CREATE TABLE __turso_internal_seq_change_log (name TEXT, seq INTEGER)",
 }
 
 // TestFirstUseLooksPastTheEnginesOwnTables pins the empty remote as the sync
