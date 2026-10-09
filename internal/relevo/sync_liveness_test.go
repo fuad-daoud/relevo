@@ -358,3 +358,26 @@ func TestSyncFailedAttemptIsRecordedAndReadsBehind(t *testing.T) {
 		t.Errorf("token after a failed attempt = %q, want %q", got, relevosync.TokenBehind)
 	}
 }
+
+// TestSyncUnopenableRemoteIsRecordedAndReadsBehind pins that an attempt which
+// cannot even open the stored remote is recorded as failed: a daemon whose
+// every tick stops there must not read as healthy.
+func TestSyncUnopenableRemoteIsRecordedAndReadsBehind(t *testing.T) {
+	t.Parallel()
+	f := newLiveFixture(t)
+	f.d.SetSyncVerbs(&VerbRunner{Local: f.local, Runner: f.d.rt.Sync})
+
+	f.d.queueSync(context.Background())
+	waitSyncIdle(t, f.d)
+
+	state, err := relevosync.ReadState(f.local)
+	if err != nil {
+		t.Fatalf("ReadState: %v", err)
+	}
+	if !state.Attempt.Failed() || state.Attempt.Start.IsZero() {
+		t.Errorf("an attempt that could not open its remote recorded %+v", state.Attempt)
+	}
+	if got := relevosync.Token(state); got != relevosync.TokenBehind {
+		t.Errorf("token after an unopenable remote = %q, want %q", got, relevosync.TokenBehind)
+	}
+}
