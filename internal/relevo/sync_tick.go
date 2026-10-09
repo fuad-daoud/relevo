@@ -110,6 +110,17 @@ func (d *Daemon) runSync(ctx context.Context, runner *relevosync.Runner, st *sto
 		slog.Warn("sync: open the shared database", "err", err)
 		return
 	}
+	// A daemon that starts on a machine already marked on holds the placeholder
+	// a fresh runner is built with, which names no remote: the stored rows are
+	// read only when something opens the transport. The verbs open it on demand,
+	// and the tick takes the same route, so a reboot, an upgrade or a re-exec
+	// does not leave the pipeline starting workers with no origin or remote.
+	if d.syncVerbs != nil {
+		if err := d.syncVerbs.EnsureTransport(ctx); err != nil {
+			slog.Warn("sync: open the stored remote", "err", err)
+			return
+		}
+	}
 	out := runner.SyncOnce(ctx, shared)
 	if out.Err != nil {
 		slog.Warn("sync failed", "err", out.Err, "attention", out.Attention)

@@ -318,6 +318,14 @@ func (v *VerbRunner) drive(ctx context.Context) (synclog.LogTransport, error) {
 	return transport, nil
 }
 
+// EnsureTransport leaves the runner holding a transport opened from the stored
+// rows, opening one when it holds only the placeholder. The daemon's tick calls
+// it before each steady attempt.
+func (v *VerbRunner) EnsureTransport(ctx context.Context) error {
+	_, err := v.drive(ctx)
+	return err
+}
+
 // transportReady reports whether a transport names a remote. A supervisor built
 // before an enable refuses until one did, so a caller can tell it from the
 // worker an enable left behind; a transport that cannot answer is taken as
