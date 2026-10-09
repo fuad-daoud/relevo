@@ -148,3 +148,36 @@ func TestSaveKeepsTheHaltKind(t *testing.T) {
 		t.Errorf("RemoteHaltKind = %q after a save and load, want %q", got.RemoteHaltKind, HaltKindUnreachable)
 	}
 }
+
+// format16BrokenRecordJSON is the record that window actually wrote:
+// format 16 raised, the kind added later, so a build in between wrote the
+// broken sentence whole with no kind beside it. Both existing tests load
+// format 15, which is why the gap survived.
+const format16BrokenRecordJSON = `{
+  "format": 16,
+  "name": "api",
+  "cwd": "/repo/api",
+  "runner": {"kind": "opencode", "server": "zen"},
+  "actor": "builder",
+  "state": "needs_you",
+  "halt": "the server's builder for this round is gone; rebind before sending",
+  "halt_notified_round": 1
+}`
+
+// TestFormat16BrokenTextLoadsKindBroken pins the ungated half of the split: a
+// format-16 record whose halt is exactly BrokenHaltText and which carries no
+// kind decodes as a broken episode. The equality is safe because this binary
+// never writes that sentence without the kind already stamped, so a record
+// matching it can only predate the field.
+//
+// Mutation check: fold the broken case back under `Format < haltKindFormat`
+// and this record decodes with an empty kind, so the break is never cleared.
+func TestFormat16BrokenTextLoadsKindBroken(t *testing.T) {
+	got := decodeJSON[Binding](t, format16BrokenRecordJSON)
+	if got.RemoteHaltKind != HaltKindBroken {
+		t.Fatalf("RemoteHaltKind = %q, want %q for the broken text at this format", got.RemoteHaltKind, HaltKindBroken)
+	}
+	if got.Halt != BrokenHaltText {
+		t.Errorf("Halt = %q, want it untouched at %q", got.Halt, BrokenHaltText)
+	}
+}

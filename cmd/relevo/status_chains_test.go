@@ -183,3 +183,71 @@ func TestStatusChainsTextSanitizesChainFields(t *testing.T) {
 		t.Errorf("the JSON output must keep the raw bytes:\n%s", jsonOut)
 	}
 }
+
+// TestStatusChainsExhaustedPlansReadsLastPlan pins the chains-doc reader at the
+// CLI surface: a chain whose plans walk is exhausted reads its last plan, so
+// `status --chains` prints 6/6 rather than the reset 1/6.
+// Mutation: revert chainDocStepsAndFacts to the raw iterator.
+// The run reads only the local store: no remote is configured in this fixture,
+// so the test spawns no harness process and touches no network.
+func TestStatusChainsExhaustedPlansReadsLastPlan(t *testing.T) {
+	stateHome := filepath.Join(t.TempDir(), "state")
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	root, err := store.DefaultRoot()
+	if err != nil {
+		t.Fatalf("DefaultRoot: %v", err)
+	}
+	s := store.New(root)
+
+	fixedTS := time.Date(2026, 9, 30, 9, 0, 0, 0, time.UTC)
+	const workflowYAML = `name: exhausted
+inputs: { plans: required }
+start: plans
+steps:
+  plans: { for-each: plans, on: { next: scan, empty: done } }
+  scan: { run: lite-planner, seed: "scan it", on: { done: done } }
+`
+	// The plans walk ran out: the same -1 index a walk that never started
+	// carries, and only Done tells them apart.
+	state, err := json.Marshal(map[string]any{
+		"status": "done",
+		"at":     "done",
+		"iter": map[string]any{
+			"plans": map[string]any{
+				"index": -1,
+				"done":  true,
+				"items": []string{"p1", "p2", "p3", "p4", "p5", "p6"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal the state: %v", err)
+	}
+	row := db.ChainRow{
+		ID: db.NewID(), Name: "spent-chain", Status: "done",
+		Phase: "build", Step: "reviewing", Plan: 6, Plans: 6,
+		WorkflowJSON: []byte(workflowYAML), StateJSON: state,
+		Builder: "spent-b", CreatedAt: fixedTS, UpdatedAt: fixedTS,
+	}
+	if err := s.WithLock(func(tx *store.Tx) error { return tx.ChainPut(row) }); err != nil {
+		t.Fatalf("seed chain: %v", err)
+	}
+
+	stdout, stderr, err := captureOutput(t, func() error {
+		return run([]string{"status", "--all-masterminds", "--chains"})
+	})
+	if err != nil {
+		t.Fatalf("run status --chains: %v (stderr: %s)", err, stderr)
+	}
+	outStr := string(stdout)
+	if !strings.Contains(outStr, "spent-chain") {
+		t.Fatalf("the chain row is not on stdout, so nothing was pinned:\n%s", outStr)
+	}
+	if !strings.Contains(outStr, "plans 6/6") {
+		t.Errorf("an exhausted plans walk reads as its reset position:\n%s", outStr)
+	}
+	if strings.Contains(outStr, "plans 1/6") {
+		t.Errorf("the reset position is still on stdout:\n%s", outStr)
+	}
+}

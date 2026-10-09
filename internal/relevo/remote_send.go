@@ -87,6 +87,21 @@ func remoteShip(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 		if errors.Is(err, remote.ErrSinceUnknown) {
 			snap, err = rt.Transport.Snapshot(ctx, b.Repo, []string{outRef}, "")
 		}
+		// A blown per-command budget on `git bundle create` is a transient
+		// miss, not a verdict: on a large or hot repo the bundle can outrun
+		// the 10s every git op shares, and the report is otherwise a bare
+		// "snapshot refs/relevo/<name>/out: context deadline exceeded" filed
+		// as internal (#959). One retry is safe here -- no round has been
+		// started, a failed Snapshot removes its temp bundle, and the
+		// UpdateRef above is idempotent -- and exactly one, so a genuinely
+		// slow bundle still fails with the same message instead of spinning.
+		//
+		// If repeats arrive, the fix belongs one layer down: a dedicated
+		// longer-timeout git client for NewBundleTransport (wire.go), not a
+		// wider retry here.
+		if errors.Is(err, context.DeadlineExceeded) {
+			snap, err = rt.Transport.Snapshot(ctx, b.Repo, []string{outRef}, b.Builder.LastShipped)
+		}
 		if err != nil {
 			return remoteShipped{}, fmt.Errorf("snapshot %s: %w", outRef, err)
 		}

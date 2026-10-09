@@ -7,6 +7,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // chainMembersOf is a chain's member binding names in the order a chain view
@@ -48,7 +49,13 @@ func chainFactsOf(s *store.Store, c db.ChainRow) view.ChainFacts {
 	if c.Parent == "" {
 		chainChildFacts(s, &f, c)
 	}
-	f.PendingMembers = chainPendingMembers(s, c)
+	// A DONE chain names no pending member: Done() deliberately leaves the log
+	// history in place, so the stranded entries on every member would read as
+	// pending forever. Halted and stopped chains keep the names, where pending
+	// is meaningful and interacts with ManualRound.
+	if c.Status != string(chain.StatusDone) {
+		f.PendingMembers = chainPendingMembers(s, c)
+	}
 	if (c.Status == string(chain.StatusHalted) || c.Status == string(chain.StatusStopped)) &&
 		chainBuilderRoundOpen(s, c) {
 		if b, err := s.Load(c.Builder); err == nil {
@@ -74,12 +81,23 @@ func chainFlowFacts(f *view.ChainFacts, c db.ChainRow) {
 	if f.Check {
 		f.Round = st.Awaiting.Run
 	}
+	f.PlanTotal, f.PlanPos = chainFlowPlanPos(st)
+}
+
+// chainFlowPlanPos is a plans walk's position for a status surface: the
+// exhausted walk reads as its last plan, exactly as workflow.LegacyView
+// projects it, so a chain past its plans (scan, security fixes, done) reads 6/6
+// and not the reset 1/6.
+func chainFlowPlanPos(st workflow.State) (pos, total int) {
 	it := st.Iter["plans"]
-	f.PlanTotal = len(it.Items)
-	f.PlanPos = it.Index + 1
-	if f.PlanPos < 1 {
-		f.PlanPos = 1
+	pos, total = it.Index+1, len(it.Items)
+	if it.Done && total > 0 {
+		pos = total
 	}
+	if pos < 1 {
+		pos = 1
+	}
+	return pos, total
 }
 
 // chainStoreState maps a chain's status onto the stored binding state the

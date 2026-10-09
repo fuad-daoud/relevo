@@ -1379,6 +1379,28 @@ func TestGoldenViews(t *testing.T) {
 			},
 		},
 		{
+			name: "stats-repos-scratch-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenStatsModel(t, 132, 34, statsScratchReport())
+				res, _ := m.Update(statsKey('5'))
+				return res.(Model)
+			},
+		},
+		{
+			name: "stats-repos-scratch-expanded-132", width: 132, height: 34,
+			build: func(t *testing.T) Model {
+				m := goldenStatsModel(t, 132, 34, statsScratchReport())
+				res, _ := m.Update(statsKey('5'))
+				m = res.(Model)
+				// space expands the fold; j lands on its first child, so the
+				// band and the child detail block show.
+				res, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+				m = res.(Model)
+				res, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+				return res.(Model)
+			},
+		},
+		{
 			name: "stats-wide", width: 160, height: 40,
 			build: func(t *testing.T) Model { return goldenStatsModel(t, 160, 40, statsFixture()) },
 		},

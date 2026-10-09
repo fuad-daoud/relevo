@@ -57,6 +57,19 @@ func serverChainMemberStore(s *store.Store, name string) bool {
 	return chainOnServer(c)
 }
 
+// serverChainMemberActive reports whether name is a member of a chain that
+// runs on a server and is still running. Only then does the chain pull own
+// the member's closed rounds: a member of a done chain collects like any
+// other served binding, so a manual round sent after `chain done` still
+// closes on the client.
+func serverChainMemberActive(s *store.Store, name string) bool {
+	c, err := s.ChainByMember(name)
+	if err != nil {
+		return false
+	}
+	return chainOnServer(c) && c.Status == string(chain.StatusRunning)
+}
+
 // missingChainFeatures is the features a server must advertise to run a whole
 // chain for a client, in the order the refusal names them: it drives the chain
 // itself, and it runs reader members. Both are absent from a pre-chain server.
