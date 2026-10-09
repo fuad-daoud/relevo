@@ -129,6 +129,9 @@ func TestRenameRepoRewritesTickets(t *testing.T) {
 	f := seedRenameFixture(t)
 	insertChain(t, f.d, "c1", renameOrigin, "o/old_repo#11")
 	insertChain(t, f.d, "c2", renameOrigin, "#12")
+	// A sibling repo whose name extends the old one: the "#" in the prefix is
+	// what keeps it out of the rewrite.
+	insertChain(t, f.d, "c3", renameOrigin, "o/old_repo-site#13")
 	c, err := f.d.RenameRepo(renameParams())
 	if err != nil {
 		t.Fatalf("RenameRepo: %v", err)
@@ -142,7 +145,7 @@ func TestRenameRepoRewritesTickets(t *testing.T) {
 		t.Errorf("binding tickets = %v, want %v", got, want)
 	}
 	got = queryStrings(t, f.d, `SELECT ticket FROM chains ORDER BY name`)
-	if strings.Join(got, ",") != "o/new_repo#11,#12" {
+	if strings.Join(got, ",") != "o/new_repo#11,#12,o/old_repo-site#13" {
 		t.Errorf("chain tickets = %v", got)
 	}
 }
