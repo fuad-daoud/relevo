@@ -99,3 +99,12 @@ func haltNext(name string, round int, w *Waiting, detail string) *Next {
 	}
 	return &Next{Label: "resolve the halt", Text: text}
 }
+
+// haltLineOf is what a row waiting on a halt is waiting on, so a consumer can
+// show the halt itself; the row's Reason keeps the status column's wording.
+func haltLineOf(b BindingStatus, tone string) string {
+	if tone != "needs" || b.Waiting == nil {
+		return ""
+	}
+	return b.Waiting.Line
+}

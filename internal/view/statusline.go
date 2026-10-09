@@ -468,6 +468,7 @@ type StatusLineRow struct {
 	// ChainProgress is set only on a chain's stand-in row.
 	ChainProgress *ChainProgress `json:"chain_progress,omitempty"`
 	Next          *Next          `json:"next,omitempty"`
+	Halt          string         `json:"halt,omitempty"`
 }
 
 // StatusLineDoc is the top-level document emitted by relevo status --line --json.
@@ -589,5 +590,6 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 		Reason:      reason,
 		Activity:    ActivityWord(b),
 		Next:        nextOf(b, tone),
+		Halt:        haltLineOf(b, tone),
 	}
 }

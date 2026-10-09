@@ -90,3 +90,17 @@ func TestStatusLineGatesProjection(t *testing.T) {
 		t.Errorf("empty doc carries gates: %s", data)
 	}
 }
+
+func TestStatusLineHaltCarriesTheWaitingLine(t *testing.T) {
+	t.Parallel()
+	halted := BindingStatus{Name: "x", Round: 2, Display: "NEEDS YOU",
+		Waiting: &Waiting{Cause: "halted", Line: "builder exited without a report", Hint: "relevo status --name x"}}
+	row, _ := nextOfFixture(halted)
+	if row.Halt != "builder exited without a report" {
+		t.Fatalf("Halt = %q, want the waiting line", row.Halt)
+	}
+	running := BindingStatus{Name: "x", Round: 1, Display: "ACTIVE", BuilderStatus: "working", RoundStart: baseTime.Add(-time.Minute)}
+	if row, doc := nextOfFixture(running); row.Halt != "" || strings.Contains(doc, `"halt"`) {
+		t.Fatalf("Halt = %q on a running row: %s", row.Halt, doc)
+	}
+}
