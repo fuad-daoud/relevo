@@ -293,7 +293,7 @@ cmd_create() {
 		chmod 0600 "$_sb/sandbox"
 	fi
 
-	write_env_sh "$_sb"
+	write_env_sh "$_name" "$_sb"
 
 	note ""
 	note "sandbox $_name is ready. Enter it with:"
@@ -301,19 +301,28 @@ cmd_create() {
 	note "claude and codex arrive logged in when your home had their logins; opencode starts logged out until you log it in inside."
 }
 
-# write_env_sh writes the export recipe that is the sandbox. Eight exports, all
-# under the sandbox root: XDG_STATE_HOME is what store.DefaultRoot reads, the
-# other three XDG_ roots follow the same base, CLAUDE_CONFIG_DIR and CODEX_HOME
-# are the two per-process homes, SB is the sandbox path itself for scripts, and
-# PATH puts the sandbox's own binary first so a sandboxed shell cannot reach
-# the developer's ~/.local/bin/relevo by accident.
+# write_env_sh writes the export recipe that is the sandbox. Nine exports: eight
+# paths, all under the sandbox root, plus the RELEVO_SANDBOX marker.
+# XDG_STATE_HOME is what store.DefaultRoot reads, the other three XDG_ roots
+# follow the same base, CLAUDE_CONFIG_DIR and CODEX_HOME are the two
+# per-process homes, SB is the sandbox path itself for scripts, and PATH puts
+# the sandbox's own binary first so a sandboxed shell cannot reach the
+# developer's ~/.local/bin/relevo by accident.
+#
+# RELEVO_SANDBOX carries the sandbox name (valid_name already matched it
+# against ^[a-z][a-z0-9-]{0,12}$, so it is safe unquoted) and is what tells a
+# process -- and any script handed out to run inside the sandbox -- that it is
+# inside one at all. It is set iff the exports above are in force: a shell that
+# did not source env.sh has no marker and no sandbox.
 write_env_sh() {
-	_sb=$1
+	_name=$1
+	_sb=$2
 	note "write $_sb/env.sh"
 	if [ "$dry_run" -eq 0 ]; then
 		{
 			printf '# %s/env.sh -- sourced by %s shell. Every path a sandboxed process\n' "$_sb" "$prog"
 			printf '# resolves lands under the sandbox root, never the developer home.\n'
+			printf 'export RELEVO_SANDBOX=%s\n' "$_name"
 			printf 'export SB=%s\n' "$_sb"
 			printf 'export XDG_STATE_HOME=%s/state\n' "$_sb"
 			printf 'export XDG_CONFIG_HOME=%s/config\n' "$_sb"
