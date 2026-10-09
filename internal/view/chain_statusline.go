@@ -47,5 +47,7 @@ func statusLineRowOfChain(b BindingStatus) StatusLineRow {
 		Status:   status,
 		Tone:     tone,
 		Reason:   b.Detail,
+
+		ChainProgress: chainProgressOf(*b.Chain),
 	}
 }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/board"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -949,4 +950,55 @@ func TestHelpJSONUnknownVerbRefused(t *testing.T) {
 		t.Errorf("help --json bogus: stderr = %q, want empty before report", stderr)
 	}
 	requireCLIError(t, err, codeUsage, "relevo help")
+}
+
+// TestStatuslinePushClaimStepsAsideText pins that a live push claim for this
+// mastermind drops the binding rows from the text line and leaves the JSON rows
+// intact with push_live true. The claim is written locally under a temp
+// XDG_STATE_HOME with the current pid: no harness is spawned and no network is
+// reached.
+func TestStatuslinePushClaimStepsAsideText(t *testing.T) {
+	fx := seedStatusFixture(t)
+	t.Setenv("RELEVO_MASTERMIND", fx.mastermindID)
+
+	text := func() string {
+		out, stderr, err := captureOutput(t, func() error { return run([]string{"status", "--line"}) })
+		if err != nil {
+			t.Fatalf("status --line: %v (stderr %s)", err, stderr)
+		}
+		return string(normalize(out, fx.roots...))
+	}
+	before := text()
+	if !strings.Contains(before, "webshop") {
+		t.Fatalf("no-claim text lacks binding rows: %q", before)
+	}
+
+	rt, err := newRuntime()
+	if err != nil {
+		t.Fatalf("newRuntime: %v", err)
+	}
+	now := time.Now()
+	if err := rt.Channels.Write(delivery.Claim{MasterMind: fx.mastermindID, PID: os.Getpid(), StartedAt: now, SeenAt: now}, now); err != nil {
+		t.Fatalf("Write claim: %v", err)
+	}
+
+	after := text()
+	if strings.Contains(after, "webshop") || !strings.Contains(after, "architect-1") {
+		t.Errorf("claimed text = %q, want the mastermind line and no rows", after)
+	}
+
+	out, stderr, err := captureOutput(t, func() error { return run([]string{"status", "--line", "--json"}) })
+	if err != nil {
+		t.Fatalf("status --line --json: %v (stderr %s)", err, stderr)
+	}
+	if doc := string(out); !strings.Contains(doc, `"push_live":true`) || !strings.Contains(doc, `"webshop"`) {
+		t.Errorf("claimed json = %s, want push_live true and every row", doc)
+	}
+
+	if err := rt.Channels.Remove(fx.mastermindID, os.Getpid()); err != nil {
+		t.Fatalf("Remove claim: %v", err)
+	}
+	if got := text(); got != before {
+		t.Errorf("text after releasing the claim = %q, want %q", got, before)
+	}
 }

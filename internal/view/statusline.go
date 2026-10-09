@@ -463,6 +463,10 @@ type StatusLineRow struct {
 	// default width. Only the --line --json path fills it; it is the OpenCode
 	// sidebar's row, so no consumer composes one.
 	Text string `json:"text,omitempty"`
+	// Activity is ActivityWord verbatim, age included; see statusline_band.go.
+	Activity string `json:"activity,omitempty"`
+	// ChainProgress is set only on a chain's stand-in row.
+	ChainProgress *ChainProgress `json:"chain_progress,omitempty"`
 }
 
 // StatusLineDoc is the top-level document emitted by relevo status --line --json.
@@ -471,6 +475,7 @@ type StatusLineDoc struct {
 	Board      *StatusLineBoard      `json:"board"` // the live board block, null when absent
 	Now        time.Time             `json:"now"`
 	Rows       []StatusLineRow       `json:"rows"`
+	PushLive   bool                  `json:"push_live"`
 }
 
 // StatusLineRows produces one StatusLineRow per r.Bindings entry, in order.
@@ -581,5 +586,6 @@ func statusLineRowOf(b BindingStatus, now time.Time) StatusLineRow {
 		Status:      status,
 		Tone:        tone,
 		Reason:      reason,
+		Activity:    ActivityWord(b),
 	}
 }
