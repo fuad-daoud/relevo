@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -271,6 +273,20 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		}
 	}
 
+	// The replacement is the SAME round, so it asks systemd for the same scope
+	// unit the process it replaces was using. A scope that is still loaded --
+	// killed above and still deactivating, or already gone and only
+	// awaiting the reaper, which is the outage path's case because it switches
+	// with closeOld=false -- makes systemd-run refuse the Start with "Unit ...
+	// was already loaded", and that refusal reads downstream as a candidate
+	// failure. So the unit is freed and waited out here, before anything is
+	// changed: a host that cannot free it gets the switch deferred whole
+	// (ErrScopeActive, retryable next tick) with no gate, no halt and no log
+	// entry, rather than a gated candidate that never ran.
+	if err := freeRoundScope(ctx, rt, b); err != nil {
+		return b, err
+	}
+
 	b = abandonSession(b)
 	old := b.BuilderCandidate
 	now := rt.Now().UTC()
@@ -341,15 +357,19 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	b.Builder = carryStream(b.Builder, ep)
 	b.BuilderCandidate = res.Token()
 	b.BuilderAccount = res.Account
-	// A rotation never counts: the pool bounds it naturally -- every login it
-	// leaves is gated -- so it must not consume the max_switches budget.
-	if counted && !rotated {
-		b.RoundSwitches++
-	}
 	b.BuilderMissingSince = time.Time{}
 	b.BuilderScreen = ""
 	b.BuilderScreenAt = time.Time{}
 	b.State = store.StateActive
+	// The round is running again, so the halt the previous attempt in it left
+	// goes with it, every field: the notification key it still carries dedups
+	// the next halt of this same round, so leaving it behind means the round's
+	// next halt is silently swallowed. OwedHalt is left alone -- it is a pending
+	// notification for an already closed round, still owed -- exactly as the
+	// other human revive paths leave it (bind.go). A startRound failure below
+	// halts fresh on the way out, which is correct: this halt really is the
+	// round's current reason.
+	b = clearHaltFields(b)
 
 	if err := tx.AppendLog(b.Name, switchEntry(now, b.Round, reason, res, prior)); err != nil {
 		return b, err
@@ -358,11 +378,35 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	text := roundPrompt(rt, tx, b, rt.Store.PromptPath(b.Name, b.Round), rt.Store.ReportPath(b.Name, b.Round), rt.Store.DonePath(b.Name, b.Round))
 	started, err := startRound(ctx, rt, tx, b, text, false)
 	if err != nil {
+		// A host that refuses the Start is not a builder that failed. The pick
+		// stays -- the switch entry above already recorded it, and reverting
+		// would report a switch that the log does not show -- but the halt says
+		// the replacement NEVER STARTED and names the host cause, so a human, or
+		// `relevo chain --resume`, retries the right candidate rather than
+		// reading a candidate fault where the host is at fault. Nothing is added
+		// to RoundExcluded: the candidate never got to prove anything about this
+		// round, and excluding it would keep it out of the resume that should
+		// pick it.
+		if hostStartError(err) {
+			return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
+				"%s: switched builder to %s, which never started -- the host refused it: %v",
+				b.Name, res.Token(), err))
+		}
 		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
 			"%s: switched builder to %s but could not start round %d: %v",
 			b.Name, res.Token(), b.Round, err))
 	}
 	b = started
+
+	// The budget is spent by a builder that failed, so it is counted only once
+	// the replacement is running. A start the host refused costs the round
+	// nothing: counting it would halt the round on the second such host refusal
+	// with a switch that never began. A rotation never counts either -- the pool
+	// bounds it naturally, every login it leaves is gated -- so it must not
+	// consume the max_switches budget.
+	if counted && !rotated {
+		b.RoundSwitches++
+	}
 
 	b.RoundStartedAt = now
 
@@ -370,6 +414,30 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		"from", old, "to", res.Token(), "reason", reason, "switches", b.RoundSwitches)
 
 	return b, nil
+}
+
+// hostStartError reports whether a startRound failure is the host refusing the
+// spawn rather than the candidate failing to run: the three classes that
+// startProcess already declines to record as a spawn failure -- a scope-unit
+// collision, a tenant-boundary refusal and a runner that is gone -- plus the
+// lost-builder resume path's own refusal. Each is an operator's problem, so a
+// switch that hits one must not spend the round's switch budget or exclude the
+// candidate it picked.
+//
+// startProcess wraps all of these in a plain (non-spawnFailure) error, which is
+// what makes this checkable at all: the classes are no longer distinguishable
+// by type at the call site, only by what the error says.
+func hostStartError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var sf spawnFailure
+	if errors.As(err, &sf) {
+		return false
+	}
+	return isScopeBusy(err) ||
+		errors.Is(err, spawn.ErrBoundarySetup) ||
+		errors.Is(err, spawn.ErrRunnerUnavailable)
 }
 
 // limitText is the text a decision point scans for rate-limit patterns: the

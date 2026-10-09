@@ -123,6 +123,12 @@ func nudgeResume(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	}
 	next.RoundStartedAt = keep
 	next.State = store.StateActive
+	// The round is running again, so a halt a previous attempt in it left goes
+	// with it, every field: the notification key it still carries dedups the
+	// next halt of this same round, so leaving it behind swallows it silently.
+	// OwedHalt is left alone -- a pending notification for an already closed
+	// round, still owed -- as the other revive paths leave it (bind.go).
+	next = clearHaltFields(next)
 	if err := tx.AppendLog(b.Name, store.LogEntry{
 		TS: now, Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindSwitch, Confirmed: true,
 		Usage: prior,

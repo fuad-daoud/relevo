@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
+	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -14,12 +16,21 @@ import (
 // one of the three path fields is set, or none when the binding has no
 // Worktree (a --cwd or adopted binding). Same shape and meaning as the
 // worktree fields of UnbindResult.
+//
+// Payload is what Done delivered on the way out: every unconfirmed
+// to-MasterMind entry that was still pending when the human ran `relevo done`,
+// rendered and joined exactly as `relevo wait` renders it. Empty when
+// nothing was pending.
+//
+// Joined, and not the per-entry split wait carries, so DoneResult stays
+// comparable with == the way it was before this field existed.
 type DoneResult struct {
 	WorktreeRemoved string // path relevo removed; the branch survives.
 	WorktreeKept    string // path relevo left in place.
 	KeptReason      string // why; "" unless WorktreeKept is set.
 	WorktreeGone    string // recorded path that no longer exists.
 	Branch          string // b.Branch, for the message; may be "".
+	Payload         string // entries delivered here; "" when none were pending.
 }
 
 // Done stops relaying for a binding once the mastermind has verified the work,
@@ -31,6 +42,10 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 	// rt.Store.Load/Save would try to take the lock a second time and Go
 	// mutexes are not reentrant.
 	var out DoneResult
+	// claimed are the entries the lock confirmed above; their text is rendered
+	// after the lock, because PushText reads the report file off disk and no
+	// file I/O belongs under the state lock.
+	var claimed []store.PendingEntry
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		b, err := tx.Load(name)
 		if err != nil {
@@ -85,6 +100,41 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 				if !is404(derr) {
 					return fmt.Errorf("%s: %w", b.Builder.Server, derr)
 				}
+			}
+		}
+
+		// `done` is the last chance this binding has to hand its MasterMind
+		// something: after it, reconcile's DONE gate only admits what a push
+		// route already took and `relevo wait` answers `gone` without pulling,
+		// so an entry left unconfirmed here is stranded for good -- a findings
+		// entry, a halt, a report the human finished reading before running
+		// done. They are claimed and confirmed with route "done" below, in
+		// wait's own pull-then-confirm shape and against the same read wait
+		// uses, so both paths agree on what pending means and what it becomes.
+		//
+		// A chain entry is NOT one of them: it is the chain's own status
+		// record, written under a binding named after the chain, and `chain
+		// done` deliberately queues no MasterMind delivery for it (the human
+		// ran the verb). Sweeping it here would consume that record on a plain
+		// `relevo done` of one member, so it is skipped by the same kind rule
+		// PushText applies.
+		//
+		// Best effort, like wait's own delivery: a Done that has already
+		// stopped the server must not be undone by a payload that would not
+		// read. The entries stay pending on a failure, which is the state this
+		// verb existed to leave behind -- the human can run `relevo wait` first.
+		all, perr := tx.ClaimableForMasterMindThrough(name, 0)
+		if perr != nil {
+			slog.Warn("could not list pending entries at done", "binding", name, "err", perr)
+		}
+		for _, p := range all {
+			if p.Entry.Kind == store.KindChain {
+				continue
+			}
+			if err := tx.ConfirmIndex(name, p.Idx, "done"); err != nil {
+				slog.Warn("could not confirm an entry delivered at done", "binding", name, "idx", p.Idx, "err", err)
+			} else {
+				claimed = append(claimed, p)
 			}
 		}
 
@@ -162,6 +212,18 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		// Outside the lock, and logged only: a delete never changes Done's
 		// result.
 		reapAbandoned(ctx, rt, name)
+	}
+	if len(claimed) > 0 {
+		// wait's own rendering, in wait's own order: report entries last, so a
+		// reader is handed the round's findings rather than a halt that closed
+		// them. PushText is the same expansion, and the same truncate.
+		binding := delivery.BindingFor(rt.Store, name)
+		delivered := make([]delivery.Delivered, 0, len(claimed))
+		for _, p := range claimed {
+			text, _ := delivery.PushText(p.Entry, binding, rt.Store.ReadFile)
+			delivered = append(delivered, delivery.Delivered{Entry: p.Entry, Text: text})
+		}
+		out.Payload = delivery.JoinDelivered(delivery.ReportLast(delivered))
 	}
 	return out, err
 }
