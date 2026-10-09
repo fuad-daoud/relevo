@@ -177,6 +177,68 @@ func TestKilledSupervisorNeverWritesTheTrailer(t *testing.T) {
 	}
 }
 
+// TestAliveBatchAgreesWithAlive is the batch probe's own contract: for every
+// handle, AliveBatch's fact must answer Alive's question the same way. It is
+// checked against the real ps, over a mix of live, exited, missing and
+// pid-reused handles, because a batch that drifts from Alive would silently
+// retire or resurrect a builder.
+func TestAliveBatchAgreesWithAlive(t *testing.T) {
+	r := New()
+
+	// One live process, one that has exited, one pid that never existed.
+	live, _, _ := start(t, r, "sh", "-c", "sleep 30")
+	// The live child must not outlive the test: this test binary is its parent,
+	// so a leaked child is a real child that TestScanChildrenPSExcludesItself
+	// then finds when it scans for its own.
+	t.Cleanup(func() { _ = r.Kill(context.Background(), live, "") })
+	dead, _, _ := start(t, r, "sh", "-c", "exit 0")
+	waitGone(t, r, dead, 5*time.Second)
+	time.Sleep(100 * time.Millisecond)
+
+	handles := []spawn.ProcHandle{
+		live,
+		dead,
+		{PID: os.Getpid(), StartedAt: time.Unix(1_000_000, 0)}, // reused pid
+		{PID: 0, StartedAt: time.Unix(1_000_000, 0)},           // no pid at all
+	}
+	facts, err := r.AliveBatch(context.Background(), handles)
+	if err != nil {
+		t.Fatalf("AliveBatch: %v", err)
+	}
+
+	for _, h := range handles {
+		want, wantErr := r.Alive(context.Background(), h)
+		if h.PID == 0 {
+			// Alive short-circuits a zero pid without asking ps at all.
+			if want || wantErr != nil {
+				t.Errorf("Alive(zero handle) = %v, %v; want false, nil", want, wantErr)
+			}
+			continue
+		}
+		if wantErr != nil {
+			t.Fatalf("Alive(%d): %v", h.PID, wantErr)
+		}
+		fact, listed := facts[h.PID]
+		got := procFact{started: fact.StartedAt, state: fact.State}.alive(h, listed)
+		if got != want {
+			t.Errorf("pid %d: batch says alive=%v, Alive says %v", h.PID, got, want)
+		}
+	}
+}
+
+// TestAliveBatchForAnEmptySetNeverForks: no handles means no probe, so a report
+// with nothing to ask pays nothing.
+func TestAliveBatchForAnEmptySetNeverForks(t *testing.T) {
+	r := New()
+	facts, err := r.AliveBatch(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("AliveBatch(nil): %v", err)
+	}
+	if len(facts) != 0 {
+		t.Errorf("facts = %v, want none", facts)
+	}
+}
+
 func TestAliveIsFalseForAReusedPid(t *testing.T) {
 	r := New()
 	// Our own pid certainly exists; a start time that is not ours must not match.

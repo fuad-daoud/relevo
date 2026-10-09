@@ -166,7 +166,7 @@ func TestConsumedMemberCloseReadsAsSeen(t *testing.T) {
 	startedChain(t, rt, ChainOptions{})
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
-	row, err := statusRow(context.Background(), rt, chainBinding(t, rt, "shop"))
+	row, err := statusRow(context.Background(), rt, chainBinding(t, rt, "shop"), statusConfig{detail: true})
 	if err != nil {
 		t.Fatalf("statusRow: %v", err)
 	}

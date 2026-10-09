@@ -613,20 +613,51 @@ const logTailLines = 20
 // newline, or "" when the file is absent or empty. It is text for humans --
 // the exit entry's payload, the status snippet -- and is never parsed
 // (spec §1: relevo reads no builder output for meaning).
+//
+// It reads the tail, not the file: a legacy builder log grows for the whole
+// round and only its last few lines are ever shown, so reading it whole meant
+// reading a process's entire stderr to keep three lines of it. The window is
+// grown until it holds n lines, so the answer is the one a whole-file read
+// gave -- including when one line is longer than the window.
 func logTail(path string, n int) string {
-	data, err := os.ReadFile(path)
-	if err != nil || n <= 0 {
+	if n <= 0 {
 		return ""
 	}
-	s := strings.TrimRight(string(data), "\n")
-	if s == "" {
+	f, err := os.Open(path)
+	if err != nil {
 		return ""
 	}
-	lines := strings.Split(s, "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil || info.Size() == 0 {
+		return ""
 	}
-	return strings.Join(lines, "\n")
+	const window = 64 << 10
+	size := info.Size()
+	for off := size - window; ; {
+		if off < 0 {
+			off = 0
+		}
+		buf, err := io.ReadAll(io.NewSectionReader(f, off, size-off))
+		if err != nil {
+			return ""
+		}
+		s := strings.TrimRight(string(buf), "\n")
+		if s == "" {
+			return ""
+		}
+		lines := strings.Split(s, "\n")
+		// A window that starts mid-line yields one short leading line, so the
+		// tail is only settled once the window holds n breaks or reaches the
+		// file's start.
+		if off == 0 || strings.Count(s, "\n") >= n {
+			if len(lines) > n {
+				lines = lines[len(lines)-n:]
+			}
+			return strings.Join(lines, "\n")
+		}
+		off -= window
+	}
 }
 
 // clearProcess is the endpoint between rounds: no pid, no start time, no
@@ -765,6 +796,12 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		}
 		if b.State == store.StateBroken {
 			b.State = store.StateActive
+			// The fault that broke the binding is over, so the halt that
+			// recorded it goes with it. Left in place it reads as the reason the
+			// round is still stopped: the next send is refused with 409
+			// round_halted naming a switch that has already been replaced, and
+			// the round classifies as halted for as long as the binding lives.
+			b = clearHaltFields(b)
 		}
 		return deliverAndSettle(ctx, rt, tx, b)
 	}
@@ -843,7 +880,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		now := rt.Now().UTC()
 		next, halted, err := checkRoundTimeout(ctx, rt, tx, b)
 		if halted {
-			return next, err // a halt does not deliver, as in the pane path
+			return next, err // the halt queued its entry and settled delivery itself
 		}
 		if err != nil {
 			return b, err
@@ -1450,13 +1487,27 @@ const statusTailLines = 3
 // Alive check, then, for an exited process, the trailer's code. No Runner
 // means relevo cannot say. A live process whose stream has gone quiet
 // (binding.StalledSince, #252) reads "stalled <age>" in place of "working".
-func headlessStatus(ctx context.Context, rt Runtime, b store.Binding) (string, *view.HeadlessInfo) {
+//
+// detail false builds no tail: the read is a whole-file logTail or a 64 KiB
+// window per row per tick, and the fleet path paints none of it. The flag
+// reaches here rather than the call site so the read is never made and then
+// thrown away.
+//
+// alive is the report's batched liveness reading, so a refresh probes ps once
+// rather than once per row. A nil map is the single-row path, which probes its
+// one handle directly.
+func headlessStatus(ctx context.Context, rt Runtime, b store.Binding, detail bool, alive map[spawn.ProcHandle]aliveAnswer) (string, *view.HeadlessInfo) {
 	e := b.Builder
 	info := &view.HeadlessInfo{PID: e.PID, LogPath: e.LogPath}
 	if e.StartedAt != 0 {
 		info.StartedAt = time.Unix(e.StartedAt, 0)
 	}
-	if e.LogPath != "" {
+	// The tail is read before the pid and runner checks, not after them: a
+	// binding keeps its LogPath after its builder exits (reconcileHeadless
+	// zeroes the pid and leaves the log), so a row with no process is still a
+	// row whose log a human reads to find out why it stopped. Skipping the
+	// read here would drop that tail from the surfaces that show it.
+	if detail && e.LogPath != "" {
 		if tail := builderTail(rt, b, statusTailLines); tail != "" {
 			info.Tail = strings.Split(tail, "\n")
 		}
@@ -1467,22 +1518,46 @@ func headlessStatus(ctx context.Context, rt Runtime, b store.Binding) (string, *
 	if rt.Runner == nil {
 		return "unknown", info
 	}
-	alive, err := rt.Runner.Alive(ctx, handleOf(e))
-	if err != nil {
+	h := handleOf(e)
+	running, known := builderAlive(ctx, rt, h, alive)
+	if !known {
 		return "unknown", info
 	}
-	if alive {
-		// #252's label is now one of #135's progress labels, so a live
-		// headless builder can also read "exploring <age>".
-		if working, _ := labelsOf(b, rt.Now()); working != "" {
-			return working, info
-		}
-		return "working", info
+	if !running {
+		return exitedStatus(ctx, rt, b, info), info
 	}
-	if code, ok := rt.Runner.ExitCode(ctx, handleOf(e), rt.Store.StreamPath(b.Name, b.Round)); ok {
+	// #252's label is now one of #135's progress labels, so a live
+	// headless builder can also read "exploring <age>".
+	if working, _ := labelsOf(b, rt.Now()); working != "" {
+		return working, info
+	}
+	return "working", info
+}
+
+// exitedStatus is the word and the code for a process that is no longer there:
+// the trailer's code when the supervisor wrote one, else "unknown". Split out of
+// headlessStatus so the tail read and the exit read stay legible next to each
+// other.
+func exitedStatus(ctx context.Context, rt Runtime, b store.Binding, info *view.HeadlessInfo) string {
+	if code, ok := rt.Runner.ExitCode(ctx, handleOf(b.Builder), rt.Store.StreamPath(b.Name, b.Round)); ok {
 		info.ExitCode = strconv.Itoa(code)
-		return "exited " + info.ExitCode, info
+		return "exited " + info.ExitCode
 	}
 	info.ExitCode = "unknown"
-	return "exited", info
+	return "exited"
+}
+
+// builderAlive is the report's batched liveness answer for h, or a direct probe
+// when the report carries none. It reports ok=false when the process could not
+// be probed at all, which is how "unknown" stays distinct from "exited": a ps
+// that could not run says nothing about the process, and the row says so.
+func builderAlive(ctx context.Context, rt Runtime, h spawn.ProcHandle, alive map[spawn.ProcHandle]aliveAnswer) (bool, bool) {
+	if got, ok := alive[h]; ok {
+		return got.alive, got.known
+	}
+	got, err := rt.Runner.Alive(ctx, h)
+	if err != nil {
+		return false, false
+	}
+	return got, true
 }

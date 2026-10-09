@@ -14,9 +14,9 @@ package e2e
 //	   candidates.json and policy.json naming the fake harness;
 //	3  the plugin's SessionStart hook registers the mastermind and exports
 //	   RELEVO_MASTERMIND into $CLAUDE_ENV_FILE;
-//	4  a channel-mode relevo mcp claims that mastermind over a pipe pair;
-//	5  add, send, the daemon closes the round, and the report arrives as a
-//	   kind="report" channel notification;
+//	4  a relevo push holder claims that mastermind over a pipe pair;
+//	5  add, send, the daemon closes the round, and the report arrives as an
+//	   NDJSON push line, acked on stdin;
 //	6  pull and done;
 //	7  the hook fires again for /clear: same mastermind id, moved session;
 //	8  a tools-mode relevo mcp sends round two, and its result points at the
@@ -56,8 +56,8 @@ import (
 
 const (
 	// fakeReportText is the sentence the fake harness writes into its report.
-	// A channel push expands the report file (delivery.PushText), so this exact
-	// sentence is what arrives as the notification's body.
+	// A push line expands the report file (delivery.PushText), so this exact
+	// sentence is what arrives as the line's text.
 	fakeReportText = "fake-harness-report: this round was handled by the fake claude on PATH"
 
 	// The three harness sessions the scenario registers: the startup session,
@@ -74,10 +74,10 @@ const (
 	notifyDeadline = 15 * time.Second
 	mcpDeadline    = 10 * time.Second
 
-	// The two bindings the scenario creates: one delivered by the channel,
+	// The two bindings the scenario creates: one delivered by the push holder,
 	// one by the tools-mode mastermind's wait tool.
-	channelBinding = "e2e-round"
-	toolsBinding   = "e2e-tools"
+	pushBinding  = "e2e-round"
+	toolsBinding = "e2e-tools"
 )
 
 // TestHeadlessE2E is the one test the Makefile's `e2e` target runs:
@@ -128,76 +128,77 @@ func TestHeadlessE2E(t *testing.T) {
 	// mastermind, so the rest of the scenario runs with it set.
 	t.Setenv("RELEVO_MASTERMIND", first.ID)
 
-	// -- 4. The channel -----------------------------------------------------
-	channel := startChannel(t, ctx, rt, first.ID, 50*time.Millisecond)
+	// -- 4. The push holder -------------------------------------------------
+	pusher := startPush(t, ctx, rt, first.ID)
 	if !claimExists(t, rt, first.ID) {
-		t.Fatalf("relevo mcp wrote no live channel claim for mastermind %s", first.ID)
+		t.Fatalf("relevo push wrote no live claim for mastermind %s", first.ID)
 	}
 
-	// The channel's poll loop and any builder a failing step left behind are
-	// this test's children; both go away with it.
+	// The push holder and any builder a failing step left behind are this
+	// test's children; both go away with it.
 	t.Cleanup(func() {
-		stopRecordedBuilders(t, rt, channelBinding, toolsBinding)
+		stopRecordedBuilders(t, rt, pushBinding, toolsBinding)
 		cancel()
 	})
 
 	// -- 5. Round one -------------------------------------------------------
-	if _, err := relevo.Add(ctx, rt, relevo.AddOptions{Name: channelBinding, Repo: repo}); err != nil {
-		t.Fatalf("relevo.Add(%s): %v", channelBinding, err)
+	if _, err := relevo.Add(ctx, rt, relevo.AddOptions{Name: pushBinding, Repo: repo}); err != nil {
+		t.Fatalf("relevo.Add(%s): %v", pushBinding, err)
 	}
-	channelPlan := writePlan(t, "channel.md", "# Round\n\nOne line of work.\n")
-	if _, err := relevo.Send(ctx, rt, channelBinding, channelPlan, relevo.SendOptions{}); err != nil {
-		t.Fatalf("relevo.Send(%s): %v", channelBinding, err)
+	pushPlan := writePlan(t, "push.md", "# Round\n\nOne line of work.\n")
+	if _, err := relevo.Send(ctx, rt, pushBinding, pushPlan, relevo.SendOptions{}); err != nil {
+		t.Fatalf("relevo.Send(%s): %v", pushBinding, err)
 	}
 
 	// 5.3: the daemon tick, bounded. A round that never closes fails here,
 	// naming the binding, its state and its builder.
 	daemon := relevo.NewDaemon(rt, 200*time.Millisecond)
-	tickUntilRoundCloses(t, ctx, daemon, rt, channelBinding)
+	tickUntilRoundCloses(t, ctx, daemon, rt, pushBinding)
 
 	// The round closed on the fake harness's own report and marker: a close
 	// that fell back to a scrape or an unmarked exit carries a note.
-	if e, _ := reportEntry(t, rt, channelBinding, 1); e.Note != "" {
+	if e, _ := reportEntry(t, rt, pushBinding, 1); e.Note != "" {
 		t.Fatalf("binding %s round 1 closed with note %q, want \"\": the fake harness's own marker must be what closed it; builder log tail:\n%s",
-			channelBinding, e.Note, builderLogTail(rt, channelBinding, 1))
+			pushBinding, e.Note, builderLogTail(rt, pushBinding, 1))
 	}
 
-	// 5.4: the report arrives on the channel, and its body carries the
-	// report's own text (PushText expands the file a report entry points at).
-	note := channel.waitNote(t, channelBinding, "report", notifyDeadline)
-	if !strings.Contains(note.content, fakeReportText) {
-		t.Fatalf("the kind=\"report\" channel notification for %s does not carry the fake report's text:\n%s",
-			channelBinding, note.content)
+	// 5.4: the report arrives as a push line carrying the report's own text
+	// (PushText expands the file a report entry points at). The test acks it.
+	ev := pusher.waitEvent(t, pushBinding, "report", notifyDeadline)
+	if !strings.Contains(ev.Text, fakeReportText) {
+		t.Fatalf("the kind=\"report\" push line for %s does not carry the fake report's text:\n%s",
+			pushBinding, ev.Text)
 	}
+	pusher.ack(t, ev.Seq)
 
 	// -- 6. pull / done -----------------------------------------------------
-	// relevo mcp's own drain confirms the entry it pushed (route=channel), so
-	// pull has nothing left to take: the documented "nothing pending" answer
+	// The push holder confirms the entry it acked (route=push), so pull has
+	// nothing left to take: the documented "nothing pending" answer
 	// (internal/relevo/pull.go). Wait for that confirm first, so this is not a
-	// race with the poll loop, then assert pull reports nothing pending and
-	// that the report itself is on disk where the notification named it.
+	// race with the holder, then assert pull reports nothing pending and that
+	// the report itself is on disk where the line named it.
 	waitFor(t, notifyDeadline, func() bool {
-		e, ok := reportEntry(t, rt, channelBinding, 1)
-		return ok && e.Route == "channel"
-	}, "the channel's confirm of %s round 1 (route=channel)", channelBinding)
+		e, ok := reportEntry(t, rt, pushBinding, 1)
+		return ok && e.Route == "push"
+	}, "the push holder's confirm of %s round 1 (route=push)", pushBinding)
 
-	channelWait := runWait(t, ctx, rt, channelBinding, time.Minute)
-	if channelWait.err != nil {
-		t.Fatalf("relevo wait --name %s: %v", channelBinding, channelWait.err)
+	pushWait := runWait(t, ctx, rt, pushBinding, time.Minute)
+	if pushWait.err != nil {
+		t.Fatalf("relevo wait --name %s: %v", pushBinding, pushWait.err)
 	}
-	if channelWait.res.Payload != "" {
-		t.Fatalf("relevo wait --name %s printed a payload %q; the channel already took the report (route=channel), so nothing must be pending", channelBinding, channelWait.res.Payload)
+	if pushWait.res.Payload != "" {
+		t.Fatalf("relevo wait --name %s printed a payload %q; the push holder already took the report (route=push), so nothing must be pending", pushBinding, pushWait.res.Payload)
 	}
-	channelReport := rt.Store.ReportPath(channelBinding, 1)
-	if got := readFile(t, channelReport); !strings.Contains(got, fakeReportText) {
-		t.Fatalf("report %s = %q, want it to carry the fake report text", channelReport, got)
+	pushReport := rt.Store.ReportPath(pushBinding, 1)
+	if got := readFile(t, pushReport); !strings.Contains(got, fakeReportText) {
+		t.Fatalf("report %s = %q, want it to carry the fake report text", pushReport, got)
 	}
 
-	if _, err := relevo.Done(ctx, rt, channelBinding); err != nil {
-		t.Fatalf("relevo.Done(%s): %v", channelBinding, err)
+	if _, err := relevo.Done(ctx, rt, pushBinding); err != nil {
+		t.Fatalf("relevo.Done(%s): %v", pushBinding, err)
 	}
-	if b := loadBinding(t, rt, channelBinding); b.State != store.StateDone {
-		t.Fatalf("binding %s state after done = %q, want %q", channelBinding, b.State, store.StateDone)
+	if b := loadBinding(t, rt, pushBinding); b.State != store.StateDone {
+		t.Fatalf("binding %s state after done = %q, want %q", pushBinding, b.State, store.StateDone)
 	}
 
 	// -- 7. /clear: same mastermind, new session -------------------------------
@@ -215,11 +216,11 @@ func TestHeadlessE2E(t *testing.T) {
 
 	// -- 8. Tools mode (revised D6) -----------------------------------------
 	// A second relevo mcp, in tools mode, for a second mastermind session -- what
-	// a second `relevo mcp` in a second session is. The channel-mode server for
+	// a second `relevo mcp` in a second session is. The push holder for
 	// the first mastermind stays live, which is what makes 8.4's "nothing was
-	// written to a channel mailbox for that binding" a real check: a channel
-	// drains only its own mastermind's bindings (delivery.Drain), so the tools-mode
-	// binding's report can only reach the mastermind through pull.
+	// written to a push mailbox for that binding" a real check: a holder
+	// drains only its own mastermind's bindings (delivery.RunPush), so the
+	// tools-mode binding's report can only reach the mastermind through pull.
 	second, _, err := mastermind.Init(reg, mastermind.InitInput{
 		Kind: "claude", SessionID: sessionTools, CWD: repo, Now: rt.Now(),
 	})
@@ -229,7 +230,7 @@ func TestHeadlessE2E(t *testing.T) {
 	if second.ID == first.ID {
 		t.Fatalf("the tools-mode registration reused mastermind %s", first.ID)
 	}
-	tools := startMCP(t, ctx, rt, mcp.ModeTools, second.ID)
+	tools := startMCP(t, ctx, rt, second.ID)
 
 	if _, err := relevo.Add(ctx, rt, relevo.AddOptions{Name: toolsBinding, Repo: repo, MasterMindID: second.ID}); err != nil {
 		t.Fatalf("relevo.Add(%s): %v", toolsBinding, err)
@@ -289,8 +290,8 @@ func TestHeadlessE2E(t *testing.T) {
 	}
 
 	// 8.4: the log entry is marked delivered with route=wait, nothing was
-	// written to a channel mailbox for that binding -- the live channel-mode
-	// server received no notification naming it -- and the round closed on the
+	// written to a push mailbox for that binding -- the live push holder
+	// received no line naming it -- and the round closed on the
 	// fake harness's own marker, not on a fallback.
 	entry, ok := reportEntry(t, rt, toolsBinding, 1)
 	if !ok {
@@ -303,8 +304,8 @@ func TestHeadlessE2E(t *testing.T) {
 	if !entry.Confirmed || entry.Route != "wait" {
 		t.Fatalf("binding %s round 1 report entry = confirmed:%v route:%q, want confirmed with route=wait", toolsBinding, entry.Confirmed, entry.Route)
 	}
-	if names := channel.noteBindings(); contains(names, toolsBinding) {
-		t.Fatalf("a channel notification was written for %s (notifications: %v)", toolsBinding, names)
+	if names := pusher.seenBindings(); contains(names, toolsBinding) {
+		t.Fatalf("a push line was written for %s (lines: %v)", toolsBinding, names)
 	}
 }
 
@@ -326,7 +327,7 @@ func writeFakeHarness(t *testing.T) string {
 }
 
 // fakeReportBody is the body the fake harness writes to the report path: the
-// sentence the channel assertion looks for, plus a well-formed relevo tail so
+// sentence the push assertion looks for, plus a well-formed relevo tail so
 // the round closes on a marked report (reporttail.Parse).
 const fakeReportBody = "# Round Report\n\n" +
 	fakeReportText + "\n\n" +
@@ -583,7 +584,7 @@ func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *
 	gitClient := git.NewClient("git", 10*time.Second, 0)
 
 	// Gates live in the store root's database, as buildRuntime wires them
-	// (P3b plan §4.5); the mastermind records and the channel claims live in the
+	// (P3b plan §4.5); the mastermind records and the push claims live in the
 	// same database (P3b round 2 §4.1, §4.2).
 	mdb, err := st.DB()
 	if err != nil {
@@ -675,15 +676,17 @@ func runMasterMindHook(t *testing.T, reg *mastermind.DBRegistry, now func() time
 
 // --- the in-process MCP client ----------------------------------------------
 
-// channelNote is one notifications/claude/channel push the client received.
-type channelNote struct {
-	content string
-	meta    map[string]string
+// pushClient is the test's end of a `relevo push` session: it reads the NDJSON
+// lines the holder writes and acks them on stdin.
+type pushClient struct {
+	t      *testing.T
+	in     *io.PipeWriter
+	mu     sync.Mutex
+	events []delivery.PushEvent
 }
 
 // mcpClient is the test's end of a `relevo mcp` stdio session: it writes
-// JSON-RPC requests to the server and reads every line the server writes,
-// keeping responses by id and every channel push.
+// JSON-RPC requests to the server and reads every response line it writes.
 type mcpClient struct {
 	t   *testing.T
 	srv *mcp.Server
@@ -692,12 +695,126 @@ type mcpClient struct {
 	mu      sync.Mutex
 	nextID  int
 	waiters map[int]chan map[string]any
-	notes   []channelNote
+}
+
+// startPush starts one relevo push holder in-process over a pipe pair: RunPush
+// reads acks from one end and writes NDJSON lines to the other, and the client
+// does the reverse.
+func startPush(t *testing.T, ctx context.Context, rt relevo.Runtime, mastermindID string) *pushClient {
+	t.Helper()
+
+	pushIn, clientWrite := io.Pipe()   // the test writes acks; the holder reads
+	clientRead, holderOut := io.Pipe() // the holder writes; the test reads
+	deps := delivery.Deps{
+		Store:       rt.Store,
+		Now:         rt.Now,
+		Channels:    rt.Channels,
+		Deliverers:  rt.Deliverers,
+		MasterMinds: rt.MasterMinds,
+	}
+	go func() { _ = delivery.RunPush(ctx, deps, mastermindID, pushIn, holderOut) }()
+
+	c := &pushClient{t: t, in: clientWrite}
+	go c.read(clientRead)
+
+	// Wait for RunPush to take the claim before the test proceeds: the holder
+	// runs in a goroutine, and a claim that is not yet written would let the
+	// daemon deliver the entry itself.
+	deadline := time.Now().Add(notifyDeadline)
+	for {
+		if live, err := rt.Channels.Live(mastermindID, rt.Now()); err == nil && live != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("relevo push wrote no live claim for mastermind %s within %s", mastermindID, notifyDeadline)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	t.Cleanup(func() {
+		// Closing the ack side turns the holder's stdin read into an EOF;
+		// closing the line side unblocks the reader goroutine.
+		_ = clientWrite.Close()
+		_ = clientRead.Close()
+	})
+	return c
+}
+
+// read consumes the holder's stdout: one NDJSON push event per line.
+func (c *pushClient) read(r io.Reader) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 16<<20)
+	for scanner.Scan() {
+		var ev delivery.PushEvent
+		if json.Unmarshal(scanner.Bytes(), &ev) != nil {
+			continue
+		}
+		c.mu.Lock()
+		c.events = append(c.events, ev)
+		c.mu.Unlock()
+	}
+}
+
+// waitEvent waits, bounded, for a push line naming that binding and kind.
+func (c *pushClient) waitEvent(t *testing.T, binding, kind string, timeout time.Duration) delivery.PushEvent {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		c.mu.Lock()
+		var found *delivery.PushEvent
+		for i := range c.events {
+			if c.events[i].Binding == binding && c.events[i].Kind == kind {
+				found = &c.events[i]
+			}
+		}
+		c.mu.Unlock()
+		if found != nil {
+			return *found
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the push client received no kind=%q line for binding %q within %s (received: %s)",
+				kind, binding, timeout, c.seenSummary())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// ack writes the `ack <seq>` line that confirms one push event.
+func (c *pushClient) ack(t *testing.T, seq int) {
+	t.Helper()
+	if _, err := fmt.Fprintf(c.in, "ack %d\n", seq); err != nil {
+		t.Fatalf("write ack %d: %v", seq, err)
+	}
+}
+
+// seenBindings is every binding a push line has named so far.
+func (c *pushClient) seenBindings() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, 0, len(c.events))
+	for _, e := range c.events {
+		out = append(out, e.Binding)
+	}
+	return out
+}
+
+// seenSummary names what the client did receive, for a failure message.
+func (c *pushClient) seenSummary() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.events) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(c.events))
+	for _, e := range c.events {
+		parts = append(parts, e.Kind+" for "+e.Binding)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // startMCP starts one relevo mcp server in-process over a pipe pair and runs the
 // stdio handshake with it: initialize, then notifications/initialized.
-func startMCP(t *testing.T, ctx context.Context, rt relevo.Runtime, mode mcp.Mode, mastermindID string) *mcpClient {
+func startMCP(t *testing.T, ctx context.Context, rt relevo.Runtime, mastermindID string) *mcpClient {
 	t.Helper()
 
 	srvIn, clientWrite := io.Pipe() // the test writes; the server reads
@@ -705,7 +822,7 @@ func startMCP(t *testing.T, ctx context.Context, rt relevo.Runtime, mode mcp.Mod
 	srv := &mcp.Server{
 		Verbs:   &mcp.RelevoVerbs{RT: rt, MasterMind: mastermindID},
 		Version: "e2e-test",
-		Mode:    mode,
+		Mode:    mcp.ModeTools,
 		Log:     io.Discard,
 	}
 	c := &mcpClient{t: t, srv: srv, in: clientWrite, waiters: map[int]chan map[string]any{}}
@@ -727,66 +844,7 @@ func startMCP(t *testing.T, ctx context.Context, rt relevo.Runtime, mode mcp.Mod
 	return c
 }
 
-// startChannel starts a channel-mode relevo mcp and, in cmd/relevo's order, makes
-// the two moves the command wires from the server's OnInitialized callback: it
-// writes the claim, then polls -- re-reading, refreshing the claim and draining
-// the mastermind's mailbox every interval (cmd/relevo's pollMCPChannel).
-func startChannel(t *testing.T, ctx context.Context, rt relevo.Runtime, mastermindID string, interval time.Duration) *mcpClient {
-	t.Helper()
-
-	c := startMCP(t, ctx, rt, mcp.ModeChannel, mastermindID)
-
-	now := rt.Now()
-	claim := delivery.Claim{
-		MasterMind: mastermindID,
-		PID:        os.Getpid(),
-		HostPID:    os.Getpid(),
-		StartedAt:  now,
-		SeenAt:     now,
-		Version:    "e2e-test",
-	}
-	if err := rt.Channels.Write(claim, now); err != nil {
-		t.Fatalf("write channel claim for mastermind %s: %v", mastermindID, err)
-	}
-
-	st := &delivery.DrainState{MasterMind: mastermindID}
-	pollCtx, stopPoll := context.WithCancel(ctx)
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-pollCtx.Done():
-				return
-			case <-ticker.C:
-				claim.SeenAt = rt.Now()
-				if err := rt.Channels.Write(claim, claim.SeenAt); err != nil {
-					return
-				}
-				if _, err := delivery.Drain(pollCtx, delivery.Deps{Store: rt.Store, Now: rt.Now, Channels: rt.Channels, Deliverers: rt.Deliverers, MasterMinds: rt.MasterMinds}, st, c.srv); err != nil {
-					return
-				}
-			}
-		}
-	}()
-	// The poll loop writes under the state root (its claim, and any entry it
-	// delivers). Wait for it to stop before the test's temp dirs are removed,
-	// or the removal races its next write and fails the test.
-	t.Cleanup(func() {
-		stopPoll()
-		select {
-		case <-stopped:
-		case <-time.After(5 * time.Second):
-			t.Errorf("the channel poll loop for mastermind %s did not stop within 5s", mastermindID)
-		}
-	})
-	return c
-}
-
-// read consumes the server's stdout: responses by id, channel pushes appended
-// to notes.
+// read consumes the server's stdout: one response per line, keyed by id.
 func (c *mcpClient) read(r io.Reader) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16<<20)
@@ -795,32 +853,17 @@ func (c *mcpClient) read(r io.Reader) {
 		if json.Unmarshal(scanner.Bytes(), &msg) != nil {
 			continue
 		}
-		if id, ok := msg["id"].(float64); ok {
-			c.mu.Lock()
-			ch := c.waiters[int(id)]
-			delete(c.waiters, int(id))
-			c.mu.Unlock()
-			if ch != nil {
-				ch <- msg
-			}
+		id, ok := msg["id"].(float64)
+		if !ok {
 			continue
-		}
-		if msg["method"] != "notifications/claude/channel" {
-			continue
-		}
-		params, _ := msg["params"].(map[string]any)
-		content, _ := params["content"].(string)
-		meta := map[string]string{}
-		if raw, ok := params["meta"].(map[string]any); ok {
-			for k, v := range raw {
-				if s, ok := v.(string); ok {
-					meta[k] = s
-				}
-			}
 		}
 		c.mu.Lock()
-		c.notes = append(c.notes, channelNote{content: content, meta: meta})
+		ch := c.waiters[int(id)]
+		delete(c.waiters, int(id))
 		c.mu.Unlock()
+		if ch != nil {
+			ch <- msg
+		}
 	}
 }
 
@@ -895,57 +938,6 @@ func (c *mcpClient) callSend(t *testing.T, name, file string) string {
 	}
 	return res.Content[0].Text
 }
-
-// waitNote waits, bounded, for a channel push with that binding and kind.
-func (c *mcpClient) waitNote(t *testing.T, binding, kind string, timeout time.Duration) channelNote {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for {
-		c.mu.Lock()
-		var found *channelNote
-		for i := range c.notes {
-			if c.notes[i].meta["binding"] == binding && c.notes[i].meta["kind"] == kind {
-				found = &c.notes[i]
-			}
-		}
-		c.mu.Unlock()
-		if found != nil {
-			return *found
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the MCP client received no kind=%q channel notification for binding %q within %s (received: %s)",
-				kind, binding, timeout, c.noteSummary())
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-}
-
-// noteBindings is every binding a channel push has named so far.
-func (c *mcpClient) noteBindings() []string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	out := make([]string, 0, len(c.notes))
-	for _, n := range c.notes {
-		out = append(out, n.meta["binding"])
-	}
-	return out
-}
-
-// noteSummary names what the client did receive, for a failure message.
-func (c *mcpClient) noteSummary() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.notes) == 0 {
-		return "none"
-	}
-	parts := make([]string, 0, len(c.notes))
-	for _, n := range c.notes {
-		parts = append(parts, n.meta["kind"]+" for "+n.meta["binding"])
-	}
-	return strings.Join(parts, ", ")
-}
-
-// --- small assertions -------------------------------------------------------
 
 // waitPointerRE pulls the wait tool's arguments out of a send result:
 // wait(name: "<n>", timeout: "<budget>"). The wait prints the report itself,

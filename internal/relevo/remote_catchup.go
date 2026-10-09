@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -210,9 +209,7 @@ func clearAbsorbHalt(b store.Binding) store.Binding {
 	}
 	b.RemoteAbsorbFailures = 0
 	b.RemoteBundleFailures = 0
-	b.Halt = ""
-	b.HaltAt = time.Time{}
-	b.HaltNotifiedRound = 0
+	b = clearHaltFields(b)
 	b.State = store.StateActive
 	return b
 }
@@ -305,6 +302,11 @@ func catchUpPayload(b store.Binding, view remote.BindingView, haveReport bool, c
 		payload, note = stopPayload(view.Stopped, name, n, " on "+server, haveReport, clause, b.Shape)
 	} else {
 		payload = fmt.Sprintf("The runner finished round %d on %s. %s", n, server, clause)
+		// The server's own report note is what says the round closed without
+		// its completion marker, and this note is the only place the client's
+		// log records that. Without it an unmarked close reads as marked, and
+		// Wait certifies a report nothing confirmed.
+		note = view.ReportNote
 	}
 	if line := capture.DiffLineFromNote(view.DiffNote, view.DiffCommits, view.DiffTree, b.Branch); line != "" {
 		payload = payload + "\n" + line
@@ -312,8 +314,39 @@ func catchUpPayload(b store.Binding, view remote.BindingView, haveReport bool, c
 	if line := capture.PathsLineFromNote(view.DiffNote); line != "" {
 		payload = payload + "\n" + line
 	}
+	// The switches the round took on the server, one line each, after the diff
+	// and before the usage -- the same place and the same rendering a local
+	// close puts them. The client logs a switch only when a poll happens to
+	// observe a candidate delta, so these are the round's own history: every
+	// rotation and every leg of an A-B-A, which that one line can never be.
+	for _, s := range view.Switches {
+		if line := switchLine(s); line != "" {
+			payload = payload + "\n" + line
+		}
+	}
 	if view.DirtyCommit != "" {
 		note = joinNotes(note, fmt.Sprintf("uncommitted work at refs/relevo/%s/round-%d", name, n))
 	}
 	return payload, note
+}
+
+// chainRoundFacts is one closed-round entry of a chain member view, completed
+// from the member's binding view for the round that view itself describes: the
+// server keeps the uncommitted work and the prior tokens of the round it last
+// closed on the binding view and, on a server older than both fields, nowhere
+// else, so a client that read the entry alone would install that round as
+// clean and bill it for nothing. Every other round's entry is the whole record
+// -- the server ships no older figures to complete it from -- and is returned
+// untouched, which is what keeps the newest round's values off the older ones.
+func chainRoundFacts(cr remote.ClosedRoundView, view remote.BindingView) remote.ClosedRoundView {
+	if cr.Round != view.ClosedRound {
+		return cr
+	}
+	if cr.DirtyCommit == "" {
+		cr.DirtyCommit = view.DirtyCommit
+	}
+	if cr.PriorTokens == nil {
+		cr.PriorTokens = view.PriorTokens
+	}
+	return cr
 }

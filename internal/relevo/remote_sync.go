@@ -20,6 +20,15 @@ import (
 
 const unreachableGrace = 30 * time.Minute
 
+// pollSwitchNotePrefix marks the switch entry a poll writes when the server
+// reports a candidate other than the one this client recorded. The entry names
+// what this client observed, not what the round did: the round's own switch
+// history ships in the closed round's view and is rendered from there, so this
+// note is excluded from the report's switch lines rather than naming the same
+// switch a second time. A server that ships no switch history leaves the entry
+// as the only record of the switch there is.
+const pollSwitchNotePrefix = "switched on "
+
 // checkedOutWarned records the bindings whose "checked out" hint catchUp has
 // already logged at Info in this process, so the hint does not repeat on every
 // SyncRemote (#253). Process-local on purpose: the daemon and `relevo wait` are
@@ -217,22 +226,8 @@ func applyRemoteErr(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		}
 	}
 	if errors.Is(err, client.ErrUnreachable) {
-		if b.RemoteUnreachableSince.IsZero() {
-			b.RemoteUnreachableSince = now
-			slog.Warn(fmt.Sprintf("%s unreachable", server), "server", server, "binding", name)
-		}
-		b.Builder.RemoteStatus = "unreachable"
-
-		entries, rerr := tx.ReadLog(name)
-		roundOpen := rerr == nil && store.RoundOpen(entries, b.Round)
-
-		dur := now.Sub(b.RemoteUnreachableSince).Truncate(time.Second)
-		if roundOpen && now.Sub(b.RemoteUnreachableSince) > roundBudget(b)+unreachableGrace {
-			b, err := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: %s unreachable for %s; round %d may still be running there",
-				name, server, dur, b.Round))
-			return b, false, err
-		}
-		return b, false, nil
+		b, err := applyRemoteUnreachable(ctx, rt, tx, b, now)
+		return b, false, err
 	}
 	if errors.Is(err, client.ErrCertChanged) {
 		if b.Builder.RemoteStatus != "cert" {
@@ -292,19 +287,23 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 		b.Builder.Kind = kind
 		if err := tx.AppendLog(name, store.LogEntry{
 			TS: now, Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindSwitch,
-			Note:      fmt.Sprintf("switched on %s: %s -> %s", server, prev, view.Candidate),
+			Note:      fmt.Sprintf("%s%s: %s -> %s", pollSwitchNotePrefix, server, prev, view.Candidate),
 			Confirmed: true,
 		}); err != nil {
 			return b, false, err
 		}
 	}
 
+	// A view that came back answers the only question the unreachable halt asked,
+	// so that halt goes first -- above the observe branch, which never gated it.
+	b = clearUnreachableHalt(view.RoundState, b)
+
 	// A member of a server chain observes the live round only: a close, an
-	// idle round or a need for a human is the chain pull's to install and
-	// ack, so this per-binding apply writes the status word above and stops.
+	// idle round or a wait for a human -- needs_you or broken -- is the chain
+	// pull's to install and ack, so this apply writes the status word and stops.
 	if f.Observe {
 		switch view.RoundState {
-		case remote.RoundNeedsYou, remote.RoundClosed, remote.RoundIdle:
+		case remote.RoundNeedsYou, remote.RoundClosed, remote.RoundIdle, remote.RoundBroken:
 			return b, false, nil
 		}
 	}
@@ -340,7 +339,9 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 		applyDrift(rt, tx, name, b.Round, f.Drift)
 		return b, false, nil
 
-	case remote.RoundNeedsYou:
+	// A broken round shares this arm: no builder behind it means a human is what
+	// it waits on, and a close outranks a break, so it owes no catch-up here.
+	case remote.RoundNeedsYou, remote.RoundBroken:
 		b.StalledSince = view.StalledSince
 		// Catch-up first, halt second. A halt and a close are not exclusive on
 		// the wire: a round that closed and then halted again reports both, and
@@ -352,9 +353,14 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 			if f.CatchUp != nil && f.CatchUp.Round == view.ClosedRound {
 				next, a, err := applyCatchUp(ctx, rt, tx, b, view, f.CatchUp)
 				f.Settle = a
-				if err != nil || a != nil {
-					return next, true, err
-				}
+				// The catch-up owns the tick's outcome whenever it ran,
+				// settled or not. Falling through to the halt below discarded
+				// `next` and halted the stale `b` with view.Halt: the deciding
+				// reason clobbered, a second entry for a round already
+				// notified, a second delivery, and the failure counters
+				// dropped so the budget never accumulated here. The
+				// retry-no-halt outcomes stop here too -- they owe no halt.
+				return next, true, err
 			} else {
 				next, err := catchUp(ctx, rt, tx, b, view)
 				if err != nil {
@@ -365,7 +371,7 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 				return next, true, nil
 			}
 		}
-		b, err := haltAndSettle(ctx, rt, tx, b, name+": "+view.Halt)
+		b, err := haltAndSettleKind(ctx, rt, tx, b, name+": "+remoteHaltText(view.RoundState, view.Halt), haltKindFor(view.RoundState))
 		return b, false, err
 
 	case remote.RoundClosed:
@@ -497,7 +503,7 @@ func settleCatchUp(ctx context.Context, rt Runtime, a *catchUpAck, reconcile boo
 // is still relaying (not store.StateDone), so `relevo status`, `relevo wait`
 // and each `relevo wait` iteration collect a closed round without the daemon
 // running (spec §2.2). It never delivers: it calls observeRemote directly,
-// not reconcileRemote, so a payload stays pending for the daemon, the channel
+// not reconcileRemote, so a payload stays pending for the daemon, the push holder
 // or `relevo wait` to take.
 //
 // synced counts bindings whose stored state actually changed under the

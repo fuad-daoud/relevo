@@ -83,9 +83,26 @@ const headlessLogLines = 5000
 
 type tickMsg time.Time
 
+// watchdogMsg is the first fetch's time-box: it fires one poll interval after
+// Init and says only that the first status has not landed yet. It carries no
+// report, so a slow Source.Status can never merge a partial one -- the fleet
+// keeps painting the bounded loading state until the whole status arrives.
+type watchdogMsg time.Time
+
+// statusMsg carries one fleet refresh...
 type statusMsg struct {
 	report view.Report
 	err    error
+}
+
+// detailRowMsg carries one binding's own full-detail row: the three figures a
+// fleet row deliberately leaves nil (Live, LiveUsage, Headless.Tail), fetched
+// for the row the round view has open. row is nil whenever err is, so a failed
+// fetch leaves the fleet's own nil figures rather than a half-populated row.
+type detailRowMsg struct {
+	key string
+	row *view.BindingStatus
+	err error
 }
 
 // tabMsg carries a row key (BindingStatus.Key()) and round so a late reply
@@ -115,6 +132,26 @@ func fetchStatus(ctx context.Context, src Source) tea.Cmd {
 			return statusMsg{err: err}
 		}
 		return statusMsg{report: rep}
+	}
+}
+
+// fetchStatusRow is fetchStatus for one row: it resolves key through
+// src.Runtime and builds that single binding's row with its detail figures on,
+// which is exactly what the fleet refresh leaves out. A key the source cannot
+// resolve -- or resolves to a runtime carrying no store, as a server source
+// does for an owner it does not hold -- is the same prose an unknown owner's
+// tab reads, never a blank row and never a panic.
+func fetchStatusRow(ctx context.Context, src Source, key string) tea.Cmd {
+	return func() tea.Msg {
+		rt, name, ok := src.Runtime(key)
+		if !ok || rt.Store == nil {
+			return detailRowMsg{key: key, err: unresolvedKey(key)}
+		}
+		row, err := relevo.StatusRow(ctx, rt, name)
+		if err != nil {
+			return detailRowMsg{key: key, err: err}
+		}
+		return detailRowMsg{key: key, row: &row}
 	}
 }
 

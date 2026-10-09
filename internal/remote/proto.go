@@ -67,6 +67,10 @@ const (
 	// RoundQueued is a round accepted by the server with no builder process
 	// yet: staged, waiting for a slot under serve.max_builders (#285).
 	RoundQueued RoundState = "queued"
+	// RoundBroken is a round whose builder is gone: the server holds the round
+	// but has no process for it. Additive on the wire -- a client predating the
+	// word reads it as unknown and waits, exactly as it does for RoundQueued.
+	RoundBroken RoundState = "broken"
 )
 
 // WhoAmI represents the response to an authentication identity check.
@@ -188,6 +192,18 @@ type BindingView struct {
 	// "reaped", "gone" or "dequeued". It is "" when that round closed any
 	// other way, on a pre-stop server, or when ClosedRound is 0.
 	Stopped string `json:"stopped,omitempty"`
+	// ReportNote is the closed round's report entry note verbatim, the one
+	// the server's own log holds. A client keys a round's completion marker
+	// off the tokens in it, so a client that cannot see it reads an unmarked
+	// close as a marked one. Empty on a server whose close wrote no note, and
+	// from a client older than the field.
+	ReportNote string `json:"report_note,omitempty"`
+	// Switches are the closed round's switch reasons in log order: every
+	// switch entry for ClosedRound, each one the note the server wrote. They
+	// are the round's whole switch history, so a rotation and an A-B-A leave
+	// two entries here where the client's own poll can only ever see the last
+	// one. Nil from a server that sends none.
+	Switches []string `json:"switches,omitempty"`
 	// Shape is the binding's actor shape: "reader" for a reader binding, ""
 	// for a writer -- the default, and what an older server sends.
 	Shape string `json:"shape,omitempty"`

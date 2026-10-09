@@ -14,6 +14,11 @@
     "report_outcome": "completed",
     "gate_result": "pass",
     "stopped": "killed",
+    "report_note": "noreport unmarked",
+    "switches": [
+      "switched builder (rate-limited: 429): picked agy/test/m for builder: order #2",
+      "switched builder (rate-limited: 429): picked claude/test/m for builder: order #5"
+    ],
     "shape": "reader",
     "diff_note": "refactored remote wire",
     "diff_commits": 2,
@@ -124,9 +129,15 @@
       "report_outcome": "completed",
       "gate_result": "pass",
       "stopped": "killed",
+      "report_note": "noreport unmarked",
+      "switches": [
+        "switched builder (rate-limited: 429): picked agy/test/m for builder: order #2",
+        "switched builder (rate-limited: 429): picked claude/test/m for builder: order #5"
+      ],
       "diff_note": "refactored remote wire",
       "diff_commits": 2,
       "diff_tree": "5555666677778888999900001111222233334444",
+      "dirty_commit": "4444555566667777888899990000111122223333",
       "usage": {
         "harness": "opencode",
         "provider": "anthropic",
@@ -153,6 +164,12 @@
       "rusage": {
         "cpu_ms": 2500,
         "peak_mem_bytes": 52428800
+      },
+      "prior_tokens": {
+        "in": 100,
+        "cache_read": 200,
+        "cache_write": 50,
+        "out": 25
       }
     }
   ]

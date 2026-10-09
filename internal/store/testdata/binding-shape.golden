@@ -1,4 +1,4 @@
-format 14
+format 16
 abandoned_sessions[].attempts
 abandoned_sessions[].id
 abandoned_sessions[].kind
@@ -129,6 +129,8 @@ name
 oom_requeue.at
 oom_requeue.peak_bytes
 oom_requeue.running
+owed_halt.round
+owed_halt.text
 owner
 planner.agent_name
 planner.kind
@@ -197,6 +199,7 @@ queued_at
 regate
 remote_absorb_failures
 remote_bundle_failures
+remote_halt_kind
 remote_unreachable_since
 repair_count
 repo

@@ -437,9 +437,12 @@ gives a MasterMind a name of your own.
   A service-managed daemon (systemd unit or launchd agent installed) is refused
   with the service command to use instead, so the stop never fights the service
   manager's restart policy.
-- `relevo mcp [--mode channel|tools|auto] [--mastermind P] [--interval D]` — run the
-  MCP server over stdio for a Claude Code MasterMind pane. See
+- `relevo mcp [--kind opencode] [--mastermind P]` — run the MCP server over stdio
+  for a Claude Code MasterMind, serving the verbs as tools. See
   [Claude Code plugin](#claude-code-plugin).
+- `relevo push [--mastermind P]` — hold this MasterMind's push claim and write its
+  round events to the mod on stdout as NDJSON, confirming each on an `ack <seq>`
+  line from stdin.
 - `relevo mastermind init [--name N] [--kind K --session S] [--hook claude]`;
   `relevo mastermind list [--json]`; `relevo mastermind rename <id|name> <new-name>`;
   `relevo mastermind forget <id|name>` — register this MasterMind, or list, rename
@@ -2589,27 +2592,16 @@ binding, so the model does not have to remember it. Act on the wait's output
 after every exit except `WaitTimeout`; on a timeout, run `relevo status --name
 <n>` and start the wait again if the round is still running.
 
-**The channel is an opt-in upgrade.** With the channel enabled, reports,
-consult answers and edge artifacts arrive as `<channel source="relevo">` events
-the moment the daemon has them, instead of being fetched by the wait. Turn it
-on by launching with the development flag, which asks for confirmation at
-every start:
-
-    claude --agent architect --model opus --dangerously-load-development-channels plugin:relevo@relevo
-
-During the research preview `--channels` only registers plugins on an
-Anthropic-curated allowlist, and relevo is not on it. A Team or Enterprise admin
-can instead add `{"marketplace": "relevo", "plugin": "relevo"}` under
-`allowedChannelPlugins` (with `channelsEnabled: true`) in managed settings,
-which replaces Anthropic's list for that org and makes plain
-`--channels plugin:relevo@relevo` work. Without either, `relevo mcp` runs in
-tools mode: the tools work and nothing is pushed, which is the background wait
-above.
+**Push is the opt-in upgrade.** A `relevo push` holder writes reports, consult
+answers and edge artifacts to the session's mod as NDJSON the moment the daemon
+has them, instead of the session fetching them with the wait. The session's mod
+starts the holder and acks each line; without a holder, `relevo mcp` serves the
+tools and reports arrive through the background wait above.
 
 **How reports arrive.** relevo identifies the MasterMind session itself -- the
 plugin's hook registers it, and `relevo mastermind list` shows the records -- so no
 verb has to guess who is calling. A report then reaches the MasterMind by exactly
-one of four routes: the background wait (the Claude Code default), the channel
+one of four routes: the background wait (the Claude Code default), the push holder
 (opt-in, above), a deliverer for a harness that has one (opencode, agy), or
 `relevo wait` by hand. Nothing is ever typed into a terminal.
 

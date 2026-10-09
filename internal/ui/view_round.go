@@ -145,6 +145,13 @@ type roundView struct {
 	// was reached through a chain, so the trail reads chains › chain › step
 	// rather than naming the member twice.
 	crumbs []string
+	// detailKey and detailRow are the row this view fetched for itself, with
+	// the three figures the fleet report leaves nil (Live, LiveUsage,
+	// Headless.Tail). They are nil until the fetch lands: a row with no detail
+	// fetch in flight keeps the fleet's nil figures, and a failed one keeps
+	// them too (onDetailRow).
+	detailKey string
+	detailRow *view.BindingStatus
 }
 
 // mergeRows is rep with extra appended, one loop, dropping any extra row the
@@ -181,7 +188,7 @@ func (r roundView) Crumbs() []string {
 // the view's own rows merged in, so a chain member's round names its binding
 // after a status refresh as it did when it was opened.
 func (r roundView) Context(env Env) (string, string) {
-	b := row(mergeRows(env.Report, r.extra), r.pane.detail.name)
+	b := row(r.rows(env), r.pane.detail.name)
 
 	rightText := fmt.Sprintf("round %d of %d", r.pane.detail.round, r.pane.detail.rounds)
 	if !r.pane.detail.archivedAt.IsZero() {
@@ -411,9 +418,10 @@ func (r roundView) Capturing() bool { return false }
 func (r roundView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	// Every call lends the pane the shell's current report and box (§4.4):
 	// invalidate, the ages and the fetch all read these. The pane's own rows
-	// ride along, or a member the shell's report no longer carries would
-	// vanish on the first status refresh.
-	r.pane.report = mergeRows(env.Report, r.extra)
+	// and its fetched detail row ride along, or a member the shell's report
+	// no longer carries -- or the three figures the fleet row leaves nil --
+	// would vanish on the first status refresh.
+	r.pane.report = r.rows(env)
 	r.pane.now = envNow(env)
 	r.pane.width = env.Width
 	r.pane.rows = bodyHeight(env)
@@ -442,6 +450,14 @@ func (r roundView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 		// tabMsg arm); onTab then drops a mismatched one.
 		r.pane.tabInFlight = false
 		r.pane = r.pane.onTab(msg)
+		return r, nil
+
+	case detailRowMsg:
+		// The pane's report was synced above with the figures this reply
+		// carries, so it is synced again here: the figures land on the same
+		// paint rather than the one after it.
+		r = r.onDetailRow(msg)
+		r.pane.report = r.rows(env)
 		return r, nil
 
 	case tea.WindowSizeMsg:
@@ -529,7 +545,7 @@ func (r roundView) updateKey(msg tea.KeyMsg, env Env) (View, tea.Cmd) {
 func (r roundView) Body(env Env, width, height int) string {
 	r.pane.width = width
 	r.pane.rows = height
-	r.pane.report = mergeRows(env.Report, r.extra)
+	r.pane.report = r.rows(env)
 	r.pane.now = envNow(env)
 	r.pane.actions = r.actions
 	return r.pane.view(width)

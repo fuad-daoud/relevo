@@ -449,6 +449,11 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 			b.Ticket = ticket
 		}
 		wasPaused := b.State == store.StatePaused
+		// A resume is a fresh attempt, so the halt the previous one left goes
+		// with it: every field of it, or the per-round notification key dedups
+		// the next halt of this round against a reason nobody is looking at any
+		// more. OwedHalt is left alone, as the other human paths leave it.
+		b = clearHaltFields(b)
 		b.State = store.StateActive
 		// A resume or a rebind is a fresh attempt, so the previous round's
 		// progress clock, stall, exploring and stale stamps say nothing about
@@ -473,9 +478,11 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 			}
 			b.BuilderCandidate = res.Token() // "" when adopting a pane
 			b.BuilderAccount = res.Account
-			b.HaltNotifiedRound = 0
-			b.Halt = ""
-			b.HaltAt = time.Time{}
+			b = clearHaltFields(b)
+			// The owed notification goes with the halt: the replacement builder
+			// is a fresh attempt, and an entry the replaced round still owed
+			// would be notified as a halt of a round nobody is running.
+			b.OwedHalt = nil
 			b.BuilderScreen = ""
 			b.BuilderScreenAt = time.Time{}
 			b.RoundClosedTree = ""
@@ -575,6 +582,7 @@ func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, mastermindE
 		if opts.MasterMindID != "" {
 			cur.MasterMindID = opts.MasterMindID
 		}
+		cur = clearHaltFields(cur)
 		cur.State = store.StateActive
 		if err := tx.Save(cur); err != nil {
 			return err

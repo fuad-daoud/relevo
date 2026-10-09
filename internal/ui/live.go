@@ -86,9 +86,14 @@ type liveSource struct {
 // Status reloads the shared runtime, then reports the fleet. A reload error is
 // dropped: the last good snapshot still answers, and the config screens report
 // a load failure themselves.
+//
+// The report is built with the detail figures off -- Live, LiveUsage and
+// Headless.Tail -- because the fleet view paints none of them; the detail pane
+// fetches its own row with them on. Every other field is what the same store
+// read returns with them on.
 func (s liveSource) Status(ctx context.Context) (view.Report, error) {
 	_ = s.live.Refresh()
-	return relevo.Status(ctx, s.live.Get())
+	return relevo.Status(ctx, s.live.Get(), relevo.Detail(false))
 }
 
 func (s liveSource) Runtime(key string) (relevo.Runtime, string, bool) {

@@ -139,9 +139,9 @@ type Delivered struct {
 
 // PullPendingThroughEntries returns one Delivered per pending mastermind
 // payload of name whose round is at most round -- every round when round <= 0
-// -- confirming each with route and WITHOUT pushing anything, in log order so
-// the waited round is last. An empty slice with a nil error means nothing was
-// pending and nothing was confirmed.
+// -- confirming each with route and WITHOUT pushing anything, ordered so the
+// waited round's report is last. An empty slice with a nil error means nothing
+// was pending and nothing was confirmed.
 //
 // The list and confirm step runs in ONE lock, wrapped in retryBusy: a busy
 // database is retried with a short backoff, and nothing is confirmed unless
@@ -181,7 +181,81 @@ func PullPendingThroughEntries(ctx context.Context, st *store.Store, name, route
 		text, _ := PushText(p.Entry, binding, st.ReadFile)
 		out = append(out, Delivered{Entry: p.Entry, Text: text})
 	}
-	return out, nil
+	return ReportLast(out), nil
+}
+
+// EarlierHeader is the line that introduces an entry a through-pull delivers
+// before the waited round, so an older undelivered payload is neither dropped
+// nor mistaken for the newest text.
+//
+// The path is dropped when there is none. A halt entry carries no artifact, so
+// its Path is empty by design and an unconditional (%s) rendered it as a bare
+// pair of parens -- a header that named nothing while implying it had. Both
+// renderers of this line share the function so the two cannot drift apart on
+// what a label looks like.
+func EarlierHeader(round int, path string) string {
+	if path == "" {
+		return fmt.Sprintf("── round %d: not delivered earlier ──\n", round)
+	}
+	return fmt.Sprintf("── round %d: not delivered earlier (%s) ──\n", round, path)
+}
+
+// HaltHeader is the line that introduces a halt entry collected together with
+// the waited round's report. The halt is the reason a human is needed, and
+// "not delivered earlier" is not what happened to it: it is not a report that
+// went undelivered, it is the round stopping.
+func HaltHeader(round int) string {
+	return fmt.Sprintf("── round %d: halted ──\n", round)
+}
+
+// EntryHeader is the label that introduces an entry rendered before the
+// waited round's own text: the halt label for a halt of that same round, and
+// the not-delivered-earlier label for everything else. Both renderers of
+// these labels go through it, so the joined result and the per-entry result
+// cannot drift apart on what a label says.
+func EntryHeader(e store.LogEntry, waitedRound int) string {
+	if e.Kind == store.KindHalt && e.Round == waitedRound {
+		return HaltHeader(e.Round)
+	}
+	return EarlierHeader(e.Round, e.Path)
+}
+
+// ReportLast returns delivered with the newest round's report entries moved to
+// the end, the rest in the order it came. A round that closed on a halt files
+// that halt after its report, so log order ends on the halt and a reader that
+// took the last entry as the round's own text would print the report under a
+// "not delivered earlier" header and the halt as the main text -- the report
+// demoted and the halt promoted. Moving the report last keeps the report the
+// main text and leaves the halt ahead of it under its own header.
+//
+// The newest round is the one a through-pull waited for: it answers every round
+// at or below the one asked, so the highest round it carries is the waited one.
+// Entries of that round keep their own order, and a round whose only entry is
+// its halt comes back untouched -- there is no report to move.
+func ReportLast(delivered []Delivered) []Delivered {
+	if len(delivered) < 2 {
+		return delivered
+	}
+	waited := 0
+	for _, d := range delivered {
+		if d.Entry.Round > waited {
+			waited = d.Entry.Round
+		}
+	}
+
+	reports := make([]Delivered, 0, len(delivered))
+	out := make([]Delivered, 0, len(delivered))
+	for _, d := range delivered {
+		if d.Entry.Round == waited && d.Entry.Kind == store.KindReport {
+			reports = append(reports, d)
+			continue
+		}
+		out = append(out, d)
+	}
+	if len(reports) == 0 {
+		return delivered
+	}
+	return append(out, reports...)
 }
 
 // JoinDelivered renders one whole-result string from the per-entry deliveries,
@@ -189,15 +263,18 @@ func PullPendingThroughEntries(ctx context.Context, st *store.Store, name, route
 // earlier entry under a header naming its round otherwise. It is the shape
 // PullPendingThrough returns and the shape WaitResult.Payload carries, so a
 // caller that reads the result whole and a caller that reads it per entry agree
-// on what the entries were.
+// on what the entries were. The order it renders is the order it is given, so a
+// caller that wants the waited round's report last orders the entries with
+// ReportLast.
 func JoinDelivered(delivered []Delivered) string {
 	if len(delivered) == 1 {
 		return delivered[0].Text
 	}
 
+	waited := delivered[len(delivered)-1].Entry.Round
 	var b strings.Builder
 	for _, d := range delivered[:len(delivered)-1] {
-		fmt.Fprintf(&b, "── round %d: not delivered earlier (%s) ──\n", d.Entry.Round, d.Entry.Path)
+		b.WriteString(EntryHeader(d.Entry, waited))
 		b.WriteString(d.Text)
 		b.WriteString("\n\n")
 	}

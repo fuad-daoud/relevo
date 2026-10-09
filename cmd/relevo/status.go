@@ -145,7 +145,10 @@ func cmdStatus(args []string) error {
 	if isChain {
 		rep, err = relevo.ChainStatus(context.Background(), rt, target)
 	} else {
-		rep, err = relevo.Status(context.Background(), rt)
+		// sc is already resolved, so the rows are built for this scope alone
+		// instead of for the whole fleet and then filtered. ScopeReport below
+		// still runs, as the post-check.
+		rep, err = relevo.ScopedStatus(context.Background(), rt, sc)
 	}
 	if err != nil {
 		return fail(codeInternal, "%v", err)

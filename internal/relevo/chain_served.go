@@ -443,7 +443,14 @@ func ServedChainView(rt Runtime, name string, recordID func(string) string, inst
 		}
 		if b.Serve != nil {
 			for n := b.Serve.AckedRound + 1; n <= b.Serve.ClosedRound; n++ {
-				mv.Rounds = append(mv.Rounds, servedRoundFacts(entries, n))
+				f := servedRoundFacts(entries, n)
+				// The server keeps the dirty commit of the round it last
+				// closed, so only that round ships one; an older round ships
+				// "" rather than the newest round's commit.
+				if n == b.Serve.ClosedRound {
+					f.DirtyCommit = b.Serve.DirtyCommit
+				}
+				mv.Rounds = append(mv.Rounds, f)
 			}
 		}
 		view.Members = append(view.Members, mv)

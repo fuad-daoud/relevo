@@ -325,12 +325,14 @@ func TestRelevoVerbsWaitOversizeSingleEntryIsCutNotPointedAt(t *testing.T) {
 	}
 }
 
-// TestRelevoVerbsWaitOversizePointsAtAHaltEntry: a halt entry a halt queues is
-// an ordinary claimable payload, so it is one of the entries an over-cap wait
-// confirmed -- and it is delivered or pointed at like any other. The budget is
-// gone by then, so the pointer is what arrives; what must not happen is the
-// halt being confirmed and printed nowhere.
-func TestRelevoVerbsWaitOversizePointsAtAHaltEntry(t *testing.T) {
+// TestRelevoVerbsWaitOversizeDeliversAHaltEntryWhole: a halt entry a halt
+// queues is an ordinary claimable payload, so it is one of the entries an
+// over-cap wait confirmed -- and it is one of the entries the budget must not
+// cost. Two rounds of reports have spent it by the time the halt is reached, and
+// the halt's text is short and is the reason a human is needed, so it is
+// delivered whole rather than reduced to its peek pointer at the one moment it
+// was the most useful thing in the result.
+func TestRelevoVerbsWaitOversizeDeliversAHaltEntryWhole(t *testing.T) {
 	s := store.New(t.TempDir())
 	now := func() time.Time { return time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC) }
 	halt := "builder exited (code 1) without a report"
@@ -374,13 +376,18 @@ func TestRelevoVerbsWaitOversizePointsAtAHaltEntry(t *testing.T) {
 	if !strings.HasPrefix(text, "halty round 3 needs-you\n") {
 		t.Errorf("wait text = %q, want the needs-you outcome line first", text)
 	}
-	// The halt entry names no show section of its own, so the pointer is the
-	// round's log -- and --peek, so following it claims nothing.
-	if !strings.Contains(text, "relevo show halty --round 3 --log --peek") {
-		t.Errorf("wait text = %q, want a peek pointer naming the round 3 halt entry", text)
+	if !strings.Contains(text, halt) {
+		t.Errorf("wait text = %q, want the halt entry's own text whole", text)
+	}
+	// A halt names no show section of its own, so the pointer that would have
+	// replaced it is the round's log. The text is the delivery now, so that
+	// pointer must be gone: the budget is spent, and a pointer there would mean
+	// the reason a human is needed was confirmed and never read.
+	if strings.Contains(text, "relevo show halty --round 3 --log --peek") {
+		t.Errorf("wait text = %q, want the halt's text rather than a peek pointer", text)
 	}
 	if !strings.Contains(text, "── round 1: not delivered earlier") {
-		t.Errorf("wait text = %q, want round 1 delivered before the pointed-at halt", text)
+		t.Errorf("wait text = %q, want round 1 delivered before the halt", text)
 	}
 }
 
@@ -548,4 +555,78 @@ func TestRelevoVerbsWaitNoNameTakesTheDefaultBudget(t *testing.T) {
 	if text != want {
 		t.Errorf("wait text = %q, want %q", text, want)
 	}
+}
+
+// TestOversizeWaitBodyLabelsAnEntryWithNoPath pins the same label in the
+// over-cap renderer. A halt entry carries no artifact, so its Path is empty by
+// design and the header rendered "not delivered earlier ()" -- a label that
+// named nothing while implying that it had. Both renderers share one header
+// function, so this and the delivery-side case cannot drift apart.
+func TestOversizeWaitBodyLabelsAnEntryWithNoPath(t *testing.T) {
+	s := store.New(t.TempDir())
+
+	res := relevo.WaitResult{
+		Round: 1,
+		Delivered: []delivery.Delivered{
+			{Entry: store.LogEntry{Round: 1, Kind: store.KindHalt}, Text: "halting: the round ran past its budget"},
+			{Entry: store.LogEntry{Round: 1, Kind: store.KindReport, Path: "/repo-big/001-report.md"}, Text: "round 1 done"},
+		},
+	}
+
+	body := oversizeWaitBody(s, "big", 1, res)
+
+	if strings.Contains(body, "()") {
+		t.Errorf("an entry with no path rendered empty parens:\n%s", body)
+	}
+	if !strings.Contains(body, "── round 1: halted ──\n") {
+		t.Errorf("the label does not name the entry's round:\n%s", body)
+	}
+	if !strings.Contains(body, "halting: the round ran past its budget") {
+		t.Errorf("the entry's own text is missing:\n%s", body)
+	}
+	if !strings.HasSuffix(body, "round 1 done") {
+		t.Errorf("the waited entry is not last:\n%s", body)
+	}
+}
+
+// TestOversizeWaitBodyKeepsAHaltWhole: the halt entry is short and says why a
+// human is needed, so the over-cap renderer delivers its text whole even when
+// the budget a big report spent leaves nothing for it -- and it does not spend
+// budget the report still had. Without this the halt degraded to a peek
+// pointer at exactly the moment it was the most useful thing in the result.
+func TestOversizeWaitBodyKeepsAHaltWhole(t *testing.T) {
+	s := store.New(t.TempDir())
+
+	const halt = "scope refusal: the plan names a path outside the repo"
+	// Same round both: the report is the big one and is the entry a wait
+	// orders last, so the halt is rendered under its own header.
+	res := relevo.WaitResult{
+		Round: 2,
+		Delivered: []delivery.Delivered{
+			{Entry: store.LogEntry{Round: 2, Kind: store.KindHalt}, Text: halt},
+			{Entry: store.LogEntry{Round: 2, Kind: store.KindReport, Path: "/repo-big/002-report.md"}, Text: strings.Repeat("A", maxWaitOutputBytes)},
+		},
+	}
+
+	body := oversizeWaitBody(s, "big", 2, res)
+
+	if !strings.Contains(body, halt) {
+		t.Errorf("the halt's own text is missing, want it whole:\n%s", lastLines(body, 3))
+	}
+	if strings.Contains(body, "--log --peek") {
+		t.Errorf("the halt degraded to a peek pointer:\n%s", lastLines(body, 3))
+	}
+	if !strings.Contains(body, "── round 2: halted ──\n"+halt) {
+		t.Errorf("the halt does not carry its own header:\n%s", lastLines(body, 3))
+	}
+}
+
+// lastLines is the tail of s, for a failure message that would otherwise print
+// a report the size of the cap twice.
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) <= n {
+		return s
+	}
+	return strings.Join(lines[len(lines)-n:], "\n")
 }

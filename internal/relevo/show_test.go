@@ -696,6 +696,70 @@ func TestShowArchivedWinsOverTheMirror(t *testing.T) {
 	}
 }
 
+// TestShowArchivedOnALiveNameWithNoRecordIsNotFound pins Show's history read of
+// a name the live store still holds: with neither an archived record nor an
+// archived database row there is no history to read, so --archived is not
+// found rather than answered from the mirror rows -- which are that live
+// binding's current rounds, not sealed ones. Before the guard, showDB returned
+// them with Live false, so a live binding's own open state read as sealed
+// history. Mutation: drop the guard in Show and this returns the live rounds
+// instead of ErrNotFound.
+func TestShowArchivedOnALiveNameWithNoRecordIsNotFound(t *testing.T) {
+	t.Parallel()
+
+	// A live "fixture" alongside the fixture's own never-archived mirror rows,
+	// so the database tier would answer with three rounds were the guard
+	// absent.
+	s := newShowLiveStore(t)
+	if archived, err := s.ListArchived(); err != nil || len(archived) != 0 {
+		t.Fatalf("ListArchived = %+v, %v, want no record", archived, err)
+	}
+	rt := Runtime{Store: s, DB: seedShowDB(t)}
+
+	_, err := Show(context.Background(), rt, ShowOptions{
+		Name: "fixture", Section: ShowPrompt, ArchivedOnly: true,
+	})
+	if err == nil {
+		t.Fatal("Show: want an error for a live name with no archived record")
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("err = %v, want it to wrap store.ErrNotFound", err)
+	}
+}
+
+// TestShowArchivedOnALiveNameWithAnArchivedRowAnswers pins the other half of the
+// guard above: a live name whose database row does carry an archive timestamp
+// is a real history row of that name, so --archived answers from it. The live
+// store holding the same name is a rebind shadowing it, not a reason to refuse
+// the history the row genuinely holds.
+func TestShowArchivedOnALiveNameWithAnArchivedRowAnswers(t *testing.T) {
+	t.Parallel()
+
+	// The archived fixture's row: ingested from an archive source, so its
+	// binding carries ArchivedAt.
+	d := seedShowArchiveDB(t)
+	s := newShowLiveStore(t)
+	rt := Runtime{Store: s, DB: d}
+
+	res, err := Show(context.Background(), rt, ShowOptions{
+		Name: "fixture", Section: ShowPrompt, ArchivedOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("Show: %v", err)
+	}
+	if !res.Archived {
+		t.Errorf("Archived = false, want true for an archived database row")
+	}
+	// showDB's own default: the highest round with an outcome other than open,
+	// which is round 3 in the fixture.
+	if res.Round != 3 {
+		t.Errorf("Round = %d, want 3 (highest round with outcome != open)", res.Round)
+	}
+	if res.Text == "" {
+		t.Error("Text is empty, want the row's stored plan")
+	}
+}
+
 // TestShowArchivedDefaultsToNewestCompletedRound pins Show's archived step to
 // showLive's default-round rule: with no --round, the newest completed round
 // is the highest KindReport entry round -- round 2 in the fixture -- not the

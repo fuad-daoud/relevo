@@ -60,7 +60,7 @@ type MasterMindCheckInput struct {
 	Detected  bool               // mastermind.Detect: relevo runs inside a Claude Code session
 	Resolved  *mastermind.Record // the mastermind Resolve found; nil on a miss
 	Chat      string             // the resolved mastermind's chatlabel (opencode only); "" when Resolved is nil
-	ClaimLive bool               // a live channel claim exists for Resolved
+	ClaimLive bool               // a live push claim exists for Resolved
 	MCPChild  bool               // a `relevo mcp` process is a child of the mastermind's host; false is FAIL
 
 	Stale   []string // mastermind records seen over 7 days ago with no live binding
@@ -143,8 +143,9 @@ func consentCheck(in MasterMindCheckInput) Check {
 }
 
 // mastermindSessionCheck is the mastermind row for a detected Claude Code session:
-// FAIL when Resolve missed or no relevo mcp child reaches the channel, INFO
-// while push is unavailable (tools mode), OK once the channel claim is live.
+// FAIL when Resolve missed or no relevo mcp child serves its tools, INFO while
+// no push claim is live (reports arrive through the blocking wait tool), OK once
+// the push claim is live.
 func mastermindSessionCheck(in MasterMindCheckInput) Check {
 	switch {
 	case in.Resolved == nil:
@@ -165,13 +166,13 @@ func mastermindSessionCheck(in MasterMindCheckInput) Check {
 		return Check{
 			Name:     "MasterMind",
 			Severity: SevInfo,
-			Detail:   fmt.Sprintf("MasterMind %s: tools mode: reports arrive through the blocking wait tool. For push, launch with `--dangerously-load-development-channels plugin:relevo@relevo`, or have an org admin add relevo to `allowedChannelPlugins`", mastermindRef(in.Resolved, in.Chat)),
+			Detail:   fmt.Sprintf("MasterMind %s: tools mode: reports arrive through the blocking wait tool. For push, the session's mod runs `relevo push`", mastermindRef(in.Resolved, in.Chat)),
 		}
 	default:
 		return Check{
 			Name:     "MasterMind",
 			Severity: SevOK,
-			Detail:   fmt.Sprintf("%s; channel claim live", mastermindRef(in.Resolved, in.Chat)),
+			Detail:   fmt.Sprintf("%s; push claim live", mastermindRef(in.Resolved, in.Chat)),
 		}
 	}
 }

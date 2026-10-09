@@ -124,16 +124,29 @@ func (d roundStartDecision) write(w http.ResponseWriter, view remote.BindingView
 // 409 round_open, and a different round's plan is 409 round_started.
 func roundStartDecisionOf(rt relevo.Runtime, b store.Binding, entries []store.LogEntry, reqRound int, planText string) (roundStartDecision, string) {
 	st := relevo.RoundStateOf(b, entries)
-	if (st == remote.RoundRunning || st == remote.RoundQueued) && reqRound == b.Round && sameSavedPlan(rt, b.Name, b.Round, planText) {
+	// A broken round is an open round: the server holds it and there is no
+	// process left to finish it, which is what makes a start a conflict about
+	// that round rather than a fresh one. It is named here beside running and
+	// queued so an identical resend stays the no-op it is for them, rather
+	// than absorbing a bundle and moving the server worktree on the way to
+	// being refused by Send.
+	if (st == remote.RoundRunning || st == remote.RoundQueued || st == remote.RoundBroken) && reqRound == b.Round && sameSavedPlan(rt, b.Name, b.Round, planText) {
 		return startRetry, ""
 	}
 	if st == remote.RoundRunning {
 		return startOpen, "round is running"
 	}
+	// The identical retry is checked before the broken arm because an already
+	// accepted resend is the no-op whatever state the binding is in now: the
+	// broken arm answers it 409, which the client maps to a hard error, for a
+	// round the server already took.
+	if reqRound == b.Round-1 && sameSavedPlan(rt, b.Name, b.Round-1, planText) {
+		return startRetry, ""
+	}
+	if st == remote.RoundBroken {
+		return startOpen, "round is broken; rebind before sending"
+	}
 	if reqRound != b.Round {
-		if reqRound == b.Round-1 && sameSavedPlan(rt, b.Name, b.Round-1, planText) {
-			return startRetry, ""
-		}
 		return startStarted, fmt.Sprintf("round %d already started with a different plan", reqRound)
 	}
 	return startProceed, ""
@@ -311,7 +324,14 @@ func writeSendError(w http.ResponseWriter, rt relevo.Runtime, name string, b sto
 		if reloaded, loadErr := rt.Store.Load(name); loadErr == nil {
 			b = reloaded
 		}
-		if b.State == store.StateNeedsYou || b.Halt != "" {
+		// Broken is named beside halted because Send refuses one with a plain
+		// error, so it reached this arm and the question below could not tell a
+		// broken binding from a server fault: neither is halted, and a binding
+		// broken before its reason was recorded carries no text either. Both
+		// states leave the round to a human -- rebind, stop, unbind -- so both
+		// answer 409 with the reason rather than 500, which says the server is
+		// broken and is the one thing here it is not.
+		if b.State == store.StateNeedsYou || b.State == store.StateBroken || b.Halt != "" {
 			slog.Warn("round start failed", "binding", name, "round", b.Round, "err", sendErr, "halt", b.Halt)
 			writeErr(w, http.StatusConflict, remote.CodeRoundHalted, orText(b.Halt, sendErr.Error()))
 			return

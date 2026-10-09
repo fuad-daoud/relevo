@@ -75,11 +75,11 @@ func roundOpenIn(entries []store.LogEntry, round int) bool {
 // because the binding's round is already open, with one exception: a served
 // binding that has halted in NEEDS YOU may be re-pointed at a named candidate.
 //
-// The why: a halt is a human decision point, and on a served binding `relevo
-// stop` is itself refused (the server answers 409 round_halted), so naming the
-// candidate that continues *this* round is the human's only lever there. A
-// local binding is not exempt -- it stops and re-sends as its refusal has
-// always said.
+// The why: a halt is a human decision point. On a served binding `relevo
+// stop` performs the stop on the halted round, and naming the candidate that
+// continues *this* round works without stopping first, so the human has two
+// levers there. A local binding is not exempt -- it stops and re-sends as its
+// refusal has always said.
 //
 // "Served" has two spellings, because relevo keeps two copies of such a
 // binding: the server's copy carries Owner and a headless builder, while the

@@ -1,6 +1,9 @@
 package relevo
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -168,5 +171,93 @@ func TestReconcileRoundCapNotifiesOnce(t *testing.T) {
 	}
 	if b.Halt == "" {
 		t.Error("Halt is empty over 5 ticks at the cap, want the reason recorded")
+	}
+}
+
+// TestDedupedRoundCapHaltKeepsNotifiedArtifactCapReason pins the cross-halt
+// stamp: a reader round that closes over the artifact cap stamps the dedup key
+// with the round the binding has just advanced to, so the NEXT tick's round-cap
+// halt finds the key already equal and is deduped. A deduped halt queues
+// nothing, so writing b.Halt on that path overwrites the artifact-cap reason
+// with a reason no entry ever carried -- the MasterMind is left holding the
+// round-cap text and the artifact-cap text is gone from the binding.
+//
+// The tick trace it pins, with RoundCap = 1:
+//
+//	N   : round 1 closes, b.Round++ makes it 2, the stamp is zeroed, and the
+//	      artifact cap halts: HaltNotifiedRound = 2, Halt = the cap reason,
+//	      one entry filed under round 1.
+//	N+1 : 2 > RoundCap 1, so the round-cap halt halts. HaltNotifiedRound == 2
+//	      already, so the guard is false: no entry, and -- the point of this
+//	      test -- Halt still the cap reason.
+//
+// Mutation check: restore the unconditional `b.Halt =` write above the
+// HaltNotifiedRound guard in haltBinding and the Halt assertion below fails,
+// with the log still holding exactly one halt entry -- the reason the binding
+// shows and the reason the mastermind was told have drifted apart.
+func TestDedupedRoundCapHaltKeepsNotifiedArtifactCapReason(t *testing.T) {
+	t.Parallel()
+
+	repo := readerRepo(t)
+	rt, b := bindReader(t, repo)
+
+	// The cap the round-cap halt will compare against after the close advances
+	// the binding past it. Pinned explicitly so the test exercises the cap
+	// halt rather than whatever default the store happens to carry.
+	b.RoundCap = 1
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	dir := rt.Store.ArtifactDir("reader-bind", 1, "reviewer")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	big := bytes.Repeat([]byte("x"), 2<<20)
+	if err := os.WriteFile(filepath.Join(dir, "big.bin"), big, 0o644); err != nil {
+		t.Fatalf("write big.bin: %v", err)
+	}
+	oneMB := 1
+	rt.Policy.ArtifactMaxMB = &oneMB
+
+	writeReaderStream(t, rt, "reader-bind", 1, readerCloseFinal)
+	touch(t, rt.Store.DonePath("reader-bind", 1))
+	exitReaderRunner(t, rt, b)
+
+	// Tick N: the close advances the round and the artifact cap halts.
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	capReason := "artifacts over the cap: 2 > 1 MB; raise policy.artifact_max_mb to seal them"
+	if got.Round != 2 {
+		t.Fatalf("Round = %d, want 2: the close advances before the cap halt runs", got.Round)
+	}
+	if got.Halt != capReason {
+		t.Fatalf("Halt = %q after the artifact-cap tick, want %q", got.Halt, capReason)
+	}
+	if got.HaltNotifiedRound != got.Round {
+		t.Fatalf("HaltNotifiedRound = %d, want %d: the post-advance halt stamps the new round",
+			got.HaltNotifiedRound, got.Round)
+	}
+
+	// Tick N+1: the round-cap halt finds the stamp already equal to the round,
+	// so it is deduped.
+	capped, err := reconcile(t, rt, got)
+	if err != nil {
+		t.Fatalf("cap Reconcile: %v", err)
+	}
+	if capped.State != store.StateNeedsYou {
+		t.Errorf("State = %q, want %q: the cap halt still asks for a human", capped.State, store.StateNeedsYou)
+	}
+	if capped.Halt != capReason {
+		t.Errorf("Halt = %q after the deduped cap halt, want the notified reason %q: a halt that queued no entry must not overwrite the reason one did",
+			capped.Halt, capReason)
+	}
+	if capped.HaltAt != got.HaltAt {
+		t.Errorf("HaltAt = %v after the deduped cap halt, want unchanged %v", capped.HaltAt, got.HaltAt)
+	}
+	if halts := haltEntriesFor(t, rt, "reader-bind"); len(halts) != 1 {
+		t.Errorf("halt entries = %d, want exactly 1: a deduped halt queues nothing: %+v", len(halts), halts)
 	}
 }

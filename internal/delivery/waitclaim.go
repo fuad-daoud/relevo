@@ -3,6 +3,7 @@ package delivery
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -56,6 +57,17 @@ type WaitClaimStore interface {
 	Remove(name string, pid int) error
 }
 
+// WaitBulk is the optional whole-namespace read a WaitClaimStore may also
+// implement: one pass over the wait rows instead of one read per binding name.
+// A status report resolves every row's wait liveness from the returned map; a
+// store that does not implement it is read one name at a time.
+type WaitBulk interface {
+	// LiveAll returns every live registration keyed by binding name. A stale
+	// or unparseable row is removed, exactly as Live removes it, and is absent
+	// from the map.
+	LiveAll(now time.Time) (map[string]*WaitClaim, error)
+}
+
 // KVWaitClaims is the WaitClaimStore over the store root database's kv rows:
 // one `wait/<binding-name>` row per binding somebody is waiting on.
 type KVWaitClaims struct {
@@ -69,6 +81,8 @@ type KVWaitClaims struct {
 
 var _ WaitClaimStore = (*KVWaitClaims)(nil)
 
+var _ WaitBulk = (*KVWaitClaims)(nil)
+
 func (w *KVWaitClaims) alive(pid int) bool {
 	if w.Alive != nil {
 		return w.Alive(pid)
@@ -81,7 +95,13 @@ func (w *KVWaitClaims) Live(name string, now time.Time) (*WaitClaim, error) {
 	if name == "" {
 		return nil, ErrEmptyWaitName
 	}
-	raw, ok, err := w.KV.KVGet(waitKey(name))
+	return w.liveFrom(w.KV, name, now)
+}
+
+// liveFrom is Live's body over one kv handle: the *DB for a read, or the
+// transaction a write-side caller runs in.
+func (w *KVWaitClaims) liveFrom(kv db.KVTx, name string, now time.Time) (*WaitClaim, error) {
+	raw, ok, err := kv.KVGet(waitKey(name))
 	if err != nil {
 		return nil, err
 	}
@@ -103,8 +123,32 @@ func (w *KVWaitClaims) Live(name string, now time.Time) (*WaitClaim, error) {
 	// Stale: whoever reads it cleans it up, exactly as a claim's stale row is.
 	// Removal failure is not worth failing the read over -- the caller already
 	// has its answer, "not live".
-	_ = w.KV.KVDelete(waitKey(name))
+	_ = kv.KVDelete(waitKey(name))
 	return nil, nil
+}
+
+// LiveAll implements WaitBulk: every live registration keyed by binding name,
+// with each stale row removed exactly as Live removes it.
+func (w *KVWaitClaims) LiveAll(now time.Time) (map[string]*WaitClaim, error) {
+	keys, err := w.KV.KVKeys(waitKeyPrefix)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]*WaitClaim, len(keys))
+	for _, key := range keys {
+		name := strings.TrimPrefix(key, waitKeyPrefix)
+		if name == "" {
+			continue
+		}
+		claim, err := w.liveFrom(w.KV, name, now)
+		if err != nil {
+			return nil, err
+		}
+		if claim != nil {
+			out[name] = claim
+		}
+	}
+	return out, nil
 }
 
 // Write implements WaitClaimStore.

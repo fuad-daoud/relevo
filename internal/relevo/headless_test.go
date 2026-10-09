@@ -14,8 +14,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/consult"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -1422,6 +1424,128 @@ func TestSendResetsRoundBudget(t *testing.T) {
 	}
 	if got.HaltNotifiedRound != 0 {
 		t.Errorf("HaltNotifiedRound = %d, want 0", got.HaltNotifiedRound)
+	}
+}
+
+// TestReconcileBrokenToActiveClearsHalt pins the recovery transition: a broken
+// binding whose round is no longer open is active again, and the halt that
+// named the break goes with it.
+//
+// Left in place, that stale halt answers the next send 409 round_halted naming a
+// switch that has already been replaced, and the round classifies as halted for
+// as long as the binding lives -- so the binding is active and still reads as
+// stopped.
+//
+// The round this fixture lands on is one whose only entry is a switch, with no
+// prompt: that is the shape recovery finds (nothing open), and it is the shape
+// that tells the two outcomes apart -- with the halt still on the binding the
+// round derives to halted, and with it cleared it derives to switched.
+//
+// Mutation check: drop the Halt/HaltAt clears in reconcileHeadless and this
+// fails on Halt surviving the recovery, on the send answering with that stale
+// text, and on the round deriving to halted.
+func TestReconcileBrokenToActiveClearsHalt(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt := newRuntime(t)
+	rt.Runner = fr
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	rt.DB = d
+
+	if _, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testAgyRef, MasterMindID: testMasterMindName, CWD: "/repo",
+	}); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	const reason = "builder claude; switching to codex failed: exit status 1"
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		cur, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		// The state a failed switch leaves behind one round later: the round
+		// ahead has been picked and switched but never sent, so nothing about it
+		// is open, and the binding is broken with the reason it recorded.
+		cur.Round = 2
+		cur.State = store.StateBroken
+		cur.Halt = reason
+		cur.HaltAt = baseTime
+		cur.HaltNotifiedRound = 2
+		if err := tx.Save(cur); err != nil {
+			return err
+		}
+		return tx.AppendLog("webshop", store.LogEntry{
+			TS: baseTime, Round: 2, Direction: store.DirToMasterMind,
+			Kind: store.KindSwitch, Confirmed: true, Note: "switched: rate-limited",
+		})
+	}); err != nil {
+		t.Fatalf("seed the broken binding: %v", err)
+	}
+
+	b, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	// The daemon saves what the tick settled on; the store is what the send
+	// and the mirror below read.
+	if err := rt.Store.Save(got); err != nil {
+		t.Fatalf("save the recovered binding: %v", err)
+	}
+	if got.State != store.StateActive {
+		t.Fatalf("state = %q, want %q", got.State, store.StateActive)
+	}
+	if got.Halt != "" {
+		t.Errorf("Halt = %q, want empty: the fault that broke the binding is over", got.Halt)
+	}
+	if !got.HaltAt.IsZero() {
+		t.Errorf("HaltAt = %v, want zero", got.HaltAt)
+	}
+
+	if _, err := ingest.Ingest(context.Background(), ingest.StoreSource(rt.Store, "webshop"), d, IngestDeps(rt)); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	row, found, err := d.Binding("webshop")
+	if err != nil || !found {
+		t.Fatalf("mirror Binding: found=%v err=%v", found, err)
+	}
+	rounds, err := d.Rounds(row.ID)
+	if err != nil {
+		t.Fatalf("Rounds: %v", err)
+	}
+	for _, rd := range rounds {
+		if rd.Number != 2 {
+			continue
+		}
+		if rd.Outcome == db.OutcomeHalted {
+			t.Errorf("round 2 outcome = %q, want %q: a recovered binding's round is not halted", rd.Outcome, db.OutcomeSwitched)
+		}
+	}
+
+	// The send itself answers by its own failure, and the reason it records is
+	// its own: a builder that cannot start is a new fault, not the switch that
+	// was replaced.
+	fr.startErr = errors.New("boom: no such binary")
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it again"), SendOptions{}); err == nil {
+		t.Fatal("Send: err = nil, want the spawn failure")
+	} else if strings.Contains(err.Error(), reason) {
+		t.Errorf("Send error = %q, want it to name its own failure, not the cleared halt", err)
+	}
+	sent, err := rt.Store.Load("webshop")
+	if err != nil {
+		t.Fatalf("Load after the send: %v", err)
+	}
+	if strings.Contains(sent.Halt, reason) {
+		t.Errorf("Halt = %q, want it to name the spawn failure, not the cleared halt", sent.Halt)
 	}
 }
 

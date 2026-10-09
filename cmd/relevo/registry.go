@@ -81,6 +81,7 @@ var verbFlagSets = map[string]func(*flag.FlagSet){
 	"mastermind rename":    installer(mastermindRenameFlagSet),
 	"mastermind reset":     installer(mastermindResetFlagSet),
 	"mcp":                  installer(mcpFlagSet),
+	"push":                 installer(pushFlagSet),
 	"send":                 installer(sendFlagSet),
 	"serve":                serveRunFlagSet,
 	"serve clients":        installer(serveClientsFlagSet),

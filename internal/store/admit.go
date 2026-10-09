@@ -118,3 +118,69 @@ func (s *Store) admitIndex(name string, idx int) error {
 
 	return d.EventAdmit(rec.ID, ev.Seq, string(patched))
 }
+
+// clearAdmitIndex removes the admit stamp from the idx'th event in Seq order,
+// putting a payload no read-back ever found back into the pending and claimable
+// scans.
+//
+// It is admitIndex's exact mirror -- same JSON map patch, so a key a newer
+// relevo wrote survives, same first-line name refusal, same no-op on a
+// confirmed entry -- with the key deleted instead of written. The admit lives
+// only in the entry JSON, so clearing it needs no column and no migration. It is
+// idempotent, so a tick that retries the clear cannot stamp anything.
+//
+// Clearing is how a bounded admit ends: the entry stops being invisible to every
+// reader, which is what lets the push path offer it again and lets the
+// background wait claim it.
+func (s *Store) clearAdmitIndex(name string, idx int) error {
+	// This write does not pass through read, and the name still becomes a path
+	// in the sibling helpers, so it takes the same first-line refusal.
+	if err := ValidName(name); err != nil {
+		return err
+	}
+	d, err := s.dbForWrite()
+	if err != nil {
+		return err
+	}
+	rec, ok, err := d.RecordGet(s.owner, name)
+	if err != nil {
+		return fmt.Errorf("read log for %q: %w", name, err)
+	}
+	var events []db.RecordEvent
+	if ok {
+		if events, err = d.EventsOf(rec.ID, 0); err != nil {
+			return fmt.Errorf("read log for %q: %w", name, err)
+		}
+	}
+	if idx < 0 || idx >= len(events) {
+		return fmt.Errorf("clear admit on entry %d for %q: log has %d entries", idx, name, len(events))
+	}
+	ev := events[idx]
+	// A confirmed entry was already read back and has nothing left to un-admit.
+	if ev.Confirmed {
+		return nil
+	}
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(ev.JSON), &m); err != nil {
+		return fmt.Errorf("decode log entry %d for %q: %w", idx, name, err)
+	}
+	if _, admitted := m["admitted_at"]; !admitted {
+		return nil
+	}
+	delete(m, "admitted_at")
+
+	// Seq is written through so a reader of the JSON alone still sees it.
+	encodedSeq, err := json.Marshal(ev.Seq)
+	if err != nil {
+		return fmt.Errorf("encode seq: %w", err)
+	}
+	m["seq"] = encodedSeq
+
+	patched, err := json.Marshal(m)
+	if err != nil {
+		return fmt.Errorf("encode log entry: %w", err)
+	}
+
+	return d.EventAdmit(rec.ID, ev.Seq, string(patched))
+}

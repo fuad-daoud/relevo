@@ -94,6 +94,13 @@ func (d *AgyDeliverer) fallbackAfter() time.Duration {
 	return DefaultFallbackAfter
 }
 
+// AdmitHorizon reports agy's short shared horizon: a message the inbox never
+// marks read stops being an admit after this long, so the entry returns to the
+// pending and claimable scans.
+func (d *AgyDeliverer) AdmitHorizon() time.Duration {
+	return d.fallbackAfter()
+}
+
 func (d *AgyDeliverer) confirmWindow() time.Duration {
 	if d.ConfirmWindow > 0 {
 		return d.ConfirmWindow
@@ -123,11 +130,16 @@ func (d *AgyDeliverer) home() (string, error) {
 // Deliver implements MasterMindDeliverer's push half for agy masterminds.
 //
 // The step order is fixed and non-obvious: guards, conversation id, origin,
-// inbox scan, pastFallback, creds/loopback, send. The inbox scan runs
-// before the give-up gate, so a message already in the inbox is confirmed at
-// any age -- a late-read message must not be failed by the fallback before it
-// is ever looked at. The gate stays above the creds check, so a conversation
-// past the window still gives up.
+// inbox scan, pastFallback, admitted-if-sent, creds/loopback, send. The inbox
+// scan is read before the give-up gate, so a message already marked read is
+// confirmed at any age -- a late-read message must not be failed by the fallback
+// before it is ever looked at -- and the scan never sends, so a retry after a
+// crash cannot post twice. The gate then runs BEFORE the "sent but not yet read"
+// admit, because that admit is the only outcome that re-enters the loop: an
+// entry queued past the window is no longer an admission candidate, so it is
+// handed to the pull route where a reader can claim it instead of being stamped
+// and polled again. The gate also stays above the creds check, so a
+// conversation past the window still gives up.
 //
 // A successful send-message is admission, not delivery: Deliver returns
 // OutcomeAdmitted and the caller records that admit before calling Confirm. It
@@ -153,17 +165,33 @@ func (d *AgyDeliverer) Deliver(ctx context.Context, mastermind store.Endpoint, p
 
 	// Already there? A previous tick may have sent and crashed before
 	// confirming. Check before the give-up gate, so a message already in the
-	// inbox is confirmed at any age, and so a retry never sends twice.
-	if state := d.inbox(conv, origin, queuedAt); state.read {
+	// inbox and marked read is confirmed at any age, and so a retry never sends
+	// twice.
+	state := d.inbox(conv, origin, queuedAt)
+	if state.read {
 		return OutcomeDelivered, "already present", nil
-	} else if state.undelivered {
+	}
+	if state.undelivered {
 		return OutcomeUnavailable, "agy reports the message undelivered", nil
-	} else if state.sent {
-		return OutcomeAdmitted, "sent to agy but not yet read", nil
 	}
 
+	// Past the window, this entry is no longer an admission candidate. The gate
+	// runs before the "sent but not yet read" admit below because that admit is
+	// the one outcome the caller turns back into an admission: it stamps a fresh
+	// admit and then polls Confirm for the whole window, under the state lock,
+	// on every tick -- so an expired entry would be re-admitted in the same pass
+	// and never become claimable. NotMine leaves the entry pending and claimable
+	// through the pull route, and the gate keeps firing for this same queue time,
+	// so the entry stays claimable instead of cycling between admitted and
+	// expired. Nothing was sent: the scan above already proved that.
 	if out, reason, gave := d.pastFallback(conv, payload, queuedAt); gave {
 		return out, reason, nil
+	}
+
+	// A message sitting unread in the inbox is admission, not delivery -- but
+	// only for an entry still inside its window.
+	if state.sent {
+		return OutcomeAdmitted, "sent to agy but not yet read", nil
 	}
 
 	creds, err := ReadAgyCreds(d.Creds, conv)
