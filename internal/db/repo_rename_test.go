@@ -220,7 +220,7 @@ func TestAdoptCwdPrefixMatchesWholeComponents(t *testing.T) {
 		"/home/f/projects/oldname":             true,
 		"/home/f/projects/oldname/x":           true,
 		"/home/f/projects/oldname-plugin-lock": false,
-		"/home/f/projects":                   false,
+		"/home/f/projects":                     false,
 	} {
 		if got := cwdUnderAny(cwd, prefixes); got != want {
 			t.Errorf("cwdUnderAny(%q) = %v, want %v", cwd, got, want)
