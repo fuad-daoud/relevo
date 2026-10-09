@@ -22,6 +22,10 @@ type Env interface {
 	LookPath(binary string) (string, error)
 	HomePath(rel string) (string, error)
 	Stat(path string) error
+	// StatOwner returns the numeric uid that owns path and ok reports whether
+	// the platform's FileInfo carries one. It is how a row tells a root this
+	// user owns from one an inherited environment pointed at.
+	StatOwner(path string) (uid uint32, ok bool)
 	// ReadFile reads a file whose existence Stat has already established; a
 	// read error is never itself a check failure.
 	ReadFile(path string) ([]byte, error)
@@ -90,6 +94,15 @@ func (e *realEnv) HomePath(rel string) (string, error) {
 func (e *realEnv) Stat(path string) error {
 	_, err := os.Stat(path)
 	return err
+}
+
+func (e *realEnv) StatOwner(path string) (uint32, bool) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0, false
+	}
+	uid, _, ok := statOwner(fi)
+	return uid, ok
 }
 
 func (e *realEnv) ReadFile(path string) ([]byte, error) {

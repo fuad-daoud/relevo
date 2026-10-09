@@ -56,6 +56,11 @@ under `~/.cache`; keep it on any rebuild.
   `go build -ldflags "-X main.version=$(git describe --tags --always --dirty)"`,
   `install` the binary to `~/.local/bin/relevo.new`, and atomically `mv` it
   into place.
+- A dev sandbox needs no root: `scripts/relevo-sandbox.sh` points the `XDG_*`
+  and harness homes at a directory, and [env-sandbox.md](env-sandbox.md) has the
+  recipe. Separate Unix users are the stronger flow for UID-separation tests;
+  create, list and destroy those with `scripts/relevo-dev-user.sh`, and see
+  [dev-sandbox.md](dev-sandbox.md).
 - zen: `scp` the binary to `~/.local/bin/relevo.new`, `mv` it into place,
   then `systemctl --user restart relevo-serve`. Serve reads config only at
   start, so a config change alone never lands without the restart.
