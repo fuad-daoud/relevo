@@ -17,6 +17,7 @@ import (
 type pushFlagValues struct {
 	mastermind *string
 	ack        *string
+	asJSON     *bool
 }
 
 // pushFlagSet defines push's flags on fs and returns what they parse into.
@@ -24,6 +25,7 @@ func pushFlagSet(fs *flag.FlagSet) *pushFlagValues {
 	v := &pushFlagValues{}
 	v.mastermind = fs.String("mastermind", "", "mastermind id or name (default: $RELEVO_MASTERMIND, else this session's host)")
 	v.ack = fs.String("ack", "", "confirm this binding's entry with this seq, then exit")
+	v.asJSON = fs.Bool("json", false, "print the result as a JSON document")
 	return v
 }
 
@@ -87,7 +89,16 @@ func cmdPush(args []string) error {
 		MasterMinds: rt.MasterMinds,
 	}
 	if acking {
-		return writeError(delivery.AckPush(deps, rec.ID, binding, seq))
+		res, ackErr := delivery.AckPush(deps, rec.ID, binding, seq)
+		if ackErr != nil {
+			return writeError(ackErr)
+		}
+		// Without --json the ack stays silent and exits 0, as it always has:
+		// the holder reads the confirmation off the log, not off stdout.
+		if *v.asJSON {
+			return printDoc(pushAckDocOf(res))
+		}
+		return nil
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

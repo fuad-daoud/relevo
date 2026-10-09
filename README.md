@@ -443,7 +443,11 @@ gives a MasterMind a name of your own.
 - `relevo push [--mastermind P]` — hold this MasterMind's push claim and write its
   round events to the mod on stdout as NDJSON. The holder reads nothing from
   stdin: `relevo push --ack <binding> <seq>` confirms one entry the holder wrote
-  and exits 0, and the holder moves on once it sees that confirm.
+  and exits 0, and the holder moves on once it sees that confirm. `--json` is
+  accepted on both routes; the holder's stream is already NDJSON, so on the ack
+  route it prints one document instead — `{"binding","seq","route",
+  "already_confirmed"}`, where `already_confirmed` is true only on an idempotent
+  retry. Without `--json` a successful ack stays silent.
 - `relevo mastermind init [--name N] [--kind K --session S] [--hook claude]`;
   `relevo mastermind list [--json]`; `relevo mastermind rename <id|name> <new-name>`;
   `relevo mastermind forget <id|name>` — register this MasterMind, or list, rename

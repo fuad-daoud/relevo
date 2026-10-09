@@ -102,3 +102,35 @@ Declared diff scope: `internal/delivery/{pushrun.go, pushack.go (new), pushrun_t
    the `AdmittedAt == nil` exit; the new test must fail.
 2. The plan's two deviations from the seed (guarded exit clear on claim loss;
    idempotent ack without a live claim) are approved as written.
+
+## Round 2
+
+Same branch, on top of ec1ed92c; new commit only (no amend/rebase/force-push).
+Append a "## Round 2" section holding this plan verbatim to
+`docs/plans/2026-10-09-relevo-push-ack.md` in the same commit.
+
+Found by the MasterMind's sandbox run: `relevo push --ack ev1 4 --json`
+fails with `flag provided but not defined: -json` (exit 2). The injected guide
+and `relevo help --json` promise every verb takes `--json`; `push` does not.
+
+- Add `--json` to `push` the way the other write verbs do (find the shared
+  pattern in `cmd/relevo`; do not invent a new one).
+  - `--ack` with `--json`: on success print ONE document, e.g.
+    `{"binding":"ev1","seq":4,"route":"push","already_confirmed":false}`
+    (`already_confirmed` true on the idempotent retry -- `AckPush` must say
+    which happened; adjust its return without changing its rules). Errors use
+    the existing `{"error":{"code","message","next"}}` envelope. Without
+    `--json`, success stays silent and exit 0.
+  - The long form with `--json`: accepted; the stream is already NDJSON, so it
+    changes nothing but startup-failure errors, which use the JSON envelope.
+- Registry row: add `--json` to `Flags`, set the `output` document name the
+  repo's convention uses; regenerate `help-json.golden`.
+- Is there a test that every registry verb lists `--json`? If not, add one in
+  `cmd/relevo` (pure: reads the registry, spawns nothing) so the next verb
+  cannot ship without it -- and if any OTHER verb fails it, list them in the
+  report and exempt nothing silently: stop and report instead of editing them.
+- Tests: `--ack ... --json` success document (fresh and idempotent), an error
+  in the JSON envelope, long form accepts `--json`. Mutation: drop the
+  `already_confirmed` assignment; name the failing test.
+- `go test ./cmd/relevo/ ./internal/delivery/ -count=1`, then `make check`
+  and `make e2e`. Report tests, the mutation, `git diff --stat ec1ed92c..HEAD`.

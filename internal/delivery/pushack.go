@@ -34,25 +34,38 @@ var (
 	ErrAckNoClaim = errors.New("ack: no live push claim for this mastermind")
 )
 
+// AckResult is what an ack settled, so a caller can print which of the two
+// idempotent paths answered: AlreadyConfirmed is false when this call wrote the
+// confirmation, and true when the entry was already settled by this same route
+// and the call recognised its own earlier work. Binding and Seq are echoed so
+// the document needs nothing from the caller but the route.
+type AckResult struct {
+	Binding          string
+	Seq              int
+	Route            string
+	AlreadyConfirmed bool
+}
+
 // AckPush confirms the binding's to-mastermind entry with seq, with route
 // "push": the one-shot form of the ack the long-lived holder used to read from
 // stdin. It resolves MasterMind ownership, the entry and its admit, and the
 // holder's live claim inside ONE Store.WithLock, so an entry cannot be cleared
 // or claimed by a reader between the check and the confirm.
 //
-// An entry already confirmed with route "push" is settled and returns nil, with
-// no claim check: a retry whose first ack already landed must not be refused
-// because the holder exited in between. Any other route is
+// An entry already confirmed with route "push" is settled and returns
+// AlreadyConfirmed, with no claim check: a retry whose first ack already landed
+// must not be refused because the holder exited in between. Any other route is
 // ErrAckAlreadyConfirmed.
-func AckPush(d Deps, mastermindID, binding string, seq int) error {
+func AckPush(d Deps, mastermindID, binding string, seq int) (AckResult, error) {
 	if d.Store == nil {
-		return errors.New("ack: nil store")
+		return AckResult{}, errors.New("ack: nil store")
 	}
 	if mastermindID == "" {
-		return errors.New("ack: empty mastermind")
+		return AckResult{}, errors.New("ack: empty mastermind")
 	}
 
-	return d.Store.WithLock(func(tx *store.Tx) error {
+	res := AckResult{Binding: binding, Seq: seq, Route: ackRoutePush}
+	return res, d.Store.WithLock(func(tx *store.Tx) error {
 		b, err := tx.Load(binding)
 		if err != nil {
 			return err
@@ -79,6 +92,7 @@ func AckPush(d Deps, mastermindID, binding string, seq int) error {
 		e := entries[idx]
 		if e.Confirmed {
 			if e.Route == ackRoutePush {
+				res.AlreadyConfirmed = true
 				return nil
 			}
 			return fmt.Errorf("ack %q seq %d: %w (route %q)", binding, seq, ErrAckAlreadyConfirmed, e.Route)

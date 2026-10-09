@@ -37,7 +37,7 @@ func TestAckPushConfirmsAdmittedEntry(t *testing.T) {
 	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 	admitEntryAt(t, rt, "webshop")
 
-	if err := AckPush(rt, testClaimMasterMind, "webshop", 1); err != nil {
+	if _, err := AckPush(rt, testClaimMasterMind, "webshop", 1); err != nil {
 		t.Fatalf("AckPush: %v", err)
 	}
 	e := ackEntry(t, rt, "webshop", 0)
@@ -54,11 +54,67 @@ func TestAckPushIdempotentOnPushedEntry(t *testing.T) {
 	rt := ackRuntime(t)
 	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 	admitEntryAt(t, rt, "webshop")
-	if err := AckPush(rt, testClaimMasterMind, "webshop", 1); err != nil {
+	if _, err := AckPush(rt, testClaimMasterMind, "webshop", 1); err != nil {
 		t.Fatalf("first AckPush: %v", err)
 	}
-	if err := AckPush(rt, testClaimMasterMind, "webshop", 1); err != nil {
+	if _, err := AckPush(rt, testClaimMasterMind, "webshop", 1); err != nil {
 		t.Fatalf("second AckPush of a pushed entry: %v, want nil", err)
+	}
+}
+
+// TestAckPushReportsWhichPathAnswered pins the result the CLI prints: the ack
+// that wrote the confirmation says AlreadyConfirmed false, and the idempotent
+// retry that found its own earlier work says true. The route and the echoed
+// binding/seq are the same either way, so one field is the whole difference.
+func TestAckPushReportsWhichPathAnswered(t *testing.T) {
+	t.Parallel()
+
+	rt := ackRuntime(t)
+	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+	admitEntryAt(t, rt, "webshop")
+
+	fresh, err := AckPush(rt, testClaimMasterMind, "webshop", 1)
+	if err != nil {
+		t.Fatalf("AckPush: %v", err)
+	}
+	if fresh.AlreadyConfirmed {
+		t.Error("AlreadyConfirmed = true on the ack that wrote the confirmation, want false")
+	}
+	if fresh.Binding != "webshop" || fresh.Seq != 1 || fresh.Route != "push" {
+		t.Errorf("result = %+v, want webshop seq 1 route push", fresh)
+	}
+
+	retry, err := AckPush(rt, testClaimMasterMind, "webshop", 1)
+	if err != nil {
+		t.Fatalf("second AckPush of a pushed entry: %v, want nil", err)
+	}
+	if !retry.AlreadyConfirmed {
+		t.Error("AlreadyConfirmed = false on the idempotent retry, want true")
+	}
+}
+
+// TestAckPushRefusalClaimsNoConfirmation: a refusal settles nothing, so the
+// result it hands back must never read as already_confirmed. The identity
+// fields are still echoed, but the caller renders the error instead, so only
+// the confirmation flag carries a rule.
+func TestAckPushRefusalClaimsNoConfirmation(t *testing.T) {
+	t.Parallel()
+
+	rt := ackRuntime(t)
+	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
+	admitEntryAt(t, rt, "webshop")
+
+	res, err := AckPush(rt, "pl_bbbbbbbbbbbb", "webshop", 1)
+	if !errors.Is(err, ErrAckForeignBinding) {
+		t.Fatalf("AckPush for another mastermind = %v, want ErrAckForeignBinding", err)
+	}
+	if res.AlreadyConfirmed {
+		t.Error("AlreadyConfirmed = true on a refusal, want false: nothing was settled")
+	}
+	// The entry belongs to another mastermind, so this ack left it untouched.
+	e := ackEntry(t, rt, "webshop", 0)
+	if e.Confirmed {
+		t.Error("a refused ack confirmed the entry anyway")
 	}
 }
 
@@ -71,13 +127,13 @@ func TestAckPushIdempotentWithoutLiveClaim(t *testing.T) {
 	rt := ackRuntime(t)
 	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 	admitEntryAt(t, rt, "webshop")
-	if err := AckPush(rt, testClaimMasterMind, "webshop", 1); err != nil {
+	if _, err := AckPush(rt, testClaimMasterMind, "webshop", 1); err != nil {
 		t.Fatalf("first AckPush: %v", err)
 	}
 
 	// The holder is gone: the claim is no longer live.
 	rt.Channels = fakeClaimStore{}
-	if err := AckPush(rt, testClaimMasterMind, "webshop", 1); err != nil {
+	if _, err := AckPush(rt, testClaimMasterMind, "webshop", 1); err != nil {
 		t.Fatalf("retry without a live claim: %v, want nil", err)
 	}
 	e := ackEntry(t, rt, "webshop", 0)
@@ -95,7 +151,7 @@ func TestAckPushRefusesForeignBinding(t *testing.T) {
 	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 	admitEntryAt(t, rt, "webshop")
 
-	err := AckPush(rt, "pl_bbbbbbbbbbbb", "webshop", 1)
+	_, err := AckPush(rt, "pl_bbbbbbbbbbbb", "webshop", 1)
 	if !errors.Is(err, ErrAckForeignBinding) {
 		t.Fatalf("AckPush for another mastermind = %v, want ErrAckForeignBinding", err)
 	}
@@ -112,7 +168,7 @@ func TestAckPushRefusesUnadmittedEntry(t *testing.T) {
 	rt := ackRuntime(t)
 	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 
-	err := AckPush(rt, testClaimMasterMind, "webshop", 1)
+	_, err := AckPush(rt, testClaimMasterMind, "webshop", 1)
 	if !errors.Is(err, ErrAckNotAdmitted) {
 		t.Fatalf("AckPush on an unadmitted entry = %v, want ErrAckNotAdmitted", err)
 	}
@@ -131,7 +187,7 @@ func TestAckPushRefusesWithoutLiveClaim(t *testing.T) {
 	admitEntryAt(t, rt, "webshop")
 	rt.Channels = fakeClaimStore{}
 
-	err := AckPush(rt, testClaimMasterMind, "webshop", 1)
+	_, err := AckPush(rt, testClaimMasterMind, "webshop", 1)
 	if !errors.Is(err, ErrAckNoClaim) {
 		t.Fatalf("AckPush with no live claim = %v, want ErrAckNoClaim", err)
 	}
@@ -155,7 +211,7 @@ func TestAckPushUnknownSeq(t *testing.T) {
 	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 	admitEntryAt(t, rt, "webshop")
 
-	err := AckPush(rt, testClaimMasterMind, "webshop", 99)
+	_, err := AckPush(rt, testClaimMasterMind, "webshop", 99)
 	if !errors.Is(err, ErrAckUnknownSeq) {
 		t.Fatalf("AckPush for an unknown seq = %v, want ErrAckUnknownSeq", err)
 	}
@@ -176,7 +232,7 @@ func TestAckPushRefusesEntryConfirmedByAnotherRoute(t *testing.T) {
 		t.Fatalf("ConfirmIndex: %v", err)
 	}
 
-	err := AckPush(rt, testClaimMasterMind, "webshop", 1)
+	_, err := AckPush(rt, testClaimMasterMind, "webshop", 1)
 	if !errors.Is(err, ErrAckAlreadyConfirmed) {
 		t.Fatalf("AckPush on a wait-confirmed entry = %v, want ErrAckAlreadyConfirmed", err)
 	}
@@ -192,7 +248,7 @@ func TestAckPushUnknownBinding(t *testing.T) {
 
 	rt := ackRuntime(t)
 
-	err := AckPush(rt, testClaimMasterMind, "nosuch", 1)
+	_, err := AckPush(rt, testClaimMasterMind, "nosuch", 1)
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("AckPush for a missing binding = %v, want it to wrap store.ErrNotFound", err)
 	}
@@ -211,7 +267,7 @@ func TestAckPushRefusesBuilderSeq(t *testing.T) {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
-	err := AckPush(rt, testClaimMasterMind, "webshop", 2)
+	_, err := AckPush(rt, testClaimMasterMind, "webshop", 2)
 	if !errors.Is(err, ErrAckUnknownSeq) {
 		t.Fatalf("AckPush for a to-builder seq = %v, want ErrAckUnknownSeq", err)
 	}

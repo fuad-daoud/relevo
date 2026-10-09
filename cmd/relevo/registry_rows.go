@@ -455,8 +455,9 @@ var registry = []verbEntry{
 	{
 		Name:    "push",
 		Summary: "hold this MasterMind's push claim and write its round events to the mod on stdout",
-		Args:    "[--ack <binding> <seq>] [--mastermind ID]",
-		Flags:   []string{"--ack", "--mastermind"},
+		Args:    "[--ack <binding> <seq>] [--mastermind ID] [--json]",
+		Flags:   []string{"--ack", "--json", "--mastermind"},
+		Output:  "json:PushAckDoc; the long form is already NDJSON",
 		Exit:    []int{0, 1, 2},
 		Errors: []string{
 			"binding_not_found", "internal", "mastermind_mismatch", "push_already_confirmed",

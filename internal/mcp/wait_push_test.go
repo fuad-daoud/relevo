@@ -121,7 +121,7 @@ func TestWaitUnderPushClaimWhileHolderDrains(t *testing.T) {
 		t.Fatalf("wait text = %q, want the closed line plus the mod note", text)
 	}
 
-	if err := delivery.AckPush(deps, mcpTestMasterMindA, "webshop", ev.Seq); err != nil {
+	if _, err := delivery.AckPush(deps, mcpTestMasterMindA, "webshop", ev.Seq); err != nil {
 		t.Fatalf("AckPush: %v", err)
 	}
 	waitForSinglePushConfirm(t, s, "webshop")

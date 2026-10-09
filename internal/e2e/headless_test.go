@@ -783,7 +783,7 @@ func (c *pushClient) waitEvent(t *testing.T, binding, kind string, timeout time.
 // ack confirms one push event the way `relevo push --ack <binding> <seq>` does.
 func (c *pushClient) ack(t *testing.T, ev delivery.PushEvent) {
 	t.Helper()
-	if err := delivery.AckPush(c.deps, c.mastermindID, ev.Binding, ev.Seq); err != nil {
+	if _, err := delivery.AckPush(c.deps, c.mastermindID, ev.Binding, ev.Seq); err != nil {
 		t.Fatalf("AckPush(%s, %d): %v", ev.Binding, ev.Seq, err)
 	}
 }

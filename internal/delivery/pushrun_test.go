@@ -120,7 +120,7 @@ func TestRunPushAdmitsWritesConfirmsOnAck(t *testing.T) {
 		t.Fatalf("the entry must not be confirmed before its ack: %v (entries=%d)", err, len(entries))
 	}
 
-	if err := AckPush(rt, testClaimMasterMind, "webshop", ev.Seq); err != nil {
+	if _, err := AckPush(rt, testClaimMasterMind, "webshop", ev.Seq); err != nil {
 		t.Fatalf("AckPush: %v", err)
 	}
 	pushWaitFor(t, 2*time.Second, func() bool {
@@ -653,14 +653,14 @@ func TestRunPushDeliversTwoEntriesInOrderAsAcked(t *testing.T) {
 		t.Errorf("the holder must still hold its claim between entries: %+v (err %v)", c, err)
 	}
 
-	if err := AckPush(rt, testClaimMasterMind, "alpha", first.Seq); err != nil {
+	if _, err := AckPush(rt, testClaimMasterMind, "alpha", first.Seq); err != nil {
 		t.Fatalf("AckPush alpha: %v", err)
 	}
 	second := waitPushEvent(t, events, 2*time.Second)
 	if second.Binding != "beta" {
 		t.Fatalf("second line = %+v, want the beta binding next", second)
 	}
-	if err := AckPush(rt, testClaimMasterMind, "beta", second.Seq); err != nil {
+	if _, err := AckPush(rt, testClaimMasterMind, "beta", second.Seq); err != nil {
 		t.Fatalf("AckPush beta: %v", err)
 	}
 
@@ -851,7 +851,7 @@ func TestRunPushReSendsEntryWhoseAdmitWasCleared(t *testing.T) {
 	if second.Seq != first.Seq || second.Binding != first.Binding {
 		t.Fatalf("re-sent line = %+v, want the same entry as %+v", second, first)
 	}
-	if err := AckPush(rt, testClaimMasterMind, "webshop", second.Seq); err != nil {
+	if _, err := AckPush(rt, testClaimMasterMind, "webshop", second.Seq); err != nil {
 		t.Fatalf("AckPush of the re-sent entry: %v", err)
 	}
 	pushWaitFor(t, 2*time.Second, func() bool {
@@ -903,7 +903,7 @@ func TestRunPushStateLineWaitsForEntryAck(t *testing.T) {
 	case <-time.After(pushPollEvery + 200*time.Millisecond):
 	}
 
-	if err := AckPush(rt, testClaimMasterMind, "webshop", ev.Seq); err != nil {
+	if _, err := AckPush(rt, testClaimMasterMind, "webshop", ev.Seq); err != nil {
 		t.Fatalf("AckPush: %v", err)
 	}
 	state := waitPushEvent(t, events, 2*time.Second)
