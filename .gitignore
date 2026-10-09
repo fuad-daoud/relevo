@@ -3,3 +3,4 @@
 /.coverage.txt
 /.shard/
 board/node_modules/
+claude-plugin/.claude-plugin/types/

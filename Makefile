@@ -54,6 +54,11 @@ check-static:
 	sh scripts/check-board-theme.sh
 	$(MAKE) check-scripts
 
+# mod-test validates and tests the Claude Code mod. Local only: CI has no claude.
+mod-test:
+	claude plugin validate claude-plugin
+	claude plugin test claude-plugin
+
 check-scripts:
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck scripts/*.sh claude-plugin/scripts/*.sh; \
