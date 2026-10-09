@@ -413,8 +413,7 @@ var createStatements = []string{
 // userTables is the remote's own tables, which is everything sqlite_master
 // lists that the engine did not create for itself.
 func userTables(ctx context.Context, db *sql.DB) ([]string, error) {
-	rows, err := db.QueryContext(ctx,
-		"SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+	rows, err := db.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -425,9 +424,27 @@ func userTables(ctx context.Context, db *sql.DB) ([]string, error) {
 		if err := rows.Scan(&name); err != nil {
 			return nil, err
 		}
-		names = append(names, name)
+		if !engineTable(name) {
+			names = append(names, name)
+		}
 	}
 	return names, rows.Err()
+}
+
+// engineTable reports whether a table belongs to the database engine rather than
+// to whatever the remote holds. SQLite keeps sqlite_ tables, and the sync engine
+// keeps its change tracking in every replica -- turso_cdc, turso_cdc_version,
+// turso_sync_last_change_id and the __turso_internal_ family -- so a replica of
+// an empty remote is never empty. The match is in Go rather than in LIKE, whose
+// underscore matches any one character and whose ESCAPE the engine need not
+// support.
+func engineTable(name string) bool {
+	for _, prefix := range []string{"sqlite_", "turso_", "__turso_internal_"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // isLogTables reports whether the remote holds exactly the log's three tables.

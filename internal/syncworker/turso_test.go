@@ -248,6 +248,42 @@ func TestFirstUseCreatesTheRemoteLogTables(t *testing.T) {
 	}
 }
 
+// engineTables are the tables a Turso sync connection keeps in every replica
+// for its own change tracking, as the driver creates them on first open.
+var engineTables = []string{
+	"CREATE TABLE turso_cdc (change_id INTEGER PRIMARY KEY AUTOINCREMENT, change_time INTEGER, change_type INTEGER, table_name TEXT, id, before BLOB, after BLOB, updates BLOB)",
+	"CREATE TABLE turso_cdc_version (table_name TEXT PRIMARY KEY, version TEXT NOT NULL)",
+	"CREATE TABLE turso_sync_last_change_id (client_id TEXT PRIMARY KEY, pull_gen INTEGER, change_id INTEGER)",
+	"CREATE TABLE __turso_internal_seq___turso_internal_autoincrement_turso_cdc (name TEXT, seq INTEGER)",
+}
+
+// TestFirstUseLooksPastTheEnginesOwnTables pins the empty remote as the sync
+// engine leaves it: a replica of an empty remote already holds the engine's
+// change-tracking tables, and they are not another database's. The log is
+// created on it with one push, and a re-run over the engine's tables and the
+// log finds the log rather than refusing it.
+func TestFirstUseLooksPastTheEnginesOwnTables(t *testing.T) {
+	path := tempReplica(t)
+	execOn(t, path, engineTables...)
+	driver := &localDriver{path: path}
+	b := backendFor(t, driver, "origin-a")
+	for _, want := range []string{"head", "log", "meta"} {
+		if !replicaTables(t, path)[want] {
+			t.Errorf("first use over the engine's tables did not create %q", want)
+		}
+	}
+	if driver.pushes != 1 {
+		t.Errorf("first use pushed %d times, want once", driver.pushes)
+	}
+	_ = b.Close()
+
+	again := &localDriver{path: path}
+	backendFor(t, again, "origin-a")
+	if again.pushes != 0 {
+		t.Errorf("a re-run pushed %d times, want none: the log was already there", again.pushes)
+	}
+}
+
 // TestWorkerRefusesARemoteThatIsNotALog pins the refusal a remote that is not
 // this log gets: it is answered with the URL it named and a reason, before any
 // table is created or row is written.
@@ -255,6 +291,9 @@ func TestWorkerRefusesARemoteThatIsNotALog(t *testing.T) {
 	cases := map[string]func(t *testing.T, path string){
 		"another database's tables": func(t *testing.T, path string) {
 			execOn(t, path, "CREATE TABLE secrets (s TEXT NOT NULL)")
+		},
+		"another database's tables beside the engine's": func(t *testing.T, path string) {
+			execOn(t, path, append(append([]string(nil), engineTables...), "CREATE TABLE secrets (s TEXT NOT NULL)")...)
 		},
 		"a log with no meta": func(t *testing.T, path string) {
 			execOn(t, path, createStatements[0], createStatements[1])
