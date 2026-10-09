@@ -180,6 +180,18 @@ func TestChainSegmentFlowOnATerminalChain(t *testing.T) {
 	}
 }
 
+// TestChainSegmentFlowInTheSecurityPhasePastItsPlans pins the security-phase
+// line: a fix step after the plans walk is exhausted reads the plan it is
+// fixing, not the reset position that made it look like six fresh plans (#1057).
+func TestChainSegmentFlowInTheSecurityPhasePastItsPlans(t *testing.T) {
+	t.Parallel()
+
+	f := ChainFacts{Status: "running", StepAt: "fix-build", Round: 9, PlanPos: 6, PlanTotal: 6}
+	if got, want := ChainSegment(f), "fix-build r9 · plans 6/6"; got != want {
+		t.Errorf("ChainSegment(%+v) = %q, want %q", f, got, want)
+	}
+}
+
 // TestChainSegmentFlowWithoutPlans pins a task-only workflow: with no plan to
 // report the segment is just the step and its round.
 func TestChainSegmentFlowWithoutPlans(t *testing.T) {
