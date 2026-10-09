@@ -61,6 +61,9 @@ type State struct {
 	LastImport time.Time
 	// Trouble is what the last import reported besides applied entries.
 	Trouble Trouble
+	// Attempt is the last steady attempt the daemon recorded, the zero value
+	// when none was.
+	Attempt Attempt
 }
 
 // tick is the marker one finished tick writes. A tick that failed leaves OK
@@ -129,6 +132,8 @@ func Token(s State) string {
 		return TokenBehind
 	case !s.LastTickOK:
 		return TokenBehind
+	case s.Attempt.Failed():
+		return TokenBehind
 	case s.Backlog > BacklogThreshold:
 		return TokenBehind
 	default:
@@ -157,6 +162,7 @@ func ReadState(kv db.KV) (State, error) {
 		a     attention
 		tm    Times
 		tr    Trouble
+		at    Attempt
 		reads = []struct {
 			key string
 			out any
@@ -167,6 +173,7 @@ func ReadState(kv db.KV) (State, error) {
 			{KeyAttention, &a},
 			{KeyTimes, &tm},
 			{KeyTrouble, &tr},
+			{KeyLastAttempt, &at},
 		}
 	)
 	for _, r := range reads {
@@ -177,7 +184,7 @@ func ReadState(kv db.KV) (State, error) {
 	s.LastTickOK = t.OK
 	s.Attention = a.Message != ""
 	s.LatchCause = a.Message
-	s.LastExport, s.LastImport, s.Trouble = tm.Export, tm.Import, tr
+	s.LastExport, s.LastImport, s.Trouble, s.Attempt = tm.Export, tm.Import, tr, at
 	return s, nil
 }
 

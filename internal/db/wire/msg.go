@@ -17,6 +17,9 @@ const (
 
 	TypeSyncVerb   = "sync_verb"
 	TypeSyncResult = "sync_result"
+	// TypeSyncFreshen is the fire-and-forget hint that a reader wants current
+	// data.
+	TypeSyncFreshen = "sync_freshen"
 )
 
 // Header is the part every control message shares: its type and the request id
@@ -225,6 +228,12 @@ type SyncVerb struct {
 	// TimeoutMS bounds the verb's network work in milliseconds. Zero selects
 	// the package default on the owner side.
 	TimeoutMS int64 `json:"timeout_ms,omitempty"`
+}
+
+// SyncFreshen is the hint that a reader wants current data. It carries nothing
+// but its header and is never answered.
+type SyncFreshen struct {
+	Header
 }
 
 // SyncResult is the owner's answer to one verb: what the run did, in the shape

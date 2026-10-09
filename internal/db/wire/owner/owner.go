@@ -90,6 +90,12 @@ type Server struct {
 	// machine whose sync silently stopped working.
 	OnSyncVerb func(ctx context.Context, verb *wire.SyncVerb, token []byte) *wire.SyncResult
 
+	// OnSyncFreshen, when set, receives a reader's hint that it wants current
+	// data. It runs on the connection's read loop, outside the request slot, so
+	// it must not block: the daemon's hook only queues an attempt. Nil drops the
+	// hint, which is what an owner with no sync wired should do.
+	OnSyncFreshen func()
+
 	// reapMu guards the abandoned-statement registrations: every finish channel
 	// the server is still waiting on, and whether the hook already ran.
 	reapMu      sync.Mutex

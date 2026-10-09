@@ -3,7 +3,6 @@ package relevo
 import (
 	"context"
 	"log/slog"
-	"runtime/debug"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -16,21 +15,16 @@ import (
 // carry weeks of entries between two ticks.
 const outboxTruncateInterval = 5 * time.Minute
 
-// syncWindow is the shortest gap between two idle-window syncs. A tick arriving
-// sooner sees the window closed and does nothing. The window exists to catch
-// edits no round produced -- a config row, an installation touch, a confirm --
-// so polling the network on every interval would buy nothing and cost a round
-// latency each time.
-const syncWindow = 5 * time.Minute
-
 // queueSync hands a sync to the background and returns at once. The seal that
 // triggered it has already committed, so the round is on disk either way: a
 // network that never answers delays the other machines' copy of it and nothing
 // else.
 //
-// A trigger arriving while one is already in flight is dropped rather than
-// queued. Attempts piling up behind a slow network do not make the backlog
-// smaller, and the seal path must stay cheap enough to run every tick.
+// A trigger arriving while an attempt holds the slot marks the slot dirty
+// instead of starting a second attempt: the one in flight may have read the
+// outbox before the write that caused this trigger, so it runs once more when
+// it ends. Attempts still never pile up behind a slow network -- any number of
+// triggers during one attempt cost one rerun.
 func (d *Daemon) queueSync(ctx context.Context) {
 	// The store is read here rather than inside the goroutine, so a refresh
 	// that replaces the runtime mid-attempt cannot hand the pipeline a second
@@ -45,37 +39,34 @@ func (d *Daemon) queueSync(ctx context.Context) {
 	if !runner.On() {
 		return
 	}
+	// A backing-off or latched machine refuses the trigger before it takes the
+	// slot: the per-call gate would refuse every call anyway, and holding the
+	// slot for that would make a verb wait behind an attempt that does nothing.
+	if !breakerDue(runner) {
+		return
+	}
 
+	now := d.syncClock()()
 	d.syncMu.Lock()
 	if d.syncInFlight {
+		d.live.dirty = true
 		d.syncMu.Unlock()
 		return
 	}
 	d.syncInFlight = true
+	d.live.startedAt = now
 	d.syncMu.Unlock()
 
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("turso sync panicked", "panic", r, "stack", string(debug.Stack()))
-			}
-			d.syncMu.Lock()
-			d.syncInFlight = false
-			// A verb may be waiting for the slot this attempt held; it has to be
-			// woken here or it waits for a trigger that already ended.
-			d.signalIdleLocked()
-			d.syncMu.Unlock()
-		}()
-		d.runSync(ctx, runner, st)
-	}()
+	go d.syncSlot(ctx, runner, st)
 }
 
 // idleSync runs the window's one pipeline, or does nothing at all.
 //
-// The window is measured from the last attempt this daemon opened rather than
-// from the last one that succeeded: the breaker owns the backoff, so a failed
-// attempt is retried by the next window or by the next seal, and this window
-// only decides when to ask.
+// The window is measured from the last window this daemon opened rather than
+// from the last attempt that succeeded: the breaker owns the backoff, so a
+// failed attempt is retried by the next window or by the next seal, and this
+// window only decides when to ask. Between windows, an outbox with entries in
+// it asks for an export once the last attempt is old enough.
 func (d *Daemon) idleSync(ctx context.Context) {
 	runner := d.syncRunner()
 	if !runner.On() {
@@ -84,18 +75,19 @@ func (d *Daemon) idleSync(ctx context.Context) {
 
 	now := d.syncClock()()
 	d.syncMu.Lock()
-	closed := !d.syncLast.IsZero() && now.Sub(d.syncLast) < syncWindow
+	closed := !d.syncLast.IsZero() && now.Sub(d.syncLast) < d.pullWindowLocked(now)
 	if !closed {
 		d.syncLast = now
 	}
 	d.syncMu.Unlock()
 	if closed {
+		d.exportIfPending(ctx, now)
 		return
 	}
 	d.queueSync(ctx)
 }
 
-// runSync is the shared body of both triggers: it drives the steady pipeline
+// runSync is the shared body of every trigger: it drives the steady pipeline
 // over the shared file and says what happened once, at a level a human reads.
 //
 // It asks Enabled here rather than before the slot was taken: a verb replaces
@@ -116,8 +108,10 @@ func (d *Daemon) runSync(ctx context.Context, runner *relevosync.Runner, st *sto
 	// and the tick takes the same route, so a reboot, an upgrade or a re-exec
 	// does not leave the pipeline starting workers with no origin or remote.
 	if d.syncVerbs != nil {
+		start := time.Now()
 		if err := d.syncVerbs.EnsureTransport(ctx); err != nil {
 			slog.Warn("sync: open the stored remote", "err", err)
+			runner.RecordFailure(start, err)
 			return
 		}
 	}
@@ -126,6 +120,7 @@ func (d *Daemon) runSync(ctx context.Context, runner *relevosync.Runner, st *sto
 		slog.Warn("sync failed", "err", out.Err, "attention", out.Attention)
 		return
 	}
+	d.noteApplied(out.Applied)
 	slog.Info("sync", "exported", out.Exported, "applied", out.Applied)
 }
 

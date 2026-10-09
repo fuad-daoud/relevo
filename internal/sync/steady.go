@@ -85,8 +85,10 @@ func (r *Runner) SyncOnce(ctx context.Context, shared *db.DB) SteadyResult {
 	if !r.Enabled() || shared == nil {
 		return SteadyResult{Err: errNoSync}
 	}
+	start := time.Now()
 	out := r.attempt(ctx, shared)
 	r.record(out)
+	r.RecordAttempt(start, out)
 	return out
 }
 

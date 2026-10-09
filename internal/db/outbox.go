@@ -31,3 +31,18 @@ func (t *Tx) TruncateOutbox() error {
 	}
 	return nil
 }
+
+// HasOutboxEntries reports whether any shared-table write is waiting to be
+// exported. It is one EXISTS on the handle's own pool -- no transaction, no row
+// read -- so a daemon tick can ask it every interval. A file whose schema
+// predates the outbox has nothing waiting.
+func (d *DB) HasOutboxEntries() (bool, error) {
+	var has bool
+	if err := d.sqlDB.QueryRow(`SELECT EXISTS(SELECT 1 FROM sync_outbox)`).Scan(&has); err != nil {
+		if isMissingTable(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("db: outbox probe: %w", mapBusy(err))
+	}
+	return has, nil
+}

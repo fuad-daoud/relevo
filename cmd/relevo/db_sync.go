@@ -204,6 +204,9 @@ type dbSyncStatusDoc struct {
 	// while reading off.
 	Joining   bool   `json:"joining,omitempty"`
 	JoinSince string `json:"join_since,omitempty"`
+	// LastAttempt is the daemon's last steady attempt, absent until it has run
+	// one.
+	LastAttempt *dbSyncAttemptDoc `json:"last_attempt,omitempty"`
 }
 
 // dbSyncOutcomeDoc is what enable and disable print under --json: what the run
@@ -467,6 +470,7 @@ func cmdDBSyncStatus(args []string) error {
 		HeldOrigins:  state.Trouble.Held,
 		Dropped:      state.Trouble.Dropped,
 		Gaps:         state.Trouble.Gaps,
+		LastAttempt:  attemptDoc(state.Attempt),
 	}
 	// A join in progress is a read of the machine-local marker, so status can
 	// show one with the network blackholed and no worker open.
@@ -526,18 +530,8 @@ func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 	for _, gap := range doc.Gaps {
 		fmt.Fprintf(&b, " · gap: %s", sanitize.Text(gap))
 	}
+	b.WriteString(dbSyncAttemptDetails(doc.LastAttempt))
 	return b.String()
-}
-
-// statusStamp renders a recorded moment as the UTC RFC 3339 instant a reader
-// can compare, or "" when nothing was ever recorded. A zero time is not 1970
-// here: it is a moment that never happened, and printing it as one would be a
-// true statement about the wrong thing.
-func statusStamp(at time.Time) string {
-	if at.IsZero() {
-		return ""
-	}
-	return at.UTC().Format(time.RFC3339)
 }
 
 // dbSyncClassify maps a failure out of the sync package onto the frame's codes.

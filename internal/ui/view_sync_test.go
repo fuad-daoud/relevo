@@ -663,3 +663,40 @@ func TestSyncViewSanitizesImportTrouble(t *testing.T) {
 		}
 	}
 }
+
+// TestSyncViewShowsAFailedAttempt pins that the daemon's last attempt is drawn:
+// a failure reads as failed with its error, sanitized, even when the older
+// export and import times beside it look healthy.
+func TestSyncViewShowsAFailedAttempt(t *testing.T) {
+	snap := syncPostOnSnapshot()
+	snap.LastExport = syncNow.Add(-2 * time.Minute)
+	snap.LastImport = syncNow.Add(-2 * time.Minute)
+	snap.State.Attempt = relevosync.Attempt{
+		Start: syncNow.Add(-time.Minute), End: syncNow.Add(-50 * time.Second),
+		Exported: 2, Applied: 1, Error: "remote down\x1b[2J", Attention: true,
+	}
+
+	env := Env{Ctx: t.Context(), Now: syncNow, Width: 200, Height: 60, Loaded: true}
+	body := plain(syncView{snap: snap, loaded: true, actions: true, now: syncNow}.Body(env, 200, 60))
+	for _, want := range []string{"last attempt", "failed", "remote down", "exported 2", "applied 1", "needs attention"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the sync view does not show %q:\n%s", want, body)
+		}
+	}
+	assertNoControlBytes(t, "the sync view", body)
+}
+
+func TestSyncViewShowsACleanAttemptAndNoneWhenAbsent(t *testing.T) {
+	snap := syncPostOnSnapshot()
+	env := Env{Ctx: t.Context(), Now: syncNow, Width: 200, Height: 60, Loaded: true}
+	body := plain(syncView{snap: snap, loaded: true, actions: true, now: syncNow}.Body(env, 200, 60))
+	if strings.Contains(body, "last attempt") {
+		t.Errorf("a machine with no recorded attempt drew one:\n%s", body)
+	}
+
+	snap.State.Attempt = relevosync.Attempt{Start: syncNow.Add(-time.Minute), End: syncNow.Add(-50 * time.Second), Exported: 1}
+	body = plain(syncView{snap: snap, loaded: true, actions: true, now: syncNow}.Body(env, 200, 60))
+	if !strings.Contains(body, "last attempt") || strings.Contains(body, "failed") {
+		t.Errorf("a clean attempt is not drawn as ok:\n%s", body)
+	}
+}

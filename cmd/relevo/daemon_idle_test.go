@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
 func TestIdleExit(t *testing.T) {
@@ -22,6 +23,8 @@ func TestIdleExit(t *testing.T) {
 		{"live connection", daemonActivity{Conns: 1, RootExists: true}, time.Hour, time.Minute, false},
 		{"running builder", daemonActivity{Running: true, RootExists: true}, time.Hour, time.Minute, false},
 		{"queued round", daemonActivity{Queued: true, RootExists: true}, time.Hour, time.Minute, false},
+		{"sync on", daemonActivity{SyncOn: true, RootExists: true}, time.Hour, time.Minute, false},
+		{"sync on with the root gone", daemonActivity{SyncOn: true}, 0, time.Minute, true},
 		{"all idle under the period", daemonActivity{RootExists: true}, 30 * time.Second, time.Minute, false},
 		{"all idle past the period", daemonActivity{RootExists: true}, 2 * time.Minute, time.Minute, true},
 		{"root gone while busy", daemonActivity{Conns: 1, Running: true, Queued: true}, 0, time.Minute, true},
@@ -201,4 +204,77 @@ func TestWatchDaemonIdleStaysWhileBusyAndReturnsOnCancel(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("watcher did not return after cancel")
 	}
+}
+
+// TestDaemonActivityReadsTheSyncMarker pins the sampler's sync-on field against
+// a real store: the machine-local enabled mark decides it, a machine that never
+// turned sync on is not kept alive, and a marker the sampler cannot read keeps
+// the daemon up rather than letting it exit on a sample it never took.
+func TestDaemonActivityReadsTheSyncMarker(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		on      bool
+		corrupt bool
+	}{
+		{"sync on", true, false},
+		{"sync off", false, false},
+		{"unreadable marker", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			s := store.New(root)
+			mdb, err := s.DB()
+			if err != nil {
+				t.Fatalf("store db: %v", err)
+			}
+			local, err := relevosync.LocalHandle(mdb)
+			if err != nil {
+				t.Fatalf("LocalHandle: %v", err)
+			}
+			if tc.on && !tc.corrupt {
+				if err := relevosync.MarkEnabled(local, true, time.Now()); err != nil {
+					t.Fatalf("MarkEnabled: %v", err)
+				}
+			}
+			if tc.corrupt {
+				if err := local.KVPut(relevosync.KeyLastAttempt, []byte(`"not an attempt"`)); err != nil {
+					t.Fatalf("KVPut: %v", err)
+				}
+			}
+			a := daemonActivityNow(root, nil, s)
+			if a.SyncOn != tc.on {
+				t.Errorf("activity = %+v, want SyncOn %v", a, tc.on)
+			}
+		})
+	}
+}
+
+// TestWatchDaemonIdleStaysWhileSyncIsOn pins that a sync-on sample alone keeps
+// the watcher from ever cancelling the daemon.
+func TestWatchDaemonIdleStaysWhileSyncIsOn(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	calls := make(chan struct{}, 64)
+	sample := func() daemonActivity {
+		calls <- struct{}{}
+		return daemonActivity{RootExists: true, SyncOn: true}
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		watchDaemonIdle(ctx, cancel, time.Millisecond, time.Millisecond, time.Now, sample)
+	}()
+	for i := 0; i < 5; i++ {
+		select {
+		case <-calls:
+		case <-time.After(5 * time.Second):
+			t.Fatal("watcher stopped sampling while sync was on")
+		}
+	}
+	if ctx.Err() != nil {
+		t.Fatal("watcher cancelled an idle daemon whose sync is on")
+	}
+	cancel()
+	<-done
 }

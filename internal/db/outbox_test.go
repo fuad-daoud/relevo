@@ -90,3 +90,51 @@ func seedOutboxRows(t *testing.T, d *DB, dirs ...string) {
 		}
 	}
 }
+
+// TestHasOutboxEntriesTracksTheLog pins the probe against a real handle: empty
+// before a write, set after one, empty again after a truncate.
+func TestHasOutboxEntriesTracksTheLog(t *testing.T) {
+	d, _ := truncateDB(t)
+	has := func() bool {
+		t.Helper()
+		got, err := d.HasOutboxEntries()
+		if err != nil {
+			t.Fatalf("HasOutboxEntries: %v", err)
+		}
+		return got
+	}
+	if has() {
+		t.Fatal("a fresh handle reports outbox entries")
+	}
+	seedOutboxRows(t, d, "/checkout/probe")
+	if !has() {
+		t.Error("a handle with a recorded write reports an empty outbox")
+	}
+	if err := d.TruncateOutbox(); err != nil {
+		t.Fatalf("TruncateOutbox: %v", err)
+	}
+	if has() {
+		t.Error("a truncated outbox reports entries")
+	}
+}
+
+// TestHasOutboxEntriesOnAFileWithoutTheTable pins that a file with no outbox
+// has nothing waiting.
+func TestHasOutboxEntriesOnAFileWithoutTheTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	sqlDB := rawSQLDB(t, path)
+	if err := applyMigrations(sqlDB, migrationFiles); err != nil {
+		t.Fatalf("applyMigrations: %v", err)
+	}
+	if _, err := sqlDB.Exec(`DROP TABLE sync_outbox`); err != nil {
+		t.Fatalf("drop sync_outbox: %v", err)
+	}
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	if got, err := d.HasOutboxEntries(); err != nil || got {
+		t.Errorf("HasOutboxEntries without the table = (%v, %v), want (false, nil)", got, err)
+	}
+}

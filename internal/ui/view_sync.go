@@ -336,6 +336,7 @@ func (v syncView) postOnLines(width int) []string {
 		lines = append(lines, syncLine("last import", v.localStampPhrase(v.snap.LastImport), mutedStyle))
 	}
 	lines = append(lines, syncLine("first upload", v.uploadProgress(), mutedStyle))
+	lines = append(lines, v.attemptLines()...)
 	if v.snap.Attention != "" {
 		lines = append(lines, "")
 		lines = append(lines, "   "+errorStyle.Render(v.snap.Attention))

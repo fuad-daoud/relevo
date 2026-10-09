@@ -39,6 +39,12 @@ func Info(context.Context, string) (info, error) {
 		"; relevo supports Linux and macOS")
 }
 
+// SyncFreshen refuses: there is no socket to send one over off unix.
+func SyncFreshen(context.Context, string) error {
+	return errors.New("relevo sync hints are not implemented on " + runtime.GOOS +
+		"; relevo supports Linux and macOS")
+}
+
 // SyncVerb refuses: there is no socket to send one over off unix.
 func SyncVerb(context.Context, string, *wire.SyncVerb, []byte) (*wire.SyncResult, error) {
 	return nil, errors.New("relevo sync verbs are not implemented on " + runtime.GOOS +

@@ -94,3 +94,10 @@ func (c *conn) invoke(ctx context.Context, m *wire.SyncVerb, token []byte) (out 
 	}
 	return res
 }
+
+// current is the request this connection is serving, nil when it has none.
+func (c *conn) current() *request {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cur
+}

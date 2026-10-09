@@ -9,19 +9,29 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db/wire/owner"
 	"github.com/fuad-daoud/relevo/internal/store"
+	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
 // idlePoll is how often the idle watcher samples the daemon's activity.
 const idlePoll = 30 * time.Second
 
 // daemonActivity is one sample of what the daemon has to do: live owner
-// connections, a locally running builder or gate, a queued round, and whether
-// the state root still exists.
+// connections, a locally running builder or gate, a queued round, whether sync
+// is turned on, and whether the state root still exists.
 type daemonActivity struct {
-	Conns      int
-	Running    bool
-	Queued     bool
+	Conns   int
+	Running bool
+	Queued  bool
+	// SyncOn keeps the daemon alive: a machine whose sync is on needs a process
+	// to export and pull, and an idle exit would stop both until the next
+	// command happened to start one.
+	SyncOn     bool
 	RootExists bool
+}
+
+// busy is whether anything keeps the daemon from idling out.
+func (a daemonActivity) busy() bool {
+	return a.Conns > 0 || a.Running || a.Queued || a.SyncOn
 }
 
 // idleExit decides whether an idle daemon should exit: the root is gone, or
@@ -31,7 +41,7 @@ func idleExit(a daemonActivity, idleFor, after time.Duration) bool {
 	if !a.RootExists {
 		return true
 	}
-	if a.Conns > 0 || a.Running || a.Queued {
+	if a.busy() {
 		return false
 	}
 	if after <= 0 {
@@ -79,8 +89,34 @@ func daemonActivityNow(root string, srv *owner.Server, st *store.Store) daemonAc
 				a.Queued = true
 			}
 		}
+		a.SyncOn = syncSampledOn(st)
 	}
 	return a
+}
+
+// syncSampledOn reads the machine-local enabled marker. A machine with no
+// database, or no local file beside it, cannot be syncing. A read that fails is
+// busy rather than idle, for the same reason an unreadable root is: the daemon
+// must not exit on a sample it could not take.
+func syncSampledOn(st *store.Store) bool {
+	mdb, err := st.DBIfExists()
+	if err != nil {
+		slog.Warn("relevo daemon: idle open database", "err", err)
+		return true
+	}
+	if mdb == nil {
+		return false
+	}
+	local, err := relevosync.LocalHandle(mdb)
+	if err != nil {
+		return false
+	}
+	state, err := relevosync.ReadState(local)
+	if err != nil {
+		slog.Warn("relevo daemon: idle read sync marker", "err", err)
+		return true
+	}
+	return state.Enabled
 }
 
 // watchDaemonIdle cancels the daemon's own context once it has been idle for
@@ -101,7 +137,7 @@ func watchDaemonIdle(ctx context.Context, cancel context.CancelFunc, after, poll
 			return
 		case <-ticker.C:
 			a := sample()
-			if a.RootExists && (a.Conns > 0 || a.Running || a.Queued) {
+			if a.RootExists && a.busy() {
 				idleSince = time.Time{}
 				continue
 			}

@@ -126,6 +126,7 @@ func cmdStatus(args []string) error {
 	if err != nil {
 		return fail(codeInternal, "%v", err)
 	}
+	hintFreshen(*line, nil)
 	if rt.Remote != nil {
 		if _, _, serr := relevo.SyncRemoteUnlessDaemon(context.Background(), rt); serr != nil {
 			fmt.Fprintf(os.Stderr, "relevo: sync remote bindings: %v\n", serr)

@@ -155,6 +155,16 @@ func (d *DB) SyncVerb(ctx context.Context, verb *wire.SyncVerb, token []byte) (*
 	return res, nil
 }
 
+// SyncFreshen tells the owner serving this handle that a reader wants current
+// data. It waits for no answer and is best effort: a handle that did not dial
+// an owner has nobody to tell.
+func (d *DB) SyncFreshen(ctx context.Context) error {
+	if d.sock == "" {
+		return fmt.Errorf("db: sync freshen: this handle did not dial an owner: %w", ErrOpen)
+	}
+	return client.SyncFreshen(ctx, d.sock)
+}
+
 // NewOwner serves d on a listener the caller opened, and the machine-local
 // file beside it when d carries one. The owner and this package share nothing
 // else: the server takes the raw pools and the handle's facts. Both handles are

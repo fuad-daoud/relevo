@@ -133,6 +133,11 @@ const (
 	// KindSyncResult answers KindSyncVerb. It is a kind of its own rather than a
 	// Done, because a verb reports what the run did rather than rows affected.
 	KindSyncResult byte = 13
+	// KindSyncFreshen is a hint that a reader wants current data. It has no
+	// answer and takes no request slot, so it is never queued behind a verb: an
+	// owner that predates it drops the connection, which a sender that does not
+	// wait for a reply does not notice.
+	KindSyncFreshen byte = 14
 )
 
 // Encode builds a frame: the kind byte, a little-endian 4-byte header length,
