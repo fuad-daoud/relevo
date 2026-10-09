@@ -18,6 +18,7 @@ type Io = {
   sleep: (ms: number) => Promise<void>
   every: Engine['clock']['every']
   store: (doc: StatusDoc) => Promise<void>
+  toast: (text: string) => void
 }
 
 type PushEvent = {
@@ -37,6 +38,7 @@ type Ctx = {
   busy: boolean
   unread: Unread[]
   delivered: Set<string>
+  prev?: StatusDoc
 }
 
 const statusDoc = atom({ plugin: 'relevo', key: 'status' } as const, null)
@@ -46,6 +48,14 @@ const POLL_MS = 5_000
 const POLL_SLOW_MS = 30_000
 const POLL_FAILS_BEFORE_SLOW = 3
 const MAX_INBOX = 3
+const AMBER = '#f0b452'
+const TEAL = '#72c8d8'
+const PHASE = '#aab4b0'
+const DIM = '#8a9591'
+const FAINT = '#66716d'
+const DONE_GREEN = '#86d093'
+const AMBER_TINT = '#2a2212'
+const TEAL_TINT = '#12282d'
 // Restart delay doubles from the floor to the cap; a child that ran for
 // STABLE_MS counts as healthy and drops the delay back to the floor.
 const BACKOFF_MIN_MS = 1_000
@@ -96,6 +106,15 @@ function parseDoc(stdout: string): StatusDoc | undefined {
   }
 }
 
+// The first document seen only seeds the diff: a toast is a change between two polls.
+async function observe(ctx: Ctx, doc: StatusDoc): Promise<void> {
+  const prev = ctx.prev
+  ctx.prev = doc
+  await ctx.io.store(doc)
+  if (prev === undefined) return
+  for (const text of toastTexts(prev, doc)) ctx.io.toast(text)
+}
+
 async function fetchDoc(io: Io, env: Record<string, string>): Promise<StatusDoc | undefined> {
   try {
     const r = await io.run(['relevo', 'status', '--line', '--json'], { env })
@@ -120,7 +139,7 @@ function startPoller(ctx: Ctx): void {
       if (now < nextAt) return
       const doc = await fetchDoc(ctx.io, ctx.env)
       if (doc !== undefined) {
-        await ctx.io.store(doc)
+        await observe(ctx, doc)
         fails = 0
         nextAt = 0
         return
@@ -251,7 +270,7 @@ async function start(ctx: Ctx): Promise<void> {
       if (doc === undefined) return
       timer.cancel()
       ctx.env = { ...sessionEnv, RELEVO_MASTERMIND: doc.mastermind.id }
-      await ctx.io.store(doc)
+      await observe(ctx, doc)
       startPoller(ctx)
       void supervise(ctx)
     } finally {
@@ -304,33 +323,77 @@ function detail(r: StatusRow): string {
     const l = r.live
     return l ? `delivered · +${l.added}/-${l.removed} in ${l.files}` : 'delivered'
   }
-  return r.reason
+  return r.halt || r.reason
 }
 
-function inboxLabel(r: StatusRow, now: string): string {
-  const head = `● ${r.name} r${r.round}  ${r.status} · ${age(r, now)}`
-  const d = detail(r)
-  return d === '' ? head : `${head}  ${d}`
+// A report row names the round that reported, not the binding's next round.
+function shownRound(r: StatusRow): number {
+  return r.tone === 'report' && r.report_round ? r.report_round : r.round
 }
 
-function chainText(r: StatusRow): string {
+function stateWord(r: StatusRow, now: string): string {
+  return `${r.status.toLowerCase()} · ${age(r, now)}`
+}
+
+type ChainBar = { done: string; current: string; rest: string; tail: string }
+
+// done / total with the phase; the bar marks the plan in flight apart from the ones still to come.
+function chainBar(r: StatusRow): ChainBar | undefined {
   const p = r.chain_progress
-  if (p && p.total > 0) {
-    const done = Math.max(0, Math.min(p.done, p.total))
-    const bar = '■'.repeat(done) + '□'.repeat(p.total - done)
-    return `${bar} ${p.done}/${p.total}${p.phase ? ` ${p.phase}` : ''}`
+  if (!p || p.total <= 0) return undefined
+  const done = Math.max(0, Math.min(p.done, p.total))
+  const running = done < p.total ? 1 : 0
+  return {
+    done: '■'.repeat(done),
+    current: '▣'.repeat(running),
+    rest: '□'.repeat(p.total - done - running),
+    tail: `${p.done}/${p.total}${p.phase ? ` ${p.phase}` : ''}`,
   }
-  return r.chain ?? ''
 }
 
 function railWord(r: StatusRow): string {
-  if (r.chain) return chainText(r)
+  if (r.chain) return r.chain
   return r.activity ? r.activity : r.status
 }
 
 function fit(text: string, cols: number): string {
   if (cols <= 0) return ''
   return text.length <= cols ? text : `${text.slice(0, Math.max(0, cols - 1))}…`
+}
+
+function chainMoved(prev: StatusRow, cur: StatusRow): string | undefined {
+  const a = prev.chain_progress
+  const b = cur.chain_progress
+  if (!a || !b || b.done <= a.done) return undefined
+  const where = b.done >= b.total ? 'chain finished' : `chain moved to plan ${b.done + 1}/${b.total}`
+  return `relevo: ${cur.name} ${where}`
+}
+
+function gateTexts(prev: StatusDoc, cur: StatusDoc): string[] {
+  if (!Array.isArray(prev.gates) || !Array.isArray(cur.gates)) return []
+  const before = new Set(prev.gates.map((g) => g.token))
+  const after = new Set(cur.gates.map((g) => g.token))
+  return [
+    ...cur.gates
+      .filter((g) => !before.has(g.token))
+      .map((g) => `relevo: gate set on ${g.token} until ${g.until === '' ? 'cleared' : g.until}: ${g.reason}`),
+    ...prev.gates.filter((g) => !after.has(g.token)).map((g) => `relevo: gate lifted on ${g.token}`),
+  ]
+}
+
+// Never for an arriving report or question: only chain, candidate and gate changes toast.
+function toastTexts(prev: StatusDoc, cur: StatusDoc): string[] {
+  const out: string[] = []
+  for (const r of cur.rows) {
+    const p = prev.rows.find((x) => x.name === r.name)
+    if (p === undefined) continue
+    const moved = chainMoved(p, r)
+    if (moved !== undefined) out.push(moved)
+    if (p.candidate && r.candidate && p.candidate !== r.candidate) {
+      out.push(`relevo: ${r.name} switched to ${r.candidate}`)
+    }
+  }
+  return [...out, ...gateTexts(prev, cur)]
 }
 
 export const register: Register = (on) => {
@@ -348,6 +411,7 @@ export const register: Register = (on) => {
       sleep: (ms) => $.clock.sleep(ms),
       every: (ms, fn) => $.clock.every(ms, fn),
       store: (doc) => update($, statusDoc, () => doc),
+      toast: (text) => $.ui.toast(text),
     }
     ctx.env = { CLAUDE_CODE_SESSION_ID: await $.session.id() }
     void start(ctx)
@@ -393,43 +457,96 @@ export const register: Register = (on) => {
     const press = (name: string) => () => {
       void $.prompt.fill({ text: `relevo show ${name} --report` })
     }
+    // Returns the node and the columns it takes. A plain Button with a hotkey is drawn
+    // as `1: label`, so the label must not repeat the digit.
     const button = (r: StatusRow, label: string, room: number) => {
       digit++
       const hotkey = digit <= 9 ? String(digit) : undefined
-      // A plain Button with a hotkey is drawn as `1: label`; the label must not repeat the digit.
-      const width = hotkey === undefined ? room : Math.max(1, room - 3)
-      return h(Button, { key: `b${r.name}`, plain: true, hotkey, label: fit(label, width), onPress: press(r.name) })
+      const text = fit(label, hotkey === undefined ? room : Math.max(1, room - 3))
+      const node = h(Button, { key: `b${r.name}`, plain: true, hotkey, label: text, onPress: press(r.name) })
+      return { node, width: text.length + (hotkey === undefined ? 0 : 3) }
     }
+    const txt = (text: string, props: object, room: number) =>
+      h(Text, { wrap: 'truncate-end', ...props }, fit(text, room))
 
-    const inbox = shown.map((r) => button(r, inboxLabel(r, doc.now), cols))
-    const rail: ReturnType<typeof button>[] = []
-    let used = fit(`relevo · ${doc.mastermind.name}`, cols).length
+    const inbox = shown.map((r) => {
+      const tone = r.tone === 'needs' ? AMBER : TEAL
+      const tint = r.tone === 'needs' ? AMBER_TINT : TEAL_TINT
+      let room = cols
+      const head = button(r, `● ${r.name} r${shownRound(r)}`, room)
+      room -= head.width + 1
+      const state = fit(stateWord(r, doc.now), Math.max(0, room))
+      room -= state.length + 1
+      const nx = r.next
+      const nextLabel = nx ? fit(`→ ${nx.label}`, Math.max(0, room)) : ''
+      room -= nextLabel === '' ? 0 : nextLabel.length + 1
+      const extra = fit(detail(r), Math.max(0, room))
+      return h(
+        Box,
+        { key: `i${r.name}`, flexDirection: 'row', gap: 1, backgroundColor: tint },
+        head.node,
+        state === '' ? null : h(Text, { color: tone }, state),
+        extra === '' ? null : h(Text, { color: DIM }, extra),
+        nx && nextLabel !== ''
+          ? h(Button, {
+              key: `n${r.name}`,
+              plain: true,
+              label: nextLabel,
+              onPress: () => {
+                void $.prompt.fill({ text: nx.text })
+              },
+            })
+          : null,
+      )
+    })
+
+    const title = fit(`relevo · ${doc.mastermind.name}`, cols)
+    const rail: unknown[] = []
+    let used = title.length
     let hidden = 0
     for (const r of rest) {
-      const label = `○ ${r.name} ${railWord(r)}`
       const room = cols - used - 2
       if (room < 4) {
         hidden++
         continue
       }
-      const b = button(r, label, room)
-      used += 2 + Math.min(label.length + (digit <= 9 ? 3 : 0), room)
-      rail.push(b)
+      const b = button(r, `○ ${r.name}`, room)
+      const bar = chainBar(r)
+      const wordRoom = Math.max(0, room - b.width - 1)
+      const parts: unknown[] = [b.node]
+      let width = b.width
+      if (bar !== undefined) {
+        const glyphs = bar.done.length + bar.current.length + bar.rest.length
+        if (wordRoom >= glyphs) {
+          parts.push(
+            h(Text, { key: `d${r.name}`, color: DONE_GREEN }, bar.done),
+            h(Text, { key: `c${r.name}`, bold: true }, bar.current),
+            h(Text, { key: `r${r.name}`, color: FAINT }, bar.rest),
+            txt(bar.tail, { color: PHASE }, wordRoom - glyphs - 1),
+          )
+          width += 1 + Math.min(wordRoom, glyphs + 1 + bar.tail.length)
+        }
+      } else {
+        const word = fit(railWord(r), wordRoom)
+        parts.push(h(Text, { color: PHASE }, word))
+        width += 1 + word.length
+      }
+      used += 2 + width
+      rail.push(h(Box, { key: `rail${r.name}`, flexDirection: 'row', gap: 1 }, ...parts))
     }
 
-    const head = h(Text, { wrap: 'truncate-end' }, fit(`relevo · ${doc.mastermind.name}`, cols))
     const railRow = h(
       Box,
       { flexDirection: 'row', gap: 2 },
-      head,
+      h(Text, { wrap: 'truncate-end', dimColor: true, bold: true }, title),
       ...rail,
-      hidden > 0 ? h(Text, { wrap: 'truncate-end' }, `+${hidden}`) : null,
+      hidden > 0 ? h(Text, { wrap: 'truncate-end', color: DIM }, `+${hidden}`) : null,
     )
     return h(
       Box,
       { flexDirection: 'column' },
       ...inbox,
-      more > 0 ? h(Text, { wrap: 'truncate-end' }, fit(`+${more} more · /relevo:status`, cols)) : null,
+      more > 0 ? txt(`+${more} more · /relevo:status`, { color: DIM }, cols) : null,
       railRow,
     )
   })
