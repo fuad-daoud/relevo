@@ -67,3 +67,37 @@ Focused command while iterating: `claude plugin test claude-plugin`. Final full 
 3. The builder's machine runs Claude Code 2.1.293; if `claude plugin
    validate`/`test` disagree with the 2.1.294 declarations anywhere, record the
    difference in the report rather than coding around it silently.
+
+## Round 2
+
+On top of 71690903 ("Deliver relevo push lines from the Claude Code mod");
+new commit only (no amend/rebase/force-push). Harden the mod's delivery
+(`claude-plugin/hooks/register.ts`). TypeScript only; if a Go change is needed,
+stop and report.
+
+1. **A failed ack stalls delivery.** `relevo push` waits for each entry's
+   confirm before writing the next line, so after `ack()` gives up the stream
+   stops for good with only a log line. Fix:
+   - Keep a per-session set of delivered `(binding, seq)` (seq > 0) in `Ctx`.
+   - `ack()` retries with a delay (e.g. 1 s, 2 s, 4 s... up to ~60 s total,
+     via `io.sleep`), not 3 immediate tries.
+   - If the ack still fails, end the child (return from `consume`), so
+     `relevo push` clears the admit and, after the supervisor restarts it,
+     sends the same line again.
+   - When a line arrives whose `(binding, seq)` is already in the delivered
+     set, do NOT deliver it again: only ack it.
+   - Tests: ack fails every try -> child ended, nothing delivered twice, the
+     resent line is acked without a second submit/append; ack succeeds on the
+     third try -> one delivery, one ack, the child keeps running.
+   - Mutation: drop the delivered-set check -> the resend test must fail.
+2. **Delivery retries are immediate.** Add a short growing delay between the
+   `DELIVER_TRIES` attempts (`io.sleep`). Test: a refusal then success
+   delivers once and waits between tries.
+3. **The nudge text for state lines.** When the unread item came from a
+   `kind: "state"` line, say so ("relevo: <binding> r<round> changed state
+   (needs_you|broken) -- see above") instead of calling it a report. Test both
+   wordings.
+4. **`mod-test` is not in `.PHONY`** in the Makefile; add it.
+
+Finish: `make mod-test` (all pass, give the count), `make check`; report the
+tests by name, the mutation, and `git diff --stat 71690903..HEAD`.

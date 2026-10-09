@@ -239,25 +239,61 @@ describe('ack gate', () => {
     expect(f.acks()).toHaveLength(1)
   })
 
-  test('a failed ack is retried a bounded number of times', async ($, on) => {
+  test('ack succeeding on the third try: one delivery, one ack, child keeps running', async ($, on) => {
     let n = 0
     const f = fakes(on, { ackExit: () => (++n < 3 ? 1 : 0) })
     await startSession($)
     await f.clock.settle()
     f.pipes[0]?.push(report(5))
     await f.clock.settle()
+    expect(f.acks()).toHaveLength(1)
+    await f.clock.advance(1_000)
+    expect(f.acks()).toHaveLength(2)
+    await f.clock.advance(2_000)
+    expect(f.acks()).toHaveLength(3)
+    await f.clock.advance(120_000)
+    expect(f.submits).toEqual(['report text'])
     expect(f.acks()).toHaveLength(3)
     expect(f.log).toHaveLength(0)
+    expect(f.spawns).toHaveLength(1)
   })
 
-  test('an ack that never succeeds stops after 3 tries and logs', async ($, on) => {
-    const f = fakes(on, { ackExit: () => 1 })
+  test('an ack that never succeeds ends the child; the resent line is only acked', async ($, on) => {
+    let fail = true
+    const f = fakes(on, { ackExit: () => (fail ? 1 : 0) })
     await startSession($)
     await f.clock.settle()
     f.pipes[0]?.push(report(5))
     await f.clock.settle()
-    expect(f.acks()).toHaveLength(3)
+    await f.clock.advance(63_000)
+    expect(f.acks()).toHaveLength(7)
     expect(f.log).toHaveLength(1)
+    expect(f.submits).toEqual(['report text'])
+    await f.clock.advance(1_000)
+    expect(f.spawns).toHaveLength(2)
+    fail = false
+    f.pipes[1]?.push(report(5))
+    await f.clock.settle()
+    expect(f.submits).toEqual(['report text'])
+    expect(f.appends()).toHaveLength(0)
+    expect(f.acks()).toHaveLength(8)
+  })
+})
+
+describe('delivery retry', () => {
+  test('a refusal then success delivers once and waits between tries', async ($, on) => {
+    let n = 0
+    const f = fakes(on, { submit: (text) => (++n < 2 ? { drop: 'busy' } : { text }) })
+    await startSession($)
+    await f.clock.settle()
+    f.pipes[0]?.push(report(5))
+    await f.clock.settle()
+    expect(n).toBe(1)
+    expect(f.acks()).toHaveLength(0)
+    await f.clock.advance(500)
+    expect(n).toBe(2)
+    expect(f.submits).toEqual(['report text'])
+    expect(f.acks()).toHaveLength(1)
   })
 })
 
@@ -269,6 +305,7 @@ describe('refusal', () => {
     await f.clock.settle()
     f.pipes[0]?.push(report(9))
     await f.clock.settle()
+    await f.clock.advance(1_500)
     expect(f.acks()).toHaveLength(0)
     expect(f.log.length).toBeGreaterThan(0)
     expect(f.log[0]).toContain('refused')
@@ -276,6 +313,7 @@ describe('refusal', () => {
     expect(f.spawns).toHaveLength(2)
     f.pipes[1]?.push(report(9))
     await f.clock.settle()
+    await f.clock.advance(1_500)
     expect(f.log.length).toBeGreaterThan(3)
   })
 
@@ -285,6 +323,7 @@ describe('refusal', () => {
     await f.clock.settle()
     f.pipes[0]?.push(report(9))
     await f.clock.settle()
+    await f.clock.advance(1_500)
     expect(f.acks()).toHaveLength(0)
     expect(f.log[0]).toContain('blocked')
     await f.clock.advance(1_000)
@@ -344,5 +383,31 @@ describe('unread append nudge', () => {
     await endTurn($)
     await f.clock.settle()
     expect(f.submits).toHaveLength(1)
+  })
+})
+
+describe('state nudge wording', () => {
+  test('a state line says the binding changed state, not report', async ($, on) => {
+    const f = fakes(on)
+    await startSession($)
+    await startTurn($)
+    await f.clock.settle()
+    f.pipes[0]?.push(line({ seq: 0, binding: 'b1', round: 2, kind: 'state', state: 'NEEDS_YOU', text: 'b1 needs you' }))
+    await f.clock.settle()
+    await endTurn($)
+    await f.clock.settle()
+    expect(f.submits).toEqual(['relevo: b1 r2 changed state (needs_you) -- see above'])
+  })
+
+  test('a report line keeps the report wording', async ($, on) => {
+    const f = fakes(on)
+    await startSession($)
+    await startTurn($)
+    await f.clock.settle()
+    f.pipes[0]?.push(report(4))
+    await f.clock.settle()
+    await endTurn($)
+    await f.clock.settle()
+    expect(f.submits).toEqual(['relevo: the report for b1 r2 is above -- act on it'])
   })
 })

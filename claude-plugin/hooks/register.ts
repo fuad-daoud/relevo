@@ -21,14 +21,18 @@ type PushEvent = {
   binding: string
   round: number
   kind: string
+  state: string
   text: string
 }
+
+type Unread = { binding: string; round: number; kind: string; state: string }
 
 type Ctx = {
   io: Io
   env: Record<string, string>
   busy: boolean
-  unread: string[]
+  unread: Unread[]
+  delivered: Set<string>
 }
 
 const RESOLVE_RETRY_MS = 10_000
@@ -38,7 +42,10 @@ const BACKOFF_MIN_MS = 1_000
 const BACKOFF_MAX_MS = 60_000
 const STABLE_MS = 30_000
 const DELIVER_TRIES = 3
-const ACK_TRIES = 3
+const DELIVER_RETRY_MS = 500
+// Ack waits 1, 2, 4 ... 32 s between its 7 tries: about a minute in all.
+const ACK_TRIES = 7
+const ACK_RETRY_MIN_MS = 1_000
 
 function parseEvent(line: string): PushEvent | undefined {
   try {
@@ -53,6 +60,7 @@ function parseEvent(line: string): PushEvent | undefined {
         binding: v.binding,
         round: typeof v.round === 'number' ? v.round : 0,
         kind: typeof v.kind === 'string' ? v.kind : '',
+        state: typeof v.state === 'string' ? v.state : '',
         text: v.text,
       }
     }
@@ -90,7 +98,7 @@ async function submitOnce(ctx: Ctx, ev: PushEvent): Promise<string | undefined> 
     message: { type: 'user', content: [{ type: 'text', text: ev.text }] },
   })
   if (r.deny !== undefined) return r.deny
-  ctx.unread.push(`${ev.binding} r${ev.round}`)
+  ctx.unread.push({ binding: ev.binding, round: ev.round, kind: ev.kind, state: ev.state })
   return undefined
 }
 
@@ -103,25 +111,30 @@ async function deliver(ctx: Ctx, ev: PushEvent): Promise<boolean> {
     } catch (err) {
       ctx.io.log(`relevo push: ${ev.binding} #${ev.seq} failed: ${String(err)}`)
     }
+    if (i < DELIVER_TRIES - 1) await ctx.io.sleep(DELIVER_RETRY_MS * 2 ** i)
   }
   return false
 }
 
-async function ack(ctx: Ctx, ev: PushEvent): Promise<void> {
-  if (ev.seq === 0) return
+// False when the ack never landed: the caller ends the child so `relevo push`
+// clears the admit and resends the line after the restart.
+async function ack(ctx: Ctx, ev: PushEvent): Promise<boolean> {
+  if (ev.seq === 0) return true
   const argv = ['relevo', 'push', '--ack', ev.binding, String(ev.seq), '--json']
   for (let i = 0; i < ACK_TRIES; i++) {
     try {
       const r = await ctx.io.run(argv, { env: ctx.env })
-      if (r.exitCode === 0) return
+      if (r.exitCode === 0) return true
     } catch {
       // retried below
     }
+    if (i < ACK_TRIES - 1) await ctx.io.sleep(ACK_RETRY_MIN_MS * 2 ** i)
   }
   ctx.io.log(`relevo push: ack of ${ev.binding} #${ev.seq} failed`)
+  return false
 }
 
-// Resolves false when a line could not be delivered: the caller ends the child.
+// Returns when a line could not be delivered or acked: the caller ends the child.
 async function consume(ctx: Ctx): Promise<void> {
   const child = ctx.io.spawn({ argv: ['relevo', 'push'], env: ctx.env })
   let buf = ''
@@ -133,10 +146,27 @@ async function consume(ctx: Ctx): Promise<void> {
     for (const line of lines) {
       const ev = parseEvent(line)
       if (ev === undefined) continue
-      if (!(await deliver(ctx, ev))) return
-      await ack(ctx, ev)
+      const key = `${ev.binding}#${ev.seq}`
+      if (ev.seq === 0 || !ctx.delivered.has(key)) {
+        if (!(await deliver(ctx, ev))) return
+        if (ev.seq > 0) ctx.delivered.add(key)
+      }
+      if (!(await ack(ctx, ev))) return
     }
   }
+}
+
+function nudgeText(unread: Unread[]): string {
+  const states = unread.filter((u) => u.kind === 'state')
+  const reports = unread.filter((u) => u.kind !== 'state')
+  const parts: string[] = []
+  if (reports.length > 0) {
+    parts.push(`the report for ${reports.map((u) => `${u.binding} r${u.round}`).join(', ')} is above -- act on it`)
+  }
+  for (const u of states) {
+    parts.push(`${u.binding} r${u.round} changed state (${u.state.toLowerCase()}) -- see above`)
+  }
+  return `relevo: ${parts.join('; ')}`
 }
 
 async function supervise(ctx: Ctx): Promise<void> {
@@ -182,7 +212,7 @@ async function start(ctx: Ctx): Promise<void> {
 }
 
 export const register: Register = (on) => {
-  const ctx: Ctx = { io: undefined as unknown as Io, env: {}, busy: false, unread: [] }
+  const ctx: Ctx = { io: undefined as unknown as Io, env: {}, busy: false, unread: [], delivered: new Set() }
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -221,7 +251,7 @@ export const register: Register = (on) => {
     ctx.unread = []
     const result = await next(e)
     if (unread.length > 0) {
-      const text = `relevo: the report for ${unread.join(', ')} is above -- act on it`
+      const text = nudgeText(unread)
       void $.prompt.submit({ text }).catch((err: unknown) => {
         $.ui.log(`relevo push: nudge failed: ${String(err)}`)
       })
