@@ -69,6 +69,7 @@ func newVerbRunner(d *db.DB) *relevo.VerbRunner {
 		Local:       local,
 		Path:        d.Path(),
 		ReplicaPath: syncpipe.ReplicaPath(d.Path()),
+		StagingDir:  syncpipe.BlobStagingDir(d.Path()),
 		Runner:      syncpipe.NewSyncRunner(syncpipe.Config{}, local),
 		ClientName:  dbSyncHandleName,
 	}

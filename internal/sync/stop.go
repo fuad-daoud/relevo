@@ -106,7 +106,7 @@ func (s *StopTransport) PutBlob(key, stagingPath string) (int64, bool, error) {
 	return m.PutBlob(key, stagingPath)
 }
 
-func (s *StopTransport) GetBlob(key, stagingPath string) (int64, error) {
+func (s *StopTransport) GetBlob(key, stagingPath string, max int64) (int64, error) {
 	if s.stopped.Load() {
 		return 0, ErrStopped
 	}
@@ -114,5 +114,5 @@ func (s *StopTransport) GetBlob(key, stagingPath string) (int64, error) {
 	if !ok {
 		return 0, fmt.Errorf("sync: %w: the client moves no bodies", db.ErrInvalid)
 	}
-	return m.GetBlob(key, stagingPath)
+	return m.GetBlob(key, stagingPath, max)
 }

@@ -22,6 +22,18 @@ const refTag = "$ref"
 // where the per-object overhead would cost more than the bytes do.
 const BlobRefThreshold = 4 << 10
 
+// MaxBlobBytes is the largest stored value a ref may name. The largest round
+// file body on the laptop on 2026-10-10 was 835 KB stored, so this is far above
+// any real value; it bounds what one ref in a remote entry can make a machine
+// download.
+const MaxBlobBytes = 64 << 20
+
+// MaxBatchBlobBytes bounds the distinct bodies one batch names. A batch applies
+// in one transaction, so every body it names is in memory at once, together with
+// its re-encoded copy. The exporter splits a batch before it passes this, so
+// only a forged batch is refused for it.
+const MaxBatchBlobBytes = 512 << 20
+
 // BlobRef is a value that lives in the blob store rather than in the log: the
 // digest of the bytes as they are stored, their length, and the codec they are
 // stored under. The digest covers the stored bytes and not the plaintext,
@@ -97,8 +109,8 @@ func checkRef(ref BlobRef) error {
 			return fmt.Errorf("synclog: ref: digest is not lowercase hex: %w", ErrInvalid)
 		}
 	}
-	if ref.Bytes < 0 {
-		return fmt.Errorf("synclog: ref: negative length %d: %w", ref.Bytes, ErrInvalid)
+	if ref.Bytes < 0 || ref.Bytes > MaxBlobBytes {
+		return fmt.Errorf("synclog: ref: length %d is outside 0 to %d: %w", ref.Bytes, MaxBlobBytes, ErrInvalid)
 	}
 	return nil
 }

@@ -42,6 +42,8 @@ type VerbRunner struct {
 	// ReplicaPath is the worker's replica file beside the shared one. The
 	// turn-off deletes it and the driver files named after it.
 	ReplicaPath string
+	// StagingDir is the folder bodies pass through; the turn-off deletes it.
+	StagingDir string
 	// Runner is the daemon's sync runner. An enable that finishes leaves the
 	// worker it built here, so the daemon holds one transport however many calls
 	// it carries.
@@ -453,6 +455,7 @@ func (v *VerbRunner) disable(ctx context.Context, verb *wire.SyncVerb) *wire.Syn
 		FinalExport: exportThrough(v.Shared, transport),
 		Stop:        stopTransport(transport),
 		ReplicaPath: v.ReplicaPath,
+		StagingDir:  v.StagingDir,
 		Drop:        v.dropClient,
 		Cancel:      cancelTransport(transport),
 		Timeout:     verbTimeout(verb),

@@ -339,11 +339,12 @@ func (c *Client) PutBlob(key, stagingPath string) (int64, bool, error) {
 // refusal: the importer latches the origin on it instead of retrying, because the
 // object an applied entry names is not there and asking again will not put it
 // there.
-func (c *Client) GetBlob(key, stagingPath string) (int64, error) {
+func (c *Client) GetBlob(key, stagingPath string, max int64) (int64, error) {
 	resp, err := c.call(syncworker.Request{
 		Verb:    syncworker.VerbGetBlob,
 		Key:     key,
 		Staging: stagingPath,
+		Max:     max,
 	})
 	if err != nil {
 		return 0, err

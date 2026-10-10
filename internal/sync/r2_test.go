@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
@@ -219,4 +220,14 @@ func stringsContains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// A bucket reached over plain http would carry the key id and a replayable
+// signature in the clear, so enable refuses it off loopback.
+func TestR2ResolveRefusesAPlainHTTPEndpoint(t *testing.T) {
+	t.Parallel()
+	_, err := R2Intake{Endpoint: "http://acct.r2.cloudflarestorage.com", Bucket: "b", KeyID: "k", Secret: []byte("s")}.R2Resolve()
+	if !errors.Is(err, blobstore.ErrInsecureEndpoint) || !errors.Is(err, db.ErrInvalid) {
+		t.Fatalf("resolve = %v, want ErrInsecureEndpoint refused as invalid", err)
+	}
 }

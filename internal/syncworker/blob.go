@@ -95,10 +95,14 @@ func putBlob(ctx context.Context, store blobstore.BlobStore, key, staging string
 // will read one and compare its digest against a key it cannot match. A missing
 // object is its own refusal class: it repeats, and the daemon latches the origin
 // rather than retrying a bucket that has already answered.
-func getBlob(ctx context.Context, store blobstore.BlobStore, key, staging string) (int64, error) {
+func getBlob(ctx context.Context, store blobstore.BlobStore, key, staging string, max int64) (int64, error) {
+	if max <= 0 {
+		return 0, fmt.Errorf("syncworker: get %s names no size limit", key)
+	}
 	part := staging + partSuffix
-	written, err := fetchTo(ctx, store, key, part)
+	written, err := fetchTo(ctx, store, key, part, max)
 	if err != nil {
+		_ = os.Remove(part)
 		return 0, err
 	}
 	if err := os.Rename(part, staging); err != nil {
@@ -114,12 +118,12 @@ func getBlob(ctx context.Context, store blobstore.BlobStore, key, staging string
 // The fsync is what makes the rename mean something: without it the rename can
 // land in the directory while the bytes are still only in the page cache, and a
 // crash would leave a correctly named file holding nothing.
-func fetchTo(ctx context.Context, store blobstore.BlobStore, key, path string) (int64, error) {
+func fetchTo(ctx context.Context, store blobstore.BlobStore, key, path string, max int64) (int64, error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, stagingMode)
 	if err != nil {
 		return 0, fmt.Errorf("syncworker: open the staging file: %w", err)
 	}
-	written, getErr := store.Get(ctx, key, f)
+	written, getErr := store.Get(ctx, key, &capWriter{w: f, left: max})
 	if getErr != nil {
 		_ = f.Close()
 		return 0, blobFetchError(key, getErr)
@@ -208,7 +212,7 @@ func (s *server) getBlobVerb(req Request) Response {
 	if err != nil {
 		return refuse(req, err)
 	}
-	got, err := getBlob(context.Background(), store, req.Key, req.Staging)
+	got, err := getBlob(context.Background(), store, req.Key, req.Staging, req.Max)
 	if err != nil {
 		return refuse(req, err)
 	}
@@ -234,4 +238,22 @@ func (s *server) blobStore(req Request) (blobstore.BlobStore, error) {
 	}
 	s.blobs = newBlobStore(*s.spec.R2)
 	return s.blobs, nil
+}
+
+// errPastMax is a body longer than the ref it was fetched for declares.
+var errPastMax = errors.New("syncworker: the body runs past the length its ref declares")
+
+// capWriter passes writes through until left bytes are used, and fails the write
+// that would pass it, which ends the copy and so the download.
+type capWriter struct {
+	w    io.Writer
+	left int64
+}
+
+func (c *capWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > c.left {
+		return 0, errPastMax
+	}
+	c.left -= int64(len(p))
+	return c.w.Write(p)
 }

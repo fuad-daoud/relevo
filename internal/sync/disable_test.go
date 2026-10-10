@@ -408,3 +408,22 @@ func TestDisableFinalPushIsBounded(t *testing.T) {
 		t.Error("a blackholed export was reported as a success")
 	}
 }
+
+// The bodies passing through the staging folder go with the replica: a machine
+// that turned sync off keeps no copy of content it was moving.
+func TestDisableDeletesTheStagingFolder(t *testing.T) {
+	d, _ := disableFixture(t, nil)
+	d.StagingDir = filepath.Join(t.TempDir(), "sync-blobs")
+	if err := os.MkdirAll(d.StagingDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(d.StagingDir, "body.part"), []byte("in transit"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := d.Disable(context.Background()); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if _, err := os.Stat(d.StagingDir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("staging folder survived disable (stat err %v)", err)
+	}
+}

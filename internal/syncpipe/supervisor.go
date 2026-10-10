@@ -141,13 +141,13 @@ func (s *Supervisor) PutBlob(key, stagingPath string) (int64, bool, error) {
 }
 
 // GetBlob writes the body under key to stagingPath.
-func (s *Supervisor) GetBlob(key, stagingPath string) (int64, error) {
+func (s *Supervisor) GetBlob(key, stagingPath string, max int64) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var n int64
 	err := s.drive("get_blob", func(c *Client) error {
 		var e error
-		n, e = c.GetBlob(key, stagingPath)
+		n, e = c.GetBlob(key, stagingPath, max)
 		return e
 	})
 	return n, err

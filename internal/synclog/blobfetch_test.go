@@ -103,3 +103,127 @@ func TestDescribeRowFallsBackToTableAndKey(t *testing.T) {
 		}
 	}
 }
+
+// An origin is the first segment of an object key, and a remote entry may carry
+// any string there: a key-shaping one is refused as invalid rather than reaching
+// the key builder, which stops on it.
+func TestResolveRefsRefusesAForgedOrigin(t *testing.T) {
+	t.Parallel()
+	e := refEntry(t, json.RawMessage(`0`))
+	e.Origin = "evil/x"
+	if err := resolveRefs(NewMemBlobMover(), t.TempDir(), []Entry{e}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("resolve = %v, want ErrInvalid", err)
+	}
+}
+
+// A forged-origin batch is dropped and its mark moves, so it cannot hold the
+// import on every later attempt.
+func TestImportDropsAForgedOriginRefAndMovesOn(t *testing.T) {
+	t.Parallel()
+	p := newBlobPair()
+	forged := refEntry(t, json.RawMessage(`0`))
+	forged.Origin = "evil/x"
+	if _, err := p.log.OnLog("evil/x").Append([]Entry{forged}); err != nil {
+		t.Fatalf("append the forged entry: %v", err)
+	}
+	b, _ := exporterFile(t, "B")
+	res, err := NewImporter(b, p.link(t, "B")).Import()
+	if err != nil || len(res.Dropped) != 1 {
+		t.Fatalf("import = (%+v, %v), want the forged batch dropped", res, err)
+	}
+	if marks, _ := b.ImportMarks(); marks["evil/x"] != 1 {
+		t.Errorf("mark = %d, want it past the dropped entry", marks["evil/x"])
+	}
+}
+
+// The batch cap is checked from the lengths the refs declare, so a forged batch
+// naming more than one batch may hold is refused before any download.
+func TestResolveRefsRefusesABatchPastTheCapBeforeFetching(t *testing.T) {
+	t.Parallel()
+	var batch []Entry
+	for n := 0; int64(n)*MaxBlobBytes <= MaxBatchBlobBytes; n++ {
+		sum := sha256.Sum256([]byte{byte(n)})
+		ref := EncodeRef(BlobRef{SHA256: hex.EncodeToString(sum[:]), Bytes: MaxBlobBytes, Codec: 0})
+		body, _ := json.Marshal(map[string]json.RawMessage{"body": ref})
+		batch = append(batch, Entry{Origin: "A", Table: "round_file", PK: `["x"]`, Op: OpUpsert, Body: body})
+	}
+	m := NewMemBlobMover()
+	if err := resolveRefs(m, t.TempDir(), batch); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("resolve = %v, want ErrInvalid", err)
+	}
+	if m.Gets != 0 {
+		t.Errorf("fetched %d objects for a batch refused by its declared size", m.Gets)
+	}
+}
+
+func TestDecodeRefRefusesALengthPastMaxBlobBytes(t *testing.T) {
+	t.Parallel()
+	raw := EncodeRef(BlobRef{SHA256: strings.Repeat("ab", 32), Bytes: MaxBlobBytes + 1})
+	if _, _, err := DecodeRef(raw); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("decode = %v, want ErrInvalid", err)
+	}
+}
+
+// batchesFrom counts the batches origin A appended, as another machine pulls them.
+func batchesFrom(t *testing.T, p blobPair) int {
+	t.Helper()
+	entries, err := p.log.OnLog("B").Pull(nil)
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	seen := map[int]bool{}
+	for _, e := range entries {
+		seen[e.Batch] = true
+	}
+	return len(seen)
+}
+
+// A drain whose bodies pass the cap is appended as smaller batches, each within
+// it, and nothing is lost: another machine still converges.
+func TestExportSplitsABatchPastTheBlobCap(t *testing.T) {
+	t.Parallel()
+	whole, split := newBlobPair(), newBlobPair()
+	for _, p := range []blobPair{whole, split} {
+		a, aPath := exporterFile(t, "A")
+		seedBodies(t, aPath)
+		e := NewExporter(a, p.link(t, "A"))
+		if p == split {
+			e.blobCap = 100 << 10
+		}
+		if _, err := e.Export(); err != nil {
+			t.Fatalf("export: %v", err)
+		}
+	}
+	if got, base := batchesFrom(t, split), batchesFrom(t, whole); got <= base {
+		t.Fatalf("batches with a 100 KiB cap = %d, without = %d; want the capped drain split", got, base)
+	}
+	b, _ := exporterFile(t, "B")
+	if _, err := NewImporter(b, split.link(t, "B")).Import(); err != nil {
+		t.Fatalf("import the split batches: %v", err)
+	}
+	if got := storedColumns(t, b); len(got) != 3 {
+		t.Errorf("B holds %d values after the split export, want 3", len(got))
+	}
+}
+
+// A reconcile chunk ends once its bodies pass the budget, rather than at the row
+// count alone.
+func TestReconcileChunkEndsAtTheBlobBudget(t *testing.T) {
+	t.Parallel()
+	var batches [2]int
+	for n, budget := range []int64{MaxBatchBlobBytes, 100 << 10} {
+		p := newBlobPair()
+		a, aPath := exporterFile(t, "A")
+		seedBodies(t, aPath)
+		r := NewReconciler(a, p.link(t, "A"))
+		r.blobBudget = budget
+		res, err := r.Reconcile()
+		if err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		batches[n] = res.Batches
+	}
+	if batches[1] <= batches[0] {
+		t.Fatalf("batches with a 100 KiB budget = %d, without = %d; want the chunk cut early", batches[1], batches[0])
+	}
+}

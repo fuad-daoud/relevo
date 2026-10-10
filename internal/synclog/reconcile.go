@@ -60,6 +60,9 @@ type Reconciler struct {
 	// chunk which is never appended -- one whose entries all turn out to be
 	// already held -- leaves nothing behind.
 	pending []pendingBlob
+	// blobBudget is the body bytes past which a chunk ends early: below what an
+	// importer takes in one batch by the most one more row can add.
+	blobBudget int64
 
 	// readPage reads one rowid-ordered page of a table's owned rows inside the
 	// chunk's read transaction. It is a field so a test can count the pages a run
@@ -97,14 +100,15 @@ func NewReconciler(d *db.DB, t LogTransport) *Reconciler {
 	origin := d.Origin()
 	mover, staging := blobWiring(t)
 	return &Reconciler{
-		db:        d,
-		transport: t,
-		origin:    origin,
-		schema:    have,
-		chunk:     defaultReconcileChunk,
-		now:       time.Now,
-		mover:     mover,
-		staging:   staging,
+		db:         d,
+		transport:  t,
+		origin:     origin,
+		schema:     have,
+		chunk:      defaultReconcileChunk,
+		blobBudget: MaxBatchBlobBytes - 2*MaxBlobBytes,
+		now:        time.Now,
+		mover:      mover,
+		staging:    staging,
 		readPage: func(tx *db.Tx, tbl string, after int64, limit int) ([]db.ExchangeRow, error) {
 			return tx.SharedOwnedRowPage(tbl, origin, after, limit)
 		},
@@ -255,7 +259,9 @@ func (r *Reconciler) nextUpserts(tx *db.Tx, limit int) ([]Entry, error) {
 				return nil, err
 			}
 			r.cursor.rowID = row.RowID
-			if len(out) == limit {
+			// The chunk also ends before its bodies could pass what an importer
+			// takes in one batch: the next row adds at most two values.
+			if len(out) == limit || pendingBytes(r.pending) > r.blobBudget {
 				return out, nil
 			}
 		}
@@ -306,6 +312,9 @@ func (r *Reconciler) inspectUpsert(out *[]Entry, tbl string, row db.ExchangeRow)
 	// Only a row that is actually proposed moves its values. A row head already
 	// carries was stored when its entry was appended, so uploading again would
 	// put the same bytes under a digest the store already holds.
+	if err := checkBlobSizes(tbl, row.PK, blobs); err != nil {
+		return err
+	}
 	r.pending = append(r.pending, blobs...)
 	entry, err := NewUpsert(r.origin, tbl, row.PK, r.schema, body, r.now())
 	if err != nil {

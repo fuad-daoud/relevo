@@ -91,6 +91,9 @@ func resolveRefs(m BlobMover, stagingDir string, batch []Entry) error {
 	if err != nil || len(slots) == 0 {
 		return err
 	}
+	if err := checkBatchBytes(batch, slots); err != nil {
+		return err
+	}
 	if m == nil || stagingDir == "" {
 		return errNoMover
 	}
@@ -141,6 +144,11 @@ func refSlots(batch []Entry, fields map[int]map[string]json.RawMessage) ([]refSl
 			if !isRef {
 				continue
 			}
+			// The origin becomes the first segment of the object key, and a remote
+			// entry may carry any string there.
+			if err := blobstore.CheckOrigin(e.Origin); err != nil {
+				return nil, fmt.Errorf("synclog: %s %s: %w: %w", e.Table, e.PK, err, ErrInvalid)
+			}
 			if got := codecOf(f, c.codec); got != ref.Codec {
 				return nil, fmt.Errorf("synclog: %s %s: %s is %d but its ref says %d: %w",
 					e.Table, e.PK, c.codec, got, ref.Codec, ErrInvalid)
@@ -150,6 +158,27 @@ func refSlots(batch []Entry, fields map[int]map[string]json.RawMessage) ([]refSl
 		}
 	}
 	return slots, nil
+}
+
+// checkBatchBytes refuses a batch whose distinct bodies add up past
+// MaxBatchBlobBytes, from the lengths the refs declare and before anything is
+// fetched, so a forged batch costs no download.
+func checkBatchBytes(batch []Entry, slots []refSlot) error {
+	sizes := make(map[string]int64, len(slots))
+	var total int64
+	for _, s := range slots {
+		key := blobstore.Key(batch[s.entry].Origin, s.ref.SHA256)
+		if _, seen := sizes[key]; seen {
+			continue
+		}
+		sizes[key] = s.ref.Bytes
+		total += s.ref.Bytes
+	}
+	if total > MaxBatchBlobBytes {
+		return fmt.Errorf("synclog: a batch from %s names %d bytes of bodies, over the %d one batch may: %w",
+			batch[0].Origin, total, MaxBatchBlobBytes, ErrInvalid)
+	}
+	return nil
 }
 
 // codecOf reads a codec column out of a body. An absent column is plain, as in a
@@ -222,7 +251,7 @@ func failedFetch(batch []Entry, s refSlot, err error) error {
 func fetchOne(m BlobMover, stagingDir, key string, ref BlobRef) ([]byte, error) {
 	path := filepath.Join(stagingDir, ref.SHA256)
 	defer func() { _ = os.Remove(path) }()
-	if _, err := m.GetBlob(key, path); err != nil {
+	if _, err := m.GetBlob(key, path, ref.Bytes); err != nil {
 		if errors.Is(err, ErrBlobMissing) || errors.Is(err, blobstore.ErrNotFound) {
 			return nil, fmt.Errorf("synclog: fetch %s: %w", key, ErrBlobMissing)
 		}

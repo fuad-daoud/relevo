@@ -5,8 +5,10 @@ package blobstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
-	"strings"
+	"net"
+	"net/url"
 	"time"
 )
 
@@ -42,16 +44,40 @@ type BlobStore interface {
 	Delete(ctx context.Context, key string) error
 }
 
+// ErrBadOrigin reports an origin that cannot be the first segment of a key.
+var ErrBadOrigin = errors.New("blobstore: origin is not an installation id")
+
+// maxOriginLen is far above an installation id's 26 characters; it only stops a
+// remote entry from making a key arbitrarily long.
+const maxOriginLen = 64
+
+// CheckOrigin refuses an origin that is not letters, digits, '-' and '_'.
+// Installation ids are ULIDs, and an origin arriving in a remote log entry is
+// not trusted: a '/', '.', '?', '#' or '%' in it would address another key, or
+// reshape the signed request URL the key is put into.
+func CheckOrigin(origin string) error {
+	if origin == "" || len(origin) > maxOriginLen {
+		return fmt.Errorf("%w: %d characters, want 1 to %d", ErrBadOrigin, len(origin), maxOriginLen)
+	}
+	for i := 0; i < len(origin); i++ {
+		c := origin[i]
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '-' && c != '_' {
+			return fmt.Errorf("%w: it holds %q", ErrBadOrigin, c)
+		}
+	}
+	return nil
+}
+
 // Key returns the object key for one value from one origin. Both halves are
 // checked: a key is a path, and a key built from an origin holding a separator
 // would put one machine's objects under another's prefix, where the weekly
-// cleanup would delete them. The arguments come from the exporter and the
-// importer, so a value that fails either check is a bug rather than a condition
-// to recover from, and the call stops instead of returning a key that would
-// address the wrong object.
+// cleanup would delete them. Callers check a remote origin with CheckOrigin
+// first, so a value that fails here is a bug rather than a condition to recover
+// from, and the call stops instead of returning a key that would address the
+// wrong object.
 func Key(origin, sha256hex string) string {
-	if origin == "" || strings.Contains(origin, "/") {
-		panic("blobstore: Key: origin must be non-empty and hold no '/'")
+	if CheckOrigin(origin) != nil {
+		panic("blobstore: Key: origin must be letters, digits, '-' or '_'")
 	}
 	if len(sha256hex) != 64 || !isLowerHex(sha256hex) {
 		panic("blobstore: Key: digest must be 64 lowercase hex characters")
@@ -71,4 +97,27 @@ func isLowerHex(s string) bool {
 		}
 	}
 	return true
+}
+
+// ErrInsecureEndpoint reports an endpoint a signed request would cross in the
+// clear.
+var ErrInsecureEndpoint = errors.New("blobstore: the endpoint is not https")
+
+// CheckEndpoint refuses an endpoint that is not an https URL with a host. Plain
+// http is allowed only on loopback, where a local fake store runs: anywhere else
+// the key id and a replayable signature would cross the network in the clear,
+// and the bodies would arrive unauthenticated.
+func CheckEndpoint(endpoint string) error {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("%w: %q is not a URL with a host", ErrInsecureEndpoint, endpoint)
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	host := u.Hostname()
+	if u.Scheme == "http" && (host == "localhost" || net.ParseIP(host).IsLoopback()) {
+		return nil
+	}
+	return fmt.Errorf("%w: %q", ErrInsecureEndpoint, endpoint)
 }

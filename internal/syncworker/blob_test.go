@@ -171,7 +171,7 @@ func TestGetBlobWritesTheWholeFile(t *testing.T) {
 	backend := &fakeBackend{}
 	replies := serve(t, backend,
 		Request{ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a", URL: "libsql://x", Token: "t", R2: &R2Config{}},
-		Request{ID: "2", Verb: VerbGetBlob, Key: key, Staging: staging},
+		Request{ID: "2", Verb: VerbGetBlob, Key: key, Staging: staging, Max: 64 << 20},
 	)
 	rep := replies[1]
 	if !rep.OK {
@@ -205,7 +205,7 @@ func TestGetBlobMissingIsBlobMissing(t *testing.T) {
 	backend := &fakeBackend{}
 	replies := serve(t, backend,
 		Request{ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a", URL: "libsql://x", Token: "t", R2: &R2Config{}},
-		Request{ID: "2", Verb: VerbGetBlob, Key: missing, Staging: staging},
+		Request{ID: "2", Verb: VerbGetBlob, Key: missing, Staging: staging, Max: 64 << 20},
 	)
 	rep := replies[1]
 	if rep.OK {
@@ -230,7 +230,7 @@ func TestBlobVerbsRefuseWithoutR2Settings(t *testing.T) {
 		backend := &fakeBackend{}
 		replies := serve(t, backend,
 			Request{ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a", URL: "libsql://x", Token: "t"},
-			Request{ID: "2", Verb: verb, Key: blobstore.Key("origin-a", hexSHA("x")), Staging: staging},
+			Request{ID: "2", Verb: verb, Key: blobstore.Key("origin-a", hexSHA("x")), Staging: staging, Max: 64 << 20},
 		)
 		rep := replies[1]
 		if rep.OK {
@@ -258,7 +258,7 @@ func TestBlobBytesAreCountedInStats(t *testing.T) {
 		Request{ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a", URL: "libsql://x", Token: "t", R2: &R2Config{}},
 		Request{ID: "2", Verb: VerbPutBlob, Key: key, Staging: path},
 		Request{ID: "3", Verb: VerbPutBlob, Key: key, Staging: path},
-		Request{ID: "4", Verb: VerbGetBlob, Key: keyForFetch, Staging: filepath.Join(dir, "fetched")},
+		Request{ID: "4", Verb: VerbGetBlob, Key: keyForFetch, Staging: filepath.Join(dir, "fetched"), Max: 64 << 20},
 		Request{ID: "5", Verb: VerbStats},
 	)
 	stats := replies[4].Stats
@@ -294,7 +294,7 @@ func TestBlobVerbsRefuseATransferTheStoreCannotMake(t *testing.T) {
 	staging := filepath.Join(t.TempDir(), "staged")
 
 	for _, verb := range []Verb{VerbPutBlob, VerbGetBlob} {
-		resp := s.dispatch(Request{ID: "1", Verb: verb, Key: key, Staging: staging})
+		resp := s.dispatch(Request{ID: "1", Verb: verb, Key: key, Staging: staging, Max: 64 << 20})
 		if resp.OK {
 			t.Errorf("%s answered OK against a store that failed", verb)
 		}
@@ -306,7 +306,7 @@ func TestBlobVerbsRefuseATransferTheStoreCannotMake(t *testing.T) {
 	// not answer, and it is the one the daemon latches on.
 	absent := &failingStore{notFound: true}
 	s.blobs = absent
-	resp := s.dispatch(Request{ID: "1", Verb: VerbGetBlob, Key: key, Staging: staging})
+	resp := s.dispatch(Request{ID: "1", Verb: VerbGetBlob, Key: key, Staging: staging, Max: 64 << 20})
 	if resp.Code != CodeBlobMissing {
 		t.Errorf("a 404 came back as %q, want %q", resp.Code, CodeBlobMissing)
 	}

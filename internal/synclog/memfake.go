@@ -323,7 +323,7 @@ func (m *MemBlobMover) PutBlob(key, stagingPath string) (int64, bool, error) {
 
 // GetBlob writes the body under key to stagingPath, or reports the store's
 // ErrNotFound, which the importer latches on rather than retrying.
-func (m *MemBlobMover) GetBlob(key, stagingPath string) (int64, error) {
+func (m *MemBlobMover) GetBlob(key, stagingPath string, max int64) (int64, error) {
 	m.mu.Lock()
 	m.Gets++
 	m.mu.Unlock()
@@ -335,11 +335,15 @@ func (m *MemBlobMover) GetBlob(key, stagingPath string) (int64, error) {
 		return 0, fmt.Errorf("synclog: mem mover create %s: %w", stagingPath, err)
 	}
 	defer func() { _ = f.Close() }()
-	n, err := m.store.Get(context.Background(), key, f)
-	if err != nil {
-		return n, err
+	var body bytes.Buffer
+	if _, err := m.store.Get(context.Background(), key, &body); err != nil {
+		return 0, err
 	}
-	return n, nil
+	if int64(body.Len()) > max {
+		return 0, fmt.Errorf("synclog: mem mover get %s: %d bytes, past %d", key, body.Len(), max)
+	}
+	n, err := f.Write(body.Bytes())
+	return int64(n), err
 }
 
 // tableIndex is a table's position in SharedTables, so head rows come back in

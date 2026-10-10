@@ -34,6 +34,8 @@ type Exporter struct {
 	// keeps every value inline for a log with no bucket behind it.
 	mover   BlobMover
 	staging string
+	// blobCap is the most body bytes one appended batch may name.
+	blobCap int64
 }
 
 // NewExporter returns the exporter for one installation's file and the log it
@@ -53,6 +55,7 @@ func NewExporter(d *db.DB, t LogTransport) *Exporter {
 		now:       time.Now,
 		mover:     mover,
 		staging:   staging,
+		blobCap:   MaxBatchBlobBytes,
 	}
 }
 
@@ -94,17 +97,9 @@ func (e *Exporter) Export() (ExportResult, error) {
 // transport refused -- those entries are re-exported next pass, which is safe
 // because import is an idempotent upsert.
 func (e *Exporter) ExportBatch() (ExportResult, error) {
-	drained, err := e.db.DrainOutbox(e.batch)
-	if err != nil {
-		return ExportResult{}, fmt.Errorf("synclog: export: drain: %w", err)
-	}
-	if len(drained) == 0 {
-		return ExportResult{}, nil
-	}
-
-	entries, pending, err := e.entries(drained)
-	if err != nil {
-		return ExportResult{}, fmt.Errorf("synclog: export: %w", err)
+	drained, entries, pending, err := e.build()
+	if err != nil || len(drained) == 0 {
+		return ExportResult{}, err
 	}
 	if len(entries) > 0 {
 		// The bodies go first because an entry naming an object the store does
@@ -130,6 +125,28 @@ func (e *Exporter) ExportBatch() (ExportResult, error) {
 	return ExportResult{Drained: len(drained), Appended: len(entries)}, nil
 }
 
+// build drains the outbox and turns what it read into the batch the log is
+// given. A batch whose bodies would pass MaxBatchBlobBytes is drained again at
+// half the size, so no batch this machine appends is one an importer refuses.
+func (e *Exporter) build() ([]db.DrainedEntry, []Entry, []pendingBlob, error) {
+	for n := e.batch; ; n /= 2 {
+		drained, err := e.db.DrainOutbox(n)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("synclog: export: drain: %w", err)
+		}
+		if len(drained) == 0 {
+			return nil, nil, nil, nil
+		}
+		entries, pending, err := e.entries(drained)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("synclog: export: %w", err)
+		}
+		if n <= 1 || pendingBytes(pending) <= e.blobCap {
+			return drained, entries, pending, nil
+		}
+	}
+}
+
 // entries is the batch the log is given: the drained rows this installation
 // owns, one per row, ordered so an importer can apply it with foreign keys on.
 // The values too large to travel inline come back beside the batch, to be
@@ -150,6 +167,9 @@ func (e *Exporter) entries(drained []db.DrainedEntry) ([]Entry, []pendingBlob, e
 		row, blobs := *d.Row, []pendingBlob(nil)
 		if e.mover != nil {
 			row, blobs = refColumns(e.origin, d.Table, *d.Row)
+		}
+		if err := checkBlobSizes(d.Table, d.PK, blobs); err != nil {
+			return nil, nil, err
 		}
 		pending = append(pending, blobs...)
 		body, err := EncodeBody(row)

@@ -29,8 +29,9 @@ type BlobMover interface {
 	// same bytes under the same digest, and the entry that refers to the object
 	// may still be appended.
 	PutBlob(key, staging string) (bytes int64, skipped bool, err error)
-	// GetBlob writes the body under key to staging.
-	GetBlob(key, staging string) (int64, error)
+	// GetBlob writes the body under key to staging, refusing one longer than
+	// max bytes before it is all downloaded.
+	GetBlob(key, staging string, max int64) (int64, error)
 }
 
 // BlobTransport is a LogTransport that can also move bodies: the daemon's
@@ -222,4 +223,31 @@ func uploadOne(m BlobMover, stagingDir string, b pendingBlob) error {
 		return fmt.Errorf("synclog: upload %s: %w", b.Key, putErr)
 	}
 	return nil
+}
+
+// checkBlobSizes refuses a row holding a value past MaxBlobBytes. Every
+// importer refuses a ref that large, so exporting it would drop the row on every
+// other machine; the export stops on it instead, naming the row.
+func checkBlobSizes(table, pk string, blobs []pendingBlob) error {
+	for _, b := range blobs {
+		if len(b.Bytes) > MaxBlobBytes {
+			return fmt.Errorf("synclog: %s %s holds a %d-byte value, past the %d bytes sync moves: %w",
+				table, pk, len(b.Bytes), MaxBlobBytes, ErrInvalid)
+		}
+	}
+	return nil
+}
+
+// pendingBytes is the length of the distinct objects a batch uploads, counted as
+// an importer counts them against MaxBatchBlobBytes.
+func pendingBytes(blobs []pendingBlob) int64 {
+	seen := make(map[string]bool, len(blobs))
+	var total int64
+	for _, b := range blobs {
+		if !seen[b.Key] {
+			seen[b.Key] = true
+			total += int64(len(b.Bytes))
+		}
+	}
+	return total
 }

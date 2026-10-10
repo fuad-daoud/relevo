@@ -181,7 +181,7 @@ func TestPipeClientMovesBlobsOverThePipe(t *testing.T) {
 	}
 
 	fetched := filepath.Join(filepath.Dir(path), "fetched")
-	got, err := c.GetBlob(key, fetched)
+	got, err := c.GetBlob(key, fetched, 64<<20)
 	if err != nil {
 		t.Fatalf("GetBlob: %v", err)
 	}
@@ -209,12 +209,12 @@ func TestPipeClientMapsAMissingBodyToTheSentinel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if _, err := c.GetBlob(absent, filepath.Join(t.TempDir(), "out")); !errors.Is(err, synclog.ErrBlobMissing) {
+	if _, err := c.GetBlob(absent, filepath.Join(t.TempDir(), "out"), 64<<20); !errors.Is(err, synclog.ErrBlobMissing) {
 		t.Errorf("GetBlob = %v, want synclog.ErrBlobMissing", err)
 	}
 	// It stays a refusal as well: a caller that reads only the class still learns
 	// the worker declined rather than that the pipe broke.
-	if _, err := c.GetBlob(absent, filepath.Join(t.TempDir(), "out")); !errors.Is(err, ErrRefused) {
+	if _, err := c.GetBlob(absent, filepath.Join(t.TempDir(), "out"), 64<<20); !errors.Is(err, ErrRefused) {
 		t.Error("the mapped error is not a refusal as well")
 	}
 }
@@ -233,7 +233,7 @@ func TestPipeClientCarriesTheByteCounters(t *testing.T) {
 	if _, _, err := c.PutBlob(key, path); err != nil {
 		t.Fatalf("PutBlob: %v", err)
 	}
-	if _, err := c.GetBlob(key, filepath.Join(filepath.Dir(path), "back")); err != nil {
+	if _, err := c.GetBlob(key, filepath.Join(filepath.Dir(path), "back"), 64<<20); err != nil {
 		t.Fatalf("GetBlob: %v", err)
 	}
 
@@ -400,7 +400,7 @@ func TestSupervisorMovesBodiesThroughTheStagingFolder(t *testing.T) {
 	}
 
 	fetched := filepath.Join(dir, "fetched")
-	n, err := sup.GetBlob(key, fetched)
+	n, err := sup.GetBlob(key, fetched, 64<<20)
 	if err != nil {
 		t.Fatalf("GetBlob: %v", err)
 	}

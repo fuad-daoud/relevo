@@ -114,6 +114,9 @@ type Request struct {
 	// Bodies never cross the pipe, so this is the only thing either blob verb
 	// carries about them.
 	Staging string `json:"staging,omitempty"`
+	// Max is the most bytes get_blob may write: the length the ref declares. A
+	// body that runs past it is cut off there rather than downloaded whole.
+	Max int64 `json:"max,omitempty"`
 	// Entries is the batch an export appends as one write.
 	Entries []Entry `json:"entries,omitempty"`
 	// Marks is each other origin's last applied sequence number, so a pull

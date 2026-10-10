@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
@@ -143,6 +144,9 @@ func (i R2Intake) R2Resolve() (R2Secrets, error) {
 	}
 	if !out.Complete() {
 		return R2Secrets{}, ErrNoR2
+	}
+	if err := blobstore.CheckEndpoint(out.Endpoint); err != nil {
+		return R2Secrets{}, fmt.Errorf("sync: r2.endpoint: %w: %w", err, db.ErrInvalid)
 	}
 	return out, nil
 }
