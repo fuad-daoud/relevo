@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -83,6 +84,34 @@ func Key(origin, sha256hex string) string {
 		panic("blobstore: Key: digest must be 64 lowercase hex characters")
 	}
 	return origin + "/" + sha256hex
+}
+
+// sizeName is the last segment of an origin's published log size. It is not 64
+// characters of hex, so no body key can equal it.
+const sizeName = "log-size.json"
+
+// SizeKey returns the key an origin publishes the size of its log under.
+func SizeKey(origin string) string {
+	if CheckOrigin(origin) != nil {
+		panic("blobstore: SizeKey: origin must be letters, digits, '-' or '_'")
+	}
+	return origin + "/" + sizeName
+}
+
+// SizeOrigin returns the origin a size key belongs to, and whether key is one.
+func SizeOrigin(key string) (string, bool) {
+	origin, name, ok := strings.Cut(key, "/")
+	if !ok || name != sizeName || CheckOrigin(origin) != nil {
+		return "", false
+	}
+	return origin, true
+}
+
+// IsBodyKey reports whether key addresses a body: an origin, then 64 lowercase
+// hex characters. A caller that lists the bucket counts only these as bodies.
+func IsBodyKey(key string) bool {
+	origin, digest, ok := strings.Cut(key, "/")
+	return ok && CheckOrigin(origin) == nil && len(digest) == 64 && isLowerHex(digest)
 }
 
 // isLowerHex reports whether s is 64 characters of 0-9a-f. Uppercase is

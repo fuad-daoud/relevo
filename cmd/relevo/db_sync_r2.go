@@ -213,7 +213,18 @@ func dbSyncStatusRead(local relevosync.Local) (dbSyncStatusDoc, error) {
 		return dbSyncStatusDoc{}, dbSyncClassify(err)
 	}
 	if !month.Zero() {
-		doc.Bytes, doc.QuotaTursoSync = &month, settings.TursoSyncQuota()
+		doc.Bytes = &month
+	}
+	storage, err := relevosync.ReadStorage(local)
+	if err != nil {
+		return dbSyncStatusDoc{}, dbSyncClassify(err)
+	}
+	if !storage.At.IsZero() {
+		doc.Storage = &storage
+	}
+	if doc.Bytes != nil || doc.Storage != nil {
+		doc.QuotaTursoSync = settings.TursoSyncQuota()
+		doc.QuotaTursoStorage, doc.QuotaR2Storage = settings.TursoStorageQuota(), settings.R2StorageQuota()
 	}
 	// A join in progress is a read of the machine-local marker, so status can
 	// show one with the network blackholed and no worker open.

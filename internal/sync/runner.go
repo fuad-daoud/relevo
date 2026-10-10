@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
@@ -42,6 +43,12 @@ type Runner struct {
 	// which is the bound production runs under; a test shortens it so a step
 	// that overruns is reached without waiting the real bound out.
 	Timeout time.Duration
+	// Blobs returns the in-process bucket store, or nil when the machine has no
+	// bucket. It is a func so the credentials are read when needed.
+	Blobs func() blobstore.BlobStore
+	// ReplicaPath is the worker's replica file, whose size is the Turso storage
+	// in use.
+	ReplicaPath string
 
 	// active is the transport the work in flight drives, so Stop can end it
 	// from outside the sync slot that work holds.

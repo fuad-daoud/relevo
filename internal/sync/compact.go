@@ -28,13 +28,14 @@ type compactState struct {
 // It runs after the import and the marks publish, so the floor reflects the
 // marks the readers last published and this machine's own are not behind it. A
 // failure is logged and left for the next tick: the exchange itself succeeded,
-// and compaction is housekeeping whose retry costs nothing.
+// and compaction is housekeeping whose retry costs nothing. It reports whether
+// it compacted.
 //
 // The floor is skipped unless it is above the one the log already records, so a
 // quiet log with no new reader progress does no work.
-func (r *Runner) compact(shared *db.DB, t *StopTransport, now time.Time) {
+func (r *Runner) compact(shared *db.DB, t *StopTransport, now time.Time) bool {
 	if r.Local == nil {
-		return
+		return false
 	}
 	var last compactState
 	if err := marker(r.Local, KeyCompact, &last); err != nil {
@@ -43,27 +44,28 @@ func (r *Runner) compact(shared *db.DB, t *StopTransport, now time.Time) {
 	state, err := t.ReadMarks()
 	if err != nil {
 		slog.Warn("sync: read the marks to compact", "err", err)
-		return
+		return false
 	}
 	origin := shared.Origin()
 	if !synclog.CompactDue(last.At, last.Entries, state.Entries[origin], now) {
-		return
+		return false
 	}
 	floor := synclog.FloorFor(state.Marks, origin, state.Heads[origin], now)
 	if floor <= state.Floors[origin] {
-		return
+		return false
 	}
 	res, err := t.CompactOwn(floor)
 	if err != nil {
 		slog.Warn("sync: compact this machine's log", "err", err)
-		return
+		return false
 	}
 	body, err := json.Marshal(compactState{At: now, Entries: state.Entries[origin] - res.Dropped, Floor: res.Floor, Dropped: res.Dropped})
 	if err != nil {
 		slog.Warn("sync: encode the compaction marker", "err", err)
-		return
+		return false
 	}
 	if err := r.Local.KVPut(KeyCompact, body); err != nil {
 		slog.Warn("sync: write the compaction marker", "err", err)
 	}
+	return true
 }

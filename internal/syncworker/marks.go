@@ -269,7 +269,8 @@ func (s *server) readMarks(req Request) Response {
 // make smaller.
 func (b *TursoBackend) readSizes(ctx context.Context, out *MarkState) error {
 	rows, err := b.db.QueryContext(ctx,
-		"SELECT origin, COALESCE(MAX(seq), 0), COUNT(*) FROM log GROUP BY origin")
+		"SELECT origin, COALESCE(MAX(seq), 0), COUNT(*), "+
+			"COALESCE(SUM(LENGTH(body)), 0) + "+strconv.Itoa(logRowOverhead)+"*COUNT(*) FROM log GROUP BY origin")
 	if err != nil {
 		return err
 	}
@@ -277,15 +278,18 @@ func (b *TursoBackend) readSizes(ctx context.Context, out *MarkState) error {
 	for rows.Next() {
 		var origin string
 		var head, entries int
-		if err := rows.Scan(&origin, &head, &entries); err != nil {
+		var size int64
+		if err := rows.Scan(&origin, &head, &entries, &size); err != nil {
 			return err
 		}
 		if out.Heads == nil {
 			out.Heads = make(map[string]int)
 			out.Entries = make(map[string]int)
+			out.Sizes = make(map[string]int64)
 		}
 		out.Heads[origin] = head
 		out.Entries[origin] = entries
+		out.Sizes[origin] = size
 	}
 	if err := rows.Err(); err != nil {
 		return err

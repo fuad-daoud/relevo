@@ -35,6 +35,10 @@ var ErrRemoteRefused = errors.New("sync: the remote refused the SQL in this chan
 // message to find out.
 var ErrRemoteSchema = errors.New("sync: the remote has no table for this machine's change set")
 
+// ErrQuotaReached reports a remote that refused because the plan's quota is
+// used up. It repeats until the billing month turns, so it is permanent.
+var ErrQuotaReached = errors.New("sync: the Turso plan quota is reached")
+
 // IsPermanentRefusal reports whether err is a remote refusal that will repeat on
 // every attempt: the remote has no table for this machine's rows, it refused
 // the change set in a way that re-sending it cannot fix, or a body an entry names
@@ -42,7 +46,8 @@ var ErrRemoteSchema = errors.New("sync: the remote has no table for this machine
 // machine on one of these rather than waiting out three deaths it can already
 // predict.
 func IsPermanentRefusal(err error) bool {
-	return errors.Is(err, ErrRemoteSchema) || errors.Is(err, ErrRemoteRefused) || errors.Is(err, synclog.ErrBlobMissing)
+	return errors.Is(err, ErrRemoteSchema) || errors.Is(err, ErrRemoteRefused) ||
+		errors.Is(err, synclog.ErrBlobMissing) || errors.Is(err, ErrQuotaReached)
 }
 
 // The driver shapes this matches on. They are the SQLite result codes the engine

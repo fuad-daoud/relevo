@@ -125,12 +125,27 @@ func (r *Runner) countBytes(ctx context.Context, t *StopTransport) {
 	}
 	r.readMu.Lock()
 	defer r.readMu.Unlock()
-	delta := bytesSince(r.lastRead, cur)
+	recordStats(r.Local, &r.lastRead, cur)
+}
+
+// SeedStats sets the reading the next count is measured against, for a worker a
+// join already counted up to cur.
+func (r *Runner) SeedStats(cur synclog.Stats) {
+	r.readMu.Lock()
+	defer r.readMu.Unlock()
 	r.lastRead = cur
+}
+
+// recordStats folds the worker's totals since *last into this month's row and
+// moves *last to cur. The steady loop and the join both count through it, so a
+// reset worker is handled by one rule.
+func recordStats(kv db.KV, last *synclog.Stats, cur synclog.Stats) {
+	delta := bytesSince(*last, cur)
+	*last = cur
 	if delta.Zero() {
 		return
 	}
-	if err := addBytes(r.Local, time.Now(), delta); err != nil {
+	if err := addBytes(kv, time.Now(), delta); err != nil {
 		slog.Warn("sync: count the bytes moved", "err", err)
 	}
 }

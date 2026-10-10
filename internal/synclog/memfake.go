@@ -342,7 +342,9 @@ func (m *memLog) markState() MarkState {
 	}
 	out.Heads = make(map[string]int)
 	out.Entries = make(map[string]int)
+	out.Sizes = make(map[string]int64)
 	for _, e := range m.entries {
+		out.Sizes[e.Origin] += int64(len(e.Body)) + LogRowOverhead
 		if e.Seq > out.Heads[e.Origin] {
 			out.Heads[e.Origin] = e.Seq
 		}

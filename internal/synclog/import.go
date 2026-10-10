@@ -33,6 +33,15 @@ type Importer struct {
 	staging   string
 	// chunk bounds a snapshot transaction's entries; zero is the default.
 	chunk int
+	// AfterBatch runs after each batch or snapshot chunk is written, so a
+	// caller can account for the transfer before the next one starts.
+	AfterBatch func()
+}
+
+func (i *Importer) batchDone() {
+	if i.AfterBatch != nil {
+		i.AfterBatch()
+	}
 }
 
 // NewImporter returns the importer for one installation's file and the log it
@@ -248,6 +257,7 @@ func (i *Importer) Import() (ImportResult, error) {
 		total.Applied += applied
 		if applied > 0 {
 			total.Batches++
+			i.batchDone()
 		}
 	}
 	return total, nil

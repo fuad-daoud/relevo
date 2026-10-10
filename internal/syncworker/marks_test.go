@@ -256,6 +256,9 @@ func TestReadMarksReportsWhatTheLogHolds(t *testing.T) {
 		t.Errorf("sizes = heads %v entries %v, want the two appended entries",
 			state.Heads, state.Entries)
 	}
+	if want := int64(2*len(`{"title":"one"}`) + 2*logRowOverhead); state.Sizes["origin-a"] != want {
+		t.Errorf("sizes = %v, want origin-a at %d: the bodies plus the per-row overhead", state.Sizes, want)
+	}
 }
 
 // TestMarksVerbsRefusedWithoutAReplica pins the second gate: a verb that needs a

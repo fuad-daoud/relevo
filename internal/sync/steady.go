@@ -125,7 +125,10 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 	out.Applied = imported.Applied
 	out.Trouble = troubleFrom(imported)
 	r.publishMarks(shared, t, imported.Moved())
-	r.compact(shared, t, time.Now().UTC())
+	now := time.Now().UTC()
+	compacted := r.compact(shared, t, now)
+	r.publishSize(shared.Origin(), t, compacted, out.Exported > 0, now)
+	r.measureStorage(now)
 	return out
 }
 

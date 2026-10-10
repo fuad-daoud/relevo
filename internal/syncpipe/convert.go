@@ -138,7 +138,7 @@ func marksToWire(marks map[string]int) []syncworker.Mark {
 
 // markStateFromWire reads back what a read_marks answered with.
 func markStateFromWire(s syncworker.MarkState) synclog.MarkState {
-	out := synclog.MarkState{Floors: s.Floors, Heads: s.Heads, Entries: s.Entries}
+	out := synclog.MarkState{Floors: s.Floors, Heads: s.Heads, Entries: s.Entries, Sizes: s.Sizes}
 	for _, m := range s.Marks {
 		out.Marks = append(out.Marks, synclog.Mark{
 			Reader: m.Reader,

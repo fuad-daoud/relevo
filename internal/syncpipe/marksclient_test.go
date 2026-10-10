@@ -177,3 +177,10 @@ func TestSupervisorCountsAMarksRefusal(t *testing.T) {
 		t.Errorf("a refused read counted %d deaths, want none", deaths)
 	}
 }
+
+func TestMarkStateFromWireCarriesTheSizes(t *testing.T) {
+	got := markStateFromWire(syncworker.MarkState{Sizes: map[string]int64{"a": 7}})
+	if got.Sizes["a"] != 7 {
+		t.Errorf("Sizes = %v, want a=7", got.Sizes)
+	}
+}

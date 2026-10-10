@@ -222,6 +222,9 @@ const (
 	// repeats, so it needs a class of its own: the daemon latches the origin and
 	// names the round, where a bucket that could not be reached is retried.
 	CodeBlobMissing RefusalCode = "blob_missing"
+	// CodeQuota is a remote refusing writes because the plan's quota is reached.
+	// It repeats until the billing month turns, so the daemon latches on it.
+	CodeQuota RefusalCode = "quota"
 	// CodeBlobRefused is a body the worker will not publish under the key it was
 	// given, because the staged file's digest is not the key's. The store is
 	// fine and the remote is fine; what crossed the pipe is not, and repeating
@@ -391,6 +394,9 @@ type MarkState struct {
 	Heads map[string]int `json:"heads,omitempty"`
 	// Entries is how many entries the log holds for each origin.
 	Entries map[string]int `json:"entries,omitempty"`
+	// Sizes is each origin's log size in bytes, estimated as the bodies plus a
+	// fixed overhead per row.
+	Sizes map[string]int64 `json:"sizes,omitempty"`
 }
 
 // readRequest reads one request line. A clean end of the pipe is io.EOF, which

@@ -202,6 +202,9 @@ const (
 	// and a reader sent to `relevo bugreport` for it would be reporting a driver
 	// boundary as a defect.
 	SyncCodeRemoteSchemaMissing = "remote_schema_missing"
+	// SyncCodeOverQuota is a join estimated to use more Turso traffic than the
+	// month has left; --yes joins anyway.
+	SyncCodeOverQuota = "over_quota"
 	// SyncCodeInternal is a failure with no class of its own -- the daemon's
 	// own bug, or a hook that panicked or reported nothing.
 	SyncCodeInternal = "internal"
@@ -240,6 +243,8 @@ type SyncVerb struct {
 	// secret; the rest is the token. Both ride the tail because it is the one
 	// part of a frame that is never logged or echoed.
 	R2SecretLen int `json:"r2_secret_len,omitempty"`
+	// Yes joins past the quota guard's refusal.
+	Yes bool `json:"yes,omitempty"`
 }
 
 // SyncFreshen is the hint that a reader wants current data. It carries nothing

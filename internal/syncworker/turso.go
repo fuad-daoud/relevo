@@ -559,6 +559,9 @@ const (
 // fix is the schema; any other refused statement repeats until the change set
 // changes, and both meet the same remote on every later attempt.
 func markDriverRefusal(err error) error {
+	if isQuotaRefusal(err) {
+		return MarkRefusal(CodeQuota, err)
+	}
 	if !strings.Contains(err.Error(), remoteRefusalMarker) {
 		return err
 	}

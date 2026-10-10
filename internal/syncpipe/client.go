@@ -409,6 +409,8 @@ func refusalError(resp syncworker.Response) error {
 		return fmt.Errorf("%w: %w", refused, relevosync.ErrRemoteSchema)
 	case syncworker.CodeRemote:
 		return fmt.Errorf("%w: %w", refused, relevosync.ErrRemoteRefused)
+	case syncworker.CodeQuota:
+		return fmt.Errorf("%w: %w", refused, relevosync.ErrQuotaReached)
 	case syncworker.CodeBlobMissing:
 		// The bucket answered and the object is not there. That is a fact about
 		// the bucket rather than a fault in reaching it, so it maps to the

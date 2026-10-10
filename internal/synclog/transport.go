@@ -110,7 +110,14 @@ type MarkState struct {
 	Heads map[string]int
 	// Entries is how many entries the log holds for each origin.
 	Entries map[string]int
+	// Sizes is each origin's log size in bytes: the bodies plus a fixed
+	// overhead per row.
+	Sizes map[string]int64
 }
+
+// LogRowOverhead is the bytes a log row costs beside its body, for the columns
+// the body does not carry.
+const LogRowOverhead = 96
 
 // HeadRow is one row of an origin's `head`: the materialized latest state of a
 // single shared row, as the log holds it.

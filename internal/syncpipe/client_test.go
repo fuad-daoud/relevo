@@ -624,6 +624,15 @@ func TestRefusalErrorCarriesTheClassSentinel(t *testing.T) {
 	}
 }
 
+// TestRefusalErrorMapsAQuotaRefusalToTheQuotaSentinel pins that a quota class
+// from the worker reaches the caller as ErrQuotaReached under ErrRefused.
+func TestRefusalErrorMapsAQuotaRefusalToTheQuotaSentinel(t *testing.T) {
+	err := refusalError(syncworker.Response{OK: false, Error: "full", Code: syncworker.CodeQuota})
+	if !errors.Is(err, ErrRefused) || !errors.Is(err, relevosync.ErrQuotaReached) {
+		t.Fatalf("err = %v, want ErrRefused and ErrQuotaReached", err)
+	}
+}
+
 // TestPipeClientCountsOnlyAMissAndNotARefusal pins which faults the breaker is
 // meant to see. A worker that answers and declines is healthy, and counting it
 // would latch the breaker against a remote that is working perfectly.

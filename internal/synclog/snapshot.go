@@ -192,6 +192,7 @@ func (i *Importer) applyPass(origin string, entries []Entry, total *ImportResult
 		}
 		applied += n
 		deferred = append(deferred, refused...)
+		i.batchDone()
 	}
 	total.Applied += applied
 	return deferred, applied, nil

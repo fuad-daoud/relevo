@@ -21,7 +21,7 @@ import (
 // sync can be moved between plus the three one-shot calls, and each verb parses
 // its own flags rather than leaving them to the dispatcher. The R2 flags, their
 // line and their prose are in db_sync_r2.go, which is where they are installed.
-const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [--timeout D] [--json]\n" +
+const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [--yes] [--timeout D] [--json]\n" +
 	dbSyncR2Usage +
 	"       relevo db sync disable [--timeout D] [--json]\n" +
 	"       relevo db sync retry [--json]\n" +
@@ -92,6 +92,7 @@ type dbSyncEnableFlagValues struct {
 	remoteURL  *string
 	tokenStdin *bool
 	timeout    *time.Duration
+	yes        *bool
 	dbSyncR2Flags
 }
 
@@ -103,6 +104,7 @@ func dbSyncEnableFlagSet(fs *flag.FlagSet) *dbSyncEnableFlagValues {
 	v.remoteURL = fs.String("url", "", "the remote to sync with, stored in the machine-local sync section")
 	v.tokenStdin = fs.Bool("token-stdin", false, "read the turso.token from standard input")
 	v.timeout = fs.Duration("timeout", dbSyncDefaultTimeout, "bound the remote probe and the open")
+	v.yes = fs.Bool("yes", false, "join even when the estimate exceeds what is left of this month's Turso quota")
 	installR2Flags(fs, &v.dbSyncR2Flags)
 	return v
 }
@@ -228,6 +230,11 @@ type dbSyncStatusDoc struct {
 	// QuotaTursoSync the allowance the Turso total is read against.
 	Bytes          *relevosync.ByteCounters `json:"bytes,omitempty"`
 	QuotaTursoSync int64                    `json:"quota_turso_sync,omitempty"`
+	// Storage is the last daily measurement of the replica and the bucket,
+	// absent until one was taken, read against the two storage quotas.
+	Storage           *relevosync.Storage `json:"storage,omitempty"`
+	QuotaTursoStorage int64               `json:"quota_turso_storage,omitempty"`
+	QuotaR2Storage    int64               `json:"quota_r2_storage,omitempty"`
 }
 
 // dbSyncOutcomeDoc is what enable and disable print under --json: what the run
@@ -292,7 +299,7 @@ func cmdDBSyncEnable(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), *v.timeout+verbDialSlack)
 	defer cancel()
 
-	opts := dbSyncVerbOptions{RemoteURL: *v.remoteURL, Timeout: *v.timeout}
+	opts := dbSyncVerbOptions{RemoteURL: *v.remoteURL, Timeout: *v.timeout, Yes: *v.yes}
 	tail, err := dbSyncEnableR2Tail(token, v.dbSyncR2Flags, &opts)
 	if err != nil {
 		return err
@@ -314,6 +321,9 @@ func cmdDBSyncEnable(args []string) error {
 			RemoteURL: res.RemoteURL,
 			Applied:   res.Applied,
 		})
+	}
+	if res.Warning != "" {
+		fmt.Fprintln(os.Stderr, "warning: "+res.Warning)
 	}
 	fmt.Println("sync enabled on this machine")
 	return nil
@@ -493,11 +503,30 @@ func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 	for _, gap := range doc.Gaps {
 		fmt.Fprintf(&b, " · gap: %s", sanitize.Text(gap))
 	}
-	if doc.Bytes != nil {
-		fmt.Fprintf(&b, " · %s", relevosync.FormatBytes(*doc.Bytes, doc.QuotaTursoSync))
+	if doc.Bytes != nil || doc.Storage != nil {
+		fmt.Fprintf(&b, " · %s", dbSyncQuotasLine(doc))
 	}
 	b.WriteString(dbSyncAttemptDetails(doc.LastAttempt))
 	return b.String()
+}
+
+// dbSyncQuotasLine renders the month's traffic and the stored bytes against the
+// plan quotas the document carries. A storage reading that was never taken reads
+// as not measured, never as zero.
+func dbSyncQuotasLine(doc dbSyncStatusDoc) string {
+	var month relevosync.ByteCounters
+	if doc.Bytes != nil {
+		month = *doc.Bytes
+	}
+	var storage relevosync.Storage
+	if doc.Storage != nil {
+		storage = *doc.Storage
+	}
+	return relevosync.FormatQuotas(month, relevosync.Settings{
+		QuotaTursoSync:    doc.QuotaTursoSync,
+		QuotaTursoStorage: doc.QuotaTursoStorage,
+		QuotaR2Storage:    doc.QuotaR2Storage,
+	}, storage)
 }
 
 // dbSyncClassify maps a failure out of the sync package onto the frame's codes.
@@ -519,7 +548,8 @@ func dbSyncClassify(err error) error {
 		return failNext(codeRefused, "relevo db sync status", "%v", err)
 	case errors.Is(err, relevosync.ErrNoToken):
 		return fail(codeUsage, "%v", err)
-	case errors.Is(err, relevosync.ErrNoRemote), errors.Is(err, relevosync.ErrNoR2):
+	case errors.Is(err, relevosync.ErrNoRemote), errors.Is(err, relevosync.ErrNoR2),
+		errors.Is(err, relevosync.ErrJoinOverQuota):
 		return fail(codeUsage, "%v", err)
 	case errors.Is(err, relevosync.ErrRemoteConflict):
 		return fail(codeRefused, "%v", err)
