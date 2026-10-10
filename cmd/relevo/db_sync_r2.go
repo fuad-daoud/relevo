@@ -15,6 +15,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
@@ -177,6 +178,13 @@ func dbSyncStatusRead(local relevosync.Local) (dbSyncStatusDoc, error) {
 		Dropped:      state.Trouble.Dropped,
 		Gaps:         state.Trouble.Gaps,
 		LastAttempt:  attemptDoc(state.Attempt),
+	}
+	month, err := relevosync.ReadBytes(local, time.Now())
+	if err != nil {
+		return dbSyncStatusDoc{}, dbSyncClassify(err)
+	}
+	if !month.Zero() {
+		doc.Bytes, doc.QuotaTursoSync = &month, settings.TursoSyncQuota()
 	}
 	// A join in progress is a read of the machine-local marker, so status can
 	// show one with the network blackholed and no worker open.

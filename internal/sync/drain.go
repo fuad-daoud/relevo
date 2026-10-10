@@ -44,4 +44,5 @@ func mergeImport(total *synclog.ImportResult, res synclog.ImportResult) {
 	total.Held = append(total.Held, res.Held...)
 	total.Dropped = append(total.Dropped, res.Dropped...)
 	total.Gaps = append(total.Gaps, res.Gaps...)
+	total.Stalled = append(total.Stalled, res.Stalled...)
 }

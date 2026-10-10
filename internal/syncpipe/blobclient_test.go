@@ -6,6 +6,7 @@ package syncpipe
 // pinned is the whole path the daemon takes, not a stub of it.
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -348,6 +349,104 @@ func TestOpenSupervisorHandsOverNoCredentialOnTheCommandLine(t *testing.T) {
 			t.Errorf("the worker arguments name a credential: %v", sup.cfg.Args)
 		}
 	}
+}
+
+// TestSupervisorMovesBodiesThroughTheStagingFolder pins the wiring the exporter
+// and reconcile depend on: the supervisor is the mover, and it names the same
+// folder the daemon writes bodies into. The exporter takes its mover from the
+// transport it was handed, so a supervisor that did not carry both would leave
+// every value travelling inline with nothing to say why.
+func TestSupervisorMovesBodiesThroughTheStagingFolder(t *testing.T) {
+	t.Parallel()
+	bucket := newTestBucket(t)
+	dir := t.TempDir()
+	cfg := fakeWorkerCfg(modeBlobs)
+	cfg.R2 = &syncworker.R2Config{
+		Endpoint: bucket.srv.URL,
+		Bucket:   "bucket",
+		KeyID:    "key-1",
+		Secret:   "secret-1",
+	}
+	cfg.BlobStaging = dir
+	sup := newSupervisor(t, cfg, breakerOver(newMemKV()))
+
+	// The folder the daemon stages into is the one the supervisor names, which is
+	// what lets the exporter write a file the worker will be told to read.
+	if sup.BlobStagingDir() != dir {
+		t.Fatalf("BlobStagingDir = %q, want %q", sup.BlobStagingDir(), dir)
+	}
+
+	body := bytes.Repeat([]byte("stored body "), 400)
+	digest := digestHex(body)
+	key := blobstore.Key("m1", digest)
+	staged := filepath.Join(dir, digest)
+	if err := os.WriteFile(staged, body, 0o600); err != nil {
+		t.Fatalf("stage the body: %v", err)
+	}
+	sent, skipped, err := sup.PutBlob(key, staged)
+	if err != nil {
+		t.Fatalf("PutBlob: %v", err)
+	}
+	if skipped {
+		t.Error("the first put skipped, want the bucket to have taken the body")
+	}
+	if sent != int64(len(body)) {
+		t.Errorf("PutBlob reported %d bytes, want %d", sent, len(body))
+	}
+	// A second put of the same digest is the skip, which is what lets two rows
+	// holding one value upload it once.
+	if _, skipped, err := sup.PutBlob(key, staged); err != nil || !skipped {
+		t.Errorf("the second put = skipped %v (err %v), want it skipped", skipped, err)
+	}
+
+	fetched := filepath.Join(dir, "fetched")
+	n, err := sup.GetBlob(key, fetched)
+	if err != nil {
+		t.Fatalf("GetBlob: %v", err)
+	}
+	if n != int64(len(body)) {
+		t.Errorf("GetBlob reported %d bytes, want %d", n, len(body))
+	}
+	got, err := os.ReadFile(fetched)
+	if err != nil {
+		t.Fatalf("read the fetched body: %v", err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Error("the fetched body is not the one that was stored")
+	}
+}
+
+// TestOpenSupervisorNamesTheStagingFolderItCreated pins that the folder the
+// daemon hands the exporter is the one it made, beside the replica and already
+// there. A supervisor naming a path it never created would have the exporter
+// stage a body into a folder nothing created.
+func TestOpenSupervisorNamesTheStagingFolderItCreated(t *testing.T) {
+	t.Parallel()
+	shared, local := wiringPair(t)
+	seedRemoteAndToken(t, local)
+	if err := relevosync.SetR2(local, wiringR2, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetR2: %v", err)
+	}
+	sup, err := OpenSupervisor(shared, local)
+	if err != nil {
+		t.Fatalf("OpenSupervisor: %v", err)
+	}
+	t.Cleanup(func() { _ = sup.Close() })
+
+	dir := sup.BlobStagingDir()
+	if want := BlobStagingDir(shared.Path()); dir != want {
+		t.Fatalf("BlobStagingDir = %q, want %q", dir, want)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("the staging folder the supervisor names is not there: %v", err)
+	}
+}
+
+// digestHex is the hex sha256 of a value, which is the name its object is stored
+// under.
+func digestHex(stored []byte) string {
+	sum := sha256.Sum256(stored)
+	return hex.EncodeToString(sum[:])
 }
 
 // seedRemoteAndToken gives a machine the two rows every sync install has before

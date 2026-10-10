@@ -49,6 +49,18 @@ type Reconciler struct {
 	chunk     int
 	now       func() time.Time
 
+	// mover and staging are where the values too large to travel inline go.
+	// Both are nil or empty on a transport that moves no bodies, which is what
+	// keeps every value inline for a log with no bucket behind it.
+	mover   BlobMover
+	staging string
+
+	// pending is what the current chunk's rows will need uploaded before its
+	// entries may be appended. It is emptied by the batch that consumed it, so a
+	// chunk which is never appended -- one whose entries all turn out to be
+	// already held -- leaves nothing behind.
+	pending []pendingBlob
+
 	// readPage reads one rowid-ordered page of a table's owned rows inside the
 	// chunk's read transaction. It is a field so a test can count the pages a run
 	// reads and the rows each one returned.
@@ -83,6 +95,7 @@ type reconcileCursor struct {
 func NewReconciler(d *db.DB, t LogTransport) *Reconciler {
 	have, _ := d.SchemaVersions()
 	origin := d.Origin()
+	mover, staging := blobWiring(t)
 	return &Reconciler{
 		db:        d,
 		transport: t,
@@ -90,6 +103,8 @@ func NewReconciler(d *db.DB, t LogTransport) *Reconciler {
 		schema:    have,
 		chunk:     defaultReconcileChunk,
 		now:       time.Now,
+		mover:     mover,
+		staging:   staging,
 		readPage: func(tx *db.Tx, tbl string, after int64, limit int) ([]db.ExchangeRow, error) {
 			return tx.SharedOwnedRowPage(tbl, origin, after, limit)
 		},
@@ -138,12 +153,14 @@ func (r *Reconciler) reset() {
 	r.head = nil
 	r.cursor = reconcileCursor{}
 	r.seen = make(map[rowKey]bool)
+	r.pending = nil
 }
 
 // ReconcileBatch appends one batch of the differences it finds, up to the chunk
 // size, as a single transport call. It appends nothing when the walk is finished,
 // and one batch when it is not.
 func (r *Reconciler) ReconcileBatch() (ReconcileResult, error) {
+	r.pending = nil
 	entries, err := r.differences(r.chunk)
 	if err != nil {
 		return ReconcileResult{}, fmt.Errorf("synclog: reconcile: %w", err)
@@ -151,6 +168,15 @@ func (r *Reconciler) ReconcileBatch() (ReconcileResult, error) {
 	if len(entries) == 0 {
 		return ReconcileResult{}, nil
 	}
+	// The bodies go first, for the reason the exporter's do: an entry naming an
+	// object the store does not hold would latch the importer over a body a
+	// later attempt could still have stored. The chunk is not appended, and the
+	// next one re-reads it from head, so a failed upload costs nothing but the
+	// sha256s the walk already paid.
+	if err := uploadPending(r.mover, r.staging, r.pending); err != nil {
+		return ReconcileResult{}, fmt.Errorf("synclog: reconcile: upload: %w", err)
+	}
+	r.pending = nil
 	if _, err := r.transport.Append(entries); err != nil {
 		return ReconcileResult{}, fmt.Errorf("synclog: reconcile: append: %w", err)
 	}
@@ -247,12 +273,26 @@ func (r *Reconciler) nextUpserts(tx *db.Tx, limit int) ([]Entry, error) {
 // as an upsert. The body is encoded once and both the comparison and the entry use
 // it, so the hash is taken over the bytes that travel rather than a digest of a
 // body the log never saw.
+//
+// The comparison is over the ref form, which is the form the entry travels in:
+// the worker hashes the body as it was appended, so hashing the local bytes would
+// compare a digest of the full value against a digest of a ref and propose the
+// same row on every run forever. Building the ref form costs one sha256 per value
+// over the threshold, on every owned row of the walk, whatever the comparison
+// then decides -- which is the price of not re-exporting the file each time.
 func (r *Reconciler) inspectUpsert(out *[]Entry, tbl string, row db.ExchangeRow) error {
 	key := rowKey{table: tbl, pk: row.PK}
 	if r.head.names(key) {
 		r.seen[key] = true
 	}
-	body, err := EncodeBody(row)
+	// A row is only rewritten when there is somewhere to write it, for the
+	// reason the exporter's is: without a mover the ref would name an object
+	// nobody put.
+	moved, blobs := row, []pendingBlob(nil)
+	if r.mover != nil {
+		moved, blobs = refColumns(r.origin, tbl, row)
+	}
+	body, err := EncodeBody(moved)
 	if err != nil {
 		return err
 	}
@@ -263,6 +303,10 @@ func (r *Reconciler) inspectUpsert(out *[]Entry, tbl string, row db.ExchangeRow)
 	if r.head.holds(key, hash) {
 		return nil
 	}
+	// Only a row that is actually proposed moves its values. A row head already
+	// carries was stored when its entry was appended, so uploading again would
+	// put the same bytes under a digest the store already holds.
+	r.pending = append(r.pending, blobs...)
 	entry, err := NewUpsert(r.origin, tbl, row.PK, r.schema, body, r.now())
 	if err != nil {
 		return err

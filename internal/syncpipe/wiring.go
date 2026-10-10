@@ -54,12 +54,17 @@ func OpenSupervisor(shared *db.DB, local relevosync.Local) (*Supervisor, error) 
 	if !r2.Complete() {
 		return nil, relevosync.ErrNoR2
 	}
+	staging, err := EnsureBlobStagingDir(shared.Path())
+	if err != nil {
+		return nil, err
+	}
 	cfg := Config{
-		Args:   []string{"sync-worker", "--replica", ReplicaPath(shared.Path())},
-		Origin: shared.Origin(),
-		URL:    settings.RemoteURL,
-		Token:  string(token),
-		R2:     &syncworker.R2Config{Endpoint: r2.Endpoint, Bucket: r2.Bucket, KeyID: r2.KeyID, Secret: r2.Secret},
+		Args:        []string{"sync-worker", "--replica", ReplicaPath(shared.Path())},
+		Origin:      shared.Origin(),
+		URL:         settings.RemoteURL,
+		Token:       string(token),
+		R2:          &syncworker.R2Config{Endpoint: r2.Endpoint, Bucket: r2.Bucket, KeyID: r2.KeyID, Secret: r2.Secret},
+		BlobStaging: staging,
 	}
 	return NewSupervisor(cfg, relevosync.NewBreaker(local)), nil
 }

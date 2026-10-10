@@ -110,6 +110,12 @@ type Config struct {
 	// worker can hold without its argv or environment naming it. Nil is a
 	// machine with no bucket, and the blob verbs are then refused.
 	R2 *syncworker.R2Config
+	// BlobStaging is the folder the daemon writes bodies to and the worker
+	// reads them from. It travels in the config rather than being derived in
+	// either half because both name the file: the daemon stages under a digest
+	// and tells the worker that path, so a folder either side computed on its
+	// own would be a file the other side never looks at.
+	BlobStaging string
 	// Timeout overrides the kind's own call bound for every call. Zero maps
 	// each verb to its kind's bound; a test shortens it so a call that overruns
 	// is reached without waiting the real bound out.

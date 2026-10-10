@@ -17,6 +17,8 @@ package sync
 import (
 	"errors"
 	"strings"
+
+	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
 // ErrRemoteRefused reports a remote that refused SQL this machine's change set
@@ -34,12 +36,13 @@ var ErrRemoteRefused = errors.New("sync: the remote refused the SQL in this chan
 var ErrRemoteSchema = errors.New("sync: the remote has no table for this machine's change set")
 
 // IsPermanentRefusal reports whether err is a remote refusal that will repeat on
-// every attempt: the remote has no table for this machine's rows, or it refused
-// the change set in a way that re-sending it cannot fix. A breaker latches the
+// every attempt: the remote has no table for this machine's rows, it refused
+// the change set in a way that re-sending it cannot fix, or a body an entry names
+// is gone from the store. A breaker latches the
 // machine on one of these rather than waiting out three deaths it can already
 // predict.
 func IsPermanentRefusal(err error) bool {
-	return errors.Is(err, ErrRemoteSchema) || errors.Is(err, ErrRemoteRefused)
+	return errors.Is(err, ErrRemoteSchema) || errors.Is(err, ErrRemoteRefused) || errors.Is(err, synclog.ErrBlobMissing)
 }
 
 // The driver shapes this matches on. They are the SQLite result codes the engine

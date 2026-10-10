@@ -16,6 +16,15 @@ import (
 // that merely looks like one.
 const blobTag = "$blob"
 
+// RefValue is a column value that is not in the entry at all: the entry names
+// the object in the blob store that holds it, and the importer fetches the
+// bytes before the row can be applied. It is a type of its own rather than a
+// BlobRef because the two travel differently -- a BlobRef is a value a caller
+// holds, a RefValue is a value standing in for one that stayed behind -- and a
+// body that carried a bare ref object would be indistinguishable from a column
+// whose value happens to be a structure.
+type RefValue struct{ BlobRef }
+
 // EncodeBody turns one row read from the file into the body an entry carries:
 // every column under its own name, in the type the file stored it as. A NULL
 // stays a JSON null so a column set to nothing is distinguishable from one that
@@ -58,6 +67,8 @@ func encodeValue(value any) (json.RawMessage, error) {
 		// The tag is what tells this apart from text on the way back, so it is
 		// written here rather than left to the reader to guess.
 		return json.Marshal(map[string]string{blobTag: base64.StdEncoding.EncodeToString(v)})
+	case RefValue:
+		return EncodeRef(v.BlobRef), nil
 	default:
 		return nil, fmt.Errorf("%T is not a storable column value: %w", value, ErrInvalid)
 	}
@@ -105,7 +116,7 @@ func decodeValue(raw json.RawMessage) (any, error) {
 	}
 	switch trimmed[0] {
 	case '{':
-		return decodeBlob(trimmed)
+		return decodeObject(trimmed)
 	case 'n':
 		if string(trimmed) != "null" {
 			return nil, fmt.Errorf("body value %s is not null: %w", trimmed, ErrInvalid)
@@ -120,6 +131,33 @@ func decodeValue(raw json.RawMessage) (any, error) {
 	default:
 		return decodeNumber(trimmed)
 	}
+}
+
+// decodeObject reads one tagged value. The two tags answer different questions:
+// $blob says the bytes are here, $ref says they are in the store and names the
+// object. They are read apart because only one of them leaves the importer with
+// a value it can bind, and an entry that pointed at a body it had not fetched
+// would apply a row of missing columns.
+//
+// Both tags require an object of exactly the tag and nothing beside it. A
+// second key is refused rather than ignored, so a body cannot carry a structure
+// past a reader that would bind its contents under a name the writer chose.
+func decodeObject(raw json.RawMessage) (any, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, fmt.Errorf("body value %s is not an object: %w: %w", raw, err, ErrInvalid)
+	}
+	if len(fields) != 1 {
+		return nil, fmt.Errorf("body value %s is neither a blob nor a ref: %w", raw, ErrInvalid)
+	}
+	if _, ok := fields[refTag]; ok {
+		ref, _, err := DecodeRef(raw)
+		if err != nil {
+			return nil, fmt.Errorf("body value %s is not a ref: %w", raw, err)
+		}
+		return RefValue{BlobRef: ref}, nil
+	}
+	return decodeBlob(raw)
 }
 
 // decodeBlob returns the bytes a tagged BLOB carries. An object is only a blob

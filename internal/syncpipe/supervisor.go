@@ -52,7 +52,13 @@ func NewSyncRunner(cfg Config, local relevosync.Local) *relevosync.Runner {
 
 // The supervisor is the transport the exchange drives. Naming it here means a
 // method the transport needs cannot be lost without the tree failing to build.
+//
+// It is also the blob mover: the exporter and reconcile take their mover from
+// the transport they were handed, and this is the transport the daemon hands
+// them. One object numbers the entries and stores the bodies they point at, so
+// a caller cannot pair an append path with a bucket that is not there.
 var _ synclog.LogTransport = (*Supervisor)(nil)
+var _ synclog.BlobTransport = (*Supervisor)(nil)
 
 // Ready reports whether this supervisor names a remote and a token, so a caller
 // can tell a worker an enable built from the placeholder a daemon holds before
@@ -109,6 +115,42 @@ func (s *Supervisor) Stats() (synclog.Stats, error) {
 		return e
 	})
 	return out, err
+}
+
+// BlobStagingDir is the folder bodies are written to before they are put. It is
+// the supervisor's own rather than a caller's, so the exporter writing the file
+// and the worker reading it are named from one place.
+func (s *Supervisor) BlobStagingDir() string { return s.cfg.BlobStaging }
+
+// PutBlob uploads the body staged at stagingPath under key. It runs through the
+// breaker like every other call, because a worker that stops answering a blob
+// put is a dead worker whatever it was doing when it stopped.
+func (s *Supervisor) PutBlob(key, stagingPath string) (int64, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var (
+		bytes   int64
+		skipped bool
+	)
+	err := s.drive("put_blob", func(c *Client) error {
+		var e error
+		bytes, skipped, e = c.PutBlob(key, stagingPath)
+		return e
+	})
+	return bytes, skipped, err
+}
+
+// GetBlob writes the body under key to stagingPath.
+func (s *Supervisor) GetBlob(key, stagingPath string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var n int64
+	err := s.drive("get_blob", func(c *Client) error {
+		var e error
+		n, e = c.GetBlob(key, stagingPath)
+		return e
+	})
+	return n, err
 }
 
 // Cancel stops the current worker and keeps nothing to reuse. It does not take

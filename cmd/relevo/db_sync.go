@@ -224,6 +224,10 @@ type dbSyncStatusDoc struct {
 	// LastAttempt is the daemon's last steady attempt, absent until it has run
 	// one.
 	LastAttempt *dbSyncAttemptDoc `json:"last_attempt,omitempty"`
+	// Bytes is this month's traffic, absent until something moved, and
+	// QuotaTursoSync the allowance the Turso total is read against.
+	Bytes          *relevosync.ByteCounters `json:"bytes,omitempty"`
+	QuotaTursoSync int64                    `json:"quota_turso_sync,omitempty"`
 }
 
 // dbSyncOutcomeDoc is what enable and disable print under --json: what the run
@@ -486,6 +490,9 @@ func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 	}
 	for _, gap := range doc.Gaps {
 		fmt.Fprintf(&b, " · gap: %s", sanitize.Text(gap))
+	}
+	if doc.Bytes != nil {
+		fmt.Fprintf(&b, " · %s", relevosync.FormatBytes(*doc.Bytes, doc.QuotaTursoSync))
 	}
 	b.WriteString(dbSyncAttemptDetails(doc.LastAttempt))
 	return b.String()

@@ -1,9 +1,14 @@
 package synclog
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"os"
 	"sort"
 	"sync"
+
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 )
 
 // MemTransport is the in-memory LogTransport every test in this slice runs
@@ -260,6 +265,81 @@ func (m *MemTransport) Head(origin string) ([]HeadRow, error) {
 // transport that is refusing to answer.
 func (m *MemTransport) Stats() (Stats, error) {
 	return m.log.stats(), nil
+}
+
+// MemBlobMover is the BlobMover every test in this slice runs bodies through,
+// over the same MemBlobStore the store's own tests use. It stands where the
+// supervisor's pipe client stands, so a test exercises the real staging round
+// trip -- write the file, read it back, remove it -- without a worker, a pipe
+// or a bucket.
+//
+// The failure it can be told to return is the point of it: the rule being pinned
+// is that a body is in the store before the entry naming it is appended, and
+// that can only be shown by a mover which refuses.
+type MemBlobMover struct {
+	store *blobstore.MemBlobStore
+	// mu guards the counters, because a batch's fetches run side by side.
+	mu sync.Mutex
+	// Err is what PutBlob returns instead of storing. Nil puts.
+	Err error
+	// GetErr is what GetBlob returns instead of fetching. Nil fetches.
+	GetErr error
+	// Puts counts the bodies it was asked to store and Gets the ones it
+	// fetched, so a test can say a batch uploaded nothing rather than reading
+	// the store to find out.
+	Puts int
+	Gets int
+}
+
+// NewMemBlobMover returns a mover over an empty in-memory store.
+func NewMemBlobMover() *MemBlobMover {
+	return &MemBlobMover{store: blobstore.NewMemBlobStore(nil)}
+}
+
+// Store is the store underneath, so a test reads the objects a run left behind.
+func (m *MemBlobMover) Store() *blobstore.MemBlobStore { return m.store }
+
+// PutBlob stores the body staged at stagingPath under key. It works through the
+// staging file rather than through the caller's bytes, which is what the real
+// mover does and what makes a staging file that was never written visible here
+// as the failure it is.
+func (m *MemBlobMover) PutBlob(key, stagingPath string) (int64, bool, error) {
+	if m.Err != nil {
+		return 0, false, m.Err
+	}
+	body, err := os.ReadFile(stagingPath)
+	if err != nil {
+		return 0, false, fmt.Errorf("synclog: mem mover read %s: %w", stagingPath, err)
+	}
+	ctx := context.Background()
+	if err := m.store.Put(ctx, key, bytes.NewReader(body), int64(len(body))); err != nil {
+		return 0, false, err
+	}
+	m.mu.Lock()
+	m.Puts++
+	m.mu.Unlock()
+	return int64(len(body)), false, nil
+}
+
+// GetBlob writes the body under key to stagingPath, or reports the store's
+// ErrNotFound, which the importer latches on rather than retrying.
+func (m *MemBlobMover) GetBlob(key, stagingPath string) (int64, error) {
+	m.mu.Lock()
+	m.Gets++
+	m.mu.Unlock()
+	if m.GetErr != nil {
+		return 0, m.GetErr
+	}
+	f, err := os.Create(stagingPath)
+	if err != nil {
+		return 0, fmt.Errorf("synclog: mem mover create %s: %w", stagingPath, err)
+	}
+	defer func() { _ = f.Close() }()
+	n, err := m.store.Get(context.Background(), key, f)
+	if err != nil {
+		return n, err
+	}
+	return n, nil
 }
 
 // tableIndex is a table's position in SharedTables, so head rows come back in

@@ -28,6 +28,12 @@ type Exporter struct {
 	schema    int
 	batch     int
 	now       func() time.Time
+
+	// mover and staging are where the values too large to travel inline go.
+	// Both are nil or empty on a transport that moves no bodies, which is what
+	// keeps every value inline for a log with no bucket behind it.
+	mover   BlobMover
+	staging string
 }
 
 // NewExporter returns the exporter for one installation's file and the log it
@@ -37,6 +43,7 @@ type Exporter struct {
 // binary wrote.
 func NewExporter(d *db.DB, t LogTransport) *Exporter {
 	have, _ := d.SchemaVersions()
+	mover, staging := blobWiring(t)
 	return &Exporter{
 		db:        d,
 		transport: t,
@@ -44,6 +51,8 @@ func NewExporter(d *db.DB, t LogTransport) *Exporter {
 		schema:    have,
 		batch:     defaultBatchSize,
 		now:       time.Now,
+		mover:     mover,
+		staging:   staging,
 	}
 }
 
@@ -93,11 +102,19 @@ func (e *Exporter) ExportBatch() (ExportResult, error) {
 		return ExportResult{}, nil
 	}
 
-	entries, err := e.entries(drained)
+	entries, pending, err := e.entries(drained)
 	if err != nil {
 		return ExportResult{}, fmt.Errorf("synclog: export: %w", err)
 	}
 	if len(entries) > 0 {
+		// The bodies go first because an entry naming an object the store does
+		// not hold is worse than no entry at all: an importer would latch the
+		// origin over a body that a later attempt could have stored. A failed
+		// upload returns here, exactly as a failed append does, so the outbox
+		// entries stay and the whole batch is offered again next pass.
+		if err := uploadPending(e.mover, e.staging, pending); err != nil {
+			return ExportResult{}, fmt.Errorf("synclog: export: upload: %w", err)
+		}
 		if _, err := e.transport.Append(entries); err != nil {
 			return ExportResult{}, fmt.Errorf("synclog: export: append: %w", err)
 		}
@@ -115,30 +132,44 @@ func (e *Exporter) ExportBatch() (ExportResult, error) {
 
 // entries is the batch the log is given: the drained rows this installation
 // owns, one per row, ordered so an importer can apply it with foreign keys on.
-func (e *Exporter) entries(drained []db.DrainedEntry) ([]Entry, error) {
+// The values too large to travel inline come back beside the batch, to be
+// uploaded before it is appended.
+//
+// A delete carries no body, so it never moves a value: there is nothing in it
+// to be too large.
+func (e *Exporter) entries(drained []db.DrainedEntry) ([]Entry, []pendingBlob, error) {
 	upserts, deletes := split(coalesce(owned(drained, e.origin)))
 	sortParentsFirst(upserts)
 	sortChildrenFirst(deletes)
 	out := make([]Entry, 0, len(upserts)+len(deletes))
+	var pending []pendingBlob
 	for _, d := range upserts {
-		body, err := EncodeBody(*d.Row)
+		// A row is only rewritten when there is somewhere to write it. A
+		// transport with no mover cannot upload, and an entry pointing at an
+		// object nobody put is a latch on the importer rather than a saving.
+		row, blobs := *d.Row, []pendingBlob(nil)
+		if e.mover != nil {
+			row, blobs = refColumns(e.origin, d.Table, *d.Row)
+		}
+		pending = append(pending, blobs...)
+		body, err := EncodeBody(row)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		entry, err := NewUpsert(e.origin, d.Table, d.PK, e.schema, body, e.now())
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, entry)
 	}
 	for _, d := range deletes {
 		entry, err := NewDelete(e.origin, d.Table, d.PK, e.schema, e.now())
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, entry)
 	}
-	return out, nil
+	return out, pending, nil
 }
 
 // split divides the drained rows into the two kinds of entry the log carries: a
