@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
 // KeyDeaths is where the breaker keeps its consecutive-death count.
@@ -33,6 +34,7 @@ const LatchAfter = 3
 const (
 	latchDeaths  = "sync: the worker stopped answering three times in a row"
 	latchRefused = "sync: the remote refused this machine's sync log"
+	latchMissing = "sync: a body the sync log names is missing from the bucket"
 )
 
 // ErrLatched reports a call refused because the machine is latched: it stops
@@ -194,6 +196,9 @@ func (b *Breaker) Success() error {
 func (b *Breaker) Refused(err error) error {
 	if !IsPermanentRefusal(err) {
 		return nil
+	}
+	if errors.Is(err, synclog.ErrBlobMissing) {
+		return b.latch(latchMissing)
 	}
 	return b.latch(latchRefused)
 }

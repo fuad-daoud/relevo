@@ -660,6 +660,7 @@ func TestSyncVerbClassificationIsTotal(t *testing.T) {
 		{relevosync.ErrNoToken, wire.SyncCodeNoToken},
 		{relevosync.ErrNoRemote, wire.SyncCodeNoRemote},
 		{relevosync.ErrNoR2, wire.SyncCodeNoR2},
+		{synclog.ErrBlobMissing, wire.SyncCodeRemoteRefused},
 		{relevosync.ErrAlreadyEnabled, wire.SyncCodeAlreadyEnabled},
 		{relevosync.ErrRemoteConflict, wire.SyncCodeRemoteConflict},
 		{relevosync.ErrAuthRefused, wire.SyncCodeAuthRefused},

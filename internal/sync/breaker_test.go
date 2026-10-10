@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
 // breakerNow is the fixed instant every breaker test runs on, so the backoff
@@ -203,5 +204,18 @@ func TestLatchPersistsUntilCleared(t *testing.T) {
 	}
 	if tok, _ := StatusToken(local); tok == TokenErr {
 		t.Errorf("token after Clear = %q, want the latch gone", tok)
+	}
+}
+
+// A missing body latches with its own sentence, since the remote did not refuse
+// anything and the way out is restoring the object.
+func TestMissingBodyLatchesWithItsOwnCause(t *testing.T) {
+	t.Parallel()
+	b, _ := breakerUnder(t)
+	if err := b.Refused(fmt.Errorf("import: %w", synclog.ErrBlobMissing)); err != nil {
+		t.Fatalf("Refused: %v", err)
+	}
+	if cause, _ := b.LatchCause(); cause != latchMissing {
+		t.Errorf("latch cause = %q, want %q", cause, latchMissing)
 	}
 }
