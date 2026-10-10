@@ -211,6 +211,7 @@ func TestChainRemoteBuilderE2E(t *testing.T) {
 	// -- The chain's own row -------------------------------------------------
 	row := chainE2ERow(t, rt, chainRemoteName)
 	if row.Status != string(chain.StatusDone) || row.Phase != string(chain.PhaseFinished) {
+		diagDump(t, rt.Store.Root(), chainRemoteName+"-rev", "chains")
 		t.Fatalf("chain ended status %q phase %q, want done/finished (reason %q)", row.Status, row.Phase, row.Reason)
 	}
 	if row.Plan != 1 || row.Corrections != 1 {
