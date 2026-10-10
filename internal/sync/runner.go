@@ -9,6 +9,7 @@ package sync
 
 import (
 	"errors"
+	gosync "sync"
 	"sync/atomic"
 	"time"
 
@@ -45,6 +46,11 @@ type Runner struct {
 	// active is the transport the work in flight drives, so Stop can end it
 	// from outside the sync slot that work holds.
 	active atomic.Pointer[StopTransport]
+
+	// lastRead is the worker's cumulative totals as of the last attempt, which
+	// the next reading is measured against.
+	readMu   gosync.Mutex
+	lastRead synclog.Stats
 }
 
 // Enabled reports whether there is anything to drive. A machine with no client

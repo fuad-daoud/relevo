@@ -189,3 +189,9 @@ func (d *Daemon) truncateOutbox() {
 	}
 	d.outboxTruncatedAt = time.Now()
 }
+
+// Joining reports whether an enable's join is running on this daemon. A nil
+// daemon is one not yet built, which has started no join.
+func (d *Daemon) Joining() bool {
+	return d != nil && d.syncVerbs.Joining()
+}

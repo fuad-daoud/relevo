@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
@@ -96,6 +97,58 @@ func (i TokenIntake) Resolve() ([]byte, TokenSource, error) {
 		return value, TokenSourceEnv, nil
 	}
 	return nil, TokenSourceNone, ErrNoToken
+}
+
+// R2Intake is what an enable was given for R2, and the stored credentials it
+// falls back to. The flag beats the stored value per field, so a machine
+// pointed at a new bucket keeps its old secret rather than being asked for it
+// again -- the three non-secret flags describe where, and only where changed.
+type R2Intake struct {
+	// Endpoint, Bucket and KeyID are the flags, empty when they were not passed.
+	Endpoint string
+	Bucket   string
+	KeyID    string
+	// Secret is what --r2-secret-stdin or EnvR2Secret resolved to, empty when
+	// neither carried anything.
+	Secret []byte
+	// Stored is what the machine already holds, read by the caller so this rule
+	// stays a pure function of its input and can be tested without a database.
+	Stored R2Secrets
+}
+
+// R2Resolve returns the four credentials an enable would store.
+//
+// A field the caller supplied wins, and a field it did not is taken from what is
+// already stored. Nothing resolving is ErrNoR2, which is the refusal an enable
+// stops on: a machine that cannot name a bucket cannot move a body, and the
+// check is here rather than at the first upload so the enable refuses before it
+// has imported anything.
+func (i R2Intake) R2Resolve() (R2Secrets, error) {
+	out := R2Secrets{
+		Endpoint: i.Endpoint,
+		Bucket:   i.Bucket,
+		KeyID:    i.KeyID,
+		Secret:   string(bytes.TrimSpace(i.Secret)),
+	}
+	if out.Endpoint == "" {
+		out.Endpoint = i.Stored.Endpoint
+	}
+	if out.Bucket == "" {
+		out.Bucket = i.Stored.Bucket
+	}
+	if out.KeyID == "" {
+		out.KeyID = i.Stored.KeyID
+	}
+	if out.Secret == "" {
+		out.Secret = i.Stored.Secret
+	}
+	if !out.Complete() {
+		return R2Secrets{}, ErrNoR2
+	}
+	if err := blobstore.CheckEndpoint(out.Endpoint); err != nil {
+		return R2Secrets{}, fmt.Errorf("sync: r2.endpoint: %w: %w", err, db.ErrInvalid)
+	}
+	return out, nil
 }
 
 // SectionSettings is the config section this machine's sync settings live

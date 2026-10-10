@@ -8,8 +8,10 @@ package sync
 
 import (
 	"errors"
+	"fmt"
 	"sync/atomic"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -26,6 +28,7 @@ type StopTransport struct {
 }
 
 var _ synclog.LogTransport = (*StopTransport)(nil)
+var _ synclog.BlobTransport = (*StopTransport)(nil)
 
 func NewStopTransport(inner synclog.LogTransport) *StopTransport {
 	return &StopTransport{inner: inner}
@@ -79,4 +82,37 @@ func (s *StopTransport) Stats() (synclog.Stats, error) {
 		return synclog.Stats{}, ErrStopped
 	}
 	return s.inner.Stats()
+}
+
+// The blob half, forwarded so a stopped export cannot upload a body the entry
+// naming it was never appended for. BlobStagingDir reports an empty folder for a
+// client that moves nothing, which is what tells the exporter there is no mover
+// and every value should travel inline.
+func (s *StopTransport) BlobStagingDir() string {
+	if b, ok := s.inner.(interface{ BlobStagingDir() string }); ok {
+		return b.BlobStagingDir()
+	}
+	return ""
+}
+
+func (s *StopTransport) PutBlob(key, stagingPath string) (int64, bool, error) {
+	if s.stopped.Load() {
+		return 0, false, ErrStopped
+	}
+	m, ok := s.inner.(synclog.BlobMover)
+	if !ok {
+		return 0, false, fmt.Errorf("sync: %w: the client moves no bodies", db.ErrInvalid)
+	}
+	return m.PutBlob(key, stagingPath)
+}
+
+func (s *StopTransport) GetBlob(key, stagingPath string, max int64) (int64, error) {
+	if s.stopped.Load() {
+		return 0, ErrStopped
+	}
+	m, ok := s.inner.(synclog.BlobMover)
+	if !ok {
+		return 0, fmt.Errorf("sync: %w: the client moves no bodies", db.ErrInvalid)
+	}
+	return m.GetBlob(key, stagingPath, max)
 }

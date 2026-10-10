@@ -29,6 +29,8 @@ type Importer struct {
 	db        *db.DB
 	transport LogTransport
 	known     int
+	mover     BlobMover
+	staging   string
 }
 
 // NewImporter returns the importer for one installation's file and the log it
@@ -42,7 +44,8 @@ type Importer struct {
 // the file holds is the one that has to apply it.
 func NewImporter(d *db.DB, t LogTransport) *Importer {
 	_, known := d.SchemaVersions()
-	return &Importer{db: d, transport: t, known: known}
+	mover, staging := blobWiring(t)
+	return &Importer{db: d, transport: t, known: known, mover: mover, staging: staging}
 }
 
 // ImportResult is what one import moved: the batches it applied and the entries
@@ -67,6 +70,9 @@ type ImportResult struct {
 	// is reported, so nothing below it is skipped and the missing batch is read
 	// again once it arrives.
 	Gaps []Gap
+	// Stalled are the origins whose batch refers to a body that could not be
+	// fetched and checked. Like a gap they hold for the run and are read again.
+	Stalled []Stall
 }
 
 // Moved reports whether a run moved any origin's mark: it applied an entry or
@@ -206,6 +212,12 @@ func (i *Importer) Import() (ImportResult, error) {
 			continue
 		}
 		applied, hold, drop, err := i.applyBatch(batch, marks)
+		var stalled *stallError
+		if errors.As(err, &stalled) {
+			total.Stalled = append(total.Stalled, Stall{Origin: origin, Label: i.labelOf(origin), Reason: err.Error()})
+			held[origin] = true
+			continue
+		}
 		if err != nil {
 			return total, fmt.Errorf("synclog: import: %w", err)
 		}
@@ -246,6 +258,15 @@ func (i *Importer) labels() (map[string]string, error) {
 	return out, nil
 }
 
+// labelOf is the name an installation's file carries, or its id when the
+// directory cannot say.
+func (i *Importer) labelOf(origin string) string {
+	if names, err := i.labels(); err == nil && names[origin] != "" {
+		return names[origin]
+	}
+	return origin
+}
+
 // applyBatch writes one batch in one transaction and moves the mark that covers
 // it. It reports the entries that took effect, or the one thing that kept the
 // batch from taking effect at all.
@@ -270,7 +291,7 @@ func (i *Importer) applyBatch(batch []Entry, marks map[string]int) (int, *Hold, 
 	if e, held := i.held(batch); held {
 		return 0, &Hold{Origin: e.Origin, Seq: batch[0].Seq - 1, Schema: e.SchemaVersion}, nil, nil
 	}
-	applied, err := i.applyEntries(batch, marks)
+	applied, err := i.fetchAndApply(batch, marks)
 	if err == nil {
 		return applied, nil, nil, nil
 	}

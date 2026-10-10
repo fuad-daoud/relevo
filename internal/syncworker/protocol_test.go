@@ -3,6 +3,7 @@ package syncworker
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,14 +71,65 @@ func TestProtocolRoundTripPinsEveryRequest(t *testing.T) {
 // requestWireCases is one case per verb the daemon sends, each carrying every
 // field that verb reads.
 func requestWireCases() []wireCase {
+	return append(logRequestWireCases(), blobRequestWireCases()...)
+}
+
+// blobRequestWireCases are the two blob verbs' requests, kept apart because the
+// staged paths are long enough on their own to push the table over the length
+// the linter allows.
+func blobRequestWireCases() []wireCase {
+	return []wireCase{
+		{
+			name: "request put_blob",
+			value: Request{
+				ID: "7", Verb: VerbPutBlob,
+				Key:     "origin-a/" + strings.Repeat("a", 64),
+				Staging: "/state/sync-blobs/" + strings.Repeat("a", 64),
+			},
+			wire: `{"id":"7","verb":"put_blob","key":"origin-a/` + strings.Repeat("a", 64) +
+				`","staging":"/state/sync-blobs/` + strings.Repeat("a", 64) + `"}`,
+		},
+		{
+			name: "request get_blob",
+			value: Request{
+				ID: "8", Verb: VerbGetBlob,
+				Key:     "origin-b/" + strings.Repeat("b", 64),
+				Staging: "/state/sync-blobs/" + strings.Repeat("b", 64),
+			},
+			wire: `{"id":"8","verb":"get_blob","key":"origin-b/` + strings.Repeat("b", 64) +
+				`","staging":"/state/sync-blobs/` + strings.Repeat("b", 64) + `"}`,
+		},
+	}
+}
+
+// logRequestWireCases are the requests that carry rows rather than bodies.
+func logRequestWireCases() []wireCase {
 	return []wireCase{
 		{
 			name: "request hello",
 			value: Request{
 				ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a",
 				Token: "t", URL: "libsql://remote.example",
+				R2: &R2Config{
+					Endpoint: "https://acct.r2.cloudflarestorage.com",
+					Bucket:   "relevo-sync", KeyID: "key-1", Secret: "s",
+				},
 			},
-			wire: `{"id":"1","verb":"hello","version":1,"origin":"origin-a",` +
+			wire: `{"id":"1","verb":"hello","version":2,"origin":"origin-a",` +
+				`"token":"t","url":"libsql://remote.example","r2":{` +
+				`"endpoint":"https://acct.r2.cloudflarestorage.com",` +
+				`"bucket":"relevo-sync","key_id":"key-1","secret":"s"}}`,
+		},
+		{
+			// A hello with no bucket: the R2 block is omitted entirely rather
+			// than sent as an empty object, so a worker on a machine that has no
+			// credentials sees no block at all.
+			name: "request hello without a bucket",
+			value: Request{
+				ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a",
+				Token: "t", URL: "libsql://remote.example",
+			},
+			wire: `{"id":"1","verb":"hello","version":2,"origin":"origin-a",` +
 				`"token":"t","url":"libsql://remote.example"}`,
 		},
 		{
@@ -118,7 +170,13 @@ func requestWireCases() []wireCase {
 // responseWireCases is one case per shape a reply takes, so a field a reply
 // gained and one a reply lost are both caught.
 func responseWireCases() []wireCase {
-	stats := Stats{Entries: 11, Origins: 2, Seq: 9}
+	// Every counter is set, because a stats reply that gained one and left the
+	// others at zero would still encode to a line a reader could mistake for a
+	// month that cost nothing.
+	stats := Stats{
+		Entries: 11, Origins: 2, Seq: 9,
+		TursoSent: 1024, TursoReceived: 2048, R2Put: 4096, R2Get: 8192,
+	}
 	return []wireCase{
 		{
 			name:  "response carrying entries",
@@ -146,7 +204,26 @@ func responseWireCases() []wireCase {
 		{
 			name:  "response carrying stats",
 			value: Response{ID: "5", OK: true, Stats: &stats},
-			wire:  `{"id":"5","ok":true,"stats":{"entries":11,"origins":2,"seq":9}}`,
+			wire: `{"id":"5","ok":true,"stats":{"entries":11,"origins":2,"seq":9,` +
+				`"turso_sent":1024,"turso_received":2048,"r2_put":4096,"r2_get":8192}}`,
+		},
+		{
+			name:  "response carrying a put that moved bytes",
+			value: Response{ID: "7", OK: true, Bytes: 4096},
+			wire:  `{"id":"7","ok":true,"bytes":4096}`,
+		},
+		{
+			// A skip carries no bytes: the object was already there, so the
+			// zero must be absent from the line rather than sent as bytes:0,
+			// which would read as an empty body having been stored.
+			name:  "response carrying a put that skipped",
+			value: Response{ID: "7", OK: true, Skipped: true},
+			wire:  `{"id":"7","ok":true,"skipped":true}`,
+		},
+		{
+			name:  "response carrying a missing body",
+			value: Response{ID: "8", OK: false, Error: "not in the store", Code: CodeBlobMissing},
+			wire:  `{"id":"8","ok":false,"error":"not in the store","code":"blob_missing"}`,
 		},
 		{
 			name:  "response to a shutdown",

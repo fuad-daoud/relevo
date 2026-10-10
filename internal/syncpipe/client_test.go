@@ -53,6 +53,10 @@ const (
 	modeStaleID = "stale-id"
 	// modeNormal is the worker the client is meant to drive.
 	modeNormal = "normal"
+	// modeBlobs is the same worker pointed at a bucket the test controls: the
+	// blob verbs are served by the worker's own loop against whatever hello
+	// named, so the mode only has to say which fixture the child runs.
+	modeBlobs = "blobs"
 )
 
 // TestMain hands this binary over to the fake worker before the suite starts,
@@ -111,6 +115,14 @@ func runFakeWorker(mode string) int {
 		return 0
 	case modeRefuseVerbs:
 		if err := syncworker.Serve(os.Stdin, os.Stdout, verbsRefusingBackend{code: syncworker.CodeRemote}); err != nil {
+			return 1
+		}
+		return 0
+	case modeBlobs:
+		// The blob verbs are served by the worker's own loop against whatever
+		// bucket hello named, so this mode needs no backend of its own: the
+		// tests point the handshake at a local httptest bucket.
+		if err := syncworker.Serve(os.Stdin, os.Stdout, normalBackend{}); err != nil {
 			return 1
 		}
 		return 0

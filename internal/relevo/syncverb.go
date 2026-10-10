@@ -42,6 +42,8 @@ type VerbRunner struct {
 	// ReplicaPath is the worker's replica file beside the shared one. The
 	// turn-off deletes it and the driver files named after it.
 	ReplicaPath string
+	// StagingDir is the folder bodies pass through; the turn-off deletes it.
+	StagingDir string
 	// Runner is the daemon's sync runner. An enable that finishes leaves the
 	// worker it built here, so the daemon holds one transport however many calls
 	// it carries.
@@ -345,7 +347,11 @@ func transportReady(transport synclog.LogTransport) bool {
 // starts a worker. A run that fails closes the transport it opened, because a
 // worker left behind holds the replica open against the next one; a run that
 // finishes leaves it on the runner, where the daemon can drive it again.
-func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, token []byte) *wire.SyncResult {
+func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byte) *wire.SyncResult {
+	token, r2, err := enableIntake(verb, tail)
+	if err != nil {
+		return verbRefusal(verbClassify(err), err)
+	}
 	v.beginJoin()
 	opened := false
 	// The join drives its transport through a stop of its own, so a disable's
@@ -358,6 +364,7 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, token []by
 			Shared: v.Shared,
 			URL:    verb.RemoteURL,
 			Token:  token,
+			R2:     r2,
 		},
 		Open: func() (synclog.LogTransport, error) {
 			transport, err := v.openTransport(ctx)
@@ -448,6 +455,7 @@ func (v *VerbRunner) disable(ctx context.Context, verb *wire.SyncVerb) *wire.Syn
 		FinalExport: exportThrough(v.Shared, transport),
 		Stop:        stopTransport(transport),
 		ReplicaPath: v.ReplicaPath,
+		StagingDir:  v.StagingDir,
 		Drop:        v.dropClient,
 		Cancel:      cancelTransport(transport),
 		Timeout:     verbTimeout(verb),

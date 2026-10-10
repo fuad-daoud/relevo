@@ -91,6 +91,10 @@ type EnableRequest struct {
 	// Token is the token the caller resolved, empty when it resolved none. A
 	// token already stored stands in for it.
 	Token []byte
+	// R2 is what the caller passed for the bucket credentials. A machine that
+	// holds them already needs nothing here: the stored ones stand in, field by
+	// field, so pointing this machine at another bucket does not reissue the key.
+	R2 R2Intake
 }
 
 // EnablePlan is what a passing preflight resolved.
@@ -99,6 +103,8 @@ type EnablePlan struct {
 	Remote string
 	// Token is the token to store, empty when the stored one is used.
 	Token []byte
+	// R2 is the resolved bucket credentials, complete or the preflight refused.
+	R2 R2Secrets
 }
 
 // Preflight runs the enable's checks in their fixed order and returns the plan
@@ -144,10 +150,28 @@ func (r EnableRequest) Preflight() (EnablePlan, error) {
 	if r.Shared == nil {
 		return EnablePlan{}, fmt.Errorf("sync: enable: no shared database: %w", db.ErrInvalid)
 	}
+	// R2 is checked after the origin gate rather than with the token: a machine
+	// whose file cannot be shared is not going to move a body either way, and the
+	// gate is the check that costs. The refusal names the flags that clear it,
+	// which is what a user who was expecting a working enable needs to read.
+	stored, err := ReadR2(r.Local)
+	if err != nil {
+		return EnablePlan{}, err
+	}
+	r2, err := R2Intake{
+		Endpoint: r.R2.Endpoint,
+		Bucket:   r.R2.Bucket,
+		KeyID:    r.R2.KeyID,
+		Secret:   r.R2.Secret,
+		Stored:   stored,
+	}.R2Resolve()
+	if err != nil {
+		return EnablePlan{}, err
+	}
 	if err := db.EnablePreflight(r.Shared).Err(); err != nil {
 		return EnablePlan{}, err
 	}
-	return EnablePlan{Remote: remote, Token: r.Token}, nil
+	return EnablePlan{Remote: remote, Token: r.Token, R2: r2}, nil
 }
 
 // EnableResult is what one enable moved.
@@ -222,9 +246,11 @@ func (e *Enabler) Enable() (EnableResult, error) {
 	return res, nil
 }
 
-// store writes the remote and, when the caller brought one, the token. Both
-// rows are what the worker is built from, so they are written before anything
-// opens a remote.
+// store writes the remote, and the token and R2 credentials when the caller
+// brought them. Every row written here is what the worker is built from, so they
+// are all written before anything opens a remote: an enable that stopped part
+// way leaves a machine still pointed at the right place with whatever it managed
+// to store, rather than one whose worker would open against nothing.
 func (e *Enabler) store(plan EnablePlan, now time.Time) error {
 	settings, err := ReadSettings(e.Request.Local)
 	if err != nil {
@@ -232,6 +258,9 @@ func (e *Enabler) store(plan EnablePlan, now time.Time) error {
 	}
 	settings.RemoteURL = plan.Remote
 	if err := PutSettings(e.Request.Local, settings, now); err != nil {
+		return err
+	}
+	if err := SetR2(e.Request.Local, plan.R2, now); err != nil {
 		return err
 	}
 	if len(bytes.TrimSpace(plan.Token)) == 0 {

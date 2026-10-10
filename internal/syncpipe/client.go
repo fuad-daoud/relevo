@@ -63,7 +63,8 @@ const (
 // one would park a caller behind a call that answers at once.
 func callBound(verb syncworker.Verb) (time.Duration, error) {
 	switch verb {
-	case syncworker.VerbHello, syncworker.VerbExport, syncworker.VerbPull:
+	case syncworker.VerbHello, syncworker.VerbExport, syncworker.VerbPull,
+		syncworker.VerbPutBlob, syncworker.VerbGetBlob:
 		return dataCallTimeout, nil
 	case syncworker.VerbHead, syncworker.VerbStats, syncworker.VerbShutdown:
 		return controlCallTimeout, nil
@@ -103,6 +104,18 @@ type Config struct {
 	Origin string
 	URL    string
 	Token  string
+	// R2 is the bucket configuration, carried by hello alone for the same reason
+	// the token is: a credential that stayed in this process would be one more
+	// thing in the daemon's memory, and one that travels on the pipe is one the
+	// worker can hold without its argv or environment naming it. Nil is a
+	// machine with no bucket, and the blob verbs are then refused.
+	R2 *syncworker.R2Config
+	// BlobStaging is the folder the daemon writes bodies to and the worker
+	// reads them from. It travels in the config rather than being derived in
+	// either half because both name the file: the daemon stages under a digest
+	// and tells the worker that path, so a folder either side computed on its
+	// own would be a file the other side never looks at.
+	BlobStaging string
 	// Timeout overrides the kind's own call bound for every call. Zero maps
 	// each verb to its kind's bound; a test shortens it so a call that overruns
 	// is reached without waiting the real bound out.
@@ -230,6 +243,7 @@ func helloRequest(cfg Config) syncworker.Request {
 		Origin:  cfg.Origin,
 		URL:     cfg.URL,
 		Token:   cfg.Token,
+		R2:      cfg.R2,
 	}
 }
 
@@ -298,6 +312,46 @@ func (c *Client) Stats() (synclog.Stats, error) {
 	return statsFromWire(*resp.Stats), nil
 }
 
+// PutBlob uploads the body staged at stagingPath under key, unless the bucket
+// already holds it.
+//
+// A skip is not a failure and not an empty success: it says another machine
+// already stored the body this key names, so the entry that refers to it may be
+// appended. The caller learns which it was from the return rather than from an
+// error, because the two lead to the same next step and only the byte total
+// differs.
+func (c *Client) PutBlob(key, stagingPath string) (int64, bool, error) {
+	resp, err := c.call(syncworker.Request{
+		Verb:    syncworker.VerbPutBlob,
+		Key:     key,
+		Staging: stagingPath,
+	})
+	if err != nil {
+		return 0, false, err
+	}
+	return resp.Bytes, resp.Skipped, nil
+}
+
+// GetBlob fetches the body under key to stagingPath, where it appears whole or
+// not at all.
+//
+// A body the bucket does not hold is synclog.ErrBlobMissing rather than a plain
+// refusal: the importer latches the origin on it instead of retrying, because the
+// object an applied entry names is not there and asking again will not put it
+// there.
+func (c *Client) GetBlob(key, stagingPath string, max int64) (int64, error) {
+	resp, err := c.call(syncworker.Request{
+		Verb:    syncworker.VerbGetBlob,
+		Key:     key,
+		Staging: stagingPath,
+		Max:     max,
+	})
+	if err != nil {
+		return 0, err
+	}
+	return resp.Bytes, nil
+}
+
 // call sends one request and returns the reply that answers it.
 func (c *Client) call(req syncworker.Request) (syncworker.Response, error) {
 	c.mu.Lock()
@@ -353,6 +407,18 @@ func refusalError(resp syncworker.Response) error {
 		return fmt.Errorf("%w: %w", refused, relevosync.ErrRemoteSchema)
 	case syncworker.CodeRemote:
 		return fmt.Errorf("%w: %w", refused, relevosync.ErrRemoteRefused)
+	case syncworker.CodeBlobMissing:
+		// The bucket answered and the object is not there. That is a fact about
+		// the bucket rather than a fault in reaching it, so it maps to the
+		// sentinel the importer latches on instead of staying a refusal the
+		// breaker would back off and retry.
+		return fmt.Errorf("%w: %w", refused, synclog.ErrBlobMissing)
+	case syncworker.CodeBlobRefused:
+		// The staged file was not the body its key named, so nothing was
+		// published. Retrying the same call would publish the same wrong body,
+		// which is why it is a class the caller can act on rather than a plain
+		// refusal: the staging folder is what has to be rewritten.
+		return fmt.Errorf("%w: %w", refused, synclog.ErrInvalid)
 	default:
 		return refused
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
 // classify maps a sync package error onto the closed set of refusal codes. The
@@ -23,6 +24,8 @@ func verbClassify(err error) string {
 		return wire.SyncCodeNoToken
 	case errors.Is(err, relevosync.ErrNoRemote):
 		return wire.SyncCodeNoRemote
+	case errors.Is(err, relevosync.ErrNoR2):
+		return wire.SyncCodeNoR2
 	case errors.Is(err, relevosync.ErrAlreadyEnabled):
 		return wire.SyncCodeAlreadyEnabled
 	case errors.Is(err, relevosync.ErrRemoteConflict):
@@ -37,6 +40,10 @@ func verbClassify(err error) string {
 		// sent to `relevo bugreport` for a remote that never learned the schema
 		// has been sent to report a driver boundary as a defect.
 		return wire.SyncCodeRemoteSchemaMissing
+	case errors.Is(err, synclog.ErrBlobMissing):
+		// A body the log names is gone from the bucket. The message names the
+		// row and the machine that wrote it; nothing in this build is at fault.
+		return wire.SyncCodeRemoteRefused
 	case errors.Is(err, relevosync.ErrRemoteRefused):
 		// A remote refusing a statement is a refusal, not an internal failure:
 		// the message names the constraint and the call, and the reader's answer

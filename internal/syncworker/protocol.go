@@ -16,7 +16,12 @@ import (
 // number of. The version travels on the first request rather than in the
 // command line, so the daemon learns what its own child speaks before it sends
 // anything it would otherwise have to take back.
-const ProtocolVersion = 1
+//
+// Version 2 added the blob verbs and the R2 settings hello carries. A daemon on
+// version 1 and a worker on version 2 refuse each other here rather than
+// discovering it at the first put_blob, which would be after the exporter had
+// already written entries pointing at objects nobody uploaded.
+const ProtocolVersion = 2
 
 // The refusals the worker answers with rather than dying over. A request that
 // breaks one of them has a well-formed frame around it, so the reply can carry
@@ -49,11 +54,33 @@ const (
 	VerbPull Verb = "pull"
 	// VerbHead reads one page of an origin's head.
 	VerbHead Verb = "head"
+	// VerbPutBlob uploads one staged body into R2 under a key.
+	VerbPutBlob Verb = "put_blob"
+	// VerbGetBlob fetches one body out of R2 into a staged file.
+	VerbGetBlob Verb = "get_blob"
 	// VerbStats reports what the log holds.
 	VerbStats Verb = "stats"
 	// VerbShutdown ends the pipe after its reply.
 	VerbShutdown Verb = "shutdown"
 )
+
+// R2Config is the bucket the worker moves bodies through, as hello carries it.
+//
+// It travels in hello and nowhere else, like the token: the daemon reads it from
+// this machine's secrets, hands it over the pipe, and the worker holds it for
+// life without its command line or its environment ever naming it. Every later
+// verb names an object by key alone.
+type R2Config struct {
+	// Endpoint is the account-scoped S3 URL, which carries no bucket of its own.
+	Endpoint string `json:"endpoint"`
+	// Bucket is the bucket objects are stored under, one per installation.
+	Bucket string `json:"bucket"`
+	// KeyID is the access key that signs every request.
+	KeyID string `json:"key_id"`
+	// Secret is that key's secret. It is never formatted into an error, and the
+	// status surface reports whether it is present rather than what it holds.
+	Secret string `json:"secret"`
+}
 
 // Request is one line of the pipe, from the daemon to the worker.
 //
@@ -75,6 +102,21 @@ type Request struct {
 	// environment, where any process on this machine could read them back.
 	Token string `json:"token,omitempty"`
 	URL   string `json:"url,omitempty"`
+	// R2 is the bucket configuration, on hello alone. It is optional because a
+	// machine may sync rows with no bucket configured, and the blob verbs are
+	// then refused with a message that says so rather than failing on a nil.
+	R2 *R2Config `json:"r2,omitempty"`
+	// Key names the object a blob verb addresses, as "<origin>/<sha256>". It is
+	// never a path into the bucket: the store builds the URL from it and both
+	// halves are checked, so a key cannot reach outside its own origin's prefix.
+	Key string `json:"key,omitempty"`
+	// Staging is the absolute local path the body is read from or written to.
+	// Bodies never cross the pipe, so this is the only thing either blob verb
+	// carries about them.
+	Staging string `json:"staging,omitempty"`
+	// Max is the most bytes get_blob may write: the length the ref declares. A
+	// body that runs past it is cut off there rather than downloaded whole.
+	Max int64 `json:"max,omitempty"`
 	// Entries is the batch an export appends as one write.
 	Entries []Entry `json:"entries,omitempty"`
 	// Marks is each other origin's last applied sequence number, so a pull
@@ -106,6 +148,14 @@ type Response struct {
 	Entries []Entry `json:"entries,omitempty"`
 	// Head is a page of an origin's latest state per row.
 	Head []HeadRow `json:"head,omitempty"`
+	// Bytes is what one blob verb moved, in each direction. It is the exact
+	// length rather than an estimate, because the daemon adds it to what the
+	// month has cost and an estimate compounds across every call.
+	Bytes int64 `json:"bytes,omitempty"`
+	// Skipped says a put_blob found the object already in the store and sent
+	// nothing. A caller that uploaded a body another machine had already put
+	// reads the skip as the object it wanted being there, not as a failure.
+	Skipped bool `json:"skipped,omitempty"`
 	// Stats is what the log holds, on stats alone.
 	Stats *Stats `json:"stats,omitempty"`
 }
@@ -125,6 +175,15 @@ const (
 	// its own class because its fix is the schema rather than a re-recorded
 	// row.
 	CodeSchema RefusalCode = "schema"
+	// CodeBlobMissing is a body the store does not hold. It is a refusal that
+	// repeats, so it needs a class of its own: the daemon latches the origin and
+	// names the round, where a bucket that could not be reached is retried.
+	CodeBlobMissing RefusalCode = "blob_missing"
+	// CodeBlobRefused is a body the worker will not publish under the key it was
+	// given, because the staged file's digest is not the key's. The store is
+	// fine and the remote is fine; what crossed the pipe is not, and repeating
+	// the call unchanged would publish the same wrong body.
+	CodeBlobRefused RefusalCode = "blob_refused"
 )
 
 // RefusalError is an error a backend marked with the class of refusal it is, so
@@ -223,6 +282,19 @@ type Stats struct {
 	// Seq is the highest sequence number the log holds. A sequence number
 	// belongs to one origin, so this is the largest rather than a count.
 	Seq int `json:"seq"`
+	// TursoSent and TursoReceived are the network bytes the replica has pushed
+	// and pulled over this worker's life, from the deltas of the engine's own
+	// counters. They are cumulative for this worker and start at zero, because a
+	// process that has just started has moved nothing whatever the replica file
+	// was written by before.
+	TursoSent     int64 `json:"turso_sent"`
+	TursoReceived int64 `json:"turso_received"`
+	// R2Put and R2Get are the body bytes sent to and received from the bucket
+	// over this worker's life, counted from object sizes rather than estimated.
+	// An upload that found the object already present adds nothing: it moved no
+	// bytes, and counting it would bill the month for a body nobody sent.
+	R2Put int64 `json:"r2_put"`
+	R2Get int64 `json:"r2_get"`
 }
 
 // readRequest reads one request line. A clean end of the pipe is io.EOF, which

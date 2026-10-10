@@ -25,13 +25,17 @@ type daemonActivity struct {
 	// SyncOn keeps the daemon alive: a machine whose sync is on needs a process
 	// to export and pull, and an idle exit would stop both until the next
 	// command happened to start one.
-	SyncOn     bool
+	SyncOn bool
+	// Joining is an enable's join running in this process. The mark goes on
+	// only when the join ends, and a first join that uploads every large body
+	// can outlast the idle period with no client connected.
+	Joining    bool
 	RootExists bool
 }
 
 // busy is whether anything keeps the daemon from idling out.
 func (a daemonActivity) busy() bool {
-	return a.Conns > 0 || a.Running || a.Queued || a.SyncOn
+	return a.Conns > 0 || a.Running || a.Queued || a.SyncOn || a.Joining
 }
 
 // idleExit decides whether an idle daemon should exit: the root is gone, or

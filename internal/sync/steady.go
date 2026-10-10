@@ -96,9 +96,16 @@ func (r *Runner) SyncOnce(ctx context.Context, shared *db.DB) SteadyResult {
 // exchange's: export first, so the log learns what this machine wrote, then
 // import, so the file learns what the others wrote.
 func (r *Runner) attempt(ctx context.Context, shared *db.DB) SteadyResult {
-	var out SteadyResult
 	t := NewStopTransport(r.Client)
 	defer r.Track(t)()
+	out := r.exchange(ctx, shared, t)
+	r.countBytes(ctx, t)
+	return out
+}
+
+// exchange is the export then the import over one attempt's transport.
+func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) SteadyResult {
+	var out SteadyResult
 	if err := within(ctx, t, r.stepTimeout(), func() error {
 		res, err := synclog.NewExporter(shared, t).Export()
 		out.Exported = res.Appended
@@ -162,6 +169,9 @@ func troubleFrom(res synclog.ImportResult) Trouble {
 	}
 	for _, drop := range res.Dropped {
 		t.Dropped = append(t.Dropped, drop.String())
+	}
+	for _, stall := range res.Stalled {
+		t.Held = append(t.Held, stall.String())
 	}
 	for _, gap := range res.Gaps {
 		t.Gaps = append(t.Gaps, gap.String())

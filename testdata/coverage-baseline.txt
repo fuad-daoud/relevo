@@ -3,6 +3,7 @@ github.com/fuad-daoud/relevo/cmd/relevo 71.5
 github.com/fuad-daoud/relevo/internal/account 97.6
 github.com/fuad-daoud/relevo/internal/agentsrc 92.3
 github.com/fuad-daoud/relevo/internal/availability 87.0
+github.com/fuad-daoud/relevo/internal/blobstore 91.8
 github.com/fuad-daoud/relevo/internal/board 86.8
 github.com/fuad-daoud/relevo/internal/bugreport 91.0
 github.com/fuad-daoud/relevo/internal/candidate 96.3

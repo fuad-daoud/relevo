@@ -77,7 +77,19 @@ func headFromWire(rows []syncworker.HeadRow) []synclog.HeadRow {
 	return out
 }
 
-// statsFromWire reads back what the log holds.
+// statsFromWire reads back what the log holds, and what the worker has moved.
+//
+// The four byte counters are carried through rather than summed here: they are
+// already cumulative, and adding to them a second time would count every call
+// the worker made once per stats reply the daemon asked for.
 func statsFromWire(s syncworker.Stats) synclog.Stats {
-	return synclog.Stats{Entries: s.Entries, Origins: s.Origins, Seq: s.Seq}
+	return synclog.Stats{
+		Entries:       s.Entries,
+		Origins:       s.Origins,
+		Seq:           s.Seq,
+		TursoSent:     s.TursoSent,
+		TursoReceived: s.TursoReceived,
+		R2Put:         s.R2Put,
+		R2Get:         s.R2Get,
+	}
 }

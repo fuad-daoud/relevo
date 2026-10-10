@@ -90,8 +90,35 @@ func (d *tursoDriver) Pull(ctx context.Context) error {
 	return err
 }
 
-// Stats is the engine's own health call.
-func (d *tursoDriver) Stats(ctx context.Context) error {
-	_, err := d.sdb.Stats(ctx)
-	return err
+// Stats is the engine's own health call, and its network counters come back
+// with it. The counters are what the byte totals are built from, so discarding
+// them here would have left the daemon with no exact measure of what a push or
+// a pull actually cost.
+func (d *tursoDriver) Stats(ctx context.Context) (turso.TursoSyncDbStats, error) {
+	return d.sdb.Stats(ctx)
+}
+
+// bytesDelta returns what one push or pull moved, from the engine's own totals
+// before and after it.
+//
+// The engine's counters are cumulative over the replica's life and monotonic
+// between two reads, so a difference is the transfer. They do reset: the engine
+// re-creates a replica's counters after a long disconnect or when the replica
+// is re-bootstrapped, and a negative difference is that rather than a lost
+// transfer. A counter that went down is therefore read as a reset and counted
+// as `after` alone -- the bytes of the transfer just made, with nothing
+// subtracted from before it.
+//
+// A zero difference is a transfer that moved nothing, which is ordinary: a
+// push with an empty outbox and a pull with no remote changes both report it.
+func bytesDelta(before, after turso.TursoSyncDbStats) (sent, recv int64) {
+	sent, recv = after.NetworkSentBytes-before.NetworkSentBytes,
+		after.NetworkReceivedBytes-before.NetworkReceivedBytes
+	if sent < 0 {
+		sent = after.NetworkSentBytes
+	}
+	if recv < 0 {
+		recv = after.NetworkReceivedBytes
+	}
+	return sent, recv
 }

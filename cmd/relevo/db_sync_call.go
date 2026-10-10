@@ -99,6 +99,12 @@ type dbSyncVerbOptions struct {
 	RemoteURL string
 	// Timeout bounds the verb's network work. Zero selects the daemon's own.
 	Timeout time.Duration
+	// R2Endpoint, R2Bucket and R2KeyID are enable's bucket flags, and
+	// R2SecretLen the length of the bucket secret at the end of the tail.
+	R2Endpoint  string
+	R2Bucket    string
+	R2KeyID     string
+	R2SecretLen int
 }
 
 // sendSyncVerb sends one verb over the framed surface and classifies the answer.
@@ -122,10 +128,14 @@ func sendSyncVerb(ctx context.Context, shared *db.DB, verb string, opts dbSyncVe
 // the value crosses the stream between them and nowhere else.
 func sendSyncVerbToken(ctx context.Context, shared *db.DB, verb string, token []byte, opts dbSyncVerbOptions) (*wire.SyncResult, error) {
 	req := &wire.SyncVerb{
-		Header:    wire.Header{Type: wire.TypeSyncVerb},
-		Verb:      verb,
-		RemoteURL: opts.RemoteURL,
-		TimeoutMS: opts.Timeout.Milliseconds(),
+		Header:      wire.Header{Type: wire.TypeSyncVerb},
+		Verb:        verb,
+		RemoteURL:   opts.RemoteURL,
+		TimeoutMS:   opts.Timeout.Milliseconds(),
+		R2Endpoint:  opts.R2Endpoint,
+		R2Bucket:    opts.R2Bucket,
+		R2KeyID:     opts.R2KeyID,
+		R2SecretLen: opts.R2SecretLen,
 	}
 	res, err := shared.SyncVerb(ctx, req, token)
 	if err != nil {
@@ -152,7 +162,7 @@ func dbSyncVerbRefusal(verb string, err error) error {
 	}
 	name := "relevo db sync " + verb
 	switch refusal.Code {
-	case wire.SyncCodeNoToken, wire.SyncCodeNoRemote:
+	case wire.SyncCodeNoToken, wire.SyncCodeNoRemote, wire.SyncCodeNoR2:
 		return fail(codeUsage, "%s", refusal.Message)
 	case wire.SyncCodeAlreadyEnabled:
 		return failNext(codeRefused, "relevo db sync status", "%s", refusal.Message)

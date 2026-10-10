@@ -346,11 +346,13 @@ var registry = []verbEntry{
 	{
 		Name:    "db sync enable",
 		Summary: "refuse: this build carries no sync engine, so enable joins nothing",
-		Args:    "[--url URL] [--token-stdin] [--timeout D] [--json]",
-		Flags:   []string{"--json", "--timeout", "--token-stdin", "--url"},
-		Output:  "json:DbSyncOutcomeDoc",
-		Exit:    []int{0, 1, 2},
-		Errors:  []string{"config_invalid", "conflict", "internal", "refused", "remote_auth", "remote_unreachable", "usage"},
+		Args: "[--url URL] [--token-stdin] [--r2-endpoint URL] [--r2-bucket NAME] " +
+			"[--r2-key-id ID] [--r2-secret-stdin] [--timeout D] [--json]",
+		Flags: []string{"--json", "--r2-bucket", "--r2-endpoint", "--r2-key-id",
+			"--r2-secret-stdin", "--timeout", "--token-stdin", "--url"},
+		Output: "json:DbSyncOutcomeDoc",
+		Exit:   []int{0, 1, 2},
+		Errors: []string{"config_invalid", "conflict", "internal", "refused", "remote_auth", "remote_unreachable", "usage"},
 	},
 	{
 		Name:    "db sync pull",

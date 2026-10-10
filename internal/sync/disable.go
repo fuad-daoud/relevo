@@ -57,6 +57,9 @@ type Disabler struct {
 	// it go; empty means this machine never opened a worker and there is
 	// nothing to delete.
 	ReplicaPath string
+	// StagingDir is the folder bodies pass through on their way to and from
+	// the bucket. It goes with the replica; empty means there is none.
+	StagingDir string
 	// Drop releases the client the worker was driven through. Nil means the
 	// caller keeps no client and the step is skipped.
 	Drop func() error
@@ -127,6 +130,13 @@ func (d *Disabler) Disable(ctx context.Context) (DisableResult, error) {
 	if err := DeleteToken(d.Local); err != nil {
 		return out, fmt.Errorf("sync: disable: %w", err)
 	}
+	// The R2 credentials go with the token, and on the same reasoning: a machine
+	// marked off with a live bucket credential is one the next enable would
+	// inherit credentials for without being asked, and a bucket key outlives the
+	// machine's right to sync.
+	if err := DeleteR2(d.Local); err != nil {
+		return out, fmt.Errorf("sync: disable: %w", err)
+	}
 
 	out.Steps = append(out.Steps, stepStopWorker)
 	if d.Stop != nil {
@@ -140,6 +150,12 @@ func (d *Disabler) Disable(ctx context.Context) (DisableResult, error) {
 	deleted, err := deleteReplica(d.ReplicaPath)
 	if err != nil {
 		return out, fmt.Errorf("sync: disable: delete the replica: %w", err)
+	}
+	if d.StagingDir != "" {
+		if err := os.RemoveAll(d.StagingDir); err != nil {
+			return out, fmt.Errorf("sync: disable: delete the staging folder: %w", err)
+		}
+		deleted = append(deleted, d.StagingDir)
 	}
 	out.Deleted = deleted
 

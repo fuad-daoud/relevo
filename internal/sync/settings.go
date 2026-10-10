@@ -27,6 +27,36 @@ type Settings struct {
 	// BacklogThreshold is the unpushed operation count above which the
 	// statusline reports behind; zero selects the package default.
 	BacklogThreshold int64 `json:"backlog_threshold,omitempty"`
+	// QuotaTursoSync, QuotaTursoStorage and QuotaR2Storage are the plan limits
+	// in bytes that status reads the month's counters against; zero selects the
+	// default.
+	QuotaTursoSync    int64 `json:"quota_turso_sync,omitempty"`
+	QuotaTursoStorage int64 `json:"quota_turso_storage,omitempty"`
+	QuotaR2Storage    int64 `json:"quota_r2_storage,omitempty"`
+}
+
+const (
+	defaultQuotaTursoSync    int64 = 10_000_000_000
+	defaultQuotaTursoStorage int64 = 9_000_000_000
+	defaultQuotaR2Storage    int64 = 10_000_000_000
+)
+
+// TursoSyncQuota is the monthly Turso sync allowance in bytes.
+func (s Settings) TursoSyncQuota() int64 { return orDefault(s.QuotaTursoSync, defaultQuotaTursoSync) }
+
+// TursoStorageQuota is the Turso storage allowance in bytes.
+func (s Settings) TursoStorageQuota() int64 {
+	return orDefault(s.QuotaTursoStorage, defaultQuotaTursoStorage)
+}
+
+// R2StorageQuota is the bucket's storage allowance in bytes.
+func (s Settings) R2StorageQuota() int64 { return orDefault(s.QuotaR2Storage, defaultQuotaR2Storage) }
+
+func orDefault(v, def int64) int64 {
+	if v == 0 {
+		return def
+	}
+	return v
 }
 
 // ParseSettings parses a sync section body. An unknown field is refused rather
@@ -58,6 +88,9 @@ func (s Settings) validate() error {
 	}
 	if s.BacklogThreshold < 0 {
 		return fmt.Errorf("sync: backlog_threshold is negative: %w", db.ErrInvalid)
+	}
+	if s.QuotaTursoSync < 0 || s.QuotaTursoStorage < 0 || s.QuotaR2Storage < 0 {
+		return fmt.Errorf("sync: a quota is negative: %w", db.ErrInvalid)
 	}
 	if s.RemoteURL != "" && !validRemoteURL(s.RemoteURL) {
 		return fmt.Errorf("sync: remote_url is not a remote URL: %w", db.ErrInvalid)

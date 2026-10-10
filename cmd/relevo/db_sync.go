@@ -19,8 +19,10 @@ import (
 
 // dbSyncUsage is what a bare `relevo db sync` prints. It names the states
 // sync can be moved between plus the three one-shot calls, and each verb parses
-// its own flags rather than leaving them to the dispatcher.
+// its own flags rather than leaving them to the dispatcher. The R2 flags, their
+// line and their prose are in db_sync_r2.go, which is where they are installed.
 const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [--timeout D] [--json]\n" +
+	dbSyncR2Usage +
 	"       relevo db sync disable [--timeout D] [--json]\n" +
 	"       relevo db sync retry [--json]\n" +
 	"       relevo db sync status [--json]\n" +
@@ -38,6 +40,7 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"--token-stdin reads the turso.token from standard input and\n" +
 	"beats " + relevosync.EnvToken + "; with neither, enable refuses. The value\n" +
 	"appears in no log, no error and no payload.\n" +
+	dbSyncR2UsageText +
 	"disable marks this machine off, forgets the token, stops the worker,\n" +
 	"deletes relevo-sync.db and the driver's files beside it, and drops the\n" +
 	"handle. Local files keep every row and stay servable, and the remote is\n" +
@@ -82,12 +85,14 @@ func cmdDBSync(args []string) error {
 	return errUsagePrinted
 }
 
-// dbSyncEnableFlagValues holds the pointers `db sync enable` parses into.
+// dbSyncEnableFlagValues holds the pointers `db sync enable` parses into. The
+// R2 half is declared in db_sync_r2.go with the flags that install it.
 type dbSyncEnableFlagValues struct {
 	asJSON     *bool
 	remoteURL  *string
 	tokenStdin *bool
 	timeout    *time.Duration
+	dbSyncR2Flags
 }
 
 // dbSyncEnableFlagSet defines those flags on fs and returns what they parse
@@ -98,6 +103,7 @@ func dbSyncEnableFlagSet(fs *flag.FlagSet) *dbSyncEnableFlagValues {
 	v.remoteURL = fs.String("url", "", "the remote to sync with, stored in the machine-local sync section")
 	v.tokenStdin = fs.Bool("token-stdin", false, "read the turso.token from standard input")
 	v.timeout = fs.Duration("timeout", dbSyncDefaultTimeout, "bound the remote probe and the open")
+	installR2Flags(fs, &v.dbSyncR2Flags)
 	return v
 }
 
@@ -176,12 +182,23 @@ var dbSyncGetenv = os.Getenv
 // dbSyncStatusDoc is `db sync status --json`: what this machine is set to be,
 // what its last exchange measured, and which origins need a human. TokenPresent
 // is a bool because the value is the one thing on this surface that must never
-// be printed.
+// be printed. The R2 fields are omitempty for the same reason an unconfigured
+// machine renders no R2 clause on the line: bodies in a bucket are opt-in, and a
+// machine that has not turned them on is in the ordinary state.
 type dbSyncStatusDoc struct {
 	Enabled      bool   `json:"enabled"`
 	RemoteURL    string `json:"remote_url,omitempty"`
 	Namespace    string `json:"namespace,omitempty"`
 	TokenPresent bool   `json:"token_present"`
+	// R2Configured says whether this machine holds a complete set of bucket
+	// credentials. R2Endpoint and R2Bucket describe where bodies would go, which
+	// is what a reader needs to tell this machine's bucket from another's. There
+	// is deliberately no field for the key id or the secret: this document is
+	// printed on request and read aloud, and a credential has no reason to be in
+	// either. See db_sync_r2.go, which is where the reader and renderer live.
+	R2Configured bool   `json:"r2_configured,omitempty"`
+	R2Endpoint   string `json:"r2_endpoint,omitempty"`
+	R2Bucket     string `json:"r2_bucket,omitempty"`
 	// Latched and LatchCause describe a breaker that stopped the machine until
 	// `relevo db sync retry`.
 	Latched    bool   `json:"latched,omitempty"`
@@ -207,6 +224,10 @@ type dbSyncStatusDoc struct {
 	// LastAttempt is the daemon's last steady attempt, absent until it has run
 	// one.
 	LastAttempt *dbSyncAttemptDoc `json:"last_attempt,omitempty"`
+	// Bytes is this month's traffic, absent until something moved, and
+	// QuotaTursoSync the allowance the Turso total is read against.
+	Bytes          *relevosync.ByteCounters `json:"bytes,omitempty"`
+	QuotaTursoSync int64                    `json:"quota_turso_sync,omitempty"`
 }
 
 // dbSyncOutcomeDoc is what enable and disable print under --json: what the run
@@ -258,6 +279,10 @@ func cmdDBSyncEnable(args []string) error {
 		return err
 	}
 
+	if err := dbSyncEnableR2(*v.tokenStdin, v.dbSyncR2Flags); err != nil {
+		return err
+	}
+
 	shared, err := dialSyncVerb()
 	if err != nil {
 		return err
@@ -267,10 +292,12 @@ func cmdDBSyncEnable(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), *v.timeout+verbDialSlack)
 	defer cancel()
 
-	res, err := sendSyncVerbToken(ctx, shared, wire.SyncVerbEnable, token, dbSyncVerbOptions{
-		RemoteURL: *v.remoteURL,
-		Timeout:   *v.timeout,
-	})
+	opts := dbSyncVerbOptions{RemoteURL: *v.remoteURL, Timeout: *v.timeout}
+	tail, err := dbSyncEnableR2Tail(token, v.dbSyncR2Flags, &opts)
+	if err != nil {
+		return err
+	}
+	res, err := sendSyncVerbToken(ctx, shared, wire.SyncVerbEnable, tail, opts)
 	if err != nil {
 		if !enableContinuesInDaemon(err) {
 			return err
@@ -419,73 +446,6 @@ func cmdDBSyncRetry(args []string) error {
 	return nil
 }
 
-// cmdDBSyncStatus answers what this machine is set to be. It reads the local
-// marks and nothing else, so it answers with the network blackholed and no
-// handle open.
-//
-// It reaches them through the owner (openDBSyncStatus) and reads them itself
-// rather than asking for a verb, and that is the whole of what S7 does not move:
-// status is a description of the machine, so it stays a read. Every byte below is
-// unchanged by that -- what it prints is a function of the document alone.
-func cmdDBSyncStatus(args []string) error {
-	fs := flag.NewFlagSet("db sync status", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	v := dbSyncStatusFlagSet(fs)
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return fail(codeUsage, "relevo db sync status takes no arguments, got %d", fs.NArg())
-	}
-
-	shared, local, err := openDBSyncStatus()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = shared.Close() }()
-
-	settings, err := relevosync.ReadSettings(local)
-	if err != nil {
-		return failWrap(codeConfigInvalid, err, "relevo db sync status")
-	}
-	_, hasToken, err := relevosync.ReadToken(local)
-	if err != nil {
-		return failWrap(codeConfigInvalid, err, "relevo db sync status")
-	}
-	state, err := relevosync.ReadState(local)
-	if err != nil {
-		return dbSyncClassify(err)
-	}
-
-	doc := dbSyncStatusDoc{
-		Enabled:      state.Enabled,
-		RemoteURL:    settings.RemoteURL,
-		Namespace:    settings.Namespace,
-		TokenPresent: hasToken,
-		Latched:      state.Attention,
-		LatchCause:   state.LatchCause,
-		Backlog:      state.Backlog,
-		LastExport:   statusStamp(state.LastExport),
-		LastImport:   statusStamp(state.LastImport),
-		HeldOrigins:  state.Trouble.Held,
-		Dropped:      state.Trouble.Dropped,
-		Gaps:         state.Trouble.Gaps,
-		LastAttempt:  attemptDoc(state.Attempt),
-	}
-	// A join in progress is a read of the machine-local marker, so status can
-	// show one with the network blackholed and no worker open.
-	if progress, joining, err := relevosync.ReadJoin(local); err != nil {
-		return dbSyncClassify(err)
-	} else if joining {
-		doc.Joining, doc.JoinSince = true, statusStamp(progress.At)
-	}
-	if *v.asJSON {
-		return printDoc(doc)
-	}
-	fmt.Print(dbSyncStatusLine(doc))
-	return nil
-}
-
 // dbSyncStatusLine is the one line `db sync status` prints, as a function of the
 // document and nothing else. Pulling it out of the verb is what lets the mapping
 // be pinned by bytes: the route a row arrived over is then nowhere in the line,
@@ -497,6 +457,9 @@ func dbSyncStatusLine(doc dbSyncStatusDoc) string {
 		state = "on"
 	}
 	line := fmt.Sprintf("sync %s (remote: %s, token: %s)", state, orNone(doc.RemoteURL), presentOrAbsent(doc.TokenPresent))
+	if r2 := dbSyncR2Line(doc); r2 != "" {
+		line += ", r2: " + r2
+	}
 	return line + dbSyncStatusDetails(doc) + "\n"
 }
 
@@ -530,6 +493,9 @@ func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 	for _, gap := range doc.Gaps {
 		fmt.Fprintf(&b, " · gap: %s", sanitize.Text(gap))
 	}
+	if doc.Bytes != nil {
+		fmt.Fprintf(&b, " · %s", relevosync.FormatBytes(*doc.Bytes, doc.QuotaTursoSync))
+	}
 	b.WriteString(dbSyncAttemptDetails(doc.LastAttempt))
 	return b.String()
 }
@@ -553,7 +519,7 @@ func dbSyncClassify(err error) error {
 		return failNext(codeRefused, "relevo db sync status", "%v", err)
 	case errors.Is(err, relevosync.ErrNoToken):
 		return fail(codeUsage, "%v", err)
-	case errors.Is(err, relevosync.ErrNoRemote):
+	case errors.Is(err, relevosync.ErrNoRemote), errors.Is(err, relevosync.ErrNoR2):
 		return fail(codeUsage, "%v", err)
 	case errors.Is(err, relevosync.ErrRemoteConflict):
 		return fail(codeRefused, "%v", err)
