@@ -27,14 +27,16 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"       relevo db sync retry [--json]\n" +
 	"       relevo db sync status [--json]\n" +
 	"       relevo db sync push [--timeout D] [--json]\n" +
-	"       relevo db sync pull [--timeout D] [--json]\n\n" +
+	"       relevo db sync pull [--timeout D] [--json]\n" +
+	"       relevo db sync reconcile --dry-run [--timeout D] [--json]\n\n" +
 	"enable joins this machine to the remote: it checks the origin gate, stores\n" +
 	"the token and the remote, then imports the other origins and exports this\n" +
 	"one's history before the mark goes on. An interrupted enable resumes.\n" +
 	"push drains this machine's outbox into the log and pull reads the other\n" +
 	"origins' entries and imports them; each is the half of the steady exchange\n" +
 	"it names. retry clears a latched breaker and drops the worker, so the next\n" +
-	"tick starts a fresh one.\n" +
+	"tick starts a fresh one. reconcile --dry-run lists the rows this machine\n" +
+	"would append to or delete from the log, and appends nothing.\n" +
 	"Writing the machine-local sync section by hand stays the advanced\n" +
 	"route: `relevo config set sync '{\"remote_url\":\"...\"}'`.\n" +
 	"--token-stdin reads the turso.token from standard input and\n" +
@@ -77,6 +79,8 @@ func cmdDBSync(args []string) error {
 		return cmdDBSyncPush(args[1:])
 	case len(args) > 0 && args[0] == "pull":
 		return cmdDBSyncPull(args[1:])
+	case len(args) > 0 && args[0] == "reconcile":
+		return cmdDBSyncReconcile(args[1:])
 	case len(args) > 0 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help"):
 		fmt.Fprint(os.Stderr, dbSyncUsage)
 		return errHelpShown

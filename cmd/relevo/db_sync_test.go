@@ -29,7 +29,7 @@ import (
 func TestDBSyncUsageNamesEveryVerb(t *testing.T) {
 	t.Parallel()
 
-	for _, verb := range []string{"enable", "disable", "retry", "status", "push", "pull"} {
+	for _, verb := range []string{"enable", "disable", "retry", "status", "push", "pull", "reconcile"} {
 		if !strings.Contains(dbSyncUsage, "relevo db sync "+verb) {
 			t.Errorf("the usage text does not name %q:\n%s", verb, dbSyncUsage)
 		}
@@ -155,7 +155,7 @@ func TestDBSyncFlagsParseAfterAPositional(t *testing.T) {
 // below run sequentially with the rest of the package's capturing tests rather
 // than in parallel: two of them at once would each write into the other's pipe.
 func TestDBSyncRoutesEveryVerb(t *testing.T) {
-	for _, verb := range []string{"enable", "disable", "retry", "status", "push", "pull", "bogus"} {
+	for _, verb := range []string{"enable", "disable", "retry", "status", "push", "pull", "reconcile", "bogus"} {
 		t.Run(verb, func(t *testing.T) {
 			_, _, err := captureOutput(t, func() error { return run([]string{"db", "sync", verb, "--nope"}) })
 			if err == nil {
@@ -472,5 +472,27 @@ func TestDBSyncClassifyReportsAPreflightRefusalAsRefused(t *testing.T) {
 	}
 	if !errors.Is(classified, db.ErrPreflightRefused) {
 		t.Errorf("the classified error does not match the refusal it came from: %v", classified)
+	}
+}
+
+// TestDBSyncReconcileNeedsDryRun pins that the verb refuses before dialing
+// anything: with no --dry-run there is nothing it offers to run.
+func TestDBSyncReconcileNeedsDryRun(t *testing.T) {
+	_, _, err := captureOutput(t, func() error { return cmdDBSyncReconcile(nil) })
+	if err == nil || !strings.Contains(err.Error(), "--dry-run") {
+		t.Fatalf("reconcile without --dry-run = %v, want a refusal naming the flag", err)
+	}
+}
+
+func TestDBSyncReconcileParsesItsFlags(t *testing.T) {
+	t.Parallel()
+	fs := flag.NewFlagSet("db sync reconcile", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	v := dbSyncReconcileFlagSet(fs)
+	if err := parseFlags(fs, []string{"--dry-run", "--json"}); err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if !*v.dryRun || !*v.asJSON {
+		t.Errorf("--dry-run --json parsed to %t, %t", *v.dryRun, *v.asJSON)
 	}
 }

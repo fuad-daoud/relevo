@@ -8,7 +8,7 @@ import (
 
 // The bodies the sync section tests store and refuse.
 const (
-	syncStored = `{"enabled":true,"remote_url":"libsql://relevo-example.turso.io","namespace":"relevo","idle_seconds":300}`
+	syncStored = `{"enabled":true,"remote_url":"libsql://relevo-example.turso.io","namespace":"relevo"}`
 )
 
 func TestSyncSectionValidation(t *testing.T) {
@@ -30,8 +30,8 @@ func TestSyncSectionValidation(t *testing.T) {
 		`{"enabled":"yes"}`,
 		`{"enabled":true`,
 		`{"enable":true}`,
-		`{"idle_seconds":-1}`,
-		`{"backlog_threshold":-1}`,
+		`{"idle_seconds":300}`,
+		`{"backlog_threshold":100}`,
 		`{"remote_url":"ftp://relevo-example.turso.io"}`,
 		`{"remote_url":"relevo-example.turso.io"}`,
 		`{"namespace":"two/segments"}`,

@@ -107,6 +107,8 @@ type dbSyncVerbOptions struct {
 	R2SecretLen int
 	// Yes is enable's --yes.
 	Yes bool
+	// DryRun is reconcile's --dry-run.
+	DryRun bool
 }
 
 // sendSyncVerb sends one verb over the framed surface and classifies the answer.
@@ -139,6 +141,7 @@ func sendSyncVerbToken(ctx context.Context, shared *db.DB, verb string, token []
 		R2KeyID:     opts.R2KeyID,
 		R2SecretLen: opts.R2SecretLen,
 		Yes:         opts.Yes,
+		DryRun:      opts.DryRun,
 	}
 	res, err := shared.SyncVerb(ctx, req, token)
 	if err != nil {

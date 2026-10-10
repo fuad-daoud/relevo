@@ -101,6 +101,8 @@ func (v *VerbRunner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte)
 		return v.runGuarded(func() *wire.SyncResult { return v.retry() })
 	case wire.SyncVerbProbe:
 		return v.runGuarded(func() *wire.SyncResult { return v.probe(ctx) })
+	case wire.SyncVerbReconcile:
+		return v.runGuarded(func() *wire.SyncResult { return v.reconcilePreview(ctx, verb) })
 	case wire.SyncVerbDisable:
 		// A disable must not queue behind a call that can run for the whole
 		// data-call bound: a joined machine reads off for the whole join, and a

@@ -1013,3 +1013,17 @@ func (h *hangingJoin) PullRange(string, int, int) ([]synclog.Entry, error) { ret
 func (h *hangingJoin) CompactOwn(int) (synclog.CompactResult, error) {
 	return synclog.CompactResult{}, nil
 }
+
+// TestReconcileVerbRefusesWithoutDryRun pins that the only reconcile on offer is
+// the preview: a call that does not ask for one is refused before a transport
+// is opened.
+func TestReconcileVerbRefusesWithoutDryRun(t *testing.T) {
+	f := newVerbFixture(t)
+	res := f.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbReconcile}, nil)
+	if res.OK || res.Code != wire.SyncCodeInvalid {
+		t.Fatalf("reconcile without dry_run = %+v, want an invalid refusal", res)
+	}
+	if f.opens != 0 {
+		t.Errorf("the refusal opened %d handles, want none", f.opens)
+	}
+}

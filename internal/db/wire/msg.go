@@ -154,6 +154,9 @@ const (
 	// owner socket like every other action, rather than opening a worker of its
 	// own.
 	SyncVerbProbe = "probe"
+	// SyncVerbReconcile compares this origin's file against the log. It only
+	// previews: the result's Report is the differences, and nothing is appended.
+	SyncVerbReconcile = "reconcile"
 )
 
 // The refusal codes a SyncResult carries. They are a closed set and every one is
@@ -245,6 +248,9 @@ type SyncVerb struct {
 	R2SecretLen int `json:"r2_secret_len,omitempty"`
 	// Yes joins past the quota guard's refusal.
 	Yes bool `json:"yes,omitempty"`
+	// DryRun asks a reconcile to report what it would append and append
+	// nothing. A reconcile without it is refused.
+	DryRun bool `json:"dry_run,omitempty"`
 }
 
 // SyncFreshen is the hint that a reader wants current data. It carries nothing
@@ -284,4 +290,6 @@ type SyncResult struct {
 	// Warning is what a disable's final export hit, kept as a warning rather
 	// than a failure.
 	Warning string `json:"warning,omitempty"`
+	// Report is a verb's rendered text answer: a reconcile preview.
+	Report string `json:"report,omitempty"`
 }
