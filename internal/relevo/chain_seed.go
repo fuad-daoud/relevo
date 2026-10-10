@@ -294,12 +294,12 @@ func memberReportPath(tx *store.Tx, planner string, round int) (string, error) {
 }
 
 // chainSeedInput is the one path a seed may name for one input. An empty path
-// stays empty. A path the store reads as itself -- a regular file on disk that
-// is not a reserved round-file name -- is named as it is. Anything else is a
-// fact about its source member round, so its bytes are read through the store
-// and copied under the chain's own directory, and the copy is named: a reserved
-// key, a sealed row and a file a later seal removes all copy the same way, and
-// the copy stays valid for the round.
+// stays empty. A binding round file is always copied under the chain's own
+// directory and the copy is named, whether it is a reserved key, a sealed row or
+// a file still on disk: a seal moves an on-disk round file into its row and
+// removes it, and it can do so between this seed being written and the runner
+// opening it. Any other regular file the store reads as itself, such as the
+// chain's own plan copy, is named as it is.
 //
 // A read, a key or a write that fails yields chainSeedMissing's one path-free
 // clause, so a seed never names a path a runner cannot open.
@@ -307,15 +307,15 @@ func chainSeedInput(rt Runtime, c db.ChainRow, path string) string {
 	if path == "" {
 		return ""
 	}
-	if rt.Store.DiskRegularFile(path) {
+	dest, roundFile := rt.Store.ChainInputPath(c.Name, path)
+	if !roundFile && rt.Store.DiskRegularFile(path) {
 		return path
 	}
 	body, err := rt.Store.ReadFile(path)
 	if err != nil {
 		return chainSeedMissing(err)
 	}
-	dest, ok := rt.Store.ChainInputPath(c.Name, path)
-	if !ok {
+	if !roundFile {
 		return chainSeedMissing(errors.New("not a binding round file"))
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {

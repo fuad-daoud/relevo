@@ -172,9 +172,9 @@ func TestChainE2E(t *testing.T) {
 
 	// The reviewer saw the correction: its second round is seeded after the
 	// correction round closed, so its prompt names that round's report.
-	if got := chainStaged(t, rt, rt.Store.PromptPath(reviewerName, 2)); !strings.Contains(got, rt.Store.ReportPath(builderName, 2)) {
-		t.Errorf("the reviewer's round 2 seed does not name the correction round's report %s:\n%s",
-			rt.Store.ReportPath(builderName, 2), got)
+	if report := chainSeedCopy(t, rt, chainE2EName, rt.Store.ReportPath(builderName, 2)); !strings.Contains(chainStaged(t, rt, rt.Store.PromptPath(reviewerName, 2)), report) {
+		t.Errorf("the reviewer's round 2 seed does not name the correction round's report copy %s:\n%s",
+			report, chainStaged(t, rt, rt.Store.PromptPath(reviewerName, 2)))
 	}
 
 	// The reviewer's round-2 seed names the plan's whole span as well as the
@@ -252,8 +252,8 @@ func TestChainE2E(t *testing.T) {
 	// changes verdict judged, so the planner reads the report and diff that
 	// verdict was about.
 	correctionSeed := chainStaged(t, rt, rt.Store.PromptPath(plannerName, 1))
-	if want := "Builder's report: " + rt.Store.ReportPath(builderName, 1); !strings.Contains(correctionSeed, want) {
-		t.Errorf("the correction planner's seed does not name the judged builder round's report %s:\n%s", rt.Store.ReportPath(builderName, 1), correctionSeed)
+	if want := "Builder's report: " + chainSeedCopy(t, rt, chainE2EName, rt.Store.ReportPath(builderName, 1)); !strings.Contains(correctionSeed, want) {
+		t.Errorf("the correction planner's seed does not carry %q:\n%s", want, correctionSeed)
 	}
 
 	// The builder's round 2 is the planner's correction plan itself, not the
@@ -644,6 +644,17 @@ func chainMembersNote(t *testing.T, rt relevo.Runtime, c db.ChainRow) string {
 
 // chainInputCopyGone asserts a chain's input copy was swept when the chain
 // ended done: the copy the seed named while the chain ran is gone from disk.
+// chainSeedCopy is the path a seed names for one of a chain's round files: its
+// copy under the chain's directory.
+func chainSeedCopy(t *testing.T, rt relevo.Runtime, chainName, key string) string {
+	t.Helper()
+	copyPath, ok := rt.Store.ChainInputPath(chainName, key)
+	if !ok {
+		t.Fatalf("ChainInputPath(%s) = false", key)
+	}
+	return copyPath
+}
+
 func chainInputCopyGone(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
