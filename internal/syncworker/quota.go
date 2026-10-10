@@ -17,3 +17,16 @@ var quotaWord = regexp.MustCompile(`\bBLOCKED\b`)
 func isQuotaRefusal(err error) bool {
 	return quotaWord.MatchString(err.Error())
 }
+
+// markTransferRefusal classes an error from a push or a pull. Those are the
+// only calls that reach Turso -- every statement runs on the local replica -- so
+// they are the only place a plan quota can refuse, and the only errors the quota
+// word is looked for in. An error from reading a row is never searched for it:
+// the row's text is the remote's, and a value that spelt the word would latch
+// every machine that read it.
+func markTransferRefusal(err error) error {
+	if isQuotaRefusal(err) {
+		return MarkRefusal(CodeQuota, err)
+	}
+	return markDriverRefusal(err)
+}

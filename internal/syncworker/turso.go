@@ -568,19 +568,6 @@ func markDriverRefusal(err error) error {
 	return MarkRefusal(CodeRemote, err)
 }
 
-// markTransferRefusal classes an error from a push or a pull. Those are the
-// only calls that reach Turso -- every statement runs on the local replica -- so
-// they are the only place a plan quota can refuse, and the only errors the quota
-// word is looked for in. An error from reading a row is never searched for it:
-// the row's text is the remote's, and a value that spelt the word would latch
-// every machine that read it.
-func markTransferRefusal(err error) error {
-	if isQuotaRefusal(err) {
-		return MarkRefusal(CodeQuota, err)
-	}
-	return markDriverRefusal(err)
-}
-
 // bodyHash is the digest head carries for a row: the sha256 of the body's
 // canonical encoding. The daemon encodes every body once, with its columns
 // sorted, and the wire carries exactly those bytes, so re-marshalling the
