@@ -1398,7 +1398,7 @@ func TestChainReviewerSeedNamesTheRoundPromptOfACorrection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read the reviewer prompt: %v", err)
 	}
-	if want := "This round's prompt: " + rt.Store.PromptPath("shop", 2); !strings.Contains(string(text), want) {
+	if want := "This round's prompt: " + seedCopy(t, rt, rt.Store.PromptPath("shop", 2)); !strings.Contains(string(text), want) {
 		t.Errorf("reviewer seed does not name %q:\n%s", want, text)
 	}
 }
@@ -1599,18 +1599,10 @@ func TestRemoteBuilderCloseSeedsTheReviewerWithThePulledRound(t *testing.T) {
 		rt.Store.PlanDiffPath("shop", 1),
 		rt.Store.PromptPath("shop", 1),
 	} {
-		// The seed names the input's own path when the store reads it as a
-		// regular file, and a copy under the chain's directory otherwise; either
-		// way the named path exists on disk and holds what the store holds for
-		// the original key.
-		named := key
-		if !rt.Store.DiskRegularFile(named) {
-			copy, ok := rt.Store.ChainInputPath("shop", key)
-			if !ok {
-				t.Fatalf("ChainInputPath(%s) = false", key)
-			}
-			named = copy
-		}
+		// The seed names a copy under the chain's directory, never the round
+		// file itself, which a seal may remove before the reader opens it; the
+		// copy exists on disk and holds what the store holds for the key.
+		named := seedCopy(t, rt, key)
 		if !rt.Store.DiskRegularFile(named) {
 			t.Errorf("reviewer seed's input %s is not a regular file on disk", named)
 		}
@@ -1953,7 +1945,7 @@ func TestChainReviewerSeedSaysNotAvailableForAnUnreadableGateLog(t *testing.T) {
 	if !strings.Contains(got, "This round's diff: "+diffCopy+".") {
 		t.Errorf("reviewer seed does not name the round diff copy %s:\n%s", diffCopy, got)
 	}
-	if !strings.Contains(got, "Builder's report: "+rt.Store.ReportPath("shop", 1)+".") {
+	if !strings.Contains(got, "Builder's report: "+seedCopy(t, rt, rt.Store.ReportPath("shop", 1))+".") {
 		t.Errorf("reviewer seed does not name the builder's report:\n%s", got)
 	}
 }
@@ -1979,7 +1971,7 @@ func TestChainCorrectionSeedNamesTheReviewersOutputFile(t *testing.T) {
 	got := string(text)
 
 	rev := chainBinding(t, rt, "shop-rev")
-	output := rt.Store.OutputPath("shop-rev", reviewerRound, bindingRole(rev), readerOutputLabel(rt, rev))
+	output := seedCopy(t, rt, rt.Store.OutputPath("shop-rev", reviewerRound, bindingRole(rev), readerOutputLabel(rt, rev)))
 	if !strings.Contains(got, "Reviewer's output: "+output+".") {
 		t.Errorf("correction seed does not name the reviewer's output %s:\n%s", output, got)
 	}
@@ -2021,10 +2013,10 @@ func TestRepairRoundSeedFramesThePlanAndListsEveryBuilderRound(t *testing.T) {
 		"as a whole",
 		"This closing round is " + workflow.BuilderRoundRepair + ", on top of round 1.",
 		"Builder rounds of this plan:",
-		"- round 1 prompt: " + rt.Store.PromptPath("shop", 1),
-		"- round 1 report: " + rt.Store.ReportPath("shop", 1),
-		"- round 2 prompt: " + rt.Store.PromptPath("shop", 2),
-		"- round 2 report: " + rt.Store.ReportPath("shop", 2),
+		"- round 1 prompt: " + seedCopy(t, rt, rt.Store.PromptPath("shop", 1)),
+		"- round 1 report: " + seedCopy(t, rt, rt.Store.ReportPath("shop", 1)),
+		"- round 2 prompt: " + seedCopy(t, rt, rt.Store.PromptPath("shop", 2)),
+		"- round 2 report: " + seedCopy(t, rt, rt.Store.ReportPath("shop", 2)),
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("reviewer seed does not carry %q:\n%s", want, got)
@@ -2062,8 +2054,8 @@ func TestChainReviewerSeedNamesTheCorrectionRoundKind(t *testing.T) {
 	got := string(text)
 	for _, want := range []string{
 		"This closing round is " + workflow.BuilderRoundCorrection + ", on top of round 1.",
-		"- round 1 prompt: " + rt.Store.PromptPath("shop", 1),
-		"- round 2 prompt: " + rt.Store.PromptPath("shop", 2),
+		"- round 1 prompt: " + seedCopy(t, rt, rt.Store.PromptPath("shop", 1)),
+		"- round 2 prompt: " + seedCopy(t, rt, rt.Store.PromptPath("shop", 2)),
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("reviewer seed does not carry %q:\n%s", want, got)
@@ -2413,4 +2405,15 @@ func TestWorkflowFindingsCountReachesTheEndPayload(t *testing.T) {
 			t.Errorf("mirror end payload = %q, want it to carry findings 3", pending[0].Payload)
 		}
 	})
+}
+
+// seedCopy is the path a chain seed names for one of chain shop's round files:
+// its copy under the chain's directory.
+func seedCopy(t *testing.T, rt Runtime, key string) string {
+	t.Helper()
+	copyPath, ok := rt.Store.ChainInputPath("shop", key)
+	if !ok {
+		t.Fatalf("ChainInputPath(%s) = false", key)
+	}
+	return copyPath
 }
