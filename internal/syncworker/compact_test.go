@@ -2,8 +2,9 @@ package syncworker
 
 import (
 	"errors"
-	"strings"
+	"fmt"
 	"testing"
+	"time"
 )
 
 func appendRow(t *testing.T, b *TursoBackend, pk string) {
@@ -113,28 +114,37 @@ func TestCompactAlignsAFloorNoReaderCanHold(t *testing.T) {
 	}
 }
 
-// The superseding-entry lookup is a range on the primary key per candidate row,
-// never a scan of the table.
-func TestCompactStatementSearchesThePrimaryKey(t *testing.T) {
+// Compaction is one grouped pass over the origin's log, not a lookup per entry.
+// A per-entry lookup took seconds at a few thousand entries and minutes on a
+// real log, holding the worker and every verb behind it; the bound here is far
+// above the grouped pass and far below the per-entry one.
+func TestCompactIsNotQuadratic(t *testing.T) {
 	b, _, path := compactBackend(t)
-	appendRow(t, b, `["a"]`)
-	rows, err := openAt(t, path).Query("EXPLAIN QUERY PLAN "+compactStatement, "origin-a", 5, 5)
+	const n = 8000
+	db := openAt(t, path)
+	tx, err := db.Begin()
 	if err != nil {
-		t.Fatalf("explain: %v", err)
+		t.Fatalf("begin: %v", err)
 	}
-	defer func() { _ = rows.Close() }()
-	var plan []string
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
-			t.Fatalf("scan: %v", err)
+	for i := 1; i <= n; i++ {
+		if _, err := tx.Exec("INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at) "+
+			"VALUES ('origin-a', ?, ?, 'board', ?, 'upsert', 1, '{}', 't')", i, i, fmt.Sprintf(`["k%d"]`, i%(n/3))); err != nil {
+			t.Fatalf("insert: %v", err)
 		}
-		plan = append(plan, detail)
 	}
-	all := strings.Join(plan, "\n")
-	if !strings.Contains(all, "SEARCH") || strings.Contains(all, "SCAN later") {
-		t.Fatalf("plan:\n%s\nwant a primary-key search for the later entry", all)
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	start := time.Now()
+	res, err := b.Compact(n)
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("compacting %d entries took %v", n, took)
+	}
+	if want := n - n/3; res.Dropped != want {
+		t.Errorf("dropped %d, want %d", res.Dropped, want)
 	}
 }
 

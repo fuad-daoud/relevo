@@ -13,15 +13,17 @@ import (
 )
 
 // compactStatement drops an entry at or below the floor that a later entry for
-// the same row, also at or below the floor, supersedes. The later entry must be
-// bounded by the floor too: a row whose only newer entry sits above it keeps its
-// older one, so a reader applying up to the floor always meets a row's parent.
+// the same row, also at or below the floor, supersedes: every such entry but the
+// newest per row. The later entry must be bounded by the floor too: a row whose
+// only newer entry sits above it keeps its older one, so a reader applying up to
+// the floor always meets a row's parent.
 //
-// The subquery is a range on the primary key (origin, seq) per candidate row,
-// not a scan of the table.
-const compactStatement = "DELETE FROM log WHERE origin = ? AND seq <= ? AND EXISTS (" +
-	"SELECT 1 FROM log AS later WHERE later.origin = log.origin AND later.seq > log.seq " +
-	"AND later.seq <= ? AND later.tbl = log.tbl AND later.pk = log.pk)"
+// It keeps the newest per row by one grouped pass rather than asking, per
+// entry, whether a later one exists: that question reads a range of the log for
+// every entry, and on a log of tens of thousands of entries it held the worker
+// -- and every verb queued behind it -- for minutes.
+const compactStatement = "DELETE FROM log WHERE origin = ? AND seq <= ? AND seq NOT IN (" +
+	"SELECT MAX(seq) FROM log WHERE origin = ? AND seq <= ? GROUP BY tbl, pk)"
 
 // Compact drops this worker's own superseded entries up to floor.
 //
@@ -43,7 +45,7 @@ func (b *TursoBackend) Compact(floor int) (CompactResult, error) {
 	if err != nil {
 		return CompactResult{}, err
 	}
-	res, err := tx.ExecContext(ctx, compactStatement, b.spec.Origin, floor, floor)
+	res, err := tx.ExecContext(ctx, compactStatement, b.spec.Origin, floor, b.spec.Origin, floor)
 	if err != nil {
 		return CompactResult{}, fmt.Errorf("syncworker: compact: %w", err)
 	}

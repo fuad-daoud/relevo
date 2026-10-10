@@ -154,7 +154,7 @@ func TestScratchRemoteCompact(t *testing.T) {
 			t.Fatalf("append: %v", err)
 		}
 	}
-	rows, err := b.db.Query("EXPLAIN QUERY PLAN "+compactStatement, origin, 3, 3)
+	rows, err := b.db.Query("EXPLAIN QUERY PLAN "+compactStatement, origin, 3, origin, 3)
 	if err != nil {
 		t.Fatalf("explain on the engine: %v", err)
 	}
