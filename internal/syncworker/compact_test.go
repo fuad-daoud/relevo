@@ -90,16 +90,23 @@ func TestCompactFloorNeverMovesDown(t *testing.T) {
 	}
 }
 
-func TestCompactRefusesAFloorNoReaderCanHold(t *testing.T) {
+// A floor past the head is refused. One inside a batch comes from a mark no
+// honest reader holds, and is moved down to the batch before rather than
+// refused, so a forged mark cannot stop compaction for good.
+func TestCompactAlignsAFloorNoReaderCanHold(t *testing.T) {
 	b, _, _ := compactBackend(t)
+	if _, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["a"]`, `{"title":"t"}`)}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
 	if _, err := b.Append([]Entry{
-		upsertEntry("origin-a", "board", `["a"]`, `{"title":"t"}`),
+		upsertEntry("origin-a", "board", `["a"]`, `{"title":"u"}`),
 		upsertEntry("origin-a", "board", `["b"]`, `{"title":"t"}`),
 	}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	if _, err := b.Compact(1); !errors.Is(err, ErrProtocol) {
-		t.Errorf("Compact(1) inside a batch = %v, want a refusal", err)
+	res, err := b.Compact(2)
+	if err != nil || res.Floor != 1 || res.Dropped != 0 {
+		t.Errorf("Compact(2) inside batch 2 = %+v, %v; want the floor moved down to 1, nothing dropped", res, err)
 	}
 	if _, err := b.Compact(9); !errors.Is(err, ErrProtocol) {
 		t.Errorf("Compact(9) past the head = %v, want a refusal", err)

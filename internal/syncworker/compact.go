@@ -39,7 +39,8 @@ func (b *TursoBackend) Compact(floor int) (CompactResult, error) {
 		return CompactResult{}, fmt.Errorf("syncworker: compact: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := b.checkFloor(ctx, tx, floor); err != nil {
+	floor, err = b.alignFloor(ctx, tx, floor)
+	if err != nil {
 		return CompactResult{}, err
 	}
 	res, err := tx.ExecContext(ctx, compactStatement, b.spec.Origin, floor, floor)
@@ -58,31 +59,37 @@ func (b *TursoBackend) Compact(floor int) (CompactResult, error) {
 		return CompactResult{}, fmt.Errorf("syncworker: compact: %w", err)
 	}
 	if err := b.transfer(ctx, b.driver.Push); err != nil {
-		return CompactResult{}, fmt.Errorf("syncworker: push the compaction: %w", markDriverRefusal(err))
+		return CompactResult{}, fmt.Errorf("syncworker: push the compaction: %w", markTransferRefusal(err))
 	}
 	return CompactResult{Dropped: int(dropped), Floor: written}, nil
 }
 
-// checkFloor refuses a floor no reader's mark can have reached.
-func (b *TursoBackend) checkFloor(ctx context.Context, tx *sql.Tx, floor int) error {
+// alignFloor refuses a floor past the log's head and moves one that falls
+// inside a batch down to the end of the batch before it.
+//
+// A floor comes from the marks other machines publish, and a reader applies
+// whole batches, so one inside a batch is a mark no honest reader holds. Moving
+// it down keeps compaction going -- refusing it would stop it on every tick for
+// as long as the mark stayed -- and dropping less is always safe.
+func (b *TursoBackend) alignFloor(ctx context.Context, tx *sql.Tx, floor int) (int, error) {
 	var head sql.NullInt64
 	if err := tx.QueryRowContext(ctx,
 		"SELECT MAX(seq) FROM log WHERE origin = ?", b.spec.Origin).Scan(&head); err != nil {
-		return fmt.Errorf("syncworker: compact: read the head: %w", err)
+		return 0, fmt.Errorf("syncworker: compact: read the head: %w", err)
 	}
 	if floor < 0 || int64(floor) > head.Int64 {
-		return fmt.Errorf("%w: a floor of %d past the log's head %d", ErrProtocol, floor, head.Int64)
+		return 0, fmt.Errorf("%w: a floor of %d past the log's head %d", ErrProtocol, floor, head.Int64)
 	}
-	var inside int
+	var straddling sql.NullInt64
 	if err := tx.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM log WHERE origin = ? AND batch <= ? AND seq > ?",
-		b.spec.Origin, floor, floor).Scan(&inside); err != nil {
-		return fmt.Errorf("syncworker: compact: read the batches: %w", err)
+		"SELECT MIN(batch) FROM log WHERE origin = ? AND batch <= ? AND seq > ?",
+		b.spec.Origin, floor, floor).Scan(&straddling); err != nil {
+		return 0, fmt.Errorf("syncworker: compact: read the batches: %w", err)
 	}
-	if inside > 0 {
-		return fmt.Errorf("%w: a floor of %d inside a batch", ErrProtocol, floor)
+	if straddling.Valid {
+		return int(straddling.Int64) - 1, nil
 	}
-	return nil
+	return floor, nil
 }
 
 // writeFloor records max(old floor, floor) for this origin and returns it.

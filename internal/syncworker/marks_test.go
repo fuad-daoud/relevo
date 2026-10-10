@@ -441,25 +441,42 @@ func TestMarksVerbsHandTheBackendARefusal(t *testing.T) {
 	}
 }
 
-// TestReadMarksReportsAMalformedRow pins that a row the remote holds but this
-// build cannot read is reported rather than skipped. A mark whose time will not
-// parse has no age, and an age is what decides whether its reader still counts
-// towards a floor; skipping it silently would drop a reader out of the count.
-func TestReadMarksReportsAMalformedRow(t *testing.T) {
+// TestReadMarksSkipsAMalformedRow pins that a row this build cannot read is
+// skipped and the rest are still answered. The marks and meta rows are written
+// by other machines, so failing the whole read on one bad row would let any of
+// them stop every reader's import -- and the error would carry the row's own
+// text. A reader whose mark is dropped is only left out of the floor, and one
+// that falls behind a floor takes the snapshot path.
+func TestReadMarksSkipsAMalformedRow(t *testing.T) {
 	path := tempReplica(t)
 	b := backendFor(t, &localDriver{path: path}, "origin-a")
-	execOn(t, path, "INSERT INTO marks (reader, origin, seq, at) VALUES ('origin-b', 'origin-a', 4, 'not-a-time')")
-	if _, err := b.ReadMarks(); err == nil {
-		t.Error("a mark with an unreadable time was skipped, want it reported")
+	execOn(t, path,
+		"INSERT INTO marks (reader, origin, seq, at) VALUES ('origin-b', 'origin-a', 4, 'BLOCKED')",
+		"INSERT INTO marks (reader, origin, seq, at) VALUES ('origin-c', 'origin-a', 'BLOCKED', '2026-01-01T00:00:00Z')",
+		"INSERT INTO marks (reader, origin, seq, at) VALUES ('origin-d', 'origin-a', 7, '2026-01-01T00:00:00Z')",
+		"INSERT INTO meta (key, value) VALUES ('floor.origin-b', 'BLOCKED')",
+		"INSERT INTO meta (key, value) VALUES ('floor.origin-c', '-3')",
+		"INSERT INTO meta (key, value) VALUES ('floor.origin-d', '12')")
+	state, err := b.ReadMarks()
+	if err != nil {
+		t.Fatalf("ReadMarks with malformed rows: %v", err)
 	}
+	if len(state.Marks) != 1 || state.Marks[0].Reader != "origin-d" || state.Marks[0].Seq != 7 {
+		t.Errorf("marks = %+v, want only origin-d's", state.Marks)
+	}
+	if len(state.Floors) != 1 || state.Floors["origin-d"] != 12 {
+		t.Errorf("floors = %v, want only origin-d's", state.Floors)
+	}
+}
 
-	// A floor the meta holds but that is not a number is the same case.
-	if err := execOnErr(t, path,
-		"INSERT INTO meta (key, value) VALUES ('floor.origin-b', 'not-a-number')"); err != nil {
-		t.Fatalf("seed an unreadable floor: %v", err)
-	}
-	if _, err := b.ReadMarks(); err == nil {
-		t.Error("a floor that is not a number was skipped, want it reported")
+// TestQuotaWordInARowIsNotAQuota pins that the quota word is only looked for in
+// errors from a push or a pull. An error a local statement raised can carry a
+// row's text, and the remote's rows are not this machine's to trust.
+func TestQuotaWordInARowIsNotAQuota(t *testing.T) {
+	t.Parallel()
+	err := markDriverRefusal(errors.New(`strconv.Atoi: parsing "BLOCKED": invalid syntax`))
+	if got := RefusalCodeOf(err); got == CodeQuota {
+		t.Fatalf("a local parse error carrying the word was marked %q", got)
 	}
 }
 

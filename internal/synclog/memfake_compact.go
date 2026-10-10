@@ -31,8 +31,8 @@ func (m *MemTransport) CompactOwn(floor int) (CompactResult, error) {
 // recorded floor to it, under one lock so no reader sees one without the other.
 // The floor only rises; a lower one drops what it covers and records nothing.
 //
-// A floor past the origin's head, or one that falls inside a batch, is refused:
-// neither can be a position a reader's mark reached.
+// A floor past the origin's head is refused, and one that falls inside a batch
+// is moved down to the end of the batch before it, as the worker does.
 func (m *MemTransport) Compact(origin string, floor int) (int, error) {
 	l := m.log
 	l.mu.Lock()
@@ -42,14 +42,16 @@ func (m *MemTransport) Compact(origin string, floor int) (int, error) {
 		return 0, fmt.Errorf("synclog: compact %s to %d: past the log's head: %w", origin, floor, ErrInvalid)
 	}
 	var own []Entry
+	aligned := floor
 	for _, e := range l.entries {
 		if e.Origin == origin {
 			if e.Batch <= floor && e.Seq > floor {
-				return 0, fmt.Errorf("synclog: compact %s to %d: inside batch %d: %w", origin, floor, e.Batch, ErrInvalid)
+				aligned = min(aligned, e.Batch-1)
 			}
 			own = append(own, e)
 		}
 	}
+	floor = aligned
 	drop := compactDrops(own, floor)
 	kept := l.entries[:0:0]
 	for _, e := range l.entries {

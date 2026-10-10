@@ -95,3 +95,23 @@ func TestDropTursoCdcOnceRefusesWithoutSpace(t *testing.T) {
 		t.Error("the marker was written for a refused run")
 	}
 }
+
+// Room for the backup alone is not enough: the VACUUM after the drop writes a
+// second copy to the same disk.
+func TestDropTursoCdcOnceWantsRoomForTheVacuumToo(t *testing.T) {
+	d := withCdcTable(t)
+	info, err := os.Stat(d.Path())
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	orig := freeBytes
+	freeBytes = func(string) (uint64, error) { return uint64(info.Size()) * 3 / 2, nil } //nolint:gosec // a test file's size
+	t.Cleanup(func() { freeBytes = orig })
+
+	if _, ran, err := DropTursoCdcOnce(d, t.TempDir(), time.Now()); err == nil || ran {
+		t.Fatalf("DropTursoCdcOnce with room for one copy = %t, %v; want a refusal", ran, err)
+	}
+	if !hasCdcTable(t, d.Path()) {
+		t.Error("the table was dropped despite the refusal")
+	}
+}

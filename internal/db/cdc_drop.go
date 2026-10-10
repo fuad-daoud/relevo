@@ -97,7 +97,9 @@ func cdcHolders(d *DB) ([]*DB, error) {
 }
 
 // requireBackupSpace refuses when backupDir cannot hold a full copy of every
-// file about to be backed up, so a backup never fills the disk it protects.
+// file about to be backed up and then the VACUUM after the drop, which rewrites
+// the file through a copy of its own. Both land on the disk the live database
+// is on, so a check for the backup alone would let the VACUUM fill it.
 func requireBackupSpace(files []*DB, backupDir string) error {
 	var need uint64
 	for _, f := range files {
@@ -111,8 +113,9 @@ func requireBackupSpace(files []*DB, backupDir string) error {
 	if err != nil {
 		return fmt.Errorf("turso cdc drop: free space in %s: %w", backupDir, err)
 	}
+	need *= 2
 	if free < need {
-		return fmt.Errorf("turso cdc drop: refused: the backups need %d bytes and %s has %d free; free space there and restart the daemon: %w",
+		return fmt.Errorf("turso cdc drop: refused: the backups and the vacuum need %d bytes and %s has %d free; free space there and restart the daemon: %w",
 			need, backupDir, free, ErrInvalid)
 	}
 	return nil

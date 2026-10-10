@@ -26,21 +26,36 @@ import (
 // blob budget bounds it by bytes.
 const snapshotChunkEntries = 200
 
+// The region is held whole in memory, and the log it comes from is written by
+// other machines, so it is bounded: by rows, and by the inline body bytes those
+// rows carry (bodies over the ref threshold travel as refs and are fetched a
+// chunk at a time). A region past either is not one this design produces.
+const (
+	maxRegionRows  = 1_000_000
+	maxRegionBytes = int64(512) << 20
+)
+
+// maxSnapshotPasses bounds the retry passes a region takes. Each pass applies
+// the rows whose references are in place, so the passes an honest region needs
+// are the depth of its parent chains; a region built to need one pass per row
+// would otherwise cost a pass over the whole region for every row in it.
+const maxSnapshotPasses = 64
+
 // snapshots takes the snapshot path for every origin whose floor is past this
 // machine's mark. Origins it could not finish are added to held, so the normal
 // path leaves them alone for the run.
-func (i *Importer) snapshots(floors, marks map[string]int, total *ImportResult, held map[string]bool) error {
-	origins := make([]string, 0, len(floors))
-	for origin := range floors {
+func (i *Importer) snapshots(state MarkState, marks map[string]int, total *ImportResult, held map[string]bool) error {
+	origins := make([]string, 0, len(state.Floors))
+	for origin := range state.Floors {
 		origins = append(origins, origin)
 	}
 	sort.Strings(origins)
 	for _, origin := range origins {
-		floor := floors[origin]
+		floor := state.Floors[origin]
 		if origin == i.db.Origin() || floor <= marks[origin] {
 			continue
 		}
-		hold, err := i.snapshotOrigin(origin, marks[origin], floor, marks, total)
+		hold, err := i.snapshotOrigin(origin, marks[origin], floor, state.Heads[origin], marks, total)
 		var stalled *stallError
 		switch {
 		case errors.As(err, &stalled):
@@ -61,10 +76,16 @@ func (i *Importer) snapshots(floors, marks map[string]int, total *ImportResult, 
 // The mark stays where it was until the whole region is applied. A crash in the
 // middle re-applies the region, which is harmless: an upsert is idempotent and a
 // delete of an absent row is a no-op.
-func (i *Importer) snapshotOrigin(origin string, mark, floor int, marks map[string]int, total *ImportResult) (*Hold, error) {
-	region, err := i.pullRegion(origin, mark, floor)
+func (i *Importer) snapshotOrigin(origin string, mark, floor, head int, marks map[string]int, total *ImportResult) (*Hold, error) {
+	if floor > head {
+		return nil, badFloor(origin, floor, fmt.Sprintf("past the log's head %d", head))
+	}
+	region, reached, err := i.pullRegion(origin, mark, floor)
 	if err != nil {
 		return nil, fmt.Errorf("synclog: import: pull %s up to its floor: %w", origin, err)
+	}
+	if err := i.checkFloor(origin, floor, reached); err != nil {
+		return nil, err
 	}
 	if e, held := i.held(region); held {
 		return &Hold{Origin: origin, Label: i.labelOf(origin), Seq: mark, Schema: e.SchemaVersion}, nil
@@ -90,13 +111,15 @@ func (i *Importer) snapshotOrigin(origin string, mark, floor int, marks map[stri
 //
 // The transport is not trusted for the range: an entry outside it, or from
 // another origin, is ignored, and a page that does not advance ends the read.
-func (i *Importer) pullRegion(origin string, after, upto int) ([]Entry, error) {
+func (i *Importer) pullRegion(origin string, after, upto int) ([]Entry, bool, error) {
 	latest := make(map[rowKey]Entry)
 	cursor := after
+	reached := false
+	var held int64
 	for cursor < upto {
 		page, err := i.transport.PullRange(origin, cursor, upto)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		advanced := cursor
 		for _, e := range page {
@@ -104,10 +127,16 @@ func (i *Importer) pullRegion(origin string, after, upto int) ([]Entry, error) {
 				continue
 			}
 			advanced = max(advanced, e.Seq)
+			reached = reached || e.Seq == upto
 			k := rowKey{table: e.Table, pk: e.PK}
 			if prev, ok := latest[k]; !ok || e.Seq > prev.Seq {
+				held += int64(len(e.Body)) - int64(len(prev.Body))
 				latest[k] = e
 			}
+		}
+		if len(latest) > orDefault(i.regionRows, maxRegionRows) || held > maxRegionBytes {
+			return nil, false, &stallError{origin: origin, cause: fmt.Errorf(
+				"the region up to the floor holds more than %d rows or %d body bytes", maxRegionRows, maxRegionBytes)}
 		}
 		if advanced == cursor {
 			break
@@ -118,7 +147,36 @@ func (i *Importer) pullRegion(origin string, after, upto int) ([]Entry, error) {
 	for _, e := range latest {
 		out = append(out, e)
 	}
-	return out, nil
+	return out, reached, nil
+}
+
+// checkFloor refuses a floor the log itself contradicts before the mark is
+// moved to it. The floor is a meta row other machines can write, and a mark set
+// past entries this machine never read would skip them for good: a mark only
+// moves forward and the normal path pulls only what follows it.
+//
+// An honest floor names an entry that is still there -- compaction never drops
+// the entry at the floor, since nothing at or below it is later -- and it ends
+// a batch, because it was a reader's mark and marks land on batch tails.
+func (i *Importer) checkFloor(origin string, floor int, reached bool) error {
+	if !reached {
+		return badFloor(origin, floor, "names no entry the log holds")
+	}
+	next, err := i.transport.PullRange(origin, floor, floor+1)
+	if err != nil {
+		return fmt.Errorf("synclog: import: read past the floor of %s: %w", origin, err)
+	}
+	for _, e := range next {
+		if e.Origin == origin && e.Seq == floor+1 && e.Batch <= floor {
+			return badFloor(origin, floor, "falls inside a batch")
+		}
+	}
+	return nil
+}
+
+// badFloor is the stall a contradicted floor holds its origin with.
+func badFloor(origin string, floor int, why string) error {
+	return &stallError{origin: origin, cause: fmt.Errorf("the log's floor %d for this origin %s", floor, why)}
 }
 
 // splitRegion orders a region for applying: upserts parents-first and by
@@ -157,7 +215,10 @@ func splitRegion(region []Entry, total *ImportResult) (upserts, deletes []Entry)
 // do -- so a refused entry is set aside and retried after the rest. Passes
 // repeat while each applies something; one that applies nothing is a stall.
 func (i *Importer) applyUntilDone(origin string, entries []Entry, total *ImportResult) error {
-	for len(entries) > 0 {
+	for pass := 0; len(entries) > 0; pass++ {
+		if pass == orDefault(i.passes, maxSnapshotPasses) {
+			return &stallError{origin: origin, cause: fmt.Errorf("the references of %s still refuse them after %d passes", describeRows(entries), pass)}
+		}
 		next, applied, err := i.applyPass(origin, entries, total)
 		if err != nil {
 			return err
@@ -235,4 +296,12 @@ func declaredBlobBytes(e Entry) int64 {
 		sum += s.ref.Bytes
 	}
 	return sum
+}
+
+// orDefault is n, or def when n is zero.
+func orDefault(n, def int) int {
+	if n == 0 {
+		return def
+	}
+	return n
 }

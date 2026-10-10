@@ -23,6 +23,16 @@ var ErrJoinOverQuota = errors.New("sync: the join would use more Turso traffic t
 // larger one is not ours and is ignored rather than read.
 const maxSizeObject = 4096
 
+// The bucket is written by other machines and is not trusted, so the estimate
+// bounds what it takes from it: how many size objects it reads, and how large a
+// size it believes. A log past maxLogSize is no log this design produces, and a
+// bound on each keeps the sum from overflowing into a number the guard waves
+// through.
+const (
+	maxSizeKeys = 1000
+	maxLogSize  = int64(1) << 40
+)
+
 // LogSize is what one origin publishes about its log under blobstore.SizeKey.
 type LogSize struct {
 	Entries int       `json:"entries"`
@@ -69,19 +79,57 @@ func EstimateJoin(ctx context.Context, store blobstore.BlobStore) (JoinEstimate,
 		return JoinEstimate{}, err
 	}
 	est := JoinEstimate{R2Bytes: bodies}
+	if len(keys) > maxSizeKeys {
+		keys = keys[:maxSizeKeys]
+	}
 	for _, key := range keys {
-		var buf bytes.Buffer
-		if _, err := store.Get(ctx, key, &buf); err != nil {
-			return JoinEstimate{}, fmt.Errorf("sync: read %s: %w", key, err)
+		size, ok, err := readLogSize(ctx, store, key)
+		if err != nil {
+			return JoinEstimate{}, err
 		}
-		var size LogSize
-		if err := json.Unmarshal(buf.Bytes(), &size); err != nil || size.Bytes < 0 {
+		if !ok {
 			continue
 		}
-		est.TursoBytes += size.Bytes
+		est.TursoBytes += size
 		est.Known = true
 	}
 	return est, nil
+}
+
+// readLogSize reads one published size, reporting false for an object that is
+// not one: longer than a size object is, not JSON, or a size no log has. The
+// read stops past maxSizeObject whatever the listing said the object held.
+func readLogSize(ctx context.Context, store blobstore.BlobStore, key string) (int64, bool, error) {
+	var buf bytes.Buffer
+	if _, err := store.Get(ctx, key, &limitedWriter{w: &buf, left: maxSizeObject + 1}); err != nil {
+		if errors.Is(err, errObjectTooLarge) {
+			return 0, false, nil
+		}
+		return 0, false, fmt.Errorf("sync: read %s: %w", key, err)
+	}
+	var size LogSize
+	if err := json.Unmarshal(buf.Bytes(), &size); err != nil || size.Bytes < 0 || size.Bytes > maxLogSize {
+		return 0, false, nil
+	}
+	return size.Bytes, true, nil
+}
+
+// errObjectTooLarge stops a read that ran past what the object may hold.
+var errObjectTooLarge = errors.New("sync: the object is larger than a size object")
+
+// limitedWriter takes at most left bytes and fails the write that would pass
+// it, which ends the download rather than buffering it.
+type limitedWriter struct {
+	w    *bytes.Buffer
+	left int
+}
+
+func (l *limitedWriter) Write(p []byte) (int, error) {
+	if len(p) >= l.left {
+		return 0, errObjectTooLarge
+	}
+	l.left -= len(p)
+	return l.w.Write(p)
 }
 
 // GuardJoin refuses a join whose known estimate is more than what is left of

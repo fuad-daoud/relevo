@@ -186,7 +186,7 @@ func (b *TursoBackend) createLog(ctx context.Context) error {
 		return fmt.Errorf("syncworker: create the log: %w", err)
 	}
 	if err := b.driver.Push(ctx); err != nil {
-		return fmt.Errorf("syncworker: push the new log: %w", markDriverRefusal(err))
+		return fmt.Errorf("syncworker: push the new log: %w", markTransferRefusal(err))
 	}
 	return nil
 }
@@ -218,7 +218,7 @@ func (b *TursoBackend) Append(entries []Entry) ([]Entry, error) {
 		return nil, err
 	}
 	if err := b.transfer(ctx, b.driver.Push); err != nil {
-		return nil, fmt.Errorf("syncworker: push: %w", markDriverRefusal(err))
+		return nil, fmt.Errorf("syncworker: push: %w", markTransferRefusal(err))
 	}
 	return written, nil
 }
@@ -326,7 +326,7 @@ func (b *TursoBackend) Pull(marks map[string]int) ([]Entry, error) {
 	}
 	ctx := context.Background()
 	if err := b.transfer(ctx, b.driver.Pull); err != nil {
-		return nil, fmt.Errorf("syncworker: pull: %w", markDriverRefusal(err))
+		return nil, fmt.Errorf("syncworker: pull: %w", markTransferRefusal(err))
 	}
 	entries, err := b.readEntries(ctx, marks)
 	if err != nil {
@@ -559,9 +559,6 @@ const (
 // fix is the schema; any other refused statement repeats until the change set
 // changes, and both meet the same remote on every later attempt.
 func markDriverRefusal(err error) error {
-	if isQuotaRefusal(err) {
-		return MarkRefusal(CodeQuota, err)
-	}
 	if !strings.Contains(err.Error(), remoteRefusalMarker) {
 		return err
 	}
@@ -569,6 +566,19 @@ func markDriverRefusal(err error) error {
 		return MarkRefusal(CodeSchema, err)
 	}
 	return MarkRefusal(CodeRemote, err)
+}
+
+// markTransferRefusal classes an error from a push or a pull. Those are the
+// only calls that reach Turso -- every statement runs on the local replica -- so
+// they are the only place a plan quota can refuse, and the only errors the quota
+// word is looked for in. An error from reading a row is never searched for it:
+// the row's text is the remote's, and a value that spelt the word would latch
+// every machine that read it.
+func markTransferRefusal(err error) error {
+	if isQuotaRefusal(err) {
+		return MarkRefusal(CodeQuota, err)
+	}
+	return markDriverRefusal(err)
 }
 
 // bodyHash is the digest head carries for a row: the sha256 of the body's

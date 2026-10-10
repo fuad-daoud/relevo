@@ -33,6 +33,10 @@ type Importer struct {
 	staging   string
 	// chunk bounds a snapshot transaction's entries; zero is the default.
 	chunk int
+	// regionRows and passes bound a snapshot's rows and retry passes; zero is
+	// the default.
+	regionRows int
+	passes     int
 	// AfterBatch runs after each batch or snapshot chunk is written, so a
 	// caller can account for the transfer before the next one starts.
 	AfterBatch func()
@@ -207,7 +211,7 @@ func (i *Importer) Import() (ImportResult, error) {
 	// were written by the same newer binary and are just as unreadable, so
 	// reading them would apply part of a batch the exporter wrote as one.
 	held := make(map[string]bool)
-	if err := i.snapshots(state.Floors, marks, &total, held); err != nil {
+	if err := i.snapshots(state, marks, &total, held); err != nil {
 		return total, err
 	}
 	entries, err := i.transport.Pull(marks)

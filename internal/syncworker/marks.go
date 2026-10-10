@@ -50,7 +50,7 @@ func (b *TursoBackend) upgradeLog(ctx context.Context) error {
 		return fmt.Errorf("syncworker: upgrade the log: %w", err)
 	}
 	if err := b.driver.Push(ctx); err != nil {
-		return fmt.Errorf("syncworker: push the upgraded log: %w", markDriverRefusal(err))
+		return fmt.Errorf("syncworker: push the upgraded log: %w", markTransferRefusal(err))
 	}
 	return nil
 }
@@ -79,7 +79,7 @@ func (b *TursoBackend) PublishMarks(marks map[string]int, at time.Time) error {
 		return fmt.Errorf("syncworker: publish marks: %w", markDriverRefusal(err))
 	}
 	if err := b.transfer(ctx, b.driver.Push); err != nil {
-		return fmt.Errorf("syncworker: push marks: %w", markDriverRefusal(err))
+		return fmt.Errorf("syncworker: push marks: %w", markTransferRefusal(err))
 	}
 	return nil
 }
@@ -172,20 +172,18 @@ func (b *TursoBackend) readMarkRows(ctx context.Context, out *MarkState) error {
 		return err
 	}
 	defer func() { _ = rows.Close() }()
+	// Every column is read as text and a row that does not parse is skipped:
+	// the table is written by other machines, and one malformed row must not
+	// stop every reader from reading the rest.
 	for rows.Next() {
-		var (
-			m  PublishedMark
-			at string
-		)
-		if err := rows.Scan(&m.Reader, &m.Origin, &m.Seq, &at); err != nil {
+		var reader, origin, seq, at sql.NullString
+		if err := rows.Scan(&reader, &origin, &seq, &at); err != nil {
 			return err
 		}
-		parsed, err := time.Parse(time.RFC3339Nano, at)
-		if err != nil {
-			return err
+		m, ok := parseMark(reader.String, origin.String, seq.String, at.String)
+		if ok {
+			out.Marks = append(out.Marks, m)
 		}
-		m.At = parsed
-		out.Marks = append(out.Marks, m)
 	}
 	if err := rows.Err(); err != nil {
 		return err
@@ -207,18 +205,20 @@ func (b *TursoBackend) readFloors(ctx context.Context, out *MarkState) error {
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var key, value string
+		var key, value sql.NullString
 		if err := rows.Scan(&key, &value); err != nil {
 			return err
 		}
-		floor, err := strconv.Atoi(value)
-		if err != nil {
-			return err
+		// A floor that is not a non-negative number is skipped, for the reason
+		// a malformed mark is.
+		floor, err := strconv.Atoi(value.String)
+		if err != nil || floor < 0 {
+			continue
 		}
 		if out.Floors == nil {
 			out.Floors = make(map[string]int)
 		}
-		out.Floors[key[len(floorPrefix):]] = floor
+		out.Floors[key.String[len(floorPrefix):]] = floor
 	}
 	if err := rows.Err(); err != nil {
 		return err
@@ -270,7 +270,8 @@ func (s *server) readMarks(req Request) Response {
 func (b *TursoBackend) readSizes(ctx context.Context, out *MarkState) error {
 	rows, err := b.db.QueryContext(ctx,
 		"SELECT origin, COALESCE(MAX(seq), 0), COUNT(*), "+
-			"COALESCE(SUM(LENGTH(body)), 0) + "+strconv.Itoa(logRowOverhead)+"*COUNT(*) FROM log GROUP BY origin")
+			"COALESCE(SUM(LENGTH(body)), 0) + "+strconv.Itoa(logRowOverhead)+"*COUNT(*) FROM log "+
+			"WHERE typeof(seq) = 'integer' GROUP BY origin")
 	if err != nil {
 		return err
 	}
@@ -295,4 +296,19 @@ func (b *TursoBackend) readSizes(ctx context.Context, out *MarkState) error {
 		return err
 	}
 	return nil
+}
+
+// parseMark reads one marks row, and reports false for a row that is not a
+// mark: an empty reader or origin, a sequence that is not a non-negative
+// number, or a time that is not RFC 3339.
+func parseMark(reader, origin, seq, at string) (PublishedMark, bool) {
+	n, err := strconv.Atoi(seq)
+	if err != nil || n < 0 || reader == "" || origin == "" {
+		return PublishedMark{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, at)
+	if err != nil {
+		return PublishedMark{}, false
+	}
+	return PublishedMark{Reader: reader, Origin: origin, Seq: n, At: parsed}, true
 }

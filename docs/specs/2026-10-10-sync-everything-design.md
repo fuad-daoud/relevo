@@ -298,6 +298,9 @@ no row on this machine references and that are older than 30 days.
 - **What it ignores.** R2 bytes are reported but never refused on. R2 has no
   egress charge, and a join adds no storage.
 - **No size yet.** With no size published, the join proceeds.
+- **Advisory.** The guard is advice, not enforcement: the bucket isn't
+  authenticated, so a forged size can make it permissive. It bounds what it
+  reads (1,000 sizes of at most 4 KiB, none above 1 TiB).
 - **Quota refusal.** A Turso refusal at quota (Turso's `BLOCKED` code, not
   the engine's local disk-full code) latches as "quota reached" and isn't
   retried.

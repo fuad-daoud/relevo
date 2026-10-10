@@ -122,3 +122,24 @@ func TestFloorCountsAMarkAtTheEdgeOfItsLifetime(t *testing.T) {
 		t.Errorf("FloorFor past the edge = %d, want head 100", got)
 	}
 }
+
+// A mark stamped far in the future would stay live forever, and one with a seq
+// of 0 would then pin the floor for good. Clock drift is allowed; a mark past
+// it is not counted.
+func TestFloorIgnoresAMarkFromTheFuture(t *testing.T) {
+	t.Parallel()
+	marks := []Mark{aged("m1", "origin-a", 30, 1), aged("m2", "origin-a", 0, -400)}
+	if got := FloorFor(marks, "origin-a", 50, markNow); got != 30 {
+		t.Fatalf("floor = %d, want 30 with the future mark ignored", got)
+	}
+}
+
+// A mark past the origin's head claims entries the log never held, so it says
+// nothing about what a reader needs.
+func TestFloorIgnoresAMarkPastTheHead(t *testing.T) {
+	t.Parallel()
+	marks := []Mark{aged("m1", "origin-a", 900, 1)}
+	if got := FloorFor(marks, "origin-a", 50, markNow); got != 50 {
+		t.Fatalf("floor = %d, want the head 50 with the impossible mark ignored", got)
+	}
+}

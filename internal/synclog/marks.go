@@ -29,6 +29,10 @@ type Mark struct {
 	At time.Time
 }
 
+// markSkew is how far in the future a mark may be stamped and still count:
+// clock drift between machines, not a mark that would stay live forever.
+const markSkew = time.Hour
+
 // FloorFor is the highest sequence of origin's log every live reader has
 // applied: the point below which no live reader still needs an entry.
 //
@@ -36,6 +40,11 @@ type Mark struct {
 // and from a reader other than origin itself are counted: a machine's mark of
 // its own log says nothing about what any other machine needs, and counting it
 // would hold the floor at whatever the origin itself has caught up to.
+//
+// A mark the origin's own log contradicts is not counted: one past head, or
+// one stamped further in the future than clocks drift. The marks table is
+// written by other machines, and either would hold the floor where no reader
+// is -- a stale far-future mark pinned at zero would stop compaction for good.
 //
 // With no live reader the floor is head, the origin's own highest sequence. A
 // machine syncing alone still needs its log compacted, and a reader that turns
@@ -48,7 +57,7 @@ func FloorFor(marks []Mark, origin string, head int, now time.Time) int {
 		if m.Origin != origin || m.Reader == origin {
 			continue
 		}
-		if now.Sub(m.At) > markLifetime {
+		if now.Sub(m.At) > markLifetime || m.At.Sub(now) > markSkew || m.Seq > head {
 			continue
 		}
 		if !live || m.Seq < floor {
