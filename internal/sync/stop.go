@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/synclog"
@@ -82,6 +83,20 @@ func (s *StopTransport) Stats() (synclog.Stats, error) {
 		return synclog.Stats{}, ErrStopped
 	}
 	return s.inner.Stats()
+}
+
+func (s *StopTransport) PublishMarks(marks map[string]int, at time.Time) error {
+	if s.stopped.Load() {
+		return ErrStopped
+	}
+	return s.inner.PublishMarks(marks, at)
+}
+
+func (s *StopTransport) ReadMarks() (synclog.MarkState, error) {
+	if s.stopped.Load() {
+		return synclog.MarkState{}, ErrStopped
+	}
+	return s.inner.ReadMarks()
 }
 
 // The blob half, forwarded so a stopped export cannot upload a body the entry

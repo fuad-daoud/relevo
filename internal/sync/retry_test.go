@@ -27,6 +27,12 @@ func (r *retryTransport) Head(o string) ([]synclog.HeadRow, error) { return r.in
 
 func (r *retryTransport) Stats() (synclog.Stats, error) { return r.inner.Stats() }
 
+func (r *retryTransport) PublishMarks(m map[string]int, at time.Time) error {
+	return r.inner.PublishMarks(m, at)
+}
+
+func (r *retryTransport) ReadMarks() (synclog.MarkState, error) { return r.inner.ReadMarks() }
+
 func (r *retryTransport) Cancel() { r.cancels++ }
 
 // TestRetryClearsALatchedBreaker pins the operator's way out of a latched

@@ -104,6 +104,11 @@ func (r *Runner) attempt(ctx context.Context, shared *db.DB) SteadyResult {
 }
 
 // exchange is the export then the import over one attempt's transport.
+//
+// The marks are published after the import, not inside it: what a publish
+// reports is where this machine has got to, and that is only true once the
+// import has finished moving them. A publish that ran first would advertise a
+// position the attempt had not reached yet.
 func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) SteadyResult {
 	var out SteadyResult
 	if err := within(ctx, t, r.stepTimeout(), func() error {
@@ -119,7 +124,60 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 	}
 	out.Applied = imported.Applied
 	out.Trouble = troubleFrom(imported)
+	r.publishMarks(shared, t, imported.Moved())
 	return out
+}
+
+// marksEvery is the shortest gap between two publishes of this machine's marks.
+//
+// A publish is a Turso write and a push, and a tick that ran an import has
+// already spent its transfer. The throttle is safe because a mark only grows: a
+// published mark that has fallen behind is a lower one, which only makes
+// another machine's floor more cautious, never less.
+const marksEvery = 15 * time.Minute
+
+// publishMarks tells the log how far this machine has applied of every origin,
+// at most once every marksEvery and only after an import that moved a mark.
+//
+// A publish that fails is logged rather than folded into the attempt's result.
+// The exchange itself succeeded, and the marks are a report of where this
+// machine stands: failing the tick over them would report a sync that did
+// happen as one that did not, and the next attempt republishes anyway.
+func (r *Runner) publishMarks(shared *db.DB, t *StopTransport, moved bool) {
+	if !moved || r.Local == nil {
+		return
+	}
+	now := time.Now().UTC()
+	if !r.marksDue(now) {
+		return
+	}
+	marks, err := shared.ImportMarks()
+	if err != nil {
+		slog.Warn("sync: read this machine's import marks", "err", err)
+		return
+	}
+	if err := t.PublishMarks(marks, now); err != nil {
+		slog.Warn("sync: publish this machine's import marks", "err", err)
+		return
+	}
+	r.put(KeyMarksPublished, now)
+}
+
+// marksDue reports whether a publish is due: one is due when the marker is
+// absent, which is a machine that has never published, and again once
+// marksEvery has passed since the last.
+//
+// A marker that will not parse reads as due rather than as never due. The
+// worst a bad marker costs is a publish the throttle was going to skip, and the
+// alternative is a machine whose marks are never published again because a row
+// it cannot read holds it off.
+func (r *Runner) marksDue(now time.Time) bool {
+	var last time.Time
+	if err := marker(r.Local, KeyMarksPublished, &last); err != nil {
+		slog.Warn("sync: read the marks marker", "err", err)
+		return true
+	}
+	return last.IsZero() || now.Sub(last) >= marksEvery
 }
 
 // Track records t as the work in flight until the returned release runs, so

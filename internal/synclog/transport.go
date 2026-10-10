@@ -1,5 +1,7 @@
 package synclog
 
+import "time"
+
 // LogTransport is where the per-origin log lives. It is the seam the exporter,
 // importer and reconcile are written against, so every test in this slice runs
 // against MemTransport and a second implementation over another wire needs no
@@ -53,6 +55,40 @@ type LogTransport interface {
 	// Stats reports what the log holds, so a caller can tell an empty log from a
 	// transport that is refusing to answer.
 	Stats() (Stats, error)
+
+	// PublishMarks records how far this reader has applied of each origin given,
+	// as of at. The reader is the transport's own installation rather than a
+	// field of the call: a mark is what a compaction floor is computed from, so
+	// naming another reader's would be choosing what the log may drop on a
+	// machine that does not hold the entries it speaks for.
+	//
+	// An origin's own mark is not published. A reader never needs one, and
+	// writing it would only give the floor a row it must then be taught to
+	// ignore.
+	PublishMarks(marks map[string]int, at time.Time) error
+
+	// ReadMarks answers with every published mark, the floors the log has
+	// recorded, and each origin's head and entry count -- the three inputs a
+	// compaction decides from. A transport that has no floors yet answers with
+	// an empty set rather than an error, because nothing has compacted.
+	ReadMarks() (MarkState, error)
+}
+
+// MarkState is what a transport holds about compaction: the marks readers
+// published, and the log's own size per origin.
+//
+// The maps are nil rather than empty when there is nothing to report, so an
+// origin that has compacted nothing and one whose floor is at the start of its
+// log stay apart -- the two mean different things to whoever reads them.
+type MarkState struct {
+	// Marks are the published positions, one per reader per origin.
+	Marks []Mark
+	// Floors is what each origin has already been compacted to.
+	Floors map[string]int
+	// Heads is each origin's highest sequence in the log.
+	Heads map[string]int
+	// Entries is how many entries the log holds for each origin.
+	Entries map[string]int
 }
 
 // HeadRow is one row of an origin's `head`: the materialized latest state of a

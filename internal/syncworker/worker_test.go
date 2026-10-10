@@ -34,6 +34,11 @@ type fakeBackend struct {
 	rows    []HeadRow
 	stats   Stats
 	fail    error
+
+	// published records each publish_marks as it arrived, and markState is
+	// what a read_marks answers with.
+	published []published
+	markState MarkState
 }
 
 // headCall is one head read as it arrived, so a test can assert the paging
@@ -88,6 +93,33 @@ func (f *fakeBackend) Stats() (Stats, error) {
 		return Stats{}, f.fail
 	}
 	return f.stats, nil
+}
+
+// published records one publish_marks as it arrived, so a test asserts what the
+// worker was asked to write rather than what the log holds afterwards.
+type published struct {
+	marks map[string]int
+	at    time.Time
+}
+
+func (f *fakeBackend) PublishMarks(marks map[string]int, at time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.published = append(f.published, published{marks: marks, at: at})
+	if f.fail != nil {
+		return f.fail
+	}
+	f.markState.Marks = nil
+	return nil
+}
+
+func (f *fakeBackend) ReadMarks() (MarkState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return MarkState{}, f.fail
+	}
+	return f.markState, nil
 }
 
 func (f *fakeBackend) Close() error {
@@ -636,7 +668,7 @@ func TestVerbsNamesEveryDispatchedVerb(t *testing.T) {
 	for _, verb := range Verbs() {
 		names = append(names, string(verb))
 	}
-	if got := strings.Join(names, ","); got != "export,get_blob,head,hello,pull,put_blob,shutdown,stats" {
+	if got := strings.Join(names, ","); got != "export,get_blob,head,hello,publish_marks,pull,put_blob,read_marks,shutdown,stats" {
 		t.Errorf("Verbs() = %q, want the pipe's own verb set", got)
 	}
 }

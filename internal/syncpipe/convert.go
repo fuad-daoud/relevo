@@ -1,6 +1,10 @@
 package syncpipe
 
 import (
+	"errors"
+	"sort"
+	"time"
+
 	"github.com/fuad-daoud/relevo/internal/synclog"
 	"github.com/fuad-daoud/relevo/internal/syncworker"
 )
@@ -55,6 +59,73 @@ func entriesFromWire(entries []syncworker.Entry) []synclog.Entry {
 			SchemaVersion: e.SchemaVersion,
 			Body:          e.Body,
 			At:            e.At,
+		})
+	}
+	return out
+}
+
+// PublishMarks records how far this installation has applied of each origin.
+//
+// The request carries no reader: the worker takes its own from hello, so a
+// caller here cannot name a machine that is not this one. What it does carry is
+// the time, because only this process knows when it reached those sequences and
+// a mark's age is what decides whether its reader still counts towards a floor.
+func (c *Client) PublishMarks(marks map[string]int, at time.Time) error {
+	_, err := c.call(syncworker.Request{
+		Verb:    syncworker.VerbPublishMarks,
+		Publish: marksToWire(marks),
+		At:      &at,
+	})
+	return err
+}
+
+// ReadMarks answers with every published mark and each origin's size.
+//
+// A reply with nothing in it is a refusal rather than an empty log: the worker
+// always fills the field it answers with, so a reply without one is a worker
+// that did not do what was asked. Reading it as "no reader has published"
+// would floor every origin at nothing.
+func (c *Client) ReadMarks() (synclog.MarkState, error) {
+	resp, err := c.call(syncworker.Request{Verb: syncworker.VerbReadMarks})
+	if err != nil {
+		return synclog.MarkState{}, err
+	}
+	if resp.Marks == nil {
+		return synclog.MarkState{}, errors.New("syncpipe: the worker answered read_marks with no marks")
+	}
+	return markStateFromWire(*resp.Marks), nil
+}
+
+// marksToWire renders this reader's published positions.
+//
+// The order is sorted so a request's line is the same for the same marks every
+// time: the wire is what a golden line and a failing diff are read against, and
+// a map's own order would make it neither.
+func marksToWire(marks map[string]int) []syncworker.Mark {
+	if len(marks) == 0 {
+		return nil
+	}
+	origins := make([]string, 0, len(marks))
+	for origin := range marks {
+		origins = append(origins, origin)
+	}
+	sort.Strings(origins)
+	out := make([]syncworker.Mark, 0, len(origins))
+	for _, origin := range origins {
+		out = append(out, syncworker.Mark{Origin: origin, Seq: marks[origin]})
+	}
+	return out
+}
+
+// markStateFromWire reads back what a read_marks answered with.
+func markStateFromWire(s syncworker.MarkState) synclog.MarkState {
+	out := synclog.MarkState{Floors: s.Floors, Heads: s.Heads, Entries: s.Entries}
+	for _, m := range s.Marks {
+		out.Marks = append(out.Marks, synclog.Mark{
+			Reader: m.Reader,
+			Origin: m.Origin,
+			Seq:    m.Seq,
+			At:     m.At,
 		})
 	}
 	return out

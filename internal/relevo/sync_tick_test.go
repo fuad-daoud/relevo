@@ -49,6 +49,16 @@ func (r *recordTransport) Stats() (synclog.Stats, error) {
 	return synclog.Stats{}, nil
 }
 
+func (r *recordTransport) PublishMarks(map[string]int, time.Time) error {
+	r.Calls = append(r.Calls, "publish_marks")
+	return nil
+}
+
+func (r *recordTransport) ReadMarks() (synclog.MarkState, error) {
+	r.Calls = append(r.Calls, "read_marks")
+	return synclog.MarkState{}, nil
+}
+
 // syncBlackhole accepts a call and then goes silent until it is cancelled,
 // which is what a network that accepts a connection and then stops answering
 // looks like from here. It counts what was driven through it, so a trigger that
@@ -75,6 +85,8 @@ func (b *syncBlackhole) Append([]synclog.Entry) ([]synclog.Entry, error) { retur
 func (b *syncBlackhole) Pull(map[string]int) ([]synclog.Entry, error)    { return nil, b.wait() }
 func (b *syncBlackhole) Head(string) ([]synclog.HeadRow, error)          { return nil, b.wait() }
 func (b *syncBlackhole) Stats() (synclog.Stats, error)                   { return synclog.Stats{}, b.wait() }
+func (b *syncBlackhole) PublishMarks(map[string]int, time.Time) error    { return b.wait() }
+func (b *syncBlackhole) ReadMarks() (synclog.MarkState, error)           { return synclog.MarkState{}, b.wait() }
 
 // Cancel releases every call waiting on the blackhole, which is what killing
 // the worker behind a call does.

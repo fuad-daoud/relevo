@@ -157,6 +157,8 @@ func (c *cancelLog) Append([]synclog.Entry) ([]synclog.Entry, error) { return ni
 func (c *cancelLog) Pull(map[string]int) ([]synclog.Entry, error)    { return nil, c.wait() }
 func (c *cancelLog) Head(string) ([]synclog.HeadRow, error)          { return nil, c.wait() }
 func (c *cancelLog) Stats() (synclog.Stats, error)                   { return synclog.Stats{}, c.wait() }
+func (c *cancelLog) PublishMarks(map[string]int, time.Time) error    { return c.wait() }
+func (c *cancelLog) ReadMarks() (synclog.MarkState, error)           { return synclog.MarkState{}, c.wait() }
 
 func (c *cancelLog) Cancel() {
 	c.mu.Lock()

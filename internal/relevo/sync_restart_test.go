@@ -38,6 +38,16 @@ func (u *unreadyTransport) Pull(map[string]int) ([]synclog.Entry, error)    { u.
 func (u *unreadyTransport) Head(string) ([]synclog.HeadRow, error)          { u.hit(); return nil, nil }
 func (u *unreadyTransport) Stats() (synclog.Stats, error)                   { u.hit(); return synclog.Stats{}, nil }
 
+func (u *unreadyTransport) PublishMarks(map[string]int, time.Time) error {
+	u.hit()
+	return nil
+}
+
+func (u *unreadyTransport) ReadMarks() (synclog.MarkState, error) {
+	u.hit()
+	return synclog.MarkState{}, nil
+}
+
 var _ synclog.LogTransport = (*unreadyTransport)(nil)
 
 // TestTickOpensTheStoredRemoteAfterARestart pins the daemon that starts on a

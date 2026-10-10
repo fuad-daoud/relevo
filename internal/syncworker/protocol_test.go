@@ -71,7 +71,35 @@ func TestProtocolRoundTripPinsEveryRequest(t *testing.T) {
 // requestWireCases is one case per verb the daemon sends, each carrying every
 // field that verb reads.
 func requestWireCases() []wireCase {
-	return append(logRequestWireCases(), blobRequestWireCases()...)
+	out := logRequestWireCases()
+	out = append(out, marksRequestWireCases()...)
+	return append(out, blobRequestWireCases()...)
+}
+
+// marksRequestWireCases are the two marks verbs' requests, kept apart because
+// the publish carries a whole mark set and the table is already at the length
+// the linter allows.
+func marksRequestWireCases() []wireCase {
+	return []wireCase{
+		{
+			// A publish carries no reader: the worker takes its own from hello,
+			// so the field is absent from the line rather than sent empty and
+			// read as a reader with no name.
+			name: "request publish_marks",
+			value: Request{
+				ID: "5", Verb: VerbPublishMarks, At: &pinnedAt,
+				Publish: []Mark{{Origin: "origin-b", Seq: 4}, {Origin: "origin-c", Seq: 9}},
+			},
+			wire: `{"id":"5","verb":"publish_marks","publish":[` +
+				`{"origin":"origin-b","seq":4},{"origin":"origin-c","seq":9}],` +
+				`"at":"2026-10-08T09:30:00Z"}`,
+		},
+		{
+			name:  "request read_marks",
+			value: Request{ID: "6", Verb: VerbReadMarks},
+			wire:  `{"id":"6","verb":"read_marks"}`,
+		},
+	}
 }
 
 // blobRequestWireCases are the two blob verbs' requests, kept apart because the
@@ -156,8 +184,8 @@ func logRequestWireCases() []wireCase {
 		},
 		{
 			name:  "request stats",
-			value: Request{ID: "5", Verb: VerbStats},
-			wire:  `{"id":"5","verb":"stats"}`,
+			value: Request{ID: "7", Verb: VerbStats},
+			wire:  `{"id":"7","verb":"stats"}`,
 		},
 		{
 			name:  "request shutdown",
@@ -224,6 +252,24 @@ func responseWireCases() []wireCase {
 			name:  "response carrying a missing body",
 			value: Response{ID: "8", OK: false, Error: "not in the store", Code: CodeBlobMissing},
 			wire:  `{"id":"8","ok":false,"error":"not in the store","code":"blob_missing"}`,
+		},
+		{
+			// Every map is set and one mark carries its reader, because the
+			// reply is read by a caller deciding what the log may drop: an
+			// empty map and a missing one would look the same here and are not
+			// the same fact.
+			name: "response carrying the mark state",
+			value: Response{ID: "9", OK: true, Marks: &MarkState{
+				Marks:   []PublishedMark{{Reader: "origin-a", Origin: "origin-b", Seq: 4, At: pinnedAt}},
+				Floors:  map[string]int{"origin-b": 3},
+				Heads:   map[string]int{"origin-a": 9, "origin-b": 4},
+				Entries: map[string]int{"origin-a": 7, "origin-b": 4},
+			}},
+			wire: `{"id":"9","ok":true,"marks":{"marks":[` +
+				`{"reader":"origin-a","origin":"origin-b","seq":4,` +
+				`"at":"2026-10-08T09:30:00Z"}],` +
+				`"floors":{"origin-b":3},"heads":{"origin-a":9,"origin-b":4},` +
+				`"entries":{"origin-a":7,"origin-b":4}}}`,
 		},
 		{
 			name:  "response to a shutdown",

@@ -10,6 +10,7 @@ package syncpipe
 import (
 	"errors"
 	"sync"
+	"time"
 
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/synclog"
@@ -112,6 +113,28 @@ func (s *Supervisor) Stats() (synclog.Stats, error) {
 	err := s.drive("stats", func(c *Client) error {
 		var e error
 		out, e = c.Stats()
+		return e
+	})
+	return out, err
+}
+
+// PublishMarks records how far this installation has applied of each origin.
+// It runs through the breaker like every other call, because a worker that
+// stops answering a publish is a dead worker whatever it was doing.
+func (s *Supervisor) PublishMarks(marks map[string]int, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.drive("publish_marks", func(c *Client) error { return c.PublishMarks(marks, at) })
+}
+
+// ReadMarks answers with every published mark and each origin's size.
+func (s *Supervisor) ReadMarks() (synclog.MarkState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out synclog.MarkState
+	err := s.drive("read_marks", func(c *Client) error {
+		var e error
+		out, e = c.ReadMarks()
 		return e
 	})
 	return out, err

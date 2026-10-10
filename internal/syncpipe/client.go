@@ -64,9 +64,10 @@ const (
 func callBound(verb syncworker.Verb) (time.Duration, error) {
 	switch verb {
 	case syncworker.VerbHello, syncworker.VerbExport, syncworker.VerbPull,
-		syncworker.VerbPutBlob, syncworker.VerbGetBlob:
+		syncworker.VerbPutBlob, syncworker.VerbGetBlob, syncworker.VerbPublishMarks:
 		return dataCallTimeout, nil
-	case syncworker.VerbHead, syncworker.VerbStats, syncworker.VerbShutdown:
+	case syncworker.VerbHead, syncworker.VerbStats, syncworker.VerbReadMarks,
+		syncworker.VerbShutdown:
 		return controlCallTimeout, nil
 	default:
 		return 0, fmt.Errorf("syncpipe: verb %q is neither a data nor a control call", verb)

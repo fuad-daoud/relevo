@@ -60,6 +60,12 @@ const (
 	VerbGetBlob Verb = "get_blob"
 	// VerbStats reports what the log holds.
 	VerbStats Verb = "stats"
+	// VerbPublishMarks records how far this worker has applied of every other
+	// origin, as this worker's own rows.
+	VerbPublishMarks Verb = "publish_marks"
+	// VerbReadMarks reads every published mark, the floors recorded so far, and
+	// each origin's head and entry count.
+	VerbReadMarks Verb = "read_marks"
 	// VerbShutdown ends the pipe after its reply.
 	VerbShutdown Verb = "shutdown"
 )
@@ -122,6 +128,23 @@ type Request struct {
 	// Marks is each other origin's last applied sequence number, so a pull
 	// answers with what follows it and with no mark answered from the start.
 	Marks map[string]int `json:"marks,omitempty"`
+	// Publish is what a publish_marks carries: each origin this reader has
+	// applied to the sequence named. It is its own field rather than the Marks
+	// above because the two shapes are a list and a map, and one frame field
+	// cannot be both.
+	//
+	// A mark's reader is not among them. It is this worker's own origin from
+	// hello, so a caller on this machine cannot write another reader's rows --
+	// a mark is what a compaction floor is computed from, and choosing one for
+	// somebody else is choosing what the log may drop.
+	Publish []Mark `json:"publish,omitempty"`
+	// At is when this reader reached the marks being published, rather than a
+	// time the worker takes for itself: a mark's age decides whether its reader
+	// still counts towards a floor, and only the publisher knows when it was
+	// really at that sequence. It is a pointer so a request that carries no
+	// time at all sends no field, rather than one every verb would have to know
+	// to ignore.
+	At *time.Time `json:"at,omitempty"`
 	// After and Limit page a head read. An empty after starts at the beginning
 	// and a limit of zero means the whole rest, which is what a caller that
 	// wants the whole head leaves unset.
@@ -158,6 +181,11 @@ type Response struct {
 	Skipped bool `json:"skipped,omitempty"`
 	// Stats is what the log holds, on stats alone.
 	Stats *Stats `json:"stats,omitempty"`
+	// Marks is what a read_marks answered with. It is one object rather than
+	// four fields at the top of the reply because one of its names is entries,
+	// which an export and a pull already answer under, and a reply may not say
+	// two different things under one name.
+	Marks *MarkState `json:"marks,omitempty"`
 }
 
 // RefusalCode is the class of a refusal the worker answered with. It is the
@@ -295,6 +323,60 @@ type Stats struct {
 	// bytes, and counting it would bill the month for a body nobody sent.
 	R2Put int64 `json:"r2_put"`
 	R2Get int64 `json:"r2_get"`
+}
+
+// Mark is one origin's published position, as a publish_marks carries it: a
+// sequence and where it is, and nothing else.
+//
+// There is no reader and no time among them. The reader is the worker's own
+// origin from hello, so a caller cannot name a machine that is not this one;
+// the time is the request's own, one value for the whole publish rather than
+// one per origin that could disagree with each other.
+type Mark struct {
+	// Origin is the log the position is in, which is never this reader's own.
+	Origin string `json:"origin"`
+	// Seq is the highest sequence of that origin the reader has applied.
+	Seq int `json:"seq"`
+}
+
+// PublishedMark is a mark as a read_marks hands it back, with the reader and the
+// time the publish did not carry. It is a separate shape from Mark because a
+// reply names who a mark belongs to and when it was taken, and a request that
+// could do the same would be letting the publisher choose both.
+type PublishedMark struct {
+	// Reader is the installation the mark belongs to.
+	Reader string `json:"reader"`
+	// Origin is the log the position is in.
+	Origin string `json:"origin"`
+	// Seq is the highest sequence of that origin the reader has applied.
+	Seq int `json:"seq"`
+	// At is when the reader reached that sequence, which is what decides whether
+	// it still counts towards a floor.
+	At time.Time `json:"at"`
+}
+
+// MarkState is what a read of the marks answers with: every published mark, the
+// floors the remote has recorded, and each origin's head and entry count.
+//
+// It is its own object on the wire rather than four fields beside the rest of
+// the reply because one of its names is entries, which an export and a pull
+// already answer under. A reply may not say two different things under one
+// name, so the three counts are read from here rather than from the top.
+//
+// The maps are nil rather than empty when there is nothing to report, so an
+// absent floor and a floor of zero stay apart -- a remote that has compacted
+// nothing and one whose floor is at the start of a log mean different things to
+// the caller that reads them.
+type MarkState struct {
+	// Marks are the published positions, one row per reader per origin.
+	Marks []PublishedMark `json:"marks,omitempty"`
+	// Floors is what each origin has already been compacted to. Nothing writes
+	// them yet, so it is empty until compaction runs.
+	Floors map[string]int `json:"floors,omitempty"`
+	// Heads is each origin's highest sequence in the log.
+	Heads map[string]int `json:"heads,omitempty"`
+	// Entries is how many entries the log holds for each origin.
+	Entries map[string]int `json:"entries,omitempty"`
 }
 
 // readRequest reads one request line. A clean end of the pipe is io.EOF, which
