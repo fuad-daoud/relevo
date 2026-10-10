@@ -114,6 +114,9 @@ type pendingBlob struct {
 	Key   string
 	Bytes []byte
 	Ref   BlobRef
+	// repair marks a body uploaded for a row the log already carries, rather
+	// than for an entry about to be appended.
+	repair bool
 }
 
 // refColumns rewrites an eligible []byte value over BlobRefThreshold into a

@@ -211,8 +211,11 @@ type Enabler struct {
 	// worker to whatever drives sync next.
 	Transport synclog.LogTransport
 	// Blobs builds the in-process bucket store the join guard reads. Nil skips
-	// the guard.
+	// the guard and the body repair.
 	Blobs func(R2Secrets) blobstore.BlobStore
+	// present is the bodies the bucket holds under this machine's origin, read
+	// once before the join, or nil when there is no bucket to read.
+	present map[string]bool
 	// last is the worker's totals as of the last count.
 	last synclog.Stats
 	// Stopped reports whether the enable has been released by a disable since
@@ -242,6 +245,9 @@ func (e *Enabler) Enable() (EnableResult, error) {
 	}
 	est, guarded, err := e.guard(plan, now)
 	if err != nil {
+		return EnableResult{Remote: plan.Remote, Guarded: guarded, Estimate: est}, err
+	}
+	if e.present, err = e.ownBodies(plan); err != nil {
 		return EnableResult{Remote: plan.Remote, Guarded: guarded, Estimate: est}, err
 	}
 	transport, err := e.transport()
@@ -404,13 +410,16 @@ func (e *Enabler) publishMarks(transport synclog.LogTransport) error {
 // of our own can drift from it.
 func (e *Enabler) reconcile(transport synclog.LogTransport) (int, int, error) {
 	reconciler := synclog.NewReconciler(e.Request.Shared, transport)
+	if e.present != nil {
+		reconciler.RepairBodies(e.present)
+	}
 	var appended, batches int
 	for {
 		one, err := reconciler.ReconcileBatch()
 		if err != nil {
 			return appended, batches, fmt.Errorf("sync: enable: reconcile: %w", err)
 		}
-		if one.Batches == 0 {
+		if !one.More() {
 			return appended, batches, nil
 		}
 		appended += one.Upserts + one.Deletes

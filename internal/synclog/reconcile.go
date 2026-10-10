@@ -64,6 +64,12 @@ type Reconciler struct {
 	// importer takes in one batch by the most one more row can add.
 	blobBudget int64
 
+	// present is the bodies the bucket holds under this origin, or nil when the
+	// run does not check the bucket. With it, a row head already carries still
+	// has its bodies uploaded when the bucket lacks them: the log names the
+	// object either way, and a reader joining from zero needs it there.
+	present map[string]bool
+
 	// readPage reads one rowid-ordered page of a table's owned rows inside the
 	// chunk's read transaction. It is a field so a test can count the pages a run
 	// reads and the rows each one returned.
@@ -121,11 +127,17 @@ func NewReconciler(d *db.DB, t LogTransport) *Reconciler {
 type ReconcileResult struct {
 	// Batches is how many appends the log took.
 	Batches int
+	// Repaired is how many bodies it uploaded for rows head already carries.
+	Repaired int
 	// Upserts is how many rows it proposed as changed or missing.
 	Upserts int
 	// Deletes is how many head rows it proposed as gone from this file.
 	Deletes int
 }
+
+// More reports whether one batch did anything, which is whether the walk may
+// have more to do. A batch that only repaired bodies is not the end of it.
+func (r ReconcileResult) More() bool { return r.Batches > 0 || r.Repaired > 0 }
 
 // Reconcile compares the whole file against head and appends every difference,
 // in as many batches as the differences need.
@@ -145,7 +157,8 @@ func (r *Reconciler) Reconcile() (ReconcileResult, error) {
 		total.Batches += one.Batches
 		total.Upserts += one.Upserts
 		total.Deletes += one.Deletes
-		if one.Batches == 0 {
+		total.Repaired += one.Repaired
+		if !one.More() {
 			return total, nil
 		}
 	}
@@ -160,9 +173,17 @@ func (r *Reconciler) reset() {
 	r.pending = nil
 }
 
+// RepairBodies makes the run upload every body of this origin's rows that the
+// bucket does not hold, present being the keys it does hold. Without it a row
+// head carries is left alone, and an object lost from the bucket stays lost.
+func (r *Reconciler) RepairBodies(present map[string]bool) {
+	r.present = present
+}
+
 // ReconcileBatch appends one batch of the differences it finds, up to the chunk
 // size, as a single transport call. It appends nothing when the walk is finished,
-// and one batch when it is not.
+// and one batch when it is not. A chunk that found only bodies to repair uploads
+// them and appends nothing; the walk is finished only when a chunk finds neither.
 func (r *Reconciler) ReconcileBatch() (ReconcileResult, error) {
 	r.pending = nil
 	entries, err := r.differences(r.chunk)
@@ -170,7 +191,7 @@ func (r *Reconciler) ReconcileBatch() (ReconcileResult, error) {
 		return ReconcileResult{}, fmt.Errorf("synclog: reconcile: %w", err)
 	}
 	if len(entries) == 0 {
-		return ReconcileResult{}, nil
+		return r.repairOnly()
 	}
 	// The bodies go first, for the reason the exporter's do: an entry naming an
 	// object the store does not hold would latch the importer over a body a
@@ -180,11 +201,12 @@ func (r *Reconciler) ReconcileBatch() (ReconcileResult, error) {
 	if err := uploadPending(r.mover, r.staging, r.pending); err != nil {
 		return ReconcileResult{}, fmt.Errorf("synclog: reconcile: upload: %w", err)
 	}
+	repaired := r.repairs()
 	r.pending = nil
 	if _, err := r.transport.Append(entries); err != nil {
 		return ReconcileResult{}, fmt.Errorf("synclog: reconcile: append: %w", err)
 	}
-	result := ReconcileResult{Batches: 1, Upserts: len(entries)}
+	result := ReconcileResult{Batches: 1, Upserts: len(entries), Repaired: repaired}
 	for _, e := range entries {
 		if e.Op == OpDelete {
 			result.Upserts--
@@ -192,6 +214,35 @@ func (r *Reconciler) ReconcileBatch() (ReconcileResult, error) {
 		}
 	}
 	return result, nil
+}
+
+// repairOnly uploads the bodies a chunk with no differences found missing.
+func (r *Reconciler) repairOnly() (ReconcileResult, error) {
+	if len(r.pending) == 0 {
+		return ReconcileResult{}, nil
+	}
+	if err := uploadPending(r.mover, r.staging, r.pending); err != nil {
+		return ReconcileResult{}, fmt.Errorf("synclog: reconcile: repair: %w", err)
+	}
+	repaired := r.repairs()
+	r.pending = nil
+	return ReconcileResult{Repaired: repaired}, nil
+}
+
+// repairs counts the pending bodies that were repairs rather than the bodies of
+// proposed rows, and records them as present so a later chunk does not upload
+// them again.
+func (r *Reconciler) repairs() int {
+	n := 0
+	for _, b := range r.pending {
+		if b.repair {
+			n++
+		}
+		if r.present != nil {
+			r.present[b.Key] = true
+		}
+	}
+	return n
 }
 
 // differences is the batch the log is handed: this file's rows whose body hash
@@ -307,6 +358,7 @@ func (r *Reconciler) inspectUpsert(out *[]Entry, tbl string, row db.ExchangeRow)
 		return err
 	}
 	if r.head.holds(key, hash) {
+		r.queueRepairs(tbl, row.PK, blobs)
 		return nil
 	}
 	// Only a row that is actually proposed moves its values. A row head already
@@ -322,6 +374,23 @@ func (r *Reconciler) inspectUpsert(out *[]Entry, tbl string, row db.ExchangeRow)
 	}
 	*out = append(*out, entry)
 	return nil
+}
+
+// queueRepairs queues the bodies of a row head already carries that the bucket
+// lacks. A body queued once in this run is not queued again, so two rows sharing
+// one body upload it once.
+func (r *Reconciler) queueRepairs(tbl, pk string, blobs []pendingBlob) {
+	if r.present == nil {
+		return
+	}
+	for _, b := range blobs {
+		if r.present[b.Key] || checkBlobSizes(tbl, pk, []pendingBlob{b}) != nil {
+			continue
+		}
+		b.repair = true
+		r.present[b.Key] = true
+		r.pending = append(r.pending, b)
+	}
 }
 
 // nextDeletes fills out with deletes until it holds limit of them or head runs

@@ -123,3 +123,26 @@ func (e *Enabler) guard(plan EnablePlan, now time.Time) (JoinEstimate, bool, err
 
 // guardTimeout bounds the bucket listing the guard makes.
 const guardTimeout = 2 * time.Minute
+
+// ownBodies lists the bodies the bucket holds under this machine's origin, so the
+// join's reconcile can upload any its rows name that the bucket lost. A join
+// that cannot list the bucket could not upload to it either, so a failure ends
+// the enable here rather than halfway through.
+func (e *Enabler) ownBodies(plan EnablePlan) (map[string]bool, error) {
+	if e.Blobs == nil {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), guardTimeout)
+	defer cancel()
+	objects, err := e.Blobs(plan.R2).List(ctx, e.Request.Shared.Origin()+"/")
+	if err != nil {
+		return nil, fmt.Errorf("sync: enable: list this machine's bodies: %w", err)
+	}
+	present := make(map[string]bool, len(objects))
+	for _, o := range objects {
+		if blobstore.IsBodyKey(o.Key) {
+			present[o.Key] = true
+		}
+	}
+	return present, nil
+}
