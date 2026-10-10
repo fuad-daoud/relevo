@@ -137,3 +137,36 @@ func carries(entries []Entry, origin string, seq int) bool {
 	}
 	return false
 }
+
+// TestScratchRemoteCompact compacts a log on a real remote and reads the
+// statement's plan from the engine that runs it, which is where the primary-key
+// search has to hold.
+func TestScratchRemoteCompact(t *testing.T) {
+	url := os.Getenv("RELEVO_SCRATCH_SYNC_URL")
+	token := os.Getenv("RELEVO_SCRATCH_SYNC_TOKEN")
+	if url == "" || token == "" {
+		t.Skip("set RELEVO_SCRATCH_SYNC_URL and RELEVO_SCRATCH_SYNC_TOKEN to run against a scratch remote")
+	}
+	origin := "scratch-c-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	b := openScratch(t, filepath.Join(t.TempDir(), "c.db"), origin, url, token)
+	for _, pk := range []string{`["a"]`, `["b"]`, `["a"]`} {
+		if _, err := b.Append([]Entry{upsertEntry(origin, "board", pk, `{"title":"t"}`)}); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	rows, err := b.db.Query("EXPLAIN QUERY PLAN "+compactStatement, origin, 3, 3)
+	if err != nil {
+		t.Fatalf("explain on the engine: %v", err)
+	}
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		_ = rows.Scan(&id, &parent, &unused, &detail)
+		t.Logf("plan: %s", detail)
+	}
+	_ = rows.Close()
+	res, err := b.Compact(3)
+	if err != nil || res.Dropped != 1 || res.Floor != 3 {
+		t.Fatalf("Compact(3) = %+v, %v; want one dropped at floor 3", res, err)
+	}
+}

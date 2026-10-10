@@ -1,6 +1,7 @@
 package synclog
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -448,4 +449,102 @@ func reopen(t *testing.T, path, origin string) *db.DB {
 		t.Fatalf("reopen %s as %s: %v", path, origin, err)
 	}
 	return d
+}
+
+// permutations is every order of 0..n-1.
+func permutations(n int) [][]int {
+	if n == 0 {
+		return [][]int{{}}
+	}
+	var out [][]int
+	for _, tail := range permutations(n - 1) {
+		for at := 0; at <= len(tail); at++ {
+			out = append(out, append(append(append([]int(nil), tail[:at]...), n-1), tail[at:]...))
+		}
+	}
+	return out
+}
+
+// settleAll runs rounds on every machine, in the order given, until a whole pass
+// moves nothing.
+func settleAll(t *testing.T, log *MemTransport, order []*db.DB) {
+	t.Helper()
+	for round := 0; round < 2*maxJoinRounds; round++ {
+		moved := false
+		for _, d := range order {
+			if runRound(t, log, d).moved() {
+				moved = true
+			}
+		}
+		if !moved {
+			return
+		}
+	}
+	t.Fatalf("the machines did not settle in %d passes", 2*maxJoinRounds)
+}
+
+// Three machines write concurrently, one compacts its own log while a second
+// machine is silent, a fourth joins from zero and the silent one comes back; all
+// four end holding the same rows, whatever order their rounds run in.
+func TestConvergenceAcrossCompactionInEveryPullOrder(t *testing.T) {
+	t.Parallel()
+	for _, idx := range permutations(4) {
+		t.Run(fmt.Sprint(idx), func(t *testing.T) {
+			t.Parallel()
+			runCompactionConvergence(t, idx)
+		})
+	}
+}
+
+func runCompactionConvergence(t *testing.T, idx []int) {
+	t.Helper()
+	m1, p1 := peerFile(t, "m1")
+	m2, p2 := peerFile(t, "m2")
+	m3, p3 := peerFile(t, "m3")
+	m4, _ := peerFile(t, "m4")
+	machines := []*db.DB{m1, m2, m3, m4}
+	var order []*db.DB
+	for _, k := range idx {
+		order = append(order, machines[k])
+	}
+	log := NewMemTransport("m1")
+
+	// Concurrent writes: each machine owns rows the others have never seen.
+	seed(t, p1, insertBinding("01P", "m1"), insertBinding("01X", "m1"))
+	seed(t, p2, insertBinding("02B", "m2"))
+	seed(t, p3, insertRecord("03R", "m3"), insertRecordEvent("03R", 1))
+	settleAll(t, log, []*db.DB{m1, m2, m3})
+	seed(t, p1, insertForkedBinding("01C", "01P", "m1"))
+	settleAll(t, log, []*db.DB{m1, m2, m3})
+
+	// m3 goes silent. m1 rewrites its parent, removes a row and adds one, in
+	// separate batches, and m2 follows it.
+	seed(t, p1, `UPDATE binding SET cwd = '/y' WHERE id = '01P'`)
+	runRound(t, log, m1)
+	seed(t, p1, `DELETE FROM binding WHERE id = '01X'`, insertBinding("01Y", "m1"))
+	runRound(t, log, m1)
+	settleAll(t, log, []*db.DB{m1, m2})
+
+	state, err := log.ReadMarks()
+	if err != nil {
+		t.Fatalf("read marks: %v", err)
+	}
+	dropped, err := log.Compact("m1", state.Heads["m1"])
+	if err != nil || dropped == 0 {
+		t.Fatalf("compact m1 = %d, %v; want superseded entries dropped", dropped, err)
+	}
+
+	if markOf(t, m3, "m1") >= state.Heads["m1"] {
+		t.Fatalf("m3's mark of m1 = %d, want it behind the floor %d", markOf(t, m3, "m1"), state.Heads["m1"])
+	}
+
+	// The fourth machine joins from zero and the silent one rejoins.
+	settleAll(t, log, order)
+	want := sharedRows(t, m1)
+	for _, d := range []*db.DB{m2, m3, m4} {
+		assertConverged(t, m1, d, want)
+	}
+	if got := markOf(t, m4, "m1"); got < state.Heads["m1"] {
+		t.Fatalf("m4's mark of m1 = %d, want at least the compacted head %d", got, state.Heads["m1"])
+	}
 }

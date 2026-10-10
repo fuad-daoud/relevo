@@ -108,3 +108,9 @@ func TestTickOpensTheStoredRemoteAfterARestart(t *testing.T) {
 		t.Errorf("import mark for m2 = (%d, %v, %v), want the far entry applied", got, ok, err)
 	}
 }
+
+func (u *unreadyTransport) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
+
+func (u *unreadyTransport) CompactOwn(int) (synclog.CompactResult, error) {
+	return synclog.CompactResult{}, nil
+}

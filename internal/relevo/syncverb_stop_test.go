@@ -317,3 +317,21 @@ func TestDisableEndsAPushBetweenItsBatches(t *testing.T) {
 		t.Errorf("the push made %d appends, want it ended after the one in flight", got)
 	}
 }
+
+func (h *hungAppend) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
+
+func (h *hungAppend) CompactOwn(int) (synclog.CompactResult, error) {
+	return synclog.CompactResult{}, nil
+}
+
+func (h *heldJoin) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
+
+func (h *heldJoin) CompactOwn(int) (synclog.CompactResult, error) {
+	return synclog.CompactResult{}, nil
+}
+
+func (h *heldPush) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
+
+func (h *heldPush) CompactOwn(int) (synclog.CompactResult, error) {
+	return synclog.CompactResult{}, nil
+}

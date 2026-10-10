@@ -268,3 +268,9 @@ func TestSteadyRecordsTheImportTroubleAndTimes(t *testing.T) {
 		t.Errorf("the exchange times were not stamped: (ok %v, err %v)", ok, err)
 	}
 }
+
+func (c *cancelLog) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
+
+func (c *cancelLog) CompactOwn(int) (synclog.CompactResult, error) {
+	return synclog.CompactResult{}, nil
+}

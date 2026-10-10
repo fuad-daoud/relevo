@@ -498,3 +498,15 @@ func sealAndCount(t *testing.T, client synclog.LogTransport) int {
 	}
 	return sealed
 }
+
+func (r *recordTransport) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
+
+func (r *recordTransport) CompactOwn(int) (synclog.CompactResult, error) {
+	return synclog.CompactResult{}, nil
+}
+
+func (s *syncBlackhole) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
+
+func (s *syncBlackhole) CompactOwn(int) (synclog.CompactResult, error) {
+	return synclog.CompactResult{}, nil
+}

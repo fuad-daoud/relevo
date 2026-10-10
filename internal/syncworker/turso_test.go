@@ -1113,3 +1113,7 @@ func TestWorkerSQLUsesNoUpsert(t *testing.T) {
 		}
 	}
 }
+
+func (r refusingBackend) PullRange(string, int, int) ([]Entry, error) { return nil, nil }
+
+func (r refusingBackend) Compact(int) (CompactResult, error) { return CompactResult{}, nil }

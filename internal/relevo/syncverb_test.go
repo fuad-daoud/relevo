@@ -1005,3 +1005,9 @@ func TestRetryStopsAHungSteadyPullAtTheDaemon(t *testing.T) {
 		t.Errorf("breaker deaths = %d, %v; want the deliberate stop uncounted", deaths, err)
 	}
 }
+
+func (h *hangingJoin) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
+
+func (h *hangingJoin) CompactOwn(int) (synclog.CompactResult, error) {
+	return synclog.CompactResult{}, nil
+}

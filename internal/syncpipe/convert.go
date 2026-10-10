@@ -96,6 +96,25 @@ func (c *Client) ReadMarks() (synclog.MarkState, error) {
 	return markStateFromWire(*resp.Marks), nil
 }
 
+// PullRange reads one page of an origin's entries in (after, upto].
+func (c *Client) PullRange(origin string, after, upto int) ([]synclog.Entry, error) {
+	resp, err := c.call(syncworker.Request{Verb: syncworker.VerbPullRange, Origin: origin, AfterSeq: after, Upto: upto})
+	if err != nil {
+		return nil, err
+	}
+	return entriesFromWire(resp.Entries), nil
+}
+
+// CompactOwn drops this installation's superseded entries up to floor. The
+// request names no origin: the worker compacts its own, from hello.
+func (c *Client) CompactOwn(floor int) (synclog.CompactResult, error) {
+	resp, err := c.call(syncworker.Request{Verb: syncworker.VerbCompact, Floor: floor})
+	if err != nil {
+		return synclog.CompactResult{}, err
+	}
+	return synclog.CompactResult{Dropped: resp.Dropped, Floor: resp.Floor}, nil
+}
+
 // marksToWire renders this reader's published positions.
 //
 // The order is sorted so a request's line is the same for the same marks every

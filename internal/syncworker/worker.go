@@ -65,6 +65,14 @@ type Backend interface {
 	// ReadMarks answers with every published mark, the floors the remote has
 	// recorded, and each origin's head and entry count.
 	ReadMarks() (MarkState, error)
+	// PullRange reads one page of origin's entries with after < seq <= upto from
+	// the replica as it stands, without pulling the remote first: the floor a
+	// caller read with ReadMarks belongs to that same state, and a newer
+	// compaction pulled in between would drop entries the range needs.
+	PullRange(origin string, after, upto int) ([]Entry, error)
+	// Compact drops this worker's own superseded entries up to floor and
+	// records the floor, in one transaction and one push.
+	Compact(floor int) (CompactResult, error)
 	// Close releases the remote and the replica.
 	Close() error
 }
@@ -139,6 +147,8 @@ var verbHandlers = map[Verb]func(*server, Request) Response{
 	VerbStats:        (*server).stats,
 	VerbPublishMarks: (*server).publishMarks,
 	VerbReadMarks:    (*server).readMarks,
+	VerbPullRange:    (*server).pullRange,
+	VerbCompact:      (*server).compact,
 	VerbShutdown:     (*server).shutdown,
 }
 

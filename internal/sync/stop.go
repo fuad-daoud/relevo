@@ -99,6 +99,20 @@ func (s *StopTransport) ReadMarks() (synclog.MarkState, error) {
 	return s.inner.ReadMarks()
 }
 
+func (s *StopTransport) PullRange(origin string, after, upto int) ([]synclog.Entry, error) {
+	if s.stopped.Load() {
+		return nil, ErrStopped
+	}
+	return s.inner.PullRange(origin, after, upto)
+}
+
+func (s *StopTransport) CompactOwn(floor int) (synclog.CompactResult, error) {
+	if s.stopped.Load() {
+		return synclog.CompactResult{}, ErrStopped
+	}
+	return s.inner.CompactOwn(floor)
+}
+
 // The blob half, forwarded so a stopped export cannot upload a body the entry
 // naming it was never appended for. BlobStagingDir reports an empty folder for a
 // client that moves nothing, which is what tells the exporter there is no mover

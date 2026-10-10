@@ -43,6 +43,8 @@ type memLog struct {
 	// log sees them -- which is the rule the remote enforces by key, reproduced
 	// here rather than by a transport that checks who asked.
 	marks map[string]map[string]Mark
+	// floors is what each origin has compacted to.
+	floors map[string]int
 }
 
 // NewMemTransport returns a handle on an empty log for the installation named
@@ -282,10 +284,8 @@ func (m *MemTransport) PublishMarks(marks map[string]int, at time.Time) error {
 	return nil
 }
 
-// ReadMarks answers with every published mark and each origin's size.
-//
-// The floors come back empty: nothing compacts in this slice, so a floor has no
-// writer here and reporting one would be a value no test could have produced.
+// ReadMarks answers with every published mark, the floors compaction recorded
+// and each origin's size.
 func (m *MemTransport) ReadMarks() (MarkState, error) {
 	return m.log.markState(), nil
 }
@@ -333,6 +333,12 @@ func (m *memLog) markState() MarkState {
 		for _, origin := range origins {
 			out.Marks = append(out.Marks, held[origin])
 		}
+	}
+	for origin, floor := range m.floors {
+		if out.Floors == nil {
+			out.Floors = make(map[string]int)
+		}
+		out.Floors[origin] = floor
 	}
 	out.Heads = make(map[string]int)
 	out.Entries = make(map[string]int)

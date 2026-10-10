@@ -72,6 +72,27 @@ type LogTransport interface {
 	// compaction decides from. A transport that has no floors yet answers with
 	// an empty set rather than an error, because nothing has compacted.
 	ReadMarks() (MarkState, error)
+
+	// PullRange returns entries of one origin with after < seq <= upto, in
+	// sequence order. Unlike Pull it does not hand back whole batches: the
+	// snapshot path reads a region that ends on a batch tail and keeps the
+	// latest entry per key, so a batch cut by a page changes nothing.
+	//
+	// A transport may answer with fewer entries than the range holds. The caller
+	// asks again from the last sequence it was given until an answer is empty.
+	PullRange(origin string, after, upto int) ([]Entry, error)
+
+	// CompactOwn drops this installation's own superseded entries up to floor and
+	// records the floor, as one write. The origin is the transport's own for the
+	// reason PublishMarks has: only the machine that wrote a log may drop from it.
+	CompactOwn(floor int) (CompactResult, error)
+}
+
+// CompactResult is what one compaction did: how many entries it dropped and the
+// floor the log now records, which is never below what it recorded before.
+type CompactResult struct {
+	Dropped int
+	Floor   int
 }
 
 // MarkState is what a transport holds about compaction: the marks readers

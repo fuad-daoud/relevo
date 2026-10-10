@@ -66,6 +66,12 @@ const (
 	// VerbReadMarks reads every published mark, the floors recorded so far, and
 	// each origin's head and entry count.
 	VerbReadMarks Verb = "read_marks"
+	// VerbPullRange reads one page of one origin's entries between two
+	// sequences, for a reader whose mark is below the origin's floor.
+	VerbPullRange Verb = "pull_range"
+	// VerbCompact drops this worker's own superseded entries up to a floor and
+	// records the floor, in one write.
+	VerbCompact Verb = "compact"
 	// VerbShutdown ends the pipe after its reply.
 	VerbShutdown Verb = "shutdown"
 )
@@ -150,6 +156,11 @@ type Request struct {
 	// wants the whole head leaves unset.
 	After string `json:"after,omitempty"`
 	Limit int    `json:"limit,omitempty"`
+	// AfterSeq and Upto bound a pull_range to AfterSeq < seq <= Upto of the
+	// origin named above; Floor is what a compact drops up to.
+	AfterSeq int `json:"after_seq,omitempty"`
+	Upto     int `json:"upto,omitempty"`
+	Floor    int `json:"floor,omitempty"`
 }
 
 // Response is one line of the pipe, from the worker to the daemon.
@@ -186,6 +197,10 @@ type Response struct {
 	// which an export and a pull already answer under, and a reply may not say
 	// two different things under one name.
 	Marks *MarkState `json:"marks,omitempty"`
+	// Dropped and Floor are what a compact answers with: the entries it removed
+	// and the floor the log now records, which is never below the one before.
+	Dropped int `json:"dropped,omitempty"`
+	Floor   int `json:"floor,omitempty"`
 }
 
 // RefusalCode is the class of a refusal the worker answered with. It is the
@@ -370,8 +385,7 @@ type PublishedMark struct {
 type MarkState struct {
 	// Marks are the published positions, one row per reader per origin.
 	Marks []PublishedMark `json:"marks,omitempty"`
-	// Floors is what each origin has already been compacted to. Nothing writes
-	// them yet, so it is empty until compaction runs.
+	// Floors is what each origin has already been compacted to.
 	Floors map[string]int `json:"floors,omitempty"`
 	// Heads is each origin's highest sequence in the log.
 	Heads map[string]int `json:"heads,omitempty"`
@@ -431,4 +445,10 @@ func writeResponse(w *bufio.Writer, resp Response) error {
 		return fmt.Errorf("syncworker: flush reply %s: %w", resp.ID, err)
 	}
 	return nil
+}
+
+// CompactResult is what a compaction did, as the backend reports it.
+type CompactResult struct {
+	Dropped int
+	Floor   int
 }

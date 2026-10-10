@@ -437,3 +437,9 @@ func TestACancelledJoinDoesNotTurnTheMachineOn(t *testing.T) {
 		t.Fatalf("Enabled = %v, %v; want the released machine left off", on, err)
 	}
 }
+
+func (r *runningLog) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
+
+func (r *runningLog) CompactOwn(int) (synclog.CompactResult, error) {
+	return synclog.CompactResult{}, nil
+}

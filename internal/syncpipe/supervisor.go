@@ -140,6 +140,32 @@ func (s *Supervisor) ReadMarks() (synclog.MarkState, error) {
 	return out, err
 }
 
+// PullRange reads one page of an origin's entries in (after, upto].
+func (s *Supervisor) PullRange(origin string, after, upto int) ([]synclog.Entry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []synclog.Entry
+	err := s.drive("pull_range", func(c *Client) error {
+		var e error
+		out, e = c.PullRange(origin, after, upto)
+		return e
+	})
+	return out, err
+}
+
+// CompactOwn drops this installation's superseded entries up to floor.
+func (s *Supervisor) CompactOwn(floor int) (synclog.CompactResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out synclog.CompactResult
+	err := s.drive("compact", func(c *Client) error {
+		var e error
+		out, e = c.CompactOwn(floor)
+		return e
+	})
+	return out, err
+}
+
 // BlobStagingDir is the folder bodies are written to before they are put. It is
 // the supervisor's own rather than a caller's, so the exporter writing the file
 // and the worker reading it are named from one place.

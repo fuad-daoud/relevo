@@ -82,3 +82,11 @@ func TestRetryClearsALatchedBreaker(t *testing.T) {
 		t.Fatalf("the tick after the retry failed: %v", out.Err)
 	}
 }
+
+func (r *retryTransport) PullRange(o string, after, upto int) ([]synclog.Entry, error) {
+	return r.inner.PullRange(o, after, upto)
+}
+
+func (r *retryTransport) CompactOwn(floor int) (synclog.CompactResult, error) {
+	return r.inner.CompactOwn(floor)
+}

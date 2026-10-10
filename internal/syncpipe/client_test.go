@@ -717,8 +717,8 @@ func TestCallBoundClassifiesEveryProtocolVerb(t *testing.T) {
 // the map does not name is refused rather than handed the control bound, so a
 // new data verb cannot silently get the short one.
 func TestCallBoundRefusesAnUnclassifiedVerb(t *testing.T) {
-	if got, err := callBound(syncworker.Verb("compact")); err == nil {
-		t.Errorf("callBound(compact) = %s, nil; want an unclassified refusal", got)
+	if got, err := callBound(syncworker.Verb("vacuum")); err == nil {
+		t.Errorf("callBound(vacuum) = %s, nil; want an unclassified refusal", got)
 	}
 }
 
@@ -730,4 +730,26 @@ func TestSteadyStepBoundSitsBelowTheDataCallBound(t *testing.T) {
 	if relevosync.StepTimeout >= dataCallTimeout {
 		t.Errorf("sync.StepTimeout = %s, want below the %s data call bound", relevosync.StepTimeout, dataCallTimeout)
 	}
+}
+
+func (n normalBackend) PullRange(origin string, after, upto int) ([]syncworker.Entry, error) {
+	return []syncworker.Entry{{Origin: origin, Seq: after + 1, Batch: after + 1, Tbl: "board", PK: `["a"]`, Op: "delete", At: pinnedAt}}, nil
+}
+
+func (n normalBackend) Compact(floor int) (syncworker.CompactResult, error) {
+	return syncworker.CompactResult{Dropped: floor - 1, Floor: floor}, nil
+}
+
+func (r refusingBackend) PullRange(string, int, int) ([]syncworker.Entry, error) { return nil, nil }
+
+func (r refusingBackend) Compact(int) (syncworker.CompactResult, error) {
+	return syncworker.CompactResult{}, nil
+}
+
+func (v verbsRefusingBackend) PullRange(string, int, int) ([]syncworker.Entry, error) {
+	return nil, nil
+}
+
+func (v verbsRefusingBackend) Compact(int) (syncworker.CompactResult, error) {
+	return syncworker.CompactResult{}, nil
 }
