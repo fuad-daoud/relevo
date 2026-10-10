@@ -26,3 +26,9 @@ func enableIntake(verb *wire.SyncVerb, tail []byte) ([]byte, relevosync.R2Intake
 		Secret:   tail[cut:],
 	}, nil
 }
+
+// Joining reports whether an enable's join holds a transport: from when the join
+// opens its log until the enable settles.
+func (v *VerbRunner) Joining() bool {
+	return v != nil && v.joinTransport() != nil
+}

@@ -481,9 +481,12 @@ func cmdDaemon(args []string) error {
 	// internal, so a service-managed or hand-started daemon never gets it. It
 	// cancels this context once the daemon has been idle past the period, which
 	// Run reports as a clean shutdown.
+	var running atomic.Pointer[relevo.Daemon]
 	if *autoExitAfter > 0 {
 		go watchDaemonIdle(ctx, stop, *autoExitAfter, idlePoll, rt.Now, func() daemonActivity {
-			return daemonActivityNow(root, srv, rt.Store)
+			a := daemonActivityNow(root, srv, rt.Store)
+			a.Joining = running.Load().Joining()
+			return a
 		})
 	}
 
@@ -494,6 +497,7 @@ func cmdDaemon(args []string) error {
 	// verb and a seal or idle tick are serialized against each other, which is
 	// what keeps one machine's markers from being written twice at once.
 	installSyncVerbSerializing(ctx, daemon, srv, d)
+	running.Store(daemon)
 	err = daemon.Run(ctx)
 	if errors.Is(err, relevo.ErrReexec) {
 		// Drain the owner first: an open transaction must be able to commit

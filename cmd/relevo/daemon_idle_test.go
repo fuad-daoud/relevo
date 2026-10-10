@@ -24,6 +24,7 @@ func TestIdleExit(t *testing.T) {
 		{"running builder", daemonActivity{Running: true, RootExists: true}, time.Hour, time.Minute, false},
 		{"queued round", daemonActivity{Queued: true, RootExists: true}, time.Hour, time.Minute, false},
 		{"sync on", daemonActivity{SyncOn: true, RootExists: true}, time.Hour, time.Minute, false},
+		{"join running", daemonActivity{Joining: true, RootExists: true}, time.Hour, time.Minute, false},
 		{"sync on with the root gone", daemonActivity{SyncOn: true}, 0, time.Minute, true},
 		{"all idle under the period", daemonActivity{RootExists: true}, 30 * time.Second, time.Minute, false},
 		{"all idle past the period", daemonActivity{RootExists: true}, 2 * time.Minute, time.Minute, true},
