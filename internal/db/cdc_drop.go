@@ -1,5 +1,3 @@
-//go:build unix
-
 package db
 
 import (
@@ -12,8 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 // tursoCdcKVKey records a finished drop. It lives in the machine-local file for
@@ -27,13 +23,7 @@ const cdcTableName = "turso" + "_cdc"
 
 // freeBytes reads the space left under dir. It is a variable so a test can
 // stand in a full disk without filling one.
-var freeBytes = func(dir string) (uint64, error) {
-	var st unix.Statfs_t
-	if err := unix.Statfs(dir, &st); err != nil {
-		return 0, err
-	}
-	return st.Bavail * uint64(st.Bsize), nil //nolint:gosec // Bsize is never negative
-}
+var freeBytes = diskFree
 
 // tursoCdcStats is what the marker holds: where the backups went and whether
 // the reclaim steps succeeded.
