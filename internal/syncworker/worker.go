@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"sort"
+
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 )
 
 // Spec is what hello tells the worker, and the only way it ever learns what it
@@ -21,6 +23,10 @@ type Spec struct {
 	// URL and Token reach the remote.
 	URL   string
 	Token string
+	// R2 is the bucket bodies move through, or nil on a machine that has none.
+	// It arrives on hello with the token and stays for the worker's life, so a
+	// blob verb never carries a credential of its own.
+	R2 *R2Config
 }
 
 // Backend is what the worker serves the pipe with: the log itself, behind the
@@ -59,6 +65,13 @@ type Backend interface {
 type server struct {
 	backend Backend
 	spec    *Spec
+	// blobs is the store hello configured, built on the first blob verb and kept
+	// for the rest of the pipe. It is nil until then, which is also what a verb
+	// sent before the handshake finds.
+	blobs blobstore.BlobStore
+	// r2 is what the blob verbs have moved over this pipe's life, added to the
+	// backend's own totals when stats answers.
+	r2 Stats
 }
 
 // Serve answers requests from in until the pipe ends, writing one reply per
@@ -111,6 +124,8 @@ var verbHandlers = map[Verb]func(*server, Request) Response{
 	VerbExport:   (*server).export,
 	VerbPull:     (*server).pull,
 	VerbHead:     (*server).head,
+	VerbPutBlob:  (*server).putBlobVerb,
+	VerbGetBlob:  (*server).getBlobVerb,
 	VerbStats:    (*server).stats,
 	VerbShutdown: (*server).shutdown,
 }
@@ -159,7 +174,7 @@ func (s *server) hello(req Request) Response {
 	if req.URL == "" || req.Token == "" {
 		return refuse(req, fmt.Errorf("%w: hello without a remote", ErrProtocol))
 	}
-	spec := Spec{Version: req.Version, Origin: req.Origin, URL: req.URL, Token: req.Token}
+	spec := Spec{Version: req.Version, Origin: req.Origin, URL: req.URL, Token: req.Token, R2: req.R2}
 	if err := s.backend.Open(spec); err != nil {
 		return refuse(req, err)
 	}
@@ -206,12 +221,19 @@ func (s *server) head(req Request) Response {
 	return Response{ID: req.ID, OK: true, Head: rows}
 }
 
-// stats answers with what the log holds.
+// stats answers with what the log holds, and with what this worker has moved.
+//
+// The two halves are added rather than read from one place because they are
+// counted by different things: the backend measures the replica's traffic and
+// the verbs measure the bucket's. A caller asking what the month has cost reads
+// both from this one reply.
 func (s *server) stats(req Request) Response {
 	stats, err := s.backend.Stats()
 	if err != nil {
 		return refuse(req, err)
 	}
+	stats.R2Put += s.r2.R2Put
+	stats.R2Get += s.r2.R2Get
 	return Response{ID: req.ID, OK: true, Stats: &stats}
 }
 

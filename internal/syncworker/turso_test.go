@@ -29,6 +29,10 @@ type localDriver struct {
 	pushes int
 	pulls  int
 	stats  int
+	// engineBytes is what the engine's own counters read as. A transfer that
+	// moves bytes sets it, and the backend's cumulative totals follow from the
+	// difference between the readings either side.
+	engineBytes turso.TursoSyncDbStats
 
 	openErr  error
 	pushErr  error
@@ -62,9 +66,13 @@ func (d *localDriver) Pull(context.Context) error {
 	return d.pullErr
 }
 
-func (d *localDriver) Stats(context.Context) error {
+// Stats hands back whatever engineBytes holds, which is how a test drives the
+// byte totals: a push advances them, and the backend's own readings come from
+// here. A test that wants the totals to move sets them across a transfer rather
+// than returning a fixed pair.
+func (d *localDriver) Stats(context.Context) (turso.TursoSyncDbStats, error) {
 	d.stats++
-	return d.statsErr
+	return d.engineBytes, d.statsErr
 }
 
 // tempReplica is a replica path no other test shares.
@@ -640,6 +648,12 @@ type fakeSyncDb struct {
 	pushes int
 	pulls  int
 	stats  int
+	// reading is what the engine's own counters report. It is a field so a test
+	// can move them across a transfer and watch the backend's totals follow.
+	reading turso.TursoSyncDbStats
+	// readingErr is what a stats call fails with, which is how a test drives the
+	// path where the counters cannot be read at all.
+	readingErr error
 }
 
 func (f *fakeSyncDb) Connect(context.Context) (*sql.DB, error) {
@@ -661,7 +675,10 @@ func (f *fakeSyncDb) Pull(context.Context) (bool, error) {
 
 func (f *fakeSyncDb) Stats(context.Context) (turso.TursoSyncDbStats, error) {
 	f.stats++
-	return turso.TursoSyncDbStats{}, f.err
+	if f.readingErr != nil {
+		return turso.TursoSyncDbStats{}, f.readingErr
+	}
+	return f.reading, f.err
 }
 
 // TestTursoDriverOpensThroughTheSyncConstructor pins the production driver's
@@ -706,7 +723,7 @@ func TestTursoDriverOpensThroughTheSyncConstructor(t *testing.T) {
 	if err := d.Pull(context.Background()); err != nil || fake.pulls != 1 {
 		t.Errorf("Pull err=%v calls=%d, want one call", err, fake.pulls)
 	}
-	if err := d.Stats(context.Background()); err != nil || fake.stats != 1 {
+	if _, err := d.Stats(context.Background()); err != nil || fake.stats != 1 {
 		t.Errorf("Stats err=%v calls=%d, want one call", err, fake.stats)
 	}
 	if _, err := d.Open(context.Background(), Spec{}); err == nil {
@@ -790,6 +807,11 @@ func TestBackendStatsAndErrors(t *testing.T) {
 	if _, err := b.Append([]Entry{upsertEntry("origin-a", "board", `["b"]`, `{"title":"one"}`)}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
+	// The count is read relative to a stats call rather than absolutely: an
+	// append now asks the engine for its counters either side of the push, so
+	// the absolute number moved. What the check is for is that the stats verb
+	// asks the engine at all, exactly once, before it reports a size.
+	before := driver.stats
 	stats, err := b.Stats()
 	if err != nil {
 		t.Fatalf("stats: %v", err)
@@ -797,8 +819,8 @@ func TestBackendStatsAndErrors(t *testing.T) {
 	if stats.Entries != 1 || stats.Origins != 1 || stats.Seq != 1 {
 		t.Errorf("stats = %+v, want one entry, one origin, seq 1", stats)
 	}
-	if driver.stats != 1 {
-		t.Errorf("driver stats called %d times, want once", driver.stats)
+	if driver.stats != before+1 {
+		t.Errorf("driver stats called %d times for one stats, want once", driver.stats-before)
 	}
 
 	driver.statsErr = errors.New("engine wedged")

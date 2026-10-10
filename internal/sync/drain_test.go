@@ -50,7 +50,7 @@ func TestJoinDrainsEveryPageOfAnOrigin(t *testing.T) {
 	seedFarMany(t, log, "m2", total, known)
 
 	paged := &pagingLog{MemTransport: log, page: drainPage}
-	res, err := runEnable(shared, local, []byte(joinToken), paged)
+	res, err := runEnable(t, shared, local, []byte(joinToken), paged)
 	if err != nil {
 		t.Fatalf("enable: %v", err)
 	}

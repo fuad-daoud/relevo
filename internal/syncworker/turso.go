@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	turso "turso.tech/database/tursogo"
 )
 
 // The log's own vocabulary. An entry is one of these two writes, and the remote
@@ -47,10 +49,12 @@ type ReplicaDriver interface {
 	Push(ctx context.Context) error
 	// Pull applies the remote's changes to the replica.
 	Pull(ctx context.Context) error
-	// Stats is the engine's own health call. The transport's stats are the
-	// log's size, read in SQL; asking the engine first keeps a size from being
-	// reported for a replica nobody can reach.
-	Stats(ctx context.Context) error
+	// Stats is the engine's own health call, and it hands back the engine's own
+	// network counters with it. The transport's stats are the log's size, read in
+	// SQL; asking the engine first keeps a size from being reported for a replica
+	// nobody can reach, and the counters are what the byte totals are measured
+	// from.
+	Stats(ctx context.Context) (turso.TursoSyncDbStats, error)
 }
 
 // TursoBackend is the log behind the worker's replica. It is what serves the
@@ -62,6 +66,20 @@ type TursoBackend struct {
 	// page bounds one pull's read. It is a field so a test can lower it and pin
 	// that a page which cuts a batch still hands the batch back whole.
 	page int
+	// bytes holds what the replica has moved over this worker's life, split by
+	// direction. They are cumulative and start at zero on a fresh backend rather
+	// than being read off the replica file: the file carries the engine's own
+	// counters from before this process existed, and those bytes were some
+	// earlier worker's to report.
+	bytes Stats
+	// lastEngine is the engine's counters as of the last transfer this backend
+	// made, and haveLast says whether one was ever read. Each push and pull takes
+	// a reading before and after itself and adds the difference, so the totals
+	// count what this worker moved rather than what the replica has held since it
+	// was written. The flag is what stops a failed reading from being taken for a
+	// zero: an unreadable counter is not a counter that did not move.
+	lastEngine turso.TursoSyncDbStats
+	haveLast   bool
 }
 
 // The backend is what the worker serves the pipe with. Naming it here means a
@@ -184,7 +202,7 @@ func (b *TursoBackend) Append(entries []Entry) ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := b.driver.Push(ctx); err != nil {
+	if err := b.transfer(ctx, b.driver.Push); err != nil {
 		return nil, fmt.Errorf("syncworker: push: %w", markDriverRefusal(err))
 	}
 	return written, nil
@@ -292,7 +310,7 @@ func (b *TursoBackend) Pull(marks map[string]int) ([]Entry, error) {
 		return nil, err
 	}
 	ctx := context.Background()
-	if err := b.driver.Pull(ctx); err != nil {
+	if err := b.transfer(ctx, b.driver.Pull); err != nil {
 		return nil, fmt.Errorf("syncworker: pull: %w", markDriverRefusal(err))
 	}
 	entries, err := b.readEntries(ctx, marks)
@@ -374,7 +392,7 @@ func (b *TursoBackend) Stats() (Stats, error) {
 		return Stats{}, err
 	}
 	ctx := context.Background()
-	if err := b.driver.Stats(ctx); err != nil {
+	if _, err := b.driver.Stats(ctx); err != nil {
 		return Stats{}, fmt.Errorf("syncworker: driver stats: %w", markDriverRefusal(err))
 	}
 	var s Stats
@@ -383,6 +401,11 @@ func (b *TursoBackend) Stats() (Stats, error) {
 		Scan(&s.Entries, &s.Origins, &s.Seq); err != nil {
 		return Stats{}, fmt.Errorf("syncworker: read the log's size: %w", err)
 	}
+	// The byte counters ride along with the log's size. They are what this
+	// worker moved rather than what the engine has moved, so they are read from
+	// the accumulated totals and never seeded from the engine's own running
+	// counters.
+	s.TursoSent, s.TursoReceived = b.bytes.TursoSent, b.bytes.TursoReceived
 	return s, nil
 }
 

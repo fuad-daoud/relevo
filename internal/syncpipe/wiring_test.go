@@ -32,9 +32,20 @@ func wiringPair(t *testing.T) (*db.DB, relevosync.Local) {
 	return shared, local
 }
 
+// wiringR2 is the bucket configuration a machine holds in these tests. The
+// values are not credentials and reach no bucket: the supervisor only reads them
+// to build the handshake, and the worker that would use them is never started.
+var wiringR2 = relevosync.R2Secrets{
+	Endpoint: "https://acct.r2.cloudflarestorage.com",
+	Bucket:   "relevo-sync",
+	KeyID:    "key-1",
+	Secret:   "secret-1",
+}
+
 // TestOpenSupervisorReadsTheStoredRows pins that the worker is pointed at what
-// the preflight stored: the origin, the remote and the token all come from the
-// machine-local rows, and the replica travels on the command line.
+// the preflight stored: the origin, the remote, the token and the bucket all
+// come from the machine-local rows, and the replica travels on the command
+// line.
 func TestOpenSupervisorReadsTheStoredRows(t *testing.T) {
 	t.Parallel()
 	shared, local := wiringPair(t)
@@ -46,6 +57,9 @@ func TestOpenSupervisorReadsTheStoredRows(t *testing.T) {
 	}
 	if err := relevosync.SetToken(local, []byte(token), now); err != nil {
 		t.Fatalf("SetToken: %v", err)
+	}
+	if err := relevosync.SetR2(local, wiringR2, now); err != nil {
+		t.Fatalf("SetR2: %v", err)
 	}
 
 	sup, err := OpenSupervisor(shared, local)
@@ -64,6 +78,13 @@ func TestOpenSupervisorReadsTheStoredRows(t *testing.T) {
 	}
 	if sup.cfg.Token != token {
 		t.Error("the worker is not pointed at the stored token")
+	}
+	if sup.cfg.R2 == nil {
+		t.Fatal("the handshake carries no R2 settings")
+	}
+	if got := *sup.cfg.R2; got.Endpoint != wiringR2.Endpoint || got.Bucket != wiringR2.Bucket ||
+		got.KeyID != wiringR2.KeyID || got.Secret != wiringR2.Secret {
+		t.Errorf("the handshake carries %+v, want the stored credentials", got)
 	}
 	want := []string{"sync-worker", "--replica", ReplicaPath(shared.Path())}
 	if !slices.Equal(sup.cfg.Args, want) {

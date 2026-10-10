@@ -32,6 +32,16 @@ import (
 // greps for exactly this string.
 const verbFixtureToken = "FIXTURE-TOKEN-8f3a2c91d4e7b605a1c2d3e4f5061728"
 
+// verbFixtureR2 is the bucket configuration every verb fixture stores. The
+// values are not credentials and reach no bucket: the transport under test is a
+// record, and the only thing the daemon builds from them is the handshake.
+var verbFixtureR2 = relevosync.R2Secrets{
+	Endpoint: "https://acct.r2.cloudflarestorage.com",
+	Bucket:   "relevo-sync",
+	KeyID:    "key-1",
+	Secret:   "secret-1",
+}
+
 // verbFixture is one executor over a real split pair, plus the fake client and
 // the opener it was handed.
 type verbFixture struct {
@@ -64,6 +74,12 @@ func newVerbFixture(t *testing.T) *verbFixture {
 	putVerbSection(t, local, "libsql://example.invalid")
 	if err := relevosync.SetToken(local, []byte(verbFixtureToken), time.Unix(0, 0).UTC()); err != nil {
 		t.Fatalf("SetToken: %v", err)
+	}
+	// The bucket credentials too: an enable refuses a machine that holds none,
+	// so a fixture about anything else has to be a configured machine. The values
+	// reach no bucket -- the transport here is a record, not a worker.
+	if err := relevosync.SetR2(local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetR2: %v", err)
 	}
 	f := &recordTransport{}
 	fx := &verbFixture{shared: shared, local: local, client: f}
@@ -154,6 +170,11 @@ func TestSyncVerbEnableJoins(t *testing.T) {
 	}
 	if _, _, err := db.CompressHistoryOnce(shared, t.TempDir(), time.Unix(0, 0).UTC()); err != nil {
 		t.Fatalf("CompressHistoryOnce: %v", err)
+	}
+	// The enable preflight refuses a machine with no bucket credentials, so this
+	// one stores a complete set before the verb runs.
+	if err := relevosync.SetR2(local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetR2: %v", err)
 	}
 	log := synclog.NewMemTransport("m1")
 	runner := &VerbRunner{
@@ -277,6 +298,12 @@ func TestSyncVerbOverOwnerNeverOpensASecondHandle(t *testing.T) {
 	putVerbSection(t, local, "libsql://example.invalid")
 	if err := relevosync.SetToken(local, []byte(verbFixtureToken), time.Unix(0, 0).UTC()); err != nil {
 		t.Fatalf("SetToken: %v", err)
+	}
+	// The bucket credentials too: an enable refuses a machine that holds none,
+	// so a fixture about anything else has to be a configured machine. The values
+	// reach no bucket -- the transport here is a record, not a worker.
+	if err := relevosync.SetR2(local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetR2: %v", err)
 	}
 	f := &recordTransport{}
 	runner := &VerbRunner{
@@ -549,6 +576,9 @@ func TestSyncStatusUnchanged(t *testing.T) {
 	f := newVerbFixture(t)
 	if err := relevosync.SetToken(f.local, []byte(verbFixtureToken), time.Unix(0, 0).UTC()); err != nil {
 		t.Fatalf("SetToken: %v", err)
+	}
+	if err := relevosync.SetR2(f.local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetR2: %v", err)
 	}
 
 	settings, err := relevosync.ReadSettings(f.local)

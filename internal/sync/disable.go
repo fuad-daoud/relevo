@@ -127,6 +127,13 @@ func (d *Disabler) Disable(ctx context.Context) (DisableResult, error) {
 	if err := DeleteToken(d.Local); err != nil {
 		return out, fmt.Errorf("sync: disable: %w", err)
 	}
+	// The R2 credentials go with the token, and on the same reasoning: a machine
+	// marked off with a live bucket credential is one the next enable would
+	// inherit credentials for without being asked, and a bucket key outlives the
+	// machine's right to sync.
+	if err := DeleteR2(d.Local); err != nil {
+		return out, fmt.Errorf("sync: disable: %w", err)
+	}
 
 	out.Steps = append(out.Steps, stepStopWorker)
 	if d.Stop != nil {

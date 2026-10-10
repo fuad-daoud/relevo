@@ -79,4 +79,13 @@ type Stats struct {
 	// sequence number belongs to one origin, so this is the largest rather than
 	// a count.
 	Seq int
+	// TursoSent and TursoReceived are the network bytes the transport has pushed
+	// and pulled over its life, and R2Put and R2Get the body bytes it has sent to
+	// and taken from the bucket. All four are cumulative for one transport's life
+	// and are what a month of sync costs; a zero means the transport has moved
+	// nothing, which is how a fresh one is told from one that is not reporting.
+	TursoSent     int64
+	TursoReceived int64
+	R2Put         int64
+	R2Get         int64
 }

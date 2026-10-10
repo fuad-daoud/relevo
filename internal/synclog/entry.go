@@ -18,6 +18,13 @@ import (
 // came from a body this machine does not control, and dropping it is correct.
 var ErrInvalid = errors.New("invalid sync log entry")
 
+// ErrBlobMissing reports a body the store does not hold. It is a sentinel
+// because a missing body and a bucket that could not be reached call for
+// opposite handling: the first latches the origin and names the round, since the
+// object an entry points at is not there and a retry will not make it appear,
+// and the second is a fault a later attempt can still get past.
+var ErrBlobMissing = errors.New("synclog: the body is not in the blob store")
+
 // Op is what an importer is asked to do with the row an entry names.
 type Op string
 

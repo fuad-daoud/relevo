@@ -130,8 +130,27 @@ func (r *runningLog) Pull(map[string]int) ([]synclog.Entry, error)    { return n
 func (r *runningLog) Head(string) ([]synclog.HeadRow, error)          { return nil, r.err }
 func (r *runningLog) Stats() (synclog.Stats, error)                   { return synclog.Stats{}, r.err }
 
+// r2Fixture is the complete set of bucket credentials an enable needs. The
+// values are not credentials: nothing here reaches a bucket, and the enable
+// under test is refused before any store is built from them.
+var r2Fixture = R2Secrets{
+	Endpoint: "https://acct.r2.cloudflarestorage.com",
+	Bucket:   "relevo-sync",
+	KeyID:    "key-1",
+	Secret:   "secret-1",
+}
+
+func storeR2(tb testing.TB, local Local) {
+	tb.Helper()
+	if err := SetR2(local, r2Fixture, time.Unix(0, 0).UTC()); err != nil {
+		tb.Fatalf("SetR2: %v", err)
+	}
+}
+
 // runEnable drives one enable with the given log and token, at a fixed clock.
-func runEnable(shared *db.DB, local Local, token []byte, transport synclog.LogTransport) (EnableResult, error) {
+func runEnable(tb testing.TB, shared *db.DB, local Local, token []byte, transport synclog.LogTransport) (EnableResult, error) {
+	tb.Helper()
+	storeR2(tb, local)
 	enabler := &Enabler{
 		Request: EnableRequest{
 			Local:  local,
@@ -158,6 +177,7 @@ func TestEnablePreflightOrder(t *testing.T) {
 		if err := SetToken(local, []byte(joinToken), now); err != nil {
 			t.Fatalf("SetToken: %v", err)
 		}
+		storeR2(t, local)
 	}
 	pointed := func(t *testing.T, local Local) {
 		t.Helper()
@@ -202,6 +222,7 @@ func TestEnablePreflightResolvesTheRemote(t *testing.T) {
 	t.Parallel()
 	shared, local := joinPair(t, "m1")
 	passGate(t, shared)
+	storeR2(t, local)
 	plan, err := EnableRequest{
 		Local:  local,
 		Shared: shared,
@@ -213,6 +234,9 @@ func TestEnablePreflightResolvesTheRemote(t *testing.T) {
 	}
 	if plan.Remote != joinRemote {
 		t.Errorf("remote = %q, want %q", plan.Remote, joinRemote)
+	}
+	if plan.R2 != r2Fixture {
+		t.Errorf("R2 = %+v, want the stored credentials", plan.R2)
 	}
 }
 
@@ -236,7 +260,7 @@ func TestJoinResumesFromTheJoinMarker(t *testing.T) {
 
 	log := synclog.NewMemTransport("m1")
 	first := &joinLog{MemTransport: log, failAt: 2, err: errors.New("the worker went away mid-export")}
-	interrupted, err := runEnable(shared, local, []byte(joinToken), first)
+	interrupted, err := runEnable(t, shared, local, []byte(joinToken), first)
 	if err == nil {
 		t.Fatal("an enable whose transport refused its second append succeeded")
 	}
@@ -260,7 +284,7 @@ func TestJoinResumesFromTheJoinMarker(t *testing.T) {
 	// The resume supplies no token: the first run stored one, and the second
 	// enable is meant to read it rather than be handed it again.
 	second := &joinLog{MemTransport: log}
-	resumed, err := runEnable(shared, local, nil, second)
+	resumed, err := runEnable(t, shared, local, nil, second)
 	if err != nil {
 		t.Fatalf("the resumed enable: %v", err)
 	}
@@ -301,7 +325,7 @@ func TestJoinExportsInBoundedResumableChunks(t *testing.T) {
 	seedJoin(t, shared, statements...)
 
 	log := &joinLog{MemTransport: synclog.NewMemTransport("m1")}
-	res, err := runEnable(shared, local, []byte(joinToken), log)
+	res, err := runEnable(t, shared, local, []byte(joinToken), log)
 	if err != nil {
 		t.Fatalf("enable: %v", err)
 	}
@@ -353,7 +377,7 @@ func TestEnableRefusedRemoteWritesNoMark(t *testing.T) {
 	passGate(t, shared)
 
 	refusal := fmt.Errorf("sync: refusing remote %s: it is not a relevo sync log: %w", joinRemote, ErrRemoteRefused)
-	_, err := runEnable(shared, local, []byte(joinToken), &runningLog{err: refusal})
+	_, err := runEnable(t, shared, local, []byte(joinToken), &runningLog{err: refusal})
 	if err == nil {
 		t.Fatal("an enable against a refused remote succeeded")
 	}
@@ -391,6 +415,7 @@ func (s *stoppedLog) Pull(marks map[string]int) ([]synclog.Entry, error) {
 func TestACancelledJoinDoesNotTurnTheMachineOn(t *testing.T) {
 	shared, local := joinPair(t, "m1")
 	passGate(t, shared)
+	storeR2(t, local)
 
 	stopped := false
 	log := &stoppedLog{
