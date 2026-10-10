@@ -23,6 +23,8 @@ func verbClassify(err error) string {
 		return wire.SyncCodeNoToken
 	case errors.Is(err, relevosync.ErrNoRemote):
 		return wire.SyncCodeNoRemote
+	case errors.Is(err, relevosync.ErrNoR2):
+		return wire.SyncCodeNoR2
 	case errors.Is(err, relevosync.ErrAlreadyEnabled):
 		return wire.SyncCodeAlreadyEnabled
 	case errors.Is(err, relevosync.ErrRemoteConflict):

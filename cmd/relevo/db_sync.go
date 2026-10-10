@@ -292,10 +292,12 @@ func cmdDBSyncEnable(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), *v.timeout+verbDialSlack)
 	defer cancel()
 
-	res, err := sendSyncVerbToken(ctx, shared, wire.SyncVerbEnable, token, dbSyncVerbOptions{
-		RemoteURL: *v.remoteURL,
-		Timeout:   *v.timeout,
-	})
+	opts := dbSyncVerbOptions{RemoteURL: *v.remoteURL, Timeout: *v.timeout}
+	tail, err := dbSyncEnableR2Tail(token, v.dbSyncR2Flags, &opts)
+	if err != nil {
+		return err
+	}
+	res, err := sendSyncVerbToken(ctx, shared, wire.SyncVerbEnable, tail, opts)
 	if err != nil {
 		if !enableContinuesInDaemon(err) {
 			return err

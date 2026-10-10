@@ -12,8 +12,10 @@ package main
 // by default.
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -101,6 +103,33 @@ func dbSyncEnableR2(tokenStdin bool, r2 dbSyncR2Flags) error {
 		return fail(codeUsage, "relevo db sync enable: --token-stdin and --r2-secret-stdin read one standard input; pass one")
 	}
 	return nil
+}
+
+// dbSyncR2SecretStdin is the reader --r2-secret-stdin reads. It is a var so a
+// test can feed it.
+var dbSyncR2SecretStdin io.Reader = os.Stdin
+
+// dbSyncEnableR2Tail fills the bucket half of an enable's frame and returns the
+// raw tail: the token, then the bucket secret. The secret comes from
+// --r2-secret-stdin, else RELEVO_R2_SECRET; with neither the tail is the token
+// alone and the daemon falls back to the stored secret.
+func dbSyncEnableR2Tail(token []byte, r2 dbSyncR2Flags, opts *dbSyncVerbOptions) ([]byte, error) {
+	secret := []byte(dbSyncGetenv(relevosync.EnvR2Secret))
+	if *r2.secretStdin {
+		read, err := io.ReadAll(dbSyncR2SecretStdin)
+		if err != nil {
+			return nil, failWrap(codeUsage, err, "relevo db sync enable --r2-secret-stdin")
+		}
+		if len(bytes.TrimSpace(read)) == 0 {
+			return nil, fail(codeUsage, "relevo db sync enable --r2-secret-stdin: standard input carried no secret")
+		}
+		secret = read
+	}
+	secret = bytes.TrimSpace(secret)
+	opts.R2Endpoint, opts.R2Bucket, opts.R2KeyID = *r2.endpoint, *r2.bucket, *r2.keyID
+	opts.R2SecretLen = len(secret)
+	tail := make([]byte, 0, len(token)+len(secret))
+	return append(append(tail, token...), secret...), nil
 }
 
 // cmdDBSyncStatus answers what this machine is set to be. It reads the local

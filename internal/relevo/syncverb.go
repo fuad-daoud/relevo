@@ -345,7 +345,11 @@ func transportReady(transport synclog.LogTransport) bool {
 // starts a worker. A run that fails closes the transport it opened, because a
 // worker left behind holds the replica open against the next one; a run that
 // finishes leaves it on the runner, where the daemon can drive it again.
-func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, token []byte) *wire.SyncResult {
+func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byte) *wire.SyncResult {
+	token, r2, err := enableIntake(verb, tail)
+	if err != nil {
+		return verbRefusal(verbClassify(err), err)
+	}
 	v.beginJoin()
 	opened := false
 	// The join drives its transport through a stop of its own, so a disable's
@@ -358,6 +362,7 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, token []by
 			Shared: v.Shared,
 			URL:    verb.RemoteURL,
 			Token:  token,
+			R2:     r2,
 		},
 		Open: func() (synclog.LogTransport, error) {
 			transport, err := v.openTransport(ctx)

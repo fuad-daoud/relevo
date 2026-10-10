@@ -169,6 +169,9 @@ const (
 	SyncCodeNoToken = "no_token"
 	// SyncCodeNoRemote is an enable that named no remote on either route.
 	SyncCodeNoRemote = "no_remote"
+	// SyncCodeNoR2 is an enable with no complete set of bucket credentials
+	// from its flags or the stored ones.
+	SyncCodeNoR2 = "no_r2"
 	// SyncCodeAlreadyEnabled is a machine already syncing.
 	SyncCodeAlreadyEnabled = "already_enabled"
 	// SyncCodeRemoteConflict is a --url that contradicts the stored remote.
@@ -228,6 +231,15 @@ type SyncVerb struct {
 	// TimeoutMS bounds the verb's network work in milliseconds. Zero selects
 	// the package default on the owner side.
 	TimeoutMS int64 `json:"timeout_ms,omitempty"`
+	// R2Endpoint, R2Bucket and R2KeyID are an enable's bucket flags, empty when
+	// not passed; the owner falls back to the stored value field by field.
+	R2Endpoint string `json:"r2_endpoint,omitempty"`
+	R2Bucket   string `json:"r2_bucket,omitempty"`
+	R2KeyID    string `json:"r2_key_id,omitempty"`
+	// R2SecretLen is how many bytes at the end of the raw tail are the bucket
+	// secret; the rest is the token. Both ride the tail because it is the one
+	// part of a frame that is never logged or echoed.
+	R2SecretLen int `json:"r2_secret_len,omitempty"`
 }
 
 // SyncFreshen is the hint that a reader wants current data. It carries nothing
