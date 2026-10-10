@@ -320,23 +320,22 @@ func TestChainRemoteBuilderE2E(t *testing.T) {
 		t.Errorf("the reviewer's round 1 seed does not name the repair round's diff copy %s:\n%s", diffCopy, rev1)
 	}
 
-	if want := "This round's prompt: " + rt.Store.PromptPath(builderName, 2); !strings.Contains(rev1, want) {
-		t.Errorf("the reviewer's round 1 seed does not name the repair round's own prompt %s:\n%s", rt.Store.PromptPath(builderName, 2), rev1)
+	if want := "This round's prompt: " + chainSeedCopy(t, rt, chainRemoteName, rt.Store.PromptPath(builderName, 2)); !strings.Contains(rev1, want) {
+		t.Errorf("the reviewer's round 1 seed does not carry %q:\n%s", want, rev1)
 	}
 
-	// The check line names the gate log the seed can read: read the file the
-	// seed names, not a fixed path, and hold it to the gate log the store keeps.
-	// The store serves it whether it still sits on disk or was sealed to a row.
+	// The check line names the gate log's copy, which a seal cannot remove
+	// while the reviewer reads it, and which went with the chain's other inputs
+	// when the chain ended.
 	const gateLine = "Check result: green; its output: "
 	if i := strings.Index(rev1, gateLine); i < 0 {
 		t.Errorf("the reviewer's round 1 seed does not carry the green check line:\n%s", rev1)
 	} else {
 		namedGate := strings.TrimSuffix(strings.SplitN(rev1[i+len(gateLine):], "\n", 2)[0], ".")
-		got := chainRemoteRead(t, rt.Store, namedGate)
-		want := chainRemoteRead(t, rt.Store, rt.Store.GateLogPath(builderName, 2))
-		if got != want {
-			t.Errorf("the seed's green gate log %s = %q, want the gate log's %q", namedGate, got, want)
+		if want := chainSeedCopy(t, rt, chainRemoteName, rt.Store.GateLogPath(builderName, 2)); namedGate != want {
+			t.Errorf("the seed's gate log = %s, want its copy %s", namedGate, want)
 		}
+		chainInputCopyGone(t, namedGate)
 	}
 
 	// Round 2 of the reviewer judged the builder's correction round (round 3):
@@ -351,8 +350,8 @@ func TestChainRemoteBuilderE2E(t *testing.T) {
 	if want := "Plan diff, every round of this plan so far: " + planDiffCopy2 + "."; !strings.Contains(rev2, want) {
 		t.Errorf("the reviewer's round 2 seed does not name the cumulative plan diff copy %s:\n%s", planDiffCopy2, rev2)
 	}
-	if want := "This round's prompt: " + rt.Store.PromptPath(builderName, 3); !strings.Contains(rev2, want) {
-		t.Errorf("the reviewer's round 2 seed does not name the correction round's own prompt %s:\n%s", rt.Store.PromptPath(builderName, 3), rev2)
+	if want := "This round's prompt: " + chainSeedCopy(t, rt, chainRemoteName, rt.Store.PromptPath(builderName, 3)); !strings.Contains(rev2, want) {
+		t.Errorf("the reviewer's round 2 seed does not carry %q:\n%s", want, rev2)
 	}
 
 	// -- The correction plan reaches the remote builder ----------------------

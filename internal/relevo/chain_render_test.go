@@ -82,6 +82,30 @@ func TestRenderSeedPathsGoThroughChainSeedInput(t *testing.T) {
 	}
 }
 
+// A round file still on disk is copied too: a seal removes it once its round is
+// sealed, which can land between the seed being written and the runner opening
+// it, so the seed must never name the original.
+func TestRenderSeedCopiesARoundFileStillOnDisk(t *testing.T) {
+	t.Parallel()
+	rt, c, _ := chainRenderFixture(t)
+	prompt := rt.Store.PromptPath("shop", 1)
+	if err := os.WriteFile(prompt, []byte("PROMPT-BODY"), 0o644); err != nil {
+		t.Fatalf("write the prompt: %v", err)
+	}
+	got := renderSeed(t, rt, c, workflow.Default(), chainRenderState(prompt), "the prompt: {{build.diff}}.")
+
+	copyPath, ok := rt.Store.ChainInputPath("shop", prompt)
+	if !ok || !strings.Contains(got, copyPath) || strings.Contains(got, prompt+".") {
+		t.Fatalf("seed names %q, want the copy %s and never the original", got, copyPath)
+	}
+	if err := os.Remove(prompt); err != nil {
+		t.Fatalf("remove the original, as a seal does: %v", err)
+	}
+	if body, err := os.ReadFile(copyPath); err != nil || string(body) != "PROMPT-BODY" {
+		t.Fatalf("copy after the original went = %q, %v; want the prompt's bytes", body, err)
+	}
+}
+
 // TestRenderSeedSingleRefHandsBytes pins the single-reference seed: exactly one
 // file reference hands that file's bytes over, as a plan is handed over.
 func TestRenderSeedSingleRefHandsBytes(t *testing.T) {

@@ -638,9 +638,9 @@ func TestChainCorrectionSeedNamesTheJudgedBuilderRound(t *testing.T) {
 		t.Fatalf("ChainInputPath(%s) = false", rt.Store.PlanDiffPath("shop", builderRound))
 	}
 	for _, want := range []string{
-		rt.Store.ReportPath("shop", builderRound),
+		seedCopy(t, rt, rt.Store.ReportPath("shop", builderRound)),
 		"This round's diff: " + diffCopy,
-		"This round's prompt: " + rt.Store.PromptPath("shop", builderRound),
+		"This round's prompt: " + seedCopy(t, rt, rt.Store.PromptPath("shop", builderRound)),
 		"Plan diff, every round of this plan so far: " + planDiffCopy,
 	} {
 		if !strings.Contains(got, want) {
