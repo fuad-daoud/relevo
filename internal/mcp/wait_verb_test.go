@@ -151,6 +151,8 @@ func TestRelevoVerbsWaitRefusesUnresolvableTargets(t *testing.T) {
 		v := waitVerbsFor(store.New(t.TempDir()), time.Now)
 		if _, err := v.Wait(context.Background(), "", WaitArgs{Name: "missing"}); err == nil {
 			t.Fatal("wait on a missing binding = nil error, want an error")
+		} else if !strings.Contains(err.Error(), "binding not found") {
+			t.Fatalf("err = %q, want it to say binding not found", err)
 		}
 	})
 

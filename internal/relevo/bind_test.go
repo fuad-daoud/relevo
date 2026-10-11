@@ -2208,3 +2208,11 @@ func TestResumeAppliesLabelFlags(t *testing.T) {
 		}
 	})
 }
+
+func TestErrNoMasterMindSessionIsASentinel(t *testing.T) {
+	t.Parallel()
+
+	if !errors.Is(errors.Join(errors.New("add"), ErrNoMasterMindSession), ErrNoMasterMindSession) {
+		t.Fatal("ErrNoMasterMindSession must stay matchable through wrapping")
+	}
+}

@@ -246,5 +246,15 @@ func placementError(role string, skipped []PlacementSkip) error {
 	for _, s := range skipped {
 		texts = append(texts, fmt.Sprintf("%s (%s)", s.Name, s.Reason))
 	}
-	return fmt.Errorf("no viable placement for actor %q: %s", role, strings.Join(texts, "; "))
+	return &noViablePlacementError{text: fmt.Sprintf("no viable placement for actor %q: %s", role, strings.Join(texts, "; "))}
 }
+
+// ErrNoViablePlacement is what placementError unwraps to, so a caller
+// classifies the refusal without reading its text.
+var ErrNoViablePlacement = errors.New("no viable placement")
+
+type noViablePlacementError struct{ text string }
+
+func (e *noViablePlacementError) Error() string { return e.text }
+
+func (e *noViablePlacementError) Unwrap() error { return ErrNoViablePlacement }

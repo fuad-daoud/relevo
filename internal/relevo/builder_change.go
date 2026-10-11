@@ -65,6 +65,18 @@ func applyBuilder(b store.Binding, res Resolution, reg *roles.Registry, pol poli
 	return b, nil
 }
 
+// CandidateRoundOpenError is the refusal of `send --candidate` while the
+// binding's round is open. It carries the binding so the CLI can name
+// `relevo stop <name>` as the next command.
+type CandidateRoundOpenError struct {
+	Name  string
+	Round int
+}
+
+func (e *CandidateRoundOpenError) Error() string {
+	return fmt.Sprintf("binding %q has round %d open; relevo stop %s ends it, then send again with --candidate", e.Name, e.Round, e.Name)
+}
+
 // roundOpenIn reports whether the binding's round is open. It is store's single
 // definition of the condition, read here for the --candidate refusal.
 func roundOpenIn(entries []store.LogEntry, round int) bool {

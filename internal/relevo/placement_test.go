@@ -216,6 +216,9 @@ func TestChoosePlacement(t *testing.T) {
 				if !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("err = %q, want it to contain %q", err, tc.wantErr)
 				}
+				if strings.HasPrefix(tc.wantErr, "no viable placement") && !errors.Is(err, ErrNoViablePlacement) {
+					t.Fatalf("err = %#v, want it to unwrap to ErrNoViablePlacement", err)
+				}
 				return
 			}
 			if err != nil {
@@ -664,4 +667,17 @@ func slicesContain(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestPlacementErrorUnwrapsToNoViablePlacementWithFullText(t *testing.T) {
+	t.Parallel()
+
+	err := placementError("builder", []PlacementSkip{{Name: "zen", Reason: "gone"}, {Name: "local", Reason: "gated"}})
+	if !errors.Is(err, ErrNoViablePlacement) {
+		t.Fatalf("err = %#v, want ErrNoViablePlacement", err)
+	}
+	want := `no viable placement for actor "builder": zen (gone); local (gated)`
+	if err.Error() != want {
+		t.Errorf("err = %q, want %q", err.Error(), want)
+	}
 }

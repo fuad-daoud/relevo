@@ -144,8 +144,8 @@ func TestReadVerbErrorCodes(t *testing.T) {
 		{"wait timeout", []string{"wait", "--name", "errcodes", "--timeout", "0"}, codeUsage, "relevo help"},
 		{"wait round", []string{"wait", "--name", "errcodes", "--round=-1"}, codeUsage, "relevo help"},
 		{"wait any with name", []string{"wait", "--any", "--name", "errcodes"}, codeUsage, "relevo help"},
-		// A name wait never loaded is the poll's own failure: internal.
-		{"wait unknown name", []string{"wait", "--any", "nosuch", "--timeout", "1ns"}, codeInternal, ""},
+		// A name the store does not hold is a binding to look up.
+		{"wait unknown name", []string{"wait", "--any", "nosuch", "--timeout", "1ns"}, codeBindingNotFound, "relevo status --all"},
 		// status: --line takes no binding selector, and an unknown name is a
 		// binding the store does not hold.
 		{"status line with all", []string{"status", "--line", "--all"}, codeUsage, "relevo help"},

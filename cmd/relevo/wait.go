@@ -101,7 +101,7 @@ func cmdWait(args []string) error {
 		// in which case the wait follows that round as any binding's would.
 		binding, isChain, err := relevo.ChainWaitTarget(rt, target)
 		if err != nil {
-			return fail(codeInternal, "%v", err)
+			return waitFailure(err)
 		}
 		if isChain {
 			chain = target
@@ -120,7 +120,7 @@ func cmdWait(args []string) error {
 		Names: names, Round: *round, Timeout: *timeout, Interval: time.Second, Peek: *peek,
 	})
 	if err != nil {
-		return fail(codeInternal, "%v", err)
+		return waitFailure(err)
 	}
 
 	// --json prints one WaitDoc and nothing else; the human form below is the
@@ -156,6 +156,15 @@ func cmdWait(args []string) error {
 	return exitCodeErr{res.Code}
 }
 
+// waitFailure classifies a wait error: a missing binding is the caller's
+// name to correct, anything else is internal.
+func waitFailure(err error) error {
+	if errors.Is(err, store.ErrNotFound) {
+		return fail(codeBindingNotFound, "%v", err)
+	}
+	return fail(codeInternal, "%v", err)
+}
+
 // waitChain is cmdWait's chain arm: a name that is a chain blocks until the
 // chain is no longer running, then prints the chain's end line and, unless
 // --peek, the one end delivery it queued. The protocol is the chain's own: 0
@@ -163,10 +172,7 @@ func cmdWait(args []string) error {
 func waitChain(ctx context.Context, rt relevo.Runtime, name string, timeout time.Duration, peek, asJSON bool) error {
 	res, err := relevo.WaitChain(ctx, rt, name, timeout, time.Second, peek)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return fail(codeBindingNotFound, "%v", err)
-		}
-		return fail(codeInternal, "%v", err)
+		return waitFailure(err)
 	}
 
 	if asJSON {
