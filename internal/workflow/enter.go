@@ -138,25 +138,15 @@ func applyBudget(def Definition, s State, id string, b *Budget) (State, Target) 
 // redBudgetArm reports whether any check step's red edge names id, which is what
 // makes id a repair arm: the step a failed check would spend a budget on.
 func redBudgetArm(def Definition, id string) bool {
-	for _, name := range sortedKeys(def.Steps) {
-		step := def.Steps[name]
-		if step.Check == "" {
-			continue
-		}
-		for _, edge := range []string{"red", "result=red"} {
-			if t, ok := step.On[edge]; ok && t.Kind == TargetStep && t.Step == id {
-				return true
-			}
-		}
-	}
-	return false
+	return len(RedArmChecks(def, id)) > 0
 }
 
 // zeroBudgetReason names the step whose budget renders to zero and what the run
 // therefore cannot do, so a halt reads as the budget it is rather than as a
-// generic stop.
+// generic stop. It names the flags that change the run, never a chain: the
+// workflow knows no chain name, and the payload that carries one adds it.
 func zeroBudgetReason(id string, b *Budget) string {
-	return id + " has no budget left (" + b.Max.Text() + " renders to 0), so the failure it was meant to fix is unaddressed; the run halts rather than continuing past it. Raise the budget, or rerun the check by hand"
+	return id + " has no budget left (" + b.Max.Text() + " renders to 0), so the failure it was meant to fix is unaddressed; the run halts rather than continuing past it. Resume with --gate <command> to rerun the check, or --regate <rounds> to raise the budget"
 }
 
 // renderLimit reads a budget's max, rendering a param reference. A reference

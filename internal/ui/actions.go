@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
@@ -164,6 +165,14 @@ func (a *mastermindActions) Stop(ctx context.Context, key string) Result {
 	}
 	res, err := relevo.Stop(ctx, rt, name, relevo.StopOptions{})
 	if errors.Is(err, relevo.ErrNothingToStop) {
+		// A name that is a halted chain answers with the halt's own text rather
+		// than a binding's: the cockpit shows a chain row under the chain's own
+		// name, and "has no open round" there left a reader at a halt with no
+		// command. It is an answer, not a failure, exactly as the binding case
+		// is -- Err stays nil either way.
+		if row, cerr := rt.Store.Chain(name); cerr == nil && row.Status == string(chain.StatusHalted) {
+			return Result{Text: relevo.ChainHaltedStopText(name), Refresh: true}
+		}
 		return Result{Text: fmt.Sprintf("nothing to stop: %s has no open round", name), Refresh: true}
 	}
 	if err != nil {

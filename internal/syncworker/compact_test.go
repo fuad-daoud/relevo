@@ -116,11 +116,27 @@ func TestCompactAlignsAFloorNoReaderCanHold(t *testing.T) {
 
 // Compaction is one grouped pass over the origin's log, not a lookup per entry.
 // A per-entry lookup took seconds at a few thousand entries and minutes on a
-// real log, holding the worker and every verb behind it; the bound here is far
-// above the grouped pass and far below the per-entry one.
+// real log, holding the worker and every verb behind it. The test compares two
+// sizes rather than holding one to a wall-clock bound: CI runs under -race on
+// shared runners, which slows every pass by an order of magnitude, while the
+// ratio for 4x the entries stays between 4 and 7 for the grouped pass and
+// passes 40 for a per-entry one.
 func TestCompactIsNotQuadratic(t *testing.T) {
+	const small, large = 2000, 8000
+	smallTook := timeCompact(t, small)
+	largeTook := timeCompact(t, large)
+	ratio := float64(largeTook) / float64(smallTook)
+	t.Logf("%d entries: %v, %d entries: %v, ratio %.1f", small, smallTook, large, largeTook, ratio)
+	if ratio > 12 {
+		t.Fatalf("compacting %d entries took %v, %d took %v: %.1fx for 4x the entries", small, smallTook, large, largeTook, ratio)
+	}
+}
+
+// timeCompact fills a fresh log with n entries over n/3 rows and times one
+// Compact over all of them, checking it drops every superseded entry.
+func timeCompact(t *testing.T, n int) time.Duration {
+	t.Helper()
 	b, _, path := compactBackend(t)
-	const n = 8000
 	db := openAt(t, path)
 	tx, err := db.Begin()
 	if err != nil {
@@ -137,15 +153,14 @@ func TestCompactIsNotQuadratic(t *testing.T) {
 	}
 	start := time.Now()
 	res, err := b.Compact(n)
+	took := time.Since(start)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
-	if took := time.Since(start); took > 3*time.Second {
-		t.Fatalf("compacting %d entries took %v", n, took)
-	}
 	if want := n - n/3; res.Dropped != want {
-		t.Errorf("dropped %d, want %d", res.Dropped, want)
+		t.Errorf("dropped %d of %d, want %d", res.Dropped, n, want)
 	}
+	return took
 }
 
 func TestPullRangeVerbAndCompactVerbOverThePipe(t *testing.T) {

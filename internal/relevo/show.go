@@ -354,6 +354,9 @@ func showSections(rt Runtime, name string, round int, actor, shape, output strin
 			text, err = readOutput(rt, name, round, actor, output)
 			if err == nil {
 				res.Text, res.Missing = string(text), text == nil
+				if !res.Missing {
+					res.Text = withFallbackHeader(entries, round, res.Text)
+				}
 			}
 		} else {
 			res.Text, res.Missing, err = read(rt.Store.ReportPath(name, round))

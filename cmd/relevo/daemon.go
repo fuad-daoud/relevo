@@ -245,11 +245,12 @@ func cmdDaemon(args []string) error {
 	// started after this point is never in its set (#371 §4.6).
 	reaper := proc.NewInheritedReaper(os.Getpid(), "/proc")
 
-	// Capture the executable and its identity once, before any replacement
-	// can land. A failure disables re-exec with a warning; the daemon runs on
-	// regardless (#371 §4.7, §6).
+	// Capture the executable and the identity of the image this process is
+	// running, not of the path: a replacement landing after exec would become
+	// the baseline, and the watcher would never fire. A failure disables
+	// re-exec with a warning; the daemon runs on.
 	exe, exeErr := upgrade.ResolveExe()
-	exeID, idErr := upgrade.ExeIdentity(exe)
+	exeID, idErr := upgrade.SelfImageIdentity()
 	reexecOK := exeErr == nil && idErr == nil
 	if !reexecOK {
 		reason := exeErr

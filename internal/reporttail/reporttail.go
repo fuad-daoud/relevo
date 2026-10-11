@@ -84,17 +84,30 @@ func ParseWithReason(report []byte) (Tail, bool, string) {
 // line could not be read.
 func scanTail(lines []string, openIdx, closeIdx int) (tail Tail, statusRaw string, hasStatus bool, haltedAtRaw, reject string) {
 	var openList string
+	// itemIndent is the column of the open list's last item's dash, or -1 when
+	// the list has no item yet. A deeper line continues that item, as YAML
+	// folds a wrapped plain scalar.
+	itemIndent := -1
 	for i := openIdx + 1; i < closeIdx; i++ {
-		line := strings.TrimSpace(StripComment(lines[i]))
+		raw := StripComment(lines[i])
+		line := strings.TrimSpace(raw)
 		if line == "" {
 			continue
 		}
-		if item, isItem := stripListItem(line); isItem {
+		item, isItem := stripListItem(line)
+		indent := len(raw) - len(strings.TrimLeft(raw, " \t"))
+		if !isItem && openList != "" && itemIndent >= 0 && indent > itemIndent {
+			continueLastItem(&tail, openList, line)
+			continue
+		}
+		if isItem {
 			if openList == "" {
 				return Tail{}, "", false, "", fmt.Sprintf("tail: line %d has no ':'", i+1)
 			}
+			itemIndent = -1
 			if item != "" {
 				setList(&tail, openList, append(listOf(tail, openList), item))
+				itemIndent = indent
 			}
 			continue
 		}
@@ -105,6 +118,7 @@ func scanTail(lines []string, openIdx, closeIdx int) (tail Tail, statusRaw strin
 		key := strings.TrimSpace(line[:colon])
 		val := strings.TrimSpace(line[colon+1:])
 		openList = ""
+		itemIndent = -1
 		switch key {
 		case "status":
 			hasStatus = true
@@ -128,6 +142,13 @@ func scanTail(lines []string, openIdx, closeIdx int) (tail Tail, statusRaw strin
 		}
 	}
 	return tail, statusRaw, hasStatus, haltedAtRaw, ""
+}
+
+// continueLastItem joins a wrapped line onto the last item of the key's list.
+func continueLastItem(tail *Tail, key, line string) {
+	items := listOf(*tail, key)
+	items[len(items)-1] += " " + line
+	setList(tail, key, items)
 }
 
 // stripListItem reports whether line is a "- item" list entry and returns the

@@ -302,7 +302,12 @@ func writeError(err error) error {
 		// A binding that used every round its cap allows needs a fresh
 		// builder; the cap is not an internal failure.
 		return failWrap(codeRoundCap, err, "%v", err)
-	case errors.Is(err, store.ErrCWDTaken), errors.Is(err, relevo.ErrRunningChainMember), errors.Is(err, relevo.ErrChainRunning), errors.Is(err, relevo.ErrChainDone):
+	case errors.Is(err, store.ErrCWDTaken), errors.Is(err, relevo.ErrRunningChainMember), errors.Is(err, relevo.ErrChainRunning), errors.Is(err, relevo.ErrChainDone), errors.Is(err, relevo.ErrChainHalted):
+		// A halted chain's stop answer is a statement about the chain's own
+		// state -- stop it and nothing is running to stop -- so it is the
+		// conflict family, the same class its running and done siblings have.
+		// The message itself already names `relevo done`, so the catalog's
+		// next hint would only repeat it.
 		return fail(codeConflict, "%v", err)
 	case errors.As(err, &openMember):
 		return failNext(codeConflict, "relevo stop "+openMember.Member, "%v", err)

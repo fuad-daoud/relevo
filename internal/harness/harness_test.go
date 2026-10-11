@@ -211,7 +211,7 @@ func TestArchitectPlannerContractIsSharedAcrossKinds(t *testing.T) {
 			t.Fatalf("AgentDoc(architect, %s): %v", h.Kind, err)
 		}
 		body := definitionBody(t, h.Kind, string(doc))
-		for _, want := range []string{"a small seed", "Your final message is the plan", "never edit the repository", "one-line ordered steps", "a strong builder owns the how"} {
+		for _, want := range []string{"a small seed", "Write the full plan to the output path your round prompt names", "never edit the repository", "one-line ordered steps", "a strong builder owns the how"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s architect body lacks %q", h.Kind, want)
 			}
@@ -254,11 +254,12 @@ func TestArchitectCarriesRoundTripGuidance(t *testing.T) {
 	}
 }
 
-// TestReaderDefinitionsWriteNoFile pins the reader contract: no shipped
-// researcher or reviewer definition asks its runner to write into an artifact
-// directory; the answer is the final message and no file is written.
-func TestReaderDefinitionsWriteNoFile(t *testing.T) {
-	for _, role := range []string{"researcher", "reviewer"} {
+// TestReaderDefinitionsWriteTheNamedOutputPath pins the reader contract: every
+// shipped reader definition tells its runner to write the full artifact to the
+// output path the round prompt names, and leaves the final message as the
+// fallback only when no path is named.
+func TestReaderDefinitionsWriteTheNamedOutputPath(t *testing.T) {
+	for _, role := range []string{"researcher", "reviewer", "security-reviewer"} {
 		for _, h := range All() {
 			doc, err := AgentDoc(role, h.Kind)
 			if err != nil {
@@ -268,9 +269,9 @@ func TestReaderDefinitionsWriteNoFile(t *testing.T) {
 			if strings.Contains(body, "artifact directory") {
 				t.Errorf("%s.%s still names an artifact directory", role, h.Kind)
 			}
-			for _, want := range []string{"your final message and the whole of", "no file is written"} {
+			for _, want := range []string{"written in full to the output path your round prompt names", "If the prompt names\nno path"} {
 				if !strings.Contains(body, want) {
-					t.Errorf("%s.%s lacks the final-message sentence: %q", role, h.Kind, want)
+					t.Errorf("%s.%s lacks the output-path sentence: %q", role, h.Kind, want)
 				}
 			}
 		}
@@ -400,18 +401,21 @@ var launchPrintCases = []struct {
 	{
 		kind: "agy",
 		wantPrint: []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor",
-			"--output-format", "stream-json", "--print-timeout", BudgetPlaceholder, "--add-dir", DirPlaceholder},
+			"--output-format", "stream-json", "--print-timeout", BudgetPlaceholder,
+			"--add-dir", DirPlaceholder, "--add-dir", OutputDirPlaceholder},
 		wantPrompt: 1,
 	},
 	{
 		kind: "agy", extra: []string{"--dangerously-skip-permissions"},
 		wantPrint: []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor",
-			"--output-format", "stream-json", "--print-timeout", BudgetPlaceholder, "--add-dir", DirPlaceholder, "--dangerously-skip-permissions"},
+			"--output-format", "stream-json", "--print-timeout", BudgetPlaceholder,
+			"--add-dir", DirPlaceholder, "--add-dir", OutputDirPlaceholder, "--dangerously-skip-permissions"},
 		wantPrompt: 1,
 	},
 	{
-		kind:       "claude",
-		wantPrint:  []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor", "--output-format", "stream-json", "--verbose"},
+		kind: "claude",
+		wantPrint: []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor",
+			"--output-format", "stream-json", "--verbose", "--add-dir", OutputDirPlaceholder},
 		wantPrompt: 1,
 	},
 	{
@@ -485,12 +489,28 @@ func checkLaunchExtras(t *testing.T, builder RoleSpec) {
 	if p := agyLaunch.Print; !containsAdjacent(p, "--add-dir", DirPlaceholder) {
 		t.Errorf("agy print form must carry --add-dir <dir>: %v", p)
 	}
-	for _, kind := range []string{"claude", "opencode"} {
+	o, _ := Lookup("opencode")
+	ocLaunch, _ := o.Launch("prov", "m/x", nil, builder, TierHarness)
+	if p := ocLaunch.Print; contains(p, "--add-dir") {
+		t.Errorf("opencode: --add-dir is not a flag opencode takes: %v", p)
+	}
+
+	// Every kind that can write at the round's tier is also told where the
+	// round's output directory is, because a round's report and a reader's
+	// output file live there and neither is under the working tree. agy keeps
+	// its own --add-dir for the workspace alongside it.
+	for _, kind := range []string{"agy", "claude"} {
 		h, _ := Lookup(kind)
 		l, _ := h.Launch("prov", "m/x", nil, builder, TierHarness)
-		if p := l.Print; contains(p, "--add-dir") {
-			t.Errorf("%s: --add-dir is agy-only: %v", kind, p)
+		if p := l.Print; !containsAdjacent(p, "--add-dir", OutputDirPlaceholder) {
+			t.Errorf("%s print form must carry --add-dir <output-dir>: %v", kind, p)
 		}
+	}
+	// codex names the same directory through its sandbox, not a directory flag.
+	cx, _ := Lookup("codex")
+	cxLaunch, _ := cx.Launch("prov", "gpt-5.6-terra", nil, builder, TierEdit)
+	if p := cxLaunch.Print; !contains(p, WritableRootPlaceholder) || contains(p, OutputDirPlaceholder) {
+		t.Errorf("codex must name the output directory through WritableRootPlaceholder only: %v", p)
 	}
 
 	unknown := Harness{Kind: "unknown"}
@@ -513,7 +533,8 @@ func TestLaunchClaudeEffort(t *testing.T) {
 	base := func(model string, rest ...string) []string {
 		return append([]string{"-p", PromptPlaceholder, "--model", model}, rest...)
 	}
-	tail := []string{"--agent", builder.Definition, "--output-format", "stream-json", "--verbose"}
+	tail := []string{"--agent", builder.Definition, "--output-format", "stream-json", "--verbose",
+		"--add-dir", OutputDirPlaceholder}
 	tests := []struct {
 		model string
 		want  []string
@@ -648,7 +669,8 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 	prompt := "Read /state/x/003-plan.md and write /state/x/003-report.md"
 	got := l.PrintArgs(prompt, 90*time.Minute, "/w", "/state")
 	want := []string{"-p", prompt, "--model", "m/x", "--agent", "plan-executor",
-		"--output-format", "stream-json", "--print-timeout", "1h30m0s", "--add-dir", "/w", "--dangerously-skip-permissions"}
+		"--output-format", "stream-json", "--print-timeout", "1h30m0s", "--add-dir", "/w",
+		"--add-dir", "/state", "--dangerously-skip-permissions"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("PrintArgs = %v, want %v", got, want)
 	}
@@ -670,11 +692,13 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 		t.Fatalf("Launch() error = %v", err)
 	}
 	got = cl.PrintArgs("hello", time.Hour, "/w", "/state")
-	if !reflect.DeepEqual(got, []string{"-p", "hello", "--model", "m/x", "--agent", "plan-executor", "--output-format", "stream-json", "--verbose"}) {
+	if !reflect.DeepEqual(got, []string{"-p", "hello", "--model", "m/x", "--agent", "plan-executor",
+		"--output-format", "stream-json", "--verbose", "--add-dir", "/state"}) {
 		t.Errorf("claude PrintArgs = %v", got)
 	}
 	for _, a := range got {
-		if a == BudgetPlaceholder || a == PromptPlaceholder || a == DirPlaceholder || a == WritableRootPlaceholder || a == "/w" || a == "/state" {
+		if a == BudgetPlaceholder || a == PromptPlaceholder || a == DirPlaceholder ||
+			a == WritableRootPlaceholder || a == OutputDirPlaceholder || a == "/w" {
 			t.Errorf("placeholder survived substitution, or an ignored dir leaked in: %v", got)
 		}
 	}
@@ -725,7 +749,7 @@ func TestPrintArgsFillsState(t *testing.T) {
 	}
 	clGot := cl.PrintArgs("p", 0, "/wt", stateDir)
 	wantClaude := []string{"-p", "p", "--model", "m/x", "--agent", "plan-executor",
-		"--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits"}
+		"--output-format", "stream-json", "--verbose", "--add-dir", stateDir, "--permission-mode", "acceptEdits"}
 	if !reflect.DeepEqual(clGot, wantClaude) {
 		t.Errorf("claude PrintArgs = %v, want %v", clGot, wantClaude)
 	}
