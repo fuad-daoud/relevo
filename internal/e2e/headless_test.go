@@ -382,8 +382,9 @@ fi
 worktree=$(printf '%s\n' "$prompt" | awk '/^Your working tree is: /{ sub(/^Your working tree is: /, ""); print; exit }')
 plan=$(printf '%s\n' "$prompt" | awk '/^Read: /{ sub(/^Read: /, ""); print; exit }')
 report=$(printf '%s\n' "$prompt" | awk '/^When you are done, write your report to: /{ sub(/^When you are done, write your report to: /, ""); print; exit }')
-artifact=$(printf '%s\n' "$prompt" | awk '/^Your final message is your /{ sub(/^.*: it is saved as /, ""); sub(/\.$/, ""); print; exit }')
+artifact=$(printf '%s\n' "$prompt" | awk '/^Write your .* to .*, in full and finished:/{ sub(/^Write your .* to /, ""); sub(/, in full and finished:.*$/, ""); print; exit }')
 marker=$(printf '%s\n' "$prompt" | awk '/create this empty file: /{ sub(/.*create this empty file: /, ""); print; exit }')
+output_file=$artifact
 if [ -n "$artifact" ]; then
 	artifact=$(dirname "$artifact")
 fi
@@ -494,6 +495,12 @@ if [ -n "$artifact" ]; then
 		msg='# Triage\n\nThe task text decided this one.\n\n'"$fence"'relevo\nanswer: '"$answer"'\n'"$fence"'\n\n'"$fence"'relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n'"$fence"'\n'
 		;;
 	esac
+
+	# An ordinary reader writes its own output file, as its prompt tells it to;
+	# a chain member's round is saved from its block-carrying message instead.
+	if [ -z "$msg" ] && [ -z "$recap" ]; then
+		printf '# Reader summary\n\nindex.html and style.css are in the artifact directory.\n' > "$output_file"
+	fi
 
 	: > "$marker"
 	sleep 0.2

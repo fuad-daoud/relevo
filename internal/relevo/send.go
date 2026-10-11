@@ -64,11 +64,11 @@ not_done: []            # adjacent work you deliberately left
 Reply here with only the report path.`
 
 // readerPrompt is a reader round's handoff template (A5 R4a): the reader works
-// in a throwaway scratch copy and its final message is the actor's output
-// label, saved as that label's file in the round's artifact directory. relevo
-// writes nothing on the reader's behalf: it saves the final message itself. The
-// first line is exactly `Your working tree is: ` because the e2e fake parses it,
-// as it does for builderPrompt.
+// in a throwaway scratch copy and writes its actor's output label in full to
+// that label's file in the round's artifact directory -- the named state-dir
+// path, which the close saves verbatim. Only a missing or empty file falls back
+// to the stream. The first line is exactly `Your working tree is: ` because the
+// e2e fake parses it, as it does for builderPrompt.
 //
 // It is a format string: scratch tree, b.CWD, prompt path, output label, output
 // path, done marker.
@@ -78,8 +78,11 @@ anything read-only, change nothing you need to keep -- it is discarded when
 the round ends, and nothing in it is ever committed.
 
 Read: %s
-Your final message is your %s: it is saved as %s.
-End that final message with this block, filled in honestly:
+Write your %s to %s, in full and finished: that file is the round's saved
+output and is kept verbatim. The repository stays read-only; the state
+directory holding that path is the one place you may write.
+Your final message is then only the short close -- the path you wrote and no
+part of the report itself -- and it ends with this block, filled in honestly:
 
 ` + "```relevo" + `
 status: done            # done | halted | blocked | deferred
@@ -98,7 +101,8 @@ your final action, created after that message, with nothing written after the ma
 // the block is both the round's last text and the artifact the round saves. A
 // chain reader that obeyed readerPrompt's "nothing written after the marker"
 // rule could only end on an empty reply, and the chain parsed no verdict or
-// finding count.
+// finding count. The output file is named here exactly as readerPrompt names
+// it, so the path wording cannot drift between the two lanes.
 //
 // It is a format string: scratch tree, b.CWD, prompt path, output label, output
 // path, done marker, block.
@@ -108,9 +112,12 @@ anything read-only, change nothing you need to keep -- it is discarded when
 the round ends, and nothing in it is ever committed.
 
 Read: %s
-Your final message is your %s: it is saved as %s.
+Write your %s to %s, in full and finished: that file is the round's saved
+output and is kept verbatim. The repository stays read-only; the state
+directory holding that path is the one place you may write.
 When your review is complete, create this empty file: %s
-Then write your final message. It must end with this block, filled in honestly:
+Then write your final message -- the short close only, naming the path you
+wrote. It must end with this block, filled in honestly:
 
 ` + "```relevo" + `
 %s

@@ -139,7 +139,7 @@ func TestHeadlessE2EReaderRound(t *testing.T) {
 		}
 	}
 	if got := readFile(t, output); got != fakeReaderSummary {
-		t.Fatalf("findings.md does not equal the final message with its block stripped:\ngot:\n%q\nwant:\n%q", got, fakeReaderSummary)
+		t.Fatalf("findings.md does not equal the file the reader wrote:\ngot:\n%q\nwant:\n%q", got, fakeReaderSummary)
 	}
 	if entry.Outcome != "done" {
 		t.Errorf("report entry Outcome = %q, want %q", entry.Outcome, "done")

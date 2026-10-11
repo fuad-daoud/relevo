@@ -11,9 +11,11 @@ import (
 )
 
 // readerDeliverablePresent reports whether a reader round has produced its
-// deliverable: either a regular file the runner wrote itself at reportPathFor,
-// or a stream message carrying a relevo block. A length heuristic is never
-// used: narration sentences and DSML text do not count as deliverables.
+// deliverable: either a regular file with content in it that the runner wrote
+// itself at reportPathFor, or a stream message carrying a relevo block. A
+// length heuristic is never used: narration sentences and DSML text do not
+// count as deliverables, and neither does an output file that is empty, which
+// the close would fall back to the stream for.
 //
 // For an actor that declares outcome keys, presence is not enough: the body
 // must carry a value one of them names, read with the same reader the outcome
@@ -29,7 +31,7 @@ func readerDeliverablePresent(rt Runtime, b store.Binding) bool {
 	// while the tightened rule below would strand the chain running behind
 	// an exited-without-report binding halt, which is strictly worse.
 	if _, merr := rt.Store.ChainByMember(b.Name); merr == nil {
-		if fi, ferr := os.Lstat(reportPathFor(rt, b)); ferr == nil && fi.Mode().IsRegular() {
+		if present, empty := readerOutputPresent(reportPathFor(rt, b)); present && !empty {
 			return true
 		}
 		stream, _ := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, b.Round))
@@ -52,13 +54,15 @@ func readerDeliverablePresent(rt Runtime, b store.Binding) bool {
 }
 
 // readerCandidateBodies returns the bodies a reader round's deliverable is read
-// from: the regular file the runner wrote itself at the output path (when present),
-// and the stream's last block-carrying message (when present). A message that
-// carries no block at all is not a candidate -- narration is not one.
+// from: the file the runner wrote itself at the output path, when it is a
+// regular file with content in it, and the stream's last block-carrying message
+// (when present). An empty file is not a body -- the close falls back to the
+// stream for it. A message that carries no block at all is not a candidate
+// either: narration is not one.
 func readerCandidateBodies(rt Runtime, b store.Binding) [][]byte {
 	var bodies [][]byte
 	path := reportPathFor(rt, b)
-	if fi, err := os.Lstat(path); err == nil && fi.Mode().IsRegular() {
+	if present, empty := readerOutputPresent(path); present && !empty {
 		if body, rerr := os.ReadFile(path); rerr == nil {
 			bodies = append(bodies, body)
 		}
@@ -142,4 +146,20 @@ func readerUndeliveredReason(rt Runtime, b store.Binding, continuations int) str
 	}
 	return fmt.Sprintf("%s: %s not delivered: runner ended without its relevo block after %d %s; see %s",
 		b.Name, label, continuations, unit, showCommand(b.Name, b.Round, "transcript"))
+}
+
+// readerStreamTail reads the status block from a non-chain reader's final
+// message when the output file it wrote carries none: the file is the artifact
+// and the block closes the message, so the outcome is read from where the
+// prompt told the reader to put it.
+func readerStreamTail(rt Runtime, b store.Binding) (reporttail.Tail, bool) {
+	if b.Shape != store.ShapeReader {
+		return reporttail.Tail{}, false
+	}
+	text := readerBlockText(rt, b)
+	if text == "" {
+		return reporttail.Tail{}, false
+	}
+	tail, ok, _ := reporttail.ParseWithReason([]byte(text))
+	return tail, ok
 }
