@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/serviceunit"
 )
 
@@ -171,4 +172,20 @@ func refreshServiceUnitAtStart() {
 	case serviceunit.ActionEdited:
 		slog.Info(fmt.Sprintf("%s was edited; relevo service install --force replaces it", u.path))
 	}
+}
+
+// unitEnv gives the doctor the installed unit, whose path only this package
+// composes.
+type unitEnv struct{ doctor.Env }
+
+func (unitEnv) ServiceUnit() (doctor.ServiceUnit, error) {
+	u, err := osUnitSpec()
+	if err != nil {
+		return doctor.ServiceUnit{}, err
+	}
+	data, mtime, present, err := u.read()
+	if err != nil {
+		return doctor.ServiceUnit{}, err
+	}
+	return doctor.ServiceUnit{Doc: u.doc(), Installed: data, Shipped: u.shipped(), MTime: mtime, Present: present}, nil
 }

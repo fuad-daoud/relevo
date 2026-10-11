@@ -494,6 +494,7 @@ func (s *stubDoctorEnv) DaemonRunning(ctx context.Context) (bool, error) {
 func (s *stubDoctorEnv) DaemonInfo() (store.DaemonInfo, bool, error) {
 	return s.daemonInfo, s.daemonInfoOK, nil
 }
+func (s *stubDoctorEnv) ServiceUnit() (doctor.ServiceUnit, error) { return doctor.ServiceUnit{}, nil }
 func (s *stubDoctorEnv) LookPath(binary string) (string, error) {
 	if p, ok := s.lookPaths[binary]; ok {
 		return p, nil

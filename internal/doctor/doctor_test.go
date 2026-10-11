@@ -32,6 +32,8 @@ type fakeEnv struct {
 	daemonInfo    store.DaemonInfo
 	daemonInfoOK  bool
 	daemonInfoErr error
+	unit          ServiceUnit
+	unitErr       error
 	lookPaths     map[string]string // binary -> path
 	existingFiles map[string]bool   // path -> exists
 	fileContents  map[string]string // path -> content; absent reads as empty
@@ -68,6 +70,8 @@ func (f *fakeEnv) DaemonInfo() (store.DaemonInfo, bool, error) {
 	}
 	return f.daemonInfo, f.daemonInfoOK, nil
 }
+
+func (f *fakeEnv) ServiceUnit() (ServiceUnit, error) { return f.unit, f.unitErr }
 
 func (f *fakeEnv) LookPath(binary string) (string, error) {
 	if path, ok := f.lookPaths[binary]; ok {

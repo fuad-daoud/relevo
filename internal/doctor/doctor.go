@@ -166,7 +166,11 @@ func Run(ctx context.Context, env Env, kinds []string, opts ...RunOption) Report
 		opt(&cfg)
 	}
 
-	checks := []Check{releaseCheck(env), daemonRow(ctx, env), ConfigCheck(cfg.configWarnings)}
+	checks := []Check{releaseCheck(env), daemonRow(ctx, env)}
+	if row, ok := serviceRow(env); ok {
+		checks = append(checks, row)
+	}
+	checks = append(checks, ConfigCheck(cfg.configWarnings))
 
 	usableBuilder := false
 	for _, kind := range kinds {

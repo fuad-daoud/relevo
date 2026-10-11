@@ -255,7 +255,7 @@ func doctorFlagSet(fs *flag.FlagSet) *doctorFlagValues {
 // and the rendering; the bundle calls this so both carry the same report.
 func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 	kinds, storeErr := assembleKinds(rt.Candidates, rt.Store)
-	env := doctor.NewEnv(rt.Store, releaseInputs())
+	env := unitEnv{Env: doctor.NewEnv(rt.Store, releaseInputs())}
 
 	opencodeConfigured := false
 	for _, k := range kinds {

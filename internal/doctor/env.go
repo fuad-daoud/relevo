@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/release"
@@ -43,6 +44,20 @@ type Env interface {
 	// ReleaseState returns the running version, the cached latest (ok false
 	// with no usable cache) and the install kind.
 	ReleaseState() (running string, latest string, ok bool, kind release.Kind)
+	// ServiceUnit reads the installed daemon unit. Only package main knows
+	// where it lives, so a real Env reports none until main wraps it.
+	ServiceUnit() (ServiceUnit, error)
+}
+
+// ServiceUnit is the installed daemon unit beside what this binary ships.
+// Installed is in the form the shipped index hashes (a plist with its
+// install-time paths substituted back to placeholders).
+type ServiceUnit struct {
+	Doc       string
+	Installed []byte
+	Shipped   []byte
+	MTime     time.Time
+	Present   bool
 }
 
 type realEnv struct {
@@ -175,6 +190,8 @@ func (e *realEnv) ReleaseState() (string, string, bool, release.Kind) {
 	}
 	return e.self.Version, cached.Latest, ok, kind
 }
+
+func (e *realEnv) ServiceUnit() (ServiceUnit, error) { return ServiceUnit{}, nil }
 
 func (e *realEnv) Probe(dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
