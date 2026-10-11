@@ -124,8 +124,11 @@ type fakeRemote struct {
 	createCheckReq    remote.CreateCheckRequest
 	getCheckResp      remote.CheckView
 	getCheckErr       error
-	setGateReq        remote.SetGateRequest
-	setGateErr        error
+	// getCheckIDs answers by run id, modelling a binding that holds one
+	// specific run: an id it names answers, every other id misses.
+	getCheckIDs map[string]remote.CheckView
+	setGateReq  remote.SetGateRequest
+	setGateErr  error
 
 	beforeCall func(call string)
 
@@ -346,6 +349,12 @@ func (f *fakeRemote) CreateCheck(ctx context.Context, server, name string, req r
 
 func (f *fakeRemote) GetCheck(ctx context.Context, server, name, id string) (remote.CheckView, error) {
 	f.calls = append(f.calls, "GetCheck:"+server+":"+name+":"+id)
+	if len(f.getCheckIDs) > 0 {
+		if view, ok := f.getCheckIDs[id]; ok {
+			return view, nil
+		}
+		return remote.CheckView{}, f.getCheckErr
+	}
 	return f.getCheckResp, f.getCheckErr
 }
 

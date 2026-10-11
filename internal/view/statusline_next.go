@@ -100,6 +100,19 @@ func haltNext(name string, round int, w *Waiting, detail string) *Next {
 	return &Next{Label: "resolve the halt", Text: text}
 }
 
+// chainHaltNext is a halted chain's next move: the halt's own detail, then both
+// ways out of it. A binding's halt has one resolving move; a chain's has two --
+// resume it once the cause is fixed, or close it -- and a row that named only
+// the first left a reader who has given up with no command to run.
+func chainHaltNext(name, detail string) *Next {
+	text := "Resolve " + name
+	if detail != "" {
+		text += ": " + detail
+	}
+	text += fmt.Sprintf(" -- `relevo chain --resume --name %s` once the cause is fixed, or `relevo done %s` closes it", name, name)
+	return &Next{Label: "resolve the halt", Text: text}
+}
+
 // haltLineOf is what a row waiting on a halt is waiting on, so a consumer can
 // show the halt itself; the row's Reason keeps the status column's wording.
 func haltLineOf(b BindingStatus, tone string) string {

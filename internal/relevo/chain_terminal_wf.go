@@ -74,7 +74,10 @@ func chainTerminalCarrier(tx *store.Tx, c db.ChainRow) (store.Binding, bool, err
 
 // chainTerminalWFPayload is what the mastermind reads when a workflow chain
 // ends: how it ended, where it got to, and the command that resumes it (on a
-// halt) or shows its trace.
+// halt) or shows its trace. A halt names both ways out -- resume after fixing
+// the cause, or done to close the chain -- because a resume is only half the
+// answer and a reader who has abandoned the work needs the half that is not a
+// resume at all.
 func chainTerminalWFPayload(c db.ChainRow, s workflow.State) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "chain %s %s: status %s, at %s, plans %d/%d, findings %d.",
@@ -83,7 +86,7 @@ func chainTerminalWFPayload(c db.ChainRow, s workflow.State) string {
 		fmt.Fprintf(&b, " Reason: %s.", s.Reason)
 	}
 	if s.Status == workflow.StatusHalted {
-		fmt.Fprintf(&b, " relevo chain --resume --name %s resumes it.", c.Name)
+		fmt.Fprintf(&b, " relevo chain --resume --name %s resumes it once the cause is fixed; `relevo done %s` closes it instead.", c.Name, c.Name)
 	}
 	fmt.Fprintf(&b, " Branch %s. relevo show %s --trace", c.Branch, c.Name)
 	return b.String()

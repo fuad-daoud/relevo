@@ -118,40 +118,51 @@ func TestChainStopWithAClosedMemberRoundMarksTheChainStopped(t *testing.T) {
 	}
 }
 
-// TestChainStopOnAStoppedOrHaltedChainIsNothingToStop pins the answer for a
-// chain that is not running: nothing to stop, and nothing changed. It is the
-// same answer `relevo stop` gives a binding with no open round.
-func TestChainStopOnAStoppedOrHaltedChainIsNothingToStop(t *testing.T) {
+// TestChainStopOnAStoppedChainIsNothingToStop pins the answer for a chain that
+// has already stopped: nothing to stop, and nothing changed. It is the same
+// answer `relevo stop` gives a binding with no open round.
+func TestChainStopOnAStoppedChainIsNothingToStop(t *testing.T) {
 	t.Parallel()
 
-	t.Run("stopped", func(t *testing.T) {
-		t.Parallel()
+	rt, _ := chainRuntime(t)
+	stoppedChain(t, rt, ChainOptions{})
 
-		rt, _ := chainRuntime(t)
-		stoppedChain(t, rt, ChainOptions{})
+	if _, err := ChainStop(context.Background(), rt, "shop"); !errors.Is(err, ErrNothingToStop) {
+		t.Errorf("ChainStop = %v, want ErrNothingToStop", err)
+	}
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusStopped) {
+		t.Errorf("chain status = %q, want it untouched", row.Status)
+	}
+}
 
-		if _, err := ChainStop(context.Background(), rt, "shop"); !errors.Is(err, ErrNothingToStop) {
-			t.Errorf("ChainStop = %v, want ErrNothingToStop", err)
-		}
-		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusStopped) {
-			t.Errorf("chain status = %q, want it untouched", row.Status)
-		}
-	})
+// TestChainStopOnAHaltedChainNamesDone pins the halted chain's own stop answer:
+// a halt is not "nothing to stop", because a reader left at one needs to be
+// told which command closes it. The answer carries ErrChainHalted so the CLI
+// codes it as a conflict, and names `relevo done` in the same words every
+// surface builds from the chain's name.
+func TestChainStopOnAHaltedChainNamesDone(t *testing.T) {
+	t.Parallel()
 
-	t.Run("halted", func(t *testing.T) {
-		t.Parallel()
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+	chainBuilderClose(t, rt, "shop", chainHaltedBody("stuck"))
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {
+		t.Fatalf("chain status = %q, want halted", row.Status)
+	}
 
-		rt, _ := chainRuntime(t)
-		startedChain(t, rt, ChainOptions{})
-		chainBuilderClose(t, rt, "shop", chainHaltedBody("stuck"))
-		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {
-			t.Fatalf("chain status = %q, want halted", row.Status)
-		}
-
-		if _, err := ChainStop(context.Background(), rt, "shop"); !errors.Is(err, ErrNothingToStop) {
-			t.Errorf("ChainStop = %v, want ErrNothingToStop", err)
-		}
-	})
+	_, err := ChainStop(context.Background(), rt, "shop")
+	if !errors.Is(err, ErrChainHalted) {
+		t.Fatalf("ChainStop = %v, want the halted answer", err)
+	}
+	if errors.Is(err, ErrNothingToStop) {
+		t.Error("a halted chain answered ErrNothingToStop, the old answer this replaces")
+	}
+	if got, want := err.Error(), ChainHaltedStopText("shop"); got != want {
+		t.Errorf("answer = %q, want %q", got, want)
+	}
+	if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusHalted) {
+		t.Errorf("chain status = %q, want it untouched by a refusal", row.Status)
+	}
 }
 
 // TestChainStopOnAHaltedChainWithAnOpenMemberRoundStopsTheMember pins the one

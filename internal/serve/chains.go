@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -588,6 +589,9 @@ func resumeOptionsFromWire(name string, req remote.ChainResumeRequest) (relevo.R
 		}
 		params["gate"] = *req.Gate
 	}
+	maps.Copy(params, req.Params)
+	// From reaches the engine's own resume, which enters that step.
+	opts.From = req.From
 	if len(params) > 0 {
 		opts.Params = params
 	}

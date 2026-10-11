@@ -81,6 +81,16 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 			return ChainResult{}, err
 		}
 	}
+	// A resume that replaces the check on a halt a zero-budget repair arm
+	// caused goes back to that arm's check rather than to the arm itself, so
+	// the check runs again under the new command instead of halting on the very
+	// budget it had before. Every other resume re-enters what it asked for.
+	// The refusal lands here, before the delivery below is superseded and
+	// before the lock writes anything.
+	from, err := chainResumeReroute(def, before, opts)
+	if err != nil {
+		return ChainResult{}, err
+	}
 	// A human has looked at the plan: every budget starts fresh, exactly as a
 	// resume resets the correction count on the fixed state machine.
 	before.Visits = map[string]int{}
@@ -121,7 +131,7 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 		if err != nil {
 			return err
 		}
-		resumed, acts, err := workflow.Resume(def, before, workflow.ResumeOpts{From: opts.From, Closed: closed})
+		resumed, acts, err := workflow.Resume(def, before, workflow.ResumeOpts{From: from, Closed: closed})
 		if err != nil {
 			return refuse("%v", err)
 		}
@@ -154,7 +164,11 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 		if err := tx.ChainPut(row); err != nil {
 			return err
 		}
-		gateChanged := opts.Gate != "" || opts.NoGate
+		// The one definition of a gate change, the reroute's own: --gate and
+		// --no-gate, the --param that fills the same slot, and the wire's own
+		// gate field all count, so a staged prompt whose bytes name a replaced
+		// check is walked back whichever way the gate was named.
+		gateChanged := chainResumeChangesGate(opts)
 		for _, act := range acts {
 			if err := chainResumeRunAction(ctx, rt, tx, row, def, before, &resumed, act, gateChanged); err != nil {
 				return err
@@ -182,9 +196,13 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 		return ChainResult{}, err
 	}
 	// A resume whose send could not start halts the chain, exactly as the fixed
-	// state machine's resume returns the send's own error.
+	// state machine's resume returns the send's own error. The halt is the
+	// answer -- nothing about the resume was malformed and nothing of relevo's
+	// own failed -- so it is refused, not reported as an internal fault: the
+	// CLI reads a refusal as exit 2 with the reason to act on, and an internal
+	// as "send this to bugreport" on a row the human can read and fix.
 	if out.Chain.Status == string(workflow.StatusHalted) {
-		return out, fmt.Errorf("chain %s: %s", out.Chain.Name, out.Chain.Reason)
+		return out, refuse("chain %s is still halted: %s", out.Chain.Name, out.Chain.Reason)
 	}
 	// The resume itself has committed and nothing refused it, so the gate change
 	// a placed writer's server is owed can go out now. Any later abort of this
