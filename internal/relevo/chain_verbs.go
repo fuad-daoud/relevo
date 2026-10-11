@@ -87,23 +87,37 @@ func ChainStop(ctx context.Context, rt Runtime, name string) (StopResult, error)
 // `relevo stop <member>` resolves to this very verb and the round is reachable
 // only from here; ending it is what keeps a halted chain with an open manual
 // round from having no working command at all -- the resume refuses the open
-// round, so without this a human is left with nothing to run. A chain with no
-// open member round has nothing to stop, which stays the answer it has always
-// been.
+// round, so without this a human is left with nothing to run.
+//
+// A halted chain with no open member round answers with its own refusal, which
+// names `relevo done` as the command that closes it: "nothing to stop" left a
+// human at a halt with no command to run. A stopped chain keeps the
+// nothing-to-stop answer -- it has already ended, and a release is a different
+// verb -- so the refusal is asked of the halted status alone.
 func chainStopHaltedMember(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult, error) {
 	member, _, ok := chainAwaited(rt.Store, c)
 	if !ok {
-		return StopResult{}, ErrNothingToStop
+		return StopResult{}, chainStoppedNothing(c)
 	}
 	b, err := rt.Store.Load(member)
 	if err != nil {
-		return StopResult{}, ErrNothingToStop
+		return StopResult{}, chainStoppedNothing(c)
 	}
 	entries, err := rt.Store.ReadLog(member)
 	if err != nil || !roundOpenIn(entries, b.Round) {
-		return StopResult{}, ErrNothingToStop
+		return StopResult{}, chainStoppedNothing(c)
 	}
 	return Stop(ctx, rt, member, StopOptions{})
+}
+
+// chainStoppedNothing is the answer a chain that has already left running gives
+// when it has no open member round: the halt names the command that closes it,
+// and every other ended chain keeps ErrNothingToStop.
+func chainStoppedNothing(c db.ChainRow) error {
+	if chain.Status(c.Status) == chain.StatusHalted {
+		return haltedChainStop(c.Name)
+	}
+	return ErrNothingToStop
 }
 
 // chainStopWorkflow stops a workflow chain's awaited member. The actor the

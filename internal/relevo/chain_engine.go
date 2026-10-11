@@ -380,16 +380,24 @@ func chainRepeatSameItem(rt Runtime, c db.ChainRow, before workflow.State, step 
 // chainFlowPullCheck answers a placed writer's check from the gate record its
 // newest closed round carries. No record yet leaves the chain awaiting the
 // check, so a later tick answers it once the round is pulled.
+//
+// It records no run id: no check runs on the server here, so there is nothing
+// to poll, and the round number is not a run id. Leaving one on the state let
+// the next check step inherit it, and its tick then asked the server for a
+// check run that was never created.
 func chainFlowPullCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, act workflow.Action, member string) error {
 	round := memberNewestClosedRound(tx, member)
 	rec, err := chainRoundGate(tx, member, round)
 	if err != nil {
 		return err
 	}
+	// The round is the record's round, not a run id: the state an id-less
+	// awaiting check carries is Run 0, and the close below has to name the same
+	// run the state awaits or the engine reads it as a close for another run.
+	next.Awaiting.Run = 0
 	if rec == nil {
 		return chainSaveFlow(rt, tx, c, def, before, *next, ev, act, member)
 	}
-	next.Awaiting.Run = round
 	if err := chainSaveFlow(rt, tx, c, def, before, *next, ev, act, member); err != nil {
 		return err
 	}
@@ -400,7 +408,7 @@ func chainFlowPullCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chai
 		return err
 	}
 	return chainAdvance(ctx, rt, tx, saved, workflow.Event{
-		Kind: workflow.EventCheckClosed, Step: act.Step, Run: round,
+		Kind: workflow.EventCheckClosed, Step: act.Step, Run: 0,
 		Result: chainGateResult(rec), Log: rec.LogPath,
 		RepeatRed: chainRepeatRedCheck(rt, c, *next, act.Step, rec.LogPath),
 	})

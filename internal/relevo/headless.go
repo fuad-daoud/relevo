@@ -987,7 +987,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// omission noted (spec §4.4). A reader whose deliverable is absent
 	// skips this and falls through to the exit-without-report path.
 	if b.Shape != store.ShapeReader || readerDeliverablePresent(rt, b) {
-		reportPath, serr := writeReaderSummary(rt, b)
+		reportPath, fellBack, serr := writeReaderSummary(rt, b)
 		if serr != nil {
 			slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", serr)
 		}
@@ -1004,6 +1004,9 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 				payload += fmt.Sprintf(" Provider rate-limited: %s; gated until %s.", m.Line, availability.GateTimeText(m.Until))
 			}
 			note := "unmarked"
+			if fellBack {
+				note = joinNotes(note, readerFallbackNote)
+			}
 			if escapeCheck(ctx, rt, b, true) == EscapeNote {
 				note = joinNotes(note, escapeNote)
 			}

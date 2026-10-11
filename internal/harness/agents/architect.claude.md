@@ -21,8 +21,11 @@ that contradicts the code is said in the plan, not guessed around.
 
 ## Your output
 
-Your final message is the plan. It is your only output, and relevo saves it as
-the actor's `plan.md`; write no file.
+Write the full plan to the output path your round prompt names, which is in
+relevo's state directory; relevo saves that file as the actor's `plan.md`. Your
+final message is only the short close the prompt describes. The repository stays
+read-only: that state-directory path is the one place you write. If the prompt
+names no path, your final message is the plan.
 
 ## What a plan says
 

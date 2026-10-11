@@ -37,7 +37,7 @@ func TestStatusLineNextByTone(t *testing.T) {
 			Waiting: &Waiting{Cause: "halted", Line: "boom", Hint: "relevo status --name x"}},
 			"resolve the halt", "Resolve x r2 (halted: boom): run relevo status --name x"},
 		{"chain halt", BindingStatus{Name: "c", Display: "NEEDS YOU", Detail: "step failed", Chain: &ChainFacts{}},
-			"resolve the halt", "Resolve c: step failed"},
+			"resolve the halt", "Resolve c: step failed -- `relevo chain --resume --name c` once the cause is fixed, or `relevo done c` closes it"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			row, doc := nextOfFixture(tt.b)
@@ -69,6 +69,70 @@ func TestStatusLineNextAbsentOffTheMasterMind(t *testing.T) {
 				t.Fatalf("Next = %+v in %s", row.Next, doc)
 			}
 		})
+	}
+}
+
+// TestHaltedChainRowNamesBothWaysOut pins the chain row's and the fork child's
+// next move: a halt has two ways out -- resume it once the cause is fixed, or
+// close it -- and a row that named only the resume left a reader who has given
+// up with no command to run. The mutation it kills is the resume-only text the
+// row carried before.
+func TestHaltedChainRowNamesBothWaysOut(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name string
+		row  func() StatusLineRow
+	}{
+		{"chain row", func() StatusLineRow {
+			row, _ := nextOfFixture(BindingStatus{
+				Name: "shop", Display: "NEEDS YOU", Detail: "reviewer wants changes",
+				Chain: &ChainFacts{Status: "halted"},
+			})
+			return row
+		}},
+		{"fork child", func() StatusLineRow {
+			row, _ := ChainChildRow(BindingStatus{
+				Name: "shop.1", Display: "NEEDS YOU", Detail: "stuck",
+				Chain: &ChainFacts{Parent: "shop", Status: "halted"},
+			})
+			return row
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			row := tt.row()
+			if row.Next == nil {
+				t.Fatal("Next is nil, want the halt's two ways out")
+			}
+			for _, want := range []string{
+				"relevo chain --resume --name " + row.Name,
+				"`relevo done " + row.Name + "` closes it",
+			} {
+				if !strings.Contains(row.Next.Text, want) {
+					t.Errorf("Next text %q does not carry %q", row.Next.Text, want)
+				}
+			}
+			if row.Reason == "" || !strings.Contains(row.Next.Text, row.Reason) {
+				t.Errorf("Next text %q does not carry the halt's own reason %q", row.Next.Text, row.Reason)
+			}
+		})
+	}
+}
+
+// TestBindingHaltRowKeepsItsOwnNextMove pins that the two-hint text is the
+// chain rows' alone: a binding's halt still resolves through its own Waiting,
+// which names the command that unblocks it.
+func TestBindingHaltRowKeepsItsOwnNextMove(t *testing.T) {
+	t.Parallel()
+
+	row, _ := nextOfFixture(BindingStatus{
+		Name: "x", Round: 2, Display: "NEEDS YOU",
+		Waiting: &Waiting{Cause: "halted", Line: "boom", Hint: "relevo status --name x"},
+	})
+	if row.Next == nil || row.Next.Text != "Resolve x r2 (halted: boom): run relevo status --name x" {
+		t.Fatalf("Next = %+v, want the binding's own resolving move", row.Next)
 	}
 }
 
