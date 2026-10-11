@@ -52,7 +52,7 @@ func (s *Store) WriteDaemonInfo(info DaemonInfo) error {
 	if err != nil {
 		return err
 	}
-	return d.KVPut(daemonInfoKey, raw)
+	return d.LocalOrSelf().KVPut(daemonInfoKey, raw)
 }
 
 // ReadDaemonInfo reads the daemon's record. A missing row and a store root
@@ -67,7 +67,7 @@ func (s *Store) ReadDaemonInfo() (DaemonInfo, bool, error) {
 		return DaemonInfo{}, false, nil
 	}
 
-	raw, ok, err := d.KVGet(daemonInfoKey)
+	raw, ok, err := d.LocalOrSelf().KVGet(daemonInfoKey)
 	if err != nil {
 		return DaemonInfo{}, false, fmt.Errorf("read daemon info: %w", err)
 	}
@@ -92,5 +92,5 @@ func (s *Store) RemoveDaemonInfo() error {
 	if d == nil {
 		return nil
 	}
-	return d.KVDelete(daemonInfoKey)
+	return d.LocalOrSelf().KVDelete(daemonInfoKey)
 }

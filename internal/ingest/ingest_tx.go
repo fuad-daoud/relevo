@@ -73,7 +73,7 @@ func (r *ingestRun) upsertMasterMind(tx *db.Tx) (*string, error) {
 	return &id, nil
 }
 
-func (r *ingestRun) readLog(tx *db.Tx) (logRead, error) {
+func (r *ingestRun) readLog() (logRead, error) {
 	var lr logRead
 	if !r.members["log.jsonl"] {
 		return lr, nil
@@ -81,10 +81,7 @@ func (r *ingestRun) readLog(tx *db.Tx) (logRead, error) {
 	lr.present = true
 
 	opener, key := sourceOpener(r.src, "log.jsonl")
-	cur, found, err := tx.Cursor(key)
-	if err != nil {
-		return logRead{}, fmt.Errorf("log cursor: %w", err)
-	}
+	cur, found := r.cursor, r.cursorFound
 	lines, startSeq, next, reset, err := readAppendOnly(opener, key, cur, found)
 	if err != nil {
 		return logRead{}, fmt.Errorf("read log.jsonl: %w", err)
@@ -192,6 +189,11 @@ func (r *ingestRun) appendEvents(tx *db.Tx, bindingID string, log logRead) ([]st
 	if had, err := tx.Events(bindingID, 0); err == nil && len(had) > 0 && log.resumed {
 		merged := make([]store.LogEntry, 0, len(had)+len(log.entries))
 		for _, ev := range had {
+			// A cursor older than the rows -- one restored, or kept over a newer
+			// copy -- re-reads lines already in; they come from the read below.
+			if ev.Seq >= log.startSeq {
+				continue
+			}
 			var e store.LogEntry
 			if json.Unmarshal([]byte(ev.EntryJSON), &e) == nil {
 				merged = append(merged, e)
@@ -215,9 +217,8 @@ func (r *ingestRun) appendEvents(tx *db.Tx, bindingID string, log logRead) ([]st
 		}
 		r.stats.Events += added
 	}
-	if err := tx.SaveCursor(log.cursor); err != nil {
-		return nil, fmt.Errorf("save log cursor: %w", err)
-	}
+	saved := log.cursor
+	r.saved = &saved
 	return all, nil
 }
 

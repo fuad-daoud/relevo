@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -16,11 +17,14 @@ func TestMirrorArchivedFeedsOnce(t *testing.T) {
 	t.Parallel()
 
 	rt := newRuntime(t)
-	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	d, err := db.OpenSplit(filepath.Join(t.TempDir(), "relevo.db"), db.Options{Origin: "01ORIGIN"})
 	if err != nil {
-		t.Fatalf("db.Open: %v", err)
+		t.Fatalf("db.OpenSplit: %v", err)
 	}
 	t.Cleanup(func() { d.Close() })
+	if _, _, err := db.SplitOnce(d, t.TempDir(), time.Now()); err != nil {
+		t.Fatalf("first SplitOnce: %v", err)
+	}
 	rt.DB = d
 
 	if err := rt.Store.Save(store.Binding{Name: "webshop", CWD: "/repo", Round: 2, State: store.StateDone}); err != nil {
@@ -49,7 +53,7 @@ func TestMirrorArchivedFeedsOnce(t *testing.T) {
 		t.Error("the mirror binding has no ArchivedAt, want the archive stamp")
 	}
 	key := "ingested.archive." + archived[0].RecordID
-	if _, ok, err := d.KVGet(key); err != nil || !ok {
+	if _, ok, err := d.Local().KVGet(key); err != nil || !ok {
 		t.Errorf("kv %s = ok %v, err %v; want it set", key, ok, err)
 	}
 
@@ -66,5 +70,10 @@ func TestMirrorArchivedFeedsOnce(t *testing.T) {
 		if after.Rows[tbl] != n {
 			t.Errorf("a second pass changed Rows[%s]: before %d, after %d", tbl, n, after.Rows[tbl])
 		}
+	}
+	if stats, ran, err := db.SplitOnce(d, t.TempDir(), time.Now()); err != nil {
+		t.Fatalf("second SplitOnce: %v", err)
+	} else if ran {
+		t.Errorf("the split pass moved %d kv keys the mirror left in the shared file, want none", stats.KVKeysMoved)
 	}
 }
