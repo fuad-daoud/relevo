@@ -126,6 +126,9 @@ func (r Redactor) section(s Section) Section {
 func (r Redactor) privacy() []string {
 	lines := []string{"redacted: home paths to ~, the user name to " + userToken +
 		", the host name to " + hostToken + ", remotes and secret-shaped strings to placeholders"}
+	if r.GitName != "" || r.GitEmail != "" {
+		lines = append(lines, "the git identity to "+gitNameTok+" and "+gitMailTok)
+	}
 	if len(r.User) < 3 {
 		lines = append(lines, "user name is shorter than 3 characters and was not replaced")
 	}
