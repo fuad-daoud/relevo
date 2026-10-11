@@ -536,6 +536,55 @@ func TestResolve(t *testing.T) {
 	})
 }
 
+// TestResolveIgnoresAnEffortSuffix pins that the "#effort" suffix a builder's
+// own settings carry names how hard to try, not a different candidate: a token
+// pasted from one resolves to the same candidate as the bare token. Removing
+// the strip in Resolve kills the "#high" row.
+func TestResolveIgnoresAnEffortSuffix(t *testing.T) {
+	set := parseSet(t, oneSetBody)
+
+	for _, tok := range []string{
+		"claude/anthropic/sonnet",
+		"claude/anthropic/sonnet#high",
+		"claude/anthropic/sonnet#max",
+		"claude/anthropic/sonnet#",
+	} {
+		c, err := set.Resolve(tok)
+		if err != nil {
+			t.Fatalf("Resolve(%q): %v", tok, err)
+		}
+		if got := c.Ref().String(); got != "claude/anthropic/sonnet" {
+			t.Errorf("Resolve(%q) = %q, want claude/anthropic/sonnet", tok, got)
+		}
+	}
+}
+
+// TestStripEffortLeavesTheModelSuffix pins the one thing the strip must not
+// touch: ":effort" belongs to the model name itself, so it survives.
+func TestStripEffortLeavesTheModelSuffix(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"claude/anthropic/sonnet#high", "claude/anthropic/sonnet"},
+		{"claude/anthropic/sonnet:high", "claude/anthropic/sonnet:high"},
+		{"claude/anthropic/son", "claude/anthropic/son"},
+		{"", ""},
+	} {
+		if got := StripEffort(c.in); got != c.want {
+			t.Errorf("StripEffort(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestResolveKeepsRefusingAnUnknownEffortToken pins that the tolerance is
+// about the suffix alone: a token no candidate serves is still refused, and
+// the refusal still names what is configured.
+func TestResolveKeepsRefusingAnUnknownEffortToken(t *testing.T) {
+	set := parseSet(t, oneSetBody)
+
+	if _, err := set.Resolve("claude/anthropic/nope#high"); !errors.Is(err, ErrUnknownCandidate) {
+		t.Errorf("Resolve(unknown#high) err = %v, want ErrUnknownCandidate", err)
+	}
+}
+
 func TestNameOf(t *testing.T) {
 	set := parseSet(t, oneSetBody)
 

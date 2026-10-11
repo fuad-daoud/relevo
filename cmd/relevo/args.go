@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -317,6 +319,14 @@ func writeError(err error) error {
 		errors.Is(err, roles.ErrBadActors),
 		errors.Is(err, roles.ErrBadRoles):
 		return fail(codePolicyRefused, "%v", err)
+	case errors.Is(err, candidate.ErrUnknownCandidate),
+		errors.Is(err, candidate.ErrBadRef),
+		errors.Is(err, availability.ErrUnknownProvider):
+		// A candidate, a ref or a provider the caller named on the command line
+		// is their own argument: a corrected subject is the whole way out, so
+		// it is usage (exit 2) and never `relevo bugreport`. The message names
+		// the accepted forms so a typo does not have to be guessed at.
+		return fail(codeUsage, "%s", availability.UsageText(err))
 	case errors.Is(err, client.ErrUnreachable):
 		return fail(codeRemoteUnreachable, "%v", err)
 	case errors.Is(err, relevo.ErrRemoteUnavailable):

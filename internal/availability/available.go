@@ -38,6 +38,8 @@ const (
 //	     candidate.ErrUnknownCandidate); when set is nil, return
 //	     fmt.Errorf("candidate %q not found (no candidates configured): %w",
 //	     subject, candidate.ErrUnknownCandidate)
+//	  a trailing "#effort" on the token is stripped before it is read, so the
+//	    same candidate answers with and without it
 //	otherwise (a bare provider):
 //	  provider := subject
 //	  known if provider is in set.Providers(),
@@ -64,7 +66,7 @@ func ResolveClearSubject(set *candidate.Set, l Ledger, subject string) (provider
 		}
 	}
 
-	if ref, perr := candidate.ParseRef(subject); perr == nil {
+	if ref, perr := candidate.ParseRef(candidate.StripEffort(subject)); perr == nil {
 		provider = ref.Provider
 		if set != nil {
 			if _, lerr := set.Lookup(ref); lerr == nil {
@@ -90,6 +92,22 @@ func ResolveClearSubject(set *candidate.Set, l Ledger, subject string) (provider
 		return provider, nil
 	}
 	return "", unknownProviderError{msg: unknownProviderMessage(set, subject)}
+}
+
+// AcceptedSubjects names every form a gate subject may take, so a refusal says
+// what the caller may type next rather than only what they typed. It is the one
+// list both `relevo gate` and `relevo gate --clear` accept.
+const AcceptedSubjects = "group, group@account, provider, candidate name, harness/provider/model"
+
+// UsageText renders a refused gate subject as the usage line a CLI shows: the
+// refusal's own words -- including the unknown-provider suggestion -- followed
+// by the accepted forms. err is rendered unchanged so the reason it was refused
+// survives into the message.
+func UsageText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error() + "; accepted: " + AcceptedSubjects
 }
 
 // clearSubjects names every ledger subject a clear of provider must remove: the

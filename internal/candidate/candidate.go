@@ -105,13 +105,26 @@ func (s *Set) Lookup(ref Ref) (Candidate, error) {
 	return c, nil
 }
 
-// Resolve takes a name or a harness/provider/model token to a candidate.
+// StripEffort removes a trailing "#..." suffix from a candidate token. The
+// suffix names how hard the builder should try rather than a different model,
+// so a token pasted out of a builder's own settings resolves to the candidate
+// it names. A ":effort" suffix belongs to the model name and is left alone.
+func StripEffort(tok string) string {
+	if i := strings.IndexByte(tok, '#'); i >= 0 {
+		return tok[:i]
+	}
+	return tok
+}
+
+// Resolve takes a name or a harness/provider/model token to a candidate. A
+// token may carry a trailing "#effort" suffix, which is stripped before the
+// lookup so the same candidate answers with and without it.
 func (s *Set) Resolve(str string) (Candidate, error) {
 	if s == nil {
 		return Candidate{}, fmt.Errorf("unknown candidate %q (no candidates configured): %w", str, ErrUnknownCandidate)
 	}
 	if strings.Contains(str, "/") {
-		ref, err := ParseRef(str)
+		ref, err := ParseRef(StripEffort(str))
 		if err != nil {
 			return Candidate{}, err
 		}
