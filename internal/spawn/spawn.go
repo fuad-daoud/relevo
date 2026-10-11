@@ -43,12 +43,6 @@ type ScopeSpec struct {
 	CPUQuota  string // "" = omit; systemd units, e.g. "200%" = two cores' worth
 	TasksMax  int    // 0 = omit
 
-	// OOMScoreAdjust is the kernel OOM score adjustment the process starts
-	// with; 0 omits it. systemd-run rejects OOMScoreAdjust= on a scope and
-	// ManagedOOMPreference= only reaches systemd-oomd, so ScopeArgv applies it
-	// from inside the scope, and only a raise is permitted unprivileged.
-	OOMScoreAdjust int
-
 	// AllowedCPUs is a real launch field: "" omits it, and otherwise it is a
 	// systemd cpu-list ("2" or "0-2") pinning the process to those cores.
 	AllowedCPUs string

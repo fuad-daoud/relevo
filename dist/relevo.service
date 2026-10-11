@@ -26,6 +26,9 @@ RestartSec=5
 # holds no long-lived state; it rebuilds from ~/.local/state/relevo and a
 # live builder probe on every start.
 OOMPolicy=continue
+# The daemon owns the database; under memory pressure systemd-oomd should take
+# a round scope or another app first.
+ManagedOOMPreference=avoid
 
 [Install]
 WantedBy=default.target

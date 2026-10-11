@@ -161,7 +161,7 @@ func TestScopeFromPolicy(t *testing.T) {
 	}{
 		"nil block defaults on": {
 			sc:   nil,
-			want: &spawn.ScopeSpec{OOMScoreAdjust: roundOOMScoreAdjust, CPUWeight: 100},
+			want: &spawn.ScopeSpec{CPUWeight: 100},
 		},
 		"enabled false is nil": {
 			sc:   &policy.ScopePolicy{Enabled: &enabledFalse},
@@ -169,25 +169,25 @@ func TestScopeFromPolicy(t *testing.T) {
 		},
 		"zero weight defaults to 100": {
 			sc:   &policy.ScopePolicy{},
-			want: &spawn.ScopeSpec{OOMScoreAdjust: roundOOMScoreAdjust, CPUWeight: 100},
+			want: &spawn.ScopeSpec{CPUWeight: 100},
 		},
 		"quota passes through": {
 			sc:   &policy.ScopePolicy{CPUQuota: "200%"},
-			want: &spawn.ScopeSpec{OOMScoreAdjust: roundOOMScoreAdjust, CPUWeight: 100, CPUQuota: "200%"},
+			want: &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "200%"},
 		},
 		"gate quota passes through": {
 			sc:   &policy.ScopePolicy{CPUQuota: "200%", GateCPUQuota: "300%"},
-			want: &spawn.ScopeSpec{OOMScoreAdjust: roundOOMScoreAdjust, CPUWeight: 100, CPUQuota: "200%", GateCPUQuota: "300%"},
+			want: &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "200%", GateCPUQuota: "300%"},
 		},
 		"slice and limits pass through": {
 			sc: &policy.ScopePolicy{
 				Slice: "relevo.slice", CPUWeight: 200, CPUQuota: "200%", MemoryMax: "2G", TasksMax: 64,
 			},
-			want: &spawn.ScopeSpec{OOMScoreAdjust: roundOOMScoreAdjust, Slice: "relevo.slice", CPUWeight: 200, CPUQuota: "200%", MemoryMax: "2G", TasksMax: 64},
+			want: &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 200, CPUQuota: "200%", MemoryMax: "2G", TasksMax: 64},
 		},
 		"allowed cpus passes through": {
 			sc:   &policy.ScopePolicy{CPUQuota: "200%", AllowedCPUs: "0-2"},
-			want: &spawn.ScopeSpec{OOMScoreAdjust: roundOOMScoreAdjust, CPUWeight: 100, CPUQuota: "200%", AllowedCPUs: "0-2"},
+			want: &spawn.ScopeSpec{CPUWeight: 100, CPUQuota: "200%", AllowedCPUs: "0-2"},
 		},
 	}
 	for name, c := range cases {

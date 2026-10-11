@@ -56,13 +56,6 @@ func TestScopeArgv(t *testing.T) {
 			want: scopeWant("--slice=relevo.slice", "-p", "CPUWeight=200", "-p", "CPUQuota=200%", "-p", "AllowedCPUs=2", "-p", "MemoryMax=2G", "-p", "TasksMax=50",
 				"--", "/bin/sh", "-c", "script", "relevo-supervisor", "bin"),
 		},
-		// The adjustment is written from inside the scope, ahead of the exec of inner.
-		"with oom score adjust": {
-			spec: spawn.ScopeSpec{Unit: "relevo-round-abc12345-foo-1", CPUWeight: 200, OOMScoreAdjust: 500},
-			want: scopeWant("-p", "CPUWeight=200",
-				"--", "sh", "-c", `echo "$0" >/proc/self/oom_score_adj 2>/dev/null; exec "$@"`, "500",
-				"/bin/sh", "-c", "script", "relevo-supervisor", "bin"),
-		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

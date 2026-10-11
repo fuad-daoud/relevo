@@ -365,3 +365,24 @@ remote binding's branch.
 - If the premise proved wrong on current main (heap already tracks the
   smaller file), the evidence and which steps were therefore narrowed,
   instead of file-size work with no effect.
+
+## Round 2
+
+Mechanism change for the OOM-ordering step: the `oom_score_adj` wrapper
+(`ScopeSpec.OOMScoreAdjust`, the `sh -c` insertion in `ScopeArgv`,
+`roundOOMScoreAdjust`) is removed, and the unit sets
+`ManagedOOMPreference=avoid` instead. The engine cache and idle-pool bound
+from round 1 stay.
+
+Why: on the owner's laptop the killer was systemd-oomd ("killed 25
+process(es) in this unit"), not the kernel OOM killer. oomd picks a cgroup by
+pressure and usage and ignores `oom_score_adj`. `oomctl` monitors
+`.../user@1000.service/app.slice`, `relevo.service` sits under it with
+`ManagedOOMPreference=none`, and both cgroups are owned by the same user,
+which is the condition under which oomd honours `ManagedOOMPreference=` on a
+user-owned cgroup. A shell in every round's argv is not worth a kernel-OOM
+ordering nobody has hit.
+
+`dist/relevo.service` is installed verbatim (`make install`:
+`install -Dm644`), so the line reaches the user unit unchanged; no Go
+template renders it.

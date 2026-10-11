@@ -100,11 +100,6 @@ func withIsolation(cfg serve.Config, raw string) serve.Config {
 	return cfg
 }
 
-// roundOOMScoreAdjust makes the kernel OOM killer take a round's process
-// before the daemon, which an unprivileged user manager cannot lower below its
-// own score; a round can only be raised, so the ordering is made on this side.
-const roundOOMScoreAdjust = 500
-
 // scopeFromPolicy is the systemd scope template a served round launches
 // under, from an already-resolved policy scope block. nil turns scopes off:
 // sc.Enabled explicitly false. Otherwise (no block, or one present but silent
@@ -115,7 +110,7 @@ func scopeFromPolicy(sc *policy.ScopePolicy) *spawn.ScopeSpec {
 	if sc != nil && sc.Enabled != nil && !*sc.Enabled {
 		return nil
 	}
-	spec := &spawn.ScopeSpec{CPUWeight: 100, OOMScoreAdjust: roundOOMScoreAdjust}
+	spec := &spawn.ScopeSpec{CPUWeight: 100}
 	if sc != nil {
 		spec.Slice = sc.Slice
 		if sc.CPUWeight != 0 {

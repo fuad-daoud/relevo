@@ -30,6 +30,9 @@ fi
 if grep -q '^OOMPolicy=' "$template" && ! grep -q '^OOMPolicy=continue$' "$template"; then
 	echo "FAIL: $template sets an OOMPolicy other than continue"; fail=1
 fi
+if [ "$(grep -c '^ManagedOOMPreference=avoid$' "$template")" -ne 1 ]; then
+	echo "FAIL: $template must set ManagedOOMPreference=avoid exactly once"; fail=1
+fi
 
 # #370 §4.9: systemd's default start limit (5 starts in 10s) left the daemon
 # down until reset-failed. Exactly one StartLimitIntervalSec=0, in [Unit].
@@ -59,4 +62,4 @@ for unit in "$here/../dist/relevo.service" "$here/../dist/relevo-serve.service";
 done
 
 if [ "$fail" -ne 0 ]; then exit 1; fi
-echo "ok: $template has no MemoryMax, OOMPolicy=continue, and StartLimitIntervalSec=0 in [Unit]; both unit templates carry %h/go/bin on PATH"
+echo "ok: $template has no MemoryMax, OOMPolicy=continue, ManagedOOMPreference=avoid, and StartLimitIntervalSec=0 in [Unit]; both unit templates carry %h/go/bin on PATH"
