@@ -31,7 +31,8 @@ import (
 // order, out of the same place. What changes is what they can no longer do --
 // the in-place compaction each one wanted would close the pool the owner's
 // clients are reading through, so each one skips it and says so, and the freed
-// pages stay on the file's free list for the engine to reuse.
+// pages stay on the file's free list until the next start returns them before
+// it serves.
 //
 // The verb executor is installed after the passes and not with the serve, and
 // it is the last thing here for a reason: a verb is the one request that pushes
@@ -47,6 +48,7 @@ import (
 // later, and the verb hook that daemon installs are all further down the start,
 // and the sync worker is a child no verb and no tick has driven yet.
 func daemonStartup(rt *relevo.Runtime, d *db.DB, ln net.Listener, onAbandoned func()) *owner.Server {
+	reclaimBeforeServing(d)
 	srv := daemonServeOwner(d, ln, onAbandoned)
 
 	if daemonStartupPasses(rt) {
@@ -54,6 +56,26 @@ func daemonStartup(rt *relevo.Runtime, d *db.DB, ln net.Listener, onAbandoned fu
 	}
 	return srv
 }
+
+// reclaimBeforeServing returns to the filesystem the pages an earlier start's
+// passes freed but could not compact on a served handle. This is the one moment
+// the handle is not served yet, and a client that connects meanwhile waits for
+// a starting daemon; the bounds in db keep that wait short. A failure is one
+// warning, and the start goes on with the file as it is.
+func reclaimBeforeServing(d *db.DB) {
+	files, err := reclaimFreePages(d)
+	for _, f := range files {
+		slog.Info("relevo daemon: reclaimed free pages", "path", f.Path,
+			"bytes_before", f.BytesBefore, "bytes_after", f.BytesAfter)
+	}
+	if err != nil {
+		slog.Warn("relevo daemon: free-page reclaim skipped", "err", err)
+	}
+}
+
+// reclaimFreePages is a var so a test can pin that it runs on a handle the
+// owner does not serve yet.
+var reclaimFreePages = db.ReclaimFreePages
 
 // daemonServeOwner starts the owner over d on ln. A listener or a handle that
 // cannot be served is one warning and no server: the daemon keeps running its
