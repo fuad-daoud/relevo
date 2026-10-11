@@ -152,7 +152,11 @@ func chainServerWait(ctx context.Context, rt Runtime, name string, timeout, inte
 
 // chainServerStop is `relevo stop <chain>` for a chain that runs on a server:
 // the server stops it and answers what it did. A chain that is not running is
-// the ordinary nothing-to-stop answer.
+// the ordinary nothing-to-stop answer -- except a halted one, which answers with
+// its own refusal naming `relevo done`. That answer is built from the mirror's
+// status rather than the server's, so a served chain reads exactly as a local
+// one does; the mirror is this machine's own record of the chain, the same row
+// every other chain surface reads.
 func chainServerStop(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult, error) {
 	if rt.Remote == nil {
 		return StopResult{}, ErrRemoteUnavailable
@@ -160,7 +164,7 @@ func chainServerStop(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult
 	resp, err := rt.Remote.ChainStop(ctx, c.Server, c.Name)
 	if err != nil {
 		if remoteCode(err, 409, remote.CodeNothingToStop) {
-			return StopResult{}, ErrNothingToStop
+			return StopResult{}, chainStoppedNothing(c)
 		}
 		return StopResult{}, err
 	}
