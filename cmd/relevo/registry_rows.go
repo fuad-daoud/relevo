@@ -659,6 +659,16 @@ var registry = []verbEntry{
 		Errors:  []string{"binding_not_found", "client_not_found", "conflict", "internal", "not_available", "usage"},
 	},
 	{
+		Name:    "service",
+		Summary: "install or remove the daemon's service unit (systemd user unit, launchd agent)",
+		Args:    "install|uninstall",
+		Flags:   []string{},
+		Exit:    []int{0, 2},
+		Errors:  []string{},
+	},
+	{Name: "service install", Summary: "write the service unit shipped in this binary, enable it and restart the daemon; refuses an edited unit without --force", Args: "[--force] [--json]", Flags: []string{"--force", "--json"}, Output: "json:ServiceDoc", Exit: []int{0, 1, 2}, Errors: []string{"conflict", "internal", "usage"}},
+	{Name: "service uninstall", Summary: "stop and remove the service unit, never the binary", Args: "[--json]", Flags: []string{"--json"}, Output: "json:ServiceDoc", Exit: []int{0, 1, 2}, Errors: []string{"internal", "usage"}},
+	{
 		Name:    "show",
 		Summary: "one round's plan, report, diff, drift, gate, findings, log or transcript",
 		Args:    "[NAME] [--round N] [--diff [--stat|--anchors]] [--log [--follow --after N]] [--trace] [--json] [--peek]",

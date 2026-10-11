@@ -372,6 +372,8 @@ func outcomeDocFixtures() []struct {
 			WorktreeRemoved: "/s/work/webshop",
 			ProcessStopped:  4242,
 		})},
+		{"service-install-json", serviceDocOf("install", "/home/u/.config/systemd/user/relevo.service", "wrote")},
+		{"service-uninstall-json", serviceDocOf("uninstall", "/home/u/.config/systemd/user/relevo.service", "removed")},
 		{"update-json", updateDocOf("v0.13.0", "/usr/local/bin/relevo", release.KindRelease,
 			release.UpdateDecision{Action: release.UpdateReplace, Target: "v0.14.0", Message: "relevo v0.13.0 -> v0.14.0"}, true)},
 		{"update-check-json", updateDocOf("(devel)", "/home/u/go/bin/relevo", release.KindGoInstall,

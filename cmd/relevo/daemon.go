@@ -313,6 +313,9 @@ func cmdDaemon(args []string) error {
 	// daemon.json (#371 §4.10): an upgrade leaves the files relevo wrote for
 	// each harness on disk, and one nobody edited is stale. Never fatal.
 	refreshRoles(rt.Config)
+	// The unit the supervisor starts this binary from is refreshed on the same
+	// beat, never restarting the daemon itself.
+	refreshServiceUnitAtStart()
 
 	loaded, err := rt.Config.Load()
 	if err != nil {
