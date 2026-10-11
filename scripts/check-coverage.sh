@@ -91,13 +91,19 @@ case $first_line in
 		;;
 esac
 
-if [ "$baseline_header" != "$current_header" ]; then
-	if [ "${RELEVO_REQUIRE_COVERAGE:-}" = "1" ]; then
-		echo "check-coverage: baseline was measured with $baseline_header, this is $current_header; regenerate it with --write on the header's env or the CI leg"
-		exit 1
-	fi
-	echo "check-coverage: skipped (baseline measured with $baseline_header, this is $current_header)"
+# Only CI's coverage job compares. The header names the Go minor version, but
+# two builds of one minor (a patch apart, or a distribution's build) can count
+# a package's statements differently by several points, so a developer machine
+# or a server whose header matches would still fail on code nobody touched.
+# RELEVO_REQUIRE_COVERAGE=1 is set by that job, and opts a local run in.
+if [ "${RELEVO_REQUIRE_COVERAGE:-}" != "1" ]; then
+	echo "check-coverage: skipped (the baseline, measured with $baseline_header, is enforced by CI's coverage job; RELEVO_REQUIRE_COVERAGE=1 checks it here)"
 	exit 0
+fi
+
+if [ "$baseline_header" != "$current_header" ]; then
+	echo "check-coverage: baseline was measured with $baseline_header, this is $current_header; regenerate it with --write on the header's env or the CI leg"
+	exit 1
 fi
 
 # The header line is not a package line.

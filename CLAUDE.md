@@ -90,14 +90,16 @@ versions corrupt each other and there is no rollback. Two flows exist:
   `scripts/check-comments.sh` / `scripts/check-filesize.sh`. Packages and files
   not yet cleaned are listed as exclusions; a round that finishes a package
   removes its entries, and a new exclusion is never added to get a round green.
-- `make check` also fails when a package's statement coverage drops more than
+- CI's coverage job fails when a package's statement coverage drops more than
   one point below `testdata/coverage-baseline.txt`; a round that moves code
   between packages regenerates the baseline with
   `sh scripts/check-coverage.sh --write` and says so in its report, and no
   round lowers a baseline to get green. The baseline is tied to the Go minor
-  version and platform recorded in its header, is enforced on CI's
-  ubuntu-latest/go-stable leg, and is skipped elsewhere; a Go upgrade on that
-  leg means regenerating it.
+  version and platform recorded in its header and is enforced only by that
+  job (`RELEVO_REQUIRE_COVERAGE=1`): elsewhere `make check` prints `skipped`,
+  because another build of the same Go minor can measure a package several
+  points apart. Set `RELEVO_REQUIRE_COVERAGE=1` to compare locally; a Go
+  upgrade on CI's go-stable leg means regenerating it.
 
 ## Merging and CI
 
