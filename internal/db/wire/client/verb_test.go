@@ -328,7 +328,7 @@ func TestClientSyncVerbReportsALostOwner(t *testing.T) {
 // A verb's whole bound is the caller's, and a caller that has stopped caring
 // must be released promptly: the daemon is doing the work either way.
 func TestClientSyncVerbHonoursACancelledCaller(t *testing.T) {
-	s := &scriptedVerbOwner{ready: make(chan struct{}), release: make(chan struct{})}
+	s := &scriptedVerbOwner{silent: true, ready: make(chan struct{}), release: make(chan struct{})}
 	sock := verbSocket(t, s)
 
 	ctx, cancel := context.WithCancel(context.Background())

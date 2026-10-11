@@ -396,3 +396,76 @@ func TestSealRefusesFileBehindEscapingSymlink(t *testing.T) {
 		t.Errorf("the symlink target = %q, %v; want it untouched", body, err)
 	}
 }
+
+// TestSealHoldsARoundWhileItsCheckStreams drives a served check across the
+// close of its round: the check starts on the open round, the binding is then
+// marked DONE with the round behind it, and a seal pass runs while the check
+// still writes. The log must stay on disk so the check's whole output is what
+// ReadFile returns once it settles.
+func TestSealHoldsARoundWhileItsCheckStreams(t *testing.T) {
+	s := New(t.TempDir())
+	b := newBinding("webshop", "/home/dev/webshop")
+	b.Round = 2
+	b.CheckRun = &CheckRun{ID: "c1", Command: "make check", Round: 2, LogPath: s.ServedCheckLogPath("webshop", 2)}
+	if err := s.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(b.CheckRun.LogPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(b.CheckRun.LogPath, []byte("stage 1\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	b.Round = 3
+	b.State = StateDone
+	if Sealable(b, 2, true) {
+		if err := s.WithLock(func(tx *Tx) error {
+			_, err := tx.SealRound("webshop", 2)
+			return err
+		}); err != nil {
+			t.Fatalf("SealRound: %v", err)
+		}
+	}
+
+	f, err := os.OpenFile(b.CheckRun.LogPath, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("the live check log is gone while the check runs: %v", err)
+	}
+	if _, err := f.WriteString("stage 2\n"); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	_ = f.Close()
+
+	got, err := s.ReadFile(b.CheckRun.LogPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(got) != "stage 1\nstage 2\n" {
+		t.Errorf("check log = %q, want the whole output", got)
+	}
+}
+
+// TestSealableCheckRun pins that only an unsettled check run for the round
+// holds it back.
+func TestSealableCheckRun(t *testing.T) {
+	base := newBinding("webshop", "/home/dev/webshop")
+	base.Round = 5
+	cases := []struct {
+		name string
+		run  CheckRun
+		want bool
+	}{
+		{"unsettled for the round", CheckRun{ID: "c1", Round: 3}, false},
+		{"settled for the round", CheckRun{ID: "c1", Round: 3, Result: "pass"}, true},
+		{"unsettled for another round", CheckRun{ID: "c1", Round: 2}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := withBinding(base, func(b *Binding) { b.CheckRun = &tc.run })
+			if got := Sealable(b, 3, false); got != tc.want {
+				t.Errorf("Sealable = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

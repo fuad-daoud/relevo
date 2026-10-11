@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"time"
 
@@ -111,7 +110,7 @@ func chainPullGone(ctx context.Context, rt Runtime, c db.ChainRow) error {
 			return nil
 		}
 		entry := store.LogEntry{
-			TS: rt.Now().UTC(), Round: carrier.Round,
+			TS: rt.Now().UTC(), Round: chainTerminalRound(tx, carrier),
 			Direction: store.DirToMasterMind, Kind: store.KindChain,
 			Payload: chainTerminalPayload(cur, 0),
 		}
@@ -246,36 +245,6 @@ func setChainMemberColumn(c *db.ChainRow, part, name string) {
 	}
 }
 
-// chainRoundView is the closed-round facts of round r as the catch-up reads
-// them: the member's binding view, its ClosedRound set to r and every other
-// closed-round fact taken from the view's Round r, the newest one completed
-// by chainRoundFacts. That is what makes one member's older rounds
-// installable by the same code a single closed round uses.
-func chainRoundView(mv remote.ChainMemberView, r int) remote.BindingView {
-	v := mv.View
-	v.ClosedRound = r
-	for _, cr := range mv.Rounds {
-		if cr.Round != r {
-			continue
-		}
-		cr = chainRoundFacts(cr, mv.View)
-		v.ReportOutcome = cr.ReportOutcome
-		v.GateResult = cr.GateResult
-		v.Stopped = cr.Stopped
-		v.ReportNote = cr.ReportNote
-		v.Switches = cr.Switches
-		v.DiffNote = cr.DiffNote
-		v.DiffCommits = cr.DiffCommits
-		v.DiffTree = cr.DiffTree
-		v.DirtyCommit = cr.DirtyCommit
-		v.Usage = cr.Usage
-		v.Rusage = cr.Rusage
-		v.PriorTokens = cr.PriorTokens
-		break
-	}
-	return v
-}
-
 // chainPullMember installs one member's missing closed rounds, in the order
 // the server closed them. The fetch runs unlocked; the install takes one lock
 // and writes every round in that one critical section, so a pass either lands
@@ -340,6 +309,10 @@ func chainPullMember(ctx context.Context, rt Runtime, mv remote.ChainMemberView)
 		for _, f := range fs {
 			next := cur
 			next.Round = f.round
+			// The mirror's binding carries the server's start for the round it
+			// is installing, so a reader that asks the binding rather than the
+			// log sees the round's real start too.
+			next.RoundStartedAt = chainPullStart(rt, f.view.RoundStartedAt)
 			if !applyCatchUpFiles(rt, tx, next, f.view, f.cf) {
 				// The round's files did not land. Stop here and fall through
 				// to the save, so the rounds before it commit with the member
@@ -349,8 +322,13 @@ func chainPullMember(ctx context.Context, rt Runtime, mv remote.ChainMemberView)
 				break
 			}
 			cur = next
-			if err := chainPullPromptEntry(rt, tx, cur, f.round, f.prompt); err != nil {
+			if err := chainPullPromptEntry(rt, tx, cur, f.round, f.prompt, f.view.RoundStartedAt); err != nil {
 				return err
+			}
+			if entry, listed := chainRoundEntry(mv, f.round); listed {
+				if err := chainPullQueueEntry(rt, tx, cur, f.round, entry); err != nil {
+					return err
+				}
 			}
 			a := &catchUpAck{
 				Server: cur.Builder.Server, Name: name, Round: f.round,
@@ -402,47 +380,6 @@ func chainPullMember(ctx context.Context, rt Runtime, mv remote.ChainMemberView)
 	return nil
 }
 
-// chainPullPrompt fetches one round's prompt. The server keeps the prompt it
-// staged at the round's own path and serves it as the round's plan file.
-func chainPullPrompt(ctx context.Context, rt Runtime, b store.Binding, r int) ([]byte, bool) {
-	rc, err := rt.Remote.RoundFile(ctx, b.Builder.Server, b.Name, r, "plan")
-	if err != nil {
-		if !is404(err) {
-			slog.Warn("chain prompt fetch failed", "server", b.Builder.Server, "name", b.Name, "round", r, "err", err)
-		}
-		return nil, false
-	}
-	defer rc.Close()
-	body, rerr := io.ReadAll(io.LimitReader(rc, chainPullMaxPlanBytes+1))
-	if rerr != nil || len(body) > chainPullMaxPlanBytes {
-		slog.Warn("chain prompt over cap; not stored", "server", b.Builder.Server, "name", b.Name, "round", r)
-		return nil, false
-	}
-	return body, true
-}
-
-// chainPullPromptEntry writes the round's prompt file and records the entry
-// that says the member was handed it. A round whose entry already exists is
-// left alone, so a re-run of an interrupted install never doubles it.
-func chainPullPromptEntry(rt Runtime, tx *store.Tx, b store.Binding, r int, body []byte) error {
-	entries, err := tx.ReadLog(b.Name)
-	if err != nil {
-		return err
-	}
-	if HasPromptEntry(entries, r) {
-		return nil
-	}
-	path := rt.Store.PromptPath(b.Name, r)
-	if err := stagePlan(path, body); err != nil {
-		return fmt.Errorf("%s: stage prompt at %s: %w", b.Name, path, err)
-	}
-	return tx.AppendLog(b.Name, store.LogEntry{
-		TS: rt.Now().UTC(), Round: r, Direction: store.DirToBuilder,
-		Kind: store.KindPrompt, Path: path, Confirmed: true,
-		Note: chainStepNote(tx, b.Name),
-	})
-}
-
 // chainPullFinish copies the server's state onto the mirror and, when the view
 // is terminal and every member has caught up, ends the mirror and queues the
 // one chain delivery. The terminal status is written only on the running to
@@ -471,6 +408,9 @@ func chainPullFinish(ctx context.Context, rt Runtime, c db.ChainRow, view remote
 		if err := tx.ChainPut(row); err != nil {
 			return err
 		}
+		if err := chainPullTrace(tx, c.Name, view.Trace); err != nil {
+			return err
+		}
 		if before != string(chain.StatusRunning) || !chainStatusTerminal(row.Status) {
 			return nil
 		}
@@ -482,7 +422,7 @@ func chainPullFinish(ctx context.Context, rt Runtime, c db.ChainRow, view remote
 			return nil
 		}
 		entry := store.LogEntry{
-			TS: now, Round: carrier.Round,
+			TS: now, Round: chainTerminalRound(tx, carrier),
 			Direction: store.DirToMasterMind, Kind: store.KindChain,
 			Payload: chainTerminalPayload(row, view.Findings),
 		}

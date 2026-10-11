@@ -3,12 +3,36 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
+
+// candidateSetForCodes is a candidate set for the classification rows above: two
+// providers, one of them the one the CLI's own example names, so a refusal's
+// suggestion has something to suggest.
+func candidateSetForCodes(t *testing.T) *candidate.Set {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "candidates.json")
+	body := `[
+	  {"harness":"opencode","provider":"test","model":"m","roles":["builder"]},
+	  {"harness":"opencode","provider":"cline-pass","model":"m","roles":["builder"]}
+	]`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	set, err := candidate.Load(path)
+	if err != nil {
+		t.Fatalf("candidate.Load: %v", err)
+	}
+	return set
+}
 
 // codedOf is the frame's code and next hint for err, or ok false when err is
 // not a coded error at all.
@@ -139,6 +163,53 @@ func TestBusySentinelsAreRefusals(t *testing.T) {
 		if !errors.Is(wrapped, relevo.ErrRefused) {
 			t.Errorf("%s: errors.Is(%v, ErrRefused) = false, want the refusal class", c.name, wrapped)
 		}
+	}
+}
+
+// TestUnknownGateSubjectIsUsage pins that a subject a caller named on the
+// command line is refused as usage rather than reported as an internal failure:
+// an unknown candidate token, a malformed ref and an unknown provider each
+// carry the caller's own words plus the forms that are accepted, and none of
+// them points at `relevo bugreport`. Dropping the case from writeError kills
+// every row (the code becomes internal).
+func TestUnknownGateSubjectIsUsage(t *testing.T) {
+	t.Parallel()
+
+	set := candidateSetForCodes(t)
+	for _, c := range []struct {
+		name    string
+		subject string
+	}{
+		{"unknown token", "opencode/nope/m"},
+		{"unknown name", "nope"},
+		{"malformed ref", "opencode/test"},
+		{"unknown provider", "clinepass"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := availability.ResolveClearSubject(set, availability.Ledger{}, c.subject)
+			if err == nil {
+				t.Fatalf("ResolveClearSubject(%q) = nil, want a refusal", c.subject)
+			}
+			got := writeError(err)
+			coded, next, ok := codedOf(t, got)
+			if !ok {
+				t.Fatalf("writeError(%v) is not a coded error", err)
+			}
+			if coded != codeUsage {
+				t.Errorf("code = %q, want %q", coded, codeUsage)
+			}
+			if next != "relevo help" {
+				t.Errorf("next = %q, want %q", next, "relevo help")
+			}
+			if e := catalogExit(coded); e != 2 {
+				t.Errorf("exit = %d, want 2", e)
+			}
+			if !strings.Contains(got.Error(), availability.AcceptedSubjects) {
+				t.Errorf("message %q must name the accepted forms", got.Error())
+			}
+		})
 	}
 }
 

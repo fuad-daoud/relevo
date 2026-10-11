@@ -1874,6 +1874,64 @@ func TestSendRefusesStoredTierAboveMaxWithoutAllowYolo(t *testing.T) {
 	}
 }
 
+// TestAMissingPlanFileIsAUsageError pins that a --file the caller named which
+// does not exist is refused as the caller's own argument: the class is
+// ErrBadInput, which the CLI maps to usage with `relevo help`, and the message
+// names the path so the reader can see which one was read. Reported as an
+// internal failure it sent a mistyped path to `relevo bugreport`.
+//
+// Wrapping the read in badInputf instead kills this (the error unwraps to
+// nothing the CLI knows and the message no longer leads with --file).
+func TestAMissingPlanFileIsAUsageError(t *testing.T) {
+	t.Parallel()
+
+	missing := filepath.Join(t.TempDir(), "no-such-dir", "plan.md")
+	_, err := readPromptFile(missing)
+	if err == nil {
+		t.Fatalf("readPromptFile(%q) = nil, want a refusal", missing)
+	}
+	if !errors.Is(err, ErrBadInput) {
+		t.Fatalf("err = %v, want it to unwrap to ErrBadInput", err)
+	}
+	if !strings.Contains(err.Error(), missing) {
+		t.Errorf("message %q must name the path it could not read", err.Error())
+	}
+	if !strings.Contains(err.Error(), "--file") {
+		t.Errorf("message %q must name the flag that carried it", err.Error())
+	}
+
+	// A readable path is still the plan's bytes, unchanged.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "plan.md")
+	if err := os.WriteFile(path, []byte("do it"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	body, err := readPromptFile(path)
+	if err != nil {
+		t.Fatalf("readPromptFile(present): %v", err)
+	}
+	if string(body) != "do it" {
+		t.Errorf("body = %q, want %q", body, "do it")
+	}
+}
+
+// TestSendRefusesAMissingPlanFileAsUsage pins the same refusal at the seam the
+// CLI reaches: Send and SendDryRun both read the plan through this preflight,
+// and neither may return an error the CLI cannot classify as usage.
+func TestSendRefusesAMissingPlanFileAsUsage(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := seedBound(t)
+	missing := filepath.Join(t.TempDir(), "no-such-plan.md")
+
+	if _, err := Send(context.Background(), rt, "webshop", missing, SendOptions{Defer: true}); !errors.Is(err, ErrBadInput) {
+		t.Errorf("Send(missing) = %v, want ErrBadInput", err)
+	}
+	if _, err := SendDryRun(context.Background(), rt, "webshop", missing, SendOptions{}); !errors.Is(err, ErrBadInput) {
+		t.Errorf("SendDryRun(missing) = %v, want ErrBadInput", err)
+	}
+}
+
 // TestSendRefusesASymlinkedPlanFile pins that a local send does not follow a
 // symlink planted at the round's plan path: the write is refused under the
 // store lock, so nothing is recorded, the binding keeps active with no

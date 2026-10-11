@@ -779,6 +779,7 @@ func TestSyncVerbClassificationIsTotal(t *testing.T) {
 		{relevosync.ErrQuotaReached, wire.SyncCodeRemoteRefused},
 		{db.ErrPreflightRefused, wire.SyncCodePreflightRefused},
 		{db.ErrContended, wire.SyncCodeContended},
+		{relevosync.ErrBackingOff, wire.SyncCodeBackingOff},
 		{db.ErrInvalid, wire.SyncCodeInvalid},
 		{errors.New("something else"), wire.SyncCodeInternal},
 	}
@@ -786,6 +787,33 @@ func TestSyncVerbClassificationIsTotal(t *testing.T) {
 		if got := verbClassify(tc.err); got != tc.want {
 			t.Errorf("classify(%v) = %q, want %q", tc.err, got, tc.want)
 		}
+	}
+}
+
+// TestABackingOffVerbIsARefusal pins that a push or pull refused while the
+// breaker waits out a stopped worker's delay comes back as the retryable
+// class rather than internal: the delay ends on its own, and the reader's
+// answer is the retry verb, not a defect report for a machine that is doing
+// exactly what its breaker is for. Dropping the case from verbClassify kills
+// this (the code falls back to internal).
+func TestABackingOffVerbIsARefusal(t *testing.T) {
+	t.Parallel()
+
+	for _, verb := range []string{wire.SyncVerbPush, wire.SyncVerbPull} {
+		t.Run(verb, func(t *testing.T) {
+			t.Parallel()
+
+			res := verbRefusal(verbClassify(relevosync.ErrBackingOff), relevosync.ErrBackingOff)
+			if res.OK {
+				t.Fatalf("the %s refusal reports OK", verb)
+			}
+			if res.Code != wire.SyncCodeBackingOff {
+				t.Fatalf("code = %q, want %q", res.Code, wire.SyncCodeBackingOff)
+			}
+			if !strings.Contains(res.Message, "backing off") {
+				t.Errorf("message %q must say the machine is backing off", res.Message)
+			}
+		})
 	}
 }
 

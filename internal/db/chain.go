@@ -386,6 +386,24 @@ func (t *Tx) chainDeleteChildren(owner, name string) error {
 	return nil
 }
 
+// ChainEventPut stores one trace row under the seq the row names, and reports
+// whether it was new. A mirror that copies a server's trace must keep the
+// server's own seqs, so the row cannot be allocated here; a seq already stored
+// is left exactly as it is, which is what makes a re-copy a no-op.
+func (t *Tx) ChainEventPut(id string, e ChainEventRow) (bool, error) {
+	res, err := t.exec(`INSERT OR IGNORE INTO chain_event (chain_id, seq, ts, phase, step, member, round, event, action, reason, plan)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, e.Seq, formatTime(e.TS), e.Phase, e.Step, e.Member, e.Round, e.Event, e.Action, e.Reason, e.Plan)
+	if err != nil {
+		return false, fmt.Errorf("db: chain event put %s: %w", id, mapBusy(err))
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("db: chain event put %s: rows affected: %w", id, mapBusy(err))
+	}
+	return n > 0, nil
+}
+
 // ChainEventAppend appends one trace row for chain id, with the next seq after
 // the chain's current maximum, so a caller never names a seq.
 func (t *Tx) ChainEventAppend(id string, e ChainEventRow) error {

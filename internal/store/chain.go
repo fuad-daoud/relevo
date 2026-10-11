@@ -93,6 +93,22 @@ func (t *Tx) ChainPut(c db.ChainRow) error {
 	return t.withDB(func(dtx *db.Tx) error { return dtx.ChainPut(c) })
 }
 
+// ChainEventPut stores one trace row on the named chain under the seq the row
+// names, and reports whether it was new.
+func (t *Tx) ChainEventPut(name string, e db.ChainEventRow) (bool, error) {
+	c, err := t.s.chain(name)
+	if err != nil {
+		return false, err
+	}
+	var added bool
+	err = t.withDB(func(dtx *db.Tx) error {
+		var perr error
+		added, perr = dtx.ChainEventPut(c.ID, e)
+		return perr
+	})
+	return added, err
+}
+
 // ChainEventAppend appends one trace row to the named chain, with the seq the
 // database allocates.
 func (t *Tx) ChainEventAppend(name string, e db.ChainEventRow) error {

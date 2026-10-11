@@ -453,9 +453,10 @@ const dedupeKVKey = "mirror-dedupe.v2"
 // the work: an existing kv row means an earlier run finished and ran is false; an
 // empty plan writes the stats and returns with no backup; otherwise the database is
 // backed up first (a failure returns the error with no deletes and no kv row), one
-// transaction deletes every planned row, the marker is written last, and a VACUUM
+// transaction deletes every planned row, the marker is written last, and the reclaim
 // failure is recorded in stats.VacuumErr rather than returned, since the rows are
-// gone either way.
+// gone either way. A handle the owner is serving skips the reclaim instead, and
+// records nothing.
 //
 // The marker is machine-local and the rows are shared history, so they are two
 // writes against two files rather than one transaction: the marker goes to the
@@ -505,7 +506,7 @@ func DedupeMirrorOnce(d *db.DB, backupDir string, now time.Time) (stats DedupeSt
 		return DedupeStats{}, false, err
 	}
 
-	if verr := d.Vacuum(); verr != nil {
+	if verr := d.Reclaim("mirror dedupe"); verr != nil {
 		stats.VacuumErr = verr.Error()
 	}
 	// Last, so a failure anywhere before it leaves the next pass retrying: the

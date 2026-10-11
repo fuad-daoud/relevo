@@ -113,3 +113,11 @@ Tests now pin the whole multi-stage log at the serve leg and at the render leg.
 `ChainResumeRequest` (plus its contract test). Without them `--from` cannot
 reach the server that drives the chain. No other struct in that file was
 touched.
+## Round 2-3: #1055
+
+`store.Sealable` now refuses a round with an unsettled `CheckRun` for it, so a
+seal pass cannot unlink a served check's log while it streams. A served
+check's `LogTruncated` is carried into the stored `check-NNN.log` as a leading
+"partial: ..." line naming the server path (`CheckView.LogPath`).
+`relevo show --gate` reads the gate log, not the check log, so it shows no
+such line.

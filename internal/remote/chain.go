@@ -74,6 +74,19 @@ type ClosedRoundView struct {
 	// PriorTokens is the tokens the server's earlier builders in this round
 	// used. Nil when zero, and nil from a server older than the field.
 	PriorTokens *usage.Tokens `json:"prior_tokens,omitempty"`
+	// RoundStartedAt is when the round's builder actually began on the server:
+	// the admit that spawned it, or the prompt handoff for a round that was
+	// never queued. The binding-level RoundStartedAt answers only for the
+	// binding's current round, so a per-round stamp is the only way a client
+	// learns when an older round of this member began. Zero from a server older
+	// than the field, and zero for a round the server never recorded a start
+	// for.
+	RoundStartedAt time.Time `json:"round_started_at,omitempty"`
+	// QueuedAt is when the server accepted this round into its builder queue,
+	// zero for a round that was handed straight to a builder. Paired with
+	// RoundStartedAt it is the round's queue wait; zero from a server older
+	// than the field.
+	QueuedAt time.Time `json:"queued_at,omitempty"`
 }
 
 // ChainMemberView is one chain member: its part and binding name, the actor it

@@ -108,7 +108,7 @@ func CompressHistoryOnce(d *DB, backupDir string, now time.Time) (stats Compress
 		stats.Tables = append(stats.Tables, ts)
 	}
 
-	stats = finishCompress(d, stats)
+	stats = finishCompress(d, stats, "history compression")
 	if err := putCompressStats(local, stats); err != nil {
 		return CompressStats{}, false, err
 	}
@@ -281,15 +281,19 @@ func readCompressRow(t *Tx, tbl compressTable, rowid int64) ([][]byte, []int, er
 	return values, codecs, nil
 }
 
-// finishCompress checkpoints, vacuums and checkpoints again: a -wal left in
-// place would keep the conversion's size, and the vacuum's own output needs the
-// second truncate. A failure is recorded, never returned, since the rows are
-// converted either way.
-func finishCompress(d *DB, stats CompressStats) CompressStats {
+// finishCompress checkpoints, reclaims and checkpoints again: a -wal left in
+// place would keep the conversion's size, and the reclaim's own output needs
+// the second truncate. A failure is recorded, never returned, since the rows
+// are converted either way, and the reclaim is skipped rather than refused on a
+// handle an owner is serving.
+//
+// pass names this pass in the line a skipped reclaim writes, so a reader of the
+// journal can tell which compaction did not run and why.
+func finishCompress(d *DB, stats CompressStats, pass string) CompressStats {
 	if err := d.walCheckpoint(); err != nil {
 		stats.CheckpointErr = err.Error()
 	}
-	if err := d.Vacuum(); err != nil {
+	if err := d.Reclaim(pass); err != nil {
 		stats.VacuumErr = err.Error()
 	}
 	if err := d.walCheckpoint(); err != nil && stats.CheckpointErr == "" {

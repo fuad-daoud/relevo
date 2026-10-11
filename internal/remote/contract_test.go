@@ -372,6 +372,9 @@ func filledClosedRoundView() ClosedRoundView {
 		Usage:       &u,
 		Rusage:      &rusage,
 		PriorTokens: &usage.Tokens{In: 100, CacheRead: 200, CacheWrite: 50, Out: 25},
+
+		RoundStartedAt: fixedTime.Add(-90 * time.Minute),
+		QueuedAt:       fixedTime.Add(-92 * time.Minute),
 	}
 }
 

@@ -181,6 +181,13 @@ func dbSyncVerbRefusal(verb string, err error) error {
 		// The database was busy and nothing was written. The verb is idempotent
 		// over that, so the next hint is the verb itself rather than a report.
 		return failNext(codeRefused, "relevo db sync "+verb, "%s", refusal.Message)
+	case wire.SyncCodeBackingOff:
+		// This machine is waiting out the delay a stopped worker earned, and
+		// nothing was written. The delay ends on its own, so the reader is
+		// told that and given the verb that clears it now rather than a defect
+		// report for a breaker doing its job.
+		return failNext(codeRefused, "relevo db sync retry",
+			"%s; it ends on its own, or run `relevo db sync retry` now", refusal.Message)
 	case wire.SyncCodeRemoteRefused, wire.SyncCodeRemoteSchemaMissing:
 		// The remote refused the statement this machine's change set carried, and
 		// said which call and which constraint. It is a refusal: the reader is

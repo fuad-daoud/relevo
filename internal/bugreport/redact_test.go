@@ -13,12 +13,33 @@ var baseRedactor = Redactor{Home: "/home/fuad", User: "fuad", Host: "contabo-01"
 
 // redactCases is the rule table: one row per rule of the pass, and the rows
 // that pin what it must leave alone.
+var gitRedactor = Redactor{Home: "/home/fuad", User: "fuad", Host: "contabo-01",
+	GitName: "Fuad Daoud", GitEmail: "fuad.daoud@example.org"}
+
 var redactCases = []struct {
 	name string
 	r    Redactor
 	in   string
 	want string
 }{
+	{
+		name: "the whole git name and email are masked, surname and domain with them",
+		r:    gitRedactor,
+		in:   "git identity: Fuad Daoud <fuad.daoud@example.org>",
+		want: "git identity: <git-name> <<git-email>>",
+	},
+	{
+		name: "the git email is masked inside other text",
+		r:    gitRedactor,
+		in:   "git -c user.email=fuad.daoud@example.org commit",
+		want: "git -c user.email=<git-email> commit",
+	},
+	{
+		name: "a one-word git name never eats a longer word",
+		r:    Redactor{GitName: "Fuadx"},
+		in:   "Fuadx and Fuadxylophone",
+		want: "<git-name> and Fuadxylophone",
+	},
 	{
 		name: "this machine's home becomes a tilde",
 		r:    baseRedactor,
@@ -241,6 +262,20 @@ func TestRedactMarksItsWork(t *testing.T) {
 		if !strings.Contains(line, "shorter than 3 characters") {
 			t.Errorf("a short name must be accounted for, got %q", line)
 		}
+	}
+}
+
+// TestRedactNamesTheGitIdentityPlaceholders pins that a bundle whose git
+// identity was redacted says so in its header, so a reader meeting <git-email>
+// knows what it stands for; a bundle with no identity keeps the header as it was.
+func TestRedactNamesTheGitIdentityPlaceholders(t *testing.T) {
+	with := Redact(Bundle{}, Redactor{User: "fuad", Host: "contabo-01", GitName: "Fuad Surname", GitEmail: "fuad.surname@example.org"})
+	if !strings.Contains(strings.Join(with.Privacy, "\n"), "the git identity to <git-name> and <git-email>") {
+		t.Errorf("Privacy = %q, want a line naming the git identity placeholders", with.Privacy)
+	}
+	without := Redact(Bundle{}, Redactor{User: "fuad", Host: "contabo-01"})
+	if len(without.Privacy) != 1 {
+		t.Errorf("Privacy = %q, want only the pass line when no identity was redacted", without.Privacy)
 	}
 }
 

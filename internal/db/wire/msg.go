@@ -208,6 +208,12 @@ const (
 	// SyncCodeOverQuota is a join estimated to use more Turso traffic than the
 	// month has left; --yes joins anyway.
 	SyncCodeOverQuota = "over_quota"
+	// SyncCodeBackingOff is a verb refused because the breaker is waiting out
+	// the delay a stopped worker earned. It is its own class rather than a
+	// share of contended because that delay is the whole answer: nothing else
+	// was holding the call, this machine's own backoff was, and it ends on its
+	// own. The reader's way out is the retry verb, not a defect report.
+	SyncCodeBackingOff = "backing_off"
 	// SyncCodeInternal is a failure with no class of its own -- the daemon's
 	// own bug, or a hook that panicked or reported nothing.
 	SyncCodeInternal = "internal"

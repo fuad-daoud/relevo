@@ -137,32 +137,71 @@ func RecordSpawnFailureLocked(d Deps, token, binding string, cause error) {
 	recordSpawnFailureWith(d, true, token, binding, cause)
 }
 
-// Unavailable records that token's provider is rate-limited, so every candidate
-// sharing that provider shows as gated -- a quota is enforced per subscription
-// or key, not per model. token (a candidate name or a canonical token) must
-// resolve to a configured candidate: a typo is refused rather than recorded.
+// GateProvider resolves what `relevo gate <subject>` gates: a configured
+// candidate's provider, else the provider or group subject names, known when
+// the set configures it or the ledger already gates it. It shares
+// ResolveClearSubject's rule rather than stating a second one, so gate and
+// gate --clear accept one set of subjects. keys overrides the ledger subjects
+// recorded, as an account pool needs.
+func GateProvider(set *candidate.Set, l Ledger, subject string, keys []string) (provider string, subjects []string, err error) {
+	if c, rerr := set.Resolve(subject); rerr == nil {
+		if len(keys) > 0 {
+			return c.Ref().Provider, keys, nil
+		}
+		return c.Ref().Provider, []string{c.Ref().Provider}, nil
+	} else if errors.Is(rerr, candidate.ErrBadRef) {
+		// A subject carrying a slash is a token that does not parse. A provider
+		// is a single segment, so this is a typo and never a provider: the
+		// refusal the parse already produced is the right one.
+		return "", nil, rerr
+	}
+
+	provider, cerr := ResolveClearSubject(set, l, subject)
+	if cerr != nil {
+		return "", nil, cerr
+	}
+	if len(keys) > 0 {
+		return provider, keys, nil
+	}
+	if _, accountName, ok := account.ParseGateKey(subject); ok && accountName != "" {
+		return provider, []string{account.GateKey(provider, accountName)}, nil
+	}
+	return provider, []string{provider}, nil
+}
+
+// Unavailable records that subject's provider is rate-limited, so every
+// candidate sharing that provider shows as gated -- a quota is enforced per
+// subscription or key, not per model. subject may be a candidate name or a
+// canonical token (a trailing #effort suffix is ignored), a bare provider or
+// group, or a group@account key: the same subjects `gate --clear` takes, and
+// the ones the halt texts tell a reader to type. A subject relevo knows
+// nothing about is refused rather than recorded.
 //
 // keys names the account gates to record instead of the bare group, one
-// group@account entry each; it is empty on every host with no accounts, when
-// the bare group gates every candidate of the provider exactly as before.
-func Unavailable(d Deps, token string, until time.Time, reason string, keys ...string) (provider string, err error) {
-	c, err := d.Candidates.Resolve(token)
+// group@account entry each; it is empty on every host with no accounts, when the
+// bare group gates every candidate of the provider exactly as before.
+func Unavailable(d Deps, subject string, until time.Time, reason string, keys ...string) (provider string, err error) {
+	// The pruned ledger is what decides whether a provider no configured
+	// candidate uses is still known: a gate left by a candidate since removed
+	// must stay clearable and re-gateable.
+	l := Ledger{}
+	if d.Gates != nil {
+		if loaded, lerr := LoadLedger(d.Gates); lerr == nil {
+			l = loaded.Prune(d.Now())
+		}
+	}
+
+	provider, subjects, err := GateProvider(d.Candidates, l, subject, keys)
 	if err != nil {
 		return "", err
-	}
-	ref := c.Ref()
-
-	subjects := keys
-	if len(subjects) == 0 {
-		subjects = []string{ref.Provider}
 	}
 
 	now := d.Now()
 	err = d.Store.WithLock(func(*store.Tx) error {
-		for _, subject := range subjects {
+		for _, s := range subjects {
 			entry := Entry{
 				Kind:    RateLimited,
-				Subject: subject,
+				Subject: s,
 				At:      now,
 				Until:   until,
 				Note:    sanitize.Text(reason),
@@ -178,7 +217,7 @@ func Unavailable(d Deps, token string, until time.Time, reason string, keys ...s
 		return "", err
 	}
 
-	return ref.Provider, nil
+	return provider, nil
 }
 
 // Available clears every rate-limit gate on subject's provider. subject may be

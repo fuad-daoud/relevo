@@ -153,6 +153,13 @@ func runBugreport(opts bugreportOptions) error {
 		bugreportSources(rt, root, L, le, haveLE, opts),
 	)
 	r := bugreport.NewRedactor()
+	if rt.Git != nil {
+		if wd, wdErr := os.Getwd(); wdErr == nil {
+			if name, email, identErr := rt.Git.Identity(context.Background(), wd); identErr == nil {
+				r.GitName, r.GitEmail = name, email
+			}
+		}
+	}
 	r.Raw = opts.raw
 	b = bugreport.Redact(b, r)
 

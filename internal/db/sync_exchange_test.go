@@ -388,10 +388,13 @@ func drainUnderTwoRivals(t *testing.T, d *DB, path string) ([]DrainedEntry, erro
 
 	// Each rival hammers BEGIN IMMEDIATE for as long as the drain runs.
 	spun := make(chan struct{}, len(samplers))
-	spinRivals(samplers, &competingRan, stop, spun)
-	// Let the sampler reach the lock before the drain is let run, so it is
-	// contending rather than starting afterwards.
-	time.Sleep(20 * time.Millisecond)
+	attempted := make(chan struct{}, len(samplers))
+	spinRivals(samplers, &competingRan, stop, spun, attempted)
+	// Wait for every sampler to have been turned away by the drain's lock once,
+	// so each is contending rather than starting afterwards.
+	for range samplers {
+		<-attempted
+	}
 	close(release)
 	derr := <-drainDone
 	close(stop)
@@ -404,8 +407,14 @@ func drainUnderTwoRivals(t *testing.T, d *DB, path string) ([]DrainedEntry, erro
 
 	// Busy, then success: the same write lands once the drain has let the lock
 	// go, which is what makes the failures above the drain's lock rather than a
-	// handle that cannot write at all.
-	if err := exchangeWrite(failFast, competingRepoWrite); err != nil {
+	// handle that cannot write at all. The rivals are closed first because an
+	// idle pooled connection of a second handle on the file can hold a lock the
+	// proof write then waits on; a process opens one handle per file, so only
+	// the test has rivals to close. The proof write uses a default handle.
+	for _, rival := range append(samplers, failFast) {
+		_ = rival.Close()
+	}
+	if err := exchangeWrite(openExchangeDB(t, path), competingRepoWrite); err != nil {
 		t.Fatalf("the competing write after the drain: %v", err)
 	}
 	return drained, nil
@@ -415,10 +424,11 @@ func drainUnderTwoRivals(t *testing.T, d *DB, path string) ([]DrainedEntry, erro
 // stop closes, so a drain that lets the lock go between its two reads is caught
 // at the moment it does. A rival whose body runs marks ran, which the drain
 // reads from inside its own transaction before it commits. Each rival sends to
-// spun as it stops.
-func spinRivals(rivals []*DB, ran *int32, stop <-chan struct{}, spun chan<- struct{}) {
+// spun as it stops, and to attempted once after its first attempt returns.
+func spinRivals(rivals []*DB, ran *int32, stop <-chan struct{}, spun, attempted chan<- struct{}) {
 	for _, rival := range rivals {
 		go func() {
+			first := true
 			for {
 				select {
 				case <-stop:
@@ -431,6 +441,10 @@ func spinRivals(rivals []*DB, ran *int32, stop <-chan struct{}, spun chan<- stru
 					_, err := tx.exec(competingRepoWrite)
 					return err
 				})
+				if first {
+					first = false
+					attempted <- struct{}{}
+				}
 			}
 		}()
 	}
