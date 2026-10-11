@@ -142,3 +142,58 @@ func note(high *atomic.Int64, n int64) {
 		}
 	}
 }
+
+// TestEveryPooledConnectionAppliesThePageCacheBound pins that the cache bound is
+// set per connection, not just on the first one the pool opens: two connections
+// held at once must both read it back.
+func TestEveryPooledConnectionAppliesThePageCacheBound(t *testing.T) {
+	pool, err := OpenRaw(filepath.Join(t.TempDir(), "cache.db"))
+	if err != nil {
+		t.Fatalf("open the pool: %v", err)
+	}
+	defer func() { _ = pool.Close() }()
+
+	for i := range 3 {
+		conn, err := pool.Conn(context.Background())
+		if err != nil {
+			t.Fatalf("check out connection %d: %v", i, err)
+		}
+		defer func() { _ = conn.Close() }()
+		var got int
+		if err := conn.QueryRowContext(context.Background(), `PRAGMA cache_size`).Scan(&got); err != nil {
+			t.Fatalf("read cache_size on connection %d: %v", i, err)
+		}
+		if want := -pageCacheKiB; got != want {
+			t.Errorf("connection %d cache_size = %d, want %d", i, got, want)
+		}
+	}
+}
+
+// TestAnIdlePoolKeepsOnlyItsIdleBound pins that a burst past maxIdleConns is
+// closed back down on release instead of being kept for the process's life.
+func TestAnIdlePoolKeepsOnlyItsIdleBound(t *testing.T) {
+	pool, err := OpenRaw(filepath.Join(t.TempDir(), "idle.db"))
+	if err != nil {
+		t.Fatalf("open the pool: %v", err)
+	}
+	defer func() { _ = pool.Close() }()
+
+	held := make([]*sql.Conn, 0, maxIdleConns*2)
+	for range maxIdleConns * 2 {
+		conn, err := pool.Conn(context.Background())
+		if err != nil {
+			t.Fatalf("check out: %v", err)
+		}
+		held = append(held, conn)
+	}
+	for _, c := range held {
+		_ = c.Close()
+	}
+	st := pool.Stats()
+	if st.Idle > maxIdleConns {
+		t.Errorf("idle connections = %d, want at most %d", st.Idle, maxIdleConns)
+	}
+	if st.MaxIdleClosed == 0 {
+		t.Error("no connection was closed for exceeding the idle bound")
+	}
+}
