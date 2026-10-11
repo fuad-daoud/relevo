@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template, not a usable plist: `make service` substitutes @BIN@ and @HOME@ and
+  writes the result to ~/Library/LaunchAgents/. launchd does not expand ~, so
+  every path here has to be absolute by the time it lands.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.github.fuad-daoud.relevo</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>@BIN@</string>
+    <string>daemon</string>
+    <string>--interval</string>
+    <string>2s</string>
+  </array>
+
+  <!-- The daemon execs the harness CLIs by PATH lookup, and a LaunchAgent
+       inherits no login shell PATH, so it has to be named here. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>@HOME@/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Restart on failure only. A clean exit is relevo being told to stop, and
+       launchd must not fight that. -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>@HOME@/Library/Logs/relevo.log</string>
+  <key>StandardErrorPath</key>
+  <string>@HOME@/Library/Logs/relevo.log</string>
+</dict>
+</plist>

@@ -52,6 +52,7 @@ check-static:
 	sh scripts/check-plugin-version.sh
 	sh scripts/check-name.sh
 	sh scripts/check-board-theme.sh
+	sh scripts/serviceunit-dist.sh --check
 	$(MAKE) check-scripts
 
 # mod-test validates and tests the Claude Code mod. Local only: CI has no claude.
