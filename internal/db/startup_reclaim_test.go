@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -60,7 +61,9 @@ func TestDropTursoCdcSkipsTheReclaimOnAServedHandle(t *testing.T) {
 // just the answer: an unserved handle compacts exactly as before, and its
 // freed pages go back to the filesystem.
 func TestReclaimVacuumsAnUnservedHandle(t *testing.T) {
-	d := openTestDB(t)
+	// A reclaim is a direct-only operation, so the handle is direct even under
+	// the owner-mode switch, which would otherwise dial it through an owner.
+	d := directOpen(t, filepath.Join(t.TempDir(), "relevo.db"), Options{})
 	if _, err := d.sqlDB.Exec(`CREATE TABLE filler (id INTEGER PRIMARY KEY, body BLOB)`); err != nil {
 		t.Fatalf("create the filler table: %v", err)
 	}
