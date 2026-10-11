@@ -199,7 +199,9 @@
               "cache_read": 200,
               "cache_write": 50,
               "out": 25
-            }
+            },
+            "round_started_at": "2026-01-02T01:34:05Z",
+            "queued_at": "2026-01-02T01:32:05Z"
           }
         ]
       }

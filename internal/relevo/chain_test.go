@@ -805,8 +805,8 @@ func TestChainFinishQueuesExactlyOneDelivery(t *testing.T) {
 	if len(pending) != 1 {
 		t.Fatalf("pending chain deliveries = %d, want exactly 1", len(pending))
 	}
-	if pending[0].Round != chainBinding(t, rt, "shop").Round {
-		t.Errorf("delivery round = %d, want the builder's current round %d", pending[0].Round, chainBinding(t, rt, "shop").Round)
+	if want := chainBinding(t, rt, "shop").Round - 1; pending[0].Round != want {
+		t.Errorf("delivery round = %d, want the builder's last closed round %d", pending[0].Round, want)
 	}
 
 	// A second tick cannot add another: the terminal transition happened

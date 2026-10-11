@@ -348,5 +348,12 @@ func chainRoundFacts(cr remote.ClosedRoundView, view remote.BindingView) remote.
 	if cr.PriorTokens == nil {
 		cr.PriorTokens = view.PriorTokens
 	}
+	// The binding view's stamps are the newest closed round's on a server that
+	// keeps them, so an entry that carries none is completed from the view.
+	// An older round has no view-level figure to complete it from and keeps
+	// whatever the server shipped for that round alone.
+	if cr.RoundStartedAt.IsZero() {
+		cr.RoundStartedAt = view.RoundStartedAt
+	}
 	return cr
 }
