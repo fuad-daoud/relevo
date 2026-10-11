@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -130,6 +132,77 @@ func TestSyncWritersNeverReturnConflict(t *testing.T) {
 	}
 }
 
+// TestDBSyncEnableTokenResolvesBeforeTheDaemon pins what the client sends, which
+// is the only half of the token rule this process owns: the flag beats the
+// environment, a flag asked for and left empty falls through to the environment,
+// and a token is never rendered into the error a refusal carries.
+//
+// The case this names and the ordinary ones are one table because they are one
+// rule. The daemon holds the stored token and falls back to it, so a bare enable
+// is a request with an empty token rather than a refusal here: an enable that
+// stopped before the join finished left the mark off, and the retry that resumes
+// it is exactly the invocation carrying no token. A machine with nothing stored
+// is refused by the daemon, naming both routes, with the code and the text it
+// already had.
+//
+// The mutation is dbSyncEnableToken refusing on intake's own ErrNoToken, which
+// sends a resume down a usage error before anything is dialed.
+func TestDBSyncEnableTokenResolvesBeforeTheDaemon(t *testing.T) {
+	const envToken = "FIXTURE-TOKEN-ENV-cccccccccccccccccccc"
+	cases := []struct {
+		name      string
+		fromStdin bool
+		stdin     string
+		env       string
+		want      []byte
+	}{
+		{name: "bare", want: nil},
+		{name: "stdin", fromStdin: true, stdin: testVerbTokenStdin, want: []byte(testVerbTokenStdin)},
+		{name: "env", env: envToken, want: []byte(envToken)},
+		// The flag beats the environment, and a flag that was asked for and left
+		// empty is not an answer, so the environment still answers.
+		{name: "stdin beats env", fromStdin: true, stdin: testVerbTokenStdin, env: envToken, want: []byte(testVerbTokenStdin)},
+		{name: "empty stdin falls through to env", fromStdin: true, stdin: "  \n", env: envToken, want: []byte(envToken)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			prev := dbSyncTokenStdin
+			dbSyncTokenStdin = &testReader{data: []byte(c.stdin)}
+			t.Cleanup(func() { dbSyncTokenStdin = prev })
+			t.Setenv(relevosync.EnvToken, c.env)
+
+			token, err := dbSyncEnableToken(c.fromStdin)
+			if err != nil {
+				t.Fatalf("dbSyncEnableToken: %v", err)
+			}
+			if string(token) != string(c.want) {
+				t.Errorf("token = %q, want %q", token, c.want)
+			}
+		})
+	}
+}
+
+// TestDBSyncEnableTokenNeverRendersItsValue pins that the one refusal this
+// process can still raise about a token carries the routes and nothing else.
+// The value is never formatted into an error, so a log line built from one
+// cannot leak the credential.
+func TestDBSyncEnableTokenNeverRendersItsValue(t *testing.T) {
+	prev := dbSyncTokenStdin
+	dbSyncTokenStdin = &testReader{err: errors.New("pipe is closed")}
+	t.Cleanup(func() { dbSyncTokenStdin = prev })
+
+	_, err := dbSyncEnableToken(true)
+	if err == nil {
+		t.Fatal("a stdin that cannot be read was accepted")
+	}
+	if strings.Contains(err.Error(), relevosync.SecretToken) {
+		t.Errorf("the refusal rendered the secret name from a value it never read: %v", err)
+	}
+	if !strings.Contains(err.Error(), "relevo db sync enable --token-stdin") {
+		t.Errorf("the refusal does not name the flag to fix it: %v", err)
+	}
+}
+
 // testVerbStdinReader hands a verb its token without a pipe, so no test reads
 // the caller's real stdin.
 func testVerbStdinReader(t *testing.T, value string) *testReader {
@@ -140,9 +213,15 @@ func testVerbStdinReader(t *testing.T, value string) *testReader {
 type testReader struct {
 	data []byte
 	off  int
+	// err is returned instead of the data when a test wants a pipe that failed
+	// rather than one that closed cleanly.
+	err error
 }
 
 func (r *testReader) Read(p []byte) (int, error) {
+	if r.err != nil {
+		return 0, r.err
+	}
 	if r.off >= len(r.data) {
 		return 0, io.EOF
 	}

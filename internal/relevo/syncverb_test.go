@@ -206,6 +206,115 @@ func TestSyncVerbEnableJoins(t *testing.T) {
 	}
 }
 
+// TestSyncVerbEnableTakesTheStoredTokenOnAnEmptyTail pins the contract the
+// client now relies on: an enable whose tail carries no token is a request to
+// join with the token this machine already stored, not a refusal.
+//
+// The case it names is an interrupted join. An enable that stopped before the
+// join finished left the mark off, so the operator re-runs it, and re-running it
+// with no token is the ordinary way to do that. Refusing here would strand the
+// machine in exactly the state the retry exists to leave.
+//
+// The mutation is the preflight demanding token bytes rather than falling back
+// to the stored one.
+func TestSyncVerbEnableTakesTheStoredTokenOnAnEmptyTail(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	shared, err := db.OpenSplit(path, db.Options{Origin: "m1"})
+	if err != nil {
+		t.Fatalf("db.OpenSplit: %v", err)
+	}
+	t.Cleanup(func() { _ = shared.Close() })
+	local, err := relevosync.LocalHandle(shared)
+	if err != nil {
+		t.Fatalf("LocalHandle: %v", err)
+	}
+	if _, _, err := db.CompressHistoryOnce(shared, t.TempDir(), time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("CompressHistoryOnce: %v", err)
+	}
+	if err := relevosync.SetR2(local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetR2: %v", err)
+	}
+	if err := relevosync.SetToken(local, []byte(verbFixtureToken), time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetToken: %v", err)
+	}
+	putVerbSection(t, local, "libsql://stored.invalid")
+	log := synclog.NewMemTransport("m1")
+	runner := &VerbRunner{
+		Shared: shared,
+		Local:  local,
+		Path:   shared.Path(),
+		Runner: &relevosync.Runner{Local: local},
+		Open:   func(context.Context) (synclog.LogTransport, error) { return log, nil },
+	}
+	res := runner.Run(context.Background(), &wire.SyncVerb{
+		Verb:      wire.SyncVerbEnable,
+		RemoteURL: "libsql://stored.invalid",
+	}, nil)
+	if !res.OK {
+		t.Fatalf("a tokenless enable on a machine holding a token was refused: %s", res.Message)
+	}
+	if res.Code == wire.SyncCodeNoToken {
+		t.Error("the executor answered a token refusal where it should have joined")
+	}
+	on, err := relevosync.Enabled(local)
+	if err != nil || !on {
+		t.Fatalf("Enabled = %v, %v; want the mark on", on, err)
+	}
+	if _, _, err := relevosync.ReadToken(local); err != nil {
+		t.Fatalf("ReadToken: %v", err)
+	}
+}
+
+// TestSyncVerbEnableRefusesTheStoredTokenWhenThereIsNone pins the other half,
+// which is the half that must not have moved: a machine with no token anywhere
+// is refused with the code the client maps to a usage error and with the message
+// naming both routes.
+//
+// The token is never named and its value never appears, so the refusal is safe
+// to log. This is what a bare enable answers once the client's own check is gone.
+func TestSyncVerbEnableRefusesTheStoredTokenWhenThereIsNone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	shared, err := db.OpenSplit(path, db.Options{Origin: "m1"})
+	if err != nil {
+		t.Fatalf("db.OpenSplit: %v", err)
+	}
+	t.Cleanup(func() { _ = shared.Close() })
+	local, err := relevosync.LocalHandle(shared)
+	if err != nil {
+		t.Fatalf("LocalHandle: %v", err)
+	}
+	if err := relevosync.SetR2(local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetR2: %v", err)
+	}
+	putVerbSection(t, local, "libsql://stored.invalid")
+	runner := &VerbRunner{
+		Shared: shared,
+		Local:  local,
+		Path:   shared.Path(),
+		Runner: &relevosync.Runner{Local: local},
+	}
+	res := runner.Run(context.Background(), &wire.SyncVerb{
+		Verb:      wire.SyncVerbEnable,
+		RemoteURL: "libsql://stored.invalid",
+	}, nil)
+	if res.OK {
+		t.Fatal("an enable joined a machine holding no token at all")
+	}
+	if res.Code != wire.SyncCodeNoToken {
+		t.Errorf("code = %q, want %q", res.Code, wire.SyncCodeNoToken)
+	}
+	if !strings.Contains(res.Message, relevosync.EnvToken) {
+		t.Errorf("the refusal does not name the environment route: %q", res.Message)
+	}
+	on, err := relevosync.Enabled(local)
+	if err != nil {
+		t.Fatalf("Enabled: %v", err)
+	}
+	if on {
+		t.Error("a refused enable left the machine marked on")
+	}
+}
+
 // TestSyncVerbDisableStillRuns pins the turn-off's contract: it is the one verb
 // that only writes machine-local rows, so it marks the machine off, forgets the
 // token and reports its steps in the contract's order.
