@@ -321,6 +321,28 @@ not_done:
 	})
 }
 
+// TestParseReportTailWrappedListItem pins that a line indented deeper than
+// its list item's dash continues that item, as YAML folds a wrapped scalar.
+func TestParseReportTailWrappedListItem(t *testing.T) {
+	t.Parallel()
+	input := "```relevo\nstatus: done\nnot_done:\n" +
+		"  - compaction, the join guard,\n" +
+		"    byte counting: status output\n" +
+		"  - the end-of-run publish\n" +
+		"commands_run:\n  - make check\n```\n"
+	tail, ok, reason := ParseWithReason([]byte(input))
+	if !ok {
+		t.Fatalf("ok=false, reason %q", reason)
+	}
+	want := []string{"compaction, the join guard, byte counting: status output", "the end-of-run publish"}
+	if !reflect.DeepEqual(tail.NotDone, want) {
+		t.Fatalf("not_done: got %q, want %q", tail.NotDone, want)
+	}
+	if !reflect.DeepEqual(tail.CommandsRun, []string{"make check"}) {
+		t.Fatalf("commands_run: got %q", tail.CommandsRun)
+	}
+}
+
 func TestParseReportTailListOverrides(t *testing.T) {
 	t.Parallel()
 
@@ -440,6 +462,24 @@ func TestParseReportTailReasons(t *testing.T) {
 		}
 		if reason != "tail: line 3 has no ':'" {
 			t.Fatalf("reason = %q, want tail: line 3 has no ':'", reason)
+		}
+	})
+
+	t.Run("line no deeper than the item's dash is not a continuation", func(t *testing.T) {
+		for _, line := range []string{"stray words", "  stray words"} {
+			input := "```relevo\nstatus: done\nnot_done:\n  - docs\n" + line + "\n```\n"
+			_, ok, reason := ParseWithReason([]byte(input))
+			if ok || reason != "tail: line 5 has no ':'" {
+				t.Fatalf("%q: ok=%v reason=%q, want tail: line 5 has no ':'", line, ok, reason)
+			}
+		}
+	})
+
+	t.Run("indented line before a list's first item is refused", func(t *testing.T) {
+		input := "```relevo\nstatus: done\nnot_done:\n    stray words\n```\n"
+		_, ok, reason := ParseWithReason([]byte(input))
+		if ok || reason != "tail: line 4 has no ':'" {
+			t.Fatalf("ok=%v reason=%q, want tail: line 4 has no ':'", ok, reason)
 		}
 	})
 
