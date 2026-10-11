@@ -110,7 +110,7 @@ func chainPullGone(ctx context.Context, rt Runtime, c db.ChainRow) error {
 			return nil
 		}
 		entry := store.LogEntry{
-			TS: rt.Now().UTC(), Round: carrier.Round,
+			TS: rt.Now().UTC(), Round: chainTerminalRound(tx, carrier),
 			Direction: store.DirToMasterMind, Kind: store.KindChain,
 			Payload: chainTerminalPayload(cur, 0),
 		}
@@ -423,7 +423,7 @@ func chainPullFinish(ctx context.Context, rt Runtime, c db.ChainRow, view remote
 			return nil
 		}
 		entry := store.LogEntry{
-			TS: now, Round: carrier.Round,
+			TS: now, Round: chainTerminalRound(tx, carrier),
 			Direction: store.DirToMasterMind, Kind: store.KindChain,
 			Payload: chainTerminalPayload(row, view.Findings),
 		}

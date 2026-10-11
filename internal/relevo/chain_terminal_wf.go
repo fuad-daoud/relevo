@@ -40,11 +40,28 @@ func chainTerminalWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRo
 		return nil
 	}
 	entry := store.LogEntry{
-		TS: rt.Now().UTC(), Round: carrier.Round,
+		TS: rt.Now().UTC(), Round: chainTerminalRound(tx, carrier),
 		Direction: store.DirToMasterMind, Kind: store.KindChain,
 		Payload: chainTerminalWFPayload(c, next),
 	}
 	return delivery.Queue(ctx, deliveryDeps(rt), tx, carrier.Name, entry)
+}
+
+// chainTerminalRound is the round a chain's end notice is filed under: the
+// carrier's last closed round. The carrier's own round has already advanced
+// past it, and a notice filed there would be the only entry of a round nobody
+// ever ran. A carrier that never reported keeps its current round.
+func chainTerminalRound(tx *store.Tx, b store.Binding) int {
+	entries, err := tx.ReadLog(b.Name)
+	if err != nil {
+		return b.Round
+	}
+	for r := b.Round; r >= 1; r-- {
+		if store.HasKind(entries, r, store.DirToMasterMind, store.KindReport) {
+			return r
+		}
+	}
+	return b.Round
 }
 
 // chainTerminalCarrier names the member a chain's end is recorded against: the
