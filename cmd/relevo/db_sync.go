@@ -40,8 +40,8 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"Writing the machine-local sync section by hand stays the advanced\n" +
 	"route: `relevo config set sync '{\"remote_url\":\"...\"}'`.\n" +
 	"--token-stdin reads the turso.token from standard input and\n" +
-	"beats " + relevosync.EnvToken + "; with neither, enable refuses. The value\n" +
-	"appears in no log, no error and no payload.\n" +
+	"beats " + relevosync.EnvToken + "; with neither, the stored token is used,\n" +
+	"and enable refuses only if none is stored. The value appears nowhere else.\n" +
 	dbSyncR2UsageText +
 	"disable marks this machine off, forgets the token, stops the worker,\n" +
 	"deletes relevo-sync.db and the driver's files beside it, and drops the\n" +
@@ -360,10 +360,11 @@ const verbDialSlack = 5 * time.Second
 // environment, so a script that pipes a token cannot be overridden by whatever
 // the environment happens to carry.
 //
-// Neither route yielding anything is ErrNoToken, and this is the one fixed line
-// that says so: the routes are named, the attempt is not. Every line out of
-// enable can end up in a log, so nothing here says which route was tried or what
-// either of them held.
+// Neither route yielding anything is not a refusal here but an empty answer: the
+// daemon holds the stored token and falls back to it, so a tokenless enable
+// resumes an interrupted join rather than raising a usage error, and a machine
+// with nothing stored is refused by the daemon's own preflight. This process
+// never says which route was tried or what either held.
 func dbSyncEnableToken(fromStdin bool) ([]byte, error) {
 	intake := relevosync.TokenIntake{EnvValue: dbSyncGetenv(relevosync.EnvToken)}
 	if fromStdin {
@@ -374,6 +375,13 @@ func dbSyncEnableToken(fromStdin bool) ([]byte, error) {
 		intake.FromStdin, intake.Stdin = true, token
 	}
 	token, _, err := intake.Resolve()
+	if errors.Is(err, relevosync.ErrNoToken) {
+		// Neither route carried a token, and that is not this process's refusal
+		// to make: the daemon falls back to the stored one exactly as it does for
+		// the bucket secret. The tail goes out empty, and a machine with nothing
+		// stored is refused there, by the preflight, naming both routes.
+		return nil, nil
+	}
 	if err != nil {
 		return nil, fail(codeUsage, "%v", err)
 	}

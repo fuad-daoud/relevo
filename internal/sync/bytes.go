@@ -128,6 +128,14 @@ func (r *Runner) countBytes(ctx context.Context, t *StopTransport) {
 	recordStats(r.Local, &r.lastRead, cur)
 }
 
+// CountMoved folds what a one-shot verb's transport moved into this month's row
+// through the same baseline the steady loop reads, so the next attempt measures
+// from here and recounts nothing. It is meant to be deferred: the bytes a failed
+// verb moved were spent too.
+func (r *Runner) CountMoved(ctx context.Context, t *StopTransport) {
+	r.countBytes(ctx, t)
+}
+
 // SeedStats sets the reading the next count is measured against, for a worker a
 // join already counted up to cur.
 func (r *Runner) SeedStats(cur synclog.Stats) {
