@@ -43,6 +43,7 @@ github.com/fuad-daoud/relevo/internal/reporttail 97.6
 github.com/fuad-daoud/relevo/internal/roles 92.3
 github.com/fuad-daoud/relevo/internal/sanitize 100.0
 github.com/fuad-daoud/relevo/internal/serve 76.9
+github.com/fuad-daoud/relevo/internal/serviceunit 80.0
 github.com/fuad-daoud/relevo/internal/setup 92.2
 github.com/fuad-daoud/relevo/internal/spawn 60.0
 github.com/fuad-daoud/relevo/internal/stats 97.9

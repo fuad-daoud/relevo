@@ -56,6 +56,7 @@ Commands:
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
               --done clears every binding the MasterMind marked DONE [--delete] [--dry-run]
   daemon    run the long-running reconciler (daemon stop stops the daemon this CLI started)
+  service   install|uninstall the daemon's service unit (systemd user unit or launchd agent) [--force] [--json]
   mcp       run an MCP server over stdio for a Claude Code MasterMind: status/send/wait/done/show/gate
             as tools
   push      hold this MasterMind's push claim and write each round event to stdout as NDJSON;
@@ -254,6 +255,8 @@ func run(args []string) error {
 		return cmdStop(args[1:])
 	case "daemon":
 		return cmdDaemon(args[1:])
+	case "service":
+		return cmdService(args[1:])
 	case "mcp":
 		return cmdMCP(args[1:])
 	case "push":

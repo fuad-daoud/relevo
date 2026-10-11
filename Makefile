@@ -1,8 +1,4 @@
 BIN     := $(HOME)/.local/bin/relevo
-UNIT    := $(HOME)/.config/systemd/user/relevo.service
-LABEL   := com.github.fuad-daoud.relevo
-PLIST   := $(HOME)/Library/LaunchAgents/$(LABEL).plist
-UNAME_S := $(shell uname -s)
 
 # Stamp the binary so `relevo version` means something in a build made from a
 # clone. A `go install`ed binary gets its version from the module proxy
@@ -52,6 +48,7 @@ check-static:
 	sh scripts/check-plugin-version.sh
 	sh scripts/check-name.sh
 	sh scripts/check-board-theme.sh
+	sh scripts/serviceunit-dist.sh --check
 	$(MAKE) check-scripts
 
 # mod-test validates and tests the Claude Code mod. Local only: CI has no claude.
@@ -139,29 +136,11 @@ install: build
 	install -m755 relevo $(BIN).new
 	mv -f $(BIN).new $(BIN)
 
-ifeq ($(UNAME_S),Darwin)
-
+# The unit ships inside the binary, so both recipes only call it; the two OS
+# branches live in `relevo service`.
 service: install
-	mkdir -p $(dir $(PLIST))
-	sed -e 's|@BIN@|$(BIN)|g' -e 's|@HOME@|$(HOME)|g' dist/$(LABEL).plist.in > $(PLIST)
-	launchctl unload $(PLIST) 2>/dev/null || true
-	launchctl load -w $(PLIST)
+	$(BIN) service install
 
 uninstall:
-	launchctl unload $(PLIST) 2>/dev/null || true
-	rm -f $(BIN) $(PLIST)
-
-else
-
-service: install
-	install -Dm644 dist/relevo.service $(UNIT)
-	systemctl --user daemon-reload
-	systemctl --user enable relevo.service
-	systemctl --user restart relevo.service
-
-uninstall:
-	systemctl --user disable --now relevo.service || true
-	rm -f $(BIN) $(UNIT)
-	systemctl --user daemon-reload
-
-endif
+	$(BIN) service uninstall
+	rm -f $(BIN)

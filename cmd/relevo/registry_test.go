@@ -34,6 +34,7 @@ var dispatchers = []dispatcher{
 	{"db sync", "db_sync.go", "cmdDBSync"},
 	{"mastermind", "mastermind.go", "cmdMasterMind"},
 	{"serve", "serve.go", "cmdServe"},
+	{"service", "service.go", "cmdService"},
 }
 
 // removedCases are the case labels that deliberately have no entry: the verbs

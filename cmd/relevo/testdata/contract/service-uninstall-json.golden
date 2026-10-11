@@ -1,0 +1,5 @@
+{
+  "action": "uninstall",
+  "unit": "/home/u/.config/systemd/user/relevo.service",
+  "outcome": "removed"
+}

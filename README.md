@@ -90,10 +90,15 @@ file. A running daemon moves onto a newly installed binary by itself within a
 few seconds, and a round in flight is not interrupted: builders, gates and consults
 run in their own systemd scopes and survive the restart. A daemon started
 before this release needs one manual restart to start following upgrades —
-`make service`, or `systemctl --user restart relevo.service`. `relevo doctor`
-shows what the daemon is running. The daemon also refreshes the agent
-definitions relevo wrote for each harness on every start, and leaves a file you
-edited alone; a MasterMind session's `relevo mcp` notices the upgrade too -- it
+`systemctl --user restart relevo.service`. `relevo doctor` shows what the
+daemon is running. The daemon also refreshes the agent definitions relevo wrote
+for each harness on every start, and leaves a file you edited alone; it does the
+same for its own service unit, which ships inside the binary, so `relevo update`
+alone carries a release forward -- no checkout and no `make service`. A
+refreshed unit takes effect at the next daemon restart, and `relevo doctor`
+says when one is due. The first install of a release has no unit yet:
+`relevo service install` writes it and starts the daemon (`relevo service
+uninstall` removes it). A MasterMind session's `relevo mcp` notices the upgrade too -- it
 appends a line to every tool result saying to reconnect it (`/mcp`), so the
 session loads the new server without a restart.
 
@@ -167,7 +172,7 @@ On a clean machine, set up prerequisites and preflight with `relevo config init`
    Doctor inspects the background daemon, each harness binary on `PATH`, and the relevo plugin and its hook in Claude Code, and the builder's agent files.
 4. Run the literal fix commands `relevo doctor` prints for any missing items.
 5. Re-run `relevo doctor` to confirm `0 failures`.
-6. Start the daemon (e.g. `relevo daemon &` or `make service`).
+6. Start the daemon (e.g. `relevo daemon &` or `relevo service install`).
 7. Bind your first agent from the MasterMind session:
    ```
    relevo bind --no-feature --candidate claude/anthropic/sonnet

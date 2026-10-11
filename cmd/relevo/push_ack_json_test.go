@@ -246,6 +246,7 @@ var jsonExemptByDesign = map[string]string{
 	"mastermind notice": "prints the notice text itself",
 	"mcp":               "is an MCP server speaking JSON-RPC over stdio",
 	"serve":             "is the remote-builder server (listener + daemon)",
+	"service":           "parent verb; `service install`/`uninstall` take --json",
 	"serve ui":          "is the web UI",
 	"ui":                "is the cockpit TUI",
 }
@@ -333,12 +334,12 @@ func TestJSONExemptionNamesAreRegistryVerbs(t *testing.T) {
 
 // TestJSONExemptionCount pins the size of both maps, so a verb leaving one of
 // them has to be a deliberate edit rather than a silent deletion: today
-// jsonExemptByDesign holds 13 and jsonNotYet 8, which is every verb the
+// jsonExemptByDesign holds 14 and jsonNotYet 8, which is every verb the
 // registry lists without --json. A count that moves is a verb converted or a
 // verb added, and either belongs in the change that moved it.
 func TestJSONExemptionCount(t *testing.T) {
-	if len(jsonExemptByDesign) != 13 {
-		t.Errorf("jsonExemptByDesign holds %d verbs, want 13", len(jsonExemptByDesign))
+	if len(jsonExemptByDesign) != 14 {
+		t.Errorf("jsonExemptByDesign holds %d verbs, want 14", len(jsonExemptByDesign))
 	}
 	if len(jsonNotYet) != 8 {
 		t.Errorf("jsonNotYet holds %d verbs, want 8", len(jsonNotYet))

@@ -1,0 +1,5 @@
+{
+  "action": "install",
+  "unit": "/home/u/.config/systemd/user/relevo.service",
+  "outcome": "wrote"
+}
