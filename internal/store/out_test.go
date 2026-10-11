@@ -349,3 +349,38 @@ func TestSealedRunnerOutputReadsThroughNewPath(t *testing.T) {
 		t.Fatalf("StatFile(sealed out report) = %d, %v, %v; want %d, true, nil", size, ok, err, len("sealed-body"))
 	}
 }
+
+// TestMigrateOutLayoutWithNothingToMoveKeepsTheRevision pins that a binding with
+// no runner output left in its directory -- a finished one whose out/ the seal
+// already removed -- is not touched: the tick runs the migration on every
+// binding, and a revision that moved would re-run its mirror every tick.
+func TestMigrateOutLayoutWithNothingToMoveKeepsTheRevision(t *testing.T) {
+	t.Parallel()
+
+	s, name := seedBinding(t)
+	dir := s.Dir(name)
+	if err := os.WriteFile(filepath.Join(dir, "002-runner.jsonl"), []byte("stream"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "002-prompt.md"), []byte("prompt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(s.OutDir(name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
+	}
+	before, err := s.Revision(name)
+	if err != nil {
+		t.Fatalf("Revision: %v", err)
+	}
+
+	if moved, err := s.MigrateOutLayout(name); err != nil || moved != 0 {
+		t.Fatalf("MigrateOutLayout = %d, %v; want 0, nil", moved, err)
+	}
+
+	if _, err := os.Lstat(s.OutDir(name)); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("out/ exists after a migration with nothing to move: %v", err)
+	}
+	if after, err := s.Revision(name); err != nil || after != before {
+		t.Errorf("Revision after a migration with nothing to move = %q, %v; want %q", after, err, before)
+	}
+}
