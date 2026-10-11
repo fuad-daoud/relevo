@@ -40,3 +40,28 @@ the sweep removed), so no change was made to `chainFlowSend` or `chainApply`.
 
 No migration: `event` and `chain_event` already sync, and a stray is closed by
 appending log entries, not by a new column or table.
+
+## Round 2
+
+The sweep did not fix #1080. A sandbox chain left `rc` round 2 `open` with one
+log entry: the chain's terminal notice, filed under `carrier.Round`, which had
+already advanced past the closed round. Ingest derived `open` from that entry
+alone; `store.RoundOpen` (prompt and no report) never saw it.
+
+- Source: `chainTerminalRound` files the end notice (`chainTerminalWF`, and both
+  notices in `chain_pull.go`) under the carrier's last closed round. Delivery
+  does not depend on the number: a through-pull claims entries at or below the
+  waited round (`ClaimableForMasterMindThrough`, `delivery/pull.go`), so an
+  earlier round only makes the notice claimable sooner.
+- Existing phantoms: `deriveOutcome` returns `halted` for a round holding no
+  prompt, with no closed time. Evidence: 5 `open` rounds in the developer's
+  database, every one without a prompt. No new outcome value, so no schema,
+  histq or UI change. Nothing is deleted.
+- Tests: `TestLocalChainTerminalNoticeLeavesNoOpenRound`,
+  `TestMirroredChainTerminalNoticeLeavesNoOpenRound` and
+  `TestIngestDerivesNoOpenForAPromptlessRound` assert on the ingested `round`
+  row; each fails when its fix is reverted.
+- Sweep removed: `chainCloseStrays` is deleted. Finish and stop already leave
+  no prompted, reportless round (`TestChainFinishLeavesNoOpenRound`,
+  `TestChainStopLeavesNoOpenRound` pass without it), and no sequence produced
+  one on a done or stopped chain, so it guarded a case nobody can produce.
