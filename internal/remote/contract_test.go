@@ -468,7 +468,6 @@ func filledCheckView() CheckView {
 		Note:         "acceptance passed",
 		LogTail:      "all tests pass",
 		LogTruncated: true,
-		LogPath:      "/srv/relevo/shop/002-served-check.log",
 	}
 }
 

@@ -408,7 +408,7 @@ func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 		return err
 	}
 	logKey := rt.Store.CheckLogPath(logTarget, round, st.Awaiting.Run)
-	if err := tx.PutRoundFile(logTarget, round, logKey, []byte(partialCheckNote(view)+view.LogTail)); err != nil {
+	if err := tx.PutRoundFile(logTarget, round, logKey, []byte(partialCheckNote(view, b.Builder.Server)+view.LogTail)); err != nil {
 		return err
 	}
 	saved, err := tx.Chain(c.Name)
@@ -559,10 +559,12 @@ func chainCheckResult(raw string) string {
 }
 
 // partialCheckNote heads a stored check log whose served tail was cut, so the
-// log never reads as the whole run; it is empty for a log that was not cut.
-func partialCheckNote(view remote.CheckView) string {
+// log never reads as the whole run; it is empty for a log that was not cut. It
+// names the server and the run rather than a path: a server's filesystem layout
+// is not something it hands to its clients.
+func partialCheckNote(view remote.CheckView, server string) string {
 	if !view.LogTruncated {
 		return ""
 	}
-	return fmt.Sprintf("partial: the last %d KiB of the check log; the full log is on the server at %s\n", servedCheckLogCap/1024, view.LogPath)
+	return fmt.Sprintf("partial: the last %d KiB of the check log; the full log is check run %s on server %s\n", servedCheckLogCap/1024, view.ID, server)
 }

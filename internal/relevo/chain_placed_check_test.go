@@ -654,8 +654,8 @@ func TestPlacedCheckStoresPartialNoteForCutLog(t *testing.T) {
 		view remote.CheckView
 		want string
 	}{
-		{"cut", remote.CheckView{ID: "chk-1", Result: "pass", LogTail: "tail\n", LogTruncated: true, LogPath: "/srv/shop/002-served-check.log"},
-			"partial: the last 64 KiB of the check log; the full log is on the server at /srv/shop/002-served-check.log\ntail\n"},
+		{"cut", remote.CheckView{ID: "chk-1", Result: "pass", LogTail: "tail\n", LogTruncated: true},
+			"partial: the last 64 KiB of the check log; the full log is check run chk-1 on server zen\ntail\n"},
 		{"whole", remote.CheckView{ID: "chk-1", Result: "pass", LogTail: "tail\n"}, "tail\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

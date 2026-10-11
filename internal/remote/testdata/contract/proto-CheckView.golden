@@ -7,6 +7,5 @@
   "duration_ms": 1250,
   "note": "acceptance passed",
   "log_tail": "all tests pass",
-  "log_truncated": true,
-  "log_path": "/srv/relevo/shop/002-served-check.log"
+  "log_truncated": true
 }
