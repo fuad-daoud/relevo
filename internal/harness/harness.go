@@ -267,6 +267,12 @@ const (
 	BudgetPlaceholder       = "<budget>"
 	DirPlaceholder          = "<dir>"
 	WritableRootPlaceholder = "<writable-root>" // codex writable-roots override, after a "-c"
+	// OutputDirPlaceholder stands for the same round state directory in the
+	// form a kind that takes a plain directory expects: claude and agy read it
+	// as an --add-dir path. It is a separate placeholder from
+	// WritableRootPlaceholder because the two renderings differ -- codex takes
+	// a -c TOML value built around the path, these take the path itself.
+	OutputDirPlaceholder = "<output-dir>"
 )
 
 // Launch describes how to start an agent process for a specific role and model.
@@ -287,13 +293,23 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 	promptAt := -1
 
 	switch h.Kind {
+	// The writable root is the round's state directory (Store.OutDir), which is
+	// where a round's report and output file live. Every kind that can write at
+	// the round's tier is told about it explicitly: a reader writes its own
+	// output file there and a writer its report, and neither is under the
+	// working tree. codex takes it as a sandbox writable root; claude and agy
+	// take it as an additional working directory, agy alongside the --add-dir
+	// that pins its workspace (agy's cwd report proved unreliable and its first
+	// run_command ran outside any repository). It is the state directory and
+	// nothing else, so the repository stays exactly as the tier leaves it.
 	case "claude":
 		id, effort := claudeEffort(model)
 		print = []string{"-p", PromptPlaceholder, "--model", id}
 		if effort != "" {
 			print = append(print, "--effort", effort)
 		}
-		print = append(print, "--agent", role.Definition, "--output-format", "stream-json", "--verbose")
+		print = append(print, "--agent", role.Definition, "--output-format", "stream-json", "--verbose",
+			"--add-dir", OutputDirPlaceholder)
 		promptAt = 1
 	case "opencode":
 		// Without --standalone, `run` is a client of the user's single
@@ -302,11 +318,9 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 		print = []string{"run", PromptPlaceholder, "-m", provider + "/" + model, "--agent", role.Definition, "--format", "json", "--thinking", "--standalone"}
 		promptAt = 1
 	case "agy":
-		// agy's cwd report proved unreliable and its first run_command ran
-		// outside any repository, so --add-dir pins the workspace.
 		print = []string{"-p", PromptPlaceholder, "--model", model, "--agent", role.Definition,
 			"--output-format", "stream-json", "--print-timeout", BudgetPlaceholder,
-			"--add-dir", DirPlaceholder}
+			"--add-dir", DirPlaceholder, "--add-dir", OutputDirPlaceholder}
 		promptAt = 1
 	case "codex":
 		id, effort, err := SplitEffort(model)
@@ -351,7 +365,9 @@ func writableRootsArg(root string) string {
 // filled in: a fresh slice, so neither Print nor the caller's extra is touched.
 // A kind whose Print lacks a placeholder ignores that argument; a present
 // WritableRootPlaceholder with an empty root is filled with a value codex
-// rejects.
+// rejects. The root is never dropped for a kind that takes it: an empty one
+// would name no directory at all, which is wider than naming the wrong one.
+// OutputDirPlaceholder takes the same root as the bare path the kind expects.
 func (l Launch) PrintArgs(prompt string, budget time.Duration, dir, writableRoot string) []string {
 	out := make([]string, 0, len(l.Print))
 	for _, a := range l.Print {
@@ -364,6 +380,8 @@ func (l Launch) PrintArgs(prompt string, budget time.Duration, dir, writableRoot
 			out = append(out, dir)
 		case WritableRootPlaceholder:
 			out = append(out, writableRootsArg(writableRoot))
+		case OutputDirPlaceholder:
+			out = append(out, writableRoot)
 		default:
 			out = append(out, a)
 		}
