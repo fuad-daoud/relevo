@@ -132,6 +132,13 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 	var facts remote.ClosedRoundView
 	if b.Serve != nil && b.Serve.ClosedRound > 0 {
 		facts = servedRoundFacts(entries, b.Serve.ClosedRound)
+		// The binding's own start answers only for the round it is on now, so
+		// it completes a newest closed round whose own entries named none. A
+		// binding whose closed round is not its current one leaves it zero, and
+		// the log-derived start stands on its own.
+		if facts.RoundStartedAt.IsZero() && b.Serve.ClosedRound == b.Round-1 {
+			facts.RoundStartedAt = b.RoundStartedAt
+		}
 	}
 	var ackedRound int
 	var closedRound int
@@ -140,29 +147,33 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 		closedRound = b.Serve.ClosedRound
 	}
 	return remote.BindingView{
-		ID:             recordID,
-		Installation:   installation,
-		Name:           b.Name,
-		State:          string(b.State),
-		Round:          b.Round,
-		RoundState:     rState,
-		ClosedRound:    closedRound,
-		Halt:           halt,
-		ResultCommit:   resultCommit,
-		DirtyCommit:    dirtyCommit,
-		ReportOutcome:  facts.ReportOutcome,
-		GateResult:     facts.GateResult,
-		Stopped:        facts.Stopped,
-		ReportNote:     facts.ReportNote,
-		Switches:       facts.Switches,
-		Shape:          b.Shape,
-		DiffNote:       facts.DiffNote,
-		DiffCommits:    facts.DiffCommits,
-		DiffTree:       facts.DiffTree,
-		AckedRound:     ackedRound,
-		Candidate:      b.BuilderCandidate,
-		Account:        b.BuilderAccount,
-		RoundStartedAt: b.RoundStartedAt,
+		ID:            recordID,
+		Installation:  installation,
+		Name:          b.Name,
+		State:         string(b.State),
+		Round:         b.Round,
+		RoundState:    rState,
+		ClosedRound:   closedRound,
+		Halt:          halt,
+		ResultCommit:  resultCommit,
+		DirtyCommit:   dirtyCommit,
+		ReportOutcome: facts.ReportOutcome,
+		GateResult:    facts.GateResult,
+		Stopped:       facts.Stopped,
+		ReportNote:    facts.ReportNote,
+		Switches:      facts.Switches,
+		Shape:         b.Shape,
+		DiffNote:      facts.DiffNote,
+		DiffCommits:   facts.DiffCommits,
+		DiffTree:      facts.DiffTree,
+		AckedRound:    ackedRound,
+		Candidate:     b.BuilderCandidate,
+		Account:       b.BuilderAccount,
+		// The closed round's own start when the round is closed, and the live
+		// round's otherwise: the binding's stamp answers only for the round it
+		// is on now, and a client reading one view wants the round the view is
+		// about.
+		RoundStartedAt: chainServedRoundStart(b, facts.RoundStartedAt),
 		RoundCap:       b.RoundCap,
 		RoundTimeoutMS: b.RoundTimeoutMS,
 		Tier:           string(effectiveTier(b)),
@@ -173,6 +184,17 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 		Rusage:         facts.Rusage,
 		StalledSince:   b.StalledSince,
 	}
+}
+
+// chainServedRoundStart is the start ServedView ships: the closed round's own
+// start when the binding has one and a closed round at all, and the live round's
+// stamp otherwise. A binding whose round is still open has no closed round to
+// describe, so its running start is the only one a client can mean.
+func chainServedRoundStart(b store.Binding, closedStart time.Time) time.Time {
+	if b.Serve != nil && b.Serve.ClosedRound > 0 && !closedStart.IsZero() {
+		return closedStart
+	}
+	return b.RoundStartedAt
 }
 
 // servedRoundFacts is the per-round scan ServedView used to run for its
@@ -239,6 +261,7 @@ func servedRoundFacts(entries []store.LogEntry, n int) remote.ClosedRoundView {
 			break
 		}
 	}
+	f.RoundStartedAt, f.QueuedAt = servedRoundStamps(entries, n)
 	return f
 }
 
