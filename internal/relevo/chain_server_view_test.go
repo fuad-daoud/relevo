@@ -1,7 +1,9 @@
 package relevo
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -267,6 +269,55 @@ func TestChainResumeOnAServerChainSendsTheResolvedGate(t *testing.T) {
 				t.Errorf("gate = %q, want the field left off the wire", *got)
 			}
 		})
+	}
+}
+
+// TestChainResumeOnAServerChainCarriesFrom pins that --from reaches the server
+// that drives the chain. The server's own engine enters the resumed step, so a
+// --from that stopped at the client left the server resuming the step it
+// halted on: --resume --from review re-entered the check.
+func TestChainResumeOnAServerChainCarriesFrom(t *testing.T) {
+	t.Parallel()
+
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusRunning), 0, 0, 0))
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{
+		Name: "shop", From: "review", Params: map[string]string{"gate": "make check"},
+	}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+	if got := fr.chainResumeReq.From; got != "review" {
+		t.Errorf("from = %q, want %q to reach the server", got, "review")
+	}
+	if got := fr.chainResumeReq.Params["gate"]; got != "make check" {
+		t.Errorf("params[gate] = %q, want %q to reach the server", got, "make check")
+	}
+}
+
+// TestChainResumeOnAServerChainOmitsEmptyFrom pins that a resume with no --from
+// leaves the field off the wire, so a chain resumed without one resumes exactly
+// as it did before the field existed.
+func TestChainResumeOnAServerChainOmitsEmptyFrom(t *testing.T) {
+	t.Parallel()
+
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusRunning), 0, 0, 0))
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+	if fr.chainResumeReq.From != "" {
+		t.Errorf("from = %q, want the field left empty", fr.chainResumeReq.From)
+	}
+	raw, err := json.Marshal(fr.chainResumeReq)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if bytes.Contains(raw, []byte(`"from"`)) {
+		t.Errorf("wire body = %s, want no from key for a resume without one", raw)
 	}
 }
 

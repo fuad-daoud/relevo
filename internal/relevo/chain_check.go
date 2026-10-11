@@ -395,14 +395,7 @@ func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	if err != nil {
 		var httpErr *client.HTTPError
 		if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
-			reason := httpErr.Body.Message
-			if reason == "" {
-				reason = httpErr.Error()
-			}
-			before := st
-			st.Status = workflow.StatusHalted
-			st.Reason = fmt.Sprintf("check %s: %s", st.Awaiting.Step, reason)
-			return chainTerminalWF(ctx, rt, tx, c, def, before, st, workflow.Event{}, workflow.Action{Kind: workflow.ActionHalt, Reason: st.Reason})
+			return chainPlacedCheckMiss(ctx, rt, tx, c, def, st, b, step)
 		}
 		return nil
 	}
@@ -433,6 +426,50 @@ func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 		Log:       logKey,
 		RepeatRed: chainRepeatRedCheck(rt, saved, before, st.Awaiting.Step, logKey),
 	})
+}
+
+// chainPlacedCheckMiss answers a GetCheck that found nothing under the run id
+// this machine awaits.
+//
+// A bare miss is not a lost run. The binding holds one run at a time, and it is
+// stored when the create answer comes back, so a tick that reads between the
+// create being asked for and its answer arriving sees nothing under the id --
+// and the same is true of a server whose daemon is still starting the run. Both
+// are a chain still waiting, so nothing is written and nothing is delivered;
+// halting here ended chains on checks that were about to answer, and because a
+// pull flips a halted mirror back to running while the tick halts it again, one
+// false halt became a chain notice every sweep.
+//
+// A loss is proved, not assumed: the binding holds a settled run under a
+// different id for this same step. That is a run this step will never settle
+// against, so the chain halts and names the check. Everything else keeps
+// awaiting, and the chain's own round and chain timeouts end a check that truly
+// never answers.
+func chainPlacedCheckMiss(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, st workflow.State, b store.Binding, step workflow.Step) error {
+	if !chainCheckRunLost(ctx, rt, b, st, step) {
+		return nil
+	}
+	before := st
+	st.Status = workflow.StatusHalted
+	st.Reason = fmt.Sprintf("check %s: %s", st.Awaiting.Step, "the server holds a different run for it")
+	return chainTerminalWF(ctx, rt, tx, c, def, before, st, workflow.Event{}, workflow.Action{Kind: workflow.ActionHalt, Reason: st.Reason})
+}
+
+// chainCheckRunLost reports that the binding holds a settled check run under an
+// id other than the awaited one, for the awaited step. A binding that holds
+// nothing, or holds the awaited run itself, is not a loss: the first is a run
+// not created yet, and the second cannot have answered with a miss.
+func chainCheckRunLost(ctx context.Context, rt Runtime, b store.Binding, st workflow.State, step workflow.Step) bool {
+	if rt.Remote == nil {
+		return false
+	}
+	// The binding holds one run, so the only other id worth asking about is the
+	// one this machine would mint next. Anything else is not a run of this step.
+	view, err := rt.Remote.GetCheck(ctx, b.Builder.Server, b.Name, chainCheckID(st.Awaiting.Run+1))
+	if err != nil {
+		return false
+	}
+	return view.Result != "" && view.Step == st.Awaiting.Step
 }
 
 // chainCheckSpec is the gate-runner spec for one chain check: the chain's tree,
