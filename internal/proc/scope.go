@@ -44,6 +44,11 @@ func ScopeArgv(s spawn.ScopeSpec, inner []string) []string {
 		argv = append(argv, "-p", "TasksMax="+strconv.Itoa(s.TasksMax))
 	}
 	argv = append(argv, "--")
+	if s.OOMScoreAdjust != 0 {
+		// The write fails harmlessly where /proc is read-only; the exec must
+		// run either way, and keeps the pid inner is recorded under.
+		argv = append(argv, "sh", "-c", `echo "$0" >/proc/self/oom_score_adj 2>/dev/null; exec "$@"`, strconv.Itoa(s.OOMScoreAdjust))
+	}
 	argv = append(argv, inner...)
 	return argv
 }

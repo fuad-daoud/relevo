@@ -57,6 +57,21 @@ const cacheEnv = "TURSO_GO_CACHE_DIR"
 // opening a connection, so the failure is a bounded wait and then an error.
 const maxOpenConns = 128
 
+// maxIdleConns and idleConnTime bound what an idle pool keeps. Every pooled
+// connection owns native memory the Go heap profile never shows, so keeping
+// all maxOpenConns alive for the process's life pins a burst's worth of it;
+// the ceiling above stays, only the retention after a burst shrinks.
+const (
+	maxIdleConns = 16
+	idleConnTime = 2 * time.Minute
+)
+
+// pageCacheKiB is the per-connection page cache, as the negative KiB form of
+// cache_size. Turso reads the default back as -2000 yet does not apply it: a
+// scan of a 1 GiB file on 64 connections held ~580 MiB resident without the
+// pragma and ~120 MiB with it, so the pragma is set explicitly on every one.
+const pageCacheKiB = 1024
+
 // openPool opens a pool on path with Turso. Turso parses no `file:` URI and
 // ends the path at the first `?`, so a path carrying one would silently open
 // another file: that is refused. Settings that modernc takes in the DSN are
@@ -90,7 +105,8 @@ func openPool(path string, busy time.Duration, readOnly bool) (*sql.DB, error) {
 	}
 	pool := sql.OpenDB(repairConnector{Connector: &pragmaConnector{base: conn, pragmas: openPragmas(readOnly)}})
 	pool.SetMaxOpenConns(maxOpenConns)
-	pool.SetMaxIdleConns(maxOpenConns)
+	pool.SetMaxIdleConns(maxIdleConns)
+	pool.SetConnMaxIdleTime(idleConnTime)
 	if fresh && !readOnly {
 		if err := markFreshDatabase(pool); err != nil {
 			_ = pool.Close()
@@ -121,10 +137,11 @@ func freshDatabase(path string) (bool, error) {
 // openPragmas is the per-connection pragma sequence: WAL always, and then the
 // guard that matches the handle's mode.
 func openPragmas(readOnly bool) []string {
+	cache := fmt.Sprintf("PRAGMA cache_size = -%d", pageCacheKiB)
 	if readOnly {
-		return []string{"PRAGMA journal_mode = wal", "PRAGMA query_only = 1", "PRAGMA temp_store = MEMORY"}
+		return []string{"PRAGMA journal_mode = wal", "PRAGMA query_only = 1", "PRAGMA temp_store = MEMORY", cache}
 	}
-	return []string{"PRAGMA journal_mode = wal", "PRAGMA foreign_keys = ON", "PRAGMA temp_store = MEMORY"}
+	return []string{"PRAGMA journal_mode = wal", "PRAGMA foreign_keys = ON", "PRAGMA temp_store = MEMORY", cache}
 }
 
 // pragmaConnector runs pragmas on every new driver connection before
