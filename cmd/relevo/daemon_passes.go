@@ -33,7 +33,14 @@ import (
 //
 // Neither failure stops the daemon. A machine with no database still runs, and a
 // pass that failed is retried on the next start.
-func daemonEnablePath(d *db.DB, backupDir, origin string, now time.Time) {
+//
+// What it reports is whether this machine's rows may leave it. Both passes record
+// themselves only once they finished -- the split's marker is written last, after
+// every row has moved, and the backfill's only once the origin gate counts nothing
+// anywhere -- so a pass that returned an error left no marker, and the caller
+// answers no. That answer is what keeps the sync verb uninstalled on a database
+// whose secrets are still sitting in the shared file.
+func daemonEnablePath(d *db.DB, backupDir, origin string, now time.Time) (rowsMayLeave bool) {
 	sstats, sran, serr := db.SplitOnce(d, backupDir, now)
 	if serr != nil {
 		slog.Warn("relevo daemon: local split skipped", "err", serr)
@@ -76,7 +83,7 @@ func daemonEnablePath(d *db.DB, backupDir, origin string, now time.Time) {
 				"rows_halted", bstats.Halted(),
 				"rows_halted_by_table", bstats.HaltedByTable(),
 				"rows_left_unstamped", bstats.LeftUnstamped)
-			return
+			return false
 		}
 		slog.Warn("relevo daemon: origin backfill skipped", "err", berr,
 			"stamped", bstats.Stamped(),
@@ -94,4 +101,8 @@ func daemonEnablePath(d *db.DB, backupDir, origin string, now time.Time) {
 			"stale_rows_dropped", bstats.Dropped(),
 			"twins", bstats.Twins)
 	}
+	// No error from either pass is the marker: both record themselves only after
+	// they finished, so err nil here means the shared file holds nothing this
+	// machine has not already classified, and the rows here may leave.
+	return serr == nil && berr == nil
 }

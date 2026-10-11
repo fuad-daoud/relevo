@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,6 +111,39 @@ func (d *DB) Vacuum() error {
 		return fmt.Errorf("db: vacuum: %w", err)
 	}
 	return d.swapInVacuum(sibling)
+}
+
+// Reclaim is the compaction a one-time pass wants once it has deleted rows or
+// converted columns, on the handles such a pass actually runs on.
+//
+// It is Vacuum, with the one answer Vacuum cannot give turned into a skip. A
+// pass runs while the owner is serving, so the in-place swap -- which closes
+// the pool and reopens it, stranding every client the owner is answering -- is
+// refused on every served handle. That refusal is the right answer to a vacuum
+// a person asked for and the wrong one here: the deletes and the conversions
+// have already committed, and only the file compaction is left. So a pass calls
+// this instead: on a served handle it skips, records nothing in its stats and
+// says so in one line naming the pass and the reason, and on an unserved one it
+// vacuums exactly as before.
+//
+// Skipping loses no space the engine could have used. The pages the deletes and
+// the conversions freed are on the file's free list, and the engine hands a
+// free page to the next insert into that table rather than extending the file,
+// so the database stops growing at the high-water mark the pass left instead of
+// shrinking. What it does not do is return those pages to the filesystem, and
+// nothing reclaims them later: the passes are once-per-database, so the next
+// start finds the marker and does not run them again. Only a compaction over an
+// unserved handle -- a start with no owner, or a manual vacuum -- gives the
+// space back.
+func (d *DB) Reclaim(pass string) error {
+	if d == nil {
+		return nil
+	}
+	if d.served {
+		slog.Info("reclaim skipped", "pass", pass, "reason", "the owner serves this handle")
+		return nil
+	}
+	return d.Vacuum()
 }
 
 // vacuumAllowed refuses the handle kinds a vacuum cannot swap under.

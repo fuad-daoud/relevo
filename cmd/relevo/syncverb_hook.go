@@ -91,11 +91,14 @@ func newVerbRunner(d *db.DB) *relevo.VerbRunner {
 // markers and both hold the same remote handle, and two of them at once would
 // write each other's outcomes.
 //
+// A server whose hook the startup did not install stays without one: that is
+// the startup saying this machine's rows may not leave yet.
+//
 // It is called once the Daemon exists, which is after the owner is served, so
 // that the guard a verb waits on is the guard the seal hook and the idle tick
 // already take.
 func installSyncVerbSerializing(ctx context.Context, d *relevo.Daemon, srv *owner.Server, handle *db.DB) {
-	if srv == nil || handle == nil {
+	if srv == nil || handle == nil || srv.OnSyncVerb == nil {
 		return
 	}
 	runner := newVerbRunner(handle)
