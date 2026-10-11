@@ -53,6 +53,40 @@ func TestBytesAccumulateAcrossWorkerRestart(t *testing.T) {
 	}
 }
 
+// A one-shot verb's movement lands in the month row when the verb ends, and the
+// steady attempt after it measures from that reading instead of recounting it.
+// Removing the count leaves the row at zero after the verb; not advancing the
+// baseline makes the steady attempt count the verb's bytes a second time.
+func TestOneShotMovementCountedOnceAcrossTheNextSteadyAttempt(t *testing.T) {
+	t.Parallel()
+	shared, local := joinPair(t, "m1")
+	client := &readings{MemTransport: synclog.NewMemTransport("m1"), totals: []synclog.Stats{
+		{TursoSent: 1000, TursoReceived: 200, R2Put: 50, R2Get: 5},
+		{TursoSent: 1500, TursoReceived: 300, R2Put: 80, R2Get: 5},
+	}}
+	runner := &Runner{Client: client, Local: local, Timeout: time.Second}
+
+	runner.CountMoved(context.Background(), NewStopTransport(client))
+	got, err := ReadBytes(local, time.Now())
+	if err != nil {
+		t.Fatalf("ReadBytes: %v", err)
+	}
+	if want := (ByteCounters{TursoPush: 1000, TursoPull: 200, R2Put: 50, R2Get: 5}); got != want {
+		t.Fatalf("after the one-shot verb counters = %+v, want %+v", got, want)
+	}
+
+	if res := runner.SyncOnce(context.Background(), shared); res.Err != nil {
+		t.Fatalf("SyncOnce: %v", res.Err)
+	}
+	got, err = ReadBytes(local, time.Now())
+	if err != nil {
+		t.Fatalf("ReadBytes: %v", err)
+	}
+	if want := (ByteCounters{TursoPush: 1500, TursoPull: 300, R2Put: 80, R2Get: 5}); got != want {
+		t.Fatalf("after the next attempt counters = %+v, want %+v", got, want)
+	}
+}
+
 func TestBytesKeyIsTheUTCMonth(t *testing.T) {
 	t.Parallel()
 	zone := time.FixedZone("far", 14*3600)

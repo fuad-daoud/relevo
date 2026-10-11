@@ -246,6 +246,7 @@ func (v *VerbRunner) push(ctx context.Context) *wire.SyncResult {
 	}
 	stop := relevosync.NewStopTransport(transport)
 	defer v.Runner.Track(stop)()
+	defer v.Runner.CountMoved(ctx, stop)
 	res, err := synclog.NewExporter(v.Shared, stop).Export()
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
@@ -264,6 +265,7 @@ func (v *VerbRunner) pull(ctx context.Context) *wire.SyncResult {
 	}
 	stop := relevosync.NewStopTransport(transport)
 	defer v.Runner.Track(stop)()
+	defer v.Runner.CountMoved(ctx, stop)
 	res, err := synclog.NewImporter(v.Shared, stop).Import()
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
