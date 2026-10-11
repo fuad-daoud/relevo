@@ -411,7 +411,6 @@ func chainPullFinish(ctx context.Context, rt Runtime, c db.ChainRow, view remote
 		if err := chainPullTrace(tx, c.Name, view.Trace); err != nil {
 			return err
 		}
-		chainStraySweep(ctx, rt, tx, row)
 		if before != string(chain.StatusRunning) || !chainStatusTerminal(row.Status) {
 			return nil
 		}
