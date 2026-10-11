@@ -260,6 +260,7 @@ func writeError(err error) error {
 		return err
 	}
 	var openMember *relevo.RoundOpenError
+	var candOpen *relevo.CandidateRoundOpenError
 	switch {
 	// The busy family is checked before the bare ErrRefused case, because
 	// each of these sentinels also unwraps to ErrRefused: they are refusals
@@ -313,6 +314,12 @@ func writeError(err error) error {
 		return fail(codeConflict, "%v", err)
 	case errors.As(err, &openMember):
 		return failNext(codeConflict, "relevo stop "+openMember.Member, "%v", err)
+	case errors.As(err, &candOpen):
+		return failNext(codeConflict, "relevo stop "+candOpen.Name, "%v", err)
+	case errors.Is(err, relevo.ErrNoViablePlacement):
+		return failNext(codePolicyRefused, "relevo config", "%v", err)
+	case errors.Is(err, relevo.ErrNoMasterMindSession):
+		return failNext(codeUsage, "relevo mastermind init", "%v", err)
 	case errors.Is(err, relevo.ErrTierAboveMax), errors.Is(err, harness.ErrTierUnsupported):
 		return fail(codeTierCap, "%v", err)
 	case errors.Is(err, relevo.ErrAllGated):

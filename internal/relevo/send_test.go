@@ -1354,6 +1354,10 @@ func TestSendBuilderRefusedWhileRoundOpen(t *testing.T) {
 	if !strings.Contains(err.Error(), "has round 1 open") || !strings.Contains(err.Error(), "relevo stop webshop ends it") {
 		t.Errorf("err = %q, want the round-open refusal", err.Error())
 	}
+	var open *CandidateRoundOpenError
+	if !errors.As(err, &open) || open.Name != "webshop" || open.Round != 1 {
+		t.Errorf("err = %#v, want a *CandidateRoundOpenError for webshop round 1", err)
+	}
 
 	after, err := rt.Store.ReadLog("webshop")
 	if err != nil {

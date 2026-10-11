@@ -252,3 +252,40 @@ func TestOutOfRangeRoundIsRoundNotFound(t *testing.T) {
 		t.Errorf("drift out-of-range message %q must name --drift", got)
 	}
 }
+
+func TestWriteErrorClassifiesUserSideRefusals(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name string
+		err  error
+		code errorCode
+		next string
+	}{
+		{"candidate on open round", fmt.Errorf("send: %w", &relevo.CandidateRoundOpenError{Name: "smoke", Round: 1}), codeConflict, "relevo stop smoke"},
+		{"no viable placement", fmt.Errorf("bind: %w", relevo.ErrNoViablePlacement), codePolicyRefused, "relevo config"},
+		{"no mastermind session", fmt.Errorf("bind: %w", relevo.ErrNoMasterMindSession), codeUsage, "relevo mastermind init"},
+		{"missing binding", fmt.Errorf("wait: %w", store.ErrNotFound), codeBindingNotFound, "relevo status --all"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			code, next, ok := codedOf(t, writeError(c.err))
+			if !ok || code != c.code || next != c.next {
+				t.Fatalf("writeError = (%q, %q, %v), want (%q, %q)", code, next, ok, c.code, c.next)
+			}
+		})
+	}
+}
+
+func TestWaitFailureMapsOnlyNotFoundToBindingNotFound(t *testing.T) {
+	t.Parallel()
+
+	code, next, ok := codedOf(t, waitFailure(fmt.Errorf("smoke: %w", store.ErrNotFound)))
+	if !ok || code != codeBindingNotFound || next != "relevo status --all" {
+		t.Fatalf("waitFailure(ErrNotFound) = (%q, %q, %v)", code, next, ok)
+	}
+	code, _, ok = codedOf(t, waitFailure(errors.New("boom")))
+	if !ok || code != codeInternal {
+		t.Fatalf("waitFailure(other) = (%q, %v), want internal", code, ok)
+	}
+}
