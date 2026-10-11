@@ -191,7 +191,9 @@ func (r *ingestRun) appendEvents(tx *db.Tx, bindingID string, log logRead) ([]st
 		for _, ev := range had {
 			// A cursor older than the rows -- one restored, or kept over a newer
 			// copy -- re-reads lines already in; they come from the read below.
-			if ev.Seq >= log.startSeq {
+			// startSeq numbers only returned lines and is zero when none came
+			// back, so with nothing read every stored event is kept.
+			if len(log.lines) > 0 && ev.Seq >= log.startSeq {
 				continue
 			}
 			var e store.LogEntry

@@ -137,9 +137,6 @@ var outLayoutWarned sync.Map
 // for the next tick. out/ being a child of the binding directory, the rename is
 // same-filesystem by construction, so no copy fallback is needed.
 func (s *Store) MigrateOutLayout(name string) (int, error) {
-	if err := s.EnsureOutDir(name); err != nil {
-		return 0, err
-	}
 	dir := s.Dir(name)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -154,11 +151,20 @@ func (s *Store) MigrateOutLayout(name string) (int, error) {
 	}
 	defer func() { _ = root.Close() }()
 
-	moved := 0
+	// out/ is made only once there is something to move into it: the tick
+	// runs this on every binding, and a made-then-removed out/ would change
+	// the binding directory's mtime, which Revision reads as a change.
+	moved, ensured := 0, false
 	for _, e := range entries {
 		base := e.Name()
 		if !migratableRunnerOutput(base, e.IsDir()) {
 			continue
+		}
+		if !ensured {
+			if err := s.EnsureOutDir(name); err != nil {
+				return moved, err
+			}
+			ensured = true
 		}
 		dst := outDirName + "/" + base
 		if _, derr := root.Lstat(dst); derr == nil {

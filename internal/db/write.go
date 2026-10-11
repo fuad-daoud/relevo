@@ -174,6 +174,26 @@ func mapMasterMindKey(err error) error {
 	return mapBusy(err)
 }
 
+// updateIfChanged sets cols to vals on table's row id, and writes nothing when
+// every column already holds its value: an UPDATE fires the table's sync
+// trigger even when it changes nothing, and a re-ingest of an unchanged
+// binding would otherwise queue its rows for export again.
+func (t *Tx) updateIfChanged(table, id string, cols []string, vals ...any) error {
+	set := make([]string, len(cols))
+	same := make([]string, len(cols))
+	for i, c := range cols {
+		set[i] = c + " = ?"
+		same[i] = c + " IS ?"
+	}
+	args := make([]any, 0, 2*len(vals)+1)
+	args = append(args, vals...)
+	args = append(args, id)
+	args = append(args, vals...)
+	_, err := t.exec(`UPDATE `+table+` SET `+strings.Join(set, ", ")+
+		` WHERE id = ? AND NOT (`+strings.Join(same, " AND ")+`)`, args...)
+	return err
+}
+
 // UpsertBinding inserts or updates b by its natural key within this handle's
 // origin: (origin, name, created_at).
 func (t *Tx) UpsertBinding(b Binding) (string, error) {
@@ -193,17 +213,16 @@ func (t *Tx) UpsertBinding(b Binding) (string, error) {
 	err := t.queryRow(`SELECT id FROM binding WHERE `+originScope+` AND name = ? AND created_at = ?`,
 		t.origin, b.Name, createdAt).Scan(&id)
 	if err == nil {
-		if _, uerr := t.exec(`UPDATE binding SET repo_id=?, mastermind_id=?, feature=?, ticket=?, forked_from_binding_id=?,
-				forked_from_round=?, cwd=?, worktree=?, branch=?, base_commit=?, tier=?, gate=?,
-				builder_mode=?, server=?, final_state=?, archived_at=?, archive_path=?, ingest_source=?
-			WHERE id=?`,
+		if uerr := t.updateIfChanged("binding", id, []string{"repo_id", "mastermind_id", "feature", "ticket",
+			"forked_from_binding_id", "forked_from_round", "cwd", "worktree", "branch", "base_commit", "tier", "gate",
+			"builder_mode", "server", "final_state", "archived_at", "archive_path", "ingest_source"},
 			nullableString(b.RepoID), nullableString(b.MasterMindID), nullableString(b.Feature),
 			nullableString(b.Ticket),
 			nullableString(b.ForkedFromBindingID), nullableInt(b.ForkedFromRound),
 			b.CWD, nullableString(b.Worktree), nullableString(b.Branch), nullableString(b.BaseCommit),
 			nullableString(b.Tier), nullableString(b.Gate), b.BuilderMode, nullableString(b.Server),
 			nullableString(b.FinalState), nullableTime(b.ArchivedAt), nullableString(b.ArchivePath),
-			b.IngestSource, id); uerr != nil {
+			b.IngestSource); uerr != nil {
 			return "", fmt.Errorf("db: upsert binding: update: %w", mapBusy(uerr))
 		}
 		return id, nil
@@ -245,12 +264,11 @@ func (t *Tx) UpsertRound(r Round) (string, error) {
 	var id string
 	err := t.queryRow(`SELECT id FROM round WHERE binding_id = ? AND number = ?`, r.BindingID, r.Number).Scan(&id)
 	if err == nil {
-		if _, uerr := t.exec(`UPDATE round SET started_at=?, closed_at=?, outcome=?, candidate=?,
-				account=?, harness=?, provider=?, model=?, mode=?, actor=?, tier=?,
-				commits=?, tree=?, gate_result=?, gate_exit=?, gate_duration_ms=?,
-				in_tokens=?, cache_tokens=?, write_tokens=?, out_tokens=?, cost_usd=?, cost_basis=?,
-				report_outcome=?, switches=?
-			WHERE id=?`,
+		if uerr := t.updateIfChanged("round", id, []string{"started_at", "closed_at", "outcome", "candidate",
+			"account", "harness", "provider", "model", "mode", "actor", "tier",
+			"commits", "tree", "gate_result", "gate_exit", "gate_duration_ms",
+			"in_tokens", "cache_tokens", "write_tokens", "out_tokens", "cost_usd", "cost_basis",
+			"report_outcome", "switches"},
 			formatTime(r.StartedAt), nullableTime(r.ClosedAt), r.Outcome, nullableString(r.Candidate),
 			nullableString(r.Account),
 			nullableString(r.Harness), nullableString(r.Provider), nullableString(r.Model),
@@ -259,8 +277,7 @@ func (t *Tx) UpsertRound(r Round) (string, error) {
 			nullableInt64(r.GateDurationMS),
 			nullableInt64(r.InTokens), nullableInt64(r.CacheTokens), nullableInt64(r.WriteTokens), nullableInt64(r.OutTokens),
 			nullableFloat64(r.CostUSD), nullableString(r.CostBasis),
-			nullableString(r.ReportOutcome), r.Switches,
-			id); uerr != nil {
+			nullableString(r.ReportOutcome), r.Switches); uerr != nil {
 			return "", fmt.Errorf("db: upsert round: update: %w", mapBusy(uerr))
 		}
 		return id, nil
