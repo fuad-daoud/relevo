@@ -157,6 +157,9 @@ func writeRoundLine(sb *strings.Builder, b BindingStatus) {
 func writeMasterMindLine(sb *strings.Builder, b BindingStatus) {
 	fmt.Fprintf(sb, "  MasterMind  %-14s %-8s route %s",
 		mastermindNameOrID(b), b.MasterMindKind, b.MasterMindRoute)
+	if b.MasterMindRoute == "push" && !b.MasterMindRouteLive {
+		fmt.Fprint(sb, " (MasterMind gone: run relevo mastermind init)")
+	}
 	if b.MasterMindChatLabel != "" || b.MasterMindChatLink != "" {
 		lbl := chatlabel.Label{Text: b.MasterMindChatLabel, Link: b.MasterMindChatLink}
 		fmt.Fprintf(sb, " · %s", lbl.String())

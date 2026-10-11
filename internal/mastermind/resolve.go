@@ -50,11 +50,16 @@ type ResolveInput struct {
 	// OpencodeSession finds an opencode session id for CWD; nil skips the
 	// opencode step.
 	OpencodeSession func(cwd string, now time.Time) (string, error)
+	// Heal lets Resolve re-point a gone record at the calling session. Only a
+	// process that is itself the caller's session may set it: Detect reads this
+	// process's environment, so a daemon would describe the daemon.
+	Heal bool
 }
 
 // Resolve is how every verb except `init` gets its mastermind: flag > env > host
 // > session, first hit wins. It never creates a record; a missing hook is
-// loud (ErrNoMasterMind) rather than a silently unnamed mastermind.
+// loud (ErrNoMasterMind) rather than a silently unnamed mastermind. A hit
+// writes seen_at and, when in.Heal is set, may re-point a gone record's host.
 func Resolve(reg Registry, in ResolveInput) (Record, Resolution, error) {
 	env := in.Env
 	if env == nil {
@@ -66,10 +71,10 @@ func Resolve(reg Registry, in ResolveInput) (Record, Resolution, error) {
 		if err != nil {
 			return Record{}, "", err
 		}
-		return hit(reg, rec, ResolutionFlag, in.Now)
+		return hit(reg, rec, ResolutionFlag, in, env)
 	}
 
-	if rec, res, ok, err := resolveFromEnv(reg, env, in.Now); err != nil {
+	if rec, res, ok, err := resolveFromEnv(reg, env, in); err != nil {
 		return Record{}, "", err
 	} else if ok {
 		return rec, res, nil
@@ -83,7 +88,7 @@ func Resolve(reg Registry, in ResolveInput) (Record, Resolution, error) {
 			rec, err := reg.ByHost(ident.HostPID, startedAt)
 			switch {
 			case err == nil:
-				return hit(reg, rec, ResolutionHost, in.Now)
+				return hit(reg, rec, ResolutionHost, in, env)
 			case errors.Is(err, ErrNotFound):
 			default:
 				return Record{}, "", err
@@ -111,7 +116,7 @@ func Resolve(reg Registry, in ResolveInput) (Record, Resolution, error) {
 		rec, err := reg.BySession(ident.Kind, ident.SessionID)
 		switch {
 		case err == nil:
-			return hit(reg, rec, ResolutionSession, in.Now)
+			return hit(reg, rec, ResolutionSession, in, env)
 		case errors.Is(err, ErrNotFound):
 			if ident.Kind == "opencode" {
 				return Record{}, "", ErrUnregisteredSession{Kind: "opencode", SessionID: ident.SessionID}
@@ -128,7 +133,7 @@ func Resolve(reg Registry, in ResolveInput) (Record, Resolution, error) {
 // historical $RELEVO_PLANNER, because the export line already in a live
 // session's $CLAUDE_ENV_FILE is state already written (D5). ok is false when
 // neither variable names anything, in which case the caller keeps looking.
-func resolveFromEnv(reg Registry, env func(string) string, now time.Time) (Record, Resolution, bool, error) {
+func resolveFromEnv(reg Registry, env func(string) string, in ResolveInput) (Record, Resolution, bool, error) {
 	for _, name := range []string{"RELEVO_MASTERMIND", "RELEVO_PLANNER"} {
 		ref := env(name)
 		if ref == "" {
@@ -138,7 +143,7 @@ func resolveFromEnv(reg Registry, env func(string) string, now time.Time) (Recor
 		if err != nil {
 			return Record{}, "", false, err
 		}
-		rec, res, err := hit(reg, rec, ResolutionEnv, now)
+		rec, res, err := hit(reg, rec, ResolutionEnv, in, env)
 		if err != nil {
 			return Record{}, "", false, err
 		}
@@ -164,9 +169,14 @@ func lookupRef(reg Registry, ref string) (Record, error) {
 	return Record{}, ErrUnknownMasterMind{Ref: ref}
 }
 
-// hit refreshes seen_at and reports how the record was found; Touch's error
-// is dropped since a resolution must not fail on a timestamp write.
-func hit(reg Registry, rec Record, res Resolution, now time.Time) (Record, Resolution, error) {
-	_ = reg.Touch(rec.ID, now)
+// hit refreshes seen_at, heals a gone record when asked, and reports how the
+// record was found; Touch's error is dropped since a resolution must not fail
+// on a timestamp write. The heal runs after the Touch so its returned record
+// is the freshest one.
+func hit(reg Registry, rec Record, res Resolution, in ResolveInput, env func(string) string) (Record, Resolution, error) {
+	_ = reg.Touch(rec.ID, in.Now)
+	if in.Heal {
+		rec = healGone(reg, rec, in, env)
+	}
 	return rec, res, nil
 }

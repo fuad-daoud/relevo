@@ -84,7 +84,7 @@ func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.Ch
 		mastermindID: parent.MasterMindID,
 		in:           workflow.StartInputs{Plans: items, Task: spec.Task},
 	}
-	if rec, haveRec, rerr := resolveVerbMasterMind(rt, parent.MasterMindID); rerr == nil && haveRec {
+	if rec, haveRec, rerr := resolveVerbMasterMindHeal(rt, parent.MasterMindID, false); rerr == nil && haveRec {
 		childPlan.mastermind = recordEndpoint(rec)
 	}
 

@@ -31,6 +31,45 @@ type rowLoads struct {
 	// not "nothing is alive": a handle absent from it falls back to its own
 	// Alive call, so a probe that was never taken costs a fork, never an answer.
 	alive map[spawn.ProcHandle]aliveAnswer
+	// gone memoises recordGone by mastermind id, so a report over many bindings
+	// classifies each mastermind once.
+	gone map[string]bool
+}
+
+// record is the mastermind's record: from the report's bulk map when it has
+// one (an id absent from it is a failed Get, not worth a second), else one Get.
+func (l *rowLoads) record(rt Runtime, id string) (mastermind.Record, bool) {
+	if l != nil && l.masterminds != nil {
+		rec, ok := l.masterminds[id]
+		return rec, ok
+	}
+	if rt.MasterMinds == nil {
+		return mastermind.Record{}, false
+	}
+	rec, err := rt.MasterMinds.Get(id)
+	return rec, err == nil
+}
+
+// recordGone reports whether the mastermind's record reads gone. A missing
+// registry, a failed Get and an explicit record all read as not gone, so a
+// lookup failure keeps the claim's own answer.
+func (l *rowLoads) recordGone(rt Runtime, id string) bool {
+	if l != nil {
+		if g, ok := l.gone[id]; ok {
+			return g
+		}
+	}
+	gone := false
+	if rec, ok := l.record(rt, id); ok {
+		gone = mastermind.RecordState(rec, rt.ProcStart) == mastermind.StateGone
+	}
+	if l != nil {
+		if l.gone == nil {
+			l.gone = make(map[string]bool)
+		}
+		l.gone[id] = gone
+	}
+	return gone
 }
 
 func (l *rowLoads) claimMap() map[string]*delivery.Claim {

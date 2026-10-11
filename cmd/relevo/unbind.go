@@ -290,6 +290,7 @@ func gcResolver(rt relevo.Runtime) func(ref string) (mastermind.Record, error) {
 			Now:             now,
 			CWD:             cwd,
 			OpencodeSession: rt.OpencodeSession,
+			Heal:            true,
 		})
 		return rec, err
 	}
