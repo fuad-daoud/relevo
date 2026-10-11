@@ -163,3 +163,38 @@ func TestIngestFromAnOlderCursorChangesNoRound(t *testing.T) {
 		}
 	}
 }
+
+// A binding re-ingested with nothing appended -- every daemon start re-ingests
+// each live binding -- must rebuild its rounds from the events already in,
+// not from the empty read: a round rebuilt from no events loses its start,
+// its close, its outcome and its cost.
+func TestIngestWithNothingNewKeepsEveryRound(t *testing.T) {
+	d := splitPair(t)
+	src := DirSource(copyFixture(t))
+	if _, err := Ingest(context.Background(), src, d, Deps{}); err != nil {
+		t.Fatalf("first Ingest: %v", err)
+	}
+	b, err := src.Bind()
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	row, ok, err := d.Binding(b.Name)
+	if err != nil || !ok {
+		t.Fatalf("Binding(%s) = found %v, err %v", b.Name, ok, err)
+	}
+	want, err := d.Rounds(row.ID)
+	if err != nil || len(want) == 0 {
+		t.Fatalf("Rounds after the first ingest = %d rounds, err %v; want some", len(want), err)
+	}
+
+	if _, err := Ingest(context.Background(), src, d, Deps{}); err != nil {
+		t.Fatalf("second Ingest: %v", err)
+	}
+	got, err := d.Rounds(row.ID)
+	if err != nil {
+		t.Fatalf("Rounds: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("rounds after an ingest with nothing new =\n%+v\nwant\n%+v", got, want)
+	}
+}
