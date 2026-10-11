@@ -49,7 +49,7 @@ func withoutShimPATH(t *testing.T, env []string) []string {
 	last := env[len(env)-1]
 	path, ok := strings.CutPrefix(last, "PATH=")
 	first, _, _ := strings.Cut(path, string(os.PathListSeparator))
-	if !ok || filepath.Base(first) != "shims" {
+	if !ok || filepath.Base(first) != ".shims" {
 		t.Fatalf("last env entry %q, want PATH led by the git shim dir", last)
 	}
 	return env[:len(env)-1]
