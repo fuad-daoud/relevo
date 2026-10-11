@@ -104,11 +104,11 @@ func TestSelfImageIdentityIsTheRunningImageNotThePath(t *testing.T) {
 		t.Fatalf("the copy could not read itself: image %q, path %q", got.ImageErr, got.PathErr)
 	}
 
-	if got.Image != original {
+	if !sameFile(got.Image, original) {
 		t.Errorf("running image = %+v, want the copy's own identity %+v; a baseline read from the path adopts the replacement instead",
 			got.Image, original)
 	}
-	if got.Path == original {
+	if sameFile(got.Path, original) {
 		t.Errorf("path identity = %+v, unchanged after a rename over it", got.Path)
 	}
 }
@@ -200,6 +200,14 @@ func copySelf(t *testing.T, path string) {
 	if err := out.Close(); err != nil {
 		t.Fatalf("close the copy: %v", err)
 	}
+}
+
+// sameFile compares two identities the way the watcher means them. The child's
+// identity crossed a JSON round trip, which keeps the instant but not the
+// time's location unless the offset happens to be local, so == on the struct
+// would compare locations rather than files.
+func sameFile(a, b store.FileID) bool {
+	return a.Dev == b.Dev && a.Ino == b.Ino && a.Size == b.Size && a.ModTime.Equal(b.ModTime)
 }
 
 // readLine reads one line, without the newline.
