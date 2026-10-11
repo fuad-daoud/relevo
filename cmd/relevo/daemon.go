@@ -248,7 +248,7 @@ func cmdDaemon(args []string) error {
 	// Capture the executable and the identity of the image this process is
 	// running, not of the path: a replacement landing after exec would become
 	// the baseline, and the watcher would never fire. A failure disables
-	// re-exec with a warning; the daemon runs on (#371 §4.7, §6).
+	// re-exec with a warning; the daemon runs on.
 	exe, exeErr := upgrade.ResolveExe()
 	exeID, idErr := upgrade.SelfImageIdentity()
 	reexecOK := exeErr == nil && idErr == nil
