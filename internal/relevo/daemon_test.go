@@ -971,11 +971,14 @@ func TestPruneMasterMindsForgetsAndStamps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store DB: %v", err)
 	}
-	last, ok, err := mastermindLastPruned(kv)
+	last, ok, err := mastermindLastPruned(kv.LocalOrSelf())
 	if err != nil {
 		t.Fatalf("mastermindLastPruned: %v", err)
 	}
 	if !ok || !last.Equal(now) {
 		t.Errorf("planner.pruned_at = (%v, %v), want (%v, true)", last, ok, now)
+	}
+	if _, ok, err := kv.KVGet(mastermindPrunedAtKey); err != nil || ok {
+		t.Errorf("planner.pruned_at in the shared file = ok %v, err %v; want absent, or the split pass moves it on every start", ok, err)
 	}
 }

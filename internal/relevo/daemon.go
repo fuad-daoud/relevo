@@ -526,10 +526,13 @@ func mirrorArchived(ctx context.Context, rt Runtime) {
 		return
 	}
 
+	// The "ingested.archive" namespace is machine-local: it lives in the local
+	// file, where the split pass would otherwise move it on every start.
+	marks := rt.DB.LocalOrSelf()
 	deps := IngestDeps(rt)
 	for _, a := range archived {
 		key := "ingested.archive." + a.RecordID
-		if _, ok, kerr := rt.DB.KVGet(key); kerr != nil {
+		if _, ok, kerr := marks.KVGet(key); kerr != nil {
 			slog.Warn("mirror: read archived cursor", "record", a.RecordID, "err", kerr)
 			continue
 		} else if ok {
@@ -541,7 +544,7 @@ func mirrorArchived(ctx context.Context, rt Runtime) {
 			slog.Warn("mirror: ingest archived", "binding", a.Binding.Name, "err", ierr)
 			continue
 		}
-		if perr := rt.DB.KVPut(key, []byte("true")); perr != nil {
+		if perr := marks.KVPut(key, []byte("true")); perr != nil {
 			slog.Warn("mirror: record archived cursor", "record", a.RecordID, "err", perr)
 			continue
 		}
@@ -757,11 +760,12 @@ func (d *Daemon) pruneMasterMinds() {
 	if rt.MasterMinds == nil || rt.Store == nil {
 		return
 	}
-	kv, err := rt.Store.DB()
+	sdb, err := rt.Store.DB()
 	if err != nil {
 		slog.Warn("mastermind prune: open store db", "err", err)
 		return
 	}
+	kv := sdb.LocalOrSelf()
 
 	now := time.Now
 	if rt.Now != nil {

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 func TestDaemonInfoRoundTrip(t *testing.T) {
@@ -64,7 +66,7 @@ func TestWriteDaemonInfoPlainStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DB: %v", err)
 	}
-	raw, ok, err := d.KVGet(daemonInfoKey)
+	raw, ok, err := d.LocalOrSelf().KVGet(daemonInfoKey)
 	if err != nil || !ok {
 		t.Fatalf("KVGet(%s) = (_, %v, %v), want the row", daemonInfoKey, ok, err)
 	}
@@ -101,7 +103,7 @@ func TestReadDaemonInfoMalformedIsAnError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DB: %v", err)
 	}
-	if err := d.KVPut(daemonInfoKey, []byte(`{"pid":"not-a-number"}`)); err != nil {
+	if err := d.LocalOrSelf().KVPut(daemonInfoKey, []byte(`{"pid":"not-a-number"}`)); err != nil {
 		t.Fatalf("seed malformed daemon row: %v", err)
 	}
 	if _, _, err := s.ReadDaemonInfo(); err == nil {
@@ -125,5 +127,35 @@ func TestRemoveDaemonInfo(t *testing.T) {
 	// record already gone.
 	if err := s.RemoveDaemonInfo(); err != nil {
 		t.Fatalf("RemoveDaemonInfo on a missing record: %v", err)
+	}
+}
+
+// The daemon record is machine-local: written to the shared file, the split
+// pass moves it out, with a full backup, on every daemon start.
+func TestDaemonInfoLeavesTheSplitNothingToMove(t *testing.T) {
+	s := New(t.TempDir())
+	d, err := s.DB()
+	if err != nil {
+		t.Fatalf("DB: %v", err)
+	}
+	if _, _, err := db.SplitOnce(d, t.TempDir(), time.Now()); err != nil {
+		t.Fatalf("first SplitOnce: %v", err)
+	}
+	if err := s.WriteDaemonInfo(DaemonInfo{Version: "v1.2.3", PID: 4242}); err != nil {
+		t.Fatalf("WriteDaemonInfo: %v", err)
+	}
+	if _, ran, err := db.SplitOnce(d, t.TempDir(), time.Now()); err != nil {
+		t.Fatalf("second SplitOnce: %v", err)
+	} else if ran {
+		t.Error("the split pass found the daemon record in the shared file")
+	}
+	if got, ok, err := s.ReadDaemonInfo(); err != nil || !ok || got.PID != 4242 {
+		t.Errorf("ReadDaemonInfo = %+v, %v, %v; want PID 4242", got, ok, err)
+	}
+	if err := s.RemoveDaemonInfo(); err != nil {
+		t.Fatalf("RemoveDaemonInfo: %v", err)
+	}
+	if _, ok, err := s.ReadDaemonInfo(); err != nil || ok {
+		t.Errorf("ReadDaemonInfo after remove = ok %v, err %v; want absent", ok, err)
 	}
 }

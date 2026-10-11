@@ -131,6 +131,12 @@ func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error)
 		src: src, b: b, members: members, kind: kind,
 		ref: ref, deps: deps, logger: deps.Logger,
 	}
+	if members["log.jsonl"] {
+		_, key := sourceOpener(src, "log.jsonl")
+		if run.cursor, run.cursorFound, err = d.Cursor(key); err != nil {
+			return Stats{}, fmt.Errorf("ingest %s: log cursor: %w", src.Name(), err)
+		}
+	}
 	var stats Stats
 	err = d.Tx(func(tx *db.Tx) error {
 		var terr error
@@ -139,6 +145,13 @@ func Ingest(ctx context.Context, src Source, d *db.DB, deps Deps) (Stats, error)
 	})
 	if err != nil {
 		return Stats{}, fmt.Errorf("ingest %s: %w", src.Name(), err)
+	}
+	// Saved only after the commit: a crash in between re-reads lines whose
+	// events are already in, and appending an event twice is a no-op.
+	if run.saved != nil {
+		if err := d.SaveCursor(*run.saved); err != nil {
+			return Stats{}, fmt.Errorf("ingest %s: save log cursor: %w", src.Name(), err)
+		}
 	}
 	return stats, nil
 }
@@ -179,6 +192,12 @@ type ingestRun struct {
 	deps    Deps
 	logger  *slog.Logger
 	stats   Stats
+	// cursor is the log member's saved cursor, read before the transaction;
+	// saved is the one to write after it commits. Both live in the
+	// machine-local file, which the shared transaction cannot reach.
+	cursor      db.Cursor
+	cursorFound bool
+	saved       *db.Cursor
 }
 
 func (r *ingestRun) run(tx *db.Tx) (Stats, error) {
@@ -190,7 +209,7 @@ func (r *ingestRun) run(tx *db.Tx) (Stats, error) {
 	if err != nil {
 		return Stats{}, err
 	}
-	log, err := r.readLog(tx)
+	log, err := r.readLog()
 	if err != nil {
 		return Stats{}, err
 	}
