@@ -325,6 +325,11 @@ func chainPullMember(ctx context.Context, rt Runtime, mv remote.ChainMemberView)
 			if err := chainPullPromptEntry(rt, tx, cur, f.round, f.prompt, f.view.RoundStartedAt); err != nil {
 				return err
 			}
+			if entry, listed := chainRoundEntry(mv, f.round); listed {
+				if err := chainPullQueueEntry(rt, tx, cur, f.round, entry); err != nil {
+					return err
+				}
+			}
 			a := &catchUpAck{
 				Server: cur.Builder.Server, Name: name, Round: f.round,
 				BindingRound: f.round, View: f.view,

@@ -19,27 +19,38 @@ import (
 func chainRoundView(mv remote.ChainMemberView, r int) remote.BindingView {
 	v := mv.View
 	v.ClosedRound = r
-	for _, cr := range mv.Rounds {
-		if cr.Round != r {
-			continue
-		}
-		cr = chainRoundFacts(cr, mv.View)
-		v.ReportOutcome = cr.ReportOutcome
-		v.GateResult = cr.GateResult
-		v.Stopped = cr.Stopped
-		v.ReportNote = cr.ReportNote
-		v.Switches = cr.Switches
-		v.DiffNote = cr.DiffNote
-		v.DiffCommits = cr.DiffCommits
-		v.DiffTree = cr.DiffTree
-		v.DirtyCommit = cr.DirtyCommit
-		v.Usage = cr.Usage
-		v.Rusage = cr.Rusage
-		v.PriorTokens = cr.PriorTokens
-		v.RoundStartedAt = cr.RoundStartedAt
-		break
+	cr, ok := chainRoundEntry(mv, r)
+	if !ok {
+		return v
 	}
+	v.ReportOutcome = cr.ReportOutcome
+	v.GateResult = cr.GateResult
+	v.Stopped = cr.Stopped
+	v.ReportNote = cr.ReportNote
+	v.Switches = cr.Switches
+	v.DiffNote = cr.DiffNote
+	v.DiffCommits = cr.DiffCommits
+	v.DiffTree = cr.DiffTree
+	v.DirtyCommit = cr.DirtyCommit
+	v.Usage = cr.Usage
+	v.Rusage = cr.Rusage
+	v.PriorTokens = cr.PriorTokens
+	v.RoundStartedAt = cr.RoundStartedAt
 	return v
+}
+
+// chainRoundEntry is round r's own entry from the member view, completed from
+// the binding view by chainRoundFacts, and whether the view lists that round at
+// all. A round the view does not list is reported false rather than as an empty
+// entry, so a caller that needs the round's own facts tells "no entry" from an
+// entry that happens to carry none.
+func chainRoundEntry(mv remote.ChainMemberView, r int) (remote.ClosedRoundView, bool) {
+	for _, cr := range mv.Rounds {
+		if cr.Round == r {
+			return chainRoundFacts(cr, mv.View), true
+		}
+	}
+	return remote.ClosedRoundView{}, false
 }
 
 // chainPullPrompt fetches one round's prompt. The server keeps the prompt it
