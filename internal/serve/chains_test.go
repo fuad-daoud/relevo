@@ -794,6 +794,38 @@ func TestServedResumeMapsWireToParams(t *testing.T) {
 	}
 }
 
+// TestServedResumeCarriesTheFromTarget pins that the wire's resume target
+// reaches the engine that enters the step. The server drives a server chain, so
+// a target that stopped at the client left the server resuming the step it
+// halted on and --from review re-entered the check.
+func TestServedResumeCarriesTheFromTarget(t *testing.T) {
+	t.Parallel()
+
+	opts, bad := resumeOptionsFromWire("shop", remote.ChainResumeRequest{
+		From:   "review",
+		Params: map[string]string{"gate": "make test"},
+	})
+	if bad != "" {
+		t.Fatalf("resumeOptionsFromWire = %q, want no refusal", bad)
+	}
+	if opts.From != "review" {
+		t.Errorf("from = %q, want %q", opts.From, "review")
+	}
+	if got := opts.Params["gate"]; got != "make test" {
+		t.Errorf("gate param = %q, want %q", got, "make test")
+	}
+
+	// A body that names no target resumes the step the chain halted on, so the
+	// field stays empty rather than naming one.
+	empty, bad := resumeOptionsFromWire("shop", remote.ChainResumeRequest{})
+	if bad != "" {
+		t.Fatalf("resumeOptionsFromWire(empty) = %q, want no refusal", bad)
+	}
+	if empty.From != "" {
+		t.Errorf("from for an empty body = %q, want empty", empty.From)
+	}
+}
+
 // TestServedResumeRefusesAGateChangeOnAPlacedWriter pins the wire half of the
 // refusal: a gate built by resumeOptionsFromWire is refused as a usage error
 // when the chain's writer member runs on a server, because relevo has no route
