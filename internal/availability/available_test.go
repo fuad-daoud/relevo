@@ -162,6 +162,55 @@ func TestSuggestProvider(t *testing.T) {
 	}
 }
 
+// TestResolveClearSubjectIgnoresAnEffortSuffix: a clear subject pasted out of a
+// builder's settings carries the "#effort" suffix, and it names the same
+// provider as the bare token. Removing the strip in ResolveClearSubject kills
+// the "#high" row.
+func TestResolveClearSubjectIgnoresAnEffortSuffix(t *testing.T) {
+	t.Parallel()
+
+	set := candidateSet(t, availTwoProviderJSON)
+
+	for _, subject := range []string{
+		"opencode/test/m",
+		"opencode/test/m#high",
+		"opencode/test/m#max",
+	} {
+		provider, err := ResolveClearSubject(set, Ledger{}, subject)
+		if err != nil {
+			t.Fatalf("ResolveClearSubject(%s): %v", subject, err)
+		}
+		if provider != "test" {
+			t.Errorf("ResolveClearSubject(%s) = %q, want test", subject, provider)
+		}
+	}
+}
+
+// TestUsageTextNamesTheAcceptedForms: a refused subject says what the caller
+// may type next, and keeps the refusal's own words -- including the closest
+// provider's name -- ahead of them.
+func TestUsageTextNamesTheAcceptedForms(t *testing.T) {
+	t.Parallel()
+
+	set := candidateSet(t, availTwoProviderJSON)
+	_, err := ResolveClearSubject(set, Ledger{}, "clinepass")
+	if err == nil {
+		t.Fatal("an unknown provider must be refused")
+	}
+	got := UsageText(err)
+	if !strings.Contains(got, `did you mean "cline-pass"`) {
+		t.Errorf("usage text %q must keep the suggestion", got)
+	}
+	for _, form := range []string{"group@account", "provider", "candidate name", "harness/provider/model"} {
+		if !strings.Contains(got, form) {
+			t.Errorf("usage text %q must name %q", got, form)
+		}
+	}
+	if UsageText(nil) != "" {
+		t.Error("a nil error must render no usage text")
+	}
+}
+
 // TestResolveClearSubjectName: `gate --clear <name>` clears that
 // candidate's provider, and a bare provider still clears the provider.
 func TestResolveClearSubjectName(t *testing.T) {

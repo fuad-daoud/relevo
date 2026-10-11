@@ -122,11 +122,13 @@ func capLine(line string) string {
 
 // parseReset tries three forms, in this order, on the matched line only: a
 // duration ("resets in 2h48m52s"), an absolute date ("try again at Oct 19th,
-// 2026 7:14 PM"), and a clock time ("resets 7pm", "resets at 23:30"). A duration
-// and a clock time must lie in (now, now+7d]; a date that names a year may lie
-// in (now, now+31d], because a full date is hard to misread. Anything else is
-// ok=false -- garbage in a line that happened to match the limit pattern must
-// not gate a provider indefinitely. The returned time is UTC.
+// 2026 7:14 PM"), and a clock time ("resets 7pm", "resets at 23:30"). A
+// duration and a full date may lie in (now, now+31d]; a date naming no year and
+// a clock time are the vaguer forms and keep the 7-day window, because "7pm"
+// without a day is the one a line can most easily be misread out of. Anything
+// outside its window is ok=false -- garbage in a line that happened to match
+// the limit pattern must not gate a provider indefinitely. The returned time
+// is UTC.
 func parseReset(line string, now time.Time) (time.Time, bool) {
 	if t, ok := parseDurationReset(line, now); ok {
 		return t, true
@@ -173,7 +175,12 @@ func parseDurationReset(line string, now time.Time) (time.Time, bool) {
 			return time.Time{}, false
 		}
 	}
-	return windowedReset(now.Add(d), now, limitWindowShort)
+	// A duration earns the dated window, not the short one: a monthly
+	// subscription limit states its own reset in days, and "16d 5h" is that
+	// statement rather than a misread. The overflow guard above already
+	// refused a count no window could accept, so nothing here gates a provider
+	// on a wrapped nanosecond count.
+	return windowedReset(now.Add(d), now, limitWindowDated)
 }
 
 // parseDateReset handles the absolute-date form, which may or may not name a
@@ -320,12 +327,14 @@ func windowedReset(t, now time.Time, window time.Duration) (time.Time, bool) {
 	return t.UTC(), true
 }
 
-// limitWindowShort bounds the vaguer reset forms -- a duration and a clock time,
-// both easy to misread -- to (now, now+7d].
+// limitWindowShort bounds the vaguer reset forms -- a clock time, and a date
+// naming no year -- to (now, now+7d], because neither says which day it means.
 const limitWindowShort = 7 * 24 * time.Hour
 
-// limitWindowDated bounds a reset that names a full date with a year: a full
-// calendar date is hard to misread, so it earns the longer window.
+// limitWindowDated bounds the reset forms that carry their own day: a duration
+// ("16d 5h") and a full calendar date with a year. Both say how far out they
+// are, so a monthly quota may state a reset two weeks out without the parser
+// discarding what it just read.
 const limitWindowDated = 31 * 24 * time.Hour
 
 // inLimitWindow is parseReset's (now, now+max] bound.

@@ -53,6 +53,11 @@ func verbClassify(err error) string {
 		// the message names the constraint and the call, and the reader's answer
 		// is a change set this machine can push, not a defect report.
 		return wire.SyncCodeRemoteRefused
+	case errors.Is(err, relevosync.ErrBackingOff):
+		// The breaker is waiting out the delay a stopped worker earned. That
+		// delay ends on its own, so the caller's answer is to try again rather
+		// than report a defect in a machine behaving as designed.
+		return wire.SyncCodeBackingOff
 	case errors.Is(err, db.ErrPreflightRefused):
 		return wire.SyncCodePreflightRefused
 	case errors.Is(err, db.ErrContended):

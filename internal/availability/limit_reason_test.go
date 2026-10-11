@@ -46,7 +46,13 @@ func TestResetFromReason(t *testing.T) {
 		},
 		{
 			name:   "a reset beyond the trusted window is not honoured",
-			reason: "rate limit reached. Resets in 200h",
+			reason: "rate limit reached. Resets in 2000h",
+		},
+		{
+			name:   "a monthly limit states its reset in days",
+			reason: "RESOURCE_EXHAUSTED 429: monthly limit reached. Resets in 16d 5h",
+			want:   now.Add(16*24*time.Hour + 5*time.Hour),
+			wantOK: true,
 		},
 		{
 			name:   "a nonsense reset is not honoured",

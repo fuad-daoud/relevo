@@ -370,6 +370,44 @@ func TestDBSyncRemoteRefusalIsRefusedNotInternal(t *testing.T) {
 	}
 }
 
+// TestDBSyncBackoffIsRefusedWithRetry pins the refusal a verb gets while the
+// breaker waits out a stopped worker: nothing was written, the delay ends on
+// its own, and the way out is the retry verb. Classifying it internal would
+// send the reader to `relevo bugreport` for a delay that was the answer.
+// Dropping the arm from dbSyncVerbRefusal kills this (the code becomes
+// internal and the next becomes the bug report).
+func TestDBSyncBackoffIsRefusedWithRetry(t *testing.T) {
+	t.Parallel()
+
+	for _, verb := range []string{wire.SyncVerbPush, wire.SyncVerbPull} {
+		t.Run(verb, func(t *testing.T) {
+			t.Parallel()
+
+			classified := dbSyncVerbRefusal(verb, &client.VerbRefusal{
+				Code:    wire.SyncCodeBackingOff,
+				Message: "sync: the breaker is backing off",
+			})
+
+			var got *cliError
+			if !errors.As(classified, &got) {
+				t.Fatalf("classified = %v, want a cliError", classified)
+			}
+			if got.code != codeRefused {
+				t.Errorf("code = %q, want %q", got.code, codeRefused)
+			}
+			if got.next != "relevo db sync retry" {
+				t.Errorf("next = %q, want %q", got.next, "relevo db sync retry")
+			}
+			if !strings.Contains(got.Error(), "backing off") {
+				t.Errorf("message %q must say the machine is backing off", got.Error())
+			}
+			if strings.Contains(got.next, "bugreport") {
+				t.Errorf("next = %q, want no bug report on a backoff", got.next)
+			}
+		})
+	}
+}
+
 // TestDBSyncRemoteWithoutTheTableIsRefused pins the other remote refusal: the
 // remote has no table for the rows this machine is pushing. It is refused, and
 // its message says the schema rather than the row order, because the two have

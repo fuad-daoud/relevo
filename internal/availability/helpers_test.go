@@ -98,6 +98,25 @@ func testDeps(t *testing.T) Deps {
 	}
 }
 
+// testDepsWith is testDeps against a caller's own candidate set, for the tests
+// that need a specific configuration rather than the shared three-ref one.
+func testDepsWith(t *testing.T, set *candidate.Set) Deps {
+	t.Helper()
+	gates := testGates(t)
+	reg, err := roles.Build(nil, set, policy.Policy{})
+	if err != nil {
+		t.Fatalf("roles.Build: %v", err)
+	}
+	return Deps{
+		Store:        store.New(t.TempDir()),
+		Candidates:   set,
+		Gates:        gates,
+		Latency:      gates,
+		Now:          func() time.Time { return baseTime },
+		RoleRegistry: func() *roles.Registry { return reg },
+	}
+}
+
 // badJSONKV returns invalid bytes for every key, so a reader hits the decode
 // failure a hand-edited file used to cause.
 type badJSONKV struct{}
