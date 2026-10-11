@@ -2,6 +2,8 @@ package store
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -56,5 +58,26 @@ func TestEnsureOutDirChownsThroughCallback(t *testing.T) {
 	}
 	if len(got) != 1 {
 		t.Errorf("second EnsureOutDir chowned again: %v", got)
+	}
+}
+
+func TestGitShimDirIsUnderTheRootAndStable(t *testing.T) {
+	root := t.TempDir()
+	s := New(root)
+	got := s.GitShimDir()
+	if rel, err := filepath.Rel(root, got); err != nil || strings.HasPrefix(rel, "..") || rel == "." {
+		t.Errorf("GitShimDir = %q, want a path under %q", got, root)
+	}
+	if again := s.GitShimDir(); again != got {
+		t.Errorf("GitShimDir changed between calls: %q then %q", got, again)
+	}
+}
+
+// TestGitShimDirIsOutsideBindingNamespace pins that the shim directory's name
+// is not a valid binding name, so no binding can share its directory.
+func TestGitShimDirIsOutsideBindingNamespace(t *testing.T) {
+	s := New(t.TempDir())
+	if err := ValidName(filepath.Base(s.GitShimDir())); err == nil {
+		t.Fatalf("GitShimDir base %q is a valid binding name", filepath.Base(s.GitShimDir()))
 	}
 }
