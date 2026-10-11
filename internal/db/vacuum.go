@@ -130,11 +130,8 @@ func (d *DB) Vacuum() error {
 // the conversions freed are on the file's free list, and the engine hands a
 // free page to the next insert into that table rather than extending the file,
 // so the database stops growing at the high-water mark the pass left instead of
-// shrinking. What it does not do is return those pages to the filesystem, and
-// nothing reclaims them later: the passes are once-per-database, so the next
-// start finds the marker and does not run them again. Only a compaction over an
-// unserved handle -- a start with no owner, or a manual vacuum -- gives the
-// space back.
+// shrinking. Returning them to the filesystem is left to ReclaimFreePages, which
+// the next start runs before it serves the handle.
 func (d *DB) Reclaim(pass string) error {
 	if d == nil {
 		return nil

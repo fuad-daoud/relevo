@@ -286,3 +286,35 @@ func refusalCode(err error) (string, bool) {
 	}
 	return "", false
 }
+
+// TestStartupReclaimsBeforeItServes pins where the reclaim sits. A compaction
+// closes and reopens the pool, which a served handle refuses, so a reclaim
+// moved after the serve compacts nothing and only warns.
+func TestStartupReclaimsBeforeItServes(t *testing.T) {
+	root := shortStateRoot(t)
+	t.Setenv("XDG_STATE_HOME", root)
+	noDaemon(t)
+
+	rt, b := startupRuntime(t, root)
+	prevPasses, prevReclaim := daemonStartupPasses, reclaimFreePages
+	t.Cleanup(func() { daemonStartupPasses, reclaimFreePages = prevPasses, prevReclaim })
+	daemonStartupPasses = func(*relevo.Runtime) bool { return false }
+	called := false
+	var vacuumErr error
+	reclaimFreePages = func(d *db.DB) ([]db.ReclaimedFile, error) {
+		called = true
+		vacuumErr = d.Vacuum()
+		return nil, vacuumErr
+	}
+
+	srv := daemonStartup(&rt, b.db, b.ln, nil)
+	if srv != nil {
+		t.Cleanup(func() { _ = srv.Close() })
+	}
+	if !called {
+		t.Fatal("the start ran no reclaim")
+	}
+	if vacuumErr != nil {
+		t.Errorf("the reclaim could not compact the handle: %v", vacuumErr)
+	}
+}
