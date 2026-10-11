@@ -642,3 +642,38 @@ func TestShowGateRendersTheWholePulledLog(t *testing.T) {
 		t.Errorf("rendered gate =\n%q\nwant the whole log\n%q", res.Text, full)
 	}
 }
+
+// TestPlacedCheckStoresPartialNoteForCutLog pins that a served tail cut at the
+// cap is stored under a line saying it is partial and where the full log is,
+// and that a log within the cap is stored bare.
+func TestPlacedCheckStoresPartialNoteForCutLog(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		view remote.CheckView
+		want string
+	}{
+		{"cut", remote.CheckView{ID: "chk-1", Result: "pass", LogTail: "tail\n", LogTruncated: true, LogPath: "/srv/shop/002-served-check.log"},
+			"partial: the last 64 KiB of the check log; the full log is on the server at /srv/shop/002-served-check.log\ntail\n"},
+		{"whole", remote.CheckView{ID: "chk-1", Result: "pass", LogTail: "tail\n"}, "tail\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fr := chainCheckFake()
+			rt, _, _ := chainRemoteRuntime(t, fr)
+			startFlowChain(t, rt, flowPlacedCheckWorkflow)
+			flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
+			fr.getCheckResp = tc.view
+			tickChainChecks(context.Background(), rt)
+
+			got, err := rt.Store.ReadFile(rt.Store.CheckLogPath("shop", 1, 1))
+			if err != nil {
+				t.Fatalf("ReadFile: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Errorf("stored check log = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

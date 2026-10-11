@@ -307,6 +307,7 @@ func servedCheckView(rt Runtime, run store.CheckRun) remote.CheckView {
 		Note:         run.Note,
 		LogTail:      tail,
 		LogTruncated: cut,
+		LogPath:      run.LogPath,
 	}
 }
 

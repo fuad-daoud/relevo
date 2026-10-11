@@ -505,6 +505,7 @@ type CheckView struct {
 	Note         string `json:"note,omitempty"`
 	LogTail      string `json:"log_tail,omitempty"`
 	LogTruncated bool   `json:"log_truncated,omitempty"`
+	LogPath      string `json:"log_path,omitempty"`
 }
 
 // SetGateRequest is the body of POST /v1/bindings/{name}/gate.

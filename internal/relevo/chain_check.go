@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -407,7 +408,7 @@ func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 		return err
 	}
 	logKey := rt.Store.CheckLogPath(logTarget, round, st.Awaiting.Run)
-	if err := tx.PutRoundFile(logTarget, round, logKey, []byte(view.LogTail)); err != nil {
+	if err := tx.PutRoundFile(logTarget, round, logKey, []byte(partialCheckNote(view)+view.LogTail)); err != nil {
 		return err
 	}
 	saved, err := tx.Chain(c.Name)
@@ -555,4 +556,13 @@ func chainCheckResult(raw string) string {
 		return chainCheckGreen
 	}
 	return chainCheckRed
+}
+
+// partialCheckNote heads a stored check log whose served tail was cut, so the
+// log never reads as the whole run; it is empty for a log that was not cut.
+func partialCheckNote(view remote.CheckView) string {
+	if !view.LogTruncated {
+		return ""
+	}
+	return fmt.Sprintf("partial: the last %d KiB of the check log; the full log is on the server at %s\n", servedCheckLogCap/1024, view.LogPath)
 }
