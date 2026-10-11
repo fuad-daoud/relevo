@@ -203,12 +203,26 @@ func pendingRoundFile(rt Runtime, name string, round int) (string, bool) {
 // Every --candidate guard here and under Send's lock is candidateSendRefused:
 // the round-open refusal, except for a served binding halted in NEEDS YOU,
 // which the candidate re-points.
+// readPromptFile reads the plan a caller named with --file. The path is their
+// own argument, so a missing or unreadable one is a usage refusal naming the
+// path -- ErrBadInput, which the CLI maps to exit 2 with `relevo help` -- rather
+// than an internal failure with `relevo bugreport` for a path that never
+// existed. It is the one read of a caller-named file on the send path: send and
+// send --dry-run both come through here, so neither can drift from the other.
+func readPromptFile(file string) ([]byte, error) {
+	body, err := os.ReadFile(file)
+	if err != nil {
+		return nil, badInputf("--file %s: %v", file, err)
+	}
+	return body, nil
+}
+
 func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts SendOptions) (preflight, error) {
 	// Read the caller's file first; it is the one input that does not depend
 	// on binding state.
-	body, err := os.ReadFile(file)
+	body, err := readPromptFile(file)
 	if err != nil {
-		return preflight{}, fmt.Errorf("read prompt %s: %w", file, err)
+		return preflight{}, err
 	}
 
 	var tier harness.Tier
