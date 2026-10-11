@@ -99,8 +99,8 @@ func TestSnapshotRegionPastItsBoundStalls(t *testing.T) {
 }
 
 // A fork whose parent was rewritten after it needs a second pass. The passes
-// are bounded, so a region built to need one per row stalls instead of costing
-// a pass over the whole region for every row.
+// are bounded, so a region built to need one per row drops what is left instead
+// of costing a pass over the whole region for every row.
 func TestSnapshotPassesAreBounded(t *testing.T) {
 	t.Parallel()
 	m1, m1Path := exporterFile(t, "m1")
@@ -115,8 +115,8 @@ func TestSnapshotPassesAreBounded(t *testing.T) {
 	compactTo(t, log, "m1", head, 1)
 
 	for _, tc := range []struct {
-		passes int
-		stall  bool
+		passes  int
+		dropped bool
 	}{{1, true}, {2, false}} {
 		reader, _ := peerFile(t, "m2")
 		imp := NewImporter(reader, log.OnLog("m2"))
@@ -125,8 +125,8 @@ func TestSnapshotPassesAreBounded(t *testing.T) {
 		if err != nil {
 			t.Fatalf("import with %d passes: %v", tc.passes, err)
 		}
-		if stalled := len(res.Stalled) == 1; stalled != tc.stall {
-			t.Errorf("import with %d passes = %+v, want stalled %t", tc.passes, res, tc.stall)
+		if dropped := len(res.Dropped) == 1; dropped != tc.dropped || len(res.Stalled) != 0 {
+			t.Errorf("import with %d passes = %+v, want dropped %t and nothing stalled", tc.passes, res, tc.dropped)
 		}
 	}
 }

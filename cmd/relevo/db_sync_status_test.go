@@ -743,7 +743,7 @@ func TestStatusNamesDroppedBatchesAndGaps(t *testing.T) {
 		namespace: syncStatusNamespace,
 		token:     syncStatusSecret,
 		held:      []string{"relevo on this machine is older than zen, which writes schema 5: upgrade it (mark rests at 3)"},
-		dropped:   []string{"dropped a batch of 4 entries from m2: unreadable body"},
+		dropped:   []string{"dropped entries from m2 up to sequence 4: unreadable body"},
 		gaps:      []string{"m3 is held at 6: a batch reaches 9, want 7; the entries in between have not arrived"},
 	}
 	serveSyncStatus(t, tc)
