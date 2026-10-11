@@ -15,7 +15,6 @@ import (
 //	exit on the current round -> exited
 //	needs_you or Halt on n    -> halted
 //	switch entry              -> switched
-//	no prompt on n            -> halted
 //	otherwise                 -> open
 //
 // The open arm reads store.RoundOpen, the definition `stop` and the served view
@@ -49,8 +48,6 @@ func deriveOutcome(events []store.LogEntry, n int, b store.Binding, members map[
 		return db.OutcomeHalted
 	case hasSwitch:
 		return db.OutcomeSwitched
-	case !store.HasPrompt(events, n):
-		return db.OutcomeHalted
 	default:
 		return db.OutcomeOpen
 	}

@@ -60,17 +60,10 @@ func TestDeriveOutcome(t *testing.T) {
 		},
 		{
 			"nothing",
-			[]store.LogEntry{{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt}},
+			[]store.LogEntry{{Round: 1, Kind: store.KindPrompt}},
 			map[string]bool{},
 			store.Binding{Round: 2, State: store.StateActive},
 			db.OutcomeOpen,
-		},
-		{
-			"a chain notice and no prompt is not open",
-			[]store.LogEntry{{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindChain}},
-			map[string]bool{},
-			store.Binding{Round: 1, State: store.StateActive},
-			db.OutcomeHalted,
 		},
 	}
 	for _, c := range cases {
