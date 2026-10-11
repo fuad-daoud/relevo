@@ -72,6 +72,37 @@ func TestRenderStatusMasterMindChat(t *testing.T) {
 		t.Errorf("mastermind line %q does not end with %q", mastermindLines[1], "route pull")
 	}
 }
+
+func TestRenderStatusMasterMindGoneAnnotation(t *testing.T) {
+	t.Parallel()
+
+	line := func(route string, live bool) string {
+		out := RenderStatus(Report{Bindings: []BindingStatus{{
+			Name: "one", CWD: "/a", Round: 1, Display: "ACTIVE",
+			MasterMindName: "architect-1", MasterMindKind: "claude",
+			MasterMindRoute: route, MasterMindRouteLive: live,
+		}}})
+		for _, l := range strings.Split(out, "\n") {
+			if strings.HasPrefix(l, "  MasterMind  ") {
+				return l
+			}
+		}
+		t.Fatalf("no mastermind line in:\n%s", out)
+		return ""
+	}
+
+	const note = "route push (MasterMind gone: run relevo mastermind init)"
+	if got := line("push", false); !strings.HasSuffix(got, note) {
+		t.Errorf("push not live: %q does not end with %q", got, note)
+	}
+	if got := line("push", true); !strings.HasSuffix(got, "route push") {
+		t.Errorf("push live: %q must end with a bare route", got)
+	}
+	if got := line("pull", false); !strings.HasSuffix(got, "route pull") {
+		t.Errorf("pull: %q must end with a bare route", got)
+	}
+}
+
 func TestRenderStatusOmitsEmptyDetail(t *testing.T) {
 	t.Parallel()
 

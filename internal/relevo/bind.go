@@ -40,6 +40,13 @@ var ErrGitRequired = errors.New("relevo bind needs git; pass --cwd to bind a tre
 // mastermind.ErrNoMasterMind becomes ErrNoMasterMindSession, and so does a Runtime with
 // no registry configured: nothing derives a mastermind from a pane any more.
 func resolveVerbMasterMind(rt Runtime, ref string) (mastermind.Record, bool, error) {
+	return resolveVerbMasterMindHeal(rt, ref, true)
+}
+
+// resolveVerbMasterMindHeal is resolveVerbMasterMind with the gone-record heal
+// switchable: a caller that may run in the daemon passes false, since the
+// daemon's environment is not the calling session's.
+func resolveVerbMasterMindHeal(rt Runtime, ref string, heal bool) (mastermind.Record, bool, error) {
 	if rt.MasterMinds == nil {
 		return mastermind.Record{}, false, ErrNoMasterMindSession
 	}
@@ -56,6 +63,7 @@ func resolveVerbMasterMind(rt Runtime, ref string) (mastermind.Record, bool, err
 		Now:             now,
 		CWD:             cwd,
 		OpencodeSession: rt.OpencodeSession,
+		Heal:            heal,
 	})
 	switch {
 	case err == nil:

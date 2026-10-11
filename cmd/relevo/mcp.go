@@ -148,6 +148,7 @@ func resolveMCPMasterMind(rt relevo.Runtime, flagVal string) (mastermind.Record,
 		PPID:      os.Getppid(),
 		ProcStart: rt.ProcStart,
 		Now:       now,
+		Heal:      true,
 	})
 }
 

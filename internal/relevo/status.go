@@ -23,14 +23,18 @@ import (
 // live: the daemon cannot see whether the background wait's `relevo wait` is
 // running, which is exactly why pull is a route and not a fault.
 //
-// claims is the report's one bulk load when the store offers one, keyed by
-// mastermind id; nil means no bulk surface, so the claim is read here. Either
-// way every failure reads as not live.
-func mastermindRoute(rt Runtime, b store.Binding, claims map[string]*delivery.Claim) (route string, live bool) {
+// A live claim held for a gone record is still the push route but not live:
+// the claim outlives the session's host, and nothing is listening. A failed
+// record lookup keeps the claim's answer.
+//
+// loads carries the report's bulk claim load, keyed by mastermind id, and its
+// per-record liveness memo; a nil loads, or one with no claims map, reads the
+// claim here. Either way every failure reads as not live.
+func mastermindRoute(rt Runtime, b store.Binding, loads *rowLoads) (route string, live bool) {
 	if b.MasterMindID != "" {
-		if claims != nil {
+		if claims := loads.claimMap(); claims != nil {
 			if c := claims[b.MasterMindID]; c != nil {
-				return "push", true
+				return "push", !loads.recordGone(rt, b.MasterMindID)
 			}
 		} else if rt.Channels != nil {
 			now := time.Now()
@@ -38,7 +42,7 @@ func mastermindRoute(rt Runtime, b store.Binding, claims map[string]*delivery.Cl
 				now = rt.Now()
 			}
 			if c, err := rt.Channels.Live(b.MasterMindID, now); err == nil && c != nil {
-				return "push", true
+				return "push", !loads.recordGone(rt, b.MasterMindID)
 			}
 		}
 	}
@@ -238,7 +242,7 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 		}
 	}
 
-	row.MasterMindRoute, row.MasterMindRouteLive = mastermindRoute(rt, b, loads.claimMap())
+	row.MasterMindRoute, row.MasterMindRouteLive = mastermindRoute(rt, b, loads)
 	row.WaitLive = waitLive(rt, b.Name, loads.waitMap())
 
 	// MasterMindName is the record's name, so `status --json` and a status row
