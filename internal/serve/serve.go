@@ -411,7 +411,11 @@ func (s *Server) applyContainer(root string, rt *relevo.Runtime) {
 		return
 	}
 	if b, ok := s.cfg.Runner.(isolate.Boundary); ok {
-		rt.Runner = b.ForContainer(isolate.ContainerSpec{Image: s.cfg.IsolationImage, RepoRoot: repo})
+		rt.Runner = b.ForContainer(isolate.ContainerSpec{
+			Image:      s.cfg.IsolationImage,
+			RepoRoot:   repo,
+			GitShimDir: rt.Store.GitShimDir(),
+		})
 		return
 	}
 	rt.Runner = isolate.Refuse(s.cfg.Runner, fmt.Errorf("serve.isolation=container needs a container boundary runner, got %T", s.cfg.Runner))

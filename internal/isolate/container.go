@@ -19,12 +19,13 @@ type Mount struct {
 
 // ContainerSpec is what a container-mode boundary needs beyond a round's
 // ProcSpec: the image to run, the owner's bare repo bound read-write so a
-// linked worktree can reach its common git dir and commit, and any per-owner
-// harness homes to bind.
+// linked worktree can reach its common git dir and commit, any per-owner
+// harness homes to bind, and the owner's git shim directory.
 type ContainerSpec struct {
-	Image    string
-	RepoRoot string
-	Homes    []Mount
+	Image      string
+	RepoRoot   string
+	Homes      []Mount
+	GitShimDir string
 }
 
 // ContainerArgv renders spec into the ProcSpec a container round runs: the
@@ -63,8 +64,8 @@ func containerCommand(spec spawn.ProcSpec, c ContainerSpec) []string {
 
 // containerMounts renders every bind in the fixed order the contract names:
 // the round tree, the binding's out/ directory, the owner's bare repo, the
-// owner's harness homes, then the round's Env-derived harness homes, then a
-// private /tmp. Each mount uses the identical host and container path, which
+// owner's harness homes, then the round's Env-derived harness homes, then the
+// git shim directory, then a private /tmp. Each mount uses the identical host and container path, which
 // is what keeps the round tree's absolute paths valid inside the container.
 func containerMounts(spec spawn.ProcSpec, c ContainerSpec) []string {
 	var argv []string
@@ -96,7 +97,28 @@ func containerMounts(spec spawn.ProcSpec, c ContainerSpec) []string {
 		seenHomes[val] = true
 		add(Mount{Path: val})
 	}
+	if shimOnPath(spec.Env, c.GitShimDir) {
+		add(Mount{Path: c.GitShimDir, ReadOnly: true})
+	}
 	return append(argv, "--tmpfs", "/tmp")
+}
+
+// shimOnPath reports whether env's PATH starts with the git shim directory.
+// Only a writer round's PATH carries it, and only then is the directory known
+// to exist on the host: podman refuses to bind a missing path, so a reader
+// round on a server whose shim was never written must not mount it.
+func shimOnPath(env []string, dir string) bool {
+	if dir == "" {
+		return false
+	}
+	for _, e := range env {
+		name, val, _ := cut(e)
+		if name == "PATH" {
+			first, _, _ := strings.Cut(val, ":")
+			return first == dir
+		}
+	}
+	return false
 }
 
 // containerName is the podman container name: the scope unit when Start had

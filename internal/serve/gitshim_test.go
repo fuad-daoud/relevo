@@ -1,10 +1,13 @@
 package serve
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
 // TestOwnerRuntimeGitShimDirIsPerOwner: a served round reaches the same
@@ -24,5 +27,28 @@ func TestOwnerRuntimeGitShimDirIsPerOwner(t *testing.T) {
 	}
 	if !strings.HasPrefix(b.GitShimDir(), b.Root()+string(filepath.Separator)) {
 		t.Errorf("bob shim dir %q is not under his store root %q", b.GitShimDir(), b.Root())
+	}
+}
+
+// TestServedContainerRoundMountsTheOwnersGitShim: a container round still runs
+// in a worktree of the owner's shared repository, so a writer round's PATH
+// entry for the owner's shim must reach a read-only bind of that directory.
+func TestServedContainerRoundMountsTheOwnersGitShim(t *testing.T) {
+	env := newContainerTestEnv(t)
+	root := ownerRootOf(t, env)
+	rt := env.srv.runtimeAt(root)
+	shim := rt.Store.GitShimDir()
+	spec := spawn.ProcSpec{
+		Dir:        root,
+		Argv:       []string{"claude", "-p", "plan"},
+		Env:        []string{"PATH=" + shim + ":/usr/bin"},
+		StreamPath: filepath.Join(root, "round-runner.jsonl"),
+	}
+	if _, err := rt.Runner.Start(context.Background(), spec); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	got := specAt(t, env.runner, 0)
+	if want := shim + ":" + shim + ":ro"; !containsString(got.Argv, want) {
+		t.Errorf("Argv = %v, want volume %q", got.Argv, want)
 	}
 }
