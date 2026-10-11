@@ -117,11 +117,13 @@ a sandbox problem, and re-login fixes both sides.
 
 opencode is the other direction. A second opencode service cannot start while
 yours runs: opencode pins its managed port, so the sandbox instance retries
-your port and never binds. `create` attaches the sandbox to your running
-service instead, by copying its address and your login into the sandbox, and
-copies your opencode agent definitions (`~/.config/opencode/agents/`) into
-`<sandbox>/config/opencode/agents/`; without them an opencode builder fails
-with `Agent not found`. To re-attach by hand (same user, re-copyable):
+your port and never binds. `create` copies your opencode agent definitions
+(`~/.config/opencode/agents/`) into `<sandbox>/config/opencode/agents/` --
+without them an opencode builder fails with `Agent not found` -- and copies
+`service.json` and `auth.json`, which attach an interactive opencode inside
+the sandbox to your running service. To re-attach by hand (same user,
+re-copyable; copy `service.json` again after your service restarts, since its
+password rotates):
 
 ```
 mkdir -p <sandbox>/state/opencode <sandbox>/data/opencode
@@ -129,11 +131,14 @@ cp ~/.local/state/opencode/service.json <sandbox>/state/opencode/service.json
 cp ~/.local/share/opencode/auth.json <sandbox>/data/opencode/auth.json
 ```
 
-Sessions then land in your own opencode database -- shared, like agy -- while
-everything relevo-side stays isolated. If your service ever restarts, its
-password rotates, so copy `service.json` again. A first `opencode auth list`
-inside a fresh sandbox can time out while it settles; retry once before
-debugging further.
+relevo itself runs opencode `--standalone`, which does not use that service:
+it reads provider credentials from opencode's own database
+(`<sandbox>/data/opencode/opencode.db`), and since opencode 2 that is where
+subscription logins such as opencode-go and cline-pass live, not `auth.json`.
+The database also holds your sessions, so `create` never copies it. Before an
+opencode-backed builder or reader runs in a sandbox, log in inside it with
+`opencode auth login`; until then the round fails with `provider.no-route:
+Model unavailable` and relevo switches to the next candidate.
 
 `relevo doctor` is the check to run after any sandbox setup: it reports which
 harnesses are installed, which are logged in and where each resolves.

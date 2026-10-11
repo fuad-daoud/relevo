@@ -459,6 +459,7 @@ sb "$script" create nologin "$nb"
 carries 'a create with no credentials to copy warns' 'log the claude harness in'
 carries 'a create with no opencode agents names the failure' 'Agent not found'
 carries 'a create with no opencode service warns' 'no running opencode service'
+carries 'a create says opencode needs a login inside' 'opencode auth login'
 if [ -f "$root/nologin/claude/.credentials.json" ]; then
 	echo "FAIL: create copied credentials the temp HOME does not have"
 	fail=1

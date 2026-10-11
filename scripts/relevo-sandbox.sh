@@ -213,9 +213,10 @@ cmd_create() {
 	fi
 	# opencode resolves its agents under $XDG_CONFIG_HOME/opencode/agents, which
 	# the sandbox points inside it, so the definitions are copied the same one
-	# direction as claude's. Its login is not a standalone file: a second
-	# opencode service cannot bind while the host's runs, so the sandbox
-	# attaches to that service through its address and the host's auth.
+	# direction as claude's. service.json and auth.json attach an interactive
+	# opencode to the host's service, but relevo runs opencode --standalone,
+	# which reads credentials from its own opencode.db; that database holds
+	# sessions too, so it is never copied and the login is done inside.
 	_oc_cfg="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 	_oc_state="${XDG_STATE_HOME:-$HOME/.local/state}/opencode"
 	_oc_data="${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
@@ -229,10 +230,10 @@ cmd_create() {
 		plan mkdir -p "$_sb/state/opencode" "$_sb/data/opencode"
 		plan cp "$_oc_state/service.json" "$_sb/state/opencode/service.json"
 		plan cp "$_oc_data/auth.json" "$_sb/data/opencode/auth.json"
-		_login=1
 	else
-		note "no running opencode service and login to attach; opencode-backed candidates fail inside until service.json and auth.json are copied (docs/env-sandbox.md)"
+		note "no running opencode service to attach; copy service.json and auth.json by hand to attach (docs/env-sandbox.md)"
 	fi
+	note "opencode-backed builders need 'opencode auth login' inside the sandbox: relevo runs opencode standalone, and its credentials live in opencode's own database, which is never copied"
 	if [ "$_login" -eq 0 ]; then
 		note "no harness login found to copy; log the claude harness in inside the sandbox before using it"
 	fi
@@ -320,7 +321,7 @@ cmd_create() {
 	note ""
 	note "sandbox $_name is ready. Enter it with:"
 	note "  $prog shell $_name"
-	note "claude and codex arrive logged in when your home had their logins; opencode is attached to your running service when it had one. Copy opencode's service.json again if that service restarts."
+	note "claude and codex arrive logged in when your home had their logins; opencode does not: log it in inside before using an opencode candidate."
 }
 
 # write_env_sh writes the export recipe that is the sandbox. Nine exports: eight
