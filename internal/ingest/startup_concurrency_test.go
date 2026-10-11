@@ -42,10 +42,13 @@ func TestDedupeMirrorOnceSkipsTheReclaimOnAServedHandle(t *testing.T) {
 // TestDedupeMirrorOnceKeepsReadersCorrectDuringTheDelete pins the reader side
 // of the pass: every planned row is deleted inside one transaction, so a reader
 // running alongside it sees either the row or its absence -- never a partial one,
-// and never an error it would have to classify.
+// and never an error it would have to classify. The handle is served, as every
+// startup pass's handle now is: an unserved one would also run the in-place
+// reclaim, which swaps the pool out from under the reader.
 func TestDedupeMirrorOnceKeepsReadersCorrectDuringTheDelete(t *testing.T) {
 	d := openTestDB(t)
 	round3 := seedPlannedScene(t, d)
+	_ = db.NewOwner(d)
 
 	stop := make(chan struct{})
 	done := make(chan error, 1)
