@@ -39,6 +39,22 @@ func requireRoundState(t *testing.T, rt relevo.Runtime, name string, want remote
 	}
 }
 
+// withoutShimPATH checks that a served writer round's env ends with a PATH
+// entry led by the owner's git shim directory, and returns the env without it.
+func withoutShimPATH(t *testing.T, env []string) []string {
+	t.Helper()
+	if len(env) == 0 {
+		t.Fatal("empty spec.Env")
+	}
+	last := env[len(env)-1]
+	path, ok := strings.CutPrefix(last, "PATH=")
+	first, _, _ := strings.Cut(path, string(os.PathListSeparator))
+	if !ok || filepath.Base(first) != "shims" {
+		t.Fatalf("last env entry %q, want PATH led by the git shim dir", last)
+	}
+	return env[:len(env)-1]
+}
+
 // TestRoundSpawnCarriesAuthorEnv: the round a binding's stored author starts runs
 // the builder with that identity in its environment, so every commit it makes is
 // the client's. A binding with no author gets no GIT_* additions at all.
@@ -60,9 +76,10 @@ func TestRoundSpawnCarriesAuthorEnv(t *testing.T) {
 		if len(specs) == 0 {
 			t.Fatal("round started no process")
 		}
+		specEnv := withoutShimPATH(t, specs[0].Env)
 		for _, want := range authorEnv {
 			found := false
-			for _, got := range specs[0].Env {
+			for _, got := range specEnv {
 				if got == want {
 					found = true
 					break
@@ -73,8 +90,8 @@ func TestRoundSpawnCarriesAuthorEnv(t *testing.T) {
 			}
 		}
 		want := append(append([]string{}, authorEnv...), "RELEVO_RUNNER=api")
-		if !reflect.DeepEqual(specs[0].Env, want) {
-			t.Errorf("spec.Env = %v, want exactly %v", specs[0].Env, want)
+		if !reflect.DeepEqual(specEnv, want) {
+			t.Errorf("spec.Env = %v, want exactly %v", specEnv, want)
 		}
 	})
 
@@ -87,7 +104,7 @@ func TestRoundSpawnCarriesAuthorEnv(t *testing.T) {
 		if len(specs) == 0 {
 			t.Fatal("round started no process")
 		}
-		if want := []string{"RELEVO_RUNNER=api"}; !reflect.DeepEqual(specs[0].Env, want) {
+		if want := []string{"RELEVO_RUNNER=api"}; !reflect.DeepEqual(withoutShimPATH(t, specs[0].Env), want) {
 			t.Errorf("spec.Env = %v, want exactly %v for a binding with no author", specs[0].Env, want)
 		}
 	})

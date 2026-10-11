@@ -15,6 +15,10 @@ import (
 // Dir is the state directory for one binding.
 func (s *Store) Dir(name string) string { return filepath.Join(s.root, name) }
 
+// GitShimDir is where the git shim for writer rounds lives, under this store's
+// root so each owner of a server gets its own.
+func (s *Store) GitShimDir() string { return filepath.Join(s.root, "shims") }
+
 func (s *Store) roundFile(name string, round int, suffix, ext string) string {
 	if ext != "" && !strings.HasPrefix(ext, ".") {
 		ext = "." + ext

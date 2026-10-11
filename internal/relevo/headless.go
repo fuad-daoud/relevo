@@ -323,6 +323,12 @@ func legacyLog(rt Runtime, name string, round int) bool {
 // Preconditions: rt.Runner non-nil (both callers check it before building
 // argv); argv is a complete command line. Postconditions: as startRound's.
 func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, argv []string, c candidate.Candidate) (store.Binding, error) {
+	// A writer's git shim must exist before the process can start; a write
+	// failure refuses the round with nothing spawned.
+	shimEnv, err := gitShimEnv(rt, b)
+	if err != nil {
+		return b, err
+	}
 	// The harness's writable root is <binding>/out; create it before the
 	// process starts so the report, done marker and artifacts all land there.
 	if err := rt.Store.EnsureOutDir(b.Name); err != nil {
@@ -388,7 +394,7 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 	}
 	spec := spawn.ProcSpec{
 		Dir: roundTree(rt, b), Argv: argv,
-		Env:        roundEnvFor(b, accountFor(rt, c)),
+		Env:        append(roundEnvFor(b, accountFor(rt, c)), shimEnv...),
 		LogPath:    logPath,
 		StreamPath: rt.Store.StreamPath(b.Name, b.Round),
 	}

@@ -26,6 +26,10 @@ This is the guide to relevo, the tool that hands work between you and a runner.
   RECURSIVE is refused as a cheap first line, not the guarantee: SQLite decides
   recursion structurally, and a runaway statement is ended by the owner, which
   refuses ad-hoc reads and reaps the daemon by re-execing it.
+- Never `git stash` in a relevo worktree: every worktree of one repository
+  shares a single stash stack, so a builder's stash or pop can take another
+  builder's work. A builder's `git` refuses it; set work aside with a WIP
+  commit, or copy files outside the repo.
 
 ## Output and errors
 

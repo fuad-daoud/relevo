@@ -2,6 +2,8 @@ package store
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -56,5 +58,17 @@ func TestEnsureOutDirChownsThroughCallback(t *testing.T) {
 	}
 	if len(got) != 1 {
 		t.Errorf("second EnsureOutDir chowned again: %v", got)
+	}
+}
+
+func TestGitShimDirIsUnderTheRootAndStable(t *testing.T) {
+	root := t.TempDir()
+	s := New(root)
+	got := s.GitShimDir()
+	if rel, err := filepath.Rel(root, got); err != nil || strings.HasPrefix(rel, "..") || rel == "." {
+		t.Errorf("GitShimDir = %q, want a path under %q", got, root)
+	}
+	if again := s.GitShimDir(); again != got {
+		t.Errorf("GitShimDir changed between calls: %q then %q", got, again)
 	}
 }

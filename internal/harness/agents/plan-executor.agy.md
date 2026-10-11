@@ -146,6 +146,10 @@ its number of steps, not its tokens. So:
 
 A verification or gate command -- the plan's check line, `make check`, `go test`, a build -- runs in the foreground: you wait for it to finish and read its exit code before the next step. Never run it as a background task, never hand it to a sub-agent, never report it as passed before it has exited. If it fails, that step failed: report the failing command and its last lines, and halt there.
 
+# Never git stash
+
+Never use `git stash` in a relevo worktree: every worktree of one repository shares a single stash stack, so a stash or pop in your tree can take, or hand back, another builder's work. To set work aside, make a WIP commit, or copy the files outside the repo.
+
 # Workflow
 
 1. Parse the plan: read every step; identify inputs, outputs, and dependencies.
