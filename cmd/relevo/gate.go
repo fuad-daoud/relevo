@@ -134,19 +134,27 @@ func gateUnavailable(token, forFlag, reason string, asJSON bool) error {
 		return fail(codeUsage, "%v", err)
 	}
 
-	// The argument may be a candidate name or a token. It is resolved here,
-	// first, so the ledger and every server the bindings name see the
-	// canonical token, never the raw argument (A1 §4.2).
-	c, err := rt.Candidates.Resolve(token)
+	deps := relevo.AvailabilityDeps(rt)
+
+	// The argument may be a candidate name or a token, a bare provider, a quota
+	// group or a group@account key: the same subjects `gate --clear` accepts
+	// and the same ones the halt texts tell a reader to type. A configured
+	// candidate is resolved here, first, so the ledger and every server the
+	// bindings name see the canonical token, never the raw argument (A1 §4.2);
+	// a provider has no token of its own and travels as the subject it names.
+	canonical := token
+	provider, _, err := availability.GateProvider(rt.Candidates, availability.Ledger{}, token, nil)
 	if err != nil {
 		return writeError(err)
 	}
-	canonical := c.Ref().String()
+	if c, rerr := rt.Candidates.Resolve(token); rerr == nil {
+		canonical = c.Ref().String()
+		provider = c.Ref().Provider
+	}
 
-	deps := relevo.AvailabilityDeps(rt)
-	keys, accounts := gateKeys(rt, deps, canonical, c.Ref().Provider)
+	keys, accounts := gateKeys(rt, deps, canonical, provider)
 
-	provider, err := availability.Unavailable(deps, canonical, until, reason, keys...)
+	provider, err = availability.Unavailable(deps, token, until, reason, keys...)
 	if err != nil {
 		return writeError(err)
 	}

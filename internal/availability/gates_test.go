@@ -154,6 +154,110 @@ func TestUnavailableRefusesAnUnknownToken(t *testing.T) {
 	}
 }
 
+// TestUnavailableTakesTheSubjectsGateClearTakes pins that a gate takes what a
+// clear takes: the halt texts tell a reader to run `relevo gate --clear
+// <provider>`, so `gate <provider>` has to gate it rather than refuse it as an
+// unknown candidate. A subject nothing knows is still refused, and the refusal
+// is the caller's own argument rather than a defect.
+func TestUnavailableTakesTheSubjectsGateClearTakes(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name    string
+		set     *candidate.Set
+		ledger  Ledger
+		subject string
+		want    string
+		wantKey string
+		wantErr error
+	}{
+		{name: "bare provider", set: candidateSet(t, availTwoProviderJSON),
+			subject: "cline-pass", want: "cline-pass", wantKey: "cline-pass"},
+		{name: "candidate name", set: candidateSet(t, availTwoProviderJSON),
+			subject: "claude-m", want: "test", wantKey: "test"},
+		{name: "candidate token", set: candidateSet(t, availTwoProviderJSON),
+			subject: "opencode/test/m", want: "test", wantKey: "test"},
+		{name: "token with an effort suffix", set: candidateSet(t, availTwoProviderJSON),
+			subject: "opencode/test/m#high", want: "test", wantKey: "test"},
+		{name: "account gate key", set: candidateSet(t, availTwoProviderJSON),
+			subject: "test@cp1", want: "test", wantKey: "test@cp1"},
+		{name: "provider a gate left behind", set: candidateSet(t, testCandidatesJSON),
+			ledger:  Ledger{Entries: []Entry{{Kind: RateLimited, Subject: "gone", At: baseTime, Source: "planner"}}},
+			subject: "gone", want: "gone", wantKey: "gone"},
+		{name: "unknown provider", set: candidateSet(t, availTwoProviderJSON),
+			subject: "clinepass", wantErr: ErrUnknownProvider},
+		{name: "unknown token", set: candidateSet(t, availTwoProviderJSON),
+			subject: "opencode/test/nope", wantErr: candidate.ErrUnknownCandidate},
+		{name: "malformed ref", set: candidateSet(t, availTwoProviderJSON),
+			subject: "opencode/test", wantErr: candidate.ErrBadRef},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			d := testDepsWith(t, c.set)
+			if err := SaveLedger(d.Gates, c.ledger); err != nil {
+				t.Fatalf("SaveLedger: %v", err)
+			}
+
+			got, err := Unavailable(d, c.subject, baseTime.Add(time.Hour), "reason")
+			if c.wantErr != nil {
+				if !errors.Is(err, c.wantErr) {
+					t.Fatalf("Unavailable(%q) err = %v, want %v", c.subject, err, c.wantErr)
+				}
+				if len(loadLedger(t, d).Entries) != len(c.ledger.Entries) {
+					t.Errorf("a refused subject wrote to the ledger: %+v", loadLedger(t, d).Entries)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unavailable(%q): %v", c.subject, err)
+			}
+			if got != c.want {
+				t.Errorf("provider = %q, want %q", got, c.want)
+			}
+
+			entries := loadLedger(t, d).Entries
+			if len(entries) != len(c.ledger.Entries)+1 {
+				t.Fatalf("got %d entries, want %d: %+v", len(entries), len(c.ledger.Entries)+1, entries)
+			}
+			last := entries[len(entries)-1]
+			if last.Kind != RateLimited || last.Subject != c.wantKey {
+				t.Errorf("entry = %+v, want RateLimited on %q", last, c.wantKey)
+			}
+		})
+	}
+}
+
+// TestGateProviderIsResolveClearSubjectsRule pins that the two verbs share one
+// accepted set rather than two that drift: every subject ResolveClearSubject
+// accepts, GateProvider accepts, and it refuses exactly what it refuses.
+func TestGateProviderIsResolveClearSubjectsRule(t *testing.T) {
+	t.Parallel()
+
+	set := candidateSet(t, availTwoProviderJSON)
+	for _, subject := range []string{
+		"opencode/test/m", "opencode/test/m#high", "opencode-m",
+		"test", "cline-pass", "test@cp1",
+	} {
+		clearProvider, cerr := ResolveClearSubject(set, Ledger{}, subject)
+		if cerr != nil {
+			t.Fatalf("ResolveClearSubject(%q): %v", subject, cerr)
+		}
+		gateProvider, _, gerr := GateProvider(set, Ledger{}, subject, nil)
+		if gerr != nil {
+			t.Fatalf("GateProvider(%q): %v", subject, gerr)
+		}
+		if gateProvider != clearProvider {
+			t.Errorf("GateProvider(%q) = %q, clear = %q", subject, gateProvider, clearProvider)
+		}
+	}
+	for _, subject := range []string{"clinepass", "opencode/test/nope", "opencode/test"} {
+		if _, _, err := GateProvider(set, Ledger{}, subject, nil); err == nil {
+			t.Errorf("GateProvider(%q) = nil, want a refusal", subject)
+		}
+	}
+}
+
 func TestAvailableByTokenAndByProvider(t *testing.T) {
 	t.Parallel()
 
