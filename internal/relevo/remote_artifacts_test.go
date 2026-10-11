@@ -488,3 +488,18 @@ func TestRemoteCatchUpRefusesALinkedArtifactAncestor(t *testing.T) {
 		t.Errorf("download temps left behind: %v", left)
 	}
 }
+
+// TestRemoteArtifactOutputRelNamesTheClosePath pins that the rel the server
+// lists as a reader's output, joined under the artifact directory the client
+// installs into, is the very path the close writes and the prompt names, so
+// the two sides cannot drift onto different files.
+func TestRemoteArtifactOutputRelNamesTheClosePath(t *testing.T) {
+	t.Parallel()
+
+	rt, b := bindReader(t, readerRepo(t))
+	rel := OutputFile(rt, b)
+	dir := rt.Store.ArtifactDir(b.Name, b.Round, bindingRole(b))
+	if got, want := filepath.Join(dir, filepath.FromSlash(rel)), reportPathFor(rt, b); got != want {
+		t.Errorf("artifact dir + output rel = %q, want the close path %q", got, want)
+	}
+}

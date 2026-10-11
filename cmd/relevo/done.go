@@ -11,10 +11,20 @@ import (
 )
 
 // runStopChain is cmdStop's chain arm: the name is a chain, so the chain's own
-// stop runs. A chain that is not running is the same "nothing to stop" answer a
-// binding with no open round gives, and it changes nothing.
+// stop runs. A chain that has already stopped is the same "nothing to stop"
+// answer a binding with no open round gives, and it changes nothing. A halted
+// chain is its own answer -- it names `relevo done` as the command that closes
+// it -- and it is a conflict-class refusal like any other answer about the
+// chain's state, so it is printed and then returned as the coded failure a
+// script can branch on.
 func runStopChain(rt relevo.Runtime, name string, asJSON bool) error {
 	res, err := relevo.ChainStop(context.Background(), rt, name)
+	// A halted chain carries its own wording, so it is classified rather than
+	// printed here: the human line and the --json envelope both come out of the
+	// coded refusal, and neither invents bytes the other does not have.
+	if errors.Is(err, relevo.ErrChainHalted) {
+		return writeError(err)
+	}
 	if errors.Is(err, relevo.ErrNothingToStop) {
 		if asJSON {
 			return printDoc(chainStopDocOf(name, res))

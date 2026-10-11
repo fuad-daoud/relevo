@@ -152,6 +152,11 @@ type ChainResumeRequest struct {
 	Security       *bool   `json:"security,omitempty"`
 	Gate           *string `json:"gate,omitempty"`
 	Regate         *int    `json:"regate,omitempty"`
+	// From re-enters the chain at this step instead of the one it halted on.
+	// It is additive: a client that does not set it resumes exactly as before.
+	From string `json:"from,omitempty"`
+	// Params overrides the workflow's params, keyed by param name.
+	Params map[string]string `json:"params,omitempty"`
 }
 
 // ChainStopResponse is the answer to POST /v1/chains/{name}/stop: the round
