@@ -14,6 +14,8 @@ const (
 	userToken   = "<user>"
 	hostToken   = "<host>"
 	remoteToken = "<remote>"
+	gitNameTok  = "<git-name>"
+	gitMailTok  = "<git-email>"
 )
 
 // Redactor is the bundle's privacy pass: the machine facts the rules need, and
@@ -23,7 +25,11 @@ type Redactor struct {
 	Home string
 	User string
 	Host string
-	Raw  bool
+	// GitName and GitEmail are the exact values git commits as; each is removed
+	// wherever the bundle prints it.
+	GitName  string
+	GitEmail string
+	Raw      bool
 }
 
 // NewRedactor reads the machine facts from the process: the home directory, the
@@ -36,16 +42,34 @@ func NewRedactor() Redactor {
 }
 
 // Text applies every rule to s, in the order the rules depend on: home paths
-// first, then the user and host tokens, then remotes, then secret shapes.
+// first, then the git identity (before the user pass splits an address at its
+// dots), then the user and host tokens, then remotes, then secret shapes.
 func (r Redactor) Text(s string) string {
 	if r.Raw {
 		return s
 	}
 	out := r.redactPaths(s)
+	out = r.redactGitIdentity(out)
 	out = replaceToken(out, r.User, userToken)
 	out = replaceToken(out, r.Host, hostToken)
 	out = redactRemotes(out)
 	return redactSecrets(out)
+}
+
+// redactGitIdentity removes the git email and name by value. The email goes
+// first so a name that is part of it cannot leave half an address behind; a
+// name of one word is a whole-token match so it never eats a longer word.
+func (r Redactor) redactGitIdentity(s string) string {
+	if len(r.GitEmail) >= 3 {
+		s = strings.ReplaceAll(s, r.GitEmail, gitMailTok)
+	}
+	if strings.ContainsAny(r.GitName, " \t") {
+		if len(r.GitName) >= 3 {
+			s = strings.ReplaceAll(s, r.GitName, gitNameTok)
+		}
+		return s
+	}
+	return replaceToken(s, r.GitName, gitNameTok)
 }
 
 // Redact returns b with every string it carries rewritten, and the lines the

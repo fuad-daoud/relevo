@@ -13,12 +13,33 @@ var baseRedactor = Redactor{Home: "/home/fuad", User: "fuad", Host: "contabo-01"
 
 // redactCases is the rule table: one row per rule of the pass, and the rows
 // that pin what it must leave alone.
+var gitRedactor = Redactor{Home: "/home/fuad", User: "fuad", Host: "contabo-01",
+	GitName: "Fuad Daoud", GitEmail: "fuad.daoud@example.org"}
+
 var redactCases = []struct {
 	name string
 	r    Redactor
 	in   string
 	want string
 }{
+	{
+		name: "the whole git name and email are masked, surname and domain with them",
+		r:    gitRedactor,
+		in:   "git identity: Fuad Daoud <fuad.daoud@example.org>",
+		want: "git identity: <git-name> <<git-email>>",
+	},
+	{
+		name: "the git email is masked inside other text",
+		r:    gitRedactor,
+		in:   "git -c user.email=fuad.daoud@example.org commit",
+		want: "git -c user.email=<git-email> commit",
+	},
+	{
+		name: "a one-word git name never eats a longer word",
+		r:    Redactor{GitName: "Fuadx"},
+		in:   "Fuadx and Fuadxylophone",
+		want: "<git-name> and Fuadxylophone",
+	},
 	{
 		name: "this machine's home becomes a tilde",
 		r:    baseRedactor,
