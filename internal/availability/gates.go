@@ -174,7 +174,7 @@ func GateProvider(set *candidate.Set, l Ledger, subject string, keys []string) (
 // subscription or key, not per model. subject may be a candidate name or a
 // canonical token (a trailing #effort suffix is ignored), a bare provider or
 // group, or a group@account key: the same subjects `gate --clear` takes, and
-// the ones the halt texts tell a reader to type. A subject relevero knows
+// the ones the halt texts tell a reader to type. A subject relevo knows
 // nothing about is refused rather than recorded.
 //
 // keys names the account gates to record instead of the bare group, one

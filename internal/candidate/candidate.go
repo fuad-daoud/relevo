@@ -133,8 +133,8 @@ func (s *Set) ResolveToken(tok string) (Candidate, error) {
 }
 
 // Resolve takes a name or a harness/provider/model token to a candidate. A
-// token may carry a trailing "#effort" suffix, which is stripped before the
-// lookup so the same candidate answers with and without it.
+// token may carry a trailing "#effort" suffix: ResolveToken tries it exactly
+// first and then without the suffix, so the same candidate answers either way.
 func (s *Set) Resolve(str string) (Candidate, error) {
 	if s == nil {
 		return Candidate{}, fmt.Errorf("unknown candidate %q (no candidates configured): %w", str, ErrUnknownCandidate)
