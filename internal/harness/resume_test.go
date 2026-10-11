@@ -190,13 +190,13 @@ func TestResumeBuildPerKind(t *testing.T) {
 		{
 			name: "claude", kind: "claude", id: "sess-1",
 			want: []string{"-p", prompt, "--model", model, "--agent", "plan-executor",
-				"--output-format", "stream-json", "--verbose", "--resume", "sess-1"},
+				"--output-format", "stream-json", "--verbose", "--add-dir", state, "--resume", "sess-1"},
 		},
 		{
 			name: "agy", kind: "agy", id: "conv-1",
 			want: []string{"-p", prompt, "--model", model, "--agent", "plan-executor",
 				"--output-format", "stream-json", "--print-timeout", "2h0m0s",
-				"--add-dir", dir, "--conversation", "conv-1"},
+				"--add-dir", dir, "--add-dir", state, "--conversation", "conv-1"},
 		},
 		{
 			name: "opencode", kind: "opencode", id: "ses-1",

@@ -1,6 +1,7 @@
 package relevo
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -25,73 +26,130 @@ func reportPathFor(rt Runtime, b store.Binding) string {
 	return rt.Store.ReportPath(b.Name, b.Round)
 }
 
-// writeReaderSummary records a reader round's report. A reader's output file
-// (<label>.md) is written here when the runner did not write one itself: it is
-// taken from the last message that carried a relevo block, kept whole so the
-// close can parse its tail and strip it afterwards, or from the stream's last
-// assistant text when no message carried a block. Either is rendered with the
-// harness kind of the last segment that ran, which a mid-round switch can
-// change. A runner that wrote only summary.md does not keep it as the report:
-// the old file stays an extra artifact. The caller no longer calls it when no
-// deliverable exists; an absent deliverable falls through to the continuation
-// or halt path. A writer is untouched: it writes its own report.
+// writeReaderSummary records a reader round's report. The reader writes its own
+// output file (<label>.md) and that file is what the close keeps: a regular
+// file with content in it is left verbatim and the stream is not read for a
+// non-chain reader. Only a file that is missing or empty falls back to the
+// stream -- the last message that carried a relevo block, kept whole so the
+// close can parse its tail and strip it afterwards, else the stream's last
+// assistant text -- and the fallback is reported so the caller can mark the
+// round. Either is rendered with the harness kind of the last segment that ran,
+// which a mid-round switch can change. A runner that wrote only summary.md does
+// not keep it as the report: the old file stays an extra artifact. The caller no
+// longer calls it when no deliverable exists; an absent deliverable falls
+// through to the continuation or halt path. A writer is untouched: it writes its
+// own report.
 //
 // A chain's reviewer and security members are the exception: their report is
 // the message that carried the block their seed demands (a recap after the
 // block would otherwise hide the whole review), and the file is relevo's to
-// rewrite with that message, stripped of the block the parse already read.
+// rewrite with that message, stripped of the block the parse already read. That
+// rewrite of a file that has content in it is the chain's own rule and is not
+// reported as a fallback.
 //
 // The path a close should record is returned either way, so a caller can stat
-// what it is about to queue. An error is the write's own; the callers log it
-// and close without a report rather than failing the round, which is why the
-// path is returned with it.
-func writeReaderSummary(rt Runtime, b store.Binding) (string, error) {
+// what it is about to queue; fellBack reports whether the stream was saved
+// instead of the file the runner wrote. An error is the write's own; the callers
+// log it and close without a report rather than failing the round, which is why
+// the path is returned with it.
+func writeReaderSummary(rt Runtime, b store.Binding) (string, bool, error) {
 	path := reportPathFor(rt, b)
 	if b.Shape != store.ShapeReader {
-		return path, nil
+		return path, false, nil
 	}
 
 	chainReader := chainReaderPart(rt, b.Name)
 	stream, _ := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, b.Round))
 	text := readerOutputText(lastStreamKind(b), stream, chainReader)
 
-	// A regular file at the output path is the runner's own report and is left
-	// alone -- except for a chain reader, whose report relevo owns. Anything
-	// else there -- a symlink a runner planted, a directory, a fifo -- must not
-	// be followed: it is refused and nothing is created.
+	// A regular file at the output path with content in it is the runner's own
+	// report and is left alone -- except for a chain reader, whose report
+	// relevo owns. Anything else there -- a symlink a runner planted, a
+	// directory, a fifo -- must not be followed: it is refused and nothing is
+	// created, which is a refusal and not a fallback.
+	present, empty := false, false
 	if fi, err := os.Lstat(path); err == nil {
 		if !fi.Mode().IsRegular() {
-			return path, fmt.Errorf("reader output %s is not a regular file", path)
+			return path, false, fmt.Errorf("reader output %s is not a regular file", path)
 		}
-		if !chainReader || text == "" {
-			return path, nil
+		present = true
+		if empty, err = readerOutputEmpty(path); err != nil {
+			return path, false, err
 		}
-		root, rel, err := readerOutputRoot(rt.Store, b, path)
-		if err != nil {
-			return path, err
+		if !empty && (!chainReader || text == "") {
+			return path, false, nil
 		}
-		defer func() { _ = root.Close() }()
-		return path, replaceReaderOutput(root, rel, []byte(text+"\n"))
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return path, err
+		return path, false, err
 	}
 	if text == "" {
-		return path, nil
+		return path, false, nil
 	}
 	// The artifact directory is created through the output's os.Root: a symlink
 	// (even one pointing at a real directory) or any other non-directory is
 	// refused, so the create never descends one.
 	root, rel, err := readerOutputRoot(rt.Store, b, path)
 	if err != nil {
-		return path, err
+		return path, false, err
 	}
 	defer func() { _ = root.Close() }()
+	if present {
+		// Only the empty file is a fallback; a chain rewrite over a file that
+		// has content in it is the chain's own rule.
+		return path, empty, replaceReaderOutput(root, rel, []byte(text+"\n"))
+	}
 	if dir := filepath.Dir(rel); dir != "." {
 		if err := root.MkdirAll(dir, 0o755); err != nil {
-			return path, err
+			return path, false, err
 		}
 	}
-	return path, writeReaderOutput(root, rel, text)
+	return path, true, writeReaderOutput(root, rel, text)
+}
+
+// readerOutputEmpty reports whether the runner's output file is empty for the
+// close's purposes: zero bytes, or content that is only whitespace once
+// trimmed. A file a runner created and then wrote nothing into is not an
+// artifact, and treating it as one leaves the round with a blank output and no
+// say so. The read error is reported rather than guessed at, so a file that
+// cannot be read is never silently overwritten by the fallback.
+func readerOutputEmpty(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	return len(bytes.TrimSpace(data)) == 0, nil
+}
+
+// readerFallbackNote is the log-note token a close records when it saved the
+// stream because the runner's output file was missing or empty, and the token
+// readerFallbackHeader looks for when it marks the same output. Both surfaces
+// read this one constant, so the note and the header cannot disagree about
+// which output was salvaged.
+const readerFallbackNote = "output-fallback"
+
+// readerFallbackHeaderLine is the line `show --output` puts above a salvaged
+// output, so the MasterMind reading it learns the file is not the runner's own.
+const readerFallbackHeaderLine = "note: the runner left no output file, so this is its last message, saved by the close."
+
+// withFallbackHeader puts the fallback line above a salvaged output, so the
+// reader of it is never left believing the runner wrote the file.
+func withFallbackHeader(entries []store.LogEntry, round int, text string) string {
+	if head := readerFallbackHeader(entries, round); head != "" {
+		return head + "\n" + text
+	}
+	return text
+}
+
+// readerFallbackHeader returns readerFallbackHeaderLine when name's round closed
+// with the fallback marked, else "". entries is the binding's whole log; the
+// search is from the newest entry back, so the newest marking of the round wins.
+func readerFallbackHeader(entries []store.LogEntry, round int) string {
+	for i := len(entries) - 1; i >= 0; i-- {
+		if e := entries[i]; e.Round == round && strings.Contains(e.Note, readerFallbackNote) {
+			return readerFallbackHeaderLine
+		}
+	}
+	return ""
 }
 
 // readerOutputRoot opens the os.Root a reader's output path lives under: the
@@ -150,16 +208,32 @@ func readerOutputText(kind string, stream []byte, chainReader bool) string {
 }
 
 // readerHasReport reports whether a reader round already has something to
-// close with: an output file the runner wrote itself, or text the close would
-// take from the stream. A round with neither is the noreport case the marker
-// hold keeps open inside the grace, so this reads the two sources the close
-// writes from and no others.
+// close with: an output file the runner wrote itself that has content in it, or
+// text the close would take from the stream. An empty file is neither -- the
+// close falls back to the stream for it -- so it does not hold a round open.
+// A round with neither is the noreport case the marker hold keeps open inside
+// the grace, so this reads the two sources the close writes from and no others.
 func readerHasReport(rt Runtime, b store.Binding) bool {
-	if fi, err := os.Lstat(reportPathFor(rt, b)); err == nil && fi.Mode().IsRegular() {
+	if present, _ := readerOutputPresent(reportPathFor(rt, b)); present {
 		return true
 	}
 	stream, _ := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, b.Round))
 	return readerOutputText(lastStreamKind(b), stream, chainReaderPart(rt, b.Name)) != ""
+}
+
+// readerOutputPresent reports whether path is a regular file the runner wrote
+// with content in it, and whether that file is empty. A missing path, a symlink,
+// a directory or a fifo is not present and not empty: whether it is a refusal
+// is the close's decision, not this one's, so nothing here follows it.
+func readerOutputPresent(path string) (present, empty bool) {
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() {
+		return false, false
+	}
+	if empty, err = readerOutputEmpty(path); err != nil {
+		return true, false
+	}
+	return true, empty
 }
 
 // chainReaderPart reports whether name is the reviewer or the security member

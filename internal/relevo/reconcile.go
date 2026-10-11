@@ -729,9 +729,14 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		gateSuffix = "\n" + gateLine(b.Name, b.Round, *rec, tail)
 	}
 
-	reportPath, serr := writeReaderSummary(rt, b)
+	reportPath, fellBack, serr := writeReaderSummary(rt, b)
 	if serr != nil {
 		slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", serr)
+	}
+	if fellBack {
+		// The runner left no output file, so the close saved its last message:
+		// recorded in the note the round's status row and `show --output` read.
+		note = joinNotes(note, readerFallbackNote)
 	}
 	if _, _, ok, _ := rt.Store.StatFile(reportPath); ok {
 		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)
@@ -766,7 +771,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// here from the runner's final message when the runner wrote none itself,
 	// and it is the path the report entry records. A writer's report is the
 	// flat NNN-report.md the caller computed.
-	if p, err := writeReaderSummary(rt, b); err != nil {
+	if p, _, err := writeReaderSummary(rt, b); err != nil {
 		slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", err)
 	} else {
 		path = p
@@ -800,6 +805,9 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		// ```relevo skeleton, truncated by the capture. The tail contract is
 		// for the file the builder writes.
 		tail, ok, reject = reporttail.ParseWithReason(body)
+		if !ok && reject == "" && fallbackOutcome == "" && chainErr != nil {
+			tail, ok = readerStreamTail(rt, b)
+		}
 	}
 	if ok {
 		outcome = tail.Status

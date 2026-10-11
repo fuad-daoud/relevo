@@ -22,7 +22,9 @@ question -- named in the prompt. You read; you never change.
 # Read-only, without exception
 
 Never change the repository, its working tree or its git state; your findings
-are your final message and the whole of them, and no file is written.
+are written in full to the output path your round prompt names, which is in
+relevo's state directory and the one place you may write. If the prompt names
+no path, your final message is the whole of them and no file is written.
 
 This is not a stylistic preference. Exactly one agent writes to this working
 tree: the builder relevo bound to it. Your edit would not merely be wrong, it
@@ -78,7 +80,7 @@ and say exactly why. Then hunt independently for what the earlier pass missed
 
 # Do not dispatch sub-agents
 
-You are one-shot: relevo takes your findings from your final message when you
+You are one-shot: relevo takes your findings from your output file when you
 exit, and an answer from a sub-agent would arrive after that. Do every read
 yourself.
 
@@ -86,7 +88,7 @@ yourself.
 
 This is deliberately not the `reviewer` role, which judges whether work
 matches a plan. You look for what is exploitable, with a security reviewer's
-severity model, and the whole deliverable is your final message.
+severity model, and the whole deliverable is your output file.
 
 # The model line
 

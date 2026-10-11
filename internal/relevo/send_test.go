@@ -416,7 +416,10 @@ func TestComposePromptNamesPlanReportAndMarkerInOrder(t *testing.T) {
 
 // TestComposePromptReaderNamesTheOutputFile pins the reader handoff: it names
 // the actor's output file and carries no artifact-directory sentence, because
-// the actor writes nothing relevo reads.
+// the actor writes nothing else in the repository. The prompt orders the reader
+// to write that file in full -- it is the artifact, kept verbatim -- and demotes
+// the final message to the short close, so a runner that only answers in chat
+// is a fallback the close can see rather than a silent success.
 func TestComposePromptReaderNamesTheOutputFile(t *testing.T) {
 	t.Parallel()
 
@@ -430,8 +433,24 @@ func TestComposePromptReaderNamesTheOutputFile(t *testing.T) {
 		t.Errorf("reader prompt still asks the runner to write an artifact directory:\n%s", got)
 	}
 	output := st.OutputPath("reader-bind", 1, "reviewer", "findings")
-	if !strings.Contains(got, "Your final message is your findings: it is saved as "+output+".") {
-		t.Errorf("reader prompt must name the output file %s:\n%s", output, got)
+	writeOrder := "Write your findings to " + output + ", in full and finished"
+	if !strings.Contains(got, writeOrder) {
+		t.Errorf("reader prompt must order the runner to write %s:\n%s", output, got)
+	}
+	if strings.Contains(got, "Your final message is your findings") {
+		t.Errorf("reader prompt still makes the final message the whole deliverable:\n%s", got)
+	}
+	if !strings.Contains(got, "Your final message is then only the short close") {
+		t.Errorf("reader prompt must keep the final message as the short close:\n%s", got)
+	}
+	// The write is ordered before the close, and the close before the block it
+	// ends with: deleting the path sentence breaks both orderings.
+	writeAt := strings.Index(got, writeOrder)
+	closeAt := strings.Index(got, "only the short close")
+	blockAt := strings.Index(got, "it ends with this block")
+	if !(writeAt < closeAt && closeAt < blockAt) {
+		t.Errorf("reader prompt order is write(%d) then close(%d) then block(%d):\n%s",
+			writeAt, closeAt, blockAt, got)
 	}
 }
 
@@ -460,6 +479,38 @@ func TestComposePromptReaderPutsTheBlockMessageLast(t *testing.T) {
 	}
 	if strings.Contains(got, "comes after it") || strings.Contains(got, "Your final message comes after") {
 		t.Errorf("reader prompt still says the final message comes after the marker:\n%s", got)
+	}
+}
+
+// TestChainReaderPromptNamesTheOutputFile pins that the chain lane orders the
+// same file write as the plain reader lane, before its own marker-before-message
+// ordering: the wording of the path sentence must not drift between the two
+// templates, only the block and the marker order may differ.
+func TestChainReaderPromptNamesTheOutputFile(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	rt := Runtime{Store: st}
+	b := store.Binding{Name: "shop-rev", CWD: "/repo", Round: 2, Shape: store.ShapeReader, Role: "reviewer"}
+
+	got := chainReaderPromptFor(rt, b, "/s/002-prompt.md", "/s/002-done", "verdict: pass")
+
+	output := st.OutputPath("shop-rev", 2, "reviewer", "findings")
+	writeOrder := "Write your findings to " + output + ", in full and finished"
+	if !strings.Contains(got, writeOrder) {
+		t.Errorf("chain reader prompt must order the runner to write %s:\n%s", output, got)
+	}
+	if strings.Contains(got, "Your final message is your findings") {
+		t.Errorf("chain reader prompt still makes the final message the whole deliverable:\n%s", got)
+	}
+	// The write is ordered before the marker, and the marker before the block
+	// message: that ordering is the chain lane's whole close contract.
+	writeAt := strings.Index(got, writeOrder)
+	markerAt := strings.Index(got, "create this empty file")
+	blockAt := strings.Index(got, "It must end with this block")
+	if !(writeAt < markerAt && markerAt < blockAt) {
+		t.Errorf("chain reader prompt order is write(%d) then marker(%d) then block(%d):\n%s",
+			writeAt, markerAt, blockAt, got)
 	}
 }
 
@@ -848,7 +899,7 @@ func TestSendHeadlessNoTierDefaultsToHarness(t *testing.T) {
 	wantArgv := []string{
 		"agy", "-p", wantPrompt, "--model", "m", "--agent", "plan-executor",
 		"--output-format", "stream-json", "--print-timeout", "24h0m0s", "--add-dir", "/repo",
-		"--dangerously-skip-permissions",
+		"--add-dir", rt.Store.OutDir("webshop"), "--dangerously-skip-permissions",
 	}
 	if !reflect.DeepEqual(fr.specs[0].Argv, wantArgv) {
 		t.Errorf("argv =\n%v\nwant =\n%v", fr.specs[0].Argv, wantArgv)

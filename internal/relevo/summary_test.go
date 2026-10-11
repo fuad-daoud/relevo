@@ -1,6 +1,7 @@
 package relevo
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -60,7 +61,7 @@ func TestWriteReaderSummaryPrefersTheChainBlockMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := writeReaderSummary(rt, b); err != nil {
+	if _, _, err := writeReaderSummary(rt, b); err != nil {
 		t.Fatalf("writeReaderSummary: %v", err)
 	}
 	got, err := os.ReadFile(out)
@@ -117,7 +118,7 @@ func TestWriteReaderSummarySavesAPlainReadersBlockMessageOverARecap(t *testing.T
 	b := testReaderBinding()
 	writeReaderMessages(t, rt, b.Name, b.Round, plainReaderBlock, "Done.")
 
-	if _, err := writeReaderSummary(rt, b); err != nil {
+	if _, _, err := writeReaderSummary(rt, b); err != nil {
 		t.Fatalf("writeReaderSummary: %v", err)
 	}
 	got, err := os.ReadFile(reportPathFor(rt, b))
@@ -144,7 +145,7 @@ func TestWriteReaderSummarySavesTheFinalTextWithoutABlock(t *testing.T) {
 	b := testReaderBinding()
 	writeReaderMessages(t, rt, b.Name, b.Round, "First message.", "The final message.")
 
-	if _, err := writeReaderSummary(rt, b); err != nil {
+	if _, _, err := writeReaderSummary(rt, b); err != nil {
 		t.Fatalf("writeReaderSummary: %v", err)
 	}
 	got, err := os.ReadFile(reportPathFor(rt, b))
@@ -157,7 +158,11 @@ func TestWriteReaderSummarySavesTheFinalTextWithoutABlock(t *testing.T) {
 }
 
 // TestWriteReaderSummaryLeavesAPlainReadersOwnFileAlone pins that a regular
-// file the runner wrote at a plain reader's output path is left byte-identical.
+// file the runner wrote at a plain reader's output path is left byte-identical
+// and reported as no fallback. The file's content differs from the stream's
+// last block-carrying message on purpose: a close that re-saved the stream over
+// a file the runner had already written passes every assertion here that leaves
+// the two texts the same.
 func TestWriteReaderSummaryLeavesAPlainReadersOwnFileAlone(t *testing.T) {
 	t.Parallel()
 
@@ -170,12 +175,19 @@ func TestWriteReaderSummaryLeavesAPlainReadersOwnFileAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	const own = "# The runner's own findings\n"
+	if strings.Contains(own, "The code is sound") {
+		t.Fatalf("the runner's own text must differ from the stream text, got %q", own)
+	}
 	if err := os.WriteFile(out, []byte(own), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := writeReaderSummary(rt, b); err != nil {
+	_, fellBack, err := writeReaderSummary(rt, b)
+	if err != nil {
 		t.Fatalf("writeReaderSummary: %v", err)
+	}
+	if fellBack {
+		t.Errorf("fellBack = true for a file the runner wrote, want false")
 	}
 	got, err := os.ReadFile(out)
 	if err != nil {
@@ -183,6 +195,198 @@ func TestWriteReaderSummaryLeavesAPlainReadersOwnFileAlone(t *testing.T) {
 	}
 	if string(got) != own {
 		t.Errorf("output = %q, want the runner's own file unchanged %q", got, own)
+	}
+}
+
+// TestWriteReaderSummaryFallsBackFromAnEmptyOutputFile pins that an output file
+// with nothing in it is not an artifact: the close saves the stream's
+// block-carrying message over it and says the fallback fired. A file that is
+// zero bytes and one that is only whitespace are the same case, and a close
+// that treated either as delivered leaves the round with a blank artifact and
+// no record that it happened.
+func TestWriteReaderSummaryFallsBackFromAnEmptyOutputFile(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		content string
+	}{
+		{"zero bytes", ""},
+		{"whitespace only", "   \n\t\n  "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			rt := newRuntime(t)
+			b := testReaderBinding()
+			writeReaderMessages(t, rt, b.Name, b.Round, plainReaderBlock, "Done.")
+
+			out := reportPathFor(rt, b)
+			if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(out, []byte(tc.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			path, fellBack, err := writeReaderSummary(rt, b)
+			if err != nil {
+				t.Fatalf("writeReaderSummary: %v", err)
+			}
+			if path != out {
+				t.Errorf("path = %q, want %q", path, out)
+			}
+			if !fellBack {
+				t.Fatalf("fellBack = false for an empty output file, want true")
+			}
+			got, err := os.ReadFile(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(got), "The code is sound") {
+				t.Errorf("output = %q, want the stream's block-carrying message saved over it", got)
+			}
+			if present, empty := readerOutputPresent(out); !present || empty {
+				t.Errorf("readerOutputPresent = (%v, %v), want a present non-empty file after the fallback", present, empty)
+			}
+			// The stream message carried the block, so the close leaves it whole
+			// and parses the tail later; the salvage is the message, not a stub.
+			if !strings.Contains(string(got), "```relevo") {
+				t.Errorf("output = %q, want the block-carrying message kept whole", got)
+			}
+		})
+	}
+}
+
+// TestWriteReaderSummaryRefusalIsNotAFallback pins that a symlink a runner
+// planted at the output path is still a refusal: the close reports an error and
+// no fallback, so the round closes without an output rather than quietly saving
+// the stream over a path it must not follow.
+func TestWriteReaderSummaryRefusalIsNotAFallback(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	b := testReaderBinding()
+	writeReaderStream(t, rt, b.Name, b.Round, "final message")
+
+	out := reportPathFor(rt, b)
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(t.TempDir(), "pwned"), out); err != nil {
+		t.Fatal(err)
+	}
+
+	_, fellBack, err := writeReaderSummary(rt, b)
+	if err == nil {
+		t.Fatalf("writeReaderSummary = nil error, want the planted symlink refused")
+	}
+	if fellBack {
+		t.Errorf("fellBack = true for a refused output path, want false: a refusal is not a fallback")
+	}
+}
+
+// TestReaderFallbackIsMarkedForTheMasterMind pins that the fallback is visible
+// where the MasterMind reads it: the close's own note token, the header
+// `show --output` puts above the salvaged text, and no header at all on a round
+// that closed on the runner's own file.
+func TestReaderFallbackIsMarkedForTheMasterMind(t *testing.T) {
+	t.Parallel()
+
+	// The header line a reader of the output is shown.
+	if !strings.HasPrefix(readerFallbackHeaderLine, "note: ") {
+		t.Errorf("the header line must read as a note, got %q", readerFallbackHeaderLine)
+	}
+
+	entries := []store.LogEntry{
+		{Round: 1, Note: "noreport"},
+		{Round: 2, Note: "unmarked/" + readerFallbackNote},
+		{Round: 2, Note: "escape"},
+	}
+	if got := readerFallbackHeader(entries, 2); got != readerFallbackHeaderLine {
+		t.Errorf("readerFallbackHeader(round 2) = %q, want %q", got, readerFallbackHeaderLine)
+	}
+	if got := readerFallbackHeader(entries, 1); got != "" {
+		t.Errorf("readerFallbackHeader(round 1) = %q, want no header: that round did not fall back", got)
+	}
+
+	// The same round through Show: a saved fallback is marked above the text, a
+	// file-first close is not marked at all.
+	st := store.New(t.TempDir())
+	rt := Runtime{Store: st}
+	b := testReaderBinding()
+	b.CWD = "/repo"
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	out := st.OutputPath(b.Name, b.Round, "reviewer", "findings")
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(out, []byte("# salvaged\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	appendNote := func(note string) {
+		t.Helper()
+		if err := st.AppendLog(b.Name, store.LogEntry{
+			Round: b.Round, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true,
+		}); err != nil {
+			t.Fatalf("AppendLog(prompt): %v", err)
+		}
+		if err := st.AppendLog(b.Name, store.LogEntry{
+			Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindReport,
+			Note: note, Confirmed: true,
+		}); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+
+	appendNote(readerFallbackNote)
+	res, err := Show(ctx, rt, ShowOptions{Name: b.Name, Round: b.Round, Section: ShowOutput})
+	if err != nil {
+		t.Fatalf("Show(--output): %v", err)
+	}
+	if res.Missing {
+		t.Fatalf("Show(--output) = missing, want the saved output")
+	}
+	if !strings.HasPrefix(res.Text, readerFallbackHeaderLine) {
+		t.Errorf("--output = %q, want it headed with %q", res.Text, readerFallbackHeaderLine)
+	}
+	if !strings.Contains(res.Text, "# salvaged") {
+		t.Errorf("--output = %q, want the salvaged text under the header", res.Text)
+	}
+
+	// A round whose close kept the runner's own file carries no header, so the
+	// marker cannot be mistaken for a property of every reader output.
+	st2 := store.New(t.TempDir())
+	rt2 := Runtime{Store: st2}
+	b2 := testReaderBinding()
+	b2.CWD = "/repo"
+	if err := st2.Save(b2); err != nil {
+		t.Fatal(err)
+	}
+	out2 := st2.OutputPath(b2.Name, b2.Round, "reviewer", "findings")
+	if err := os.MkdirAll(filepath.Dir(out2), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(out2, []byte("# the runner's own\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []store.LogEntry{
+		{Round: b2.Round, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true},
+		{Round: b2.Round, Direction: store.DirToMasterMind, Kind: store.KindReport, Confirmed: true},
+	} {
+		if err := st2.AppendLog(b2.Name, e); err != nil {
+			t.Fatalf("AppendLog: %v", err)
+		}
+	}
+	res2, err := Show(ctx, rt2, ShowOptions{Name: b2.Name, Round: b2.Round, Section: ShowOutput})
+	if err != nil {
+		t.Fatalf("Show(--output): %v", err)
+	}
+	if res2.Text != "# the runner's own\n" {
+		t.Errorf("--output = %q, want the runner's own file with no header", res2.Text)
 	}
 }
 
@@ -216,7 +420,7 @@ func TestWriteReaderSummaryRefusesADanglingSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := writeReaderSummary(rt, b)
+	_, _, err := writeReaderSummary(rt, b)
 	if err == nil {
 		t.Fatalf("writeReaderSummary = nil error, want the dangling symlink refused")
 	}
@@ -245,7 +449,7 @@ func TestWriteReaderSummaryRefusesASymlinkedArtifactDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := writeReaderSummary(rt, b)
+	_, _, err := writeReaderSummary(rt, b)
 	if err == nil {
 		t.Fatalf("writeReaderSummary = nil error, want the symlinked artifact directory refused")
 	}
@@ -335,7 +539,7 @@ func TestReaderArtifactIsTheBlockCarryingMessageNotATrailingSummary(t *testing.T
 	const trailingSummary = "The plan is above, outlining the two implementation steps."
 	writeReaderMessages(t, rt, b.Name, b.Round, planMessage, trailingSummary)
 
-	if _, err := writeReaderSummary(rt, b); err != nil {
+	if _, _, err := writeReaderSummary(rt, b); err != nil {
 		t.Fatalf("writeReaderSummary: %v", err)
 	}
 	got, err := os.ReadFile(reportPathFor(rt, b))
