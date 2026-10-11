@@ -19,8 +19,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire/owner"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/ingest"
-	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -272,99 +270,6 @@ func cmdDaemon(args []string) error {
 	// daemon's own ingest may write it.
 	daemonRuntimeHandle(&rt, d)
 
-	// The ingest mirror's proven duplicates are removed once, before daemon.json
-	// is written (D3c; v2 #476). The run backs the database up first and records
-	// itself in the kv table, so every later start is a no-op, and a failure
-	// never stops the daemon: a machine with no database, or one where the
-	// backup could not be written, still runs and retries on the next start.
-	if rt.DB != nil {
-		stats, ran, derr := ingest.DedupeMirrorOnce(rt.DB, filepath.Dir(rt.Store.DBPath()), time.Now())
-		if derr != nil {
-			slog.Warn("relevo daemon: mirror dedupe skipped", "err", derr)
-		} else if ran {
-			slog.Info("relevo daemon: mirror dedupe",
-				"done_at", stats.DoneAt,
-				"mirror_bindings", stats.MirrorBindings,
-				"unmapped", stats.Unmapped,
-				"artifacts_deleted", stats.ArtifactsDeleted,
-				"artifacts_kept", stats.ArtifactsKept,
-				"transcript_rounds_deleted", stats.TranscriptRoundsDeleted,
-				"transcript_rows_deleted", stats.TranscriptRowsDeleted,
-				"transcript_rounds_kept", stats.TranscriptRoundsKept,
-				"transcript_rounds_by_stream_lines", stats.TranscriptRoundsByStreamLines,
-				"backup_path", stats.BackupPath,
-				"vacuum_err", stats.VacuumErr)
-		}
-	}
-
-	// The pass converts the bulk history columns to per-row zstd once, right
-	// after the dedupe removed the rows it could, so the conversion and its
-	// backup run on the smaller database. It backs the database up first and
-	// records itself in the kv table, so every later start is a no-op, and a
-	// failure never stops the daemon.
-	if rt.DB != nil {
-		cstats, cran, cerr := db.CompressHistoryOnce(rt.DB, filepath.Dir(rt.Store.DBPath()), time.Now())
-		if cerr != nil {
-			slog.Warn("relevo daemon: history compression skipped", "err", cerr)
-		} else if cran {
-			for _, ts := range cstats.Tables {
-				slog.Info("relevo daemon: history compression",
-					"table", ts.Table,
-					"rows_compressed", ts.RowsCompressed,
-					"columns_compressed", ts.ColumnsCompressed,
-					"columns_kept_plain", ts.ColumnsKeptPlain,
-					"bytes_in", ts.BytesIn,
-					"bytes_out", ts.BytesOut)
-			}
-			slog.Info("relevo daemon: history compression done",
-				"done_at", cstats.DoneAt,
-				"backup_path", cstats.BackupPath,
-				"checkpoint_err", cstats.CheckpointErr,
-				"vacuum_err", cstats.VacuumErr)
-		}
-	}
-
-	dropChangeCaptureTable(rt)
-
-	// The installation's own row, then the local split and the origin backfill,
-	// run next to the other run-once passes. The row is the projection other
-	// machines read to label this installation; the two passes behind it are the
-	// ones the enable preflight refuses on by name, so running them here is what
-	// gives a refusal its fix. A failure never stops the daemon: a machine with
-	// no database still runs, and the next start retries.
-	if rt.DB != nil {
-		dir := filepath.Dir(rt.Store.DBPath())
-		inst, ierr := installation.Load(dir)
-		if ierr != nil {
-			slog.Warn("relevo daemon: installation file unavailable", "err", ierr)
-		} else {
-			if terr := rt.DB.Tx(func(t *db.Tx) error {
-				return t.InstallationTouch(inst.ID, inst.Label, time.Now())
-			}); terr != nil {
-				slog.Warn("relevo daemon: installation row skipped", "err", terr)
-			}
-
-			daemonEnablePath(rt.DB, dir, inst.ID, time.Now())
-		}
-	}
-
-	// A client key stored under the pre-rename PEM label is rewritten once
-	// here, so every later reader sees the current label. The reader accepts
-	// either label, so no remote path refuses the key in the meantime; the
-	// trigger is the stored label itself, so the pass is self-limiting and
-	// needs no kv once-row. A failure never stops the daemon, and the key stays
-	// readable, so the next start retries.
-	if rt.DB != nil {
-		if wrote, err := rt.Config.NormalizeClientKey(); err != nil {
-			slog.Warn("relevo daemon: client key label not updated", "err", err)
-		} else if wrote {
-			slog.Info("relevo daemon: client key PEM label updated")
-		}
-	}
-
-	// daemon.json: what this image runs. Written under the lock, so its
-	// presence with the lock held means a #371 daemon; removed on a clean
-	// shutdown, kept across a re-exec (#371 §4.7).
 	// An abandoned statement the owner cannot interrupt is ended by re-execing
 	// this binary: the hook the owner calls once logs the reap and asks the
 	// upgrade hook below to return true on its next tick. With re-exec
@@ -380,11 +285,15 @@ func cmdDaemon(args []string) error {
 		}
 	}
 
-	srv, err = serveOwner(d, ln, onAbandoned)
-	if err != nil {
-		slog.Warn("relevo daemon: owner socket not served", "err", err)
-	}
-	installSyncVerbHook(srv, d)
+	// The owner is served before the one-time passes, which then run under the
+	// owner's normal write path; the sync verb executor is installed after them,
+	// and only once they recorded themselves. See daemonStartup for why the
+	// order is this one.
+	srv = daemonStartup(&rt, d, ln, onAbandoned)
+
+	// daemon.json: what this image runs. Written under the lock, so its
+	// presence with the lock held means a daemon of this build; removed on a
+	// clean shutdown, kept across a re-exec.
 	info := store.DaemonInfo{
 		Version:    buildVersion(),
 		PID:        os.Getpid(),

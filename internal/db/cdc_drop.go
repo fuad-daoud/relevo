@@ -122,8 +122,9 @@ func requireBackupSpace(files []*DB, backupDir string) error {
 }
 
 // backupAndDrop backs each file up before dropping the table in it, then
-// checkpoints and vacuums so the file shrinks. A checkpoint or vacuum failure
-// is recorded rather than returned: the table is gone either way.
+// checkpoints and reclaims so the file shrinks. A checkpoint or reclaim failure
+// is recorded rather than returned: the table is gone either way, and a reclaim
+// the owner makes impossible is skipped rather than recorded.
 func backupAndDrop(files []*DB, backupDir string, now time.Time, stats tursoCdcStats) (tursoCdcStats, error) {
 	var paths []string
 	for _, f := range files {
@@ -135,7 +136,7 @@ func backupAndDrop(files []*DB, backupDir string, now time.Time, stats tursoCdcS
 		if _, err := f.sqlDB.ExecContext(context.Background(), `DROP TABLE IF EXISTS `+cdcTableName); err != nil {
 			return stats, fmt.Errorf("turso cdc drop: drop in %s: %w", f.path, mapBusy(err))
 		}
-		fin := finishCompress(f, CompressStats{})
+		fin := finishCompress(f, CompressStats{}, "change-capture table drop")
 		stats.CheckpointErr = firstNonEmpty(stats.CheckpointErr, fin.CheckpointErr)
 		stats.VacuumErr = firstNonEmpty(stats.VacuumErr, fin.VacuumErr)
 	}
