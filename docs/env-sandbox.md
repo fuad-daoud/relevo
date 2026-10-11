@@ -117,8 +117,11 @@ a sandbox problem, and re-login fixes both sides.
 
 opencode is the other direction. A second opencode service cannot start while
 yours runs: opencode pins its managed port, so the sandbox instance retries
-your port and never binds. Attach the sandbox to your running service instead,
-by copying its address and your login into the sandbox (same user, re-copyable):
+your port and never binds. `create` attaches the sandbox to your running
+service instead, by copying its address and your login into the sandbox, and
+copies your opencode agent definitions (`~/.config/opencode/agents/`) into
+`<sandbox>/config/opencode/agents/`; without them an opencode builder fails
+with `Agent not found`. To re-attach by hand (same user, re-copyable):
 
 ```
 mkdir -p <sandbox>/state/opencode <sandbox>/data/opencode

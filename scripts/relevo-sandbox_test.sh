@@ -457,13 +457,16 @@ rm -rf "$outside"
 # convenience, and a sandbox without it is still a working sandbox.
 sb "$script" create nologin "$nb"
 carries 'a create with no credentials to copy warns' 'log the claude harness in'
+carries 'a create with no opencode agents names the failure' 'Agent not found'
+carries 'a create with no opencode service warns' 'no running opencode service'
 if [ -f "$root/nologin/claude/.credentials.json" ]; then
 	echo "FAIL: create copied credentials the temp HOME does not have"
 	fail=1
 fi
 
 # With logins present, create copies the login and config files plus the agent
-# definitions, and leaves every data directory behind: transcripts must land
+# definitions (opencode's read from the host XDG paths), and leaves every data
+# directory behind: transcripts must land
 # in the sandbox, never leak out of it through a copied directory.
 mkdir -p "$home/.claude/agents" "$home/.claude/projects/sess1" "$home/.codex"
 printf '{"token":"x"}' > "$home/.claude/.credentials.json"
@@ -475,6 +478,11 @@ printf 'history' > "$home/.claude/history.jsonl"
 printf '{"t":"y"}' > "$home/.codex/auth.json"
 printf 'cfg' > "$home/.codex/config.toml"
 printf 'data' > "$home/.codex/goals_1.sqlite"
+mkdir -p "$root/xdg-config/opencode/agents" "$root/xdg-state/opencode" "$root/xdg-data/opencode"
+printf 'agent' > "$root/xdg-config/opencode/agents/plan-executor.md"
+printf '{"port":1}' > "$root/xdg-state/opencode/service.json"
+printf '{"k":"v"}' > "$root/xdg-data/opencode/auth.json"
+printf 'sessions' > "$root/xdg-data/opencode/opencode.db"
 sb "$script" create logins "$nb"
 for want in \
 	"$root/logins/claude/.credentials.json" \
@@ -482,7 +490,10 @@ for want in \
 	"$root/logins/claude/settings.shared.json" \
 	"$root/logins/claude/agents/executor.md" \
 	"$root/logins/codex/auth.json" \
-	"$root/logins/codex/config.toml"; do
+	"$root/logins/codex/config.toml" \
+	"$root/logins/config/opencode/agents/plan-executor.md" \
+	"$root/logins/state/opencode/service.json" \
+	"$root/logins/data/opencode/auth.json"; do
 	if [ ! -f "$want" ]; then
 		echo "FAIL: create copied no $want"
 		fail=1
@@ -491,7 +502,8 @@ done
 for want in \
 	"$root/logins/claude/projects" \
 	"$root/logins/claude/history.jsonl" \
-	"$root/logins/codex/goals_1.sqlite"; do
+	"$root/logins/codex/goals_1.sqlite" \
+	"$root/logins/data/opencode/opencode.db"; do
 	if [ -e "$want" ]; then
 		echo "FAIL: create copied session data $want"
 		fail=1

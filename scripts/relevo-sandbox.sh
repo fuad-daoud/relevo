@@ -11,8 +11,8 @@
 #
 # What it never does, deliberately: it never touches ~/.local/bin, never runs
 # `make install` or `make service`, and never installs harness definitions
-# into the caller's home (it copies the already-installed claude and codex
-# definitions into the sandbox instead). The binary lands in
+# into the caller's home (it copies the already-installed claude, codex and
+# opencode definitions into the sandbox instead). The binary lands in
 # <root>/<name>/bin, ahead of PATH, so the sandbox's own binary is the one a
 # sandboxed shell finds.
 #
@@ -211,6 +211,28 @@ cmd_create() {
 			fi
 		done
 	fi
+	# opencode resolves its agents under $XDG_CONFIG_HOME/opencode/agents, which
+	# the sandbox points inside it, so the definitions are copied the same one
+	# direction as claude's. Its login is not a standalone file: a second
+	# opencode service cannot bind while the host's runs, so the sandbox
+	# attaches to that service through its address and the host's auth.
+	_oc_cfg="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+	_oc_state="${XDG_STATE_HOME:-$HOME/.local/state}/opencode"
+	_oc_data="${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
+	if [ -d "$_oc_cfg/agents" ]; then
+		plan mkdir -p "$_sb/config/opencode/agents"
+		plan cp -r "$_oc_cfg/agents/." "$_sb/config/opencode/agents/"
+	else
+		note "no $_oc_cfg/agents to copy; an opencode builder fails with 'Agent not found' until the definitions are in $_sb/config/opencode/agents"
+	fi
+	if [ -f "$_oc_state/service.json" ] && [ -f "$_oc_data/auth.json" ]; then
+		plan mkdir -p "$_sb/state/opencode" "$_sb/data/opencode"
+		plan cp "$_oc_state/service.json" "$_sb/state/opencode/service.json"
+		plan cp "$_oc_data/auth.json" "$_sb/data/opencode/auth.json"
+		_login=1
+	else
+		note "no running opencode service and login to attach; opencode-backed candidates fail inside until service.json and auth.json are copied (docs/env-sandbox.md)"
+	fi
 	if [ "$_login" -eq 0 ]; then
 		note "no harness login found to copy; log the claude harness in inside the sandbox before using it"
 	fi
@@ -298,7 +320,7 @@ cmd_create() {
 	note ""
 	note "sandbox $_name is ready. Enter it with:"
 	note "  $prog shell $_name"
-	note "claude and codex arrive logged in when your home had their logins; opencode starts logged out until you log it in inside."
+	note "claude and codex arrive logged in when your home had their logins; opencode is attached to your running service when it had one. Copy opencode's service.json again if that service restarts."
 }
 
 # write_env_sh writes the export recipe that is the sandbox. Nine exports: eight
