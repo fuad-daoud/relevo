@@ -46,9 +46,10 @@ func (m *missingBlob) Error() string {
 
 func (m *missingBlob) Unwrap() error { return ErrBlobMissing }
 
-// Stall is one origin held for a run because a body its batch refers to could not
-// be fetched and checked. Nothing of the batch applied and the mark did not move,
-// so the next attempt reads the same batch again.
+// Stall is one origin held for a run: a body its batch refers to could not be
+// fetched and checked, or the snapshot up to its floor could not be applied.
+// Nothing of it applied and the mark did not move, so the next attempt reads the
+// same entries again. Reason says which.
 type Stall struct {
 	Origin string
 	// Label is the name that installation's own file carries.
@@ -58,8 +59,7 @@ type Stall struct {
 
 // String is the report a stall reads as: the installation and why it waits.
 func (s Stall) String() string {
-	return fmt.Sprintf("%s is held: a body it refers to could not be fetched, %s; it is retried on the next attempt",
-		s.Label, s.Reason)
+	return fmt.Sprintf("%s is held: %s; it is retried on the next attempt", s.Label, s.Reason)
 }
 
 // stallError carries a stall up from the fetch to the loop that records it.
@@ -290,7 +290,7 @@ func (i *Importer) fetchAndApply(batch []Entry, marks map[string]int) (int, erro
 	case refused(err):
 		return 0, err
 	default:
-		return 0, &stallError{origin: batch[0].Origin, cause: err}
+		return 0, &stallError{origin: batch[0].Origin, cause: fmt.Errorf("a body it refers to could not be fetched, %w", err)}
 	}
 }
 

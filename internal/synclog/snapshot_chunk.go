@@ -52,7 +52,7 @@ func (i *Importer) chunkFetchFailure(origin string, chunk []Entry, err error, to
 		total.Dropped = append(total.Dropped, Drop{Origin: origin, Seq: tail(chunk), Reason: err.Error()})
 		return nil
 	default:
-		return &stallError{origin: origin, cause: err}
+		return &stallError{origin: origin, cause: fmt.Errorf("a body it refers to could not be fetched, %w", err)}
 	}
 }
 

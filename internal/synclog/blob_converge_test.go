@@ -256,6 +256,9 @@ func TestImportHoldsOriginOnFetchError(t *testing.T) {
 	if err != nil || len(res.Stalled) != 1 || res.Applied != 0 {
 		t.Fatalf("import = (%+v, %v), want one stall and nothing applied", res, err)
 	}
+	if said := res.Stalled[0].String(); !strings.Contains(said, "could not be fetched") {
+		t.Errorf("stall reads %q, want it to say a body could not be fetched", said)
+	}
 	if rows := storedColumns(t, b); len(rows) != 0 {
 		t.Fatalf("B holds %v after a failed fetch, want no body applied", rows)
 	}

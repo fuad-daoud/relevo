@@ -31,6 +31,9 @@ func importStalledOn(t *testing.T, log *MemTransport, origin, reason string) {
 	if got := markOf(t, reader, origin); got != 0 {
 		t.Fatalf("mark = %d, want it left at 0", got)
 	}
+	if said := res.Stalled[0].String(); strings.Contains(said, "fetched") {
+		t.Errorf("stall reads %q, want no word of a fetch for a floor", said)
+	}
 }
 
 // A floor past the origin's head names entries the log never held. Taking it
