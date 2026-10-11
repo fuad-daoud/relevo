@@ -72,8 +72,22 @@ var parseResetCases = []struct {
 		ok:   true,
 	},
 	{
-		name: "day component past the short window",
+		// A monthly subscription states its reset in days, so a duration earns
+		// the same 31-day window a full calendar date does.
+		name: "monthly limit resets in days and hours",
+		line: "Error 429: You have reached your monthly ClinePass limit. The limit resets in 16d 5h, please try again later.",
+		want: parseResetNow.Add(16*24*time.Hour + 5*time.Hour),
+		ok:   true,
+	},
+	{
+		name: "day component inside the dated window",
 		line: "try again in 8d",
+		want: parseResetNow.Add(192 * time.Hour),
+		ok:   true,
+	},
+	{
+		name: "day count past the dated window",
+		line: "try again in 40d",
 		ok:   false,
 	},
 	{
@@ -160,9 +174,10 @@ var parseResetCases = []struct {
 		ok:   false,
 	},
 	{
-		name: "duration outside 7 day window",
+		name: "duration inside the dated window",
 		line: "try again in 400h",
-		ok:   false,
+		want: parseResetNow.Add(400 * time.Hour),
+		ok:   true,
 	},
 	{
 		name: "clock out of range",
@@ -376,6 +391,62 @@ func TestMatchLimitAgyFixtureParsesReset(t *testing.T) {
 	want := now.Add(2*time.Hour + 48*time.Minute + 52*time.Second)
 	if !got.Until.Equal(want) {
 		t.Errorf("Until = %v, want %v", got.Until, want)
+	}
+}
+
+// TestMatchLimitMonthlyDurationAgreesWithResetFromReason pins that a 429
+// naming a monthly reset gates for the months the provider stated rather than
+// the one-hour fallback, and that the two readers of that sentence -- the
+// builder's output and a hand-written --reason -- end at the same instant.
+// Reverting the duration window to the short one kills this: Until comes back
+// as now+1h with Parsed false.
+func TestMatchLimitMonthlyDurationAgreesWithResetFromReason(t *testing.T) {
+	t.Parallel()
+
+	now := testNow()
+	const line = "Error 429: You have reached your monthly ClinePass limit. The limit resets in 16d 5h, please try again later."
+	want := now.Add(16*24*time.Hour + 5*time.Hour)
+
+	got, ok := MatchLimit(line, opencodePatterns(t), now, time.Hour)
+	if !ok {
+		t.Fatal("MatchLimit ok = false, want true")
+	}
+	if !got.Parsed {
+		t.Fatalf("Parsed = false, want true (Until %v is the %v fallback)", got.Until, time.Hour)
+	}
+	if !got.Until.Equal(want) {
+		t.Errorf("MatchLimit Until = %v, want %v", got.Until, want)
+	}
+	if got.Until.Location() != time.UTC {
+		t.Errorf("Until location = %v, want UTC", got.Until.Location())
+	}
+
+	fromReason, ok := ResetFromReason(line, now)
+	if !ok {
+		t.Fatal("ResetFromReason ok = false, want true")
+	}
+	if !fromReason.Equal(got.Until) {
+		t.Errorf("ResetFromReason = %v, MatchLimit = %v; the two must agree", fromReason, got.Until)
+	}
+}
+
+// TestMatchLimitRefusesADurationPastTheDatedWindow pins the refusal the wider
+// window must not have cost: a reset further out than the parser trusts still
+// falls back rather than gating a provider for a month.
+func TestMatchLimitRefusesADurationPastTheDatedWindow(t *testing.T) {
+	t.Parallel()
+
+	now := testNow()
+	fallback := time.Hour
+	got, ok := MatchLimit("Error 429: limit reached. Resets in 40d", opencodePatterns(t), now, fallback)
+	if !ok {
+		t.Fatal("MatchLimit ok = false, want true")
+	}
+	if got.Parsed {
+		t.Error("Parsed = true, want false")
+	}
+	if want := now.Add(fallback); !got.Until.Equal(want) {
+		t.Errorf("Until = %v, want the %v fallback", got.Until, fallback)
 	}
 }
 
