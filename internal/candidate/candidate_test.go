@@ -618,3 +618,18 @@ func TestNameFor(t *testing.T) {
 		t.Errorf("(*Set)(nil).NameFor = %q, %v, want \"\", false", name, ok)
 	}
 }
+
+// TestResolveReachesAModelThatItselfEndsInAnEffortSuffix: a configured model
+// named "...#high" is looked up exactly before any suffix is stripped. Stripping
+// first makes it unreachable, which the exact-match row kills.
+func TestResolveReachesAModelThatItselfEndsInAnEffortSuffix(t *testing.T) {
+	set := parseSet(t, `[{"harness":"opencode","provider":"cline-pass","model":"cline-pass/deepseek#high"}]`)
+
+	c, err := set.Resolve("opencode/cline-pass/cline-pass/deepseek#high")
+	if err != nil {
+		t.Fatalf("Resolve exact: %v", err)
+	}
+	if got := c.Ref().Model; got != "cline-pass/deepseek#high" {
+		t.Errorf("model = %q", got)
+	}
+}

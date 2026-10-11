@@ -63,7 +63,7 @@ func TestGateUntil(t *testing.T) {
 		},
 		{
 			name:     "a reset beyond the trusted window is not honoured",
-			reason:   "rate limit reached. Resets in 200h",
+			reason:   "rate limit reached. Resets in 800h",
 			wantZero: true,
 		},
 		{

@@ -69,7 +69,7 @@ func ResolveClearSubject(set *candidate.Set, l Ledger, subject string) (provider
 	if ref, perr := candidate.ParseRef(candidate.StripEffort(subject)); perr == nil {
 		provider = ref.Provider
 		if set != nil {
-			if _, lerr := set.Lookup(ref); lerr == nil {
+			if _, lerr := set.ResolveToken(subject); lerr == nil {
 				return provider, nil
 			} else if !gatesProvider(l, provider) {
 				// The token is not configured and nothing is gating its

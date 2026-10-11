@@ -116,6 +116,22 @@ func StripEffort(tok string) string {
 	return tok
 }
 
+// ResolveToken looks a harness/provider/model token up exactly first, and
+// only then without its "#effort" suffix: a configured model may itself end in
+// "#high", and stripping first would make that candidate unreachable.
+func (s *Set) ResolveToken(tok string) (Candidate, error) {
+	if ref, err := ParseRef(tok); err == nil {
+		if c, ok := s.byRef[ref.String()]; ok {
+			return c, nil
+		}
+	}
+	ref, err := ParseRef(StripEffort(tok))
+	if err != nil {
+		return Candidate{}, err
+	}
+	return s.Lookup(ref)
+}
+
 // Resolve takes a name or a harness/provider/model token to a candidate. A
 // token may carry a trailing "#effort" suffix, which is stripped before the
 // lookup so the same candidate answers with and without it.
@@ -124,11 +140,7 @@ func (s *Set) Resolve(str string) (Candidate, error) {
 		return Candidate{}, fmt.Errorf("unknown candidate %q (no candidates configured): %w", str, ErrUnknownCandidate)
 	}
 	if strings.Contains(str, "/") {
-		ref, err := ParseRef(StripEffort(str))
-		if err != nil {
-			return Candidate{}, err
-		}
-		return s.Lookup(ref)
+		return s.ResolveToken(str)
 	}
 	if key, ok := s.byName[str]; ok {
 		return s.byRef[key], nil
