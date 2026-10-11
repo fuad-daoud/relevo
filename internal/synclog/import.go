@@ -143,7 +143,7 @@ type Drop struct {
 // entry rather than the origin alone, because the origin is usually fine and it
 // is one entry inside its log that this build cannot take.
 func (d Drop) String() string {
-	return fmt.Sprintf("dropped a batch of %d entries from %s: %s", d.Seq, d.Origin, d.Reason)
+	return fmt.Sprintf("dropped entries from %s up to sequence %d: %s", d.Origin, d.Seq, d.Reason)
 }
 
 // Gap is one origin the log handed a batch to out of order: the batch starts

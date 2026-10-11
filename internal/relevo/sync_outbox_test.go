@@ -120,3 +120,33 @@ func TestOutboxTruncationStaysOffWhileOn(t *testing.T) {
 		t.Errorf("the outbox holds %d entries after a tick with sync on, want %d", got, want)
 	}
 }
+
+// TestOutboxKeepsEntriesWhileAJoinRuns pins that a machine part way through an
+// enable keeps its entries although its mark still says off: the join walks the
+// tables one at a time, so a row written into a table it has already passed
+// leaves the machine only through its outbox entry.
+func TestOutboxKeepsEntriesWhileAJoinRuns(t *testing.T) {
+	t.Parallel()
+
+	rt, raw := outboxRuntime(t)
+	mdb, err := rt.Store.DB()
+	if err != nil {
+		t.Fatalf("store db: %v", err)
+	}
+	local, err := relevosync.LocalHandle(mdb)
+	if err != nil {
+		t.Fatalf("LocalHandle: %v", err)
+	}
+	if err := relevosync.WriteJoin(local, baseTime); err != nil {
+		t.Fatalf("WriteJoin: %v", err)
+	}
+	want := outboxCount(t, raw)
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+
+	if got := outboxCount(t, raw); got != want {
+		t.Errorf("the outbox holds %d entries after a tick during a join, want %d", got, want)
+	}
+}

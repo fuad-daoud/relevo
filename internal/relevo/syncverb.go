@@ -409,11 +409,7 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byt
 	if v.Runner != nil {
 		v.Runner.SeedStats(res.Stats)
 	}
-	out := &wire.SyncResult{OK: true, Applied: true, RemoteURL: res.Remote, TokenPresent: true}
-	if res.Guarded && !res.Estimate.Known {
-		out.Warning = "no machine has published its log size, so the join was not checked against the Turso quota"
-	}
-	return out
+	return &wire.SyncResult{OK: true, Applied: true, RemoteURL: res.Remote, TokenPresent: true, Warning: enableWarning(res)}
 }
 
 // openTransport returns the log an enable drives: the opener the wiring

@@ -3,6 +3,7 @@ package synclog
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -104,9 +105,11 @@ func TestSnapshotDropsAnEntryForARowAnotherInstallationOwns(t *testing.T) {
 	}
 }
 
-// A region whose references can never be satisfied stalls the origin and leaves
-// the mark where it was, rather than looping or applying a row without its parent.
-func TestSnapshotStallsWhenNoPassCanApplyTheRest(t *testing.T) {
+// A region whose references can never be satisfied drops the rows they refuse
+// and moves the mark to the floor, as the normal path moves past a batch it
+// refuses: a mark left behind would pull, fetch and apply the whole region again
+// on every run. The refused row is never written without its parent.
+func TestSnapshotDropsRowsNoPassCanApplyAndMovesTheMark(t *testing.T) {
 	t.Parallel()
 	m1, m1Path := exporterFile(t, "m1")
 	m2, _ := peerFile(t, "m2")
@@ -130,11 +133,21 @@ func TestSnapshotStallsWhenNoPassCanApplyTheRest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
-	if len(res.Stalled) != 1 || res.Snapshots != 0 {
-		t.Fatalf("import = %+v, want the origin stalled", res)
+	if len(res.Stalled) != 0 || res.Snapshots != 1 || len(res.Dropped) != 1 || !strings.Contains(res.Dropped[0].Reason, `["01C"]`) {
+		t.Fatalf("import = %+v, want the snapshot done with 01C dropped", res)
 	}
-	if got := markOf(t, m2, "m1"); got != 0 {
-		t.Fatalf("mark = %d, want it left at 0", got)
+	if got := markOf(t, m2, "m1"); got != 2 {
+		t.Fatalf("mark = %d, want it at the floor 2", got)
+	}
+	if got := columnOf(t, m2, `SELECT COUNT(*) FROM binding WHERE id = '01C'`); got != "0" {
+		t.Fatalf("m2 holds %s rows for 01C, want none: it was written without its parent", got)
+	}
+	again, err := NewImporter(m2, log.OnLog("m2")).Import()
+	if err != nil {
+		t.Fatalf("second import: %v", err)
+	}
+	if again.Moved() || again.Snapshots != 0 {
+		t.Fatalf("second import = %+v, want nothing pulled again", again)
 	}
 }
 

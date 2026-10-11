@@ -76,6 +76,11 @@ func (i *Importer) snapshots(state MarkState, marks map[string]int, total *Impor
 // The mark stays where it was until the whole region is applied. A crash in the
 // middle re-applies the region, which is harmless: an upsert is idempotent and a
 // delete of an absent row is a no-op.
+//
+// Rows whose references refuse them on every pass are dropped and the mark still
+// moves to the floor, the way the normal path moves past a batch it refuses:
+// left at the old mark, the region would be pulled, fetched and applied again on
+// every run, and refuse the same rows each time.
 func (i *Importer) snapshotOrigin(origin string, mark, floor, head int, marks map[string]int, total *ImportResult) (*Hold, error) {
 	if floor > head {
 		return nil, badFloor(origin, floor, fmt.Sprintf("past the log's head %d", head))
@@ -91,11 +96,14 @@ func (i *Importer) snapshotOrigin(origin string, mark, floor, head int, marks ma
 		return &Hold{Origin: origin, Label: i.labelOf(origin), Seq: mark, Schema: e.SchemaVersion}, nil
 	}
 	upserts, deletes := splitRegion(region, total)
-	if err := i.applyUntilDone(origin, upserts, total); err != nil {
-		return nil, err
-	}
-	if err := i.applyUntilDone(origin, deletes, total); err != nil {
-		return nil, err
+	for _, part := range [][]Entry{upserts, deletes} {
+		left, err := i.applyUntilDone(origin, part, total)
+		if err != nil {
+			return nil, err
+		}
+		if left != nil {
+			total.Dropped = append(total.Dropped, Drop{Origin: origin, Seq: floor, Reason: left.Error()})
+		}
 	}
 	if err := i.db.Tx(func(tx *db.Tx) error { return i.mark(tx, marks, origin, floor, true) }); err != nil {
 		return nil, fmt.Errorf("synclog: import: %w", err)
@@ -213,22 +221,24 @@ func splitRegion(region []Entry, total *ImportResult) (upserts, deletes []Entry)
 // applyUntilDone applies entries in passes. A foreign key can refuse an upsert
 // whose parent has a higher sequence -- a table that references itself, as forks
 // do -- so a refused entry is set aside and retried after the rest. Passes
-// repeat while each applies something; one that applies nothing is a stall.
-func (i *Importer) applyUntilDone(origin string, entries []Entry, total *ImportResult) error {
+// repeat while each applies something. When one applies nothing, or the passes
+// run out, the rows still refused are left: left names them, and err is kept
+// for a failure that is not a refusal.
+func (i *Importer) applyUntilDone(origin string, entries []Entry, total *ImportResult) (left, err error) {
 	for pass := 0; len(entries) > 0; pass++ {
 		if pass == orDefault(i.passes, maxSnapshotPasses) {
-			return &stallError{origin: origin, cause: fmt.Errorf("the references of %s still refuse them after %d passes", describeRows(entries), pass)}
+			return fmt.Errorf("the references of %s still refuse them after %d passes", describeRows(entries), pass), nil
 		}
 		next, applied, err := i.applyPass(origin, entries, total)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if len(next) > 0 && applied == 0 {
-			return &stallError{origin: origin, cause: fmt.Errorf("the references of %s refuse every remaining row", describeRows(next))}
+			return fmt.Errorf("the references of %s refuse every remaining row", describeRows(next)), nil
 		}
 		entries = next
 	}
-	return nil
+	return nil, nil
 }
 
 // describeRows names the first few rows, enough to find them.

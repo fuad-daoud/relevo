@@ -182,6 +182,13 @@ func (d *Daemon) truncateOutbox() {
 	if state.Enabled {
 		return
 	}
+	// An enable's join walks the shared tables one at a time and turns the mark
+	// on only once it ends. An entry dropped while it runs names a row written
+	// into a table the walk has already passed: that row would never leave the
+	// machine, and every row that refers to it would be refused everywhere else.
+	if _, joining, err := relevosync.ReadJoin(local); err != nil || joining {
+		return
+	}
 
 	if err := mdb.TruncateOutbox(); err != nil {
 		slog.Warn("outbox truncate", "err", err)
