@@ -199,11 +199,6 @@ func chainServerResume(ctx context.Context, rt Runtime, c db.ChainRow, opts Resu
 		Security:       opts.Security,
 		Regate:         opts.Regate,
 	}
-	// The resume target travels because the server's own engine enters the step:
-	// without it the server resumed the step it halted on, so a --from review
-	// re-entered the check instead of the review the human asked for.
-	req.From = opts.From
-	req.Params = opts.Params
 	if opts.Gate != "" || opts.NoGate {
 		gate := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), "builder"))
 		req.Gate = &gate

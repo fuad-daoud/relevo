@@ -197,7 +197,7 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	}
 	// A resume whose send could not start halts the chain, exactly as the fixed
 	// state machine's resume returns the send's own error. The halt is the
-	// answer -- nothing about the resume was malformed and nothing of relance's
+	// answer -- nothing about the resume was malformed and nothing of relevo's
 	// own failed -- so it is refused, not reported as an internal fault: the
 	// CLI reads a refusal as exit 2 with the reason to act on, and an internal
 	// as "send this to bugreport" on a row the human can read and fix.
