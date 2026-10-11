@@ -158,7 +158,7 @@ func TestLaunchAppliesTier(t *testing.T) {
 		t.Fatalf("claude Launch edit error: %v", err)
 	}
 	wantClaudePrint := []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor",
-		"--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits", "--some-flag"}
+		"--output-format", "stream-json", "--verbose", "--add-dir", OutputDirPlaceholder, "--permission-mode", "acceptEdits", "--some-flag"}
 	if !reflect.DeepEqual(cl.Print, wantClaudePrint) {
 		t.Errorf("claude Print = %v, want %v", cl.Print, wantClaudePrint)
 	}
@@ -197,14 +197,14 @@ func TestLaunchHarnessTierUnchanged(t *testing.T) {
 			provider:  "prov",
 			model:     "m/x",
 			extra:     nil,
-			wantPrint: []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor", "--output-format", "stream-json", "--print-timeout", BudgetPlaceholder, "--add-dir", DirPlaceholder},
+			wantPrint: []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor", "--output-format", "stream-json", "--print-timeout", BudgetPlaceholder, "--add-dir", DirPlaceholder, "--add-dir", OutputDirPlaceholder},
 		},
 		{
 			kind:      "claude",
 			provider:  "prov",
 			model:     "m/x",
 			extra:     nil,
-			wantPrint: []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor", "--output-format", "stream-json", "--verbose"},
+			wantPrint: []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor", "--output-format", "stream-json", "--verbose", "--add-dir", OutputDirPlaceholder},
 		},
 		{
 			kind:      "opencode",

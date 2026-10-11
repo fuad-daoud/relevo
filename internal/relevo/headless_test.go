@@ -180,8 +180,8 @@ func TestHeadlessLaunchPerKind(t *testing.T) {
 		want  []string
 	}{
 		{testAgyRef, []string{"agy", "-p", "PROMPT", "--model", "m", "--agent", "plan-executor",
-			"--output-format", "stream-json", "--print-timeout", "2h0m0s", "--add-dir", "/repo", "--dangerously-skip-permissions"}},
-		{testClaudeRef, []string{"claude", "-p", "PROMPT", "--model", "m", "--agent", "plan-executor", "--output-format", "stream-json", "--verbose"}},
+			"--output-format", "stream-json", "--print-timeout", "2h0m0s", "--add-dir", "/repo", "--add-dir", "/state/dir", "--dangerously-skip-permissions"}},
+		{testClaudeRef, []string{"claude", "-p", "PROMPT", "--model", "m", "--agent", "plan-executor", "--output-format", "stream-json", "--verbose", "--add-dir", "/state/dir"}},
 		{testOpencodeRef, []string{"opencode", "run", "PROMPT", "-m", "test/m", "--agent", "plan-executor", "--format", "json", "--thinking", "--standalone"}},
 	}
 	for _, c := range cases {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -275,6 +276,51 @@ func TestPlacedCheckFallsBackToPulledRecordWithoutFeature(t *testing.T) {
 	}
 }
 
+// TestFallbackCheckRecordsNoRunID pins that the fallback to a pulled gate record
+// mints no run id. The fallback runs no check on the server, so it has nothing
+// to poll: recording the builder's closed round as the run id left that number
+// on the state, so the next check step inherited it and its tick asked the
+// server for a check run that was never created. The miss that answered was the
+// halt these two reports are about.
+func TestFallbackCheckRecordsNoRunID(t *testing.T) {
+	t.Parallel()
+
+	rt, _, _ := chainRemoteRuntime(t, chainCheckFake())
+	startFlowChain(t, rt, flowTwoChecksWorkflow)
+	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
+
+	// The server loses the check feature, so every check from here is answered
+	// from a pulled gate record and no CreateCheck is ever posted.
+	rt.Remote = chainRemoteFake()
+	chainAwaitingWithoutRun(t, rt)
+	chainPulledGate(t, rt, "pass")
+	fr := rt.Remote.(*fakeRemote)
+	tickChainChecks(context.Background(), rt)
+
+	// The round number is not a run id: the check it answered, and the check
+	// step it left the chain on, both carry none.
+	if _, run := chainAwaitedCheck(t, rt); run != 0 {
+		t.Errorf("awaiting run = %d, want no run id: the fallback started no check to poll", run)
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "GetCheck:") {
+			t.Errorf("calls = %v, want no GetCheck for a run the fallback never started", fr.calls)
+			break
+		}
+	}
+
+	// A later tick on the chain the fallback left behind must still not poll:
+	// nothing here ever posted a CreateCheck to answer.
+	fr.calls = nil
+	tickChainChecks(context.Background(), rt)
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c, "GetCheck:") {
+			t.Errorf("calls = %v, want no GetCheck for a run the fallback never started", fr.calls)
+			break
+		}
+	}
+}
+
 // TestPlacedStartAllowsTwoCommandsWithCheck pins that two different check
 // commands are no longer a reason to refuse a placed writer: each check is its
 // own run on the server's check route, so two commands are two runs.
@@ -404,10 +450,14 @@ func TestResumeGateOnPlacedWriterSkipsSetGateOnBadParam(t *testing.T) {
 	}
 }
 
-// TestPlacedCheckHaltsWhenTheServerHasNoSuchRun pins a lost run: a check the
-// server no longer holds is a chain that can never settle, so the chain halts
-// and says which check it was.
-func TestPlacedCheckHaltsWhenTheServerHasNoSuchRun(t *testing.T) {
+// TestPlacedCheckMissKeepsAwaiting pins that a bare miss is not a loss. A
+// check run this machine minted can be one the server has not created yet --
+// the run is stored when the create answer comes back, and a tick that reads
+// between the two sees nothing under the id. That is a chain still waiting,
+// not a chain that can never settle, so the tick says nothing, writes nothing
+// and delivers nothing: a halt here would be a false end for a check that is
+// about to answer.
+func TestPlacedCheckMissKeepsAwaiting(t *testing.T) {
 	t.Parallel()
 
 	fr := chainCheckFake()
@@ -415,14 +465,180 @@ func TestPlacedCheckHaltsWhenTheServerHasNoSuchRun(t *testing.T) {
 	startFlowChain(t, rt, flowPlacedCheckWorkflow)
 	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
 
-	fr.getCheckErr = &client.HTTPError{Status: 404, Body: remote.ErrorBody{Message: "no check chk-1"}}
+	fr.calls = nil
+	fr.getCheckErr = &client.HTTPError{
+		Status: 404,
+		Body:   remote.ErrorBody{Message: "relevo: no such check run on this binding"},
+	}
+	tickChainChecks(context.Background(), rt)
+
+	row := flowChainRow(t, rt)
+	if row.Status != string(workflow.StatusRunning) || row.Reason != "" {
+		t.Errorf("status = %s (%q), want the chain still running with no halt reason", row.Status, row.Reason)
+	}
+	if step, run := chainAwaitedCheck(t, rt); step != "check" || run != 1 {
+		t.Errorf("awaiting check = %q run %d, want it still awaiting check run 1", step, run)
+	}
+	if entries := chainPendingChain(t, rt, "shop"); len(entries) != 0 {
+		t.Errorf("queued %d chain deliveries, want none for a miss that is not a loss", len(entries))
+	}
+}
+
+// TestPlacedCheckMissAsksAgain pins the other half of staying awaiting: the run
+// is still polled on the next tick, so a run the server did create is still
+// picked up. A miss that stopped the poll would strand the chain forever.
+func TestPlacedCheckMissAsksAgain(t *testing.T) {
+	t.Parallel()
+
+	fr := chainCheckFake()
+	rt, _, _ := chainRemoteRuntime(t, fr)
+	startFlowChain(t, rt, flowPlacedCheckWorkflow)
+	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
+
+	fr.calls = nil
+	fr.getCheckErr = &client.HTTPError{Status: 404, Body: remote.ErrorBody{Message: "relevo: no such check run on this binding"}}
+	tickChainChecks(context.Background(), rt)
+	tickChainChecks(context.Background(), rt)
+
+	if n := slices.ContainsFunc(fr.calls, func(c string) bool {
+		return strings.HasPrefix(c, "GetCheck:")
+	}); !n {
+		t.Errorf("calls = %v, want the tick to poll the run again after a miss", fr.calls)
+	}
+}
+
+// TestPlacedCheckHaltsWhenTheServerHoldsAnotherRun pins the loss the tick can
+// prove: the binding holds a check run under a different id, so the id this
+// machine awaits names nothing that can ever settle. A bare miss proves
+// nothing, but a server that holds a *different* run for this same step does
+// prove the awaited one is gone, and the chain halts naming it.
+func TestPlacedCheckHaltsWhenTheServerHoldsAnotherRun(t *testing.T) {
+	t.Parallel()
+
+	fr := chainCheckFake()
+	rt, _, _ := chainRemoteRuntime(t, fr)
+	startFlowChain(t, rt, flowPlacedCheckWorkflow)
+	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
+
+	// The binding holds chk-2, not the chk-1 this machine awaits, and chk-1 is
+	// already settled there: the awaited run is gone for good.
+	fr.getCheckIDs = map[string]remote.CheckView{
+		"chk-2": {ID: "chk-2", Step: "check", Result: "pass"},
+	}
+	fr.getCheckErr = &client.HTTPError{Status: 404, Body: remote.ErrorBody{Message: "relevo: no such check run on this binding"}}
 	tickChainChecks(context.Background(), rt)
 
 	row := flowChainRow(t, rt)
 	if row.Status != string(workflow.StatusHalted) {
-		t.Errorf("status = %s, want the chain halted on a check the server dropped", row.Status)
+		t.Fatalf("status = %s (%q), want the chain halted on a run the server replaced", row.Status, row.Reason)
 	}
 	if !strings.Contains(row.Reason, "check") {
 		t.Errorf("halt reason = %q, want it to name the check", row.Reason)
+	}
+}
+
+// TestResumeFromEntersReviewOnTheDefaultWorkflow pins the rule --from is judged
+// by, in the pure function that enters the step: on the shipped default,
+// resuming at review runs the review step, not a second check run. A resume
+// that re-entered check is the symptom this rules out, so the assertion is the
+// entered step and not the run number.
+func TestResumeFromEntersReviewOnTheDefaultWorkflow(t *testing.T) {
+	t.Parallel()
+
+	def := workflow.Default()
+	state, _ := workflow.Start(def, workflow.StartInputs{Plans: []string{"/x/plan.md"}})
+	// Drive the default to the check step and close it green, so the chain
+	// would otherwise sit on check.
+	state, _ = workflow.Next(def, state, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
+	state, _ = workflow.Next(def, state, workflow.Event{Kind: workflow.EventCheckClosed, Step: "check", Run: 1, Result: "pass"})
+	state.Status = workflow.StatusHalted
+	state.Reason = "halted for the human"
+
+	resumed, acts, err := workflow.Resume(def, state, workflow.ResumeOpts{From: "review"})
+	if err != nil {
+		t.Fatalf("Resume(from review): %v", err)
+	}
+	if resumed.Awaiting.Step != "review" {
+		t.Errorf("resumed awaiting step = %q, want the review the --from named", resumed.Awaiting.Step)
+	}
+	if resumed.Awaiting.Member == "builder" {
+		t.Errorf("resumed awaiting member = %q, want the reviewer, not a second check run", resumed.Awaiting.Member)
+	}
+	if resumed.Awaiting.Run != 0 {
+		t.Errorf("resumed awaiting run = %d, want no check run for a resume at review", resumed.Awaiting.Run)
+	}
+	var sent bool
+	for _, act := range acts {
+		if act.Kind == workflow.ActionSend && act.Actor != "" {
+			sent = true
+		}
+		if act.Kind == workflow.ActionRunCheck {
+			t.Errorf("resume at review started a check run, want the review step's send")
+		}
+	}
+	if !sent {
+		t.Error("resume at review produced no send, want the review step handed to the reviewer")
+	}
+}
+
+// TestResumeFromAndCloseIsRefused pins the precedence the plan asks for: a
+// resume that names both a target and a close is refused by the typed refusal,
+// never silently letting one of them win. Entering check here would be the
+// silent loss.
+func TestResumeFromAndCloseIsRefused(t *testing.T) {
+	t.Parallel()
+
+	def := workflow.Default()
+	state, _ := workflow.Start(def, workflow.StartInputs{Plans: []string{"/x/plan.md"}})
+	state.Status = workflow.StatusHalted
+
+	_, _, err := workflow.Resume(def, state, workflow.ResumeOpts{
+		From:   "review",
+		Closed: &workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 2},
+	})
+	if err == nil {
+		t.Fatal("Resume(from+close) = nil error, want the typed refusal")
+	}
+	if !strings.Contains(err.Error(), "review") {
+		t.Errorf("error = %q, want it to name the refused target", err)
+	}
+}
+
+// TestShowGateRendersTheWholePulledLog pins the render half of the gate path:
+// `show --round N --gate` prints the whole pulled log, past the stage a chain
+// appears to stop at. The log arrives whole from the gate fetch, so the half
+// that cut it was here -- a gate that ends at an early stage reads as a check
+// that stopped there, and the last stage's verdict never reaches the reader.
+func TestShowGateRendersTheWholePulledLog(t *testing.T) {
+	t.Parallel()
+
+	rt, _, _ := chainRemoteRuntime(t, chainCheckFake())
+	startFlowChain(t, rt, flowPlacedCheckWorkflow)
+
+	var stages []string
+	for i := 1; i <= 12; i++ {
+		stages = append(stages, fmt.Sprintf("stage %02d running", i))
+	}
+	stages = append(stages, "running check-comments.sh", "check-comments.sh: ok", "gate green")
+	full := strings.Join(stages, "\n") + "\n"
+
+	// The log arrives as the gate fetch installed it, at the gate log path.
+	path := rt.Store.GateLogPath("shop", 1)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(full), 0o644); err != nil {
+		t.Fatalf("write the gate log: %v", err)
+	}
+
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "shop", Round: 1, Section: ShowGate})
+	if err != nil {
+		t.Fatalf("Show: %v", err)
+	}
+	if res.Missing {
+		t.Fatal("Missing = true, want the pulled gate log")
+	}
+	if res.Text != full {
+		t.Errorf("rendered gate =\n%q\nwant the whole log\n%q", res.Text, full)
 	}
 }

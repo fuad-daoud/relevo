@@ -207,8 +207,57 @@ func TestReaderCloseKeepsARunnerWrittenSummary(t *testing.T) {
 	if string(got) != own {
 		t.Errorf("findings.md = %q, want the runner's own %q", got, own)
 	}
-	if e := reportEntryFor(t, rt, "reader-bind", 1); e.Path != output {
+	e := reportEntryFor(t, rt, "reader-bind", 1)
+	if e.Path != output {
 		t.Errorf("report entry Path = %q, want the summary path %q", e.Path, output)
+	}
+	if strings.Contains(e.Note, readerFallbackNote) {
+		t.Errorf("report entry Note = %q, want no fallback marker: the runner wrote its own file", e.Note)
+	}
+	if e.Outcome != "done" {
+		t.Errorf("report entry Outcome = %q, want the status read from the final message's block", e.Outcome)
+	}
+}
+
+// TestReaderCloseMarksAFallbackFromAnEmptyOutputFile checks that a round whose
+// output file is empty closes on the stream's last message and says so: the
+// report entry's note carries the marker the status row and `show --output`
+// read. An empty file is not a delivery, so a close that saved nothing and
+// claimed nothing is the one outcome this rules out.
+func TestReaderCloseMarksAFallbackFromAnEmptyOutputFile(t *testing.T) {
+	t.Parallel()
+
+	repo := readerRepo(t)
+	rt, b := bindReader(t, repo)
+	output := rt.Store.OutputPath("reader-bind", 1, "reviewer", "findings")
+	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The runner created the file and wrote nothing into it.
+	if err := os.WriteFile(output, []byte("  \n\t\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeReaderStream(t, rt, "reader-bind", 1, readerCloseFinal)
+	touch(t, rt.Store.DonePath("reader-bind", 1))
+	exitReaderRunner(t, rt, b)
+
+	if _, err := reconcile(t, rt, b); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	got, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatalf("read findings.md: %v", err)
+	}
+	if string(got) != readerCloseSummary {
+		t.Errorf("findings.md = %q, want the stream's message saved over the empty file %q", got, readerCloseSummary)
+	}
+	e := reportEntryFor(t, rt, "reader-bind", 1)
+	if !strings.Contains(e.Note, readerFallbackNote) {
+		t.Errorf("report entry Note = %q, want it to mark the %s fallback", e.Note, readerFallbackNote)
+	}
+	if e.Path != output {
+		t.Errorf("report entry Path = %q, want %q", e.Path, output)
 	}
 }
 

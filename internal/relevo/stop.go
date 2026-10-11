@@ -263,7 +263,7 @@ func stopPayload(how, name string, round int, where string, haveReport bool, cla
 // entry appended after it is filed under the round that was stopped.
 func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, how string) (store.Binding, error) {
 	stoppedRound := b.Round
-	reportPath, serr := writeReaderSummary(rt, b)
+	reportPath, fellBack, serr := writeReaderSummary(rt, b)
 	if serr != nil {
 		slog.Warn("reader output not written", "binding", b.Name, "round", stoppedRound, "err", serr)
 	}
@@ -278,6 +278,9 @@ func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		haveReport = true
 	}
 	payload, note := stopPayload(how, b.Name, stoppedRound, "", haveReport, closeClause(rt, b, stoppedRound), b.Shape)
+	if fellBack {
+		note = joinNotes(note, readerFallbackNote)
+	}
 
 	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "", true, scopeVerdict{})
 	if err != nil {
