@@ -207,3 +207,10 @@ and what each returned; files created/modified mapped to steps; every mutation
 named in §4 steps 5–6 with kill confirmation; coverage-baseline handling;
 `changed_paths`, `commands_run` (both commands: the focused `go test` line and
 `make check`), `not_done`, and the `relevo` block.
+
+## Round 2
+
+`Store.GitShimDir()` moved from `<root>/shims` to `<root>/.shims`: `shims` is a
+valid binding name, a dot-prefixed one is not. `TestGitShimDirIsOutsideBindingNamespace`
+pins it. No walker over a store root lists or deletes unknown dot-directories
+(bindings come from the database; per-binding walks stay under `Dir(name)`).

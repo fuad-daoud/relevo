@@ -72,3 +72,12 @@ func TestGitShimDirIsUnderTheRootAndStable(t *testing.T) {
 		t.Errorf("GitShimDir changed between calls: %q then %q", got, again)
 	}
 }
+
+// TestGitShimDirIsOutsideBindingNamespace pins that the shim directory's name
+// is not a valid binding name, so no binding can share its directory.
+func TestGitShimDirIsOutsideBindingNamespace(t *testing.T) {
+	s := New(t.TempDir())
+	if err := ValidName(filepath.Base(s.GitShimDir())); err == nil {
+		t.Fatalf("GitShimDir base %q is a valid binding name", filepath.Base(s.GitShimDir()))
+	}
+}
