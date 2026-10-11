@@ -31,6 +31,21 @@ type Importer struct {
 	known     int
 	mover     BlobMover
 	staging   string
+	// chunk bounds a snapshot transaction's entries; zero is the default.
+	chunk int
+	// regionRows and passes bound a snapshot's rows and retry passes; zero is
+	// the default.
+	regionRows int
+	passes     int
+	// AfterBatch runs after each batch or snapshot chunk is written, so a
+	// caller can account for the transfer before the next one starts.
+	AfterBatch func()
+}
+
+func (i *Importer) batchDone() {
+	if i.AfterBatch != nil {
+		i.AfterBatch()
+	}
 }
 
 // NewImporter returns the importer for one installation's file and the log it
@@ -73,6 +88,8 @@ type ImportResult struct {
 	// Stalled are the origins whose batch refers to a body that could not be
 	// fetched and checked. Like a gap they hold for the run and are read again.
 	Stalled []Stall
+	// Snapshots is how many origins were brought up to their compaction floor.
+	Snapshots int
 }
 
 // Moved reports whether a run moved any origin's mark: it applied an entry or
@@ -82,7 +99,7 @@ type ImportResult struct {
 // deadline. Batches is not the test: a dropped batch moves the mark through
 // past() without incrementing it.
 func (r ImportResult) Moved() bool {
-	return r.Applied > 0 || len(r.Dropped) > 0
+	return r.Applied > 0 || len(r.Dropped) > 0 || r.Snapshots > 0
 }
 
 // Hold is one origin stopped at an entry this machine's schema cannot read. The
@@ -185,15 +202,22 @@ func (i *Importer) Import() (ImportResult, error) {
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("synclog: import: %w", err)
 	}
-	entries, err := i.transport.Pull(marks)
+	state, err := i.transport.ReadMarks()
 	if err != nil {
-		return ImportResult{}, fmt.Errorf("synclog: import: pull: %w", err)
+		return ImportResult{}, fmt.Errorf("synclog: import: read the floors: %w", err)
 	}
 	var total ImportResult
 	// An origin that held once holds for the rest of the run. Its later entries
 	// were written by the same newer binary and are just as unreadable, so
 	// reading them would apply part of a batch the exporter wrote as one.
 	held := make(map[string]bool)
+	if err := i.snapshots(state, marks, &total, held); err != nil {
+		return total, err
+	}
+	entries, err := i.transport.Pull(marks)
+	if err != nil {
+		return total, fmt.Errorf("synclog: import: pull: %w", err)
+	}
 	for _, batch := range batches(entries, marks) {
 		origin := batch[0].Origin
 		if held[origin] {
@@ -237,6 +261,7 @@ func (i *Importer) Import() (ImportResult, error) {
 		total.Applied += applied
 		if applied > 0 {
 			total.Batches++
+			i.batchDone()
 		}
 	}
 	return total, nil

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	turso "turso.tech/database/tursogo"
 
@@ -231,13 +232,13 @@ func TestFirstUseCreatesTheRemoteLogTables(t *testing.T) {
 	b := backendFor(t, driver, "origin-a")
 
 	tables := replicaTables(t, path)
-	for _, want := range []string{"head", "log", "meta"} {
+	for _, want := range []string{"head", "log", "marks", "meta"} {
 		if !tables[want] {
 			t.Errorf("first use did not create %q; the replica holds %v", want, tables)
 		}
 	}
-	if len(tables) != 3 {
-		t.Errorf("first use created %v, want exactly log, head and meta", tables)
+	if len(tables) != 4 {
+		t.Errorf("first use created %v, want exactly log, head, marks and meta", tables)
 	}
 	if got := metaFormat(t, path); got != strconv.Itoa(logFormatVersion) {
 		t.Errorf("meta format = %q, want %d", got, logFormatVersion)
@@ -252,8 +253,65 @@ func TestFirstUseCreatesTheRemoteLogTables(t *testing.T) {
 	if again.pushes != 0 {
 		t.Errorf("a re-run pushed %d times, want none: the log was already there", again.pushes)
 	}
-	if tables := replicaTables(t, path); len(tables) != 3 {
-		t.Errorf("a re-run left %v, want the same three tables", tables)
+	if tables := replicaTables(t, path); len(tables) != 4 {
+		t.Errorf("a re-run left %v, want the same four tables", tables)
+	}
+}
+
+// TestFormatOneRemoteIsUpgradedInPlace pins the one remote this build brings
+// forward rather than refuses: a log at the format below has the same tables
+// and the same entries, and a machine that has not synced since the change
+// would otherwise be left holding a remote no build of this version will open.
+//
+// The upgrade writes the marks table and the new format row in one transaction
+// and pushes, so the remote never holds one without the other, and a re-run
+// finds a log at the current format and writes nothing.
+func TestFormatOneRemoteIsUpgradedInPlace(t *testing.T) {
+	path := tempReplica(t)
+	// A format-1 remote is the first three statements and the old format row:
+	// everything a build of that version wrote, and nothing else.
+	execOn(t, path, createStatements[0], createStatements[1], createStatements[2],
+		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '1')")
+	// An entry already in it, so the upgrade is shown to leave the log alone
+	// rather than to reach it.
+	execOn(t, path, "INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at)"+
+		" VALUES ('origin-a', 1, 1, 'board', '[\"b\"]', 'upsert', 3, '{\"title\":\"one\"}', '2026-10-08T09:30:00Z')")
+
+	driver := &localDriver{path: path}
+	b := backendFor(t, driver, "origin-b")
+
+	if tables := replicaTables(t, path); len(tables) != 4 {
+		t.Errorf("the upgrade left %v, want the current format's four tables", tables)
+	}
+	if got := metaFormat(t, path); got != strconv.Itoa(logFormatVersion) {
+		t.Errorf("meta format = %q, want %d after the upgrade", got, logFormatVersion)
+	}
+	if driver.pushes != 1 {
+		t.Errorf("the upgrade pushed %d times, want once: the remote learns the new schema from a push",
+			driver.pushes)
+	}
+
+	// The entry that was there is still there: an upgrade is a schema change,
+	// not a rewrite.
+	written, err := b.Pull(map[string]int{"origin-a": 0})
+	if err != nil {
+		t.Fatalf("pull from the upgraded log: %v", err)
+	}
+	if !carries(written, "origin-a", 1) {
+		t.Errorf("the upgraded log pulled %d entries but not origin-a seq 1: the upgrade moved the log",
+			len(written))
+	}
+	_ = b.Close()
+
+	// A re-run finds a log at the current format and writes nothing, which is
+	// what makes the upgrade a one-time event rather than one per open.
+	again := &localDriver{path: path}
+	backendFor(t, again, "origin-b")
+	if again.pushes != 0 {
+		t.Errorf("a re-run pushed %d times, want none: the log was already at the current format", again.pushes)
+	}
+	if tables := replicaTables(t, path); len(tables) != 4 {
+		t.Errorf("a re-run left %v, want the same four tables", tables)
 	}
 }
 
@@ -278,7 +336,7 @@ func TestFirstUseLooksPastTheEnginesOwnTables(t *testing.T) {
 	execOn(t, path, engineTables...)
 	driver := &localDriver{path: path}
 	b := backendFor(t, driver, "origin-a")
-	for _, want := range []string{"head", "log", "meta"} {
+	for _, want := range []string{"head", "log", "marks", "meta"} {
 		if !replicaTables(t, path)[want] {
 			t.Errorf("first use over the engine's tables did not create %q", want)
 		}
@@ -314,7 +372,18 @@ func TestWorkerRefusesARemoteThatIsNotALog(t *testing.T) {
 		},
 		"a different format": func(t *testing.T, path string) {
 			execOn(t, path, createStatements[0], createStatements[1], createStatements[2],
+				createStatements[3],
 				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '99')")
+		},
+		// The tables of the format below with the current format's row: a
+		// remote in neither shape, which the two checks must not read as one.
+		"the older tables at the current format": func(t *testing.T, path string) {
+			execOn(t, path, createStatements[0], createStatements[1], createStatements[2],
+				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '2')")
+		},
+		"the current tables at the older format": func(t *testing.T, path string) {
+			execOn(t, path, append(append([]string(nil), createStatements...),
+				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '1')")...)
 		},
 	}
 	for name, seed := range cases {
@@ -983,7 +1052,12 @@ func (r refusingBackend) Head(string, string, int) ([]HeadRow, error) {
 	return nil, r.fail
 }
 func (r refusingBackend) Stats() (Stats, error) { return Stats{}, r.fail }
-func (r refusingBackend) Close() error          { return nil }
+
+func (r refusingBackend) PublishMarks(map[string]int, time.Time) error { return r.fail }
+
+func (r refusingBackend) ReadMarks() (MarkState, error) { return MarkState{}, r.fail }
+
+func (r refusingBackend) Close() error { return nil }
 
 // TestWorkerCarriesEveryBackendRefusal pins that each verb hands the backend's
 // own reason back over the pipe rather than a paraphrase or a silence.
@@ -1039,3 +1113,7 @@ func TestWorkerSQLUsesNoUpsert(t *testing.T) {
 		}
 	}
 }
+
+func (r refusingBackend) PullRange(string, int, int) ([]Entry, error) { return nil, nil }
+
+func (r refusingBackend) Compact(int) (CompactResult, error) { return CompactResult{}, nil }

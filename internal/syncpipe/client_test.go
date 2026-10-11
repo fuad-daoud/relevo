@@ -232,6 +232,78 @@ func (normalBackend) Stats() (syncworker.Stats, error) {
 	return syncworker.Stats{Entries: 11, Origins: 2, Seq: 9}, nil
 }
 
+// PublishMarks hands the publish back to the test over a file, because the
+// fake worker is this binary respawned as a process: what it was asked for
+// happened in another address space, and a package variable would only ever be
+// read in the child.
+//
+// It is a file rather than a pipe because the child is started by the client and
+// its environment is the only channel the parent sets up before it runs; a path
+// the parent names is what both sides can agree on.
+func (normalBackend) PublishMarks(marks map[string]int, at time.Time) error {
+	path := os.Getenv(publishedMarksEnv)
+	if path == "" {
+		return nil
+	}
+	body, err := json.Marshal(normalPublish{
+		Marks: marks,
+		At:    at.Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = file.Close() }()
+	_, err = file.Write(append(body, '\n'))
+	return err
+}
+
+// publishedMarksEnv names the file the fake worker records each publish in.
+const publishedMarksEnv = "RELEVO_SYNCPIPE_PUBLISHED_MARKS"
+
+// normalPublish is one publish as the fake worker was asked for it.
+type normalPublish struct {
+	Marks map[string]int `json:"marks"`
+	At    string         `json:"at"`
+}
+
+// readPublished is every publish the fake worker recorded, in the order it took
+// them. A publish answers {} and carries nothing back, so this is the only place
+// the parent can see what the worker was handed.
+func readPublished(t *testing.T, path string) []normalPublish {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		t.Fatalf("read the recorded publishes: %v", err)
+	}
+	var out []normalPublish
+	for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
+		if line == "" {
+			continue
+		}
+		var p normalPublish
+		if err := json.Unmarshal([]byte(line), &p); err != nil {
+			t.Fatalf("decode a recorded publish: %v", err)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func (normalBackend) ReadMarks() (syncworker.MarkState, error) {
+	return syncworker.MarkState{
+		Marks:   []syncworker.PublishedMark{{Reader: "origin-a", Origin: "origin-b", Seq: 4, At: pinnedAt}},
+		Heads:   map[string]int{"origin-a": 9, "origin-b": 4},
+		Entries: map[string]int{"origin-a": 7, "origin-b": 4},
+	}, nil
+}
+
 func (normalBackend) Close() error { return nil }
 
 // errRemoteRefused is the reason a refused remote carries, in the words a
@@ -264,6 +336,12 @@ func (r refusingBackend) Stats() (syncworker.Stats, error) {
 	return syncworker.Stats{}, r.fail()
 }
 
+func (r refusingBackend) PublishMarks(map[string]int, time.Time) error { return r.fail() }
+
+func (r refusingBackend) ReadMarks() (syncworker.MarkState, error) {
+	return syncworker.MarkState{}, r.fail()
+}
+
 func (r refusingBackend) Close() error { return nil }
 
 // verbsRefusingBackend answers the handshake and then refuses every verb with
@@ -289,6 +367,12 @@ func (r verbsRefusingBackend) Head(string, string, int) ([]syncworker.HeadRow, e
 
 func (r verbsRefusingBackend) Stats() (syncworker.Stats, error) {
 	return syncworker.Stats{}, r.fail()
+}
+
+func (r verbsRefusingBackend) PublishMarks(map[string]int, time.Time) error { return r.fail() }
+
+func (r verbsRefusingBackend) ReadMarks() (syncworker.MarkState, error) {
+	return syncworker.MarkState{}, r.fail()
 }
 
 func (r verbsRefusingBackend) Close() error { return nil }
@@ -540,6 +624,15 @@ func TestRefusalErrorCarriesTheClassSentinel(t *testing.T) {
 	}
 }
 
+// TestRefusalErrorMapsAQuotaRefusalToTheQuotaSentinel pins that a quota class
+// from the worker reaches the caller as ErrQuotaReached under ErrRefused.
+func TestRefusalErrorMapsAQuotaRefusalToTheQuotaSentinel(t *testing.T) {
+	err := refusalError(syncworker.Response{OK: false, Error: "full", Code: syncworker.CodeQuota})
+	if !errors.Is(err, ErrRefused) || !errors.Is(err, relevosync.ErrQuotaReached) {
+		t.Fatalf("err = %v, want ErrRefused and ErrQuotaReached", err)
+	}
+}
+
 // TestPipeClientCountsOnlyAMissAndNotARefusal pins which faults the breaker is
 // meant to see. A worker that answers and declines is healthy, and counting it
 // would latch the breaker against a remote that is working perfectly.
@@ -633,8 +726,8 @@ func TestCallBoundClassifiesEveryProtocolVerb(t *testing.T) {
 // the map does not name is refused rather than handed the control bound, so a
 // new data verb cannot silently get the short one.
 func TestCallBoundRefusesAnUnclassifiedVerb(t *testing.T) {
-	if got, err := callBound(syncworker.Verb("compact")); err == nil {
-		t.Errorf("callBound(compact) = %s, nil; want an unclassified refusal", got)
+	if got, err := callBound(syncworker.Verb("vacuum")); err == nil {
+		t.Errorf("callBound(vacuum) = %s, nil; want an unclassified refusal", got)
 	}
 }
 
@@ -646,4 +739,26 @@ func TestSteadyStepBoundSitsBelowTheDataCallBound(t *testing.T) {
 	if relevosync.StepTimeout >= dataCallTimeout {
 		t.Errorf("sync.StepTimeout = %s, want below the %s data call bound", relevosync.StepTimeout, dataCallTimeout)
 	}
+}
+
+func (n normalBackend) PullRange(origin string, after, upto int) ([]syncworker.Entry, error) {
+	return []syncworker.Entry{{Origin: origin, Seq: after + 1, Batch: after + 1, Tbl: "board", PK: `["a"]`, Op: "delete", At: pinnedAt}}, nil
+}
+
+func (n normalBackend) Compact(floor int) (syncworker.CompactResult, error) {
+	return syncworker.CompactResult{Dropped: floor - 1, Floor: floor}, nil
+}
+
+func (r refusingBackend) PullRange(string, int, int) ([]syncworker.Entry, error) { return nil, nil }
+
+func (r refusingBackend) Compact(int) (syncworker.CompactResult, error) {
+	return syncworker.CompactResult{}, nil
+}
+
+func (v verbsRefusingBackend) PullRange(string, int, int) ([]syncworker.Entry, error) {
+	return nil, nil
+}
+
+func (v verbsRefusingBackend) Compact(int) (syncworker.CompactResult, error) {
+	return syncworker.CompactResult{}, nil
 }

@@ -25,8 +25,15 @@ const (
 
 // logFormatVersion is the version this build writes into the remote's meta. A
 // remote whose meta carries another value defines the log differently, so this
-// build refuses it rather than read columns it may have moved.
-const logFormatVersion = 1
+// build refuses it rather than read columns it may have moved -- except the one
+// version below, which this build knows how to bring forward in place.
+const logFormatVersion = 2
+
+// formatOneVersion is the format this build's predecessor wrote. A remote at
+// it holds the same log without the marks table, and is upgraded rather than
+// refused, so a machine that has not synced since the change is not left with a
+// remote no build of this version will open.
+const formatOneVersion = 1
 
 // metaFormatKey names the meta row that carries the format version.
 const metaFormatKey = "format"
@@ -123,9 +130,14 @@ func (b *TursoBackend) Open(spec Spec) error {
 }
 
 // ensureLog makes sure the remote is this log: an empty remote gets the log's
-// tables, one whose meta names this format is used, and anything else is
-// refused. A remote is never written into after it has been classified as
-// something other than a relevo log.
+// tables, one at the format below is brought forward, one whose meta names this
+// format is used, and anything else is refused. A remote is never written into
+// after it has been classified as something other than a relevance log.
+//
+// The two table sets are matched against the format together rather than one
+// after the other, so a remote that holds the current tables and claims the
+// older format -- or the other way round -- is refused rather than opened as
+// something it is not.
 func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
 	tables, err := userTables(ctx, b.db)
 	if err != nil {
@@ -134,17 +146,20 @@ func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
 	if len(tables) == 0 {
 		return b.createLog(ctx)
 	}
-	if !isLogTables(tables) {
+	if !isLogTables(tables) && !isFormatOneTables(tables) {
 		return errNotALog(url)
 	}
 	format, err := readFormat(ctx, b.db)
 	if err != nil {
 		return err
 	}
-	if format != strconv.Itoa(logFormatVersion) {
-		return errNotALog(url)
+	if isLogTables(tables) && format == strconv.Itoa(logFormatVersion) {
+		return nil
 	}
-	return nil
+	if isFormatOneTables(tables) && format == strconv.Itoa(formatOneVersion) {
+		return b.upgradeLog(ctx)
+	}
+	return errNotALog(url)
 }
 
 // createLog writes the log's tables and its format row in one replica
@@ -171,7 +186,7 @@ func (b *TursoBackend) createLog(ctx context.Context) error {
 		return fmt.Errorf("syncworker: create the log: %w", err)
 	}
 	if err := b.driver.Push(ctx); err != nil {
-		return fmt.Errorf("syncworker: push the new log: %w", markDriverRefusal(err))
+		return fmt.Errorf("syncworker: push the new log: %w", markTransferRefusal(err))
 	}
 	return nil
 }
@@ -203,7 +218,7 @@ func (b *TursoBackend) Append(entries []Entry) ([]Entry, error) {
 		return nil, err
 	}
 	if err := b.transfer(ctx, b.driver.Push); err != nil {
-		return nil, fmt.Errorf("syncworker: push: %w", markDriverRefusal(err))
+		return nil, fmt.Errorf("syncworker: push: %w", markTransferRefusal(err))
 	}
 	return written, nil
 }
@@ -311,7 +326,7 @@ func (b *TursoBackend) Pull(marks map[string]int) ([]Entry, error) {
 	}
 	ctx := context.Background()
 	if err := b.transfer(ctx, b.driver.Pull); err != nil {
-		return nil, fmt.Errorf("syncworker: pull: %w", markDriverRefusal(err))
+		return nil, fmt.Errorf("syncworker: pull: %w", markTransferRefusal(err))
 	}
 	entries, err := b.readEntries(ctx, marks)
 	if err != nil {
@@ -436,7 +451,9 @@ func (b *TursoBackend) ready() error {
 }
 
 // createStatements is the remote schema, in one place so the create and the
-// classification cannot disagree about what a relevo log is.
+// classification cannot disagree about what a relevo log is. The marks table is
+// last because it is the only one the format below does not have, so an upgrade
+// creates it on its own.
 var createStatements = []string{
 	"CREATE TABLE log (" +
 		"origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, " +
@@ -448,6 +465,7 @@ var createStatements = []string{
 		"seq INTEGER NOT NULL, hash TEXT NOT NULL, " +
 		"PRIMARY KEY (origin, tbl, pk))",
 	"CREATE TABLE meta (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)",
+	createMarksStatement,
 }
 
 // userTables is the remote's own tables, which is everything sqlite_master
@@ -488,10 +506,18 @@ func engineTable(name string) bool {
 	return false
 }
 
-// isLogTables reports whether the remote holds exactly the log's three tables.
+// isLogTables reports whether the remote holds exactly the log's four tables.
 // Anything else -- another database's tables, a partial create, a log missing
 // its meta -- is a remote this build will not write into.
 func isLogTables(tables []string) bool {
+	return slices.Equal(tables, []string{"head", "log", "marks", "meta"})
+}
+
+// isFormatOneTables reports whether the remote holds exactly the tables the
+// format below has: the same log without the marks table. It is a format to
+// bring forward rather than a remote to refuse, so it is named apart from the
+// current set instead of being read as a partial create of it.
+func isFormatOneTables(tables []string) bool {
 	return slices.Equal(tables, []string{"head", "log", "meta"})
 }
 

@@ -105,6 +105,10 @@ type dbSyncVerbOptions struct {
 	R2Bucket    string
 	R2KeyID     string
 	R2SecretLen int
+	// Yes is enable's --yes.
+	Yes bool
+	// DryRun is reconcile's --dry-run.
+	DryRun bool
 }
 
 // sendSyncVerb sends one verb over the framed surface and classifies the answer.
@@ -136,6 +140,8 @@ func sendSyncVerbToken(ctx context.Context, shared *db.DB, verb string, token []
 		R2Bucket:    opts.R2Bucket,
 		R2KeyID:     opts.R2KeyID,
 		R2SecretLen: opts.R2SecretLen,
+		Yes:         opts.Yes,
+		DryRun:      opts.DryRun,
 	}
 	res, err := shared.SyncVerb(ctx, req, token)
 	if err != nil {
@@ -162,7 +168,7 @@ func dbSyncVerbRefusal(verb string, err error) error {
 	}
 	name := "relevo db sync " + verb
 	switch refusal.Code {
-	case wire.SyncCodeNoToken, wire.SyncCodeNoRemote, wire.SyncCodeNoR2:
+	case wire.SyncCodeNoToken, wire.SyncCodeNoRemote, wire.SyncCodeNoR2, wire.SyncCodeOverQuota:
 		return fail(codeUsage, "%s", refusal.Message)
 	case wire.SyncCodeAlreadyEnabled:
 		return failNext(codeRefused, "relevo db sync status", "%s", refusal.Message)

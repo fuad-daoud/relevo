@@ -27,6 +27,12 @@ func (r *retryTransport) Head(o string) ([]synclog.HeadRow, error) { return r.in
 
 func (r *retryTransport) Stats() (synclog.Stats, error) { return r.inner.Stats() }
 
+func (r *retryTransport) PublishMarks(m map[string]int, at time.Time) error {
+	return r.inner.PublishMarks(m, at)
+}
+
+func (r *retryTransport) ReadMarks() (synclog.MarkState, error) { return r.inner.ReadMarks() }
+
 func (r *retryTransport) Cancel() { r.cancels++ }
 
 // TestRetryClearsALatchedBreaker pins the operator's way out of a latched
@@ -75,4 +81,12 @@ func TestRetryClearsALatchedBreaker(t *testing.T) {
 	if out := runner.SyncOnce(context.Background(), shared); out.Err != nil {
 		t.Fatalf("the tick after the retry failed: %v", out.Err)
 	}
+}
+
+func (r *retryTransport) PullRange(o string, after, upto int) ([]synclog.Entry, error) {
+	return r.inner.PullRange(o, after, upto)
+}
+
+func (r *retryTransport) CompactOwn(floor int) (synclog.CompactResult, error) {
+	return r.inner.CompactOwn(floor)
 }

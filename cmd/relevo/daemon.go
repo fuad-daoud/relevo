@@ -323,6 +323,8 @@ func cmdDaemon(args []string) error {
 		}
 	}
 
+	dropChangeCaptureTable(rt)
+
 	// The installation's own row, then the local split and the origin backfill,
 	// run next to the other run-once passes. The row is the projection other
 	// machines read to label this installation; the two passes behind it are the

@@ -88,3 +88,14 @@ func TestMissingBlobIsAPermanentRefusal(t *testing.T) {
 		t.Fatal("a missing body is not a permanent refusal")
 	}
 }
+
+// idle_seconds and backlog_threshold were removed rather than wired: nothing
+// read them, and a stored body naming one must be refused rather than ignored.
+func TestSettingsRefuseTheRemovedTuningFields(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{`{"idle_seconds":300}`, `{"backlog_threshold":100}`} {
+		if _, err := ParseSettings([]byte(body)); err == nil {
+			t.Errorf("ParseSettings(%s) = nil, want a refusal of the unknown field", body)
+		}
+	}
+}

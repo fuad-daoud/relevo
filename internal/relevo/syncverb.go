@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/db/wire/client"
@@ -57,6 +58,8 @@ type VerbRunner struct {
 	// inline, which is what a cockpit wants: it is not the daemon and has no
 	// trigger to be serialized against.
 	Serialize func(fn func())
+	// Blobs builds the bucket store the join guard reads. Nil skips the guard.
+	Blobs func(relevosync.R2Secrets) blobstore.BlobStore
 	// ClientName is what the remote is told this client is called.
 	ClientName string
 
@@ -98,6 +101,8 @@ func (v *VerbRunner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte)
 		return v.runGuarded(func() *wire.SyncResult { return v.retry() })
 	case wire.SyncVerbProbe:
 		return v.runGuarded(func() *wire.SyncResult { return v.probe(ctx) })
+	case wire.SyncVerbReconcile:
+		return v.runGuarded(func() *wire.SyncResult { return v.reconcilePreview(ctx, verb) })
 	case wire.SyncVerbDisable:
 		// A disable must not queue behind a call that can run for the whole
 		// data-call bound: a joined machine reads off for the whole join, and a
@@ -365,7 +370,9 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byt
 			URL:    verb.RemoteURL,
 			Token:  token,
 			R2:     r2,
+			Yes:    verb.Yes,
 		},
+		Blobs: v.Blobs,
 		Open: func() (synclog.LogTransport, error) {
 			transport, err := v.openTransport(ctx)
 			if err != nil {
@@ -397,7 +404,14 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byt
 		client = stop.Inner()
 	}
 	v.setClient(client)
-	return &wire.SyncResult{OK: true, Applied: true, RemoteURL: res.Remote, TokenPresent: true}
+	if v.Runner != nil {
+		v.Runner.SeedStats(res.Stats)
+	}
+	out := &wire.SyncResult{OK: true, Applied: true, RemoteURL: res.Remote, TokenPresent: true}
+	if res.Guarded && !res.Estimate.Known {
+		out.Warning = "no machine has published its log size, so the join was not checked against the Turso quota"
+	}
+	return out
 }
 
 // openTransport returns the log an enable drives: the opener the wiring

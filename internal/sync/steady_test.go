@@ -157,6 +157,8 @@ func (c *cancelLog) Append([]synclog.Entry) ([]synclog.Entry, error) { return ni
 func (c *cancelLog) Pull(map[string]int) ([]synclog.Entry, error)    { return nil, c.wait() }
 func (c *cancelLog) Head(string) ([]synclog.HeadRow, error)          { return nil, c.wait() }
 func (c *cancelLog) Stats() (synclog.Stats, error)                   { return synclog.Stats{}, c.wait() }
+func (c *cancelLog) PublishMarks(map[string]int, time.Time) error    { return c.wait() }
+func (c *cancelLog) ReadMarks() (synclog.MarkState, error)           { return synclog.MarkState{}, c.wait() }
 
 func (c *cancelLog) Cancel() {
 	c.mu.Lock()
@@ -265,4 +267,10 @@ func TestSteadyRecordsTheImportTroubleAndTimes(t *testing.T) {
 	if _, ok, err := local.KVGet(KeyTimes); err != nil || !ok {
 		t.Errorf("the exchange times were not stamped: (ok %v, err %v)", ok, err)
 	}
+}
+
+func (c *cancelLog) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
+
+func (c *cancelLog) CompactOwn(int) (synclog.CompactResult, error) {
+	return synclog.CompactResult{}, nil
 }

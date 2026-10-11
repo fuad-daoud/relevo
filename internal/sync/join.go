@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
@@ -95,6 +96,8 @@ type EnableRequest struct {
 	// holds them already needs nothing here: the stored ones stand in, field by
 	// field, so pointing this machine at another bucket does not reissue the key.
 	R2 R2Intake
+	// Yes joins past the quota guard's refusal.
+	Yes bool
 }
 
 // EnablePlan is what a passing preflight resolved.
@@ -186,6 +189,13 @@ type EnableResult struct {
 	Appended int
 	// Batches is how many transport appends the reconcile made.
 	Batches int
+	// Guarded is whether the join was estimated against a bucket, and Estimate
+	// what it found. An estimate that is not Known means no machine had
+	// published its log size.
+	Guarded  bool
+	Estimate JoinEstimate
+	// Stats is the worker's last reading, which the runner counts on from.
+	Stats synclog.Stats
 }
 
 // Enabler drives one enable: the preflight, the store, the transport and the
@@ -200,6 +210,14 @@ type Enabler struct {
 	// Open leaves it here, so the wiring that installed Open can hand the same
 	// worker to whatever drives sync next.
 	Transport synclog.LogTransport
+	// Blobs builds the in-process bucket store the join guard reads. Nil skips
+	// the guard and the body repair.
+	Blobs func(R2Secrets) blobstore.BlobStore
+	// present is the bodies the bucket holds under this machine's origin, read
+	// once before the join, or nil when there is no bucket to read.
+	present map[string]bool
+	// last is the worker's totals as of the last count.
+	last synclog.Stats
 	// Stopped reports whether the enable has been released by a disable since
 	// it began. A join released that way must not turn the machine on when it
 	// settles: the machine was told to stop, so the mark stays off even when
@@ -225,12 +243,20 @@ func (e *Enabler) Enable() (EnableResult, error) {
 	if err := e.store(plan, now); err != nil {
 		return EnableResult{}, err
 	}
+	est, guarded, err := e.guard(plan, now)
+	if err != nil {
+		return EnableResult{Remote: plan.Remote, Guarded: guarded, Estimate: est}, err
+	}
+	if e.present, err = e.ownBodies(plan); err != nil {
+		return EnableResult{Remote: plan.Remote, Guarded: guarded, Estimate: est}, err
+	}
 	transport, err := e.transport()
 	if err != nil {
 		return EnableResult{}, err
 	}
 	res, err := e.join(transport, now)
 	res.Remote = plan.Remote
+	res.Guarded, res.Estimate = guarded, est
 	if err != nil {
 		return res, err
 	}
@@ -287,7 +313,13 @@ func (e *Enabler) transport() (synclog.LogTransport, error) {
 }
 
 // join runs the pipeline: open the log, import every other origin, reconcile
-// this origin's history in bounded chunks, then clear the marker.
+// this origin's history in bounded chunks, publish the marks, then clear the
+// marker.
+//
+// The marks are published only once the reconcile has succeeded, because they
+// say how far this machine has got and a join that stopped earlier has not got
+// there. Each step counts the worker's bytes as it goes, so a worker that dies
+// mid-join loses at most one batch of counts.
 //
 // The first transport call comes before the marker and is what starts the
 // worker and bootstraps the replica. A remote that refuses the log therefore
@@ -295,9 +327,12 @@ func (e *Enabler) transport() (synclog.LogTransport, error) {
 // caller reads.
 func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (EnableResult, error) {
 	var res EnableResult
-	if _, err := transport.Stats(); err != nil {
+	defer func() { res.Stats = e.last }()
+	opened, err := transport.Stats()
+	if err != nil {
 		return res, fmt.Errorf("sync: enable: open the log: %w", err)
 	}
+	recordStats(e.Request.Local, &e.last, opened)
 	_, resumed, err := ReadJoin(e.Request.Local)
 	if err != nil {
 		return res, err
@@ -316,6 +351,9 @@ func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (EnableRes
 	appended, batches, err := e.reconcile(transport)
 	res.Appended, res.Batches = appended, batches
 	if err != nil {
+		return res, err
+	}
+	if err := e.publishMarks(transport); err != nil {
 		return res, err
 	}
 	if err := ClearJoin(e.Request.Local); err != nil {
@@ -337,8 +375,33 @@ const JoinImportDeadline = 30 * time.Minute
 func (e *Enabler) drainImport(transport synclog.LogTransport) (synclog.ImportResult, error) {
 	deadline := e.now().Add(JoinImportDeadline)
 	return drainImport(func() (synclog.ImportResult, error) {
-		return synclog.NewImporter(e.Request.Shared, transport).Import()
+		imp := synclog.NewImporter(e.Request.Shared, transport)
+		imp.AfterBatch = func() { e.count(transport) }
+		res, err := imp.Import()
+		e.count(transport)
+		return res, err
 	}, deadline, e.now)
+}
+
+// count folds the worker's totals into this month's row. A reading that cannot
+// be taken is skipped: the next one carries the same totals.
+func (e *Enabler) count(transport synclog.LogTransport) {
+	if cur, err := transport.Stats(); err == nil {
+		recordStats(e.Request.Local, &e.last, cur)
+	}
+}
+
+// publishMarks tells the log how far this machine has applied of every origin.
+func (e *Enabler) publishMarks(transport synclog.LogTransport) error {
+	marks, err := e.Request.Shared.ImportMarks()
+	if err != nil {
+		return fmt.Errorf("sync: enable: read the import marks: %w", err)
+	}
+	if err := transport.PublishMarks(marks, e.now().UTC()); err != nil {
+		return fmt.Errorf("sync: enable: publish the marks: %w", err)
+	}
+	e.count(transport)
+	return nil
 }
 
 // reconcile exports this origin's history one bounded chunk at a time. Each
@@ -347,17 +410,21 @@ func (e *Enabler) drainImport(transport synclog.LogTransport) (synclog.ImportRes
 // of our own can drift from it.
 func (e *Enabler) reconcile(transport synclog.LogTransport) (int, int, error) {
 	reconciler := synclog.NewReconciler(e.Request.Shared, transport)
+	if e.present != nil {
+		reconciler.RepairBodies(e.present)
+	}
 	var appended, batches int
 	for {
 		one, err := reconciler.ReconcileBatch()
 		if err != nil {
 			return appended, batches, fmt.Errorf("sync: enable: reconcile: %w", err)
 		}
-		if one.Batches == 0 {
+		if !one.More() {
 			return appended, batches, nil
 		}
 		appended += one.Upserts + one.Deletes
 		batches += one.Batches
+		e.count(transport)
 	}
 }
 

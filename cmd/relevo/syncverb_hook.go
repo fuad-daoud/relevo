@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire/owner"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -72,7 +73,10 @@ func newVerbRunner(d *db.DB) *relevo.VerbRunner {
 		StagingDir:  syncpipe.BlobStagingDir(d.Path()),
 		Runner:      syncpipe.NewSyncRunner(syncpipe.Config{}, local),
 		ClientName:  dbSyncHandleName,
+		Blobs:       relevosync.NewR2Store,
 	}
+	runner.Runner.Blobs = func() blobstore.BlobStore { return relevosync.StoreFromLocal(local) }
+	runner.Runner.ReplicaPath = runner.ReplicaPath
 	// The opener reads the machine-local rows at the moment an enable runs, so
 	// the worker it builds is pointed at the remote and token the enable just
 	// stored rather than the empty section the daemon started with.

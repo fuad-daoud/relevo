@@ -21,12 +21,6 @@ type Settings struct {
 	RemoteURL string `json:"remote_url,omitempty"`
 	// Namespace is the remote's namespace, optional on the remote's own terms.
 	Namespace string `json:"namespace,omitempty"`
-	// IdleSeconds is the idle-tick interval in seconds; zero selects the
-	// package default.
-	IdleSeconds int64 `json:"idle_seconds,omitempty"`
-	// BacklogThreshold is the unpushed operation count above which the
-	// statusline reports behind; zero selects the package default.
-	BacklogThreshold int64 `json:"backlog_threshold,omitempty"`
 	// QuotaTursoSync, QuotaTursoStorage and QuotaR2Storage are the plan limits
 	// in bytes that status reads the month's counters against; zero selects the
 	// default.
@@ -78,17 +72,11 @@ func ParseSettings(body []byte) (Settings, error) {
 	return st, nil
 }
 
-// validate refuses a body whose numbers name a moment in the past or a
-// threshold no tick could ever cross. The remote's reachability and this
-// machine's origin are checked when sync is enabled, not here: this is the
-// shape of the settings, not whether they may be used.
+// validate refuses a body whose numbers are negative or whose URL is unusable.
+// The remote's reachability and this machine's origin are checked when sync is
+// enabled, not here: this is the shape of the settings, not whether they may be
+// used.
 func (s Settings) validate() error {
-	if s.IdleSeconds < 0 {
-		return fmt.Errorf("sync: idle_seconds is negative: %w", db.ErrInvalid)
-	}
-	if s.BacklogThreshold < 0 {
-		return fmt.Errorf("sync: backlog_threshold is negative: %w", db.ErrInvalid)
-	}
 	if s.QuotaTursoSync < 0 || s.QuotaTursoStorage < 0 || s.QuotaR2Storage < 0 {
 		return fmt.Errorf("sync: a quota is negative: %w", db.ErrInvalid)
 	}

@@ -129,6 +129,8 @@ func (r *runningLog) Append([]synclog.Entry) ([]synclog.Entry, error) { return n
 func (r *runningLog) Pull(map[string]int) ([]synclog.Entry, error)    { return nil, r.err }
 func (r *runningLog) Head(string) ([]synclog.HeadRow, error)          { return nil, r.err }
 func (r *runningLog) Stats() (synclog.Stats, error)                   { return synclog.Stats{}, r.err }
+func (r *runningLog) PublishMarks(map[string]int, time.Time) error    { return r.err }
+func (r *runningLog) ReadMarks() (synclog.MarkState, error)           { return synclog.MarkState{}, r.err }
 
 // r2Fixture is the complete set of bucket credentials an enable needs. The
 // values are not credentials: nothing here reaches a bucket, and the enable
@@ -434,4 +436,10 @@ func TestACancelledJoinDoesNotTurnTheMachineOn(t *testing.T) {
 	if on, err := Enabled(local); err != nil || on {
 		t.Fatalf("Enabled = %v, %v; want the released machine left off", on, err)
 	}
+}
+
+func (r *runningLog) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
+
+func (r *runningLog) CompactOwn(int) (synclog.CompactResult, error) {
+	return synclog.CompactResult{}, nil
 }

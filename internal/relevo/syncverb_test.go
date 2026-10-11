@@ -666,6 +666,8 @@ func TestSyncVerbClassificationIsTotal(t *testing.T) {
 		{relevosync.ErrAuthRefused, wire.SyncCodeAuthRefused},
 		{relevosync.ErrRemoteRefused, wire.SyncCodeRemoteRefused},
 		{relevosync.ErrRemoteSchema, wire.SyncCodeRemoteSchemaMissing},
+		{relevosync.ErrJoinOverQuota, wire.SyncCodeOverQuota},
+		{relevosync.ErrQuotaReached, wire.SyncCodeRemoteRefused},
 		{db.ErrPreflightRefused, wire.SyncCodePreflightRefused},
 		{db.ErrContended, wire.SyncCodeContended},
 		{db.ErrInvalid, wire.SyncCodeInvalid},
@@ -802,6 +804,10 @@ func (j *hangingJoin) Append(entries []synclog.Entry) ([]synclog.Entry, error) {
 }
 func (j *hangingJoin) Head(string) ([]synclog.HeadRow, error) { return nil, nil }
 func (j *hangingJoin) Stats() (synclog.Stats, error)          { return synclog.Stats{}, nil }
+
+func (j *hangingJoin) PublishMarks(map[string]int, time.Time) error { return nil }
+
+func (j *hangingJoin) ReadMarks() (synclog.MarkState, error) { return synclog.MarkState{}, nil }
 
 func (j *hangingJoin) Pull(map[string]int) ([]synclog.Entry, error) {
 	if err := j.breaker.Begin("pull"); err != nil {
@@ -999,5 +1005,25 @@ func TestRetryStopsAHungSteadyPullAtTheDaemon(t *testing.T) {
 	}
 	if deaths, err := breaker.Deaths(); err != nil || deaths != 0 {
 		t.Errorf("breaker deaths = %d, %v; want the deliberate stop uncounted", deaths, err)
+	}
+}
+
+func (h *hangingJoin) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
+
+func (h *hangingJoin) CompactOwn(int) (synclog.CompactResult, error) {
+	return synclog.CompactResult{}, nil
+}
+
+// TestReconcileVerbRefusesWithoutDryRun pins that the only reconcile on offer is
+// the preview: a call that does not ask for one is refused before a transport
+// is opened.
+func TestReconcileVerbRefusesWithoutDryRun(t *testing.T) {
+	f := newVerbFixture(t)
+	res := f.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbReconcile}, nil)
+	if res.OK || res.Code != wire.SyncCodeInvalid {
+		t.Fatalf("reconcile without dry_run = %+v, want an invalid refusal", res)
+	}
+	if f.opens != 0 {
+		t.Errorf("the refusal opened %d handles, want none", f.opens)
 	}
 }

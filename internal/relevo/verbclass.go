@@ -30,8 +30,12 @@ func verbClassify(err error) string {
 		return wire.SyncCodeAlreadyEnabled
 	case errors.Is(err, relevosync.ErrRemoteConflict):
 		return wire.SyncCodeRemoteConflict
+	case errors.Is(err, relevosync.ErrJoinOverQuota):
+		return wire.SyncCodeOverQuota
 	case errors.Is(err, relevosync.ErrAuthRefused):
 		return wire.SyncCodeAuthRefused
+	case errors.Is(err, relevosync.ErrQuotaReached):
+		return wire.SyncCodeRemoteRefused
 	case errors.Is(err, relevosync.ErrRemoteSchema):
 		// The remote has no table for the rows this machine is pushing, which is
 		// not a fault in the call and not something re-running it fixes: the DDL

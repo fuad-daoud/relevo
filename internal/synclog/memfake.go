@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/blobstore"
 )
@@ -30,13 +31,20 @@ type MemTransport struct {
 }
 
 // memLog is the log itself: the entries in append order, each origin's latest
-// state per row, and the lock both are read and written under. It is separate
-// from the transport so two installations can hold the same log, which is the
-// arrangement the exchange actually runs in.
+// state per row, the sequence each origin reached, and the marks readers
+// published. It is separate from the transport so two installations can hold
+// the same log, which is the arrangement the exchange actually runs in.
 type memLog struct {
 	mu      sync.Mutex
 	entries []Entry
 	head    map[string][]HeadRow
+	// marks is keyed by reader and then origin, so a memLog built for one
+	// reader records only that reader's rows and a second handle on the same
+	// log sees them -- which is the rule the remote enforces by key, reproduced
+	// here rather than by a transport that checks who asked.
+	marks map[string]map[string]Mark
+	// floors is what each origin has compacted to.
+	floors map[string]int
 }
 
 // NewMemTransport returns a handle on an empty log for the installation named
@@ -48,7 +56,7 @@ func NewMemTransport(origin string) *MemTransport {
 
 // newMemLog is an empty log.
 func newMemLog() *memLog {
-	return &memLog{head: make(map[string][]HeadRow)}
+	return &memLog{head: make(map[string][]HeadRow), marks: make(map[string]map[string]Mark)}
 }
 
 // OnLog returns a second installation's handle on the same log, which is how two
@@ -265,6 +273,84 @@ func (m *MemTransport) Head(origin string) ([]HeadRow, error) {
 // transport that is refusing to answer.
 func (m *MemTransport) Stats() (Stats, error) {
 	return m.log.stats(), nil
+}
+
+// PublishMarks records this reader's position in each origin given. The reader
+// is the transport's own, so a handle built for one installation cannot write
+// another's rows -- the rule the remote enforces by key, which a test cannot
+// exercise without two machines.
+func (m *MemTransport) PublishMarks(marks map[string]int, at time.Time) error {
+	m.log.publishMarks(m.origin, marks, at)
+	return nil
+}
+
+// ReadMarks answers with every published mark, the floors compaction recorded
+// and each origin's size.
+func (m *MemTransport) ReadMarks() (MarkState, error) {
+	return m.log.markState(), nil
+}
+
+// publishMarks writes one reader's rows. A mark only grows, so a repeat that
+// named a lower sequence is ignored rather than moving the row back: a mark is
+// read as the furthest a reader has got, and a stale publish must not make it
+// look as though the reader went backwards.
+func (m *memLog) publishMarks(reader string, marks map[string]int, at time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	held := m.marks[reader]
+	if held == nil {
+		held = make(map[string]Mark, len(marks))
+		m.marks[reader] = held
+	}
+	for origin, seq := range marks {
+		if prior, ok := held[origin]; ok && prior.Seq > seq {
+			continue
+		}
+		held[origin] = Mark{Reader: reader, Origin: origin, Seq: seq, At: at}
+	}
+}
+
+// markState is every mark the log holds and each origin's size, in reader then
+// origin order so a reader walking the answer sees the same row every time.
+func (m *memLog) markState() MarkState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var out MarkState
+	readers := make([]string, 0, len(m.marks))
+	for reader := range m.marks {
+		readers = append(readers, reader)
+	}
+	sort.Strings(readers)
+	for _, reader := range readers {
+		held := m.marks[reader]
+		origins := make([]string, 0, len(held))
+		for origin := range held {
+			origins = append(origins, origin)
+		}
+		sort.Strings(origins)
+		for _, origin := range origins {
+			out.Marks = append(out.Marks, held[origin])
+		}
+	}
+	for origin, floor := range m.floors {
+		if out.Floors == nil {
+			out.Floors = make(map[string]int)
+		}
+		out.Floors[origin] = floor
+	}
+	out.Heads = make(map[string]int)
+	out.Entries = make(map[string]int)
+	out.Sizes = make(map[string]int64)
+	for _, e := range m.entries {
+		out.Sizes[e.Origin] += int64(len(e.Body)) + LogRowOverhead
+		if e.Seq > out.Heads[e.Origin] {
+			out.Heads[e.Origin] = e.Seq
+		}
+		out.Entries[e.Origin]++
+	}
+	return out
 }
 
 // MemBlobMover is the BlobMover every test in this slice runs bodies through,

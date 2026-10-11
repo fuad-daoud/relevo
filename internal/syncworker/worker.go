@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/blobstore"
 )
@@ -55,6 +56,23 @@ type Backend interface {
 	Head(origin, after string, limit int) ([]HeadRow, error)
 	// Stats reports what the log holds.
 	Stats() (Stats, error)
+	// PublishMarks records how far this worker has applied of each origin, and
+	// when. The reader is the worker's own origin from hello, never a field of
+	// the call: a mark is what a compaction floor is computed from, so naming
+	// another reader's would be choosing what the log may drop on a machine
+	// that does not hold the entries it speaks for.
+	PublishMarks(marks map[string]int, at time.Time) error
+	// ReadMarks answers with every published mark, the floors the remote has
+	// recorded, and each origin's head and entry count.
+	ReadMarks() (MarkState, error)
+	// PullRange reads one page of origin's entries with after < seq <= upto from
+	// the replica as it stands, without pulling the remote first: the floor a
+	// caller read with ReadMarks belongs to that same state, and a newer
+	// compaction pulled in between would drop entries the range needs.
+	PullRange(origin string, after, upto int) ([]Entry, error)
+	// Compact drops this worker's own superseded entries up to floor and
+	// records the floor, in one transaction and one push.
+	Compact(floor int) (CompactResult, error)
 	// Close releases the remote and the replica.
 	Close() error
 }
@@ -120,14 +138,18 @@ func (s *server) loop(r *bufio.Reader, w *bufio.Writer) error {
 // dispatches from it, and a caller that has to classify every verb can walk it
 // rather than keep a second list in step.
 var verbHandlers = map[Verb]func(*server, Request) Response{
-	VerbHello:    (*server).hello,
-	VerbExport:   (*server).export,
-	VerbPull:     (*server).pull,
-	VerbHead:     (*server).head,
-	VerbPutBlob:  (*server).putBlobVerb,
-	VerbGetBlob:  (*server).getBlobVerb,
-	VerbStats:    (*server).stats,
-	VerbShutdown: (*server).shutdown,
+	VerbHello:        (*server).hello,
+	VerbExport:       (*server).export,
+	VerbPull:         (*server).pull,
+	VerbHead:         (*server).head,
+	VerbPutBlob:      (*server).putBlobVerb,
+	VerbGetBlob:      (*server).getBlobVerb,
+	VerbStats:        (*server).stats,
+	VerbPublishMarks: (*server).publishMarks,
+	VerbReadMarks:    (*server).readMarks,
+	VerbPullRange:    (*server).pullRange,
+	VerbCompact:      (*server).compact,
+	VerbShutdown:     (*server).shutdown,
 }
 
 // Verbs returns every request verb this pipe speaks, sorted for a stable order.

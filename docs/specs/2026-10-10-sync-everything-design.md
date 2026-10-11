@@ -285,36 +285,67 @@ no row on this machine references and that are older than 30 days.
   defaults of 10 GB of Turso sync traffic, 9 GB of Turso storage and 10 GB of
   R2 storage.
 
-**Join guard.** Before bootstrapping, `enable` estimates the join's bytes
-from the remote's log size and the bucket total. If that exceeds what's left
-of the month, it says so and asks. A Turso refusal at quota latches as "quota
-reached" and isn't retried.
+**Join guard.**
+- **Estimate.** The worker's replica bootstraps the moment it opens, so the
+  estimate comes from R2 alone, before any worker exists.
+  - Each machine publishes its log size to `<origin>/log-size.json`
+    (`{"entries","bytes","at"}`). It does so after each compaction, and
+    otherwise at most daily after an export that appended something.
+  - `enable` lists the bucket and sums the published sizes.
+- **Refusal.** If the sum exceeds what is left of the month's Turso traffic,
+  `enable` refuses, naming the estimate and the remainder. `--yes` joins
+  anyway; the verb never prompts.
+- **What it ignores.** R2 bytes are reported but never refused on. R2 has no
+  egress charge, and a join adds no storage.
+- **No size yet.** With no size published, the join proceeds.
+- **Advisory.** The guard is advice, not enforcement: the bucket isn't
+  authenticated, so a forged size can make it permissive. It bounds what it
+  reads (1,000 sizes of at most 4 KiB, none above 1 TiB).
+- **Quota refusal.** A Turso refusal at quota (Turso's `BLOCKED` code, not
+  the engine's local disk-full code) latches as "quota reached" and isn't
+  retried.
 
 **Compaction.**
-- **Marks.** A remote `marks(reader, origin, seq, at)` table holds each
-  machine's import marks, which it publishes after every import (it writes
-  only its own rows).
-- **Floor.** For origin O, the compaction floor is the minimum mark for O
-  over readers whose `at` is within 30 days.
-- **What's dropped.** O drops its own log entries below the floor that a
-  later entry for the same key supersedes, plus deletes below the floor that
-  are the latest for their key. The floor is recorded in `meta`.
+- **Marks.** A remote `marks(reader, origin, seq, at)` table (log format 2)
+  holds each machine's import marks. A machine publishes its own rows after an
+  import that moved a mark, at most every 15 minutes, and at the end of a
+  join.
+- **Floor.** For origin O, the compaction floor F is the minimum mark for O
+  over other readers whose `at` is within 30 days, or O's own head when no
+  reader is live.
+  - F is always a batch tail.
+  - It is recorded in `meta` as `floor.<O>` and only ever rises.
+- **What's dropped.** O drops each of its own entries at or below F that a
+  later entry for the same row, also at or below F, supersedes. That leaves
+  at or below F exactly O's state as of F.
+  - Delete entries are kept, so a reader that held a row still removes it.
+  - An entry superseded only above F is kept, so a reader applying up to F
+    always meets a row's parent.
+  - The drop and the floor write are one transaction and one push.
 - **When it runs.** Weekly, or when O's log grew 10% since the last run.
-- **A reader that falls behind.** A reader whose mark is below the floor
-  (silent for over 30 days) detects the gap and re-imports O from zero.
-  Upserts are idempotent.
+- **A reader below the floor.** This covers both a reader joining from zero
+  and one silent for over 30 days.
+  - It reads O's entries in (mark, F] as one snapshot.
+  - It keeps the latest entry per row and applies upserts parents-first,
+    retrying any upsert a foreign key refuses, then applies deletes
+    children-first.
+  - It moves its mark to F only once the whole snapshot is in.
+  - Above F it reads batches as before.
 
 **Join, new.**
-1. Bootstrap the small replica.
-2. Import every origin, fetching bodies from R2.
-3. Reconcile own rows: upload any body R2 lacks, then append entries.
-4. Publish marks.
+1. Check the join guard.
+2. Bootstrap the small replica.
+3. Import every origin, taking the snapshot path below each floor and
+   fetching bodies from R2.
+4. Reconcile own rows: upload any body R2 lacks, then append entries.
+5. Publish marks.
 
 **Also in step 2.**
 - A one-time pass drops the laptop's dead `turso_cdc` (1,688 MiB), after a
   backup.
 - The spec'd `db sync reconcile --dry-run` verb gets built.
-- `idle_seconds` and `backlog_threshold` are wired up, or removed.
+- `idle_seconds` and `backlog_threshold` are removed: nothing read them, and
+  the daemon tick and the statusline backlog constant each have one owner.
 
 ## 8. A new machine (step 5)
 

@@ -64,9 +64,11 @@ const (
 func callBound(verb syncworker.Verb) (time.Duration, error) {
 	switch verb {
 	case syncworker.VerbHello, syncworker.VerbExport, syncworker.VerbPull,
-		syncworker.VerbPutBlob, syncworker.VerbGetBlob:
+		syncworker.VerbPutBlob, syncworker.VerbGetBlob, syncworker.VerbPublishMarks,
+		syncworker.VerbPullRange, syncworker.VerbCompact:
 		return dataCallTimeout, nil
-	case syncworker.VerbHead, syncworker.VerbStats, syncworker.VerbShutdown:
+	case syncworker.VerbHead, syncworker.VerbStats, syncworker.VerbReadMarks,
+		syncworker.VerbShutdown:
 		return controlCallTimeout, nil
 	default:
 		return 0, fmt.Errorf("syncpipe: verb %q is neither a data nor a control call", verb)
@@ -407,6 +409,8 @@ func refusalError(resp syncworker.Response) error {
 		return fmt.Errorf("%w: %w", refused, relevosync.ErrRemoteSchema)
 	case syncworker.CodeRemote:
 		return fmt.Errorf("%w: %w", refused, relevosync.ErrRemoteRefused)
+	case syncworker.CodeQuota:
+		return fmt.Errorf("%w: %w", refused, relevosync.ErrQuotaReached)
 	case syncworker.CodeBlobMissing:
 		// The bucket answered and the object is not there. That is a fact about
 		// the bucket rather than a fault in reaching it, so it maps to the
