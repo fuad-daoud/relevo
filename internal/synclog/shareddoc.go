@@ -222,7 +222,14 @@ func DocPK(key string) (string, error) {
 // covers, including the stamp the reader would order by; and a stamp of the
 // wrong shape would order wrongly against everything already applied.
 func ParseDocEntry(e Entry) (DocEntry, error) {
-	doc, err := SharedDocFor(e.Table)
+	return parseDocEntry(SharedDocFor, e)
+}
+
+// parseDocEntry is ParseDocEntry against a chosen way of finding the document,
+// so a reader bound to its own documents refuses what those documents do not
+// name.
+func parseDocEntry(lookup func(string) (SharedDoc, error), e Entry) (DocEntry, error) {
+	doc, err := lookup(e.Table)
 	if err != nil {
 		return DocEntry{}, err
 	}

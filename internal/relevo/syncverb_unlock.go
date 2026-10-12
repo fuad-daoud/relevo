@@ -19,6 +19,9 @@ func (v *VerbRunner) unlock(ctx context.Context, verb *wire.SyncVerb, passphrase
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
+	if _, err := relevosync.DrainParkedDocs(v.Shared, v.Local, transport); err != nil {
+		return verbRefusal(verbClassify(err), err)
+	}
 	// A join that ran while this machine was locked still owes its own history,
 	// and the key it now holds is what lets that history be sent.
 	owed := &relevosync.Enabler{Request: relevosync.EnableRequest{Local: v.Local, Shared: v.Shared}}

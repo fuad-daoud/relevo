@@ -52,7 +52,7 @@ func (e *Exporter) exportDocs() (int, error) {
 	}
 	var appended int
 	for _, sig := range signals {
-		doc, known := sharedDocs[sig.Doc]
+		doc, known := e.docNamed(sig.Doc)
 		if !known {
 			continue
 		}

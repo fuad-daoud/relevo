@@ -96,7 +96,16 @@ func (i *Importer) snapshotOrigin(origin string, mark, floor, head int, marks ma
 	if err := i.verify(origin, region); err != nil {
 		return nil, err
 	}
-	upserts, deletes := splitRegion(region, total)
+	docs, rows := splitDocs(region)
+	handled, err := i.takeDocs(origin, docs)
+	if err != nil && !refused(err) {
+		return nil, err
+	}
+	if err != nil {
+		total.Dropped = append(total.Dropped, Drop{Origin: origin, Seq: floor, Reason: err.Error()})
+	}
+	total.Applied += handled
+	upserts, deletes := splitRegion(rows, total)
 	for _, part := range [][]Entry{upserts, deletes} {
 		left, err := i.applyUntilDone(origin, part, total)
 		if err != nil {

@@ -123,40 +123,62 @@ func (d *SharedDoc) Apply(key string, value json.RawMessage) error {
 func (s *Store) applyKey(sec Section, name string, value json.RawMessage) error {
 	var refusal error
 	err := s.db.Tx(func(t *db.Tx) error {
+		var err error
+		if refusal, err = s.applyKeyIn(t, sec, name, value); refusal == nil || err != nil {
+			return err
+		}
 		before, err := readSnapshot(t)
 		if err != nil {
 			return err
 		}
-		body, err := setDocKey(before.doc, sec, name, value)
-		if err != nil {
-			refusal = invalidValueOf(err)
-			return nil
-		}
-
-		prospective := copyDoc(before.doc)
-		if body == nil {
-			delete(prospective, sec)
-		} else {
-			prospective[sec] = body
-		}
-		merged, err := mergedDoc(t, prospective)
-		if err != nil {
-			refusal = invalidValueOf(err)
-			return nil
-		}
-		if err := validateProspective(merged); err != nil {
-			refusal = err
-			return s.recordSuperseded(t, before, sec, name, value, err)
-		}
-		if body == nil {
-			return s.deleteRecord(t, before, sec)
-		}
-		return s.writeRecord(t, before, sec, body)
+		key := docKeyOf(sec, name)
+		return s.recordSuperseded(t, before, key, value, key, refusal)
 	})
 	if err != nil {
 		return err
 	}
 	return refusal
+}
+
+// applyKeyIn is applyKey inside a caller's transaction, and records nothing for
+// a refusal: the caller decides whether the item is lost for good or may be
+// retried once the keys it depends on have landed. The second result is a
+// failure of the store itself.
+func (s *Store) applyKeyIn(t *db.Tx, sec Section, name string, value json.RawMessage) (refusal error, hard error) {
+	before, err := readSnapshot(t)
+	if err != nil {
+		return nil, err
+	}
+	body, err := setDocKey(before.doc, sec, name, value)
+	if err != nil {
+		return invalidValueOf(err), nil
+	}
+
+	prospective := copyDoc(before.doc)
+	if body == nil {
+		delete(prospective, sec)
+	} else {
+		prospective[sec] = body
+	}
+	merged, err := mergedDoc(t, prospective)
+	if err != nil {
+		return invalidValueOf(err), nil
+	}
+	if err := validateProspective(merged); err != nil {
+		return err, nil
+	}
+	if body == nil {
+		return nil, s.deleteRecord(t, before, sec)
+	}
+	return nil, s.writeRecord(t, before, sec, body)
+}
+
+// docKeyOf is the doc key of one item, or of a whole section.
+func docKeyOf(sec Section, name string) string {
+	if perItemSections[sec] {
+		return itemKey(sec, name)
+	}
+	return string(sec)
 }
 
 // setDocKey returns the shared body of sec with one key set or removed, or nil
@@ -165,9 +187,12 @@ func setDocKey(doc Doc, sec Section, name string, value json.RawMessage) (json.R
 	if !perItemSections[sec] {
 		return value, nil
 	}
-	items, err := splits(sec, doc[sec])
-	if err != nil {
-		return nil, err
+	items := map[string]json.RawMessage{}
+	if len(doc[sec]) > 0 {
+		var err error
+		if items, err = splits(sec, doc[sec]); err != nil {
+			return nil, err
+		}
 	}
 	if value == nil {
 		delete(items, name)
@@ -234,11 +259,7 @@ func (s *Store) mergedDoc() (Doc, error) {
 // recordSuperseded leaves the config exactly as it is and records why an
 // arriving item did not land. The revision points at the unchanged document, so
 // rolling back to it is a no-op rather than a second change.
-func (s *Store) recordSuperseded(t *db.Tx, before snapshot, sec Section, name string, value json.RawMessage, cause error) error {
-	key := string(sec)
-	if perItemSections[sec] {
-		key = itemKey(sec, name)
-	}
+func (s *Store) recordSuperseded(t *db.Tx, before snapshot, key string, value json.RawMessage, label string, cause error) error {
 	changes, err := json.Marshal([]Change{{Path: key, Op: "add", After: compactCopy(value)}})
 	if err != nil {
 		return err
@@ -249,7 +270,7 @@ func (s *Store) recordSuperseded(t *db.Tx, before snapshot, sec Section, name st
 	}
 	_, err = t.RevisionInsert(db.RevisionRow{
 		At:       s.now(),
-		Source:   supersededSourcePrefix + key,
+		Source:   supersededSourcePrefix + label,
 		Message:  cause.Error(),
 		Version:  before.version,
 		Changes:  changes,
