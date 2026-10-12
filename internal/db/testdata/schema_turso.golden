@@ -248,13 +248,13 @@ table transcript transcript
 CREATE TABLE transcript (id TEXT PRIMARY KEY, owner_kind TEXT NOT NULL, owner_id TEXT NOT NULL, seq INTEGER NOT NULL, ts TEXT, record_json TEXT NOT NULL, rendered TEXT NOT NULL, record_json_codec INTEGER NOT NULL DEFAULT 0, rendered_codec INTEGER NOT NULL DEFAULT 0)
 
 trigger shared_outbox_config_doc_del config_doc
-CREATE TRIGGER IF NOT EXISTS shared_outbox_config_doc_del AFTER DELETE ON config_doc WHEN OLD.name != 'sync' BEGIN REPLACE INTO shared_outbox (doc, dirtied_at) VALUES ('config', strftime ('%Y-%m-%dT%H:%M:%fZ', 'now')); END
+CREATE TRIGGER IF NOT EXISTS shared_outbox_config_doc_del AFTER DELETE ON config_doc WHEN OLD.name != 'sync' BEGIN REPLACE INTO shared_outbox (doc, dirtied_at) VALUES ('config', strftime ('%Y-%m-%dT%H:%M:%fZ', 'now') || '-' || hex (randomblob (8))); END
 
 trigger shared_outbox_config_doc_ins config_doc
-CREATE TRIGGER IF NOT EXISTS shared_outbox_config_doc_ins AFTER INSERT ON config_doc WHEN NEW.name != 'sync' BEGIN REPLACE INTO shared_outbox (doc, dirtied_at) VALUES ('config', strftime ('%Y-%m-%dT%H:%M:%fZ', 'now')); END
+CREATE TRIGGER IF NOT EXISTS shared_outbox_config_doc_ins AFTER INSERT ON config_doc WHEN NEW.name != 'sync' BEGIN REPLACE INTO shared_outbox (doc, dirtied_at) VALUES ('config', strftime ('%Y-%m-%dT%H:%M:%fZ', 'now') || '-' || hex (randomblob (8))); END
 
 trigger shared_outbox_config_doc_upd config_doc
-CREATE TRIGGER IF NOT EXISTS shared_outbox_config_doc_upd AFTER UPDATE ON config_doc WHEN NEW.name != 'sync' BEGIN REPLACE INTO shared_outbox (doc, dirtied_at) VALUES ('config', strftime ('%Y-%m-%dT%H:%M:%fZ', 'now')); END
+CREATE TRIGGER IF NOT EXISTS shared_outbox_config_doc_upd AFTER UPDATE ON config_doc WHEN NEW.name != 'sync' BEGIN REPLACE INTO shared_outbox (doc, dirtied_at) VALUES ('config', strftime ('%Y-%m-%dT%H:%M:%fZ', 'now') || '-' || hex (randomblob (8))); END
 
 trigger sync_outbox_artifact_del artifact
 CREATE TRIGGER IF NOT EXISTS sync_outbox_artifact_del AFTER DELETE ON artifact BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('artifact', json_array (OLD.id), 'delete', (SELECT origin FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = OLD.round_id))); END
@@ -391,4 +391,4 @@ CREATE TRIGGER IF NOT EXISTS sync_outbox_transcript_ins AFTER INSERT ON transcri
 trigger sync_outbox_transcript_upd transcript
 CREATE TRIGGER IF NOT EXISTS sync_outbox_transcript_upd AFTER UPDATE ON transcript BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('transcript', json_array (NEW.id), 'update', CASE NEW.owner_kind WHEN 'round' THEN (SELECT origin FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = NEW.owner_id)) WHEN 'mastermind' THEN (SELECT origin FROM mastermind WHERE id = NEW.owner_id) ELSE NULL END); END
 
-schema_versions have=26 know=26
+schema_versions have=27 know=27

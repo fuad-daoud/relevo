@@ -89,12 +89,16 @@ func (d *DB) RecordDocExport(sig DocSignal, writes []DocExportWrite) error {
 				return err
 			}
 		}
-		if _, err := t.exec(`DELETE FROM shared_outbox WHERE doc = ? AND dirtied_at = ?`,
-			sig.Doc, sig.DirtiedAt); err != nil {
-			return fmt.Errorf("db: clear doc signal %s: %w", sig.Doc, mapBusy(err))
-		}
-		return nil
+		return t.clearDocSignal(sig)
 	})
+}
+
+func (t *Tx) clearDocSignal(sig DocSignal) error {
+	if _, err := t.exec(`DELETE FROM shared_outbox WHERE doc = ? AND dirtied_at = ?`,
+		sig.Doc, sig.DirtiedAt); err != nil {
+		return fmt.Errorf("db: clear doc signal %s: %w", sig.Doc, mapBusy(err))
+	}
+	return nil
 }
 
 func (t *Tx) recordDocWrite(doc string, w DocExportWrite) error {

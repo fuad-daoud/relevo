@@ -118,17 +118,19 @@ func (s *Store) PutLocal(doc Doc) error {
 }
 
 // localPatchesFor returns the overrides turning sec's merged value into next,
-// one row per doc key. A key the shared layer does not hold is skipped: the
-// local layer overrides what is shared and never introduces a section of its
-// own, so a write that would add one is a shared write the caller has to make
-// without --local.
+// one row per doc key. The local layer overrides what is shared and never adds
+// or removes a section or an item, so a write that would is refused: it is a
+// shared write the caller has to make without --local.
 func localPatchesFor(t *db.Tx, sec Section, next json.RawMessage) (map[string]json.RawMessage, error) {
 	shared, ok, err := t.ConfigGet(string(sec))
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, nil
+		return nil, fmt.Errorf("%s: the shared config has no such section, and adding one is a shared write", sec)
+	}
+	if string(compactJSON(next)) == "null" {
+		return nil, fmt.Errorf("%s: a local override cannot remove a shared section", sec)
 	}
 	current, err := mergedBody(t, sec, shared)
 	if err != nil {
@@ -145,7 +147,15 @@ func localPatchesFor(t *db.Tx, sec Section, next json.RawMessage) (map[string]js
 		if err != nil {
 			return nil, err
 		}
+		for name := range nextItems {
+			if _, held := heldItems[name]; !held {
+				return nil, fmt.Errorf("%s: the shared config has no such item, and adding one is a shared write", itemKey(sec, name))
+			}
+		}
 		for name := range heldItems {
+			if _, kept := nextItems[name]; !kept {
+				return nil, fmt.Errorf("%s: a local override cannot remove a shared item", itemKey(sec, name))
+			}
 			patches, err = diffInto(t, patches, itemKey(sec, name), heldItems[name], nextItems[name])
 			if err != nil {
 				return nil, err

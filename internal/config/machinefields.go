@@ -194,3 +194,24 @@ func fieldSet(body json.RawMessage, fields []string) map[string]json.RawMessage 
 	}
 	return out
 }
+
+// dropMachineFields returns value without the fields sec routes local, for one
+// arriving item or whole-section body. A value that is not an object is
+// returned as it is, for validation to refuse.
+func dropMachineFields(sec Section, value json.RawMessage) json.RawMessage {
+	if value == nil || !stripsMachineFields(sec) {
+		return value
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(value, &obj); err != nil || obj == nil {
+		return value
+	}
+	if len(takeFields(obj, machineFields[sec])) == 0 {
+		return value
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return value
+	}
+	return out
+}

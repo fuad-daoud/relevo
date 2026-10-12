@@ -529,21 +529,21 @@ trigger shared_outbox_config_doc_del config_doc
 CREATE TRIGGER shared_outbox_config_doc_del AFTER DELETE ON config_doc
 WHEN OLD.name <> 'sync' BEGIN
     INSERT OR REPLACE INTO shared_outbox (doc, dirtied_at)
-    VALUES ('config', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+    VALUES ('config', strftime('%Y-%m-%dT%H:%M:%fZ', 'now') || '-' || hex(randomblob(8)));
 END
 
 trigger shared_outbox_config_doc_ins config_doc
 CREATE TRIGGER shared_outbox_config_doc_ins AFTER INSERT ON config_doc
 WHEN NEW.name <> 'sync' BEGIN
     INSERT OR REPLACE INTO shared_outbox (doc, dirtied_at)
-    VALUES ('config', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+    VALUES ('config', strftime('%Y-%m-%dT%H:%M:%fZ', 'now') || '-' || hex(randomblob(8)));
 END
 
 trigger shared_outbox_config_doc_upd config_doc
 CREATE TRIGGER shared_outbox_config_doc_upd AFTER UPDATE ON config_doc
 WHEN NEW.name <> 'sync' BEGIN
     INSERT OR REPLACE INTO shared_outbox (doc, dirtied_at)
-    VALUES ('config', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+    VALUES ('config', strftime('%Y-%m-%dT%H:%M:%fZ', 'now') || '-' || hex(randomblob(8)));
 END
 
 trigger sync_outbox_artifact_del artifact
@@ -810,4 +810,4 @@ CREATE TRIGGER sync_outbox_transcript_upd AFTER UPDATE ON transcript BEGIN
         END);
 END
 
-schema_versions have=26 know=26
+schema_versions have=27 know=27

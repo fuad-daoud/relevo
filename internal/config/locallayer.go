@@ -71,12 +71,8 @@ func mergeLocal(sec Section, body json.RawMessage, patches map[string]json.RawMe
 		if !ok {
 			continue
 		}
-		// Per-item sections whose items are object members merge the patch into
-		// the member; the array-shaped ones need the element rebuilt in place.
-		if namedArraySection(sec) {
-			if _, held := items[name]; !held {
-				continue
-			}
+		if _, held := items[name]; !held {
+			continue
 		}
 		merged, err := mergePatch(items[name], patch)
 		if err != nil {

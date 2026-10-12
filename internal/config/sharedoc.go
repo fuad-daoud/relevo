@@ -93,9 +93,10 @@ func (d *SharedDoc) ItemUpdatedAt(key string) (time.Time, bool, error) {
 func syncs(sec Section) bool { return sec != Sync }
 
 // Apply writes one key's value, or removes the key when value is nil. It only
-// ever writes the shared layer: the fields naming things on this machine stay
-// where the shared write path put them, so an arriving item cannot redirect an
-// account's directory or this host's serve policy.
+// ever writes the shared layer, and drops the fields naming things on this
+// machine from the arriving value, so an arriving item can neither redirect an
+// account's directory or this host's serve policy nor carry a peer's into the
+// shared body this machine re-exports.
 //
 // A value that would leave the merged config invalid is refused and recorded as
 // superseded: the entry is newer than what this machine holds, so the choice is
@@ -149,7 +150,7 @@ func (s *Store) applyKeyIn(t *db.Tx, sec Section, name string, value json.RawMes
 	if err != nil {
 		return nil, err
 	}
-	body, err := setDocKey(before.doc, sec, name, value)
+	body, err := setDocKey(before.doc, sec, name, dropMachineFields(sec, value))
 	if err != nil {
 		return invalidValueOf(err), nil
 	}
