@@ -354,3 +354,42 @@ func TestReaddedKeyOutranksItsTombstone(t *testing.T) {
 		t.Fatalf("stamps %v are not strictly rising across add, delete, re-add", stamps)
 	}
 }
+
+// TestUnknownDocKeepsItsSignal pins that a doc nothing is bound to is skipped
+// and its signal kept, so it is exported once something can read it.
+func TestUnknownDocKeepsItsSignal(t *testing.T) {
+	d, path := exporterFile(t, "m1")
+	r := &recording{MemTransport: NewMemTransport("m1")}
+	dirty(t, path)
+
+	e := docExporter(d, r, keyA)
+	e.UseDocs(newFakeDoc("other"))
+	if _, err := e.Export(); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if len(r.appended()) != 0 {
+		t.Errorf("appended %s, want nothing for a doc nothing reads", r.shape())
+	}
+	if signals, err := d.DocSignals(); err != nil || len(signals) != 1 {
+		t.Fatalf("signals = %v, %v; want the one kept", signals, err)
+	}
+}
+
+// TestCorruptExportedStampFailsTheExport pins that a stored stamp which does
+// not parse is reported, and the key is not re-stamped from nothing.
+func TestCorruptExportedStampFailsTheExport(t *testing.T) {
+	doc := newFakeDoc("config")
+	registerDoc(t, doc)
+	doc.items["policy"] = json.RawMessage(`{"a":1}`)
+	d, path := exporterFile(t, "m1")
+	seed(t, path, `INSERT INTO shared_export_state (doc, key, origin, stamp, digest) VALUES ('config', 'policy', 'm1', 'garbage', 'other')`)
+	r := &recording{MemTransport: NewMemTransport("m1")}
+	dirty(t, path)
+
+	if _, err := docExporter(d, r, keyA).Export(); err == nil {
+		t.Fatal("export over a stamp that cannot be read reported success")
+	}
+	if len(r.appended()) != 0 {
+		t.Errorf("appended %s, want nothing", r.shape())
+	}
+}

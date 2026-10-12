@@ -497,11 +497,6 @@ func newHeadIndex(head []HeadRow) *headIndex {
 		keys:   make(map[string][]string),
 	}
 	for _, row := range head {
-		// A doc entry is not a row of any file: the doc exporter owns it, and
-		// a walk that indexed it would propose its removal as a missing row.
-		if IsDocTable(row.Table) {
-			continue
-		}
 		key := rowKey{table: row.Table, pk: row.PK}
 		index.hashes[key] = row.Hash
 		index.keys[row.Table] = append(index.keys[row.Table], row.PK)
