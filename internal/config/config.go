@@ -6,7 +6,6 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/account"
@@ -112,12 +111,22 @@ type Store struct {
 // on the machine that wrote them, so after the split they live in the local
 // file. Binding here rather than at each call site is what keeps a caller
 // holding a shared handle from reading its config back out of the shared file.
-func Open(d *db.DB) *Store { return &Store{db: d.LocalOrSelf(), now: time.Now} }
+//
+// The move of the machine fields out of the shared bodies runs here, so it is
+// reached first by the first thing that opens the config rather than by a
+// start-up path some callers do not take. A failure is left to the caller's
+// own write rather than reported here: the marker is what the exporter checks,
+// and a store that could not write cannot have moved anything.
+func Open(d *db.DB) *Store {
+	s := &Store{db: d.LocalOrSelf(), now: time.Now}
+	_, _ = s.EnsureLocalLayer()
+	return s
+}
 
 // Load reads every section and both secrets. A stored body that does not parse
 // is an error: it cannot happen after a validated Put.
 func (s *Store) Load() (Loaded, error) {
-	doc, err := s.currentDoc()
+	doc, err := s.mergedDoc()
 	if err != nil {
 		return Loaded{}, err
 	}
@@ -376,145 +385,6 @@ func Validate(sec Section, body []byte) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("unknown config section %q", sec)
 	}
-}
-
-// Put validates body and stores it as sec in one transaction; a refused body
-// writes nothing. A write the next Load would refuse is refused here.
-func (s *Store) Put(sec Section, body []byte) ([]string, error) {
-	if sec == Candidates {
-		filled, _, err := fillCandidateNames(body)
-		if err != nil {
-			return nil, invalidValueOf(err)
-		}
-		body = filled
-	}
-	warnings, err := Validate(sec, body)
-	if err != nil {
-		return nil, invalidValueOf(err)
-	}
-	if err := s.db.Tx(func(t *db.Tx) error {
-		before, err := readSnapshot(t)
-		if err != nil {
-			return err
-		}
-		prospective := copyDoc(before.doc)
-		prospective[sec] = body
-		if err := validateProspective(prospective); err != nil {
-			return err
-		}
-		if err := t.ConfigPut(string(sec), body, s.now().UTC()); err != nil {
-			return err
-		}
-		return s.record(t, before, nil)
-	}); err != nil {
-		return nil, err
-	}
-	return warnings, nil
-}
-
-// Delete removes sec's stored body, if any, in one transaction. The version
-// bumps even when sec was absent: it is a change counter, not a section count.
-// A removal the next Load would refuse is refused here.
-func (s *Store) Delete(sec Section) error {
-	return s.db.Tx(func(t *db.Tx) error {
-		before, err := readSnapshot(t)
-		if err != nil {
-			return err
-		}
-		if err := validateProspective(docWithout(before.doc, sec)); err != nil {
-			return err
-		}
-		if err := t.ConfigDelete(string(sec)); err != nil {
-			return err
-		}
-		return s.record(t, before, nil)
-	})
-}
-
-// PutDoc stores every section in doc in one transaction, validating every body
-// first; an unknown section or the first invalid body aborts with nothing
-// written. Sections not named in doc are untouched. A write the next Load
-// would refuse is refused here.
-func (s *Store) PutDoc(doc map[Section]json.RawMessage) ([]string, error) {
-	if err := checkDocSections(doc); err != nil {
-		return nil, invalidValueOf(err)
-	}
-
-	if body, ok := doc[Candidates]; ok {
-		filled, _, err := fillCandidateNames(body)
-		if err != nil {
-			return nil, invalidValueOf(err)
-		}
-		doc[Candidates] = filled
-	}
-
-	var warnings []string
-	for _, sec := range Sections {
-		body, ok := doc[sec]
-		if !ok {
-			continue
-		}
-		w, err := Validate(sec, body)
-		if err != nil {
-			return nil, invalidValueOf(err)
-		}
-		warnings = append(warnings, w...)
-	}
-
-	now := s.now().UTC()
-	if err := s.db.Tx(func(t *db.Tx) error {
-		before, err := readSnapshot(t)
-		if err != nil {
-			return err
-		}
-		prospective := copyDoc(before.doc)
-		for _, sec := range Sections {
-			body, ok := doc[sec]
-			if !ok {
-				continue
-			}
-			prospective[sec] = body
-		}
-		if err := validateProspective(prospective); err != nil {
-			return err
-		}
-		for _, sec := range Sections {
-			body, ok := doc[sec]
-			if !ok {
-				continue
-			}
-			if err := t.ConfigPut(string(sec), body, now); err != nil {
-				return err
-			}
-		}
-		return s.record(t, before, nil)
-	}); err != nil {
-		return nil, err
-	}
-	return warnings, nil
-}
-
-func checkDocSections(doc map[Section]json.RawMessage) error {
-	var unknown []string
-	for sec := range doc {
-		if !known(sec) {
-			unknown = append(unknown, string(sec))
-		}
-	}
-	if len(unknown) == 0 {
-		return nil
-	}
-	sort.Strings(unknown)
-	return fmt.Errorf("unknown config section %q", unknown[0])
-}
-
-func known(sec Section) bool {
-	for _, s := range Sections {
-		if s == sec {
-			return true
-		}
-	}
-	return false
 }
 
 // PutSecret stores value under name, validating the client key with

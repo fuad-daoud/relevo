@@ -1,0 +1,247 @@
+package config
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/fuad-daoud/relevo/internal/db"
+)
+
+// Config is the name the config document travels under, as `doc:config` on the
+// log.
+const Config = "config"
+
+// supersededSourcePrefix labels the revision an arriving item lands when it
+// would leave this machine's merged config invalid. It reads as what happened
+// rather than as a transport detail: the entry was newer than what this machine
+// holds and still lost, because taking it would have broken the config.
+const supersededSourcePrefix = "sync-superseded:"
+
+// SharedDoc is the config document as a synclog SharedDoc. One key is one
+// candidate, agent, actor, account or server, or one whole-section body for the
+// sections that have no items to speak of; the sync section is not among them,
+// because a sync setting is this machine's answer to its own peer and travels
+// with the connection rather than in the config.
+type SharedDoc struct {
+	store *Store
+}
+
+// NewSharedDoc binds the config document of one store.
+func NewSharedDoc(s *Store) *SharedDoc { return &SharedDoc{store: s} }
+
+// Name is the document's name, the word an entry's table carries after `doc:`.
+func (d *SharedDoc) Name() string { return Config }
+
+// Doc returns the config document of this store, for the sync runtime to
+// register once it has one.
+func (s *Store) Doc() *SharedDoc { return NewSharedDoc(s) }
+
+// Items returns the shared document as one value per syncable key. It reads
+// the shared layer and never the local one, because the local layer holds the
+// machine fields the exporter must not send and has stripped out of the shared
+// bodies already; merging it here would put this machine's directories back
+// into every entry.
+func (d *SharedDoc) Items() (map[string]json.RawMessage, error) {
+	if err := d.store.localLayerReady(); err != nil {
+		return nil, err
+	}
+	shared, err := d.store.Current()
+	if err != nil {
+		return nil, err
+	}
+
+	out := map[string]json.RawMessage{}
+	for _, sec := range Sections {
+		if !syncs(sec) {
+			continue
+		}
+		body, ok := shared[sec]
+		if !ok {
+			continue
+		}
+		items, err := splits(sec, body)
+		if err != nil {
+			return nil, err
+		}
+		for name, item := range items {
+			key := string(sec)
+			if perItemSections[sec] {
+				key = itemKey(sec, name)
+			}
+			out[key] = item
+		}
+	}
+	return out, nil
+}
+
+// syncs reports whether a section is part of the shared document at all. The
+// sync section is not: its settings say how this machine talks to its peer,
+// which is this machine's business and would be overwritten by whichever peer
+// answered last.
+func syncs(sec Section) bool { return sec != Sync }
+
+// Apply writes one key's value, or removes the key when value is nil. It only
+// ever writes the shared layer: the fields naming things on this machine stay
+// where the shared write path put them, so an arriving item cannot redirect an
+// account's directory or this host's serve policy.
+//
+// A value that would leave the merged config invalid is refused and recorded as
+// superseded: the entry is newer than what this machine holds, so the choice is
+// between taking a config that does not resolve and keeping one that does.
+func (d *SharedDoc) Apply(key string, value json.RawMessage) error {
+	sec, name, err := splitKey(key)
+	if err != nil {
+		return err
+	}
+	if !syncs(sec) {
+		return fmt.Errorf("config: the %s section never syncs: %w", sec, ErrInvalidValue)
+	}
+	return d.store.applyKey(sec, name, value)
+}
+
+// applyKey writes one key's value in one transaction: the prospective shared
+// document is merged with the local layer and validated as the reader would
+// see it, so a write the reader would refuse is refused here rather than
+// leaving Load broken behind it.
+//
+// A refusal is still a transaction that commits, because the record of why the
+// entry lost has to outlive the call that reported it. The refusal is therefore
+// carried out of the transaction and returned once it has committed, rather
+// than returned from inside it where it would take the record with it.
+func (s *Store) applyKey(sec Section, name string, value json.RawMessage) error {
+	var refusal error
+	err := s.db.Tx(func(t *db.Tx) error {
+		before, err := readSnapshot(t)
+		if err != nil {
+			return err
+		}
+		body, err := setDocKey(before.doc, sec, name, value)
+		if err != nil {
+			refusal = invalidValueOf(err)
+			return nil
+		}
+
+		prospective := copyDoc(before.doc)
+		if body == nil {
+			delete(prospective, sec)
+		} else {
+			prospective[sec] = body
+		}
+		merged, err := mergedDoc(t, prospective)
+		if err != nil {
+			refusal = invalidValueOf(err)
+			return nil
+		}
+		if err := validateProspective(merged); err != nil {
+			refusal = err
+			return s.recordSuperseded(t, before, sec, name, value, err)
+		}
+		if body == nil {
+			return s.deleteRecord(t, before, sec)
+		}
+		return s.writeRecord(t, before, sec, body)
+	})
+	if err != nil {
+		return err
+	}
+	return refusal
+}
+
+// setDocKey returns the shared body of sec with one key set or removed, or nil
+// when the whole section is gone.
+func setDocKey(doc Doc, sec Section, name string, value json.RawMessage) (json.RawMessage, error) {
+	if !perItemSections[sec] {
+		return value, nil
+	}
+	items, err := splits(sec, doc[sec])
+	if err != nil {
+		return nil, err
+	}
+	if value == nil {
+		delete(items, name)
+	} else {
+		items[name] = value
+	}
+	return joins(sec, items)
+}
+
+// writeSection stores one shared section body and bumps the config version a
+// reader's reload watches. It is the shared write path: Put, PutDoc and an
+// applied item all store through it and then record through record, so a
+// change that arrived from a peer takes effect exactly as one made here by
+// `relevo config set` does, with no restart.
+func (s *Store) writeSection(t *db.Tx, sec Section, body json.RawMessage) error {
+	return t.ConfigPut(string(sec), body, s.now().UTC())
+}
+
+// deleteSection removes one shared section, bumping the version with it.
+func (s *Store) deleteSection(t *db.Tx, sec Section) error {
+	return t.ConfigDelete(string(sec))
+}
+
+// writeRecord stores a section and records the change in one transaction, which
+// is what the callers that change exactly one section use.
+func (s *Store) writeRecord(t *db.Tx, before snapshot, sec Section, body json.RawMessage) error {
+	if err := s.writeSection(t, sec, body); err != nil {
+		return err
+	}
+	return s.record(t, before, nil)
+}
+
+// deleteRecord removes a section and records the removal.
+func (s *Store) deleteRecord(t *db.Tx, before snapshot, sec Section) error {
+	if err := s.deleteSection(t, sec); err != nil {
+		return err
+	}
+	return s.record(t, before, nil)
+}
+
+// mergedDoc is the shared document with every section's local overrides laid
+// over it, which is the document every reader decodes and every writer
+// validates. It is the only view of the config a caller ever sees.
+//
+// The read runs in one transaction so the shared rows and the overrides read
+// back together are the same snapshot: a write landing between them would
+// otherwise show a merged body no single moment ever held.
+func (s *Store) mergedDoc() (Doc, error) {
+	var out Doc
+	err := s.db.Tx(func(t *db.Tx) error {
+		shared, err := readDoc(t)
+		if err != nil {
+			return err
+		}
+		out, err = mergedDoc(t, shared)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// recordSuperseded leaves the config exactly as it is and records why an
+// arriving item did not land. The revision points at the unchanged document, so
+// rolling back to it is a no-op rather than a second change.
+func (s *Store) recordSuperseded(t *db.Tx, before snapshot, sec Section, name string, value json.RawMessage, cause error) error {
+	key := string(sec)
+	if perItemSections[sec] {
+		key = itemKey(sec, name)
+	}
+	changes, err := json.Marshal([]Change{{Path: key, Op: "add", After: compactCopy(value)}})
+	if err != nil {
+		return err
+	}
+	snapshot, err := EncodeDoc(before.doc)
+	if err != nil {
+		return err
+	}
+	_, err = t.RevisionInsert(db.RevisionRow{
+		At:       s.now(),
+		Source:   supersededSourcePrefix + key,
+		Message:  cause.Error(),
+		Version:  before.version,
+		Changes:  changes,
+		Snapshot: snapshot,
+	})
+	return err
+}

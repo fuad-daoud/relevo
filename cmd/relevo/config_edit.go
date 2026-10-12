@@ -75,6 +75,7 @@ func configGet(args []string) error {
 type configSetFlagValues struct {
 	asJSON *bool
 	force  *bool
+	local  *bool
 }
 
 // configSetFlagSet defines those flags on fs and returns what they parse into,
@@ -83,6 +84,7 @@ func configSetFlagSet(fs *flag.FlagSet) *configSetFlagValues {
 	v := &configSetFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the document the write produced")
 	v.force = fs.Bool("force", false, "replace candidates even when an actor still names a dropped one")
+	v.local = fs.Bool("local", false, "store the value on this machine only, never in the shared config")
 	return v
 }
 
@@ -119,7 +121,7 @@ func configSetRun(args []string) error {
 		if err := guardCandidatesDrop(rt, sec, value, *force); err != nil {
 			return err
 		}
-		if _, err := rt.Config.As("cli", "config set "+path).Put(sec, value); err != nil {
+		if err := writeConfigSection(rt.Config.As("cli", "config set "+path), sec, value, *v.local); err != nil {
 			return err
 		}
 	} else {
@@ -136,7 +138,7 @@ func configSetRun(args []string) error {
 		if err := guardCandidatesDrop(rt, sec, updated, *force); err != nil {
 			return err
 		}
-		if _, err := rt.Config.As("cli", "config set "+path).Put(sec, updated); err != nil {
+		if err := writeConfigSection(rt.Config.As("cli", "config set "+path), sec, updated, *v.local); err != nil {
 			return err
 		}
 	}
@@ -157,6 +159,7 @@ func configSetRun(args []string) error {
 type configUnsetFlagValues struct {
 	asJSON *bool
 	force  *bool
+	local  *bool
 }
 
 // configUnsetFlagSet defines those flags on fs and returns what they parse
@@ -165,6 +168,7 @@ func configUnsetFlagSet(fs *flag.FlagSet) *configUnsetFlagValues {
 	v := &configUnsetFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the document the write produced")
 	v.force = fs.Bool("force", false, "drop the candidates section even when an actor still names one of them")
+	v.local = fs.Bool("local", false, "remove a value on this machine only, never in the shared config")
 	return v
 }
 
@@ -176,7 +180,7 @@ func configUnsetRun(args []string) error {
 	fs := flag.NewFlagSet("relevo config unset", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	v := configUnsetFlagSet(fs)
-	asJSON, force := v.asJSON, v.force
+	asJSON, force, local := v.asJSON, v.force, v.local
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -203,7 +207,11 @@ func configUnsetRun(args []string) error {
 		if err := guardCandidatesDrop(rt, sec, nil, *force); err != nil {
 			return err
 		}
-		if err := rt.Config.As("cli", "config unset "+path).Delete(sec); err != nil {
+		if *local {
+			if err := rt.Config.PutLocal(config.Doc{sec: json.RawMessage("null")}); err != nil {
+				return err
+			}
+		} else if err := rt.Config.As("cli", "config unset "+path).Delete(sec); err != nil {
 			return err
 		}
 	} else {
@@ -221,7 +229,7 @@ func configUnsetRun(args []string) error {
 		if !removed {
 			return fail(codeConfigInvalid, "%s: not set", path)
 		}
-		if _, err := rt.Config.As("cli", "config unset "+path).Put(sec, updated); err != nil {
+		if err := writeConfigSection(rt.Config.As("cli", "config unset "+path), sec, updated, *local); err != nil {
 			return err
 		}
 	}
@@ -240,17 +248,27 @@ func configUnsetRun(args []string) error {
 // vi, and stores what the editor leaves (§4.2). A file left empty aborts, an
 // unchanged file is a no-op, and an invalid document goes round again with the
 // editor so the user can fix it.
-// configEditFlagSet declares `config edit`'s flags: none today.
-func configEditFlagSet(*flag.FlagSet) {}
+// configEditFlagValues holds the pointer `config edit` parses into.
+type configEditFlagValues struct {
+	local *bool
+}
+
+// configEditFlagSet declares `config edit`'s flags.
+func configEditFlagSet(fs *flag.FlagSet) *configEditFlagValues {
+	v := &configEditFlagValues{}
+	v.local = fs.Bool("local", false, "store the edits on this machine only, never in the shared config")
+	return v
+}
 
 func configEdit(args []string) error {
 	fs := flag.NewFlagSet("relevo config edit", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	v := configEditFlagSet(fs)
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if len(fs.Args()) != 0 {
-		fmt.Fprintln(os.Stderr, "usage: relevo config edit")
+		fmt.Fprintln(os.Stderr, "usage: relevo config edit [--local]")
 		return exitCodeErr{code: 2}
 	}
 
@@ -316,7 +334,7 @@ func configEdit(args []string) error {
 			continue
 		}
 
-		warnings, err := rt.Config.As("cli", "config edit").PutDoc(parsed)
+		warnings, err := putEditedDoc(rt.Config.As("cli", "config edit"), parsed, *v.local)
 		if err != nil {
 			return err
 		}
@@ -334,6 +352,37 @@ func configEdit(args []string) error {
 		fmt.Printf("saved (config version %d, revision #%d)\n", v, rev)
 		return nil
 	}
+}
+
+// configWriter is the part of a config store a verb writes through. It is an
+// interface so the routing a flag chooses can be tested without a database,
+// which a test in this package may not open.
+type configWriter interface {
+	Put(config.Section, []byte) ([]string, error)
+	PutDoc(config.Doc) ([]string, error)
+	PutLocal(config.Doc) error
+}
+
+// writeConfigSection stores one section body, either as this machine's override
+// or as the shared section. Both routes read the same merged body first, so
+// `--local` changes where the write lands and nothing about what the caller
+// edited.
+func writeConfigSection(w configWriter, sec config.Section, body []byte, local bool) error {
+	if local {
+		return w.PutLocal(config.Doc{sec: json.RawMessage(body)})
+	}
+	_, err := w.Put(sec, body)
+	return err
+}
+
+// putEditedDoc stores the edited document, either as this machine's overrides
+// or as the shared sections. The editor always works on the merged document, so
+// `--local` changes where the changes land and not what the user saw.
+func putEditedDoc(w configWriter, parsed map[config.Section]json.RawMessage, local bool) ([]string, error) {
+	if local {
+		return nil, w.PutLocal(parsed)
+	}
+	return w.PutDoc(parsed)
 }
 
 // runEditor runs $VISUAL, else $EDITOR, else vi (split on spaces) with path
@@ -384,115 +433,6 @@ func configSectionKnown(sec config.Section) bool {
 		}
 	}
 	return false
-}
-
-// jsonAt walks keys into a JSON body, returning the raw value there. A key
-// missing, or a body that is not an object at some step, is ok false.
-func jsonAt(body []byte, keys []string) (json.RawMessage, bool) {
-	cur := json.RawMessage(body)
-	for _, key := range keys {
-		var obj map[string]json.RawMessage
-		if err := json.Unmarshal(cur, &obj); err != nil {
-			return nil, false
-		}
-		next, ok := obj[key]
-		if !ok {
-			return nil, false
-		}
-		cur = next
-	}
-	return cur, true
-}
-
-// setJSON returns body with value stored at keys, creating intermediate
-// objects. A path that runs through a non-object is an error.
-func setJSON(body []byte, keys []string, value json.RawMessage) ([]byte, error) {
-	var root map[string]json.RawMessage
-	if err := json.Unmarshal(body, &root); err != nil {
-		return nil, errors.New("not an object")
-	}
-	if root == nil {
-		return nil, errors.New("not an object")
-	}
-	if err := setAt(root, keys, value); err != nil {
-		return nil, err
-	}
-	return json.Marshal(root)
-}
-
-func setAt(obj map[string]json.RawMessage, keys []string, value json.RawMessage) error {
-	key := keys[0]
-	if len(keys) == 1 {
-		obj[key] = value
-		return nil
-	}
-
-	child := map[string]json.RawMessage{}
-	if existing, ok := obj[key]; ok {
-		if err := json.Unmarshal(existing, &child); err != nil || child == nil {
-			return errors.New("not an object")
-		}
-	}
-	if err := setAt(child, keys[1:], value); err != nil {
-		return err
-	}
-	encoded, err := json.Marshal(child)
-	if err != nil {
-		return err
-	}
-	obj[key] = encoded
-	return nil
-}
-
-// unsetJSON returns body with the key at keys removed, and removed false when
-// the path is missing. A path that runs through a non-object is an error.
-func unsetJSON(body []byte, keys []string) (out []byte, removed bool, err error) {
-	var root map[string]json.RawMessage
-	if err := json.Unmarshal(body, &root); err != nil {
-		return nil, false, errors.New("not an object")
-	}
-	if root == nil {
-		return nil, false, errors.New("not an object")
-	}
-	removed, err = delAt(root, keys)
-	if err != nil {
-		return nil, false, err
-	}
-	if !removed {
-		return nil, false, nil
-	}
-	out, err = json.Marshal(root)
-	return out, true, err
-}
-
-func delAt(obj map[string]json.RawMessage, keys []string) (bool, error) {
-	key := keys[0]
-	if len(keys) == 1 {
-		if _, ok := obj[key]; !ok {
-			return false, nil
-		}
-		delete(obj, key)
-		return true, nil
-	}
-
-	existing, ok := obj[key]
-	if !ok {
-		return false, nil
-	}
-	var child map[string]json.RawMessage
-	if err := json.Unmarshal(existing, &child); err != nil || child == nil {
-		return false, errors.New("not an object")
-	}
-	removed, err := delAt(child, keys[1:])
-	if err != nil || !removed {
-		return false, err
-	}
-	encoded, err := json.Marshal(child)
-	if err != nil {
-		return false, err
-	}
-	obj[key] = encoded
-	return true, nil
 }
 
 // guardCandidatesDrop refuses a write of the candidates section that would

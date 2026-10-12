@@ -39,7 +39,7 @@ var verbFlagSets = map[string]func(*flag.FlagSet){
 	"chain":                installer(chainFlagSet),
 	"config":               installer(configShowFlagSet),
 	"config agents":        installer(agentFlagSet),
-	"config edit":          configEditFlagSet,
+	"config edit":          installer(configEditFlagSet),
 	"config export":        installer(configExportFlagSet),
 	"config get":           installer(configGetFlagSet),
 	"config import":        installer(configImportFlagSet),
