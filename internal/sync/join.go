@@ -416,6 +416,7 @@ func (e *Enabler) drainImport(transport synclog.LogTransport) (synclog.ImportRes
 		}
 		imp := synclog.NewImporter(e.Request.Shared, transport)
 		imp.SetKey(key)
+		BindDocs(imp, e.Request.Shared)
 		imp.AfterBatch = func() { e.count(transport) }
 		res, ierr := imp.Import()
 		e.count(transport)
@@ -455,6 +456,7 @@ func (e *Enabler) reconcile(transport synclog.LogTransport) (int, int, error) {
 	}
 	reconciler := synclog.NewReconciler(e.Request.Shared, transport)
 	reconciler.SetKey(key)
+	BindDocs(reconciler, e.Request.Shared)
 	if e.present != nil {
 		reconciler.RepairBodies(e.present)
 	}

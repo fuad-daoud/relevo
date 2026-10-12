@@ -150,8 +150,8 @@ func (d *Daemon) exportIfPending(ctx context.Context, now time.Time) {
 	d.queueSync(ctx)
 }
 
-// outboxPending reports whether the machine's shared file has writes waiting
-// to be exported. It reads the daemon's own handle and never opens one: a
+// outboxPending reports whether the machine has writes waiting to be exported:
+// a row in the shared file's outbox, or a document signal in the local file. It reads the daemon's own handle and never opens one: a
 // machine with no database has nothing waiting.
 func (d *Daemon) outboxPending() bool {
 	if d.rt.Store == nil {
@@ -166,7 +166,34 @@ func (d *Daemon) outboxPending() bool {
 		slog.Debug("sync: probe the outbox", "err", err)
 		return false
 	}
-	return has
+	if has {
+		return true
+	}
+	if !d.holdsSigningKey() {
+		return false
+	}
+	signals, err := mdb.DocSignals()
+	if err != nil {
+		slog.Debug("sync: probe the doc signals", "err", err)
+		return false
+	}
+	return len(signals) > 0
+}
+
+// holdsSigningKey reports whether this machine can sign a document entry. A
+// locked machine keeps its document signals unexported, so counting them would
+// start an attempt every debounce that can never clear them.
+func (d *Daemon) holdsSigningKey() bool {
+	runner := d.rt.Sync
+	if runner == nil || runner.Local == nil {
+		return false
+	}
+	key, err := relevosync.SigningKey(runner.Local)
+	if err != nil {
+		slog.Debug("sync: read the signing key", "err", err)
+		return false
+	}
+	return len(key) > 0
 }
 
 // Freshen is a hint from a reader that it wants current data: it queues an

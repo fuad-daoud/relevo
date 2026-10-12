@@ -46,10 +46,10 @@ func TestImportFailsWhenTheLocalFileFailsAMidApplyWrite(t *testing.T) {
 	}
 }
 
-// TestImportDropsADocEntryNamingNoKnownDoc pins that an entry for a doc this
-// build has no reader for is dropped with the reason, and the batch before it
-// is not undone.
-func TestImportDropsADocEntryNamingNoKnownDoc(t *testing.T) {
+// TestImportHoldsAtADocEntryNamingNoKnownDoc pins that an entry for a doc this
+// build has no reader for holds its origin with the doc named, and the batch
+// before it is not undone.
+func TestImportHoldsAtADocEntryNamingNoKnownDoc(t *testing.T) {
 	t.Parallel()
 	doc := newTxDoc("config")
 	ghost := newTxDoc("ghost")
@@ -62,8 +62,8 @@ func TestImportDropsADocEntryNamingNoKnownDoc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
-	if reason := droppedReason(res, "m1"); !strings.Contains(reason, "no shared doc named") {
-		t.Errorf("dropped %q, want the unknown doc named", reason)
+	if len(res.Held) != 1 || !strings.Contains(res.Held[0].String(), `"ghost"`) {
+		t.Errorf("held = %v, want the unknown doc named", res.Held)
 	}
 	if len(doc.revisions) != 1 {
 		t.Errorf("revisions %v, want only the known doc's entry applied", doc.revisions)

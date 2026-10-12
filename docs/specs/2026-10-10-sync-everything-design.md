@@ -225,8 +225,12 @@ An unlocked reader refuses an unsigned or bad-MAC doc entry and holds that
 origin's whole batch, mark unmoved. A locked reader cannot verify, so it parks
 the entry whole in `shared_pending(origin, seq, entry)` and moves its mark; the
 parked entries are verified and applied, or refused and removed, on unlock and
-on every keyed import. Shape is refused independently of the signature, each
-refusal having its own test: an unknown doc name; a `doc:` table naming no
+on every keyed import. An unknown doc name is not a refusal: the realistic
+cause is a peer on a newer binary, so, like an entry from a newer schema, it
+holds that origin at the batch's first sequence with the mark unmoved, locked
+reader or not, and the report names the doc and says to upgrade; the batch's
+rows are kept for the next import. Shape is refused independently of the
+signature, each refusal having its own test: a `doc:` table naming no
 doc; a PK that is not a one-string array; a body that is not an object, has a
 field beyond `stamp` and `value`, or lacks one of them; a stamp that is not
 canonical decimal text; and an `OpDelete` carrying a doc table. A doc item whose

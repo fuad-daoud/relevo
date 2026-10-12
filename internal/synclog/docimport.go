@@ -53,6 +53,26 @@ func splitDocs(entries []Entry) (docs, rows []Entry) {
 	return docs, rows
 }
 
+// unknownDoc holds an origin whose entries name a document this build has no
+// reader for, at seq: the peer is most likely on a newer binary, and dropping
+// the batch would lose the rows beside the entry for good. A doc table naming
+// no document at all stays a refusal, because no upgrade would give it a
+// meaning.
+func (i *Importer) unknownDoc(origin string, seq int, entries []Entry) *Hold {
+	for _, e := range entries {
+		name, ok := DocName(e.Table)
+		if !ok || name == "" {
+			continue
+		}
+		if _, known := i.docNamed(name); !known {
+			return &Hold{Origin: origin, Label: i.labelOf(origin), Seq: seq, Reason: fmt.Sprintf(
+				"%s writes the shared document %q, which this build does not know: upgrade this machine to follow it (mark rests at %d)",
+				i.labelOf(origin), name, seq)}
+		}
+	}
+	return nil
+}
+
 // parseDocs checks every doc entry before any is applied, so a malformed entry
 // refuses the whole set and nothing lands half way.
 func (k *keyed) parseDocs(entries []Entry) ([]docItem, error) {

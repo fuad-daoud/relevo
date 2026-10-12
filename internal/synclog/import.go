@@ -123,6 +123,9 @@ type Hold struct {
 	Seq int
 	// Schema is the writer's schema version at the entry that stopped it.
 	Schema int
+	// Reason, when set, is the whole report: the origin stopped at something
+	// other than a schema this machine is behind.
+	Reason string
 }
 
 // String is the report a hold reads as to whoever has to act on it. It names the
@@ -130,6 +133,9 @@ type Hold struct {
 // this machine and the sequence number says nothing about which writer's schema
 // is the one waiting.
 func (h Hold) String() string {
+	if h.Reason != "" {
+		return h.Reason
+	}
 	return fmt.Sprintf("relevo on this machine is older than %s, which writes schema %d: upgrade this machine to follow it (mark rests at %d)",
 		h.Label, h.Schema, h.Seq)
 }
@@ -327,6 +333,9 @@ func (i *Importer) applyBatch(batch []Entry, marks map[string]int) (applied int,
 	origin := batch[0].Origin
 	if e, held := i.held(batch); held {
 		return 0, &Hold{Origin: e.Origin, Seq: batch[0].Seq - 1, Schema: e.SchemaVersion}, nil, nil
+	}
+	if hold := i.unknownDoc(origin, batch[0].Seq-1, batch); hold != nil {
+		return 0, hold, nil, nil
 	}
 	if err := i.verify(origin, batch); err != nil {
 		return 0, nil, nil, err

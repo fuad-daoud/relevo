@@ -148,5 +148,6 @@ func DrainParkedDocs(shared *db.DB, local Local, transport synclog.LogTransport)
 	}
 	imp := synclog.NewImporter(shared, transport)
 	imp.SetKey(key)
+	BindDocs(imp, shared)
 	return imp.DrainPending()
 }

@@ -120,6 +120,7 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 		}
 		exp := synclog.NewExporter(shared, t)
 		exp.SetKey(key)
+		BindDocs(exp, shared)
 		res, err := exp.Export()
 		out.Exported = res.Appended
 		return err
@@ -235,6 +236,7 @@ func (r *Runner) drainImport(ctx context.Context, shared *db.DB, t *StopTranspor
 			}
 			imp := synclog.NewImporter(shared, t)
 			imp.SetKey(key)
+			BindDocs(imp, shared)
 			res, ierr = imp.Import()
 			return ierr
 		})

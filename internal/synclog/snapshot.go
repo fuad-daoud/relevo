@@ -93,6 +93,9 @@ func (i *Importer) snapshotOrigin(origin string, mark, floor, head int, marks ma
 	if e, held := i.held(region); held {
 		return &Hold{Origin: origin, Label: i.labelOf(origin), Seq: mark, Schema: e.SchemaVersion}, nil
 	}
+	if hold := i.unknownDoc(origin, mark, region); hold != nil {
+		return hold, nil
+	}
 	if err := i.verify(origin, region); err != nil {
 		return nil, err
 	}
