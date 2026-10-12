@@ -107,6 +107,60 @@ func NewDelete(origin, table, pk string, schemaVersion int, at time.Time) (Entry
 	return e, nil
 }
 
+// NewDocUpsert builds the entry that writes one doc key's value.
+//
+// The entry is an ordinary upsert on the table `doc:<name>`, carrying the
+// stamp and the value in its body. Nothing about the transport, the numbering
+// or the signature changes to carry a doc: what makes it a doc entry is the
+// table name, and that is checked where it is read.
+func NewDocUpsert(origin string, doc SharedDoc, key string, schemaVersion int, stamp Stamp, value json.RawMessage, at time.Time) (Entry, error) {
+	return newDocEntry(origin, doc, key, schemaVersion, stamp, value, at)
+}
+
+// NewDocDelete builds the entry that removes one doc key.
+//
+// It is an upsert whose value is JSON null rather than a delete, for two
+// reasons that both come down to the stamp. A delete carries no body, so the
+// stamp would not travel and a reader could not tell a removal older than the
+// value it holds from one newer than it. And the shape rule refuses a delete
+// that carries a body, so the stamp and the removal could not travel together
+// at all.
+func NewDocDelete(origin string, doc SharedDoc, key string, schemaVersion int, stamp Stamp, at time.Time) (Entry, error) {
+	return newDocEntry(origin, doc, key, schemaVersion, stamp, nil, at)
+}
+
+// newDocEntry builds the one doc entry shape, with a nil value as the removal.
+func newDocEntry(origin string, doc SharedDoc, key string, schemaVersion int, stamp Stamp, value json.RawMessage, at time.Time) (Entry, error) {
+	if doc == nil {
+		return Entry{}, fmt.Errorf("synclog: doc entry names no doc: %w", ErrInvalid)
+	}
+	name := doc.Name()
+	if err := checkDocName(name); err != nil {
+		return Entry{}, err
+	}
+	pk, err := DocPK(key)
+	if err != nil {
+		return Entry{}, err
+	}
+	body, err := json.Marshal(docBody{Stamp: stamp.String(), Value: value})
+	if err != nil {
+		return Entry{}, fmt.Errorf("synclog: doc entry %s %s: %w: %w", name, key, err, ErrInvalid)
+	}
+	e := Entry{
+		Origin:        origin,
+		Table:         DocPrefix + name,
+		PK:            pk,
+		Op:            OpUpsert,
+		SchemaVersion: schemaVersion,
+		Body:          body,
+		At:            at,
+	}
+	if err := checkShape(e); err != nil {
+		return Entry{}, err
+	}
+	return e, nil
+}
+
 // checkShape refuses an entry the log has no room for: an unknown op, a delete
 // carrying a body, or an upsert carrying none. Both directions are refused at
 // the point the entry is built, because an entry that reaches a transport with

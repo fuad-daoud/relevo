@@ -88,6 +88,9 @@ index sqlite_autoindex_chains_1 chains
 index sqlite_autoindex_config_doc_1 config_doc
 
 
+index sqlite_autoindex_config_local_1 config_local
+
+
 index sqlite_autoindex_event_1 event
 
 
@@ -116,6 +119,18 @@ index sqlite_autoindex_secret_1 secret
 
 
 index sqlite_autoindex_session_consent_1 session_consent
+
+
+index sqlite_autoindex_shared_applied_1 shared_applied
+
+
+index sqlite_autoindex_shared_export_state_1 shared_export_state
+
+
+index sqlite_autoindex_shared_outbox_1 shared_outbox
+
+
+index sqlite_autoindex_shared_pending_1 shared_pending
 
 
 index sqlite_autoindex_sync_import_mark_1 sync_import_mark
@@ -163,6 +178,9 @@ CREATE TABLE config_doc (name TEXT PRIMARY KEY, body TEXT NOT NULL, updated_at T
 table config_import config_import
 CREATE TABLE config_import (id INTEGER PRIMARY KEY, name TEXT NOT NULL, source_path TEXT NOT NULL, body BLOB NOT NULL, imported_at TEXT NOT NULL)
 
+table config_local config_local
+CREATE TABLE config_local ("key" TEXT PRIMARY KEY, patch TEXT NOT NULL, updated_at TEXT NOT NULL)
+
 table config_meta config_meta
 CREATE TABLE config_meta (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL)
 
@@ -201,6 +219,18 @@ CREATE TABLE secret (name TEXT PRIMARY KEY, value BLOB NOT NULL, updated_at TEXT
 
 table session_consent session_consent
 CREATE TABLE session_consent (harness_kind TEXT NOT NULL, session_id TEXT NOT NULL, answer TEXT, answer_at TEXT, told TEXT, told_at TEXT, PRIMARY KEY (harness_kind, session_id))
+
+table shared_applied shared_applied
+CREATE TABLE shared_applied (doc TEXT NOT NULL, "key" TEXT NOT NULL, origin TEXT NOT NULL, stamp TEXT NOT NULL, PRIMARY KEY (doc, "key"))
+
+table shared_export_state shared_export_state
+CREATE TABLE shared_export_state (doc TEXT NOT NULL, "key" TEXT NOT NULL, origin TEXT NOT NULL, stamp TEXT NOT NULL, PRIMARY KEY (doc, "key"))
+
+table shared_outbox shared_outbox
+CREATE TABLE shared_outbox (doc TEXT PRIMARY KEY, dirtied_at TEXT NOT NULL)
+
+table shared_pending shared_pending
+CREATE TABLE shared_pending (origin TEXT NOT NULL, seq INTEGER NOT NULL, entry TEXT NOT NULL, parked_at TEXT NOT NULL, PRIMARY KEY (origin, seq))
 
 table sqlite_sequence sqlite_sequence
 CREATE TABLE sqlite_sequence(name,seq)
@@ -352,4 +382,4 @@ CREATE TRIGGER IF NOT EXISTS sync_outbox_transcript_ins AFTER INSERT ON transcri
 trigger sync_outbox_transcript_upd transcript
 CREATE TRIGGER IF NOT EXISTS sync_outbox_transcript_upd AFTER UPDATE ON transcript BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('transcript', json_array (NEW.id), 'update', CASE NEW.owner_kind WHEN 'round' THEN (SELECT origin FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = NEW.owner_id)) WHEN 'mastermind' THEN (SELECT origin FROM mastermind WHERE id = NEW.owner_id) ELSE NULL END); END
 
-schema_versions have=24 know=24
+schema_versions have=25 know=25
