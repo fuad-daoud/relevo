@@ -208,7 +208,7 @@ func (r *Reconciler) ReconcileBatch() (ReconcileResult, error) {
 	repaired := r.repairs()
 	r.pending = nil
 	r.sign(entries)
-	if _, err := r.transport.Append(entries); err != nil {
+	if _, err := r.appendTo(r.transport, r.origin, entries); err != nil {
 		return ReconcileResult{}, fmt.Errorf("synclog: reconcile: append: %w", err)
 	}
 	result := ReconcileResult{Batches: 1, Upserts: len(entries), Repaired: repaired}

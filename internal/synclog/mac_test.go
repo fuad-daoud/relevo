@@ -222,3 +222,26 @@ func TestEntryMACCoversADeleteWithNoBody(t *testing.T) {
 		t.Error("a delete for another row verifies under the first one's signature")
 	}
 }
+
+func TestBoundaryTagBindsOriginAndSeq(t *testing.T) {
+	t.Parallel()
+	tag := BoundaryTag(macKey, "m1", 2)
+	if !VerifyBoundary(macKey, "m1", 2, tag) {
+		t.Fatal("a boundary does not verify against its own tag")
+	}
+	if VerifyBoundary(macKey, "m2", 2, tag) {
+		t.Error("the tag verifies for another origin")
+	}
+	if VerifyBoundary(macKey, "m1", 3, tag) {
+		t.Error("the tag verifies for another sequence")
+	}
+	if VerifyBoundary([]byte("another key another key another"), "m1", 2, tag) {
+		t.Error("the tag verifies under another key")
+	}
+	if VerifyBoundary(macKey, "m1", 2, nil) {
+		t.Error("no tag verified")
+	}
+	if string(tag) == string(EntryMAC(macKey, Entry{Origin: "m1"})) {
+		t.Error("a boundary tag collides with an entry MAC")
+	}
+}

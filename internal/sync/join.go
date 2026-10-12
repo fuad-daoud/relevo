@@ -377,12 +377,16 @@ const JoinImportDeadline = 30 * time.Minute
 func (e *Enabler) drainImport(transport synclog.LogTransport) (synclog.ImportResult, error) {
 	deadline := e.now().Add(JoinImportDeadline)
 	return drainImport(func() (synclog.ImportResult, error) {
+		key, err := SigningKey(e.Request.Local)
+		if err != nil {
+			return synclog.ImportResult{}, err
+		}
 		imp := synclog.NewImporter(e.Request.Shared, transport)
-		imp.SetKey(SigningKey(e.Request.Local))
+		imp.SetKey(key)
 		imp.AfterBatch = func() { e.count(transport) }
-		res, err := imp.Import()
+		res, ierr := imp.Import()
 		e.count(transport)
-		return res, err
+		return res, ierr
 	}, deadline, e.now)
 }
 
@@ -412,8 +416,12 @@ func (e *Enabler) publishMarks(transport synclog.LogTransport) error {
 // converged rows out of the next one: the resumption is head's, and no cursor
 // of our own can drift from it.
 func (e *Enabler) reconcile(transport synclog.LogTransport) (int, int, error) {
+	key, err := SigningKey(e.Request.Local)
+	if err != nil {
+		return 0, 0, fmt.Errorf("sync: enable: %w", err)
+	}
 	reconciler := synclog.NewReconciler(e.Request.Shared, transport)
-	reconciler.SetKey(SigningKey(e.Request.Local))
+	reconciler.SetKey(key)
 	if e.present != nil {
 		reconciler.RepairBodies(e.present)
 	}

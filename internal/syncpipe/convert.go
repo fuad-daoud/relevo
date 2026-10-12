@@ -202,6 +202,7 @@ func markStateFromWire(s syncworker.MarkState) synclog.MarkState {
 		Entries:    s.Entries,
 		Sizes:      s.Sizes,
 		SignedFrom: s.SignedFrom,
+		SignedTags: s.SignedTags,
 	}
 	for _, m := range s.Marks {
 		out.Marks = append(out.Marks, synclog.Mark{

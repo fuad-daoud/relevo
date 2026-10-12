@@ -2,6 +2,7 @@ package syncworker
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -173,7 +174,7 @@ func TestScratchRemoteMACSurvivesThePipeAndTheLog(t *testing.T) {
 		t.Fatalf("decode the entry: %v", err)
 	}
 
-	written, err := b.Append(onWire)
+	written, err := b.AppendSigned(onWire, boundaryAt(key, origin, 1))
 	if err != nil {
 		t.Fatalf("append to the scratch remote: %v", err)
 	}
@@ -271,5 +272,28 @@ func TestScratchRemoteCompact(t *testing.T) {
 	res, err := b.Compact(3)
 	if err != nil || res.Dropped != 1 || res.Floor != 3 {
 		t.Fatalf("Compact(3) = %+v, %v; want one dropped at floor 3", res, err)
+	}
+}
+
+// TestScratchRemoteRefusesASignedBatchWithoutABoundary runs the boundary rule
+// against a real remote: a signed batch for an origin with no boundary row is
+// refused, and one naming the wrong sequence is too.
+func TestScratchRemoteRefusesASignedBatchWithoutABoundary(t *testing.T) {
+	url := os.Getenv("RELEVO_SCRATCH_SYNC_URL")
+	token := os.Getenv("RELEVO_SCRATCH_SYNC_TOKEN")
+	if url == "" || token == "" {
+		t.Skip("set RELEVO_SCRATCH_SYNC_URL and RELEVO_SCRATCH_SYNC_TOKEN to run against a scratch remote")
+	}
+	origin := "scratch-bound-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	b := openScratch(t, filepath.Join(t.TempDir(), "m.db"), origin, url, token)
+	key := []byte("the passphrase this machine stretched")
+
+	e := upsertEntry(origin, "board", `["s"]`, `{"title":"signed"}`)
+	e.MAC = []byte("a signature")
+	if _, err := b.Append([]Entry{e}); !errors.Is(err, ErrBoundary) {
+		t.Fatalf("append with no boundary = %v, want ErrBoundary", err)
+	}
+	if _, err := b.AppendSigned([]Entry{e}, boundaryAt(key, origin, 9)); !errors.Is(err, ErrBoundary) {
+		t.Fatalf("append with a wrong boundary = %v, want ErrBoundary", err)
 	}
 }

@@ -102,6 +102,16 @@ func (r *recording) Append(entries []Entry) ([]Entry, error) {
 	return r.MemTransport.Append(entries)
 }
 
+// AppendSigned records the batch like Append, so the boundary-carrying path is
+// recorded too.
+func (r *recording) AppendSigned(entries []Entry, boundary Boundary) ([]Entry, error) {
+	r.batches = append(r.batches, entries)
+	if r.refuse {
+		return nil, fmt.Errorf("synclog: the log refused the append")
+	}
+	return r.MemTransport.AppendSigned(entries, boundary)
+}
+
 // appended is every entry the exporter handed over, in the order it handed them.
 func (r *recording) appended() []Entry {
 	var out []Entry

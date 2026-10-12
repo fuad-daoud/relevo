@@ -14,10 +14,4 @@ func TestSignedFromRecordsOnlyLower(t *testing.T) {
 	if err != nil || got["m1"] != 3 {
 		t.Fatalf("SignedFroms = %v, %v; want m1 at 3", got, err)
 	}
-	if err := d.ClearSignedFrom(); err != nil {
-		t.Fatalf("ClearSignedFrom: %v", err)
-	}
-	if got, _ := d.SignedFroms(); len(got) != 0 {
-		t.Errorf("records after clear = %v", got)
-	}
 }

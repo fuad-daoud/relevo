@@ -221,25 +221,42 @@ under the merged rules, imports no shared docs, and status says "locked".
   from `--passphrase-stdin`, then `RELEVO_SYNC_PASSPHRASE`, then a TTY.
   `enable` takes the passphrase only from step 5 on.
 - **KDF bounds.** The remote chooses the Argon2id parameters, so a machine
-  refuses any parameters outside fixed bounds.
+  refuses any parameters outside fixed bounds: t 1..4, m 19456..262144 KiB,
+  p 1..8.
 
 **Signing (step 3).**
 - Every entry carries `mac = HMAC-SHA256(key, canonical entry)`.
 - **What a MAC covers.** Origin, table, pk, op, schema version, the
   compacted body as stored (a `$ref`, not the fetched body) and At in
   RFC3339Nano UTC. It does not cover Seq or Batch.
-- **signed-from.** The worker writes `signed_from.<origin>` once, at the
-  origin's first signed entry. A reader takes the lower of that value and its
-  own local record of the first entry it verified, so a remote that rewrites
-  `meta` cannot switch checking off.
+- **signed-from.** The boundary is a keyed tag. `signed_from.<origin>` holds
+  `<seq> <base64 tag>`, where the tag is HMAC-SHA256(key, label
+  `relevo-sync-signed-from-v1`, origin, decimal seq), each field length
+  prefixed. An unlocked exporter whose origin has no boundary row predicts the
+  first signed seq (its head plus the index of the first signed entry in the
+  batch) and sends it with the tag. In the append transaction the worker writes
+  the row only if it is absent and the batch carries a signed entry, and
+  refuses the whole append, writing nothing, when the predicted seq is not the
+  one the entry gets or none was sent; the exporter retries on its next tick.
+- **Reader.** A reader verifies the row under its own key: an unparseable row
+  or a tag that fails holds that origin like a bad MAC. A row that verifies is
+  lowered into the reader's local `sync_signed_from` record at once, not only
+  when an entry verifies, and the record is also lowered to the lowest signed
+  entry the reader verifies. A reader keeps every verified boundary locally, so
+  deleting or raising the remote row afterwards changes nothing, and
+  `disable` keeps those records. A locked reader ignores the tag.
 - An importer refuses an unsigned or badly signed entry at or above that
-  point, holds the origin, and latches with the reason.
+  point and holds only that origin for the run. The hold is reported per
+  origin in status trouble on every tick while the entry is there; it does not
+  latch the machine, and the other origins keep importing.
 - **Verification order.** Verification runs before any body fetch.
 - **Locked machine, signed origin.** Such a machine holds its export and says
   `run relevo db sync unlock`.
 - Shared docs and takeovers are only ever accepted signed.
 - **Known limits.** A holder of the Turso token can replay an old signed
-  entry at a new seq, or delete entries; signing detects neither.
+  entry at a new seq, or delete entries; signing detects neither. Entries
+  imported before this machine was unlocked are not re-verified; step 5's
+  enable takes the passphrase before the join.
 - **Rollout.** Format 3 is refused by older binaries, so every machine
   installs the release before anyone runs unlock.
 

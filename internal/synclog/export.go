@@ -115,7 +115,7 @@ func (e *Exporter) ExportBatch() (ExportResult, error) {
 			return ExportResult{}, fmt.Errorf("synclog: export: upload: %w", err)
 		}
 		e.sign(entries)
-		if _, err := e.transport.Append(entries); err != nil {
+		if _, err := e.appendTo(e.transport, e.origin, entries); err != nil {
 			return ExportResult{}, fmt.Errorf("synclog: export: append: %w", err)
 		}
 	}

@@ -32,9 +32,9 @@ const (
 	kdfKeyLen     = 32
 	keyCheckLabel = "relevo-sync-key-check-v1"
 
-	kdfMinTime, kdfMaxTime       = 1, 10
-	kdfMinMemory, kdfMaxMemory   = 19456, 1048576
-	kdfMinThreads, kdfMaxThreads = 1, 16
+	kdfMinTime, kdfMaxTime       = 1, 4
+	kdfMinMemory, kdfMaxMemory   = 19456, 262144
+	kdfMinThreads, kdfMaxThreads = 1, 8
 )
 
 // KDFParams are the argon2id cost parameters; MemoryKiB is in kibibytes.
@@ -120,18 +120,21 @@ func ReadKey(l Local) (key []byte, ok bool, err error) {
 
 // SigningKey is the key entries are signed and verified with, or nil on a
 // locked machine. It is read per attempt, so an unlock while the daemon runs
-// takes effect on the next tick. A key that cannot be read is a locked machine:
-// the exporter's own guard still refuses to append unsigned to a signed log.
-func SigningKey(kv db.KV) []byte {
+// takes effect on the next tick. A key that cannot be read is an error, never a
+// locked machine: running locked would import entries without checking them.
+func SigningKey(kv db.KV) ([]byte, error) {
 	l, isDB := kv.(Local)
 	if !isDB || l == nil {
-		return nil
+		return nil, nil
 	}
 	key, ok, err := ReadKey(l)
-	if err != nil || !ok {
-		return nil
+	if err != nil {
+		return nil, err
 	}
-	return key
+	if !ok {
+		return nil, nil
+	}
+	return key, nil
 }
 
 // DeleteKey removes the stored key and the fact about the remote's. An absent

@@ -41,7 +41,7 @@ func TestSignedEntryVerifiesAfterThePipeAndTheLog(t *testing.T) {
 	if err := json.Unmarshal(line, &onWire); err != nil {
 		t.Fatalf("decode the entry: %v", err)
 	}
-	written, err := writer.Append(onWire)
+	written, err := writer.AppendSigned(onWire, boundaryAt(key, "origin-a", 1))
 	if err != nil {
 		t.Fatalf("append: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestPullRangeHandsBackTheMAC(t *testing.T) {
 
 	e := upsertEntry("origin-a", "board", `["r"]`, `{"title":"ranged"}`)
 	e.MAC = synclog.EntryMAC(key, entryFromWire(e))
-	if _, err := b.Append([]Entry{e}); err != nil {
+	if _, err := b.AppendSigned([]Entry{e}, boundaryAt(key, "origin-a", 1)); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	paged, err := b.PullRange("origin-a", 0, 10)
@@ -119,4 +119,9 @@ func TestPullRangeHandsBackTheMAC(t *testing.T) {
 	if !synclog.VerifyMAC(key, entryFromWire(paged[0])) {
 		t.Error("the entry a pull_range read does not verify: the statement left the MAC behind")
 	}
+}
+
+// boundaryAt is the boundary an unlocked exporter sends for seq under key.
+func boundaryAt(key []byte, origin string, seq int) Boundary {
+	return Boundary{Seq: seq, Tag: synclog.BoundaryTag(key, origin, seq)}
 }

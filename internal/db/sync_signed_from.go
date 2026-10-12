@@ -44,16 +44,3 @@ func (t *Tx) LowerSignedFrom(origin string, seq int) error {
 	}
 	return nil
 }
-
-// ClearSignedFrom forgets every record, as turning sync off does.
-func (d *DB) ClearSignedFrom() error {
-	return d.Tx(func(t *Tx) error {
-		if _, err := t.exec(`DELETE FROM sync_signed_from`); err != nil {
-			if isMissingTable(err) {
-				return nil
-			}
-			return fmt.Errorf("db: clear signed-from records: %w", mapBusy(err))
-		}
-		return nil
-	})
-}

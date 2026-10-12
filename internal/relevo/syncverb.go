@@ -249,7 +249,7 @@ func (v *VerbRunner) push(ctx context.Context) *wire.SyncResult {
 	stop := relevosync.NewStopTransport(transport)
 	defer v.Runner.Track(stop)()
 	defer v.Runner.CountMoved(ctx, stop)
-	res, err := keyedExporter(v.Shared, stop).Export()
+	res, err := exportOnce(v.Shared, stop)
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
@@ -268,7 +268,7 @@ func (v *VerbRunner) pull(ctx context.Context) *wire.SyncResult {
 	stop := relevosync.NewStopTransport(transport)
 	defer v.Runner.Track(stop)()
 	defer v.Runner.CountMoved(ctx, stop)
-	res, err := keyedImporter(v.Shared, stop).Import()
+	res, err := importOnce(v.Shared, stop)
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
@@ -526,7 +526,7 @@ func exportThrough(shared *db.DB, transport synclog.LogTransport) func(context.C
 		stop := relevosync.NewStopTransport(transport)
 		done := make(chan error, 1)
 		go func() {
-			_, err := keyedExporter(shared, stop).Export()
+			_, err := exportOnce(shared, stop)
 			done <- err
 		}()
 		select {

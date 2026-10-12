@@ -14,7 +14,6 @@ package synclog
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -56,9 +55,8 @@ func (i *Importer) snapshots(state MarkState, marks map[string]int, total *Impor
 			continue
 		}
 		hold, err := i.snapshotOrigin(origin, marks[origin], floor, state.Heads[origin], marks, total)
-		var stalled *stallError
 		switch {
-		case errors.As(err, &stalled):
+		case holdsOrigin(err):
 			total.Stalled = append(total.Stalled, Stall{Origin: origin, Label: i.labelOf(origin), Reason: err.Error()})
 			held[origin] = true
 		case err != nil:

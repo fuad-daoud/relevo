@@ -41,11 +41,11 @@ func TestKDFParamsRefuseOutOfBounds(t *testing.T) {
 	}
 	bad := []string{
 		fmt.Sprintf("argon2id;t=%d;m=65536;p=4", 0),
-		fmt.Sprintf("argon2id;t=%d;m=65536;p=4", 11),
+		fmt.Sprintf("argon2id;t=%d;m=65536;p=4", 5),
 		fmt.Sprintf("argon2id;t=3;m=%d;p=4", 19455),
-		fmt.Sprintf("argon2id;t=3;m=%d;p=4", 1048577),
+		fmt.Sprintf("argon2id;t=3;m=%d;p=4", 262145),
 		fmt.Sprintf("argon2id;t=3;m=65536;p=%d", 0),
-		fmt.Sprintf("argon2id;t=3;m=65536;p=%d", 17),
+		fmt.Sprintf("argon2id;t=3;m=65536;p=%d", 9),
 		"argon2id",
 		"scrypt;t=3;m=65536;p=4",
 		"argon2id;t=x;m=65536;p=4",
@@ -55,7 +55,7 @@ func TestKDFParamsRefuseOutOfBounds(t *testing.T) {
 			t.Errorf("ParseKDF(%q) = %v, want ErrKDFParams", s, err)
 		}
 	}
-	for _, s := range []string{"argon2id;t=1;m=19456;p=1", "argon2id;t=10;m=1048576;p=16"} {
+	for _, s := range []string{"argon2id;t=1;m=19456;p=1", "argon2id;t=4;m=262144;p=8"} {
 		if _, err := ParseKDF(s); err != nil {
 			t.Errorf("ParseKDF(%q) = %v, want the bound accepted", s, err)
 		}

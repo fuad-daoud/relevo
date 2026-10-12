@@ -32,7 +32,7 @@ func TestMemTransportCarriesMACThroughPullRangeAndCompaction(t *testing.T) {
 
 	// Two writes of one row, so compaction has a superseded entry to drop and a
 	// survivor to keep.
-	if _, err := writer.Append([]Entry{signed(`["b"]`, "first")}); err != nil {
+	if _, err := writer.AppendSigned([]Entry{signed(`["b"]`, "first")}, Boundary{Seq: 1, Tag: BoundaryTag(key, "origin-a", 1)}); err != nil {
 		t.Fatalf("append the first write: %v", err)
 	}
 	if _, err := writer.Append([]Entry{signed(`["b"]`, "second")}); err != nil {
@@ -150,11 +150,12 @@ func TestMemTransportRecordsWhereEachOriginStartedSigning(t *testing.T) {
 		t.Errorf("signed_from = %v, want none: nothing has been signed yet", state.SignedFrom)
 	}
 
+	boundary := Boundary{Seq: 2, Tag: BoundaryTag(keyA, "origin-a", 2)}
 	for _, pk := range []string{`["s"]`, `["t"]`} {
-		if _, err := writer.Append([]Entry{{
+		if _, err := writer.AppendSigned([]Entry{{
 			Origin: "origin-a", Table: "board", PK: pk, Op: OpUpsert, SchemaVersion: 3,
 			Body: json.RawMessage(`{"title":"signed"}`), At: now, MAC: []byte("a signature"),
-		}}); err != nil {
+		}}, boundary); err != nil {
 			t.Fatalf("append a signed batch: %v", err)
 		}
 	}

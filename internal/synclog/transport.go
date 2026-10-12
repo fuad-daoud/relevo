@@ -153,6 +153,21 @@ type MarkState struct {
 	// origin that has never signed is absent from the map, which is how a
 	// reader tells that from an origin whose very first entry was signed.
 	SignedFrom map[string]int
+	// SignedTags is the tag stored beside each SignedFrom entry; an origin
+	// whose stored boundary has none, or none that parses, maps to nil.
+	SignedTags map[string][]byte
+}
+
+// Boundary is the first signed sequence an exporter predicts for its origin and
+// the tag that binds it to the key. The zero value carries none.
+type Boundary struct {
+	Seq int
+	Tag []byte
+}
+
+// BoundaryAppender is a transport that takes the boundary with a signed batch.
+type BoundaryAppender interface {
+	AppendSigned(entries []Entry, boundary Boundary) ([]Entry, error)
 }
 
 // LogRowOverhead is the bytes a log row costs beside its body, for the columns

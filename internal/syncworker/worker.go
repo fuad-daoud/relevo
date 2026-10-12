@@ -30,6 +30,19 @@ type Spec struct {
 	R2 *R2Config
 }
 
+// Boundary is the first signed sequence an export predicted for its origin and
+// the tag binding it to the key.
+type Boundary struct {
+	Seq int
+	Tag []byte
+}
+
+// boundaryBackend is a backend that writes the signed-from row with a signed
+// batch.
+type boundaryBackend interface {
+	AppendSigned(entries []Entry, boundary Boundary) ([]Entry, error)
+}
+
 // Backend is what the worker serves the pipe with: the log itself, behind the
 // replica this process owns.
 //
@@ -226,7 +239,13 @@ func (s *server) export(req Request) Response {
 			return refuse(req, err)
 		}
 	}
-	written, err := s.backend.Append(req.Entries)
+	var written []Entry
+	var err error
+	if bb, ok := s.backend.(boundaryBackend); ok {
+		written, err = bb.AppendSigned(req.Entries, Boundary{Seq: req.BoundarySeq, Tag: req.BoundaryTag})
+	} else {
+		written, err = s.backend.Append(req.Entries)
+	}
 	if err != nil {
 		return refuse(req, err)
 	}

@@ -39,6 +39,10 @@ var (
 	// An installation appends only for its own rows, and refusing here is what
 	// stops two machines writing the same one.
 	ErrForeignOrigin = errors.New("another origin's entry")
+
+	// ErrBoundary is a signed batch for an origin with no boundary row whose
+	// first signed sequence is not the one the export predicted.
+	ErrBoundary = errors.New("the signed-from boundary was not the one predicted")
 )
 
 // Verb is what one request asks the worker to do.
@@ -190,6 +194,11 @@ type Request struct {
 	// KeyMeta is the passphrase material a key_init writes. A key_meta carries
 	// none: it asks what the remote holds rather than naming what it should.
 	KeyMeta *KeyMeta `json:"key_meta,omitempty"`
+	// BoundarySeq and BoundaryTag are the first signed sequence an export
+	// predicts for its origin and the tag that binds it to the key. The worker
+	// stores them only where the origin has no boundary yet.
+	BoundarySeq int    `json:"boundary_seq,omitempty"`
+	BoundaryTag []byte `json:"boundary_tag,omitempty"`
 }
 
 // Response is one line of the pipe, from the worker to the daemon.
@@ -262,6 +271,10 @@ const (
 	// fine and the remote is fine; what crossed the pipe is not, and repeating
 	// the call unchanged would publish the same wrong body.
 	CodeBlobRefused RefusalCode = "blob_refused"
+	// CodeBoundary is a signed batch the worker refused because its boundary was
+	// not the one predicted. Nothing was written and the next attempt predicts
+	// again.
+	CodeBoundary RefusalCode = "boundary"
 )
 
 // RefusalError is an error a backend marked with the class of refusal it is, so
@@ -437,6 +450,9 @@ type MarkState struct {
 	// origin with no entry is not named, which is how a reader tells "nothing
 	// here has been signed" from "signed from the first entry".
 	SignedFrom map[string]int `json:"signed_from,omitempty"`
+	// SignedTags is the tag stored beside each boundary, nil where the stored
+	// value has none that parses.
+	SignedTags map[string][]byte `json:"signed_tags,omitempty"`
 }
 
 // readRequest reads one request line. A clean end of the pipe is io.EOF, which

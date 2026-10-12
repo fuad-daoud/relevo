@@ -138,11 +138,6 @@ func (d *Disabler) Disable(ctx context.Context) (DisableResult, error) {
 	if err := DeleteKey(d.Local); err != nil {
 		return out, fmt.Errorf("sync: disable: %w", err)
 	}
-	if d.Shared != nil {
-		if err := d.Shared.ClearSignedFrom(); err != nil {
-			return out, fmt.Errorf("sync: disable: %w", err)
-		}
-	}
 	// The R2 credentials go with the token, and on the same reasoning: a machine
 	// marked off with a live bucket credential is one the next enable would
 	// inherit credentials for without being asked, and a bucket key outlives the

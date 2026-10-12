@@ -1,7 +1,6 @@
 package synclog
 
 import (
-	"errors"
 	"strings"
 	"testing"
 )
@@ -16,6 +15,29 @@ func signedLog(t *testing.T) (*MemTransport, string) {
 	seed(t, path, insertBinding("01B", "m1"))
 	signedExport(t, m1, log, keyA)
 	return log, path
+}
+
+// stallOf is the reason an import held origin, or "" when it did not.
+func stallOf(res ImportResult, origin string) string {
+	for _, s := range res.Stalled {
+		if s.Origin == origin {
+			return s.Reason
+		}
+	}
+	return ""
+}
+
+// forgeMAC flips the stored MAC of the entry at seq, as a remote writer would.
+func forgeMAC(log *MemTransport, seq int) {
+	log.log.mu.Lock()
+	defer log.log.mu.Unlock()
+	for n := range log.log.entries {
+		if log.log.entries[n].Seq == seq {
+			mac := append([]byte(nil), log.log.entries[n].MAC...)
+			mac[0] ^= 0xff
+			log.log.entries[n].MAC = mac
+		}
+	}
 }
 
 func appendUnsigned(t *testing.T, log *MemTransport, pk string) {
@@ -33,14 +55,15 @@ func TestImportRefusesABadMACAndHoldsTheOrigin(t *testing.T) {
 	log := NewMemTransport("m1")
 	seed(t, path, insertBinding("01A", "m1"))
 	signedExport(t, m1, log, keyA)
+	forgeMAC(log, 1)
 	m2, _ := peerFile(t, "m2")
 
-	_, err := importWith(m2, log, keyB)
-	if !errors.Is(err, ErrBadSignature) {
-		t.Fatalf("import = %v, want ErrBadSignature", err)
+	res, err := importWith(m2, log, keyA)
+	if err != nil {
+		t.Fatalf("import: %v", err)
 	}
-	if !strings.Contains(err.Error(), "entry 1 from m1 has a bad signature") {
-		t.Errorf("error %q lacks the sentence", err)
+	if reason := stallOf(res, "m1"); !strings.Contains(reason, `entry 1 from "m1" has a bad signature`) {
+		t.Errorf("stall %q lacks the sentence", reason)
 	}
 	if got := sharedRows(t, m2); got != "" {
 		t.Errorf("m2 holds %q after a refusal", got)
@@ -56,12 +79,12 @@ func TestImportRefusesUnsignedAtOrAboveSignedFrom(t *testing.T) {
 	appendUnsigned(t, log, `["01C"]`)
 	m2, _ := peerFile(t, "m2")
 
-	_, err := importWith(m2, log, keyA)
-	if !errors.Is(err, ErrBadSignature) {
-		t.Fatalf("import = %v, want ErrBadSignature", err)
+	res, err := importWith(m2, log, keyA)
+	if err != nil {
+		t.Fatalf("import: %v", err)
 	}
-	if !strings.Contains(err.Error(), "entry 3 from m1 is unsigned but m1 signs from 2") {
-		t.Errorf("error %q lacks the sentence", err)
+	if reason := stallOf(res, "m1"); !strings.Contains(reason, `entry 3 from "m1" is unsigned but "m1" signs from 2`) {
+		t.Errorf("stall %q lacks the sentence", reason)
 	}
 	if got := markOf(t, m2, "m1"); got != 2 {
 		t.Errorf("mark = %d, want the two entries before the refusal applied", got)
@@ -117,9 +140,9 @@ func TestSignedFromTakesTheLowerOfRemoteAndLocal(t *testing.T) {
 	if err := m2.LowerSignedFrom("m1", 1); err != nil {
 		t.Fatalf("seed the record: %v", err)
 	}
-	_, err := importWith(m2, log, keyA)
-	if !errors.Is(err, ErrBadSignature) || !strings.Contains(err.Error(), "m1 signs from 1") {
-		t.Fatalf("import = %v, want the unsigned entry 1 refused under the local record", err)
+	res, err := importWith(m2, log, keyA)
+	if err != nil || !strings.Contains(stallOf(res, "m1"), `"m1" signs from 1`) {
+		t.Fatalf("import = %+v, %v; want the unsigned entry 1 refused under the local record", res, err)
 	}
 	if err := m2.LowerSignedFrom("m1", 5); err != nil {
 		t.Fatal(err)
@@ -138,12 +161,13 @@ func TestARemoteThatDropsSignedFromCannotSwitchCheckingOff(t *testing.T) {
 	}
 	log.log.mu.Lock()
 	log.log.signedFrom = nil
+	log.log.signedTag = nil
 	log.log.mu.Unlock()
 	appendUnsigned(t, log, `["01C"]`)
 
-	_, err := importWith(m2, log, keyA)
-	if !errors.Is(err, ErrBadSignature) {
-		t.Fatalf("import = %v, want the unsigned entry refused", err)
+	res, err := importWith(m2, log, keyA)
+	if err != nil || stallOf(res, "m1") == "" {
+		t.Fatalf("import = %+v, %v; want the unsigned entry refused", res, err)
 	}
 }
 
@@ -176,9 +200,9 @@ func TestSnapshotRegionRefusesABadMAC(t *testing.T) {
 	compactTo(t, log, "m1", 2, 1)
 	m2, _ := peerFile(t, "m2")
 
-	_, err := importWith(m2, log, keyB)
-	if !errors.Is(err, ErrBadSignature) {
-		t.Fatalf("snapshot import = %v, want ErrBadSignature", err)
+	res, err := importWith(m2, log, keyB)
+	if err != nil || stallOf(res, "m1") == "" {
+		t.Fatalf("snapshot import = %+v, %v; want the region refused", res, err)
 	}
 	if got := sharedRows(t, m2); got != "" {
 		t.Errorf("m2 holds %q after a refused region", got)
@@ -229,8 +253,9 @@ func TestVerificationHappensBeforeAnyBodyFetch(t *testing.T) {
 	c, _ := exporterFile(t, "C")
 	imp := NewImporter(c, p.link(t, "C"))
 	imp.SetKey(keyB)
-	if _, err := imp.Import(); !errors.Is(err, ErrBadSignature) {
-		t.Fatalf("import = %v, want ErrBadSignature", err)
+	res, err := imp.Import()
+	if err != nil || stallOf(res, "A") == "" {
+		t.Fatalf("import = %+v, %v; want origin A held", res, err)
 	}
 	if p.mover.Gets != 0 {
 		t.Errorf("%d bodies were fetched before the refusal", p.mover.Gets)

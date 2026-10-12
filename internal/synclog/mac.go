@@ -38,6 +38,28 @@ func EntryMAC(key []byte, e Entry) []byte {
 	return mac.Sum(nil)
 }
 
+// boundaryDomain labels the tag that binds an origin's signed-from sequence to
+// the key, so a reader can tell a boundary this key vouched for from one a
+// remote writer made up.
+const boundaryDomain = "relevo-sync-signed-from-v1"
+
+// BoundaryTag is the HMAC-SHA256 that binds seq to origin under key.
+func BoundaryTag(key []byte, origin string, seq int) []byte {
+	var buf bytes.Buffer
+	writeMACField(&buf, []byte(boundaryDomain))
+	writeMACField(&buf, []byte(origin))
+	writeMACField(&buf, []byte(strconv.Itoa(seq)))
+
+	mac := hmac.New(sha256.New, key)
+	mac.Write(buf.Bytes())
+	return mac.Sum(nil)
+}
+
+// VerifyBoundary reports whether tag is the one key makes for origin and seq.
+func VerifyBoundary(key []byte, origin string, seq int, tag []byte) bool {
+	return hmac.Equal(tag, BoundaryTag(key, origin, seq))
+}
+
 // VerifyMAC reports whether the entry's MAC is the one its fields make. It
 // compares with hmac.Equal rather than bytes.Equal, so a caller learns only
 // that the two agree and not how far they are into disagreeing.

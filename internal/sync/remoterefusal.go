@@ -47,7 +47,7 @@ var ErrQuotaReached = errors.New("sync: the Turso plan quota is reached")
 // predict.
 func IsPermanentRefusal(err error) bool {
 	return errors.Is(err, ErrRemoteSchema) || errors.Is(err, ErrRemoteRefused) ||
-		errors.Is(err, synclog.ErrBlobMissing) || errors.Is(err, synclog.ErrBadSignature) || errors.Is(err, ErrQuotaReached)
+		errors.Is(err, synclog.ErrBlobMissing) || errors.Is(err, ErrQuotaReached)
 }
 
 // The driver shapes this matches on. They are the SQLite result codes the engine

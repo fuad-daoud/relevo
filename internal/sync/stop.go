@@ -65,6 +65,17 @@ func (s *StopTransport) Append(entries []synclog.Entry) ([]synclog.Entry, error)
 	return s.inner.Append(entries)
 }
 
+// AppendSigned is Append with the boundary the exporter predicted.
+func (s *StopTransport) AppendSigned(entries []synclog.Entry, boundary synclog.Boundary) ([]synclog.Entry, error) {
+	if s.stopped.Load() {
+		return nil, ErrStopped
+	}
+	if ba, ok := s.inner.(synclog.BoundaryAppender); ok {
+		return ba.AppendSigned(entries, boundary)
+	}
+	return s.inner.Append(entries)
+}
+
 func (s *StopTransport) Pull(marks map[string]int) ([]synclog.Entry, error) {
 	if s.stopped.Load() {
 		return nil, ErrStopped

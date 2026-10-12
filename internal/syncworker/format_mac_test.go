@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strconv"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
 // The remote's format: which older shapes this build brings forward, which it
@@ -281,7 +283,7 @@ func TestAnAppendThatCannotRecordWhereSigningStartsFails(t *testing.T) {
 
 	e := upsertEntry("origin-a", "board", `["s"]`, `{"title":"signed"}`)
 	e.MAC = []byte("a signature")
-	if _, err := b.Append([]Entry{e}); err == nil {
+	if _, err := b.AppendSigned([]Entry{e}, boundaryAt([]byte("k"), "origin-a", 1)); err == nil {
 		t.Fatal("an append that could not record where signing starts came back as a success")
 	} else if !contains(err.Error(), "record where signing starts") {
 		t.Errorf("refusal %q does not name the marker it could not write", err)
@@ -359,65 +361,70 @@ func TestKeyMetaReadsAMalformedValueAsItsOwnBytes(t *testing.T) {
 	}
 }
 
-// TestReadMarksSkipsAMalformedSignedFromRow pins that one unreadable row does not
-// stop a reader reading the rest. The meta table is written by other machines,
-// and a signed_from row that is not a number would otherwise take down every
-// read of every mark along with it.
-func TestReadMarksSkipsAMalformedSignedFromRow(t *testing.T) {
+// TestReadMarksReportsAMalformedSignedFromRowAsUnverifiable pins that one
+// unreadable row does not stop a reader reading the rest, and is not hidden
+// either: it comes back with no sequence or no tag, which the reader refuses.
+func TestReadMarksReportsAMalformedSignedFromRowAsUnverifiable(t *testing.T) {
 	path := tempReplica(t)
 	b := backendFor(t, &localDriver{path: path}, "origin-a")
+	tag := encodeKeyValue(synclog.BoundaryTag([]byte("k"), "origin-b", 7))
 	execOn(t, path,
 		"INSERT INTO meta (key, value) VALUES ('"+signedFromPrefix+"origin-a', 'not a sequence')",
-		"INSERT INTO meta (key, value) VALUES ('"+signedFromPrefix+"origin-b', '7')",
-		"INSERT INTO meta (key, value) VALUES ('"+signedFromPrefix+"origin-c', '-1')")
+		"INSERT INTO meta (key, value) VALUES ('"+signedFromPrefix+"origin-b', '7 "+tag+"')",
+		"INSERT INTO meta (key, value) VALUES ('"+signedFromPrefix+"origin-c', '-1')",
+		"INSERT INTO meta (key, value) VALUES ('"+signedFromPrefix+"origin-d', '5')")
 
 	state, err := b.ReadMarks()
 	if err != nil {
 		t.Fatalf("ReadMarks: %v", err)
 	}
-	if _, ok := state.SignedFrom["origin-a"]; ok {
-		t.Error("a row that is not a sequence was reported as one")
+	for _, origin := range []string{"origin-a", "origin-c"} {
+		if seq, ok := state.SignedFrom[origin]; !ok || seq != 0 || state.SignedTags[origin] != nil {
+			t.Errorf("%s = %d, %v: a row that is not a sequence must be reported as seq 0", origin, seq, state.SignedTags[origin])
+		}
 	}
-	if _, ok := state.SignedFrom["origin-c"]; ok {
-		t.Error("a negative sequence was reported as one")
+	if seq, tags := state.SignedFrom["origin-d"], state.SignedTags["origin-d"]; seq != 5 || tags != nil {
+		t.Errorf("origin-d = %d, %x; want 5 with no tag", seq, tags)
 	}
-	if got := state.SignedFrom["origin-b"]; got != 7 {
-		t.Errorf("signed_from[origin-b] = %d, want 7: one bad row must not hide the good ones", got)
+	if got := state.SignedFrom["origin-b"]; got != 7 || !synclog.VerifyBoundary([]byte("k"), "origin-b", 7, state.SignedTags["origin-b"]) {
+		t.Errorf("origin-b = %d: one bad row must not hide the good ones", got)
 	}
 }
 
 // TestAppendWritesSignedFromOnceAtTheFirstSignedEntry pins the marker a reader
 // is told to enforce: where each origin started signing. It lands on the first
-// signed sequence, it does not move for the batches after it, and an unsigned
-// batch ahead of it writes nothing at all.
+// signed sequence with the tag the exporter sent, it does not move for the
+// batches after it, and an unsigned batch ahead of it writes nothing at all.
 func TestAppendWritesSignedFromOnceAtTheFirstSignedEntry(t *testing.T) {
 	path := tempReplica(t)
 	b := backendFor(t, &localDriver{path: path}, "origin-a")
+	key := []byte("the passphrase this machine stretched")
 
-	appendOne := func(pk string, mac []byte) {
+	appendOne := func(pk string, mac []byte, boundary Boundary) {
 		t.Helper()
 		e := upsertEntry("origin-a", "board", pk, `{"title":"one"}`)
 		e.MAC = mac
-		if _, err := b.Append([]Entry{e}); err != nil {
+		if _, err := b.AppendSigned([]Entry{e}, boundary); err != nil {
 			t.Fatalf("append %s: %v", pk, err)
 		}
 	}
 
-	appendOne(`["u"]`, nil)
+	appendOne(`["u"]`, nil, Boundary{})
 	if _, ok := signedFromMeta(t, path, "origin-a"); ok {
 		t.Fatal("an unsigned batch recorded where signing starts")
 	}
 
-	appendOne(`["s"]`, []byte("the first signature"))
+	appendOne(`["s"]`, []byte("the first signature"), boundaryAt(key, "origin-a", 2))
 	value, ok := signedFromMeta(t, path, "origin-a")
 	if !ok {
 		t.Fatal("the first signed batch recorded nothing")
 	}
-	if value != "2" {
-		t.Errorf("signed_from = %q, want \"2\": the first signed sequence", value)
+	want := "2 " + encodeKeyValue(synclog.BoundaryTag(key, "origin-a", 2))
+	if value != want {
+		t.Errorf("signed_from = %q, want %q: the first signed sequence and its tag", value, want)
 	}
 
-	appendOne(`["t"]`, []byte("a later signature"))
+	appendOne(`["t"]`, []byte("a later signature"), Boundary{})
 	again, ok := signedFromMeta(t, path, "origin-a")
 	if !ok || again != value {
 		t.Errorf("signed_from = %q, want %q: a later signed batch moved the boundary", again, value)

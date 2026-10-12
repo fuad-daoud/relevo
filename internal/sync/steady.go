@@ -114,8 +114,12 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 	r.recordRemoteKDF(ctx, t)
 	locked := false
 	if err := within(ctx, t, r.stepTimeout(), func() error {
+		key, err := SigningKey(r.Local)
+		if err != nil {
+			return err
+		}
 		exp := synclog.NewExporter(shared, t)
-		exp.SetKey(SigningKey(r.Local))
+		exp.SetKey(key)
 		res, err := exp.Export()
 		out.Exported = res.Appended
 		return err
@@ -225,9 +229,12 @@ func (r *Runner) drainImport(ctx context.Context, shared *db.DB, t *StopTranspor
 	return drainImport(func() (synclog.ImportResult, error) {
 		var res synclog.ImportResult
 		err := within(ctx, t, r.stepTimeout(), func() error {
-			var ierr error
+			key, ierr := SigningKey(r.Local)
+			if ierr != nil {
+				return ierr
+			}
 			imp := synclog.NewImporter(shared, t)
-			imp.SetKey(SigningKey(r.Local))
+			imp.SetKey(key)
 			res, ierr = imp.Import()
 			return ierr
 		})

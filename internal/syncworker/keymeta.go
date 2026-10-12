@@ -7,10 +7,12 @@ package syncworker
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // The meta rows the material is kept in. The salt and the check are base64
@@ -126,37 +128,89 @@ func encodeKeyValue(value []byte) string {
 	return base64.StdEncoding.EncodeToString(value)
 }
 
-// writeSignedFrom records where this origin started signing: the first sequence
-// in the batch that carries a MAC.
+// writeSignedFrom records where this origin started signing, once, in the
+// append's own transaction so the row and the entries it describes cannot
+// disagree. The value is the sequence and a tag binding it to the key; a reader
+// refuses a row whose tag does not verify, so the worker takes both from the
+// exporter and only checks that the sequence is the one the batch gets.
 //
-// It runs in the append's own transaction so the marker and the entries it
-// describes cannot disagree, and it writes at most once per origin because the
-// row is insert-if-absent. A later signed batch therefore cannot move it, and
-// the marker keeps naming the boundary a reader refuses to cross unsigned --
-// moving it forward would retroactively bless entries that were never signed,
-// and moving it back would hold an origin that was already signing.
-func writeSignedFrom(ctx context.Context, tx *sql.Tx, origin string, written []Entry) error {
-	first := 0
-	for _, e := range written {
+// A batch with a signed entry for an origin that has no row is refused unless it
+// names that sequence, with nothing written: a row naming a later sequence
+// would bless the unsigned entries before it.
+func writeSignedFrom(ctx context.Context, tx *sql.Tx, origin string, written []Entry, boundary Boundary) error {
+	first := -1
+	for n, e := range written {
 		if len(e.MAC) > 0 {
-			first = e.Seq
+			first = n
 			break
 		}
 	}
-	if first == 0 {
+	if first < 0 {
 		return nil
+	}
+	var have int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM meta WHERE key = ?", signedFromPrefix+origin).Scan(&have); err != nil {
+		return fmt.Errorf("syncworker: record where signing starts: %w", err)
+	}
+	if have > 0 {
+		return nil
+	}
+	if boundary.Seq != written[first].Seq || len(boundary.Tag) != sha256.Size {
+		return MarkRefusal(CodeBoundary, fmt.Errorf("%w: wanted %d, got %d", ErrBoundary, written[first].Seq, boundary.Seq))
 	}
 	if _, err := tx.ExecContext(ctx,
 		"INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
-		signedFromPrefix+origin, strconv.Itoa(first)); err != nil {
+		signedFromPrefix+origin, fmt.Sprintf("%d %s", boundary.Seq, encodeKeyValue(boundary.Tag))); err != nil {
 		return fmt.Errorf("syncworker: record where signing starts: %w", err)
 	}
 	return nil
 }
 
-// readSignedFrom reads the sequence each origin started signing at.
+// readSignedFrom reads each origin's stored boundary.
+//
+// The meta table is written by other machines, so a row that does not parse is
+// not skipped: it comes back with sequence 0 or no tag, and the reader refuses
+// that origin the way it refuses a boundary whose tag fails.
 func (b *TursoBackend) readSignedFrom(ctx context.Context, out *MarkState) error {
-	return b.readMetaPositions(ctx, signedFromPrefix, &out.SignedFrom)
+	rows, err := b.db.QueryContext(ctx,
+		"SELECT key, value FROM meta WHERE key LIKE ?", signedFromPrefix+"%")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var key, value sql.NullString
+		if err := rows.Scan(&key, &value); err != nil {
+			return err
+		}
+		seq, tag := parseBoundary(value.String)
+		if out.SignedFrom == nil {
+			out.SignedFrom = make(map[string]int)
+			out.SignedTags = make(map[string][]byte)
+		}
+		origin := key.String[len(signedFromPrefix):]
+		out.SignedFrom[origin] = seq
+		out.SignedTags[origin] = tag
+	}
+	return rows.Err()
+}
+
+// parseBoundary reads "<seq> <base64 tag>"; what does not parse is 0 and nil.
+func parseBoundary(value string) (int, []byte) {
+	fields := strings.Split(value, " ")
+	seq, err := strconv.Atoi(fields[0])
+	if err != nil || seq < 0 {
+		return 0, nil
+	}
+	if len(fields) != 2 {
+		return seq, nil
+	}
+	tag, err := base64.StdEncoding.DecodeString(fields[1])
+	if err != nil {
+		return seq, nil
+	}
+	return seq, tag
 }
 
 // readMetaPositions reads the meta rows whose key begins with prefix into a map

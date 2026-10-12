@@ -38,11 +38,13 @@ type Importer struct {
 	// the default.
 	regionRows int
 	passes     int
-	// signedFrom is the sequence each origin must be signed from, and
-	// localSigned this machine's own records behind it; both are set per run
-	// and only with a key.
+	// signedFrom is the sequence each origin must be signed from, localSigned
+	// this machine's own records behind it and badBoundary the refusal for an
+	// origin whose remote boundary did not verify; all are set per run and
+	// only with a key.
 	signedFrom  map[string]int
 	localSigned map[string]int
+	badBoundary map[string]error
 	// AfterBatch runs after each batch or snapshot chunk is written, so a
 	// caller can account for the transfer before the next one starts.
 	AfterBatch func()
@@ -245,8 +247,7 @@ func (i *Importer) Import() (ImportResult, error) {
 			continue
 		}
 		applied, hold, drop, err := i.applyBatch(batch, marks)
-		var stalled *stallError
-		if errors.As(err, &stalled) {
+		if holdsOrigin(err) {
 			total.Stalled = append(total.Stalled, Stall{Origin: origin, Label: i.labelOf(origin), Reason: err.Error()})
 			held[origin] = true
 			continue

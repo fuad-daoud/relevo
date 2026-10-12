@@ -69,12 +69,18 @@ func (s *Supervisor) Ready() bool { return s.cfg.URL != "" && s.cfg.Token != "" 
 
 // Append writes one batch of this origin's entries.
 func (s *Supervisor) Append(entries []synclog.Entry) ([]synclog.Entry, error) {
+	return s.AppendSigned(entries, synclog.Boundary{})
+}
+
+// AppendSigned is Append with the boundary the exporter predicted for its first
+// signed entry.
+func (s *Supervisor) AppendSigned(entries []synclog.Entry, boundary synclog.Boundary) ([]synclog.Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []synclog.Entry
 	err := s.drive("export", func(c *Client) error {
 		var e error
-		out, e = c.Append(entries)
+		out, e = c.AppendSigned(entries, boundary)
 		return e
 	})
 	return out, err

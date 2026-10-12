@@ -1,6 +1,7 @@
 package synclog
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -14,8 +15,19 @@ func (e *signatureError) Error() string { return e.msg }
 
 func (e *signatureError) Unwrap() error { return ErrBadSignature }
 
+// holdsOrigin reports whether err holds only its own origin for the run: a body
+// that could not be fetched, or a signature that was refused.
+func holdsOrigin(err error) bool {
+	var stalled *stallError
+	var refused *signatureError
+	return errors.As(err, &stalled) || errors.As(err, &refused)
+}
+
 // loadSigned computes, per origin, the sequence from which entries must be
-// signed: the lower of the remote's value and this machine's own record.
+// signed: the lowest of this machine's own record and every remote boundary
+// that verifies under its key. A boundary that does not verify holds its origin
+// for the run, and one that does is recorded locally at once, so deleting the
+// remote row afterwards changes nothing.
 func (i *Importer) loadSigned(state MarkState) error {
 	if len(i.key) == 0 {
 		return nil
@@ -26,13 +38,26 @@ func (i *Importer) loadSigned(state MarkState) error {
 	}
 	i.localSigned = local
 	i.signedFrom = make(map[string]int, len(state.SignedFrom)+len(local))
-	for origin, seq := range state.SignedFrom {
+	for origin, seq := range local {
 		i.signedFrom[origin] = seq
 	}
-	for origin, seq := range local {
-		if have, ok := i.signedFrom[origin]; !ok || seq < have {
-			i.signedFrom[origin] = seq
+	i.badBoundary = make(map[string]error)
+	for origin, seq := range state.SignedFrom {
+		if origin == i.db.Origin() {
+			continue
 		}
+		if seq < 1 || !VerifyBoundary(i.key, origin, seq, state.SignedTags[origin]) {
+			i.badBoundary[origin] = &signatureError{fmt.Sprintf("the signed-from boundary of %q does not verify under this machine's key", origin)}
+			continue
+		}
+		if have, ok := local[origin]; ok && have <= seq {
+			continue
+		}
+		if err := i.db.LowerSignedFrom(origin, seq); err != nil {
+			return fmt.Errorf("synclog: import: %w", err)
+		}
+		i.localSigned[origin] = seq
+		i.signedFrom[origin] = seq
 	}
 	return nil
 }
@@ -43,13 +68,16 @@ func (i *Importer) verify(origin string, entries []Entry) error {
 	if len(i.key) == 0 {
 		return nil
 	}
+	if err := i.badBoundary[origin]; err != nil {
+		return err
+	}
 	from, signs := i.signedFrom[origin]
 	for _, e := range entries {
 		if len(e.MAC) == 0 {
 			continue
 		}
 		if !VerifyMAC(i.key, e) {
-			return &signatureError{fmt.Sprintf("entry %d from %s has a bad signature", e.Seq, origin)}
+			return &signatureError{fmt.Sprintf("entry %d from %q has a bad signature", e.Seq, origin)}
 		}
 		if !signs || e.Seq < from {
 			from, signs = e.Seq, true
@@ -57,19 +85,16 @@ func (i *Importer) verify(origin string, entries []Entry) error {
 	}
 	for _, e := range entries {
 		if len(e.MAC) == 0 && signs && e.Seq >= from {
-			return &signatureError{fmt.Sprintf("entry %d from %s is unsigned but %s signs from %d", e.Seq, origin, origin, from)}
+			return &signatureError{fmt.Sprintf("entry %d from %q is unsigned but %q signs from %d", e.Seq, origin, origin, from)}
 		}
 	}
 	return nil
 }
 
-// recordSigned writes this machine's signed-from record for an origin it has
-// none for yet, at the lowest verified entry, inside the caller's transaction.
+// recordSigned lowers this machine's signed-from record for an origin to the
+// lowest verified entry, inside the caller's transaction.
 func (i *Importer) recordSigned(tx *db.Tx, origin string, entries []Entry) (int, bool, error) {
 	if len(i.key) == 0 {
-		return 0, false, nil
-	}
-	if _, have := i.localSigned[origin]; have {
 		return 0, false, nil
 	}
 	first, found := 0, false
@@ -79,6 +104,9 @@ func (i *Importer) recordSigned(tx *db.Tx, origin string, entries []Entry) (int,
 		}
 	}
 	if !found {
+		return 0, false, nil
+	}
+	if have, ok := i.localSigned[origin]; ok && have <= first {
 		return 0, false, nil
 	}
 	if err := tx.LowerSignedFrom(origin, first); err != nil {

@@ -122,6 +122,12 @@ func (b *TursoBackend) Open(spec Spec) error {
 // covered only once it has the numbered entries back, so an append answered
 // before the remote holds it would drop changes the log never received.
 func (b *TursoBackend) Append(entries []Entry) ([]Entry, error) {
+	return b.AppendSigned(entries, Boundary{})
+}
+
+// AppendSigned is Append with the boundary the exporter predicted for its first
+// signed entry.
+func (b *TursoBackend) AppendSigned(entries []Entry, boundary Boundary) ([]Entry, error) {
 	if err := b.ready(); err != nil {
 		return nil, err
 	}
@@ -134,7 +140,7 @@ func (b *TursoBackend) Append(entries []Entry) ([]Entry, error) {
 		}
 	}
 	ctx := context.Background()
-	written, err := b.writeBatch(ctx, entries)
+	written, err := b.writeBatch(ctx, entries, boundary)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +152,7 @@ func (b *TursoBackend) Append(entries []Entry) ([]Entry, error) {
 
 // writeBatch numbers one batch and writes its log rows and head updates in one
 // transaction, so a reader sees the whole batch or none of it.
-func (b *TursoBackend) writeBatch(ctx context.Context, entries []Entry) ([]Entry, error) {
+func (b *TursoBackend) writeBatch(ctx context.Context, entries []Entry, boundary Boundary) ([]Entry, error) {
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("syncworker: append: %w", err)
@@ -173,7 +179,7 @@ func (b *TursoBackend) writeBatch(ctx context.Context, entries []Entry) ([]Entry
 		}
 		written = append(written, e)
 	}
-	if err := writeSignedFrom(ctx, tx, b.spec.Origin, written); err != nil {
+	if err := writeSignedFrom(ctx, tx, b.spec.Origin, written, boundary); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
