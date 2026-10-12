@@ -151,8 +151,9 @@ func (d *Daemon) exportIfPending(ctx context.Context, now time.Time) {
 }
 
 // outboxPending reports whether the machine has writes waiting to be exported:
-// a row in the shared file's outbox, or a document signal in the local file. It reads the daemon's own handle and never opens one: a
-// machine with no database has nothing waiting.
+// a row in the shared file's outbox, or a document signal in the local file. It
+// reads the daemon's own handle and never opens one: a machine with no database
+// has nothing waiting.
 func (d *Daemon) outboxPending() bool {
 	if d.rt.Store == nil {
 		return false
@@ -182,9 +183,10 @@ func (d *Daemon) outboxPending() bool {
 
 // holdsSigningKey reports whether this machine can sign a document entry. A
 // locked machine keeps its document signals unexported, so counting them would
-// start an attempt every debounce that can never clear them.
+// start an attempt every debounce that can never clear them. The key is read
+// through the runner the tick drives, which is the one the exporter signs with.
 func (d *Daemon) holdsSigningKey() bool {
-	runner := d.rt.Sync
+	runner := d.syncRunner()
 	if runner == nil || runner.Local == nil {
 		return false
 	}

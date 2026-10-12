@@ -260,6 +260,22 @@ func TestLockedMachineDoesNotCountConfigSignalsAsPending(t *testing.T) {
 	}
 }
 
+// A served daemon drives the runner it shares with the verbs, and its runtime
+// seam holds no machine-local file; the key is read where the exporter reads it.
+func TestServedDaemonCountsConfigSignalsWithTheSharedRunnersKey(t *testing.T) {
+	t.Parallel()
+	log := synclog.NewMemTransport("x")
+	m := newCfgMachine(t, log, cfgSyncKey, true)
+	d := NewDaemon(Runtime{Store: m.st, Sync: &relevosync.Runner{}}, time.Second)
+	d.SetSyncVerbs(&VerbRunner{Runner: m.runner})
+	m.attempt(t)
+
+	m.set(t, config.Candidates, cfgCandidate)
+	if !d.outboxPending() {
+		t.Error("outbox not pending after a config write on a served daemon")
+	}
+}
+
 // TestAppliedConfigItemReloadsTheRunningDaemon pins that an item the importer
 // applies moves the config version the daemon's watcher compares, so the
 // running daemon reloads it with no restart.
