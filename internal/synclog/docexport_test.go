@@ -214,3 +214,143 @@ func TestReconcileIgnoresDocTables(t *testing.T) {
 		t.Fatalf("reconcile = %+v appended %v; want nothing for a doc entry", got, rec.shape())
 	}
 }
+
+// TestRefusedDocAppendKeepsTheSignalAndState pins that a log which refuses the
+// append leaves the signal and the export state as they were, so the next
+// export sends the same keys again rather than believing they went.
+func TestRefusedDocAppendKeepsTheSignalAndState(t *testing.T) {
+	doc := newFakeDoc("config")
+	registerDoc(t, doc)
+	doc.items["policy"] = json.RawMessage(`{"a":1}`)
+	d, path := exporterFile(t, "m1")
+	r := &recording{MemTransport: NewMemTransport("m1"), refuse: true}
+	dirty(t, path)
+
+	if _, err := docExporter(d, r, keyA).Export(); err == nil {
+		t.Fatal("an export whose append was refused reported success")
+	}
+	if signals, err := d.DocSignals(); err != nil || len(signals) != 1 {
+		t.Fatalf("signals = %v, %v; want the one kept", signals, err)
+	}
+	if state, err := d.DocExportState("config"); err != nil || len(state) != 0 {
+		t.Fatalf("export state = %v, %v; want none recorded", state, err)
+	}
+
+	r.refuse = false
+	r.batches = nil
+	if _, err := docExporter(d, r, keyA).Export(); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if got := docShape(r); got != `policy={"a":1}` {
+		t.Fatalf("retry = %q, want the key sent", got)
+	}
+}
+
+// TestDocItemsFailureIsReportedAndKeepsTheSignal pins that a doc that cannot
+// say what it holds exports nothing and is not treated as empty, which would
+// export a delete for every key.
+func TestDocItemsFailureIsReportedAndKeepsTheSignal(t *testing.T) {
+	doc := newFakeDoc("config")
+	registerDoc(t, doc)
+	doc.err = ErrInvalid
+	d, path := exporterFile(t, "m1")
+	r := &recording{MemTransport: NewMemTransport("m1")}
+	dirty(t, path)
+
+	if _, err := docExporter(d, r, keyA).Export(); err == nil {
+		t.Fatal("an export of a doc that could not be read reported success")
+	}
+	if got := docShape(r); got != "" {
+		t.Fatalf("exported %q from an unreadable doc", got)
+	}
+	if signals, err := d.DocSignals(); err != nil || len(signals) != 1 {
+		t.Fatalf("signals = %v, %v; want the one kept", signals, err)
+	}
+}
+
+// TestItemDigestIgnoresSpacing pins that two spellings of one value share a
+// digest and a different value does not.
+func TestItemDigestIgnoresSpacing(t *testing.T) {
+	a, _ := ItemDigest(json.RawMessage(`{"a": 1}`))
+	b, _ := ItemDigest(json.RawMessage(`{"a":1}`))
+	c, _ := ItemDigest(json.RawMessage(`{"a":2}`))
+	if a != b || a == c {
+		t.Fatalf("digests %s %s %s: want the first two equal and the third apart", a, b, c)
+	}
+}
+
+type brokenStamper struct{ *fakeDoc }
+
+func (brokenStamper) ItemUpdatedAt(string) (time.Time, bool, error) {
+	return time.Time{}, false, ErrInvalid
+}
+
+// TestUnreadableUpdatedAtStopsTheExport pins that a doc which cannot say when a
+// key was written exports nothing for it, rather than falling back to the clock
+// and outranking an edit made elsewhere.
+func TestUnreadableUpdatedAtStopsTheExport(t *testing.T) {
+	doc := brokenStamper{newFakeDoc("config")}
+	registerDoc(t, doc.fakeDoc)
+	sharedDocs["config"] = doc
+	doc.items["policy"] = json.RawMessage(`{"a":1}`)
+	d, path := exporterFile(t, "m1")
+	r := &recording{MemTransport: NewMemTransport("m1")}
+	dirty(t, path)
+
+	if _, err := docExporter(d, r, keyA).Export(); err == nil {
+		t.Fatal("an export whose key had no readable time reported success")
+	}
+	if got := docShape(r); got != "" {
+		t.Fatalf("exported %q", got)
+	}
+}
+
+// TestCorruptExportStateStampStopsTheExport pins that a stored stamp that is
+// not a canonical number is reported rather than reissued from zero.
+func TestCorruptExportStateStampStopsTheExport(t *testing.T) {
+	doc := newFakeDoc("config")
+	registerDoc(t, doc)
+	doc.items["policy"] = json.RawMessage(`{"a":2}`)
+	d, path := exporterFile(t, "m1")
+	seed(t, path, `INSERT INTO shared_export_state (doc, key, origin, stamp, digest) VALUES ('config', 'policy', 'm1', 'x', 'old')`)
+	r := &recording{MemTransport: NewMemTransport("m1")}
+	dirty(t, path)
+
+	if _, err := docExporter(d, r, keyA).Export(); err == nil {
+		t.Fatal("an export over a corrupt stored stamp reported success")
+	}
+	if got := docShape(r); got != "" {
+		t.Fatalf("exported %q", got)
+	}
+}
+
+// TestReaddedKeyOutranksItsTombstone pins that a key deleted and then written
+// again is sent with a stamp above the removal's, so it wins over the delete
+// every reader has already applied.
+func TestReaddedKeyOutranksItsTombstone(t *testing.T) {
+	doc := newFakeDoc("config")
+	registerDoc(t, doc)
+	doc.items["policy"] = json.RawMessage(`{"a":1}`)
+	d, path := exporterFile(t, "m1")
+	r := &recording{MemTransport: NewMemTransport("m1")}
+	var stamps []Stamp
+	for _, items := range []map[string]json.RawMessage{
+		{"policy": json.RawMessage(`{"a":1}`)},
+		{},
+		{"policy": json.RawMessage(`{"a":1}`)},
+	} {
+		doc.items = items
+		dirty(t, path)
+		if _, err := docExporter(d, r, keyA).Export(); err != nil {
+			t.Fatalf("export: %v", err)
+		}
+		parsed, err := ParseDocEntry(r.appended()[len(stamps)])
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		stamps = append(stamps, parsed.Stamp)
+	}
+	if !(stamps[0] < stamps[1] && stamps[1] < stamps[2]) {
+		t.Fatalf("stamps %v are not strictly rising across add, delete, re-add", stamps)
+	}
+}
