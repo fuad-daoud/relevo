@@ -30,12 +30,16 @@ CREATE TABLE IF NOT EXISTS shared_outbox (
 -- for a value that came from here in the first place. A join clears it, so the
 -- first export after a join re-emits every key the new peer had never seen.
 -- origin is NOT NULL because it is half of what says whether an arriving
--- (stamp, origin) is this machine's own echo or another machine's news.
+-- (stamp, origin) is this machine's own echo or another machine's news. digest
+-- is a hash of the value the row stands for: a stamp says when a key was
+-- written, not whether the doc still holds what was written, and the diff has
+-- to tell a changed key from an unchanged one without keeping a copy of it.
 CREATE TABLE IF NOT EXISTS shared_export_state (
     doc TEXT NOT NULL,
     key TEXT NOT NULL,
     origin TEXT NOT NULL,
     stamp TEXT NOT NULL,
+    digest TEXT NOT NULL,
     PRIMARY KEY (doc, key)
 );
 

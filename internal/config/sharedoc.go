@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 )
@@ -72,6 +73,17 @@ func (d *SharedDoc) Items() (map[string]json.RawMessage, error) {
 		}
 	}
 	return out, nil
+}
+
+// ItemUpdatedAt is when the section a key lives in was last written, which is
+// as fine as the document records: an item of a per-item section carries its
+// section's time.
+func (d *SharedDoc) ItemUpdatedAt(key string) (time.Time, bool, error) {
+	sec, _, err := splitKey(key)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	return d.store.db.ConfigUpdatedAt(string(sec))
 }
 
 // syncs reports whether a section is part of the shared document at all. The

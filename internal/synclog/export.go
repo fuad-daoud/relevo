@@ -84,7 +84,9 @@ func (e *Exporter) Export() (ExportResult, error) {
 			return total, fmt.Errorf("synclog: export: %w", err)
 		}
 		if one.Drained == 0 {
-			return total, nil
+			docs, err := e.exportDocs()
+			total.Appended += docs
+			return total, err
 		}
 	}
 }

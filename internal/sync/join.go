@@ -348,6 +348,11 @@ func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (EnableRes
 		if err := WriteJoin(e.Request.Local, now); err != nil {
 			return res, err
 		}
+		// The new peer has seen none of the doc keys this machine exported to
+		// another log, so the next export sends every one again.
+		if err := e.Request.Local.ClearDocExportState(); err != nil {
+			return res, err
+		}
 	}
 	imported, err := e.drainImport(transport)
 	res.Imported = imported

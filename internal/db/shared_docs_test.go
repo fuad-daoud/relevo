@@ -124,7 +124,7 @@ func TestSharedStateRowsCarryAnOrigin(t *testing.T) {
 func TestOutboxSignalCarriesNoPayload(t *testing.T) {
 	sqlDB := migratedSQLDB(t)
 
-	if _, err := sqlDB.Exec(`INSERT INTO shared_outbox (doc, dirtied_at)
+	if _, err := sqlDB.Exec(`INSERT OR REPLACE INTO shared_outbox (doc, dirtied_at)
 		VALUES ('config', '2026-10-12T00:00:00.000Z')`); err != nil {
 		t.Fatalf("write the doc signal: %v", err)
 	}
