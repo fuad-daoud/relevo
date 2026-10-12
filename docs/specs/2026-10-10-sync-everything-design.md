@@ -212,16 +212,36 @@ at once, through the same path `refreshRoles` uses at daemon start.
 **Key.** The passphrase is turned into a 32-byte key with Argon2id, using
 `kdf_salt` from the remote `meta` table; `key_check` in `meta` rejects a
 wrong passphrase. The key is stored locally as the machine-only secret
-`sync.key`. It's entered at `db sync enable`, or later with
-`db sync unlock`. Until it's present, the machine syncs history unsigned
+`sync.key`. Until it's present, the machine syncs history unsigned
 under the merged rules, imports no shared docs, and status says "locked".
+
+- **Unlock.** The passphrase is entered with `relevo db sync unlock`.
+  `--new` creates `kdf_salt`, `kdf` and `key_check` insert-if-absent; a
+  machine that races another adopts the winner's salt. The passphrase comes
+  from `--passphrase-stdin`, then `RELEVO_SYNC_PASSPHRASE`, then a TTY.
+  `enable` takes the passphrase only from step 5 on.
+- **KDF bounds.** The remote chooses the Argon2id parameters, so a machine
+  refuses any parameters outside fixed bounds.
 
 **Signing (step 3).**
 - Every entry carries `mac = HMAC-SHA256(key, canonical entry)`.
-- `meta` records, per origin, the first seq that was signed.
+- **What a MAC covers.** Origin, table, pk, op, schema version, the
+  compacted body as stored (a `$ref`, not the fetched body) and At in
+  RFC3339Nano UTC. It does not cover Seq or Batch.
+- **signed-from.** The worker writes `signed_from.<origin>` once, at the
+  origin's first signed entry. A reader takes the lower of that value and its
+  own local record of the first entry it verified, so a remote that rewrites
+  `meta` cannot switch checking off.
 - An importer refuses an unsigned or badly signed entry at or above that
-  seq, holds the origin, and latches with the reason.
+  point, holds the origin, and latches with the reason.
+- **Verification order.** Verification runs before any body fetch.
+- **Locked machine, signed origin.** Such a machine holds its export and says
+  `run relevo db sync unlock`.
 - Shared docs and takeovers are only ever accepted signed.
+- **Known limits.** A holder of the Turso token can replay an old signed
+  entry at a new seq, or delete entries; signing detects neither.
+- **Rollout.** Format 3 is refused by older binaries, so every machine
+  installs the release before anyone runs unlock.
 
 **Secrets (step 5).**
 - **Allow-list:** `typesafe`, `client.key` (one identity for all the owner's
