@@ -28,7 +28,8 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"       relevo db sync status [--json]\n" +
 	"       relevo db sync push [--timeout D] [--json]\n" +
 	"       relevo db sync pull [--timeout D] [--json]\n" +
-	"       relevo db sync reconcile --dry-run [--timeout D] [--json]\n\n" +
+	"       relevo db sync reconcile --dry-run [--timeout D] [--json]\n" +
+	"       relevo db sync unlock [--new] [--passphrase-stdin] [--json]\n\n" +
 	"enable joins this machine to the remote: it checks the origin gate, stores\n" +
 	"the token and the remote, then imports the other origins and exports this\n" +
 	"one's history before the mark goes on. An interrupted enable resumes.\n" +
@@ -36,7 +37,10 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"origins' entries and imports them; each is the half of the steady exchange\n" +
 	"it names. retry clears a latched breaker and drops the worker, so the next\n" +
 	"tick starts a fresh one. reconcile --dry-run lists the rows this machine\n" +
-	"would append to or delete from the log, and appends nothing.\n" +
+	"would append to or delete from the log, and appends nothing. unlock stores\n" +
+	"the sync key derived from the passphrase; --new creates it on a remote that\n" +
+	"holds none. The passphrase comes from --passphrase-stdin, else " + dbSyncPassphraseEnv + ",\n" +
+	"else a prompt.\n" +
 	"Writing the machine-local sync section by hand stays the advanced\n" +
 	"route: `relevo config set sync '{\"remote_url\":\"...\"}'`.\n" +
 	"--token-stdin reads the turso.token from standard input and\n" +
@@ -81,6 +85,8 @@ func cmdDBSync(args []string) error {
 		return cmdDBSyncPull(args[1:])
 	case len(args) > 0 && args[0] == "reconcile":
 		return cmdDBSyncReconcile(args[1:])
+	case len(args) > 0 && args[0] == "unlock":
+		return cmdDBSyncUnlock(args[1:])
 	case len(args) > 0 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help"):
 		fmt.Fprint(os.Stderr, dbSyncUsage)
 		return errHelpShown
@@ -196,6 +202,9 @@ type dbSyncStatusDoc struct {
 	RemoteURL    string `json:"remote_url,omitempty"`
 	Namespace    string `json:"namespace,omitempty"`
 	TokenPresent bool   `json:"token_present"`
+	// Key is unlocked when this machine holds the sync key, locked when it
+	// holds none and the remote does, and none otherwise.
+	Key string `json:"key,omitempty"`
 	// R2Configured says whether this machine holds a complete set of bucket
 	// credentials. R2Endpoint and R2Bucket describe where bodies would go, which
 	// is what a reader needs to tell this machine's bucket from another's. There
@@ -482,6 +491,7 @@ func dbSyncStatusLine(doc dbSyncStatusDoc) string {
 	if r2 := dbSyncR2Line(doc); r2 != "" {
 		line += ", r2: " + r2
 	}
+	line += dbSyncKeyClause(doc.Key)
 	return line + dbSyncStatusDetails(doc) + "\n"
 }
 
@@ -520,25 +530,6 @@ func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 	}
 	b.WriteString(dbSyncAttemptDetails(doc.LastAttempt))
 	return b.String()
-}
-
-// dbSyncQuotasLine renders the month's traffic and the stored bytes against the
-// plan quotas the document carries. A storage reading that was never taken reads
-// as not measured, never as zero.
-func dbSyncQuotasLine(doc dbSyncStatusDoc) string {
-	var month relevosync.ByteCounters
-	if doc.Bytes != nil {
-		month = *doc.Bytes
-	}
-	var storage relevosync.Storage
-	if doc.Storage != nil {
-		storage = *doc.Storage
-	}
-	return relevosync.FormatQuotas(month, relevosync.Settings{
-		QuotaTursoSync:    doc.QuotaTursoSync,
-		QuotaTursoStorage: doc.QuotaTursoStorage,
-		QuotaR2Storage:    doc.QuotaR2Storage,
-	}, storage)
 }
 
 // dbSyncClassify maps a failure out of the sync package onto the frame's codes.

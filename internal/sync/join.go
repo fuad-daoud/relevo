@@ -12,6 +12,7 @@ package sync
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -333,6 +334,7 @@ func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (EnableRes
 		return res, fmt.Errorf("sync: enable: open the log: %w", err)
 	}
 	recordStats(e.Request.Local, &e.last, opened)
+	e.recordRemoteKDF(transport)
 	_, resumed, err := ReadJoin(e.Request.Local)
 	if err != nil {
 		return res, err
@@ -433,4 +435,11 @@ func (e *Enabler) now() time.Time {
 		return e.Now()
 	}
 	return time.Now()
+}
+
+// recordRemoteKDF is the join's hello: it learns whether the remote holds a key.
+func (e *Enabler) recordRemoteKDF(transport synclog.LogTransport) {
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
+	defer cancel()
+	RecordRemoteKDF(ctx, e.Request.Local, transport)
 }

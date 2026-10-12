@@ -333,7 +333,7 @@ func TestSyncVerbDisableStillRuns(t *testing.T) {
 	if !res.OK {
 		t.Fatalf("disable refused: %s", res.Message)
 	}
-	if got := strings.Join(res.Steps, ","); got != "final export,mark off,delete token,stop worker,delete replica,drop client" {
+	if got := strings.Join(res.Steps, ","); got != "final export,mark off,delete token,delete key,stop worker,delete replica,drop client" {
 		t.Errorf("steps = %q, want the contract's six in order", got)
 	}
 	if !res.FinalPush {

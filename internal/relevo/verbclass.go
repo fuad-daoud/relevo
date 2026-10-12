@@ -32,6 +32,10 @@ func verbClassify(err error) string {
 		return wire.SyncCodeRemoteConflict
 	case errors.Is(err, relevosync.ErrJoinOverQuota):
 		return wire.SyncCodeOverQuota
+	case errors.Is(err, relevosync.ErrNoKDF):
+		return wire.SyncCodeNoKDF
+	case errors.Is(err, relevosync.ErrWrongPassphrase):
+		return wire.SyncCodeWrongPassphrase
 	case errors.Is(err, relevosync.ErrAuthRefused):
 		return wire.SyncCodeAuthRefused
 	case errors.Is(err, relevosync.ErrQuotaReached):

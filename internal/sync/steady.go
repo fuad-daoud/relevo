@@ -111,6 +111,7 @@ func (r *Runner) attempt(ctx context.Context, shared *db.DB) SteadyResult {
 // position the attempt had not reached yet.
 func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) SteadyResult {
 	var out SteadyResult
+	r.recordRemoteKDF(ctx, t)
 	if err := within(ctx, t, r.stepTimeout(), func() error {
 		res, err := synclog.NewExporter(shared, t).Export()
 		out.Exported = res.Appended
@@ -351,4 +352,12 @@ func (r *Runner) put(key string, value any) {
 	if err := r.Local.KVPut(key, body); err != nil {
 		slog.Warn("sync: write a marker", "key", key, "err", err)
 	}
+}
+
+// recordRemoteKDF is the exchange's hello: it learns whether the remote holds a
+// key, under the step bound so a silent remote costs one step.
+func (r *Runner) recordRemoteKDF(ctx context.Context, t *StopTransport) {
+	ctx, cancel := context.WithTimeout(ctx, r.stepTimeout())
+	defer cancel()
+	RecordRemoteKDF(ctx, r.Local, t)
 }

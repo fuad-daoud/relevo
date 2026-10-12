@@ -329,7 +329,7 @@ var registry = []verbEntry{
 	{
 		Name:    "db sync",
 		Summary: "turn this machine's cloud sync on and off, and drive or inspect it by hand",
-		Args:    "enable|disable|retry|status|push|pull|reconcile",
+		Args:    "enable|disable|retry|status|push|pull|reconcile|unlock",
 		Flags:   []string{},
 		Exit:    []int{0, 2},
 		Errors:  []string{},
@@ -398,6 +398,15 @@ var registry = []verbEntry{
 		Output:  "json:DbSyncStatusDoc",
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"config_invalid", "conflict", "internal", "usage"},
+	},
+	{
+		Name:    "db sync unlock",
+		Summary: "derive the sync key from a passphrase and store it; --new creates the remote's key where it holds none",
+		Args:    "[--new] [--passphrase-stdin] [--json]",
+		Flags:   []string{"--json", "--new", "--passphrase-stdin"},
+		Output:  "json:DbSyncUnlockDoc",
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"config_invalid", "internal", "refused", "remote_auth", "remote_unreachable", "usage"},
 	},
 	{
 		Name:    "doctor",

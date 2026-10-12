@@ -109,6 +109,8 @@ type dbSyncVerbOptions struct {
 	Yes bool
 	// DryRun is reconcile's --dry-run.
 	DryRun bool
+	// New is unlock's --new.
+	New bool
 }
 
 // sendSyncVerb sends one verb over the framed surface and classifies the answer.
@@ -142,6 +144,7 @@ func sendSyncVerbToken(ctx context.Context, shared *db.DB, verb string, token []
 		R2SecretLen: opts.R2SecretLen,
 		Yes:         opts.Yes,
 		DryRun:      opts.DryRun,
+		New:         opts.New,
 	}
 	res, err := shared.SyncVerb(ctx, req, token)
 	if err != nil {
@@ -181,6 +184,10 @@ func dbSyncVerbRefusal(verb string, err error) error {
 		// The database was busy and nothing was written. The verb is idempotent
 		// over that, so the next hint is the verb itself rather than a report.
 		return failNext(codeRefused, "relevo db sync "+verb, "%s", refusal.Message)
+	case wire.SyncCodeNoKDF:
+		return failNext(codeRefused, "relevo db sync unlock --new", "%s", refusal.Message)
+	case wire.SyncCodeWrongPassphrase:
+		return fail(codeRefused, "%s", refusal.Message)
 	case wire.SyncCodeBackingOff:
 		// This machine is waiting out the delay a stopped worker earned, and
 		// nothing was written. The delay ends on its own, so the reader is

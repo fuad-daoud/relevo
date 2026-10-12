@@ -78,7 +78,7 @@ var dbSyncStatusCases = []dbSyncStatusCase{
 		name:      "off, never configured",
 		wantToken: relevosync.TokenOff,
 		wantLine:  "sync off (remote: (none), token: absent)\n",
-		wantDoc:   "{\n  \"enabled\": false,\n  \"token_present\": false\n}\n",
+		wantDoc:   "{\n  \"enabled\": false,\n  \"token_present\": false,\n  \"key\": \"none\"\n}\n",
 	},
 	{
 		name:      "off, a remote configured but sync never turned on",
@@ -87,7 +87,7 @@ var dbSyncStatusCases = []dbSyncStatusCase{
 		token:     syncStatusSecret,
 		wantToken: relevosync.TokenOff,
 		wantLine:  "sync off (remote: " + syncStatusRemote + ", token: present)\n",
-		wantDoc:   "{\n  \"enabled\": false,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true\n}\n",
+		wantDoc:   "{\n  \"enabled\": false,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true,\n  \"key\": \"none\"\n}\n",
 	},
 	{
 		name:      "on, no backlog",
@@ -98,7 +98,7 @@ var dbSyncStatusCases = []dbSyncStatusCase{
 		token:     syncStatusSecret,
 		wantToken: relevosync.TokenOK,
 		wantLine:  "sync on (remote: " + syncStatusRemote + ", token: present)\n",
-		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true\n}\n",
+		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true,\n  \"key\": \"none\"\n}\n",
 	},
 	{
 		name:      "on, a backlog at the threshold",
@@ -110,7 +110,7 @@ var dbSyncStatusCases = []dbSyncStatusCase{
 		token:     syncStatusSecret,
 		wantToken: relevosync.TokenOK,
 		wantLine:  "sync on (remote: " + syncStatusRemote + ", token: present) · backlog: 100\n",
-		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true,\n  \"backlog\": 100\n}\n",
+		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true,\n  \"key\": \"none\",\n  \"backlog\": 100\n}\n",
 	},
 	{
 		name:      "on, a backlog over the threshold",
@@ -122,7 +122,7 @@ var dbSyncStatusCases = []dbSyncStatusCase{
 		token:     syncStatusSecret,
 		wantToken: relevosync.TokenBehind,
 		wantLine:  "sync on (remote: " + syncStatusRemote + ", token: present) · backlog: 101\n",
-		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true,\n  \"backlog\": 101\n}\n",
+		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true,\n  \"key\": \"none\",\n  \"backlog\": 101\n}\n",
 	},
 	{
 		name:      "on, a tick that failed with no backlog",
@@ -132,7 +132,7 @@ var dbSyncStatusCases = []dbSyncStatusCase{
 		token:     syncStatusSecret,
 		wantToken: relevosync.TokenBehind,
 		wantLine:  "sync on (remote: " + syncStatusRemote + ", token: present)\n",
-		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true\n}\n",
+		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true,\n  \"key\": \"none\"\n}\n",
 	},
 	{
 		name:      "on, an error a human must act on",
@@ -144,7 +144,7 @@ var dbSyncStatusCases = []dbSyncStatusCase{
 		token:     syncStatusSecret,
 		wantToken: relevosync.TokenErr,
 		wantLine:  "sync on (remote: " + syncStatusRemote + ", token: present) · latched: the remote refused the stored credential\n",
-		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true,\n  \"latched\": true,\n  \"latch_cause\": \"the remote refused the stored credential\"\n}\n",
+		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true,\n  \"key\": \"none\",\n  \"latched\": true,\n  \"latch_cause\": \"the remote refused the stored credential\"\n}\n",
 	},
 	{
 		name:      "on, an origin held by a newer schema",
@@ -156,14 +156,14 @@ var dbSyncStatusCases = []dbSyncStatusCase{
 		token:     syncStatusSecret,
 		wantToken: relevosync.TokenBehind,
 		wantLine:  "sync on (remote: " + syncStatusRemote + ", token: present) · held: relevo on this machine is older than zen, which writes schema 5: upgrade this machine to follow it (mark rests at 3)\n",
-		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true,\n  \"held_origins\": [\n    \"relevo on this machine is older than zen, which writes schema 5: upgrade this machine to follow it (mark rests at 3)\"\n  ]\n}\n",
+		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true,\n  \"key\": \"none\",\n  \"held_origins\": [\n    \"relevo on this machine is older than zen, which writes schema 5: upgrade this machine to follow it (mark rests at 3)\"\n  ]\n}\n",
 	},
 	{
 		name:      "off, with an attention marker still set",
 		attention: "the remote refused the stored credential",
 		wantToken: relevosync.TokenOff,
 		wantLine:  "sync off (remote: (none), token: absent) · latched: the remote refused the stored credential\n",
-		wantDoc:   "{\n  \"enabled\": false,\n  \"token_present\": false,\n  \"latched\": true,\n  \"latch_cause\": \"the remote refused the stored credential\"\n}\n",
+		wantDoc:   "{\n  \"enabled\": false,\n  \"token_present\": false,\n  \"key\": \"none\",\n  \"latched\": true,\n  \"latch_cause\": \"the remote refused the stored credential\"\n}\n",
 	},
 }
 
