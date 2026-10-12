@@ -251,7 +251,9 @@ under the merged rules, imports no shared docs, and status says "locked".
   latch the machine, and the other origins keep importing.
 - **Verification order.** Verification runs before any body fetch.
 - **Locked machine, signed origin.** Such a machine holds its export and says
-  `run relevo db sync unlock`.
+  `run relevo db sync unlock`. An enable on it still finishes and turns sync
+  on, because unlock needs sync on; the join marker stays, and unlock sends the
+  history the join held back, signed.
 - Shared docs and takeovers are only ever accepted signed.
 - **Known limits.** A holder of the Turso token can replay an old signed
   entry at a new seq, or delete entries; signing detects neither. Entries

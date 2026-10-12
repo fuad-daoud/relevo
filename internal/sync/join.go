@@ -197,6 +197,10 @@ type EnableResult struct {
 	Estimate JoinEstimate
 	// Stats is the worker's last reading, which the runner counts on from.
 	Stats synclog.Stats
+	// Locked is whether the reconcile was held because this machine has no key
+	// while its own origin signs. The join marker then stays, and unlock sends
+	// this origin's history.
+	Locked bool
 }
 
 // Enabler drives one enable: the preflight, the store, the transport and the
@@ -352,16 +356,40 @@ func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (EnableRes
 	}
 	appended, batches, err := e.reconcile(transport)
 	res.Appended, res.Batches = appended, batches
-	if err != nil {
+	res.Locked = errors.Is(err, synclog.ErrLockedSignedOrigin)
+	if err != nil && !res.Locked {
 		return res, err
 	}
 	if err := e.publishMarks(transport); err != nil {
 		return res, err
 	}
+	// A locked machine still turns on, or unlock -- which needs sync on -- could
+	// never run. The marker stays because this origin's history is still owed:
+	// it keeps the outbox, and FinishJoin sends the history once there is a key.
+	if res.Locked {
+		return res, nil
+	}
 	if err := ClearJoin(e.Request.Local); err != nil {
 		return res, err
 	}
 	return res, nil
+}
+
+// FinishJoin sends what a locked join left owed: it reconciles this origin's
+// history, signed now that there is a key, publishes the marks and clears the
+// join marker. A machine with no join marker has nothing owed.
+func (e *Enabler) FinishJoin(transport synclog.LogTransport) (int, error) {
+	if _, joining, err := ReadJoin(e.Request.Local); err != nil || !joining {
+		return 0, err
+	}
+	appended, _, err := e.reconcile(transport)
+	if err != nil {
+		return appended, err
+	}
+	if err := e.publishMarks(transport); err != nil {
+		return appended, err
+	}
+	return appended, ClearJoin(e.Request.Local)
 }
 
 // JoinImportDeadline bounds the join's import loop. The join reads every other
