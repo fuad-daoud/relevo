@@ -487,7 +487,7 @@ func TestQuotaWordInARowIsNotAQuota(t *testing.T) {
 // caller sees.
 func TestUpgradeReportsAFailedPush(t *testing.T) {
 	path := tempReplica(t)
-	execOn(t, path, createStatements[0], createStatements[1], createStatements[2],
+	execOn(t, path, logWithoutMAC, createStatements[1], createStatements[2],
 		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '1')")
 	driver := &localDriver{path: path, pushErr: errors.New("the remote is not answering")}
 

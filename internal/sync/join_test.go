@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -442,4 +443,12 @@ func (r *runningLog) PullRange(string, int, int) ([]synclog.Entry, error) { retu
 
 func (r *runningLog) CompactOwn(int) (synclog.CompactResult, error) {
 	return synclog.CompactResult{}, nil
+}
+
+func (r *runningLog) KeyMeta(context.Context) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
+
+func (r *runningLog) KeyInit(context.Context, synclog.KeyMeta) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
 }

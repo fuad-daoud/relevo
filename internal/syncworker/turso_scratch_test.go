@@ -1,11 +1,15 @@
 package syncworker
 
 import (
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
 // TestScratchRemoteExportPullRoundTrip is the one test that reaches a real
@@ -128,6 +132,109 @@ func openScratch(t *testing.T, replicaPath, origin, url, token string) *TursoBac
 	return b
 }
 
+// TestScratchRemoteMACSurvivesThePipeAndTheLog signs an entry whose body is not
+// compact and whose time is neither UTC nor whole-nanosecond-free, and takes it
+// all the way round a real remote: over the pipe, through the JSON encoding, into
+// the log, back out on a pull. The signature has to verify on what comes back.
+//
+// It is the one place the two normalisations -- the compacted body and the UTC
+// time -- are checked against a real engine rather than against the fake, because
+// both are decisions this build makes about how the bytes are stored and only a
+// real store can disagree with them.
+func TestScratchRemoteMACSurvivesThePipeAndTheLog(t *testing.T) {
+	url := os.Getenv("RELEVO_SCRATCH_SYNC_URL")
+	token := os.Getenv("RELEVO_SCRATCH_SYNC_TOKEN")
+	if url == "" || token == "" {
+		t.Skip("set RELEVO_SCRATCH_SYNC_URL and RELEVO_SCRATCH_SYNC_TOKEN to run against a scratch remote")
+	}
+	origin := "scratch-mac-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	b := openScratch(t, filepath.Join(t.TempDir(), "m.db"), origin, url, token)
+
+	key := []byte("the passphrase this machine stretched")
+	// A body written with whitespace and a key in an order of its own, at a time
+	// carrying a zone and a nanosecond -- neither of which is how the log stores
+	// either.
+	e, err := synclog.NewUpsert(origin, "board", `["mac"]`, 3,
+		json.RawMessage("{\n  \"title\": \"signed\",\n  \"n\": 1\n}"),
+		time.Date(2026, 10, 8, 9, 30, 0, 123456789, time.FixedZone("an hour out", 3600)))
+	if err != nil {
+		t.Fatalf("build the entry: %v", err)
+	}
+	e.MAC = synclog.EntryMAC(key, e)
+
+	// Through the pipe's own encoding. The MAC travels as base64 and the body
+	// as a raw message, so the round trip is where a signature stops verifying
+	// if either is carried as anything but bytes.
+	line, err := json.Marshal([]Entry{entryToWire(e)})
+	if err != nil {
+		t.Fatalf("marshal the entry: %v", err)
+	}
+	var onWire []Entry
+	if err := json.Unmarshal(line, &onWire); err != nil {
+		t.Fatalf("decode the entry: %v", err)
+	}
+
+	written, err := b.AppendSigned(onWire, boundaryAt(key, origin, 1))
+	if err != nil {
+		t.Fatalf("append to the scratch remote: %v", err)
+	}
+	if len(written) != 1 || len(written[0].MAC) == 0 {
+		t.Fatalf("append = %+v, want one entry carrying its MAC", written)
+	}
+
+	// A pull returns only other origins' entries, so a second installation
+	// reads it back.
+	reader := openScratch(t, filepath.Join(t.TempDir(), "r.db"), origin+"-reader", url, token)
+	pulled, err := reader.Pull(nil)
+	if err != nil {
+		t.Fatalf("pull from the scratch remote: %v", err)
+	}
+	var found *Entry
+	for i := range pulled {
+		if pulled[i].Origin == origin && pulled[i].Seq == written[0].Seq {
+			found = &pulled[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("the pull of %d entries did not carry %s seq %d back", len(pulled), origin, written[0].Seq)
+	}
+	back := entryFromWire(*found)
+	if !synclog.VerifyMAC(key, back) {
+		t.Errorf("the entry that came back does not verify: %+v", back)
+	}
+}
+
+// entryToWire renders one daemon-side entry as the wire carries it, so the test
+// signs with synclog's own function and appends the worker's own type.
+func entryToWire(e synclog.Entry) Entry {
+	return Entry{
+		Origin:        e.Origin,
+		Tbl:           e.Table,
+		PK:            e.PK,
+		Op:            string(e.Op),
+		SchemaVersion: e.SchemaVersion,
+		Body:          e.Body,
+		At:            e.At,
+		MAC:           e.MAC,
+	}
+}
+
+// entryFromWire is the other direction, for the entry a pull brought back.
+func entryFromWire(e Entry) synclog.Entry {
+	return synclog.Entry{
+		Origin:        e.Origin,
+		Seq:           e.Seq,
+		Batch:         e.Batch,
+		Table:         e.Tbl,
+		PK:            e.PK,
+		Op:            synclog.Op(e.Op),
+		SchemaVersion: e.SchemaVersion,
+		Body:          e.Body,
+		At:            e.At,
+		MAC:           e.MAC,
+	}
+}
+
 // carries reports whether an origin's entry at seq came back from a pull.
 func carries(entries []Entry, origin string, seq int) bool {
 	for _, e := range entries {
@@ -168,5 +275,28 @@ func TestScratchRemoteCompact(t *testing.T) {
 	res, err := b.Compact(3)
 	if err != nil || res.Dropped != 1 || res.Floor != 3 {
 		t.Fatalf("Compact(3) = %+v, %v; want one dropped at floor 3", res, err)
+	}
+}
+
+// TestScratchRemoteRefusesASignedBatchWithoutABoundary runs the boundary rule
+// against a real remote: a signed batch for an origin with no boundary row is
+// refused, and one naming the wrong sequence is too.
+func TestScratchRemoteRefusesASignedBatchWithoutABoundary(t *testing.T) {
+	url := os.Getenv("RELEVO_SCRATCH_SYNC_URL")
+	token := os.Getenv("RELEVO_SCRATCH_SYNC_TOKEN")
+	if url == "" || token == "" {
+		t.Skip("set RELEVO_SCRATCH_SYNC_URL and RELEVO_SCRATCH_SYNC_TOKEN to run against a scratch remote")
+	}
+	origin := "scratch-bound-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	b := openScratch(t, filepath.Join(t.TempDir(), "m.db"), origin, url, token)
+	key := []byte("the passphrase this machine stretched")
+
+	e := upsertEntry(origin, "board", `["s"]`, `{"title":"signed"}`)
+	e.MAC = []byte("a signature")
+	if _, err := b.Append([]Entry{e}); !errors.Is(err, ErrBoundary) {
+		t.Fatalf("append with no boundary = %v, want ErrBoundary", err)
+	}
+	if _, err := b.AppendSigned([]Entry{e}, boundaryAt(key, origin, 9)); !errors.Is(err, ErrBoundary) {
+		t.Fatalf("append with a wrong boundary = %v, want ErrBoundary", err)
 	}
 }

@@ -179,6 +179,10 @@ func dbSyncStatusRead(local relevosync.Local) (dbSyncStatusDoc, error) {
 	if err != nil {
 		return dbSyncStatusDoc{}, failWrap(codeConfigInvalid, err, "relevo db sync status")
 	}
+	key, err := relevosync.KeyState(local)
+	if err != nil {
+		return dbSyncStatusDoc{}, failWrap(codeConfigInvalid, err, "relevo db sync status")
+	}
 	// The bucket half is read here rather than asked of the worker, so status
 	// stays a read of the local file with the network blackholed.
 	r2Ready, r2Endpoint, r2Bucket, err := syncR2Status(local)
@@ -195,6 +199,7 @@ func dbSyncStatusRead(local relevosync.Local) (dbSyncStatusDoc, error) {
 		RemoteURL:    settings.RemoteURL,
 		Namespace:    settings.Namespace,
 		TokenPresent: hasToken,
+		Key:          key,
 		R2Configured: r2Ready,
 		R2Endpoint:   r2Endpoint,
 		R2Bucket:     r2Bucket,
@@ -249,4 +254,23 @@ func dbSyncR2Line(doc dbSyncStatusDoc) string {
 		return ""
 	}
 	return doc.R2Endpoint + "/" + doc.R2Bucket
+}
+
+// dbSyncQuotasLine renders the month's traffic and the stored bytes against the
+// plan quotas the document carries. A storage reading that was never taken reads
+// as not measured, never as zero.
+func dbSyncQuotasLine(doc dbSyncStatusDoc) string {
+	var month relevosync.ByteCounters
+	if doc.Bytes != nil {
+		month = *doc.Bytes
+	}
+	var storage relevosync.Storage
+	if doc.Storage != nil {
+		storage = *doc.Storage
+	}
+	return relevosync.FormatQuotas(month, relevosync.Settings{
+		QuotaTursoSync:    doc.QuotaTursoSync,
+		QuotaTursoStorage: doc.QuotaTursoStorage,
+		QuotaR2Storage:    doc.QuotaR2Storage,
+	}, storage)
 }

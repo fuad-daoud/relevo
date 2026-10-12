@@ -333,7 +333,7 @@ func TestSyncVerbDisableStillRuns(t *testing.T) {
 	if !res.OK {
 		t.Fatalf("disable refused: %s", res.Message)
 	}
-	if got := strings.Join(res.Steps, ","); got != "final export,mark off,delete token,stop worker,delete replica,drop client" {
+	if got := strings.Join(res.Steps, ","); got != "final export,mark off,delete token,delete key,stop worker,delete replica,drop client" {
 		t.Errorf("steps = %q, want the contract's six in order", got)
 	}
 	if !res.FinalPush {
@@ -1149,6 +1149,14 @@ func (h *hangingJoin) PullRange(string, int, int) ([]synclog.Entry, error) { ret
 
 func (h *hangingJoin) CompactOwn(int) (synclog.CompactResult, error) {
 	return synclog.CompactResult{}, nil
+}
+
+func (h *hangingJoin) KeyMeta(context.Context) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
+
+func (h *hangingJoin) KeyInit(context.Context, synclog.KeyMeta) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
 }
 
 // TestReconcileVerbRefusesWithoutDryRun pins that the only reconcile on offer is

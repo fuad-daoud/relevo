@@ -12,9 +12,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// Turning sync off is six steps in a fixed order, and the order is the whole
+// Turning sync off is seven steps in a fixed order, and the order is the whole
 // contract: make one last attempt to hand the remote what this machine holds,
-// mark the machine off, forget the token, stop the worker, delete the replica
+// mark the machine off, forget the token and the key, stop the worker, delete the replica
 // and the driver's files beside it, and drop the client. The attempt comes
 // first because a machine that leaves with an unsent round is a machine whose
 // cloud copy silently lacks it, the token goes after the mark because a machine
@@ -32,6 +32,7 @@ const (
 	stepFinalPush     = "final export"
 	stepMarkOff       = "mark off"
 	stepDeleteToke    = "delete token"
+	stepDeleteKey     = "delete key"
 	stepStopWorker    = "stop worker"
 	stepDeleteReplica = "delete replica"
 	stepDropClient    = "drop client"
@@ -43,6 +44,9 @@ type Disabler struct {
 	// Local is the machine-local file: the section, the mark and the token all
 	// live there.
 	Local Local
+	// Shared is the file the signed-from records live in; nil skips clearing
+	// them.
+	Shared *db.DB
 	// FinalExport is the one call the turn-off's final attempt makes: drain
 	// this machine's pending rows into the log before the mark goes off. It is
 	// a single call rather than a whole transport because the turn-off reads
@@ -96,7 +100,7 @@ type DisableResult struct {
 	Dropped bool
 }
 
-// Disable runs the six steps in order. The final export is the only step whose
+// Disable runs the seven steps in order. The final export is the only step whose
 // failure is kept rather than returned, and it is kept precisely so the other
 // five still run: a machine that cannot reach its remote has the strongest
 // reason of all to stop syncing, and refusing to stop would leave it pushing at
@@ -128,6 +132,10 @@ func (d *Disabler) Disable(ctx context.Context) (DisableResult, error) {
 
 	out.Steps = append(out.Steps, stepDeleteToke)
 	if err := DeleteToken(d.Local); err != nil {
+		return out, fmt.Errorf("sync: disable: %w", err)
+	}
+	out.Steps = append(out.Steps, stepDeleteKey)
+	if err := DeleteKey(d.Local); err != nil {
 		return out, fmt.Errorf("sync: disable: %w", err)
 	}
 	// The R2 credentials go with the token, and on the same reasoning: a machine

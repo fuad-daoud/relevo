@@ -39,6 +39,8 @@ type fakeBackend struct {
 	// what a read_marks answers with.
 	published []published
 	markState MarkState
+	// key is the passphrase material the fake log holds.
+	key KeyMeta
 }
 
 // headCall is one head read as it arrived, so a test can assert the paging
@@ -123,6 +125,30 @@ func (f *fakeBackend) ReadMarks() (MarkState, error) {
 }
 
 func (f *fakeBackend) PullRange(string, int, int) ([]Entry, error) { return nil, f.fail }
+
+func (f *fakeBackend) KeyMeta() (KeyMeta, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return KeyMeta{}, f.fail
+	}
+	return f.key, nil
+}
+
+func (f *fakeBackend) KeyInit(key KeyMeta) (KeyMeta, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return KeyMeta{}, f.fail
+	}
+	// The remote keeps what it already holds and answers with that, which is
+	// what makes a second init report the first one's material.
+	if !f.key.Present {
+		f.key = key
+		f.key.Present = true
+	}
+	return f.key, nil
+}
 
 func (f *fakeBackend) Compact(int) (CompactResult, error) { return CompactResult{}, f.fail }
 
@@ -672,7 +698,7 @@ func TestVerbsNamesEveryDispatchedVerb(t *testing.T) {
 	for _, verb := range Verbs() {
 		names = append(names, string(verb))
 	}
-	if got := strings.Join(names, ","); got != "compact,export,get_blob,head,hello,publish_marks,pull,pull_range,put_blob,read_marks,shutdown,stats" {
+	if got := strings.Join(names, ","); got != "compact,export,get_blob,head,hello,key_init,key_meta,publish_marks,pull,pull_range,put_blob,read_marks,shutdown,stats" {
 		t.Errorf("Verbs() = %q, want the pipe's own verb set", got)
 	}
 }

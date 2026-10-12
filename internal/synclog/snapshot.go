@@ -14,7 +14,6 @@ package synclog
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -56,9 +55,8 @@ func (i *Importer) snapshots(state MarkState, marks map[string]int, total *Impor
 			continue
 		}
 		hold, err := i.snapshotOrigin(origin, marks[origin], floor, state.Heads[origin], marks, total)
-		var stalled *stallError
 		switch {
-		case errors.As(err, &stalled):
+		case holdsOrigin(err):
 			total.Stalled = append(total.Stalled, Stall{Origin: origin, Label: i.labelOf(origin), Reason: err.Error()})
 			held[origin] = true
 		case err != nil:
@@ -95,6 +93,9 @@ func (i *Importer) snapshotOrigin(origin string, mark, floor, head int, marks ma
 	if e, held := i.held(region); held {
 		return &Hold{Origin: origin, Label: i.labelOf(origin), Seq: mark, Schema: e.SchemaVersion}, nil
 	}
+	if err := i.verify(origin, region); err != nil {
+		return nil, err
+	}
 	upserts, deletes := splitRegion(region, total)
 	for _, part := range [][]Entry{upserts, deletes} {
 		left, err := i.applyUntilDone(origin, part, total)
@@ -105,9 +106,18 @@ func (i *Importer) snapshotOrigin(origin string, mark, floor, head int, marks ma
 			total.Dropped = append(total.Dropped, Drop{Origin: origin, Seq: floor, Reason: left.Error()})
 		}
 	}
-	if err := i.db.Tx(func(tx *db.Tx) error { return i.mark(tx, marks, origin, floor, true) }); err != nil {
+	var signedAt int
+	var wrote bool
+	if err := i.db.Tx(func(tx *db.Tx) error {
+		var err error
+		if signedAt, wrote, err = i.recordSigned(tx, origin, region); err != nil {
+			return err
+		}
+		return i.mark(tx, marks, origin, floor, true)
+	}); err != nil {
 		return nil, fmt.Errorf("synclog: import: %w", err)
 	}
+	i.noteSigned(origin, signedAt, wrote)
 	total.Snapshots++
 	return nil, nil
 }

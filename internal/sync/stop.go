@@ -7,6 +7,7 @@ package sync
 // call after the stop refuses at once, and the work ends at its next call.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync/atomic"
@@ -64,6 +65,17 @@ func (s *StopTransport) Append(entries []synclog.Entry) ([]synclog.Entry, error)
 	return s.inner.Append(entries)
 }
 
+// AppendSigned is Append with the boundary the exporter predicted.
+func (s *StopTransport) AppendSigned(entries []synclog.Entry, boundary synclog.Boundary) ([]synclog.Entry, error) {
+	if s.stopped.Load() {
+		return nil, ErrStopped
+	}
+	if ba, ok := s.inner.(synclog.BoundaryAppender); ok {
+		return ba.AppendSigned(entries, boundary)
+	}
+	return s.inner.Append(entries)
+}
+
 func (s *StopTransport) Pull(marks map[string]int) ([]synclog.Entry, error) {
 	if s.stopped.Load() {
 		return nil, ErrStopped
@@ -111,6 +123,20 @@ func (s *StopTransport) CompactOwn(floor int) (synclog.CompactResult, error) {
 		return synclog.CompactResult{}, ErrStopped
 	}
 	return s.inner.CompactOwn(floor)
+}
+
+func (s *StopTransport) KeyMeta(ctx context.Context) (synclog.KeyMeta, error) {
+	if s.stopped.Load() {
+		return synclog.KeyMeta{}, ErrStopped
+	}
+	return s.inner.KeyMeta(ctx)
+}
+
+func (s *StopTransport) KeyInit(ctx context.Context, key synclog.KeyMeta) (synclog.KeyMeta, error) {
+	if s.stopped.Load() {
+		return synclog.KeyMeta{}, ErrStopped
+	}
+	return s.inner.KeyInit(ctx, key)
 }
 
 // The blob half, forwarded so a stopped export cannot upload a body the entry

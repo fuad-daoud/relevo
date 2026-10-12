@@ -39,6 +39,10 @@ var (
 	// An installation appends only for its own rows, and refusing here is what
 	// stops two machines writing the same one.
 	ErrForeignOrigin = errors.New("another origin's entry")
+
+	// ErrBoundary is a signed batch for an origin with no boundary row whose
+	// first signed sequence is not the one the export predicted.
+	ErrBoundary = errors.New("the signed-from boundary was not the one predicted")
 )
 
 // Verb is what one request asks the worker to do.
@@ -72,9 +76,35 @@ const (
 	// VerbCompact drops this worker's own superseded entries up to a floor and
 	// records the floor, in one write.
 	VerbCompact Verb = "compact"
+	// VerbKeyMeta reads the passphrase material the remote holds: the KDF
+	// parameters and the check value derived from the key.
+	VerbKeyMeta Verb = "key_meta"
+	// VerbKeyInit writes that material if the remote holds none, and answers
+	// with whatever it holds afterwards.
+	VerbKeyInit Verb = "key_init"
 	// VerbShutdown ends the pipe after its reply.
 	VerbShutdown Verb = "shutdown"
 )
+
+// KeyMeta is the passphrase material a remote holds, as the pipe carries it.
+//
+// It travels as base64 like the MAC, because encoding/json gives a byte slice
+// that and because the remote stores these in text meta rows. The salt and the
+// check are not secret -- the remote holds them so a second machine can derive
+// and compare the same key -- and they are still treated as untrusted: every
+// value here came from a remote this machine does not control.
+type KeyMeta struct {
+	// Salt is the KDF salt, empty on a remote that has never been given one.
+	Salt []byte `json:"salt,omitempty"`
+	// KDF names the derivation this remote's key was stretched with.
+	KDF string `json:"kdf,omitempty"`
+	// Check is the value a wrong passphrase does not reproduce.
+	Check []byte `json:"check,omitempty"`
+	// Present says whether the remote holds a key at all. It is its own field
+	// rather than being read from the salt, because a remote can hold a check
+	// without a salt and the two absences mean different things to a caller.
+	Present bool `json:"present,omitempty"`
+}
 
 // R2Config is the bucket the worker moves bodies through, as hello carries it.
 //
@@ -161,6 +191,14 @@ type Request struct {
 	AfterSeq int `json:"after_seq,omitempty"`
 	Upto     int `json:"upto,omitempty"`
 	Floor    int `json:"floor,omitempty"`
+	// KeyMeta is the passphrase material a key_init writes. A key_meta carries
+	// none: it asks what the remote holds rather than naming what it should.
+	KeyMeta *KeyMeta `json:"key_meta,omitempty"`
+	// BoundarySeq and BoundaryTag are the first signed sequence an export
+	// predicts for its origin and the tag that binds it to the key. The worker
+	// stores them only where the origin has no boundary yet.
+	BoundarySeq int    `json:"boundary_seq,omitempty"`
+	BoundaryTag []byte `json:"boundary_tag,omitempty"`
 }
 
 // Response is one line of the pipe, from the worker to the daemon.
@@ -201,6 +239,9 @@ type Response struct {
 	// and the floor the log now records, which is never below the one before.
 	Dropped int `json:"dropped,omitempty"`
 	Floor   int `json:"floor,omitempty"`
+	// KeyMeta is what a key_meta read and a key_init wrote, and is nil on a remote
+	// that holds no passphrase material at all.
+	KeyMeta *KeyMeta `json:"key_meta,omitempty"`
 }
 
 // RefusalCode is the class of a refusal the worker answered with. It is the
@@ -230,6 +271,10 @@ const (
 	// fine and the remote is fine; what crossed the pipe is not, and repeating
 	// the call unchanged would publish the same wrong body.
 	CodeBlobRefused RefusalCode = "blob_refused"
+	// CodeBoundary is a signed batch the worker refused because its boundary was
+	// not the one predicted. Nothing was written and the next attempt predicts
+	// again.
+	CodeBoundary RefusalCode = "boundary"
 )
 
 // RefusalError is an error a backend marked with the class of refusal it is, so
@@ -301,6 +346,10 @@ type Entry struct {
 	Body json.RawMessage `json:"body,omitempty"`
 	// At is when the entry was written.
 	At time.Time `json:"at"`
+	// MAC is the HMAC-SHA256 over the entry's canonical encoding, absent on an
+	// entry written before this machine had a key. It travels as base64, which
+	// is what encoding/json does with a byte slice.
+	MAC []byte `json:"mac,omitempty"`
 }
 
 // HeadRow is one row of an origin's head: the latest state of a single shared
@@ -397,6 +446,13 @@ type MarkState struct {
 	// Sizes is each origin's log size in bytes, estimated as the bodies plus a
 	// fixed overhead per row.
 	Sizes map[string]int64 `json:"sizes,omitempty"`
+	// SignedFrom is the first sequence of each origin that was signed. An
+	// origin with no entry is not named, which is how a reader tells "nothing
+	// here has been signed" from "signed from the first entry".
+	SignedFrom map[string]int `json:"signed_from,omitempty"`
+	// SignedTags is the tag stored beside each boundary, nil where the stored
+	// value has none that parses.
+	SignedTags map[string][]byte `json:"signed_tags,omitempty"`
 }
 
 // readRequest reads one request line. A clean end of the pipe is io.EOF, which

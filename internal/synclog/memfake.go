@@ -45,6 +45,12 @@ type memLog struct {
 	marks map[string]map[string]Mark
 	// floors is what each origin has compacted to.
 	floors map[string]int
+	// signedFrom is the first sequence of each origin that carried a MAC.
+	signedFrom map[string]int
+	// signedTag is the tag stored with each signedFrom entry.
+	signedTag map[string][]byte
+	// key is the passphrase material the log holds.
+	key KeyMeta
 }
 
 // NewMemTransport returns a handle on an empty log for the installation named
@@ -69,7 +75,7 @@ func (m *MemTransport) OnLog(origin string) *MemTransport {
 // append records a batch as one write, numbering the entries from one past the
 // highest sequence this origin already holds. Everything that can fail is checked
 // before anything is written, so a refused batch leaves the log as it was.
-func (m *memLog) append(origin string, entries []Entry) ([]Entry, error) {
+func (m *memLog) append(origin string, entries []Entry, boundary Boundary) ([]Entry, error) {
 	if len(entries) == 0 {
 		return nil, nil
 	}
@@ -99,6 +105,9 @@ func (m *memLog) append(origin string, entries []Entry) ([]Entry, error) {
 	// Reading the log's highest number is what keeps the two from handing out
 	// the same one.
 	next := m.latestSeq(origin) + 1
+	if err := m.checkBoundary(origin, entries, next, boundary); err != nil {
+		return nil, err
+	}
 	written := make([]Entry, 0, len(entries))
 	for i, e := range entries {
 		e.Origin = origin
@@ -110,6 +119,7 @@ func (m *memLog) append(origin string, entries []Entry) ([]Entry, error) {
 		m.writeHead(e, hashes[i])
 		written = append(written, e)
 	}
+	m.recordSignedFrom(written, boundary)
 	return written, nil
 }
 
@@ -246,7 +256,13 @@ func (m *memLog) originsOtherThan(self string) []string {
 
 // Append numbers the batch and records it as one write.
 func (m *MemTransport) Append(entries []Entry) ([]Entry, error) {
-	written, err := m.log.append(m.origin, entries)
+	return m.AppendSigned(entries, Boundary{})
+}
+
+// AppendSigned is Append with the boundary the exporter predicted for its first
+// signed entry.
+func (m *MemTransport) AppendSigned(entries []Entry, boundary Boundary) ([]Entry, error) {
+	written, err := m.log.append(m.origin, entries, boundary)
 	if err != nil {
 		return nil, err
 	}
@@ -339,6 +355,16 @@ func (m *memLog) markState() MarkState {
 			out.Floors = make(map[string]int)
 		}
 		out.Floors[origin] = floor
+	}
+	if len(m.signedFrom) > 0 {
+		out.SignedFrom = make(map[string]int, len(m.signedFrom))
+		for origin, seq := range m.signedFrom {
+			out.SignedFrom[origin] = seq
+		}
+		out.SignedTags = make(map[string][]byte, len(m.signedTag))
+		for origin, tag := range m.signedTag {
+			out.SignedTags[origin] = tag
+		}
 	}
 	out.Heads = make(map[string]int)
 	out.Entries = make(map[string]int)

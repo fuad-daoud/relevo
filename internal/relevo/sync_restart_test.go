@@ -114,3 +114,11 @@ func (u *unreadyTransport) PullRange(string, int, int) ([]synclog.Entry, error) 
 func (u *unreadyTransport) CompactOwn(int) (synclog.CompactResult, error) {
 	return synclog.CompactResult{}, nil
 }
+
+func (u *unreadyTransport) KeyMeta(context.Context) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
+
+func (u *unreadyTransport) KeyInit(context.Context, synclog.KeyMeta) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}

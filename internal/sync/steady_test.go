@@ -274,3 +274,11 @@ func (c *cancelLog) PullRange(string, int, int) ([]synclog.Entry, error) { retur
 func (c *cancelLog) CompactOwn(int) (synclog.CompactResult, error) {
 	return synclog.CompactResult{}, nil
 }
+
+func (c *cancelLog) KeyMeta(context.Context) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
+
+func (c *cancelLog) KeyInit(context.Context, synclog.KeyMeta) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}

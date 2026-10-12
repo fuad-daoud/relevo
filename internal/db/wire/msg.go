@@ -157,6 +157,9 @@ const (
 	// SyncVerbReconcile compares this origin's file against the log. It only
 	// previews: the result's Report is the differences, and nothing is appended.
 	SyncVerbReconcile = "reconcile"
+	// SyncVerbUnlock derives the sync key from the passphrase in the frame's
+	// raw tail and stores it when it matches the remote's check.
+	SyncVerbUnlock = "unlock"
 )
 
 // The refusal codes a SyncResult carries. They are a closed set and every one is
@@ -214,6 +217,12 @@ const (
 	// was holding the call, this machine's own backoff was, and it ends on its
 	// own. The reader's way out is the retry verb, not a defect report.
 	SyncCodeBackingOff = "backing_off"
+	// SyncCodeNoKDF is a plain unlock against a remote that holds no key yet;
+	// `relevo db sync unlock --new` creates it.
+	SyncCodeNoKDF = "no_kdf"
+	// SyncCodeWrongPassphrase is an unlock whose key does not match the
+	// remote's check.
+	SyncCodeWrongPassphrase = "wrong_passphrase"
 	// SyncCodeInternal is a failure with no class of its own -- the daemon's
 	// own bug, or a hook that panicked or reported nothing.
 	SyncCodeInternal = "internal"
@@ -257,6 +266,8 @@ type SyncVerb struct {
 	// DryRun asks a reconcile to report what it would append and append
 	// nothing. A reconcile without it is refused.
 	DryRun bool `json:"dry_run,omitempty"`
+	// New lets an unlock create the key material where the remote holds none.
+	New bool `json:"new,omitempty"`
 }
 
 // SyncFreshen is the hint that a reader wants current data. It carries nothing
@@ -298,4 +309,6 @@ type SyncResult struct {
 	Warning string `json:"warning,omitempty"`
 	// Report is a verb's rendered text answer: a reconcile preview.
 	Report string `json:"report,omitempty"`
+	// Created is whether an unlock created the remote's key material.
+	Created bool `json:"created,omitempty"`
 }

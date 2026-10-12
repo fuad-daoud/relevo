@@ -75,6 +75,7 @@ var verbFlagSets = map[string]func(*flag.FlagSet){
 	"db sync push":         installer(dbSyncPushFlagSet),
 	"db sync retry":        installer(dbSyncRetryFlagSet),
 	"db sync status":       installer(dbSyncStatusFlagSet),
+	"db sync unlock":       installer(dbSyncUnlockFlagSet),
 	"doctor":               installer(doctorFlagSet),
 	"done":                 installer(doneFlagSet),
 	"gate":                 installer(gateFlagSet),

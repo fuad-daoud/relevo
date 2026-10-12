@@ -111,12 +111,25 @@ func (r *Runner) attempt(ctx context.Context, shared *db.DB) SteadyResult {
 // position the attempt had not reached yet.
 func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) SteadyResult {
 	var out SteadyResult
+	r.recordRemoteKDF(ctx, t)
+	locked := false
 	if err := within(ctx, t, r.stepTimeout(), func() error {
-		res, err := synclog.NewExporter(shared, t).Export()
+		key, err := SigningKey(r.Local)
+		if err != nil {
+			return err
+		}
+		exp := synclog.NewExporter(shared, t)
+		exp.SetKey(key)
+		res, err := exp.Export()
 		out.Exported = res.Appended
 		return err
 	}); err != nil {
-		return r.failed(out, err)
+		// A locked machine cannot append, but it can still read: the import goes
+		// on and the refusal is reported as trouble.
+		if !errors.Is(err, synclog.ErrLockedSignedOrigin) {
+			return r.failed(out, err)
+		}
+		locked = true
 	}
 	imported, err := r.drainImport(ctx, shared, t)
 	if err != nil {
@@ -124,6 +137,9 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 	}
 	out.Applied = imported.Applied
 	out.Trouble = troubleFrom(imported)
+	if locked {
+		out.Trouble.Held = append(out.Trouble.Held, synclog.ErrLockedSignedOrigin.Error())
+	}
 	r.publishMarks(shared, t, imported.Moved())
 	now := time.Now().UTC()
 	compacted := r.compact(shared, t, now)
@@ -213,8 +229,13 @@ func (r *Runner) drainImport(ctx context.Context, shared *db.DB, t *StopTranspor
 	return drainImport(func() (synclog.ImportResult, error) {
 		var res synclog.ImportResult
 		err := within(ctx, t, r.stepTimeout(), func() error {
-			var ierr error
-			res, ierr = synclog.NewImporter(shared, t).Import()
+			key, ierr := SigningKey(r.Local)
+			if ierr != nil {
+				return ierr
+			}
+			imp := synclog.NewImporter(shared, t)
+			imp.SetKey(key)
+			res, ierr = imp.Import()
 			return ierr
 		})
 		return res, err
@@ -351,4 +372,12 @@ func (r *Runner) put(key string, value any) {
 	if err := r.Local.KVPut(key, body); err != nil {
 		slog.Warn("sync: write a marker", "key", key, "err", err)
 	}
+}
+
+// recordRemoteKDF is the exchange's hello: it learns whether the remote holds a
+// key, under the step bound so a silent remote costs one step.
+func (r *Runner) recordRemoteKDF(ctx context.Context, t *StopTransport) {
+	ctx, cancel := context.WithTimeout(ctx, r.stepTimeout())
+	defer cancel()
+	RecordRemoteKDF(ctx, r.Local, t)
 }

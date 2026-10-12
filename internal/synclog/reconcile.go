@@ -42,6 +42,7 @@ const (
 // restarted. Head is read once for the run and held, which is what lets the
 // delete phase name the rows the walk did not find without asking the file again.
 type Reconciler struct {
+	keyed
 	db        *db.DB
 	transport LogTransport
 	origin    string
@@ -198,12 +199,16 @@ func (r *Reconciler) ReconcileBatch() (ReconcileResult, error) {
 	// later attempt could still have stored. The chunk is not appended, and the
 	// next one re-reads it from head, so a failed upload costs nothing but the
 	// sha256s the walk already paid.
+	if err := r.guard(r.transport, r.origin); err != nil {
+		return ReconcileResult{}, fmt.Errorf("synclog: reconcile: %w", err)
+	}
 	if err := uploadPending(r.mover, r.staging, r.pending); err != nil {
 		return ReconcileResult{}, fmt.Errorf("synclog: reconcile: upload: %w", err)
 	}
 	repaired := r.repairs()
 	r.pending = nil
-	if _, err := r.transport.Append(entries); err != nil {
+	r.sign(entries)
+	if _, err := r.appendTo(r.transport, r.origin, entries); err != nil {
 		return ReconcileResult{}, fmt.Errorf("synclog: reconcile: append: %w", err)
 	}
 	result := ReconcileResult{Batches: 1, Upserts: len(entries), Repaired: repaired}

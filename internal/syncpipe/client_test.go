@@ -57,6 +57,10 @@ const (
 	// blob verbs are served by the worker's own loop against whatever hello
 	// named, so the mode only has to say which fixture the child runs.
 	modeBlobs = "blobs"
+	// modeNoKeyAnswer is a worker that answers the key verbs with a reply that
+	// leaves the field out, which is what one that skipped the work looks like
+	// from the daemon's side.
+	modeNoKeyAnswer = "no-key-answer"
 )
 
 // TestMain hands this binary over to the fake worker before the suite starts,
@@ -131,6 +135,8 @@ func runFakeWorker(mode string) int {
 			return 1
 		}
 		return 0
+	case modeNoKeyAnswer:
+		return serveNoKeyField()
 	default:
 		if err := syncworker.Serve(os.Stdin, os.Stdout, normalBackend{}); err != nil {
 			fmt.Fprintln(os.Stderr, "fake worker:", err)
@@ -342,6 +348,14 @@ func (r refusingBackend) ReadMarks() (syncworker.MarkState, error) {
 	return syncworker.MarkState{}, r.fail()
 }
 
+func (r refusingBackend) KeyMeta() (syncworker.KeyMeta, error) {
+	return syncworker.KeyMeta{}, r.fail()
+}
+
+func (r refusingBackend) KeyInit(syncworker.KeyMeta) (syncworker.KeyMeta, error) {
+	return syncworker.KeyMeta{}, r.fail()
+}
+
 func (r refusingBackend) Close() error { return nil }
 
 // verbsRefusingBackend answers the handshake and then refuses every verb with
@@ -373,6 +387,14 @@ func (r verbsRefusingBackend) PublishMarks(map[string]int, time.Time) error { re
 
 func (r verbsRefusingBackend) ReadMarks() (syncworker.MarkState, error) {
 	return syncworker.MarkState{}, r.fail()
+}
+
+func (r verbsRefusingBackend) KeyMeta() (syncworker.KeyMeta, error) {
+	return syncworker.KeyMeta{}, r.fail()
+}
+
+func (r verbsRefusingBackend) KeyInit(syncworker.KeyMeta) (syncworker.KeyMeta, error) {
+	return syncworker.KeyMeta{}, r.fail()
 }
 
 func (r verbsRefusingBackend) Close() error { return nil }
@@ -748,6 +770,27 @@ func (n normalBackend) PullRange(origin string, after, upto int) ([]syncworker.E
 func (n normalBackend) Compact(floor int) (syncworker.CompactResult, error) {
 	return syncworker.CompactResult{Dropped: floor - 1, Floor: floor}, nil
 }
+
+func (normalBackend) KeyMeta() (syncworker.KeyMeta, error) {
+	return heldKey, nil
+}
+
+// KeyInit keeps what the log already holds and answers with that, the way the
+// real backend does, so a client test sees the same insert-if-absent answer a
+// second init would get.
+func (normalBackend) KeyInit(key syncworker.KeyMeta) (syncworker.KeyMeta, error) {
+	if heldKey.Present {
+		return heldKey, nil
+	}
+	heldKey = key
+	heldKey.Present = true
+	return heldKey, nil
+}
+
+// heldKey is the passphrase material the fake log has been given. It is a
+// package variable because the worker runs in a child process: each mode gets
+// its own process, so one test's init is never another's answer.
+var heldKey = syncworker.KeyMeta{Salt: []byte("salt"), KDF: "argon2id", Present: true}
 
 func (r refusingBackend) PullRange(string, int, int) ([]syncworker.Entry, error) { return nil, nil }
 

@@ -32,6 +32,10 @@ func verbClassify(err error) string {
 		return wire.SyncCodeRemoteConflict
 	case errors.Is(err, relevosync.ErrJoinOverQuota):
 		return wire.SyncCodeOverQuota
+	case errors.Is(err, relevosync.ErrNoKDF):
+		return wire.SyncCodeNoKDF
+	case errors.Is(err, relevosync.ErrWrongPassphrase):
+		return wire.SyncCodeWrongPassphrase
 	case errors.Is(err, relevosync.ErrAuthRefused):
 		return wire.SyncCodeAuthRefused
 	case errors.Is(err, relevosync.ErrQuotaReached):
@@ -44,6 +48,10 @@ func verbClassify(err error) string {
 		// sent to `relevo bugreport` for a remote that never learned the schema
 		// has been sent to report a driver boundary as a defect.
 		return wire.SyncCodeRemoteSchemaMissing
+	case errors.Is(err, synclog.ErrBadSignature), errors.Is(err, synclog.ErrLockedSignedOrigin):
+		// A signature refusal names the entry and its origin; the way out is a
+		// key or a re-export, not a defect report.
+		return wire.SyncCodeRemoteRefused
 	case errors.Is(err, synclog.ErrBlobMissing):
 		// A body the log names is gone from the bucket. The message names the
 		// row and the machine that wrote it; nothing in this build is at fault.

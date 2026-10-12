@@ -68,7 +68,7 @@ func callBound(verb syncworker.Verb) (time.Duration, error) {
 		syncworker.VerbPullRange, syncworker.VerbCompact:
 		return dataCallTimeout, nil
 	case syncworker.VerbHead, syncworker.VerbStats, syncworker.VerbReadMarks,
-		syncworker.VerbShutdown:
+		syncworker.VerbKeyMeta, syncworker.VerbKeyInit, syncworker.VerbShutdown:
 		return controlCallTimeout, nil
 	default:
 		return 0, fmt.Errorf("syncpipe: verb %q is neither a data nor a control call", verb)
@@ -269,9 +269,17 @@ func (c *Client) Close() error {
 
 // Append writes one batch and returns it numbered.
 func (c *Client) Append(entries []synclog.Entry) ([]synclog.Entry, error) {
+	return c.AppendSigned(entries, synclog.Boundary{})
+}
+
+// AppendSigned is Append with the boundary the exporter predicted for its first
+// signed entry.
+func (c *Client) AppendSigned(entries []synclog.Entry, boundary synclog.Boundary) ([]synclog.Entry, error) {
 	resp, err := c.call(syncworker.Request{
-		Verb:    syncworker.VerbExport,
-		Entries: entriesToWire(entries),
+		Verb:        syncworker.VerbExport,
+		Entries:     entriesToWire(entries),
+		BoundarySeq: boundary.Seq,
+		BoundaryTag: boundary.Tag,
 	})
 	if err != nil {
 		return nil, err
@@ -411,6 +419,8 @@ func refusalError(resp syncworker.Response) error {
 		return fmt.Errorf("%w: %w", refused, relevosync.ErrRemoteRefused)
 	case syncworker.CodeQuota:
 		return fmt.Errorf("%w: %w", refused, relevosync.ErrQuotaReached)
+	case syncworker.CodeBoundary:
+		return fmt.Errorf("%w: %w", refused, synclog.ErrBoundary)
 	case syncworker.CodeBlobMissing:
 		// The bucket answered and the object is not there. That is a fact about
 		// the bucket rather than a fault in reaching it, so it maps to the

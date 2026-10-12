@@ -22,6 +22,7 @@ const defaultBatchSize = 256
 // entries the log holds afterwards are therefore an order an importer can apply
 // with foreign keys on.
 type Exporter struct {
+	keyed
 	db        *db.DB
 	transport LogTransport
 	origin    string
@@ -102,6 +103,9 @@ func (e *Exporter) ExportBatch() (ExportResult, error) {
 		return ExportResult{}, err
 	}
 	if len(entries) > 0 {
+		if err := e.guard(e.transport, e.origin); err != nil {
+			return ExportResult{}, err
+		}
 		// The bodies go first because an entry naming an object the store does
 		// not hold is worse than no entry at all: an importer would latch the
 		// origin over a body that a later attempt could have stored. A failed
@@ -110,7 +114,8 @@ func (e *Exporter) ExportBatch() (ExportResult, error) {
 		if err := uploadPending(e.mover, e.staging, pending); err != nil {
 			return ExportResult{}, fmt.Errorf("synclog: export: upload: %w", err)
 		}
-		if _, err := e.transport.Append(entries); err != nil {
+		e.sign(entries)
+		if _, err := e.appendTo(e.transport, e.origin, entries); err != nil {
 			return ExportResult{}, fmt.Errorf("synclog: export: append: %w", err)
 		}
 	}

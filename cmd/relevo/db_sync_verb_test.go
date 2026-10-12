@@ -43,7 +43,7 @@ func installTestVerbHook(srv *owner.Server, d *db.DB) {
 		case wire.SyncVerbPush:
 			res.Applied = true
 		case wire.SyncVerbDisable:
-			res.Steps = []string{"final export", "mark off", "delete token", "stop worker", "delete replica", "drop client"}
+			res.Steps = []string{"final export", "mark off", "delete token", "delete key", "stop worker", "delete replica", "drop client"}
 			res.FinalPush = true
 		}
 		_ = len(token)

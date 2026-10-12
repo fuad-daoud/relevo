@@ -128,8 +128,8 @@ func TestDisableFinalPushFailureStillDisables(t *testing.T) {
 	if res.FinalPushErr == nil {
 		t.Error("the failure was dropped instead of reported as a warning")
 	}
-	if len(res.Steps) != 6 {
-		t.Fatalf("steps = %v, want all six", res.Steps)
+	if len(res.Steps) != 7 {
+		t.Fatalf("steps = %v, want all seven", res.Steps)
 	}
 	if on, _ := Enabled(local); on {
 		t.Error("a failed final export left the machine marked on")
@@ -193,7 +193,7 @@ func TestDisableRunsTheSixStepsInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Disable: %v", err)
 	}
-	want := []string{stepFinalPush, stepMarkOff, stepDeleteToke, stepStopWorker, stepDeleteReplica, stepDropClient}
+	want := []string{stepFinalPush, stepMarkOff, stepDeleteToke, stepDeleteKey, stepStopWorker, stepDeleteReplica, stepDropClient}
 	if len(res.Steps) != len(want) {
 		t.Fatalf("steps = %v, want %v", res.Steps, want)
 	}
@@ -230,7 +230,7 @@ func TestDisableDropsTheClientLast(t *testing.T) {
 	if dropped != 1 {
 		t.Errorf("the drop was attempted %d times, want once", dropped)
 	}
-	if len(res.Steps) != 6 || res.Steps[5] != stepDropClient {
+	if len(res.Steps) != 7 || res.Steps[6] != stepDropClient {
 		t.Errorf("steps = %v, want the drop last", res.Steps)
 	}
 	// The steps before it still ran, so a machine whose client will not drop is
@@ -347,10 +347,10 @@ func TestDisableCompletesTheWedgedMachine(t *testing.T) {
 	if res.FinalPushErr != nil {
 		t.Errorf("a skipped export was reported as a failure: %v", res.FinalPushErr)
 	}
-	// All six steps still ran, so the report reads whole even though one was
+	// All seven steps still ran, so the report reads whole even though one was
 	// skipped rather than performed.
-	if len(res.Steps) != 6 {
-		t.Errorf("steps = %v, want all six", res.Steps)
+	if len(res.Steps) != 7 {
+		t.Errorf("steps = %v, want all seven", res.Steps)
 	}
 	if on, _ := Enabled(local); on {
 		t.Error("the machine is still marked on")
@@ -425,5 +425,36 @@ func TestDisableDeletesTheStagingFolder(t *testing.T) {
 	}
 	if _, err := os.Stat(d.StagingDir); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("staging folder survived disable (stat err %v)", err)
+	}
+}
+
+func TestDisableDeletesTheSyncKey(t *testing.T) {
+	t.Parallel()
+
+	fake := &exportFake{}
+	disabler, local := disableFixture(t, fake.Export)
+	if err := SetKey(local, []byte("derived-key-fixture"), tokenNow); err != nil {
+		t.Fatalf("SetKey: %v", err)
+	}
+	if err := local.KVPut(KeyRemoteKDF, []byte("1")); err != nil {
+		t.Fatalf("KVPut: %v", err)
+	}
+
+	res, err := disabler.Disable(context.Background())
+	if err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+	if _, ok, _ := ReadKey(local); ok {
+		t.Error("the sync key is still in the local secret table")
+	}
+	if _, ok, _ := local.KVGet(KeyRemoteKDF); ok {
+		t.Error("the remote-key fact is still recorded")
+	}
+	found := false
+	for _, step := range res.Steps {
+		found = found || step == stepDeleteKey
+	}
+	if !found {
+		t.Errorf("steps = %v, want the key delete named", res.Steps)
 	}
 }

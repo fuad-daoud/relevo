@@ -11,7 +11,9 @@ require (
 	github.com/muesli/termenv v0.15.2
 	github.com/tursodatabase/turso-go-platform-libs v0.8.1
 	go.yaml.in/yaml/v3 v3.0.4
+	golang.org/x/crypto v0.54.0
 	golang.org/x/sys v0.47.0
+	golang.org/x/term v0.45.0
 	modernc.org/sqlite v1.59.0
 	turso.tech/database/tursogo v0.8.1
 )
@@ -34,7 +36,7 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/text v0.3.8 // indirect
+	golang.org/x/text v0.40.0 // indirect
 	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect

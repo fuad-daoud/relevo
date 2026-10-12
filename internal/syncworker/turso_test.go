@@ -157,6 +157,83 @@ func metaFormat(t *testing.T, path string) string {
 	return value
 }
 
+// logWithoutMAC is the log table as a build before the mac column wrote it. It
+// is spelled out rather than taken from createStatements, which carries the
+// current format's column and would seed a remote this build could not recognise
+// as older.
+const logWithoutMAC = "CREATE TABLE log (" +
+	"origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, " +
+	"tbl TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, " +
+	"schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, " +
+	"PRIMARY KEY (origin, seq))"
+
+// tablesHaveColumn reports whether a table carries a column, which is how a
+// test states that an upgrade added one rather than only that the format row
+// moved.
+func tablesHaveColumn(t *testing.T, path, table, column string) bool {
+	t.Helper()
+	rows, err := openAt(t, path).Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		t.Fatalf("read the columns of %s: %v", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, kind string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &kind, &notNull, &dflt, &primaryKey); err != nil {
+			t.Fatalf("scan a column of %s: %v", table, err)
+		}
+		if name == column {
+			return true
+		}
+	}
+	return false
+}
+
+// seedFormatOneRemote creates the tables a build of the oldest format wrote,
+// with no marks table and no mac column, and records that format. The two are
+// what tell this build the remote is older rather than broken.
+func seedFormatOneRemote(t *testing.T, path string) {
+	t.Helper()
+	execOn(t, path, logWithoutMAC, createStatements[1], createStatements[2],
+		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '1')")
+}
+
+// seedFormatTwoRemote creates this build's tables with the log as it was before
+// the mac column, and records format two.
+func seedFormatTwoRemote(t *testing.T, path string) {
+	t.Helper()
+	execOn(t, path, logWithoutMAC, createStatements[1], createStatements[2],
+		createStatements[3],
+		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '2')")
+}
+
+// signedFromMeta is the sequence the meta records an origin started signing at.
+func signedFromMeta(t *testing.T, path, origin string) (string, bool) {
+	t.Helper()
+	var value string
+	err := openAt(t, path).QueryRow("SELECT value FROM meta WHERE key = ?", signedFromPrefix+origin).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", false
+	}
+	if err != nil {
+		t.Fatalf("read %s: %v", signedFromPrefix+origin, err)
+	}
+	return value, true
+}
+
+// logMAC is the MAC stored on one row of the replica's log, and whether it is
+// NULL -- which is how an entry written before this machine had a key reads.
+func logMAC(t *testing.T, path string, seq int) ([]byte, bool) {
+	t.Helper()
+	var mac []byte
+	if err := openAt(t, path).QueryRow("SELECT mac FROM log WHERE seq = ?", seq).Scan(&mac); err != nil {
+		t.Fatalf("read the mac of seq %d: %v", seq, err)
+	}
+	return mac, mac != nil
+}
+
 // assertSeqs pins the sequence numbers of a batch, so a test states the
 // numbering it expects rather than reading it out of place.
 func assertSeqs(t *testing.T, entries []Entry, seqs ...int) {
@@ -258,20 +335,17 @@ func TestFirstUseCreatesTheRemoteLogTables(t *testing.T) {
 	}
 }
 
-// TestFormatOneRemoteIsUpgradedInPlace pins the one remote this build brings
-// forward rather than refuses: a log at the format below has the same tables
-// and the same entries, and a machine that has not synced since the change
+// TestHelloUpgradesFormatOneToThree pins the oldest remote this build brings
+// forward rather than refuses: a log at the first format has neither the marks
+// table nor the mac column, and a machine that has not synced since that change
 // would otherwise be left holding a remote no build of this version will open.
 //
-// The upgrade writes the marks table and the new format row in one transaction
-// and pushes, so the remote never holds one without the other, and a re-run
-// finds a log at the current format and writes nothing.
-func TestFormatOneRemoteIsUpgradedInPlace(t *testing.T) {
+// The upgrade writes the missing table, the missing column and the new format
+// row in one transaction and pushes, so the remote never holds one without the
+// others, and a re-run finds a log at the current format and writes nothing.
+func TestHelloUpgradesFormatOneToThree(t *testing.T) {
 	path := tempReplica(t)
-	// A format-1 remote is the first three statements and the old format row:
-	// everything a build of that version wrote, and nothing else.
-	execOn(t, path, createStatements[0], createStatements[1], createStatements[2],
-		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '1')")
+	seedFormatOneRemote(t, path)
 	// An entry already in it, so the upgrade is shown to leave the log alone
 	// rather than to reach it.
 	execOn(t, path, "INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at)"+
@@ -375,15 +449,25 @@ func TestWorkerRefusesARemoteThatIsNotALog(t *testing.T) {
 				createStatements[3],
 				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '99')")
 		},
-		// The tables of the format below with the current format's row: a
-		// remote in neither shape, which the two checks must not read as one.
+		// The tables of an older format with the current format's row, and the
+		// other way round: a remote in neither shape, which the checks must not
+		// read as one.
 		"the older tables at the current format": func(t *testing.T, path string) {
-			execOn(t, path, createStatements[0], createStatements[1], createStatements[2],
-				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '2')")
+			execOn(t, path, logWithoutMAC, createStatements[1], createStatements[2],
+				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '3')")
 		},
 		"the current tables at the older format": func(t *testing.T, path string) {
 			execOn(t, path, append(append([]string(nil), createStatements...),
 				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '1')")...)
+		},
+		"format two's tables at format one's row": func(t *testing.T, path string) {
+			execOn(t, path, logWithoutMAC, createStatements[1], createStatements[2],
+				createStatements[3],
+				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '1')")
+		},
+		"a format above this build's": func(t *testing.T, path string) {
+			execOn(t, path, append(append([]string(nil), createStatements...),
+				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '4')")...)
 		},
 	}
 	for name, seed := range cases {
@@ -1056,6 +1140,10 @@ func (r refusingBackend) Stats() (Stats, error) { return Stats{}, r.fail }
 func (r refusingBackend) PublishMarks(map[string]int, time.Time) error { return r.fail }
 
 func (r refusingBackend) ReadMarks() (MarkState, error) { return MarkState{}, r.fail }
+
+func (r refusingBackend) KeyMeta() (KeyMeta, error) { return KeyMeta{}, r.fail }
+
+func (r refusingBackend) KeyInit(KeyMeta) (KeyMeta, error) { return KeyMeta{}, r.fail }
 
 func (r refusingBackend) Close() error { return nil }
 

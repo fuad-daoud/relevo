@@ -103,6 +103,8 @@ func (v *VerbRunner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte)
 		return v.runGuarded(func() *wire.SyncResult { return v.probe(ctx) })
 	case wire.SyncVerbReconcile:
 		return v.runGuarded(func() *wire.SyncResult { return v.reconcilePreview(ctx, verb) })
+	case wire.SyncVerbUnlock:
+		return v.runGuarded(func() *wire.SyncResult { return v.unlock(ctx, verb, token) })
 	case wire.SyncVerbDisable:
 		// A disable must not queue behind a call that can run for the whole
 		// data-call bound: a joined machine reads off for the whole join, and a
@@ -247,7 +249,7 @@ func (v *VerbRunner) push(ctx context.Context) *wire.SyncResult {
 	stop := relevosync.NewStopTransport(transport)
 	defer v.Runner.Track(stop)()
 	defer v.Runner.CountMoved(ctx, stop)
-	res, err := synclog.NewExporter(v.Shared, stop).Export()
+	res, err := exportOnce(v.Shared, stop)
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
@@ -266,7 +268,7 @@ func (v *VerbRunner) pull(ctx context.Context) *wire.SyncResult {
 	stop := relevosync.NewStopTransport(transport)
 	defer v.Runner.Track(stop)()
 	defer v.Runner.CountMoved(ctx, stop)
-	res, err := synclog.NewImporter(v.Shared, stop).Import()
+	res, err := importOnce(v.Shared, stop)
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
@@ -464,6 +466,7 @@ func (v *VerbRunner) disable(ctx context.Context, verb *wire.SyncVerb) *wire.Syn
 	transport := v.disableTransport(ctx)
 	disabler := &relevosync.Disabler{
 		Local:       v.Local,
+		Shared:      v.Shared,
 		FinalExport: exportThrough(v.Shared, transport),
 		Stop:        stopTransport(transport),
 		ReplicaPath: v.ReplicaPath,
@@ -523,7 +526,7 @@ func exportThrough(shared *db.DB, transport synclog.LogTransport) func(context.C
 		stop := relevosync.NewStopTransport(transport)
 		done := make(chan error, 1)
 		go func() {
-			_, err := synclog.NewExporter(shared, stop).Export()
+			_, err := exportOnce(shared, stop)
 			done <- err
 		}()
 		select {

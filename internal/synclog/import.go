@@ -26,6 +26,7 @@ import (
 // again; a hard failure -- a log that will not answer, a busy file -- moves no
 // mark at all, because nothing was applied.
 type Importer struct {
+	keyed
 	db        *db.DB
 	transport LogTransport
 	known     int
@@ -37,6 +38,13 @@ type Importer struct {
 	// the default.
 	regionRows int
 	passes     int
+	// signedFrom is the sequence each origin must be signed from, localSigned
+	// this machine's own records behind it and badBoundary the refusal for an
+	// origin whose remote boundary did not verify; all are set per run and
+	// only with a key.
+	signedFrom  map[string]int
+	localSigned map[string]int
+	badBoundary map[string]error
 	// AfterBatch runs after each batch or snapshot chunk is written, so a
 	// caller can account for the transfer before the next one starts.
 	AfterBatch func()
@@ -206,6 +214,9 @@ func (i *Importer) Import() (ImportResult, error) {
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("synclog: import: read the floors: %w", err)
 	}
+	if err := i.loadSigned(state); err != nil {
+		return ImportResult{}, err
+	}
 	var total ImportResult
 	// An origin that held once holds for the rest of the run. Its later entries
 	// were written by the same newer binary and are just as unreadable, so
@@ -236,8 +247,7 @@ func (i *Importer) Import() (ImportResult, error) {
 			continue
 		}
 		applied, hold, drop, err := i.applyBatch(batch, marks)
-		var stalled *stallError
-		if errors.As(err, &stalled) {
+		if holdsOrigin(err) {
 			total.Stalled = append(total.Stalled, Stall{Origin: origin, Label: i.labelOf(origin), Reason: err.Error()})
 			held[origin] = true
 			continue
@@ -316,6 +326,9 @@ func (i *Importer) applyBatch(batch []Entry, marks map[string]int) (int, *Hold, 
 	if e, held := i.held(batch); held {
 		return 0, &Hold{Origin: e.Origin, Seq: batch[0].Seq - 1, Schema: e.SchemaVersion}, nil, nil
 	}
+	if err := i.verify(origin, batch); err != nil {
+		return 0, nil, nil, err
+	}
 	applied, err := i.fetchAndApply(batch, marks)
 	if err == nil {
 		return applied, nil, nil, nil
@@ -345,6 +358,8 @@ func (i *Importer) applyBatch(batch []Entry, marks map[string]int) (int, *Hold, 
 func (i *Importer) applyEntries(batch []Entry, marks map[string]int) (int, error) {
 	origin := batch[0].Origin
 	applied := 0
+	var signedAt int
+	var wrote bool
 	err := i.db.Tx(func(tx *db.Tx) error {
 		for _, e := range batch {
 			handled, err := applyEntry(tx, e)
@@ -355,8 +370,15 @@ func (i *Importer) applyEntries(batch []Entry, marks map[string]int) (int, error
 				applied++
 			}
 		}
+		var err error
+		if signedAt, wrote, err = i.recordSigned(tx, origin, batch); err != nil {
+			return err
+		}
 		return i.mark(tx, marks, origin, tail(batch), applied > 0)
 	})
+	if err == nil {
+		i.noteSigned(origin, signedAt, wrote)
+	}
 	return applied, err
 }
 
