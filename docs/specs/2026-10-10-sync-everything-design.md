@@ -198,8 +198,10 @@ elsewhere since. The exporter takes the write stamp when it is newer than the
 key's export-state stamp; otherwise a first export, which has no export state,
 stamps the key from its section's `config_doc.updated_at`, never from `Now()`,
 and a later one from the clock moved past the key's previous stamp. A
-join clears `shared_export_state`, so the first export after it re-emits every
-key. The reconciler ignores doc tables.
+join clears `shared_export_state` and every `config_write_stamp`, in one
+transaction before its import, so the first export after it re-emits every key
+and shared keys apply over the machine's seed; a machine that joins late does
+not outrank edits made elsewhere while it was offline. The reconciler ignores doc tables.
 
 **Hybrid clock.** 64 bits: wall milliseconds << 16 | counter, kept in a local
 kv row (`sync.hybrid_clock.v1`) so it survives a restart. `Now()` never runs

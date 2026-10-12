@@ -175,7 +175,7 @@ func (s *Store) applyKey(sec Section, name string, value json.RawMessage) error 
 // failure of the store itself.
 func (s *Store) applyKeyIn(t *db.Tx, sec Section, name string, value json.RawMessage) (refusal error, hard error) {
 	unstamped := *s
-	unstamped.arrived = true
+	unstamped.unstamped = true
 	s = &unstamped
 	before, err := readSnapshot(t)
 	if err != nil {

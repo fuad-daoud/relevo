@@ -15,12 +15,16 @@ var ErrNoRevision = errors.New("no such revision")
 // ErrNoChange reports a rollback whose target equals the stored config.
 var ErrNoChange = errors.New("config already equals that revision")
 
+// unstampedSources are the labels of writes that are not a person's edit.
+var unstampedSources = map[string]bool{"init": true, "import": true, "migration": true}
+
 // As returns a copy of s labelled with source and message; the receiver is
 // unchanged, so a runtime's base store stays unlabelled.
 func (s *Store) As(source, message string) *Store {
 	c := *s
 	c.source = source
 	c.message = message
+	c.unstamped = unstampedSources[source]
 	return &c
 }
 

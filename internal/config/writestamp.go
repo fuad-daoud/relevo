@@ -20,9 +20,9 @@ func (k txKV) KVDelete(key string) error              { return k.t.KVDelete(key)
 // stampWrites records a stamp for every syncable item whose value differs
 // between two documents, in the transaction of the write. The stamp is per
 // item: a section-wide one would let an old edit of one item ride a later edit
-// of another. An item that arrived from a peer is not stamped.
+// of another. A write that is not a person's edit is not stamped.
 func (s *Store) stampWrites(t *db.Tx, before, after Doc) error {
-	if s.arrived {
+	if s.unstamped {
 		return nil
 	}
 	changed, err := changedItems(before, after)

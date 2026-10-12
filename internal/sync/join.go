@@ -349,7 +349,8 @@ func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (EnableRes
 			return res, err
 		}
 		// The new peer has seen none of the doc keys this machine exported to
-		// another log, so the next export sends every one again.
+		// another log, so the next export sends every one again. Local write
+		// stamps go too, before the import, so shared keys apply over the seed.
 		if err := e.Request.Local.ClearDocExportState(); err != nil {
 			return res, err
 		}

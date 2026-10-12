@@ -117,7 +117,9 @@ func (t *Tx) recordDocWrite(doc string, w DocExportWrite) error {
 	return nil
 }
 
-// ClearDocExportState forgets what was exported, so the next export of each doc
+// ClearDocExportState forgets what was exported and every local write stamp:
+// config that predates a join is the machine's starting point, not an edit
+// made against the shared config. So the next export of each doc
 // that had state re-emits every key. Each such doc is signalled in the same
 // transaction, because an export only looks at a doc it has been told changed.
 func (d *DB) ClearDocExportState() error {
@@ -128,6 +130,9 @@ func (d *DB) ClearDocExportState() error {
 		}
 		if _, err := t.exec(`DELETE FROM shared_export_state`); err != nil {
 			return fmt.Errorf("db: clear doc export state: %w", mapBusy(err))
+		}
+		if _, err := t.exec(`DELETE FROM config_write_stamp`); err != nil {
+			return fmt.Errorf("db: clear config write stamps: %w", mapBusy(err))
 		}
 		return nil
 	})
