@@ -182,7 +182,10 @@ func TestScratchRemoteMACSurvivesThePipeAndTheLog(t *testing.T) {
 		t.Fatalf("append = %+v, want one entry carrying its MAC", written)
 	}
 
-	pulled, err := b.Pull(nil)
+	// A pull returns only other origins' entries, so a second installation
+	// reads it back.
+	reader := openScratch(t, filepath.Join(t.TempDir(), "r.db"), origin+"-reader", url, token)
+	pulled, err := reader.Pull(nil)
 	if err != nil {
 		t.Fatalf("pull from the scratch remote: %v", err)
 	}
