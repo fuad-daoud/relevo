@@ -150,11 +150,22 @@ func cmdConfigLog(args []string) error {
 		fmt.Println("no revisions yet")
 		return nil
 	}
+	width := sourceWidth(rows)
 	for _, r := range rows {
-		fmt.Printf("#%d  %s  %-9s  %d change(s)  %s\n",
-			r.Rev, r.At.Local().Format("2006-01-02 15:04"), r.Source, len(revChangeList(r)), r.Message)
+		fmt.Printf("#%d  %s  %-*s  %d change(s)  %s\n",
+			r.Rev, r.At.Local().Format("2006-01-02 15:04"), width, r.Source, len(revChangeList(r)), r.Message)
 	}
 	return nil
+}
+
+// sourceWidth is the column a source needs: a synced revision's source carries
+// the sending machine's label, so it is longer than any local source.
+func sourceWidth(rows []db.RevisionRow) int {
+	width := len("migration")
+	for _, r := range rows {
+		width = max(width, len(r.Source))
+	}
+	return width
 }
 
 // cmdConfigRollback prints what rolling back to rev would change, confirms
