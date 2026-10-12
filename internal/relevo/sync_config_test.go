@@ -144,6 +144,24 @@ func TestSteadyAttemptCarriesAConfigEditToAPeer(t *testing.T) {
 	}
 }
 
+func TestPushAndPullVerbsCarryAConfigEdit(t *testing.T) {
+	t.Parallel()
+	log := synclog.NewMemTransport("x")
+	a := newCfgMachine(t, log, cfgSyncKey, true)
+	b := newCfgMachine(t, log, cfgSyncKey, true)
+
+	a.set(t, config.Candidates, cfgCandidate)
+	if _, err := exportOnce(a.mdb, log.OnLog(a.mdb.Origin())); err != nil {
+		t.Fatalf("push from A: %v", err)
+	}
+	if _, err := importOnce(b.mdb, log.OnLog(b.mdb.Origin())); err != nil {
+		t.Fatalf("pull on B: %v", err)
+	}
+	if got := b.body(t, config.Candidates); !strings.Contains(got, "sonnet") {
+		t.Errorf("B's candidates after a pull = %s, want A's candidate", got)
+	}
+}
+
 func TestSteadyAttemptKeepsMachineFieldsHome(t *testing.T) {
 	t.Parallel()
 	log := synclog.NewMemTransport("x")
