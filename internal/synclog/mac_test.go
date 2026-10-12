@@ -102,6 +102,34 @@ func TestEntryMACIsStableAcrossBodyWhitespace(t *testing.T) {
 	}
 }
 
+// TestEntryMACSurvivesThePipeEscapingABody pins the body form against the
+// pipe's encoder, which escapes <, > and & where json.Compact leaves them: a
+// body signed with them raw has to verify after the pipe has escaped them.
+func TestEntryMACSurvivesThePipeEscapingABody(t *testing.T) {
+	t.Parallel()
+	e, err := NewUpsert("origin-a", "round_file", `["r"]`, 3,
+		json.RawMessage(`{"body":"<b>a & b</b>"}`), time.Date(2026, 10, 8, 9, 30, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("NewUpsert: %v", err)
+	}
+	e.MAC = EntryMAC(macKey, e)
+
+	piped, err := json.Marshal(e)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	var back Entry
+	if err := json.Unmarshal(piped, &back); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if string(back.Body) == string(e.Body) {
+		t.Fatalf("the pipe left %s as it was: this test no longer exercises the escaping", back.Body)
+	}
+	if !VerifyMAC(macKey, back) {
+		t.Errorf("a body the pipe re-escaped as %s no longer verifies", back.Body)
+	}
+}
+
 // TestEntryMACCannotBeMovedFromOneFieldToTheNext pins the length prefix.
 //
 // Without it the encoding is a plain concatenation, so an origin and a table

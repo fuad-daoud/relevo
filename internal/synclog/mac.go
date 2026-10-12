@@ -58,25 +58,27 @@ func writeMACField(buf *bytes.Buffer, field []byte) {
 	buf.Write(field)
 }
 
-// writeMacBody appends the body as the log holds it, compacted.
+// writeMacBody appends the body as the log holds it.
 //
-// The pipe re-encodes a json.RawMessage, so the bytes that come back are not
-// the bytes the exporter signed and compacting on both sides is what makes the
-// two agree. A body is signed as stored: an entry naming an R2 object is signed
-// as the reference, never as the content behind it, or the signature would
-// depend on a bucket this machine may not be able to read.
+// The pipe re-encodes a json.RawMessage, which compacts it and escapes <, > and
+// &, so the bytes that come back are not always the bytes the exporter signed.
+// Putting the body through that same encoding on both sides is what makes the
+// two agree, whichever encoder produced the body. A body is signed as stored:
+// an entry naming an R2 object is signed as the reference, never as the content
+// behind it, or the signature would depend on a bucket this machine may not be
+// able to read.
 func writeMacBody(buf *bytes.Buffer, body json.RawMessage) {
 	if len(body) == 0 {
 		writeMACField(buf, nil)
 		return
 	}
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, body); err != nil {
+	encoded, err := json.Marshal(body)
+	if err != nil {
 		// A body that is not JSON carries no meaning to a reader either, so it
 		// is signed as it stands rather than being left out of the MAC, which
 		// would let anything at all stand in for it.
 		writeMACField(buf, body)
 		return
 	}
-	writeMACField(buf, compact.Bytes())
+	writeMACField(buf, encoded)
 }
