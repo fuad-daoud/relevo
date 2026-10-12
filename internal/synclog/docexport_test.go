@@ -350,7 +350,7 @@ func TestReaddedKeyOutranksItsTombstone(t *testing.T) {
 		}
 		stamps = append(stamps, parsed.Stamp)
 	}
-	if !(stamps[0] < stamps[1] && stamps[1] < stamps[2]) {
+	if stamps[0] >= stamps[1] || stamps[1] >= stamps[2] {
 		t.Fatalf("stamps %v are not strictly rising across add, delete, re-add", stamps)
 	}
 }
