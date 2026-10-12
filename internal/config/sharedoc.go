@@ -104,6 +104,16 @@ func (d *SharedDoc) ItemWriteStamp(key string) (synclog.Stamp, bool, error) {
 	return stamp, err == nil, err
 }
 
+// ItemWriteStampIn is ItemWriteStamp read inside the importer's transaction.
+func (d *SharedDoc) ItemWriteStampIn(t *db.Tx, key string) (synclog.Stamp, bool, error) {
+	text, ok, err := t.ConfigWriteStamp(key)
+	if err != nil || !ok {
+		return 0, false, err
+	}
+	stamp, err := synclog.ParseStamp(text)
+	return stamp, err == nil, err
+}
+
 // syncs reports whether a section is part of the shared document at all. The
 // sync section is not: its settings say how this machine talks to its peer,
 // which is this machine's business and would be overwritten by whichever peer

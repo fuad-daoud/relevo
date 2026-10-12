@@ -31,6 +31,12 @@ type TxDoc interface {
 	SupersedeIn(tx *db.Tx, key string, value json.RawMessage, label, why string) error
 }
 
+// TxWriteStamper is the optional half of a TxDoc that can say, inside the
+// importer's transaction, when a key was last written on this machine.
+type TxWriteStamper interface {
+	ItemWriteStampIn(tx *db.Tx, key string) (stamp Stamp, ok bool, err error)
+}
+
 // docItem is a doc entry that passed the shape checks, with the entry it came
 // from so a locked reader can park it whole.
 type docItem struct {
@@ -113,7 +119,7 @@ func (i *Importer) takeDocs(origin string, docs []Entry) (int, error) {
 	}
 	err = i.db.LocalOrSelf().Tx(func(tx *db.Tx) error {
 		if len(i.key) > 0 {
-			return applyDocs(tx, items)
+			return applyDocs(tx, i.db.Origin(), items)
 		}
 		for _, it := range items {
 			if err := park(tx, it.entry); err != nil {
@@ -151,13 +157,13 @@ func park(tx *db.Tx, e Entry) error {
 // them in key order, so an item refused for the state of the document is set
 // aside and tried again after the rest. When a pass lands nothing new, what is
 // left will never land and is recorded as superseded.
-func applyDocs(tx *db.Tx, items []docItem) error {
+func applyDocs(tx *db.Tx, local string, items []docItem) error {
 	left := items
 	for len(left) > 0 {
 		var next []docItem
 		var whys []error
 		for _, it := range left {
-			refusal, err := applyDoc(tx, it)
+			refusal, err := applyDoc(tx, local, it)
 			if err != nil {
 				return err
 			}
@@ -194,9 +200,11 @@ func supersedeRefused(tx *db.Tx, items []docItem, whys []error) error {
 // applyDoc decides one verified doc entry against the newest state applied for
 // its key. An entry equal to it is a redelivery and does nothing, which is what
 // makes a crash between the two transactions harmless; a newer one is applied;
-// an older one is recorded as superseded. refusal is the document declining a
-// newer entry for now, with nothing recorded.
-func applyDoc(tx *db.Tx, it docItem) (refusal error, err error) {
+// an older one is recorded as superseded. A local write of the key that this
+// machine has not exported yet counts as an entry of its own origin, so an
+// arriving entry older than it is superseded too. refusal is the document
+// declining a newer entry for now, with nothing recorded.
+func applyDoc(tx *db.Tx, local string, it docItem) (refusal error, err error) {
 	doc, ok := it.parsed.Doc.(TxDoc)
 	if !ok {
 		return nil, fmt.Errorf("synclog: doc %s cannot apply inside a transaction: %w", it.parsed.Name, ErrInvalid)
@@ -221,6 +229,18 @@ func applyDoc(tx *db.Tx, it docItem) (refusal error, err error) {
 					p.Stamp, p.Origin, cur.Stamp, cur.Origin))
 		}
 	}
+	wrote, won, err := localWriteWins(tx, doc, local, p, cur, found)
+	if err != nil {
+		return nil, err
+	}
+	if won {
+		why := fmt.Sprintf("an entry stamped %s from %s is older than a local write of the key, stamped %s",
+			p.Stamp, p.Origin, wrote)
+		if err := doc.SupersedeIn(tx, p.Key, value, it.label, why); err != nil {
+			return nil, err
+		}
+		return nil, tx.SetDocApplied(p.Name, p.Key, p.Origin, p.Stamp.String())
+	}
 	refusal, err = doc.ApplyIn(tx, p.Key, value, it.label)
 	if refusal != nil || err != nil {
 		return refusal, err
@@ -229,6 +249,39 @@ func applyDoc(tx *db.Tx, it docItem) (refusal error, err error) {
 		return nil, err
 	}
 	return nil, recordExported(tx, p, value)
+}
+
+// localWriteWins reports whether this machine's own write of the key outranks
+// both the arriving entry and the applied state, in which case the arriving
+// entry must not overwrite it. The write is stamped with this machine's origin,
+// so ties break to the higher origin like any other pair of entries.
+func localWriteWins(tx *db.Tx, doc TxDoc, local string, p DocEntry, cur db.DocApplied, found bool) (Stamp, bool, error) {
+	w, ok := doc.(TxWriteStamper)
+	if !ok {
+		return 0, false, nil
+	}
+	wrote, has, err := w.ItemWriteStampIn(tx, p.Key)
+	if err != nil || !has {
+		return 0, false, err
+	}
+	if !stampBeats(wrote, local, p.Stamp, p.Origin) {
+		return 0, false, nil
+	}
+	if found {
+		have, err := ParseStamp(cur.Stamp)
+		if err != nil {
+			return 0, false, fmt.Errorf("synclog: applied stamp of %s %s: %w", p.Name, p.Key, err)
+		}
+		if !stampBeats(wrote, local, have, cur.Origin) {
+			return 0, false, nil
+		}
+	}
+	return wrote, true, nil
+}
+
+// stampBeats is whether (stamp, origin) is strictly newer than (other, otherOrigin).
+func stampBeats(stamp Stamp, origin string, other Stamp, otherOrigin string) bool {
+	return stamp > other || (stamp == other && origin > otherOrigin)
 }
 
 // recordExported leaves the export state holding what was just applied, so the
@@ -303,7 +356,7 @@ func (i *Importer) DrainPending() (ImportResult, error) {
 		return res, err
 	}
 	err = i.db.LocalOrSelf().Tx(func(tx *db.Tx) error {
-		if err := applyDocs(tx, items); err != nil {
+		if err := applyDocs(tx, i.db.Origin(), items); err != nil {
 			return err
 		}
 		for _, it := range items {

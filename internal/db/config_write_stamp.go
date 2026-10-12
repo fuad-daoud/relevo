@@ -30,3 +30,15 @@ func (t *Tx) ConfigWriteStampPut(key, stamp string) error {
 	}
 	return nil
 }
+
+// ConfigWriteStamp is DB.ConfigWriteStamp read inside the caller's transaction.
+func (t *Tx) ConfigWriteStamp(key string) (stamp string, ok bool, err error) {
+	err = t.queryRow(`SELECT stamp FROM config_write_stamp WHERE key = ?`, key).Scan(&stamp)
+	if errors.Is(err, sql.ErrNoRows) || isMissingTable(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("db: config write stamp %s: %w", key, mapBusy(err))
+	}
+	return stamp, true, nil
+}

@@ -154,3 +154,69 @@ func TestAppliedItemRecordsNoWriteStamp(t *testing.T) {
 		t.Errorf("the applying machine recorded write stamp %d for an item that arrived", stamp)
 	}
 }
+
+func TestUnlockKeepsANewerLocalEditOverAnOlderParkedEntry(t *testing.T) {
+	t.Parallel()
+	base := time.Now().Add(-time.Hour).UTC()
+	a, b := syncedPair(t, base)
+
+	if err := relevosync.DeleteKey(a.local); err != nil {
+		t.Fatalf("lock A: %v", err)
+	}
+	b.setAt(t, base.Add(time.Minute), config.Candidates, "["+cfgCandidateNamed("m", "older-from-b")+"]")
+	b.export(t)
+	a.pull(t)
+	if parked, err := a.mdb.PendingDocs(); err != nil || len(parked) == 0 {
+		t.Fatalf("pending = %v, %v; want B's entry parked", parked, err)
+	}
+	a.setAt(t, base.Add(2*time.Minute), config.Candidates, "["+cfgCandidateNamed("m", "newer-from-a")+"]")
+	if err := relevosync.SetKey(a.local, cfgSyncKey, time.Now().UTC()); err != nil {
+		t.Fatalf("unlock A: %v", err)
+	}
+	if _, err := relevosync.DrainParkedDocs(a.mdb, a.local, a.log.OnLog(a.mdb.Origin())); err != nil {
+		t.Fatalf("DrainParkedDocs: %v", err)
+	}
+
+	if got := a.body(t, config.Candidates); !strings.Contains(got, "newer-from-a") {
+		t.Errorf("A holds %s after the unlock, want its own newer edit", got)
+	}
+	if want := "sync-superseded:" + b.label(t); !a.hasSource(t, want) {
+		t.Errorf("A's revision sources %v lack %q", a.sources(t), want)
+	}
+	a.export(t)
+	b.pull(t)
+	assertConverged(t, a, b, "newer-from-a")
+}
+
+func TestPullKeepsANewerUnexportedLocalEdit(t *testing.T) {
+	t.Parallel()
+	base := time.Now().Add(-time.Hour).UTC()
+	a, b := syncedPair(t, base)
+
+	b.setAt(t, base.Add(time.Minute), config.Candidates, "["+cfgCandidateNamed("m", "older-from-b")+"]")
+	b.export(t)
+	a.setAt(t, base.Add(2*time.Minute), config.Candidates, "["+cfgCandidateNamed("m", "newer-from-a")+"]")
+	a.pull(t)
+
+	if got := a.body(t, config.Candidates); !strings.Contains(got, "newer-from-a") {
+		t.Errorf("A holds %s after the pull, want its own newer edit", got)
+	}
+	a.export(t)
+	b.pull(t)
+	assertConverged(t, a, b, "newer-from-a")
+}
+
+func TestNewerArrivingEntryStillBeatsAnOlderLocalEdit(t *testing.T) {
+	t.Parallel()
+	base := time.Now().Add(-time.Hour).UTC()
+	a, b := syncedPair(t, base)
+
+	a.setAt(t, base.Add(time.Minute), config.Candidates, "["+cfgCandidateNamed("m", "older-from-a")+"]")
+	b.setAt(t, base.Add(2*time.Minute), config.Candidates, "["+cfgCandidateNamed("m", "newer-from-b")+"]")
+	b.export(t)
+	a.pull(t)
+
+	if got := a.body(t, config.Candidates); !strings.Contains(got, "newer-from-b") {
+		t.Errorf("A holds %s, want the arriving newer entry", got)
+	}
+}

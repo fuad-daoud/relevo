@@ -217,6 +217,12 @@ origin) with `shared_applied(doc, key, origin, stamp)`:
   in the local transaction before the mark moves. The key's `shared_applied`
   and `shared_export_state` rows are written in the same transaction, so the
   exporter finds nothing to send back and an applied item is never echoed.
+- Older than this machine's own write of the key that is newer than the applied
+  state and not yet exported (the write stamp, read in the same transaction,
+  with this machine's origin breaking ties): recorded as superseded and the
+  applied state moves to the entry; the local value stays and the next export
+  sends it with its write stamp. This holds for parked entries drained on
+  unlock and for imports that run before an export.
 - Older, or an item that would leave the merged config invalid: recorded as a
   superseded revision, with the config untouched.
 A newer item that fails validation only because a key it depends on has not
