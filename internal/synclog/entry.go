@@ -65,6 +65,11 @@ type Entry struct {
 	Body json.RawMessage
 	// At is when the entry was written.
 	At time.Time
+	// MAC is the HMAC-SHA256 over the entry's canonical encoding, empty on an
+	// entry written before this machine had a key. It covers every field above
+	// except Seq and Batch, which the transport assigns after the signature is
+	// made.
+	MAC []byte
 }
 
 // NewUpsert builds the entry that writes a row's state.

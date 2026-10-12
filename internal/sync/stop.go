@@ -7,6 +7,7 @@ package sync
 // call after the stop refuses at once, and the work ends at its next call.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync/atomic"
@@ -111,6 +112,20 @@ func (s *StopTransport) CompactOwn(floor int) (synclog.CompactResult, error) {
 		return synclog.CompactResult{}, ErrStopped
 	}
 	return s.inner.CompactOwn(floor)
+}
+
+func (s *StopTransport) KeyMeta(ctx context.Context) (synclog.KeyMeta, error) {
+	if s.stopped.Load() {
+		return synclog.KeyMeta{}, ErrStopped
+	}
+	return s.inner.KeyMeta(ctx)
+}
+
+func (s *StopTransport) KeyInit(ctx context.Context, key synclog.KeyMeta) (synclog.KeyMeta, error) {
+	if s.stopped.Load() {
+		return synclog.KeyMeta{}, ErrStopped
+	}
+	return s.inner.KeyInit(ctx, key)
 }
 
 // The blob half, forwarded so a stopped export cannot upload a body the entry

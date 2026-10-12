@@ -1,6 +1,7 @@
 package syncpipe
 
 import (
+	"context"
 	"errors"
 	"sort"
 	"time"
@@ -34,6 +35,7 @@ func entriesToWire(entries []synclog.Entry) []syncworker.Entry {
 			SchemaVersion: e.SchemaVersion,
 			Body:          e.Body,
 			At:            e.At,
+			MAC:           e.MAC,
 		})
 	}
 	return out
@@ -59,6 +61,7 @@ func entriesFromWire(entries []syncworker.Entry) []synclog.Entry {
 			SchemaVersion: e.SchemaVersion,
 			Body:          e.Body,
 			At:            e.At,
+			MAC:           e.MAC,
 		})
 	}
 	return out
@@ -115,6 +118,61 @@ func (c *Client) CompactOwn(floor int) (synclog.CompactResult, error) {
 	return synclog.CompactResult{Dropped: resp.Dropped, Floor: resp.Floor}, nil
 }
 
+// KeyMeta reads the passphrase material the remote holds.
+func (c *Client) KeyMeta(ctx context.Context) (synclog.KeyMeta, error) {
+	resp, err := c.call(syncworker.Request{Verb: syncworker.VerbKeyMeta})
+	if err != nil {
+		return synclog.KeyMeta{}, err
+	}
+	if resp.KeyMeta == nil {
+		// The worker always answers with the field it was asked about, so an
+		// answer without one is a worker that did not do what was asked. Reading
+		// it as "no key" would take the caller down the setup path again.
+		return synclog.KeyMeta{}, errors.New("syncpipe: the worker answered key_meta with no key")
+	}
+	return keyMetaFromWire(*resp.KeyMeta), nil
+}
+
+// KeyInit writes the passphrase material where the remote holds none and
+// answers with what it holds afterwards.
+//
+// The answer is used rather than the request on purpose: two machines running
+// --new at once each write their own salt, and only the answer tells either of
+// them which one the log is actually keyed by.
+func (c *Client) KeyInit(ctx context.Context, key synclog.KeyMeta) (synclog.KeyMeta, error) {
+	resp, err := c.call(syncworker.Request{
+		Verb:    syncworker.VerbKeyInit,
+		KeyMeta: keyToWire(key),
+	})
+	if err != nil {
+		return synclog.KeyMeta{}, err
+	}
+	if resp.KeyMeta == nil {
+		return synclog.KeyMeta{}, errors.New("syncpipe: the worker answered key_init with no key")
+	}
+	return keyMetaFromWire(*resp.KeyMeta), nil
+}
+
+// keyToWire renders the passphrase material for a key_init.
+func keyToWire(key synclog.KeyMeta) *syncworker.KeyMeta {
+	return &syncworker.KeyMeta{
+		Salt:    key.Salt,
+		KDF:     key.KDF,
+		Check:   key.Check,
+		Present: key.Present,
+	}
+}
+
+// keyMetaFromWire reads back the passphrase material the worker answered with.
+func keyMetaFromWire(k syncworker.KeyMeta) synclog.KeyMeta {
+	return synclog.KeyMeta{
+		Salt:    k.Salt,
+		KDF:     k.KDF,
+		Check:   k.Check,
+		Present: k.Present,
+	}
+}
+
 // marksToWire renders this reader's published positions.
 //
 // The order is sorted so a request's line is the same for the same marks every
@@ -138,7 +196,13 @@ func marksToWire(marks map[string]int) []syncworker.Mark {
 
 // markStateFromWire reads back what a read_marks answered with.
 func markStateFromWire(s syncworker.MarkState) synclog.MarkState {
-	out := synclog.MarkState{Floors: s.Floors, Heads: s.Heads, Entries: s.Entries, Sizes: s.Sizes}
+	out := synclog.MarkState{
+		Floors:     s.Floors,
+		Heads:      s.Heads,
+		Entries:    s.Entries,
+		Sizes:      s.Sizes,
+		SignedFrom: s.SignedFrom,
+	}
 	for _, m := range s.Marks {
 		out.Marks = append(out.Marks, synclog.Mark{
 			Reader: m.Reader,

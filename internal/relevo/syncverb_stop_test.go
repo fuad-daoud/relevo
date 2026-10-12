@@ -324,14 +324,38 @@ func (h *hungAppend) CompactOwn(int) (synclog.CompactResult, error) {
 	return synclog.CompactResult{}, nil
 }
 
+func (h *hungAppend) KeyMeta(context.Context) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
+
+func (h *hungAppend) KeyInit(context.Context, synclog.KeyMeta) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
+
 func (h *heldJoin) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
 
 func (h *heldJoin) CompactOwn(int) (synclog.CompactResult, error) {
 	return synclog.CompactResult{}, nil
 }
 
+func (h *heldJoin) KeyMeta(context.Context) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
+
+func (h *heldJoin) KeyInit(context.Context, synclog.KeyMeta) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
+
 func (h *heldPush) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
 
 func (h *heldPush) CompactOwn(int) (synclog.CompactResult, error) {
 	return synclog.CompactResult{}, nil
+}
+
+func (h *heldPush) KeyMeta(context.Context) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
+
+func (h *heldPush) KeyInit(context.Context, synclog.KeyMeta) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
 }

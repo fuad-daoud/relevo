@@ -73,6 +73,13 @@ type Backend interface {
 	// Compact drops this worker's own superseded entries up to floor and
 	// records the floor, in one transaction and one push.
 	Compact(floor int) (CompactResult, error)
+	// KeyMeta reads the passphrase material the remote holds, answering
+	// Present false on a remote that has none.
+	KeyMeta() (KeyMeta, error)
+	// KeyInit writes that material where the remote holds none and answers
+	// with what it holds afterwards, so two machines racing the first one both
+	// learn which salt the other chose rather than each keeping its own.
+	KeyInit(key KeyMeta) (KeyMeta, error)
 	// Close releases the remote and the replica.
 	Close() error
 }
@@ -149,6 +156,8 @@ var verbHandlers = map[Verb]func(*server, Request) Response{
 	VerbReadMarks:    (*server).readMarks,
 	VerbPullRange:    (*server).pullRange,
 	VerbCompact:      (*server).compact,
+	VerbKeyMeta:      (*server).keyMeta,
+	VerbKeyInit:      (*server).keyInit,
 	VerbShutdown:     (*server).shutdown,
 }
 

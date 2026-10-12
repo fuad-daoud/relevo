@@ -45,6 +45,10 @@ type memLog struct {
 	marks map[string]map[string]Mark
 	// floors is what each origin has compacted to.
 	floors map[string]int
+	// signedFrom is the first sequence of each origin that carried a MAC.
+	signedFrom map[string]int
+	// key is the passphrase material the log holds.
+	key KeyMeta
 }
 
 // NewMemTransport returns a handle on an empty log for the installation named
@@ -110,6 +114,7 @@ func (m *memLog) append(origin string, entries []Entry) ([]Entry, error) {
 		m.writeHead(e, hashes[i])
 		written = append(written, e)
 	}
+	m.recordSignedFrom(written)
 	return written, nil
 }
 
@@ -339,6 +344,12 @@ func (m *memLog) markState() MarkState {
 			out.Floors = make(map[string]int)
 		}
 		out.Floors[origin] = floor
+	}
+	if len(m.signedFrom) > 0 {
+		out.SignedFrom = make(map[string]int, len(m.signedFrom))
+		for origin, seq := range m.signedFrom {
+			out.SignedFrom[origin] = seq
+		}
 	}
 	out.Heads = make(map[string]int)
 	out.Entries = make(map[string]int)

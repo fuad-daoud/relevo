@@ -6,9 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -22,21 +20,6 @@ const (
 	opUpsert = "upsert"
 	opDelete = "delete"
 )
-
-// logFormatVersion is the version this build writes into the remote's meta. A
-// remote whose meta carries another value defines the log differently, so this
-// build refuses it rather than read columns it may have moved -- except the one
-// version below, which this build knows how to bring forward in place.
-const logFormatVersion = 2
-
-// formatOneVersion is the format this build's predecessor wrote. A remote at
-// it holds the same log without the marks table, and is upgraded rather than
-// refused, so a machine that has not synced since the change is not left with a
-// remote no build of this version will open.
-const formatOneVersion = 1
-
-// metaFormatKey names the meta row that carries the format version.
-const metaFormatKey = "format"
 
 // ReplicaDriver is the half of the replica only a sync engine can do: bootstrap
 // the local replica from the remote, push the replica's changes, apply the
@@ -129,68 +112,6 @@ func (b *TursoBackend) Open(spec Spec) error {
 	return nil
 }
 
-// ensureLog makes sure the remote is this log: an empty remote gets the log's
-// tables, one at the format below is brought forward, one whose meta names this
-// format is used, and anything else is refused. A remote is never written into
-// after it has been classified as something other than a relevance log.
-//
-// The two table sets are matched against the format together rather than one
-// after the other, so a remote that holds the current tables and claims the
-// older format -- or the other way round -- is refused rather than opened as
-// something it is not.
-func (b *TursoBackend) ensureLog(ctx context.Context, url string) error {
-	tables, err := userTables(ctx, b.db)
-	if err != nil {
-		return fmt.Errorf("syncworker: read the remote's tables: %w", err)
-	}
-	if len(tables) == 0 {
-		return b.createLog(ctx)
-	}
-	if !isLogTables(tables) && !isFormatOneTables(tables) {
-		return errNotALog(url)
-	}
-	format, err := readFormat(ctx, b.db)
-	if err != nil {
-		return err
-	}
-	if isLogTables(tables) && format == strconv.Itoa(logFormatVersion) {
-		return nil
-	}
-	if isFormatOneTables(tables) && format == strconv.Itoa(formatOneVersion) {
-		return b.upgradeLog(ctx)
-	}
-	return errNotALog(url)
-}
-
-// createLog writes the log's tables and its format row in one replica
-// transaction, then pushes so the remote learns the schema. DDL reaches the
-// remote only when it is made on a sync connection; the push is what carries
-// the new tables and the format row to it.
-func (b *TursoBackend) createLog(ctx context.Context) error {
-	tx, err := b.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("syncworker: create the log: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	for _, stmt := range createStatements {
-		if _, err := tx.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("syncworker: create the log: %w", err)
-		}
-	}
-	if _, err := tx.ExecContext(ctx,
-		"INSERT INTO meta (key, value) VALUES (?, ?)",
-		metaFormatKey, strconv.Itoa(logFormatVersion)); err != nil {
-		return fmt.Errorf("syncworker: write the log format: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("syncworker: create the log: %w", err)
-	}
-	if err := b.driver.Push(ctx); err != nil {
-		return fmt.Errorf("syncworker: push the new log: %w", markTransferRefusal(err))
-	}
-	return nil
-}
-
 // Append writes one batch of this origin's entries as a single replica
 // transaction and pushes it. The sequence numbers come from the replica's own
 // high-water mark, never from the request: a local file restored from a backup
@@ -252,6 +173,9 @@ func (b *TursoBackend) writeBatch(ctx context.Context, entries []Entry) ([]Entry
 		}
 		written = append(written, e)
 	}
+	if err := writeSignedFrom(ctx, tx, b.spec.Origin, written); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("syncworker: append: %w", err)
 	}
@@ -259,15 +183,24 @@ func (b *TursoBackend) writeBatch(ctx context.Context, entries []Entry) ([]Entry
 }
 
 // insertEntry writes one entry's log row. A delete carries no body, so it is
-// stored as NULL rather than as an empty string that would read as a body.
+// stored as NULL rather than as an empty string that would read as a body. An
+// unsigned entry's MAC goes in the same way: NULL is what says "this entry was
+// written before this machine had a key", and it is not the same answer as a
+// MAC that failed to verify.
 func insertEntry(ctx context.Context, tx *sql.Tx, e Entry) error {
 	var body any
 	if e.Op == opUpsert {
 		body = string(e.Body)
 	}
+	var mac any
+	if len(e.MAC) > 0 {
+		mac = e.MAC
+	}
 	if _, err := tx.ExecContext(ctx,
-		"INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		e.Origin, e.Seq, e.Batch, e.Tbl, e.PK, e.Op, e.SchemaVersion, body, e.At.UTC().Format(time.RFC3339Nano)); err != nil {
+		"INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at, mac)"+
+			" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		e.Origin, e.Seq, e.Batch, e.Tbl, e.PK, e.Op, e.SchemaVersion, body,
+		e.At.UTC().Format(time.RFC3339Nano), mac); err != nil {
 		return fmt.Errorf("syncworker: append %s %s: %w", e.Tbl, e.PK, err)
 	}
 	return nil
@@ -335,18 +268,26 @@ func (b *TursoBackend) Pull(marks map[string]int) ([]Entry, error) {
 	return entries, nil
 }
 
-// scanEntry reads one log row back into the entry the pipe carries.
+// scanEntry reads one log row back into the entry the pipe carries. The MAC is
+// read as raw bytes rather than as text: it is a digest, and the column is a
+// BLOB, so any decoding of it on the way in would have to be undone on the way
+// out for the two to agree.
 func scanEntry(rows *sql.Rows) (Entry, error) {
 	var (
 		e    Entry
 		body sql.NullString
+		mac  []byte
 		at   string
 	)
-	if err := rows.Scan(&e.Origin, &e.Seq, &e.Batch, &e.Tbl, &e.PK, &e.Op, &e.SchemaVersion, &body, &at); err != nil {
+	if err := rows.Scan(&e.Origin, &e.Seq, &e.Batch, &e.Tbl, &e.PK, &e.Op,
+		&e.SchemaVersion, &body, &at, &mac); err != nil {
 		return Entry{}, fmt.Errorf("syncworker: read an entry: %w", err)
 	}
 	if body.Valid {
 		e.Body = json.RawMessage(body.String)
+	}
+	if len(mac) > 0 {
+		e.MAC = mac
 	}
 	parsed, err := time.Parse(time.RFC3339Nano, at)
 	if err != nil {
@@ -448,100 +389,6 @@ func (b *TursoBackend) ready() error {
 		return fmt.Errorf("syncworker: no replica: %w", ErrNoHello)
 	}
 	return nil
-}
-
-// createStatements is the remote schema, in one place so the create and the
-// classification cannot disagree about what a relevo log is. The marks table is
-// last because it is the only one the format below does not have, so an upgrade
-// creates it on its own.
-var createStatements = []string{
-	"CREATE TABLE log (" +
-		"origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, " +
-		"tbl TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, " +
-		"schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, " +
-		"PRIMARY KEY (origin, seq))",
-	"CREATE TABLE head (" +
-		"origin TEXT NOT NULL, tbl TEXT NOT NULL, pk TEXT NOT NULL, " +
-		"seq INTEGER NOT NULL, hash TEXT NOT NULL, " +
-		"PRIMARY KEY (origin, tbl, pk))",
-	"CREATE TABLE meta (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)",
-	createMarksStatement,
-}
-
-// userTables is the remote's own tables, which is everything sqlite_master
-// lists that the engine did not create for itself.
-func userTables(ctx context.Context, db *sql.DB) ([]string, error) {
-	rows, err := db.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var names []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		if !engineTable(name) {
-			names = append(names, name)
-		}
-	}
-	return names, rows.Err()
-}
-
-// engineTable reports whether a table belongs to the database engine rather than
-// to whatever the remote holds. SQLite keeps its sqlite_ tables, and the sync
-// engine keeps its change tracking in every replica in tables of its own, all
-// named turso_ or __turso_internal_, so a replica of an empty remote is never
-// empty. The match is on those prefixes rather than on any one table, so an
-// engine that renames a table of its own still matches, and it is made in Go
-// rather than in LIKE, whose underscore matches any one character and whose
-// ESCAPE the engine need not support.
-func engineTable(name string) bool {
-	for _, prefix := range []string{"sqlite_", "turso_", "__turso_internal_"} {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-// isLogTables reports whether the remote holds exactly the log's four tables.
-// Anything else -- another database's tables, a partial create, a log missing
-// its meta -- is a remote this build will not write into.
-func isLogTables(tables []string) bool {
-	return slices.Equal(tables, []string{"head", "log", "marks", "meta"})
-}
-
-// isFormatOneTables reports whether the remote holds exactly the tables the
-// format below has: the same log without the marks table. It is a format to
-// bring forward rather than a remote to refuse, so it is named apart from the
-// current set instead of being read as a partial create of it.
-func isFormatOneTables(tables []string) bool {
-	return slices.Equal(tables, []string{"head", "log", "meta"})
-}
-
-// readFormat is the format version the remote's meta carries, and empty when it
-// carries none.
-func readFormat(ctx context.Context, db *sql.DB) (string, error) {
-	var value string
-	err := db.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = ?", metaFormatKey).Scan(&value)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("syncworker: read the log format: %w", err)
-	}
-	return value, nil
-}
-
-// errNotALog is the refusal a remote that is not this log gets. It names the URL
-// because the operator's next move is to check which database the machine is
-// pointed at, and a refusal that did not would send them elsewhere to find out.
-// Every later attempt meets the same remote, so the class says so.
-func errNotALog(url string) error {
-	return MarkRefusal(CodeRemote,
-		fmt.Errorf("sync: refusing remote %s: it is not a relevo sync log", url))
 }
 
 // The shape the engine's own refusal takes: the call failed to execute SQL, and

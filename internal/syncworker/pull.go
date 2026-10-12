@@ -91,7 +91,7 @@ func pullQuery(origins []string, marks map[string]int, limit int) (string, []any
 		clauses = append(clauses, "(origin = ? AND seq > ?)")
 		args = append(args, origin, marks[origin])
 	}
-	query := "SELECT origin, seq, batch, tbl, pk, op, schema_version, body, at FROM log" +
+	query := "SELECT origin, seq, batch, tbl, pk, op, schema_version, body, at, mac FROM log" +
 		" WHERE " + strings.Join(clauses, " OR ") +
 		" ORDER BY origin, seq LIMIT ?"
 	return query, append(args, limit)
@@ -101,7 +101,7 @@ func pullQuery(origins []string, marks map[string]int, limit int) (string, []any
 // of one batch after the last row the page held. It is bounded to that batch, so
 // a batch longer than a page is still read in one piece.
 func restOfBatchQuery(last Entry) (string, []any) {
-	return "SELECT origin, seq, batch, tbl, pk, op, schema_version, body, at FROM log" +
+	return "SELECT origin, seq, batch, tbl, pk, op, schema_version, body, at, mac FROM log" +
 			" WHERE origin = ? AND batch = ? AND seq > ? ORDER BY seq",
 		[]any{last.Origin, last.Batch, last.Seq}
 }

@@ -1,6 +1,9 @@
 package synclog
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // LogTransport is where the per-origin log lives. It is the seam the exporter,
 // importer and reconcile are written against, so every test in this slice runs
@@ -86,6 +89,39 @@ type LogTransport interface {
 	// records the floor, as one write. The origin is the transport's own for the
 	// reason PublishMarks has: only the machine that wrote a log may drop from it.
 	CompactOwn(floor int) (CompactResult, error)
+
+	// KeyMeta reads the passphrase material the remote holds, answering Present
+	// false on a transport whose log has none. It exists before any signing
+	// does, because a machine that is about to sign has to learn what the log
+	// was set up with before it can produce anything a reader would accept.
+	KeyMeta(ctx context.Context) (KeyMeta, error)
+
+	// KeyInit writes that material where the log holds none and answers with
+	// what it holds afterwards. The answer rather than the request is what a
+	// caller acts on: two machines racing the first one both learn the winner's
+	// salt this way, and each compares its own check against it, rather than one
+	// machine silently replacing the other's key.
+	KeyInit(ctx context.Context, key KeyMeta) (KeyMeta, error)
+}
+
+// KeyMeta is the passphrase material a transport holds: the KDF salt, the name
+// of the derivation, and the check value derived from the key.
+//
+// The salt and the check are not secret -- the remote holds them so another
+// machine can derive the same key and compare -- but everything here arrived
+// from a machine this one does not control, so a caller treats all of it as a
+// claim to check rather than as a fact.
+type KeyMeta struct {
+	// Salt is the KDF salt.
+	Salt []byte
+	// KDF names the derivation the key was stretched with.
+	KDF string
+	// Check is the value a wrong passphrase does not reproduce.
+	Check []byte
+	// Present says whether a key has been set up at all. It is not read from
+	// the salt being empty, because a remote that holds a check without a salt
+	// is a different state from one that holds neither.
+	Present bool
 }
 
 // CompactResult is what one compaction did: how many entries it dropped and the
@@ -113,6 +149,10 @@ type MarkState struct {
 	// Sizes is each origin's log size in bytes: the bodies plus a fixed
 	// overhead per row.
 	Sizes map[string]int64
+	// SignedFrom is the first sequence of each origin that was signed. An
+	// origin that has never signed is absent from the map, which is how a
+	// reader tells that from an origin whose very first entry was signed.
+	SignedFrom map[string]int
 }
 
 // LogRowOverhead is the bytes a log row costs beside its body, for the columns

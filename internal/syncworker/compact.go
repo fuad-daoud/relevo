@@ -127,7 +127,7 @@ func (b *TursoBackend) PullRange(origin string, after, upto int) ([]Entry, error
 		return nil, err
 	}
 	return b.scanEntries(context.Background(),
-		"SELECT origin, seq, batch, tbl, pk, op, schema_version, body, at FROM log"+
+		"SELECT origin, seq, batch, tbl, pk, op, schema_version, body, at, mac FROM log"+
 			" WHERE origin = ? AND seq > ? AND seq <= ? ORDER BY seq LIMIT ?",
 		[]any{origin, after, upto, b.page})
 }

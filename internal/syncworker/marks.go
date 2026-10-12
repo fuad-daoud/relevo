@@ -28,33 +28,6 @@ const createMarksStatement = "CREATE TABLE marks (" +
 // the floors finds them without a second table.
 const floorPrefix = "floor."
 
-// upgradeLog brings a remote this build's predecessor wrote to the current
-// format. The marks table and the format row are written in one replica
-// transaction and pushed, the way createLog writes a whole log, so the remote
-// never holds one without the other.
-func (b *TursoBackend) upgradeLog(ctx context.Context) error {
-	tx, err := b.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("syncworker: upgrade the log: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, createMarksStatement); err != nil {
-		return fmt.Errorf("syncworker: upgrade the log: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx,
-		"UPDATE meta SET value = ? WHERE key = ?",
-		strconv.Itoa(logFormatVersion), metaFormatKey); err != nil {
-		return fmt.Errorf("syncworker: write the log format: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("syncworker: upgrade the log: %w", err)
-	}
-	if err := b.driver.Push(ctx); err != nil {
-		return fmt.Errorf("syncworker: push the upgraded log: %w", markTransferRefusal(err))
-	}
-	return nil
-}
-
 // PublishMarks writes this reader's own rows and pushes them.
 //
 // The reader is this worker's own origin rather than anything the request
@@ -160,6 +133,9 @@ func (b *TursoBackend) ReadMarks() (MarkState, error) {
 	if err := b.readSizes(ctx, &out); err != nil {
 		return MarkState{}, markDriverRefusal(err)
 	}
+	if err := b.readSignedFrom(ctx, &out); err != nil {
+		return MarkState{}, markDriverRefusal(err)
+	}
 	return out, nil
 }
 
@@ -198,32 +174,7 @@ func (b *TursoBackend) readMarkRows(ctx context.Context, out *MarkState) error {
 // has already dropped, and a caller that recomputed one would floor an origin
 // below what the remote has in fact discarded.
 func (b *TursoBackend) readFloors(ctx context.Context, out *MarkState) error {
-	rows, err := b.db.QueryContext(ctx,
-		"SELECT key, value FROM meta WHERE key LIKE ?", floorPrefix+"%")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var key, value sql.NullString
-		if err := rows.Scan(&key, &value); err != nil {
-			return err
-		}
-		// A floor that is not a non-negative number is skipped, for the reason
-		// a malformed mark is.
-		floor, err := strconv.Atoi(value.String)
-		if err != nil || floor < 0 {
-			continue
-		}
-		if out.Floors == nil {
-			out.Floors = make(map[string]int)
-		}
-		out.Floors[key.String[len(floorPrefix):]] = floor
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	return nil
+	return b.readMetaPositions(ctx, floorPrefix, &out.Floors)
 }
 
 // publishMarks records this worker's own applied positions.

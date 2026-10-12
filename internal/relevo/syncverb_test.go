@@ -1151,6 +1151,14 @@ func (h *hangingJoin) CompactOwn(int) (synclog.CompactResult, error) {
 	return synclog.CompactResult{}, nil
 }
 
+func (h *hangingJoin) KeyMeta(context.Context) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
+
+func (h *hangingJoin) KeyInit(context.Context, synclog.KeyMeta) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
+
 // TestReconcileVerbRefusesWithoutDryRun pins that the only reconcile on offer is
 // the preview: a call that does not ask for one is refused before a transport
 // is opened.

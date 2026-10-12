@@ -8,6 +8,7 @@ package syncpipe
 // pipe and decides what a failed call means.
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
@@ -161,6 +162,33 @@ func (s *Supervisor) CompactOwn(floor int) (synclog.CompactResult, error) {
 	err := s.drive("compact", func(c *Client) error {
 		var e error
 		out, e = c.CompactOwn(floor)
+		return e
+	})
+	return out, err
+}
+
+// KeyMeta reads the passphrase material the remote holds.
+func (s *Supervisor) KeyMeta(ctx context.Context) (synclog.KeyMeta, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out synclog.KeyMeta
+	err := s.drive("key_meta", func(c *Client) error {
+		var e error
+		out, e = c.KeyMeta(ctx)
+		return e
+	})
+	return out, err
+}
+
+// KeyInit writes the passphrase material where the remote holds none and
+// answers with what it holds afterwards.
+func (s *Supervisor) KeyInit(ctx context.Context, key synclog.KeyMeta) (synclog.KeyMeta, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out synclog.KeyMeta
+	err := s.drive("key_init", func(c *Client) error {
+		var e error
+		out, e = c.KeyInit(ctx, key)
 		return e
 	})
 	return out, err

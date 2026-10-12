@@ -90,3 +90,11 @@ func (r *retryTransport) PullRange(o string, after, upto int) ([]synclog.Entry, 
 func (r *retryTransport) CompactOwn(floor int) (synclog.CompactResult, error) {
 	return r.inner.CompactOwn(floor)
 }
+
+func (r *retryTransport) KeyMeta(context.Context) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
+
+func (r *retryTransport) KeyInit(context.Context, synclog.KeyMeta) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
