@@ -91,6 +91,9 @@ index sqlite_autoindex_config_doc_1 config_doc
 index sqlite_autoindex_config_local_1 config_local
 
 
+index sqlite_autoindex_config_write_stamp_1 config_write_stamp
+
+
 index sqlite_autoindex_event_1 event
 
 
@@ -186,6 +189,9 @@ CREATE TABLE config_meta (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER
 
 table config_revision config_revision
 CREATE TABLE config_revision (rev INTEGER PRIMARY KEY, at TEXT NOT NULL, source TEXT NOT NULL, message TEXT NOT NULL, version INTEGER NOT NULL, changes TEXT NOT NULL, snapshot TEXT NOT NULL)
+
+table config_write_stamp config_write_stamp
+CREATE TABLE config_write_stamp ("key" TEXT PRIMARY KEY, stamp TEXT NOT NULL)
 
 table event event
 CREATE TABLE event (id TEXT PRIMARY KEY, binding_id TEXT NOT NULL REFERENCES binding (id), round_id TEXT REFERENCES round (id), seq INTEGER NOT NULL, ts TEXT NOT NULL, kind TEXT NOT NULL, direction TEXT NOT NULL, note TEXT, path TEXT, delivered_at TEXT, confirmed INTEGER NOT NULL, late INTEGER NOT NULL, flagged INTEGER, flagged_by TEXT, entry_json TEXT NOT NULL)
@@ -391,4 +397,4 @@ CREATE TRIGGER IF NOT EXISTS sync_outbox_transcript_ins AFTER INSERT ON transcri
 trigger sync_outbox_transcript_upd transcript
 CREATE TRIGGER IF NOT EXISTS sync_outbox_transcript_upd AFTER UPDATE ON transcript BEGIN INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('transcript', json_array (NEW.id), 'update', CASE NEW.owner_kind WHEN 'round' THEN (SELECT origin FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = NEW.owner_id)) WHEN 'mastermind' THEN (SELECT origin FROM mastermind WHERE id = NEW.owner_id) ELSE NULL END); END
 
-schema_versions have=27 know=27
+schema_versions have=28 know=28

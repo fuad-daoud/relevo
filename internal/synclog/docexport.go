@@ -21,6 +21,15 @@ type DocStamper interface {
 	ItemUpdatedAt(key string) (at time.Time, ok bool, err error)
 }
 
+// DocWriteStamper is the optional half of a SharedDoc that stamps an item when
+// it is written, so the export carries the time of the write and not the time
+// of the export.
+type DocWriteStamper interface {
+	// ItemWriteStamp is the stamp recorded when key was last written here; ok is
+	// false when no write on this machine stamped it.
+	ItemWriteStamp(key string) (stamp Stamp, ok bool, err error)
+}
+
 // ItemDigest is the hash an item is compared by. The value is compacted first
 // so spacing never makes an unchanged item look changed.
 func ItemDigest(value json.RawMessage) (string, error) {
@@ -141,29 +150,46 @@ func (e *Exporter) docEntries(doc SharedDoc, items map[string]json.RawMessage, s
 	return entries, writes, nil
 }
 
-// docStamp is the stamp for a key about to be exported. A key never exported
-// takes its stamp from when the doc says it was written; every later one comes
-// from the clock, moved past the stamp the key last carried so a change always
-// outranks the state it replaces.
+// docStamp is the stamp for a key about to be exported. The stamp recorded when
+// the key was written wins when it is newer than the one the key last carried.
+// Otherwise a key never exported takes its stamp from when the doc says it was
+// written, and every later one comes from the clock, moved past the stamp the
+// key last carried so a change always outranks the state it replaces.
 func (e *Exporter) docStamp(clock *HybridClock, doc SharedDoc, key string, prev db.DocExportRow, had bool) (Stamp, error) {
-	if !had {
-		if stamper, ok := doc.(DocStamper); ok {
-			at, known, err := stamper.ItemUpdatedAt(key)
-			if err != nil {
-				return 0, err
-			}
-			if known {
-				return stampAt(at, 0), nil
-			}
+	var last Stamp
+	if had {
+		var err error
+		if last, err = ParseStamp(prev.Stamp); err != nil {
+			return 0, err
 		}
-		return clock.Now()
 	}
-	last, err := ParseStamp(prev.Stamp)
-	if err != nil {
-		return 0, err
+	if w, ok := doc.(DocWriteStamper); ok {
+		wrote, found, err := w.ItemWriteStamp(key)
+		if err != nil {
+			return 0, err
+		}
+		if found && (!had || wrote > last) {
+			return wrote, nil
+		}
+	}
+	if !had {
+		return e.firstStamp(clock, doc, key)
 	}
 	if err := clock.Observe(last); err != nil {
 		return 0, err
+	}
+	return clock.Now()
+}
+
+func (e *Exporter) firstStamp(clock *HybridClock, doc SharedDoc, key string) (Stamp, error) {
+	if stamper, ok := doc.(DocStamper); ok {
+		at, known, err := stamper.ItemUpdatedAt(key)
+		if err != nil {
+			return 0, err
+		}
+		if known {
+			return stampAt(at, 0), nil
+		}
 	}
 	return clock.Now()
 }

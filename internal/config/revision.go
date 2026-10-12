@@ -73,6 +73,9 @@ func (s *Store) record(t *db.Tx, before snapshot, extra []Change) error {
 	if err != nil {
 		return err
 	}
+	if err := s.stampWrites(t, before.doc, after); err != nil {
+		return err
+	}
 
 	changes := append(DiffDocs(before.doc, after), extra...)
 	if len(changes) == 0 {

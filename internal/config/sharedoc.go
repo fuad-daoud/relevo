@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
 // Config is the name the config document travels under, as `doc:config` on the
@@ -51,6 +52,13 @@ func (d *SharedDoc) Items() (map[string]json.RawMessage, error) {
 		return nil, err
 	}
 
+	return itemsOf(shared, false)
+}
+
+// itemsOf is one value per syncable key of a shared document. A section that
+// does not split into named items is an error, or with lenient is left out: a
+// body written before its items had names has no keys to stamp.
+func itemsOf(shared Doc, lenient bool) (map[string]json.RawMessage, error) {
 	out := map[string]json.RawMessage{}
 	for _, sec := range Sections {
 		if !syncs(sec) {
@@ -62,14 +70,13 @@ func (d *SharedDoc) Items() (map[string]json.RawMessage, error) {
 		}
 		items, err := splits(sec, body)
 		if err != nil {
+			if lenient {
+				continue
+			}
 			return nil, err
 		}
 		for name, item := range items {
-			key := string(sec)
-			if perItemSections[sec] {
-				key = itemKey(sec, name)
-			}
-			out[key] = item
+			out[docKeyOf(sec, name)] = item
 		}
 	}
 	return out, nil
@@ -84,6 +91,17 @@ func (d *SharedDoc) ItemUpdatedAt(key string) (time.Time, bool, error) {
 		return time.Time{}, false, err
 	}
 	return d.store.db.ConfigUpdatedAt(string(sec))
+}
+
+// ItemWriteStamp is the stamp recorded when key was last written on this
+// machine. An item that arrived from a peer records none.
+func (d *SharedDoc) ItemWriteStamp(key string) (synclog.Stamp, bool, error) {
+	text, ok, err := d.store.db.ConfigWriteStamp(key)
+	if err != nil || !ok {
+		return 0, false, err
+	}
+	stamp, err := synclog.ParseStamp(text)
+	return stamp, err == nil, err
 }
 
 // syncs reports whether a section is part of the shared document at all. The
@@ -146,6 +164,9 @@ func (s *Store) applyKey(sec Section, name string, value json.RawMessage) error 
 // retried once the keys it depends on have landed. The second result is a
 // failure of the store itself.
 func (s *Store) applyKeyIn(t *db.Tx, sec Section, name string, value json.RawMessage) (refusal error, hard error) {
+	unstamped := *s
+	unstamped.arrived = true
+	s = &unstamped
 	before, err := readSnapshot(t)
 	if err != nil {
 		return nil, err

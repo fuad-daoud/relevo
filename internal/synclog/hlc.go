@@ -91,6 +91,13 @@ func NewHybridClock(store db.KV) *HybridClock {
 	return &HybridClock{store: store, key: hybridClockKey, now: time.Now}
 }
 
+// NewHybridClockAt is NewHybridClock reading the wall clock from now.
+func NewHybridClockAt(store db.KV, now func() time.Time) *HybridClock {
+	c := NewHybridClock(store)
+	c.now = now
+	return c
+}
+
 // Now returns the next stamp, which is strictly greater than every stamp this
 // clock has issued or observed.
 func (c *HybridClock) Now() (Stamp, error) {

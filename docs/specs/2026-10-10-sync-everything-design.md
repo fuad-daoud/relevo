@@ -187,9 +187,17 @@ emits one signed entry per key whose value differs, plus a tombstone per key
 that has gone. Diffing keeps entries at item level though config is stored per
 section, and the digest, a hash of the canonical value, is what tells a changed
 key from an unchanged one. A locked machine (no key) emits no doc entries and
-keeps its outbox. A first export, which has no export state, stamps each key
-from its section's `config_doc.updated_at`, never from `Now()`, so a machine
-that joins late does not outrank edits made elsewhere while it was offline. A
+keeps its outbox. An item is stamped when it is written locally, not when it is
+exported: a write that changes the canonical value of a key (or removes it)
+records `config_write_stamp(key, stamp)` in the machine-local file, in the
+write's own transaction, from the hybrid clock, and the export carries that
+stamp. The stamp is per key, so an old edit of one item never rides a later
+edit of another, and a write that arrived through sync records none. So a
+machine that was offline or locked when it edited does not outrank edits made
+elsewhere since. The exporter takes the write stamp when it is newer than the
+key's export-state stamp; otherwise a first export, which has no export state,
+stamps the key from its section's `config_doc.updated_at`, never from `Now()`,
+and a later one from the clock moved past the key's previous stamp. A
 join clears `shared_export_state`, so the first export after it re-emits every
 key. The reconciler ignores doc tables.
 

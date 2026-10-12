@@ -104,6 +104,9 @@ type Store struct {
 	source  string
 	message string
 	now     func() time.Time
+	// arrived marks a store writing an item that came from a peer, which
+	// records no write stamp: the export state already stands for it.
+	arrived bool
 }
 
 // Open binds a config store to d's machine-local file, or to d itself on a
