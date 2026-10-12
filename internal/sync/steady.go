@@ -112,12 +112,20 @@ func (r *Runner) attempt(ctx context.Context, shared *db.DB) SteadyResult {
 func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) SteadyResult {
 	var out SteadyResult
 	r.recordRemoteKDF(ctx, t)
+	locked := false
 	if err := within(ctx, t, r.stepTimeout(), func() error {
-		res, err := synclog.NewExporter(shared, t).Export()
+		exp := synclog.NewExporter(shared, t)
+		exp.SetKey(SigningKey(r.Local))
+		res, err := exp.Export()
 		out.Exported = res.Appended
 		return err
 	}); err != nil {
-		return r.failed(out, err)
+		// A locked machine cannot append, but it can still read: the import goes
+		// on and the refusal is reported as trouble.
+		if !errors.Is(err, synclog.ErrLockedSignedOrigin) {
+			return r.failed(out, err)
+		}
+		locked = true
 	}
 	imported, err := r.drainImport(ctx, shared, t)
 	if err != nil {
@@ -125,6 +133,9 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 	}
 	out.Applied = imported.Applied
 	out.Trouble = troubleFrom(imported)
+	if locked {
+		out.Trouble.Held = append(out.Trouble.Held, synclog.ErrLockedSignedOrigin.Error())
+	}
 	r.publishMarks(shared, t, imported.Moved())
 	now := time.Now().UTC()
 	compacted := r.compact(shared, t, now)
@@ -215,7 +226,9 @@ func (r *Runner) drainImport(ctx context.Context, shared *db.DB, t *StopTranspor
 		var res synclog.ImportResult
 		err := within(ctx, t, r.stepTimeout(), func() error {
 			var ierr error
-			res, ierr = synclog.NewImporter(shared, t).Import()
+			imp := synclog.NewImporter(shared, t)
+			imp.SetKey(SigningKey(r.Local))
+			res, ierr = imp.Import()
 			return ierr
 		})
 		return res, err

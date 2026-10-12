@@ -378,6 +378,7 @@ func (e *Enabler) drainImport(transport synclog.LogTransport) (synclog.ImportRes
 	deadline := e.now().Add(JoinImportDeadline)
 	return drainImport(func() (synclog.ImportResult, error) {
 		imp := synclog.NewImporter(e.Request.Shared, transport)
+		imp.SetKey(SigningKey(e.Request.Local))
 		imp.AfterBatch = func() { e.count(transport) }
 		res, err := imp.Import()
 		e.count(transport)
@@ -412,6 +413,7 @@ func (e *Enabler) publishMarks(transport synclog.LogTransport) error {
 // of our own can drift from it.
 func (e *Enabler) reconcile(transport synclog.LogTransport) (int, int, error) {
 	reconciler := synclog.NewReconciler(e.Request.Shared, transport)
+	reconciler.SetKey(SigningKey(e.Request.Local))
 	if e.present != nil {
 		reconciler.RepairBodies(e.present)
 	}

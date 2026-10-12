@@ -35,6 +35,7 @@ const (
 	latchDeaths  = "sync: the worker stopped answering three times in a row"
 	latchRefused = "sync: the remote refused this machine's sync log"
 	latchMissing = "sync: a body the sync log names is missing from the bucket"
+	latchSigned  = "sync: an entry in the sync log failed its signature check"
 	latchQuota   = "sync: the Turso plan quota is reached; it resets with the billing month"
 )
 
@@ -200,6 +201,9 @@ func (b *Breaker) Refused(err error) error {
 	}
 	if errors.Is(err, synclog.ErrBlobMissing) {
 		return b.latch(latchMissing)
+	}
+	if errors.Is(err, synclog.ErrBadSignature) {
+		return b.latch(latchSigned)
 	}
 	if errors.Is(err, ErrQuotaReached) {
 		return b.latch(latchQuota)

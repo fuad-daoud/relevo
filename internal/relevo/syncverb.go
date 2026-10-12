@@ -249,7 +249,7 @@ func (v *VerbRunner) push(ctx context.Context) *wire.SyncResult {
 	stop := relevosync.NewStopTransport(transport)
 	defer v.Runner.Track(stop)()
 	defer v.Runner.CountMoved(ctx, stop)
-	res, err := synclog.NewExporter(v.Shared, stop).Export()
+	res, err := keyedExporter(v.Shared, stop).Export()
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
@@ -268,7 +268,7 @@ func (v *VerbRunner) pull(ctx context.Context) *wire.SyncResult {
 	stop := relevosync.NewStopTransport(transport)
 	defer v.Runner.Track(stop)()
 	defer v.Runner.CountMoved(ctx, stop)
-	res, err := synclog.NewImporter(v.Shared, stop).Import()
+	res, err := keyedImporter(v.Shared, stop).Import()
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
@@ -466,6 +466,7 @@ func (v *VerbRunner) disable(ctx context.Context, verb *wire.SyncVerb) *wire.Syn
 	transport := v.disableTransport(ctx)
 	disabler := &relevosync.Disabler{
 		Local:       v.Local,
+		Shared:      v.Shared,
 		FinalExport: exportThrough(v.Shared, transport),
 		Stop:        stopTransport(transport),
 		ReplicaPath: v.ReplicaPath,
@@ -525,7 +526,7 @@ func exportThrough(shared *db.DB, transport synclog.LogTransport) func(context.C
 		stop := relevosync.NewStopTransport(transport)
 		done := make(chan error, 1)
 		go func() {
-			_, err := synclog.NewExporter(shared, stop).Export()
+			_, err := keyedExporter(shared, stop).Export()
 			done <- err
 		}()
 		select {

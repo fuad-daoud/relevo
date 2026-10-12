@@ -44,6 +44,9 @@ type Disabler struct {
 	// Local is the machine-local file: the section, the mark and the token all
 	// live there.
 	Local Local
+	// Shared is the file the signed-from records live in; nil skips clearing
+	// them.
+	Shared *db.DB
 	// FinalExport is the one call the turn-off's final attempt makes: drain
 	// this machine's pending rows into the log before the mark goes off. It is
 	// a single call rather than a whole transport because the turn-off reads
@@ -134,6 +137,11 @@ func (d *Disabler) Disable(ctx context.Context) (DisableResult, error) {
 	out.Steps = append(out.Steps, stepDeleteKey)
 	if err := DeleteKey(d.Local); err != nil {
 		return out, fmt.Errorf("sync: disable: %w", err)
+	}
+	if d.Shared != nil {
+		if err := d.Shared.ClearSignedFrom(); err != nil {
+			return out, fmt.Errorf("sync: disable: %w", err)
+		}
 	}
 	// The R2 credentials go with the token, and on the same reasoning: a machine
 	// marked off with a live bucket credential is one the next enable would

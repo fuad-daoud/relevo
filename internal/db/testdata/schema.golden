@@ -126,6 +126,9 @@ index sqlite_autoindex_session_consent_1 session_consent
 index sqlite_autoindex_sync_import_mark_1 sync_import_mark
 
 
+index sqlite_autoindex_sync_signed_from_1 sync_signed_from
+
+
 index sqlite_autoindex_transcript_1 transcript
 
 
@@ -449,6 +452,12 @@ CREATE TABLE sync_outbox (
     origin TEXT
 )
 
+table sync_signed_from sync_signed_from
+CREATE TABLE sync_signed_from (
+    origin TEXT PRIMARY KEY,
+    seq INTEGER NOT NULL
+)
+
 table transcript transcript
 CREATE TABLE transcript (
     id TEXT PRIMARY KEY,
@@ -724,4 +733,4 @@ CREATE TRIGGER sync_outbox_transcript_upd AFTER UPDATE ON transcript BEGIN
         END);
 END
 
-schema_versions have=23 know=23
+schema_versions have=24 know=24

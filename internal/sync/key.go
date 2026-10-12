@@ -118,6 +118,22 @@ func ReadKey(l Local) (key []byte, ok bool, err error) {
 	return key, ok, nil
 }
 
+// SigningKey is the key entries are signed and verified with, or nil on a
+// locked machine. It is read per attempt, so an unlock while the daemon runs
+// takes effect on the next tick. A key that cannot be read is a locked machine:
+// the exporter's own guard still refuses to append unsigned to a signed log.
+func SigningKey(kv db.KV) []byte {
+	l, isDB := kv.(Local)
+	if !isDB || l == nil {
+		return nil
+	}
+	key, ok, err := ReadKey(l)
+	if err != nil || !ok {
+		return nil
+	}
+	return key
+}
+
 // DeleteKey removes the stored key and the fact about the remote's. An absent
 // key is a no-op.
 func DeleteKey(l Local) error {
