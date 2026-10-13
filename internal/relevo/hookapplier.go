@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -30,7 +31,8 @@ func HookFileApplier(root string) config.FileApplier {
 
 type diskFileApplier struct{ root string }
 
-// hooksDir is this machine's hook script directory.
+// hooksDir is this machine's hook script directory, the only place a write may
+// set the executable bit.
 func (a diskFileApplier) hooksDir() string { return filepath.Join(a.root, "hooks") }
 
 func (a diskFileApplier) HookFilePath(event, file string) (string, error) {
@@ -65,19 +67,18 @@ func (a diskFileApplier) ReadHookFile(path string) ([]byte, bool, error) {
 }
 
 // WriteHookFile writes data at path through a temp file in path's directory
-// and a rename. A new file lands 0644 whatever the sender's file was: only a
-// local chmod makes a synced script executable, and a rewrite keeps the mode
-// that chmod gave it. An existing target that is not a regular file is refused.
-func (a diskFileApplier) WriteHookFile(path string, data []byte) (bool, error) {
-	mode := os.FileMode(0o644)
-	if info, err := os.Lstat(path); err == nil {
-		if !info.Mode().IsRegular() {
-			return false, fmt.Errorf("hooks: %s is not a regular file: %w", path, config.ErrHookPath)
-		}
-		mode = info.Mode().Perm()
+// and a rename, setting the executable bit only under this machine's hooks
+// directory. An existing target that is not a regular file is refused.
+func (a diskFileApplier) WriteHookFile(path string, data []byte, exec bool) (bool, error) {
+	if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
+		return false, fmt.Errorf("hooks: %s is not a regular file: %w", path, config.ErrHookPath)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return false, err
+	}
+	mode := os.FileMode(0o644)
+	if exec && a.underHooksDir(path) {
+		mode = 0o755
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".relevo-hook-*")
 	if err != nil {
@@ -99,6 +100,14 @@ func (a diskFileApplier) WriteHookFile(path string, data []byte) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// underHooksDir reports whether path is this machine's hook script directory
+// or below it. The executable bit is set nowhere else, so a file the config
+// names can never arrive executable on a machine that did not run it.
+func (a diskFileApplier) underHooksDir(path string) bool {
+	dir := a.hooksDir()
+	return path == dir || strings.HasPrefix(path, dir+string(filepath.Separator))
 }
 
 // MachineConfigWithFiles is the config store of one machine bound to the

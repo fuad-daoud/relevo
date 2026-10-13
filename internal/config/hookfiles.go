@@ -76,6 +76,7 @@ var errOversize = errors.New("over the cap")
 // HookFile is one hook script as the document carries it.
 type HookFile struct {
 	Contents []byte
+	Exec     bool
 }
 
 // Hash is the script's content digest: the identity the hash cache keeps and
@@ -87,8 +88,7 @@ func (f HookFile) Hash() string {
 
 // hookFileValue is one script on the wire. The contents are base64 because a
 // script is a byte string and JSON text cannot carry one that is not valid
-// UTF-8 without silently changing it. Exec is always written false and an
-// arriving value is never read: a peer cannot make a script executable here.
+// UTF-8 without silently changing it.
 type hookFileValue struct {
 	Contents string `json:"contents"`
 	Exec     bool   `json:"exec"`
@@ -209,6 +209,7 @@ func EncodeHookDoc(doc HookDoc) (json.RawMessage, error) {
 	for name, file := range doc.Files {
 		value.Files[name] = hookFileValue{
 			Contents: base64.StdEncoding.EncodeToString(file.Contents),
+			Exec:     file.Exec,
 		}
 	}
 	encoded, err := json.Marshal(value)
@@ -476,7 +477,7 @@ func HooksMapOf(doc HookDoc) HooksMap {
 func hookFileValues(files map[string]HookFile) map[string]hookFileValue {
 	out := make(map[string]hookFileValue, len(files))
 	for name, file := range files {
-		out[name] = hookFileValue{Contents: base64.StdEncoding.EncodeToString(file.Contents)}
+		out[name] = hookFileValue{Contents: base64.StdEncoding.EncodeToString(file.Contents), Exec: file.Exec}
 	}
 	return out
 }

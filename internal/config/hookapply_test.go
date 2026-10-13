@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -20,12 +19,13 @@ import (
 type memApplier struct {
 	root   string
 	files  map[string][]byte
+	execs  map[string]bool
 	reads  int
 	writes int
 }
 
 func newMemApplier(root string) *memApplier {
-	return &memApplier{root: root, files: map[string][]byte{}}
+	return &memApplier{root: root, files: map[string][]byte{}, execs: map[string]bool{}}
 }
 
 func (m *memApplier) HookFilePath(event, file string) (string, error) {
@@ -44,9 +44,10 @@ func (m *memApplier) ReadHookFile(path string) ([]byte, bool, error) {
 	return data, ok, nil
 }
 
-func (m *memApplier) WriteHookFile(path string, data []byte) (bool, error) {
+func (m *memApplier) WriteHookFile(path string, data []byte, exec bool) (bool, error) {
 	m.writes++
 	m.files[path] = append([]byte(nil), data...)
+	m.execs[path] = exec
 	return true, nil
 }
 
@@ -71,6 +72,7 @@ func (m *memApplier) ReadAgentFile(path string) ([]byte, bool, error) {
 func (m *memApplier) WriteAgentFile(path string, data []byte) (bool, error) {
 	m.writes++
 	m.files[path] = append([]byte(nil), data...)
+	m.execs[path] = false
 	return true, nil
 }
 
@@ -101,11 +103,15 @@ func (a diskApplier) ReadHookFile(path string) ([]byte, bool, error) {
 	return data, true, nil
 }
 
-func (a diskApplier) WriteHookFile(path string, data []byte) (bool, error) {
+func (a diskApplier) WriteHookFile(path string, data []byte, exec bool) (bool, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return false, err
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	mode := os.FileMode(0o644)
+	if exec {
+		mode = 0o755
+	}
+	if err := os.WriteFile(path, data, mode); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -169,10 +175,11 @@ func writeScript(t *testing.T, root, event, file, body string, exec bool) string
 	return HookPathOf(event, file)
 }
 
-// TestHooksItemsEmbedContentsAndNeverExportExec pins the export half: the hooks
-// item carries the script itself, not only the argv row naming it, and says it
-// is not executable whatever mode the file has here.
-func TestHooksItemsEmbedContentsAndNeverExportExec(t *testing.T) {
+// TestHooksItemsEmbedContentsAndExecBit pins the export half: the hooks item
+// carries the script itself and whether it is executable, not only the argv
+// row naming it, so a peer receives a hook it can run rather than the name of
+// one.
+func TestHooksItemsEmbedContentsAndExecBit(t *testing.T) {
 	t.Parallel()
 	store, _, root := hooksRootStore(t)
 	rel := writeScript(t, root, "PreToolUse", "check.sh", "#!/bin/sh\nexit 0\n", true)
@@ -197,8 +204,8 @@ func TestHooksItemsEmbedContentsAndNeverExportExec(t *testing.T) {
 	if string(file.Contents) != "#!/bin/sh\nexit 0\n" {
 		t.Errorf("script contents = %q, want the file on disk", file.Contents)
 	}
-	if strings.Contains(string(items[string(Hooks)]), `"exec":true`) {
-		t.Errorf("hooks item exports an exec bit: %s", items[string(Hooks)])
+	if !file.Exec {
+		t.Error("script exec bit = false, want true for an executable file")
 	}
 }
 
@@ -457,24 +464,28 @@ func TestHooksApplyPeerUpdatesLand(t *testing.T) {
 		}
 	})
 
-	// An arriving exec member is never read, so it cannot come back out.
-	t.Run("an arriving exec member is not exported", func(t *testing.T) {
+	// The executable bit is part of what the document carries, so a peer that
+	// flips it lands even though the contents are untouched.
+	t.Run("an exec flip lands", func(t *testing.T) {
 		t.Parallel()
-		store, _, _ := hooksRootStore(t)
+		store, applier, _ := hooksRootStore(t)
 		if err := store.Doc().Apply(string(Hooks),
 			json.RawMessage(`{"files":{"hooks/PreToolUse.d/a.sh":{"contents":"c2hlbGw=","exec":true}}}`)); err != nil {
-			t.Fatalf("Apply: %v", err)
+			t.Fatalf("first Apply: %v", err)
 		}
-		doc, err := store.HookDoc()
-		if err != nil {
-			t.Fatalf("HookDoc: %v", err)
+		path := filepath.Join(applier.root, hooksDirName, "PreToolUse.d", "a.sh")
+		if !applier.execs[path] {
+			t.Fatal("the first write left the script unexecutable, want it executable")
 		}
-		encoded, err := EncodeHookDoc(doc)
-		if err != nil {
-			t.Fatalf("EncodeHookDoc: %v", err)
+		if err := store.Doc().Apply(string(Hooks),
+			json.RawMessage(`{"files":{"hooks/PreToolUse.d/a.sh":{"contents":"c2hlbGw=","exec":false}}}`)); err != nil {
+			t.Fatalf("second Apply: %v", err)
 		}
-		if strings.Contains(string(encoded), `"exec":true`) {
-			t.Errorf("an exec member survived the round trip: %s", encoded)
+		if applier.execs[path] {
+			t.Error("the script is still executable, want the peer's flip to land")
+		}
+		if got := string(applier.files[path]); got != "shell" {
+			t.Errorf("file on disk = %q, want the contents untouched", got)
 		}
 	})
 
@@ -626,9 +637,10 @@ func TestUnchangedHookFileIsUnstamped(t *testing.T) {
 	}
 }
 
-// TestScriptRemovedIsCapturedAndChmodIsNot pins two capture cases: a named
-// script that goes away is carried away, and a local chmod is no edit at all.
-func TestScriptRemovedIsCapturedAndChmodIsNot(t *testing.T) {
+// TestScriptRemovedAndExecFlipCaptured pins two capture cases: a named script
+// that loses its executable bit carries the change, and one that goes away is
+// carried away.
+func TestScriptRemovedAndExecFlipCaptured(t *testing.T) {
 	t.Parallel()
 	store, _, root := hooksRootStore(t)
 	first := writeScript(t, root, "PreToolUse", "a.sh", "a\n", true)
@@ -651,8 +663,8 @@ func TestScriptRemovedIsCapturedAndChmodIsNot(t *testing.T) {
 	if err := os.Chmod(filepath.Join(root, filepath.FromSlash(first)), 0o644); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
-	if changed, err := store.CaptureHookFiles(); err != nil || changed {
-		t.Fatalf("CaptureHookFiles after chmod = %v, %v; want no change", changed, err)
+	if changed, err := store.CaptureHookFiles(); err != nil || !changed {
+		t.Fatalf("CaptureHookFiles after chmod = %v, %v; want the flipped bit", changed, err)
 	}
 	if err := os.Remove(filepath.Join(root, filepath.FromSlash(second))); err != nil {
 		t.Fatalf("remove script: %v", err)
@@ -666,6 +678,9 @@ func TestScriptRemovedIsCapturedAndChmodIsNot(t *testing.T) {
 	}
 	if _, still := doc.Files[second]; still {
 		t.Errorf("a removed script is still carried: %v", sortedFiles(doc.Files))
+	}
+	if doc.Files[first].Exec {
+		t.Error("exec bit = true after the file lost it")
 	}
 }
 

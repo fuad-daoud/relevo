@@ -119,8 +119,8 @@ func TestHookFilesApplyLandedOnThePeer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat the landed script: %v", err)
 	}
-	if info.Mode().Perm() != 0o644 {
-		t.Errorf("landed script mode = %v, want 0644 though A's file was executable", info.Mode().Perm())
+	if info.Mode()&0o111 == 0 {
+		t.Errorf("landed script mode = %v, want it executable under the hooks directory", info.Mode())
 	}
 }
 
@@ -247,31 +247,5 @@ func TestUnnamedAndOutsideRelevoExecutablesNeverExport(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(bRoot, filepath.FromSlash(unnamed))); err == nil {
 		t.Error("the unnamed executable landed on the peer")
-	}
-}
-
-// TestLocalChmodIsNotReExported pins that making a synced script executable
-// here is local drift and not an edit the next attempt exports.
-func TestLocalChmodIsNotReExported(t *testing.T) {
-	log := synclog.NewMemTransport("x")
-	a := newCfgMachine(t, log, cfgSyncKey, true)
-	b := newCfgMachine(t, log, cfgSyncKey, true)
-	aRoot, bRoot := relevoRoot(t), relevoRoot(t)
-
-	rel := writeHookScript(t, aRoot, "PreToolUse", "check.sh", "x\n")
-	a.set(t, config.Hooks, `{"events":{"PreToolUse":[["`+rel+`"]]}}`)
-	a.attemptIn(t, aRoot)
-	b.attemptIn(t, bRoot)
-	landed := filepath.Join(bRoot, filepath.FromSlash(rel))
-	if err := os.Chmod(landed, 0o755); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
-	b.attemptIn(t, bRoot)
-	items, err := b.cfg.Doc().Items()
-	if err != nil {
-		t.Fatalf("Items: %v", err)
-	}
-	if body := string(items[string(config.Hooks)]); indexOfSubstring(body, `"exec":true`) >= 0 {
-		t.Errorf("exported hooks body carries an exec bit:\n%s", body)
 	}
 }

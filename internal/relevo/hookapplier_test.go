@@ -9,8 +9,8 @@ import (
 // TestHookApplierRefusesUnsafeTargets pins the three rules the disk applier
 // holds on its own, which no document-level test can reach: a target that is a
 // symlink or a non-regular file is refused rather than followed, a write goes
-// through a temp file and a rename in the target's own directory, and a synced
-// script never arrives executable.
+// through a temp file and a rename in the target's own directory, and the
+// executable bit is set only under this machine's hooks directory.
 func TestHookApplierRefusesUnsafeTargets(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -51,7 +51,7 @@ func TestHookApplierRefusesUnsafeTargets(t *testing.T) {
 		if err := os.Symlink(outside, link); err != nil {
 			t.Skipf("symlinks unavailable: %v", err)
 		}
-		if _, err := a.WriteHookFile(link, []byte("replaced\n")); err == nil {
+		if _, err := a.WriteHookFile(link, []byte("replaced\n"), true); err == nil {
 			t.Error("WriteHookFile followed the symlink; want a refusal")
 		}
 		data, err := os.ReadFile(outside)
@@ -63,36 +63,25 @@ func TestHookApplierRefusesUnsafeTargets(t *testing.T) {
 		}
 	})
 
-	t.Run("a new file lands 0644 whatever the sender had", func(t *testing.T) {
+	t.Run("the executable bit is set only under the hooks directory", func(t *testing.T) {
 		t.Parallel()
-		target := filepath.Join(t.TempDir(), "hooks", "PreToolUse.d", "script.sh")
-		if _, err := a.WriteHookFile(target, []byte("x\n")); err != nil {
-			t.Fatalf("WriteHookFile: %v", err)
+		inside := filepath.Join(root, "hooks", "Stop.d", "run.sh")
+		if _, err := a.WriteHookFile(inside, []byte("x\n"), true); err != nil {
+			t.Fatalf("WriteHookFile under the hooks directory: %v", err)
 		}
-		info, err := os.Stat(target)
+		if info, err := os.Stat(inside); err != nil || info.Mode()&0o111 == 0 {
+			t.Errorf("mode under the hooks directory = %v, %v; want it executable", info, err)
+		}
+		outside := filepath.Join(t.TempDir(), "script.sh")
+		if _, err := a.WriteHookFile(outside, []byte("x\n"), true); err != nil {
+			t.Fatalf("WriteHookFile outside the hooks directory: %v", err)
+		}
+		info, err := os.Stat(outside)
 		if err != nil {
 			t.Fatalf("stat: %v", err)
 		}
-		if info.Mode().Perm() != 0o644 {
-			t.Errorf("mode = %v, want 0644", info.Mode().Perm())
-		}
-	})
-
-	t.Run("a rewrite keeps a local chmod", func(t *testing.T) {
-		t.Parallel()
-		target := filepath.Join(t.TempDir(), "script.sh")
-		if err := os.WriteFile(target, []byte("old\n"), 0o755); err != nil {
-			t.Fatalf("seed: %v", err)
-		}
-		if _, err := a.WriteHookFile(target, []byte("new\n")); err != nil {
-			t.Fatalf("WriteHookFile: %v", err)
-		}
-		info, err := os.Stat(target)
-		if err != nil {
-			t.Fatalf("stat: %v", err)
-		}
-		if info.Mode().Perm() != 0o755 {
-			t.Errorf("mode = %v, want the local 0755 kept", info.Mode().Perm())
+		if info.Mode()&0o111 != 0 {
+			t.Errorf("mode outside the hooks directory = %v, want no executable bit", info.Mode())
 		}
 	})
 
@@ -102,7 +91,7 @@ func TestHookApplierRefusesUnsafeTargets(t *testing.T) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
-		if _, err := a.WriteHookFile(filepath.Join(dir, "a.sh"), []byte("x\n")); err != nil {
+		if _, err := a.WriteHookFile(filepath.Join(dir, "a.sh"), []byte("x\n"), true); err != nil {
 			t.Fatalf("WriteHookFile: %v", err)
 		}
 		entries, err := os.ReadDir(dir)

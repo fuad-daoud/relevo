@@ -368,10 +368,11 @@ those age-based deletes.
   names is never read, stamped, signalled or exported. The root is relevo's own
   directory, `<user config root>/relevo` (`~/.config/relevo`), so another
   tool's `~/.config/hooks` never enters sync. Argv is stored relative to that
-  directory. The executable bit never travels: a script always lands `0644`,
-  the exported `exec` member is always `false` and an arriving one is ignored,
-  and making a synced script executable is a local `chmod`, which the capture
-  does not treat as an edit. Naming a script in a hook is the consent to
+  directory. The entry carries each script's executable bit, because a hook
+  runs its script directly and a script that lands without the bit cannot run.
+  The bit is set only under `hooks/`. Carrying it gives a peer nothing it does
+  not already have: a peer that can sign a `hooks` entry already chooses the
+  argv this machine runs. Naming a script in a hook is the consent to
   publish it: its bytes are signed like all config, not encrypted, and any
   reader of the Turso database can read them.
 
