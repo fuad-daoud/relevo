@@ -24,7 +24,9 @@ func (v *VerbRunner) reconcilePreview(ctx context.Context, verb *wire.SyncVerb) 
 	}
 	stop := relevosync.NewStopTransport(transport)
 	defer v.Runner.Track(stop)()
-	preview, err := synclog.NewReconciler(v.Shared, stop).Preview(relevosync.PreviewKeyLimit)
+	reconciler := synclog.NewReconciler(v.Shared, stop)
+	relevosync.BindDocs(reconciler, v.Shared)
+	preview, err := reconciler.Preview(relevosync.PreviewKeyLimit)
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}

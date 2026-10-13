@@ -3,7 +3,6 @@ package synclog
 import (
 	"errors"
 	"fmt"
-	"sort"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 )
@@ -124,6 +123,9 @@ type Hold struct {
 	Seq int
 	// Schema is the writer's schema version at the entry that stopped it.
 	Schema int
+	// Reason, when set, is the whole report: the origin stopped at something
+	// other than a schema this machine is behind.
+	Reason string
 }
 
 // String is the report a hold reads as to whoever has to act on it. It names the
@@ -131,6 +133,9 @@ type Hold struct {
 // this machine and the sequence number says nothing about which writer's schema
 // is the one waiting.
 func (h Hold) String() string {
+	if h.Reason != "" {
+		return h.Reason
+	}
 	return fmt.Sprintf("relevo on this machine is older than %s, which writes schema %d: upgrade this machine to follow it (mark rests at %d)",
 		h.Label, h.Schema, h.Seq)
 }
@@ -217,7 +222,10 @@ func (i *Importer) Import() (ImportResult, error) {
 	if err := i.loadSigned(state); err != nil {
 		return ImportResult{}, err
 	}
-	var total ImportResult
+	total, err := i.DrainPending()
+	if err != nil {
+		return total, err
+	}
 	// An origin that held once holds for the rest of the run. Its later entries
 	// were written by the same newer binary and are just as unreadable, so
 	// reading them would apply part of a batch the exporter wrote as one.
@@ -318,7 +326,7 @@ func (i *Importer) labelOf(origin string) string {
 //
 // marks is how far each origin has been applied, read from the file and kept
 // current as the run goes, so a batch behind one already applied writes nothing.
-func (i *Importer) applyBatch(batch []Entry, marks map[string]int) (int, *Hold, *Drop, error) {
+func (i *Importer) applyBatch(batch []Entry, marks map[string]int) (applied int, _ *Hold, _ *Drop, _ error) {
 	if len(batch) == 0 {
 		return 0, nil, nil, nil
 	}
@@ -326,10 +334,20 @@ func (i *Importer) applyBatch(batch []Entry, marks map[string]int) (int, *Hold, 
 	if e, held := i.held(batch); held {
 		return 0, &Hold{Origin: e.Origin, Seq: batch[0].Seq - 1, Schema: e.SchemaVersion}, nil, nil
 	}
+	if hold := i.unknownDoc(origin, batch[0].Seq-1, batch); hold != nil {
+		return 0, hold, nil, nil
+	}
 	if err := i.verify(origin, batch); err != nil {
 		return 0, nil, nil, err
 	}
-	applied, err := i.fetchAndApply(batch, marks)
+	docs, rows := splitDocs(batch)
+	handled, err := i.takeDocs(origin, docs)
+	if err != nil && !refused(err) {
+		return 0, nil, nil, err
+	}
+	if err == nil {
+		applied, err = i.fetchAndApply(batch, rows, handled, marks)
+	}
 	if err == nil {
 		return applied, nil, nil, nil
 	}
@@ -355,13 +373,14 @@ func (i *Importer) applyBatch(batch []Entry, marks map[string]int) (int, *Hold, 
 // handled counts the entries that did their work, which includes an entry
 // naming a row this file does not hold: a delete that finds nothing has still
 // been applied, which is what keeps a re-read batch from stalling.
-func (i *Importer) applyEntries(batch []Entry, marks map[string]int) (int, error) {
+func (i *Importer) applyEntries(batch, rows []Entry, docs int, marks map[string]int) (int, error) {
 	origin := batch[0].Origin
 	applied := 0
 	var signedAt int
 	var wrote bool
 	err := i.db.Tx(func(tx *db.Tx) error {
-		for _, e := range batch {
+		applied = 0
+		for _, e := range rows {
 			handled, err := applyEntry(tx, e)
 			if err != nil {
 				return err
@@ -374,12 +393,12 @@ func (i *Importer) applyEntries(batch []Entry, marks map[string]int) (int, error
 		if signedAt, wrote, err = i.recordSigned(tx, origin, batch); err != nil {
 			return err
 		}
-		return i.mark(tx, marks, origin, tail(batch), applied > 0)
+		return i.mark(tx, marks, origin, tail(batch), applied+docs > 0)
 	})
 	if err == nil {
 		i.noteSigned(origin, signedAt, wrote)
 	}
-	return applied, err
+	return applied + docs, err
 }
 
 // mark writes the mark for one origin, and only forwards. A batch whose tail is
@@ -519,82 +538,4 @@ func owns(tx *db.Tx, e Entry) error {
 	}
 	return fmt.Errorf("synclog: import %s %s: %s does not own it, %s does: %w: %w",
 		e.Table, e.PK, e.Origin, owner, errNotOwner, ErrInvalid)
-}
-
-// batchKey is one batch of one origin: the entries sharing a batch number, which
-// is the sequence of the first of them. A batch is keyed by origin too because
-// the number belongs to the origin that issued it and two origins' sequences
-// overlap by design.
-type batchKey struct {
-	origin string
-	batch  int
-}
-
-// batches divides pulled entries into the whole batches they arrived in, in the
-// order to apply them. Entries are grouped by the batch they share rather than
-// split on the mark, because a batch that begins at or before the mark is
-// re-read whole and applying half of it would write an order the exporter never
-// produced.
-func batches(entries []Entry, marks map[string]int) [][]Entry {
-	order := make([]batchKey, 0, len(entries))
-	grouped := make(map[batchKey][]Entry, len(entries))
-	for _, e := range entries {
-		if replayed(marks, e) {
-			continue
-		}
-		key := batchKey{origin: e.Origin, batch: e.Batch}
-		if _, seen := grouped[key]; !seen {
-			order = append(order, key)
-		}
-		grouped[key] = append(grouped[key], e)
-	}
-	out := make([][]Entry, 0, len(order))
-	for _, key := range order {
-		entries := grouped[key]
-		// Within a batch the exporter's own order is the order to apply: it put
-		// every parent before the rows naming it and every removal before its
-		// parent, and the foreign keys on are what make that order necessary.
-		sort.SliceStable(entries, func(a, b int) bool { return entries[a].Seq < entries[b].Seq })
-		out = append(out, entries)
-	}
-	return out
-}
-
-// replayed reports whether an entry's sequence is at or below the mark its origin
-// has been applied to, and so is not offered to the importer again. Both the
-// entry's own sequence and its batch's decide it: the transport hands back whole
-// batches, so a batch that began before the mark is a batch whose order this
-// machine has already followed, and applying any of it again would rewrite rows
-// with content the log has since moved past.
-func replayed(marks map[string]int, e Entry) bool {
-	mark := marks[e.Origin]
-	return e.Seq <= mark || e.Batch <= mark
-}
-
-// firstHole is the first sequence in a batch that does not follow the one before
-// it, and whether the batch has one. A batch is applicable whole only when its
-// entries run want, want+1, ... with nothing missing: a hole at the batch's head
-// or between two of its entries would advance the mark over the sequences it
-// skipped, and the transport has no way to hand them back. The batch is sorted
-// by sequence before this runs.
-func firstHole(batch []Entry, want int) (int, bool) {
-	for i, e := range batch {
-		if e.Seq != want+i {
-			return e.Seq, true
-		}
-	}
-	return 0, false
-}
-
-// tail is the highest sequence a batch carries, which is the mark that covers it.
-// The maximum is taken rather than the last entry read, so a transport handing
-// entries back out of order cannot lower the mark this machine writes.
-func tail(batch []Entry) int {
-	high := 0
-	for _, e := range batch {
-		if e.Seq > high {
-			high = e.Seq
-		}
-	}
-	return high
 }

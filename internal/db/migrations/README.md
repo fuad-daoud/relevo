@@ -63,7 +63,7 @@ What binds a migration:
 
 A trigger fires for every connection and every writer, so a migration that
 adds one changes what every later write records whether or not that writer
-knows. `022_sync_outbox.sql` is the only file that creates any:
+knows. `022_sync_outbox.sql` creates the ones below, and `026_shared_outbox_triggers.sql` adds three more on `config_doc`, which write one doc signal into `shared_outbox` and follow the same never-raise rule:
 
 - One trigger per operation per shared table, named
   `sync_outbox_<table>_<ins|upd|del>`. A reader enumerates the set from

@@ -71,6 +71,11 @@ func (i *Importer) verify(origin string, entries []Entry) error {
 	if err := i.badBoundary[origin]; err != nil {
 		return err
 	}
+	for _, e := range entries {
+		if IsDocTable(e.Table) && len(e.MAC) == 0 {
+			return &signatureError{fmt.Sprintf("doc entry %d from %q is unsigned; a document is only taken from a signed entry", e.Seq, origin)}
+		}
+	}
 	from, signs := i.signedFrom[origin]
 	for _, e := range entries {
 		if len(e.MAC) == 0 {

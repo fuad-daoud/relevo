@@ -128,56 +128,197 @@ back as its own, and reconcile repairs anything missing.
 
 ## 4. Shared docs (step 3)
 
+Step 3 is built in two parts. Config is the first instance (step 3b, below);
+gates, consents, allow-listed secrets and files (§4.2, §4.3) follow in 3c on
+the same framework. The framework and the config instance are described as
+built.
+
 **Shared doc.** A shared doc is anything that splits into keyed items, each of
-which any machine may set or delete. One interface covers them all:
+which any machine may set or delete. One interface in `internal/synclog`
+covers them all:
 
 ```go
 type SharedDoc interface {
-	Name() string                                   // "config", "gate", "consent", "secret", "file"
-	Items(tx) (map[string]json.RawMessage, error)   // the current value of every key on this machine
-	Apply(tx, key string, value json.RawMessage) error // nil value deletes the key
+	Name() string                                  // "config"; the entry's table is "doc:<name>"
+	Items() (map[string]json.RawMessage, error)    // the current value of every key on this machine
+	Apply(key string, value json.RawMessage) error // nil value deletes the key
 }
 ```
 
+A doc that can apply an item inside the importer's own transaction also
+implements `TxDoc` (`ApplyIn`, `SupersedeIn`); config does. Docs register by
+name; a second registration of a name, or an unusable name, is refused.
+
 Instances: config sections (one key per item in candidates, agents, actors,
-accounts and servers; one key per section for policy, roles, prices, hooks and
-workflows), gates (one key per ledger subject), repo consent (key: remote
-URL; repos without one don't share consent), session consent (key: harness
-kind + session id), allow-listed secrets (§5), and files (§4.3).
+accounts and servers, as `<section>/<name>`; one key per section for policy,
+roles, prices, hooks and workflows), gates (one key per ledger subject), repo
+consent (key: remote URL; repos without one don't share consent), session
+consent (key: harness kind + session id), allow-listed secrets (§5), and files
+(§4.3). Only config is built so far. The `sync` section never syncs.
 
-**Change capture.** A new `shared_outbox` in `relevo-local.db` is filled by
-triggers on `config_doc`, `secret`, `session_consent` and the kv rows of the
-shared namespaces. The trigger only records which doc changed. The exporter
-diffs that doc's items against `shared_export_state` (key → hash of the last
-exported value) and emits one entry per changed key, stamped with the hybrid
-clock. Diffing keeps entries at item level even though config is stored per
-section; triggers keep the rule that every writer is caught.
+**A doc entry is an ordinary log entry.** Its table is `doc:<name>`, its PK is
+`json_array(<key>)`, and its body is `{"stamp": "<decimal>", "value": <json>}`.
+The 3a MAC covers all of it, stamp and value included. No remote format
+changes, and `SharedTables` does not list doc tables: `SharedTable()` refuses
+them, so a doc entry can never reach row apply. A delete is an upsert whose
+`value` is `null` (a tombstone), never an `OpDelete`, because a delete may
+carry no body and the stamp has to travel; `Apply(key, nil)` deletes the key.
 
-**Hybrid clock.** 64 bits: wall milliseconds << 16 | counter, ties broken by
-origin. The local clock never runs backwards, and applying a newer stamp moves
-it past that stamp, so a machine with a slow clock can't keep losing.
+**Two files, no shared transaction.** `relevo.db` and `relevo-local.db` are
+separate handles with no `ATTACH`, so no transaction spans both. Every table a
+doc needs lives in the local file and is reached through `LocalOrSelf()`:
+`shared_outbox`, `shared_export_state`, `shared_applied`, `shared_pending`,
+`config_local`, `config_doc`, `config_revision` and the hybrid-clock kv row.
+`sync_import_mark` stays where it was. The importer takes a batch's doc entries
+out before row apply, applies or parks them in one local-file transaction, and
+only then applies the batch's rows and moves the mark in the shared-file
+transaction. A crash between the two redelivers the batch; the doc half is
+idempotent, so it changes nothing the second time (below).
 
-**Apply.** For each doc entry, the importer compares its stamp with
-`shared_applied` (key → stamp and origin of the value in force).
-- Newer: the importer applies it through the doc's `Apply`, inside the batch
-  transaction.
-- Older: the importer keeps it as a superseded revision.
+**Change capture.** Migration `025_shared_docs.sql` creates the five tables,
+trigger-free. Migration `026_shared_outbox_triggers.sql` adds an insert, update
+and delete trigger on `config_doc` (every section but `sync`) that writes one
+`shared_outbox(doc)` row naming the doc and nothing else; a second write before
+the export is still one row. A seed row makes a database whose config predates
+the triggers export it once. The triggers come after the tables so that no
+outbox row exists before an exporter does. The exporter diffs the doc's
+`Items()` against `shared_export_state(doc, key, origin, stamp, digest)` and
+emits one signed entry per key whose value differs, plus a tombstone per key
+that has gone. Diffing keeps entries at item level though config is stored per
+section, and the digest, a hash of the canonical value, is what tells a changed
+key from an unchanged one. A locked machine (no key) emits no doc entries and
+keeps its outbox. An item is stamped when it is written locally, not when it is
+exported: a write that changes the canonical value of a key (or removes it)
+records `config_write_stamp(key, stamp)` in the machine-local file, in the
+write's own transaction, from the hybrid clock, and the export carries that
+stamp. The stamp is per key, so an old edit of one item never rides a later
+edit of another, and a write that arrived through sync records none. So a
+machine that was offline or locked when it edited does not outrank edits made
+elsewhere since. The exporter takes the write stamp when it is newer than the
+key's export-state stamp; otherwise a first export, which has no export state,
+stamps the key from its section's `config_doc.updated_at`, never from `Now()`,
+and a later one from the clock moved past the key's previous stamp. A
+join clears `shared_export_state` and every `config_write_stamp`, in one
+transaction before its import, so the first export after it re-emits every key
+and shared keys apply over the machine's seed; a machine that joins late does
+not outrank edits made elsewhere while it was offline. The reconciler ignores doc tables.
+
+**Hybrid clock.** 64 bits: wall milliseconds << 16 | counter, kept in a local
+kv row (`sync.hybrid_clock.v1`) so it survives a restart. `Now()` never runs
+backwards; `Observe(stamp)` moves the clock past a stamp it has seen, so a
+machine with a slow clock can't keep losing. The importer observes every doc
+stamp it sees, whether it applies, supersedes or parks the entry. A stamp
+travels as canonical decimal text, and a non-canonical form (sign, leading
+zero, whitespace, base prefix) is refused, so one key cannot be stamped two
+ways.
+
+**Apply.** For each verified doc entry the importer compares its (stamp,
+origin) with `shared_applied(doc, key, origin, stamp)`:
+- Equal: a redelivery. Nothing changes and no second revision is written.
+- Newer, with ties to the higher origin: applied through the doc's `ApplyIn`,
+  in the local transaction before the mark moves. The key's `shared_applied`
+  and `shared_export_state` rows are written in the same transaction, so the
+  exporter finds nothing to send back and an applied item is never echoed.
+- Older than this machine's own write of the key that is newer than the applied
+  state and not yet exported (the write stamp, read in the same transaction,
+  with this machine's origin breaking ties): recorded as superseded and the
+  applied state moves to the entry; the local value stays and the next export
+  sends it with its write stamp. This holds for parked entries drained on
+  unlock and for imports that run before an export.
+- Older, or an item that would leave the merged config invalid: recorded as a
+  superseded revision, with the config untouched.
+A newer item that fails validation only because a key it depends on has not
+landed yet (an actor naming an agent) is set aside and retried after the rest of
+the batch; what no pass can land is recorded as superseded. An item no pass can land still advances the key's
+`shared_applied`, so a later, older entry cannot beat it.
+
+An applied item takes effect exactly as `relevo config set` does: it writes the
+section and bumps the config version through the same `writeSection` and
+`record` path, so a running reader reloads and no restart is needed.
+
+**Verification before apply.** A doc entry is attacker bytes until verified.
+An unlocked reader refuses an unsigned or bad-MAC doc entry and holds that
+origin's whole batch, mark unmoved. A locked reader cannot verify, so it parks
+the entry whole in `shared_pending(origin, seq, entry)` and moves its mark; the
+parked entries are verified and applied, or refused and removed, on unlock and
+on every keyed import. An unknown doc name is not a refusal: the realistic
+cause is a peer on a newer binary, so, like an entry from a newer schema, it
+holds that origin at the batch's first sequence with the mark unmoved, locked
+reader or not, and the report names the doc and says to upgrade; the batch's
+rows are kept for the next import. Shape is refused independently of the
+signature, each refusal having its own test: a `doc:` table naming no
+doc; a PK that is not a one-string array; a body that is not an object, has a
+field beyond `stamp` and `value`, or lacks one of them; a stamp that is not
+canonical decimal text; and an `OpDelete` carrying a doc table. A doc item whose
+section has no shape, or the `sync` section, is refused by `Apply`.
 
 Config changes, applied or superseded, land in `config_revision` with source
-`sync:<machine label>` or `sync-superseded:<machine label>`, so `relevo config
-log` shows them and `relevo config rollback` restores one.
+`sync:<machine label>` or `sync-superseded:<machine label>`. `relevo config
+log` lists them with the whole source (the column is as wide as the longest
+source, so labels never run into the change count), and `relevo config
+rollback` restores one like any other revision. A superseded revision's
+snapshot is the config it left untouched, so rolling back to one is a no-op.
+
+**Tests that pin it.** Foundation: `TestSharedDocTablesStayOutOfSharedTables`,
+`TestHybridClockNeverRunsBackwards`, `TestHybridClockObserveMovesPast`,
+`TestHybridClockSurvivesRestart`, `TestUnknownSharedDocIsRefused`,
+`TestDocEntryWithBadStampIsRefused`, `TestDocEntrySurvivesTheLogUnchanged`.
+Config doc and layer: `TestConfigItemsSplitPerItemAndPerSection`,
+`TestSyncSectionNeverSyncs`, `TestConfigApplyRefusesAnInvalidItem`,
+`TestAppliedItemNeverBreaksLoad`, `TestLocalLayerWinsOverShared`,
+`TestMachineFieldsLandLocalByDefault`, `TestLocalFlagSendsAnyEditLocal`,
+`TestMigrationMovesMachineFieldsBeforeExport`. Export:
+`TestConfigWriteDirtiesOnlyTheDocSignal`,
+`TestExporterEmitsOneEntryPerChangedKey`, `TestFirstExportStampsFromUpdatedAt`,
+`TestAppliedEntryDoesNotReexport`, `TestLockedMachineExportsNoDocEntries`,
+`TestJoinClearsExportState`, `TestReconcileIgnoresDocTables`. Import:
+`TestUnsignedDocEntryIsRefusedWhenUnlocked`, `TestBadDocSignatureHoldsTheOrigin`,
+`TestLockedReaderParksDocEntriesAndMovesItsMark`, `TestUnlockDrainsPending`,
+`TestKeyedImportDrainsPending`, `TestNewerStampWinsTieGoesToHigherOrigin`,
+`TestOlderEntryLandsSuperseded`, `TestInvalidAppliedConfigLandsSuperseded`,
+`TestThreeMachinesConvergeWithLoserRevisioned`, and the crash case
+`TestFailedMarkTransactionRedeliversWithoutASecondRevision` (fail the mark
+transaction once, re-import, assert one revision and the same config).
+Surface: `TestConfigLogShowsSyncSources`, `TestRollbackRestoresASyncedRevision`.
 
 ### 4.1 Config layers
 
-`config_doc` holds the shared layer. A new local-only table
-`config_local(section, patch, updated_at)` holds a JSON merge patch per
-section. `config.Store.Load` returns shared + local. Edits to known
-machine-specific fields land in the local layer by default; `--local` sends
-any edit there. The machine-specific fields are:
+`config_doc` holds the shared layer. The local-only table
+`config_local(key, patch, updated_at)` holds a JSON merge patch per key (a
+whole-section key for the single-body sections, `<section>/<name>` for an
+item), applied over the shared body on read. A patch is the diff against what
+the shared layer says, so a local override freezes only the field it names: a
+peer that changes the rest of an item still reaches this machine. The local
+layer overrides what is shared and never introduces an item of its own.
+
+`config.Store.Load`, `relevo config get`, `config export` and bare `relevo
+config` show the merged view, so existing callers see what they always did.
+Writes (`Put`, `PutDoc`, `Delete`, `Rollback`) strip the machine fields from
+the shared body and store them in `config_local`. Edits to the known
+machine-specific fields land there by default; `--local` on `config set`,
+`config edit` and `config unset` sends any edit there, and a bare edit of a
+machine field no longer writes the shared section. The machine-specific fields
+built are:
 
 - `accounts.*.config_dir`, `accounts.*.home`
 - `policy.serve.*`
-- the argv of a hook that points outside the relevo config root
+
+The third field in the original design, the argv of a hook that points outside
+the relevo config root, is not built here: it belongs with hook files in 3c.
+
+**Moving the fields.** The move of those fields out of an existing shared
+`config_doc` into `config_local` is a Go step, not SQL, because the fields have
+to be read and turned into patches. It is idempotent and recorded by a local kv
+marker (`sync.config_local.v1`); it runs in `config.Open`, the first place any caller
+reaches the store. The exporter refuses to export the
+config doc until the marker is set, so no shared entry ever carries a machine
+field.
+
+**Applying into the layers.** `Apply` validates the merged (shared + local)
+prospective config, not the shared one alone, and only ever writes the shared
+layer, never `config_local`. An item that would make the merged config invalid
+is recorded as `sync-superseded:<label>` and changes nothing, so `Load` never
+breaks on what a peer sent.
 
 The `sync` section is never a shared doc.
 

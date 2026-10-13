@@ -116,8 +116,8 @@ var registry = []verbEntry{
 	{
 		Name:    "config edit",
 		Summary: "edit the configuration document in $EDITOR",
-		Args:    "",
-		Flags:   []string{},
+		Args:    "[--local]",
+		Flags:   []string{"--local"},
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"usage"},
 	},
@@ -256,8 +256,8 @@ var registry = []verbEntry{
 	{
 		Name:    "config set",
 		Summary: "set a configuration section or key to a JSON value",
-		Args:    "<section>[.<key>...] <json> [--force] [--json]",
-		Flags:   []string{"--force", "--json"},
+		Args:    "<section>[.<key>...] <json> [--force] [--local] [--json]",
+		Flags:   []string{"--force", "--json", "--local"},
 		Output:  "json:ConfigWriteDoc",
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"config_invalid", "conflict", "internal", "usage"},
@@ -265,8 +265,8 @@ var registry = []verbEntry{
 	{
 		Name:    "config unset",
 		Summary: "remove a configuration section or key",
-		Args:    "<section>[.<key>...] [--force] [--json]",
-		Flags:   []string{"--force", "--json"},
+		Args:    "<section>[.<key>...] [--force] [--local] [--json]",
+		Flags:   []string{"--force", "--json", "--local"},
 		Output:  "json:ConfigWriteDoc",
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"config_invalid", "conflict", "internal", "usage"},

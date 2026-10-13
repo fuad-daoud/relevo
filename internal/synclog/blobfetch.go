@@ -279,12 +279,12 @@ func fetchOne(m BlobMover, stagingDir, key string, ref BlobRef) ([]byte, error) 
 // decides what the batch becomes: a missing object ends the run with a message
 // naming the row, a self-contradicting ref is a refusal and so dropped, and
 // anything else holds the origin with nothing applied.
-func (i *Importer) fetchAndApply(batch []Entry, marks map[string]int) (int, error) {
-	err := resolveRefs(i.mover, i.staging, batch)
+func (i *Importer) fetchAndApply(batch, rows []Entry, docs int, marks map[string]int) (int, error) {
+	err := resolveRefs(i.mover, i.staging, rows)
 	var missing *missingBlob
 	switch {
 	case err == nil:
-		return i.applyEntries(batch, marks)
+		return i.applyEntries(batch, rows, docs, marks)
 	case errors.As(err, &missing):
 		return 0, i.missingError(missing)
 	case refused(err):

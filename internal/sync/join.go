@@ -348,6 +348,12 @@ func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (EnableRes
 		if err := WriteJoin(e.Request.Local, now); err != nil {
 			return res, err
 		}
+		// The new peer has seen none of the doc keys this machine exported to
+		// another log, so the next export sends every one again. Local write
+		// stamps go too, before the import, so shared keys apply over the seed.
+		if err := e.Request.Local.ClearDocExportState(); err != nil {
+			return res, err
+		}
 	}
 	imported, err := e.drainImport(transport)
 	res.Imported = imported
@@ -411,6 +417,7 @@ func (e *Enabler) drainImport(transport synclog.LogTransport) (synclog.ImportRes
 		}
 		imp := synclog.NewImporter(e.Request.Shared, transport)
 		imp.SetKey(key)
+		BindDocs(imp, e.Request.Shared)
 		imp.AfterBatch = func() { e.count(transport) }
 		res, ierr := imp.Import()
 		e.count(transport)
@@ -450,6 +457,7 @@ func (e *Enabler) reconcile(transport synclog.LogTransport) (int, int, error) {
 	}
 	reconciler := synclog.NewReconciler(e.Request.Shared, transport)
 	reconciler.SetKey(key)
+	BindDocs(reconciler, e.Request.Shared)
 	if e.present != nil {
 		reconciler.RepairBodies(e.present)
 	}

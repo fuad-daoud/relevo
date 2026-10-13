@@ -89,7 +89,7 @@ func (m *memLog) append(origin string, entries []Entry, boundary Boundary) ([]En
 			return nil, err
 		}
 		if e.Op == OpUpsert {
-			hash, err := BodyHash(e.Body)
+			hash, err := entryHash(e)
 			if err != nil {
 				return nil, fmt.Errorf("synclog: append %s %s: %w", e.Table, e.PK, err)
 			}

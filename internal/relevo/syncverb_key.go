@@ -15,6 +15,7 @@ func keyedExporter(shared *db.DB, t synclog.LogTransport) (*synclog.Exporter, er
 	}
 	e := synclog.NewExporter(shared, t)
 	e.SetKey(key)
+	relevosync.BindDocs(e, shared)
 	return e, nil
 }
 
@@ -26,6 +27,7 @@ func keyedImporter(shared *db.DB, t synclog.LogTransport) (*synclog.Importer, er
 	}
 	i := synclog.NewImporter(shared, t)
 	i.SetKey(key)
+	relevosync.BindDocs(i, shared)
 	return i, nil
 }
 

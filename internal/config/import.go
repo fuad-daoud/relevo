@@ -47,6 +47,7 @@ func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, erro
 	// Every revision this import writes is stamped with the time the caller
 	// gave, and labelled "import" unless the caller labelled it.
 	s = s.WithClock(func() time.Time { return now })
+	s.unstamped = true
 	if s.source == "" {
 		s.source = "import"
 	}

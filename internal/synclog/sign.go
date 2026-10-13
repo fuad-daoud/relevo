@@ -26,6 +26,44 @@ type keyed struct {
 	// boundaryKnown is set once the remote is known to hold this origin's
 	// boundary, so later appends do not read it again.
 	boundaryKnown bool
+	// docs, when set, are the documents this exporter or importer answers for
+	// instead of the process-wide registry, so several machines can be run in
+	// one process.
+	docs map[string]SharedDoc
+}
+
+// UseDocs binds the documents this exporter or importer answers for, in place
+// of the registry.
+func (k *keyed) UseDocs(docs ...SharedDoc) {
+	k.docs = make(map[string]SharedDoc, len(docs))
+	for _, d := range docs {
+		k.docs[d.Name()] = d
+	}
+}
+
+// docFor finds the handler a `doc:` table names.
+func (k *keyed) docFor(tbl string) (SharedDoc, error) {
+	if k.docs == nil {
+		return SharedDocFor(tbl)
+	}
+	name, ok := DocName(tbl)
+	if !ok {
+		return SharedDocFor(tbl)
+	}
+	if doc, known := k.docs[name]; known {
+		return doc, nil
+	}
+	return nil, fmt.Errorf("synclog: no shared doc named %q: %w", name, ErrInvalid)
+}
+
+// docNamed finds the handler for a document's name, and whether there is one.
+func (k *keyed) docNamed(name string) (SharedDoc, bool) {
+	if k.docs != nil {
+		doc, ok := k.docs[name]
+		return doc, ok
+	}
+	doc, ok := sharedDocs[name]
+	return doc, ok
 }
 
 // SetKey sets the sync key; nil or empty is a locked machine.
