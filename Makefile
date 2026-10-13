@@ -6,7 +6,7 @@ BIN     := $(HOME)/.local/bin/relevo
 BUILD_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo devel)
 LDFLAGS := -X main.version=$(if $(VERSION),$(VERSION),$(BUILD_VERSION))
 
-.PHONY: check check-static check-scripts check-test lint build install service uninstall release release-bump release-tag jev board-assets mod-test
+.PHONY: check check-quick check-static check-scripts check-test lint build install service uninstall release release-bump release-tag jev board-assets mod-test
 
 # lint runs golangci-lint with .golangci.yml. The binary is not vendored and
 # CI installs it in a setup step, so a machine without it still gets the rest
@@ -69,6 +69,16 @@ check-scripts:
 # it. The built assets are committed, so `check` only reads them.
 board-assets:
 	sh scripts/board-assets.sh
+
+# check-quick is the inner loop, not the gate: the static checks, then the
+# tests without -race and with Go's test cache, so a re-run after a small fix
+# retests only the packages the fix reaches. -race multiplies a run several
+# times over, and -count=1 retests every package; check and CI keep both.
+# PKGS narrows the tests, e.g. PKGS='./internal/config/... ./cmd/relevo/'.
+PKGS ?= ./...
+check-quick:
+	$(MAKE) check-static
+	go test $(PKGS)
 
 check-test:
 	@go test -race -count=1 -cover ./... > .coverage.txt 2>&1; st=$$?; cat .coverage.txt; exit $$st
