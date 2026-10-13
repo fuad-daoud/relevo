@@ -15,9 +15,17 @@ import (
 // construction site that forgot to bind it fails.
 //
 // The applier resolves its root through XDG_CONFIG_HOME, so each machine's
-// attempt runs with that machine's root in the environment. That is the only
+// attempt runs with that machine's config home in the environment and the hook
+// root is its `relevo` directory. That is the only
 // lever a test has, and it is the same one a person has: which config root
 // this installation reads.
+
+// relevoRoot is a fresh machine's relevo config directory under its own
+// config home.
+func relevoRoot(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "relevo")
+}
 
 // writeHookScript puts an executable hook script under root and returns its
 // root-relative name, the name the config document carries it under.
@@ -37,7 +45,7 @@ func writeHookScript(t *testing.T, root, event, file, body string) string {
 // in the environment.
 func (m *cfgMachine) attemptIn(t *testing.T, root string) {
 	t.Helper()
-	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Dir(root))
 	m.attempt(t)
 }
 
@@ -59,7 +67,7 @@ func TestHandEditedHookExportsOnTheNextAttempt(t *testing.T) {
 	log := synclog.NewMemTransport("x")
 	a := newCfgMachine(t, log, cfgSyncKey, true)
 	b := newCfgMachine(t, log, cfgSyncKey, true)
-	aRoot, bRoot := t.TempDir(), t.TempDir()
+	aRoot, bRoot := relevoRoot(t), relevoRoot(t)
 
 	rel := writeHookScript(t, aRoot, "PreToolUse", "check.sh", "first\n")
 	a.set(t, config.Hooks, `{"events":{"PreToolUse":[["`+rel+`"]]}}`)
@@ -92,7 +100,7 @@ func TestHookFilesApplyLandedOnThePeer(t *testing.T) {
 	log := synclog.NewMemTransport("x")
 	a := newCfgMachine(t, log, cfgSyncKey, true)
 	b := newCfgMachine(t, log, cfgSyncKey, true)
-	aRoot, bRoot := t.TempDir(), t.TempDir()
+	aRoot, bRoot := relevoRoot(t), relevoRoot(t)
 
 	rel := writeHookScript(t, aRoot, "PreToolUse", "check.sh", "#!/bin/sh\nexit 0\n")
 	a.set(t, config.Hooks, `{"events":{"PreToolUse":[["`+rel+`"]]}}`)
@@ -111,8 +119,8 @@ func TestHookFilesApplyLandedOnThePeer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat the landed script: %v", err)
 	}
-	if info.Mode()&0o111 == 0 {
-		t.Errorf("landed script mode = %v, want it executable under the hooks directory", info.Mode())
+	if info.Mode().Perm() != 0o644 {
+		t.Errorf("landed script mode = %v, want 0644 though A's file was executable", info.Mode().Perm())
 	}
 }
 
@@ -123,7 +131,7 @@ func TestPeerHookScriptKeepsThisMachinesEdit(t *testing.T) {
 	log := synclog.NewMemTransport("x")
 	a := newCfgMachine(t, log, cfgSyncKey, true)
 	b := newCfgMachine(t, log, cfgSyncKey, true)
-	aRoot, bRoot := t.TempDir(), t.TempDir()
+	aRoot, bRoot := relevoRoot(t), relevoRoot(t)
 
 	kept := writeHookScript(t, bRoot, "PreToolUse", "kept.sh", "mine\n")
 	other := writeHookScript(t, bRoot, "PreToolUse", "other.sh", "theirs\n")
@@ -162,7 +170,7 @@ func TestOutsideRootHookArgvNeverLeavesTheMachine(t *testing.T) {
 	log := synclog.NewMemTransport("x")
 	a := newCfgMachine(t, log, cfgSyncKey, true)
 	b := newCfgMachine(t, log, cfgSyncKey, true)
-	aRoot, bRoot := t.TempDir(), t.TempDir()
+	aRoot, bRoot := relevoRoot(t), relevoRoot(t)
 
 	outside := filepath.Join(t.TempDir(), "elsewhere.sh")
 	if err := os.WriteFile(outside, []byte("#!/bin/sh\n"), 0o755); err != nil {
@@ -193,7 +201,7 @@ func TestOutsideRootHookArgvNeverLeavesTheMachine(t *testing.T) {
 	}
 
 	// And it never reached the peer: the exported body carries no such path.
-	t.Setenv("XDG_CONFIG_HOME", aRoot)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Dir(aRoot))
 	items, err := a.cfg.Doc().Items()
 	if err != nil {
 		t.Fatalf("Items: %v", err)
@@ -215,4 +223,55 @@ func indexOfSubstring(haystack, needle string) int {
 		}
 	}
 	return -1
+}
+
+// TestUnnamedAndOutsideRelevoExecutablesNeverExport pins the scope end to end:
+// an executable in the relevo hooks directory that no argv row names, and one
+// under another tool's directory beside relevo, never reach the peer.
+func TestUnnamedAndOutsideRelevoExecutablesNeverExport(t *testing.T) {
+	log := synclog.NewMemTransport("x")
+	a := newCfgMachine(t, log, cfgSyncKey, true)
+	b := newCfgMachine(t, log, cfgSyncKey, true)
+	aRoot, bRoot := relevoRoot(t), relevoRoot(t)
+
+	named := writeHookScript(t, aRoot, "PreToolUse", "named.sh", "named\n")
+	unnamed := writeHookScript(t, aRoot, "PreToolUse", "unnamed.sh", "unnamed\n")
+	writeHookScript(t, filepath.Dir(aRoot), "PreToolUse", "other.sh", "other\n")
+	a.set(t, config.Hooks, `{"events":{"PreToolUse":[["`+named+`"]]}}`)
+	a.attemptIn(t, aRoot)
+	b.attemptIn(t, bRoot)
+
+	files := hooksOf(t, b).Files
+	if _, ok := files[named]; !ok || len(files) != 1 {
+		t.Fatalf("B carries %v, want only %s", files, named)
+	}
+	if _, err := os.Stat(filepath.Join(bRoot, filepath.FromSlash(unnamed))); err == nil {
+		t.Error("the unnamed executable landed on the peer")
+	}
+}
+
+// TestLocalChmodIsNotReExported pins that making a synced script executable
+// here is local drift and not an edit the next attempt exports.
+func TestLocalChmodIsNotReExported(t *testing.T) {
+	log := synclog.NewMemTransport("x")
+	a := newCfgMachine(t, log, cfgSyncKey, true)
+	b := newCfgMachine(t, log, cfgSyncKey, true)
+	aRoot, bRoot := relevoRoot(t), relevoRoot(t)
+
+	rel := writeHookScript(t, aRoot, "PreToolUse", "check.sh", "x\n")
+	a.set(t, config.Hooks, `{"events":{"PreToolUse":[["`+rel+`"]]}}`)
+	a.attemptIn(t, aRoot)
+	b.attemptIn(t, bRoot)
+	landed := filepath.Join(bRoot, filepath.FromSlash(rel))
+	if err := os.Chmod(landed, 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	b.attemptIn(t, bRoot)
+	items, err := b.cfg.Doc().Items()
+	if err != nil {
+		t.Fatalf("Items: %v", err)
+	}
+	if body := string(items[string(config.Hooks)]); indexOfSubstring(body, `"exec":true`) >= 0 {
+		t.Errorf("exported hooks body carries an exec bit:\n%s", body)
+	}
 }

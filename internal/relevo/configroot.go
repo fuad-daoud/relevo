@@ -1,8 +1,20 @@
 package relevo
 
-import "github.com/fuad-daoud/relevo/internal/config"
+import (
+	"path/filepath"
 
-// ConfigRoot is this machine's config root, resolved through the one rule in
-// internal/config so the applier, the importer and `relevo config` cannot
-// disagree about where the files are.
-func ConfigRoot() (string, error) { return config.UserRoot() }
+	"github.com/fuad-daoud/relevo/internal/config"
+)
+
+// ConfigRoot is relevo's own config directory, `<user config root>/relevo`:
+// the one place hook scripts are read from and written to, and the directory
+// the importer reads. Resolving it through config.UserRoot keeps the applier,
+// the importer and `relevo config` agreeing; nothing beside it under the user
+// config root is ever synced.
+func ConfigRoot() (string, error) {
+	root, err := config.UserRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "relevo"), nil
+}

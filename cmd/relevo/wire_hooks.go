@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 // resolveHooksConfig builds the hook dispatcher environment: the hooks section
@@ -19,7 +20,7 @@ import (
 // point before the hook runs, where a name this machine did not write still
 // becomes a path this machine can.
 func resolveHooksConfig(hooksMap map[string][][]string, log hooks.RunLog) (hooks.Config, error) {
-	root, err := userConfigRoot()
+	root, err := relevo.ConfigRoot()
 	if err != nil {
 		return hooks.Config{}, err
 	}

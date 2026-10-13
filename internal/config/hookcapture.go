@@ -28,9 +28,9 @@ type FileApplier interface {
 	// is absent or is not a regular file.
 	ReadHookFile(path string) (data []byte, ok bool, err error)
 	// WriteHookFile writes data at path through a temp file and a rename in
-	// path's own directory, setting the executable bit only for a path under
-	// the config root's hooks directory. It reports whether it wrote.
-	WriteHookFile(path string, data []byte, exec bool) (wrote bool, err error)
+	// path's own directory. A new file is never executable; a file already
+	// there keeps the mode its owner gave it. It reports whether it wrote.
+	WriteHookFile(path string, data []byte) (wrote bool, err error)
 	// AgentFilePath returns the absolute path one native agent's harness file
 	// belongs at for one kind. The directory is the kind's own harness home,
 	// computed from the kind and the agent name, so an item cannot steer the
@@ -60,8 +60,8 @@ var hooksMovedMarker = []byte(`"moved"`)
 const hooksSource = "hook capture"
 
 // fileHashMarker is the local kv row of the capture's hash cache: one root-
-// relative script path to the digest, size, modification time and executable
-// bit last seen on disk. It is a cache and only ever a shortcut: an entry that
+// relative script path to the digest, size and modification time last seen on
+// disk. It is a cache and only ever a shortcut: an entry that
 // disagrees with the disk costs one read and is replaced.
 const fileHashMarker = "sync.filehash.v1"
 
@@ -252,13 +252,11 @@ func (s *Store) writeHooks(t *db.Tx, doc HookDoc) error {
 type fileHash struct {
 	Hash string `json:"h"`
 	Size int64  `json:"s"`
-	Exec bool   `json:"x"`
 	Mod  int64  `json:"m"`
 }
 
 func (f fileHash) matches(info os.FileInfo) bool {
-	return f.Size == info.Size() && f.Mod == info.ModTime().UnixNano() &&
-		f.Exec == (info.Mode()&0o111 != 0)
+	return f.Size == info.Size() && f.Mod == info.ModTime().UnixNano()
 }
 
 // capturedHooks is what one capture read off the disk: the document the disk
@@ -386,12 +384,11 @@ func (s *Store) applyHookFiles(t *db.Tx, doc HookDoc) error {
 			return err
 		}
 		if ok {
-			// Bytes that already equal the arriving ones are left alone: the
-			// only thing left to reconcile is the executable bit, which is part
-			// of what the document carries, so a peer that flips it lands. A
-			// bit that already agrees writes nothing at all, because rewriting
-			// a file with itself is the churn a re-apply must not cause.
-			if bytes.Equal(current, file.Contents) && hookFileExecSettled(rel, file.Exec, cache) {
+			// Bytes that already equal the arriving ones are left alone:
+			// rewriting a file with itself is the churn a re-apply must not
+			// cause, and it would be the only thing that could touch a mode a
+			// person set locally.
+			if bytes.Equal(current, file.Contents) {
 				continue
 			}
 			// Differing bytes are a peer's update only while the cache still
@@ -404,7 +401,7 @@ func (s *Store) applyHookFiles(t *db.Tx, doc HookDoc) error {
 				continue
 			}
 		}
-		if _, err := s.files.WriteHookFile(full, file.Contents, file.Exec); err != nil {
+		if _, err := s.files.WriteHookFile(full, file.Contents); err != nil {
 			return err
 		}
 		// What is on disk is now what the item carried, so the cache says so:
@@ -415,7 +412,6 @@ func (s *Store) applyHookFiles(t *db.Tx, doc HookDoc) error {
 		cache[rel] = fileHash{
 			Hash: file.Hash(),
 			Size: int64(len(file.Contents)),
-			Exec: file.Exec,
 		}
 	}
 	return s.recordFileHashes(t, cache)
@@ -430,15 +426,6 @@ func hookFileUnchanged(rel string, current []byte, cache map[string]fileHash) bo
 		return false
 	}
 	return HookFile{Contents: current}.Hash() == seen.Hash
-}
-
-// hookFileExecSettled reports whether the executable bit already on disk is
-// the one the arriving file carries, so an identical file needs no write. An
-// entry the cache does not hold is not settled: nothing says what mode the
-// file has, so the write that settles it is the safe answer.
-func hookFileExecSettled(rel string, exec bool, cache map[string]fileHash) bool {
-	seen, held := cache[rel]
-	return held && seen.Exec == exec
 }
 
 // readFileHashes reads the capture's hash cache. A row that does not parse is

@@ -19,9 +19,11 @@ import (
 // that name them, so a machine that receives a hook receives the hook. The
 // bodies are shaped by three rules and nothing else:
 //
-//   - the shared half holds the scripts under this machine's config root, named
-//     root-relative, so a peer that stores them under a different root still
-//     applies them to the right directory;
+//   - the shared half holds only the scripts a stored argv row names, under
+//     relevo's own config directory, named root-relative, so a peer that stores
+//     them under a different root still applies them to the right directory.
+//     Their bytes travel signed, not encrypted: naming a script in a hook is
+//     the consent to publish it, and an unnamed script is never read;
 //   - an argv row naming anything outside the config root names a file on this
 //     machine, so it never travels: it is split out into the machine field
 //     `local` before the write leaves this machine, and the stored shared body
@@ -74,7 +76,6 @@ var errOversize = errors.New("over the cap")
 // HookFile is one hook script as the document carries it.
 type HookFile struct {
 	Contents []byte
-	Exec     bool
 }
 
 // Hash is the script's content digest: the identity the hash cache keeps and
@@ -86,7 +87,8 @@ func (f HookFile) Hash() string {
 
 // hookFileValue is one script on the wire. The contents are base64 because a
 // script is a byte string and JSON text cannot carry one that is not valid
-// UTF-8 without silently changing it.
+// UTF-8 without silently changing it. Exec is always written false and an
+// arriving value is never read: a peer cannot make a script executable here.
 type hookFileValue struct {
 	Contents string `json:"contents"`
 	Exec     bool   `json:"exec"`
@@ -207,7 +209,6 @@ func EncodeHookDoc(doc HookDoc) (json.RawMessage, error) {
 	for name, file := range doc.Files {
 		value.Files[name] = hookFileValue{
 			Contents: base64.StdEncoding.EncodeToString(file.Contents),
-			Exec:     file.Exec,
 		}
 	}
 	encoded, err := json.Marshal(value)
@@ -475,7 +476,7 @@ func HooksMapOf(doc HookDoc) HooksMap {
 func hookFileValues(files map[string]HookFile) map[string]hookFileValue {
 	out := make(map[string]hookFileValue, len(files))
 	for name, file := range files {
-		out[name] = hookFileValue{Contents: base64.StdEncoding.EncodeToString(file.Contents), Exec: file.Exec}
+		out[name] = hookFileValue{Contents: base64.StdEncoding.EncodeToString(file.Contents)}
 	}
 	return out
 }

@@ -211,6 +211,9 @@ func (s *Store) applyKeyIn(t *db.Tx, sec Section, name string, value json.RawMes
 	unstamped := *s
 	unstamped.unstamped = true
 	s = &unstamped
+	if err := validateArrivingItem(sec, name, value); err != nil {
+		return err, nil
+	}
 	before, err := readSnapshot(t)
 	if err != nil {
 		return nil, err
@@ -295,6 +298,24 @@ func (s *Store) queueAgentRender(agent string) {
 	if s.rerender != nil {
 		s.rerender(agent)
 	}
+}
+
+// validateArrivingItem refuses an arriving agents item before anything is
+// stored, because a stored item that capture then rejects would halt every
+// later export. A delete, and every other section, passes.
+func validateArrivingItem(sec Section, name string, value json.RawMessage) error {
+	if sec != Agents || len(value) == 0 {
+		return nil
+	}
+	body := dropMachineFields(sec, value)
+	doc, err := ParseAgentEntryDoc(name, body)
+	if err != nil {
+		return invalidValueOf(err)
+	}
+	if err := ValidateAgentEntryDoc(doc); err != nil {
+		return invalidValueOf(err)
+	}
+	return nil
 }
 
 // docKeyOf is the doc key of one item, or of a whole section.

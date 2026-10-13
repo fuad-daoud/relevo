@@ -363,9 +363,17 @@ those age-based deletes.
 
 - **Native agent files.** A native `agents` entry carries the contents of its
   harness file per harness kind.
-- **Hook scripts.** A `hooks` entry carries the contents and executable bit of
-  every script under `<config root>/hooks/`. Its argv is stored relative to
-  the relevo config root and resolved through `userConfigRoot()`.
+- **Hook scripts.** A `hooks` entry carries the contents of the scripts its
+  own argv rows name, and no others: an executable under `hooks/` that no row
+  names is never read, stamped, signalled or exported. The root is relevo's own
+  directory, `<user config root>/relevo` (`~/.config/relevo`), so another
+  tool's `~/.config/hooks` never enters sync. Argv is stored relative to that
+  directory. The executable bit never travels: a script always lands `0644`,
+  the exported `exec` member is always `false` and an arriving one is ignored,
+  and making a synced script executable is a local `chmod`, which the capture
+  does not treat as an edit. Naming a script in a hook is the consent to
+  publish it: its bytes are signed like all config, not encrypted, and any
+  reader of the Turso database can read them.
 
 On apply, the importer writes the file if it's missing or still matches the
 hash it last wrote. A file edited by hand is kept, and `relevo doctor`

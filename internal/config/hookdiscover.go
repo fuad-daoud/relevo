@@ -5,83 +5,34 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
-// DiscoverHookFiles is the set of scripts on disk under this machine's hooks
-// directory: the executable files of every `<event>.d` directory, which is
-// what readHooksDir would import, plus every script the stored argv rows name.
-// The second map it returns is the hash cache that describes how the walk read
-// them.
+// DiscoverHookFiles is the set of scripts the stored argv rows name, read off
+// this machine's disk. An executable no row names is never read: naming a
+// script in a hook is the person's consent to publish its bytes, and nothing
+// else under the config root is.
+// The second map it returns is the hash cache that describes how the read went.
 //
-// The capture is cheap because the walk stats first. A script whose size,
-// modification time and executable bit are what the cache last recorded is
-// taken from the document rather than read again, so an unchanged hook costs
-// one stat per file. Anything the cache cannot vouch for is read once, and a
-// file that is not a regular file is left out rather than followed.
+// The capture is cheap because it stats first. A script whose size and
+// modification time are what the cache last recorded is taken from the document
+// rather than read again, so an unchanged hook costs one stat per file. Anything
+// the cache cannot vouch for is read once, and a file that is not a regular file
+// is left out rather than followed.
 func DiscoverHookFiles(root string, cache map[string]fileHash, known map[string]HookFile, events map[string][][]string) (map[string]HookFile, map[string]fileHash, error) {
 	out := map[string]HookFile{}
 	hashes := map[string]fileHash{}
 	if root == "" {
 		return out, hashes, nil
 	}
-	keep := map[string]bool{}
-	if err := walkHookEventDirs(root, func(rel string) error {
-		keep[rel] = true
-		return keepHookScript(root, rel, cache, known, out, hashes)
-	}); err != nil {
-		return nil, nil, err
-	}
-	// An argv row naming a script that is not executable still carries it: the
-	// row says the script runs, and the map says what it contains.
 	for _, rel := range argvHookPaths(root, events) {
-		if keep[rel] {
+		if _, done := out[rel]; done || validateHookFilePath(rel) != nil {
 			continue
 		}
-		if _, named := known[rel]; !named {
-			continue
-		}
-		keep[rel] = true
 		if err := keepHookScript(root, rel, cache, known, out, hashes); err != nil {
 			return nil, nil, err
 		}
 	}
 	return out, hashes, nil
-}
-
-// walkHookEventDirs calls fn once per executable script under every
-// `<config root>/hooks/<event>.d` directory, in name order. An event whose name
-// is not one plain component is left out rather than walked.
-func walkHookEventDirs(root string, fn func(rel string) error) error {
-	hooksDir := filepath.Join(root, hooksDirName)
-	entries, err := os.ReadDir(hooksDir)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasSuffix(entry.Name(), hooksSuffix) {
-			continue
-		}
-		event := strings.TrimSuffix(entry.Name(), hooksSuffix)
-		if event == "" || safeComponent(event) != nil {
-			continue
-		}
-		sub := filepath.Join(hooksDir, entry.Name())
-		files, err := os.ReadDir(sub)
-		if err != nil {
-			return err
-		}
-		for _, f := range files {
-			info, err := f.Info()
-			if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
-				continue
-			}
-			if err := fn(HookPathOf(event, f.Name())); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 // argvHookPaths is every root-relative script the stored argv rows name.
@@ -135,21 +86,18 @@ func readHookScript(root, rel string, cache map[string]fileHash, known map[strin
 	if !info.Mode().IsRegular() {
 		return nil, fileHash{}, nil
 	}
-	exec := info.Mode()&0o111 != 0
 	mod := info.ModTime().UnixNano()
 	if cached, ok := cache[rel]; ok && cached.matches(info) {
 		if file, held := known[rel]; held {
-			out := file
-			out.Exec = exec
-			return &out, cached, nil
+			return &file, cached, nil
 		}
 	}
 	data, err := readLimited(full, MaxHookFileBytes)
 	if err != nil {
 		return nil, fileHash{}, err
 	}
-	file := HookFile{Contents: data, Exec: exec}
-	return &file, fileHash{Hash: file.Hash(), Size: info.Size(), Exec: exec, Mod: mod}, nil
+	file := HookFile{Contents: data}
+	return &file, fileHash{Hash: file.Hash(), Size: info.Size(), Mod: mod}, nil
 }
 
 // readHookFileAt reads one root-relative script, reporting nil when it is
@@ -164,5 +112,5 @@ func readHookFileAt(root, rel string) (*HookFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &HookFile{Contents: data, Exec: info.Mode()&0o111 != 0}, nil
+	return &HookFile{Contents: data}, nil
 }
