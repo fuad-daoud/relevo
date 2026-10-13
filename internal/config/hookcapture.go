@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,10 +56,20 @@ const fileHashMarker = "sync.filehash.v1"
 // WithFiles binds the applier the embedded scripts are written through and the
 // config root every root-relative name is measured against. The receiver is
 // unchanged, so a runtime's base store stays unbound.
+//
+// The outside-root argv move runs here rather than at Open, because this is the
+// first binding that knows which root this machine has. A store with no root
+// cannot tell an argv row naming something outside it from one naming something
+// inside it, so it moves nothing and records nothing, and the move is still
+// waiting for the binding that can do it.
 func (s *Store) WithFiles(files FileApplier, root string) *Store {
 	c := *s
 	c.files = files
 	c.root = root
+	// A failure is left to the binding's own write rather than reported here:
+	// the marker is what the exporter checks, and a store that could not write
+	// has not moved anything.
+	_, _ = c.EnsureHooksLocal()
 	return &c
 }
 
@@ -123,7 +134,15 @@ func (s *Store) sharedHooksDocInTx() (HookDoc, json.RawMessage, error) {
 // EnsureHooksLocal runs the outside-root argv move once and records the
 // marker. moved is false once the marker is set, which is what makes a second
 // call a no-op rather than a second move.
+//
+// A store with no config root moves nothing and records nothing: with nothing
+// to measure the rows against, the move would leave every row where it is and
+// still mark the work done, which is the one outcome the marker must never
+// report. The move runs when a root is bound instead.
 func (s *Store) EnsureHooksLocal() (moved bool, err error) {
+	if s.root == "" {
+		return false, nil
+	}
 	if _, done, err := s.db.KVGet(hooksLocalMarker); err != nil || done {
 		return false, err
 	}
@@ -303,28 +322,18 @@ func (s *Store) captureHooks() (*capturedHooks, error) {
 	return &capturedHooks{doc: normalized, hashes: hashes, raw: raw}, nil
 }
 
-func (s *Store) readFileHashes() map[string]fileHash {
-	out := map[string]fileHash{}
-	raw, ok, err := s.db.KVGet(fileHashMarker)
-	if err != nil || !ok {
-		return out
-	}
-	if err := json.Unmarshal(raw, &out); err != nil || out == nil {
-		return map[string]fileHash{}
-	}
-	return out
-}
-
 // applyHookFiles writes the scripts an arriving hooks item carries, keeping a
-// file a person has edited: only a missing file or one whose bytes still equal
-// the document's is written.
+// file a person has edited: only a missing file, or one whose bytes still hold
+// what the capture last recorded, is written.
 //
 // It runs inside the importer's transaction, so the document and the files it
-// carries land as one decision.
-func (s *Store) applyHookFiles(doc HookDoc) error {
+// carries land as one decision. The document lands in every case, so a peer's
+// other scripts travel even when this machine keeps one of its own.
+func (s *Store) applyHookFiles(t *db.Tx, doc HookDoc) error {
 	if s.files == nil {
 		return nil
 	}
+	cache := s.readFileHashesIn(t)
 	for _, rel := range sortedFiles(doc.Files) {
 		if err := validateHookFilePath(rel); err != nil {
 			return invalidValueOf(err)
@@ -346,19 +355,108 @@ func (s *Store) applyHookFiles(doc HookDoc) error {
 		if err != nil {
 			return err
 		}
-		// A missing file, or one whose bytes still equal what the document
-		// carries, is written. Anything else is a hand edit: the document still
-		// lands, so the peer's other scripts travel, and `relevo doctor` names
-		// the one this machine kept.
 		if ok {
-			continue
+			// Bytes that already equal the arriving ones are left alone: the
+			// only thing left to reconcile is the executable bit, which is part
+			// of what the document carries, so a peer that flips it lands. A
+			// bit that already agrees writes nothing at all, because rewriting
+			// a file with itself is the churn a re-apply must not cause.
+			if bytes.Equal(current, file.Contents) && hookFileExecSettled(rel, file.Exec, cache) {
+				continue
+			}
+			// Differing bytes are a peer's update only while the cache still
+			// vouches for what is on disk: that is a file this machine has not
+			// changed since the capture read it or a write put it there. A
+			// cache that disagrees is a hand edit, which is kept -- the
+			// document still lands, so the peer's other scripts travel, and
+			// `relevo doctor` names this one.
+			if !bytes.Equal(current, file.Contents) && !hookFileUnchanged(rel, current, cache) {
+				continue
+			}
 		}
 		if _, err := s.files.WriteHookFile(full, file.Contents, file.Exec); err != nil {
 			return err
 		}
-		_ = current
+		// What is on disk is now what the item carried, so the cache says so:
+		// a file this machine wrote joins the capture that will read it back,
+		// and the next arriving copy of it is an update rather than a hand
+		// edit. Without this a script written from a peer could never be
+		// updated by a peer again.
+		cache[rel] = fileHash{
+			Hash: file.Hash(),
+			Size: int64(len(file.Contents)),
+			Exec: file.Exec,
+		}
 	}
-	return nil
+	return s.recordFileHashes(t, cache)
+}
+
+// hookFileUnchanged reports whether the bytes on disk are still the ones the
+// cache last recorded for rel, which is what makes an arriving copy safe to
+// write over them. An entry the cache cannot vouch for is a hand edit.
+func hookFileUnchanged(rel string, current []byte, cache map[string]fileHash) bool {
+	seen, held := cache[rel]
+	if !held {
+		return false
+	}
+	return HookFile{Contents: current}.Hash() == seen.Hash
+}
+
+// hookFileExecSettled reports whether the executable bit already on disk is
+// the one the arriving file carries, so an identical file needs no write. An
+// entry the cache does not hold is not settled: nothing says what mode the
+// file has, so the write that settles it is the safe answer.
+func hookFileExecSettled(rel string, exec bool, cache map[string]fileHash) bool {
+	seen, held := cache[rel]
+	return held && seen.Exec == exec
+}
+
+// readFileHashes reads the capture's hash cache. A row that does not parse is
+// an empty cache rather than an error: it is only ever a shortcut, and a missing
+// one costs a read per file rather than a refusal.
+func (s *Store) readFileHashes() map[string]fileHash {
+	raw, ok, err := s.db.KVGet(fileHashMarker)
+	if err != nil || !ok {
+		return map[string]fileHash{}
+	}
+	return decodeFileHashes(raw)
+}
+
+// readFileHashesIn is readFileHashes inside a caller's transaction, so an apply
+// reads the cache the capture last wrote rather than a second connection's view
+// of it.
+func (s *Store) readFileHashesIn(t *db.Tx) map[string]fileHash {
+	raw, ok, err := t.KVGet(fileHashMarker)
+	if err != nil || !ok {
+		return map[string]fileHash{}
+	}
+	return decodeFileHashes(raw)
+}
+
+func decodeFileHashes(raw []byte) map[string]fileHash {
+	out := map[string]fileHash{}
+	if err := json.Unmarshal(raw, &out); err != nil || out == nil {
+		return map[string]fileHash{}
+	}
+	return out
+}
+
+// recordFileHashes stores the cache back, and only when it changed: a hook
+// apply that wrote nothing must leave no trace for the next capture to read as
+// a change.
+func (s *Store) recordFileHashes(t *db.Tx, cache map[string]fileHash) error {
+	encoded, err := json.Marshal(cache)
+	if err != nil {
+		return err
+	}
+	existing, ok, err := t.KVGet(fileHashMarker)
+	if err != nil {
+		return err
+	}
+	if ok && string(existing) == string(encoded) {
+		return nil
+	}
+	return t.KVPut(fileHashMarker, encoded)
 }
 
 // EditedHookFile is one script on disk that no longer holds what the document

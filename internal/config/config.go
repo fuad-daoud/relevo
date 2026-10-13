@@ -125,10 +125,13 @@ type Store struct {
 // start-up path some callers do not take. A failure is left to the caller's
 // own write rather than reported here: the marker is what the exporter checks,
 // and a store that could not write cannot have moved anything.
+//
+// The hooks argv move does not run here, because a store opened this way has no
+// config root to measure the rows against and so could only record the work
+// without doing it. WithFiles runs it once a root is bound.
 func Open(d *db.DB) *Store {
 	s := &Store{db: d.LocalOrSelf(), now: time.Now}
 	_, _ = s.EnsureLocalLayer()
-	_, _ = s.EnsureHooksLocal()
 	return s
 }
 

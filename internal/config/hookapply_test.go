@@ -1,9 +1,11 @@
 package config
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -44,6 +46,47 @@ func (m *memApplier) WriteHookFile(path string, data []byte, exec bool) (bool, e
 	m.writes++
 	m.files[path] = append([]byte(nil), data...)
 	m.execs[path] = exec
+	return true, nil
+}
+
+// diskApplier is a FileApplier over a real temporary root, for a test whose
+// assertions read the disk rather than the applier's own record: the drift
+// report is one of those, so a memApplier would let it pass without the write
+// having landed anywhere.
+type diskApplier struct{ root string }
+
+func (a diskApplier) HookFilePath(event, file string) (string, error) {
+	if err := safeComponent(event); err != nil {
+		return "", err
+	}
+	if err := safeComponent(file); err != nil {
+		return "", err
+	}
+	return filepath.Join(a.root, hooksDirName, event+hooksSuffix, file), nil
+}
+
+func (a diskApplier) ReadHookFile(path string) ([]byte, bool, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
+}
+
+func (a diskApplier) WriteHookFile(path string, data []byte, exec bool) (bool, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, err
+	}
+	mode := os.FileMode(0o644)
+	if exec {
+		mode = 0o755
+	}
+	if err := os.WriteFile(path, data, mode); err != nil {
+		return false, err
+	}
 	return true, nil
 }
 
@@ -291,6 +334,123 @@ func TestHooksApplyKeepsHandEdits(t *testing.T) {
 	})
 }
 
+// TestHooksApplyPeerUpdatesLand pins the other side of the guard from the
+// previous test: a script this machine has not edited is the peer's to
+// update, so an arriving copy of it lands rather than being kept as a hand
+// edit nobody made.
+func TestHooksApplyPeerUpdatesLand(t *testing.T) {
+	t.Parallel()
+	t.Run("an update to an unedited script lands", func(t *testing.T) {
+		t.Parallel()
+		store, applier, _ := hooksRootStore(t)
+		if err := store.Doc().Apply(string(Hooks),
+			json.RawMessage(`{"files":{"hooks/PreToolUse.d/a.sh":{"contents":"Zmlyc3Q=","exec":true}}}`)); err != nil {
+			t.Fatalf("first Apply: %v", err)
+		}
+		path := filepath.Join(applier.root, hooksDirName, "PreToolUse.d", "a.sh")
+		if err := store.Doc().Apply(string(Hooks),
+			json.RawMessage(`{"files":{"hooks/PreToolUse.d/a.sh":{"contents":"c2Vjb25k","exec":true}}}`)); err != nil {
+			t.Fatalf("second Apply: %v", err)
+		}
+		if got := string(applier.files[path]); got != "second" {
+			t.Errorf("file on disk = %q, want the peer's update", got)
+		}
+	})
+
+	// The executable bit is part of what the document carries, so a peer that
+	// flips it lands even though the contents are untouched.
+	t.Run("an exec flip lands", func(t *testing.T) {
+		t.Parallel()
+		store, applier, _ := hooksRootStore(t)
+		if err := store.Doc().Apply(string(Hooks),
+			json.RawMessage(`{"files":{"hooks/PreToolUse.d/a.sh":{"contents":"c2hlbGw=","exec":true}}}`)); err != nil {
+			t.Fatalf("first Apply: %v", err)
+		}
+		path := filepath.Join(applier.root, hooksDirName, "PreToolUse.d", "a.sh")
+		if !applier.execs[path] {
+			t.Fatal("the first write left the script unexecutable, want it executable")
+		}
+		if err := store.Doc().Apply(string(Hooks),
+			json.RawMessage(`{"files":{"hooks/PreToolUse.d/a.sh":{"contents":"c2hlbGw=","exec":false}}}`)); err != nil {
+			t.Fatalf("second Apply: %v", err)
+		}
+		if applier.execs[path] {
+			t.Error("the script is still executable, want the peer's flip to land")
+		}
+		if got := string(applier.files[path]); got != "shell" {
+			t.Errorf("file on disk = %q, want the contents untouched", got)
+		}
+	})
+
+	// An arriving item that already holds what is on disk writes nothing and
+	// records nothing: a re-apply that rewrote every file would stamp and
+	// re-export the document on every import.
+	t.Run("an identical re-apply is unstamped", func(t *testing.T) {
+		t.Parallel()
+		store, applier, _ := hooksRootStore(t)
+		arriving := `{"files":{"hooks/PreToolUse.d/a.sh":{"contents":"c2hlbGw=","exec":true}}}`
+		if err := store.Doc().Apply(string(Hooks), json.RawMessage(arriving)); err != nil {
+			t.Fatalf("first Apply: %v", err)
+		}
+		writes := applier.writes
+		cache := store.readFileHashes()
+		if err := store.Doc().Apply(string(Hooks), json.RawMessage(arriving)); err != nil {
+			t.Fatalf("second Apply: %v", err)
+		}
+		if applier.writes != writes {
+			t.Errorf("an identical item rewrote the file: %d writes, want %d", applier.writes, writes)
+		}
+		if got := store.readFileHashes(); !reflect.DeepEqual(got, cache) {
+			t.Errorf("an identical item moved the hash cache:\n%+v\nwant\n%+v", got, cache)
+		}
+	})
+}
+
+// TestCleanPeerUpdateIsNotDrift pins that the hand edit is the one file doctor
+// names. A peer update to an untouched script lands, so it is not drift, and
+// reporting it would tell a person their script had drifted every time a peer
+// touched it.
+func TestCleanPeerUpdateIsNotDrift(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	store := openStore(t).WithFiles(diskApplier{root: root}, root)
+	relA := writeScript(t, root, "PreToolUse", "a.sh", "first\n", true)
+	relB := writeScript(t, root, "PreToolUse", "b.sh", "other\n", true)
+	if _, err := store.As("config set", "").Put(Hooks, []byte(`{"events":{"PreToolUse":[[`+
+		jsonStr(relA)+"],["+jsonStr(relB)+"]]}}")); err != nil {
+		t.Fatalf("put hooks: %v", err)
+	}
+	if _, err := store.CaptureHookFiles(); err != nil {
+		t.Fatalf("first capture: %v", err)
+	}
+	// A person edits one script in their editor, on this machine alone.
+	pathA := filepath.Join(root, filepath.FromSlash(relA))
+	writeFile(t, pathA, "edited by a person\n", 0o755)
+	// The peer sends an update to the untouched script and restates the edited
+	// one, which is what a peer that has not seen the edit sends.
+	if err := store.Doc().Apply(string(Hooks), json.RawMessage(
+		`{"files":{"`+relA+`":{"contents":"Zmlyc3QK","exec":true},`+
+			`"`+relB+`":{"contents":"`+base64.StdEncoding.EncodeToString([]byte("updated\n"))+`","exec":true}}}`)); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if got := readFileString(t, filepath.Join(root, filepath.FromSlash(relB))); got != "updated\n" {
+		t.Errorf("the untouched script = %q, want the peer's update", got)
+	}
+	if got := readFileString(t, pathA); got != "edited by a person\n" {
+		t.Errorf("the edited script = %q, want the hand edit kept", got)
+	}
+	edited, err := store.DriftedHookFiles()
+	if err != nil {
+		t.Fatalf("DriftedHookFiles: %v", err)
+	}
+	if len(edited) != 1 {
+		t.Fatalf("drifted = %v, want only the hand-edited script", edited)
+	}
+	if edited[0].Path != pathA {
+		t.Errorf("drifted path = %q, want %q", edited[0].Path, pathA)
+	}
+}
+
 // TestHookFileChangeStampsAndSignals pins the capture as a person's edit: a
 // hand-edited script on disk is a config write, so the hooks item is stamped
 // and the document is signalled for export.
@@ -414,6 +574,52 @@ func TestScriptAddedRemovedAndExecFlipped(t *testing.T) {
 	}
 }
 
+// TestDeletedArgvScriptStillExports pins that a deletion is a person's edit
+// like any other. An argv row keeps naming a script this machine no longer
+// has, and the capture has to carry that away rather than fail the export and
+// the capture both over a file that is simply gone.
+func TestDeletedArgvScriptStillExports(t *testing.T) {
+	t.Parallel()
+	store, _, root := hooksRootStore(t)
+	kept := writeScript(t, root, "PreToolUse", "kept.sh", "kept\n", true)
+	gone := writeScript(t, root, "PreToolUse", "gone.sh", "gone\n", true)
+	if _, err := store.As("config set", "").Put(Hooks, []byte(`{"events":{"PreToolUse":[[`+
+		jsonStr(kept)+"],["+jsonStr(gone)+"]]}}")); err != nil {
+		t.Fatalf("put hooks: %v", err)
+	}
+	if _, err := store.CaptureHookFiles(); err != nil {
+		t.Fatalf("first capture: %v", err)
+	}
+
+	// A person deletes the script one argv row still names.
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(gone))); err != nil {
+		t.Fatalf("remove script: %v", err)
+	}
+	items, err := store.Doc().Items()
+	if err != nil {
+		t.Fatalf("Items after the deletion: %v", err)
+	}
+	doc, err := ParseHookDoc(items[string(Hooks)])
+	if err != nil {
+		t.Fatalf("ParseHookDoc: %v", err)
+	}
+	if _, still := doc.Files[gone]; still {
+		t.Errorf("the deleted script is still carried: %v", sortedFiles(doc.Files))
+	}
+	if _, keptHere := doc.Files[kept]; !keptHere {
+		t.Errorf("the surviving script was dropped too: %v", sortedFiles(doc.Files))
+	}
+
+	// The capture records the deletion as the edit it is.
+	changed, err := store.CaptureHookFiles()
+	if err != nil {
+		t.Fatalf("CaptureHookFiles after the deletion: %v", err)
+	}
+	if !changed {
+		t.Error("CaptureHookFiles = false, want the deletion captured")
+	}
+}
+
 // TestHookScriptSymlinkIsNotCarried pins the discovery rule: the walk skips
 // anything that is not a regular file, so a symlink under a hook event is
 // neither followed nor exported.
@@ -471,6 +677,17 @@ func hasConfigSignal(signals []db.DocSignal) bool {
 // jsonStr encodes one string as a JSON string, for a body built by
 // concatenation in a test.
 func jsonStr(s string) string { return string(mustJSON(s)) }
+
+// readFileString reads a file whole, so an assertion about what a write landed
+// on the disk does not have to repeat the read error handling.
+func readFileString(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
+}
 
 func containsArg(body, script string) bool {
 	var parsed map[string]json.RawMessage

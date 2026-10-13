@@ -117,11 +117,23 @@ func keepHookScript(root, rel string, cache map[string]fileHash, known map[strin
 // readHookScript reads one script through the cache: a cached entry the file
 // still matches costs no read at all, and the document's copy supplies the
 // bytes. Anything else is read, capped and hashed.
+//
+// A path that is gone records nothing rather than failing the walk. A person
+// who deletes a script a hook names has made an edit, and it is the capture's
+// job to carry it: refusing here would fail the export and the capture both,
+// over a deletion the document is supposed to travel. A genuine read failure is
+// still an error, because it says nothing about what the file holds.
 func readHookScript(root, rel string, cache map[string]fileHash, known map[string]HookFile) (*HookFile, fileHash, error) {
 	full := filepath.Join(root, filepath.FromSlash(rel))
 	info, err := os.Lstat(full)
-	if err != nil || !info.Mode().IsRegular() {
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fileHash{}, nil
+		}
 		return nil, fileHash{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fileHash{}, nil
 	}
 	exec := info.Mode()&0o111 != 0
 	mod := info.ModTime().UnixNano()

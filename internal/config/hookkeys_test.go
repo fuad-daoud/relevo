@@ -50,7 +50,8 @@ func TestHooksLocalMoveIsIdempotent(t *testing.T) {
 		t.Fatalf("machine half = %v, want the outside-root row", doc.Local)
 	}
 
-	// Open runs the move, so the marker is what says a second call is a no-op.
+	// The binding runs the move, so the marker is what says a second call is a
+	// no-op.
 	if _, done, err := store.db.KVGet(hooksLocalMarker); err != nil || !done {
 		t.Fatalf("marker present = %v (err %v); want the move recorded", done, err)
 	}
@@ -67,6 +68,57 @@ func TestHooksLocalMoveIsIdempotent(t *testing.T) {
 	}
 	if !sameJSON(before, after) {
 		t.Errorf("a second move changed the shared body:\n%s\n%s", before, after)
+	}
+}
+
+// TestUnboundOpenDoesNotRecordTheArgvMove pins that the marker is a record of
+// work done, not of work skipped. A store opened with no config root has
+// nothing to measure an argv row against, so it moves nothing, and recording
+// the move anyway would let the exporter send a body that still carries this
+// machine's directories -- the one outcome the marker exists to prevent. The
+// move runs when a root is bound, which is what every machine does.
+func TestUnboundOpenDoesNotRecordTheArgvMove(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	seedSharedDoc(t, s, map[Section]string{
+		Hooks: `{"events":{"PreToolUse":[["/outside/check.sh"]]}}`,
+	})
+	if _, done, err := s.db.KVGet(hooksLocalMarker); err != nil || done {
+		t.Fatalf("marker present = %v (err %v); want a rootless store to record nothing", done, err)
+	}
+	if moved, err := s.EnsureHooksLocal(); err != nil || moved {
+		t.Fatalf("EnsureHooksLocal on a rootless store = %v, %v; want no move", moved, err)
+	}
+	if _, done, err := s.db.KVGet(hooksLocalMarker); err != nil || done {
+		t.Fatalf("marker present after EnsureHooksLocal = %v (err %v); want it still absent", done, err)
+	}
+	// The row is still in the shared body, because nothing has moved it yet.
+	_, raw, err := s.sharedHooksDocInTx()
+	if err != nil {
+		t.Fatalf("read the shared body: %v", err)
+	}
+	if !containsArg(string(raw), "/outside/check.sh") {
+		t.Errorf("shared hooks body = %s, want the row still waiting for the move", raw)
+	}
+
+	// Binding a root is what runs the move, and it runs it exactly once.
+	root := t.TempDir()
+	bound := s.WithFiles(newMemApplier(root), root)
+	if _, done, err := bound.db.KVGet(hooksLocalMarker); err != nil || !done {
+		t.Fatalf("marker present after the binding = %v (err %v); want the move recorded", done, err)
+	}
+	doc, err := bound.HookDoc()
+	if err != nil {
+		t.Fatalf("HookDoc: %v", err)
+	}
+	if got := doc.Local["PreToolUse"]; len(got) != 1 || got[0][0] != "/outside/check.sh" {
+		t.Fatalf("machine half = %v, want the outside-root row moved", doc.Local)
+	}
+	if len(doc.Events["PreToolUse"]) != 0 {
+		t.Errorf("the outside-root row reached the shared half: %v", doc.Events)
+	}
+	if moved, err := bound.EnsureHooksLocal(); err != nil || moved {
+		t.Fatalf("second EnsureHooksLocal = %v, %v; want a no-op behind the marker", moved, err)
 	}
 }
 

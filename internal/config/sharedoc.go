@@ -248,7 +248,7 @@ func (s *Store) applyKeyIn(t *db.Tx, sec Section, name string, value json.RawMes
 			return invalidValueOf(err), nil
 		}
 		hooks.Root = s.root
-		if err := s.applyHookFiles(hooks); err != nil {
+		if err := s.applyHookFiles(t, hooks); err != nil {
 			return invalidValueOf(err), nil
 		}
 	}
