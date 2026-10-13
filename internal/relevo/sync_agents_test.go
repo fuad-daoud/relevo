@@ -155,6 +155,38 @@ func TestAgentsApplyKeepsAnEditedDefinition(t *testing.T) {
 	}
 }
 
+// TestHandEditedAgentFileExportsOnTheNextAttempt pins the capture every
+// attempt runs: a native definition a person edits on disk, with no config
+// write behind it, reaches the peer on the next attempt.
+func TestHandEditedAgentFileExportsOnTheNextAttempt(t *testing.T) {
+	log := synclog.NewMemTransport("x")
+	a := newCfgMachine(t, log, cfgSyncKey, true)
+	b := newCfgMachine(t, log, cfgSyncKey, true)
+
+	env := newAgentEnv(t)
+	homeA := env.point("a")
+	a.set(t, config.Agents, `{"my-native":`+nativeAgentBody+`}`)
+	writeHomeFile(t, homeA, ".claude/agents/my-native.md", "first\n")
+	a.attempt(t)
+	homeB := env.point("b")
+	b.attempt(t)
+
+	landed := filepath.Join(homeB, ".claude", "agents", "my-native.md")
+	if data, err := os.ReadFile(landed); err != nil || string(data) != "first\n" {
+		t.Fatalf("b's definition = %q, %v; want a's first version", data, err)
+	}
+
+	env.point("a")
+	writeHomeFile(t, homeA, ".claude/agents/my-native.md", "edited\n")
+	a.attempt(t)
+	env.point("b")
+	b.attempt(t)
+
+	if data, err := os.ReadFile(landed); err != nil || string(data) != "edited\n" {
+		t.Errorf("b's definition = %q, %v; want a's hand edit to have exported", data, err)
+	}
+}
+
 // TestSourceAgentChangeRendersWithoutTouchingNativeFiles pins that a source
 // agent's text change re-renders its own definition and leaves every native
 // file on the machine exactly as it was.

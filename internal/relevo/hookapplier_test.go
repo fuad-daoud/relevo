@@ -107,3 +107,31 @@ func TestHookApplierRefusesUnsafeTargets(t *testing.T) {
 		}
 	})
 }
+
+// TestAgentApplierRefusesASymlinkedDefinition pins the agent half of the same
+// rule: a definition path that is a symlink is neither read nor written
+// through, so an arriving item cannot replace the file the link names.
+func TestAgentApplierRefusesASymlinkedDefinition(t *testing.T) {
+	t.Parallel()
+	a := HookFileApplier(t.TempDir())
+	outside := filepath.Join(t.TempDir(), "outside.md")
+	if err := os.WriteFile(outside, []byte("do not touch\n"), 0o644); err != nil {
+		t.Fatalf("write the outside file: %v", err)
+	}
+	link := filepath.Join(t.TempDir(), "agents", "linked.md")
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, _, err := a.ReadAgentFile(link); err == nil {
+		t.Error("ReadAgentFile followed the symlink; want a refusal")
+	}
+	if _, err := a.WriteAgentFile(link, []byte("replaced\n")); err == nil {
+		t.Error("WriteAgentFile followed the symlink; want a refusal")
+	}
+	if data, err := os.ReadFile(outside); err != nil || string(data) != "do not touch\n" {
+		t.Errorf("the file the link named = %q, %v; want it untouched", data, err)
+	}
+}

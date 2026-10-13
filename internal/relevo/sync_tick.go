@@ -29,20 +29,7 @@ func (d *Daemon) SyncNow(ctx context.Context) {
 	if d == nil {
 		return
 	}
-	// A hook script a person edited between two attempts is a config edit, and
-	// the capture is what makes this one such an attempt rather than waiting
-	// for the tick. It is the same capture every attempt runs.
-	d.captureEditedFiles()
 	d.queueSync(ctx)
-}
-
-// captureEditedFiles runs the file capture over this daemon's config store, if
-// it has one bound to the disk.
-func (d *Daemon) captureEditedFiles() {
-	if d == nil || d.rt.Config == nil {
-		return
-	}
-	_, _ = d.rt.Config.CaptureHookFiles()
 }
 
 // queueSync hands a sync to the background and returns at once. The seal that
