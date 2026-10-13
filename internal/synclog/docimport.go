@@ -229,7 +229,7 @@ func applyDoc(tx *db.Tx, local string, it docItem) (refusal error, err error) {
 					p.Stamp, p.Origin, cur.Stamp, cur.Origin))
 		}
 	}
-	wrote, won, err := localWriteWins(tx, doc, local, p, cur, found)
+	wrote, won, err := localWriteWins(tx, doc, local, p)
 	if err != nil {
 		return nil, err
 	}
@@ -252,10 +252,11 @@ func applyDoc(tx *db.Tx, local string, it docItem) (refusal error, err error) {
 }
 
 // localWriteWins reports whether this machine's own write of the key outranks
-// both the arriving entry and the applied state, in which case the arriving
-// entry must not overwrite it. The write is stamped with this machine's origin,
-// so ties break to the higher origin like any other pair of entries.
-func localWriteWins(tx *db.Tx, doc TxDoc, local string, p DocEntry, cur db.DocApplied, found bool) (Stamp, bool, error) {
+// the arriving entry, in which case the entry must not overwrite it. It runs
+// only for an entry newer than the applied state, so outranking the entry
+// outranks that state too. The write is stamped with this machine's origin, so
+// ties break to the higher origin like any other pair of entries.
+func localWriteWins(tx *db.Tx, doc TxDoc, local string, p DocEntry) (Stamp, bool, error) {
 	w, ok := doc.(TxWriteStamper)
 	if !ok {
 		return 0, false, nil
@@ -264,19 +265,7 @@ func localWriteWins(tx *db.Tx, doc TxDoc, local string, p DocEntry, cur db.DocAp
 	if err != nil || !has {
 		return 0, false, err
 	}
-	if !stampBeats(wrote, local, p.Stamp, p.Origin) {
-		return 0, false, nil
-	}
-	if found {
-		have, err := ParseStamp(cur.Stamp)
-		if err != nil {
-			return 0, false, fmt.Errorf("synclog: applied stamp of %s %s: %w", p.Name, p.Key, err)
-		}
-		if !stampBeats(wrote, local, have, cur.Origin) {
-			return 0, false, nil
-		}
-	}
-	return wrote, true, nil
+	return wrote, stampBeats(wrote, local, p.Stamp, p.Origin), nil
 }
 
 // stampBeats is whether (stamp, origin) is strictly newer than (other, otherOrigin).
