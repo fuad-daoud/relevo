@@ -41,24 +41,28 @@ func sharedDocs(shared *db.DB) []synclog.SharedDoc {
 }
 
 // captureEditedFiles is the pipeline's file capture: the hook scripts under
-// this machine's config root, read off the disk and stored where the config
-// document carries them. It runs before every export and before a join or an
-// unlock drains what was parked.
+// this machine's config root and the harness files of every native agent, both
+// read off the disk and stored where the config document carries them. It runs
+// before every export and before a join or an unlock drains what was parked.
 //
 // A store that cannot resolve its config root reports no change rather than an
 // error, so the export still describes the config as the store holds it.
 func captureEditedFiles(shared *db.DB) {
-	_, _ = machineConfig(shared).CaptureHookFiles()
+	store := machineConfig(shared)
+	store.CaptureHookFiles()
+	store.CaptureAgentFiles()
 }
 
 // machineConfig is the config store of one machine with the applier bound, so
-// the config document can write the files it carries.
+// the config document can write the files it carries, and with the re-render
+// bound, so an arriving agents item is rendered once its transaction commits.
 func machineConfig(shared *db.DB) *config.Store {
 	root, err := ConfigRoot()
 	if err != nil {
-		return config.Open(shared)
+		return config.Open(shared).WithAgentRenders(queueRender(shared))
 	}
-	return config.Open(shared).WithFiles(HookFileApplier(root), root)
+	return config.Open(shared).WithFiles(HookFileApplier(root), root).
+		WithAgentRenders(queueRender(shared))
 }
 
 // gatesLocal is the file the gates document belongs to: the machine-local file

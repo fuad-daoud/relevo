@@ -153,5 +153,9 @@ func DrainParkedDocs(shared *db.DB, local Local, transport synclog.LogTransport)
 	// script a person edited while this machine held no key travels with the
 	// drain rather than with whichever attempt comes after it.
 	CaptureFiles(shared)
-	return imp.DrainPending()
+	res, err := imp.DrainPending()
+	// The settle runs after the drain, not inside it: what it renders is the
+	// config the drain wrote, which is only true once it has committed.
+	SettleFiles(shared)
+	return res, err
 }

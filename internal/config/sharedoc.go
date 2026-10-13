@@ -73,6 +73,19 @@ func (d *SharedDoc) Items() (map[string]json.RawMessage, error) {
 			return nil, err
 		}
 	}
+	// An agents item carries the harness files of its native kinds, read off
+	// this machine's homes, so a peer receives the agent and not only the name
+	// of one. The capture stamps the items it changed and signals the
+	// document, so the stamp this exporter reads is the one the write recorded.
+	captured, err := d.store.captureAgents()
+	if err != nil {
+		return nil, err
+	}
+	if captured != nil {
+		for name, item := range captured.items {
+			items[itemKey(Agents, name)] = item
+		}
+	}
 	return items, nil
 }
 
@@ -252,7 +265,36 @@ func (s *Store) applyKeyIn(t *db.Tx, sec Section, name string, value json.RawMes
 			return invalidValueOf(err), nil
 		}
 	}
+	if sec == Agents && body != nil {
+		// A native agent's harness files land with the entry that names them,
+		// in the caller's transaction, and the agent is queued for a re-render
+		// once that transaction has committed: the render reads the config the
+		// apply wrote, so running it inside would render the agent as it used
+		// to be. A source agent carries no file and is re-rendered from its own
+		// text, which is what re-renders without touching native files means.
+		//
+		// The agents section is a per-item one, so the item is read back out of
+		// the body the write stored rather than taken as the body: the entry is
+		// what carries the files, and it is one agent's.
+		items, err := splits(Agents, body)
+		if err != nil {
+			return invalidValueOf(err), nil
+		}
+		if err := s.applyAgentFiles(t, name, items[name]); err != nil {
+			return invalidValueOf(err), nil
+		}
+		s.queueAgentRender(name)
+	}
 	return nil, nil
+}
+
+// queueAgentRender asks for the re-render an arriving agents item needs. A
+// store with no renderer bound still lands the item and its files; only the
+// render is skipped.
+func (s *Store) queueAgentRender(agent string) {
+	if s.rerender != nil {
+		s.rerender(agent)
+	}
 }
 
 // docKeyOf is the doc key of one item, or of a whole section.

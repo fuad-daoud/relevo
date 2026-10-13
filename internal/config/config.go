@@ -112,6 +112,9 @@ type Store struct {
 	// Both are empty on a store that carries the config but writes no disk.
 	files FileApplier
 	root  string
+	// rerender re-renders an agent whose item arrived from a peer. It is nil on
+	// a store that has not been bound to one.
+	rerender AgentRerenderer
 }
 
 // Open binds a config store to d's machine-local file, or to d itself on a

@@ -365,24 +365,29 @@ func validateSharedArgv(root, event, script string) error {
 // instead of each keeping its own.
 func SafeHookComponent(name string) error { return safeComponent(name) }
 
-// safeComponent refuses a name that is not one plain path component. The rules
-// are separate refusals because they are separate mistakes: a slash, a
+// safeComponent refuses a name that is not one plain path component, saying
+// hooks because it is the hooks' rule; the agents' names take the same rule
+// through safeAgentComponent, which says agents.
+func safeComponent(name string) error { return safeNamedComponent("hooks", name, ErrHookPath) }
+
+// safeNamedComponent is one plain-component rule with the section that applies
+// it. The refusals are separate because they are separate mistakes: a slash, a
 // backslash, a dot name, a NUL, an over-long name.
-func safeComponent(name string) error {
+func safeNamedComponent(section, name string, cause error) error {
 	switch {
 	case name == "":
-		return fmt.Errorf("hooks: empty name: %w", ErrHookPath)
+		return fmt.Errorf("%s: empty name: %w", section, cause)
 	case name == "." || name == "..":
-		return fmt.Errorf("hooks: %q is a directory name, not a file name: %w", name, ErrHookPath)
+		return fmt.Errorf("%s: %q is a directory name, not a file name: %w", section, name, cause)
 	case strings.ContainsRune(name, 0):
-		return fmt.Errorf("hooks: name holds a NUL: %w", ErrHookPath)
+		return fmt.Errorf("%s: name holds a NUL: %w", section, cause)
 	case strings.ContainsRune(name, '/'):
-		return fmt.Errorf("hooks: %q holds a slash: %w", name, ErrHookPath)
+		return fmt.Errorf("%s: %q holds a slash: %w", section, name, cause)
 	case strings.ContainsRune(name, '\\'):
-		return fmt.Errorf("hooks: %q holds a backslash: %w", name, ErrHookPath)
+		return fmt.Errorf("%s: %q holds a backslash: %w", section, name, cause)
 	case len(name) > maxHookComponent:
-		return fmt.Errorf("hooks: name is %d bytes, over the %d cap: %w",
-			len(name), maxHookComponent, ErrHookPath)
+		return fmt.Errorf("%s: name is %d bytes, over the %d cap: %w",
+			section, len(name), maxHookComponent, cause)
 	}
 	return nil
 }

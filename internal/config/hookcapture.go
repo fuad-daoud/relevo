@@ -31,6 +31,18 @@ type FileApplier interface {
 	// path's own directory, setting the executable bit only for a path under
 	// the config root's hooks directory. It reports whether it wrote.
 	WriteHookFile(path string, data []byte, exec bool) (wrote bool, err error)
+	// AgentFilePath returns the absolute path one native agent's harness file
+	// belongs at for one kind. The directory is the kind's own harness home,
+	// computed from the kind and the agent name, so an item cannot steer the
+	// write and cannot name a directory outside it.
+	AgentFilePath(kind, agent string) (path string, err error)
+	// ReadAgentFile returns what is on disk at path; ok is false when the file
+	// is absent or is not a regular file.
+	ReadAgentFile(path string) (data []byte, ok bool, err error)
+	// WriteAgentFile writes data at path through a temp file and a rename in
+	// path's own directory. An agent definition is never executable, whatever
+	// mode the item asked for. It reports whether it wrote.
+	WriteAgentFile(path string, data []byte) (wrote bool, err error)
 }
 
 // hooksLocalMarker is the local kv row the outside-root argv move is recorded
@@ -70,6 +82,24 @@ func (s *Store) WithFiles(files FileApplier, root string) *Store {
 	// the marker is what the exporter checks, and a store that could not write
 	// has not moved anything.
 	_, _ = c.EnsureHooksLocal()
+	return &c
+}
+
+// AgentRerenderer re-renders one agent's files on every harness kind on PATH.
+// It is called once the transaction that applied the agent has committed,
+// because the render reads the config the apply wrote and a render that read
+// the state before it would render the agent as it used to be.
+//
+// It reports nothing: a render that cannot run is a warning, exactly as
+// refreshRoles treats a definition it could not write.
+type AgentRerenderer func(agent string)
+
+// WithAgentRenders binds the re-render an arriving agents item queues. The
+// receiver is unchanged, so a store with no renderer still lands the item and
+// its files; only the render is skipped.
+func (s *Store) WithAgentRenders(rerender AgentRerenderer) *Store {
+	c := *s
+	c.rerender = rerender
 	return &c
 }
 
@@ -500,15 +530,24 @@ func sameFileHashes(a, b map[string]fileHash) bool {
 	return true
 }
 
-// captureAfterHooksWrite runs the capture after a write of the hooks section
-// has committed, so a write that adds an argv row also brings the script the
-// row names.
+// captureAfterFilesWrite runs the captures after a write of the sections whose
+// items carry files has committed, so a write that adds a hook row or a native
+// agent also brings the file the row names. A capture that cannot read the
+// disk leaves the document as it is, which is the state the write made.
 func (s *Store) captureAfterHooksWrite(sec Section) {
-	if sec != Hooks || s.root == "" || s.files == nil {
+	if s.files == nil {
 		return
 	}
-	if _, err := s.CaptureHookFiles(); err != nil && !errors.Is(err, ErrInvalidValue) {
-		return
+	switch sec {
+	case Hooks:
+		if s.root == "" {
+			return
+		}
+		if _, err := s.CaptureHookFiles(); err != nil && !errors.Is(err, ErrInvalidValue) {
+			return
+		}
+	case Agents:
+		_, _ = s.CaptureAgentFiles()
 	}
 }
 

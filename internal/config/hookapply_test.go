@@ -3,12 +3,14 @@ package config
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
 // A memory applier standing in for the disk one: it records what it was asked
@@ -49,6 +51,31 @@ func (m *memApplier) WriteHookFile(path string, data []byte, exec bool) (bool, e
 	return true, nil
 }
 
+// The agent trio is the hooks' trio under another directory rule: a harness
+// kind's own home, computed here out of the kind and the agent name.
+func (m *memApplier) AgentFilePath(kind, agent string) (string, error) {
+	if _, ok := harness.Lookup(kind); !ok {
+		return "", fmt.Errorf("agents: %q is not a harness kind: %w", kind, ErrAgentPath)
+	}
+	if err := safeAgentComponent(agent); err != nil {
+		return "", err
+	}
+	return filepath.Join(m.root, kind, agent+".md"), nil
+}
+
+func (m *memApplier) ReadAgentFile(path string) ([]byte, bool, error) {
+	m.reads++
+	data, ok := m.files[path]
+	return data, ok, nil
+}
+
+func (m *memApplier) WriteAgentFile(path string, data []byte) (bool, error) {
+	m.writes++
+	m.files[path] = append([]byte(nil), data...)
+	m.execs[path] = false
+	return true, nil
+}
+
 // diskApplier is a FileApplier over a real temporary root, for a test whose
 // assertions read the disk rather than the applier's own record: the drift
 // report is one of those, so a memApplier would let it pass without the write
@@ -85,6 +112,37 @@ func (a diskApplier) WriteHookFile(path string, data []byte, exec bool) (bool, e
 		mode = 0o755
 	}
 	if err := os.WriteFile(path, data, mode); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (a diskApplier) AgentFilePath(kind, agent string) (string, error) {
+	if _, ok := harness.Lookup(kind); !ok {
+		return "", fmt.Errorf("agents: %q is not a harness kind: %w", kind, ErrAgentPath)
+	}
+	if err := safeAgentComponent(agent); err != nil {
+		return "", err
+	}
+	return filepath.Join(a.root, kind, agent+".md"), nil
+}
+
+func (a diskApplier) ReadAgentFile(path string) ([]byte, bool, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
+}
+
+func (a diskApplier) WriteAgentFile(path string, data []byte) (bool, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, err
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return false, err
 	}
 	return true, nil

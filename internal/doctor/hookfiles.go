@@ -10,13 +10,6 @@ import (
 // edit is a person's edit -- so the drift between the document and the disk is
 // something only `relevo doctor` reports: nothing else would ever mention it.
 
-// EditedFile is one script on disk that no longer holds what the document
-// carries.
-type EditedFile struct {
-	Path string
-	Hash string
-}
-
 // HookFilesCheckInput is the scripts this machine's config doc carries and the
 // ones a person has edited since, as the config store reports them.
 type HookFilesCheckInput struct {
