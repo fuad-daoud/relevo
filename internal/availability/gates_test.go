@@ -399,7 +399,7 @@ func TestMutateLedgerCarriesUnknownEntries(t *testing.T) {
 		t.Fatalf("KVPut: %v", err)
 	}
 
-	err := mutateLedgerLocked(d, func(l Ledger) Ledger {
+	err := mutateLedgerLocked(d, nil, func(l Ledger) Ledger {
 		return l.Append(Entry{
 			Kind:    RateLimited,
 			Subject: "test",

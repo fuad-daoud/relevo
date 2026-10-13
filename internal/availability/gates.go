@@ -51,29 +51,18 @@ func ProviderOf(tok string) string {
 // and ten minutes outlasts that.
 const SpawnFailedCooldown = 10 * time.Minute
 
-// mutateLedgerLocked loads, prunes, applies fn and saves the ledger for a
-// caller that already holds the state lock, so every ledger write serialises on
-// the state lock the caller already holds. It does not take Store.WithLock
-// itself: that lock is a plain mutex and is not reentrant, so a second Lock from
-// the goroutine that already holds it blocks forever rather than erroring.
-func mutateLedgerLocked(d Deps, fn func(Ledger) Ledger) error {
-	if d.Gates == nil {
-		return ErrNoGates
-	}
-	l, err := LoadLedger(d.Gates)
-	if err != nil {
-		return err
-	}
-	l = fn(l.Prune(d.Now()))
-	return SaveLedger(d.Gates, l)
-}
-
 // AppendEntryLocked commits one observation: the ledger entry that gates, then
 // its mirror in the history that remembers. The caller holds the store lock. A
 // history failure is printed and dropped -- the ledger write is the one that
 // matters, and it already happened.
+//
+// A rate-limit entry is stamped as a person's edit of that subject's gate: a
+// provider's quota is the provider's, so every machine gating it should see it.
+// A spawn failure is stamped for nothing, because it says only that this
+// machine could not start that candidate, and the gates document never exports
+// one.
 func AppendEntryLocked(d Deps, e Entry) error {
-	if err := mutateLedgerLocked(d, func(l Ledger) Ledger { return l.Append(e) }); err != nil {
+	if err := mutateLedgerLocked(d, stampedSubjects(e), func(l Ledger) Ledger { return l.Append(e) }); err != nil {
 		return err
 	}
 	h, err := loadHistory(d.Gates)
@@ -255,9 +244,17 @@ func Available(d Deps, subject, source string) (provider string, removed int, er
 		// account clear lifts only that key.
 		_, accountName, _ := account.ParseGateKey(subject)
 
-		l, removed, oldest = clearLedger(l, clearSubjects(l, provider, accountName))
+		cleared := clearSubjects(l, provider, accountName)
+		l, removed, oldest = clearLedger(l, cleared)
 
-		if serr := SaveLedger(d.Gates, l); serr != nil {
+		// A clear that removed nothing changed no value, so it stamps nothing
+		// and signals nothing: there is no key for the exporter to have held
+		// that this write makes stale.
+		var stamped []string
+		if removed > 0 {
+			stamped = cleared
+		}
+		if serr := saveLedger(d, l, stamped); serr != nil {
 			return serr
 		}
 

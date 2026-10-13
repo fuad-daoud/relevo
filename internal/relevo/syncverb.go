@@ -58,6 +58,9 @@ type VerbRunner struct {
 	// inline, which is what a cockpit wants: it is not the daemon and has no
 	// trigger to be serialized against.
 	Serialize func(fn func())
+	// Trigger asks the daemon for an attempt now rather than at the end of the
+	// export debounce. Nil until the daemon that owns the attempts binds it.
+	Trigger func()
 	// Blobs builds the bucket store the join guard reads. Nil skips the guard.
 	Blobs func(relevosync.R2Secrets) blobstore.BlobStore
 	// ClientName is what the remote is told this client is called.
@@ -105,6 +108,10 @@ func (v *VerbRunner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte)
 		return v.runGuarded(func() *wire.SyncResult { return v.reconcilePreview(ctx, verb) })
 	case wire.SyncVerbUnlock:
 		return v.runGuarded(func() *wire.SyncResult { return v.unlock(ctx, verb, token) })
+	case wire.SyncVerbAttempt:
+		// An attempt is queued, not waited for: the daemon's slot decides when
+		// it runs, which is what lets the one-shot that asked return at once.
+		return v.runGuarded(v.attempt)
 	case wire.SyncVerbDisable:
 		// A disable must not queue behind a call that can run for the whole
 		// data-call bound: a joined machine reads off for the whole join, and a
@@ -236,43 +243,6 @@ func (v *VerbRunner) setClient(transport synclog.LogTransport) {
 	v.clientMu.Lock()
 	v.Runner.Client = transport
 	v.clientMu.Unlock()
-}
-
-// push drains this machine's outbox into the log: the export half of the steady
-// exchange, run alone for a caller who asked for it. It appends only rows this
-// installation owns, so an imported row never travels back.
-func (v *VerbRunner) push(ctx context.Context) *wire.SyncResult {
-	transport, err := v.drive(ctx)
-	if err != nil {
-		return verbRefusal(verbClassify(err), err)
-	}
-	stop := relevosync.NewStopTransport(transport)
-	defer v.Runner.Track(stop)()
-	defer v.Runner.CountMoved(ctx, stop)
-	res, err := exportOnce(v.Shared, stop)
-	if err != nil {
-		return verbRefusal(verbClassify(err), err)
-	}
-	return &wire.SyncResult{OK: true, Applied: res.Appended > 0}
-}
-
-// pull reads every origin but this one and applies it: the import half of the
-// steady exchange, run alone. A batch this machine cannot act on is dropped by
-// the importer rather than failing the call, so one unreadable entry cannot
-// stop every other origin.
-func (v *VerbRunner) pull(ctx context.Context) *wire.SyncResult {
-	transport, err := v.drive(ctx)
-	if err != nil {
-		return verbRefusal(verbClassify(err), err)
-	}
-	stop := relevosync.NewStopTransport(transport)
-	defer v.Runner.Track(stop)()
-	defer v.Runner.CountMoved(ctx, stop)
-	res, err := importOnce(v.Shared, stop)
-	if err != nil {
-		return verbRefusal(verbClassify(err), err)
-	}
-	return &wire.SyncResult{OK: true, Applied: res.Applied > 0}
 }
 
 // retry clears a latched breaker and drops the worker, so the next attempt

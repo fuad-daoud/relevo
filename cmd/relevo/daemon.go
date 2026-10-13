@@ -407,6 +407,11 @@ func cmdDaemon(args []string) error {
 
 	slog.Info("relevo daemon starting", "interval", *interval)
 	daemon := relevo.NewDaemon(rt, *interval).WithRefresh(watcher.Refresh).WithUpgrade(hook)
+	// A gate this daemon records has to reach the other machines now, not at
+	// the end of the export debounce, so the runtime it was built from carries
+	// the daemon's own trigger. The daemon is bound afterwards, because the
+	// trigger is the daemon asking itself for an attempt.
+	daemon.BindSyncNow(ctx)
 	// The verb hook was installed before this Daemon existed, because the owner
 	// is served before it is built. Rebind it now with the guard: from here a
 	// verb and a seal or idle tick are serialized against each other, which is

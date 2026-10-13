@@ -12,7 +12,12 @@ adds only columns or indexes adds no table, so every table in the series is
 listed below. Migration 022 is the first outside it: it adds `sync_outbox` and
 the triggers, which are machine-local like the sections below, and it changes
 no table's scope. Migration 023 adds `sync_import_mark`, machine-local like the
-outbox, and changes no table's scope either. The rules a migration must follow are in
+outbox, and changes no table's scope either. Migrations 025 onward add the
+documents' own bookkeeping, machine-local like the outbox for the same reason: a
+row there is about what this machine has sent, seen or parked, and two machines
+sharing one would each believe the other had done it. The documents themselves
+are not tables and are listed under their own heading below. The rules a
+migration must follow are in
 [`README.md`](README.md); the file that created a table is its history.
 
 ## Shared history
@@ -60,8 +65,15 @@ These are the destination for the second, local-only database file.
   - `mastermind/*`: the same registry rows under their current prefix.
   - `claim/*`: a channel claim, keyed by the claiming process.
   - `hooks.log`: the hook run log.
-  - `ledger`, `availability`, `latency`: this machine's gates, availability
-    history and candidate latency samples.
+  - `ledger`: this machine's own view of its gates, after the entries that
+    arrived from peers were applied into it. The row itself never syncs: the
+    gates document below is what carries a gate, and it carries one key per
+    ledger subject rather than the row. A `spawn_failed` entry is in this row
+    and in no document -- it says this binary could not start that candidate
+    here, which is true of this host alone -- and an entry this build cannot
+    read stays here too, for the same reason the ledger keeps it raw.
+  - `availability`, `latency`: this machine's availability history and
+    candidate latency samples.
   - `serve.*` (`serve.clients`, `serve.ui`, `serve.ledger`): serve-wide state
     read and written on the server host.
   - `ui`: the cockpit's remembered query and sort column (`serve.ui` on a
@@ -100,13 +112,24 @@ never sync: two machines sharing one id could not tell each other's rows apart,
 and a database copy, backup or template would clone the id onto another
 machine. That is why it lives in a file beside the database and not in `kv`.
 
+## Shared documents, synced per key
+
+A document is not a table: it travels as ordinary log entries naming `doc:<name>`
+and one key each, and its newest write per key wins. Every doc's write stamps
+live in `config_write_stamp` under `<doc>/<key>`, so a document stamp can never
+be read as a config section's -- no section below is named after a document.
+
+| document | what it is | what never leaves |
+|---|---|---|
+| `config` | The shared config layer: one key per candidate, agent, actor, account, policy, role, price, server, hook set and workflow, plus one key per section that has no items. | The `sync` section and the machine-local layer: both say what this machine can run, and neither is the owner's answer to hand out. |
+| `gates` | One key per ledger subject, holding that subject's live rate-limit entries. A rate limit is the provider's quota, so every machine gating that provider gates the same candidates. | `spawn_failed` entries, which are about this host's binaries failing to start; entries whose kind or source this build cannot read; and an expiry that no write has yet pruned. |
+
 ## Per-user config, synced deliberately or not at all
 
 Configuration describes what this user's machine can run: its candidates,
 actors, policy, roles, prices and servers name local binaries and harnesses.
-Another machine's are not the same, so a section syncs only if the sync round
-decides it should. Current leaning, not a decision: machine-local, in the
-second file.
+Another machine's are not the same, so a section travels only through the
+`config` document's keys, and only the shared layer of it does.
 
 - `config_doc` rows: one row per section (`candidates`, `actors`, `policy`,
   `roles`, `prices`, `servers`).

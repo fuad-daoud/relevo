@@ -446,10 +446,11 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 	// the same database (P3b round 2 §4.1-§4.4), so `relevo daemon --preflight`
 	// and `--check`, which pass openGates false, open no database at all.
 	var (
-		gates  db.KV
-		claims delivery.ClaimStore
-		waits  delivery.WaitClaimStore
-		runLog hooks.RunLog
+		gates   db.KV
+		gatesDB *db.DB
+		claims  delivery.ClaimStore
+		waits   delivery.WaitClaimStore
+		runLog  hooks.RunLog
 	)
 	if openGates {
 		d, err := st.DB()
@@ -463,6 +464,10 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		// shared file by accident.
 		local := d.LocalOrSelf()
 		gates = local
+		// The gates document records a write's stamp and its export signal in
+		// this same file, so it needs the handle that can open a transaction
+		// rather than the bare kv surface the ledger reads and writes through.
+		gatesDB = local
 		claims = &delivery.KVClaims{KV: db.TxKV{DB: local}}
 		waits = &delivery.KVWaitClaims{KV: db.TxKV{DB: local}}
 		runLog = hooksRunLog(d)
@@ -509,6 +514,7 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		Accounts:       L.Accounts,
 		OpencodeAuth:   relevo.OSOpencodeAuth(opencodeDBPath()),
 		Gates:          gates,
+		GatesDB:        gatesDB,
 		Latency:        gates,
 		Policy:         pol,
 		Registry:       L.Registry,

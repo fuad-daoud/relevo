@@ -2,7 +2,9 @@ package db
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -91,6 +93,34 @@ func (d *DB) RecordDocExport(sig DocSignal, writes []DocExportWrite) error {
 		}
 		return t.clearDocSignal(sig)
 	})
+}
+
+// SignalDoc records that doc's items may have changed since the last export,
+// which is the row a config_doc trigger writes for the config document. It
+// exists in Go for the documents whose changes do not go through a table of
+// their own: their write path knows it changed something, and no trigger on a
+// table can see it.
+//
+// The signal's own text carries random bytes after the time, so a write landing
+// while an export is running replaces the row that export read rather than
+// writing the value it already read. The exporter clears the signal only while
+// the text is unchanged, so a shared stamp would let that later write be
+// cleared unexported.
+func (t *Tx) SignalDoc(doc string) error {
+	suffix := make([]byte, 8)
+	if _, err := rand.Read(suffix); err != nil {
+		return fmt.Errorf("db: signal doc %s: %w", doc, err)
+	}
+	if _, err := t.exec(`INSERT OR REPLACE INTO shared_outbox (doc, dirtied_at) VALUES (?, ?)`,
+		doc, formatTime(time.Now())+"-"+hex.EncodeToString(suffix)); err != nil {
+		return fmt.Errorf("db: signal doc %s: %w", doc, mapBusy(err))
+	}
+	return nil
+}
+
+// SignalDoc is Tx.SignalDoc in a transaction of its own.
+func (d *DB) SignalDoc(doc string) error {
+	return d.LocalOrSelf().Tx(func(t *Tx) error { return t.SignalDoc(doc) })
 }
 
 func (t *Tx) clearDocSignal(sig DocSignal) error {
