@@ -149,5 +149,9 @@ func DrainParkedDocs(shared *db.DB, local Local, transport synclog.LogTransport)
 	imp := synclog.NewImporter(shared, transport)
 	imp.SetKey(key)
 	BindDocs(imp, shared)
+	// The unlock drains what the lock parked, and the capture runs first so a
+	// script a person edited while this machine held no key travels with the
+	// drain rather than with whichever attempt comes after it.
+	CaptureFiles(shared)
 	return imp.DrainPending()
 }

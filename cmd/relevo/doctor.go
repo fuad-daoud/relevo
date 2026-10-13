@@ -416,9 +416,36 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 		if runs, rerr := hooks.NewKVLog(db.TxKV{DB: d}).Runs(); rerr == nil {
 			rep.Checks = append(rep.Checks, doctor.HooksCheck(doctor.HooksCheckInput{Runs: runs, Now: rt.Now()}))
 		}
+		// The hook-files row: the scripts this machine's config carries and the
+		// ones a person edited on disk and the applier kept. Nothing else would
+		// ever say so.
+		rep.Checks = append(rep.Checks, hookFileCheck(relevo.MachineConfig))
 	}
 
 	return rep, nil
+}
+
+// hookFileCheck reads the config's carried hook scripts and the ones that have
+// drifted off them. A config store that cannot be opened leaves the row off,
+// as every other best-effort row does.
+func hookFileCheck(open func() (*config.Store, error)) doctor.Check {
+	store, err := open()
+	if err != nil {
+		return doctor.Check{Name: "hook-files", Detail: "hook-files: config store unavailable", Severity: doctor.SevOK, ProbeFailed: true}
+	}
+	doc, err := store.HookDoc()
+	if err != nil {
+		return doctor.Check{Name: "hook-files", Detail: "hook-files: config store unavailable", Severity: doctor.SevOK, ProbeFailed: true}
+	}
+	edited, err := store.DriftedHookFiles()
+	if err != nil {
+		return doctor.Check{Name: "hook-files", Detail: "hook-files: config store unavailable", Severity: doctor.SevOK, ProbeFailed: true}
+	}
+	files := make([]doctor.EditedFile, 0, len(edited))
+	for _, file := range edited {
+		files = append(files, doctor.EditedFile{Path: file.Path, Hash: file.Hash})
+	}
+	return doctor.HookFilesCheck(doctor.HookFilesCheckInput{Carried: len(doc.Files), Edited: files})
 }
 
 func cmdDoctor(args []string) error {

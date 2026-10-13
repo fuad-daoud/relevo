@@ -26,18 +26,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// resolveHooksConfig builds the hook dispatcher environment: the hooks section
-// the config store loaded, and the run log its runs are recorded in (#4.4).
-// log is the machine database's kv log; a caller with no database open
-// (preflight, check, serve's admin paths) passes nil, and hook output is then
-// recorded nowhere.
-func resolveHooksConfig(hooksMap map[string][][]string, log hooks.RunLog) (hooks.Config, error) {
-	return hooks.Config{
-		Hooks: hooksMap,
-		Log:   log,
-	}, nil
-}
-
 // hooksRunLog is the hook run log over d's machine-local file: the kv row every
 // hook run and webhook failure is recorded in. A nil log records nothing, so a
 // caller with no database open wires the nil it already gets from a nil handle.

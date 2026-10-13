@@ -124,7 +124,7 @@ be read as a config section's -- no section below is named after a document.
 
 | document | what it is | what never leaves |
 |---|---|---|
-| `config` | The shared config layer: one key per candidate, agent, actor, account, policy, role, price, server, hook set and workflow, plus one key per section that has no items. | The `sync` section and the machine-local layer: both say what this machine can run, and neither is the owner's answer to hand out. |
+| `config` | The shared config layer: one key per candidate, agent, actor, account, policy, role, price, server, hook set and workflow, plus one key per section that has no items. The `hooks` key carries the hook scripts themselves -- each one's contents and executable bit -- beside the argv rows that name them, root-relative, so a peer receives the hook and not only the name of one. | The `sync` section and the machine-local layer: both say what this machine can run, and neither is the owner's answer to hand out. For `hooks` that means an argv row naming a file outside `<config root>/hooks/`: it stays in `config_local`, because a path elsewhere on this filesystem means nothing on another one. A hook script a person edited on disk is also kept rather than overwritten -- the document lands, the file does not, and `relevo doctor` names the one kept. |
 | `gates` | One key per ledger subject, holding that subject's live rate-limit entries. A rate limit is the provider's quota, so every machine gating that provider gates the same candidates. | `spawn_failed` entries, which are about this host's binaries failing to start; entries whose kind or source this build cannot read; and an expiry that no write has yet pruned. |
 | `consent` | One key per remote URL, holding the repository's answer to "may relevo register this repo's sessions as MasterMinds?". It reads and writes only the row this installation wrote, and the read scopes to it the same way: the `repo` rows themselves sync through the row log, so a machine holding several installations' rows for one URL holds several answers and only its own answers for it. | A repository with no remote URL, which no other machine can be asked about, and an answer that has been cleared: a clear is the key's absence, so it travels as a tombstone rather than as a value. A peer's copy of `mastermind_consent` in its own `repo` row means nothing here -- nothing reads it for the decision. |
 | `session_consent` | One key per `harness_kind/session_id`, holding the answer that session gave on its own rather than inheriting from the repository. A session id is not a repository, so a peer can hand over an answer for a session this machine has never seen and the row is simply created. | The told baseline and its time, which are this machine's own record of what it has already shown the session here; and an answer that has been cleared, which is a tombstone rather than a value. |
@@ -170,3 +170,44 @@ Path-valued `kv` values:
 - `daemon.exe`, `serve.daemon.root`
 
 This pass adds no code for the rule; it records it here and in the plan.
+
+## Hook scripts inside the config document
+
+The `hooks` section is the one section whose keys name files rather than
+values, so the rule above applies inside it as well: a path stored there is
+either this machine's or it is nobody's.
+
+The shared half holds the scripts under `<config root>/hooks/<event>.d/`,
+named `hooks/<event>.d/<file>`, with their contents and their executable bit.
+The name is root-relative so a peer whose config root differs still applies it
+under its own directory, and the directory is computed from the event and file
+names rather than read out of the entry, so an entry cannot steer a write.
+
+What never leaves the machine:
+
+- an argv row whose `argv[0]` is absolute and outside the config root. It is
+  split out into `config_local` under the `hooks` key's `local` member before
+  the write commits, by the idempotent step the `sync.config_hooks_local.v1`
+  local kv marker records. The marker is its own row rather than
+  `sync.config_local.v1`, because that one is already set on every machine that
+  ran the machine-layer move, and a move guarded by it would never run there.
+- a script a person edited on disk. The applier writes only a missing file or
+  one whose bytes still match, and `relevo doctor` names what it kept.
+
+Caps, refused with a test each: one script over 256 KiB, and one hooks value
+over 2 MiB in total.
+
+`apply` computes every path from the config root and refuses a name that is not
+one plain component (no `/`, no `\`, not `.` or `..`, no NUL, at most 128
+bytes). Writes go through a temp file in the target's own directory and a
+rename; a target that exists as a symlink or as anything but a regular file is
+refused rather than followed; and the executable bit is set only under
+`<config root>/hooks/`.
+
+The `sync.filehash.v1` local kv row is the capture's cache: one root-relative
+path to the digest, size, modification time and executable bit last seen. The
+capture stats first and reuses the document's bytes for a script the cache
+still vouches for, so an unchanged hook costs one stat per file and no write.
+The stamp is the capture time: it is recorded on the `hooks` item through the
+same write path `relevo config set` uses, so an edited script exports with the
+next attempt rather than with the next tick.

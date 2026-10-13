@@ -95,7 +95,12 @@ func (r *Runner) SyncOnce(ctx context.Context, shared *db.DB) SteadyResult {
 // attempt is the pipeline without the marker writing. The order is the
 // exchange's: export first, so the log learns what this machine wrote, then
 // import, so the file learns what the others wrote.
+//
+// The capture runs first, before the export, because a person editing a hook
+// script or a native agent file on disk is a person's edit and it has to reach
+// the peers with this attempt rather than with whichever one comes next.
 func (r *Runner) attempt(ctx context.Context, shared *db.DB) SteadyResult {
+	CaptureFiles(shared)
 	t := NewStopTransport(r.Client)
 	defer r.Track(t)()
 	out := r.exchange(ctx, shared, t)

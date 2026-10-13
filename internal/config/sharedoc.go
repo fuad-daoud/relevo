@@ -47,12 +47,33 @@ func (d *SharedDoc) Items() (map[string]json.RawMessage, error) {
 	if err := d.store.localLayerReady(); err != nil {
 		return nil, err
 	}
+	if err := d.store.hooksLocalReady(); err != nil {
+		return nil, err
+	}
 	shared, err := d.store.Current()
 	if err != nil {
 		return nil, err
 	}
 
-	return itemsOf(shared, false)
+	items, err := itemsOf(shared, false)
+	if err != nil {
+		return nil, err
+	}
+	// The hooks item carries the scripts themselves, read off this machine's
+	// disk, so a peer receives the hooks rather than only the names of them.
+	// The capture stamps the item and signals the document, so the stamp this
+	// exporter reads is the one the write recorded.
+	hooks, err := d.store.captureHooks()
+	if err != nil {
+		return nil, err
+	}
+	if hooks != nil {
+		items[string(Hooks)], err = EncodeHookDoc(hooks.doc)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
 }
 
 // itemsOf is one value per syncable key of a shared document. A section that
@@ -185,6 +206,14 @@ func (s *Store) applyKeyIn(t *db.Tx, sec Section, name string, value json.RawMes
 	if err != nil {
 		return invalidValueOf(err), nil
 	}
+	if sec == Hooks && name == "" {
+		// An arriving hooks item is already root-relative, so nothing is
+		// divided out of it; the shared member is checked against this
+		// machine's own rules rather than taken on trust.
+		if err := s.validateHooksBody(body); err != nil {
+			return err, nil
+		}
+	}
 
 	prospective := copyDoc(before.doc)
 	if body == nil {
@@ -199,10 +228,31 @@ func (s *Store) applyKeyIn(t *db.Tx, sec Section, name string, value json.RawMes
 	if err := validateProspective(merged); err != nil {
 		return err, nil
 	}
+	if sec == Hooks && body != nil {
+		if err := s.validateHooksBody(body); err != nil {
+			return err, nil
+		}
+	}
 	if body == nil {
 		return nil, s.deleteRecord(t, before, sec)
 	}
-	return nil, s.writeRecord(t, before, sec, body)
+	if err := s.writeRecord(t, before, sec, body); err != nil {
+		return err, nil
+	}
+	if sec == Hooks {
+		// The scripts land with the argv rows that name them, inside the
+		// caller's transaction, so a document and the files it carries are one
+		// decision. A file this machine has edited is kept either way.
+		hooks, err := ParseHookDoc(body)
+		if err != nil {
+			return invalidValueOf(err), nil
+		}
+		hooks.Root = s.root
+		if err := s.applyHookFiles(hooks); err != nil {
+			return invalidValueOf(err), nil
+		}
+	}
+	return nil, nil
 }
 
 // docKeyOf is the doc key of one item, or of a whole section.

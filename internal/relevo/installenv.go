@@ -33,6 +33,10 @@ func AgentInstallEnv() (harness.InstallEnv, error) {
 // MachineConfig opens the config store of the same machine database
 // AgentInstallEnv keeps the role manifest in: the custom agents live in the
 // config, so the surfaces that install them read both through one state root.
+//
+// The store carries the file applier as well, so the hooks section's embedded
+// scripts are written where the argv rows name them rather than only held in
+// the database.
 func MachineConfig() (*config.Store, error) {
 	root, err := store.DefaultRoot()
 	if err != nil {
@@ -42,5 +46,9 @@ func MachineConfig() (*config.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return config.Open(d), nil
+	cfgRoot, err := ConfigRoot()
+	if err != nil {
+		return config.Open(d), nil
+	}
+	return config.Open(d).WithFiles(HookFileApplier(cfgRoot), cfgRoot), nil
 }

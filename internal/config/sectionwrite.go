@@ -31,6 +31,10 @@ func (s *Store) Put(sec Section, body []byte) ([]string, error) {
 		if err != nil {
 			return err
 		}
+		body, err = s.normalizeSectionBody(sec, body)
+		if err != nil {
+			return invalidValueOf(err)
+		}
 		sharedBody, patches, err := splitMachineFields(sec, body)
 		if err != nil {
 			return invalidValueOf(err)
@@ -56,10 +60,14 @@ func (s *Store) Put(sec Section, body []byte) ([]string, error) {
 		if err != nil {
 			return invalidValueOf(err)
 		}
+		if err := s.validateHooksBody(sharedBody); sec == Hooks && err != nil {
+			return invalidValueOf(err)
+		}
 		return s.writeRecord(t, before, sec, sharedBody)
 	}); err != nil {
 		return nil, err
 	}
+	s.captureAfterHooksWrite(sec)
 	return warnings, nil
 }
 
@@ -70,7 +78,7 @@ func (s *Store) Put(sec Section, body []byte) ([]string, error) {
 // The machine fields go out of the shared body with it and stay in the local
 // layer, so removing a section never takes this machine's directories with it.
 func (s *Store) Delete(sec Section) error {
-	return s.db.Tx(func(t *db.Tx) error {
+	if err := s.db.Tx(func(t *db.Tx) error {
 		before, err := readSnapshot(t)
 		if err != nil {
 			return err
@@ -88,7 +96,27 @@ func (s *Store) Delete(sec Section) error {
 			return err
 		}
 		return s.deleteRecord(t, before, sec)
-	})
+	}); err != nil {
+		return err
+	}
+	s.captureAfterHooksWrite(sec)
+	return nil
+}
+
+// validateNamedSections runs the per-section checks that need a config root,
+// which decodeDoc cannot do because it is handed a document and nothing else.
+// A section that is not hooks has no root-dependent rule, so it is skipped.
+func (s *Store) validateNamedSections(doc Doc) error {
+	for _, sec := range Sections {
+		body, ok := doc[sec]
+		if !ok || sec != Hooks {
+			continue
+		}
+		if err := s.validateHooksBody(body); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PutDoc stores every section in doc in one transaction, validating every body
@@ -107,6 +135,17 @@ func (s *Store) PutDoc(doc map[Section]json.RawMessage) ([]string, error) {
 			return nil, invalidValueOf(err)
 		}
 		doc[Candidates] = filled
+	}
+
+	// The hooks section is divided by path before anything is written, so an
+	// argv row naming a file outside this machine's config root lands in the
+	// local layer rather than in the shared body. Put divides it the same way.
+	if body, ok := doc[Hooks]; ok {
+		normalized, err := s.normalizeSectionBody(Hooks, body)
+		if err != nil {
+			return nil, invalidValueOf(err)
+		}
+		doc[Hooks] = normalized
 	}
 
 	var warnings []string
@@ -131,6 +170,9 @@ func (s *Store) PutDoc(doc map[Section]json.RawMessage) ([]string, error) {
 		if err != nil {
 			return err
 		}
+		if err := s.validateNamedSections(merged); err != nil {
+			return invalidValueOf(err)
+		}
 		for _, sec := range Sections {
 			if _, named := doc[sec]; !named {
 				continue
@@ -142,6 +184,9 @@ func (s *Store) PutDoc(doc map[Section]json.RawMessage) ([]string, error) {
 		return s.record(t, before, nil)
 	}); err != nil {
 		return nil, err
+	}
+	if _, named := doc[Hooks]; named {
+		s.captureAfterHooksWrite(Hooks)
 	}
 	return warnings, nil
 }
@@ -171,6 +216,10 @@ func (s *Store) stripMachineFields(t *db.Tx, before Doc, doc Doc, now time.Time)
 		body, ok := doc[sec]
 		if !ok {
 			continue
+		}
+		body, err := s.normalizeSectionBody(sec, body)
+		if err != nil {
+			return nil, invalidValueOf(err)
 		}
 		sharedBody, patches, err := splitMachineFields(sec, body)
 		if err != nil {
