@@ -131,13 +131,6 @@ func TestMigration010AddsRepoConsent(t *testing.T) {
 	if err := applyMigrations(sqlDB, ten); err != nil {
 		t.Fatalf("applyMigrations 010: %v", err)
 	}
-	c, err := repoConsent(context.Background(), sqlDB, Repo{OriginURL: ptr("https://github.com/o/r")})
-	if err != nil {
-		t.Fatalf("repoConsent after 010: %v", err)
-	}
-	if c != ConsentUnset {
-		t.Errorf("existing repo consent = %q, want unset", c)
-	}
 
 	if err := applyMigrations(sqlDB, ten); err != nil {
 		t.Fatalf("second applyMigrations 010: %v", err)
@@ -148,6 +141,21 @@ func TestMigration010AddsRepoConsent(t *testing.T) {
 	}
 	if rows != 1 {
 		t.Errorf("schema_version rows for 10 = %d, want 1", rows)
+	}
+
+	// The read happens at the current schema rather than at 010: the consent
+	// read scopes to this origin's row, and the origin column arrives at 014. A
+	// v10 file is only ever read by a binary that has migrated it on, so
+	// reading at 010 would test a shape no caller ever asks for.
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 99)); err != nil {
+		t.Fatalf("applyMigrations to the current schema: %v", err)
+	}
+	c, err := repoConsent(context.Background(), sqlDB, "", Repo{OriginURL: ptr("https://github.com/o/r")})
+	if err != nil {
+		t.Fatalf("repoConsent after 010: %v", err)
+	}
+	if c != ConsentUnset {
+		t.Errorf("existing repo consent = %q, want unset", c)
 	}
 }
 

@@ -3,6 +3,7 @@ package relevo
 import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/consent"
 	"github.com/fuad-daoud/relevo/internal/db"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/synclog"
@@ -13,8 +14,10 @@ import (
 func init() { relevosync.SetDocsBuilder(sharedDocs) }
 
 // sharedDocs is the documents of one machine: its config, bound to the local
-// file the way config.Open binds it, and its gates, bound to the same file the
-// ledger is in.
+// file the way config.Open binds it, its gates, bound to the same file the
+// ledger is in, and the two consent documents, each bound to the file its own
+// store is in -- the repository answers with the shared rows, the session
+// answers with the machine-local ones.
 //
 // It is the one place a document is bound. Every pipeline stage reaches the
 // documents through the BindDocs sites rather than naming one, so a document
@@ -22,9 +25,12 @@ func init() { relevosync.SetDocsBuilder(sharedDocs) }
 // verbs at once, and a construction site that forgot it fails rather than
 // quietly syncing nothing.
 func sharedDocs(shared *db.DB) []synclog.SharedDoc {
+	local := gatesLocal(shared)
 	return []synclog.SharedDoc{
 		config.Open(shared).Doc(),
-		availability.OpenGates(gatesLocal(shared), nil),
+		availability.OpenGates(local, nil),
+		consent.OpenRepo(shared),
+		consent.OpenSessions(local),
 	}
 }
 

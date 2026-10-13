@@ -91,7 +91,10 @@ These are the destination for the second, local-only database file.
 - `secret`: the `client.key` remote-builder identity, the `typesafe`
   classifier token, and `serve.tls.*` (the server's certificate and key).
 - `session_consent`: one session's own consent answer and last status token,
-  keyed by `(harness_kind, session_id)`.
+  keyed by `(harness_kind, session_id)`. The answer and its time travel, in the
+  `session_consent` document below; the told baseline stays here, because it says
+  what this machine has already shown this session on this host, which is true
+  of no other machine and would tell a peer about a delivery it never made.
 - `ingest_cursor`: an ingest source's byte offset and last hashes, keyed by an
   absolute path.
 - `config_import`: the watch-list of config files already imported, keyed by
@@ -123,6 +126,8 @@ be read as a config section's -- no section below is named after a document.
 |---|---|---|
 | `config` | The shared config layer: one key per candidate, agent, actor, account, policy, role, price, server, hook set and workflow, plus one key per section that has no items. | The `sync` section and the machine-local layer: both say what this machine can run, and neither is the owner's answer to hand out. |
 | `gates` | One key per ledger subject, holding that subject's live rate-limit entries. A rate limit is the provider's quota, so every machine gating that provider gates the same candidates. | `spawn_failed` entries, which are about this host's binaries failing to start; entries whose kind or source this build cannot read; and an expiry that no write has yet pruned. |
+| `consent` | One key per remote URL, holding the repository's answer to "may relevo register this repo's sessions as MasterMinds?". It reads and writes only the row this installation wrote, and the read scopes to it the same way: the `repo` rows themselves sync through the row log, so a machine holding several installations' rows for one URL holds several answers and only its own answers for it. | A repository with no remote URL, which no other machine can be asked about, and an answer that has been cleared: a clear is the key's absence, so it travels as a tombstone rather than as a value. A peer's copy of `mastermind_consent` in its own `repo` row means nothing here -- nothing reads it for the decision. |
+| `session_consent` | One key per `harness_kind/session_id`, holding the answer that session gave on its own rather than inheriting from the repository. A session id is not a repository, so a peer can hand over an answer for a session this machine has never seen and the row is simply created. | The told baseline and its time, which are this machine's own record of what it has already shown the session here; and an answer that has been cleared, which is a tombstone rather than a value. |
 
 ## Per-user config, synced deliberately or not at all
 
