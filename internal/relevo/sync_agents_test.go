@@ -32,8 +32,15 @@ type agentEnv struct {
 	roots map[string]string
 }
 
+// newAgentEnv also puts a fake claude first on PATH: the render installs only
+// for a harness whose binary is on PATH, and CI runners have none.
 func newAgentEnv(t *testing.T) *agentEnv {
 	t.Helper()
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write a fake claude: %v", err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return &agentEnv{t: t, roots: map[string]string{}}
 }
 
