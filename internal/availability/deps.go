@@ -22,14 +22,13 @@ type Deps struct {
 	// accounts, where a gate is a bare group and nothing here changes.
 	Accounts account.Set
 	Gates    db.KV
-	Latency  db.KV
 	// History is the shared file the availability_event and latency_sample rows
-	// are written into and pruned from. It is the shared file rather than the
-	// one Gates and Latency bind, because a history row travels through the
-	// outbox like every other shared row while a kv document travels as a
-	// document. Nil means this machine writes no history rows -- every test that
-	// predates them, and a runtime with no shared file -- and the kv documents
-	// stay authoritative exactly as they were.
+	// are written into, read from and pruned from. It is the shared file rather
+	// than the one Gates binds, because a history row travels through the outbox
+	// like every other shared row while a ledger row travels as a document. Nil
+	// means this machine keeps no shared file, so it records no history rows and
+	// reads an empty history -- a machine with no database, rather than a second
+	// place the window lives.
 	History      *db.DB
 	Now          func() time.Time
 	Roles        harness.RoleChecker

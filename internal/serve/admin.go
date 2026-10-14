@@ -433,6 +433,10 @@ func (s *Server) resolveOwner(owner string) (remote.ClientID, error) {
 // only because relevo's ledger mutation takes its lock through rt.Store.
 // store.New creates nothing on its own, so locking through it cannot make an
 // uninitialised root report as initialised.
+//
+// History is the server's own shared file, the same choice s.gates makes: the
+// availability rows a server-side gate records are the server's, so they belong
+// beside its ledger rather than in any one owner's.
 func ledgerRuntime(s *Server) relevo.Runtime {
 	cfg := s.live()
 	return relevo.Runtime{
@@ -440,6 +444,7 @@ func ledgerRuntime(s *Server) relevo.Runtime {
 		Policy:     cfg.Policy,
 		Store:      store.New(s.cfg.Root),
 		Gates:      s.gates,
+		History:    s.cfg.DB,
 		Now:        s.cfg.Now,
 	}
 }

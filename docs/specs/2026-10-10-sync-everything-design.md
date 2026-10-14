@@ -75,10 +75,15 @@ logins (Claude Code, Codex, OpenCode credentials); a self-hosted hub (the
 | Rule | What |
 |---|---|
 | One writer per binding (history) | `repo`, `mastermind`, `installation`, `binding_record`, `binding_event`, `round_file`, `chains`, `chain_event`, `chain_member`, `chain_check`, `binding`, `round`, `event`, `artifact`, `transcript` |
-| One writer per machine (history, new tables) | `availability_event`, `latency_sample` |
+| One writer per machine (append-only history) | `availability_event`, `latency_sample` |
 | Newest wins per key (shared docs) | config shared layer (candidates, agents, actors, accounts, policy, roles, prices, servers, hooks, workflows); the files config points at (native agent files, hook scripts); gates; repo consent by remote URL; session consent; allow-listed secrets (encrypted) |
 | Bytes through R2 | `round_file.body`, `transcript.record_json`, `transcript.rendered` over 4 KiB stored |
-| Never | installation id; the `sync` config section; the local config layer; `turso.token`; `serve.tls.*`; `agy/*`; `sync_outbox`, `sync_import_mark` and the new local sync tables; `ingest_cursor`; `config_import`; kv `daemon`, `serve.*`, `claim`, `hooks.log`, `ui`, `agents-manifest`, `release-check`, run-once markers; `schema_version` |
+| Never | installation id; the `sync` config section; the local config layer; `turso.token`; `serve.tls.*`; `agy/*`; `sync_outbox`, `sync_import_mark` and the new local sync tables; `ingest_cursor`; `config_import`; kv `daemon`, `serve.*`, `claim`, `hooks.log`, `ui`, `agents-manifest`, `release-check`, run-once markers including `sync.history_rows.v1`; `schema_version` |
+
+The two history tables are roots: `origin` is a column of their own rather than
+one inherited through a parent, an arrival whose `origin` is not the entry's is
+dropped, and a row that has aged out is neither re-proposed nor deleted by
+reconcile.
 
 `SCOPES.md` is rewritten to match this table in the step that changes each row.
 
@@ -352,12 +357,16 @@ nothing reads a peer's `mastermind_consent` for the decision. `session_consent`
 carries a session's own answer and its time; the told baseline stays local. A
 cleared answer is a tombstone, never a value.
 
-**Availability and latency.** Availability events and latency samples move
-from whole-document kv values into two shared history tables in `relevo.db`,
-`availability_event` and `latency_sample`, keyed by ULID with `origin`. Each
-machine writes only its own rows, and readers combine all origins. The
-30-day retention runs on every machine by age, and the exporter does not emit
-those age-based deletes.
+**Availability and latency.** Availability events and latency samples are two
+shared history tables in `relevo.db`, `availability_event` and `latency_sample`,
+keyed by ULID with `origin`; each observation is one append-only row, and the
+`availability` and `latency` kv documents were migrated into them once, behind
+the local marker `sync.history_rows.v1`, and deleted. Each machine writes only
+its own rows and display reads combine all origins, but nothing that decides
+behaviour reads a peer's: a pick reads the ledger and the gates document, and
+never a history row. The 30-day retention runs on every machine by age, in the
+daemon's periodic maintenance beside the mastermind prune and as a read-time
+filter, and the exporter emits no age delete.
 
 ### 4.3 Files config points at
 
@@ -641,7 +650,9 @@ Each step is one PR with sandbox evidence before merge.
 3. **Signed shared docs.** Passphrase key, signing, hybrid clock,
    `shared_outbox`, config layers, gates, consents, the files config points
    at, agent re-render.
-4. **Availability and latency** as history tables.
+4. **Availability and latency** as history tables. Shipped: the tables, the
+   origin refusal, the never-exported age prune, the combined display reads and
+   the kv migration in migration 029 and the readers above.
 5. **Secrets and the new-machine flow.** Allow-list encryption, unlock,
    rekey, `invite` and `--join`.
 6. **Ownership.** The `writer` column, `handover`, `takeover`,

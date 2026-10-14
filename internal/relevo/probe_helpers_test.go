@@ -68,7 +68,7 @@ func probeRuntime(t *testing.T, setBody string) (Runtime, *time.Time) {
 	rt := Runtime{
 		Store:      store.New(t.TempDir()),
 		Candidates: candidateSet(t, setBody),
-		Latency:    testGateKV(t),
+		History:    testHistoryDB(t),
 		Now:        func() time.Time { return now },
 	}
 	return rt, &now

@@ -7,29 +7,24 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// The row half of the two histories. Each observation is committed twice here:
-// once into the kv document the reads still use, and once into its own row of
-// availability_event or latency_sample. The row is what a peer can hold and what
-// the age prune deletes; the document is what today's readers read, so both are
-// written and neither replaces the other yet.
+// The row half of the two histories. Each observation is one row of
+// availability_event or latency_sample, and the kv documents the rows replaced
+// are gone: MigrateHistoryDocuments moved what they held into the tables and
+// deleted them, and nothing writes or reads either since.
 //
 // A row is written with this machine's own installation id and a fresh ULID, and
 // with its time as Unix milliseconds rather than as RFC3339 text. The rows are
 // append-only, so the insert trigger beside them is the only trigger they have:
 // the prune below deletes without recording, and nothing is ever updated.
 
-// recordEvent commits one availability observation to the kv document and to one
-// row of availability_event. A failure of either is printed and dropped, the
-// same rule AppendEntryLocked applies to the ledger mirror: the ledger write is
-// the one that matters and it has already happened. A Deps with no history
-// handle -- a test, or a runtime built before the rows existed -- records the
-// document alone.
+// recordEvent commits one availability observation as one row of
+// availability_event. A failure is printed and dropped, the same rule
+// AppendEntryLocked applies to the ledger mirror: the ledger write is the one
+// that matters and it has already happened. A Deps with no shared file -- a
+// test, or a runtime built with no database open -- records nothing at all,
+// which is the machine-with-no-history reading rather than a second record.
 func recordEvent(d Deps, ev Event) {
-	err := saveEventDoc(d, ev)
-	if err == nil {
-		err = insertEventRow(d, ev)
-	}
-	if err != nil {
+	if err := insertEventRow(d, ev); err != nil {
 		fmt.Fprintf(os.Stderr, "relevo: could not record history: %v\n", err)
 	}
 }
@@ -60,28 +55,12 @@ func insertEventRow(d Deps, ev Event) error {
 	return d.History.InsertAvailabilityEvent(d.History.Origin(), row)
 }
 
-// saveEventDoc is the kv document write: the whole window pruned to the
-// retention window with the new event appended, exactly as it was written before
-// the rows existed.
-func saveEventDoc(d Deps, ev Event) error {
-	h, err := loadHistory(d.Gates)
-	if err != nil {
-		return err
-	}
-	return SaveHistory(d.Gates, h.Prune(d.Now()).Append(ev))
-}
-
-// recordSample commits one probe result to the kv document and to one row of
-// latency_sample, under the same rules recordEvent commits an observation: the
-// document first, the row beside it, and a failure of either is printed rather
+// recordSample commits one probe result as one row of latency_sample, under the
+// same rule recordEvent commits an observation: a failure is returned rather
 // than failed, because a probe that measured a candidate must not be reported as
 // broken because its history could not be written.
 func recordSample(d Deps, s Sample) error {
-	err := saveSampleDoc(d, s)
-	if err == nil {
-		err = insertSampleRow(d, s)
-	}
-	return err
+	return insertSampleRow(d, s)
 }
 
 // insertSampleRow is one INSERT of one probe result into latency_sample.
@@ -98,15 +77,6 @@ func insertSampleRow(d Deps, s Sample) error {
 		TotalMS: s.TotalMS,
 		Err:     s.Err,
 	})
-}
-
-// saveSampleDoc is the kv document write for one probe result.
-func saveSampleDoc(d Deps, s Sample) error {
-	h, err := LoadLatency(d.Latency)
-	if err != nil {
-		return err
-	}
-	return SaveLatency(d.Latency, h.Prune(d.Now()).Append(s))
 }
 
 // PruneHistory removes every availability event and latency sample older than

@@ -102,7 +102,6 @@ func newRuntimeReadOnly() (relevo.Runtime, config.Loaded, error) {
 	rt.Store = st
 	rt.DB = d
 	rt.Gates = d
-	rt.Latency = d
 	// The config store reads the sections the doctor rows need; every read
 	// goes through the read-only handle, so nothing it loads can be written
 	// back.

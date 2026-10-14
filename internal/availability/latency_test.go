@@ -1,27 +1,13 @@
 package availability
 
 import (
-	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// testLatencyKV is a real t.TempDir() database, the medium the latency history lives in.
-func testLatencyKV(t *testing.T) *db.DB {
-	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
-	if err != nil {
-		t.Fatalf("db.Open: %v", err)
-	}
-	t.Cleanup(func() { _ = d.Close() })
-	return d
-}
-
 func TestLoadLatencyMissingIsEmpty(t *testing.T) {
-	kv := testLatencyKV(t)
-	h, err := LoadLatency(kv)
+	t.Parallel()
+	h, err := LoadLatency(testDeps(t))
 	if err != nil {
 		t.Fatalf("LoadLatency(missing) error = %v, want nil", err)
 	}
@@ -30,18 +16,20 @@ func TestLoadLatencyMissingIsEmpty(t *testing.T) {
 	}
 }
 
-func TestSaveLatencyLoadLatencyRoundTrip(t *testing.T) {
-	kv := testLatencyKV(t)
+// A sample written as a row reads back as the sample it was: the read is the
+// shape every display takes, so the conversion is the whole claim here.
+func TestLatencyRowReadsBackAsItsSample(t *testing.T) {
+	t.Parallel()
+	d := testDeps(t)
 	at := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
-	h := LatencyHistory{}.Append(Sample{
-		At: at, Token: "claude/test/m", Host: "box", TTFTMS: 640, TotalMS: 900,
-	})
 
-	if err := SaveLatency(kv, h); err != nil {
-		t.Fatalf("SaveLatency() error = %v", err)
+	if err := insertSampleRow(d, Sample{
+		At: at, Token: "claude/test/m", Host: "box", TTFTMS: 640, TotalMS: 900,
+	}); err != nil {
+		t.Fatalf("insertSampleRow: %v", err)
 	}
 
-	got, err := LoadLatency(kv)
+	got, err := LoadLatency(d)
 	if err != nil {
 		t.Fatalf("LoadLatency() error = %v", err)
 	}
@@ -50,7 +38,7 @@ func TestSaveLatencyLoadLatencyRoundTrip(t *testing.T) {
 	}
 	s := got.Samples[0]
 	if s.Token != "claude/test/m" || s.Host != "box" || s.TTFTMS != 640 || s.TotalMS != 900 || s.Err != "" {
-		t.Errorf("round trip = %+v, want the saved sample", s)
+		t.Errorf("read back = %+v, want the written sample", s)
 	}
 	if !s.At.Equal(at) {
 		t.Errorf("At = %v, want %v", s.At, at)

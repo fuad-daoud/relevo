@@ -68,7 +68,7 @@ func bulkRuntime(t *testing.T, names ...string) (Runtime, *countingKV) {
 		Store:      store.New(t.TempDir()),
 		Candidates: candidateSet(t, testCandidatesJSON),
 		Gates:      kv,
-		Latency:    kv,
+		History:    d,
 		Channels:   &delivery.KVClaims{KV: tx, Alive: alwaysAlive},
 		Waits:      &delivery.KVWaitClaims{KV: tx, Alive: alwaysAlive},
 		Now:        func() time.Time { return baseTime },

@@ -20,21 +20,6 @@ import (
 // this error.
 var ErrNoGates = errors.New("no gates store configured")
 
-// LoadHistory reads the availability history for display, pruning it to the
-// retention window at d's clock. An unreadable record is an error the caller
-// reports -- the same rule Gates applies to the ledger -- and a nil Gates reads
-// as an empty history.
-func LoadHistory(d Deps) (History, error) {
-	if d.Gates == nil {
-		return History{}, nil
-	}
-	h, err := loadHistory(d.Gates)
-	if err != nil {
-		return History{}, err
-	}
-	return h.Prune(d.Now()), nil
-}
-
 // ProviderOf resolves a candidate token to its provider, or "" if the token
 // does not parse. It is the one place Gates and AppendEntryLocked's history
 // mirror agree on what a token's provider is.

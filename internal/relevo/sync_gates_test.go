@@ -42,7 +42,7 @@ func newGatesMachine(t *testing.T, log *synclog.MemTransport, key []byte, enable
 	g.deps = availability.Deps{
 		Store:   m.st,
 		Gates:   local,
-		Latency: local,
+		History: m.mdb,
 		Local:   local,
 		Now:     time.Now,
 		Candidates: func() *candidate.Set {

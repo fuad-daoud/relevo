@@ -541,7 +541,9 @@ func TestAdminAvailableRecordsServerClear(t *testing.T) {
 		t.Errorf("removed = %d, want 1", removed)
 	}
 
-	h, err := availability.LoadHistory(availability.Deps{Gates: db.PrefixKV{KV: s.DB(), Prefix: "serve."}, Now: time.Now})
+	// The rows are the history now, and they live in the server's shared file
+	// rather than the serve-prefixed kv the ledger is a row of.
+	h, err := availability.LoadHistory(relevo.AvailabilityDeps(ledgerRuntime(s)))
 	if err != nil {
 		t.Fatalf("history.LoadHistory: %v", err)
 	}

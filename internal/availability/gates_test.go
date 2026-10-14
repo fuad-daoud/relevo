@@ -2,6 +2,7 @@ package availability
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -24,9 +25,9 @@ func loadLedger(t *testing.T, d Deps) Ledger {
 // loadHistory reads the runtime's history for assertions.
 func readHistory(t *testing.T, d Deps) History {
 	t.Helper()
-	h, err := loadHistory(d.Gates)
+	h, err := LoadHistory(d)
 	if err != nil {
-		t.Fatalf("LoadKV history: %v", err)
+		t.Fatalf("LoadHistory: %v", err)
 	}
 	return h
 }
@@ -39,6 +40,23 @@ func kvRowBytes(t *testing.T, d Deps, key string) []byte {
 		t.Fatalf("KVGet(%s) = (_, %v, %v), want the row", key, ok, err)
 	}
 	return raw
+}
+
+// historyRowIDs is the identity of every availability_event row the shared file
+// holds, for an assertion that a refused call recorded nothing. The rows are
+// the history now, so this is the "the availability row is untouched" check the
+// retired kv document answered.
+func historyRowIDs(t *testing.T, d Deps) []string {
+	t.Helper()
+	rows, err := d.History.AvailabilityEvents(0)
+	if err != nil {
+		t.Fatalf("AvailabilityEvents: %v", err)
+	}
+	ids := make([]string, 0, len(rows))
+	for _, r := range rows {
+		ids = append(ids, r.ID)
+	}
+	return ids
 }
 
 // TestRecordSpawnFailureLockedUnderHeldLock pins the fix for the deadlock
@@ -751,7 +769,7 @@ func TestAvailableRefusesUnknownWritesNothing(t *testing.T) {
 	d.Now = func() time.Time { return baseTime.Add(5 * time.Hour) }
 
 	beforeLedger := kvRowBytes(t, d, "ledger")
-	beforeHistory := kvRowBytes(t, d, "availability")
+	beforeHistory := historyRowIDs(t, d)
 
 	if _, _, err := Available(d, "tset", ClearedByMasterMind); !errors.Is(err, ErrUnknownProvider) {
 		t.Fatalf("Available(tset) err = %v, want ErrUnknownProvider", err)
@@ -760,8 +778,8 @@ func TestAvailableRefusesUnknownWritesNothing(t *testing.T) {
 	if got := kvRowBytes(t, d, "ledger"); string(got) != string(beforeLedger) {
 		t.Errorf("ledger row = %s, want it untouched at %s", got, beforeLedger)
 	}
-	if got := kvRowBytes(t, d, "availability"); string(got) != string(beforeHistory) {
-		t.Errorf("availability row = %s, want it untouched at %s", got, beforeHistory)
+	if got := historyRowIDs(t, d); !slices.Equal(got, beforeHistory) {
+		t.Errorf("history rows = %v, want them untouched at %v", got, beforeHistory)
 	}
 }
 
@@ -777,7 +795,7 @@ func TestAvailableRejectsBadSource(t *testing.T) {
 	}
 
 	beforeLedger := kvRowBytes(t, d, "ledger")
-	beforeHistory := kvRowBytes(t, d, "availability")
+	beforeHistory := historyRowIDs(t, d)
 
 	if _, _, err := Available(d, "test", "bogus"); err == nil {
 		t.Fatal("Available(source=\"bogus\") err = nil, want an error")
@@ -786,8 +804,8 @@ func TestAvailableRejectsBadSource(t *testing.T) {
 	if got := kvRowBytes(t, d, "ledger"); string(got) != string(beforeLedger) {
 		t.Errorf("ledger row = %s, want it untouched at %s", got, beforeLedger)
 	}
-	if got := kvRowBytes(t, d, "availability"); string(got) != string(beforeHistory) {
-		t.Errorf("availability row = %s, want it untouched at %s", got, beforeHistory)
+	if got := historyRowIDs(t, d); !slices.Equal(got, beforeHistory) {
+		t.Errorf("history rows = %v, want them untouched at %v", got, beforeHistory)
 	}
 }
 
@@ -796,9 +814,14 @@ func TestHistoryFailureDoesNotFailTheLedger(t *testing.T) {
 
 	d := testDeps(t)
 
-	// A KV whose availability write fails while the ledger write succeeds:
-	// the ledger write is the one that matters and must still land.
-	d.Gates = failPutKV{inner: d.Gates, key: "availability"}
+	// A shared file whose history INSERT fails while the ledger write succeeds:
+	// the ledger write is the one that matters and must still land. The file is
+	// closed, which is the failure a broken handle produces and the one
+	// recordEvent prints and drops.
+	broken := d.History
+	if err := broken.Close(); err != nil {
+		t.Fatalf("close the shared file: %v", err)
+	}
 
 	if _, err := Unavailable(d, testClaudeRef, time.Time{}, "reason"); err != nil {
 		t.Fatalf("Unavailable: %v", err)

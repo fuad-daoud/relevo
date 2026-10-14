@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/classify"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -436,6 +437,7 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 	var (
 		gates   db.KV
 		gatesDB *db.DB
+		history *db.DB
 		claims  delivery.ClaimStore
 		waits   delivery.WaitClaimStore
 		runLog  hooks.RunLog
@@ -459,6 +461,23 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		claims = &delivery.KVClaims{KV: db.TxKV{DB: local}}
 		waits = &delivery.KVWaitClaims{KV: db.TxKV{DB: local}}
 		runLog = hooksRunLog(d)
+		// The one-time move of the two history documents into their tables runs
+		// here, where the runtime opens both files and before anything reads or
+		// writes either history. Every reader below -- the daemon, every verb, the
+		// join `db sync enable` performs on the daemon's side -- goes through
+		// this block, so one pass covers them all and none of them can see a
+		// document the tables have replaced. A failure warns and leaves the
+		// documents in place: the marker says the move did not happen, and the
+		// next start retries it.
+		if moved, err := availability.MigrateHistoryDocuments(local, d, d.Origin()); err != nil {
+			slog.Warn("availability history documents not migrated", "err", err)
+		} else if moved.Events+moved.Samples > 0 {
+			slog.Info("availability history documents moved into their tables",
+				"events", moved.Events, "samples", moved.Samples)
+		}
+		// The two history tables live in the shared file, so this is the handle
+		// every gate and latency display reads them through.
+		history = d
 	}
 
 	hooksCfg, err := resolveHooksConfig(L.Hooks, runLog)
@@ -503,7 +522,7 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		OpencodeAuth:   relevo.OSOpencodeAuth(opencodeDBPath()),
 		Gates:          gates,
 		GatesDB:        gatesDB,
-		Latency:        gates,
+		History:        history,
 		Policy:         pol,
 		Registry:       L.Registry,
 		ConfigWarnings: configWarnings,

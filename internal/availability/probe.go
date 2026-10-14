@@ -266,11 +266,11 @@ func Probe(ctx context.Context, d Deps, x LineExec, tokens []string, host string
 }
 
 // recordLatency appends one probe result to the latency history under the store
-// lock, so a probe and a listing never read a torn document. A history failure
-// is one stderr line; it never fails a probe. A nil Latency means no store is
-// configured, so there is nothing to record into.
+// lock, so a probe and a listing never see a half-written window. A history
+// failure is one stderr line; it never fails a probe. A nil History means this
+// machine keeps no shared file, so there is nowhere to record into.
 func recordLatency(d Deps, r ProbeResult) {
-	if d.Latency == nil {
+	if d.History == nil {
 		return
 	}
 

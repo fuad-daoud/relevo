@@ -70,9 +70,9 @@ func (f *fakeExec) Run(_ context.Context, dir string, argv []string, onLine func
 	return f.runErr
 }
 
-// probeRuntime builds a Runtime with a real store and a fake clock the
-// caller advances by writing *now. Latency lives in its own temp-dir database,
-// so the recording path in Probe is exercised against a real kv row.
+// probeRuntime builds a Deps with a real store and a fake clock the caller
+// advances by writing *now. The latency rows live in their own temp-dir shared
+// file, so the recording path in Probe is exercised against real rows.
 func probeRuntime(t *testing.T, setBody string) (Deps, *time.Time) {
 	t.Helper()
 	now := probeBase
@@ -84,7 +84,7 @@ func probeRuntime(t *testing.T, setBody string) (Deps, *time.Time) {
 	d := Deps{
 		Store:        store.New(t.TempDir()),
 		Candidates:   set,
-		Latency:      testGateKV(t),
+		History:      testShared(t),
 		Now:          func() time.Time { return now },
 		RoleRegistry: func() *roles.Registry { return reg },
 	}
@@ -394,7 +394,7 @@ func TestProbeRecordsHistory(t *testing.T) {
 		t.Errorf("each saw %v, want %v in order", seen, wantOrder)
 	}
 
-	h, err := LoadLatency(d.Latency)
+	h, err := LoadLatency(d)
 	if err != nil {
 		t.Fatalf("latency.LoadLatency() error = %v", err)
 	}

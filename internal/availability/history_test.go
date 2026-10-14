@@ -2,41 +2,39 @@ package availability
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // historyNow is the fixed clock every test in this package reasons from.
 var historyNow = time.Date(2026, 9, 11, 21, 15, 0, 0, time.UTC)
 
-// testHistoryKV is a real t.TempDir() database, the medium the history lives in.
-func testHistoryKV(t *testing.T) *db.DB {
+// historyDeps is a Deps whose clock is historyNow, for the cases that reason
+// about a fixed instant and write events at it.
+func historyDeps(t *testing.T) Deps {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
-	if err != nil {
-		t.Fatalf("db.Open: %v", err)
-	}
-	t.Cleanup(func() { _ = d.Close() })
+	d := testDeps(t)
+	d.Now = func() time.Time { return historyNow }
 	return d
 }
 
+// An event written as a row reads back as the event it was, in the order it was
+// written: the row read is what every display takes, so the conversion is the
+// whole claim.
 func TestRoundTrip(t *testing.T) {
-	kv := testHistoryKV(t)
+	t.Parallel()
+	d := historyDeps(t)
 
 	h := History{}.
 		Append(Event{At: historyNow, Kind: RateLimited, Provider: "anthropic", Source: "planner", Note: "5h"}).
 		Append(Event{At: historyNow.Add(time.Minute), Kind: SpawnFailed, Provider: "anthropic", Token: "claude/anthropic/sonnet", Source: "relevo", Binding: "webshop"})
-
-	if err := SaveHistory(kv, h); err != nil {
-		t.Fatalf("SaveHistory: %v", err)
+	for _, e := range h.Events {
+		recordEvent(d, e)
 	}
 
-	got, err := loadHistory(kv)
+	got, err := LoadHistory(d)
 	if err != nil {
 		t.Fatalf("LoadHistory: %v", err)
 	}
@@ -55,12 +53,12 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLoadKVMissingPath(t *testing.T) {
-	kv := testHistoryKV(t)
+func TestLoadMissingPath(t *testing.T) {
+	t.Parallel()
 
-	got, err := loadHistory(kv)
+	got, err := LoadHistory(historyDeps(t))
 	if err != nil {
-		t.Fatalf("loadHistory(missing): %v", err)
+		t.Fatalf("LoadHistory(missing): %v", err)
 	}
 	if len(got.Events) != 0 {
 		t.Errorf("got %d events, want 0: %+v", len(got.Events), got.Events)
@@ -183,7 +181,7 @@ func TestSinceOmittedWhenZero(t *testing.T) {
 		t.Errorf("RateLimited event marshalled with a since key: %s", plain)
 	}
 
-	kv := testHistoryKV(t)
+	d := historyDeps(t)
 	h := History{}.Append(Event{
 		At:       historyNow,
 		Kind:     Cleared,
@@ -191,11 +189,11 @@ func TestSinceOmittedWhenZero(t *testing.T) {
 		Source:   "planner",
 		Since:    historyNow.Add(-5 * time.Hour),
 	})
-	if err := SaveHistory(kv, h); err != nil {
-		t.Fatalf("SaveHistory: %v", err)
+	for _, e := range h.Events {
+		recordEvent(d, e)
 	}
 
-	got, err := loadHistory(kv)
+	got, err := LoadHistory(d)
 	if err != nil {
 		t.Fatalf("LoadHistory: %v", err)
 	}

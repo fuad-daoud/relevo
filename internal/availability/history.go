@@ -1,8 +1,6 @@
 package availability
 
 import (
-	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/account"
@@ -44,37 +42,10 @@ type History struct {
 	Events []Event `json:"events"`
 }
 
-// availabilityKey is the kv row the availability document lives in.
-const availabilityKey = "availability"
-
-// loadHistory reads the availability history from the kv row "availability". An
-// absent row returns an empty History without error, as a fresh install has
-// recorded nothing yet.
-func loadHistory(kv db.KV) (History, error) {
-	data, ok, err := kv.KVGet(availabilityKey)
-	if err != nil {
-		return History{}, err
-	}
-	if !ok {
-		return History{}, nil
-	}
-
-	var h History
-	if err := json.Unmarshal(data, &h); err != nil {
-		return History{}, fmt.Errorf("decode history: %w", err)
-	}
-
-	return h, nil
-}
-
-// SaveHistory writes the whole history document to the kv row "availability".
-func SaveHistory(kv db.KV, h History) error {
-	data, err := json.MarshalIndent(h, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal history: %w", err)
-	}
-	return kv.KVPut(availabilityKey, data)
-}
+// The json tags above and below are the shape the retired availability document
+// was written in. MigrateHistoryDocuments decodes it once, on the way into the
+// table that replaced it; nothing writes it and nothing reads it after that, so
+// the tags are the migration's rather than a live wire format.
 
 // Prune returns a new History containing every event no older than
 // HistoryRetainWindow, in order. It does not mutate the receiver's slice.

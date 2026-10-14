@@ -14,8 +14,8 @@ import (
 // a real append point rather than through the helper, so what is pinned is the
 // wiring the production paths take.
 
-// withHistory binds a shared file to d's Deps, so a case can read back what a
-// writer wrote the way a peer would find it.
+// withHistory binds a shared file to d's Deps, so a case can read the rows back
+// by hand the way a peer would find them.
 func withHistory(t *testing.T, d Deps) (Deps, *db.DB) {
 	t.Helper()
 	shared, err := db.OpenWith(filepath.Join(t.TempDir(), "relevo.db"), db.Options{Origin: "m1"})
@@ -92,7 +92,7 @@ func sampleRows(t *testing.T, d *db.DB) []string {
 }
 
 // A gate writes one row of its own, under its own installation, with the
-// observation's fields -- the document beside it unchanged.
+// observation's fields, and the reader sees it there rather than in a document.
 func TestAppendEntryLockedWritesOneEventRow(t *testing.T) {
 	t.Parallel()
 	d, shared := withHistory(t, testDeps(t))
@@ -106,9 +106,8 @@ func TestAppendEntryLockedWritesOneEventRow(t *testing.T) {
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("availability_event rows = %v, want [%q]", got, want)
 	}
-	// The document is still written and still authoritative for the readers.
 	if h := readHistory(t, d); len(h.Events) != 1 {
-		t.Fatalf("got %d history events, want the document written beside the row", len(h.Events))
+		t.Fatalf("got %d history events, want the row the gate wrote", len(h.Events))
 	}
 }
 
@@ -135,8 +134,7 @@ func TestAvailableClearWritesOneEventRow(t *testing.T) {
 	}
 }
 
-// A probe writes one row of its own beside its document, with the figure the
-// sample carries.
+// A probe writes one row of its own, with the figure the sample carries.
 func TestProbeRecordsOneSampleRow(t *testing.T) {
 	t.Parallel()
 	d, shared := withHistory(t, testDeps(t))
@@ -151,8 +149,8 @@ func TestProbeRecordsOneSampleRow(t *testing.T) {
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("latency_sample rows = %v, want [%q]", got, want)
 	}
-	if h, err := LoadLatency(d.Latency); err != nil || len(h.Samples) != 1 {
-		t.Fatalf("latency document = %+v (%v), want the document written beside the row", h, err)
+	if h, err := LoadLatency(d); err != nil || len(h.Samples) != 1 {
+		t.Fatalf("latency history = %+v (%v), want the row the probe wrote", h, err)
 	}
 }
 
@@ -201,19 +199,23 @@ func TestPruneHistoryDeletesAgedRows(t *testing.T) {
 	}
 }
 
-// A Deps with no shared file prunes nothing and writes no rows: the documents
-// stay exactly what they were, which is what every caller that predates the
-// tables sees.
+// A Deps with no shared file records nothing and prunes nothing: a machine with
+// no database keeps no history at all, rather than a second copy somewhere the
+// documents used to be.
 func TestHistoryRowsAreOptional(t *testing.T) {
 	t.Parallel()
 	d := testDeps(t)
+	d.History = nil
 
 	if _, err := Unavailable(d, testClaudeRef, time.Time{}, "5h window"); err != nil {
 		t.Fatalf("Unavailable: %v", err)
 	}
 	recordLatency(d, ProbeResult{Sample: Sample{At: baseTime, Token: testClaudeRef}, Name: "claude"})
-	if h := readHistory(t, d); len(h.Events) != 1 {
-		t.Fatalf("got %d history events, want the document written with no shared file", len(h.Events))
+	if h := readHistory(t, d); len(h.Events) != 0 {
+		t.Fatalf("got %d history events, want none from a machine with no shared file", len(h.Events))
+	}
+	if h, err := LoadLatency(d); err != nil || len(h.Samples) != 0 {
+		t.Fatalf("latency history = %+v (%v), want none from a machine with no shared file", h, err)
 	}
 	pruned, err := PruneHistory(d)
 	if err != nil || pruned != (db.HistoryPruned{}) {
