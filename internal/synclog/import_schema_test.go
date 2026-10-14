@@ -335,6 +335,130 @@ func TestImporterDefaultsMissingColumns(t *testing.T) {
 	})
 }
 
+// Migration 029 is the one that puts availability and latency history in tables
+// another machine may read, so it is the first version whose entries a reader
+// still at 028 cannot read. The batch it introduces is the awkward one: it
+// carries the new history row *and* an ordinary round row from the same writer,
+// so a reader that dropped the batch on the strength of the history row would
+// lose the round row with it -- a row this build has always been able to apply.
+//
+// It holds instead. The hold is not a failure and nothing is dropped: the mark
+// rests on the batch before, so the whole batch is offered again on the next
+// pull, and once this machine knows 029 both rows apply together. Nothing is
+// rewritten in between; the entries are only read.
+
+const historySchemaVersion = 29
+
+// historyRoundEntry is one round row at a named schema version. It is the row
+// that must not be lost to a version the batch also carries.
+func historyRoundEntry(t *testing.T, id string, schema int) Entry {
+	t.Helper()
+	return Entry{
+		Table: "round", PK: `["` + id + `"]`, Op: OpUpsert, SchemaVersion: schema,
+		Body: bodyFor(t, map[string]any{
+			"id": id, "binding_id": "b1", "number": 1,
+			"started_at": "2026-10-14T00:00:00.000Z", "outcome": "green", "switches": 0,
+		}),
+	}
+}
+
+// historyEventEntry is one availability event at a named schema version. Its
+// time is an integer, which is what the age prune compares against: an integer
+// orders two events whose RFC3339 renderings carry different offsets and would
+// sort them the wrong way round as text.
+func historyEventEntry(t *testing.T, id string, schema int) Entry {
+	t.Helper()
+	return Entry{
+		Table: "availability_event", PK: `["` + id + `"]`, Op: OpUpsert, SchemaVersion: schema,
+		Body: bodyFor(t, map[string]any{
+			"id": id, "at_ms": 1767225600000, "kind": "rate_limited", "provider": "group",
+			"account": "acct", "token": "", "source": "probe", "binding": "b1",
+			"note": "slow", "since_ms": nil, "origin": "m1",
+		}),
+	}
+}
+
+func TestHistorySchemaHoldsTheBatchAndKeepsItsRoundRow(t *testing.T) {
+	t.Parallel()
+	peer, peerPath := peerFile(t, "m2")
+	know := knownVersion(t, peer)
+	if know != historySchemaVersion {
+		t.Fatalf("this build's schema version is %d, want %d: migration 029 is the one that adds the history tables",
+			know, historySchemaVersion)
+	}
+	seed(t, peerPath,
+		`INSERT INTO installation (id, label, first_seen, last_seen) VALUES ('m1', 'the laptop', '2026-01-02T03:04:05.000Z', '2026-01-02T03:04:05.000Z')`,
+		// The round hangs off a binding, and the round lands under the binding's
+		// origin -- so the peer needs one to be there for the row to apply at all.
+		`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
+		 VALUES ('b1', 'b1', '/x', 'headless', '2026-01-02T03:04:05.000Z', '', 'm1')`,
+	)
+
+	// One batch, two rows, both written at 029. The round row is the one this
+	// machine has always been able to read.
+	log := NewMemTransport("m1")
+	appendBatch(t, log, historyEventEntry(t, "01H", know), historyRoundEntry(t, "rd1", know))
+
+	// The reader is still at 028.
+	behind := NewImporter(peer, log.OnLog("m2"))
+	behind.known = know - 1
+	got, err := behind.Import()
+	if err != nil {
+		t.Fatalf("import from a writer on 029 into a reader at 028: %v", err)
+	}
+	if len(got.Held) != 1 {
+		t.Fatalf("Held = %+v, want the origin held once", got.Held)
+	}
+	if hold := got.Held[0]; hold.Origin != "m1" || hold.Schema != know {
+		t.Fatalf("the hold is %+v, want m1 held at schema %d", hold, know)
+	}
+	if got.Applied != 0 {
+		t.Fatalf("import = %+v, want nothing applied from the held batch", got)
+	}
+	// Neither row landed. The round row is the point: a reader that dropped the
+	// batch on the version its history row carries would lose a row it can read.
+	if have := sharedRows(t, peer); strings.Contains(have, "rd1") || strings.Contains(have, "01H") {
+		t.Fatalf("the peer holds %q, want no row of the held batch", have)
+	}
+	// The mark stays where it was, so the batch is offered again rather than
+	// skipped whole on the next pull.
+	if seq, _, err := peer.ImportMark("m1"); err != nil || seq != 0 {
+		t.Fatalf("ImportMark = %d (%v), want it unmoved behind the held batch", seq, err)
+	}
+
+	// The same entries against a reader that knows 029.
+	ahead := NewImporter(peer, log.OnLog("m2"))
+	ahead.known = know
+	got, err = ahead.Import()
+	if err != nil {
+		t.Fatalf("import once this machine knows 029: %v", err)
+	}
+	if len(got.Held) != 0 {
+		t.Fatalf("Held = %+v, want nothing held once this machine knows the schema", got.Held)
+	}
+	if got.Applied != 2 {
+		t.Fatalf("import = %+v, want both rows of the held batch applied", got)
+	}
+	// The two seeded rows, plus both rows of the batch: the round and the
+	// history event, applied together and in neither a partial nor a batch-only
+	// shape.
+	want := `installation ["m1"]|binding ["b1"]|round ["rd1"]|availability_event ["01H"]`
+	if have := sharedRows(t, peer); have != want {
+		t.Fatalf("the peer holds %q, want the history row and the round row together", have)
+	}
+	if seq, _, err := peer.ImportMark("m1"); err != nil || seq != 2 {
+		t.Fatalf("ImportMark = %d (%v), want the mark past the held batch", seq, err)
+	}
+	// The event's time is the integer the table was declared for, not text: it
+	// is what the age prune compares against, and text would misorder the
+	// mixed-offset timestamps the writers produce.
+	assertColumns(t, peer, "availability_event", `["01H"]`, map[string]string{
+		"id": "01H", "at_ms": "1767225600000", "kind": "rate_limited", "provider": "group",
+		"account": "acct", "token": "", "source": "probe", "binding": "b1",
+		"note": "slow", "since_ms": "<null>", "origin": "m1",
+	})
+}
+
 // sharedColumn reads one column of one row through the exchange seam, so a case
 // can assert on a column whose value is not text.
 func sharedColumn(t *testing.T, d *db.DB, tbl, pk string) db.ExchangeRow {

@@ -447,16 +447,22 @@ var OwnerRules = map[string]ownerRule{
 	"binding_record": {owner: "origin"},
 	// The installation's id is its own installation id, so its row names
 	// itself rather than reading an origin column.
-	"installation":  {owner: "id"},
-	"binding":       {owner: "origin"},
-	"chains":        {owner: "origin"},
-	"binding_event": {child: "record_id", hops: []ownerStep{{column: "origin", parent: "binding_record", key: "id"}}},
-	"round_file":    {child: "record_id", hops: []ownerStep{{column: "origin", parent: "binding_record", key: "id"}}},
-	"chain_event":   {child: "chain_id", hops: []ownerStep{{column: "origin", parent: "chains", key: "id"}}},
-	"chain_member":  {child: "chain_id", hops: []ownerStep{{column: "origin", parent: "chains", key: "id"}}},
-	"chain_check":   {child: "chain_id", hops: []ownerStep{{column: "origin", parent: "chains", key: "id"}}},
-	"round":         {child: "binding_id", hops: []ownerStep{{column: "origin", parent: "binding", key: "id"}}},
-	"event":         {child: "binding_id", hops: []ownerStep{{column: "origin", parent: "binding", key: "id"}}},
+	"installation": {owner: "id"},
+	"binding":      {owner: "origin"},
+	"chains":       {owner: "origin"},
+	// The two history tables are roots like any other: a row names the
+	// installation that wrote it, with no parent to read it through. Their
+	// triggers record an insert alone, which is what the rule has to match --
+	// there is no update or delete body to compare against.
+	"availability_event": {owner: "origin"},
+	"latency_sample":     {owner: "origin"},
+	"binding_event":      {child: "record_id", hops: []ownerStep{{column: "origin", parent: "binding_record", key: "id"}}},
+	"round_file":         {child: "record_id", hops: []ownerStep{{column: "origin", parent: "binding_record", key: "id"}}},
+	"chain_event":        {child: "chain_id", hops: []ownerStep{{column: "origin", parent: "chains", key: "id"}}},
+	"chain_member":       {child: "chain_id", hops: []ownerStep{{column: "origin", parent: "chains", key: "id"}}},
+	"chain_check":        {child: "chain_id", hops: []ownerStep{{column: "origin", parent: "chains", key: "id"}}},
+	"round":              {child: "binding_id", hops: []ownerStep{{column: "origin", parent: "binding", key: "id"}}},
+	"event":              {child: "binding_id", hops: []ownerStep{{column: "origin", parent: "binding", key: "id"}}},
 	// Two hops to an owner: an artifact belongs to a round, and the round
 	// belongs to a binding.
 	"artifact": {child: "round_id", hops: []ownerStep{

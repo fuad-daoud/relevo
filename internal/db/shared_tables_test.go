@@ -68,9 +68,15 @@ func outboxKeyArgs(body string) ([]string, bool) {
 }
 
 // TestOutboxTriggersCoverEverySharedTable pins the trigger set: every shared
-// table carries all three operations, each keyed on that table's primary-key
-// columns and on the row the operation is about, and the table the triggers
-// write into exists.
+// table carries the operations its rows can undergo, each keyed on that table's
+// primary-key columns and on the row the operation is about, and the table the
+// triggers write into exists.
+//
+// An append-only table is the one exception, and it is an exception the test
+// names rather than infers: it carries the insert trigger alone, and an update or
+// delete trigger on it is a defect rather than a gap. Those two triggers are the
+// only place the age prune could reach the outbox, so their absence is the
+// property that keeps a deletion local to the machine that aged the row out.
 func TestOutboxTriggersCoverEverySharedTable(t *testing.T) {
 	sqlDB := migratedSQLDB(t)
 
@@ -80,7 +86,7 @@ func TestOutboxTriggersCoverEverySharedTable(t *testing.T) {
 
 	bodies := triggerBodies(t, sqlDB)
 	for _, table := range SharedTables {
-		for _, op := range outboxOps {
+		for _, op := range outboxOpsFor(table.Name) {
 			name := "sync_outbox_" + table.Name + op.Suffix
 			body, ok := bodies[name]
 			if !ok {
@@ -115,6 +121,35 @@ func TestOutboxTriggersCoverEverySharedTable(t *testing.T) {
 			if !strings.HasPrefix(key, "json_array("+alias) {
 				t.Errorf("%s keys on %s, want %s for a %s", name, key, alias, op.Name)
 			}
+		}
+		assertNoUpdateOrDeleteTrigger(t, bodies, table)
+	}
+}
+
+// outboxOpsFor is the operations tbl's triggers record. Every table records all
+// three; an append-only one records the insert alone, because its rows are never
+// updated and its only delete is the age prune.
+func outboxOpsFor(tbl string) []outboxOp {
+	if appendOnly(tbl) {
+		return outboxOps[:1]
+	}
+	return outboxOps
+}
+
+// assertNoUpdateOrDeleteTrigger is the negative half of the append-only
+// classification: on a table whose rows are immutable, a trigger for the two
+// operations that must never travel must not exist. A delete trigger there would
+// export the age prune to every peer, and an update one would export a write no
+// writer is allowed to make.
+func assertNoUpdateOrDeleteTrigger(t *testing.T, bodies map[string]string, table SharedTable) {
+	t.Helper()
+	if !appendOnly(table.Name) {
+		return
+	}
+	for _, op := range outboxOps[1:] {
+		name := "sync_outbox_" + table.Name + op.Suffix
+		if bodies[name] != "" {
+			t.Errorf("%s exists; %s is append-only and must never record a %s", name, table.Name, op.Name)
 		}
 	}
 }

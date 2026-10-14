@@ -35,6 +35,37 @@ var SharedTables = []SharedTable{
 	{Name: "event", PrimaryKey: []string{"id"}},
 	{Name: "artifact", PrimaryKey: []string{"id"}},
 	{Name: "transcript", PrimaryKey: []string{"id"}},
+	// The availability and latency histories, as rows rather than documents.
+	// Neither has a parent, so both carry their own origin and both sort last.
+	{Name: "availability_event", PrimaryKey: []string{"id"}},
+	{Name: "latency_sample", PrimaryKey: []string{"id"}},
+}
+
+// AppendOnlyTables names the shared tables whose rows are immutable: a row is
+// never updated and is deleted only by age. They travel through the outbox on an
+// insert trigger alone, because an update trigger would have nothing to record
+// and a delete trigger would export the age prune -- a deletion every importer
+// would then have to reproduce, for a row each machine prunes on its own clock.
+//
+// The set is written out rather than derived, because "which tables have only
+// an insert trigger" cannot be read back out of the trigger bodies without a
+// test that would pass on a file where the delete trigger was simply missing.
+// Here the drift test and the owner/trigger tests both take this set, so a third
+// table joining it is a decision recorded in one place and a table losing its
+// delete trigger by accident is caught rather than assumed.
+var AppendOnlyTables = []string{
+	"availability_event",
+	"latency_sample",
+}
+
+// appendOnly reports whether tbl's rows are immutable.
+func appendOnly(tbl string) bool {
+	for _, name := range AppendOnlyTables {
+		if name == tbl {
+			return true
+		}
+	}
+	return false
 }
 
 // outboxOp names one of the three write operations a shared table's triggers
