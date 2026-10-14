@@ -1,11 +1,13 @@
 package relevo
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // The history retention pass as the daemon runs it: on the maintenance tick
@@ -57,6 +59,21 @@ func historyDaemonFile(t *testing.T) (Runtime, *db.DB, time.Time) {
 	// holds, not a window of what it wrote.
 	historyEvent(t, d, "m2", db.UnixMS(now.Add(-db.HistoryWindow-time.Hour)))
 	return Runtime{DB: d, Now: func() time.Time { return now }}, d, now
+}
+
+// The prune is reached from the daemon's maintenance, not only when called: a
+// tick on a machine with no bindings still deletes the aged rows.
+func TestTickPrunesAgedHistoryRows(t *testing.T) {
+	t.Parallel()
+	rt, d, _ := historyDaemonFile(t)
+	rt.Store = store.New(t.TempDir())
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if n := historyCount(t, d); n != 1 {
+		t.Fatalf("availability_event holds %d rows after a tick, want the one row inside the window", n)
+	}
 }
 
 func TestDaemonPrunesAgedHistoryRows(t *testing.T) {

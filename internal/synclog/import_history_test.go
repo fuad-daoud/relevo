@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -187,6 +188,11 @@ func refusesAHistoryDelete(t *testing.T, tbl string) {
 	}
 	if got.Applied != 0 || len(got.Dropped) != 1 {
 		t.Fatalf("import = %+v, want the history delete refused", got)
+	}
+	// A delete carries no body, so the time rule would refuse it too; the reason
+	// is what pins the delete rule itself.
+	if !strings.Contains(got.Dropped[0].Reason, errHistoryDelete.Error()) {
+		t.Fatalf("drop reason = %q, want the delete rule", got.Dropped[0].Reason)
 	}
 	if owner := historyOrigin(t, peer, tbl, "01B"); owner != "m1" {
 		t.Fatalf("the row's origin = %q, want the row still standing", owner)
