@@ -393,6 +393,105 @@ func writesAHistoryRowInsideTheWindow(t *testing.T, tbl string, atMS int64) {
 	}
 }
 
+// A row of an append-only table is written once and never rewritten, and that
+// holds on the import path too: a peer re-sending an id this file holds cannot
+// change it. An identical body is the replay a mark that did not survive a
+// restore makes, and it is applied as a no-op; a body differing in any column is
+// refused, dropped, and moved past. Both are checked here rather than only in the
+// package that writes, because what a refusal costs the importer -- the mark, and
+// the outbox -- is what this file's answer is judged by.
+func TestImporterRefusesARewrittenHistoryRow(t *testing.T) {
+	t.Parallel()
+	for _, tbl := range historyRows {
+		t.Run(tbl, func(t *testing.T) {
+			t.Parallel()
+			refusesARewrittenHistoryRow(t, tbl)
+		})
+	}
+}
+
+func refusesARewrittenHistoryRow(t *testing.T, tbl string) {
+	t.Helper()
+	peer, path := peerFile(t, "m2")
+	// The row is already here, under m1, exactly as a previous import left it.
+	seed(t, path, insertHistoryRow(tbl, "01A", "m1", insideWindowMS))
+	log := NewMemTransport("m1")
+
+	// The replay: the same body m1 already sent. It is handled, changes
+	// nothing, and records no outbox row of its own.
+	entryFor(t, log, Entry{
+		Origin: "m1", Table: tbl, PK: `["01A"]`, Op: OpUpsert,
+		SchemaVersion: knownVersion(t, peer),
+		Body:          bodyFor(t, historyBody(tbl, "01A", insideWindowMS, "m1")),
+	})
+	got, err := fixedImporter(peer, log.OnLog("m2")).Import()
+	if err != nil {
+		t.Fatalf("import an identical replay: %v", err)
+	}
+	if len(got.Dropped) != 0 {
+		t.Fatalf("import = %+v, want the replay applied rather than refused", got)
+	}
+	if got.Applied != 1 {
+		t.Fatalf("import = %+v, want the replay read and the mark moved", got)
+	}
+	if owner := historyOrigin(t, peer, tbl, "01A"); owner != "m1" {
+		t.Fatalf("the row's origin = %q after a replay, want it unchanged", owner)
+	}
+
+	// The rewrite: the same id, one column different. This is refused, the
+	// batch is dropped, and the mark moves past it in its own transaction.
+	rewritten := historyBody(tbl, "01A", insideWindowMS, "m1")
+	if tbl == "availability_event" {
+		rewritten["note"] = "rewritten by a peer"
+	} else {
+		rewritten["err"] = "rewritten by a peer"
+	}
+	entryFor(t, log, Entry{
+		Origin: "m1", Table: tbl, PK: `["01A"]`, Op: OpUpsert,
+		SchemaVersion: knownVersion(t, peer),
+		Body:          bodyFor(t, rewritten),
+	})
+	got, err = fixedImporter(peer, log.OnLog("m2")).Import()
+	if err != nil {
+		t.Fatalf("import a rewritten history row: %v", err)
+	}
+	if got.Applied != 0 || len(got.Dropped) != 1 || got.Dropped[0].Origin != "m1" {
+		t.Fatalf("import = %+v, want the rewritten row refused and the batch dropped", got)
+	}
+	if note := historyNote(t, peer, tbl, "01A"); note != "" {
+		t.Errorf("%s holds the rewritten %q, want the row unwritten", tbl, note)
+	}
+	if seq, found, err := peer.ImportMark("m1"); err != nil || !found || seq != 2 {
+		t.Fatalf("ImportMark = (%d, %t, %v), want the mark moved past the refused batch", seq, found, err)
+	}
+}
+
+// historyNote is the free-text column of one of the two tables, so a case can
+// assert a refused rewrite left the row's text standing rather than only that a
+// row exists.
+func historyNote(t *testing.T, d *db.DB, tbl, id string) string {
+	t.Helper()
+	raw, err := db.OpenRawReadOnly(d.Path())
+	if err != nil {
+		t.Fatalf("open the file for reading: %v", err)
+	}
+	defer func() { _ = raw.Close() }()
+
+	column := "note"
+	if tbl == "latency_sample" {
+		column = "err"
+	}
+	var note string
+	query := fmt.Sprintf(`SELECT %q FROM %q WHERE id = ?`, column, tbl)
+	if err := raw.QueryRow(query, id).Scan(&note); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ""
+		}
+		t.Fatalf("read %s %s %s: %v", tbl, id, column, err)
+	}
+	return note
+}
+
 // The age prune exports nothing. The tables carry an insert trigger alone, so a
 // delete by age reaches the outbox through nothing: the row leaves this machine's
 // file and no machine is asked to reproduce the removal.

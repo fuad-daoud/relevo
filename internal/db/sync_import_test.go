@@ -1,6 +1,9 @@
 package db
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 // The write half of the exchange seam, pinned on its own rather than only
 // through the synclog tests that call it: these are the statements a remote
@@ -380,4 +383,112 @@ func TestUpsertStatementNeverReplaces(t *testing.T) {
 
 func want2() string {
 	return `INSERT INTO "binding" ("id") VALUES (?) ON CONFLICT("id") DO NOTHING`
+}
+
+// The append-only exception to the upsert, on both tables. An id the file does
+// not hold is inserted; an id it holds with the same body is a replay and
+// changes nothing; an id it holds with one column changed is refused rather
+// than rewritten. The refusal is ErrInvalid, which is what puts the batch on the
+// importer's drop path with the mark moving past it.
+func TestExchangeUpsertNeverRewritesAnAppendOnlyRow(t *testing.T) {
+	for _, tbl := range AppendOnlyTables {
+		t.Run(tbl, func(t *testing.T) {
+			d := openTestDB(t)
+			body := appendOnlyBody(tbl, "01A", "instX")
+
+			if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert(tbl, "instX", body) }); err != nil {
+				t.Fatalf("upsert a new %s row: %v", tbl, err)
+			}
+			if queued := queryStrings(t, d, `SELECT tbl FROM sync_outbox WHERE tbl = ?`, tbl); len(queued) != 1 {
+				t.Fatalf("outbox holds %d entries after the insert, want the one the insert recorded", len(queued))
+			}
+
+			// The same body again is the replay a lost mark makes: handled, and
+			// writing nothing, so it records no second outbox row.
+			replay := appendOnlyBody(tbl, "01A", "instX")
+			if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert(tbl, "instX", replay) }); err != nil {
+				t.Fatalf("upsert an identical %s body: %v", tbl, err)
+			}
+			if queued := queryStrings(t, d, `SELECT tbl FROM sync_outbox WHERE tbl = ?`, tbl); len(queued) != 1 {
+				t.Fatalf("outbox holds %d entries after an identical replay, want still one", len(queued))
+			}
+			if got := value(t, exchangeRow(t, d, tbl, `["01A"]`), appendOnlyNoteColumn(tbl)); got != appendOnlyNote(tbl) {
+				t.Fatalf("the replayed row's note = %v, want the row untouched", got)
+			}
+
+			// One column different is not the same row: it is refused, and the
+			// row keeps what the file already held.
+			changed := appendOnlyBody(tbl, "01A", "instX")
+			changed[appendOnlyNoteColumn(tbl)] = "rewritten"
+			err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert(tbl, "instX", changed) })
+			if !errors.Is(err, ErrInvalid) {
+				t.Fatalf("upsert of a differing %s body = %v, want an ErrInvalid refusal", tbl, err)
+			}
+			if got := value(t, exchangeRow(t, d, tbl, `["01A"]`), appendOnlyNoteColumn(tbl)); got != appendOnlyNote(tbl) {
+				t.Fatalf("the row's note = %v after a refused upsert, want it unwritten", got)
+			}
+			if queued := queryStrings(t, d, `SELECT tbl FROM sync_outbox WHERE tbl = ?`, tbl); len(queued) != 1 {
+				t.Fatalf("outbox holds %d entries after a refused upsert, want still one", len(queued))
+			}
+		})
+	}
+}
+
+// A table that is not append-only is untouched by the rule: the same three
+// bodies update in place exactly as they did before it, because a row that is
+// not immutable is the whole reason the conflict clause updates.
+func TestExchangeUpsertStillUpdatesAMutableRow(t *testing.T) {
+	d := openTestDB(t)
+	first := map[string]any{
+		"id": "b1", "name": "b1", "cwd": "/first", "builder_mode": "local",
+		"created_at": "t", "ingest_source": "manual", "origin": "instX",
+	}
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instX", first) }); err != nil {
+		t.Fatalf("insert the binding: %v", err)
+	}
+	second := map[string]any{
+		"id": "b1", "name": "b1", "cwd": "/second", "builder_mode": "local",
+		"created_at": "t", "ingest_source": "manual", "origin": "instX",
+	}
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instX", second) }); err != nil {
+		t.Fatalf("update the binding: %v", err)
+	}
+	if got := value(t, exchangeRow(t, d, "binding", `["b1"]`), "cwd"); got != "/second" {
+		t.Fatalf("binding cwd = %v, want the update applied", got)
+	}
+}
+
+// appendOnlyBody is one row of one of the two append-only tables as a body
+// carries it: every column, so a replay is compared in full rather than on the
+// key alone.
+func appendOnlyBody(tbl, id, owner string) map[string]any {
+	if tbl == AvailabilityEventTable {
+		return map[string]any{
+			"id": id, "at_ms": int64(1757000000000), "kind": "rate_limited",
+			"provider": "test", "account": "", "token": "", "source": "relevo",
+			"binding": "", "note": appendOnlyNote(tbl), "origin": owner,
+		}
+	}
+	return map[string]any{
+		"id": id, "at_ms": int64(1757000000000), "token": "opencode/test/m",
+		"host": "laptop", "ttft_ms": int64(120), "total_ms": int64(900),
+		"err": appendOnlyNote(tbl), "origin": owner,
+	}
+}
+
+// appendOnlyNoteColumn is the free-text column of one of the two tables, which
+// is the one a rewriting peer would most plausibly change and the one a case
+// changes to prove the row was compared rather than only its key.
+func appendOnlyNoteColumn(tbl string) string {
+	if tbl == AvailabilityEventTable {
+		return "note"
+	}
+	return "err"
+}
+
+func appendOnlyNote(tbl string) string {
+	if tbl == AvailabilityEventTable {
+		return "the original note"
+	}
+	return "the original error"
 }
