@@ -59,10 +59,7 @@ type MigratedHistory struct {
 //
 // The order is rows, then the marker, then the deletes. Rows before the marker
 // means the marker never claims a move that did not happen -- a pass that failed
-// halfway leaves the documents in place and is retried. The window between the
-// row write and the document delete is the one a crash can lose into, and it
-// costs a duplicate window rather than a lost one: the retried pass reads the
-// document again and writes it again.
+// halfway leaves the documents in place and is retried.
 func MigrateHistoryDocuments(local db.KV, shared *db.DB, origin string) (MigratedHistory, error) {
 	if local == nil || shared == nil {
 		return MigratedHistory{}, nil
