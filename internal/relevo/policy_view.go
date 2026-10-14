@@ -503,16 +503,13 @@ func peakText(hist availability.History, provider string, now time.Time, loc *ti
 // the "blocked for" summary under the grid (#302). It returns "" when hist
 // has no events, so a fresh install's `relevo config` prints nothing extra.
 //
-// A provider name here is a column of a history row, and a history row can
-// have arrived from another installation, so it is drawn through the same
-// control-byte rule every other untrusted string on a terminal goes through:
-// a provider carrying an escape would otherwise repaint or split this block,
-// and one carrying a control byte would shift every column after it. Only the
-// drawn label is sanitized -- the names are grouped, sorted and looked up in the
-// history under the ones the history actually holds, because a lookup against a
-// sanitized key would find nothing for a name that carried a control byte and
-// silently print an empty row. The row in the file and the hash the log carries
-// for it are untouched: this changes what the block prints, not what was stored.
+// A provider name here is a column of a history row, and a history row can have
+// arrived from another installation, so the drawn label goes through
+// view.SanitizeText: this is a table of columns, and a control byte in a
+// provider would repaint the terminal and shift every column after it. Only the
+// label is sanitized -- grouping, sorting and the hour lookup still run on the
+// names the history holds, since a lookup against a sanitized key would find
+// nothing and print an empty row. The row stored is untouched.
 func formatHistory(hist availability.History, loc *time.Location) string {
 	if len(hist.Events) == 0 {
 		return ""
@@ -582,8 +579,7 @@ func formatHistory(hist availability.History, loc *time.Location) string {
 		if len(durations) == 1 {
 			count = "1 clear"
 		}
-		blocked.WriteString(fmt.Sprintf("  %-10s %s  median %s  longest %s\n",
-			view.SanitizeText(p), count, blockedText(median), blockedText(longest)))
+		blocked.WriteString(fmt.Sprintf("  %-10s %s  median %s  longest %s\n", view.SanitizeText(p), count, blockedText(median), blockedText(longest)))
 	}
 	if blocked.Len() > 0 {
 		sb.WriteString("blocked for (30d, gates cleared by hand)\n")
@@ -591,20 +587,4 @@ func formatHistory(hist availability.History, loc *time.Location) string {
 	}
 
 	return sb.String()
-}
-
-// blockedText renders a blocked duration compactly, flooring:
-//
-//	d < 1h   -> "<m>m"          45m -> "45m"; 0 -> "0m"
-//	d < 24h  -> "<h>h<mm>m"     5h2m -> "5h02m"
-//	else     -> "<d>d<hh>h"     52h -> "2d04h"; 72h -> "3d00h"
-func blockedText(d time.Duration) string {
-	switch {
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", d/time.Minute)
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh%02dm", d/time.Hour, (d%time.Hour)/time.Minute)
-	default:
-		return fmt.Sprintf("%dd%02dh", d/(24*time.Hour), (d%(24*time.Hour))/time.Hour)
-	}
 }
