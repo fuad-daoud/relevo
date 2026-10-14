@@ -248,6 +248,151 @@ func TestOldHistoryRowImportsWithoutReexport(t *testing.T) {
 	}
 }
 
+// The arrival gate on at_ms. Every refusal here is a batch this machine moves
+// past rather than fails on, and the mark moves with it, so a peer cannot pin
+// rows in this file by naming a time the age prune can never reach. The cases
+// cover both tables because the rule is one rule about a set of tables.
+
+// futureMS is an at_ms beyond now plus the clock-skew allowance, and justPastMS
+// the one millisecond before that bound: the first is refused and the second is
+// inside the allowance, so a case can sit either side of the clock-skew line
+// without doing arithmetic where the line is.
+var (
+	justPastMS   = db.HistoryFutureMS(historyNow) + 1
+	justInsideMS = db.HistoryFutureMS(historyNow)
+	farFutureMS  = db.UnixMS(historyNow.Add(24 * time.Hour))
+)
+
+// atMSNames are the at_ms values a body may name that this machine cannot place
+// as a time: none at all, text, and a real with a fraction in it. Each is a row
+// the age prune's one numeric comparison can never match.
+//
+// A boolean is not among them because the exchange never carries one into an
+// importer: a body naming it is refused whole by the decoder before the arrival
+// gate is asked, which is the same refusal this table asserts and one rule
+// earlier. The type rule itself is pinned where it lives, on db.HistoryAt, in
+// TestHistoryAtReadsOnlyAWholeNumber.
+var atMSNames = map[string]func(map[string]any){
+	"no at_ms column":    func(v map[string]any) { delete(v, "at_ms") },
+	"text at_ms":         func(v map[string]any) { v["at_ms"] = "1757000000123" },
+	"a fractional at_ms": func(v map[string]any) { v["at_ms"] = float64(insideWindowMS) + 0.5 },
+	"a far-future at_ms": func(v map[string]any) { v["at_ms"] = farFutureMS },
+	"one past the skew":  func(v map[string]any) { v["at_ms"] = justPastMS },
+}
+
+func TestImporterRefusesAHistoryRowItCannotAge(t *testing.T) {
+	t.Parallel()
+	for _, tbl := range historyRows {
+		for name, mangle := range atMSNames {
+			t.Run(tbl+"/"+name, func(t *testing.T) {
+				t.Parallel()
+				refusesAnUnageableHistoryRow(t, tbl, mangle)
+			})
+		}
+	}
+}
+
+// refusesAnUnageableHistoryRow is one refusal: the batch is dropped, the mark
+// moves past it, and the row is not in the file -- and a second run over a log
+// that still holds the batch moves nothing, because the mark is already past it.
+func refusesAnUnageableHistoryRow(t *testing.T, tbl string, mangle func(map[string]any)) {
+	t.Helper()
+	peer, _ := peerFile(t, "m2")
+	log := NewMemTransport("m1")
+	values := historyBody(tbl, "pin", insideWindowMS, "m1")
+	mangle(values)
+	entryFor(t, log, Entry{
+		Origin: "m1", Table: tbl, PK: `["pin"]`, Op: OpUpsert,
+		SchemaVersion: knownVersion(t, peer),
+		Body:          bodyFor(t, values),
+	})
+
+	got, err := fixedImporter(peer, log.OnLog("m2")).Import()
+	if err != nil {
+		t.Fatalf("import a history row this machine cannot age: %v", err)
+	}
+	if got.Applied != 0 || len(got.Dropped) != 1 || got.Dropped[0].Origin != "m1" {
+		t.Fatalf("import = %+v, want the row refused and the batch dropped", got)
+	}
+	if held(t, peer, tbl, "pin") {
+		t.Errorf("%s holds the row, want it refused", tbl)
+	}
+	if seq, found, err := peer.ImportMark("m1"); err != nil || !found || seq != 1 {
+		t.Fatalf("ImportMark = (%d, %t, %v), want the mark moved past the refused batch", seq, found, err)
+	}
+	// The mark is what stops the batch being offered again: a refusal that left
+	// the mark where it was would be re-read and re-refused on every run for as
+	// long as the log holds it.
+	again, err := fixedImporter(peer, log.OnLog("m2")).Import()
+	if err != nil {
+		t.Fatalf("import again over the same log: %v", err)
+	}
+	if again.Applied != 0 || len(again.Dropped) != 0 {
+		t.Fatalf("second import = %+v, want the refused batch not offered again", again)
+	}
+	if seq, _, _ := peer.ImportMark("m1"); seq != 1 {
+		t.Fatalf("ImportMark = %d after a second run, want it unmoved", seq)
+	}
+}
+
+// A row whose time is inside the arrival window writes exactly as it did, and so
+// does one whose clock runs a little ahead of this machine's -- the allowance is
+// what keeps a real observation from being thrown away over two disagreeing
+// clocks.
+func TestImporterWritesAHistoryRowInsideTheWindow(t *testing.T) {
+	t.Parallel()
+	for _, tbl := range historyRows {
+		for _, at := range []struct {
+			name string
+			ms   int64
+		}{
+			{"one millisecond inside the window", insideWindowMS},
+			{"one millisecond outside the window", outsideWindowMS},
+			{"at now plus the clock skew", justInsideMS},
+		} {
+			t.Run(tbl+"/"+at.name, func(t *testing.T) {
+				t.Parallel()
+				writesAHistoryRowInsideTheWindow(t, tbl, at.ms)
+			})
+		}
+	}
+}
+
+// writesAHistoryRowInsideTheWindow covers both sides of the two bounds at once:
+// a row inside them is written, and a row outside the window -- but inside the
+// clock skew -- is skipped rather than refused, with the mark moving over it
+// either way.
+func writesAHistoryRowInsideTheWindow(t *testing.T, tbl string, atMS int64) {
+	t.Helper()
+	peer, _ := peerFile(t, "m2")
+	log := NewMemTransport("m1")
+	entryFor(t, log, Entry{
+		Origin: "m1", Table: tbl, PK: `["in"]`, Op: OpUpsert,
+		SchemaVersion: knownVersion(t, peer),
+		Body:          bodyFor(t, historyBody(tbl, "in", atMS, "m1")),
+	})
+
+	got, err := fixedImporter(peer, log.OnLog("m2")).Import()
+	if err != nil {
+		t.Fatalf("import a history row inside the arrival window: %v", err)
+	}
+	if len(got.Dropped) != 0 {
+		t.Fatalf("import = %+v, want a row inside the window never refused", got)
+	}
+	if got.Applied != 1 {
+		t.Fatalf("import = %+v, want the entry read and the mark moved", got)
+	}
+	if atMS >= cutoffMS && !held(t, peer, tbl, "in") {
+		t.Errorf("%s does not hold the row at %d, want it written", tbl, atMS)
+	}
+	if atMS < cutoffMS && held(t, peer, tbl, "in") {
+		t.Errorf("%s holds the row at %d, want it skipped as out of window", tbl, atMS)
+	}
+	if seq, found, err := peer.ImportMark("m1"); err != nil || !found || seq != 1 {
+		t.Fatalf("ImportMark = (%d, %t, %v), want the mark moved over the entry", seq, found, err)
+	}
+}
+
 // The age prune exports nothing. The tables carry an insert trigger alone, so a
 // delete by age reaches the outbox through nothing: the row leaves this machine's
 // file and no machine is asked to reproduce the removal.

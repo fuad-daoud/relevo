@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -29,6 +30,28 @@ import (
 // refuses to propose one -- and this is the only one of the three they all
 // import.
 const HistoryWindow = 30 * 24 * time.Hour
+
+// HistoryClockSkew is how far ahead of this machine's clock an arriving history
+// row's at_ms may sit and still be written. Two machines' clocks are never the
+// same instant, so a peer whose clock runs a little fast stamps rows this
+// machine would otherwise refuse on arrival -- and refusing those would throw
+// away real observations of a fleet's own history over nothing but a clock.
+//
+// It is minutes on purpose. The allowance covers drift between two machines
+// reading the time, not a body naming a time of its own choosing: a row a day
+// or a year ahead is not a clock that disagrees, and a row like that ages out
+// of no window, so writing one would pin a row in every machine's table that no
+// prune can ever reach.
+const HistoryClockSkew = 5 * time.Minute
+
+// HistoryFutureMS is the latest at_ms an arriving history row may carry and
+// still be written: now plus the clock-skew allowance. It is the other side of
+// the arrival window HistoryAt's values are judged against, and it is stated
+// here rather than at the call site so the bound and the window it guards are
+// one number next to each other.
+func HistoryFutureMS(now time.Time) int64 {
+	return UnixMS(now.Add(HistoryClockSkew))
+}
 
 // The names the history tables' rows are keyed and aged by. They are named here
 // so a caller passes a column and not a literal, and so a migration that renamed
@@ -217,9 +240,16 @@ func (t *Tx) pruneHistoryTable(tbl string, cutoffMS int64) (int64, error) {
 }
 
 // HistoryAt reads a history row's at_ms out of the values a body carried, and
-// whether the body named it at all. A body that names no time is not an aged
-// row: the arrival window cannot judge a row whose time it does not have, so the
-// row is judged on the column's own NOT NULL at write time instead.
+// whether the body named a time this package can read.
+//
+// Only a whole number is a time here, and only an int64, an int or an integral
+// float64 is one the exchange can carry. The column is an integer and the age
+// prune compares it as one, so a body naming anything else -- no column at all,
+// text, a boolean, a fraction -- is naming something the file could not have
+// stored in the first place. It is reported as unreadable rather than as a time
+// of zero, because a caller that cannot read the time must not judge the row:
+// it has no age, no window and no clock skew to compare against, and guessing
+// any of them writes a row that no prune can reach.
 func HistoryAt(tbl string, values map[string]any) (int64, bool) {
 	if !AppendOnly(tbl) {
 		return 0, false
@@ -227,13 +257,28 @@ func HistoryAt(tbl string, values map[string]any) (int64, bool) {
 	switch at := values[historyAtColumn].(type) {
 	case int64:
 		return at, true
-	case float64:
-		return int64(at), true
 	case int:
+		return int64(at), true
+	case float64:
+		if !wholeNumber(at) {
+			return 0, false
+		}
 		return int64(at), true
 	default:
 		return 0, false
 	}
+}
+
+// wholeNumber reports whether f is a value the integer column can hold whole: a
+// real with no fraction, and inside the range an int64 covers. The range is the
+// half of the test that matters most -- a real beyond it is not an unusual
+// timestamp, it is a body choosing one, and converting it would wrap it to a
+// time this machine would then treat as long past.
+func wholeNumber(f float64) bool {
+	if math.IsNaN(f) || math.IsInf(f, 0) || f != math.Trunc(f) {
+		return false
+	}
+	return f >= math.MinInt64 && f < math.MaxInt64
 }
 
 // HistoryAtMS is one row's at_ms as the shared walk read it, and whether the row

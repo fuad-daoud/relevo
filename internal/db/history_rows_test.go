@@ -1,6 +1,7 @@
 package db
 
 import (
+	"math"
 	"path/filepath"
 	"testing"
 	"time"
@@ -211,9 +212,12 @@ func TestMigratedHistoryRowIgnoresASecondWrite(t *testing.T) {
 	}
 }
 
-// A body's time is read out of what it carries, and a body that carries none is
-// not judged: the column is NOT NULL at write time, so the window has nothing
-// to compare.
+// A body's time is read out of what it carries. A body that carries none, or
+// carries something the integer column could not have held, is reported as
+// carrying no time at all -- which is what lets the importer refuse it rather
+// than write a row the age prune cannot reach. The column is NOT NULL at write
+// time, so the window has nothing to compare either way; what it has is a row
+// that would never age out.
 func TestHistoryAtReadsOnlyTheTimeColumn(t *testing.T) {
 	t.Parallel()
 	values := map[string]any{"id": "01A", "at_ms": int64(1757000000000)}
@@ -233,5 +237,52 @@ func TestHistoryAtReadsOnlyTheTimeColumn(t *testing.T) {
 	}
 	if _, ok := HistoryAtMS(ExchangeRow{Columns: []ExchangeColumn{{Name: "id", Value: "01A"}}}); ok {
 		t.Fatal("HistoryAtMS of a row with no time column = ok, want it left alone")
+	}
+}
+
+// Only a whole number is a time to HistoryAt, and only one inside the range the
+// column can hold. Everything else is a row the age prune's `at_ms < cutoff`
+// comparison can never match, so reporting it as unreadable is what keeps the
+// importer from writing it.
+func TestHistoryAtReadsOnlyAWholeNumber(t *testing.T) {
+	t.Parallel()
+	for _, bad := range []struct {
+		name string
+		at   any
+	}{
+		{"text", "1757000000000"},
+		{"a boolean", true},
+		{"a fraction", float64(1757000000000.5)},
+		{"NaN", math.NaN()},
+		{"positive infinity", math.Inf(1)},
+		{"beyond int64", math.Exp2(63)},
+		{"below int64", -math.Exp2(63) - 4096},
+	} {
+		if got, ok := HistoryAt(AvailabilityEventTable, map[string]any{"at_ms": bad.at}); ok {
+			t.Errorf("HistoryAt of %s = (%d, true), want it unreadable", bad.name, got)
+		}
+	}
+	// The three whole-number forms are one time.
+	for _, good := range []any{int64(1757000000000), int(1757000000000), float64(1757000000000)} {
+		if got, ok := HistoryAt(LatencySampleTable, map[string]any{"at_ms": good}); !ok || got != 1757000000000 {
+			t.Errorf("HistoryAt of %T = (%d, %t), want the body's time", good, got, ok)
+		}
+	}
+}
+
+// The clock-skew allowance is minutes, not days: it covers two machines'
+// clocks disagreeing and nothing else. A row days ahead of now is not drift,
+// and writing it would pin a row no prune can ever reach.
+func TestHistoryClockSkewIsMinutesNotDays(t *testing.T) {
+	t.Parallel()
+	if HistoryClockSkew >= time.Hour {
+		t.Fatalf("HistoryClockSkew = %s, want minutes: it covers clock drift, not a body choosing a time", HistoryClockSkew)
+	}
+	now := time.Date(2026, time.October, 14, 9, 0, 0, 0, time.UTC)
+	if got, want := HistoryFutureMS(now), UnixMS(now.Add(HistoryClockSkew)); got != want {
+		t.Fatalf("HistoryFutureMS = %d, want now plus %s = %d", got, HistoryClockSkew, want)
+	}
+	if got := HistoryFutureMS(now); got <= UnixMS(now) {
+		t.Fatalf("HistoryFutureMS = %d, want it ahead of now so a peer a little fast is not refused", got)
 	}
 }
