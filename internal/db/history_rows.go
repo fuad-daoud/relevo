@@ -15,6 +15,12 @@ import (
 // row does; the age delete has no trigger, so it lands in nothing, which is what
 // keeps a row every machine prunes on its own clock from being carried around as
 // a delete every other machine would then have to reproduce.
+//
+// The one thing plain INSERT does not do is tolerate a second write of an id
+// already present, and exactly one caller needs that: the one-time migration,
+// which derives its ids from the documents it reads so a retry writes the rows
+// it already wrote. It gets its own entry points and the same statements with
+// OR IGNORE, rather than the live writers being relaxed for it.
 
 // HistoryWindow is how long a row of the availability or latency history is
 // kept. It lives here rather than in the package that renders the window because
@@ -80,14 +86,53 @@ type LatencySample struct {
 	Err     string
 }
 
+// historyConflict is the clause that decides what a second write of an id
+// already in the table does.
+//
+// historyStrict is the live contract: a row here is written once and never
+// rewritten, so a second write of the same id is the caller's own bug and is
+// reported as one rather than swallowed. historyMigrated is the one-time
+// migration's: it writes the rows it derives from the retired documents, and a
+// pass that crashed between its row writes and its marker is retried, so the
+// retry has to find the rows already there rather than fail on them.
+//
+// The value is concatenated into the statement, so it is a constant of this file
+// and never a caller's argument -- a caller-chosen one would carry whatever the
+// caller chose into the query.
+type historyConflict string
+
+const (
+	historyStrict   historyConflict = "INSERT"
+	historyMigrated historyConflict = "INSERT OR IGNORE"
+)
+
 // InsertAvailabilityEvent writes one availability observation as its own row,
-// stamped under origin. The outbox trigger on the table records it.
+// stamped under origin. The outbox trigger on the table records it. A second
+// write of the same id is refused.
 func (d *DB) InsertAvailabilityEvent(origin string, e AvailabilityEvent) error {
 	return d.Tx(func(tx *Tx) error { return tx.insertAvailabilityEvent(origin, e) })
 }
 
 func (t *Tx) insertAvailabilityEvent(origin string, e AvailabilityEvent) error {
-	const query = `INSERT OR IGNORE INTO availability_event
+	return t.insertAvailabilityEventConflict(origin, e, historyStrict)
+}
+
+// InsertMigratedAvailabilityEvent writes one availability observation as its own
+// row and tolerates the row already being there.
+//
+// This is the migration's path and not the live writers': a retried pass offers
+// the ids the crashed pass already wrote, and OR IGNORE is what turns that
+// collision into "leave the row alone" instead of a failed retry. An ignored
+// duplicate inserts no row, so the outbox trigger beside the table does not fire
+// for it and the retry records nothing a peer would then apply twice.
+func (d *DB) InsertMigratedAvailabilityEvent(origin string, e AvailabilityEvent) error {
+	return d.Tx(func(tx *Tx) error {
+		return tx.insertAvailabilityEventConflict(origin, e, historyMigrated)
+	})
+}
+
+func (t *Tx) insertAvailabilityEventConflict(origin string, e AvailabilityEvent, on historyConflict) error {
+	query := string(on) + ` INTO availability_event
 		(id, at_ms, kind, provider, account, token, source, binding, note, since_ms, origin)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	if _, err := t.exec(query, e.ID, e.AtMS, e.Kind, e.Provider, e.Account, e.Token,
@@ -98,13 +143,27 @@ func (t *Tx) insertAvailabilityEvent(origin string, e AvailabilityEvent) error {
 }
 
 // InsertLatencySample writes one probe result as its own row, stamped under
-// origin. The outbox trigger on the table records it.
+// origin. The outbox trigger on the table records it. A second write of the same
+// id is refused.
 func (d *DB) InsertLatencySample(origin string, s LatencySample) error {
 	return d.Tx(func(tx *Tx) error { return tx.insertLatencySample(origin, s) })
 }
 
 func (t *Tx) insertLatencySample(origin string, s LatencySample) error {
-	const query = `INSERT OR IGNORE INTO latency_sample
+	return t.insertLatencySampleConflict(origin, s, historyStrict)
+}
+
+// InsertMigratedLatencySample writes one probe result as its own row and
+// tolerates the row already being there, under the same rule
+// InsertMigratedAvailabilityEvent writes an event twice.
+func (d *DB) InsertMigratedLatencySample(origin string, s LatencySample) error {
+	return d.Tx(func(tx *Tx) error {
+		return tx.insertLatencySampleConflict(origin, s, historyMigrated)
+	})
+}
+
+func (t *Tx) insertLatencySampleConflict(origin string, s LatencySample, on historyConflict) error {
+	query := string(on) + ` INTO latency_sample
 		(id, at_ms, token, host, ttft_ms, total_ms, err, origin)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 	if _, err := t.exec(query, s.ID, s.AtMS, s.Token, s.Host, s.TTFTMS, s.TotalMS, s.Err, origin); err != nil {

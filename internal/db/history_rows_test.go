@@ -163,6 +163,54 @@ func TestInsertHistoryRowRefusesASecondWrite(t *testing.T) {
 	}
 }
 
+// The migration's insert path is the one caller that needs a second write of the
+// same id tolerated: a pass that crashed between its row writes and its marker is
+// retried and offers the ids the crashed pass already wrote. The live path
+// refuses that write -- see TestInsertHistoryRowRefusesASecondWrite, which stands
+// unchanged -- so the tolerance lives on the migration's own path.
+//
+// An ignored duplicate inserts no row, so the outbox trigger beside the table
+// does not fire for it. That is asserted rather than assumed: it is the property
+// that makes OR IGNORE safe here rather than merely convenient, because a
+// duplicate outbox entry is a row a peer would apply twice.
+func TestMigratedHistoryRowIgnoresASecondWrite(t *testing.T) {
+	t.Parallel()
+	d := openHistoryDB(t)
+	at := UnixMS(time.Now())
+	event := AvailabilityEvent{
+		ID: NewID(), AtMS: at, Kind: "rate_limited", Provider: "test", Source: "relevo",
+	}
+	if err := d.InsertMigratedAvailabilityEvent("m1", event); err != nil {
+		t.Fatalf("first InsertMigratedAvailabilityEvent: %v", err)
+	}
+	if err := d.InsertMigratedAvailabilityEvent("m1", event); err != nil {
+		t.Fatalf("the retry of InsertMigratedAvailabilityEvent failed on a row already there: %v", err)
+	}
+	sample := LatencySample{ID: event.ID, AtMS: at, Token: "claude/test/m", TTFTMS: 1, TotalMS: 2}
+	if err := d.InsertMigratedLatencySample("m1", sample); err != nil {
+		t.Fatalf("first InsertMigratedLatencySample: %v", err)
+	}
+	if err := d.InsertMigratedLatencySample("m1", sample); err != nil {
+		t.Fatalf("the retry of InsertMigratedLatencySample failed on a row already there: %v", err)
+	}
+
+	// One row each, not two: the retry changed nothing.
+	if got := queryStrings(t, d, `SELECT id FROM `+AvailabilityEventTable); len(got) != 1 {
+		t.Errorf("availability_event holds %v, want the single row the first write left", got)
+	}
+	if got := queryStrings(t, d, `SELECT id FROM `+LatencySampleTable); len(got) != 1 {
+		t.Errorf("latency_sample holds %v, want the single row the first write left", got)
+	}
+
+	// And one outbox entry each: the trigger fires on a row actually inserted,
+	// so the ignored duplicate records nothing a peer would apply a second time.
+	for _, tbl := range []string{AvailabilityEventTable, LatencySampleTable} {
+		if got := queryStrings(t, d, `SELECT tbl FROM sync_outbox WHERE tbl = ?`, tbl); len(got) != 1 {
+			t.Errorf("sync_outbox holds %d entries for %s, want the one the real write recorded", len(got), tbl)
+		}
+	}
+}
+
 // A body's time is read out of what it carries, and a body that carries none is
 // not judged: the column is NOT NULL at write time, so the window has nothing
 // to compare.

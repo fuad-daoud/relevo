@@ -159,7 +159,7 @@ func insertEventRows(shared *db.DB, origin string, h History) (int, error) {
 			since := db.UnixMS(ev.Since)
 			row.SinceMS = &since
 		}
-		if err := shared.InsertAvailabilityEvent(origin, row); err != nil {
+		if err := shared.InsertMigratedAvailabilityEvent(origin, row); err != nil {
 			return 0, err
 		}
 	}
@@ -176,7 +176,7 @@ func insertSampleRows(shared *db.DB, origin string, h LatencyHistory) (int, erro
 		if err != nil {
 			return 0, err
 		}
-		if err := shared.InsertLatencySample(origin, db.LatencySample{
+		if err := shared.InsertMigratedLatencySample(origin, db.LatencySample{
 			ID:      id,
 			AtMS:    db.UnixMS(s.At),
 			Token:   s.Token,
