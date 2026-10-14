@@ -87,7 +87,7 @@ func (d *DB) InsertAvailabilityEvent(origin string, e AvailabilityEvent) error {
 }
 
 func (t *Tx) insertAvailabilityEvent(origin string, e AvailabilityEvent) error {
-	const query = `INSERT INTO availability_event
+	const query = `INSERT OR IGNORE INTO availability_event
 		(id, at_ms, kind, provider, account, token, source, binding, note, since_ms, origin)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	if _, err := t.exec(query, e.ID, e.AtMS, e.Kind, e.Provider, e.Account, e.Token,
@@ -104,7 +104,7 @@ func (d *DB) InsertLatencySample(origin string, s LatencySample) error {
 }
 
 func (t *Tx) insertLatencySample(origin string, s LatencySample) error {
-	const query = `INSERT INTO latency_sample
+	const query = `INSERT OR IGNORE INTO latency_sample
 		(id, at_ms, token, host, ttft_ms, total_ms, err, origin)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 	if _, err := t.exec(query, s.ID, s.AtMS, s.Token, s.Host, s.TTFTMS, s.TotalMS, s.Err, origin); err != nil {

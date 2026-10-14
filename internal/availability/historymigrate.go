@@ -1,6 +1,7 @@
 package availability
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -135,14 +136,19 @@ func readLatencyDoc(local db.KV) (LatencyHistory, bool, error) {
 }
 
 // insertEventRows writes every event of one document as its own row, oldest
-// first. The order is the document's own and the ids are fresh, so the rows read
-// back exactly as they read before: same values, same sequence, new identities.
+// first. The order is the document's own and the ids are derived, so the rows
+// read back exactly as they read before: same values, same sequence, same
+// identities on every pass.
 func insertEventRows(shared *db.DB, origin string, h History) (int, error) {
 	events := append([]Event(nil), h.Events...)
 	sort.SliceStable(events, func(i, j int) bool { return events[i].At.Before(events[j].At) })
 	for _, ev := range events {
+		id, err := migratedRowID(origin, db.AvailabilityEventTable, db.UnixMS(ev.At), ev)
+		if err != nil {
+			return 0, err
+		}
 		row := db.AvailabilityEvent{
-			ID:       db.NewID(),
+			ID:       id,
 			AtMS:     db.UnixMS(ev.At),
 			Kind:     string(ev.Kind),
 			Provider: ev.Provider,
@@ -169,8 +175,12 @@ func insertSampleRows(shared *db.DB, origin string, h LatencyHistory) (int, erro
 	samples := append([]Sample(nil), h.Samples...)
 	sort.SliceStable(samples, func(i, j int) bool { return samples[i].At.Before(samples[j].At) })
 	for _, s := range samples {
+		id, err := migratedRowID(origin, db.LatencySampleTable, db.UnixMS(s.At), s)
+		if err != nil {
+			return 0, err
+		}
 		if err := shared.InsertLatencySample(origin, db.LatencySample{
-			ID:      db.NewID(),
+			ID:      id,
 			AtMS:    db.UnixMS(s.At),
 			Token:   s.Token,
 			Host:    s.Host,
@@ -182,4 +192,80 @@ func insertSampleRows(shared *db.DB, origin string, h LatencyHistory) (int, erro
 		}
 	}
 	return len(samples), nil
+}
+
+// crockford is the Crockford base32 alphabet ULIDs are written in: no I, L, O
+// or U. db holds the same alphabet for NewID; it is spelled out again here
+// because encodeULID is not exported and this package must not reach into db
+// for one identifier.
+const crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+// migratedRowID is the identity one migrated row is written under: a ULID whose
+// 48-bit time part is the row's own at_ms, and whose remaining 80 bits are the
+// head of the sha256 over the origin, the table name, and the entry's canonical
+// json -- the entry re-encoded from the struct the document decoded into, not
+// the bytes the document happened to be written in.
+//
+// Deriving it rather than minting it is what makes the move repeatable. A pass
+// that crashes between the row writes and the marker is retried, and the retry
+// has to write the rows that are already there rather than a second copy of the
+// window under new identities; with the insert an INSERT OR IGNORE, the retry
+// leaves the tables exactly as the crashed pass left them. The same document
+// migrated twice yields the same ids.
+//
+// The byte layout is db.NewID's -- six bytes of big-endian milliseconds, then
+// the ten bytes the hash supplies in place of the random ones.
+func migratedRowID(origin, table string, atMS int64, entry any) (string, error) {
+	canonical, err := json.Marshal(entry)
+	if err != nil {
+		return "", fmt.Errorf("canonical json for the %s row at %d: %w", table, atMS, err)
+	}
+	sum := sha256.Sum256([]byte(origin + table + string(canonical)))
+
+	var id [16]byte
+	ms := uint64(atMS)
+	id[0] = byte(ms >> 40)
+	id[1] = byte(ms >> 32)
+	id[2] = byte(ms >> 24)
+	id[3] = byte(ms >> 16)
+	id[4] = byte(ms >> 8)
+	id[5] = byte(ms)
+	copy(id[6:], sum[:10])
+
+	return encodeMigratedULID(id), nil
+}
+
+// encodeMigratedULID writes the 16 bytes as the 26 characters a ULID is, the
+// same layout db.NewID's encoder uses.
+func encodeMigratedULID(id [16]byte) string {
+	var out [26]byte
+
+	out[0] = crockford[(id[0]&224)>>5]
+	out[1] = crockford[id[0]&31]
+	out[2] = crockford[(id[1]&248)>>3]
+	out[3] = crockford[((id[1]&7)<<2)|((id[2]&192)>>6)]
+	out[4] = crockford[(id[2]&62)>>1]
+	out[5] = crockford[((id[2]&1)<<4)|((id[3]&240)>>4)]
+	out[6] = crockford[((id[3]&15)<<1)|((id[4]&128)>>7)]
+	out[7] = crockford[(id[4]&124)>>2]
+	out[8] = crockford[((id[4]&3)<<3)|((id[5]&224)>>5)]
+	out[9] = crockford[id[5]&31]
+	out[10] = crockford[(id[6]&248)>>3]
+	out[11] = crockford[((id[6]&7)<<2)|((id[7]&192)>>6)]
+	out[12] = crockford[(id[7]&62)>>1]
+	out[13] = crockford[((id[7]&1)<<4)|((id[8]&240)>>4)]
+	out[14] = crockford[((id[8]&15)<<1)|((id[9]&128)>>7)]
+	out[15] = crockford[(id[9]&124)>>2]
+	out[16] = crockford[((id[9]&3)<<3)|((id[10]&224)>>5)]
+	out[17] = crockford[id[10]&31]
+	out[18] = crockford[(id[11]&248)>>3]
+	out[19] = crockford[((id[11]&7)<<2)|((id[12]&192)>>6)]
+	out[20] = crockford[(id[12]&62)>>1]
+	out[21] = crockford[((id[12]&1)<<4)|((id[13]&240)>>4)]
+	out[22] = crockford[((id[13]&15)<<1)|((id[14]&128)>>7)]
+	out[23] = crockford[(id[14]&124)>>2]
+	out[24] = crockford[((id[14]&3)<<3)|((id[15]&224)>>5)]
+	out[25] = crockford[id[15]&31]
+
+	return string(out[:])
 }

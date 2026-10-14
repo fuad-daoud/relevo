@@ -143,6 +143,106 @@ func TestHistoryMigrationDoesNotRereadAfterTheMarker(t *testing.T) {
 	}
 }
 
+// The crash the marker cannot cover is a pass that wrote its rows and then died
+// before it wrote the marker: the next start retries the move, and it must write
+// the rows that are already there rather than a second copy of the window under
+// new identities. Two things make that true and only those two -- the rows are
+// written under ids derived from their own contents, so the retry's ids collide
+// with the first pass's, and the insert is an INSERT OR IGNORE, so the collision
+// is swallowed instead of failing the retry.
+func TestHistoryMigrationAfterACrashBeforeTheMarker(t *testing.T) {
+	t.Parallel()
+
+	local, shared := migratedMachine(t, "m1")
+	events := []Event{
+		{At: baseTime.Add(-2 * time.Hour), Kind: SpawnFailed, Provider: "test", Source: "relevo", Binding: "b"},
+		{At: baseTime, Kind: Cleared, Provider: "test", Source: "planner", Since: baseTime.Add(-3 * time.Hour)},
+	}
+	samples := []Sample{
+		{At: baseTime.Add(-time.Hour), Token: testClaudeRef, Host: "laptop", TTFTMS: 640, TotalMS: 900},
+	}
+	seedDocuments(t, local, events, samples)
+
+	first, err := MigrateHistoryDocuments(local, shared, shared.Origin())
+	if err != nil {
+		t.Fatalf("first MigrateHistoryDocuments: %v", err)
+	}
+	if first.Events != 2 || first.Samples != 1 {
+		t.Fatalf("moved = %+v, want 2 events and 1 sample", first)
+	}
+	beforeEvents := rowIDs(t, shared, db.AvailabilityEventTable)
+	beforeSamples := rowIDs(t, shared, db.LatencySampleTable)
+	if len(beforeEvents) != 2 || len(beforeSamples) != 1 {
+		t.Fatalf("the first pass wrote %d event ids and %d sample ids, want two and one",
+			len(beforeEvents), len(beforeSamples))
+	}
+
+	// The crash this stands in for: the rows are on disk and the marker is not,
+	// so the documents are put back where they were and the pass runs again.
+	if err := local.KVDelete(historyRowsMarker); err != nil {
+		t.Fatalf("delete the marker: %v", err)
+	}
+	seedDocuments(t, local, events, samples)
+
+	if _, err := MigrateHistoryDocuments(local, shared, shared.Origin()); err != nil {
+		t.Fatalf("the retried MigrateHistoryDocuments: %v", err)
+	}
+
+	// The retry adds nothing: the same counts, and the same ids underneath them,
+	// because the rows it offered are the rows already there.
+	if got := rowIDs(t, shared, db.AvailabilityEventTable); !sameIDs(got, beforeEvents) {
+		t.Errorf("availability_event ids after the retry = %v, want the first pass's %v", got, beforeEvents)
+	}
+	if got := rowIDs(t, shared, db.LatencySampleTable); !sameIDs(got, beforeSamples) {
+		t.Errorf("latency_sample ids after the retry = %v, want the first pass's %v", got, beforeSamples)
+	}
+
+	// And the values the first pass wrote are still the ones there.
+	assertMigratedRows(t, shared, events, samples)
+}
+
+// rowIDs reads one history table's ids in order, which is what a retry either
+// repeats or fails to repeat.
+func rowIDs(t *testing.T, d *db.DB, table string) []string {
+	t.Helper()
+	raw, err := db.OpenRawReadOnly(d.Path())
+	if err != nil {
+		t.Fatalf("open the shared file for reading: %v", err)
+	}
+	defer func() { _ = raw.Close() }()
+
+	rows, err := raw.Query("SELECT id FROM " + table + " ORDER BY at_ms, id")
+	if err != nil {
+		t.Fatalf("read %s ids: %v", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("read %s ids: %v", table, err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read %s ids: %v", table, err)
+	}
+	return out
+}
+
+func sameIDs(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // assertMigratedRows checks that the rows carry the documents' own values under
 // this machine's origin, and that the Cleared event's Since survived: it is what
 // BlockedDurations computes a block's length from, so a migration that dropped it
