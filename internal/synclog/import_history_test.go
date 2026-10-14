@@ -492,6 +492,76 @@ func historyNote(t *testing.T, d *db.DB, tbl, id string) string {
 	return note
 }
 
+// Sanitizing a render must not touch what was stored. A peer-origin row whose
+// provider carries a terminal escape is written byte for byte as it arrived --
+// the file holds what the log says it holds, and the body hash the log carries
+// for it is that row -- and it is the renderer downstream that drops the control
+// byte. This is the half of the render rule the synclog side can see.
+func TestImporterStoresAHistoryRowVerbatim(t *testing.T) {
+	t.Parallel()
+	for _, tbl := range historyRows {
+		t.Run(tbl, func(t *testing.T) {
+			t.Parallel()
+			storesAHistoryRowVerbatim(t, tbl)
+		})
+	}
+}
+
+func storesAHistoryRowVerbatim(t *testing.T, tbl string) {
+	t.Helper()
+	const hostile = "tes\u001b[2Jt/тест"
+	peer, _ := peerFile(t, "m2")
+	log := NewMemTransport("m1")
+	body := historyBody(tbl, "raw", insideWindowMS, "m1")
+	if tbl == "availability_event" {
+		body["provider"] = hostile
+	} else {
+		body["token"], body["host"] = hostile, hostile
+	}
+	entryFor(t, log, Entry{
+		Origin: "m1", Table: tbl, PK: `["raw"]`, Op: OpUpsert,
+		SchemaVersion: knownVersion(t, peer),
+		Body:          bodyFor(t, body),
+	})
+
+	got, err := fixedImporter(peer, log.OnLog("m2")).Import()
+	if err != nil {
+		t.Fatalf("import a peer row carrying a control byte: %v", err)
+	}
+	if got.Applied != 1 || len(got.Dropped) != 0 {
+		t.Fatalf("import = %+v, want the row applied as it arrived", got)
+	}
+	if !held(t, peer, tbl, "raw") {
+		t.Fatalf("%s does not hold the imported row", tbl)
+	}
+	if got := historyProvider(t, peer, tbl, "raw"); got != hostile {
+		t.Fatalf("%s stored %q, want the row byte-identical to what arrived", tbl, got)
+	}
+}
+
+// historyProvider is the provider column of an availability_event and the token
+// column of a latency_sample: the free-text field a renderer draws, read back out
+// of the file to prove the render rule did not rewrite it.
+func historyProvider(t *testing.T, d *db.DB, tbl, id string) string {
+	t.Helper()
+	raw, err := db.OpenRawReadOnly(d.Path())
+	if err != nil {
+		t.Fatalf("open the file for reading: %v", err)
+	}
+	defer func() { _ = raw.Close() }()
+
+	column := "provider"
+	if tbl == "latency_sample" {
+		column = "token"
+	}
+	var value string
+	query := fmt.Sprintf(`SELECT %q FROM %q WHERE id = ?`, column, tbl)
+	if err := raw.QueryRow(query, id).Scan(&value); err != nil {
+		t.Fatalf("read %s %s %s: %v", tbl, id, column, err)
+	}
+	return value
+}
+
 // The age prune exports nothing. The tables carry an insert trigger alone, so a
 // delete by age reaches the outbox through nothing: the row leaves this machine's
 // file and no machine is asked to reproduce the removal.

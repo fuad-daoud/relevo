@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // PolicyWarning is one inconsistency between order[role] and the configured
@@ -501,6 +502,17 @@ func peakText(hist availability.History, provider string, now time.Time, loc *ti
 // §4.2). A provider whose Cleared events carry a Since also gets a row in
 // the "blocked for" summary under the grid (#302). It returns "" when hist
 // has no events, so a fresh install's `relevo config` prints nothing extra.
+//
+// A provider name here is a column of a history row, and a history row can
+// have arrived from another installation, so it is drawn through the same
+// control-byte rule every other untrusted string on a terminal goes through:
+// a provider carrying an escape would otherwise repaint or split this block,
+// and one carrying a control byte would shift every column after it. Only the
+// drawn label is sanitized -- the names are grouped, sorted and looked up in the
+// history under the ones the history actually holds, because a lookup against a
+// sanitized key would find nothing for a name that carried a control byte and
+// silently print an empty row. The row in the file and the hash the log carries
+// for it are untouched: this changes what the block prints, not what was stored.
 func formatHistory(hist availability.History, loc *time.Location) string {
 	if len(hist.Events) == 0 {
 		return ""
@@ -538,7 +550,7 @@ func formatHistory(hist availability.History, loc *time.Location) string {
 				continue
 			}
 			counts := availability.HourCounts(hist, p, k, loc)
-			row := fmt.Sprintf("  %-10s %-13s", p, availability.GateKindText(k))
+			row := fmt.Sprintf("  %-10s %-13s", view.SanitizeText(p), availability.GateKindText(k))
 			for _, n := range counts {
 				cell := "."
 				if n != 0 {
@@ -570,7 +582,8 @@ func formatHistory(hist availability.History, loc *time.Location) string {
 		if len(durations) == 1 {
 			count = "1 clear"
 		}
-		blocked.WriteString(fmt.Sprintf("  %-10s %s  median %s  longest %s\n", p, count, blockedText(median), blockedText(longest)))
+		blocked.WriteString(fmt.Sprintf("  %-10s %s  median %s  longest %s\n",
+			view.SanitizeText(p), count, blockedText(median), blockedText(longest)))
 	}
 	if blocked.Len() > 0 {
 		sb.WriteString("blocked for (30d, gates cleared by hand)\n")
