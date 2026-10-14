@@ -47,12 +47,46 @@ func (d *SharedDoc) Items() (map[string]json.RawMessage, error) {
 	if err := d.store.localLayerReady(); err != nil {
 		return nil, err
 	}
+	if err := d.store.hooksLocalReady(); err != nil {
+		return nil, err
+	}
 	shared, err := d.store.Current()
 	if err != nil {
 		return nil, err
 	}
 
-	return itemsOf(shared, false)
+	items, err := itemsOf(shared, false)
+	if err != nil {
+		return nil, err
+	}
+	// The hooks item carries the scripts themselves, read off this machine's
+	// disk, so a peer receives the hooks rather than only the names of them.
+	// The capture stamps the item and signals the document, so the stamp this
+	// exporter reads is the one the write recorded.
+	hooks, err := d.store.captureHooks()
+	if err != nil {
+		return nil, err
+	}
+	if hooks != nil {
+		items[string(Hooks)], err = EncodeHookDoc(hooks.doc)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// An agents item carries the harness files of its native kinds, read off
+	// this machine's homes, so a peer receives the agent and not only the name
+	// of one. The capture stamps the items it changed and signals the
+	// document, so the stamp this exporter reads is the one the write recorded.
+	captured, err := d.store.captureAgents()
+	if err != nil {
+		return nil, err
+	}
+	if captured != nil {
+		for name, item := range captured.items {
+			items[itemKey(Agents, name)] = item
+		}
+	}
+	return items, nil
 }
 
 // itemsOf is one value per syncable key of a shared document. A section that
@@ -177,6 +211,9 @@ func (s *Store) applyKeyIn(t *db.Tx, sec Section, name string, value json.RawMes
 	unstamped := *s
 	unstamped.unstamped = true
 	s = &unstamped
+	if err := validateArrivingItem(sec, name, value); err != nil {
+		return err, nil
+	}
 	before, err := readSnapshot(t)
 	if err != nil {
 		return nil, err
@@ -184,6 +221,14 @@ func (s *Store) applyKeyIn(t *db.Tx, sec Section, name string, value json.RawMes
 	body, err := setDocKey(before.doc, sec, name, dropMachineFields(sec, value))
 	if err != nil {
 		return invalidValueOf(err), nil
+	}
+	if sec == Hooks && name == "" {
+		// An arriving hooks item is already root-relative, so nothing is
+		// divided out of it; the shared member is checked against this
+		// machine's own rules rather than taken on trust.
+		if err := s.validateHooksBody(body); err != nil {
+			return err, nil
+		}
 	}
 
 	prospective := copyDoc(before.doc)
@@ -199,10 +244,78 @@ func (s *Store) applyKeyIn(t *db.Tx, sec Section, name string, value json.RawMes
 	if err := validateProspective(merged); err != nil {
 		return err, nil
 	}
+	if sec == Hooks && body != nil {
+		if err := s.validateHooksBody(body); err != nil {
+			return err, nil
+		}
+	}
 	if body == nil {
 		return nil, s.deleteRecord(t, before, sec)
 	}
-	return nil, s.writeRecord(t, before, sec, body)
+	if err := s.writeRecord(t, before, sec, body); err != nil {
+		return err, nil
+	}
+	if sec == Hooks {
+		// The scripts land with the argv rows that name them, inside the
+		// caller's transaction, so a document and the files it carries are one
+		// decision. A file this machine has edited is kept either way.
+		hooks, err := ParseHookDoc(body)
+		if err != nil {
+			return invalidValueOf(err), nil
+		}
+		hooks.Root = s.root
+		if err := s.applyHookFiles(t, hooks); err != nil {
+			return invalidValueOf(err), nil
+		}
+	}
+	if sec == Agents && body != nil {
+		// A native agent's harness files land with the entry that names them,
+		// in the caller's transaction, and the agent is queued for a re-render
+		// once that transaction has committed: the render reads the config the
+		// apply wrote, so running it inside would render the agent as it used
+		// to be. A source agent carries no file and is re-rendered from its own
+		// text, which is what re-renders without touching native files means.
+		//
+		// The agents section is a per-item one, so the item is read back out of
+		// the body the write stored rather than taken as the body: the entry is
+		// what carries the files, and it is one agent's.
+		items, err := splits(Agents, body)
+		if err != nil {
+			return invalidValueOf(err), nil
+		}
+		if err := s.applyAgentFiles(t, name, items[name]); err != nil {
+			return invalidValueOf(err), nil
+		}
+		s.queueAgentRender(name)
+	}
+	return nil, nil
+}
+
+// queueAgentRender asks for the re-render an arriving agents item needs. A
+// store with no renderer bound still lands the item and its files; only the
+// render is skipped.
+func (s *Store) queueAgentRender(agent string) {
+	if s.rerender != nil {
+		s.rerender(agent)
+	}
+}
+
+// validateArrivingItem refuses an arriving agents item before anything is
+// stored, because a stored item that capture then rejects would halt every
+// later export. A delete, and every other section, passes.
+func validateArrivingItem(sec Section, name string, value json.RawMessage) error {
+	if sec != Agents || len(value) == 0 {
+		return nil
+	}
+	body := dropMachineFields(sec, value)
+	doc, err := ParseAgentEntryDoc(name, body)
+	if err != nil {
+		return invalidValueOf(err)
+	}
+	if err := ValidateAgentEntryDoc(doc); err != nil {
+		return invalidValueOf(err)
+	}
+	return nil
 }
 
 // docKeyOf is the doc key of one item, or of a whole section.

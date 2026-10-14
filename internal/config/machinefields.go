@@ -14,9 +14,14 @@ import (
 // machineFields lists, per section, the fields routed to the local layer. A
 // whole-section field is taken off the section object; on a per-item section
 // the same fields are taken off every item, under that item's name.
+// Hooks is the path-aware case: `local` is the member the outside-root argv
+// split puts a row into. The split is decided by path -- a row naming a file
+// under the config root travels, anything else is this machine's -- and the
+// rule below only has to say which member of the value those rows travel in.
 var machineFields = map[Section][]string{
 	Accounts: {"config_dir", "home"},
 	Policy:   {"serve"},
+	Hooks:    {hooksLocalMember},
 }
 
 // stripsMachineFields reports whether sec carries any field routed local.

@@ -109,6 +109,19 @@ func (d *Daemon) SetSyncVerbs(v *VerbRunner) {
 	d.syncVerbs = v
 }
 
+// BindSyncNow installs this daemon's own trigger into its runtime, so a gate
+// the daemon records through that runtime reaches the other machines at once
+// rather than at the end of the export debounce. It needs no separate refresh
+// hook: a refresh is applied to this runtime, so whatever it derives carries
+// the trigger with it.
+//
+// The trigger is nil-safe from the gate write's side, so a caller that never
+// bound it -- a serve host's own daemon, a test -- writes the gate and leaves
+// the export to the ordinary triggers.
+func (d *Daemon) BindSyncNow(ctx context.Context) {
+	d.rt.SyncNow = func() { d.SyncNow(ctx) }
+}
+
 // NewDaemon returns a Daemon ticking at interval, floored at minInterval.
 func NewDaemon(rt Runtime, interval time.Duration) *Daemon {
 	if interval < minInterval {

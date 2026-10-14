@@ -158,6 +158,21 @@ type Runtime struct {
 	// with an error.
 	Gates db.KV
 
+	// GatesDB is the machine-local file Gates is bound to, as a handle that can
+	// open a transaction. It is what the gates document records its write
+	// stamps and its export signal in, so both belong to the same transaction
+	// as the ledger write that caused them. Nil whenever Gates is not that
+	// file -- the serve-wide ledger under its own prefix, a test double -- and
+	// then a gate write is stamped nowhere and signals nothing.
+	GatesDB *db.DB
+
+	// SyncNow asks for a sync attempt now rather than at the end of the export
+	// debounce, which is what a gate a person just recorded is worth. The daemon
+	// installs its own; nil on a CLI one-shot with no daemon to ask, on a
+	// runtime built before the daemon existed, and in every test, and then the
+	// next ordinary trigger exports the gate.
+	SyncNow func()
+
 	// Latency is where the per-candidate latency history lives (#324 part 1;
 	// P3b plan §4.5): time to first output per candidate, recorded by `relevo
 	// config --probe` and read back for the p50 on a plain listing. Nil means
@@ -365,6 +380,8 @@ func AvailabilityDeps(rt Runtime) availability.Deps {
 		Now:          now,
 		Roles:        rt.Roles,
 		RoleRegistry: rt.RoleRegistry,
+		Local:        rt.GatesDB,
+		SyncNow:      rt.SyncNow,
 	}
 }
 

@@ -12,7 +12,12 @@ adds only columns or indexes adds no table, so every table in the series is
 listed below. Migration 022 is the first outside it: it adds `sync_outbox` and
 the triggers, which are machine-local like the sections below, and it changes
 no table's scope. Migration 023 adds `sync_import_mark`, machine-local like the
-outbox, and changes no table's scope either. The rules a migration must follow are in
+outbox, and changes no table's scope either. Migrations 025 onward add the
+documents' own bookkeeping, machine-local like the outbox for the same reason: a
+row there is about what this machine has sent, seen or parked, and two machines
+sharing one would each believe the other had done it. The documents themselves
+are not tables and are listed under their own heading below. The rules a
+migration must follow are in
 [`README.md`](README.md); the file that created a table is its history.
 
 ## Shared history
@@ -60,8 +65,15 @@ These are the destination for the second, local-only database file.
   - `mastermind/*`: the same registry rows under their current prefix.
   - `claim/*`: a channel claim, keyed by the claiming process.
   - `hooks.log`: the hook run log.
-  - `ledger`, `availability`, `latency`: this machine's gates, availability
-    history and candidate latency samples.
+  - `ledger`: this machine's own view of its gates, after the entries that
+    arrived from peers were applied into it. The row itself never syncs: the
+    gates document below is what carries a gate, and it carries one key per
+    ledger subject rather than the row. A `spawn_failed` entry is in this row
+    and in no document -- it says this binary could not start that candidate
+    here, which is true of this host alone -- and an entry this build cannot
+    read stays here too, for the same reason the ledger keeps it raw.
+  - `availability`, `latency`: this machine's availability history and
+    candidate latency samples.
   - `serve.*` (`serve.clients`, `serve.ui`, `serve.ledger`): serve-wide state
     read and written on the server host.
   - `ui`: the cockpit's remembered query and sort column (`serve.ui` on a
@@ -79,7 +91,10 @@ These are the destination for the second, local-only database file.
 - `secret`: the `client.key` remote-builder identity, the `typesafe`
   classifier token, and `serve.tls.*` (the server's certificate and key).
 - `session_consent`: one session's own consent answer and last status token,
-  keyed by `(harness_kind, session_id)`.
+  keyed by `(harness_kind, session_id)`. The answer and its time travel, in the
+  `session_consent` document below; the told baseline stays here, because it says
+  what this machine has already shown this session on this host, which is true
+  of no other machine and would tell a peer about a delivery it never made.
 - `ingest_cursor`: an ingest source's byte offset and last hashes, keyed by an
   absolute path.
 - `config_import`: the watch-list of config files already imported, keyed by
@@ -100,13 +115,26 @@ never sync: two machines sharing one id could not tell each other's rows apart,
 and a database copy, backup or template would clone the id onto another
 machine. That is why it lives in a file beside the database and not in `kv`.
 
+## Shared documents, synced per key
+
+A document is not a table: it travels as ordinary log entries naming `doc:<name>`
+and one key each, and its newest write per key wins. Every doc's write stamps
+live in `config_write_stamp` under `<doc>/<key>`, so a document stamp can never
+be read as a config section's -- no section below is named after a document.
+
+| document | what it is | what never leaves |
+|---|---|---|
+| `config` | The shared config layer: one key per candidate, agent, actor, account, policy, role, price, server, hook set and workflow, plus one key per section that has no items. The `hooks` key carries the hook scripts themselves -- each one's contents and executable bit -- beside the argv rows that name them, root-relative, so a peer receives the hook and not only the name of one. A native `agents` key carries each of its kinds' harness file beside the entry that names it, so a peer receives the agent and not only a pointer to a definition it may never have had. | The `sync` section and the machine-local layer: both say what this machine can run, and neither is the owner's answer to hand out. For `hooks` that means an argv row naming a file outside `<config root>/hooks/`: it stays in `config_local`, because a path elsewhere on this filesystem means nothing on another one. A hook script or a native agent definition a person edited on disk is also kept rather than overwritten -- the item lands, the file does not, and `relevo doctor` names the one kept. |
+| `gates` | One key per ledger subject, holding that subject's live rate-limit entries. A rate limit is the provider's quota, so every machine gating that provider gates the same candidates. | `spawn_failed` entries, which are about this host's binaries failing to start; entries whose kind or source this build cannot read; and an expiry that no write has yet pruned. |
+| `consent` | One key per remote URL, holding the repository's answer to "may relevo register this repo's sessions as MasterMinds?". It reads and writes only the row this installation wrote, and the read scopes to it the same way: the `repo` rows themselves sync through the row log, so a machine holding several installations' rows for one URL holds several answers and only its own answers for it. | A repository with no remote URL, which no other machine can be asked about, and an answer that has been cleared: a clear is the key's absence, so it travels as a tombstone rather than as a value. A peer's copy of `mastermind_consent` in its own `repo` row means nothing here -- nothing reads it for the decision. |
+| `session_consent` | One key per `harness_kind/session_id`, holding the answer that session gave on its own rather than inheriting from the repository. A session id is not a repository, so a peer can hand over an answer for a session this machine has never seen and the row is simply created. | The told baseline and its time, which are this machine's own record of what it has already shown the session here; and an answer that has been cleared, which is a tombstone rather than a value. |
+
 ## Per-user config, synced deliberately or not at all
 
 Configuration describes what this user's machine can run: its candidates,
 actors, policy, roles, prices and servers name local binaries and harnesses.
-Another machine's are not the same, so a section syncs only if the sync round
-decides it should. Current leaning, not a decision: machine-local, in the
-second file.
+Another machine's are not the same, so a section travels only through the
+`config` document's keys, and only the shared layer of it does.
 
 - `config_doc` rows: one row per section (`candidates`, `actors`, `policy`,
   `roles`, `prices`, `servers`).
@@ -142,3 +170,95 @@ Path-valued `kv` values:
 - `daemon.exe`, `serve.daemon.root`
 
 This pass adds no code for the rule; it records it here and in the plan.
+
+## Hook scripts inside the config document
+
+The `hooks` section is the one section whose keys name files rather than
+values, so the rule above applies inside it as well: a path stored there is
+either this machine's or it is nobody's.
+
+The shared half holds the scripts under `<config root>/hooks/<event>.d/`,
+named `hooks/<event>.d/<file>`, with their contents and their executable bit.
+The name is root-relative so a peer whose config root differs still applies it
+under its own directory, and the directory is computed from the event and file
+names rather than read out of the entry, so an entry cannot steer a write.
+
+What never leaves the machine:
+
+- an argv row whose `argv[0]` is absolute and outside the config root. It is
+  split out into `config_local` under the `hooks` key's `local` member before
+  the write commits, by the idempotent step the `sync.config_hooks_local.v1`
+  local kv marker records. The marker is its own row rather than
+  `sync.config_local.v1`, because that one is already set on every machine that
+  ran the machine-layer move, and a move guarded by it would never run there.
+- a script a person edited on disk. The applier writes only a missing file or
+  one whose bytes still match, and `relevo doctor` names what it kept.
+
+Caps, refused with a test each: one script over 256 KiB, and one hooks value
+over 2 MiB in total.
+
+`apply` computes every path from the config root and refuses a name that is not
+one plain component (no `/`, no `\`, not `.` or `..`, no NUL, at most 128
+bytes). Writes go through a temp file in the target's own directory and a
+rename; a target that exists as a symlink or as anything but a regular file is
+refused rather than followed; and the executable bit is set only under
+`<config root>/hooks/`.
+
+The `sync.filehash.v1` local kv row is the capture's cache: one root-relative
+path to the digest, size, modification time and executable bit last seen. The
+capture stats first and reuses the document's bytes for a script the cache
+still vouches for, so an unchanged hook costs one stat per file and no write.
+The stamp is the capture time: it is recorded on the `hooks` item through the
+same write path `relevo config set` uses, so an edited script exports with the
+next attempt rather than with the next tick.
+
+## Native agent files inside the config document
+
+An `agents` item is one agent. A source agent is its own text, which the item
+already travels, and its rendered definitions are derived from that text, so
+nothing is embedded. A native agent names an agent each harness already knows
+how to run, and that is the case the file map is for: `native` says which
+definition, `files` says what it contains.
+
+The `files` member maps a harness kind to that kind's definition of the
+agent. The path is never stored. It is computed from the kind through the same
+harness table `relevo config agents` installs through, so a peer whose home
+differs applies the file under its own and an item cannot steer a write or name
+a directory outside a kind's own home.
+
+What never leaves the machine:
+
+- a definition a person edited on disk. The applier writes only a missing file
+  or one whose bytes the capture's cache still vouches for, and `relevo doctor`
+  names what it kept.
+- a rendered definition a person edited. The re-render that follows an arriving
+  `agents` item runs `InstallCustomAgents` without `--force`, so the outcome is
+  keep-differs -- the same outcome `refreshRoles` gets for the definitions it
+  does not force either. A render that cannot run is one warning and never
+  fails the import that named it.
+
+Caps, refused with a test each: one definition over 256 KiB, and one agents
+item over 2 MiB in total.
+
+`apply` refuses a kind that is not a harness kind, an agent name that is not
+one plain component (no `/`, no `\`, not `.` or `..`, no NUL, at most 128
+bytes), and a file whose kind the item's own `native` map does not name. Writes
+go through a temp file in the target's own directory and a rename; a target
+that exists as a symlink or as anything but a regular file is refused rather
+than followed; and a definition is never executable, whatever mode the item
+asked for -- only a hook script is, and only under `<config root>/hooks/`.
+
+The `sync.agenthash.v1` local kv row is the capture's cache for these files: one
+absolute path to the digest, size and modification time last seen. It is a
+separate row from the hooks' `sync.filehash.v1` because the two describe
+different trees, and one row for both would make a section's capture rewrite
+the other's entries. The capture stats first and reuses the item's bytes for a
+definition the cache still vouches for, so an unchanged agent costs one stat
+per file and no write. The stamp is the capture time, recorded through the same
+write path `relevo config set` uses, so an edited definition exports with the
+next attempt rather than with the next tick.
+
+The re-render reads the config the apply wrote, so it cannot run inside the
+importer's transaction. The apply queues the agent and the pipeline drains the
+queue once the transaction has committed -- after the steady import, after a
+join's drain and after an unlock's drain.

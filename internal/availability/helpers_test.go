@@ -21,6 +21,10 @@ const (
 	testOpencodeRef = "opencode/test/m"
 	testClaudeRef   = "claude/test/m"
 	testAgyRef      = "agy/test/m"
+	// testOtherProviderRef is the token testTwoProviderJSON gives the agy
+	// harness, whose provider is not test: a rate limit on that provider gates
+	// it and leaves both test-provider candidates alone.
+	testOtherProviderRef = "agy/other/m"
 )
 
 // testCandidatesJSON mirrors the shape of the three aliases DefaultTable used

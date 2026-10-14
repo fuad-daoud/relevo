@@ -124,7 +124,7 @@ func TestLocalLayerWinsOverShared(t *testing.T) {
 func TestMigrationMovesMachineFieldsBeforeExport(t *testing.T) {
 	t.Parallel()
 
-	s := openStore(t)
+	s := openRootedStore(t)
 	// A config written before the layer existed: the fields are still in the
 	// shared bodies, and the marker is unset, which is exactly the state the
 	// move exists to end.

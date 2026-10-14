@@ -160,6 +160,13 @@ const (
 	// SyncVerbUnlock derives the sync key from the passphrase in the frame's
 	// raw tail and stores it when it matches the remote's check.
 	SyncVerbUnlock = "unlock"
+	// SyncVerbAttempt asks the owner to run an attempt now rather than at the
+	// end of the export debounce. A client that has just written something worth
+	// the other machines seeing in seconds -- a rate limit a person recorded --
+	// sends this instead of waiting for the window, and the owner queues the
+	// attempt it would have queued anyway had the write arrived through a
+	// trigger of its own.
+	SyncVerbAttempt = "attempt"
 )
 
 // The refusal codes a SyncResult carries. They are a closed set and every one is

@@ -26,18 +26,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// resolveHooksConfig builds the hook dispatcher environment: the hooks section
-// the config store loaded, and the run log its runs are recorded in (#4.4).
-// log is the machine database's kv log; a caller with no database open
-// (preflight, check, serve's admin paths) passes nil, and hook output is then
-// recorded nowhere.
-func resolveHooksConfig(hooksMap map[string][][]string, log hooks.RunLog) (hooks.Config, error) {
-	return hooks.Config{
-		Hooks: hooksMap,
-		Log:   log,
-	}, nil
-}
-
 // hooksRunLog is the hook run log over d's machine-local file: the kv row every
 // hook run and webhook failure is recorded in. A nil log records nothing, so a
 // caller with no database open wires the nil it already gets from a nil handle.
@@ -446,10 +434,11 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 	// the same database (P3b round 2 §4.1-§4.4), so `relevo daemon --preflight`
 	// and `--check`, which pass openGates false, open no database at all.
 	var (
-		gates  db.KV
-		claims delivery.ClaimStore
-		waits  delivery.WaitClaimStore
-		runLog hooks.RunLog
+		gates   db.KV
+		gatesDB *db.DB
+		claims  delivery.ClaimStore
+		waits   delivery.WaitClaimStore
+		runLog  hooks.RunLog
 	)
 	if openGates {
 		d, err := st.DB()
@@ -463,6 +452,10 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		// shared file by accident.
 		local := d.LocalOrSelf()
 		gates = local
+		// The gates document records a write's stamp and its export signal in
+		// this same file, so it needs the handle that can open a transaction
+		// rather than the bare kv surface the ledger reads and writes through.
+		gatesDB = local
 		claims = &delivery.KVClaims{KV: db.TxKV{DB: local}}
 		waits = &delivery.KVWaitClaims{KV: db.TxKV{DB: local}}
 		runLog = hooksRunLog(d)
@@ -509,6 +502,7 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		Accounts:       L.Accounts,
 		OpencodeAuth:   relevo.OSOpencodeAuth(opencodeDBPath()),
 		Gates:          gates,
+		GatesDB:        gatesDB,
 		Latency:        gates,
 		Policy:         pol,
 		Registry:       L.Registry,

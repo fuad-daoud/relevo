@@ -106,6 +106,7 @@ func installSyncVerbSerializing(ctx context.Context, d *relevo.Daemon, srv *owne
 		return
 	}
 	runner.Serialize = d.WaitSyncSlot
+	runner.Trigger = func() { d.SyncNow(ctx) }
 	d.SetSyncVerbs(runner)
 	srv.OnSyncVerb = runner.OwnerVerb
 	// A reader's hint runs on the daemon's own context: the connection that

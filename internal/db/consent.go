@@ -31,13 +31,26 @@ func (c Consent) Valid() error {
 // RepoConsent reads ref's answer: ConsentUnset for a repo relevo has never
 // seen, for one that has not answered, or for a ref naming neither key.
 func (d *DB) RepoConsent(ref Repo) (Consent, error) {
-	return repoConsent(context.Background(), d.sqlDB, ref)
+	return repoConsent(context.Background(), d.sqlDB, d.origin, ref)
 }
 
-func repoConsent(ctx context.Context, q queryer, ref Repo) (Consent, error) {
+// repoConsent reads ref's answer from the rows of one installation.
+//
+// The scope is this origin's, and it is what keeps the answer a decision and
+// not a rumour: repo rows reach every machine through the row log, so a machine
+// holding several installations' rows for one remote URL holds several answers
+// to the same question. Only the row this installation wrote is this machine's
+// answer; the others are what a peer decided there, and reading one of those
+// would make this machine answer for a repository a person never asked it
+// about. originScope is the scope every other repo read uses, so a row written
+// before the origin column existed still answers here: it is a row this machine
+// wrote, awaiting its backfill.
+func repoConsent(ctx context.Context, q queryer, origin string, ref Repo) (Consent, error) {
 	for _, k := range repoKeys(ref) {
 		var raw sql.Null[string]
-		err := q.QueryRowContext(ctx, `SELECT mastermind_consent FROM repo WHERE `+k.col+` = ?`, k.val).Scan(&raw)
+		err := q.QueryRowContext(ctx,
+			`SELECT mastermind_consent FROM repo WHERE `+originScope+` AND `+k.col+` = ?`,
+			origin, k.val).Scan(&raw)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -71,6 +84,16 @@ func repoKeys(ref Repo) []repoKey {
 // SetRepoConsent stores ref's answer, creating the repo row when relevo has
 // not seen the repo, and returns the row's id. ConsentUnset clears the answer:
 // the next session in the repository asks again.
+//
+// It is a person's edit of the answer, so it stamps the consent document's key
+// and signals that document. The row and the stamp cannot share a transaction:
+// the row is in the shared file, the stamp and the signal in the machine-local
+// one. The row is written first, so the worst a failure between them leaves is
+// an answer this machine holds and has not yet told anyone about -- which the
+// next consent write of any key sends, because the exporter diffs the whole
+// document rather than only the key that was written. The reverse order would
+// spend a stamp on an answer that never landed, and a stamp says to every peer
+// that this machine last wrote the key.
 func (d *DB) SetRepoConsent(ref Repo, c Consent, now time.Time) (string, error) {
 	var id string
 	err := d.Tx(func(t *Tx) error {
@@ -78,10 +101,36 @@ func (d *DB) SetRepoConsent(ref Repo, c Consent, now time.Time) (string, error) 
 		id, err = t.SetRepoConsent(ref, c, now)
 		return err
 	})
-	return id, err
+	if err != nil {
+		return "", err
+	}
+	// A repository with no remote URL has no document key, so it has nothing to
+	// stamp and nothing to export: a peer cannot be asked about a checkout this
+	// machine has, only about a URL both machines can name.
+	if key := consentKey(ref); key != "" {
+		if err := d.LocalOrSelf().Tx(func(t *Tx) error {
+			return stampConsentKey(t, ConsentDoc, consentStampKey(key))
+		}); err != nil {
+			return id, err
+		}
+	}
+	return id, nil
 }
 
-// SetRepoConsent is SetRepoConsent inside tx.
+// consentKey is the consent document's key for a repository: its remote URL, and
+// the empty string for a ref naming none. The URL is the key rather than the
+// common dir because the dir is this machine's path: a peer that stored it would
+// be holding a path that means nothing there.
+func consentKey(ref Repo) string {
+	if ref.OriginURL != nil {
+		return *ref.OriginURL
+	}
+	return ""
+}
+
+// SetRepoConsent is SetRepoConsent inside tx, without a stamp: the caller is a
+// write that already holds the transaction, or an arrival from a peer, which
+// records none.
 func (t *Tx) SetRepoConsent(ref Repo, c Consent, now time.Time) (string, error) {
 	if err := c.Valid(); err != nil {
 		return "", err
@@ -131,36 +180,56 @@ func sessionConsent(ctx context.Context, q queryer, kind, sessionID string) (Con
 // SetSessionConsent stores a session's own answer, creating the row when relevo
 // has not seen the session. ConsentUnset clears the answer. The write is
 // UPDATE-then-INSERT inside one transaction, so two calls serialise.
+//
+// It is a person's edit of the answer, so it records the session consent
+// document's write stamp and its export signal in the same transaction: a
+// stamp spent on an answer that then failed to keep would outrank the answer a
+// peer recorded meanwhile.
 func (d *DB) SetSessionConsent(kind, sessionID string, c Consent, now time.Time) error {
 	if err := c.Valid(); err != nil {
 		return err
 	}
-	d = d.LocalOrSelf()
+	if kind == "" || sessionID == "" {
+		return fmt.Errorf("db: session consent: a session needs both a kind and an id: %w", ErrInvalid)
+	}
+	return d.LocalOrSelf().Tx(func(t *Tx) error {
+		if err := t.SetSessionConsent(kind, sessionID, c, now); err != nil {
+			return err
+		}
+		return stampConsentKey(t, SessionConsentDoc, sessionConsentStampKey(kind, sessionID))
+	})
+}
+
+// SetSessionConsent is SetSessionConsent inside the caller's transaction,
+// without a stamp: the caller is a write whose key is this machine's to stamp,
+// or an arrival from a peer, which records none.
+func (t *Tx) SetSessionConsent(kind, sessionID string, c Consent, now time.Time) error {
+	if err := c.Valid(); err != nil {
+		return err
+	}
 	var answer, at any
 	if c != ConsentUnset {
 		answer, at = string(c), formatTime(now)
 	}
-	return d.Tx(func(t *Tx) error {
-		res, err := t.exec(
-			`UPDATE session_consent SET answer = ?, answer_at = ? WHERE harness_kind = ? AND session_id = ?`,
-			answer, at, kind, sessionID)
-		if err != nil {
-			return fmt.Errorf("db: session consent: %w", mapBusy(err))
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("db: session consent: %w", err)
-		}
-		if n > 0 {
-			return nil
-		}
-		if _, err := t.exec(
-			`INSERT INTO session_consent (harness_kind, session_id, answer, answer_at) VALUES (?, ?, ?, ?)`,
-			kind, sessionID, answer, at); err != nil {
-			return fmt.Errorf("db: session consent: %w", mapBusy(err))
-		}
+	res, err := t.exec(
+		`UPDATE session_consent SET answer = ?, answer_at = ? WHERE harness_kind = ? AND session_id = ?`,
+		answer, at, kind, sessionID)
+	if err != nil {
+		return fmt.Errorf("db: session consent: %w", mapBusy(err))
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("db: session consent: %w", err)
+	}
+	if n > 0 {
 		return nil
-	})
+	}
+	if _, err := t.exec(
+		`INSERT INTO session_consent (harness_kind, session_id, answer, answer_at) VALUES (?, ?, ?, ?)`,
+		kind, sessionID, answer, at); err != nil {
+		return fmt.Errorf("db: session consent: %w", mapBusy(err))
+	}
+	return nil
 }
 
 // SessionTold reads the status token last delivered to a session. ok is false
@@ -222,6 +291,12 @@ func (d *DB) SetSessionTold(kind, sessionID, told string, now time.Time) error {
 // ClearSessionConsent forgets a session's own answer and its told baseline in
 // one write, so reset returns the session to the repository's answer and the
 // next status read becomes a fresh baseline.
+//
+// It is a person's edit of the answer, so it stamps the session consent key and
+// signals the document: a cleared answer is a key the document no longer holds,
+// and the peers that still hold one have to be told to lift it. Everything here
+// is machine-local -- the table and the stamps are in the same file -- so the
+// write, its stamp and its signal are one transaction.
 func (d *DB) ClearSessionConsent(kind, sessionID string) error {
 	return d.LocalOrSelf().Tx(func(t *Tx) error {
 		if _, err := t.exec(
@@ -229,6 +304,6 @@ func (d *DB) ClearSessionConsent(kind, sessionID string) error {
 			kind, sessionID); err != nil {
 			return fmt.Errorf("db: session consent: %w", mapBusy(err))
 		}
-		return nil
+		return stampConsentKey(t, SessionConsentDoc, sessionConsentStampKey(kind, sessionID))
 	})
 }

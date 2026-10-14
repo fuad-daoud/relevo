@@ -15,6 +15,23 @@ import (
 // carry weeks of entries between two ticks.
 const outboxTruncateInterval = 5 * time.Minute
 
+// SyncNow queues an attempt without waiting out the export debounce. It is the
+// whole of what a gate write asks for: the gate is already stamped and signalled
+// by the time it is called, and a person who has just recorded a rate limit
+// wants the other machines to see it in seconds rather than a quarter of a
+// minute from now.
+//
+// It bypasses only the age check. Every other rule still applies -- sync off,
+// a breaker that is not due, and the slot itself -- so a burst of gate writes
+// inside one attempt costs the one rerun the in-flight flag already provides
+// rather than an attempt each.
+func (d *Daemon) SyncNow(ctx context.Context) {
+	if d == nil {
+		return
+	}
+	d.queueSync(ctx)
+}
+
 // queueSync hands a sync to the background and returns at once. The seal that
 // triggered it has already committed, so the round is on disk either way: a
 // network that never answers delays the other machines' copy of it and nothing

@@ -24,6 +24,17 @@ func openStore(t *testing.T) *Store {
 	return Open(d)
 }
 
+// openRootedStore is one store bound to a temporary config root, which is the
+// shape every machine has: the outside-root argv move runs at the binding and
+// records its marker, and the exporter refuses until it has. A store with no
+// root can neither measure an argv row nor be exported, so a test that exports
+// holds a root rather than a weakened gate.
+func openRootedStore(t *testing.T) *Store {
+	t.Helper()
+	root := t.TempDir()
+	return openStore(t).WithFiles(newMemApplier(root), root)
+}
+
 // openStoreWith opens a store over a database whose busy waits are the given
 // options, for a test that must not wait out the defaults.
 func openStoreWith(t *testing.T, o db.Options) *Store {

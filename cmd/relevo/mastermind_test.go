@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -56,15 +57,7 @@ func mastermindConsentRepo(t *testing.T, state string, c db.Consent) string {
 	if err != nil {
 		t.Fatalf("EvalSymlinks: %v", err)
 	}
-	root := filepath.Join(state, "relevo")
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatalf("MkdirAll %s: %v", root, err)
-	}
-	d, err := db.Open(filepath.Join(root, "relevo.db"))
-	if err != nil {
-		t.Fatalf("open relevo.db: %v", err)
-	}
-	t.Cleanup(func() { _ = d.Close() })
+	d := openConsentMachineDB(t, state)
 	if _, err := d.SetRepoConsent(db.Repo{CommonDir: &common}, c, time.Now()); err != nil {
 		t.Fatalf("SetRepoConsent: %v", err)
 	}
@@ -72,22 +65,41 @@ func mastermindConsentRepo(t *testing.T, state string, c db.Consent) string {
 }
 
 // mastermindRepoConsent reads the answer stored for repoDir's repository.
+//
+// The handle carries the installation's id, because the verb that wrote the
+// answer went through the store and the store opens the database with that id:
+// a consent row is stamped with the installation that wrote it, and the read
+// scopes to its own installation's rows. A handle opened without the id is not
+// this machine and does not answer for it.
 func mastermindRepoConsent(t *testing.T, state, repoDir string) db.Consent {
 	t.Helper()
 	common, err := filepath.EvalSymlinks(filepath.Join(repoDir, ".git"))
 	if err != nil {
 		t.Fatalf("EvalSymlinks: %v", err)
 	}
-	d, err := db.OpenSplit(filepath.Join(state, "relevo", "relevo.db"), db.Options{})
-	if err != nil {
-		t.Fatalf("open relevo.db: %v", err)
-	}
-	t.Cleanup(func() { _ = d.Close() })
+	d := openConsentMachineDB(t, state)
 	c, err := d.RepoConsent(db.Repo{CommonDir: &common})
 	if err != nil {
 		t.Fatalf("RepoConsent: %v", err)
 	}
 	return c
+}
+
+// openConsentMachineDB is the machine's database opened the way the store opens
+// it, with the installation id the installation file beside it holds.
+func openConsentMachineDB(t *testing.T, state string) *db.DB {
+	t.Helper()
+	root := filepath.Join(state, "relevo")
+	inst, err := installation.Load(root)
+	if err != nil {
+		t.Fatalf("installation.Load: %v", err)
+	}
+	d, err := db.OpenSplit(filepath.Join(root, "relevo.db"), db.Options{Origin: inst.ID})
+	if err != nil {
+		t.Fatalf("open relevo.db: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
 }
 
 // mastermindSetRepoConsent writes an answer for repoDir's repository, the way a
@@ -98,11 +110,7 @@ func mastermindSetRepoConsent(t *testing.T, state, repoDir string, c db.Consent)
 	if err != nil {
 		t.Fatalf("EvalSymlinks: %v", err)
 	}
-	d, err := db.OpenSplit(filepath.Join(state, "relevo", "relevo.db"), db.Options{})
-	if err != nil {
-		t.Fatalf("open relevo.db: %v", err)
-	}
-	t.Cleanup(func() { _ = d.Close() })
+	d := openConsentMachineDB(t, state)
 	if _, err := d.SetRepoConsent(db.Repo{CommonDir: &common}, c, time.Now()); err != nil {
 		t.Fatalf("SetRepoConsent: %v", err)
 	}

@@ -23,6 +23,10 @@ type syncMachine struct {
 	log    *synclog.MemTransport
 }
 
+// newSyncMachine is one machine exchanging the config document over the log.
+// Its config store is bound to its own temporary root, which is the shape a
+// real machine has and what lets it export: the outside-root argv move runs at
+// the binding and records its marker, and the exporter refuses without it.
 func newSyncMachine(t *testing.T, origin string, log *synclog.MemTransport) *syncMachine {
 	t.Helper()
 	d, err := db.OpenWith(filepath.Join(t.TempDir(), "relevo.db"), db.Options{Origin: origin})
@@ -30,7 +34,8 @@ func newSyncMachine(t *testing.T, origin string, log *synclog.MemTransport) *syn
 		t.Fatalf("open %s: %v", origin, err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
-	return &syncMachine{d: d, s: Open(d), origin: origin, log: log}
+	root := t.TempDir()
+	return &syncMachine{d: d, s: Open(d).WithFiles(newMemApplier(root), root), origin: origin, log: log}
 }
 
 func (m *syncMachine) export(t *testing.T) int {

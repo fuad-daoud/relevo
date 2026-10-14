@@ -129,9 +129,9 @@ back as its own, and reconcile repairs anything missing.
 ## 4. Shared docs (step 3)
 
 Step 3 is built in two parts. Config is the first instance (step 3b, below);
-gates, consents, allow-listed secrets and files (§4.2, §4.3) follow in 3c on
-the same framework. The framework and the config instance are described as
-built.
+gates, the two consent documents and the files config points at (§4.2, §4.3)
+are 3c, on the same framework. Allow-listed secrets are step 5. The framework
+and the instances through 3c are described as built.
 
 **Shared doc.** A shared doc is anything that splits into keyed items, each of
 which any machine may set or delete. One interface in `internal/synclog`
@@ -152,9 +152,17 @@ name; a second registration of a name, or an unusable name, is refused.
 Instances: config sections (one key per item in candidates, agents, actors,
 accounts and servers, as `<section>/<name>`; one key per section for policy,
 roles, prices, hooks and workflows), gates (one key per ledger subject), repo
-consent (key: remote URL; repos without one don't share consent), session
-consent (key: harness kind + session id), allow-listed secrets (§5), and files
-(§4.3). Only config is built so far. The `sync` section never syncs.
+consent (`consent`; key: remote URL; repos without one don't share consent),
+session consent (`session_consent`; key: harness kind + session id), and
+allow-listed secrets (§5, not yet built). Files (§4.3) are not docs of their
+own: they ride inside the config doc's `agents` and `hooks` items. Config,
+gates and both consent docs are built. The `sync` section never syncs.
+
+Every doc is bound to a machine's stores through one function
+(`sharedDocs`), which every exporter, importer and reconciler reaches through
+`BindDocs`; a test counts the stage constructions against the binds so a new
+site that forgot one fails. Write stamps for all docs live in
+`config_write_stamp` under `<doc>/<key>`, which a join clears whole.
 
 **A doc entry is an ordinary log entry.** Its table is `doc:<name>`, its PK is
 `json_array(<key>)`, and its body is `{"stamp": "<decimal>", "value": <json>}`.
@@ -324,9 +332,25 @@ The `sync` section is never a shared doc.
 
 ### 4.2 Gates, availability, latency
 
-**Gates.** The kv `ledger` document splits into one key per subject. Clearing
-a gate deletes its key. `until` stays an absolute UTC time. A gate write
-queues an immediate sync attempt instead of waiting for the debounce.
+**Gates.** The `gates` doc is one key per ledger subject, and its value is the
+array of that subject's live `rate_limited` entries (at most 64 KiB). A rate
+limit is a provider's quota, so every machine gating that provider gates the
+same candidates, and that includes a manual `relevo gate`. `spawn_failed`
+entries say relevo could not start a candidate on this machine, so they stay
+local, as do entries whose kind or source this build cannot read: apply
+replaces a subject's rate limits wholesale and never touches the rest, and a
+clear is a tombstone that lifts only the rate limits. `until` stays an
+absolute UTC time. An applied gate invalidates the daemon's cached ledger, so
+the next candidate switch sees it without a restart. A gate write queues an
+immediate sync attempt instead of waiting for the debounce; several writes
+inside one attempt cost one follow-up.
+
+**Consent.** `consent` carries the repository's answer, keyed by remote URL.
+The `repo` rows already reach every peer through the row log, one per
+installation; the doc reads and writes only this installation's own row, and
+nothing reads a peer's `mastermind_consent` for the decision. `session_consent`
+carries a session's own answer and its time; the told baseline stays local. A
+cleared answer is a tombstone, never a value.
 
 **Availability and latency.** Availability events and latency samples move
 from whole-document kv values into two shared history tables in `relevo.db`,
@@ -339,13 +363,31 @@ those age-based deletes.
 
 - **Native agent files.** A native `agents` entry carries the contents of its
   harness file per harness kind.
-- **Hook scripts.** A `hooks` entry carries the contents and executable bit of
-  every script under `<config root>/hooks/`. Its argv is stored relative to
-  the relevo config root and resolved through `userConfigRoot()`.
+- **Hook scripts.** A `hooks` entry carries the contents of the scripts its
+  own argv rows name, and no others: an executable under `hooks/` that no row
+  names is never read, stamped, signalled or exported. The root is relevo's own
+  directory, `<user config root>/relevo` (`~/.config/relevo`), so another
+  tool's `~/.config/hooks` never enters sync. Argv is stored relative to that
+  directory. The entry carries each script's executable bit, because a hook
+  runs its script directly and a script that lands without the bit cannot run.
+  The bit is set only under `hooks/`. Carrying it gives a peer nothing it does
+  not already have: a peer that can sign a `hooks` entry already chooses the
+  argv this machine runs. Naming a script in a hook is the consent to
+  publish it: its bytes are signed like all config, not encrypted, and any
+  reader of the Turso database can read them.
 
 On apply, the importer writes the file if it's missing or still matches the
 hash it last wrote. A file edited by hand is kept, and `relevo doctor`
-reports it. Applying an `agents` change re-renders that agent's harness files
+reports it. A hook argv row naming a file outside the config root is a
+machine field and stays in `config_local`.
+
+Paths come from this machine, never from the entry: a name is one plain path
+component, the directory is computed from the kind and the config root, writes
+go through a temp file and rename, and a symlink or non-regular target is
+refused. Caps: one file 256 KiB, one item 2 MiB. Before every steady attempt,
+and on daemon start, config writes, import, join and unlock, a capture hashes
+the files the config names (stat first) and, only when one changed, stamps the
+item and signals the doc, so a hand edit exports with the next attempt. Applying an `agents` change re-renders that agent's harness files
 at once, through the same path `refreshRoles` uses at daemon start.
 
 ## 5. Signing and secrets (steps 3 and 5)

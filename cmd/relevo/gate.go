@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/serve"
 )
@@ -186,7 +188,25 @@ func gateUnavailable(token, forFlag, reason string, asJSON bool) error {
 		fmt.Fprintln(os.Stderr, line)
 	}
 
+	askDaemonToSync()
+
 	return nil
+}
+
+// askDaemonToSync tells a running daemon to send the gate now rather than at
+// the end of the export debounce. It is best effort by design: the gate is
+// recorded and signalled either way, so a machine with no daemon answering, or
+// one whose sync is off, has simply nothing to ask and loses nothing. A failure
+// is therefore not reported -- it would read as the gate not landing, which is
+// the opposite of what happened.
+func askDaemonToSync() {
+	shared, err := dialSyncVerb()
+	if err != nil {
+		return
+	}
+	if _, err := sendSyncVerb(context.Background(), shared, wire.SyncVerbAttempt, dbSyncVerbOptions{}); err != nil {
+		slog.Debug("gate: ask the daemon for an attempt", "err", err)
+	}
 }
 
 // gateAccounts reads the accounts the config loaded, or nil when there is no
@@ -283,6 +303,11 @@ func gateClear(subject string, asJSON bool) error {
 		if p, ok, _ := serve.ReadDaemonPointer(d); ok && pidAlive(p.PID) {
 			fmt.Fprint(notices, "note: a relevo serve daemon runs here with its own gates; use relevo gate --serve\n")
 		}
+	}
+
+	// A clear that lifted nothing changed no value, so there is nothing to send.
+	if removed > 0 {
+		askDaemonToSync()
 	}
 
 	return nil

@@ -416,9 +416,100 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 		if runs, rerr := hooks.NewKVLog(db.TxKV{DB: d}).Runs(); rerr == nil {
 			rep.Checks = append(rep.Checks, doctor.HooksCheck(doctor.HooksCheckInput{Runs: runs, Now: rt.Now()}))
 		}
+		// The hook-files row: the scripts this machine's config carries and the
+		// ones a person edited on disk and the applier kept. Nothing else would
+		// ever say so.
+		rep.Checks = append(rep.Checks, hookFileCheck(relevo.MachineConfig))
+		// The agent-files row: the harness files this machine's config carries
+		// and the ones a person edited on disk, which neither the applier nor
+		// the re-render overwrites.
+		rep.Checks = append(rep.Checks, agentFileCheck(relevo.MachineConfig))
 	}
 
 	return rep, nil
+}
+
+// agentFileCheck reads the config's carried harness files and the ones that
+// have drifted off them, plus the rendered definitions of the config's own
+// agents that a person has edited against the role manifest. A config store or
+// an install env that cannot be opened leaves what it could not read out, as
+// every other best-effort row does.
+func agentFileCheck(open func() (*config.Store, error)) doctor.Check {
+	store, err := open()
+	if err != nil {
+		return agentFilesUnavailable()
+	}
+	carried, edited, err := store.CarriedAgentFiles()
+	if err != nil {
+		return agentFilesUnavailable()
+	}
+	input := doctor.AgentFilesCheckInput{Carried: carried}
+	for _, file := range edited {
+		input.Edited = append(input.Edited, doctor.EditedFile{Path: file.Path, Hash: file.Hash})
+	}
+	input.Rendered = editedRenderedAgents(store)
+	return doctor.AgentFilesCheck(input)
+}
+
+func agentFilesUnavailable() doctor.Check {
+	return doctor.Check{
+		Name: "agent-files", Detail: "agent-files: config store unavailable",
+		Severity: doctor.SevOK, ProbeFailed: true,
+	}
+}
+
+// editedRenderedAgents names the rendered definitions of the config's own
+// source agents that the role manifest no longer vouches for -- a person's edit
+// on a file the re-render keeps. An install env that cannot be opened yields
+// nothing rather than failing the row: the native half is still worth showing.
+func editedRenderedAgents(store *config.Store) []doctor.EditedFile {
+	env, err := relevo.AgentInstallEnv()
+	if err != nil {
+		return nil
+	}
+	loaded, err := store.Load()
+	if err != nil {
+		return nil
+	}
+	var out []doctor.EditedFile
+	for name, entry := range loaded.Agents {
+		if entry.Source == "" {
+			continue
+		}
+		files, err := relevo.CustomAgentFiles(store, env, name)
+		if err != nil {
+			continue
+		}
+		for _, file := range files {
+			if file.State == harness.FileEdited || file.State == harness.FileEditedNewer {
+				out = append(out, doctor.EditedFile{Path: file.Path})
+			}
+		}
+	}
+	return out
+}
+
+// hookFileCheck reads the config's carried hook scripts and the ones that have
+// drifted off them. A config store that cannot be opened leaves the row off,
+// as every other best-effort row does.
+func hookFileCheck(open func() (*config.Store, error)) doctor.Check {
+	store, err := open()
+	if err != nil {
+		return doctor.Check{Name: "hook-files", Detail: "hook-files: config store unavailable", Severity: doctor.SevOK, ProbeFailed: true}
+	}
+	doc, err := store.HookDoc()
+	if err != nil {
+		return doctor.Check{Name: "hook-files", Detail: "hook-files: config store unavailable", Severity: doctor.SevOK, ProbeFailed: true}
+	}
+	edited, err := store.DriftedHookFiles()
+	if err != nil {
+		return doctor.Check{Name: "hook-files", Detail: "hook-files: config store unavailable", Severity: doctor.SevOK, ProbeFailed: true}
+	}
+	files := make([]doctor.EditedFile, 0, len(edited))
+	for _, file := range edited {
+		files = append(files, doctor.EditedFile{Path: file.Path, Hash: file.Hash})
+	}
+	return doctor.HookFilesCheck(doctor.HookFilesCheckInput{Carried: len(doc.Files), Edited: files})
 }
 
 func cmdDoctor(args []string) error {

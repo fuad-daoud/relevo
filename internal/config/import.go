@@ -98,7 +98,16 @@ func (s *Store) ImportFiles(configDir string, now time.Time) (ImportResult, erro
 	if err := s.commitImport(pending, now); err != nil {
 		return ImportResult{}, err
 	}
-	return s.afterImport(configDir, pending, clientKeyPath, typesafePath)
+	res, err := s.afterImport(configDir, pending, clientKeyPath, typesafePath)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	// An import reads the config dir once; the scripts under it are the
+	// document's contents rather than only its argv rows, so the capture runs
+	// afterwards and stores what it found. A config dir with no hooks dir
+	// changes nothing and is not a capture at all.
+	s.captureAfterHooksWrite(Hooks)
+	return res, nil
 }
 
 func readConfigSections(configDir string) ([]pendingSection, error) {

@@ -123,13 +123,24 @@ func TestCompactAlignsAFloorNoReaderCanHold(t *testing.T) {
 // passes 40 for a per-entry one.
 func TestCompactIsNotQuadratic(t *testing.T) {
 	const small, large = 2000, 8000
-	smallTook := timeCompact(t, small)
-	largeTook := timeCompact(t, large)
+	smallTook := fastestCompact(t, small)
+	largeTook := fastestCompact(t, large)
 	ratio := float64(largeTook) / float64(smallTook)
 	t.Logf("%d entries: %v, %d entries: %v, ratio %.1f", small, smallTook, large, largeTook, ratio)
 	if ratio > 12 {
 		t.Fatalf("compacting %d entries took %v, %d took %v: %.1fx for 4x the entries", small, smallTook, large, largeTook, ratio)
 	}
+}
+
+// fastestCompact keeps the fastest of three timings: one sample on a loaded
+// machine can stall several times over and fail a sound ratio.
+func fastestCompact(t *testing.T, n int) time.Duration {
+	t.Helper()
+	best := timeCompact(t, n)
+	for range 2 {
+		best = min(best, timeCompact(t, n))
+	}
+	return best
 }
 
 // timeCompact fills a fresh log with n entries over n/3 rows and times one

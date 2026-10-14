@@ -4,7 +4,6 @@
 package config
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -108,6 +107,14 @@ type Store struct {
 	// that came from a peer (the export state already stands for it), the
 	// seed, a migration. Such a write records no write stamp.
 	unstamped bool
+	// files is where the hooks section's embedded scripts are written, and
+	// root is the config root every root-relative name is measured against.
+	// Both are empty on a store that carries the config but writes no disk.
+	files FileApplier
+	root  string
+	// rerender re-renders an agent whose item arrived from a peer. It is nil on
+	// a store that has not been bound to one.
+	rerender AgentRerenderer
 }
 
 // Open binds a config store to d's machine-local file, or to d itself on a
@@ -121,6 +128,10 @@ type Store struct {
 // start-up path some callers do not take. A failure is left to the caller's
 // own write rather than reported here: the marker is what the exporter checks,
 // and a store that could not write cannot have moved anything.
+//
+// The hooks argv move does not run here, because a store opened this way has no
+// config root to measure the rows against and so could only record the work
+// without doing it. WithFiles runs it once a root is bound.
 func Open(d *db.DB) *Store {
 	s := &Store{db: d.LocalOrSelf(), now: time.Now}
 	_, _ = s.EnsureLocalLayer()
@@ -331,18 +342,21 @@ func opencodeGroups(set account.Set) []string {
 	return out
 }
 
+// loadHooks reads the hooks section into the dispatcher's argv map: the shared
+// rows under the root-relative names they are stored with, and the machine
+// rows under the absolute names they always keep. The embedded scripts are not
+// read here; they are the applier's business at write time.
 func loadHooks(doc Doc, L *Loaded) error {
 	body, ok := doc[Hooks]
 	if !ok {
 		L.Hooks = HooksMap{}
 		return nil
 	}
-	if err := json.Unmarshal(body, &L.Hooks); err != nil {
-		return fmt.Errorf("%s: %w", Hooks, err)
+	hooks, err := ParseHookDoc(body)
+	if err != nil {
+		return err
 	}
-	if L.Hooks == nil {
-		L.Hooks = HooksMap{}
-	}
+	L.Hooks = HooksMapOf(hooks)
 	return nil
 }
 
@@ -375,8 +389,15 @@ func Validate(sec Section, body []byte) ([]string, error) {
 		_, err := remote.ParseServers(body)
 		return nil, err
 	case Hooks:
-		var h HooksMap
-		if err := json.Unmarshal(body, &h); err != nil {
+		hooks, err := ParseHookDoc(body)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", Hooks, err)
+		}
+		// The path rules need a config root to be relative to, and a body
+		// handed to Validate on its own has none. The caps and the shape are
+		// checked here; the per-name refusals happen in ValidateHookDoc, which
+		// the store calls with its root attached.
+		if err := ValidateHookDoc(hooks); err != nil {
 			return nil, fmt.Errorf("%s: %w", Hooks, err)
 		}
 		return nil, nil

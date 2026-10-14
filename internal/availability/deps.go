@@ -26,4 +26,16 @@ type Deps struct {
 	Now          func() time.Time
 	Roles        harness.RoleChecker
 	RoleRegistry func() *roles.Registry
+	// Local is the machine-local file the gates document records its write
+	// stamps and its export signal in, when the ledger is bound to that file
+	// itself. Nil when it is not: the serve-wide ledger lives under its own
+	// prefix beside the server's other records and is nobody's gates document,
+	// so a write there is stamped nowhere and signals nothing.
+	Local *db.DB
+	// SyncNow asks for an attempt now rather than at the end of the export
+	// debounce, because a gate a person just recorded is worth the other
+	// machines seeing in seconds rather than in a quarter of a minute. Nil is
+	// the normal case for a caller with no daemon behind it: the gate is written
+	// and the next ordinary trigger exports it.
+	SyncNow func()
 }

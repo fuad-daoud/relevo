@@ -409,8 +409,12 @@ const JoinImportDeadline = 30 * time.Minute
 // drainImport reads the other origins page by page until a run moves no mark or
 // the join's own deadline passes.
 func (e *Enabler) drainImport(transport synclog.LogTransport) (synclog.ImportResult, error) {
+	// The join clears every doc's write stamps and export state, so the files
+	// a person edited before it would otherwise never be exported. The capture
+	// runs first so the re-emit already carries them.
+	CaptureFiles(e.Request.Shared)
 	deadline := e.now().Add(JoinImportDeadline)
-	return drainImport(func() (synclog.ImportResult, error) {
+	res, err := drainImport(func() (synclog.ImportResult, error) {
 		key, err := SigningKey(e.Request.Local)
 		if err != nil {
 			return synclog.ImportResult{}, err
@@ -423,6 +427,10 @@ func (e *Enabler) drainImport(transport synclog.LogTransport) (synclog.ImportRes
 		e.count(transport)
 		return res, ierr
 	}, deadline, e.now)
+	// The settle runs after the drain, not inside it: what it renders is the
+	// config the drain wrote, which is only true once it has committed.
+	SettleFiles(e.Request.Shared)
+	return res, err
 }
 
 // count folds the worker's totals into this month's row. A reading that cannot

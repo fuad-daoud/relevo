@@ -11,11 +11,11 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/pick"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
@@ -326,19 +326,10 @@ var removedVerbs = map[string]string{
 	"planner": "relevo mastermind",
 }
 
-// userConfigRoot resolves $XDG_CONFIG_HOME, falling back to ~/.config.
-func userConfigRoot() (string, error) {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return xdg, nil
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve user home directory: %w", err)
-	}
-
-	return filepath.Join(home, ".config"), nil
-}
+// userConfigRoot resolves $XDG_CONFIG_HOME, falling back to ~/.config. The
+// rule lives in internal/config so the importer, the file applier and this
+// command cannot disagree about where the config root is.
+func userConfigRoot() (string, error) { return config.UserRoot() }
 
 // uiFlagValues holds the pointer the cockpit parses into.
 type uiFlagValues struct {

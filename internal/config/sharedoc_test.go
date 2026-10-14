@@ -59,7 +59,7 @@ func sortedItemKeys(t *testing.T, doc *SharedDoc) []string {
 func TestConfigItemsSplitPerItemAndPerSection(t *testing.T) {
 	t.Parallel()
 
-	s := openStore(t)
+	s := openRootedStore(t)
 	seedDocConfig(t, s)
 
 	want := []string{
@@ -103,7 +103,7 @@ func TestConfigItemsSplitPerItemAndPerSection(t *testing.T) {
 func TestConfigItemsCarryNoMachineField(t *testing.T) {
 	t.Parallel()
 
-	s := openStore(t)
+	s := openRootedStore(t)
 	seedDocConfig(t, s)
 
 	items, err := s.Doc().Items()
@@ -119,7 +119,7 @@ func TestConfigItemsCarryNoMachineField(t *testing.T) {
 func TestSyncSectionNeverSyncs(t *testing.T) {
 	t.Parallel()
 
-	s := openStore(t)
+	s := openRootedStore(t)
 	seedDocConfig(t, s)
 	doc := s.Doc()
 

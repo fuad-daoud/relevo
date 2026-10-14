@@ -36,7 +36,7 @@ func localKeyCount(t *testing.T, s *Store) int {
 func TestApplyDropsPeerMachineFieldsFromTheSharedBody(t *testing.T) {
 	t.Parallel()
 
-	s := openStore(t)
+	s := openRootedStore(t)
 	seedDocConfig(t, s)
 	if err := s.Doc().Apply("accounts/work", json.RawMessage(
 		`{"name":"work","harness":"claude","groups":["anthropic"],"config_dir":"/peer/dir","home":"/peer/home"}`)); err != nil {
