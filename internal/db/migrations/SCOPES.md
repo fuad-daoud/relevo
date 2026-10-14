@@ -99,6 +99,8 @@ These are the destination for the second, local-only database file.
   - `agents-manifest`: the checksums of the agent definitions relevo wrote.
   - `release-check`: the last release check.
   - `planner.pruned_at`: when the MasterMind registry was last pruned.
+  - `history.pruned_at`: when the aged availability and latency rows were
+    last deleted. Each machine prunes its own file on its own clock.
   - `ingested.archive.*`: one entry per archived binding already swept into
     the mirror, keyed by record id.
   - `mirror-dedupe.v1` / `mirror-dedupe.v2`: the run-once markers of the

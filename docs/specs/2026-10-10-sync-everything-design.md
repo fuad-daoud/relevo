@@ -650,9 +650,9 @@ Each step is one PR with sandbox evidence before merge.
 3. **Signed shared docs.** Passphrase key, signing, hybrid clock,
    `shared_outbox`, config layers, gates, consents, the files config points
    at, agent re-render.
-4. **Availability and latency** as history tables. Shipped: the tables, the
-   origin refusal, the never-exported age prune, the combined display reads and
-   the kv migration in migration 029 and the readers above.
+4. **Availability and latency** as history tables: the tables, the origin
+   refusal, the never-exported age prune, the combined display reads and the kv
+   migration.
 5. **Secrets and the new-machine flow.** Allow-list encryption, unlock,
    rekey, `invite` and `--join`.
 6. **Ownership.** The `writer` column, `handover`, `takeover`,
