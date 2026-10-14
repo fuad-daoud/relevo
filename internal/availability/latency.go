@@ -10,8 +10,10 @@ import (
 )
 
 // LatencyRetainWindow is how long a sample is kept before Prune drops it,
-// matching HistoryRetainWindow so both records age out together.
-const LatencyRetainWindow = 30 * 24 * time.Hour
+// matching HistoryRetainWindow so both records age out together. It is
+// db.HistoryWindow rather than a number written here, for the reason the
+// availability window names.
+const LatencyRetainWindow = db.HistoryWindow
 
 // Sample records one probe: how long a candidate took to produce its first
 // model output, and how long the whole run took. Err is "" on success; a

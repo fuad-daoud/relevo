@@ -65,13 +65,7 @@ func AppendEntryLocked(d Deps, e Entry) error {
 	if err := mutateLedgerLocked(d, stampedSubjects(e), func(l Ledger) Ledger { return l.Append(e) }); err != nil {
 		return err
 	}
-	h, err := loadHistory(d.Gates)
-	if err == nil {
-		err = SaveHistory(d.Gates, h.Prune(d.Now()).Append(FromEntry(e, ProviderOf)))
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "relevo: could not record history: %v\n", err)
-	}
+	recordEvent(d, FromEntry(e, ProviderOf))
 	return nil
 }
 
@@ -259,7 +253,7 @@ func Available(d Deps, subject, source string) (provider string, removed int, er
 		}
 
 		if removed > 0 {
-			ev := Event{
+			recordEvent(d, Event{
 				At:       d.Now(),
 				Kind:     Cleared,
 				Provider: provider,
@@ -267,14 +261,7 @@ func Available(d Deps, subject, source string) (provider string, removed int, er
 				Source:   source,
 				Note:     fmt.Sprintf("cleared %d entries", removed),
 				Since:    oldest,
-			}
-			h, herr := loadHistory(d.Gates)
-			if herr == nil {
-				herr = SaveHistory(d.Gates, h.Prune(d.Now()).Append(ev))
-			}
-			if herr != nil {
-				fmt.Fprintf(os.Stderr, "relevo: could not record history: %v\n", herr)
-			}
+			})
 		}
 
 		return nil

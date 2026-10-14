@@ -64,7 +64,7 @@ func (i *Importer) writeChunk(chunk []Entry) (applied int, deferred []Entry, ref
 	err = i.db.Tx(func(tx *db.Tx) error {
 		applied, deferred = 0, nil
 		for n, e := range chunk {
-			_, aerr := applyEntry(tx, e)
+			_, aerr := applyEntry(tx, e, i.clock())
 			switch {
 			case aerr == nil:
 				applied++

@@ -3,6 +3,7 @@ package synclog
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 )
@@ -44,9 +45,21 @@ type Importer struct {
 	signedFrom  map[string]int
 	localSigned map[string]int
 	badBoundary map[string]error
+	// now is the clock the arrival window of the append-only tables is judged
+	// against. It is a field rather than a call to time.Now so a case can place
+	// a row on either side of the window without moving the wall clock.
+	now func() time.Time
 	// AfterBatch runs after each batch or snapshot chunk is written, so a
 	// caller can account for the transfer before the next one starts.
 	AfterBatch func()
+}
+
+// clock is the arrival window's clock, never nil after NewImporter.
+func (i *Importer) clock() time.Time {
+	if i.now == nil {
+		return time.Now()
+	}
+	return i.now()
 }
 
 func (i *Importer) batchDone() {
@@ -67,7 +80,7 @@ func (i *Importer) batchDone() {
 func NewImporter(d *db.DB, t LogTransport) *Importer {
 	_, known := d.SchemaVersions()
 	mover, staging := blobWiring(t)
-	return &Importer{db: d, transport: t, known: known, mover: mover, staging: staging}
+	return &Importer{db: d, transport: t, known: known, mover: mover, staging: staging, now: time.Now}
 }
 
 // ImportResult is what one import moved: the batches it applied and the entries
@@ -381,7 +394,7 @@ func (i *Importer) applyEntries(batch, rows []Entry, docs int, marks map[string]
 	err := i.db.Tx(func(tx *db.Tx) error {
 		applied = 0
 		for _, e := range rows {
-			handled, err := applyEntry(tx, e)
+			handled, err := applyEntry(tx, e, i.now())
 			if err != nil {
 				return err
 			}
@@ -466,7 +479,13 @@ func (i *Importer) held(batch []Entry) (Entry, bool) {
 // row out of its machine's hands. A row this file does not hold has no owner to
 // check against, so an upsert of one places the row under the claiming origin
 // and a delete of one has already happened.
-func applyEntry(tx *db.Tx, e Entry) (bool, error) {
+//
+// now is the clock the append-only tables' arrival window is judged against; it
+// decides nothing about any other table. A row that arrived already older than
+// the window is skipped rather than written, and still counts as handled: it did
+// its work by being read, so the mark that covers it moves in the same
+// transaction and the batch is not offered again.
+func applyEntry(tx *db.Tx, e Entry, now time.Time) (bool, error) {
 	if _, ok := SharedTable(e.Table); !ok {
 		return false, fmt.Errorf("synclog: import %s %s: %q is not a shared table: %w",
 			e.Table, e.PK, e.Table, db.ErrInvalid)
@@ -485,6 +504,16 @@ func applyEntry(tx *db.Tx, e Entry) (bool, error) {
 	}
 	if err := owns(tx, e); err != nil {
 		return false, err
+	}
+	skip, err := historyEntry(e, values, now)
+	if err != nil {
+		return false, err
+	}
+	if skip {
+		// A row that arrives already out of the window did its work by being
+		// read: it is reported applied so the mark moves in this same
+		// transaction and the batch is not offered again.
+		return true, nil
 	}
 	if e.Op == OpDelete {
 		if err := tx.ExchangeDelete(e.Table, e.PK); err != nil {

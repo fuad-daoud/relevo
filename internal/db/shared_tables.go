@@ -58,8 +58,11 @@ var AppendOnlyTables = []string{
 	"latency_sample",
 }
 
-// appendOnly reports whether tbl's rows are immutable.
-func appendOnly(tbl string) bool {
+// AppendOnly reports whether tbl's rows are immutable: never updated, and
+// deleted only by age. It is what the importer and the reconciler ask before
+// they treat a table's rows as a window rather than as a set, and it is the same
+// set the drift test takes.
+func AppendOnly(tbl string) bool {
 	for _, name := range AppendOnlyTables {
 		if name == tbl {
 			return true

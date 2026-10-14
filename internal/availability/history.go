@@ -9,8 +9,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// HistoryRetainWindow is how long an event is kept before Prune drops it.
-const HistoryRetainWindow = 30 * 24 * time.Hour
+// HistoryRetainWindow is how long an event is kept before Prune drops it. It
+// is db.HistoryWindow rather than a number written here, because the importer
+// and the reconciler judge an arriving or a proposed row against the same
+// window and the three must not be able to disagree about where it ends.
+const HistoryRetainWindow = db.HistoryWindow
 
 // Cleared is the history-only kind a manual clear records. It never
 // enters the ledger (ledger validation would reject it there); it exists

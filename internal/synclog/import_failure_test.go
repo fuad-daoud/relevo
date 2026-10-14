@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 )
@@ -286,7 +287,7 @@ func TestApplyEntryRefusesAMalformedEntry(t *testing.T) {
 			entry.Origin = "m1"
 			var handled bool
 			err := peer.Tx(func(tx *db.Tx) error {
-				ok, err := applyEntry(tx, entry)
+				ok, err := applyEntry(tx, entry, time.Now())
 				handled = ok
 				return err
 			})

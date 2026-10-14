@@ -274,13 +274,7 @@ func recordLatency(d Deps, r ProbeResult) {
 		return
 	}
 
-	err := d.Store.WithLock(func(*store.Tx) error {
-		h, err := LoadLatency(d.Latency)
-		if err != nil {
-			return err
-		}
-		return SaveLatency(d.Latency, h.Prune(d.Now()).Append(r.Sample))
-	})
+	err := d.Store.WithLock(func(*store.Tx) error { return recordSample(d, r.Sample) })
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "relevo: could not record latency: %v\n", err)
 	}

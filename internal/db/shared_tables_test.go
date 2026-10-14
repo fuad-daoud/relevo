@@ -130,7 +130,7 @@ func TestOutboxTriggersCoverEverySharedTable(t *testing.T) {
 // three; an append-only one records the insert alone, because its rows are never
 // updated and its only delete is the age prune.
 func outboxOpsFor(tbl string) []outboxOp {
-	if appendOnly(tbl) {
+	if AppendOnly(tbl) {
 		return outboxOps[:1]
 	}
 	return outboxOps
@@ -143,7 +143,7 @@ func outboxOpsFor(tbl string) []outboxOp {
 // writer is allowed to make.
 func assertNoUpdateOrDeleteTrigger(t *testing.T, bodies map[string]string, table SharedTable) {
 	t.Helper()
-	if !appendOnly(table.Name) {
+	if !AppendOnly(table.Name) {
 		return
 	}
 	for _, op := range outboxOps[1:] {

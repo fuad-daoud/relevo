@@ -146,7 +146,7 @@ func TestSyncOutboxDriftCoversSharedTables(t *testing.T) {
 		// and a delete trigger here would export every one of them to every
 		// peer. The check takes the named set, so a table that joins it is
 		// recorded in shared_tables.go rather than inferred from the bodies.
-		if appendOnly(table.Name) {
+		if AppendOnly(table.Name) {
 			assertNoAppendOnlyTrigger(t, bodies, table.Name, outboxOps[1], outboxOps[2])
 		}
 	}

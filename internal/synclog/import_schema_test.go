@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 )
@@ -399,9 +400,13 @@ func TestHistorySchemaHoldsTheBatchAndKeepsItsRoundRow(t *testing.T) {
 	log := NewMemTransport("m1")
 	appendBatch(t, log, historyEventEntry(t, "01H", know), historyRoundEntry(t, "rd1", know))
 
-	// The reader is still at 028.
+	// The reader is still at 028. Both readers below are pinned to a clock on
+	// which the batch's event is inside the retention window, so the case is
+	// about the schema version rather than about an arrival that has aged out.
+	clock := func() time.Time { return time.Date(2026, time.January, 15, 0, 0, 0, 0, time.UTC) }
 	behind := NewImporter(peer, log.OnLog("m2"))
 	behind.known = know - 1
+	behind.now = clock
 	got, err := behind.Import()
 	if err != nil {
 		t.Fatalf("import from a writer on 029 into a reader at 028: %v", err)
@@ -429,6 +434,7 @@ func TestHistorySchemaHoldsTheBatchAndKeepsItsRoundRow(t *testing.T) {
 	// The same entries against a reader that knows 029.
 	ahead := NewImporter(peer, log.OnLog("m2"))
 	ahead.known = know
+	ahead.now = clock
 	got, err = ahead.Import()
 	if err != nil {
 		t.Fatalf("import once this machine knows 029: %v", err)

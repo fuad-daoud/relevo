@@ -366,6 +366,11 @@ func IngestDeps(rt Runtime) ingest.Deps {
 // through nil-safe as time.Now, since a zero Runtime (a test) has no clock; the
 // roles registry is passed as the lazy builder rt.RoleRegistry, so availability
 // never builds it eagerly.
+//
+// History is rt.DB -- the shared file, whose outbox is the one the sync drains --
+// while Gates and Latency are rt.Gates and rt.Latency, which are the
+// machine-local kv views the documents live in. A row that travels and a
+// document that travels are not the same thing, so they are not the same handle.
 func AvailabilityDeps(rt Runtime) availability.Deps {
 	now := rt.Now
 	if now == nil {
@@ -377,6 +382,7 @@ func AvailabilityDeps(rt Runtime) availability.Deps {
 		Accounts:     rt.Accounts,
 		Gates:        rt.Gates,
 		Latency:      rt.Latency,
+		History:      rt.DB,
 		Now:          now,
 		Roles:        rt.Roles,
 		RoleRegistry: rt.RoleRegistry,
