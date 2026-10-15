@@ -141,6 +141,85 @@ func TestSyncPushAndPullMoveTheLog(t *testing.T) {
 	}
 }
 
+// TestSyncPushAndPullMoveNothingFromTheHistoryTables pins the production
+// wiring of the two tables migration 029 added, while they are still empty.
+// Nothing writes them yet: the kv availability and latency documents are still
+// the authoritative read, so every daemon tick, every verb and every join
+// reaches them through the existing row walk and finds nothing.
+//
+// The round below is the real steady pipeline over the real split pair, so what
+// is pinned is that adding two tables to the shared list changed nothing about a
+// push or a pull: the seeded row still travels, and neither history table is
+// named in the outbox the push drained or in what the pull reports. A drain or a
+// walk that reached for a table missing from this build's schema would refuse
+// rather than pass quietly, so this is where that would show.
+func TestSyncPushAndPullMoveNothingFromTheHistoryTables(t *testing.T) {
+	f := newVerbFixture(t)
+	ctx := context.Background()
+	if _, err := f.shared.RecordPut(db.Record{
+		Owner: "m1", Name: "webshop", State: "open", JSON: "{}",
+		CreatedAt: time.Unix(0, 0).UTC(), UpdatedAt: time.Unix(0, 0).UTC(),
+	}); err != nil {
+		t.Fatalf("seed an owned row: %v", err)
+	}
+
+	f.opens, f.client.Calls = 0, nil
+	push := f.runner.Run(ctx, &wire.SyncVerb{Verb: wire.SyncVerbPush}, nil)
+	if !push.OK {
+		t.Fatalf("push refused: %s", push.Message)
+	}
+	if !push.Applied {
+		t.Error("push handed the log nothing, want the seeded row: the empty history tables changed nothing")
+	}
+
+	f.client.Calls = nil
+	pull := f.runner.Run(ctx, &wire.SyncVerb{Verb: wire.SyncVerbPull}, nil)
+	if !pull.OK {
+		t.Fatalf("pull refused: %s", pull.Message)
+	}
+	if f.opens != 0 {
+		t.Errorf("a one-shot opened %d handles, want none", f.opens)
+	}
+
+	// What the export handed over is what an empty history table must not add to
+	// it: the seeded row travels and neither history table is named.
+	if len(f.client.Appended) == 0 {
+		t.Fatal("the export handed the log nothing at all, want the seeded row")
+	}
+	exported := appendTables(t, f.client.Appended)
+	for _, tbl := range []string{"availability_event", "latency_sample"} {
+		if strings.Contains(exported, tbl) {
+			t.Errorf("the export handed over %q, want neither history table while both are empty (exported %q)",
+				tbl, exported)
+		}
+	}
+	for _, report := range []struct{ verb, message string }{
+		{"push", push.Message}, {"pull", pull.Message},
+	} {
+		for _, tbl := range []string{"availability_event", "latency_sample"} {
+			if strings.Contains(report.message, tbl) {
+				t.Errorf("%s reports %q, want nothing about an empty history table", report.verb, report.message)
+			}
+		}
+	}
+}
+
+// appendTables is every distinct table name the export handed over, joined, so a
+// case can say what travelled without counting one table at a time.
+func appendTables(t *testing.T, entries []synclog.Entry) string {
+	t.Helper()
+	seen := map[string]bool{}
+	var out []string
+	for _, e := range entries {
+		if seen[e.Table] {
+			continue
+		}
+		seen[e.Table] = true
+		out = append(out, e.Table)
+	}
+	return strings.Join(out, ",")
+}
+
 // called reports whether a transport recorded the named call, so a test can say
 // one-shots drove the log without depending on the order they did it in.
 func called(r *recordTransport, name string) bool {

@@ -29,15 +29,16 @@ func StatsInputs(rt Runtime, since time.Time) (in stats.Inputs, warnings []strin
 	}
 
 	// Latency is read exactly as formatCandidates reads it: a failure warns
-	// and leaves the report without ttft values.
+	// and leaves the report without ttft values. Both it and the history below
+	// read the two history tables, so every origin's rows inside the window are
+	// combined -- which is the whole point of the tables over the two kv
+	// documents they replaced.
+	deps := AvailabilityDeps(rt)
 	var lat availability.LatencyHistory
-	if rt.Latency != nil {
-		loaded, lerr := availability.LoadLatency(rt.Latency)
-		if lerr != nil {
-			warnings = append(warnings, "could not read latency: "+lerr.Error())
-		} else {
-			lat = loaded
-		}
+	if loaded, lerr := availability.LoadLatency(deps); lerr != nil {
+		warnings = append(warnings, "could not read latency: "+lerr.Error())
+	} else {
+		lat = loaded
 	}
 	// The shell's clock is read once, so the prune and the report's open end
 	// agree. rt.Now is time.Now in production; the guard keeps a zero Runtime
@@ -48,7 +49,7 @@ func StatsInputs(rt Runtime, since time.Time) (in stats.Inputs, warnings []strin
 	}
 	lat = lat.Prune(now)
 
-	hist, herr := availability.LoadHistory(AvailabilityDeps(rt))
+	hist, herr := availability.LoadHistory(deps)
 	if herr != nil {
 		warnings = append(warnings, "could not read history: "+herr.Error())
 	}
@@ -57,7 +58,7 @@ func StatsInputs(rt Runtime, since time.Time) (in stats.Inputs, warnings []strin
 		Rows:    rows,
 		Landed:  landed,
 		History: hist,
-		Gates:   availability.Gates(AvailabilityDeps(rt)),
+		Gates:   availability.Gates(deps),
 		TTFT: func(token string) (int64, bool) {
 			s := lat.Summary(token)
 			return s.TTFTP50MS, s.N > 0

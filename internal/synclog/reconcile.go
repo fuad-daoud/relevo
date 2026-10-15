@@ -344,6 +344,14 @@ func (r *Reconciler) nextUpserts(tx *db.Tx, limit int) ([]Entry, error) {
 // then decides -- which is the price of not re-exporting the file each time.
 func (r *Reconciler) inspectUpsert(out *[]Entry, tbl string, row db.ExchangeRow) error {
 	key := rowKey{table: tbl, pk: row.PK}
+	if historyRowAged(tbl, row, r.historyCutoffMS()) {
+		// A row that has aged out of the window is not a row the log is
+		// missing. It is recorded as seen, so the delete phase reads this
+		// walk's having found it rather than its not holding it, and it
+		// proposes nothing.
+		r.seen[key] = true
+		return nil
+	}
 	if r.head.names(key) {
 		r.seen[key] = true
 	}
@@ -450,7 +458,15 @@ func (r *Reconciler) nextDeletes(tx *db.Tx, limit int) ([]Entry, error) {
 // file does hold the row: a head row the file holds under another installation is
 // not this walk's to remove. Reading the key back also surfaces a head key this
 // schema cannot parse, which no delete could name correctly.
+//
+// A head row of an append-only table never becomes a delete. Those rows are
+// removed only by age, and the age delete is never recorded, so a head row this
+// file does not hold is one that aged out here or on the machine that wrote it:
+// never one this walk may remove, and never drift worth reporting.
 func (r *Reconciler) deleteFor(tx *db.Tx, tbl, pk string) (*Entry, error) {
+	if db.AppendOnly(tbl) {
+		return nil, nil
+	}
 	_, found, err := tx.ReadExchangeRow(tbl, pk)
 	if err != nil {
 		return nil, fmt.Errorf("read %s %s: %w", tbl, pk, err)

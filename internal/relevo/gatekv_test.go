@@ -12,8 +12,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 )
 
-// testGateKV returns a real t.TempDir() database for a Runtime's Gates or
-// Latency field (P3b plan §7: new tests use t.TempDir() DBs only).
+// testGateKV returns a real t.TempDir() database for a Runtime's Gates field
+// (P3b plan §7: new tests use t.TempDir() DBs only).
 func testGateKV(t *testing.T) db.KV {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
@@ -32,6 +32,20 @@ func testGates(t *testing.T) db.KV {
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
+
+// testHistoryDB returns the shared file a Runtime's History field binds: the
+// one the availability_event and latency_sample rows live in, rather than the
+// machine-local file the ledger is a kv row of. It is a second file beside the
+// gates one on purpose, because it is a second file in production.
+func testHistoryDB(t *testing.T) *db.DB {
+	t.Helper()
+	d, err := db.OpenWith(filepath.Join(t.TempDir(), "relevo.db"), db.Options{Origin: "01ORIGIN"})
+	if err != nil {
+		t.Fatalf("db.OpenWith: %v", err)
 	}
 	t.Cleanup(func() { _ = d.Close() })
 	return d

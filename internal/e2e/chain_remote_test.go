@@ -532,7 +532,7 @@ func newChainRemoteClient(t *testing.T, url, fingerprint, home string) (relevo.R
 		Policy:      pol,
 		Registry:    registry,
 		Gates:       mdb,
-		Latency:     mdb,
+		History:     mdb,
 		Now:         time.Now,
 		Channels:    &delivery.KVClaims{KV: db.TxKV{DB: mdb}},
 		MasterMinds: reg,

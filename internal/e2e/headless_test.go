@@ -607,7 +607,7 @@ func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *
 		Candidates:  candidates,
 		Registry:    regRoles,
 		Gates:       mdb,
-		Latency:     mdb,
+		History:     mdb,
 		Policy:      pol,
 		Now:         time.Now,
 		Channels:    &delivery.KVClaims{KV: db.TxKV{DB: mdb}},

@@ -515,3 +515,88 @@ func TestBlockedText(t *testing.T) {
 		}
 	}
 }
+
+// A provider name in the history block is a column of a history row, and a
+// history row can have arrived from another installation. So the byte ranges a
+// terminal acts on -- C0 (ESC among them), DEL and C1, and the newline that
+// would start a row of its own -- are dropped on the way out, and the row itself
+// is untouched: this changes what a block prints, not what the file holds.
+func TestFormatHistoryDropsControlBytesFromAProvider(t *testing.T) {
+	t.Parallel()
+
+	const hostile = "open\u001b[31mcode\u007f\u0085\u0007/é\ncline-pass  rate_limited 99"
+	hist := availability.History{Events: []availability.Event{
+		{At: baseTime, Kind: availability.RateLimited, Provider: hostile, Source: "planner"},
+	}}
+	clean := availability.History{Events: []availability.Event{
+		{At: baseTime, Kind: availability.RateLimited, Provider: "open", Source: "planner"},
+	}}
+
+	got := formatHistory(hist, time.UTC)
+
+	if r := controlRunes(got); r != "" {
+		t.Fatalf("formatHistory left %q in the block, want every control byte dropped", r)
+	}
+	var counts [24]int
+	counts[baseTime.Hour()] = 1
+	if !strings.Contains(got, wantHourRow("open[31mcode/écline-pass  rate_limited 99", availability.RateLimited, counts)) {
+		t.Errorf("formatHistory =\n%s\nwant the printable part of the provider kept", got)
+	}
+	// One row in, one row out: the provider could not start a line of its own,
+	// so the block has exactly the shape the clean provider's has.
+	if want, have := len(strings.Split(formatHistory(clean, time.UTC), "\n")), len(strings.Split(got, "\n")); have != want {
+		t.Errorf("formatHistory of a hostile provider printed %d lines, want the clean provider's %d", have, want)
+	}
+	// A cleared event for the same provider puts the name in the blocked-for
+	// summary too, which is a second place the same string is drawn.
+	cleared := availability.History{}.Append(availability.Event{
+		At: baseTime, Kind: availability.RateLimited, Provider: hostile, Source: "planner",
+	})
+	cleared = cleared.Append(clearedEvent(hostile, baseTime.Add(time.Hour), time.Hour))
+	blocked := formatHistory(cleared, time.UTC)
+	if r := controlRunes(blocked); r != "" {
+		t.Fatalf("the blocked-for summary left %q in the block, want every control byte dropped", r)
+	}
+	if !strings.Contains(blocked, "  open[31mcode/écline-pass  rate_limited 99 1 clear ") {
+		t.Errorf("formatHistory =\n%s\nwant the printable part of the provider kept in the summary", blocked)
+	}
+}
+
+// A clean provider, and one with printable non-ASCII in it, render exactly as
+// they did before: sanitizing is not allowed to change a block a peer did not
+// try to break.
+func TestFormatHistoryLeavesACleanProviderByteIdentical(t *testing.T) {
+	t.Parallel()
+
+	for _, provider := range []string{"cline-pass", "claude/订阅-m", "тест"} {
+		hist := availability.History{Events: []availability.Event{
+			{At: baseTime, Kind: availability.RateLimited, Provider: provider, Source: "planner"},
+		}}
+		want := formatHistory(availability.History{Events: []availability.Event{
+			{At: baseTime, Kind: availability.RateLimited, Provider: provider, Source: "planner"},
+		}}, time.UTC)
+		if got := formatHistory(hist, time.UTC); got != want {
+			t.Errorf("formatHistory of %q =\n%s\nwant\n%s", provider, got, want)
+		}
+		if !strings.Contains(want, provider) {
+			t.Errorf("formatHistory of %q dropped the provider itself:\n%s", provider, want)
+		}
+	}
+}
+
+// controlRunes is every byte a terminal would act on rather than print, as one
+// string, so a case names what leaked rather than counting bytes. The block's own
+// line breaks are excluded: they are what separates rows, and a provider that
+// could contribute one is caught by the line count instead.
+func controlRunes(s string) string {
+	var bad []string
+	for _, r := range s {
+		if r == '\n' {
+			continue
+		}
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			bad = append(bad, fmt.Sprintf("%U", r))
+		}
+	}
+	return strings.Join(bad, " ")
+}

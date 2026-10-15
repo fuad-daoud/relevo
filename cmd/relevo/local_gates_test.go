@@ -52,13 +52,14 @@ func assertNotOnShared(t *testing.T, d *db.DB, key string) {
 	}
 }
 
-// TestTheRuntimeGatesReadTheMachineLocalFile pins the ledger and the latency
-// history the runtime wires: both are the local file's, and neither is reachable
-// through the shared handle behind the same runtime.
+// TestTheRuntimeGatesReadTheMachineLocalFile pins the ledger the runtime wires:
+// it is the local file's, and it is not reachable through the shared handle
+// behind the same runtime. The two history tables are the opposite case and
+// TestTheRuntimeHistoryReadsTheSharedFile pins them.
 func TestTheRuntimeGatesReadTheMachineLocalFile(t *testing.T) {
 	rt, d := localPairRuntime(t)
-	if rt.Gates == nil || rt.Latency == nil {
-		t.Fatal("the runtime wired no gates or no latency store")
+	if rt.Gates == nil {
+		t.Fatal("the runtime wired no gates store")
 	}
 
 	if err := rt.Gates.KVPut("availability.ledger", []byte(`{"entries":[]}`)); err != nil {
@@ -68,13 +69,47 @@ func TestTheRuntimeGatesReadTheMachineLocalFile(t *testing.T) {
 	if _, err := availability.LoadLedger(rt.Gates); err != nil {
 		t.Fatalf("LoadLedger through Gates: %v", err)
 	}
+}
 
-	if err := rt.Latency.KVPut("latency", []byte(`{"samples":[]}`)); err != nil {
-		t.Fatalf("write the latency history through Latency: %v", err)
+// TestTheRuntimeHistoryReadsTheSharedFile pins the split the other way: a
+// history row travels, so the file the rows live in is the shared one, and a
+// probe on this machine lands where a peer can import it. The retired
+// machine-local latency document is gone, so nothing local holds the window.
+func TestTheRuntimeHistoryReadsTheSharedFile(t *testing.T) {
+	rt, d := localPairRuntime(t)
+	if rt.History == nil {
+		t.Fatal("the runtime wired no history store")
 	}
-	assertNotOnShared(t, d, "latency")
-	if _, err := availability.LoadLatency(rt.Latency); err != nil {
-		t.Fatalf("LoadLatency through Latency: %v", err)
+
+	row := db.AvailabilityEvent{
+		ID: db.NewID(), AtMS: db.UnixMS(time.Now()), Kind: "rate_limited",
+		Provider: "anthropic", Source: "planner",
+	}
+	if err := rt.History.InsertAvailabilityEvent(d.Origin(), row); err != nil {
+		t.Fatalf("write a history row through History: %v", err)
+	}
+
+	rows, err := rt.History.AvailabilityEvents(0)
+	if err != nil {
+		t.Fatalf("read the history rows back: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != row.ID {
+		t.Errorf("rows = %+v, want the one the runtime wrote", rows)
+	}
+
+	// The retired documents were the local file's rows. Nothing writes them and
+	// nothing reads them, so neither file carries them.
+	for _, key := range []string{"availability", "latency"} {
+		if _, ok, err := d.KVGet(key); err != nil {
+			t.Fatalf("read %s from the shared file: %v", key, err)
+		} else if ok {
+			t.Errorf("the shared file still carries a %q document", key)
+		}
+		if _, ok, err := rt.Gates.KVGet(key); err != nil {
+			t.Fatalf("read %s from the local file: %v", key, err)
+		} else if ok {
+			t.Errorf("the local file still carries a %q document", key)
+		}
 	}
 }
 

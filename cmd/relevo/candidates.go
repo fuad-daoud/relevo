@@ -100,14 +100,12 @@ func cmdCandidates(args []string) error {
 // formatCandidates renders the candidate table cmdCandidates' non-probe form
 // prints -- the candidates block `relevo config` shows.
 func formatCandidates(rt relevo.Runtime) string {
+	deps := relevo.AvailabilityDeps(rt)
 	h := availability.LatencyHistory{}
-	if rt.Latency != nil {
-		loaded, err := availability.LoadLatency(rt.Latency)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "relevo: could not read latency: %v\n", err)
-		} else {
-			h = loaded
-		}
+	if loaded, err := availability.LoadLatency(deps); err != nil {
+		fmt.Fprintf(os.Stderr, "relevo: could not read latency: %v\n", err)
+	} else {
+		h = loaded
 	}
 	h = h.Prune(rt.Now())
 
@@ -116,7 +114,7 @@ func formatCandidates(rt relevo.Runtime) string {
 		lat[ref] = h.Summary(ref)
 	}
 
-	return view.FormatCandidatesLatencyFor(rt.RoleRegistry(), rt.Candidates, availability.Gates(relevo.AvailabilityDeps(rt)), lat)
+	return view.FormatCandidatesLatencyFor(rt.RoleRegistry(), rt.Candidates, availability.Gates(deps), lat)
 }
 
 // loadHistory reads the availability history for display, treating an

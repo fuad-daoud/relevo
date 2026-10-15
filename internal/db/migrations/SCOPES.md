@@ -16,7 +16,11 @@ outbox, and changes no table's scope either. Migrations 025 onward add the
 documents' own bookkeeping, machine-local like the outbox for the same reason: a
 row there is about what this machine has sent, seen or parked, and two machines
 sharing one would each believe the other had done it. The documents themselves
-are not tables and are listed under their own heading below. The rules a
+are not tables and are listed under their own heading below. Migration 029 adds
+`availability_event` and `latency_sample`, which are shared like the mirror
+tables and listed in the table below; the `availability` and `latency` kv
+documents they replaced were migrated into them and deleted, and the local marker
+`sync.history_rows.v1` records that the pass ran. The rules a
 migration must follow are in
 [`README.md`](README.md); the file that created a table is its history.
 
@@ -43,6 +47,18 @@ it, from migration 014.
 | mirror `event` | One event of a mirror binding. No column: it inherits origin through `binding_id`. |
 | mirror `artifact` | One captured file of a mirror round. No column: it inherits origin through `round_id`. |
 | mirror `transcript` | A round's or a session's stream records. No column: it inherits origin through `owner_id`, which is a round or a mastermind id. |
+| `availability_event` | One availability observation: a ledger entry mirrored into the 30-day window the ledger itself does not keep. `origin` is a root column of its own, and `at_ms` is the observation's time as Unix milliseconds in UTC rather than text, because today's events carry mixed offsets and a text comparison misorders them. Append-only: a row is never updated and is deleted only by age, so it carries an insert trigger alone and the age delete is never exported. |
+| `latency_sample` | One probe of one candidate: time to first output, whole-run time, and the error when it failed. `host` is kept, because a latency figure is only readable next to the machine that produced it. Root and append-only, for the same reasons as `availability_event`. |
+
+Both history tables are written and read now. The `availability` and `latency`
+kv documents they replaced were migrated into these tables once, behind the
+local marker `sync.history_rows.v1`, and then deleted, so the tables are the
+only place either window lives. Every display read combines all origins, which
+is what a panel wants and what the two documents could never have given it.
+Behaviour-deciding reads stay on this machine's own rows and on the ledger
+whatever the readers become: peers' outages and latencies must never gate a pick
+on this machine, which is why a peer having them is a display concern and not a
+scheduling one.
 
 A parent id is a ULID, so inheritance stays unambiguous when two installations
 hold rows with the same name. Child rows get no origin column of their own,
@@ -72,8 +88,10 @@ These are the destination for the second, local-only database file.
     and in no document -- it says this binary could not start that candidate
     here, which is true of this host alone -- and an entry this build cannot
     read stays here too, for the same reason the ledger keeps it raw.
-  - `availability`, `latency`: this machine's availability history and
-    candidate latency samples.
+  - `sync.history_rows.v1`: the marker recording that the `availability` and
+    `latency` kv documents moved into `availability_event` and `latency_sample`
+    and were deleted. Local, like every other run-once marker, because a
+    machine's documents are its own and there is nothing for a peer to move.
   - `serve.*` (`serve.clients`, `serve.ui`, `serve.ledger`): serve-wide state
     read and written on the server host.
   - `ui`: the cockpit's remembered query and sort column (`serve.ui` on a
@@ -81,6 +99,8 @@ These are the destination for the second, local-only database file.
   - `agents-manifest`: the checksums of the agent definitions relevo wrote.
   - `release-check`: the last release check.
   - `planner.pruned_at`: when the MasterMind registry was last pruned.
+  - `history.pruned_at`: when the aged availability and latency rows were
+    last deleted. Each machine prunes its own file on its own clock.
   - `ingested.archive.*`: one entry per archived binding already swept into
     the mirror, keyed by record id.
   - `mirror-dedupe.v1` / `mirror-dedupe.v2`: the run-once markers of the

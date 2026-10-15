@@ -1,8 +1,6 @@
 package availability
 
 import (
-	"encoding/json"
-	"fmt"
 	"sort"
 	"time"
 
@@ -10,8 +8,10 @@ import (
 )
 
 // LatencyRetainWindow is how long a sample is kept before Prune drops it,
-// matching HistoryRetainWindow so both records age out together.
-const LatencyRetainWindow = 30 * 24 * time.Hour
+// matching HistoryRetainWindow so both records age out together. It is
+// db.HistoryWindow rather than a number written here, for the reason the
+// availability window names.
+const LatencyRetainWindow = db.HistoryWindow
 
 // Sample records one probe: how long a candidate took to produce its first
 // model output, and how long the whole run took. Err is "" on success; a
@@ -38,38 +38,12 @@ type Summary struct {
 	TTFTP50MS int64
 }
 
-// latencyKey is the kv row the latency document lives in.
+// latencyKey is the retired kv row the latency document lived in. Nothing
+// writes or reads it; MigrateHistoryDocuments deletes it once the samples it
+// holds have moved into latency_sample, and names it here so the migration and
+// the deletion cannot spell it differently. The json tags above are its shape,
+// kept for that decode alone.
 const latencyKey = "latency"
-
-// LoadLatency reads the latency history from the kv row "latency". An absent
-// row is an empty LatencyHistory and no error: a
-// fresh install has probed nothing yet. Invalid JSON is an error, so a torn or
-// hand-edited document is reported rather than read as empty.
-func LoadLatency(kv db.KV) (LatencyHistory, error) {
-	data, ok, err := kv.KVGet(latencyKey)
-	if err != nil {
-		return LatencyHistory{}, err
-	}
-	if !ok {
-		return LatencyHistory{}, nil
-	}
-
-	var h LatencyHistory
-	if err := json.Unmarshal(data, &h); err != nil {
-		return LatencyHistory{}, fmt.Errorf("decode latency: %w", err)
-	}
-
-	return h, nil
-}
-
-// SaveLatency writes the whole history document to the kv row "latency".
-func SaveLatency(kv db.KV, h LatencyHistory) error {
-	data, err := json.MarshalIndent(h, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal latency: %w", err)
-	}
-	return kv.KVPut(latencyKey, data)
-}
 
 // Prune returns a new LatencyHistory containing every sample no older than
 // LatencyRetainWindow, in order. It does not mutate the receiver's slice.

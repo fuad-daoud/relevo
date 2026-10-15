@@ -172,6 +172,8 @@ var seededSharedKeys = []struct {
 	{"event", `["e1"]`},
 	{"artifact", `["a1"]`},
 	{"transcript", `["t1"]`},
+	{"availability_event", `["h1"]`},
+	{"latency_sample", `["s1"]`},
 }
 
 // sharedRowFixture writes the row each entry of seededSharedKeys names, with BLOB
@@ -233,6 +235,13 @@ func seedSharedRows() []string {
 		 VALUES ('a1', 'rd1', 'report', '', 'x', 1, 'sha', 't')`,
 		`INSERT INTO transcript (id, owner_kind, owner_id, seq, record_json, record_json_codec, rendered, rendered_codec)
 		 VALUES ('t1', 'round', 'rd1', 1, X'7B7DFF', 1, X'0A1B', 1)`,
+		// The two history tables. at_ms and since_ms are integers, which is the
+		// point of storing them that way: an integer orders two events whose
+		// RFC3339 renderings disagree, and the age prune compares against it.
+		`INSERT INTO availability_event (id, at_ms, kind, provider, account, token, source, binding, note, since_ms, origin)
+		 VALUES ('h1', 1767225600000, 'rate_limited', 'group', 'acct', '', 'probe', 'b1', 'slow', 1767139200000, 'instH')`,
+		`INSERT INTO latency_sample (id, at_ms, token, host, ttft_ms, total_ms, err, origin)
+		 VALUES ('s1', 1767225600000, 'tok', 'host-a', 120, 400, '', 'instH')`,
 	}
 }
 
@@ -768,6 +777,11 @@ func tableColumnNames(t *testing.T, d *DB, tbl string) []string {
 // different column than its trigger would attribute a child's rows to the wrong
 // installation. Comparing against the applied body rather than against another
 // hand-written copy is what keeps the two from drifting apart.
+//
+// An append-only table has one trigger rather than three, so its rule is
+// compared against the insert body alone; the update and delete bodies it has
+// none of are checked as absences by the drift test, which is where the whole
+// trigger set is pinned.
 func TestOwnerResolutionMatchesTriggers(t *testing.T) {
 	sqlDB := migratedSQLDB(t)
 	bodies := triggerBodies(t, sqlDB)
@@ -778,7 +792,7 @@ func TestOwnerResolutionMatchesTriggers(t *testing.T) {
 			t.Errorf("OwnerRules has no rule for the shared table %s", table.Name)
 			continue
 		}
-		for _, op := range outboxOps {
+		for _, op := range outboxOpsFor(table.Name) {
 			alias := "NEW"
 			if op.Name == "delete" {
 				alias = "OLD"
@@ -844,6 +858,9 @@ func TestResolveOwnerAttributesEachRowToItsRoot(t *testing.T) {
 		{"binding_record", `["rec1"]`, bindingRecordOrigin},
 		{"binding", `["b1"]`, bindingOrigin},
 		{"chains", `["c1"]`, chainsOrigin},
+		// The histories carry their own origin, like every other root.
+		{"availability_event", `["h1"]`, "instH"},
+		{"latency_sample", `["s1"]`, "instH"},
 		// An installation's id is its own installation id, so its row names
 		// itself rather than reading an origin column.
 		{"installation", `["instI"]`, installationID},

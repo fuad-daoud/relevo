@@ -53,7 +53,7 @@ func newRuntime(t *testing.T) Runtime {
 		Store:      store.New(t.TempDir()),
 		Candidates: candidateSet(t, testCandidatesJSON),
 		Gates:      gates,
-		Latency:    gates,
+		History:    testHistoryDB(t),
 		Now:        func() time.Time { return baseTime },
 		// Every local builder is headless since #303, so every Send needs a
 		// Runner. A test that wants "no runner" sets rt.Runner = nil.

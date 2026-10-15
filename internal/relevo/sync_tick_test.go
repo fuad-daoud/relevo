@@ -24,13 +24,18 @@ import (
 // driven again.
 
 // recordTransport is the log transport a fixture hands a runner: it answers
-// every call with a zero, so a test can look at what was driven through it.
+// every call with a zero, so a test can look at what was driven through it. It
+// keeps what was appended as well as that it was, so a case about what an export
+// handed over does not have to read the outbox the export has already cleared.
 type recordTransport struct {
 	Calls []string
+	// Appended is every entry an export handed to the log, in order.
+	Appended []synclog.Entry
 }
 
-func (r *recordTransport) Append([]synclog.Entry) ([]synclog.Entry, error) {
+func (r *recordTransport) Append(e []synclog.Entry) ([]synclog.Entry, error) {
 	r.Calls = append(r.Calls, "append")
+	r.Appended = append(r.Appended, e...)
 	return nil, nil
 }
 

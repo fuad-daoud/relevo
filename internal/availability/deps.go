@@ -20,9 +20,16 @@ type Deps struct {
 	Candidates *candidate.Set
 	// Accounts is the configured login pool. Empty on every host with no
 	// accounts, where a gate is a bare group and nothing here changes.
-	Accounts     account.Set
-	Gates        db.KV
-	Latency      db.KV
+	Accounts account.Set
+	Gates    db.KV
+	// History is the shared file the availability_event and latency_sample rows
+	// are written into, read from and pruned from. It is the shared file rather
+	// than the one Gates binds, because a history row travels through the outbox
+	// like every other shared row while a ledger row travels as a document. Nil
+	// means this machine keeps no shared file, so it records no history rows and
+	// reads an empty history -- a machine with no database, rather than a second
+	// place the window lives.
+	History      *db.DB
 	Now          func() time.Time
 	Roles        harness.RoleChecker
 	RoleRegistry func() *roles.Registry

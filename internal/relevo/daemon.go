@@ -247,6 +247,10 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// runs before the no-bindings early return: a machine whose sessions have
 	// all ended is exactly the one left carrying stale records.
 	d.safely("mastermind prune", func() { d.pruneMasterMinds() })
+	// The availability and latency histories age out by SQL rather than in
+	// memory, on the same maintenance cadence and for the same reason: a row is
+	// deleted only by age, and no sync is running to carry that away.
+	d.safely("history prune", func() { d.pruneHistory() })
 	// A reader round's scratch worktree is throwaway: leftovers from a crash go
 	// away here, before the no-bindings early return, because a machine whose
 	// readers are all gone is exactly the one left carrying them. It runs off

@@ -223,7 +223,7 @@ func newClient(t *testing.T, url, fingerprint string) (relevo.Runtime, remote.Ke
 		Candidates:  cSet,
 		MasterMinds: reg,
 		Gates:       mdb,
-		Latency:     mdb,
+		History:     mdb,
 		Now:         time.Now,
 		Remote:      client.New(servers, kp, time.Now),
 		Transport:   remote.NewBundleTransport(gitClient, t.TempDir()),

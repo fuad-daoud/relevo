@@ -136,10 +136,18 @@ func TestSyncOutboxDriftCoversSharedTables(t *testing.T) {
 	bodies := triggerBodies(t, sqlDB)
 	seen := map[string]string{}
 	for _, table := range SharedTables {
-		for _, op := range outboxOps {
+		for _, op := range outboxOpsFor(table.Name) {
 			name := "sync_outbox_" + table.Name + op.Suffix
 			seen[name] = table.Name
 			assertTriggerOn(t, bodies, name, table, op)
+		}
+		// An append-only table's update and delete triggers are checked as
+		// absences rather than skipped: the age prune deletes rows on purpose,
+		// and a delete trigger here would export every one of them to every
+		// peer. The check takes the named set, so a table that joins it is
+		// recorded in shared_tables.go rather than inferred from the bodies.
+		if AppendOnly(table.Name) {
+			assertNoAppendOnlyTrigger(t, bodies, table.Name, outboxOps[1], outboxOps[2])
 		}
 	}
 	assertNoUnlistedTriggers(t, bodies, seen)
@@ -216,6 +224,18 @@ func assertTriggerOn(t *testing.T, bodies map[string]string, name string, table 
 	}
 	if strings.Join(cols, ",") != strings.Join(table.PrimaryKey, ",") {
 		t.Errorf("%s keys on %v, want %v", name, cols, table.PrimaryKey)
+	}
+}
+
+// assertNoAppendOnlyTrigger fails on an outbox trigger for one of the two
+// operations an append-only table must never record.
+func assertNoAppendOnlyTrigger(t *testing.T, bodies map[string]string, table string, ops ...outboxOp) {
+	t.Helper()
+	for _, op := range ops {
+		name := "sync_outbox_" + table + op.Suffix
+		if bodies[name] != "" {
+			t.Errorf("%s exists; %s is append-only, and its %s must stay on this machine", name, table, op.Name)
+		}
 	}
 }
 

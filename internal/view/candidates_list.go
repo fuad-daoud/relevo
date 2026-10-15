@@ -87,6 +87,15 @@ func CandidateRoles(reg *roles.Registry, set *candidate.Set, token string) []str
 // formatCandidatesLatency is the one line renderer behind both forms: rolesFor
 // renders the roles column, and withTier prints the candidate's own tier
 // segment, which only legacy mode does.
+//
+// Every free-text piece of a row goes through sanitizeText on the way out. The
+// block is a table of columns, so a single control byte in a token, a role name
+// or a gate's wording does not merely print: it shifts every column after it and
+// lets the row repaint whatever the terminal draws next. The gate texts come
+// from the availability history, which another installation can write, so they
+// are as untrusted as the rest. Column widths are measured on the sanitized
+// text, which is what keeps the alignment exact: for a clean string the two are
+// the same bytes and the block prints exactly as it did before.
 func formatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat map[string]availability.Summary, rolesFor func(candidate.Candidate) string, withTier bool) string {
 	if set == nil || set.Len() == 0 {
 		return "no candidates configured; set one with relevo config set candidates (see README \"Candidates\")\n"
@@ -100,11 +109,11 @@ func formatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat 
 	refs := set.Refs()
 	nameWidth, tokWidth := 0, 0
 	for _, ref := range refs {
-		if n := set.NameOf(ref); len(n) > nameWidth {
-			nameWidth = len(n)
+		if n := len(sanitizeText(set.NameOf(ref))); n > nameWidth {
+			nameWidth = n
 		}
-		if len(ref) > tokWidth {
-			tokWidth = len(ref)
+		if n := len(sanitizeText(ref)); n > tokWidth {
+			tokWidth = n
 		}
 	}
 	var sb strings.Builder
@@ -120,12 +129,12 @@ func formatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat 
 		// carry no SGR escapes. The name and the token size their columns
 		// separately.
 		fmt.Fprintf(&sb, "%-*s  %-*s  %s",
-			nameWidth, set.NameOf(ref), tokWidth, ref, rolesFor(c))
+			nameWidth, sanitizeText(set.NameOf(ref)), tokWidth, sanitizeText(ref), sanitizeText(rolesFor(c)))
 		if withTier && c.Tier != "" {
-			sb.WriteString("   tier: " + c.Tier)
+			sb.WriteString("   tier: " + sanitizeText(c.Tier))
 		}
 		if len(c.ExtraArgs) > 0 {
-			sb.WriteString("   [" + strings.Join(c.ExtraArgs, " ") + "]")
+			sb.WriteString("   [" + sanitizeText(strings.Join(c.ExtraArgs, " ")) + "]")
 		}
 		if s, ok := lat[ref]; ok && s.N > 0 {
 			fmt.Fprintf(&sb, "   ttft p50 %s (n=%d, 30d)", availability.ProbeMS(s.TTFTP50MS), s.N)
@@ -135,7 +144,7 @@ func formatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat 
 			fmt.Fprintf(&sb, `   note: extra_args carries %s; launches at tier harness only -- move it to "tier"`, flag)
 		}
 		if rowGates := byToken[ref]; len(rowGates) > 0 {
-			sb.WriteString("   unavailable: " + strings.Join(mergeGateTexts(rowGates), "; "))
+			sb.WriteString("   unavailable: " + sanitizeText(strings.Join(mergeGateTexts(rowGates), "; ")))
 		}
 		sb.WriteString("\n")
 	}
@@ -150,6 +159,11 @@ func formatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat 
 // covers, sorted and de-duplicated:
 //
 //	agents missing (builder, reviewer) until cleared
+//
+// Both halves are sanitized: a gate's kind and the roles that scope it are
+// free text that reaches this renderer from the availability history, which
+// another installation can write, and this is where they become a line on a
+// terminal.
 func mergeGateTexts(gates []availability.Gate) []string {
 	type group struct {
 		kind     string
@@ -178,10 +192,10 @@ func mergeGateTexts(gates []availability.Gate) []string {
 	parts := make([]string, 0, len(groups))
 	for _, grp := range groups {
 		if !grp.hasRoles {
-			parts = append(parts, grp.kind+" "+grp.until)
+			parts = append(parts, sanitizeText(grp.kind)+" "+sanitizeText(grp.until))
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s (%s) %s", grp.kind, strings.Join(uniqSorted(grp.roles), ", "), grp.until))
+		parts = append(parts, fmt.Sprintf("%s (%s) %s", sanitizeText(grp.kind), sanitizeText(strings.Join(uniqSorted(grp.roles), ", ")), sanitizeText(grp.until)))
 	}
 	return parts
 }

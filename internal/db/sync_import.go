@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 )
@@ -31,6 +32,17 @@ import (
 // holds. Naming it as NULL instead would erase a value this machine has and the
 // other machine merely did not mention.
 //
+// An append-only table is the one exception, and it is the exception that makes
+// the method's own contract true. A row of one of those tables is written once
+// and never rewritten -- by this machine or by any other -- so an upsert of an
+// id the file already holds is not an update at all: an identical body is a
+// replay the mark's own recovery makes possible (a batch re-offered after a mark
+// that did not survive a restore) and is a no-op, and a body differing in any
+// column is a peer rewriting history, which is refused. Both are decided before
+// the statement runs, so the replay records no outbox row: nothing was written.
+// The live writers and the migration's OR IGNORE path are untouched; they never
+// come through here.
+//
 // owner is the installation the row belongs to, and it is a parameter rather
 // than something read out of values: a body may name the owner column, but what
 // it says there is a claim from a machine this one does not control, and a claim
@@ -46,14 +58,117 @@ func (t *Tx) ExchangeUpsert(tbl, owner string, values map[string]any) error {
 	if err != nil {
 		return err
 	}
-	named, args, err := upsertColumns(shared.PrimaryKey, columns, ownedValues(tbl, owner, values))
+	owned := ownedValues(tbl, owner, values)
+	named, args, err := upsertColumns(shared.PrimaryKey, columns, owned)
 	if err != nil {
 		return fmt.Errorf("db: exchange upsert %s: %w", tbl, err)
+	}
+	if AppendOnly(shared.Name) {
+		held, identical, err := t.appendOnlyHeld(shared, named, owned)
+		if err != nil {
+			return fmt.Errorf("db: exchange upsert %s: %w", tbl, err)
+		}
+		if held && !identical {
+			return fmt.Errorf("db: exchange upsert %s: a row of %s is never rewritten: %w",
+				tbl, shared.Name, ErrInvalid)
+		}
+		if held {
+			return nil
+		}
 	}
 	if _, err := t.exec(upsertStatement(shared.Name, named, shared.PrimaryKey), args...); err != nil {
 		return fmt.Errorf("db: exchange upsert %s: %w", tbl, mapRefused(mapBusy(err)))
 	}
 	return nil
+}
+
+// appendOnlyHeld reads the columns a body names out of the row the file already
+// holds under the body's key, and reports whether it holds one at all and
+// whether it is the row the body carries.
+//
+// The read is inside the transaction and the row is placed by the same one, so
+// a row cannot appear between the question and the write. It names only the
+// columns the body names, so a body that leaves a column out is compared on the
+// columns it did name -- which is the same set the upsert would have written.
+func (t *Tx) appendOnlyHeld(shared *SharedTable, named []string, values map[string]any) (held, identical bool, err error) {
+	keyArgs := make([]any, len(shared.PrimaryKey))
+	for i, col := range shared.PrimaryKey {
+		value, ok := values[col]
+		if !ok {
+			return false, false, fmt.Errorf("body names no %s: %w", col, ErrInvalid)
+		}
+		keyArgs[i] = value
+	}
+	where, _ := keyWhere(shared.PrimaryKey, keyArgs)
+	query := "SELECT " + joinQuoted(named) + " FROM " + quoteIdent(shared.Name) + " WHERE " + where
+	rows, err := t.conn.QueryContext(t.ctx, query, keyArgs...)
+	if err != nil {
+		return false, false, mapRefused(mapBusy(err))
+	}
+	defer func() { _ = rows.Close() }()
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return false, false, mapRefused(mapBusy(err))
+		}
+		return false, false, nil
+	}
+	have := make([]any, len(named))
+	dest := make([]any, len(named))
+	for i := range have {
+		dest[i] = &have[i]
+	}
+	if err := rows.Scan(dest...); err != nil {
+		return false, false, fmt.Errorf("db: exchange upsert %s: read the held row: %w", shared.Name, err)
+	}
+	for i, col := range named {
+		if !sameStoredValue(have[i], values[col]) {
+			return true, false, nil
+		}
+	}
+	return true, true, nil
+}
+
+// sameStoredValue reports whether the value a column holds is the value a body
+// carries. A body is decoded from JSON, so a number arrives as an integer or a
+// real while the column it lands in reads back as whichever of the two the
+// storage class chose; the two are compared as numbers, not as types. Anything
+// else -- text against a real, bytes against text, a null against a value --
+// differs, which for an append-only row is the refusal the caller wants.
+func sameStoredValue(have, incoming any) bool {
+	if have == nil || incoming == nil {
+		return have == nil && incoming == nil
+	}
+	if held, ok := have.([]byte); ok {
+		incoming, ok := incoming.([]byte)
+		return ok && bytes.Equal(held, incoming)
+	}
+	if held, ok := numericValue(have); ok {
+		incoming, ok := numericValue(incoming)
+		return ok && held == incoming
+	}
+	held, ok := have.(string)
+	incoming, isText := incoming.(string)
+	return ok && isText && held == incoming
+}
+
+// numericValue reads a value as the exact integer it is, when it is one. A real
+// with a fraction, one beyond int64, and one that is not a number at all are
+// none of them a column value this file could have stored, so they answer
+// false rather than a number that would compare equal to something else.
+func numericValue(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	case float64:
+		if !wholeNumber(n) {
+			return 0, false
+		}
+		return int64(n), true
+	}
+	return 0, false
 }
 
 // ownedValues is the values an upsert writes with the owner column set from the

@@ -1,7 +1,6 @@
 package availability
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -59,18 +58,6 @@ func candidateSet(t *testing.T, body string) *candidate.Set {
 	return set
 }
 
-// testGateKV returns a real t.TempDir() database for a Deps' Gates or Latency
-// field.
-func testGateKV(t *testing.T) db.KV {
-	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
-	if err != nil {
-		t.Fatalf("db.Open: %v", err)
-	}
-	t.Cleanup(func() { _ = d.Close() })
-	return d
-}
-
 // testGates returns a Gates handle over a real temp database.
 func testGates(t *testing.T) db.KV {
 	t.Helper()
@@ -82,11 +69,24 @@ func testGates(t *testing.T) db.KV {
 	return d
 }
 
+// testShared is the shared file a Deps writes its history rows into and reads
+// them back from. It is a second file beside the gates one on purpose, because
+// it is a second file in production: the rows travel through the shared file's
+// outbox while the ledger lives in the machine-local one.
+func testShared(t *testing.T) *db.DB {
+	t.Helper()
+	d, err := db.OpenWith(filepath.Join(t.TempDir(), "relevo.db"), db.Options{Origin: "m1"})
+	if err != nil {
+		t.Fatalf("db.OpenWith: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
+
 // testDeps builds the Deps the moved tests run against: a temp store, the test
-// candidate set, a real gates database and a fixed clock.
+// candidate set, a real gates database, a real shared file and a fixed clock.
 func testDeps(t *testing.T) Deps {
 	t.Helper()
-	gates := testGates(t)
 	set := candidateSet(t, testCandidatesJSON)
 	reg, err := roles.Build(nil, set, policy.Policy{})
 	if err != nil {
@@ -95,8 +95,8 @@ func testDeps(t *testing.T) Deps {
 	return Deps{
 		Store:        store.New(t.TempDir()),
 		Candidates:   set,
-		Gates:        gates,
-		Latency:      gates,
+		Gates:        testGates(t),
+		History:      testShared(t),
 		Now:          func() time.Time { return baseTime },
 		RoleRegistry: func() *roles.Registry { return reg },
 	}
@@ -106,7 +106,6 @@ func testDeps(t *testing.T) Deps {
 // that need a specific configuration rather than the shared three-ref one.
 func testDepsWith(t *testing.T, set *candidate.Set) Deps {
 	t.Helper()
-	gates := testGates(t)
 	reg, err := roles.Build(nil, set, policy.Policy{})
 	if err != nil {
 		t.Fatalf("roles.Build: %v", err)
@@ -114,8 +113,8 @@ func testDepsWith(t *testing.T, set *candidate.Set) Deps {
 	return Deps{
 		Store:        store.New(t.TempDir()),
 		Candidates:   set,
-		Gates:        gates,
-		Latency:      gates,
+		Gates:        testGates(t),
+		History:      testShared(t),
 		Now:          func() time.Time { return baseTime },
 		RoleRegistry: func() *roles.Registry { return reg },
 	}
@@ -128,19 +127,3 @@ type badJSONKV struct{}
 func (badJSONKV) KVGet(string) ([]byte, bool, error) { return []byte("not json"), true, nil }
 func (badJSONKV) KVPut(string, []byte) error         { return nil }
 func (badJSONKV) KVDelete(string) error              { return nil }
-
-// failPutKV delegates to an inner KV but fails KVPut for one key, so one
-// record's write can be made to fail while another's succeeds.
-type failPutKV struct {
-	inner db.KV
-	key   string
-}
-
-func (k failPutKV) KVGet(key string) ([]byte, bool, error) { return k.inner.KVGet(key) }
-func (k failPutKV) KVPut(key string, v []byte) error {
-	if key == k.key {
-		return errors.New("put failed")
-	}
-	return k.inner.KVPut(key, v)
-}
-func (k failPutKV) KVDelete(key string) error { return k.inner.KVDelete(key) }

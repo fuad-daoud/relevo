@@ -69,6 +69,9 @@ CREATE INDEX round_started_at_idx ON round(started_at)
 index sqlite_autoindex_artifact_1 artifact
 
 
+index sqlite_autoindex_availability_event_1 availability_event
+
+
 index sqlite_autoindex_binding_1 binding
 
 
@@ -109,6 +112,9 @@ index sqlite_autoindex_installation_1 installation
 
 
 index sqlite_autoindex_kv_1 kv
+
+
+index sqlite_autoindex_latency_sample_1 latency_sample
 
 
 index sqlite_autoindex_mastermind_1 mastermind
@@ -163,6 +169,21 @@ CREATE TABLE artifact (
     bytes INTEGER NOT NULL,
     sha256 TEXT NOT NULL,
     captured_at TEXT NOT NULL
+)
+
+table availability_event availability_event
+CREATE TABLE availability_event (
+    id TEXT PRIMARY KEY,
+    at_ms INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    account TEXT NOT NULL DEFAULT '',
+    token TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL,
+    binding TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    since_ms INTEGER,
+    origin TEXT NOT NULL
 )
 
 table binding binding
@@ -384,6 +405,18 @@ CREATE TABLE kv (
     updated_at TEXT NOT NULL
 )
 
+table latency_sample latency_sample
+CREATE TABLE latency_sample (
+    id TEXT PRIMARY KEY,
+    at_ms INTEGER NOT NULL,
+    token TEXT NOT NULL,
+    host TEXT NOT NULL DEFAULT '',
+    ttft_ms INTEGER NOT NULL,
+    total_ms INTEGER NOT NULL,
+    err TEXT NOT NULL DEFAULT '',
+    origin TEXT NOT NULL
+)
+
 table mastermind mastermind
 CREATE TABLE "mastermind" (
     id TEXT PRIMARY KEY,
@@ -573,6 +606,11 @@ CREATE TRIGGER sync_outbox_artifact_upd AFTER UPDATE ON artifact BEGIN
         (SELECT origin FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = NEW.round_id)));
 END
 
+trigger sync_outbox_availability_event_ins availability_event
+CREATE TRIGGER sync_outbox_availability_event_ins AFTER INSERT ON availability_event BEGIN
+    INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('availability_event', json_array(NEW.id), 'insert', NEW.origin);
+END
+
 trigger sync_outbox_binding_del binding
 CREATE TRIGGER sync_outbox_binding_del AFTER DELETE ON binding BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding', json_array(OLD.id), 'delete', OLD.origin);
@@ -723,6 +761,11 @@ CREATE TRIGGER sync_outbox_installation_upd AFTER UPDATE ON installation BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('installation', json_array(NEW.id), 'update', NEW.id);
 END
 
+trigger sync_outbox_latency_sample_ins latency_sample
+CREATE TRIGGER sync_outbox_latency_sample_ins AFTER INSERT ON latency_sample BEGIN
+    INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('latency_sample', json_array(NEW.id), 'insert', NEW.origin);
+END
+
 trigger sync_outbox_mastermind_del mastermind
 CREATE TRIGGER sync_outbox_mastermind_del AFTER DELETE ON mastermind BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('mastermind', json_array(OLD.id), 'delete', OLD.origin);
@@ -819,4 +862,4 @@ CREATE TRIGGER sync_outbox_transcript_upd AFTER UPDATE ON transcript BEGIN
         END);
 END
 
-schema_versions have=28 know=28
+schema_versions have=29 know=29

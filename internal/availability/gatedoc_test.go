@@ -47,7 +47,6 @@ func gatesDeps(t *testing.T, local *db.DB) (Deps, *int) {
 	synced := 0
 	d := testDeps(t)
 	d.Gates = local
-	d.Latency = local
 	d.Local = local
 	d.SyncNow = func() { synced++ }
 	return d, &synced

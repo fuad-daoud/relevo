@@ -173,19 +173,27 @@ type Runtime struct {
 	// next ordinary trigger exports the gate.
 	SyncNow func()
 
-	// Latency is where the per-candidate latency history lives (#324 part 1;
-	// P3b plan §4.5): time to first output per candidate, recorded by `relevo
-	// config --probe` and read back for the p50 on a plain listing. Nil means
-	// no store is configured, so nothing is recorded (tests, and any caller
-	// that never set one).
-	Latency db.KV
-
 	// DB is relevo's sqlite database (docs/specs/2026-09-20-persistence-design.md).
 	// Nil means no database: this round opens it only in `relevo db *`, never
 	// in the shared runtime constructor, so nothing else reads it yet and
 	// every call site that will (later rounds) must treat nil the same as a
 	// machine with no db.
 	DB *db.DB
+
+	// History is the shared file the availability_event and latency_sample rows
+	// are read from and written into, when one is open. It is the shared file
+	// rather than the machine-local one Gates and Latency bind, because a history
+	// row travels through the outbox like every other shared row while a kv
+	// document travels as a document; buildRuntime sets it beside the local
+	// handle it binds those two to.
+	//
+	// It is separate from DB rather than the same field because the two answer
+	// different questions. DB is the handle a verb owns and writes whole records
+	// through, and only a few verbs open one; History is needed by every surface
+	// that renders a gate or a latency figure, so a runtime with no DB still has
+	// one. historyDB resolves the pair for AvailabilityDeps, so a test or a
+	// caller that sets either alone still gets the file.
+	History *db.DB
 
 	// Config is the database-backed config store newRuntime imports into and
 	// loads from (docs/specs/2026-09-24-db-as-record-design.md). It is nil
@@ -366,6 +374,11 @@ func IngestDeps(rt Runtime) ingest.Deps {
 // through nil-safe as time.Now, since a zero Runtime (a test) has no clock; the
 // roles registry is passed as the lazy builder rt.RoleRegistry, so availability
 // never builds it eagerly.
+//
+// History is historyDB(rt) -- the shared file, whose outbox is the one the sync
+// drains -- while Gates is rt.Gates, the machine-local kv view the ledger lives
+// in. A row that travels and a machine-local record that does not are not the
+// same thing, so they are not the same handle.
 func AvailabilityDeps(rt Runtime) availability.Deps {
 	now := rt.Now
 	if now == nil {
@@ -376,13 +389,24 @@ func AvailabilityDeps(rt Runtime) availability.Deps {
 		Candidates:   rt.Candidates,
 		Accounts:     rt.Accounts,
 		Gates:        rt.Gates,
-		Latency:      rt.Latency,
+		History:      historyDB(rt),
 		Now:          now,
 		Roles:        rt.Roles,
 		RoleRegistry: rt.RoleRegistry,
 		Local:        rt.GatesDB,
 		SyncNow:      rt.SyncNow,
 	}
+}
+
+// historyDB is the shared file the two history tables are reached through:
+// History where a runtime sets one, else DB. The fallback is the daemon's shape,
+// which sets both to the same handle, and the shape a test uses when it sets only
+// DB; a runtime that sets neither is a machine with no database and reads empty.
+func historyDB(rt Runtime) *db.DB {
+	if rt.History != nil {
+		return rt.History
+	}
+	return rt.DB
 }
 
 // captureDeps builds internal/capture's Deps from rt. Git carries through

@@ -152,3 +152,72 @@ func TestFormatCandidatesHasNoEscapes(t *testing.T) {
 		}
 	}
 }
+
+// The candidate block is a table of columns, and the gate texts and role names
+// in it come from the availability history -- which another installation can
+// write. So every free-text piece of a row goes through the control-byte rule on
+// the way out: an escape in one would repaint the terminal, and a control byte
+// would shift every column after it. The block's own newlines are the rows; a
+// string that could contribute one is caught by the line count.
+func TestFormatCandidatesDropsControlBytesFromGateText(t *testing.T) {
+	t.Parallel()
+
+	set := candidateSet(t, testCandidatesJSON)
+	gates := []availability.Gate{{
+		Token: testClaudeRef, Kind: availability.RateLimited, Until: time.Time{},
+		Role: "review\u001b[2Ker",
+	}}
+
+	got := FormatCandidates(set, gates)
+
+	for _, r := range got {
+		if r == '\n' {
+			continue
+		}
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			t.Fatalf("FormatCandidates left %U in the block, want every control byte dropped", r)
+		}
+	}
+	if !strings.Contains(got, "unavailable: rate-limited (review[2Ker) until cleared") {
+		t.Errorf("FormatCandidates() =\n%q\nwant the printable part of the role kept", got)
+	}
+	want := FormatCandidates(set, []availability.Gate{{
+		Token: testClaudeRef, Kind: availability.RateLimited, Until: time.Time{},
+	}})
+	if a, b := len(strings.Split(got, "\n")), len(strings.Split(want, "\n")); a != b {
+		t.Errorf("FormatCandidates printed %d lines, want the clean gate's %d", a, b)
+	}
+}
+
+// A candidate whose own token and extra args carry control bytes is drawn the
+// same way, and its columns stay aligned: the widths are measured on what is
+// printed, so the block cannot be shifted sideways by a byte that was dropped.
+func TestFormatCandidatesDropsControlBytesFromCandidateText(t *testing.T) {
+	t.Parallel()
+
+	set := candidateSet(t, `[{"harness":"claude","provider":"tes\u0007t","model":"m","extra_args":["--flag\u001b[2K"]},
+		{"harness":"opencode","provider":"test","model":"m"}]`)
+
+	got := FormatCandidates(set, nil)
+
+	for _, r := range got {
+		if r == '\n' {
+			continue
+		}
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			t.Fatalf("FormatCandidates left %U in the block, want every control byte dropped", r)
+		}
+	}
+	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("FormatCandidates printed %d lines, want one per candidate", len(lines))
+	}
+	if !strings.Contains(lines[0], "claude/test/m") || !strings.Contains(lines[0], "[--flag[2K]") {
+		t.Errorf("FormatCandidates() =\n%q\nwant the printable part of the token and args kept", got)
+	}
+	// The roles column starts at the same offset on both rows, which is the
+	// property a dropped byte would have broken.
+	if a, b := strings.Index(lines[0], "builder"), strings.Index(lines[1], "builder"); a != b {
+		t.Errorf("roles column at %d and %d, want both rows aligned", a, b)
+	}
+}
