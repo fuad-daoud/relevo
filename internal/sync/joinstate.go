@@ -21,8 +21,8 @@ import (
 // rows that were absent before, rather than writing a default over them.
 
 // JoinSnapshot is the machine-local state an enable --join must be able to put
-// back: the sync section, the token, the key, the fact about the remote's key,
-// and the enabled marker.
+// back: the sync section, the token, the key, the four R2 credentials, the fact
+// about the remote's key, the enabled marker and the join marker.
 //
 // It records absence as well as value, because "there was no token here" and
 // "the token here was this" are different machines and only the first one is what
@@ -38,9 +38,18 @@ type JoinSnapshot struct {
 	hasRemoteKDF bool
 	enabled      []byte
 	hasEnabled   bool
+	r2           [4]heldRow
+	join         heldRow
 }
 
-// SnapshotJoin reads every row an enable --join stages or writes.
+// heldRow is one row's bytes and whether it was there at all.
+type heldRow struct {
+	value   []byte
+	present bool
+}
+
+// SnapshotJoin reads every row an enable --join stages or writes. A join marker
+// that was absent stays absent on restore.
 func SnapshotJoin(l Local) (JoinSnapshot, error) {
 	var s JoinSnapshot
 	var err error
@@ -58,6 +67,14 @@ func SnapshotJoin(l Local) (JoinSnapshot, error) {
 	}
 	if s.enabled, s.hasEnabled, err = l.KVGet(KeyEnabled); err != nil {
 		return JoinSnapshot{}, fmt.Errorf("sync: snapshot %s: %w", KeyEnabled, err)
+	}
+	for i, name := range r2Names() {
+		if s.r2[i].value, s.r2[i].present, err = l.SecretGet(name); err != nil {
+			return JoinSnapshot{}, fmt.Errorf("sync: snapshot %s: %w", name, err)
+		}
+	}
+	if s.join.value, s.join.present, err = l.KVGet(KeyJoin); err != nil {
+		return JoinSnapshot{}, fmt.Errorf("sync: snapshot %s: %w", KeyJoin, err)
 	}
 	return s, nil
 }
@@ -79,6 +96,14 @@ func (s JoinSnapshot) Restore(l Local, now time.Time) error {
 			return err
 		}
 		if err := restoreMarker(t, KeyRemoteKDF, s.remoteKDF, s.hasRemoteKDF); err != nil {
+			return err
+		}
+		for i, name := range r2Names() {
+			if err := restoreSecret(t, name, s.r2[i].value, s.r2[i].present); err != nil {
+				return err
+			}
+		}
+		if err := restoreMarker(t, KeyJoin, s.join.value, s.join.present); err != nil {
 			return err
 		}
 		return restoreMarker(t, KeyEnabled, s.enabled, s.hasEnabled)

@@ -22,11 +22,16 @@ func joinRows(t *testing.T, l Local) map[string]string {
 	t.Helper()
 	out := map[string]string{}
 	for name, read := range map[string]func() ([]byte, bool, error){
-		"section":    func() ([]byte, bool, error) { return l.ConfigGet(SectionSettings) },
-		"token":      func() ([]byte, bool, error) { return l.SecretGet(SecretToken) },
-		"sync.key":   func() ([]byte, bool, error) { return l.SecretGet(SecretKey) },
-		KeyRemoteKDF: func() ([]byte, bool, error) { return l.KVGet(KeyRemoteKDF) },
-		KeyEnabled:   func() ([]byte, bool, error) { return l.KVGet(KeyEnabled) },
+		"section":        func() ([]byte, bool, error) { return l.ConfigGet(SectionSettings) },
+		"token":          func() ([]byte, bool, error) { return l.SecretGet(SecretToken) },
+		"sync.key":       func() ([]byte, bool, error) { return l.SecretGet(SecretKey) },
+		KeyRemoteKDF:     func() ([]byte, bool, error) { return l.KVGet(KeyRemoteKDF) },
+		KeyEnabled:       func() ([]byte, bool, error) { return l.KVGet(KeyEnabled) },
+		KeyJoin:          func() ([]byte, bool, error) { return l.KVGet(KeyJoin) },
+		SecretR2Endpoint: func() ([]byte, bool, error) { return l.SecretGet(SecretR2Endpoint) },
+		SecretR2Bucket:   func() ([]byte, bool, error) { return l.SecretGet(SecretR2Bucket) },
+		SecretR2KeyID:    func() ([]byte, bool, error) { return l.SecretGet(SecretR2KeyID) },
+		SecretR2Secret:   func() ([]byte, bool, error) { return l.SecretGet(SecretR2Secret) },
 	} {
 		value, present, err := read()
 		if err != nil {
@@ -283,4 +288,37 @@ func keyFact(t *testing.T, l Local) string {
 		t.Fatalf("read %s: present %v, err %v", KeyRemoteKDF, ok, err)
 	}
 	return string(bytes.TrimSpace(value))
+}
+
+// Staged R2 credentials and a join marker written after the snapshot go away on
+// a machine that held none, and come back as they were on one that did.
+func TestJoinSnapshotRestoresR2AndTheJoinMarker(t *testing.T) {
+	t.Parallel()
+	at := time.Unix(0, 0).UTC()
+	staged := R2Secrets{Endpoint: "https://acct.r2.cloudflarestorage.com", Bucket: "b", KeyID: "k", Secret: "s"}
+	_, _, empty := openSplit(t)
+	_, _, held := openSplit(t)
+	if err := SetR2(held, R2Secrets{Endpoint: "https://old.r2.cloudflarestorage.com", Bucket: "ob", KeyID: "ok", Secret: "os"}, at); err != nil {
+		t.Fatalf("SetR2: %v", err)
+	}
+	if err := WriteJoin(held, at); err != nil {
+		t.Fatalf("WriteJoin: %v", err)
+	}
+	for name, local := range map[string]Local{"empty": empty, "held": held} {
+		before := joinRows(t, local)
+		snapshot, err := SnapshotJoin(local)
+		if err != nil {
+			t.Fatalf("%s: SnapshotJoin: %v", name, err)
+		}
+		if err := SetR2(local, staged, time.Now()); err != nil {
+			t.Fatalf("%s: SetR2: %v", name, err)
+		}
+		if err := WriteJoin(local, time.Now()); err != nil {
+			t.Fatalf("%s: WriteJoin: %v", name, err)
+		}
+		if err := snapshot.Restore(local, time.Now()); err != nil {
+			t.Fatalf("%s: Restore: %v", name, err)
+		}
+		joinRowsEqual(t, name+" restore", before, joinRows(t, local))
+	}
 }
