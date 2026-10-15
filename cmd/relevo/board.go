@@ -252,7 +252,7 @@ func cmdBoard(args []string) error {
 	}
 
 	// The theme is resolved before anything else so an unknown --theme is a
-	// usage refusal naming the built-ins regardless of which format the path
+	// usage refusal naming the stored palettes regardless of which format the path
 	// selects. Only the Excalidraw flow consumes it: a single-file board brings
 	// its own colours.
 	theme, err := boardResolveTheme(cwd, *v.theme)
