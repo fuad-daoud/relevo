@@ -361,3 +361,17 @@ func TestHintFollowsTheStoredCandidates(t *testing.T) {
 		t.Fatalf("configured machine stderr = %q, want no setup hint", stderr)
 	}
 }
+
+// TestStatusOnAFreshMachineListsNothing pins a newcomer's first command: with
+// no MasterMind registered anywhere, status succeeds with an empty listing
+// instead of refusing for want of one.
+func TestStatusOnAFreshMachineListsNothing(t *testing.T) {
+	initRoot(t)
+	stdout, stderr, err := captureOutput(t, func() error { return run([]string{"status"}) })
+	if err != nil {
+		t.Fatalf("status on a fresh machine: %v\nstderr: %s", err, stderr)
+	}
+	if !strings.Contains(string(stdout), "no bindings") {
+		t.Fatalf("stdout = %q, want the empty listing", stdout)
+	}
+}
