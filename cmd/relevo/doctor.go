@@ -11,6 +11,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/classify"
@@ -69,6 +70,18 @@ func assembleKinds(set *candidate.Set, st *store.Store) (kinds []string, storeEr
 	}
 	sort.Strings(kinds)
 	return kinds, storeErr
+}
+
+// accountHomes maps a harness kind to the per-process homes its configured
+// accounts pin it to.
+func accountHomes(accounts account.Set) map[string][]string {
+	homes := make(map[string][]string)
+	for _, a := range accounts {
+		if home, ok := harness.AccountHome(a); ok {
+			homes[string(a.Harness)] = append(homes[string(a.Harness)], home)
+		}
+	}
+	return homes
 }
 
 // builderDefinitions is what a builder needs installed on its harness:
@@ -426,6 +439,10 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 	// login, so a round cannot fail to authenticate with no surface naming
 	// which account was checked. No accounts means no rows.
 	rep.Checks = append(rep.Checks, accountChecks(context.Background(), rt.Accounts, env)...)
+
+	// The login rows: whether each configured harness is logged in on this
+	// machine, from local files only.
+	rep.Checks = append(rep.Checks, doctor.LoginChecks(env, kinds, accountHomes(rt.Accounts))...)
 
 	// The hooks row: how many runs the machine database's run log holds, how
 	// many failed in the last day and what the last failure was (P3b round 2
