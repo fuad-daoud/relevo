@@ -108,6 +108,20 @@ func (v *VerbRunner) stageAndVerify(ctx context.Context, remote string, token, p
 		closeTransport(transport)
 		return nil, err
 	}
+	// The fleet's secrets document is applied before the enable goes on, over
+	// the worker that exists. A joiner's R2 credentials are in that document and
+	// a peer's `$ref` row can sit above the entries that carry them, so waiting
+	// for the import's own walk is what stalls the origin on its first body. The
+	// walk pulls entries only -- it fetches no body -- so it runs on the worker
+	// it was handed, bucket stored or not. A plain enable's machine already
+	// holds its credentials, so only a join pays for it.
+	if required {
+		if err := relevosync.PrepassSecrets(v.Shared, v.Local, transport); err != nil {
+			v.unstageJoin(snapshot)
+			closeTransport(transport)
+			return nil, err
+		}
+	}
 	return out, nil
 }
 

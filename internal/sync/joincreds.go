@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -34,32 +35,47 @@ var ErrNoR2AfterJoin = errors.New("sync: enable --join: the fleet's secrets docu
 	": either run `relevo db sync enable --r2-endpoint ... --r2-bucket ... --r2-key-id ... --r2-secret-stdin` " +
 	"on this machine, or fix the machine that ran `relevo db sync invite`, whose own secrets have not been shared")
 
-// prepassSecrets applies the fleet's secrets document ahead of the join's rows,
-// for a join whose R2 credentials are not stored. It is a no-op otherwise, and a
-// no-op on a machine with no key: a locked machine parks what it cannot verify,
-// which is the existing path and needs no help from here.
-//
-// A failure is the join's failure. The pre-pass reads the log this join is
-// about, so a log that will not answer fails the join rather than letting it
-// continue into the same refusal one step later.
+// prepassSecrets applies the fleet's secrets document ahead of the join's rows.
+// A plain enable has nothing to unblock -- its credentials are stored by the
+// time it imports -- so only a join runs the walk.
 func (e *Enabler) prepassSecrets(transport synclog.LogTransport) error {
 	if !e.Request.Join {
 		return nil
 	}
-	stored, err := ReadR2(e.Request.Local)
+	return PrepassSecrets(e.Request.Shared, e.Request.Local, transport)
+}
+
+// PrepassSecrets applies the fleet's secrets document ahead of the join's rows,
+// for a join whose R2 credentials are not stored. Both an enable's importer and
+// the worker the passphrase check ran on reach it, so the document is applied
+// once behind whichever transport first could -- the check's worker exists
+// before an importer does.
+//
+// It is a no-op when the stored set is complete, and a no-op on a machine with
+// no key either: a locked machine parks what it cannot verify, which is the
+// existing path and needs no help from here.
+//
+// A failure is the caller's failure. The pre-pass reads the log the caller is
+// about, so a log that will not answer fails the caller rather than letting it
+// continue into the same refusal one step later.
+//
+// Nothing here moves an import mark: the entries the import reaches later are
+// redeliveries it applies as no-ops.
+func PrepassSecrets(shared *db.DB, l Local, transport synclog.LogTransport) error {
+	stored, err := ReadR2(l)
 	if err != nil {
 		return err
 	}
 	if stored.Complete() {
 		return nil
 	}
-	key, err := SigningKey(e.Request.Local)
+	key, err := SigningKey(l)
 	if err != nil || len(key) == 0 {
 		return err
 	}
-	imp := synclog.NewImporter(e.Request.Shared, transport)
+	imp := synclog.NewImporter(shared, transport)
 	imp.SetKey(key)
-	BindDocs(imp, e.Request.Shared)
+	BindDocs(imp, shared)
 	if _, err := imp.PrepassDocs(SecretsDocName); err != nil {
 		return fmt.Errorf("sync: enable: apply the %s document: %w", SecretsDocName, err)
 	}
