@@ -248,7 +248,7 @@ func (a *mastermindActions) Gate(ctx context.Context, subject string, forDur tim
 			lines = append(lines, "the daemon will switch: "+strings.Join(names, ", "))
 		}
 	}
-	lines = append(lines, relevo.ForwardUnavailable(ctx, rt, subject, reason)...)
+	lines = append(lines, relevo.ForwardUnavailable(ctx, rt, subject, reason, until)...)
 
 	return Result{Text: strings.Join(lines, "\n"), Refresh: true}
 }

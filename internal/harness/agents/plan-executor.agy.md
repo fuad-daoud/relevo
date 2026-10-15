@@ -137,9 +137,14 @@ its number of steps, not its tokens. So:
 - Put every change to one file in a single edit call (several hunks), or
   rewrite the file when most of it changes. Prefer one scripted edit to
   many single-hunk edits when the change is mechanical.
-- Iterate with a build and the focused tests only, fix every error a run
-  reports before running again, and run the full check once at the end
-  (again only if it fails).
+- Iterate with a build, the project's fast static checks (lint, vet,
+  format -- the plan names them when the project has a quick target), and
+  the tests of the packages you touched and of the packages that import
+  them; fix every error a run reports before running again. A full check
+  costs minutes and repeats all of that, so run it once at the end. If it
+  fails, re-run only the failing package and the static checks until they
+  pass, then the full check once more. In a relevo chain, relevo runs the
+  gate again after your round.
 - Delegating a read to a sub-agent is worth it only when the research is
   large and can run while you edit; a sub-agent for a handful of files
   costs more round trips than reading them yourself in one batched step.
