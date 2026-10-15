@@ -20,7 +20,7 @@ import (
 // its own flags rather than leaving them to the dispatcher. The R2 flags, their
 // line and their prose are in db_sync_r2.go, which is where they are installed.
 const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [--passphrase-stdin]\n" +
-	"       relevo db sync enable [--join CODE] [--yes] [--timeout D] [--json]\n" +
+	"       relevo db sync enable [--join-stdin] [--yes] [--timeout D] [--json]\n" +
 	dbSyncR2Usage +
 	"       relevo db sync disable [--timeout D] [--json]\n" +
 	"       relevo db sync retry [--json]\n" +
@@ -46,9 +46,11 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"refused by name.\n" +
 	"Writing the machine-local sync section by hand stays the advanced\n" +
 	"route: `relevo config set sync '{\"remote_url\":\"...\"}'`.\n" +
-	"--join CODE joins with the code `relevo db sync invite` printed, which\n" +
-	"names the remote and the token, so neither --url nor --token-stdin is\n" +
-	"needed and passing --url beside it is refused. The passphrase is read\n" +
+	"--join-stdin reads the code `relevo db sync invite` printed from standard\n" +
+	"input, never from the command line, where it would sit in shell history\n" +
+	"and the process table. The code names the remote and the token, so neither\n" +
+	"--url nor --token-stdin is needed and passing --url beside it is refused.\n" +
+	"It shares standard input with no other secret. The passphrase is read\n" +
 	"the same way unlock reads it and is checked against the remote before\n" +
 	"anything is stored, so a wrong one leaves this machine as it was.\n" +
 	"--token-stdin reads the turso.token from standard input and\n" +
@@ -112,7 +114,7 @@ type dbSyncEnableFlagValues struct {
 	remoteURL       *string
 	tokenStdin      *bool
 	passphraseStdin *bool
-	joinCode        *string
+	joinStdin       *bool
 	timeout         *time.Duration
 	yes             *bool
 	dbSyncR2Flags
@@ -126,7 +128,7 @@ func dbSyncEnableFlagSet(fs *flag.FlagSet) *dbSyncEnableFlagValues {
 	v.remoteURL = fs.String("url", "", "the remote to sync with, stored in the machine-local sync section")
 	v.tokenStdin = fs.Bool("token-stdin", false, "read the turso.token from standard input")
 	v.passphraseStdin = fs.Bool("passphrase-stdin", false, "read the sync passphrase from standard input")
-	v.joinCode = fs.String("join", "", "join with the code `relevo db sync invite` printed, instead of naming the remote")
+	v.joinStdin = fs.Bool("join-stdin", false, "read the join code `relevo db sync invite` printed from standard input, instead of naming the remote")
 	v.timeout = fs.Duration("timeout", dbSyncDefaultTimeout, "bound the remote probe and the open")
 	v.yes = fs.Bool("yes", false, "join even when the estimate exceeds what is left of this month's Turso quota")
 	installR2Flags(fs, &v.dbSyncR2Flags)
@@ -249,7 +251,7 @@ func cmdDBSyncEnable(args []string) error {
 		return fail(codeUsage, "relevo db sync enable takes no arguments, got %d", fs.NArg())
 	}
 
-	if err := dbSyncEnableIntake(*v.tokenStdin, *v.passphraseStdin, v.dbSyncR2Flags); err != nil {
+	if err := dbSyncEnableIntake(*v.tokenStdin, *v.passphraseStdin, *v.joinStdin, v.dbSyncR2Flags); err != nil {
 		return err
 	}
 
@@ -258,7 +260,11 @@ func cmdDBSyncEnable(args []string) error {
 	// know, a truncated paste, something that is not a code at all -- is refused
 	// before a daemon is reached or a worker is started, and the remote and
 	// token it names are the ones that go on the wire.
-	join, err := dbSyncEnableJoin(*v.joinCode, *v.remoteURL)
+	code, err := dbSyncReadJoinCode(*v.joinStdin)
+	if err != nil {
+		return err
+	}
+	join, err := dbSyncEnableJoin(code, *v.remoteURL)
 	if err != nil {
 		return err
 	}

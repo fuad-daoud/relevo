@@ -601,8 +601,10 @@ no row on this machine references and that are older than 30 days.
 On a machine that already syncs, `relevo db sync invite` prints a one-line
 join code (`relevo-join-v1-` and base64url) holding the Turso URL and token,
 and nothing else; a locked inviter says so, because its own secrets have not
-been shared. On the new machine: `relevo db sync enable --join <code>`, with the
-passphrase from `--passphrase-stdin`, `RELEVO_SYNC_PASSPHRASE` or a TTY. The
+been shared. On the new machine: `relevo db sync invite | relevo db sync enable --join-stdin`
+(the code is read from stdin, never argv, so the bearer stays out of shell
+history and the process table), with the passphrase from `RELEVO_SYNC_PASSPHRASE`
+or a TTY; `--passphrase-stdin` cannot share the pipe with `--join-stdin`. The
 passphrase is checked against `key_check` before anything is stored; a wrong
 one stores nothing. The R2 key, `client.key` and every other allow-listed secret
 arrive encrypted in the `secrets` doc. Agents are rendered and hook scripts

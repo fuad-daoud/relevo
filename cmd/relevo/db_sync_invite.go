@@ -4,7 +4,7 @@ package main
 // new machine can point itself at the same remote.
 //
 // stdout is exactly one line -- the code -- so it pipes into
-// `relevo db sync enable --join` unchanged. Everything a person needs to know
+// `relevo db sync enable --join-stdin` unchanged. Everything a person needs to know
 // about that line goes to stderr instead, which is where a reader looking at a
 // pipe does not expect output and a person looking at a terminal does.
 //

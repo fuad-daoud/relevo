@@ -6,6 +6,8 @@ package main
 
 import (
 	"errors"
+	"flag"
+	"io"
 	"strings"
 	"testing"
 
@@ -51,11 +53,14 @@ func TestEnableRefusesTwoSecretsOnOneStandardInput(t *testing.T) {
 		name          string
 		token, pass   bool
 		r2SecretStdin bool
+		join          bool
 		want          []string
 	}{
-		{"token and passphrase", true, true, false, []string{"--token-stdin", "--passphrase-stdin"}},
-		{"token and the bucket secret", true, false, true, []string{"--token-stdin", "--r2-secret-stdin"}},
-		{"passphrase and the bucket secret", false, true, true, []string{"--passphrase-stdin", "--r2-secret-stdin"}},
+		{"token and passphrase", true, true, false, false, []string{"--token-stdin", "--passphrase-stdin"}},
+		{"token and the bucket secret", true, false, true, false, []string{"--token-stdin", "--r2-secret-stdin"}},
+		{"passphrase and the bucket secret", false, true, true, false, []string{"--passphrase-stdin", "--r2-secret-stdin"}},
+		{"the code and the passphrase", false, true, false, true, []string{"--passphrase-stdin", "--join-stdin"}},
+		{"the code and the bucket secret", false, false, true, true, []string{"--r2-secret-stdin", "--join-stdin"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -63,7 +68,7 @@ func TestEnableRefusesTwoSecretsOnOneStandardInput(t *testing.T) {
 			if tc.r2SecretStdin {
 				args = append(args, "--r2-secret-stdin")
 			}
-			err := dbSyncEnableIntake(tc.token, tc.pass, parsedR2Flags(t, args...))
+			err := dbSyncEnableIntake(tc.token, tc.pass, tc.join, parsedR2Flags(t, args...))
 			var got *cliError
 			if !errors.As(err, &got) || got.code != codeUsage {
 				t.Fatalf("dbSyncEnableIntake = %v, want a usage error", err)
@@ -86,11 +91,14 @@ func TestEnableAcceptsOneStdinFlagOrNone(t *testing.T) {
 		name        string
 		token, pass bool
 		r2          bool
+		join        bool
 	}{
-		{"no flag at all", false, false, false},
-		{"the token alone", true, false, false},
-		{"the passphrase alone", false, true, false},
-		{"the bucket secret alone", false, false, true},
+		{"no flag at all", false, false, false, false},
+		{"the token alone", true, false, false, false},
+		{"the passphrase alone", false, true, false, false},
+		{"the bucket secret alone", false, false, true, false},
+		{"the code alone", false, false, false, true},
+		{"the code beside an ignored token flag", true, false, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -98,7 +106,7 @@ func TestEnableAcceptsOneStdinFlagOrNone(t *testing.T) {
 			if tc.r2 {
 				args = append(args, "--r2-secret-stdin")
 			}
-			if err := dbSyncEnableIntake(tc.token, tc.pass, parsedR2Flags(t, args...)); err != nil {
+			if err := dbSyncEnableIntake(tc.token, tc.pass, tc.join, parsedR2Flags(t, args...)); err != nil {
 				t.Errorf("dbSyncEnableIntake = %v, want no refusal", err)
 			}
 		})
@@ -193,5 +201,59 @@ func TestAJoinTakesTheTokensFromTheCodeNotTheEnvironment(t *testing.T) {
 	}
 	if string(token) != "FIXTURE-CODE-TOKEN" {
 		t.Errorf("a join took the token %q, want the one the code carries", token)
+	}
+}
+
+// The code is read from the piped stdin and parsed by the unchanged pure
+// parser; `invite` prints exactly one line, trailing newline included.
+func TestJoinStdinReadsThePipedCode(t *testing.T) {
+	code, err := relevosync.NewJoinCode(enableJoinRemote, []byte("FIXTURE-CODE-TOKEN"))
+	if err != nil {
+		t.Fatalf("NewJoinCode: %v", err)
+	}
+	old := dbSyncJoinStdin
+	t.Cleanup(func() { dbSyncJoinStdin = old })
+	dbSyncJoinStdin = strings.NewReader(code + "\n")
+	read, err := dbSyncReadJoinCode(true)
+	if err != nil {
+		t.Fatalf("dbSyncReadJoinCode: %v", err)
+	}
+	join, err := dbSyncEnableJoin(read, "")
+	if err != nil || !join.joining || join.remote != enableJoinRemote || string(join.token) != "FIXTURE-CODE-TOKEN" {
+		t.Errorf("piped code resolved to %+v (%v), want the remote and token it carries", join, err)
+	}
+}
+
+func TestJoinStdinWithNothingPipedIsAUsageError(t *testing.T) {
+	old := dbSyncJoinStdin
+	t.Cleanup(func() { dbSyncJoinStdin = old })
+	dbSyncJoinStdin = strings.NewReader("\n")
+	_, err := dbSyncReadJoinCode(true)
+	var got *cliError
+	if !errors.As(err, &got) || got.code != codeUsage {
+		t.Fatalf("dbSyncReadJoinCode on an empty pipe = %v, want a usage error", err)
+	}
+}
+
+func TestJoinStdinWithURLKeepsTheTwoRemotesRefusal(t *testing.T) {
+	t.Parallel()
+	code, _ := relevosync.NewJoinCode(enableJoinRemote, []byte("FIXTURE-CODE-TOKEN"))
+	_, err := dbSyncEnableJoin(code, "libsql://elsewhere.invalid")
+	if err == nil || !strings.Contains(err.Error(), "--join-stdin and --url") {
+		t.Fatalf("dbSyncEnableJoin = %v, want the refusal naming --join-stdin and --url", err)
+	}
+}
+
+// The old argv form is gone: the flag set no longer knows --join, so no code
+// can ride the command line.
+func TestJoinOnArgvFailsAtFlagParse(t *testing.T) {
+	t.Parallel()
+	fs := flag.NewFlagSet("db sync enable", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	dbSyncEnableFlagSet(fs)
+	for _, args := range [][]string{{"--join", "relevo-join-v1-x"}, {"--join=relevo-join-v1-x"}} {
+		if err := fs.Parse(args); err == nil {
+			t.Errorf("parse %v succeeded, want an unknown flag", args)
+		}
 	}
 }

@@ -95,20 +95,19 @@ func installR2Flags(fs *flag.FlagSet, v *dbSyncR2Flags) {
 // dbSyncEnableIntake refuses the one thing that cannot be resolved here: two
 // secrets asked for on the same standard input.
 //
-// There is one stdin and three secrets that must not be concatenated on it, and
+// There is one stdin and four secrets that must not be concatenated on it, and
 // a pipe carrying two would hand one program whichever value it happened to read
-// first. Any two of them are refused, which is the existing single-stdin rule
-// extended rather than a new rule: --token-stdin and --r2-secret-stdin already
-// could not share a pipe, and the passphrase joins them. What makes the
-// passphrase worth reading off stdin at all is --join, where the token came from
-// the code and left the pipe free.
+// first. Any two of them are refused. --token-stdin is not counted beside
+// --join-stdin: the code carries the token, so that flag reads nothing.
 //
 // The refusal is raised before anything is dialed, so no process is started for
 // an enable that cannot go ahead, and it names the flags that collided rather
 // than saying "a secret".
-func dbSyncEnableIntake(tokenStdin, passphraseStdin bool, r2 dbSyncR2Flags) error {
+func dbSyncEnableIntake(tokenStdin, passphraseStdin, joinStdin bool, r2 dbSyncR2Flags) error {
 	var asked []string
-	if tokenStdin {
+	// A join's token comes from the code, so --token-stdin beside it reads
+	// nothing and shares the pipe with nothing.
+	if tokenStdin && !joinStdin {
 		asked = append(asked, "--token-stdin")
 	}
 	if passphraseStdin {
@@ -116,6 +115,9 @@ func dbSyncEnableIntake(tokenStdin, passphraseStdin bool, r2 dbSyncR2Flags) erro
 	}
 	if *r2.secretStdin {
 		asked = append(asked, "--r2-secret-stdin")
+	}
+	if joinStdin {
+		asked = append(asked, "--join-stdin")
 	}
 	if len(asked) < 2 {
 		return nil

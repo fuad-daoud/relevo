@@ -1,6 +1,6 @@
 package main
 
-// The --join half of `db sync enable`, kept beside the verb rather than in it:
+// The --join-stdin half of `db sync enable`, kept beside the verb rather than in it:
 // db_sync.go is the whole sync CLI and this is one flag's intake.
 //
 // Everything here happens before anything is dialed. The code is parsed, the
@@ -9,12 +9,36 @@ package main
 // starts no worker.
 
 import (
+	"bytes"
 	"errors"
+	"io"
+	"os"
 
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
-// dbSyncEnableJoin is what a --join code resolved to, or that there was none.
+// dbSyncJoinStdin is the reader --join-stdin reads. It is a var so a test can
+// feed it.
+var dbSyncJoinStdin io.Reader = os.Stdin
+
+// dbSyncReadJoinCode reads the code off standard input, or returns none when
+// --join-stdin was not passed. The code is a bearer, so it never rides argv.
+func dbSyncReadJoinCode(fromStdin bool) (string, error) {
+	if !fromStdin {
+		return "", nil
+	}
+	read, err := io.ReadAll(dbSyncJoinStdin)
+	if err != nil {
+		return "", failWrap(codeUsage, err, "relevo db sync enable --join-stdin")
+	}
+	code := string(bytes.TrimSpace(read))
+	if code == "" {
+		return "", fail(codeUsage, "relevo db sync enable --join-stdin: standard input carried no code")
+	}
+	return code, nil
+}
+
+// dbSyncEnableJoin is what a join code resolved to, or that there was none.
 //
 // A code names the remote and the token, so it replaces both --url and
 // --token-stdin. A --url beside it is a contradiction rather than a default: the
@@ -26,7 +50,7 @@ func dbSyncEnableJoin(code, url string) (dbSyncJoin, error) {
 	}
 	if url != "" {
 		return dbSyncJoin{}, fail(codeUsage,
-			"relevo db sync enable: --join and --url name two remotes; pass one")
+			"relevo db sync enable: --join-stdin and --url name two remotes; pass one")
 	}
 	parsed, err := relevosync.ParseJoinCode(code)
 	if err != nil {
