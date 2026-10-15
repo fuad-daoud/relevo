@@ -76,7 +76,7 @@ logins (Claude Code, Codex, OpenCode credentials); a self-hosted hub (the
 |---|---|
 | One writer per binding (history) | `repo`, `mastermind`, `installation`, `binding_record`, `binding_event`, `round_file`, `chains`, `chain_event`, `chain_member`, `chain_check`, `binding`, `round`, `event`, `artifact`, `transcript` |
 | One writer per machine (append-only history) | `availability_event`, `latency_sample` |
-| Newest wins per key (shared docs) | config shared layer (candidates, agents, actors, accounts, policy, roles, prices, servers, hooks, workflows); the files config points at (native agent files, hook scripts); gates; repo consent by remote URL; session consent; allow-listed secrets (encrypted) |
+| Newest wins per key (shared docs) | config shared layer (candidates, agents, actors, accounts, policy, roles, prices, servers, hooks, workflows, themes); the files config points at (native agent files, hook scripts); gates; repo consent by remote URL; session consent; allow-listed secrets (encrypted) |
 | Bytes through R2 | `round_file.body`, `transcript.record_json`, `transcript.rendered` over 4 KiB stored |
 | Never | installation id; the `sync` config section; the local config layer; `turso.token`; `serve.tls.*`; `agy/*`; `sync_outbox`, `sync_import_mark` and the new local sync tables; `ingest_cursor`; `config_import`; kv `daemon`, `serve.*`, `claim`, `hooks.log`, `ui`, `agents-manifest`, `release-check`, run-once markers including `sync.history_rows.v1`; `schema_version` |
 
@@ -155,7 +155,8 @@ implements `TxDoc` (`ApplyIn`, `SupersedeIn`); config does. Docs register by
 name; a second registration of a name, or an unusable name, is refused.
 
 Instances: config sections (one key per item in candidates, agents, actors,
-accounts, servers and repos, as `<section>/<name>`; one key per section for
+accounts, servers, repos and themes, as `<section>/<name>`; one key per
+section for
 policy,
 roles, prices, hooks and workflows), gates (one key per ledger subject), repo
 consent (`consent`; key: remote URL; repos without one don't share consent),

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/board/theme"
 )
 
 const (
@@ -18,12 +20,8 @@ const (
 
 func testServer(t *testing.T) (*Server, string) {
 	t.Helper()
-	th, err := Lookup("cockpit")
-	if err != nil {
-		t.Fatalf("Lookup: %v", err)
-	}
 	scene := filepath.Join(t.TempDir(), "board.excalidraw")
-	return &Server{Token: testToken, ScenePath: scene, Theme: th, Host: testHost}, scene
+	return &Server{Token: testToken, ScenePath: scene, Theme: seedTheme(t, "cockpit"), Host: testHost}, scene
 }
 
 func do(t *testing.T, s *Server, method, target, host, token string, body []byte) *httptest.ResponseRecorder {
@@ -163,6 +161,35 @@ func TestGetMissingIsNew(t *testing.T) {
 		t.Errorf("GET theme = %+v, want cockpit", doc.Theme)
 	}
 }
+
+// TestBoardServesTheStoredPalette pins that the scene document carries the
+// palette it resolved, whatever it is: the page paints new elements, the
+// Mermaid surface and the exported SVG from this one field, so a stored
+// palette -- not the built-in the server would fall back to -- is what a
+// seeded machine must see.
+func TestBoardServesTheStoredPalette(t *testing.T) {
+	stored, err := theme.Parse("night", []byte(themesNightBody))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	scene := filepath.Join(t.TempDir(), "board.excalidraw")
+	s := &Server{Token: testToken, ScenePath: scene, Theme: &stored, Host: testHost}
+	w := do(t, s, http.MethodGet, "/api/scene", testHost, testToken, nil)
+	var doc sceneDoc
+	if err := json.Unmarshal(w.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode scene: %v", err)
+	}
+	if doc.Theme == nil || *doc.Theme != stored {
+		t.Errorf("GET theme = %+v, want the stored night palette", doc.Theme)
+	}
+	if doc.Theme != nil && doc.Theme.Name == "cockpit" &&
+		doc.Theme.Accent == "#6ea8fe" {
+		t.Errorf("GET theme reads the built-in cockpit, want the resolved palette")
+	}
+}
+
+// themesNightBody is a stored palette, as `config set themes.night` writes it.
+const themesNightBody = `{"bg":"#0d1b1e","ink":"#dfe6e8","muted":"#7f9599","faint":"#475d61","line":"#284044","panel":"#132428","accent":"#8be9fd","good":"#6ff2a8","warn":"#ffd166","bad":"#ff6f8e","comment":"#c9a0ff"}`
 
 func TestAssetsAndPageNeedNoToken(t *testing.T) {
 	s, _ := testServer(t)

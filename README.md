@@ -1368,9 +1368,25 @@ must name its file, a bare slug directory is never a path, so a board directory
 can never collide with a subverb name.
 
 The theme chooses the colours of **new** elements only -- an existing scene
-keeps the colours it stores. Precedence is `--theme`, then the repo-local git
-config key `relevo.boardTheme` (`git config relevo.boardTheme blueprint`), then
-`cockpit`. An unknown name is a usage error, exit 2, listing the built-ins.
+keeps the colours it stores. Every palette lives in the `themes` config
+section, keyed by name: the release writes `cockpit` and `blueprint` there
+once per database when relevo starts (so `relevo config get themes.cockpit
+--json` prints cockpit's palette on a fresh install), and after that every
+lookup reads the section -- `relevo config set themes.<name> '{...}'` changes
+what the board paints, `config unset themes.<name>` is what unsets one, and a
+palette you unset stays unset: the seed runs once, not on every open. A user
+palette is whole -- all eleven colour fields (`bg ink muted faint line panel
+accent good warn bad comment`) are required, and each is a `#` followed by 3,
+4, 6 or 8 hex digits -- so a missing or unknown field, and any other colour
+form, is refused at write time naming the entry and the field. Precedence is
+`--theme`, then the repository's own stored setting (`relevo config repo set
+board_theme <name>`), then the repo-local git config key `relevo.boardTheme`
+(`git config relevo.boardTheme blueprint`, kept so existing setups keep
+working), then `cockpit`. A `relevo board` that runs before the state root
+has a database at all -- a fresh install that has never opened it writable --
+paints the palettes the embedded seed file carries. An unknown name is a
+usage error, exit 2, that lists the names the consulted set holds and says
+how to add one: `relevo config set themes.<name> '{...}'`.
 
 On save the page writes the scene and a companion `<name>.svg` beside it,
 exported for the cockpit, agents and PR diffs; both are committed. The export
