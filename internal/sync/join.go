@@ -187,7 +187,7 @@ func (r EnableRequest) Preflight() (EnablePlan, error) {
 		Secret:   r.R2.Secret,
 		Stored:   stored,
 	}.R2Resolve()
-	if err != nil && !(r.Join && errors.Is(err, ErrNoR2)) {
+	if err != nil && (!r.Join || !errors.Is(err, ErrNoR2)) {
 		return EnablePlan{}, err
 	}
 	if err := db.EnablePreflight(r.Shared).Err(); err != nil {
