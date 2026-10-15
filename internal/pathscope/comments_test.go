@@ -291,3 +291,280 @@ func TestLexAlwaysAdvances(t *testing.T) {
 		}
 	}
 }
+
+// judgeExt runs Judge over one M change of an extension with the two blob
+// sides given, returning the violations.
+func judgeExt(t *testing.T, ext, oldSrc, newSrc string, comments bool) []Violation {
+	t.Helper()
+	if !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+	c := Change{Status: 'M', OldMode: "100644", NewMode: "100644",
+		OldOID: "old", NewOID: "new", Path: "p/f" + ext}
+	read := blobs(map[string]string{"old": oldSrc, "new": newSrc})
+	return Judge(Scope{Comments: comments}, []Change{c}, read)
+}
+
+// commentMarker returns the language's line comment marker, derived from
+// the table so every extension gets its family's marker.
+func commentMarker(l *lang) string {
+	switch {
+	case l.hashAny, l.hashWord:
+		return "# "
+	case l.slashLine:
+		return "// "
+	case l.dashLine, l.dashSymbol:
+		return "-- "
+	}
+	return ""
+}
+
+// wantReason asserts one violation with the reason wanted.
+func wantReason(t *testing.T, ext, src string, v []Violation, reason string) {
+	t.Helper()
+	if len(v) != 1 || v[0].Reason != reason {
+		t.Errorf("%s %q: violations = %v, want one %q", ext, src, v, reason)
+	}
+}
+
+// TestCommentOnlyEditPassesEveryTableLanguage gives every extension one
+// old/new pair differing only inside a comment: each is in scope.
+func TestCommentOnlyEditPassesEveryTableLanguage(t *testing.T) {
+	t.Parallel()
+
+	for _, ext := range documentedExts {
+		m := commentMarker(langOf(t, ext))
+		old := "x = 1\n" + m + "old note\n"
+		new := "x = 1\n" + m + "new note\n"
+		if v := judgeExt(t, ext, old, new, true); len(v) != 0 {
+			t.Errorf("%s: comment-only edit refused: %v", ext, v)
+		}
+	}
+}
+
+// TestCodeChangeRefusedEveryTableLanguage is the same pairs with one byte
+// changed outside a comment: each is a code change.
+func TestCodeChangeRefusedEveryTableLanguage(t *testing.T) {
+	t.Parallel()
+
+	for _, ext := range documentedExts {
+		m := commentMarker(langOf(t, ext))
+		old := "x = 1\n" + m + "note\n"
+		new := "x = 2\n" + m + "note\n"
+		wantReason(t, ext, old, judgeExt(t, ext, old, new, true), ReasonCodeChange)
+	}
+}
+
+// TestCommentMarkerInsideStringIsCode pins that a comment marker inside a
+// string is code: a change inside one is a code change.
+func TestCommentMarkerInsideStringIsCode(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		ext, old, new string
+	}{
+		{"js", `let s = "a // b";`, `let s = "a // c";`},
+		{"py", `s = 'a # b'`, `s = 'a # c'`},
+		{"js", "let t = `// x`;", "let t = `// y`;"},
+		{"lua", "s = [[a -- b]]", "s = [[a -- c]]"},
+	} {
+		wantReason(t, tt.ext, tt.old,
+			judgeExt(t, tt.ext, tt.old+"\n", tt.new+"\n", true), ReasonCodeChange)
+	}
+}
+
+// TestDirectiveCommentRefused pins that a comment whose text is a
+// directive may not change: the ordered lists must be equal.
+func TestDirectiveCommentRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		ext, old, new string
+	}{
+		{"py", "x = 1\n# noqa: E501\n", "x = 1\n# noqa: W605\n"},
+		{"py", "x = 1\n# type: ignore\n", "x = 1\n# type: ignore-report\n"},
+		{"py", "# -*- coding: utf-8 -*-\nx = 1\n", "# -*- coding: latin-1 -*-\nx = 1\n"},
+		{"js", "// @ts-ignore\nlet x = 1;\n", "// @ts-expect-error\nlet x = 1;\n"},
+		{"js", "// eslint-disable-next-line\nlet x = 1;\n", "// eslint-disable-next-line no-console\nlet x = 1;\n"},
+		{"py", "#!/usr/bin/env python\nx = 1\n", "#!/usr/bin/env python3\nx = 1\n"},
+		{"lua", "---@type string\nlocal x = 1\n", "---@class string\nlocal x = 1\n"},
+		{"hs", "{-# LANGUAGE LambdaCase #-}\nx = 1\n", "{-# LANGUAGE OverloadedStrings #-}\nx = 1\n"},
+	} {
+		wantReason(t, tt.ext, tt.old,
+			judgeExt(t, tt.ext, tt.old, tt.new, true), ReasonDirectiveComment)
+	}
+}
+
+// TestCannotJudgeUnterminated pins that either side failing to lex is
+// cannot judge: an unclosed /*, {-, """, [[ or heredoc, refuse, never
+// guess.
+func TestCannotJudgeUnterminated(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		ext, old, new string
+	}{
+		{"js", "let x = 1;\n", "let x = 1; /* abc\n"},
+		{"hs", "x = 1\n", "x = 1\n{- abc\n"},
+		{"py", "x = 1\n", "x = \"\"\"abc\n"},
+		{"lua", "x = 1\n", "s = [[abc\n"},
+		{"sh", "echo hi\n", "cat <<EOF\nbody\n"},
+	} {
+		wantReason(t, tt.ext, tt.new,
+			judgeExt(t, tt.ext, tt.old, tt.new, true), ReasonCannotJudge)
+	}
+}
+
+// TestHashNotAtWordStartIsCode pins that a # that does not start a word is
+// code: echo a#b and key: a#b are not comments.
+func TestHashNotAtWordStartIsCode(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		ext, old, new string
+	}{
+		{"sh", "echo a#b\n", "echo a#c\n"},
+		{"yaml", "key: a#b\n", "key: a#c\n"},
+	} {
+		wantReason(t, tt.ext, tt.old,
+			judgeExt(t, tt.ext, tt.old, tt.new, true), ReasonCodeChange)
+	}
+}
+
+// TestShellHeredocBodyIsCode pins that a heredoc body is code, so a body
+// line starting with # may not change.
+func TestShellHeredocBodyIsCode(t *testing.T) {
+	t.Parallel()
+
+	old := "cat <<EOF\n# one\nEOF\necho done\n"
+	new := "cat <<EOF\n# two\nEOF\necho done\n"
+	wantReason(t, "sh", old, judgeExt(t, "sh", old, new, true), ReasonCodeChange)
+}
+
+// TestShellArithmeticShiftIsNotAHeredoc pins that a << inside $(( )) or
+// (( )) is a shift, not a heredoc: an unrelated comment edit stays in
+// scope.
+func TestShellArithmeticShiftIsNotAHeredoc(t *testing.T) {
+	t.Parallel()
+
+	old := "x=$((1 << 2))\n# note\n"
+	new := "x=$((1 << 2))\n# other\n"
+	if v := judgeExt(t, "sh", old, new, true); len(v) != 0 {
+		t.Errorf("arithmetic shift read as a heredoc: %v", v)
+	}
+}
+
+// TestYamlBlockScalarBodyIsCode pins that a block scalar's body is a
+// string, so a body line starting with # may not change.
+func TestYamlBlockScalarBodyIsCode(t *testing.T) {
+	t.Parallel()
+
+	old := "k: |\n  # one\n  v\n"
+	new := "k: |\n  # two\n  v\n"
+	wantReason(t, "yaml", old, judgeExt(t, "yaml", old, new, true), ReasonCodeChange)
+}
+
+// TestIndentationChangeRefused pins that leading whitespace is code: an
+// indentation change in Python or YAML is a code change.
+func TestIndentationChangeRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		ext, old, new string
+	}{
+		{"py", "if x:\n    pass\n", "if x:\n        pass\n"},
+		{"yaml", "a:\n  b: 1\n", "a:\n    b: 1\n"},
+	} {
+		wantReason(t, tt.ext, tt.old,
+			judgeExt(t, tt.ext, tt.old, tt.new, true), ReasonCodeChange)
+	}
+}
+
+// TestCommentAddedRemovedAndMovedPasses pins that a whole-line comment
+// added, another deleted and a third moved are free: the code lines match.
+func TestCommentAddedRemovedAndMovedPasses(t *testing.T) {
+	t.Parallel()
+
+	old := "x = 1\n# one\ny = 2\n# two\n# three\n"
+	new := "# two\nx = 1\n# new\ny = 2\n"
+	if v := judgeExt(t, "py", old, new, true); len(v) != 0 {
+		t.Errorf("comment add, delete and move refused: %v", v)
+	}
+}
+
+// TestNestedBlockCommentEditPasses pins that Rust block comments nest: an
+// edit inside a /* /* ... */ */ is a comment-only edit.
+func TestNestedBlockCommentEditPasses(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct{ old, new string }{
+		{"let x = 1; /* /* old */ */\n", "let x = 1; /* /* new */ */\n"},
+		{"let v = /* /* a */ b */ 1;\n", "let v = /* /* a */ c */ 1;\n"},
+	} {
+		if v := judgeExt(t, "rs", tt.old, tt.new, true); len(v) != 0 {
+			t.Errorf("nested block comment edit refused: %q -> %q: %v", tt.old, tt.new, v)
+		}
+	}
+}
+
+// TestNewOrDeletedTableLanguageRefused pins that a table language added or
+// deleted is new/deleted source file: a new file has no old side to judge.
+func TestNewOrDeletedTableLanguageRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, status := range []byte{'A', 'D'} {
+		oldMode, newMode := "000000", "100644"
+		if status == 'D' {
+			oldMode, newMode = "100644", "000000"
+		}
+		c := Change{Status: status, OldMode: oldMode, NewMode: newMode, Path: "p/new.py"}
+		v := Judge(Scope{Comments: true}, []Change{c}, blobs(nil))
+		if len(v) != 1 || v[0].Reason != ReasonNewOrDeletedSource {
+			t.Errorf("status %s: violations = %v, want one %q",
+				string(status), v, ReasonNewOrDeletedSource)
+		}
+	}
+}
+
+// TestCommentsDisallowedTableLanguageRefused pins that a scope without
+// comment judgement refuses a table language the way it refuses .go,
+// before any blob is read.
+func TestCommentsDisallowedTableLanguageRefused(t *testing.T) {
+	t.Parallel()
+
+	c := Change{Status: 'M', OldMode: "100644", NewMode: "100644", Path: "p/f.py"}
+	v := Judge(Scope{Comments: false}, []Change{c}, blobs(nil))
+	if len(v) != 1 || v[0].Reason != ReasonOutsideScope {
+		t.Errorf("violations = %v, want one %q", v, ReasonOutsideScope)
+	}
+}
+
+// TestExtensionOutsideTableRefused pins today's refusal for an extension
+// the table does not carry, an extensionless name included.
+func TestExtensionOutsideTableRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{"x.json", "x.txt", "x.rb", "x.php", "x.pl", "Makefile", "Dockerfile"} {
+		c := Change{Status: 'M', OldMode: "100644", NewMode: "100644", Path: path}
+		v := Judge(Scope{Comments: true}, []Change{c}, blobs(nil))
+		if len(v) != 1 || v[0].Reason != ReasonOutsideScope {
+			t.Errorf("%q: violations = %v, want one %q", path, v, ReasonOutsideScope)
+		}
+	}
+}
+
+// TestExtensionLookupIsCaseInsensitive pins that the lookup lowercases the
+// extension: x.PY is judged as Python.
+func TestExtensionLookupIsCaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	c := Change{Status: 'M', OldMode: "100644", NewMode: "100644",
+		OldOID: "old", NewOID: "new", Path: "p/x.PY"}
+	read := blobs(map[string]string{
+		"old": "x = 1\n# old note\n",
+		"new": "x = 1\n# new note\n",
+	})
+	if v := Judge(Scope{Comments: true}, []Change{c}, read); len(v) != 0 {
+		t.Errorf("x.PY not judged as Python: %v", v)
+	}
+}
