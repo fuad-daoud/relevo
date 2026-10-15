@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -189,6 +190,35 @@ func TestPickServedCandidateRefusesAnUnservedExplicitToken(t *testing.T) {
 	token, kind, err = PickServedCandidate(rt, "")
 	if err != nil || token != "claude/test/b" || kind != "claude" {
 		t.Fatalf("omitted token: got %q/%q, err %v; want claude/test/b/claude, nil", token, kind, err)
+	}
+}
+
+// TestPickServedCandidateSkipsAProviderGatedOnTheServer: a provider-wide gate
+// in the server's ledger takes that provider's candidates out of the served
+// pick, so a laptop's forwarded gate steers the next round on the server.
+func TestPickServedCandidateSkipsAProviderGatedOnTheServer(t *testing.T) {
+	t.Parallel()
+
+	set := candidateSet(t, `[
+  {"harness":"claude","provider":"test","model":"a","roles":["builder"]},
+  {"harness":"agy","provider":"other","model":"b","roles":["builder"]}
+]`)
+	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
+		"builder": {Candidates: []string{"claude/test/a", "agy/other/b"}},
+	})
+	rt := Runtime{Candidates: set, Registry: reg, Gates: testGateKV(t), Now: func() time.Time { return baseTime }}
+
+	if token, _, err := PickServedCandidate(rt, ""); err != nil || token != "claude/test/a" {
+		t.Fatalf("ungated pick = %q, %v; want claude/test/a", token, err)
+	}
+	err := availability.SaveLedger(rt.Gates, availability.Ledger{Entries: []availability.Entry{
+		{Kind: availability.RateLimited, Subject: "test", At: baseTime, Source: "planner"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token, _, err := PickServedCandidate(rt, ""); err != nil || token != "agy/other/b" {
+		t.Fatalf("gated pick = %q, %v; want agy/other/b", token, err)
 	}
 }
 
