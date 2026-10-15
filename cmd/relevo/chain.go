@@ -74,7 +74,7 @@ func chainFlagSet(fs *flag.FlagSet) *chainFlagValues {
 	v.feature = fs.String("feature", "", "label grouping every member with others; a chain needs exactly one of --feature or --no-feature")
 	v.noFeature = fs.Bool("no-feature", false, "record that this chain is not a feature; a chain needs exactly one of --feature or --no-feature")
 	v.resume = fs.Bool("resume", false, "continue a halted or stopped chain: re-run the step it stopped on, applying any settings flags")
-	v.ticket = fs.String("ticket", "", "the issue this chain serves: N, #N, owner/repo#N, or a .../issues/N URL")
+	v.ticket = fs.String("ticket", "", "the issue this chain serves: N, #N, owner/repo#N, an issue key like ABC-123, or an issue URL")
 	v.base = fs.String("base", "", "commit or ref to cut the builder's worktree from; defaults to HEAD")
 	v.gate = fs.String("gate", "", "acceptance command the builder runs on the round's completion marker (default: config policy gate.default)")
 	v.noGate = fs.Bool("no-gate", false, "opt the builder out of config policy's gate.default")

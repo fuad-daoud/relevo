@@ -275,8 +275,9 @@ gives a MasterMind a name of your own.
   must name exactly one of `--feature <label>` (a label grouping it with other
   bindings) and `--no-feature` (it serves no feature); naming neither or both is
   refused, exit 2, before any state, worktree or network work. `--ticket REF` is
-  optional and allowed with either: a number, `#N`, `owner/repo#N` or an issue
-  URL, stored as `owner/repo#N` when relevo knows the repository. `--candidate` is
+  optional and allowed with either: a number, `#N`, `owner/repo#N`, an issue
+  key like `ABC-123`, or an issue URL, stored as `owner/repo#N` when relevo
+  knows the repository; any other http(s) URL is stored whole. `--candidate` is
   a candidate token; `--actor R` is the writer actor the binding runs (default
   `builder`). A name that already exists is refused rather than reused:
   only the binding's record would be rewritten, so a fresh round 1 would
@@ -1093,7 +1094,8 @@ repository it works in (the origin URL, normalised, and the git common
 directory — best-effort, so a directory git can't read leaves this blank
 rather than failing the command), the `--feature` label grouping it with
 other bindings (or that it serves none), the `--ticket` issue it serves
-(stored as `#N`, or `owner/repo#N` when the repository is known), and which
+(stored as `#N`, `owner/repo#N`, an issue key like `ABC-123`, or an http(s)
+URL stored whole), and which
 binding and round it was forked from. None of this
 changes what you see day to day; it exists for `relevo history`, the ui's
 dashboard and the database below.
@@ -1152,7 +1154,7 @@ relevo history [--here]                    filter to a repo: --here resolves the
                                            origin url (or its git common dir with no remote)
               [--feature LABEL]           filter to a --feature label
               [--ticket REF]              filter by ticket: a bare N or #N matches any stored ticket
-                                           ending in #N, owner/repo#N matches exactly
+                                           ending in #N, anything else matches exactly
               [--binding NAME]            filter to one binding name
               [--mastermind SESSION]         filter to one MasterMind session id
               [--since D]                 only rounds started after this: 24h, 7d, or YYYY-MM-DD

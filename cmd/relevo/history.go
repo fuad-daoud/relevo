@@ -81,7 +81,7 @@ func historyFlagSet(fs *flag.FlagSet) *historyFlagValues {
 	v.here = fs.Bool("here", false, "filter to the repo the current directory belongs to")
 	v.binding = fs.String("binding", "", "filter to this binding name")
 	v.feature = fs.String("feature", "", "filter to this feature label")
-	v.ticket = fs.String("ticket", "", "filter by ticket: N or owner/repo#N")
+	v.ticket = fs.String("ticket", "", "filter by ticket: a bare N or #N matches any stored ticket ending in #N; anything else matches exactly")
 	v.mastermind = fs.String("mastermind", "", "filter to this mastermind session id")
 	v.since = fs.String("since", "", "only rounds started after this: 24h, 7d, or YYYY-MM-DD")
 	v.limit = fs.Int("limit", 200, "max rows to print; 0 = all")
