@@ -55,8 +55,8 @@ type Edge struct {
 // CLI classifies it as usage.
 var ErrInvalidFeature = errors.New("invalid feature label")
 
-// ErrInvalidTicket is ValidTicket's and ParseTicket's class: a --ticket outside
-// the four accepted input forms. The caller's own argument, so usage.
+// ErrInvalidTicket is ValidTicket's and ParseTicket's class: a --ticket
+// outside the accepted input forms. The caller's own argument, so usage.
 var ErrInvalidTicket = errors.New("invalid ticket")
 
 // ValidFeature reports whether s is a valid --feature label: 1..64 bytes,
@@ -85,13 +85,28 @@ func ValidFeature(s string) error {
 }
 
 // ValidTicket reports whether s is a valid stored --ticket form: "#N" or
-// "owner/repo#N", where N is 1..9 digits with no leading zero, each of owner
-// and repo is 1..100 chars of [A-Za-z0-9._-], and the whole is at most 128
-// bytes.
+// "project/path#N" (2..N segments, each 1..100 chars of [A-Za-z0-9._-]) at
+// most 256 bytes, an issue key like ABC-123 at most 64 bytes, or an http(s)
+// URL at most 512 bytes. N is 1..9 digits with no leading zero.
 func ValidTicket(s string) error {
-	const errText = "ticket: #N or owner/repo#N"
+	const errText = "ticket: #N, project/path#N, an issue key like ABC-123, or an http(s) URL"
 
-	if len(s) == 0 || len(s) > 128 {
+	if len(s) == 0 {
+		return invalidOf(ErrInvalidTicket, "%s", errText)
+	}
+	if validIssueKey(s) {
+		if len(s) > 64 {
+			return invalidOf(ErrInvalidTicket, "%s", errText)
+		}
+		return nil
+	}
+	if isOpaqueURL(s) {
+		if len(s) > 512 {
+			return invalidOf(ErrInvalidTicket, "%s", errText)
+		}
+		return nil
+	}
+	if len(s) > 256 {
 		return invalidOf(ErrInvalidTicket, "%s", errText)
 	}
 	hash := strings.LastIndex(s, "#")
@@ -105,21 +120,44 @@ func ValidTicket(s string) error {
 	if prefix == "" {
 		return nil
 	}
-	if !validOwnerRepo(prefix) {
+	if !validProjectPath(prefix) {
 		return invalidOf(ErrInvalidTicket, "%s", errText)
 	}
 	return nil
 }
 
-// ParseTicket turns one of the four accepted --ticket input forms into the
-// stored form: a bare number ("N" or "#N"), "owner/repo#N", or a
-// ".../issues/N" URL. ownerRepo ("owner/repo", as git.OwnerRepo returns, or
-// "") fills the repository prefix when the input names none; a repository
-// typed into the input wins over the hint.
+// ParseTicket turns one of the accepted --ticket input forms into the stored
+// form: a bare number ("N" or "#N"), "project/path#N", an issue key like
+// ABC-123 stored verbatim, or an http(s) URL stored whole. ownerRepo
+// ("owner/repo", as git.OwnerRepo returns, or "") fills the repository prefix
+// of the number forms when the input names none; a repository typed into the
+// input wins over the hint, and the key and URL forms never take it. An input
+// that looks like an issue URL but does not parse as one is stored whole when
+// it carries an http(s) scheme, and refused without one.
 func ParseTicket(raw, ownerRepo string) (string, error) {
-	const errText = "ticket: a number, #N, owner/repo#N, or a .../issues/N URL"
+	const errText = "ticket: a number, #N, project/path#N, an issue key like ABC-123, or an http(s) URL"
 
-	repo, num, err := splitTicket(strings.TrimSpace(raw))
+	s := strings.TrimSpace(raw)
+	if repo, num, ok := issueURLTicket(s); ok {
+		stored := repo + "#" + num
+		if err := ValidTicket(stored); err != nil {
+			return "", invalidOf(ErrInvalidTicket, "%s", errText)
+		}
+		return stored, nil
+	}
+	if isOpaqueURL(s) {
+		if err := ValidTicket(s); err != nil {
+			return "", invalidOf(ErrInvalidTicket, "%s", errText)
+		}
+		return s, nil
+	}
+	if validIssueKey(s) {
+		if err := ValidTicket(s); err != nil {
+			return "", invalidOf(ErrInvalidTicket, "%s", errText)
+		}
+		return s, nil
+	}
+	repo, num, err := splitTicket(s)
 	if err != nil {
 		return "", invalidOf(ErrInvalidTicket, "%s", errText)
 	}
@@ -136,21 +174,31 @@ func ParseTicket(raw, ownerRepo string) (string, error) {
 	return stored, nil
 }
 
-// splitTicket splits an accepted input form into its repository ("" when the
-// input names none) and its issue number.
-func splitTicket(s string) (repo, num string, err error) {
+// issueURLTicket splits an issue URL into its project path and issue number:
+// the last "/issues/" must be followed by a valid issue number, and the path
+// before it, minus one trailing "-" segment (GitLab's "/-/issues/N"), must be
+// a project path. ok is false when the input is not an issue URL that parses;
+// the caller decides what such an input becomes.
+func issueURLTicket(s string) (repo, num string, ok bool) {
 	trimmed := strings.TrimRight(s, "/")
-	if i := strings.LastIndex(trimmed, "/issues/"); i >= 0 {
-		num = trimmed[i+len("/issues/"):]
-		if !validIssueNumber(num) {
-			return "", "", errTicketForm
-		}
-		repo = ownerRepoFromURL(trimmed[:i])
-		if repo == "" {
-			return "", "", errTicketForm
-		}
-		return repo, num, nil
+	i := strings.LastIndex(trimmed, "/issues/")
+	if i < 0 {
+		return "", "", false
 	}
+	num = trimmed[i+len("/issues/"):]
+	if !validIssueNumber(num) {
+		return "", "", false
+	}
+	repo = projectPathFromURL(trimmed[:i])
+	if repo == "" {
+		return "", "", false
+	}
+	return repo, num, true
+}
+
+// splitTicket splits an accepted number-form input into its repository (""
+// when the input names none) and its issue number.
+func splitTicket(s string) (repo, num string, err error) {
 	if hash := strings.LastIndex(s, "#"); hash >= 0 {
 		prefix, num := s[:hash], s[hash+1:]
 		if !validIssueNumber(num) {
@@ -159,7 +207,7 @@ func splitTicket(s string) (repo, num string, err error) {
 		if prefix == "" {
 			return "", num, nil
 		}
-		if !validOwnerRepo(prefix) {
+		if !validProjectPath(prefix) {
 			return "", "", errTicketForm
 		}
 		return prefix, num, nil
@@ -172,36 +220,49 @@ func splitTicket(s string) (repo, num string, err error) {
 
 var errTicketForm = fmt.Errorf("ticket: unrecognised form")
 
-// ownerRepoFromURL returns "owner/repo" from the last two path segments of a
-// URL, or "" when the URL does not carry them.
-func ownerRepoFromURL(raw string) string {
+// projectPathFromURL returns the project path of an issue URL's prefix: the
+// URL's path after the host, or the whole prefix when it carries no scheme
+// ("owner/repo" is then already the path). GitLab's trailing "-" project
+// segment is dropped. It returns "" when the result is not a project path of
+// at least two segments.
+func projectPathFromURL(raw string) string {
 	s := raw
 	if i := strings.Index(s, "://"); i >= 0 {
 		s = s[i+3:]
+		slash := strings.Index(s, "/")
+		if slash < 0 {
+			return ""
+		}
+		s = s[slash+1:]
 	}
-	slash := strings.Index(s, "/")
-	if slash < 0 {
-		return ""
+	segs := strings.Split(strings.Trim(s, "/"), "/")
+	if len(segs) > 0 && segs[len(segs)-1] == "-" {
+		segs = segs[:len(segs)-1]
 	}
-	segs := strings.Split(strings.Trim(s[slash+1:], "/"), "/")
 	if len(segs) < 2 {
 		return ""
 	}
-	owner, repo := segs[len(segs)-2], segs[len(segs)-1]
-	if !validOwnerRepoName(owner) || !validOwnerRepoName(repo) {
-		return ""
+	for _, seg := range segs {
+		if !validOwnerRepoName(seg) {
+			return ""
+		}
 	}
-	return owner + "/" + repo
+	return strings.Join(segs, "/")
 }
 
-// validOwnerRepo reports whether s is exactly "owner/repo" with both parts
-// valid.
-func validOwnerRepo(s string) bool {
-	owner, repo, ok := strings.Cut(s, "/")
-	if !ok || strings.Contains(repo, "/") {
+// validProjectPath reports whether s is a /-joined path of at least two
+// segments, each validOwnerRepoName.
+func validProjectPath(s string) bool {
+	segs := strings.Split(s, "/")
+	if len(segs) < 2 {
 		return false
 	}
-	return validOwnerRepoName(owner) && validOwnerRepoName(repo)
+	for _, seg := range segs {
+		if !validOwnerRepoName(seg) {
+			return false
+		}
+	}
+	return true
 }
 
 // validOwnerRepoName reports whether s is 1..100 chars of [A-Za-z0-9._-].
@@ -221,6 +282,46 @@ func validOwnerRepoName(s string) bool {
 		}
 	}
 	return true
+}
+
+// isOpaqueURL reports whether s starts with an http or https scheme and
+// carries something after it.
+func isOpaqueURL(s string) bool {
+	rest, ok := strings.CutPrefix(s, "http://")
+	if ok {
+		return rest != ""
+	}
+	rest, ok = strings.CutPrefix(s, "https://")
+	return ok && rest != ""
+}
+
+// validIssueKey reports whether s is an issue key like ABC-123: two or more
+// chars of [A-Z0-9] led by a letter, a dash, then one or more digits.
+func validIssueKey(s string) bool {
+	if len(s) < 4 || s[0] < 'A' || s[0] > 'Z' {
+		return false
+	}
+	i := 1
+	for i < len(s) && isUpperOrDigit(s[i]) {
+		i++
+	}
+	if i < 2 || i >= len(s) || s[i] != '-' {
+		return false
+	}
+	i++
+	if i == len(s) {
+		return false
+	}
+	for ; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isUpperOrDigit(c byte) bool {
+	return c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
 }
 
 // validIssueNumber reports whether n is 1..9 digits with no leading zero.
