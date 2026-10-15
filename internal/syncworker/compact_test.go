@@ -3,6 +3,7 @@ package syncworker
 import (
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 )
@@ -119,28 +120,24 @@ func TestCompactAlignsAFloorNoReaderCanHold(t *testing.T) {
 // real log, holding the worker and every verb behind it. The test compares two
 // sizes rather than holding one to a wall-clock bound: CI runs under -race on
 // shared runners, which slows every pass by an order of magnitude, while the
-// ratio for 4x the entries stays between 4 and 7 for the grouped pass and
-// passes 40 for a per-entry one.
+// ratio for 4x the entries stays at or under 7 for the grouped pass and near 16
+// for a per-entry one. Each pair times both sizes back to back, so a
+// load spike lands on one pair rather than skewing one side of the ratio, and
+// the lowest pair's ratio is the one judged: a host busy with other builds
+// stretched a single sample to 17x, while a per-entry pass is slow in every
+// pair.
 func TestCompactIsNotQuadratic(t *testing.T) {
-	const small, large = 2000, 8000
-	smallTook := fastestCompact(t, small)
-	largeTook := fastestCompact(t, large)
-	ratio := float64(largeTook) / float64(smallTook)
-	t.Logf("%d entries: %v, %d entries: %v, ratio %.1f", small, smallTook, large, largeTook, ratio)
-	if ratio > 12 {
-		t.Fatalf("compacting %d entries took %v, %d took %v: %.1fx for 4x the entries", small, smallTook, large, largeTook, ratio)
+	const small, large, pairs = 2000, 8000, 3
+	best := math.Inf(1)
+	for range pairs {
+		smallTook, largeTook := timeCompact(t, small), timeCompact(t, large)
+		ratio := float64(largeTook) / float64(smallTook)
+		t.Logf("%d entries: %v, %d entries: %v, ratio %.1f", small, smallTook, large, largeTook, ratio)
+		best = min(best, ratio)
 	}
-}
-
-// fastestCompact keeps the fastest of three timings: one sample on a loaded
-// machine can stall several times over and fail a sound ratio.
-func fastestCompact(t *testing.T, n int) time.Duration {
-	t.Helper()
-	best := timeCompact(t, n)
-	for range 2 {
-		best = min(best, timeCompact(t, n))
+	if best > 10 {
+		t.Fatalf("compacting %d entries took at least %.1fx as long as %d in every pair, for 4x the entries", large, best, small)
 	}
-	return best
 }
 
 // timeCompact fills a fresh log with n entries over n/3 rows and times one
