@@ -79,6 +79,30 @@ func TestDoctorPluginRow(t *testing.T) {
 	})
 }
 
+// TestDoctorPluginRowFix pins the failing row's fix: install when the plugin
+// is missing, enable when it is installed but off.
+func TestDoctorPluginRowFix(t *testing.T) {
+	t.Run("not installed: the fix installs it", func(t *testing.T) {
+		checks := MasterMindChecks(MasterMindCheckInput{Claude: true, Home: t.TempDir(), Repo: t.TempDir()})
+		c := findCheck(Report{Checks: checks}, "", "plugin")
+		if c == nil || c.Fix != pluginInstallCommand {
+			t.Fatalf("plugin row = %+v, want the install command as its fix", c)
+		}
+	})
+
+	t.Run("installed but disabled: the fix enables it", func(t *testing.T) {
+		home := t.TempDir()
+		writeDoctorFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"),
+			`{"version":2,"plugins":{"relevo@relevo":[{"version":"0.17.3"}]}}`)
+		writeDoctorFile(t, filepath.Join(home, ".claude", "settings.json"), `{"enabledPlugins":{"relevo@relevo":false}}`)
+		checks := MasterMindChecks(MasterMindCheckInput{Claude: true, Home: home, Repo: t.TempDir()})
+		c := findCheck(Report{Checks: checks}, "", "plugin")
+		if c == nil || c.Severity != SevFail || !strings.Contains(c.Fix, "/plugin") {
+			t.Fatalf("plugin row = %+v, want FAIL with the enable fix", c)
+		}
+	})
+}
+
 func TestDoctorMasterMindRow(t *testing.T) {
 	rec := &mastermind.Record{ID: "pl_aaaaaaaabbbb", Name: "architect-1", HarnessKind: "claude", SessionID: "sess"}
 
