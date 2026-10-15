@@ -138,6 +138,41 @@ func TestTheSameSecretUnderOneKeySealsToTheSameEnvelope(t *testing.T) {
 	}
 }
 
+// TestTheSealingNonceNamesAndValuesApart pins that the derived nonce mixes the
+// name and the value in, read from the envelope's nonce field rather than from
+// the envelope bytes: the ciphertext differs on the name anyway, because the
+// name is also the associated data, so only the nonce can answer whether two
+// secrets that share a value hash apart.
+func TestTheSealingNonceNamesAndValuesApart(t *testing.T) {
+	t.Parallel()
+	nonceOf := func(t *testing.T, env json.RawMessage) string {
+		t.Helper()
+		var decoded secretEnvelope
+		if err := json.Unmarshal(env, &decoded); err != nil {
+			t.Fatalf("read the envelope: %v", err)
+		}
+		return decoded.N
+	}
+	first, err := SealSecret(testSyncKey(), SecretTypesafe, canarySecret)
+	if err != nil {
+		t.Fatalf("SealSecret: %v", err)
+	}
+	otherName, err := SealSecret(testSyncKey(), SecretR2Bucket, canarySecret)
+	if err != nil {
+		t.Fatalf("SealSecret under another name: %v", err)
+	}
+	if nonceOf(t, first) == nonceOf(t, otherName) {
+		t.Fatal("two secrets sharing a value share a derived nonce")
+	}
+	otherValue, err := SealSecret(testSyncKey(), SecretTypesafe, []byte("CANARY-a-different-value"))
+	if err != nil {
+		t.Fatalf("SealSecret on another value: %v", err)
+	}
+	if nonceOf(t, first) == nonceOf(t, otherValue) {
+		t.Fatal("two values of one name share a derived nonce")
+	}
+}
+
 // TestOpenReadsAnEnvelopeSealedWithADrawnNonce pins that what a log already
 // holds keeps opening. One of its envelopes was sealed with a nonce somebody
 // drew, which is exactly how an envelope this build wrote before the sealing
