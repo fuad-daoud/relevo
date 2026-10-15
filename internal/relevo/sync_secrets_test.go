@@ -316,6 +316,51 @@ func TestTheFleetsStampedClientKeyBeatsAJoinersGeneratedOne(t *testing.T) {
 	if want := remote.IDOf(mustParse(t, fleetPEM).Public); b.clientID(t) != want {
 		t.Errorf("the joiner's client id = %q, want the fleet's %q", b.clientID(t), want)
 	}
+	// The swap is recorded, because nothing else about it is visible: the key is
+	// the fleet's and the id reads correctly, so a machine that did not write
+	// this row down would look exactly as healthy as one that had never been
+	// enrolled on the servers it now points at.
+	swapped, ok, err := b.cfg.ReadClientKeyReplaced()
+	if err != nil || !ok {
+		t.Fatalf("the joiner recorded no client key replacement (%v, %v)", ok, err)
+	}
+	if want := string(remote.IDOf(mustParse(t, joinerPEM).Public)); swapped.From != want {
+		t.Errorf("the recorded previous id = %q, want the joiner's own %q", swapped.From, want)
+	}
+	if swapped.To != string(b.clientID(t)) {
+		t.Errorf("the recorded new id = %q, want %q", swapped.To, b.clientID(t))
+	}
+}
+
+// TestAClientKeyReplacementIsRecordedOnlyWhenTheKeyChanges pins the other half:
+// a machine that never had a client key of its own records nothing when one
+// arrives. There is no swap to report without an identity to have swapped away
+// from, and a row naming only the new id would tell an operator their enrolment
+// changed when it never existed here.
+func TestAClientKeyReplacementIsRecordedOnlyWhenTheKeyChanges(t *testing.T) {
+	t.Parallel()
+	log := synclog.NewMemTransport("x")
+	a := newCfgMachine(t, log, cfgSyncKey, true)
+	b := newCfgMachine(t, log, cfgSyncKey, true)
+
+	aPEM := newClientKeyPEM(t)
+	a.setSecret(t, config.SecretClientKey, aPEM)
+	a.attempt(t)
+	b.attempt(t)
+	if _, ok, err := b.cfg.ReadClientKeyReplaced(); err != nil || ok {
+		t.Fatalf("a machine that held no client key recorded a replacement (%v, %v)", ok, err)
+	}
+
+	// The fleet's key re-sent under a newer stamp. Each seal draws a fresh nonce,
+	// so the exporter treats it as a changed value and writes a new entry, and
+	// the applied state cannot collapse it into the first. The identity is the
+	// same one either way, so nothing new is to report.
+	a.setSecret(t, config.SecretClientKey, aPEM)
+	a.attempt(t)
+	b.attempt(t)
+	if _, ok, err := b.cfg.ReadClientKeyReplaced(); err != nil || ok {
+		t.Fatalf("re-sending the same client key recorded a replacement (%v, %v)", ok, err)
+	}
 }
 
 // TestTwoMachinesWithDifferentGeneratedKeysBothKeepTheirOwn is the other

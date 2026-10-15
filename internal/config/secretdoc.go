@@ -15,6 +15,7 @@ package config
 // holds the log, so a value that reached one would have reached every reader.
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -205,7 +206,91 @@ func (d *SecretDoc) applyIn(t *db.Tx, key string, value json.RawMessage, label s
 	if err != nil {
 		return err
 	}
+	if err := d.noteClientKeyReplaced(t, key, plain); err != nil {
+		return err
+	}
 	return d.store.putSecretApplied(t, key, plain, label)
+}
+
+// ClientKeyReplacedKey is where the machine-local row records that an arriving
+// client key took the place of one this machine already held. It is a row rather
+// than a revision because it is a fact about this machine's state now, not about
+// one edit in its history: `relevo doctor` reads it to say the machine's identity
+// changed and the servers need the new enrolment line, and it reads nothing else.
+const ClientKeyReplacedKey = "config/client_key_replaced"
+
+// ClientKeyReplaced is what the row holds: the identity this machine had before
+// the arrival, and the one it has now. Both are client ids rather than keys, so
+// the row can be read and printed by anyone who opens this machine's file.
+type ClientKeyReplaced struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// noteClientKeyReplaced records the swap an arriving client key makes, and only
+// the swap: a value equal to what this machine already holds is a redelivery
+// rather than a change, and a name other than the client key is not an identity.
+//
+// The row is what makes the arrival reportable at all. Nothing derived goes
+// stale -- the client id and the enrolment line are read from the stored key
+// live -- so without it a machine whose identity was replaced would be silently
+// sending requests the servers no longer accept.
+func (d *SecretDoc) noteClientKeyReplaced(t *db.Tx, key string, plain []byte) error {
+	if key != SecretClientKey {
+		return nil
+	}
+	before, held, err := t.SecretGet(key)
+	if err != nil {
+		return err
+	}
+	if !held || bytes.Equal(bytes.TrimSpace(before), bytes.TrimSpace(plain)) {
+		return nil
+	}
+	swapped, err := clientIDsOf(before, plain)
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(swapped)
+	if err != nil {
+		return err
+	}
+	return t.ConfigPut(ClientKeyReplacedKey, body, d.now().UTC())
+}
+
+// clientIDsOf is the pair of identities two stored keys stand for, or an error
+// when either will not parse. A stored key that does not parse is refused rather
+// than reported as an unknown id, because the whole point of the row is to name
+// two identities an operator can act on.
+func clientIDsOf(before, after []byte) (ClientKeyReplaced, error) {
+	oldPair, err := remote.ParsePrivate(before)
+	if err != nil {
+		return ClientKeyReplaced{}, fmt.Errorf("config: the stored %s is not a private key: %w",
+			SecretClientKey, err)
+	}
+	newPair, err := remote.ParsePrivate(after)
+	if err != nil {
+		return ClientKeyReplaced{}, fmt.Errorf("config: an arriving %s is not a private key: %w", SecretClientKey, err)
+	}
+	return ClientKeyReplaced{
+		From: string(remote.IDOf(oldPair.Public)),
+		To:   string(remote.IDOf(newPair.Public)),
+	}, nil
+}
+
+// ReadClientKeyReplaced is what this machine recorded when an arriving client
+// key replaced the one it held. A machine that never had one swapped answers
+// false, which is the ordinary state and not a fault.
+func (s *Store) ReadClientKeyReplaced() (ClientKeyReplaced, bool, error) {
+	body, ok, err := s.db.LocalOrSelf().ConfigGet(ClientKeyReplacedKey)
+	if err != nil || !ok {
+		return ClientKeyReplaced{}, false, err
+	}
+	var swapped ClientKeyReplaced
+	if err := json.Unmarshal(body, &swapped); err != nil {
+		return ClientKeyReplaced{}, false, fmt.Errorf("config: read the %s row: %w: %w",
+			ClientKeyReplacedKey, err, ErrInvalidValue)
+	}
+	return swapped, true, nil
 }
 
 // SupersedeIn records a value that did not land -- because this machine may not

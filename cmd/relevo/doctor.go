@@ -249,6 +249,18 @@ func doctorFlagSet(fs *flag.FlagSet) *doctorFlagValues {
 	return v
 }
 
+// clientKeyReplaced reads what this machine's own file recorded when an arriving
+// client key took the place of the one it held. A row that will not read is
+// reported as no swap: the doctor is telling an operator what to act on, and a
+// corrupt row is a worse thing to interrupt that with than a missing warning.
+func clientKeyReplaced(cfg *config.Store) doctor.ClientKeyReplacedInput {
+	swapped, ok, err := cfg.ReadClientKeyReplaced()
+	if err != nil || !ok {
+		return doctor.ClientKeyReplacedInput{}
+	}
+	return doctor.ClientKeyReplacedInput{Swapped: true, From: swapped.From, To: swapped.To}
+}
+
 // doctorReport runs every check `relevo doctor` has: the configured harness
 // kinds, the server rows, the release, database, scope and role rows, the
 // hooks row and the mastermind checks. cmdDoctor owns the flags, the runtime
@@ -307,6 +319,13 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 	// #466: the engine row sits next to the database row, so a library the
 	// engine cannot load is visible beside the database it would open.
 	rep.Checks = insertGlobalCheck(rep.Checks, engineCheck(db.EngineStatus(stateRoot)))
+	// The client-id row: a fleet's stamped key replacing this machine's own is a
+	// deliberate choice, and the consequence is that the servers this machine is
+	// enrolled on no longer recognise it. Read from the machine's own file, so
+	// it answers with the network blackholed.
+	if check, ok := doctor.ClientKeyCheck(clientKeyReplaced(rt.Config)); ok {
+		rep.Checks = insertGlobalCheck(rep.Checks, check)
+	}
 	// The sandbox rows: the xdg one for every user, the linger and port ones
 	// only where the state root carries a dev-sandbox marker.
 	rep.Checks = sandboxChecks(env, serveMachineDB(rt), stateRoot, rep.Checks)

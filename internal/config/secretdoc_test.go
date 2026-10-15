@@ -538,6 +538,62 @@ func TestAnImportedSecretFileStamps(t *testing.T) {
 	}
 }
 
+// TestASecondArrivalOfTheSameClientKeyRecordsNoReplacement pins the guard that
+// decides whether a swap happened at all. A redelivery is normally collapsed by
+// the applied state, but a value re-sent by a different peer under a newer stamp
+// is a new entry carrying the same key -- and an operator told their identity
+// changed when it did not would go and re-enrol a fleet that was already right.
+func TestASecondArrivalOfTheSameClientKeyRecordsNoReplacement(t *testing.T) {
+	t.Parallel()
+	s := secretStore(t)
+	doc := s.SecretsDoc()
+	first, err := remote.Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	firstPEM, err := remote.MarshalPrivate(first)
+	if err != nil {
+		t.Fatalf("MarshalPrivate: %v", err)
+	}
+	if err := s.PutSecretUnstamped(SecretClientKey, firstPEM); err != nil {
+		t.Fatalf("PutSecretUnstamped: %v", err)
+	}
+
+	second, err := remote.Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	secondPEM, err := remote.MarshalPrivate(second)
+	if err != nil {
+		t.Fatalf("MarshalPrivate: %v", err)
+	}
+	if refusal, err := doc.applyChecked(t, SecretClientKey, sealedFor(t, SecretClientKey, secondPEM)); refusal != nil || err != nil {
+		t.Fatalf("ApplyIn = %v, %v", refusal, err)
+	}
+	swapped, ok, err := s.ReadClientKeyReplaced()
+	if err != nil || !ok {
+		t.Fatalf("the arriving key recorded no replacement (%v, %v)", ok, err)
+	}
+	if want := string(remote.IDOf(first.Public)); swapped.From != want {
+		t.Errorf("the recorded previous id = %q, want %q", swapped.From, want)
+	}
+	if swapped.From == swapped.To {
+		t.Errorf("the recorded swap names one identity twice: %+v", swapped)
+	}
+
+	// The same key again: no change, so nothing new to say.
+	if err := doc.Apply(SecretClientKey, sealedFor(t, SecretClientKey, secondPEM)); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	again, ok, err := s.ReadClientKeyReplaced()
+	if err != nil {
+		t.Fatalf("ReadClientKeyReplaced: %v", err)
+	}
+	if !ok || again != swapped {
+		t.Errorf("re-applying the same key rewrote the record: %+v, want %+v", again, swapped)
+	}
+}
+
 // TestSupersedeInRecordsTheKeyAndTheReasonOnly pins the redaction rule at the
 // one place a losing value could have been written down. A revision is read back
 // by anyone who can open this machine's history, so it carries the name and the
