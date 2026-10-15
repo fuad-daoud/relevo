@@ -13,21 +13,10 @@ import (
 // stash stack, so a builder's `git stash pop` can take another lane's work.
 // It finds the subcommand after git's global options (those that take a
 // separate value are skipped with it), and finds the real git on PATH while
-// skipping the relevo shims: its own directory is skipped by canonical path,
-// so a duplicate PATH entry or a symlinked state directory cannot make it exec
-// itself; any other copy of this same shim (the PATH of the context that
-// started a busy round may carry one) is skipped by its content, so two
-// copies do not each resolve the other as real git; and the RELEVO_GIT_SHIM
-// marker guards the chain, so a PATH without grep to recognise the content
-// still terminates after one hop instead of exec-ping-ponging forever. exec
-// keeps stdin, arguments, output and the exit code untouched.
+// skipping its own directory by canonical path, so a duplicate PATH entry or a
+// symlinked state directory cannot make it exec itself. exec keeps stdin,
+// arguments, output and the exit code untouched.
 const gitShimSource = `#!/bin/sh
-if [ -n "$RELEVO_GIT_SHIM" ]; then
-	echo "a second relevo git shim is already guarding this PATH; refusing to chain further" >&2
-	exit 127
-fi
-RELEVO_GIT_SHIM=1
-export RELEVO_GIT_SHIM
 self_dir=$(cd "$(dirname "$0")" && pwd -P)
 self=$self_dir/$(basename "$0")
 skip=0
@@ -61,7 +50,6 @@ for dir in $PATH; do
 	cand=$dir/git
 	[ -f "$cand" ] && [ -x "$cand" ] || continue
 	[ "$cand" -ef "$self" ] && continue
-	grep -q 'git stash is refused' "$cand" 2>/dev/null && continue
 	exec "$cand" "$@"
 done
 echo "git: not found on PATH" >&2
