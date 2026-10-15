@@ -324,8 +324,11 @@ func liveDirOf(res board.Resolved) string {
 
 // boardRefusal maps a board package refusal to the catalog code it earns: a
 // usage error exits 2 with the usage hint, a missing or invalid scene is a
-// refused error with no next command, and anything else is internal.
+// refused error with no next command, a conflict the stored-set read
+// classified (a held file whose owner did not answer) keeps its code, and
+// anything else is internal.
 func boardRefusal(err error) error {
+	var ce *cliError
 	switch {
 	case errors.Is(err, board.ErrUsage):
 		return fail(codeUsage, "%s", err)
@@ -337,6 +340,11 @@ func boardRefusal(err error) error {
 		return fail(codeRefused, "%s", err)
 	case errors.Is(err, board.ErrInvalid):
 		return fail(codeRefused, "%s", boardInvalidText(err))
+	case errors.As(err, &ce) && ce.code == codeConflict:
+		// The stored-set read raises the registry's conflict refusal when the
+		// machine file is held and no owner answers; it reaches the user with
+		// that code, not as an internal failure.
+		return ce
 	default:
 		return fail(codeInternal, "%s", err)
 	}

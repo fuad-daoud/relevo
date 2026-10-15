@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -20,10 +21,12 @@ import (
 // sets: the repository's settings (its board_theme) through the repository
 // identity, and the palettes of the `themes` section. It is a seam so a test
 // can pin tiers without a machine state; by default it reads the machine's
-// own database read-only when one exists and never writes: a board verb
-// keeps creating nothing. A machine with no database, and one whose database
-// is held (a daemon has the file), reads the seed file instead, which is the
-// resolution's one fallback.
+// own database when one exists and never writes: a board verb keeps creating
+// nothing. A held database (a daemon has the file) is read through the owner
+// an ad-hoc dial reaches; the owner is never started, and when it does not
+// answer the read refuses with the registry's conflict rather than resolving
+// against the seed. The seed file is read only where the resolution keeps a
+// fallback: no database exists yet, or the section was never seeded.
 var boardThemeSets = func(cwd string) (relevo.RepoSettings, map[string]board.Theme, error) {
 	repo := relevo.RepoSettings{}
 	root, err := store.DefaultRoot()
@@ -35,10 +38,21 @@ var boardThemeSets = func(cwd string) (relevo.RepoSettings, map[string]board.The
 		return repo, theme.Seed(), nil
 	}
 	d, err := openReadOnlyDB(path, db.Options{})
-	if err != nil {
-		// The daemon holds the file, or the store cannot be read: resolve
-		// against the seed file rather than failing a board open over it.
-		return repo, theme.Seed(), nil
+	if errors.Is(err, db.ErrNotConverted) {
+		return repo, nil, failWrap(codeRefused, err, "open %s", path)
+	}
+	if errors.Is(err, db.ErrLocked) {
+		// The daemon holds the file, so the section and the repository's
+		// settings live behind the owner: read through an ad-hoc dial, which
+		// never starts the owner. A dial that gets no answer refuses with the
+		// registry's conflict rather than substituting the seed, which would
+		// paint a section that exists wrong.
+		d, err = dialOwnerAdHoc(context.Background(), root, verbDialBudget)
+		if err != nil {
+			return repo, nil, boardHeldRefusal(root, err)
+		}
+	} else if err != nil {
+		return repo, nil, failWrap(codeInternal, err, "open %s", path)
 	}
 	defer func() { _ = d.Close() }()
 
@@ -55,6 +69,22 @@ var boardThemeSets = func(cwd string) (relevo.RepoSettings, map[string]board.The
 		return repo, nil, err
 	}
 	return repo, stored, nil
+}
+
+// boardHeldRefusal is the refusal a stored-set read raises when the machine
+// file is held and no owner answers, carrying the registry's own refusal out:
+// the held file and the unanswered socket, classified conflict, with the lock
+// error as its cause so a caller probing db.ErrLocked still finds it. The
+// stored sets are never resolved against the seed here, so a held database
+// with a section the owner serves paints that section or refuses, never the
+// seed.
+func boardHeldRefusal(root string, lockErr error) error {
+	path := filepath.Join(root, "relevo.db")
+	sock, sockErr := ownerSocket(root)
+	if sockErr != nil {
+		return failWrap(codeConflict, lockErr, "relevo.db is locked (%s) and no owner socket is available: %v", path+".lock", sockErr)
+	}
+	return failWrap(codeConflict, lockErr, "relevo.db is locked (%s) and the owner socket at %s did not answer", path+".lock", sock)
 }
 
 // boardThemeStored is the palette set a lookup resolves against: the seeded
