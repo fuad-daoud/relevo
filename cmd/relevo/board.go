@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/board"
+	"github.com/fuad-daoud/relevo/internal/board/theme"
 )
 
 // boardFlagValues holds the pointers board parses into.
@@ -37,7 +38,7 @@ type boardFlagValues struct {
 func boardFlagSet(fs *flag.FlagSet) *boardFlagValues {
 	v := &boardFlagValues{}
 	v.noOpen = fs.Bool("no-open", false, "print the URL without opening a browser")
-	v.theme = fs.String("theme", "", "the theme for new elements: cockpit or blueprint")
+	v.theme = fs.String("theme", "", "the palette for new elements: read the stored names with relevo config get themes")
 	v.board = fs.String("board", "", "the live scene name to open (default: the pointer, else board)")
 	v.mastermind = fs.String("mastermind", "", "the MasterMind whose live board to open (id or name)")
 	return v
@@ -251,7 +252,7 @@ func cmdBoard(args []string) error {
 	}
 
 	// The theme is resolved before anything else so an unknown --theme is a
-	// usage refusal naming the built-ins regardless of which format the path
+	// usage refusal naming the stored palettes regardless of which format the path
 	// selects. Only the Excalidraw flow consumes it: a single-file board brings
 	// its own colours.
 	theme, err := boardResolveTheme(cwd, *v.theme)
@@ -321,34 +322,29 @@ func liveDirOf(res board.Resolved) string {
 	return res.LiveDir
 }
 
-// boardResolveTheme applies the precedence: --theme, then the repo-local
-// relevo.boardTheme, then cockpit.
-func boardResolveTheme(cwd, flagTheme string) (*board.Theme, error) {
-	name := flagTheme
-	if name == "" {
-		key, err := boardGitConfig(cwd, "relevo.boardTheme")
-		if err != nil {
-			return nil, fmt.Errorf("read relevo.boardTheme: %w", err)
-		}
-		name = key
-	}
-	if name == "" {
-		name = board.Names()[0]
-	}
-	return board.Lookup(name)
-}
-
 // boardRefusal maps a board package refusal to the catalog code it earns: a
 // usage error exits 2 with the usage hint, a missing or invalid scene is a
-// refused error with no next command, and anything else is internal.
+// refused error with no next command, a conflict the stored-set read
+// classified (a held file whose owner did not answer) keeps its code, and
+// anything else is internal.
 func boardRefusal(err error) error {
+	var ce *cliError
 	switch {
 	case errors.Is(err, board.ErrUsage):
+		return fail(codeUsage, "%s", err)
+	case errors.Is(err, theme.ErrUsage):
+		// The palette refusals live beside the stored sets; the board carries
+		// them out with the same usage code.
 		return fail(codeUsage, "%s", err)
 	case errors.Is(err, board.ErrNotFound):
 		return fail(codeRefused, "%s", err)
 	case errors.Is(err, board.ErrInvalid):
 		return fail(codeRefused, "%s", boardInvalidText(err))
+	case errors.As(err, &ce) && ce.code == codeConflict:
+		// The stored-set read raises the registry's conflict refusal when the
+		// machine file is held and no owner answers; it reaches the user with
+		// that code, not as an internal failure.
+		return ce
 	default:
 		return fail(codeInternal, "%s", err)
 	}

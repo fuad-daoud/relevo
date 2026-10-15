@@ -96,6 +96,7 @@ func localSectionBodies(t *testing.T) map[Section]string {
 		Actors:     `{"builder-1":{"shape":"writer","agent":"my-exec"}}`,
 		Accounts:   `[{"name":"work","harness":"claude","groups":["anthropic"],"config_dir":"/tmp/claude-work"}]`,
 		Repos:      `{"aaaaaaaa":{"name":"shared"}}`,
+		Themes:     themesBase,
 		Sync:       syncStored,
 	}
 	// The workflows section stores a source and the parse of that source, so it
