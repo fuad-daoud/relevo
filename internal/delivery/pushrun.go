@@ -168,12 +168,16 @@ func (p *pushRun) run(ctx context.Context) error {
 // claimable it writes the state transitions it saw. sent reports whether an
 // entry was found.
 func (p *pushRun) step(ctx context.Context) (sent bool, err error) {
-	b, entry, idx, found, err := nextAdmitted(p.d, p.mastermindID)
+	mine, err := ownBindings(p.d, p.mastermindID)
+	if err != nil {
+		return false, err
+	}
+	b, entry, idx, found, err := nextAdmitted(p.d, mine)
 	if err != nil {
 		return false, err
 	}
 	if !found {
-		return false, p.writeStateLines()
+		return false, p.writeStateLines(mine)
 	}
 	if p.claimSeam != nil {
 		p.claimSeam()
@@ -208,16 +212,9 @@ func (p *pushRun) writeEntry(b store.Binding, e store.LogEntry, idx int) error {
 // claimable, never while awaitAck waits -- so the loop stays the one writer. A
 // binding that disappeared is dropped from memory: recreated under the same
 // name, it announces its state fresh.
-func (p *pushRun) writeStateLines() error {
-	all, err := p.d.Store.List()
-	if err != nil {
-		return err
-	}
+func (p *pushRun) writeStateLines(mine []store.Binding) error {
 	seen := make(map[string]bool)
-	for _, b := range all {
-		if b.MasterMindID != p.mastermindID || b.Owner != "" {
-			continue
-		}
+	for _, b := range mine {
 		seen[b.Name] = true
 		prev, wasSeen := p.last[b.Name]
 		if (!wasSeen || prev != b.State) && isStateEvent(b.State) {
@@ -322,23 +319,30 @@ func refreshPushClaim(ctx context.Context, d Deps, claim Claim) {
 	}
 }
 
-// nextAdmitted returns the oldest claimable entry across the mastermind's own
-// bindings, in binding-name order, with the entry already admitted: the scan
-// and the admit run in one lock, so no reader can confirm the entry between
-// finding it and hiding it from the claimable scans.
-func nextAdmitted(d Deps, mastermindID string) (store.Binding, store.LogEntry, int, bool, error) {
-	all, err := d.Store.List()
+// ownBindings returns the mastermind's own bindings in name order. It reads
+// only that mastermind's records: a holder polls twice a second and every
+// session on the machine runs one, so listing every binding of every
+// mastermind on each poll would make the holders the daemon's largest idle load.
+func ownBindings(d Deps, mastermindID string) ([]store.Binding, error) {
+	listed, err := d.Store.ListForMasterMind(mastermindID)
 	if err != nil {
-		return store.Binding{}, store.LogEntry{}, 0, false, err
+		return nil, err
 	}
 	var mine []store.Binding
-	for _, b := range all {
+	for _, b := range listed {
 		if b.MasterMindID == mastermindID && b.Owner == "" {
 			mine = append(mine, b)
 		}
 	}
 	sort.Slice(mine, func(i, j int) bool { return mine[i].Name < mine[j].Name })
+	return mine, nil
+}
 
+// nextAdmitted returns the oldest claimable entry across mine, in order, with
+// the entry already admitted: the scan and the admit run in one lock, so no
+// reader can confirm the entry between finding it and hiding it from the
+// claimable scans.
+func nextAdmitted(d Deps, mine []store.Binding) (store.Binding, store.LogEntry, int, bool, error) {
 	for _, b := range mine {
 		entry, idx, found, err := claimAndAdmitOne(d, b.Name)
 		if err != nil {
@@ -375,14 +379,11 @@ func claimAndAdmitOne(d Deps, name string) (store.LogEntry, int, bool, error) {
 // the holder now owns the claim, so a stamp a dead holder left is orphaned and
 // the entry must be pending for the drain.
 func clearStaleAdmits(d Deps, mastermindID string) error {
-	all, err := d.Store.List()
+	mine, err := ownBindings(d, mastermindID)
 	if err != nil {
 		return err
 	}
-	for _, b := range all {
-		if b.MasterMindID != mastermindID || b.Owner != "" {
-			continue
-		}
+	for _, b := range mine {
 		if kind := b.MasterMind.Kind; kind != "" {
 			if _, ok := d.Deliverers[kind]; ok {
 				continue

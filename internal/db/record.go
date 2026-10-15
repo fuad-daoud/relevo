@@ -165,6 +165,25 @@ func (d *DB) RecordList(owner string) ([]Record, error) {
 	return out, nil
 }
 
+// RecordListForMasterMind is RecordList narrowed, in the query, to the records
+// whose binding names mastermindID, so a caller polling for its own bindings
+// does not read every record of every MasterMind. '$.planner_id' is the JSON
+// key store.Binding writes MasterMindID under.
+func (d *DB) RecordListForMasterMind(owner, mastermindID string) ([]Record, error) {
+	rows, err := d.sqlDB.QueryContext(context.Background(),
+		`SELECT `+recordCols+` FROM binding_record WHERE `+originScope+` AND owner = ? AND archived_at IS NULL
+			AND json_extract(record_json, '$.planner_id') = ? ORDER BY name ASC`,
+		d.origin, owner, mastermindID)
+	if err != nil {
+		return nil, fmt.Errorf("db: record list for mastermind: %w", mapBusy(err))
+	}
+	out, err := collectRows(rows, scanRecord)
+	if err != nil {
+		return nil, fmt.Errorf("db: record list for mastermind: %w", mapBusy(err))
+	}
+	return out, nil
+}
+
 // RecordListArchived returns every archived row, oldest archived_at first and
 // by name within one stamp, so the archive readers can see a row RecordGet and
 // RecordList hide.
