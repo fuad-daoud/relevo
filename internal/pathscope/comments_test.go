@@ -673,7 +673,7 @@ func TestCodeHiddenBehindAnUnmodelledTokenIsRefused(t *testing.T) {
 		// ambiguity the trigger refuses.
 		{"a.sql", "select 1--2, good from t;", "select 1--2, evil from t;"},
 		{"a.js", "f(.../[a//b]/); good();", "f(.../[a//b]/); evil();"},
-		{"a.scala", "if (c) <a>\n// x\n</a>\ngood()\n", "if (c) <a>\n// x\n</a>\nevil()\n"},
+		{"a.scala", "if (c) <a>\n// x </a>; good()\n", "if (c) <a>\n// x </a>; evil()\n"},
 	} {
 		refuseReason(t, tt.path, tt.old, tt.new, judgeFile(t, tt.path, tt.old, tt.new))
 	}
