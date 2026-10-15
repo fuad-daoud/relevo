@@ -15,10 +15,13 @@ History per round (done):
 - `internal/store/log.go`: `PollSwitchNotePrefix`, shared by the poll writer and
   the history reader.
 
-Trace check result (not reproduced): `chainCheckResult`, `chainGateResult`,
-the placed poll and the pulled-record fallback all map a non-pass to red, and
-the served view ships the runner's word. No source change was made; the mapping
-is pinned by `TestCheckResultWordsFollowTheRunnersResult`.
+Trace check result: `chainRenderShippedSeed` consulted the engine's recorded
+check only when `chainSeedView` had found no member-gate record, so a builder
+with `check on` kept its own (red) gate record in the reviewer seed while the
+engine's check run was green. The engine's recorded check now overrides the
+member-gate record whenever it carries a log; the record is the fallback for a
+chain whose engine ran no check. The mapping of a non-pass to red is pinned by
+`TestCheckResultWordsFollowTheRunnersResult`.
 
 ## Tests
 
@@ -26,3 +29,4 @@ is pinned by `TestCheckResultWordsFollowTheRunnersResult`.
 - `TestSwitchesIgnorePollEntriesWhenTheServerShippedTheHistory`
 - `TestCatchUpRecordsTheServersSwitchesOnTheClosedRound`
 - `TestCheckResultWordsFollowTheRunnersResult`
+- `TestReviewerSeedNamesTheEngineCheckOverAMemberGate`
