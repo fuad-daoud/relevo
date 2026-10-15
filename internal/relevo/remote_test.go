@@ -3437,12 +3437,9 @@ func TestReconcileRemoteRunningMirrorsLog(t *testing.T) {
 		t.Fatalf("RemoteStatus = %q, want %q", got.Builder.RemoteStatus, remote.RoundRunning)
 	}
 	logPath := st.BuilderLogPath("api", 1)
-	data, err := rt.Store.ReadFile(logPath)
+	data, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("read mirrored log: %v", err)
-	}
-	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-		t.Fatalf("log exists on disk: %v", err)
 	}
 	if string(data) != "builder log line 1\n" {
 		t.Fatalf("log = %q, want mirrored content", string(data))
@@ -3599,18 +3596,14 @@ func TestMirrorLogUnchangedLogWritesNothing(t *testing.T) {
 	}
 
 	logPath := st.BuilderLogPath("api", 1)
-	base := filepath.Base(logPath)
-
-	d := openStoreDB(t, st)
-	rec, ok, err := d.RecordGet("", "api")
-	if err != nil || !ok {
-		t.Fatalf("RecordGet: ok=%v err=%v", ok, err)
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	// Seed the row with a stamp far from now, so a rewrite during the mirror
-	// shows up as a changed mtime even though the bytes are identical.
-	if err := d.Tx(func(tx *db.Tx) error {
-		return tx.RoundFilePut(rec.ID, base, 1, []byte("abc"), baseTime, baseTime)
-	}); err != nil {
+	if err := os.WriteFile(logPath, []byte("abc"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A stamp far from now, so a rewrite of identical bytes still shows.
+	if err := os.Chtimes(logPath, baseTime, baseTime); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3625,25 +3618,21 @@ func TestMirrorLogUnchangedLogWritesNothing(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	body, mtime, ok, err := d.RoundFileGet(rec.ID, base)
+	fi, err := os.Stat(logPath)
 	if err != nil {
-		t.Fatalf("RoundFileGet: %v", err)
+		t.Fatal(err)
 	}
-	if !ok {
-		t.Fatalf("round file row %q missing", base)
-	}
-	if string(body) != "abc" {
-		t.Fatalf("row body = %q, want %q", string(body), "abc")
-	}
-	if !mtime.Equal(baseTime) {
-		t.Fatalf("row mtime = %v, want unchanged %v: the row was rewritten", mtime, baseTime)
+	if !fi.ModTime().Equal(baseTime) {
+		t.Fatalf("mirror mtime = %v, want unchanged %v: the file was rewritten", fi.ModTime(), baseTime)
 	}
 	if len(fr.roundFileFromCalls) != 1 || fr.roundFileFromCalls[0] != 3 {
 		t.Fatalf("roundFileFromCalls = %v, want [3]", fr.roundFileFromCalls)
 	}
 }
 
-func TestMirrorLogWritesARow(t *testing.T) {
+// TestMirrorLogWritesNoRowWhileRunning pins why the mirror is a file: a row
+// would be re-encoded and exported to sync whole on every tick.
+func TestMirrorLogWritesNoRowWhileRunning(t *testing.T) {
 	t.Parallel()
 
 	st := store.New(t.TempDir())
@@ -3659,141 +3648,40 @@ func TestMirrorLogWritesARow(t *testing.T) {
 	}
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
-	// First tick: server serves "abc" with from honored
 	got, err := reconcile(t, rt, b)
 	if err != nil {
 		t.Fatalf("Reconcile tick 1: %v", err)
+	}
+	fr.roundFileFromResp = io.NopCloser(strings.NewReader("def"))
+	fr.roundFileFromRange = remote.FileRange{Honored: true, From: 3, Size: 6}
+	if _, err := reconcile(t, rt, got); err != nil {
+		t.Fatalf("Reconcile tick 2: %v", err)
 	}
 
 	logPath := st.BuilderLogPath("api", 1)
 	data, err := rt.Store.ReadFile(logPath)
 	if err != nil {
-		t.Fatalf("ReadFile tick 1: %v", err)
+		t.Fatalf("ReadFile: %v", err)
 	}
-	if string(data) != "abc" {
-		t.Fatalf("log tick 1 = %q, want %q", string(data), "abc")
+	if string(data) != "abcdef" {
+		t.Fatalf("log = %q, want %q", data, "abcdef")
 	}
-	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-		t.Fatalf("log on disk tick 1: %v", err)
-	}
-	if len(fr.roundFileFromCalls) != 1 || fr.roundFileFromCalls[0] != 0 {
-		t.Fatalf("roundFileFromCalls tick 1 = %v, want [0]", fr.roundFileFromCalls)
-	}
-
-	// Second tick: server now "abcdef", requests from=3, served "def"
-	fr.roundFileFromResp = io.NopCloser(strings.NewReader("def"))
-	fr.roundFileFromRange = remote.FileRange{Honored: true, From: 3, Size: 6}
-
-	if _, err := reconcile(t, rt, got); err != nil {
-		t.Fatalf("Reconcile tick 2: %v", err)
-	}
-
 	if len(fr.roundFileFromCalls) != 2 || fr.roundFileFromCalls[1] != 3 {
-		t.Fatalf("roundFileFromCalls tick 2 = %v, want [0, 3]", fr.roundFileFromCalls)
+		t.Fatalf("roundFileFromCalls = %v, want [0, 3]", fr.roundFileFromCalls)
 	}
-
-	data2, err := rt.Store.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("ReadFile tick 2: %v", err)
+	d := openStoreDB(t, st)
+	rec, ok, err := d.RecordGet("", "api")
+	if err != nil || !ok {
+		t.Fatalf("RecordGet: ok=%v err=%v", ok, err)
 	}
-	if string(data2) != "abcdef" {
-		t.Fatalf("log tick 2 = %q, want %q", string(data2), "abcdef")
-	}
-	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-		t.Fatalf("log on disk tick 2: %v", err)
+	if _, _, ok, err := d.RoundFileGet(rec.ID, filepath.Base(logPath)); err != nil || ok {
+		t.Fatalf("log row while running: ok=%v err=%v, want none", ok, err)
 	}
 }
 
-func TestMirrorLogRowRewritesWhenServerShrank(t *testing.T) {
-	t.Parallel()
-
-	t.Run("server shrank", func(t *testing.T) {
-		st := store.New(t.TempDir())
-		b := remoteBinding("zen")
-		if err := st.Save(b); err != nil {
-			t.Fatal(err)
-		}
-
-		logPath := st.BuilderLogPath("api", 1)
-		if err := st.WithLock(func(tx *store.Tx) error {
-			return tx.PutRoundFile("api", 1, logPath, []byte("abcdef"))
-		}); err != nil {
-			t.Fatal(err)
-		}
-
-		callCount := 0
-		fr := &fakeRemote{
-			getBindingResp: remote.BindingView{RoundState: remote.RoundRunning},
-			roundFileFromFunc: func(ctx context.Context, server, name string, round int, kind string, from int64) (io.ReadCloser, remote.FileRange, error) {
-				callCount++
-				if callCount == 1 {
-					// from is 6, server reports size 3
-					return io.NopCloser(strings.NewReader("")), remote.FileRange{Honored: true, From: from, Size: 3}, nil
-				}
-				// Second call: from is 0
-				return io.NopCloser(strings.NewReader("xyz")), remote.FileRange{Honored: true, From: 0, Size: 3}, nil
-			},
-		}
-		rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
-
-		if _, err := reconcile(t, rt, b); err != nil {
-			t.Fatalf("Reconcile: %v", err)
-		}
-
-		data, err := rt.Store.ReadFile(logPath)
-		if err != nil {
-			t.Fatalf("ReadFile: %v", err)
-		}
-		if string(data) != "xyz" {
-			t.Fatalf("log data = %q, want %q", string(data), "xyz")
-		}
-		if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-			t.Fatalf("log on disk: %v", err)
-		}
-		if len(fr.roundFileFromCalls) != 2 || fr.roundFileFromCalls[0] != 6 || fr.roundFileFromCalls[1] != 0 {
-			t.Fatalf("roundFileFromCalls = %v, want [6, 0]", fr.roundFileFromCalls)
-		}
-	})
-
-	t.Run("old server ignores from", func(t *testing.T) {
-		st := store.New(t.TempDir())
-		b := remoteBinding("zen")
-		if err := st.Save(b); err != nil {
-			t.Fatal(err)
-		}
-
-		logPath := st.BuilderLogPath("api", 1)
-		if err := st.WithLock(func(tx *store.Tx) error {
-			return tx.PutRoundFile("api", 1, logPath, []byte("abcdef"))
-		}); err != nil {
-			t.Fatal(err)
-		}
-
-		fr := &fakeRemote{
-			getBindingResp:     remote.BindingView{RoundState: remote.RoundRunning},
-			roundFileFromResp:  io.NopCloser(strings.NewReader("full body")),
-			roundFileFromRange: remote.FileRange{Honored: false},
-		}
-		rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
-
-		if _, err := reconcile(t, rt, b); err != nil {
-			t.Fatalf("Reconcile: %v", err)
-		}
-
-		data, err := rt.Store.ReadFile(logPath)
-		if err != nil {
-			t.Fatalf("ReadFile: %v", err)
-		}
-		if string(data) != "full body" {
-			t.Fatalf("log data = %q, want %q", string(data), "full body")
-		}
-		if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-			t.Fatalf("log on disk: %v", err)
-		}
-	})
-}
-
-func TestMirrorLogKeepsALegacyFile(t *testing.T) {
+// TestMirrorLogStartsAFileOverAnOldRow covers a round in flight across the
+// upgrade: its mirror is a row, and the file the mirror starts shadows it.
+func TestMirrorLogStartsAFileOverAnOldRow(t *testing.T) {
 	t.Parallel()
 
 	st := store.New(t.TempDir())
@@ -3801,19 +3689,17 @@ func TestMirrorLogKeepsALegacyFile(t *testing.T) {
 	if err := st.Save(b); err != nil {
 		t.Fatal(err)
 	}
-
 	logPath := st.BuilderLogPath("api", 1)
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(logPath, []byte("legacy content\n"), 0o644); err != nil {
+	if err := st.WithLock(func(tx *store.Tx) error {
+		return tx.PutRoundFile("api", 1, logPath, []byte("abc"))
+	}); err != nil {
 		t.Fatal(err)
 	}
 
 	fr := &fakeRemote{
 		getBindingResp:     remote.BindingView{RoundState: remote.RoundRunning},
-		roundFileFromResp:  io.NopCloser(strings.NewReader("appended\n")),
-		roundFileFromRange: remote.FileRange{Honored: true, From: 15, Size: 24},
+		roundFileFromResp:  io.NopCloser(strings.NewReader("abcdef")),
+		roundFileFromRange: remote.FileRange{Honored: true, From: 0, Size: 6},
 	}
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
@@ -3821,28 +3707,15 @@ func TestMirrorLogKeepsALegacyFile(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	data, err := os.ReadFile(logPath)
+	if len(fr.roundFileFromCalls) != 1 || fr.roundFileFromCalls[0] != 0 {
+		t.Fatalf("roundFileFromCalls = %v, want [0]", fr.roundFileFromCalls)
+	}
+	data, err := rt.Store.ReadFile(logPath)
 	if err != nil {
-		t.Fatalf("os.ReadFile: %v", err)
+		t.Fatalf("ReadFile: %v", err)
 	}
-	if string(data) != "legacy content\nappended\n" {
-		t.Fatalf("file content = %q, want %q", string(data), "legacy content\nappended\n")
-	}
-
-	// Verify no round_file row is written in the DB
-	d := openStoreDB(t, st)
-	rec, ok, err := d.RecordGet("", "api")
-	if err != nil || !ok {
-		t.Fatalf("RecordGet: %v, %v", ok, err)
-	}
-	names, err := d.RoundFileList(rec.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, n := range names {
-		if n == filepath.Base(logPath) {
-			t.Fatalf("RoundFileList contains %q, want no round_file row", n)
-		}
+	if string(data) != "abcdef" {
+		t.Fatalf("log = %q, want %q", data, "abcdef")
 	}
 }
 
@@ -6242,7 +6115,7 @@ func TestCatchUpWritesTheLogAsARow(t *testing.T) {
 	}
 }
 
-func TestCatchUpKeepsALegacyLogFile(t *testing.T) {
+func TestCatchUpReplacesTheMirrorFileWithARow(t *testing.T) {
 	t.Parallel()
 
 	st := store.New(t.TempDir())
@@ -6255,7 +6128,7 @@ func TestCatchUpKeepsALegacyLogFile(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(logPath, []byte("legacy local log\n"), 0o644); err != nil {
+	if err := os.WriteFile(logPath, []byte("partial mirror\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -6266,41 +6139,32 @@ func TestCatchUpKeepsALegacyLogFile(t *testing.T) {
 			case "report":
 				return io.NopCloser(strings.NewReader("Finished round 1\n")), nil
 			case "log":
-				return io.NopCloser(strings.NewReader("catchUp overwrite\n")), nil
+				return io.NopCloser(strings.NewReader("final round 1 log\n")), nil
 			default:
 				return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no " + kind}}
 			}
 		},
 	}
-	fg := &fakeGit{}
-	rt := Runtime{Store: st, Remote: fr, Git: fg, Now: func() time.Time { return baseTime }}
+	rt := Runtime{Store: st, Remote: fr, Git: &fakeGit{}, Now: func() time.Time { return baseTime }}
 
 	if _, err := reconcile(t, rt, b); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	got, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("os.ReadFile: %v", err)
+	if _, err := os.Lstat(logPath); !os.IsNotExist(err) {
+		t.Fatalf("mirror file still on disk after the close: %v", err)
 	}
-	if string(got) != "catchUp overwrite\n" {
-		t.Fatalf("log = %q, want catchUp overwrite", string(got))
-	}
-
-	// Verify no round_file row is written in the DB
 	d := openStoreDB(t, st)
 	rec, ok, err := d.RecordGet("", "api")
 	if err != nil || !ok {
-		t.Fatalf("RecordGet: %v, %v", ok, err)
+		t.Fatalf("RecordGet: ok=%v err=%v", ok, err)
 	}
-	names, err := d.RoundFileList(rec.ID)
-	if err != nil {
-		t.Fatal(err)
+	body, _, ok, err := d.RoundFileGet(rec.ID, filepath.Base(logPath))
+	if err != nil || !ok {
+		t.Fatalf("log row: ok=%v err=%v", ok, err)
 	}
-	for _, n := range names {
-		if n == filepath.Base(logPath) {
-			t.Fatalf("RoundFileList contains %q, want no round_file row", n)
-		}
+	if string(body) != "final round 1 log\n" {
+		t.Fatalf("log row = %q, want the closed round's whole log", body)
 	}
 }
 
