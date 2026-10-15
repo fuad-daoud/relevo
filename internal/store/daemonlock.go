@@ -80,3 +80,22 @@ func (l *DaemonLock) Close() error {
 	l.f = nil
 	return nil
 }
+
+// Displaced reports whether the lock file at the root is no longer the file
+// this lock holds: a state root deleted and re-created under a running daemon
+// leaves it holding a lock on an unlinked file, and a second daemon can then
+// take the new one.
+func (l *DaemonLock) Displaced() bool {
+	if l == nil || l.f == nil {
+		return false
+	}
+	held, err := l.f.Stat()
+	if err != nil {
+		return false
+	}
+	current, err := os.Stat(l.f.Name())
+	if err != nil {
+		return errors.Is(err, os.ErrNotExist)
+	}
+	return !os.SameFile(held, current)
+}

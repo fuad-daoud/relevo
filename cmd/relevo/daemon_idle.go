@@ -17,7 +17,7 @@ const idlePoll = 30 * time.Second
 
 // daemonActivity is one sample of what the daemon has to do: live owner
 // connections, a locally running builder or gate, a queued round, whether sync
-// is turned on, and whether the state root still exists.
+// is turned on, and whether the state root is still the one this daemon locked.
 type daemonActivity struct {
 	Conns   int
 	Running bool
@@ -29,8 +29,8 @@ type daemonActivity struct {
 	// Joining is an enable's join running in this process. The mark goes on
 	// only when the join ends, and a first join that uploads every large body
 	// can outlast the idle period with no client connected.
-	Joining    bool
-	RootExists bool
+	Joining  bool
+	RootHeld bool
 }
 
 // busy is whether anything keeps the daemon from idling out.
@@ -38,11 +38,12 @@ func (a daemonActivity) busy() bool {
 	return a.Conns > 0 || a.Running || a.Queued || a.SyncOn || a.Joining
 }
 
-// idleExit decides whether an idle daemon should exit: the root is gone, or
+// idleExit decides whether an idle daemon should exit: the root is gone or
+// no longer the one it locked, or
 // nothing is busy and the idle period has elapsed. It is pure, so a table test
 // can pin every condition.
 func idleExit(a daemonActivity, idleFor, after time.Duration) bool {
-	if !a.RootExists {
+	if !a.RootHeld {
 		return true
 	}
 	if a.busy() {
@@ -56,11 +57,13 @@ func idleExit(a daemonActivity, idleFor, after time.Duration) bool {
 
 // daemonActivityNow samples the daemon's current activity. The root is stat'ed
 // first: a missing root is what a deleted throwaway state root looks like, and
-// must exit the daemon at once. A nil owner server counts as no connections --
-// there is no socket a client could use, and the sampler must never
-// dereference it -- and a store read that fails is not idle: an unreadable root
-// must never read as "nothing to do".
-func daemonActivityNow(root string, srv *owner.Server, st *store.Store) daemonActivity {
+// must exit the daemon at once. So must a displaced lock: anything that touches
+// a deleted root re-creates it, with an empty database whose every read fails,
+// and a failed read would otherwise keep the daemon busy forever. A nil owner
+// server counts as no connections -- there is no socket a client could use, and
+// the sampler must never dereference it -- and a store read that fails is not
+// idle: an unreadable root must never read as "nothing to do".
+func daemonActivityNow(root string, lock *store.DaemonLock, srv *owner.Server, st *store.Store) daemonActivity {
 	var a daemonActivity
 	if _, err := os.Stat(root); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -70,7 +73,11 @@ func daemonActivityNow(root string, srv *owner.Server, st *store.Store) daemonAc
 		a.Running = true
 		return a
 	}
-	a.RootExists = true
+	if lock.Displaced() {
+		slog.Warn("relevo daemon: state root re-created under the daemon", "root", root)
+		return a
+	}
+	a.RootHeld = true
 
 	if srv != nil {
 		a.Conns = srv.ConnCount()
@@ -141,7 +148,7 @@ func watchDaemonIdle(ctx context.Context, cancel context.CancelFunc, after, poll
 			return
 		case <-ticker.C:
 			a := sample()
-			if a.RootExists && a.busy() {
+			if a.RootHeld && a.busy() {
 				idleSince = time.Time{}
 				continue
 			}
