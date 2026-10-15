@@ -102,6 +102,6 @@ func (v *RelevoVerbs) Gate(ctx context.Context, _ string, a GateArgs) (any, erro
 	if err != nil {
 		return nil, err
 	}
-	_ = relevo.ForwardUnavailable(ctx, v.RT, a.Token, a.Reason)
+	_ = relevo.ForwardUnavailable(ctx, v.RT, a.Token, a.Reason, until)
 	return gateSetDocOf(provider, until, providerCandidateCount(v.RT, provider)), nil
 }
