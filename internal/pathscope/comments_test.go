@@ -1,6 +1,7 @@
 package pathscope
 
 import (
+	"errors"
 	"reflect"
 	"sort"
 	"strings"
@@ -93,19 +94,17 @@ func spanTexts(src []byte, spans []span) []string {
 	return out
 }
 
-// TestLex pins one case per string form in the table, plus heredocs, YAML
-// block scalars, Lua long brackets, nested Rust block comments and the
-// Haskell -- operator: each row's comment markers inside strings are code,
-// so the only comment spans are the real comments in want.
-func TestLex(t *testing.T) {
-	t.Parallel()
-
-	for _, tt := range []struct {
-		ext  string
-		src  string
-		want []string
-	}{
-		{"py", "x = 'a # b'  # real\n", []string{"# real"}},
+// lexCases is TestLex's table: one case per string form in the table,
+// plus heredocs, YAML block scalars, Lua long brackets, nested Rust block
+// comments and the Haskell -- operator. Each row's comment markers inside
+// strings are code, so the only comment spans are the real comments in
+// want.
+var lexCases = []struct {
+	ext  string
+	src  string
+	want []string
+}{
+	{"py", "x = 'a # b'  # real\n", []string{"# real"}},
 		{"py", `x = "a # b"  # real` + "\n", []string{"# real"}},
 		{"py", "x = '''a # b'''  # real\n", []string{"# real"}},
 		{"py", `x = """a # b"""  # real` + "\n", []string{"# real"}},
@@ -185,7 +184,13 @@ func TestLex(t *testing.T) {
 		{"hs", "{- a -- b -}  -- real\n", []string{"{- a -- b -}", "-- real"}},
 		{"hs", "{- a {- b -} c -}  -- real\n", []string{"{- a {- b -} c -}", "-- real"}},
 		{"hs", "s = \"a\\   \\b\"  -- real\n", []string{"-- real"}},
-	} {
+}
+
+// TestLex runs every lexCases row through the lexer.
+func TestLex(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range lexCases {
 		out := lexExt(t, tt.ext, tt.src)
 		if out.err != nil {
 			t.Errorf("%s lex %q: %v", tt.ext, tt.src, out.err)
@@ -285,7 +290,7 @@ func TestLexAlwaysAdvances(t *testing.T) {
 	for ext, l := range extTable {
 		for _, src := range inputs {
 			out := lex(l, []byte(src))
-			if out.err == errStuck {
+			if errors.Is(out.err, errStuck) {
 				t.Errorf("%s lex %q: %v", ext, src, out.err)
 			}
 		}
