@@ -161,7 +161,16 @@ func (v *VerbRunner) enableJoin(ctx context.Context, verb *wire.SyncVerb, token,
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
-	return v.enablePipeline(ctx, verb, token, r2, true, done.transport)
+	return v.enablePipeline(ctx, verb, token, r2, true, done)
+}
+
+// refusedForGood says an enable failed on a rule that re-running cannot clear
+// on its own, as opposed to a transport or import failure the next enable
+// resumes from. Only the first kind puts the staged rows back.
+func refusedForGood(err error, enabler *relevosync.Enabler) bool {
+	return enabler.PreflightFailed() ||
+		errors.Is(err, relevosync.ErrNoR2AfterJoin) ||
+		errors.Is(err, relevosync.ErrJoinOverQuota)
 }
 
 // enablePipeline runs the ordinary enable, which is what imports the fleet and
@@ -169,8 +178,12 @@ func (v *VerbRunner) enableJoin(ctx context.Context, verb *wire.SyncVerb, token,
 //
 // joining relaxes the preflight's bucket check: a join's credentials may arrive
 // in the secrets document, so only flags actually passed are stored.
-func (v *VerbRunner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, token []byte, r2 relevosync.R2Intake, joining bool, opened synclog.LogTransport) *wire.SyncResult {
+func (v *VerbRunner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, token []byte, r2 relevosync.R2Intake, joining bool, staged *verified) *wire.SyncResult {
 	v.beginJoin()
+	var opened synclog.LogTransport
+	if staged != nil {
+		opened = staged.transport
+	}
 	enabler := &relevosync.Enabler{
 		Request: relevosync.EnableRequest{
 			Local:  v.Local,
@@ -206,6 +219,9 @@ func (v *VerbRunner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, to
 	if err != nil {
 		if enabler.Transport != nil {
 			closeTransport(enabler.Transport)
+		}
+		if staged != nil && refusedForGood(err, enabler) {
+			staged.unstage()
 		}
 		return verbRefusal(verbClassify(err), err)
 	}

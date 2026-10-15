@@ -249,7 +249,13 @@ type Enabler struct {
 	Stopped func() bool
 	// Now stamps the join marker and the enabled mark. Nil means time.Now.
 	Now func() time.Time
+	// preflightFailed is set when Enable stopped at the preflight.
+	preflightFailed bool
 }
+
+// PreflightFailed reports whether the last Enable stopped at its preflight,
+// before it stored or opened anything.
+func (e *Enabler) PreflightFailed() bool { return e.preflightFailed }
 
 // Enable runs the whole path: preflight, store, transport, join, then the mark.
 //
@@ -260,6 +266,7 @@ type Enabler struct {
 func (e *Enabler) Enable() (EnableResult, error) {
 	plan, err := e.Request.Preflight()
 	if err != nil {
+		e.preflightFailed = true
 		return EnableResult{}, err
 	}
 	now := e.now()

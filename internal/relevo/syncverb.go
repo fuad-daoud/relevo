@@ -338,15 +338,15 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byt
 	// A plain enable that was handed a passphrase gets the same verify the join
 	// does, before anything is stored. One that was handed none has nothing to
 	// verify and goes on exactly as it always did.
-	var opened synclog.LogTransport
+	var staged *verified
 	if len(bytes.TrimSpace(passphrase)) > 0 {
 		done, err := v.stageAndVerify(ctx, verb.RemoteURL, token, passphrase, false)
 		if err != nil {
 			return verbRefusal(verbClassify(err), err)
 		}
-		opened = done.transport
+		staged = done
 	}
-	return v.enablePipeline(ctx, verb, token, r2, false, opened)
+	return v.enablePipeline(ctx, verb, token, r2, false, staged)
 }
 
 // openTransport returns the log an enable drives: the opener the wiring
