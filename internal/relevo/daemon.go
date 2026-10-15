@@ -68,6 +68,10 @@ type Daemon struct {
 	// change the daemon never saw cannot hide behind a revision it wrote.
 	ingestSeen map[string]string
 
+	// backoff remembers servers whose prefetch failed, so a dead server costs
+	// one bounded dial per backoff window instead of one per binding per tick.
+	backoff remoteBackoff
+
 	// syncMu guards the two fields below, which are the whole of the state a
 	// sync trigger shares between the two goroutines that can start one.
 	syncMu sync.Mutex
@@ -518,7 +522,11 @@ func (d *Daemon) prefetchRemote(ctx context.Context, b store.Binding) *remoteFet
 	if !store.KnownState(b.State) || b.Format > store.BindingFormat {
 		return nil
 	}
-	f := fetchRemote(ctx, d.rt, b)
+	if d.backoff.skip(b.Builder.Server) {
+		return skippedFetch(b)
+	}
+	f := fetchRemoteWithin(ctx, d.rt, b, prefetchDeadline)
+	d.backoff.record(b.Builder.Server, f.Err != nil && serverUnreachable(f.Err))
 	return &f
 }
 
