@@ -67,3 +67,50 @@ func TestSecureSyncFilesTightensTheReplicaSetAndStagedBodies(t *testing.T) {
 		t.Errorf("staging dir mode = %o, want 700", got)
 	}
 }
+
+// TestSecureSyncFilesLeavesLinksDirectoriesAndNarrowFilesAlone pins what the
+// repair must not touch: a symlink in the replica set (chmod would follow it to
+// its target), a directory among the staged bodies, and a file already 0600.
+func TestSecureSyncFilesLeavesLinksDirectoriesAndNarrowFilesAlone(t *testing.T) {
+	dir := t.TempDir()
+	shared := filepath.Join(dir, "relevo.db")
+	replica := ReplicaPath(shared)
+	writeMode(t, replica, 0o600)
+
+	target := filepath.Join(dir, "elsewhere.txt")
+	writeMode(t, target, 0o644)
+	if err := os.Symlink(target, replica+"-wal"); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	staging, err := EnsureBlobStagingDir(shared)
+	if err != nil {
+		t.Fatalf("EnsureBlobStagingDir: %v", err)
+	}
+	nested := filepath.Join(staging, "nested")
+	if err := os.Mkdir(nested, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if err := SecureSyncFiles(shared); err != nil {
+		t.Fatalf("SecureSyncFiles: %v", err)
+	}
+	if got := permOf(t, target); got != 0o644 {
+		t.Errorf("a symlink's target was changed to %o", got)
+	}
+	if got := permOf(t, nested); got != 0o755 {
+		t.Errorf("a directory among the staged bodies was changed to %o", got)
+	}
+	if got := permOf(t, replica); got != 0o600 {
+		t.Errorf("replica mode = %o, want 600", got)
+	}
+}
+
+// TestSecureSyncFilesReportsAStagingPathItCannotList pins that a staging path
+// that is not a directory is an error the daemon logs, not a silent skip.
+func TestSecureSyncFilesReportsAStagingPathItCannotList(t *testing.T) {
+	shared := filepath.Join(t.TempDir(), "relevo.db")
+	writeMode(t, BlobStagingDir(shared), 0o600)
+	if err := SecureSyncFiles(shared); err == nil {
+		t.Fatal("SecureSyncFiles over a staging path that is a file = nil, want an error")
+	}
+}
