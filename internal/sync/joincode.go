@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/sanitize"
+
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
@@ -110,7 +112,7 @@ func ParseJoinCode(code string) (JoinCode, error) {
 		return JoinCode{}, fmt.Errorf("%w: it names no version", ErrJoinCode)
 	}
 	if version != JoinCodeVersion {
-		return JoinCode{}, fmt.Errorf("%w: it is version %s and this build reads %s", ErrJoinCode, version, JoinCodeVersion)
+		return JoinCode{}, fmt.Errorf("%w: it is version %s and this build reads %s", ErrJoinCode, shownVersion(version), JoinCodeVersion)
 	}
 	body, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil {
@@ -130,4 +132,18 @@ func ParseJoinCode(code string) (JoinCode, error) {
 		return JoinCode{}, fmt.Errorf("%w: it names no remote or no %s", ErrJoinCode, SecretToken)
 	}
 	return out, nil
+}
+
+// maxShownVersion bounds how much of a code's version segment a refusal quotes.
+const maxShownVersion = 16
+
+// shownVersion renders the version segment of a code this build does not read.
+// The segment is attacker-chosen text that reaches a terminal, so it is cut
+// short and made inert; a newline, which sanitize keeps, is replaced too.
+func shownVersion(version string) string {
+	suffix := ""
+	if len(version) > maxShownVersion {
+		version, suffix = version[:maxShownVersion], "..."
+	}
+	return strings.ReplaceAll(sanitize.Text(version), "\n", "\uFFFD") + suffix
 }

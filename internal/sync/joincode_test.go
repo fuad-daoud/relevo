@@ -141,3 +141,27 @@ func TestNewJoinCodeRefusesAnEmptyRemoteOrToken(t *testing.T) {
 		t.Error("NewJoinCode with a blank token returned a code")
 	}
 }
+
+// The version segment is the attacker's text: the refusal quotes a bounded,
+// inert rendering of it rather than the raw bytes.
+func TestParseJoinCodeRendersAHostileVersionInert(t *testing.T) {
+	t.Parallel()
+	for name, version := range map[string]string{
+		"escape and newline": "v2\x1b[2J\nforged line",
+		"long":               strings.Repeat("v", 5000),
+	} {
+		_, err := ParseJoinCode("relevo-join-" + version + "-YWJj")
+		if !errors.Is(err, ErrJoinCode) {
+			t.Fatalf("%s: ParseJoinCode = %v, want ErrJoinCode", name, err)
+		}
+		msg := err.Error()
+		if len(msg) > 300 {
+			t.Errorf("%s: the refusal is %d bytes long", name, len(msg))
+		}
+		for _, r := range msg {
+			if r < 0x20 || r == 0x7f {
+				t.Errorf("%s: the refusal %q carries control byte %#x", name, msg, r)
+			}
+		}
+	}
+}
