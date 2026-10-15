@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/syncworker"
 )
 
 // The wiring cases: the transport an enable drives is built from the rows the
@@ -124,6 +125,65 @@ func TestOpenSupervisorRefusesWithoutRemoteOrToken(t *testing.T) {
 			t.Fatal("OpenSupervisor with no database answered without an error")
 		}
 	})
+}
+
+// TestOpenNoBucketSupervisor pins the join's first worker: an incomplete set
+// starts the worker with nothing, and the worker it starts is pointed at the
+// same rows every other enable's is. Starting no process means the config it
+// would hand a hello is what the refusal question turns on, so it is read off
+// the supervisor before the first call. The refusal OpenSupervisor answers an
+// incomplete set with is pinned where it was introduced, in blobclient_test.
+func TestOpenNoBucketSupervisor(t *testing.T) {
+	t.Parallel()
+	t.Run("no stored set", func(t *testing.T) {
+		t.Parallel()
+		shared, local := wiringRows(t, false)
+		sup, err := OpenNoBucketSupervisor(shared, local)
+		if err != nil {
+			t.Fatalf("OpenNoBucketSupervisor: %v", err)
+		}
+		t.Cleanup(func() { _ = sup.Close() })
+		if sup.client != nil {
+			t.Error("OpenNoBucketSupervisor started a worker")
+		}
+		if sup.cfg.R2 != nil {
+			t.Errorf("the handshake carries %+v, want no bucket at all", *sup.cfg.R2)
+		}
+	})
+	t.Run("a complete stored set", func(t *testing.T) {
+		t.Parallel()
+		shared, local := wiringRows(t, true)
+		sup, err := OpenNoBucketSupervisor(shared, local)
+		if err != nil {
+			t.Fatalf("OpenNoBucketSupervisor: %v", err)
+		}
+		t.Cleanup(func() { _ = sup.Close() })
+		if got := *sup.cfg.R2; got != (syncworker.R2Config{
+			Endpoint: wiringR2.Endpoint, Bucket: wiringR2.Bucket, KeyID: wiringR2.KeyID, Secret: wiringR2.Secret,
+		}) {
+			t.Errorf("the handshake carries %+v, want the stored credentials", got)
+		}
+	})
+}
+
+// wiringRows opens the split pair with the two rows every opener reads and, per
+// complete, the whole bucket set.
+func wiringRows(t *testing.T, complete bool) (*db.DB, relevosync.Local) {
+	t.Helper()
+	shared, local := wiringPair(t)
+	now := time.Unix(0, 0).UTC()
+	if err := relevosync.PutSettings(local, relevosync.Settings{RemoteURL: "libsql://wiring.invalid"}, now); err != nil {
+		t.Fatalf("PutSettings: %v", err)
+	}
+	if err := relevosync.SetToken(local, []byte("token"), now); err != nil {
+		t.Fatalf("SetToken: %v", err)
+	}
+	if complete {
+		if err := relevosync.SetR2(local, wiringR2, now); err != nil {
+			t.Fatalf("SetR2: %v", err)
+		}
+	}
+	return shared, local
 }
 
 // TestReplicaPathSitsBesideTheSharedDatabase pins the replica's name: the one

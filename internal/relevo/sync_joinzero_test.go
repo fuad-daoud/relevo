@@ -190,8 +190,12 @@ func newBodyCfgMachine(t *testing.T, pair bodyPair, origin string, key []byte, e
 			t.Fatalf("MarkEnabled: %v", err)
 		}
 	}
-	if err := relevosync.SetKey(local, key, time.Unix(0, 0).UTC()); err != nil {
-		t.Fatalf("SetKey: %v", err)
+	// A nil key is a machine that holds none yet, which is what a fresh joiner
+	// is: the key it ends up holding is the one the passphrase derives.
+	if key != nil {
+		if err := relevosync.SetKey(local, key, time.Unix(0, 0).UTC()); err != nil {
+			t.Fatalf("SetKey: %v", err)
+		}
 	}
 	log := pair.joinerLog(t, origin, local)
 	return &cfgMachine{
