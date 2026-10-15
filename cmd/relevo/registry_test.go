@@ -239,6 +239,10 @@ func TestRegistryShape(t *testing.T) {
 			if !slices.Equal(e.Exit, []int{0, 2, 3, 4, 5, 6, 124}) {
 				t.Errorf("wait: exit = %v, want its protocol codes 0/2/3/4/5/6/124", e.Exit)
 			}
+		} else if e.Name == "setup" {
+			if !slices.Equal(e.Exit, []int{0, 1, 2, 3}) {
+				t.Errorf("setup: exit = %v, want 0/1/2 plus the questions-open 3", e.Exit)
+			}
 		} else {
 			for _, code := range e.Exit {
 				if code != 0 && code != 1 && code != 2 {

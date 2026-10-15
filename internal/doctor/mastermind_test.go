@@ -85,7 +85,7 @@ func TestDoctorPluginRowFix(t *testing.T) {
 	t.Run("not installed: the fix installs it", func(t *testing.T) {
 		checks := MasterMindChecks(MasterMindCheckInput{Claude: true, Home: t.TempDir(), Repo: t.TempDir()})
 		c := findCheck(Report{Checks: checks}, "", "plugin")
-		if c == nil || c.Fix != pluginInstallCommand {
+		if c == nil || c.Fix != PluginInstallCommand {
 			t.Fatalf("plugin row = %+v, want the install command as its fix", c)
 		}
 	})

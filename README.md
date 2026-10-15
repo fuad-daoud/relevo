@@ -129,61 +129,95 @@ the MasterMind.
 
 ## First run on a clean machine
 
-On a clean machine, set up prerequisites and preflight with `relevo config init` and
-`relevo doctor`:
+On a clean machine, install relevo and run the setup command once; it probes
+the machine, asks what is still open, writes the starter configuration, and
+runs the plugin, the service and one real round:
 
 1. Install relevo (see [Install](#install)).
-2. Run `relevo config init` to write a starter configuration from the harnesses on
-   `PATH`:
+2. Run the setup wizard in a terminal:
    ```
-   relevo config init
+   relevo setup
    ```
-   It finds the harness binaries on `PATH`, writes one builder candidate per
-   harness to the candidates section except claude, which only plans (it gets the
-   `planner` actor), writes the policy section and the builder
-   actor, plus a `librarian` writer over the same candidates and a `planner`
-   and a `lite-planner` reader actor for claude and
-   opencode, and installs the agent definitions into each of those harnesses. The
-   configuration lives in relevo.db under the state root, not in a file; a
-   file you drop into `~/.config/relevo` is imported on the next command and
-   removed. It refuses to overwrite the candidates, policy or actors section
-   without `--force`, and `--no-agents` skips the definitions. With claude as the
-   only harness on `PATH`, the builder is written with no candidates, and init
-   prints the command to add one. It says what it wrote and
-   the command to run next, e.g.:
+   It prints one inventory line over what it probed, e.g.:
    ```
-   wrote candidates (3: glm-5.3-flash, opus, deepseek-v4.1-flash)
-   wrote actors (builder: glm-5.3-flash; librarian: glm-5.3-flash; planner: opus; lite-planner: deepseek-v4.1-flash)
-   wrote  ~/.claude/agents/plan-executor.md
-   wrote  ~/.config/opencode/agents/plan-executor.md
-   next: edit the model names, then run: relevo doctor
+   codex: logged in · claude: logged in · agy: on PATH, not logged in -> run agy once to sign in
    ```
+   then asks one question at a time: which models build (`builder`), who
+   writes plans (`planner`), the permission tier (`tier`), whether to install
+   the relevo plugin into Claude Code (`plugin`), whether to run the daemon as
+   a user service (`service`), and whether to run one small real round now
+   (`smoke`). A question that cannot apply is dropped. Press Enter to take the
+   recommended pick; an ordered pick is typed as numbers, `1,3`, and a yes/no
+   takes `y`/`n`.
+3. Run the literal fix commands the last line names, or run `relevo setup`
+   again with every answer it named:
+   ```
+   relevo setup --answer builder=<...> --answer tier=<...>
+   ```
+   A value is the choice's own value; a candidate value is
+   `<harness>/<provider>/<model>`. Off a terminal (or under `--json`), a run
+   with questions still open prints a questions document to stdout and exits
+   3; nothing is written. A repeated `--answer <id>=<value>` answers more than
+   one question, and an answer for a question that no longer applies is
+   ignored with a note on stderr. Applying writes the configuration — one
+   builder candidate per probed model, the `librarian`, `planner`,
+   `reviewer`, `security` and `lite-planner` actors at the answered tier —
+   as one revision, installs the agent definitions for each logged-in
+   harness, installs the plugin with
+   `claude plugin marketplace add fuad-daoud/relevo && claude plugin install
+   relevo@relevo`, installs the service unit as `relevo service install`
+   does, and, on `smoke`, binds `setup-smoke` on a throwaway git repository
+   under the state root and runs one real round that must leave `HELLO.md`
+   containing `relevo works`. A passing round unbinds and removes the
+   throwaway state; a failed one keeps everything and prints
+   `relevo show setup-smoke --round 1 --transcript`. Every step lands in the
+   result document (`relevo setup --json`), exit 0 when all passed, 1 with
+   the failed step's name otherwise.
+4. Run `relevo doctor` to confirm `0 failures`. It inspects the background
+   daemon, each harness binary on `PATH`, the relevo plugin and its hook in
+   Claude Code, and the builder's agent files. Then open Claude Code in a
+   repository and ask it to plan something.
 
-   **Edit the model names it wrote** to the models your accounts may run (see
-   [Candidates](#candidates)); `relevo config` prints what you configured.
-   When more than one candidate serves `builder`, `relevo config` shows the
-   order relevo would pick them in and says `would refuse` until the actor's
-   candidate list suits you (see [Actors and agents](#actors-and-agents)).
-3. Run `relevo doctor` to check your environment:
-   ```
-   relevo doctor
-   ```
-   Doctor inspects the background daemon, each harness binary on `PATH`, and the relevo plugin and its hook in Claude Code, and the builder's agent files.
-4. Run the literal fix commands `relevo doctor` prints for any missing items.
-5. Re-run `relevo doctor` to confirm `0 failures`.
-6. Start the daemon (e.g. `relevo daemon &` or `relevo service install`).
-7. Bind your first builder from the MasterMind session:
-   ```
-   relevo bind --no-feature
-   ```
-   relevo starts the candidate `relevo config` marks `<- would pick` under
-   `builder`. To run another, pass its name, `relevo bind --no-feature
-   --candidate <name>`; it must be on `actors.builder.candidates` (see
-   [Choosing a candidate](#choosing-a-candidate)). A fresh `relevo bind`
-   must name exactly one of `--feature <label>` / `--no-feature`. Doctor does
-   not check that a harness is logged in: a builder that cannot authenticate
-   ends its first round without a report, and `relevo status` shows the
-   harness's error.
+Running it again keeps what is configured: the stored builder, planner and
+tier values are the recommended picks, so Enter-Enter-Enter keeps them, and
+applying writes a new configuration revision the revision history
+(`relevo config log`) can roll back.
+
+### Scripted install
+
+Prefer to assemble the configuration by hand or in script? `relevo config
+init` writes the same starter configuration — one builder candidate per
+probed model, the policy at tier `yolo` and the derived actor set — and
+installs the agent definitions, then leaves the plugin, service and smoke
+round to their own verbs:
+```
+relevo config init
+relevo doctor
+```
+It refuses to overwrite the candidates, policy or actors section without
+`--force`, and `--no-agents` skips the definitions. The configuration lives
+in relevo.db under the state root, not in a file; a file you drop into
+`~/.config/relevo` is imported on the next command and removed. With claude
+as the only harness on `PATH`, the builder is written with no candidates,
+and init prints the command to add one. **Edit the model names it wrote** to
+the models your accounts may run (see [Candidates](#candidates)); `relevo
+config` prints what you configured. When more than one candidate serves
+`builder`, `relevo config` shows the order relevo would pick them in and
+says `would refuse` until the actor's candidate list suits you (see
+[Actors and agents](#actors-and-agents)).
+
+Bind your first builder from the MasterMind session:
+```
+relevo bind --no-feature
+```
+relevo starts the candidate `relevo config` marks `<- would pick` under
+`builder`. To run another, pass its name, `relevo bind --no-feature
+--candidate <name>`; it must be on `actors.builder.candidates` (see
+[Choosing a candidate](#choosing-a-candidate)). A fresh `relevo bind`
+must name exactly one of `--feature <label>` / `--no-feature`. Doctor does
+not check that a harness is logged in: a builder that cannot authenticate
+ends its first round without a report, and `relevo status` shows the
+harness's error.
 
 To install the agent definitions into each harness on `PATH` by hand instead —
 the daemon refreshes unmodified definitions on every start and upgrade, a file
@@ -234,11 +268,12 @@ about this too and prints a starter policy built from your candidates.
 
 ## Quick start
 
-On a clean machine, seed your configuration first (see
-[First run on a clean machine](#first-run-on-a-clean-machine)):
+On a clean machine, run the setup wizard first (see
+[First run on a clean machine](#first-run-on-a-clean-machine)), or assemble it
+in script per its [Scripted install](#scripted-install) note:
 
 ```
-relevo config init                 # seed candidates, policy and actors, install the agent definitions
+relevo setup                       # probe, ask, write the starter configuration, install the plugin and service, run one round
 ```
 
 From the MasterMind session, in the repository you want worked on:
@@ -402,12 +437,18 @@ gives a MasterMind a name of your own.
 - `relevo config` — show the actors, the current pick and the configured
   candidates, in three blocks; `relevo config --probe` runs each candidate
   once and records its time to first output.
+- `relevo setup` — the first-run wizard described in
+  [First run on a clean machine](#first-run-on-a-clean-machine): probe, ask,
+  write the starter configuration, install the plugin and service, and run
+  one real round (`--answer <id>=<value>` repeatable; `--json` prints the
+  questions document with exit 3 until every question is answered, then the
+  result document).
 - `relevo config init` — seed the candidates, policy and actors sections from
   the harnesses on `PATH` (one builder candidate per harness except claude,
   which only plans, plus a `librarian` writer over the same candidates and a
   `planner` and a `lite-planner` reader actor for
   claude and opencode) and install the agent definitions (`--force`,
-  `--no-agents`).
+  `--no-agents`); the scripted-install alternative to `relevo setup`.
 - `relevo config agents` — install the per-kind agent definitions
   (`--kind`, `--agent`, `--force`, `--dry-run`).
 - `relevo config export|import|get|set|unset|edit` — read and change the

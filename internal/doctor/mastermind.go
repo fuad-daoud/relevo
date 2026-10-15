@@ -205,7 +205,7 @@ func pluginEnabledCheck(home, repo string) Check {
 			Name:     "plugin",
 			Severity: SevFail,
 			Detail:   "the relevo plugin is not installed in Claude Code",
-			Fix:      pluginInstallCommand,
+			Fix:      PluginInstallCommand,
 		}
 	}
 	return Check{
@@ -216,9 +216,16 @@ func pluginEnabledCheck(home, repo string) Check {
 	}
 }
 
-// pluginInstallCommand installs the plugin from this repository's marketplace;
+// PluginInstallCommand installs the plugin from this repository's marketplace;
 // install enables it too.
-const pluginInstallCommand = "claude plugin marketplace add fuad-daoud/relevo && claude plugin install relevo@relevo"
+const PluginInstallCommand = "claude plugin marketplace add fuad-daoud/relevo && claude plugin install relevo@relevo"
+
+// RelevoPluginInstalled reports whether installed_plugins.json lists a relevo
+// plugin; an unreadable file reads as not installed. Setup asks it to drop the
+// plugin question.
+func RelevoPluginInstalled(home string) bool {
+	return relevoPluginInstalled(home)
+}
 
 // relevoPluginInstalled reports whether installed_plugins.json lists a relevo
 // plugin; an unreadable file reads as not installed.
