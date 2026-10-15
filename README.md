@@ -3,13 +3,12 @@
 [![ci](https://github.com/fuad-daoud/relevo/actions/workflows/ci.yml/badge.svg)](https://github.com/fuad-daoud/relevo/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Site: [relevo-site.fuad-daoud.com](https://relevo-site.fuad-daoud.com) (source in [fuad-daoud/relevo-site](https://github.com/fuad-daoud/relevo-site), together with the `DESIGN.md` and `PRODUCT.md` that govern the page).
+Site: [relevo.sh](https://relevo.sh) (source in [fuad-daoud/relevo-site](https://github.com/fuad-daoud/relevo-site), together with the `DESIGN.md` and `PRODUCT.md` that govern the page).
 
 `relevo` automates the plan/report handoff between two AI coding agents. A
 human talks to a **MasterMind** agent; the MasterMind hands work to a **builder**
 agent; relevo moves the files between them so the human never copy-pastes a
-plan or a report by hand. Builders are headless or remote processes, and
-relevo no longer integrates with herdr.
+plan or a report by hand. Builders are headless or remote processes.
 
 <!-- name-guard: off -->
 relevo is Spanish for relay (the changeover in a relay race); it was called relay until v0.12.0.
@@ -27,7 +26,7 @@ human) at every step.
   which models in [Candidates](#candidates).
 - **`git` on `PATH` (optional).** Required for automatic round diff capture; without it, relevo works normally but rounds produce no diffs.
 - **Linux or macOS.** See [Platform support](#platform-support).
-- **Go 1.22+**, to build from source. Not needed if you install a release
+- **Go 1.25+**, to build from source. Not needed if you install a release
   binary.
 
 ## Install
@@ -2551,7 +2550,7 @@ builder `exited`.
 
 ## Platform support
 
-**Linux and macOS.** Both are exercised in CI, on the Go 1.22 floor and on
+**Linux and macOS.** Both are exercised in CI, on the Go 1.25 floor and on
 current stable.
 
 Windows is not supported. State locking is behind a build tag
