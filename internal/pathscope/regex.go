@@ -140,7 +140,7 @@ func (x *lexer) spanContaining(q int) *span {
 // because the lexer cannot be sure it is code.
 func (x *lexer) markerLaterOnLine(i int) bool {
 	rest := x.src[i+1 : lineEnd(x.src, x.i)]
-	return bytes.Index(rest, []byte("//")) >= 0 || bytes.Index(rest, []byte("/*")) >= 0
+	return bytes.Contains(rest, []byte("//")) || bytes.Contains(rest, []byte("/*"))
 }
 
 // scanRegex scans a regex literal opening at i: to the next unescaped '/'
@@ -205,7 +205,7 @@ func (x *lexer) atXMLLiteral() bool {
 		return false
 	}
 	c := x.src[j]
-	if !(isWordByte(c) || c == '!' || c == '?') {
+	if !isWordByte(c) && c != '!' && c != '?' {
 		return false
 	}
 	if cls == regexStarts {
