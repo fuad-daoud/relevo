@@ -156,7 +156,7 @@ func (c *Client) RefSHA(ctx context.Context, dir, ref string) (sha string, ok bo
 // BlobAt resolves path at ref to the blob it names. (oid, true, nil) when path
 // is a regular file there, ("", false, nil) when ref has no such file.
 func (c *Client) BlobAt(ctx context.Context, dir, ref, path string) (oid string, ok bool, err error) {
-	out, err := c.run(ctx, dir, nil, "ls-tree", "-z", ref, "--", path)
+	out, err := c.run(ctx, dir, nil, "ls-tree", "-z", "--full-tree", ref, "--", path)
 	if err != nil {
 		return "", false, err
 	}
@@ -184,9 +184,11 @@ func (c *Client) ShowPrefix(ctx context.Context, dir string) (string, error) {
 
 // DirAt reports whether ref names a directory at path: the entry ls-tree lists
 // must be a tree, not a blob. ok is false when ref has no such entry at all, so
-// only an entry that is a directory counts.
+// only an entry that is a directory counts. path is relative to the tree root;
+// --full-tree keeps it so when dir is a subdirectory, where ls-tree would
+// otherwise resolve path against dir.
 func (c *Client) DirAt(ctx context.Context, dir, ref, path string) (bool, error) {
-	out, err := c.run(ctx, dir, nil, "ls-tree", "-z", ref, "--", path)
+	out, err := c.run(ctx, dir, nil, "ls-tree", "-z", "--full-tree", ref, "--", path)
 	if err != nil {
 		return false, err
 	}
