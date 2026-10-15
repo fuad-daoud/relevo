@@ -21,8 +21,15 @@ import (
 // rows that were absent before, rather than writing a default over them.
 
 // JoinSnapshot is the machine-local state an enable --join must be able to put
-// back: the sync section, the token, the key, the four R2 credentials, the fact
-// about the remote's key, the enabled marker and the join marker.
+// back: the sync section, the token, the key, every secret the fleet's document
+// may land on, the fact about the remote's key, the enabled marker, the fact
+// that an arriving client key replaced a held one, and the join marker.
+//
+// The secret rows are the whole allow-list, not an R2 subset, because the
+// document apply runs on the worker the passphrase check drives and every
+// refusal after it has to leave the machine byte-identical. A join refused at
+// the settle must not keep the fleet's shared values -- the typesafe key and a
+// stamped client key that replaced the one this machine generated for itself.
 //
 // It records absence as well as value, because "there was no token here" and
 // "the token here was this" are different machines and only the first one is what
@@ -38,8 +45,12 @@ type JoinSnapshot struct {
 	hasRemoteKDF bool
 	enabled      []byte
 	hasEnabled   bool
-	r2           [4]heldRow
-	join         heldRow
+	// secrets holds one row per allow-listed name, in allowedSecrets order.
+	secrets []heldRow
+	// clientKeyReplaced is the machine-local row that says an arriving client
+	// key took the place of one this machine already held.
+	clientKeyReplaced heldRow
+	join              heldRow
 }
 
 // heldRow is one row's bytes and whether it was there at all.
@@ -48,11 +59,20 @@ type heldRow struct {
 	present bool
 }
 
-// SnapshotJoin reads every row an enable --join stages or writes. A join marker
-// that was absent stays absent on restore.
+// KeyClientKeyReplaced is the machine-local row that says an arriving client key
+// took the place of one this machine already held. It is spelled here rather
+// than imported because the config package imports this one, and the restore is
+// part of what a refused join owes the machine -- the same reason
+// SecretClientKey and SecretTypesafe are spelled in this package.
+const KeyClientKeyReplaced = "config/client_key_replaced"
+
+// SnapshotJoin reads every row an enable --join stages, or the document apply it
+// runs writes, on the machine-local file. A row that was absent stays absent on
+// restore.
 func SnapshotJoin(l Local) (JoinSnapshot, error) {
 	var s JoinSnapshot
 	var err error
+	s.secrets = make([]heldRow, len(allowedSecrets))
 	if s.section, s.hasSection, err = l.ConfigGet(SectionSettings); err != nil {
 		return JoinSnapshot{}, fmt.Errorf("sync: snapshot the %s section: %w", SectionSettings, err)
 	}
@@ -68,10 +88,13 @@ func SnapshotJoin(l Local) (JoinSnapshot, error) {
 	if s.enabled, s.hasEnabled, err = l.KVGet(KeyEnabled); err != nil {
 		return JoinSnapshot{}, fmt.Errorf("sync: snapshot %s: %w", KeyEnabled, err)
 	}
-	for i, name := range r2Names() {
-		if s.r2[i].value, s.r2[i].present, err = l.SecretGet(name); err != nil {
+	for i, name := range allowedSecrets {
+		if s.secrets[i].value, s.secrets[i].present, err = l.SecretGet(name); err != nil {
 			return JoinSnapshot{}, fmt.Errorf("sync: snapshot %s: %w", name, err)
 		}
+	}
+	if s.clientKeyReplaced.value, s.clientKeyReplaced.present, err = l.ConfigGet(KeyClientKeyReplaced); err != nil {
+		return JoinSnapshot{}, fmt.Errorf("sync: snapshot %s: %w", KeyClientKeyReplaced, err)
 	}
 	if s.join.value, s.join.present, err = l.KVGet(KeyJoin); err != nil {
 		return JoinSnapshot{}, fmt.Errorf("sync: snapshot %s: %w", KeyJoin, err)
@@ -86,7 +109,7 @@ func SnapshotJoin(l Local) (JoinSnapshot, error) {
 // a different thing that the preflight would read as a machine pointed nowhere.
 func (s JoinSnapshot) Restore(l Local, now time.Time) error {
 	return l.Tx(func(t *db.Tx) error {
-		if err := restoreSection(t, s.section, s.hasSection, now); err != nil {
+		if err := restoreConfig(t, SectionSettings, s.section, s.hasSection, now); err != nil {
 			return err
 		}
 		if err := restoreSecret(t, SecretToken, s.token, s.hasToken); err != nil {
@@ -98,10 +121,13 @@ func (s JoinSnapshot) Restore(l Local, now time.Time) error {
 		if err := restoreMarker(t, KeyRemoteKDF, s.remoteKDF, s.hasRemoteKDF); err != nil {
 			return err
 		}
-		for i, name := range r2Names() {
-			if err := restoreSecret(t, name, s.r2[i].value, s.r2[i].present); err != nil {
+		for i, name := range allowedSecrets {
+			if err := restoreSecret(t, name, s.secrets[i].value, s.secrets[i].present); err != nil {
 				return err
 			}
+		}
+		if err := restoreConfig(t, KeyClientKeyReplaced, s.clientKeyReplaced.value, s.clientKeyReplaced.present, now); err != nil {
+			return err
 		}
 		if err := restoreMarker(t, KeyJoin, s.join.value, s.join.present); err != nil {
 			return err
@@ -110,15 +136,19 @@ func (s JoinSnapshot) Restore(l Local, now time.Time) error {
 	})
 }
 
-func restoreSection(t *db.Tx, body []byte, present bool, now time.Time) error {
+// restoreConfig puts one machine-local config row back. The sync section and
+// the replaced row both travel this way: an absent row is deleted rather than
+// written empty, and a present one is put back with these bytes, so a reader
+// cannot meet a row of its own default between the two.
+func restoreConfig(t *db.Tx, key string, body []byte, present bool, now time.Time) error {
 	if !present {
-		if err := t.ConfigDelete(SectionSettings); err != nil {
-			return fmt.Errorf("sync: restore the %s section: %w", SectionSettings, err)
+		if err := t.ConfigDelete(key); err != nil {
+			return fmt.Errorf("sync: restore %s: %w", key, err)
 		}
 		return nil
 	}
-	if err := t.ConfigPut(SectionSettings, body, now.UTC()); err != nil {
-		return fmt.Errorf("sync: restore the %s section: %w", SectionSettings, err)
+	if err := t.ConfigPut(key, body, now.UTC()); err != nil {
+		return fmt.Errorf("sync: restore %s: %w", key, err)
 	}
 	return nil
 }

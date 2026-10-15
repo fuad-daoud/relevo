@@ -8,16 +8,23 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/blobstore"
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
-// stagedRows is localState plus the four bucket rows and the join marker, which
-// a refused join also has to leave as it found them.
+// stagedRows is localState plus every row the secrets document can land on and
+// the join marker, which a refused join has to leave as it found them: the six
+// allow-listed machine-local secrets so a refusal after the pre-pass cannot keep
+// the fleet's values, and the replaced row an arriving client key that lands
+// over a held one writes.
 func stagedRows(t *testing.T, l relevosync.Local) map[string]string {
 	t.Helper()
 	out := localState(t, l)
-	for _, name := range []string{relevosync.SecretR2Endpoint, relevosync.SecretR2Bucket, relevosync.SecretR2KeyID, relevosync.SecretR2Secret} {
+	for _, name := range []string{
+		relevosync.SecretClientKey, relevosync.SecretTypesafe,
+		relevosync.SecretR2Endpoint, relevosync.SecretR2Bucket, relevosync.SecretR2KeyID, relevosync.SecretR2Secret,
+	} {
 		value, present, err := l.SecretGet(name)
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
@@ -27,7 +34,15 @@ func stagedRows(t *testing.T, l relevosync.Local) map[string]string {
 			out[name] = string(value)
 		}
 	}
-	value, present, err := l.KVGet(relevosync.KeyJoin)
+	value, present, err := l.ConfigGet(config.ClientKeyReplacedKey)
+	if err != nil {
+		t.Fatalf("read %s: %v", config.ClientKeyReplacedKey, err)
+	}
+	out[config.ClientKeyReplacedKey] = "<absent>"
+	if present {
+		out[config.ClientKeyReplacedKey] = string(value)
+	}
+	value, present, err = l.KVGet(relevosync.KeyJoin)
 	if err != nil {
 		t.Fatalf("read %s: %v", relevosync.KeyJoin, err)
 	}

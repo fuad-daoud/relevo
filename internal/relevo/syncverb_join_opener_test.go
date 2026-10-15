@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
@@ -76,11 +77,14 @@ func daemonWiring(t *testing.T, m *cfgMachine) *VerbRunner {
 }
 
 // prodFleet is the join and the fleet it joins: A unlocked, holding stamped
-// bucket credentials, with a row whose body is over the blob threshold written
-// after its secrets were stamped, so the `$ref` entry sits ABOVE the entries
-// that grant the fetch. When withBucket is false the fleet shares no
-// credentials at all, which is the fleet that refuses a joiner. The runner
-// handed back is the joiner's, wired with the daemon's openers.
+// bucket credentials, and sharing two secrets with no bucket of its own, with a
+// row whose body is over the blob threshold written after its secrets were
+// stamped, so the `$ref` entry sits ABOVE the entries that grant the fetch.
+// When withBucket is false the fleet shares no credentials at all, which is the
+// fleet that refuses a joiner even with the document applied. A holds the
+// secrets stamped, the way a person's `config secret set` does, and B starts
+// with a client key it generated, unstamped, the way an install's is. The
+// runner handed back is the joiner's, wired with the daemon's openers.
 func prodFleet(t *testing.T, withBucket bool) (a, b *cfgMachine, bRunner *VerbRunner) {
 	t.Helper()
 	key := relevosync.DeriveKey([]byte(joinPassphrase), []byte("0123456789abcdef"), relevosync.DefaultKDF)
@@ -96,20 +100,25 @@ func prodFleet(t *testing.T, withBucket bool) (a, b *cfgMachine, bRunner *VerbRu
 		t.Fatalf("CompressHistoryOnce on B: %v", err)
 	}
 	bRunner = daemonWiring(t, b)
+	// The secrets are stamped before the large value is written, so its entry
+	// lands above the secrets entries the export writes (zeroJoinPair's order).
+	a.setSecret(t, config.SecretTypesafe, canarySecret)
+	a.setSecret(t, config.SecretClientKey, newClientKeyPEM(t))
+	if err := b.cfg.PutSecretUnstamped(config.SecretClientKey, []byte(newClientKeyPEM(t))); err != nil {
+		t.Fatalf("PutSecretUnstamped on B: %v", err)
+	}
 	if withBucket {
 		if err := relevosync.SetR2(a.local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
 			t.Fatalf("SetR2 on A: %v", err)
 		}
 	}
 	// The value is written last, so its entry lands above the secrets entries
-	// the export wrote for the credentials the joiner is owed. An importer that
+	// the export wrote for the secrets the joiner is owed. An importer that
 	// walks the log in sequence order reaches the fetch before it can name a
 	// bucket, which is the ordering the pre-pass exists to break.
 	seedLargeValue(t, a.mdb, 200<<10)
 	a.exportThrough(t)
-	if withBucket {
-		requirePrefassFixture(t, pair)
-	}
+	requirePrefassFixture(t, pair)
 	return a, b, bRunner
 }
 

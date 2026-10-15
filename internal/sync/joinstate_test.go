@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -22,16 +23,19 @@ func joinRows(t *testing.T, l Local) map[string]string {
 	t.Helper()
 	out := map[string]string{}
 	for name, read := range map[string]func() ([]byte, bool, error){
-		"section":        func() ([]byte, bool, error) { return l.ConfigGet(SectionSettings) },
-		"token":          func() ([]byte, bool, error) { return l.SecretGet(SecretToken) },
-		"sync.key":       func() ([]byte, bool, error) { return l.SecretGet(SecretKey) },
-		KeyRemoteKDF:     func() ([]byte, bool, error) { return l.KVGet(KeyRemoteKDF) },
-		KeyEnabled:       func() ([]byte, bool, error) { return l.KVGet(KeyEnabled) },
-		KeyJoin:          func() ([]byte, bool, error) { return l.KVGet(KeyJoin) },
-		SecretR2Endpoint: func() ([]byte, bool, error) { return l.SecretGet(SecretR2Endpoint) },
-		SecretR2Bucket:   func() ([]byte, bool, error) { return l.SecretGet(SecretR2Bucket) },
-		SecretR2KeyID:    func() ([]byte, bool, error) { return l.SecretGet(SecretR2KeyID) },
-		SecretR2Secret:   func() ([]byte, bool, error) { return l.SecretGet(SecretR2Secret) },
+		"section":            func() ([]byte, bool, error) { return l.ConfigGet(SectionSettings) },
+		"token":              func() ([]byte, bool, error) { return l.SecretGet(SecretToken) },
+		"sync.key":           func() ([]byte, bool, error) { return l.SecretGet(SecretKey) },
+		KeyRemoteKDF:         func() ([]byte, bool, error) { return l.KVGet(KeyRemoteKDF) },
+		KeyEnabled:           func() ([]byte, bool, error) { return l.KVGet(KeyEnabled) },
+		KeyJoin:              func() ([]byte, bool, error) { return l.KVGet(KeyJoin) },
+		SecretClientKey:      func() ([]byte, bool, error) { return l.SecretGet(SecretClientKey) },
+		SecretTypesafe:       func() ([]byte, bool, error) { return l.SecretGet(SecretTypesafe) },
+		SecretR2Endpoint:     func() ([]byte, bool, error) { return l.SecretGet(SecretR2Endpoint) },
+		SecretR2Bucket:       func() ([]byte, bool, error) { return l.SecretGet(SecretR2Bucket) },
+		SecretR2KeyID:        func() ([]byte, bool, error) { return l.SecretGet(SecretR2KeyID) },
+		SecretR2Secret:       func() ([]byte, bool, error) { return l.SecretGet(SecretR2Secret) },
+		KeyClientKeyReplaced: func() ([]byte, bool, error) { return l.ConfigGet(KeyClientKeyReplaced) },
 	} {
 		value, present, err := read()
 		if err != nil {
@@ -112,6 +116,20 @@ func TestJoinSnapshotRestoresOverRowsThatAlreadyExisted(t *testing.T) {
 	}
 	if err := SetKey(local, []byte("THE-KEY-THIS-MACHINE-HAD"), at); err != nil {
 		t.Fatalf("SetKey: %v", err)
+	}
+	// The secrets the fleet's document may land on, held the way an arriving
+	// value would be, and the fact that this machine has had a client key
+	// replaced: the restore has to put bytes back over rows that were there.
+	if err := local.Tx(func(t *db.Tx) error {
+		if err := t.SecretPut(SecretClientKey, []byte("THE-CLIENT-KEY-THIS-MACHINE-HAD"), at); err != nil {
+			return err
+		}
+		if err := t.SecretPut(SecretTypesafe, []byte("THE-TYPESAFE-THIS-MACHINE-HAD"), at); err != nil {
+			return err
+		}
+		return t.ConfigPut(KeyClientKeyReplaced, []byte(`{"from":"old","to":"now"}`), at)
+	}); err != nil {
+		t.Fatalf("write the held secret rows: %v", err)
 	}
 	if err := local.KVPut(KeyRemoteKDF, []byte("0")); err != nil {
 		t.Fatalf("KVPut %s: %v", KeyRemoteKDF, err)

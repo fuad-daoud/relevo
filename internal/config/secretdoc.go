@@ -217,7 +217,11 @@ func (d *SecretDoc) applyIn(t *db.Tx, key string, value json.RawMessage, label s
 // than a revision because it is a fact about this machine's state now, not about
 // one edit in its history: `relevo doctor` reads it to say the machine's identity
 // changed and the servers need the new enrolment line, and it reads nothing else.
-const ClientKeyReplacedKey = "config/client_key_replaced"
+//
+// It is the sync package's name for the same row, which is where a refused
+// join's restore of it lives: config imports sync, so the two spellings would
+// drift the way Secrets and SecretsDocName would have.
+const ClientKeyReplacedKey = sync.KeyClientKeyReplaced
 
 // ClientKeyReplaced is what the row holds: the identity this machine had before
 // the arrival, and the one it has now. Both are client ids rather than keys, so
