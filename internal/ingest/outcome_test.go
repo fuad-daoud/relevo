@@ -246,3 +246,41 @@ func TestSwitchesSkipRelaunch(t *testing.T) {
 		t.Errorf("switchesForRound(round 1) = %d, want 1", got)
 	}
 }
+
+// TestCandidateForRoundCarriesTheEarlierRoundsBuilder pins that a round with no
+// pick or switch of its own takes the builder the earlier rounds left running,
+// not the binding's live candidate, which a later round may have changed.
+func TestCandidateForRoundCarriesTheEarlierRoundsBuilder(t *testing.T) {
+	events := []store.LogEntry{
+		{Round: 1, Kind: store.KindPick, Note: "picked opencode/zen/space-bunny-free for builder: order #1"},
+		{Round: 3, Kind: store.KindSwitch, Note: "switched builder (rate-limited): picked claude/anthropic/claude-sonnet-5-5:medium for builder: order #2"},
+	}
+	b := store.Binding{Round: 3, BuilderCandidate: "claude/anthropic/claude-sonnet-5-5:medium"}
+
+	tok, _, ok := candidateForRound(events, 2, b)
+	if !ok || tok != "opencode/zen/space-bunny-free" {
+		t.Errorf("candidateForRound(round 2) = %q, %v, want the pick of round 1", tok, ok)
+	}
+	tok, _, ok = candidateForRound(events, 3, b)
+	if !ok || tok != "claude/anthropic/claude-sonnet-5-5:medium" {
+		t.Errorf("candidateForRound(round 3) = %q, %v, want the switch of round 3", tok, ok)
+	}
+}
+
+// TestSwitchesIgnorePollEntriesWhenTheServerShippedTheHistory pins that the
+// entry a poll writes for a switch it happened to observe does not count beside
+// the server's own record of the same switch.
+func TestSwitchesIgnorePollEntriesWhenTheServerShippedTheHistory(t *testing.T) {
+	events := []store.LogEntry{
+		{Round: 3, Kind: store.KindSwitch, Note: store.PollSwitchNotePrefix + "zen: a -> b"},
+		{Round: 3, Kind: store.KindSwitch, Note: "switched builder (rate-limited): picked b for builder: order #2"},
+		{Round: 4, Kind: store.KindSwitch, Note: store.PollSwitchNotePrefix + "zen: b -> c"},
+	}
+
+	if got := switchesForRound(events, 3); got != 1 {
+		t.Errorf("switchesForRound(round 3) = %d, want 1", got)
+	}
+	if got := switchesForRound(events, 4); got != 1 {
+		t.Errorf("switchesForRound(round 4) = %d, want the poll entry alone to count", got)
+	}
+}
