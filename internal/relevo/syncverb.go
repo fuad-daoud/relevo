@@ -55,6 +55,14 @@ type VerbRunner struct {
 	// verb, so the remote and the token it is built from are the ones just
 	// stored.
 	Open func(context.Context) (synclog.LogTransport, error)
+	// OpenNoBucket builds the transport a join's passphrase check drives, where
+	// the stored bucket set may be incomplete: the credentials arrive in the
+	// fleet's secrets document, and that document is only on the remote the
+	// worker is opened to reach. A caller that installs it makes a join open
+	// through it while the machine holds no bucket; every other enable opens
+	// through Open, whose refusal an incomplete set is. Nil means no second
+	// opener is installed and a join opens through Open as well.
+	OpenNoBucket func(context.Context) (synclog.LogTransport, error)
 	// Serialize runs fn under the daemon's in-flight sync guard. Nil runs it
 	// inline, which is what a cockpit wants: it is not the daemon and has no
 	// trigger to be serialized against.

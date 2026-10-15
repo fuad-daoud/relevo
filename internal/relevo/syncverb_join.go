@@ -51,6 +51,10 @@ type verified struct {
 	// opened says whether this enable built the transport, because only one it
 	// opened may be closed here.
 	opened bool
+	// bucketless says the worker that answered was started with no bucket
+	// stored, which is what the enable answers for before the import runs: the
+	// import fetches `$ref` bodies, so it cannot drive a worker with none.
+	bucketless bool
 	// unstage puts the staged rows back. It is safe to call more than once: the
 	// snapshot is a set of bytes, not a consumption.
 	unstage func()
@@ -69,11 +73,11 @@ func (v *VerbRunner) stageAndVerify(ctx context.Context, remote string, token, p
 	if !required && len(bytes.TrimSpace(passphrase)) == 0 {
 		return nil, nil
 	}
-	on, err := relevosync.Enabled(v.Local)
+	opened, err := relevosync.Enabled(v.Local)
 	if err != nil {
 		return nil, err
 	}
-	if on {
+	if opened {
 		return nil, relevosync.ErrAlreadyEnabled
 	}
 	snapshot, err := relevosync.SnapshotJoin(v.Local)
@@ -85,12 +89,12 @@ func (v *VerbRunner) stageAndVerify(ctx context.Context, remote string, token, p
 		v.unstageJoin(snapshot)
 		return nil, err
 	}
-	transport, opened, err := v.openJoinTransport(ctx)
+	transport, opened, bucketless, err := v.openJoinTransport(ctx, required)
 	if err != nil {
 		v.unstageJoin(snapshot)
 		return nil, err
 	}
-	out.transport, out.opened = transport, opened
+	out.transport, out.opened, out.bucketless = transport, opened, bucketless
 	key, err := relevosync.VerifyJoinKey(ctx, v.Local, transport, passphrase)
 	if err != nil {
 		v.unstageJoin(snapshot)
@@ -138,16 +142,40 @@ func (v *VerbRunner) unstageJoin(snapshot relevosync.JoinSnapshot) {
 
 // openJoinTransport opens the worker the passphrase is checked against, wrapped
 // in the stop a join drives so a disable arriving mid-join still reaches it.
-func (v *VerbRunner) openJoinTransport(ctx context.Context) (synclog.LogTransport, bool, error) {
-	transport, err := v.openTransport(ctx)
+//
+// joining decides the opener: a joiner's stored rows hold no bucket yet -- the
+// credentials arrive in the fleet's secrets document, which only the worker is
+// opened to read -- so the wiring can install an opener that starts the worker
+// with none instead of refusing. Every other enable opens through Open, whose
+// refusal an incomplete set is, because what it would import needs the bucket
+// in hand. bucketless records what the opener answered: a worker started with
+// no bucket stored, which the rest of the enable must answer for.
+func (v *VerbRunner) openJoinTransport(ctx context.Context, joining bool) (synclog.LogTransport, bool, bool, error) {
+	var transport synclog.LogTransport
+	var err error
+	var bucketless bool
+	if joining && v.OpenNoBucket != nil {
+		transport, err = v.OpenNoBucket(ctx)
+		// The opener hands a worker a bucket when the stored set is complete,
+		// so the stored set at this moment is the worker's answer; an open
+		// failure is returned below either way.
+		if err == nil {
+			var stored relevosync.R2Secrets
+			if stored, err = relevosync.ReadR2(v.Local); err == nil {
+				bucketless = !stored.Complete()
+			}
+		}
+	} else {
+		transport, err = v.openTransport(ctx)
+	}
 	if err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
 	stop := relevosync.NewStopTransport(transport)
 	// Published before the check, because the machine reads off from here until
 	// the enable settles and a disable has to be able to reach the worker.
 	v.publishJoin(stop)
-	return stop, v.Open != nil, nil
+	return stop, (joining && v.OpenNoBucket != nil) || v.Open != nil, bucketless, nil
 }
 
 // enableJoin runs a join that arrived with a code.
