@@ -145,7 +145,7 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 		return r.failed(out, err)
 	}
 	out.Applied = imported.Applied
-	out.Trouble = troubleFrom(imported)
+	out.Trouble = TroubleFrom(imported)
 	if locked {
 		out.Trouble.Held = append(out.Trouble.Held, synclog.ErrLockedSignedOrigin.Error())
 	}
@@ -153,7 +153,7 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 	now := time.Now().UTC()
 	compacted := r.compact(shared, t, now)
 	r.publishSize(shared.Origin(), t, compacted, out.Exported > 0, now)
-	r.measureStorage(now)
+	r.measureStorage(t, now)
 	return out
 }
 
@@ -252,10 +252,10 @@ func (r *Runner) drainImport(ctx context.Context, shared *db.DB, t *StopTranspor
 	}, deadline, time.Now)
 }
 
-// troubleFrom is the importer's report as the marker stores it: each trouble in
+// TroubleFrom is the importer's report as the marker stores it: each trouble in
 // the importer's own sentence, so a status surface names the installation and
 // the sequence a reader has to act on without re-deriving either.
-func troubleFrom(res synclog.ImportResult) Trouble {
+func TroubleFrom(res synclog.ImportResult) Trouble {
 	var t Trouble
 	for _, held := range res.Held {
 		t.Held = append(t.Held, held.String())
@@ -346,19 +346,33 @@ func (r *Runner) record(out SteadyResult) {
 // marker without bound.
 const maxDroppedReports = 50
 
-// putTrouble writes the attempt's report, carrying dropped reports forward. A
-// dropped batch has already had its origin's mark moved past it, so it is never
-// offered again and only a reader can act on it; a later clean attempt must not
-// erase it. Held and gap reports are per-run because they recur while they are
-// true, so they are written as this attempt found them.
+// putTrouble writes the attempt's report through RecordTrouble.
 func (r *Runner) putTrouble(t Trouble) {
+	RecordTrouble(r.Local, t)
+}
+
+// RecordTrouble writes one import's report to the trouble marker, carrying
+// dropped reports forward. A dropped batch has already had its origin's mark
+// moved past it, so it is never offered again and only a reader can act on it;
+// a later clean import must not erase it. Held and gap reports are per-run
+// because they recur while they are true, so they are written as this import
+// found them. The steady attempt and the one-shot pull share it, so a status
+// read agrees with whichever ran last.
+func RecordTrouble(kv db.KV, t Trouble) {
 	var prior Trouble
-	if err := marker(r.Local, KeyTrouble, &prior); err != nil {
+	if err := marker(kv, KeyTrouble, &prior); err != nil {
 		slog.Warn("sync: read the trouble marker", "err", err)
 	} else {
 		t.Dropped = capDropped(append(prior.Dropped, t.Dropped...))
 	}
-	r.put(KeyTrouble, t)
+	body, err := json.Marshal(t)
+	if err != nil {
+		slog.Warn("sync: encode a marker", "key", KeyTrouble, "err", err)
+		return
+	}
+	if err := kv.KVPut(KeyTrouble, body); err != nil {
+		slog.Warn("sync: write a marker", "key", KeyTrouble, "err", err)
+	}
 }
 
 // capDropped keeps the newest dropped reports, dropping the oldest when the

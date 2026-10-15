@@ -110,6 +110,12 @@ func (t Trouble) Empty() bool {
 	return len(t.Held) == 0 && len(t.Dropped) == 0 && len(t.Gaps) == 0
 }
 
+// Holds is every report a reader has to act on now: the held origins and the
+// gaps. Dropped reports are history and are not repeated here.
+func (t Trouble) Holds() []string {
+	return append(append([]string(nil), t.Held...), t.Gaps...)
+}
+
 // The four tokens the statusline shows, one per state that needs a human. The
 // renderer formats them; detail lives in the sync view.
 const (

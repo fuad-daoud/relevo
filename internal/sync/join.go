@@ -149,7 +149,7 @@ func (r EnableRequest) Preflight() (EnablePlan, error) {
 		return EnablePlan{}, ErrNoRemote
 	}
 	if r.URL != "" && settings.RemoteURL != "" && r.URL != settings.RemoteURL {
-		return EnablePlan{}, ErrRemoteConflict
+		return EnablePlan{}, &RemoteConflictError{URL: r.URL, Stored: settings.RemoteURL}
 	}
 	if r.Shared == nil {
 		return EnablePlan{}, fmt.Errorf("sync: enable: no shared database: %w", db.ErrInvalid)
@@ -330,8 +330,10 @@ func (e *Enabler) transport() (synclog.LogTransport, error) {
 // worker and bootstraps the replica. A remote that refuses the log therefore
 // leaves no join in progress behind, and its refusal is the first thing the
 // caller reads.
-func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (EnableResult, error) {
-	var res EnableResult
+func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (res EnableResult, _ error) {
+	// The result is named so the deferred reading lands in what the caller gets:
+	// the runner is seeded from it, and a zero there makes its first count fold
+	// the worker's whole cumulative total into the month a second time.
 	defer func() { res.Stats = e.last }()
 	opened, err := transport.Stats()
 	if err != nil {

@@ -51,6 +51,8 @@ func cmdSyncWorker(args []string) error {
 		path = filepath.Join(filepath.Dir(shared), workerReplicaName)
 	}
 
+	syncworker.OwnerOnlyFiles()
+
 	// Nothing is opened and nothing is captured on the way in: the worker holds
 	// no database handle of this installation's own, so it must not install the
 	// route the other verbs read through. It is a peek verb for that reason.

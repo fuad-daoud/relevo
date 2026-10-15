@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/blobstore"
@@ -105,21 +104,30 @@ func ReadStorage(kv db.KV) (Storage, error) {
 	return s, nil
 }
 
-// measureStorage records the replica file's size and the bucket's total, at
+// measureStorage records what the remote log holds and the bucket's total, at
 // most once a day.
-func (r *Runner) measureStorage(now time.Time) {
+//
+// Turso is measured as the sum of every origin's log size the remote reports,
+// the same figure the join guard compares against the quota. The local replica
+// file is not that: it is a partial copy plus the driver's write-ahead files, so
+// its size says nothing about what the cloud database bills.
+func (r *Runner) measureStorage(t *StopTransport, now time.Time) {
 	store := r.bucket()
-	if store == nil || r.ReplicaPath == "" {
+	if store == nil {
 		return
 	}
 	prior, err := ReadStorage(r.Local)
 	if err == nil && now.Sub(prior.At) < storageEvery {
 		return
 	}
-	info, err := os.Stat(r.ReplicaPath)
+	state, err := t.ReadMarks()
 	if err != nil {
-		slog.Warn("sync: measure the replica", "err", err)
+		slog.Warn("sync: measure the log", "err", err)
 		return
+	}
+	var logBytes int64
+	for _, size := range state.Sizes {
+		logBytes += size
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), measureTimeout)
 	defer cancel()
@@ -128,7 +136,7 @@ func (r *Runner) measureStorage(now time.Time) {
 		slog.Warn("sync: measure the bucket", "err", err)
 		return
 	}
-	r.put(KeyStorage, Storage{Turso: info.Size(), R2: bodies, At: now})
+	r.put(KeyStorage, Storage{Turso: logBytes, R2: bodies, At: now})
 }
 
 // FormatQuotas is the status clause for the month's Turso traffic against its

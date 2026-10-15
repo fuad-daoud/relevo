@@ -46,5 +46,7 @@ func (v *VerbRunner) pull(ctx context.Context) *wire.SyncResult {
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
-	return &wire.SyncResult{OK: true, Applied: res.Applied > 0}
+	trouble := relevosync.TroubleFrom(res)
+	relevosync.RecordTrouble(v.Local, trouble)
+	return &wire.SyncResult{OK: true, Applied: res.Applied > 0, Holds: trouble.Holds()}
 }
