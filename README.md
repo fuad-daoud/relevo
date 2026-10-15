@@ -1704,12 +1704,26 @@ wins -- or `@docs`, which expands to `**/*.md`, `**/*.markdown`, `**/*.mdx`,
 `**/*.mmd`, `**/*.rst`, `**/*.adoc`, `**/*.asciidoc`, `**/*.svg` and
 `**/*.excalidraw`, excluding `!**/testdata/**`,
 `!vendor/**` and `!**/node_modules/**`. With `comments` true, an edit to an
-out-of-scope `.go` file is still in scope when the old and new contents differ
-only in non-directive comments; a change to a directive comment (`//go:`,
-`// +build`, `//line`, `//export`, `//nolint`, `//lint:`, anything containing
-`#nosec`, the `// Code generated ... DO NOT EDIT.` marker, a test `Output:`
-comment) or to any code token is refused, as is any other extension, a binary
-or a symlink.
+out-of-scope source file is still in scope when the old and new contents differ
+only in non-directive comments. For `.go` the two sides are compared as token
+streams, so whitespace is free as `gofmt` moves it, and a change to a directive
+comment (`//go:`, `// +build`, `//line`, `//export`, `//nolint`, `//lint:`,
+anything containing `#nosec`, the `// Code generated ... DO NOT EDIT.` marker,
+a test `Output:` comment) or to any code token is refused. The other languages
+the comment table carries get the code-line rule: every comment is removed and
+the remaining lines must match one for one, in order, so a comment's own line,
+comment text and blank lines are free while everything else -- including
+leading whitespace -- is code; a docstring or any other string literal is code,
+and indentation is significant. Those languages are `.py`/`.pyi`,
+`.sh`/`.bash`/`.zsh`, `.yaml`/`.yml`, `.toml`, `.r`, `.js`/`.jsx`/`.mjs`/`.cjs`
+and `.ts`/`.tsx`, `.java`/`.kt`/`.kts`/`.scala`, `.cs`, `.swift`, `.dart`,
+`.c`/`.h`/`.cc`/`.cpp`/`.hpp`, `.rs`, `.sql`, `.lua` and `.hs`; their own
+directives are refused too -- `# noqa`, `# type:`, `#!`, `// @ts-ignore`,
+`// eslint-disable-next-line`, `// NOLINT`, `-- noqa`, `-- name:`,
+`---@type`, `{-# LANGUAGE #-}` and their kin. A file added or deleted, a
+status the rules cannot judge, an extension outside the table (`.json`,
+`.txt`, `.rb`, `.php`, `.pl`, a binary, an extensionless `Makefile` or
+`Dockerfile`) or a symlink is refused as before.
 
 A refusal still closes the round -- its report, diff and usage are recorded --
 but its outcome is forced to `halted`, the binding goes to **NEEDS YOU** naming

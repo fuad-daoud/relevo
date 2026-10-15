@@ -13,9 +13,9 @@ In scope:
 - markdown: README, docs/**, CHANGELOG;
 - agent instruction files: CLAUDE.md, AGENTS.md and kin;
 - sketches and diagrams: .excalidraw and .svg under docs/boards/;
-- code comments: doc comments, docstrings, inline comments.
+- code comments: doc comments, inline comments.
 
-Out of scope — everything that changes behaviour. Directive comments are code, not documentation: //go:build, //nolint, // @ts-ignore and codegen markers are instructions to a tool, not prose, and neither are source logic, tests, config or generated files.
+Out of scope — everything that changes behaviour. Directive comments are code, not documentation: //go:build, //nolint, // @ts-ignore and codegen markers are instructions to a tool, not prose, and neither are source logic, tests, config or generated files. A docstring is a string literal, not a comment: comment-only judgement never reaches inside one.
 
 A round that changes code is a failed round. When the work needs a code change, halt that step and report it, and never make it.
 
