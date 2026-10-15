@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -84,6 +85,28 @@ func fingerprintOf(der []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+// The dial and handshake bounds are variables so a test can shorten them.
+// There is deliberately no response-header bound: a bind, a send or a bundle
+// push can legitimately take longer than a few seconds before the server
+// answers.
+var (
+	dialTimeout         = 5 * time.Second
+	tlsHandshakeTimeout = 5 * time.Second
+	// dialer opens the connection boundedDial has already put a deadline on.
+	dialer = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, network, addr)
+	}
+)
+
+// boundedDial keeps a dead host from holding a caller for the operating
+// system's connect timeout.
+func boundedDial(ctx context.Context, network, addr string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
+	defer cancel()
+	return dialer(ctx, network, addr)
+}
+
 func (c *Client) getHTTPClient(entry remote.ServerEntry) *http.Client {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -93,7 +116,11 @@ func (c *Client) getHTTPClient(entry remote.ServerEntry) *http.Client {
 		return cl
 	}
 	cl := &http.Client{
-		Transport:     &http.Transport{TLSClientConfig: tlsConfigFor(entry)},
+		Transport: &http.Transport{
+			TLSClientConfig:     tlsConfigFor(entry),
+			DialContext:         boundedDial,
+			TLSHandshakeTimeout: tlsHandshakeTimeout,
+		},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return ErrRedirect },
 	}
 	c.httpClients[key] = cl
