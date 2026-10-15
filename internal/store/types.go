@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // State is a binding's display and control state.
@@ -87,7 +89,8 @@ func ValidFeature(s string) error {
 // ValidTicket reports whether s is a valid stored --ticket form: "#N" or
 // "project/path#N" (2..N segments, each 1..100 chars of [A-Za-z0-9._-]) at
 // most 256 bytes, an issue key like ABC-123 at most 64 bytes, or an http(s)
-// URL at most 512 bytes. N is 1..9 digits with no leading zero.
+// URL at most 512 bytes whose remainder is one printable, non-whitespace
+// token. N is 1..9 digits with no leading zero.
 func ValidTicket(s string) error {
 	const errText = "ticket: #N, project/path#N, an issue key like ABC-123, or an http(s) URL"
 
@@ -102,6 +105,9 @@ func ValidTicket(s string) error {
 	}
 	if isOpaqueURL(s) {
 		if len(s) > 512 {
+			return invalidOf(ErrInvalidTicket, "%s", errText)
+		}
+		if !opaqueURLPrintable(s) {
 			return invalidOf(ErrInvalidTicket, "%s", errText)
 		}
 		return nil
@@ -293,6 +299,28 @@ func isOpaqueURL(s string) bool {
 	}
 	rest, ok = strings.CutPrefix(s, "https://")
 	return ok && rest != ""
+}
+
+// opaqueURLPrintable reports whether every rune after s's http(s) scheme is
+// printable and not whitespace. A ticket is printed verbatim by the status
+// views and stored by a server as its client sent it, so a space would split
+// a status line and a control character would reach the terminal. Invalid
+// UTF-8 decodes to utf8.RuneError, which unicode.IsPrint accepts, so that is
+// refused on its own.
+func opaqueURLPrintable(s string) bool {
+	rest, ok := strings.CutPrefix(s, "http://")
+	if !ok {
+		rest, ok = strings.CutPrefix(s, "https://")
+	}
+	if !ok {
+		return false
+	}
+	for _, r := range rest {
+		if r == utf8.RuneError || unicode.IsSpace(r) || unicode.IsControl(r) || !unicode.IsPrint(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // validIssueKey reports whether s is an issue key like ABC-123: two or more

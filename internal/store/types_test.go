@@ -430,8 +430,8 @@ func TestParseTicketIssueKey(t *testing.T) {
 }
 
 // TestParseTicketOpaqueURL pins the opaque form: any other http(s) URL is
-// stored whole, trimmed, whatever it carries, and only http and https are
-// opaque.
+// stored whole and trimmed when every rune after the scheme is printable and
+// not whitespace, and only http and https are opaque.
 func TestParseTicketOpaqueURL(t *testing.T) {
 	// hashURL is assembled across two lines: one line carrying both an http
 	// scheme and a "#N" reads as a comment citing history to the guard.
@@ -449,6 +449,15 @@ func TestParseTicketOpaqueURL(t *testing.T) {
 		{"url with an unparseable issue number", "https://github.com/o/r/issues/abc", "https://github.com/o/r/issues/abc", false},
 		{"http url", "http://example.com/board/1", "http://example.com/board/1", false},
 		{"padded url is trimmed", "  https://linear.app/team/issue/ENG-123  ", "https://linear.app/team/issue/ENG-123", false},
+		{"non-ascii printable path", "https://example.com/ü/1", "https://example.com/ü/1", false},
+		{"inner space refused", "https://example.com/a b", "", true},
+		{"tab refused", "https://example.com/a\tb", "", true},
+		{"newline refused", "https://example.com/a\nb", "", true},
+		{"carriage return refused", "https://example.com/a\rb", "", true},
+		{"escape sequence refused", "https://example.com/\x1b[31m", "", true},
+		{"NUL refused", "https://example.com/a\x00b", "", true},
+		{"zero-width space refused", "https://example.com/a\u200bb", "", true},
+		{"invalid UTF-8 byte refused", "https://example.com/\xff", "", true},
 		{"non http scheme refused", "ftp://host/a/b", "", true},
 		{"bare scheme refused", "https://", "", true},
 	}
