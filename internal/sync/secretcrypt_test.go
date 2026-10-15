@@ -3,7 +3,9 @@ package sync
 import (
 	"bytes"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/chacha20poly1305"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 )
@@ -94,11 +98,13 @@ func TestSealAndOpenRoundTripEveryAllowedSecret(t *testing.T) {
 	}
 }
 
-// TestSealDrawsANoncePerValue pins that sealing is not a fixed function of its
-// input: two envelopes of one value differ, so the log cannot tell that two
-// machines sealed the same secret, and neither envelope can be replayed as the
-// other.
-func TestSealDrawsANoncePerValue(t *testing.T) {
+// TestTheSameSecretUnderOneKeySealsToTheSameEnvelope pins that sealing is a
+// function of its inputs: one (key, name, value) seals to one envelope, and
+// another value or another name seals to another. The exporter compares
+// envelopes by digest, so a re-seal of an unchanged value has to return the
+// same bytes or every held secret is re-exported under a fresh stamp every
+// time its document is signalled.
+func TestTheSameSecretUnderOneKeySealsToTheSameEnvelope(t *testing.T) {
 	t.Parallel()
 	first, err := SealSecret(testSyncKey(), SecretTypesafe, canarySecret)
 	if err != nil {
@@ -108,13 +114,97 @@ func TestSealDrawsANoncePerValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SealSecret again: %v", err)
 	}
-	if bytes.Equal(first, second) {
-		t.Fatal("sealing the same value twice produced one envelope")
+	if !bytes.Equal(first, second) {
+		t.Fatal("sealing the same (key, name, value) twice produced two envelopes")
+	}
+	otherValue, err := SealSecret(testSyncKey(), SecretTypesafe, []byte("CANARY-a-different-value"))
+	if err != nil {
+		t.Fatalf("SealSecret on another value: %v", err)
+	}
+	if bytes.Equal(first, otherValue) {
+		t.Fatal("a different value sealed to the same envelope")
+	}
+	otherName, err := SealSecret(testSyncKey(), SecretR2Bucket, canarySecret)
+	if err != nil {
+		t.Fatalf("SealSecret under another name: %v", err)
+	}
+	if bytes.Equal(first, otherName) {
+		t.Fatal("the same value under another name sealed to the same envelope")
 	}
 	for _, env := range []json.RawMessage{first, second} {
 		if out, err := OpenSecret(testSyncKey(), SecretTypesafe, env); err != nil || !bytes.Equal(out, canarySecret) {
-			t.Fatalf("a fresh envelope did not open back to the value: %q %v", out, err)
+			t.Fatalf("an envelope did not open back to its value: %q %v", out, err)
 		}
+	}
+}
+
+// TestOpenReadsAnEnvelopeSealedWithADrawnNonce pins that what a log already
+// holds keeps opening. One of its envelopes was sealed with a nonce somebody
+// drew, which is exactly how an envelope this build wrote before the sealing
+// became a function of its inputs looks; the read rules did not change with
+// the write rules, so it opens back to its value.
+func TestOpenReadsAnEnvelopeSealedWithADrawnNonce(t *testing.T) {
+	t.Parallel()
+	sub, err := SecretSubkey(testSyncKey())
+	if err != nil {
+		t.Fatalf("SecretSubkey: %v", err)
+	}
+	aead, err := chacha20poly1305.NewX(sub)
+	if err != nil {
+		t.Fatalf("open the cipher: %v", err)
+	}
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		t.Fatalf("draw the nonce: %v", err)
+	}
+	env, err := json.Marshal(secretEnvelope{
+		V: secretEnvelopeVersion,
+		N: base64.RawURLEncoding.EncodeToString(nonce),
+		C: base64.RawURLEncoding.EncodeToString(
+			aead.Seal(nil, nonce, canarySecret, []byte(SecretTypesafe))),
+	})
+	if err != nil {
+		t.Fatalf("encode the envelope: %v", err)
+	}
+	out, err := OpenSecret(testSyncKey(), SecretTypesafe, env)
+	if err != nil {
+		t.Fatalf("OpenSecret: %v", err)
+	}
+	if !bytes.Equal(out, canarySecret) {
+		t.Fatalf("opened %q, want the value it was sealed with", out)
+	}
+}
+
+// TestTheNonceKeyIsNotTheSealingKey pins the separation between the two
+// derivations one envelope rests on: the key its nonce is hashed under is not
+// the key its value is encrypted under, and two derivations of each are the
+// same bytes each time, so the envelopes a log compares stay reproducible.
+func TestTheNonceKeyIsNotTheSealingKey(t *testing.T) {
+	t.Parallel()
+	sub, err := SecretSubkey(testSyncKey())
+	if err != nil {
+		t.Fatalf("SecretSubkey: %v", err)
+	}
+	first, err := sealNonceKey(sub, SecretTypesafe)
+	if err != nil {
+		t.Fatalf("sealNonceKey: %v", err)
+	}
+	again, err := sealNonceKey(sub, SecretTypesafe)
+	if err != nil {
+		t.Fatalf("sealNonceKey again: %v", err)
+	}
+	if !bytes.Equal(first, again) {
+		t.Fatal("one subkey derived two nonce keys")
+	}
+	if bytes.Equal(first, sub) {
+		t.Fatal("the nonce key is the AEAD subkey itself; two uses of one key need their own derivations")
+	}
+	other, err := sealNonceKey([]byte("ffffffffffffffffffffffffffffffff"), SecretTypesafe)
+	if err != nil {
+		t.Fatalf("sealNonceKey under another subkey: %v", err)
+	}
+	if bytes.Equal(first, other) {
+		t.Fatal("two subkeys derived the same nonce key")
 	}
 }
 

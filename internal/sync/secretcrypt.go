@@ -13,9 +13,10 @@ package sync
 // against the key, never in between.
 
 import (
-	"crypto/rand"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -118,6 +119,12 @@ const SecretEnvelopeMax = 8 << 10
 // and a key that verifies a signature cannot decrypt anything.
 const secretKeyLabel = "relevo-sync-secret-v1"
 
+// secretNonceLabel is the HKDF info that separates the key the sealing nonce is
+// hashed under from the AEAD key itself: reusing the encryption key as the HMAC
+// key would make the nonce a second output of the same derivation, and distinct
+// uses of one key need labels, not operator discipline.
+const secretNonceLabel = "relevo-sync-secret-nonce-v1"
+
 // secretSubkeyLen is the derived key's length: one XChaCha20-Poly1305 key.
 const secretSubkeyLen = 32
 
@@ -169,16 +176,15 @@ func SecretSubkey(key []byte) ([]byte, error) {
 
 // sealSecret seals value with the secret's own name as the associated data, so
 // a ciphertext that arrives under another name fails to authenticate rather
-// than being read as that other secret. One nonce is drawn per sealing, so the
-// same value sealed twice is two different ciphertexts.
+// than being read as that other secret.
 func sealSecret(subkey []byte, name string, value []byte) (json.RawMessage, error) {
+	nonce, err := sealNonce(subkey, name, value)
+	if err != nil {
+		return nil, err
+	}
 	aead, err := chacha20poly1305.NewX(subkey)
 	if err != nil {
 		return nil, fmt.Errorf("secrets %s: open the cipher: %w: %w", name, err, db.ErrInvalid)
-	}
-	nonce := make([]byte, aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, fmt.Errorf("secrets %s: draw a nonce: %w: %w", name, err, db.ErrInvalid)
 	}
 	env, err := json.Marshal(secretEnvelope{
 		V: secretEnvelopeVersion,
@@ -189,6 +195,46 @@ func sealSecret(subkey []byte, name string, value []byte) (json.RawMessage, erro
 		return nil, fmt.Errorf("secrets %s: encode the envelope: %w: %w", name, err, db.ErrInvalid)
 	}
 	return env, nil
+}
+
+// sealNonce derives the sealing nonce from what the envelope is of: HMAC-SHA256
+// under a key derived from the secrets subkey with its own label, over a
+// length-prefixed encoding of the name and the value, truncated to a nonce.
+// The prefix keeps two inputs from agreeing as one: without it a name's
+// boundary is invisible, and a caller under the same key could hand a value to
+// a name so the pair hashed to another pair's nonce.
+//
+// The trade: equal (name, value) pairs under one key seal to the same
+// envelope, which is what lets the exporter's digest see an unchanged value and
+// keeps an echo of the fleet's own values off the log; what that reveals to a
+// log reader is only that a value equals one it held before.
+func sealNonce(subkey []byte, name string, value []byte) ([]byte, error) {
+	hkey, err := sealNonceKey(subkey, name)
+	if err != nil {
+		return nil, err
+	}
+	mac := hmac.New(sha256.New, hkey)
+	var size [4]byte
+	binary.BigEndian.PutUint32(size[:], uint32(len(name)))
+	mac.Write(size[:])
+	mac.Write([]byte(name))
+	binary.BigEndian.PutUint32(size[:], uint32(len(value)))
+	mac.Write(size[:])
+	mac.Write(value)
+	return mac.Sum(nil)[:chacha20poly1305.NonceSizeX], nil
+}
+
+// sealNonceKey derives the key the sealing nonce is hashed under: HKDF-SHA256
+// over the secrets subkey with the nonce's own label, so the derivation the
+// envelope is encrypted under and the derivation the nonce is hashed under are
+// never the same bytes.
+func sealNonceKey(subkey []byte, name string) ([]byte, error) {
+	key := make([]byte, secretSubkeyLen)
+	r := hkdf.New(sha256.New, subkey, nil, []byte(secretNonceLabel))
+	if _, err := io.ReadFull(r, key); err != nil {
+		return nil, fmt.Errorf("secrets %s: derive the nonce key: %w: %w", name, err, db.ErrInvalid)
+	}
+	return key, nil
 }
 
 // SealSecret seals one allow-listed secret value under the sync key and returns

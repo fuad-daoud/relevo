@@ -466,8 +466,13 @@ under the merged rules, imports no shared docs, and status says "locked".
 - **Encryption:** a value travels as XChaCha20-Poly1305 under a 32-byte subkey,
   HKDF-SHA256 over `sync.key` with the label `relevo-sync-secret-v1`, so the MAC
   key and the encryption key are never the same bytes. The secret's name is the
-  associated data. The envelope is `{"v":1,"n":<nonce>,"c":<ciphertext>}`; a
-  reader refuses any `v` other than 1 and any field it does not know.
+  associated data. The sealing nonce is HMAC-SHA256 of the length-prefixed name
+  and value under a key HKDF-SHA256 derives from that subkey with the label
+  `relevo-sync-secret-nonce-v1`, so equal (name, value) pairs under one key
+  seal to one envelope -- what lets the exporter see an unchanged value -- and
+  a log reader learns only that a value equals one it held before. The envelope
+  is `{"v":1,"n":<nonce>,"c":<ciphertext>}`; a reader refuses any `v` other than
+  1 and any field it does not know.
 - **Who stamps:** only a person's edit (`config secret set` or `rm`, secret
   files in a config import, an enable given R2 flags). A value relevo generates
   is unstamped. An unstamped `client.key` is never exported, so the machines'
