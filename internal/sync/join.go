@@ -169,18 +169,13 @@ func (r EnableRequest) Preflight() (EnablePlan, error) {
 	// gate is the check that costs. The refusal names the flags that clear it,
 	// which is what a user who was expecting a working enable needs to read.
 	//
-	// A join skips this leg, and only this leg. A code carries no bucket
-	// credentials because there is nowhere on a command line to put them that
-	// they would not outlive; they arrive in the secrets document, which the
-	// importer applies before it fetches any body. So the machine is not
-	// incomplete when this runs -- it is complete in a different place, and
-	// refusing here would refuse every join there is.
-	if r.Join {
-		if err := db.EnablePreflight(r.Shared).Err(); err != nil {
-			return EnablePlan{}, err
-		}
-		return EnablePlan{Remote: remote, Token: r.Token}, nil
-	}
+	// A join resolves this leg leniently, and only this leg. A code carries no
+	// bucket credentials because there is nowhere on a command line to put them
+	// that they would not outlive; they arrive in the secrets document, which the
+	// importer applies before it fetches any body. So a join that was given no
+	// complete set is not incomplete when this runs -- it is complete in a
+	// different place -- and only the absence of a set is let through. Flags
+	// that were passed are held to the same endpoint rules as a plain enable's.
 	stored, err := ReadR2(r.Local)
 	if err != nil {
 		return EnablePlan{}, err
@@ -192,7 +187,7 @@ func (r EnableRequest) Preflight() (EnablePlan, error) {
 		Secret:   r.R2.Secret,
 		Stored:   stored,
 	}.R2Resolve()
-	if err != nil {
+	if err != nil && !(r.Join && errors.Is(err, ErrNoR2)) {
 		return EnablePlan{}, err
 	}
 	if err := db.EnablePreflight(r.Shared).Err(); err != nil {

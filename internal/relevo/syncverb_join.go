@@ -152,25 +152,23 @@ func (v *VerbRunner) openJoinTransport(ctx context.Context) (synclog.LogTranspor
 
 // enableJoin runs a join that arrived with a code.
 //
-// The passphrase is required here, and the enable it hands off to skips exactly
-// one preflight check: the bucket credentials, which a code has nowhere to carry
-// and which arrive in the secrets document instead.
-func (v *VerbRunner) enableJoin(ctx context.Context, verb *wire.SyncVerb, token, passphrase []byte) *wire.SyncResult {
+// The passphrase is required here, and the enable it hands off to resolves the
+// bucket credentials leniently: a code has nowhere to carry them and they arrive
+// in the secrets document, but bucket flags the joiner passed are honored.
+func (v *VerbRunner) enableJoin(ctx context.Context, verb *wire.SyncVerb, token, passphrase []byte, r2 relevosync.R2Intake) *wire.SyncResult {
 	v.beginJoin()
 	done, err := v.stageAndVerify(ctx, verb.RemoteURL, token, passphrase, true)
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
-	return v.enablePipeline(ctx, verb, token, relevosync.R2Intake{}, true, done.transport)
+	return v.enablePipeline(ctx, verb, token, r2, true, done.transport)
 }
 
 // enablePipeline runs the ordinary enable, which is what imports the fleet and
 // turns the machine on.
 //
-// carryR2 is false for a join, and that one difference is the whole of what the
-// code changed about the pipeline: a join's bucket credentials are not on the
-// command line, so there is nothing for the enable to store and nothing for the
-// preflight to insist on.
+// joining relaxes the preflight's bucket check: a join's credentials may arrive
+// in the secrets document, so only flags actually passed are stored.
 func (v *VerbRunner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, token []byte, r2 relevosync.R2Intake, joining bool, opened synclog.LogTransport) *wire.SyncResult {
 	v.beginJoin()
 	enabler := &relevosync.Enabler{

@@ -333,7 +333,7 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byt
 		return verbRefusal(verbClassify(err), err)
 	}
 	if verb.Join {
-		return v.enableJoin(ctx, verb, token, passphrase)
+		return v.enableJoin(ctx, verb, token, passphrase, r2)
 	}
 	// A plain enable that was handed a passphrase gets the same verify the join
 	// does, before anything is stored. One that was handed none has nothing to
