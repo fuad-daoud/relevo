@@ -30,6 +30,12 @@ import (
 // the exporter's stamping reads it from.
 const Secrets = sync.SecretsDocName
 
+// ErrNotSharedSecret marks an arriving name the document does not carry. It is
+// the document's own refusal rather than the envelope's, so a caller can tell
+// "this build has no reader for that name" from "this value is not sealed
+// right", and both are refusals rather than failures.
+var ErrNotSharedSecret = fmt.Errorf("config: this secret does not travel: %w", ErrInvalidValue)
+
 // secretSupersededSource labels the revision an arriving secret lands under when
 // it did not, followed by the installation that sent it. It reads as what
 // happened: the entry was newer than what this machine holds and still lost,
@@ -165,7 +171,7 @@ func (d *SecretDoc) ApplyIn(t *db.Tx, key string, value json.RawMessage, label s
 // a name, so there is nothing in it to be unreadable.
 func (d *SecretDoc) check(key string, value json.RawMessage) (refusal error, err error) {
 	if !sync.AllowSecret(key) {
-		return fmt.Errorf("config: %s is not a secret that travels: %w", key, sync.ErrSecretEnvelope), nil
+		return fmt.Errorf("config: %s: %w", key, ErrNotSharedSecret), nil
 	}
 	if value == nil {
 		return nil, nil

@@ -323,7 +323,10 @@ func TestApplyRefusesAnOffListName(t *testing.T) {
 		}
 		doc := s.SecretsDoc()
 		refusal, err := doc.applyChecked(t, name, sealedFor(t, SecretTypesafe, canarySecret))
-		if !errors.Is(refusal, sync.ErrSecretEnvelope) {
+		// The document's own refusal, not the envelope's: the value is a
+		// perfectly good sealed secret, sealed for an allowed name, and what
+		// stops it is the name it arrived under.
+		if !errors.Is(refusal, ErrNotSharedSecret) {
 			t.Errorf("ApplyIn(%q) = %v, %v; want the off-list refusal", name, refusal, err)
 		}
 		if err != nil {

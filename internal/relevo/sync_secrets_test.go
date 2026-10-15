@@ -190,6 +190,15 @@ func TestAnOverCapSecretIsRefusedOnExport(t *testing.T) {
 	}
 }
 
+// signalSecrets raises the document's signal by hand, which is what a write
+// that is a person's edit does and an unstamped one deliberately does not.
+func (m *cfgMachine) signalSecrets(t *testing.T) {
+	t.Helper()
+	if err := m.mdb.SignalDoc(config.Secrets); err != nil {
+		t.Fatalf("SignalDoc: %v", err)
+	}
+}
+
 // wholeLog is every entry the log holds, read through a handle that belongs to
 // no machine in the test: a reader's own origin is the one origin it cannot
 // read, so a third name reads all of them.
@@ -224,6 +233,45 @@ func TestAPeerDoesNotHandASecretBack(t *testing.T) {
 		if e.Origin == b.mdb.Origin() && e.Table == "doc:"+config.Secrets {
 			t.Errorf("B re-exported the value it applied: %s", e.Body)
 		}
+	}
+}
+
+// TestTheR2CredentialsAPersonTypedReachAPeer pins the enable's half of the
+// stamping. A machine that was handed the R2 flags has been given them by a
+// person, so they travel: the point of the enable storing them is that a second
+// machine can then sync bodies without the owner re-running it there.
+//
+// The joiner's own SetR2 is not what this exercises -- that machine already holds
+// them -- so the peer starts with none at all.
+func TestTheR2CredentialsAPersonTypedReachAPeer(t *testing.T) {
+	t.Parallel()
+	log := synclog.NewMemTransport("x")
+	a := newCfgMachine(t, log, cfgSyncKey, true)
+	b := newCfgMachine(t, log, cfgSyncKey, true)
+	for _, name := range []string{
+		relevosync.SecretR2Endpoint, relevosync.SecretR2Bucket,
+		relevosync.SecretR2KeyID, relevosync.SecretR2Secret,
+	} {
+		if got := b.secret(t, name); got != "" {
+			t.Fatalf("B starts holding %s; the case proves nothing", name)
+		}
+	}
+
+	if err := relevosync.SetR2(a.local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetR2 on A: %v", err)
+	}
+	a.attempt(t)
+	b.attempt(t)
+
+	got, err := relevosync.ReadR2(b.local)
+	if err != nil {
+		t.Fatalf("ReadR2 on B: %v", err)
+	}
+	if !got.Complete() {
+		t.Errorf("B's R2 credentials are incomplete after the pull: missing %v", got.Missing())
+	}
+	if got != verbFixtureR2 {
+		t.Errorf("B's R2 credentials = %+v, want A's", got)
 	}
 }
 
@@ -279,6 +327,12 @@ func TestAnUnstampedClientKeyNeverCrossesTheLog(t *testing.T) {
 	if err := a.cfg.PutSecretUnstamped(config.SecretClientKey, pem); err != nil {
 		t.Fatalf("PutSecretUnstamped: %v", err)
 	}
+	// An unstamped write signals nothing, so the export would never ask for the
+	// document and the rule under test would never run. The signal is raised by
+	// hand here because the rule is what Items answers when it *is* asked: a
+	// machine that signals the document for any other reason must still not hand
+	// out the key, and a test that never asks proves nothing.
+	a.signalSecrets(t)
 	a.attempt(t)
 	b.attempt(t)
 
@@ -519,6 +573,9 @@ func TestAPeerCannotSendAMachineLocalSecret(t *testing.T) {
 	forgeSecretEntries(t, log, a, offList)
 	b.pull(t)
 
+	if !b.anySource(t, "sync-superseded:secrets:") {
+		t.Errorf("B's revision sources %v lack the refusal record for the off-list names", b.sources(t))
+	}
 	if got := b.secret(t, relevosync.SecretToken); got != "b-token-for-the-case" {
 		t.Errorf("B's token = %q, want the one B held", got)
 	}
