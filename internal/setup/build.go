@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
@@ -15,6 +16,10 @@ import (
 // noHarnessMessage is the refusal an empty probe earns -- the same text the
 // nothing-on-PATH paths have always printed.
 const noHarnessMessage = "no harness binaries on PATH (agy, claude, codex, opencode); install one first"
+
+// opencodeOnlyMessage is the refusal when opencode is the only harness found,
+// which setup does not configure yet.
+const opencodeOnlyMessage = "setup configures claude, codex and agy, and none is on PATH; configure opencode with relevo config"
 
 // chainOrder is the order the actors doc writes in: the two builders first,
 // then the plan actors and the chain's reader actors.
@@ -37,6 +42,9 @@ type picks struct {
 // before writing anything when no harness is on PATH, or none is logged in.
 func Build(inv Inventory, answers Answers) (Files, error) {
 	if len(inv.Harnesses) == 0 {
+		if slices.Contains(inv.Notes, opencodeNote) {
+			return Files{}, errors.New(opencodeOnlyMessage)
+		}
 		return Files{}, errors.New(noHarnessMessage)
 	}
 	if !anyLoggedIn(inv) {

@@ -3,6 +3,7 @@ package setup
 import (
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -59,9 +60,9 @@ func TestProbeParsesCodexModelsByPriority(t *testing.T) {
 				return nil, 0, nil
 			case "codex debug models":
 				return []byte(`[
-					{"model": "gpt-5.6-terra", "visibility": "list", "priority": 2},
-					{"model": "o9-secret", "visibility": "hidden", "priority": 1},
-					{"model": "gpt-6-luna", "visibility": "list", "priority": 5}
+					{"slug": "gpt-5.6-terra", "visibility": "list", "priority": 2},
+					{"slug": "o9-secret", "visibility": "hidden", "priority": 1},
+					{"slug": "gpt-6-luna", "visibility": "list", "priority": 5}
 				]`), 0, nil
 			}
 			return nil, -1, errProbeTimeout
@@ -187,4 +188,15 @@ func harnessKinds(inv Inventory) []string {
 	}
 	sort.Strings(kinds)
 	return kinds
+}
+
+// TestBuildOpencodeOnlyNamesRelevoConfig pins that a machine with only
+// opencode is not told it has no harness at all.
+func TestBuildOpencodeOnlyNamesRelevoConfig(t *testing.T) {
+	env := probeEnv{pathEnv: pathEnv{onPath: map[string]bool{"opencode": true}}}
+	inv := Probe(env)
+	_, err := Build(inv, RecommendedAnswers(inv, nil))
+	if err == nil || !strings.Contains(err.Error(), "configure opencode with relevo config") {
+		t.Fatalf("Build error = %v, want the opencode-only refusal", err)
+	}
 }

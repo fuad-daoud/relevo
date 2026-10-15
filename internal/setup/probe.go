@@ -174,7 +174,7 @@ func probeClaude(env SetupEnv) (bool, []string) {
 }
 
 type codexEntry struct {
-	Model      string `json:"model"`
+	Slug       string `json:"slug"`
 	Visibility string `json:"visibility"`
 	Priority   int    `json:"priority"`
 }
@@ -209,14 +209,14 @@ func codexModels(stdout []byte) []string {
 	}
 	var listed []codexEntry
 	for _, e := range entries {
-		if e.Visibility == "list" && e.Model != "" {
+		if e.Visibility == "list" && e.Slug != "" {
 			listed = append(listed, e)
 		}
 	}
 	sort.Slice(listed, func(i, j int) bool { return listed[i].Priority < listed[j].Priority })
 	models := make([]string, len(listed))
 	for i, e := range listed {
-		models[i] = e.Model
+		models[i] = e.Slug
 	}
 	return models
 }

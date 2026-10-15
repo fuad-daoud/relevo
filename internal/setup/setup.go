@@ -20,7 +20,7 @@ type Files struct {
 	CandidateNames []string // the names DeriveNames gave every candidate, in candidate order
 }
 
-// NotAvailable is what Build returns when no harness is logged in: nothing is
+// NotAvailableError is what Build returns when no harness is logged in: nothing is
 // written until one is, and the front end renders the message's login
 // commands with the not_available code.
 type NotAvailableError struct {
