@@ -32,12 +32,13 @@ const (
 	Servers    Section = "servers"
 	Hooks      Section = "hooks"
 	Workflows  Section = "workflows"
+	Repos      Section = "repos"
 	Sync       Section = "sync"
 )
 
 // Sections is the order an import checks and stores the sections, and the
 // order EncodeDoc and DiffDocs render them.
-var Sections = []Section{Candidates, Agents, Actors, Accounts, Policy, Roles, Prices, Servers, Hooks, Workflows, Sync}
+var Sections = []Section{Candidates, Agents, Actors, Accounts, Policy, Roles, Prices, Servers, Hooks, Workflows, Repos, Sync}
 
 // sectionFile maps a section to the file it is imported from.
 var sectionFile = map[Section]string{
@@ -88,13 +89,17 @@ type Loaded struct {
 	Servers    remote.Servers
 	Hooks      HooksMap
 	Workflows  map[string]StoredWorkflow
-	ClientKey  []byte
-	Typesafe   string
-	Warnings   []string
-	Version    int64
-	Agents     map[string]roles.AgentEntry
-	Actors     map[string]roles.Actor
-	Accounts   account.Set
+	// Repos is the per-repository settings section, keyed by the repository's
+	// identity (the sha256 of its root commit). An absent section is an empty
+	// map: a machine that never used the feature reads no entry.
+	Repos     map[string]RepoEntry
+	ClientKey []byte
+	Typesafe  string
+	Warnings  []string
+	Version   int64
+	Agents    map[string]roles.AgentEntry
+	Actors    map[string]roles.Actor
+	Accounts  account.Set
 }
 
 // Store reads and writes the config sections and secrets of one database.
@@ -403,6 +408,9 @@ func Validate(sec Section, body []byte) ([]string, error) {
 		return nil, nil
 	case Workflows:
 		_, err := parseWorkflows(body)
+		return nil, err
+	case Repos:
+		_, err := ParseRepos(body)
 		return nil, err
 	case Sync:
 		_, err := sync.ParseSettings(body)

@@ -606,23 +606,6 @@ func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, mastermindE
 	return out, Resolution{}, nil
 }
 
-// resolveGateFor applies the gate resolution rule (#132, #382): --no-gate wins
-// over everything, an explicit --gate is used as given, and an unset flag takes
-// policy.json's gate.default only when the binding's role gates. A writer role
-// with "gate": false takes no gate.
-func resolveGateFor(gate string, noGate bool, pol policy.Policy, roleChecks bool) string {
-	if noGate {
-		return ""
-	}
-	if gate != "" {
-		return gate
-	}
-	if !roleChecks {
-		return ""
-	}
-	return pol.GateDefault()
-}
-
 // ResolveRegate applies the repair-round rule (#132 part 2): an explicit
 // --regate is used as given (0 disables repair), and an unset flag falls back
 // to policy.json's gate.regate.
@@ -634,6 +617,13 @@ func ResolveRegate(regate *int, pol policy.Policy) int {
 }
 
 func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint, placement PlacementResolution) (store.Binding, Resolution, error) {
+	// The repository's own settings are read before anything is resolved: the
+	// gate tier reads them, and a directory that is not a repository reads as
+	// "no settings" rather than a failure.
+	repoSet, err := RepoSettingsFor(ctx, rt, opts.CWD)
+	if err != nil {
+		return store.Binding{}, Resolution{}, err
+	}
 	shape, err := actorShape(rt.RoleRegistry(), opts.Role)
 	if err != nil {
 		return store.Binding{}, Resolution{}, err
@@ -716,6 +706,10 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	// The placement rides on the resolution so the pick note says where the
 	// binding landed and what it passed over.
 	res.Placement = placement
+	// The gate resolution rides on the resolution too, so the CLI can print
+	// which tier supplied the command the binding stored.
+	gateRes := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), roleName), repoSet)
+	res.Gate = gateRes
 
 	// #637: the ticket is parsed against the binding's own captured origin, so
 	// a typed number becomes owner/repo#N when relevo knows the repo.
@@ -738,7 +732,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		Tier:             string(tier),
 		Role:             normRole(opts.Role),
 		Shape:            shape,
-		Gate:             resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), roleName)),
+		Gate:             gateRes.Command,
 		Regate:           ResolveRegate(opts.Regate, rt.Policy),
 		RepoRef:          repoRef,
 		Feature:          opts.Feature,

@@ -155,7 +155,8 @@ implements `TxDoc` (`ApplyIn`, `SupersedeIn`); config does. Docs register by
 name; a second registration of a name, or an unusable name, is refused.
 
 Instances: config sections (one key per item in candidates, agents, actors,
-accounts and servers, as `<section>/<name>`; one key per section for policy,
+accounts, servers and repos, as `<section>/<name>`; one key per section for
+policy,
 roles, prices, hooks and workflows), gates (one key per ledger subject), repo
 consent (`consent`; key: remote URL; repos without one don't share consent),
 session consent (`session_consent`; key: harness kind + session id), and

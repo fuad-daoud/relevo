@@ -412,6 +412,11 @@ gives a MasterMind a name of your own.
   (`--kind`, `--agent`, `--force`, `--dry-run`).
 - `relevo config export|import|get|set|unset|edit` — read and change the
   configuration document section by section.
+- `relevo config repo [--repo <path>]` — read this repository's own settings
+  (the `repos` config section, keyed by the repository's identity);
+  `config repo set <name|gate|board_theme> <value>` stores one field,
+  `config repo unset <key>` clears it, and `config repo list` prints one row
+  per repository that has settings.
 - `relevo config secret set|rm|list` — store, forget or list the `typesafe`
   and `client.key` secrets (the value is read from stdin).
 - `relevo gate` — list this machine's active gates.
@@ -2031,10 +2036,26 @@ builder -- no nudge, no "exited without a report" handling, no round-timeout
 halt -- until the gate finishes or times out.
 
 Configure it with `--gate '<cmd>'` on `relevo bind` or `relevo bind
---worktree`; `--no-gate` opts a binding out of the policy section's `gate.default`
-(see above) even when one is configured machine-wide. Omitting both flags
-on `bind` falls back to `gate.default`, `""` meaning no gate at all --
-bindings written before this feature have no gate and are unaffected.
+--worktree`; a repository can carry its own gate in the `repos` config
+section (`relevo config repo set gate <cmd>`, keyed by the repository's
+identity); `--no-gate` opts a binding out of both lower tiers. The flags
+resolve in this order:
+
+1. `--gate <cmd>` / `--no-gate` -- `--no-gate` wins over everything;
+2. the repository's own `gate` setting;
+3. the policy section's `gate.default`;
+4. no gate.
+
+The repository tier sits behind the role rule: a role whose check flag is
+off (a reader round) takes no gate even when its repository sets one, and
+`--gate` on a reader round is still refused. A `bind --resume` keeps the
+stored command. `bind`, `bind --worktree`, `bind --server` and `chain` name
+which tier supplied the command -- `gate: make check (--gate)`, `(repo
+setting)`, `(policy.gate.default)` -- and `chain` prints the same
+parenthetical on its `check:` line.
+
+A machine whose `repos` section is empty reads no git for this at all, so
+a machine that never used the feature pays nothing.
 
 The gate's full output -- and the supervisor's exit trailer -- lives at
 `NNN-gate.log` next to the round's prompt and report. Its result is one of

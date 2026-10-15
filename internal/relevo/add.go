@@ -249,6 +249,12 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// Resolve before AddWorktree for the same reason builderAgentName runs
 	// here -- a refused add must leave no worktree.
 	roleName := bindingRole(store.Binding{Role: normRole(opts.Role)})
+	// The repository's own settings, read before anything is created: the
+	// gate tier reads them, and opts.Repo -- not cwd -- is the tree they key.
+	repoSet, err := RepoSettingsFor(ctx, rt, opts.Repo)
+	if err != nil {
+		return AddResult{}, err
+	}
 	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), opts.Candidate, roleName, pickFor(rt))
 	if err != nil {
 		return AddResult{}, err
@@ -256,6 +262,9 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// The placement rides on the resolution so the pick note and the added
 	// line say where the binding landed and what it passed over.
 	res.Placement = opts.Placement
+	// The gate resolution rides on the resolution too, so the CLI can print
+	// which tier supplied the command the binding stored.
+	res.Gate = resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), roleName), repoSet)
 	c := res.Candidate
 
 	tier := resolveRoleTier(opts.Tier, c, rt.RoleRegistry(), roleName)
@@ -412,7 +421,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Tier:             string(tier),
 		Role:             normRole(opts.Role),
 		Shape:            shape,
-		Gate:             resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), roleName)),
+		Gate:             res.Gate.Command,
 		Regate:           ResolveRegate(opts.Regate, rt.Policy),
 		// captureRepo runs against opts.Repo, not cwd: opts.Repo is the
 		// parent checkout the worktree is cut from (its git identity is
