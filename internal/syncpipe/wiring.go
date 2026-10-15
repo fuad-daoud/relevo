@@ -23,50 +23,86 @@ import (
 // bootstraps the replica, so a preflight that refuses never leaves a child
 // behind. The replica's path travels on the worker's command line because the
 // worker owns the only handle on that file, and a path it derived itself could
-// name a file the daemon did not mean.
+// name a file the daemon did not mean. An incomplete bucket set is refused
+// rather than started without -- the enable preflight is what should have
+// caught it -- and a join opens its first worker through OpenNoBucketSupervisor.
 func OpenSupervisor(shared *db.DB, local relevosync.Local) (*Supervisor, error) {
+	cfg, err := workerConfig(shared, local, true)
+	if err != nil {
+		return nil, err
+	}
+	return NewSupervisor(cfg, relevosync.NewBreaker(local)), nil
+}
+
+// OpenNoBucketSupervisor builds the transport a join's passphrase check and its
+// secrets pre-pass drive: the same rows OpenSupervisor reads, but a machine
+// whose stored bucket set is incomplete starts a worker with none instead of
+// being refused. A joiner holds no credentials until the fleet's secrets
+// document has been applied, and that document is only on the remote the worker
+// is opened to reach -- a worker a hello starts with no bucket works for
+// everything that carries no body and refuses its first blob verb, which is
+// the shape a join's first worker is.
+//
+// A complete stored set gives the worker a bucket exactly as OpenSupervisor
+// would, so a caller cannot tell the two openers apart while it is credentials-
+// complete.
+func OpenNoBucketSupervisor(shared *db.DB, local relevosync.Local) (*Supervisor, error) {
+	cfg, err := workerConfig(shared, local, false)
+	if err != nil {
+		return nil, err
+	}
+	return NewSupervisor(cfg, relevosync.NewBreaker(local)), nil
+}
+
+// workerConfig is the body both openers build the worker from.
+//
+// The R2 credentials are read here rather than passed in, so nothing outside
+// this function ever holds them and the handshake is assembled in one place.
+// refuseIncomplete is the caller's answer to an incomplete set: the enable that
+// opens through OpenSupervisor had its preflight to catch an incomplete one, so
+// the refusal there is the truth about the machine; the join's first worker is
+// opened for exactly the enable that brings them, so none gathered is none
+// needed, and the caller answers for what its blob verbs refuse.
+func workerConfig(shared *db.DB, local relevosync.Local, refuseIncomplete bool) (Config, error) {
 	if shared == nil || local == nil {
-		return nil, fmt.Errorf("syncpipe: no database to sync: %w", db.ErrInvalid)
+		return Config{}, fmt.Errorf("syncpipe: no database to sync: %w", db.ErrInvalid)
 	}
 	settings, err := relevosync.ReadSettings(local)
 	if err != nil {
-		return nil, err
+		return Config{}, err
 	}
 	if settings.RemoteURL == "" {
-		return nil, relevosync.ErrNoRemote
+		return Config{}, relevosync.ErrNoRemote
 	}
 	token, ok, err := relevosync.ReadToken(local)
 	if err != nil {
-		return nil, err
+		return Config{}, err
 	}
 	if !ok || len(bytes.TrimSpace(token)) == 0 {
-		return nil, relevosync.ErrNoToken
+		return Config{}, relevosync.ErrNoToken
 	}
-	// The R2 credentials are read here rather than passed in, so nothing outside
-	// this function ever holds them and the handshake is assembled in one place.
-	// An incomplete set is refused rather than started without: a worker that
-	// opened with no bucket would refuse its first blob verb, and the enable
-	// preflight is what should have caught it.
 	r2, err := relevosync.ReadR2(local)
 	if err != nil {
-		return nil, err
+		return Config{}, err
 	}
-	if !r2.Complete() {
-		return nil, relevosync.ErrNoR2
+	var bucket *syncworker.R2Config
+	if r2.Complete() {
+		bucket = &syncworker.R2Config{Endpoint: r2.Endpoint, Bucket: r2.Bucket, KeyID: r2.KeyID, Secret: r2.Secret}
+	} else if refuseIncomplete {
+		return Config{}, relevosync.ErrNoR2
 	}
 	staging, err := EnsureBlobStagingDir(shared.Path())
 	if err != nil {
-		return nil, err
+		return Config{}, err
 	}
-	cfg := Config{
+	return Config{
 		Args:        []string{"sync-worker", "--replica", ReplicaPath(shared.Path())},
 		Origin:      shared.Origin(),
 		URL:         settings.RemoteURL,
 		Token:       string(token),
-		R2:          &syncworker.R2Config{Endpoint: r2.Endpoint, Bucket: r2.Bucket, KeyID: r2.KeyID, Secret: r2.Secret},
+		R2:          bucket,
 		BlobStaging: staging,
-	}
-	return NewSupervisor(cfg, relevosync.NewBreaker(local)), nil
+	}, nil
 }
 
 // ReplicaPath is the replica beside a shared database: the one file the sync
