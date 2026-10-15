@@ -324,15 +324,16 @@ func TestChainRemoteBuilderE2E(t *testing.T) {
 		t.Errorf("the reviewer's round 1 seed does not carry %q:\n%s", want, rev1)
 	}
 
-	// The check line names the gate log's copy, which a seal cannot remove
-	// while the reviewer reads it, and which went with the chain's other inputs
-	// when the chain ended.
+	// The check line names the copy of the engine's check run -- the check the
+	// trace shows -- not the builder's own gate log. A copy is what a seal
+	// cannot remove while the reviewer reads it, and it went with the chain's
+	// other inputs when the chain ended.
 	const gateLine = "Check result: green; its output: "
 	if i := strings.Index(rev1, gateLine); i < 0 {
 		t.Errorf("the reviewer's round 1 seed does not carry the green check line:\n%s", rev1)
 	} else {
 		namedGate := strings.TrimSuffix(strings.SplitN(rev1[i+len(gateLine):], "\n", 2)[0], ".")
-		if want := chainSeedCopy(t, rt, chainRemoteName, rt.Store.GateLogPath(builderName, 2)); namedGate != want {
+		if want := chainSeedCopy(t, rt, chainRemoteName, rt.Store.CheckLogPath(builderName, 2, 2)); namedGate != want {
 			t.Errorf("the seed's gate log = %s, want its copy %s", namedGate, want)
 		}
 		chainInputCopyGone(t, namedGate)
