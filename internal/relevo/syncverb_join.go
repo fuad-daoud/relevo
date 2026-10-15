@@ -1,0 +1,223 @@
+package relevo
+
+// The passphrase half of an enable: stage what the worker is built from, check
+// the passphrase against the remote's key_check, and only then let the enable go
+// on to import anything.
+//
+// The order is the whole point. A wrong passphrase has to be refused before the
+// machine is left holding a remote or a token it cannot use, because a machine
+// pointed at somebody else's remote does something on its next attempt that the
+// operator never asked for. What makes the ordering more than an intention is
+// where the check has to sit relative to the worker: the daemon builds its
+// worker from the machine-local rows, because that is the only place the worker's
+// assembly lives, so the remote and the token have to be in those rows before one
+// can be opened. They are staged, the passphrase is checked, and every row the
+// staging touched is put back byte-for-byte when the check fails.
+//
+// A --join needs this and a plain enable may need it: a joiner cannot unlock
+// without a key, while a plain enable on a machine that is already unlocked has
+// nothing to verify. That difference is the whole of the required flag below.
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"log/slog"
+	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db/wire"
+	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/synclog"
+)
+
+// errNoPassphrase is a join that arrived without one.
+//
+// A joiner that cannot unlock would import every entry and hold none of them: the
+// machine would read as joined while sharing nothing with the fleet. Refusing
+// here costs one command; discovering it later costs an operator a sync that
+// looks fine and is not. It is one fixed line, because the passphrase itself
+// never appears in a message and there is nothing here worth varying per caller.
+var errNoPassphrase = errors.New("sync: enable --join: no passphrase: pass --passphrase-stdin or set RELEVO_SYNC_PASSPHRASE")
+
+// verified is an enable that has staged its rows, opened a worker against them
+// and stored the key the passphrase derived. The snapshot is kept because the
+// enable can still fail after this point, and a failure there has to leave the
+// machine no worse than a join that was never attempted.
+type verified struct {
+	// snapshot puts the staged rows back.
+	snapshot relevosync.JoinSnapshot
+	// transport is the worker the passphrase was checked against.
+	transport synclog.LogTransport
+	// opened says whether this enable built the transport, because only one it
+	// opened may be closed here.
+	opened bool
+	// unstage puts the staged rows back. It is safe to call more than once: the
+	// snapshot is a set of bytes, not a consumption.
+	unstage func()
+}
+
+// stageAndVerify stages what the worker is built from, opens it, and stores the
+// key the passphrase derives.
+//
+// required decides whether a missing passphrase is a refusal. A --join needs one
+// -- a joiner that cannot unlock would join holding nothing -- while a plain
+// enable that was handed none has nothing to verify and goes on as it always did.
+func (v *VerbRunner) stageAndVerify(ctx context.Context, remote string, token, passphrase []byte, required bool) (*verified, error) {
+	if required && len(bytes.TrimSpace(passphrase)) == 0 {
+		return nil, errNoPassphrase
+	}
+	if !required && len(bytes.TrimSpace(passphrase)) == 0 {
+		return nil, nil
+	}
+	on, err := relevosync.Enabled(v.Local)
+	if err != nil {
+		return nil, err
+	}
+	if on {
+		return nil, relevosync.ErrAlreadyEnabled
+	}
+	snapshot, err := relevosync.SnapshotJoin(v.Local)
+	if err != nil {
+		return nil, err
+	}
+	out := &verified{snapshot: snapshot, unstage: func() { v.unstageJoin(snapshot) }}
+	if err := v.stageRows(remote, token); err != nil {
+		v.unstageJoin(snapshot)
+		return nil, err
+	}
+	transport, opened, err := v.openJoinTransport(ctx)
+	if err != nil {
+		v.unstageJoin(snapshot)
+		return nil, err
+	}
+	out.transport, out.opened = transport, opened
+	key, err := relevosync.VerifyJoinKey(ctx, v.Local, transport, passphrase)
+	if err != nil {
+		v.unstageJoin(snapshot)
+		if opened {
+			closeTransport(transport)
+		}
+		return nil, err
+	}
+	if err := relevosync.SetKey(v.Local, key, time.Now()); err != nil {
+		v.unstageJoin(snapshot)
+		closeTransport(transport)
+		return nil, err
+	}
+	return out, nil
+}
+
+// stageRows writes the remote and the token into the machine-local rows. It is
+// the two rows the worker is opened from and nothing else: the bucket
+// credentials a plain enable takes are written by the enable itself later.
+func (v *VerbRunner) stageRows(remote string, token []byte) error {
+	now := time.Now()
+	settings, err := relevosync.ReadSettings(v.Local)
+	if err != nil {
+		return err
+	}
+	settings.RemoteURL = remote
+	if err := relevosync.PutSettings(v.Local, settings, now); err != nil {
+		return err
+	}
+	return relevosync.SetToken(v.Local, token, now)
+}
+
+// unstageJoin puts the staged rows back.
+//
+// It runs on every path that opened a worker to check the passphrase and did not
+// get a key back, which is the only way a machine ends up worse off than it was.
+// The refusal that sent us here already says the enable did not happen; when the
+// restore itself fails, the log says it may not be entirely as it was, which is
+// the other half of the truth and the one an operator has to hear.
+func (v *VerbRunner) unstageJoin(snapshot relevosync.JoinSnapshot) {
+	if err := snapshot.Restore(v.Local, time.Now()); err != nil {
+		slog.Warn("sync: enable: the staged rows could not be restored", "err", err)
+	}
+}
+
+// openJoinTransport opens the worker the passphrase is checked against, wrapped
+// in the stop a join drives so a disable arriving mid-join still reaches it.
+func (v *VerbRunner) openJoinTransport(ctx context.Context) (synclog.LogTransport, bool, error) {
+	transport, err := v.openTransport(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	stop := relevosync.NewStopTransport(transport)
+	// Published before the check, because the machine reads off from here until
+	// the enable settles and a disable has to be able to reach the worker.
+	v.publishJoin(stop)
+	return stop, v.Open != nil, nil
+}
+
+// enableJoin runs a join that arrived with a code.
+//
+// The passphrase is required here, and the enable it hands off to skips exactly
+// one preflight check: the bucket credentials, which a code has nowhere to carry
+// and which arrive in the secrets document instead.
+func (v *VerbRunner) enableJoin(ctx context.Context, verb *wire.SyncVerb, token, passphrase []byte) *wire.SyncResult {
+	v.beginJoin()
+	done, err := v.stageAndVerify(ctx, verb.RemoteURL, token, passphrase, true)
+	if err != nil {
+		return verbRefusal(verbClassify(err), err)
+	}
+	return v.enablePipeline(ctx, verb, token, relevosync.R2Intake{}, true, done.transport)
+}
+
+// enablePipeline runs the ordinary enable, which is what imports the fleet and
+// turns the machine on.
+//
+// carryR2 is false for a join, and that one difference is the whole of what the
+// code changed about the pipeline: a join's bucket credentials are not on the
+// command line, so there is nothing for the enable to store and nothing for the
+// preflight to insist on.
+func (v *VerbRunner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, token []byte, r2 relevosync.R2Intake, joining bool, opened synclog.LogTransport) *wire.SyncResult {
+	v.beginJoin()
+	enabler := &relevosync.Enabler{
+		Request: relevosync.EnableRequest{
+			Local:  v.Local,
+			Shared: v.Shared,
+			URL:    verb.RemoteURL,
+			Token:  token,
+			R2:     r2,
+			Join:   joining,
+			Yes:    verb.Yes,
+		},
+		Blobs:   v.Blobs,
+		Stopped: v.joinWasStopped,
+		Now:     time.Now,
+	}
+	// A transport this enable already opened is handed over rather than built
+	// again: the passphrase was verified against it, and a second worker pointed
+	// at the same remote would be a second thing to tear down on a failure.
+	if opened != nil {
+		enabler.Transport = opened
+	} else {
+		enabler.Open = func() (synclog.LogTransport, error) {
+			transport, err := v.openTransport(ctx)
+			if err != nil {
+				return transport, err
+			}
+			stop := relevosync.NewStopTransport(transport)
+			v.publishJoin(stop)
+			return stop, nil
+		}
+	}
+	res, err := enabler.Enable()
+	v.clearJoin(enabler.Transport)
+	if err != nil {
+		if enabler.Transport != nil {
+			closeTransport(enabler.Transport)
+		}
+		return verbRefusal(verbClassify(err), err)
+	}
+	client := enabler.Transport
+	if stop, ok := client.(*relevosync.StopTransport); ok {
+		client = stop.Inner()
+	}
+	v.setClient(client)
+	if v.Runner != nil {
+		v.Runner.SeedStats(res.Stats)
+	}
+	return &wire.SyncResult{OK: true, Applied: true, RemoteURL: res.Remote, TokenPresent: true, Warning: enableWarning(res)}
+}

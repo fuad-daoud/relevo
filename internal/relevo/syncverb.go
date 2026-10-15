@@ -1,6 +1,7 @@
 package relevo
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sync"
@@ -316,7 +317,7 @@ func transportReady(transport synclog.LogTransport) bool {
 	return !ok || r.Ready()
 }
 
-// enable runs one join through the sync package: the preflight decides the
+// enable runs one enable through the sync package.
 // remote and the token, the runner opens the log transport, and the pipeline
 // bootstraps, imports every other origin and reconcile-exports this origin's
 // history before the mark goes on.
@@ -332,79 +333,20 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byt
 		return verbRefusal(verbClassify(err), err)
 	}
 	if verb.Join {
-		// The frame carries the join flag and the daemon-side join is not built
-		// yet, so this is refused rather than run as a plain enable: a plain
-		// enable would demand bucket credentials this machine has no use for and
-		// store a remote without ever checking the passphrase.
-		return verbRefusal(wire.SyncCodeInvalid,
-			fmt.Errorf("sync: enable --join: this build cannot join from a code: %w", db.ErrInvalid))
+		return v.enableJoin(ctx, verb, token, passphrase)
 	}
-	return v.enableWithPassphrase(ctx, verb, token, passphrase, r2)
-}
-
-// enableWithPassphrase runs a plain enable: the preflight decides the remote and
-// the token, the runner opens the log transport, and the pipeline bootstraps,
-// imports every other origin and reconcile-exports this origin's history before
-// the mark goes on.
-//
-// The transport is opened after the preflight and only for a run that passed
-// it, so a machine with no token, no remote or a failing origin gate never
-// starts a worker. A run that fails closes the transport it opened, because a
-// worker left behind holds the replica open against the next one; a run that
-// finishes leaves it on the runner, where the daemon can drive it again.
-func (v *VerbRunner) enableWithPassphrase(ctx context.Context, verb *wire.SyncVerb, token, passphrase []byte, r2 relevosync.R2Intake) *wire.SyncResult {
-	v.beginJoin()
-	opened := false
-	// The join drives its transport through a stop of its own, so a disable's
-	// preempt ends the whole join rather than one call of it: the supervisor
-	// would otherwise start a fresh worker for the join's next call.
-	var stop *relevosync.StopTransport
-	enabler := &relevosync.Enabler{
-		Request: relevosync.EnableRequest{
-			Local:      v.Local,
-			Shared:     v.Shared,
-			URL:        verb.RemoteURL,
-			Token:      token,
-			Passphrase: passphrase,
-			R2:         r2,
-			Yes:        verb.Yes,
-		},
-		Blobs: v.Blobs,
-		Open: func() (synclog.LogTransport, error) {
-			transport, err := v.openTransport(ctx)
-			if err != nil {
-				return transport, err
-			}
-			// Published before the join, because a joined machine reads off
-			// until the join finishes and a disable has to reach the transport
-			// while the join is still in flight.
-			stop = relevosync.NewStopTransport(transport)
-			v.publishJoin(stop)
-			opened = v.Open != nil
-			return stop, nil
-		},
-		Stopped: v.joinWasStopped,
-		Now:     time.Now,
-	}
-	res, err := enabler.Enable()
-	v.clearJoin(enabler.Transport)
-	if err != nil {
-		// Only a transport this enable opened is closed: one taken from the
-		// runner belongs to whatever built it and must not be torn down here.
-		if opened {
-			closeTransport(enabler.Transport)
+	// A plain enable that was handed a passphrase gets the same verify the join
+	// does, before anything is stored. One that was handed none has nothing to
+	// verify and goes on exactly as it always did.
+	var opened synclog.LogTransport
+	if len(bytes.TrimSpace(passphrase)) > 0 {
+		done, err := v.stageAndVerify(ctx, verb.RemoteURL, token, passphrase, false)
+		if err != nil {
+			return verbRefusal(verbClassify(err), err)
 		}
-		return verbRefusal(verbClassify(err), err)
+		opened = done.transport
 	}
-	client := enabler.Transport
-	if stop != nil {
-		client = stop.Inner()
-	}
-	v.setClient(client)
-	if v.Runner != nil {
-		v.Runner.SeedStats(res.Stats)
-	}
-	return &wire.SyncResult{OK: true, Applied: true, RemoteURL: res.Remote, TokenPresent: true, Warning: enableWarning(res)}
+	return v.enablePipeline(ctx, verb, token, r2, false, opened)
 }
 
 // openTransport returns the log an enable drives: the opener the wiring

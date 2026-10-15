@@ -168,6 +168,19 @@ func (r EnableRequest) Preflight() (EnablePlan, error) {
 	// whose file cannot be shared is not going to move a body either way, and the
 	// gate is the check that costs. The refusal names the flags that clear it,
 	// which is what a user who was expecting a working enable needs to read.
+	//
+	// A join skips this leg, and only this leg. A code carries no bucket
+	// credentials because there is nowhere on a command line to put them that
+	// they would not outlive; they arrive in the secrets document, which the
+	// importer applies before it fetches any body. So the machine is not
+	// incomplete when this runs -- it is complete in a different place, and
+	// refusing here would refuse every join there is.
+	if r.Join {
+		if err := db.EnablePreflight(r.Shared).Err(); err != nil {
+			return EnablePlan{}, err
+		}
+		return EnablePlan{Remote: remote, Token: r.Token}, nil
+	}
 	stored, err := ReadR2(r.Local)
 	if err != nil {
 		return EnablePlan{}, err
@@ -301,8 +314,15 @@ func (e *Enabler) store(plan EnablePlan, now time.Time) error {
 	if err := PutSettings(e.Request.Local, settings, now); err != nil {
 		return err
 	}
-	if err := SetR2(e.Request.Local, plan.R2, now); err != nil {
-		return err
+	// A join's plan carries no bucket credentials, because a code has nowhere to
+	// put them and they arrive in the secrets document instead. Storing an empty
+	// set would be storing a refusal, so an absent one is left alone; a plain
+	// enable's plan is complete by the time it gets here, so this is the join
+	// path and nothing else.
+	if plan.R2.Complete() {
+		if err := SetR2(e.Request.Local, plan.R2, now); err != nil {
+			return err
+		}
 	}
 	if len(bytes.TrimSpace(plan.Token)) == 0 {
 		return nil
