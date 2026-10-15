@@ -65,6 +65,11 @@ func newVerbRunner(d *db.DB) *relevo.VerbRunner {
 		slog.Warn("relevo daemon: sync verbs are not served", "err", err)
 		return nil
 	}
+	// Before any worker can open the replica, so no driver file is read through a
+	// wider mode than the owner's.
+	if err := syncpipe.SecureSyncFiles(d.Path()); err != nil {
+		slog.Warn("relevo daemon: could not narrow the sync files to owner-only", "err", err)
+	}
 	runner := &relevo.VerbRunner{
 		Shared:      d,
 		Local:       local,

@@ -194,12 +194,12 @@ func (d *Disabler) finalPush(ctx context.Context, out *DisableResult) {
 	out.FinalPush = true
 }
 
-// deleteReplica removes the replica and every driver file named after it: the
+// ReplicaFiles lists the replica and every driver file named after it: the
 // driver derives each of its files from the replica's own name, so the prefix
-// is what identifies them. A file that is not there is not a failure, because a
-// machine that never opened a worker has none, and the main file goes with its
-// siblings rather than before them.
-func deleteReplica(path string) ([]string, error) {
+// is what identifies them. A directory that is not there lists nothing, because
+// a machine that never opened a worker has no files. The turn-off deletes
+// exactly this set and the daemon's start tightens exactly this set.
+func ReplicaFiles(path string) ([]string, error) {
 	if path == "" {
 		return nil, nil
 	}
@@ -214,7 +214,7 @@ func deleteReplica(path string) ([]string, error) {
 		return nil, err
 	}
 
-	var deleted []string
+	var files []string
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -223,7 +223,21 @@ func deleteReplica(path string) ([]string, error) {
 		if name != base && !strings.HasPrefix(name, base+"-") && !strings.HasPrefix(name, base+".") {
 			continue
 		}
-		full := filepath.Join(dir, name)
+		files = append(files, filepath.Join(dir, name))
+	}
+	return files, nil
+}
+
+// deleteReplica removes the replica and every driver file named after it. A
+// file that is not there is not a failure, and the main file goes with its
+// siblings rather than before them.
+func deleteReplica(path string) ([]string, error) {
+	files, err := ReplicaFiles(path)
+	if err != nil {
+		return nil, err
+	}
+	var deleted []string
+	for _, full := range files {
 		if err := os.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return deleted, err
 		}

@@ -47,6 +47,18 @@ var (
 	ErrRemoteConflict = errors.New("sync: --url names a remote this machine is not pointed at")
 )
 
+// RemoteConflictError is ErrRemoteConflict carrying the two remotes it names.
+type RemoteConflictError struct {
+	// URL is the --url value and Stored the section's remote_url.
+	URL, Stored string
+}
+
+func (e *RemoteConflictError) Error() string {
+	return fmt.Sprintf("%v: --url is %s but this machine's stored remote_url is %s", ErrRemoteConflict, e.URL, e.Stored)
+}
+
+func (e *RemoteConflictError) Unwrap() error { return ErrRemoteConflict }
+
 // EnvToken is the environment variable a token is read from when --token-stdin
 // is not given. It carries the name of the tool that mints these tokens, so a
 // shell already exporting one for turso's own CLI does the right thing without

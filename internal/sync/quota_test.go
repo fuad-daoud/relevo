@@ -90,8 +90,8 @@ func TestSteadyPublishesLogSizeAndMeasuresStorage(t *testing.T) {
 		t.Errorf("published size = %+v, %v, want one entry with its body and overhead", size, err)
 	}
 	st, err := ReadStorage(local)
-	if err != nil || st.Turso != 321 || st.At.IsZero() {
-		t.Errorf("storage = %+v, %v, want the replica's 321 bytes", st, err)
+	if err != nil || st.Turso != size.Bytes || st.At.IsZero() {
+		t.Errorf("storage = %+v, %v, want the remote log's %d bytes and not the replica file's 321", st, err, size.Bytes)
 	}
 
 	again := runner.SyncOnce(context.Background(), shared)

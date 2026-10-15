@@ -2,6 +2,10 @@ package sync
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -62,5 +66,62 @@ func TestCapDroppedKeepsTheNewest(t *testing.T) {
 	}
 	if got[0] != list[len(list)-maxDroppedReports] {
 		t.Errorf("capDropped kept %q first, want the oldest report still in the cap", got[0])
+	}
+}
+
+// TestTroubleFromFoldsEveryHoldKindIntoTheHoldList pins that a locked or
+// boundary hold (a Reason), a newer-schema hold, a stalled origin and a gap all
+// reach the list a pull prints, while a drop stays out of it.
+func TestTroubleFromFoldsEveryHoldKindIntoTheHoldList(t *testing.T) {
+	res := synclog.ImportResult{
+		Held: []synclog.Hold{
+			{Origin: "m2", Label: "m2", Seq: 1, Schema: 9},
+			{Origin: "m3", Reason: "m3 stopped at a signed entry: run relevo db sync unlock"},
+			{Origin: "m4", Reason: "m4 stopped at a boundary"},
+		},
+		Stalled: []synclog.Stall{{Origin: "m5"}},
+		Gaps:    []synclog.Gap{{Origin: "m6", Want: 3, Got: 5}},
+		Dropped: []synclog.Drop{{Origin: "m7", Seq: 2, Reason: "unreadable"}},
+	}
+	holds := TroubleFrom(res).Holds()
+	if len(holds) != 5 {
+		t.Fatalf("holds = %v, want three held, one stalled and one gap", holds)
+	}
+	for _, want := range []string{"upgrade", "unlock", "boundary", "m6 is held at 2"} {
+		found := false
+		for _, h := range holds {
+			found = found || strings.Contains(h, want)
+		}
+		if !found {
+			t.Errorf("holds = %v, want one naming %q", holds, want)
+		}
+	}
+}
+
+// TestReplicaFilesIsTheSetDisableDeletes pins that the files a start tightens
+// and the files the turn-off removes are one set: the replica, its driver files
+// and nothing else.
+func TestReplicaFilesIsTheSetDisableDeletes(t *testing.T) {
+	dir := t.TempDir()
+	replica := filepath.Join(dir, "relevo-sync.db")
+	for _, suffix := range []string{"", "-wal", "-wal-revert", "-sibling"} {
+		if err := os.WriteFile(replica+suffix, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keep := filepath.Join(dir, "relevo.db")
+	if err := os.WriteFile(keep, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := ReplicaFiles(replica)
+	if err != nil || len(listed) != 4 {
+		t.Fatalf("ReplicaFiles = %v (%v), want the four replica files", listed, err)
+	}
+	deleted, err := deleteReplica(replica)
+	if err != nil || !reflect.DeepEqual(listed, deleted) {
+		t.Fatalf("deleteReplica = %v (%v), want %v", deleted, err, listed)
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Errorf("an unrelated file was removed: %v", err)
 	}
 }
