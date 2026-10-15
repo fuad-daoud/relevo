@@ -184,6 +184,32 @@ var lexCases = []struct {
 	{"hs", "{- a -- b -}  -- real\n", []string{"{- a -- b -}", "-- real"}},
 	{"hs", "{- a {- b -} c -}  -- real\n", []string{"{- a {- b -} c -}", "-- real"}},
 	{"hs", "s = \"a\\   \\b\"  -- real\n", []string{"-- real"}},
+	{"js", "const r = /a \\/ b/;  // real\n", []string{"// real"}},
+	{"js", "const r = /[//]/;  // real\n", []string{"// real"}},
+	{"js", "const r = /a[/*]b/;  // real\n", []string{"// real"}},
+	{"js", "x = a / b;  // real\n", []string{"// real"}},
+	{"js", "const t = `${f(\"a//b\")}`;  // real\n", []string{"// real"}},
+	{"js", "const t = `${f(`a//b`)} c`;  // real\n", []string{"// real"}},
+	{"sql", "SELECT \"a--b\"  -- real\n", []string{"-- real"}},
+	{"sql", "SELECT `a--b`  -- real\n", []string{"-- real"}},
+	{"sql", "SELECT [a--b]  -- real\n", []string{"-- real"}},
+	{"sql", "SELECT \"a\"\"--b\"  -- real\n", []string{"-- real"}},
+	{"c", "char *s = R\"(a // b)\";  // real\n", []string{"// real"}},
+	{"c", "char *s = LR\"delim(a // b)delim\";  // real\n", []string{"// real"}},
+	{"c", "char *s = u8R\"(a // b)\";  // real\n", []string{"// real"}},
+	{"c", "char *s = u8\"a // b\";  // real\n", []string{"// real"}},
+	{"r", "x <- r\"(a # b)\"  # real\n", []string{"# real"}},
+	{"r", "x <- r\"--(a # b)--\"  # real\n", []string{"# real"}},
+	{"r", "x <- r\"{a # b}\"  # real\n", []string{"# real"}},
+	{"r", "x <- R'[a # b]'  # real\n", []string{"# real"}},
+	{"kt", "val s = \"a ${f(\"a//b\")} b\"  // real\n", []string{"// real"}},
+	{"scala", "val s = s\"a ${f(\"a//b\")} b\"  // real\n", []string{"// real"}},
+	{"swift", "let s = \"a \\(f(\"a//b\")) b\"  // real\n", []string{"// real"}},
+	{"swift", "let s = #\"a \\#(f(\"a//b\")) b\"#  // real\n", []string{"// real"}},
+	{"dart", "var s = 'a ${f(\"a//b\")} b';  // real\n", []string{"// real"}},
+	{"dart", "var s = r'a ${f(\"a//b\")} b';  // real\n", []string{"// real"}},
+	{"cs", "var s = $\"a {f(\"a//b\")} b\";  // real\n", []string{"// real"}},
+	{"cs", "var s = $\"a {{x}} b\";  // real\n", []string{"// real"}},
 }
 
 // TestLex runs every lexCases row through the lexer.
@@ -228,6 +254,13 @@ func TestLexUnterminated(t *testing.T) {
 		{"lua", "s = [[abc\n"},
 		{"lua", "--[[ abc\n"},
 		{"hs", "x = 1\n{- abc\n"},
+		{"js", "x = /abc\n"},
+		{"sql", "select \"abc\n"},
+		{"sql", "select `abc\n"},
+		{"sql", "select [abc\n"},
+		{"c", "char *s = R\"(abc\n"},
+		{"c", "char *s = R\"abc\n"},
+		{"r", "x <- r\"(abc\n"},
 	} {
 		if out := lex(langOf(t, tt.ext), []byte(tt.src)); out.err == nil {
 			t.Errorf("%s lex %q: no error, want unterminated", tt.ext, tt.src)
@@ -286,6 +319,7 @@ func TestLexAlwaysAdvances(t *testing.T) {
 		"let s = #\"abc\n", "var s = '''abc\n", "char *s = \"abc\n",
 		"let s = r#\"abc\n", "SELECT 'abc\n", "SELECT $tag$abc\n",
 		"s = [[abc\n", "--[[ abc\n", "x = 1\n{- abc\n",
+		"/abc", "x = /abc\n", "select [abc", "auto s = R\"(abc", "x <- r\"(abc",
 	}
 	for ext, l := range extTable {
 		for _, src := range inputs {
@@ -571,5 +605,92 @@ func TestExtensionLookupIsCaseInsensitive(t *testing.T) {
 	})
 	if v := Judge(Scope{Comments: true}, []Change{c}, read); len(v) != 0 {
 		t.Errorf("x.PY not judged as Python: %v", v)
+	}
+}
+
+// judgeFile runs Judge over one M change of the named path with the two blob
+// sides given, returning the violations.
+func judgeFile(t *testing.T, path, oldSrc, newSrc string) []Violation {
+	t.Helper()
+	c := Change{Status: 'M', OldMode: "100644", NewMode: "100644",
+		OldOID: "old", NewOID: "new", Path: path}
+	read := blobs(map[string]string{"old": oldSrc, "new": newSrc})
+	return Judge(Scope{Comments: true}, []Change{c}, read)
+}
+
+// refuseReason asserts one violation whose reason is a refusal -- code
+// change or cannot judge, never a pass.
+func refuseReason(t *testing.T, path, oldSrc, newSrc string, v []Violation) {
+	t.Helper()
+	if len(v) != 1 || (v[0].Reason != ReasonCodeChange && v[0].Reason != ReasonCannotJudge) {
+		t.Errorf("%s: %q -> %q: violations = %v, want one refusal", path, oldSrc, newSrc, v)
+	}
+}
+
+// TestCodeHiddenBehindAnUnmodelledTokenIsRefused pins the round's rule: a
+// token the lexer does not model must never turn a code change into a
+// comment-only pass. The first five rows are the probes the MasterMind ran
+// against round 1, all of which passed there; the rest are one probe per
+// token form the round-2 audit found, where the marker hides inside the
+// form or the form leaves the lexer unsure.
+func TestCodeHiddenBehindAnUnmodelledTokenIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct{ path, old, new string }{
+		// The MasterMind's five probes: good -> evil behind a token the
+		// round-1 lexer read as a comment.
+		{"a.js", "const r = /\\//; good();", "const r = /\\//; evil();"},
+		{"a.ts", "const r = /[//]/; good();", "const r = /[//]/; evil();"},
+		{"a.sql", `select "a--b", good from t;`, `select "a--b", evil from t;`},
+		{"a.sql", "select `a--b`, good from t;", "select `a--b`, evil from t;"},
+		{"a.cpp", `auto s = R"(a"//)"; good();`, `auto s = R"(a"//)"; evil();`},
+		// The audit's forms, one probe each.
+		{"a.js", "const r = /a[/*]b/; good();", "const r = /a[/*]b/; evil();"},
+		{"a.js", "function f() { return /\\/\\//; good(); }", "function f() { return /\\/\\//; evil(); }"},
+		{"a.js", "const t = `${f(`a//good`)}`;", "const t = `${f(`a//evil`)}`;"},
+		{"a.js", "x = 1;\n", "x = /abc\n"},
+		{"a.js", "(a) / b // one\ngood();\n", "(a) / b // one\nevil();\n"},
+		{"a.js", "{ a: 1 } / y /* z */\ngood();\n", "{ a: 1 } / y /* z */\nevil();\n"},
+		{"a.sql", "select [a--b], good from t;", "select [a--b], evil from t;"},
+		{"a.sql", "x = 1\n", "select \"abc\n"},
+		{"a.cpp", "auto a = u8R\"(x//y)\"; good();", "auto a = u8R\"(x//y)\"; evil();"},
+		{"a.cpp", "auto b = uR\"(s//t)\"; good();", "auto b = uR\"(s//t)\"; evil();"},
+		{"a.cpp", "auto c = UR\"(s//t)\"; good();", "auto c = UR\"(s//t)\"; evil();"},
+		{"a.cpp", "auto d = LR\"delim(u//v)delim\"; good();", "auto d = LR\"delim(u//v)delim\"; evil();"},
+		{"a.cpp", "x = 1;\n", "auto s = R\"abc\n"},
+		{"a.r", "x <- r\"(a # b)\"\ngood()", "x <- r\"(a # b)\"\nevil()"},
+		{"a.r", "x <- r\"--(a # b)--\"\ngood()", "x <- r\"--(a # b)--\"\nevil()"},
+		{"a.r", "x <- r\"{a # b}\"\ngood()", "x <- r\"{a # b}\"\nevil()"},
+		{"a.kt", "val s = \"a ${f(\"a//good\")}\"", "val s = \"a ${f(\"a//evil\")}\""},
+		{"a.scala", "val s = s\"a ${f(\"a//good\")} b\"", "val s = s\"a ${f(\"a//evil\")} b\""},
+		{"a.scala", "val x = <a>good // b</a>", "val x = <a>evil // b</a>"},
+		{"a.scala", "x = 1\n", "val x = <a>one</a>\n"},
+		{"a.swift", "let s = \"a \\(f(\"a//good\")) b\"", "let s = \"a \\(f(\"a//evil\")) b\""},
+		{"a.swift", "let s = #\"a \\#(f(\"a//good\")) b\"#", "let s = #\"a \\#(f(\"a//evil\")) b\"#"},
+		{"a.dart", "var s = 'a ${f(\"a//good\")} b';", "var s = 'a ${f(\"a//evil\")} b';"},
+		{"a.cs", "var s = $\"a {f(\"a//good\")} b\";", "var s = $\"a {f(\"a//evil\")} b\";"},
+	} {
+		refuseReason(t, tt.path, tt.old, tt.new, judgeFile(t, tt.path, tt.old, tt.new))
+	}
+}
+
+// TestCommentEditNextToARegexOrQuotedIdentifierPasses pins that the new
+// token forms do not swallow the comments next to them: a genuine
+// comment-only edit after a division, after a regex literal and after a
+// quoted identifier stays in scope.
+func TestCommentEditNextToARegexOrQuotedIdentifierPasses(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct{ path, old, new string }{
+		{"a.js", "x = a / b; // one\n", "x = a / b; // two\n"},
+		{"a.js", "const r = /\\//; // one\n", "const r = /\\//; // two\n"},
+		{"a.js", "const r = /[//]/; // one\n", "const r = /[//]/; // two\n"},
+		{"a.sql", "select \"a--b\" -- one\n", "select \"a--b\" -- two\n"},
+		{"a.cpp", "auto s = R\"(a//b)\"; // one\n", "auto s = R\"(a//b)\"; // two\n"},
+		{"a.scala", "val s = s\"a ${f(\"x\")} b\" // one\n", "val s = s\"a ${f(\"x\")} b\" // two\n"},
+	} {
+		if v := judgeFile(t, tt.path, tt.old, tt.new); len(v) != 0 {
+			t.Errorf("%s: %q -> %q: refused: %v", tt.path, tt.old, tt.new, v)
+		}
 	}
 }
