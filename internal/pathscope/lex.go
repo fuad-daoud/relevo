@@ -111,8 +111,14 @@ func (x *lexer) atComment() bool {
 }
 
 // dashComment records a -- comment: in Lua a -- that opens a long bracket
-// starts a long comment instead, which runs to the matching closer.
+// starts a long comment instead, which runs to the matching closer. In SQL
+// a -- that follows an operand character is ambiguous between MySQL
+// subtraction and a comment, so the file is refused.
 func (x *lexer) dashComment(start int) bool {
+	if x.l.dashOperand && start > 0 && isOperandByte(x.src[start-1]) {
+		x.out.err = errUnterminated
+		return true
+	}
 	if x.l.dashBracket {
 		if n := longOpener(x.src, start+2); n >= 0 {
 			end := longCloser(x.src, start+2, n)
@@ -530,4 +536,12 @@ func isRSPrefix2(s []byte) bool {
 // isHsSymbol reports whether c keeps Haskell's -- an operator, not a comment.
 func isHsSymbol(c byte) bool {
 	return strings.IndexByte("!#$%&*+./<=>?@\\^|-~:", c) >= 0
+}
+
+// isOperandByte reports whether c is an operand character before a '--': a
+// letter, a digit, '_', ')', ']', a quote or a backtick.
+func isOperandByte(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+		(c >= '0' && c <= '9') || c == '_' || c == ')' || c == ']' ||
+		c == '\'' || c == '"' || c == '`'
 }

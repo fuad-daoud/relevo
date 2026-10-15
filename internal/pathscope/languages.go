@@ -19,6 +19,7 @@ type lang struct {
 	dashLine      bool // '--' starts a comment
 	dashSymbol    bool // '--' is a comment only when not followed by a symbol char
 	dashBracket   bool // '--[' opens a Lua long comment
+	dashOperand   bool // '--' after an operand character is ambiguous: subtraction or a comment
 	hashBangFirst bool // '#!' is a directive on the first line only
 
 	// Block comments.
@@ -210,7 +211,7 @@ var (
 		double: true, dqEsc: true, rsPrefix: true,
 	}
 	sqlLang = &lang{
-		name: "sql", dashLine: true, blockSlash: true,
+		name: "sql", dashLine: true, dashOperand: true, blockSlash: true,
 		single: true, sqDouble: true, dollarTag: true,
 		sqlIdent: true, directives: sqlDirectives,
 	}

@@ -78,22 +78,23 @@ func isRegexPunct(c byte) bool {
 	return strings.IndexByte("(,=:[!&|?{};+-*%<>~^", c) >= 0
 }
 
-// jsRegexKeyword reports whether the word is one of the keywords after
-// which a regex literal may start.
+// jsRegexKeyword reports whether the token is one of the keywords after
+// which a regex literal may start; the spread counts too, because it always
+// precedes an expression.
 func jsRegexKeyword(w string) bool {
 	switch w {
 	case "return", "typeof", "instanceof", "in", "of", "new", "delete",
-		"void", "throw", "case", "do", "else", "yield", "await":
+		"void", "throw", "case", "do", "else", "yield", "await", "...":
 		return true
 	}
 	return false
 }
 
 // prevToken returns the previous significant token before i: "" at the start
-// of the source, the byte of a punctuation token, or the text of an
-// identifier or keyword. Whitespace is skipped, and a recorded comment span
-// is skipped whole: a comment is not a token, so the token before it is what
-// a '/' after it sees.
+// of the source, the byte of a punctuation token, the text of an identifier
+// or keyword, or a run of dots -- ... is one token, the spread. Whitespace
+// is skipped, and a recorded comment span is skipped whole: a comment is not
+// a token, so the token before it is what a '/' after it sees.
 func (x *lexer) prevToken(i int) string {
 	j := i
 	for {
@@ -113,6 +114,13 @@ func (x *lexer) prevToken(i int) string {
 	if isWordByte(c) {
 		k := j - 1
 		for k > 0 && isWordByte(x.src[k-1]) {
+			k--
+		}
+		return string(x.src[k:j])
+	}
+	if c == '.' {
+		k := j - 1
+		for k > 0 && x.src[k-1] == '.' {
 			k--
 		}
 		return string(x.src[k:j])
@@ -140,6 +148,14 @@ func (x *lexer) spanContaining(q int) *span {
 // because the lexer cannot be sure it is code.
 func (x *lexer) markerLaterOnLine(i int) bool {
 	rest := x.src[i+1 : lineEnd(x.src, x.i)]
+	return bytes.Contains(rest, []byte("//")) || bytes.Contains(rest, []byte("/*"))
+}
+
+// markerLaterInFile reports whether a // or /* starts anywhere in src after
+// i. Raw bytes: a marker inside a later string still counts, because the
+// lexer cannot be sure it is code.
+func (x *lexer) markerLaterInFile(i int) bool {
+	rest := x.src[i+1:]
 	return bytes.Contains(rest, []byte("//")) || bytes.Contains(rest, []byte("/*"))
 }
 
@@ -192,6 +208,9 @@ func isSpaceByte(c byte) bool {
 // content is a language of its own, tags and all. A '<' that follows an
 // operand is a comparison and stays code, and so is '<' that opens one of
 // the operators -- <-, <:, <= -- whose next byte cannot start an XML name.
+// After ')' or '}' both readings are live: only a letter, '_' or '!' can
+// open the XML form there, and a comment marker anywhere later in the file
+// makes the two unreadable apart, so the file is refused.
 func (x *lexer) atXMLLiteral() bool {
 	if !x.l.scalaXML || x.src[x.i] != '<' {
 		return false
@@ -205,19 +224,31 @@ func (x *lexer) atXMLLiteral() bool {
 		return false
 	}
 	c := x.src[j]
-	if !isWordByte(c) && c != '!' && c != '?' {
-		return false
-	}
 	if cls == regexStarts {
+		if !isWordByte(c) && c != '!' && c != '?' {
+			return false
+		}
 		x.out.err = errUnterminated
 		return true
 	}
 	// Ambiguous: '<' after ')' or '}' may open an XML literal or compare.
-	// A marker later on the line makes the two unreadable apart; without
-	// one, plain code is safe either way.
-	if x.markerLaterOnLine(x.i) {
+	// Only a letter, '_' or '!' can start the XML form, so anything else
+	// stays code. A comment marker anywhere later in the file makes the two
+	// readings unreadable apart -- the literal's content is a language of
+	// its own, and a marker may sit inside it -- so the file is refused.
+	if !isXMLNameStart(c) {
+		return false
+	}
+	if x.markerLaterInFile(x.i) {
 		x.out.err = errUnterminated
 		return true
 	}
 	return false
+}
+
+// isXMLNameStart reports whether c can start the XML form a '<' opens: a
+// letter or '_' opens a tag, '!' opens <!-- and <![.
+func isXMLNameStart(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+		c == '_' || c == '!'
 }
