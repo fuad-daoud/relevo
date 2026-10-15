@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync/atomic"
@@ -87,11 +88,11 @@ func TestTickDialsFailedServerOncePerTick(t *testing.T) {
 			stamped++
 		}
 		if b.State != store.StateActive {
-			t.Errorf("api%d state = %s, a skipped binding must be left as it was", i, b.State)
+			t.Errorf("api%d state = %s, an outage inside the grace must not halt", i, b.State)
 		}
 	}
-	if stamped != 1 {
-		t.Fatalf("%d bindings stamped unreachable, want only the one that dialled", stamped)
+	if stamped != 4 {
+		t.Fatalf("%d bindings stamped unreachable, want all four: a skipped binding reconciles as unreachable", stamped)
 	}
 }
 
@@ -181,4 +182,120 @@ func TestTickWithSilentServerStillReconcilesLocalBindings(t *testing.T) {
 	if b.Round != 2 {
 		t.Fatalf("local binding round = %d, want the tick to have advanced it to 2", b.Round)
 	}
+}
+
+// notFoundOneRemote answers 404 for the binding named bad and the fake's view
+// for every other.
+type notFoundOneRemote struct {
+	*fakeRemote
+	bad string
+}
+
+func (n *notFoundOneRemote) GetBinding(ctx context.Context, server, name string) (remote.BindingView, error) {
+	view, err := n.fakeRemote.GetBinding(ctx, server, name)
+	if name == n.bad {
+		return view, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: "not_found", Message: "no binding"}}
+	}
+	return view, err
+}
+
+func TestTickPerBindingAnswerDoesNotBackOffServer(t *testing.T) {
+	st := store.New(t.TempDir())
+	saveRemoteBindings(t, st, "zen", 2)
+	fr := &notFoundOneRemote{fakeRemote: &fakeRemote{}, bad: "api0"}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+	d := NewDaemon(rt, time.Second)
+	d.backoff.now = func() time.Time { return baseTime }
+
+	for i := 1; i <= 2; i++ {
+		if err := d.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		if n := countCalls(fr.fakeRemote, "GetBinding:zen:api1"); n != i {
+			t.Fatalf("after tick %d the healthy binding was fetched %d times, want %d", i, n, i)
+		}
+	}
+	if d.backoff.skip("zen") {
+		t.Fatal("a 404 for one binding armed a backoff for the whole server")
+	}
+}
+
+func TestServerUnreachableCountsOnlyServerFailures(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"wrapped unreachable", fmt.Errorf("%w: refused", client.ErrUnreachable), true},
+		{"bare deadline", context.DeadlineExceeded, true},
+		{"404", &client.HTTPError{Status: 404}, false},
+		{"401", &client.HTTPError{Status: 401}, false},
+		{"unknown server", client.ErrUnknownServer, false},
+		{"other", errors.New("boom"), false},
+	}
+	for _, c := range cases {
+		if got := serverUnreachable(c.err); got != c.want {
+			t.Errorf("%s: serverUnreachable = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestTickSilentServerStampsAndHaltsEveryOpenRound(t *testing.T) {
+	st := store.New(t.TempDir())
+	const n = 3
+	for i := 0; i < n; i++ {
+		b := remoteBinding("zen")
+		b.Name = fmt.Sprintf("api%d", i)
+		b.RoundTimeoutMS = 1000
+		if err := st.Save(b); err != nil {
+			t.Fatal(err)
+		}
+		name := b.Name
+		if err := st.WithLock(func(tx *store.Tx) error {
+			return tx.AppendLog(name, store.LogEntry{Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt})
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fr := unreachableRemote()
+	clock := baseTime
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return clock }}
+	d := NewDaemon(rt, time.Second)
+	d.backoff.now = func() time.Time { return clock }
+
+	tick := func() {
+		t.Helper()
+		if err := d.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+	}
+	tick()
+	for i := 0; i < n; i++ {
+		b, err := st.Load(fmt.Sprintf("api%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b.RemoteUnreachableSince.IsZero() {
+			t.Fatalf("api%d not stamped unreachable on the first tick", i)
+		}
+	}
+
+	clock = clock.Add(roundBudgetFor(1000) + unreachableGrace + time.Minute)
+	tick()
+	for i := 0; i < n; i++ {
+		b, err := st.Load(fmt.Sprintf("api%d", i))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b.State != store.StateNeedsYou || b.RemoteHaltKind != store.HaltKindUnreachable {
+			t.Fatalf("api%d state=%s kind=%q, want needs_you with the unreachable kind", i, b.State, b.RemoteHaltKind)
+		}
+	}
+	if got := countCalls(fr, "GetBinding:"); got != 2 {
+		t.Fatalf("GetBinding calls = %d, want only the first tick's dial and the post-backoff probe", got)
+	}
+}
+
+func roundBudgetFor(ms int) time.Duration {
+	return roundBudget(store.Binding{RoundTimeoutMS: ms})
 }

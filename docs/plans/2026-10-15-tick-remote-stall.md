@@ -58,3 +58,9 @@ Base: `origin/main` (`41bf202d`). Issue: #1153 (fuad-daoud/relevo), verified wit
 - Each named test, the exact mutation command run for it, and the fail-without / pass-with result.
 - The focused `make check-quick PKGS=...` runs, the `gofmt -l` output, the full filtered-`PATH make check` output, the plan-doc save path, the new commit hashes, and a clean `git status`.
 - `SyncRemote` left unchanged (or the one-line reuse, if taken), coverage-baseline handling (`sh scripts/check-coverage.sh --write` only if code moved packages, never lowered), and anything deliberately left not done.
+
+## Corrections (round 2)
+
+1. Backoff arms only on a server failure. `prefetchRemote` records a failure only when the read's error wraps `client.ErrUnreachable` (transport errors, gateway statuses and the prefetch deadline) or is a bare `context.DeadlineExceeded`. Any other error -- a 404 for one stale binding, a 401, an unknown server -- is a live server's answer about one binding and records success, so one stale binding can no longer stall every binding on a healthy server.
+2. A skipped binding reconciles as an unreachable one. `skippedFetch` carries the binding's identity and an error wrapping `client.ErrUnreachable`, so `applyRemoteErr` sends it through `applyRemoteUnreachable` with no dial: every binding on a silent server is stamped, and an open round halts with the unreachable kind once it passes the budget plus the grace. `applyRemoteUnreachable` and `haltAndSettleKind` make no remote call for a remote binding.
+3. The per-tick `failed` set and `beginTick` are removed: `until` alone gives the same skip within a tick.

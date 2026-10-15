@@ -290,7 +290,6 @@ func (d *Daemon) Tick(ctx context.Context) error {
 		return nil
 	}
 
-	d.backoff.beginTick()
 	for _, b := range bindings {
 		if err := d.tickOne(ctx, b); err != nil {
 			slog.Error("reconcile failed", "binding", b.Name, "err", err)
@@ -524,10 +523,10 @@ func (d *Daemon) prefetchRemote(ctx context.Context, b store.Binding) *remoteFet
 		return nil
 	}
 	if d.backoff.skip(b.Builder.Server) {
-		return skippedFetch()
+		return skippedFetch(b)
 	}
 	f := fetchRemoteWithin(ctx, d.rt, b, prefetchDeadline)
-	d.backoff.record(b.Builder.Server, f.Err != nil)
+	d.backoff.record(b.Builder.Server, f.Err != nil && serverUnreachable(f.Err))
 	return &f
 }
 

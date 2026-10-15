@@ -2,8 +2,13 @@ package relevo
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // prefetchDeadline bounds the tick's first read of a binding from its server.
@@ -25,9 +30,6 @@ type remoteBackoff struct {
 	now func() time.Time
 	// until is when a server that failed may be tried again.
 	until map[string]time.Time
-	// failed is the servers that failed during the current tick, so the rest of
-	// that tick's bindings skip them without waiting on the backoff clock.
-	failed map[string]bool
 }
 
 func (r *remoteBackoff) clock() time.Time {
@@ -37,23 +39,15 @@ func (r *remoteBackoff) clock() time.Time {
 	return time.Now()
 }
 
-// beginTick forgets which servers failed in the previous tick; the cross-tick
-// backoff is untouched.
-func (r *remoteBackoff) beginTick() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.failed = nil
-}
-
 // skip reports whether a prefetch against server should not be dialled now.
 func (r *remoteBackoff) skip(server string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.failed[server] || r.clock().Before(r.until[server])
+	return r.clock().Before(r.until[server])
 }
 
 // record notes the outcome of a prefetch that was dialled. A failure arms the
-// backoff and skips the server for the rest of the tick; a success ends it.
+// backoff; a success ends it.
 func (r *remoteBackoff) record(server string, failed bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -64,19 +58,30 @@ func (r *remoteBackoff) record(server string, failed bool) {
 	if r.until == nil {
 		r.until = map[string]time.Time{}
 	}
-	if r.failed == nil {
-		r.failed = map[string]bool{}
-	}
 	r.until[server] = r.clock().Add(serverBackoff)
-	r.failed[server] = true
 }
 
-// skippedFetch is what a skipped binding reconciles against. It is non-nil
-// because a nil fetch makes the apply half fetch inline and dial anyway; its
-// empty identity never matches a binding, so the apply half leaves the
-// binding as it is.
-func skippedFetch() *remoteFetch {
-	return &remoteFetch{}
+// serverUnreachable reports whether a failed read says the server itself did
+// not answer. Any other error -- a 404 for one binding, a 401, an unknown
+// server -- is a live server's answer about one binding. The client wraps
+// transport errors, gateway statuses and the prefetch deadline in
+// ErrUnreachable, but its retry sleep can return a bare context error, so a
+// deadline counts too.
+func serverUnreachable(err error) bool {
+	return errors.Is(err, client.ErrUnreachable) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// skippedFetch is what a skipped binding reconciles against: an unreachable
+// read of its own server, so the apply half stamps and ages the outage exactly
+// as it would after a dial, without making one. It is non-nil because a nil
+// fetch makes the apply half fetch inline and dial anyway.
+func skippedFetch(b store.Binding) *remoteFetch {
+	return &remoteFetch{
+		Name:   b.Name,
+		Server: b.Builder.Server,
+		Round:  b.Round,
+		Err:    fmt.Errorf("%w: server backed off after a failed prefetch", client.ErrUnreachable),
+	}
 }
 
 // boundedWait returns ctx with a deadline of d, or ctx itself when d is not
