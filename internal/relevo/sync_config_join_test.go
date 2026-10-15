@@ -32,13 +32,26 @@ func (m *cfgMachine) join(t *testing.T) {
 	}
 }
 
+// syncRevisions counts the revisions a value arriving from a peer left. The
+// secrets document's revisions are not counted: a joiner is owed the fleet's R2
+// credentials, so a peer adopting them is the point rather than an echo, and the
+// property these tests pin is about the config sections, which is where an echo
+// would be visible.
 func (m *cfgMachine) syncRevisions(t *testing.T) int {
 	t.Helper()
+	rows, err := m.cfg.Log(0)
+	if err != nil {
+		t.Fatalf("config log: %v", err)
+	}
 	n := 0
-	for _, s := range m.sources(t) {
-		if strings.HasPrefix(s, "sync:") {
-			n++
+	for _, r := range rows {
+		if !strings.HasPrefix(r.Source, "sync:") {
+			continue
 		}
+		if strings.Contains(string(r.Changes), "secret.") {
+			continue
+		}
+		n++
 	}
 	return n
 }

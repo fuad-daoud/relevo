@@ -35,8 +35,20 @@ func TestJoinClearsExportState(t *testing.T) {
 	if err != nil || len(state) != 0 {
 		t.Fatalf("export state after the join = %v, %v; want it cleared", state, err)
 	}
+	// The config doc is signalled because the join cleared its export state. The
+	// secrets doc is signalled too, and stays signalled: the enable stamped the
+	// R2 credentials the caller had already stored, and a joiner is owed them,
+	// so swallowing that signal would withhold the credentials from the fleet.
 	signals, err := local.DocSignals()
-	if err != nil || len(signals) != 1 || signals[0].Doc != "config" {
-		t.Fatalf("signals after the join = %v, %v; want the config doc signalled", signals, err)
+	if err != nil {
+		t.Fatalf("signals after the join: %v", err)
+	}
+	got := map[string]bool{}
+	for _, s := range signals {
+		got[s.Doc] = true
+	}
+	if !got["config"] || !got[SecretsDocName] {
+		t.Fatalf("signals after the join = %v, %v; want the config doc and the secrets doc signalled",
+			signals, err)
 	}
 }

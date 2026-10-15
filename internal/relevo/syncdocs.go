@@ -20,10 +20,11 @@ func init() {
 
 // sharedDocs is the documents of one machine: its config, bound to the local
 // file the way config.Open binds it and to the config root the way the
-// applier needs, its gates, bound to the same file the ledger is in, and the
-// two consent documents, each bound to the file its own store is in -- the
+// applier needs, its gates, bound to the same file the ledger is in, the two
+// consent documents, each bound to the file its own store is in -- the
 // repository answers with the shared rows, the session answers with the
-// machine-local ones.
+// machine-local ones -- and its secrets, bound to the same store the config is,
+// because both read and write the one secret table.
 //
 // It is the one place a document is bound. Every pipeline stage reaches the
 // documents through the BindDocs sites rather than naming one, so a document
@@ -37,6 +38,7 @@ func sharedDocs(shared *db.DB) []synclog.SharedDoc {
 		availability.OpenGates(local, nil),
 		consent.OpenRepo(shared),
 		consent.OpenSessions(local),
+		machineConfig(shared).SecretsDoc(),
 	}
 }
 

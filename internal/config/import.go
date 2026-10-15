@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
@@ -147,18 +148,9 @@ func (s *Store) commitImport(p pendingImport, now time.Time) error {
 				return err
 			}
 		}
-		var extra []Change
-		if p.haveClientKey {
-			if err := t.SecretPut(SecretClientKey, p.clientKey, now); err != nil {
-				return err
-			}
-			extra = append(extra, Change{Path: "secret." + SecretClientKey, Op: "set"})
-		}
-		if p.haveTypesafe {
-			if err := t.SecretPut(SecretTypesafe, []byte(p.typesafe), now); err != nil {
-				return err
-			}
-			extra = append(extra, Change{Path: "secret." + SecretTypesafe, Op: "set"})
+		extra, err := s.commitSecrets(t, p, now)
+		if err != nil {
+			return err
 		}
 		if p.importHooks {
 			body, err := json.Marshal(p.hooks)
@@ -171,6 +163,38 @@ func (s *Store) commitImport(p pendingImport, now time.Time) error {
 		}
 		return s.record(t, before, extra)
 	})
+}
+
+// commitSecrets stores the secret files the import carried, and returns the
+// changes to record alongside the sections.
+//
+// A secret file in the import is a person dropping a file into the config dir,
+// so it stamps and signals the way `relevo config secret set` does -- even
+// though every other write this import makes is unstamped. The blanket flag
+// covers the sections; the secret writes are named as what they are here, or an
+// imported client key would sit in the table forever and never reach a joiner.
+func (s *Store) commitSecrets(t *db.Tx, p pendingImport, now time.Time) ([]Change, error) {
+	var extra []Change
+	for _, secret := range []struct {
+		name  string
+		value []byte
+		held  bool
+	}{
+		{SecretClientKey, p.clientKey, p.haveClientKey},
+		{SecretTypesafe, []byte(p.typesafe), p.haveTypesafe},
+	} {
+		if !secret.held {
+			continue
+		}
+		if err := t.SecretPut(secret.name, secret.value, now); err != nil {
+			return nil, err
+		}
+		if err := sync.StampSecretWrites(t, []string{secret.name}, s.now); err != nil {
+			return nil, err
+		}
+		extra = append(extra, Change{Path: "secret." + secret.name, Op: "set"})
+	}
+	return extra, nil
 }
 
 func (s *Store) afterImport(configDir string, p pendingImport, clientKeyPath, typesafePath string) (ImportResult, error) {

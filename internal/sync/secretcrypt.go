@@ -22,11 +22,13 @@ import (
 	"io"
 	"slices"
 	"sort"
+	"time"
 
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/hkdf"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
 // The two secret names a caller outside the R2 set owns. They are spelled here
@@ -37,6 +39,55 @@ const (
 	SecretClientKey = "client.key"
 	SecretTypesafe  = "typesafe"
 )
+
+// SecretsDocName is the name the secrets document travels under, as
+// `doc:secrets` on the log. It lives here rather than in the config package that
+// owns the document, because the two packages that write the document -- config
+// for a person's edit and a peer's value, this one for the R2 flags an enable
+// carries -- would otherwise each spell the name and the stamp key separately,
+// and the two spellings would drift until a stamped write became invisible to
+// the exporter reading the other.
+const SecretsDocName = "secrets"
+
+// SecretStampKey is the write-stamp key of one shared secret. The prefix is what
+// keeps a secret's stamp from being read as a config section's stamp: both live
+// in one table, and no config section is named after a document.
+func SecretStampKey(name string) string { return SecretsDocName + "/" + name }
+
+// StampSecretWrites records that this machine wrote each named secret as a
+// person's edit: one write stamp per name, and one signal for the document, all
+// in the caller's transaction so a stamp is never spent on a secret the machine
+// did not keep.
+//
+// The stamps come from the hybrid clock rather than the wall clock, for the same
+// reason an entry's stamp does: a machine whose clock is behind a peer's must
+// still win its own later edit against that peer's earlier one.
+//
+// A caller with a secret value the program generated passes none of this. It is
+// the whole difference between a machine choosing a fleet's client key and one
+// generating its own.
+func StampSecretWrites(t *db.Tx, names []string, now func() time.Time) error {
+	if len(names) == 0 {
+		return nil
+	}
+	for _, name := range names {
+		stamp, err := synclog.NewHybridClockAt(t, now).Now()
+		if err != nil {
+			return err
+		}
+		if err := t.ConfigWriteStampPut(SecretStampKey(name), stamp.String()); err != nil {
+			return err
+		}
+	}
+	return t.SignalDoc(SecretsDocName)
+}
+
+// ErrNoKey marks a caller that needs the sync key on a machine that holds none:
+// a locked machine, or one that never synced. It is what the secrets document
+// answers with rather than an empty document, because an exporter reads an empty
+// document as a machine that holds no secrets at all and would send a removal
+// for every one the fleet has.
+var ErrNoKey = errors.New("sync: this machine holds no sync key")
 
 // ErrSecretEnvelope marks a value this build cannot read as a sealed secret:
 // a name off the list, an envelope over the cap, a version this build does not

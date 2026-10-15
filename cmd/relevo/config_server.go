@@ -305,7 +305,10 @@ func ensureClientKey(rt relevo.Runtime) (pem []byte, generated bool, err error) 
 	if err != nil {
 		return nil, false, err
 	}
-	if err := rt.Config.As("cli", "config server key").PutSecret(config.SecretClientKey, pem); err != nil {
+	// The generated key is unstamped: no person chose it, and stamping it would
+	// make this machine's fresh install the fleet's client key the first time it
+	// synced, silently un-enrolling every machine already holding one.
+	if err := rt.Config.As("cli", "config server key").PutSecretUnstamped(config.SecretClientKey, pem); err != nil {
 		return nil, false, err
 	}
 	return pem, true, nil
