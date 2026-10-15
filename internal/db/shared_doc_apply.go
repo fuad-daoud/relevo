@@ -176,6 +176,28 @@ func (t *Tx) UnparkDoc(origin string, seq int) error {
 	return nil
 }
 
+// ClearDocSignals strikes every signal one doc carries, for a caller that
+// knows the doc's exported state stands and the signal is only the echo of a
+// state the caller has just put back.
+func (t *Tx) ClearDocSignals(doc string) error {
+	if _, err := t.exec(`DELETE FROM shared_outbox WHERE doc = ?`, doc); err != nil {
+		return fmt.Errorf("db: clear doc signals %s: %w", doc, mapBusy(err))
+	}
+	return nil
+}
+
+// DocSignalled reports whether one doc carries a signal inside the caller's
+// transaction, so a caller deciding whether a signal is its own echo or one a
+// write it knows of planted can keep the planted one.
+func (t *Tx) DocSignalled(doc string) (ok bool, err error) {
+	var n int
+	err = t.queryRow(`SELECT count(*) FROM shared_outbox WHERE doc = ?`, doc).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("db: doc signal %s: %w", doc, mapBusy(err))
+	}
+	return n > 0, nil
+}
+
 // PendingDocs returns every parked doc entry in the order they arrived.
 func (d *DB) PendingDocs() ([]PendingDoc, error) {
 	rows, err := d.LocalOrSelf().sqlDB.QueryContext(context.Background(),

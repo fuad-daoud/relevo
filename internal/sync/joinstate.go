@@ -47,18 +47,75 @@ type JoinSnapshot struct {
 	hasEnabled   bool
 	// secrets holds one row per allow-listed name, in allowedSecrets order.
 	secrets []heldRow
-	// secretDocApplied and secretDocExport are the secrets document's
-	// machine-local bookkeeping: the (origin, stamp) each of its keys was last
-	// read at, and the digest each was last compared by. The document's apply
-	// path records both before the rows are written, so a restore that put the
-	// rows back without them would leave every entry the pre-pass applied
-	// reading as a redelivery and land on nothing.
-	secretDocApplied []db.DocAppliedRow
-	secretDocExport  []db.DocExportStateRow
+	// secretDoc is the secrets document's machine-local bookkeeping: the
+	// (origin, stamp) each of its keys was last read at, and the digest each
+	// was last compared by. The document's apply path records both before the
+	// rows are written, so a restore that put the rows back without it would
+	// leave every entry the pre-pass applied reading as a redelivery and land
+	// on nothing.
+	secretDoc docSecretsBookkeeping
 	// clientKeyReplaced is the machine-local row that says an arriving client
 	// key took the place of one this machine already held.
 	clientKeyReplaced heldRow
 	join              heldRow
+}
+
+// docSecretsBookkeeping is one doc's machine-local bookkeeping, read as rows
+// and put back as rows: what each key was last applied at, what digest it was
+// last compared by, and whether the doc was signalled when it was read. The
+// tables move together because they record the same arrival -- the export
+// state is how the exporter sees what the applied state is.
+type docSecretsBookkeeping struct {
+	applied   []db.DocAppliedRow
+	export    []db.DocExportStateRow
+	signalled bool
+}
+
+// readDocSecretsBookkeeping reads the secrets document's bookkeeping off the
+// machine-local file, the file the document's apply path wrote it to.
+func readDocSecretsBookkeeping(l Local) (docSecretsBookkeeping, error) {
+	var kept docSecretsBookkeeping
+	err := l.Tx(func(t *db.Tx) error {
+		var err error
+		if kept.applied, err = t.DocAppliedRows(SecretsDocName); err != nil {
+			return err
+		}
+		if kept.export, err = t.DocExportStateRows(SecretsDocName); err != nil {
+			return err
+		}
+		if kept.signalled, err = t.DocSignalled(SecretsDocName); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return docSecretsBookkeeping{}, fmt.Errorf("sync: read the %s document's bookkeeping: %w", SecretsDocName, err)
+	}
+	return kept, nil
+}
+
+// restoreDocSecretsBookkeeping puts the secrets document's bookkeeping back the
+// way readDocSecretsBookkeeping read it. A signal the document carried when it
+// was read stands -- it is the echo of a write a caller this enable passed, not
+// of the state that was just put back -- while a signal the clear itself
+// planted is struck, because what it points at is exactly the state these rows
+// stand for. It is the whole restore in a transaction of its own, so a caller
+// that has just run the one clear the join makes can keep the document's
+// bookkeeping over it.
+func restoreDocSecretsBookkeeping(l Local, kept docSecretsBookkeeping) error {
+	err := l.Tx(func(t *db.Tx) error {
+		if err := restoreSecretsDocBookkeeping(t, kept); err != nil {
+			return err
+		}
+		if !kept.signalled {
+			return t.ClearDocSignals(SecretsDocName)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("sync: restore the %s document's bookkeeping: %w", SecretsDocName, err)
+	}
+	return nil
 }
 
 // heldRow is one row's bytes and whether it was there at all.
@@ -107,29 +164,10 @@ func SnapshotJoin(l Local) (JoinSnapshot, error) {
 	if s.join.value, s.join.present, err = l.KVGet(KeyJoin); err != nil {
 		return JoinSnapshot{}, fmt.Errorf("sync: snapshot %s: %w", KeyJoin, err)
 	}
-	if err := snapshotSecretsDocState(l, &s); err != nil {
+	if s.secretDoc, err = readDocSecretsBookkeeping(l); err != nil {
 		return JoinSnapshot{}, err
 	}
 	return s, nil
-}
-
-// snapshotSecretsDocState reads the secrets document's bookkeeping out of the
-// machine-local file, the file the document's apply path wrote it to.
-func snapshotSecretsDocState(l Local, s *JoinSnapshot) error {
-	err := l.Tx(func(t *db.Tx) error {
-		var err error
-		if s.secretDocApplied, err = t.DocAppliedRows(SecretsDocName); err != nil {
-			return err
-		}
-		if s.secretDocExport, err = t.DocExportStateRows(SecretsDocName); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("sync: snapshot the %s document's bookkeeping: %w", SecretsDocName, err)
-	}
-	return nil
 }
 
 // Restore puts back exactly what SnapshotJoin read.
@@ -156,7 +194,7 @@ func (s JoinSnapshot) Restore(l Local, now time.Time) error {
 				return err
 			}
 		}
-		if err := restoreSecretsDocBookkeeping(t, s); err != nil {
+		if err := restoreSecretsDocBookkeeping(t, s.secretDoc); err != nil {
 			return err
 		}
 		if err := restoreConfig(t, KeyClientKeyReplaced, s.clientKeyReplaced.value, s.clientKeyReplaced.present, now); err != nil {
@@ -200,22 +238,23 @@ func restoreSecret(t *db.Tx, name string, value []byte, present bool) error {
 }
 
 // restoreSecretsDocBookkeeping puts the secrets document's applied and export
-// rows back the way the snapshot read them. Every row recorded for the document
-// since then is deleted and the snapshot's rows written back, so a retried join
-// meets the state a refused first join met rather than its own leftovers.
-func restoreSecretsDocBookkeeping(t *db.Tx, s JoinSnapshot) error {
+// rows back the way the snapshot read them, inside the caller's transaction.
+// Every row recorded for the document since then is deleted and the snapshot's
+// rows written back, so a retried join meets the state a refused first join met
+// rather than its own leftovers.
+func restoreSecretsDocBookkeeping(t *db.Tx, kept docSecretsBookkeeping) error {
 	if err := t.DeleteDocApplied(SecretsDocName); err != nil {
 		return fmt.Errorf("sync: restore the %s document's applied state: %w", SecretsDocName, err)
 	}
 	if err := t.DeleteDocExport(SecretsDocName); err != nil {
 		return fmt.Errorf("sync: restore the %s document's export state: %w", SecretsDocName, err)
 	}
-	for _, row := range s.secretDocApplied {
+	for _, row := range kept.applied {
 		if err := t.SetDocApplied(SecretsDocName, row.Key, row.Origin, row.Stamp); err != nil {
 			return fmt.Errorf("sync: restore the %s %s applied state: %w", SecretsDocName, row.Key, err)
 		}
 	}
-	for _, row := range s.secretDocExport {
+	for _, row := range kept.export {
 		if err := t.SetDocExported(SecretsDocName, row.Key, row.Origin, row.Stamp, row.Digest); err != nil {
 			return fmt.Errorf("sync: restore the %s %s export state: %w", SecretsDocName, row.Key, err)
 		}

@@ -10,7 +10,9 @@ package relevo
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -259,6 +261,13 @@ func TestAJoinedMachineAnswersTheFleetWithNoSecretsEntries(t *testing.T) {
 		t.Fatalf("join refused: (%s) %s", res.Code, res.Message)
 	}
 
+	// B's first export. The join's reconcile carries rows only, so this exporter
+	// is the thing that answers the fleet for the first time, and it walks the
+	// document the join left signalled.
+	if _, err := exportOnce(b.mdb, b.bodyLog); err != nil {
+		t.Fatalf("B's first export: %v", err)
+	}
+
 	// The log the pair shares, read the way a third machine would: B's entries,
 	// everything every origin other than A's appended.
 	appended, err := b.log.OnLog("A").Pull(nil)
@@ -281,6 +290,33 @@ func TestAJoinedMachineAnswersTheFleetWithNoSecretsEntries(t *testing.T) {
 	}
 }
 
+// docSecretsKeys reads one origin's secrets-document item keys off the log,
+// in entry order, with a handle that answers as a machine other than origin.
+func docSecretsKeys(t *testing.T, log *synclog.MemTransport, origin string) []string {
+	t.Helper()
+	entries, err := log.OnLog(origin + "-reader").Pull(nil)
+	if err != nil {
+		t.Fatalf("read %s's doc entries: %v", origin, err)
+	}
+	var keys []string
+	for _, e := range entries {
+		if e.Origin != origin {
+			continue
+		}
+		name, ok := synclog.DocName(e.Table)
+		if !ok || name != "secrets" {
+			continue
+		}
+		// A doc entry's primary key is the item key as a one-element array.
+		var pk []string
+		if err := json.Unmarshal([]byte(e.PK), &pk); err != nil || len(pk) != 1 {
+			t.Fatalf("read a %s item key: %v", e.Table, err)
+		}
+		keys = append(keys, pk[0])
+	}
+	return keys
+}
+
 // TestAJoinRefusedForTheFleetsMissingBucketCanRetryAndThenHoldsTheFleetsSecrets
 // pins that a refused join can be joined again. The first attempt ends with
 // ErrNoR2AfterJoin after the pre-pass applied the fleet's document, the inviter
@@ -295,12 +331,26 @@ func TestAJoinRefusedForTheFleetsMissingBucketCanRetryAndThenHoldsTheFleetsSecre
 		t.Fatalf("first join = (ok %v, code %q), want refused as %q", res.OK, res.Code, wire.SyncCodeNoR2)
 	}
 
+	// The fleet's document said what it said before the refusal. Its next export
+	// gains only the four bucket credentials: a fleet whose unchanged values
+	// re-seal into new envelopes would re-issue typesafe and the client key
+	// under fresh stamps, and the retry would then land on the fleet's answer
+	// to values it had a moment ago instead of its redeliveries.
+	before := docSecretsKeys(t, b.log, "A")
+
 	// The fleet takes on the credentials a person typed and shares them the way
 	// it shares its other secrets.
 	if err := relevosync.SetR2(a.local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
 		t.Fatalf("SetR2 on A: %v", err)
 	}
 	a.exportThrough(t)
+	fresh := docSecretsKeys(t, b.log, "A")[len(before):]
+	if want := []string{
+		relevosync.SecretR2Bucket, relevosync.SecretR2Endpoint,
+		relevosync.SecretR2KeyID, relevosync.SecretR2Secret,
+	}; !slices.Equal(fresh, want) {
+		t.Errorf("A's export issued %v, want exactly the four bucket credentials; the fleet re-issued what it already carried", fresh)
+	}
 
 	res = bRunner.Run(context.Background(), joinVerb(t, joinPassphrase), []byte(joinToken+joinPassphrase))
 	if !res.OK {
