@@ -63,6 +63,58 @@ func TestQueryFilters(t *testing.T) {
 	}
 }
 
+// TestFilterTicketsMatchTheStoredForms pins ticket filtering across the
+// stored forms: a bare number matches every stored ticket ending in #N, and
+// every other form -- an issue key, a project path, an opaque URL -- matches
+// the stored form exactly.
+func TestFilterTicketsMatchTheStoredForms(t *testing.T) {
+	d := openTestDB(t)
+	repoID := upsertRepo(t, d, Repo{OriginURL: ptr("https://example.test/t.git"), CommonDir: ptr("/home/x/t/.git"), FirstSeen: repoSeenAt})
+	mastermindID, err := d.UpsertMasterMind(MasterMind{HarnessKind: "claude", SessionID: "sess-tickets", FirstSeen: repoSeenAt, LastSeen: repoSeenAt})
+	if err != nil {
+		t.Fatalf("UpsertMasterMind: %v", err)
+	}
+	tickets := map[string]string{
+		"ledger":  "grp/sub/proj#5",
+		"bare":    "#5",
+		"support": "ENG-42",
+		"acme":    "ABC-12",
+		"tracker": "https://linear.app/team/issue/ENG-123",
+	}
+	for name, ticket := range tickets {
+		b := newTestBinding(name, repoSeenAt)
+		b.RepoID = ptr(repoID)
+		b.MasterMindID = ptr(mastermindID)
+		b.Ticket = ptr(ticket)
+		id := upsertBinding(t, d, b)
+		if _, err := d.UpsertRound(newTestRound(id, 1, OutcomeReported)); err != nil {
+			t.Fatalf("UpsertRound %s: %v", name, err)
+		}
+	}
+
+	cases := []struct {
+		name   string
+		ticket string
+		want   []pair
+	}{
+		{"issue key is exact", "ENG-42", []pair{{"support", 1}}},
+		{"subgroup path is exact", "grp/sub/proj#5", []pair{{"ledger", 1}}},
+		{"opaque url is exact", "https://linear.app/team/issue/ENG-123", []pair{{"tracker", 1}}},
+		{"bare number matches every ending", "#5", []pair{{"bare", 1}, {"ledger", 1}}},
+		{"a shorter key matches nothing", "ABC-1", []pair{}},
+		{"a key no stored ticket equals matches nothing", "ENG-123", []pair{}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := d.Query(Filter{Ticket: c.ticket})
+			if err != nil {
+				t.Fatalf("Query: %v", err)
+			}
+			assertPairs(t, got, c.want)
+		})
+	}
+}
+
 func TestQueryNoFilterReturnsAllNewestFirst(t *testing.T) {
 	s := seedDB(t)
 	got, err := s.d.Query(Filter{Newest: true})

@@ -135,7 +135,7 @@ func bindFlagSet(fs *flag.FlagSet) *bindFlagValues {
 	v.regate = fs.Int("regate", -1, "after a failing gate, open up to N automatic repair rounds; 0 disables (default: config policy gate.regate)")
 	v.feature = fs.String("feature", "", "label grouping this binding with others; a fresh bind needs exactly one of --feature or --no-feature")
 	v.noFeature = fs.Bool("no-feature", false, "record that this binding is not a feature; a fresh bind needs exactly one of --feature or --no-feature")
-	v.ticket = fs.String("ticket", "", "the issue this binding serves: N, #N, owner/repo#N, or a .../issues/N URL (allowed with --no-feature)")
+	v.ticket = fs.String("ticket", "", "the issue this binding serves: N, #N, owner/repo#N, an issue key like ABC-123, or an issue URL (allowed with --no-feature)")
 	v.actor = fs.String("actor", "", "the actor this binding runs (default builder); a reader actor leaves artifacts and never changes the tree")
 	v.worktree = fs.Bool("worktree", false, "attach an additional runner to this mastermind, on its own worktree")
 	v.cwd = fs.String("cwd", "", "bind the peer to an existing directory instead of creating a git worktree")

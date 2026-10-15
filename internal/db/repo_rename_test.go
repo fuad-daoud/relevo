@@ -160,6 +160,63 @@ func TestRenameRepoLeavesShorthandTickets(t *testing.T) {
 	}
 }
 
+// TestRenameRepoRewritesSubgroupTickets pins a subgroup rename: the whole
+// project path is the ticket prefix, so grp/sub/old#N rewrites to
+// grp/sub/new#N in bindings and chains alike.
+func TestRenameRepoRewritesSubgroupTickets(t *testing.T) {
+	f := seedRenameFixture(t)
+	insertChain(t, f.d, "sg1", renameOrigin, "grp/sub/old#6")
+	b := newTestBinding("sg", repoSeenAt)
+	b.RepoID = ptr(f.fromID)
+	b.Ticket = ptr("grp/sub/old#5")
+	upsertBinding(t, f.d, b)
+
+	p := renameParams()
+	p.FromOwnerRepo, p.ToOwnerRepo = "grp/sub/old", "grp/sub/new"
+	c, err := f.d.RenameRepo(p)
+	if err != nil {
+		t.Fatalf("RenameRepo: %v", err)
+	}
+	if c.TicketsRewritten != 2 {
+		t.Errorf("tickets_rewritten = %d, want 2 (one binding, one chain)", c.TicketsRewritten)
+	}
+	if got := queryStrings(t, f.d, `SELECT ticket FROM binding WHERE name = 'sg'`); len(got) != 1 || got[0] != "grp/sub/new#5" {
+		t.Errorf("binding ticket = %v, want grp/sub/new#5", got)
+	}
+	if got := queryStrings(t, f.d, `SELECT ticket FROM chains WHERE name = 'sg1'`); len(got) != 1 || got[0] != "grp/sub/new#6" {
+		t.Errorf("chain ticket = %v, want grp/sub/new#6", got)
+	}
+}
+
+// TestRenameRepoLeavesKeysAndURLs pins that an issue key and an opaque URL
+// carry no owner/repo# prefix: a rename leaves them alone and does not count
+// them.
+func TestRenameRepoLeavesKeysAndURLs(t *testing.T) {
+	f := seedRenameFixture(t)
+	insertChain(t, f.d, "k1", renameOrigin, "ENG-42")
+	for i, ticket := range []string{"ENG-42", "https://linear.app/team/issue/ENG-123"} {
+		b := newTestBinding(fmt.Sprintf("k%d", i), repoSeenAt.Add(time.Duration(i)*time.Minute))
+		b.RepoID = ptr(f.fromID)
+		b.Ticket = ptr(ticket)
+		upsertBinding(t, f.d, b)
+	}
+	c, err := f.d.RenameRepo(renameParams())
+	if err != nil {
+		t.Fatalf("RenameRepo: %v", err)
+	}
+	if c.TicketsRewritten != 1 {
+		t.Errorf("tickets_rewritten = %d, want 1 (the fixture's own owner/repo ticket)", c.TicketsRewritten)
+	}
+	got := queryStrings(t, f.d, `SELECT ticket FROM binding WHERE name IN ('k0','k1') ORDER BY name`)
+	want := []string{"ENG-42", "https://linear.app/team/issue/ENG-123"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("binding tickets = %v, want %v", got, want)
+	}
+	if got := queryStrings(t, f.d, `SELECT ticket FROM chains WHERE name = 'k1'`); len(got) != 1 || got[0] != "ENG-42" {
+		t.Errorf("chain ticket = %v, want ENG-42", got)
+	}
+}
+
 const recordBefore = `{"name":"r1","big":9007199254740993,"unknown":{"a":1.50,"h":"<&>"},"ticket":"o/old_repo#5","repo_ref":{"origin_url":"https://github.com/o/old_repo","common_dir":"/main/.git"},"tail":[1,2]}`
 const recordAfter = `{"name":"r1","big":9007199254740993,"unknown":{"a":1.50,"h":"<&>"},"ticket":"o/new_repo#5","repo_ref":{"origin_url":"https://github.com/o/new_repo","common_dir":"/main/.git"},"tail":[1,2]}`
 

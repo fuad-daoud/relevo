@@ -2105,6 +2105,53 @@ func TestBindStoresBareTicketWithoutRepo(t *testing.T) {
 	}
 }
 
+// TestBindStoresAGitLabSubgroupTicket pins the whole project path as the
+// hint: a GitLab subgroup origin makes a bare --ticket number store as
+// grp/sub/proj#N.
+func TestBindStoresAGitLabSubgroupTicket(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	rt.Git = &fakeGit{
+		repoFactsOrigin:    "git@gitlab.com:grp/sub/proj.git",
+		repoFactsCommonDir: "/repo/.git",
+	}
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testAgyRef, MasterMindID: testMasterMindName,
+		CWD: "/repo", NoFeature: true, Ticket: "5",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if b.Ticket != "grp/sub/proj#5" {
+		t.Errorf("Ticket = %q, want grp/sub/proj#5", b.Ticket)
+	}
+}
+
+// TestBindStoresAnIssueKeyVerbatim pins that an issue key is stored as typed:
+// the repository hint never reaches it.
+func TestBindStoresAnIssueKeyVerbatim(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	rt.Git = &fakeGit{
+		repoFactsOrigin:    "git@github.com:o/r.git",
+		repoFactsCommonDir: "/repo/.git",
+	}
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "webshop", Candidate: testAgyRef, MasterMindID: testMasterMindName,
+		CWD: "/repo", NoFeature: true, Ticket: "ENG-42",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	if b.Ticket != "ENG-42" {
+		t.Errorf("Ticket = %q, want ENG-42", b.Ticket)
+	}
+}
+
 // TestBindRejectsBadTicketBeforeSpawn pins #637: a malformed --ticket is
 // refused before anything is spawned and no binding is saved.
 func TestBindRejectsBadTicketBeforeSpawn(t *testing.T) {

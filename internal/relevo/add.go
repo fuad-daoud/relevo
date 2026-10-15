@@ -78,10 +78,11 @@ type AddOptions struct {
 	// (#172); "" means ungrouped. Validated by store.ValidFeature when set.
 	Feature string
 
-	// Ticket is the issue this binding serves, as typed on --ticket (#637).
-	// Add parses it once against opts.Repo and stores the canonical form; ""
-	// means none. There is no --no-feature: nothing to clear, the mark is
-	// CLI-only and only a fresh bind needs it.
+	// Ticket is the issue this binding serves, as typed on --ticket (#637):
+	// a number, #N, project/path#N, an issue key like ABC-123, or an http(s)
+	// URL. Add parses it once against opts.Repo and stores the canonical
+	// form; "" means none. There is no --no-feature: nothing to clear, the
+	// mark is CLI-only and only a fresh bind needs it.
 	Ticket string
 
 	// Role is the writer role the new binding runs (#382); "" means builder.
