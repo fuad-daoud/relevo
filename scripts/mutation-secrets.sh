@@ -2,10 +2,8 @@
 # scripts/mutation-secrets.sh -- proves each rule of the secrets document fails
 # when its condition is broken.
 #
-# Round 1 of the sync-secrets plan asks for a mutation check per new rule: what
-# was broken, and the name of the test that noticed. Each case here edits one
-# condition, runs the one test that pins it, and restores the file. A case that
-# still passes has a test that does not reach its rule.
+# Each case edits one condition, runs the one test that pins it, and restores
+# the file. A case that still passes has a test that does not reach its rule.
 #
 # Usage: sh scripts/mutation-secrets.sh [case]
 #   case  run only the named case (default: all of them)

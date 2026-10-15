@@ -73,11 +73,11 @@ func (v *VerbRunner) stageAndVerify(ctx context.Context, remote string, token, p
 	if !required && len(bytes.TrimSpace(passphrase)) == 0 {
 		return nil, nil
 	}
-	opened, err := relevosync.Enabled(v.Local)
+	on, err := relevosync.Enabled(v.Local)
 	if err != nil {
 		return nil, err
 	}
-	if opened {
+	if on {
 		return nil, relevosync.ErrAlreadyEnabled
 	}
 	snapshot, err := relevosync.SnapshotJoin(v.Local)
