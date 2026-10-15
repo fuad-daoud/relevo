@@ -416,8 +416,13 @@ if printf '%s' "$stub_out" | grep -qF 'config init --no-agents'; then
 fi
 
 # A host database with no set sections falls back to the starter: the empty
-# file reads as unset for every section, so the init line returns.
-sb "$script" create emptydb --dry-run
+# file reads as unset for every section, so the init line returns. The stub
+# answers every get as unset; the installed relevo would auto-start a daemon in
+# the temp state root, and that daemon outlives the root the trap removes.
+mkdir -p "$root/emptybin"
+printf '#!/bin/sh\nexit 1\n' > "$root/emptybin/relevo"
+chmod +x "$root/emptybin/relevo"
+sb env PATH="$root/emptybin:$PATH" sh "$script" create emptydb --dry-run
 carries 'an empty host database plans the init fallback' 'config init --no-agents'
 
 # A non-absolute RELEVO_SANDBOX_ROOT is refused: every safety check below
