@@ -6,12 +6,10 @@ import (
 	"strings"
 )
 
-// errUnterminated is a form the lexer cannot close: an unterminated string,
-// block comment, long bracket or heredoc. Refuse, never guess.
+// errUnterminated is a form the lexer cannot close: refuse, never guess.
 var errUnterminated = errors.New("unterminated form")
 
-// errStuck is the scan loop's guard error: a pass ended without moving
-// forward, so the lexer stops instead of recording the same span forever.
+// errStuck is the scan loop's guard: a pass that failed to move forward.
 var errStuck = errors.New("lexer did not advance")
 
 // span is one comment's byte range inside a source.
@@ -20,8 +18,7 @@ type span struct {
 	end   int
 }
 
-// lexOut is one source's lex: its comment spans, the ordered list of its
-// directive comments, and any lex error.
+// lexOut is one source's lex: comment spans, ordered directives, any error.
 type lexOut struct {
 	spans      []span
 	directives []string
@@ -49,8 +46,7 @@ type lexer struct {
 // lex scans src with l's rules. Every comment becomes a span; a comment
 // that is a directive also joins the ordered list, in file order; an
 // unterminated form is an error. Each pass records its position at the top,
-// and a pass that ends without moving forward is errStuck, so a branch that
-// forgets to consume stops the scan instead of looping forever.
+// and a pass that ends without moving forward is the errStuck guard.
 func lex(l *lang, src []byte) lexOut {
 	x := &lexer{l: l, src: src}
 	for x.i < len(src) && x.out.err == nil {
@@ -90,20 +86,19 @@ func (x *lexer) atComment() bool {
 	l, src, i := x.l, x.src, x.i
 	switch {
 	case l.hashAny && src[i] == '#':
-		x.lineComment(i)
+		x.record(i, lineEnd(src, i))
 		return true
 	case l.hashWord && src[i] == '#' && x.wordStart(i):
-		x.lineComment(i)
+		x.record(i, lineEnd(src, i))
 		return true
 	case l.slashLine && src[i] == '/' && i+1 < len(src) && src[i+1] == '/':
-		x.lineComment(i)
+		x.record(i, lineEnd(src, i))
 		return true
 	case l.dashLine && src[i] == '-' && i+1 < len(src) && src[i+1] == '-':
 		return x.dashComment(i)
 	case l.dashSymbol && src[i] == '-' && i+1 < len(src) &&
 		src[i+1] == '-' && !isHsSymbol(byteAt(src, i+2)):
-		// --> and --| stay code: a symbol after -- makes it an operator.
-		x.lineComment(i)
+		x.record(i, lineEnd(src, i)) // --> and --| stay code
 		return true
 	case l.blockSlash && src[i] == '/' && i+1 < len(src) && src[i+1] == '*':
 		return x.blockComment(i, "/*", "*/", l.blockNest)
@@ -127,18 +122,12 @@ func (x *lexer) dashComment(start int) bool {
 			return true
 		}
 	}
-	x.lineComment(start)
+	x.record(start, lineEnd(x.src, start))
 	return true
 }
 
-// lineComment records a comment that runs to the end of its line.
-func (x *lexer) lineComment(start int) {
-	x.record(start, lineEnd(x.src, start))
-}
-
 // record appends one comment's span and, when it is a directive, its raw
-// text to the ordered directive list, and moves the scan past the comment:
-// the comment branch is the one the scan loop must always see consume.
+// text to the ordered directive list, and moves the scan past the comment.
 func (x *lexer) record(start, end int) {
 	x.out.spans = append(x.out.spans, span{start: start, end: end})
 	text := strings.TrimRight(string(x.src[start:end]), " \t\r")
@@ -178,8 +167,8 @@ func (x *lexer) hasPrefixAt(j int, s string) bool {
 	return j+len(s) <= len(x.src) && string(x.src[j:j+len(s)]) == s
 }
 
-// wordStart reports whether the '#' at i starts a word: at the line start,
-// or after whitespace or one of ;&|()<>. So echo a#b, $# and ${#x} are code.
+// wordStart reports whether the '#' at i starts a word: line start, or
+// after whitespace or one of ;&|()<>. So echo a#b and ${#x} are code.
 func (x *lexer) wordStart(i int) bool {
 	if i == 0 {
 		return true
@@ -207,7 +196,7 @@ func (x *lexer) atString() bool {
 	case l.dollarQuote && src[i] == '$' && i+1 < len(src) && (src[i+1] == '\'' || src[i+1] == '"'):
 		return x.quoted(i+1, true, false)
 	case l.verbatim && src[i] == '@' && i+1 < len(src) && src[i+1] == '"':
-		return x.verbatimString(i)
+		return x.quoted(i+1, false, true)
 	case l.dollarTag && src[i] == '$':
 		return x.dollarTagString(i)
 	case l.longBracket && src[i] == '[':
@@ -227,8 +216,7 @@ func (x *lexer) atString() bool {
 }
 
 // quoted scans a quoted string opening at i: esc lets a backslash eat the
-// next character, doubling makes a doubled quote character content. The
-// string may span lines.
+// next character, doubling makes a doubled quote content; it may span lines.
 func (x *lexer) quoted(i int, esc, doubling bool) bool {
 	q := x.src[i]
 	for j := i + 1; j < len(x.src); j++ {
@@ -268,8 +256,7 @@ func (x *lexer) scanLiteral(i int, close string, esc bool) bool {
 	return true
 }
 
-// rawQuoteHash scans a raw string opened by a quote at i whose closer is a
-// quote followed by exactly n '#'s: r#"..."#, #"..."#.
+// rawQuoteHash scans a raw string whose closer is a quote and n '#'s.
 func (x *lexer) rawQuoteHash(i, n int) bool {
 	for j := i + 1; j < len(x.src); j++ {
 		if x.src[j] != '"' {
@@ -288,8 +275,8 @@ func (x *lexer) rawQuoteHash(i, n int) bool {
 	return true
 }
 
-// swiftRaw scans a Swift raw string opening at the '#' run i: #"..."# with
-// any number of '#'s; ' is not a string in Swift, so only " is handled.
+// swiftRaw scans a Swift raw string #"..."# with any number of '#'s; ' is
+// not a string in Swift, so only " is handled.
 func (x *lexer) swiftRaw(i int) bool {
 	j := i
 	for j < len(x.src) && x.src[j] == '#' {
@@ -302,8 +289,8 @@ func (x *lexer) swiftRaw(i int) bool {
 }
 
 // rsString scans a Rust string literal: an r/b/c prefix, or a pair, with
-// any number of '#'s before the quote. The r forms are raw, closed by a
-// quote followed by exactly that many '#'s; ' is a lifetime, not a string.
+// any number of '#'s before the quote; the r forms are raw. ' is a
+// lifetime, not a string.
 func (x *lexer) rsString(i int) bool {
 	p := 1
 	if i+2 < len(x.src) && isRSPrefix2(x.src[i:i+2]) && (x.src[i+2] == '"' || x.src[i+2] == '#') {
@@ -326,7 +313,7 @@ func (x *lexer) rsString(i int) bool {
 
 // pyString scans a Python string literal after an r/b/f/u prefix run. A raw
 // prefix changes the value, not the scanning: a backslash still hides the
-// closer, so r"a\" does not close.
+// closer.
 func (x *lexer) pyString(i int) bool {
 	j := i
 	for j < len(x.src) && isPyPrefixByte(x.src[j]) {
@@ -344,8 +331,8 @@ func (x *lexer) pyString(i int) bool {
 	return false
 }
 
-// dartString scans a Dart raw string opening at r: r'...', r"...",
-// r”'...”' and r"""...""", with no escapes at all.
+// dartString scans a Dart raw string opening at r: r'...', r"...", and the
+// triple forms, with no escapes at all.
 func (x *lexer) dartString(i int) bool {
 	j := i + 1
 	if x.hasPrefixAt(j, "'''") {
@@ -358,12 +345,6 @@ func (x *lexer) dartString(i int) bool {
 		return x.quoted(j, false, false)
 	}
 	return false
-}
-
-// verbatimString scans a C# @"..." string: no escapes, a doubled quote is
-// content, and the string may span lines.
-func (x *lexer) verbatimString(i int) bool {
-	return x.quoted(i+1, false, true)
 }
 
 // dollarTagString scans a SQL $tag$...$tag$ string: the tag is identifier
@@ -466,8 +447,8 @@ func (x *lexer) openHeredoc() bool {
 	return true
 }
 
-// activateHeredoc makes the first heredoc opened on the line that just
-// ended active; the queue keeps the rest in order.
+// activateHeredoc activates the first heredoc queued on the line just ended;
+// the queue keeps the rest in order.
 func (x *lexer) activateHeredoc() {
 	if x.act == nil && len(x.pend) > 0 {
 		x.act = &x.pend[0]
@@ -541,8 +522,7 @@ func (x *lexer) scanYamlBody() {
 
 // isDirective reports whether one comment's raw text is a directive: a
 // comment a tool reads, which a comment-only change may not touch. The
-// "#!" prefix counts only for a comment that starts the file: a shebang
-// sits at byte 0, and a "#!" further into a line is ordinary text.
+// "#!" prefix counts only for a comment that starts the file: a shebang.
 func isDirective(l *lang, text string, start int) bool {
 	for _, p := range l.directives {
 		if p == "#!" && start != 0 {
@@ -611,12 +591,10 @@ func isRSPrefix2(s []byte) bool {
 
 // isTagByte reports whether c can be part of a SQL dollar-quote tag.
 func isTagByte(c byte) bool {
-	return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-		(c >= '0' && c <= '9')
+	return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
-// isHsSymbol reports whether c is a Haskell symbol character, one of the
-// characters that keeps -- an operator instead of a comment.
+// isHsSymbol reports whether c keeps Haskell's -- an operator, not a comment.
 func isHsSymbol(c byte) bool {
 	return strings.IndexByte("!#$%&*+./<=>?@\\^|-~:", c) >= 0
 }
