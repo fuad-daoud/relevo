@@ -47,6 +47,11 @@ type lang struct {
 	yamlBlock   bool // | and > block scalars
 	arith       bool // (( )) arithmetic, where << is a shift
 
+	// Token forms a comment marker can hide behind.
+	regex    bool // a '/' outside a comment may open a regex literal
+	sqlIdent bool // "...", `...` and [...] open quoted identifiers
+	rawC     bool // R"delim(...)delim" raw strings, with u8R/uR/UR/LR prefixes
+
 	directives []string
 }
 
@@ -145,7 +150,7 @@ var (
 	jsLang = &lang{
 		name: "js", slashLine: true, blockSlash: true,
 		single: true, sqEsc: true, double: true, dqEsc: true, backtick: true,
-		directives: jsDirectives,
+		regex: true, directives: jsDirectives,
 	}
 	javaLang = &lang{
 		name: "java", slashLine: true, blockSlash: true,
@@ -170,7 +175,7 @@ var (
 	cLang = &lang{
 		name: "c", slashLine: true, blockSlash: true,
 		single: true, sqEsc: true, double: true, dqEsc: true,
-		directives: cDirectives,
+		rawC: true, directives: cDirectives,
 	}
 	rsLang = &lang{
 		name: "rs", slashLine: true, blockSlash: true, blockNest: true,
@@ -178,7 +183,8 @@ var (
 	}
 	sqlLang = &lang{
 		name: "sql", dashLine: true, blockSlash: true,
-		single: true, sqDouble: true, dollarTag: true, directives: sqlDirectives,
+		single: true, sqDouble: true, dollarTag: true,
+		sqlIdent: true, directives: sqlDirectives,
 	}
 	luaLang = &lang{
 		name: "lua", dashLine: true, dashBracket: true,

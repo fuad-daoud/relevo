@@ -55,6 +55,7 @@ func lex(l *lang, src []byte) lexOut {
 		case x.act != nil:
 			x.heredocStep()
 		case x.atComment():
+		case x.atRegex():
 		case x.atString():
 		case x.atArith():
 		case x.atHeredocOpener():
@@ -189,6 +190,12 @@ func (x *lexer) atString() bool {
 		return x.swiftRaw(i)
 	case l.rsPrefix && isRSPrefixByte(src[i]):
 		return x.rsString(i)
+	case l.sqlIdent && (src[i] == '"' || src[i] == '`'):
+		return x.quoted(i, false, true)
+	case l.sqlIdent && src[i] == '[':
+		return x.bracketIdent(i)
+	case l.rawC && isCRawPrefixByte(src[i]):
+		return x.cRawString(i)
 	case l.pyPrefix && isPyPrefixByte(src[i]):
 		return x.pyString(i)
 	case l.dartPrefix && src[i] == 'r':
