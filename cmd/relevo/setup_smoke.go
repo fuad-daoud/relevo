@@ -113,9 +113,9 @@ func smokeRepo(repo string) error {
 		return err
 	}
 	for _, args := range [][]string{
-		{"git", "init", "-q"},
-		{"git", "add", "."},
-		{"git", "-c", "user.name=relevo setup", "-c", "user.email=setup@relevo", "commit", "-q", "-m", "relevo setup smoke"},
+		{"init", "-q"},
+		{"add", "."},
+		{"-c", "user.name=relevo setup", "-c", "user.email=setup@relevo", "commit", "-q", "-m", "relevo setup smoke"},
 	} {
 		if err := smokeGit(repo, args...); err != nil {
 			return err

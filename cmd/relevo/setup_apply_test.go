@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/serviceunit"
+	"github.com/fuad-daoud/relevo/internal/setup"
 )
 
 // fakePluginRunner answers every claude call from a script and records them,
@@ -298,5 +300,35 @@ func TestSetupPluginCheckReadsClaudeConfigDir(t *testing.T) {
 	}
 	if !doctor.RelevoPluginInstalledIn(dir) {
 		t.Fatalf("installed_plugins.json under CLAUDE_CONFIG_DIR not read")
+	}
+}
+
+// TestSmokeRepoCommitsTheReadme pins the throwaway repository the smoke
+// round binds: initialised, with README.md committed.
+func TestSmokeRepoCommitsTheReadme(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	if err := smokeRepo(repo); err != nil {
+		t.Fatalf("smokeRepo: %v", err)
+	}
+	out, err := exec.Command("git", "-C", repo, "ls-files").Output()
+	if err != nil {
+		t.Fatalf("git ls-files: %v", err)
+	}
+	if strings.TrimSpace(string(out)) != "README.md" {
+		t.Fatalf("committed files = %q, want README.md", out)
+	}
+}
+
+// TestSetupAgentsStepSkipsInSandbox pins that a sandbox run never installs
+// agent definitions, which land under the real HOME.
+func TestSetupAgentsStepSkipsInSandbox(t *testing.T) {
+	t.Setenv("RELEVO_SANDBOX", "test")
+	var w strings.Builder
+	files := setup.Files{Kinds: []string{"codex"}}
+	if err := runSetupAgents(nil, files, &w); err != nil {
+		t.Fatalf("runSetupAgents: %v", err)
+	}
+	if !strings.Contains(w.String(), sandboxAgentsNote) {
+		t.Fatalf("output = %q, want the sandbox note", w.String())
 	}
 }

@@ -203,6 +203,12 @@ func setupBuildError(err error) error {
 // configuration names as logged in, one result line to the notice writer, a
 // per-file error failing the step the way init does.
 func runSetupAgents(env setup.SetupEnv, files setup.Files, w io.Writer) error {
+	// Agent definitions install under the real HOME, not the sandbox's, so a
+	// sandbox run would rewrite the developer's own files.
+	if inEnvSandbox() {
+		fmt.Fprintln(w, sandboxAgentsNote)
+		return nil
+	}
 	for _, kind := range files.Kinds {
 		results, err := harness.Install(env, harness.InstallOptions{Kind: kind})
 		if err != nil {
@@ -217,6 +223,8 @@ func runSetupAgents(env setup.SetupEnv, files setup.Files, w io.Writer) error {
 	}
 	return nil
 }
+
+const sandboxAgentsNote = "agents: skipped inside an env sandbox; relevo-sandbox.sh create copied them"
 
 // runSetupPlugin installs the Claude Code plugin through the seam: add the
 // marketplace only when a marketplace list does not already name it, then
