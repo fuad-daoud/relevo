@@ -10,7 +10,7 @@ import (
 // Change is one difference between two config documents, or a secret change.
 type Change struct {
 	Path   string          `json:"path"`
-	Op     string          `json:"op"`               // "add" | "remove" | "change" | "set" (secrets only)
+	Op     string          `json:"op"`               // "add" | "remove" | "change" | "set" | "applied" | "removed" | "superseded"
 	Before json.RawMessage `json:"before,omitempty"` // absent for add/set
 	After  json.RawMessage `json:"after,omitempty"`  // absent for remove/set
 }
