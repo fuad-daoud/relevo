@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/account"
+	"github.com/fuad-daoud/relevo/internal/board/theme"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -33,12 +34,13 @@ const (
 	Hooks      Section = "hooks"
 	Workflows  Section = "workflows"
 	Repos      Section = "repos"
+	Themes     Section = "themes"
 	Sync       Section = "sync"
 )
 
 // Sections is the order an import checks and stores the sections, and the
 // order EncodeDoc and DiffDocs render them.
-var Sections = []Section{Candidates, Agents, Actors, Accounts, Policy, Roles, Prices, Servers, Hooks, Workflows, Repos, Sync}
+var Sections = []Section{Candidates, Agents, Actors, Accounts, Policy, Roles, Prices, Servers, Hooks, Workflows, Repos, Themes, Sync}
 
 // sectionFile maps a section to the file it is imported from.
 var sectionFile = map[Section]string{
@@ -92,7 +94,12 @@ type Loaded struct {
 	// Repos is the per-repository settings section, keyed by the repository's
 	// identity (the sha256 of its root commit). An absent section is an empty
 	// map: a machine that never used the feature reads no entry.
-	Repos     map[string]RepoEntry
+	Repos map[string]RepoEntry
+	// Themes is the board palettes section, keyed by theme name. It is seeded
+	// once per database from the release's own data, so a fresh install reads
+	// the two built-ins from the section like any other palette. An absent
+	// section is an empty map.
+	Themes    map[string]theme.Theme
 	ClientKey []byte
 	Typesafe  string
 	Warnings  []string
@@ -411,6 +418,9 @@ func Validate(sec Section, body []byte) ([]string, error) {
 		return nil, err
 	case Repos:
 		_, err := ParseRepos(body)
+		return nil, err
+	case Themes:
+		_, err := ParseThemes(body)
 		return nil, err
 	case Sync:
 		_, err := sync.ParseSettings(body)

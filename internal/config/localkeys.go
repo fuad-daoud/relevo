@@ -22,6 +22,7 @@ var perItemSections = map[Section]bool{
 	Accounts:   true,
 	Servers:    true,
 	Repos:      true,
+	Themes:     true,
 }
 
 // keySeparator joins a section name to an item name in a doc key.

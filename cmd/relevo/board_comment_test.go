@@ -11,9 +11,10 @@ import (
 )
 
 // stubBoardTheme points the theme seam at cockpit, so a comment test never
-// depends on this repository's git config.
+// depends on this repository's git config or this machine's own state.
 func stubBoardTheme(t *testing.T) {
 	t.Helper()
+	seamlessBoard(t)
 	orig := boardGitConfig
 	boardGitConfig = func(string, string) (string, error) { return "", nil }
 	t.Cleanup(func() { boardGitConfig = orig })

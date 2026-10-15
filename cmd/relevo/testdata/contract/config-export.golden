@@ -21,5 +21,33 @@
         "claude/p/m"
       ]
     }
+  },
+  "themes": {
+    "blueprint": {
+      "bg": "#0b1220",
+      "ink": "#dbe4f0",
+      "muted": "#8296b3",
+      "faint": "#4c5f7d",
+      "line": "#2c3c58",
+      "panel": "#111c2f",
+      "accent": "#7dd3fc",
+      "good": "#86efac",
+      "warn": "#fcd34d",
+      "bad": "#fca5a5",
+      "comment": "#c4b5fd"
+    },
+    "cockpit": {
+      "bg": "#0f1115",
+      "ink": "#e6e8ec",
+      "muted": "#9097a3",
+      "faint": "#596070",
+      "line": "#3a4150",
+      "panel": "#1a1f28",
+      "accent": "#6ea8fe",
+      "good": "#5fd08f",
+      "warn": "#f2b84b",
+      "bad": "#ff6b81",
+      "comment": "#b48cf2"
+    }
   }
 }

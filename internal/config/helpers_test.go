@@ -14,6 +14,16 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
+// The themes section's test palettes: cockpit as the seed writes it, and a
+// variant with different colours that is still a whole valid palette. Keys
+// sort, so both bodies are keyed blueprints-first and then cockpit, which is
+// the byte shape a section body rebuilt from its items always has.
+const themesVariant = `{"bg":"#101318","ink":"#e7e9ed","muted":"#9188a3","faint":"#5a6070","line":"#3b4151","panel":"#1b1f29","accent":"#6fb9fe","good":"#5fd39f","warn":"#f2c84b","bad":"#ff6c81","comment":"#b5dcf2"}`
+const themesCockpit = `{"bg":"#0f1115","ink":"#e6e8ec","muted":"#9097a3","faint":"#596070","line":"#3a4150","panel":"#1a1f28","accent":"#6ea8fe","good":"#5fd08f","warn":"#f2b84b","bad":"#ff6b81","comment":"#b48cf2"}`
+const themesBlueprint = `{"bg":"#0b1220","ink":"#dbe4f0","muted":"#8296b3","faint":"#4c5f7d","line":"#2c3c58","panel":"#111c2f","accent":"#7dd3fc","good":"#86efac","warn":"#fcd34d","bad":"#fca5a5","comment":"#c4b5fd"}`
+const themesBase = `{"blueprint":` + themesBlueprint + `,"cockpit":` + themesCockpit + `}`
+const themesChanged = `{"blueprint":` + themesVariant + `,"cockpit":` + themesVariant + `}`
+
 func openStore(t *testing.T) *Store {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))

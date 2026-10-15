@@ -31,11 +31,7 @@ func commentScene(t *testing.T, id, at string) string {
 
 func testTheme(t *testing.T) *Theme {
 	t.Helper()
-	th, err := Lookup("cockpit")
-	if err != nil {
-		t.Fatalf("Lookup(cockpit): %v", err)
-	}
-	return th
+	return seedTheme(t, "cockpit")
 }
 
 func testAt() time.Time { return time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC) }

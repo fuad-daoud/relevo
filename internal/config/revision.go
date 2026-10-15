@@ -70,6 +70,23 @@ func readSnapshot(t *db.Tx) (snapshot, error) {
 	return snapshot{doc: doc, version: version}, nil
 }
 
+// hadUserConfig reports whether doc holds config beyond the theme seed. The
+// seed writes revisionlessly, so a machine whose only stored section is
+// `themes` is still a fresh one as far as the revisions go: its first
+// recording write takes no baseline to roll back to, exactly as an empty one
+// does. Any other section earns the baseline as always.
+func hadUserConfig(doc Doc) bool {
+	if len(doc) == 0 {
+		return false
+	}
+	for sec := range doc {
+		if sec != Themes {
+			return true
+		}
+	}
+	return false
+}
+
 // record appends one revision for a write that changed something; as the last
 // statement of every write transaction, it commits with the change or not.
 func (s *Store) record(t *db.Tx, before snapshot, extra []Change) error {
@@ -93,7 +110,7 @@ func (s *Store) record(t *db.Tx, before snapshot, extra []Change) error {
 
 	// The first revision on a machine that already has config is preceded by a
 	// baseline carrying the version before the write, so it can be rolled back.
-	if len(before.doc) > 0 {
+	if hadUserConfig(before.doc) {
 		exists, err := t.RevisionsExist()
 		if err != nil {
 			return err
