@@ -1,6 +1,6 @@
 ---
 name: planner-loop
-description: Drive a relevo round end to end -- send a plan, wait for the runner, read its report, run the project's check, gate on a usage limit, and mark it done. Use when a relevo binding has a round open or a runner's report has just arrived.
+description: Drive a relevo round end to end -- send a plan, wait for the runner, read its report, verify the round, gate on a usage limit, and mark it done. Use when a relevo binding has a round open or a runner's report has just arrived.
 allowed-tools: Bash(relevo:*)
 ---
 
@@ -31,15 +31,15 @@ decision that closes it.
 3. Read it: `relevo show <n> --report`, a reader's artifact with
    `relevo show <n> --output`, and the shape of the change with
    `relevo show <n> --diff --stat`.
-4. Verify it: run the project's check yourself.
+4. Verify it yourself, as the round needs.
 5. Close it: `relevo done <n>`.
 
 ## 2. The rules
 
-- Do not trust the report. The report is the runner's claim; the diff and the
-  project's check are the evidence. Never call `relevo done <n>` on a report's
-  arrival alone.
-- Run the project's own check yourself -- in this repo, `make check`.
+- Do not trust the report. The report is the runner's claim; the diff is the
+  evidence. Never call `relevo done <n>` on a report's arrival alone.
+- Decide what verifying the round takes -- the project's check, a targeted
+  test, or reading the diff -- and do it yourself.
 - Compare `relevo show <n> --diff --stat` against the plan's declared scope.
   The report's `changed_paths` and `not_done` are where a round overreaches or
   leaves work behind.

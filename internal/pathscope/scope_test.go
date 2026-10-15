@@ -17,6 +17,9 @@ func TestDocsSetMatchesKnownFiles(t *testing.T) {
 		{"docs/design.md", true},                          // nested
 		{"a/b/c.markdown", true},                          // another extension
 		{"docs/diagram.svg", true},                        // a root-level svg would too
+		{"docs/index.rst", true},                          // Sphinx
+		{"docs/guide.adoc", true},                         // AsciiDoc
+		{"requirements.txt", false},                       // .txt is often config
 		{"internal/foo/testdata/x.md", false},             // !**/testdata/**
 		{"testdata/x.md", false},                          // testdata at the root
 		{"vendor/github.com/x/y/z.md", false},             // !vendor/**

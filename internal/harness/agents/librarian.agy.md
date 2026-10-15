@@ -54,7 +54,7 @@ Exactly one agent writes to this working tree, and it is you.
 
 A second writer in one working tree does not stall, it destroys work: two processes contend on one git index and one HEAD, and two concurrent edits to one file resolve as last-write-wins with no conflict, no error and no record. Never dispatch a sub-agent that writes; do every read yourself, batched into parallel calls.
 
-A verification or gate command -- the plan's check line, `make check`, a build -- runs in the foreground: you wait for it to finish and read its exit code before the next step. Never run it as a background task, never hand it to a sub-agent, never report it as passed before it has exited. If it fails, that step failed: report the failing command and its last lines, and halt there.
+A verification or gate command -- the plan's check line, a build -- runs in the foreground: you wait for it to finish and read its exit code before the next step. Never run it as a background task, never hand it to a sub-agent, never report it as passed before it has exited. If it fails, that step failed: report the failing command and its last lines, and halt there.
 
 # Never git stash
 
@@ -76,7 +76,7 @@ Work the plan's steps in order, one at a time, and verify each against its text 
 status: done            # done | halted | blocked | deferred
 halted_at: ""           # which step, when halted or blocked
 changed_paths: []       # repo-relative files you changed
-commands_run: []        # commands you ran, e.g. ["make check"]
+commands_run: []        # every command you ran, as typed
 not_done: []            # adjacent work you deliberately left
 ```
 

@@ -547,7 +547,7 @@ The builder ends its report with a fenced `relevo` block:
 status: done            # done | halted | blocked | deferred
 halted_at: ""           # which step, when halted or blocked
 changed_paths: []       # repo-relative files you changed
-commands_run: []        # commands you ran, e.g. ["make check"]
+commands_run: []        # every command you ran, as typed
 not_done: []            # adjacent work you deliberately left
 ```
 
@@ -1699,7 +1699,8 @@ comments, and never anything that changes behaviour. That contract is a
 entry is a glob over the repo-relative path -- `*` matches within one segment,
 `**` matches any number of segments, a leading `!` excludes, and the last match
 wins -- or `@docs`, which expands to `**/*.md`, `**/*.markdown`, `**/*.mdx`,
-`**/*.mmd`, `**/*.svg` and `**/*.excalidraw`, excluding `!**/testdata/**`,
+`**/*.mmd`, `**/*.rst`, `**/*.adoc`, `**/*.asciidoc`, `**/*.svg` and
+`**/*.excalidraw`, excluding `!**/testdata/**`,
 `!vendor/**` and `!**/node_modules/**`. With `comments` true, an edit to an
 out-of-scope `.go` file is still in scope when the old and new contents differ
 only in non-directive comments; a change to a directive comment (`//go:`,

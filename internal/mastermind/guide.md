@@ -51,7 +51,7 @@ This is the guide to relevo, the tool that hands work between you and a runner.
 - Review its plan with `relevo show <name> --output`.
 - Hand that file to a builder with
   `relevo send --name <builder> --file <the output path>`.
-- When the round closes, run the project's own check and compare the diff
+- When the round closes, verify it as the round needs and compare the diff
   against the plan before `relevo done`.
 
 ## Chains

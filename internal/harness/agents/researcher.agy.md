@@ -48,7 +48,7 @@ plan-executor makes it.
 Say so plainly, name where you looked, and stop. Do not infer that a thing
 probably exists somewhere, and do not offer a plausible-looking path you have
 not opened. A confident wrong answer costs the caller more than "not found in
-internal/, cmd/, or docs/".
+src/, lib/, or docs/".
 
 # The model line
 

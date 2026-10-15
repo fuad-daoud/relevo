@@ -64,6 +64,7 @@ type Git interface {
 	// existing-branch form of creation: add --branch uses it when only
 	// origin/<name> exists, before CheckoutWorktree.
 	CreateTrackingBranch(ctx context.Context, dir, branch, upstream string) error
+	Remotes(ctx context.Context, dir string) ([]string, error)
 	DeleteBranch(ctx context.Context, dir, branch string) error
 	AddWorktree(ctx context.Context, dir, path, branch, commit string) error
 	// AddDetachedWorktree is AddWorktree without a branch: a throwaway tree

@@ -1,6 +1,8 @@
 # MasterMind runbook: verify, merge, deploy
 
-How a MasterMind verifies a builder's branch, merges it, and deploys relevo.
+Maintainer runbook for relevo's own development; it names the maintainer's
+machines and is not a guide to using relevo. How a MasterMind verifies a
+builder's branch, merges it, and deploys relevo.
 `CLAUDE.md` states the rules; this page states the steps. Prefer the `make`
 target over a hand-rolled command when both appear.
 
