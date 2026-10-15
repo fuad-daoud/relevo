@@ -48,7 +48,9 @@ fi
 # The daemon execs the harness CLIs by PATH lookup, and CI installs
 # golangci-lint under $(go env GOPATH)/bin, whose default is %h/go/bin. Both
 # shipped unit templates must carry it, or `make lint` skips quietly inside the
-# unit. Exactly one Environment=PATH= line per unit, naming %h/go/bin.
+# unit. The daemon unit is a template whose PATH the renderer assembles, so it
+# says @PATH@ and the renderer's own tests fix that list (cmd/relevo); the
+# serve unit carries the list itself. Exactly one Environment=PATH= line per unit.
 for unit in "$here/../dist/relevo.service" "$here/../dist/relevo-serve.service"; do
 	if [ ! -f "$unit" ]; then
 		echo "FAIL: no template at $unit"; fail=1; continue
@@ -56,10 +58,19 @@ for unit in "$here/../dist/relevo.service" "$here/../dist/relevo-serve.service";
 	if [ "$(grep -c '^Environment=PATH=' "$unit")" -ne 1 ]; then
 		echo "FAIL: $unit must set exactly one Environment=PATH= line"; fail=1
 	fi
-	if ! grep -q '^Environment=PATH=.*%h/go/bin' "$unit"; then
-		echo "FAIL: $unit does not carry %h/go/bin on PATH"; fail=1
-	fi
+	case $unit in
+	*relevo.service)
+		if ! grep -q '^Environment=PATH=@PATH@$' "$unit"; then
+			echo "FAIL: $unit must leave the PATH to the renderer"; fail=1
+		fi
+		;;
+	*)
+		if ! grep -q '^Environment=PATH=.*%h/go/bin' "$unit"; then
+			echo "FAIL: $unit does not carry %h/go/bin on PATH"; fail=1
+		fi
+		;;
+	esac
 done
 
 if [ "$fail" -ne 0 ]; then exit 1; fi
-echo "ok: $template has no MemoryMax, OOMPolicy=continue, ManagedOOMPreference=avoid, and StartLimitIntervalSec=0 in [Unit]; both unit templates carry %h/go/bin on PATH"
+echo "ok: $template has no MemoryMax, OOMPolicy=continue, ManagedOOMPreference=avoid, and StartLimitIntervalSec=0 in [Unit]; the daemon template leaves its PATH to the renderer and the serve template carries %h/go/bin on PATH"

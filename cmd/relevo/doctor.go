@@ -195,7 +195,7 @@ func renderReport(w io.Writer, rep doctor.Report) {
 
 	if failCount == 0 {
 		if rep.NoCandidates {
-			fmt.Fprintf(w, "%s, %s -- no candidates configured; set them with relevo config set candidates first.\n", warnPart, failPart)
+			fmt.Fprintf(w, "%s, %s -- no candidates configured; run relevo setup.\n", warnPart, failPart)
 		} else if !rep.UsableBuilder {
 			// Say why. Every row can be `ok` and still leave no usable builder --
 			// a machine whose only alias names a kind relevo was not taught reads
@@ -234,6 +234,18 @@ func roleSourceChecks(reg *roles.Registry, set *candidate.Set, pol policy.Policy
 		})
 	}
 	return out
+}
+
+// candidatesCheck is the no-candidates row. Its fix is the one-time setup
+// wizard, which writes the same seeds a fresh machine needs (candidates,
+// policy, actors), so the machine's next steps all point at one command.
+func candidatesCheck() doctor.Check {
+	return doctor.Check{
+		Name:     "candidates",
+		Severity: doctor.SevWarn,
+		Detail:   "none configured",
+		Fix:      "relevo setup",
+	}
 }
 
 // doctorFlagValues holds the pointer doctor parses into.
@@ -345,12 +357,7 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 
 	if rt.Candidates.Len() == 0 {
 		rep.NoCandidates = true
-		rep.Checks = insertGlobalCheck(rep.Checks, doctor.Check{
-			Name:     "candidates",
-			Severity: doctor.SevWarn,
-			Detail:   "none configured",
-			Fix:      `relevo config set candidates '[{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"]}]'`,
-		})
+		rep.Checks = insertGlobalCheck(rep.Checks, candidatesCheck())
 	}
 
 	if stateRoot, err := store.DefaultRoot(); err == nil {

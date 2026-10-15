@@ -225,6 +225,8 @@ func run(args []string) error {
 		fmt.Fprintf(os.Stderr, "relevo: sandbox %s\n", name)
 	}
 
+	activeVerb = args[0]
+
 	switch args[0] {
 	case "help", "-h", "--help":
 		return cmdHelp(args[1:])
