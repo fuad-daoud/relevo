@@ -218,7 +218,7 @@ func TestSyncRemoteFetchesWithoutTheStateLock(t *testing.T) {
 	}
 }
 
-func TestApplyLogMirrorSkipsWhenTheRowMoved(t *testing.T) {
+func TestApplyLogMirrorSkipsWhenTheFileMoved(t *testing.T) {
 	st := store.New(t.TempDir())
 	if err := st.Save(remoteBinding("zen")); err != nil {
 		t.Fatal(err)
@@ -226,47 +226,48 @@ func TestApplyLogMirrorSkipsWhenTheRowMoved(t *testing.T) {
 	logPath := st.BuilderLogPath("api", 1)
 	rt := Runtime{Store: st}
 
-	putRow := func(body string) {
+	putFile := func(body string) {
 		t.Helper()
-		if err := st.WithLock(func(tx *store.Tx) error {
-			return tx.PutRoundFile("api", 1, logPath, []byte(body))
-		}); err != nil {
-			t.Fatalf("put row: %v", err)
+		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(logPath, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
 	apply := func(m *logMirror) {
 		t.Helper()
-		if err := st.WithLock(func(tx *store.Tx) error {
-			applyLogMirror(rt, tx, "api", 1, m)
+		if err := st.WithLock(func(*store.Tx) error {
+			applyLogMirror(rt, "api", 1, m)
 			return nil
 		}); err != nil {
 			t.Fatalf("applyLogMirror: %v", err)
 		}
 	}
-	readRow := func() string {
+	readFile := func() string {
 		t.Helper()
-		data, err := st.ReadFile(logPath)
+		data, err := os.ReadFile(logPath)
 		if err != nil {
-			t.Fatalf("read row: %v", err)
+			t.Fatalf("read mirror: %v", err)
 		}
 		return string(data)
 	}
 
-	putRow("12345678")
+	putFile("12345678")
 	apply(&logMirror{Path: logPath, Base: 5, Body: []byte("XY")})
-	if got := readRow(); got != "12345678" {
-		t.Fatalf("row after a moved-row append = %q, want it unchanged", got)
+	if got := readFile(); got != "12345678" {
+		t.Fatalf("mirror after a moved-file append = %q, want it unchanged", got)
 	}
 
-	putRow("12345")
+	putFile("12345")
 	apply(&logMirror{Path: logPath, Base: 5, Body: []byte("XY")})
-	if got := readRow(); got != "12345XY" {
-		t.Fatalf("row after an in-place append = %q, want %q", got, "12345XY")
+	if got := readFile(); got != "12345XY" {
+		t.Fatalf("mirror after an in-place append = %q, want %q", got, "12345XY")
 	}
 
 	apply(&logMirror{Path: logPath, Base: -1, Body: []byte("ZZZ")})
-	if got := readRow(); got != "ZZZ" {
-		t.Fatalf("row after a full replacement = %q, want %q", got, "ZZZ")
+	if got := readFile(); got != "ZZZ" {
+		t.Fatalf("mirror after a full replacement = %q, want %q", got, "ZZZ")
 	}
 }
 

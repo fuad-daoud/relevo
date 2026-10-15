@@ -2,7 +2,9 @@ package relevo
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"strings"
@@ -98,16 +100,15 @@ func applyCatchUpFiles(rt Runtime, tx *store.Tx, b store.Binding, view remote.Bi
 		}
 	}
 	logPath := rt.Store.BuilderLogPath(name, n)
-	if cf.LogTemp != "" {
-		if err := os.Rename(cf.LogTemp, logPath); err != nil {
-			slog.Warn("write log failed", "path", logPath, "err", err)
-			return false
-		}
-	}
 	if cf.Log != nil {
 		if err := tx.PutRoundFile(name, n, logPath, cf.Log); err != nil {
 			slog.Warn("write log failed", "path", logPath, "err", err)
 			return false
+		}
+		// The live mirror file would shadow the row on every read, and the
+		// seal pass would later store its partial copy over the whole log.
+		if err := os.Remove(logPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			slog.Warn("remove log mirror failed", "path", logPath, "err", err)
 		}
 	}
 	streamPath := rt.Store.StreamPath(name, n)
