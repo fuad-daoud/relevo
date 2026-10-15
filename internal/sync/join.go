@@ -332,9 +332,20 @@ func (e *Enabler) store(plan EnablePlan, now time.Time) error {
 	// set would be storing a refusal, so an absent one is left alone; a plain
 	// enable's plan is complete by the time it gets here, so this is the join
 	// path and nothing else.
+	//
+	// A resolved set equal to what the machine already holds carries nothing a
+	// person typed into this enable, so nothing is written here: a write would
+	// stamp and signal the secrets document, and a joiner whose credential rows
+	// were applied a moment ago must not answer the fleet with its own stamps.
 	if plan.R2.Complete() {
-		if err := SetR2(e.Request.Local, plan.R2, now); err != nil {
+		stored, err := ReadR2(e.Request.Local)
+		if err != nil {
 			return err
+		}
+		if stored != plan.R2 {
+			if err := SetR2(e.Request.Local, plan.R2, now); err != nil {
+				return err
+			}
 		}
 	}
 	if len(bytes.TrimSpace(plan.Token)) == 0 {
