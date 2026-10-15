@@ -411,7 +411,7 @@ under the merged rules, imports no shared docs, and status says "locked".
   `--new` creates `kdf_salt`, `kdf` and `key_check` insert-if-absent; a
   machine that races another adopts the winner's salt. The passphrase comes
   from `--passphrase-stdin`, then `RELEVO_SYNC_PASSPHRASE`, then a TTY.
-  `enable` takes the passphrase only from step 5 on.
+  `enable` takes the passphrase the same way.
 - **KDF bounds.** The remote chooses the Argon2id parameters, so a machine
   refuses any parameters outside fixed bounds: t 1..4, m 19456..262144 KiB,
   p 1..8.
@@ -449,20 +449,38 @@ under the merged rules, imports no shared docs, and status says "locked".
 - Shared docs and takeovers are only ever accepted signed.
 - **Known limits.** A holder of the Turso token can replay an old signed
   entry at a new seq, or delete entries; signing detects neither. Entries
-  imported before this machine was unlocked are not re-verified; step 5's
-  enable takes the passphrase before the join.
+  imported before this machine was unlocked are not re-verified, except on
+  `enable --join`, which checks the passphrase against `key_check` before it
+  stores anything or imports an entry.
 - **Rollout.** Format 3 is refused by older binaries, so every machine
   installs the release before anyone runs unlock.
 
-**Secrets (step 5).**
-- **Allow-list:** `typesafe`, `client.key` (one identity for all the owner's
-  machines; revoking it on a server revokes them all) and `r2.*`. Any other
-  name never syncs.
-- **Encryption:** a value travels as XChaCha20-Poly1305 ciphertext, with the
-  secret's name bound in as associated data.
-- **Rotation:** `db sync rekey` re-encrypts every value under a new
-  passphrase and rewrites `kdf_salt` and `key_check`; compaction then drops
-  the old ciphertexts.
+**Secrets (step 5a).**
+- **Allow-list:** `typesafe`, `client.key`, `r2.endpoint`, `r2.bucket`,
+  `r2.key_id` and `r2.secret`, checked on export and on import. Any other name
+  (`turso.token`, `sync.key`, `serve.tls.*`, anything unknown) is refused on
+  import and never exported.
+- **Document:** the `secrets` shared doc, one key per name, newest wins, a
+  cleared secret is a tombstone. It is inline in the log and never a `$ref`;
+  one envelope is at most 8 KiB. A locked machine neither exports nor applies it.
+- **Encryption:** a value travels as XChaCha20-Poly1305 under a 32-byte subkey,
+  HKDF-SHA256 over `sync.key` with the label `relevo-sync-secret-v1`, so the MAC
+  key and the encryption key are never the same bytes. The secret's name is the
+  associated data. The envelope is `{"v":1,"n":<nonce>,"c":<ciphertext>}`; a
+  reader refuses any `v` other than 1 and any field it does not know.
+- **Who stamps:** only a person's edit (`config secret set` or `rm`, secret
+  files in a config import, an enable given R2 flags). A value relevo generates
+  is unstamped. An unstamped `client.key` is never exported, so the machines'
+  existing identities survive the first export; a stamped one replaces a local
+  unstamped one, and `relevo doctor` then says the client id changed and the
+  servers need the new enrolment line. Other pre-existing allow-listed secrets
+  are exported on the first unlocked export.
+- **Join order:** before the normal import, a join whose R2 credentials are not
+  stored reads every origin's `doc:secrets` entries, verifies each MAC, and
+  applies them without moving an import mark.
+- **Rotation (step 5b, not built):** `db sync rekey` re-encrypts every value
+  under a new passphrase and rewrites `kdf_salt` and `key_check`; the envelope
+  then writes `"v":2` with a key epoch, which a 5a reader refuses.
 - **Lost passphrase:** if no machine holds the key any more, the synced
   secrets are unreadable. Every machine's local copies are unaffected.
 
@@ -578,14 +596,18 @@ no row on this machine references and that are older than 30 days.
 - `idle_seconds` and `backlog_threshold` are removed: nothing read them, and
   the daemon tick and the statusline backlog constant each have one owner.
 
-## 8. A new machine (step 5)
+## 8. A new machine (step 5a)
 
 On a machine that already syncs, `relevo db sync invite` prints a one-line
-join code holding the Turso URL and token. On the new machine:
-`relevo db sync enable --join <code>`, then the passphrase. The R2 key,
-`client.key` and every other allow-listed secret arrive encrypted. Agents are
-rendered and hook scripts written. `relevo doctor` lists the harness accounts
-that still need a login.
+join code (`relevo-join-v1-` and base64url) holding the Turso URL and token,
+and nothing else; a locked inviter says so, because its own secrets have not
+been shared. On the new machine: `relevo db sync enable --join <code>`, with the
+passphrase from `--passphrase-stdin`, `RELEVO_SYNC_PASSPHRASE` or a TTY. The
+passphrase is checked against `key_check` before anything is stored; a wrong
+one stores nothing. The R2 key, `client.key` and every other allow-listed secret
+arrive encrypted in the `secrets` doc. Agents are rendered and hook scripts
+written. `relevo doctor` lists, for each harness configured on the machine,
+whether its login is present, from local files only.
 
 ## 9. Remote and protocol changes
 
@@ -653,8 +675,8 @@ Each step is one PR with sandbox evidence before merge.
 4. **Availability and latency** as history tables: the tables, the origin
    refusal, the never-exported age prune, the combined display reads and the kv
    migration.
-5. **Secrets and the new-machine flow.** Allow-list encryption, unlock,
-   rekey, `invite` and `--join`.
+5. **Secrets and the new-machine flow.** 5a: allow-list encryption, `invite`,
+   `--join` and the doctor login rows (built). 5b: `rekey` (not built).
 6. **Ownership.** The `writer` column, `handover`, `takeover`,
    `enable --as`.
 
