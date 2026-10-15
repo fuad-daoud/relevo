@@ -606,7 +606,10 @@ been shared. On the new machine: `relevo db sync invite | relevo db sync enable 
 history and the process table), with the passphrase from `RELEVO_SYNC_PASSPHRASE`
 or a TTY; `--passphrase-stdin` cannot share the pipe with `--join-stdin`. The
 passphrase is checked against `key_check` before anything is stored; a wrong
-one stores nothing. The R2 key, `client.key` and every other allow-listed secret
+one stores nothing. The fleet's secrets document is applied over the worker the
+check ran on, before the import opens on a fresh worker: the joiner's bucket
+credentials are in that document and a `$ref` body can sit above the entries
+that grant the fetch. The R2 key, `client.key` and every other allow-listed secret
 arrive encrypted in the `secrets` doc. Agents are rendered and hook scripts
 written. `relevo doctor` lists, for each harness configured on the machine,
 whether its login is present, from local files only.
