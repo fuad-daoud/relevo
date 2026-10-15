@@ -43,9 +43,10 @@ func planFileCandidates(texts [][]byte) []string {
 	return out
 }
 
-// chainBaseCommit resolves the chain's base branch to a commit: the builder's
-// base branch, fetched from origin when only the remote has it, else the
-// commit the chain was cut from.
+// chainBaseCommit resolves the chain's base branch to a commit from refs the
+// repository already holds: the builder's base branch, then its origin
+// remote-tracking ref. It never fetches: the caller holds a store transaction,
+// and a network call there would hold the database lock against every other verb.
 func chainBaseCommit(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow) (string, error) {
 	ref := c.Base
 	if b, err := tx.Load(c.Builder); err == nil && b.BaseRef != "" {
@@ -54,17 +55,12 @@ func chainBaseCommit(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRo
 	if ref == "" {
 		return "", errors.New("the chain has no base")
 	}
-	if sha, ok, err := rt.Git.RefSHA(ctx, c.Repo, ref); err == nil && ok {
-		return sha, nil
+	for _, name := range []string{ref, "origin/" + ref} {
+		if sha, ok, err := rt.Git.RefSHA(ctx, c.Repo, name); err == nil && ok {
+			return sha, nil
+		}
 	}
-	if err := rt.Git.Fetch(ctx, c.Repo, "origin", ref); err != nil {
-		return "", fmt.Errorf("fetch %s: %w", ref, err)
-	}
-	sha, ok, err := rt.Git.RefSHA(ctx, c.Repo, "origin/"+ref)
-	if err != nil || !ok {
-		return "", fmt.Errorf("base %s not found", ref)
-	}
-	return sha, nil
+	return "", fmt.Errorf("base %s is not in the local repository", ref)
 }
 
 // chainSeedPlanFiles copies every repo file the chain's plan texts name from

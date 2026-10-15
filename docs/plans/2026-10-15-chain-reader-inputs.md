@@ -51,9 +51,11 @@ alternative is rejected for that reason.
 seed additionally carries every repo file the chain's plan texts name
 (including a source plan file such as `docs/plans/….md` when a plan text names
 it) plus the plan set, each read from the chain's base ref and copied into the
-chain's `inputs/` directory. A base ref present only on the remote is fetched
-first. An unreadable file renders as the existing path-free
-`not available: <reason>` clause, never as a path the runner cannot open, and
+chain's `inputs/` directory. A base ref is resolved from local refs only (the
+base branch, then its `origin/` remote-tracking ref), never fetched: the seed is
+built under a store transaction, and a fetch there would hold the database lock
+against every other verb and the daemon tick. An unreadable file renders as the
+existing path-free `not available: <reason>` clause, never as a path the runner cannot open, and
 never fails the send.
 
 **Cases.**
@@ -62,8 +64,9 @@ never fails the send.
    planner's scratch tree, which is cut from the planner binding's own HEAD):
    the correction planner's prompt/inputs carry its text and the correction
    round runs instead of halting with "plan text absent".
-2. Base ref not present locally (remote-builder chains): fetch first, then
-   read; a fetch/read failure degrades to the `not available` clause.
+2. Base ref not present locally (remote-builder chains): no fetch under the
+   transaction; read `origin/<ref>` if present, else degrade to the
+   `not available` clause.
 3. `[PREMISE — partly false as a "scratch cut" story]` The issue body says
    "`CreateScratch` cut that from the planner binding's own HEAD". Verified:
    the reader scratch is built by `sendChainRound` from the member's own
@@ -190,7 +193,8 @@ it.
    `internal/workflow/seeds.go`, `seeds/review.md`, `seeds/correct.md`) —
    deliverable: reviewer and correction seeds name `inputs/` copies of every
    repo file the plan texts name plus the plan set, read from the chain's base
-   ref with remote fetch fallback and `not available` degradation; worked:
+   ref, falling back to its local `origin/` ref (never a fetch), and
+   `not available` degradation; worked:
    `make check-quick PKGS=./internal/relevo/... ./internal/workflow/...`
    green and an engine test with the named file present only on the base
    ref shows the correction seed carrying its text (mutation: disable the

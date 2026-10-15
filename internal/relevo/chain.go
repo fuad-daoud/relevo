@@ -173,10 +173,10 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 // round when the reviewer did -- and carry that round's gate, the plan's
 // cumulative diff and the round's own prompt when it differs from the plan
 // copy; they also name the repo files the plan texts name, read from the
-// chain's base branch. The correction and fixes seeds name a reader's own output file rather
-// than the flat NNN-report.md no reader writes. The security and fixes seeds
-// name the whole branch diff -- the chain's base to the builder's newest closed
-// round -- and render no gate.
+// chain's base branch. The correction and fixes seeds name a reader's own
+// output file rather than the flat NNN-report.md no reader writes. The
+// security and fixes seeds name the whole branch diff -- the chain's base to
+// the builder's newest closed round -- and render no gate.
 func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, closedRound int) (workflow.SeedView, error) {
 	v := workflow.SeedView{
 		Plan: s.Plan, Plans: s.Plans, Corrections: s.Corrections,

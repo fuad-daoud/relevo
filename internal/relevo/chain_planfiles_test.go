@@ -55,7 +55,6 @@ func TestChainSeedPlanFilesDegradeToAClauseWhenTheBaseCannotBeRead(t *testing.T)
 
 	rt, fg := chainRuntime(t)
 	fg.refSHA = map[string]string{}
-	fg.fetchErr = os.ErrNotExist
 	startedChain(t, rt, ChainOptions{Plans: []string{writePlan(t, "Read docs/plans/x.md.")}})
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
@@ -66,5 +65,39 @@ func TestChainSeedPlanFilesDegradeToAClauseWhenTheBaseCannotBeRead(t *testing.T)
 	}
 	if !strings.Contains(string(prompt), "base branch: not available:") {
 		t.Errorf("seed lacks the not-available clause:\n%s", prompt)
+	}
+	if n := len(fg.fetchCalls); n != 0 {
+		t.Errorf("Fetch ran %d times under the seed transaction, want 0", n)
+	}
+}
+
+// TestChainSeedPlanFilesReadABaseHeldOnlyAsAnOriginRef pins that a base present
+// only as its origin remote-tracking ref resolves with no fetch.
+func TestChainSeedPlanFilesReadABaseHeldOnlyAsAnOriginRef(t *testing.T) {
+	t.Parallel()
+
+	rt, fg := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{
+		Plans: []string{writePlan(t, "Follow `docs/plans/source-plan.md`.")},
+	})
+	c, err := rt.Store.Chain("shop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := c.Base
+	if b := chainBinding(t, rt, "shop"); b.BaseRef != "" {
+		base = b.BaseRef
+	}
+	fg.refSHA = map[string]string{"origin/" + base: "originsha"}
+	fg.blobPaths = map[string]string{"docs/plans/source-plan.md": "oid-source"}
+	fg.blobs = map[string][]byte{"oid-source": []byte("only on origin\n")}
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	copyPath, _ := rt.Store.ChainRepoFilePath("shop", "docs/plans/source-plan.md")
+	if body, err := os.ReadFile(copyPath); err != nil || !strings.Contains(string(body), "only on origin") {
+		t.Errorf("copy = %q, %v; want the origin-ref text", body, err)
+	}
+	if n := len(fg.fetchCalls); n != 0 {
+		t.Errorf("Fetch ran %d times, want 0", n)
 	}
 }
