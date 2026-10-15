@@ -434,7 +434,7 @@ func TestNextAdmittedReturnsAdmittedEntry(t *testing.T) {
 	rt := routeRuntime(t)
 	seedPending(t, rt, "webshop", testClaimMasterMind, "claude")
 
-	b, entry, idx, found, err := nextAdmitted(rt, testClaimMasterMind)
+	b, entry, idx, found, err := nextAdmitted(rt, ownOf(t, rt))
 	if err != nil {
 		t.Fatalf("nextAdmitted: %v", err)
 	}
@@ -454,6 +454,37 @@ func TestNextAdmittedReturnsAdmittedEntry(t *testing.T) {
 	}
 }
 
+// TestOwnBindingsReadsOnlyThisMasterMind: the holder's listing holds this
+// mastermind's bindings, in name order, and none of another's -- so another
+// session's pending entry is never delivered here.
+func TestOwnBindingsReadsOnlyThisMasterMind(t *testing.T) {
+	t.Parallel()
+
+	rt := routeRuntime(t)
+	seedPending(t, rt, "zeta", testClaimMasterMind, "claude")
+	seedPending(t, rt, "alpha", testClaimMasterMind, "claude")
+	seedPending(t, rt, "other", "pl_someoneelse01", "claude")
+
+	mine := ownOf(t, rt)
+	var names []string
+	for _, b := range mine {
+		names = append(names, b.Name)
+	}
+	if strings.Join(names, ",") != "alpha,zeta" {
+		t.Fatalf("own bindings = %v, want [alpha zeta]", names)
+	}
+}
+
+// ownOf is the test mastermind's own bindings, as the holder lists them.
+func ownOf(t *testing.T, rt Deps) []store.Binding {
+	t.Helper()
+	mine, err := ownBindings(rt, testClaimMasterMind)
+	if err != nil {
+		t.Fatalf("ownBindings: %v", err)
+	}
+	return mine
+}
+
 // TestNextAdmittedSkipsConfirmedEntry: an entry a reader confirmed before the
 // helper runs is never returned.
 func TestNextAdmittedSkipsConfirmedEntry(t *testing.T) {
@@ -465,7 +496,7 @@ func TestNextAdmittedSkipsConfirmedEntry(t *testing.T) {
 		t.Fatalf("ConfirmIndex: %v", err)
 	}
 
-	_, _, _, found, err := nextAdmitted(rt, testClaimMasterMind)
+	_, _, _, found, err := nextAdmitted(rt, ownOf(t, rt))
 	if err != nil {
 		t.Fatalf("nextAdmitted: %v", err)
 	}

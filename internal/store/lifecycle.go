@@ -441,7 +441,27 @@ func (s *Store) list() ([]Binding, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read state root: %w", err)
 	}
+	return decodeRecords(recs)
+}
 
+// ListForMasterMind is List narrowed to the bindings of one MasterMind, read
+// with the filter in the query rather than by listing everything.
+func (s *Store) ListForMasterMind(mastermindID string) ([]Binding, error) {
+	d, err := s.dbForRead()
+	if err != nil {
+		return nil, err
+	}
+	if d == nil {
+		return nil, nil
+	}
+	recs, err := d.RecordListForMasterMind(s.owner, mastermindID)
+	if err != nil {
+		return nil, fmt.Errorf("read state root: %w", err)
+	}
+	return decodeRecords(recs)
+}
+
+func decodeRecords(recs []db.Record) ([]Binding, error) {
 	bindings := make([]Binding, 0, len(recs))
 	for _, rec := range recs {
 		b, err := decodeBinding([]byte(rec.JSON), rec.Name)
