@@ -669,6 +669,11 @@ func TestCodeHiddenBehindAnUnmodelledTokenIsRefused(t *testing.T) {
 		{"a.swift", "let s = #\"a \\#(f(\"a//good\")) b\"#", "let s = #\"a \\#(f(\"a//evil\")) b\"#"},
 		{"a.dart", "var s = 'a ${f(\"a//good\")} b';", "var s = 'a ${f(\"a//evil\")} b';"},
 		{"a.cs", "var s = $\"a {f(\"a//good\")} b\";", "var s = $\"a {f(\"a//evil\")} b\";"},
+		// Round 3's residuals, one probe each: good -> evil behind the
+		// ambiguity the trigger refuses.
+		{"a.sql", "select 1--2, good from t;", "select 1--2, evil from t;"},
+		{"a.js", "f(.../[a//b]/); good();", "f(.../[a//b]/); evil();"},
+		{"a.scala", "if (c) <a>\n// x\n</a>\ngood()\n", "if (c) <a>\n// x\n</a>\nevil()\n"},
 	} {
 		refuseReason(t, tt.path, tt.old, tt.new, judgeFile(t, tt.path, tt.old, tt.new))
 	}
@@ -688,6 +693,11 @@ func TestCommentEditNextToARegexOrQuotedIdentifierPasses(t *testing.T) {
 		{"a.sql", "select \"a--b\" -- one\n", "select \"a--b\" -- two\n"},
 		{"a.cpp", "auto s = R\"(a//b)\"; // one\n", "auto s = R\"(a//b)\"; // two\n"},
 		{"a.scala", "val s = s\"a ${f(\"x\")} b\" // one\n", "val s = s\"a ${f(\"x\")} b\" // two\n"},
+		// Round 3's triggers stay narrow: the commented edit beside them
+		// passes on both.
+		{"a.sql", "x = 1 -- one\n", "x = 1 -- two\n"},
+		{"a.sql", "-- one\n", "-- two\n"},
+		{"a.scala", "if (a) < b // one\n", "if (a) < b // two\n"},
 	} {
 		if v := judgeFile(t, tt.path, tt.old, tt.new); len(v) != 0 {
 			t.Errorf("%s: %q -> %q: refused: %v", tt.path, tt.old, tt.new, v)
