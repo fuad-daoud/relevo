@@ -118,7 +118,15 @@ func (v *VerbRunner) stageAndVerify(ctx context.Context, remote string, token, p
 	if required {
 		if err := relevosync.PrepassSecrets(v.Shared, v.Local, transport); err != nil {
 			v.unstageJoin(snapshot)
-			closeTransport(transport)
+			// Clear, then close -- and close only the worker this enable opened
+			// (out.opened), because closeTransport reaches the runner's steady
+			// holder too when openTransport answered with it: this path closes
+			// a worker it may not have built, on a publication a later disable
+			// would then find already gone.
+			v.clearJoin(transport)
+			if opened {
+				closeTransport(transport)
+			}
 			return nil, err
 		}
 	}
