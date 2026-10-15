@@ -42,6 +42,10 @@ type chainServerPlan struct {
 	authorName   string
 	authorEmail  string
 	server       string
+	// subdir is the prefix the create carries, resolved once with the
+	// repository below: the server joins the stored value into every
+	// member's round directory it cuts.
+	subdir string
 	// origin is whether the server advertises FeatureOrigin, which decides
 	// whether the client mints the member ids the create carries.
 	origin bool
@@ -113,6 +117,8 @@ func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (cha
 		server:   opts.Server,
 	}
 	plan.repo = repo
+	// From the same repository value, not a second working-directory probe.
+	plan.subdir = resolveSubdir(ctx, rt, repo)
 	isCustom := origin != "shipped"
 	if isCustom {
 		if err := chainValidateWorkflowOpts(opts); err != nil {
@@ -145,6 +151,12 @@ func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (cha
 	if missing := missingChainFeatures(who); len(missing) > 0 {
 		return chainServerPlan{}, fmt.Errorf("server %s cannot run a chain (missing the %s); upgrade it, or start the chain without --server",
 			opts.Server, chainFeatureList(missing))
+	}
+	// The same negative applies to a prefix: the server must store the
+	// subdirectory it is to join into every member's rounds, and a server
+	// without the feature would drop it silently.
+	if plan.subdir != "" && !hasFeature(who, remote.FeatureSubdir) {
+		return chainServerPlan{}, fmt.Errorf("server %s does not carry binding subdirectories (pre-subdir server); upgrade it or start the chain at the repository root", opts.Server)
 	}
 	hasWorkflow := hasFeature(who, remote.FeatureWorkflow)
 	if isCustom && !hasWorkflow {
@@ -331,6 +343,7 @@ func chainServerRequest(opts ChainOptions, plan chainServerPlan, ids chainServer
 		Plans:              chainPlanTexts(plan.bodies),
 		Feature:            opts.Feature,
 		Ticket:             plan.ticket,
+		Subdir:             plan.subdir,
 		Author:             &remote.GitIdentity{Name: plan.authorName, Email: plan.authorEmail},
 		ClientInstallation: ids.installation,
 	}

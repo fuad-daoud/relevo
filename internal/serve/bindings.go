@@ -63,6 +63,7 @@ func validAuthor(a remote.GitIdentity) bool {
 	return validAuthorPart(a.Name) && validAuthorPart(a.Email)
 }
 
+// validAuthorPart reports whether one half of a wire author is storable.
 func validAuthorPart(s string) bool {
 	if len(s) == 0 || len(s) > 256 {
 		return false
@@ -99,7 +100,7 @@ func parseCreateRequest(r *http.Request) (remote.CreateBindingRequest, string) {
 			return req, err.Error()
 		}
 	}
-	return req, ""
+	return req, validSubdir(req.Subdir)
 }
 
 // handleCreateBinding takes no server-wide lock: its own owner's store lock and
@@ -261,6 +262,7 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 		Name:             req.Name,
 		Owner:            string(caller),
 		CWD:              cwd,
+		Subdir:           req.Subdir,
 		Worktree:         cwd,
 		Branch:           "relevo/" + req.Name,
 		Base:             req.BaseCommit,

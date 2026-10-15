@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -555,15 +556,20 @@ func TestServedCheckGetNamesOneRun(t *testing.T) {
 }
 
 // TestServedCheckRunInTheBindingsWorktree pins where a check runs and how it is
-// bounded: the binding's own worktree, in a gate scope of its own, and the
-// policy's gate timeout rather than the binding's stored gate timeout. A check
-// is the client's own acceptance command, so the binding's round gate timeout
-// does not bound it -- which the last assertion shows by making the binding's
-// timeout too short to be the one in force.
+// bounded: in the binding's round directory -- the worktree plus the
+// subdirectory the create sent, the same directory a round's processes run in
+// -- and the policy's gate timeout rather than the binding's stored gate
+// timeout. A check is the client's own acceptance command, so the binding's
+// round gate timeout does not bound it -- which the last assertion shows by
+// making the binding's timeout too short to be the one in force.
 func TestServedCheckRunInTheBindingsWorktree(t *testing.T) {
 	t.Parallel()
 
 	rt, b, fr := servedCheckEnv(t)
+	// A served binding's CWD is its worktree -- buildServedBinding stores
+	// both the same -- so the fixture's tree names them the same too.
+	b.CWD = b.Worktree
+	b.Subdir = "src/api"
 	b.GateTimeoutMS = 1
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
@@ -573,8 +579,9 @@ func TestServedCheckRunInTheBindingsWorktree(t *testing.T) {
 	if len(fr.specs) != 1 {
 		t.Fatalf("Start calls = %d, want 1", len(fr.specs))
 	}
-	if got := fr.specs[0].Dir; got != b.Worktree {
-		t.Errorf("Dir = %q, want the binding's worktree %q", got, b.Worktree)
+	want := filepath.Join(b.Worktree, b.Subdir)
+	if got := fr.specs[0].Dir; got != want {
+		t.Errorf("Dir = %q, want the round's directory %q", got, want)
 	}
 	wantUnit := scopeUnitNameFor(scopeGate, b.Owner, b.Name+"-check", b.Round, "")
 	if fr.specs[0].Scope == nil || fr.specs[0].Scope.Unit != wantUnit {

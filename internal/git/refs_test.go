@@ -550,3 +550,81 @@ func TestBlobAtResolvesOnlyARegularFileAtTheRef(t *testing.T) {
 		t.Error("BlobAt at a ref that does not exist = nil error, want one")
 	}
 }
+
+// TestShowPrefixNamesTheSubdirectoryAndIsEmptyAtTheRoot pins the two answers a
+// bind needs: a caller sitting in a subdirectory is given that path (with
+// git's own trailing slash), a caller at the root an empty prefix.
+// Mutation: dropping the TrimSpace would leave the newline in the answer.
+func TestShowPrefixNamesTheSubdirectoryAndIsEmptyAtTheRoot(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	repo, _ := initRepoWithCommit(t, "a.txt", "hello\n")
+	if err := os.MkdirAll(filepath.Join(repo, "sub", "deep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "sub", "deep", "file.txt"), []byte("deep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "sub")
+	runGit(t, repo, "commit", "-m", "subdir")
+
+	root, err := client.ShowPrefix(ctx, repo)
+	if err != nil {
+		t.Fatalf("ShowPrefix at the root: %v", err)
+	}
+	if root != "" {
+		t.Fatalf("ShowPrefix at the root = %q, want empty", root)
+	}
+
+	inSub, err := client.ShowPrefix(ctx, filepath.Join(repo, "sub", "deep"))
+	if err != nil {
+		t.Fatalf("ShowPrefix in a subdirectory: %v", err)
+	}
+	if inSub != "sub/deep/" {
+		t.Fatalf("ShowPrefix = %q, want %q", inSub, "sub/deep/")
+	}
+}
+
+// TestDirAtReportsADirectoryOnly pins tree-only answer: a commit that has a
+// directory at path is true, a file at that path is false, a path with no
+// entry at all is false, and the path is the root's even when git runs in a
+// subdirectory.
+// Mutation: accepting a blob would let a bind cut a round that runs in a file.
+func TestDirAtReportsADirectoryOnly(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	repo, _ := initRepoWithCommit(t, "a.txt", "hello\n")
+	if err := os.MkdirAll(filepath.Join(repo, "mud"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "mud", "inside.txt"), []byte("inside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "mud")
+	runGit(t, repo, "commit", "-m", "mud")
+	tip := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	tests := []struct {
+		name string
+		from string
+		path string
+		ref  string
+		want bool
+	}{
+		{"the tree is there", "", "mud", tip, true},
+		{"the root itself is not a file", "", "a.txt", tip, false},
+		{"no entry at all", "", "ghost", tip, false},
+		{"a path is the root's when git runs below it", "mud", "mud", tip, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ok, err := client.DirAt(ctx, filepath.Join(repo, tc.from), tc.ref, tc.path)
+			if err != nil {
+				t.Fatalf("DirAt(%q): %v", tc.path, err)
+			}
+			if ok != tc.want {
+				t.Fatalf("DirAt(%q) = %v, want %v", tc.path, ok, tc.want)
+			}
+		})
+	}
+}

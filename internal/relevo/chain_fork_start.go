@@ -94,6 +94,13 @@ func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.Ch
 	if rec, haveRec, rerr := resolveVerbMasterMindHeal(rt, parent.MasterMindID, false); rerr == nil && haveRec {
 		childPlan.mastermind = recordEndpoint(rec)
 	}
+	// The child's members are built beside the parent's builder member, so
+	// they inherit its subdirectory rather than re-resolving one: the fork
+	// cuts from parent.Repo, the root checkout, whose own prefix names an
+	// offset nothing here started a shell in.
+	if parentBuilder, lerr := tx.Load(parent.Builder); lerr == nil {
+		childPlan.subdir = parentBuilder.Subdir
+	}
 
 	prep, err := chainPrepareWorkflow(ctx, rt, childOpts, childPlan)
 	if err != nil {

@@ -90,15 +90,17 @@ func CreateScratchFrom(ctx context.Context, rt Runtime, b store.Binding, round i
 }
 
 // roundTree is the working tree a round's process runs in (A5 R4a): the
-// binding's own CWD for a writer, its throwaway scratch worktree for a reader.
-// Every place a runner process is launched or relaunched for a round names its
-// tree through this, so a reader can never run in the binding's tree and a
-// writer is unchanged.
+// binding's tree plus its subdirectory for a writer, the binding's throwaway
+// scratch worktree joined with the same subdirectory for a reader. Every
+// place a runner process is launched or relaunched for a round names its tree
+// through this, so a reader can never run in the binding's tree, a writer is
+// unchanged for a tree-root round, and both sides land where a bind started
+// below the root asked them to.
 func roundTree(rt Runtime, b store.Binding) string {
 	if b.Shape == store.ShapeReader {
-		return rt.Store.ScratchWorktreePath(b.Name, b.Round)
+		return filepath.Join(rt.Store.ScratchWorktreePath(b.Name, b.Round), b.Subdir)
 	}
-	return b.CWD
+	return RoundDir(b)
 }
 
 // prepareScratchPath returns the path b's round should use, with the scratch

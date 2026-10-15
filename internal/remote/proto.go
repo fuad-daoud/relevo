@@ -125,6 +125,13 @@ type CreateBindingRequest struct {
 	Feature string `json:"feature,omitempty"`
 	Ticket  string `json:"ticket,omitempty"`
 
+	// Subdir is the inside-the-tree offset the round's processes run at,
+	// resolved on the client -- the server cannot know it. It is additive
+	// like the labels: an old server ignores it, and a client with a
+	// non-empty one refuses a server that does not advertise
+	// remote.FeatureSubdir rather than let the round land at the root.
+	Subdir string `json:"subdir,omitempty"`
+
 	// Gate is the acceptance command this binding's rounds are checked with;
 	// "" means no check. It is additive: an old server ignores it.
 	Gate string `json:"gate,omitempty"`
@@ -441,6 +448,13 @@ const FeatureLabels = "labels"
 // -- advertises. A client binding a reader refuses a server without it: the
 // server would otherwise run the reader as a writer.
 const FeatureReaders = "readers"
+
+// FeatureSubdir is the WhoAmI.Features token a server that honours
+// CreateBindingRequest.Subdir and CreateChainRequest.Subdir advertises. A
+// client binding or starting a chain from below its repository's root refuses
+// a server without it: a dropped prefix puts the round at the worktree root
+// instead of the subdirectory the mastermind's shell was in.
+const FeatureSubdir = "subdir"
 
 // FeatureOrigin is the WhoAmI.Features token a server that reports its own
 // installation id and its bindings' record ids advertises, and that accepts a

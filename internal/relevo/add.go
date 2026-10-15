@@ -303,6 +303,16 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		createdBranch  bool
 	)
 
+	// The subdirectory the round runs in, resolved once from the repo the
+	// cut works against: a bind started below the root offsets its round by
+	// the prefix, and --cwd never consults it because the prepared directory
+	// is the round's directory itself. A runtime with no git is refused
+	// below, where the branch it would consult lives.
+	subdir := ""
+	if opts.CWD == "" && rt.Git != nil {
+		subdir = resolveSubdir(ctx, rt, opts.Repo)
+	}
+
 	if opts.Branch != "" && opts.CWD != "" {
 		return AddResult{}, badInputf("--branch and --cwd are exclusive")
 	}
@@ -365,6 +375,24 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		}
 	}
 
+	// The round runs in the subdirectory the prefix named, so the commit it
+	// was cut from must actually have that directory: a base without it
+	// would start every round in a path that does not exist. Only a non-empty
+	// prefix is checked -- the empty one is the root, which every commit
+	// has -- and the refusal comes before the binding is written, so the
+	// worktree and branch the cut made are rolled back.
+	if subdir != "" {
+		exists, derr := rt.Git.DirAt(ctx, opts.Repo, base, subdir)
+		if derr != nil {
+			rollback()
+			return AddResult{}, derr
+		}
+		if !exists {
+			rollback()
+			return AddResult{}, refuse("subdirectory %s does not exist at %s: nothing to run the round in", subdir, base)
+		}
+	}
+
 	other, found, err := rt.Store.FindByCWD(cwd)
 	if err != nil && !errors.Is(err, store.ErrAmbiguousCWD) {
 		rollback()
@@ -405,6 +433,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	b := store.Binding{
 		Name:             opts.Name,
 		CWD:              cwd,
+		Subdir:           subdir,
 		MasterMind:       mastermindEP,
 		MasterMindID:     opts.MasterMindID,
 		Builder:          builder,
