@@ -219,7 +219,8 @@ type openerCount struct {
 	opens int
 }
 
-// A complete stored set does not change what the opener answered. The first
+// TestABucketlessAnswerReleasesTheVerifyWorkerEvenOverCompleteRows pins that a
+// complete stored set does not change what the opener answered. The first
 // worker is what the passphrase check drove, and bucketless is that worker's
 // answer about how it started: the enable releases it on that word and lets
 // the Enabler rebuild through Open. The rows merely match the word; the pin is
@@ -241,5 +242,81 @@ func TestABucketlessAnswerReleasesTheVerifyWorkerEvenOverCompleteRows(t *testing
 	}
 	if count.opens != 1 {
 		t.Errorf("Open was called %d times, want exactly 1: the verify worker was released on the opener's answer and the Enabler rebuilt", count.opens)
+	}
+}
+
+// TestAJoinedMachineAnswersTheFleetWithNoSecretsEntries pins the joiner's half
+// of the document's round trip. The fleet's values arrived sealed from A and
+// landed as B's own held rows; nothing a joiner held was typed here, so B's
+// first export appends no `secrets` entry at all and B carries no write stamp
+// for a bucket credential. An echo under a fresh stamp would spread the joiner's
+// envelope -- or, worse, a stale value -- back through the fleet as an edit.
+func TestAJoinedMachineAnswersTheFleetWithNoSecretsEntries(t *testing.T) {
+	t.Parallel()
+	_, b, bRunner := prodFleet(t, true)
+	res := bRunner.Run(context.Background(), joinVerb(t, joinPassphrase), []byte(joinToken+joinPassphrase))
+	if !res.OK {
+		t.Fatalf("join refused: (%s) %s", res.Code, res.Message)
+	}
+
+	// The log the pair shares, read the way a third machine would: B's entries,
+	// everything every origin other than A's appended.
+	appended, err := b.log.OnLog("A").Pull(nil)
+	if err != nil {
+		t.Fatalf("read B's entries off the log: %v", err)
+	}
+	for _, e := range appended {
+		name, ok := synclog.DocName(e.Table)
+		if !ok || name != "secrets" {
+			continue
+		}
+		t.Errorf("B's first export appended a %s entry under %q: the joiner answered the fleet", e.Table, e.PK)
+	}
+	for _, name := range []string{relevosync.SecretR2Endpoint, relevosync.SecretR2Bucket, relevosync.SecretR2KeyID, relevosync.SecretR2Secret} {
+		if _, ok, err := b.local.ConfigWriteStamp(relevosync.SecretStampKey(name)); err != nil {
+			t.Fatalf("ConfigWriteStamp(%s) on B: %v", name, err)
+		} else if ok {
+			t.Errorf("B holds a write stamp for %s; the join stamped what nobody typed", name)
+		}
+	}
+}
+
+// TestAJoinRefusedForTheFleetsMissingBucketCanRetryAndThenHoldsTheFleetsSecrets
+// pins that a refused join can be joined again. The first attempt ends with
+// ErrNoR2AfterJoin after the pre-pass applied the fleet's document, the inviter
+// then takes on and exports bucket credentials, and the retry with the same code
+// and passphrase lands on the document as a first join would: the refusal owes
+// the rows it had applied and the bookkeeping they were read by, both.
+func TestAJoinRefusedForTheFleetsMissingBucketCanRetryAndThenHoldsTheFleetsSecrets(t *testing.T) {
+	t.Parallel()
+	a, b, bRunner := prodFleet(t, false)
+	res := bRunner.Run(context.Background(), joinVerb(t, joinPassphrase), []byte(joinToken+joinPassphrase))
+	if res.OK || res.Code != wire.SyncCodeNoR2 {
+		t.Fatalf("first join = (ok %v, code %q), want refused as %q", res.OK, res.Code, wire.SyncCodeNoR2)
+	}
+
+	// The fleet takes on the credentials a person typed and shares them the way
+	// it shares its other secrets.
+	if err := relevosync.SetR2(a.local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetR2 on A: %v", err)
+	}
+	a.exportThrough(t)
+
+	res = bRunner.Run(context.Background(), joinVerb(t, joinPassphrase), []byte(joinToken+joinPassphrase))
+	if !res.OK {
+		t.Fatalf("retry refused: (%s) %s", res.Code, res.Message)
+	}
+	stored, err := relevosync.ReadR2(b.local)
+	if err != nil {
+		t.Fatalf("ReadR2 on B: %v", err)
+	}
+	if stored != verbFixtureR2 {
+		t.Errorf("B's R2 credentials after the retry = %+v, want the fleet's", stored)
+	}
+	if got := b.secret(t, config.SecretTypesafe); got != canarySecret {
+		t.Errorf("B's typesafe after the retry = %q, want the fleet's", got)
+	}
+	if got := b.secret(t, config.SecretClientKey); got != a.secret(t, config.SecretClientKey) {
+		t.Errorf("B's client key after the retry is not the fleet's: %q", got)
 	}
 }
