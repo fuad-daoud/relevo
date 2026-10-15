@@ -14,6 +14,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
 // r2Pair opens a machine-local file to store credentials in.
@@ -72,6 +73,54 @@ func TestR2SecretsRoundTripThroughTheLocalFile(t *testing.T) {
 	// path runs it unconditionally.
 	if err := DeleteR2(local); err != nil {
 		t.Errorf("a second DeleteR2 refused: %v", err)
+	}
+}
+
+// TestSetR2StampsEveryCredential pins the stamping an enable's R2 flags carry,
+// and it is the rule a joiner depends on: the credentials arrive in the secrets
+// document, and a value the document never exports never reaches a second
+// machine. SetR2 is the only path that writes them on a machine that has none,
+// so a stamp here is the difference between the fleet sharing its bucket and
+// every joiner needing the flags retyped.
+//
+// The write stamps the four names and signals the document once. The credential
+// that must never travel is not among them: the token is read by a different
+// name and is refused by the document's allow-list.
+func TestSetR2StampsEveryCredential(t *testing.T) {
+	t.Parallel()
+	local := r2Pair(t)
+	if err := SetR2(local, r2Fixture, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetR2: %v", err)
+	}
+	db := local
+	for _, name := range r2Names() {
+		text, ok, err := db.ConfigWriteStamp(SecretStampKey(name))
+		if err != nil {
+			t.Fatalf("ConfigWriteStamp(%s): %v", name, err)
+		}
+		if !ok {
+			t.Errorf("SetR2 left %s unstamped, so the document would never export it", name)
+		} else if _, err := synclog.ParseStamp(text); err != nil {
+			t.Errorf("the stamp for %s is %q, which does not parse: %v", name, text, err)
+		}
+	}
+	signals, err := db.DocSignals()
+	if err != nil {
+		t.Fatalf("DocSignals: %v", err)
+	}
+	signalled := false
+	for _, s := range signals {
+		if s.Doc == SecretsDocName {
+			signalled = true
+		}
+	}
+	if !signalled {
+		t.Error("SetR2 did not signal the secrets document, so the credentials would sit on this machine only")
+	}
+	if _, ok, err := db.ConfigWriteStamp(SecretStampKey(SecretToken)); err != nil {
+		t.Fatalf("ConfigWriteStamp(token): %v", err)
+	} else if ok {
+		t.Error("SetR2 stamped the token, which is this machine's own")
 	}
 }
 

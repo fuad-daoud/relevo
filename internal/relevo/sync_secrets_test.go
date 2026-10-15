@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/synclog"
@@ -356,6 +357,110 @@ func TestTwoMachinesWithDifferentGeneratedKeysBothKeepTheirOwn(t *testing.T) {
 			t.Errorf("a client key entry reached the log: %s", e.Body)
 		}
 	}
+}
+
+// TestSecretsHeldBeforeThisDocumentExistedTravelOnTheFirstExport pins C2. A
+// laptop has held its R2 credentials and its typesafe key since before the
+// secrets document existed, so neither has ever been stamped: nothing in this
+// build ever wrote them through an entry point that claims a person chose them.
+// They still have to reach a joiner, who has no way of being told otherwise --
+// so a value with no write stamp takes its stamp at export time and travels on
+// the first unlocked export, the way a pre-existing config section did in 3b.
+//
+// The client key is deliberately left out: it is the one entry whose export is
+// conditional, so "the pre-existing values travel" is a claim about the rest and
+// including it here would blur the two rules.
+func TestSecretsHeldBeforeThisDocumentExistedTravelOnTheFirstExport(t *testing.T) {
+	t.Parallel()
+	log := synclog.NewMemTransport("x")
+	a := newCfgMachine(t, log, cfgSyncKey, true)
+	b := newCfgMachine(t, log, cfgSyncKey, true)
+
+	// Seeded through the unstamped entry point, which is what a value written
+	// before this document existed amounts to: the table holds it, nothing
+	// claims a person wrote it.
+	if err := relevosync.SetR2(a.local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetR2 on A: %v", err)
+	}
+	for _, name := range r2NamesWithoutStamping(t, a) {
+		if stampOf(a, name) {
+			t.Fatalf("the fixture already stamps %s, so it proves nothing about a pre-existing value", name)
+		}
+	}
+	if err := a.cfg.PutSecretUnstamped(config.SecretTypesafe, []byte(canarySecret)); err != nil {
+		t.Fatalf("PutSecretUnstamped(typesafe): %v", err)
+	}
+
+	a.attempt(t)
+	b.attempt(t)
+
+	if got := b.secret(t, config.SecretTypesafe); got != canarySecret {
+		t.Errorf("B's typesafe = %q, want the value A held before this document existed", got)
+	}
+	got, err := relevosync.ReadR2(b.local)
+	if err != nil {
+		t.Fatalf("ReadR2 on B: %v", err)
+	}
+	if got != verbFixtureR2 {
+		t.Errorf("B's R2 credentials = %+v, want A's pre-existing ones", got)
+	}
+	// The mechanism the value travels on is named here rather than left
+	// implicit: a key with no write stamp takes the stamp the export records for
+	// it, which is the clock at export time. That is the same route a
+	// pre-existing config section took in 3b, and it is why the value travels
+	// without anyone having said a person wrote it.
+	state, err := a.mdb.DocExportState(config.Secrets)
+	if err != nil {
+		t.Fatalf("DocExportState: %v", err)
+	}
+	for _, name := range append(r2NamesWithoutStamping(t, a), config.SecretTypesafe) {
+		row, ok := state[name]
+		if !ok {
+			t.Errorf("%s has no export state, so it was never sent", name)
+			continue
+		}
+		if stamp, err := synclog.ParseStamp(row.Stamp); err != nil || stamp == 0 {
+			t.Errorf("%s was exported with the stamp %q, which is not a position in the clock: %v",
+				name, row.Stamp, err)
+		}
+		if stampOf(a, name) {
+			t.Errorf("%s was stamped as a person's edit; the fixture needs it unstamped to stand for a pre-existing value", name)
+		}
+	}
+}
+
+// r2NamesWithoutStamping undoes the stamping SetR2 does, so the fixture stands
+// for a machine whose credentials predate the document rather than one that
+// configured them after it. It is the only way to see the pre-existing case:
+// SetR2 is the one write every real enable goes through, and it stamps.
+//
+// The stamps live in the machine-local file, not the shared one, so the clear
+// goes through the local handle. A machine that predates the document holds the
+// values and no stamp; nothing this build has done since writes them again
+// unstamped.
+func r2NamesWithoutStamping(t *testing.T, m *cfgMachine) []string {
+	t.Helper()
+	names := []string{
+		relevosync.SecretR2Endpoint, relevosync.SecretR2Bucket,
+		relevosync.SecretR2KeyID, relevosync.SecretR2Secret,
+	}
+	raw, err := db.OpenRaw(m.mdb.LocalOrSelf().Path())
+	if err != nil {
+		t.Fatalf("open the local file for writing: %v", err)
+	}
+	defer func() { _ = raw.Close() }()
+	for _, name := range names {
+		if _, err := raw.Exec(`DELETE FROM config_write_stamp WHERE key = ?`, relevosync.SecretStampKey(name)); err != nil {
+			t.Fatalf("clear the stamp for %s: %v", name, err)
+		}
+	}
+	return names
+}
+
+// stampOf is the write stamp the secrets document reads for one name.
+func stampOf(m *cfgMachine, name string) bool {
+	_, ok, err := m.cfg.SecretsDoc().ItemWriteStamp(name)
+	return err == nil && ok
 }
 
 // newClientKeyPEM is a freshly generated client key, which is what an install
