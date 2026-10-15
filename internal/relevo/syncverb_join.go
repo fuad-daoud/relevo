@@ -226,6 +226,13 @@ func (v *VerbRunner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, to
 	if staged != nil {
 		opened = staged.transport
 	}
+	if joining && staged != nil {
+		if err := v.settleImportBucket(r2, staged); err != nil {
+			staged.unstage()
+			return verbRefusal(verbClassify(err), err)
+		}
+		opened = staged.transport
+	}
 	enabler := &relevosync.Enabler{
 		Request: relevosync.EnableRequest{
 			Local:  v.Local,
@@ -276,4 +283,57 @@ func (v *VerbRunner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, to
 		v.Runner.SeedStats(res.Stats)
 	}
 	return &wire.SyncResult{OK: true, Applied: true, RemoteURL: res.Remote, TokenPresent: true, Warning: enableWarning(res)}
+}
+
+// settleImportBucket decides what a join's import runs on.
+//
+// A verify worker opened with no bucket cannot carry the import, which fetches
+// `$ref` bodies: the stored set after the secrets pre-pass is merged with the
+// flags the joiner passed -- the same lenient resolve the join preflight runs,
+// where a flag beats the stored value it would fill -- and neither side
+// completing it is the fleet granting none. That is refused before the enable
+// opens a worker for an import no bucket could carry, and the rows put back the
+// way staging found them. A merged set that is complete ends the question: a
+// verify worker started with none is closed and the enable builds a fresh one
+// through Open, now that the rows name a bucket (the Enabler stores flags
+// before it opens its transport, and the pre-pass stored what the document
+// applied). One opened with a bucket keeps driving.
+//
+// The refusal error is returned; the caller puts the staged rows back.
+//
+// Ordering matters on the way out: the transport is cleared from the join's
+// publication before it is closed, so a disable arriving mid-join reaches a
+// worker that is still there and never drives one already gone.
+func (v *VerbRunner) settleImportBucket(r2 relevosync.R2Intake, staged *verified) error {
+	stored, err := relevosync.ReadR2(v.Local)
+	if err != nil {
+		releaseStagedWorker(v, staged)
+		return err
+	}
+	resolve := relevosync.R2Intake{
+		Endpoint: r2.Endpoint,
+		Bucket:   r2.Bucket,
+		KeyID:    r2.KeyID,
+		Secret:   r2.Secret,
+		Stored:   stored,
+	}
+	if _, resolveErr := resolve.R2Resolve(); resolveErr != nil {
+		releaseStagedWorker(v, staged)
+		if errors.Is(resolveErr, relevosync.ErrNoR2) {
+			return relevosync.ErrNoR2AfterJoin
+		}
+		return resolveErr
+	}
+	if staged.bucketless {
+		releaseStagedWorker(v, staged)
+	}
+	return nil
+}
+
+// releaseStagedWorker closes the worker the passphrase check ran on and clears
+// it from the join's publication.
+func releaseStagedWorker(v *VerbRunner, staged *verified) {
+	v.clearJoin(staged.transport)
+	closeTransport(staged.transport)
+	staged.transport = nil
 }
