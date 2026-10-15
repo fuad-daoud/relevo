@@ -7,8 +7,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -203,7 +206,8 @@ func TestSetupAppliesAnswersEndToEnd(t *testing.T) {
 			t.Errorf("section %s missing after setup: %v", section, err)
 		}
 	}
-	codexFiles := filepath.Join(homeOf(), ".codex", "plan-executor.config.toml")
+	home, _ := os.UserHomeDir()
+	codexFiles := filepath.Join(home, ".codex", "plan-executor.config.toml")
 	if _, err := os.Stat(codexFiles); err != nil {
 		t.Errorf("agent definition not installed: %v", err)
 	}
@@ -239,4 +243,60 @@ func rtConfigHas(t *testing.T, section config.Section) (bool, error) {
 		return false, err
 	}
 	return rt.Config.Has(section)
+}
+
+// TestSetupInSandboxNeverAsksForTheService pins that an env sandbox gets no
+// service question, because the unit it would install is the host's own.
+func TestSetupInSandboxNeverAsksForTheService(t *testing.T) {
+	bin := t.TempDir()
+	body := "#!/bin/sh\ncase \"$1 $2\" in\n\"login status\") exit 0;;\n\"debug models\") printf '[{\"slug\":\"gpt-6-luna\",\"visibility\":\"list\",\"priority\":1}]\\n';;\nesac\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(body), 0o755); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+	initRoot(t)
+	t.Setenv("PATH", bin)
+	t.Setenv("RELEVO_SANDBOX", "test")
+
+	stdout, _, err := captureOutput(t, func() error {
+		return run([]string{"setup", "--json"})
+	})
+	var ec exitCodeErr
+	if !errors.As(err, &ec) || ec.code != setupQuestionsCode {
+		t.Fatalf("setup --json = %v, want the questions exit", err)
+	}
+	var doc SetupQuestionsDoc
+	if jerr := json.Unmarshal(stdout, &doc); jerr != nil {
+		t.Fatalf("questions doc: %v\n%s", jerr, stdout)
+	}
+	for _, q := range doc.Questions {
+		if q.ID == "service" {
+			t.Fatalf("service was asked inside a sandbox: %+v", q)
+		}
+	}
+	if !slices.Contains(doc.Notes, sandboxServiceNote) {
+		t.Fatalf("notes = %v, want the sandbox service note", doc.Notes)
+	}
+}
+
+// TestSetupPluginCheckReadsClaudeConfigDir pins that the plugin question
+// follows CLAUDE_CONFIG_DIR, where Claude Code keeps its plugins when set.
+func TestSetupPluginCheckReadsClaudeConfigDir(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	if got := claudeConfigDir(); got != dir {
+		t.Fatalf("claudeConfigDir = %q, want %q", got, dir)
+	}
+	if doctor.RelevoPluginInstalledIn(dir) {
+		t.Fatalf("an empty config dir reads as installed")
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "plugins"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	state := `{"version":2,"plugins":{"relevo@relevo":[{"scope":"user","version":"0.17.3"}]}}`
+	if err := os.WriteFile(filepath.Join(dir, "plugins", "installed_plugins.json"), []byte(state), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !doctor.RelevoPluginInstalledIn(dir) {
+		t.Fatalf("installed_plugins.json under CLAUDE_CONFIG_DIR not read")
+	}
 }

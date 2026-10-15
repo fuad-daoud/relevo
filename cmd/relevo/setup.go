@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -104,6 +105,9 @@ func setupRun(rt relevo.Runtime, answersFlag []string, asJSON, stdinTTY, stdoutT
 		return err
 	}
 	inv := setup.Probe(env)
+	if inEnvSandbox() {
+		inv.Notes = append(inv.Notes, sandboxServiceNote)
+	}
 	if err := setupPrecheck(inv); err != nil {
 		return err
 	}
@@ -166,7 +170,7 @@ func setupGroundedAnswers(rt relevo.Runtime, inv setup.Inventory) (setup.Answers
 	if err != nil {
 		return nil, nil, err
 	}
-	standing := setupStandingAnswers(current, doctor.RelevoPluginInstalled(homeOf()), setupUnitPresent())
+	standing := setupStandingAnswers(current, doctor.RelevoPluginInstalledIn(claudeConfigDir()), setupUnitPresent() || inEnvSandbox())
 	return setup.RecommendedAnswers(inv, standing), standing, nil
 }
 
@@ -233,10 +237,22 @@ func setupStandingAnswers(current setup.Answers, pluginInstalled, unitPresent bo
 	return out
 }
 
-func homeOf() string {
+// claudeConfigDir is where Claude Code keeps its plugins: CLAUDE_CONFIG_DIR
+// when set, else ~/.claude.
+func claudeConfigDir() string {
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		return dir
+	}
 	home, _ := os.UserHomeDir()
-	return home
+	return filepath.Join(home, ".claude")
 }
+
+// sandboxServiceNote says why an env sandbox gets no service question: the
+// unit is the host's one relevo.service, so installing it from a sandbox
+// would restart the developer's own daemon on the sandbox binary.
+const sandboxServiceNote = "service: skipped inside an env sandbox; it would replace the host's relevo.service"
+
+func inEnvSandbox() bool { return os.Getenv("RELEVO_SANDBOX") != "" }
 
 func setupUnitPresent() bool {
 	u, err := osUnitSpec()

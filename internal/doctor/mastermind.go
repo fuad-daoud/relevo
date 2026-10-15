@@ -220,22 +220,22 @@ func pluginEnabledCheck(home, repo string) Check {
 // install enables it too.
 const PluginInstallCommand = "claude plugin marketplace add fuad-daoud/relevo && claude plugin install relevo@relevo"
 
-// RelevoPluginInstalled reports whether installed_plugins.json lists a relevo
-// plugin; an unreadable file reads as not installed. Setup asks it to drop the
-// plugin question.
-func RelevoPluginInstalled(home string) bool {
-	return relevoPluginInstalled(home)
-}
-
-// relevoPluginInstalled reports whether installed_plugins.json lists a relevo
-// plugin; an unreadable file reads as not installed.
-func relevoPluginInstalled(home string) bool {
-	raw, err := os.ReadFile(filepath.Join(home, claudePluginStateRel))
+// RelevoPluginInstalledIn reports whether the installed_plugins.json under a
+// Claude Code config directory lists a relevo plugin. setup passes
+// CLAUDE_CONFIG_DIR when it is set, which Claude Code itself honours.
+func RelevoPluginInstalledIn(claudeDir string) bool {
+	raw, err := os.ReadFile(filepath.Join(claudeDir, "plugins", "installed_plugins.json"))
 	if err != nil {
 		return false
 	}
 	_, found, err := installedRelevoPlugin(raw)
 	return err == nil && found
+}
+
+// relevoPluginInstalled reports whether installed_plugins.json lists a relevo
+// plugin; an unreadable file reads as not installed.
+func relevoPluginInstalled(home string) bool {
+	return RelevoPluginInstalledIn(filepath.Join(home, ".claude"))
 }
 
 // pluginEnabled reports whether a settings.json enables relevo@relevo; an
