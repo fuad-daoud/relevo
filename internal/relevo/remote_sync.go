@@ -27,7 +27,7 @@ const unreachableGrace = 30 * time.Minute
 // note is excluded from the report's switch lines rather than naming the same
 // switch a second time. A server that ships no switch history leaves the entry
 // as the only record of the switch there is.
-const pollSwitchNotePrefix = "switched on "
+const pollSwitchNotePrefix = store.PollSwitchNotePrefix
 
 // checkedOutWarned records the bindings whose "checked out" hint catchUp has
 // already logged at Info in this process, so the hint does not repeat on every

@@ -274,6 +274,20 @@ func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 	if err != nil {
 		return b, err
 	}
+	// After queueReport, which names the switches in the payload from the view
+	// itself: logged before it, each would be named a second time. The log is
+	// where the history record reads the round's builders from.
+	for _, sw := range a.View.Switches {
+		if sw == "" || sw == nudgeNote {
+			continue
+		}
+		if err := tx.AppendLog(name, store.LogEntry{
+			TS: rt.Now().UTC(), Round: n, Direction: store.DirToMasterMind,
+			Kind: store.KindSwitch, Note: sw, Confirmed: true,
+		}); err != nil {
+			return next, err
+		}
+	}
 	if a.View.Stopped != "" {
 		// After queueReport, so the entry is filed under the stopped round.
 		if err := tx.AppendLog(name, store.LogEntry{

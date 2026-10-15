@@ -11,6 +11,10 @@ This round's diff: {{.DiffPath}}.
 Builder rounds of this plan:
 {{range .BuilderRounds}}- round {{.Round}} prompt: {{.PromptPath}}
 - round {{.Round}} report: {{.ReportPath}}
+{{end}}{{end}}{{if .PlanFiles}}Files the plans name, from the base branch:
+{{range .PlanFiles}}- {{.Name}}: {{.Path}}
+{{end}}{{end}}{{if .PlanPaths}}Plan set:
+{{range .PlanPaths}}- {{.}}
 {{end}}{{end}}{{if .GateLogPath}}Check result: {{.GateResult}}; its output: {{.GateLogPath}}.{{else}}No check ran for this round.{{end}}
 
 Read the plan, the round's prompt when it is named, the report and the diffs.

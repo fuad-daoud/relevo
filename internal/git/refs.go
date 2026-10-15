@@ -153,6 +153,24 @@ func (c *Client) RefSHA(ctx context.Context, dir, ref string) (sha string, ok bo
 	return res, true, nil
 }
 
+// BlobAt resolves path at ref to the blob it names. (oid, true, nil) when path
+// is a regular file there, ("", false, nil) when ref has no such file.
+func (c *Client) BlobAt(ctx context.Context, dir, ref, path string) (oid string, ok bool, err error) {
+	out, err := c.run(ctx, dir, nil, "ls-tree", "-z", ref, "--", path)
+	if err != nil {
+		return "", false, err
+	}
+	meta, name, found := strings.Cut(string(out), "\t")
+	if !found || strings.TrimSuffix(name, "\x00") != path {
+		return "", false, nil
+	}
+	fields := strings.Fields(meta)
+	if len(fields) != 3 || fields[1] != "blob" || strings.HasPrefix(fields[0], "120") {
+		return "", false, nil
+	}
+	return fields[2], true, nil
+}
+
 // UpdateRef updates ref to newSHA, verifying oldSHA when it is non-empty.
 func (c *Client) UpdateRef(ctx context.Context, dir, ref, newSHA, oldSHA string) error {
 	args := []string{"update-ref", ref, newSHA}
