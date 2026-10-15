@@ -74,6 +74,9 @@ type Git interface {
 	RemoveWorktree(ctx context.Context, dir, path string, force bool) error
 	Dirty(ctx context.Context, dir string) (bool, error)
 	RefSHA(ctx context.Context, dir, ref string) (string, bool, error)
+	// BlobAt resolves path at ref to its blob id; ok is false when ref has no
+	// such regular file.
+	BlobAt(ctx context.Context, dir, ref, path string) (oid string, ok bool, err error)
 	UpdateRef(ctx context.Context, dir, ref, newSHA, oldSHA string) error
 	// DeleteRef removes ref; a missing ref is success, so the server's
 	// settled-binding cleanup deletes the refs it listed without racing.

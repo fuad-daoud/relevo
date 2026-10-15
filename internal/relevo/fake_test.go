@@ -144,9 +144,11 @@ type fakeGit struct {
 	lastChangedFilesFrom string
 	lastChangedFilesTo   string
 
-	blobs     map[string][]byte
-	blobErr   error
-	blobCalls int
+	blobs      map[string][]byte
+	blobPaths  map[string]string
+	blobAtRefs []string
+	blobErr    error
+	blobCalls  int
 
 	worktreeStat         git.Stat
 	worktreeStatErr      error
@@ -368,6 +370,15 @@ func (f *fakeGit) ChangedFiles(ctx context.Context, dir, from, to string) ([]pat
 }
 
 // ReadBlob answers the comment judge's blob read (#801).
+// BlobAt answers from blobPaths, a path -> object id map; blobAtRefs records
+// the ref each lookup read.
+func (f *fakeGit) BlobAt(ctx context.Context, dir, ref, path string) (string, bool, error) {
+	f.calls++
+	f.blobAtRefs = append(f.blobAtRefs, ref)
+	oid, ok := f.blobPaths[path]
+	return oid, ok, nil
+}
+
 func (f *fakeGit) ReadBlob(ctx context.Context, dir, oid string) ([]byte, error) {
 	f.calls++
 	f.blobCalls++

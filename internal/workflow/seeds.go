@@ -24,6 +24,13 @@ type SeedRound struct {
 	ReportPath string
 }
 
+// SeedFile is a repo file a plan names, read from the chain's base branch: its
+// repo-relative name and the path of the copy a runner can open, or a path-free
+// "not available" clause.
+type SeedFile struct {
+	Name, Path string
+}
+
 // SeedView is one round's inputs, rendered from a seed template. It carries
 // paths, never file contents.
 type SeedView struct {
@@ -36,6 +43,9 @@ type SeedView struct {
 	// PlanPaths lists every plan copy the chain holds, in plan order, for the
 	// seeds that judge the branch as a whole.
 	PlanPaths []string
+	// PlanFiles lists the repo files the plan texts name, as the chain's base
+	// branch holds them.
+	PlanFiles []SeedFile
 	// BuilderRoundKind names what the closing builder round is when it is not
 	// the plan's first; "" means it is. BuilderRoundOn is the round it sits on
 	// top of, and BuilderRounds lists every builder round of the plan with the

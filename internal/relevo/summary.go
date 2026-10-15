@@ -40,12 +40,12 @@ func reportPathFor(rt Runtime, b store.Binding) string {
 // through to the continuation or halt path. A writer is untouched: it writes its
 // own report.
 //
-// A chain's reviewer and security members are the exception: their report is
-// the message that carried the block their seed demands (a recap after the
-// block would otherwise hide the whole review), and the file is relevo's to
-// rewrite with that message, stripped of the block the parse already read. That
-// rewrite of a file that has content in it is the chain's own rule and is not
-// reported as a fallback.
+// A chain's reviewer and security members keep a file that has content in it
+// too: their verdict comes from the final message's block, and a block inside
+// the kept file is stripped in place when the final message carries its own. A
+// file that is missing or empty is saved from the block-carrying message,
+// stripped of its block, so a recap after the block cannot become the whole
+// review.
 //
 // The path a close should record is returned either way, so a caller can stat
 // what it is about to queue; fellBack reports whether the stream was saved
@@ -63,8 +63,7 @@ func writeReaderSummary(rt Runtime, b store.Binding) (string, bool, error) {
 	text := readerOutputText(lastStreamKind(b), stream, chainReader)
 
 	// A regular file at the output path with content in it is the runner's own
-	// report and is left alone -- except for a chain reader, whose report
-	// relevo owns. Anything else there -- a symlink a runner planted, a
+	// report and is kept. Anything else there -- a symlink a runner planted, a
 	// directory, a fifo -- must not be followed: it is refused and nothing is
 	// created, which is a refusal and not a fallback.
 	present, empty := false, false
@@ -76,7 +75,10 @@ func writeReaderSummary(rt Runtime, b store.Binding) (string, bool, error) {
 		if empty, err = readerOutputEmpty(path); err != nil {
 			return path, false, err
 		}
-		if !empty && (!chainReader || text == "") {
+		if !empty {
+			if chainReader {
+				return path, false, stripKeptChainBlock(rt.Store, b, path, stream)
+			}
 			return path, false, nil
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
@@ -94,9 +96,7 @@ func writeReaderSummary(rt Runtime, b store.Binding) (string, bool, error) {
 	}
 	defer func() { _ = root.Close() }()
 	if present {
-		// Only the empty file is a fallback; a chain rewrite over a file that
-		// has content in it is the chain's own rule.
-		return path, empty, replaceReaderOutput(root, rel, []byte(text+"\n"))
+		return path, true, replaceReaderOutput(root, rel, []byte(text+"\n"))
 	}
 	if dir := filepath.Dir(rel); dir != "." {
 		if err := root.MkdirAll(dir, 0o755); err != nil {
@@ -104,6 +104,30 @@ func writeReaderSummary(rt Runtime, b store.Binding) (string, bool, error) {
 		}
 	}
 	return path, true, writeReaderOutput(root, rel, text)
+}
+
+// stripKeptChainBlock removes a fenced relevo block from a chain reader's kept
+// findings file, but only when the final stream message carries its own block:
+// without one the file's block is the only verdict and the file stays as is. A
+// file the strip would leave empty is also left as is.
+func stripKeptChainBlock(st *store.Store, b store.Binding, path string, stream []byte) error {
+	if !strings.Contains(transcript.FinalText(lastStreamKind(b), stream), "```relevo") {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	stripped := reporttail.StripTail(data)
+	if bytes.Equal(stripped, data) || len(bytes.TrimSpace(stripped)) == 0 {
+		return nil
+	}
+	root, rel, err := readerOutputRoot(st, b, path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return replaceReaderOutput(root, rel, stripped)
 }
 
 // readerOutputEmpty reports whether the runner's output file is empty for the
