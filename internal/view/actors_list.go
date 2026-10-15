@@ -91,7 +91,7 @@ func formatActor(L config.Loaded, reg *roles.Registry, name string, a roles.Acto
 }
 
 // formatScope renders a writer's scope for the listings: its path entries,
-// then "+ comments" when a comment-only Go edit is allowed.
+// then "+ comments" when a comment-only edit is allowed.
 func formatScope(scope *pathscope.Scope) string {
 	parts := strings.Join(scope.Paths, ", ")
 	if scope.Comments {

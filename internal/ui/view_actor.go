@@ -121,7 +121,7 @@ func actorCheckLine(doc relevo.ConfigDoc, name string, width int) (string, bool)
 }
 
 // actorScopeText renders a writer's scope for the detail view: its path
-// entries, then "+ comments" when a comment-only Go edit is allowed (#801).
+// entries, then "+ comments" when a comment-only edit is allowed.
 func actorScopeText(scope *pathscope.Scope) string {
 	parts := strings.Join(scope.Paths, ", ")
 	if scope.Comments {
