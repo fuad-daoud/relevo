@@ -170,23 +170,15 @@ func (v *VerbRunner) unstageJoin(snapshot relevosync.JoinSnapshot) {
 // opened to read -- so the wiring can install an opener that starts the worker
 // with none instead of refusing. Every other enable opens through Open, whose
 // refusal an incomplete set is, because what it would import needs the bucket
-// in hand. bucketless records what the opener answered: a worker started with
-// no bucket stored, which the rest of the enable must answer for.
+// in hand. bucketless is the opener's answer about the worker it built -- a
+// worker started with no bucket stored, which the rest of the enable must
+// answer for.
 func (v *VerbRunner) openJoinTransport(ctx context.Context, joining bool) (synclog.LogTransport, bool, bool, error) {
 	var transport synclog.LogTransport
 	var err error
 	var bucketless bool
 	if joining && v.OpenNoBucket != nil {
-		transport, err = v.OpenNoBucket(ctx)
-		// The opener hands a worker a bucket when the stored set is complete,
-		// so the stored set at this moment is the worker's answer; an open
-		// failure is returned below either way.
-		if err == nil {
-			var stored relevosync.R2Secrets
-			if stored, err = relevosync.ReadR2(v.Local); err == nil {
-				bucketless = !stored.Complete()
-			}
-		}
+		transport, bucketless, err = v.OpenNoBucket(ctx)
 	} else {
 		transport, err = v.openTransport(ctx)
 	}

@@ -65,7 +65,7 @@ func TestAPrepassFailureClearsTheJoinPublicationBeforeClosingTheWorkerItOpened(t
 	t.Parallel()
 	runner, _ := joinRunner(t)
 	fake := brokenFleetLog(t)
-	runner.OpenNoBucket = func(context.Context) (synclog.LogTransport, error) { return fake, nil }
+	runner.OpenNoBucket = func(context.Context) (synclog.LogTransport, bool, error) { return fake, true, nil }
 
 	runJoinExpectRefused(t, runner)
 	if got := runner.joinTransport(); got != nil {

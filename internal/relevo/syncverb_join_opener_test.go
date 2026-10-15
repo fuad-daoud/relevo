@@ -63,15 +63,15 @@ func daemonWiring(t *testing.T, m *cfgMachine) *VerbRunner {
 			}
 			return log, nil
 		},
-		OpenNoBucket: func(context.Context) (synclog.LogTransport, error) {
+		OpenNoBucket: func(context.Context) (synclog.LogTransport, bool, error) {
 			stored, err := relevosync.ReadR2(m.local)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			if stored.Complete() {
-				return log, nil
+				return log, false, nil
 			}
-			return &noBucketLog{log}, nil
+			return &noBucketLog{log}, true, nil
 		},
 	}
 }
@@ -185,4 +185,61 @@ func TestAWrongPassphraseThroughTheDaemonsOpenersLeavesEveryRowAsItWas(t *testin
 		t.Fatalf("join = (ok %v, code %q), want refused as %q", res.OK, res.Code, wire.SyncCodeWrongPassphrase)
 	}
 	sameRows(t, before, stagedRows(t, b.local))
+}
+
+// answerWiring is the joiner's runner over the joiner the fixture built, with
+// the opener's answer pinned: Open counts what it built, and OpenNoBucket
+// hands the same healthy log back while answering bucketless whatever the
+// stored rows say. What decides whether the verify worker keeps driving is the
+// opener's word, not a re-read of the rows after the fact.
+func answerWiring(t *testing.T, m *cfgMachine) (*VerbRunner, *openerCount) {
+	t.Helper()
+	count := &openerCount{}
+	runner := &VerbRunner{
+		Shared: m.mdb,
+		Local:  m.local,
+		Path:   m.mdb.Path(),
+		Runner: &relevosync.Runner{
+			Client: m.bodyLog, Local: m.local, Timeout: time.Second,
+			ReplicaPath: t.TempDir() + "/replica.db",
+		},
+		Open: func(context.Context) (synclog.LogTransport, error) {
+			count.opens++
+			return m.bodyLog, nil
+		},
+		OpenNoBucket: func(context.Context) (synclog.LogTransport, bool, error) {
+			return m.bodyLog, true, nil
+		},
+	}
+	return runner, count
+}
+
+// openerCount is what the wiring's Open answered with.
+type openerCount struct {
+	opens int
+}
+
+// A complete stored set does not change what the opener answered. The first
+// worker is what the passphrase check drove, and bucketless is that worker's
+// answer about how it started: the enable releases it on that word and lets
+// the Enabler rebuild through Open. The rows merely match the word; the pin is
+// that the word is who decides.
+func TestABucketlessAnswerReleasesTheVerifyWorkerEvenOverCompleteRows(t *testing.T) {
+	t.Parallel()
+	_, b, _ := prodFleet(t, true)
+	// The joiner's set is complete the moment the opener reads it, so the rows
+	// alone would say the verify worker can keep driving. The opener's word
+	// says the worker it built is bucketless, and that word decides.
+	if err := relevosync.SetR2(b.local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetR2 on B: %v", err)
+	}
+	bRunner, count := answerWiring(t, b)
+
+	res := bRunner.Run(context.Background(), joinVerb(t, joinPassphrase), []byte(joinToken+joinPassphrase))
+	if !res.OK {
+		t.Fatalf("join refused: (%s) %s", res.Code, res.Message)
+	}
+	if count.opens != 1 {
+		t.Errorf("Open was called %d times, want exactly 1: the verify worker was released on the opener's answer and the Enabler rebuilt", count.opens)
+	}
 }

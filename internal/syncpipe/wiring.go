@@ -46,12 +46,18 @@ func OpenSupervisor(shared *db.DB, local relevosync.Local) (*Supervisor, error) 
 // A complete stored set gives the worker a bucket exactly as OpenSupervisor
 // would, so a caller cannot tell the two openers apart while it is credentials-
 // complete.
-func OpenNoBucketSupervisor(shared *db.DB, local relevosync.Local) (*Supervisor, error) {
+//
+// The bool is the answer about the worker this opener built: whether it started
+// that worker with no bucket stored, read off the same rows the handshake was
+// built from. It stands on its own, without re-reading the rows later, because
+// the opener is the thing that made the decision.
+func OpenNoBucketSupervisor(shared *db.DB, local relevosync.Local) (*Supervisor, bool, error) {
 	cfg, err := workerConfig(shared, local, false)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return NewSupervisor(cfg, relevosync.NewBreaker(local)), nil
+	sup := NewSupervisor(cfg, relevosync.NewBreaker(local))
+	return sup, cfg.R2 == nil, nil
 }
 
 // workerConfig is the body both openers build the worker from.

@@ -62,7 +62,12 @@ type VerbRunner struct {
 	// through it while the machine holds no bucket; every other enable opens
 	// through Open, whose refusal an incomplete set is. Nil means no second
 	// opener is installed and a join opens through Open as well.
-	OpenNoBucket func(context.Context) (synclog.LogTransport, error)
+	//
+	// The bool is the opener's answer about the worker it built: whether it
+	// started that worker with no bucket stored. It is trusted as it stands,
+	// because the opener built the worker and nothing re-reads the rows after
+	// the fact to guess again.
+	OpenNoBucket func(context.Context) (synclog.LogTransport, bool, error)
 	// Serialize runs fn under the daemon's in-flight sync guard. Nil runs it
 	// inline, which is what a cockpit wants: it is not the daemon and has no
 	// trigger to be serialized against.

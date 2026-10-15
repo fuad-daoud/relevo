@@ -128,17 +128,18 @@ func TestOpenSupervisorRefusesWithoutRemoteOrToken(t *testing.T) {
 }
 
 // TestOpenNoBucketSupervisor pins the join's first worker: an incomplete set
-// starts the worker with nothing, and the worker it starts is pointed at the
-// same rows every other enable's is. Starting no process means the config it
-// would hand a hello is what the refusal question turns on, so it is read off
-// the supervisor before the first call. The refusal OpenSupervisor answers an
-// incomplete set with is pinned where it was introduced, in blobclient_test.
+// starts the worker with nothing and answers so, and the worker it starts is
+// pointed at the same rows every other enable's is. Starting no process means
+// the config it would hand a hello is what the refusal question turns on, so
+// it is read off the supervisor before the first call. The refusal
+// OpenSupervisor answers an incomplete set with is pinned where it was
+// introduced, in blobclient_test.
 func TestOpenNoBucketSupervisor(t *testing.T) {
 	t.Parallel()
 	t.Run("no stored set", func(t *testing.T) {
 		t.Parallel()
 		shared, local := wiringRows(t, false)
-		sup, err := OpenNoBucketSupervisor(shared, local)
+		sup, bucketless, err := OpenNoBucketSupervisor(shared, local)
 		if err != nil {
 			t.Fatalf("OpenNoBucketSupervisor: %v", err)
 		}
@@ -149,11 +150,14 @@ func TestOpenNoBucketSupervisor(t *testing.T) {
 		if sup.cfg.R2 != nil {
 			t.Errorf("the handshake carries %+v, want no bucket at all", *sup.cfg.R2)
 		}
+		if !bucketless {
+			t.Error("the opener answers bucketed, want bucketless: it started this worker with no bucket stored")
+		}
 	})
 	t.Run("a complete stored set", func(t *testing.T) {
 		t.Parallel()
 		shared, local := wiringRows(t, true)
-		sup, err := OpenNoBucketSupervisor(shared, local)
+		sup, bucketless, err := OpenNoBucketSupervisor(shared, local)
 		if err != nil {
 			t.Fatalf("OpenNoBucketSupervisor: %v", err)
 		}
@@ -162,6 +166,9 @@ func TestOpenNoBucketSupervisor(t *testing.T) {
 			Endpoint: wiringR2.Endpoint, Bucket: wiringR2.Bucket, KeyID: wiringR2.KeyID, Secret: wiringR2.Secret,
 		}) {
 			t.Errorf("the handshake carries %+v, want the stored credentials", got)
+		}
+		if bucketless {
+			t.Error("the opener answers bucketless over a worker it started with a bucket")
 		}
 	})
 }

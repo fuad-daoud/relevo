@@ -87,7 +87,7 @@ func newVerbRunner(d *db.DB) *relevo.VerbRunner {
 	// applied, and the document is only on the remote the worker is opened to
 	// read: the join's first worker starts with none, and the enable it became
 	// answers for handing the import a bucketed one.
-	runner.OpenNoBucket = func(context.Context) (synclog.LogTransport, error) {
+	runner.OpenNoBucket = func(context.Context) (synclog.LogTransport, bool, error) {
 		return syncpipe.OpenNoBucketSupervisor(d, local)
 	}
 	return runner
