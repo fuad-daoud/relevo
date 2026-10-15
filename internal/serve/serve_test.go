@@ -1447,6 +1447,49 @@ func TestUnavailableGatesServerWide(t *testing.T) {
 	}
 }
 
+// TestUnavailableAcceptsBareProvider: the subject a laptop forwards for
+// `relevo gate <provider>` is the provider itself; the server gates it
+// provider-wide and refuses a provider it does not serve.
+func TestUnavailableAcceptsBareProvider(t *testing.T) {
+	cSet, err := builderCandidateSet(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(Config{DB: testServeDB(t), Root: t.TempDir(), Candidates: cSet, Now: time.Now, Audiences: []string{testAudience}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := s.Handler()
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	post := func(token string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(remote.UnavailableRequest{Token: token, Reason: "rate limited test"})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, signedRequest(t, kp, "POST", "/v1/unavailable", body))
+		return rec
+	}
+
+	if rec := post("nonesuch"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown provider status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+	if rec := post("anthropic"); rec.Code != http.StatusOK {
+		t.Fatalf("bare provider status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	raw, ok, err := s.DB().KVGet("serve.ledger")
+	if err != nil || !ok {
+		t.Fatalf("serve.ledger row = (_, %v, %v), want it present", ok, err)
+	}
+	if !strings.Contains(string(raw), `"anthropic"`) {
+		t.Fatalf("serve.ledger = %s, want a provider-wide anthropic gate", raw)
+	}
+}
+
 func newAvailableServer(t *testing.T) (*Server, remote.Keypair) {
 	t.Helper()
 	cSet, err := builderCandidateSet(t)

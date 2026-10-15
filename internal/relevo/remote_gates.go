@@ -68,11 +68,18 @@ func staleLine(n int) string {
 // advertise accounts, appends accountRefusal and reports false: the caller
 // then forwards nothing to that server. One line names the keys sent. The
 // second result counts the bindings the server no longer has, which the caller
-// folds into one summary rather than a line each.
-func forwardAccountKeys(ctx context.Context, rt Runtime, server string, keys []string, open []store.Binding, reason string, lines *[]string) (bool, int) {
+// folds into one summary rather than a line each. A key that failed to reach
+// the server is followed by one next: line gating that key there.
+func forwardAccountKeys(ctx context.Context, rt Runtime, server string, keys []string, open []store.Binding, g gateSpec, lines *[]string) (bool, int) {
 	ok, err := serverHasAccounts(ctx, rt, server)
 	if err != nil {
+		if unknownServer(err) {
+			return false, 0
+		}
 		*lines = append(*lines, fmt.Sprintf("%s: read features: %v", server, err))
+		for _, key := range keys {
+			*lines = append(*lines, g.next(server, key))
+		}
 		return false, 0
 	}
 	if !ok {
@@ -82,35 +89,58 @@ func forwardAccountKeys(ctx context.Context, rt Runtime, server string, keys []s
 
 	*lines = append(*lines, fmt.Sprintf("%s: gated %s", server, strings.Join(keys, ", ")))
 	var stale int
+	failed := map[string]bool{}
 	for _, b := range open {
 		if b.Builder.Server != server {
 			continue
 		}
 		for _, key := range keys {
-			if err := rt.Remote.Unavailable(ctx, b.Builder.Server, b.Name, key, reason); err != nil {
-				if staleBinding(err) {
-					stale++
-					continue
-				}
-				*lines = append(*lines, fmt.Sprintf("%s: %s: %v", b.Name, b.Builder.Server, err))
+			err := rt.Remote.Unavailable(ctx, b.Builder.Server, b.Name, key, g.reason)
+			if err == nil {
+				continue
+			}
+			if unknownServer(err) {
+				return true, stale
+			}
+			if staleBinding(err) {
+				stale++
+				continue
+			}
+			*lines = append(*lines, fmt.Sprintf("%s: %s: %v", b.Name, b.Builder.Server, err))
+			if !failed[key] {
+				failed[key] = true
+				*lines = append(*lines, g.next(server, key))
 			}
 		}
 	}
 	return true, stale
 }
 
+// subjectProvider is the provider a gate subject names: a canonical candidate
+// token's provider, or the subject itself when it is a bare provider this
+// machine configures. ok is false for anything else.
+func subjectProvider(rt Runtime, subject string) (string, bool) {
+	if ref, err := candidate.ParseRef(subject); err == nil {
+		return ref.Provider, true
+	}
+	if rt.Candidates != nil && slices.Contains(rt.Candidates.Providers(), subject) {
+		return subject, true
+	}
+	return "", false
+}
+
 // forwardAccountNames names the login of each live group@account key this
 // host's ledger records for token's provider, in ledger order: the logins a
 // `gate <token>` just gated locally, which the server's own rotation must gate
-// too. Nil when token is not a candidate, when no gates store is configured,
+// too. Nil when token names no provider, when no gates store is configured,
 // or when the ledger holds no account key for that provider -- exactly the
 // hosts where the bare token must keep travelling.
 func forwardAccountNames(rt Runtime, token string) []string {
 	if rt.Gates == nil {
 		return nil
 	}
-	ref, err := candidate.ParseRef(token)
-	if err != nil {
+	provider, ok := subjectProvider(rt, token)
+	if !ok {
 		return nil
 	}
 	l, err := availability.LoadLedger(rt.Gates)
@@ -126,7 +156,7 @@ func forwardAccountNames(rt Runtime, token string) []string {
 	var names []string
 	for _, key := range availability.LiveGateKeys(l, now) {
 		group, name, ok := account.ParseGateKey(key)
-		if !ok || group != ref.Provider || name == "" || seen[name] {
+		if !ok || group != provider || name == "" || seen[name] {
 			continue
 		}
 		seen[name] = true
@@ -260,13 +290,63 @@ func candidateOptions(views []remote.CandidateView) string {
 	return strings.Join(parts, ", ")
 }
 
+// unavailableForward is one gate being forwarded: the subject as this machine
+// knows it and what decides how each server receives it.
+type unavailableForward struct {
+	token     string
+	name      string
+	direct    bool
+	provider  bool
+	acctNames []string
+	open      []store.Binding
+	g         gateSpec
+}
+
+// openRemoteBindings returns the remote bindings with an open round, appending
+// one line per log that could not be read.
+func openRemoteBindings(rt Runtime, bindings []store.Binding, lines *[]string) []store.Binding {
+	var open []store.Binding
+	for _, b := range bindings {
+		if !b.Builder.Remote() {
+			continue
+		}
+
+		entries, err := rt.Store.ReadLog(b.Name)
+		if err != nil {
+			*lines = append(*lines, fmt.Sprintf("%s: read log: %v", b.Name, err))
+			continue
+		}
+		if store.RoundOpen(entries, b.Round) {
+			open = append(open, b)
+		}
+	}
+	return open
+}
+
+// bindingServers is the sorted set of servers bindings name.
+func bindingServers(bindings []store.Binding) []string {
+	var servers []string
+	seen := make(map[string]bool)
+	for _, b := range bindings {
+		if seen[b.Builder.Server] {
+			continue
+		}
+		seen[b.Builder.Server] = true
+		servers = append(servers, b.Builder.Server)
+	}
+	sort.Strings(servers)
+	return servers
+}
+
 // ForwardUnavailable tells every remote binding with an open round that its
 // server-side candidate just hit a usage limit, so that server's own
 // reconcile can switch or gate it exactly as a local daemon would (§4.6). It
 // never fails the caller: a binding relevo could not reach is named in the
-// returned lines instead, and `relevo gate <token>`'s local behaviour (the
-// ledger gate) proceeds either way.
-func ForwardUnavailable(ctx context.Context, rt Runtime, token, reason string) []string {
+// returned lines instead, followed by the command that gates the same subject
+// on that server by hand, and `relevo gate <token>`'s local behaviour (the
+// ledger gate) proceeds either way. until is the expiry the local gate
+// recorded, zero for until cleared.
+func ForwardUnavailable(ctx context.Context, rt Runtime, token, reason string, until time.Time) []string {
 	if rt.Remote == nil {
 		return nil
 	}
@@ -279,87 +359,36 @@ func ForwardUnavailable(ctx context.Context, rt Runtime, token, reason string) [
 	// The argument may be a name; the forwarded token is this machine's
 	// canonical token, and its name is what a server that names its candidates
 	// can match it by.
-	token, name, _ := clientCandidateToken(rt, token)
+	token, name, isCandidate := clientCandidateToken(rt, token)
 
 	var lines []string
-	var open []store.Binding
-	for _, b := range bindings {
-		if !b.Builder.Remote() {
-			continue
-		}
+	open := openRemoteBindings(rt, bindings, &lines)
 
-		entries, err := rt.Store.ReadLog(b.Name)
-		if err != nil {
-			lines = append(lines, fmt.Sprintf("%s: read log: %v", b.Name, err))
-			continue
-		}
-		if store.RoundOpen(entries, b.Round) {
-			open = append(open, b)
-		}
+	now := time.Now()
+	if rt.Now != nil {
+		now = rt.Now()
 	}
-
-	var servers []string
-	seen := make(map[string]bool)
-	for _, b := range open {
-		if seen[b.Builder.Server] {
-			continue
-		}
-		seen[b.Builder.Server] = true
-		servers = append(servers, b.Builder.Server)
-	}
-	sort.Strings(servers)
 
 	// An account gate key the caller already resolved travels as itself; a
-	// candidate token's logins are read from the live ledger, so a
-	// `gate <token>` forwards the same group@account keys it gated locally.
+	// candidate token's or provider's logins are read from the live ledger, so
+	// a `gate <token>` forwards the same group@account keys it gated locally.
 	// Both are empty on a host with no accounts, where the bare server token
-	// below stands unchanged.
-	direct := accountGateKey(token)
-	acctNames := forwardAccountNames(rt, token)
+	// below stands unchanged. A bare provider this machine configures travels
+	// as itself: the server gates it provider-wide.
+	_, known := subjectProvider(rt, token)
+	f := unavailableForward{
+		token:     token,
+		name:      name,
+		direct:    accountGateKey(token),
+		provider:  !isCandidate && !accountGateKey(token) && known,
+		acctNames: forwardAccountNames(rt, token),
+		open:      open,
+		g:         gateSpec{reason: reason, until: until, now: now},
+	}
 
 	var stale int
-	for _, server := range servers {
-		if direct {
-			_, n := forwardAccountKeys(ctx, rt, server, []string{token}, open, reason, &lines)
-			stale += n
-			continue
-		}
-
-		srv, miss, err := serverTokenFor(ctx, rt, server, token, name)
-		if err != nil {
-			lines = append(lines, fmt.Sprintf("%s: list candidates: %v", server, err))
-			continue
-		}
-		if srv == "" {
-			lines = append(lines, miss)
-			continue
-		}
-		if len(acctNames) > 0 {
-			if ref, perr := candidate.ParseRef(srv); perr == nil {
-				keys := make([]string, len(acctNames))
-				for i, n := range acctNames {
-					keys[i] = account.GateKey(ref.Provider, n)
-				}
-				_, n := forwardAccountKeys(ctx, rt, server, keys, open, reason, &lines)
-				stale += n
-				continue
-			}
-		}
-		if srv != token {
-			lines = append(lines, fmt.Sprintf("%s: gated %s for %s", server, srv, token))
-		}
-		for _, b := range open {
-			if b.Builder.Server != server {
-				continue
-			}
-			if err := rt.Remote.Unavailable(ctx, b.Builder.Server, b.Name, srv, reason); err != nil {
-				if staleBinding(err) {
-					stale++
-					continue
-				}
-				lines = append(lines, fmt.Sprintf("%s: %s: %v", b.Name, b.Builder.Server, err))
-			}
-		}
+	for _, server := range bindingServers(open) {
+		stale += forwardUnavailableTo(ctx, rt, server, f, &lines)
 	}
 
 	// One summary for every stale binding across every server, never one line
@@ -369,6 +398,75 @@ func ForwardUnavailable(ctx context.Context, rt Runtime, token, reason string) [
 	}
 
 	return lines
+}
+
+// forwardUnavailableTo forwards f to one server and returns how many of its
+// bindings the server no longer holds.
+func forwardUnavailableTo(ctx context.Context, rt Runtime, server string, f unavailableForward, lines *[]string) int {
+	if f.direct {
+		_, n := forwardAccountKeys(ctx, rt, server, []string{f.token}, f.open, f.g, lines)
+		return n
+	}
+
+	srv := f.token
+	if !f.provider {
+		mapped, miss, err := serverTokenFor(ctx, rt, server, f.token, f.name)
+		if err != nil {
+			if !unknownServer(err) {
+				*lines = append(*lines, fmt.Sprintf("%s: list candidates: %v", server, err), f.g.next(server, f.token))
+			}
+			return 0
+		}
+		if mapped == "" {
+			*lines = append(*lines, miss, f.g.next(server, f.token))
+			return 0
+		}
+		srv = mapped
+	}
+
+	if len(f.acctNames) > 0 {
+		if provider, ok := subjectProvider(rt, srv); ok {
+			keys := make([]string, len(f.acctNames))
+			for i, n := range f.acctNames {
+				keys[i] = account.GateKey(provider, n)
+			}
+			_, n := forwardAccountKeys(ctx, rt, server, keys, f.open, f.g, lines)
+			return n
+		}
+	}
+	if srv != f.token {
+		*lines = append(*lines, fmt.Sprintf("%s: gated %s for %s", server, srv, f.token))
+	}
+	return postUnavailable(ctx, rt, server, srv, f, lines)
+}
+
+// postUnavailable posts subject to every open binding on server. One failure
+// line per binding, and one next: line for the server if any failed.
+func postUnavailable(ctx context.Context, rt Runtime, server, subject string, f unavailableForward, lines *[]string) int {
+	var stale int
+	var failed bool
+	for _, b := range f.open {
+		if b.Builder.Server != server {
+			continue
+		}
+		err := rt.Remote.Unavailable(ctx, b.Builder.Server, b.Name, subject, f.g.reason)
+		if err == nil {
+			continue
+		}
+		if unknownServer(err) {
+			return stale
+		}
+		if staleBinding(err) {
+			stale++
+			continue
+		}
+		failed = true
+		*lines = append(*lines, fmt.Sprintf("%s: %s: %v", b.Name, b.Builder.Server, err))
+	}
+	if failed {
+		*lines = append(*lines, f.g.next(server, subject))
+	}
+	return stale
 }
 
 // ForwardAvailable tells every server this client's bindings name that a
@@ -415,6 +513,9 @@ func ForwardAvailable(ctx context.Context, rt Runtime, subject string) []string 
 		if accountGateKey(token) {
 			ok, ferr := serverHasAccounts(ctx, rt, server)
 			if ferr != nil {
+				if unknownServer(ferr) {
+					continue
+				}
 				lines = append(lines, fmt.Sprintf("%s: read features: %v", server, ferr))
 				continue
 			}
@@ -431,6 +532,9 @@ func ForwardAvailable(ctx context.Context, rt Runtime, subject string) []string 
 		}
 		resp, err := rt.Remote.Available(ctx, server, send)
 		if err != nil {
+			if unknownServer(err) {
+				continue
+			}
 			if staleBinding(err) {
 				// The server holds no such subject: nothing was gating it
 				// there. One count, folded into the single summary below.

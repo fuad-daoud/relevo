@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -60,6 +61,12 @@ type logMirror struct {
 // field empty and logs exactly as the inline mirror paths did, so the apply
 // half decides on a best-effort snapshot and never fails the tick on it.
 func fetchRemote(ctx context.Context, rt Runtime, b store.Binding) remoteFetch {
+	return fetchRemoteWithin(ctx, rt, b, 0)
+}
+
+// fetchRemoteWithin is fetchRemote with the first read of the binding bounded
+// by head; zero means unbounded.
+func fetchRemoteWithin(ctx context.Context, rt Runtime, b store.Binding, head time.Duration) remoteFetch {
 	f := remoteFetch{Name: b.Name, Server: b.Builder.Server, Round: b.Round}
 	if rt.Remote == nil {
 		return f
@@ -67,7 +74,9 @@ func fetchRemote(ctx context.Context, rt Runtime, b store.Binding) remoteFetch {
 
 	f.Observe = serverChainMemberActive(rt.Store, b.Name)
 
-	view, err := rt.Remote.GetBinding(ctx, f.Server, f.Name)
+	headCtx, cancel := boundedWait(ctx, head)
+	view, err := rt.Remote.GetBinding(headCtx, f.Server, f.Name)
+	cancel()
 	if err != nil {
 		f.Err = err
 		return f

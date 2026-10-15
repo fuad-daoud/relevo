@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -537,4 +538,46 @@ func TestRoundFileFrom(t *testing.T) {
 			t.Fatalf("body = %q, want whole file", string(body))
 		}
 	})
+}
+
+func TestTransportBoundsDialAndHandshake(t *testing.T) {
+	origDial, origTimeout := dialer, dialTimeout
+	t.Cleanup(func() { dialer, dialTimeout = origDial, origTimeout })
+	dialTimeout = 100 * time.Millisecond
+	var mu sync.Mutex
+	dials, bounded := 0, true
+	dialer = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		mu.Lock()
+		dials++
+		if dl, ok := ctx.Deadline(); !ok || time.Until(dl) > time.Second {
+			bounded = false
+		}
+		mu.Unlock()
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	injectSleep(t)
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl := New(remote.Servers{"zen": remote.ServerEntry{URL: "https://192.0.2.1:9", Insecure: true}}, kp, time.Now)
+
+	start := time.Now()
+	_, err = cl.GetBinding(context.Background(), "zen", "api")
+	if !errors.Is(err, ErrUnreachable) {
+		t.Fatalf("GetBinding err = %v, want ErrUnreachable", err)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("GetBinding took %v against a dial that never completes", took)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if dials != retryAttempts || !bounded {
+		t.Fatalf("dials = %d (want %d), every dial deadline-bounded = %v", dials, retryAttempts, bounded)
+	}
+	tr, ok := cl.getHTTPClient(cl.servers["zen"]).Transport.(*http.Transport)
+	if !ok || tr.TLSHandshakeTimeout != tlsHandshakeTimeout || tr.ResponseHeaderTimeout != 0 {
+		t.Fatalf("transport = %+v, want the handshake bound and no header bound", tr)
+	}
 }

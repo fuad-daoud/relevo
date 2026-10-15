@@ -318,8 +318,8 @@ var removedVerbs = map[string]string{
 	"pull":        "relevo wait (it prints the report)",
 	"unavailable": "relevo gate <token>",
 	"available":   "relevo gate --clear <provider>",
-	"tab":         "relevo history --tab",
-	"stats":       "relevo history --stats",
+	"tab":         "relevo ui :rounds",
+	"stats":       "relevo ui :stats",
 
 	// The rename (D5): the verb is `relevo mastermind` now, and the old
 	// spelling exits 2 through this map exactly like every other removed verb.
