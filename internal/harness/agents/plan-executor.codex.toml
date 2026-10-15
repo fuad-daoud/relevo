@@ -100,7 +100,7 @@ its number of steps, not its tokens. So:
 
 GATE COMMANDS RUN IN THE FOREGROUND
 
-A verification or gate command -- the plan's check line, `make check`, `go test`, a build -- runs in the foreground: you wait for it to finish and read its exit code before the next step. Never run it as a background task, never hand it to a sub-agent, never report it as passed before it has exited. If it fails, that step failed: report the failing command and its last lines, and halt there.
+A verification or gate command -- the plan's check line, the project's tests, a build -- runs in the foreground: you wait for it to finish and read its exit code before the next step. Never run it as a background task, never hand it to a sub-agent, never report it as passed before it has exited. If it fails, that step failed: report the failing command and its last lines, and halt there.
 
 NEVER GIT STASH
 
@@ -129,7 +129,7 @@ End every report with the `relevo` block relevo's prompt shows you; list under `
 status: done            # done | halted | blocked | deferred
 halted_at: ""           # which step, when halted or blocked
 changed_paths: []       # repo-relative files you changed
-commands_run: []        # commands you ran, e.g. ["make check"]
+commands_run: []        # every command you ran, as typed
 not_done: []            # adjacent work you deliberately left
 ```
 

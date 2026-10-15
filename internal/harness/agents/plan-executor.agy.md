@@ -116,11 +116,11 @@ File reads: when a step or the plan requires reading multiple files, read
 them yourself in one batched step (parallel tool calls); dispatch read-only
 sub-agents only for research large enough to run while you edit. Every command
 runs in the foreground and you wait for it: no background tasks, no `&`, no
-detached `make e2e`. The report file is written before the done marker, which
+detached test or build run. The report file is written before the done marker, which
 is the last action.
 
 On agy an idle root agent is an exit, and relevo treats an exit without a
-report as a failed builder and switches (#191).
+report as a failed builder and switches.
 
 EVERY MODEL STEP IS A ROUND TRIP
 
@@ -149,7 +149,7 @@ its number of steps, not its tokens. So:
   large and can run while you edit; a sub-agent for a handful of files
   costs more round trips than reading them yourself in one batched step.
 
-A verification or gate command -- the plan's check line, `make check`, `go test`, a build -- runs in the foreground: you wait for it to finish and read its exit code before the next step. Never run it as a background task, never hand it to a sub-agent, never report it as passed before it has exited. If it fails, that step failed: report the failing command and its last lines, and halt there.
+A verification or gate command -- the plan's check line, the project's tests, a build -- runs in the foreground: you wait for it to finish and read its exit code before the next step. Never run it as a background task, never hand it to a sub-agent, never report it as passed before it has exited. If it fails, that step failed: report the failing command and its last lines, and halt there.
 
 # Never git stash
 
@@ -199,7 +199,7 @@ End every report with the `relevo` block relevo's prompt shows you; list under `
 status: done            # done | halted | blocked | deferred
 halted_at: ""           # which step, when halted or blocked
 changed_paths: []       # repo-relative files you changed
-commands_run: []        # commands you ran, e.g. ["make check"]
+commands_run: []        # every command you ran, as typed
 not_done: []            # adjacent work you deliberately left
 ```
 

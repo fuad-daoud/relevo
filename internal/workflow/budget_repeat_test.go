@@ -65,11 +65,19 @@ func TestBudgetStillRepairsOnADifferentRed(t *testing.T) {
 	}
 }
 
+// gatedDefault is the shipped default workflow with a check command: the
+// shipped one has none, and these tests turn on what a check's result routes.
+func gatedDefault() Definition {
+	def := Default()
+	def.Params["gate"] = Param{Kind: ParamString, Str: "make check"}
+	return def
+}
+
 // noRegateDefault is the shipped default workflow with no repair budget: the
 // regate param rendered to zero, so a red check has no repair round to buy and
 // the budget's then target is taken on the red itself.
 func noRegateDefault() Definition {
-	def := Default()
+	def := gatedDefault()
 	def.Params["regate"] = Param{Kind: ParamInt, Int: 0}
 	return def
 }
@@ -260,7 +268,7 @@ func securityPhaseReview(t *testing.T, def Definition, s State) State {
 // security phase runs its own gate.
 func fixReviewState(t *testing.T, fixCheck string) (Definition, State) {
 	t.Helper()
-	def := Default()
+	def := gatedDefault()
 	s, actions := Start(def, StartInputs{Plans: []string{"plan-1.md"}})
 	if a := only(t, actions); a.Kind != ActionSend || a.Step != "build" {
 		t.Fatalf("start action = %+v, want a send to build", a)
@@ -352,7 +360,7 @@ func TestGreenCheckStillReachesTheReviewer(t *testing.T) {
 func TestRegateStillBuysARepair(t *testing.T) {
 	t.Parallel()
 
-	def := Default()
+	def := gatedDefault()
 	def.Params["regate"] = Param{Kind: ParamInt, Int: 2}
 	s, actions := Next(def, awaitingCheck("check", 1), Event{Kind: EventCheckClosed, Step: "check", Run: 1, Result: "red", Log: "L1"})
 	if a := only(t, actions); a.Kind != ActionSend || a.Step != "repair" {

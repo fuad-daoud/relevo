@@ -264,3 +264,54 @@ func TestAddRemoteBranchFetchFailureRefuses(t *testing.T) {
 		})
 	}
 }
+
+func TestAdoptionRemotePrefersOriginThenTheOnlyRemote(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name    string
+		remotes []string
+		want    string
+		refuse  string
+	}{
+		{"origin among several", []string{"upstream", "origin"}, "origin", ""},
+		{"only remote not called origin", []string{"gitlab"}, "gitlab", ""},
+		{"no remote", nil, "", "has no remote"},
+		{"several without origin", []string{"gitlab", "upstream"}, "", "remotes: gitlab, upstream"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := adoptionRemote("feature/x", tt.remotes)
+			if tt.refuse == "" {
+				if err != nil || got != tt.want {
+					t.Fatalf("adoptionRemote = %q, %v; want %q", got, err, tt.want)
+				}
+				return
+			}
+			if !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), tt.refuse) {
+				t.Fatalf("err = %v, want a refusal containing %q", err, tt.refuse)
+			}
+		})
+	}
+}
+
+func TestAddBranchFetchesFromTheOnlyRemote(t *testing.T) {
+	t.Parallel()
+
+	fg := &fakeGit{
+		branchExists: false,
+		refSHA:       map[string]string{},
+		remotes:      []string{"upstream"},
+		fetchErr:     errors.New("fetch failed"),
+	}
+	rt := newTestRuntime(t, fg)
+
+	_, err := Add(context.Background(), rt, AddOptions{
+		Name: "x", Branch: "feature/x", Candidate: testAgyRef,
+		MasterMindID: testMasterMindName, Repo: addRepo(t),
+	})
+	if len(fg.fetchCalls) != 1 || fg.fetchCalls[0].Remote != "upstream" {
+		t.Fatalf("fetch calls = %+v, want one fetch from upstream", fg.fetchCalls)
+	}
+	if err == nil || !strings.Contains(err.Error(), "git fetch upstream feature/x") {
+		t.Fatalf("err = %v, want the recovery to name upstream", err)
+	}
+}

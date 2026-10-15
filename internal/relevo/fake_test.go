@@ -113,6 +113,9 @@ type fakeGit struct {
 	// below stay for the tests that ask which method.
 	calls int
 
+	// remotes is what Remotes answers; nil means a repo with just origin.
+	remotes []string
+
 	snapshotTreeID  string
 	snapshotTreeErr error
 	snapshotCalls   int
@@ -426,6 +429,14 @@ func (f *fakeGit) CreateTrackingBranch(ctx context.Context, dir, branch, upstrea
 		Dir: dir, Branch: branch, Upstream: upstream,
 	})
 	return f.createTrackingBranchErr
+}
+
+func (f *fakeGit) Remotes(ctx context.Context, dir string) ([]string, error) {
+	f.calls++
+	if f.remotes == nil {
+		return []string{"origin"}, nil
+	}
+	return f.remotes, nil
 }
 
 func (f *fakeGit) DeleteBranch(ctx context.Context, dir, branch string) error {
