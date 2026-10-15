@@ -29,7 +29,8 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"       relevo db sync push [--timeout D] [--json]\n" +
 	"       relevo db sync pull [--timeout D] [--json]\n" +
 	"       relevo db sync reconcile --dry-run [--timeout D] [--json]\n" +
-	"       relevo db sync unlock [--new] [--passphrase-stdin] [--json]\n\n" +
+	"       relevo db sync unlock [--new] [--passphrase-stdin] [--json]\n" +
+	"       relevo db sync invite [--json]\n\n" +
 	"enable joins this machine to the remote: it checks the origin gate, stores\n" +
 	"the token and the remote, then imports the other origins and exports this\n" +
 	"one's history before the mark goes on. An interrupted enable resumes.\n" +
@@ -40,7 +41,10 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"would append to or delete from the log, and appends nothing. unlock stores\n" +
 	"the sync key derived from the passphrase; --new creates it on a remote that\n" +
 	"holds none. The passphrase comes from --passphrase-stdin, else " + dbSyncPassphraseEnv + ",\n" +
-	"else a prompt.\n" +
+	"else a prompt. invite prints one join code on stdout for a new machine to\n" +
+	"join with; it carries the turso.token, so it goes to the terminal and never\n" +
+	"to a log. A machine that is not syncing, or a remote holding no key yet, is\n" +
+	"refused by name.\n" +
 	"Writing the machine-local sync section by hand stays the advanced\n" +
 	"route: `relevo config set sync '{\"remote_url\":\"...\"}'`.\n" +
 	"--token-stdin reads the turso.token from standard input and\n" +
@@ -87,6 +91,8 @@ func cmdDBSync(args []string) error {
 		return cmdDBSyncReconcile(args[1:])
 	case len(args) > 0 && args[0] == "unlock":
 		return cmdDBSyncUnlock(args[1:])
+	case len(args) > 0 && args[0] == "invite":
+		return cmdDBSyncInvite(args[1:])
 	case len(args) > 0 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help"):
 		fmt.Fprint(os.Stderr, dbSyncUsage)
 		return errHelpShown
