@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/config"
-
 )
 
 // stampOf is the write stamp the secrets document would read for one name: the
