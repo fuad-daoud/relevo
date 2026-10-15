@@ -56,6 +56,7 @@ func lex(l *lang, src []byte) lexOut {
 			x.heredocStep()
 		case x.atComment():
 		case x.atRegex():
+		case x.atXMLLiteral():
 		case x.atString():
 		case x.atArith():
 		case x.atHeredocOpener():
@@ -182,7 +183,9 @@ func (x *lexer) wordStart(i int) bool {
 }
 
 // atString consumes a string literal starting at x.i, if one does. Longer
-// openers are tried before shorter ones, so """ wins over ".
+// openers are tried before shorter ones, so """ wins over ". The interp
+// flag marks a string kind whose interpolations, ${...} or \(..., may hold
+// nested quotes.
 func (x *lexer) atString() bool {
 	l, src, i := x.l, x.src, x.i
 	switch {
@@ -191,7 +194,7 @@ func (x *lexer) atString() bool {
 	case l.rsPrefix && isRSPrefixByte(src[i]):
 		return x.rsString(i)
 	case l.sqlIdent && (src[i] == '"' || src[i] == '`'):
-		return x.quoted(i, false, true)
+		return x.quoted(i, false, true, false)
 	case l.sqlIdent && src[i] == '[':
 		return x.bracketIdent(i)
 	case l.rawC && isCRawPrefixByte(src[i]):
@@ -200,43 +203,61 @@ func (x *lexer) atString() bool {
 		return x.pyString(i)
 	case l.dartPrefix && src[i] == 'r':
 		return x.dartString(i)
+	case l.rRaw && (src[i] == 'r' || src[i] == 'R'):
+		return x.rRawString(i)
+	case l.csDollar && src[i] == '$':
+		return x.csInterpString(i)
 	case l.dollarQuote && src[i] == '$' && i+1 < len(src) && (src[i+1] == '\'' || src[i+1] == '"'):
-		return x.quoted(i+1, true, false)
+		return x.quoted(i+1, true, false, false)
 	case l.verbatim && src[i] == '@' && i+1 < len(src) && src[i+1] == '"':
-		return x.quoted(i+1, false, true)
+		return x.quoted(i+1, false, true, false)
 	case l.dollarTag && src[i] == '$':
 		return x.dollarTagString(i)
 	case l.longBracket && src[i] == '[':
 		return x.luaLongString(i)
 	case l.triple && src[i] == '\'' && x.hasPrefixAt(i, "'''"):
-		return x.scanLiteral(i+3, "'''", l.sqEsc)
+		return x.scanLiteral(i+3, "'''", l.sqEsc, l.interp)
 	case l.triple && src[i] == '"' && x.hasPrefixAt(i, `"""`):
-		return x.scanLiteral(i+3, `"""`, l.dqEsc)
+		return x.scanLiteral(i+3, `"""`, l.dqEsc, l.interp || l.interpDq)
 	case l.single && src[i] == '\'':
-		return x.quoted(i, l.sqEsc, l.sqDouble)
+		return x.quoted(i, l.sqEsc, l.sqDouble, l.interp)
 	case l.double && src[i] == '"':
-		return x.quoted(i, l.dqEsc, false)
+		return x.quoted(i, l.dqEsc, false, l.interp || l.interpDq)
 	case l.backtick && src[i] == '`':
-		return x.scanLiteral(i+1, "`", true)
+		return x.scanLiteral(i+1, "`", true, l.interpBt)
 	}
 	return false
 }
 
 // quoted scans a quoted string opening at i: esc lets a backslash eat the
-// next character, doubling makes a doubled quote content; it may span lines.
-func (x *lexer) quoted(i int, esc, doubling bool) bool {
+// next character, doubling makes a doubled quote content, and interp lets
+// ${...} or \(...) interpolations hold nested quotes; it may span lines.
+func (x *lexer) quoted(i int, esc, doubling, interp bool) bool {
 	q := x.src[i]
-	for j := i + 1; j < len(x.src); j++ {
+	j := i + 1
+	for j < len(x.src) {
+		if interp {
+			if e := x.interpOpenAt(j); e > 0 {
+				k := x.skipInterp(j, e)
+				if k < 0 {
+					x.out.err = errUnterminated
+					return true
+				}
+				j = k
+				continue
+			}
+		}
 		c := x.src[j]
 		if esc && c == '\\' {
-			j++
+			j += 2
 			continue
 		}
 		if c != q {
+			j++
 			continue
 		}
 		if doubling && j+1 < len(x.src) && x.src[j+1] == q {
-			j++
+			j += 2
 			continue
 		}
 		x.i = j + 1
@@ -247,17 +268,31 @@ func (x *lexer) quoted(i int, esc, doubling bool) bool {
 }
 
 // scanLiteral scans a string whose closer is the literal close, with a
-// backslash eating the next character when esc.
-func (x *lexer) scanLiteral(i int, close string, esc bool) bool {
-	for j := i; j < len(x.src); j++ {
+// backslash eating the next character when esc and, when interp, ${...}
+// interpolations holding nested quotes.
+func (x *lexer) scanLiteral(i int, close string, esc, interp bool) bool {
+	j := i
+	for j < len(x.src) {
+		if interp {
+			if e := x.interpOpenAt(j); e > 0 {
+				k := x.skipInterp(j, e)
+				if k < 0 {
+					x.out.err = errUnterminated
+					return true
+				}
+				j = k
+				continue
+			}
+		}
 		if esc && x.src[j] == '\\' {
-			j++
+			j += 2
 			continue
 		}
 		if x.hasPrefixAt(j, close) {
 			x.i = j + len(close)
 			return true
 		}
+		j++
 	}
 	x.out.err = errUnterminated
 	return true

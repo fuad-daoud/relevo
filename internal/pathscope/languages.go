@@ -48,9 +48,16 @@ type lang struct {
 	arith       bool // (( )) arithmetic, where << is a shift
 
 	// Token forms a comment marker can hide behind.
-	regex    bool // a '/' outside a comment may open a regex literal
-	sqlIdent bool // "...", `...` and [...] open quoted identifiers
-	rawC     bool // R"delim(...)delim" raw strings, with u8R/uR/UR/LR prefixes
+	regex       bool // a '/' outside a comment may open a regex literal
+	sqlIdent    bool // "...", `...` and [...] open quoted identifiers
+	rawC        bool // R"delim(...)delim" raw strings, with u8R/uR/UR/LR prefixes
+	rRaw        bool // r"(...)" raw strings, with dashes and ( [ { openers
+	interp      bool // ' and " strings interpolate, so nested quotes are content
+	interpDq    bool // "..." strings interpolate
+	interpParen bool // the interpolation opener is \( instead of ${
+	interpBt    bool // `...` templates interpolate
+	csDollar    bool // $"..." interpolates, with { ... } holes
+	scalaXML    bool // '<' where an expression may start opens an XML literal
 
 	directives []string
 }
@@ -77,7 +84,7 @@ var extTable = map[string]*lang{
 	".toml": tomlLang,
 	".r":    rLang,
 	".js":   jsLang, ".jsx": jsLang, ".mjs": jsLang, ".cjs": jsLang, ".ts": jsLang, ".tsx": jsLang,
-	".java": javaLang, ".kt": javaLang, ".kts": javaLang, ".scala": javaLang,
+	".java": javaLang, ".kt": kotlinLang, ".kts": kotlinLang, ".scala": scalaLang,
 	".cs":    csLang,
 	".swift": swiftLang,
 	".dart":  dartLang,
@@ -146,31 +153,52 @@ var (
 	rLang = &lang{
 		name: "r", hashAny: true,
 		single: true, sqEsc: true, double: true, dqEsc: true,
+		rRaw: true,
 	}
 	jsLang = &lang{
 		name: "js", slashLine: true, blockSlash: true,
 		single: true, sqEsc: true, double: true, dqEsc: true, backtick: true,
-		regex: true, directives: jsDirectives,
+		regex: true, interpBt: true, directives: jsDirectives,
 	}
 	javaLang = &lang{
 		name: "java", slashLine: true, blockSlash: true,
 		single: true, sqEsc: true, double: true, dqEsc: true, triple: true,
 		directives: jvmDirectives,
 	}
+	// kotlin splits from the jvm family because every one of its strings
+	// interpolates, so a quote inside ${...} is content, not the closer.
+	kotlinLang = &lang{
+		name: "kotlin", slashLine: true, blockSlash: true,
+		single: true, sqEsc: true, double: true, dqEsc: true, triple: true,
+		interpDq: true, directives: jvmDirectives,
+	}
+	// scala splits from the jvm family on two counts: its strings
+	// interpolate (s"...", f"...", and any custom interpolator, which the
+	// lexer cannot tell from a plain string, so every "..." is read as
+	// interpolated), and '<' where an expression may start opens an XML
+	// literal, whose nested language the lexer does not model. ' is kept
+	// out on purpose: a char literal reads as code, and a symbol literal
+	// ('sym, which has no closer) would otherwise swallow the rest of the
+	// file.
+	scalaLang = &lang{
+		name: "scala", slashLine: true, blockSlash: true,
+		double: true, dqEsc: true, triple: true,
+		interpDq: true, scalaXML: true, directives: jvmDirectives,
+	}
 	csLang = &lang{
 		name: "cs", slashLine: true, blockSlash: true,
 		single: true, sqEsc: true, double: true, dqEsc: true, triple: true,
-		verbatim: true, directives: jvmDirectives,
+		verbatim: true, csDollar: true, directives: jvmDirectives,
 	}
 	swiftLang = &lang{
 		name: "swift", slashLine: true, blockSlash: true,
 		double: true, dqEsc: true, triple: true, swiftHash: true,
-		directives: jvmDirectives,
+		interpDq: true, interpParen: true, directives: jvmDirectives,
 	}
 	dartLang = &lang{
 		name: "dart", slashLine: true, blockSlash: true,
 		single: true, sqEsc: true, double: true, dqEsc: true, triple: true,
-		dartPrefix: true, directives: jvmDirectives,
+		dartPrefix: true, interp: true, directives: jvmDirectives,
 	}
 	cLang = &lang{
 		name: "c", slashLine: true, blockSlash: true,
