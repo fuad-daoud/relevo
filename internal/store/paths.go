@@ -441,6 +441,16 @@ func (s *Store) ChainInputPath(chain, source string) (string, bool) {
 	return filepath.Join(s.ChainInputDir(chain), binding+"-"+name[:3], path.Base(name)), true
 }
 
+// ChainRepoFilePath names the copy a chain keeps of a repo file a plan names:
+// <chainDir>/inputs/repo/<rel>. rel must be a clean relative path inside the
+// repo; ok is false for anything else.
+func (s *Store) ChainRepoFilePath(chain, rel string) (string, bool) {
+	if rel == "" || path.IsAbs(rel) || path.Clean(rel) != rel || rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", false
+	}
+	return filepath.Join(s.ChainInputDir(chain), "repo", filepath.FromSlash(rel)), true
+}
+
 // DiskRegularFile reports whether path is a regular file the store reads as
 // itself: os.Lstat says a regular file, and the name is not a reserved
 // round-file name. A reserved name is row-only -- the row is the record -- so a

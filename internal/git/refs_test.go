@@ -513,3 +513,40 @@ func TestCreateTrackingBranch(t *testing.T) {
 		t.Fatalf("second CreateTrackingBranch = %v, want ErrBranchExists", err)
 	}
 }
+
+// TestBlobAtResolvesOnlyARegularFileAtTheRef pins what a seed may copy from a
+// base branch: a regular file resolves to its blob, while a path the ref lacks,
+// a directory, a symlink and a prefix of a real name all answer not-found, and
+// a ref that does not exist is an error.
+func TestBlobAtResolvesOnlyARegularFileAtTheRef(t *testing.T) {
+	requireGit(t)
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	dir := initRepo(t)
+	if err := os.Mkdir(filepath.Join(dir, "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeGitFile(t, dir, "docs/spec.md", "the spec\n")
+	if err := os.Symlink("docs/spec.md", filepath.Join(dir, "link.md")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-m", "spec")
+	head := mustHead(t, dir)
+
+	oid, ok, err := client.BlobAt(ctx, dir, head, "docs/spec.md")
+	if err != nil || !ok {
+		t.Fatalf("BlobAt(docs/spec.md) = %q, %v, %v; want the file's blob", oid, ok, err)
+	}
+	if want := strings.TrimSpace(runGit(t, dir, "rev-parse", head+":docs/spec.md")); oid != want {
+		t.Errorf("BlobAt oid = %s, want %s", oid, want)
+	}
+	for _, path := range []string{"docs/missing.md", "docs", "link.md", "docs/spec"} {
+		if oid, ok, err := client.BlobAt(ctx, dir, head, path); err != nil || ok {
+			t.Errorf("BlobAt(%s) = %q, %v, %v; want not found", path, oid, ok, err)
+		}
+	}
+	if _, _, err := client.BlobAt(ctx, dir, "no-such-ref", "docs/spec.md"); err == nil {
+		t.Error("BlobAt at a ref that does not exist = nil error, want one")
+	}
+}

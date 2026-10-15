@@ -172,10 +172,11 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 // closing round itself when the builder closed it, the builder's newest closed
 // round when the reviewer did -- and carry that round's gate, the plan's
 // cumulative diff and the round's own prompt when it differs from the plan
-// copy. The correction and fixes seeds name a reader's own output file rather
-// than the flat NNN-report.md no reader writes. The security and fixes seeds
-// name the whole branch diff -- the chain's base to the builder's newest closed
-// round -- and render no gate.
+// copy; they also name the repo files the plan texts name, read from the
+// chain's base branch. The correction and fixes seeds name a reader's own
+// output file rather than the flat NNN-report.md no reader writes. The
+// security and fixes seeds name the whole branch diff -- the chain's base to
+// the builder's newest closed round -- and render no gate.
 func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, closedRound int) (workflow.SeedView, error) {
 	v := workflow.SeedView{
 		Plan: s.Plan, Plans: s.Plans, Corrections: s.Corrections,
@@ -223,6 +224,7 @@ func chainSeedView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act c
 			v.GateResult = chainGateResult(rec)
 			v.GateLogPath = chainSeedInput(rt, c, rec.LogPath)
 		}
+		v.PlanFiles = chainSeedPlanFiles(rt, tx, c)
 		v.PlanDiffPath = chainSeedInput(rt, c, chainPlanDiff(rt, tx, c, c.Builder, builderRound))
 		v.RoundPromptPath = chainSeedInput(rt, c, chainRoundPromptPath(rt, v.PlanPath, c.Builder, builderRound))
 		v.BuilderRoundKind, v.BuilderRoundOn, v.BuilderRounds, v.DiffFrom =
