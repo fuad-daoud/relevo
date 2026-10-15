@@ -332,3 +332,32 @@ func TestSetupAgentsStepSkipsInSandbox(t *testing.T) {
 		t.Fatalf("output = %q, want the sandbox note", w.String())
 	}
 }
+
+// TestHintFollowsTheStoredCandidates pins the hint through a real verb: a
+// fresh machine gets it, and once setup has stored candidates it is gone.
+func TestHintFollowsTheStoredCandidates(t *testing.T) {
+	bin := t.TempDir()
+	body := "#!/bin/sh\ncase \"$1 $2\" in\n\"login status\") exit 0;;\n\"debug models\") printf '[{\"slug\":\"gpt-6-luna\",\"visibility\":\"list\",\"priority\":1}]\\n';;\nesac\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(body), 0o755); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+	initRoot(t)
+	t.Setenv("PATH", bin)
+
+	t.Cleanup(func() { setupHintDue = false })
+	_, stderr, _ := captureOutput(t, func() error { err := run([]string{"history"}); flushSetupHint(); return err })
+	if !strings.Contains(string(stderr), setupHint) {
+		t.Fatalf("fresh machine stderr = %q, want the setup hint", stderr)
+	}
+	if _, serr, err := captureOutput(t, func() error {
+		return run([]string{"setup",
+			"--answer", "builder=codex/openai/gpt-6-luna", "--answer", "planner=codex/openai/gpt-6-luna",
+			"--answer", "tier=yolo", "--answer", "plugin=no", "--answer", "service=no", "--answer", "smoke=no"})
+	}); err != nil {
+		t.Fatalf("setup: %v\n%s", err, serr)
+	}
+	_, stderr, _ = captureOutput(t, func() error { err := run([]string{"history"}); flushSetupHint(); return err })
+	if strings.Contains(string(stderr), setupHint) {
+		t.Fatalf("configured machine stderr = %q, want no setup hint", stderr)
+	}
+}

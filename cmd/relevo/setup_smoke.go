@@ -179,7 +179,8 @@ func setupSmokeBind(ctx context.Context, rt relevo.Runtime, repo, builderToken s
 
 // setupRegisterMasterMind is the MasterMind setup registers as itself when
 // no record resolves: the wizard runs from a shell, not from a session to
-// detect.
+// detect, so it names an explicit kind and session the way `mastermind init
+// --kind --session` does.
 func setupRegisterMasterMind(rt relevo.Runtime) (mastermind.Record, error) {
 	reg, err := mastermindRegistry(rt)
 	if err != nil {
@@ -189,7 +190,7 @@ func setupRegisterMasterMind(rt relevo.Runtime) (mastermind.Record, error) {
 	if err != nil {
 		return mastermind.Record{}, err
 	}
-	rec, _, err := mastermind.Init(reg, mastermind.InitInput{Name: "setup", CWD: cwd, Now: rt.Now()})
+	rec, _, err := mastermind.Init(reg, mastermind.InitInput{Kind: "setup", SessionID: "setup", Name: "setup", CWD: cwd, Now: rt.Now()})
 	return rec, err
 }
 
@@ -215,6 +216,7 @@ func setupSmokeFinish(ctx context.Context, rt relevo.Runtime, b store.Binding, r
 	if herr := smokeHelloOkay(b.CWD); herr != nil {
 		return SetupStepDoc{}, failNext(codeInternal, next, "%s", herr)
 	}
+	detail := smokePassDetail(rt, b, time.Since(started))
 
 	if _, uerr := relevo.Unbind(ctx, rt, name, false); uerr != nil {
 		return SetupStepDoc{}, failNext(codeInternal, "relevo doctor", "unbind the smoke binding: %v", uerr)
@@ -222,8 +224,7 @@ func setupSmokeFinish(ctx context.Context, rt relevo.Runtime, b store.Binding, r
 	if rerr := os.RemoveAll(smokeDir); rerr != nil {
 		return SetupStepDoc{}, failNext(codeInternal, "relevo doctor", "remove the smoke repository: %v", rerr)
 	}
-	return SetupStepDoc{Step: "smoke", OK: true, Detail: fmt.Sprintf("builder %s: closed in %s",
-		rt.Candidates.NameOf(b.BuilderCandidate), time.Since(started).Truncate(time.Second))}, nil
+	return SetupStepDoc{Step: "smoke", OK: true, Detail: detail}, nil
 }
 
 // smokeHelloOkay proves the artifact: HELLO.md holding the line is what the
@@ -259,4 +260,20 @@ func startSmokeDots() func() {
 		close(done)
 		fmt.Fprintln(smokeDotStream)
 	}
+}
+
+// smokePassDetail names the builder that closed the round, which differs
+// from the bound one when a usage limit switched it mid-round; saying so
+// shows the newcomer that the fallback order works.
+func smokePassDetail(rt relevo.Runtime, bound store.Binding, took time.Duration) string {
+	first := rt.Candidates.NameOf(bound.BuilderCandidate)
+	last := first
+	if now, err := rt.Store.Load(bound.Name); err == nil {
+		last = rt.Candidates.NameOf(now.BuilderCandidate)
+	}
+	took = took.Truncate(time.Second)
+	if last == first {
+		return fmt.Sprintf("builder %s: closed in %s", last, took)
+	}
+	return fmt.Sprintf("builder %s (switched from %s): closed in %s", last, first, took)
 }

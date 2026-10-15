@@ -137,7 +137,9 @@ func main() {
 	args := os.Args[1:]
 	err := run(args)
 	recordInternal(args, err)
-	os.Exit(report(os.Stderr, err, jsonRequested(args)))
+	code := report(os.Stderr, err, jsonRequested(args))
+	flushSetupHint()
+	os.Exit(code)
 }
 
 // report renders run's error on w and returns the process exit code. It is the
@@ -229,6 +231,10 @@ func run(args []string) error {
 	}
 
 	activeVerb = args[0]
+	if jsonRequested(args) {
+		// A --json caller reads stderr as the error document alone.
+		activeVerb = ""
+	}
 
 	switch args[0] {
 	case "help", "-h", "--help":

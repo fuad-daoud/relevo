@@ -42,19 +42,23 @@ func TestUnconfiguredHintOnStderrOnly(t *testing.T) {
 	buf := &bytes.Buffer{}
 
 	setupHintStream = buf
-	printUnconfiguredHint("status", false)
+	t.Cleanup(func() { setupHintDue = false })
+	noteUnconfigured("status", false)
+	flushSetupHint()
 	if got := buf.String(); got != setupHint+"\n" {
 		t.Errorf("hint = %q, want the exact line", got)
 	}
 
 	buf.Reset()
-	printUnconfiguredHint("status", true)
+	noteUnconfigured("status", true)
+	flushSetupHint()
 	if buf.Len() != 0 {
 		t.Errorf("a configured verb printed %q", buf.String())
 	}
 
 	buf.Reset()
-	printUnconfiguredHint("doctor", false)
+	noteUnconfigured("doctor", false)
+	flushSetupHint()
 	if buf.Len() != 0 {
 		t.Errorf("doctor printed %q", buf.String())
 	}

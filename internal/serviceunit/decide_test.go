@@ -84,6 +84,21 @@ func TestServiceCanonicalRoundTrip(t *testing.T) {
 	}
 }
 
+// TestServiceCanonicalSurvivesHarnessDrift pins that a unit rendered before a
+// harness moved still reads as current: the PATH line reverts whole when the
+// value assembled now differs from the one written.
+func TestServiceCanonicalSurvivesHarnessDrift(t *testing.T) {
+	const bin = "/home/u/.local/bin/relevo"
+	rendered := RenderService(ShippedService(), bin, "/usr/bin:/bin:/home/u/.bun/bin")
+	got := CanonicalService(rendered, bin, "/usr/bin:/bin:/home/u/.npm-global/bin")
+	if !bytes.Equal(got, ShippedService()) {
+		t.Fatalf("drifted unit did not canonicalise to the template:\n%s", got)
+	}
+	if bytes.Equal(CanonicalService(rendered, "/opt/other/relevo", "/usr/bin"), ShippedService()) {
+		t.Fatal("a unit naming another binary canonicalised to the template")
+	}
+}
+
 // oldServiceUnit is relevo.service as pre-template releases shipped it: a
 // fixed PATH list and %h in ExecStart, written to disk byte for byte. Its
 // sha256 is e884d43199e3d68927e1418f05c522378b8ecc1583f16112a713ac083428c210
