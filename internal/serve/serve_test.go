@@ -355,7 +355,7 @@ func TestWhoAmI(t *testing.T) {
 	if len(who.Transports) != 1 || who.Transports[0] != "git-bundle" {
 		t.Fatalf("Transports = %v, want [git-bundle]", who.Transports)
 	}
-	wantFeatures := []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement, remote.FeatureAccounts, remote.FeatureChainMember, remote.FeatureChain, remote.FeatureIsolation, remote.FeatureWorkflow, remote.FeatureCheck}
+	wantFeatures := []string{remote.FeatureTier, remote.FeatureQueue, remote.FeatureStop, remote.FeatureBuilder, remote.FeatureIdempotentSend, remote.FeatureAuthor, remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders, remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement, remote.FeatureAccounts, remote.FeatureChainMember, remote.FeatureChain, remote.FeatureIsolation, remote.FeatureSubdir, remote.FeatureWorkflow, remote.FeatureCheck}
 	if !slices.Equal(who.Features, wantFeatures) {
 		t.Fatalf("Features = %v, want %v", who.Features, wantFeatures)
 	}
@@ -1240,8 +1240,76 @@ func TestCreateInvalid(t *testing.T) {
 	if errBody.Code != remote.CodeInvalid {
 		t.Fatalf("error code = %q, want %q", errBody.Code, remote.CodeInvalid)
 	}
+
+	// A hostile subdirectory is the same refusal: a prefix that escapes the
+	// owner's repo root would put the served round outside the worktree the
+	// server cut, so `/abs`, `../up` and `a/./b` are all 400.
+	for subdir, name := range map[string]string{
+		"/abs": "api-abs", "../up": "api-up", "a/./b": "api-dot",
+	} {
+		createBody, _ := json.Marshal(remote.CreateBindingRequest{
+			Name:       name,
+			RepoID:     testRepoID,
+			BaseCommit: strings.Repeat("a", 40),
+			Role:       "builder",
+			Subdir:     subdir,
+		})
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, signedRequest(t, kp, "POST", "/v1/bindings", createBody))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("subdir %q: status = %d, want 400", subdir, rec.Code)
+		}
+		var errBody remote.ErrorBody
+		if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
+			t.Fatal(err)
+		}
+		if errBody.Code != remote.CodeInvalid {
+			t.Fatalf("subdir %q: error code = %q, want %q", subdir, errBody.Code, remote.CodeInvalid)
+		}
+	}
 }
 
+// TestCreateBindingStoresSubdir pins the create's stored subdirectory: a
+// served binding carrying one joins its round directory from it, so the
+// server's builder and its checks stay inside the offset the client bound
+// from. Storing nothing, or storing an out-of-tree value, would put the
+// served round elsewhere than the mastermind's shell was.
+func TestCreateBindingStoresSubdir(t *testing.T) {
+	s, _ := newTestServer(t, 0)
+	handler := s.Handler()
+
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := remote.IDOf(kp.Public)
+	if _, err := s.clients.Add("creator", remote.MarshalPublic(kp.Public, "creator"), "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     testRepoID,
+		BaseCommit: strings.Repeat("a", 40),
+		Role:       "builder",
+		Subdir:     "src/api",
+	})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, signedRequest(t, kp, "POST", "/v1/bindings", createBody))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+	}
+
+	b, err := testRuntime(t, s, id).Store.Load("api")
+	if err != nil {
+		t.Fatalf("Load binding: %v", err)
+	}
+	if b.Subdir != "src/api" {
+		t.Fatalf("stored Subdir = %q, want src/api", b.Subdir)
+	}
+}
+
+// TestCreateDuplicate pins a second create of one name: 409.
 func TestCreateDuplicate(t *testing.T) {
 	s, _ := newTestServer(t, 0)
 	handler := s.Handler()

@@ -35,6 +35,10 @@ type chainWFStart struct {
 	mastermind   store.Endpoint
 	mastermindID string
 	keeper       string
+	// subdir is the repository offset the start's repository was reached
+	// from: a local chain joins it into every member's round directory, a
+	// placed or served builder carries it on its create.
+	subdir string
 }
 
 // chainStartWorkflow starts a chain that runs the named user workflow: it
@@ -86,6 +90,11 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 	}
 
 	plan.repo = repo
+	// The subdirectory is resolved from the same repository value the repo
+	// above: resolving it a second time -- from the caller's shell -- would
+	// name a prefix the chain's starting commit and cut have no say about
+	// when the two differ.
+	plan.subdir = resolveSubdir(ctx, rt, repo)
 	if err := chainValidateWorkflowOpts(opts); err != nil {
 		return chainWFStart{}, err
 	}
@@ -402,6 +411,7 @@ func chainBuildStartMembers(ctx context.Context, rt Runtime, opts ChainOptions, 
 	rowBase := chainBase{
 		cwd: worktree, mastermind: plan.mastermind, mastermindID: plan.mastermindID,
 		repo: plan.repo, repoRef: captureRepo(ctx, rt, plan.repo), feature: opts.Feature, ticket: plan.ticket,
+		subdir:   plan.subdir,
 		worktree: worktree, branch: branch, commit: commit, baseRef: baseRef,
 	}
 	locals, berr := chainBuildMembers(ctx, rt, plan.members, plan.resolutions, rowBase, plan.settings, len(plan.bodies))

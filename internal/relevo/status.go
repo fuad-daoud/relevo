@@ -207,7 +207,7 @@ func bindingShape(b store.Binding) string {
 // which reads each fact directly.
 func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusConfig, loads *rowLoads) (view.BindingStatus, error) {
 	row := view.BindingStatus{
-		Name: b.Name, CWD: b.CWD, Round: b.Round,
+		Name: b.Name, CWD: RoundDir(b), Round: b.Round,
 		State: string(b.State), Display: view.DisplayState(b.State),
 		BuilderCandidate: b.BuilderCandidate,
 		BuilderAccount:   b.BuilderAccount,

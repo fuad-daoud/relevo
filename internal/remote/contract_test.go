@@ -114,6 +114,7 @@ func filledCreateBindingRequest() CreateBindingRequest {
 		Author:             &author,
 		ClientInstallation: "01CLIENTINSTALLATION0000000",
 		ClientBindingID:    "01CLIENTBINDINGRECORD000000",
+		Subdir:             "src/api",
 	}
 }
 
@@ -338,6 +339,7 @@ func filledCreateChainRequest() CreateChainRequest {
 		Settings:           filledChainSettings(),
 		Feature:            "auth",
 		Ticket:             "o/r#607",
+		Subdir:             "src/api",
 		Author:             &author,
 		ClientInstallation: "01CLIENTINSTALLATION0000000",
 		ClientBindingIDs: map[string]string{
@@ -629,6 +631,7 @@ func TestCreateChainRequestWorkflowOmittedWhenEmpty(t *testing.T) {
   },
   "feature": "auth",
   "ticket": "o/r#607",
+  "subdir": "src/api",
   "author": {
     "name": "Test Builder",
     "email": "builder@example.com"

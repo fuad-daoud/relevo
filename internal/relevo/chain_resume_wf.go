@@ -428,6 +428,7 @@ func chainResumeAddMembers(ctx context.Context, rt Runtime, tx *store.Tx, c db.C
 	base := chainBase{
 		cwd: builder.CWD, mastermind: builder.MasterMind, mastermindID: c.MasterMindID,
 		repo: c.Repo, repoRef: builder.RepoRef, feature: c.Feature, ticket: c.Ticket,
+		subdir:   builder.Subdir,
 		worktree: builder.CWD,
 	}
 	built, err := chainBuildMembers(ctx, rt, add, resolutions, base, set, c.Plans)

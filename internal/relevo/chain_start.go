@@ -107,6 +107,7 @@ type chainMember struct {
 // chainBase is everything the members share, resolved once before the cut.
 type chainBase struct {
 	cwd          string
+	subdir       string
 	mastermind   store.Endpoint
 	mastermindID string
 	repo         string
@@ -374,6 +375,7 @@ func chainMemberBinding(m chainMember, ep store.Endpoint, token string, base cha
 	b := store.Binding{
 		Name:             m.name,
 		CWD:              base.cwd,
+		Subdir:           base.subdir,
 		MasterMind:       base.mastermind,
 		MasterMindID:     base.mastermindID,
 		Builder:          ep,

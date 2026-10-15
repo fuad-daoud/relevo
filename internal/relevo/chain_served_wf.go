@@ -95,6 +95,7 @@ func servedChainAddMembers(rt Runtime, tx *store.Tx, c db.ChainRow, builder stor
 	facts := servedFacts{
 		owner: builder.Owner, repoID: builder.Serve.RepoID, worktree: builder.CWD,
 		bare: builder.Serve.BareRepo, base: builder.Base, feature: c.Feature, ticket: c.Ticket,
+		subdir:     builder.Subdir,
 		authorName: builder.Serve.AuthorName, authorEmail: builder.Serve.AuthorEmail,
 		now: rt.Now().UTC(),
 	}
