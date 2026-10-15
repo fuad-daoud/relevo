@@ -268,6 +268,20 @@ type SyncVerb struct {
 	// secret; the rest is the token. Both ride the tail because it is the one
 	// part of a frame that is never logged or echoed.
 	R2SecretLen int `json:"r2_secret_len,omitempty"`
+	// PassphraseLen is how many bytes before the bucket secret are the
+	// passphrase. It rides with the two lengths above rather than beside them
+	// because the tail is split from the end, in one place, and a third secret
+	// that split somewhere else is a length that could name the wrong bytes.
+	PassphraseLen int `json:"passphrase_len,omitempty"`
+	// Join says this enable carries a join code rather than a hand-entered
+	// remote. The code was parsed on the client side, which is a pure function
+	// reaching no network, so what arrives is the remote and the token it named.
+	//
+	// What it changes on this side is the enable's shape: the bucket credentials
+	// a plain enable must be given arrive through the secrets document instead,
+	// so the preflight's unconditional no-R2 refusal does not apply and the
+	// enable has nothing to hold against a wrong passphrase.
+	Join bool `json:"join,omitempty"`
 	// Yes joins past the quota guard's refusal.
 	Yes bool `json:"yes,omitempty"`
 	// DryRun asks a reconcile to report what it would append and append

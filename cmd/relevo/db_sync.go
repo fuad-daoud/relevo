@@ -21,7 +21,8 @@ import (
 // sync can be moved between plus the three one-shot calls, and each verb parses
 // its own flags rather than leaving them to the dispatcher. The R2 flags, their
 // line and their prose are in db_sync_r2.go, which is where they are installed.
-const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [--yes] [--timeout D] [--json]\n" +
+const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [--passphrase-stdin]\n" +
+	"       relevo db sync enable [--join CODE] [--yes] [--timeout D] [--json]\n" +
 	dbSyncR2Usage +
 	"       relevo db sync disable [--timeout D] [--json]\n" +
 	"       relevo db sync retry [--json]\n" +
@@ -47,6 +48,11 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"refused by name.\n" +
 	"Writing the machine-local sync section by hand stays the advanced\n" +
 	"route: `relevo config set sync '{\"remote_url\":\"...\"}'`.\n" +
+	"--join CODE joins with the code `relevo db sync invite` printed, which\n" +
+	"names the remote and the token, so neither --url nor --token-stdin is\n" +
+	"needed and passing --url beside it is refused. The passphrase is read\n" +
+	"the same way unlock reads it and is checked against the remote before\n" +
+	"anything is stored, so a wrong one leaves this machine as it was.\n" +
 	"--token-stdin reads the turso.token from standard input and\n" +
 	"beats " + relevosync.EnvToken + "; with neither, the stored token is used,\n" +
 	"and enable refuses only if none is stored. The value appears nowhere else.\n" +
@@ -104,11 +110,13 @@ func cmdDBSync(args []string) error {
 // dbSyncEnableFlagValues holds the pointers `db sync enable` parses into. The
 // R2 half is declared in db_sync_r2.go with the flags that install it.
 type dbSyncEnableFlagValues struct {
-	asJSON     *bool
-	remoteURL  *string
-	tokenStdin *bool
-	timeout    *time.Duration
-	yes        *bool
+	asJSON          *bool
+	remoteURL       *string
+	tokenStdin      *bool
+	passphraseStdin *bool
+	joinCode        *string
+	timeout         *time.Duration
+	yes             *bool
 	dbSyncR2Flags
 }
 
@@ -119,6 +127,8 @@ func dbSyncEnableFlagSet(fs *flag.FlagSet) *dbSyncEnableFlagValues {
 	v.asJSON = fs.Bool("json", false, "print the document the enable produced")
 	v.remoteURL = fs.String("url", "", "the remote to sync with, stored in the machine-local sync section")
 	v.tokenStdin = fs.Bool("token-stdin", false, "read the turso.token from standard input")
+	v.passphraseStdin = fs.Bool("passphrase-stdin", false, "read the sync passphrase from standard input")
+	v.joinCode = fs.String("join", "", "join with the code `relevo db sync invite` printed, instead of naming the remote")
 	v.timeout = fs.Duration("timeout", dbSyncDefaultTimeout, "bound the remote probe and the open")
 	v.yes = fs.Bool("yes", false, "join even when the estimate exceeds what is left of this month's Turso quota")
 	installR2Flags(fs, &v.dbSyncR2Flags)
@@ -300,12 +310,25 @@ func cmdDBSyncEnable(args []string) error {
 		return fail(codeUsage, "relevo db sync enable takes no arguments, got %d", fs.NArg())
 	}
 
-	token, err := dbSyncEnableToken(*v.tokenStdin)
-	if err != nil {
+	if err := dbSyncEnableIntake(*v.tokenStdin, *v.passphraseStdin, v.dbSyncR2Flags); err != nil {
 		return err
 	}
 
-	if err := dbSyncEnableR2(*v.tokenStdin, v.dbSyncR2Flags); err != nil {
+	// The code is parsed here, before anything is dialed. It is a pure function
+	// over the string, so a code this build cannot read -- a version it does not
+	// know, a truncated paste, something that is not a code at all -- is refused
+	// before a daemon is reached or a worker is started, and the remote and
+	// token it names are the ones that go on the wire.
+	join, err := dbSyncEnableJoin(*v.joinCode, *v.remoteURL)
+	if err != nil {
+		return err
+	}
+	token, err := dbSyncEnableToken(join, *v.tokenStdin)
+	if err != nil {
+		return err
+	}
+	pass, err := dbSyncEnablePassphrase(*v.passphraseStdin, join.joining)
+	if err != nil {
 		return err
 	}
 
@@ -318,8 +341,8 @@ func cmdDBSyncEnable(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), *v.timeout+verbDialSlack)
 	defer cancel()
 
-	opts := dbSyncVerbOptions{RemoteURL: *v.remoteURL, Timeout: *v.timeout, Yes: *v.yes}
-	tail, err := dbSyncEnableR2Tail(token, v.dbSyncR2Flags, &opts)
+	opts := dbSyncVerbOptions{RemoteURL: join.remote, Timeout: *v.timeout, Yes: *v.yes, Join: join.joining}
+	tail, err := dbSyncEnableR2Tail(token, pass, v.dbSyncR2Flags, &opts)
 	if err != nil {
 		return err
 	}
@@ -346,6 +369,54 @@ func cmdDBSyncEnable(args []string) error {
 	}
 	fmt.Println("sync enabled on this machine")
 	return nil
+}
+
+// dbSyncEnableJoin is what a --join code resolved to, or that there was none.
+//
+// A code names the remote and the token, so it replaces both --url and
+// --token-stdin. A --url beside it is a contradiction rather than a default: the
+// code is the operator's stated destination and a second one means they meant two
+// things, so it is refused by name instead of one of them quietly winning.
+func dbSyncEnableJoin(code, url string) (dbSyncJoin, error) {
+	if code == "" {
+		return dbSyncJoin{remote: url}, nil
+	}
+	if url != "" {
+		return dbSyncJoin{}, fail(codeUsage,
+			"relevo db sync enable: --join and --url name two remotes; pass one")
+	}
+	parsed, err := relevosync.ParseJoinCode(code)
+	if err != nil {
+		return dbSyncJoin{}, fail(codeUsage, "%v", err)
+	}
+	return dbSyncJoin{remote: parsed.URL, token: []byte(parsed.Token), joining: true}, nil
+}
+
+// dbSyncJoin is a resolved --join: which remote, which token the code carried,
+// and that the enable came from a code rather than from flags.
+type dbSyncJoin struct {
+	remote  string
+	token   []byte
+	joining bool
+}
+
+// dbSyncEnablePassphrase resolves the passphrase in unlock's order: standard
+// input, else RELEVO_SYNC_PASSPHRASE, else a prompt with echo off. isNew is
+// always false: an enable never creates key material on a remote, so a remote
+// holding none stays `relevo db sync unlock --new`'s work.
+//
+// Whether a missing passphrase is a refusal is what required decides. A --join
+// needs one -- a joiner that cannot unlock would join holding nothing at all --
+// so there it ends in the refusal and the enable stores nothing. A plain enable
+// does not: a machine that is already unlocked has no use for one, and a
+// scripted enable has no terminal to offer, so "nothing carried one and there is
+// no terminal" is an empty answer rather than a failure.
+func dbSyncEnablePassphrase(fromStdin, required bool) ([]byte, error) {
+	pass, err := dbSyncPassphrase(fromStdin, false)
+	if err != nil && !required && errors.Is(err, errPassphraseUnavailable) {
+		return nil, nil
+	}
+	return pass, err
 }
 
 // enableContinuesLine is what an enable prints when the client's own wait runs
@@ -380,7 +451,13 @@ const verbDialSlack = 5 * time.Second
 // resumes an interrupted join rather than raising a usage error, and a machine
 // with nothing stored is refused by the daemon's own preflight. This process
 // never says which route was tried or what either held.
-func dbSyncEnableToken(fromStdin bool) ([]byte, error) {
+func dbSyncEnableToken(join dbSyncJoin, fromStdin bool) ([]byte, error) {
+	// A code carries the token, and it carries the only one: a joiner is not
+	// handed this machine's environment, and a token from elsewhere would reach a
+	// remote the code never named.
+	if join.joining {
+		return join.token, nil
+	}
 	intake := relevosync.TokenIntake{EnvValue: dbSyncGetenv(relevosync.EnvToken)}
 	if fromStdin {
 		token, err := io.ReadAll(dbSyncTokenStdin)

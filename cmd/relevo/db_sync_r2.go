@@ -67,8 +67,9 @@ func syncR2Status(local relevosync.Local) (configured bool, endpoint, bucket str
 const dbSyncR2UsageText = "--r2-endpoint, --r2-bucket and --r2-key-id name the bucket bodies\n" +
 	"move through; --r2-secret-stdin reads the " + relevosync.SecretR2Secret +
 	" from standard\n" +
-	"input and beats " + relevosync.EnvR2Secret + ". The two stdin flags read one\n" +
-	"standard input, so passing both is refused. With none of the four, enable\n" +
+	"input and beats " + relevosync.EnvR2Secret + ". The stdin flags read one standard\n" +
+	"input, so passing any two of --token-stdin, --passphrase-stdin and\n" +
+	"--r2-secret-stdin is refused. With none of the four, enable\n" +
 	"refuses and names them; what is stored already stands in for what is not\n" +
 	"passed, so pointing this machine at another bucket keeps its access key.\n"
 
@@ -91,29 +92,53 @@ func installR2Flags(fs *flag.FlagSet, v *dbSyncR2Flags) {
 	v.secretStdin = fs.Bool("r2-secret-stdin", false, "read the r2.secret from standard input")
 }
 
-// dbSyncEnableR2 refuses the one thing that cannot be resolved here: two secrets
-// asked for on the same standard input.
+// dbSyncEnableIntake refuses the one thing that cannot be resolved here: two
+// secrets asked for on the same standard input.
 //
-// There is one stdin and two secrets that must not be concatenated on it, and a
-// pipe carrying both would hand one program whichever value it happened to read
-// first. Refusing is the only safe reading, and it is refused before anything is
-// dialed so no process is started for an enable that cannot go ahead.
-func dbSyncEnableR2(tokenStdin bool, r2 dbSyncR2Flags) error {
-	if tokenStdin && *r2.secretStdin {
-		return fail(codeUsage, "relevo db sync enable: --token-stdin and --r2-secret-stdin read one standard input; pass one")
+// There is one stdin and three secrets that must not be concatenated on it, and
+// a pipe carrying two would hand one program whichever value it happened to read
+// first. Any two of them are refused, which is the existing single-stdin rule
+// extended rather than a new rule: --token-stdin and --r2-secret-stdin already
+// could not share a pipe, and the passphrase joins them. What makes the
+// passphrase worth reading off stdin at all is --join, where the token came from
+// the code and left the pipe free.
+//
+// The refusal is raised before anything is dialed, so no process is started for
+// an enable that cannot go ahead, and it names the flags that collided rather
+// than saying "a secret".
+func dbSyncEnableIntake(tokenStdin, passphraseStdin bool, r2 dbSyncR2Flags) error {
+	var asked []string
+	if tokenStdin {
+		asked = append(asked, "--token-stdin")
 	}
-	return nil
+	if passphraseStdin {
+		asked = append(asked, "--passphrase-stdin")
+	}
+	if *r2.secretStdin {
+		asked = append(asked, "--r2-secret-stdin")
+	}
+	if len(asked) < 2 {
+		return nil
+	}
+	return fail(codeUsage, "relevo db sync enable: %s and %s read one standard input; pass one",
+		asked[0], asked[1])
 }
 
 // dbSyncR2SecretStdin is the reader --r2-secret-stdin reads. It is a var so a
 // test can feed it.
 var dbSyncR2SecretStdin io.Reader = os.Stdin
 
-// dbSyncEnableR2Tail fills the bucket half of an enable's frame and returns the
-// raw tail: the token, then the bucket secret. The secret comes from
-// --r2-secret-stdin, else RELEVO_R2_SECRET; with neither the tail is the token
-// alone and the daemon falls back to the stored secret.
-func dbSyncEnableR2Tail(token []byte, r2 dbSyncR2Flags, opts *dbSyncVerbOptions) ([]byte, error) {
+// dbSyncEnableR2Tail fills an enable's frame and returns the raw tail: the
+// token, then the passphrase, then the bucket secret.
+//
+// The order is the split the owner reads back from the end, and it is fixed here
+// so the two halves cannot disagree about where a secret starts. The bucket
+// secret comes from --r2-secret-stdin, else RELEVO_R2_SECRET; with neither the
+// secret is empty and the tail ends after the passphrase.
+//
+// The passphrase is placed rather than read here: this file owns the R2 half,
+// and the passphrase's route is dbSyncPassphrase's, shared with unlock.
+func dbSyncEnableR2Tail(token, passphrase []byte, r2 dbSyncR2Flags, opts *dbSyncVerbOptions) ([]byte, error) {
 	secret := []byte(dbSyncGetenv(relevosync.EnvR2Secret))
 	if *r2.secretStdin {
 		read, err := io.ReadAll(dbSyncR2SecretStdin)
@@ -126,10 +151,13 @@ func dbSyncEnableR2Tail(token []byte, r2 dbSyncR2Flags, opts *dbSyncVerbOptions)
 		secret = read
 	}
 	secret = bytes.TrimSpace(secret)
+	passphrase = bytes.TrimSpace(passphrase)
 	opts.R2Endpoint, opts.R2Bucket, opts.R2KeyID = *r2.endpoint, *r2.bucket, *r2.keyID
-	opts.R2SecretLen = len(secret)
-	tail := make([]byte, 0, len(token)+len(secret))
-	return append(append(tail, token...), secret...), nil
+	opts.R2SecretLen, opts.PassphraseLen = len(secret), len(passphrase)
+	tail := make([]byte, 0, len(token)+len(passphrase)+len(secret))
+	tail = append(tail, token...)
+	tail = append(tail, passphrase...)
+	return append(tail, secret...), nil
 }
 
 // cmdDBSyncStatus answers what this machine is set to be. It reads the local

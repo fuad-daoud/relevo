@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -15,6 +16,15 @@ import (
 
 // dbSyncPassphraseEnv names the environment variable the passphrase route reads.
 const dbSyncPassphraseEnv = "RELEVO_SYNC_PASSPHRASE"
+
+// errPassphraseUnavailable is a passphrase that could not be read because
+// nothing carried one and there was no terminal to ask on.
+//
+// It is its own sentinel rather than a bare usage failure so a caller that does
+// not need a passphrase can tell "none is available here" apart from "the one
+// supplied was blank" -- the second is a mistake worth refusing, the first is
+// just a machine with nothing to give.
+var errPassphraseUnavailable = errors.New("no passphrase is available: pass --passphrase-stdin or set " + dbSyncPassphraseEnv)
 
 // The passphrase sources are package vars so a test never touches a real handle.
 var (
@@ -89,7 +99,7 @@ func dbSyncPassphrasePrompt(isNew bool) ([]byte, error) {
 		return nil, fail(codeUsage, "relevo db sync unlock: could not read the passphrase")
 	}
 	if !ok {
-		return nil, fail(codeUsage, "relevo db sync unlock: no passphrase: pass --passphrase-stdin or set %s", dbSyncPassphraseEnv)
+		return nil, failWrap(codeUsage, errPassphraseUnavailable, "relevo db sync unlock")
 	}
 	if isNew {
 		again, _, err := dbSyncPassphraseTTY("Repeat passphrase: ")

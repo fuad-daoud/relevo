@@ -327,10 +327,32 @@ func transportReady(transport synclog.LogTransport) bool {
 // worker left behind holds the replica open against the next one; a run that
 // finishes leaves it on the runner, where the daemon can drive it again.
 func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byte) *wire.SyncResult {
-	token, r2, err := enableIntake(verb, tail)
+	token, passphrase, r2, err := enableIntake(verb, tail)
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
+	if verb.Join {
+		// The frame carries the join flag and the daemon-side join is not built
+		// yet, so this is refused rather than run as a plain enable: a plain
+		// enable would demand bucket credentials this machine has no use for and
+		// store a remote without ever checking the passphrase.
+		return verbRefusal(wire.SyncCodeInvalid,
+			fmt.Errorf("sync: enable --join: this build cannot join from a code: %w", db.ErrInvalid))
+	}
+	return v.enableWithPassphrase(ctx, verb, token, passphrase, r2)
+}
+
+// enableWithPassphrase runs a plain enable: the preflight decides the remote and
+// the token, the runner opens the log transport, and the pipeline bootstraps,
+// imports every other origin and reconcile-exports this origin's history before
+// the mark goes on.
+//
+// The transport is opened after the preflight and only for a run that passed
+// it, so a machine with no token, no remote or a failing origin gate never
+// starts a worker. A run that fails closes the transport it opened, because a
+// worker left behind holds the replica open against the next one; a run that
+// finishes leaves it on the runner, where the daemon can drive it again.
+func (v *VerbRunner) enableWithPassphrase(ctx context.Context, verb *wire.SyncVerb, token, passphrase []byte, r2 relevosync.R2Intake) *wire.SyncResult {
 	v.beginJoin()
 	opened := false
 	// The join drives its transport through a stop of its own, so a disable's
@@ -339,12 +361,13 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byt
 	var stop *relevosync.StopTransport
 	enabler := &relevosync.Enabler{
 		Request: relevosync.EnableRequest{
-			Local:  v.Local,
-			Shared: v.Shared,
-			URL:    verb.RemoteURL,
-			Token:  token,
-			R2:     r2,
-			Yes:    verb.Yes,
+			Local:      v.Local,
+			Shared:     v.Shared,
+			URL:        verb.RemoteURL,
+			Token:      token,
+			Passphrase: passphrase,
+			R2:         r2,
+			Yes:        verb.Yes,
 		},
 		Blobs: v.Blobs,
 		Open: func() (synclog.LogTransport, error) {

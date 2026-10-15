@@ -97,6 +97,16 @@ type EnableRequest struct {
 	// holds them already needs nothing here: the stored ones stand in, field by
 	// field, so pointing this machine at another bucket does not reissue the key.
 	R2 R2Intake
+	// Passphrase is what the caller read in the frame's tail, empty when it read
+	// none. It is verified against the remote's key_check before anything is
+	// stored, so an enable that was handed the wrong one leaves the machine
+	// exactly as it found it rather than pointed at a remote it cannot read.
+	Passphrase []byte
+	// Join says this enable came from an invite code. The code named the remote
+	// and the token, and the bucket credentials arrive in the secrets document
+	// rather than on the command line, so the preflight's unconditional no-R2
+	// refusal does not apply to it.
+	Join bool
 	// Yes joins past the quota guard's refusal.
 	Yes bool
 }
