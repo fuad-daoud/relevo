@@ -24,7 +24,12 @@ func verbClassify(err error) string {
 		return wire.SyncCodeNoToken
 	case errors.Is(err, relevosync.ErrNoRemote):
 		return wire.SyncCodeNoRemote
-	case errors.Is(err, relevosync.ErrNoR2):
+	case errors.Is(err, relevosync.ErrNoR2), errors.Is(err, relevosync.ErrNoR2AfterJoin):
+		// Both are the same fact under two names: this machine has no bucket
+		// credentials. The plain one is refused before anything is imported and
+		// the join one after the document that was supposed to bring them, so a
+		// caller that has to tell them apart reads the message rather than the
+		// code -- but it is one condition to the user, who is told the same fix.
 		return wire.SyncCodeNoR2
 	case errors.Is(err, relevosync.ErrAlreadyEnabled):
 		return wire.SyncCodeAlreadyEnabled

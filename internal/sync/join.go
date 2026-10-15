@@ -271,12 +271,23 @@ func (e *Enabler) Enable() (EnableResult, error) {
 	if err := e.store(plan, now); err != nil {
 		return EnableResult{}, err
 	}
-	est, guarded, err := e.guard(plan, now)
-	if err != nil {
-		return EnableResult{Remote: plan.Remote, Guarded: guarded, Estimate: est}, err
-	}
-	if e.present, err = e.ownBodies(plan); err != nil {
-		return EnableResult{Remote: plan.Remote, Guarded: guarded, Estimate: est}, err
+	// A plain enable estimates against a bucket it already holds, so the guard
+	// runs before the transport opens and a machine that would not fit refuses
+	// without having imported anything. A join holds none: its credentials
+	// arrive in the secrets document during the import, so its guard runs after
+	// it, in join, against what the document brought. Estimating before that
+	// would read an empty credential set as an empty bucket and wave the join
+	// through on a bucket nobody can name.
+	var est JoinEstimate
+	var guarded bool
+	if !e.Request.Join {
+		est, guarded, err = e.guard(plan, now)
+		if err != nil {
+			return EnableResult{Remote: plan.Remote, Guarded: guarded, Estimate: est}, err
+		}
+		if e.present, err = e.ownBodies(plan); err != nil {
+			return EnableResult{Remote: plan.Remote, Guarded: guarded, Estimate: est}, err
+		}
 	}
 	transport, err := e.transport()
 	if err != nil {
@@ -390,6 +401,23 @@ func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (EnableRes
 	if err != nil {
 		return res, fmt.Errorf("sync: enable: import: %w", err)
 	}
+	// The document has been applied, so a join knows whether its credentials
+	// arrived. The completeness check comes first because a guard run without a
+	// bucket would read an empty credential set as an empty bucket, and the
+	// join would be waved through on a bucket nobody can name.
+	if err := e.checkJoinR2(); err != nil {
+		return res, err
+	}
+	if e.Request.Join {
+		est, guarded, err := e.guardJoined()
+		res.Guarded, res.Estimate = guarded, est
+		if err != nil {
+			return res, err
+		}
+		if e.present, err = e.ownBodiesJoined(); err != nil {
+			return res, err
+		}
+	}
 	appended, batches, err := e.reconcile(transport)
 	res.Appended, res.Batches = appended, batches
 	res.Locked = errors.Is(err, synclog.ErrLockedSignedOrigin)
@@ -438,11 +466,24 @@ const JoinImportDeadline = 30 * time.Minute
 
 // drainImport reads the other origins page by page until a run moves no mark or
 // the join's own deadline passes.
+//
+// The secrets pre-pass runs before the import, and only for a join whose R2
+// credentials are not stored. That is the one document a joiner cannot reach by
+// ordinary ordering: a peer's log interleaves its rows and its documents in
+// sequence order, so a `$ref` row written above the fleet's `doc:secrets` entry
+// is fetched before those credentials have been applied, and the origin stalls
+// on the first body it has no bucket to fetch. The pre-pass applies that one
+// document first and moves no mark, so the import below reaches the same entries
+// as redeliveries. A plain enable already holds the credentials, so it has
+// nothing to unblock and pays nothing for the walk.
 func (e *Enabler) drainImport(transport synclog.LogTransport) (synclog.ImportResult, error) {
 	// The join clears every doc's write stamps and export state, so the files
 	// a person edited before it would otherwise never be exported. The capture
 	// runs first so the re-emit already carries them.
 	CaptureFiles(e.Request.Shared)
+	if err := e.prepassSecrets(transport); err != nil {
+		return synclog.ImportResult{}, err
+	}
 	deadline := e.now().Add(JoinImportDeadline)
 	res, err := drainImport(func() (synclog.ImportResult, error) {
 		key, err := SigningKey(e.Request.Local)
@@ -461,6 +502,76 @@ func (e *Enabler) drainImport(transport synclog.LogTransport) (synclog.ImportRes
 	// config the drain wrote, which is only true once it has committed.
 	SettleFiles(e.Request.Shared)
 	return res, err
+}
+
+// ErrNoR2AfterJoin reports a join whose document import brought no bucket
+// credentials. The enable did not refuse for it: a code has nowhere to carry
+// them, so they were owed in the secrets document and their absence is a fact
+// about the fleet rather than about this command. It is refused here rather
+// than left to the first body fetch, because a joiner that turns sync on
+// without them reads as a working machine and then holds every origin it could
+// not fetch.
+//
+// The two fixes are named because either one clears it, and which one applies is
+// a fact this machine cannot see: the inviter may never have configured a bucket
+// (so its own machines cannot move bodies either), or it may have and this
+// machine's document import simply did not reach them.
+var ErrNoR2AfterJoin = errors.New("sync: enable --join: the fleet's secrets document carried no " +
+	SecretR2Endpoint + ", " + SecretR2Bucket + ", " + SecretR2KeyID + " and " + SecretR2Secret +
+	": either run `relevo db sync enable --r2-endpoint ... --r2-bucket ... --r2-key-id ... --r2-secret-stdin` " +
+	"on this machine, or fix the machine that ran `relevo db sync invite`, whose own secrets have not been shared")
+
+// prepassSecrets applies the fleet's secrets document ahead of the join's rows,
+// for a join whose R2 credentials are not stored. It is a no-op otherwise, and a
+// no-op on a machine with no key: a locked machine parks what it cannot verify,
+// which is the existing path and needs no help from here.
+//
+// A failure is the join's failure. The pre-pass reads the log this join is
+// about, so a log that will not answer fails the join rather than letting it
+// continue into the same refusal one step later.
+func (e *Enabler) prepassSecrets(transport synclog.LogTransport) error {
+	if !e.Request.Join {
+		return nil
+	}
+	stored, err := ReadR2(e.Request.Local)
+	if err != nil {
+		return err
+	}
+	if stored.Complete() {
+		return nil
+	}
+	key, err := SigningKey(e.Request.Local)
+	if err != nil || len(key) == 0 {
+		return err
+	}
+	imp := synclog.NewImporter(e.Request.Shared, transport)
+	imp.SetKey(key)
+	BindDocs(imp, e.Request.Shared)
+	if _, err := imp.PrepassDocs(SecretsDocName); err != nil {
+		return fmt.Errorf("sync: enable: apply the %s document: %w", SecretsDocName, err)
+	}
+	return nil
+}
+
+// checkJoinR2 is the completeness check a join owes its operator: the document
+// import has run, so either the credentials arrived or they did not, and a join
+// that turned the machine on without them would read as a working machine.
+//
+// A machine that was already configured is left alone. The join's contract is
+// that a code carries the credentials, not that a code is the only way to have
+// them, and a machine that set them up by hand has nothing to be told.
+func (e *Enabler) checkJoinR2() error {
+	if !e.Request.Join {
+		return nil
+	}
+	stored, err := ReadR2(e.Request.Local)
+	if err != nil {
+		return err
+	}
+	if stored.Complete() {
+		return nil
+	}
+	return ErrNoR2AfterJoin
 }
 
 // count folds the worker's totals into this month's row. A reading that cannot

@@ -2,9 +2,12 @@ package relevo
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/synclog"
@@ -28,6 +31,11 @@ const (
 // a remote does: the machine sends a passphrase and the remote answers whether it
 // matches. A fixture that stored the expected key locally would pass whatever the
 // code did with the passphrase, which is the thing being tested.
+//
+// The log also holds one peer that exported the fleet's bucket credentials, which
+// is what a fleet that shares bodies looks like from a joiner. A join that gets
+// no credentials at all is refused after the document import, so a fixture with
+// no peer cannot exercise anything past the preflight.
 func joinMachine(t *testing.T, pass string) (*VerbRunner, relevosync.Local, *synclog.MemTransport) {
 	t.Helper()
 	runner, local := joinRunner(t)
@@ -35,8 +43,42 @@ func joinMachine(t *testing.T, pass string) (*VerbRunner, relevosync.Local, *syn
 	if _, err := log.KeyInit(context.Background(), keyMetaFor(t, pass)); err != nil {
 		t.Fatalf("KeyInit: %v", err)
 	}
+	exportFleetR2(t, log, pass)
 	runner.Open = func(context.Context) (synclog.LogTransport, error) { return log, nil }
 	return runner, local, log
+}
+
+// fleetOrigin is the installation the fixture fleet writes as. It is a name no
+// other fixture in this package uses, so its entries cannot be mistaken for
+// another machine's.
+const fleetOrigin = "fleet"
+
+// exportFleetR2 runs the real exporter over a real store holding the fleet key
+// and the four bucket credentials, so the `doc:secrets` entries on the log are
+// the ones a fleet produces rather than a shape this file invented. The peer is
+// a machine exporting through the same pipeline the machine under test will
+// import, so what the joiner receives is whatever the document actually sends.
+func exportFleetR2(t *testing.T, log *synclog.MemTransport, pass string) {
+	t.Helper()
+	shared, err := db.OpenSplit(filepath.Join(t.TempDir(), "fleet.db"), db.Options{Origin: fleetOrigin})
+	if err != nil {
+		t.Fatalf("db.OpenSplit: %v", err)
+	}
+	t.Cleanup(func() { _ = shared.Close() })
+	local, err := relevosync.LocalHandle(shared)
+	if err != nil {
+		t.Fatalf("LocalHandle: %v", err)
+	}
+	key := relevosync.DeriveKey([]byte(pass), []byte("0123456789abcdef"), relevosync.DefaultKDF)
+	if err := relevosync.SetKey(local, key, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetKey on the fleet: %v", err)
+	}
+	if err := relevosync.SetR2(local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("SetR2 on the fleet: %v", err)
+	}
+	if _, err := exportOnce(shared, log.OnLog(fleetOrigin)); err != nil {
+		t.Fatalf("export from the fleet: %v", err)
+	}
 }
 
 // keyMetaFor is the remote's salt, parameters and check for one passphrase, made
@@ -129,17 +171,58 @@ func TestJoinWithTheRightPassphraseTurnsTheMachineOn(t *testing.T) {
 
 // A join needs no bucket credentials on a command line: a code has nowhere to
 // carry them, and they arrive in the secrets document instead. So the preflight's
-// unconditional no-R2 refusal does not apply, and a join with none of the four
-// proceeds rather than stopping at the refusal a plain enable would give.
+// unconditional no-R2 refusal does not apply, and the join gets as far as the
+// import on nothing but the code and the passphrase -- which is what this pins,
+// because the log's peer is what supplies the credentials. A join against a
+// remote with no fleet on it at all is a different case, pinned below.
 func TestJoinNeedsNoBucketCredentialsOnTheCommandLine(t *testing.T) {
 	t.Parallel()
-	runner, _, _ := joinMachine(t, joinPassphrase)
+	runner, local, _ := joinMachine(t, joinPassphrase)
 	res := runner.Run(context.Background(), joinVerb(t, joinPassphrase), []byte(joinToken+joinPassphrase))
 	if !res.OK {
 		t.Fatalf("join refused: (%s) %s", res.Code, res.Message)
 	}
 	if res.Code == wire.SyncCodeNoR2 {
 		t.Fatal("a join was refused for missing bucket credentials, which arrive in the secrets document")
+	}
+	stored, err := relevosync.ReadR2(local)
+	if err != nil {
+		t.Fatalf("ReadR2: %v", err)
+	}
+	if stored != verbFixtureR2 {
+		t.Errorf("the joiner's R2 credentials = %+v, want the fleet's", stored)
+	}
+}
+
+// A remote whose fleet never shared its credentials leaves the joiner with none,
+// and a machine that turned sync on without them would read as working and then
+// hold every origin it could not fetch. The refusal names both fixes, because
+// which one applies is a fact this machine cannot see: the inviter may never
+// have configured a bucket, or it may have and the joiner may be pointed
+// somewhere else.
+func TestAJoinWithNoFleetCredentialsIsRefusedNamingBothFixes(t *testing.T) {
+	t.Parallel()
+	runner, local := joinRunner(t)
+	log := synclog.NewMemTransport("m1")
+	if _, err := log.KeyInit(context.Background(), keyMetaFor(t, joinPassphrase)); err != nil {
+		t.Fatalf("KeyInit: %v", err)
+	}
+	runner.Open = func(context.Context) (synclog.LogTransport, error) { return log, nil }
+
+	res := runner.Run(context.Background(), joinVerb(t, joinPassphrase), []byte(joinToken+joinPassphrase))
+	if res.OK {
+		t.Fatal("a join that received no bucket credentials turned the machine on")
+	}
+	if res.Code != wire.SyncCodeNoR2 {
+		t.Errorf("code = %q, want %q", res.Code, wire.SyncCodeNoR2)
+	}
+	for _, want := range []string{"--r2-endpoint", "db sync invite"} {
+		if !strings.Contains(res.Message, want) {
+			t.Errorf("the refusal does not name %q: %s", want, res.Message)
+		}
+	}
+	if on, err := relevosync.Enabled(local); err != nil || on {
+		t.Errorf("sync is on = %v (%v), want the machine left off", on, err)
 	}
 }
 
