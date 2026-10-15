@@ -42,7 +42,7 @@ func TestForwardUnavailableSkipsStaleBindings(t *testing.T) {
 	}
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
-	lines := ForwardUnavailable(ctx, rt, testOpencodeRef, "RESOURCE_EXHAUSTED 429")
+	lines := ForwardUnavailable(ctx, rt, testOpencodeRef, "RESOURCE_EXHAUSTED 429", time.Time{})
 
 	for _, l := range lines {
 		if strings.Contains(l, "stale-") || strings.Contains(l, "not found") {
@@ -85,7 +85,7 @@ func TestForwardUnavailableReportsRealFailures(t *testing.T) {
 	}
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
-	lines := ForwardUnavailable(ctx, rt, testOpencodeRef, "RESOURCE_EXHAUSTED 429")
+	lines := ForwardUnavailable(ctx, rt, testOpencodeRef, "RESOURCE_EXHAUSTED 429", time.Time{})
 	var found bool
 	for _, l := range lines {
 		if strings.Contains(l, "broken: zen: boom") {
@@ -118,7 +118,7 @@ func TestForwardNoSummaryWhenNothingIsStale(t *testing.T) {
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
 	for _, lines := range [][]string{
-		ForwardUnavailable(ctx, rt, testOpencodeRef, "RESOURCE_EXHAUSTED 429"),
+		ForwardUnavailable(ctx, rt, testOpencodeRef, "RESOURCE_EXHAUSTED 429", time.Time{}),
 		ForwardAvailable(ctx, rt, testOpencodeRef),
 	} {
 		for _, l := range lines {

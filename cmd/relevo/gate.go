@@ -184,7 +184,7 @@ func gateUnavailable(token, forFlag, reason string, asJSON bool) error {
 		}
 	}
 
-	for _, line := range relevo.ForwardUnavailable(context.Background(), rt, canonical, reason) {
+	for _, line := range relevo.ForwardUnavailable(context.Background(), rt, canonical, reason, until) {
 		fmt.Fprintln(os.Stderr, line)
 	}
 

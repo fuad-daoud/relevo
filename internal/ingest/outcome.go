@@ -54,43 +54,39 @@ func deriveOutcome(events []store.LogEntry, n int, b store.Binding, members map[
 }
 
 // switchesForRound counts switch entries for round n. A relaunch replaces a lost
-// process with the same candidate, so its note prefix is skipped.
+// process with the same candidate, so its note prefix is skipped. A poll's entry
+// for a switch it observed is skipped once the log holds the server's own record
+// of the round's switches, which names the same switches in full.
 func switchesForRound(events []store.LogEntry, n int) int {
-	count := 0
+	count, polled := 0, 0
 	for _, e := range events {
-		if e.Round == n && e.Kind == store.KindSwitch &&
-			!strings.HasPrefix(e.Note, "relaunched ") && !strings.HasPrefix(e.Note, "resumed session ") {
-			count++
+		if e.Round != n || e.Kind != store.KindSwitch ||
+			strings.HasPrefix(e.Note, "relaunched ") || strings.HasPrefix(e.Note, "resumed session ") {
+			continue
 		}
+		if strings.HasPrefix(e.Note, store.PollSwitchNotePrefix) {
+			polled++
+			continue
+		}
+		count++
+	}
+	if count == 0 {
+		return polled
 	}
 	return count
 }
 
-// candidateForRound resolves round n's candidate: the token from the last pick or
-// switch entry's note, falling back to b.BuilderCandidate. A pick naming an actor
+// candidateForRound resolves round n's candidate: the token from the round's own
+// last pick or switch entry's note. A round with none carries the builder the
+// earlier rounds left running, and only a round with no record at all, nor an
+// earlier one to carry, falls back to b.BuilderCandidate. A pick naming an actor
 // other than the binding's own is a consult's pick (or another runner's) and is
 // skipped. candidateTok is verbatim; ref has a trailing "#..." stripped, since a
 // ":effort" suffix belongs to the model.
 func candidateForRound(events []store.LogEntry, n int, b store.Binding) (candidateTok string, ref candidate.Ref, ok bool) {
-	actor := actorOf(b)
-	var lastKind store.Kind
-	var lastNote string
-	var found bool
-	for _, e := range events {
-		if e.Round != n {
-			continue
-		}
-		if e.Kind == store.KindPick && isOtherActorPick(e.Note, actor) {
-			continue
-		}
-		if e.Kind == store.KindPick || e.Kind == store.KindSwitch {
-			lastKind, lastNote, found = e.Kind, e.Note, true
-		}
-	}
-
-	tok := ""
-	if found {
-		tok = parseBuilderNote(lastKind, lastNote)
+	tok := lastBuilderToken(events, actorOf(b), func(round int) bool { return round == n })
+	if tok == "" {
+		tok = lastBuilderToken(events, actorOf(b), func(round int) bool { return round > 0 && round < n })
 	}
 	if tok == "" {
 		tok = b.BuilderCandidate
@@ -103,6 +99,22 @@ func candidateForRound(events []store.LogEntry, n int, b store.Binding) (candida
 		ref = r
 	}
 	return tok, ref, true
+}
+
+// lastBuilderToken is the token of the last pick or switch entry, among those
+// whose round inRound accepts, that names the builder actor plays.
+func lastBuilderToken(events []store.LogEntry, actor string, inRound func(int) bool) string {
+	tok := ""
+	for _, e := range events {
+		if !inRound(e.Round) || (e.Kind != store.KindPick && e.Kind != store.KindSwitch) {
+			continue
+		}
+		if e.Kind == store.KindPick && isOtherActorPick(e.Note, actor) {
+			continue
+		}
+		tok = parseBuilderNote(e.Kind, e.Note)
+	}
+	return tok
 }
 
 // isOtherActorPick reports whether note is the pick `ask` writes for a consult:

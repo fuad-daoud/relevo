@@ -167,12 +167,11 @@ func chainRenderShippedSeed(rt Runtime, tx *store.Tx, c db.ChainRow, def workflo
 		return "", err
 	}
 	// An engine chain runs its checks as steps, so the check the seed names
-	// comes from the engine's recorded result, not from a member-gate record.
-	if v.GateLogPath == "" {
-		if result, log := flowCheckResult(st); log != "" {
-			v.GateResult = result
-			v.GateLogPath = chainSeedInput(rt, c, log)
-		}
+	// is the engine's recorded result; a member-gate record is the fallback
+	// for a chain whose engine ran no check.
+	if result, log := flowCheckResult(st); log != "" {
+		v.GateResult = result
+		v.GateLogPath = chainSeedInput(rt, c, log)
 	}
 	return workflow.RenderShipped(name, v)
 }

@@ -3054,7 +3054,7 @@ func TestForwardUnavailable(t *testing.T) {
 	}
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
-	lines := ForwardUnavailable(ctx, rt, "some-token", "hit a limit")
+	lines := ForwardUnavailable(ctx, rt, "some-token", "hit a limit", time.Time{})
 	if len(lines) != 0 {
 		t.Fatalf("lines = %v, want none: the fake never fails", lines)
 	}
@@ -3114,7 +3114,7 @@ func TestForwardUnavailableSendsTheServerTokenForTheSameName(t *testing.T) {
 		Now:        func() time.Time { return baseTime },
 	}
 
-	lines := ForwardUnavailable(ctx, rt, "test-model-1", "hit a limit")
+	lines := ForwardUnavailable(ctx, rt, "test-model-1", "hit a limit", time.Time{})
 	want := []string{"zen: gated opencode/server-group/test-model-1 for opencode/laptop-group/test-model-1"}
 	if !slices.Equal(lines, want) {
 		t.Fatalf("lines = %v, want %v", lines, want)
@@ -3163,7 +3163,7 @@ func TestForwardUnavailableSendsTheServerTokenForARenamedProvider(t *testing.T) 
 		Now:        func() time.Time { return baseTime },
 	}
 
-	lines := ForwardUnavailable(ctx, rt, "test-model-1", "hit a limit")
+	lines := ForwardUnavailable(ctx, rt, "test-model-1", "hit a limit", time.Time{})
 	want := []string{"zen: gated opencode/server-group/test-model-1 for opencode/laptop-group/test-model-1"}
 	if !slices.Equal(lines, want) {
 		t.Fatalf("lines = %v, want %v", lines, want)
@@ -3183,7 +3183,8 @@ func TestForwardUnavailableSendsTheServerTokenForARenamedProvider(t *testing.T) 
 // TestForwardUnavailableReportsOneLinePerServerWhenNothingMatches: two open
 // bindings on one server, and the server lists no candidate the client's
 // candidate maps to. One line names the mismatch -- the token, its provider
-// and the server's candidates -- and nothing is posted.
+// and the server's candidates -- followed by its next: command, and nothing is
+// posted.
 func TestForwardUnavailableReportsOneLinePerServerWhenNothingMatches(t *testing.T) {
 	t.Parallel()
 
@@ -3214,9 +3215,9 @@ func TestForwardUnavailableReportsOneLinePerServerWhenNothingMatches(t *testing.
 		Now:        func() time.Time { return baseTime },
 	}
 
-	lines := ForwardUnavailable(ctx, rt, "test-model-1", "hit a limit")
-	if len(lines) != 1 {
-		t.Fatalf("lines = %v, want exactly one line for the one server", lines)
+	lines := ForwardUnavailable(ctx, rt, "test-model-1", "hit a limit", time.Time{})
+	if len(lines) != 2 || !strings.HasPrefix(lines[1], "next: ") {
+		t.Fatalf("lines = %v, want the mismatch line and one next: line for the one server", lines)
 	}
 	for _, want := range []string{"opencode/laptop-group/test-model-1", "laptop-group", "other-model"} {
 		if !strings.Contains(lines[0], want) {

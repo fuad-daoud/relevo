@@ -119,7 +119,7 @@ func TestForwardUnavailableForwardsAccountGates(t *testing.T) {
 	}
 	seedAccountGate(t, rt, "test", "cp2")
 
-	lines := ForwardUnavailable(ctx, rt, testOpencodeRef, "hit a limit")
+	lines := ForwardUnavailable(ctx, rt, testOpencodeRef, "hit a limit", time.Time{})
 	want := []string{"zen: gated test@cp2"}
 	if !slices.Equal(lines, want) {
 		t.Fatalf("lines = %v, want %v", lines, want)
@@ -157,7 +157,7 @@ func TestForwardUnavailableRefusesAccountGateOnOldServer(t *testing.T) {
 	}
 	seedAccountGate(t, rt, "test", "cp2")
 
-	lines := ForwardUnavailable(ctx, rt, testOpencodeRef, "hit a limit")
+	lines := ForwardUnavailable(ctx, rt, testOpencodeRef, "hit a limit", time.Time{})
 	want := []string{"zen: account gates unsupported; upgrade the server"}
 	if !slices.Equal(lines, want) {
 		t.Fatalf("lines = %v, want %v", lines, want)
@@ -215,7 +215,7 @@ func TestForwardUnavailableAccountGateStaysBareWithoutAccounts(t *testing.T) {
 		Now:        func() time.Time { return baseTime },
 	}
 
-	lines := ForwardUnavailable(ctx, rt, testOpencodeRef, "hit a limit")
+	lines := ForwardUnavailable(ctx, rt, testOpencodeRef, "hit a limit", time.Time{})
 	if len(lines) != 0 {
 		t.Fatalf("lines = %v, want none", lines)
 	}

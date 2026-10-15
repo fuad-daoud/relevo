@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1773,6 +1774,30 @@ func TestRemovedVerbsNameTheirReplacement(t *testing.T) {
 		var ec exitCodeErr
 		if !errors.As(err, &ec) || ec.code != 2 {
 			t.Errorf("%s: run = %v, want exit code 2", c.verb, err)
+		}
+	}
+}
+
+// TestRemovedVerbHintsNameFlagsThatExist checks each hint against the registry
+// without running it: a hint that names a gone verb or flag sends the user to
+// a second error.
+func TestRemovedVerbHintsNameFlagsThatExist(t *testing.T) {
+	for verb, hint := range removedVerbs {
+		for _, cmd := range strings.Split(hint, ", then ") {
+			words := strings.Fields(strings.TrimPrefix(cmd, "relevo "))
+			entry, ok := verbEntry{}, false
+			for i := len(words); i > 0 && !ok; i-- {
+				entry, ok = registryEntry(strings.Join(words[:i], " "))
+			}
+			if !ok {
+				t.Errorf("%s: hint %q names no verb in the registry", verb, cmd)
+				continue
+			}
+			for _, w := range words {
+				if strings.HasPrefix(w, "--") && !slices.Contains(entry.Flags, w) {
+					t.Errorf("%s: hint %q names %s, which %q does not take", verb, cmd, w, entry.Name)
+				}
+			}
 		}
 	}
 }

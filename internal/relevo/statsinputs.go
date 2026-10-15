@@ -11,9 +11,7 @@ import (
 
 // StatsInputs assembles stats.Inputs for the window starting at since (zero =
 // all) ending at rt.Now(). rt.DB must be open. Read failures of latency and
-// history are returned as warnings, never as errors. It is exactly the input
-// assembly `relevo history --stats` used, moved here so the CLI and the
-// cockpit's `:stats` view cannot disagree (cockpit C2b §4.1).
+// history are returned as warnings, never as errors.
 func StatsInputs(rt Runtime, since time.Time) (in stats.Inputs, warnings []string, err error) {
 	rows, err := rt.DB.Query(db.Filter{Since: since})
 	if err != nil {
