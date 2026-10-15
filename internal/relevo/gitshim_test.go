@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -145,6 +146,26 @@ func TestGitShimSkipsItselfWhenListedTwiceOrSymlinked(t *testing.T) {
 	_, stderr, code := shimRun(t, shim, []string{shimDir, shimDir}, "", "status")
 	if code != 127 || !strings.Contains(stderr, "not found") {
 		t.Errorf("no real git: code %d stderr %q, want 127 and a not-found line", code, stderr)
+	}
+}
+
+func TestGitShimNestedUnderAnotherShimReachesTheRealGit(t *testing.T) {
+	t.Parallel()
+	outerDir, realDir := shimFixture(t)
+	innerDir := filepath.Join(t.TempDir(), "inner")
+	if err := ensureGitShim(innerDir); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, filepath.Join(innerDir, "git"), "status")
+	cmd.Env = []string{"PATH=" + strings.Join([]string{innerDir, outerDir, realDir, shimTools(t)}, ":")}
+	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		t.Fatalf("nested shims did not return within 10s: the two shims exec each other")
+	}
+	if string(out) != "real git: status\n" {
+		t.Errorf("stdout %q err %v, want the real git's", out, err)
 	}
 }
 
