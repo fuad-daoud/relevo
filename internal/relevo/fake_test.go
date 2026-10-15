@@ -369,7 +369,6 @@ func (f *fakeGit) ChangedFiles(ctx context.Context, dir, from, to string) ([]pat
 	return f.changedFiles, nil
 }
 
-// ReadBlob answers the comment judge's blob read (#801).
 // BlobAt answers from blobPaths, a path -> object id map; blobAtRefs records
 // the ref each lookup read.
 func (f *fakeGit) BlobAt(ctx context.Context, dir, ref, path string) (string, bool, error) {
@@ -379,6 +378,7 @@ func (f *fakeGit) BlobAt(ctx context.Context, dir, ref, path string) (string, bo
 	return oid, ok, nil
 }
 
+// ReadBlob answers the comment judge's blob read.
 func (f *fakeGit) ReadBlob(ctx context.Context, dir, oid string) ([]byte, error) {
 	f.calls++
 	f.blobCalls++
