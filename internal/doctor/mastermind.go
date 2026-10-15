@@ -200,12 +200,35 @@ func pluginEnabledCheck(home, repo string) Check {
 			return Check{Name: "plugin", Severity: SevOK, Detail: "relevo@relevo enabled in " + path}
 		}
 	}
+	if !relevoPluginInstalled(home) {
+		return Check{
+			Name:     "plugin",
+			Severity: SevFail,
+			Detail:   "the relevo plugin is not installed in Claude Code",
+			Fix:      pluginInstallCommand,
+		}
+	}
 	return Check{
 		Name:     "plugin",
 		Severity: SevFail,
 		Detail:   "relevo@relevo is not enabled in " + filepath.Join(home, claudeSettingsRel) + " or the project's " + claudeSettingsRel,
 		Fix:      "enable the relevo plugin in Claude Code (/plugin), or set enabledPlugins[\"relevo@relevo\"] = true in " + claudeSettingsRel,
 	}
+}
+
+// pluginInstallCommand installs the plugin from this repository's marketplace;
+// install enables it too.
+const pluginInstallCommand = "claude plugin marketplace add fuad-daoud/relevo && claude plugin install relevo@relevo"
+
+// relevoPluginInstalled reports whether installed_plugins.json lists a relevo
+// plugin; an unreadable file reads as not installed.
+func relevoPluginInstalled(home string) bool {
+	raw, err := os.ReadFile(filepath.Join(home, claudePluginStateRel))
+	if err != nil {
+		return false
+	}
+	_, found, err := installedRelevoPlugin(raw)
+	return err == nil && found
 }
 
 // pluginEnabled reports whether a settings.json enables relevo@relevo; an
@@ -272,24 +295,9 @@ func pluginVersionCheck(home, running string) Check {
 		return Check{Name: name, Severity: SevOK, Detail: "not checked (no readable ~/" + claudePluginStateRel + ")"}
 	}
 
-	// {"version":2,"plugins":{"relevo@relevo":[{"version":"0.8.0",...}]}}
-	var state struct {
-		Plugins map[string][]struct {
-			Version string `json:"version"`
-		} `json:"plugins"`
-	}
-	if err := json.Unmarshal(raw, &state); err != nil {
+	plugin, found, err := installedRelevoPlugin(raw)
+	if err != nil {
 		return Check{Name: name, Severity: SevOK, Detail: "not checked (no readable ~/" + claudePluginStateRel + ")"}
-	}
-
-	plugin, found := "", false
-	for key, entries := range state.Plugins {
-		at := strings.Index(key, "@")
-		if at <= 0 || key[:at] != "relevo" || len(entries) == 0 {
-			continue
-		}
-		plugin, found = entries[0].Version, true // several entries: report the first
-		break
 	}
 	if !found {
 		return Check{Name: name, Severity: SevOK, Detail: "not checked (relevo plugin not installed)"}
@@ -310,6 +318,28 @@ func pluginVersionCheck(home, running string) Check {
 		Detail:   "plugin " + plugin + ", relevo " + running,
 		Fix:      "claude plugin update relevo@relevo",
 	}
+}
+
+// installedRelevoPlugin finds the relevo@* entry in an installed_plugins.json
+// and returns its version.
+func installedRelevoPlugin(raw []byte) (version string, found bool, err error) {
+	// {"version":2,"plugins":{"relevo@relevo":[{"version":"0.8.0",...}]}}
+	var state struct {
+		Plugins map[string][]struct {
+			Version string `json:"version"`
+		} `json:"plugins"`
+	}
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return "", false, err
+	}
+	for key, entries := range state.Plugins {
+		at := strings.Index(key, "@")
+		if at <= 0 || key[:at] != "relevo" || len(entries) == 0 {
+			continue
+		}
+		return entries[0].Version, true, nil // several entries: report the first
+	}
+	return "", false, nil
 }
 
 // installedPluginDirs finds every absolute, existing directory path

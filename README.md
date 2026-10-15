@@ -172,12 +172,18 @@ On a clean machine, set up prerequisites and preflight with `relevo config init`
 4. Run the literal fix commands `relevo doctor` prints for any missing items.
 5. Re-run `relevo doctor` to confirm `0 failures`.
 6. Start the daemon (e.g. `relevo daemon &` or `relevo service install`).
-7. Bind your first agent from the MasterMind session:
+7. Bind your first builder from the MasterMind session:
    ```
-   relevo bind --no-feature --candidate claude/anthropic/sonnet
+   relevo bind --no-feature
    ```
-   (or, with one candidate, `relevo bind --no-feature`). A fresh `relevo bind`
-   must name exactly one of `--feature <label>` / `--no-feature`.
+   relevo starts the candidate `relevo config` marks `<- would pick` under
+   `builder`. To run another, pass its name, `relevo bind --no-feature
+   --candidate <name>`; it must be on `actors.builder.candidates` (see
+   [Choosing a candidate](#choosing-a-candidate)). A fresh `relevo bind`
+   must name exactly one of `--feature <label>` / `--no-feature`. Doctor does
+   not check that a harness is logged in: a builder that cannot authenticate
+   ends its first round without a report, and `relevo status` shows the
+   harness's error.
 
 To install the agent definitions into each harness on `PATH` by hand instead —
 the daemon refreshes unmodified definitions on every start and upgrade, a file
@@ -238,7 +244,7 @@ relevo config init                 # seed candidates, policy and actors, install
 From the MasterMind session, in the repository you want worked on:
 
 ```
-relevo bind --no-feature --candidate claude/anthropic/sonnet     # start a builder on this tree
+relevo bind --no-feature           # start a builder on this tree
 relevo send --file plan.md         # hand it the plan; the builder starts working
 relevo status                      # watch the round
 relevo wait                        # block until the round closes; prints the report
@@ -1540,8 +1546,11 @@ Any `extra_args` are appended verbatim after what relevo renders. Because relevo
 
 ### Choosing a candidate
 
-Pass the token to `relevo bind --no-feature --candidate claude/anthropic/sonnet` and relevo
-starts exactly that, gated or not (with a `note:` on stderr if it is).
+Pass a candidate's name or token to `relevo bind --no-feature --candidate
+claude/anthropic/sonnet` and relevo starts exactly that, gated or not (with a
+`note:` on stderr if it is). It must still serve the actor: a candidate missing
+from the actor's `candidates` list is refused, so add it there first, e.g.
+`relevo config set actors.builder.candidates '["sonnet", "glm-5.3-flash"]'`.
 
 With `--candidate` omitted, relevo decides, by one rule:
 
