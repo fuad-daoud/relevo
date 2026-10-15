@@ -140,10 +140,11 @@ func trimRepoPath(p string) string {
 	return p
 }
 
-// OwnerRepo returns "owner/repo" from the last two path segments of a
-// normalised origin URL (as NormalizeOriginURL returns it), and "" for anything
-// that is not a URL with a host and at least two path segments: a local path, a
-// bare host, an empty string.
+// OwnerRepo returns the repository path of a normalised origin URL (as
+// NormalizeOriginURL returns it): every path segment after the host,
+// /-joined, so a GitLab subgroup keeps its whole path. It returns "" for
+// anything that is not a URL with a host and at least two non-empty path
+// segments: a local path, a bare host, an empty string.
 func OwnerRepo(normalised string) string {
 	s := strings.TrimSpace(normalised)
 	scheme := strings.Index(s, "://")
@@ -159,9 +160,10 @@ func OwnerRepo(normalised string) string {
 	if len(segs) < 2 {
 		return ""
 	}
-	owner, repo := segs[len(segs)-2], segs[len(segs)-1]
-	if owner == "" || repo == "" {
-		return ""
+	for _, seg := range segs {
+		if seg == "" {
+			return ""
+		}
 	}
-	return owner + "/" + repo
+	return strings.Join(segs, "/")
 }
