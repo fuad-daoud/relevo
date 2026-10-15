@@ -160,7 +160,8 @@ type BindOptions struct {
 	NoFeature bool
 
 	// Ticket is the issue this binding serves, as typed on --ticket (#637):
-	// a number, #N, owner/repo#N, or a .../issues/N URL. Empty means none. On
+	// a number, #N, project/path#N, an issue key like ABC-123, or an http(s)
+	// URL, in the stored form store.ParseTicket returns. Empty means none. On
 	// resume, empty leaves the binding's ticket untouched; there is no way to
 	// clear one.
 	Ticket string

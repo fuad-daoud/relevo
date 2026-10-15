@@ -126,11 +126,11 @@ func roundFilter(f Filter) (string, []any) {
 	return ` WHERE ` + strings.Join(where, " AND "), args
 }
 
-// ticketMatch builds the WHERE clause for Filter.Ticket. A value naming a
-// repository (owner/repo#N) matches the stored form exactly; a bare N or #N
-// matches any stored ticket ending in #N. The number is digits only, so the
-// LIKE pattern takes no wildcard from the value; an unparseable value matches
-// nothing, because no stored ticket equals it.
+// ticketMatch builds the WHERE clause for Filter.Ticket. A bare N or #N
+// matches any stored ticket ending in #N -- the number is digits only, so the
+// LIKE pattern takes no wildcard from the value; every other stored form (a
+// project path, an issue key, an opaque URL) matches the stored form exactly,
+// and a value no stored ticket equals matches nothing.
 func ticketMatch(value string) (string, any) {
 	if n, ok := bareTicketNumber(value); ok {
 		return `binding.ticket LIKE '%#' || ?`, n
