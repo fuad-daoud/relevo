@@ -14,6 +14,7 @@
 # `go test` over the packages the round touched.
 set -eu
 
+# shellcheck disable=SC1007 # CDPATH= scopes an empty CDPATH to this one command
 here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$here"
 
@@ -57,6 +58,8 @@ mutate() {
 		cp "$f" "$backup/$(basename "$f")"
 	done
 	"$@"
+	# The package list is deliberately several words, so it is not quoted.
+	# shellcheck disable=SC2086
 	if PATH="$test_path" go test $pkgs -run "$test" -count=1 > "$here/.mutation.out" 2>&1; then
 		printf 'NOT CAUGHT %s: %s still passes with the condition broken\n' "$name" "$test"
 		fail=$((fail + 1))
