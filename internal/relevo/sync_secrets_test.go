@@ -275,6 +275,124 @@ func TestTheR2CredentialsAPersonTypedReachAPeer(t *testing.T) {
 	}
 }
 
+// TestTheFleetsStampedClientKeyBeatsAJoinersGeneratedOne is C1's arrival rule
+// from the joiner's side: a machine that generated its own key joins, and the
+// fleet's stamped key is the owner's deliberate choice, so it replaces the one
+// the joiner made for itself. Nothing derived is left stale -- the client id and
+// the enrolment line both come out of the stored key at read time -- so what the
+// joiner has to re-do afterwards is re-enrol it on the servers.
+func TestTheFleetsStampedClientKeyBeatsAJoinersGeneratedOne(t *testing.T) {
+	t.Parallel()
+	log := synclog.NewMemTransport("x")
+	a := newCfgMachine(t, log, cfgSyncKey, true)
+	b := newCfgMachine(t, log, cfgSyncKey, false)
+
+	fleetPEM := newClientKeyPEM(t)
+	a.setSecret(t, config.SecretClientKey, fleetPEM)
+	a.attempt(t)
+
+	// The joiner's own key is generated the way a fresh install's is: through the
+	// unstamped entry point, so nothing claims it was ever this machine's choice.
+	joinerPEM := newClientKeyPEM(t)
+	if err := b.cfg.PutSecretUnstamped(config.SecretClientKey, []byte(joinerPEM)); err != nil {
+		t.Fatalf("PutSecretUnstamped: %v", err)
+	}
+	if string(b.clientID(t)) == string(remote.IDOf(mustParse(t, fleetPEM).Public)) {
+		t.Fatal("the joiner starts holding the fleet's key, so the case proves nothing")
+	}
+
+	b.join(t)
+
+	got := b.secret(t, config.SecretClientKey)
+	if got == "" {
+		t.Fatal("the joiner holds no client key after the join")
+	}
+	if got != fleetPEM {
+		t.Errorf("the joiner's client key is not the fleet's; it kept the one it generated")
+	}
+	// The enrolment follows from the stored key rather than from anything cached,
+	// so the joiner reads its new identity with no other command run.
+	if want := remote.IDOf(mustParse(t, fleetPEM).Public); b.clientID(t) != want {
+		t.Errorf("the joiner's client id = %q, want the fleet's %q", b.clientID(t), want)
+	}
+}
+
+// TestTwoMachinesWithDifferentGeneratedKeysBothKeepTheirOwn is the other
+// direction, and the rule that keeps C1 from becoming a way for one machine to
+// take another's identity: neither key was stamped, so neither travels, and a
+// full exchange in both directions leaves both machines exactly where they were.
+//
+// Without the export filter the newest-wins rule would settle this by clock and
+// one machine would lose the enrolment it holds on every server.
+func TestTwoMachinesWithDifferentGeneratedKeysBothKeepTheirOwn(t *testing.T) {
+	t.Parallel()
+	log := synclog.NewMemTransport("x")
+	a := newCfgMachine(t, log, cfgSyncKey, true)
+	b := newCfgMachine(t, log, cfgSyncKey, true)
+
+	aPEM, bPEM := newClientKeyPEM(t), newClientKeyPEM(t)
+	for machine, pem := range map[*cfgMachine]string{a: aPEM, b: bPEM} {
+		if err := machine.cfg.PutSecretUnstamped(config.SecretClientKey, []byte(pem)); err != nil {
+			t.Fatalf("PutSecretUnstamped: %v", err)
+		}
+		// An unstamped write signals nothing, so the export would never ask for
+		// the document. The signal is raised by hand so the filter under test is
+		// what answers when it is asked.
+		machine.signalSecrets(t)
+	}
+
+	a.attempt(t)
+	b.attempt(t)
+	a.attempt(t)
+	b.attempt(t)
+
+	for machine, want := range map[*cfgMachine]string{a: aPEM, b: bPEM} {
+		if got := machine.secret(t, config.SecretClientKey); got != want {
+			t.Errorf("%s holds a client key it did not generate: the keys crossed", machine.label(t))
+		}
+	}
+	for _, e := range wholeLog(t, log) {
+		if e.Table == "doc:"+config.Secrets && strings.Contains(string(e.Body), config.SecretClientKey) {
+			t.Errorf("a client key entry reached the log: %s", e.Body)
+		}
+	}
+}
+
+// newClientKeyPEM is a freshly generated client key, which is what an install
+// that has never been told one holds.
+func newClientKeyPEM(t *testing.T) string {
+	t.Helper()
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	pem, err := remote.MarshalPrivate(kp)
+	if err != nil {
+		t.Fatalf("MarshalPrivate: %v", err)
+	}
+	return string(pem)
+}
+
+func mustParse(t *testing.T, pem string) remote.Keypair {
+	t.Helper()
+	kp, err := remote.ParsePrivate([]byte(pem))
+	if err != nil {
+		t.Fatalf("ParsePrivate: %v", err)
+	}
+	return kp
+}
+
+// clientID is the identity this machine is enrolled under, read the way the
+// enrolment is derived: from the stored key, live.
+func (m *cfgMachine) clientID(t *testing.T) remote.ClientID {
+	t.Helper()
+	pem := m.secret(t, config.SecretClientKey)
+	if pem == "" {
+		return ""
+	}
+	return remote.IDOf(mustParse(t, pem).Public)
+}
+
 // TestAJoinerReceivesTheR2Credentials pins the path a new machine depends on: it
 // joins with nothing but the code and the passphrase, and the credentials it had
 // no way of being told arrive in the document.
