@@ -21,11 +21,13 @@ exit 7
 `
 
 // shimTools is a directory holding only the utilities the shim and the fake git
-// call, so no system git can be found behind the fake one.
+// call, so no system git can be found behind the fake one; grep is there for
+// the shim's own content check, so the PATH a round sees is genuinely what the
+// shim has to run on, not a shorter PATH the test provider also gave it.
 func shimTools(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, tool := range []string{"dirname", "basename", "cat"} {
+	for _, tool := range []string{"dirname", "basename", "cat", "grep"} {
 		p, err := exec.LookPath(tool)
 		if err != nil {
 			t.Skipf("no %s: %v", tool, err)
@@ -41,8 +43,15 @@ func shimTools(t *testing.T) string {
 // directory, and returns stdout, stderr and the exit code.
 func shimRun(t *testing.T, shim string, pathDirs []string, stdin string, args ...string) (string, string, int) {
 	t.Helper()
+	return shimRunWithTools(t, shim, shimTools(t), pathDirs, stdin, args...)
+}
+
+// shimRunWithTools is shimRun with an explicit tools directory, so the
+// chain-guard test can run the shim on a PATH the content check cannot use.
+func shimRunWithTools(t *testing.T, shim, tools string, pathDirs []string, stdin string, args ...string) (string, string, int) {
+	t.Helper()
 	cmd := exec.Command(shim, args...)
-	cmd.Env = []string{"PATH=" + strings.Join(append(pathDirs, shimTools(t)), ":")}
+	cmd.Env = []string{"PATH=" + strings.Join(append(pathDirs, tools), ":")}
 	cmd.Stdin = strings.NewReader(stdin)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
@@ -54,6 +63,23 @@ func shimRun(t *testing.T, shim string, pathDirs []string, stdin string, args ..
 		t.Fatalf("run shim: %v", err)
 	}
 	return out.String(), errb.String(), code
+}
+
+// noGrepTools is shimTools without grep: a PATH the shim's content check has
+// no way to run on.
+func noGrepTools(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, tool := range []string{"dirname", "basename", "cat"} {
+		p, err := exec.LookPath(tool)
+		if err != nil {
+			t.Skipf("no %s: %v", tool, err)
+		}
+		if err := os.Symlink(p, filepath.Join(dir, tool)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
 }
 
 func shimFixture(t *testing.T) (shimDir, realDir string) {
@@ -145,6 +171,50 @@ func TestGitShimSkipsItselfWhenListedTwiceOrSymlinked(t *testing.T) {
 	_, stderr, code := shimRun(t, shim, []string{shimDir, shimDir}, "", "status")
 	if code != 127 || !strings.Contains(stderr, "not found") {
 		t.Errorf("no real git: code %d stderr %q, want 127 and a not-found line", code, stderr)
+	}
+}
+
+// TestGitShimSkipsADifferentShimCopyWithTheSameContent pins the exec loop a
+// second copy of this shim on PATH would otherwise start: the round's own shim
+// dir and the PATH of the context that launched the round can each carry one,
+// and neither is the other's self directory by canonical path, so content is
+// the only thing that can identify one copy as relevo's.
+func TestGitShimSkipsADifferentShimCopyWithTheSameContent(t *testing.T) {
+	t.Parallel()
+	shimDir, realDir := shimFixture(t)
+	dup := filepath.Join(t.TempDir(), "other-shims")
+	if err := os.MkdirAll(dup, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dup, "git"), []byte(gitShimSource), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shim := filepath.Join(shimDir, "git")
+	stdout, _, code := shimRun(t, shim, []string{shimDir, dup, realDir}, "", "status")
+	if stdout != "real git: status\n" || code != 7 {
+		t.Errorf("PATH with a second relevo shim: stdout %q code %d, want the real git's", stdout, code)
+	}
+}
+
+// TestGitShimBreaksAChainedRunWithoutGrep pins the guard for the PATH where
+// the content check cannot run: the walk reaches the other copy and execs it,
+// and that copy -- carrying the marker the first one exported -- refuses the
+// chain instead of looping.
+func TestGitShimBreaksAChainedRunWithoutGrep(t *testing.T) {
+	t.Parallel()
+	shimDir, realDir := shimFixture(t)
+	dup := filepath.Join(t.TempDir(), "other-shims")
+	if err := os.MkdirAll(dup, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dup, "git"), []byte(gitShimSource), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A PATH the shim's content check cannot run on: no grep anywhere.
+	shim := filepath.Join(shimDir, "git")
+	_, stderr, code := shimRunWithTools(t, shim, noGrepTools(t), []string{shimDir, dup, realDir}, "", "status")
+	if code != 127 || !strings.Contains(stderr, "chain") {
+		t.Errorf("PATH without grep: code %d stderr %q, want 127 and a chain refusal", code, stderr)
 	}
 }
 
