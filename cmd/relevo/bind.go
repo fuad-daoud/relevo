@@ -321,6 +321,15 @@ func runBind(f bindFlags) error {
 	// Every supplementary line goes to the human default's stdout, or to
 	// stderr under --json, where stdout must carry the document alone (§2.1).
 	notices := noticeWriter(f.asJSON)
+	// The gate line names the command the binding resolved and the tier that
+	// supplied it: the flag, the repository's own setting or the policy
+	// default on a create, and the stored command on a resume, whose binding
+	// carries no fresh resolution to name a tier from.
+	gateCmd, gateSource := res.Gate.Command, res.Gate.Source
+	if f.resume {
+		gateCmd, gateSource = b.Gate, relevo.GateSourceBinding
+	}
+	gateText := relevo.GateLine(gateCmd, gateSource)
 	if t := relevo.RestoreText(res); t != "" {
 		fmt.Fprintln(notices, t)
 	}
@@ -339,6 +348,7 @@ func runBind(f bindFlags) error {
 				"  relevo send --name %s --file %s\n",
 				b.Name, builderDesc, b.Round, b.Name, rt.Store.PromptPath(b.Name, b.Round))
 		}
+		fmt.Fprintln(notices, gateText)
 		noteRegateNoGate(notices, b)
 		notePick(rt, roleName, res)
 		warnWaitingOnYou(rt, b.Name)
@@ -351,6 +361,7 @@ func runBind(f bindFlags) error {
 	if !f.asJSON {
 		fmt.Println(boundLine(b, b.MasterMind.PaneID, rt.Candidates.NameOf(b.BuilderCandidate), res.Placement))
 	}
+	fmt.Fprintln(notices, gateText)
 	noteRegateNoGate(notices, b)
 	if n := availability.GatedNote(relevo.AvailabilityDeps(rt), b.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
@@ -436,6 +447,9 @@ func runAdd(f bindFlags) error {
 				res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate), builderWhere(res.Binding.Builder))
 		}
 	}
+	// The gate line names the command the add resolved and the tier that
+	// supplied it, through the same notice writer the other lines use.
+	fmt.Fprintln(notices, relevo.GateLine(res.Resolution.Gate.Command, res.Resolution.Gate.Source))
 	noteRegateNoGate(notices, res.Binding)
 	if n := availability.GatedNote(relevo.AvailabilityDeps(rt), res.Binding.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)

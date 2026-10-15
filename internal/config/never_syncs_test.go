@@ -25,6 +25,7 @@ var (
 		Servers:    placementServers,
 		Hooks:      `{}`,
 		Workflows:  `{}`,
+		Repos:      `{"aaaaaaaa":{"name":"shared"}}`,
 		Sync:       `{"enabled":false}`,
 	}
 )
@@ -42,6 +43,7 @@ func changedBodies(t *testing.T) map[Section]string {
 		Servers:    `{"zen":{"url":"https://other:7777","fingerprint":"sha256:ffff"}}`,
 		Hooks:      `{"state_changed":[["10-x","/bin/true"]]}`,
 		Workflows:  changedWorkflows(t),
+		Repos:      `{"bbbbbbbb":{"gate":"make check"}}`,
 		Sync:       `{"enabled":true,"remote_url":"libsql://other.turso.io"}`,
 	}
 }

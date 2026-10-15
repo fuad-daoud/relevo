@@ -106,7 +106,10 @@ func resumeSettings(rt Runtime, c db.ChainRow, opts ResumeOptions) (chain.Settin
 		set.MaxCorrections = *opts.MaxCorrections
 	}
 	if opts.Gate != "" || opts.NoGate {
-		set.Gate = resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), "builder"))
+		// The gate flags are the one tier a resume reads fresh, and the one
+		// tier that never falls back: the flag wins over every lower tier, so
+		// a resume reads no repository's settings here.
+		set.Gate = resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), "builder"), RepoSettings{}).Command
 	}
 	if opts.Regate != nil {
 		set.Regate = ResolveRegate(opts.Regate, rt.Policy)

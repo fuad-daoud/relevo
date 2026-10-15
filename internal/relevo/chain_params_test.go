@@ -17,7 +17,7 @@ func TestChainParamsPrecedence(t *testing.T) {
 	pol := policy.Policy{Chain: &policy.ChainPolicy{ReviewerActor: "policy-reviewer"}}
 
 	// Policy fills an unflagged slot.
-	got, err := chainParamsFor(def, pol, ChainOptions{})
+	got, err := chainParamsFor(def, pol, ChainOptions{}, RepoSettings{})
 	if err != nil {
 		t.Fatalf("chainParamsFor(policy): %v", err)
 	}
@@ -26,7 +26,7 @@ func TestChainParamsPrecedence(t *testing.T) {
 	}
 
 	// An old flag beats the policy's own value.
-	got, err = chainParamsFor(def, pol, ChainOptions{ReviewerActor: "flag-reviewer"})
+	got, err = chainParamsFor(def, pol, ChainOptions{ReviewerActor: "flag-reviewer"}, RepoSettings{})
 	if err != nil {
 		t.Fatalf("chainParamsFor(flag): %v", err)
 	}
@@ -38,7 +38,7 @@ func TestChainParamsPrecedence(t *testing.T) {
 	got, err = chainParamsFor(def, pol, ChainOptions{
 		ReviewerActor: "flag-reviewer",
 		Params:        map[string]string{"reviewer": "param-reviewer"},
-	})
+	}, RepoSettings{})
 	if err != nil {
 		t.Fatalf("chainParamsFor(param): %v", err)
 	}
@@ -55,7 +55,7 @@ func TestChainParamsFlagWithoutSlotListsParams(t *testing.T) {
 		Name:   "triage",
 		Params: map[string]workflow.Param{"answer": {Kind: workflow.ParamBool, Bool: true}},
 	}
-	_, err := chainParamsFor(def, policy.Policy{}, ChainOptions{ReviewerActor: "assistant"})
+	_, err := chainParamsFor(def, policy.Policy{}, ChainOptions{ReviewerActor: "assistant"}, RepoSettings{})
 	if err == nil {
 		t.Fatal("chainParamsFor(no slot) = nil error, want a refusal")
 	}
@@ -69,7 +69,7 @@ func TestChainParamsFlagWithoutSlotListsParams(t *testing.T) {
 // TestChainParamsNoGateRendersEmpty pins --no-gate: the gate param resolves to
 // the empty string, so the check step renders no command.
 func TestChainParamsNoGateRendersEmpty(t *testing.T) {
-	got, err := chainParamsFor(workflow.Default(), policy.Policy{}, ChainOptions{NoGate: true})
+	got, err := chainParamsFor(workflow.Default(), policy.Policy{}, ChainOptions{NoGate: true}, RepoSettings{})
 	if err != nil {
 		t.Fatalf("chainParamsFor(--no-gate): %v", err)
 	}
@@ -104,7 +104,7 @@ func TestChainParamsMatchChainSettings(t *testing.T) {
 		{Regate: ptr(5)},
 	}
 	for _, opts := range cases {
-		values, err := chainParamsFor(def, rt.Policy, opts)
+		values, err := chainParamsFor(def, rt.Policy, opts, RepoSettings{})
 		if err != nil {
 			t.Fatalf("chainParamsFor(%+v): %v", opts, err)
 		}
@@ -112,7 +112,7 @@ func TestChainParamsMatchChainSettings(t *testing.T) {
 		if err != nil {
 			t.Fatalf("WithParams(%+v): %v", opts, err)
 		}
-		set := chainSettings(rt.Policy, opts, roleChecks(rt.RoleRegistry(), "builder"))
+		set := chainSettings(rt.Policy, opts, roleChecks(rt.RoleRegistry(), "builder"), RepoSettings{})
 		render := func(param string) string {
 			return workflow.RenderParams(applied, "{{params."+param+"}}")
 		}
@@ -143,7 +143,7 @@ func TestCustomWorkflowParamDefaultsBeatPolicy(t *testing.T) {
 	}
 	pol := policy.Policy{Chain: &policy.ChainPolicy{ReviewerActor: "policy-reviewer"}}
 
-	got, err := chainParamsFor(def, pol, ChainOptions{})
+	got, err := chainParamsFor(def, pol, ChainOptions{}, RepoSettings{})
 	if err != nil {
 		t.Fatalf("chainParamsFor(custom): %v", err)
 	}
@@ -164,7 +164,7 @@ func TestCustomWorkflowParamDefaultsBeatPolicy(t *testing.T) {
 func TestDefaultWorkflowParamsComeFromPolicy(t *testing.T) {
 	pol := policy.Policy{Chain: &policy.ChainPolicy{ReviewerActor: "policy-reviewer"}}
 
-	got, err := chainParamsFor(workflow.Default(), pol, ChainOptions{})
+	got, err := chainParamsFor(workflow.Default(), pol, ChainOptions{}, RepoSettings{})
 	if err != nil {
 		t.Fatalf("chainParamsFor(default): %v", err)
 	}

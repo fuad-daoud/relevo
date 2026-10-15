@@ -256,7 +256,9 @@ func chainResumeFlagParams(def workflow.Definition, rt Runtime, opts ResumeOptio
 		}
 	}
 	if opts.Gate != "" || opts.NoGate {
-		gate := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), "builder"))
+		// The gate flags win over every lower tier, so a resume reads no
+		// repository's settings here.
+		gate := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), "builder"), RepoSettings{}).Command
 		if err := add("--gate/--no-gate", "gate", gate); err != nil {
 			return nil, err
 		}

@@ -27,6 +27,7 @@ var dispatchers = []dispatcher{
 	{"", "main.go", "run"},
 	{"board", "board.go", "cmdBoard"},
 	{"config", "config.go", "cmdConfig"},
+	{"config repo", "config_repo.go", "cmdConfigRepo"},
 	{"config secret", "config_server.go", "configSecret"},
 	{"config server", "config_server.go", "configServer"},
 	{"config workflow", "config_workflow.go", "configWorkflow"},

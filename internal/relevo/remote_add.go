@@ -220,10 +220,16 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	}
 
 	// The gate resolves exactly as the local path does: with the client's
-	// policy and the actor's role. The resolved value rides on the wire -- the
-	// field chains already use -- and is stored on the client mirror, so both
-	// sides read the same acceptance check.
-	gate := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), bindingRole(store.Binding{Role: normRole(opts.Role)})))
+	// policy, the actor's role and the repository's own settings, read on the
+	// client for the tree the branch is cut from. The resolved value rides on
+	// the wire -- the field chains already use -- and is stored on the client
+	// mirror, so both sides read the same acceptance check.
+	repoSet, err := RepoSettingsFor(ctx, rt, opts.Repo)
+	if err != nil {
+		return AddResult{}, err
+	}
+	gateRes := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), bindingRole(store.Binding{Role: normRole(opts.Role)})), repoSet)
+	gate := gateRes.Command
 	// The regate resolves the same way, and for the same reason: the mirror
 	// and the served binding must agree on the repair budget.
 	regate := ResolveRegate(opts.Regate, rt.Policy)
@@ -364,6 +370,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		Candidate: cand,
 		How:       HowExplicit,
 		Placement: opts.Placement,
+		Gate:      gateRes,
 	}
 
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {

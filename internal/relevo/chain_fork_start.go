@@ -71,9 +71,16 @@ func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.Ch
 	for i := range bodies {
 		items[i] = rt.Store.ChainPlanPath(childName, i+1)
 	}
+	// The child's repository is the parent's: the child's branch is cut from
+	// the parent's branch, so the settings that name a gate read the same
+	// tree's own settings the parent's start read.
+	childRepoSet, err := RepoSettingsFor(ctx, rt, parent.Repo)
+	if err != nil {
+		return childCreated{}, err
+	}
 	childPlan := chainWFStart{
 		def:          childDef,
-		settings:     chainSettings(rt.Policy, childOpts, roleChecks(rt.RoleRegistry(), "builder")),
+		settings:     chainSettings(rt.Policy, childOpts, roleChecks(rt.RoleRegistry(), "builder"), childRepoSet),
 		repo:         parent.Repo,
 		ticket:       parent.Ticket,
 		bodies:       bodies,

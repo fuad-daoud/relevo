@@ -444,7 +444,7 @@ func chainStartedText(rt relevo.Runtime, res relevo.ChainResult) {
 		}
 		fmt.Printf("  %-8s %-16s %-8s %s\n", chainPartOf(res.Chain, m.Name), m.Name, placement, actor)
 	}
-	fmt.Printf("  check: %s\n", chainCheckText(res.Check))
+	fmt.Printf("  %s\n", relevo.CheckLine(res.Check, res.CheckSource))
 	if res.Chain.Worktree != "" {
 		fmt.Printf("  worktree %s on %s (from %s)\n", res.Chain.Worktree, res.Chain.Branch, res.Chain.Base)
 	} else {

@@ -148,12 +148,17 @@ func chainRemoteFacts(ctx context.Context, rt Runtime, repo, base string) (resol
 		resolved = sha
 	}
 
-	root, err := rt.Git.RootCommit(ctx, repo)
+	// The repository's identity, through the one helper the repo settings
+	// read: a tree git cannot identify (no commits, not a repository, no git)
+	// has no settings and no id, and a remote create needs the id, so that
+	// case is refused here rather than sent as "".
+	var ok bool
+	repoID, ok, err = RepoKey(ctx, rt.Git, repo)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("root commit: %w", err)
-	}
-	if repoID, err = remote.RepoID(root); err != nil {
 		return "", "", "", "", fmt.Errorf("repo id: %w", err)
+	}
+	if !ok {
+		return "", "", "", "", fmt.Errorf("root commit: %w", git.ErrRefMissing)
 	}
 
 	if authorName, authorEmail, err = rt.Git.Identity(ctx, repo); err != nil {
