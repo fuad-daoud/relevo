@@ -66,6 +66,12 @@ func TestRekeyIntakeSplitsTheTailAtItsOwnLengths(t *testing.T) {
 	if _, _, err := rekeyIntake(verb, tail); err == nil {
 		t.Fatal("a tail shorter than its lengths was accepted")
 	}
+	// A tail longer than the two lengths name carries bytes neither names, and
+	// splitting it anyway would make them part of the new passphrase.
+	verb.NewPassphraseLen = len(newPass) - 1
+	if _, _, err := rekeyIntake(verb, tail); err == nil {
+		t.Fatal("a tail longer than its lengths was accepted")
+	}
 	// A negative length names nothing and is refused the same way.
 	verb.NewPassphraseLen = -1
 	if _, _, err := rekeyIntake(verb, tail); err == nil {
