@@ -511,9 +511,16 @@ under the merged rules, imports no shared docs, and status says "locked".
   that signs, above that origin's cut, must verify under a held epoch at
   least the cut's; at or below the cut, under any held key. An origin with no
   cut row is fenced by the default (newest held epoch, seq 0), which at an
-  epoch-1 fleet is today's single-key verification. A cut a reader verifies
-  is recorded locally at once and never regresses, so deleting, lowering or
-  replaying the remote row changes nothing. An origin that appended under the
+  epoch-1 fleet is today's single-key verification. A reader acts on a
+  remote cut only when it names the reader's newest held epoch and its tag
+  verifies under that epoch's key: a row at a retired epoch -- however
+  honestly its tag verifies under the old key -- is held for the run and
+  recorded nowhere, so the default fence stands and a leaked old key cannot
+  re-bless history the reader has never verified. A cut that verifies is
+  recorded locally at once and never regresses, so deleting, lowering or
+  replaying the remote row changes nothing after the first verified import;
+  first contact still needs the honest newest-epoch cut. An origin that
+  appended under the
   old key before it learned of the rekey is held everywhere; `unlock` with
   the new passphrase then publishes its own cut extension to the highest
   sequence its own transport confirmed appending, so the tail it vouches for
