@@ -41,6 +41,15 @@ func verbClassify(err error) string {
 		return wire.SyncCodeNoKDF
 	case errors.Is(err, relevosync.ErrWrongPassphrase):
 		return wire.SyncCodeWrongPassphrase
+	case errors.Is(err, relevosync.ErrMachineLocked):
+		// A rekey on a locked machine names the verb that answers it; the
+		// refusal's own words carry the fix, so the code only names the class.
+		return wire.SyncCodeMachineLocked
+	case errors.Is(err, relevosync.ErrEpochRace):
+		// Another machine rekeyed first and this caller's key is an old one.
+		// Nothing was written on this side either, which is why the fix is the
+		// winner's passphrase at unlock and not a retry.
+		return wire.SyncCodeEpochRace
 	case errors.Is(err, relevosync.ErrAuthRefused):
 		return wire.SyncCodeAuthRefused
 	case errors.Is(err, relevosync.ErrQuotaReached):

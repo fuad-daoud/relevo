@@ -356,6 +356,12 @@ func (r refusingBackend) KeyInit(syncworker.KeyMeta) (syncworker.KeyMeta, error)
 	return syncworker.KeyMeta{}, r.fail()
 }
 
+func (r refusingBackend) KeyRekey(syncworker.KeyRekeySpec) (syncworker.KeyMeta, error) {
+	return syncworker.KeyMeta{}, r.fail()
+}
+
+func (r refusingBackend) PublishEpochCut(syncworker.EpochCut) error { return r.fail() }
+
 func (r refusingBackend) Close() error { return nil }
 
 // verbsRefusingBackend answers the handshake and then refuses every verb with
@@ -394,6 +400,12 @@ func (r verbsRefusingBackend) KeyMeta() (syncworker.KeyMeta, error) {
 }
 
 func (r verbsRefusingBackend) KeyInit(syncworker.KeyMeta) (syncworker.KeyMeta, error) {
+	return syncworker.KeyMeta{}, r.fail()
+}
+
+func (r verbsRefusingBackend) PublishEpochCut(syncworker.EpochCut) error { return nil }
+
+func (r verbsRefusingBackend) KeyRekey(syncworker.KeyRekeySpec) (syncworker.KeyMeta, error) {
 	return syncworker.KeyMeta{}, r.fail()
 }
 
@@ -772,7 +784,17 @@ func (n normalBackend) Compact(floor int) (syncworker.CompactResult, error) {
 }
 
 func (normalBackend) KeyMeta() (syncworker.KeyMeta, error) {
-	return heldKey, nil
+	return keyHeldForFake(), nil
+}
+
+// keyHeldForFake is the material the fake log holds, with an epoch row that was
+// never written read as epoch 1 the way the real backend reads it.
+func keyHeldForFake() syncworker.KeyMeta {
+	key := heldKey
+	if key.Epoch == 0 {
+		key.Epoch = 1
+	}
+	return key
 }
 
 // KeyInit keeps what the log already holds and answers with that, the way the
@@ -785,6 +807,12 @@ func (normalBackend) KeyInit(key syncworker.KeyMeta) (syncworker.KeyMeta, error)
 	heldKey = key
 	heldKey.Present = true
 	return heldKey, nil
+}
+
+func (normalBackend) PublishEpochCut(syncworker.EpochCut) error { return nil }
+
+func (normalBackend) KeyRekey(syncworker.KeyRekeySpec) (syncworker.KeyMeta, error) {
+	return keyHeldForFake(), nil
 }
 
 // heldKey is the passphrase material the fake log has been given. It is a

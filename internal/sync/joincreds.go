@@ -69,12 +69,10 @@ func PrepassSecrets(shared *db.DB, l Local, transport synclog.LogTransport) erro
 	if stored.Complete() {
 		return nil
 	}
-	key, err := SigningKey(l)
-	if err != nil || len(key) == 0 {
+	imp := synclog.NewImporter(shared, transport)
+	if err := BindVerifier(imp, l); err != nil {
 		return err
 	}
-	imp := synclog.NewImporter(shared, transport)
-	imp.SetKey(key)
 	BindDocs(imp, shared)
 	if _, err := imp.PrepassDocs(SecretsDocName); err != nil {
 		return fmt.Errorf("sync: enable: apply the %s document: %w", SecretsDocName, err)

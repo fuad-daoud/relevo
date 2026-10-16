@@ -348,7 +348,7 @@ func TestImporterDefaultsMissingColumns(t *testing.T) {
 // pull, and once this machine knows 029 both rows apply together. Nothing is
 // rewritten in between; the entries are only read.
 
-const historySchemaVersion = 29
+const historySchemaVersion = 30
 
 // historyRoundEntry is one round row at a named schema version. It is the row
 // that must not be lost to a version the batch also carries.
@@ -384,7 +384,7 @@ func TestHistorySchemaHoldsTheBatchAndKeepsItsRoundRow(t *testing.T) {
 	peer, peerPath := peerFile(t, "m2")
 	know := knownVersion(t, peer)
 	if know != historySchemaVersion {
-		t.Fatalf("this build's schema version is %d, want %d: migration 029 is the one that adds the history tables",
+		t.Fatalf("this build's schema version is %d, want %d: migration 030 is the latest",
 			know, historySchemaVersion)
 	}
 	seed(t, peerPath,

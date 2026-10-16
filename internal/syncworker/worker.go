@@ -93,6 +93,15 @@ type Backend interface {
 	// with what it holds afterwards, so two machines racing the first one both
 	// learn which salt the other chose rather than each keeping its own.
 	KeyInit(key KeyMeta) (KeyMeta, error)
+	// KeyRekey rotates the log's key to the epoch the spec names, in one
+	// transaction that also writes the key it replaced sealed and every
+	// origin's cut, and refuses whole on a moved head or a moved epoch.
+	KeyRekey(spec KeyRekeySpec) (KeyMeta, error)
+	// PublishEpochCut extends this worker's own origin's cut, forward only
+	// and within the log. The origin is the worker's own from hello, never a
+	// field of the call, because vouching for history is deciding what
+	// another reader may refuse above the fence.
+	PublishEpochCut(cut EpochCut) error
 	// Close releases the remote and the replica.
 	Close() error
 }
@@ -171,6 +180,8 @@ var verbHandlers = map[Verb]func(*server, Request) Response{
 	VerbCompact:      (*server).compact,
 	VerbKeyMeta:      (*server).keyMeta,
 	VerbKeyInit:      (*server).keyInit,
+	VerbKeyRekey:     (*server).keyRekey,
+	VerbKeyCut:       (*server).keyCut,
 	VerbShutdown:     (*server).shutdown,
 }
 

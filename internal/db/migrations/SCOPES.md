@@ -114,7 +114,13 @@ These are the destination for the second, local-only database file.
   `secrets` document below: `typesafe`, `client.key`, `r2.endpoint`,
   `r2.bucket`, `r2.key_id` and `r2.secret`. The rest -- `turso.token`,
   `sync.key`, `serve.tls.*` and any name not on that list -- stay
-  machine-local: they are refused on import and never exported.
+  machine-local: they are refused on import and never exported. The sync
+  key's keyring rows stay in this table too: `sync.key` (the newest epoch's
+  key, the name every existing reader uses), `sync.key.epoch` (the newest
+  epoch's number, absent while the fleet is at epoch 1) and one
+  `sync.key.old.<e>` per older epoch the remote's wrapped chain unwraps to.
+  None of them is on the secrets allow-list, so each is refused on import and
+  never exported in either direction.
 - `session_consent`: one session's own consent answer and last status token,
   keyed by `(harness_kind, session_id)`. The answer and its time travel, in the
   `session_consent` document below; the told baseline stays here, because it says
@@ -132,6 +138,11 @@ These are the destination for the second, local-only database file.
   installation's entries, one row per origin. It is progress rather than
   history, so it carries no trigger and stays here; two machines sharing a
   mark would each believe the other had applied the entries between them.
+- `sync_epoch_cut`: the highest epoch cut this machine has verified for each
+  origin, one row per origin. Like `sync_signed_from`, it records what this
+  machine has checked, so it stays here; another installation sharing the
+  table would take this machine's verification on as its own, and a cut is
+  exactly the fact a remote that lost its key must not be able to hand over.
 - the installation file, `<state root>/installation.json`: this installation's
   id, label and creation stamp.
 
@@ -154,6 +165,21 @@ be read as a config section's -- no section below is named after a document.
 | `consent` | One key per remote URL, holding the repository's answer to "may relevo register this repo's sessions as MasterMinds?". It reads and writes only the row this installation wrote, and the read scopes to it the same way: the `repo` rows themselves sync through the row log, so a machine holding several installations' rows for one URL holds several answers and only its own answers for it. | A repository with no remote URL, which no other machine can be asked about, and an answer that has been cleared: a clear is the key's absence, so it travels as a tombstone rather than as a value. A peer's copy of `mastermind_consent` in its own `repo` row means nothing here -- nothing reads it for the decision. |
 | `session_consent` | One key per `harness_kind/session_id`, holding the answer that session gave on its own rather than inheriting from the repository. A session id is not a repository, so a peer can hand over an answer for a session this machine has never seen and the row is simply created. | The told baseline and its time, which are this machine's own record of what it has already shown the session here; and an answer that has been cleared, which is a tombstone rather than a value. |
 | `secrets` | One key per allow-listed secret name (`typesafe`, `client.key`, `r2.endpoint`, `r2.bucket`, `r2.key_id`, `r2.secret`), each value an XChaCha20-Poly1305 envelope sealed under a subkey derived from `sync.key`, with the name as associated data. A cleared secret is a tombstone. The document is always inline in the log, never a `$ref`, because a joiner holds no R2 credentials until it has applied it. | `turso.token`, `sync.key`, `serve.tls.*` and every name off the list, in both directions. A `client.key` nobody stamped (one relevo generated or normalized) is not exported, so a machine's own identity is not replaced by a peer's generated one; only a person's `relevo config secret set` makes one travel. A locked machine neither exports nor applies the document. The value is never printed: a loss record names the key and the reason. |
+
+## The remote's meta table
+
+The sync remote's `meta` table is remote material every machine reads and
+only a fleet act writes, and no row of it lives in the machine-local file.
+`kdf_salt`, `kdf` and `key_check` describe the newest epoch; `key_epoch` (the
+canonical decimal of that epoch, absent until a rekey writes it) and one
+`key_wrapped.<e>` per older epoch -- the key sealed under the one that
+replaced it -- are the rekey's rows; `signed_from.<origin>` and
+`epoch_cut.<origin>` (the epoch and sequence above which that origin's signed
+entries must verify under a key at least that epoch's) are the fleet's trust
+boundaries, written by a rekey at the head it observed and extended by an
+origin's own unlock; `floor.<origin>` is compaction's. What a machine holds
+of these is its own record, never the rows: the kv facts `sync.remote_epoch`
+and `sync.own_head.v1`, and the `sync_epoch_cut` rows above.
 
 ## Per-user config, synced deliberately or not at all
 

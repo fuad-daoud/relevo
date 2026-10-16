@@ -124,6 +124,39 @@ func serveNoKeyField() int {
 	}
 }
 
+// TestKeyRekeyAnswersWithWhatTheRemoteHolds pins the rekey call over the pipe:
+// the epoch the caller read, the material and the cuts cross as one request,
+// and the answer is what the remote holds afterwards rather than an echo.
+func TestKeyRekeyAnswersWithWhatTheRemoteHolds(t *testing.T) {
+	c, err := startFakeWorker(t, modeNormal, handshake())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	spec := synclog.KeyRekeySpec{
+		From: 1,
+		Key: synclog.KeyMeta{
+			Salt: []byte("this machine's new salt"), KDF: "argon2id",
+			Check: []byte("this machine's new check"), Present: true,
+			Epoch: 2, Wrapped: map[int][]byte{1: []byte("the sealed epoch key")},
+		},
+		Cuts: map[string]synclog.EpochCut{
+			"origin-b": {Epoch: 2, Seq: 3, Tag: []byte("the cut's tag")},
+		},
+	}
+	got, err := c.KeyRekey(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("KeyRekey: %v", err)
+	}
+	// The fake log already holds material, so the answer is that material --
+	// the remote's own, not the request's echo.
+	if !bytes.Equal(got.Salt, []byte("salt")) {
+		t.Errorf("KeyRekey answered the salt %q, want the one the log holds", got.Salt)
+	}
+	if got.Epoch != 1 {
+		t.Errorf("KeyRekey answered epoch %d, want the log's own 1", got.Epoch)
+	}
+}
+
 // TestSupervisorDrivesTheKeyVerbs pins that the two verbs run through the
 // breaker like every other call: a worker that dies on one is counted, so a
 // remote that cannot be asked is backed off rather than retried forever.
@@ -144,5 +177,45 @@ func TestSupervisorDrivesTheKeyVerbs(t *testing.T) {
 	}
 	if !bytes.Equal(got.Salt, []byte("salt")) {
 		t.Errorf("Supervisor.KeyInit answered the salt %q, want the log's own", got.Salt)
+	}
+	rekeyed, err := s.KeyRekey(context.Background(), synclog.KeyRekeySpec{
+		From: 1,
+		Key: synclog.KeyMeta{
+			Salt: []byte("ignored"), KDF: "argon2id", Check: []byte("ignored"),
+			Present: true, Epoch: 2, Wrapped: map[int][]byte{1: []byte("sealed")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Supervisor.KeyRekey: %v", err)
+	}
+	if !bytes.Equal(rekeyed.Salt, []byte("salt")) {
+		t.Errorf("Supervisor.KeyRekey answered the salt %q, want the log's own", rekeyed.Salt)
+	}
+}
+
+// TestKeyCutAnswersTheForwardOnlyVouch pins the cut extension over the pipe:
+// the cut crosses as one request and the answer carries no payload, which is
+// the worker saying the vouch landed.
+func TestKeyCutAnswersTheForwardOnlyVouch(t *testing.T) {
+	c, err := startFakeWorker(t, modeNormal, handshake())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := c.PublishEpochCut(context.Background(), synclog.EpochCut{
+		Epoch: 2, Seq: 3, Tag: []byte("the cut's tag"),
+	}); err != nil {
+		t.Fatalf("PublishEpochCut: %v", err)
+	}
+}
+
+// TestSupervisorPublishesTheCutExtension runs the extension through the
+// supervisor, so the breaker counts a worker that dies on it the same way it
+// counts any other call.
+func TestSupervisorPublishesTheCutExtension(t *testing.T) {
+	s := newSupervisor(t, fakeWorkerCfg(modeNormal), breakerOver(newMemKV()))
+	if err := s.PublishEpochCut(context.Background(), synclog.EpochCut{
+		Epoch: 2, Seq: 3, Tag: []byte("the cut's tag"),
+	}); err != nil {
+		t.Fatalf("Supervisor.PublishEpochCut: %v", err)
 	}
 }

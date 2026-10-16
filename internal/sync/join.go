@@ -515,12 +515,10 @@ func (e *Enabler) drainImport(transport synclog.LogTransport) (synclog.ImportRes
 	}
 	deadline := e.now().Add(JoinImportDeadline)
 	res, err := drainImport(func() (synclog.ImportResult, error) {
-		key, err := SigningKey(e.Request.Local)
-		if err != nil {
+		imp := synclog.NewImporter(e.Request.Shared, transport)
+		if err := BindVerifier(imp, e.Request.Local); err != nil {
 			return synclog.ImportResult{}, err
 		}
-		imp := synclog.NewImporter(e.Request.Shared, transport)
-		imp.SetKey(key)
 		BindDocs(imp, e.Request.Shared)
 		imp.AfterBatch = func() { e.count(transport) }
 		res, ierr := imp.Import()

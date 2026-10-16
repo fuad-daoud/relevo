@@ -485,9 +485,89 @@ under the merged rules, imports no shared docs, and status says "locked".
 - **Join order:** before the normal import, a join whose R2 credentials are not
   stored reads every origin's `doc:secrets` entries, verifies each MAC, and
   applies them without moving an import mark.
-- **Rotation (step 5b, not built):** `db sync rekey` re-encrypts every value
-  under a new passphrase and rewrites `kdf_salt` and `key_check`; the envelope
-  then writes `"v":2` with a key epoch, which a 5a reader refuses.
+- **Rotation (step 5b, built):** `relevo db sync rekey` rotates the log's key
+  to the next epoch. The machine must be unlocked and syncing; the current
+  passphrase is checked against `key_check` before anything is written, so a
+  wrong one changes nothing anywhere; the new one may not be the current one.
+  The current passphrase follows unlock's intake; the new one comes from
+  `RELEVO_SYNC_NEW_PASSPHRASE`, else a prompt asked twice -- stdin carries at
+  most one secret. Both travel CLI to daemon in the frame tail behind
+  explicit lengths, never argv, never a log.
+- **Epochs and the wrapped chain.** The key every remote holds today is epoch
+  1, and every entry and v1 envelope on a log is epoch 1. A rekey's one
+  worker transaction, guarded by a compare-and-set on `key_epoch`, writes
+  fresh `kdf_salt`, `kdf` and `key_check` for the new epoch and one
+  `key_wrapped.<e>` per older epoch -- XChaCha20-Poly1305 of key_e under a
+  wrap subkey derived from key_{e+1}, the epoch pair bound into the
+  associated data -- so a machine holding the newest key unwraps E down to 1
+  and nothing unwraps forwards; a wrapped row that will not open under the
+  checked key is a refusal, never a skip. Two machines rekeying at once:
+  exactly one wins, the loser writes nothing and says so (`epoch_race`).
+- **Cuts.** The same transaction cuts every origin, `epoch_cut.<origin>` =
+  `<epoch> <seq> <tag>`, the tag HMAC-SHA256 under the new key over label
+  `relevo-sync-epoch-cut-v1`, the origin and the decimal epoch and sequence,
+  each length-prefixed, at the head the rekeyer observed; a head or epoch
+  that moved under the caller refuses the whole rekey. An entry of an origin
+  that signs, above that origin's cut, must verify under a held epoch at
+  least the cut's; at or below the cut, under any held key. An origin with no
+  cut row is fenced by the default (newest held epoch, seq 0), which at an
+  epoch-1 fleet is today's single-key verification. A reader acts on a
+  remote cut only when it names the reader's newest held epoch and its tag
+  verifies under that epoch's key: a row at a retired epoch -- however
+  honestly its tag verifies under the old key -- is held for the run and
+  recorded nowhere, so the default fence stands and a leaked old key cannot
+  re-bless history the reader has never verified. A cut that verifies is
+  recorded locally at once and never regresses, so deleting, lowering or
+  replaying the remote row changes nothing after the first verified import;
+  first contact still needs the honest newest-epoch cut. An origin that
+  appended under the
+  old key before it learned of the rekey is held everywhere; `unlock` with
+  the new passphrase then publishes its own cut extension to the highest
+  sequence its own transport confirmed appending, so the tail it vouches for
+  verifies as old-epoch history and anything above stays refused.
+- **Secrets v2.** An epoch-1 build seals the same `{"v":1}` envelope as
+  today, byte-identical, so upgrading alone re-emits nothing. From epoch 2 on
+  the envelope is `{"v":2,"e":<epoch>,"n":…,"c":…}` under that epoch's
+  subkey; a reader refuses an epoch it does not hold, any other `v`, and any
+  field it does not know -- the refusal a 5a binary keeps. A rekey re-seals
+  every held secret under the newest epoch; the exporter re-emits each key
+  under the stamp it already carried, never a fresh clock stamp, so a re-seal
+  cannot rank above a concurrent peer's edit, and the rekey signals the
+  document once locally without stamping.
+- **Rollout (5b).** A 5b build changes no wire byte until someone rekeys, so
+  the signing rollout's rule holds: every machine installs the release before
+  anyone runs `relevo db sync rekey`. After a rekey a 5a binary refuses
+  rather than misreads -- epoch-2 entries fail its single-key verification, a
+  `"v":2` envelope is refused, unlock with the old passphrase no longer
+  matches -- and a locked machine's history still syncs unverified, as
+  before.
+- **Known limits (5b).** Rekey protects the future, not the past: old keys
+  stay derivable from the wrapped chain by anyone holding a newer key, and a
+  leaked old passphrase still reads every old entry and old envelope; nothing
+  re-encrypts history. Entries the origin's own transport appended between
+  the rekey and its discovery are indistinguishable from forgeries a token
+  holder interleaved into the same sequence window below the extension
+  sequence; the extension vouches for both -- one attempt's window on a
+  healthy machine. A machine that never learned of the rekey vouches for its
+  whole old-key tail the same way when it finally unlocks; everything it
+  appends after it stops is refused. A crash between a successful append and
+  the own-head marker write leaves honest entries above the extension: a
+  visible hold, and the way out is a further rekey whose cuts cover them as
+  history -- an owner act, never automatic. A token holder can still replay
+  an old signed entry at a new seq or delete entries, and can still append
+  unsigned entries under an origin that never signed -- unchanged by rekey. A
+  locked machine still applies history unverified, as today; rekey does not
+  extend what it accepts.
+  Two machines rekeying in the same few seconds can both pass their checks:
+  the push is last-writer-wins, and each re-reads the remote only after its
+  own push. The machine whose key the remote no longer holds stops on its
+  next attempt, like a stale one, and says to unlock with the passphrase that
+  rekeyed the remote; anything it exported before that attempt is signed
+  under a key no other machine holds and stays held. A machine notices a
+  rekey on its first or second attempt after it: the attempt reads the
+  remote's key rows from the replica before that attempt's pull.
+- **Rollout (5b).** A build without rekey cannot follow one, so every machine
+  runs a build with it before anyone runs `relevo db sync rekey`.
 - **Lost passphrase:** if no machine holds the key any more, the synced
   secrets are unreadable. Every machine's local copies are unaffected.
 
@@ -641,6 +721,7 @@ The daemon refuses a worker of the wrong version.
 | R2 unreachable | Exports that need an upload wait; imports that need a body hold that origin; everything else proceeds |
 | Object missing (404) | Latch, naming the binding, round and file |
 | Wrong or missing passphrase | Shared docs, secrets and takeovers don't import; history still syncs; status says "locked" |
+| Passphrase changed on the fleet (this machine holds an old epoch) | The machine stops signing and exporting and holds its import whole, one trouble line per attempt; status (human and `--json`) reports `stale` and names `relevo db sync unlock` |
 | Bad signature | Refuse, hold that origin, latch with the entry named |
 | Takeover while the old writer still runs | Its later entries for the binding are fenced everywhere; it reports what was lost when it next imports |
 | `enable --as` on a live identity | Refused (activity in the last 24 h) |
@@ -688,7 +769,8 @@ Each step is one PR with sandbox evidence before merge.
    refusal, the never-exported age prune, the combined display reads and the kv
    migration.
 5. **Secrets and the new-machine flow.** 5a: allow-list encryption, `invite`,
-   `--join` and the doctor login rows (built). 5b: `rekey` (not built).
+   `--join` and the doctor login rows (built). 5b: `rekey` with key epochs,
+   the cuts, the wrapped chain and the v2 secrets envelope (built).
 6. **Ownership.** The `writer` column, `handover`, `takeover`,
    `enable --as`.
 

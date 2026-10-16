@@ -227,6 +227,7 @@ func TestKeyVerbsRefusedWithoutHello(t *testing.T) {
 	for _, req := range []Request{
 		{ID: "a", Verb: VerbKeyMeta},
 		{ID: "b", Verb: VerbKeyInit, KeyMeta: &KeyMeta{Salt: []byte("s"), KDF: "argon2id", Present: true}},
+		{ID: "c", Verb: VerbKeyRekey, Epoch: 1, KeyMeta: &KeyMeta{Epoch: 2, Present: true}},
 	} {
 		resp := s.ask(req)
 		if resp.OK {

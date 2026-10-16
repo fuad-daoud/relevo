@@ -19,14 +19,13 @@ func keyedExporter(shared *db.DB, t synclog.LogTransport) (*synclog.Exporter, er
 	return e, nil
 }
 
-// keyedImporter is an importer that verifies with the machine's stored key.
+// keyedImporter is an importer that verifies with the machine's stored
+// keyring -- the whole chain, not only its newest key.
 func keyedImporter(shared *db.DB, t synclog.LogTransport) (*synclog.Importer, error) {
-	key, err := relevosync.SigningKey(shared.Local())
-	if err != nil {
+	i := synclog.NewImporter(shared, t)
+	if err := relevosync.BindVerifier(i, shared.Local()); err != nil {
 		return nil, err
 	}
-	i := synclog.NewImporter(shared, t)
-	i.SetKey(key)
 	relevosync.BindDocs(i, shared)
 	return i, nil
 }

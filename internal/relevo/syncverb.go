@@ -122,6 +122,8 @@ func (v *VerbRunner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte)
 		return v.runGuarded(func() *wire.SyncResult { return v.reconcilePreview(ctx, verb) })
 	case wire.SyncVerbUnlock:
 		return v.runGuarded(func() *wire.SyncResult { return v.unlock(ctx, verb, token) })
+	case wire.SyncVerbRekey:
+		return v.runGuarded(func() *wire.SyncResult { return v.rekey(ctx, verb, token) })
 	case wire.SyncVerbAttempt:
 		// An attempt is queued, not waited for: the daemon's slot decides when
 		// it runs, which is what lets the one-shot that asked return at once.

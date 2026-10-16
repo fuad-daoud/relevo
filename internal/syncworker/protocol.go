@@ -17,11 +17,12 @@ import (
 // command line, so the daemon learns what its own child speaks before it sends
 // anything it would otherwise have to take back.
 //
-// Version 2 added the blob verbs and the R2 settings hello carries. A daemon on
-// version 1 and a worker on version 2 refuse each other here rather than
-// discovering it at the first put_blob, which would be after the exporter had
-// already written entries pointing at objects nobody uploaded.
-const ProtocolVersion = 2
+// Version 2 added the blob verbs and the R2 settings hello carries. Version 3
+// added key_rekey, which writes the key's new epoch beside it; a daemon on an
+// older version and a worker on this one refuse each other here rather than
+// discovering the difference at the first key_rekey, which would be after one
+// side had already answered from material the other cannot read.
+const ProtocolVersion = 3
 
 // The refusals the worker answers with rather than dying over. A request that
 // breaks one of them has a well-formed frame around it, so the reply can carry
@@ -82,6 +83,16 @@ const (
 	// VerbKeyInit writes that material if the remote holds none, and answers
 	// with whatever it holds afterwards.
 	VerbKeyInit Verb = "key_init"
+	// VerbKeyRekey rotates the log's key to a new epoch: the new material, the
+	// key it replaced sealed for the machines still holding it, and every
+	// origin's cut, all in one transaction that refuses a remote whose epoch
+	// or whose heads moved under the caller.
+	VerbKeyRekey Verb = "key_rekey"
+	// VerbKeyCut extends this worker's own origin's cut, forward only and
+	// within the log. It is how a machine that unlocked with the new
+	// passphrase -- or whose own head has grown past the cut it holds --
+	// vouches for the tail it appended before it learned of the rekey.
+	VerbKeyCut Verb = "key_cut"
 	// VerbShutdown ends the pipe after its reply.
 	VerbShutdown Verb = "shutdown"
 )
@@ -104,10 +115,29 @@ type KeyMeta struct {
 	// rather than being read from the salt, because a remote can hold a check
 	// without a salt and the two absences mean different things to a caller.
 	Present bool `json:"present,omitempty"`
+	// Epoch is the epoch this material's key is. A remote that holds no
+	// key_epoch row is at epoch 1, and the worker hands every reader that 1
+	// rather than a zero each caller would have to default itself.
+	Epoch int `json:"epoch,omitempty"`
+	// Wrapped is the older epochs' keys the remote holds sealed, keyed by the
+	// epoch each one is. It is nil on a remote that holds none, which is every
+	// remote before its first rekey.
+	Wrapped map[int][]byte `json:"wrapped,omitempty"`
+}
+
+// EpochCut is one origin's cut as a key_rekey carries it: the epoch entries
+// above the cut must verify under, the sequence the cut sits at, and the tag
+// binding origin, epoch and sequence to the epoch's key.
+type EpochCut struct {
+	// Epoch is the epoch the cut fences for.
+	Epoch int `json:"epoch,omitempty"`
+	// Seq is the highest sequence the cut vouches for as history.
+	Seq int `json:"seq,omitempty"`
+	// Tag is the HMAC that binds the three to the epoch's key.
+	Tag []byte `json:"tag,omitempty"`
 }
 
 // R2Config is the bucket the worker moves bodies through, as hello carries it.
-//
 // It travels in hello and nowhere else, like the token: the daemon reads it from
 // this machine's secrets, hands it over the pipe, and the worker holds it for
 // life without its command line or its environment ever naming it. Every later
@@ -193,7 +223,21 @@ type Request struct {
 	Floor    int `json:"floor,omitempty"`
 	// KeyMeta is the passphrase material a key_init writes. A key_meta carries
 	// none: it asks what the remote holds rather than naming what it should.
+	// A key_rekey names the material the remote is to hold afterwards.
 	KeyMeta *KeyMeta `json:"key_meta,omitempty"`
+	// Epoch is the epoch the caller read the remote at, on a key_rekey alone:
+	// the rekey is a compare-and-set against it, so a remote whose epoch moved
+	// under the caller refuses rather than writing over another machine's.
+	Epoch int `json:"epoch,omitempty"`
+	// Cuts is every origin's cut a key_rekey writes, each at the head the
+	// caller observed. The worker re-predicts them from the log inside its own
+	// transaction and refuses a caller whose observation is stale.
+	Cuts map[string]EpochCut `json:"cuts,omitempty"`
+	// Cut is the one cut a key_cut extends this worker's own origin to, named
+	// by the caller and tagged under the key the caller vouches with. The
+	// origin is the worker's from hello and the head is the log's own, so a
+	// caller cannot vouch for history the log does not hold.
+	Cut *EpochCut `json:"cut,omitempty"`
 	// BoundarySeq and BoundaryTag are the first signed sequence an export
 	// predicts for its origin and the tag that binds it to the key. The worker
 	// stores them only where the origin has no boundary yet.
@@ -275,6 +319,11 @@ const (
 	// not the one predicted. Nothing was written and the next attempt predicts
 	// again.
 	CodeBoundary RefusalCode = "boundary"
+	// CodeEpochRace is a key_rekey the worker refused because the remote's epoch
+	// is not the one the caller read: another machine rekeyed first. Nothing was
+	// written, and no retry with the same material can get past it -- the
+	// caller's key is an old one now.
+	CodeEpochRace RefusalCode = "epoch_race"
 )
 
 // RefusalError is an error a backend marked with the class of refusal it is, so
@@ -453,6 +502,10 @@ type MarkState struct {
 	// SignedTags is the tag stored beside each boundary, nil where the stored
 	// value has none that parses.
 	SignedTags map[string][]byte `json:"signed_tags,omitempty"`
+	// EpochCuts is each origin's cut as the log holds it, one row per origin
+	// a rekey wrote. A row that does not parse arrives as the cut nothing
+	// verifies under, which the reader holds its origin over.
+	EpochCuts map[string]EpochCut `json:"epoch_cuts,omitempty"`
 }
 
 // readRequest reads one request line. A clean end of the pipe is io.EOF, which

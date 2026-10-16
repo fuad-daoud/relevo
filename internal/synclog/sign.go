@@ -10,6 +10,13 @@ import (
 // refused by every unlocked reader.
 var ErrLockedSignedOrigin = errors.New("this machine's log is signed; run relevo db sync unlock")
 
+// ErrEpochMoved is what a machine whose held newest epoch is below the
+// recorded remote epoch reports: the remote has rekeyed and this machine
+// holds the old key. It stops signing and exporting and holds its import
+// whole -- a stale reader must not apply entries current readers refuse --
+// and the fix is the owner's: relevo db sync unlock with the new passphrase.
+var ErrEpochMoved = errors.New("sync: the remote's key moved to a newer epoch; this machine holds the old one: run relevo db sync unlock with the new passphrase")
+
 // ErrBadSignature reports an entry an unlocked reader refuses: its MAC does not
 // hold, or it is unsigned where its origin signs.
 var ErrBadSignature = errors.New("synclog: an entry's signature was refused")
@@ -23,6 +30,11 @@ var ErrBoundary = errors.New("synclog: the signed-from boundary was not the one 
 // locked machine.
 type keyed struct {
 	key []byte
+	// ring is every epoch key this machine holds, keyed by the epoch each one
+	// is. A verifier verifies by trial under the ring; the exporter signs
+	// under key, which whichever setter ran stores as the newest epoch's.
+	// nil reads as a one-key machine, which every epoch-1 log is.
+	ring map[int][]byte
 	// boundaryKnown is set once the remote is known to hold this origin's
 	// boundary, so later appends do not read it again.
 	boundaryKnown bool
@@ -68,6 +80,35 @@ func (k *keyed) docNamed(name string) (SharedDoc, bool) {
 
 // SetKey sets the sync key; nil or empty is a locked machine.
 func (k *keyed) SetKey(key []byte) { k.key = key }
+
+// Keyring is every epoch key a verifier holds: the newest epoch's key and the
+// older ones it unwrapped off the remote's chain. It is this package's own
+// shape for the machine's stored ring, which the reader of the local keyring
+// hands across rather than this package reaching for its secrets.
+type Keyring struct {
+	// Epoch is the newest epoch in Keys.
+	Epoch int
+	// Keys maps each epoch this machine holds to its key.
+	Keys map[int][]byte
+}
+
+// SetKeyring sets the ring a verifier verifies by trial under, carrying the
+// newest epoch's key into the signing key the same setter runs write. A ring
+// that names no epoch its keys back is refused, never half-stored: a verifier
+// with a newest it cannot name would verify nothing signed since the epoch
+// moved.
+func (k *keyed) SetKeyring(ring Keyring) {
+	if ring.Epoch < 1 || len(ring.Keys[ring.Epoch]) == 0 {
+		return
+	}
+	for epoch := range ring.Keys {
+		if epoch > ring.Epoch {
+			return
+		}
+	}
+	k.key = ring.Keys[ring.Epoch]
+	k.ring = ring.Keys
+}
 
 // sign stamps every entry with its MAC when there is a key. It runs last, on
 // the entries exactly as they will be stored.

@@ -160,6 +160,11 @@ const (
 	// SyncVerbUnlock derives the sync key from the passphrase in the frame's
 	// raw tail and stores it when it matches the remote's check.
 	SyncVerbUnlock = "unlock"
+	// SyncVerbRekey rotates the log's key to a new epoch. The current and the
+	// new passphrase ride the frame's raw tail, current first, behind the two
+	// lengths on the header -- a tail that splits from the end carries both,
+	// and neither ever reaches argv, a log or an error.
+	SyncVerbRekey = "rekey"
 	// SyncVerbAttempt asks the owner to run an attempt now rather than at the
 	// end of the export debounce. A client that has just written something worth
 	// the other machines seeing in seconds -- a rate limit a person recorded --
@@ -230,6 +235,13 @@ const (
 	// SyncCodeWrongPassphrase is an unlock whose key does not match the
 	// remote's check.
 	SyncCodeWrongPassphrase = "wrong_passphrase"
+	// SyncCodeMachineLocked is a rekey on a machine that holds no sync key; it
+	// must unlock with the current passphrase first.
+	SyncCodeMachineLocked = "machine_locked"
+	// SyncCodeEpochRace is a rekey another machine won: the remote's epoch
+	// moved before this caller's transaction landed, so nothing of this
+	// caller's was written and its key is an old one now.
+	SyncCodeEpochRace = "epoch_race"
 	// SyncCodeInternal is a failure with no class of its own -- the daemon's
 	// own bug, or a hook that panicked or reported nothing.
 	SyncCodeInternal = "internal"
@@ -273,6 +285,11 @@ type SyncVerb struct {
 	// because the tail is split from the end, in one place, and a third secret
 	// that split somewhere else is a length that could name the wrong bytes.
 	PassphraseLen int `json:"passphrase_len,omitempty"`
+	// NewPassphraseLen is how many bytes at the end of a rekey's tail are the
+	// new passphrase, behind the current one the PassphraseLen names. Two
+	// secrets on one tail split from the end in one place, so neither length
+	// can name the other's bytes.
+	NewPassphraseLen int `json:"new_passphrase_len,omitempty"`
 	// Join says this enable carries a join code rather than a hand-entered
 	// remote. The code was parsed on the client side, which is a pure function
 	// reaching no network, so what arrives is the remote and the token it named.

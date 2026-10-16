@@ -60,6 +60,32 @@ func VerifyBoundary(key []byte, origin string, seq int, tag []byte) bool {
 	return hmac.Equal(tag, BoundaryTag(key, origin, seq))
 }
 
+// epochCutDomain labels the tag that binds an origin's epoch cut to the key, so
+// a reader can tell a cut this key vouched for from one a remote writer made
+// up. It is a fresh label rather than the boundary's, so a cut tag can never
+// double as a signed-from tag or an entry MAC.
+const epochCutDomain = "relevo-sync-epoch-cut-v1"
+
+// EpochCutTag is the HMAC-SHA256 that binds an origin's cut -- the epoch its
+// later entries must verify under and the sequence the cut sits at -- to key.
+func EpochCutTag(key []byte, origin string, epoch, seq int) []byte {
+	var buf bytes.Buffer
+	writeMACField(&buf, []byte(epochCutDomain))
+	writeMACField(&buf, []byte(origin))
+	writeMACField(&buf, []byte(strconv.Itoa(epoch)))
+	writeMACField(&buf, []byte(strconv.Itoa(seq)))
+
+	mac := hmac.New(sha256.New, key)
+	mac.Write(buf.Bytes())
+	return mac.Sum(nil)
+}
+
+// VerifyEpochCut reports whether tag is the one key makes for origin, epoch and
+// seq.
+func VerifyEpochCut(key []byte, origin string, epoch, seq int, tag []byte) bool {
+	return hmac.Equal(tag, EpochCutTag(key, origin, epoch, seq))
+}
+
 // VerifyMAC reports whether the entry's MAC is the one its fields make. It
 // compares with hmac.Equal rather than bytes.Equal, so a caller learns only
 // that the two agree and not how far they are into disagreeing.

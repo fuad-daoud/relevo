@@ -201,12 +201,12 @@ func TestVerifyJoinKeyChecksAPassphraseOnAMachineThatIsNotSyncing(t *testing.T) 
 	}
 	transport := keyedLog(t, "the passphrase")
 
-	key, err := VerifyJoinKey(context.Background(), local, transport, []byte("the passphrase"))
+	ring, err := VerifyJoinKey(context.Background(), local, transport, []byte("the passphrase"))
 	if err != nil {
 		t.Fatalf("VerifyJoinKey: %v", err)
 	}
 	want := DeriveKey([]byte("the passphrase"), joinKeySalt, DefaultKDF)
-	if !bytes.Equal(key, want) {
+	if !bytes.Equal(ring.Keys[ring.Epoch], want) {
 		t.Error("VerifyJoinKey returned a key this passphrase does not derive from the remote's salt")
 	}
 	// It records what it learned, so status can report a locked machine without a

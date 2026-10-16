@@ -51,6 +51,10 @@ type memLog struct {
 	signedTag map[string][]byte
 	// key is the passphrase material the log holds.
 	key KeyMeta
+	// epochCut is the cut each origin's history is fenced at, as a rekey
+	// wrote it. A row is one origin's, and the newest rekey's row is the one
+	// that stands.
+	epochCut map[string]EpochCut
 }
 
 // NewMemTransport returns a handle on an empty log for the installation named
@@ -364,6 +368,12 @@ func (m *memLog) markState() MarkState {
 		out.SignedTags = make(map[string][]byte, len(m.signedTag))
 		for origin, tag := range m.signedTag {
 			out.SignedTags[origin] = tag
+		}
+	}
+	if len(m.epochCut) > 0 {
+		out.EpochCuts = make(map[string]EpochCut, len(m.epochCut))
+		for origin, cut := range m.epochCut {
+			out.EpochCuts[origin] = cut
 		}
 	}
 	out.Heads = make(map[string]int)

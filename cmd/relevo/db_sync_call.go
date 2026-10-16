@@ -139,7 +139,10 @@ type dbSyncVerbOptions struct {
 	// together: a code names the remote and the token, which leaves the tail's
 	// middle to the passphrase.
 	PassphraseLen int
-	Join          bool
+	// NewPassphraseLen is the length of the new passphrase behind it, which a
+	// rekey's tail carries.
+	NewPassphraseLen int
+	Join             bool
 	// Yes is enable's --yes.
 	Yes bool
 	// DryRun is reconcile's --dry-run.
@@ -169,19 +172,20 @@ func sendSyncVerb(ctx context.Context, shared *db.DB, verb string, opts dbSyncVe
 // the value crosses the stream between them and nowhere else.
 func sendSyncVerbToken(ctx context.Context, shared *db.DB, verb string, token []byte, opts dbSyncVerbOptions) (*wire.SyncResult, error) {
 	req := &wire.SyncVerb{
-		Header:        wire.Header{Type: wire.TypeSyncVerb},
-		Verb:          verb,
-		RemoteURL:     opts.RemoteURL,
-		TimeoutMS:     opts.Timeout.Milliseconds(),
-		R2Endpoint:    opts.R2Endpoint,
-		R2Bucket:      opts.R2Bucket,
-		R2KeyID:       opts.R2KeyID,
-		R2SecretLen:   opts.R2SecretLen,
-		PassphraseLen: opts.PassphraseLen,
-		Join:          opts.Join,
-		Yes:           opts.Yes,
-		DryRun:        opts.DryRun,
-		New:           opts.New,
+		Header:           wire.Header{Type: wire.TypeSyncVerb},
+		Verb:             verb,
+		RemoteURL:        opts.RemoteURL,
+		TimeoutMS:        opts.Timeout.Milliseconds(),
+		R2Endpoint:       opts.R2Endpoint,
+		R2Bucket:         opts.R2Bucket,
+		R2KeyID:          opts.R2KeyID,
+		R2SecretLen:      opts.R2SecretLen,
+		PassphraseLen:    opts.PassphraseLen,
+		NewPassphraseLen: opts.NewPassphraseLen,
+		Join:             opts.Join,
+		Yes:              opts.Yes,
+		DryRun:           opts.DryRun,
+		New:              opts.New,
 	}
 	res, err := shared.SyncVerb(ctx, req, token)
 	if err != nil {
@@ -243,6 +247,11 @@ func dbSyncVerbRefusalFor(verb, url string, err error) error {
 	case wire.SyncCodeNoKDF:
 		return failNext(codeRefused, "relevo db sync unlock --new", "%s", refusal.Message)
 	case wire.SyncCodeWrongPassphrase:
+		return fail(codeRefused, "%s", refusal.Message)
+	case wire.SyncCodeMachineLocked, wire.SyncCodeEpochRace:
+		// Both refusals name the act that fixes them in their own words: the
+		// locked machine names unlock, and a lost race names the winner's
+		// passphrase at unlock. Nothing was written either way.
 		return fail(codeRefused, "%s", refusal.Message)
 	case wire.SyncCodeBackingOff:
 		// This machine is waiting out the delay a stopped worker earned, and

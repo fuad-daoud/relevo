@@ -147,6 +147,9 @@ index sqlite_autoindex_shared_outbox_1 shared_outbox
 index sqlite_autoindex_shared_pending_1 shared_pending
 
 
+index sqlite_autoindex_sync_epoch_cut_1 sync_epoch_cut
+
+
 index sqlite_autoindex_sync_import_mark_1 sync_import_mark
 
 
@@ -535,6 +538,13 @@ CREATE TABLE shared_pending (
 table sqlite_sequence sqlite_sequence
 CREATE TABLE sqlite_sequence(name,seq)
 
+table sync_epoch_cut sync_epoch_cut
+CREATE TABLE sync_epoch_cut (
+    origin TEXT PRIMARY KEY,
+    epoch INTEGER NOT NULL,
+    seq INTEGER NOT NULL
+)
+
 table sync_import_mark sync_import_mark
 CREATE TABLE sync_import_mark (
     origin TEXT PRIMARY KEY,
@@ -862,4 +872,4 @@ CREATE TRIGGER sync_outbox_transcript_upd AFTER UPDATE ON transcript BEGIN
         END);
 END
 
-schema_versions have=29 know=29
+schema_versions have=30 know=30

@@ -136,6 +136,9 @@ func (b *TursoBackend) ReadMarks() (MarkState, error) {
 	if err := b.readSignedFrom(ctx, &out); err != nil {
 		return MarkState{}, markDriverRefusal(err)
 	}
+	if err := b.readEpochCuts(ctx, &out); err != nil {
+		return MarkState{}, markDriverRefusal(err)
+	}
 	return out, nil
 }
 

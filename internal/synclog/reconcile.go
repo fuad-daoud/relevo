@@ -208,9 +208,11 @@ func (r *Reconciler) ReconcileBatch() (ReconcileResult, error) {
 	repaired := r.repairs()
 	r.pending = nil
 	r.sign(entries)
-	if _, err := r.appendTo(r.transport, r.origin, entries); err != nil {
+	written, err := r.appendTo(r.transport, r.origin, entries)
+	if err != nil {
 		return ReconcileResult{}, fmt.Errorf("synclog: reconcile: append: %w", err)
 	}
+	noteOwnHead(r.db.LocalOrSelf(), written)
 	result := ReconcileResult{Batches: 1, Upserts: len(entries), Repaired: repaired}
 	for _, e := range entries {
 		if e.Op == OpDelete {

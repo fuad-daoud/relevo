@@ -124,3 +124,81 @@ func TestUnlockRefusesWhenSyncIsOff(t *testing.T) {
 		t.Fatalf("Unlock with sync off = %v, want ErrSyncOff", err)
 	}
 }
+
+// epochTwoLog is a remote that has rekeyed: its material is epoch 2's, and the
+// epoch 1 key it replaced is stored sealed under epoch 2's key. The rekey that
+// wrote it is the real one, so the state a machine unlocks against here is the
+// state a rekey leaves behind.
+func epochTwoLog(t *testing.T, oldPass, newPass string) *synclog.MemTransport {
+	t.Helper()
+	log := synclog.NewMemTransport("a")
+	salt1 := bytes.Repeat([]byte{7}, saltLen)
+	key1 := DeriveKey([]byte(oldPass), salt1, DefaultKDF)
+	if _, err := log.KeyInit(context.Background(), synclog.KeyMeta{
+		Salt: salt1, KDF: DefaultKDF.String(), Check: KeyCheck(key1), Present: true,
+	}); err != nil {
+		t.Fatalf("seed epoch 1: %v", err)
+	}
+	salt2 := bytes.Repeat([]byte{8}, saltLen)
+	key2 := DeriveKey([]byte(newPass), salt2, DefaultKDF)
+	wrapped, err := WrapKey(key2, 1, key1)
+	if err != nil {
+		t.Fatalf("wrap epoch 1: %v", err)
+	}
+	if _, err := log.KeyRekey(context.Background(), synclog.KeyRekeySpec{
+		From: 1,
+		Key: synclog.KeyMeta{
+			Salt: salt2, KDF: DefaultKDF.String(), Check: KeyCheck(key2),
+			Present: true, Epoch: 2, Wrapped: map[int][]byte{1: wrapped},
+		},
+	}); err != nil {
+		t.Fatalf("rekey to epoch 2: %v", err)
+	}
+	return log
+}
+
+// TestUnlockOnARekeyedRemoteStoresTheWholeKeyring pins what an unlock is worth
+// after a rekey: the newest key and every older one the remote's chain unwraps
+// to, so this machine reads epoch 1's history and signs under the newest key.
+func TestUnlockOnARekeyedRemoteStoresTheWholeKeyring(t *testing.T) {
+	t.Parallel()
+	local, _ := unlockFixture(t)
+	log := epochTwoLog(t, "the old passphrase", "the new passphrase")
+	if _, err := Unlock(context.Background(), local, log, []byte("the new passphrase"), false, fixedRand(1)); err != nil {
+		t.Fatalf("Unlock on a rekeyed remote: %v", err)
+	}
+	ring, ok, err := ReadKeyring(local)
+	if err != nil || !ok {
+		t.Fatalf("ReadKeyring after the unlock = %+v, %v; want the keyring", ring, err)
+	}
+	if ring.Epoch != 2 {
+		t.Errorf("epoch = %d, want 2", ring.Epoch)
+	}
+	salt2 := bytes.Repeat([]byte{8}, saltLen)
+	if !bytes.Equal(ring.Keys[2], DeriveKey([]byte("the new passphrase"), salt2, DefaultKDF)) {
+		t.Error("the newest key is not the one the new passphrase derives")
+	}
+	salt1 := bytes.Repeat([]byte{7}, saltLen)
+	if !bytes.Equal(ring.Keys[1], DeriveKey([]byte("the old passphrase"), salt1, DefaultKDF)) {
+		t.Error("the older key is not the one the remote's chain unwraps to")
+	}
+}
+
+// TestUnlockOnARekeyedRemoteRefusesTheOldPassphrase pins that an old passphrase
+// is refused rather than misread: the remote's check is the new key's, so the
+// passphrase that opened epoch 1 opens nothing now and stores nothing.
+func TestUnlockOnARekeyedRemoteRefusesTheOldPassphrase(t *testing.T) {
+	t.Parallel()
+	fresh, _ := unlockFixture(t)
+	log := epochTwoLog(t, "the old passphrase", "the new passphrase")
+	_, err := Unlock(context.Background(), fresh, log, []byte("the old passphrase"), false, fixedRand(1))
+	if !errors.Is(err, ErrWrongPassphrase) {
+		t.Fatalf("Unlock with the old passphrase = %v, want ErrWrongPassphrase", err)
+	}
+	if _, ok, _ := ReadKey(fresh); ok {
+		t.Error("a refused unlock stored a key")
+	}
+	if _, ok, _ := fresh.KVGet(KeyRemoteKDF); ok {
+		t.Error("a refused unlock recorded the remote fact")
+	}
+}

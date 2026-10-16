@@ -332,6 +332,13 @@ func (h *hungAppend) KeyInit(context.Context, synclog.KeyMeta) (synclog.KeyMeta,
 	return synclog.KeyMeta{}, nil
 }
 
+func (h *hungAppend) KeyRekey(context.Context, synclog.KeyRekeySpec) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
+
+func (h *hungAppend) PublishEpochCut(context.Context, synclog.EpochCut) error {
+	return nil
+}
 func (h *heldJoin) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
 
 func (h *heldJoin) CompactOwn(int) (synclog.CompactResult, error) {
@@ -346,7 +353,8 @@ func (h *heldJoin) KeyInit(context.Context, synclog.KeyMeta) (synclog.KeyMeta, e
 	return synclog.KeyMeta{}, nil
 }
 
-func (h *heldPush) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
+func (h *heldJoin) PublishEpochCut(context.Context, synclog.EpochCut) error { return nil }
+func (h *heldPush) PullRange(string, int, int) ([]synclog.Entry, error)     { return nil, nil }
 
 func (h *heldPush) CompactOwn(int) (synclog.CompactResult, error) {
 	return synclog.CompactResult{}, nil
@@ -359,3 +367,13 @@ func (h *heldPush) KeyMeta(context.Context) (synclog.KeyMeta, error) {
 func (h *heldPush) KeyInit(context.Context, synclog.KeyMeta) (synclog.KeyMeta, error) {
 	return synclog.KeyMeta{}, nil
 }
+
+func (h *heldPush) KeyRekey(context.Context, synclog.KeyRekeySpec) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
+
+func (h *heldJoin) KeyRekey(context.Context, synclog.KeyRekeySpec) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
+
+func (h *heldPush) PublishEpochCut(context.Context, synclog.EpochCut) error { return nil }

@@ -143,7 +143,7 @@ func logRequestWireCases() []wireCase {
 					Bucket:   "relevo-sync", KeyID: "key-1", Secret: "s",
 				},
 			},
-			wire: `{"id":"1","verb":"hello","version":2,"origin":"origin-a",` +
+			wire: `{"id":"1","verb":"hello","version":3,"origin":"origin-a",` +
 				`"token":"t","url":"libsql://remote.example","r2":{` +
 				`"endpoint":"https://acct.r2.cloudflarestorage.com",` +
 				`"bucket":"relevo-sync","key_id":"key-1","secret":"s"}}`,
@@ -157,7 +157,7 @@ func logRequestWireCases() []wireCase {
 				ID: "1", Verb: VerbHello, Version: ProtocolVersion, Origin: "origin-a",
 				Token: "t", URL: "libsql://remote.example",
 			},
-			wire: `{"id":"1","verb":"hello","version":2,"origin":"origin-a",` +
+			wire: `{"id":"1","verb":"hello","version":3,"origin":"origin-a",` +
 				`"token":"t","url":"libsql://remote.example"}`,
 		},
 		{

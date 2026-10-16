@@ -38,6 +38,21 @@ func enableIntake(verb *wire.SyncVerb, tail []byte) (token, passphrase []byte, r
 	}, nil
 }
 
+// rekeyIntake splits a rekey's raw tail into the current and the new
+// passphrase. Both are named by their own length on the header and both ride
+// the tail, so a split that does not account for every byte would store one
+// passphrase as the other -- which is a wrong-passphrase refusal at best, and
+// a fleet keyed to a stranger's bytes at worst. A tail the two lengths do not
+// exactly cover is refused rather than trimmed.
+func rekeyIntake(verb *wire.SyncVerb, tail []byte) (current, newPass []byte, err error) {
+	passLen, newLen := verb.PassphraseLen, verb.NewPassphraseLen
+	if passLen < 0 || newLen < 0 || passLen+newLen != len(tail) {
+		return nil, nil, fmt.Errorf("sync: rekey: the frame names a %d-byte passphrase and a %d-byte new passphrase in a %d-byte tail: %w",
+			passLen, newLen, len(tail), db.ErrInvalid)
+	}
+	return tail[:passLen], tail[passLen:], nil
+}
+
 // Joining reports whether an enable's join holds a transport: from when the join
 // opens its log until the enable settles.
 func (v *VerbRunner) Joining() bool {

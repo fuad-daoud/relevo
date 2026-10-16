@@ -153,13 +153,15 @@ func (c *Client) KeyInit(ctx context.Context, key synclog.KeyMeta) (synclog.KeyM
 	return keyMetaFromWire(*resp.KeyMeta), nil
 }
 
-// keyToWire renders the passphrase material for a key_init.
+// keyToWire renders the passphrase material for a key_init or a key_rekey.
 func keyToWire(key synclog.KeyMeta) *syncworker.KeyMeta {
 	return &syncworker.KeyMeta{
 		Salt:    key.Salt,
 		KDF:     key.KDF,
 		Check:   key.Check,
 		Present: key.Present,
+		Epoch:   key.Epoch,
+		Wrapped: key.Wrapped,
 	}
 }
 
@@ -170,7 +172,65 @@ func keyMetaFromWire(k syncworker.KeyMeta) synclog.KeyMeta {
 		KDF:     k.KDF,
 		Check:   k.Check,
 		Present: k.Present,
+		Epoch:   k.Epoch,
+		Wrapped: k.Wrapped,
 	}
+}
+
+// KeyRekey rotates the log's key to the epoch the spec names and answers with
+// what the remote holds afterwards.
+func (c *Client) KeyRekey(ctx context.Context, spec synclog.KeyRekeySpec) (synclog.KeyMeta, error) {
+	resp, err := c.call(syncworker.Request{
+		Verb:    syncworker.VerbKeyRekey,
+		Epoch:   spec.From,
+		KeyMeta: keyToWire(spec.Key),
+		Cuts:    cutsToWire(spec.Cuts),
+	})
+	if err != nil {
+		return synclog.KeyMeta{}, err
+	}
+	if resp.KeyMeta == nil {
+		return synclog.KeyMeta{}, errors.New("syncpipe: the worker answered key_rekey with no key")
+	}
+	return keyMetaFromWire(*resp.KeyMeta), nil
+}
+
+// PublishEpochCut extends this installation's own cut to the one named, on the
+// worker side forward only and within the log.
+func (c *Client) PublishEpochCut(ctx context.Context, cut synclog.EpochCut) error {
+	_, err := c.call(syncworker.Request{
+		Verb: syncworker.VerbKeyCut,
+		Cut: &syncworker.EpochCut{
+			Epoch: cut.Epoch, Seq: cut.Seq, Tag: cut.Tag,
+		},
+	})
+	return err
+}
+
+// cutsToWire renders the cuts a key_rekey writes.
+func cutsToWire(cuts map[string]synclog.EpochCut) map[string]syncworker.EpochCut {
+	if len(cuts) == 0 {
+		return nil
+	}
+	out := make(map[string]syncworker.EpochCut, len(cuts))
+	for origin, cut := range cuts {
+		out[origin] = syncworker.EpochCut{Epoch: cut.Epoch, Seq: cut.Seq, Tag: cut.Tag}
+	}
+	return out
+}
+
+// epochCutsFromWire reads back the cuts a read_marks answered with. The two
+// shapes name the same three fields, so the map carries through one row at a
+// time, the way every conversion above does.
+func epochCutsFromWire(cuts map[string]syncworker.EpochCut) map[string]synclog.EpochCut {
+	if len(cuts) == 0 {
+		return nil
+	}
+	out := make(map[string]synclog.EpochCut, len(cuts))
+	for origin, cut := range cuts {
+		out[origin] = synclog.EpochCut{Epoch: cut.Epoch, Seq: cut.Seq, Tag: cut.Tag}
+	}
+	return out
 }
 
 // marksToWire renders this reader's published positions.
@@ -203,6 +263,7 @@ func markStateFromWire(s syncworker.MarkState) synclog.MarkState {
 		Sizes:      s.Sizes,
 		SignedFrom: s.SignedFrom,
 		SignedTags: s.SignedTags,
+		EpochCuts:  epochCutsFromWire(s.EpochCuts),
 	}
 	for _, m := range s.Marks {
 		out.Marks = append(out.Marks, synclog.Mark{

@@ -19,6 +19,11 @@ func (v *VerbRunner) unlock(ctx context.Context, verb *wire.SyncVerb, passphrase
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
+	// The key this unlock stored is what lets the machine vouch for the tail
+	// it appended before it learned of the rekey; the extension goes out
+	// before the parked docs drain, so the fence this machine believes in is
+	// on the remote while this machine unblocks itself.
+	relevosync.PublishOwnCut(ctx, v.Shared, v.Local, transport)
 	if _, err := relevosync.DrainParkedDocs(v.Shared, v.Local, transport); err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}

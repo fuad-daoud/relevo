@@ -159,6 +159,8 @@ func dbSyncKeyClause(key string) string {
 		return ", key: unlocked"
 	case "locked":
 		return ", key: locked: run relevo db sync unlock"
+	case "stale":
+		return ", key: the passphrase changed: run relevo db sync unlock"
 	}
 	return ""
 }

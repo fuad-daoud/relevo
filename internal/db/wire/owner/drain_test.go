@@ -123,7 +123,11 @@ func TestDrainWaitsForAnOpenTransactionToCommit(t *testing.T) {
 	sendHello(t, a, wire.Version)
 	welcome(t, a)
 	execRaw(t, a, 1, "BEGIN")
-	readDone(t, a, na)
+	// The done answers and the drain return ride the readAllowance rather
+	// than readDone's two seconds and the usual three-second window: the test
+	// pins drain ordering, not round-trip latency, and a loaded gate can
+	// stretch any single hop past a short deadline.
+	readDoneWithin(t, a, na, readAllowance)
 
 	done := make(chan error, 1)
 	go func() { done <- srv.Drain(context.Background()) }()
@@ -135,14 +139,14 @@ func TestDrainWaitsForAnOpenTransactionToCommit(t *testing.T) {
 	}
 
 	execRaw(t, a, 2, "COMMIT")
-	readDone(t, a, na)
+	readDoneWithin(t, a, na, readAllowance)
 
 	select {
 	case err := <-done:
 		if err != nil {
 			t.Fatalf("Drain: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(readAllowance):
 		t.Fatal("Drain did not return after the transaction committed")
 	}
 }
