@@ -25,11 +25,11 @@ func RewindImport(shared *db.DB, origin string, seq int) error {
 // originRewinds computes the rewind target sequence for each remote origin from
 // cumulative dropped trouble reports.
 //
-// C1: DrainOutbox prepends the pending parents it pulls on top of the 256-entry
-// window. Rewind each origin to max(0, Nmin - 4*defaultBatchSize); overshooting
+// DrainOutbox prepends the pending parents it pulls on top of the 256-entry
+// window. Rewind each origin to max(0, Nmin - 4*DefaultBatchSize); overshooting
 // is harmless because the replay is idempotent and runs through to the head.
 //
-// C2: The dropped list is capped at maxDroppedReports (50) and keeps the newest,
+// The dropped list is capped at maxDroppedReports (50) and keeps the newest,
 // so the oldest drop can be gone. When an origin's dropped lines fill the cap,
 // rewind that origin to 0 and let the existing floor/snapshot path take over.
 func originRewinds(localOrigin string, dropped []string) map[string]int {
@@ -67,7 +67,13 @@ func originRewinds(localOrigin string, dropped []string) map[string]int {
 // that suffered batch drops under earlier binaries. It parses cumulative dropped
 // trouble reports, rewinds each remote origin's mark to before its first dropped
 // batch, and writes the KeyReplayRefused marker so it runs only once per machine.
-func ReplayRefusedPass(shared *db.DB, kv db.KV) error {
+//
+// When a transport is provided, the rewind target is resolved to a batch
+// boundary: the mark is placed at the start of the first batch past the target
+// (first entry's Batch - 1). If the log holds nothing past the target, the mark
+// is left alone. If the target is below the origin's compaction floor, the mark
+// is placed below the floor and the snapshot path takes over.
+func ReplayRefusedPass(shared *db.DB, kv db.KV, t synclog.LogTransport) error {
 	if kv == nil || shared == nil {
 		return nil
 	}
@@ -83,12 +89,48 @@ func ReplayRefusedPass(shared *db.DB, kv db.KV) error {
 	if err := marker(kv, KeyTrouble, &tr); err != nil {
 		return err
 	}
-	for origin, rewindTo := range originRewinds(shared.Origin(), tr.Dropped) {
+	rewinds := originRewinds(shared.Origin(), tr.Dropped)
+	if len(rewinds) == 0 {
+		return markReplayRefused(kv)
+	}
+
+	var heads map[string]int
+	if t != nil {
+		state, err := t.ReadMarks()
+		if err != nil {
+			return fmt.Errorf("sync: replay read marks: %w", err)
+		}
+		heads = state.Heads
+	}
+
+	for origin, target := range rewinds {
+		rewindTo := target
+		if t != nil {
+			head, ok := heads[origin]
+			if !ok || head <= target {
+				continue
+			}
+			entries, err := t.PullRange(origin, target, head)
+			if err != nil {
+				return fmt.Errorf("sync: replay pull range %s: %w", origin, err)
+			}
+			if len(entries) == 0 {
+				continue
+			}
+			boundary := entries[0].Batch - 1
+			if boundary <= target && boundary >= 0 {
+				rewindTo = boundary
+			}
+		}
 		if err := RewindImport(shared, origin, rewindTo); err != nil {
 			return fmt.Errorf("sync: replay rewind %s to %d: %w", origin, rewindTo, err)
 		}
 	}
 
+	return markReplayRefused(kv)
+}
+
+func markReplayRefused(kv db.KV) error {
 	body, err := json.Marshal(replayRefusedGeneration)
 	if err != nil {
 		return fmt.Errorf("sync: encode replay marker: %w", err)

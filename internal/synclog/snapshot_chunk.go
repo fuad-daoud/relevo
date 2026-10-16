@@ -64,15 +64,20 @@ func (i *Importer) chunkFetchFailure(origin string, chunk []Entry, err error, to
 func (i *Importer) writeChunk(chunk []Entry) (applied int, deferred []Entry, refusal *entryRefusal, err error) {
 	err = i.db.Tx(func(tx *db.Tx) error {
 		applied, deferred = 0, nil
-		a, d, _, ref, aerr := sweepEntries(tx, chunk, i.clock())
-		if ref != nil {
-			refusal = ref
-			return ref.err
+		for n, e := range chunk {
+			_, aerr := applyEntry(tx, e, i.clock())
+			switch {
+			case aerr == nil:
+				applied++
+			case errors.Is(aerr, ErrInvalid):
+				refusal = &entryRefusal{at: n, entry: e, err: aerr}
+				return aerr
+			case errors.Is(aerr, db.ErrInvalid):
+				deferred = append(deferred, e)
+			default:
+				return aerr
+			}
 		}
-		if aerr != nil {
-			return aerr
-		}
-		applied, deferred = a, d
 		return nil
 	})
 	if refusal != nil {

@@ -15,10 +15,10 @@ import (
 // It works in whole batches, and one batch is one transaction: the entries go
 // in as the exporter ordered them -- every row removed before its parent,
 // every parent before the rows that name it, with deletes before upserts --
-// and the origin's mark moves in the same transaction. A batch that fails half way leaves neither the rows it had
-// written nor the mark behind, so the next run sees the same batch again from
-// the same mark rather than a mark that has moved over rows that were never
-// applied.
+// and the origin's mark moves in the same transaction. A batch that fails half
+// way leaves neither the rows it had written nor the mark behind, so the next
+// run sees the same batch again from the same mark rather than a mark that has
+// moved over rows that were never applied.
 //
 // A batch this machine cannot apply at all is dropped rather than failed on: an
 // entry a newer binary wrote, a body it cannot read, a row that breaks a
@@ -523,10 +523,14 @@ func applyEntry(tx *db.Tx, e Entry, now time.Time) (bool, error) {
 		return true, nil
 	}
 	if e.Op == OpDelete {
+		_, found, err := tx.ResolveOwner(e.Table, e.PK)
+		if err != nil {
+			return false, fmt.Errorf("synclog: import %s %s: %w", e.Table, e.PK, err)
+		}
 		if err := tx.ExchangeDelete(e.Table, e.PK); err != nil {
 			return false, fmt.Errorf("synclog: import %s %s: %w", e.Table, e.PK, err)
 		}
-		return true, nil
+		return found, nil
 	}
 	// The owner is passed rather than taken from the body, so what this row's
 	// owner column ends up holding is the owner this file resolved and not what

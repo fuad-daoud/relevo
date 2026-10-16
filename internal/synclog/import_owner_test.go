@@ -194,8 +194,8 @@ func TestImporterSkipsADeleteOfARowItDoesNotHold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import deletes of rows this file does not hold: %v", err)
 	}
-	if got.Applied != 2 || len(got.Dropped) != 0 || len(got.Held) != 0 {
-		t.Fatalf("import = %+v, want both deletes applied rather than refused", got)
+	if got.Applied != 0 || len(got.Dropped) != 0 || len(got.Held) != 0 {
+		t.Fatalf("import = %+v, want no-op deletes to count 0 applied and not refused", got)
 	}
 	if have := sharedRows(t, peer); have != `binding ["01A"]|binding ["01B"]` {
 		t.Fatalf("the peer holds %q, want both bindings untouched", have)

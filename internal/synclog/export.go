@@ -13,7 +13,6 @@ import (
 // of work a refused append repeats; it is small enough that a failure loses
 // little and large enough that a full outbox is not appended one row at a time.
 const DefaultBatchSize = 256
-const defaultBatchSize = DefaultBatchSize
 
 // Exporter turns this installation's own outbox into appends on the log.
 //
@@ -53,7 +52,7 @@ func NewExporter(d *db.DB, t LogTransport) *Exporter {
 		transport: t,
 		origin:    d.Origin(),
 		schema:    have,
-		batch:     defaultBatchSize,
+		batch:     DefaultBatchSize,
 		now:       time.Now,
 		mover:     mover,
 		staging:   staging,

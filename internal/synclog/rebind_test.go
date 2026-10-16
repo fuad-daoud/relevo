@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 func insertBindingRecord(id, origin, owner, name string) string {
@@ -386,7 +389,7 @@ func signingEntries(t *testing.T, key []byte) (Entry, Entry, Entry) {
 	return e1, e2, e3
 }
 
-// C3: Replayed entries pass verification. Replay unsigned entries an origin wrote
+// Replayed entries pass verification. Replay unsigned entries an origin wrote
 // before it first signed, after that origin has started signing, proving they apply
 // rather than being refused or holding the origin.
 func TestReplayUnsignedEntriesAfterSigning(t *testing.T) {
@@ -436,4 +439,53 @@ func TestReplayUnsignedEntriesAfterSigning(t *testing.T) {
 		t.Fatalf("mark after replay = %d, want 3", mark)
 	}
 	assertReferencesClean(t, peer)
+}
+
+// TestDeferredUpsertAfterAbsentDelete pins that retryPasses judges progress by
+// an entry stopping failing (len(next) < len(cur)) rather than by work done
+// (a > 0). An absent delete succeeds without incrementing applied (a == 0);
+// subsequent passes must still run so a deferred upsert can apply.
+func TestDeferredUpsertAfterAbsentDelete(t *testing.T) {
+	t.Parallel()
+	peer, peerPath := peerFile(t, "m2")
+	seed(t, peerPath,
+		`INSERT INTO chain_member (chain_id, binding, actor, seq) VALUES ('orphan_chain', 'b1', 'a', 1)`,
+		`CREATE TRIGGER block_upsert BEFORE INSERT ON binding
+		BEGIN
+			SELECT CASE WHEN (SELECT COUNT(*) FROM chain_member WHERE chain_id = 'orphan_chain') > 0 THEN
+				RAISE(ABORT, 'FOREIGN KEY constraint failed')
+			END;
+		END;`,
+	)
+
+	b2Body := bodyFor(t, map[string]any{
+		"id": "b2", "name": "b2", "cwd": "/2", "builder_mode": "local",
+		"created_at": "t", "ingest_source": "manual", "origin": "m1",
+	})
+
+	delEntry := Entry{
+		Origin: "m1", Batch: 1, Seq: 1, Table: "chain_member", PK: `["orphan_chain","b1"]`,
+		Op: OpDelete, SchemaVersion: 1,
+	}
+	upsertEntry := Entry{
+		Origin: "m1", Batch: 1, Seq: 2, Table: "binding", PK: `["b2"]`,
+		Op: OpUpsert, SchemaVersion: 1, Body: b2Body,
+	}
+
+	err := peer.Tx(func(tx *db.Tx) error {
+		applied, rem, _, _, err := retryPasses(tx, []Entry{upsertEntry, delEntry}, []error{db.ErrInvalid, nil}, 10, time.Now())
+		if err != nil {
+			return err
+		}
+		if len(rem) != 0 {
+			t.Fatalf("retryPasses left unapplied entries: %+v", rem)
+		}
+		if applied != 1 {
+			t.Fatalf("retryPasses applied = %d, want 1", applied)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("tx: %v", err)
+	}
 }

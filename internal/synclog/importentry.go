@@ -51,7 +51,7 @@ func retryPasses(tx *db.Tx, deferred []Entry, defErrs []error, maxPasses int, no
 			return applied, nil, nil, nil, aerr
 		}
 		applied += a
-		if a == 0 || len(next) == 0 {
+		if len(next) >= len(cur) || len(next) == 0 {
 			cur = next
 			curErrs = nextErrs
 			break
@@ -102,7 +102,7 @@ func (i *Importer) writeBatch(batch, rows []Entry, docs, priorDrops int, marks m
 		if signedAt, wrote, err = i.recordSigned(tx, origin, batch); err != nil {
 			return err
 		}
-		moved := applied+docs > 0 || len(drops) > 0 || priorDrops > 0
+		moved := applied+docs > 0 || len(drops) > 0 || priorDrops > 0 || len(rows) > len(drops)
 		return i.mark(tx, marks, origin, tail(batch), moved)
 	})
 	if refusal != nil {
