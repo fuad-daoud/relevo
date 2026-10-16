@@ -192,3 +192,30 @@ func TestSupervisorDrivesTheKeyVerbs(t *testing.T) {
 		t.Errorf("Supervisor.KeyRekey answered the salt %q, want the log's own", rekeyed.Salt)
 	}
 }
+
+// TestKeyCutAnswersTheForwardOnlyVouch pins the cut extension over the pipe:
+// the cut crosses as one request and the answer carries no payload, which is
+// the worker saying the vouch landed.
+func TestKeyCutAnswersTheForwardOnlyVouch(t *testing.T) {
+	c, err := startFakeWorker(t, modeNormal, handshake())
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := c.PublishEpochCut(context.Background(), synclog.EpochCut{
+		Epoch: 2, Seq: 3, Tag: []byte("the cut's tag"),
+	}); err != nil {
+		t.Fatalf("PublishEpochCut: %v", err)
+	}
+}
+
+// TestSupervisorPublishesTheCutExtension runs the extension through the
+// supervisor, so the breaker counts a worker that dies on it the same way it
+// counts any other call.
+func TestSupervisorPublishesTheCutExtension(t *testing.T) {
+	s := newSupervisor(t, fakeWorkerCfg(modeNormal), breakerOver(newMemKV()))
+	if err := s.PublishEpochCut(context.Background(), synclog.EpochCut{
+		Epoch: 2, Seq: 3, Tag: []byte("the cut's tag"),
+	}); err != nil {
+		t.Fatalf("Supervisor.PublishEpochCut: %v", err)
+	}
+}
