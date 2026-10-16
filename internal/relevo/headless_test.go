@@ -3066,7 +3066,7 @@ func TestHeadlessMarkerCloseEscapedNote(t *testing.T) {
 	t.Parallel()
 
 	fr := newFakeRunner()
-	fg := &fakeGit{snapshotTreeID: "tree-1", dirtyResult: true}
+	fg := &fakeGit{snapshotTreeID: "tree-1", dirtyResult: true, snapshotByDir: repoMovesDuringRound("/original/repo")}
 	rt, b := escapeFixture(t, fr, fg, "/original/repo")
 
 	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
@@ -3099,7 +3099,7 @@ func TestHeadlessExitNoReportEscapedHalts(t *testing.T) {
 	t.Parallel()
 
 	fr := newFakeRunner()
-	fg := &fakeGit{snapshotTreeID: "tree-1", dirtyResult: true}
+	fg := &fakeGit{snapshotTreeID: "tree-1", dirtyResult: true, snapshotByDir: repoMovesDuringRound("/original/repo")}
 	rt, b := escapeFixture(t, fr, fg, "/original/repo")
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
 	fr.script(b.Builder.PID, false)
@@ -3124,6 +3124,43 @@ func TestHeadlessExitNoReportEscapedHalts(t *testing.T) {
 	if len(fr.specs) != 1 {
 		t.Errorf("specs = %+v, want no second Start", fr.specs)
 	}
+}
+
+// TestHeadlessExitNoReportInAnAlreadyDirtyRepoSwitches pins that a source repo
+// the human left dirty before the send is no escape: the builder failed fast,
+// its tree is unchanged and the repo is exactly as the send found it, so the
+// round switches like any other no-report exit instead of halting on a
+// worktree escape.
+func TestHeadlessExitNoReportInAnAlreadyDirtyRepoSwitches(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	fg := &fakeGit{snapshotTreeID: "tree-1", dirtyResult: true,
+		snapshotByDir: map[string][]string{"/original/repo": {"repo-dirty"}}}
+	rt, b := escapeFixture(t, fr, fg, "/original/repo")
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	if b.RoundRepoBaselineTree != "repo-dirty" {
+		t.Fatalf("RoundRepoBaselineTree = %q, want the send's snapshot of the repo", b.RoundRepoBaselineTree)
+	}
+	fr.script(b.Builder.PID, false)
+	fr.exit(b.Builder.PID, 1)
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if strings.Contains(got.Halt, "worked outside its tree") {
+		t.Errorf("Halt = %q, want no escape for a repo that was dirty before the round", got.Halt)
+	}
+	if got.RoundSwitches != 1 {
+		t.Errorf("RoundSwitches = %d, want 1: a fast failure switches", got.RoundSwitches)
+	}
+}
+
+// repoMovesDuringRound is a snapshotByDir under which repo's send snapshot
+// differs from its close snapshot: the source checkout changed in the round.
+func repoMovesDuringRound(repo string) map[string][]string {
+	return map[string][]string{repo: {"repo-at-send", "repo-at-close"}}
 }
 
 // TestHeadlessExitNoReportNoRepoSwitches pins that a binding with no Repo

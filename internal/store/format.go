@@ -5,7 +5,11 @@ import (
 	"fmt"
 )
 
-// BindingFormat is the format of the Binding JSON this binary writes. It is 17
+// BindingFormat is the format of the Binding JSON this binary writes. It is 18
+// because round_repo_baseline_tree is the source checkout's snapshot at send:
+// an older relevo that drops it from an open round would judge that round's
+// close against a plain dirty check, and halt on a worktree escape that never
+// happened. It is 17
 // because subdir records where inside the tree a round's processes run: an
 // older relevo that drops it would run the round at the tree root, the wrong
 // directory, silently. It is 16
@@ -37,9 +41,9 @@ import (
 // tracked fact. Stamping a field would lock that older
 // relevo out of loading the binding. Bump BindingFormat whenever Binding's JSON
 // shape changes in a way that must lock an older relevo out.
-const BindingFormat = 17
+const BindingFormat = 18
 
-// recordFormat is the format to write b at. Every record is format 17: the
+// recordFormat is the format to write b at. Every record is format 18: the
 // binary writes and migrates the out/ layout, which an older relevo cannot
 // serve.
 func recordFormat(b Binding) int {

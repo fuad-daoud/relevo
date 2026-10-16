@@ -1062,6 +1062,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	b.RoundCPU = nil
 	b.RoundBaselineTree = ""
 	b.RoundBaselineHead = ""
+	b.RoundRepoBaselineTree = ""
 	// A remote member's closed tree is the pulled result commit the catch-up
 	// recorded -- there is no local worktree to snapshot -- so it keeps that
 	// value across the advance. Every non-remote binding keeps today's exact

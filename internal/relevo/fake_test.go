@@ -120,6 +120,10 @@ type fakeGit struct {
 	snapshotTreeErr error
 	snapshotCalls   int
 	lastSnapshotDir string
+	// snapshotByDir, when it has an entry for dir, answers SnapshotTree from
+	// that queue in order, repeating its last answer, so a test can make one
+	// directory change between two snapshots while another stays put.
+	snapshotByDir map[string][]string
 
 	initBareErr   error
 	initBareCalls []string
@@ -339,6 +343,12 @@ func (f *fakeGit) SnapshotTree(ctx context.Context, dir string) (string, error) 
 	f.lastSnapshotDir = dir
 	if f.snapshotTreeErr != nil {
 		return "", f.snapshotTreeErr
+	}
+	if q := f.snapshotByDir[dir]; len(q) > 0 {
+		if len(q) > 1 {
+			f.snapshotByDir[dir] = q[1:]
+		}
+		return q[0], nil
 	}
 	return f.snapshotTreeID, nil
 }

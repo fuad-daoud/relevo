@@ -78,6 +78,7 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 	}
 
 	baseline, baselineHead := capture.Baseline(ctx, captureDeps(rt), cur)
+	repoBaseline := escapeRepoBaseline(ctx, rt, cur, baseline)
 	prompt := roundPrompt(rt, tx, cur, planPath, reportPath, donePath)
 
 	var pending []store.LogEntry
@@ -129,6 +130,7 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 
 	cur.RoundBaselineTree = baseline
 	cur.RoundBaselineHead = baselineHead
+	cur.RoundRepoBaselineTree = repoBaseline
 	cur.RoundClosedTree = ""
 	if served {
 		cur.QueuedAt = rt.Now().UTC()
