@@ -254,12 +254,15 @@ func remoteEpoch(l db.KV) (int, bool, error) {
 // refuses what does not verify, so the unlock is when a forged entry parked
 // earlier is found out rather than when the next tick happens to run.
 func DrainParkedDocs(shared *db.DB, local Local, transport synclog.LogTransport) (synclog.ImportResult, error) {
-	key, err := SigningKey(local)
-	if err != nil || len(key) == 0 || shared == nil {
+	if shared == nil {
+		return synclog.ImportResult{}, nil
+	}
+	ring, ok, err := heldKeyring(local)
+	if err != nil || !ok {
 		return synclog.ImportResult{}, err
 	}
 	imp := synclog.NewImporter(shared, transport)
-	imp.SetKey(key)
+	imp.SetKeyring(synclog.Keyring{Epoch: ring.Epoch, Keys: ring.Keys})
 	BindDocs(imp, shared)
 	// The unlock drains what the lock parked, and the capture runs first so a
 	// script a person edited while this machine held no key travels with the

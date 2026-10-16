@@ -256,13 +256,12 @@ func (r *Runner) drainImport(ctx context.Context, shared *db.DB, t *StopTranspor
 	return drainImport(func() (synclog.ImportResult, error) {
 		var res synclog.ImportResult
 		err := within(ctx, t, r.stepTimeout(), func() error {
-			key, ierr := SigningKey(r.Local)
-			if ierr != nil {
+			imp := synclog.NewImporter(shared, t)
+			if ierr := BindVerifier(imp, r.Local); ierr != nil {
 				return ierr
 			}
-			imp := synclog.NewImporter(shared, t)
-			imp.SetKey(key)
 			BindDocs(imp, shared)
+			var ierr error
 			res, ierr = imp.Import()
 			return ierr
 		})

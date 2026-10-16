@@ -66,3 +66,19 @@ func PublishOwnCut(ctx context.Context, shared *db.DB, kv db.KV, t synclog.LogTr
 		slog.Warn("sync: record the own cut extension", "err", err)
 	}
 }
+
+// BindVerifier sets an importer's verification to the machine's stored
+// keyring, newest epoch first. It is what every verification site binds with:
+// an import runs on the whole ring's trial, and a machine set through the old
+// one-key path verifies exactly as it did, because its ring is one epoch
+// deep -- which is every epoch-1 log, until a rekey writes its first cut.
+func BindVerifier(imp *synclog.Importer, kv db.KV) error {
+	ring, ok, err := heldKeyring(kv)
+	if err != nil {
+		return err
+	}
+	if ok {
+		imp.SetKeyring(synclog.Keyring{Epoch: ring.Epoch, Keys: ring.Keys})
+	}
+	return nil
+}
