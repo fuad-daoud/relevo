@@ -25,14 +25,14 @@ const opencodeOnlyMessage = "setup configures claude, codex and agy, and none is
 // then the plan actors and the chain's reader actors.
 var chainOrder = []string{"builder", "librarian", "planner", "reviewer", "security", "lite-planner"}
 
-// picks are what Build cannot do without, after validation: the ordered
-// builder tokens, the one planner token, the tier, and the derived cheapest
-// pick the reader actors share.
+// picks are what Build writes, after validation: the ordered builder
+// tokens, the one planner token, the tier, and each role's tokens, answered
+// or derived.
 type picks struct {
 	builder []string
 	planner string
 	tier    string
-	derived string
+	roles   Answers
 }
 
 // Build assembles the starter configuration from a probe plus the answers
@@ -54,7 +54,9 @@ func Build(inv Inventory, answers Answers) (Files, error) {
 	if err != nil {
 		return Files{}, err
 	}
-	p.derived = pickedAlready(p, cheapestPick(inv))
+	if p.roles, err = rolePicks(inv, p, answers); err != nil {
+		return Files{}, err
+	}
 	cands, err := sharedCandidates(allPicks(p))
 	if err != nil {
 		return Files{}, err
@@ -141,27 +143,37 @@ func cheapestPick(inv Inventory) string {
 	return ""
 }
 
-// pickedAlready is the derived pick -- always a model with no effort -- as
-// the answers already picked it, at whatever effort they chose, so one model
-// never lands as two candidates that differ only in effort.
-func pickedAlready(p picks, derived string) string {
-	for _, t := range append(slices.Clone(p.builder), p.planner) {
-		if strings.HasPrefix(t, derived+":") {
-			return t
+// rolePicks is each role's tokens: its own answer, validated, where one was
+// given, else what DerivedRoles makes of the builder and planner picks.
+func rolePicks(inv Inventory, p picks, answers Answers) (Answers, error) {
+	qs := Questions(inv, nil)
+	out := DerivedRoles(qs, Answers{"builder": p.builder, "planner": {p.planner}})
+	for _, q := range qs {
+		if !IsRole(q.ID) || len(answers[q.ID]) == 0 {
+			continue
+		}
+		var err error
+		if q.Multi {
+			out[q.ID], err = pickedList(q, answers[q.ID])
+		} else {
+			var one string
+			one, err = pickedOne(q, answers[q.ID])
+			out[q.ID] = []string{one}
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
-	return derived
+	return out, nil
 }
 
 // allPicks joins the picks in candidate order: builder tokens first, then
-// the planner's, then the derived cheapest pick. A token picked twice names
-// one candidate, so repeats fall out in the dedup.
+// the planner's, then each role's. A token picked twice names one
+// candidate, so repeats fall out in the dedup.
 func allPicks(p picks) []string {
-	tokens := make([]string, 0, len(p.builder)+2)
-	tokens = append(tokens, p.builder...)
-	tokens = append(tokens, p.planner)
-	if p.derived != "" {
-		tokens = append(tokens, p.derived)
+	tokens := append(append([]string{}, p.builder...), p.planner)
+	for _, id := range roleIDs {
+		tokens = append(tokens, p.roles[id]...)
 	}
 	return tokens
 }
@@ -196,24 +208,24 @@ func filesWith(inv Inventory, p picks, cands []candidate.Candidate) (Files, erro
 		nameFor[refFor(c.Harness, c.Model)] = names[i]
 	}
 
-	builderNames := make([]string, 0, len(p.builder))
-	for _, t := range p.builder {
-		builderNames = append(builderNames, nameFor[t])
-	}
-	readerName := ""
-	if p.derived != "" {
-		readerName = nameFor[p.derived]
+	namesOf := func(tokens []string) []string {
+		out := make([]string, 0, len(tokens))
+		for _, t := range tokens {
+			out = append(out, nameFor[t])
+		}
+		return out
 	}
 
 	actorSet := map[string]roles.Actor{
-		"builder":   {Agent: "plan-executor", Tier: p.tier, Candidates: candidateEntries(builderNames)},
-		"librarian": librarianActor(builderNames, p.tier),
+		"builder":   {Agent: "plan-executor", Tier: p.tier, Candidates: candidateEntries(namesOf(p.builder))},
+		"librarian": librarianActor(namesOf(p.roles["librarian"]), p.tier),
 		"planner":   {Agent: "architect", Candidates: candidateEntries([]string{nameFor[p.planner]})},
-		"security":  {Agent: "security-reviewer", Candidates: candidateEntries([]string{nameFor[p.planner]})},
+		"security":  {Agent: "security-reviewer", Candidates: candidateEntries(namesOf(p.roles["security"]))},
 	}
-	if readerName != "" {
-		actorSet["reviewer"] = roles.Actor{Agent: "reviewer", Candidates: candidateEntries([]string{readerName})}
-		actorSet["lite-planner"] = roles.Actor{Agent: "architect", Candidates: candidateEntries([]string{readerName})}
+	for id, agent := range map[string]string{"reviewer": "reviewer", "lite-planner": "architect"} {
+		if tokens := p.roles[id]; len(tokens) > 0 {
+			actorSet[id] = roles.Actor{Agent: agent, Candidates: candidateEntries(namesOf(tokens))}
+		}
 	}
 
 	actors, err := roles.EncodeActors(actorSet)

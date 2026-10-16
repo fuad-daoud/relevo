@@ -111,8 +111,8 @@ question that cannot apply is dropped.
 On a terminal, each picked builder or planner model that runs at more than
 one effort gets a follow-up effort question, recommending medium for a
 builder and high for the planner. The efforts
-are codex's reported reasoning levels, claude's `--effort` levels for sonnet
-and opus, and agy's model-name suffixes. An `--answer` value carries the
+are codex's reported reasoning levels, claude's `--effort` levels for sonnet,
+opus and haiku, and agy's model-name suffixes. An `--answer` value carries the
 effort itself: `<harness>/<provider>/<model>:<effort>`, the choice's
 `efforts` listing the valid ones.
 3. `tier` (one): `yolo` (recommended) or `edit`. The prompt says plainly:
@@ -126,7 +126,11 @@ effort itself: `<harness>/<provider>/<model>:<effort>`, the choice's
    Without it, relevo starts the daemon on demand.
 6. `smoke` (yes/no): run one small real round now. Recommended yes.
 
-Derived, not asked, and printed in the summary:
+Derived from the builder and planner answers, and shown on a terminal as
+one "keep these, or customize?" step after the planner; customize asks each
+role as its own question, with its derived pick recommended. In the JSON
+document they are optional questions: left out, each role is derived as
+below.
 
 - `librarian`: the builder list, scope `@docs` with comments, as init writes
   today.

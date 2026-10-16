@@ -132,14 +132,18 @@ func TestSetupQuestionsDoc(t *testing.T) {
 	}
 
 	qs := got["questions"].([]any)
-	ids := []string{"builder", "planner", "tier", "service", "smoke"}
+	ids := []string{"builder", "planner", "librarian", "reviewer", "security", "lite-planner", "tier", "service", "smoke"}
 	if len(qs) != len(ids) {
 		t.Fatalf("questions = %d, want %d", len(qs), len(ids))
 	}
 	for i, qAny := range qs {
 		q := qAny.(map[string]any)
-		if !slices.Equal(setupKeyList(q), []string{"choices", "id", "multi", "prompt", "recommended"}) {
-			t.Fatalf("%s keys = %v, want choices/id/multi/prompt/recommended", ids[i], setupKeyList(q))
+		want := []string{"choices", "id", "multi", "prompt", "recommended"}
+		if setup.IsRole(ids[i]) {
+			want = []string{"choices", "id", "multi", "optional", "prompt", "recommended"}
+		}
+		if !slices.Equal(setupKeyList(q), want) {
+			t.Fatalf("%s keys = %v, want %v", ids[i], setupKeyList(q), want)
 		}
 		if q["id"] != ids[i] {
 			t.Fatalf("question %d id = %v, want %s", i, q["id"], ids[i])
@@ -489,7 +493,7 @@ func TestSetupPromptEnterTakesRecommended(t *testing.T) {
 
 	in := strings.NewReader("1,3\n" + strings.Repeat("maybe\n", 2) + "n\n")
 	out := new(bytes.Buffer)
-	answers, err := askSetupQuestions(out, in, qs)
+	answers, err := askSetupQuestions(out, in, qs, nil)
 	if err != nil {
 		t.Fatalf("askSetupQuestions: %v", err)
 	}
@@ -506,7 +510,7 @@ func TestSetupPromptEnterTakesRecommended(t *testing.T) {
 	// Enter takes the recommendation on its own, and three unusable lines
 	// give up on the question.
 	in2 := strings.Repeat("maybe\n", 3)
-	if _, err := askSetupQuestions(out, strings.NewReader(in2), []setup.Question{builder}); err == nil {
+	if _, err := askSetupQuestions(out, strings.NewReader(in2), []setup.Question{builder}, nil); err == nil {
 		t.Fatal("three unusable answers parsed, want a failure")
 	}
 }
@@ -519,7 +523,7 @@ func TestSetupPromptEmptyLineTakesRecommendation(t *testing.T) {
 		Recommended: []string{"yolo"},
 		Choices:     []setup.Choice{{Value: "yolo"}, {Value: "edit"}},
 	}
-	answers, err := askSetupQuestions(new(bytes.Buffer), strings.NewReader("\n"), []setup.Question{tier})
+	answers, err := askSetupQuestions(new(bytes.Buffer), strings.NewReader("\n"), []setup.Question{tier}, nil)
 	if err != nil {
 		t.Fatalf("askSetupQuestions: %v", err)
 	}
@@ -530,7 +534,7 @@ func TestSetupPromptEmptyLineTakesRecommendation(t *testing.T) {
 
 // TestSetupPromptAsksEffortAfterModels pins the effort follow-up: models are
 // picked once each, each picked model with several efforts gets its own
-// effort question after the list, and a model with none is not asked.
+// effort question after the list, and the answer is echoed back.
 func TestSetupPromptAsksEffortAfterModels(t *testing.T) {
 	inv := setup.Inventory{Harnesses: []setup.HarnessStatus{
 		{Harness: "agy", OnPath: true, LoggedIn: true, Models: []string{"gemini-3.8-flash-low", "gemini-3.8-flash-high"}},
@@ -543,23 +547,81 @@ func TestSetupPromptAsksEffortAfterModels(t *testing.T) {
 		}
 	}
 	// 1 = gemini-3.8-flash, 4 = haiku, 2 = sonnet; then flash at low (1),
-	// and Enter keeps sonnet's recommended medium. haiku asks nothing.
-	in := strings.NewReader("1,4,2\n1\n\n")
+	// haiku at high (3), and Enter keeps sonnet's recommended medium.
+	in := strings.NewReader("1,4,2\n1\n3\n\n")
 	out := new(bytes.Buffer)
-	answers, err := askSetupQuestions(out, in, []setup.Question{builder})
+	answers, err := askSetupQuestions(out, in, []setup.Question{builder}, nil)
 	if err != nil {
 		t.Fatalf("askSetupQuestions: %v\n%s", err, out)
 	}
-	want := []string{"agy/google/gemini-3.8-flash-low", "claude/anthropic/haiku", "claude/anthropic/sonnet:medium"}
+	want := []string{"agy/google/gemini-3.8-flash-low", "claude/anthropic/haiku:high", "claude/anthropic/sonnet:medium"}
 	if got := answers["builder"]; !slices.Equal(got, want) {
 		t.Fatalf("answers = %v, want %v\n%s", got, want, out)
 	}
-	for _, line := range []string{"comma-separated", "Effort for gemini-3.8-flash on agy (google)?", "Effort for sonnet on claude (anthropic)?"} {
+	for _, line := range []string{"comma-separated", "Effort for gemini-3.8-flash on agy (google)?", "Effort for haiku on claude (anthropic)?",
+		"-> gemini-3.8-flash (low), haiku (high), sonnet (medium)"} {
 		if !strings.Contains(out.String(), line) {
 			t.Errorf("prompts lack %q:\n%s", line, out)
 		}
 	}
 	if strings.Contains(out.String(), "gemini-3.8-flash-high (") {
 		t.Errorf("an effort variant is listed as its own model:\n%s", out)
+	}
+}
+
+// TestSetupPromptRolesKeepOrCustomize pins the roles step: the derived roles
+// are shown from the answers given, Enter keeps them unasked and unanswered,
+// and customize asks each role with its derived pick recommended.
+func TestSetupPromptRolesKeepOrCustomize(t *testing.T) {
+	inv := setup.Inventory{Harnesses: []setup.HarnessStatus{
+		{Harness: "claude", OnPath: true, LoggedIn: true, Models: []string{"sonnet", "opus", "haiku"}},
+	}}
+	var roles []setup.Question
+	for _, q := range setup.Questions(inv, nil) {
+		if q.Optional {
+			roles = append(roles, q)
+		}
+	}
+	given := setup.Answers{"builder": {"claude/anthropic/haiku:low"}, "planner": {"claude/anthropic/opus:high"}}
+
+	out := new(bytes.Buffer)
+	answers, err := askSetupQuestions(out, strings.NewReader("\n"), roles, given)
+	if err != nil {
+		t.Fatalf("keep: %v\n%s", err, out)
+	}
+	if len(answers) != 0 {
+		t.Errorf("keeping answered %v, want the roles left to derive", answers)
+	}
+	for _, line := range []string{"librarian (writes docs only): haiku (low)", "security (reviews for security issues): opus (high)"} {
+		if !strings.Contains(out.String(), line) {
+			t.Errorf("roles summary lacks %q:\n%s", line, out)
+		}
+	}
+
+	// customize, then: librarian Enter (haiku, effort Enter), reviewer 2
+	// (opus, effort Enter), security Enter, lite-planner Enter.
+	out.Reset()
+	in := strings.NewReader("2\n\n\n2\n\n\n\n\n\n")
+	if answers, err = askSetupQuestions(out, in, roles, given); err != nil {
+		t.Fatalf("customize: %v\n%s", err, out)
+	}
+	if got := answers["librarian"]; !slices.Equal(got, []string{"claude/anthropic/haiku:low"}) {
+		t.Errorf("librarian = %v, want the derived haiku:low", got)
+	}
+	if got := answers["reviewer"]; len(got) != 1 || !strings.HasPrefix(got[0], "claude/anthropic/opus") {
+		t.Errorf("reviewer = %v, want opus", got)
+	}
+}
+
+// TestMergeSetupAnswersLeavesRolesToDerive pins that a role nobody answered
+// stays empty even when a recommendation exists, because its recommendation
+// follows the recommended builders, not the ones actually picked.
+func TestMergeSetupAnswersLeavesRolesToDerive(t *testing.T) {
+	qs := []setup.Question{{ID: "librarian", Optional: true, Recommended: []string{"codex/openai/gpt-6-luna:medium"}}}
+	if got := mergeSetupAnswers(qs, setup.Answers{"librarian": {"x"}}, nil); len(got["librarian"]) != 0 {
+		t.Errorf("merged librarian = %v, want it left to derive", got["librarian"])
+	}
+	if got := mergeSetupAnswers(qs, nil, setup.Answers{"librarian": {"y"}}); !slices.Equal(got["librarian"], []string{"y"}) {
+		t.Errorf("merged librarian = %v, want the given y", got["librarian"])
 	}
 }

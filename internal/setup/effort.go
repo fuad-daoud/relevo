@@ -20,11 +20,8 @@ var effortWhy = map[string]string{
 	"ultra":   "deepest reasoning plus automatic task delegation",
 }
 
-// claudeEfforts is what `claude --effort` takes. haiku is left without
-// them: nothing shows the flag is accepted for it.
+// claudeEfforts is what `claude --effort` takes, for each of its aliases.
 var claudeEfforts = []string{"low", "medium", "high", "xhigh", "max"}
-
-var claudeEffortModels = map[string]bool{"sonnet": true, "opus": true}
 
 // harnessChoices are one harness's models as the candidate questions list
 // them: one choice per model, its efforts carried on the choice rather than
@@ -44,11 +41,7 @@ func harnessChoices(s HarnessStatus) []Choice {
 		}
 	case "claude":
 		for _, m := range s.Models {
-			c := Choice{Label: m, sep: ":", bare: true}
-			if claudeEffortModels[m] {
-				c.Efforts, c.effort = claudeEfforts, "medium"
-			}
-			add(c)
+			add(Choice{Label: m, Efforts: claudeEfforts, effort: "medium", sep: ":", bare: true})
 		}
 	default:
 		for _, m := range s.Models {

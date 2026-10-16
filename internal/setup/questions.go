@@ -25,12 +25,14 @@ type Choice struct {
 }
 
 // Question is one thing the wizard asks: its prompt, the choices to show,
-// the values recommended (one, or several in order for a multi), and whether
-// several may be picked in order.
+// the values recommended (one, or several in order for a multi), whether
+// several may be picked in order, and whether it may go unanswered -- a role
+// question, whose role Build then derives.
 type Question struct {
 	ID          string
 	Prompt      string
 	Multi       bool
+	Optional    bool
 	Recommended []string
 	Choices     []Choice
 }
@@ -55,15 +57,13 @@ const builderPrompt = "Which models build code? Pick one or more, comma-separate
 const tierPrompt = "How much may a builder do without asking? yolo lets them run any command in their worktree without asking; at edit they change files but a claude builder cannot run tests or git"
 
 // Questions are the questions still open, in the order the front end asks
-// them: builder, planner, tier, then the optional plugin and service, then
-// smoke. A no-longer-applicable one is dropped rather than carried with an
-// empty choice list.
+// them: builder, planner, the optional roles, tier, then the optional plugin
+// and service, then smoke. A no-longer-applicable one is dropped rather than
+// carried with an empty choice list.
 func Questions(inv Inventory, answers map[string][]string) []Question {
-	qs := []Question{
-		builderQuestion(inv),
-		plannerQuestion(inv),
-		tierQuestion(),
-	}
+	builder, planner := builderQuestion(inv), plannerQuestion(inv)
+	qs := append([]Question{builder, planner}, roleQuestions(inv, builder, planner)...)
+	qs = append(qs, tierQuestion())
 	if claudeOnPath(inv) && len(answers["plugin"]) == 0 {
 		qs = append(qs, yesNoQuestion("plugin",
 			"Install the relevo plugin into Claude Code (the MasterMind side)?",
@@ -90,8 +90,9 @@ func Questions(inv Inventory, answers map[string][]string) []Question {
 // RecommendedAnswers are every question's answer together, ready for Build:
 // for each one the caller already keeps values, those stand while they are
 // still among the question's choices; every other question takes its own
-// recommendation. current is nil on a fresh machine, where every value is
-// the default.
+// recommendation. A role question takes none, so Build derives the role
+// from the answers it stands beside. current is nil on a fresh machine,
+// where every value is the default.
 func RecommendedAnswers(inv Inventory, current map[string][]string) Answers {
 	out := Answers{}
 	for _, q := range Questions(inv, nil) {
@@ -99,7 +100,9 @@ func RecommendedAnswers(inv Inventory, current map[string][]string) Answers {
 			out[q.ID] = kept
 			continue
 		}
-		out[q.ID] = q.Recommended
+		if !q.Optional {
+			out[q.ID] = q.Recommended
+		}
 	}
 	return out
 }

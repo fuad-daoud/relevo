@@ -74,7 +74,7 @@ func TestBuildDerivesReviewerSecurityLitePlanner(t *testing.T) {
 	for _, c := range candidatesOf(t, files) {
 		names = append(names, c.Model)
 	}
-	if want := []string{"gpt-6-luna:medium", "gpt-6-luna:high", "gpt-5.6-terra"}; !reflect.DeepEqual(names, want) {
+	if want := []string{"gpt-6-luna:medium", "gpt-6-luna:high", "gpt-5.6-terra:medium"}; !reflect.DeepEqual(names, want) {
 		t.Errorf("candidates' models = %v, want %v", names, want)
 	}
 }

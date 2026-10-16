@@ -42,6 +42,7 @@ type SetupQuestionDoc struct {
 	ID          string           `json:"id"`
 	Prompt      string           `json:"prompt"`
 	Multi       bool             `json:"multi"`
+	Optional    bool             `json:"optional,omitempty"`
 	Recommended []string         `json:"recommended"`
 	Choices     []SetupChoiceDoc `json:"choices"`
 }
@@ -106,6 +107,7 @@ func setupQuestionDocs(qs []setup.Question) []SetupQuestionDoc {
 			ID:          q.ID,
 			Prompt:      q.Prompt,
 			Multi:       q.Multi,
+			Optional:    q.Optional,
 			Recommended: q.Recommended,
 			Choices:     choices,
 		})
@@ -113,9 +115,14 @@ func setupQuestionDocs(qs []setup.Question) []SetupQuestionDoc {
 	return docs
 }
 
+// setupQuestionsNext names the answers still owed; a role question may be
+// left out, so it is not named.
 func setupQuestionsNext(qs []setup.Question) string {
 	parts := make([]string, 0, len(qs))
 	for _, q := range qs {
+		if q.Optional {
+			continue
+		}
 		parts = append(parts, "--answer "+q.ID+"="+setupQuestionPlaceholder(q))
 	}
 	return strings.Join(append([]string{"relevo setup"}, parts...), " ")
@@ -156,24 +163,97 @@ func setupStepDocOf(step string, err error) SetupStepDoc {
 }
 
 // askSetupQuestions walks the open questions in order, reading one answer
-// line per question, then one per picked model that runs at several efforts.
-func askSetupQuestions(w io.Writer, r io.Reader, qs []setup.Question) (setup.Answers, error) {
+// line per question, then one per picked model that runs at several efforts,
+// and echoes what each answer picked. The role questions are asked only
+// when the reader chooses to customize the roles their picks imply; given
+// carries the answers flags already gave, which those roles follow too.
+func askSetupQuestions(w io.Writer, r io.Reader, qs []setup.Question, given setup.Answers) (setup.Answers, error) {
 	sc := bufio.NewScanner(r)
 	out := make(setup.Answers, len(qs))
+	known := func() setup.Answers {
+		all := make(setup.Answers, len(given)+len(out))
+		for id, v := range given {
+			all[id] = v
+		}
+		for id, v := range out {
+			all[id] = v
+		}
+		return all
+	}
 	fmt.Fprintln(w, "Press Enter on any question to take the recommended answer.")
+	rolesAsked, customize := false, false
 	for _, q := range qs {
-		vals, spelled, err := askOneSetupQuestion(w, sc, q)
+		if q.Optional {
+			if !rolesAsked {
+				rolesAsked = true
+				var err error
+				if customize, err = askSetupRoles(w, sc, qs, known()); err != nil {
+					return nil, err
+				}
+			}
+			if !customize {
+				continue
+			}
+			q.Recommended = setup.DerivedRoles(qs, known())[q.ID]
+		}
+		vals, err := askSetupAnswer(w, sc, q)
 		if err != nil {
 			return nil, err
-		}
-		if !spelled {
-			if vals, err = askSetupEfforts(w, sc, q, vals); err != nil {
-				return nil, err
-			}
 		}
 		out[q.ID] = vals
 	}
 	return out, nil
+}
+
+// askSetupAnswer asks one question and its effort follow-ups, then echoes
+// the result.
+func askSetupAnswer(w io.Writer, sc *bufio.Scanner, q setup.Question) ([]string, error) {
+	vals, spelled, err := askOneSetupQuestion(w, sc, q)
+	if err != nil {
+		return nil, err
+	}
+	if !spelled {
+		if vals, err = askSetupEfforts(w, sc, q, vals); err != nil {
+			return nil, err
+		}
+	}
+	fmt.Fprintf(w, "  -> %s\n", describeSetupAnswer(q, vals))
+	return vals, nil
+}
+
+func describeSetupAnswer(q setup.Question, vals []string) string {
+	parts := make([]string, 0, len(vals))
+	for _, v := range vals {
+		parts = append(parts, setup.Describe(q, v))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// askSetupRoles shows what the other roles get from the answers so far and
+// asks whether to keep that or pick each role.
+func askSetupRoles(w io.Writer, sc *bufio.Scanner, qs []setup.Question, answers setup.Answers) (bool, error) {
+	derived := setup.DerivedRoles(qs, answers)
+	var lines []string
+	for _, q := range qs {
+		if q.Optional && len(derived[q.ID]) > 0 {
+			lines = append(lines, fmt.Sprintf("  %s (%s): %s", q.ID, setup.RoleWhat[q.ID], describeSetupAnswer(q, derived[q.ID])))
+		}
+	}
+	gate := setup.Question{
+		ID:          "roles",
+		Prompt:      "The other roles, from your picks:\n" + strings.Join(lines, "\n") + "\nKeep these?",
+		Recommended: []string{"keep"},
+		Choices: []setup.Choice{
+			{Value: "keep", Why: "use them as shown"},
+			{Value: "customize", Why: "pick a model for each role"},
+		},
+	}
+	vals, _, err := askOneSetupQuestion(w, sc, gate)
+	if err != nil {
+		return false, err
+	}
+	fmt.Fprintf(w, "  -> %s\n", vals[0])
+	return vals[0] == "customize", nil
 }
 
 // askSetupEfforts asks each picked model's effort, in pick order. A model

@@ -143,7 +143,10 @@ runs the plugin, the service and one real round:
    codex: logged in · claude: logged in · agy: on PATH, not logged in -> run agy once to sign in
    ```
    then asks one question at a time: which models build (`builder`), who
-   writes plans (`planner`), the permission tier (`tier`), whether to install
+   writes plans (`planner`), then shows what the other roles get from those
+   picks -- `librarian` (writes docs only), `reviewer`, `security` and
+   `lite-planner` -- and asks whether to keep them or pick each one, then the
+   permission tier (`tier`), whether to install
    the relevo plugin into Claude Code (`plugin`), whether to run the daemon as
    a user service (`service`), and whether to run one small real round now
    (`smoke`). A question that cannot apply is dropped. Press Enter to take the
@@ -151,7 +154,8 @@ runs the plugin, the service and one real round:
    `1,3`, and a yes/no takes `y`/`n`. Each picked builder or planner model
    that runs at more than one effort then gets its own effort question:
    medium is recommended for builders, which follow a plan, and high for the
-   planner, which writes it.
+   planner, which writes it. Each answer is echoed back (`-> gpt-6-luna
+   (medium), haiku (medium)`).
 3. Run the literal fix commands the last line names, or run `relevo setup`
    again with every answer it named:
    ```
@@ -159,7 +163,8 @@ runs the plugin, the service and one real round:
    ```
    A value is the choice's own value; a candidate value is
    `<harness>/<provider>/<model>`, optionally `:<effort>` with one of the
-   choice's `efforts`. Off a terminal (or under `--json`), a run
+   choice's `efforts`. The role questions are `optional`: leave them out and
+   each role follows the builder and planner answers. Off a terminal (or under `--json`), a run
    with questions still open prints a questions document to stdout and exits
    3; nothing is written. A repeated `--answer <id>=<value>` answers more than
    one question, and an answer for a question that no longer applies is

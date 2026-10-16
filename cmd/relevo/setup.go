@@ -132,9 +132,10 @@ func setupRun(rt relevo.Runtime, answersFlag []string, asJSON, stdinTTY, stdoutT
 	}
 	open := openSetupQuestions(qs, given)
 	switch {
-	case len(open) == 0:
+	case !anyRequired(open):
+		// Only role questions are left, and an unanswered role is derived.
 	case setupAskMode(stdinTTY, stdoutTTY, asJSON):
-		prompted, err := askSetupQuestions(setupPromptStream, os.Stdin, open)
+		prompted, err := askSetupQuestions(setupPromptStream, os.Stdin, open, given)
 		if err != nil {
 			return fail(codeInternal, "%v", err)
 		}
@@ -329,13 +330,26 @@ func openSetupQuestions(qs []setup.Question, given setup.Answers) []setup.Questi
 	return open
 }
 
+func anyRequired(qs []setup.Question) bool {
+	for _, q := range qs {
+		if !q.Optional {
+			return true
+		}
+	}
+	return false
+}
+
 // mergeSetupAnswers names every answer the apply carries: the given flags
-// and prompts win, the recommendations fill what nothing answered.
+// and prompts win, the recommendations fill what nothing answered. A role
+// nothing answered stays empty, so Build derives it from the answers given.
 func mergeSetupAnswers(qs []setup.Question, rec, given setup.Answers) setup.Answers {
 	out := make(setup.Answers, len(qs))
 	for _, q := range qs {
 		if vals := given[q.ID]; len(vals) > 0 {
 			out[q.ID] = append([]string{}, vals...)
+			continue
+		}
+		if q.Optional {
 			continue
 		}
 		if vals := rec[q.ID]; len(vals) > 0 {

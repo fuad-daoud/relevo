@@ -57,7 +57,7 @@ func TestEffortAnswersSpellEachHarnessesModel(t *testing.T) {
 			t.Errorf("ParseAnswer(%q) = %v, %v; want %s", raw, got, err, want)
 		}
 	}
-	for _, bad := range []string{"claude/anthropic/haiku:high", "codex/openai/gpt-6-luna:ultra", "agy/google/gemini-3.8-flash:medium"} {
+	for _, bad := range []string{"claude/anthropic/haiku:ultra", "codex/openai/gpt-6-luna:ultra", "agy/google/gemini-3.8-flash:medium"} {
 		if got, err := ParseAnswer(q, bad); err == nil {
 			t.Errorf("ParseAnswer(%q) = %v, want an effort the model does not run at refused", bad, got)
 		}
@@ -96,7 +96,7 @@ func TestEffortQuestionFollowsAPickedModel(t *testing.T) {
 		t.Errorf("opus builder effort = %v, %v; want medium", eq.Recommended, ok)
 	}
 	q = pickOf(t, Questions(inv, nil), "builder")
-	for _, none := range []string{"agy/google/gpt-oss-120b-medium", "claude/anthropic/haiku"} {
+	for _, none := range []string{"agy/google/gpt-oss-120b-medium", "agy/google/gemini-3.7-pro"} {
 		if _, ok := EffortQuestion(q, none); ok {
 			t.Errorf("%s got an effort question, want none for one effort or none", none)
 		}
@@ -149,5 +149,64 @@ func TestPlannerRecommendsHighEffort(t *testing.T) {
 	claude := pickOf(t, Questions(Inventory{Harnesses: []HarnessStatus{status("claude", true, "sonnet", "opus")}}, nil), "planner")
 	if !reflect.DeepEqual(claude.Recommended, []string{"claude/anthropic/opus:high"}) {
 		t.Errorf("claude planner recommends %v, want opus at high", claude.Recommended)
+	}
+}
+
+// TestRolesDeriveUnlessAnswered pins the optional roles: left unanswered,
+// the librarian follows the builders, security the planner, and the
+// reviewer and lite-planner the cheapest model; answered, each role writes
+// its own pick.
+func TestRolesDeriveUnlessAnswered(t *testing.T) {
+	inv := Inventory{Harnesses: []HarnessStatus{status("claude", true, "sonnet", "opus", "haiku")}}
+	answers := Answers{
+		"builder": {"claude/anthropic/haiku:low"},
+		"planner": {"claude/anthropic/opus:high"},
+		"tier":    {"yolo"},
+	}
+	files, err := Build(inv, answers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actors := parseActorsOf(t, files)
+	for role, want := range map[string][]string{
+		"librarian": {"haiku"}, "security": {"opus"}, "reviewer": {"sonnet"}, "lite-planner": {"sonnet"},
+	} {
+		if got := actorNames(actors[role]); !reflect.DeepEqual(got, want) {
+			t.Errorf("derived %s = %v, want %v", role, got, want)
+		}
+	}
+
+	answers["reviewer"] = []string{"claude/anthropic/opus:high"}
+	answers["librarian"] = []string{"claude/anthropic/sonnet:low"}
+	if files, err = Build(inv, answers); err != nil {
+		t.Fatal(err)
+	}
+	actors = parseActorsOf(t, files)
+	if got := actorNames(actors["reviewer"]); !reflect.DeepEqual(got, []string{"opus"}) {
+		t.Errorf("answered reviewer = %v, want opus", got)
+	}
+	if got := actorNames(actors["librarian"]); len(got) != 1 || got[0] == "haiku" {
+		t.Errorf("answered librarian = %v, want the sonnet pick", got)
+	}
+	if _, ok := RecommendedAnswers(inv, nil)["reviewer"]; ok {
+		t.Error("RecommendedAnswers answers a role, want it left for Build to derive")
+	}
+}
+
+// TestDerivedReaderTakesThePickedEffort pins that a reviewer derived onto a
+// model the builders already run takes the builders' effort for it, not the
+// medium a fresh derived pick gets.
+func TestDerivedReaderTakesThePickedEffort(t *testing.T) {
+	inv := Inventory{Harnesses: []HarnessStatus{status("claude", true, "sonnet", "opus", "haiku")}}
+	files, err := Build(inv, Answers{"builder": {"claude/anthropic/sonnet:low"}, "planner": {"claude/anthropic/opus:high"}, "tier": {"yolo"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var models []string
+	for _, c := range candidatesOf(t, files) {
+		models = append(models, c.Model)
+	}
+	if !reflect.DeepEqual(models, []string{"sonnet:low", "opus:high"}) {
+		t.Errorf("candidates = %v, want sonnet once, at the builder's low", models)
 	}
 }
