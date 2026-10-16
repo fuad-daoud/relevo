@@ -224,13 +224,13 @@ func TestExporterCoalescesRepeatedEntries(t *testing.T) {
 	if got.Drained != 5 || got.Appended != 2 {
 		t.Fatalf("export = %+v, want five entries drained and one entry per row appended", got)
 	}
-	if shape := r.shape(); shape != `binding ["01A"] upsert|binding ["01B"] delete` {
+	if shape := r.shape(); shape != `binding ["01B"] delete|binding ["01A"] upsert` {
 		t.Fatalf("appended = %q, want one entry per row, the removed one a delete", shape)
 	}
 
 	// The state is the one the drain read, not the first write's: a batch
 	// carrying the row as it was three writes ago would undo the other two.
-	body, err := DecodeBody(r.appended()[0].Body)
+	body, err := DecodeBody(r.appended()[1].Body)
 	if err != nil {
 		t.Fatalf("read the appended body: %v", err)
 	}
@@ -473,6 +473,37 @@ func TestExporterOrdersBatchParentsFirst(t *testing.T) {
 	}
 	if shape := removals.shape(); shape != `round ["04A"] delete|binding ["03A"] delete` {
 		t.Fatalf("appended = %q, want the round removed before the binding", shape)
+	}
+}
+
+// A batch holding both deletes and upserts emits every delete first (children-first)
+// and then every upsert (parents-first), so an importer frees re-used unique keys
+// before inserting new rows.
+func TestExporterOrdersBatchDeletesBeforeUpserts(t *testing.T) {
+	t.Parallel()
+	d, path := exporterFile(t, "m1")
+	seed(t, path,
+		insertBinding("01A", "m1"),
+		insertRound("02A", "01A"),
+	)
+	if _, err := exporter(d, &recording{MemTransport: NewMemTransport("m1")}).Export(); err != nil {
+		t.Fatalf("drain initial: %v", err)
+	}
+
+	seed(t, path,
+		`DELETE FROM round WHERE id = '02A'`,
+		`DELETE FROM binding WHERE id = '01A'`,
+		insertBinding("01B", "m1"),
+		insertRound("02B", "01B"),
+	)
+
+	r := &recording{MemTransport: NewMemTransport("m1")}
+	if _, err := exporter(d, r).Export(); err != nil {
+		t.Fatalf("export mixed batch: %v", err)
+	}
+	want := `round ["02A"] delete|binding ["01A"] delete|binding ["01B"] upsert|round ["02B"] upsert`
+	if shape := r.shape(); shape != want {
+		t.Fatalf("appended = %q, want %q", shape, want)
 	}
 }
 

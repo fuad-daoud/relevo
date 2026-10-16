@@ -9,8 +9,9 @@ import (
 
 // entryRefusal is the one entry of a chunk the file refused outright, and why.
 type entryRefusal struct {
-	at  int
-	err error
+	at    int
+	entry Entry
+	err   error
 }
 
 // applyChunk resolves a chunk's bodies and writes it in one transaction. It
@@ -69,7 +70,7 @@ func (i *Importer) writeChunk(chunk []Entry) (applied int, deferred []Entry, ref
 			case aerr == nil:
 				applied++
 			case errors.Is(aerr, ErrInvalid):
-				refusal = &entryRefusal{at: n, err: aerr}
+				refusal = &entryRefusal{at: n, entry: e, err: aerr}
 				return aerr
 			case errors.Is(aerr, db.ErrInvalid):
 				deferred = append(deferred, e)

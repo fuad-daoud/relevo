@@ -309,3 +309,32 @@ func TestImporterAppliesARepointedChildAfterItsNewParent(t *testing.T) {
 		t.Fatalf("the peer's new binding cwd = %q, want the row the round now needs", label)
 	}
 }
+
+func TestDropStringParseRoundTrip(t *testing.T) {
+	for _, d := range []Drop{
+		{Origin: "laptop", Seq: 42, Reason: "constraint failed: UNIQUE on binding_record"},
+		{Origin: "01ABCDEF", Seq: 1, Reason: "err: with: multiple: colons: here"},
+		{Origin: "remote-node-1", Seq: 1000, Reason: "table round_file pk [\"a\", \"b\"]"},
+	} {
+		s := d.String()
+		got, ok := ParseDrop(s)
+		if !ok {
+			t.Fatalf("ParseDrop(%q) failed, want ok", s)
+		}
+		if got != d {
+			t.Fatalf("ParseDrop(%q) = %+v, want %+v", s, got, d)
+		}
+	}
+
+	for _, bad := range []string{
+		"",
+		"some random error",
+		"dropped entries from ",
+		"dropped entries from laptop up to sequence notanumber: reason",
+		"dropped entries from laptop without middle: reason",
+	} {
+		if got, ok := ParseDrop(bad); ok {
+			t.Fatalf("ParseDrop(%q) = %+v, want false", bad, got)
+		}
+	}
+}
