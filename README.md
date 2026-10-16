@@ -2795,18 +2795,16 @@ after every return except `still-open`; on a timeout, run `relevo status --name
 <n>` and wait again if the round is still running.
 
 **Push is the Claude Code default where the mod loads.** A `relevo push` holder
-writes reports, consult
-answers and edge artifacts to the session's mod as NDJSON the moment the daemon
-has them. The session's mod
-starts the holder and acks each line with `relevo push --ack <binding> <seq>`,
-which confirms that entry and exits; the holder sees the confirm and sends the
-next line, so by the time the `wait` tool returns its outcome line the report
-is already in the session. While the holder writes, the status line under the
-prompt keeps the bindings, round and state in view meanwhile (see
-[Status line](#status-line)). Without a holder -- the mod not loaded, another
-harness, a session where no MasterMind resolved -- reports arrive through the
-`wait` tool above instead. `relevo help --json push` documents both routes of
-the verb.
+writes reports, consult answers and edge artifacts to the session's mod as
+NDJSON the moment the daemon has them. The session's mod starts the holder and
+acks each line with `relevo push --ack <binding> <seq>`, which confirms that
+entry and exits; the holder sees the confirm and sends the next line, so by the
+time the `wait` tool returns its outcome line the report is already in the
+session. Meanwhile the status line under the prompt keeps the bindings, round
+and state in view (see [Status line](#status-line)). Without a holder -- the mod
+not loaded, another harness, a session where no MasterMind resolved -- reports
+arrive through the `wait` tool above instead. `relevo help --json push`
+documents both routes of the verb.
 
 **How reports arrive.** relevo identifies the MasterMind session itself -- the
 plugin's hook registers it, and `relevo mastermind list` shows the records -- so no
