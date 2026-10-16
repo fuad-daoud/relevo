@@ -393,12 +393,12 @@ func TestImportNeverRewindsAMarkWhenDropping(t *testing.T) {
 		Op: OpUpsert, SchemaVersion: i.known, Body: json.RawMessage(`{`),
 	}}
 
-	applied, hold, drop, err := i.applyBatch(batch, marks)
+	applied, hold, drops, err := i.applyBatch(batch, marks)
 	if err != nil {
 		t.Fatalf("apply a batch behind the mark: %v", err)
 	}
-	if drop == nil || applied != 0 || hold != nil {
-		t.Fatalf("applyBatch = (%d, %+v, %+v, %v), want the unreadable batch dropped", applied, hold, drop, err)
+	if len(drops) == 0 || applied != 0 || hold != nil {
+		t.Fatalf("applyBatch = (%d, %+v, %+v, %v), want the unreadable batch dropped", applied, hold, drops, err)
 	}
 	if marks["m1"] != 5 {
 		t.Fatalf("the in-memory mark = %d, want it left at 5", marks["m1"])

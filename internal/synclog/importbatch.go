@@ -33,8 +33,9 @@ func batches(entries []Entry, marks map[string]int) [][]Entry {
 	for _, key := range order {
 		entries := grouped[key]
 		// Within a batch the exporter's own order is the order to apply: it put
-		// every parent before the rows naming it and every removal before its
-		// parent, and the foreign keys on are what make that order necessary.
+		// deletes before upserts (every removal before its parent, every parent
+		// before the rows naming it), and the foreign keys on are what make that
+		// order necessary.
 		sort.SliceStable(entries, func(a, b int) bool { return entries[a].Seq < entries[b].Seq })
 		out = append(out, entries)
 	}

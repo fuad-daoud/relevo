@@ -78,6 +78,20 @@ func (t *Tx) SetImportMark(origin string, seq int) error {
 	return nil
 }
 
+// RewindImportMark sets an origin's mark down. It is explicitly named so the
+// forward-only guard of SetImportMark stays intact for every other caller.
+func (d *DB) RewindImportMark(origin string, seq int) error {
+	return d.Tx(func(t *Tx) error { return t.RewindImportMark(origin, seq) })
+}
+
+func (t *Tx) RewindImportMark(origin string, seq int) error {
+	if _, err := t.exec(`INSERT INTO sync_import_mark (origin, seq) VALUES (?, ?)
+		ON CONFLICT(origin) DO UPDATE SET seq = excluded.seq`, origin, seq); err != nil {
+		return fmt.Errorf("db: rewind import mark %s: %w", origin, mapBusy(err))
+	}
+	return nil
+}
+
 // ExchangeRow is one shared row read for export: the table it is in, the
 // primary key it was found by, and every column the file holds, in schema
 // order, each value in the type the file stored it as.

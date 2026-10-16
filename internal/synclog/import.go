@@ -3,6 +3,8 @@ package synclog
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -11,9 +13,9 @@ import (
 // Importer applies another installation's entries to this machine's file.
 //
 // It works in whole batches, and one batch is one transaction: the entries go
-// in as the exporter ordered them -- every parent before the rows that name it,
-// every row removed before its parent -- and the origin's mark moves in the same
-// transaction. A batch that fails half way leaves neither the rows it had
+// in as the exporter ordered them -- every row removed before its parent,
+// every parent before the rows that name it, with deletes before upserts --
+// and the origin's mark moves in the same transaction. A batch that fails half way leaves neither the rows it had
 // written nor the mark behind, so the next run sees the same batch again from
 // the same mark rather than a mark that has moved over rows that were never
 // applied.
@@ -180,6 +182,39 @@ func (d Drop) String() string {
 	return fmt.Sprintf("dropped entries from %s up to sequence %d: %s", d.Origin, d.Seq, d.Reason)
 }
 
+// ParseDrop parses the sentence Drop.String() produces.
+// It returns the Drop and true when s has the shape "dropped entries from <origin> up to sequence <seq>: <reason>",
+// or zero Drop and false otherwise.
+func ParseDrop(s string) (Drop, bool) {
+	const prefix = "dropped entries from "
+	if !strings.HasPrefix(s, prefix) {
+		return Drop{}, false
+	}
+	rest := s[len(prefix):]
+	const middle = " up to sequence "
+	midIdx := strings.Index(rest, middle)
+	if midIdx <= 0 {
+		return Drop{}, false
+	}
+	origin := rest[:midIdx]
+	rest = rest[midIdx+len(middle):]
+	colonIdx := strings.Index(rest, ": ")
+	if colonIdx <= 0 {
+		return Drop{}, false
+	}
+	seqStr := rest[:colonIdx]
+	reason := rest[colonIdx+2:]
+	seq, err := strconv.Atoi(seqStr)
+	if err != nil {
+		return Drop{}, false
+	}
+	return Drop{
+		Origin: origin,
+		Seq:    seq,
+		Reason: reason,
+	}, true
+}
+
 // Gap is one origin the log handed a batch to out of order: the batch starts
 // past the sequence the origin's mark rests at, or jumps past one inside itself,
 // so the entries in between have not arrived. The origin holds where it stands
@@ -275,7 +310,7 @@ func (i *Importer) Import() (ImportResult, error) {
 			held[origin] = true
 			continue
 		}
-		applied, hold, drop, err := i.applyBatch(batch, marks)
+		applied, hold, drops, err := i.applyBatch(batch, marks)
 		if holdsOrigin(err) {
 			total.Stalled = append(total.Stalled, Stall{Origin: origin, Label: i.labelOf(origin), Reason: err.Error()})
 			held[origin] = true
@@ -294,9 +329,7 @@ func (i *Importer) Import() (ImportResult, error) {
 			held[hold.Origin] = true
 			continue
 		}
-		if drop != nil {
-			total.Dropped = append(total.Dropped, *drop)
-		}
+		total.Dropped = append(total.Dropped, drops...)
 		total.Applied += applied
 		if applied > 0 {
 			total.Batches++
@@ -347,7 +380,7 @@ func (i *Importer) labelOf(origin string) string {
 //
 // marks is how far each origin has been applied, read from the file and kept
 // current as the run goes, so a batch behind one already applied writes nothing.
-func (i *Importer) applyBatch(batch []Entry, marks map[string]int) (applied int, _ *Hold, _ *Drop, _ error) {
+func (i *Importer) applyBatch(batch []Entry, marks map[string]int) (applied int, _ *Hold, _ []Drop, _ error) {
 	if len(batch) == 0 {
 		return 0, nil, nil, nil
 	}
@@ -366,16 +399,17 @@ func (i *Importer) applyBatch(batch []Entry, marks map[string]int) (applied int,
 	if err != nil && !refused(err) {
 		return 0, nil, nil, err
 	}
+	var drops []Drop
 	if err == nil {
-		applied, err = i.fetchAndApply(batch, rows, handled, marks)
+		applied, drops, err = i.fetchAndApply(batch, rows, handled, marks)
 	}
 	if err == nil {
-		return applied, nil, nil, nil
+		return applied, nil, drops, nil
 	}
 	if !refused(err) {
 		return 0, nil, nil, err
 	}
-	drop := &Drop{Origin: origin, Seq: tail(batch), Reason: err.Error()}
+	drop := Drop{Origin: origin, Seq: tail(batch), Reason: err.Error()}
 	// The batch was refused, so the transaction that would have carried its rows
 	// rolled back and the mark it would have moved with them went with it. The
 	// mark moves here instead, in a transaction of its own: without that the
@@ -384,42 +418,7 @@ func (i *Importer) applyBatch(batch []Entry, marks map[string]int) (applied int,
 	if err := i.past(batch, marks); err != nil {
 		return 0, nil, nil, err
 	}
-	return 0, nil, drop, nil
-}
-
-// applyEntries writes one batch's entries in the order the exporter wrote them
-// and moves the mark in the same transaction, so the rows and the mark that
-// covers them commit together or neither does.
-//
-// handled counts the entries that did their work, which includes an entry
-// naming a row this file does not hold: a delete that finds nothing has still
-// been applied, which is what keeps a re-read batch from stalling.
-func (i *Importer) applyEntries(batch, rows []Entry, docs int, marks map[string]int) (int, error) {
-	origin := batch[0].Origin
-	applied := 0
-	var signedAt int
-	var wrote bool
-	err := i.db.Tx(func(tx *db.Tx) error {
-		applied = 0
-		for _, e := range rows {
-			handled, err := applyEntry(tx, e, i.now())
-			if err != nil {
-				return err
-			}
-			if handled {
-				applied++
-			}
-		}
-		var err error
-		if signedAt, wrote, err = i.recordSigned(tx, origin, batch); err != nil {
-			return err
-		}
-		return i.mark(tx, marks, origin, tail(batch), applied+docs > 0)
-	})
-	if err == nil {
-		i.noteSigned(origin, signedAt, wrote)
-	}
-	return applied + docs, err
+	return 0, nil, []Drop{drop}, nil
 }
 
 // mark writes the mark for one origin, and only forwards. A batch whose tail is
@@ -496,7 +495,7 @@ func (i *Importer) held(batch []Entry) (Entry, bool) {
 func applyEntry(tx *db.Tx, e Entry, now time.Time) (bool, error) {
 	if _, ok := SharedTable(e.Table); !ok {
 		return false, fmt.Errorf("synclog: import %s %s: %q is not a shared table: %w",
-			e.Table, e.PK, e.Table, db.ErrInvalid)
+			e.Table, e.PK, e.Table, ErrInvalid)
 	}
 	var values map[string]any
 	switch e.Op {

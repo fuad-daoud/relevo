@@ -278,6 +278,32 @@ func TestSetImportMarkNeverMovesBackward(t *testing.T) {
 	}
 }
 
+// RewindImportMark lowers an origin's mark while leaving SetImportMark forward-only.
+func TestRewindImportMark(t *testing.T) {
+	d := openTestDB(t)
+	if err := d.SetImportMark("instX", 10); err != nil {
+		t.Fatalf("set import mark: %v", err)
+	}
+	if err := d.RewindImportMark("instX", 4); err != nil {
+		t.Fatalf("rewind import mark: %v", err)
+	}
+	if have, found, err := d.ImportMark("instX"); err != nil || !found || have != 4 {
+		t.Fatalf("ImportMark after rewind = (%d, %t, %v), want 4", have, found, err)
+	}
+	if err := d.SetImportMark("instX", 2); err != nil {
+		t.Fatalf("set lower import mark: %v", err)
+	}
+	if have, found, err := d.ImportMark("instX"); err != nil || !found || have != 4 {
+		t.Fatalf("ImportMark after SetImportMark(2) = (%d, %t, %v), want 4", have, found, err)
+	}
+	if err := d.SetImportMark("instX", 8); err != nil {
+		t.Fatalf("advance import mark: %v", err)
+	}
+	if have, found, err := d.ImportMark("instX"); err != nil || !found || have != 8 {
+		t.Fatalf("ImportMark after SetImportMark(8) = (%d, %t, %v), want 8", have, found, err)
+	}
+}
+
 // A delete names one row by its key and leaves everything else, and a row that
 // is already gone is not a failure: the delete has to be safe to re-apply after
 // a mark that did not survive a restore.
@@ -491,4 +517,41 @@ func appendOnlyNote(tbl string) string {
 		return "the original note"
 	}
 	return "the original error"
+}
+
+// A UNIQUE constraint failure on an upsert leaves the transaction open: the
+// statement fails alone, so subsequent writes in the same transaction succeed
+// and can commit.
+func TestExchangeUpsertUniqueConstraintLeavesTxOpen(t *testing.T) {
+	d := openTestDB(t)
+	r1 := map[string]any{
+		"id": "r1", "owner": "o", "name": "n", "state": "open", "round": 1,
+		"cwd": "/z", "record_json": "{}", "created_at": "t", "updated_at": "t", "origin": "instX",
+	}
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding_record", "instX", r1) }); err != nil {
+		t.Fatalf("insert r1: %v", err)
+	}
+
+	var uniqueErr error
+	err := d.Tx(func(tx *Tx) error {
+		r2 := map[string]any{
+			"id": "r2", "owner": "o", "name": "n", "state": "open", "round": 1,
+			"cwd": "/z", "record_json": "{}", "created_at": "t", "updated_at": "t", "origin": "instX",
+		}
+		uniqueErr = tx.ExchangeUpsert("binding_record", "instX", r2)
+		if !errors.Is(uniqueErr, ErrInvalid) {
+			t.Fatalf("r2 upsert err = %v, want ErrInvalid", uniqueErr)
+		}
+
+		r3 := map[string]any{
+			"id": "r3", "owner": "o", "name": "different", "state": "open", "round": 1,
+			"cwd": "/z", "record_json": "{}", "created_at": "t", "updated_at": "t", "origin": "instX",
+		}
+		return tx.ExchangeUpsert("binding_record", "instX", r3)
+	})
+	if err != nil {
+		t.Fatalf("tx commit failed after UNIQUE constraint violation: %v", err)
+	}
+
+	_ = exchangeRow(t, d, "binding_record", `["r3"]`)
 }

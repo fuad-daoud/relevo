@@ -256,6 +256,9 @@ func (r *Runner) drainImport(ctx context.Context, shared *db.DB, t *StopTranspor
 	return drainImport(func() (synclog.ImportResult, error) {
 		var res synclog.ImportResult
 		err := within(ctx, t, r.stepTimeout(), func() error {
+			if err := ReplayRefusedPass(shared, r.Local); err != nil {
+				slog.Warn("sync: replay refused pass", "err", err)
+			}
 			imp := synclog.NewImporter(shared, t)
 			if ierr := BindVerifier(imp, r.Local); ierr != nil {
 				return ierr

@@ -207,13 +207,13 @@ func TestApplyBatchFailsOnAHardFailure(t *testing.T) {
 	if err := peer.Close(); err != nil {
 		t.Fatalf("close the peer file: %v", err)
 	}
-	applied, hold, drop, err := i.applyBatch(batch, map[string]int{})
+	applied, hold, drops, err := i.applyBatch(batch, map[string]int{})
 	if err == nil {
 		t.Fatal("applying a batch to a file that is not open succeeded, want the failure reported")
 	}
-	if applied != 0 || hold != nil || drop != nil {
+	if applied != 0 || hold != nil || len(drops) != 0 {
 		t.Fatalf("applyBatch = (%d, %+v, %+v, %v), want the failure reported rather than dropped",
-			applied, hold, drop, err)
+			applied, hold, drops, err)
 	}
 	if refused(err) {
 		t.Fatalf("the failure %v reads as a refusal, want this machine's own trouble", err)
@@ -243,10 +243,10 @@ func TestApplyBatchSkipsAnEmptyBatch(t *testing.T) {
 	t.Parallel()
 	peer, _ := peerFile(t, "m2")
 	i := NewImporter(peer, NewMemTransport("m1"))
-	applied, hold, drop, err := i.applyBatch(nil, map[string]int{})
-	if err != nil || applied != 0 || hold != nil || drop != nil {
+	applied, hold, drops, err := i.applyBatch(nil, map[string]int{})
+	if err != nil || applied != 0 || hold != nil || len(drops) != 0 {
 		t.Fatalf("applyBatch(nil) = (%d, %+v, %+v, %v), want nothing applied, no hold, no drop and no error",
-			applied, hold, drop, err)
+			applied, hold, drops, err)
 	}
 	if marks, err := peer.ImportMarks(); err != nil || len(marks) != 0 {
 		t.Fatalf("marks = %v (%v), want none written for an empty batch", marks, err)

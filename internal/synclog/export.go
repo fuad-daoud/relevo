@@ -8,11 +8,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-// defaultBatchSize is how many outbox entries one drain reads. The batch is one
+// DefaultBatchSize is how many outbox entries one drain reads. The batch is one
 // transport append, so the size is the granularity a remote sees and the amount
 // of work a refused append repeats; it is small enough that a failure loses
 // little and large enough that a full outbox is not appended one row at a time.
-const defaultBatchSize = 256
+const DefaultBatchSize = 256
+const defaultBatchSize = DefaultBatchSize
 
 // Exporter turns this installation's own outbox into appends on the log.
 //
@@ -158,6 +159,8 @@ func (e *Exporter) build() ([]db.DrainedEntry, []Entry, []pendingBlob, error) {
 
 // entries is the batch the log is given: the drained rows this installation
 // owns, one per row, ordered so an importer can apply it with foreign keys on.
+// Deletes are emitted before upserts (children-first for deletes, parents-first
+// for upserts) so any re-used key is freed before the new row is written.
 // The values too large to travel inline come back beside the batch, to be
 // uploaded before it is appended.
 //
@@ -168,6 +171,13 @@ func (e *Exporter) entries(drained []db.DrainedEntry) ([]Entry, []pendingBlob, e
 	sortParentsFirst(upserts)
 	sortChildrenFirst(deletes)
 	out := make([]Entry, 0, len(upserts)+len(deletes))
+	for _, d := range deletes {
+		entry, err := NewDelete(e.origin, d.Table, d.PK, e.schema, e.now())
+		if err != nil {
+			return nil, nil, err
+		}
+		out = append(out, entry)
+	}
 	var pending []pendingBlob
 	for _, d := range upserts {
 		// A row is only rewritten when there is somewhere to write it. A
@@ -186,13 +196,6 @@ func (e *Exporter) entries(drained []db.DrainedEntry) ([]Entry, []pendingBlob, e
 			return nil, nil, err
 		}
 		entry, err := NewUpsert(e.origin, d.Table, d.PK, e.schema, body, e.now())
-		if err != nil {
-			return nil, nil, err
-		}
-		out = append(out, entry)
-	}
-	for _, d := range deletes {
-		entry, err := NewDelete(e.origin, d.Table, d.PK, e.schema, e.now())
 		if err != nil {
 			return nil, nil, err
 		}
@@ -284,10 +287,12 @@ func sortParentsFirst(rows []db.DrainedEntry) {
 	})
 }
 
-// sortChildrenFirst orders a batch's deletes the other way round, so a row is
-// removed before its parent. The parent rows of the 001 tables carry no cascade,
-// so an importer that deleted a parent first would have the child's delete
-// refused by the very foreign key the importer needs satisfied.
+// sortChildrenFirst orders a batch's deletes children-first, so every row is
+// removed before its parent. Deletes are emitted before upserts, and within
+// deletes this ensures a child is removed before its parent. The parent rows of
+// the 001 tables carry no cascade, so an importer that deleted a parent first
+// would have the child's delete refused by the very foreign key the importer
+// needs satisfied.
 func sortChildrenFirst(rows []db.DrainedEntry) {
 	sort.SliceStable(rows, func(i, j int) bool {
 		return tableIndex(rows[i].Table) > tableIndex(rows[j].Table)
