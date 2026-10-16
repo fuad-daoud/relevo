@@ -35,7 +35,7 @@ func recommendedOf(t *testing.T, q Question) []string {
 }
 
 // TestQuestionsRecommendOneModelPerLoggedInHarness pins the builder
-// recommendation: one model per logged-in harness at high effort, codex's
+// recommendation: one model per logged-in harness at medium effort, codex's
 // first listed model, agy's first flash model (not simply its first), and
 // claude sonnet -- with agy's efforts folded into one choice per model.
 func TestQuestionsRecommendOneModelPerLoggedInHarness(t *testing.T) {
@@ -46,9 +46,9 @@ func TestQuestionsRecommendOneModelPerLoggedInHarness(t *testing.T) {
 	}}
 	q := pickOf(t, Questions(inv, nil), "builder")
 	want := []string{
-		"codex/openai/gpt-6-luna:high",
+		"codex/openai/gpt-6-luna:medium",
 		"agy/google/gemini-3.8-flash-high",
-		"claude/anthropic/sonnet:high",
+		"claude/anthropic/sonnet:medium",
 	}
 	if got := recommendedOf(t, q); !reflect.DeepEqual(got, want) {
 		t.Errorf("builder recommends %v, want %v", got, want)
@@ -156,7 +156,7 @@ func TestRecommendedAnswersKeepCurrentConfig(t *testing.T) {
 
 	current["builder"] = []string{"codex/openai/gpt-9-gone:high"}
 	rec = RecommendedAnswers(inv, current)
-	fallback := []string{"codex/openai/gpt-6-luna:high", "agy/google/gemini-3.8-flash-high"}
+	fallback := []string{"codex/openai/gpt-6-luna:medium", "agy/google/gemini-3.8-flash-high"}
 	if got := rec["builder"]; !reflect.DeepEqual(got, fallback) {
 		t.Errorf("builder recommends %v with only stale values stored, want the defaults %v", got, fallback)
 	}

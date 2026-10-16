@@ -149,8 +149,9 @@ runs the plugin, the service and one real round:
    (`smoke`). A question that cannot apply is dropped. Press Enter to take the
    recommended pick; an ordered pick is typed as comma-separated numbers,
    `1,3`, and a yes/no takes `y`/`n`. Each picked builder or planner model
-   that runs at more than one effort then gets its own effort question;
-   high is recommended.
+   that runs at more than one effort then gets its own effort question:
+   medium is recommended for builders, which follow a plan, and high for the
+   planner, which writes it.
 3. Run the literal fix commands the last line names, or run `relevo setup`
    again with every answer it named:
    ```
@@ -174,6 +175,8 @@ runs the plugin, the service and one real round:
    containing `relevo works`. While it runs, setup prints the builder holding
    the round, each tool call it makes, and a switch when a usage limit hands
    it to the next builder; a pass prints the file and the builder's commit.
+   A round whose only builders hit a usage limit fails with the reset time
+   and `next: relevo setup`, to pick a second builder as a fallback.
    A passing round unbinds and removes the
    throwaway state; a failed one keeps everything and prints
    `relevo show setup-smoke --round 1 --transcript`. Every step lands in the

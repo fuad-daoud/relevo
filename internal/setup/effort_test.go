@@ -65,8 +65,8 @@ func TestEffortAnswersSpellEachHarnessesModel(t *testing.T) {
 }
 
 // TestEffortQuestionFollowsAPickedModel pins the follow-up: asked only for a
-// model with several efforts, recommending the pick's own effort else high,
-// and its answer moving the pick to that effort.
+// model with several efforts, recommending the pick's own effort else the
+// builder's medium, and its answer moving the pick to that effort.
 func TestEffortQuestionFollowsAPickedModel(t *testing.T) {
 	inv := Inventory{Harnesses: []HarnessStatus{
 		status("agy", true, "gemini-3.8-flash-low", "gemini-3.8-flash-high", "gpt-oss-120b-medium"),
@@ -86,9 +86,16 @@ func TestEffortQuestionFollowsAPickedModel(t *testing.T) {
 	}
 
 	eq, ok = EffortQuestion(q, "claude/anthropic/sonnet")
-	if !ok || !reflect.DeepEqual(eq.Recommended, []string{"high"}) {
-		t.Errorf("sonnet effort question = %+v, %v; want one recommending high", eq, ok)
+	if !ok || !reflect.DeepEqual(eq.Recommended, []string{"medium"}) {
+		t.Errorf("sonnet effort question = %+v, %v; want one recommending medium", eq, ok)
 	}
+	// opus is not a recommended builder, so it takes the builder's own
+	// medium rather than the planner's high.
+	q = pickOf(t, Questions(Inventory{Harnesses: []HarnessStatus{status("claude", true, "sonnet", "opus")}}, nil), "builder")
+	if eq, ok := EffortQuestion(q, "claude/anthropic/opus"); !ok || !reflect.DeepEqual(eq.Recommended, []string{"medium"}) {
+		t.Errorf("opus builder effort = %v, %v; want medium", eq.Recommended, ok)
+	}
+	q = pickOf(t, Questions(inv, nil), "builder")
 	for _, none := range []string{"agy/google/gpt-oss-120b-medium", "claude/anthropic/haiku"} {
 		if _, ok := EffortQuestion(q, none); ok {
 			t.Errorf("%s got an effort question, want none for one effort or none", none)

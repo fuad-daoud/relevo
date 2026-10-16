@@ -98,8 +98,9 @@ question that cannot apply is dropped.
 1. `builder` (ordered, one or more, comma-separated): who writes code. The
    order is the fallback order when one hits a usage limit. Each model is one
    choice; agy's per-effort models (`gemini-3.8-flash-low`, `-high`, ...) fold
-   into one. Recommended: one model per logged-in harness at high effort, in
-   the order codex, agy, claude:
+   into one. Recommended: one model per logged-in harness at medium effort
+   (a builder follows a plan whose thinking is done), in the order codex,
+   agy, claude:
    - codex: its first listed model.
    - agy: its first `gemini-*-flash` model, else its first model.
    - claude: `sonnet`.
@@ -108,7 +109,8 @@ question that cannot apply is dropped.
    agy's first `claude-opus-*` model, else its first model.
 
 On a terminal, each picked builder or planner model that runs at more than
-one effort gets a follow-up effort question, recommending high. The efforts
+one effort gets a follow-up effort question, recommending medium for a
+builder and high for the planner. The efforts
 are codex's reported reasoning levels, claude's `--effort` levels for sonnet
 and opus, and agy's model-name suffixes. An `--answer` value carries the
 effort itself: `<harness>/<provider>/<model>:<effort>`, the choice's

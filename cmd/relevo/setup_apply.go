@@ -140,7 +140,21 @@ func setupApply(ctx context.Context, refresh func() (relevo.Runtime, error), env
 	if asJSON {
 		_ = printDoc(setupResultDocOf(steps))
 	}
-	return err
+	return setupExitOf(err)
+}
+
+// setupExitOf is the exit a failed apply takes without a second print: the
+// failed step's row (or the result document) already said what failed and
+// what fixes it.
+func setupExitOf(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ce *cliError
+	if errors.As(err, &ce) {
+		return exitCodeErr{code: catalogExit(ce.code)}
+	}
+	return exitCodeErr{code: catalogExit(codeInternal)}
 }
 
 // setupStepStarts are the lines a step prints before it starts, so a step

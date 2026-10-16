@@ -15,11 +15,15 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/doctor"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/serviceunit"
 	"github.com/fuad-daoud/relevo/internal/setup"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // fakePluginRunner answers every claude call from a script and records them,
@@ -373,5 +377,57 @@ func TestStatusOnAFreshMachineListsNothing(t *testing.T) {
 	}
 	if !strings.Contains(string(stdout), "no bindings") {
 		t.Fatalf("stdout = %q, want the empty listing", stdout)
+	}
+}
+
+// TestSmokeLimitFailureNamesTheResetAndTheFix pins the usage-limit failure:
+// a smoke round whose builder is gated fails as gate_active, naming the
+// builder and its reset and sending the reader back to setup for a second
+// builder; a round with no gate is not this failure.
+func TestSmokeLimitFailureNamesTheResetAndTheFix(t *testing.T) {
+	initRoot(t)
+	rt, err := newRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "codex/openai/gpt-6-luna:high"
+	if err := rt.Store.Save(store.Binding{Name: smokeName, BuilderCandidate: token, Round: 1, CWD: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := smokeLimitFailure(context.Background(), rt, dir); err != nil {
+		t.Fatalf("an ungated round = %v, want no limit failure", err)
+	}
+
+	until := time.Now().Add(72 * time.Hour)
+	entry := availability.Entry{Kind: availability.RateLimited, Subject: availability.ProviderOf(token), At: time.Now(), Until: until, Source: "relevo", Binding: smokeName}
+	if err := availability.AppendEntryLocked(relevo.AvailabilityDeps(rt), entry); err != nil {
+		t.Fatal(err)
+	}
+	ce := requireCLIError(t, smokeLimitFailure(context.Background(), rt, dir), codeGateActive, "relevo setup")
+	for _, want := range []string{"gpt-6-luna", "resets " + availability.GateTimeText(until), "pick a second builder"} {
+		if !strings.Contains(ce.message, want) {
+			t.Errorf("message %q lacks %q", ce.message, want)
+		}
+	}
+	if _, err := rt.Store.Load(smokeName); err == nil {
+		t.Error("the smoke binding outlived a limit failure")
+	}
+}
+
+// TestSetupExitIsSilentAfterAFailedRow pins that a failed step is printed
+// once: the apply hands main a bare exit code carrying the step's own exit.
+func TestSetupExitIsSilentAfterAFailedRow(t *testing.T) {
+	got := setupExitOf(fail(codeGateActive, "limited"))
+	var ce *cliError
+	if errors.As(got, &ce) {
+		t.Fatalf("setupExitOf = %v, a cliError main would print a second time", got)
+	}
+	var ec exitCodeErr
+	if !errors.As(got, &ec) || ec.code != catalogExit(codeGateActive) {
+		t.Fatalf("setupExitOf = %v, want the gate_active exit", got)
+	}
+	if setupExitOf(nil) != nil {
+		t.Fatal("a clean apply exits with an error")
 	}
 }

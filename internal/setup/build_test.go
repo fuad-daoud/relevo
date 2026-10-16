@@ -41,7 +41,8 @@ func candidatesOf(t *testing.T, files Files) []candidate.Candidate {
 
 // TestBuildDerivesReviewerSecurityLitePlanner pins the chain's own reader
 // picks: the reviewer and lite-planner over the codex model the offer list
-// lists last, and security over the planner's candidate.
+// lists last, and security over the planner's candidate -- the planner's
+// model at high, a candidate apart from the builder's medium.
 func TestBuildDerivesReviewerSecurityLitePlanner(t *testing.T) {
 	rec := RecommendedAnswers(codexInventory(), nil)
 	files, err := Build(codexInventory(), rec)
@@ -52,9 +53,9 @@ func TestBuildDerivesReviewerSecurityLitePlanner(t *testing.T) {
 	for _, tt := range []struct{ actor, want string }{
 		{"builder", "gpt-6-luna"},
 		{"librarian", "gpt-6-luna"},
-		{"planner", "gpt-6-luna"},
+		{"planner", "gpt-6-luna-high"},
 		{"reviewer", "gpt-5.6-terra"},
-		{"security", "gpt-6-luna"},
+		{"security", "gpt-6-luna-high"},
 		{"lite-planner", "gpt-5.6-terra"},
 	} {
 		a, ok := actorSet[tt.actor]
@@ -73,7 +74,7 @@ func TestBuildDerivesReviewerSecurityLitePlanner(t *testing.T) {
 	for _, c := range candidatesOf(t, files) {
 		names = append(names, c.Model)
 	}
-	if want := []string{"gpt-6-luna:high", "gpt-5.6-terra"}; !reflect.DeepEqual(names, want) {
+	if want := []string{"gpt-6-luna:medium", "gpt-6-luna:high", "gpt-5.6-terra"}; !reflect.DeepEqual(names, want) {
 		t.Errorf("candidates' models = %v, want %v", names, want)
 	}
 }

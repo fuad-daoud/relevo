@@ -543,14 +543,14 @@ func TestSetupPromptAsksEffortAfterModels(t *testing.T) {
 		}
 	}
 	// 1 = gemini-3.8-flash, 4 = haiku, 2 = sonnet; then flash at low (1),
-	// and Enter keeps sonnet's recommended high. haiku asks nothing.
+	// and Enter keeps sonnet's recommended medium. haiku asks nothing.
 	in := strings.NewReader("1,4,2\n1\n\n")
 	out := new(bytes.Buffer)
 	answers, err := askSetupQuestions(out, in, []setup.Question{builder})
 	if err != nil {
 		t.Fatalf("askSetupQuestions: %v\n%s", err, out)
 	}
-	want := []string{"agy/google/gemini-3.8-flash-low", "claude/anthropic/haiku", "claude/anthropic/sonnet:high"}
+	want := []string{"agy/google/gemini-3.8-flash-low", "claude/anthropic/haiku", "claude/anthropic/sonnet:medium"}
 	if got := answers["builder"]; !slices.Equal(got, want) {
 		t.Fatalf("answers = %v, want %v\n%s", got, want, out)
 	}

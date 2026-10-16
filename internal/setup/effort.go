@@ -161,13 +161,26 @@ func ChoiceFor(q Question, value string) (Choice, bool) {
 	return c, ok
 }
 
-// questionEffort is the effort builders and planners are recommended at.
-const questionEffort = "high"
+// builderEffort and plannerEffort are the efforts each question recommends:
+// a builder follows a plan whose thinking is already done, so medium spends
+// less quota on the same work; the planner does that thinking.
+const (
+	builderEffort = "medium"
+	plannerEffort = "high"
+)
+
+// effortFor is the effort one candidate question recommends.
+func effortFor(q Question) string {
+	if q.ID == "planner" {
+		return plannerEffort
+	}
+	return builderEffort
+}
 
 // EffortQuestion is the follow-up a picked model gets when it runs at more
 // than one effort: which one, recommending the effort the pick already
 // carries, else the one a recommendation of the same model carries, else
-// high, else the model's own default.
+// the question's own effort, else the model's default.
 func EffortQuestion(q Question, picked string) (Question, bool) {
 	c, effort, ok := choiceAndEffort(q, picked)
 	if !ok || len(c.Efforts) < 2 {
@@ -197,8 +210,8 @@ func recommendedEffort(q Question, c Choice) string {
 			return e
 		}
 	}
-	if slices.Contains(c.Efforts, questionEffort) {
-		return questionEffort
+	if want := effortFor(q); slices.Contains(c.Efforts, want) {
+		return want
 	}
 	return c.effort
 }

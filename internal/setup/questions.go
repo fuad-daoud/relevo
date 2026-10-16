@@ -126,19 +126,20 @@ func keptAnswers(q Question, answers map[string][]string) ([]string, bool) {
 }
 
 // builderQuestion shows every model each logged-in harness offers, question
-// order, and recommends one model per harness at high effort: codex's first
-// listed model, agy's first gemini flash model else its first, claude sonnet.
+// order, and recommends one model per harness at medium effort: codex's
+// first listed model, agy's first gemini flash model else its first, claude
+// sonnet.
 func builderQuestion(inv Inventory) Question {
 	offers := loggedChoices(inv)
 	recommended := []string{}
 	if cs := offers["codex"]; len(cs) > 0 {
-		recommended = append(recommended, atEffort(cs[0], questionEffort))
+		recommended = append(recommended, atEffort(cs[0], builderEffort))
 	}
 	if c, ok := pickChoice(offers["agy"], "gemini-", "flash"); ok {
-		recommended = append(recommended, atEffort(c, questionEffort))
+		recommended = append(recommended, atEffort(c, builderEffort))
 	}
 	if c, ok := pickChoice(offers["claude"], "sonnet", ""); ok {
-		recommended = append(recommended, atEffort(c, questionEffort))
+		recommended = append(recommended, atEffort(c, builderEffort))
 	}
 	return Question{
 		ID:          "builder",
@@ -160,11 +161,11 @@ func plannerQuestion(inv Inventory) Question {
 		Choices: candidateChoices(inv),
 	}
 	if c, ok := pickChoice(offers["claude"], "opus", ""); ok {
-		q.Recommended = []string{atEffort(c, questionEffort)}
+		q.Recommended = []string{atEffort(c, plannerEffort)}
 	} else if cs := offers["codex"]; len(cs) > 0 {
-		q.Recommended = []string{atEffort(cs[0], questionEffort)}
+		q.Recommended = []string{atEffort(cs[0], plannerEffort)}
 	} else if c, ok := pickChoice(offers["agy"], "claude-opus-", ""); ok {
-		q.Recommended = []string{atEffort(c, questionEffort)}
+		q.Recommended = []string{atEffort(c, plannerEffort)}
 	}
 	return q
 }

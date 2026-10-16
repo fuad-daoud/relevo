@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -203,6 +204,9 @@ func setupSmokeFinish(ctx context.Context, rt relevo.Runtime, b store.Binding, r
 		return SetupStepDoc{}, failNext(codeInternal, next, "%v", err)
 	}
 	if res.Code != 0 {
+		if lerr := smokeLimitFailure(ctx, rt, smokeDir); lerr != nil {
+			return SetupStepDoc{}, lerr
+		}
 		return SetupStepDoc{}, failNext(codeInternal, next, "%s", firstLine(res.Line))
 	}
 	if herr := smokeHelloOkay(b.CWD); herr != nil {
@@ -217,6 +221,33 @@ func setupSmokeFinish(ctx context.Context, rt relevo.Runtime, b store.Binding, r
 		return SetupStepDoc{}, failNext(codeInternal, "relevo doctor", "remove the smoke repository: %v", rerr)
 	}
 	return SetupStepDoc{Step: "smoke", OK: true, Detail: detail}, nil
+}
+
+// smokeLimitFailure is the failure a round gets when its last builder hit a
+// usage limit with nobody left to take over: the account's problem, not
+// relevo's, so the row says when it resets and how to add a fallback. The
+// throwaway state goes, because its transcript only repeats the limit.
+// nil when the round failed some other way.
+func smokeLimitFailure(ctx context.Context, rt relevo.Runtime, smokeDir string) error {
+	b, err := rt.Store.Load(smokeName)
+	if err != nil || b.BuilderCandidate == "" {
+		return nil
+	}
+	for _, g := range availability.LedgerGates(relevo.AvailabilityDeps(rt), []string{b.BuilderCandidate}) {
+		if g.Token != b.BuilderCandidate || g.Kind != availability.RateLimited {
+			continue
+		}
+		until := ""
+		if !g.Until.IsZero() {
+			until = " (resets " + availability.GateTimeText(g.Until) + ")"
+		}
+		_, _ = relevo.Unbind(ctx, rt, smokeName, false)
+		_ = os.RemoveAll(smokeDir)
+		return failNext(codeGateActive, "relevo setup",
+			"%s hit its usage limit%s and no other builder could take over; run relevo setup again and pick a second builder as a fallback, or wait for the reset",
+			rt.Candidates.NameOf(b.BuilderCandidate), until)
+	}
+	return nil
 }
 
 // smokeHelloOkay proves the artifact: HELLO.md holding the line is what the
