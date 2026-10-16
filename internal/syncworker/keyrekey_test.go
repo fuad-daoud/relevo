@@ -316,6 +316,8 @@ func (d *sharedRemoteDriver) Stats(context.Context) (turso.TursoSyncDbStats, err
 	return turso.TursoSyncDbStats{}, nil
 }
 
+func (d *sharedRemoteDriver) Checkpoint(context.Context) error { return nil }
+
 // TestTwoSameFromRekeysEndWithExactlyOneWinnerAndLoserReportsRace pins that when two
 // workers attempt same-From rekeys against a shared remote, exactly one winner's
 // material ends up on the remote and the loser reports CodeEpochRace.
