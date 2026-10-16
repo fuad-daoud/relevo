@@ -2,6 +2,7 @@ package sync
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/synclog"
@@ -33,8 +34,8 @@ func TestReplayRefusedPassRunsOnce(t *testing.T) {
 
 	// Verify marker written.
 	var gen string
-	if err := marker(local, KeyReplayRefused, &gen); err != nil || gen != "1" {
-		t.Fatalf("marker = %q, %v, want '1'", gen, err)
+	if err := marker(local, KeyReplayRefused, &gen); err != nil || gen != replayRefusedGeneration {
+		t.Fatalf("marker = %q, %v, want %q", gen, err, replayRefusedGeneration)
 	}
 
 	// Move mark forward again.
@@ -95,8 +96,8 @@ func TestReplayRefusedPassNoDroppedLines(t *testing.T) {
 	}
 
 	var gen string
-	if err := marker(local, KeyReplayRefused, &gen); err != nil || gen != "1" {
-		t.Fatalf("marker = %q, want '1'", gen)
+	if err := marker(local, KeyReplayRefused, &gen); err != nil || gen != replayRefusedGeneration {
+		t.Fatalf("marker = %q, want %q", gen, replayRefusedGeneration)
 	}
 }
 
@@ -290,5 +291,86 @@ func TestReplayRefusedPassTargetBelowFloorTakesSnapshotPath(t *testing.T) {
 	mark, _, err = shared.ImportMark("m1")
 	if err != nil || mark != 5 {
 		t.Fatalf("mark after snapshot import = %d, want head 5", mark)
+	}
+}
+
+func replayBinding(id, cwd string) synclog.Entry {
+	body := fmt.Sprintf(`{"id":%q,"name":%q,"cwd":%q,"builder_mode":"local","created_at":"t","ingest_source":"manual","origin":"m1"}`, id, id, cwd)
+	return synclog.Entry{Origin: "m1", Table: "binding", PK: fmt.Sprintf(`[%q]`, id), Op: synclog.OpUpsert, SchemaVersion: 1, Body: []byte(body)}
+}
+
+// compactedLog is m1's log after rows were rewritten and compacted to floor 5:
+// the superseded entries 1 and 2 are gone, so nothing follows sequence 1
+// directly.
+func compactedLog(t *testing.T) *synclog.MemTransport {
+	t.Helper()
+	log := synclog.NewMemTransport("m1")
+	for _, batch := range [][]synclog.Entry{
+		{replayBinding("b1", "/1"), replayBinding("b2", "/2"), replayBinding("b1", "/1b")},
+		{replayBinding("b2", "/2b"), replayBinding("b3", "/3")},
+		{replayBinding("b4", "/4")},
+	} {
+		if _, err := log.Append(batch); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+	if _, err := log.Compact("m1", 5); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if got, _ := log.PullRange("m1", 1, 2); len(got) != 0 {
+		t.Fatalf("entry 2 survived compaction: %+v", got)
+	}
+	return log
+}
+
+func TestReplayRefusedPassReachesRowsCompactedPastTheTarget(t *testing.T) {
+	_, shared, local := openSplit(t)
+	log := compactedLog(t)
+	if err := shared.SetImportMark("m1", 6); err != nil {
+		t.Fatalf("set import mark: %v", err)
+	}
+	drop := synclog.Drop{Origin: "m1", Seq: 1 + 4*synclog.DefaultBatchSize, Reason: "err"}.String()
+	body, _ := json.Marshal(Trouble{Dropped: []string{drop}})
+	if err := local.KVPut(KeyTrouble, body); err != nil {
+		t.Fatalf("write trouble: %v", err)
+	}
+
+	if err := ReplayRefusedPass(shared, local, log); err != nil {
+		t.Fatalf("ReplayRefusedPass: %v", err)
+	}
+	res, err := synclog.NewImporter(shared, log.OnLog(shared.Origin())).Import()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(res.Held) != 0 || len(res.Gaps) != 0 {
+		t.Fatalf("held = %+v, gaps = %+v, want none", res.Held, res.Gaps)
+	}
+	for _, id := range []string{"b1", "b2", "b3"} {
+		if _, found, err := shared.ResolveOwner("binding", fmt.Sprintf(`[%q]`, id)); err != nil || !found {
+			t.Fatalf("binding %s not replayed (found=%v, err=%v)", id, found, err)
+		}
+	}
+}
+
+func TestReplayRefusedPassRunsAgainForAnOlderGeneration(t *testing.T) {
+	_, shared, local := openSplit(t)
+	log := compactedLog(t)
+	if err := shared.SetImportMark("m1", 6); err != nil {
+		t.Fatalf("set import mark: %v", err)
+	}
+	drop := synclog.Drop{Origin: "m1", Seq: 1 + 4*synclog.DefaultBatchSize, Reason: "err"}.String()
+	body, _ := json.Marshal(Trouble{Dropped: []string{drop}})
+	if err := local.KVPut(KeyTrouble, body); err != nil {
+		t.Fatalf("write trouble: %v", err)
+	}
+	if err := local.KVPut(KeyReplayRefused, []byte(`"1"`)); err != nil {
+		t.Fatalf("write old marker: %v", err)
+	}
+
+	if err := ReplayRefusedPass(shared, local, log); err != nil {
+		t.Fatalf("ReplayRefusedPass: %v", err)
+	}
+	if mark, _, err := shared.ImportMark("m1"); err != nil || mark != 1 {
+		t.Fatalf("mark = %d (err %v), want 1: an older generation runs the pass again", mark, err)
 	}
 }
