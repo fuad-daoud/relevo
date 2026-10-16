@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -111,11 +112,13 @@ func spawnDetachedDaemon() error {
 
 // The stop seams: a test replaces them, so no test ever signals a process or
 // opens a real daemon lock. daemonStopRunning defaults to the daemon lock over
-// the default root, which is what tells a started daemon from a dead one.
+// the default root, which is what tells a started daemon from a dead one, and
+// daemonStopInfo to the running daemon's socket.
 var (
 	daemonStopSignal  = func(pid int) error { return syscall.Kill(pid, syscall.SIGTERM) }
 	daemonStopRunning = func(root string) (bool, error) { return store.New(root).DaemonRunning() }
 	daemonStopSleep   = time.Sleep
+	daemonStopInfo    = ownerDaemonInfo
 )
 
 const (
@@ -126,8 +129,8 @@ const (
 	daemonStopPoll = 50 * time.Millisecond
 )
 
-// daemonStop stops the daemon this CLI started: the one recorded in this root's
-// daemon.json and holding the daemon lock. It sends SIGTERM to the recorded pid
+// daemonStop stops the daemon this CLI started: the one holding the daemon lock
+// and recorded in the database it owns. It sends SIGTERM to the recorded pid
 // and waits, bounded, for the lock to clear. A service-managed daemon is
 // refused, so the stop never fights the service manager's restart policy, and
 // there is no SIGKILL and no escalation.
@@ -143,14 +146,9 @@ func daemonStop() error {
 	if err != nil {
 		return err
 	}
-	info, ok, err := store.New(root).ReadDaemonInfo()
-	if err != nil {
-		return err
-	}
-	if !ok {
-		fmt.Println("no daemon is running")
-		return nil
-	}
+	// The lock comes first: a running daemon owns relevo.db, so its record can
+	// only be read through the daemon, and with no daemon there is no record
+	// worth opening the database for.
 	running, err := daemonStopRunning(root)
 	if err != nil {
 		return err
@@ -158,6 +156,13 @@ func daemonStop() error {
 	if !running {
 		fmt.Println("no daemon is running")
 		return nil
+	}
+	info, ok, err := daemonStopInfo(root)
+	if err != nil {
+		return failWrap(codeNotAvailable, err, "relevo daemon: a daemon holds the lock but its record could not be read")
+	}
+	if !ok {
+		return fail(codeNotAvailable, "relevo daemon: a daemon holds the lock in %s but recorded no pid; it predates the record, so stop it by its pid", root)
 	}
 
 	if err := daemonStopSignal(info.PID); err != nil {
@@ -185,4 +190,15 @@ func daemonStop() error {
 		daemonStopSleep(daemonStopPoll)
 	}
 	return fmt.Errorf("relevo daemon: pid %d did not stop within %s", info.PID, daemonStopBound)
+}
+
+// ownerDaemonInfo reads the daemon's record through the daemon's own socket.
+// The dial never starts a daemon, so a stop cannot bring one up.
+func ownerDaemonInfo(root string) (store.DaemonInfo, bool, error) {
+	d, err := dialOwner(context.Background(), root, verbDialBudget)
+	if err != nil {
+		return store.DaemonInfo{}, false, err
+	}
+	defer func() { _ = d.Close() }()
+	return store.NewShared(root, "", d).ReadDaemonInfo()
 }
