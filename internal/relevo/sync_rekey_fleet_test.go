@@ -34,7 +34,9 @@ var (
 // under the origin its own file chose.
 func newFleetMachine(t *testing.T, log *synclog.MemTransport) *cfgMachine {
 	t.Helper()
-	return newCfgMachine(t, log, nil, true)
+	m := newCfgMachine(t, log, nil, true)
+	m.runner.Timeout = 10 * time.Second
+	return m
 }
 
 // transport is the log view this machine appends and reads under.
