@@ -487,6 +487,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 	// The baseline snapshot adds git objects, so it stays out of the
 	// read-only preflight and is taken here, before the lock.
 	baseline, baselineHead := capture.Baseline(ctx, captureDeps(rt), pf.b)
+	repoBaseline := escapeRepoBaseline(ctx, rt, pf.b, baseline)
 	hintRound := pf.b.Round
 
 	// spawned is the process startRound launched, if any: the deferred
@@ -692,6 +693,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		driftLineOut = driftLine
 		b.RoundBaselineTree = baseline
 		b.RoundBaselineHead = baselineHead
+		b.RoundRepoBaselineTree = repoBaseline
 		b.RoundClosedTree = ""
 		if deferred {
 			b.QueuedAt = rt.Now().UTC()
