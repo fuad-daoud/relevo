@@ -199,6 +199,166 @@ func encodeKeyValue(value []byte) string {
 	return base64.StdEncoding.EncodeToString(value)
 }
 
+// epochCutPrefix prefixes the meta row holding one origin's cut, named for the
+// origin it fences.
+const epochCutPrefix = "epoch_cut."
+
+// KeyRekey rotates the log's key to the epoch the spec names: a fresh pull, one
+// transaction that verifies the caller's cuts against the log's own heads and
+// compare-and-sets the epoch before anything is written, then a push and a
+// read-back answer. A refusal anywhere in the transaction leaves the remote as
+// it was.
+func (b *TursoBackend) KeyRekey(spec KeyRekeySpec) (KeyMeta, error) {
+	if err := b.ready(); err != nil {
+		return KeyMeta{}, err
+	}
+	ctx := context.Background()
+	// The pull is what makes the reads below this attempt's remote rather than
+	// the last one's: the heads the cuts are checked against and the epoch the
+	// CAS is set against both have to be what the remote holds now.
+	if err := b.transfer(ctx, b.driver.Pull); err != nil {
+		return KeyMeta{}, fmt.Errorf("syncworker: rekey the key: %w", markTransferRefusal(err))
+	}
+	if err := b.rekeyTx(ctx, spec); err != nil {
+		return KeyMeta{}, err
+	}
+	if err := b.transfer(ctx, b.driver.Push); err != nil {
+		return KeyMeta{}, fmt.Errorf("syncworker: push the rekey: %w", markTransferRefusal(err))
+	}
+	return b.KeyMeta()
+}
+
+// rekeyTx is the one transaction a rekey writes everything in. The heads are
+// read and the epoch is set before any row is written, so a caller whose
+// observation is stale writes nothing at all.
+func (b *TursoBackend) rekeyTx(ctx context.Context, spec KeyRekeySpec) error {
+	tx, err := b.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("syncworker: rekey the key: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	heads, err := readLogHeads(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if err := checkPredictedCuts(heads, spec.Cuts); err != nil {
+		return err
+	}
+	if err := casEpoch(ctx, tx, spec.From, spec.Key.Epoch); err != nil {
+		return err
+	}
+	if err := writeRekeyRows(ctx, tx, spec); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("syncworker: rekey the key: %w", err)
+	}
+	return nil
+}
+
+// writeRekeyRows replaces the key material with the new epoch's, stores the key
+// it replaced sealed for the machines still holding it, and writes each origin's
+// cut. Every write is a replace, because a rekey rewrites what a previous one
+// wrote rather than finding it absent.
+func writeRekeyRows(ctx context.Context, tx *sql.Tx, spec KeyRekeySpec) error {
+	rows := []struct{ key, value string }{
+		{metaKDFSaltKey, encodeKeyValue(spec.Key.Salt)},
+		{metaKDFKey, spec.Key.KDF},
+		{metaKeyCheckKey, encodeKeyValue(spec.Key.Check)},
+		{metaKeyEpochKey, strconv.Itoa(spec.Key.Epoch)},
+	}
+	for epoch, wrapped := range spec.Key.Wrapped {
+		rows = append(rows, struct{ key, value string }{
+			keyWrappedPrefix + strconv.Itoa(epoch), encodeKeyValue(wrapped)})
+	}
+	for origin, cut := range spec.Cuts {
+		rows = append(rows, struct{ key, value string }{
+			epochCutPrefix + origin,
+			fmt.Sprintf("%d %d %s", cut.Epoch, cut.Seq, encodeKeyValue(cut.Tag))})
+	}
+	for _, row := range rows {
+		if _, err := tx.ExecContext(ctx,
+			"INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", row.key, row.value); err != nil {
+			return fmt.Errorf("syncworker: rekey the key: %w", markDriverRefusal(err))
+		}
+	}
+	return nil
+}
+
+// readLogHeads is every origin's highest sequence in the log, the fact a cut is
+// predicted from and checked against.
+func readLogHeads(ctx context.Context, tx *sql.Tx) (map[string]int, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT origin, MAX(seq) FROM log GROUP BY origin")
+	if err != nil {
+		return nil, fmt.Errorf("syncworker: rekey the key: %w", markDriverRefusal(err))
+	}
+	defer func() { _ = rows.Close() }()
+	heads := make(map[string]int)
+	for rows.Next() {
+		var origin string
+		var seq sql.NullInt64
+		if err := rows.Scan(&origin, &seq); err != nil {
+			return nil, fmt.Errorf("syncworker: rekey the key: %w", err)
+		}
+		heads[origin] = int(seq.Int64)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("syncworker: rekey the key: %w", err)
+	}
+	return heads, nil
+}
+
+// checkPredictedCuts refuses a rekey whose cuts are not the log's own heads: an
+// origin whose head moved between the caller's read and this transaction, or
+// one the caller named that the log does not hold, is an observation that is no
+// longer true, and nothing of the rekey may land on it.
+func checkPredictedCuts(heads map[string]int, cuts map[string]EpochCut) error {
+	for origin, seq := range heads {
+		cut, ok := cuts[origin]
+		if !ok || cut.Seq != seq {
+			return fmt.Errorf("syncworker: rekey the key: %s's head is %d, not the %d the caller predicted",
+				origin, seq, cut.Seq)
+		}
+	}
+	for origin := range cuts {
+		if _, ok := heads[origin]; !ok {
+			return fmt.Errorf("syncworker: rekey the key: %s has no entries in the log", origin)
+		}
+	}
+	return nil
+}
+
+// casEpoch moves key_epoch from to to, or refuses. An update that moved no row
+// says the remote's epoch is not the one the caller read -- another machine
+// rekeyed first, or a caller that read a remote it was never looking at -- and
+// the class says which, because no retry with the same material can get past
+// it.
+func casEpoch(ctx context.Context, tx *sql.Tx, from, to int) error {
+	// The row is inserted at its default before the set, so an epoch-1 remote
+	// -- one that holds no row at all -- CASes from 1 the same way an older
+	// one CASes from its own row.
+	if _, err := tx.ExecContext(ctx,
+		"INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
+		metaKeyEpochKey, "1"); err != nil {
+		return fmt.Errorf("syncworker: rekey the key: %w", markDriverRefusal(err))
+	}
+	res, err := tx.ExecContext(ctx,
+		"UPDATE meta SET value = ? WHERE key = ? AND value = ?",
+		strconv.Itoa(to), metaKeyEpochKey, strconv.Itoa(from))
+	if err != nil {
+		return fmt.Errorf("syncworker: rekey the key: %w", markDriverRefusal(err))
+	}
+	moved, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("syncworker: rekey the key: %w", err)
+	}
+	if moved == 0 {
+		return MarkRefusal(CodeEpochRace, fmt.Errorf(
+			"syncworker: the remote is not at epoch %d: another machine rekeyed first", from))
+	}
+	return nil
+}
+
 // writeSignedFrom records where this origin started signing, once, in the
 // append's own transaction so the row and the entries it describes cannot
 // disagree. The value is the sequence and a tag binding it to the key; a reader
@@ -333,6 +493,34 @@ func (s *server) keyInit(req Request) Response {
 		return refuse(req, fmt.Errorf("%w: key_init with no key", ErrProtocol))
 	}
 	key, err := s.backend.KeyInit(*req.KeyMeta)
+	if err != nil {
+		return refuse(req, err)
+	}
+	return Response{ID: req.ID, OK: true, KeyMeta: &key}
+}
+
+// keyRekey rotates the log's key to the epoch the request names. A request that
+// does not hold together -- no key, no epoch it read, a target that is not the
+// next epoch after it, or a cut fencing another epoch than the one being
+// written -- is refused before the backend is reached: a rekey writes
+// everything or nothing, and a spec that does not hold together is nothing.
+func (s *server) keyRekey(req Request) Response {
+	if req.KeyMeta == nil {
+		return refuse(req, fmt.Errorf("%w: key_rekey with no key", ErrProtocol))
+	}
+	if req.Epoch < 1 {
+		return refuse(req, fmt.Errorf("%w: key_rekey with no epoch it read", ErrProtocol))
+	}
+	if req.KeyMeta.Epoch != req.Epoch+1 {
+		return refuse(req, fmt.Errorf("%w: key_rekey to epoch %d from epoch %d", ErrProtocol, req.KeyMeta.Epoch, req.Epoch))
+	}
+	for origin, cut := range req.Cuts {
+		if cut.Epoch != req.KeyMeta.Epoch {
+			return refuse(req, fmt.Errorf("%w: a cut for %s names epoch %d, not %d",
+				ErrProtocol, origin, cut.Epoch, req.KeyMeta.Epoch))
+		}
+	}
+	key, err := s.backend.KeyRekey(KeyRekeySpec{From: req.Epoch, Key: *req.KeyMeta, Cuts: req.Cuts})
 	if err != nil {
 		return refuse(req, err)
 	}

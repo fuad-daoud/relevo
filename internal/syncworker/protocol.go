@@ -17,11 +17,12 @@ import (
 // command line, so the daemon learns what its own child speaks before it sends
 // anything it would otherwise have to take back.
 //
-// Version 2 added the blob verbs and the R2 settings hello carries. A daemon on
-// version 1 and a worker on version 2 refuse each other here rather than
-// discovering it at the first put_blob, which would be after the exporter had
-// already written entries pointing at objects nobody uploaded.
-const ProtocolVersion = 2
+// Version 2 added the blob verbs and the R2 settings hello carries. Version 3
+// added key_rekey, which writes the key's new epoch beside it; a daemon on an
+// older version and a worker on this one refuse each other here rather than
+// discovering the difference at the first key_rekey, which would be after one
+// side had already answered from material the other cannot read.
+const ProtocolVersion = 3
 
 // The refusals the worker answers with rather than dying over. A request that
 // breaks one of them has a well-formed frame around it, so the reply can carry
@@ -308,6 +309,11 @@ const (
 	// not the one predicted. Nothing was written and the next attempt predicts
 	// again.
 	CodeBoundary RefusalCode = "boundary"
+	// CodeEpochRace is a key_rekey the worker refused because the remote's epoch
+	// is not the one the caller read: another machine rekeyed first. Nothing was
+	// written, and no retry with the same material can get past it -- the
+	// caller's key is an old one now.
+	CodeEpochRace RefusalCode = "epoch_race"
 )
 
 // RefusalError is an error a backend marked with the class of refusal it is, so
