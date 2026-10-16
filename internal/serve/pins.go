@@ -2,6 +2,7 @@ package serve
 
 import (
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -42,4 +43,16 @@ func pinBareRepo(bare string) func() {
 // mutex, which is what makes the prune's pin check and its row read one step.
 func pinnedLocked(bare string) bool {
 	return barePins.counts[filepath.Clean(bare)] > 0
+}
+
+// pinnedUnderLocked reports whether any pin lies under dir. The caller holds
+// barePins' mutex.
+func pinnedUnderLocked(dir string) bool {
+	prefix := filepath.Clean(dir) + string(filepath.Separator)
+	for key := range barePins.counts {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
 }

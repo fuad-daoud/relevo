@@ -243,6 +243,11 @@ func (s *Server) pruneOwnerRepos(id remote.ClientID, ownerRepoDir string, rt rel
 		pruned++
 	}
 
-	_ = os.Remove(ownerRepoDir)
+	// A pin may name a repo not created yet: InitBare makes the owner dir
+	// first and runs git init inside it, so removing that dir while it is
+	// still empty would fail the bind the pin protects.
+	if !pinnedUnderLocked(ownerRepoDir) {
+		_ = os.Remove(ownerRepoDir)
+	}
 	return pruned
 }
