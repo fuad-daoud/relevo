@@ -696,8 +696,8 @@ func TestSecretNamesStillListNamesOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SecretNames: %v", err)
 	}
-	if len(names) != 2 { // typesafe and the sync key
-		t.Fatalf("names = %v, want typesafe and the sync key", names)
+	if len(names) != 3 { // typesafe, the sync key, and the epoch row beside it
+		t.Fatalf("names = %v, want typesafe, the sync key and its epoch row", names)
 	}
 	for _, name := range names {
 		if strings.Contains(name, string(canarySecret)) {
