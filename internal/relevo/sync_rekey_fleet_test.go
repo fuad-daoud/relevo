@@ -11,6 +11,8 @@ package relevo
 import (
 	"context"
 	"crypto/rand"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -317,5 +319,263 @@ func rekeyOnTheLogOnly(t *testing.T, m *cfgMachine, newPass []byte) {
 		Cuts: cuts,
 	}); err != nil {
 		t.Fatalf("KeyRekey: %v", err)
+	}
+}
+
+// forgeOldKeyEntry appends one entry for origin, signed under the old key,
+// simulating a token holder with a leaked old passphrase appending a forgery.
+func forgeOldKeyEntry(t *testing.T, log *synclog.MemTransport, origin string, key []byte) {
+	t.Helper()
+	e, err := synclog.NewUpsert(origin, "binding", `["forged"]`, 1,
+		[]byte(`{"id":"forged","name":"forged","cwd":"/f","builder_mode":"local","created_at":"t","ingest_source":"manual"}`),
+		time.Unix(0, 0).UTC())
+	if err != nil {
+		t.Fatalf("build the forged entry: %v", err)
+	}
+	e.MAC = synclog.EntryMAC(key, e)
+	if _, err := log.OnLog(origin).Append([]synclog.Entry{e}); err != nil {
+		t.Fatalf("append the forged entry: %v", err)
+	}
+}
+
+// TestOldKeyForgeryAboveRekeyCutIsRefusedEvenWhenOriginKeepsWriting pins that
+// an origin continuing to write on a rekeyed fleet does not extend its cut, so
+// an interleaved old-key forgery stays refused above the cut and the forgery
+// window does not stay open.
+func TestOldKeyForgeryAboveRekeyCutIsRefusedEvenWhenOriginKeepsWriting(t *testing.T) {
+	t.Parallel()
+	log := synclog.NewMemTransport("x")
+	a := newFleetMachine(t, log)
+	b := newFleetMachine(t, log)
+	a.unlock(t, fleetPass, true)
+	b.unlock(t, fleetPass, false)
+
+	a.setSecret(t, config.SecretTypesafe, "honest before rekey")
+	a.attempt(t)
+	b.attempt(t)
+
+	// Rekey to epoch 2. Both machines unlock at epoch 2.
+	a.rekey(t, fleetPass, fleetPassNew)
+	b.unlock(t, fleetPassNew, false)
+
+	ringA, ok, err := relevosync.ReadKeyring(a.local)
+	if err != nil || !ok {
+		t.Fatalf("ReadKeyring: %v", err)
+	}
+	oldKey := ringA.Keys[1]
+
+	// The token holder with leaked old key appends a forged entry under A's origin.
+	forgeOldKeyEntry(t, log, a.mdb.Origin(), oldKey)
+
+	// A exports again under the new key and runs several further attempts.
+	a.setSecret(t, config.SecretTypesafe, "honest after rekey")
+	a.attempt(t)
+	a.attempt(t)
+	a.attempt(t)
+
+	// Reader B runs an attempt.
+	res := b.attemptOut(t)
+
+	// Readers applied A's entries below the forgery:
+	if got := b.secret(t, config.SecretTypesafe); got != "honest before rekey" {
+		t.Errorf("B secret = %q, want honest before rekey", got)
+	}
+
+	// Reader B holds A at the forgery with the bad-signature sentence.
+	if len(res.Trouble.Held) == 0 || !strings.Contains(res.Trouble.Held[0], "has a bad signature") {
+		t.Errorf("trouble = %v, want bad signature refusal", res.Trouble.Held)
+	}
+
+	// The forged entry was never applied.
+	if _, ok, err := b.mdb.Binding("forged"); err != nil || ok {
+		t.Fatalf("Binding(forged) = (ok %v, err %v), want not applied", ok, err)
+	}
+}
+
+// TestStaleOriginRecoveryAppliesPreUnlockTailAndRefusesPostUnlockForgery pins that
+// an origin that appended before discovering the rekey has its pre-unlock tail
+// applied after unlock, while a forgery added after unlock stays refused.
+func TestStaleOriginRecoveryAppliesPreUnlockTailAndRefusesPostUnlockForgery(t *testing.T) {
+	t.Parallel()
+	log := synclog.NewMemTransport("x")
+	a := newFleetMachine(t, log)
+	b := newFleetMachine(t, log)
+	c := newFleetMachine(t, log)
+	a.unlock(t, fleetPass, true)
+	b.unlock(t, fleetPass, false)
+	c.unlock(t, fleetPass, false)
+
+	// All sync initial state at epoch 1.
+	a.setSecret(t, config.SecretTypesafe, "v1")
+	a.attempt(t)
+	b.attempt(t)
+	c.attempt(t)
+
+	// B writes a secret under the old key (the pre-unlock tail).
+	b.setSecret(t, config.SecretTypesafe, "b-pre-unlock")
+	ringB, ok, err := relevosync.ReadKeyring(b.local)
+	if err != nil || !ok {
+		t.Fatalf("ReadKeyring: %v", err)
+	}
+	oldKey := ringB.Keys[1]
+	exp := synclog.NewExporter(b.mdb, b.transport())
+	exp.SetKey(oldKey)
+	relevosync.BindDocs(exp, b.mdb)
+	if _, err := exp.Export(); err != nil {
+		t.Fatalf("B export under old key: %v", err)
+	}
+
+	// Now A rekeys the fleet to epoch 2.
+	a.rekey(t, fleetPass, fleetPassNew)
+	c.unlock(t, fleetPassNew, false)
+
+	// B unlocks with the new passphrase.
+	// B was stale, so unlock records SyncVouchTarget and runs PublishOwnCut up to the vouch target.
+	b.unlock(t, fleetPassNew, false)
+
+	// Reader C attempts: B's pre-unlock tail is applied!
+	c.attemptOut(t)
+	if got := c.secret(t, config.SecretTypesafe); got != "b-pre-unlock" {
+		t.Fatalf("C holds %q, want B's pre-unlock tail %q", got, "b-pre-unlock")
+	}
+
+	// Now the token holder adds an old-key entry AFTER B's unlock.
+	forgeOldKeyEntry(t, log, b.mdb.Origin(), oldKey)
+
+	// B appends more entries under the new key and attempts.
+	b.setSecret(t, config.SecretTypesafe, "b-post-unlock")
+	b.attempt(t)
+	b.attempt(t)
+
+	// Reader C attempts again: the post-unlock old-key entry stays refused.
+	res := c.attemptOut(t)
+	if len(res.Trouble.Held) == 0 || !strings.Contains(res.Trouble.Held[0], "has a bad signature") {
+		t.Errorf("trouble = %v, want bad signature refusal for post-unlock old-key entry", res.Trouble.Held)
+	}
+	if _, ok, err := c.mdb.Binding("forged"); err != nil || ok {
+		t.Fatalf("Binding(forged) = (ok %v, err %v), want post-unlock forgery not applied", ok, err)
+	}
+}
+
+// failCutTransport wraps LogTransport and fails PublishEpochCut when fail is true.
+type failCutTransport struct {
+	synclog.LogTransport
+	fail bool
+}
+
+func (f *failCutTransport) PublishEpochCut(ctx context.Context, cut synclog.EpochCut) error {
+	if f.fail {
+		return errors.New("network failure on cut publish")
+	}
+	return f.LogTransport.PublishEpochCut(ctx, cut)
+}
+
+// TestFailedExtensionPublishIsRetriedUpToTargetNotBeyond pins that a failed
+// vouch publish is retried on the next steady attempt, published up to the target
+// and not beyond it even if live head grew.
+func TestFailedExtensionPublishIsRetriedUpToTargetNotBeyond(t *testing.T) {
+	t.Parallel()
+	log := synclog.NewMemTransport("x")
+	a := newFleetMachine(t, log)
+	b := newFleetMachine(t, log)
+	a.unlock(t, fleetPass, true)
+	b.unlock(t, fleetPass, false)
+
+	a.setSecret(t, config.SecretTypesafe, "v1")
+	a.attempt(t)
+	b.attempt(t)
+
+	// B writes and exports under old key.
+	b.setSecret(t, config.SecretTypesafe, "b-vouch-target")
+	ringB, ok, err := relevosync.ReadKeyring(b.local)
+	if err != nil || !ok {
+		t.Fatalf("ReadKeyring: %v", err)
+	}
+	oldKey := ringB.Keys[1]
+	exp := synclog.NewExporter(b.mdb, b.transport())
+	exp.SetKey(oldKey)
+	relevosync.BindDocs(exp, b.mdb)
+	if _, err := exp.Export(); err != nil {
+		t.Fatalf("export under old key: %v", err)
+	}
+	targetHead, ok, err := synclog.OwnHead(b.local)
+	if err != nil || !ok {
+		t.Fatalf("own head = (%d, %v, %v)", targetHead, ok, err)
+	}
+
+	// A rekeys the fleet to epoch 2.
+	a.rekey(t, fleetPass, fleetPassNew)
+
+	// Wrap B's transport so PublishEpochCut fails.
+	failingTransport := &failCutTransport{LogTransport: b.transport(), fail: true}
+	if _, err := relevosync.Unlock(context.Background(), b.local, failingTransport, fleetPassNew, false, rand.Reader); err != nil {
+		t.Fatalf("unlock: %v", err)
+	}
+	relevosync.PublishOwnCut(context.Background(), b.mdb, b.local, failingTransport)
+
+	// Verify SyncVouchTarget is still in b.local.
+	if _, ok, err := b.local.KVGet(relevosync.SyncVouchTarget); err != nil || !ok {
+		t.Fatalf("SyncVouchTarget not present in local after failed publish: %v", err)
+	}
+
+	// B appends more entries under the new key, advancing B's live own head beyond targetHead.
+	b.setSecret(t, config.SecretTypesafe, "b-post-tail-honest")
+	ringB2, _, _ := relevosync.ReadKeyring(b.local)
+	newKey := ringB2.Keys[2]
+	exp2 := synclog.NewExporter(b.mdb, b.transport())
+	exp2.SetKey(newKey)
+	relevosync.BindDocs(exp2, b.mdb)
+	if _, err := exp2.Export(); err != nil {
+		t.Fatalf("export under new key: %v", err)
+	}
+	liveHead, ok, err := synclog.OwnHead(b.local)
+	if err != nil || !ok || liveHead <= targetHead {
+		t.Fatalf("live head = %d, want > targetHead %d", liveHead, targetHead)
+	}
+
+	// B's next steady attempt retries PublishOwnCut on healthy transport.
+	b.attemptOut(t)
+
+	// Verify the cut on the log: Seq == targetHead, NOT liveHead.
+	state, err := log.ReadMarks()
+	if err != nil {
+		t.Fatalf("ReadMarks: %v", err)
+	}
+	cut := state.EpochCuts[b.mdb.Origin()]
+	if cut.Epoch != 2 || cut.Seq != targetHead {
+		t.Fatalf("cut for B = %+v, want Epoch 2 and Seq = %d (targetHead, not liveHead %d)", cut, targetHead, liveHead)
+	}
+
+	// Verify SyncVouchTarget is now cleared.
+	if _, ok, err := b.local.KVGet(relevosync.SyncVouchTarget); err != nil || ok {
+		t.Fatalf("SyncVouchTarget still present in local after successful retry: %v", err)
+	}
+}
+
+// TestEpoch1FleetSteadyAttemptsWriteNoEpochCutRows pins that an epoch-1 fleet
+// never publishes own cuts or epoch_cut.* rows.
+func TestEpoch1FleetSteadyAttemptsWriteNoEpochCutRows(t *testing.T) {
+	t.Parallel()
+	log := synclog.NewMemTransport("x")
+	a := newFleetMachine(t, log)
+	b := newFleetMachine(t, log)
+	a.unlock(t, fleetPass, true)
+	b.unlock(t, fleetPass, false)
+
+	for i := 0; i < 3; i++ {
+		a.setSecret(t, config.SecretTypesafe, "a-val")
+		a.attempt(t)
+		b.attempt(t)
+		b.setSecret(t, config.SecretTypesafe, "b-val")
+		b.attempt(t)
+		a.attempt(t)
+	}
+
+	state, err := log.ReadMarks()
+	if err != nil {
+		t.Fatalf("ReadMarks: %v", err)
+	}
+	if len(state.EpochCuts) != 0 {
+		t.Fatalf("an epoch-1 fleet wrote epoch cuts = %+v, want none", state.EpochCuts)
 	}
 }

@@ -60,12 +60,25 @@ func Unlock(ctx context.Context, local Local, transport synclog.LogTransport, pa
 	if err != nil {
 		return false, fmt.Errorf("sync: unlock: %w", err)
 	}
+	oldRing, hadRing, err := ReadKeyring(local)
+	if err != nil {
+		return false, fmt.Errorf("sync: unlock: read existing keyring: %w", err)
+	}
 	now := time.Now()
 	if err := SetKeys(local, ring, now); err != nil {
 		return false, err
 	}
 	if err := local.KVPut(KeyRemoteKDF, []byte("1")); err != nil {
 		return false, fmt.Errorf("sync: unlock: %w", err)
+	}
+	if hadRing && ring.Epoch > oldRing.Epoch {
+		if head, ok, err := synclog.OwnHead(local); err == nil && ok {
+			if err := local.KVPut(SyncVouchTarget, []byte(strconv.Itoa(head))); err != nil {
+				return false, fmt.Errorf("sync: unlock: record the vouch target: %w", err)
+			}
+		}
+	} else {
+		_ = local.KVDelete(SyncVouchTarget)
 	}
 	return created, nil
 }

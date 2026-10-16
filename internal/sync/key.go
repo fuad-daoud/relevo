@@ -28,6 +28,10 @@ const KeyRemoteKDF = "sync.remote_kdf"
 // could not.
 const SyncRemoteEpoch = "sync.remote_epoch"
 
+// SyncVouchTarget is the machine-local kv fact naming the sequence up to which
+// this origin vouches for the tail it appended before learning of a rekey.
+const SyncVouchTarget = "sync.vouch_target"
+
 // SecretKeyEpoch is the secret-table row naming the newest epoch this machine
 // holds. It sits in the secret table beside the key rather than in the kv facts
 // because a caller holding only the secret table -- a document opening an

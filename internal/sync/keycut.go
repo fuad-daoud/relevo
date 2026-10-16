@@ -1,8 +1,10 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
+	"strconv"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/synclog"
@@ -13,32 +15,29 @@ import (
 // after every append its transport confirmed; the vouch is forward only and
 // the log's own head bounds it from above.
 
-// PublishOwnCut extends this origin's cut to sync.own_head.v1, when that head
-// is above the cut this machine's record holds.
+// PublishOwnCut extends this origin's cut to the vouch target recorded
+// when the machine unlocked from being stale. It publishes at most up to that
+// target (never the live own head), and only while this origin's record is below
+// it; once the record reaches the target, the target fact is cleared.
 //
-// It runs on the unlock -- the act that stores the new keyring and with it the
-// right to tag under the newest key -- and on every steady attempt whose own
-// head has grown past the fence, which is what keeps a machine unlocked at an
-// old cut from re-fencing its own fresh appends every tick. The record it
-// reads is the machine-local one the import raised from every verified
-// remote row, so the extension only ever raises, and a failed write leaves
-// the fence where it stood: the next attempt repeats the vouch.
+// A machine that was never stale, or a fleet at epoch 1, records no vouch
+// target and publishes no extension. The steady-path call stays only as the
+// retry of a vouch whose publish previously failed.
 func PublishOwnCut(ctx context.Context, shared *db.DB, kv db.KV, t synclog.LogTransport) {
-	if shared == nil || t == nil {
+	if shared == nil || t == nil || kv == nil {
 		return
 	}
-	origin := shared.Origin()
+	target, ok, err := vouchTarget(kv)
+	if err != nil {
+		slog.Warn("sync: read the vouch target for the own cut", "err", err)
+		return
+	}
+	if !ok || target <= 0 {
+		return
+	}
 	ring, ok, err := heldKeyring(kv)
 	if err != nil {
 		slog.Warn("sync: read the keyring for the own cut", "err", err)
-		return
-	}
-	if !ok {
-		return
-	}
-	head, ok, err := synclog.OwnHead(shared.LocalOrSelf())
-	if err != nil {
-		slog.Warn("sync: read the own-head fact for the own cut", "err", err)
 		return
 	}
 	if !ok {
@@ -49,14 +48,18 @@ func PublishOwnCut(ctx context.Context, shared *db.DB, kv db.KV, t synclog.LogTr
 		slog.Warn("sync: read the epoch cuts for the own cut", "err", err)
 		return
 	}
+	origin := shared.Origin()
 	record, recorded := records[origin]
-	if recorded && (ring.Epoch < record.Epoch || (ring.Epoch == record.Epoch && head <= record.Seq)) {
+	if recorded && (ring.Epoch < record.Epoch || (ring.Epoch == record.Epoch && record.Seq >= target)) {
+		if err := kv.KVDelete(SyncVouchTarget); err != nil {
+			slog.Warn("sync: clear the vouch target", "err", err)
+		}
 		return
 	}
 	cut := synclog.EpochCut{
 		Epoch: ring.Epoch,
-		Seq:   head,
-		Tag:   synclog.EpochCutTag(ring.Keys[ring.Epoch], origin, ring.Epoch, head),
+		Seq:   target,
+		Tag:   synclog.EpochCutTag(ring.Keys[ring.Epoch], origin, ring.Epoch, target),
 	}
 	if err := t.PublishEpochCut(ctx, cut); err != nil {
 		slog.Warn("sync: publish the own cut extension", "err", err)
@@ -64,7 +67,26 @@ func PublishOwnCut(ctx context.Context, shared *db.DB, kv db.KV, t synclog.LogTr
 	}
 	if err := shared.RaiseEpochCut(origin, cut.Epoch, cut.Seq); err != nil {
 		slog.Warn("sync: record the own cut extension", "err", err)
+		return
 	}
+	if err := kv.KVDelete(SyncVouchTarget); err != nil {
+		slog.Warn("sync: clear the vouch target", "err", err)
+	}
+}
+
+// vouchTarget reads the sequence up to which this origin vouches for its
+// pre-unlock tail, recorded at unlock when the machine recovered from being
+// stale.
+func vouchTarget(kv db.KV) (int, bool, error) {
+	value, ok, err := kv.KVGet(SyncVouchTarget)
+	if err != nil || !ok {
+		return 0, false, err
+	}
+	target, err := strconv.Atoi(string(bytes.TrimSpace(value)))
+	if err != nil || target < 1 {
+		return 0, false, nil
+	}
+	return target, true, nil
 }
 
 // BindVerifier sets an importer's verification to the machine's stored
