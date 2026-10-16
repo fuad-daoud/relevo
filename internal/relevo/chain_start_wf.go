@@ -354,6 +354,24 @@ func chainSingleCheckCommand(def workflow.Definition) string {
 	return ""
 }
 
+// chainCheckReport is the check a chain's start line names: the commands its
+// check steps run, local or placed, with where the command came from. A
+// member's own gate is no guide, since a local writer carries none.
+func chainCheckReport(def workflow.Definition, res GateResolution, params map[string]string) (string, string) {
+	cmds := chainCheckCommands(def)
+	switch {
+	case len(cmds) == 0:
+		return "", ""
+	case len(cmds) > 1:
+		return strings.Join(cmds, "; "), "workflow"
+	case params["gate"] == cmds[0]:
+		return cmds[0], "--param gate"
+	case res.Command == cmds[0]:
+		return cmds[0], res.Source
+	}
+	return cmds[0], "workflow"
+}
+
 // chainPreparedWorkflow holds the artifacts of a prepared workflow start before
 // database persistence.
 type chainPreparedWorkflow struct {
@@ -522,7 +540,8 @@ func chainPersistAndStartWorkflow(ctx context.Context, rt Runtime, tx *store.Tx,
 	if current, cerr := tx.Chain(prep.opts.Name); cerr == nil {
 		row = current
 	}
-	return ChainResult{Chain: row, Members: stored, Plans: len(prep.plan.bodies), Check: prep.gate, CheckSource: prep.plan.gateRes.Source}, nil
+	check, source := chainCheckReport(prep.plan.def, prep.plan.gateRes, prep.opts.Params)
+	return ChainResult{Chain: row, Members: stored, Plans: len(prep.plan.bodies), Check: check, CheckSource: source}, nil
 }
 
 // chainCreateWorkflow is the half of a workflow start that creates things.
