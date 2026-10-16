@@ -132,6 +132,11 @@ These are the destination for the second, local-only database file.
   installation's entries, one row per origin. It is progress rather than
   history, so it carries no trigger and stays here; two machines sharing a
   mark would each believe the other had applied the entries between them.
+- `sync_epoch_cut`: the highest epoch cut this machine has verified for each
+  origin, one row per origin. Like `sync_signed_from`, it records what this
+  machine has checked, so it stays here; another installation sharing the
+  table would take this machine's verification on as its own, and a cut is
+  exactly the fact a remote that lost its key must not be able to hand over.
 - the installation file, `<state root>/installation.json`: this installation's
   id, label and creation stamp.
 
