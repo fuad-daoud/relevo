@@ -210,7 +210,7 @@ func TestBoardRefusesAConflictWhenTheFileIsHeldAndNoOwnerAnswers(t *testing.T) {
 	}
 	failReadOnlyWithLock(t)
 
-	want := filepath.Join(root, "relevo", "relevo.db") + ".lock"
+	want := machineDBPath() + ".lock"
 	ce := requireCLIError(t, cmdBoard([]string{"--theme", "x"}), codeConflict, "")
 	if !strings.Contains(ce.message, want) {
 		t.Errorf("refusal %q does not name the held file %q", ce.message, want)
