@@ -38,7 +38,7 @@ func secretStore(t *testing.T) *Store {
 
 func sealedFor(t *testing.T, name string, plain []byte) json.RawMessage {
 	t.Helper()
-	env, err := sync.SealSecret([]byte(secretDocKey), name, plain)
+	env, err := sync.SealSecret(sync.Keyring{Epoch: 1, Keys: map[int][]byte{1: []byte(secretDocKey)}}, name, plain)
 	if err != nil {
 		t.Fatalf("SealSecret(%s): %v", name, err)
 	}

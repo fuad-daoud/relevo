@@ -96,11 +96,15 @@ var ErrNoKey = errors.New("sync: this machine holds no sync key")
 // caller can tell a value it must not read from a store it could not reach.
 var ErrSecretEnvelope = errors.New("sync: not a sealed secret this build reads")
 
-// secretEnvelopeVersion is the only envelope this build reads. A later step adds
-// a key epoch to the envelope itself rather than a field to this shape, so a
-// peer on that step fails closed here instead of decrypting under an epoch this
-// machine does not have.
-const secretEnvelopeVersion = 1
+// The envelope versions this build reads. Version 1 is the shape every machine
+// before the first rekey wrote and reads: no epoch field, sealed under the one
+// key there is. Version 2 is the same shape with the epoch it was sealed under
+// named, and it is what every machine from epoch 2 on seals with -- so an
+// upgrade alone writes nothing new, and only a rekey changes the bytes.
+const (
+	secretEnvelopeVersion  = 1
+	secretEnvelopeVersion2 = 2
+)
 
 // SecretEnvelopeMax is the largest sealed secret that crosses the log, measured
 // in bytes of the encoded envelope. The largest value a legitimate secret
@@ -176,8 +180,10 @@ func SecretSubkey(key []byte) ([]byte, error) {
 
 // sealSecret seals value with the secret's own name as the associated data, so
 // a ciphertext that arrives under another name fails to authenticate rather
-// than being read as that other secret.
-func sealSecret(subkey []byte, name string, value []byte) (json.RawMessage, error) {
+// than being read as that other secret. The epoch decides the envelope: one
+// seals v1 exactly as every machine before the first rekey did, and anything
+// above one seals v2 naming its epoch.
+func sealSecret(epoch int, subkey []byte, name string, value []byte) (json.RawMessage, error) {
 	nonce, err := sealNonce(subkey, name, value)
 	if err != nil {
 		return nil, err
@@ -186,15 +192,20 @@ func sealSecret(subkey []byte, name string, value []byte) (json.RawMessage, erro
 	if err != nil {
 		return nil, fmt.Errorf("secrets %s: open the cipher: %w: %w", name, err, db.ErrInvalid)
 	}
-	env, err := json.Marshal(secretEnvelope{
-		V: secretEnvelopeVersion,
+	env := secretEnvelope{
 		N: base64.RawURLEncoding.EncodeToString(nonce),
 		C: base64.RawURLEncoding.EncodeToString(aead.Seal(nil, nonce, value, []byte(name))),
-	})
+	}
+	if epoch > 1 {
+		env.V, env.E = secretEnvelopeVersion2, epoch
+	} else {
+		env.V = secretEnvelopeVersion
+	}
+	raw, err := json.Marshal(env)
 	if err != nil {
 		return nil, fmt.Errorf("secrets %s: encode the envelope: %w: %w", name, err, db.ErrInvalid)
 	}
-	return env, nil
+	return raw, nil
 }
 
 // sealNonce derives the sealing nonce from what the envelope is of: HMAC-SHA256
@@ -237,20 +248,26 @@ func sealNonceKey(subkey []byte, name string) ([]byte, error) {
 	return key, nil
 }
 
-// SealSecret seals one allow-listed secret value under the sync key and returns
-// the envelope as the document's JSON value. A value that does not fit the cap
+// SealSecret seals one allow-listed secret value under the newest epoch's key
+// of the keyring given, and returns the envelope as the document's JSON value.
+// An epoch-1 ring seals v1, byte-identical to what every earlier build wrote;
+// anything newer seals v2 naming its epoch. A value that does not fit the cap
 // is refused rather than sent, on the same rule as an unreadable ledger: the
-// caller keeps its signal and reports, and a peer never has to read a shape this
-// build would have to truncate to accept.
-func SealSecret(key []byte, name string, value []byte) (json.RawMessage, error) {
+// caller keeps its signal and reports, and a peer never has to read a shape
+// this build would have to truncate to accept.
+func SealSecret(ring Keyring, name string, value []byte) (json.RawMessage, error) {
 	if !AllowSecret(name) {
 		return nil, secretNameRefusal(name)
+	}
+	epoch, key, err := ring.sealingKey()
+	if err != nil {
+		return nil, err
 	}
 	sub, err := SecretSubkey(key)
 	if err != nil {
 		return nil, err
 	}
-	env, err := sealSecret(sub, name, value)
+	env, err := sealSecret(epoch, sub, name, value)
 	if err != nil {
 		return nil, err
 	}
@@ -261,16 +278,36 @@ func SealSecret(key []byte, name string, value []byte) (json.RawMessage, error) 
 	return env, nil
 }
 
-// OpenSecret reads one sealed secret back under its own name. Every refusal
-// here happens before a single plaintext byte is produced, and none of them
-// formats the ciphertext: a refusal is read by whoever holds the log.
-func OpenSecret(key []byte, name string, raw json.RawMessage) ([]byte, error) {
+// sealingKey is the epoch and the key a seal runs under: the newest the ring
+// holds, validated so a ring that names no key it holds never seals at all.
+func (r Keyring) sealingKey() (int, []byte, error) {
+	key, err := r.newest()
+	if err != nil {
+		return 0, nil, err
+	}
+	return r.Epoch, key, nil
+}
+
+// OpenSecret reads one sealed secret back under its own name. Version 1 opens
+// under the epoch-1 key -- the only key the shape names -- and version 2 under
+// the key of the epoch its `e` names, which the ring must hold: an envelope
+// sealed under an epoch this machine does not hold is refused, never opened
+// under a key that happens to be nearest. Every refusal here happens before a
+// single plaintext byte is produced, and none of them formats the ciphertext:
+// a refusal is read by whoever holds the log.
+func OpenSecret(ring Keyring, name string, raw json.RawMessage) ([]byte, error) {
 	if !AllowSecret(name) {
 		return nil, secretNameRefusal(name)
 	}
 	env, err := readSecretEnvelope(name, raw)
 	if err != nil {
 		return nil, err
+	}
+	epoch := env.Epoch()
+	key := ring.Keys[epoch]
+	if len(key) == 0 {
+		return nil, fmt.Errorf("secrets %s: envelope names epoch %d, which this machine does not hold: %w",
+			name, epoch, ErrSecretEnvelope)
 	}
 	sub, err := SecretSubkey(key)
 	if err != nil {
@@ -296,14 +333,26 @@ func OpenSecret(key []byte, name string, raw json.RawMessage) ([]byte, error) {
 	return out, nil
 }
 
-// secretEnvelope is the one shape a sealed secret travels in. The version is a
+// secretEnvelope is the shape a sealed secret travels in. The version is a
 // field of the envelope rather than of the entry, so a reader can refuse it
 // before it opens anything and a later writer cannot reach a reader that has no
-// rule for what it wrote.
+// rule for what it wrote. Epoch is the epoch version 2 was sealed under; a
+// version-1 envelope names no epoch because it names the only one there was.
 type secretEnvelope struct {
 	V int    `json:"v"`
+	E int    `json:"e,omitempty"`
 	N string `json:"n"`
 	C string `json:"c"`
+}
+
+// Epoch is the epoch the envelope was sealed under: what its `e` names on
+// version 2, and one on version 1, which is the epoch the shape was the whole
+// of.
+func (e secretEnvelope) Epoch() int {
+	if e.V == secretEnvelopeVersion2 && e.E > 0 {
+		return e.E
+	}
+	return 1
 }
 
 // readSecretEnvelope decodes an envelope and refuses every shape this build has
@@ -311,6 +360,9 @@ type secretEnvelope struct {
 // different peer: an unknown field is a writer that added something this build
 // would ignore, an unknown version is a writer whose key rules cannot be applied
 // here at all, and a value over the cap is not a secret this document carries.
+// A version-2 envelope that names no epoch is a shape nothing sealed, so it is
+// refused here rather than read as epoch 1 -- the epoch is the version's whole
+// point.
 func readSecretEnvelope(name string, raw json.RawMessage) (secretEnvelope, error) {
 	var env secretEnvelope
 	if len(raw) == 0 {
@@ -325,16 +377,26 @@ func readSecretEnvelope(name string, raw json.RawMessage) (secretEnvelope, error
 		return env, envelopeRefusal(name, "is not a JSON object")
 	}
 	for field := range fields {
-		if field != "v" && field != "n" && field != "c" {
+		if field != "v" && field != "n" && field != "c" && field != "e" {
 			return env, envelopeRefusal(name, fmt.Sprintf("carries unknown field %q", field))
 		}
 	}
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return env, envelopeRefusal(name, "does not decode")
 	}
-	if env.V != secretEnvelopeVersion {
-		return env, fmt.Errorf("secrets %s: envelope version %d, this build reads only %d: %w",
-			name, env.V, secretEnvelopeVersion, ErrSecretEnvelope)
+	if env.V != secretEnvelopeVersion && env.V != secretEnvelopeVersion2 {
+		return env, fmt.Errorf("secrets %s: envelope version %d, this build reads %d and %d: %w",
+			name, env.V, secretEnvelopeVersion, secretEnvelopeVersion2, ErrSecretEnvelope)
+	}
+	if env.V == secretEnvelopeVersion2 && env.E < 2 {
+		return env, envelopeRefusal(name, fmt.Sprintf("names epoch %d, which is not a rekeyed epoch", env.E))
+	}
+	if env.V == secretEnvelopeVersion && fields["e"] != nil {
+		// The epoch field is version 2's and version 2's only. A version-1
+		// envelope carrying one is a writer this build would otherwise ignore
+		// the field of, and ignoring it would read the value on terms its
+		// writer did not choose.
+		return env, envelopeRefusal(name, `carries field "e" on version 1`)
 	}
 	return env, nil
 }

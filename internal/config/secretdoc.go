@@ -93,12 +93,9 @@ func (d *SecretDoc) Name() string { return Secrets }
 // stamp from the clock at export time, which is what the exporter does for any
 // key it has not exported before.
 func (d *SecretDoc) Items() (map[string]json.RawMessage, error) {
-	key, ok, err := sync.ReadKey(d.store.db)
+	ring, err := readKeyringFrom(d.store.db)
 	if err != nil {
 		return nil, err
-	}
-	if !ok {
-		return nil, fmt.Errorf("config: the %s document needs the sync key: %w", Secrets, sync.ErrNoKey)
 	}
 	names, err := d.store.SecretNames()
 	if err != nil {
@@ -119,7 +116,7 @@ func (d *SecretDoc) Items() (map[string]json.RawMessage, error) {
 		if !held {
 			continue
 		}
-		sealed, err := sync.SealSecret(key, name, item)
+		sealed, err := sync.SealSecret(ring, name, item)
 		if err != nil {
 			return nil, err
 		}
@@ -181,7 +178,11 @@ func (d *SecretDoc) check(key string, value json.RawMessage) (refusal error, err
 	// machine cannot read is refused before the transaction opens the client key
 	// path at all: a malformed PEM that landed would replace the identity this
 	// machine is enrolled under on every server.
-	plain, err := sync.OpenSecret(readKeyFrom(d.store.db), key, value)
+	ring, err := readKeyringFrom(d.store.db)
+	if err != nil {
+		return err, nil
+	}
+	plain, err := sync.OpenSecret(ring, key, value)
 	if err != nil {
 		return err, nil
 	}
@@ -202,7 +203,11 @@ func (d *SecretDoc) applyIn(t *db.Tx, key string, value json.RawMessage, label s
 	if value == nil {
 		return d.store.deleteSecretApplied(t, key, label)
 	}
-	plain, err := sync.OpenSecret(readKeyFrom(t), key, value)
+	ring, err := readKeyringFrom(t)
+	if err != nil {
+		return err
+	}
+	plain, err := sync.OpenSecret(ring, key, value)
 	if err != nil {
 		return err
 	}
@@ -353,14 +358,18 @@ func (d *SecretDoc) ItemWriteStampIn(t *db.Tx, key string) (synclog.Stamp, bool,
 	return stamp, err == nil, err
 }
 
-// readKeyFrom is the sync key as the surface that holds it reads it, for a
-// caller that must not depend on the whole database. A machine with no key
-// answers with nothing rather than an error, so the caller's own check names
-// what is missing.
-func readKeyFrom(secrets sync.SecretReader) []byte {
-	key, ok, err := sync.ReadKeyFrom(secrets)
-	if err != nil || !ok {
-		return nil
+// readKeyringFrom is the sync keyring as the surface that holds it reads it,
+// for a caller that must not depend on the whole database. A machine with no
+// key is refused with the error the document's own refusal names: a locked
+// machine holds no document at all, and every caller answers with an error
+// rather than an empty one.
+func readKeyringFrom(secrets sync.SecretReader) (sync.Keyring, error) {
+	ring, ok, err := sync.ReadKeyringFrom(secrets)
+	if err != nil {
+		return sync.Keyring{}, err
 	}
-	return key
+	if !ok {
+		return sync.Keyring{}, fmt.Errorf("config: the %s document needs the sync key: %w", Secrets, sync.ErrNoKey)
+	}
+	return ring, nil
 }

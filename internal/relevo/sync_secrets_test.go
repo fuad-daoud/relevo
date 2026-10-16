@@ -148,7 +148,7 @@ func largestSealedSecret(t *testing.T) []byte {
 		for i := range candidate {
 			candidate[i] = byte('a' + i%26)
 		}
-		if _, err := relevosync.SealSecret(cfgSyncKey, relevosync.SecretR2Secret, candidate); err == nil {
+		if _, err := relevosync.SealSecret(relevosync.Keyring{Epoch: 1, Keys: map[int][]byte{1: cfgSyncKey}}, relevosync.SecretR2Secret, candidate); err == nil {
 			return candidate
 		}
 	}
@@ -788,7 +788,7 @@ func TestAnUnreadableSecretIsDroppedWithoutTheValue(t *testing.T) {
 	a := newCfgMachine(t, log, cfgSyncKey, true)
 	b := newCfgMachine(t, log, cfgSyncKey, true)
 
-	sealed, err := relevosync.SealSecret([]byte("ffffffffffffffffffffffffffffffff"),
+	sealed, err := relevosync.SealSecret(relevosync.Keyring{Epoch: 1, Keys: map[int][]byte{1: []byte("ffffffffffffffffffffffffffffffff")}},
 		config.SecretTypesafe, []byte(canarySecret))
 	if err != nil {
 		t.Fatalf("SealSecret: %v", err)
@@ -833,7 +833,7 @@ func TestAPeerCannotSendAMachineLocalSecret(t *testing.T) {
 	// build cannot read.
 	offList := map[string]json.RawMessage{}
 	for _, name := range []string{relevosync.SecretKey, relevosync.SecretToken, "serve.tls.key", "unknown.name"} {
-		if _, err := relevosync.SealSecret(cfgSyncKey, name, []byte("a-value-a-peer-tried-to-set")); !errors.Is(err, relevosync.ErrSecretEnvelope) {
+		if _, err := relevosync.SealSecret(relevosync.Keyring{Epoch: 1, Keys: map[int][]byte{1: cfgSyncKey}}, name, []byte("a-value-a-peer-tried-to-set")); !errors.Is(err, relevosync.ErrSecretEnvelope) {
 			t.Errorf("SealSecret(%s) = %v, want the off-list refusal", name, err)
 		}
 		offList[name] = json.RawMessage(`{"v":1,"n":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","c":"AAAA"}`)

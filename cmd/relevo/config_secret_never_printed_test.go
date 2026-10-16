@@ -184,7 +184,7 @@ func TestTheSupersedingRevisionOfASecretCarriesNoValue(t *testing.T) {
 		t.Fatalf("DB: %v", err)
 	}
 	store := config.Open(d)
-	sealed, err := relevosync.SealSecret(secretFixtureKey, config.SecretTypesafe, []byte(canarySecret))
+	sealed, err := relevosync.SealSecret(relevosync.Keyring{Epoch: 1, Keys: map[int][]byte{1: secretFixtureKey}}, config.SecretTypesafe, []byte(canarySecret))
 	if err != nil {
 		t.Fatalf("SealSecret: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestAnArrivingSecretIsRecordedByNameAndOrigin(t *testing.T) {
 		t.Fatalf("DB: %v", err)
 	}
 	store := config.Open(d)
-	sealed, err := relevosync.SealSecret(secretFixtureKey, config.SecretTypesafe, []byte(canarySecret))
+	sealed, err := relevosync.SealSecret(relevosync.Keyring{Epoch: 1, Keys: map[int][]byte{1: secretFixtureKey}}, config.SecretTypesafe, []byte(canarySecret))
 	if err != nil {
 		t.Fatalf("SealSecret: %v", err)
 	}
