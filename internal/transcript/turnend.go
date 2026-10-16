@@ -51,7 +51,7 @@ func names(ts ...string) map[string]bool {
 // the first: opencode emits step_finish after EVERY step, so the first one
 // says nothing about the turn the stream ends on -- one finished step and
 // then a cut mid-reasoning stays Unclean. A resumed (nudged) session
-// appends to the same stream, so that last event is the latest turn's turn.
+// appends to the same stream, so that last event is the latest turn's.
 // Only complete lines count: a trailing partial line is the same wait every
 // drain leaves it as.
 func TurnEndState(kind string, stream []byte) TurnEnd {
