@@ -300,3 +300,23 @@ func TestServiceInstallRendersCurrentBinary(t *testing.T) {
 		t.Errorf("re-read of the installed unit = %q, %v; want current", act, err)
 	}
 }
+
+func TestServiceVerbsRefuseInsideAnEnvSandbox(t *testing.T) {
+	t.Setenv("RELEVO_SANDBOX", "sb")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	r := &fakeRunner{}
+	old := newServiceRunner
+	newServiceRunner = func() serviceunit.Runner { return r }
+	t.Cleanup(func() { newServiceRunner = old })
+
+	for _, verb := range []string{"install", "uninstall"} {
+		err := run([]string{"service", verb})
+		var ce *cliError
+		if !errors.As(err, &ce) || ce.code != codeRefused {
+			t.Errorf("service %s in a sandbox: err = %v, want refused", verb, err)
+		}
+	}
+	if len(r.calls) != 0 {
+		t.Errorf("init-system calls = %v, want none from a sandbox", r.calls)
+	}
+}

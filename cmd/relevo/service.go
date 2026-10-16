@@ -59,6 +59,18 @@ func cmdService(args []string) error {
 	}
 }
 
+// refuseInEnvSandbox keeps an env sandbox off the host's service: the sandbox
+// moves XDG paths, not systemd's user manager or launchd, so the reload and
+// restart would land on the developer's own relevo.service and put the host
+// daemon on the sandbox's untagged binary.
+func refuseInEnvSandbox(verb string) error {
+	if !inEnvSandbox() {
+		return nil
+	}
+	return fail(codeRefused, "relevo service %s: refused inside env sandbox %q; it would act on the host's %s",
+		verb, os.Getenv("RELEVO_SANDBOX"), serviceunit.ServiceName)
+}
+
 func cmdServiceInstall(args []string) error {
 	fs := flag.NewFlagSet("relevo service install", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -68,6 +80,9 @@ func cmdServiceInstall(args []string) error {
 	}
 	if fs.NArg() > 0 {
 		return fail(codeUsage, "service install takes no arguments, got %v", fs.Args())
+	}
+	if err := refuseInEnvSandbox("install"); err != nil {
+		return err
 	}
 	u, err := osUnitSpec()
 	if err != nil {
@@ -132,6 +147,9 @@ func cmdServiceUninstall(args []string) error {
 	}
 	if fs.NArg() > 0 {
 		return fail(codeUsage, "service uninstall takes no arguments, got %v", fs.Args())
+	}
+	if err := refuseInEnvSandbox("uninstall"); err != nil {
+		return err
 	}
 	u, err := osUnitSpec()
 	if err != nil {
