@@ -1,9 +1,7 @@
 # relevo researcher role for codex (spec §5.1). Two uses, one file: the
 # `-p researcher` consult profile, and the [agents.researcher] layer the
-# plan-executor profile names. The model pin is deliberate: every codex
-# builder's research runs gpt-5.6-luna at medium regardless of the
-# candidate; `relevo doctor` warns if it drifts.
-model = "gpt-5.6-luna"
+# plan-executor profile names. No model is pinned, so research runs on the
+# candidate's model, at medium effort.
 model_reasoning_effort = "medium"
 sandbox_mode = "read-only"
 
