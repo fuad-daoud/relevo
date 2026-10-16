@@ -123,7 +123,7 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 	// passphrase. Both halves stop, because a stale exporter appends entries
 	// current readers refuse, and a stale importer would apply them.
 	if err := r.epochGate(); err != nil {
-		if !errors.Is(err, synclog.ErrEpochMoved) {
+		if !errors.Is(err, synclog.ErrEpochMoved) && !errors.Is(err, ErrEpochReplaced) {
 			// A key this machine cannot read is its own failure, not a
 			// locked machine's posture: the attempt reports it failed rather
 			// than running any half of the exchange unverified.
@@ -424,10 +424,12 @@ func (r *Runner) recordRemoteKDF(ctx context.Context, t *StopTransport) {
 }
 
 // epochGate is the stale stop the exchange runs before both halves: ErrEpochMoved
-// when the keyring's newest epoch sits below the recorded remote epoch, nil
-// otherwise. A locked machine never trips it -- it holds no key, so no epoch
-// moves under it -- and an epoch the machine never recorded leaves the gate
-// open, which is what a fact left in place by an unreachable remote means.
+// when the keyring's newest epoch sits below the recorded remote epoch,
+// ErrEpochReplaced when the held newest epoch equals the remote's but with a
+// mismatched check, nil otherwise. A locked machine never trips it -- it holds
+// no key, so no epoch moves under it -- and an epoch the machine never recorded
+// leaves the gate open, which is what a fact left in place by an unreachable
+// remote means.
 func (r *Runner) epochGate() error {
 	ring, ok, err := heldKeyring(r.Local)
 	if err != nil || !ok {
@@ -439,6 +441,9 @@ func (r *Runner) epochGate() error {
 	}
 	if ring.Epoch < remote {
 		return synclog.ErrEpochMoved
+	}
+	if ring.Epoch == remote && checkMismatch(r.Local) {
+		return ErrEpochReplaced
 	}
 	return nil
 }

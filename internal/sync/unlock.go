@@ -71,6 +71,9 @@ func Unlock(ctx context.Context, local Local, transport synclog.LogTransport, pa
 	if err := local.KVPut(KeyRemoteKDF, []byte("1")); err != nil {
 		return false, fmt.Errorf("sync: unlock: %w", err)
 	}
+	if err := local.KVPut(SyncKeyCheckMatch, []byte("1")); err != nil {
+		return false, fmt.Errorf("sync: unlock: %w", err)
+	}
 	if hadRing && ring.Epoch > oldRing.Epoch {
 		if head, ok, err := synclog.OwnHead(local); err == nil && ok {
 			if err := local.KVPut(SyncVouchTarget, []byte(strconv.Itoa(head))); err != nil {
@@ -211,6 +214,15 @@ func RecordRemoteKDF(ctx context.Context, kv db.KV, transport synclog.LogTranspo
 	if err := kv.KVPut(SyncRemoteEpoch, []byte(strconv.Itoa(meta.Epoch))); err != nil {
 		slog.Warn("sync: record the remote epoch", "err", err)
 	}
+	if ring, ok, err := heldKeyring(kv); err == nil && ok && meta.Present && ring.Epoch == meta.Epoch {
+		match := "0"
+		if hmac.Equal(KeyCheck(ring.Keys[ring.Epoch]), meta.Check) {
+			match = "1"
+		}
+		if err := kv.KVPut(SyncKeyCheckMatch, []byte(match)); err != nil {
+			slog.Warn("sync: record the key check match", "err", err)
+		}
+	}
 }
 
 // KeyState is the key line status reports: unlocked when this machine holds a
@@ -230,6 +242,9 @@ func KeyState(l Local) (string, error) {
 		if ok && ring.Epoch < remote {
 			return "stale", nil
 		}
+		if ok && ring.Epoch == remote && checkMismatch(l) {
+			return "stale", nil
+		}
 		return "unlocked", nil
 	}
 	value, ok, err := l.KVGet(KeyRemoteKDF)
@@ -240,6 +255,16 @@ func KeyState(l Local) (string, error) {
 		return "locked", nil
 	}
 	return "none", nil
+}
+
+// checkMismatch reports whether the machine-local fact records that the held
+// newest key's check does not match the remote's check at the same epoch.
+func checkMismatch(l db.KV) bool {
+	value, ok, err := l.KVGet(SyncKeyCheckMatch)
+	if err != nil || !ok {
+		return false
+	}
+	return string(bytes.TrimSpace(value)) == "0"
 }
 
 // remoteEpoch reads the local fact naming the remote's newest epoch, written

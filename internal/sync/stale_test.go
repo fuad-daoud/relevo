@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"crypto/rand"
 	"strings"
 	"testing"
 	"time"
@@ -134,4 +135,121 @@ func schemaOf(t *testing.T, d interface{ SchemaVersions() (int, int) }) int {
 	t.Helper()
 	_, known := d.SchemaVersions()
 	return known
+}
+
+// TestDoubleWinRekeyRaceCheckMismatchStopsExchangeUntilUnlock pins that when
+// two machines win the rekey race and B overwrites A's material at the same
+// epoch, A's next attempt stops exchange with ErrEpochReplaced and KeyState
+// stale, unlock with B's passphrase recovers it, and a machine matching B is
+// unaffected.
+func TestDoubleWinRekeyRaceCheckMismatchStopsExchangeUntilUnlock(t *testing.T) {
+	t.Parallel()
+	sharedA, localA := joinPair(t, "m1")
+	if err := MarkEnabled(localA, true, time.Unix(0, 0)); err != nil {
+		t.Fatalf("MarkEnabled: %v", err)
+	}
+	log := synclog.NewMemTransport("m1")
+	seedFar(t, log, "m2", "b2", schemaOf(t, sharedA))
+
+	passA := []byte("passphrase A")
+	if _, err := Unlock(context.Background(), localA, log, passA, true, rand.Reader); err != nil {
+		t.Fatalf("A unlock --new: %v", err)
+	}
+
+	// Initial sync of A at epoch 1.
+	seedJoin(t, sharedA, joinBinding("b1", "m1"))
+	runnerA := &Runner{Client: log, Local: localA, Timeout: time.Second}
+	if res := runnerA.SyncOnce(context.Background(), sharedA); res.Err != nil {
+		t.Fatalf("A initial attempt: %v", res.Err)
+	}
+
+	// A rekeys to epoch 2 with passA2.
+	passA2 := []byte("passphrase A2")
+	if err := Rekey(context.Background(), localA, log, passA, passA2, rand.Reader); err != nil {
+		t.Fatalf("A rekey to 2: %v", err)
+	}
+
+	// Now B overwrites A's material at epoch 2 (the double win).
+	passB2 := []byte("passphrase B2")
+	saltB := []byte("salt-for-winner-b")
+	keyB2 := DeriveKey(passB2, saltB, DefaultKDF)
+	ringA, ok, err := ReadKeyring(localA)
+	if err != nil || !ok {
+		t.Fatalf("ReadKeyring: %v", err)
+	}
+	wrappedB, err := WrapKey(keyB2, 1, ringA.Keys[1])
+	if err != nil {
+		t.Fatalf("WrapKey: %v", err)
+	}
+	state, err := log.ReadMarks()
+	if err != nil {
+		t.Fatalf("ReadMarks: %v", err)
+	}
+	cuts := make(map[string]synclog.EpochCut, len(state.Heads))
+	for orig, head := range state.Heads {
+		cuts[orig] = synclog.EpochCut{Epoch: 2, Seq: head, Tag: synclog.EpochCutTag(keyB2, orig, 2, head)}
+	}
+	if _, err := log.KeyRekey(context.Background(), synclog.KeyRekeySpec{
+		From: 2,
+		Key: synclog.KeyMeta{
+			Salt: saltB, KDF: DefaultKDF.String(), Check: KeyCheck(keyB2), Present: true, Epoch: 2,
+			Wrapped: map[int][]byte{1: wrappedB},
+		},
+		Cuts: cuts,
+	}); err != nil {
+		t.Fatalf("B KeyRekey: %v", err)
+	}
+
+	// A seeds a row it would export if the stop were absent.
+	seedJoin(t, sharedA, joinBinding("b3", "m1"))
+
+	// A's next attempt stops: exports nothing, imports nothing, trouble names the sentence.
+	resA := runnerA.SyncOnce(context.Background(), sharedA)
+	if resA.Err != nil {
+		t.Fatalf("A attempt error: %v", resA.Err)
+	}
+	if resA.Exported != 0 || resA.Applied != 0 {
+		t.Fatalf("A exported %d, applied %d; want nothing moved", resA.Exported, resA.Applied)
+	}
+	if len(resA.Trouble.Held) != 1 || resA.Trouble.Held[0] != ErrEpochReplaced.Error() {
+		t.Fatalf("trouble = %v, want %q", resA.Trouble.Held, ErrEpochReplaced.Error())
+	}
+	stateA, err := KeyState(localA)
+	if err != nil || stateA != "stale" {
+		t.Fatalf("KeyState A = %q, %v; want stale", stateA, err)
+	}
+
+	// A machine whose check matches (B) is unaffected.
+	sharedB, localB := joinPair(t, "m2")
+	if err := MarkEnabled(localB, true, time.Unix(0, 0)); err != nil {
+		t.Fatalf("MarkEnabled: %v", err)
+	}
+	if _, err := Unlock(context.Background(), localB, log.OnLog("m2"), passB2, false, rand.Reader); err != nil {
+		t.Fatalf("B unlock: %v", err)
+	}
+	runnerB := &Runner{Client: log.OnLog("m2"), Local: localB, Timeout: time.Second}
+	resB := runnerB.SyncOnce(context.Background(), sharedB)
+	if resB.Err != nil || len(resB.Trouble.Held) != 0 {
+		t.Fatalf("B attempt trouble = %v, err = %v; want unaffected attempt", resB.Trouble.Held, resB.Err)
+	}
+	stateB, err := KeyState(localB)
+	if err != nil || stateB != "unlocked" {
+		t.Fatalf("KeyState B = %q, %v; want unlocked", stateB, err)
+	}
+
+	// A's unlock with B's passphrase recovers it and its next attempt exchanges.
+	if _, err := Unlock(context.Background(), localA, log, passB2, false, rand.Reader); err != nil {
+		t.Fatalf("A unlock with winner passphrase: %v", err)
+	}
+	stateAAfter, err := KeyState(localA)
+	if err != nil || stateAAfter != "unlocked" {
+		t.Fatalf("KeyState A after unlock = %q, %v; want unlocked", stateAAfter, err)
+	}
+	resA2 := runnerA.SyncOnce(context.Background(), sharedA)
+	if resA2.Err != nil || len(resA2.Trouble.Held) != 0 {
+		t.Fatalf("A attempt after recovery: %v, %v", resA2.Err, resA2.Trouble.Held)
+	}
+	if resA2.Exported == 0 {
+		t.Errorf("A exported %d, want b3 to be exported", resA2.Exported)
+	}
 }

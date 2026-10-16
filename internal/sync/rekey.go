@@ -170,6 +170,9 @@ func storeNewKeyring(local Local, answer synclog.KeyMeta, newKey []byte) error {
 	if err := local.KVPut(KeyRemoteKDF, []byte("1")); err != nil {
 		return fmt.Errorf("sync: rekey: %w", err)
 	}
+	if err := local.KVPut(SyncKeyCheckMatch, []byte("1")); err != nil {
+		return fmt.Errorf("sync: rekey: %w", err)
+	}
 	if err := local.KVPut(SyncRemoteEpoch, []byte(fmt.Sprint(answer.Epoch))); err != nil {
 		return fmt.Errorf("sync: rekey: %w", err)
 	}

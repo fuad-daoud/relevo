@@ -32,6 +32,16 @@ const SyncRemoteEpoch = "sync.remote_epoch"
 // this origin vouches for the tail it appended before learning of a rekey.
 const SyncVouchTarget = "sync.vouch_target"
 
+// SyncKeyCheckMatch is the machine-local kv fact recording whether the held
+// newest key's check matches the remote's check at the same epoch: "1" or "0".
+const SyncKeyCheckMatch = "sync.key_check_match"
+
+// ErrEpochReplaced is what a machine whose held newest key check differs from
+// the remote's check at the same epoch reports: another machine rekeyed to the
+// same epoch and overwrote this machine's key. It stops signing and exporting
+// and holds its import whole, and the fix is unlock with the winner's passphrase.
+var ErrEpochReplaced = errors.New("sync: another machine's rekey replaced this one's key at the same epoch: run relevo db sync unlock with the passphrase that rekeyed the remote")
+
 // SecretKeyEpoch is the secret-table row naming the newest epoch this machine
 // holds. It sits in the secret table beside the key rather than in the kv facts
 // because a caller holding only the secret table -- a document opening an
