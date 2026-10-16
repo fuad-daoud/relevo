@@ -349,7 +349,7 @@ var registry = []verbEntry{
 	},
 	{
 		Name:    "db sync enable",
-		Summary: "refuse: this build carries no sync engine, so enable joins nothing",
+		Summary: "turn sync on for this machine: join with a code from db sync invite (--join-stdin), or name a remote with --url and --token-stdin",
 		Args: "[--url URL] [--token-stdin] [--passphrase-stdin] [--join-stdin] " +
 			"[--r2-endpoint URL] [--r2-bucket NAME] [--r2-key-id ID] [--r2-secret-stdin] " +
 			"[--yes] [--timeout D] [--json]",
