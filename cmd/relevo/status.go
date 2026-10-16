@@ -157,9 +157,19 @@ func cmdStatus(args []string) error {
 
 	// A name that resolves to a chain -- including the chain's own builder
 	// member, `<n>` -- is the chain: `status <chain>` lists the chain row with
-	// its members under it. The chain lookup runs before filterReport, so a
-	// chain name never comes back as a missing binding.
+	// its members under it. A name that is one of any chain's members is the
+	// chain too: the waiting notice names those members -- a done chain's
+	// stranded rows among them -- and every status surface collapses members,
+	// so answering through the chain is what makes the notice's own hint true.
+	// The lookups run before filterReport, so a chain name and a member name
+	// never come back as a missing binding.
 	isChain := target != "" && statusChain(rt, target)
+	if target != "" && !isChain {
+		if c, memberOf := relevo.MemberChain(rt.Store.ChainByMember, target); memberOf {
+			isChain = true
+			target = c.Name
+		}
+	}
 	sc, _, err := statusScopeOrNone(*v.mastermind, *v.allMasterMinds, *all, target != "", rt)
 	if err != nil {
 		return err

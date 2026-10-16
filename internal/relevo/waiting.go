@@ -3,6 +3,7 @@ package relevo
 import (
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -48,6 +49,15 @@ func WaitingOnYou(rt Runtime, except string) ([]string, error) {
 		w, ok := view.WaitingOn(b, entries, qf)
 		if !ok {
 			continue
+		}
+		// A member whose owning chain is finished is clearable by hand, so its
+		// hint names the clear a person can run. Every other row's own word --
+		// the running-chain member's, the broken binding's rebind -- stands.
+		if c, memberOf := MemberChain(rt.Store.ChainByMember, b.Name); memberOf {
+			switch chain.Status(c.Status) {
+			case chain.StatusDone, chain.StatusStopped:
+				w.Hint = MemberHint(b.Name, c, memberOf)
+			}
 		}
 		lines = append(lines, view.WaitingLine(w, rt.Now().UTC()))
 	}
