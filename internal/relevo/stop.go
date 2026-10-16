@@ -282,7 +282,7 @@ func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		note = joinNotes(note, readerFallbackNote)
 	}
 
-	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "", true, scopeVerdict{})
+	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "", true, "", scopeVerdict{})
 	if err != nil {
 		return b, err
 	}

@@ -56,7 +56,10 @@ func bindReader(t *testing.T, repo string) (Runtime, store.Binding) {
 	return rt, b
 }
 
-// writeReaderStream writes a claude stream whose last assistant text is text.
+// writeReaderStream writes a claude stream whose last assistant text is text:
+// the assistant message, then the result event a one-shot claude run always
+// streams last. The result carries the same text, so everything that reads the
+// stream reads the message it always read.
 func writeReaderStream(t *testing.T, rt Runtime, name string, round int, text string) {
 	t.Helper()
 	line, err := json.Marshal(map[string]any{
@@ -68,11 +71,17 @@ func writeReaderStream(t *testing.T, rt Runtime, name string, round int, text st
 	if err != nil {
 		t.Fatalf("encode stream: %v", err)
 	}
+	end, err := json.Marshal(map[string]any{"type": "result", "result": text})
+	if err != nil {
+		t.Fatalf("encode stream: %v", err)
+	}
 	path := rt.Store.RunnerStreamPath(name, round)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(line, '\n'), 0o644); err != nil {
+	stream := append(append(line, '\n'), end...)
+	stream = append(stream, '\n')
+	if err := os.WriteFile(path, stream, 0o644); err != nil {
 		t.Fatalf("write stream: %v", err)
 	}
 }
