@@ -293,9 +293,8 @@ first missed -- two models cover each other's blind spots, and the agent
 definition tells the second round how.
 
 codex agent definitions are TOML profiles at `~/.codex/<name>.config.toml` selected
-with `-p`; the researcher profile pins `gpt-5.6-luna` at `medium` for
-every codex builder's research sub-agents and `relevo doctor` warns when
-that pin drifts.
+with `-p`; the researcher profile runs every codex builder's research
+sub-agents at `medium` effort on the candidate's own model.
 
 Then set the candidates section (see [Candidates](#candidates)) and check it
 with `relevo config`. If more than one candidate serves `builder`, order them

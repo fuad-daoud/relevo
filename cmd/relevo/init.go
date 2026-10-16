@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log/slog"
 	"os"
 	"strings"
 
@@ -53,16 +52,6 @@ func cmdInitRun(args []string) error {
 	rt, err := newRuntime()
 	if err != nil {
 		return err
-	}
-
-	// The theme seed rides every config init too, filling any palette the
-	// database has never carried. The seeding is once-per-database and
-	// idempotent, so a state that already runs it is a no-op here; the return
-	// is the same warning the mute her migrations warn with.
-	if seeded, err := rt.Config.EnsureThemesSeed(); err != nil {
-		slog.Warn("config: themes not seeded", "err", err)
-	} else if seeded && !*asJSON {
-		fmt.Fprintln(os.Stderr, "relevo: seeded the board palettes into themes (relevo config log)")
 	}
 
 	env, err := agentInstallEnv()

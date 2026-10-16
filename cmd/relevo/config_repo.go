@@ -42,6 +42,10 @@ const configRepoUsage = `usage: relevo config repo [--repo <path>] [--json]
 // cmdConfigRepo dispatches the `config repo` verbs. A bare invocation, or one
 // whose first argument is a flag, shows the working directory's own settings.
 func cmdConfigRepo(args []string) error {
+	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
+		fmt.Fprintln(os.Stderr, configRepoUsage)
+		return nil
+	}
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return configRepoShow(args)
 	}
@@ -52,7 +56,7 @@ func cmdConfigRepo(args []string) error {
 		return configRepoUnset(args[1:])
 	case "list":
 		return configRepoList(args[1:])
-	case "help", "-h", "--help":
+	case "help":
 		fmt.Fprintln(os.Stderr, configRepoUsage)
 		return nil
 	default:

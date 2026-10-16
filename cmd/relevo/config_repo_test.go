@@ -256,3 +256,21 @@ func TestConfigRepoRefusesOutsideARepository(t *testing.T) {
 		t.Fatalf("exit = %v, want exit code 2", err)
 	}
 }
+
+// TestConfigRepoHelpListsTheSubcommands pins that --help and -h print the
+// whole surface, set, unset and list included, rather than show's flag set
+// alone.
+func TestConfigRepoHelpListsTheSubcommands(t *testing.T) {
+	initRoot(t)
+	for _, flag := range []string{"--help", "-h"} {
+		_, stderr, err := captureOutput(t, func() error { return run([]string{"config", "repo", flag}) })
+		if err != nil {
+			t.Fatalf("config repo %s: %v", flag, err)
+		}
+		for _, verb := range []string{"repo set", "repo unset", "repo list"} {
+			if !strings.Contains(string(stderr), verb) {
+				t.Errorf("config repo %s printed %q, want it to name %q", flag, stderr, verb)
+			}
+		}
+	}
+}

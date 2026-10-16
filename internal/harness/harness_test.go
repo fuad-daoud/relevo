@@ -903,7 +903,7 @@ var harnessTableExpected = map[string]Harness{
 		DocExt: "toml",
 		Roles: []Role{
 			{Name: "plan-executor", Path: ".codex/plan-executor.config.toml", Doc: "plan-executor.codex"},
-			{Name: "researcher", Path: ".codex/researcher.config.toml", Doc: "researcher.codex", ExpectModel: "gpt-5.6-luna"},
+			{Name: "researcher", Path: ".codex/researcher.config.toml", Doc: "researcher.codex"},
 			{Name: "reviewer", Path: ".codex/reviewer.config.toml", Doc: "reviewer.codex"},
 			{Name: "security-reviewer", Path: ".codex/security-reviewer.config.toml", Doc: "security-reviewer.codex"},
 			{Name: "architect", Path: ".codex/architect.config.toml", Doc: "architect.codex"},

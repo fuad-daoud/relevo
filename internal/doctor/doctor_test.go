@@ -696,27 +696,25 @@ func TestDoctorCodexResearcherPin(t *testing.T) {
 		return env
 	}
 
-	t.Run("researcher pinned to the shipped model is OK", func(t *testing.T) {
+	t.Run("researcher as shipped carries no pin suffix", func(t *testing.T) {
 		env := newEnv(t)
 		env.fileContents["/home/u/.codex/researcher.config.toml"] = shippedDoc(t, "researcher", "codex")
 		report := Run(context.Background(), env, []string{"codex"})
 		c := findCheck(report, "codex", "researcher")
-		want := "~/.codex/researcher.config.toml (model: gpt-5.6-luna)"
+		want := "~/.codex/researcher.config.toml"
 		if c == nil || c.Severity != SevOK || c.Detail != want {
 			t.Errorf("row = %+v, want SevOK %q", c, want)
 		}
 	})
 
-	t.Run("researcher drifted to another model warns with the install fix", func(t *testing.T) {
+	t.Run("researcher the user pins is reported, not warned", func(t *testing.T) {
 		env := newEnv(t)
-		drifted := strings.ReplaceAll(shippedDoc(t, "researcher", "codex"), "gpt-5.6-luna", "gpt-5.6-terra")
-		env.fileContents["/home/u/.codex/researcher.config.toml"] = drifted
+		env.fileContents["/home/u/.codex/researcher.config.toml"] = "model = \"gpt-5.6-terra\"\n" + shippedDoc(t, "researcher", "codex")
 		report := Run(context.Background(), env, []string{"codex"})
 		c := findCheck(report, "codex", "researcher")
-		wantDetail := "~/.codex/researcher.config.toml (model: gpt-5.6-terra) -- pins gpt-5.6-terra; relevo ships gpt-5.6-luna"
-		wantFix := "relevo config agents --kind codex --agent researcher --force"
-		if c == nil || c.Severity != SevWarn || c.Detail != wantDetail || c.Fix != wantFix {
-			t.Errorf("row = %+v, want SevWarn %q fix %q", c, wantDetail, wantFix)
+		want := "~/.codex/researcher.config.toml (model: gpt-5.6-terra)"
+		if c == nil || c.Severity != SevOK || c.Detail != want {
+			t.Errorf("row = %+v, want SevOK %q", c, want)
 		}
 	})
 

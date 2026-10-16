@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -14,11 +15,16 @@ import (
 )
 
 // swapDaemonStopSeams saves the stop seams and restores them when the test
-// ends, so no test ever signals a process or opens a real daemon lock.
+// ends, so no test ever signals a process or opens a real daemon lock. The
+// record is read straight from the test's database: no test has a daemon
+// socket to read it through.
 func swapDaemonStopSeams(t *testing.T) {
 	t.Helper()
-	signal, running, sleep := daemonStopSignal, daemonStopRunning, daemonStopSleep
-	t.Cleanup(func() { daemonStopSignal, daemonStopRunning, daemonStopSleep = signal, running, sleep })
+	signal, running, sleep, info := daemonStopSignal, daemonStopRunning, daemonStopSleep, daemonStopInfo
+	t.Cleanup(func() {
+		daemonStopSignal, daemonStopRunning, daemonStopSleep, daemonStopInfo = signal, running, sleep, info
+	})
+	daemonStopInfo = func(root string) (store.DaemonInfo, bool, error) { return store.New(root).ReadDaemonInfo() }
 }
 
 // stopEnv points the state, config and home roots at fresh temporary
@@ -76,15 +82,20 @@ func TestDaemonStopSignalsTheRecordedPIDAndWaits(t *testing.T) {
 	}
 }
 
-// TestDaemonStopReportsNotRunning pins the friendly outcomes: no record, and a
-// record whose lock is free, each print one line and never signal.
+// TestDaemonStopReportsNotRunning pins the outcomes that signal nothing: a free
+// lock prints one line without reading any record, and a held lock with no
+// record is refused rather than reported as no daemon.
 func TestDaemonStopReportsNotRunning(t *testing.T) {
-	t.Run("no record", func(t *testing.T) {
+	t.Run("no lock", func(t *testing.T) {
 		stopEnv(t)
 		swapDaemonStopSeams(t)
-		var signals, probes int32
+		var signals, reads int32
 		daemonStopSignal = func(int) error { atomic.AddInt32(&signals, 1); return nil }
-		daemonStopRunning = func(string) (bool, error) { atomic.AddInt32(&probes, 1); return true, nil }
+		daemonStopRunning = func(string) (bool, error) { return false, nil }
+		daemonStopInfo = func(string) (store.DaemonInfo, bool, error) {
+			atomic.AddInt32(&reads, 1)
+			return store.DaemonInfo{PID: 4242}, true, nil
+		}
 
 		stdout, _, err := captureOutput(t, daemonStop)
 		if err != nil {
@@ -96,32 +107,27 @@ func TestDaemonStopReportsNotRunning(t *testing.T) {
 		if got := atomic.LoadInt32(&signals); got != 0 {
 			t.Errorf("the signal seam was called %d times, want 0", got)
 		}
-		if got := atomic.LoadInt32(&probes); got != 0 {
-			t.Errorf("the lock was probed %d times with no record, want 0", got)
+		if got := atomic.LoadInt32(&reads); got != 0 {
+			t.Errorf("the record was read %d times with the lock free, want 0", got)
 		}
 	})
 
-	t.Run("no lock", func(t *testing.T) {
-		root := stopEnv(t)
-		if err := store.New(root).WriteDaemonInfo(store.DaemonInfo{PID: 4242}); err != nil {
-			t.Fatalf("WriteDaemonInfo: %v", err)
-		}
+	t.Run("lock held, no record", func(t *testing.T) {
+		stopEnv(t)
 		swapDaemonStopSeams(t)
 		var signals int32
 		daemonStopSignal = func(int) error { atomic.AddInt32(&signals, 1); return nil }
-		daemonStopRunning = func(string) (bool, error) { return false, nil }
+		daemonStopRunning = func(string) (bool, error) { return true, nil }
 
-		stdout, _, err := captureOutput(t, daemonStop)
-		if err != nil {
-			t.Fatalf("daemonStop: %v", err)
-		}
-		if !strings.Contains(string(stdout), "no daemon is running") {
-			t.Errorf("stdout = %q, want the not-running line", stdout)
+		_, _, err := captureOutput(t, daemonStop)
+		if err == nil || !strings.Contains(err.Error(), "recorded no pid") {
+			t.Fatalf("daemonStop = %v, want the no-pid refusal", err)
 		}
 		if got := atomic.LoadInt32(&signals); got != 0 {
 			t.Errorf("the signal seam was called %d times, want 0", got)
 		}
 	})
+
 }
 
 // TestDaemonStopGivesUpAfterTheBoundedWait pins the timeout: a lock that never
@@ -192,5 +198,46 @@ func TestDaemonStopRefusesWhenTheServiceOwnsIt(t *testing.T) {
 
 	if got := atomic.LoadInt32(&signals); got != 0 {
 		t.Errorf("the signal seam was called %d times, want 0", got)
+	}
+}
+
+// TestDaemonStopReadsTheRecordWhileTheDaemonHoldsTheDatabase pins that a stop
+// reads the pid through the daemon rather than opening relevo.db, which a
+// running daemon holds: the direct open would be refused as locked.
+func TestDaemonStopReadsTheRecordWhileTheDaemonHoldsTheDatabase(t *testing.T) {
+	root := stopEnv(t)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatalf("create state root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "relevo.db"), nil, 0o600); err != nil {
+		t.Fatalf("seed relevo.db: %v", err)
+	}
+	holder, err := os.OpenFile(filepath.Join(root, "relevo.db.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("open lock: %v", err)
+	}
+	t.Cleanup(func() { _ = holder.Close() })
+	if err := syscall.Flock(int(holder.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("hold the database lock: %v", err)
+	}
+
+	swapDaemonStopSeams(t)
+	daemonStopInfo = func(string) (store.DaemonInfo, bool, error) { return store.DaemonInfo{PID: 4242}, true, nil }
+	signalled := make(chan int, 1)
+	daemonStopSignal = func(pid int) error { signalled <- pid; return nil }
+	var probes int32
+	daemonStopRunning = func(string) (bool, error) { return atomic.AddInt32(&probes, 1) < 2, nil }
+	daemonStopSleep = func(time.Duration) {}
+
+	if _, _, err := captureOutput(t, daemonStop); err != nil {
+		t.Fatalf("daemonStop with the database held: %v", err)
+	}
+	select {
+	case pid := <-signalled:
+		if pid != 4242 {
+			t.Errorf("signalled pid = %d, want 4242", pid)
+		}
+	default:
+		t.Error("the signal seam was never called")
 	}
 }
