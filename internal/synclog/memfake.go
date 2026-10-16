@@ -370,6 +370,12 @@ func (m *memLog) markState() MarkState {
 			out.SignedTags[origin] = tag
 		}
 	}
+	if len(m.epochCut) > 0 {
+		out.EpochCuts = make(map[string]EpochCut, len(m.epochCut))
+		for origin, cut := range m.epochCut {
+			out.EpochCuts[origin] = cut
+		}
+	}
 	out.Heads = make(map[string]int)
 	out.Entries = make(map[string]int)
 	out.Sizes = make(map[string]int64)

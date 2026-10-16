@@ -492,6 +492,10 @@ type MarkState struct {
 	// SignedTags is the tag stored beside each boundary, nil where the stored
 	// value has none that parses.
 	SignedTags map[string][]byte `json:"signed_tags,omitempty"`
+	// EpochCuts is each origin's cut as the log holds it, one row per origin
+	// a rekey wrote. A row that does not parse arrives as the cut nothing
+	// verifies under, which the reader holds its origin over.
+	EpochCuts map[string]EpochCut `json:"epoch_cuts,omitempty"`
 }
 
 // readRequest reads one request line. A clean end of the pipe is io.EOF, which

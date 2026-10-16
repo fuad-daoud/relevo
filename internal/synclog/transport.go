@@ -201,6 +201,11 @@ type MarkState struct {
 	// SignedTags is the tag stored beside each SignedFrom entry; an origin
 	// whose stored boundary has none, or none that parses, maps to nil.
 	SignedTags map[string][]byte
+	// EpochCuts is each origin's cut as the log holds it, one row per origin
+	// a rekey wrote. The tag is unverified here -- the reader's job -- and a
+	// row this transport cannot parse comes back with a zero epoch and no
+	// tag, the shape nothing verifies under.
+	EpochCuts map[string]EpochCut
 }
 
 // Boundary is the first signed sequence an exporter predicts for its origin and

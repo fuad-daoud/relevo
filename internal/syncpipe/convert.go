@@ -207,6 +207,20 @@ func cutsToWire(cuts map[string]synclog.EpochCut) map[string]syncworker.EpochCut
 	return out
 }
 
+// epochCutsFromWire reads back the cuts a read_marks answered with. The two
+// shapes name the same three fields, so the map carries through one row at a
+// time, the way every conversion above does.
+func epochCutsFromWire(cuts map[string]syncworker.EpochCut) map[string]synclog.EpochCut {
+	if len(cuts) == 0 {
+		return nil
+	}
+	out := make(map[string]synclog.EpochCut, len(cuts))
+	for origin, cut := range cuts {
+		out[origin] = synclog.EpochCut{Epoch: cut.Epoch, Seq: cut.Seq, Tag: cut.Tag}
+	}
+	return out
+}
+
 // marksToWire renders this reader's published positions.
 //
 // The order is sorted so a request's line is the same for the same marks every
@@ -237,6 +251,7 @@ func markStateFromWire(s syncworker.MarkState) synclog.MarkState {
 		Sizes:      s.Sizes,
 		SignedFrom: s.SignedFrom,
 		SignedTags: s.SignedTags,
+		EpochCuts:  epochCutsFromWire(s.EpochCuts),
 	}
 	for _, m := range s.Marks {
 		out.Marks = append(out.Marks, synclog.Mark{

@@ -77,6 +77,16 @@ func TestMemRekeyWritesTheEpochTheCallerNames(t *testing.T) {
 	if cut.Epoch != 2 || cut.Seq != written.Seq {
 		t.Errorf("cut = %+v, want epoch 2 at the head the caller observed (%d)", cut, written.Seq)
 	}
+	// The article the reader reads the cuts through answers with the same rows,
+	// tags and all, which is what a verifying reader is handed.
+	state, err := log.ReadMarks()
+	if err != nil {
+		t.Fatalf("ReadMarks: %v", err)
+	}
+	read, ok := state.EpochCuts["a"]
+	if !ok || read.Epoch != cut.Epoch || read.Seq != cut.Seq || string(read.Tag) != string(cut.Tag) {
+		t.Errorf("ReadMarks epoch_cuts = %+v, want %+v", state.EpochCuts["a"], cut)
+	}
 }
 
 // TestMemRekeyRefusesAStaleObservationAndWritesNothing pins that a rekey whose

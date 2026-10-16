@@ -427,6 +427,56 @@ func (b *TursoBackend) readSignedFrom(ctx context.Context, out *MarkState) error
 	return rows.Err()
 }
 
+// readEpochCuts reads each origin's stored cut.
+//
+// The meta table is written by other machines, so a row that does not parse is
+// not skipped either: it comes back as the cut nothing verifies under -- epoch
+// 0, sequence 0, no tag -- and the reader holds that origin the way it holds a
+// boundary whose tag fails.
+func (b *TursoBackend) readEpochCuts(ctx context.Context, out *MarkState) error {
+	rows, err := b.db.QueryContext(ctx,
+		"SELECT key, value FROM meta WHERE key LIKE ?", epochCutPrefix+"%")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var key, value sql.NullString
+		if err := rows.Scan(&key, &value); err != nil {
+			return err
+		}
+		if out.EpochCuts == nil {
+			out.EpochCuts = make(map[string]EpochCut)
+		}
+		origin := key.String[len(epochCutPrefix):]
+		epoch, seq, tag := parseCut(value.String)
+		out.EpochCuts[origin] = EpochCut{Epoch: epoch, Seq: seq, Tag: tag}
+	}
+	return rows.Err()
+}
+
+// parseCut reads "<epoch> <seq> <base64 tag>"; what does not parse is the zero
+// cut: epoch 0, sequence 0, no tag.
+func parseCut(value string) (int, int, []byte) {
+	fields := strings.Fields(value)
+	if len(fields) != 3 {
+		return 0, 0, nil
+	}
+	epoch, err := strconv.Atoi(fields[0])
+	if err != nil || epoch < 1 {
+		return 0, 0, nil
+	}
+	seq, err := strconv.Atoi(fields[1])
+	if err != nil || seq < 0 {
+		return 0, 0, nil
+	}
+	tag, err := base64.StdEncoding.DecodeString(fields[2])
+	if err != nil {
+		return 0, 0, nil
+	}
+	return epoch, seq, tag
+}
+
 // parseBoundary reads "<seq> <base64 tag>"; what does not parse is 0 and nil.
 func parseBoundary(value string) (int, []byte) {
 	fields := strings.Split(value, " ")
