@@ -12,7 +12,10 @@ import (
 // for refused batches has run on this machine.
 const KeyReplayRefused = "sync.replay.refused"
 
-const replayRefusedGeneration = "1"
+// replayRefusedGeneration names the pass a machine has run. A machine holding an
+// older generation runs it again: the first one skipped every origin whose
+// target lay in a compacted region, so those machines were never repaired.
+const replayRefusedGeneration = "2"
 
 // RewindImport sets an origin's mark down so entries behind it can be replayed.
 func RewindImport(shared *db.DB, origin string, seq int) error {
@@ -68,11 +71,8 @@ func originRewinds(localOrigin string, dropped []string) map[string]int {
 // trouble reports, rewinds each remote origin's mark to before its first dropped
 // batch, and writes the KeyReplayRefused marker so it runs only once per machine.
 //
-// When a transport is provided, the rewind target is resolved to a batch
-// boundary: the mark is placed at the start of the first batch past the target
-// (first entry's Batch - 1). If the log holds nothing past the target, the mark
-// is left alone. If the target is below the origin's compaction floor, the mark
-// is placed below the floor and the snapshot path takes over.
+// When a transport is provided, the target is placed where the importer can
+// resume from it (see rewindPoint).
 func ReplayRefusedPass(shared *db.DB, kv db.KV, t synclog.LogTransport) error {
 	if kv == nil || shared == nil {
 		return nil
@@ -81,7 +81,7 @@ func ReplayRefusedPass(shared *db.DB, kv db.KV, t synclog.LogTransport) error {
 	if err := marker(kv, KeyReplayRefused, &gen); err != nil {
 		return err
 	}
-	if gen != "" {
+	if gen == replayRefusedGeneration {
 		return nil
 	}
 
@@ -94,33 +94,24 @@ func ReplayRefusedPass(shared *db.DB, kv db.KV, t synclog.LogTransport) error {
 		return markReplayRefused(kv)
 	}
 
-	var heads map[string]int
+	var state synclog.MarkState
 	if t != nil {
-		state, err := t.ReadMarks()
-		if err != nil {
+		var err error
+		if state, err = t.ReadMarks(); err != nil {
 			return fmt.Errorf("sync: replay read marks: %w", err)
 		}
-		heads = state.Heads
 	}
 
 	for origin, target := range rewinds {
-		rewindTo := target
+		rewindTo, ok := target, true
 		if t != nil {
-			head, ok := heads[origin]
-			if !ok || head <= target {
-				continue
+			var err error
+			if rewindTo, ok, err = rewindPoint(t, state, origin, target); err != nil {
+				return err
 			}
-			entries, err := t.PullRange(origin, target, target+1)
-			if err != nil {
-				return fmt.Errorf("sync: replay pull range %s: %w", origin, err)
-			}
-			if len(entries) == 0 {
-				continue
-			}
-			boundary := entries[0].Batch - 1
-			if boundary <= target && boundary >= 0 {
-				rewindTo = boundary
-			}
+		}
+		if !ok {
+			continue
 		}
 		if err := RewindImport(shared, origin, rewindTo); err != nil {
 			return fmt.Errorf("sync: replay rewind %s to %d: %w", origin, rewindTo, err)
@@ -128,6 +119,36 @@ func ReplayRefusedPass(shared *db.DB, kv db.KV, t synclog.LogTransport) error {
 	}
 
 	return markReplayRefused(kv)
+}
+
+// rewindPoint is where an origin's mark can be put back to so the importer
+// replays from target, and whether it should move at all.
+//
+// Below the origin's floor the log keeps only each row's newest entry, so the
+// entry after target may be gone; the importer reads a mark below the floor
+// through the snapshot path, which needs no batch boundary, so target itself
+// is the answer. Above the floor every entry is there, and the mark has to sit
+// on a batch boundary: a mark inside a batch skips the rest of it and the next
+// batch reads as a gap.
+func rewindPoint(t synclog.LogTransport, state synclog.MarkState, origin string, target int) (int, bool, error) {
+	head, ok := state.Heads[origin]
+	if !ok || head <= target {
+		return 0, false, nil
+	}
+	if target < state.Floors[origin] {
+		return target, true, nil
+	}
+	entries, err := t.PullRange(origin, target, target+1)
+	if err != nil {
+		return 0, false, fmt.Errorf("sync: replay pull range %s: %w", origin, err)
+	}
+	if len(entries) == 0 {
+		return 0, false, nil
+	}
+	if boundary := entries[0].Batch - 1; boundary >= 0 && boundary <= target {
+		return boundary, true, nil
+	}
+	return target, true, nil
 }
 
 func markReplayRefused(kv db.KV) error {
