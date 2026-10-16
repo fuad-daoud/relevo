@@ -55,6 +55,8 @@ func (runnerEnv) Run(name string, args ...string) ([]byte, int, error) {
 // carries the login command to name wherever the status is printed; it is
 // empty for a harness not on PATH. Efforts and DefaultEffort are what a CLI
 // reports per model -- only codex does; the others' efforts are known.
+// Catalog is opencode's every runnable "provider/model", and its Models the
+// ones picked from it.
 type HarnessStatus struct {
 	Harness       string
 	OnPath        bool
@@ -63,6 +65,7 @@ type HarnessStatus struct {
 	Login         string
 	Efforts       map[string][]string
 	DefaultEffort map[string]string
+	Catalog       []string
 }
 
 // Inventory is everything a probe produced: the wizard harnesses' statuses
@@ -82,19 +85,13 @@ var loginCommands = map[string]string{
 	"agy":    "run agy once to sign in",
 }
 
-// openrouterLineup is what opencode offers the questions: the OpenRouter
-// builder and lite-planner models a new machine starts from. opencode is
-// not asked for a login -- a missing OpenRouter key is a doctor finding, not
-// a reason to leave the lineup out.
-var openrouterLineup = []string{"z-ai/glm-5.3-flash", "deepseek/deepseek-v4.1-flash#max"}
-
 // claudeAliases are the only candidate models claude ever names, because
 // claude has no model-list command and the aliases always resolve.
 var claudeAliases = []string{"sonnet", "opus", "haiku"}
 
 // Probe runs each harness's status and model commands through the env's
-// runner and reports what it found. opencode on PATH offers the OpenRouter
-// lineup unprobed, and a harness not on PATH gets no status at all.
+// runner and reports what it found. A harness not on PATH gets no status at
+// all.
 func Probe(env SetupEnv) Inventory {
 	var inv Inventory
 	var kinds []string
@@ -163,7 +160,8 @@ func probeHarness(env SetupEnv, kind string) HarnessStatus {
 	case "agy":
 		s.LoggedIn, s.Models = probeAgy(env)
 	case "opencode":
-		s.LoggedIn, s.Models, s.Login = true, openrouterLineup, ""
+		catalog := probeOpencode(env)
+		s.LoggedIn, s.Catalog, s.Models, s.Login = true, catalog, defaultOpencodePicks(catalog), ""
 	}
 	return s
 }

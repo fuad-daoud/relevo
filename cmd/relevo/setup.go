@@ -125,7 +125,13 @@ func setupRun(rt relevo.Runtime, answersFlag []string, asJSON, stdinTTY, stdoutT
 		fmt.Fprintln(w, note)
 	}
 
-	qs := setup.Questions(inv, standing)
+	questionsFor := func(a setup.Answers) []setup.Question {
+		return setup.Questions(inv, withOpencodeAnswer(standing, a))
+	}
+	qs, err := setupQuestionsFor(answersFlag, questionsFor)
+	if err != nil {
+		return fail(codeUsage, "%v", err)
+	}
 	given, err := parseSetupAnswers(answersFlag, qs)
 	if err != nil {
 		return fail(codeUsage, "%v", err)
@@ -135,7 +141,7 @@ func setupRun(rt relevo.Runtime, answersFlag []string, asJSON, stdinTTY, stdoutT
 	case !anyRequired(open):
 		// Only role questions are left, and an unanswered role is derived.
 	case setupAskMode(stdinTTY, stdoutTTY, asJSON):
-		prompted, err := askSetupQuestions(setupPromptStream, os.Stdin, open, given)
+		prompted, err := askSetupQuestions(setupPromptStream, os.Stdin, open, given, func(a setup.Answers) []setup.Question { return questionsFor(a) })
 		if err != nil {
 			return fail(codeInternal, "%v", err)
 		}
@@ -330,6 +336,41 @@ func openSetupQuestions(qs []setup.Question, given setup.Answers) []setup.Questi
 	return open
 }
 
+// setupQuestionsFor are the questions an answer set is checked against: an
+// --answer opencode=... decides which opencode models the other questions
+// offer, so it is read first and the questions built over it.
+func setupQuestionsFor(raw []string, questionsFor func(setup.Answers) []setup.Question) ([]setup.Question, error) {
+	qs := questionsFor(nil)
+	var opencode []string
+	for _, piece := range raw {
+		if id, _, ok := setupAnswerPiece(piece); ok && id == "opencode" {
+			opencode = append(opencode, piece)
+		}
+	}
+	if len(opencode) == 0 {
+		return qs, nil
+	}
+	given, err := parseSetupAnswers(opencode, qs)
+	if err != nil {
+		return nil, err
+	}
+	return questionsFor(given), nil
+}
+
+// withOpencodeAnswer is the standing answers plus an opencode answer, the
+// pair the questions are built over.
+func withOpencodeAnswer(standing, a setup.Answers) setup.Answers {
+	if len(a["opencode"]) == 0 {
+		return standing
+	}
+	out := make(setup.Answers, len(standing)+1)
+	for id, v := range standing {
+		out[id] = v
+	}
+	out["opencode"] = a["opencode"]
+	return out
+}
+
 func anyRequired(qs []setup.Question) bool {
 	for _, q := range qs {
 		if !q.Optional {
@@ -370,8 +411,7 @@ func setupInventoryLine(inv setup.Inventory) string {
 	parts := make([]string, 0, len(inv.Harnesses))
 	for _, s := range inv.Harnesses {
 		if s.Harness == "opencode" {
-			// opencode is never asked for a login; its key is the doctor's.
-			parts = append(parts, "opencode: on PATH (OpenRouter lineup; relevo doctor checks the key)")
+			parts = append(parts, opencodeInventoryText(s))
 			continue
 		}
 		if s.LoggedIn {

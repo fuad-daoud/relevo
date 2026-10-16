@@ -34,6 +34,9 @@ type SetupInventoryEntry struct {
 	LoggedIn bool     `json:"logged_in"`
 	Models   []string `json:"models,omitempty"`
 	Login    string   `json:"login,omitempty"`
+	// Providers is opencode's model count per provider; its Models are the
+	// recommended picks, the full list being hundreds long.
+	Providers map[string]int `json:"providers,omitempty"`
 }
 
 // SetupQuestionDoc is one open question: its prompt, whether several values
@@ -80,13 +83,21 @@ func setupQuestionsDocOf(inv setup.Inventory, questions []setup.Question) SetupQ
 			// Logged in needs no way in: an empty login omits the field's key.
 			login = ""
 		}
-		entries = append(entries, SetupInventoryEntry{
+		entry := SetupInventoryEntry{
 			Harness:  s.Harness,
 			OnPath:   s.OnPath,
 			LoggedIn: s.LoggedIn,
 			Models:   s.Models,
 			Login:    login,
-		})
+		}
+		for _, m := range s.Catalog {
+			if entry.Providers == nil {
+				entry.Providers = map[string]int{}
+			}
+			p, _, _ := strings.Cut(m, "/")
+			entry.Providers[p]++
+		}
+		entries = append(entries, entry)
 	}
 	return SetupQuestionsDoc{
 		Inventory: entries,
@@ -167,7 +178,9 @@ func setupStepDocOf(step string, err error) SetupStepDoc {
 // and echoes what each answer picked. The role questions are asked only
 // when the reader chooses to customize the roles their picks imply; given
 // carries the answers flags already gave, which those roles follow too.
-func askSetupQuestions(w io.Writer, r io.Reader, qs []setup.Question, given setup.Answers) (setup.Answers, error) {
+// rebuild, when set, is how the questions after opencode's are asked again
+// once its answer narrows the models they offer.
+func askSetupQuestions(w io.Writer, r io.Reader, qs []setup.Question, given setup.Answers, rebuild func(setup.Answers) []setup.Question) (setup.Answers, error) {
 	sc := bufio.NewScanner(r)
 	out := make(setup.Answers, len(qs))
 	known := func() setup.Answers {
@@ -182,7 +195,19 @@ func askSetupQuestions(w io.Writer, r io.Reader, qs []setup.Question, given setu
 	}
 	fmt.Fprintln(w, "Press Enter on any question to take the recommended answer.")
 	rolesAsked, customize := false, false
-	for _, q := range qs {
+	for i := 0; i < len(qs); i++ {
+		q := qs[i]
+		if q.ID == "opencode" {
+			vals, err := askOpencodeModels(w, sc, q)
+			if err != nil {
+				return nil, err
+			}
+			out[q.ID] = vals
+			if rebuild != nil {
+				qs = append(qs[:i+1:i+1], refreshedQuestions(qs[i+1:], rebuild(known()))...)
+			}
+			continue
+		}
 		if q.Optional {
 			if !rolesAsked {
 				rolesAsked = true
@@ -203,6 +228,21 @@ func askSetupQuestions(w io.Writer, r io.Reader, qs []setup.Question, given setu
 		out[q.ID] = vals
 	}
 	return out, nil
+}
+
+// refreshedQuestions are the questions still to ask, each replaced by its
+// rebuilt shape.
+func refreshedQuestions(rest, rebuilt []setup.Question) []setup.Question {
+	out := make([]setup.Question, len(rest))
+	for i, q := range rest {
+		out[i] = q
+		for _, nq := range rebuilt {
+			if nq.ID == q.ID {
+				out[i] = nq
+			}
+		}
+	}
+	return out
 }
 
 // askSetupAnswer asks one question and its effort follow-ups, then echoes
@@ -304,7 +344,11 @@ func askOneSetupQuestion(w io.Writer, sc *bufio.Scanner, q setup.Question) (vals
 func writeSetupPrompt(w io.Writer, q setup.Question) {
 	fmt.Fprintf(w, "\n%s\n", q.Prompt)
 	for i, c := range q.Choices {
-		fmt.Fprintf(w, "  %d. %s%s -- %s\n", i+1, setupChoiceText(c), recommendedMark(q, c), c.Why)
+		why := ""
+		if c.Why != "" {
+			why = " -- " + c.Why
+		}
+		fmt.Fprintf(w, "  %d. %s%s%s\n", i+1, setupChoiceText(c), recommendedMark(q, c), why)
 	}
 	if q.Multi {
 		fmt.Fprintln(w, "  e.g. 1,3 picks two, 1 first")

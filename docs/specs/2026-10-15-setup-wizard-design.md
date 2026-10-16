@@ -16,10 +16,10 @@ skip it and use `relevo config` directly.
 
 ## Non-goals
 
-- Probing opencode. opencode on PATH offers the OpenRouter lineup main's
-  init seeds -- `z-ai/glm-5.3-flash` as a builder (recommended, last) and
-  `deepseek/deepseek-v4.1-flash#max` as the lite-planner -- without a login
-  check: a missing OpenRouter key is a doctor finding (owner, 2026-10-16).
+- A login check for opencode. `opencode models --standalone` lists only
+  the logged-in providers' models plus the free ones, so the list is the
+  probe; when it fails, the OpenRouter lineup stands in, and a missing key
+  is a doctor finding (owner, 2026-10-16).
 - A full-screen TUI. Prompts are plain lines that work over ssh, in CI and in
   an agent's shell.
 - Changing the shipped agent files' model pins (the codex researcher's
@@ -84,8 +84,20 @@ Notes, not questions:
 - a harness on PATH but not logged in: `<harness>: on PATH, not logged in ->
   <login command>` (`claude auth login`, `codex login`, and for agy, which has no login verb, `run agy once to sign in`); rerun
   setup afterwards.
-- opencode on PATH: `opencode: on PATH (OpenRouter lineup; relevo doctor
-  checks the key)`.
+- opencode on PATH: `opencode: openrouter (385 models), opencode-go (29
+  models), ...`, each provider it can run with its model count.
+
+The opencode question (owner, 2026-10-16) comes first where opencode is on
+PATH: optional, multi. On a terminal the reader picks providers, then
+models -- a provider's whole list at 30 models or fewer, else the
+recommended shortlist and a substring search, a full model id taken as
+typed; `none` skips opencode. Recommended: the OpenRouter lineup the
+catalog holds (`z-ai/glm-5.3-flash`, `deepseek/deepseek-v4.1-flash`,
+`xiaomi/mimo-v2.6-flash`), else the first model of the first provider that
+needs a login. Every picked model becomes a candidate, and the picks are
+the opencode choices every later question offers: glm a recommended builder
+(last), deepseek at `#max` the lite-planner (and the planner where nothing
+else plans).
 - no harness logged in: setup stops before writing anything, with code
   `not_available`, a message listing each login command, and
   `next: relevo setup` once one is logged in. No harness on PATH at all keeps

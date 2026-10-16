@@ -36,10 +36,12 @@ func roleQuestions(inv Inventory, builder, planner Question) []Question {
 		recommended["reviewer"] = []string{cheap}
 		recommended["lite-planner"] = []string{cheap}
 	}
-	// The lite-planner keeps the OpenRouter lineup's planner wherever
-	// opencode stands.
-	if c, ok := pickChoice(loggedChoices(inv)["opencode"], "deepseek/", ""); ok {
-		recommended["lite-planner"] = []string{c.Value}
+	// The lite-planner keeps the OpenRouter lineup's planner wherever it
+	// was picked.
+	for _, c := range loggedChoices(inv)["opencode"] {
+		if c.Label == opencodePlanner {
+			recommended["lite-planner"] = []string{atEffort(c, opencodePlannerVariant)}
+		}
 	}
 	qs := make([]Question, 0, len(roleIDs))
 	for _, id := range roleIDs {

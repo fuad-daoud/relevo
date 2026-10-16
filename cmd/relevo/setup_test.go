@@ -401,9 +401,11 @@ func TestSetupInventoryLine(t *testing.T) {
 	if got := setupInventoryLine(setupInventory()); got != line {
 		t.Errorf("inventory line = %q, want %q", got, line)
 	}
-	// opencode is never asked for a login, so it never reads as logged in.
-	oc := setup.Inventory{Harnesses: []setup.HarnessStatus{{Harness: "opencode", OnPath: true, LoggedIn: true}}}
-	if got := setupInventoryLine(oc); got != "opencode: on PATH (OpenRouter lineup; relevo doctor checks the key)" {
+	// opencode is never asked for a login: its line counts what each
+	// provider can run.
+	oc := setup.Inventory{Harnesses: []setup.HarnessStatus{{Harness: "opencode", OnPath: true, LoggedIn: true,
+		Catalog: []string{"openrouter/a/b", "openrouter/c/d", "opencode/free-1"}}}}
+	if got := setupInventoryLine(oc); got != "opencode: openrouter (2 models), opencode (1 free models)" {
 		t.Errorf("opencode line = %q", got)
 	}
 }
@@ -498,7 +500,7 @@ func TestSetupPromptEnterTakesRecommended(t *testing.T) {
 
 	in := strings.NewReader("1,3\n" + strings.Repeat("maybe\n", 2) + "n\n")
 	out := new(bytes.Buffer)
-	answers, err := askSetupQuestions(out, in, qs, nil)
+	answers, err := askSetupQuestions(out, in, qs, nil, nil)
 	if err != nil {
 		t.Fatalf("askSetupQuestions: %v", err)
 	}
@@ -515,7 +517,7 @@ func TestSetupPromptEnterTakesRecommended(t *testing.T) {
 	// Enter takes the recommendation on its own, and three unusable lines
 	// give up on the question.
 	in2 := strings.Repeat("maybe\n", 3)
-	if _, err := askSetupQuestions(out, strings.NewReader(in2), []setup.Question{builder}, nil); err == nil {
+	if _, err := askSetupQuestions(out, strings.NewReader(in2), []setup.Question{builder}, nil, nil); err == nil {
 		t.Fatal("three unusable answers parsed, want a failure")
 	}
 }
@@ -528,7 +530,7 @@ func TestSetupPromptEmptyLineTakesRecommendation(t *testing.T) {
 		Recommended: []string{"yolo"},
 		Choices:     []setup.Choice{{Value: "yolo"}, {Value: "edit"}},
 	}
-	answers, err := askSetupQuestions(new(bytes.Buffer), strings.NewReader("\n"), []setup.Question{tier}, nil)
+	answers, err := askSetupQuestions(new(bytes.Buffer), strings.NewReader("\n"), []setup.Question{tier}, nil, nil)
 	if err != nil {
 		t.Fatalf("askSetupQuestions: %v", err)
 	}
@@ -555,7 +557,7 @@ func TestSetupPromptAsksEffortAfterModels(t *testing.T) {
 	// haiku at high (3), and Enter keeps sonnet's recommended medium.
 	in := strings.NewReader("1,4,2\n1\n3\n\n")
 	out := new(bytes.Buffer)
-	answers, err := askSetupQuestions(out, in, []setup.Question{builder}, nil)
+	answers, err := askSetupQuestions(out, in, []setup.Question{builder}, nil, nil)
 	if err != nil {
 		t.Fatalf("askSetupQuestions: %v\n%s", err, out)
 	}
@@ -590,7 +592,7 @@ func TestSetupPromptRolesKeepOrCustomize(t *testing.T) {
 	given := setup.Answers{"builder": {"claude/anthropic/haiku:low"}, "planner": {"claude/anthropic/opus:high"}}
 
 	out := new(bytes.Buffer)
-	answers, err := askSetupQuestions(out, strings.NewReader("\n"), roles, given)
+	answers, err := askSetupQuestions(out, strings.NewReader("\n"), roles, given, nil)
 	if err != nil {
 		t.Fatalf("keep: %v\n%s", err, out)
 	}
@@ -607,7 +609,7 @@ func TestSetupPromptRolesKeepOrCustomize(t *testing.T) {
 	// (opus, effort Enter), security Enter, lite-planner Enter.
 	out.Reset()
 	in := strings.NewReader("2\n\n\n2\n\n\n\n\n\n")
-	if answers, err = askSetupQuestions(out, in, roles, given); err != nil {
+	if answers, err = askSetupQuestions(out, in, roles, given, nil); err != nil {
 		t.Fatalf("customize: %v\n%s", err, out)
 	}
 	if got := answers["librarian"]; !slices.Equal(got, []string{"claude/anthropic/haiku:low"}) {

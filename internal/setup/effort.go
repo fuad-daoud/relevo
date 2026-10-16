@@ -40,10 +40,7 @@ func harnessChoices(s HarnessStatus) []Choice {
 			add(c)
 		}
 	case "opencode":
-		// An OpenRouter model's variant rides in its name after "#".
-		for _, m := range s.Models {
-			add(Choice{Label: m, sep: "#", bare: true})
-		}
+		return opencodeChoices(s)
 	case "claude":
 		for _, m := range s.Models {
 			add(Choice{Label: m, Efforts: claudeEfforts, effort: "medium", sep: ":", bare: true})
@@ -130,12 +127,13 @@ func atEffort(c Choice, want string) string {
 // the choice value itself, or the value plus an effort after ":" -- or after
 // "-", where agy spells it in the model name.
 func choiceAndEffort(q Question, value string) (Choice, string, bool) {
-	for _, c := range q.Choices {
+	all := append(append([]Choice{}, q.Choices...), q.more...)
+	for _, c := range all {
 		if value == c.Value {
 			return c, "", true
 		}
 	}
-	for _, c := range q.Choices {
+	for _, c := range all {
 		if c.sep == "" {
 			continue
 		}
@@ -144,7 +142,7 @@ func choiceAndEffort(q Question, value string) (Choice, string, bool) {
 			if !ok || effort == "" {
 				continue
 			}
-			if slices.Contains(c.Efforts, effort) || (c.open && sep == ":") {
+			if slices.Contains(c.Efforts, effort) || (c.open && sep == c.sep) {
 				return c, effort, true
 			}
 		}

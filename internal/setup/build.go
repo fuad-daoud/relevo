@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
@@ -24,10 +25,11 @@ var chainOrder = []string{"builder", "librarian", "planner", "reviewer", "securi
 // tokens, the one planner token, the tier, and each role's tokens, answered
 // or derived.
 type picks struct {
-	builder []string
-	planner string
-	tier    string
-	roles   Answers
+	builder  []string
+	planner  string
+	tier     string
+	roles    Answers
+	opencode []string // every picked opencode model, a candidate whether or not an actor names it
 }
 
 // Build assembles the starter configuration from a probe plus the answers
@@ -49,6 +51,7 @@ func Build(inv Inventory, answers Answers) (Files, error) {
 	if p.roles, err = rolePicks(inv, p, answers); err != nil {
 		return Files{}, err
 	}
+	p.opencode = opencodePicked(inv, answers)
 	cands, err := sharedCandidates(allPicks(p))
 	if err != nil {
 		return Files{}, err
@@ -61,7 +64,7 @@ func Build(inv Inventory, answers Answers) (Files, error) {
 // one is an error too, because a front end that asks everything hands all
 // three over.
 func requiredPicks(inv Inventory, answers Answers) (picks, error) {
-	byID := questionSet(inv)
+	byID := questionSet(inv, answers)
 	tokens, err := pickedList(byID["builder"], answers["builder"])
 	if err != nil {
 		return picks{}, err
@@ -78,9 +81,10 @@ func requiredPicks(inv Inventory, answers Answers) (picks, error) {
 }
 
 // questionSet maps the questions' ids to their shape with every choice
-// value: the candidate, planner and tier questions always stand.
-func questionSet(inv Inventory) map[string]Question {
-	qs := Questions(inv, nil)
+// value: the candidate, planner and tier questions always stand. The
+// answers decide which opencode models those questions offer.
+func questionSet(inv Inventory, answers Answers) map[string]Question {
+	qs := Questions(inv, answers)
 	byID := make(map[string]Question, len(qs))
 	for _, q := range qs {
 		byID[q.ID] = q
@@ -141,7 +145,7 @@ func cheapestPick(inv Inventory) string {
 // rolePicks is each role's tokens: its own answer, validated, where one was
 // given, else what DerivedRoles makes of the builder and planner picks.
 func rolePicks(inv Inventory, p picks, answers Answers) (Answers, error) {
-	qs := Questions(inv, nil)
+	qs := Questions(inv, answers)
 	out := DerivedRoles(qs, Answers{"builder": p.builder, "planner": {p.planner}})
 	for _, q := range qs {
 		if !IsRole(q.ID) || len(answers[q.ID]) == 0 {
@@ -170,7 +174,27 @@ func allPicks(p picks) []string {
 	for _, id := range roleIDs {
 		tokens = append(tokens, p.roles[id]...)
 	}
+	for _, t := range p.opencode {
+		if !slices.ContainsFunc(tokens, func(have string) bool { return have == t || strings.HasPrefix(have, t+"#") }) {
+			tokens = append(tokens, t)
+		}
+	}
 	return tokens
+}
+
+// opencodePicked are the opencode models the answers picked, else the
+// default picks, as candidate tokens. allPicks drops one an actor already
+// runs, at a variant or not.
+func opencodePicked(inv Inventory, answers Answers) []string {
+	var out []string
+	for _, s := range withOpencodePicks(inv, answers).Harnesses {
+		if s.Harness == "opencode" {
+			for _, m := range s.Models {
+				out = append(out, refFor("opencode", m))
+			}
+		}
+	}
+	return out
 }
 
 // sharedCandidates turns the picked tokens into the candidate list Build
@@ -200,7 +224,7 @@ func filesWith(inv Inventory, p picks, cands []candidate.Candidate) (Files, erro
 	names := candidate.DeriveNames(cands)
 	nameFor := make(map[string]string, len(cands))
 	for i, c := range cands {
-		nameFor[refFor(c.Harness, c.Model)] = names[i]
+		nameFor[c.Ref().String()] = names[i]
 	}
 
 	namesOf := func(tokens []string) []string {

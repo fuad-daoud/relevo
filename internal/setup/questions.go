@@ -35,6 +35,8 @@ type Question struct {
 	Optional    bool
 	Recommended []string
 	Choices     []Choice
+
+	more []Choice // accepted but not listed: a catalog too long to show
 }
 
 // Answers maps a question id to the values it already carries: candidate,
@@ -57,12 +59,21 @@ const builderPrompt = "Which models build code? Pick one or more, comma-separate
 const tierPrompt = "How much may a builder do without asking? yolo lets them run any command in their worktree without asking; at edit they change files but a claude builder cannot run tests or git"
 
 // Questions are the questions still open, in the order the front end asks
-// them: builder, planner, the optional roles, tier, then the optional plugin
+// them: opencode's models where it stands, builder, planner, the optional
+// roles, tier, then the optional plugin
 // and service, then smoke. A no-longer-applicable one is dropped rather than
 // carried with an empty choice list.
 func Questions(inv Inventory, answers map[string][]string) []Question {
+	var qs []Question
+	for _, s := range inv.Harnesses {
+		if s.Harness == "opencode" {
+			qs = append(qs, opencodeQuestion(s))
+		}
+	}
+	inv = withOpencodePicks(inv, answers)
 	builder, planner := builderQuestion(inv), plannerQuestion(inv)
-	qs := append([]Question{builder, planner}, roleQuestions(inv, builder, planner)...)
+	qs = append(qs, builder, planner)
+	qs = append(qs, roleQuestions(inv, builder, planner)...)
 	qs = append(qs, tierQuestion())
 	if claudeOnPath(inv) && len(answers["plugin"]) == 0 {
 		qs = append(qs, yesNoQuestion("plugin",
@@ -144,8 +155,8 @@ func builderQuestion(inv Inventory) Question {
 	if c, ok := pickChoice(offers["claude"], "sonnet", ""); ok {
 		recommended = append(recommended, atEffort(c, builderEffort))
 	}
-	if cs := offers["opencode"]; len(cs) > 0 {
-		recommended = append(recommended, cs[0].Value)
+	if c, ok := exactChoice(offers["opencode"], opencodeBuilder); ok {
+		recommended = append(recommended, c.Value)
 	}
 	return Question{
 		ID:          "builder",
@@ -172,8 +183,8 @@ func plannerQuestion(inv Inventory) Question {
 		q.Recommended = []string{atEffort(cs[0], plannerEffort)}
 	} else if c, ok := pickChoice(offers["agy"], "claude-opus-", ""); ok {
 		q.Recommended = []string{atEffort(c, plannerEffort)}
-	} else if c, ok := pickChoice(offers["opencode"], "deepseek/", ""); ok {
-		q.Recommended = []string{c.Value}
+	} else if c, ok := exactChoice(offers["opencode"], opencodePlanner); ok {
+		q.Recommended = []string{atEffort(c, opencodePlannerVariant)}
 	}
 	return q
 }
@@ -266,21 +277,34 @@ func loggedModels(inv Inventory) map[string][]string {
 }
 
 // refFor prefixes the provider a harness's candidates carry to one model:
-// the kind's own first provider.
+// the kind's own first provider. An opencode model names its provider
+// itself.
 func refFor(kind, model string) string {
+	if kind == "opencode" {
+		return kind + "/" + model
+	}
 	return kind + "/" + providerFor(kind) + "/" + model
+}
+
+// exactChoice is the choice for one model, else the first choice at all.
+func exactChoice(choices []Choice, model string) (Choice, bool) {
+	for _, c := range choices {
+		if c.Label == model {
+			return c, true
+		}
+	}
+	if len(choices) > 0 {
+		return choices[0], true
+	}
+	return Choice{}, false
 }
 
 // providerFor is the provider a candidate lists under for one harness kind:
 // the first of the kind's own providers, with openai spelled for codex,
-// whose table's row names none, and openrouter for opencode, whose lineup
-// is OpenRouter's.
+// whose table's row names none.
 func providerFor(kind string) string {
-	switch kind {
-	case "codex":
+	if kind == "codex" {
 		return "openai"
-	case "opencode":
-		return "openrouter"
 	}
 	h, ok := harnessLookup(kind)
 	if !ok || len(h.Providers) == 0 {

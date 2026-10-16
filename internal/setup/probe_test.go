@@ -190,9 +190,10 @@ func harnessKinds(inv Inventory) []string {
 	return kinds
 }
 
-// TestOpencodeSeedsTheOpenRouterLineup pins the lineup: opencode on PATH,
-// with no login asked, offers glm as a recommended builder and deepseek as
-// the lite-planner, and on a machine with nothing else Build writes both.
+// TestOpencodeSeedsTheOpenRouterLineup pins the lineup: opencode on PATH
+// whose model list fails still offers the lineup -- glm a recommended
+// builder, deepseek#max the lite-planner -- and Build writes all three,
+// deepseek once.
 func TestOpencodeSeedsTheOpenRouterLineup(t *testing.T) {
 	env := probeEnv{pathEnv: pathEnv{onPath: map[string]bool{"opencode": true}}}
 	inv := Probe(env)
@@ -204,7 +205,7 @@ func TestOpencodeSeedsTheOpenRouterLineup(t *testing.T) {
 	for _, c := range candidatesOf(t, files) {
 		models = append(models, c.Harness+"/"+c.Provider+"/"+c.Model)
 	}
-	want := []string{"opencode/openrouter/z-ai/glm-5.3-flash", "opencode/openrouter/deepseek/deepseek-v4.1-flash#max"}
+	want := []string{"opencode/openrouter/z-ai/glm-5.3-flash", "opencode/openrouter/deepseek/deepseek-v4.1-flash#max", "opencode/openrouter/xiaomi/mimo-v2.6-flash"}
 	if !reflect.DeepEqual(models, want) {
 		t.Fatalf("candidates = %v, want the lineup %v", models, want)
 	}
@@ -218,7 +219,7 @@ func TestOpencodeSeedsTheOpenRouterLineup(t *testing.T) {
 	if rec[len(rec)-1] != "opencode/openrouter/z-ai/glm-5.3-flash" {
 		t.Errorf("builder recommends %v, want glm last", rec)
 	}
-	if lp := pickOf(t, Questions(withClaude, nil), "lite-planner").Recommended; !reflect.DeepEqual(lp, []string{want[1]}) {
+	if lp := pickOf(t, Questions(withClaude, nil), "lite-planner").Recommended; !reflect.DeepEqual(lp, []string{"opencode/openrouter/deepseek/deepseek-v4.1-flash#max"}) {
 		t.Errorf("lite-planner recommends %v, want deepseek beside claude too", lp)
 	}
 }

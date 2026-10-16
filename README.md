@@ -142,7 +142,14 @@ runs the plugin, the service and one real round:
    ```
    codex: logged in · claude: logged in · agy: on PATH, not logged in -> run agy once to sign in
    ```
-   then asks one question at a time: which models build (`builder`), who
+   then asks one question at a time. Where opencode is installed it first
+   asks which opencode models relevo may use (`opencode`): pick providers
+   from what `opencode models --standalone` lists, then models -- a
+   provider's whole list when it has 30 or fewer, else a recommended
+   shortlist (the OpenRouter lineup: `z-ai/glm-5.3-flash`,
+   `deepseek/deepseek-v4.1-flash`, `xiaomi/mimo-v2.6-flash`) and a name
+   search; `none` skips opencode. Every picked model is written as a
+   candidate. Then: which models build (`builder`), who
    writes plans (`planner`), then shows what the other roles get from those
    picks -- `librarian` (writes docs only), `reviewer`, `security` and
    `lite-planner` -- and asks whether to keep them or pick each one, then the
@@ -164,7 +171,11 @@ runs the plugin, the service and one real round:
    A value is the choice's own value; a candidate value is
    `<harness>/<provider>/<model>`, optionally `:<effort>` with one of the
    choice's `efforts`. The role questions are `optional`: leave them out and
-   each role follows the builder and planner answers. Off a terminal (or under `--json`), a run
+   each role follows the builder and planner answers. So is `opencode`: its
+   choices list the recommended picks, but any model
+   `opencode models --standalone` prints is accepted as
+   `opencode/<provider>/<model>`, and the builder and planner questions then
+   offer those picks. Off a terminal (or under `--json`), a run
    with questions still open prints a questions document to stdout and exits
    3; nothing is written. A repeated `--answer <id>=<value>` answers more than
    one question, and an answer for a question that no longer applies is
