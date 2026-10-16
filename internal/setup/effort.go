@@ -39,6 +39,11 @@ func harnessChoices(s HarnessStatus) []Choice {
 		for _, c := range agyChoices(s.Models) {
 			add(c)
 		}
+	case "opencode":
+		// An OpenRouter model's variant rides in its name after "#".
+		for _, m := range s.Models {
+			add(Choice{Label: m, sep: "#", bare: true})
+		}
 	case "claude":
 		for _, m := range s.Models {
 			add(Choice{Label: m, Efforts: claudeEfforts, effort: "medium", sep: ":", bare: true})

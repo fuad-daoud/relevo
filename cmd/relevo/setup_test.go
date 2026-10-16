@@ -401,6 +401,11 @@ func TestSetupInventoryLine(t *testing.T) {
 	if got := setupInventoryLine(setupInventory()); got != line {
 		t.Errorf("inventory line = %q, want %q", got, line)
 	}
+	// opencode is never asked for a login, so it never reads as logged in.
+	oc := setup.Inventory{Harnesses: []setup.HarnessStatus{{Harness: "opencode", OnPath: true, LoggedIn: true}}}
+	if got := setupInventoryLine(oc); got != "opencode: on PATH (OpenRouter lineup; relevo doctor checks the key)" {
+		t.Errorf("opencode line = %q", got)
+	}
 }
 
 func setupInventory() setup.Inventory {

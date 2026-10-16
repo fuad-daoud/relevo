@@ -82,26 +82,24 @@ var loginCommands = map[string]string{
 	"agy":    "run agy once to sign in",
 }
 
-// opencodeNote is what opencode's presence earns; a follow-up adds it to the
-// wizard.
-const opencodeNote = "opencode: not covered by setup yet; configure it with relevo config"
+// openrouterLineup is what opencode offers the questions: the OpenRouter
+// builder and lite-planner models a new machine starts from. opencode is
+// not asked for a login -- a missing OpenRouter key is a doctor finding, not
+// a reason to leave the lineup out.
+var openrouterLineup = []string{"z-ai/glm-5.3-flash", "deepseek/deepseek-v4.1-flash#max"}
 
 // claudeAliases are the only candidate models claude ever names, because
 // claude has no model-list command and the aliases always resolve.
 var claudeAliases = []string{"sonnet", "opus", "haiku"}
 
 // Probe runs each harness's status and model commands through the env's
-// runner and reports what it found. opencode on PATH becomes a note, and a
-// harness not on PATH gets no status at all.
+// runner and reports what it found. opencode on PATH offers the OpenRouter
+// lineup unprobed, and a harness not on PATH gets no status at all.
 func Probe(env SetupEnv) Inventory {
 	var inv Inventory
 	var kinds []string
 	for _, h := range harness.All() {
 		if _, err := env.LookPath(h.Binary); err != nil {
-			continue
-		}
-		if h.Kind == "opencode" {
-			inv.Notes = append(inv.Notes, opencodeNote)
 			continue
 		}
 		kinds = append(kinds, h.Kind)
@@ -164,6 +162,8 @@ func probeHarness(env SetupEnv, kind string) HarnessStatus {
 		s.Models, s.Efforts, s.DefaultEffort = codexOffer(offer)
 	case "agy":
 		s.LoggedIn, s.Models = probeAgy(env)
+	case "opencode":
+		s.LoggedIn, s.Models, s.Login = true, openrouterLineup, ""
 	}
 	return s
 }

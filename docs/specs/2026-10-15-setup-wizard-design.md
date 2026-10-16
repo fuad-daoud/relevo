@@ -16,8 +16,10 @@ skip it and use `relevo config` directly.
 
 ## Non-goals
 
-- opencode. v1 covers claude, codex and agy; opencode on PATH gets a note
-  pointing at `relevo config`, and a follow-up adds it.
+- Probing opencode. opencode on PATH offers the OpenRouter lineup main's
+  init seeds -- `z-ai/glm-5.3-flash` as a builder (recommended, last) and
+  `deepseek/deepseek-v4.1-flash#max` as the lite-planner -- without a login
+  check: a missing OpenRouter key is a doctor finding (owner, 2026-10-16).
 - A full-screen TUI. Prompts are plain lines that work over ssh, in CI and in
   an agent's shell.
 - Changing the shipped agent files' model pins (the codex researcher's
@@ -82,8 +84,8 @@ Notes, not questions:
 - a harness on PATH but not logged in: `<harness>: on PATH, not logged in ->
   <login command>` (`claude auth login`, `codex login`, and for agy, which has no login verb, `run agy once to sign in`); rerun
   setup afterwards.
-- opencode on PATH: `opencode: not covered by setup yet; configure it with
-  relevo config`.
+- opencode on PATH: `opencode: on PATH (OpenRouter lineup; relevo doctor
+  checks the key)`.
 - no harness logged in: setup stops before writing anything, with code
   `not_available`, a message listing each login command, and
   `next: relevo setup` once one is logged in. No harness on PATH at all keeps

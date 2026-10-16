@@ -369,6 +369,11 @@ func mergeSetupAnswers(qs []setup.Question, rec, given setup.Answers) setup.Answ
 func setupInventoryLine(inv setup.Inventory) string {
 	parts := make([]string, 0, len(inv.Harnesses))
 	for _, s := range inv.Harnesses {
+		if s.Harness == "opencode" {
+			// opencode is never asked for a login; its key is the doctor's.
+			parts = append(parts, "opencode: on PATH (OpenRouter lineup; relevo doctor checks the key)")
+			continue
+		}
 		if s.LoggedIn {
 			parts = append(parts, s.Harness+": logged in")
 			continue

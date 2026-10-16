@@ -36,6 +36,11 @@ func roleQuestions(inv Inventory, builder, planner Question) []Question {
 		recommended["reviewer"] = []string{cheap}
 		recommended["lite-planner"] = []string{cheap}
 	}
+	// The lite-planner keeps the OpenRouter lineup's planner wherever
+	// opencode stands.
+	if c, ok := pickChoice(loggedChoices(inv)["opencode"], "deepseek/", ""); ok {
+		recommended["lite-planner"] = []string{c.Value}
+	}
 	qs := make([]Question, 0, len(roleIDs))
 	for _, id := range roleIDs {
 		qs = append(qs, Question{
@@ -62,8 +67,8 @@ func IsRole(id string) bool {
 
 // DerivedRoles is what each role gets when its question goes unanswered:
 // the librarian writes with the builders, security reviews with the
-// planner, and the reviewer and lite-planner share the cheapest model the
-// questions recommend -- at the effort the answers already picked it at,
+// planner, and the reviewer and lite-planner take the model their own
+// question recommends -- at the effort the answers already picked it at,
 // when they did.
 func DerivedRoles(qs []Question, answers Answers) Answers {
 	out := Answers{}
@@ -73,13 +78,11 @@ func DerivedRoles(qs []Question, answers Answers) Answers {
 	if p := answers["planner"]; len(p) > 0 {
 		out["security"] = p
 	}
+	picked := append(append([]string{}, answers["builder"]...), answers["planner"]...)
 	for _, q := range qs {
-		if q.ID != "reviewer" || len(q.Recommended) == 0 {
-			continue
+		if (q.ID == "reviewer" || q.ID == "lite-planner") && len(q.Recommended) > 0 {
+			out[q.ID] = []string{pickedAlready(q, picked, q.Recommended[0])}
 		}
-		cheap := pickedAlready(q, append(append([]string{}, answers["builder"]...), answers["planner"]...), q.Recommended[0])
-		out["reviewer"] = []string{cheap}
-		out["lite-planner"] = []string{cheap}
 	}
 	return out
 }

@@ -46,7 +46,7 @@ type Answers map[string][]string
 
 // questionKinds is the order the questions name harnesses in: the first-pick
 // order for builder choices and their recommendations.
-var questionKinds = []string{"codex", "agy", "claude"}
+var questionKinds = []string{"codex", "agy", "claude", "opencode"}
 
 // builderPrompt names the comma list, because a builder answer is several
 // models in the order they are tried.
@@ -144,6 +144,9 @@ func builderQuestion(inv Inventory) Question {
 	if c, ok := pickChoice(offers["claude"], "sonnet", ""); ok {
 		recommended = append(recommended, atEffort(c, builderEffort))
 	}
+	if cs := offers["opencode"]; len(cs) > 0 {
+		recommended = append(recommended, cs[0].Value)
+	}
 	return Question{
 		ID:          "builder",
 		Prompt:      builderPrompt,
@@ -169,6 +172,8 @@ func plannerQuestion(inv Inventory) Question {
 		q.Recommended = []string{atEffort(cs[0], plannerEffort)}
 	} else if c, ok := pickChoice(offers["agy"], "claude-opus-", ""); ok {
 		q.Recommended = []string{atEffort(c, plannerEffort)}
+	} else if c, ok := pickChoice(offers["opencode"], "deepseek/", ""); ok {
+		q.Recommended = []string{c.Value}
 	}
 	return q
 }
@@ -268,10 +273,14 @@ func refFor(kind, model string) string {
 
 // providerFor is the provider a candidate lists under for one harness kind:
 // the first of the kind's own providers, with openai spelled for codex,
-// whose table's row names none.
+// whose table's row names none, and openrouter for opencode, whose lineup
+// is OpenRouter's.
 func providerFor(kind string) string {
-	if kind == "codex" {
+	switch kind {
+	case "codex":
 		return "openai"
+	case "opencode":
+		return "openrouter"
 	}
 	h, ok := harnessLookup(kind)
 	if !ok || len(h.Providers) == 0 {

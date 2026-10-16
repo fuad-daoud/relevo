@@ -190,14 +190,36 @@ func harnessKinds(inv Inventory) []string {
 	return kinds
 }
 
-// TestBuildOpencodeOnlyNamesRelevoConfig pins that a machine with only
-// opencode is not told it has no harness at all.
-func TestBuildOpencodeOnlyNamesRelevoConfig(t *testing.T) {
+// TestOpencodeSeedsTheOpenRouterLineup pins the lineup: opencode on PATH,
+// with no login asked, offers glm as a recommended builder and deepseek as
+// the lite-planner, and on a machine with nothing else Build writes both.
+func TestOpencodeSeedsTheOpenRouterLineup(t *testing.T) {
 	env := probeEnv{pathEnv: pathEnv{onPath: map[string]bool{"opencode": true}}}
 	inv := Probe(env)
-	_, err := Build(inv, RecommendedAnswers(inv, nil))
-	if err == nil || !strings.Contains(err.Error(), "configure opencode with relevo config") {
-		t.Fatalf("Build error = %v, want the opencode-only refusal", err)
+	files, err := Build(inv, RecommendedAnswers(inv, nil))
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	var models []string
+	for _, c := range candidatesOf(t, files) {
+		models = append(models, c.Harness+"/"+c.Provider+"/"+c.Model)
+	}
+	want := []string{"opencode/openrouter/z-ai/glm-5.3-flash", "opencode/openrouter/deepseek/deepseek-v4.1-flash#max"}
+	if !reflect.DeepEqual(models, want) {
+		t.Fatalf("candidates = %v, want the lineup %v", models, want)
+	}
+	actors := parseActorsOf(t, files)
+	if got := actorNames(actors["lite-planner"]); len(got) != 1 || !strings.Contains(got[0], "deepseek") {
+		t.Errorf("lite-planner = %v, want deepseek", got)
+	}
+
+	withClaude := Inventory{Harnesses: []HarnessStatus{status("claude", true, "sonnet", "opus", "haiku"), inv.Harnesses[0]}}
+	rec := pickOf(t, Questions(withClaude, nil), "builder").Recommended
+	if rec[len(rec)-1] != "opencode/openrouter/z-ai/glm-5.3-flash" {
+		t.Errorf("builder recommends %v, want glm last", rec)
+	}
+	if lp := pickOf(t, Questions(withClaude, nil), "lite-planner").Recommended; !reflect.DeepEqual(lp, []string{want[1]}) {
+		t.Errorf("lite-planner recommends %v, want deepseek beside claude too", lp)
 	}
 }
 
