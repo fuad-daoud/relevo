@@ -37,8 +37,8 @@ func opencodeTestQuestion(t *testing.T) setup.Question {
 func TestOpencodeWalkPicksByProvider(t *testing.T) {
 	q := opencodeTestQuestion(t)
 	// providers: 1 cline-pass, 2 openrouter -> "1,2"; cline-pass list: "2"
-	// (kimi); openrouter shortlist: Enter (both); search "qwen" -> pick 2;
-	// type a full id; Enter ends the search.
+	// (kimi); openrouter's starting list: Enter adds none; search "qwen" ->
+	// pick 2; type a full id; Enter ends the search.
 	in := "1,2\n2\n\nqwen\n2\nvendor/model-07\n\n"
 	out := new(bytes.Buffer)
 	got, err := askOpencodeModels(out, bufio.NewScanner(strings.NewReader(in)), q)
@@ -47,18 +47,19 @@ func TestOpencodeWalkPicksByProvider(t *testing.T) {
 	}
 	want := []string{
 		"opencode/cline-pass/cline-pass/kimi-k3",
-		"opencode/openrouter/z-ai/glm-5.3-flash",
-		"opencode/openrouter/deepseek/deepseek-v4.1-flash",
 		"opencode/openrouter/qwen/qwen3.8-max",
 		"opencode/openrouter/vendor/model-07",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("picks = %v\nwant    %v\n%s", got, want, out)
 	}
-	for _, line := range []string{"openrouter has 44 models; these are recommended", "2 openrouter models hold \"qwen\""} {
+	for _, line := range []string{"openrouter has 44 models; here are a few to start from", "2 openrouter models hold \"qwen\""} {
 		if !strings.Contains(out.String(), line) {
 			t.Errorf("walk lacks %q:\n%s", line, out)
 		}
+	}
+	if strings.Contains(out.String(), "(recommended") {
+		t.Errorf("the opencode walk recommends something:\n%s", out)
 	}
 	if strings.Contains(out.String(), "model-39") {
 		t.Errorf("the long provider's whole list was printed:\n%s", out)

@@ -18,8 +18,8 @@ skip it and use `relevo config` directly.
 
 - A login check for opencode. `opencode models --standalone` lists only
   the logged-in providers' models plus the free ones, so the list is the
-  probe; when it fails, the OpenRouter lineup stands in, and a missing key
-  is a doctor finding (owner, 2026-10-16).
+  probe; when it fails, a few openrouter models stand in to pick from, and
+  a missing key is a doctor finding (owner, 2026-10-16).
 - A full-screen TUI. Prompts are plain lines that work over ssh, in CI and in
   an agent's shell.
 - Changing the shipped agent files' model pins (the codex researcher's
@@ -90,14 +90,15 @@ Notes, not questions:
 The opencode question (owner, 2026-10-16) comes first where opencode is on
 PATH: optional, multi. On a terminal the reader picks providers, then
 models -- a provider's whole list at 30 models or fewer, else the
-recommended shortlist and a substring search, a full model id taken as
-typed; `none` skips opencode. Recommended: the OpenRouter lineup the
-catalog holds (`z-ai/glm-5.3-flash`, `deepseek/deepseek-v4.1-flash`,
-`xiaomi/mimo-v2.6-flash`), else the first model of the first provider that
-needs a login. Every picked model becomes a candidate, and the picks are
-the opencode choices every later question offers: glm a recommended builder
-(last), deepseek at `#max` the lite-planner (and the planner where nothing
-else plans).
+few models to start from (for openrouter: `z-ai/glm-5.3-flash`,
+`deepseek/deepseek-v4.1-flash`, `xiaomi/mimo-v2.6-flash`) and a substring
+search, a full model id taken as typed. Nothing is recommended -- not even
+openrouter (owner, 2026-10-16) -- so Enter skips opencode and config init
+writes no opencode model. Every picked model becomes a candidate, and the
+picks are the opencode choices every later question offers: a picked glm is
+a recommended builder (last), a picked deepseek at `#max` the lite-planner
+(and the planner where nothing else plans). With opencode the only harness
+and nothing picked, setup refuses: no model to build with.
 - no harness logged in: setup stops before writing anything, with code
   `not_available`, a message listing each login command, and
   `next: relevo setup` once one is logged in. No harness on PATH at all keeps

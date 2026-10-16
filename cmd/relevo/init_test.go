@@ -95,10 +95,10 @@ func TestInitWritesConfigAndRoles(t *testing.T) {
 	}
 
 	L := storedConfig(t)
-	// claude's sonnet and opus, and opencode's three-model OpenRouter lineup
-	// (the stub lists no models, so the lineup stands in).
-	if L.Candidates.Len() != 5 {
-		t.Errorf("stored candidates = %v, want sonnet, opus and the three OpenRouter models", L.Candidates.Refs())
+	// claude's sonnet and opus; opencode adds only models its question
+	// picked, and init asks none.
+	if L.Candidates.Len() != 2 {
+		t.Errorf("stored candidates = %v, want the two probed (sonnet, opus)", L.Candidates.Refs())
 	}
 	if got := len(L.Policy.OrderFor("builder")); got != 0 {
 		t.Errorf("stored order.builder has %d tokens, want none", got)
@@ -126,7 +126,7 @@ func TestInitWritesConfigAndRoles(t *testing.T) {
 	}
 	opencodeRole := filepath.Join(home, ".config", "opencode", "agents", "plan-executor.md")
 	if _, err := os.Stat(opencodeRole); err != nil {
-		t.Errorf("opencode role file: %v; opencode seeds the lineup, so its agents install", err)
+		t.Errorf("opencode role file: %v; opencode is on PATH, so its agents install", err)
 	}
 
 	out := string(stdout) + string(stderr)
@@ -168,7 +168,7 @@ func TestInitReportsActors(t *testing.T) {
 	if !strings.Contains(out, want) {
 		t.Errorf("output does not contain %q:\n%s", want, out)
 	}
-	if want := "wrote candidates (5: sonnet, glm-5.3-flash, opus, "; !strings.Contains(out, want) {
+	if want := "wrote candidates (2: sonnet, opus)"; !strings.Contains(out, want) {
 		t.Errorf("output does not contain %q:\n%s", want, out)
 	}
 }

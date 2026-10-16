@@ -17,10 +17,7 @@ func opencodeInventory() Inventory {
 		"openrouter/xiaomi/mimo-v2.6-flash",
 		"openrouter/z-ai/glm-5.3-flash",
 	}
-	return Inventory{Harnesses: []HarnessStatus{{
-		Harness: "opencode", OnPath: true, LoggedIn: true,
-		Catalog: catalog, Models: defaultOpencodePicks(catalog),
-	}}}
+	return Inventory{Harnesses: []HarnessStatus{{Harness: "opencode", OnPath: true, LoggedIn: true, Catalog: catalog}}}
 }
 
 // TestProbeOpencodeReadsTheModelList pins the probe: one "provider/model"
@@ -36,19 +33,26 @@ func TestProbeOpencodeReadsTheModelList(t *testing.T) {
 	if !reflect.DeepEqual(s.Catalog, []string{"opencode/big-pickle", "openrouter/z-ai/glm-5.3-flash"}) {
 		t.Errorf("catalog = %v", s.Catalog)
 	}
-	if !reflect.DeepEqual(s.Models, []string{"openrouter/z-ai/glm-5.3-flash"}) {
-		t.Errorf("default picks = %v, want the lineup model the catalog has", s.Models)
+	if len(s.Models) != 0 {
+		t.Errorf("models = %v before any answer, want none: opencode is picked, never defaulted", s.Models)
 	}
 }
 
 // TestOpencodeQuestionAcceptsTheWholeCatalog pins the opencode question: it
-// lists the lineup, accepts an unlisted catalog model, refuses one opencode
-// cannot run, and none picks nothing.
+// recommends nothing, lists the lineup and none, accepts an unlisted catalog
+// model, and refuses one opencode cannot run.
 func TestOpencodeQuestionAcceptsTheWholeCatalog(t *testing.T) {
 	q := pickOf(t, Questions(opencodeInventory(), nil), "opencode")
-	want := []string{"opencode/openrouter/z-ai/glm-5.3-flash", "opencode/openrouter/deepseek/deepseek-v4.1-flash", "opencode/openrouter/xiaomi/mimo-v2.6-flash"}
-	if !reflect.DeepEqual(q.Recommended, want) {
-		t.Errorf("recommended = %v, want the lineup", q.Recommended)
+	if len(q.Recommended) != 0 {
+		t.Errorf("recommended = %v, want nothing", q.Recommended)
+	}
+	var listed []string
+	for _, c := range q.Choices {
+		listed = append(listed, c.Value)
+	}
+	want := []string{"opencode/openrouter/z-ai/glm-5.3-flash", "opencode/openrouter/deepseek/deepseek-v4.1-flash", "opencode/openrouter/xiaomi/mimo-v2.6-flash", OpencodeNone}
+	if !reflect.DeepEqual(listed, want) {
+		t.Errorf("choices = %v, want the lineup and none", listed)
 	}
 	if got, err := ParseAnswer(q, "opencode/openrouter/qwen/qwen3.8-coder"); err != nil || got[0] != "opencode/openrouter/qwen/qwen3.8-coder" {
 		t.Errorf("unlisted catalog model = %v, %v; want accepted", got, err)

@@ -5,9 +5,9 @@ import (
 	"strings"
 )
 
-// opencodeShortlist is the OpenRouter lineup a new machine starts from: the
-// builder, the lite-planner and the security reviewer the owner runs. They
-// are the opencode question's recommendation wherever the catalog has them.
+// opencodeShortlist is the OpenRouter lineup: the builder, lite-planner and
+// security reviewer the owner runs, listed for a reader who picks
+// openrouter and recommended nowhere else.
 var opencodeShortlist = []string{
 	"openrouter/z-ai/glm-5.3-flash",
 	"openrouter/deepseek/deepseek-v4.1-flash",
@@ -50,28 +50,17 @@ func probeOpencode(env SetupEnv) []string {
 	return models
 }
 
-// defaultOpencodePicks are the models opencode contributes when the opencode
-// question goes unanswered: the lineup models the catalog lists, else the
-// first model of the first provider that needs a login, else the first.
-func defaultOpencodePicks(catalog []string) []string {
-	var picks []string
+// opencodeShortlistIn are the lineup models a catalog lists: a starting
+// list for a reader browsing openrouter, never a recommendation -- opencode
+// contributes only the models its question was answered with.
+func opencodeShortlistIn(catalog []string) []string {
+	var out []string
 	for _, m := range opencodeShortlist {
 		if slices.Contains(catalog, m) {
-			picks = append(picks, m)
+			out = append(out, m)
 		}
 	}
-	if len(picks) > 0 {
-		return picks
-	}
-	for _, m := range catalog {
-		if opencodeProvider(m) != opencodeFree {
-			return []string{m}
-		}
-	}
-	if len(catalog) > 0 {
-		return catalog[:1]
-	}
-	return nil
+	return out
 }
 
 func opencodeProvider(model string) string {
@@ -79,9 +68,9 @@ func opencodeProvider(model string) string {
 	return provider
 }
 
-// opencodeQuestion asks which opencode models relevo may use. Its choices are
-// the recommended picks plus none; the whole catalog is accepted, most of it
-// unlisted, because it runs to hundreds of models.
+// opencodeQuestion asks which opencode models relevo may use. It recommends
+// none: its choices list the lineup and none, and the whole catalog is
+// accepted, most of it unlisted, because it runs to hundreds of models.
 func opencodeQuestion(s HarnessStatus) Question {
 	q := Question{
 		ID:       "opencode",
@@ -89,9 +78,8 @@ func opencodeQuestion(s HarnessStatus) Question {
 		Multi:    true,
 		Optional: true,
 	}
-	for _, m := range defaultOpencodePicks(s.Catalog) {
+	for _, m := range opencodeShortlistIn(s.Catalog) {
 		q.Choices = append(q.Choices, opencodeChoice(m))
-		q.Recommended = append(q.Recommended, "opencode/"+m)
 	}
 	q.Choices = append(q.Choices, Choice{Value: OpencodeNone, Why: "use no opencode model"})
 	for _, m := range s.Catalog {
@@ -118,8 +106,8 @@ func OpencodeCatalog(q Question) []Choice {
 }
 
 // withOpencodePicks narrows opencode's offer to the models the opencode
-// answer picked, so every other question lists those alone; no answer keeps
-// the default picks the probe made.
+// answer picked, so every other question lists those alone; no answer
+// leaves opencode offering nothing.
 func withOpencodePicks(inv Inventory, answers map[string][]string) Inventory {
 	picked := answers["opencode"]
 	if len(picked) == 0 {

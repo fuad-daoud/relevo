@@ -190,37 +190,33 @@ func harnessKinds(inv Inventory) []string {
 	return kinds
 }
 
-// TestOpencodeSeedsTheOpenRouterLineup pins the lineup: opencode on PATH
-// whose model list fails still offers the lineup -- glm a recommended
-// builder, deepseek#max the lite-planner -- and Build writes all three,
-// deepseek once.
-func TestOpencodeSeedsTheOpenRouterLineup(t *testing.T) {
+// TestOpencodeOffersOnlyWhatWasPicked pins that opencode is never a
+// default: unanswered, a machine with only opencode has no model to build
+// with and says so; answered with the lineup, glm is a recommended builder
+// and deepseek#max the lite-planner, and a machine with claude too
+// recommends no opencode model at all.
+func TestOpencodeOffersOnlyWhatWasPicked(t *testing.T) {
 	env := probeEnv{pathEnv: pathEnv{onPath: map[string]bool{"opencode": true}}}
 	inv := Probe(env)
-	files, err := Build(inv, RecommendedAnswers(inv, nil))
-	if err != nil {
-		t.Fatalf("Build: %v", err)
+	if _, err := Build(inv, RecommendedAnswers(inv, nil)); err == nil || !strings.Contains(err.Error(), "no model to build with") {
+		t.Fatalf("Build with nothing picked = %v, want the no-model refusal", err)
 	}
-	var models []string
-	for _, c := range candidatesOf(t, files) {
-		models = append(models, c.Harness+"/"+c.Provider+"/"+c.Model)
+
+	picked := Answers{"opencode": {"opencode/openrouter/z-ai/glm-5.3-flash", "opencode/openrouter/deepseek/deepseek-v4.1-flash"}}
+	if rec := pickOf(t, Questions(inv, picked), "builder").Recommended; !reflect.DeepEqual(rec, []string{"opencode/openrouter/z-ai/glm-5.3-flash"}) {
+		t.Errorf("builder recommends %v, want glm", rec)
 	}
-	want := []string{"opencode/openrouter/z-ai/glm-5.3-flash", "opencode/openrouter/deepseek/deepseek-v4.1-flash#max", "opencode/openrouter/xiaomi/mimo-v2.6-flash"}
-	if !reflect.DeepEqual(models, want) {
-		t.Fatalf("candidates = %v, want the lineup %v", models, want)
-	}
-	actors := parseActorsOf(t, files)
-	if got := actorNames(actors["lite-planner"]); len(got) != 1 || !strings.Contains(got[0], "deepseek") {
-		t.Errorf("lite-planner = %v, want deepseek", got)
+	if lp := pickOf(t, Questions(inv, picked), "lite-planner").Recommended; !reflect.DeepEqual(lp, []string{"opencode/openrouter/deepseek/deepseek-v4.1-flash#max"}) {
+		t.Errorf("lite-planner recommends %v, want deepseek at max", lp)
 	}
 
 	withClaude := Inventory{Harnesses: []HarnessStatus{status("claude", true, "sonnet", "opus", "haiku"), inv.Harnesses[0]}}
-	rec := pickOf(t, Questions(withClaude, nil), "builder").Recommended
-	if rec[len(rec)-1] != "opencode/openrouter/z-ai/glm-5.3-flash" {
-		t.Errorf("builder recommends %v, want glm last", rec)
-	}
-	if lp := pickOf(t, Questions(withClaude, nil), "lite-planner").Recommended; !reflect.DeepEqual(lp, []string{"opencode/openrouter/deepseek/deepseek-v4.1-flash#max"}) {
-		t.Errorf("lite-planner recommends %v, want deepseek beside claude too", lp)
+	for _, q := range Questions(withClaude, nil) {
+		for _, r := range q.Recommended {
+			if strings.HasPrefix(r, "opencode/") {
+				t.Errorf("%s recommends %s with nothing picked", q.ID, r)
+			}
+		}
 	}
 }
 

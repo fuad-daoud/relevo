@@ -53,7 +53,7 @@ func askOpencodeModels(w io.Writer, sc *bufio.Scanner, q setup.Question) ([]stri
 	providers := opencodeProviders(q)
 	pq := setup.Question{
 		ID:     "opencode",
-		Prompt: "opencode can run models from these providers. Which should relevo use models from? Pick one or more, comma-separated",
+		Prompt: "opencode can run models from these providers. Which should relevo use models from? Pick one or more, comma-separated; Enter skips opencode",
 		Multi:  true,
 	}
 	for _, p := range providers {
@@ -62,9 +62,6 @@ func askOpencodeModels(w io.Writer, sc *bufio.Scanner, q setup.Question) ([]stri
 			why += ", free"
 		}
 		pq.Choices = append(pq.Choices, setup.Choice{Value: p.name, Why: why})
-		if slices.ContainsFunc(q.Recommended, func(v string) bool { return strings.HasPrefix(v, "opencode/"+p.name+"/") }) {
-			pq.Recommended = append(pq.Recommended, p.name)
-		}
 	}
 	pq.Choices = append(pq.Choices, setup.Choice{Value: setup.OpencodeNone, Why: "use no opencode model; relevo config set candidates adds one later"})
 	names, _, err := askOneSetupQuestion(w, sc, pq)
@@ -76,7 +73,7 @@ func askOpencodeModels(w io.Writer, sc *bufio.Scanner, q setup.Question) ([]stri
 		if !slices.Contains(names, p.name) {
 			continue
 		}
-		got, err := askProviderModels(w, sc, p, q.Recommended)
+		got, err := askProviderModels(w, sc, p, shortlistValues(q))
 		if err != nil {
 			return nil, err
 		}
@@ -90,6 +87,18 @@ func askOpencodeModels(w io.Writer, sc *bufio.Scanner, q setup.Question) ([]stri
 	return picks, nil
 }
 
+// shortlistValues are the lineup models the opencode question lists: the
+// starting list a long provider offers once the reader picked it.
+func shortlistValues(q setup.Question) []string {
+	var out []string
+	for _, c := range q.Choices {
+		if c.Value != setup.OpencodeNone {
+			out = append(out, c.Value)
+		}
+	}
+	return out
+}
+
 func trimOpencode(values []string) []string {
 	out := make([]string, len(values))
 	for i, v := range values {
@@ -99,11 +108,12 @@ func trimOpencode(values []string) []string {
 }
 
 // askProviderModels picks one provider's models: the whole list when it is
-// short, else the recommended shortlist and then a search.
-func askProviderModels(w io.Writer, sc *bufio.Scanner, p opencodeProvider, recommended []string) ([]string, error) {
+// short, else a few lineup models to start from, then a search. Nothing is
+// pre-picked: Enter adds none.
+func askProviderModels(w io.Writer, sc *bufio.Scanner, p opencodeProvider, lineup []string) ([]string, error) {
 	var shortlist []string
 	for _, m := range p.models {
-		if slices.Contains(recommended, opencodeValue(p.name, m)) {
+		if slices.Contains(lineup, opencodeValue(p.name, m)) {
 			shortlist = append(shortlist, m)
 		}
 	}
@@ -113,10 +123,10 @@ func askProviderModels(w io.Writer, sc *bufio.Scanner, p opencodeProvider, recom
 	}
 	var picked []string
 	if len(list) > 0 {
-		mq := setup.Question{ID: p.name, Multi: true, Recommended: shortlist,
-			Prompt: fmt.Sprintf("Which %s models? Pick one or more, comma-separated", p.name)}
+		mq := setup.Question{ID: p.name, Multi: true,
+			Prompt: fmt.Sprintf("Which %s models? Pick one or more, comma-separated; Enter adds none", p.name)}
 		if len(p.models) > opencodeListMax {
-			mq.Prompt = fmt.Sprintf("%s has %d models; these are recommended. Which of them?", p.name, len(p.models))
+			mq.Prompt = fmt.Sprintf("%s has %d models; here are a few to start from. Which of them? Enter adds none", p.name, len(p.models))
 		}
 		for _, m := range list {
 			mq.Choices = append(mq.Choices, setup.Choice{Value: m})

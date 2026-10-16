@@ -161,7 +161,7 @@ func probeHarness(env SetupEnv, kind string) HarnessStatus {
 		s.LoggedIn, s.Models = probeAgy(env)
 	case "opencode":
 		catalog := probeOpencode(env)
-		s.LoggedIn, s.Catalog, s.Models, s.Login = true, catalog, defaultOpencodePicks(catalog), ""
+		s.LoggedIn, s.Catalog, s.Login = true, catalog, ""
 	}
 	return s
 }

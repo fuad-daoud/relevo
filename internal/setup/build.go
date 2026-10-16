@@ -17,6 +17,10 @@ import (
 // nothing-on-PATH paths have always printed.
 const noHarnessMessage = "no harness binaries on PATH (agy, claude, codex, opencode); install one first"
 
+// noModelMessage is the refusal when no question offers a model to build
+// with: opencode alone, with none of its models picked.
+const noModelMessage = "no model to build with: no harness offers one and no opencode model was picked; run relevo setup and pick one"
+
 // chainOrder is the order the actors doc writes in: the two builders first,
 // then the plan actors and the chain's reader actors.
 var chainOrder = []string{"builder", "librarian", "planner", "reviewer", "security", "lite-planner"}
@@ -65,6 +69,9 @@ func Build(inv Inventory, answers Answers) (Files, error) {
 // three over.
 func requiredPicks(inv Inventory, answers Answers) (picks, error) {
 	byID := questionSet(inv, answers)
+	if len(byID["builder"].Choices) == 0 && len(answers["builder"]) == 0 {
+		return picks{}, errors.New(noModelMessage)
+	}
 	tokens, err := pickedList(byID["builder"], answers["builder"])
 	if err != nil {
 		return picks{}, err
