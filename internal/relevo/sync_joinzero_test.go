@@ -202,7 +202,7 @@ func newBodyCfgMachine(t *testing.T, pair bodyPair, origin string, key []byte, e
 		mdb: mdb, local: local, cfg: config.Open(mdb), log: log.MemTransport,
 		bodyLog: log,
 		runner: &relevosync.Runner{
-			Client: log, Local: local, Timeout: time.Second,
+			Client: log, Local: local,
 			ReplicaPath: t.TempDir() + "/replica.db",
 		},
 	}

@@ -52,7 +52,7 @@ func daemonWiring(t *testing.T, m *cfgMachine) *VerbRunner {
 		Local:  m.local,
 		Path:   m.mdb.Path(),
 		Runner: &relevosync.Runner{
-			Client: log, Local: m.local, Timeout: time.Second,
+			Client: log, Local: m.local,
 			ReplicaPath: t.TempDir() + "/replica.db",
 		},
 		Open: func(context.Context) (synclog.LogTransport, error) {
@@ -202,7 +202,7 @@ func answerWiring(t *testing.T, m *cfgMachine) (*VerbRunner, *openerCount) {
 		Local:  m.local,
 		Path:   m.mdb.Path(),
 		Runner: &relevosync.Runner{
-			Client: m.bodyLog, Local: m.local, Timeout: time.Second,
+			Client: m.bodyLog, Local: m.local,
 			ReplicaPath: t.TempDir() + "/replica.db",
 		},
 		Open: func(context.Context) (synclog.LogTransport, error) {

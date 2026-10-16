@@ -21,7 +21,7 @@ func TestSteadySignsWithTheStoredKey(t *testing.T) {
 	}
 	log := synclog.NewMemTransport("m1")
 
-	runner := &Runner{Client: log, Local: local, Timeout: time.Second}
+	runner := &Runner{Client: log, Local: local}
 	if res := runner.SyncOnce(context.Background(), shared); res.Err != nil {
 		t.Fatalf("SyncOnce: %v", res.Err)
 	}
@@ -53,7 +53,7 @@ func TestSteadyImportsAndReportsTroubleWhenLockedOnASignedOrigin(t *testing.T) {
 	seedFar(t, log, "m2", "b2", known)
 	seedJoin(t, shared, joinBinding("b1", "m1"))
 
-	runner := &Runner{Client: log, Local: local, Timeout: time.Second}
+	runner := &Runner{Client: log, Local: local}
 	res := runner.SyncOnce(context.Background(), shared)
 	if res.Err != nil {
 		t.Fatalf("SyncOnce: %v", res.Err)
@@ -109,7 +109,7 @@ func TestSigningKeyReadErrorFailsTheTick(t *testing.T) {
 	}
 	log := synclog.NewMemTransport("m1")
 
-	runner := &Runner{Client: log, Local: local, Timeout: time.Second}
+	runner := &Runner{Client: log, Local: local}
 	res := runner.SyncOnce(context.Background(), shared)
 	if res.Err == nil {
 		t.Fatal("the tick ran locked over an unreadable key")
@@ -144,7 +144,7 @@ func TestSteadyReportsABadSignatureEveryTickWithoutLatching(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runner := &Runner{Client: log, Local: local, Timeout: time.Second}
+	runner := &Runner{Client: log, Local: local}
 	for tick := 1; tick <= 2; tick++ {
 		res := runner.SyncOnce(context.Background(), shared)
 		if res.Err != nil {
@@ -177,7 +177,7 @@ func TestImportFailsWhenTheSigningKeyCannotBeRead(t *testing.T) {
 	_ = raw.Close()
 	log := synclog.NewMemTransport("m1")
 
-	runner := &Runner{Client: log, Local: local, Timeout: time.Second}
+	runner := &Runner{Client: log, Local: local}
 	if _, err := runner.drainImport(context.Background(), shared, NewStopTransport(log)); err == nil {
 		t.Fatal("the import ran locked over an unreadable key")
 	}

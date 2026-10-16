@@ -49,7 +49,7 @@ func TestSteadyCompactsToTheSlowestReaderOnce(t *testing.T) {
 		t.Fatalf("publish the reader's mark: %v", err)
 	}
 
-	runner := &Runner{Client: log, Local: local, Timeout: time.Second}
+	runner := &Runner{Client: log, Local: local}
 	if res := runner.SyncOnce(context.Background(), shared); res.Err != nil {
 		t.Fatalf("SyncOnce: %v", res.Err)
 	}
@@ -84,7 +84,7 @@ func TestSteadySkipsCompactionWhenTheFloorWouldNotRise(t *testing.T) {
 		t.Fatalf("compact: %v", err)
 	}
 
-	runner := &Runner{Client: log, Local: local, Timeout: time.Second}
+	runner := &Runner{Client: log, Local: local}
 	if res := runner.SyncOnce(context.Background(), shared); res.Err != nil {
 		t.Fatalf("SyncOnce: %v", res.Err)
 	}

@@ -62,7 +62,7 @@ func newCfgMachine(t *testing.T, log *synclog.MemTransport, key []byte, enabled 
 	}
 	return &cfgMachine{
 		st: st, mdb: mdb, local: local, cfg: config.Open(mdb), log: log,
-		runner: &relevosync.Runner{Client: log.OnLog(mdb.Origin()), Local: local, Timeout: time.Second},
+		runner: &relevosync.Runner{Client: log.OnLog(mdb.Origin()), Local: local},
 	}
 }
 
