@@ -333,6 +333,62 @@ func TestServerSwitchLinesFollowTheDiff(t *testing.T) {
 	}
 }
 
+// TestADirtyCatchUpNamesTheRefInTheReport pins the lone-remote parity: a
+// round that closed uncommitted reports the fact in the mastermind's payload,
+// not only in the machinery note a report reader does not see, naming the
+// snapshot ref its work survives at -- there is no chain to halt over it, so
+// the line is what tells the mastermind to land nothing before a commit.
+func TestADirtyCatchUpNamesTheRefInTheReport(t *testing.T) {
+	t.Parallel()
+
+	b := store.Binding{Name: "webshop"}
+	b.Builder.Server = "zen"
+	b.Branch = "relevo/webshop"
+	view := remote.BindingView{
+		ClosedRound: 2,
+		DirtyCommit: "dirty-sha-2",
+		DiffNote:    "2 files changed, +3 -0",
+		DiffTree:    "dirty",
+		ReportNote:  "unmarked",
+	}
+
+	payload, note := catchUpPayload(b, view, true, "Report: done")
+
+	for _, want := range []string{
+		"Uncommitted work:",
+		"refs/relevo/webshop/round-2",
+		"relevo/webshop",
+	} {
+		if !strings.Contains(payload, want) {
+			t.Errorf("payload = %q, want it to name %s", payload, want)
+		}
+	}
+	if !strings.Contains(note, "uncommitted work at refs/relevo/webshop/round-2") {
+		t.Errorf("note = %q, want the snapshot ref", note)
+	}
+}
+
+// TestACleanCatchUpCarriesNoDirtyLine pins the clean half: a round that
+// committed its work names nothing to recover.
+func TestACleanCatchUpCarriesNoDirtyLine(t *testing.T) {
+	t.Parallel()
+
+	b := store.Binding{Name: "webshop"}
+	b.Builder.Server = "zen"
+	b.Branch = "relevo/webshop"
+	view := remote.BindingView{
+		ClosedRound: 2,
+		DiffNote:    "2 files changed, +3 -0",
+		DiffTree:    "clean",
+	}
+
+	payload, note := catchUpPayload(b, view, true, "Report: done")
+
+	if strings.Contains(payload, "Uncommitted work") || strings.Contains(note, "uncommitted") {
+		t.Errorf("payload = %q note = %q, want neither to tell the round left work", payload, note)
+	}
+}
+
 // remoteCloseReport closes a remote round with the given server switches through
 // the whole catch-up report path -- applyCatchUpReport, which is queueReport's
 // only remote caller -- and returns the report entry's stored payload.

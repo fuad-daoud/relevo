@@ -159,7 +159,7 @@ func TestQueueReportScopeRefusalHaltWaitOnClosedRound(t *testing.T) {
 			return err
 		}
 		next, err := queueReport(context.Background(), rt, tx, cur, entries,
-			reportPath, "done", "test", nil, nil, nil, nil, "", false, refused)
+			reportPath, "done", "test", nil, nil, nil, nil, "", false, "", refused)
 		if err != nil {
 			return err
 		}
@@ -450,7 +450,7 @@ func closeWithUnwritableHaltEntry(t *testing.T, rt Runtime, b store.Binding) sto
 			return err
 		}
 		next, err = queueReport(context.Background(), rt, tx, cur, entries,
-			reportPath, "done", "test", nil, nil, nil, nil, "", false, refusedScope())
+			reportPath, "done", "test", nil, nil, nil, nil, "", false, "", refusedScope())
 		if err != nil {
 			return err
 		}

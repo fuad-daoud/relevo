@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -28,6 +29,13 @@ type chainCloseWF struct {
 	// before the chain moves, so the closing binding's own round is no longer
 	// the closed one by then; the event must name the round the step awaited.
 	Round int
+	// DirtyCommit is the round's uncommitted-work snapshot commit, from the
+	// pulled view the close was built on. Non-empty says the round closed
+	// over work the tree it ran in never committed; "" only says no fact was
+	// carried, which a clean close and a close whose facts ship neither both
+	// are. The gate that reads it decides for a close whose tree this
+	// machine does not own.
+	DirtyCommit string
 }
 
 // chainEventFromCloseWF maps one member close onto the workflow event the
@@ -93,6 +101,16 @@ func chainEventFromCloseWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.C
 			ev.HaltReason = reason
 			return ev, nil
 		}
+		// A done close whose tree this machine does not own answers from the
+		// facts the close was built on instead: a mirror round that says it
+		// left uncommitted work behind halts the same shape, on the pulled
+		// word, for the same reason the readable tree gives.
+		if reason := chainMirrorDirtyCloseReason(rt, c, b, round, wf.DirtyCommit); reason != "" {
+			ev.Status = reporttail.OutcomeHalted
+			ev.Reason = reason
+			ev.HaltReason = reason
+			return ev, nil
+		}
 	}
 
 	artifacts := chainCloseArtifacts(rt, b, round, wf.Path, outs)
@@ -128,14 +146,16 @@ func chainDirtyCloseReason(ctx context.Context, rt Runtime, c db.ChainRow, b sto
 }
 
 // chainDirtyGateApplies reports whether the dirty gate covers this close. Only
-// the writer close that owns its tree does: a reader runs in a scratch copy, a
-// placed writer is mirror-only and its closed tree is the pulled result commit,
-// and a served binding's tree belongs to the server that cut the round ref.
+// the writer close that owns its tree does: a reader runs in a scratch copy,
+// and a mirror-placed writer's closed tree is the pulled result commit on the
+// server -- its row's CWD is this machine's own repo, which it must not probe.
+// A served binding's tree belongs to the server, and the close runs on the
+// server whose daemon can read it, so it keeps the gate like any owned tree.
 func chainDirtyGateApplies(rt Runtime, b store.Binding) bool {
 	if b.Shape == store.ShapeReader {
 		return false
 	}
-	if b.Serve != nil || b.Builder.Remote() {
+	if b.Builder.Remote() {
 		return false
 	}
 	return rt.Git != nil && b.CWD != ""
@@ -173,6 +193,63 @@ func chainDirtySummary(ctx context.Context, rt Runtime, b store.Binding) string 
 // on the closing writer and the round that closed.
 func chainRoundSnapshotRef(b store.Binding, round int) string {
 	return fmt.Sprintf("refs/relevo/%s/round-%d", b.Name, round)
+}
+
+// chainMirrorDirtyCloseReason is the dirty gate's answer for a close whose
+// tree is elsewhere: the halt wording when the round the close was built on
+// says it left uncommitted work behind, and "" for a close whose facts carry
+// nothing or whose tree this machine does own (the readable-tree gate answers
+// those).
+func chainMirrorDirtyCloseReason(rt Runtime, c db.ChainRow, b store.Binding, round int, dirtyCommit string) string {
+	if dirtyCommit == "" || !b.Builder.Remote() {
+		return ""
+	}
+	return chainMirrorDirtyReason(rt, c, b, round)
+}
+
+// chainMirrorDirtyReason is the halt wording for a mirror round that closed
+// done with uncommitted work on its server: the same wording chainDirtyReason
+// gives a readable tree, with the files the round's sealed diff patch names in
+// place of a tree stat, the branch it never reached named where a local tree
+// would be, and the server's snapshot ref where the work survives.
+func chainMirrorDirtyReason(rt Runtime, c db.ChainRow, b store.Binding, round int) string {
+	return fmt.Sprintf("round %d of %s closed done with uncommitted work (%s) left on the server and no commit in %s to carry it: the chain does not advance over uncommitted work; commit it, or recover it from %s (sealed diff: %s)",
+		round, c.Name, chainSealedDiffPaths(rt, b, round), b.Branch, chainRoundSnapshotRef(b, round), rt.Store.DiffPath(b.Name, round))
+}
+
+// chainSealedDiffPaths reads the round's sealed diff patch and names the files
+// it changes. For a mirror round the patch -- which for a close whose tree
+// was dirty includes the worktree -- is the only copy of what is uncommitted,
+// so its paths are what the wording can put in a human's hands. A diff that
+// cannot be read, or one that names no file, falls back to the count word a
+// tree stat without a stat gives, rather than paths it does not have.
+func chainSealedDiffPaths(rt Runtime, b store.Binding, round int) string {
+	body, _ := rt.Store.ReadFile(rt.Store.DiffPath(b.Name, round))
+	var out []string
+	for _, line := range strings.Split(string(body), "\n") {
+		if p := gitPatchPath(line); p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return "changes"
+	}
+	return strings.Join(out, ", ")
+}
+
+// gitPatchPath is the path a `diff --git a/<p> b/<p>` header names, "" for any
+// other line. A path with no space survives; one with an embedded space is
+// guessed as the shorter a-side name, which is only ever wording of a hint.
+func gitPatchPath(line string) string {
+	const head = "diff --git a/"
+	if !strings.HasPrefix(line, head) {
+		return ""
+	}
+	rest := strings.TrimPrefix(line, head)
+	if i := strings.Index(rest, " b/"); i > 0 {
+		rest = rest[:i]
+	}
+	return rest
 }
 
 // chainCloseArtifacts keys a closing round's artifacts: a writer exposes its

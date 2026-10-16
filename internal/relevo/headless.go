@@ -1016,7 +1016,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			if escapeCheck(ctx, rt, b, true) == EscapeNote {
 				note = joinNotes(note, escapeNote)
 			}
-			next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "", false, scopeVerdict{})
+			next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "", false, "", scopeVerdict{})
 			if err != nil {
 				return b, err
 			}
@@ -1226,11 +1226,16 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// A builder that ended its turn cleanly without a report has left a
 	// session nothing will wake: resume it once with a nudge and hand the
 	// round back, rather than spend a switch on work that is nearly done.
-	if next, resumed, err := nudgeResume(ctx, rt, tx, b, entries, codeText, now); err != nil {
-		return next, err
-	} else if resumed {
-		slog.Info("headless builder nudged to finish", "binding", b.Name, "round", b.Round, "session", b.Builder.StreamSessionID)
-		return next, nil
+	// Only a clean end earns it: a turn the stream shows cut off inside
+	// itself is a runner failure even at code 0, and a stream that says
+	// nothing keeps today's path, which is nudgeResume's own code gate.
+	if classifyRoundEnd(roundEndCase{TurnEnd: roundTurnEnd(rt, b), Code: codeText}) == roundEndNudge {
+		if next, resumed, err := nudgeResume(ctx, rt, tx, b, entries, codeText, now); err != nil {
+			return next, err
+		} else if resumed {
+			slog.Info("headless builder nudged to finish", "binding", b.Name, "round", b.Round, "session", b.Builder.StreamSessionID)
+			return next, nil
+		}
 	}
 
 	if b.Shape == store.ShapeReader && codeText == "0" {

@@ -271,7 +271,7 @@ func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 		// sent none rather than reading a record the client does not have.
 		u = remoteNoUsage(rt, b, b.RoundStartedAt, rt.Now().UTC())
 	}
-	next, err := queueReport(ctx, rt, tx, b, entries, reportPathFor(rt, b), payload, note, remoteGateRecord(a), u, a.View.Rusage, a.View.PriorTokens, a.View.ReportOutcome, a.View.Stopped != "", scopeVerdict{})
+	next, err := queueReport(ctx, rt, tx, b, entries, reportPathFor(rt, b), payload, note, remoteGateRecord(a), u, a.View.Rusage, a.View.PriorTokens, a.View.ReportOutcome, a.View.Stopped != "", a.View.DirtyCommit, scopeVerdict{})
 	if err != nil {
 		return b, err
 	}
@@ -339,8 +339,15 @@ func catchUpPayload(b store.Binding, view remote.BindingView, haveReport bool, c
 			payload = payload + "\n" + line
 		}
 	}
+	// A round that left uncommitted work names it in the report the
+	// mastermind receives, not only in the note: the work is elsewhere and
+	// its only durable copies are the sealed diff above and the snapshot ref
+	// this line names, so a lone round -- no chain to halt over it -- still
+	// reads as one with something to recover before it is landed.
 	if view.DirtyCommit != "" {
-		note = joinNotes(note, fmt.Sprintf("uncommitted work at refs/relevo/%s/round-%d", name, n))
+		ref := chainRoundSnapshotRef(b, n)
+		note = joinNotes(note, fmt.Sprintf("uncommitted work at %s", ref))
+		payload = payload + "\n" + fmt.Sprintf("Uncommitted work: the branch %s holds no round %d commit; recover by commit from %s -- the round diff above is sealed around the worktree, so it names what is uncommitted.", b.Branch, n, ref)
 	}
 	return payload, note
 }
