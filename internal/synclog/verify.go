@@ -3,6 +3,7 @@ package synclog
 import (
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 )
@@ -46,7 +47,13 @@ func (i *Importer) loadSigned(state MarkState) error {
 		if origin == i.db.Origin() {
 			continue
 		}
-		if seq < 1 || !VerifyBoundary(i.key, origin, seq, state.SignedTags[origin]) {
+		// The boundary was tagged under the key its origin signed with, which
+		// can be an older epoch's than the newest this machine holds -- the
+		// remote's history is old-key material the moment it rekeyed. It
+		// verifies by trial like any other signed row.
+		if seq < 1 || !i.anyKeyVerifies(func(key []byte) bool {
+			return VerifyBoundary(key, origin, seq, state.SignedTags[origin])
+		}) {
 			i.badBoundary[origin] = &signatureError{fmt.Sprintf("the signed-from boundary of %q does not verify under this machine's key", origin)}
 			continue
 		}
@@ -58,6 +65,43 @@ func (i *Importer) loadSigned(state MarkState) error {
 		}
 		i.localSigned[origin] = seq
 		i.signedFrom[origin] = seq
+	}
+	return i.loadCuts(state)
+}
+
+// loadCuts computes, per origin, the highest cut this machine acts on: the
+// highest of its own record and every remote cut whose tag verifies under the
+// cut's epoch key. A cut that does not verify holds its origin for the run,
+// and one that does is recorded locally at once and never regresses, so
+// deleting, lowering or replaying the remote row afterwards changes nothing.
+func (i *Importer) loadCuts(state MarkState) error {
+	if len(i.ring) == 0 {
+		return nil
+	}
+	local, err := i.db.EpochCuts()
+	if err != nil {
+		return fmt.Errorf("synclog: import: %w", err)
+	}
+	i.localCut = local
+	i.cuts = make(map[string]EpochCut, len(state.EpochCuts)+len(local))
+	for origin, cut := range local {
+		i.cuts[origin] = EpochCut{Epoch: cut.Epoch, Seq: cut.Seq}
+	}
+	i.badCut = make(map[string]error)
+	for origin, cut := range state.EpochCuts {
+		key := i.ring[cut.Epoch]
+		if len(key) == 0 || !VerifyEpochCut(key, origin, cut.Epoch, cut.Seq, cut.Tag) {
+			i.badCut[origin] = &signatureError{fmt.Sprintf("the epoch cut of %q does not verify under this machine's keys", origin)}
+			continue
+		}
+		if have, ok := local[origin]; ok && (cut.Epoch < have.Epoch || (cut.Epoch == have.Epoch && cut.Seq <= have.Seq)) {
+			continue
+		}
+		if err := i.db.RaiseEpochCut(origin, cut.Epoch, cut.Seq); err != nil {
+			return fmt.Errorf("synclog: import: %w", err)
+		}
+		i.localCut[origin] = db.EpochCut{Epoch: cut.Epoch, Seq: cut.Seq}
+		i.cuts[origin] = EpochCut{Epoch: cut.Epoch, Seq: cut.Seq}
 	}
 	return nil
 }
@@ -71,6 +115,9 @@ func (i *Importer) verify(origin string, entries []Entry) error {
 	if err := i.badBoundary[origin]; err != nil {
 		return err
 	}
+	if err := i.badCut[origin]; err != nil {
+		return err
+	}
 	for _, e := range entries {
 		if IsDocTable(e.Table) && len(e.MAC) == 0 {
 			return &signatureError{fmt.Sprintf("doc entry %d from %q is unsigned; a document is only taken from a signed entry", e.Seq, origin)}
@@ -81,8 +128,8 @@ func (i *Importer) verify(origin string, entries []Entry) error {
 		if len(e.MAC) == 0 {
 			continue
 		}
-		if !VerifyMAC(i.key, e) {
-			return &signatureError{fmt.Sprintf("entry %d from %q has a bad signature", e.Seq, origin)}
+		if err := i.verifyMAC(origin, e); err != nil {
+			return err
 		}
 		if !signs || e.Seq < from {
 			from, signs = e.Seq, true
@@ -94,6 +141,87 @@ func (i *Importer) verify(origin string, entries []Entry) error {
 		}
 	}
 	return nil
+}
+
+// verifyMAC checks one entry's MAC against the keys the origin's cut allows:
+// an entry at or below the cut verifies under any key this machine holds, and
+// one above it under some epoch at least the cut's. An entry that verifies
+// under none of the ones allowed is refused, not skipped -- a refusal holds
+// the origin for the run and the next attempt re-refuses it rather than
+// applying what could be forgery.
+func (i *Importer) verifyMAC(origin string, e Entry) error {
+	for _, key := range i.allowedKeys(origin, e.Seq) {
+		if VerifyMAC(key, e) {
+			return nil
+		}
+	}
+	return &signatureError{fmt.Sprintf("entry %d from %q has a bad signature", e.Seq, origin)}
+}
+
+// anyKeyVerifies reports whether a key of this machine's ring verifies under
+// the check given. It is the trial a confirmed-at-or-below-the-cut row runs:
+// every held epoch is on the table, newest first.
+func (i *Importer) anyKeyVerifies(check func([]byte) bool) bool {
+	for _, key := range i.allowedKeys("", -1) {
+		if check(key) {
+			return true
+		}
+	}
+	return false
+}
+
+// allowedKeys is the set of held keys, newest epoch first, the entry at seq
+// may verify under. The cut narrows the set from the top only: an entry above
+// an epoch-2 cut may not verify under key 1, however honestly signed it looks,
+// because the cut is exactly what says key 1 is dead above that point.
+func (i *Importer) allowedKeys(origin string, seq int) [][]byte {
+	epochs := i.epochs()
+	cut, have := i.cuts[origin]
+	if have && seq > cut.Seq {
+		narrowed := epochs[:0]
+		for _, epoch := range epochs {
+			if epoch >= cut.Epoch {
+				narrowed = append(narrowed, epoch)
+			}
+		}
+		epochs = narrowed
+	}
+	keys := make([][]byte, 0, len(epochs))
+	for _, epoch := range epochs {
+		if key := i.keyOf(epoch); len(key) > 0 {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+// epochs is the epochs this machine holds keys for, highest first, so a trial
+// answers with the newest key's before the older ones. A machine set by
+// SetKey alone is a one-key machine at epoch 1, which every epoch-1 log is.
+func (i *Importer) epochs() []int {
+	if len(i.ring) == 0 {
+		if len(i.key) == 0 {
+			return nil
+		}
+		return []int{1}
+	}
+	var out []int
+	for epoch := range i.ring {
+		out = append(out, epoch)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(out)))
+	return out
+}
+
+// keyOf is the key this machine holds for epoch, or nil.
+func (i *Importer) keyOf(epoch int) []byte {
+	if len(i.ring) == 0 {
+		if epoch == 1 {
+			return i.key
+		}
+		return nil
+	}
+	return i.ring[epoch]
 }
 
 // recordSigned lowers this machine's signed-from record for an origin to the

@@ -45,6 +45,14 @@ type Importer struct {
 	signedFrom  map[string]int
 	localSigned map[string]int
 	badBoundary map[string]error
+	// cuts is the effective cut per origin -- this machine's own record and
+	// every remote cut whose tag verified, the higher of the two per run --
+	// localCut this machine's own records behind it and badCut the refusal
+	// for an origin whose remote cut did not verify. Like the signed-from
+	// facts, all are set per run and only with a keyring.
+	cuts     map[string]EpochCut
+	localCut map[string]db.EpochCut
+	badCut   map[string]error
 	// now is the clock the arrival window of the append-only tables is judged
 	// against. It is a field rather than a call to time.Now so a case can place
 	// a row on either side of the window without moving the wall clock.
