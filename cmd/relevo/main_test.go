@@ -1832,6 +1832,7 @@ func TestStatusLineFlags(t *testing.T) {
 		t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "")
 		t.Setenv("RELEVO_HARNESS", "")
 
+		seedTwoMastermindScope(t)
 		for _, args := range [][]string{
 			{"status", "--line"},
 			{"status", "--line", "--json"},
