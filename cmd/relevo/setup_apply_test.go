@@ -147,11 +147,13 @@ func TestServiceStepInstallsTheUnit(t *testing.T) {
 	if !doc.OK || doc.Step != "service" {
 		t.Fatalf("doc = %+v, want a passed service row", doc)
 	}
-	configRoot, err := userConfigRoot()
+	// The unit lands where this OS keeps it: systemd's user dir on Linux,
+	// LaunchAgents on macOS.
+	u, err := osUnitSpec()
 	if err != nil {
-		t.Fatalf("userConfigRoot: %v", err)
+		t.Fatalf("osUnitSpec: %v", err)
 	}
-	if _, statErr := os.Stat(filepath.Join(configRoot, "systemd", "user", "relevo.service")); statErr != nil {
+	if _, statErr := os.Stat(u.path); statErr != nil {
 		t.Fatalf("unit was not written: %v", statErr)
 	}
 }
