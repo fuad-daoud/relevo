@@ -89,7 +89,7 @@ func TestProbeTimeoutForDefaultsToTheDeadline(t *testing.T) {
 // TestCodexModelsParsesWrappedShapes pins the two codex offer shapes: the
 // bare array and one wrapped under models, and silence parsing as no offer.
 func TestCodexModelsParsesWrappedShapes(t *testing.T) {
-	if got := codexModels([]byte(`{"models": [{"slug": "gpt-6-luna", "visibility": "list", "priority": 2}]}`)); !reflect.DeepEqual(got, []string{"gpt-6-luna"}) {
+	if got, _, _ := codexOffer(codexModels([]byte(`{"models": [{"slug": "gpt-6-luna", "visibility": "list", "priority": 2}]}`))); !reflect.DeepEqual(got, []string{"gpt-6-luna"}) {
 		t.Errorf("wrapped shapes = %v, want [gpt-6-luna]", got)
 	}
 	if got := codexModels([]byte("not json at all")); got != nil {

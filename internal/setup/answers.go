@@ -33,7 +33,9 @@ func ParseAnswer(q Question, raw string) ([]string, error) {
 
 // matchChoice reports the canonical value one raw token names: a choice
 // value verbatim; on a yes/no pair, also the y/n a prompt abbreviates; on a
-// candidate question, also a choice with an effort suffix after the model.
+// candidate question, also a choice with one of its efforts after the model.
+// A model answered without an effort runs bare where it can, and at its
+// default where agy names no model without one.
 func matchChoice(q Question, token string) (string, bool) {
 	if token == "" {
 		return "", false
@@ -47,20 +49,11 @@ func matchChoice(q Question, token string) (string, bool) {
 		}
 		return "", false
 	}
-	for _, c := range q.Choices {
-		if token == c.Value {
-			return c.Value, true
-		}
+	c, effort, ok := choiceAndEffort(q, token)
+	if !ok {
+		return "", false
 	}
-	if i := strings.LastIndexByte(token, ':'); i > 0 && i < len(token)-1 {
-		base := token[:i]
-		for _, c := range q.Choices {
-			if base == c.Value {
-				return token, true
-			}
-		}
-	}
-	return "", false
+	return valueAt(c, effort), true
 }
 
 // yesNoPair reports whether a question's choices are just the yes/no pair.

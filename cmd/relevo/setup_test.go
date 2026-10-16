@@ -529,3 +529,39 @@ func TestSetupPromptEmptyLineTakesRecommendation(t *testing.T) {
 		t.Fatalf("enter answered %v, want the recommendation yolo", got)
 	}
 }
+
+// TestSetupPromptAsksEffortAfterModels pins the effort follow-up: models are
+// picked once each, each picked model with several efforts gets its own
+// effort question after the list, and a model with none is not asked.
+func TestSetupPromptAsksEffortAfterModels(t *testing.T) {
+	inv := setup.Inventory{Harnesses: []setup.HarnessStatus{
+		{Harness: "agy", OnPath: true, LoggedIn: true, Models: []string{"gemini-3.8-flash-low", "gemini-3.8-flash-high"}},
+		{Harness: "claude", OnPath: true, LoggedIn: true, Models: []string{"sonnet", "opus", "haiku"}},
+	}}
+	var builder setup.Question
+	for _, q := range setup.Questions(inv, nil) {
+		if q.ID == "builder" {
+			builder = q
+		}
+	}
+	// 1 = gemini-3.8-flash, 4 = haiku, 2 = sonnet; then flash at low (1),
+	// and Enter keeps sonnet's recommended medium. haiku asks nothing.
+	in := strings.NewReader("1,4,2\n1\n\n")
+	out := new(bytes.Buffer)
+	answers, err := askSetupQuestions(out, in, []setup.Question{builder})
+	if err != nil {
+		t.Fatalf("askSetupQuestions: %v\n%s", err, out)
+	}
+	want := []string{"agy/google/gemini-3.8-flash-low", "claude/anthropic/haiku", "claude/anthropic/sonnet:medium"}
+	if got := answers["builder"]; !slices.Equal(got, want) {
+		t.Fatalf("answers = %v, want %v\n%s", got, want, out)
+	}
+	for _, line := range []string{"comma-separated", "Effort for gemini-3.8-flash on agy (google)?", "Effort for sonnet on claude (anthropic)?"} {
+		if !strings.Contains(out.String(), line) {
+			t.Errorf("prompts lack %q:\n%s", line, out)
+		}
+	}
+	if strings.Contains(out.String(), "gemini-3.8-flash-high (") {
+		t.Errorf("an effort variant is listed as its own model:\n%s", out)
+	}
+}

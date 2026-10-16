@@ -93,6 +93,9 @@ func setupApply(ctx context.Context, refresh func() (relevo.Runtime, error), env
 	var err error
 	var files setup.Files
 	run := func(step string, do func() (SetupStepDoc, error)) bool {
+		if start := setupStepStarts[step]; start != "" {
+			fmt.Fprintf(w, "%s: %s...\n", step, start)
+		}
 		doc, serr := do()
 		if serr != nil && !doc.OK {
 			doc = setupStepDocOf(step, serr)
@@ -109,10 +112,10 @@ func setupApply(ctx context.Context, refresh func() (relevo.Runtime, error), env
 		return SetupStepDoc{Step: "config", OK: true, Detail: summary}, cerr
 	})
 	if goOn {
-		if rt, err = refresh(); err != nil {
-			return failNext(codeInternal, "relevo doctor", "reload the configuration after the setup write: %v", err)
-		}
 		goOn = run("agents", func() (SetupStepDoc, error) {
+			if _, rerr := refresh(); rerr != nil {
+				return SetupStepDoc{}, failNext(codeInternal, "relevo doctor", "reload the configuration after the setup write: %v", rerr)
+			}
 			return SetupStepDoc{Step: "agents", OK: true}, runSetupAgents(env, files, w)
 		})
 	}
@@ -138,6 +141,16 @@ func setupApply(ctx context.Context, refresh func() (relevo.Runtime, error), env
 		_ = printDoc(setupResultDocOf(steps))
 	}
 	return err
+}
+
+// setupStepStarts are the lines a step prints before it starts, so a step
+// that takes seconds never reads as a hang: each waits on a CLI, the daemon
+// or a builder.
+var setupStepStarts = map[string]string{
+	"agents":  "loading the new configuration and installing agent definitions",
+	"plugin":  "installing the relevo plugin into Claude Code",
+	"service": "installing and starting the relevo user service",
+	"smoke":   "binding a builder to a throwaway repository and sending it one small plan; this takes a minute or two",
 }
 
 // setupPrintStep renders one step's row: the step and what it did on

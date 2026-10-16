@@ -35,9 +35,9 @@ func recommendedOf(t *testing.T, q Question) []string {
 }
 
 // TestQuestionsRecommendOneModelPerLoggedInHarness pins the builder
-// recommendation: one model per logged-in harness, codex's first listed
-// model at high reasoning, agy's first flash-high model (not simply its
-// first), and claude sonnet.
+// recommendation: one model per logged-in harness at high effort, codex's
+// first listed model, agy's first flash model (not simply its first), and
+// claude sonnet -- with agy's efforts folded into one choice per model.
 func TestQuestionsRecommendOneModelPerLoggedInHarness(t *testing.T) {
 	inv := Inventory{Harnesses: []HarnessStatus{
 		status("codex", true, "gpt-6-luna", "gpt-5.6-terra"),
@@ -48,7 +48,7 @@ func TestQuestionsRecommendOneModelPerLoggedInHarness(t *testing.T) {
 	want := []string{
 		"codex/openai/gpt-6-luna:high",
 		"agy/google/gemini-3.8-flash-high",
-		"claude/anthropic/sonnet",
+		"claude/anthropic/sonnet:high",
 	}
 	if got := recommendedOf(t, q); !reflect.DeepEqual(got, want) {
 		t.Errorf("builder recommends %v, want %v", got, want)
@@ -62,7 +62,7 @@ func TestQuestionsRecommendOneModelPerLoggedInHarness(t *testing.T) {
 	}
 	if want := []string{
 		"codex/openai/gpt-6-luna", "codex/openai/gpt-5.6-terra",
-		"agy/google/gemini-3.7-pro", "agy/google/gemini-3.8-flash-high",
+		"agy/google/gemini-3.7-pro", "agy/google/gemini-3.8-flash",
 		"claude/anthropic/sonnet", "claude/anthropic/opus", "claude/anthropic/haiku",
 	}; !reflect.DeepEqual(wantValues, want) {
 		t.Errorf("builder choices = %v, want %v", wantValues, want)

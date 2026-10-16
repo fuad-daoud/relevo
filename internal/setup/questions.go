@@ -1,18 +1,27 @@
 package setup
 
 import (
+	"slices"
 	"strings"
 
-	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
 // Choice is one of a question's answers: its value -- what an --answer flag
-// takes -- a short label, and a one-line why.
+// takes -- a short label, a one-line why, and for a model the efforts it runs
+// at. The unexported fields say how an effort joins the value: its default,
+// the separator, whether the model also runs with none, and whether the
+// effort list is unknown so any effort passes.
 type Choice struct {
-	Value string
-	Label string
-	Why   string
+	Value   string
+	Label   string
+	Why     string
+	Efforts []string
+
+	effort string
+	sep    string
+	bare   bool
+	open   bool
 }
 
 // Question is one thing the wizard asks: its prompt, the choices to show,
@@ -36,6 +45,10 @@ type Answers map[string][]string
 // questionKinds is the order the questions name harnesses in: the first-pick
 // order for builder choices and their recommendations.
 var questionKinds = []string{"codex", "agy", "claude"}
+
+// builderPrompt names the comma list, because a builder answer is several
+// models in the order they are tried.
+const builderPrompt = "Which models build code? Pick one or more, comma-separated, in the order to try them: the first builds, the next takes over when one hits a usage limit"
 
 // tierPrompt says plainly what each tier lets a builder do, because nothing
 // else in the flow may hide it.
@@ -113,49 +126,45 @@ func keptAnswers(q Question, answers map[string][]string) ([]string, bool) {
 }
 
 // builderQuestion shows every model each logged-in harness offers, question
-// order, and recommends one model per harness: codex's first listed model at
-// high reasoning, agy's first flash-high model else its first, claude sonnet.
+// order, and recommends one model per harness at high effort: codex's first
+// listed model, agy's first gemini flash model else its first, claude sonnet.
 func builderQuestion(inv Inventory) Question {
-	models := loggedModels(inv)
+	offers := loggedChoices(inv)
 	recommended := []string{}
-	if len(models["codex"]) > 0 {
-		recommended = append(recommended, refFor("codex", models["codex"][0]+":high"))
+	if cs := offers["codex"]; len(cs) > 0 {
+		recommended = append(recommended, atEffort(cs[0], "high"))
 	}
-	if m, ok := agyFlashPick(models["agy"]); ok {
-		recommended = append(recommended, refFor("agy", m))
+	if c, ok := pickChoice(offers["agy"], "gemini-", "flash"); ok {
+		recommended = append(recommended, atEffort(c, "high"))
 	}
-	if len(models["claude"]) > 0 {
-		recommended = append(recommended, refFor("claude", "sonnet"))
+	if c, ok := pickChoice(offers["claude"], "sonnet", ""); ok {
+		recommended = append(recommended, atEffort(c, "high"))
 	}
 	return Question{
 		ID:          "builder",
-		Prompt:      "Which models build code?",
+		Prompt:      builderPrompt,
 		Multi:       true,
 		Recommended: recommended,
 		Choices:     candidateChoices(inv),
 	}
 }
 
-// plannerQuestion names who writes plans: claude opus at medium reasoning
-// when it is logged in, else codex's first listed model at high, else agy's
-// first claude-opus-* model else its first.
+// plannerQuestion names who writes plans: claude opus at medium effort when
+// it is logged in, else codex's first listed model at high, else agy's first
+// claude-opus-* model else its first, at high.
 func plannerQuestion(inv Inventory) Question {
-	models := loggedModels(inv)
+	offers := loggedChoices(inv)
 	q := Question{
 		ID:      "planner",
 		Prompt:  "Who writes plans?",
 		Choices: candidateChoices(inv),
 	}
-	switch {
-	case len(models["claude"]) > 0:
-		q.Recommended = []string{refFor("claude", "opus:medium")}
-	case len(models["codex"]) > 0:
-		q.Recommended = []string{refFor("codex", models["codex"][0]+":high")}
-	case len(models["agy"]) > 0:
-		m, ok := agyPlannerPick(models["agy"])
-		if ok {
-			q.Recommended = []string{refFor("agy", m)}
-		}
+	if c, ok := pickChoice(offers["claude"], "opus", ""); ok {
+		q.Recommended = []string{atEffort(c, "medium")}
+	} else if cs := offers["codex"]; len(cs) > 0 {
+		q.Recommended = []string{atEffort(cs[0], "high")}
+	} else if c, ok := pickChoice(offers["agy"], "claude-opus-", ""); ok {
+		q.Recommended = []string{atEffort(c, "high")}
 	}
 	return q
 }
@@ -187,19 +196,41 @@ func yesNoQuestion(id, prompt, yesWhy, noWhy string) Question {
 }
 
 // candidateChoices are the questions' candidate picks, one per model each
-// logged-in harness offers, question order. The label is the model token and
-// the why names the seat it runs on.
+// logged-in harness offers, question order. The label is the model and the
+// why names the seat it runs on.
 func candidateChoices(inv Inventory) []Choice {
+	offers := loggedChoices(inv)
 	choices := make([]Choice, 0, 8)
-	for _, ref := range offeredRefs(inv) {
-		r, _ := candidate.ParseRef(ref) // an offered ref always parses
-		choices = append(choices, Choice{
-			Value: ref,
-			Label: r.Model,
-			Why:   "on " + r.Harness + " (" + r.Provider + ")",
-		})
+	for _, kind := range questionKinds {
+		choices = append(choices, offers[kind]...)
 	}
 	return choices
+}
+
+// loggedChoices maps each logged-in wizard harness to its choices.
+func loggedChoices(inv Inventory) map[string][]Choice {
+	out := make(map[string][]Choice, len(inv.Harnesses))
+	for _, s := range inv.Harnesses {
+		if s.LoggedIn {
+			out[s.Harness] = harnessChoices(s)
+		}
+	}
+	return out
+}
+
+// pickChoice is the first choice whose model has a given prefix -- and, when
+// one is named, a given substring -- else the first with the prefix, else
+// the first at all.
+func pickChoice(choices []Choice, prefix, contains string) (Choice, bool) {
+	labels := make([]string, len(choices))
+	for i, c := range choices {
+		labels[i] = c.Label
+	}
+	m, ok := pickPattern(labels, prefix, contains)
+	if !ok {
+		return Choice{}, false
+	}
+	return choices[slices.Index(labels, m)], true
 }
 
 // claudeOnPath reports whether claude has a status entry in the inventory;
@@ -223,18 +254,6 @@ func loggedModels(inv Inventory) map[string][]string {
 		}
 	}
 	return models
-}
-
-// offeredRefs are the candidate values the questions list, question order.
-func offeredRefs(inv Inventory) []string {
-	models := loggedModels(inv)
-	var refs []string
-	for _, kind := range questionKinds {
-		for _, m := range models[kind] {
-			refs = append(refs, refFor(kind, m))
-		}
-	}
-	return refs
 }
 
 // refFor prefixes the provider a harness's candidates carry to one model:
@@ -265,11 +284,6 @@ func harnessLookup(kind string) (harness.Harness, bool) {
 // gemini model at all.
 func agyFlashPick(models []string) (string, bool) {
 	return pickPattern(models, "gemini-", "flash-high")
-}
-
-// agyPlannerPick is agy's first claude-opus-* model, else its first model.
-func agyPlannerPick(models []string) (string, bool) {
-	return pickPattern(models, "claude-opus-", "")
 }
 
 // pickPattern is the first model with a given prefix -- and, when one is

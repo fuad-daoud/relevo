@@ -200,3 +200,23 @@ func TestBuildOpencodeOnlyNamesRelevoConfig(t *testing.T) {
 		t.Fatalf("Build error = %v, want the opencode-only refusal", err)
 	}
 }
+
+// TestProbeAsksAgyAgainAfterAFailure pins the retry: one failed `agy models`
+// is asked once more, so a network blip does not read as signed out.
+func TestProbeAsksAgyAgainAfterAFailure(t *testing.T) {
+	calls := 0
+	env := probeEnv{
+		pathEnv: pathEnv{onPath: map[string]bool{"agy": true}},
+		run: func(string, ...string) ([]byte, int, error) {
+			calls++
+			if calls == 1 {
+				return nil, 1, nil
+			}
+			return []byte("gemini-3.8-flash-high\tGemini\n"), 0, nil
+		},
+	}
+	inv := Probe(env)
+	if len(inv.Harnesses) != 1 || !inv.Harnesses[0].LoggedIn {
+		t.Fatalf("agy = %+v after one failure then success, want logged in", inv.Harnesses)
+	}
+}

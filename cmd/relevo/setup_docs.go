@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -48,11 +47,13 @@ type SetupQuestionDoc struct {
 }
 
 // SetupChoiceDoc is one choice: the value an --answer flag takes, a short
-// label, and the one-line why.
+// label, the one-line why, and for a model the efforts an answer may append
+// as value:effort.
 type SetupChoiceDoc struct {
-	Value string `json:"value"`
-	Label string `json:"label"`
-	Why   string `json:"why"`
+	Value   string   `json:"value"`
+	Label   string   `json:"label"`
+	Why     string   `json:"why"`
+	Efforts []string `json:"efforts,omitempty"`
 }
 
 // SetupResultDoc is the machine shape of an applied run: one row per step,
@@ -99,7 +100,7 @@ func setupQuestionDocs(qs []setup.Question) []SetupQuestionDoc {
 	for _, q := range qs {
 		choices := make([]SetupChoiceDoc, 0, len(q.Choices))
 		for _, c := range q.Choices {
-			choices = append(choices, SetupChoiceDoc{Value: c.Value, Label: c.Label, Why: c.Why})
+			choices = append(choices, SetupChoiceDoc{Value: c.Value, Label: c.Label, Why: c.Why, Efforts: c.Efforts})
 		}
 		docs = append(docs, SetupQuestionDoc{
 			ID:          q.ID,
@@ -155,54 +156,93 @@ func setupStepDocOf(step string, err error) SetupStepDoc {
 }
 
 // askSetupQuestions walks the open questions in order, reading one answer
-// line per question.
+// line per question, then one per picked model that runs at several efforts.
 func askSetupQuestions(w io.Writer, r io.Reader, qs []setup.Question) (setup.Answers, error) {
 	sc := bufio.NewScanner(r)
 	out := make(setup.Answers, len(qs))
+	fmt.Fprintln(w, "Press Enter on any question to take the recommended answer.")
 	for _, q := range qs {
-		vals, err := askOneSetupQuestion(w, sc, q)
+		vals, spelled, err := askOneSetupQuestion(w, sc, q)
 		if err != nil {
 			return nil, err
+		}
+		if !spelled {
+			if vals, err = askSetupEfforts(w, sc, q, vals); err != nil {
+				return nil, err
+			}
 		}
 		out[q.ID] = vals
 	}
 	return out, nil
 }
 
+// askSetupEfforts asks each picked model's effort, in pick order. A model
+// with one effort or none is kept as picked.
+func askSetupEfforts(w io.Writer, sc *bufio.Scanner, q setup.Question, vals []string) ([]string, error) {
+	out := make([]string, 0, len(vals))
+	for _, v := range vals {
+		eq, ok := setup.EffortQuestion(q, v)
+		if !ok {
+			out = append(out, v)
+			continue
+		}
+		effort, _, err := askOneSetupQuestion(w, sc, eq)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, setup.WithEffort(q, v, effort[0]))
+	}
+	return out, nil
+}
+
 // askOneSetupQuestion renders one prompt and reads an answer, re-asking up
 // to three times when a line is unusable; an empty line takes the
-// recommendation.
-func askOneSetupQuestion(w io.Writer, sc *bufio.Scanner, q setup.Question) ([]string, error) {
+// recommendation. spelled reports an answer typed out as values rather than
+// picked by number or Enter: it already says its effort, so none is asked.
+func askOneSetupQuestion(w io.Writer, sc *bufio.Scanner, q setup.Question) (vals []string, spelled bool, err error) {
 	for tries := 0; tries < 3; tries++ {
 		writeSetupPrompt(w, q)
 		if !sc.Scan() {
-			return nil, io.ErrUnexpectedEOF
+			return nil, false, io.ErrUnexpectedEOF
 		}
 		line := strings.TrimSpace(sc.Text())
 		if line == "" {
-			return append([]string{}, q.Recommended...), nil
+			return append([]string{}, q.Recommended...), false, nil
 		}
-		vals, err := promptAnswerLine(q, line)
+		vals, spelled, err := promptAnswerLine(q, line)
 		if err == nil {
-			return vals, nil
+			return vals, spelled, nil
 		}
 		fmt.Fprintln(w, err)
 	}
-	return nil, fmt.Errorf("%s: no usable answer after three prompts", q.ID)
+	return nil, false, fmt.Errorf("%s: no usable answer after three prompts", q.ID)
 }
 
 // writeSetupPrompt renders one question: the prompt, every choice with the
-// recommended ones marked, then the answer line.
+// recommended ones marked -- numbered by order on a multi, where order is
+// the answer -- then the answer line.
 func writeSetupPrompt(w io.Writer, q setup.Question) {
-	fmt.Fprintf(w, "%s\n", q.Prompt)
+	fmt.Fprintf(w, "\n%s\n", q.Prompt)
 	for i, c := range q.Choices {
-		mark := ""
-		if slices.Contains(q.Recommended, c.Value) {
-			mark = " (recommended)"
-		}
-		fmt.Fprintf(w, "  %d. %s%s -- %s\n", i+1, setupChoiceText(c), mark, c.Why)
+		fmt.Fprintf(w, "  %d. %s%s -- %s\n", i+1, setupChoiceText(c), recommendedMark(q, c), c.Why)
+	}
+	if q.Multi {
+		fmt.Fprintln(w, "  e.g. 1,3 picks two, 1 first")
 	}
 	fmt.Fprint(w, "> ")
+}
+
+func recommendedMark(q setup.Question, c setup.Choice) string {
+	for i, r := range q.Recommended {
+		if picked, ok := setup.ChoiceFor(q, r); !ok || picked.Value != c.Value {
+			continue
+		}
+		if q.Multi && len(q.Recommended) > 1 {
+			return fmt.Sprintf(" (recommended #%d)", i+1)
+		}
+		return " (recommended)"
+	}
+	return ""
 }
 
 // setupChoiceText carries a choice's label beside its value when the label
@@ -214,23 +254,24 @@ func setupChoiceText(c setup.Choice) string {
 	return c.Value
 }
 
-// promptAnswerLine turns one typed line into an answer: an empty line takes
-// the recommendation, a comma list of numbers picks choices in the order
-// typed, and anything else is parsed as the flag rule would.
-func promptAnswerLine(q setup.Question, line string) ([]string, error) {
+// promptAnswerLine turns one typed line into an answer: a comma list of
+// numbers picks choices in the order typed, and anything else is parsed as
+// the flag rule would and reports itself spelled.
+func promptAnswerLine(q setup.Question, line string) ([]string, bool, error) {
 	tokens := strings.Split(line, ",")
 	if order, ok := numericTokens(tokens); ok {
 		vals := make([]string, 0, len(tokens))
 		for _, n := range order {
 			n--
 			if n < 0 || n >= len(q.Choices) {
-				return nil, fmt.Errorf("%s: pick between 1 and %d", q.ID, len(q.Choices))
+				return nil, false, fmt.Errorf("%s: pick between 1 and %d", q.ID, len(q.Choices))
 			}
-			vals = append(vals, q.Choices[n].Value)
+			vals = append(vals, setup.WithEffort(q, q.Choices[n].Value, ""))
 		}
-		return vals, nil
+		return vals, false, nil
 	}
-	return setup.ParseAnswer(q, line)
+	vals, err := setup.ParseAnswer(q, line)
+	return vals, true, err
 }
 
 // numericTokens reports a comma list of natural numbers, keeping the order

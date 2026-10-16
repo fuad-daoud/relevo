@@ -54,7 +54,7 @@ func Build(inv Inventory, answers Answers) (Files, error) {
 	if err != nil {
 		return Files{}, err
 	}
-	p.derived = cheapestPick(inv)
+	p.derived = pickedAlready(p, cheapestPick(inv))
 	cands, err := sharedCandidates(allPicks(p))
 	if err != nil {
 		return Files{}, err
@@ -139,6 +139,18 @@ func cheapestPick(inv Inventory) string {
 		return refFor("agy", m)
 	}
 	return ""
+}
+
+// pickedAlready is the derived pick -- always a model with no effort -- as
+// the answers already picked it, at whatever effort they chose, so one model
+// never lands as two candidates that differ only in effort.
+func pickedAlready(p picks, derived string) string {
+	for _, t := range append(slices.Clone(p.builder), p.planner) {
+		if strings.HasPrefix(t, derived+":") {
+			return t
+		}
+	}
+	return derived
 }
 
 // allPicks joins the picks in candidate order: builder tokens first, then

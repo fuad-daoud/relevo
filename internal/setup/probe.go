@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -52,13 +53,16 @@ func (runnerEnv) Run(name string, args ...string) ([]byte, int, error) {
 // HarnessStatus is one probed harness: its kind, whether it is on PATH and,
 // when it is, whether its CLI is logged in and which models it offers. Login
 // carries the login command to name wherever the status is printed; it is
-// empty for a harness not on PATH.
+// empty for a harness not on PATH. Efforts and DefaultEffort are what a CLI
+// reports per model -- only codex does; the others' efforts are known.
 type HarnessStatus struct {
-	Harness  string
-	OnPath   bool
-	LoggedIn bool
-	Models   []string
-	Login    string
+	Harness       string
+	OnPath        bool
+	LoggedIn      bool
+	Models        []string
+	Login         string
+	Efforts       map[string][]string
+	DefaultEffort map[string]string
 }
 
 // Inventory is everything a probe produced: the wizard harnesses' statuses
@@ -91,6 +95,7 @@ var claudeAliases = []string{"sonnet", "opus", "haiku"}
 // harness not on PATH gets no status at all.
 func Probe(env SetupEnv) Inventory {
 	var inv Inventory
+	var kinds []string
 	for _, h := range harness.All() {
 		if _, err := env.LookPath(h.Binary); err != nil {
 			continue
@@ -99,8 +104,20 @@ func Probe(env SetupEnv) Inventory {
 			inv.Notes = append(inv.Notes, opencodeNote)
 			continue
 		}
-		inv.Harnesses = append(inv.Harnesses, probeHarness(env, h.Kind))
+		kinds = append(kinds, h.Kind)
 	}
+	// Each CLI takes seconds to answer, so the harnesses probe side by side;
+	// the statuses keep harness order.
+	inv.Harnesses = make([]HarnessStatus, len(kinds))
+	var wg sync.WaitGroup
+	for i, kind := range kinds {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			inv.Harnesses[i] = probeHarness(env, kind)
+		}()
+	}
+	wg.Wait()
 	return inv
 }
 
@@ -137,23 +154,18 @@ func runProbe(env SetupEnv, name string, args ...string) (stdout []byte, exit in
 
 // probeHarness fills one wizard harness's status from its own commands.
 func probeHarness(env SetupEnv, kind string) HarnessStatus {
-	var loggedIn bool
-	var models []string
+	s := HarnessStatus{Harness: kind, OnPath: true, Login: loginCommands[kind]}
 	switch kind {
 	case "claude":
-		loggedIn, models = probeClaude(env)
+		s.LoggedIn, s.Models = probeClaude(env)
 	case "codex":
-		loggedIn, models = probeCodex(env)
+		var offer []codexEntry
+		s.LoggedIn, offer = probeCodex(env)
+		s.Models, s.Efforts, s.DefaultEffort = codexOffer(offer)
 	case "agy":
-		loggedIn, models = probeAgy(env)
+		s.LoggedIn, s.Models = probeAgy(env)
 	}
-	return HarnessStatus{
-		Harness:  kind,
-		OnPath:   true,
-		LoggedIn: loggedIn,
-		Models:   models,
-		Login:    loginCommands[kind],
-	}
+	return s
 }
 
 // probeClaude asks `claude auth status`: logged in is its JSON's loggedIn
@@ -177,11 +189,15 @@ type codexEntry struct {
 	Slug       string `json:"slug"`
 	Visibility string `json:"visibility"`
 	Priority   int    `json:"priority"`
+	Default    string `json:"default_reasoning_level"`
+	Levels     []struct {
+		Effort string `json:"effort"`
+	} `json:"supported_reasoning_levels"`
 }
 
 // probeCodex asks `codex login status` -- exit 0 is logged in -- and then
 // `codex debug models` for the offer.
-func probeCodex(env SetupEnv) (bool, []string) {
+func probeCodex(env SetupEnv) (bool, []codexEntry) {
 	_, exit, err := runProbe(env, "codex", "login", "status")
 	if err != nil || exit != 0 {
 		return false, nil
@@ -193,10 +209,33 @@ func probeCodex(env SetupEnv) (bool, []string) {
 	return true, codexModels(out)
 }
 
+// codexOffer splits the listed entries into the status fields: the models in
+// order, and each one's efforts and default where codex reports them.
+func codexOffer(listed []codexEntry) ([]string, map[string][]string, map[string]string) {
+	if len(listed) == 0 {
+		return nil, nil, nil
+	}
+	models := make([]string, len(listed))
+	efforts := map[string][]string{}
+	defaults := map[string]string{}
+	for i, e := range listed {
+		models[i] = e.Slug
+		for _, l := range e.Levels {
+			if l.Effort != "" {
+				efforts[e.Slug] = append(efforts[e.Slug], l.Effort)
+			}
+		}
+		if e.Default != "" {
+			defaults[e.Slug] = e.Default
+		}
+	}
+	return models, efforts, defaults
+}
+
 // codexModels keeps the "list" entries and orders them by ascending
 // priority. Stdout malformed, or a models command that says nothing, is no
 // offer rather than a failed login.
-func codexModels(stdout []byte) []string {
+func codexModels(stdout []byte) []codexEntry {
 	var entries []codexEntry
 	if json.Unmarshal(stdout, &entries) != nil {
 		var wrapped struct {
@@ -214,21 +253,21 @@ func codexModels(stdout []byte) []string {
 		}
 	}
 	sort.Slice(listed, func(i, j int) bool { return listed[i].Priority < listed[j].Priority })
-	models := make([]string, len(listed))
-	for i, e := range listed {
-		models[i] = e.Slug
-	}
-	return models
+	return listed
 }
 
 // probeAgy asks `agy models`: exit 0 is the login signal, because agy needs
 // no login verb, and the lines' first tab-separated fields are the offer.
+// A failure is asked once more: the command fetches over the network, and a
+// one-off failure would tell a logged-in user to sign in.
 func probeAgy(env SetupEnv) (bool, []string) {
-	out, exit, err := runProbe(env, "agy", "models")
-	if err != nil || exit != 0 {
-		return false, nil
+	for try := 0; try < 2; try++ {
+		out, exit, err := runProbe(env, "agy", "models")
+		if err == nil && exit == 0 {
+			return true, agyModels(out)
+		}
 	}
-	return true, agyModels(out)
+	return false, nil
 }
 
 // agyModels keeps each line's first tab-separated field, skipping the

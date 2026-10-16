@@ -104,6 +104,10 @@ func setupRun(rt relevo.Runtime, answersFlag []string, asJSON, stdinTTY, stdoutT
 	if err != nil {
 		return err
 	}
+	w := noticeWriter(asJSON)
+	// The probe runs every CLI's status and model commands, seconds of
+	// silence without this line.
+	fmt.Fprintln(w, "checking which coding agents are installed and logged in...")
 	inv := setup.Probe(env)
 	if inEnvSandbox() {
 		inv.Notes = append(inv.Notes, sandboxServiceNote)
@@ -116,7 +120,6 @@ func setupRun(rt relevo.Runtime, answersFlag []string, asJSON, stdinTTY, stdoutT
 		return err
 	}
 
-	w := noticeWriter(asJSON)
 	fmt.Fprintln(w, setupInventoryLine(inv))
 	for _, note := range inv.Notes {
 		fmt.Fprintln(w, note)
