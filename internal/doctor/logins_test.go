@@ -48,3 +48,22 @@ func TestLoginChecksUseAccountHomes(t *testing.T) {
 		t.Fatalf("rows = %+v, want a warn for /acct/a then ok for /acct/b", got)
 	}
 }
+
+func TestLoginChecksFollowTheHarnessHomeVariable(t *testing.T) {
+	env := loginEnv("claude", "codex")
+	env.existingFiles["/cfg/claude/.credentials.json"] = true
+	getenv := func(name string) string {
+		if name == "CLAUDE_CONFIG_DIR" {
+			return "/cfg/claude"
+		}
+		return ""
+	}
+	homes := WithHomeEnv(map[string][]string{"codex": {"/acct/a"}}, getenv)
+	got := LoginChecks(env, []string{"claude", "codex"}, homes)
+	if len(got) != 2 || got[0].Severity != SevOK || got[0].Detail != "login at /cfg/claude/.credentials.json" {
+		t.Fatalf("claude row = %+v, want ok at the CLAUDE_CONFIG_DIR credentials", got)
+	}
+	if got[1].Detail != "no login at /acct/a/auth.json" {
+		t.Errorf("codex row = %+v, want the account home kept over the variable", got[1])
+	}
+}
