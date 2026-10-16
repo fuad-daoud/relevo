@@ -290,12 +290,6 @@ func TestAgyLimitDetectedInRenderedStream(t *testing.T) {
 // dropping the signal. The fixture lives in the transcript package and is read
 // by relative path, so both packages scan the same bytes.
 func TestOpencodeLimitDetectedInRenderedStream(t *testing.T) {
-	// The pinned render below carries the event's clock, so the zone is pinned
-	// too; not parallel, so the write cannot race another test's render.
-	prev := time.Local
-	time.Local = time.UTC
-	t.Cleanup(func() { time.Local = prev })
-
 	now := testNow()
 	const fallback = time.Hour
 	raw, err := os.ReadFile(filepath.Join("..", "transcript", "testdata", "opencode-errors", "results.jsonl"))
