@@ -2780,39 +2780,41 @@ Then launch Claude Code normally:
 
     claude --agent architect --model opus
 
-**The `wait` tool is the default.** After each `relevo send`, the MasterMind
+**The `wait` tool covers sessions without a holder.** After each `relevo send`, the MasterMind
 calls
 
     wait(name: "<n>", timeout: "<budget>")
 
-and ends its turn. The call blocks until the round closes, and its output is
-the report (or the reason the round stopped). The `relevo mcp` send result
+and ends its turn. The call blocks until the round closes. Where no push holder
+runs, its output is the report (or the reason the round stopped); where the
+mod already delivered the report, its output is only the outcome line
+("delivered by the mod"). The `relevo mcp` send result
 points at that tool for the binding, carrying the round's budget, so the model
 does not have to remember it. Act on the wait's output
 after every return except `still-open`; on a timeout, run `relevo status --name
 <n>` and wait again if the round is still running.
 
-**Push is the opt-in upgrade.** A `relevo push` holder writes reports, consult
+**Push is the Claude Code default where the mod loads.** A `relevo push` holder
+writes reports, consult
 answers and edge artifacts to the session's mod as NDJSON the moment the daemon
-has them, instead of the session fetching them with the wait. The session's mod
+has them. The session's mod
 starts the holder and acks each line with `relevo push --ack <binding> <seq>`,
 which confirms that entry and exits; the holder sees the confirm and sends the
-next line. Without a holder, `relevo mcp` serves the tools and reports arrive
-through the `wait` tool above.
+next line, so by the time the `wait` tool returns its outcome line the report
+is already in the session. While the holder writes, the status line under the
+prompt keeps the bindings, round and state in view meanwhile (see
+[Status line](#status-line)). Without a holder -- the mod not loaded, another
+harness, a session where no MasterMind resolved -- reports arrive through the
+`wait` tool above instead. `relevo help --json push` documents both routes of
+the verb.
 
 **How reports arrive.** relevo identifies the MasterMind session itself -- the
 plugin's hook registers it, and `relevo mastermind list` shows the records -- so no
 verb has to guess who is calling. A report then reaches the MasterMind by exactly
-one of four routes: the `wait` tool (the Claude Code default), the push holder
-(opt-in, above), a deliverer for a harness that has one (opencode, agy), or
+one of four routes: the push holder (the Claude Code default where the mod
+loads), the `wait` tool (where no holder runs), a deliverer for a harness
+that has one (opencode, agy), or
 `relevo wait` by hand. Nothing is ever typed into a terminal.
-
-**Push and the status band.** Where the plugin's mod loads, reports arrive in
-the session itself: the `relevo push` holder writes each one the moment the
-daemon has it, acked with `relevo push --ack <binding> <seq>`, while the
-status line under the prompt keeps the bindings, round and state in view
-meanwhile (see [Status line](#status-line)). `relevo help --json push`
-documents both routes of the verb.
 
 An agy MasterMind runs `relevo mastermind init` once inside agy, with no flags: relevo
 detects the session from agy's own environment, so nothing has to be exported by

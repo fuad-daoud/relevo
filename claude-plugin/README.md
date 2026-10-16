@@ -1,6 +1,6 @@
 # relevo for Claude Code
 
-relevo automates the plan and report handoff between two AI coding agents. You talk to a **MasterMind** session in Claude Code. The MasterMind hands each round of work to a **builder** agent, and relevo moves the plan to the builder and its report back, so you never copy them by hand. This plugin makes a Claude Code session a relevo MasterMind: it registers the session, pushes builder reports and "needs you" stops into it, and gives it relevo's `status`, `send`, `show`, `gate` and `done` as tools.
+relevo automates the plan and report handoff between two AI coding agents. You talk to a **MasterMind** session in Claude Code. The MasterMind hands each round of work to a **builder** agent, and relevo moves the plan to the builder and its report back, so you never copy them by hand. This plugin makes a Claude Code session a relevo MasterMind: it registers the session, pushes builder reports and "needs you" stops into it, and gives it relevo's `status`, `send`, `wait`, `done`, `show` and `gate` as tools (`--kind opencode` serves the five without `wait`).
 
 ## You need the relevo binary first
 
