@@ -54,6 +54,12 @@ This is the guide to relevo, the tool that hands work between you and a runner.
 - When the round closes, verify it as the round needs and compare the diff
   against the plan before `relevo done`.
 
+## Setup answers
+
+- Show each `relevo setup` question to your human with the recommended
+  choice marked; never answer the tier question yourself.
+- Then rerun `relevo setup` with every answer.
+
 ## Chains
 
 - When several reviewed plans run in a row with no MasterMind turn between

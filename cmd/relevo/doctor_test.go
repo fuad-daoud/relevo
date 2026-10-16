@@ -446,7 +446,7 @@ func TestRenderReportFooterPrecedence(t *testing.T) {
 			"could not establish a usable builder"},
 		{"no candidates beats no usable builder",
 			doctor.Report{Checks: healthy, UsableBuilder: false, NoCandidates: true},
-			"0 warnings, 0 failures -- no candidates configured; set them with relevo config set candidates first."},
+			"0 warnings, 0 failures -- no candidates configured; run relevo setup."},
 		{"a failure beats everything",
 			doctor.Report{Checks: append(append([]doctor.Check(nil), healthy...), doctor.Check{Group: "agy", Name: "version", Severity: doctor.SevFail, Detail: "1.1.5 (below floor 1.1.6)"}), NoCandidates: true, BuilderRefusal: "y"},
 			"Fix the failure above."},
@@ -462,6 +462,18 @@ func TestRenderReportFooterPrecedence(t *testing.T) {
 				t.Errorf("footer missing %q in:\n%s", tc.want, buf.String())
 			}
 		})
+	}
+}
+
+// TestDoctorSetupRowFix pins the no-candidates row as a warning whose fix is
+// the setup wizard, not a raw config edit.
+func TestDoctorSetupRowFix(t *testing.T) {
+	row := candidatesCheck()
+	if row.Fix != "relevo setup" {
+		t.Errorf("the no-candidates row's fix = %q, want relevo setup", row.Fix)
+	}
+	if row.Name != "candidates" || row.Severity != doctor.SevWarn || row.Detail != "none configured" {
+		t.Errorf("the no-candidates row changed shape: %+v", row)
 	}
 }
 

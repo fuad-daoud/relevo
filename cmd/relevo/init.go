@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -58,9 +59,15 @@ func cmdInitRun(args []string) error {
 		return err
 	}
 
-	files, err := setup.Plan(env)
+	inv := setup.Probe(env)
+	rec := setup.RecommendedAnswers(inv, nil)
+	files, err := setup.Build(inv, rec)
 	if err != nil {
-		return err
+		return initBuildError(err)
+	}
+	tier := ""
+	if t := rec["tier"]; len(t) == 1 {
+		tier = t[0]
 	}
 
 	hasCandidates, err := rt.Config.Has(config.Candidates)
@@ -100,13 +107,7 @@ func cmdInitRun(args []string) error {
 		return err
 	}
 	fmt.Fprintf(w, "wrote actors (%s)\n", summary)
-	actorSet, _, err := roles.ParseActors(files.Actors)
-	if err != nil {
-		return err
-	}
-	if len(actorSet["builder"].Candidates) == 0 {
-		fmt.Fprintf(w, "note: no builder candidate (claude only plans); add one from a builder harness (%s): relevo config set actors.builder.candidates '[\"<name>\"]'\n", strings.Join(setup.BuilderKinds(), ", "))
-	}
+	fmt.Fprintln(w, tierLine(tier))
 
 	if !*noAgents {
 		failed := false
@@ -137,6 +138,27 @@ func cmdInitRun(args []string) error {
 		return printDoc(configImportDocOf(importSections(doc), warnings, version))
 	}
 	return nil
+}
+
+// initBuildError classifies what Build refused: nothing is logged in is the
+// machine's own state, so it is not_available with the login commands the
+// message already names, and the wizard as the way back in.
+func initBuildError(err error) error {
+	var na *setup.NotAvailableError
+	if errors.As(err, &na) {
+		return failNext(codeNotAvailable, "relevo setup", "%s", na.Message)
+	}
+	return err
+}
+
+// tierLine is init's tier notice: what the tier it seeded lets a builder do,
+// followed by the way to restrict it.
+func tierLine(tier string) string {
+	why := "builders run commands without asking"
+	if tier == "edit" {
+		why = "builders change files but cannot run tests or git"
+	}
+	return fmt.Sprintf("tier: %s (%s) -- relevo config set policy.max_tier edit to restrict", tier, why)
 }
 
 // actorSummary renders every actor in order as the text inside the `wrote

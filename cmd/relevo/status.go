@@ -64,6 +64,16 @@ func statusScope(mastermindRef string, allMasterMinds, allDone, named bool, rt r
 	return sc, rec, nil
 }
 
+// noMasterMinds reports whether the registry holds no record at all; a
+// registry that cannot answer is not empty.
+func noMasterMinds(rt relevo.Runtime) bool {
+	if rt.MasterMinds == nil {
+		return false
+	}
+	recs, err := rt.MasterMinds.List()
+	return err == nil && len(recs) == 0
+}
+
 // statusFlagValues holds the pointers status parses into.
 type statusFlagValues struct {
 	all            *bool
@@ -139,6 +149,12 @@ func cmdStatus(args []string) error {
 	// chain name never comes back as a missing binding.
 	isChain := target != "" && statusChain(rt, target)
 	sc, _, err := statusScope(*v.mastermind, *v.allMasterMinds, *all, target != "", rt)
+	if err != nil && *v.mastermind == "" && noMasterMinds(rt) {
+		// A machine with no MasterMind yet has nothing bound to any of them, so
+		// the empty listing is the true answer, not a refusal: it is often a
+		// newcomer's first command.
+		sc, err = relevo.Scope{All: *all, Named: target != ""}, nil
+	}
 	if err != nil {
 		return err
 	}

@@ -9,11 +9,29 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 )
 
-// stubBinary writes an executable stub named name into dir.
+// stubBinary writes an executable stub named name into dir. A claude stub
+// answers the one probe the starter configuration now asks (`claude auth
+// status` printing its loggedIn JSON), so a test's init sees a probed
+// lineup; everything else exits 0. A stub is not a real harness: no harness
+// CLI, no network, no daemon.
 func stubBinary(t *testing.T, dir, name string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	body := "#!/bin/sh\nexit 0\n"
+	if name == "claude" {
+		body = "#!/bin/sh\nif [ \"$1\" = auth ] && [ \"$2\" = status ]; then\n  printf '{\"loggedIn\": true}\\n'\nfi\nexit 0\n"
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
 		t.Fatalf("write stub %s: %v", name, err)
+	}
+}
+
+// stubLoggedOutClaude writes a claude stub whose status says not logged in,
+// for a test of the nothing-logged-in refusal.
+func stubLoggedOutClaude(t *testing.T, dir string) {
+	t.Helper()
+	body := "#!/bin/sh\nprintf '{\"loggedIn\": false}\\n'\n"
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(body), 0o755); err != nil {
+		t.Fatalf("write logged-out stub: %v", err)
 	}
 }
 
@@ -28,6 +46,18 @@ func initRoot(t *testing.T) (home, configHome string) {
 	t.Setenv("XDG_CONFIG_HOME", configHome)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 	return home, configHome
+}
+
+// stubbedProbedRoot gives init a machine where claude (and, when named, any
+// further kind) stands on PATH with a probed-able stub.
+func stubbedProbedRoot(t *testing.T, names ...string) {
+	t.Helper()
+	initRoot(t)
+	bin := t.TempDir()
+	for _, name := range names {
+		stubBinary(t, bin, name)
+	}
+	t.Setenv("PATH", bin)
 }
 
 // storedConfig loads the sections a command just wrote back through the
@@ -45,6 +75,10 @@ func storedConfig(t *testing.T) config.Loaded {
 	return L
 }
 
+// TestInitWritesConfigAndRoles pins what init writes through the probed
+// lineup: the candidates the recommendations name, the policy only at
+// max_tier, and a builder actor at the yolo tier. There is no roles key on a
+// candidate and no model of the writer's choice; actors decide now.
 func TestInitWritesConfigAndRoles(t *testing.T) {
 	home, _ := initRoot(t)
 
@@ -61,16 +95,16 @@ func TestInitWritesConfigAndRoles(t *testing.T) {
 	}
 
 	L := storedConfig(t)
-	if L.Candidates.Len() != 3 {
-		t.Errorf("stored candidates = %v, want the one builder and two mastermind candidates", L.Candidates.Refs())
+	// claude's sonnet and opus; opencode adds only models its question
+	// picked, and init asks none.
+	if L.Candidates.Len() != 2 {
+		t.Errorf("stored candidates = %v, want the two probed (sonnet, opus)", L.Candidates.Refs())
 	}
-	// R5: the candidates carry no roles/tier, the policy only max_tier, and a
-	// builder actor over the candidates' names is what says who serves what.
 	if got := len(L.Policy.OrderFor("builder")); got != 0 {
 		t.Errorf("stored order.builder has %d tokens, want none", got)
 	}
-	if len(L.Policy.Order) != 0 || len(L.Policy.Tier) != 0 {
-		t.Errorf("stored policy order/tier = %v/%v, want none", L.Policy.Order, L.Policy.Tier)
+	if len(L.Policy.Order) != 0 || len(L.Policy.Tier) != 0 || L.Policy.MaxTier != "yolo" {
+		t.Errorf("stored policy order/tier/max_tier = %v/%v/%q, want none/none/yolo", L.Policy.Order, L.Policy.Tier, L.Policy.MaxTier)
 	}
 	if got := L.Candidates.ForRole("builder"); len(got) != 0 {
 		t.Errorf("candidates serving builder = %v, want none: actors decide now", got)
@@ -82,17 +116,17 @@ func TestInitWritesConfigAndRoles(t *testing.T) {
 	if builder.Agent != "plan-executor" || builder.Tier != "yolo" {
 		t.Errorf("builder actor = %+v, want plan-executor at tier yolo", builder)
 	}
-	if len(builder.Candidates) != 1 {
-		t.Errorf("builder candidates = %v, want the one non-claude plan name", builder.Candidates)
-	}
 
 	for _, path := range []string{
 		filepath.Join(home, ".claude", "agents", "plan-executor.md"),
-		filepath.Join(home, ".config", "opencode", "agents", "plan-executor.md"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("role file %s: %v", path, err)
 		}
+	}
+	opencodeRole := filepath.Join(home, ".config", "opencode", "agents", "plan-executor.md")
+	if _, err := os.Stat(opencodeRole); err != nil {
+		t.Errorf("opencode role file: %v; opencode is on PATH, so its agents install", err)
 	}
 
 	out := string(stdout) + string(stderr)
@@ -104,15 +138,10 @@ func TestInitWritesConfigAndRoles(t *testing.T) {
 	}
 }
 
-// TestInitReportsActors pins A2 round 3 S2.2: config init reports the actor it
-// seeded and the names Plan derived, not the old policy order.
+// TestInitReportsActors pins what init reports: the actors it seeded in
+// chain order with the names the probe's recommendations derived.
 func TestInitReportsActors(t *testing.T) {
-	initRoot(t)
-
-	bin := t.TempDir()
-	stubBinary(t, bin, "claude")
-	stubBinary(t, bin, "opencode")
-	t.Setenv("PATH", bin)
+	stubbedProbedRoot(t, "claude", "opencode")
 
 	stdout, stderr, err := captureOutput(t, func() error {
 		return run([]string{"config", "init"})
@@ -123,7 +152,7 @@ func TestInitReportsActors(t *testing.T) {
 
 	L := storedConfig(t)
 	var parts []string
-	for _, name := range []string{"builder", "librarian", "planner", "lite-planner"} {
+	for _, name := range []string{"builder", "librarian", "planner", "reviewer", "security", "lite-planner"} {
 		a, ok := L.Actors[name]
 		if !ok {
 			t.Fatalf("stored actors = %v, want a %s", L.Actors, name)
@@ -139,19 +168,15 @@ func TestInitReportsActors(t *testing.T) {
 	if !strings.Contains(out, want) {
 		t.Errorf("output does not contain %q:\n%s", want, out)
 	}
-	if want := "wrote candidates (3: glm-5.3-flash, opus, deepseek-v4.1-flash)"; !strings.Contains(out, want) {
+	if want := "wrote candidates (2: sonnet, opus)"; !strings.Contains(out, want) {
 		t.Errorf("output does not contain %q:\n%s", want, out)
 	}
 }
 
-// TestInitClaudeOnlyNotesMissingBuilder pins the claude-only case: the builder
-// is written with no candidates and init says how to add one.
-func TestInitClaudeOnlyNotesMissingBuilder(t *testing.T) {
-	initRoot(t)
-
-	bin := t.TempDir()
-	stubBinary(t, bin, "claude")
-	t.Setenv("PATH", bin)
+// TestInitPrintsTierLine pins init's tier notice: the seeded tier, plainly
+// named, with the way to restrict it.
+func TestInitPrintsTierLine(t *testing.T) {
+	stubbedProbedRoot(t, "claude")
 
 	stdout, stderr, err := captureOutput(t, func() error {
 		return run([]string{"config", "init"})
@@ -159,13 +184,50 @@ func TestInitClaudeOnlyNotesMissingBuilder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run init: %v (stderr: %s)", err, stderr)
 	}
-
+	want := "tier: yolo (builders run commands without asking) -- relevo config set policy.max_tier edit to restrict"
 	out := string(stdout) + string(stderr)
-	if !strings.Contains(out, "builder: none") {
-		t.Errorf("output does not contain %q:\n%s", "builder: none", out)
+	if !strings.Contains(out, want) {
+		t.Errorf("output does not contain the tier line %q:\n%s", want, out)
 	}
-	if want := `note: no builder candidate (claude only plans); add one from a builder harness (agy, codex, opencode): relevo config set actors.builder.candidates '["<name>"]'`; !strings.Contains(out, want) {
-		t.Errorf("output does not contain %q:\n%s", want, out)
+}
+
+// TestInitNothingLoggedInIsNotAvailable pins the nothing-logged-in refusal:
+// config init writes nothing, names every reachable login, and points back
+// at the wizard.
+func TestInitNothingLoggedInIsNotAvailable(t *testing.T) {
+	initRoot(t)
+
+	bin := t.TempDir()
+	stubLoggedOutClaude(t, bin)
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("write codex stub: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "agy"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("write agy stub: %v", err)
+	}
+	t.Setenv("PATH", bin)
+
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "init"})
+	})
+	if err == nil {
+		t.Fatal("init with nothing logged in: want error, got nil")
+	}
+	requireCLIError(t, err, codeNotAvailable, "relevo setup")
+	if !strings.Contains(err.Error(), "not_available") {
+		t.Fatalf("init error = %v, want the not_available code", err)
+	}
+	for _, login := range []string{"claude auth login", "codex login", "run agy once to sign in"} {
+		if !strings.Contains(err.Error(), login) {
+			t.Errorf("refusal %q does not name %q", err, login)
+		}
+	}
+	if !strings.Contains(err.Error(), "log in with one of:") {
+		t.Errorf("refusal %q does not name the way in", err)
+	}
+	L := storedConfig(t)
+	if L.Candidates.Len() != 0 {
+		t.Errorf("candidates written despite the refusal: %v", L.Candidates.Refs())
 	}
 }
 
@@ -224,6 +286,9 @@ func TestInitNoBinariesExits1(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no harness binaries") {
 		t.Fatalf("init error %v does not mention %q (stderr: %s)", err, "no harness binaries", stderr)
+	}
+	if strings.Contains(string(stderr), "not_available") {
+		t.Errorf("no-binaries refusal carries not_available:\n%s", stderr)
 	}
 }
 

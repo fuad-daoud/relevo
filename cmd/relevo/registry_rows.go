@@ -692,6 +692,15 @@ var registry = []verbEntry{
 	{Name: "service install", Summary: "write the service unit shipped in this binary, enable it and restart the daemon; refuses an edited unit without --force", Args: "[--force] [--json]", Flags: []string{"--force", "--json"}, Output: "json:ServiceDoc", Exit: []int{0, 1, 2}, Errors: []string{"conflict", "internal", "usage"}},
 	{Name: "service uninstall", Summary: "stop and remove the service unit, never the binary", Args: "[--json]", Flags: []string{"--json"}, Output: "json:ServiceDoc", Exit: []int{0, 1, 2}, Errors: []string{"internal", "usage"}},
 	{
+		Name:    "setup",
+		Summary: "the one-time wizard: probe the machine, ask what is still open, then write the starter configuration, the agent definitions, the plugin and the service, and run one real round",
+		Args:    "[--answer <id>=<value>] [--json]",
+		Flags:   []string{"--answer", "--json"},
+		Output:  "json:SetupQuestionsDoc with questions open; SetupResultDoc once applied",
+		Exit:    []int{0, 1, 2, 3},
+		Errors:  []string{"conflict", "internal", "not_available", "policy_refused", "refused", "usage"},
+	},
+	{
 		Name:    "show",
 		Summary: "one round's plan, report, diff, drift, gate, findings, log or transcript",
 		Args:    "[NAME] [--round N] [--diff [--stat|--anchors]] [--log [--follow --after N]] [--trace] [--json] [--peek]",
