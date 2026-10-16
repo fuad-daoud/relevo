@@ -251,6 +251,43 @@ func TestImportHoldsTheOriginWithARefusedCut(t *testing.T) {
 	}
 }
 
+// TestImportRefusesADeadEpochCutBeforeAnyImport pins the first-contact fence:
+// a cut row tagged under a retired epoch -- whatever its key verifies, and
+// however high its sequence -- is never acted on while this machine holds no
+// cut of its own for the origin. The default fence of the reader's newest
+// held epoch stands instead, so a leaked old key cannot re-bless signed
+// history the reader has never verified, and the row's origin holds for the
+// run with nothing recorded.
+func TestImportRefusesADeadEpochCutBeforeAnyImport(t *testing.T) {
+	t.Parallel()
+	log, _ := signedLog(t) // m1 at epoch 1, head 2
+	rekeyTo2(t, log, keyA, keyB)
+	appendOldKey(t, log, "m1", `["01C"]`)
+	// The attacker holds the epoch-1 key and rewrites the remote's cut row
+	// under it: a valid tag, at a retired epoch, naming a far higher seq.
+	log.log.mu.Lock()
+	log.log.epochCut["m1"] = EpochCut{Epoch: 1, Seq: 99, Tag: EpochCutTag(keyA, "m1", 1, 99)}
+	log.log.mu.Unlock()
+	m2, _ := peerFile(t, "m2")
+
+	res, err := importWithRing(t, m2, log, ring2())
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if reason := stallOf(res, "m1"); !strings.Contains(reason, `the epoch cut of "m1" names a retired epoch`) {
+		t.Errorf("stall %q lacks the retired-epoch hold", reason)
+	}
+	if cuts, _ := m2.EpochCuts(); len(cuts) != 0 {
+		t.Errorf("records = %v, want nothing recorded for a cut the reader never acted on", cuts)
+	}
+	if got := sharedRows(t, m2); got != "" {
+		t.Errorf("m2 holds %q, want the history and the old-key tail both refused under the default fence", got)
+	}
+	if mark := markOf(t, m2, "m1"); mark != 0 {
+		t.Errorf("mark = %d, want the origin held at the start", mark)
+	}
+}
+
 // TestImportAtEpochOneBehavesExactlyAsBefore pins the degeneration: a
 // single-key machine without cut rows verifies every entry the way it always
 // did, so an upgrade changes nothing until a rekey does.
