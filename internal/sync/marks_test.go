@@ -68,7 +68,7 @@ func TestSteadyPublishesMarksAfterAnImport(t *testing.T) {
 	log := newMarkSpy("m1")
 	seed(t, log, "m2", "b2", mustSchemaVersion(t, shared))
 
-	runner := &Runner{Client: log, Local: local, Timeout: time.Second}
+	runner := &Runner{Client: log, Local: local}
 	res := runner.SyncOnce(context.Background(), shared)
 	if res.Err != nil {
 		t.Fatalf("SyncOnce: %v", res.Err)
@@ -107,7 +107,7 @@ func TestSteadyPublishesMarksAtMostEveryFifteenMinutes(t *testing.T) {
 	log := newMarkSpy("m1")
 	seed(t, log, "m2", "b2", mustSchemaVersion(t, shared))
 
-	runner := &Runner{Client: log, Local: local, Timeout: time.Second}
+	runner := &Runner{Client: log, Local: local}
 	for i := 0; i < 3; i++ {
 		seed(t, log, "m2", "b"+string(rune('a'+i)), mustSchemaVersion(t, shared))
 		if res := runner.SyncOnce(context.Background(), shared); res.Err != nil {
@@ -142,7 +142,7 @@ func TestSteadyPublishesNothingWhenNoMarkMoved(t *testing.T) {
 	t.Parallel()
 	shared, local := joinPair(t, "m1")
 	log := newMarkSpy("m1")
-	runner := &Runner{Client: log, Local: local, Timeout: time.Second}
+	runner := &Runner{Client: log, Local: local}
 
 	for i := 0; i < 3; i++ {
 		if res := runner.SyncOnce(context.Background(), shared); res.Err != nil {
@@ -170,7 +170,7 @@ func TestMarksMarkerThatWillNotParsePublishesAnyway(t *testing.T) {
 		t.Fatalf("corrupt the marks marker: %v", err)
 	}
 
-	runner := &Runner{Client: log, Local: local, Timeout: time.Second}
+	runner := &Runner{Client: log, Local: local}
 	if res := runner.SyncOnce(context.Background(), shared); res.Err != nil {
 		t.Fatalf("SyncOnce: %v", res.Err)
 	}

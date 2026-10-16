@@ -71,7 +71,7 @@ func TestSteadyPublishesLogSizeAndMeasuresStorage(t *testing.T) {
 	}
 	store := blobstore.NewMemBlobStore(nil)
 	runner := &Runner{
-		Client: synclog.NewMemTransport("m1"), Local: local, Timeout: time.Second,
+		Client: synclog.NewMemTransport("m1"), Local: local,
 		Blobs: func() blobstore.BlobStore { return store }, ReplicaPath: replica,
 	}
 	if res := runner.SyncOnce(context.Background(), shared); res.Err != nil || res.Exported != 1 {

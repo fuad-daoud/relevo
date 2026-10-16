@@ -467,7 +467,12 @@ func TestSupervisorReportsAccountingFailures(t *testing.T) {
 func TestDisableCancelsAHungPullWithoutCountingADeath(t *testing.T) {
 	local := syncLocal(t)
 	b := breakerOver(newMemKV())
-	cfg := fakeWorkerCfg(modeHangOnce)
+	// modeHang leaves the pull itself unanswered, which the call in flight when
+	// the turn-off lands has to be: hangOnce hangs only its first stats call,
+	// so over it the pull would answer before the cancel reached it, and
+	// whether the released call settles as a deliberate stop would depend on
+	// the race between the answer and the turn-off.
+	cfg := fakeWorkerCfg(modeHang)
 	cfg.Timeout = 30 * time.Second
 	s := newSupervisor(t, cfg, b)
 
