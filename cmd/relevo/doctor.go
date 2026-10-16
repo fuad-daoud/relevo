@@ -11,6 +11,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/classify"
@@ -69,6 +70,18 @@ func assembleKinds(set *candidate.Set, st *store.Store) (kinds []string, storeEr
 	}
 	sort.Strings(kinds)
 	return kinds, storeErr
+}
+
+// accountHomes maps a harness kind to the per-process homes its configured
+// accounts pin it to.
+func accountHomes(accounts account.Set) map[string][]string {
+	homes := make(map[string][]string)
+	for _, a := range accounts {
+		if home, ok := harness.AccountHome(a); ok {
+			homes[string(a.Harness)] = append(homes[string(a.Harness)], home)
+		}
+	}
+	return homes
 }
 
 // builderDefinitions is what a builder needs installed on its harness:
@@ -261,6 +274,18 @@ func doctorFlagSet(fs *flag.FlagSet) *doctorFlagValues {
 	return v
 }
 
+// clientKeyReplaced reads what this machine's own file recorded when an arriving
+// client key took the place of the one it held. A row that will not read is
+// reported as no swap: the doctor is telling an operator what to act on, and a
+// corrupt row is a worse thing to interrupt that with than a missing warning.
+func clientKeyReplaced(cfg *config.Store) doctor.ClientKeyReplacedInput {
+	swapped, ok, err := cfg.ReadClientKeyReplaced()
+	if err != nil || !ok {
+		return doctor.ClientKeyReplacedInput{}
+	}
+	return doctor.ClientKeyReplacedInput{Swapped: true, From: swapped.From, To: swapped.To}
+}
+
 // doctorReport runs every check `relevo doctor` has: the configured harness
 // kinds, the server rows, the release, database, scope and role rows, the
 // hooks row and the mastermind checks. cmdDoctor owns the flags, the runtime
@@ -319,6 +344,13 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 	// #466: the engine row sits next to the database row, so a library the
 	// engine cannot load is visible beside the database it would open.
 	rep.Checks = insertGlobalCheck(rep.Checks, engineCheck(db.EngineStatus(stateRoot)))
+	// The client-id row: a fleet's stamped key replacing this machine's own is a
+	// deliberate choice, and the consequence is that the servers this machine is
+	// enrolled on no longer recognise it. Read from the machine's own file, so
+	// it answers with the network blackholed.
+	if check, ok := doctor.ClientKeyCheck(clientKeyReplaced(rt.Config)); ok {
+		rep.Checks = insertGlobalCheck(rep.Checks, check)
+	}
 	// The sandbox rows: the xdg one for every user, the linger and port ones
 	// only where the state root carries a dev-sandbox marker.
 	rep.Checks = sandboxChecks(env, serveMachineDB(rt), stateRoot, rep.Checks)
@@ -414,6 +446,10 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 	// login, so a round cannot fail to authenticate with no surface naming
 	// which account was checked. No accounts means no rows.
 	rep.Checks = append(rep.Checks, accountChecks(context.Background(), rt.Accounts, env)...)
+
+	// The login rows: whether each configured harness is logged in on this
+	// machine, from local files only.
+	rep.Checks = append(rep.Checks, doctor.LoginChecks(env, kinds, accountHomes(rt.Accounts))...)
 
 	// The hooks row: how many runs the machine database's run log holds, how
 	// many failed in the last day and what the last failure was (P3b round 2

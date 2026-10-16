@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -59,12 +60,24 @@ type DryRunMember struct {
 // does not validate comes back in the document, so a caller prints every
 // problem at once rather than only the first.
 func ChainDryRun(ctx context.Context, rt Runtime, opts ChainOptions) (DryRunDoc, error) {
-	_ = ctx
 	def, origin, err := chainDryRunWorkflow(rt, opts.Workflow)
 	if err != nil {
 		return DryRunDoc{}, err
 	}
-	values, err := chainParamsFor(def, rt.Policy, opts)
+	// The chain's repository is resolved before the params are computed, on
+	// the same terms a start uses: the gate param reads the repository's own
+	// settings, and a directory that is not a repository reads as "no
+	// settings" rather than a failure -- a dry run starts nothing, so it must
+	// not fail on a tree git cannot identify either.
+	repo, err := os.Getwd()
+	if err != nil {
+		return DryRunDoc{}, fmt.Errorf("resolve working directory: %w", err)
+	}
+	repoSet, err := RepoSettingsFor(ctx, rt, repo)
+	if err != nil {
+		return DryRunDoc{}, err
+	}
+	values, err := chainParamsFor(def, rt.Policy, opts, repoSet)
 	if err != nil {
 		return DryRunDoc{}, err
 	}

@@ -266,13 +266,14 @@ func applyServedCheckRecord(run *store.CheckRun, rec *store.GateRecord) {
 }
 
 // servedCheckSpec is the gate-runner spec for one served check run: the
-// binding's own worktree, a gate scope named after the binding and the round,
-// and the policy's gate timeout. The timeout comes from policy and not from the
-// binding because a check is the client's own acceptance command, not the
-// round's stored gate.
+// binding's round directory -- the same directory a round's processes run in
+// -- a gate scope named after the binding and the round, and the policy's
+// gate timeout. The timeout comes from policy and not from the binding
+// because a check is the client's own acceptance command, not the round's
+// stored gate.
 func servedCheckSpec(rt Runtime, b store.Binding, run store.CheckRun) gateProcSpec {
 	return gateProcSpec{
-		Dir:      b.Worktree,
+		Dir:      roundTree(rt, b),
 		Command:  run.Command,
 		LogPath:  run.LogPath,
 		UnitName: scopeUnitNameFor(scopeGate, b.Owner, b.Name+"-check", run.Round, ""),

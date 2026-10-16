@@ -147,6 +147,42 @@ func TestNormalizeClientKeyLeavesCurrentLabelAlone(t *testing.T) {
 	}
 }
 
+// TestNormalizeClientKeyStampsNothing pins the stamping half of the re-marshal,
+// which is the whole reason it has its own entry point. A normalisation is the
+// program rewriting a value's PEM label; a stamp there would claim this machine
+// deliberately set the fleet's client key at the moment the daemon happened to
+// start, which is how one machine's generated identity replaces another's on
+// every server they share.
+//
+// The seed is written straight into the table, so the only stamp that can exist
+// afterwards is one the normalisation made.
+func TestNormalizeClientKeyStampsNothing(t *testing.T) {
+	t.Parallel()
+
+	s := openStore(t).WithClock(atTime(revAt))
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	seedRawSecret(t, s, SecretClientKey, legacyPEM(t, kp))
+
+	if wrote, err := s.NormalizeClientKey(); err != nil || !wrote {
+		t.Fatalf("NormalizeClientKey = %v, %v; want it to rewrite a legacy label", wrote, err)
+	}
+	if _, ok, err := s.SecretsDoc().ItemWriteStamp(SecretClientKey); err != nil {
+		t.Fatalf("ItemWriteStamp: %v", err)
+	} else if ok {
+		t.Error("the re-marshal stamped the client key, so a normalised key would be exported as the fleet's")
+	}
+	signals, err := s.db.DocSignals()
+	if err != nil {
+		t.Fatalf("DocSignals: %v", err)
+	}
+	if hasSignal(signals, Secrets) {
+		t.Error("the re-marshal signalled the secrets document, so a normalised key would travel on its own")
+	}
+}
+
 // TestNormalizeClientKeyWithoutAKeyIsANoop pins the absent-key branch: nothing
 // stored, nothing written, no revision.
 func TestNormalizeClientKeyWithoutAKeyIsANoop(t *testing.T) {

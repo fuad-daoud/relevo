@@ -87,6 +87,11 @@ type ChainResult struct {
 	Plans   int
 	// Check is the builder member's resolved acceptance command; "" means none.
 	Check string
+	// CheckSource names the tier that supplied Check -- "--gate", "repo
+	// setting" or "policy.gate.default" -- for the printed check line. ""
+	// leaves the line without a parenthetical, which is the shape a result
+	// read back off a mirror prints.
+	CheckSource string
 }
 
 // chainMember is one part of a chain: which part it fills, the binding name it
@@ -102,6 +107,7 @@ type chainMember struct {
 // chainBase is everything the members share, resolved once before the cut.
 type chainBase struct {
 	cwd          string
+	subdir       string
 	mastermind   store.Endpoint
 	mastermindID string
 	repo         string
@@ -172,16 +178,18 @@ func chainRollback(ctx context.Context, rt Runtime, repo, worktree, branch strin
 
 // chainSettings resolves the chain's settings: a flag beats the setting, and
 // the setting beats the policy default. checks is the builder role's own
-// check flag, which decides whether an unset gate flag takes policy's
-// gate.default -- exactly as a lone binding resolves it.
-func chainSettings(pol policy.Policy, opts ChainOptions, checks bool) chain.Settings {
+// check flag, which decides whether an unset gate flag takes the repository's
+// own gate or policy's gate.default -- exactly as a lone binding resolves it.
+// repo is the chain's repository's own settings; its zero value (a resume, or
+// a chain on a tree with no settings) leaves the old two tiers standing.
+func chainSettings(pol policy.Policy, opts ChainOptions, checks bool, repo RepoSettings) chain.Settings {
 	set := chain.Settings{
 		MaxCorrections: pol.ChainMaxCorrections(),
 		ReviewerActor:  pol.ChainReviewerActor(),
 		PlannerActor:   pol.ChainPlannerActor(),
 		SecurityActor:  pol.ChainSecurityActor(),
 		Security:       pol.ChainSecurityOn(),
-		Gate:           resolveGateFor(opts.Gate, opts.NoGate, pol, checks),
+		Gate:           resolveGateFor(opts.Gate, opts.NoGate, pol, checks, repo).Command,
 		Regate:         ResolveRegate(opts.Regate, pol),
 	}
 	if opts.MaxCorrections != nil {
@@ -367,6 +375,7 @@ func chainMemberBinding(m chainMember, ep store.Endpoint, token string, base cha
 	b := store.Binding{
 		Name:             m.name,
 		CWD:              base.cwd,
+		Subdir:           base.subdir,
 		MasterMind:       base.mastermind,
 		MasterMindID:     base.mastermindID,
 		Builder:          ep,

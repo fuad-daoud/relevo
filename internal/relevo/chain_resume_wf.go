@@ -256,7 +256,9 @@ func chainResumeFlagParams(def workflow.Definition, rt Runtime, opts ResumeOptio
 		}
 	}
 	if opts.Gate != "" || opts.NoGate {
-		gate := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), "builder"))
+		// The gate flags win over every lower tier, so a resume reads no
+		// repository's settings here.
+		gate := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), "builder"), RepoSettings{}).Command
 		if err := add("--gate/--no-gate", "gate", gate); err != nil {
 			return nil, err
 		}
@@ -426,6 +428,7 @@ func chainResumeAddMembers(ctx context.Context, rt Runtime, tx *store.Tx, c db.C
 	base := chainBase{
 		cwd: builder.CWD, mastermind: builder.MasterMind, mastermindID: c.MasterMindID,
 		repo: c.Repo, repoRef: builder.RepoRef, feature: c.Feature, ticket: c.Ticket,
+		subdir:   builder.Subdir,
 		worktree: builder.CWD,
 	}
 	built, err := chainBuildMembers(ctx, rt, add, resolutions, base, set, c.Plans)

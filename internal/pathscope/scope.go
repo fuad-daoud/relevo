@@ -1,9 +1,10 @@
 // Package pathscope judges the paths a writer actor's round changed against
 // the actor's declared scope.
 //
-// A scope is a list of globs over repo-relative paths plus, for Go files,
-// whether a comment-only edit is allowed. Scope itself is pure; Judge walks a
-// git-reported change list and returns the paths it refuses.
+// A scope is a list of globs over repo-relative paths plus, for the source
+// files a comment lexer can judge, whether a comment-only edit is allowed.
+// Scope itself is pure; Judge walks a git-reported change list and returns
+// the paths it refuses.
 package pathscope
 
 import (
@@ -20,8 +21,8 @@ type Scope struct {
 	// leading "!" excludes, and the last matching entry wins. An entry may
 	// name a built-in set as "@docs" instead of a glob.
 	Paths []string `json:"paths"`
-	// Comments allows a Go file's modification when the old and new contents
-	// differ only in non-directive comments.
+	// Comments allows a source file's modification when the old and new
+	// contents differ only in non-directive comments.
 	Comments bool `json:"comments"`
 }
 

@@ -5,7 +5,10 @@ import (
 	"fmt"
 )
 
-// BindingFormat is the format of the Binding JSON this binary writes. It is 16
+// BindingFormat is the format of the Binding JSON this binary writes. It is 17
+// because subdir records where inside the tree a round's processes run: an
+// older relevo that drops it would run the round at the tree root, the wrong
+// directory, silently. It is 16
 // because remote_halt_kind names the remote halt episode a binding is carrying,
 // where the halt text used to name it: the text reaches a binding from the
 // server as well as from here, so an older relevo reading it would take a halt
@@ -29,12 +32,14 @@ import (
 // drops oom_requeue or round_oom_kills loses only oom-kill tracking for
 // in-flight rounds, one that drops link loses only the name of a remote
 // binding's other copy, and one that drops remote_bundle_failures loses only a
-// failure run, which restarts from zero. Stamping a field would lock that older
+// failure run, which restarts from zero. subdir is not one of these: a dropped
+// subdirectory changes where a round's own files are written, not just one
+// tracked fact. Stamping a field would lock that older
 // relevo out of loading the binding. Bump BindingFormat whenever Binding's JSON
 // shape changes in a way that must lock an older relevo out.
-const BindingFormat = 16
+const BindingFormat = 17
 
-// recordFormat is the format to write b at. Every record is format 16: the
+// recordFormat is the format to write b at. Every record is format 17: the
 // binary writes and migrates the out/ layout, which an older relevo cannot
 // serve.
 func recordFormat(b Binding) int {

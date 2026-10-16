@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/account"
+	"github.com/fuad-daoud/relevo/internal/board/theme"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -32,12 +33,14 @@ const (
 	Servers    Section = "servers"
 	Hooks      Section = "hooks"
 	Workflows  Section = "workflows"
+	Repos      Section = "repos"
+	Themes     Section = "themes"
 	Sync       Section = "sync"
 )
 
 // Sections is the order an import checks and stores the sections, and the
 // order EncodeDoc and DiffDocs render them.
-var Sections = []Section{Candidates, Agents, Actors, Accounts, Policy, Roles, Prices, Servers, Hooks, Workflows, Sync}
+var Sections = []Section{Candidates, Agents, Actors, Accounts, Policy, Roles, Prices, Servers, Hooks, Workflows, Repos, Themes, Sync}
 
 // sectionFile maps a section to the file it is imported from.
 var sectionFile = map[Section]string{
@@ -88,13 +91,22 @@ type Loaded struct {
 	Servers    remote.Servers
 	Hooks      HooksMap
 	Workflows  map[string]StoredWorkflow
-	ClientKey  []byte
-	Typesafe   string
-	Warnings   []string
-	Version    int64
-	Agents     map[string]roles.AgentEntry
-	Actors     map[string]roles.Actor
-	Accounts   account.Set
+	// Repos is the per-repository settings section, keyed by the repository's
+	// identity (the sha256 of its root commit). An absent section is an empty
+	// map: a machine that never used the feature reads no entry.
+	Repos map[string]RepoEntry
+	// Themes is the board palettes section, keyed by theme name. It is seeded
+	// once per database from the release's own data, so a fresh install reads
+	// the two built-ins from the section like any other palette. An absent
+	// section is an empty map.
+	Themes    map[string]theme.Theme
+	ClientKey []byte
+	Typesafe  string
+	Warnings  []string
+	Version   int64
+	Agents    map[string]roles.AgentEntry
+	Actors    map[string]roles.Actor
+	Accounts  account.Set
 }
 
 // Store reads and writes the config sections and secrets of one database.
@@ -404,61 +416,18 @@ func Validate(sec Section, body []byte) ([]string, error) {
 	case Workflows:
 		_, err := parseWorkflows(body)
 		return nil, err
+	case Repos:
+		_, err := ParseRepos(body)
+		return nil, err
+	case Themes:
+		_, err := ParseThemes(body)
+		return nil, err
 	case Sync:
 		_, err := sync.ParseSettings(body)
 		return nil, err
 	default:
 		return nil, fmt.Errorf("unknown config section %q", sec)
 	}
-}
-
-// PutSecret stores value under name, validating the client key with
-// remote.ParsePrivate first so a malformed PEM never reaches the database. A
-// client key is re-marshalled before it is stored, so whichever accepted label
-// the caller handed in -- the current one or the pre-rename one -- exactly one
-// label, the current one, survives a re-store.
-func (s *Store) PutSecret(name string, value []byte) error {
-	if name == SecretClientKey {
-		kp, err := remote.ParsePrivate(value)
-		if err != nil {
-			return err
-		}
-		canonical, err := remote.MarshalPrivate(kp)
-		if err != nil {
-			return err
-		}
-		value = canonical
-	}
-	return s.db.Tx(func(t *db.Tx) error {
-		before, err := readSnapshot(t)
-		if err != nil {
-			return err
-		}
-		if err := t.SecretPut(name, value, s.now().UTC()); err != nil {
-			return err
-		}
-		return s.record(t, before, []Change{{Path: "secret." + name, Op: "set"}})
-	})
-}
-
-// SecretDelete removes name's stored value, if any; an unstored name writes
-// nothing.
-func (s *Store) SecretDelete(name string) error {
-	return s.db.Tx(func(t *db.Tx) error {
-		before, err := readSnapshot(t)
-		if err != nil {
-			return err
-		}
-		if _, ok, err := t.SecretGet(name); err != nil {
-			return err
-		} else if !ok {
-			return nil
-		}
-		if err := t.SecretDelete(name); err != nil {
-			return err
-		}
-		return s.record(t, before, []Change{{Path: "secret." + name, Op: "remove"}})
-	})
 }
 
 // SecretNames returns every stored secret's name, sorted, never a value.

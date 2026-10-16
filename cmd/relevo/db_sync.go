@@ -7,13 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/db/wire/client"
-	"github.com/fuad-daoud/relevo/internal/sanitize"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
@@ -21,7 +19,8 @@ import (
 // sync can be moved between plus the three one-shot calls, and each verb parses
 // its own flags rather than leaving them to the dispatcher. The R2 flags, their
 // line and their prose are in db_sync_r2.go, which is where they are installed.
-const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [--yes] [--timeout D] [--json]\n" +
+const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [--passphrase-stdin]\n" +
+	"       relevo db sync enable [--join-stdin] [--yes] [--timeout D] [--json]\n" +
 	dbSyncR2Usage +
 	"       relevo db sync disable [--timeout D] [--json]\n" +
 	"       relevo db sync retry [--json]\n" +
@@ -29,7 +28,8 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"       relevo db sync push [--timeout D] [--json]\n" +
 	"       relevo db sync pull [--timeout D] [--json]\n" +
 	"       relevo db sync reconcile --dry-run [--timeout D] [--json]\n" +
-	"       relevo db sync unlock [--new] [--passphrase-stdin] [--json]\n\n" +
+	"       relevo db sync unlock [--new] [--passphrase-stdin] [--json]\n" +
+	"       relevo db sync invite [--json]\n\n" +
 	"enable joins this machine to the remote: it checks the origin gate, stores\n" +
 	"the token and the remote, then imports the other origins and exports this\n" +
 	"one's history before the mark goes on. An interrupted enable resumes.\n" +
@@ -40,9 +40,19 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"would append to or delete from the log, and appends nothing. unlock stores\n" +
 	"the sync key derived from the passphrase; --new creates it on a remote that\n" +
 	"holds none. The passphrase comes from --passphrase-stdin, else " + dbSyncPassphraseEnv + ",\n" +
-	"else a prompt.\n" +
+	"else a prompt. invite prints one join code on stdout for a new machine to\n" +
+	"join with; it carries the turso.token, so it goes to the terminal and never\n" +
+	"to a log. A machine that is not syncing, or a remote holding no key yet, is\n" +
+	"refused by name.\n" +
 	"Writing the machine-local sync section by hand stays the advanced\n" +
 	"route: `relevo config set sync '{\"remote_url\":\"...\"}'`.\n" +
+	"--join-stdin reads the code `relevo db sync invite` printed from standard\n" +
+	"input, never from the command line, where it would sit in shell history\n" +
+	"and the process table. The code names the remote and the token, so neither\n" +
+	"--url nor --token-stdin is needed and passing --url beside it is refused.\n" +
+	"It shares standard input with no other secret. The passphrase is read\n" +
+	"the same way unlock reads it and is checked against the remote before\n" +
+	"anything is stored, so a wrong one leaves this machine as it was.\n" +
 	"--token-stdin reads the turso.token from standard input and\n" +
 	"beats " + relevosync.EnvToken + "; with neither, the stored token is used,\n" +
 	"and enable refuses only if none is stored. The value appears nowhere else.\n" +
@@ -87,6 +97,8 @@ func cmdDBSync(args []string) error {
 		return cmdDBSyncReconcile(args[1:])
 	case len(args) > 0 && args[0] == "unlock":
 		return cmdDBSyncUnlock(args[1:])
+	case len(args) > 0 && args[0] == "invite":
+		return cmdDBSyncInvite(args[1:])
 	case len(args) > 0 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help"):
 		fmt.Fprint(os.Stderr, dbSyncUsage)
 		return errHelpShown
@@ -98,11 +110,13 @@ func cmdDBSync(args []string) error {
 // dbSyncEnableFlagValues holds the pointers `db sync enable` parses into. The
 // R2 half is declared in db_sync_r2.go with the flags that install it.
 type dbSyncEnableFlagValues struct {
-	asJSON     *bool
-	remoteURL  *string
-	tokenStdin *bool
-	timeout    *time.Duration
-	yes        *bool
+	asJSON          *bool
+	remoteURL       *string
+	tokenStdin      *bool
+	passphraseStdin *bool
+	joinStdin       *bool
+	timeout         *time.Duration
+	yes             *bool
 	dbSyncR2Flags
 }
 
@@ -113,6 +127,8 @@ func dbSyncEnableFlagSet(fs *flag.FlagSet) *dbSyncEnableFlagValues {
 	v.asJSON = fs.Bool("json", false, "print the document the enable produced")
 	v.remoteURL = fs.String("url", "", "the remote to sync with, stored in the machine-local sync section")
 	v.tokenStdin = fs.Bool("token-stdin", false, "read the turso.token from standard input")
+	v.passphraseStdin = fs.Bool("passphrase-stdin", false, "read the sync passphrase from standard input")
+	v.joinStdin = fs.Bool("join-stdin", false, "read the join code `relevo db sync invite` printed from standard input, instead of naming the remote")
 	v.timeout = fs.Duration("timeout", dbSyncDefaultTimeout, "bound the remote probe and the open")
 	v.yes = fs.Bool("yes", false, "join even when the estimate exceeds what is left of this month's Turso quota")
 	installR2Flags(fs, &v.dbSyncR2Flags)
@@ -191,65 +207,6 @@ var dbSyncTokenStdin io.Reader = os.Stdin
 // the same reason, and it is the only place the environment is read.
 var dbSyncGetenv = os.Getenv
 
-// dbSyncStatusDoc is `db sync status --json`: what this machine is set to be,
-// what its last exchange measured, and which origins need a human. TokenPresent
-// is a bool because the value is the one thing on this surface that must never
-// be printed. The R2 fields are omitempty for the same reason an unconfigured
-// machine renders no R2 clause on the line: bodies in a bucket are opt-in, and a
-// machine that has not turned them on is in the ordinary state.
-type dbSyncStatusDoc struct {
-	Enabled      bool   `json:"enabled"`
-	RemoteURL    string `json:"remote_url,omitempty"`
-	Namespace    string `json:"namespace,omitempty"`
-	TokenPresent bool   `json:"token_present"`
-	// Key is unlocked when this machine holds the sync key, locked when it
-	// holds none and the remote does, and none otherwise.
-	Key string `json:"key,omitempty"`
-	// R2Configured says whether this machine holds a complete set of bucket
-	// credentials. R2Endpoint and R2Bucket describe where bodies would go, which
-	// is what a reader needs to tell this machine's bucket from another's. There
-	// is deliberately no field for the key id or the secret: this document is
-	// printed on request and read aloud, and a credential has no reason to be in
-	// either. See db_sync_r2.go, which is where the reader and renderer live.
-	R2Configured bool   `json:"r2_configured,omitempty"`
-	R2Endpoint   string `json:"r2_endpoint,omitempty"`
-	R2Bucket     string `json:"r2_bucket,omitempty"`
-	// Latched and LatchCause describe a breaker that stopped the machine until
-	// `relevo db sync retry`.
-	Latched    bool   `json:"latched,omitempty"`
-	LatchCause string `json:"latch_cause,omitempty"`
-	// Backlog is the count of this machine's operations the last attempt left
-	// unsent.
-	Backlog int64 `json:"backlog,omitempty"`
-	// LastExport and LastImport are the UTC instants the last completed
-	// exchange stamped, empty when it never completed one.
-	LastExport string `json:"last_export,omitempty"`
-	LastImport string `json:"last_import,omitempty"`
-	// HeldOrigins, Dropped and Gaps are the last import's report: an origin a
-	// newer writer held, a batch a refusal dropped, a sequence gap a hole left.
-	HeldOrigins []string `json:"held_origins,omitempty"`
-	Dropped     []string `json:"dropped,omitempty"`
-	Gaps        []string `json:"gaps,omitempty"`
-	// Joining says a join is in progress and JoinSince is when it began, read
-	// from the machine-local join marker. The daemon finishes the join whether
-	// the enable that started it waited or not, so a machine can be joining
-	// while reading off.
-	Joining   bool   `json:"joining,omitempty"`
-	JoinSince string `json:"join_since,omitempty"`
-	// LastAttempt is the daemon's last steady attempt, absent until it has run
-	// one.
-	LastAttempt *dbSyncAttemptDoc `json:"last_attempt,omitempty"`
-	// Bytes is this month's traffic, absent until something moved, and
-	// QuotaTursoSync the allowance the Turso total is read against.
-	Bytes          *relevosync.ByteCounters `json:"bytes,omitempty"`
-	QuotaTursoSync int64                    `json:"quota_turso_sync,omitempty"`
-	// Storage is the last daily measurement of the replica and the bucket,
-	// absent until one was taken, read against the two storage quotas.
-	Storage           *relevosync.Storage `json:"storage,omitempty"`
-	QuotaTursoStorage int64               `json:"quota_turso_storage,omitempty"`
-	QuotaR2Storage    int64               `json:"quota_r2_storage,omitempty"`
-}
-
 // dbSyncOutcomeDoc is what enable and disable print under --json: what the run
 // did, and for disable the warning a failed final export produces. RemoteURL is
 // what enable stored, and never the token: the URL is the thing a caller needs
@@ -296,12 +253,29 @@ func cmdDBSyncEnable(args []string) error {
 		return fail(codeUsage, "relevo db sync enable takes no arguments, got %d", fs.NArg())
 	}
 
-	token, err := dbSyncEnableToken(*v.tokenStdin)
-	if err != nil {
+	if err := dbSyncEnableIntake(*v.tokenStdin, *v.passphraseStdin, *v.joinStdin, v.dbSyncR2Flags); err != nil {
 		return err
 	}
 
-	if err := dbSyncEnableR2(*v.tokenStdin, v.dbSyncR2Flags); err != nil {
+	// The code is parsed here, before anything is dialed. It is a pure function
+	// over the string, so a code this build cannot read -- a version it does not
+	// know, a truncated paste, something that is not a code at all -- is refused
+	// before a daemon is reached or a worker is started, and the remote and
+	// token it names are the ones that go on the wire.
+	code, err := dbSyncReadJoinCode(*v.joinStdin)
+	if err != nil {
+		return err
+	}
+	join, err := dbSyncEnableJoin(code, *v.remoteURL)
+	if err != nil {
+		return err
+	}
+	token, err := dbSyncEnableToken(join, *v.tokenStdin)
+	if err != nil {
+		return err
+	}
+	pass, err := dbSyncEnablePassphrase(*v.passphraseStdin, join.joining)
+	if err != nil {
 		return err
 	}
 
@@ -314,8 +288,8 @@ func cmdDBSyncEnable(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), *v.timeout+verbDialSlack)
 	defer cancel()
 
-	opts := dbSyncVerbOptions{RemoteURL: *v.remoteURL, Timeout: *v.timeout, Yes: *v.yes}
-	tail, err := dbSyncEnableR2Tail(token, v.dbSyncR2Flags, &opts)
+	opts := dbSyncVerbOptions{RemoteURL: join.remote, Timeout: *v.timeout, Yes: *v.yes, Join: join.joining}
+	tail, err := dbSyncEnableR2Tail(token, pass, v.dbSyncR2Flags, &opts)
 	if err != nil {
 		return err
 	}
@@ -376,7 +350,13 @@ const verbDialSlack = 5 * time.Second
 // resumes an interrupted join rather than raising a usage error, and a machine
 // with nothing stored is refused by the daemon's own preflight. This process
 // never says which route was tried or what either held.
-func dbSyncEnableToken(fromStdin bool) ([]byte, error) {
+func dbSyncEnableToken(join dbSyncJoin, fromStdin bool) ([]byte, error) {
+	// A code carries the token, and it carries the only one: a joiner is not
+	// handed this machine's environment, and a token from elsewhere would reach a
+	// remote the code never named.
+	if join.joining {
+		return join.token, nil
+	}
 	intake := relevosync.TokenIntake{EnvValue: dbSyncGetenv(relevosync.EnvToken)}
 	if fromStdin {
 		token, err := io.ReadAll(dbSyncTokenStdin)
@@ -479,61 +459,6 @@ func cmdDBSyncRetry(args []string) error {
 	return nil
 }
 
-// dbSyncStatusLine is the one line `db sync status` prints, as a function of the
-// document and nothing else. Pulling it out of the verb is what lets the mapping
-// be pinned by bytes: the route a row arrived over is then nowhere in the line,
-// so a table of documents renders to the exact same table of strings whichever
-// handle the rows came out of.
-func dbSyncStatusLine(doc dbSyncStatusDoc) string {
-	state := "off"
-	if doc.Enabled {
-		state = "on"
-	}
-	line := fmt.Sprintf("sync %s (remote: %s, token: %s)", state, orNone(doc.RemoteURL), presentOrAbsent(doc.TokenPresent))
-	if r2 := dbSyncR2Line(doc); r2 != "" {
-		line += ", r2: " + r2
-	}
-	line += dbSyncKeyClause(doc.Key)
-	return line + dbSyncStatusDetails(doc) + "\n"
-}
-
-// dbSyncStatusDetails is the tail of the status line: each fact a reader can act
-// on, in a fixed order and only when it is set. A latch comes first because it
-// is the one state that stops the machine until a human acts; the rest is what
-// the last exchange measured and what it could not apply.
-func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
-	var b strings.Builder
-	if doc.Joining {
-		fmt.Fprintf(&b, " · joining since %s", doc.JoinSince)
-	}
-	if doc.Latched {
-		fmt.Fprintf(&b, " · latched: %s", doc.LatchCause)
-	}
-	if doc.Backlog > 0 {
-		fmt.Fprintf(&b, " · backlog: %d", doc.Backlog)
-	}
-	if doc.LastExport != "" {
-		fmt.Fprintf(&b, " · exported: %s", doc.LastExport)
-	}
-	if doc.LastImport != "" {
-		fmt.Fprintf(&b, " · imported: %s", doc.LastImport)
-	}
-	for _, held := range doc.HeldOrigins {
-		fmt.Fprintf(&b, " · held: %s", sanitize.Text(held))
-	}
-	for _, dropped := range doc.Dropped {
-		fmt.Fprintf(&b, " · dropped: %s", sanitize.Text(dropped))
-	}
-	for _, gap := range doc.Gaps {
-		fmt.Fprintf(&b, " · gap: %s", sanitize.Text(gap))
-	}
-	if doc.Bytes != nil || doc.Storage != nil {
-		fmt.Fprintf(&b, " · %s", dbSyncQuotasLine(doc))
-	}
-	b.WriteString(dbSyncAttemptDetails(doc.LastAttempt))
-	return b.String()
-}
-
 // dbSyncClassify maps a failure out of the sync package onto the frame's codes.
 // The refusals that name a fix are refused; a driver failure the user cannot fix
 // by reading the message is an internal failure with the bugreport command, and
@@ -576,20 +501,4 @@ func dbSyncClassify(err error) error {
 		return failWrap(codeRefused, err, "relevo db sync")
 	}
 	return failWrap(codeInternal, err, "relevo db sync")
-}
-
-// orNone renders an empty remote as something a reader can tell from a URL.
-func orNone(s string) string {
-	if s == "" {
-		return "(none)"
-	}
-	return s
-}
-
-// presentOrAbsent renders a token's presence without rendering the token.
-func presentOrAbsent(present bool) string {
-	if present {
-		return "present"
-	}
-	return "absent"
 }

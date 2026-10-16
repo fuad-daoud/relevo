@@ -471,6 +471,11 @@ gives a MasterMind a name of your own.
   (`--kind`, `--agent`, `--force`, `--dry-run`).
 - `relevo config export|import|get|set|unset|edit` — read and change the
   configuration document section by section.
+- `relevo config repo [--repo <path>]` — read this repository's own settings
+  (the `repos` config section, keyed by the repository's identity);
+  `config repo set <name|gate|board_theme> <value>` stores one field,
+  `config repo unset <key>` clears it, and `config repo list` prints one row
+  per repository that has settings.
 - `relevo config secret set|rm|list` — store, forget or list the `typesafe`
   and `client.key` secrets (the value is read from stdin).
 - `relevo gate` — list this machine's active gates.
@@ -1422,9 +1427,25 @@ must name its file, a bare slug directory is never a path, so a board directory
 can never collide with a subverb name.
 
 The theme chooses the colours of **new** elements only -- an existing scene
-keeps the colours it stores. Precedence is `--theme`, then the repo-local git
-config key `relevo.boardTheme` (`git config relevo.boardTheme blueprint`), then
-`cockpit`. An unknown name is a usage error, exit 2, listing the built-ins.
+keeps the colours it stores. Every palette lives in the `themes` config
+section, keyed by name: the release writes `cockpit` and `blueprint` there
+once per database when relevo starts (so `relevo config get themes.cockpit
+--json` prints cockpit's palette on a fresh install), and after that every
+lookup reads the section -- `relevo config set themes.<name> '{...}'` changes
+what the board paints, `config unset themes.<name>` is what unsets one, and a
+palette you unset stays unset: the seed runs once, not on every open. A user
+palette is whole -- all eleven colour fields (`bg ink muted faint line panel
+accent good warn bad comment`) are required, and each is a `#` followed by 3,
+4, 6 or 8 hex digits -- so a missing or unknown field, and any other colour
+form, is refused at write time naming the entry and the field. Precedence is
+`--theme`, then the repository's own stored setting (`relevo config repo set
+board_theme <name>`), then the repo-local git config key `relevo.boardTheme`
+(`git config relevo.boardTheme blueprint`, kept so existing setups keep
+working), then `cockpit`. A `relevo board` that runs before the state root
+has a database at all -- a fresh install that has never opened it writable --
+paints the palettes the embedded seed file carries. An unknown name is a
+usage error, exit 2, that lists the names the consulted set holds and says
+how to add one: `relevo config set themes.<name> '{...}'`.
 
 On save the page writes the scene and a companion `<name>.svg` beside it,
 exported for the cockpit, agents and PR diffs; both are committed. The export
@@ -1763,12 +1784,26 @@ wins -- or `@docs`, which expands to `**/*.md`, `**/*.markdown`, `**/*.mdx`,
 `**/*.mmd`, `**/*.rst`, `**/*.adoc`, `**/*.asciidoc`, `**/*.svg` and
 `**/*.excalidraw`, excluding `!**/testdata/**`,
 `!vendor/**` and `!**/node_modules/**`. With `comments` true, an edit to an
-out-of-scope `.go` file is still in scope when the old and new contents differ
-only in non-directive comments; a change to a directive comment (`//go:`,
-`// +build`, `//line`, `//export`, `//nolint`, `//lint:`, anything containing
-`#nosec`, the `// Code generated ... DO NOT EDIT.` marker, a test `Output:`
-comment) or to any code token is refused, as is any other extension, a binary
-or a symlink.
+out-of-scope source file is still in scope when the old and new contents differ
+only in non-directive comments. For `.go` the two sides are compared as token
+streams, so whitespace is free as `gofmt` moves it, and a change to a directive
+comment (`//go:`, `// +build`, `//line`, `//export`, `//nolint`, `//lint:`,
+anything containing `#nosec`, the `// Code generated ... DO NOT EDIT.` marker,
+a test `Output:` comment) or to any code token is refused. The other languages
+the comment table carries get the code-line rule: every comment is removed and
+the remaining lines must match one for one, in order, so a comment's own line,
+comment text and blank lines are free while everything else -- including
+leading whitespace -- is code; a docstring or any other string literal is code,
+and indentation is significant. Those languages are `.py`/`.pyi`,
+`.sh`/`.bash`/`.zsh`, `.yaml`/`.yml`, `.toml`, `.r`, `.js`/`.jsx`/`.mjs`/`.cjs`
+and `.ts`/`.tsx`, `.java`/`.kt`/`.kts`/`.scala`, `.cs`, `.swift`, `.dart`,
+`.c`/`.h`/`.cc`/`.cpp`/`.hpp`, `.rs`, `.sql`, `.lua` and `.hs`; their own
+directives are refused too -- `# noqa`, `# type:`, `#!`, `// @ts-ignore`,
+`// eslint-disable-next-line`, `// NOLINT`, `-- noqa`, `-- name:`,
+`---@type`, `{-# LANGUAGE #-}` and their kin. A file added or deleted, a
+status the rules cannot judge, an extension outside the table (`.json`,
+`.txt`, `.rb`, `.php`, `.pl`, a binary, an extensionless `Makefile` or
+`Dockerfile`) or a symlink is refused as before.
 
 A refusal still closes the round -- its report, diff and usage are recorded --
 but its outcome is forced to `halted`, the binding goes to **NEEDS YOU** naming
@@ -2076,10 +2111,26 @@ builder -- no nudge, no "exited without a report" handling, no round-timeout
 halt -- until the gate finishes or times out.
 
 Configure it with `--gate '<cmd>'` on `relevo bind` or `relevo bind
---worktree`; `--no-gate` opts a binding out of the policy section's `gate.default`
-(see above) even when one is configured machine-wide. Omitting both flags
-on `bind` falls back to `gate.default`, `""` meaning no gate at all --
-bindings written before this feature have no gate and are unaffected.
+--worktree`; a repository can carry its own gate in the `repos` config
+section (`relevo config repo set gate <cmd>`, keyed by the repository's
+identity); `--no-gate` opts a binding out of both lower tiers. The flags
+resolve in this order:
+
+1. `--gate <cmd>` / `--no-gate` -- `--no-gate` wins over everything;
+2. the repository's own `gate` setting;
+3. the policy section's `gate.default`;
+4. no gate.
+
+The repository tier sits behind the role rule: a role whose check flag is
+off (a reader round) takes no gate even when its repository sets one, and
+`--gate` on a reader round is still refused. A `bind --resume` keeps the
+stored command. `bind`, `bind --worktree`, `bind --server` and `chain` name
+which tier supplied the command -- `gate: make check (--gate)`, `(repo
+setting)`, `(policy.gate.default)` -- and `chain` prints the same
+parenthetical on its `check:` line.
+
+A machine whose `repos` section is empty reads no git for this at all, so
+a machine that never used the feature pays nothing.
 
 The gate's full output -- and the supervisor's exit trailer -- lives at
 `NNN-gate.log` next to the round's prompt and report. Its result is one of

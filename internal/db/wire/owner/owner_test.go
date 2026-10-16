@@ -137,10 +137,23 @@ func execRaw(t *testing.T, w *wire.Conn, id int, query string) {
 	}
 }
 
+// readAllowance is the deadline a test gives an answer the server is free to
+// take its time on: the cap tests start their final read the moment they free
+// the pin slot, and cleanup may legally spend its own discardTimeout (two
+// seconds) releasing that slot, so a positive wait needs headroom over both,
+// and a loaded gate can stretch every hop between the close and the answer.
+const readAllowance = 15 * time.Second
+
 // readDone reads one frame and requires it to be a done answer.
 func readDone(t *testing.T, w *wire.Conn, nc net.Conn) {
 	t.Helper()
-	if err := nc.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+	readDoneWithin(t, w, nc, 2*time.Second)
+}
+
+// readDoneWithin reads one frame inside d and requires it to be a done answer.
+func readDoneWithin(t *testing.T, w *wire.Conn, nc net.Conn, d time.Duration) {
+	t.Helper()
+	if err := nc.SetReadDeadline(time.Now().Add(d)); err != nil {
 		t.Fatalf("SetReadDeadline: %v", err)
 	}
 	frame, err := w.Read()
@@ -239,9 +252,10 @@ func TestConnectionCapWaitsInsteadOfRefusing(t *testing.T) {
 	readDone(t, a, na)
 
 	// A second client's handshake is served while the cap is full: the cap
-	// never bounds the handshake, so a short deadline is enough to prove it.
+	// never bounds the handshake, so even a loaded machine answers it well
+	// inside the allowance.
 	b, nb := dialRaw(t, sock)
-	if err := nb.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+	if err := nb.SetReadDeadline(time.Now().Add(readAllowance)); err != nil {
 		t.Fatalf("SetReadDeadline: %v", err)
 	}
 	sendHello(t, b, wire.Version)
@@ -264,9 +278,11 @@ func TestConnectionCapWaitsInsteadOfRefusing(t *testing.T) {
 		t.Fatalf("SetReadDeadline: %v", err)
 	}
 
-	// Free the slot; the waiting request now succeeds.
+	// Free the slot; the waiting request now succeeds. Cleanup may legally
+	// spend its own discardTimeout releasing the slot, so the answer waits on
+	// the allowance, not on a guess about how long that takes.
 	_ = na.Close()
-	readDone(t, b, nb)
+	readDoneWithin(t, b, nb, readAllowance)
 }
 
 func TestLiveConnectionCapDropsTheExtra(t *testing.T) {
@@ -283,15 +299,16 @@ func TestLiveConnectionCapDropsTheExtra(t *testing.T) {
 	welcome(t, a)
 
 	// The next dial is dropped without a frame, so its hello is either never
-	// written or never answered: one of the two fails within the deadline.
+	// written or never answered: one of the two fails within the allowance
+	// rather than being raced by a loaded machine.
 	b, nb := dialRaw(t, sock)
-	if err := nb.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+	if err := nb.SetWriteDeadline(time.Now().Add(readAllowance)); err != nil {
 		t.Fatalf("SetWriteDeadline: %v", err)
 	}
 	if err := tryHello(b, wire.Version); err != nil {
 		// The owner closed the connection before the hello could be written.
 	} else {
-		if err := nb.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		if err := nb.SetReadDeadline(time.Now().Add(readAllowance)); err != nil {
 			t.Fatalf("SetReadDeadline: %v", err)
 		}
 		if _, err := b.Read(); err == nil {
@@ -304,7 +321,7 @@ func TestLiveConnectionCapDropsTheExtra(t *testing.T) {
 	// returns a done, so dropping the extra connection leaves existing work
 	// and the pinned path untouched.
 	execRaw(t, a, 1, `CREATE TABLE t (n INTEGER)`)
-	readDone(t, a, na)
+	readDoneWithin(t, a, na, readAllowance)
 }
 
 // liveConn returns the server's one live connection.
@@ -346,9 +363,11 @@ func TestAFinishedRequestDoesNotDropTheNextOne(t *testing.T) {
 		close(held.done)
 	}()
 
-	// The next request must be served, not dropped with the connection.
+	// The next request must be served, not dropped with the connection; the
+	// split between the fake slot's goroutine and the real claim is timing the
+	// server is free to spend, so the answer waits on the allowance.
 	execRaw(t, w, 1, `CREATE TABLE t (n INTEGER)`)
-	readDone(t, w, nc)
+	readDoneWithin(t, w, nc, readAllowance)
 }
 
 func TestOwnerDropsADifferentUid(t *testing.T) {

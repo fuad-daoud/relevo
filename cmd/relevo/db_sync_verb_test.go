@@ -171,7 +171,7 @@ func TestDBSyncEnableTokenResolvesBeforeTheDaemon(t *testing.T) {
 			t.Cleanup(func() { dbSyncTokenStdin = prev })
 			t.Setenv(relevosync.EnvToken, c.env)
 
-			token, err := dbSyncEnableToken(c.fromStdin)
+			token, err := dbSyncEnableToken(dbSyncJoin{}, c.fromStdin)
 			if err != nil {
 				t.Fatalf("dbSyncEnableToken: %v", err)
 			}
@@ -191,7 +191,7 @@ func TestDBSyncEnableTokenNeverRendersItsValue(t *testing.T) {
 	dbSyncTokenStdin = &testReader{err: errors.New("pipe is closed")}
 	t.Cleanup(func() { dbSyncTokenStdin = prev })
 
-	_, err := dbSyncEnableToken(true)
+	_, err := dbSyncEnableToken(dbSyncJoin{}, true)
 	if err == nil {
 		t.Fatal("a stdin that cannot be read was accepted")
 	}

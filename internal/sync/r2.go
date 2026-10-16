@@ -91,6 +91,12 @@ func (r R2Secrets) Missing() []string {
 	return out
 }
 
+// r2Names is the four names in the order they are stored, which is the order
+// both the write and the stamping walk.
+func r2Names() []string {
+	return []string{SecretR2Endpoint, SecretR2Bucket, SecretR2KeyID, SecretR2Secret}
+}
+
 // SetR2 stores the four credentials in the local file beside the shared
 // database, in one transaction so a machine is never left with half a set.
 //
@@ -114,7 +120,12 @@ func SetR2(l Local, r R2Secrets, now time.Time) error {
 				return fmt.Errorf("sync: set %s: %w", s.name, err)
 			}
 		}
-		return nil
+		// A person typing the flags is the only way an R2 credential arrives
+		// here, so the write stamps and signals: a joiner is owed the
+		// credentials without the owner re-running enable. A credential that
+		// came from a peer's secrets document is written by that document's
+		// apply path instead, which does not stamp.
+		return StampSecretWrites(t, r2Names(), func() time.Time { return now })
 	})
 }
 

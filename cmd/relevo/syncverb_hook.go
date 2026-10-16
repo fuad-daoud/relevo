@@ -88,6 +88,13 @@ func newVerbRunner(d *db.DB) *relevo.VerbRunner {
 	runner.Open = func(context.Context) (synclog.LogTransport, error) {
 		return syncpipe.OpenSupervisor(d, local)
 	}
+	// A join's rows hold no bucket until the fleet's secrets document has been
+	// applied, and the document is only on the remote the worker is opened to
+	// read: the join's first worker starts with none, and the enable it became
+	// answers for handing the import a bucketed one.
+	runner.OpenNoBucket = func(context.Context) (synclog.LogTransport, bool, error) {
+		return syncpipe.OpenNoBucketSupervisor(d, local)
+	}
 	return runner
 }
 

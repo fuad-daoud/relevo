@@ -49,6 +49,12 @@ func decodeDoc(doc Doc) (Loaded, error) {
 	if err := loadWorkflows(doc, &L); err != nil {
 		return Loaded{}, err
 	}
+	if err := loadRepos(doc, &L); err != nil {
+		return Loaded{}, err
+	}
+	if err := loadThemes(doc, &L); err != nil {
+		return Loaded{}, err
+	}
 	// The rotation check reads both sections, so it runs once the policy and
 	// the accounts are parsed.
 	if err := policy.ValidateRotation(FileName(Policy), L.Policy.AccountsRotation(), opencodeGroups(L.Accounts)); err != nil {

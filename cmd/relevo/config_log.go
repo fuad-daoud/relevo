@@ -13,6 +13,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 )
 
 // revisionJSON is the --json shape of one revision (§6.4). Snapshot is present
@@ -60,13 +61,20 @@ func revisionJSONOf(r db.RevisionRow, withSnapshot bool) revisionJSON {
 	return out
 }
 
+// inertText makes a stored source or message safe to print: a synced revision's
+// label and message are chosen by a peer. sanitize keeps newlines, which would
+// let one forge a line of their own, so they go too.
+func inertText(s string) string {
+	return strings.ReplaceAll(sanitize.Text(s), "\n", "\uFFFD")
+}
+
 // printRevisionText prints one revision's header, its message when it has one,
 // and one Describe line per change indented by two spaces.
 func printRevisionText(r db.RevisionRow) error {
 	fmt.Printf("#%d  %s  %s  config version %d\n",
-		r.Rev, r.At.Local().Format("2006-01-02 15:04"), r.Source, r.Version)
+		r.Rev, r.At.Local().Format("2006-01-02 15:04"), inertText(r.Source), r.Version)
 	if r.Message != "" {
-		fmt.Printf("message: %s\n", r.Message)
+		fmt.Printf("message: %s\n", inertText(r.Message))
 	}
 	if r.Source == "baseline" {
 		fmt.Println("  (baseline: the config as it was before revisions were recorded)")
@@ -153,7 +161,7 @@ func cmdConfigLog(args []string) error {
 	width := sourceWidth(rows)
 	for _, r := range rows {
 		fmt.Printf("#%d  %s  %-*s  %d change(s)  %s\n",
-			r.Rev, r.At.Local().Format("2006-01-02 15:04"), width, r.Source, len(revChangeList(r)), r.Message)
+			r.Rev, r.At.Local().Format("2006-01-02 15:04"), width, inertText(r.Source), len(revChangeList(r)), inertText(r.Message))
 	}
 	return nil
 }

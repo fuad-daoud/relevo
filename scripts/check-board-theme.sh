@@ -1,12 +1,14 @@
 #!/bin/sh
 # scripts/check-board-theme.sh -- the board page-source guard (#795, S3).
 #
-# The page palette has exactly one home: the Go table in internal/board/theme.go.
-# The wrapper under board/src must therefore carry no colour of its own and no
-# runtime network of its own, and the Mermaid recolour must stay present. Three
+# The page palette has exactly one home: the `themes` config section, whose
+# entries the release seeds out of the embedded data file
+# internal/board/theme/seed.json -- there is no palette in Go. The wrapper
+# under board/src must therefore carry no colour of its own and no runtime
+# network of its own, and the Mermaid recolour must stay present. Three
 # rules over the tracked sources:
 #
-#   a) no hex colour literal -- the palette is Go's, not the page's;
+#   a) no hex colour literal -- the palette is seeded config, not the page's;
 #   b) no https://            -- no new runtime network;
 #   c) recolor() carries at least four strokeColor and four backgroundColor
 #      assignments, so deleting the recolour fails the check rather than
@@ -46,7 +48,7 @@ fail=0
 # a) no hex colour literal.
 if [ -s "$work/hex" ]; then
 	cat "$work/hex"
-	echo "check-board-theme: rule a: hex colour literal in board/src (the palette is Go's)"
+	echo "check-board-theme: rule a: hex colour literal in board/src (the palette is the themes section's)"
 	fail=1
 fi
 

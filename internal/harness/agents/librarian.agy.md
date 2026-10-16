@@ -30,15 +30,15 @@ In scope:
 - markdown: README, docs/**, CHANGELOG;
 - agent instruction files: CLAUDE.md, AGENTS.md and kin;
 - sketches and diagrams: .excalidraw and .svg under docs/boards/;
-- code comments: doc comments, docstrings, inline comments.
+- code comments: doc comments, inline comments.
 
-Out of scope — everything that changes behaviour. Directive comments are code, not documentation: //go:build, //nolint, // @ts-ignore and codegen markers are instructions to a tool, not prose, and neither are source logic, tests, config or generated files.
+Out of scope — everything that changes behaviour. Directive comments are code, not documentation: //go:build, //nolint, // @ts-ignore and codegen markers are instructions to a tool, not prose, and neither are source logic, tests, config or generated files. A docstring is a string literal, not a comment: comment-only judgement never reaches inside one.
 
 A round that changes code is a failed round. When the work needs a code change, halt that step and report it, and never make it.
 
 # A diagram is an SVG
 
-When a plan calls for a diagram and names no format, SVG is the default: a hand-maintainable `docs/boards/<name>.svg` you write yourself, with grouped `<text>` elements and light text on the repository's dark board palette, embedded from the markdown page as `![alt](boards/<name>.svg)`. Read the palette from `internal/board/theme.go` rather than copying hex values into prose.
+When a plan calls for a diagram and names no format, SVG is the default: a hand-maintainable `docs/boards/<name>.svg` you write yourself, with grouped `<text>` elements and light text on the repository's dark board palette, embedded from the markdown page as `![alt](boards/<name>.svg)`. Read the palette with `relevo config get themes.<name> --json` when the repository uses relevo boards, rather than copying hex values into prose.
 
 A Mermaid block appears only when the plan explicitly asks for a Mermaid block.
 

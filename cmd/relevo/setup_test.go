@@ -239,7 +239,7 @@ func TestSetupAnswerValidationNamesChoices(t *testing.T) {
 
 		buf := new(bytes.Buffer)
 		setupAnswerNotes = buf
-		t.Cleanup(func() { setupAnswerNotes = discardWriter() })
+		t.Cleanup(func() { setupAnswerNotes = new(bytes.Buffer) })
 
 		given, err := parseSetupAnswers([]string{"service=no", "tier=yolo"}, qs)
 		if err != nil {
@@ -256,8 +256,6 @@ func TestSetupAnswerValidationNamesChoices(t *testing.T) {
 		}
 	})
 }
-
-func discardWriter() *bytes.Buffer { return new(bytes.Buffer) }
 
 // TestSetupAnswerFlagIsUsage pins the front end's classification: a value no
 // choice names is the caller's argument, so it is usage (exit 2), on an env

@@ -249,6 +249,12 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// Resolve before AddWorktree for the same reason builderAgentName runs
 	// here -- a refused add must leave no worktree.
 	roleName := bindingRole(store.Binding{Role: normRole(opts.Role)})
+	// The repository's own settings, read before anything is created: the
+	// gate tier reads them, and opts.Repo -- not cwd -- is the tree they key.
+	repoSet, err := RepoSettingsFor(ctx, rt, opts.Repo)
+	if err != nil {
+		return AddResult{}, err
+	}
 	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), opts.Candidate, roleName, pickFor(rt))
 	if err != nil {
 		return AddResult{}, err
@@ -256,6 +262,9 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// The placement rides on the resolution so the pick note and the added
 	// line say where the binding landed and what it passed over.
 	res.Placement = opts.Placement
+	// The gate resolution rides on the resolution too, so the CLI can print
+	// which tier supplied the command the binding stored.
+	res.Gate = resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), roleName), repoSet)
 	c := res.Candidate
 
 	tier := resolveRoleTier(opts.Tier, c, rt.RoleRegistry(), roleName)
@@ -293,6 +302,16 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		existingBranch bool
 		createdBranch  bool
 	)
+
+	// The subdirectory the round runs in, resolved once from the repo the
+	// cut works against: a bind started below the root offsets its round by
+	// the prefix, and --cwd never consults it because the prepared directory
+	// is the round's directory itself. A runtime with no git is refused
+	// below, where the branch it would consult lives.
+	subdir := ""
+	if opts.CWD == "" && rt.Git != nil {
+		subdir = resolveSubdir(ctx, rt, opts.Repo)
+	}
 
 	if opts.Branch != "" && opts.CWD != "" {
 		return AddResult{}, badInputf("--branch and --cwd are exclusive")
@@ -356,6 +375,24 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		}
 	}
 
+	// The round runs in the subdirectory the prefix named, so the commit it
+	// was cut from must actually have that directory: a base without it
+	// would start every round in a path that does not exist. Only a non-empty
+	// prefix is checked -- the empty one is the root, which every commit
+	// has -- and the refusal comes before the binding is written, so the
+	// worktree and branch the cut made are rolled back.
+	if subdir != "" {
+		exists, derr := rt.Git.DirAt(ctx, opts.Repo, base, subdir)
+		if derr != nil {
+			rollback()
+			return AddResult{}, derr
+		}
+		if !exists {
+			rollback()
+			return AddResult{}, refuse("subdirectory %s does not exist at %s: nothing to run the round in", subdir, base)
+		}
+	}
+
 	other, found, err := rt.Store.FindByCWD(cwd)
 	if err != nil && !errors.Is(err, store.ErrAmbiguousCWD) {
 		rollback()
@@ -396,6 +433,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	b := store.Binding{
 		Name:             opts.Name,
 		CWD:              cwd,
+		Subdir:           subdir,
 		MasterMind:       mastermindEP,
 		MasterMindID:     opts.MasterMindID,
 		Builder:          builder,
@@ -412,7 +450,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Tier:             string(tier),
 		Role:             normRole(opts.Role),
 		Shape:            shape,
-		Gate:             resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), roleName)),
+		Gate:             res.Gate.Command,
 		Regate:           ResolveRegate(opts.Regate, rt.Policy),
 		// captureRepo runs against opts.Repo, not cwd: opts.Repo is the
 		// parent checkout the worktree is cut from (its git identity is

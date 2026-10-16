@@ -38,6 +38,7 @@ func seedDocConfig(t *testing.T, s *Store) {
 		Servers:    docServers,
 		Hooks:      docHooks,
 		Workflows:  string(wfBody(t, "ship", wfSource, wfRaw(t, wfParse(t, wfSource)))),
+		Themes:     themesBase,
 		Sync:       syncStored,
 	})
 }
@@ -72,6 +73,8 @@ func TestConfigItemsSplitPerItemAndPerSection(t *testing.T) {
 		"prices",
 		"roles",
 		"servers/zen",
+		"themes/blueprint",
+		"themes/cockpit",
 		"workflows",
 	}
 	got := sortedItemKeys(t, s.Doc())

@@ -27,6 +27,93 @@ type PendingDoc struct {
 	Entry string
 }
 
+// DocAppliedRow is one key of one doc's applied state, with the key beside the
+// (origin, stamp) it stands for.
+type DocAppliedRow struct {
+	Key    string
+	Origin string
+	Stamp  string
+}
+
+// DocExportStateRow is one key of one doc's export state, with the key beside
+// what was last put on the log for it.
+type DocExportStateRow struct {
+	Key string
+	DocExportRow
+}
+
+// DocAppliedRows returns one doc's applied keys, sorted by key.
+func (t *Tx) DocAppliedRows(doc string) ([]DocAppliedRow, error) {
+	rows, err := t.conn.QueryContext(t.ctx,
+		`SELECT key, origin, stamp FROM shared_applied WHERE doc = ? ORDER BY key`, doc)
+	if err != nil {
+		return nil, fmt.Errorf("db: doc applied rows %s: %w", doc, mapBusy(err))
+	}
+	defer func() { _ = rows.Close() }()
+	out, err := scanDocAppliedRows(doc, rows)
+	if err != nil {
+		return nil, err
+	}
+	return out, rows.Err()
+}
+
+// DeleteDocApplied removes every applied row of one doc, for a caller that is
+// about to write the doc's rows back as it read them.
+func (t *Tx) DeleteDocApplied(doc string) error {
+	if _, err := t.exec(`DELETE FROM shared_applied WHERE doc = ?`, doc); err != nil {
+		return fmt.Errorf("db: delete doc applied %s: %w", doc, mapBusy(err))
+	}
+	return nil
+}
+
+// DocExportStateRows returns one doc's export states, sorted by key.
+func (t *Tx) DocExportStateRows(doc string) ([]DocExportStateRow, error) {
+	rows, err := t.conn.QueryContext(t.ctx,
+		`SELECT key, origin, stamp, digest FROM shared_export_state WHERE doc = ? ORDER BY key`, doc)
+	if err != nil {
+		return nil, fmt.Errorf("db: doc export state rows %s: %w", doc, mapBusy(err))
+	}
+	defer func() { _ = rows.Close() }()
+	out, err := scanDocExportRows(doc, rows)
+	if err != nil {
+		return nil, err
+	}
+	return out, rows.Err()
+}
+
+// DeleteDocExport removes every export state row of one doc, for a caller that
+// is about to write the doc's rows back as it read them.
+func (t *Tx) DeleteDocExport(doc string) error {
+	if _, err := t.exec(`DELETE FROM shared_export_state WHERE doc = ?`, doc); err != nil {
+		return fmt.Errorf("db: delete doc export state %s: %w", doc, mapBusy(err))
+	}
+	return nil
+}
+
+func scanDocAppliedRows(doc string, rows *sql.Rows) ([]DocAppliedRow, error) {
+	var out []DocAppliedRow
+	for rows.Next() {
+		var r DocAppliedRow
+		if err := rows.Scan(&r.Key, &r.Origin, &r.Stamp); err != nil {
+			return nil, fmt.Errorf("db: doc applied rows %s: %w", doc, err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func scanDocExportRows(doc string, rows *sql.Rows) ([]DocExportStateRow, error) {
+	var out []DocExportStateRow
+	for rows.Next() {
+		var r DocExportStateRow
+		if err := rows.Scan(&r.Key, &r.Origin, &r.Stamp, &r.Digest); err != nil {
+			return nil, fmt.Errorf("db: doc export state rows %s: %w", doc, err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // DocApplied returns the newest applied state of one key; found is false when
 // none has been applied.
 func (t *Tx) DocApplied(doc, key string) (DocApplied, bool, error) {
@@ -87,6 +174,28 @@ func (t *Tx) UnparkDoc(origin string, seq int) error {
 		return fmt.Errorf("db: unpark doc entry %s %d: %w", origin, seq, mapBusy(err))
 	}
 	return nil
+}
+
+// ClearDocSignals strikes every signal one doc carries, for a caller that
+// knows the doc's exported state stands and the signal is only the echo of a
+// state the caller has just put back.
+func (t *Tx) ClearDocSignals(doc string) error {
+	if _, err := t.exec(`DELETE FROM shared_outbox WHERE doc = ?`, doc); err != nil {
+		return fmt.Errorf("db: clear doc signals %s: %w", doc, mapBusy(err))
+	}
+	return nil
+}
+
+// DocSignalled reports whether one doc carries a signal inside the caller's
+// transaction, so a caller deciding whether a signal is its own echo or one a
+// write it knows of planted can keep the planted one.
+func (t *Tx) DocSignalled(doc string) (ok bool, err error) {
+	var n int
+	err = t.queryRow(`SELECT count(*) FROM shared_outbox WHERE doc = ?`, doc).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("db: doc signal %s: %w", doc, mapBusy(err))
+	}
+	return n > 0, nil
 }
 
 // PendingDocs returns every parked doc entry in the order they arrived.

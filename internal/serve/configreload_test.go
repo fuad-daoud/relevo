@@ -343,7 +343,8 @@ func TestReloadIsWireAdditive(t *testing.T) {
 		remote.FeatureRoles, remote.FeatureLabels, remote.FeatureReaders,
 		remote.FeatureOrigin, remote.FeatureForce, remote.FeaturePlacement,
 		remote.FeatureAccounts, remote.FeatureChainMember, remote.FeatureChain,
-		remote.FeatureIsolation, remote.FeatureWorkflow, remote.FeatureCheck,
+		remote.FeatureIsolation, remote.FeatureSubdir, remote.FeatureWorkflow,
+		remote.FeatureCheck,
 	}
 	if strings.Join(who.Features, ",") != strings.Join(want, ",") {
 		t.Errorf("whoami features = %v\nwant %v", who.Features, want)

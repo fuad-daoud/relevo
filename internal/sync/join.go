@@ -97,6 +97,16 @@ type EnableRequest struct {
 	// holds them already needs nothing here: the stored ones stand in, field by
 	// field, so pointing this machine at another bucket does not reissue the key.
 	R2 R2Intake
+	// Passphrase is what the caller read in the frame's tail, empty when it read
+	// none. It is verified against the remote's key_check before anything is
+	// stored, so an enable that was handed the wrong one leaves the machine
+	// exactly as it found it rather than pointed at a remote it cannot read.
+	Passphrase []byte
+	// Join says this enable came from an invite code. The code named the remote
+	// and the token, and the bucket credentials arrive in the secrets document
+	// rather than on the command line, so the preflight's unconditional no-R2
+	// refusal does not apply to it.
+	Join bool
 	// Yes joins past the quota guard's refusal.
 	Yes bool
 }
@@ -158,6 +168,14 @@ func (r EnableRequest) Preflight() (EnablePlan, error) {
 	// whose file cannot be shared is not going to move a body either way, and the
 	// gate is the check that costs. The refusal names the flags that clear it,
 	// which is what a user who was expecting a working enable needs to read.
+	//
+	// A join resolves this leg leniently, and only this leg. A code carries no
+	// bucket credentials because there is nowhere on a command line to put them
+	// that they would not outlive; they arrive in the secrets document, which the
+	// importer applies before it fetches any body. So a join that was given no
+	// complete set is not incomplete when this runs -- it is complete in a
+	// different place -- and only the absence of a set is let through. Flags
+	// that were passed are held to the same endpoint rules as a plain enable's.
 	stored, err := ReadR2(r.Local)
 	if err != nil {
 		return EnablePlan{}, err
@@ -169,7 +187,7 @@ func (r EnableRequest) Preflight() (EnablePlan, error) {
 		Secret:   r.R2.Secret,
 		Stored:   stored,
 	}.R2Resolve()
-	if err != nil {
+	if err != nil && (!r.Join || !errors.Is(err, ErrNoR2)) {
 		return EnablePlan{}, err
 	}
 	if err := db.EnablePreflight(r.Shared).Err(); err != nil {
@@ -231,7 +249,13 @@ type Enabler struct {
 	Stopped func() bool
 	// Now stamps the join marker and the enabled mark. Nil means time.Now.
 	Now func() time.Time
+	// preflightFailed is set when Enable stopped at the preflight.
+	preflightFailed bool
 }
+
+// PreflightFailed reports whether the last Enable stopped at its preflight,
+// before it stored or opened anything.
+func (e *Enabler) PreflightFailed() bool { return e.preflightFailed }
 
 // Enable runs the whole path: preflight, store, transport, join, then the mark.
 //
@@ -242,18 +266,30 @@ type Enabler struct {
 func (e *Enabler) Enable() (EnableResult, error) {
 	plan, err := e.Request.Preflight()
 	if err != nil {
+		e.preflightFailed = true
 		return EnableResult{}, err
 	}
 	now := e.now()
 	if err := e.store(plan, now); err != nil {
 		return EnableResult{}, err
 	}
-	est, guarded, err := e.guard(plan, now)
-	if err != nil {
-		return EnableResult{Remote: plan.Remote, Guarded: guarded, Estimate: est}, err
-	}
-	if e.present, err = e.ownBodies(plan); err != nil {
-		return EnableResult{Remote: plan.Remote, Guarded: guarded, Estimate: est}, err
+	// A plain enable estimates against a bucket it already holds, so the guard
+	// runs before the transport opens and a machine that would not fit refuses
+	// without having imported anything. A join holds none: its credentials
+	// arrive in the secrets document during the import, so its guard runs after
+	// it, in join, against what the document brought. Estimating before that
+	// would read an empty credential set as an empty bucket and wave the join
+	// through on a bucket nobody can name.
+	var est JoinEstimate
+	var guarded bool
+	if !e.Request.Join {
+		est, guarded, err = e.guard(plan, now)
+		if err != nil {
+			return EnableResult{Remote: plan.Remote, Guarded: guarded, Estimate: est}, err
+		}
+		if e.present, err = e.ownBodies(plan); err != nil {
+			return EnableResult{Remote: plan.Remote, Guarded: guarded, Estimate: est}, err
+		}
 	}
 	transport, err := e.transport()
 	if err != nil {
@@ -291,8 +327,26 @@ func (e *Enabler) store(plan EnablePlan, now time.Time) error {
 	if err := PutSettings(e.Request.Local, settings, now); err != nil {
 		return err
 	}
-	if err := SetR2(e.Request.Local, plan.R2, now); err != nil {
-		return err
+	// A join's plan carries no bucket credentials, because a code has nowhere to
+	// put them and they arrive in the secrets document instead. Storing an empty
+	// set would be storing a refusal, so an absent one is left alone; a plain
+	// enable's plan is complete by the time it gets here, so this is the join
+	// path and nothing else.
+	//
+	// A resolved set equal to what the machine already holds carries nothing a
+	// person typed into this enable, so nothing is written here: a write would
+	// stamp and signal the secrets document, and a joiner whose credential rows
+	// were applied a moment ago must not answer the fleet with its own stamps.
+	if plan.R2.Complete() {
+		stored, err := ReadR2(e.Request.Local)
+		if err != nil {
+			return err
+		}
+		if stored != plan.R2 {
+			if err := SetR2(e.Request.Local, plan.R2, now); err != nil {
+				return err
+			}
+		}
 	}
 	if len(bytes.TrimSpace(plan.Token)) == 0 {
 		return nil
@@ -353,7 +407,21 @@ func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (res Enabl
 		// The new peer has seen none of the doc keys this machine exported to
 		// another log, so the next export sends every one again. Local write
 		// stamps go too, before the import, so shared keys apply over the seed.
+		//
+		// The secrets document's bookkeeping is kept over the clear. The
+		// pre-pass that filled it read it off the fleet's own entries on the
+		// log this enable is joining, and a machine whose held values are the
+		// fleet's answers the fleet with nothing: an apply of a peer's entry is
+		// this machine taking one, not this machine writing one.
+		kept, err := readDocSecretsBookkeeping(e.Request.Local)
+		if err != nil {
+			return res, err
+		}
+		kept = kept.fromPeers(e.Request.Shared.Origin())
 		if err := e.Request.Local.ClearDocExportState(); err != nil {
+			return res, err
+		}
+		if err := restoreDocSecretsBookkeeping(e.Request.Local, kept); err != nil {
 			return res, err
 		}
 	}
@@ -361,6 +429,23 @@ func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (res Enabl
 	res.Imported = imported
 	if err != nil {
 		return res, fmt.Errorf("sync: enable: import: %w", err)
+	}
+	// The document has been applied, so a join knows whether its credentials
+	// arrived. The completeness check comes first because a guard run without a
+	// bucket would read an empty credential set as an empty bucket, and the
+	// join would be waved through on a bucket nobody can name.
+	if err := e.checkJoinR2(); err != nil {
+		return res, err
+	}
+	if e.Request.Join {
+		est, guarded, err := e.guardJoined()
+		res.Guarded, res.Estimate = guarded, est
+		if err != nil {
+			return res, err
+		}
+		if e.present, err = e.ownBodiesJoined(); err != nil {
+			return res, err
+		}
 	}
 	appended, batches, err := e.reconcile(transport)
 	res.Appended, res.Batches = appended, batches
@@ -410,11 +495,24 @@ const JoinImportDeadline = 30 * time.Minute
 
 // drainImport reads the other origins page by page until a run moves no mark or
 // the join's own deadline passes.
+//
+// The secrets pre-pass runs before the import, and only for a join whose R2
+// credentials are not stored. That is the one document a joiner cannot reach by
+// ordinary ordering: a peer's log interleaves its rows and its documents in
+// sequence order, so a `$ref` row written above the fleet's `doc:secrets` entry
+// is fetched before those credentials have been applied, and the origin stalls
+// on the first body it has no bucket to fetch. The pre-pass applies that one
+// document first and moves no mark, so the import below reaches the same entries
+// as redeliveries. A plain enable already holds the credentials, so it has
+// nothing to unblock and pays nothing for the walk.
 func (e *Enabler) drainImport(transport synclog.LogTransport) (synclog.ImportResult, error) {
 	// The join clears every doc's write stamps and export state, so the files
 	// a person edited before it would otherwise never be exported. The capture
 	// runs first so the re-emit already carries them.
 	CaptureFiles(e.Request.Shared)
+	if err := e.prepassSecrets(transport); err != nil {
+		return synclog.ImportResult{}, err
+	}
 	deadline := e.now().Add(JoinImportDeadline)
 	res, err := drainImport(func() (synclog.ImportResult, error) {
 		key, err := SigningKey(e.Request.Local)

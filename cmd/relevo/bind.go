@@ -321,6 +321,15 @@ func runBind(f bindFlags) error {
 	// Every supplementary line goes to the human default's stdout, or to
 	// stderr under --json, where stdout must carry the document alone (§2.1).
 	notices := noticeWriter(f.asJSON)
+	// The gate line names the command the binding resolved and the tier that
+	// supplied it: the flag, the repository's own setting or the policy
+	// default on a create, and the stored command on a resume, whose binding
+	// carries no fresh resolution to name a tier from.
+	gateCmd, gateSource := res.Gate.Command, res.Gate.Source
+	if f.resume {
+		gateCmd, gateSource = b.Gate, relevo.GateSourceBinding
+	}
+	gateText := relevo.GateLine(gateCmd, gateSource)
 	if t := relevo.RestoreText(res); t != "" {
 		fmt.Fprintln(notices, t)
 	}
@@ -339,6 +348,7 @@ func runBind(f bindFlags) error {
 				"  relevo send --name %s --file %s\n",
 				b.Name, builderDesc, b.Round, b.Name, rt.Store.PromptPath(b.Name, b.Round))
 		}
+		fmt.Fprintln(notices, gateText)
 		noteRegateNoGate(notices, b)
 		notePick(rt, roleName, res)
 		warnWaitingOnYou(rt, b.Name)
@@ -351,6 +361,7 @@ func runBind(f bindFlags) error {
 	if !f.asJSON {
 		fmt.Println(boundLine(b, b.MasterMind.PaneID, rt.Candidates.NameOf(b.BuilderCandidate), res.Placement))
 	}
+	fmt.Fprintln(notices, gateText)
 	noteRegateNoGate(notices, b)
 	if n := availability.GatedNote(relevo.AvailabilityDeps(rt), b.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
@@ -436,35 +447,52 @@ func runAdd(f bindFlags) error {
 				res.Binding.Name, rt.Candidates.NameOf(res.Binding.BuilderCandidate), builderWhere(res.Binding.Builder))
 		}
 	}
+	// The gate line names the command the add resolved and the tier that
+	// supplied it, through the same notice writer the other lines use.
+	fmt.Fprintln(notices, relevo.GateLine(res.Resolution.Gate.Command, res.Resolution.Gate.Source))
 	noteRegateNoGate(notices, res.Binding)
 	if n := availability.GatedNote(relevo.AvailabilityDeps(rt), res.Binding.BuilderCandidate); n != "" {
 		fmt.Fprintln(os.Stderr, n)
 	}
 	notePick(rt, roleOrBuilder(f.role), res.Resolution)
 	if !f.asJSON {
-		switch {
-		case res.Binding.Builder.Remote() && res.Binding.ExistingBranch:
-			fmt.Printf("  branch %s (existing, tip %s) on %s\n", res.Binding.Branch, res.Base, res.Binding.Builder.Server)
-		case res.Binding.Builder.Remote():
-			fmt.Printf("  branch %s (from %s)\n", res.Binding.Branch, res.Base)
-		case res.Worktree != "" && res.Binding.ExistingBranch:
-			fmt.Printf("  worktree %s on existing branch %s (tip %s)\n", res.Worktree, res.Branch, res.Base)
-		case res.Worktree != "":
-			fmt.Printf("  worktree %s on %s (from %s)\n", res.Worktree, res.Branch, res.Base)
-		default:
-			fmt.Printf("  tree %s\n", res.Binding.CWD)
+		for _, line := range addedTreeLines(res) {
+			fmt.Println(line)
 		}
 		fmt.Printf("  relevo send --name %s --file <plan.md>\n", res.Binding.Name)
 	}
 	warnWaitingOnYou(rt, res.Binding.Name)
 
 	if f.asJSON {
-		dir := res.Worktree
-		if dir == "" {
-			dir = res.Binding.CWD
-		}
-		return printDoc(bindDocOf(res.Binding, dir, relevo.BindingRole(res.Binding), candidateLabel(rt, res.Binding.BuilderCandidate), false))
+		return printDoc(bindDocOf(res.Binding, relevo.RoundDir(res.Binding), relevo.BindingRole(res.Binding), candidateLabel(rt, res.Binding.BuilderCandidate), false))
 	}
 
 	return nil
+}
+
+// addedTreeLines is runAdd's own round-directory lines: the branch or tree
+// the add provisioned, and, when the bind was started below the tree root,
+// the directory the round actually runs in. An empty line is never printed,
+// and every caller renders one add's worth of output only.
+func addedTreeLines(res relevo.AddResult) []string {
+	var lines []string
+	switch {
+	case res.Binding.Builder.Remote() && res.Binding.ExistingBranch:
+		lines = append(lines, fmt.Sprintf("  branch %s (existing, tip %s) on %s", res.Binding.Branch, res.Base, res.Binding.Builder.Server))
+	case res.Binding.Builder.Remote():
+		lines = append(lines, fmt.Sprintf("  branch %s (from %s)", res.Binding.Branch, res.Base))
+	case res.Worktree != "" && res.Binding.ExistingBranch:
+		lines = append(lines, fmt.Sprintf("  worktree %s on existing branch %s (tip %s)", res.Worktree, res.Branch, res.Base))
+	case res.Worktree != "":
+		lines = append(lines, fmt.Sprintf("  worktree %s on %s (from %s)", res.Worktree, res.Branch, res.Base))
+	default:
+		lines = append(lines, fmt.Sprintf("  tree %s", res.Binding.CWD))
+	}
+	// A remote binding's mirror already sits in the subdirectory (its CWD is
+	// the checkout the bind ran in), so only a provisioned tree can differ
+	// from where the round runs.
+	if res.Binding.Subdir != "" {
+		lines = append(lines, fmt.Sprintf("  round runs in %s", relevo.RoundDir(res.Binding)))
+	}
+	return lines
 }

@@ -43,6 +43,11 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	if rt.Git == nil {
 		return AddResult{}, ErrGitRequired
 	}
+	// The subdirectory the round runs in, resolved from the caller's own
+	// checkout: the worktree the server cuts is at the bare repo's root, so
+	// the offset the bind was started under travels on the create and the
+	// server's own paths join it in.
+	subdir := resolveSubdir(ctx, rt, opts.Repo)
 
 	// 1. store.ValidName; binding must not exist locally.
 	if err := store.ValidName(opts.Name); err != nil {
@@ -191,6 +196,13 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	if (opts.Feature != "" || opts.Ticket != "") && !slices.Contains(who.Features, remote.FeatureLabels) {
 		return AddResult{}, fmt.Errorf("%w: server %s does not carry binding labels (pre-labels server); upgrade it or drop --feature/--ticket", ErrServerPreTier, opts.Server)
 	}
+	// The same negative applies to a subdirectory the server would silently
+	// drop: bind's round would run at the bare repo's root, not where the
+	// mastermind's shell was. An empty prefix needs no feature, so a
+	// root-started bind meets a pre-subdir server unchanged.
+	if subdir != "" && !slices.Contains(who.Features, remote.FeatureSubdir) {
+		return AddResult{}, fmt.Errorf("%w: server %s does not carry binding subdirectories (pre-subdir server); upgrade it or bind at the repository root", ErrServerPreTier, opts.Server)
+	}
 	// The client's actors never travel (§5.3): the server resolves the
 	// actor against its own. A server too old to do that would ignore the
 	// field and run the default actor, so it is refused here -- before any
@@ -220,10 +232,16 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	}
 
 	// The gate resolves exactly as the local path does: with the client's
-	// policy and the actor's role. The resolved value rides on the wire -- the
-	// field chains already use -- and is stored on the client mirror, so both
-	// sides read the same acceptance check.
-	gate := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), bindingRole(store.Binding{Role: normRole(opts.Role)})))
+	// policy, the actor's role and the repository's own settings, read on the
+	// client for the tree the branch is cut from. The resolved value rides on
+	// the wire -- the field chains already use -- and is stored on the client
+	// mirror, so both sides read the same acceptance check.
+	repoSet, err := RepoSettingsFor(ctx, rt, opts.Repo)
+	if err != nil {
+		return AddResult{}, err
+	}
+	gateRes := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), bindingRole(store.Binding{Role: normRole(opts.Role)})), repoSet)
+	gate := gateRes.Command
 	// The regate resolves the same way, and for the same reason: the mirror
 	// and the served binding must agree on the repair budget.
 	regate := ResolveRegate(opts.Regate, rt.Policy)
@@ -242,6 +260,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		Author:             &remote.GitIdentity{Name: authorName, Email: authorEmail},
 		ClientInstallation: clientInstallation,
 		ClientBindingID:    clientBindingID,
+		Subdir:             subdir,
 	}
 	view, err := rt.Remote.CreateBinding(ctx, opts.Server, createReq)
 	if err != nil {
@@ -364,6 +383,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		Candidate: cand,
 		How:       HowExplicit,
 		Placement: opts.Placement,
+		Gate:      gateRes,
 	}
 
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {

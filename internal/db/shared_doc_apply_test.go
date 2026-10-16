@@ -53,6 +53,112 @@ func TestExportedStateIsSetAndCleared(t *testing.T) {
 	}
 }
 
+// TestOneDocRowsListDeleteAndWriteBack pins the three row moves a snapshot of
+// one doc's bookkeeping needs: the rows of a doc read back in key order with
+// other docs' rows left out, an absent doc reads none, and a delete drops the
+// doc's rows only.
+func TestOneDocRowsListDeleteAndWriteBack(t *testing.T) {
+	t.Parallel()
+	d := openTestDB(t)
+	if err := d.Tx(func(tx *Tx) error {
+		if err := seedDocBooks(t, tx); err != nil {
+			return err
+		}
+		if err := assertDocRows(t, tx); err != nil {
+			return err
+		}
+		if err := tx.SetDocExported("config", "policy", "m2", "9", "digest"); err != nil {
+			return err
+		}
+		state, err := tx.DocExportStateRows("config")
+		if want := []DocExportStateRow{{Key: "policy", DocExportRow: DocExportRow{Origin: "m2", Stamp: "9", Digest: "digest"}}}; err != nil || !reflect.DeepEqual(state, want) {
+			t.Errorf("DocExportStateRows = %v, %v; want %v", state, err, want)
+		}
+		if err := tx.DeleteDocApplied("config"); err != nil {
+			return err
+		}
+		if err := tx.DeleteDocExport("config"); err != nil {
+			return err
+		}
+		if rows, err := tx.DocAppliedRows("config"); err != nil || rows != nil {
+			t.Errorf("DocAppliedRows after the delete = %v, %v; want none", rows, err)
+		}
+		if rows, err := tx.DocAppliedRows("other"); err != nil || len(rows) != 1 {
+			t.Errorf("DocAppliedRows of another doc after the delete = %v, %v; want its one row", rows, err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("tx: %v", err)
+	}
+}
+
+// seedDocBooks seeds two keys of one doc and one of another.
+func seedDocBooks(t *testing.T, tx *Tx) error {
+	t.Helper()
+	for _, row := range []struct{ doc, key, origin, stamp string }{
+		{"config", "roles", "m1", "5"},
+		{"config", "policy", "m2", "9"},
+		{"other", "policy", "m3", "7"},
+	} {
+		if err := tx.SetDocApplied(row.doc, row.key, row.origin, row.stamp); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// assertDocRows reads one doc's applied rows in key order and a doc with none.
+func assertDocRows(t *testing.T, tx *Tx) error {
+	t.Helper()
+	rows, err := tx.DocAppliedRows("config")
+	if want := []DocAppliedRow{{Key: "policy", Origin: "m2", Stamp: "9"}, {Key: "roles", Origin: "m1", Stamp: "5"}}; err != nil || !reflect.DeepEqual(rows, want) {
+		t.Errorf("DocAppliedRows = %v, %v; want %v", rows, err, want)
+	}
+	none, err := tx.DocAppliedRows("none")
+	if err != nil || none != nil {
+		t.Errorf("DocAppliedRows of a doc with none = %v, %v; want none", none, err)
+	}
+	return nil
+}
+
+// TestTheDocSignalIsOneDocOwn pins the signal list and strike: a doc written
+// with a signal shows on other docs' reads and a clear drops only its own.
+func TestTheDocSignalIsOneDocOwn(t *testing.T) {
+	t.Parallel()
+	d := openTestDB(t)
+	if err := d.Tx(func(tx *Tx) error {
+		// A fresh file may already carry a signal the schema's seed planted;
+		// what is under test is a write of this doc and what survives its strike.
+		if err := tx.ClearDocSignals("config"); err != nil {
+			return err
+		}
+		if signalled, err := tx.DocSignalled("config"); err != nil || signalled {
+			t.Errorf("DocSignalled after its strike = %v, %v; want false", signalled, err)
+		}
+		if err := tx.SignalDoc("config"); err != nil {
+			return err
+		}
+		if err := tx.SignalDoc("other"); err != nil {
+			return err
+		}
+		if signalled, err := tx.DocSignalled("config"); err != nil || !signalled {
+			t.Errorf("DocSignalled after its write = %v, %v; want true", signalled, err)
+		}
+		if err := tx.ClearDocSignals("config"); err != nil {
+			return err
+		}
+		if signalled, err := tx.DocSignalled("config"); err != nil || signalled {
+			t.Errorf("DocSignalled after the strike = %v, %v; want false", signalled, err)
+		}
+		if signalled, err := tx.DocSignalled("other"); err != nil || !signalled {
+			t.Errorf("DocSignalled of another doc after the strike = %v, %v; want true", signalled, err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("tx: %v", err)
+	}
+}
+
 func TestParkedDocsComeBackInArrivalOrderUntilUnparked(t *testing.T) {
 	t.Parallel()
 	d := openTestDB(t)

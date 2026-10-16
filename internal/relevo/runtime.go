@@ -78,6 +78,15 @@ type Git interface {
 	// BlobAt resolves path at ref to its blob id; ok is false when ref has no
 	// such regular file.
 	BlobAt(ctx context.Context, dir, ref, path string) (oid string, ok bool, err error)
+	// ShowPrefix reports dir's path relative to its repository's root, as
+	// `rev-parse --show-prefix`; empty at the root. resolveSubdir's one call
+	// site: it is what a bind started below the root tells its round apart
+	// with.
+	ShowPrefix(ctx context.Context, dir string) (string, error)
+	// DirAt reports whether ref names a directory at path; ok is false when
+	// the entry there is a file or there is no entry at all, so a bind can
+	// refuse a subdirectory the base commit does not have.
+	DirAt(ctx context.Context, dir, ref, path string) (bool, error)
 	UpdateRef(ctx context.Context, dir, ref, newSHA, oldSHA string) error
 	// DeleteRef removes ref; a missing ref is success, so the server's
 	// settled-binding cleanup deletes the refs it listed without racing.

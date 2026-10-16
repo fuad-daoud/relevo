@@ -18,8 +18,11 @@ import (
 
 // chainWFStart is everything a workflow start resolved before anything existed.
 type chainWFStart struct {
-	def          workflow.Definition
-	settings     chain.Settings
+	def      workflow.Definition
+	settings chain.Settings
+	// gateRes is the gate resolution the settings were built from, so the
+	// start's ChainResult can name the tier that supplied the check.
+	gateRes      GateResolution
 	repo         string
 	ticket       string
 	bodies       [][]byte
@@ -32,6 +35,10 @@ type chainWFStart struct {
 	mastermind   store.Endpoint
 	mastermindID string
 	keeper       string
+	// subdir is the repository offset the start's repository was reached
+	// from: a local chain joins it into every member's round directory, a
+	// placed or served builder carries it on its create.
+	subdir string
 }
 
 // chainStartWorkflow starts a chain that runs the named user workflow: it
@@ -54,23 +61,40 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 	if err != nil {
 		return chainWFStart{}, err
 	}
-	values, err := chainParamsFor(def, rt.Policy, opts)
+	// The chain's repository is resolved before the params are computed: the
+	// gate param and the chain settings both read the repository's own
+	// settings, which are keyed on the tree the chain runs on.
+	repo, err := os.Getwd()
+	if err != nil {
+		return chainWFStart{}, fmt.Errorf("resolve working directory: %w", err)
+	}
+	repoSet, err := RepoSettingsFor(ctx, rt, repo)
+	if err != nil {
+		return chainWFStart{}, err
+	}
+	values, err := chainParamsFor(def, rt.Policy, opts, repoSet)
 	if err != nil {
 		return chainWFStart{}, err
 	}
 	if def, err = workflow.WithParams(def, values); err != nil {
 		return chainWFStart{}, refuse("%v", err)
 	}
-	plan := chainWFStart{def: def, settings: chainSettings(rt.Policy, opts, roleChecks(rt.RoleRegistry(), "builder"))}
+	checks := roleChecks(rt.RoleRegistry(), "builder")
+	plan := chainWFStart{
+		def:      def,
+		settings: chainSettings(rt.Policy, opts, checks, repoSet),
+		gateRes:  resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, checks, repoSet),
+	}
 	if err := chainRefuseReaderBuilder(def, rt.RoleRegistry().WorkflowActors()); err != nil {
 		return chainWFStart{}, err
 	}
 
-	repo, err := os.Getwd()
-	if err != nil {
-		return chainWFStart{}, fmt.Errorf("resolve working directory: %w", err)
-	}
 	plan.repo = repo
+	// The subdirectory is resolved from the same repository value the repo
+	// above: resolving it a second time -- from the caller's shell -- would
+	// name a prefix the chain's starting commit and cut have no say about
+	// when the two differ.
+	plan.subdir = resolveSubdir(ctx, rt, repo)
 	if err := chainValidateWorkflowOpts(opts); err != nil {
 		return chainWFStart{}, err
 	}
@@ -387,6 +411,7 @@ func chainBuildStartMembers(ctx context.Context, rt Runtime, opts ChainOptions, 
 	rowBase := chainBase{
 		cwd: worktree, mastermind: plan.mastermind, mastermindID: plan.mastermindID,
 		repo: plan.repo, repoRef: captureRepo(ctx, rt, plan.repo), feature: opts.Feature, ticket: plan.ticket,
+		subdir:   plan.subdir,
 		worktree: worktree, branch: branch, commit: commit, baseRef: baseRef,
 	}
 	locals, berr := chainBuildMembers(ctx, rt, plan.members, plan.resolutions, rowBase, plan.settings, len(plan.bodies))
@@ -497,7 +522,7 @@ func chainPersistAndStartWorkflow(ctx context.Context, rt Runtime, tx *store.Tx,
 	if current, cerr := tx.Chain(prep.opts.Name); cerr == nil {
 		row = current
 	}
-	return ChainResult{Chain: row, Members: stored, Plans: len(prep.plan.bodies), Check: prep.gate}, nil
+	return ChainResult{Chain: row, Members: stored, Plans: len(prep.plan.bodies), Check: prep.gate, CheckSource: prep.plan.gateRes.Source}, nil
 }
 
 // chainCreateWorkflow is the half of a workflow start that creates things.

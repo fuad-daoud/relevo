@@ -39,7 +39,7 @@ func TestEnableFrameCarriesTheR2FlagsAndSecret(t *testing.T) {
 		dbSyncR2SecretStdin = testVerbStdinReader(t, tc.stdin)
 		flags := parsedR2Flags(t, append([]string{"--r2-endpoint", "https://e", "--r2-bucket", "b", "--r2-key-id", "k"}, tc.args...)...)
 		var opts dbSyncVerbOptions
-		tail, err := dbSyncEnableR2Tail([]byte("TOKEN"), flags, &opts)
+		tail, err := dbSyncEnableR2Tail([]byte("TOKEN"), nil, flags, &opts)
 		if err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
@@ -55,7 +55,7 @@ func TestEnableFrameCarriesTheR2FlagsAndSecret(t *testing.T) {
 func TestEnableWithNoSecretSendsTheTokenAlone(t *testing.T) {
 	t.Setenv(relevosync.EnvR2Secret, "")
 	var opts dbSyncVerbOptions
-	tail, err := dbSyncEnableR2Tail([]byte("TOKEN"), parsedR2Flags(t), &opts)
+	tail, err := dbSyncEnableR2Tail([]byte("TOKEN"), nil, parsedR2Flags(t), &opts)
 	if err != nil || string(tail) != "TOKEN" || opts.R2SecretLen != 0 {
 		t.Fatalf("tail = %q, length %d, err %v; want the token alone", tail, opts.R2SecretLen, err)
 	}
@@ -66,7 +66,7 @@ func TestEnableRefusesAnEmptySecretOnStdin(t *testing.T) {
 	t.Cleanup(func() { dbSyncR2SecretStdin = prev })
 	dbSyncR2SecretStdin = testVerbStdinReader(t, "\n")
 	var opts dbSyncVerbOptions
-	_, err := dbSyncEnableR2Tail(nil, parsedR2Flags(t, "--r2-secret-stdin"), &opts)
+	_, err := dbSyncEnableR2Tail(nil, nil, parsedR2Flags(t, "--r2-secret-stdin"), &opts)
 	var got *cliError
 	if !errors.As(err, &got) || got.code != codeUsage {
 		t.Fatalf("err = %v, want a usage error", err)

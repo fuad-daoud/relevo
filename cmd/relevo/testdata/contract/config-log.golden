@@ -4,7 +4,7 @@
     "at": "<TIME>",
     "source": "migration",
     "message": "roles → actors",
-    "version": 4,
+    "version": 5,
     "changes": [
       {
         "path": "candidates[0].roles",
@@ -41,7 +41,7 @@
     "at": "<TIME>",
     "source": "cli",
     "message": "config set candidates",
-    "version": 1,
+    "version": 2,
     "changes": [
       {
         "path": "candidates",
