@@ -100,9 +100,9 @@ func rotateKey(ctx context.Context, local Local, transport synclog.LogTransport,
 		return rekeyRefused(ctx, transport, spec.From, err)
 	}
 	// The answer is what the remote holds afterwards, which is another
-	// machine's when this one lost: an epoch that is not the one this caller
-	// wrote says so, and nothing here is stored.
-	if answer.Epoch != spec.Key.Epoch {
+	// machine's when this one lost: an epoch or key check that is not what
+	// this caller wrote says so, and nothing here is stored.
+	if answer.Epoch != spec.Key.Epoch || !bytes.Equal(answer.Check, spec.Key.Check) {
 		return ErrEpochRace
 	}
 	return storeNewKeyring(local, answer, newKey)
@@ -138,6 +138,9 @@ func rekeySpec(meta synclog.KeyMeta, newKey, salt, wrapped []byte, heads map[str
 // moved past the one this caller read is the race, whatever words carried it,
 // and anything else is the transport's own reason.
 func rekeyRefused(ctx context.Context, transport synclog.LogTransport, from int, err error) error {
+	if errors.Is(err, ErrEpochRace) {
+		return ErrEpochRace
+	}
 	if meta, merr := transport.KeyMeta(ctx); merr == nil && meta.Epoch > from {
 		return ErrEpochRace
 	}

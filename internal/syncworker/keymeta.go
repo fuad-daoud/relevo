@@ -6,6 +6,7 @@ package syncworker
 // the remote was set up with before it can sign anything a reader would accept.
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -225,7 +226,18 @@ func (b *TursoBackend) KeyRekey(spec KeyRekeySpec) (KeyMeta, error) {
 	if err := b.transfer(ctx, b.driver.Push); err != nil {
 		return KeyMeta{}, fmt.Errorf("syncworker: push the rekey: %w", markTransferRefusal(err))
 	}
-	return b.KeyMeta()
+	if err := b.transfer(ctx, b.driver.Pull); err != nil {
+		return KeyMeta{}, fmt.Errorf("syncworker: pull the rekey: %w", markTransferRefusal(err))
+	}
+	held, err := b.KeyMeta()
+	if err != nil {
+		return KeyMeta{}, err
+	}
+	if held.Epoch != spec.Key.Epoch || !bytes.Equal(held.Check, spec.Key.Check) {
+		return KeyMeta{}, MarkRefusal(CodeEpochRace, fmt.Errorf(
+			"syncworker: the remote is not at epoch %d with this key: another machine rekeyed first", spec.Key.Epoch))
+	}
+	return held, nil
 }
 
 // rekeyTx is the one transaction a rekey writes everything in. The heads are

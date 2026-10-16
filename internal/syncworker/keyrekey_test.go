@@ -1,11 +1,14 @@
 package syncworker
 
 import (
+	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/synclog"
+	turso "turso.tech/database/tursogo"
 )
 
 // rekeySpec is the spec a rekeying machine would send: a fresh salt and check
@@ -245,5 +248,186 @@ func TestKeyRekeyCarriesTheRaceOverThePipe(t *testing.T) {
 	}
 	if second.Code != CodeEpochRace {
 		t.Errorf("the second key_rekey carried code %q, want %q", second.Code, CodeEpochRace)
+	}
+}
+
+type sharedRemoteDriver struct {
+	path         string
+	db           *sql.DB
+	remoteDb     *sql.DB
+	pushNoop     bool
+	skipNextPull bool
+}
+
+func (d *sharedRemoteDriver) Open(_ context.Context, _ Spec) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", d.path)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	d.db = db
+	return db, nil
+}
+
+func (d *sharedRemoteDriver) Push(ctx context.Context) error {
+	if d.pushNoop {
+		return nil
+	}
+	rows, err := d.db.QueryContext(ctx, "SELECT key, value FROM meta")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return err
+		}
+		if _, err := d.remoteDb.ExecContext(ctx, "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", k, v); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func (d *sharedRemoteDriver) Pull(ctx context.Context) error {
+	if d.skipNextPull {
+		d.skipNextPull = false
+		return nil
+	}
+	rows, err := d.remoteDb.QueryContext(ctx, "SELECT key, value FROM meta")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return err
+		}
+		if _, err := d.db.ExecContext(ctx, "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", k, v); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func (d *sharedRemoteDriver) Stats(context.Context) (turso.TursoSyncDbStats, error) {
+	return turso.TursoSyncDbStats{}, nil
+}
+
+// TestTwoSameFromRekeysEndWithExactlyOneWinnerAndLoserReportsRace pins that when two
+// workers attempt same-From rekeys against a shared remote, exactly one winner's
+// material ends up on the remote and the loser reports CodeEpochRace.
+func TestTwoSameFromRekeysEndWithExactlyOneWinnerAndLoserReportsRace(t *testing.T) {
+	t.Parallel()
+	remotePath := tempReplica(t)
+	remoteDb := openAt(t, remotePath)
+	if _, err := remoteDb.Exec(
+		"CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);\n" +
+			"INSERT INTO meta (key, value) VALUES ('format', '3'), ('kdf_salt', 'dGVzdA=='), ('kdf', 'argon2id'), ('key_check', 'dGVzdA==');",
+	); err != nil {
+		t.Fatalf("init remote: %v", err)
+	}
+
+	path1 := tempReplica(t)
+	path2 := tempReplica(t)
+
+	d1 := &sharedRemoteDriver{path: path1, remoteDb: remoteDb}
+	d2 := &sharedRemoteDriver{path: path2, remoteDb: remoteDb}
+
+	b1 := backendFor(t, d1, "origin-a")
+	b2 := backendFor(t, d2, "origin-b")
+
+	if err := d1.Pull(context.Background()); err != nil {
+		t.Fatalf("d1 pull: %v", err)
+	}
+	if err := d2.Pull(context.Background()); err != nil {
+		t.Fatalf("d2 pull: %v", err)
+	}
+
+	spec1 := rekeySpec(t, 1, nil)
+	spec1.Key.Salt = []byte("winner salt")
+	spec1.Key.Check = []byte("winner check")
+
+	spec2 := rekeySpec(t, 1, nil)
+	spec2.Key.Salt = []byte("loser salt")
+	spec2.Key.Check = []byte("loser check")
+
+	held1, err := b1.KeyRekey(spec1)
+	if err != nil {
+		t.Fatalf("worker 1 KeyRekey: %v", err)
+	}
+	if !bytes.Equal(held1.Check, spec1.Key.Check) {
+		t.Fatalf("worker 1 check = %v, want %v", held1.Check, spec1.Key.Check)
+	}
+
+	_, err = b2.KeyRekey(spec2)
+	if err == nil {
+		t.Fatal("worker 2 rekey succeeded, want epoch_race")
+	}
+	if code := RefusalCodeOf(err); code != CodeEpochRace {
+		t.Errorf("worker 2 error code = %q, want %q; err: %v", code, CodeEpochRace, err)
+	}
+
+	var remoteCheck string
+	if err := remoteDb.QueryRow("SELECT value FROM meta WHERE key = ?", metaKeyCheckKey).Scan(&remoteCheck); err != nil {
+		t.Fatalf("read remote check: %v", err)
+	}
+	if remoteCheck != encodeKeyValue(spec1.Key.Check) {
+		t.Errorf("remote check = %q, want winner's %q", remoteCheck, encodeKeyValue(spec1.Key.Check))
+	}
+}
+
+// TestConcurrentSameFromRekeysLoserDetectsOverwrittenPush pins that when Worker 2
+// passed its local CAS before Worker 1 pushed, but Worker 1 won the remote, Worker 2's
+// post-push pull detects that the remote does not hold its key and reports CodeEpochRace.
+func TestConcurrentSameFromRekeysLoserDetectsOverwrittenPush(t *testing.T) {
+	t.Parallel()
+	remotePath := tempReplica(t)
+	remoteDb := openAt(t, remotePath)
+	if _, err := remoteDb.Exec(
+		"CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);\n" +
+			"INSERT INTO meta (key, value) VALUES ('format', '3'), ('kdf_salt', 'dGVzdA=='), ('kdf', 'argon2id'), ('key_check', 'dGVzdA==');",
+	); err != nil {
+		t.Fatalf("init remote: %v", err)
+	}
+
+	path1 := tempReplica(t)
+	path2 := tempReplica(t)
+
+	d1 := &sharedRemoteDriver{path: path1, remoteDb: remoteDb}
+	d2 := &sharedRemoteDriver{path: path2, remoteDb: remoteDb}
+
+	b1 := backendFor(t, d1, "origin-a")
+	b2 := backendFor(t, d2, "origin-b")
+
+	if err := d1.Pull(context.Background()); err != nil {
+		t.Fatalf("d1 pull: %v", err)
+	}
+	if err := d2.Pull(context.Background()); err != nil {
+		t.Fatalf("d2 pull: %v", err)
+	}
+
+	spec1 := rekeySpec(t, 1, nil)
+	spec1.Key.Salt = []byte("winner salt")
+	spec1.Key.Check = []byte("winner check")
+
+	spec2 := rekeySpec(t, 1, nil)
+	spec2.Key.Salt = []byte("loser salt")
+	spec2.Key.Check = []byte("loser check")
+
+	if _, err := b1.KeyRekey(spec1); err != nil {
+		t.Fatalf("worker 1 KeyRekey: %v", err)
+	}
+
+	d2.skipNextPull = true
+	d2.pushNoop = true
+	_, err := b2.KeyRekey(spec2)
+	if err == nil {
+		t.Fatal("worker 2 KeyRekey succeeded, want epoch_race")
+	}
+	if code := RefusalCodeOf(err); code != CodeEpochRace {
+		t.Errorf("worker 2 code = %q, want %q; err: %v", code, CodeEpochRace, err)
 	}
 }

@@ -236,6 +236,27 @@ func TestARekeyAnswerFromAnotherEpochIsTheRace(t *testing.T) {
 	}
 }
 
+// TestARekeyAnswerFromAnotherWinnerAtSameEpochIsTheRace pins the same-epoch
+// read-back check: a transport that answers with another machine's check at the
+// same epoch -- two machines rekeyed concurrently and this caller's write was
+// lost or overwritten -- is refused as the race before anything is stored.
+func TestARekeyAnswerFromAnotherWinnerAtSameEpochIsTheRace(t *testing.T) {
+	t.Parallel()
+	_, local, log := rekeyFleetPair(t)
+	ring := ringOf(t, local)
+	loser := &rekeyMetaMover{LogTransport: log}
+	loser.rekey = func() (synclog.KeyMeta, error) {
+		return synclog.KeyMeta{Salt: []byte("elsewhere"), KDF: DefaultKDF.String(),
+			Check: []byte("winner check"), Present: true, Epoch: 2}, nil
+	}
+	if err := Rekey(context.Background(), local, loser, rekeyPass, rekeyNew, rand.Reader); !errors.Is(err, ErrEpochRace) {
+		t.Fatalf("the rekey = %v, want the race refusal", err)
+	}
+	if got := ringOf(t, local); got.Epoch != ring.Epoch {
+		t.Fatalf("the ring moved to epoch %d; an answer with another machine's check stores nothing", got.Epoch)
+	}
+}
+
 // rekeyMetaMover is a log whose key reads are the test's to stage: the first
 // KeyMeta answers whatever the log holds now, and later ones answer after. It
 // is how one test holds a machine's start observation still while the remote
