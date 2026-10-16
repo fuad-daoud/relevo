@@ -29,6 +29,9 @@ func (b *TursoBackend) transfer(ctx context.Context, move func(context.Context) 
 		return err
 	}
 	after, haveAfter := b.engineBytes(ctx)
+	if haveAfter {
+		b.boundWAL(ctx, after)
+	}
 	if haveBefore {
 		b.lastEngine, b.haveLast = before, true
 	}

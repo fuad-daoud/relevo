@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -45,6 +47,9 @@ type ReplicaDriver interface {
 	// nobody can reach, and the counters are what the byte totals are measured
 	// from.
 	Stats(ctx context.Context) (turso.TursoSyncDbStats, error)
+	// Checkpoint folds the replica's WAL into its database file. The engine
+	// never does this on its own for a sync replica.
+	Checkpoint(ctx context.Context) error
 }
 
 // TursoBackend is the log behind the worker's replica. It is what serves the
@@ -70,6 +75,9 @@ type TursoBackend struct {
 	// zero: an unreadable counter is not a counter that did not move.
 	lastEngine turso.TursoSyncDbStats
 	haveLast   bool
+	// warn is where a failed checkpoint is reported: the worker's stderr, which
+	// is the daemon's log. Nil reports nothing.
+	warn io.Writer
 }
 
 // The backend is what the worker serves the pipe with. Naming it here means a
@@ -80,7 +88,7 @@ var _ Backend = (*TursoBackend)(nil)
 // NewTursoBackend returns the log behind the replica driver owns. The driver is
 // supplied rather than named so a test serves the pipe against a plain file.
 func NewTursoBackend(driver ReplicaDriver) *TursoBackend {
-	return &TursoBackend{driver: driver, page: pullPageSize}
+	return &TursoBackend{driver: driver, page: pullPageSize, warn: os.Stderr}
 }
 
 // NewTursoBackendForPath returns the backend production runs: the replica at
