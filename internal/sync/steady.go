@@ -117,6 +117,21 @@ func (r *Runner) attempt(ctx context.Context, shared *db.DB) SteadyResult {
 func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) SteadyResult {
 	var out SteadyResult
 	r.recordRemoteKDF(ctx, t)
+	// The stale stop reads the two local epoch facts and nothing else: a
+	// machine whose held newest epoch is below the recorded remote epoch
+	// neither exports nor imports until its owner unlocks it with the new
+	// passphrase. Both halves stop, because a stale exporter appends entries
+	// current readers refuse, and a stale importer would apply them.
+	if err := r.epochGate(); err != nil {
+		if !errors.Is(err, synclog.ErrEpochMoved) {
+			// A key this machine cannot read is its own failure, not a
+			// locked machine's posture: the attempt reports it failed rather
+			// than running any half of the exchange unverified.
+			return r.failed(out, err)
+		}
+		out.Trouble.Held = append(out.Trouble.Held, err.Error())
+		return out
+	}
 	locked := false
 	if err := within(ctx, t, r.stepTimeout(), func() error {
 		key, err := SigningKey(r.Local)
@@ -404,4 +419,35 @@ func (r *Runner) recordRemoteKDF(ctx context.Context, t *StopTransport) {
 	ctx, cancel := context.WithTimeout(ctx, r.stepTimeout())
 	defer cancel()
 	RecordRemoteKDF(ctx, r.Local, t)
+}
+
+// epochGate is the stale stop the exchange runs before both halves: ErrEpochMoved
+// when the keyring's newest epoch sits below the recorded remote epoch, nil
+// otherwise. A locked machine never trips it -- it holds no key, so no epoch
+// moves under it -- and an epoch the machine never recorded leaves the gate
+// open, which is what a fact left in place by an unreachable remote means.
+func (r *Runner) epochGate() error {
+	ring, ok, err := heldKeyring(r.Local)
+	if err != nil || !ok {
+		return err
+	}
+	remote, ok, err := remoteEpoch(r.Local)
+	if err != nil || !ok {
+		return err
+	}
+	if ring.Epoch < remote {
+		return synclog.ErrEpochMoved
+	}
+	return nil
+}
+
+// heldKeyring reads the machine's keyring over a kv handle, ok false on a
+// machine that holds no key at all. It is the read SigningKey does, over the
+// whole ring rather than the newest key's one row.
+func heldKeyring(kv db.KV) (Keyring, bool, error) {
+	l, isDB := kv.(Local)
+	if !isDB || l == nil {
+		return Keyring{}, false, nil
+	}
+	return ReadKeyring(l)
 }

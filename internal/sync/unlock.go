@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -179,8 +180,9 @@ func recordRemoteKeyFact(kv db.KV, meta synclog.KeyMeta) error {
 }
 
 // RecordRemoteKDF learns whether the remote holds key material and records it
-// as the local fact status reads. A failed read leaves the recorded value as it
-// was, so an unreachable remote never flips a machine between locked and none.
+// as the local fact status reads, beside the remote's newest epoch. A failed
+// read leaves the recorded values as they were, so an unreachable remote never
+// flips a machine between locked and none.
 func RecordRemoteKDF(ctx context.Context, kv db.KV, transport synclog.LogTransport) {
 	meta, err := transport.KeyMeta(ctx)
 	if err != nil {
@@ -193,16 +195,28 @@ func RecordRemoteKDF(ctx context.Context, kv db.KV, transport synclog.LogTranspo
 	if err := kv.KVPut(KeyRemoteKDF, value); err != nil {
 		slog.Warn("sync: record the remote key fact", "err", err)
 	}
+	if err := kv.KVPut(SyncRemoteEpoch, []byte(strconv.Itoa(meta.Epoch))); err != nil {
+		slog.Warn("sync: record the remote epoch", "err", err)
+	}
 }
 
 // KeyState is the key line status reports: unlocked when this machine holds a
-// key, locked when it holds none and the remote does, none otherwise.
+// key that names the remote's newest epoch, stale when it holds one below the
+// recorded remote epoch -- the passphrase changed and this machine is on the
+// old key -- locked when it holds none and the remote does, none otherwise.
 func KeyState(l Local) (string, error) {
-	_, ok, err := ReadKey(l)
+	ring, ok, err := ReadKeyring(l)
 	if err != nil {
 		return "", err
 	}
 	if ok {
+		remote, ok, err := remoteEpoch(l)
+		if err != nil {
+			return "", err
+		}
+		if ok && ring.Epoch < remote {
+			return "stale", nil
+		}
 		return "unlocked", nil
 	}
 	value, ok, err := l.KVGet(KeyRemoteKDF)
@@ -213,6 +227,26 @@ func KeyState(l Local) (string, error) {
 		return "locked", nil
 	}
 	return "none", nil
+}
+
+// remoteEpoch reads the local fact naming the remote's newest epoch, written
+// by every attempt that could read the remote and left as it was by one that
+// could not. A row that does not parse reads as absent: it is this machine's
+// own row, and the worst a broken one costs is a stale machine that reports
+// unlocked until the next attempt rewrites it.
+func remoteEpoch(l db.KV) (int, bool, error) {
+	value, ok, err := l.KVGet(SyncRemoteEpoch)
+	if err != nil {
+		return 0, false, fmt.Errorf("sync: read %s: %w", SyncRemoteEpoch, err)
+	}
+	if !ok {
+		return 0, false, nil
+	}
+	epoch, err := strconv.Atoi(string(bytes.TrimSpace(value)))
+	if err != nil || epoch < 1 {
+		return 0, false, nil
+	}
+	return epoch, true, nil
 }
 
 // DrainParkedDocs applies the doc entries parked while this machine held no

@@ -10,6 +10,13 @@ import (
 // refused by every unlocked reader.
 var ErrLockedSignedOrigin = errors.New("this machine's log is signed; run relevo db sync unlock")
 
+// ErrEpochMoved is what a machine whose held newest epoch is below the
+// recorded remote epoch reports: the remote has rekeyed and this machine
+// holds the old key. It stops signing and exporting and holds its import
+// whole -- a stale reader must not apply entries current readers refuse --
+// and the fix is the owner's: relevo db sync unlock with the new passphrase.
+var ErrEpochMoved = errors.New("sync: the remote's key moved to a newer epoch; this machine holds the old one: run relevo db sync unlock with the new passphrase")
+
 // ErrBadSignature reports an entry an unlocked reader refuses: its MAC does not
 // hold, or it is unsigned where its origin signs.
 var ErrBadSignature = errors.New("synclog: an entry's signature was refused")

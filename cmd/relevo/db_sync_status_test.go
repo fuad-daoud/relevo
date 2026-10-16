@@ -808,3 +808,19 @@ func TestStatusShowsAJoinInProgress(t *testing.T) {
 		t.Errorf("document joining = %t since %q, want the marker's start", doc.Joining, doc.JoinSince)
 	}
 }
+
+// TestStatusKeyClauseStale pins the stale key clause: a machine whose held
+// epoch is below the recorded remote epoch reports the passphrase change and
+// names the one command that unblocks it, on the line the command prints.
+func TestStatusKeyClauseStale(t *testing.T) {
+	got := dbSyncKeyClause("stale")
+	if !strings.Contains(got, "the passphrase changed") || !strings.Contains(got, "relevo db sync unlock") {
+		t.Fatalf("stale clause = %q, want the passphrase change naming the unlock", got)
+	}
+	// The document carries the same state under key, so the --json reader
+	// sees the stale name and nothing else has to guess.
+	line := dbSyncStatusLine(dbSyncStatusDoc{Enabled: true, RemoteURL: syncStatusRemote, Key: "stale"})
+	if !strings.Contains(line, "the passphrase changed") {
+		t.Fatalf("status line %q does not render the stale clause", line)
+	}
+}
