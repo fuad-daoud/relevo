@@ -106,20 +106,25 @@ to the next member — the new test halts, fails on the deletion.
 The turn-end signals, per harness renderer (`internal/transcript/opencode.go:9-10`,
 `claude.go:17-24`, `codex.go:13-16`, `agy.go:8-53`):
 
-| kind | marks a clean turn end | the events that only appear mid-turn | marks the turn cut off |
-|---|---|---|---|
-| `opencode` | `type:"step_finish"` | `step_start`, `text`, `tool_use`, `reasoning`, `error` | (mid-turn events with no end) |
-| `claude` | `type:"result"` | `assistant`, `user`, `error` | (mid-turn events with no end) |
-| `codex` | `type:"turn.completed"` | `item.started`, `item.completed`, `error` | `type:"turn.failed"` — the turn itself said it did not finish |
-| `agy` | `event:"result"` | `step_update` | (mid-turn events with no end) |
+| kind | a stream ending in these reads Clean | a stream ending in these reads Unclean |
+|---|---|---|
+| `opencode` | `step_finish`, `text` | `reasoning`, `step_start`, `tool_use`, `error` |
+| `claude` | `result` | `assistant`, `user` |
+| `codex` | `turn.completed` | `turn.failed`, `item.started`, `item.completed` |
+| `agy` | `result` | `step_update` |
 
 New `internal/transcript` helper (`turnend.go`): `TurnEndState(kind, stream) TurnEnd`
-returns Clean when an end event appears; Unclean on positive evidence of the turn
-being cut (a mid-turn event — or codex's `turn.failed` — followed by nothing), else
-Unknown. Unknown is the verdict for an unknown kind, an empty stream and an
-unreadable one, because an unclean verdict needs positive evidence, not absence of
-evidence. Reading stream bytes keeps it beside the renderers that give the table its
-shapes.
+classifies the stream by its LAST recognised harness event -- lines that are
+blank, not JSON, or outside the kind's grammar are skipped; last clean -> Clean,
+last unclean -> Unclean, and Unknown when nothing is recognised (unknown kind,
+empty stream, unreadable one), because an unclean verdict needs positive
+evidence, not absence of evidence. The last event, not the first:
+opencode emits step_finish after EVERY step, so an end event anywhere in the
+stream still reads Unclean for a stream cut mid-reasoning after a finished step
+-- #1166's case 2 misclassification. A resumed (nudged) session appends to the
+same stream, so that last event is the latest turn's -- a cut turn finished by a
+clean resume reads Clean. Reading stream bytes keeps it beside the renderers
+that give the table its shapes.
 
 New `internal/relevo` classifier (`roundend.go`): `classifyRoundEnd` turns the
 exit-without-report decision into a pure function of (turn end, code, report present,

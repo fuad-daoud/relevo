@@ -13,6 +13,8 @@ const (
 	opencodeReason      = `{"type":"reasoning","part":{"text":"hmm"}}`
 	opencodeToolUse     = `{"type":"tool_use","part":{"tool":"bash"}}`
 	opencodeFinish      = `{"type":"step_finish"}`
+	opencodeStart       = `{"type":"step_start","part":{}}`
+	opencodeText        = `{"type":"text","part":{"type":"text","text":"done"}}`
 	codexItem           = `{"type":"item.completed","item":{"type":"agent_message","text":"half"}}`
 	codexFail           = `{"type":"turn.failed","error":{"message":"cut"}}`
 	codexCompletedEvent = `{"type":"turn.completed"}`
@@ -20,7 +22,8 @@ const (
 	agyResultFail       = `{"event":"result","result":{"status":"ERROR","error":"cut"}}`
 	agyResultOK         = `{"event":"result","result":{"status":"SUCCESS","response":"done"}}`
 
-	relevoExitTrailer = "relevo-exit: 0"
+	relevoRusageTrailer = "relevo-rusage:cpu_usec=123456 mem_peak=891289600"
+	relevoExitTrailer   = "relevo-exit:0"
 )
 
 func TestTurnEndStateShowsTheTablesTurnEnds(t *testing.T) {
@@ -71,16 +74,56 @@ func TestTurnEndStateAnswersUnknownWithoutEvidence(t *testing.T) {
 	}
 }
 
-// TestTurnEndStateCleanWins pins precedence: an end event anywhere in the
-// stream outweighs every mid-turn event before it, and a codex turn.failed
-// must not outweigh a turn.completed after it.
-func TestTurnEndStateCleanWins(t *testing.T) {
+// TestTurnEndStateReadsTheLastEvent replaces the old sticky rule: opencode
+// emits step_finish after EVERY step, so an end event anywhere in the stream
+// reads Clean for a stream cut mid-reasoning after a finished step -- the
+// failure the sticky rule was written into the classifier over. The verdict
+// reads the stream's LAST recognised harness event, and the runner's own
+// relevo-rusage:/relevo-exit: trailers behind it do not change it.
+func TestTurnEndStateReadsTheLastEvent(t *testing.T) {
 	t.Parallel()
 
-	if got := TurnEndState("claude", []byte(claudeUser+"\n"+claudeAssistant+"\n"+claudeEndEvent+"\n")); got != TurnEndClean {
-		t.Errorf("TurnEndState = %d, want Clean: the end event outranks what it ends", got)
+	// Three finished steps: opencode emits step_finish after EVERY step, so
+	// the stream's middle is full of them -- an end-event-first rule stops
+	// reading at the first.
+	steps := ""
+	for i := 0; i < 3; i++ {
+		steps += opencodeStart + "\n" + opencodeText + "\n" + opencodeFinish + "\n"
 	}
-	if got := TurnEndState("codex", []byte(codexFail+"\n"+codexCompletedEvent+"\n")); got != TurnEndClean {
-		t.Errorf("TurnEndState = %d, want Clean: the completed turn outranks the failed one before it", got)
+	trailers := "\n" + relevoRusageTrailer + "\n" + relevoExitTrailer + "\n"
+
+	for _, tt := range []struct {
+		name   string
+		stream string
+		want   TurnEnd
+	}{
+		{"several steps then a cut reasoning event", steps + opencodeReason + "\n", TurnEndUnclean},
+		{"several steps ending in text", steps + opencodeText + "\n", TurnEndClean},
+		{"several steps ending in step_finish", steps + opencodeFinish + "\n", TurnEndClean},
+		{"trailers behind the cut", steps + opencodeReason + "\n" + trailers, TurnEndUnclean},
+		{"trailers behind the clean text", steps + opencodeText + "\n" + trailers, TurnEndClean},
+		{"trailers behind the clean finish", steps + opencodeFinish + "\n" + trailers, TurnEndClean},
+	} {
+		if got := TurnEndState("opencode", []byte(tt.stream)); got != tt.want {
+			t.Errorf("%s: TurnEndState = %d, want %d", tt.name, got, tt.want)
+		}
+	}
+}
+
+// TestTurnEndStateFollowsTheResumedTurn pins the rule the resume depends on:
+// a nudged session appends to the same stream, so the last event is the
+// latest turn's -- a cut first turn finished by a clean resumed one reads
+// Clean, and a clean first turn followed by a cut one reads Unclean.
+func TestTurnEndStateFollowsTheResumedTurn(t *testing.T) {
+	t.Parallel()
+
+	cutTurn := opencodeReason + "\n"
+	cleanTurn := opencodeStart + "\n" + opencodeText + "\n" + opencodeFinish + "\n"
+
+	if got := TurnEndState("opencode", []byte(cutTurn+cleanTurn)); got != TurnEndClean {
+		t.Errorf("cut turn, clean resume: TurnEndState = %d, want Clean: the resumed turn's event is the last", got)
+	}
+	if got := TurnEndState("opencode", []byte(cleanTurn+cutTurn)); got != TurnEndUnclean {
+		t.Errorf("clean turn, cut resume: TurnEndState = %d, want Unclean: the resumed turn was cut", got)
 	}
 }
