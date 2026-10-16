@@ -251,11 +251,11 @@ func (i *Importer) applyUntilDone(origin string, entries []Entry, total *ImportR
 		if pass == orDefault(i.passes, maxSnapshotPasses) {
 			return fmt.Errorf("the references of %s still refuse them after %d passes", describeRows(entries), pass), nil
 		}
-		next, _, err := i.applyPass(origin, entries, total)
+		next, applied, err := i.applyPass(origin, entries, total)
 		if err != nil {
 			return nil, err
 		}
-		if len(next) > 0 && len(next) >= len(entries) {
+		if len(next) > 0 && applied == 0 {
 			return fmt.Errorf("the references of %s refuse every remaining row", describeRows(next)), nil
 		}
 		entries = next

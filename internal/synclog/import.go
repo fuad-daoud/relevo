@@ -523,14 +523,10 @@ func applyEntry(tx *db.Tx, e Entry, now time.Time) (bool, error) {
 		return true, nil
 	}
 	if e.Op == OpDelete {
-		_, found, err := tx.ResolveOwner(e.Table, e.PK)
-		if err != nil {
-			return false, fmt.Errorf("synclog: import %s %s: %w", e.Table, e.PK, err)
-		}
 		if err := tx.ExchangeDelete(e.Table, e.PK); err != nil {
 			return false, fmt.Errorf("synclog: import %s %s: %w", e.Table, e.PK, err)
 		}
-		return found, nil
+		return true, nil
 	}
 	// The owner is passed rather than taken from the body, so what this row's
 	// owner column ends up holding is the owner this file resolved and not what

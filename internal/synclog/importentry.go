@@ -102,7 +102,7 @@ func (i *Importer) writeBatch(batch, rows []Entry, docs, priorDrops int, marks m
 		if signedAt, wrote, err = i.recordSigned(tx, origin, batch); err != nil {
 			return err
 		}
-		moved := applied+docs > 0 || len(drops) > 0 || priorDrops > 0 || len(rows) > len(drops)
+		moved := applied+docs > 0 || len(drops) > 0 || priorDrops > 0
 		return i.mark(tx, marks, origin, tail(batch), moved)
 	})
 	if refusal != nil {

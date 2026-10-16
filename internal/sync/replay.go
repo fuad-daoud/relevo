@@ -110,7 +110,7 @@ func ReplayRefusedPass(shared *db.DB, kv db.KV, t synclog.LogTransport) error {
 			if !ok || head <= target {
 				continue
 			}
-			entries, err := t.PullRange(origin, target, head)
+			entries, err := t.PullRange(origin, target, target+1)
 			if err != nil {
 				return fmt.Errorf("sync: replay pull range %s: %w", origin, err)
 			}
