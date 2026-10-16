@@ -66,3 +66,20 @@ func TestPrepassAppliesUnderTwoEpochs(t *testing.T) {
 		t.Errorf("policy = %s, want the document applied", got)
 	}
 }
+
+// TestSetKeyringRefusesARingHoldingAKeyAboveItsNewest pins the ring's own
+// consistency: a ring whose keys reach past the epoch it names as newest is
+// refused whole, so a stray newer key can never become the default fence
+// that every origin without a cut verifies under.
+func TestSetKeyringRefusesARingHoldingAKeyAboveItsNewest(t *testing.T) {
+	t.Parallel()
+	var k keyed
+	k.SetKeyring(Keyring{Epoch: 1, Keys: map[int][]byte{1: keyA, 2: keyB}})
+	if k.key != nil || k.ring != nil {
+		t.Errorf("SetKeyring stored key %q and ring %v, want nothing", k.key, k.ring)
+	}
+	k.SetKeyring(ring2())
+	if string(k.key) != string(keyB) || len(k.ring) != 2 {
+		t.Errorf("a consistent ring stored key %q and ring of %d, want keyB and both epochs", k.key, len(k.ring))
+	}
+}
