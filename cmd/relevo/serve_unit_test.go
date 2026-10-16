@@ -48,10 +48,11 @@ func TestServeUnitWantsTheDaemon(t *testing.T) {
 	}
 }
 
-// TestServiceUnitsCarryTheGoBinOnPath pins the daemon's PATH: the shipped unit
-// templates name %h/go/bin, where CI installs golangci-lint, so `make lint`
-// inside the unit is not silently skipped. Each template must carry exactly one
-// Environment=PATH= line and that line must name %h/go/bin.
+// TestServiceUnitsCarryTheGoBinOnPath pins the daemon's PATH: CI installs
+// golangci-lint to %h/go/bin, so `make lint` inside a unit never misses it.
+// The daemon unit is a template whose PATH the renderer assembles, so its
+// line must say @PATH@ and the renderer's fixed-list pin carries the go bin
+// instead; the serve unit carries that fixed list itself.
 func TestServiceUnitsCarryTheGoBinOnPath(t *testing.T) {
 	t.Parallel()
 
@@ -61,19 +62,23 @@ func TestServiceUnitsCarryTheGoBinOnPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
 		}
-		count, found := 0, false
-		for _, line := range strings.Split(string(body), "\n") {
-			if strings.HasPrefix(line, "Environment=PATH=") {
+		count, line := 0, ""
+		for _, l := range strings.Split(string(body), "\n") {
+			if strings.HasPrefix(l, "Environment=PATH=") {
 				count++
-				if strings.Contains(line, "%h/go/bin") {
-					found = true
-				}
+				line = l
 			}
 		}
 		if count != 1 {
 			t.Errorf("%s must set exactly one Environment=PATH= line, got %d:\n%s", path, count, body)
 		}
-		if !found {
+		if name == "relevo.service" {
+			if line != "Environment=PATH=@PATH@" {
+				t.Errorf("%s must leave the PATH to the renderer, got %q", path, line)
+			}
+			continue
+		}
+		if !strings.Contains(line, "%h/go/bin") {
 			t.Errorf("%s does not name %s on PATH:\n%s", path, "%h/go/bin", body)
 		}
 	}

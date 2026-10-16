@@ -246,6 +246,7 @@ func newRuntimeWith(root string, d *db.DB, st *store.Store) (relevo.Runtime, err
 		return relevo.Runtime{}, err
 	}
 	rt.Config = cs
+	noteUnconfigured(activeVerb, rt.Candidates.Len() > 0)
 	return rt, nil
 }
 

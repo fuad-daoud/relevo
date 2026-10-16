@@ -4,24 +4,13 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
-	"time"
 )
-
-// utc pins the rendering zone for a case that asserts a clock, and restores
-// the machine's own zone afterwards. Every case that pins clock bytes uses it.
-func utc(t *testing.T) {
-	t.Helper()
-	prev := time.Local
-	time.Local = time.UTC
-	t.Cleanup(func() { time.Local = prev })
-}
 
 // stampLineAt is the opencode fixture's own event time, epoch milliseconds:
 // 2026-09-26T20:16:21Z.
 const stampLineAt = 1789589781193
 
 func TestStampPerHarness(t *testing.T) {
-	utc(t)
 
 	cases := []struct {
 		name string
@@ -96,7 +85,6 @@ func TestStampPerHarness(t *testing.T) {
 // TestClaudeCallResultDuration is the sequence case: one pass sees the call and
 // its result, so the result carries the span between the two event times.
 func TestClaudeCallResultDuration(t *testing.T) {
-	utc(t)
 
 	call := `{"type":"assistant","timestamp":"2026-09-26T20:16:21.000Z","message":{"content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"go test ./..."}}]}}`
 	result := `{"type":"user","timestamp":"2026-09-26T20:16:25.200Z","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","is_error":false,"content":"ok  github.com/… 0.4s"}]}}`
@@ -115,7 +103,6 @@ func TestClaudeCallResultDuration(t *testing.T) {
 }
 
 func TestClaudeDurationAbsentCases(t *testing.T) {
-	utc(t)
 
 	call := func(at, id string) string {
 		return fmt.Sprintf(`{"type":"assistant","timestamp":%q,"message":{"content":[{"type":"tool_use","id":%q,"name":"Bash","input":{"command":"ls"}}]}}`, at, id)

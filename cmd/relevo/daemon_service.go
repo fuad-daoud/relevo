@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/doctor"
+	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/serviceunit"
 )
 
@@ -63,7 +66,47 @@ func (u unitSpec) doc() string {
 	return serviceunit.ServiceName
 }
 
-// shipped is what the index and the decision compare against: the plist as a
+// lookPath is where the service template's PATH reads the harness homes. It
+// is a seam so tests pin the order and the dedup without shell PATH lookups.
+var lookPath = exec.LookPath
+
+// servicePath assembles the daemon's PATH: the fixed list the unit has
+// always carried, in %h form because systemd expands the specifiers at exec
+// and the rendered unit has to keep naming %h/go/bin (where go installs the
+// CLIs the daemon runs lint with), then the directory of every harness
+// binary LookPath finds, deduplicated, in harness.All() order.
+func servicePath(home string) string {
+	prefix := "%h/.local/bin:%h/go/bin:/usr/local/bin:/usr/bin:/bin"
+	// The %h entries expand to the same homes the harness LookPath can find,
+	// so the dedup must see the expanded forms to keep a harness home from
+	// appearing twice in the rendered value.
+	seen := map[string]bool{
+		filepath.Join(home, ".local", "bin"): true,
+		filepath.Join(home, "go", "bin"):     true,
+		"/usr/local/bin":                     true,
+		"/usr/bin":                           true,
+		"/bin":                               true,
+	}
+	var extra []string
+	for _, h := range harness.All() {
+		found, err := lookPath(h.Binary)
+		if err != nil {
+			continue
+		}
+		dir := filepath.Dir(found)
+		if seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		extra = append(extra, dir)
+	}
+	if len(extra) == 0 {
+		return prefix
+	}
+	return prefix + ":" + strings.Join(extra, ":")
+}
+
+// shipped is what the index and the decision compare against: the unit as a
 // template, since its rendered form differs per machine.
 func (u unitSpec) shipped() []byte {
 	if u.darwin() {
@@ -77,7 +120,7 @@ func (u unitSpec) rendered() []byte {
 	if u.darwin() {
 		return serviceunit.RenderPlist(serviceunit.ShippedPlistTemplate(), u.bin, u.home)
 	}
-	return serviceunit.ShippedService()
+	return serviceunit.RenderService(serviceunit.ShippedService(), u.bin, servicePath(u.home))
 }
 
 // read returns the installed bytes in the form the index hashes, and the
@@ -95,6 +138,8 @@ func (u unitSpec) read() (data []byte, mtime time.Time, present bool, err error)
 	}
 	if u.darwin() {
 		data = serviceunit.CanonicalPlist(data, u.bin, u.home)
+	} else {
+		data = serviceunit.CanonicalService(data, u.bin, servicePath(u.home))
 	}
 	return data, mtime, true, nil
 }

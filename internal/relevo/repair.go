@@ -180,6 +180,7 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 	}
 
 	b.RoundBaselineTree, b.RoundBaselineHead = baseline, head
+	b.RoundRepoBaselineTree = escapeRepoBaseline(ctx, rt, b, baseline)
 	b.RoundClosedTree = ""
 	b.RoundStartedAt = rt.Now().UTC()
 	b.FinishPending = true

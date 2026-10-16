@@ -12,7 +12,6 @@ import (
 var update = flag.Bool("update", false, "rewrite testdata/*.log from the renderer")
 
 func TestFixtures(t *testing.T) {
-	utc(t)
 	streams, err := filepath.Glob(filepath.Join("testdata", "*.jsonl"))
 	if err != nil || len(streams) == 0 {
 		t.Fatalf("no fixtures: %v", err)
@@ -265,7 +264,6 @@ func TestAgyTable(t *testing.T) {
 }
 
 func TestOpencodeTable(t *testing.T) {
-	utc(t)
 	cases := map[string]struct {
 		line string
 		want []string

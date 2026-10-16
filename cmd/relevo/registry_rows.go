@@ -349,7 +349,7 @@ var registry = []verbEntry{
 	},
 	{
 		Name:    "db sync enable",
-		Summary: "refuse: this build carries no sync engine, so enable joins nothing",
+		Summary: "turn sync on for this machine: join with a code from db sync invite (--join-stdin), or name a remote with --url and --token-stdin",
 		Args: "[--url URL] [--token-stdin] [--passphrase-stdin] [--join-stdin] " +
 			"[--r2-endpoint URL] [--r2-bucket NAME] [--r2-key-id ID] [--r2-secret-stdin] " +
 			"[--yes] [--timeout D] [--json]",
@@ -698,8 +698,17 @@ var registry = []verbEntry{
 		Exit:    []int{0, 2},
 		Errors:  []string{},
 	},
-	{Name: "service install", Summary: "write the service unit shipped in this binary, enable it and restart the daemon; refuses an edited unit without --force", Args: "[--force] [--json]", Flags: []string{"--force", "--json"}, Output: "json:ServiceDoc", Exit: []int{0, 1, 2}, Errors: []string{"conflict", "internal", "usage"}},
-	{Name: "service uninstall", Summary: "stop and remove the service unit, never the binary", Args: "[--json]", Flags: []string{"--json"}, Output: "json:ServiceDoc", Exit: []int{0, 1, 2}, Errors: []string{"internal", "usage"}},
+	{Name: "service install", Summary: "write the service unit shipped in this binary, enable it and restart the daemon; refuses an edited unit without --force", Args: "[--force] [--json]", Flags: []string{"--force", "--json"}, Output: "json:ServiceDoc", Exit: []int{0, 1, 2}, Errors: []string{"conflict", "internal", "refused", "usage"}},
+	{Name: "service uninstall", Summary: "stop and remove the service unit, never the binary", Args: "[--json]", Flags: []string{"--json"}, Output: "json:ServiceDoc", Exit: []int{0, 1, 2}, Errors: []string{"internal", "refused", "usage"}},
+	{
+		Name:    "setup",
+		Summary: "the one-time wizard: probe the machine, ask what is still open, then write the starter configuration, the agent definitions, the plugin and the service, and run one real round",
+		Args:    "[--answer <id>=<value>] [--json]",
+		Flags:   []string{"--answer", "--json"},
+		Output:  "json:SetupQuestionsDoc with questions open; SetupResultDoc once applied",
+		Exit:    []int{0, 1, 2, 3},
+		Errors:  []string{"conflict", "internal", "not_available", "policy_refused", "refused", "usage"},
+	},
 	{
 		Name:    "show",
 		Summary: "one round's plan, report, diff, drift, gate, findings, log or transcript",

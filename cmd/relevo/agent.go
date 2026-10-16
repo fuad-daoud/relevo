@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/setup"
 )
 
 // installAccountHomes installs each configured claude and codex account's role
@@ -40,12 +41,12 @@ func installAccountHomes(env harness.InstallEnv, accounts account.Set, opts harn
 	return out, nil
 }
 
-// agentInstallEnv is the InstallEnv `relevo config agents` uses -- and the
-// same one the daemon's once-per-image role refresh uses (#371 §4.10). It
-// lives in internal/relevo from round 5 on, so the cockpit's `:agents` view
-// can build the same env; see relevo.AgentInstallEnv.
-func agentInstallEnv() (harness.InstallEnv, error) {
-	return relevo.AgentInstallEnv()
+// agentInstallEnv is the SetupEnv `relevo config agents`, `relevo config init`
+// and the daemon's once-per-image role refresh share: the OS-backed env with
+// the runner seat the probe reads through, over relevo.AgentInstallEnv. See
+// relevo.AgentInstallEnv for where the role manifest lives.
+func agentInstallEnv() (setup.SetupEnv, error) {
+	return setup.OSEnv()
 }
 
 // agentFlagValues holds the pointers `relevo config agents`' flags parse into.

@@ -74,7 +74,7 @@ func closeSwitchedRound(t *testing.T, switchNotes ...string) (Runtime, store.Log
 			return err
 		}
 		next, err := queueReport(context.Background(), rt, tx, cur, entries,
-			rt.Store.ReportPath(b.Name, b.Round), "done", "", nil, nil, nil, nil, "", false, scopeVerdict{})
+			rt.Store.ReportPath(b.Name, b.Round), "done", "", nil, nil, nil, nil, "", false, "", scopeVerdict{})
 		if err != nil {
 			return err
 		}

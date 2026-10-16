@@ -8,8 +8,8 @@ import (
 
 // shippedSHA256 indexes every unit blob relevo has ever shipped: one
 // "<sha256>  <name>" line per historical and working-tree version of each
-// source under units/; scripts/serviceunit-shipped.sh regenerates it. The
-// plist is indexed as its template, placeholders intact.
+// source under units/; scripts/serviceunit-shipped.sh regenerates it. Both
+// units are indexed as templates, placeholders intact.
 //
 //go:embed units/shipped.sha256
 var shippedSHA256 string

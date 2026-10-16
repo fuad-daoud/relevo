@@ -2,7 +2,6 @@ package ingest
 
 import (
 	"testing"
-	"time"
 )
 
 func TestTranscriptFromStream(t *testing.T) {
@@ -74,10 +73,6 @@ func TestTranscriptFromLogOnly(t *testing.T) {
 // TestTranscriptFromStreamClaudePair: one batch is one pass, so a claude call
 // and its result in the same batch carry the span between their two events.
 func TestTranscriptFromStreamClaudePair(t *testing.T) {
-	prev := time.Local
-	time.Local = time.UTC
-	t.Cleanup(func() { time.Local = prev })
-
 	lines := [][]byte{
 		[]byte(`{"type":"assistant","timestamp":"2026-09-26T20:16:21Z","message":{"content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"ls"}}]}}`),
 		[]byte(`{"type":"user","timestamp":"2026-09-26T20:16:25.2Z","message":{"content":[{"type":"tool_result","tool_use_id":"tu1","is_error":false,"content":"ok"}]}}`),

@@ -55,7 +55,7 @@ func TestSteadyExportsAndImports(t *testing.T) {
 	_, known := shared.SchemaVersions()
 	seedFar(t, log, "m2", "b2", known)
 
-	runner := &Runner{Client: log, Local: local, Timeout: time.Second}
+	runner := &Runner{Client: log, Local: local}
 	res := runner.SyncOnce(context.Background(), shared)
 	if res.Err != nil {
 		t.Fatalf("SyncOnce: %v", res.Err)
@@ -244,7 +244,7 @@ func TestSteadyRecordsTheImportTroubleAndTimes(t *testing.T) {
 	_, known := shared.SchemaVersions()
 	seedFar(t, log, "m2", "b2", known+1)
 
-	runner := &Runner{Client: log, Local: local, Timeout: time.Second}
+	runner := &Runner{Client: log, Local: local}
 	res := runner.SyncOnce(context.Background(), shared)
 	if res.Err != nil {
 		t.Fatalf("SyncOnce: %v", res.Err)

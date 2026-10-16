@@ -113,6 +113,7 @@ var verbFlagSets = map[string]func(*flag.FlagSet){
 	"service":              serviceFlagSet,
 	"service install":      installer(serviceInstallFlagSet),
 	"service uninstall":    installer(serviceUninstallFlagSet),
+	"setup":                installer(setupFlagSet),
 	"show":                 installer(showFlagSet),
 	"status":               installer(statusFlagSet),
 	"stop":                 installer(stopFlagSet),

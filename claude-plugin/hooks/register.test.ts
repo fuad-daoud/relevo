@@ -12,6 +12,8 @@ type Opts = {
   doc?: () => object | 'fail'
   // Holds a poll (a status run under the resolved env) until it settles.
   hold?: () => Promise<void>
+  // Answers `relevo done`.
+  done?: () => { exitCode: number; stdout?: string; stderr?: string }
 }
 
 // Fakes sit beneath the plugin: every call it makes lands here and is recorded.
@@ -47,6 +49,7 @@ function fakes(on: any, opts: Opts = {}) {
       }
       return { value: opts.status === 'fail' ? { ...RUN_OK, exitCode: 1 } : STATUS_OK }
     }
+    if (e.argv[1] === 'done') return { value: { ...RUN_OK, ...(opts.done?.() ?? {}) } }
     return { value: { ...RUN_OK, exitCode: opts.ackExit?.() ?? 0 } }
   })
   on('process.spawn', async function* ($: any, e: any) {
@@ -101,7 +104,9 @@ function fakes(on: any, opts: Opts = {}) {
 const line = (o: object) => JSON.stringify(o) + '\n'
 const report = (seq: number, text = 'report text') =>
   line({ seq, binding: 'b1', round: 2, kind: 'report', text })
-const startSession = ($: any) => $.session.start({ cwd: '/w', surface: null, isInteractive: false })
+// The start the MasterMind sees: interactive, the one session shape that runs
+// the push child. The gate tests below name the other shapes explicitly.
+const startSession = ($: any) => $.session.start({ cwd: '/w', surface: null, isInteractive: true })
 const startTurn = ($: any, turnId = 't1') => $.turn.start({ text: 'hi', turnId })
 const endTurn = ($: any, extra: object = {}) =>
   $.turn.complete({ answer: 'x', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', ...extra })
@@ -137,6 +142,23 @@ describe('identity', () => {
     expect(f.spawns[0].env).toEqual({ RELEVO_MASTERMIND: 'mm-1', CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'sess-1' })
     await f.clock.advance(60_000)
     expect(f.statuses().filter((r) => r.env?.RELEVO_MASTERMIND === undefined)).toHaveLength(1)
+  })
+
+  test('headless (`claude -p`): identity resolves, but no push child and no claim', async ($, on) => {
+    const f = fakes(on)
+    await $.session.start({ cwd: '/w', surface: null, isInteractive: false })
+    await f.clock.settle()
+    expect(f.statuses()).toHaveLength(1)
+    await f.clock.advance(10_000)
+    expect(f.spawns).toHaveLength(0)
+  })
+
+  test('an engine that omits isInteractive keeps today\'s push behaviour', async ($, on) => {
+    const f = fakes(on)
+    await $.session.start({ cwd: '/w', surface: null })
+    await f.clock.settle()
+    expect(f.spawns).toHaveLength(1)
+    expect(f.spawns[0]?.argv).toEqual(['relevo', 'push'])
   })
 })
 
@@ -739,10 +761,74 @@ describe('band', () => {
       await startSession($)
       await f.clock.settle()
       const ui = await mount($, surface)
-      expect(await labels(ui)).toEqual(['→ answer', '→ show'])
+      expect(await labels(ui)).toEqual(['→ answer', '→ show', 'done'])
       await ui.press({ key: 'nw' })
       expect(f.fills).toEqual(['relevo send w --file a.md'])
       expect(f.submits).toHaveLength(0)
+    })
+  }
+
+  test('only a finished round offers done, and it has no hotkey', async ($, on) => {
+    const f = fakes(on, {
+      doc: () =>
+        mkdoc([
+          row('n', { tone: 'needs', status: 'NEEDS YOU' }),
+          row('q', { tone: 'report', status: 'QUESTION IN' }),
+          row('p', { tone: 'report', status: 'REPORT IN', next: { label: 'compare the diff', text: 't' } }),
+          row('r', { activity: 'working' }),
+        ]),
+    })
+    await startSession($)
+    await f.clock.settle()
+    const ui = await mount($, 'terminal', { bodyColumns: 120 })
+    const done = (await ui.findAll({ type: 'Button' })).filter((b: any) => b.props.label === 'done')
+    expect(done.map((b: any) => b.key ?? b.props.key)).toEqual(['dp'])
+    expect(done[0].props.hotkey).toBeUndefined()
+  })
+
+  for (const surface of SURFACES) {
+    test(`${surface}: done runs relevo done, toasts it and polls at once`, async ($, on) => {
+      let closed = false
+      const f = fakes(on, {
+        doc: () =>
+          mkdoc([closed ? row('p', { status: 'DONE', tone: 'quiet' }) : row('p', { tone: 'report', status: 'REPORT IN' })]),
+        done: () => {
+          closed = true
+          return { exitCode: 0, stdout: '{"name":"p","released":true}' }
+        },
+      })
+      await startSession($)
+      await f.clock.settle()
+      const before = f.statuses().length
+      await (await mount($, surface)).press({ key: 'dp' })
+      await f.clock.settle()
+      expect(f.runs.filter((r) => r.argv[1] === 'done').map((r) => [r.argv, r.env?.RELEVO_MASTERMIND])).toEqual([
+        [['relevo', 'done', 'p', '--json'], 'mm-1'],
+      ])
+      expect(f.toasts).toEqual(['relevo: p done, worktree released'])
+      expect(f.statuses().length).toBe(before + 1)
+      expect(await labels(await mount($, surface))).toEqual(['○ p'])
+      expect(f.submits).toHaveLength(0)
+    })
+  }
+
+  const outcomes: [string, { exitCode: number; stdout?: string; stderr?: string }, string][] = [
+    ['a kept worktree names why', { exitCode: 0, stdout: '{"name":"p","released":false,"kept_reason":"dirty tree"}' }, 'relevo: p done, worktree kept: dirty tree'],
+    [
+      'a refusal names the message',
+      { exitCode: 1, stderr: '{"error":{"code":"conflict","message":"round open","next":"relevo stop p"}}' },
+      'relevo: done p refused: round open',
+    ],
+    ['an unreadable failure keeps stderr', { exitCode: 2, stderr: 'boom' }, 'relevo: done p failed: boom'],
+  ]
+  for (const [name, answer, toast] of outcomes) {
+    test(`done: ${name}`, async ($, on) => {
+      const f = fakes(on, { doc: () => mkdoc([row('p', { tone: 'report', status: 'REPORT IN' })]), done: () => answer })
+      await startSession($)
+      await f.clock.settle()
+      await (await mount($, 'terminal')).press({ key: 'dp' })
+      await f.clock.settle()
+      expect(f.toasts).toEqual([toast])
     })
   }
 

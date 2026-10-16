@@ -134,6 +134,87 @@ func TestWaitUnderPushClaimWhileHolderDrains(t *testing.T) {
 	}
 }
 
+// TestWaitUnderPushClaimDeliversInlineInHeadless pins the headless case: in a
+// `claude -p` session the mod runs no push child, so a live claim over the
+// target can only be stranded there. The wait therefore takes the normal pull
+// path: the report comes back with the payload attached and confirmed with
+// route wait, and no "delivered by the mod" note is promised.
+func TestWaitUnderPushClaimDeliversInlineInHeadless(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "sdk-cli")
+
+	s := store.New(t.TempDir())
+	saveVerbBinding(t, s, store.Binding{Name: "webshop", CWD: "/repo-ws", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
+
+	reportBody := "# Report\nRound 1 completed successfully."
+	writeStoreFile(t, s.ReportPath("webshop", 1), reportBody)
+	if err := s.AppendLog("webshop", store.LogEntry{
+		Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport,
+		Path: s.ReportPath("webshop", 1), Payload: "origin",
+	}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+
+	v := &RelevoVerbs{
+		RT:           relevo.Runtime{Store: s, Now: time.Now, Channels: liveClaimStore{id: mcpTestMasterMindA}},
+		MasterMind:   mcpTestMasterMindA,
+		WaitInterval: time.Millisecond,
+	}
+	text := waitText(t, func() (any, error) { return v.Wait(context.Background(), "", WaitArgs{Name: "webshop"}) })
+
+	if !strings.HasPrefix(text, "webshop round 1 closed") {
+		t.Errorf("wait text = %q, want the closed outcome line", text)
+	}
+	if !strings.Contains(text, reportBody) {
+		t.Errorf("wait text = %q, must carry the report payload inline", text)
+	}
+	if strings.HasSuffix(text, "delivered by the mod") {
+		t.Errorf("wait text = %q, must not promise a delivery the mod never ran", text)
+	}
+
+	entries, err := s.ReadLog("webshop")
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("ReadLog: %v (%d entries)", err, len(entries))
+	}
+	if !entries[0].Confirmed || entries[0].Route != "wait" {
+		t.Errorf("entry confirmed = %v with route %q, want confirmed with route wait", entries[0].Confirmed, entries[0].Route)
+	}
+}
+
+// TestHeadlessByEntrypoint is the env rule as a table: the entrypoint a child
+// inherits decides whether the server's own process counts as headless -- and
+// only the `sdk-` prefix does.
+func TestHeadlessByEntrypoint(t *testing.T) {
+	cases := []struct {
+		entrypoint string
+		want       bool
+	}{
+		{"cli", false},
+		{"sdk-cli", true},
+		{"sdk-ts", true},
+		{"", false},
+	}
+	for _, tt := range cases {
+		t.Run("entrypoint "+firstNonEmpty(tt.entrypoint, "unset"), func(t *testing.T) {
+			getenv := func(key string) string {
+				if key == "CLAUDE_CODE_ENTRYPOINT" {
+					return tt.entrypoint
+				}
+				return ""
+			}
+			if got := claudeRunsHeadless(getenv); got != tt.want {
+				t.Errorf("claudeRunsHeadless(%q) = %v, want %v", tt.entrypoint, got, tt.want)
+			}
+		})
+	}
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
 // readPushEvent reads one NDJSON push event.
 func readPushEvent(t *testing.T, r io.Reader) delivery.PushEvent {
 	t.Helper()

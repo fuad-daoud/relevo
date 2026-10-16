@@ -12,11 +12,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/release"
 )
 
-// The relevo Claude Code plugin's install facts, resolved through $HOME so
-// cmd/relevo's TestMain isolation holds.
+// The relevo Claude Code plugin's install facts. The user's files sit under
+// Claude Code's config directory and the project's settings under the repo.
 const (
 	claudeSettingsRel     = ".claude/settings.json"
-	claudePluginStateRel  = ".claude/plugins/installed_plugins.json"
+	claudePluginStateRel  = "plugins/installed_plugins.json"
 	claudePluginName      = "relevo@relevo"
 	claudeHooksRel        = "hooks/hooks.json"
 	pluginHookInitCommand = "mastermind init"
@@ -55,7 +55,10 @@ func HasMCPChild(children []ChildProcess) bool {
 type MasterMindCheckInput struct {
 	Claude bool   // a claude candidate or mastermind record exists; gates the plugin rows
 	Home   string // $HOME, so a test can point it at a temp dir
-	Repo   string // the repository `relevo doctor` runs in
+	// ClaudeDir is CLAUDE_CONFIG_DIR, where Claude Code keeps its settings
+	// and plugins when it is set; "" means Home/.claude.
+	ClaudeDir string
+	Repo      string // the repository `relevo doctor` runs in
 
 	Detected  bool               // mastermind.Detect: relevo runs inside a Claude Code session
 	Resolved  *mastermind.Record // the mastermind Resolve found; nil on a miss
@@ -85,9 +88,10 @@ func MasterMindChecks(in MasterMindCheckInput) []Check {
 	}
 
 	if in.Claude {
-		checks = append(checks, pluginEnabledCheck(in.Home, in.Repo))
-		checks = append(checks, pluginHookCheck(in.Home))
-		checks = append(checks, pluginVersionCheck(in.Home, in.Running))
+		dir := claudeDir(in)
+		checks = append(checks, pluginEnabledCheck(dir, in.Repo))
+		checks = append(checks, pluginHookCheck(dir))
+		checks = append(checks, pluginVersionCheck(dir, in.Running))
 	}
 
 	if in.Detected {
@@ -185,11 +189,19 @@ func mastermindRef(rec *mastermind.Record, chat string) string {
 	return rec.Name + " (" + rec.ID + ") · " + chat
 }
 
+func claudeDir(in MasterMindCheckInput) string {
+	if in.ClaudeDir != "" {
+		return in.ClaudeDir
+	}
+	return filepath.Join(in.Home, ".claude")
+}
+
 // pluginEnabledCheck is the first plugin row: FAIL unless the user's or the
 // repo's settings.json has enabledPlugins["relevo@relevo"] == true.
-func pluginEnabledCheck(home, repo string) Check {
+func pluginEnabledCheck(claudeDir, repo string) Check {
+	userSettings := filepath.Join(claudeDir, "settings.json")
 	for _, path := range []string{
-		filepath.Join(home, claudeSettingsRel),
+		userSettings,
 		filepath.Join(repo, claudeSettingsRel),
 	} {
 		raw, err := os.ReadFile(path)
@@ -200,30 +212,31 @@ func pluginEnabledCheck(home, repo string) Check {
 			return Check{Name: "plugin", Severity: SevOK, Detail: "relevo@relevo enabled in " + path}
 		}
 	}
-	if !relevoPluginInstalled(home) {
+	if !RelevoPluginInstalledIn(claudeDir) {
 		return Check{
 			Name:     "plugin",
 			Severity: SevFail,
 			Detail:   "the relevo plugin is not installed in Claude Code",
-			Fix:      pluginInstallCommand,
+			Fix:      PluginInstallCommand,
 		}
 	}
 	return Check{
 		Name:     "plugin",
 		Severity: SevFail,
-		Detail:   "relevo@relevo is not enabled in " + filepath.Join(home, claudeSettingsRel) + " or the project's " + claudeSettingsRel,
+		Detail:   "relevo@relevo is not enabled in " + userSettings + " or the project's " + claudeSettingsRel,
 		Fix:      "enable the relevo plugin in Claude Code (/plugin), or set enabledPlugins[\"relevo@relevo\"] = true in " + claudeSettingsRel,
 	}
 }
 
-// pluginInstallCommand installs the plugin from this repository's marketplace;
+// PluginInstallCommand installs the plugin from this repository's marketplace;
 // install enables it too.
-const pluginInstallCommand = "claude plugin marketplace add fuad-daoud/relevo && claude plugin install relevo@relevo"
+const PluginInstallCommand = "claude plugin marketplace add fuad-daoud/relevo && claude plugin install relevo@relevo"
 
-// relevoPluginInstalled reports whether installed_plugins.json lists a relevo
-// plugin; an unreadable file reads as not installed.
-func relevoPluginInstalled(home string) bool {
-	raw, err := os.ReadFile(filepath.Join(home, claudePluginStateRel))
+// RelevoPluginInstalledIn reports whether the installed_plugins.json under a
+// Claude Code config directory lists a relevo plugin. setup passes
+// CLAUDE_CONFIG_DIR when it is set, which Claude Code itself honours.
+func RelevoPluginInstalledIn(claudeDir string) bool {
+	raw, err := os.ReadFile(filepath.Join(claudeDir, claudePluginStateRel))
 	if err != nil {
 		return false
 	}
@@ -247,15 +260,16 @@ func pluginEnabled(raw []byte) bool {
 // pluginHookCheck is the second plugin row: FAIL when the installed plugin
 // has no SessionStart hook running `relevo mastermind init`. Anything relevo
 // cannot establish reads `not checked` (OK), never FAIL.
-func pluginHookCheck(home string) Check {
-	raw, err := os.ReadFile(filepath.Join(home, claudePluginStateRel))
+func pluginHookCheck(claudeDir string) Check {
+	state := filepath.Join(claudeDir, claudePluginStateRel)
+	raw, err := os.ReadFile(state)
 	if err != nil {
-		return Check{Name: "plugin hook", Severity: SevOK, Detail: "not checked (no ~/" + claudePluginStateRel + ")"}
+		return Check{Name: "plugin hook", Severity: SevOK, Detail: "not checked (no " + state + ")"}
 	}
 
 	dirs := installedPluginDirs(raw)
 	if len(dirs) == 0 {
-		return Check{Name: "plugin hook", Severity: SevOK, Detail: "not checked (no installed plugin found in ~/" + claudePluginStateRel + ")"}
+		return Check{Name: "plugin hook", Severity: SevOK, Detail: "not checked (no installed plugin found in " + state + ")"}
 	}
 
 	checked := false
@@ -283,21 +297,22 @@ func pluginHookCheck(home string) Check {
 // pluginVersionCheck compares the installed relevo@* plugin's version with
 // the running binary's. Advisory only: the MCP server runs the binary on
 // PATH regardless. Every fact relevo cannot prove reads `not checked` (OK).
-func pluginVersionCheck(home, running string) Check {
+func pluginVersionCheck(claudeDir, running string) Check {
 	const name = "plugin version"
 
 	if running == "" {
 		return Check{Name: name, Severity: SevOK, Detail: "not checked"}
 	}
 
-	raw, err := os.ReadFile(filepath.Join(home, claudePluginStateRel))
+	state := filepath.Join(claudeDir, claudePluginStateRel)
+	raw, err := os.ReadFile(state)
 	if err != nil {
-		return Check{Name: name, Severity: SevOK, Detail: "not checked (no readable ~/" + claudePluginStateRel + ")"}
+		return Check{Name: name, Severity: SevOK, Detail: "not checked (no readable " + state + ")"}
 	}
 
 	plugin, found, err := installedRelevoPlugin(raw)
 	if err != nil {
-		return Check{Name: name, Severity: SevOK, Detail: "not checked (no readable ~/" + claudePluginStateRel + ")"}
+		return Check{Name: name, Severity: SevOK, Detail: "not checked (no readable " + state + ")"}
 	}
 	if !found {
 		return Check{Name: name, Severity: SevOK, Detail: "not checked (relevo plugin not installed)"}

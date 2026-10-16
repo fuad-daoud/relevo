@@ -741,7 +741,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	if _, _, ok, _ := rt.Store.StatFile(reportPath); ok {
 		slog.Info("round closed by marker", "binding", b.Name, "round", b.Round)
 		next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-			fmt.Sprintf("The runner finished round %d. %s", b.Round, closeClause(rt, b, b.Round))+gateSuffix, joinNotes("", note), rec, nil, nil, nil, "", false, verdict)
+			fmt.Sprintf("The runner finished round %d. %s", b.Round, closeClause(rt, b, b.Round))+gateSuffix, joinNotes("", note), rec, nil, nil, nil, "", false, "", verdict)
 		if err != nil {
 			return b, false, false, nil, fmt.Errorf("close round on marker: %w", err)
 		}
@@ -749,14 +749,14 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 	slog.Warn("round closed by marker without a report", "binding", b.Name, "round", b.Round, "note", "noreport")
 	next, err := queueReport(ctx, rt, tx, b, entries, reportPath,
-		fmt.Sprintf("Builder wrote its completion marker for round %d but wrote no %s.", b.Round, outputWord(b.Shape))+gateSuffix, joinNotes("noreport", note), rec, nil, nil, nil, "", false, verdict)
+		fmt.Sprintf("Builder wrote its completion marker for round %d but wrote no %s.", b.Round, outputWord(b.Shape))+gateSuffix, joinNotes("noreport", note), rec, nil, nil, nil, "", false, "", verdict)
 	if err != nil {
 		return b, false, false, nil, fmt.Errorf("close round on marker: %w", err)
 	}
 	return next, true, false, rec, nil
 }
 
-func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string, gate *store.GateRecord, usage *usage.Usage, rusage *store.Rusage, prior *usage.Tokens, fallbackOutcome string, stopped bool, verdict scopeVerdict) (store.Binding, error) {
+func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string, gate *store.GateRecord, usage *usage.Usage, rusage *store.Rusage, prior *usage.Tokens, fallbackOutcome string, stopped bool, dirtyCommit string, verdict scopeVerdict) (store.Binding, error) {
 	// The round this close is closing: the cap check below sizes that round's
 	// artifact directory after b.Round has advanced.
 	closedRound := b.Round
@@ -854,6 +854,9 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		if st := chainReaderCloseOutcome(rt, tx, b, closedRound, body); st != "" {
 			outcome = st
 		}
+	}
+	if closeWF != nil {
+		closeWF.DirtyCommit = dirtyCommit
 	}
 
 	pLines := strings.SplitN(payload, "\n", 2)
@@ -1062,6 +1065,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	b.RoundCPU = nil
 	b.RoundBaselineTree = ""
 	b.RoundBaselineHead = ""
+	b.RoundRepoBaselineTree = ""
 	// A remote member's closed tree is the pulled result commit the catch-up
 	// recorded -- there is no local worktree to snapshot -- so it keeps that
 	// value across the advance. Every non-remote binding keeps today's exact

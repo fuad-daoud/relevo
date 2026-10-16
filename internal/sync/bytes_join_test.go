@@ -34,7 +34,7 @@ func TestJoinThenSteadyCountsTheWorkersTotalsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enable: %v", err)
 	}
-	runner := &Runner{Client: log, Local: local, Timeout: time.Second}
+	runner := &Runner{Client: log, Local: local}
 	runner.SeedStats(res.Stats)
 	if out := runner.SyncOnce(context.Background(), shared); out.Err != nil {
 		t.Fatalf("SyncOnce: %v", out.Err)

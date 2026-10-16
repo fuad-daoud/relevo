@@ -343,6 +343,10 @@ type Binding struct {
 	// two describe different instants.
 	RoundClosedTree   string `json:"round_closed_tree,omitempty"`
 	RoundBaselineHead string `json:"round_baseline_head,omitempty"`
+	// RoundRepoBaselineTree is the source checkout's snapshot at send, so the
+	// escape check at close counts a repo the round changed, not one that was
+	// already dirty when it began. Empty falls back to a plain dirty check.
+	RoundRepoBaselineTree string `json:"round_repo_baseline_tree,omitempty"`
 	// legacy: bind.json from before pane builders were removed.
 	BuilderScreen      string        `json:"runner_screen,omitempty"`
 	BuilderScreenAt    time.Time     `json:"runner_screen_at,omitempty"`

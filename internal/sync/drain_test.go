@@ -62,19 +62,24 @@ func TestJoinDrainsEveryPageOfAnOrigin(t *testing.T) {
 	}
 }
 
+// steadyDrainPage is the page the steady drain test reads at, in place of the
+// real 1024-row page: the steady pipeline runs every Import under the step
+// bound, so this test arms the same two-page loop over a few dozen entries,
+// where no host's clock can reach the bound on work this small.
+const steadyDrainPage = 24
+
 // TestSteadyDrainsEveryPageOfAnOrigin pins the steady import loop the same way:
 // one attempt reads a backlog larger than a page to the end.
 func TestSteadyDrainsEveryPageOfAnOrigin(t *testing.T) {
 	shared, local := joinPair(t, "m1")
 	log := synclog.NewMemTransport("m1")
 	_, known := shared.SchemaVersions()
-	const total = drainPage + 1
+	const total = steadyDrainPage + 1
 	seedFarMany(t, log, "m2", total, known)
 
-	paged := &pagingLog{MemTransport: log, page: drainPage}
-	// A page of real applies is not instant, so the step bound is set above the
-	// time a page takes; the loop's own deadline is what this test does not
-	// reach.
+	paged := &pagingLog{MemTransport: log, page: steadyDrainPage}
+	// A pass comes from the work being small, not from the bound being large;
+	// the loop's own deadline is what this test does not reach.
 	runner := &Runner{Client: paged, Local: local, Timeout: 30 * time.Second}
 	res := runner.SyncOnce(context.Background(), shared)
 	if res.Err != nil {
@@ -94,7 +99,10 @@ func TestSteadyHeldOriginStopsTheDrain(t *testing.T) {
 	_, known := shared.SchemaVersions()
 	seedFar(t, log, "m2", "b1", known+1)
 
-	runner := &Runner{Client: log, Local: local, Timeout: time.Second}
+	// No test-shortened bound drives this attempt, so a pass cannot depend on
+	// a step's speed: the pinned stop is the loop's own, and the elapsed check
+	// below is what a mutant that spins instead of stopping costs.
+	runner := &Runner{Client: log, Local: local}
 	start := time.Now()
 	res := runner.SyncOnce(context.Background(), shared)
 	if res.Err != nil {

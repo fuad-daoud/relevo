@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -437,6 +438,87 @@ func TestCloseServedRoundRecordsABranchlessReader(t *testing.T) {
 // TestServedChainEndQueuesNoDelivery pins the delivery skip: a served chain
 // writes its terminal row and trace but queues no end delivery, while a local
 // chain still queues one.
+// TestWorkflowDirtyServedWriterCloseHalts pins the served half of the dirty
+// gate: a served writer member's close over a tree that still holds its work
+// halts the step with the same wording a local writer's close gives -- what is
+// uncommitted, the snapshot ref the server's own close cuts, and the sealed
+// diff key -- instead of the completed step the engine would read from it. The
+// close event is built on the server's own row, whose CWD is the served
+// worktree that daemon can read, so the gate answers it like any owned tree.
+func TestWorkflowDirtyServedWriterCloseHalts(t *testing.T) {
+	t.Parallel()
+
+	rt, fg, _ := servedChainRuntime(t)
+	servedChainStart(t, rt, servedChainRequest("shop"))
+	fg.dirtyResult = true
+
+	var ev workflow.Event
+	rt.Store.WithLock(func(tx *store.Tx) error {
+		c, err := tx.Chain("shop")
+		if err != nil {
+			return err
+		}
+		b, err := tx.Load("shop")
+		if err != nil {
+			return err
+		}
+		ev, err = chainEventFromCloseWF(context.Background(), rt, tx, c, b, chainCloseWF{
+			Body: []byte(chainDoneBody()), Outcome: "done", Round: 1,
+		})
+		return err
+	})
+	if ev.Status != reporttail.OutcomeHalted {
+		t.Fatalf("event = %s %q, want halted: a dirty served close must not advance", ev.Status, ev.Reason)
+	}
+	for _, want := range []string{
+		"refs/relevo/shop/round-1",
+		rt.Store.DiffPath("shop", 1),
+	} {
+		if !strings.Contains(ev.Reason, want) {
+			t.Errorf("halt reason %q does not name %s", ev.Reason, want)
+		}
+	}
+}
+
+// TestWorkflowCleanServedWriterCloseStillAdvances pins the other half: a clean
+// served close is the completed step the engine reads, and driving it into the
+// engine moves the chain exactly as before the gate covered the server's own
+// tree.
+func TestWorkflowCleanServedWriterCloseStillAdvances(t *testing.T) {
+	t.Parallel()
+
+	rt, _, _ := servedChainRuntime(t)
+	servedChainStart(t, rt, servedChainRequest("shop"))
+
+	var ev workflow.Event
+	rt.Store.WithLock(func(tx *store.Tx) error {
+		c, err := tx.Chain("shop")
+		if err != nil {
+			return err
+		}
+		b, err := tx.Load("shop")
+		if err != nil {
+			return err
+		}
+		ev, err = chainEventFromCloseWF(context.Background(), rt, tx, c, b, chainCloseWF{
+			Body: []byte(chainDoneBody()), Outcome: "done", Round: 1,
+		})
+		return err
+	})
+	if ev.Status != "" && ev.Status != "done" {
+		t.Fatalf("event = %s %q, want a completed step from a clean close", ev.Status, ev.Reason)
+	}
+	flowAdvance(t, rt, ev)
+	c := flowChainRow(t, rt)
+	st, err := chainWorkflowState(c)
+	if err != nil {
+		t.Fatalf("chainWorkflowState: %v", err)
+	}
+	if st.Awaiting.Step != "review" {
+		t.Errorf("awaiting = %+v (%q), want the review step from a clean close", st.Awaiting, c.Reason)
+	}
+}
+
 func TestServedChainEndQueuesNoDelivery(t *testing.T) {
 	t.Parallel()
 

@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"net/http"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -242,6 +240,13 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The bare repo is pinned before the init and the absorb and released after
+	// the rows are saved (defer covers every failure): between the absorb and
+	// the row write no row references it, and the pin is what keeps the tick's
+	// prune from deleting the repo inside that window.
+	unpin := pinBareRepo(bare)
+	defer unpin()
+
 	// The absorb is the long git step and holds no server-wide lock.
 	if !s.chainInitAndAbsorb(w, r, rt, caller, bare, outRef, bundle) {
 		return
@@ -272,6 +277,11 @@ func (s *Server) chainPrepareCreate(w http.ResponseWriter, rt relevo.Runtime, ca
 	}
 	return false
 }
+
+// chainCreateSeam parks a chain create between the worktree cut and the chain
+// row write when non-nil. Nil in production; the prune-race tests set it to
+// run the tick's prune inside the pin-to-row-save window deterministically.
+var chainCreateSeam func()
 
 // chainFinishCreate is the create's second half, after the bundle was absorbed.
 // It takes this owner's section first, so the re-check below, the branch cut and
@@ -316,6 +326,9 @@ func (s *Server) chainFinishCreate(w http.ResponseWriter, r *http.Request, rt re
 
 	if !s.cutChainWorktree(ctx, w, rt.Git, bare, name, outRef, branch, worktree, req.BaseCommit) {
 		return
+	}
+	if chainCreateSeam != nil {
+		chainCreateSeam()
 	}
 
 	if _, err := relevo.ServedChainCreate(ctx, rt, plan, worktree); err != nil {
@@ -521,79 +534,4 @@ func (s *Server) handleResumeChain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, view)
-}
-
-// writeChainResumeError maps a resume failure; the status was checked before the
-// call, so these arms are the backstop for a chain that changed under the lock.
-func writeChainResumeError(w http.ResponseWriter, err error) {
-	msg := err.Error()
-	var open *relevo.RoundOpenError
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
-	case errors.As(err, &open):
-		// The target member's round is open and alive: the client rebuilds the
-		// typed refusal so the CLI prints the conflict and its `relevo stop
-		// <member>` next line, exactly as a local refusal does.
-		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, msg)
-	case strings.Contains(msg, "is running"):
-		writeErr(w, http.StatusConflict, remote.CodeChainRunning, msg)
-	case strings.Contains(msg, "is done"):
-		writeErr(w, http.StatusConflict, remote.CodeChainDone, msg)
-	default:
-		writeErr(w, http.StatusInternalServerError, "", msg)
-	}
-}
-
-// resumeOptionsFromWire converts the resume body to relevo's options and
-// enforces the same bounds a create does. A gate that is present and empty
-// clears the check (NoGate); a present non-empty one sets it. Every field that
-// was given is also mapped onto the workflow param it fills, so the engine a
-// served chain runs reads the wire values through its own params.
-func resumeOptionsFromWire(name string, req remote.ChainResumeRequest) (relevo.ResumeOptions, string) {
-	opts := relevo.ResumeOptions{Name: name}
-	params := map[string]string{}
-	if req.MaxCorrections != nil {
-		if *req.MaxCorrections < 0 || *req.MaxCorrections > maxChainCorrections {
-			return opts, fmt.Sprintf("max_corrections must be 0 to %d", maxChainCorrections)
-		}
-		opts.MaxCorrections = req.MaxCorrections
-		params["max_corrections"] = strconv.Itoa(*req.MaxCorrections)
-	}
-	if req.Regate != nil {
-		if *req.Regate < 0 || *req.Regate > maxChainRegate {
-			return opts, fmt.Sprintf("regate must be 0 to %d", maxChainRegate)
-		}
-		opts.Regate = req.Regate
-		params["regate"] = strconv.Itoa(*req.Regate)
-	}
-	opts.ReviewerActor = req.ReviewerActor
-	opts.PlannerActor = req.PlannerActor
-	opts.SecurityActor = req.SecurityActor
-	opts.Security = req.Security
-	for param, value := range map[string]string{
-		"reviewer": req.ReviewerActor, "planner": req.PlannerActor, "security": req.SecurityActor,
-	} {
-		if value != "" {
-			params[param] = value
-		}
-	}
-	if req.Security != nil {
-		params["scan"] = strconv.FormatBool(*req.Security)
-	}
-	if req.Gate != nil {
-		if *req.Gate == "" {
-			opts.NoGate = true
-		} else {
-			opts.Gate = *req.Gate
-		}
-		params["gate"] = *req.Gate
-	}
-	maps.Copy(params, req.Params)
-	// From reaches the engine's own resume, which enters that step.
-	opts.From = req.From
-	if len(params) > 0 {
-		opts.Params = params
-	}
-	return opts, ""
 }

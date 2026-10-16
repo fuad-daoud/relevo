@@ -64,6 +64,28 @@ func statusScope(mastermindRef string, allMasterMinds, allDone, named bool, rt r
 	return sc, rec, nil
 }
 
+// statusScopeOrNone is statusScope on a machine that may have no MasterMind
+// yet. With none registered and none named, nothing is bound to any of them,
+// so the empty scope (and a nil record) is the true answer, not a refusal: it
+// is often a newcomer's first command.
+func statusScopeOrNone(mastermindRef string, allMasterMinds, allDone, named bool, rt relevo.Runtime) (relevo.Scope, *mastermind.Record, error) {
+	sc, rec, err := statusScope(mastermindRef, allMasterMinds, allDone, named, rt)
+	if err != nil && mastermindRef == "" && noMasterMinds(rt) {
+		return relevo.Scope{All: allDone, Named: named}, nil, nil
+	}
+	return sc, rec, err
+}
+
+// noMasterMinds reports whether the registry holds no record at all; a
+// registry that cannot answer is not empty.
+func noMasterMinds(rt relevo.Runtime) bool {
+	if rt.MasterMinds == nil {
+		return false
+	}
+	recs, err := rt.MasterMinds.List()
+	return err == nil && len(recs) == 0
+}
+
 // statusFlagValues holds the pointers status parses into.
 type statusFlagValues struct {
 	all            *bool
@@ -135,10 +157,20 @@ func cmdStatus(args []string) error {
 
 	// A name that resolves to a chain -- including the chain's own builder
 	// member, `<n>` -- is the chain: `status <chain>` lists the chain row with
-	// its members under it. The chain lookup runs before filterReport, so a
-	// chain name never comes back as a missing binding.
+	// its members under it. A name that is one of any chain's members is the
+	// chain too: the waiting notice names those members -- a done chain's
+	// stranded rows among them -- and every status surface collapses members,
+	// so answering through the chain is what makes the notice's own hint true.
+	// The lookups run before filterReport, so a chain name and a member name
+	// never come back as a missing binding.
 	isChain := target != "" && statusChain(rt, target)
-	sc, _, err := statusScope(*v.mastermind, *v.allMasterMinds, *all, target != "", rt)
+	if target != "" && !isChain {
+		if c, memberOf := relevo.MemberChain(rt.Store.ChainByMember, target); memberOf {
+			isChain = true
+			target = c.Name
+		}
+	}
+	sc, _, err := statusScopeOrNone(*v.mastermind, *v.allMasterMinds, *all, target != "", rt)
 	if err != nil {
 		return err
 	}
@@ -256,6 +288,15 @@ func runStatusline(asJSON bool, mastermindRef string) error {
 		return nil
 	}
 	sc, rec, err := statusScope(mastermindRef, false, false, false, rt)
+	if err != nil && !asJSON && mastermindRef == "" && noMasterMinds(rt) {
+		// Before any MasterMind registers, the line says so: it is drawn under
+		// a newcomer's first prompt, and neither an error nor an empty line
+		// (which reads like a healthy session) is the truth. The document
+		// keeps refusing, since a null mastermind over no rows is that same
+		// healthy-looking answer.
+		fmt.Println("relevo: no MasterMind yet")
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -319,7 +360,7 @@ func runStatusChains(asJSON bool, mastermindRef string, allMasterMinds bool) err
 			fmt.Fprintf(os.Stderr, "relevo: sync remote bindings: %v\n", serr)
 		}
 	}
-	sc, _, err := statusScope(mastermindRef, allMasterMinds, false, false, rt)
+	sc, _, err := statusScopeOrNone(mastermindRef, allMasterMinds, false, false, rt)
 	if err != nil {
 		return err
 	}

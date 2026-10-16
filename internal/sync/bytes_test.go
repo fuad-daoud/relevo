@@ -37,7 +37,7 @@ func TestBytesAccumulateAcrossWorkerRestart(t *testing.T) {
 		{TursoSent: 1500, TursoReceived: 300, R2Put: 80, R2Get: 5},
 		{TursoSent: 100, TursoReceived: 40, R2Put: 7, R2Get: 3},
 	}}
-	runner := &Runner{Client: client, Local: local, Timeout: time.Second}
+	runner := &Runner{Client: client, Local: local}
 	for range 3 {
 		if res := runner.SyncOnce(context.Background(), shared); res.Err != nil {
 			t.Fatalf("SyncOnce: %v", res.Err)
@@ -64,7 +64,7 @@ func TestOneShotMovementCountedOnceAcrossTheNextSteadyAttempt(t *testing.T) {
 		{TursoSent: 1000, TursoReceived: 200, R2Put: 50, R2Get: 5},
 		{TursoSent: 1500, TursoReceived: 300, R2Put: 80, R2Get: 5},
 	}}
-	runner := &Runner{Client: client, Local: local, Timeout: time.Second}
+	runner := &Runner{Client: client, Local: local}
 
 	runner.CountMoved(context.Background(), NewStopTransport(client))
 	got, err := ReadBytes(local, time.Now())

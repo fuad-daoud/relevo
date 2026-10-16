@@ -105,6 +105,28 @@ func TestOpencodeDefinitionsDeclareMode(t *testing.T) {
 	}
 }
 
+// TestOpencodeDefinitionsPinNoModel pins that no shipped opencode definition
+// names a model: a pin would route every user's subagent to one provider
+// account, and an unpinned one runs on the session's own model.
+func TestOpencodeDefinitionsPinNoModel(t *testing.T) {
+	h, ok := Lookup("opencode")
+	if !ok {
+		t.Fatal("no opencode harness")
+	}
+	for _, r := range h.Roles {
+		if r.Doc == "" {
+			continue
+		}
+		doc, err := AgentDoc(r.Name, "opencode")
+		if err != nil {
+			t.Fatalf("AgentDoc(%s): %v", r.Name, err)
+		}
+		if model := PinnedModel("opencode", doc); model != "" {
+			t.Errorf("%s.opencode pins model %q", r.Name, model)
+		}
+	}
+}
+
 func TestAgentDocCodexIsToml(t *testing.T) {
 	const marker = "developer_instructions = '''\n"
 	for _, role := range []string{"plan-executor", "librarian", "researcher", "reviewer", "architect"} {
@@ -149,10 +171,11 @@ func checkCodexPlanExecutor(t *testing.T, s string) {
 
 func checkCodexResearcher(t *testing.T, s string) {
 	t.Helper()
-	for _, want := range []string{`model = "gpt-5.6-luna"`, `model_reasoning_effort = "medium"`} {
-		if !strings.Contains(s, want) {
-			t.Errorf("researcher doc must contain %q", want)
-		}
+	if !strings.Contains(s, `model_reasoning_effort = "medium"`) {
+		t.Errorf("researcher doc must set medium effort")
+	}
+	if model := PinnedModel("codex", []byte(s)); model != "" {
+		t.Errorf("researcher doc pins model %q; it must run on the candidate's model", model)
 	}
 }
 

@@ -173,7 +173,9 @@ func TestWriteReaderSummaryKeepsAChainFileBlockWhenTheMessageHasNone(t *testing.
 const plainReaderBlock = "# Findings\n\nThe code is sound.\n\n```relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n```\n"
 
 // writeReaderMessages writes a claude stream whose assistant texts are texts,
-// in order, so a test can put a recap after a block-carrying message.
+// in order, so a test can put a recap after a block-carrying message. The last
+// result event a one-shot claude run always streams carries the last text, so
+// everything that reads the stream reads the message it always read.
 func writeReaderMessages(t *testing.T, rt Runtime, name string, round int, texts ...string) {
 	t.Helper()
 	var stream strings.Builder
@@ -190,6 +192,12 @@ func writeReaderMessages(t *testing.T, rt Runtime, name string, round int, texts
 		stream.Write(raw)
 		stream.WriteByte('\n')
 	}
+	end, err := json.Marshal(map[string]any{"type": "result", "result": texts[len(texts)-1]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream.Write(end)
+	stream.WriteByte('\n')
 	path := rt.Store.RunnerStreamPath(name, round)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)

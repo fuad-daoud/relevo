@@ -432,3 +432,31 @@ func TestCreateAfterPruneRecreatesTheRepo(t *testing.T) {
 		t.Fatalf("binding BareRepo = %v, want %s", b.Serve, bare)
 	}
 }
+
+func TestTickPruneKeepsAnOwnerDirAPendingBindPinned(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	ownerDir, ok := env.id.Dir()
+	if !ok {
+		t.Fatal("client id has no owner dir")
+	}
+	bare, _ := seedServedBinding(t, env, "archived-binding", store.ServeFacts{RepoID: env.repoID})
+	if _, err := relevo.Unbind(ctx, env.runtime(t), "archived-binding", true); err != nil {
+		t.Fatalf("unbind: %v", err)
+	}
+	ownerRepoDir := filepath.Join(env.srv.cfg.Root, "repos", ownerDir)
+	unpin := pinBareRepo(filepath.Join(ownerRepoDir, "not-yet-created.git"))
+	defer unpin()
+
+	if err := env.srv.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if _, err := os.Stat(bare); !os.IsNotExist(err) {
+		t.Errorf("bare repo stat err = %v, want the unused repo pruned", err)
+	}
+	if _, err := os.Stat(ownerRepoDir); err != nil {
+		t.Errorf("owner repo dir %s stat err = %v, want it kept for the pinned bind", ownerRepoDir, err)
+	}
+}

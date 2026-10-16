@@ -35,10 +35,15 @@ type Unread = { binding: string; round: number; kind: string; state: string }
 type Ctx = {
   io: Io
   env: Record<string, string>
+  // False only when the start event names a headless session (`claude -p`):
+  // there the mod claims nothing and runs no push child, because a headless
+  // run leaves no transcript the child could push into.
+  interactive: boolean
   busy: boolean
   unread: Unread[]
   delivered: Set<string>
   prev?: StatusDoc
+  closing: Set<string>
 }
 
 const statusDoc = atom({ plugin: 'relevo', key: 'status' } as const, null)
@@ -57,6 +62,8 @@ const DONE_GREEN = 'success'
 const AMBER_TINT = '#2a2212'
 const TEAL_TINT = '#12282d'
 const RULE = 'promptBorder'
+// `[ done ]` and the gap before it.
+const DONE_W = 9
 // Restart delay doubles from the floor to the cap; a child that ran for
 // STABLE_MS counts as healthy and drops the delay back to the floor.
 const BACKOFF_MIN_MS = 1_000
@@ -156,6 +163,45 @@ function startPoller(ctx: Ctx): void {
   ctx.io.every(POLL_MS, () => {
     void tick()
   })
+}
+
+type DoneDoc = { released?: boolean; kept_reason?: string }
+
+function doneText(name: string, stdout: string): string {
+  try {
+    const d = JSON.parse(stdout) as DoneDoc
+    if (d.released) return `relevo: ${name} done, worktree released`
+    if (d.kept_reason) return `relevo: ${name} done, worktree kept: ${d.kept_reason}`
+  } catch {
+    // an unreadable document still means done succeeded
+  }
+  return `relevo: ${name} done`
+}
+
+function refusalText(name: string, stderr: string): string {
+  try {
+    const msg = (JSON.parse(stderr) as { error?: { message?: string } }).error?.message
+    if (msg) return `relevo: done ${name} refused: ${msg}`
+  } catch {
+    // not the error document
+  }
+  return `relevo: done ${name} failed${stderr.trim() ? `: ${stderr.trim()}` : ''}`
+}
+
+// Polls again at once so the row leaves the inbox without waiting for the next tick.
+async function markDone(ctx: Ctx, name: string): Promise<void> {
+  if (ctx.closing.has(name)) return
+  ctx.closing.add(name)
+  try {
+    const r = await ctx.io.run(['relevo', 'done', name, '--json'], { env: ctx.env })
+    ctx.io.toast(r.exitCode === 0 ? doneText(name, r.stdout) : refusalText(name, r.stderr))
+    const doc = await fetchDoc(ctx.io, ctx.env)
+    if (doc !== undefined) await observe(ctx, doc)
+  } catch (err) {
+    ctx.io.toast(`relevo: done ${name} failed: ${String(err)}`)
+  } finally {
+    ctx.closing.delete(name)
+  }
 }
 
 // A refusal is a returned drop/deny, never a throw; both count as not delivered.
@@ -273,7 +319,11 @@ async function start(ctx: Ctx): Promise<void> {
       ctx.env = { ...sessionEnv, RELEVO_MASTERMIND: doc.mastermind.id }
       await observe(ctx, doc)
       startPoller(ctx)
-      void supervise(ctx)
+      // The push child claims the round the moment it starts, and the claim is
+      // what makes later waits stop delivering. A headless session has no
+      // transcript to push into, so it starts no child and stays claim-free;
+      // its waits deliver the report themselves.
+      if (ctx.interactive) void supervise(ctx)
     } finally {
       resolving = false
     }
@@ -289,6 +339,11 @@ async function start(ctx: Ctx): Promise<void> {
 // `needs_you` false, and `tone` is the one signal the status line itself draws.
 function isWaiting(r: StatusRow): boolean {
   return r.tone === 'needs' || r.tone === 'report'
+}
+
+// A round that reported is finished; a question waits on an answer instead.
+function isFinished(r: StatusRow): boolean {
+  return r.tone === 'report' && !r.status.startsWith('QUESTION')
 }
 
 function parseTs(ts: unknown): number {
@@ -403,7 +458,15 @@ function toastTexts(prev: StatusDoc, cur: StatusDoc): string[] {
 }
 
 export const register: Register = (on) => {
-  const ctx: Ctx = { io: undefined as unknown as Io, env: {}, busy: false, unread: [], delivered: new Set() }
+  const ctx: Ctx = {
+    io: undefined as unknown as Io,
+    env: {},
+    interactive: true,
+    busy: false,
+    unread: [],
+    delivered: new Set(),
+    closing: new Set(),
+  }
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -420,6 +483,9 @@ export const register: Register = (on) => {
       toast: (text) => $.ui.toast(text),
     }
     ctx.env = { CLAUDE_CODE_SESSION_ID: await $.session.id() }
+    // Back-compat: only an explicit false flips a session headless, so an
+    // engine that leaves the field out keeps today's push behaviour.
+    ctx.interactive = (e as unknown as { isInteractive?: boolean }).isInteractive !== false
     void start(ctx)
     return started
   })
@@ -486,18 +552,30 @@ export const register: Register = (on) => {
       const tint = r.tone === 'needs' ? AMBER_TINT : TEAL_TINT
       const d = nextDigit()
       const nx = r.next
+      const finished = isFinished(r)
+      const room = finished ? Math.max(2, moveRoom - DONE_W) : moveRoom
       // A non-plain Button draws `[ label ]` and not its hotkey, so the muted
       // digit drawn beside it is the only one on screen.
       const move = nx
         ? h(Button, {
             key: `n${r.name}`,
             hotkey: d,
-            label: fit(`→ ${nx.label}`, moveRoom),
+            label: fit(`→ ${nx.label}`, room),
             onPress: () => {
               void $.prompt.fill({ text: nx.text })
             },
           })
         : h(Button, { key: `b${r.name}`, hotkey: d, label: '→ show', onPress: show(r.name) })
+      // No hotkey: a stray digit must never close a binding.
+      const done = finished
+        ? h(Button, {
+            key: `d${r.name}`,
+            label: 'done',
+            onPress: () => {
+              void markDone(ctx, r.name)
+            },
+          })
+        : null
       return h(
         Box,
         { key: `i${r.name}`, flexDirection: 'row', columnGap: 2, backgroundColor: tint, paddingX: 1, marginX: 1 },
@@ -505,7 +583,7 @@ export const register: Register = (on) => {
         h(Box, { width: headW, flexShrink: 0 }, h(Text, { color: tone, bold: true, wrap: 'truncate-end' }, heads[i])),
         h(Box, { width: stateW, flexShrink: 0 }, h(Text, { color: tone, wrap: 'truncate-end' }, states[i])),
         h(Box, { flexGrow: 1, flexShrink: 1, minWidth: 0 }, h(Text, { color: r.tone === 'needs' ? undefined : DIM, wrap: 'truncate-end' }, detail(r))),
-        h(Box, { flexShrink: 0 }, move),
+        h(Box, { flexShrink: 0, flexDirection: 'row', columnGap: 1 }, move, done),
       )
     })
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -25,6 +26,21 @@ func (f *fakeRunner) Load(p string) error { return f.rec("load " + p) }
 func (f *fakeRunner) Unload(p string) error {
 	_ = f.rec("unload " + p)
 	return f.unloadErr
+}
+
+// stubLookPath answers lookPath from a map, and restores the real lookup when
+// the test ends: the rendered unit's PATH must not depend on what this shell
+// happens to have. A binary absent from the map is not found.
+func stubLookPath(t *testing.T, paths map[string]string) {
+	t.Helper()
+	old := lookPath
+	lookPath = func(binary string) (string, error) {
+		if p, ok := paths[binary]; ok {
+			return p, nil
+		}
+		return "", exec.ErrNotFound
+	}
+	t.Cleanup(func() { lookPath = old })
 }
 
 const (
@@ -71,6 +87,7 @@ func TestServiceUnitRefreshLeavesAnAbsentUnitAlone(t *testing.T) {
 
 func TestServiceUnitRefreshRewritesAStaleUnitAndReloads(t *testing.T) {
 	u := linuxSpec(t)
+	stubLookPath(t, nil)
 	putUnit(t, u, oldUnit)
 	r := &fakeRunner{}
 	act, err := refreshServiceUnit(u, r, isOld)
@@ -78,8 +95,11 @@ func TestServiceUnitRefreshRewritesAStaleUnitAndReloads(t *testing.T) {
 		t.Fatalf("refresh = %q, %v; want stale", act, err)
 	}
 	got, _ := os.ReadFile(u.path)
-	if !bytes.Equal(got, serviceunit.ShippedService()) {
-		t.Error("stale unit was not rewritten to the shipped bytes")
+	if !bytes.Equal(got, u.rendered()) {
+		t.Error("stale unit was not rewritten to this machine's rendered unit")
+	}
+	if bytes.Contains(got, []byte("@BIN@")) || bytes.Contains(got, []byte("@PATH@")) {
+		t.Error("rewritten unit kept a placeholder")
 	}
 	if strings.Join(r.calls, ",") != "daemon-reload" {
 		t.Errorf("calls = %v, want only daemon-reload (never a restart)", r.calls)
@@ -136,6 +156,7 @@ func TestServiceUnitRefreshOnDarwinWritesWithoutReload(t *testing.T) {
 
 func TestServiceInstallWritesEnablesAndRestarts(t *testing.T) {
 	u := linuxSpec(t)
+	stubLookPath(t, nil)
 	r := &fakeRunner{}
 	doc, err := installServiceUnit(u, r, false)
 	if err != nil {
@@ -147,13 +168,14 @@ func TestServiceInstallWritesEnablesAndRestarts(t *testing.T) {
 	if got := strings.Join(r.calls, ","); got != "daemon-reload,enable,restart" {
 		t.Errorf("calls = %s", got)
 	}
-	if got, _ := os.ReadFile(u.path); !bytes.Equal(got, serviceunit.ShippedService()) {
-		t.Error("unit not written")
+	if got, _ := os.ReadFile(u.path); !bytes.Equal(got, u.rendered()) {
+		t.Error("unit not written to the rendered bytes")
 	}
 }
 
 func TestServiceInstallRefusesAnEditedUnitWithoutForce(t *testing.T) {
 	u := linuxSpec(t)
+	stubLookPath(t, nil)
 	putUnit(t, u, editedUnit)
 	r := &fakeRunner{}
 	_, err := installServiceUnit(u, r, false)
@@ -167,8 +189,8 @@ func TestServiceInstallRefusesAnEditedUnitWithoutForce(t *testing.T) {
 	if _, err := installServiceUnit(u, r, true); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := os.ReadFile(u.path); !bytes.Equal(got, serviceunit.ShippedService()) {
-		t.Error("--force did not replace the edited unit")
+	if got, _ := os.ReadFile(u.path); !bytes.Equal(got, u.rendered()) {
+		t.Error("--force did not replace the edited unit with the rendered bytes")
 	}
 }
 
@@ -209,5 +231,92 @@ func TestServiceUninstallRemovesTheUnitOnly(t *testing.T) {
 	again, err := uninstallServiceUnit(u, r)
 	if err != nil || again.Outcome != "absent" {
 		t.Errorf("second uninstall = %+v, %v; want absent", again, err)
+	}
+}
+
+// TestServicePATHAssemblyOrderAndDedup pins the assembled PATH's shape: the
+// fixed list stays first, harness homes follow in harness.All() order, a
+// home already covered is not appended, and one home already in the fixed
+// list is not appended either.
+func TestServicePATHAssemblyOrderAndDedup(t *testing.T) {
+	home := t.TempDir()
+	fixed := "%h/.local/bin:%h/go/bin:/usr/local/bin:/usr/bin:/bin"
+	agyDir := filepath.Join(home, "gemini-home", "bin")
+	claudeDir := filepath.Join(home, "npm-global", "bin")
+	stubLookPath(t, map[string]string{
+		"agy":      filepath.Join(agyDir, "agy"),
+		"claude":   filepath.Join(claudeDir, "claude"),
+		"codex":    filepath.Join(claudeDir, "codex"),
+		"opencode": filepath.Join(home, ".local", "bin", "opencode"),
+	})
+	want := fixed + ":" + agyDir + ":" + claudeDir
+	if got := servicePath(home); got != want {
+		t.Errorf("servicePath =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// TestServiceInstallRendersCurrentBinary pins that an install writes a unit
+// carrying this machine's binary and every harness home, and that a re-read
+// of the written bytes decides current, so installs and later refreshes
+// agree on what the unit is.
+func TestServiceInstallRendersCurrentBinary(t *testing.T) {
+	home := t.TempDir()
+	u := newUnitSpec("linux", filepath.Join(home, "config"), home, filepath.Join(home, ".local", "bin", "relevo"))
+	npmDir := filepath.Join(home, "npm-global", "bin")
+	bunDir := filepath.Join(home, ".bun", "bin")
+	stubLookPath(t, map[string]string{
+		"agy":      filepath.Join(home, ".local", "bin", "agy"),
+		"claude":   filepath.Join(npmDir, "claude"),
+		"opencode": filepath.Join(npmDir, "opencode"),
+		"codex":    filepath.Join(bunDir, "codex"),
+	})
+	r := &fakeRunner{}
+	if _, err := installServiceUnit(u, r, false); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(u.path)
+	for _, want := range []string{
+		"ExecStart=" + u.bin,
+		"Environment=PATH=%h/.local/bin:%h/go/bin:/usr/local/bin:/usr/bin:/bin:",
+		npmDir,
+		bunDir,
+	} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("written unit lacks %q:\n%s", want, got)
+		}
+	}
+	// The installed binary home is inside the fixed list already, so the agy
+	// lookup must have added nothing for it: exactly one .local/bin mention,
+	// the ExecStart.
+	if n := strings.Count(string(got), filepath.Join(home, ".local", "bin")); n != 1 {
+		t.Errorf("the binary home appeared %d times, want once", n)
+	}
+	// claude and opencode share the npm home; dedup keeps it once.
+	if n := strings.Count(string(got), npmDir); n != 1 {
+		t.Errorf("the npm home appeared %d times, want once", n)
+	}
+	act, err := u.decide(isOld)
+	if err != nil || act != serviceunit.ActionCurrent {
+		t.Errorf("re-read of the installed unit = %q, %v; want current", act, err)
+	}
+}
+
+func TestServiceVerbsRefuseInsideAnEnvSandbox(t *testing.T) {
+	t.Setenv("RELEVO_SANDBOX", "sb")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	r := &fakeRunner{}
+	old := newServiceRunner
+	newServiceRunner = func() serviceunit.Runner { return r }
+	t.Cleanup(func() { newServiceRunner = old })
+
+	for _, verb := range []string{"install", "uninstall"} {
+		err := run([]string{"service", verb})
+		var ce *cliError
+		if !errors.As(err, &ce) || ce.code != codeRefused {
+			t.Errorf("service %s in a sandbox: err = %v, want refused", verb, err)
+		}
+	}
+	if len(r.calls) != 0 {
+		t.Errorf("init-system calls = %v, want none from a sandbox", r.calls)
 	}
 }
