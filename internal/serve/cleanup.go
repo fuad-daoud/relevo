@@ -168,7 +168,8 @@ func unusedRepos(repos []string, live []store.Binding) []string {
 
 // pruneUnusedRepos deletes every bare repo no live binding references. It runs
 // under the tick's admitMu hold, so the live set it reads is the post-collect
-// one, and it takes each owner's own store lock in turn.
+// one. Each owner's pass runs under the bare-repo pin mutex; see
+// pruneOwnerRepos for why the pass and the pins share that mutex.
 func (s *Server) pruneUnusedRepos(ctx context.Context) int {
 	reposDir := filepath.Join(s.cfg.Root, "repos")
 	entries, err := os.ReadDir(reposDir)
@@ -190,38 +191,58 @@ func (s *Server) pruneUnusedRepos(ctx context.Context) int {
 
 		ownerRepoDir := filepath.Join(reposDir, entry.Name())
 		ownerBindingsDir := filepath.Join(s.cfg.Root, "bindings", entry.Name())
-		rt := s.runtimeAt(ownerBindingsDir)
-
-		live, err := rt.Store.List()
-		if err != nil {
-			slog.Warn("prune unused repos: list owner bindings failed", "owner", id, "err", err)
-			continue
-		}
-
-		repoEntries, err := os.ReadDir(ownerRepoDir)
-		if err != nil {
-			slog.Warn("prune unused repos: read owner repo dir failed", "owner", id, "err", err)
-			continue
-		}
-
-		var ownerRepos []string
-		for _, re := range repoEntries {
-			if re.IsDir() && strings.HasSuffix(re.Name(), ".git") {
-				ownerRepos = append(ownerRepos, filepath.Join(ownerRepoDir, re.Name()))
-			}
-		}
-
-		for _, path := range unusedRepos(ownerRepos, live) {
-			if err := os.RemoveAll(path); err != nil {
-				slog.Warn("prune unused bare repo failed", "owner", id, "repo", filepath.Base(path), "err", err)
-				continue
-			}
-			slog.Info("pruned unused bare repo", "owner", id, "repo", filepath.Base(path))
-			pruned++
-		}
-
-		_ = os.Remove(ownerRepoDir)
+		pruned += s.pruneOwnerRepos(id, ownerRepoDir, s.runtimeAt(ownerBindingsDir))
 	}
 
+	return pruned
+}
+
+// pruneOwnerRepos is one owner's prune pass: list the rows, apply unusedRepos,
+// spare every pinned path, delete the rest, and remove the owner's repo dir
+// when it emptied. It holds the bare-repo pin mutex across the whole pass, so a
+// bind cannot slip in between the row read and the delete: a bind pins the bare
+// repo before it creates or absorbs into it and unpins only after the row that
+// references it is saved, so the pass sees either the pin or the row -- never
+// neither -- and a repo a bind is mid-way into survives even though no row
+// names it yet. The mutex is a leaf: nothing below it waits on another server
+// lock, so a pin never queues a bind behind a round start and a pass never
+// queues one behind an owner section.
+func (s *Server) pruneOwnerRepos(id remote.ClientID, ownerRepoDir string, rt relevo.Runtime) int {
+	barePins.Lock()
+	defer barePins.Unlock()
+
+	live, err := rt.Store.List()
+	if err != nil {
+		slog.Warn("prune unused repos: list owner bindings failed", "owner", id, "err", err)
+		return 0
+	}
+
+	repoEntries, err := os.ReadDir(ownerRepoDir)
+	if err != nil {
+		slog.Warn("prune unused repos: read owner repo dir failed", "owner", id, "err", err)
+		return 0
+	}
+
+	var ownerRepos []string
+	for _, re := range repoEntries {
+		if re.IsDir() && strings.HasSuffix(re.Name(), ".git") {
+			ownerRepos = append(ownerRepos, filepath.Join(ownerRepoDir, re.Name()))
+		}
+	}
+
+	pruned := 0
+	for _, path := range unusedRepos(ownerRepos, live) {
+		if pinnedLocked(path) {
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			slog.Warn("prune unused bare repo failed", "owner", id, "repo", filepath.Base(path), "err", err)
+			continue
+		}
+		slog.Info("pruned unused bare repo", "owner", id, "repo", filepath.Base(path))
+		pruned++
+	}
+
+	_ = os.Remove(ownerRepoDir)
 	return pruned
 }

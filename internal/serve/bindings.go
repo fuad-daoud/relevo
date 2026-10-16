@@ -103,9 +103,12 @@ func parseCreateRequest(r *http.Request) (remote.CreateBindingRequest, string) {
 	return req, validSubdir(req.Subdir)
 }
 
-// handleCreateBinding takes no server-wide lock: its own owner's store lock and
-// the git work below are the only exclusion it needs, and holding s.mu across
-// either would block every other owner's poll.
+// handleCreateBinding takes no server-wide lock: its own owner's store lock
+// and the git work below are the only exclusion it needs, and holding s.mu
+// across either would block every other owner's poll. The bare repo the create
+// makes is pinned from before InitBare until this handler returns, so the
+// tick's prune cannot delete it in the window between the init and the row
+// save (the pin's release is deferred, which covers the error paths too).
 func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 	req, bad := parseCreateRequest(r)
 	if bad != "" {
@@ -138,10 +141,17 @@ func (s *Server) handleCreateBinding(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	b, ok := s.buildServedBinding(w, r.Context(), rt, caller, req)
+	b, unpin, ok := s.buildServedBinding(w, r.Context(), rt, caller, req)
 	if !ok {
 		return
 	}
+	if bindCreateSeam != nil {
+		bindCreateSeam()
+	}
+	// The pin releases when this handler returns: after the save below on the
+	// success path, and on every error path. The prune must see the pin or the
+	// saved row, never neither.
+	defer unpin()
 	// Check and save under the owner's own store lock, so two creates of one
 	// name cannot both pass: one 409s on the row the other just wrote. The lock
 	// is per-owner, so this never blocks a different owner's request.
@@ -220,36 +230,49 @@ func (s *Server) servedShape(w http.ResponseWriter, rt relevo.Runtime, reqRole, 
 	return shape, true
 }
 
+// bindCreateSeam parks a plain bind between InitBare and the row save when
+// non-nil. Nil in production; the prune-race tests set it to run the tick's
+// prune inside the pin-to-row-save window deterministically.
+var bindCreateSeam func()
+
 // buildServedBinding resolves the request's role against this server's own
-// registry -- the client's roles.json never travels -- creates the bare repo and
-// picks the role's candidate and tier. It writes the failure itself and returns
-// ok=false, so a refused create leaves no bare repo behind.
-func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, rt relevo.Runtime, caller remote.ClientID, req remote.CreateBindingRequest) (store.Binding, bool) {
+// registry -- the client's roles.json never travels -- creates the bare repo
+// and picks the role's candidate and tier. It writes the failure itself and
+// returns ok=false, so a refused create leaves no bare repo behind. The bare
+// repo comes back pinned: the caller releases the pin once the row that
+// references it is saved, because between InitBare and that save no row names
+// the repo and the tick's prune would otherwise delete it.
+func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, rt relevo.Runtime, caller remote.ClientID, req remote.CreateBindingRequest) (store.Binding, func(), bool) {
 	role := relevo.NormRole(req.Role)
 	shape, ok := s.servedShape(w, rt, req.Role, req.Gate)
 	if !ok {
-		return store.Binding{}, false
+		return store.Binding{}, nil, false
 	}
 
 	repoRoot, err := s.repoRoot(caller)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
-		return store.Binding{}, false
+		return store.Binding{}, nil, false
 	}
 	bare := filepath.Join(repoRoot, req.RepoID+".git")
 	if !insideRoot(repoRoot, bare) {
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "repo_id escapes the owner's repo root")
-		return store.Binding{}, false
+		return store.Binding{}, nil, false
 	}
 	roleName := orText(role, "builder")
 	candidateToken, harnessKind, tier, ok := pickServedTier(w, rt, roleName, req.Candidate, req.Tier)
 	if !ok {
-		return store.Binding{}, false
+		return store.Binding{}, nil, false
 	}
 
+	// The pin goes on before the bare repo exists: between here and the row
+	// save in handleCreateBinding no row references it, and the pin is what
+	// keeps the tick's prune from deleting it inside that window.
+	unpin := pinBareRepo(bare)
 	if err := rt.Git.InitBare(ctx, bare); err != nil {
+		unpin()
 		writeErr(w, http.StatusInternalServerError, "", err.Error())
-		return store.Binding{}, false
+		return store.Binding{}, nil, false
 	}
 
 	authorName, authorEmail := "", ""
@@ -288,7 +311,7 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 			AuthorName:  authorName,
 			AuthorEmail: authorEmail,
 		},
-	}, true
+	}, unpin, true
 }
 
 func (s *Server) handleListBindings(w http.ResponseWriter, r *http.Request) {
@@ -520,47 +543,6 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 		b = reloaded
 	}
 	entries, _ = rt.Store.ReadLog(name)
-	writeJSON(w, http.StatusOK, s.servedView(rt, b, entries))
-}
-
-func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
-	caller := callerOf(r)
-	name := r.PathValue("name")
-
-	b, rt, err := s.loadBinding(caller, name)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
-			return
-		}
-		writeErr(w, http.StatusInternalServerError, remote.CodeInvalid, "malformed client id")
-		return
-	}
-	if !Allowed(caller, "resume", b) {
-		writeErr(w, http.StatusNotFound, remote.CodeNotFound, "not found")
-		return
-	}
-
-	if b.State != store.StateDone {
-		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "binding is not done")
-		return
-	}
-	if b.Serve == nil || b.Serve.BareRepo == "" {
-		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "missing bare repo facts")
-		return
-	}
-
-	if err := rt.Git.CheckoutWorktree(r.Context(), b.Serve.BareRepo, b.Worktree, b.Branch); err != nil {
-		writeErr(w, http.StatusInternalServerError, "", err.Error())
-		return
-	}
-	b.State = store.StateActive
-	if err := rt.Store.Save(b); err != nil {
-		writeErr(w, http.StatusInternalServerError, "", err.Error())
-		return
-	}
-
-	entries, _ := rt.Store.ReadLog(name)
 	writeJSON(w, http.StatusOK, s.servedView(rt, b, entries))
 }
 
