@@ -102,3 +102,4 @@ func (r *retryTransport) KeyInit(context.Context, synclog.KeyMeta) (synclog.KeyM
 func (r *retryTransport) KeyRekey(context.Context, synclog.KeyRekeySpec) (synclog.KeyMeta, error) {
 	return synclog.KeyMeta{}, nil
 }
+func (r *retryTransport) PublishEpochCut(context.Context, synclog.EpochCut) error { return nil }

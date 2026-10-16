@@ -1255,3 +1255,5 @@ func TestReconcileVerbRefusesWithoutDryRun(t *testing.T) {
 		t.Errorf("the refusal opened %d handles, want none", f.opens)
 	}
 }
+
+func (h *hangingJoin) PublishEpochCut(context.Context, synclog.EpochCut) error { return nil }

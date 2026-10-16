@@ -171,23 +171,34 @@ func (i *Importer) anyKeyVerifies(check func([]byte) bool) bool {
 }
 
 // allowedKeys is the set of held keys, newest epoch first, the entry at seq
-// may verify under. The cut narrows the set from the top only: an entry above
-// an epoch-2 cut may not verify under key 1, however honestly signed it looks,
-// because the cut is exactly what says key 1 is dead above that point.
+// may verify under. An origin without a cut row is fenced by the default: its
+// entries must verify under the reader's newest key, which at an epoch-1
+// fleet is exactly the single-key verification of today and at a rekeyed one
+// is what keeps an old-key write attempting a log no reader has heard of a
+// cut for from re-blessing the dead key. The cut narrows the set from the top
+// only: an entry above an epoch-2 cut may not verify under key 1, however
+// honestly signed it looks, because the cut is exactly what says key 1 is
+// dead above that point.
 func (i *Importer) allowedKeys(origin string, seq int) [][]byte {
-	epochs := i.epochs()
-	cut, have := i.cuts[origin]
-	if have && seq > cut.Seq {
-		narrowed := epochs[:0]
-		for _, epoch := range epochs {
+	all := i.epochs()
+	cut, found := i.cuts[origin]
+	if !found {
+		if len(all) == 0 {
+			return nil
+		}
+		cut, found = EpochCut{Epoch: all[0], Seq: 0}, true
+	}
+	if found && seq > cut.Seq {
+		narrowed := all[:0]
+		for _, epoch := range all {
 			if epoch >= cut.Epoch {
 				narrowed = append(narrowed, epoch)
 			}
 		}
-		epochs = narrowed
+		all = narrowed
 	}
-	keys := make([][]byte, 0, len(epochs))
-	for _, epoch := range epochs {
+	keys := make([][]byte, 0, len(all))
+	for _, epoch := range all {
 		if key := i.keyOf(epoch); len(key) > 0 {
 			keys = append(keys, key)
 		}

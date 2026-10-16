@@ -195,6 +195,18 @@ func (c *Client) KeyRekey(ctx context.Context, spec synclog.KeyRekeySpec) (syncl
 	return keyMetaFromWire(*resp.KeyMeta), nil
 }
 
+// PublishEpochCut extends this installation's own cut to the one named, on the
+// worker side forward only and within the log.
+func (c *Client) PublishEpochCut(ctx context.Context, cut synclog.EpochCut) error {
+	_, err := c.call(syncworker.Request{
+		Verb: syncworker.VerbKeyCut,
+		Cut: &syncworker.EpochCut{
+			Epoch: cut.Epoch, Seq: cut.Seq, Tag: cut.Tag,
+		},
+	})
+	return err
+}
+
 // cutsToWire renders the cuts a key_rekey writes.
 func cutsToWire(cuts map[string]synclog.EpochCut) map[string]syncworker.EpochCut {
 	if len(cuts) == 0 {

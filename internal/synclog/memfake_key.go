@@ -108,6 +108,36 @@ func (m *memLog) checkCuts(cuts map[string]EpochCut) error {
 	return nil
 }
 
+// PublishEpochCut extends this handle's own origin's cut, forward only and
+// within the log: a cut naming a sequence the log does not hold vouches for
+// history nobody appended, and one below the stored row could only move the
+// fence over entries a reader has already been told to refuse above it. A
+// backward or inside-the-fence extension is refused rather than silently
+// ignored, so the caller learns its vouch did not land.
+func (m *MemTransport) PublishEpochCut(_ context.Context, cut EpochCut) error {
+	m.log.mu.Lock()
+	defer m.log.mu.Unlock()
+
+	head := m.log.latestSeq(m.origin)
+	if cut.Seq < 0 || cut.Seq > head {
+		return fmt.Errorf("synclog: cut extension: the log's head is %d, not the %d named", head, cut.Seq)
+	}
+	if have, ok := m.log.epochCut[m.origin]; ok {
+		if cut.Epoch == have.Epoch && cut.Seq == have.Seq {
+			return nil
+		}
+		if cut.Epoch < have.Epoch || (cut.Epoch == have.Epoch && cut.Seq < have.Seq) {
+			return fmt.Errorf("synclog: cut extension: the stored cut is (%d, %d), which the named (%d, %d) does not raise",
+				have.Epoch, have.Seq, cut.Epoch, cut.Seq)
+		}
+	}
+	if m.log.epochCut == nil {
+		m.log.epochCut = make(map[string]EpochCut)
+	}
+	m.log.epochCut[m.origin] = cut
+	return nil
+}
+
 // firstSigned is the index of the first entry carrying a MAC, or -1.
 func firstSigned(entries []Entry) int {
 	for n, e := range entries {

@@ -110,6 +110,18 @@ type LogTransport interface {
 	// with what the remote holds afterwards, which is another machine's when
 	// this one lost the race.
 	KeyRekey(ctx context.Context, spec KeyRekeySpec) (KeyMeta, error)
+
+	// PublishEpochCut extends this installation's own cut to the cut given,
+	// which must not name a sequence the log does not hold and must not move
+	// the stored one backwards. The origin is the transport's own, the reason
+	// CompactOwn has: only the machine that wrote a log may extend what its
+	// history is fenced at, and a cut extension is exactly how a machine
+	// vouches for the tail it appended before it learned of the rekey.
+	//
+	// The tag travels with the cut; the worker side checks only that the
+	// sequence is forward and within the log, because which key the tag
+	// verifies under is a question about the reader, not the writer.
+	PublishEpochCut(ctx context.Context, cut EpochCut) error
 }
 
 // KeyMeta is the passphrase material a transport holds: the KDF salt, the name

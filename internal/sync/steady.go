@@ -152,8 +152,11 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 		}
 		locked = true
 	}
-	imported, err := r.drainImport(ctx, shared, t)
-	// The settles run after the import, not inside it: what they render is the
+	// The extension that vouches for this origin's own confirmed tail goes
+	// out before the import reads the cuts, so this attempt's own reads see
+	// the fence this machine believes in.
+	PublishOwnCut(ctx, shared, r.Local, t)
+	imported, err := r.drainImport(ctx, shared, t) // The settles run after the import, not inside it: what they render is the
 	// config the import wrote, which is only true once it has committed.
 	SettleFiles(shared)
 	if err != nil {

@@ -147,6 +147,14 @@ func (s *StopTransport) KeyRekey(ctx context.Context, spec synclog.KeyRekeySpec)
 	return s.inner.KeyRekey(ctx, spec)
 }
 
+// PublishEpochCut extends this installation's own cut to the one named.
+func (s *StopTransport) PublishEpochCut(ctx context.Context, cut synclog.EpochCut) error {
+	if s.stopped.Load() {
+		return ErrStopped
+	}
+	return s.inner.PublishEpochCut(ctx, cut)
+}
+
 // The blob half, forwarded so a stopped export cannot upload a body the entry
 // naming it was never appended for. BlobStagingDir reports an empty folder for a
 // client that moves nothing, which is what tells the exporter there is no mover

@@ -88,6 +88,11 @@ const (
 	// origin's cut, all in one transaction that refuses a remote whose epoch
 	// or whose heads moved under the caller.
 	VerbKeyRekey Verb = "key_rekey"
+	// VerbKeyCut extends this worker's own origin's cut, forward only and
+	// within the log. It is how a machine that unlocked with the new
+	// passphrase -- or whose own head has grown past the cut it holds --
+	// vouches for the tail it appended before it learned of the rekey.
+	VerbKeyCut Verb = "key_cut"
 	// VerbShutdown ends the pipe after its reply.
 	VerbShutdown Verb = "shutdown"
 )
@@ -228,6 +233,11 @@ type Request struct {
 	// caller observed. The worker re-predicts them from the log inside its own
 	// transaction and refuses a caller whose observation is stale.
 	Cuts map[string]EpochCut `json:"cuts,omitempty"`
+	// Cut is the one cut a key_cut extends this worker's own origin to, named
+	// by the caller and tagged under the key the caller vouches with. The
+	// origin is the worker's from hello and the head is the log's own, so a
+	// caller cannot vouch for history the log does not hold.
+	Cut *EpochCut `json:"cut,omitempty"`
 	// BoundarySeq and BoundaryTag are the first signed sequence an export
 	// predicts for its origin and the tag that binds it to the key. The worker
 	// stores them only where the origin has no boundary yet.

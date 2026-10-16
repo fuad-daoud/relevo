@@ -126,3 +126,5 @@ func (u *unreadyTransport) KeyInit(context.Context, synclog.KeyMeta) (synclog.Ke
 func (u *unreadyTransport) KeyRekey(context.Context, synclog.KeyRekeySpec) (synclog.KeyMeta, error) {
 	return synclog.KeyMeta{}, nil
 }
+
+func (u *unreadyTransport) PublishEpochCut(context.Context, synclog.EpochCut) error { return nil }

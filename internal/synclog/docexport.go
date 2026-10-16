@@ -96,9 +96,11 @@ func (e *Exporter) exportDoc(doc SharedDoc, sig db.DocSignal) (int, error) {
 			return 0, err
 		}
 		e.sign(entries)
-		if _, err := e.appendTo(e.transport, e.origin, entries); err != nil {
+		written, err := e.appendTo(e.transport, e.origin, entries)
+		if err != nil {
 			return 0, fmt.Errorf("append: %w", err)
 		}
+		noteOwnHead(e.db.LocalOrSelf(), written)
 	}
 	if err := e.db.RecordDocExport(sig, writes); err != nil {
 		return len(entries), err

@@ -213,6 +213,13 @@ func (s *Supervisor) KeyRekey(ctx context.Context, spec synclog.KeyRekeySpec) (s
 	return out, err
 }
 
+// PublishEpochCut extends this installation's own cut to the one named.
+func (s *Supervisor) PublishEpochCut(ctx context.Context, cut synclog.EpochCut) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.drive("key_cut", func(c *Client) error { return c.PublishEpochCut(ctx, cut) })
+}
+
 // BlobStagingDir is the folder bodies are written to before they are put. It is
 // the supervisor's own rather than a caller's, so the exporter writing the file
 // and the worker reading it are named from one place.

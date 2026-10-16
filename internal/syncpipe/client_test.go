@@ -360,6 +360,8 @@ func (r refusingBackend) KeyRekey(syncworker.KeyRekeySpec) (syncworker.KeyMeta, 
 	return syncworker.KeyMeta{}, r.fail()
 }
 
+func (r refusingBackend) PublishEpochCut(syncworker.EpochCut) error { return r.fail() }
+
 func (r refusingBackend) Close() error { return nil }
 
 // verbsRefusingBackend answers the handshake and then refuses every verb with
@@ -400,6 +402,8 @@ func (r verbsRefusingBackend) KeyMeta() (syncworker.KeyMeta, error) {
 func (r verbsRefusingBackend) KeyInit(syncworker.KeyMeta) (syncworker.KeyMeta, error) {
 	return syncworker.KeyMeta{}, r.fail()
 }
+
+func (r verbsRefusingBackend) PublishEpochCut(syncworker.EpochCut) error { return nil }
 
 func (r verbsRefusingBackend) KeyRekey(syncworker.KeyRekeySpec) (syncworker.KeyMeta, error) {
 	return syncworker.KeyMeta{}, r.fail()
@@ -804,6 +808,8 @@ func (normalBackend) KeyInit(key syncworker.KeyMeta) (syncworker.KeyMeta, error)
 	heldKey.Present = true
 	return heldKey, nil
 }
+
+func (normalBackend) PublishEpochCut(syncworker.EpochCut) error { return nil }
 
 func (normalBackend) KeyRekey(syncworker.KeyRekeySpec) (syncworker.KeyMeta, error) {
 	return keyHeldForFake(), nil

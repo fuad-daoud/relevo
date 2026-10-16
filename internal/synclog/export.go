@@ -117,9 +117,11 @@ func (e *Exporter) ExportBatch() (ExportResult, error) {
 			return ExportResult{}, fmt.Errorf("synclog: export: upload: %w", err)
 		}
 		e.sign(entries)
-		if _, err := e.appendTo(e.transport, e.origin, entries); err != nil {
+		written, err := e.appendTo(e.transport, e.origin, entries)
+		if err != nil {
 			return ExportResult{}, fmt.Errorf("synclog: export: append: %w", err)
 		}
+		noteOwnHead(e.db.LocalOrSelf(), written)
 	}
 
 	// The cut is by sequence rather than by count, so a batch that held fewer
