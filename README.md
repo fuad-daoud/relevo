@@ -147,15 +147,18 @@ runs the plugin, the service and one real round:
    the relevo plugin into Claude Code (`plugin`), whether to run the daemon as
    a user service (`service`), and whether to run one small real round now
    (`smoke`). A question that cannot apply is dropped. Press Enter to take the
-   recommended pick; an ordered pick is typed as numbers, `1,3`, and a yes/no
-   takes `y`/`n`.
+   recommended pick; an ordered pick is typed as comma-separated numbers,
+   `1,3`, and a yes/no takes `y`/`n`. Each picked builder or planner model
+   that runs at more than one effort then gets its own effort question;
+   high is recommended.
 3. Run the literal fix commands the last line names, or run `relevo setup`
    again with every answer it named:
    ```
    relevo setup --answer builder=<...> --answer tier=<...>
    ```
    A value is the choice's own value; a candidate value is
-   `<harness>/<provider>/<model>`. Off a terminal (or under `--json`), a run
+   `<harness>/<provider>/<model>`, optionally `:<effort>` with one of the
+   choice's `efforts`. Off a terminal (or under `--json`), a run
    with questions still open prints a questions document to stdout and exits
    3; nothing is written. A repeated `--answer <id>=<value>` answers more than
    one question, and an answer for a question that no longer applies is
@@ -168,7 +171,10 @@ runs the plugin, the service and one real round:
    relevo@relevo`, installs the service unit as `relevo service install`
    does, and, on `smoke`, binds `setup-smoke` on a throwaway git repository
    under the state root and runs one real round that must leave `HELLO.md`
-   containing `relevo works`. A passing round unbinds and removes the
+   containing `relevo works`. While it runs, setup prints the builder holding
+   the round, each tool call it makes, and a switch when a usage limit hands
+   it to the next builder; a pass prints the file and the builder's commit.
+   A passing round unbinds and removes the
    throwaway state; a failed one keeps everything and prints
    `relevo show setup-smoke --round 1 --transcript`. Every step lands in the
    result document (`relevo setup --json`), exit 0 when all passed, 1 with
@@ -182,6 +188,18 @@ Running it again keeps what is configured: the stored builder, planner and
 tier values are the recommended picks, so Enter-Enter-Enter keeps them, and
 applying writes a new configuration revision the revision history
 (`relevo config log`) can roll back.
+
+### Setting up through an AI agent
+
+An agent asked to install relevo runs the same command, without a terminal
+to prompt on: `relevo setup --json` prints the probe and the open questions
+and exits 3 with nothing written. The agent shows each question to you with
+its recommended answer marked, never answers the `tier` question itself,
+and then runs the `next` command the document names with your answers
+filled in, e.g.
+`relevo setup --answer builder=codex/openai/gpt-6-luna:high --answer tier=yolo ...`.
+That run applies everything, smoke round included, and prints one result
+row per step.
 
 ### Scripted install
 

@@ -65,8 +65,8 @@ func TestEffortAnswersSpellEachHarnessesModel(t *testing.T) {
 }
 
 // TestEffortQuestionFollowsAPickedModel pins the follow-up: asked only for a
-// model with several efforts, recommending the pick's own effort, and its
-// answer moving the pick to that effort.
+// model with several efforts, recommending the pick's own effort else high,
+// and its answer moving the pick to that effort.
 func TestEffortQuestionFollowsAPickedModel(t *testing.T) {
 	inv := Inventory{Harnesses: []HarnessStatus{
 		status("agy", true, "gemini-3.8-flash-low", "gemini-3.8-flash-high", "gpt-oss-120b-medium"),
@@ -86,8 +86,8 @@ func TestEffortQuestionFollowsAPickedModel(t *testing.T) {
 	}
 
 	eq, ok = EffortQuestion(q, "claude/anthropic/sonnet")
-	if !ok || !reflect.DeepEqual(eq.Recommended, []string{"medium"}) {
-		t.Errorf("sonnet effort question = %+v, %v; want one recommending medium", eq, ok)
+	if !ok || !reflect.DeepEqual(eq.Recommended, []string{"high"}) {
+		t.Errorf("sonnet effort question = %+v, %v; want one recommending high", eq, ok)
 	}
 	for _, none := range []string{"agy/google/gpt-oss-120b-medium", "claude/anthropic/haiku"} {
 		if _, ok := EffortQuestion(q, none); ok {
@@ -120,5 +120,27 @@ func TestDerivedReaderReusesAPickedEffort(t *testing.T) {
 	}
 	if !reflect.DeepEqual(files.CandidateNames, []string{"sonnet", "opus"}) {
 		t.Errorf("candidates = %v, want sonnet and opus once each", files.CandidateNames)
+	}
+}
+
+// TestPlannerRecommendsHighEffort pins the planner's effort: a planner model
+// picked by number, carrying no effort, is recommended high -- not codex's
+// own medium default.
+func TestPlannerRecommendsHighEffort(t *testing.T) {
+	codex := status("codex", true, "gpt-6-luna", "gpt-5.6-terra")
+	codex.Efforts = map[string][]string{"gpt-6-luna": {"low", "medium", "high"}, "gpt-5.6-terra": {"low", "medium", "high"}}
+	codex.DefaultEffort = map[string]string{"gpt-6-luna": "medium", "gpt-5.6-terra": "medium"}
+	q := pickOf(t, Questions(Inventory{Harnesses: []HarnessStatus{codex}}, nil), "planner")
+	// gpt-6-luna is the recommended planner; gpt-5.6-terra is not, so it
+	// takes the high fallback rather than the recommendation's effort.
+	for _, picked := range []string{"codex/openai/gpt-6-luna", "codex/openai/gpt-5.6-terra"} {
+		eq, ok := EffortQuestion(q, picked)
+		if !ok || !reflect.DeepEqual(eq.Recommended, []string{"high"}) {
+			t.Errorf("%s effort question = %+v, %v; want high recommended", picked, eq.Recommended, ok)
+		}
+	}
+	claude := pickOf(t, Questions(Inventory{Harnesses: []HarnessStatus{status("claude", true, "sonnet", "opus")}}, nil), "planner")
+	if !reflect.DeepEqual(claude.Recommended, []string{"claude/anthropic/opus:high"}) {
+		t.Errorf("claude planner recommends %v, want opus at high", claude.Recommended)
 	}
 }

@@ -132,13 +132,13 @@ func builderQuestion(inv Inventory) Question {
 	offers := loggedChoices(inv)
 	recommended := []string{}
 	if cs := offers["codex"]; len(cs) > 0 {
-		recommended = append(recommended, atEffort(cs[0], "high"))
+		recommended = append(recommended, atEffort(cs[0], questionEffort))
 	}
 	if c, ok := pickChoice(offers["agy"], "gemini-", "flash"); ok {
-		recommended = append(recommended, atEffort(c, "high"))
+		recommended = append(recommended, atEffort(c, questionEffort))
 	}
 	if c, ok := pickChoice(offers["claude"], "sonnet", ""); ok {
-		recommended = append(recommended, atEffort(c, "high"))
+		recommended = append(recommended, atEffort(c, questionEffort))
 	}
 	return Question{
 		ID:          "builder",
@@ -149,9 +149,9 @@ func builderQuestion(inv Inventory) Question {
 	}
 }
 
-// plannerQuestion names who writes plans: claude opus at medium effort when
-// it is logged in, else codex's first listed model at high, else agy's first
-// claude-opus-* model else its first, at high.
+// plannerQuestion names who writes plans, at high effort: claude opus when
+// it is logged in, else codex's first listed model, else agy's first
+// claude-opus-* model else its first.
 func plannerQuestion(inv Inventory) Question {
 	offers := loggedChoices(inv)
 	q := Question{
@@ -160,11 +160,11 @@ func plannerQuestion(inv Inventory) Question {
 		Choices: candidateChoices(inv),
 	}
 	if c, ok := pickChoice(offers["claude"], "opus", ""); ok {
-		q.Recommended = []string{atEffort(c, "medium")}
+		q.Recommended = []string{atEffort(c, questionEffort)}
 	} else if cs := offers["codex"]; len(cs) > 0 {
-		q.Recommended = []string{atEffort(cs[0], "high")}
+		q.Recommended = []string{atEffort(cs[0], questionEffort)}
 	} else if c, ok := pickChoice(offers["agy"], "claude-opus-", ""); ok {
-		q.Recommended = []string{atEffort(c, "high")}
+		q.Recommended = []string{atEffort(c, questionEffort)}
 	}
 	return q
 }

@@ -161,16 +161,20 @@ func ChoiceFor(q Question, value string) (Choice, bool) {
 	return c, ok
 }
 
+// questionEffort is the effort builders and planners are recommended at.
+const questionEffort = "high"
+
 // EffortQuestion is the follow-up a picked model gets when it runs at more
 // than one effort: which one, recommending the effort the pick already
-// carries, else the model's own default.
+// carries, else the one a recommendation of the same model carries, else
+// high, else the model's own default.
 func EffortQuestion(q Question, picked string) (Question, bool) {
 	c, effort, ok := choiceAndEffort(q, picked)
 	if !ok || len(c.Efforts) < 2 {
 		return Question{}, false
 	}
 	if effort == "" {
-		effort = c.effort
+		effort = recommendedEffort(q, c)
 	}
 	if !slices.Contains(c.Efforts, effort) {
 		effort = preferredEffort(c.Efforts)
@@ -185,6 +189,18 @@ func EffortQuestion(q Question, picked string) (Question, bool) {
 		Recommended: []string{effort},
 		Choices:     choices,
 	}, true
+}
+
+func recommendedEffort(q Question, c Choice) string {
+	for _, r := range q.Recommended {
+		if rc, e, ok := choiceAndEffort(q, r); ok && rc.Value == c.Value && e != "" {
+			return e
+		}
+	}
+	if slices.Contains(c.Efforts, questionEffort) {
+		return questionEffort
+	}
+	return c.effort
 }
 
 // WithEffort is a picked value moved to one effort.

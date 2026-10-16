@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,14 +27,6 @@ const smokeName = "setup-smoke"
 // smokeBudget bounds the wait: a healthy machine closes the round in about a
 // minute, so ten of them means a builder that is stuck, not slow.
 const smokeBudget = 10 * time.Minute
-
-// smokeDotTick is how often the wait prints a dot, so a shell run shows the
-// budget is still being spent.
-var smokeDotTick = 10 * time.Second
-
-// smokeDotStream is where the dots go; stderr keeps stdout clean under
-// --json and in scripts whose stdout is parsed.
-var smokeDotStream io.Writer = os.Stderr
 
 // smokePlanText is the plan the smoke round sends. Its artifact means
 // "the builder ran and closed" and "the builder did the plan" are one check:
@@ -194,18 +185,19 @@ func setupRegisterMasterMind(rt relevo.Runtime) (mastermind.Record, error) {
 	return rec, err
 }
 
-// setupSmokeFinish waits with the dot line closed and proves the plan's
-// artifact: HELLO.md holding the line. A pass cleans the whole throwaway
-// state up; a failure keeps it for the transcript command the row names.
+// setupSmokeFinish waits with the feed running and proves the plan's
+// artifact: HELLO.md holding the line. A pass shows the file and the commit
+// the builder made, then cleans the whole throwaway state up; a failure
+// keeps it for the transcript command the row names.
 func setupSmokeFinish(ctx context.Context, rt relevo.Runtime, b store.Binding, round int, started time.Time, smokeDir string) (SetupStepDoc, error) {
-	stopDots := startSmokeDots()
+	stopFeed := startSmokeFeed(rt, smokeName, smokeDir)
 	name, res, err := relevo.Wait(ctx, rt, relevo.WaitOptions{
 		Names:    []string{smokeName},
 		Round:    round,
 		Timeout:  smokeBudget,
 		Interval: time.Second,
 	})
-	stopDots()
+	stopFeed()
 	next := fmt.Sprintf("relevo show %s --round %d --transcript", smokeName, round)
 	if err != nil {
 		return SetupStepDoc{}, failNext(codeInternal, next, "%v", err)
@@ -216,7 +208,7 @@ func setupSmokeFinish(ctx context.Context, rt relevo.Runtime, b store.Binding, r
 	if herr := smokeHelloOkay(b.CWD); herr != nil {
 		return SetupStepDoc{}, failNext(codeInternal, next, "%s", herr)
 	}
-	detail := smokePassDetail(rt, b, time.Since(started))
+	detail := smokePassDetail(rt, b, time.Since(started)) + smokeProof(b.CWD)
 
 	if _, uerr := relevo.Unbind(ctx, rt, name, false); uerr != nil {
 		return SetupStepDoc{}, failNext(codeInternal, "relevo doctor", "unbind the smoke binding: %v", uerr)
@@ -240,26 +232,21 @@ func smokeHelloOkay(repo string) error {
 	return nil
 }
 
-// startSmokeDots prints one dot per tick while the smoke round waits and a
-// newline once the wait is over, so the shell line is closed either way.
-func startSmokeDots() func() {
-	done := make(chan struct{})
-	go func() {
-		tick := time.NewTicker(smokeDotTick)
-		defer tick.Stop()
-		for {
-			select {
-			case <-tick.C:
-				fmt.Fprint(smokeDotStream, ".")
-			case <-done:
-				return
-			}
-		}
-	}()
-	return func() {
-		close(done)
-		fmt.Fprintln(smokeDotStream)
+// smokeProof is what the builder left, for the row to show before the
+// throwaway repository goes: the file it wrote and the commit it made on top
+// of the repository's first one.
+func smokeProof(repo string) string {
+	proof := ""
+	if body, err := os.ReadFile(filepath.Join(repo, "HELLO.md")); err == nil {
+		proof += "\n  HELLO.md: " + firstLine(strings.TrimSpace(string(body)))
 	}
+	cmd := exec.Command("git", "log", "-2", "--format=%h %s")
+	cmd.Dir = repo
+	out, err := cmd.Output()
+	if lines := strings.Split(strings.TrimSpace(string(out)), "\n"); err == nil && len(lines) == 2 {
+		proof += "\n  commit " + lines[0]
+	}
+	return proof
 }
 
 // smokePassDetail names the builder that closed the round, which differs

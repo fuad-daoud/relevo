@@ -95,15 +95,24 @@ Each question has an id, a prompt, choices (value, label, one-line why), a
 recommended value, and whether several values may be picked in order. A
 question that cannot apply is dropped.
 
-1. `builder` (ordered, one or more): who writes code. The order is the fallback
-   order when one hits a usage limit. Recommended: one model per logged-in
-   harness, in the order codex, agy, claude:
-   - codex: its first listed model, at `:high`.
-   - agy: its first `gemini-*-flash-high` model, else its first model.
+1. `builder` (ordered, one or more, comma-separated): who writes code. The
+   order is the fallback order when one hits a usage limit. Each model is one
+   choice; agy's per-effort models (`gemini-3.8-flash-low`, `-high`, ...) fold
+   into one. Recommended: one model per logged-in harness at high effort, in
+   the order codex, agy, claude:
+   - codex: its first listed model.
+   - agy: its first `gemini-*-flash` model, else its first model.
    - claude: `sonnet`.
-2. `planner` (one): who writes plans. Recommended: claude `opus:medium` when
-   claude is logged in, else codex's first listed model at `:high`, else agy's
-   first `claude-opus-*` model, else its first model.
+2. `planner` (one): who writes plans. Recommended at high effort: claude
+   `opus` when claude is logged in, else codex's first listed model, else
+   agy's first `claude-opus-*` model, else its first model.
+
+On a terminal, each picked builder or planner model that runs at more than
+one effort gets a follow-up effort question, recommending high. The efforts
+are codex's reported reasoning levels, claude's `--effort` levels for sonnet
+and opus, and agy's model-name suffixes. An `--answer` value carries the
+effort itself: `<harness>/<provider>/<model>:<effort>`, the choice's
+`efforts` listing the valid ones.
 3. `tier` (one): `yolo` (recommended) or `edit`. The prompt says plainly:
    yolo lets builders run any command in their worktree without asking; at
    edit they change files but a claude builder cannot run tests or git.
