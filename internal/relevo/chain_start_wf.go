@@ -323,37 +323,6 @@ func chainHasCheckStep(def workflow.Definition) bool {
 	return false
 }
 
-// chainCheckCommands returns the distinct non-empty check commands a workflow's
-// check steps render.
-func chainCheckCommands(def workflow.Definition) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, id := range workflow.ResumeTargets(def) {
-		step := def.Steps[id]
-		if step.Check == "" {
-			continue
-		}
-		if cmd := workflow.RenderParams(def, step.Check); cmd != "" && !seen[cmd] {
-			seen[cmd] = true
-			out = append(out, cmd)
-		}
-	}
-	return out
-}
-
-// chainSingleCheckCommand is the one non-empty check command a placed writer's
-// binding carries as its own gate, or "" when the workflow does not have
-// exactly one. A placed writer's binding keeps this gate so a chain started
-// before the check route can still be answered from the record the writer's
-// newest closed round carries.
-func chainSingleCheckCommand(def workflow.Definition) string {
-	cmds := chainCheckCommands(def)
-	if len(cmds) == 1 {
-		return cmds[0]
-	}
-	return ""
-}
-
 // chainPreparedWorkflow holds the artifacts of a prepared workflow start before
 // database persistence.
 type chainPreparedWorkflow struct {
@@ -522,7 +491,8 @@ func chainPersistAndStartWorkflow(ctx context.Context, rt Runtime, tx *store.Tx,
 	if current, cerr := tx.Chain(prep.opts.Name); cerr == nil {
 		row = current
 	}
-	return ChainResult{Chain: row, Members: stored, Plans: len(prep.plan.bodies), Check: prep.gate, CheckSource: prep.plan.gateRes.Source}, nil
+	check, source := chainCheckReport(prep.plan.def, prep.plan.gateRes, prep.opts.Params)
+	return ChainResult{Chain: row, Members: stored, Plans: len(prep.plan.bodies), Check: check, CheckSource: source}, nil
 }
 
 // chainCreateWorkflow is the half of a workflow start that creates things.

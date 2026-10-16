@@ -290,7 +290,7 @@ const staleMasterMindAge = 7 * 24 * time.Hour
 // than guessing. Home comes from $HOME so the row reads the same directory
 // cmd/relevo's TestMain isolated.
 func mastermindCheckInput(rt relevo.Runtime, kinds []string) doctor.MasterMindCheckInput {
-	in := doctor.MasterMindCheckInput{Home: os.Getenv("HOME"), Running: buildVersion()}
+	in := doctor.MasterMindCheckInput{Home: os.Getenv("HOME"), ClaudeDir: os.Getenv("CLAUDE_CONFIG_DIR"), Running: buildVersion()}
 	if wd, err := os.Getwd(); err == nil {
 		in.Repo = wd
 	}

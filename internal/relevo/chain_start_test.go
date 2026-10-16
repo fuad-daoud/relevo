@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
 // chainRows is the roles file the chain tests resolve against: the built-in
@@ -623,9 +624,10 @@ func TestChainStartResolvesTheBuilderCheck(t *testing.T) {
 	})
 }
 
-// assertBuilderCheck pins the resolved gate on the stored setting and the
-// workflow's gate param, and that a local workflow writer and its readers carry
-// no member gate: a workflow chain runs its checks as steps.
+// assertBuilderCheck pins the resolved gate on the stored setting, the
+// workflow's gate param and the start result, and that a local workflow writer
+// and its readers carry no member gate: a workflow chain runs its checks as
+// steps.
 func assertBuilderCheck(t *testing.T, rt Runtime, res ChainResult, want string) {
 	t.Helper()
 	if set := storedSettings(t, res.Chain); set.Gate != want {
@@ -634,8 +636,8 @@ func assertBuilderCheck(t *testing.T, rt Runtime, res ChainResult, want string) 
 	if got := storedFlowParam(t, res.Chain, "gate"); got != want {
 		t.Errorf("workflow gate param = %q, want %q", got, want)
 	}
-	if res.Check != "" {
-		t.Errorf("result check = %q, want empty: a workflow chain runs its checks as steps", res.Check)
+	if res.Check != want {
+		t.Errorf("result check = %q, want %q: the start line names the check step's command", res.Check, want)
 	}
 	for _, m := range res.Members {
 		if m.Gate != "" || m.Regate != 0 {
@@ -683,5 +685,37 @@ func TestChainStartRecordsThePlanStartCommit(t *testing.T) {
 	}
 	if got := chainStoredRow(t, rt, "shop").PlanStartCommit; got != fg.headCommitID {
 		t.Errorf("stored plan start = %q, want %q", got, fg.headCommitID)
+	}
+}
+
+// TestChainCheckReportNamesTheCheckStepsCommand pins the start line's check: a
+// gate given through --param is named as such, a resolved gate keeps its
+// source, and a workflow with no check step reports none.
+func TestChainCheckReportNamesTheCheckStepsCommand(t *testing.T) {
+	withGate := func(gate string) workflow.Definition {
+		def, err := workflow.WithParams(workflow.Default(), map[string]string{"gate": gate})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return def
+	}
+	cases := []struct {
+		name        string
+		def         workflow.Definition
+		res         GateResolution
+		params      map[string]string
+		cmd, source string
+	}{
+		{"--param gate", withGate("go test ./..."), GateResolution{}, map[string]string{"gate": "go test ./..."}, "go test ./...", "--param gate"},
+		{"policy default", withGate("make check"), GateResolution{Command: "make check", Source: GateSourcePolicy}, nil, "make check", GateSourcePolicy},
+		{"no check", withGate(""), GateResolution{}, nil, "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cmd, source := chainCheckReport(c.def, c.res, c.params)
+			if cmd != c.cmd || source != c.source {
+				t.Errorf("chainCheckReport = %q (%q), want %q (%q)", cmd, source, c.cmd, c.source)
+			}
+		})
 	}
 }

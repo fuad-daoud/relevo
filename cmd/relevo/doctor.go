@@ -449,7 +449,7 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 
 	// The login rows: whether each configured harness is logged in on this
 	// machine, from local files only.
-	rep.Checks = append(rep.Checks, doctor.LoginChecks(env, kinds, accountHomes(rt.Accounts))...)
+	rep.Checks = append(rep.Checks, doctor.LoginChecks(env, kinds, doctor.WithHomeEnv(accountHomes(rt.Accounts), os.Getenv))...)
 
 	// The hooks row: how many runs the machine database's run log holds, how
 	// many failed in the last day and what the last failure was (P3b round 2

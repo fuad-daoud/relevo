@@ -79,6 +79,26 @@ func TestDoctorPluginRow(t *testing.T) {
 	})
 }
 
+// TestDoctorPluginRowsReadClaudeConfigDir pins that a set CLAUDE_CONFIG_DIR,
+// not ~/.claude, is where the plugin rows look: Claude Code keeps its
+// settings and plugins there.
+func TestDoctorPluginRowsReadClaudeConfigDir(t *testing.T) {
+	home, claudeDir := t.TempDir(), t.TempDir()
+	writeDoctorFile(t, filepath.Join(claudeDir, "settings.json"), `{"enabledPlugins":{"relevo@relevo":true}}`)
+	writeDoctorFile(t, filepath.Join(claudeDir, "plugins", "installed_plugins.json"),
+		`{"version":2,"plugins":{"relevo@relevo":[{"version":"0.8.0"}]}}`)
+	writeDoctorFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"),
+		`{"version":2,"plugins":{"relevo@relevo":[{"version":"0.1.0"}]}}`)
+
+	checks := MasterMindChecks(MasterMindCheckInput{Claude: true, Home: home, ClaudeDir: claudeDir, Repo: t.TempDir(), Running: "v0.8.0"})
+	if c := findCheck(Report{Checks: checks}, "", "plugin"); c == nil || c.Severity != SevOK {
+		t.Errorf("plugin row = %+v, want ok from CLAUDE_CONFIG_DIR's settings", c)
+	}
+	if c := findCheck(Report{Checks: checks}, "", "plugin version"); c == nil || c.Detail != "plugin 0.8.0 matches relevo" {
+		t.Errorf("plugin version row = %+v, want the version installed under CLAUDE_CONFIG_DIR", c)
+	}
+}
+
 // TestDoctorPluginRowFix pins the failing row's fix: install when the plugin
 // is missing, enable when it is installed but off.
 func TestDoctorPluginRowFix(t *testing.T) {
@@ -322,11 +342,11 @@ func TestDoctorPluginVersionRow(t *testing.T) {
 		body    string // ~/.claude/plugins/installed_plugins.json; "" writes nothing
 		running string
 		wantSev Severity
-		want    string
+		want    string // $STATE stands for the state file's path
 	}{
 		{"no running version", state("0.8.0"), "", SevOK, "not checked"},
-		{"missing file", "", "v0.8.0", SevOK, "not checked (no readable ~/" + claudePluginStateRel + ")"},
-		{"not json", "not json", "v0.8.0", SevOK, "not checked (no readable ~/" + claudePluginStateRel + ")"},
+		{"missing file", "", "v0.8.0", SevOK, "not checked (no readable $STATE)"},
+		{"not json", "not json", "v0.8.0", SevOK, "not checked (no readable $STATE)"},
 		{"no relevo entry", `{"version":2,"plugins":{"other@relevo":[{"version":"0.8.0"}]}}`, "v0.8.0", SevOK, "not checked (relevo plugin not installed)"},
 		{"dev build matches the release", state("0.8.0"), "v0.8.0-15-gd664545", SevOK, "plugin 0.8.0 matches relevo"},
 		{"exact match", state("0.8.0"), "v0.8.0", SevOK, "plugin 0.8.0 matches relevo"},
@@ -349,8 +369,9 @@ func TestDoctorPluginVersionRow(t *testing.T) {
 			if c.Severity != tc.wantSev {
 				t.Errorf("severity = %v (%s), want %v", c.Severity, c.Detail, tc.wantSev)
 			}
-			if c.Detail != tc.want {
-				t.Errorf("detail = %q, want %q", c.Detail, tc.want)
+			want := strings.ReplaceAll(tc.want, "$STATE", filepath.Join(home, ".claude", claudePluginStateRel))
+			if c.Detail != want {
+				t.Errorf("detail = %q, want %q", c.Detail, want)
 			}
 			if tc.wantSev == SevWarn && c.Fix != "claude plugin update relevo@relevo" {
 				t.Errorf("fix = %q, want the update command", c.Fix)

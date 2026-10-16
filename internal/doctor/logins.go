@@ -49,6 +49,25 @@ func LoginChecks(env Env, kinds []string, homes map[string][]string) []Check {
 	return checks
 }
 
+// WithHomeEnv adds, for a kind with no account home, the directory its
+// harness's home variable names (CLAUDE_CONFIG_DIR, CODEX_HOME) when that is
+// set: the harness keeps its login there, not under $HOME.
+func WithHomeEnv(homes map[string][]string, getenv func(string) string) map[string][]string {
+	out := make(map[string][]string, len(homes)+len(loginSpecs))
+	for kind, dirs := range homes {
+		out[kind] = dirs
+	}
+	for kind := range loginSpecs {
+		if len(out[kind]) > 0 {
+			continue
+		}
+		if name, ok := harness.HomeEnv(kind); ok && getenv(name) != "" {
+			out[kind] = []string{getenv(name)}
+		}
+	}
+	return out
+}
+
 // loginDirs is the directories to check: the account homes when there are any,
 // else the kind's default home resolved under $HOME ("" for a kind whose login
 // file is itself home-relative).
