@@ -63,9 +63,13 @@ func TestRekeyRefusesAnEmptyPassphrase(t *testing.T) {
 	if _, _, err := dbSyncRekeyPassphrases(true); err == nil {
 		t.Fatal("an empty current passphrase was accepted")
 	}
-	withRekeySources(t, "current-secret\n", "", "", ttyAnswering("first", "second"))
+	withRekeySources(t, "current-secret\n", "", "", ttyAnswering("", ""))
 	if _, _, err := dbSyncRekeyPassphrases(true); err == nil {
-		t.Fatal("an empty new passphrase was accepted")
+		t.Fatal("an empty new passphrase was accepted from tty")
+	}
+	withRekeySources(t, "current-secret\n", "", "\n", ttyAnswering("x"))
+	if _, _, err := dbSyncRekeyPassphrases(true); err == nil {
+		t.Fatal("an empty new passphrase was accepted from env")
 	}
 }
 

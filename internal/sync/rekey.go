@@ -41,6 +41,9 @@ var ErrEpochRace = errors.New("sync: another machine rekeyed first, this machine
 // would spend the epoch without retiring anything.
 var ErrSamePassphrase = fmt.Errorf("sync: the new passphrase is the current one: rotation needs a different passphrase: %w", db.ErrInvalid)
 
+// ErrEmptyPassphrase is a rotation to the empty passphrase.
+var ErrEmptyPassphrase = fmt.Errorf("sync: the new passphrase is empty: %w", db.ErrInvalid)
+
 // Rekey rotates the log's key from the epoch the remote holds to the next one.
 // It stores nothing until the remote's transaction has accepted the whole
 // write, and it stores everything -- the newest key, every older key the
@@ -48,6 +51,9 @@ var ErrSamePassphrase = fmt.Errorf("sync: the new passphrase is the current one:
 // a crash between the remote and the local store leaves the machine stale, the
 // ordinary state, and unlock recovers it.
 func Rekey(ctx context.Context, local Local, transport synclog.LogTransport, current, newPass []byte, rand io.Reader) error {
+	if len(newPass) == 0 {
+		return ErrEmptyPassphrase
+	}
 	on, err := Enabled(local)
 	if err != nil {
 		return err

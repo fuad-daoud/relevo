@@ -68,8 +68,12 @@ func dbSyncRekeyPassphrases(fromStdin bool) (current, newPass []byte, err error)
 // own environment variable, else a prompt with echo off asked twice. An empty
 // answer is refused the way unlock's is.
 func dbSyncRekeyNewPassphrase() ([]byte, error) {
-	if dbSyncPassphraseEnvFn(dbSyncNewPassphraseEnv) != "" {
-		return dbSyncTrimmed(dbSyncPassphraseEnvFn(dbSyncNewPassphraseEnv)), nil
+	if raw := dbSyncPassphraseEnvFn(dbSyncNewPassphraseEnv); raw != "" {
+		pass := dbSyncTrimmed(raw)
+		if len(pass) == 0 {
+			return nil, fail(codeUsage, "relevo db sync rekey: the passphrase is empty")
+		}
+		return pass, nil
 	}
 	pass, ok, err := dbSyncPassphraseTTY("New sync passphrase: ")
 	if err != nil {
@@ -85,7 +89,11 @@ func dbSyncRekeyNewPassphrase() ([]byte, error) {
 	if string(again) != string(pass) {
 		return nil, fail(codeUsage, "relevo db sync rekey: the two passphrases differ")
 	}
-	return dbSyncTrimmed(string(pass)), nil
+	trimmed := dbSyncTrimmed(string(pass))
+	if len(trimmed) == 0 {
+		return nil, fail(codeUsage, "relevo db sync rekey: the passphrase is empty")
+	}
+	return trimmed, nil
 }
 
 // dbSyncTrimmed strips the trailing newline an interactive or piped secret

@@ -176,6 +176,27 @@ func TestRekeyRefusesTheCurrentPassphraseAsTheNewOne(t *testing.T) {
 	}
 }
 
+// TestRekeyRefusesAnEmptyNewPassphrase pins the empty rule: the new
+// passphrase may not be empty, and a refused rotation writes nothing to the
+// remote.
+func TestRekeyRefusesAnEmptyNewPassphrase(t *testing.T) {
+	t.Parallel()
+	_, local, log := rekeyFleetPair(t)
+	if err := Rekey(context.Background(), local, log, rekeyPass, nil, rand.Reader); !errors.Is(err, ErrEmptyPassphrase) {
+		t.Fatalf("Rekey with nil = %v, want ErrEmptyPassphrase", err)
+	}
+	if err := Rekey(context.Background(), local, log, rekeyPass, []byte(""), rand.Reader); !errors.Is(err, ErrEmptyPassphrase) {
+		t.Fatalf("Rekey with empty slice = %v, want ErrEmptyPassphrase", err)
+	}
+	if meta, err := log.KeyMeta(context.Background()); err != nil || meta.Epoch != 1 {
+		t.Fatalf("the remote moved to epoch %d, %v; a refused rotation writes nothing", meta.Epoch, err)
+	}
+	state, err := log.ReadMarks()
+	if err != nil || len(state.EpochCuts) != 0 {
+		t.Fatalf("the remote holds cuts = %v, %v; want none", state.EpochCuts, err)
+	}
+}
+
 // TestTheRekeyLoserChangesNothingAndSaysSo pins the race: a machine whose
 // observation of the remote is one rekey behind loses the compare-and-set, the
 // refusal names the race, and nothing of its own was stored.
