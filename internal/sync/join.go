@@ -415,6 +415,7 @@ func (e *Enabler) join(transport synclog.LogTransport, now time.Time) (EnableRes
 		if err != nil {
 			return res, err
 		}
+		kept = kept.fromPeers(e.Request.Shared.Origin())
 		if err := e.Request.Local.ClearDocExportState(); err != nil {
 			return res, err
 		}

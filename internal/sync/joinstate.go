@@ -71,6 +71,24 @@ type docSecretsBookkeeping struct {
 	signalled bool
 }
 
+// fromPeers is the part of the bookkeeping a join keeps over its fresh start:
+// what this machine took from peers' entries. An export row of this machine's
+// own origin records a value it sent to a log it wrote before, which the log it
+// is joining has never seen, so the row is dropped and the document stays
+// signalled for the next export to send that value.
+func (k docSecretsBookkeeping) fromPeers(self string) docSecretsBookkeeping {
+	out := k
+	out.export = nil
+	for _, row := range k.export {
+		if row.Origin == self {
+			out.signalled = true
+			continue
+		}
+		out.export = append(out.export, row)
+	}
+	return out
+}
+
 // readDocSecretsBookkeeping reads the secrets document's bookkeeping off the
 // machine-local file, the file the document's apply path wrote it to.
 func readDocSecretsBookkeeping(l Local) (docSecretsBookkeeping, error) {

@@ -52,3 +52,49 @@ func TestJoinClearsExportState(t *testing.T) {
 			signals, err)
 	}
 }
+
+// TestJoinKeepsOnlyThePeersSecretsBookkeeping pins what a fresh join keeps of
+// the secrets document's export state: a row for a value taken from a peer
+// stays, so the joiner does not send the fleet's own value back, and a row for
+// a value this machine sent to a log it wrote before goes, with the document
+// signalled, so the log it is joining receives that value.
+func TestJoinKeepsOnlyThePeersSecretsBookkeeping(t *testing.T) {
+	shared, local := joinPair(t, "m1")
+	passGate(t, shared)
+	self := shared.Origin()
+	if err := local.RecordDocExport(db.DocSignal{Doc: SecretsDocName}, []db.DocExportWrite{
+		{Key: SecretTypesafe, Origin: self, Stamp: "5", Digest: "own"},
+		{Key: SecretR2Bucket, Origin: "peer", Stamp: "6", Digest: "theirs"},
+	}); err != nil {
+		t.Fatalf("seed the export state: %v", err)
+	}
+	if err := local.Tx(func(tx *db.Tx) error { return tx.ClearDocSignals(SecretsDocName) }); err != nil {
+		t.Fatalf("clear the seeded signal: %v", err)
+	}
+
+	if _, err := runEnable(t, shared, local, []byte(joinToken), synclog.NewMemTransport("m1")); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	state, err := local.DocExportState(SecretsDocName)
+	if err != nil {
+		t.Fatalf("export state after the join: %v", err)
+	}
+	if _, kept := state[SecretTypesafe]; kept {
+		t.Errorf("the row for a value this machine sent to another log survived the join: %+v", state)
+	}
+	if row, kept := state[SecretR2Bucket]; !kept || row.Origin != "peer" || row.Digest != "theirs" {
+		t.Errorf("the row for a value taken from a peer = %+v, %v; want it kept as it was", row, kept)
+	}
+	signals, err := local.DocSignals()
+	if err != nil {
+		t.Fatalf("signals after the join: %v", err)
+	}
+	signalled := false
+	for _, s := range signals {
+		signalled = signalled || s.Doc == SecretsDocName
+	}
+	if !signalled {
+		t.Errorf("signals after the join = %v; want the secrets document signalled", signals)
+	}
+}
