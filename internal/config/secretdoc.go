@@ -132,6 +132,16 @@ func (d *SecretDoc) stamped(name string) bool {
 	return err == nil && ok
 }
 
+// ResealKeepsStamp marks this document as one whose re-seals must not outrank a
+// peer's edit. A rekey re-seals every value this machine holds under the newest
+// epoch -- same plaintext, new bytes, new digest -- and an export that stamped
+// that re-seal from the clock would send it out ahead of an edit another
+// machine made while the key was rotating, and overwrite it there. The
+// re-emission carries the stamp the key already had instead: it lands as the
+// redelivery it is, and the peer's edit -- which carries its own, newer write
+// stamp -- wins on every reader including this one.
+func (d *SecretDoc) ResealKeepsStamp() bool { return true }
+
 // Apply writes one secret's value, or clears it when value is nil, in one
 // transaction with nothing else. It is the seam a caller without the importer's
 // own transaction uses; the importer reaches ApplyIn instead.

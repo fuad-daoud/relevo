@@ -30,6 +30,20 @@ type DocWriteStamper interface {
 	ItemWriteStamp(key string) (stamp Stamp, ok bool, err error)
 }
 
+// DocReSealStamper is the optional half of a SharedDoc whose items are sealed
+// values. When the key rotates, such a doc re-seals every value it holds
+// without anyone editing it: the plaintext is the same, only the bytes differ,
+// and the digest with them. A re-seal that took a fresh stamp would rank above
+// a peer's edit that happened while the key was rotating, and overwrite it --
+// so a doc that re-seals says so here, and its re-emissions carry the stamp the
+// key already had instead. A person's edit on such a doc still outranks
+// everything, because it carries its write stamp and that branch runs first.
+type DocReSealStamper interface {
+	// ResealKeepsStamp says a digest that changed with no newer write stamp is
+	// a re-seal of what the key already carried.
+	ResealKeepsStamp() bool
+}
+
 // ItemDigest is the hash an item is compared by. The value is compacted first
 // so spacing never makes an unchanged item look changed.
 func ItemDigest(value json.RawMessage) (string, error) {
@@ -123,7 +137,7 @@ func (e *Exporter) docEntries(doc SharedDoc, items map[string]json.RawMessage, s
 		if had && prev.Digest == digest {
 			continue
 		}
-		stamp, err := e.docStamp(clock, doc, key, prev, had)
+		stamp, err := e.docStamp(clock, doc, key, prev, had, false)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -138,7 +152,7 @@ func (e *Exporter) docEntries(doc SharedDoc, items map[string]json.RawMessage, s
 		if _, held := items[key]; held {
 			continue
 		}
-		stamp, err := e.docStamp(clock, doc, key, state[key], true)
+		stamp, err := e.docStamp(clock, doc, key, state[key], true, true)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -154,10 +168,13 @@ func (e *Exporter) docEntries(doc SharedDoc, items map[string]json.RawMessage, s
 
 // docStamp is the stamp for a key about to be exported. The stamp recorded when
 // the key was written wins when it is newer than the one the key last carried.
-// Otherwise a key never exported takes its stamp from when the doc says it was
-// written, and every later one comes from the clock, moved past the stamp the
-// key last carried so a change always outranks the state it replaces.
-func (e *Exporter) docStamp(clock *HybridClock, doc SharedDoc, key string, prev db.DocExportRow, had bool) (Stamp, error) {
+// Otherwise a re-sealing doc's upsert keeps the stamp the key already had --
+// a re-seal is the same value under new bytes, and a stamp of now would rank it
+// above a peer's edit it never saw. A key never exported takes its stamp from
+// when the doc says it was written, and every later one -- including every
+// removal -- comes from the clock, moved past the stamp the key last carried so
+// a change always outranks the state it replaces.
+func (e *Exporter) docStamp(clock *HybridClock, doc SharedDoc, key string, prev db.DocExportRow, had, tombstone bool) (Stamp, error) {
 	var last Stamp
 	if had {
 		var err error
@@ -172,6 +189,11 @@ func (e *Exporter) docStamp(clock *HybridClock, doc SharedDoc, key string, prev 
 		}
 		if found && (!had || wrote > last) {
 			return wrote, nil
+		}
+	}
+	if !tombstone {
+		if keeper, ok := doc.(DocReSealStamper); ok && keeper.ResealKeepsStamp() && had {
+			return last, nil
 		}
 	}
 	if !had {
