@@ -780,7 +780,17 @@ func (n normalBackend) Compact(floor int) (syncworker.CompactResult, error) {
 }
 
 func (normalBackend) KeyMeta() (syncworker.KeyMeta, error) {
-	return heldKey, nil
+	return keyHeldForFake(), nil
+}
+
+// keyHeldForFake is the material the fake log holds, with an epoch row that was
+// never written read as epoch 1 the way the real backend reads it.
+func keyHeldForFake() syncworker.KeyMeta {
+	key := heldKey
+	if key.Epoch == 0 {
+		key.Epoch = 1
+	}
+	return key
 }
 
 // KeyInit keeps what the log already holds and answers with that, the way the
@@ -796,7 +806,7 @@ func (normalBackend) KeyInit(key syncworker.KeyMeta) (syncworker.KeyMeta, error)
 }
 
 func (normalBackend) KeyRekey(syncworker.KeyRekeySpec) (syncworker.KeyMeta, error) {
-	return heldKey, nil
+	return keyHeldForFake(), nil
 }
 
 // heldKey is the passphrase material the fake log has been given. It is a

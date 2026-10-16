@@ -2,6 +2,7 @@ package syncworker
 
 import (
 	"database/sql"
+	"errors"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/synclog"
@@ -148,6 +149,72 @@ func TestKeyRekeyIsACompareAndSetOnTheEpoch(t *testing.T) {
 		if cut != want {
 			t.Errorf("epoch_cut.origin-a = %q, want the winner's %q", cut, want)
 		}
+	}
+}
+
+// TestKeyRekeyRefusesASpecThatDoesNotHoldTogether pins the handler's own
+// refusals: a rekey that names no key, no epoch it read, a target that is not
+// the next epoch after it, or a cut fencing another epoch than the one being
+// written is refused before the backend is reached.
+func TestKeyRekeyRefusesASpecThatDoesNotHoldTogether(t *testing.T) {
+	t.Parallel()
+	b := NewTursoBackend(&localDriver{path: tempReplica(t)})
+	w := startWorker(t, b)
+	w.askHello()
+	for name, req := range map[string]Request{
+		"no key":       {ID: "1", Verb: VerbKeyRekey, Epoch: 1},
+		"no epoch":     {ID: "2", Verb: VerbKeyRekey, KeyMeta: &KeyMeta{Epoch: 2, Present: true}},
+		"not the next": {ID: "3", Verb: VerbKeyRekey, Epoch: 1, KeyMeta: &KeyMeta{Epoch: 3, Present: true}},
+		"a foreign cut": {ID: "4", Verb: VerbKeyRekey, Epoch: 1,
+			KeyMeta: &KeyMeta{Epoch: 2, Present: true},
+			Cuts:    map[string]EpochCut{"origin-b": {Epoch: 5, Seq: 1, Tag: []byte("t")}}},
+	} {
+		resp := w.ask(req)
+		if resp.OK {
+			t.Errorf("%s: the request was answered, want a refusal", name)
+		}
+	}
+}
+
+// TestKeyRekeyFailsOnABrokenRemote pins that a rekey over a remote missing one
+// of its own tables is a failure, never a write that skipped the part it could
+// not read: the heads and the epoch are both read from the remote the spec is
+// written onto.
+func TestKeyRekeyFailsOnABrokenRemote(t *testing.T) {
+	t.Parallel()
+	path := tempReplica(t)
+	b := backendFor(t, &localDriver{path: path}, "origin-a")
+	execOn(t, path, "DROP TABLE meta")
+	if _, err := b.KeyRekey(rekeySpec(t, 1, nil)); err == nil {
+		t.Error("a rekey over a remote with no meta table came back as a success")
+	}
+
+	path = tempReplica(t)
+	b = backendFor(t, &localDriver{path: path}, "origin-a")
+	execOn(t, path, "DROP TABLE log")
+	if _, err := b.KeyRekey(rekeySpec(t, 1, nil)); err == nil {
+		t.Error("a rekey over a remote with no log table came back as a success")
+	}
+}
+
+// TestKeyRekeyReportsAFailedTransfer pins that a rekey whose pull or push did
+// not reach the remote is a failure the caller sees, the way a key_init is: a
+// replica that holds one side of a rekey alone would hand the next machine a
+// remote it cannot reconcile.
+func TestKeyRekeyReportsAFailedTransfer(t *testing.T) {
+	t.Parallel()
+	driver := &localDriver{path: tempReplica(t)}
+	b := backendFor(t, driver, "origin-a")
+	driver.pullErr = errors.New("the remote is not answering")
+	if _, err := b.KeyRekey(rekeySpec(t, 1, nil)); err == nil || !contains(err.Error(), "rekey the key") {
+		t.Errorf("a rekey whose pull failed = %v, want a refusal naming the rekey", err)
+	}
+
+	driver = &localDriver{path: tempReplica(t)}
+	b = backendFor(t, driver, "origin-a")
+	driver.pushErr = errors.New("the remote is not answering")
+	if _, err := b.KeyRekey(rekeySpec(t, 1, nil)); err == nil || !contains(err.Error(), "push the rekey") {
+		t.Errorf("a rekey whose push failed = %v, want a refusal naming the push", err)
 	}
 }
 
