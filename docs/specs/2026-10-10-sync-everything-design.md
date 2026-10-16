@@ -558,6 +558,16 @@ under the merged rules, imports no shared docs, and status says "locked".
   unsigned entries under an origin that never signed -- unchanged by rekey. A
   locked machine still applies history unverified, as today; rekey does not
   extend what it accepts.
+  Two machines rekeying in the same few seconds can both pass their checks:
+  the push is last-writer-wins, and each re-reads the remote only after its
+  own push. The machine whose key the remote no longer holds stops on its
+  next attempt, like a stale one, and says to unlock with the passphrase that
+  rekeyed the remote; anything it exported before that attempt is signed
+  under a key no other machine holds and stays held. A machine notices a
+  rekey on its first or second attempt after it: the attempt reads the
+  remote's key rows from the replica before that attempt's pull.
+- **Rollout (5b).** A build without rekey cannot follow one, so every machine
+  runs a build with it before anyone runs `relevo db sync rekey`.
 - **Lost passphrase:** if no machine holds the key any more, the synced
   secrets are unreadable. Every machine's local copies are unaffected.
 
