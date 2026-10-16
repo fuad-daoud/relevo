@@ -137,7 +137,6 @@ func schemaOf(t *testing.T, d interface{ SchemaVersions() (int, int) }) int {
 	return known
 }
 
-
 // overwriteRekeyWithWinner simulates the second winner in a double-win race,
 // writing winner B's material at epoch 2 over winner A's.
 func overwriteRekeyWithWinner(t *testing.T, log *synclog.MemTransport, localA Local, passB2 []byte) {
