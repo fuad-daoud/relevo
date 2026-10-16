@@ -132,7 +132,9 @@ type Server struct {
 	// admitMu serializes census-and-admit, so the server-wide builder cap is
 	// decided against one running count even when a tick's admit and a
 	// round start's admit overlap. collectSettled -> pruneUnusedRepos -> admit
-	// still run in that order inside the section they share.
+	// still run in that order inside the section they share. The prune takes
+	// the bare-repo pin mutex inside that hold, and the bind paths take that
+	// mutex alone, so the order is admitMu -> pin mutex and never the reverse.
 	admitMu sync.Mutex
 	// liveCache caches running round LiveViews per caller/binding/round.
 	liveCache *liveCache
