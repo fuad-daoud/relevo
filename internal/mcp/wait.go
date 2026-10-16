@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -279,9 +280,27 @@ func (v *RelevoVerbs) Wait(ctx context.Context, session string, a WaitArgs) (any
 	return formatWaitResult(v.RT.Store, target, v.waitRoundLine(target, a.Round, res.Round), res), nil
 }
 
+// claudeRunsHeadless reads the one marker a `claude -p` child reliably
+// carries: the entrypoint. Interactive sessions run `cli`, headless runs and
+// the Agent SDK mark their children `sdk-*`, and a child with no mark predates
+// the variable -- so anything but the `sdk-` prefix keeps a process
+// interactive, which is today's behaviour everywhere the mark is absent.
+func claudeRunsHeadless(getenv func(string) string) bool {
+	return strings.HasPrefix(getenv("CLAUDE_CODE_ENTRYPOINT"), "sdk-")
+}
+
 // pushClaimLive reports whether a live push claim covers the wait's target: the
 // named binding's mastermind, or this call's own mastermind.
 func (v *RelevoVerbs) pushClaimLive(session, name string) bool {
+	// The claim is a handshake between this server and the push child its own
+	// session's mod started. In a headless session (`claude -p`) the mod
+	// starts no push child, so a live claim can only be stranded there -- a
+	// leftover of a concurrent interactive holder or version skew. Acting on
+	// one would promise "delivered by the mod" with nothing attached instead
+	// of letting the wait deliver the report itself.
+	if claudeRunsHeadless(os.Getenv) {
+		return false
+	}
 	if v.RT.Channels == nil {
 		return false
 	}
