@@ -71,13 +71,19 @@ func (i *Importer) loadSigned(state MarkState) error {
 
 // loadCuts computes, per origin, the highest cut this machine acts on: the
 // highest of its own record and every remote cut whose tag verifies under the
-// cut's epoch key. A cut that does not verify holds its origin for the run,
-// and one that does is recorded locally at once and never regresses, so
-// deleting, lowering or replaying the remote row afterwards changes nothing.
+// cut's epoch key. A remote cut is acted on only when it names the reader's
+// newest held epoch -- a row at a retired epoch, whatever its key verifies,
+// is never recorded and holds its origin for the run, so the default fence of
+// the reader's newest key stands and a leaked old key cannot re-bless history
+// the reader has never verified. A cut that does not verify holds its origin
+// for the run, and one that does is recorded locally at once and never
+// regresses, so deleting, lowering or replaying the remote row afterwards
+// changes nothing.
 func (i *Importer) loadCuts(state MarkState) error {
 	if len(i.ring) == 0 {
 		return nil
 	}
+	newest := i.epochs()[0]
 	local, err := i.db.EpochCuts()
 	if err != nil {
 		return fmt.Errorf("synclog: import: %w", err)
@@ -89,6 +95,10 @@ func (i *Importer) loadCuts(state MarkState) error {
 	}
 	i.badCut = make(map[string]error)
 	for origin, cut := range state.EpochCuts {
+		if cut.Epoch != newest {
+			i.badCut[origin] = &signatureError{fmt.Sprintf("the epoch cut of %q names a retired epoch (%d, newest held is %d), so it is held for the run", origin, cut.Epoch, newest)}
+			continue
+		}
 		key := i.ring[cut.Epoch]
 		if len(key) == 0 || !VerifyEpochCut(key, origin, cut.Epoch, cut.Seq, cut.Tag) {
 			i.badCut[origin] = &signatureError{fmt.Sprintf("the epoch cut of %q does not verify under this machine's keys", origin)}
