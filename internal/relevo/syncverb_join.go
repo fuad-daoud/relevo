@@ -95,7 +95,7 @@ func (v *VerbRunner) stageAndVerify(ctx context.Context, remote string, token, p
 		return nil, err
 	}
 	out.transport, out.opened, out.bucketless = transport, opened, bucketless
-	key, err := relevosync.VerifyJoinKey(ctx, v.Local, transport, passphrase)
+	ring, err := relevosync.VerifyJoinKey(ctx, v.Local, transport, passphrase)
 	if err != nil {
 		v.unstageJoin(snapshot)
 		if opened {
@@ -103,7 +103,7 @@ func (v *VerbRunner) stageAndVerify(ctx context.Context, remote string, token, p
 		}
 		return nil, err
 	}
-	if err := relevosync.SetKey(v.Local, key, time.Now()); err != nil {
+	if err := relevosync.SetKeys(v.Local, ring, time.Now()); err != nil {
 		v.unstageJoin(snapshot)
 		closeTransport(transport)
 		return nil, err

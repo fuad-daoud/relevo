@@ -55,14 +55,41 @@ func Unlock(ctx context.Context, local Local, transport synclog.LogTransport, pa
 	if err != nil {
 		return false, err
 	}
+	ring, err := unwrapKeyring(meta, key)
+	if err != nil {
+		return false, fmt.Errorf("sync: unlock: %w", err)
+	}
 	now := time.Now()
-	if err := SetKey(local, key, now); err != nil {
+	if err := SetKeys(local, ring, now); err != nil {
 		return false, err
 	}
 	if err := local.KVPut(KeyRemoteKDF, []byte("1")); err != nil {
 		return false, fmt.Errorf("sync: unlock: %w", err)
 	}
 	return created, nil
+}
+
+// unwrapKeyring builds the ring the remote's chain unwraps to: the key the
+// passphrase derived for the newest epoch, and every older epoch's key out of
+// the rows sealed under the one that replaced it. A chain with a missing or
+// unopenable row is a refusal, never a shorter ring -- a machine that stored
+// half a chain would read history it cannot verify as though it could.
+func unwrapKeyring(meta synclog.KeyMeta, newest []byte) (Keyring, error) {
+	ring := Keyring{Epoch: meta.Epoch, Keys: map[int][]byte{meta.Epoch: newest}}
+	newer := newest
+	for epoch := meta.Epoch - 1; epoch >= 1; epoch-- {
+		wrapped, ok := meta.Wrapped[epoch]
+		if !ok {
+			return Keyring{}, fmt.Errorf("sync: the remote holds no wrapped key for epoch %d: %w", epoch, ErrKDFParams)
+		}
+		key, err := UnwrapKey(newer, epoch, wrapped)
+		if err != nil {
+			return Keyring{}, err
+		}
+		ring.Keys[epoch] = key
+		newer = key
+	}
+	return ring, nil
 }
 
 // initKey writes fresh material and answers with what the remote holds
@@ -101,8 +128,8 @@ func checkedKey(meta synclog.KeyMeta, passphrase []byte) ([]byte, error) {
 }
 
 // VerifyJoinKey is the check an enable --join runs before it stores anything: it
-// reads the remote's key material and returns the derived key only when the
-// passphrase reproduces the remote's check.
+// reads the remote's key material and returns the keyring the remote's chain
+// unwraps to, only when the passphrase reproduces the remote's check.
 //
 // It exists rather than reusing Unlock because Unlock refuses a machine that is
 // not syncing -- ErrSyncOff -- and a joiner is by definition not syncing yet: it
@@ -114,22 +141,26 @@ func checkedKey(meta synclog.KeyMeta, passphrase []byte) ([]byte, error) {
 // that was handed such a remote could not unlock what it imported and would end
 // up holding nothing, so it is refused here rather than after a join that
 // appeared to work.
-func VerifyJoinKey(ctx context.Context, local Local, transport synclog.LogTransport, passphrase []byte) ([]byte, error) {
+func VerifyJoinKey(ctx context.Context, local Local, transport synclog.LogTransport, passphrase []byte) (Keyring, error) {
 	meta, err := transport.KeyMeta(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("sync: join: read the remote key: %w", err)
+		return Keyring{}, fmt.Errorf("sync: join: read the remote key: %w", err)
 	}
 	if !meta.Present {
-		return nil, ErrNoKDF
+		return Keyring{}, ErrNoKDF
 	}
 	key, err := checkedKey(meta, passphrase)
 	if err != nil {
-		return nil, err
+		return Keyring{}, err
+	}
+	ring, err := unwrapKeyring(meta, key)
+	if err != nil {
+		return Keyring{}, fmt.Errorf("sync: join: %w", err)
 	}
 	if err := recordRemoteKeyFact(local, meta); err != nil {
-		return nil, err
+		return Keyring{}, err
 	}
-	return key, nil
+	return ring, nil
 }
 
 // recordRemoteKeyFact writes what the remote holds so status can report a
