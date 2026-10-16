@@ -14,10 +14,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
-// These tests cover the three documents the config document's neighbours added
-// -- gates, repository consent and session consent -- at the seams a pipeline
-// stage can get wrong: which stage binds them, what a late joiner does to them,
-// and what a locked machine does with them.
+// These tests cover the documents the config document's neighbours added --
+// gates, repository consent, session consent and the secrets document -- at the
+// seams a pipeline stage can get wrong: which stage binds them, what a late
+// joiner does to them, and what a locked machine does with them.
 
 // stageConstructors are the calls that build an exporter, an importer or a
 // reconciler, which answer for no document of this machine until BindDocs binds

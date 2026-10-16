@@ -31,6 +31,10 @@ type cfgMachine struct {
 	cfg    *config.Store
 	runner *relevosync.Runner
 	log    *synclog.MemTransport
+	// bodyLog is nil on a machine over a plain log and set on one over a log
+	// that can also move bodies, so a value over the blob threshold travels as
+	// a `$ref`. Only the export-through helper reads it.
+	bodyLog *bodyLog
 }
 
 // newCfgMachine is one machine over a real split pair. A nil key is a locked

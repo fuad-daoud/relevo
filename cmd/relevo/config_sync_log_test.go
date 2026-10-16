@@ -145,3 +145,39 @@ func TestRollbackRestoresASyncedRevision(t *testing.T) {
 		t.Errorf("servers after rolling back to the synced revision = %s, want zen:2222", got)
 	}
 }
+
+// A peer chooses the label and the message of a synced revision. The text views
+// print them inert while --json and the stored row keep the raw bytes.
+func TestConfigLogRendersAHostilePeerLabelInert(t *testing.T) {
+	initRoot(t)
+	seedSyncedRevisions(t)
+	rt, err := newRuntime()
+	if err != nil {
+		t.Fatalf("newRuntime: %v", err)
+	}
+	d, err := rt.Store.DB()
+	if err != nil {
+		t.Fatalf("DB: %v", err)
+	}
+	doc := config.Open(d).Doc()
+	const label = "evil\x1b[2J\nforged line"
+	if err := d.LocalOrSelf().Tx(func(tx *db.Tx) error {
+		return doc.SupersedeIn(tx, "servers/zen", json.RawMessage(syncZenA), label, "why\x1b[31m\nforged message")
+	}); err != nil {
+		t.Fatalf("SupersedeIn: %v", err)
+	}
+	raw := revisionOf(t, "sync-superseded:"+label)
+
+	for _, args := range [][]string{{"config", "log"}, {"config", "log", "--rev", strconv.FormatInt(raw.Rev, 10)}} {
+		out, stderr, err := captureOutput(t, func() error { return run(args) })
+		if err != nil {
+			t.Fatalf("%v: %v (stderr: %s)", args, err, stderr)
+		}
+		if strings.ContainsRune(string(out), 0x1b) || strings.Contains(string(out), "\nforged") {
+			t.Errorf("%v printed peer-chosen control bytes:\n%q", args, out)
+		}
+	}
+	if !strings.Contains(raw.Message, "\x1b[31m\nforged message") {
+		t.Errorf("--json message = %q, want the raw stored bytes", raw.Message)
+	}
+}

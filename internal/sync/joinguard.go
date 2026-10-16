@@ -169,6 +169,34 @@ func (e *Enabler) guard(plan EnablePlan, now time.Time) (JoinEstimate, bool, err
 	return est, true, GuardJoin(est, settings.TursoSyncQuota(), used.TursoPush+used.TursoPull)
 }
 
+// guardJoined is the guard a join runs after its document import, against the
+// credentials that import brought rather than against the ones the command
+// carried. It is the same rule and the same refusal, on a later reading of the
+// same rows: a join has no bucket to estimate until the secrets document has
+// been applied, so this is the earliest point at which the question is askable.
+//
+// A machine with no bucket store to consult is not guarded, the same as a plain
+// enable's: the guard exists to stop a join reading more than the month's quota
+// allows, and a caller that installed no store installed no bucket to overrun.
+func (e *Enabler) guardJoined() (JoinEstimate, bool, error) {
+	stored, err := ReadR2(e.Request.Local)
+	if err != nil {
+		return JoinEstimate{}, false, err
+	}
+	return e.guard(EnablePlan{Remote: "", R2: stored}, e.now())
+}
+
+// ownBodiesJoined is ownBodies for a join, against the credentials the document
+// brought. It runs after the import for the same reason the guard does: before
+// it, this machine has no bucket to list.
+func (e *Enabler) ownBodiesJoined() (map[string]bool, error) {
+	stored, err := ReadR2(e.Request.Local)
+	if err != nil {
+		return nil, err
+	}
+	return e.ownBodies(EnablePlan{Remote: "", R2: stored})
+}
+
 // guardTimeout bounds the bucket listing the guard makes.
 const guardTimeout = 2 * time.Minute
 

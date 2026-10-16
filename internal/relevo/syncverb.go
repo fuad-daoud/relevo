@@ -1,6 +1,7 @@
 package relevo
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sync"
@@ -54,6 +55,19 @@ type VerbRunner struct {
 	// verb, so the remote and the token it is built from are the ones just
 	// stored.
 	Open func(context.Context) (synclog.LogTransport, error)
+	// OpenNoBucket builds the transport a join's passphrase check drives, where
+	// the stored bucket set may be incomplete: the credentials arrive in the
+	// fleet's secrets document, and that document is only on the remote the
+	// worker is opened to reach. A caller that installs it makes a join open
+	// through it while the machine holds no bucket; every other enable opens
+	// through Open, whose refusal an incomplete set is. Nil means no second
+	// opener is installed and a join opens through Open as well.
+	//
+	// The bool is the opener's answer about the worker it built: whether it
+	// started that worker with no bucket stored. It is trusted as it stands,
+	// because the opener built the worker and nothing re-reads the rows after
+	// the fact to guess again.
+	OpenNoBucket func(context.Context) (synclog.LogTransport, bool, error)
 	// Serialize runs fn under the daemon's in-flight sync guard. Nil runs it
 	// inline, which is what a cockpit wants: it is not the daemon and has no
 	// trigger to be serialized against.
@@ -316,7 +330,7 @@ func transportReady(transport synclog.LogTransport) bool {
 	return !ok || r.Ready()
 }
 
-// enable runs one join through the sync package: the preflight decides the
+// enable runs one enable through the sync package.
 // remote and the token, the runner opens the log transport, and the pipeline
 // bootstraps, imports every other origin and reconcile-exports this origin's
 // history before the mark goes on.
@@ -327,61 +341,25 @@ func transportReady(transport synclog.LogTransport) bool {
 // worker left behind holds the replica open against the next one; a run that
 // finishes leaves it on the runner, where the daemon can drive it again.
 func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byte) *wire.SyncResult {
-	token, r2, err := enableIntake(verb, tail)
+	token, passphrase, r2, err := enableIntake(verb, tail)
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
-	v.beginJoin()
-	opened := false
-	// The join drives its transport through a stop of its own, so a disable's
-	// preempt ends the whole join rather than one call of it: the supervisor
-	// would otherwise start a fresh worker for the join's next call.
-	var stop *relevosync.StopTransport
-	enabler := &relevosync.Enabler{
-		Request: relevosync.EnableRequest{
-			Local:  v.Local,
-			Shared: v.Shared,
-			URL:    verb.RemoteURL,
-			Token:  token,
-			R2:     r2,
-			Yes:    verb.Yes,
-		},
-		Blobs: v.Blobs,
-		Open: func() (synclog.LogTransport, error) {
-			transport, err := v.openTransport(ctx)
-			if err != nil {
-				return transport, err
-			}
-			// Published before the join, because a joined machine reads off
-			// until the join finishes and a disable has to reach the transport
-			// while the join is still in flight.
-			stop = relevosync.NewStopTransport(transport)
-			v.publishJoin(stop)
-			opened = v.Open != nil
-			return stop, nil
-		},
-		Stopped: v.joinWasStopped,
-		Now:     time.Now,
+	if verb.Join {
+		return v.enableJoin(ctx, verb, token, passphrase, r2)
 	}
-	res, err := enabler.Enable()
-	v.clearJoin(enabler.Transport)
-	if err != nil {
-		// Only a transport this enable opened is closed: one taken from the
-		// runner belongs to whatever built it and must not be torn down here.
-		if opened {
-			closeTransport(enabler.Transport)
+	// A plain enable that was handed a passphrase gets the same verify the join
+	// does, before anything is stored. One that was handed none has nothing to
+	// verify and goes on exactly as it always did.
+	var staged *verified
+	if len(bytes.TrimSpace(passphrase)) > 0 {
+		done, err := v.stageAndVerify(ctx, verb.RemoteURL, token, passphrase, false)
+		if err != nil {
+			return verbRefusal(verbClassify(err), err)
 		}
-		return verbRefusal(verbClassify(err), err)
+		staged = done
 	}
-	client := enabler.Transport
-	if stop != nil {
-		client = stop.Inner()
-	}
-	v.setClient(client)
-	if v.Runner != nil {
-		v.Runner.SeedStats(res.Stats)
-	}
-	return &wire.SyncResult{OK: true, Applied: true, RemoteURL: res.Remote, TokenPresent: true, Warning: enableWarning(res)}
+	return v.enablePipeline(ctx, verb, token, r2, false, staged)
 }
 
 // openTransport returns the log an enable drives: the opener the wiring

@@ -109,7 +109,12 @@ These are the destination for the second, local-only database file.
   - `zstd-compress.v1`: the run-once marker of the history compression pass.
   - `origin-backfill.v1`: the run-once marker of the origin backfill pass.
 - `secret`: the `client.key` remote-builder identity, the `typesafe`
-  classifier token, and `serve.tls.*` (the server's certificate and key).
+  classifier token, the `r2.*` credentials, `turso.token`, `sync.key` and
+  `serve.tls.*` (the server's certificate and key). Six names travel, in the
+  `secrets` document below: `typesafe`, `client.key`, `r2.endpoint`,
+  `r2.bucket`, `r2.key_id` and `r2.secret`. The rest -- `turso.token`,
+  `sync.key`, `serve.tls.*` and any name not on that list -- stay
+  machine-local: they are refused on import and never exported.
 - `session_consent`: one session's own consent answer and last status token,
   keyed by `(harness_kind, session_id)`. The answer and its time travel, in the
   `session_consent` document below; the told baseline stays here, because it says
@@ -148,6 +153,7 @@ be read as a config section's -- no section below is named after a document.
 | `gates` | One key per ledger subject, holding that subject's live rate-limit entries. A rate limit is the provider's quota, so every machine gating that provider gates the same candidates. | `spawn_failed` entries, which are about this host's binaries failing to start; entries whose kind or source this build cannot read; and an expiry that no write has yet pruned. |
 | `consent` | One key per remote URL, holding the repository's answer to "may relevo register this repo's sessions as MasterMinds?". It reads and writes only the row this installation wrote, and the read scopes to it the same way: the `repo` rows themselves sync through the row log, so a machine holding several installations' rows for one URL holds several answers and only its own answers for it. | A repository with no remote URL, which no other machine can be asked about, and an answer that has been cleared: a clear is the key's absence, so it travels as a tombstone rather than as a value. A peer's copy of `mastermind_consent` in its own `repo` row means nothing here -- nothing reads it for the decision. |
 | `session_consent` | One key per `harness_kind/session_id`, holding the answer that session gave on its own rather than inheriting from the repository. A session id is not a repository, so a peer can hand over an answer for a session this machine has never seen and the row is simply created. | The told baseline and its time, which are this machine's own record of what it has already shown the session here; and an answer that has been cleared, which is a tombstone rather than a value. |
+| `secrets` | One key per allow-listed secret name (`typesafe`, `client.key`, `r2.endpoint`, `r2.bucket`, `r2.key_id`, `r2.secret`), each value an XChaCha20-Poly1305 envelope sealed under a subkey derived from `sync.key`, with the name as associated data. A cleared secret is a tombstone. The document is always inline in the log, never a `$ref`, because a joiner holds no R2 credentials until it has applied it. | `turso.token`, `sync.key`, `serve.tls.*` and every name off the list, in both directions. A `client.key` nobody stamped (one relevo generated or normalized) is not exported, so a machine's own identity is not replaced by a peer's generated one; only a person's `relevo config secret set` makes one travel. A locked machine neither exports nor applies the document. The value is never printed: a loss record names the key and the reason. |
 
 ## Per-user config, synced deliberately or not at all
 

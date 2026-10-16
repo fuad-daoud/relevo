@@ -111,7 +111,20 @@ func SetKey(l Local, key []byte, now time.Time) error {
 
 // ReadKey returns the stored key; ok is false when this machine has none.
 func ReadKey(l Local) (key []byte, ok bool, err error) {
-	key, ok, err = l.SecretGet(SecretKey)
+	return ReadKeyFrom(l)
+}
+
+// SecretReader is the one row the key lives in, read without the rest of the
+// database: a caller holding only the secret table -- a document opening an
+// arriving value inside somebody else's transaction -- reads the key through
+// this rather than taking a whole database handle it would have to open one for.
+type SecretReader interface {
+	SecretGet(name string) ([]byte, bool, error)
+}
+
+// ReadKeyFrom is ReadKey over that surface.
+func ReadKeyFrom(secrets SecretReader) (key []byte, ok bool, err error) {
+	key, ok, err = secrets.SecretGet(SecretKey)
 	if err != nil {
 		return nil, false, fmt.Errorf("sync: read %s: %w", SecretKey, err)
 	}

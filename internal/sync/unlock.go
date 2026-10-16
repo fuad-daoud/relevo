@@ -100,6 +100,53 @@ func checkedKey(meta synclog.KeyMeta, passphrase []byte) ([]byte, error) {
 	return key, nil
 }
 
+// VerifyJoinKey is the check an enable --join runs before it stores anything: it
+// reads the remote's key material and returns the derived key only when the
+// passphrase reproduces the remote's check.
+//
+// It exists rather than reusing Unlock because Unlock refuses a machine that is
+// not syncing -- ErrSyncOff -- and a joiner is by definition not syncing yet: it
+// is the thing that turns sync on. What the two share is checkedKey, which is
+// where the passphrase is actually compared, so the answer to "is this the right
+// passphrase" is written once.
+//
+// A remote holding no key is ErrNoKDF, the same refusal `unlock` gives. A joiner
+// that was handed such a remote could not unlock what it imported and would end
+// up holding nothing, so it is refused here rather than after a join that
+// appeared to work.
+func VerifyJoinKey(ctx context.Context, local Local, transport synclog.LogTransport, passphrase []byte) ([]byte, error) {
+	meta, err := transport.KeyMeta(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("sync: join: read the remote key: %w", err)
+	}
+	if !meta.Present {
+		return nil, ErrNoKDF
+	}
+	key, err := checkedKey(meta, passphrase)
+	if err != nil {
+		return nil, err
+	}
+	if err := recordRemoteKeyFact(local, meta); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+// recordRemoteKeyFact writes what the remote holds so status can report a
+// locked machine without a round trip. It is the writing half of RecordRemoteKDF,
+// split out for the caller that has just asked the remote rather than asking
+// again.
+func recordRemoteKeyFact(kv db.KV, meta synclog.KeyMeta) error {
+	value := []byte("0")
+	if meta.Present {
+		value = []byte("1")
+	}
+	if err := kv.KVPut(KeyRemoteKDF, value); err != nil {
+		return fmt.Errorf("sync: join: record the remote key: %w", err)
+	}
+	return nil
+}
+
 // RecordRemoteKDF learns whether the remote holds key material and records it
 // as the local fact status reads. A failed read leaves the recorded value as it
 // was, so an unreachable remote never flips a machine between locked and none.

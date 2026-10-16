@@ -134,6 +134,12 @@ type dbSyncVerbOptions struct {
 	R2Bucket    string
 	R2KeyID     string
 	R2SecretLen int
+	// PassphraseLen is the length of the passphrase in the tail, and Join says
+	// the enable carries a code rather than a hand-entered remote. The two go
+	// together: a code names the remote and the token, which leaves the tail's
+	// middle to the passphrase.
+	PassphraseLen int
+	Join          bool
 	// Yes is enable's --yes.
 	Yes bool
 	// DryRun is reconcile's --dry-run.
@@ -163,17 +169,19 @@ func sendSyncVerb(ctx context.Context, shared *db.DB, verb string, opts dbSyncVe
 // the value crosses the stream between them and nowhere else.
 func sendSyncVerbToken(ctx context.Context, shared *db.DB, verb string, token []byte, opts dbSyncVerbOptions) (*wire.SyncResult, error) {
 	req := &wire.SyncVerb{
-		Header:      wire.Header{Type: wire.TypeSyncVerb},
-		Verb:        verb,
-		RemoteURL:   opts.RemoteURL,
-		TimeoutMS:   opts.Timeout.Milliseconds(),
-		R2Endpoint:  opts.R2Endpoint,
-		R2Bucket:    opts.R2Bucket,
-		R2KeyID:     opts.R2KeyID,
-		R2SecretLen: opts.R2SecretLen,
-		Yes:         opts.Yes,
-		DryRun:      opts.DryRun,
-		New:         opts.New,
+		Header:        wire.Header{Type: wire.TypeSyncVerb},
+		Verb:          verb,
+		RemoteURL:     opts.RemoteURL,
+		TimeoutMS:     opts.Timeout.Milliseconds(),
+		R2Endpoint:    opts.R2Endpoint,
+		R2Bucket:      opts.R2Bucket,
+		R2KeyID:       opts.R2KeyID,
+		R2SecretLen:   opts.R2SecretLen,
+		PassphraseLen: opts.PassphraseLen,
+		Join:          opts.Join,
+		Yes:           opts.Yes,
+		DryRun:        opts.DryRun,
+		New:           opts.New,
 	}
 	res, err := shared.SyncVerb(ctx, req, token)
 	if err != nil {

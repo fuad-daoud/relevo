@@ -333,7 +333,7 @@ var registry = []verbEntry{
 	{
 		Name:    "db sync",
 		Summary: "turn this machine's cloud sync on and off, and drive or inspect it by hand",
-		Args:    "enable|disable|retry|status|push|pull|reconcile|unlock",
+		Args:    "enable|disable|retry|status|push|pull|reconcile|unlock|invite",
 		Flags:   []string{},
 		Exit:    []int{0, 2},
 		Errors:  []string{},
@@ -350,13 +350,23 @@ var registry = []verbEntry{
 	{
 		Name:    "db sync enable",
 		Summary: "refuse: this build carries no sync engine, so enable joins nothing",
-		Args: "[--url URL] [--token-stdin] [--r2-endpoint URL] [--r2-bucket NAME] " +
-			"[--r2-key-id ID] [--r2-secret-stdin] [--yes] [--timeout D] [--json]",
-		Flags: []string{"--json", "--r2-bucket", "--r2-endpoint", "--r2-key-id",
-			"--r2-secret-stdin", "--timeout", "--token-stdin", "--url", "--yes"},
+		Args: "[--url URL] [--token-stdin] [--passphrase-stdin] [--join-stdin] " +
+			"[--r2-endpoint URL] [--r2-bucket NAME] [--r2-key-id ID] [--r2-secret-stdin] " +
+			"[--yes] [--timeout D] [--json]",
+		Flags: []string{"--join-stdin", "--json", "--passphrase-stdin", "--r2-bucket", "--r2-endpoint",
+			"--r2-key-id", "--r2-secret-stdin", "--timeout", "--token-stdin", "--url", "--yes"},
 		Output: "json:DbSyncOutcomeDoc",
 		Exit:   []int{0, 1, 2},
 		Errors: []string{"config_invalid", "conflict", "internal", "refused", "remote_auth", "remote_unreachable", "usage"},
+	},
+	{
+		Name:    "db sync invite",
+		Summary: "print one join code for a new machine, carrying the turso token for this remote",
+		Args:    "[--json]",
+		Flags:   []string{"--json"},
+		Output:  "json:DbSyncInviteDoc",
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"config_invalid", "internal", "refused", "usage"},
 	},
 	{
 		Name:    "db sync pull",
