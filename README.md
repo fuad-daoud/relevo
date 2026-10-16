@@ -438,12 +438,14 @@ gives a MasterMind a name of your own.
   (the report's pointer line, a blank line, then the report itself, capped at
   64 KiB), marked delivered, unless `--peek` asks for the outcome line only.
   `--any` waits on several and prints the
-  winner's name first. A Claude Code MasterMind runs `relevo wait N` as a
-  background command and ends its turn: Claude Code wakes the session when the
-  command exits, with the report in its output (see
-  [Claude Code plugin](#claude-code-plugin)).
+  winner's name first. A Claude Code MasterMind instead calls the blocking
+  `wait` tool the `relevo mcp` server exposes and ends its turn: the call
+  returns with the report in its output (see
+  [Claude Code plugin](#claude-code-plugin)). The `relevo wait` command is
+  the route where there are no MCP tools.
 - `relevo ui [--interval D] [:view [args]]` — the cockpit: `:fleet`, `:rounds [query]`,
-  `:round <binding> [N]`, `:servers`. `:fleet` is the root table of bindings; `enter` opens its round
+  `:round <binding> [N]`, `:chains`, `:stats`, `:candidates`, `:actors`, `:workflows`,
+  `:agents`, `:servers`, `:sync`, `:settings`, `:audit`, `:log`. `:fleet` is the root table of bindings; `enter` opens its round
   detail, `esc` goes back, `:` the command line, `?` the key list. `relevo ui :rounds`
   opens the rounds grid directly (`:rounds` reaches it from the fleet).
   `:servers` lists the configured remote builders' servers and probes their health on demand
@@ -603,7 +605,6 @@ name exits 2 and names its replacement:
 | `relevo pull` | `relevo wait (it prints the report)` |
 | `relevo unavailable` | `relevo gate <token>` |
 | `relevo available` | `relevo gate --clear <provider>` |
-| `relevo db` | `relevo doctor (the database row)` |
 
 ### Reviewing a round
 
@@ -652,13 +653,19 @@ read, exactly as `relevo status` does.
 round, state, age, spend, MasterMind, repo). `s` toggles attention and name
 order and `/` filters the rows; `enter` opens the selected binding's round
 detail, `esc` goes back to it, `:` opens the command line (`:fleet`,
-`:rounds [query]`, `:round <binding> [N]`), `?` lists every key, and `q`
-quits at the root. The pane's five tabs:
+`:rounds [query]`, `:round <binding> [N]`, `:chains`, `:stats`, `:candidates`,
+`:actors`, `:workflows`, `:agents`, `:servers`, `:sync`, `:settings`, `:audit`,
+`:log`), `?` lists every key, and `q`
+quits at the root. A writer round's pane has five tabs:
 - **prompt** — the round's own prompt file, first in the order (#183).
 - **report** — that round's MasterMind-bound report or question payload.
 - **terminal** — recent live terminal output from the builder's log.
 - **diff** — the captured git patch from the round.
 - **log** — the formatted append-only round log, scoped to the round.
+
+A reader round (reviewer, researcher, planner) instead shows four:
+**prompt**, **artifacts**, **log** and **terminal** — no report and no diff,
+with the artifacts tab in their place.
 
 `[` and `]` step the round a tab reads, from round 1 through the binding's
 current round -- every tab refetches for the new round. Stepping onto a
@@ -714,7 +721,8 @@ grammar is documented in full under `relevo history`.
 
 The fleet lists live bindings only. Every binding the database has ever
 recorded stays reachable through `:rounds`: its grid carries archived rounds
-too, and `enter` on one opens the same five tabs, reading the database instead
+too, and `enter` on one opens the same tabs (five for a writer round, four
+for a reader round), reading the database instead
 of files -- `terminal` renders the round's stored transcript rows and does not
 follow a tail, since nothing about an archived round is still moving. A
 database relevo cannot open shows `no database: <err>` as a sticky notice and
@@ -1093,6 +1101,23 @@ Headless builders are the cheap way to run several: no terminal per builder,
 no idle harness holding memory. `relevo bind --worktree --no-feature --name api` gives a peer its own
 worktree and a fresh process per round.
 
+### Chains
+
+`relevo chain` runs a build, review and correct loop across a list of plans:
+it starts a builder member per plan, reviews each round, and opens correction
+rounds up to the policy cap before asking for a human. `relevo status --chains`
+watches the chain and its steps instead of the members:
+
+```
+relevo chain --name shop --plan plan-a.md --plan plan-b.md --no-feature
+relevo status --chains
+```
+
+A `--workflow` runs a saved workflow instead of the shipped
+build-review-correct graph; `relevo config workflow` lists, adds and edits the
+saved ones. `relevo help --json chain` lists every flag; the design records are
+[`docs/specs/2026-09-30-chains-design.md`](docs/specs/2026-09-30-chains-design.md)
+and [`docs/specs/2026-10-01-custom-chains-design.md`](docs/specs/2026-10-01-custom-chains-design.md).
 
 ### Stopping a round
 
@@ -1184,13 +1209,15 @@ dashboard and the database below.
 
 ### The database
 
-relevo keeps a pure-Go sqlite database at `$XDG_STATE_HOME/relevo/relevo.db`
+relevo keeps a Turso-engine database at `$XDG_STATE_HOME/relevo/relevo.db`
 (defaulting to `~/.local/state/relevo/relevo.db`), mode 0600, and it is the
 record: the configuration sections and secrets, every binding with its round
 log and rounds, gates, MasterMind records, and every file a closed round produced
 (artifact rows, and transcript rows holding a builder round's rendered stream).
 relevo never reads or records the MasterMind's own harness transcript. Nothing
-else is a source of truth, and no verb needs it closed.
+else is a source of truth, and no verb needs it closed. The first start
+converts a pre-Turso SQLite file in place and keeps the backup at
+`relevo.db.pre-turso`.
 
 One process opens the file: `relevo daemon`. Every other process -- every verb,
 the lifecycle hooks, `mcp`, `wait`, the ui and `relevo serve` -- reaches it
@@ -1220,10 +1247,24 @@ Nothing else is used. A file dropped into `~/.config/relevo` is imported on the
 next command and removed. `relevo doctor`
 prints the database's `database` row: its path, its size, the schema version,
 the live and archived binding counts, and the route it was read by.
+`relevo db query` reads the database ad hoc, and `relevo db rename-repo` and
+`relevo db relabel` repair a renamed remote and finished labels;
+`relevo help --json db` lists the family.
 
 `relevo history` and `relevo show` read the database for anything that is not a
 live binding's open round, so a round from months ago renders the same way a
 live one does. See "relevo history" and "relevo show" below.
+
+### Cloud sync
+
+Cloud sync keeps this machine's rows in a shared remote log, so several
+machines share the same bindings. It is off until joined:
+`relevo db sync enable` joins this machine to the remote,
+`relevo db sync status` shows the exchange, and `push` and `pull` drive each
+half by hand. `relevo help --json db sync` lists every verb (`enable`,
+`disable`, `retry`, `status`, `push`, `pull`, `reconcile`, `unlock`, `invite`);
+the design record is
+[`docs/specs/2026-10-10-sync-everything-design.md`](docs/specs/2026-10-10-sync-everything-design.md).
 
 ### relevo history
 
@@ -1676,6 +1717,16 @@ picked claude/anthropic/sonnet for builder: order #2; skipped agy/google/gemini-
 ```
 
 `relevo config` prints the actors, the pick per actor and the candidates.
+
+### Account pools
+
+The `accounts` section names the harness logins relevo may run as: one entry
+per login, with the quota groups its candidates use, so several logins for one
+provider cover for each other — the pick fails over to the first login no gate
+covers, or spreads fresh rounds across the pool. Read it with
+`relevo config get accounts` and write it with
+`relevo config set accounts '[…]'`; the design record is
+[`docs/specs/2026-09-30-account-pools-design.md`](docs/specs/2026-09-30-account-pools-design.md).
 
 ### Policy
 
@@ -2497,11 +2548,10 @@ opencode copies leave `model:` unset so the launch line's flag decides. The
 `relevo mastermind init` SessionStart hook injects the relevo guide, so a
 MasterMind session on any agent receives it.
 
-**Wait for the report after every send.** In Claude Code the MasterMind starts
-`relevo wait <name> --timeout <budget>` as a **background**
-command and ends its turn: Claude Code wakes the session when the command exits,
-with the report already in the command's output, and the `relevo mcp` send result
-prints the exact command for that binding. Other
+**Wait for the report after every send.** In Claude Code the MasterMind calls
+the blocking `wait` tool for that binding and ends its turn: the call returns
+with the report already in its output, and the `relevo mcp` send result
+points at that tool, carrying the round's budget. Other
 harnesses run `relevo wait <name> --timeout 9m` in a loop while it exits 124; the
 wait prints the report, and they end their turn only when no binding has a round in
 flight.
@@ -2702,7 +2752,8 @@ at runtime with a clear error rather than running without a state lock.
 ## Claude Code plugin
 
 The relevo plugin gives a Claude Code MasterMind two things: the `relevo mcp` MCP
-server, which exposes `status`, `send`, `done`, `show` and `gate` as tools, and
+server, which exposes `status`, `send`, `wait`, `done`, `show` and `gate` as tools
+(`--kind opencode` serves the five without `wait`), and
 a `SessionStart` hook that runs `relevo mastermind init`. The MCP server, the
 hooks and the slash commands below all run through tiny scripts under
 `${CLAUDE_PLUGIN_ROOT}/scripts/` that exec `relevo` from `PATH`; without it the
@@ -2729,31 +2780,38 @@ Then launch Claude Code normally:
 
     claude --agent architect --model opus
 
-**The background wait is the default.** After each `relevo send`, the MasterMind
-runs
+**The `wait` tool covers sessions without a holder.** After each `relevo send`, the MasterMind
+calls
 
-    relevo wait --name <n> --timeout <budget>
+    wait(name: "<n>", timeout: "<budget>")
 
-as a background Bash command and ends its turn. Claude Code wakes the session
-when the command exits, and its output is the report (or the reason the round
-stopped). The `relevo mcp` send result prints that exact command for the
-binding, so the model does not have to remember it. Act on the wait's output
-after every exit except `WaitTimeout`; on a timeout, run `relevo status --name
-<n>` and start the wait again if the round is still running.
+and ends its turn. The call blocks until the round closes. Where no push holder
+runs, its output is the report (or the reason the round stopped); where the
+mod already delivered the report, its output is only the outcome line
+("delivered by the mod"). The `relevo mcp` send result
+points at that tool for the binding, carrying the round's budget, so the model
+does not have to remember it. Act on the wait's output
+after every return except `still-open`; on a timeout, run `relevo status --name
+<n>` and wait again if the round is still running.
 
-**Push is the opt-in upgrade.** A `relevo push` holder writes reports, consult
-answers and edge artifacts to the session's mod as NDJSON the moment the daemon
-has them, instead of the session fetching them with the wait. The session's mod
-starts the holder and acks each line with `relevo push --ack <binding> <seq>`,
-which confirms that entry and exits; the holder sees the confirm and sends the
-next line. Without a holder, `relevo mcp` serves the tools and reports arrive
-through the background wait above.
+**Push is the Claude Code default where the mod loads.** A `relevo push` holder
+writes reports, consult answers and edge artifacts to the session's mod as
+NDJSON the moment the daemon has them. The session's mod starts the holder and
+acks each line with `relevo push --ack <binding> <seq>`, which confirms that
+entry and exits; the holder sees the confirm and sends the next line, so by the
+time the `wait` tool returns its outcome line the report is already in the
+session. Meanwhile the status line under the prompt keeps the bindings, round
+and state in view (see [Status line](#status-line)). Without a holder -- the mod
+not loaded, another harness, a session where no MasterMind resolved -- reports
+arrive through the `wait` tool above instead. `relevo help --json push`
+documents both routes of the verb.
 
 **How reports arrive.** relevo identifies the MasterMind session itself -- the
 plugin's hook registers it, and `relevo mastermind list` shows the records -- so no
 verb has to guess who is calling. A report then reaches the MasterMind by exactly
-one of four routes: the background wait (the Claude Code default), the push holder
-(opt-in, above), a deliverer for a harness that has one (opencode, agy), or
+one of four routes: the push holder (the Claude Code default where the mod
+loads), the `wait` tool (where no holder runs), a deliverer for a harness
+that has one (opencode, agy), or
 `relevo wait` by hand. Nothing is ever typed into a terminal.
 
 An agy MasterMind runs `relevo mastermind init` once inside agy, with no flags: relevo
