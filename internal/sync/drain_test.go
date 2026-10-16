@@ -78,8 +78,7 @@ func TestSteadyDrainsEveryPageOfAnOrigin(t *testing.T) {
 	seedFarMany(t, log, "m2", total, known)
 
 	paged := &pagingLog{MemTransport: log, page: steadyDrainPage}
-	// The bound stays where it was and the page is what got shrunk, so a pass
-	// comes from the work being small rather than from the bound being large;
+	// A pass comes from the work being small, not from the bound being large;
 	// the loop's own deadline is what this test does not reach.
 	runner := &Runner{Client: paged, Local: local, Timeout: 30 * time.Second}
 	res := runner.SyncOnce(context.Background(), shared)
