@@ -35,6 +35,10 @@ type Unread = { binding: string; round: number; kind: string; state: string }
 type Ctx = {
   io: Io
   env: Record<string, string>
+  // False only when the start event names a headless session (`claude -p`):
+  // there the mod claims nothing and runs no push child, because a headless
+  // run leaves no transcript the child could push into.
+  interactive: boolean
   busy: boolean
   unread: Unread[]
   delivered: Set<string>
@@ -315,7 +319,11 @@ async function start(ctx: Ctx): Promise<void> {
       ctx.env = { ...sessionEnv, RELEVO_MASTERMIND: doc.mastermind.id }
       await observe(ctx, doc)
       startPoller(ctx)
-      void supervise(ctx)
+      // The push child claims the round the moment it starts, and the claim is
+      // what makes later waits stop delivering. A headless session has no
+      // transcript to push into, so it starts no child and stays claim-free;
+      // its waits deliver the report themselves.
+      if (ctx.interactive) void supervise(ctx)
     } finally {
       resolving = false
     }
@@ -453,6 +461,7 @@ export const register: Register = (on) => {
   const ctx: Ctx = {
     io: undefined as unknown as Io,
     env: {},
+    interactive: true,
     busy: false,
     unread: [],
     delivered: new Set(),
@@ -474,6 +483,9 @@ export const register: Register = (on) => {
       toast: (text) => $.ui.toast(text),
     }
     ctx.env = { CLAUDE_CODE_SESSION_ID: await $.session.id() }
+    // Back-compat: only an explicit false flips a session headless, so an
+    // engine that leaves the field out keeps today's push behaviour.
+    ctx.interactive = (e as unknown as { isInteractive?: boolean }).isInteractive !== false
     void start(ctx)
     return started
   })

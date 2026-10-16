@@ -104,7 +104,9 @@ function fakes(on: any, opts: Opts = {}) {
 const line = (o: object) => JSON.stringify(o) + '\n'
 const report = (seq: number, text = 'report text') =>
   line({ seq, binding: 'b1', round: 2, kind: 'report', text })
-const startSession = ($: any) => $.session.start({ cwd: '/w', surface: null, isInteractive: false })
+// The start the MasterMind sees: interactive, the one session shape that runs
+// the push child. The gate tests below name the other shapes explicitly.
+const startSession = ($: any) => $.session.start({ cwd: '/w', surface: null, isInteractive: true })
 const startTurn = ($: any, turnId = 't1') => $.turn.start({ text: 'hi', turnId })
 const endTurn = ($: any, extra: object = {}) =>
   $.turn.complete({ answer: 'x', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', ...extra })
@@ -140,6 +142,23 @@ describe('identity', () => {
     expect(f.spawns[0].env).toEqual({ RELEVO_MASTERMIND: 'mm-1', CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'sess-1' })
     await f.clock.advance(60_000)
     expect(f.statuses().filter((r) => r.env?.RELEVO_MASTERMIND === undefined)).toHaveLength(1)
+  })
+
+  test('headless (`claude -p`): identity resolves, but no push child and no claim', async ($, on) => {
+    const f = fakes(on)
+    await $.session.start({ cwd: '/w', surface: null, isInteractive: false })
+    await f.clock.settle()
+    expect(f.statuses()).toHaveLength(1)
+    await f.clock.advance(10_000)
+    expect(f.spawns).toHaveLength(0)
+  })
+
+  test('an engine that omits isInteractive keeps today\'s push behaviour', async ($, on) => {
+    const f = fakes(on)
+    await $.session.start({ cwd: '/w', surface: null })
+    await f.clock.settle()
+    expect(f.spawns).toHaveLength(1)
+    expect(f.spawns[0]?.argv).toEqual(['relevo', 'push'])
   })
 })
 
