@@ -26,6 +26,7 @@ type syncDb interface {
 	Push(ctx context.Context) error
 	Pull(ctx context.Context) (bool, error)
 	Stats(ctx context.Context) (turso.TursoSyncDbStats, error)
+	Checkpoint(ctx context.Context) error
 }
 
 // newSyncDb is the sync constructor as a variable so a test can stand in for it:
@@ -96,6 +97,11 @@ func (d *tursoDriver) Pull(ctx context.Context) error {
 // a pull actually cost.
 func (d *tursoDriver) Stats(ctx context.Context) (turso.TursoSyncDbStats, error) {
 	return d.sdb.Stats(ctx)
+}
+
+// Checkpoint folds the replica's WAL into its database file.
+func (d *tursoDriver) Checkpoint(ctx context.Context) error {
+	return d.sdb.Checkpoint(ctx)
 }
 
 // bytesDelta returns what one push or pull moved, from the engine's own totals

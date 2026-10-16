@@ -30,6 +30,8 @@ type localDriver struct {
 	pushes int
 	pulls  int
 	stats  int
+	// checkpoints counts the WAL checkpoints the backend asked for.
+	checkpoints int
 	// engineBytes is what the engine's own counters read as. A transfer that
 	// moves bytes sets it, and the backend's cumulative totals follow from the
 	// difference between the readings either side.
@@ -65,6 +67,11 @@ func (d *localDriver) Push(context.Context) error {
 func (d *localDriver) Pull(context.Context) error {
 	d.pulls++
 	return d.pullErr
+}
+
+func (d *localDriver) Checkpoint(context.Context) error {
+	d.checkpoints++
+	return nil
 }
 
 // Stats hands back whatever engineBytes holds, which is how a test drives the
@@ -798,9 +805,12 @@ type fakeSyncDb struct {
 	db  *sql.DB
 	err error
 
-	pushes int
-	pulls  int
-	stats  int
+	pushes      int
+	pulls       int
+	stats       int
+	checkpoints int
+	// checkpointErr is what a checkpoint fails with.
+	checkpointErr error
 	// reading is what the engine's own counters report. It is a field so a test
 	// can move them across a transfer and watch the backend's totals follow.
 	reading turso.TursoSyncDbStats
@@ -824,6 +834,11 @@ func (f *fakeSyncDb) Push(context.Context) error {
 func (f *fakeSyncDb) Pull(context.Context) (bool, error) {
 	f.pulls++
 	return false, f.err
+}
+
+func (f *fakeSyncDb) Checkpoint(context.Context) error {
+	f.checkpoints++
+	return f.checkpointErr
 }
 
 func (f *fakeSyncDb) Stats(context.Context) (turso.TursoSyncDbStats, error) {

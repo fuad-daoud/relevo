@@ -115,6 +115,66 @@ func TestScratchRemoteMovesAHeadRowTwice(t *testing.T) {
 	}
 }
 
+// TestScratchRemoteRoundTripsAcrossACheckpoint takes entries both ways through
+// a real remote with each replica checkpointed partway, so the WAL bound is
+// proven against the engine rather than the fake: a checkpoint must empty the
+// WAL, and every append and pull after it must still land.
+func TestScratchRemoteRoundTripsAcrossACheckpoint(t *testing.T) {
+	url := os.Getenv("RELEVO_SCRATCH_SYNC_URL")
+	token := os.Getenv("RELEVO_SCRATCH_SYNC_TOKEN")
+	if url == "" || token == "" {
+		t.Skip("set RELEVO_SCRATCH_SYNC_URL and RELEVO_SCRATCH_SYNC_TOKEN to run against a scratch remote")
+	}
+	dir := t.TempDir()
+	stamp := strconv.FormatInt(time.Now().UnixNano(), 10)
+	aOrigin, bOrigin := "scratch-ckpt-a-"+stamp, "scratch-ckpt-b-"+stamp
+	a := openScratch(t, filepath.Join(dir, "a.db"), aOrigin, url, token)
+	b := openScratch(t, filepath.Join(dir, "b.db"), bOrigin, url, token)
+
+	appendOne := func(be *TursoBackend, origin, pk string) Entry {
+		t.Helper()
+		got, err := be.Append([]Entry{upsertEntry(origin, "board", `["`+pk+`"]`, `{"title":"`+pk+`"}`)})
+		if err != nil {
+			t.Fatalf("append %s: %v", pk, err)
+		}
+		return got[0]
+	}
+	checkpoint := func(be *TursoBackend, name string) {
+		t.Helper()
+		ctx := t.Context()
+		if err := be.driver.Checkpoint(ctx); err != nil {
+			t.Fatalf("checkpoint %s: %v", name, err)
+		}
+		stats, err := be.driver.Stats(ctx)
+		if err != nil {
+			t.Fatalf("stats %s: %v", name, err)
+		}
+		if stats.MainWalSize != 0 {
+			t.Errorf("%s WAL = %d bytes after a checkpoint, want 0", name, stats.MainWalSize)
+		}
+	}
+	pullFinds := func(be *TursoBackend, origin string, want Entry) {
+		t.Helper()
+		pulled, err := be.Pull(nil)
+		if err != nil {
+			t.Fatalf("pull: %v", err)
+		}
+		if !carries(pulled, origin, want.Seq) {
+			t.Errorf("pulled %d entries but not %s seq %d", len(pulled), origin, want.Seq)
+		}
+	}
+
+	first := appendOne(a, aOrigin, "before")
+	checkpoint(a, "a")
+	pullFinds(b, aOrigin, first)
+	pullFinds(b, aOrigin, appendOne(a, aOrigin, "after"))
+
+	answer := appendOne(b, bOrigin, "answer")
+	checkpoint(b, "b")
+	pullFinds(a, bOrigin, answer)
+	pullFinds(b, aOrigin, appendOne(a, aOrigin, "last"))
+}
+
 // openScratch opens one installation's backend against the real remote through
 // the production driver.
 func openScratch(t *testing.T, replicaPath, origin, url, token string) *TursoBackend {
