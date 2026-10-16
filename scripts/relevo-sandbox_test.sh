@@ -415,6 +415,22 @@ if printf '%s' "$stub_out" | grep -qF 'config init --no-agents'; then
 	fail=1
 fi
 
+# A seed step can start a daemon that outlives create and runs the next rounds,
+# so it must run under every export env.sh writes, with the sandbox's bin ahead
+# of the caller's PATH; a step without them lets that daemon's harnesses
+# resolve the developer's binaries against the sandbox's state.
+seed_line=$(printf '%s\n' "$stub_out" | grep -F 'config set candidates')
+for want in "RELEVO_SANDBOX=stubbed " "SB=$root/stubbed " \
+	"XDG_STATE_HOME=$root/stubbed/state " "XDG_CONFIG_HOME=$root/stubbed/config " \
+	"XDG_DATA_HOME=$root/stubbed/data " "XDG_CACHE_HOME=$root/stubbed/cache " \
+	"CLAUDE_CONFIG_DIR=$root/stubbed/claude " "CODEX_HOME=$root/stubbed/codex " \
+	"PATH=$root/stubbed/bin:$root/stubbin:"; do
+	if ! printf '%s' "$seed_line" | grep -qF -- "$want"; then
+		echo "FAIL: the seed step runs without $want: $seed_line"
+		fail=1
+	fi
+done
+
 # A host database with no set sections falls back to the starter: the empty
 # file reads as unset for every section, so the init line returns. The stub
 # answers every get as unset; the installed relevo would auto-start a daemon in
