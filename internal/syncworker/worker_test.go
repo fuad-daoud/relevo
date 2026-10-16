@@ -700,7 +700,7 @@ func TestVerbsNamesEveryDispatchedVerb(t *testing.T) {
 	for _, verb := range Verbs() {
 		names = append(names, string(verb))
 	}
-	if got := strings.Join(names, ","); got != "compact,export,get_blob,head,hello,key_init,key_meta,publish_marks,pull,pull_range,put_blob,read_marks,shutdown,stats" {
+	if got := strings.Join(names, ","); got != "compact,export,get_blob,head,hello,key_init,key_meta,key_rekey,publish_marks,pull,pull_range,put_blob,read_marks,shutdown,stats" {
 		t.Errorf("Verbs() = %q, want the pipe's own verb set", got)
 	}
 }
