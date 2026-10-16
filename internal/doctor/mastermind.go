@@ -58,7 +58,7 @@ type MasterMindCheckInput struct {
 	// ClaudeDir is CLAUDE_CONFIG_DIR, where Claude Code keeps its settings
 	// and plugins when it is set; "" means Home/.claude.
 	ClaudeDir string
-	Repo   string // the repository `relevo doctor` runs in
+	Repo      string // the repository `relevo doctor` runs in
 
 	Detected  bool               // mastermind.Detect: relevo runs inside a Claude Code session
 	Resolved  *mastermind.Record // the mastermind Resolve found; nil on a miss
