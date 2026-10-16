@@ -308,3 +308,28 @@ func TestImportAtEpochOneBehavesExactlyAsBefore(t *testing.T) {
 		t.Errorf("mark = %d, want the two entries before the refusal applied", got)
 	}
 }
+
+// TestImportRefusesAnOldKeyWriteFromAnOriginWithNoCut pins the default fence:
+// an origin the rekey never cut -- one that first appears after it, as a
+// token holder can make up -- verifies under the newest key only, so the old
+// key cannot sign entries, shared docs among them, under a fresh origin.
+func TestImportRefusesAnOldKeyWriteFromAnOriginWithNoCut(t *testing.T) {
+	t.Parallel()
+	log, _ := signedLog(t)
+	rekeyTo2(t, log, keyA, keyB)
+	e := syncEntry(t, "m9", "binding", `["09A"]`, map[string]any{"id": "x"})
+	e.SchemaVersion = 1
+	e.MAC = EntryMAC(keyA, e)
+	if _, err := log.OnLog("m9").AppendSigned([]Entry{e}, Boundary{Seq: 1, Tag: BoundaryTag(keyA, "m9", 1)}); err != nil {
+		t.Fatalf("append under the old key: %v", err)
+	}
+	m2, _ := peerFile(t, "m2")
+
+	res, err := importWithRing(t, m2, log, ring2())
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if reason := stallOf(res, "m9"); !strings.Contains(reason, `entry 1 from "m9" has a bad signature`) {
+		t.Errorf("stall %q lacks the sentence", reason)
+	}
+}
