@@ -5,6 +5,7 @@ github.com/fuad-daoud/relevo/internal/agentsrc 92.3
 github.com/fuad-daoud/relevo/internal/availability 87.0
 github.com/fuad-daoud/relevo/internal/blobstore 91.8
 github.com/fuad-daoud/relevo/internal/board 86.8
+github.com/fuad-daoud/relevo/internal/board/theme 90.4
 github.com/fuad-daoud/relevo/internal/bugreport 91.0
 github.com/fuad-daoud/relevo/internal/candidate 96.3
 github.com/fuad-daoud/relevo/internal/capture 95.5
