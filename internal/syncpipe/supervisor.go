@@ -200,6 +200,19 @@ func (s *Supervisor) KeyInit(ctx context.Context, key synclog.KeyMeta) (synclog.
 	return out, err
 }
 
+// KeyRekey rotates the log's key to the epoch the spec names.
+func (s *Supervisor) KeyRekey(ctx context.Context, spec synclog.KeyRekeySpec) (synclog.KeyMeta, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out synclog.KeyMeta
+	err := s.drive("key_rekey", func(c *Client) error {
+		var e error
+		out, e = c.KeyRekey(ctx, spec)
+		return e
+	})
+	return out, err
+}
+
 // BlobStagingDir is the folder bodies are written to before they are put. It is
 // the supervisor's own rather than a caller's, so the exporter writing the file
 // and the worker reading it are named from one place.

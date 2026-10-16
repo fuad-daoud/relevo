@@ -1145,6 +1145,8 @@ func (r refusingBackend) KeyMeta() (KeyMeta, error) { return KeyMeta{}, r.fail }
 
 func (r refusingBackend) KeyInit(KeyMeta) (KeyMeta, error) { return KeyMeta{}, r.fail }
 
+func (r refusingBackend) KeyRekey(KeyRekeySpec) (KeyMeta, error) { return KeyMeta{}, r.fail }
+
 func (r refusingBackend) Close() error { return nil }
 
 // TestWorkerCarriesEveryBackendRefusal pins that each verb hands the backend's

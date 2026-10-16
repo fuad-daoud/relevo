@@ -98,3 +98,7 @@ func (r *retryTransport) KeyMeta(context.Context) (synclog.KeyMeta, error) {
 func (r *retryTransport) KeyInit(context.Context, synclog.KeyMeta) (synclog.KeyMeta, error) {
 	return synclog.KeyMeta{}, nil
 }
+
+func (r *retryTransport) KeyRekey(context.Context, synclog.KeyRekeySpec) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}

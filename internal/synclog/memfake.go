@@ -51,6 +51,10 @@ type memLog struct {
 	signedTag map[string][]byte
 	// key is the passphrase material the log holds.
 	key KeyMeta
+	// epochCut is the cut each origin's history is fenced at, as a rekey
+	// wrote it. A row is one origin's, and the newest rekey's row is the one
+	// that stands.
+	epochCut map[string]EpochCut
 }
 
 // NewMemTransport returns a handle on an empty log for the installation named

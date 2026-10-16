@@ -518,6 +518,10 @@ func (r *recordTransport) KeyInit(context.Context, synclog.KeyMeta) (synclog.Key
 	return synclog.KeyMeta{}, nil
 }
 
+func (r *recordTransport) KeyRekey(context.Context, synclog.KeyRekeySpec) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
+
 func (s *syncBlackhole) PullRange(string, int, int) ([]synclog.Entry, error) { return nil, nil }
 
 func (s *syncBlackhole) CompactOwn(int) (synclog.CompactResult, error) {
@@ -529,5 +533,9 @@ func (s *syncBlackhole) KeyMeta(context.Context) (synclog.KeyMeta, error) {
 }
 
 func (s *syncBlackhole) KeyInit(context.Context, synclog.KeyMeta) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
+
+func (s *syncBlackhole) KeyRekey(context.Context, synclog.KeyRekeySpec) (synclog.KeyMeta, error) {
 	return synclog.KeyMeta{}, nil
 }

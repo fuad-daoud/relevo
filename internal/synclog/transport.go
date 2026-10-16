@@ -102,6 +102,14 @@ type LogTransport interface {
 	// salt this way, and each compares its own check against it, rather than one
 	// machine silently replacing the other's key.
 	KeyInit(ctx context.Context, key KeyMeta) (KeyMeta, error)
+
+	// KeyRekey rotates the log's key to the epoch the spec names: the new
+	// material, the key it replaced sealed for the machines still holding it,
+	// and every origin's cut, all written in one transaction that also refuses
+	// a remote whose epoch or whose heads moved under the caller. It answers
+	// with what the remote holds afterwards, which is another machine's when
+	// this one lost the race.
+	KeyRekey(ctx context.Context, spec KeyRekeySpec) (KeyMeta, error)
 }
 
 // KeyMeta is the passphrase material a transport holds: the KDF salt, the name
@@ -122,6 +130,43 @@ type KeyMeta struct {
 	// the salt being empty, because a remote that holds a check without a salt
 	// is a different state from one that holds neither.
 	Present bool
+	// Epoch is the epoch this material's key is. A remote that holds no
+	// key_epoch row is at epoch 1, and the transport hands every reader that 1
+	// rather than a zero each caller would have to default itself.
+	Epoch int
+	// Wrapped is the older epochs' keys the remote holds sealed, keyed by the
+	// epoch each one is. It is nil on a remote that holds none, which is every
+	// remote before its first rekey.
+	Wrapped map[int][]byte
+}
+
+// EpochCut is one origin's cut: the epoch entries above the cut must verify
+// under, the sequence the cut sits at, and the tag binding origin, epoch and
+// sequence to the epoch's key.
+type EpochCut struct {
+	// Epoch is the epoch the cut fences for.
+	Epoch int
+	// Seq is the highest sequence the cut vouches for as history.
+	Seq int
+	// Tag is the HMAC that binds the three to the epoch's key.
+	Tag []byte
+}
+
+// KeyRekeySpec is what one rekey writes: the epoch it is rotating from, the
+// material the remote is to hold, and the cut each origin's history is fenced
+// at.
+type KeyRekeySpec struct {
+	// From is the epoch the caller read the remote at. The rekey is a
+	// compare-and-set against it, so a remote whose epoch has moved under the
+	// caller -- another machine rekeyed first -- refuses and changes nothing.
+	From int
+	// Key is the material the remote holds afterwards: a fresh salt, the
+	// derivation, the new key's check, the epoch it names, and the key it
+	// replaced sealed for the machines still holding it.
+	Key KeyMeta
+	// Cuts is one cut per origin in the log, each at that origin's head as the
+	// caller observed it.
+	Cuts map[string]EpochCut
 }
 
 // CompactResult is what one compaction did: how many entries it dropped and the

@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -23,8 +24,33 @@ const (
 	metaKDFSaltKey   = "kdf_salt"
 	metaKDFKey       = "kdf"
 	metaKeyCheckKey  = "key_check"
+	metaKeyEpochKey  = "key_epoch"
+	keyWrappedPrefix = "key_wrapped."
 	signedFromPrefix = "signed_from."
 )
+
+// ErrKeyEpoch is a key_epoch row this build refuses to read: the remote is
+// untrusted, and a row that is not the canonical decimal of an epoch 2 or later
+// is not a row this build can act on. An absent row is not read here at all --
+// it is epoch 1, which is the caller's default.
+var ErrKeyEpoch = errors.New("syncworker: the remote's key_epoch row is not an epoch this build reads")
+
+// KeyRekeySpec is what one rekey writes: the epoch it is rotating from, the
+// material the remote is to hold, and the cut each origin's history is fenced
+// at.
+type KeyRekeySpec struct {
+	// From is the epoch the caller read the remote at. The rekey is a
+	// compare-and-set against it, so a remote whose epoch has moved under the
+	// caller -- another machine rekeyed first -- refuses and changes nothing.
+	From int
+	// Key is the material the remote holds afterwards: a fresh salt, the
+	// derivation, the new key's check, the epoch it names, and the key it
+	// replaced sealed for the machines still holding it.
+	Key KeyMeta
+	// Cuts is one cut per origin in the log, each at that origin's head as the
+	// caller observed it.
+	Cuts map[string]EpochCut
+}
 
 // KeyMeta reads the passphrase material the remote holds.
 //
@@ -36,12 +62,12 @@ func (b *TursoBackend) KeyMeta() (KeyMeta, error) {
 	if err := b.ready(); err != nil {
 		return KeyMeta{}, err
 	}
-	// One read rather than three: the material is written as one unit, so
-	// reading it row by row would let a key_init landing between two of the
+	// One read rather than several: the material is written as one unit, so
+	// reading it row by row would let a rekey landing between two of the
 	// reads answer with a mixture of two states.
 	rows, err := b.db.QueryContext(context.Background(),
-		"SELECT key, value FROM meta WHERE key IN (?, ?, ?)",
-		metaKDFSaltKey, metaKDFKey, metaKeyCheckKey)
+		"SELECT key, value FROM meta WHERE key IN (?, ?, ?, ?) OR key LIKE ?",
+		metaKDFSaltKey, metaKDFKey, metaKeyCheckKey, metaKeyEpochKey, keyWrappedPrefix+"%")
 	if err != nil {
 		return KeyMeta{}, fmt.Errorf("syncworker: read the key material: %w", markDriverRefusal(err))
 	}
@@ -51,6 +77,25 @@ func (b *TursoBackend) KeyMeta() (KeyMeta, error) {
 		var key, value sql.NullString
 		if err := rows.Scan(&key, &value); err != nil {
 			return KeyMeta{}, fmt.Errorf("syncworker: read the key material: %w", err)
+		}
+		if key.String == metaKeyEpochKey {
+			epoch, err := parseKeyEpoch(value.String)
+			if err != nil {
+				return KeyMeta{}, err
+			}
+			out.Epoch = epoch
+			continue
+		}
+		if epoch, ok := strings.CutPrefix(key.String, keyWrappedPrefix); ok {
+			epoch, err := parseWrappedEpoch(epoch)
+			if err != nil {
+				return KeyMeta{}, err
+			}
+			if out.Wrapped == nil {
+				out.Wrapped = make(map[int][]byte)
+			}
+			out.Wrapped[epoch] = decodeKeyValue(value.String)
+			continue
 		}
 		if key.String == metaKDFSaltKey {
 			// Decoded rather than taken as text: the row holds the salt's base64,
@@ -69,7 +114,33 @@ func (b *TursoBackend) KeyMeta() (KeyMeta, error) {
 	if err := rows.Err(); err != nil {
 		return KeyMeta{}, fmt.Errorf("syncworker: read the key material: %w", err)
 	}
+	if out.Epoch == 0 {
+		out.Epoch = 1
+	}
 	return out, nil
+}
+
+// parseKeyEpoch reads the key_epoch row the remote holds. The row exists only
+// once a rekey has written it, so a present row must be the canonical decimal
+// of an epoch 2 or later: anything else is a remote this build cannot act on,
+// refused rather than read as epoch 1.
+func parseKeyEpoch(value string) (int, error) {
+	epoch, err := strconv.Atoi(value)
+	if err != nil || strconv.Itoa(epoch) != value || epoch < 2 {
+		return 0, fmt.Errorf("syncworker: read the key material: %q: %w", value, ErrKeyEpoch)
+	}
+	return epoch, nil
+}
+
+// parseWrappedEpoch reads the epoch a key_wrapped row is for, on the same rule
+// the key_epoch row is read under: the name is the remote's claim, and a claim
+// this build cannot read is refused rather than skipped.
+func parseWrappedEpoch(name string) (int, error) {
+	epoch, err := strconv.Atoi(name)
+	if err != nil || strconv.Itoa(epoch) != name || epoch < 1 {
+		return 0, fmt.Errorf("syncworker: read the key material: %q is not an epoch: %w", name, ErrKeyEpoch)
+	}
+	return epoch, nil
 }
 
 // decodeKeyValue reads a stored base64 value. A row that is not base64 is read

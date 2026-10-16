@@ -150,6 +150,8 @@ func (f *fakeBackend) KeyInit(key KeyMeta) (KeyMeta, error) {
 	return f.key, nil
 }
 
+func (f *fakeBackend) KeyRekey(KeyRekeySpec) (KeyMeta, error) { return KeyMeta{}, f.fail }
+
 func (f *fakeBackend) Compact(int) (CompactResult, error) { return CompactResult{}, f.fail }
 
 func (f *fakeBackend) Close() error {

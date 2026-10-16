@@ -1238,6 +1238,10 @@ func (h *hangingJoin) KeyInit(context.Context, synclog.KeyMeta) (synclog.KeyMeta
 	return synclog.KeyMeta{}, nil
 }
 
+func (h *hangingJoin) KeyRekey(context.Context, synclog.KeyRekeySpec) (synclog.KeyMeta, error) {
+	return synclog.KeyMeta{}, nil
+}
+
 // TestReconcileVerbRefusesWithoutDryRun pins that the only reconcile on offer is
 // the preview: a call that does not ask for one is refused before a transport
 // is opened.

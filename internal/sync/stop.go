@@ -139,6 +139,14 @@ func (s *StopTransport) KeyInit(ctx context.Context, key synclog.KeyMeta) (syncl
 	return s.inner.KeyInit(ctx, key)
 }
 
+// KeyRekey rotates the log's key to the epoch the spec names.
+func (s *StopTransport) KeyRekey(ctx context.Context, spec synclog.KeyRekeySpec) (synclog.KeyMeta, error) {
+	if s.stopped.Load() {
+		return synclog.KeyMeta{}, ErrStopped
+	}
+	return s.inner.KeyRekey(ctx, spec)
+}
+
 // The blob half, forwarded so a stopped export cannot upload a body the entry
 // naming it was never appended for. BlobStagingDir reports an empty folder for a
 // client that moves nothing, which is what tells the exporter there is no mover
