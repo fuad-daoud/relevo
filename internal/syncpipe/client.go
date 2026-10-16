@@ -423,6 +423,12 @@ func refusalError(resp syncworker.Response) error {
 		return fmt.Errorf("%w: %w", refused, relevosync.ErrQuotaReached)
 	case syncworker.CodeBoundary:
 		return fmt.Errorf("%w: %w", refused, synclog.ErrBoundary)
+	case syncworker.CodeEpochRace:
+		// The remote's epoch moved under this caller: another machine rekeyed
+		// first. Nothing was written, and no retry with the same material can
+		// get past it, so the caller's answer is the winner's passphrase at
+		// unlock -- which is the sentinel's own sentence.
+		return fmt.Errorf("%w: %w", refused, relevosync.ErrEpochRace)
 	case syncworker.CodeBlobMissing:
 		// The bucket answered and the object is not there. That is a fact about
 		// the bucket rather than a fault in reaching it, so it maps to the

@@ -107,6 +107,40 @@ func TestInviteOnALockedMachineStillPrintsACodeAndSaysItIsLocked(t *testing.T) {
 	}
 }
 
+// TestInviteSaysWhenThisMachineHoldsAnOldKey pins the stale fact: a machine
+// whose held newest epoch sits below the recorded remote epoch still prints the
+// code -- the remote's newest key unlocks a joiner -- and says its key is old,
+// which is the state the human note and the --json field both carry.
+func TestInviteSaysWhenThisMachineHoldsAnOldKey(t *testing.T) {
+	t.Parallel()
+	l := inviteMachine(t)
+	readyInvite(t, l, true)
+	// The remote rekeyed to epoch 2 and the last attempt recorded it, while
+	// this machine still holds the epoch-1 key readyInvite set.
+	if err := l.KVPut(relevosync.SyncRemoteEpoch, []byte("2")); err != nil {
+		t.Fatalf("KVPut %s: %v", relevosync.SyncRemoteEpoch, err)
+	}
+
+	got, err := InviteCode(l)
+	if err != nil {
+		t.Fatalf("a stale machine refused to print a code: %v", err)
+	}
+	if got.Stale != true || got.Locked != false {
+		t.Errorf("invite = (stale %v, locked %v), want stale and not locked", got.Stale, got.Locked)
+	}
+	if _, err := relevosync.ParseJoinCode(got.Code); err != nil {
+		t.Errorf("the code a stale machine printed does not parse: %v", err)
+	}
+
+	// A machine whose key names the remote's newest epoch says nothing.
+	if err := l.KVPut(relevosync.SyncRemoteEpoch, []byte("1")); err != nil {
+		t.Fatalf("KVPut %s: %v", relevosync.SyncRemoteEpoch, err)
+	}
+	if got, err := InviteCode(l); err != nil || got.Stale {
+		t.Fatalf("a current machine's invite = (stale %v, %v), want stale false", got.Stale, err)
+	}
+}
+
 // The three refusals. Each names the verb that answers it, because the person
 // holding the machine is the one who has to run it.
 func TestInviteRefusesAMachineThatCannotHandOutACode(t *testing.T) {

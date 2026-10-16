@@ -34,6 +34,11 @@ type dbSyncInviteDoc struct {
 	// machine's own secrets have not been shared, so it is stated rather than
 	// left for the reader to assume either way.
 	Locked bool `json:"locked"`
+	// Stale says this machine holds an older epoch's key than the remote's: the
+	// passphrase changed, and this machine has not unlocked with the new one
+	// yet. The code still works; the state is stated so the reader knows whose
+	// view of the fleet's secrets this machine can vouch for.
+	Stale bool `json:"stale"`
 }
 
 // dbSyncInviteLine is the stderr note that says what the line on stdout is. It
@@ -47,6 +52,12 @@ const dbSyncInviteLine = "relevo db sync invite: that line carries the " + relev
 // code is looking.
 const dbSyncInviteLockedLine = "relevo db sync invite: this machine is locked, so its own secrets have not been shared; " +
 	"a joiner still unlocks from the log"
+
+// dbSyncInviteStaleLine is the extra note a stale machine adds: the remote's
+// key moved and this machine holds the old one, so its own view of the fleet's
+// secrets is one unlock behind what the code joins a new machine to.
+const dbSyncInviteStaleLine = "relevo db sync invite: this machine holds an old key; " +
+	"run relevo db sync unlock with the new passphrase"
 
 func dbSyncInviteFlagSet(fs *flag.FlagSet) *dbSyncInviteFlagValues {
 	v := &dbSyncInviteFlagValues{}
@@ -100,10 +111,11 @@ func cmdDBSyncInvite(args []string) error {
 			Code:      invite.Code,
 			RemoteURL: parsed.URL,
 			Locked:    invite.Locked,
+			Stale:     invite.Stale,
 		})
 	}
 	fmt.Fprintln(os.Stderr, dbSyncInviteLine)
-	for _, note := range dbSyncInviteNotes(invite.Locked) {
+	for _, note := range dbSyncInviteNotes(invite) {
 		fmt.Fprintln(os.Stderr, note)
 	}
 	// The only thing on stdout, and the only thing a pipe should carry.
@@ -112,17 +124,21 @@ func cmdDBSyncInvite(args []string) error {
 }
 
 // dbSyncInviteNotes is everything the human output says beside the code, as a
-// function of one fact.
-//
-// It is pulled out of the verb so the rule can be pinned without an owner: a
-// locked machine says so, and an unlocked one does not. Leaving it out of the
-// unlocked case is deliberate -- an unconditional warning trains a reader to
-// skip the line that matters on the one machine it is true for.
-func dbSyncInviteNotes(locked bool) []string {
-	if !locked {
-		return nil
+// function of what the machine that printed it holds. It is pulled out of the
+// verb so the rule can be pinned without an owner: a locked machine says so, a
+// stale one says its key is old and names the unlock that fixes it, and an
+// unlocked, current one adds nothing. Leaving the ordinary case out is
+// deliberate -- an unconditional warning trains a reader to skip the lines that
+// matter on the machines they are true for.
+func dbSyncInviteNotes(invite relevo.Invite) []string {
+	var notes []string
+	if invite.Locked {
+		notes = append(notes, dbSyncInviteLockedLine)
 	}
-	return []string{dbSyncInviteLockedLine}
+	if invite.Stale {
+		notes = append(notes, dbSyncInviteStaleLine)
+	}
+	return notes
 }
 
 // dbSyncInviteClassify maps an invite refusal onto this CLI's exit codes.

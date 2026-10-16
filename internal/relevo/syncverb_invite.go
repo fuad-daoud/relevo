@@ -26,12 +26,22 @@ import (
 // with the passphrase. What it cannot offer is its own secrets, since it cannot
 // read the ones it holds. The caller says so rather than letting the reader
 // assume a code carries the inviter's whole configuration.
+//
+// Stale is about this machine's key, not about the code either: the remote has
+// rekeyed and this machine holds the old key. The code still works -- the
+// remote's newest key unlocks a joiner -- but this machine cannot read the
+// values the rekeyed fleet seals, so it says so, and the one act that unblocks
+// it is its own unlock with the new passphrase.
 type Invite struct {
 	// Code is the one line stdout carries.
 	Code string
 	// Locked says this machine holds no sync key, so the code lets a joiner
 	// unlock while this machine's own secrets have not been shared.
 	Locked bool
+	// Stale says this machine holds an older epoch's key than the remote's:
+	// the passphrase changed and this machine has not unlocked with the new
+	// one yet.
+	Stale bool
 }
 
 // InviteCode is the join code this machine hands a new one, read out of the rows
@@ -84,5 +94,13 @@ func InviteCode(l relevosync.Local) (Invite, error) {
 	if err != nil {
 		return Invite{}, err
 	}
-	return Invite{Code: code, Locked: !keyed}, nil
+	// The stale state is the key state this machine already recorded, read the
+	// same way status reads it: a machine whose held newest epoch sits below
+	// the remote's is one unlock behind the fleet, and it says so beside the
+	// code rather than letting a joiner guess why its secrets look unreadable.
+	state, err := relevosync.KeyState(l)
+	if err != nil {
+		return Invite{}, err
+	}
+	return Invite{Code: code, Locked: !keyed, Stale: state == "stale"}, nil
 }

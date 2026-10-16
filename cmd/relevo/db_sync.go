@@ -29,6 +29,7 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"       relevo db sync pull [--timeout D] [--json]\n" +
 	"       relevo db sync reconcile --dry-run [--timeout D] [--json]\n" +
 	"       relevo db sync unlock [--new] [--passphrase-stdin] [--json]\n" +
+	"       relevo db sync rekey [--passphrase-stdin] [--json]\n" +
 	"       relevo db sync invite [--json]\n\n" +
 	"enable joins this machine to the remote: it checks the origin gate, stores\n" +
 	"the token and the remote, then imports the other origins and exports this\n" +
@@ -40,10 +41,14 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"would append to or delete from the log, and appends nothing. unlock stores\n" +
 	"the sync key derived from the passphrase; --new creates it on a remote that\n" +
 	"holds none. The passphrase comes from --passphrase-stdin, else " + dbSyncPassphraseEnv + ",\n" +
-	"else a prompt. invite prints one join code on stdout for a new machine to\n" +
-	"join with; it carries the turso.token, so it goes to the terminal and never\n" +
-	"to a log. A machine that is not syncing, or a remote holding no key yet, is\n" +
-	"refused by name.\n" +
+	"else a prompt. rekey rotates the log's key to a new epoch: the machine must\n" +
+	"be unlocked, the current passphrase is checked against the remote before\n" +
+	"anything is written, and the new one comes from " + dbSyncNewPassphraseEnv + "\n" +
+	"or a prompt asked twice -- stdin carries at most one secret, so it is the\n" +
+	"current passphrase's route alone. invite prints one join code on stdout for\n" +
+	"a new machine to join with; it carries the turso.token, so it goes to the\n" +
+	"terminal and never to a log. A machine that is not syncing, or a remote\n" +
+	"holding no key yet, is refused by name.\n" +
 	"Writing the machine-local sync section by hand stays the advanced\n" +
 	"route: `relevo config set sync '{\"remote_url\":\"...\"}'`.\n" +
 	"--join-stdin reads the code `relevo db sync invite` printed from standard\n" +
@@ -97,6 +102,8 @@ func cmdDBSync(args []string) error {
 		return cmdDBSyncReconcile(args[1:])
 	case len(args) > 0 && args[0] == "unlock":
 		return cmdDBSyncUnlock(args[1:])
+	case len(args) > 0 && args[0] == "rekey":
+		return cmdDBSyncRekey(args[1:])
 	case len(args) > 0 && args[0] == "invite":
 		return cmdDBSyncInvite(args[1:])
 	case len(args) > 0 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help"):

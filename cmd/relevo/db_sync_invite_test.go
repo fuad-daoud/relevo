@@ -14,6 +14,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/db/wire/client"
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
@@ -113,19 +114,30 @@ func TestInviteNoKDFIsNotADefectReport(t *testing.T) {
 	}
 }
 
-// A locked machine says so beside the code, and an unlocked one does not. The
-// line is unconditional on the one machine it is true for -- a reader holding a
-// code from a locked inviter would otherwise assume it carries that machine's
-// secrets -- and absent everywhere else, because a warning that is always there
-// is a warning nobody reads.
+// A locked machine says so beside the code, and an unlocked, current one does
+// not. A stale machine says its key is old and names the unlock that fixes it,
+// which is one more line and not a replacement for the locked one -- the two
+// states are apart and both are worth a line each. The line is unconditional on
+// the one machine it is true for -- a reader holding a code from a locked
+// inviter would otherwise assume it carries that machine's secrets -- and
+// absent everywhere else, because a warning that is always there is a warning
+// nobody reads.
 func TestInviteSaysWhenThisMachineIsLocked(t *testing.T) {
 	t.Parallel()
-	notes := dbSyncInviteNotes(true)
+	notes := dbSyncInviteNotes(relevo.Invite{Locked: true})
 	if len(notes) != 1 || !strings.Contains(notes[0], "locked") {
 		t.Fatalf("a locked machine prints notes %q, want one line saying it is locked", notes)
 	}
-	if got := dbSyncInviteNotes(false); len(got) != 0 {
+	if got := dbSyncInviteNotes(relevo.Invite{}); len(got) != 0 {
 		t.Errorf("an unlocked machine prints notes %q, want none", got)
+	}
+	// A stale machine adds the one line that names the act that unblocks it,
+	// whether or not it is also locked -- a locked machine holds no epoch, so
+	// the two are apart in practice, and the rule does not guess.
+	if got := dbSyncInviteNotes(relevo.Invite{Stale: true}); len(got) != 1 ||
+		!strings.Contains(got[0], "holds an old key") ||
+		!strings.Contains(got[0], "relevo db sync unlock") {
+		t.Errorf("a stale machine prints notes %q, want the one line naming the unlock", got)
 	}
 }
 
