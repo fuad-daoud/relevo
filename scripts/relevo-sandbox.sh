@@ -255,10 +255,6 @@ cmd_create() {
 		# them would write the caller's home. Both steps tolerate failure: a
 		# sandbox without seeded candidates or with a failing doctor is still
 		# a working sandbox, and the warning names the manual repair.
-		_sbenv="XDG_STATE_HOME=$_sb/state XDG_CONFIG_HOME=$_sb/config XDG_DATA_HOME=$_sb/data XDG_CACHE_HOME=$_sb/cache CLAUDE_CONFIG_DIR=$_sb/claude CODEX_HOME=$_sb/codex"
-		# The env assignments travel as arguments to env (the split below is
-		# deliberate), so --dry-run prints the exact environment the real run
-		# executes under.
 		# Seed the sandbox config from the host's, section by section: a whole
 		# export cannot be imported as-is (export carries a "sync" section
 		# import refuses), so every set section travels by get/set and anything
@@ -285,9 +281,7 @@ cmd_create() {
 		else
 			for _s in candidates policy servers actors agents; do
 				if _val=$(relevo config get "$_s" 2>/dev/null); then
-					# shellcheck disable=SC2086 # _sbenv is a list of VAR=value
-					# words for env, as above.
-					if plan env $_sbenv "$_sb/bin/relevo" config set "$_s" "$_val"; then
+					if sb_relevo config set "$_s" "$_val"; then
 						_seeded=1
 					else
 						note "seeding $_s failed; set it by hand inside the sandbox"
@@ -297,13 +291,11 @@ cmd_create() {
 				fi
 			done
 			if [ "$_seeded" -eq 0 ]; then
-				# shellcheck disable=SC2086 # same list as above.
-				plan env $_sbenv "$_sb/bin/relevo" config init --no-agents ||
+				sb_relevo config init --no-agents ||
 					note "the config seed failed; run 'relevo config init --no-agents' inside the sandbox"
 			fi
 		fi
-		# shellcheck disable=SC2086 # same list as above.
-		plan env $_sbenv "$_sb/bin/relevo" doctor ||
+		sb_relevo doctor ||
 			note "doctor reported failures above; a fresh sandbox starts every harness logged out"
 	fi
 
@@ -322,6 +314,23 @@ cmd_create() {
 	note "sandbox $_name is ready. Enter it with:"
 	note "  $prog shell $_name"
 	note "claude and codex arrive logged in when your home had their logins; opencode does not: log it in inside before using an opencode candidate."
+}
+
+# sb_relevo runs the sandbox binary under exactly the exports env.sh writes.
+# A step here can start a CLI-spawned daemon that outlives create by minutes,
+# and every round it supervises in that time inherits this environment: without
+# the sandbox's bin first on PATH, its harnesses and their relevo calls resolve
+# the developer's binaries against the sandbox's state. The assignments are
+# separate arguments to env, so --dry-run prints the exact environment the real
+# run executes under, and a PATH with spaces stays one word.
+sb_relevo() {
+	# The caller's PATH is expanded here on purpose: env.sh prepends to the
+	# PATH of whoever sources it, and this is the same prepend.
+	plan env "RELEVO_SANDBOX=$_name" "SB=$_sb" \
+		"XDG_STATE_HOME=$_sb/state" "XDG_CONFIG_HOME=$_sb/config" \
+		"XDG_DATA_HOME=$_sb/data" "XDG_CACHE_HOME=$_sb/cache" \
+		"CLAUDE_CONFIG_DIR=$_sb/claude" "CODEX_HOME=$_sb/codex" \
+		"PATH=$_sb/bin:$PATH" "$_sb/bin/relevo" "$@"
 }
 
 # write_env_sh writes the export recipe that is the sandbox. Nine exports: eight
