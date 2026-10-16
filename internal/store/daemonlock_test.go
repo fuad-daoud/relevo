@@ -2,6 +2,8 @@ package store
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -70,5 +72,44 @@ func TestDaemonLockDoesNotBlockStateOperations(t *testing.T) {
 
 	if err := s.WithLock(func(tx *Tx) error { return nil }); err != nil {
 		t.Fatalf("WithLock while the daemon lock was held: %v", err)
+	}
+}
+
+func TestDaemonLockDisplacedOnceTheRootIsReCreated(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	s := New(root)
+	held, err := s.AcquireDaemonLock()
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	defer func() { _ = held.Close() }()
+	if held.Displaced() {
+		t.Fatal("a freshly held lock reported displaced")
+	}
+
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatalf("remove root: %v", err)
+	}
+	if !held.Displaced() {
+		t.Fatal("a lock whose file was deleted reported in place")
+	}
+
+	// A probe re-creates the root and a new lock file nobody holds.
+	running, err := s.DaemonRunning()
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if running {
+		t.Fatal("the re-created lock file reported held")
+	}
+	if !held.Displaced() {
+		t.Fatal("a lock on the unlinked file reported in place after the root came back")
+	}
+}
+
+func TestNilDaemonLockIsNeverDisplaced(t *testing.T) {
+	var l *DaemonLock
+	if l.Displaced() {
+		t.Fatal("a nil lock reported displaced")
 	}
 }

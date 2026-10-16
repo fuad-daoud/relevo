@@ -71,12 +71,12 @@ func nextOf(b BindingStatus, tone string) *Next {
 		}
 	}
 	if tone == "report" && toMasterMind && p.Kind == store.KindReport {
-		text := fmt.Sprintf("Verify %s r%d: run make check, then compare relevo show %s --round %d --diff",
+		text := fmt.Sprintf("Verify %s r%d: compare relevo show %s --round %d --diff",
 			b.Name, p.Round, b.Name, p.Round)
 		if b.PromptPath != "" {
 			text += " against " + b.PromptPath
 		}
-		return &Next{Label: "make check, compare the diff", Text: text}
+		return &Next{Label: "compare the diff", Text: text}
 	}
 	if tone != "needs" {
 		return nil

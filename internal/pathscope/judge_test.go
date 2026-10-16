@@ -144,7 +144,7 @@ func TestJudgeNewOrDeletedGoFile(t *testing.T) {
 func TestJudgeOtherExtensionRefused(t *testing.T) {
 	t.Parallel()
 
-	for _, path := range []string{"config.json", "internal/git/client.go.txt", "docs/specs/probes/x.ts"} {
+	for _, path := range []string{"config.json", "internal/git/client.go.txt", "docs/specs/probes/x.json"} {
 		c := Change{Status: 'M', OldMode: "100644", NewMode: "100644", Path: path}
 		v := Judge(Scope{Comments: true}, []Change{c}, blobs(nil))
 		if len(v) != 1 || v[0].Reason != ReasonOutsideScope {

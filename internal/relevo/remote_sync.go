@@ -27,7 +27,7 @@ const unreachableGrace = 30 * time.Minute
 // note is excluded from the report's switch lines rather than naming the same
 // switch a second time. A server that ships no switch history leaves the entry
 // as the only record of the switch there is.
-const pollSwitchNotePrefix = "switched on "
+const pollSwitchNotePrefix = store.PollSwitchNotePrefix
 
 // checkedOutWarned records the bindings whose "checked out" hint catchUp has
 // already logged at Info in this process, so the hint does not repeat on every
@@ -61,64 +61,6 @@ func writeTempAndRename(root, dest string, r io.Reader) error {
 }
 
 const maxMirrorBytes = 16 << 20
-
-func mirrorLog(ctx context.Context, rt Runtime, tx *store.Tx, server, name string, round int) {
-	if legacyLog(rt, name, round) {
-		path := rt.Store.BuilderLogPath(name, round)
-		var local int64
-		if fi, err := os.Stat(path); err == nil {
-			local = fi.Size()
-		}
-		rc, fr, err := rt.Remote.RoundFileFrom(ctx, server, name, round, "log", local)
-		if err != nil || rc == nil {
-			if err != nil {
-				slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
-			}
-			return
-		}
-
-		switch {
-		case fr.Honored && fr.From == local && fr.Size >= local:
-			defer rc.Close()
-			dir := filepath.Dir(path)
-			if err := ensureRealDir(rt.Store.Dir(name), dir); err != nil {
-				slog.Warn("write builder log failed", "path", path, "err", err)
-				return
-			}
-			f, err := openAppendRegular(path)
-			if err != nil {
-				slog.Warn("write builder log failed", "path", path, "err", err)
-				return
-			}
-			defer f.Close()
-			if _, err := io.Copy(f, rc); err != nil {
-				slog.Warn("write builder log failed", "path", path, "err", err)
-			}
-		case fr.Honored && fr.Size < local:
-			_ = rc.Close()
-			rc2, _, err := rt.Remote.RoundFileFrom(ctx, server, name, round, "log", 0)
-			if err != nil || rc2 == nil {
-				if err != nil {
-					slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
-				}
-				return
-			}
-			defer rc2.Close()
-			if err := writeTempAndRename(rt.Store.Dir(name), path, rc2); err != nil {
-				slog.Warn("write builder log failed", "path", path, "err", err)
-			}
-		default:
-			defer rc.Close()
-			if err := writeTempAndRename(rt.Store.Dir(name), path, rc); err != nil {
-				slog.Warn("write builder log failed", "path", path, "err", err)
-			}
-		}
-		return
-	}
-
-	m, _ := fetchLogMirror(ctx, rt, server, name, round)
-	applyLogMirror(rt, tx, name, round, m)
-}
 
 var mirrorDriftAttempts sync.Map // "name/round" -> struct{}
 
@@ -331,11 +273,7 @@ func applyRemoteView(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 		// the same "stalled <age>".
 		b.StalledSince = view.StalledSince
 		b.Builder.RemoteLive = liveFactsOf(view.Live)
-		if f.Legacy {
-			mirrorLog(ctx, rt, tx, server, name, b.Round)
-		} else {
-			applyLogMirror(rt, tx, name, b.Round, f.Log)
-		}
+		applyLogMirror(rt, name, b.Round, f.Log)
 		applyDrift(rt, tx, name, b.Round, f.Drift)
 		return b, false, nil
 

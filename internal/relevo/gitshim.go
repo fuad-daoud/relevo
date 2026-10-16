@@ -14,8 +14,11 @@ import (
 // It finds the subcommand after git's global options (those that take a
 // separate value are skipped with it), and finds the real git on PATH while
 // skipping its own directory by canonical path, so a duplicate PATH entry or a
-// symlinked state directory cannot make it exec itself. exec keeps stdin,
-// arguments, output and the exit code untouched.
+// symlinked state directory cannot make it exec itself. It drops its own
+// directory from the PATH it hands on: a nested relevo (a test daemon under a
+// served round) puts a second shim ahead of this one, and two shims that each
+// skip only themselves exec each other forever. exec keeps stdin, arguments,
+// output and the exit code untouched.
 const gitShimSource = `#!/bin/sh
 self_dir=$(cd "$(dirname "$0")" && pwd -P)
 self=$self_dir/$(basename "$0")
@@ -43,6 +46,13 @@ if [ "$sub" = stash ]; then
 fi
 set -f
 IFS=:
+path=
+for dir in $PATH; do
+	d=$(cd "$dir" 2>/dev/null && pwd -P) && [ "$d" = "$self_dir" ] && continue
+	path=${path:+$path:}$dir
+done
+PATH=$path
+export PATH
 for dir in $PATH; do
 	[ -n "$dir" ] || continue
 	d=$(cd "$dir" 2>/dev/null && pwd -P) || continue

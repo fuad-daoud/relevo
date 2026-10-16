@@ -118,7 +118,8 @@ type HistoryOptions struct {
 	Repo                                                                       string
 	Feature, Binding, MasterMind, Harness, Provider, Model, Candidate, Outcome string
 	// Ticket is the --ticket filter (#637): a bare N/#N matches any stored
-	// ticket ending in #N, and owner/repo#N matches exactly (see db.Filter).
+	// ticket ending in #N, and anything else matches the stored form exactly
+	// (see db.Filter).
 	Ticket string
 	// Since/Until are relevo.ParseSince forms: "", "24h", "7d", "YYYY-MM-DD".
 	Since, Until string

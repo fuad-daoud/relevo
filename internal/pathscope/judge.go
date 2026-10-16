@@ -67,8 +67,11 @@ func judgeOne(scope Scope, c Change, readBlob func(oid string) ([]byte, error)) 
 		return Violation{}, false
 	}
 
-	if !strings.HasSuffix(c.Path, ".go") {
-		// 8. Anything else: another extension, a binary, config, testdata.
+	// 3-5. Comment judgement, by extension: .go keeps the go/scanner rule,
+	// a table extension gets the code-line rule, and any other extension, a
+	// binary or an extensionless path is refused as before.
+	l := langFor(c.Path)
+	if l == nil && !strings.HasSuffix(c.Path, ".go") {
 		return Violation{Path: c.Path, Reason: ReasonOutsideScope}, true
 	}
 
@@ -87,15 +90,22 @@ func judgeOne(scope Scope, c Change, readBlob func(oid string) ([]byte, error)) 
 		if err != nil {
 			return Violation{Path: c.Path, Reason: ReasonCannotJudge}, true
 		}
+		if l != nil {
+			if ok, reason := judgeComments(l, oldSrc, newSrc); !ok {
+				return Violation{Path: c.Path, Reason: reason}, true
+			}
+			return Violation{}, false
+		}
 		if ok, reason := judgeGo(oldSrc, newSrc); !ok {
 			return Violation{Path: c.Path, Reason: reason}, true
 		}
 		return Violation{}, false
 	case 'A', 'D':
-		// 7. A .go file added or deleted.
+		// 7. A source file added or deleted, .go or a table language: a new
+		// file has no old side to judge.
 		return Violation{Path: c.Path, Reason: ReasonNewOrDeletedSource}, true
 	default:
-		// 8. A status the Go comment rule cannot judge (a type change, a
+		// 8. A status the comment rules cannot judge (a type change, a
 		// rename git did not flatten, ...).
 		return Violation{Path: c.Path, Reason: ReasonOutsideScope}, true
 	}

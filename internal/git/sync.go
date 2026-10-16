@@ -150,6 +150,15 @@ func (c *Client) Push(ctx context.Context, dir, remote, branch string, forceWith
 	return err
 }
 
+// Remotes lists dir's configured remote names in git's order.
+func (c *Client) Remotes(ctx context.Context, dir string) ([]string, error) {
+	out, err := c.run(ctx, dir, nil, "remote")
+	if err != nil {
+		return nil, err
+	}
+	return strings.Fields(string(out)), nil
+}
+
 // RemoteBranchExists reports whether remote already has a branch named branch.
 func (c *Client) RemoteBranchExists(ctx context.Context, dir, remote, branch string) (bool, error) {
 	out, err := c.run(ctx, dir, nil, "ls-remote", "--heads", remote, branch)

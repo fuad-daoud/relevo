@@ -93,7 +93,7 @@ func seedServerChain(t *testing.T, rt Runtime, name string) store.Binding {
 	t.Helper()
 	ctx := context.Background()
 	opts := ChainOptions{Name: name, Feature: "auth", MasterMindID: testMasterMindName}
-	settings := chainSettings(rt.Policy, opts, false)
+	settings := chainSettings(rt.Policy, opts, false, RepoSettings{})
 	members := chainMembersFor(opts, settings)
 	repo := rt.Store.Dir(name)
 	repoRef := captureRepo(ctx, rt, repo)

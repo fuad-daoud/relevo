@@ -319,6 +319,9 @@ type SyncResult struct {
 	TokenPresent bool `json:"token_present,omitempty"`
 	// Applied is whether a pull rebased anything.
 	Applied bool `json:"applied,omitempty"`
+	// Holds are the held origins and gaps a pull found, each in the importer's
+	// own sentence.
+	Holds []string `json:"holds,omitempty"`
 	// RemoteURL is the remote the enable stored.
 	RemoteURL string `json:"remote_url,omitempty"`
 	// Steps is the order a disable took, which is its contract.

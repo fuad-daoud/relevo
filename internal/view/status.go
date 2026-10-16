@@ -34,7 +34,10 @@ type LiveDiff struct {
 // BindingStatus is one row of relevo status: stored binding plus what relevo
 // can determine about its builder and its delivery route.
 type BindingStatus struct {
-	Name  string `json:"name"`
+	Name string `json:"name"`
+	// CWD is the round's directory, the binding's tree plus its
+	// subdirectory: the directory the round's processes run in is not
+	// necessarily the tree itself.
 	CWD   string `json:"cwd"`
 	Round int    `json:"round"`
 	// PlanRound is the highest round with a plan log entry -- the round in

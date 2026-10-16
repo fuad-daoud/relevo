@@ -205,7 +205,9 @@ func chainServerResume(ctx context.Context, rt Runtime, c db.ChainRow, opts Resu
 	req.From = opts.From
 	req.Params = opts.Params
 	if opts.Gate != "" || opts.NoGate {
-		gate := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), "builder"))
+		// The gate flags win over every lower tier, so a resume reads no
+		// repository's settings here.
+		gate := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), "builder"), RepoSettings{}).Command
 		req.Gate = &gate
 	}
 	if _, err := rt.Remote.ChainResume(ctx, c.Server, c.Name, req); err != nil {

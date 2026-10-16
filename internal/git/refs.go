@@ -153,6 +153,56 @@ func (c *Client) RefSHA(ctx context.Context, dir, ref string) (sha string, ok bo
 	return res, true, nil
 }
 
+// BlobAt resolves path at ref to the blob it names. (oid, true, nil) when path
+// is a regular file there, ("", false, nil) when ref has no such file.
+func (c *Client) BlobAt(ctx context.Context, dir, ref, path string) (oid string, ok bool, err error) {
+	out, err := c.run(ctx, dir, nil, "ls-tree", "-z", "--full-tree", ref, "--", path)
+	if err != nil {
+		return "", false, err
+	}
+	meta, name, found := strings.Cut(string(out), "\t")
+	if !found || strings.TrimSuffix(name, "\x00") != path {
+		return "", false, nil
+	}
+	fields := strings.Fields(meta)
+	if len(fields) != 3 || fields[1] != "blob" || strings.HasPrefix(fields[0], "120") {
+		return "", false, nil
+	}
+	return fields[2], true, nil
+}
+
+// ShowPrefix is dir's path relative to its repository's root, as
+// `rev-parse --show-prefix` reports it, with git's own trailing slash. An empty
+// prefix means the caller is at the root; a non-repo fails.
+func (c *Client) ShowPrefix(ctx context.Context, dir string) (string, error) {
+	out, err := c.run(ctx, dir, nil, "rev-parse", "--show-prefix")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// DirAt reports whether ref names a directory at path: the entry ls-tree lists
+// must be a tree, not a blob. ok is false when ref has no such entry at all, so
+// only an entry that is a directory counts. path is relative to the tree root;
+// --full-tree keeps it so when dir is a subdirectory, where ls-tree would
+// otherwise resolve path against dir.
+func (c *Client) DirAt(ctx context.Context, dir, ref, path string) (bool, error) {
+	out, err := c.run(ctx, dir, nil, "ls-tree", "-z", "--full-tree", ref, "--", path)
+	if err != nil {
+		return false, err
+	}
+	meta, name, found := strings.Cut(string(out), "\t")
+	if !found || strings.TrimSuffix(name, "\x00") != path {
+		return false, nil
+	}
+	fields := strings.Fields(meta)
+	if len(fields) != 3 || fields[1] != "tree" {
+		return false, nil
+	}
+	return true, nil
+}
+
 // UpdateRef updates ref to newSHA, verifying oldSHA when it is non-empty.
 func (c *Client) UpdateRef(ctx context.Context, dir, ref, newSHA, oldSHA string) error {
 	args := []string{"update-ref", ref, newSHA}

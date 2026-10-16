@@ -401,7 +401,7 @@ func TestRenderReportVerdict(t *testing.T) {
 	renderReport(&buf, repFail)
 	outFail := buf.String()
 
-	if !strings.Contains(outFail, "1 failure, 0 warnings -- no usable builder. Fix the failure above.") {
+	if !strings.Contains(outFail, "1 failure, 0 warnings -- relevo is not ready. Fix the failure above.") {
 		t.Errorf("expected failure footer, got: %s", outFail)
 	}
 

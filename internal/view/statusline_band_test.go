@@ -45,6 +45,10 @@ func TestStatusLineRowChainProgress(t *testing.T) {
 		{"fixed", ChainFacts{Status: "running", Plan: 3, Plans: 4, Step: "reviewing"}, ChainProgress{2, 4, "reviewing"}},
 		{"flow", ChainFacts{Status: "running", StepAt: "build", Round: 1, PlanPos: 1, PlanTotal: 3}, ChainProgress{0, 3, "build"}},
 		{"done", ChainFacts{Status: "done", PlanPos: 4, PlanTotal: 4, StepAt: "done"}, ChainProgress{4, 4, "done"}},
+		{"done after its last step", ChainFacts{Status: "done", PlanPos: 3, PlanTotal: 3, StepAt: "fix-review"}, ChainProgress{3, 3, "done"}},
+		{"fixed done", ChainFacts{Status: "done", Plan: 4, Plans: 4, Step: "reviewing"}, ChainProgress{4, 4, "done"}},
+		{"stopped", ChainFacts{Status: "stopped", PlanPos: 2, PlanTotal: 3, StepAt: "build"}, ChainProgress{1, 3, "stopped"}},
+		{"halted", ChainFacts{Status: "halted", PlanPos: 2, PlanTotal: 3, StepAt: "build"}, ChainProgress{1, 3, "halted build"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			b := BindingStatus{Name: "c", Display: "ACTIVE", Chain: &tt.f}

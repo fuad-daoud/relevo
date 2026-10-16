@@ -3,7 +3,9 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/remote"
 )
 
 // failReadOnlyWithLock makes the direct read-only config opener report the lock
@@ -124,5 +127,92 @@ func TestBugreportReadsThroughTheOwnerWhenTheFileIsHeld(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&served.ln.accepts); got == 0 {
 		t.Errorf("the bundle read no connection through the owner")
+	}
+}
+
+// rootCommitKey is the settings key remote.RepoID gives dir's root commit,
+// the identity the per-repository section is read by.
+func rootCommitKey(t *testing.T, dir string) string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", dir, "rev-list", "--max-parents=0", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("git rev-list --max-parents=0 HEAD in %s: %v", dir, err)
+	}
+	key, err := remote.RepoID(strings.TrimSpace(string(out)))
+	if err != nil {
+		t.Fatalf("remote.RepoID: %v", err)
+	}
+	return key
+}
+
+// TestBoardReadsThemesThroughTheOwnerWhenTheFileIsHeld pins the board's
+// on-locked policy: when the daemon holds the file, the theme resolution
+// reads the stored `themes` section and the repository's board_theme through
+// the dialled owner, and -- the mutation this catches -- the seed file the
+// correction removed is never substituted for either.
+func TestBoardReadsThemesThroughTheOwnerWhenTheFileIsHeld(t *testing.T) {
+	root := shortStateRoot(t)
+	t.Setenv("XDG_STATE_HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
+	served := startTestOwner(t, root)
+
+	// Seed a stored night palette into the `themes` section and a repo
+	// board_theme into the machine-local file through the direct handle the
+	// owner serves, so a read that reaches the owner sees values distinct
+	// from everything the seed carries.
+	repoDir := gitRepoWithACommit(t)
+	reposBody := fmt.Sprintf(`{%q:{"name":"lab","board_theme":"blueprint"}}`, rootCommitKey(t, repoDir))
+	if err := served.db.Local().Tx(func(tx *db.Tx) error {
+		if err := tx.ConfigPut("themes", []byte(`{"night":`+themesNight+`}`), time.Now().UTC()); err != nil {
+			return err
+		}
+		return tx.ConfigPut("repos", []byte(reposBody), time.Now().UTC())
+	}); err != nil {
+		t.Fatalf("seed the sections: %v", err)
+	}
+	failReadOnlyWithLock(t)
+
+	repo, stored, err := boardThemeSets(repoDir)
+	if err != nil {
+		t.Fatalf("boardThemeSets: %v, want the stored sets served by the owner", err)
+	}
+	if repo.BoardTheme != "blueprint" {
+		t.Errorf("repo board_theme = %q, want the one the owner served", repo.BoardTheme)
+	}
+	if len(stored) != 1 {
+		t.Errorf("stored sets hold %d palettes, want the section's one stored night, not the seed's two", len(stored))
+	}
+	if got, ok := stored["night"]; !ok || got != nightPalette() {
+		t.Errorf("stored night = %+v, %v; want the stored palette the owner served", got, ok)
+	}
+	if got := atomic.LoadInt32(&served.ln.accepts); got == 0 {
+		t.Errorf("the board read no connection through the owner")
+	}
+
+	// The whole resolution rides the same handle: --theme night resolves the
+	// section's palette, not the seed's.
+	th, err := boardResolveTheme(repoDir, "night")
+	if err != nil || th.Name != "night" || th.Accent != "#8be9fd" {
+		t.Errorf("--theme night = %v, %v; want the stored palette the owner served", th, err)
+	}
+}
+
+// TestBoardRefusesAConflictWhenTheFileIsHeldAndNoOwnerAnswers pins that the
+// held-file refusal the stored-set read raises reaches the verb as conflict
+// naming the held file -- the registry's own refusal, not a seed fallback and
+// not a re-wrapped internal. No owner is started, so the dial has nothing to
+// answer.
+func TestBoardRefusesAConflictWhenTheFileIsHeldAndNoOwnerAnswers(t *testing.T) {
+	root := shortStateRoot(t)
+	t.Setenv("XDG_STATE_HOME", root)
+	if _, err := openDBDirect(machineDBPath()); err != nil {
+		t.Fatalf("openDBDirect: %v", err)
+	}
+	failReadOnlyWithLock(t)
+
+	want := filepath.Join(root, "relevo", "relevo.db") + ".lock"
+	ce := requireCLIError(t, cmdBoard([]string{"--theme", "x"}), codeConflict, "")
+	if !strings.Contains(ce.message, want) {
+		t.Errorf("refusal %q does not name the held file %q", ce.message, want)
 	}
 }

@@ -71,9 +71,16 @@ func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.Ch
 	for i := range bodies {
 		items[i] = rt.Store.ChainPlanPath(childName, i+1)
 	}
+	// The child's repository is the parent's: the child's branch is cut from
+	// the parent's branch, so the settings that name a gate read the same
+	// tree's own settings the parent's start read.
+	childRepoSet, err := RepoSettingsFor(ctx, rt, parent.Repo)
+	if err != nil {
+		return childCreated{}, err
+	}
 	childPlan := chainWFStart{
 		def:          childDef,
-		settings:     chainSettings(rt.Policy, childOpts, roleChecks(rt.RoleRegistry(), "builder")),
+		settings:     chainSettings(rt.Policy, childOpts, roleChecks(rt.RoleRegistry(), "builder"), childRepoSet),
 		repo:         parent.Repo,
 		ticket:       parent.Ticket,
 		bodies:       bodies,
@@ -86,6 +93,13 @@ func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.Ch
 	}
 	if rec, haveRec, rerr := resolveVerbMasterMindHeal(rt, parent.MasterMindID, false); rerr == nil && haveRec {
 		childPlan.mastermind = recordEndpoint(rec)
+	}
+	// The child's members are built beside the parent's builder member, so
+	// they inherit its subdirectory rather than re-resolving one: the fork
+	// cuts from parent.Repo, the root checkout, whose own prefix names an
+	// offset nothing here started a shell in.
+	if parentBuilder, lerr := tx.Load(parent.Builder); lerr == nil {
+		childPlan.subdir = parentBuilder.Subdir
 	}
 
 	prep, err := chainPrepareWorkflow(ctx, rt, childOpts, childPlan)

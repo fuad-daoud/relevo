@@ -399,7 +399,7 @@ func cmdDaemon(args []string) error {
 	var running atomic.Pointer[relevo.Daemon]
 	if *autoExitAfter > 0 {
 		go watchDaemonIdle(ctx, stop, *autoExitAfter, idlePoll, rt.Now, func() daemonActivity {
-			a := daemonActivityNow(root, srv, rt.Store)
+			a := daemonActivityNow(root, lock, srv, rt.Store)
 			a.Joining = running.Load().Joining()
 			return a
 		})

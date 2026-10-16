@@ -2,7 +2,9 @@ package relevo
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"strings"
@@ -98,16 +100,15 @@ func applyCatchUpFiles(rt Runtime, tx *store.Tx, b store.Binding, view remote.Bi
 		}
 	}
 	logPath := rt.Store.BuilderLogPath(name, n)
-	if cf.LogTemp != "" {
-		if err := os.Rename(cf.LogTemp, logPath); err != nil {
-			slog.Warn("write log failed", "path", logPath, "err", err)
-			return false
-		}
-	}
 	if cf.Log != nil {
 		if err := tx.PutRoundFile(name, n, logPath, cf.Log); err != nil {
 			slog.Warn("write log failed", "path", logPath, "err", err)
 			return false
+		}
+		// The live mirror file would shadow the row on every read, and the
+		// seal pass would later store its partial copy over the whole log.
+		if err := os.Remove(logPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			slog.Warn("remove log mirror failed", "path", logPath, "err", err)
 		}
 	}
 	streamPath := rt.Store.StreamPath(name, n)
@@ -273,6 +274,20 @@ func applyCatchUpReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.B
 	next, err := queueReport(ctx, rt, tx, b, entries, reportPathFor(rt, b), payload, note, remoteGateRecord(a), u, a.View.Rusage, a.View.PriorTokens, a.View.ReportOutcome, a.View.Stopped != "", scopeVerdict{})
 	if err != nil {
 		return b, err
+	}
+	// After queueReport, which names the switches in the payload from the view
+	// itself: logged before it, each would be named a second time. The log is
+	// where the history record reads the round's builders from.
+	for _, sw := range a.View.Switches {
+		if sw == "" || sw == nudgeNote {
+			continue
+		}
+		if err := tx.AppendLog(name, store.LogEntry{
+			TS: rt.Now().UTC(), Round: n, Direction: store.DirToMasterMind,
+			Kind: store.KindSwitch, Note: sw, Confirmed: true,
+		}); err != nil {
+			return next, err
+		}
 	}
 	if a.View.Stopped != "" {
 		// After queueReport, so the entry is filed under the stopped round.

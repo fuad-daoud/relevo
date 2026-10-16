@@ -47,7 +47,10 @@ type chainRemotePlan struct {
 	tier        string
 	candidate   string
 	role        string
-	who         remote.WhoAmI
+	// subdir is the prefix the create carries: the server cuts its own
+	// worktree at its root, so the round's offset travels on the wire.
+	subdir string
+	who    remote.WhoAmI
 }
 
 // chainResolvePlacements resolves every member's placement, read-only and
@@ -113,12 +116,20 @@ func chainRemotePreflight(ctx context.Context, rt Runtime, opts ChainOptions, pl
 	if err != nil {
 		return nil, err
 	}
+	// The prefix needs a server that stores it, exactly as a lone bind does:
+	// a server that silently dropped it would run the chain's rounds at the
+	// bare repo's root, not the subdirectory the mastermind's shell was in.
+	subdir := resolveSubdir(ctx, rt, repo)
+	if subdir != "" && !hasFeature(who, remote.FeatureSubdir) {
+		return nil, refuse("server %s does not carry binding subdirectories (pre-subdir server); upgrade it or start the chain at the repository root", server)
+	}
 
 	return &chainRemotePlan{
 		server: server, base: base, repoID: repoID,
 		authorName: authorName, authorEmail: authorEmail,
 		tier: string(tier), candidate: srv, role: role,
-		who: who,
+		subdir: subdir,
+		who:    who,
 	}, nil
 }
 
@@ -148,12 +159,17 @@ func chainRemoteFacts(ctx context.Context, rt Runtime, repo, base string) (resol
 		resolved = sha
 	}
 
-	root, err := rt.Git.RootCommit(ctx, repo)
+	// The repository's identity, through the one helper the repo settings
+	// read: a tree git cannot identify (no commits, not a repository, no git)
+	// has no settings and no id, and a remote create needs the id, so that
+	// case is refused here rather than sent as "".
+	var ok bool
+	repoID, ok, err = RepoKey(ctx, rt.Git, repo)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("root commit: %w", err)
-	}
-	if repoID, err = remote.RepoID(root); err != nil {
 		return "", "", "", "", fmt.Errorf("repo id: %w", err)
+	}
+	if !ok {
+		return "", "", "", "", fmt.Errorf("root commit: %w", git.ErrRefMissing)
 	}
 
 	if authorName, authorEmail, err = rt.Git.Identity(ctx, repo); err != nil {
@@ -211,6 +227,7 @@ func chainBuildRemoteBuilder(ctx context.Context, rt Runtime, opts ChainOptions,
 		Role:       chainWireRole(rp.role),
 		Feature:    opts.Feature,
 		Ticket:     plan.ticket,
+		Subdir:     rp.subdir,
 		Gate:       plan.settings.Gate,
 		Author:     &remote.GitIdentity{Name: rp.authorName, Email: rp.authorEmail},
 

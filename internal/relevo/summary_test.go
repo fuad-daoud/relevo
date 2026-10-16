@@ -10,16 +10,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestWriteReaderSummaryPrefersTheChainBlockMessage pins the artifact fix: a
-// chain reviewer that recaps after its block leaves a final message with no
-// findings, and the saved artifact must be the message that carried the block,
-// stripped of the block the parse already read.
-func TestWriteReaderSummaryPrefersTheChainBlockMessage(t *testing.T) {
-	t.Parallel()
-
+// chainReviewerRound starts a chain, closes its builder and returns the
+// reviewer binding with a claude stream whose assistant texts are texts, and
+// the path of its output file with the given content (none when file is nil).
+func chainReviewerRound(t *testing.T, file *string, texts ...string) (Runtime, store.Binding, string) {
+	t.Helper()
 	rt, _ := chainRuntime(t)
 	startedChain(t, rt, ChainOptions{})
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
@@ -29,10 +28,8 @@ func TestWriteReaderSummaryPrefersTheChainBlockMessage(t *testing.T) {
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
 	}
-
-	block := "# Review\n\nThe plan is honoured and the tests cover it.\n\n```relevo\nverdict: pass\n```\n"
-	recap := "Done."
-	line := func(text string) string {
+	var stream strings.Builder
+	for _, text := range texts {
 		raw, err := json.Marshal(map[string]any{
 			"type": "assistant",
 			"message": map[string]any{
@@ -42,27 +39,44 @@ func TestWriteReaderSummaryPrefersTheChainBlockMessage(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return string(raw) + "\n"
+		stream.Write(raw)
+		stream.WriteByte('\n')
 	}
-	stream := rt.Store.RunnerStreamPath(b.Name, b.Round)
-	if err := os.MkdirAll(filepath.Dir(stream), 0o755); err != nil {
+	path := rt.Store.RunnerStreamPath(b.Name, b.Round)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(stream, []byte(line(block)+line(recap)), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(stream.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
-
-	// The runner already saved the recap as its artifact.
 	out := reportPathFor(rt, b)
-	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
-		t.Fatal(err)
+	if file != nil {
+		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(out, []byte(*file), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.WriteFile(out, []byte(recap+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	return rt, b, out
+}
 
-	if _, _, err := writeReaderSummary(rt, b); err != nil {
+// TestWriteReaderSummaryPrefersTheChainBlockMessageOverARecap pins the recap
+// protection: a chain reviewer that recaps after its block and left an empty
+// output file gets the block-carrying message saved, stripped of its block.
+func TestWriteReaderSummaryPrefersTheChainBlockMessageOverARecap(t *testing.T) {
+	t.Parallel()
+
+	block := "# Review\n\nThe plan is honoured and the tests cover it.\n\n```relevo\nverdict: pass\n```\n"
+	empty := "\n"
+	rt, b, out := chainReviewerRound(t, &empty, block, "Done.")
+
+	_, fellBack, err := writeReaderSummary(rt, b)
+	if err != nil {
 		t.Fatalf("writeReaderSummary: %v", err)
+	}
+	if !fellBack {
+		t.Errorf("fellBack = false, want true for an empty file")
 	}
 	got, err := os.ReadFile(out)
 	if err != nil {
@@ -73,6 +87,84 @@ func TestWriteReaderSummaryPrefersTheChainBlockMessage(t *testing.T) {
 	}
 	if strings.Contains(string(got), "```relevo") {
 		t.Errorf("artifact still carries the block:\n%s", got)
+	}
+}
+
+// TestWriteReaderSummaryKeepsAChainReviewersFindingsFile pins that findings the
+// reviewer wrote to its file survive a pointer-plus-block final message, and
+// that the verdict is read from that message.
+func TestWriteReaderSummaryKeepsAChainReviewersFindingsFile(t *testing.T) {
+	t.Parallel()
+
+	findings := "# Findings\n\nTwo real problems in the diff.\n"
+	rt, b, out := chainReviewerRound(t, &findings, "Findings are in the output file.\n\n```relevo\nverdict: changes\n```\n")
+
+	_, fellBack, err := writeReaderSummary(rt, b)
+	if err != nil {
+		t.Fatalf("writeReaderSummary: %v", err)
+	}
+	if fellBack {
+		t.Errorf("fellBack = true for a kept file, want false")
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != findings {
+		t.Errorf("output = %q, want the findings kept byte-identical %q", got, findings)
+	}
+	var verdict string
+	for _, body := range chainOutcomeBodies(rt, b, b.Round, got) {
+		if v, ok := reporttail.BlockValue(body, "verdict"); ok {
+			verdict = v
+			break
+		}
+	}
+	if verdict != "changes" {
+		t.Errorf("verdict = %q, want changes from the final message", verdict)
+	}
+}
+
+// TestWriteReaderSummaryStripsTheBlockFromAKeptChainFile pins that a block
+// inside a kept findings file is removed when the final message carries its own.
+func TestWriteReaderSummaryStripsTheBlockFromAKeptChainFile(t *testing.T) {
+	t.Parallel()
+
+	file := "# Findings\n\nOne problem.\n\n```relevo\nverdict: changes\n```\n"
+	rt, b, out := chainReviewerRound(t, &file, "See the file.\n\n```relevo\nverdict: changes\n```\n")
+
+	if _, _, err := writeReaderSummary(rt, b); err != nil {
+		t.Fatalf("writeReaderSummary: %v", err)
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "# Findings\n\nOne problem.\n" {
+		t.Errorf("output = %q, want the findings without the block", got)
+	}
+}
+
+// TestWriteReaderSummaryKeepsAChainFileBlockWhenTheMessageHasNone pins that a
+// file carrying the only block is left byte-identical, so its verdict survives.
+func TestWriteReaderSummaryKeepsAChainFileBlockWhenTheMessageHasNone(t *testing.T) {
+	t.Parallel()
+
+	file := "# Findings\n\nOne problem.\n\n```relevo\nverdict: changes\n```\n"
+	rt, b, out := chainReviewerRound(t, &file, "Review written to the file.")
+
+	if _, _, err := writeReaderSummary(rt, b); err != nil {
+		t.Fatalf("writeReaderSummary: %v", err)
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != file {
+		t.Errorf("output = %q, want the file byte-identical %q", got, file)
+	}
+	if v, ok := reporttail.BlockValue(got, "verdict"); !ok || v != "changes" {
+		t.Errorf("verdict = %q, %v, want changes from the file", v, ok)
 	}
 }
 

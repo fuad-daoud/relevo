@@ -37,8 +37,8 @@ last-write-wins with no conflict and no error.
 - Write your findings, complete, in markdown, to the output path your round
   prompt names: relevo records that file, and it is the entire deliverable.
   Your final message is only the short close the prompt describes.
-- Cite file and line references, not summaries. "status.go:115 compares the
-  running count against the cap before the builder starts" is a finding; "the
+- Cite file and line references, not summaries. "queue.py:115 compares the
+  running count against the cap before a job starts" is a finding; "the
   cap logic looks off" is not.
 - State plainly when the diff contains no problem, rather than manufacturing
   one. A reviewer that always finds something is pinning nothing, and a

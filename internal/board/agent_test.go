@@ -63,11 +63,7 @@ func lastElement(t *testing.T, path string) map[string]any {
 // cockpitTheme is the default theme, looked up so a test names it once.
 func cockpitTheme(t *testing.T) *Theme {
 	t.Helper()
-	th, err := Lookup("cockpit")
-	if err != nil {
-		t.Fatalf("Lookup(cockpit): %v", err)
-	}
-	return th
+	return seedTheme(t, "cockpit")
 }
 
 func TestTextElementsInSceneOrder(t *testing.T) {
@@ -288,10 +284,7 @@ func TestAnnotateRandomFieldsAreWellFormed(t *testing.T) {
 func TestAnnotateStrokeIsThemeInk(t *testing.T) {
 	fixSeams(t)
 	for _, name := range []string{"cockpit", "blueprint"} {
-		th, err := Lookup(name)
-		if err != nil {
-			t.Fatalf("Lookup(%s): %v", name, err)
-		}
+		th := seedTheme(t, name)
 		path := writeScene(t, `{"type":"excalidraw","elements":[]}`)
 		if _, err := Annotate(path, AnnotateOptions{Text: "hi", Theme: th}); err != nil {
 			t.Fatalf("Annotate: %v", err)

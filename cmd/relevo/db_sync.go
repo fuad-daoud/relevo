@@ -226,7 +226,9 @@ type dbSyncOutcomeDoc struct {
 
 // dbSyncCallDoc is what push and pull print under --json.
 type dbSyncCallDoc struct {
-	Applied bool `json:"applied"`
+	Applied bool     `json:"applied"`
+	Holds   []string `json:"holds,omitempty"`
+	Next    string   `json:"next,omitempty"`
 }
 
 // cmdDBSyncEnable runs the enable path through the daemon.
@@ -480,7 +482,9 @@ func dbSyncClassify(err error) error {
 		errors.Is(err, relevosync.ErrJoinOverQuota):
 		return fail(codeUsage, "%v", err)
 	case errors.Is(err, relevosync.ErrRemoteConflict):
-		return fail(codeRefused, "%v", err)
+		var conflict *relevosync.RemoteConflictError
+		errors.As(err, &conflict)
+		return failNext(codeRefused, remoteConflictNext(conflict), "%v", err)
 	case errors.Is(err, relevosync.ErrAuthRefused):
 		return fail(codeRemoteAuth, "%v", err)
 	case errors.Is(err, db.ErrPreflightRefused):

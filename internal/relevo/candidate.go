@@ -102,6 +102,11 @@ type Resolution struct {
 	// nothing was probed, and the notes and the pick log entry stay exactly
 	// as they were before placement existed.
 	Placement PlacementResolution
+
+	// Gate is the acceptance check the binding resolved and the tier that
+	// supplied it. The zero value means no gate: the command is empty, so
+	// the printed line reads "gate: none" whatever the absence came from.
+	Gate GateResolution
 }
 
 // Token is the canonical ref of the resolved candidate, or "" when there

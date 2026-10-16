@@ -21,7 +21,7 @@ func TestDefaultIsTheSpecDefault(t *testing.T) {
 		"planner":         {Kind: ParamString, Str: "lite-planner"},
 		"security":        {Kind: ParamString, Str: "security"},
 		"scan":            {Kind: ParamBool, Bool: true},
-		"gate":            {Kind: ParamString, Str: "make check"},
+		"gate":            {Kind: ParamString, Str: ""},
 		"regate":          {Kind: ParamInt, Int: 1},
 		"max_corrections": {Kind: ParamInt, Int: 3},
 	}
@@ -83,5 +83,19 @@ func TestDefaultCheckRoutesGreenToReviewAndRedToRepair(t *testing.T) {
 		"red":   StepTarget("fix-repair"),
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("fix-check on = %+v, want %+v", got, want)
+	}
+}
+
+func TestDefaultWithNoGateGoesFromBuildToReview(t *testing.T) {
+	t.Parallel()
+
+	def := Default()
+	s, actions := Start(def, StartInputs{Plans: []string{"plan-1.md"}})
+	if len(actions) != 1 || actions[0].Step != "build" {
+		t.Fatalf("start actions = %+v, want one send to build", actions)
+	}
+	_, actions = Next(def, s, Event{Kind: EventStepClosed, Step: "build", Member: "builder", Status: "done"})
+	if len(actions) != 1 || actions[0].Kind != ActionSend || actions[0].Step != "review" {
+		t.Fatalf("build close actions = %+v, want a send to review with no check run", actions)
 	}
 }

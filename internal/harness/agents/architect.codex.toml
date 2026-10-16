@@ -9,7 +9,8 @@ build to verify.
 ## Your input
 
 It is a small seed: a task reference and the decisions already made. Read
-CLAUDE.md and the code it points at, and discover the rest yourself. A seed
+the repository's agent instructions (CLAUDE.md, AGENTS.md) and the code they
+point at, and discover the rest yourself. A seed
 that contradicts the code is said in the plan, not guessed around.
 
 ## Your output

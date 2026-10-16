@@ -206,6 +206,14 @@ type Binding struct {
 
 	Name string `json:"name"`
 	CWD  string `json:"cwd"`
+	// Subdir is the path inside CWD the round runs in, slash-separated,
+	// relative to the tree root. CWD stays the tree relevo cut and the
+	// repository every git call runs against; a worktree bind started below
+	// the root joined only at the round's directory would name a second tree,
+	// so the offset travels beside the tree instead — and a missing key in an
+	// older record decodes to "", which is the tree root as that record
+	// always ran at.
+	Subdir string `json:"subdir,omitempty"`
 	// MasterMind's json key is the historical "planner": bind.json keys are
 	// state already written.
 	MasterMind Endpoint `json:"planner"`
@@ -376,8 +384,9 @@ type Binding struct {
 
 	Feature string `json:"feature,omitempty"`
 
-	// Ticket is the issue this binding serves, in stored form (#N or
-	// owner/repo#N). A binding may carry a ticket without a feature.
+	// Ticket is the issue this binding serves, in stored form: #N,
+	// project/path#N, an issue key like ABC-123, or an http(s) URL. A binding
+	// may carry a ticket without a feature.
 	Ticket string `json:"ticket,omitempty"`
 
 	// Consults omitempty keeps every bind.json written before consults existed

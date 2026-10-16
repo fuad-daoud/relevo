@@ -58,7 +58,7 @@ End the report with this block as its last lines, filled in honestly:
 status: done            # done | halted | blocked | deferred
 halted_at: ""           # which step, when halted or blocked
 changed_paths: []       # repo-relative files you changed
-commands_run: []        # commands you ran, e.g. ["make check"]
+commands_run: []        # every command you ran, as typed
 not_done: []            # adjacent work you deliberately left
 ` + "```" + `
 Reply here with only the report path.`

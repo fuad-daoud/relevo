@@ -20,17 +20,17 @@ func TestIdleExit(t *testing.T) {
 		after   time.Duration
 		want    bool
 	}{
-		{"live connection", daemonActivity{Conns: 1, RootExists: true}, time.Hour, time.Minute, false},
-		{"running builder", daemonActivity{Running: true, RootExists: true}, time.Hour, time.Minute, false},
-		{"queued round", daemonActivity{Queued: true, RootExists: true}, time.Hour, time.Minute, false},
-		{"sync on", daemonActivity{SyncOn: true, RootExists: true}, time.Hour, time.Minute, false},
-		{"join running", daemonActivity{Joining: true, RootExists: true}, time.Hour, time.Minute, false},
+		{"live connection", daemonActivity{Conns: 1, RootHeld: true}, time.Hour, time.Minute, false},
+		{"running builder", daemonActivity{Running: true, RootHeld: true}, time.Hour, time.Minute, false},
+		{"queued round", daemonActivity{Queued: true, RootHeld: true}, time.Hour, time.Minute, false},
+		{"sync on", daemonActivity{SyncOn: true, RootHeld: true}, time.Hour, time.Minute, false},
+		{"join running", daemonActivity{Joining: true, RootHeld: true}, time.Hour, time.Minute, false},
 		{"sync on with the root gone", daemonActivity{SyncOn: true}, 0, time.Minute, true},
-		{"all idle under the period", daemonActivity{RootExists: true}, 30 * time.Second, time.Minute, false},
-		{"all idle past the period", daemonActivity{RootExists: true}, 2 * time.Minute, time.Minute, true},
+		{"all idle under the period", daemonActivity{RootHeld: true}, 30 * time.Second, time.Minute, false},
+		{"all idle past the period", daemonActivity{RootHeld: true}, 2 * time.Minute, time.Minute, true},
 		{"root gone while busy", daemonActivity{Conns: 1, Running: true, Queued: true}, 0, time.Minute, true},
-		{"after zero never exits", daemonActivity{RootExists: true}, time.Hour, 0, false},
-		{"no activity past the period", daemonActivity{RootExists: true}, time.Hour, time.Minute, true},
+		{"after zero never exits", daemonActivity{RootHeld: true}, time.Hour, 0, false},
+		{"no activity past the period", daemonActivity{RootHeld: true}, time.Hour, time.Minute, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if got := idleExit(c.a, c.idleFor, c.after); got != c.want {
@@ -59,8 +59,8 @@ func TestDaemonActivityFromStore(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Save: %v", err)
 		}
-		a := daemonActivityNow(root, nil, s)
-		if !a.RootExists || !a.Running || a.Queued || a.Conns != 0 {
+		a := daemonActivityNow(root, nil, nil, s)
+		if !a.RootHeld || !a.Running || a.Queued || a.Conns != 0 {
 			t.Errorf("activity = %+v, want running with the root present", a)
 		}
 	})
@@ -73,7 +73,7 @@ func TestDaemonActivityFromStore(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Save: %v", err)
 		}
-		a := daemonActivityNow(root, nil, s)
+		a := daemonActivityNow(root, nil, nil, s)
 		if !a.Queued || a.Running {
 			t.Errorf("activity = %+v, want queued and not running", a)
 		}
@@ -91,7 +91,7 @@ func TestDaemonActivityFromStore(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Save: %v", err)
 		}
-		a := daemonActivityNow(root, nil, s)
+		a := daemonActivityNow(root, nil, nil, s)
 		if !a.Queued || a.Running {
 			t.Errorf("activity = %+v, want queued and not running", a)
 		}
@@ -105,7 +105,7 @@ func TestDaemonActivityFromStore(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Save: %v", err)
 		}
-		a := daemonActivityNow(root, nil, s)
+		a := daemonActivityNow(root, nil, nil, s)
 		if !a.Running || a.Queued {
 			t.Errorf("activity = %+v, want running and not queued", a)
 		}
@@ -118,16 +118,56 @@ func TestDaemonActivityFromStore(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(root, "relevo.db"), 0o755); err != nil {
 			t.Fatalf("mkdir relevo.db: %v", err)
 		}
-		a := daemonActivityNow(root, nil, store.New(root))
-		if !a.RootExists || !a.Running {
+		a := daemonActivityNow(root, nil, nil, store.New(root))
+		if !a.RootHeld || !a.Running {
 			t.Errorf("activity = %+v, want busy with the root present", a)
+		}
+	})
+
+	t.Run("held lock", func(t *testing.T) {
+		root, s := newStore(t)
+		lock, err := s.AcquireDaemonLock()
+		if err != nil {
+			t.Fatalf("acquire: %v", err)
+		}
+		defer func() { _ = lock.Close() }()
+		a := daemonActivityNow(root, lock, nil, s)
+		if !a.RootHeld {
+			t.Errorf("activity = %+v, want the root held", a)
+		}
+	})
+
+	t.Run("root re-created under the daemon", func(t *testing.T) {
+		root, s := newStore(t)
+		lock, err := s.AcquireDaemonLock()
+		if err != nil {
+			t.Fatalf("acquire: %v", err)
+		}
+		defer func() { _ = lock.Close() }()
+		if err := os.RemoveAll(root); err != nil {
+			t.Fatalf("remove root: %v", err)
+		}
+		// An empty database is what a re-created root holds: every read of it
+		// fails, which alone would read as busy.
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatalf("re-create root: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "relevo.db"), nil, 0o600); err != nil {
+			t.Fatalf("write empty database: %v", err)
+		}
+		a := daemonActivityNow(root, lock, nil, store.New(root))
+		if a.RootHeld {
+			t.Errorf("activity = %+v, want the root reported no longer held", a)
+		}
+		if !idleExit(a, 0, time.Minute) {
+			t.Error("a daemon whose root was re-created under it would not exit")
 		}
 	})
 
 	t.Run("missing root", func(t *testing.T) {
 		root := filepath.Join(t.TempDir(), "gone")
-		a := daemonActivityNow(root, nil, store.New(root))
-		if a.RootExists {
+		a := daemonActivityNow(root, nil, nil, store.New(root))
+		if a.RootHeld {
 			t.Errorf("activity = %+v, want the root reported gone", a)
 		}
 	})
@@ -143,7 +183,7 @@ func TestWatchDaemonIdleCancelsWhenIdlePastThePeriod(t *testing.T) {
 	var samples int32
 	sample := func() daemonActivity {
 		atomic.AddInt32(&samples, 1)
-		return daemonActivity{RootExists: true}
+		return daemonActivity{RootHeld: true}
 	}
 	var clock int64
 	now := func() time.Time {
@@ -179,7 +219,7 @@ func TestWatchDaemonIdleStaysWhileBusyAndReturnsOnCancel(t *testing.T) {
 	calls := make(chan struct{}, 64)
 	sample := func() daemonActivity {
 		calls <- struct{}{}
-		return daemonActivity{RootExists: true, Running: true}
+		return daemonActivity{RootHeld: true, Running: true}
 	}
 
 	done := make(chan struct{})
@@ -242,7 +282,7 @@ func TestDaemonActivityReadsTheSyncMarker(t *testing.T) {
 					t.Fatalf("KVPut: %v", err)
 				}
 			}
-			a := daemonActivityNow(root, nil, s)
+			a := daemonActivityNow(root, nil, nil, s)
 			if a.SyncOn != tc.on {
 				t.Errorf("activity = %+v, want SyncOn %v", a, tc.on)
 			}
@@ -259,7 +299,7 @@ func TestWatchDaemonIdleStaysWhileSyncIsOn(t *testing.T) {
 	calls := make(chan struct{}, 64)
 	sample := func() daemonActivity {
 		calls <- struct{}{}
-		return daemonActivity{RootExists: true, SyncOn: true}
+		return daemonActivity{RootHeld: true, SyncOn: true}
 	}
 	done := make(chan struct{})
 	go func() {

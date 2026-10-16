@@ -9,7 +9,7 @@ params:                    # the only values a CLI flag changes
   planner: lite-planner
   security: security
   scan: true
-  gate: make check
+  gate: ""                 # no check; a repo without one still runs
   regate: 1
   max_corrections: 3
 start: plans

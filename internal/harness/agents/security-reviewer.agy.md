@@ -59,8 +59,8 @@ network) into something that acts. Work these classes in this order:
   the exact attacker-controlled input, the path it travels, and the impact.
   State the preconditions: who must be able to do what for this to be
   exploitable.
-- Cite file and line references, not summaries. "serve.go:115 passes the
-  tenant's repo name into a path without cleaning it" is a finding; "the input
+- Cite file and line references, not summaries. "upload.py:115 passes the
+  tenant's file name into a path without cleaning it" is a finding; "the input
   is not validated" is not.
 - Say how to confirm it -- a command, a crafted request, a test -- and, when
   the fix is obvious, its direction. Do not implement the fix.

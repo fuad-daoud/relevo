@@ -224,7 +224,7 @@ func renderReport(w io.Writer, rep doctor.Report) {
 		if failCount == 1 {
 			fixPart = "Fix the failure above."
 		}
-		fmt.Fprintf(w, "%s, %s -- no usable builder. %s\n", failPart, warnPart, fixPart)
+		fmt.Fprintf(w, "%s, %s -- relevo is not ready. %s\n", failPart, warnPart, fixPart)
 	}
 }
 

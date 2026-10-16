@@ -25,8 +25,8 @@ The first line of every wait result names the binding, the round and one
 outcome: closed, unmarked, needs-you, halted, gone, not-started, or still-open.
 Act on it like this:
 
-  - closed, with payload text: a runner's round closed. Run the project's
-    check command and compare the diff against the plan before calling done --
+  - closed, with payload text: a runner's round closed. Verify it as the
+    round needs and compare the diff against the plan before calling done --
     do not call done on the payload's arrival alone.
   - needs-you, unmarked, halted, gone or not-started: the same line carries the
     reason; run status(name) and decide: send the next round, gate, or stop.
@@ -81,7 +81,7 @@ const InstructionsOpencode = `relevo is running as your tools server. Outputs an
 as new turns in this session, pushed by relevo itself: after a send, end your
 turn and the output comes on its own. Do not start a wait.
 
-Act on an output as soon as it arrives: run the project's check command and
+Act on an output as soon as it arrives: verify it as the round needs and
 compare the diff against the plan before calling done -- do not call done on
 the output's arrival alone. A needs-you turn gives the reason; call
 relevo_status and decide: send the next round, gate, or stop.

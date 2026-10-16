@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -32,13 +33,23 @@ func formBundlePart(r *http.Request) (io.Reader, func()) {
 	return nil, func() {}
 }
 
+// validSubdir is the subdirectory rule a binding and a chain create share:
+// the wire value must normalize, so any prefix that could move the served
+// round outside the owner's worktree is refused at this one boundary.
+func validSubdir(raw string) string {
+	if _, err := relevo.NormalizeSubdir(raw); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
 // servedChainRequestOf builds the relevo request from the wire create and the
 // server's own facts. BuilderActor is left "": this slice's wire carries no
 // builder actor, so every chain fixes its builder to the builder actor.
 func servedChainRequestOf(caller remote.ClientID, bare string, req remote.CreateChainRequest) relevo.ServedChainRequest {
 	out := relevo.ServedChainRequest{
 		Name: req.Name, Plans: req.Plans, Settings: req.Settings,
-		Feature: req.Feature, Ticket: req.Ticket,
+		Feature: req.Feature, Ticket: req.Ticket, Subdir: req.Subdir,
 		Owner: string(caller), Bare: bare, RepoID: req.RepoID, Base: req.BaseCommit,
 		ClientInstallation: req.ClientInstallation, ClientBindingIDs: req.ClientBindingIDs,
 		Workflow: []byte(req.Workflow), ClientActorIDs: req.ClientActorIDs,
@@ -77,11 +88,23 @@ func canonicalJSON(data []byte) ([]byte, error) {
 }
 
 // chainRequestMatches reports whether an existing chain is byte-for-byte the
-// request: its base, settings, labels and plan copies. The name and owner are
-// already the same, and the repo id is not part of the comparison.
+// request: its base, settings, labels, subdirectory and plan copies. The name
+// and owner are already the same, and the repo id is not part of the
+// comparison. The subdirectory is read from the chain's builder member
+// binding -- the row does not carry it -- so a differing prefix is a
+// conflict, never an identical retry.
 func chainRequestMatches(rt relevo.Runtime, view remote.ChainView, req remote.CreateChainRequest) bool {
 	if view.Base != req.BaseCommit || view.Feature != req.Feature || view.Ticket != req.Ticket {
 		return false
+	}
+	for _, m := range view.Members {
+		if m.Part != chain.MemberBuilder {
+			continue
+		}
+		b, err := rt.Store.Load(m.Name)
+		if err != nil || b.Subdir != req.Subdir {
+			return false
+		}
 	}
 	if len(req.Workflow) > 0 {
 		canonStored, err1 := canonicalJSON(view.Workflow)

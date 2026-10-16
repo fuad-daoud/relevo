@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -62,14 +63,42 @@ func dbSyncOneShot(name string, args []string, set func(*flag.FlagSet) *dbSyncCa
 		return err
 	}
 	if *v.asJSON {
-		return printDoc(dbSyncCallDoc{Applied: res.Applied})
+		return printDoc(syncCallDoc(res))
 	}
-	if res.Applied {
-		fmt.Printf("relevo %s applied\n", name)
-		return nil
-	}
-	fmt.Printf("relevo %s: nothing to apply\n", name)
+	fmt.Print(syncCallText(name, res))
 	return nil
+}
+
+// syncCallDoc is the --json answer of a push or pull: the applied flag, plus
+// each hold a pull found and the command that reads them again.
+func syncCallDoc(res *wire.SyncResult) dbSyncCallDoc {
+	doc := dbSyncCallDoc{Applied: res.Applied, Holds: res.Holds}
+	if len(res.Holds) > 0 {
+		doc.Next = dbSyncHoldNext
+	}
+	return doc
+}
+
+// dbSyncHoldNext is where a reader goes to see a hold a pull reported.
+const dbSyncHoldNext = "relevo db sync status"
+
+// syncCallText is the text answer of a push or pull. A pull that held an origin
+// names each hold after the outcome line, so a run that stopped short does not
+// read as one that finished.
+func syncCallText(name string, res *wire.SyncResult) string {
+	var b strings.Builder
+	if res.Applied {
+		fmt.Fprintf(&b, "relevo %s applied\n", name)
+	} else {
+		fmt.Fprintf(&b, "relevo %s: nothing to apply\n", name)
+	}
+	for _, hold := range res.Holds {
+		fmt.Fprintf(&b, "held: %s\n", hold)
+	}
+	if len(res.Holds) > 0 {
+		fmt.Fprintf(&b, "next: %s\n", dbSyncHoldNext)
+	}
+	return b.String()
 }
 
 // dialSyncVerb reaches the owner serving this root, which is the only route a
@@ -159,7 +188,7 @@ func sendSyncVerbToken(ctx context.Context, shared *db.DB, verb string, token []
 		return nil, dbSyncVerbTransport(err)
 	}
 	if verr := client.VerbError(res); verr != nil {
-		return nil, dbSyncVerbRefusal(verb, verr)
+		return nil, dbSyncVerbRefusalFor(verb, opts.RemoteURL, verr)
 	}
 	return res, nil
 }
@@ -173,6 +202,23 @@ func sendSyncVerbToken(ctx context.Context, shared *db.DB, verb string, token []
 // The messages pass through untouched. They are fixed text written in this
 // repository, and every one of them names the fix.
 func dbSyncVerbRefusal(verb string, err error) error {
+	return dbSyncVerbRefusalFor(verb, "", err)
+}
+
+// remoteConflictNext is the command that points this machine at the remote
+// --url named, which is the way out of a remote conflict: enable has no flag
+// that re-points, and the sync section is machine-local, so no --local.
+func remoteConflictNext(conflict *relevosync.RemoteConflictError) string {
+	url := "<url>"
+	if conflict != nil && conflict.URL != "" {
+		url = conflict.URL
+	}
+	return "relevo config set sync.remote_url " + url
+}
+
+// dbSyncVerbRefusalFor is dbSyncVerbRefusal for a caller that knows the --url it
+// sent, which a remote-conflict refusal's next command repeats.
+func dbSyncVerbRefusalFor(verb, url string, err error) error {
 	var refusal *client.VerbRefusal
 	if !errors.As(err, &refusal) {
 		return dbSyncClassify(err)
@@ -185,7 +231,9 @@ func dbSyncVerbRefusal(verb string, err error) error {
 		return failNext(codeRefused, "relevo db sync status", "%s", refusal.Message)
 	case wire.SyncCodeAuthRefused:
 		return fail(codeRemoteAuth, "%s", refusal.Message)
-	case wire.SyncCodePreflightRefused, wire.SyncCodeRemoteConflict,
+	case wire.SyncCodeRemoteConflict:
+		return failNext(codeRefused, remoteConflictNext(&relevosync.RemoteConflictError{URL: url}), "%s", refusal.Message)
+	case wire.SyncCodePreflightRefused,
 		wire.SyncCodeRemoteUnreachable, wire.SyncCodeInvalid:
 		return fail(codeRefused, "%s", refusal.Message)
 	case wire.SyncCodeContended:

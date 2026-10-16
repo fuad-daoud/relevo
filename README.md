@@ -3,13 +3,12 @@
 [![ci](https://github.com/fuad-daoud/relevo/actions/workflows/ci.yml/badge.svg)](https://github.com/fuad-daoud/relevo/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Site: [relevo-site.fuad-daoud.com](https://relevo-site.fuad-daoud.com) (source in [fuad-daoud/relevo-site](https://github.com/fuad-daoud/relevo-site), together with the `DESIGN.md` and `PRODUCT.md` that govern the page).
+Site: [relevo.sh](https://relevo.sh) (source in [fuad-daoud/relevo-site](https://github.com/fuad-daoud/relevo-site), together with the `DESIGN.md` and `PRODUCT.md` that govern the page).
 
 `relevo` automates the plan/report handoff between two AI coding agents. A
 human talks to a **MasterMind** agent; the MasterMind hands work to a **builder**
 agent; relevo moves the files between them so the human never copy-pastes a
-plan or a report by hand. Builders are headless or remote processes, and
-relevo no longer integrates with herdr.
+plan or a report by hand. Builders are headless or remote processes.
 
 <!-- name-guard: off -->
 relevo is Spanish for relay (the changeover in a relay race); it was called relay until v0.12.0.
@@ -27,7 +26,7 @@ human) at every step.
   which models in [Candidates](#candidates).
 - **`git` on `PATH` (optional).** Required for automatic round diff capture; without it, relevo works normally but rounds produce no diffs.
 - **Linux or macOS.** See [Platform support](#platform-support).
-- **Go 1.22+**, to build from source. Not needed if you install a release
+- **Go 1.25+**, to build from source. Not needed if you install a release
   binary.
 
 ## Install
@@ -173,12 +172,18 @@ On a clean machine, set up prerequisites and preflight with `relevo config init`
 4. Run the literal fix commands `relevo doctor` prints for any missing items.
 5. Re-run `relevo doctor` to confirm `0 failures`.
 6. Start the daemon (e.g. `relevo daemon &` or `relevo service install`).
-7. Bind your first agent from the MasterMind session:
+7. Bind your first builder from the MasterMind session:
    ```
-   relevo bind --no-feature --candidate claude/anthropic/sonnet
+   relevo bind --no-feature
    ```
-   (or, with one candidate, `relevo bind --no-feature`). A fresh `relevo bind`
-   must name exactly one of `--feature <label>` / `--no-feature`.
+   relevo starts the candidate `relevo config` marks `<- would pick` under
+   `builder`. To run another, pass its name, `relevo bind --no-feature
+   --candidate <name>`; it must be on `actors.builder.candidates` (see
+   [Choosing a candidate](#choosing-a-candidate)). A fresh `relevo bind`
+   must name exactly one of `--feature <label>` / `--no-feature`. Doctor does
+   not check that a harness is logged in: a builder that cannot authenticate
+   ends its first round without a report, and `relevo status` shows the
+   harness's error.
 
 To install the agent definitions into each harness on `PATH` by hand instead —
 the daemon refreshes unmodified definitions on every start and upgrade, a file
@@ -239,7 +244,7 @@ relevo config init                 # seed candidates, policy and actors, install
 From the MasterMind session, in the repository you want worked on:
 
 ```
-relevo bind --no-feature --candidate claude/anthropic/sonnet     # start a builder on this tree
+relevo bind --no-feature           # start a builder on this tree
 relevo send --file plan.md         # hand it the plan; the builder starts working
 relevo status                      # watch the round
 relevo wait                        # block until the round closes; prints the report
@@ -270,8 +275,9 @@ gives a MasterMind a name of your own.
   must name exactly one of `--feature <label>` (a label grouping it with other
   bindings) and `--no-feature` (it serves no feature); naming neither or both is
   refused, exit 2, before any state, worktree or network work. `--ticket REF` is
-  optional and allowed with either: a number, `#N`, `owner/repo#N` or an issue
-  URL, stored as `owner/repo#N` when relevo knows the repository. `--candidate` is
+  optional and allowed with either: a number, `#N`, `owner/repo#N`, an issue
+  key like `ABC-123`, or an issue URL, stored as `owner/repo#N` when relevo
+  knows the repository; any other http(s) URL is stored whole. `--candidate` is
   a candidate token; `--actor R` is the writer actor the binding runs (default
   `builder`). A name that already exists is refused rather than reused:
   only the binding's record would be rewritten, so a fresh round 1 would
@@ -406,6 +412,11 @@ gives a MasterMind a name of your own.
   (`--kind`, `--agent`, `--force`, `--dry-run`).
 - `relevo config export|import|get|set|unset|edit` — read and change the
   configuration document section by section.
+- `relevo config repo [--repo <path>]` — read this repository's own settings
+  (the `repos` config section, keyed by the repository's identity);
+  `config repo set <name|gate|board_theme> <value>` stores one field,
+  `config repo unset <key>` clears it, and `config repo list` prints one row
+  per repository that has settings.
 - `relevo config secret set|rm|list` — store, forget or list the `typesafe`
   and `client.key` secrets (the value is read from stdin).
 - `relevo gate` — list this machine's active gates.
@@ -542,7 +553,7 @@ The builder ends its report with a fenced `relevo` block:
 status: done            # done | halted | blocked | deferred
 halted_at: ""           # which step, when halted or blocked
 changed_paths: []       # repo-relative files you changed
-commands_run: []        # commands you ran, e.g. ["make check"]
+commands_run: []        # every command you ran, as typed
 not_done: []            # adjacent work you deliberately left
 ```
 
@@ -1088,7 +1099,8 @@ repository it works in (the origin URL, normalised, and the git common
 directory — best-effort, so a directory git can't read leaves this blank
 rather than failing the command), the `--feature` label grouping it with
 other bindings (or that it serves none), the `--ticket` issue it serves
-(stored as `#N`, or `owner/repo#N` when the repository is known), and which
+(stored as `#N`, `owner/repo#N`, an issue key like `ABC-123`, or an http(s)
+URL stored whole), and which
 binding and round it was forked from. None of this
 changes what you see day to day; it exists for `relevo history`, the ui's
 dashboard and the database below.
@@ -1147,7 +1159,7 @@ relevo history [--here]                    filter to a repo: --here resolves the
                                            origin url (or its git common dir with no remote)
               [--feature LABEL]           filter to a --feature label
               [--ticket REF]              filter by ticket: a bare N or #N matches any stored ticket
-                                           ending in #N, owner/repo#N matches exactly
+                                           ending in #N, anything else matches exactly
               [--binding NAME]            filter to one binding name
               [--mastermind SESSION]         filter to one MasterMind session id
               [--since D]                 only rounds started after this: 24h, 7d, or YYYY-MM-DD
@@ -1356,9 +1368,25 @@ must name its file, a bare slug directory is never a path, so a board directory
 can never collide with a subverb name.
 
 The theme chooses the colours of **new** elements only -- an existing scene
-keeps the colours it stores. Precedence is `--theme`, then the repo-local git
-config key `relevo.boardTheme` (`git config relevo.boardTheme blueprint`), then
-`cockpit`. An unknown name is a usage error, exit 2, listing the built-ins.
+keeps the colours it stores. Every palette lives in the `themes` config
+section, keyed by name: the release writes `cockpit` and `blueprint` there
+once per database when relevo starts (so `relevo config get themes.cockpit
+--json` prints cockpit's palette on a fresh install), and after that every
+lookup reads the section -- `relevo config set themes.<name> '{...}'` changes
+what the board paints, `config unset themes.<name>` is what unsets one, and a
+palette you unset stays unset: the seed runs once, not on every open. A user
+palette is whole -- all eleven colour fields (`bg ink muted faint line panel
+accent good warn bad comment`) are required, and each is a `#` followed by 3,
+4, 6 or 8 hex digits -- so a missing or unknown field, and any other colour
+form, is refused at write time naming the entry and the field. Precedence is
+`--theme`, then the repository's own stored setting (`relevo config repo set
+board_theme <name>`), then the repo-local git config key `relevo.boardTheme`
+(`git config relevo.boardTheme blueprint`, kept so existing setups keep
+working), then `cockpit`. A `relevo board` that runs before the state root
+has a database at all -- a fresh install that has never opened it writable --
+paints the palettes the embedded seed file carries. An unknown name is a
+usage error, exit 2, that lists the names the consulted set holds and says
+how to add one: `relevo config set themes.<name> '{...}'`.
 
 On save the page writes the scene and a companion `<name>.svg` beside it,
 exported for the cockpit, agents and PR diffs; both are committed. The export
@@ -1541,8 +1569,11 @@ Any `extra_args` are appended verbatim after what relevo renders. Because relevo
 
 ### Choosing a candidate
 
-Pass the token to `relevo bind --no-feature --candidate claude/anthropic/sonnet` and relevo
-starts exactly that, gated or not (with a `note:` on stderr if it is).
+Pass a candidate's name or token to `relevo bind --no-feature --candidate
+claude/anthropic/sonnet` and relevo starts exactly that, gated or not (with a
+`note:` on stderr if it is). It must still serve the actor: a candidate missing
+from the actor's `candidates` list is refused, so add it there first, e.g.
+`relevo config set actors.builder.candidates '["sonnet", "glm-5.3-flash"]'`.
 
 With `--candidate` omitted, relevo decides, by one rule:
 
@@ -1691,14 +1722,29 @@ comments, and never anything that changes behaviour. That contract is a
 entry is a glob over the repo-relative path -- `*` matches within one segment,
 `**` matches any number of segments, a leading `!` excludes, and the last match
 wins -- or `@docs`, which expands to `**/*.md`, `**/*.markdown`, `**/*.mdx`,
-`**/*.mmd`, `**/*.svg` and `**/*.excalidraw`, excluding `!**/testdata/**`,
+`**/*.mmd`, `**/*.rst`, `**/*.adoc`, `**/*.asciidoc`, `**/*.svg` and
+`**/*.excalidraw`, excluding `!**/testdata/**`,
 `!vendor/**` and `!**/node_modules/**`. With `comments` true, an edit to an
-out-of-scope `.go` file is still in scope when the old and new contents differ
-only in non-directive comments; a change to a directive comment (`//go:`,
-`// +build`, `//line`, `//export`, `//nolint`, `//lint:`, anything containing
-`#nosec`, the `// Code generated ... DO NOT EDIT.` marker, a test `Output:`
-comment) or to any code token is refused, as is any other extension, a binary
-or a symlink.
+out-of-scope source file is still in scope when the old and new contents differ
+only in non-directive comments. For `.go` the two sides are compared as token
+streams, so whitespace is free as `gofmt` moves it, and a change to a directive
+comment (`//go:`, `// +build`, `//line`, `//export`, `//nolint`, `//lint:`,
+anything containing `#nosec`, the `// Code generated ... DO NOT EDIT.` marker,
+a test `Output:` comment) or to any code token is refused. The other languages
+the comment table carries get the code-line rule: every comment is removed and
+the remaining lines must match one for one, in order, so a comment's own line,
+comment text and blank lines are free while everything else -- including
+leading whitespace -- is code; a docstring or any other string literal is code,
+and indentation is significant. Those languages are `.py`/`.pyi`,
+`.sh`/`.bash`/`.zsh`, `.yaml`/`.yml`, `.toml`, `.r`, `.js`/`.jsx`/`.mjs`/`.cjs`
+and `.ts`/`.tsx`, `.java`/`.kt`/`.kts`/`.scala`, `.cs`, `.swift`, `.dart`,
+`.c`/`.h`/`.cc`/`.cpp`/`.hpp`, `.rs`, `.sql`, `.lua` and `.hs`; their own
+directives are refused too -- `# noqa`, `# type:`, `#!`, `// @ts-ignore`,
+`// eslint-disable-next-line`, `// NOLINT`, `-- noqa`, `-- name:`,
+`---@type`, `{-# LANGUAGE #-}` and their kin. A file added or deleted, a
+status the rules cannot judge, an extension outside the table (`.json`,
+`.txt`, `.rb`, `.php`, `.pl`, a binary, an extensionless `Makefile` or
+`Dockerfile`) or a symlink is refused as before.
 
 A refusal still closes the round -- its report, diff and usage are recorded --
 but its outcome is forced to `halted`, the binding goes to **NEEDS YOU** naming
@@ -2006,10 +2052,26 @@ builder -- no nudge, no "exited without a report" handling, no round-timeout
 halt -- until the gate finishes or times out.
 
 Configure it with `--gate '<cmd>'` on `relevo bind` or `relevo bind
---worktree`; `--no-gate` opts a binding out of the policy section's `gate.default`
-(see above) even when one is configured machine-wide. Omitting both flags
-on `bind` falls back to `gate.default`, `""` meaning no gate at all --
-bindings written before this feature have no gate and are unaffected.
+--worktree`; a repository can carry its own gate in the `repos` config
+section (`relevo config repo set gate <cmd>`, keyed by the repository's
+identity); `--no-gate` opts a binding out of both lower tiers. The flags
+resolve in this order:
+
+1. `--gate <cmd>` / `--no-gate` -- `--no-gate` wins over everything;
+2. the repository's own `gate` setting;
+3. the policy section's `gate.default`;
+4. no gate.
+
+The repository tier sits behind the role rule: a role whose check flag is
+off (a reader round) takes no gate even when its repository sets one, and
+`--gate` on a reader round is still refused. A `bind --resume` keeps the
+stored command. `bind`, `bind --worktree`, `bind --server` and `chain` name
+which tier supplied the command -- `gate: make check (--gate)`, `(repo
+setting)`, `(policy.gate.default)` -- and `chain` prints the same
+parenthetical on its `check:` line.
+
+A machine whose `repos` section is empty reads no git for this at all, so
+a machine that never used the feature pays nothing.
 
 The gate's full output -- and the supervisor's exit trailer -- lives at
 `NNN-gate.log` next to the round's prompt and report. Its result is one of
@@ -2551,7 +2613,7 @@ builder `exited`.
 
 ## Platform support
 
-**Linux and macOS.** Both are exercised in CI, on the Go 1.22 floor and on
+**Linux and macOS.** Both are exercised in CI, on the Go 1.25 floor and on
 current stable.
 
 Windows is not supported. State locking is behind a build tag

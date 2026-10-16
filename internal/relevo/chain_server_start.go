@@ -27,7 +27,10 @@ import (
 // mastermind, the git facts the create needs and the server's answer about
 // itself.
 type chainServerPlan struct {
-	settings     chain.Settings
+	settings chain.Settings
+	// gateRes is the gate resolution the settings were built from, so the
+	// start's ChainResult can name the tier that supplied the check.
+	gateRes      GateResolution
 	repo         string
 	ticket       string
 	bodies       [][]byte
@@ -39,6 +42,10 @@ type chainServerPlan struct {
 	authorName   string
 	authorEmail  string
 	server       string
+	// subdir is the prefix the create carries, resolved once with the
+	// repository below: the server joins the stored value into every
+	// member's round directory it cuts.
+	subdir string
 	// origin is whether the server advertises FeatureOrigin, which decides
 	// whether the client mints the member ids the create carries.
 	origin bool
@@ -84,23 +91,34 @@ func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (cha
 	if err != nil {
 		return chainServerPlan{}, err
 	}
-	values, err := chainParamsFor(def, rt.Policy, opts)
+	// The chain's repository is resolved before the params are computed: the
+	// gate param and the chain settings both read the repository's own
+	// settings, which are keyed on the tree the chain runs on.
+	repo, err := os.Getwd()
+	if err != nil {
+		return chainServerPlan{}, fmt.Errorf("resolve working directory: %w", err)
+	}
+	repoSet, err := RepoSettingsFor(ctx, rt, repo)
+	if err != nil {
+		return chainServerPlan{}, err
+	}
+	values, err := chainParamsFor(def, rt.Policy, opts, repoSet)
 	if err != nil {
 		return chainServerPlan{}, err
 	}
 	if def, err = workflow.WithParams(def, values); err != nil {
 		return chainServerPlan{}, refuse("%v", err)
 	}
+	checks := roleChecks(rt.RoleRegistry(), "builder")
 	plan := chainServerPlan{
 		def:      def,
-		settings: chainSettings(rt.Policy, opts, roleChecks(rt.RoleRegistry(), "builder")),
+		settings: chainSettings(rt.Policy, opts, checks, repoSet),
+		gateRes:  resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, checks, repoSet),
 		server:   opts.Server,
 	}
-	repo, err := os.Getwd()
-	if err != nil {
-		return chainServerPlan{}, fmt.Errorf("resolve working directory: %w", err)
-	}
 	plan.repo = repo
+	// From the same repository value, not a second working-directory probe.
+	plan.subdir = resolveSubdir(ctx, rt, repo)
 	isCustom := origin != "shipped"
 	if isCustom {
 		if err := chainValidateWorkflowOpts(opts); err != nil {
@@ -133,6 +151,12 @@ func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (cha
 	if missing := missingChainFeatures(who); len(missing) > 0 {
 		return chainServerPlan{}, fmt.Errorf("server %s cannot run a chain (missing the %s); upgrade it, or start the chain without --server",
 			opts.Server, chainFeatureList(missing))
+	}
+	// The same negative applies to a prefix: the server must store the
+	// subdirectory it is to join into every member's rounds, and a server
+	// without the feature would drop it silently.
+	if plan.subdir != "" && !hasFeature(who, remote.FeatureSubdir) {
+		return chainServerPlan{}, fmt.Errorf("server %s does not carry binding subdirectories (pre-subdir server); upgrade it or start the chain at the repository root", opts.Server)
 	}
 	hasWorkflow := hasFeature(who, remote.FeatureWorkflow)
 	if isCustom && !hasWorkflow {
@@ -254,7 +278,7 @@ func chainServerCreate(ctx context.Context, rt Runtime, opts ChainOptions, plan 
 	if err != nil {
 		return ChainResult{}, err
 	}
-	return ChainResult{Chain: row, Members: stored, Plans: len(plan.bodies), Check: chainBuilderCheck(stored, name)}, nil
+	return ChainResult{Chain: row, Members: stored, Plans: len(plan.bodies), Check: chainBuilderCheck(stored, name), CheckSource: plan.gateRes.Source}, nil
 }
 
 // chainMirrorStored loads the mirror bindings from the store, so the returned
@@ -319,6 +343,7 @@ func chainServerRequest(opts ChainOptions, plan chainServerPlan, ids chainServer
 		Plans:              chainPlanTexts(plan.bodies),
 		Feature:            opts.Feature,
 		Ticket:             plan.ticket,
+		Subdir:             plan.subdir,
 		Author:             &remote.GitIdentity{Name: plan.authorName, Email: plan.authorEmail},
 		ClientInstallation: ids.installation,
 	}

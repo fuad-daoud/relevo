@@ -499,6 +499,56 @@ func TestCreateChainRetryIsIdempotentOnlyWhenIdentical(t *testing.T) {
 // Without the section both requests clear the post-absorb re-check while the
 // chain does not exist yet and both go on to cut the branch and create the row,
 // so the second create answers 201 as well.
+// TestChainRequestMatchesComparesTheSubdirectory pins the retry rule on the
+// prefix: an identical retry answers the chain, a differing subdirectory is a
+// conflict -- the comparison reads it from the chain's builder member
+// binding, the one place the chain stores it. Treating a differing prefix as
+// an identical retry would let the second create bind a round the first
+// chain's worktree never had.
+func TestChainRequestMatchesComparesTheSubdirectory(t *testing.T) {
+	s, _ := newTestServer(t, 0)
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := remote.IDOf(kp.Public)
+	if _, err := s.clients.Add("user", remote.MarshalPublic(kp.Public, "user"), "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	rt := testRuntime(t, s, id)
+
+	req := remote.CreateChainRequest{
+		Name:   "shop",
+		RepoID: strings.Repeat("a", 64),
+	}
+	view := remote.ChainView{Name: "shop", Members: []remote.ChainMemberView{
+		{Part: "builder", Name: "shop"},
+	}}
+	b := store.Binding{Name: "shop", CWD: "/bare", Subdir: "src/api", Round: 1}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+
+	matching := req
+	matching.Subdir = "src/api"
+	if !chainRequestMatches(rt, view, matching) {
+		t.Fatal("an identical prefix did not match")
+	}
+	differing := req
+	differing.Subdir = "src/other"
+	if chainRequestMatches(rt, view, differing) {
+		t.Fatal("a differing prefix matched, want a conflict")
+	}
+}
+
+// TestDuplicateChainCreateIsAtomicPerOwner pins the exclusion chainFinishCreate
+// takes: two identical concurrent creates for one owner yield one 201 and one
+// 200 retry, the chain row the winner wrote is the one that survives, and the
+// branch and worktree are cut once.
+//
+// Without the section both requests clear the post-absorb re-check while the
+// chain does not exist yet and both go on to cut the branch and create the row,
+// so the second create answers 201 as well.
 func TestDuplicateChainCreateIsAtomicPerOwner(t *testing.T) {
 	env := setupTestEnv(t)
 	ctx := context.Background()

@@ -113,6 +113,9 @@ type fakeGit struct {
 	// below stay for the tests that ask which method.
 	calls int
 
+	// remotes is what Remotes answers; nil means a repo with just origin.
+	remotes []string
+
 	snapshotTreeID  string
 	snapshotTreeErr error
 	snapshotCalls   int
@@ -144,9 +147,28 @@ type fakeGit struct {
 	lastChangedFilesFrom string
 	lastChangedFilesTo   string
 
-	blobs     map[string][]byte
-	blobErr   error
-	blobCalls int
+	blobs      map[string][]byte
+	blobPaths  map[string]string
+	blobAtRefs []string
+	blobErr    error
+	blobCalls  int
+
+	// showPrefixResult is what ShowPrefix answers; empty is the root, which
+	// is what every test that does not set it is. showPrefixErr makes every
+	// call fail; showPrefixCalls counts and lastShowPrefixDir records the
+	// dir each read answered from.
+	showPrefixResult  string
+	showPrefixErr     error
+	showPrefixCalls   int
+	lastShowPrefixDir string
+	// dirAtResult is what DirAt answers; false means the directory is not
+	// there, which is the negative a round must refuse. dirAtErr makes every
+	// call fail; dirAtCalls counts and dirAtRefs records the commit each
+	// check read.
+	dirAtResult bool
+	dirAtErr    error
+	dirAtCalls  int
+	dirAtRefs   []string
 
 	worktreeStat         git.Stat
 	worktreeStatErr      error
@@ -367,7 +389,41 @@ func (f *fakeGit) ChangedFiles(ctx context.Context, dir, from, to string) ([]pat
 	return f.changedFiles, nil
 }
 
-// ReadBlob answers the comment judge's blob read (#801).
+// BlobAt answers from blobPaths, a path -> object id map; blobAtRefs records
+// the ref each lookup read.
+func (f *fakeGit) BlobAt(ctx context.Context, dir, ref, path string) (string, bool, error) {
+	f.calls++
+	f.blobAtRefs = append(f.blobAtRefs, ref)
+	oid, ok := f.blobPaths[path]
+	return oid, ok, nil
+}
+
+// ShowPrefix answers showPrefixResult, empty unless a test set it, so every
+// existing test reads a bind started at the root; showPrefixCalls counts.
+func (f *fakeGit) ShowPrefix(ctx context.Context, dir string) (string, error) {
+	f.calls++
+	f.showPrefixCalls++
+	f.lastShowPrefixDir = dir
+	if f.showPrefixErr != nil {
+		return "", f.showPrefixErr
+	}
+	return f.showPrefixResult, nil
+}
+
+// DirAt answers dirAtResult, false unless a test set it, so a round refused
+// unless the test says the directory is there; dirAtCalls counts and
+// lastDirAtRef records the commit each check read.
+func (f *fakeGit) DirAt(ctx context.Context, dir, ref, path string) (bool, error) {
+	f.calls++
+	f.dirAtCalls++
+	f.dirAtRefs = append(f.dirAtRefs, ref)
+	if f.dirAtErr != nil {
+		return false, f.dirAtErr
+	}
+	return f.dirAtResult, nil
+}
+
+// ReadBlob answers the comment judge's blob read.
 func (f *fakeGit) ReadBlob(ctx context.Context, dir, oid string) ([]byte, error) {
 	f.calls++
 	f.blobCalls++
@@ -415,6 +471,14 @@ func (f *fakeGit) CreateTrackingBranch(ctx context.Context, dir, branch, upstrea
 		Dir: dir, Branch: branch, Upstream: upstream,
 	})
 	return f.createTrackingBranchErr
+}
+
+func (f *fakeGit) Remotes(ctx context.Context, dir string) ([]string, error) {
+	f.calls++
+	if f.remotes == nil {
+		return []string{"origin"}, nil
+	}
+	return f.remotes, nil
 }
 
 func (f *fakeGit) DeleteBranch(ctx context.Context, dir, branch string) error {

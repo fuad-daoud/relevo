@@ -2126,9 +2126,9 @@ func chainStreamResultLine(t *testing.T, text string) string {
 }
 
 // TestReviewerRecapAfterTheBlockKeepsTheBlockMessage pins the artifact rule: a
-// reviewer that recaps after its block closes with a verdict from the stream,
-// and its saved output is the block-carrying message, stripped of the block,
-// never the recap.
+// reviewer that recaps after its block and left an empty output file closes
+// with a verdict from the stream, and its saved output is the block-carrying
+// message, stripped of the block, never the recap.
 func TestReviewerRecapAfterTheBlockKeepsTheBlockMessage(t *testing.T) {
 	t.Parallel()
 
@@ -2143,7 +2143,7 @@ func TestReviewerRecapAfterTheBlockKeepsTheBlockMessage(t *testing.T) {
 		t.Fatalf("write the reviewer stream: %v", err)
 	}
 
-	chainReaderClose(t, rt, "shop-rev", chainRecapText)
+	chainReaderClose(t, rt, "shop-rev", "")
 
 	row := chainStoredRow(t, rt, "shop")
 	if row.Status != string(chain.StatusDone) {

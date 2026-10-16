@@ -20,28 +20,36 @@ type chainParamFlag struct {
 }
 
 // chainParamsFor resolves the values a workflow's params take, in precedence
-// order: the workflow's own defaults, then policy for the shipped default
-// workflow, then the old flags, then --param. It returns only the params it
-// overrides; a caller merges them with workflow.WithParams, which is what
-// parses and validates the values. A flag the workflow has no slot for is
-// refused, naming the params the workflow does take.
+// order: the workflow's own defaults, then the repository's own gate, then
+// policy for the shipped default workflow, then the old flags, then --param.
+// It returns only the params it overrides; a caller merges them with
+// workflow.WithParams, which is what parses and validates the values. A flag
+// the workflow has no slot for is refused, naming the params the workflow does
+// take.
 //
 // Policy fills those slots only for the shipped default workflow: a custom
 // workflow's own param defaults are the human's intent, so policy never
 // overwrites them, and a custom param left without a default stays required.
-// The old flags and --param override either.
-func chainParamsFor(def workflow.Definition, pol policy.Policy, opts ChainOptions) (map[string]string, error) {
+// The repository's own gate sits exactly where the policy tier sat, behind the
+// flags; the old flags and --param override either.
+func chainParamsFor(def workflow.Definition, pol policy.Policy, opts ChainOptions, repo RepoSettings) (map[string]string, error) {
 	out := map[string]string{}
 
 	// Policy fills only the shipped default's slots: a custom workflow keeps its
 	// own defaults, and a workflow with no reviewer param ignores policy's.
 	if def.Name == workflow.Default().Name {
+		// The gate param takes the repository's own gate before the policy
+		// default: the repo tier sits exactly where the policy tier sat.
+		gate := pol.GateDefault()
+		if repo.Gate != "" {
+			gate = repo.Gate
+		}
 		policyValues := map[string]string{
 			"reviewer":        pol.ChainReviewerActor(),
 			"planner":         pol.ChainPlannerActor(),
 			"security":        pol.ChainSecurityActor(),
 			"scan":            strconv.FormatBool(pol.ChainSecurityOn()),
-			"gate":            pol.GateDefault(),
+			"gate":            gate,
 			"regate":          strconv.Itoa(pol.GateRegate()),
 			"max_corrections": strconv.Itoa(pol.ChainMaxCorrections()),
 		}

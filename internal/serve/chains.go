@@ -114,7 +114,7 @@ func parseChainCreateShared(req remote.CreateChainRequest) string {
 			return err.Error()
 		}
 	}
-	return ""
+	return validSubdir(req.Subdir)
 }
 
 // validateChainPlans checks the plan list: 1 to maxChainPlans entries, each

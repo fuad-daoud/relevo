@@ -9,6 +9,7 @@
   "actor": "builder",
   "feature": "auth",
   "ticket": "o/r#607",
+  "subdir": "src/api",
   "gate": "make check",
   "author": {
     "name": "Test Builder",

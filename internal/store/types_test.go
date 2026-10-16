@@ -262,8 +262,24 @@ func TestValidTicket(t *testing.T) {
 		{"repo without owner", "r#607", false},
 		{"spaces in repo", "o/r r#607", false},
 		{"too long number", "#" + strings.Repeat("1", 10), false},
-		{"over 128 bytes", strings.Repeat("a", 100) + "/" + strings.Repeat("b", 100) + "#607", false},
 		{"hash in middle", "#1#2", false},
+		{"gitlab subgroup path", "grp/sub/proj#607", true},
+		{"four segment path", "a/b/c/d#1", true},
+		{"256 byte path form", strings.Repeat("a", 100) + "/" + strings.Repeat("b", 100) + "/" + strings.Repeat("c", 52) + "#1", true},
+		{"257 byte path", strings.Repeat("a", 100) + "/" + strings.Repeat("b", 100) + "/" + strings.Repeat("c", 53) + "#1", false},
+		{"issue key", "ABC-123", true},
+		{"issue key with digits in the project", "PROJ1-7", true},
+		{"key over 64 bytes", "AB-" + strings.Repeat("1", 63), false},
+		{"lowercase key", "abc-123", false},
+		{"single letter project key", "A-1", false},
+		{"key with a leading digit", "1AB-2", false},
+		{"key without a number", "ABC-", false},
+		{"opaque url", "https://linear.app/team/issue/ENG-123", true},
+		{"opaque url with a query", "https://example.com/x/y?z=1", true},
+		{"512 byte url", "https://example.com/" + strings.Repeat("a", 492), true},
+		{"513 byte url", "https://example.com/" + strings.Repeat("a", 493), false},
+		{"ftp url", "ftp://host/a/b", false},
+		{"bare scheme", "https://", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -328,6 +344,193 @@ func TestParseTicket(t *testing.T) {
 			}
 			if got != c.want {
 				t.Errorf("ParseTicket(%q, %q) = %q, want %q", c.raw, c.ownerRepo, got, c.want)
+			}
+		})
+	}
+}
+
+// TestParseTicketGitLabSubgroupURL pins the whole project path an issue URL
+// stores: GitLab's "/-/issues/N" keeps every subgroup segment, so the stored
+// ticket names the project it came from.
+func TestParseTicketGitLabSubgroupURL(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "gitlab subgroup url",
+			raw:  "https://gitlab.com/grp/sub/proj/-/issues/5",
+			want: "grp/sub/proj#5",
+		},
+		{
+			name: "gitlab url trailing slash",
+			raw:  "https://gitlab.com/grp/sub/proj/-/issues/5/",
+			want: "grp/sub/proj#5",
+		},
+		{
+			name: "self hosted deep subgroup url",
+			raw:  "https://gitlab.example.com:8443/a/b/c/d/-/issues/7",
+			want: "a/b/c/d#7",
+		},
+		{
+			name: "github url keeps two segments",
+			raw:  "https://github.com/o/r/issues/607",
+			want: "o/r#607",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := ParseTicket(c.raw, "")
+			if err != nil {
+				t.Fatalf("ParseTicket(%q) = %v", c.raw, err)
+			}
+			if got != c.want {
+				t.Errorf("ParseTicket(%q) = %q, want %q", c.raw, got, c.want)
+			}
+		})
+	}
+}
+
+// TestParseTicketIssueKey pins the key form: an issue key is stored verbatim
+// and the repository hint never reaches it.
+func TestParseTicketIssueKey(t *testing.T) {
+	cases := []struct {
+		name      string
+		raw       string
+		ownerRepo string
+		want      string
+		wantErr   bool
+	}{
+		{"key", "ENG-42", "", "ENG-42", false},
+		{"key ignores hint", "ENG-42", "o/r", "ENG-42", false},
+		{"key with digits in the project", "PROJ1-7", "", "PROJ1-7", false},
+		{"lowercase refused", "abc-123", "", "", true},
+		{"single letter project refused", "A-1", "", "", true},
+		{"leading digit refused", "1AB-2", "", "", true},
+		{"missing number refused", "ABC-", "", "", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := ParseTicket(c.raw, c.ownerRepo)
+			if c.wantErr {
+				if err == nil {
+					t.Errorf("ParseTicket(%q, %q) = %q, want an error", c.raw, c.ownerRepo, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseTicket(%q, %q) = %v", c.raw, c.ownerRepo, err)
+			}
+			if got != c.want {
+				t.Errorf("ParseTicket(%q, %q) = %q, want %q", c.raw, c.ownerRepo, got, c.want)
+			}
+		})
+	}
+}
+
+// TestParseTicketOpaqueURL pins the opaque form: any other http(s) URL is
+// stored whole and trimmed when every rune after the scheme is printable and
+// not whitespace, and only http and https are opaque.
+func TestParseTicketOpaqueURL(t *testing.T) {
+	// hashURL is assembled across two lines: one line carrying both an http
+	// scheme and a "#N" reads as a comment citing history to the guard.
+	hashHost := "https://example.com"
+	hashURL := hashHost + "/a#5"
+	cases := []struct {
+		name    string
+		raw     string
+		want    string
+		wantErr bool
+	}{
+		{"linear url", "https://linear.app/team/issue/ENG-123", "https://linear.app/team/issue/ENG-123", false},
+		{"url before the hash branch", hashURL, hashURL, false},
+		{"url with a query", "https://example.com/x/y?z=1", "https://example.com/x/y?z=1", false},
+		{"url with an unparseable issue number", "https://github.com/o/r/issues/abc", "https://github.com/o/r/issues/abc", false},
+		{"http url", "http://example.com/board/1", "http://example.com/board/1", false},
+		{"padded url is trimmed", "  https://linear.app/team/issue/ENG-123  ", "https://linear.app/team/issue/ENG-123", false},
+		{"non-ascii printable path", "https://example.com/ü/1", "https://example.com/ü/1", false},
+		{"inner space refused", "https://example.com/a b", "", true},
+		{"tab refused", "https://example.com/a\tb", "", true},
+		{"newline refused", "https://example.com/a\nb", "", true},
+		{"carriage return refused", "https://example.com/a\rb", "", true},
+		{"escape sequence refused", "https://example.com/\x1b[31m", "", true},
+		{"NUL refused", "https://example.com/a\x00b", "", true},
+		{"zero-width space refused", "https://example.com/a\u200bb", "", true},
+		{"invalid UTF-8 byte refused", "https://example.com/\xff", "", true},
+		{"non http scheme refused", "ftp://host/a/b", "", true},
+		{"bare scheme refused", "https://", "", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := ParseTicket(c.raw, "o/r")
+			if c.wantErr {
+				if err == nil {
+					t.Errorf("ParseTicket(%q) = %q, want an error", c.raw, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseTicket(%q) = %v", c.raw, err)
+			}
+			if got != c.want {
+				t.Errorf("ParseTicket(%q) = %q, want %q", c.raw, got, c.want)
+			}
+		})
+	}
+}
+
+// TestParseTicketKeepsGitHubForms pins that the number forms parse as they
+// did before the key and URL forms existed.
+func TestParseTicketKeepsGitHubForms(t *testing.T) {
+	cases := []struct {
+		name      string
+		raw       string
+		ownerRepo string
+		want      string
+	}{
+		{"bare number, no hint", "607", "", "#607"},
+		{"bare number, hint", "607", "o/r", "o/r#607"},
+		{"hash number, no hint", "#607", "", "#607"},
+		{"typed repo wins over hint", "o/r#607", "other/repo", "o/r#607"},
+		{"schemeless issue url", "owner/repo/issues/5", "", "owner/repo#5"},
+		{"schemeless issue url trailing slash", "owner/repo/issues/5/", "", "owner/repo#5"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := ParseTicket(c.raw, c.ownerRepo)
+			if err != nil {
+				t.Fatalf("ParseTicket(%q, %q) = %v", c.raw, c.ownerRepo, err)
+			}
+			if got != c.want {
+				t.Errorf("ParseTicket(%q, %q) = %q, want %q", c.raw, c.ownerRepo, got, c.want)
+			}
+		})
+	}
+}
+
+// TestParseTicketRefusesTheRemainingGarbage pins what none of the forms
+// accepts.
+func TestParseTicketRefusesTheRemainingGarbage(t *testing.T) {
+	cases := []struct {
+		name      string
+		raw       string
+		ownerRepo string
+	}{
+		{"bare word", "ticket", ""},
+		{"empty", "", "o/r"},
+		{"bad hint", "607", "not-a-repo"},
+		{"leading zero", "#0607", ""},
+		{"lowercase key", "abc-123", ""},
+		{"schemeless issue url with a bad number", "owner/repo/issues/abc", ""},
+		{"one segment issue url", "o/issues/5", ""},
+		{"bare scheme", "https://", ""},
+		{"ftp url", "ftp://host/a/b", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got, err := ParseTicket(c.raw, c.ownerRepo); err == nil {
+				t.Errorf("ParseTicket(%q, %q) = %q, want an error", c.raw, c.ownerRepo, got)
 			}
 		})
 	}

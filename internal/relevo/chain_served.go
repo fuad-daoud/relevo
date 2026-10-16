@@ -27,6 +27,10 @@ type ServedChainRequest struct {
 	// Feature and Ticket label every member, exactly as on a served create.
 	Feature string
 	Ticket  string
+	// Subdir is the inside-the-repository offset the round's processes run
+	// at, resolved on the client before the create; the server joins it into
+	// the round directory of every member it stores.
+	Subdir string
 	// BuilderActor is the actor the builder member runs. It is "" for every
 	// wire create -- the chain fixes the builder to the builder actor -- but a
 	// caller may name one, and the preflight's shape check then decides.
@@ -77,6 +81,7 @@ type servedFacts struct {
 	base         string
 	feature      string
 	ticket       string
+	subdir       string
 	authorName   string
 	authorEmail  string
 	installation string
@@ -211,7 +216,7 @@ func ServedChainCreate(ctx context.Context, rt Runtime, plan ServedChainPlan, wo
 	}
 	facts := servedFacts{
 		owner: req.Owner, repoID: req.RepoID, worktree: worktree, bare: req.Bare,
-		base: req.Base, feature: req.Feature, ticket: req.Ticket,
+		base: req.Base, feature: req.Feature, ticket: req.Ticket, subdir: req.Subdir,
 		authorName: req.AuthorName, authorEmail: req.AuthorEmail,
 		installation: req.ClientInstallation, clientIDs: clientIDs,
 		gate: plan.settings.Gate, regate: plan.settings.Regate,
@@ -270,6 +275,7 @@ func servedChainMember(m chainMember, pick servedPick, f servedFacts) store.Bind
 		Name:             m.name,
 		Owner:            f.owner,
 		CWD:              f.worktree,
+		Subdir:           f.subdir,
 		Repo:             f.bare,
 		Base:             f.base,
 		Builder:          store.Endpoint{Kind: pick.kind, Mode: store.ModeHeadless, AgentName: m.name},

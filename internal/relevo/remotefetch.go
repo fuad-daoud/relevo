@@ -1,6 +1,7 @@
 package relevo
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,7 +9,9 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -28,8 +31,7 @@ type remoteFetch struct {
 	// install and ack the chain pull owns, and the apply half writes the status
 	// word and stops short of the halt and settle a close would drive.
 	Observe bool
-	Log     *logMirror    // nil: nothing fetched to write (not running, legacy log, error, no growth)
-	Legacy  bool          // the round's log is the legacy file form: apply runs the legacy mirror inline
+	Log     *logMirror    // nil: nothing fetched to write (not running, error, no growth)
 	Drift   []byte        // nil: nothing fetched
 	CatchUp *catchUpFetch // nil: no catch-up was fetched
 	// Settle is what the apply half still owes once the lock is released: the
@@ -47,11 +49,17 @@ func (f *remoteFetch) release() {
 	f.CatchUp.release()
 }
 
-// logMirror is one fetched update to the round's mirrored builder log row.
+// logMirror is one fetched update to the running round's mirrored builder log.
+//
+// The mirror of a running round is a file in the binding directory, not a
+// round_file row: a row is re-encoded whole on every write, so appending to one
+// costs the whole log per tick, and every rewrite is exported to sync as a new
+// full body. The round's close stores the log as a row once and removes the
+// file; a log the close never fetches is left for the seal pass.
 type logMirror struct {
 	Path string // rt.Store.BuilderLogPath(name, round)
-	Base int64  // local length the range read started from; the apply half writes only if the
-	// row still has exactly this length. -1 means Body is a full replacement.
+	Base int64  // file length the range read started from; the apply half writes only if the
+	// file still has exactly this length. -1 means Body is a full replacement.
 	Body []byte // bytes to append (Base >= 0) or the whole log (Base == -1); never empty when Log != nil
 }
 
@@ -60,6 +68,12 @@ type logMirror struct {
 // field empty and logs exactly as the inline mirror paths did, so the apply
 // half decides on a best-effort snapshot and never fails the tick on it.
 func fetchRemote(ctx context.Context, rt Runtime, b store.Binding) remoteFetch {
+	return fetchRemoteWithin(ctx, rt, b, 0)
+}
+
+// fetchRemoteWithin is fetchRemote with the first read of the binding bounded
+// by head; zero means unbounded.
+func fetchRemoteWithin(ctx context.Context, rt Runtime, b store.Binding, head time.Duration) remoteFetch {
 	f := remoteFetch{Name: b.Name, Server: b.Builder.Server, Round: b.Round}
 	if rt.Remote == nil {
 		return f
@@ -67,7 +81,9 @@ func fetchRemote(ctx context.Context, rt Runtime, b store.Binding) remoteFetch {
 
 	f.Observe = serverChainMemberActive(rt.Store, b.Name)
 
-	view, err := rt.Remote.GetBinding(ctx, f.Server, f.Name)
+	headCtx, cancel := boundedWait(ctx, head)
+	view, err := rt.Remote.GetBinding(headCtx, f.Server, f.Name)
+	cancel()
 	if err != nil {
 		f.Err = err
 		return f
@@ -92,7 +108,7 @@ func fetchRemote(ctx context.Context, rt Runtime, b store.Binding) remoteFetch {
 		return f
 	}
 
-	f.Log, f.Legacy = fetchLogMirror(ctx, rt, f.Server, f.Name, f.Round)
+	f.Log = fetchLogMirror(ctx, rt, f.Server, f.Name, f.Round)
 	f.Drift = fetchDrift(ctx, rt, f.Server, f.Name, f.Round)
 	return f
 }
@@ -108,34 +124,25 @@ func reportMissingForRound(rt Runtime, name string, round int) bool {
 	return !HasEntry(entries, round, store.DirToMasterMind, store.KindReport)
 }
 
-// fetchLogMirror is the network half of the DB-branch builder-log mirror: it
-// reads the row's current length, range-reads the bytes the server holds past
-// it, and returns the update the apply half should write. legacy reports that
-// the round keeps its log in the old on-disk form, which the apply half mirrors
-// inline instead.
-func fetchLogMirror(ctx context.Context, rt Runtime, server, name string, round int) (*logMirror, bool) {
+// fetchLogMirror is the network half of the builder-log mirror: it reads the
+// mirror file's length, range-reads the bytes the server holds past it, and
+// returns the update the apply half should write.
+func fetchLogMirror(ctx context.Context, rt Runtime, server, name string, round int) *logMirror {
 	path := rt.Store.BuilderLogPath(name, round)
-	if legacyLog(rt, name, round) {
-		return nil, true
+	var local int64
+	if fi, err := os.Stat(path); err == nil {
+		local = fi.Size()
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
+		return nil
 	}
-
-	cur, err := rt.Store.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			cur = nil
-		} else {
-			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
-			return nil, false
-		}
-	}
-	local := int64(len(cur))
 
 	rc, fr, err := rt.Remote.RoundFileFrom(ctx, server, name, round, "log", local)
 	if err != nil || rc == nil {
 		if err != nil {
 			slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
 		}
-		return nil, false
+		return nil
 	}
 
 	readBounded := func(r io.Reader) ([]byte, bool) {
@@ -155,16 +162,14 @@ func fetchLogMirror(ctx context.Context, rt Runtime, server, name string, round 
 	case fr.Honored && fr.From == local && fr.Size >= local:
 		defer rc.Close()
 		body, ok := readBounded(rc)
-		// An empty body means the row did not grow: rewriting it with the
-		// same bytes would put the whole blob back for no change.
 		if !ok || len(body) == 0 {
-			return nil, false
+			return nil
 		}
-		if int64(len(cur))+int64(len(body)) > maxMirrorBytes {
+		if local+int64(len(body)) > maxMirrorBytes {
 			slog.Warn("mirror builder log over cap; not stored", "server", server, "name", name, "round", round)
-			return nil, false
+			return nil
 		}
-		return &logMirror{Path: path, Base: local, Body: body}, false
+		return &logMirror{Path: path, Base: local, Body: body}
 	case fr.Honored && fr.Size < local:
 		_ = rc.Close()
 		rc2, _, err := rt.Remote.RoundFileFrom(ctx, server, name, round, "log", 0)
@@ -172,21 +177,21 @@ func fetchLogMirror(ctx context.Context, rt Runtime, server, name string, round 
 			if err != nil {
 				slog.Warn("mirror builder log failed", "server", server, "name", name, "round", round, "err", err)
 			}
-			return nil, false
+			return nil
 		}
 		defer rc2.Close()
 		body, ok := readBounded(rc2)
 		if !ok {
-			return nil, false
+			return nil
 		}
-		return &logMirror{Path: path, Base: -1, Body: body}, false
+		return &logMirror{Path: path, Base: -1, Body: body}
 	default:
 		defer rc.Close()
 		body, ok := readBounded(rc)
 		if !ok {
-			return nil, false
+			return nil
 		}
-		return &logMirror{Path: path, Base: -1, Body: body}, false
+		return &logMirror{Path: path, Base: -1, Body: body}
 	}
 }
 
@@ -232,38 +237,45 @@ func (f remoteFetch) matches(b store.Binding) bool {
 		store.KnownState(b.State)
 }
 
-// applyLogMirror writes one fetched log update under tx. A Base of -1 is a full
-// replacement; otherwise the row must still hold exactly Base bytes, or the row
-// moved since the fetch and the next tick re-reads it.
-func applyLogMirror(rt Runtime, tx *store.Tx, name string, round int, m *logMirror) {
+// applyLogMirror writes one fetched log update to the mirror file; the caller
+// holds the state lock, which orders it against the close that replaces the
+// file with a row. A Base of -1 is a full replacement; otherwise the file must
+// still hold exactly Base bytes, or it moved since the fetch and the next tick
+// re-reads it.
+func applyLogMirror(rt Runtime, name string, round int, m *logMirror) {
 	if m == nil {
 		return
 	}
+	root := rt.Store.Dir(name)
 	if m.Base < 0 {
-		if err := tx.PutRoundFile(name, round, m.Path, m.Body); err != nil {
+		if err := writeTempAndRename(root, m.Path, bytes.NewReader(m.Body)); err != nil {
 			slog.Warn("mirror builder log failed", "name", name, "round", round, "err", err)
 		}
 		return
 	}
 
-	cur, err := rt.Store.ReadFile(m.Path)
+	var cur int64
+	if fi, err := os.Lstat(m.Path); err == nil {
+		cur = fi.Size()
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		slog.Warn("mirror builder log failed", "name", name, "round", round, "err", err)
+		return
+	}
+	if cur != m.Base {
+		slog.Debug("mirror builder log moved since fetch; skipping", "name", name, "round", round)
+		return
+	}
+	if err := ensureRealDir(root, filepath.Dir(m.Path)); err != nil {
+		slog.Warn("mirror builder log failed", "name", name, "round", round, "err", err)
+		return
+	}
+	f, err := openAppendRegular(m.Path)
 	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			slog.Warn("mirror builder log failed", "name", name, "round", round, "err", err)
-			return
-		}
-		cur = nil
-	}
-	if int64(len(cur)) != m.Base {
-		slog.Debug("mirror builder log row moved since fetch; skipping", "name", name, "round", round)
+		slog.Warn("mirror builder log failed", "name", name, "round", round, "err", err)
 		return
 	}
-	full := append(cur, m.Body...)
-	if int64(len(full)) > maxMirrorBytes {
-		slog.Warn("mirror builder log over cap; not stored", "name", name, "round", round)
-		return
-	}
-	if err := tx.PutRoundFile(name, round, m.Path, full); err != nil {
+	defer f.Close()
+	if _, err := f.Write(m.Body); err != nil {
 		slog.Warn("mirror builder log failed", "name", name, "round", round, "err", err)
 	}
 }
@@ -293,8 +305,7 @@ type catchUpFetch struct {
 	Diff          []byte            // nil: none (404, or over cap -- logged at fetch as today)
 	Artifacts     []fetchedArtifact // reader artifacts awaiting the apply's rename
 	ArtifactCap   string            // non-empty: the listing was over the cap; the apply halts
-	Log           []byte            // DB-form log body; nil: none
-	LogTemp       string            // legacy-form log in a temp file, "" if none
+	Log           []byte            // log body; nil: none
 	StreamTemp    string            // temp file holding the stream, "" if none
 	GateTemp      string            // temp file holding the acceptance check's log, "" if none
 	GatePath      string            // the path that log is installed at, "" if none was fetched
@@ -310,7 +321,7 @@ func (cf *catchUpFetch) release() {
 	if cf == nil {
 		return
 	}
-	for _, path := range []string{cf.ReportTemp, cf.LogTemp, cf.StreamTemp, cf.GateTemp} {
+	for _, path := range []string{cf.ReportTemp, cf.StreamTemp, cf.GateTemp} {
 		if path != "" {
 			_ = os.Remove(path)
 		}
@@ -436,8 +447,8 @@ func fetchCatchUpDiff(ctx context.Context, rt Runtime, b store.Binding, view rem
 	}
 }
 
-// fetchCatchUpLog fetches the round's log: into a temp file for the legacy
-// on-disk form, into memory for the DB form, over the mirror cap into neither.
+// fetchCatchUpLog fetches the round's whole log into memory, or nothing when it
+// is over the mirror cap.
 func fetchCatchUpLog(ctx context.Context, rt Runtime, b store.Binding, view remote.BindingView, cf *catchUpFetch) bool {
 	server, name, n := b.Builder.Server, b.Name, view.ClosedRound
 	rc, err := rt.Remote.RoundFile(ctx, server, name, n, "log")
@@ -451,16 +462,6 @@ func fetchCatchUpLog(ctx context.Context, rt Runtime, b store.Binding, view remo
 		return false
 	default:
 		path := rt.Store.BuilderLogPath(name, n)
-		if legacyLog(rt, name, n) {
-			cf.LogTemp, err = downloadTemp(rt.Store.Dir(name), path, rc)
-			if err != nil {
-				slog.Warn("write log failed", "path", path, "err", err)
-				cf.Abort = true
-				cf.release()
-				return false
-			}
-			return true
-		}
 		body, rerr := io.ReadAll(io.LimitReader(rc, maxMirrorBytes+1))
 		_ = rc.Close()
 		if rerr != nil {

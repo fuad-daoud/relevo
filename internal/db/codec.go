@@ -14,8 +14,7 @@ const (
 	codecZstd  = 1
 )
 
-// One encoder and one decoder are shared by every row. NewWriter(nil) and
-// NewReader(nil) pass no option and cannot fail, and EncodeAll and DecodeAll
+// One encoder and one decoder are shared by every row. EncodeAll and DecodeAll
 // are documented safe for concurrent calls, so reads and writes share these
 // without a lock.
 //
@@ -24,16 +23,30 @@ const (
 // smaller, for a cost paid once when the value is sealed and then never again.
 // zstd's own level 9 has no numeric equivalent in klauspost, which exposes
 // named levels, so the numeric level is mapped onto the nearest name.
-var (
-	zstdEncoder, _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(9)))
-	zstdDecoder, _ = zstd.NewReader(nil)
-)
+var zstdEncoder, zstdDecoder = newColumnCodec()
+
+// codecConcurrency caps how many encoders and decoders the shared pair keeps.
+// Each one holds its own tables and a history buffer that grows to the largest
+// value it has handled and never shrinks, and the pool hands them out in turn,
+// so in a long-lived daemon every one of them reaches that size. Left at its
+// default of GOMAXPROCS, a 22-thread laptop kept about 490 MB for the pool alone.
+const codecConcurrency = 2
+
+// newColumnCodec builds the shared pair. Its options are constants zstd always
+// accepts, so neither constructor can fail.
+func newColumnCodec() (*zstd.Encoder, *zstd.Decoder) {
+	enc, _ := zstd.NewWriter(nil,
+		zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(9)),
+		zstd.WithEncoderConcurrency(codecConcurrency))
+	dec, _ := zstd.NewReader(nil, zstd.WithDecoderConcurrency(codecConcurrency))
+	return enc, dec
+}
 
 // zstdMaxInput is the largest value encodeColumn compresses. Above it the value
-// stays plain: the shared encoder's history buffer grows to the largest input it
-// ever encodes and keeps that size for the process's life, so one outsized value
-// -- a fetched round bundle rather than a row -- would pin hundreds of megabytes
-// until the daemon restarts. Legitimate columns are far below this: the largest
+// stays plain: each pooled encoder's history buffer grows to the largest input
+// it ever encodes and keeps that size for the process's life, so one outsized
+// value -- a fetched round bundle rather than a row -- would pin hundreds of
+// megabytes until the daemon restarts. Legitimate columns are far below this: the largest
 // stored row is a few megabytes.
 const zstdMaxInput = 8 << 20
 

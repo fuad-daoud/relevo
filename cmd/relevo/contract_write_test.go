@@ -431,6 +431,20 @@ func TestContractWriteUnclassifiedIsInternal(t *testing.T) {
 	}
 }
 
+// TestContractWriteRoleNotServedNamesConfig pins the way out of a candidate the
+// actor does not list: `relevo config` shows the actor's list and the pick.
+func TestContractWriteRoleNotServedNamesConfig(t *testing.T) {
+	for _, err := range []error{relevo.ErrRoleNotServed, relevo.ErrNoCandidates} {
+		var ce *cliError
+		if !errors.As(writeError(fmt.Errorf("bind: %w", err)), &ce) {
+			t.Fatalf("writeError(%v) is not a coded error", err)
+		}
+		if ce.code != codePolicyRefused || ce.next != "relevo config" {
+			t.Errorf("%v: code %q next %q, want %q next %q", err, ce.code, ce.next, codePolicyRefused, "relevo config")
+		}
+	}
+}
+
 // TestContractWriteInternalExit is the frame-level companion: the internal code
 // an unclassified write failure earns renders with exit 1 and the bundle
 // command as its next hint.
