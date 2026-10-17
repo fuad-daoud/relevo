@@ -2,6 +2,8 @@ package db
 
 import (
 	"bytes"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -58,6 +60,31 @@ func (t *Tx) ExchangeUpsert(tbl, owner string, values map[string]any) error {
 	if err != nil {
 		return err
 	}
+	if creator := creatorColumn(tbl); creator != "" {
+		bodyOrigin, _ := values[creator].(string)
+		if bodyOrigin == "" {
+			return fmt.Errorf("db: exchange upsert %s: %s is missing or empty: %w", tbl, creator, ErrInvalid)
+		}
+		keyArgs := make([]any, len(shared.PrimaryKey))
+		for i, col := range shared.PrimaryKey {
+			v, vok := values[col]
+			if !vok {
+				return fmt.Errorf("db: exchange upsert %s: body names no %s: %w", tbl, col, ErrInvalid)
+			}
+			keyArgs[i] = v
+		}
+		where, _ := keyWhere(shared.PrimaryKey, keyArgs)
+		var storedOrigin string
+		err := t.conn.QueryRowContext(t.ctx, "SELECT "+quoteIdent(creator)+" FROM "+quoteIdent(shared.Name)+" WHERE "+where, keyArgs...).Scan(&storedOrigin)
+		if err == nil {
+			if storedOrigin != bodyOrigin {
+				return fmt.Errorf("db: exchange upsert %s: %s is immutable (stored %q, body %q): %w",
+					tbl, creator, storedOrigin, bodyOrigin, ErrInvalid)
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("db: exchange upsert %s: check stored %s: %w", tbl, creator, mapRefused(mapBusy(err)))
+		}
+	}
 	owned := ownedValues(tbl, owner, values)
 	named, args, err := upsertColumns(shared.PrimaryKey, columns, owned)
 	if err != nil {
@@ -78,6 +105,36 @@ func (t *Tx) ExchangeUpsert(tbl, owner string, values map[string]any) error {
 	}
 	if _, err := t.exec(upsertStatement(shared.Name, named, shared.PrimaryKey), args...); err != nil {
 		return fmt.Errorf("db: exchange upsert %s: %w", tbl, mapRefused(mapBusy(err)))
+	}
+	return nil
+}
+
+// MaxOutboxSeq returns the highest seq in sync_outbox, or 0 if empty.
+func (t *Tx) MaxOutboxSeq() (int, error) {
+	var seq sql.Null[int]
+	if err := t.queryRow(`SELECT MAX(seq) FROM sync_outbox`).Scan(&seq); err != nil {
+		if isMissingTable(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("db: max outbox seq: %w", mapBusy(err))
+	}
+	if !seq.Valid {
+		return 0, nil
+	}
+	return seq.V, nil
+}
+
+// DiscardOutboxSince removes any outbox entries for (tbl, pk) with seq > sinceSeq
+// that are attributed to this installation (origin IN (?, '') or NULL).
+// This prevents import statements from queueing echoes of local writes,
+// whatever the op (insert, update, delete).
+func (t *Tx) DiscardOutboxSince(tbl, pk string, sinceSeq int) error {
+	query := `DELETE FROM sync_outbox WHERE seq > ? AND tbl = ? AND pk = ? AND (origin = ? OR origin = '' OR origin IS NULL)`
+	if _, err := t.exec(query, sinceSeq, tbl, pk, t.origin); err != nil {
+		if isMissingTable(err) {
+			return nil
+		}
+		return fmt.Errorf("db: discard outbox %s %s since %d: %w", tbl, pk, sinceSeq, mapBusy(err))
 	}
 	return nil
 }
