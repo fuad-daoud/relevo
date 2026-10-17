@@ -158,7 +158,7 @@ func CheckAdoptedClaim(ctx context.Context, local db.KV, transport synclog.LogTr
 	}
 	fact, _ := json.Marshal(adopted.ID)
 	if perr := local.KVPut(KeyIdentityTaken, fact); perr != nil {
-		return fmt.Errorf("%w (and the fact could not be stored: %v)", ErrIdentityTaken, perr)
+		return fmt.Errorf("%w (and the fact could not be stored: %w)", ErrIdentityTaken, perr)
 	}
 	return ErrIdentityTaken
 }

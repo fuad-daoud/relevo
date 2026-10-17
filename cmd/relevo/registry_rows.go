@@ -352,8 +352,8 @@ var registry = []verbEntry{
 		Summary: "turn sync on for this machine: join with a code from db sync invite (--join-stdin), or name a remote with --url and --token-stdin",
 		Args: "[--url URL] [--token-stdin] [--passphrase-stdin] [--join-stdin] " +
 			"[--r2-endpoint URL] [--r2-bucket NAME] [--r2-key-id ID] [--r2-secret-stdin] " +
-			"[--yes] [--timeout D] [--json]",
-		Flags: []string{"--join-stdin", "--json", "--passphrase-stdin", "--r2-bucket", "--r2-endpoint",
+			"[--as INSTALLATION] [--yes] [--timeout D] [--json]",
+		Flags: []string{"--as", "--join-stdin", "--json", "--passphrase-stdin", "--r2-bucket", "--r2-endpoint",
 			"--r2-key-id", "--r2-secret-stdin", "--timeout", "--token-stdin", "--url", "--yes"},
 		Output: "json:DbSyncOutcomeDoc",
 		Exit:   []int{0, 1, 2},
