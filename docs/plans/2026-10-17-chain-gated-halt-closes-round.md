@@ -69,61 +69,77 @@ Nothing is deleted. Anything else in `git diff --stat` is out of scope.
 - Any existing test other than the named swap fixture that the new rule broke (halt, do not bend).
 - A note that closing at the halt was rejected and why (Decision 1), so a reviewer does not re-open it.
 
-## Round 2 amendment
+## Round 3 amendment
 
-Round 1 implemented the Behaviour above literally -- `Builder.PID == 0` closes
-for *any* member state -- and halted at step 6, because four existing
-`cmd/relevo` CLI tests (`TestChainResumeReportlessRoundIsNotInternal`,
+Round 2's rule was "pid evidence, state-independent": `Builder.PID == 0` **and**
+`State == needs_you`, **or** `Builder.PID != 0` **and** `Runner.Alive` false with
+no error. The issue was then reproduced live against that rule (env sandbox,
+main `016cb0a4`, with debug prints in `closeDeadMemberRound`) and it still
+refused:
+
+```
+DBG awaited="gh3-rev" ok=true
+DBG state=needs_you pid=4132257 dead=false
+relevo: conflict: gh3-rev: round 1 is still open; relevo stop gh3-rev ends it
+```
+
+The awaited member was **NEEDS YOU with its pid kept and its process alive** --
+the one shape round 2 ruled out. Round 2 read a resume as asking to proceed
+*past* the open round. The reading this amendment adopts is that a resume *is*
+the `relevo stop gh3-rev` the refusal names: a halted member's round is the
+human's to end, and a resume is that human asking, so the resume ends it. The
+runner exited minutes later, which is why a later manual stop answered "runner
+already gone" -- the case round 2's rule could not reach.
+
+**The final rule, as shipped.** `resumeMayCloseRound`
+(`internal/relevo/stop.go`, renamed from `memberRoundProcessless`) admits the
+awaited member's open round when
+
+- the member is `needs_you` -- whatever its pid and whether its process is
+  running; **or**
+- `Builder.PID != 0` **and** `Runner.Alive` answers false with no error, in any
+  state.
+
+The first arm supersedes round 2's pidless half: NEEDS YOU is now read as a
+state rather than as a pid, and `Stop` kills a live process on the way, so the
+close is the same write a stop makes. The second arm is round 2's dead-pid rule,
+unchanged.
+
+**Unchanged from round 2**, each still pinned by a test: a pid of 0 in a state
+that is not `needs_you` is a refusal -- which is what the four store-only
+`cmd/relevo` CLI fixtures (`TestChainResumeReportlessRoundIsNotInternal`,
 `TestStopOnAHaltedChainWithAnOpenMemberRoundIsNotNothingToStop`,
 `TestChainResumeOpenMemberRoundIsAConflict`,
-`TestChainResumeOpenRoundIsAConflict`) break on it. Their fixtures are
-store-only (`seedCLIChain`, `seedCLIReportlessRound`): a chain whose awaited
-member has an open round and **no process at all**, seeded `StateActive`. Round
-1's rule closed those rounds and the resume ran past the `*RoundOpenError` the
-tests assert.
+`TestChainResumeOpenRoundIsAConflict`) keep passing on, untouched; a live
+process on a member that is **not** `needs_you` is a refusal; a probe that
+errors is an OS hiccup, not evidence of death; a remote binding keeps round 2's
+rule verbatim (NEEDS YOU and no pid), since `Stop` on a remote goes to the
+server; `done`, `paused` and `queued` stay left to the resume's own refusal.
 
-**The narrowed rule, as shipped.** `memberRoundProcessless`
-(`internal/relevo/stop.go`) closes the awaited member's open round when
+**The test set** (`internal/relevo/chain_resume_gated_test.go`):
 
-- `Builder.PID == 0` **and** `State == needs_you` (today's rule, unchanged), **or**
-- `Builder.PID != 0` **and** `Runner.Alive` answers false with no error, in any state.
+- `gatedReviewerHalt` no longer scripts the pid dead. It now asserts the halt's
+  own premise -- NEEDS YOU, pid kept, pid answers alive -- which is the live
+  reproduction above.
+- `TestChainResumeHaltedOnAllGatedActorResumes` and its swap twin resume with no
+  manual stop, and assert through the fake runner's kill record that the halted
+  round's old pid was killed on the way.
+- `TestChainResumeRefusesLiveProcess/state needs_you` **flips**: it is now
+  `TestChainResumeClosesTheHaltedMemberRoundWithALiveProcess`. `state active`
+  with a live process stays a refusal.
+- `TestChainResumeProcessDeathAndProbeError` scripts the pid dead itself in the
+  two close cases so each keeps testing the pid arm, and moves its probe-error
+  case to an `active` member, since past the state arm the probe is the only
+  evidence and a NEEDS YOU member never reaches it.
 
-Every skip round 1 added is kept exactly: a live process, a liveness probe that
-errors, `Runner == nil` with a pid, a queued round (`QueuedAt` non-zero), a
-remote binding (`Builder.Remote()` keeps today's rule verbatim: NEEDS YOU and no
-pid), and `done`/`paused`.
+**Mutations, with the test each one fails by name:**
 
-**Why.** A pid is evidence; its absence is not. With no pid there is nothing to
-probe, so the only state in which a round with no process is known to have died
-is the one the halt itself writes -- NEEDS YOU, set by `haltBindingKind`
-(`internal/relevo/reconcile.go` 286-311). Round 1's step-1 finding confirms that
-is exactly the state the all-gated halt leaves: `State = "needs_you"`,
-`Builder.PID = 4002` **kept** (not cleared), `Runner.Alive` true at the halt.
-The defect is therefore the PID/liveness half, not the state -- which is why the
-`PID != 0` half is state-independent (a dead pid is a dead pid, in any state,
-and that is the case the issue is about) while the pidless half keeps its
-original NEEDS YOU guard. This restores every documented refusal: a PID-0 member
-that is not NEEDS YOU, such as every store-only CLI fixture, stays a refusal,
-so the four CLI tests keep passing untouched and the swap fixture
-`TestChainResumeSwapRefusesAnOpenMemberRound` needed no change at all -- round
-1's rewrite of it is reverted, leaving `internal/relevo/chain_resume_swap_test.go`
-out of the diff.
-
-One consequence, by design: `TestChainResumeSwapRefusesAnOpenMemberRound` no
-longer pins "a running round is refused" by round 1's rewrite, but it still pins
-the refusal, now for the state reason. Mutation (iv) below exists to keep the
-pidless guard honest.
-
-**Round 2's additions to the test set** (`internal/relevo/chain_resume_gated_test.go`):
-
-- `TestChainResumeRefusesAPidlessMemberOutsideNeedsYou/state active` -- a pidless
-  **active** member is a refusal. This case is new in round 2 (round 1's rule
-  closed it, so no such test could exist); it is the sole test that fails under
-  mutation (iv).
-- Mutation (iv) joins (i)-(iii): drop the `State == needs_you` half of the pidless
-  branch and the test above must fail.
-
-Mutations (i), (ii) and (iii) are unchanged from round 1 and still fail by name.
+| # | mutation | failing test |
+|---|---|---|
+| a | drop the `needs_you` arm | `TestChainResumeHaltedOnAllGatedActorResumes` |
+| b | close any live process regardless of state (`err == nil`) | `TestChainResumeRefusesLiveProcess/state_active` |
+| c | drop the dead-pid arm | `TestChainResumeProcessDeathAndProbeError/dead_process_closes_in_a_state_that_is_not_needs_you` |
+| d | drop the PID-0 guard | `TestChainResumeRefusesAPidlessMemberOutsideNeedsYou/state_active` |
 
 Everything else in this document stands as written above; this section is the
 only amendment.
