@@ -284,7 +284,7 @@ func (v verifyStart) start(b store.Binding, consult store.Consult, askPath, prom
 		}
 		return v.fail("ensure out dir: " + brief(err))
 	}
-	argv, err := spawn.HeadlessLaunch(c, role, tier, Timeout, prompt, wt, v.d.Store.OutDir(v.b.Name))
+	argv, err := spawn.HeadlessLaunch(c, role, tier, Timeout, prompt, wt, v.d.Store.OutDir(v.b.Name), "")
 	if err != nil {
 		b.Consults = b.Consults[:len(b.Consults)-1]
 		if saveErr := v.tx.Save(b); saveErr != nil {

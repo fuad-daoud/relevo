@@ -158,7 +158,7 @@ func TestLaunchAppliesTier(t *testing.T) {
 		t.Fatalf("claude Launch edit error: %v", err)
 	}
 	wantClaudePrint := []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor",
-		"--output-format", "stream-json", "--verbose", "--add-dir", OutputDirPlaceholder, "--permission-mode", "acceptEdits", "--some-flag"}
+		"--output-format", "stream-json", "--verbose", "--add-dir", OutputDirPlaceholder, "--permission-mode", "acceptEdits", PromptFilePlaceholder, "--some-flag"}
 	if !reflect.DeepEqual(cl.Print, wantClaudePrint) {
 		t.Errorf("claude Print = %v, want %v", cl.Print, wantClaudePrint)
 	}
@@ -281,4 +281,76 @@ func TestLaunchRefusesExtraArgsPermissionFlag(t *testing.T) {
 	if len(cl.Print) < 2 || cl.Print[len(cl.Print)-2] != "-s" || cl.Print[len(cl.Print)-1] != "read-only" {
 		t.Errorf("codex Print should end with -s read-only: %v", cl.Print)
 	}
+}
+
+func assertClaudePermissionPlaceholder(t *testing.T, cl Launch, expectedMode string) {
+	t.Helper()
+	idx := -1
+	for i := 0; i+1 < len(cl.Print); i++ {
+		if cl.Print[i] == "--permission-mode" && cl.Print[i+1] == expectedMode {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 || idx+2 >= len(cl.Print) || cl.Print[idx+2] != PromptFilePlaceholder {
+		t.Errorf("claude Launch: want PromptFilePlaceholder immediately after --permission-mode %s, got %v", expectedMode, cl.Print)
+	}
+	if cl.Print[len(cl.Print)-1] != "--extra-arg" {
+		t.Errorf("claude Launch: want extra after PromptFilePlaceholder, got %v", cl.Print)
+	}
+}
+
+func checkOtherKindsOmitPrompt(t *testing.T, builder RoleSpec) {
+	t.Helper()
+	for _, kind := range []string{"opencode", "agy", "codex"} {
+		h, ok := Lookup(kind)
+		if !ok {
+			t.Fatalf("Lookup(%q) not found", kind)
+		}
+		for _, tier := range []Tier{TierHarness, TierRead, TierEdit, TierYolo} {
+			l, err := h.Launch("prov", "model", nil, builder, tier)
+			if err != nil {
+				continue
+			}
+			if contains(l.Print, PromptFilePlaceholder) {
+				t.Errorf("%s at tier %s must not contain PromptFilePlaceholder: %v", kind, tier, l.Print)
+			}
+		}
+	}
+}
+
+func TestLaunchClaudePromptFilePlaceholder(t *testing.T) {
+	builder, ok := RoleByName("builder")
+	if !ok {
+		t.Fatal("RoleByName(\"builder\") not found")
+	}
+	claude, ok := Lookup("claude")
+	if !ok {
+		t.Fatal("Lookup(\"claude\") not found")
+	}
+	extra := []string{"--extra-arg"}
+
+	clRead, err := claude.Launch("anthropic", "sonnet", extra, builder, TierRead)
+	if err != nil {
+		t.Fatalf("claude Launch read error: %v", err)
+	}
+	assertClaudePermissionPlaceholder(t, clRead, "plan")
+
+	clEdit, err := claude.Launch("anthropic", "sonnet", extra, builder, TierEdit)
+	if err != nil {
+		t.Fatalf("claude Launch edit error: %v", err)
+	}
+	assertClaudePermissionPlaceholder(t, clEdit, "acceptEdits")
+
+	for _, tier := range []Tier{TierYolo, TierHarness} {
+		cl, err := claude.Launch("anthropic", "sonnet", nil, builder, tier)
+		if err != nil {
+			t.Fatalf("claude Launch %s error: %v", tier, err)
+		}
+		if contains(cl.Print, PromptFilePlaceholder) {
+			t.Errorf("claude Launch %s must not contain PromptFilePlaceholder: %v", tier, cl.Print)
+		}
+	}
+
+	checkOtherKindsOmitPrompt(t, builder)
 }

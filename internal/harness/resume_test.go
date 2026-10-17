@@ -226,7 +226,7 @@ func checkResumeBuild(t *testing.T, tt resumeBuildCase, builder RoleSpec, provid
 	if err != nil {
 		t.Fatalf("Launch(%s): %v", tt.kind, err)
 	}
-	got, err := h.ResumeBuild(tt.id, l, prompt, budget, dir, state)
+	got, err := h.ResumeBuild(tt.id, l, prompt, budget, dir, state, "")
 	switch {
 	case tt.wantErr != nil:
 		if !errors.Is(err, tt.wantErr) {
@@ -247,9 +247,37 @@ func checkResumeBuild(t *testing.T, tt resumeBuildCase, builder RoleSpec, provid
 			t.Errorf("ResumeBuild() = %v, want %v", got, tt.want)
 		}
 		// The result is the round's print form and then the selector.
-		base := l.PrintArgs(prompt, budget, dir, state)
+		base := l.PrintArgs(prompt, budget, dir, state, "")
 		if len(got) < len(base) || !reflect.DeepEqual(got[:len(base)], base) {
 			t.Errorf("ResumeBuild() = %v, want it to start with PrintArgs %v", got, base)
 		}
+	}
+}
+
+func TestResumeBuildForwardsPromptFile(t *testing.T) {
+	builder, ok := RoleByName("builder")
+	if !ok {
+		t.Fatal("RoleByName(\"builder\") not found")
+	}
+	claude, ok := Lookup("claude")
+	if !ok {
+		t.Fatal("Lookup(\"claude\") not found")
+	}
+	l, err := claude.Launch("anthropic", "sonnet", nil, builder, TierEdit)
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+
+	promptPath := "/state/binding/001-prompt.md"
+	got, err := claude.ResumeBuild("session-xyz", l, "hello", time.Minute, "/wt", "/state", promptPath)
+	if err != nil {
+		t.Fatalf("ResumeBuild() error = %v", err)
+	}
+	wantRule := "--allowedTools=Read(/" + promptPath + ")"
+	if !contains(got, wantRule) {
+		t.Errorf("ResumeBuild() at TierEdit want %q in argv, got %v", wantRule, got)
+	}
+	if !containsAdjacent(got, "--resume", "session-xyz") {
+		t.Errorf("ResumeBuild() want --resume session-xyz, got %v", got)
 	}
 }

@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -976,6 +977,104 @@ func TestSendDryRunGateNote(t *testing.T) {
 	}
 }
 
+func TestSendPreflightClaudeArgvPromptReadGrant(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	rt.Runner = newFakeRunner()
+
+	b, err := Bind(context.Background(), rt, BindOptions{
+		Name: "claude-bound", Candidate: testClaudeRef, Tier: "edit", MasterMindID: testMasterMindName, CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	planFile := writePlan(t, "# test plan")
+	pfEdit, err := sendPreflight(context.Background(), rt, "claude-bound", planFile, SendOptions{})
+	if err != nil {
+		t.Fatalf("sendPreflight edit: %v", err)
+	}
+
+	wantRule := "--allowedTools=Read(/" + rt.Store.PromptPath("claude-bound", b.Round) + ")"
+	found := false
+	for _, a := range pfEdit.argv {
+		if a == wantRule {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("claude edit argv want %q, got %v", wantRule, pfEdit.argv)
+	}
+
+	pfYolo, err := sendPreflight(context.Background(), rt, "claude-bound", planFile, SendOptions{Tier: "yolo", AllowYolo: true})
+	if err != nil {
+		t.Fatalf("sendPreflight yolo: %v", err)
+	}
+	for _, a := range pfYolo.argv {
+		if strings.HasPrefix(a, "--allowedTools=") {
+			t.Errorf("claude yolo argv must not contain --allowedTools: %v", pfYolo.argv)
+		}
+	}
+}
+
+func TestSendDryRunTierFrom(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	rt.Runner = newFakeRunner()
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name: "claude-bound", Candidate: testClaudeRef, Tier: "edit", MasterMindID: testMasterMindName, CWD: "/repo",
+	})
+	if err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	planFile := writePlan(t, "# dry run test")
+
+	dBinding, err := SendDryRun(context.Background(), rt, "claude-bound", planFile, SendOptions{})
+	if err != nil {
+		t.Fatalf("SendDryRun: %v", err)
+	}
+	wantBindingFrom := "binding (fixed at bind; rebind to pick up config changes)"
+	if dBinding.TierFrom != wantBindingFrom {
+		t.Errorf("d.TierFrom = %q, want %q", dBinding.TierFrom, wantBindingFrom)
+	}
+	renderedBinding := RenderDryRun(dBinding)
+	if !strings.Contains(renderedBinding, "("+wantBindingFrom+")") {
+		t.Errorf("RenderDryRun must contain %q: %s", wantBindingFrom, renderedBinding)
+	}
+
+	dOverride, err := SendDryRun(context.Background(), rt, "claude-bound", planFile, SendOptions{Tier: "read"})
+	if err != nil {
+		t.Fatalf("SendDryRun with --tier: %v", err)
+	}
+	wantOverrideFrom := "round override (--tier)"
+	if dOverride.TierFrom != wantOverrideFrom {
+		t.Errorf("d.TierFrom = %q, want %q", dOverride.TierFrom, wantOverrideFrom)
+	}
+	renderedOverride := RenderDryRun(dOverride)
+	if !strings.Contains(renderedOverride, "("+wantOverrideFrom+")") {
+		t.Errorf("RenderDryRun must contain %q: %s", wantOverrideFrom, renderedOverride)
+	}
+
+	data, err := json.Marshal(dOverride)
+	if err != nil {
+		t.Fatalf("json.Marshal(DryRun): %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	val, ok := raw["tier_from"]
+	if !ok {
+		t.Errorf("json representation must include \"tier_from\" key: %s", string(data))
+	} else if val != wantOverrideFrom {
+		t.Errorf("raw[\"tier_from\"] = %v, want %q", val, wantOverrideFrom)
+	}
+}
+
 // TestSendDryRunErrorsMatchSend pins §6: for every precondition, the dry run
 // returns the identical error Send would, exit-1 text included, and writes
 // nothing on the way.
@@ -1111,6 +1210,7 @@ func TestRenderDryRunShape(t *testing.T) {
 		ReportPath:    "/home/p/.local/state/relevo/api-auth/005-report.md",
 		DonePath:      "/home/p/.local/state/relevo/api-auth/005-done",
 		Tier:          "yolo",
+		TierFrom:      "round override (--tier)",
 		PromptHead: []string{
 			`relevo: round 5 · to runner "api-auth" · from the MasterMind (not the human)`,
 			"Your working tree is: /home/p/.worktrees/api-auth",
@@ -1119,7 +1219,7 @@ func TestRenderDryRunShape(t *testing.T) {
 	want := `would send round 5 to api-auth
   runner    headless gemini-3.8-flash-high
   where     /usr/bin/agy -p
-  tier      yolo
+  tier      yolo  (round override (--tier))
   prompt    /home/p/.local/state/relevo/api-auth/005-prompt.md  (staged from ./plan.md, 4.1 KiB)
   report    /home/p/.local/state/relevo/api-auth/005-report.md
   marker    /home/p/.local/state/relevo/api-auth/005-done

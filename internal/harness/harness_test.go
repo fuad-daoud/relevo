@@ -629,7 +629,7 @@ func TestLaunchCodex(t *testing.T) {
 	}
 
 	printBefore := append([]string(nil), got.Print...)
-	rendered := got.PrintArgs("hi", time.Hour, "/w", "/state")
+	rendered := got.PrintArgs("hi", time.Hour, "/w", "/state", "")
 	wantRendered := []string{"exec", "hi", "-p", "plan-executor", "-m", "gpt-5.6-terra", "-c", "model_provider=openai", "-c", "model_reasoning_effort=high", "--json", "-C", "/w", "--foo"}
 	if !reflect.DeepEqual(rendered, wantRendered) {
 		t.Errorf("PrintArgs = %v, want %v", rendered, wantRendered)
@@ -667,7 +667,7 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 	before := append([]string(nil), l.Print...)
 
 	prompt := "Read /state/x/003-plan.md and write /state/x/003-report.md"
-	got := l.PrintArgs(prompt, 90*time.Minute, "/w", "/state")
+	got := l.PrintArgs(prompt, 90*time.Minute, "/w", "/state", "")
 	want := []string{"-p", prompt, "--model", "m/x", "--agent", "plan-executor",
 		"--output-format", "stream-json", "--print-timeout", "1h30m0s", "--add-dir", "/w",
 		"--add-dir", "/state", "--dangerously-skip-permissions"}
@@ -691,19 +691,19 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
-	got = cl.PrintArgs("hello", time.Hour, "/w", "/state")
+	got = cl.PrintArgs("hello", time.Hour, "/w", "/state", "")
 	if !reflect.DeepEqual(got, []string{"-p", "hello", "--model", "m/x", "--agent", "plan-executor",
 		"--output-format", "stream-json", "--verbose", "--add-dir", "/state"}) {
 		t.Errorf("claude PrintArgs = %v", got)
 	}
 	for _, a := range got {
 		if a == BudgetPlaceholder || a == PromptPlaceholder || a == DirPlaceholder ||
-			a == WritableRootPlaceholder || a == OutputDirPlaceholder || a == "/w" {
+			a == WritableRootPlaceholder || a == OutputDirPlaceholder || a == PromptFilePlaceholder || a == "/w" {
 			t.Errorf("placeholder survived substitution, or an ignored dir leaked in: %v", got)
 		}
 	}
 
-	if got := (Launch{Kind: "unknown", PromptAt: -1}).PrintArgs("x", time.Minute, "/w", "/state"); len(got) != 0 {
+	if got := (Launch{Kind: "unknown", PromptAt: -1}).PrintArgs("x", time.Minute, "/w", "/state", ""); len(got) != 0 {
 		t.Errorf("unknown kind PrintArgs = %v, want empty", got)
 	}
 }
@@ -720,7 +720,7 @@ func TestPrintArgsFillsState(t *testing.T) {
 	}
 
 	stateDir := "/home/u/.local/state/relevo/x"
-	got := l.PrintArgs("p", 0, "/wt", stateDir)
+	got := l.PrintArgs("p", 0, "/wt", stateDir, "")
 	for _, a := range got {
 		if a == WritableRootPlaceholder {
 			t.Errorf("WritableRootPlaceholder survived PrintArgs: %v", got)
@@ -747,7 +747,7 @@ func TestPrintArgsFillsState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claude Launch() TierEdit error = %v", err)
 	}
-	clGot := cl.PrintArgs("p", 0, "/wt", stateDir)
+	clGot := cl.PrintArgs("p", 0, "/wt", stateDir, "")
 	wantClaude := []string{"-p", "p", "--model", "m/x", "--agent", "plan-executor",
 		"--output-format", "stream-json", "--verbose", "--add-dir", stateDir, "--permission-mode", "acceptEdits"}
 	if !reflect.DeepEqual(clGot, wantClaude) {
@@ -922,5 +922,50 @@ func TestTableExactValues(t *testing.T) {
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("Lookup(%q) = %+v, want %+v", kind, got, want)
 		}
+	}
+}
+
+func TestPrintArgsPromptFile(t *testing.T) {
+	builder, ok := RoleByName("builder")
+	if !ok {
+		t.Fatal("RoleByName(\"builder\") not found")
+	}
+	claude, ok := Lookup("claude")
+	if !ok {
+		t.Fatal("Lookup(\"claude\") not found")
+	}
+
+	l, err := claude.Launch("anthropic", "sonnet", nil, builder, TierEdit)
+	if err != nil {
+		t.Fatalf("Launch() error = %v", err)
+	}
+	beforePrint := append([]string(nil), l.Print...)
+
+	absPath := "/var/run/relevo/001-prompt.md"
+	gotAbs := l.PrintArgs("prompt", time.Minute, "/wt", "/state", absPath)
+	wantToolArg := "--allowedTools=Read(/" + absPath + ")"
+	if !contains(gotAbs, wantToolArg) {
+		t.Errorf("PrintArgs with abs path want %q in argv, got %v", wantToolArg, gotAbs)
+	}
+	if contains(gotAbs, PromptFilePlaceholder) {
+		t.Errorf("PrintArgs left PromptFilePlaceholder in argv: %v", gotAbs)
+	}
+
+	gotEmpty := l.PrintArgs("prompt", time.Minute, "/wt", "/state", "")
+	for _, a := range gotEmpty {
+		if strings.HasPrefix(a, "--allowedTools=") || a == PromptFilePlaceholder {
+			t.Errorf("PrintArgs with empty promptFile had unexpected element %q in %v", a, gotEmpty)
+		}
+	}
+
+	gotRel := l.PrintArgs("prompt", time.Minute, "/wt", "/state", "relative/001-prompt.md")
+	for _, a := range gotRel {
+		if strings.HasPrefix(a, "--allowedTools=") || a == PromptFilePlaceholder {
+			t.Errorf("PrintArgs with relative promptFile had unexpected element %q in %v", a, gotRel)
+		}
+	}
+
+	if !reflect.DeepEqual(l.Print, beforePrint) {
+		t.Errorf("PrintArgs mutated Print: got %v, want %v", l.Print, beforePrint)
 	}
 }
