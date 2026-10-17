@@ -309,6 +309,9 @@ func (t *Tx) RecordPut(r Record) (string, error) {
 }
 
 func (t *Tx) insertRecord(r Record, updatedAt time.Time) (string, error) {
+	if err := t.guardName(r.Name); err != nil {
+		return "", err
+	}
 	id := r.ID
 	if id == "" {
 		id = NewID()
@@ -403,6 +406,9 @@ func scanRecordEvent(s rowScanner) (RecordEvent, error) {
 // EventAppend inserts one event; (record_id, seq) is the primary key, so an
 // existing seq fails rather than duplicating a line.
 func (t *Tx) EventAppend(recordID string, e RecordEvent) error {
+	if err := t.guardRoot(recordID); err != nil {
+		return err
+	}
 	if _, err := t.exec(`INSERT INTO binding_event
 			(record_id, seq, ts, round, direction, kind, confirmed, delivered_at, route, entry_json)
 		VALUES (?,?,?,?,?,?,?,?,?,?)`,
@@ -416,6 +422,9 @@ func (t *Tx) EventAppend(recordID string, e RecordEvent) error {
 // EventReplaceAll replaces recordID's entire log with evs in one transaction,
 // so a failed import leaves no half of a previous log behind.
 func (t *Tx) EventReplaceAll(recordID string, evs []RecordEvent) error {
+	if err := t.guardRoot(recordID); err != nil {
+		return err
+	}
 	if _, err := t.exec(`DELETE FROM binding_event WHERE record_id = ?`, recordID); err != nil {
 		return fmt.Errorf("db: event replace %s: delete: %w", recordID, mapBusy(err))
 	}
@@ -431,6 +440,9 @@ func (t *Tx) EventReplaceAll(recordID string, evs []RecordEvent) error {
 // is non-empty, and replaces the entry's JSON with the caller's patched map, so
 // unknown keys survive.
 func (t *Tx) EventConfirm(recordID string, seq int, at time.Time, route, newJSON string) error {
+	if err := t.guardRoot(recordID); err != nil {
+		return err
+	}
 	if _, err := t.exec(`UPDATE binding_event SET confirmed = 1, delivered_at = ?, route = ?, entry_json = ? WHERE record_id = ? AND seq = ?`,
 		formatTime(at), nullIfEmpty(route), newJSON, recordID, seq); err != nil {
 		return fmt.Errorf("db: event confirm %s#%d: %w", recordID, seq, mapBusy(err))
@@ -443,6 +455,9 @@ func (t *Tx) EventConfirm(recordID string, seq int, at time.Time, route, newJSON
 // confirmed, delivered_at and route columns are untouched: a later EventConfirm
 // still writes them.
 func (t *Tx) EventAdmit(recordID string, seq int, newJSON string) error {
+	if err := t.guardRoot(recordID); err != nil {
+		return err
+	}
 	if _, err := t.exec(`UPDATE binding_event SET entry_json = ? WHERE record_id = ? AND seq = ?`,
 		newJSON, recordID, seq); err != nil {
 		return fmt.Errorf("db: event admit %s#%d: %w", recordID, seq, mapBusy(err))

@@ -238,6 +238,9 @@ func (t *Tx) UpsertBinding(b Binding) (string, error) {
 		return "", fmt.Errorf("db: upsert binding: select: %w", mapBusy(err))
 	}
 
+	if err := t.guardName(b.Name); err != nil {
+		return "", err
+	}
 	id = NewID()
 	if _, err := t.exec(`INSERT INTO binding (id, origin, writer, name, repo_id, mastermind_id, feature, ticket, forked_from_binding_id,
 			forked_from_round, cwd, worktree, branch, base_commit, tier, gate, builder_mode, server,
@@ -257,6 +260,9 @@ func (t *Tx) UpsertBinding(b Binding) (string, error) {
 
 // UpsertRound inserts or updates r by its natural key: (binding_id, number).
 func (t *Tx) UpsertRound(r Round) (string, error) {
+	if err := t.guardRoot(r.BindingID); err != nil {
+		return "", err
+	}
 	if r.BindingID == "" {
 		return "", fmt.Errorf("db: upsert round: BindingID: %w", ErrInvalid)
 	}
@@ -320,6 +326,9 @@ func (t *Tx) UpsertRound(r Round) (string, error) {
 // AppendEvents inserts every event not already present, keyed on
 // (binding_id, seq), and returns how many were added.
 func (t *Tx) AppendEvents(bindingID string, evs []Event) (int, error) {
+	if err := t.guardRoot(bindingID); err != nil {
+		return 0, err
+	}
 	added := 0
 	for _, e := range evs {
 		id := e.ID
@@ -345,6 +354,9 @@ func (t *Tx) AppendEvents(bindingID string, evs []Event) (int, error) {
 }
 
 func (t *Tx) UpsertArtifact(a Artifact) error {
+	if err := t.guardRound(a.RoundID); err != nil {
+		return err
+	}
 	if !ValidArtifactKind(a.Kind) {
 		return fmt.Errorf("db: upsert artifact: Kind: %w", ErrInvalid)
 	}
@@ -384,6 +396,9 @@ func (t *Tx) UpsertArtifact(a Artifact) error {
 // error: the caller may be applying a plan built against a database that has
 // since lost the row, and the end state it wants already holds.
 func (t *Tx) DeleteArtifact(id string) error {
+	if err := t.guardArtifact(id); err != nil {
+		return err
+	}
 	if _, err := t.exec(`DELETE FROM artifact WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("db: delete artifact %s: %w", id, mapBusy(err))
 	}
@@ -393,6 +408,9 @@ func (t *Tx) DeleteArtifact(id string) error {
 // DeleteRoundTranscript removes every transcript row of one mirror round and
 // returns how many rows went. The owner kind is hard-coded to OwnerRound.
 func (t *Tx) DeleteRoundTranscript(roundID string) (int64, error) {
+	if err := t.guardRound(roundID); err != nil {
+		return 0, err
+	}
 	res, err := t.exec(`DELETE FROM transcript WHERE owner_kind = ? AND owner_id = ?`, OwnerRound, roundID)
 	if err != nil {
 		return 0, fmt.Errorf("db: delete round transcript %s: %w", roundID, mapBusy(err))
@@ -407,6 +425,11 @@ func (t *Tx) DeleteRoundTranscript(roundID string) (int64, error) {
 // AppendTranscript inserts every record not already present, keyed on
 // (owner_kind, owner_id, seq), and returns how many were added.
 func (t *Tx) AppendTranscript(ownerKind, ownerID string, recs []TranscriptRecord) (int, error) {
+	if ownerKind == OwnerRound {
+		if err := t.guardRound(ownerID); err != nil {
+			return 0, err
+		}
+	}
 	if !ValidOwnerKind(ownerKind) {
 		return 0, fmt.Errorf("db: append transcript: OwnerKind: %w", ErrInvalid)
 	}
@@ -438,6 +461,9 @@ func (t *Tx) AppendTranscript(ownerKind, ownerID string, recs []TranscriptRecord
 // round_id is still null and whose seq is in seqs. The WHERE round_id IS NULL
 // clause makes a second call a no-op rather than overwriting the link.
 func (t *Tx) LinkEvents(bindingID, roundID string, seqs []int) error {
+	if err := t.guardRoot(bindingID); err != nil {
+		return err
+	}
 	if roundID == "" {
 		return fmt.Errorf("db: link events: RoundID: %w", ErrInvalid)
 	}
