@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/synclog"
 	"github.com/fuad-daoud/relevo/internal/syncworker"
@@ -217,5 +218,16 @@ func TestSupervisorPublishesTheCutExtension(t *testing.T) {
 		Epoch: 2, Seq: 3, Tag: []byte("the cut's tag"),
 	}); err != nil {
 		t.Fatalf("Supervisor.PublishEpochCut: %v", err)
+	}
+}
+
+// TestSupervisorDrivesTheClaimVerb pins that the claim runs through the breaker
+// like every other call and answers what the worker held.
+func TestSupervisorDrivesTheClaimVerb(t *testing.T) {
+	s := newSupervisor(t, fakeWorkerCfg(modeNormal), breakerOver(newMemKV()))
+	at := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	winner, claimedAt, err := s.ClaimIdentity(context.Background(), "inst-x", "tok", at)
+	if err != nil || winner != "tok" || !claimedAt.Equal(at) {
+		t.Fatalf("Supervisor.ClaimIdentity = %q at %v, %v, want the token and time the worker held", winner, claimedAt, err)
 	}
 }

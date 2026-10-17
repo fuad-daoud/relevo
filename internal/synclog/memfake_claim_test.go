@@ -34,3 +34,21 @@ func TestClaimIdentityMatchesTheRemotesRule(t *testing.T) {
 		t.Error("a claim on no identity was accepted")
 	}
 }
+
+// TestOverwriteClaimLaysDownADoubleWin pins the test seam: a claim another
+// machine's push replaced reads as that machine's, and Claims names the
+// identities that hold one.
+func TestOverwriteClaimLaysDownADoubleWin(t *testing.T) {
+	a := NewMemTransport("a")
+	start := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	if won, _, _ := a.ClaimIdentity(context.Background(), "x", "ta", start); won != "ta" {
+		t.Fatalf("claim = %q", won)
+	}
+	a.OverwriteClaim("x", "tb", start.Add(time.Minute))
+	if won, _, _ := a.ClaimIdentity(context.Background(), "x", "", start); won != "tb" {
+		t.Errorf("read after the overwrite = %q, want tb", won)
+	}
+	if claims := a.Claims(); len(claims) != 1 || claims[0] != "x" {
+		t.Errorf("Claims = %v, want [x]", claims)
+	}
+}

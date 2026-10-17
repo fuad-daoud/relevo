@@ -1,6 +1,7 @@
 package syncworker
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -48,5 +49,29 @@ func TestClaimIdentityVerbRefusesNoOrigin(t *testing.T) {
 	resp = s.ask(Request{ID: "c3", Verb: VerbClaim, Origin: "inst-x", ClaimToken: "t", At: &now})
 	if !resp.OK || resp.ClaimToken != "t" || resp.ClaimAt == nil {
 		t.Errorf("claim_identity = %+v, want the token and its time", resp)
+	}
+}
+
+// TestClaimIdentityRefusesATransferThatFails pins the pull the claim is decided
+// against and the push that lands it: a refusal on either is the caller's error,
+// and a claim whose push refused is not reported as held.
+func TestClaimIdentityRefusesATransferThatFails(t *testing.T) {
+	driver := &localDriver{path: tempReplica(t), pullErr: errors.New("the pull does not answer")}
+	b := backendFor(t, driver, "origin-a")
+	now := time.Now()
+	if _, _, err := b.ClaimIdentity("inst-x", "t", now); err == nil {
+		t.Error("a claim over a pull that refused came back as a success")
+	}
+	driver.pullErr = nil
+	driver.pushErr = errors.New("the push does not answer")
+	if _, _, err := b.ClaimIdentity("inst-x", "t", now); err == nil {
+		t.Error("a claim landed by a push that refused came back as a success")
+	}
+}
+
+func TestParseClaimReadsAnUnparseableRowAsAHeldClaim(t *testing.T) {
+	token, at := parseClaim("tok not-a-time")
+	if token != "tok" || !at.IsZero() {
+		t.Errorf("parseClaim = %q at %v, want the token held since the zero time", token, at)
 	}
 }
