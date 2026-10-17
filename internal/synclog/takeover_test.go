@@ -2,6 +2,7 @@ package synclog
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -411,5 +412,38 @@ func TestSnapshotHoldsWhileAnEntryWaitsForAnotherOrigin(t *testing.T) {
 	}
 	if res.Snapshots != 0 || len(res.Held) != 1 || res.Held[0].Origin != "m2" || !strings.Contains(res.Held[0].Reason, "waiting for m1 at seq 5") {
 		t.Fatalf("import = %+v, want m2 held waiting for m1 at seq 5 and no snapshot applied", res)
+	}
+}
+
+// A Turso token alone must not move a binding: an origin that has never signed
+// may still append unsigned history, but an unsigned takeover from it is
+// refused, and the binding keeps its writer.
+func TestAnUnsignedTakeoverFromAnOriginThatNeverSignedIsRefused(t *testing.T) {
+	t.Parallel()
+	peer, _ := peerFile(t, "m3")
+	know := knownVersion(t, peer)
+	log := NewMemTransport("m1")
+	root := map[string]any{"id": "b1", "owner": "", "name": "b1", "state": "open", "round": 1, "cwd": "/x", "record_json": "{}",
+		"created_at": "t", "updated_at": "t", "origin": "m1", "writer": "m1"}
+	appendSignedBatch(t, log, handoverKey, makeSignedEntry(t, handoverKey, "m1", "binding_record", `["b1"]`, OpUpsert, know, root, nil))
+
+	take, err := NewTakeover("m2", Takeover{RecordID: "b1", OldWriter: "m1", Upto: 1, Taker: "m2"}, know, takeoverAt)
+	if err != nil {
+		t.Fatalf("NewTakeover: %v", err)
+	}
+	appendSignedBatch(t, log.OnLog("m2"), nil, take)
+
+	res, err := keyedImporter(peer, log.OnLog("m3")).Import()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if got := columnOf(t, peer, `SELECT writer FROM binding_record WHERE id = 'b1'`); got != "m1" {
+		t.Fatalf("writer = %q after an unsigned takeover, want m1 kept", got)
+	}
+	if _, _, _, found, _ := peer.Term("b1", "m1"); found {
+		t.Fatalf("an unsigned takeover raised a fence on m1")
+	}
+	if stalled := fmt.Sprint(res.Stalled); !strings.Contains(stalled, "requires a signature") {
+		t.Fatalf("Stalled = %s, want the takeover held as unsigned", stalled)
 	}
 }
