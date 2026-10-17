@@ -119,7 +119,7 @@ func (v *VerbRunner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte)
 	case wire.SyncVerbProbe:
 		return v.runGuarded(func() *wire.SyncResult { return v.probe(ctx) })
 	case wire.SyncVerbReconcile:
-		return v.runGuarded(func() *wire.SyncResult { return v.reconcilePreview(ctx, verb) })
+		return v.runGuarded(func() *wire.SyncResult { return v.reconcile(ctx, verb) })
 	case wire.SyncVerbUnlock:
 		return v.runGuarded(func() *wire.SyncResult { return v.unlock(ctx, verb, token) })
 	case wire.SyncVerbRekey:

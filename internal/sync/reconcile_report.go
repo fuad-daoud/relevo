@@ -34,3 +34,11 @@ func FormatPreview(p synclog.Preview) string {
 	b.WriteString("dry run: nothing was appended\n")
 	return b.String()
 }
+
+// FormatReconcile renders what a reconcile appended for a terminal.
+func FormatReconcile(r synclog.ReconcileResult) string {
+	if r.Batches == 0 {
+		return "in step with the log; nothing to append\n"
+	}
+	return fmt.Sprintf("appended %d upserts and %d deletes in %d batches\n", r.Upserts, r.Deletes, r.Batches)
+}
