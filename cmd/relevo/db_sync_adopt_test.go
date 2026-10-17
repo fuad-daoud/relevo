@@ -63,3 +63,12 @@ func TestDBSyncStatusSaysAnotherMachineAdoptedTheIdentity(t *testing.T) {
 		t.Error("the adopted line does not tell the owner to restart the daemon")
 	}
 }
+
+func TestDBSyncStatusSaysAdoptionIsUnfinished(t *testing.T) {
+	t.Parallel()
+	line := dbSyncStatusLine(dbSyncStatusDoc{Enabled: true, AdoptPending: "inst-x"})
+	want := "adoption of inst-x is unfinished: run relevo db sync enable --as inst-x"
+	if !strings.Contains(line, want) {
+		t.Errorf("status line %q does not contain %q", line, want)
+	}
+}

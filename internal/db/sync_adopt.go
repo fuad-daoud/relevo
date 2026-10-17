@@ -1,11 +1,24 @@
 package db
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
 )
+
+// KeyAdoptPending is the machine-local kv fact written in the database swap
+// transaction holding the adopted identity and the claim token.
+const KeyAdoptPending = "sync.adopt_pending.v1"
+
+// PendingAdopt is the fact stored under KeyAdoptPending while an adoption is
+// in flight between the database swap and the installation file rewrite.
+type PendingAdopt struct {
+	ID    string `json:"id"`
+	Token string `json:"token"`
+}
 
 // AdoptionBlockers is what stops a machine taking over another's identity: any
 // change waiting in an outbox, and any shared row that is not this machine's own
@@ -116,11 +129,11 @@ var ErrAdoptionDirty = errors.New("db: this machine holds changes of its own")
 // Whatever else the outbox holds is a change this machine made after the
 // adoption began, under an identity it is leaving; that refuses, and nothing
 // changes.
-func (d *DB) AdoptIdentity(id string) error {
+func (d *DB) AdoptIdentity(id, token string) error {
 	if id == "" || id == d.origin {
 		return fmt.Errorf("db: adopt %q: %w", id, ErrInvalid)
 	}
-	return d.Tx(func(t *Tx) error {
+	err := d.Tx(func(t *Tx) error {
 		if _, err := t.exec(`DELETE FROM sync_outbox WHERE origin = ?`, id); err != nil {
 			return fmt.Errorf("db: adopt %s: outbox: %w", id, mapBusy(err))
 		}
@@ -141,6 +154,49 @@ func (d *DB) AdoptIdentity(id string) error {
 		if _, err := t.exec(`DELETE FROM sync_import_mark WHERE origin = ?`, id); err != nil {
 			return fmt.Errorf("db: adopt %s: mark: %w", id, mapBusy(err))
 		}
+		pending, err := json.Marshal(PendingAdopt{ID: id, Token: token})
+		if err != nil {
+			return fmt.Errorf("db: adopt %s: pending: %w", id, err)
+		}
+		if err := t.KVPut(KeyAdoptPending, pending); err != nil {
+			return fmt.Errorf("db: adopt %s: pending: %w", id, err)
+		}
 		return nil
 	})
+	if err == nil {
+		d.origin = id
+	}
+	return err
+}
+
+// DatabaseOriginIs reports whether id is this database's origin, either on the
+// handle or in the installation table.
+func (d *DB) DatabaseOriginIs(id string) (bool, error) {
+	if d.origin == id {
+		return true, nil
+	}
+	var count int
+	err := d.sqlDB.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM installation WHERE id = ?`, id).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("db: check installation: %w", mapBusy(err))
+	}
+	if count > 0 {
+		d.origin = id
+		return true, nil
+	}
+	return false, nil
+}
+
+// ReadAdoptPending reads the pending adoption fact, if present.
+func (d *DB) ReadAdoptPending() (PendingAdopt, bool, error) {
+	body, ok, err := d.KVGet(KeyAdoptPending)
+	if err != nil || !ok {
+		return PendingAdopt{}, false, err
+	}
+	var p PendingAdopt
+	if err := json.Unmarshal(body, &p); err != nil || p.ID == "" {
+		return PendingAdopt{}, false, fmt.Errorf("db: pending adoption fact: %w", ErrInvalid)
+	}
+	return p, true, nil
 }

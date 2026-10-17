@@ -275,6 +275,9 @@ func (e *Enabler) PreflightFailed() bool { return e.preflightFailed }
 // with a join marker behind it. That is exactly the state a second enable
 // resumes from.
 func (e *Enabler) Enable() (EnableResult, error) {
+	if err := e.checkAdoptPending(); err != nil {
+		return EnableResult{}, err
+	}
 	plan, err := e.Request.Preflight()
 	if err != nil {
 		e.preflightFailed = true

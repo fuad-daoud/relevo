@@ -63,8 +63,12 @@ func TestAdoptIdentityDropsTheTemporaryIdentityAndTheImportEchoes(t *testing.T) 
 	if err := d.SetImportMark("inst-x", 7); err != nil {
 		t.Fatalf("SetImportMark: %v", err)
 	}
-	if err := d.AdoptIdentity("inst-x"); err != nil {
+	if err := d.AdoptIdentity("inst-x", "token-x"); err != nil {
 		t.Fatalf("AdoptIdentity: %v", err)
+	}
+	pending, ok, err := d.ReadAdoptPending()
+	if err != nil || !ok || pending.ID != "inst-x" || pending.Token != "token-x" {
+		t.Fatalf("ReadAdoptPending = %+v, %v, %v; want inst-x and token-x", pending, ok, err)
 	}
 	for query, want := range map[string]int{
 		`SELECT COUNT(*) FROM installation WHERE id = 'tmp'`: 0,
@@ -83,7 +87,7 @@ func TestAdoptIdentityRefusesAChangeMadeSinceTheAdoptionBegan(t *testing.T) {
 	d := openTermTestDB(t, "tmp")
 	adoptBinding(t, d, "mine", "tmp")
 	adoptExec(t, d, `DELETE FROM binding WHERE id = 'mine'`)
-	err := d.AdoptIdentity("inst-x")
+	err := d.AdoptIdentity("inst-x", "token-x")
 	if !errors.Is(err, ErrAdoptionDirty) || !errors.Is(err, ErrInvalid) {
 		t.Fatalf("AdoptIdentity = %v, want ErrAdoptionDirty", err)
 	}
@@ -92,7 +96,7 @@ func TestAdoptIdentityRefusesAChangeMadeSinceTheAdoptionBegan(t *testing.T) {
 		t.Errorf("a refused adoption cleared the outbox (%d, %v)", n, err)
 	}
 	for _, id := range []string{"", "tmp"} {
-		if err := d.AdoptIdentity(id); !errors.Is(err, ErrInvalid) {
+		if err := d.AdoptIdentity(id, "token-x"); !errors.Is(err, ErrInvalid) {
 			t.Errorf("AdoptIdentity(%q) = %v, want ErrInvalid", id, err)
 		}
 	}

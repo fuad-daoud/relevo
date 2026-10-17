@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -123,6 +124,10 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 	if err := r.identityGate(ctx, t); err != nil {
 		return r.failed(out, err)
 	}
+	if err := r.pendingAdoptGate(shared); err != nil {
+		out.Trouble.Held = append(out.Trouble.Held, err.Error())
+		return out
+	}
 	// The stale stop reads the two local epoch facts and nothing else: a
 	// machine whose held newest epoch is below the recorded remote epoch
 	// neither exports nor imports until its owner unlocks it with the new
@@ -138,26 +143,11 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 		out.Trouble.Held = append(out.Trouble.Held, err.Error())
 		return out
 	}
-	locked := false
-	if err := within(ctx, t, r.stepTimeout(), func() error {
-		key, err := SigningKey(r.Local)
-		if err != nil {
-			return err
-		}
-		exp := synclog.NewExporter(shared, t)
-		exp.SetKey(key)
-		BindDocs(exp, shared)
-		res, err := exp.Export()
-		out.Exported = res.Appended
-		return err
-	}); err != nil {
-		// A locked machine cannot append, but it can still read: the import goes
-		// on and the refusal is reported as trouble.
-		if !errors.Is(err, synclog.ErrLockedSignedOrigin) {
-			return r.failed(out, err)
-		}
-		locked = true
+	exported, locked, err := r.exportStep(ctx, shared, t)
+	if err != nil {
+		return r.failed(out, err)
 	}
+	out.Exported = exported
 	// The extension that vouches for this origin's own confirmed tail goes
 	// out before the import reads the cuts, so this attempt's own reads see
 	// the fence this machine believes in.
@@ -181,6 +171,31 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 	return out
 }
 
+// exportStep runs the exporter under the attempt bound. Locked signed origins
+// are tolerated so the import half still runs.
+func (r *Runner) exportStep(ctx context.Context, shared *db.DB, t *StopTransport) (int, bool, error) {
+	var exported int
+	err := within(ctx, t, r.stepTimeout(), func() error {
+		key, err := SigningKey(r.Local)
+		if err != nil {
+			return err
+		}
+		exp := synclog.NewExporter(shared, t)
+		exp.SetKey(key)
+		BindDocs(exp, shared)
+		res, err := exp.Export()
+		exported = res.Appended
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, synclog.ErrLockedSignedOrigin) {
+			return 0, true, nil
+		}
+		return 0, false, err
+	}
+	return exported, false, nil
+}
+
 // identityGate is CheckAdoptedClaim under the attempt's own step bound.
 func (r *Runner) identityGate(ctx context.Context, t *StopTransport) error {
 	if r.Local == nil {
@@ -189,6 +204,17 @@ func (r *Runner) identityGate(ctx context.Context, t *StopTransport) error {
 	return within(ctx, t, r.stepTimeout(), func() error {
 		return CheckAdoptedClaim(ctx, r.Local, t)
 	})
+}
+
+// pendingAdoptGate stops steady attempts while an adoption is unfinished:
+// the installation file and database origin disagree about identity, so
+// neither exporting nor importing is safe.
+func (r *Runner) pendingAdoptGate(shared *db.DB) error {
+	pending, ok, err := ReadAdoptPending(shared, r.Local)
+	if err != nil || !ok {
+		return err
+	}
+	return fmt.Errorf("adoption of %s is unfinished: run relevo db sync enable --as %s", pending.ID, pending.ID)
 }
 
 // marksEvery is the shortest gap between two publishes of this machine's marks.

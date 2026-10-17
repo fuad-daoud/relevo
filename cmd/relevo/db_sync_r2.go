@@ -194,6 +194,10 @@ func cmdDBSyncStatus(args []string) error {
 		return err
 	}
 	doc.IdentityTaken = relevosync.IdentityTaken(local)
+	if pending := relevosync.AdoptPending(shared, local); pending != "" {
+		doc.AdoptPending = pending
+		doc.AdoptionPending = pending
+	}
 	if *v.asJSON {
 		return printDoc(doc)
 	}
@@ -247,23 +251,8 @@ func dbSyncStatusRead(local relevosync.Local) (dbSyncStatusDoc, error) {
 		Gaps:         state.Trouble.Gaps,
 		LastAttempt:  attemptDoc(state.Attempt),
 	}
-	month, err := relevosync.ReadBytes(local, time.Now())
-	if err != nil {
-		return dbSyncStatusDoc{}, dbSyncClassify(err)
-	}
-	if !month.Zero() {
-		doc.Bytes = &month
-	}
-	storage, err := relevosync.ReadStorage(local)
-	if err != nil {
-		return dbSyncStatusDoc{}, dbSyncClassify(err)
-	}
-	if !storage.At.IsZero() {
-		doc.Storage = &storage
-	}
-	if doc.Bytes != nil || doc.Storage != nil {
-		doc.QuotaTursoSync = settings.TursoSyncQuota()
-		doc.QuotaTursoStorage, doc.QuotaR2Storage = settings.TursoStorageQuota(), settings.R2StorageQuota()
+	if err := dbSyncStatusStorage(local, settings, &doc); err != nil {
+		return dbSyncStatusDoc{}, err
 	}
 	// A join in progress is a read of the machine-local marker, so status can
 	// show one with the network blackholed and no worker open.
@@ -274,7 +263,34 @@ func dbSyncStatusRead(local relevosync.Local) (dbSyncStatusDoc, error) {
 	if joining {
 		doc.Joining, doc.JoinSince = true, statusStamp(progress.At)
 	}
+	if pending := relevosync.AdoptPending(local); pending != "" {
+		doc.AdoptPending = pending
+		doc.AdoptionPending = pending
+	}
 	return doc, nil
+}
+
+// dbSyncStatusStorage populates bytes, storage, and quotas onto doc.
+func dbSyncStatusStorage(local relevosync.Local, settings relevosync.Settings, doc *dbSyncStatusDoc) error {
+	month, err := relevosync.ReadBytes(local, time.Now())
+	if err != nil {
+		return dbSyncClassify(err)
+	}
+	if !month.Zero() {
+		doc.Bytes = &month
+	}
+	storage, err := relevosync.ReadStorage(local)
+	if err != nil {
+		return dbSyncClassify(err)
+	}
+	if !storage.At.IsZero() {
+		doc.Storage = &storage
+	}
+	if doc.Bytes != nil || doc.Storage != nil {
+		doc.QuotaTursoSync = settings.TursoSyncQuota()
+		doc.QuotaTursoStorage, doc.QuotaR2Storage = settings.TursoStorageQuota(), settings.R2StorageQuota()
+	}
+	return nil
 }
 
 // dbSyncR2Line is where bodies would go, or empty on a machine that has no

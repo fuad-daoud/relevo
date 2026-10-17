@@ -63,6 +63,9 @@ type dbSyncStatusDoc struct {
 	// IdentityTaken is the installation id this machine adopted whose claim
 	// another machine now holds. Export and import are stopped.
 	IdentityTaken string `json:"identity_taken,omitempty"`
+	// AdoptPending is the installation id whose adoption is unfinished.
+	AdoptPending    string `json:"adopt_pending,omitempty"`
+	AdoptionPending string `json:"adoption_pending,omitempty"`
 	// Joining says a join is in progress and JoinSince is when it began, read
 	// from the machine-local join marker. The daemon finishes the join whether
 	// the enable that started it waited or not, so a machine can be joining
@@ -156,6 +159,9 @@ func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 	if doc.IdentityTaken != "" {
 		fmt.Fprintf(&b, " · %s", sanitize.Text(dbSyncIdentityTakenLine(doc.IdentityTaken)))
 	}
+	if doc.AdoptPending != "" {
+		fmt.Fprintf(&b, " · %s", sanitize.Text(dbSyncAdoptPendingLine(doc.AdoptPending)))
+	}
 	for _, f := range doc.Fenced {
 		fmt.Fprintf(&b, " · %d local changes to %s were fenced by a takeover", f.Count, sanitize.Text(f.Name))
 	}
@@ -186,4 +192,9 @@ func presentOrAbsent(present bool) string {
 // adopted, and what to do about it.
 func dbSyncIdentityTakenLine(id string) string {
 	return "another machine adopted installation " + id + ": sync is stopped here; run `relevo db sync disable` on one of the two machines"
+}
+
+// dbSyncAdoptPendingLine says an adoption was interrupted and what finishes it.
+func dbSyncAdoptPendingLine(id string) string {
+	return "adoption of " + id + " is unfinished: run relevo db sync enable --as " + id
 }

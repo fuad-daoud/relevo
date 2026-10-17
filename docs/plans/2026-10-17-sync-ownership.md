@@ -260,7 +260,9 @@ round reports recorded for the hand-over and takeover work (Round 3).
   hostile remote or a clock-forged joiner can adopt a live identity: the same
   split-brain the claim token detects later. Signing the claim into the log is
   the known fix and is not built.
-- An adoption interrupted between the database swap and the identity file does
-  not finish on a rerun: the swapped rows read as changes of the machine's own
-  and the rerun refuses. Finishing it needs a resume path, which is not built.
+- An adoption interrupted between the database swap and the identity file leaves
+  a pending fact (`sync.adopt_pending.v1`) written in the swap transaction, and
+  a rerun of `enable --as X` resumes: skips the blockers, import and swap,
+  re-checks the claim on the remote with the stored token, writes the
+  installation file, sets the own head, and clears the fact.
 - The coverage baseline was not regenerated: no code moved between packages.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	gosync "sync"
 	"testing"
 	"time"
@@ -369,5 +370,169 @@ func TestAdoptionStopsBeforeTheSwapWhenTheImportFellShort(t *testing.T) {
 	}
 	if written {
 		t.Error("the identity was written before the import reached the head")
+	}
+}
+
+// TestInterruptedAdoptionFinishesOnRerun pins that when an adoption is interrupted
+// after the swap, a rerun of enable --as X resumes: the rerun succeeds, the file
+// names X, the own head equals X's remote head, the pending fact is gone, and the
+// remote holds no rows under the temporary id.
+func TestInterruptedAdoptionFinishesOnRerun(t *testing.T) {
+	log := deadMachine(t)
+	shared, local, path := freshMachine(t, "tmp-m")
+	var writtenAs string
+	failOnce := true
+	identityFn := func(id string) error {
+		if failOnce {
+			failOnce = false
+			return errors.New("simulated crash before installation file rewrite")
+		}
+		writtenAs = id
+		return nil
+	}
+
+	e1 := adopter(shared, local, log.OnLog("tmp-m"), adoptLater, identityFn)
+	_, err := e1.Enable()
+	if err == nil {
+		t.Fatal("first enable expected to fail, got nil")
+	}
+
+	pending, ok, err := ReadAdoptPending(shared, local)
+	if err != nil || !ok || pending.ID != adoptedID {
+		t.Fatalf("ReadAdoptPending = %+v, %v, %v; want %s", pending, ok, err, adoptedID)
+	}
+
+	e2 := adopter(shared, local, log.OnLog("tmp-m"), adoptLater, identityFn)
+	res, err := e2.Enable()
+	if err != nil {
+		t.Fatalf("rerun Enable: %v", err)
+	}
+	if res.Adopted != adoptedID || writtenAs != adoptedID {
+		t.Fatalf("adopted = %q, identity written = %q, want %q", res.Adopted, writtenAs, adoptedID)
+	}
+
+	if _, ok, _ := ReadAdoptPending(shared, local); ok {
+		t.Error("pending fact remains after successful resume")
+	}
+
+	state, err := log.ReadMarks()
+	if err != nil {
+		t.Fatalf("ReadMarks: %v", err)
+	}
+	if head, ok, _ := synclog.OwnHead(local); !ok || head != state.Heads[adoptedID] {
+		t.Errorf("own head = %d (%v), want remote head %d", head, ok, state.Heads[adoptedID])
+	}
+
+	for origin := range state.Heads {
+		if origin != adoptedID {
+			t.Errorf("the remote holds entries under %q", origin)
+		}
+	}
+	for _, m := range state.Marks {
+		if m.Reader == "tmp-m" {
+			t.Errorf("the remote holds marks under %q", m.Reader)
+		}
+	}
+	for _, c := range log.Claims() {
+		if c != adoptedID {
+			t.Errorf("the remote holds claims under %q", c)
+		}
+	}
+
+	e3 := adopter(shared, local, log.OnLog("tmp-m"), adoptLater, identityFn)
+	if _, err := e3.Enable(); !errors.Is(err, ErrAdoptionSelf) {
+		t.Fatalf("second rerun Enable = %v, want ErrAdoptionSelf", err)
+	}
+	_ = path
+}
+
+// TestPendingAdoptionSteadyAttemptStopsAndStatusCarriesSentence pins that while
+// the pending fact is present, a steady attempt neither exports nor imports,
+// and the status line carries the sentence naming the command that finishes it.
+func TestPendingAdoptionSteadyAttemptStopsAndStatusCarriesSentence(t *testing.T) {
+	log := deadMachine(t)
+	shared, local, _ := freshMachine(t, "tmp-m")
+	fail := func(string) error { return errors.New("simulated crash") }
+	e := adopter(shared, local, log.OnLog("tmp-m"), adoptLater, fail)
+	if _, err := e.Enable(); err == nil {
+		t.Fatal("expected failure")
+	}
+
+	runner := &Runner{Client: log.OnLog(adoptedID), Local: local}
+	before, _ := log.Stats()
+	seedJoin(t, shared, joinBinding("b-pending", adoptedID))
+	res := runner.SyncOnce(context.Background(), shared)
+	if res.Exported != 0 || res.Applied != 0 {
+		t.Errorf("exported = %d, applied = %d; want 0 and 0", res.Exported, res.Applied)
+	}
+	after, _ := log.Stats()
+	if after.Entries != before.Entries {
+		t.Errorf("log entries grew from %d to %d; expected no export", before.Entries, after.Entries)
+	}
+
+	wantSentence := "adoption of " + adoptedID + " is unfinished: run relevo db sync enable --as " + adoptedID
+	if len(res.Trouble.Held) == 0 || !strings.Contains(res.Trouble.Held[0], wantSentence) {
+		t.Errorf("trouble = %v, want to contain %q", res.Trouble.Held, wantSentence)
+	}
+}
+
+// TestPendingAdoptionRefusesOtherIdentitiesAndPlainEnable pins that when the
+// pending fact names X, an enable for Y or a plain enable is refused with the
+// sentence naming X and leaves the database and file unchanged.
+func TestPendingAdoptionRefusesOtherIdentitiesAndPlainEnable(t *testing.T) {
+	log := deadMachine(t)
+	shared, local, _ := freshMachine(t, "tmp-m")
+	fail := func(string) error { return errors.New("simulated crash") }
+	e := adopter(shared, local, log.OnLog("tmp-m"), adoptLater, fail)
+	if _, err := e.Enable(); err == nil {
+		t.Fatal("expected failure")
+	}
+
+	wantSentence := "adoption of " + adoptedID + " is unfinished: run relevo db sync enable --as " + adoptedID
+
+	eY := &Enabler{
+		Request:   EnableRequest{Local: local, Shared: shared, URL: joinRemote, Token: []byte(joinToken)},
+		Transport: log.OnLog("tmp-m"),
+		Now:       adoptLater,
+		Adopt:     &Adoption{ID: "other-id"},
+	}
+	_, err := eY.Enable()
+	if err == nil || !strings.Contains(err.Error(), wantSentence) {
+		t.Errorf("enable --as Y = %v, want containing %q", err, wantSentence)
+	}
+
+	ePlain := &Enabler{
+		Request:   EnableRequest{Local: local, Shared: shared, URL: joinRemote, Token: []byte(joinToken)},
+		Transport: log.OnLog("tmp-m"),
+		Now:       adoptLater,
+	}
+	_, err = ePlain.Enable()
+	if err == nil || !strings.Contains(err.Error(), wantSentence) {
+		t.Errorf("plain enable = %v, want containing %q", err, wantSentence)
+	}
+
+	pending, ok, err := ReadAdoptPending(shared, local)
+	if err != nil || !ok || pending.ID != adoptedID {
+		t.Errorf("pending fact changed or missing: %+v, %v, %v", pending, ok, err)
+	}
+}
+
+// TestPendingAdoptionResumeRefusesOverwrittenClaim pins that when another machine
+// overwrote the claim on the remote while adoption was pending, the resume is refused.
+func TestPendingAdoptionResumeRefusesOverwrittenClaim(t *testing.T) {
+	log := deadMachine(t)
+	shared, local, _ := freshMachine(t, "tmp-m")
+	fail := func(string) error { return errors.New("simulated crash") }
+	e := adopter(shared, local, log.OnLog("tmp-m"), adoptLater, fail)
+	if _, err := e.Enable(); err == nil {
+		t.Fatal("expected failure")
+	}
+
+	log.OverwriteClaim(adoptedID, "other-machine-token", time.Now())
+
+	eResume := adopter(shared, local, log.OnLog("tmp-m"), adoptLater, nil)
+	_, err := eResume.Enable()
+	if !errors.Is(err, ErrIdentityTaken) {
+		t.Fatalf("resume with overwritten claim = %v, want ErrIdentityTaken", err)
 	}
 }
