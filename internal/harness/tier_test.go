@@ -354,3 +354,49 @@ func TestLaunchClaudePromptFilePlaceholder(t *testing.T) {
 
 	checkOtherKindsOmitPrompt(t, builder)
 }
+
+func TestPromptCopyWanted(t *testing.T) {
+	tests := []struct {
+		kind string
+		tier Tier
+		want bool
+	}{
+		// agy: wanted only at read and edit
+		{"agy", TierRead, true},
+		{"agy", TierEdit, true},
+		{"agy", TierYolo, false},
+		{"agy", TierHarness, false},
+
+		// claude: never wanted (uses --allowedTools=Read)
+		{"claude", TierRead, false},
+		{"claude", TierEdit, false},
+		{"claude", TierYolo, false},
+		{"claude", TierHarness, false},
+
+		// codex: never wanted
+		{"codex", TierRead, false},
+		{"codex", TierEdit, false},
+		{"codex", TierYolo, false},
+		{"codex", TierHarness, false},
+
+		// opencode: never wanted
+		{"opencode", TierRead, false},
+		{"opencode", TierEdit, false},
+		{"opencode", TierYolo, false},
+		{"opencode", TierHarness, false},
+
+		// unknown or empty kind
+		{"unknown", TierRead, false},
+		{"unknown", TierEdit, false},
+		{"", TierEdit, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.kind+"_"+string(tt.tier), func(t *testing.T) {
+			got := PromptCopyWanted(tt.kind, tt.tier)
+			if got != tt.want {
+				t.Errorf("PromptCopyWanted(%q, %q) = %v, want %v", tt.kind, tt.tier, got, tt.want)
+			}
+		})
+	}
+}

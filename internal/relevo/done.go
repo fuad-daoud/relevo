@@ -77,11 +77,13 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		// server here would ask it to release a binding the chain already
 		// released, and the refusal would fail a done that has already
 		// happened where it matters.
+		var remoteKept, remoteReason string
 		if b.Builder.Remote() && !serverChainMember(tx, b.Name) {
 			if rt.Remote == nil {
 				return ErrRemoteUnavailable
 			}
-			if derr := rt.Remote.Done(ctx, b.Builder.Server, b.Name); derr != nil {
+			view, derr := rt.Remote.Done(ctx, b.Builder.Server, b.Name)
+			if derr != nil {
 				var httpErr *client.HTTPError
 				if errors.As(derr, &httpErr) && httpErr.Status == 409 {
 					return fmt.Errorf("round %d is running on %s; relevo stop %s to stop it and keep the binding, or relevo unbind %s to drop it", b.Round, b.Builder.Server, b.Name, b.Name)
@@ -99,6 +101,11 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 				// "gone", and marks the local record done too.
 				if !is404(derr) {
 					return fmt.Errorf("%s: %w", b.Builder.Server, derr)
+				}
+			} else {
+				remoteKept = view.WorktreeKept
+				if view.WorktreeKept != "" {
+					remoteReason = "on " + b.Builder.Server + ": " + view.KeptReason
 				}
 			}
 		}
@@ -187,6 +194,9 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 
 		out.Branch = b.Branch
 		switch {
+		case remoteKept != "":
+			out.WorktreeKept = remoteKept
+			out.KeptReason = remoteReason
 		case b.Worktree == "":
 			// nothing
 		case b.Builder.Headless() && stopErr != nil:

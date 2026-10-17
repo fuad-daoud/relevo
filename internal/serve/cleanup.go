@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -82,6 +83,11 @@ func (s *Server) collectSettled(ctx context.Context) (int, error) {
 				continue
 			}
 
+			if worktreeDirtyOrUnknown(ctx, rt, b.Worktree) {
+				slog.Debug("collect settled: worktree is dirty or check errored, skipping", "owner", id, "binding", b.Name)
+				continue
+			}
+
 			if err := teardownServed(ctx, rt, b); err != nil {
 				slog.Warn("collect settled binding failed", "owner", id, "binding", b.Name, "err", err)
 				continue
@@ -98,6 +104,26 @@ func (s *Server) collectSettled(ctx context.Context) (int, error) {
 	}
 
 	return collected, nil
+}
+
+// worktreeDirtyOrUnknown reports whether wt must stop a settled binding from
+// being collected: it exists on disk and is dirty, or the check itself failed.
+// A missing worktree is collectable, as is a clean one. A check that cannot be
+// trusted is treated like a dirty tree, because the removal this guards is
+// forced and cannot undo a lost uncommitted change.
+func worktreeDirtyOrUnknown(ctx context.Context, rt relevo.Runtime, wt string) bool {
+	if wt == "" {
+		return false
+	}
+	if _, err := os.Lstat(wt); errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	dirty, err := rt.Git.Dirty(ctx, wt)
+	if err != nil {
+		slog.Debug("collect settled: worktree dirty check failed", "worktree", wt, "err", err)
+		return true
+	}
+	return dirty
 }
 
 func releaseServedRefs(ctx context.Context, rt relevo.Runtime, b store.Binding) error {
