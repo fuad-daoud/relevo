@@ -139,7 +139,28 @@ open, so sync stays off until the owner restarts it and runs `enable` again,
 which resumes the join as the adopted identity. The claim carries the
 adopter's random token, is read back after the push, and is compared on every
 steady attempt; a mismatch stops export and import and `db sync status` says
-another machine adopted the identity.
+another machine adopted the identity. An adoption interrupted between the
+database swap and the installation file finishes when `enable --as` is run
+again.
+
+**Known limits (step 6).**
+- A takeover fences what the taker had not imported, not what other machines
+  had. A machine that applied the old writer's entries above N before it saw
+  the takeover keeps them; every machine that sees the takeover first refuses
+  them, as a "writer moved" drop.
+- The old writer learns what was fenced when it applies the takeover: queued
+  changes and the entries it had already exported above N are both counted in
+  `db sync status`. That count reads its own log through the transport inside
+  the import transaction, once per takeover.
+- Adoption's 24-hour window and its claim read heads, marks and the claim row
+  from the remote and judge them by the joiner's clock. A hostile remote, or a
+  joiner with a forged clock, can adopt a live identity; the claim token finds
+  the double adoption on the next steady attempt. Signing the claim into the
+  log would close this and is not built.
+- **Rollout:** the remote log moves to format 4, which a build from before this
+  step cannot read: it refuses the remote ("not a relevo sync log") and latches,
+  without writing anything. Every machine is upgraded together, and a hand-over
+  is refused until the target has written at schema 31.
 
 ## 4. Shared docs (step 3)
 
