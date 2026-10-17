@@ -278,8 +278,16 @@ func (e *Enabler) resumeAdopt(plan EnablePlan, pending PendingAdopt, now time.Ti
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultTimeout)
 	defer cancel()
-	if _, ok, _ := ReadAdopted(e.Request.Local); !ok {
-		_ = writeAdopted(e.Request.Local, Adopted{ID: a.ID, Token: pending.Token, At: now.UTC()})
+	// Without the adopted fact CheckAdoptedClaim has nothing to compare, so a
+	// fact that cannot be read or written refuses rather than skipping the check.
+	_, ok, err := ReadAdopted(e.Request.Local)
+	if err != nil {
+		return res, err
+	}
+	if !ok {
+		if err := writeAdopted(e.Request.Local, Adopted{ID: a.ID, Token: pending.Token, At: now.UTC()}); err != nil {
+			return res, err
+		}
 	}
 	if err := CheckAdoptedClaim(ctx, e.Request.Local, transport); err != nil {
 		return res, err
