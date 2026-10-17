@@ -32,14 +32,16 @@ func (v *validator) checkRunMatches(id string, step Step) {
 	if !ok {
 		return
 	}
+	actorName := RenderParams(v.def, step.Run)
+	seen := make(map[string]bool)
 	for _, key := range sortedKeys(step.On) {
-		v.checkRunMatch(id, key, actor.Outputs)
+		v.checkRunMatch(id, key, actorName, actor.Outputs, seen)
 	}
 	v.checkRunCoverage(id, step, actor.Outputs)
 }
 
 // checkRunMatch validates one on key against the actor's declarations.
-func (v *validator) checkRunMatch(id, key string, declared Outputs) {
+func (v *validator) checkRunMatch(id, key, actorName string, declared Outputs, seen map[string]bool) {
 	switch {
 	case key == "else", key == "done":
 		return
@@ -49,23 +51,25 @@ func (v *validator) checkRunMatch(id, key string, declared Outputs) {
 		}
 	case strings.HasSuffix(key, ">0"):
 		name := strings.TrimSuffix(key, ">0")
-		if out, ok := declared[name]; !ok || out.Kind != OutputCount {
+		if out, ok := declared[name]; !ok {
+			v.addOutcomeHint(id, actorName, name, "", true, seen)
+		} else if out.Kind != OutputCount {
 			v.add(id, RuleMatch, "match %q names %q, which is not a count", key, name)
 		}
 	case strings.Contains(key, "="):
 		name, value := cut(key, "=")
-		v.checkOutcomeMatch(id, key, name, value, declared)
+		v.checkOutcomeMatch(id, key, name, value, actorName, declared, seen)
 	default:
 		v.checkBareMatch(id, key, declared)
 	}
 }
 
 // checkOutcomeMatch validates a key=value match against a declared outcome.
-func (v *validator) checkOutcomeMatch(id, key, name, value string, declared Outputs) {
+func (v *validator) checkOutcomeMatch(id, key, name, value, actorName string, declared Outputs, seen map[string]bool) {
 	out, ok := declared[name]
 	switch {
 	case !ok:
-		v.add(id, RuleMatch, "match %q names undeclared outcome %q", key, name)
+		v.addOutcomeHint(id, actorName, name, value, false, seen)
 	case out.Kind == OutputArtifact:
 		v.add(id, RuleMatch, "match %q branches on artifact %q", key, name)
 	case out.Kind == OutputOneOf && !containsStr(out.Values, value):
@@ -73,6 +77,21 @@ func (v *validator) checkOutcomeMatch(id, key, name, value string, declared Outp
 	case out.Kind == OutputCount && value != "0":
 		v.add(id, RuleMatch, "count match %q is only =0 or >0", key)
 	}
+}
+
+func (v *validator) addOutcomeHint(id, actorName, name, value string, count bool, seen map[string]bool) {
+	if seen[name] {
+		return
+	}
+	seen[name] = true
+	if suggested, ok := SuggestOutputs(name, value, count); ok {
+		data, err := suggested.MarshalJSON()
+		if err == nil {
+			v.add(id, RuleMatch, "actor %q declares no outcome %q; declare it with: relevo config set actors.%s.outputs '%s'", actorName, name, actorName, string(data))
+			return
+		}
+	}
+	v.add(id, RuleMatch, "actor %q declares no outcome %q; declare it in actors.%s.outputs", actorName, name, actorName)
 }
 
 // checkBareMatch rejects an outcome key with no value, or an artifact key.
