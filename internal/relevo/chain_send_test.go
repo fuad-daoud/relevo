@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -413,5 +414,76 @@ func TestSendChainRoundRefusedWhenReportPresentWithNoOpenRound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "001-report.md exists") {
 		t.Errorf("err = %q, want it to name 001-report.md", err)
+	}
+}
+
+// TestChainReadDir pins the one place the chain-membership decision is made
+// for the claude chain-input read grant: a member gets the absolute chain
+// directory, everyone else gets "" so PrintArgs renders nothing.
+func TestChainReadDir(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	member := store.Binding{Name: "shop", CWD: t.TempDir(), Round: 1, State: store.StateActive}
+	if err := rt.Store.Save(member); err != nil {
+		t.Fatalf("Save(member): %v", err)
+	}
+	row := db.ChainRow{
+		ID: db.NewID(), Name: "shop", Status: string(chain.StatusHalted),
+		Phase: "build", Step: "building", Plan: 1, Plans: 1, Builder: "shop",
+		CreatedAt: baseTime, UpdatedAt: baseTime,
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.CreateChain(row, []store.Binding{member})
+	}); err != nil {
+		t.Fatalf("CreateChain: %v", err)
+	}
+
+	want := rt.Store.ChainDir("shop")
+
+	// Outside the lock: the store path.
+	if got := chainReadDir(rt, nil, "shop"); got != want {
+		t.Errorf("chainReadDir(rt, nil, member) = %q, want %q", got, want)
+	}
+	// Inside the lock: the tx path must agree with the store path.
+	var gotTx string
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		gotTx = chainReadDir(rt, tx, "shop")
+		return nil
+	}); err != nil {
+		t.Fatalf("WithLock: %v", err)
+	}
+	if gotTx != want {
+		t.Errorf("chainReadDir(rt, tx, member) = %q, want %q", gotTx, want)
+	}
+	// A non-member is "" on both paths, and "" is what PrintArgs drops.
+	if got := chainReadDir(rt, nil, "not-a-member"); got != "" {
+		t.Errorf("chainReadDir(rt, nil, non-member) = %q, want empty", got)
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		if got := chainReadDir(rt, tx, "not-a-member"); got != "" {
+			t.Errorf("chainReadDir(rt, tx, non-member) = %q, want empty", got)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("WithLock: %v", err)
+	}
+	// No store at all is "", not a panic.
+	if got := chainReadDir(Runtime{}, nil, "shop"); got != "" {
+		t.Errorf("chainReadDir with no store = %q, want empty", got)
+	}
+}
+
+// TestChainReadDirNoChains covers the store that holds no chain at all: the
+// membership lookup finds nothing and the grant is not rendered.
+func TestChainReadDirNoChains(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	if err := rt.Store.Save(store.Binding{Name: "solo", CWD: t.TempDir(), Round: 1, State: store.StateActive}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if got := chainReadDir(rt, nil, "solo"); got != "" {
+		t.Errorf("chainReadDir with no chains = %q, want empty", got)
 	}
 }

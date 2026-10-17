@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -2118,5 +2120,135 @@ func TestSendReplacesAnExistingPlanFile(t *testing.T) {
 	}
 	if !fi.Mode().IsRegular() {
 		t.Errorf("plan path mode = %v, want a regular file", fi.Mode())
+	}
+}
+
+// TestSendPreflightClaudeArgvChainReadGrant pins the argv a claude chain
+// member gets: one more --allowedTools rule covering the chain's staged
+// inputs. A non-member gets nothing, yolo gets nothing, and a codex member's
+// argv is byte-identical to a non-member's, because the grant is claude's
+// permission syntax only.
+func TestSendPreflightClaudeArgvChainReadGrant(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	rt.Runner = newFakeRunner()
+
+	for _, name := range []string{"member", "outsider"} {
+		if _, err := Bind(context.Background(), rt, BindOptions{
+			Name: name, Candidate: testClaudeRef, Tier: "edit", MasterMindID: testMasterMindName, CWD: t.TempDir(),
+		}); err != nil {
+			t.Fatalf("Bind(%s): %v", name, err)
+		}
+	}
+	// A halted chain hands its member back, so the dry run is not refused.
+	row := db.ChainRow{
+		ID: db.NewID(), Name: "ch-1", Status: string(chain.StatusHalted),
+		Phase: "build", Step: "building", Plan: 1, Plans: 1, Builder: "member",
+		CreatedAt: baseTime, UpdatedAt: baseTime,
+	}
+	mb, err := rt.Store.Load("member")
+	if err != nil {
+		t.Fatalf("Load(member): %v", err)
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.CreateChain(row, []store.Binding{mb})
+	}); err != nil {
+		t.Fatalf("CreateChain: %v", err)
+	}
+
+	wantRule := "--allowedTools=Read(/" + rt.Store.ChainDir("ch-1") + "/**)"
+	hasRule := func(argv []string, rule string) bool {
+		for _, a := range argv {
+			if a == rule {
+				return true
+			}
+		}
+		return false
+	}
+
+	planFile := writePlan(t, "# test plan")
+	pfMember, err := sendPreflight(context.Background(), rt, "member", planFile, SendOptions{})
+	if err != nil {
+		t.Fatalf("sendPreflight member: %v", err)
+	}
+	if !hasRule(pfMember.argv, wantRule) {
+		t.Errorf("chain member argv want %q, got %v", wantRule, pfMember.argv)
+	}
+	// The prompt-file rule from #1257 must survive alongside it.
+	promptRule := "--allowedTools=Read(/" + rt.Store.PromptPath("member", mb.Round) + ")"
+	if !hasRule(pfMember.argv, promptRule) {
+		t.Errorf("chain member argv must keep %q, got %v", promptRule, pfMember.argv)
+	}
+
+	pfOutsider, err := sendPreflight(context.Background(), rt, "outsider", planFile, SendOptions{})
+	if err != nil {
+		t.Fatalf("sendPreflight outsider: %v", err)
+	}
+	if hasRule(pfOutsider.argv, wantRule) {
+		t.Errorf("non-chain binding argv must not contain %q: %v", wantRule, pfOutsider.argv)
+	}
+
+	pfYolo, err := sendPreflight(context.Background(), rt, "member", planFile, SendOptions{Tier: "yolo", AllowYolo: true})
+	if err != nil {
+		t.Fatalf("sendPreflight member yolo: %v", err)
+	}
+	for _, a := range pfYolo.argv {
+		if strings.HasPrefix(a, "--allowedTools=") {
+			t.Errorf("chain member at yolo argv must not contain %q: %v", a, pfYolo.argv)
+		}
+	}
+}
+
+// TestSendPreflightCodexMemberArgvUnchanged proves the grant is claude-only: a
+// codex candidate that is a chain member renders exactly the argv it renders
+// when it is in no chain.
+func TestSendPreflightCodexMemberArgvUnchanged(t *testing.T) {
+	t.Parallel()
+
+	const codexJSON = `[{"harness":"codex","provider":"test","model":"m","roles":["builder"]}]`
+	rt := newRuntime(t)
+	rt.Runner = newFakeRunner()
+	rt.Candidates = candidateSet(t, codexJSON)
+
+	for _, name := range []string{"cx-member", "cx-outsider"} {
+		if _, err := Bind(context.Background(), rt, BindOptions{
+			Name: name, Candidate: "codex/test/m", Tier: "edit", MasterMindID: testMasterMindName, CWD: t.TempDir(),
+		}); err != nil {
+			t.Fatalf("Bind(%s): %v", name, err)
+		}
+	}
+	row := db.ChainRow{
+		ID: db.NewID(), Name: "cx-ch", Status: string(chain.StatusHalted),
+		Phase: "build", Step: "building", Plan: 1, Plans: 1, Builder: "cx-member",
+		CreatedAt: baseTime, UpdatedAt: baseTime,
+	}
+	mb, err := rt.Store.Load("cx-member")
+	if err != nil {
+		t.Fatalf("Load(cx-member): %v", err)
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.CreateChain(row, []store.Binding{mb})
+	}); err != nil {
+		t.Fatalf("CreateChain: %v", err)
+	}
+
+	planFile := writePlan(t, "# test plan")
+	pfMember, err := sendPreflight(context.Background(), rt, "cx-member", planFile, SendOptions{})
+	if err != nil {
+		t.Fatalf("sendPreflight cx-member: %v", err)
+	}
+	pfOutsider, err := sendPreflight(context.Background(), rt, "cx-outsider", planFile, SendOptions{})
+	if err != nil {
+		t.Fatalf("sendPreflight cx-outsider: %v", err)
+	}
+	for _, a := range pfMember.argv {
+		if strings.HasPrefix(a, "--allowedTools=") || strings.Contains(a, ".chains") {
+			t.Errorf("codex member argv must carry no claude grant, got %q in %v", a, pfMember.argv)
+		}
+	}
+	if len(pfMember.argv) != len(pfOutsider.argv) {
+		t.Errorf("codex member argv length %d, outsider %d: the grant must not change codex",
+			len(pfMember.argv), len(pfOutsider.argv))
 	}
 }

@@ -188,3 +188,21 @@ func chainMemberBlock(rt Runtime, tx *store.Tx, b store.Binding) (string, bool) 
 	}
 	return strings.Join(lines, "\n"), true
 }
+
+// chainReadDir returns the absolute path to chain's directory in the store
+// when name is a member of a chain, or "" when it is not.
+func chainReadDir(rt Runtime, tx *store.Tx, name string) string {
+	if rt.Store == nil {
+		return ""
+	}
+	if tx != nil {
+		if c, err := tx.ChainByMember(name); err == nil {
+			return rt.Store.ChainDir(c.Name)
+		}
+		return ""
+	}
+	if c, err := rt.Store.ChainByMember(name); err == nil {
+		return rt.Store.ChainDir(c.Name)
+	}
+	return ""
+}

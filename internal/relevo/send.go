@@ -440,7 +440,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		return preflight{}, err
 	}
 	pf.prompt = prompt
-	argv, err := spawn.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, roundTree(rt, b), rt.Store.OutDir(b.Name), promptPath)
+	argv, err := spawn.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, roundTree(rt, b), rt.Store.OutDir(b.Name), promptPath, chainReadDir(rt, nil, name))
 	if err != nil {
 		return preflight{}, err
 	}
