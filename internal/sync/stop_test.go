@@ -146,6 +146,21 @@ func TestRunnerStopWithNoAttemptIsANoOp(t *testing.T) {
 // with its next call.
 func TestWithinStopsTheStepAtItsBound(t *testing.T) {
 	t.Parallel()
+	// On a loaded runner the bound can fire before the step's goroutine makes
+	// its first call; that attempt pins nothing about the call in flight, so the
+	// scenario is run again until the first call wins.
+	for range 20 {
+		if withinBoundsACallInFlight(t) {
+			return
+		}
+	}
+	t.Fatal("the bound fired before the step's first call on every attempt")
+}
+
+// withinBoundsACallInFlight runs one bounded step and reports whether its first
+// call reached the worker before the bound.
+func withinBoundsACallInFlight(t *testing.T) bool {
+	t.Helper()
 	log := newRestartLog("m1")
 	stop := NewStopTransport(log)
 	done := make(chan error, 1)
@@ -161,8 +176,16 @@ func TestWithinStopsTheStepAtItsBound(t *testing.T) {
 
 	select {
 	case <-log.entered:
+	case err := <-done:
+		if !errors.Is(err, errStepTimedOut) {
+			t.Fatalf("within = %v before any call, want the step reported as timed out", err)
+		}
+		if got := log.calls.Load(); got != 0 {
+			t.Fatalf("%d calls reached the worker after the bound, want none", got)
+		}
+		return false
 	case <-time.After(10 * time.Second):
-		t.Fatal("the step never reached its first call")
+		t.Fatal("the step neither reached its first call nor ended")
 	}
 	// Past the bound, so the stop has landed while the first call still waits.
 	time.Sleep(300 * time.Millisecond)
@@ -179,4 +202,5 @@ func TestWithinStopsTheStepAtItsBound(t *testing.T) {
 	if got := log.calls.Load(); got != 1 {
 		t.Errorf("%d calls reached the worker, want only the one in flight at the bound", got)
 	}
+	return true
 }
