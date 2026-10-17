@@ -87,6 +87,206 @@ for total in 1 2 3 4; do
 	fi
 done
 
+# Determinism: two dry runs of the same shard are byte-identical.
+dry_run 0 3
+cp "$work/out" "$work/det0-a.out"
+dry_run 0 3
+cp "$work/out" "$work/det0-b.out"
+if ! cmp -s "$work/det0-a.out" "$work/det0-b.out"; then
+	echo "FAIL: two dry runs of shard 0/3 are not identical"
+	diff -u "$work/det0-a.out" "$work/det0-b.out" || :
+	fail=1
+fi
+
+# Balance: with the shipped weights at TOTAL=3, compute each shard's load from
+# its pkg lines (weights file, default 5) plus the split packages' weight/3, in
+# the test with its own awk; assert max load minus min load is at most the
+# largest single whole-package weight (the greedy bound).
+for idx in 0 1 2; do
+	dry_run "$idx" 3
+	if [ "$status" -ne 0 ]; then
+		echo "FAIL: balance check dry_run $idx 3 exits $status, want 0"
+		fail=1
+	fi
+	cp "$work/out" "$work/shard-$idx.out"
+done
+
+awk -v mod="$(cd "$repo" && go list -m)" \
+    -v weights_file="$here/test-shard.weights" \
+    -v s0="$work/shard-0.out" -v s1="$work/shard-1.out" -v s2="$work/shard-2.out" '
+	function strip_mod(p) {
+		if (mod != "" && substr(p, 1, length(mod) + 1) == (mod "/")) {
+			return substr(p, length(mod) + 2)
+		}
+		if (p == mod) return "."
+		return p
+	}
+	BEGIN {
+		while ((getline line < weights_file) > 0) {
+			if (line ~ /^#/ || line ~ /^[ \t]*$/) continue
+			split(line, parts)
+			if (parts[1] != "") weights[parts[1]] = parts[2] + 0
+		}
+		close(weights_file)
+
+		# The default split package.
+		split_list[1] = "internal/relevo"
+		split_cost = 0
+		for (i = 1; i <= 1; i++) {
+			sp = split_list[i]
+			w = (sp in weights) ? weights[sp] : 5
+			split_cost += w / 3.0
+		}
+
+		shards[0] = s0
+		shards[1] = s1
+		shards[2] = s2
+		max_single_weight = 0
+
+		for (s = 0; s < 3; s++) {
+			load[s] = split_cost
+			f = shards[s]
+			while ((getline line < f) > 0) {
+				if (line ~ /^pkg /) {
+					pkg = substr(line, 5)
+					rel = strip_mod(pkg)
+					w = (rel in weights) ? weights[rel] : 5
+					load[s] += w
+					if (w > max_single_weight) max_single_weight = w
+				}
+			}
+			close(f)
+		}
+
+		max_load = load[0]
+		min_load = load[0]
+		for (s = 1; s < 3; s++) {
+			if (load[s] > max_load) max_load = load[s]
+			if (load[s] < min_load) min_load = load[s]
+		}
+		diff = max_load - min_load
+		if (diff > max_single_weight) {
+			printf "FAIL: balance check: diff=%.2f > max_single_weight=%d (max=%.2f, min=%.2f)\n",
+				diff, max_single_weight, max_load, min_load > "/dev/stderr"
+			exit 1
+		}
+	}
+' </dev/null || {
+	echo "FAIL: balance check exceeded the greedy bound"
+	fail=1
+}
+
+# Longest-first: with a fixture weights file via SHARD_WEIGHTS giving the two
+# heaviest real whole packages different shards.
+cat > "$work/longest.weights" <<'EOF'
+internal/sync 100
+internal/serve 80
+EOF
+sync_shard=
+serve_shard=
+for idx in 0 1 2; do
+	status=0
+	(cd "$repo" && SHARD_WEIGHTS="$work/longest.weights" \
+		sh "$here/test-shard.sh" --dry-run "$idx" 3) > "$work/out" 2>&1 || status=$?
+	if [ "$status" -ne 0 ]; then
+		echo "FAIL: longest-first dry-run $idx 3 exits $status, want 0"
+		fail=1
+	fi
+	if grep -q "pkg .*/internal/sync$" "$work/out"; then
+		sync_shard=$idx
+	fi
+	if grep -q "pkg .*/internal/serve$" "$work/out"; then
+		serve_shard=$idx
+	fi
+done
+if [ -z "$sync_shard" ] || [ -z "$serve_shard" ]; then
+	echo "FAIL: longest-first: sync_shard=$sync_shard, serve_shard=$serve_shard, expected both assigned"
+	fail=1
+elif [ "$sync_shard" -eq "$serve_shard" ]; then
+	echo "FAIL: longest-first: internal/sync and internal/serve assigned to same shard $sync_shard"
+	fail=1
+fi
+
+# Unknown packages: SHARD_WEIGHTS pointing at an empty file puts every package
+# at the default weight and the three shards' package counts differ by at most 1.
+: > "$work/empty.weights"
+count0=0
+count1=0
+count2=0
+for idx in 0 1 2; do
+	status=0
+	(cd "$repo" && SHARD_WEIGHTS="$work/empty.weights" \
+		sh "$here/test-shard.sh" --dry-run "$idx" 3) > "$work/out" 2>&1 || status=$?
+	if [ "$status" -ne 0 ]; then
+		echo "FAIL: empty weights dry-run $idx 3 exits $status, want 0"
+		fail=1
+	fi
+	cnt=$(grep -c '^pkg ' "$work/out" || :)
+	case $idx in
+		0) count0=$cnt ;;
+		1) count1=$cnt ;;
+		2) count2=$cnt ;;
+	esac
+done
+max_cnt=$count0
+[ "$count1" -gt "$max_cnt" ] && max_cnt=$count1
+[ "$count2" -gt "$max_cnt" ] && max_cnt=$count2
+min_cnt=$count0
+[ "$count1" -lt "$min_cnt" ] && min_cnt=$count1
+[ "$count2" -lt "$min_cnt" ] && min_cnt=$count2
+diff_cnt=$((max_cnt - min_cnt))
+if [ "$diff_cnt" -gt 1 ]; then
+	echo "FAIL: package counts with empty weights differ by $diff_cnt ($count0, $count1, $count2), want <= 1"
+	fail=1
+fi
+
+# Weights file hygiene: every non-comment line is path integer, keys unique,
+# and every key resolves to a package in go list ./...
+(cd "$repo" && go list ./...) > "$work/all-pkgs.txt"
+awk -v mod="$(cd "$repo" && go list -m)" -v pkgs_file="$work/all-pkgs.txt" '
+	function strip_mod(p) {
+		if (mod != "" && substr(p, 1, length(mod) + 1) == (mod "/")) {
+			return substr(p, length(mod) + 2)
+		}
+		if (p == mod) return "."
+		return p
+	}
+	BEGIN {
+		while ((getline line < pkgs_file) > 0) {
+			rel = strip_mod(line)
+			real_pkgs[rel] = 1
+		}
+		close(pkgs_file)
+		while ((getline line < "scripts/test-shard.weights") > 0) {
+			if (line ~ /^#/ || line ~ /^[ \t]*$/) continue
+			n = split(line, parts)
+			if (n != 2) {
+				printf "FAIL: weights hygiene: line %q has %d fields, want 2\n", line, n > "/dev/stderr"
+				exit 1
+			}
+			path = parts[1]
+			sec = parts[2]
+			if (sec !~ /^[0-9]+$/) {
+				printf "FAIL: weights hygiene: weight %q for %q is not integer\n", sec, path > "/dev/stderr"
+				exit 1
+			}
+			if (path in seen) {
+				printf "FAIL: weights hygiene: duplicate key %q\n", path > "/dev/stderr"
+				exit 1
+			}
+			seen[path] = 1
+			if (!(path in real_pkgs)) {
+				printf "FAIL: weights hygiene: key %q does not exist in go list ./...\n", path > "/dev/stderr"
+				exit 1
+			}
+		}
+		close("scripts/test-shard.weights")
+	}
+' </dev/null || {
+	echo "FAIL: weights file hygiene check failed"
+	fail=1
+}
+
 # BSD awk rejects a newline inside a -v assignment, where GNU awk accepts it, so
 # a shard script that hands awk its newline-separated list through -v passes on
 # Linux and fails on macOS. No BSD awk exists here, so the shim below stands in
@@ -150,12 +350,13 @@ chmod +x "$work/bin/go"
 record_shard() {
 	status=0
 	(cd "$repo" && PATH="$work/bin:$PATH" SHIM_LOG="$1" SHARD_COVER="$2" \
-		sh "$here/test-shard.sh" 0 3 "$work/shard") > "$work/out" 2>&1 || status=$?
+		SPLIT_PKGS="${3:-}" sh "$here/test-shard.sh" 0 3 "$work/shard") > "$work/out" 2>&1 || status=$?
 }
 
 # Default: coverage is on, so every `go test` carries -cover and race, and at
-# least one split job carries its profile.
-record_shard "$work/argv-cover" ""
+# least one split job carries its profile. Two split packages share the last
+# path element relevo, which is what the profile-name check below needs.
+record_shard "$work/argv-cover" "" "./internal/relevo ./cmd/relevo"
 if [ "$status" -ne 0 ]; then
 	echo "FAIL: a shard with coverage on exits $status, want 0"
 	fail=1
@@ -178,6 +379,37 @@ else
 		echo "FAIL: with coverage on, no go test carries -coverprofile="
 		fail=1
 	fi
+	# Split packages sharing a last path element still get distinct profiles.
+	awk '
+		/-coverprofile=/ {
+			for (i = 1; i <= NF; i++) {
+				if ($i ~ /^-coverprofile=/) {
+					prof = substr($i, 15)
+					sub(/.*\//, "", prof)
+					profs[prof]++
+				}
+			}
+		}
+		END {
+			for (p in profs) {
+				if (profs[p] > 1) {
+					printf "FAIL: duplicate cover profile: %s\n", p > "/dev/stderr"
+					exit 1
+				}
+			}
+			if (!("split-cmd-relevo.out" in profs)) {
+				printf "FAIL: missing split-cmd-relevo.out\n" > "/dev/stderr"
+				exit 1
+			}
+			if (!("split-internal-relevo.out" in profs)) {
+				printf "FAIL: missing split-internal-relevo.out\n" > "/dev/stderr"
+				exit 1
+			}
+		}
+	' "$work/argv-cover" || {
+		echo "FAIL: split cover profiles check failed"
+		fail=1
+	}
 fi
 
 # SHARD_COVER=0 drops both coverage flags and keeps race on every job.
@@ -266,10 +498,17 @@ if [ "$bad" -eq 0 ]; then
 	fi
 fi
 
-# Bad usage: no arguments, INDEX == TOTAL, and a negative INDEX.
+# Bad usage: no arguments, INDEX == TOTAL, negative INDEX, nonexistent SHARD_WEIGHTS.
 check_usage
 check_usage 3 3
 check_usage -1 2
+
+status=0
+(cd "$repo" && SHARD_WEIGHTS="$work/nonexistent" sh "$here/test-shard.sh" 0 3) > "$work/out" 2>&1 || status=$?
+if [ "$status" -ne 2 ]; then
+	echo "FAIL: nonexistent SHARD_WEIGHTS exits $status, want 2"
+	fail=1
+fi
 
 [ "$fail" -eq 0 ] && echo "test-shard: ok"
 exit "$fail"

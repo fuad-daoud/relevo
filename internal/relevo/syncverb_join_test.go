@@ -386,3 +386,64 @@ func TestAPlainEnableWithNoPassphraseStillJoins(t *testing.T) {
 		t.Errorf("sync is on = %v (%v), want the machine joined", on, err)
 	}
 }
+
+// A fresh machine holds no bucket, and its worker is opened from the stored
+// set, so a plain enable with a passphrase must store the bucket it was handed
+// before it opens the worker the passphrase is checked against.
+func TestAPlainEnableWithAPassphraseOnAFreshMachineOpensWithItsFlags(t *testing.T) {
+	t.Parallel()
+	runner, local, log := joinMachine(t, joinPassphrase)
+	runner.Open = func(context.Context) (synclog.LogTransport, error) {
+		stored, err := relevosync.ReadR2(local)
+		if err != nil {
+			return nil, err
+		}
+		if !stored.Complete() {
+			return nil, relevosync.ErrNoR2
+		}
+		return log, nil
+	}
+	verb := &wire.SyncVerb{
+		Verb:          wire.SyncVerbEnable,
+		RemoteURL:     joinRemote,
+		PassphraseLen: len(joinPassphrase),
+		R2Endpoint:    verbFixtureR2.Endpoint,
+		R2Bucket:      verbFixtureR2.Bucket,
+		R2KeyID:       verbFixtureR2.KeyID,
+		R2SecretLen:   len(verbFixtureR2.Secret),
+	}
+	res := runner.Run(context.Background(), verb, []byte(joinToken+joinPassphrase+verbFixtureR2.Secret))
+	if !res.OK {
+		t.Fatalf("a plain enable with a passphrase on a fresh machine refused: (%s) %s", res.Code, res.Message)
+	}
+	if on, err := relevosync.Enabled(local); err != nil || !on {
+		t.Errorf("sync is on = %v (%v), want the machine enabled", on, err)
+	}
+}
+
+// A refused passphrase puts the staged bucket back: a fresh machine is left
+// holding no credentials, exactly as it was.
+func TestAPlainEnableWithTheWrongPassphraseLeavesAFreshMachineWithNoBucket(t *testing.T) {
+	t.Parallel()
+	runner, local, _ := joinMachine(t, joinPassphrase)
+	wrong := "not the passphrase"
+	verb := &wire.SyncVerb{
+		Verb:          wire.SyncVerbEnable,
+		RemoteURL:     joinRemote,
+		PassphraseLen: len(wrong),
+		R2Endpoint:    verbFixtureR2.Endpoint,
+		R2Bucket:      verbFixtureR2.Bucket,
+		R2KeyID:       verbFixtureR2.KeyID,
+		R2SecretLen:   len(verbFixtureR2.Secret),
+	}
+	if res := runner.Run(context.Background(), verb, []byte(joinToken+wrong+verbFixtureR2.Secret)); res.OK {
+		t.Fatal("a plain enable with the wrong passphrase was accepted")
+	}
+	stored, err := relevosync.ReadR2(local)
+	if err != nil {
+		t.Fatalf("ReadR2: %v", err)
+	}
+	if stored != (relevosync.R2Secrets{}) {
+		t.Errorf("a refused enable left a bucket behind: %+v", stored.Missing())
+	}
+}
