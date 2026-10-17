@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 var handoverKey = []byte("0123456789abcdef0123456789abcdef")
@@ -616,3 +618,148 @@ func TestHandoverSchemaAboveKnownHeldSnapshot(t *testing.T) {
 		t.Errorf("import mark = %d (found=%v, err=%v), want 0", mark, found, err)
 	}
 }
+
+// TestHandoverRefusedWithoutVerifiedMAC pins that a hand-over with an unverified MAC
+// is refused and stalls the origin.
+func TestHandoverRefusedWithoutVerifiedMAC(t *testing.T) {
+	t.Parallel()
+	peer, _ := peerFile(t, "m2")
+	know := knownVersion(t, peer)
+	log := NewMemTransport("m1")
+
+	b1Handover := map[string]any{
+		"id": "b1", "owner": "o1", "name": "b1", "state": "open", "round": 1,
+		"cwd": "/x", "record_json": "{}", "created_at": "t", "updated_at": "t",
+		"origin": "m1", "writer": "m2",
+	}
+	entry := makeSignedEntry(t, handoverKey, "m1", "binding_record", `["b1"]`, OpUpsert, know, b1Handover, nil)
+	appendSignedBatch(t, log, handoverKey, entry)
+	log.log.mu.Lock()
+	log.log.entries[0].MAC = []byte("corrupted-mac-value")
+	log.log.mu.Unlock()
+
+	imp := NewImporter(peer, log.OnLog("m2"))
+	imp.SetKey(handoverKey)
+	res, err := imp.Import()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(res.Stalled) == 0 {
+		t.Fatal("expected stall on unverified MAC for hand-over, got none")
+	}
+	if res.Applied != 0 {
+		t.Errorf("Applied = %d, want 0", res.Applied)
+	}
+}
+
+// TestForgedCreatorClaimRefused pins that a root upsert whose body origin differs
+// from the entry origin without carrying After is refused as a forged creator claim.
+func TestForgedCreatorClaimRefused(t *testing.T) {
+	t.Parallel()
+	peer, _ := peerFile(t, "m2")
+	know := knownVersion(t, peer)
+	log := NewMemTransport("m1")
+
+	// Absent root: entry origin is m1, but body origin is "forged-creator", no After.
+	b1Forged := map[string]any{
+		"id": "b1", "owner": "o1", "name": "b1", "state": "open", "round": 1,
+		"cwd": "/x", "record_json": "{}", "created_at": "t", "updated_at": "t",
+		"origin": "forged-creator", "writer": "m1",
+	}
+	entry := makeSignedEntry(t, handoverKey, "m1", "binding_record", `["b1"]`, OpUpsert, know, b1Forged, nil)
+	appendSignedBatch(t, log, handoverKey, entry)
+
+	imp := NewImporter(peer, log.OnLog("m2"))
+	imp.SetKey(handoverKey)
+	res, err := imp.Import()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(res.Dropped) != 1 {
+		t.Fatalf("Dropped = %v, want 1 dropped entry for forged creator claim", res.Dropped)
+	}
+	if res.Applied != 0 {
+		t.Errorf("Applied = %d, want 0", res.Applied)
+	}
+	if rows := sharedRows(t, peer); strings.Contains(rows, `binding_record ["b1"]`) {
+		t.Fatalf("peer holds forged row: %s", rows)
+	}
+}
+
+func targetOutboxCount(t *testing.T, d *db.DB) int {
+	t.Helper()
+	raw, err := db.OpenRawReadOnly(d.Path())
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() { _ = raw.Close() }()
+	var count int
+	if err := raw.QueryRow(`SELECT count(*) FROM sync_outbox WHERE origin = ? OR origin = '' OR origin IS NULL`, d.Origin()).Scan(&count); err != nil {
+		t.Fatalf("query outbox: %v", err)
+	}
+	return count
+}
+
+// TestHandoverLandingOnTargetQueuesNothing pins C2: a hand-over landing on the target
+// (both first sight and existing row) queues nothing in the target's outbox.
+func TestHandoverLandingOnTargetQueuesNothing(t *testing.T) {
+	t.Parallel()
+	peer, _ := peerFile(t, "m2")
+	know := knownVersion(t, peer)
+	log := NewMemTransport("m1")
+
+	// First sight: peer has no row for b1. Hand-over arrives from m1.
+	b1Handover := map[string]any{
+		"id": "b1", "owner": "o1", "name": "b1", "state": "open", "round": 1,
+		"cwd": "/x", "record_json": "{}", "created_at": "t", "updated_at": "t",
+		"origin": "m1", "writer": "m2",
+	}
+	e1 := makeSignedEntry(t, handoverKey, "m1", "binding_record", `["b1"]`, OpUpsert, know, b1Handover, nil)
+	appendSignedBatch(t, log, handoverKey, e1)
+
+	imp := NewImporter(peer, log.OnLog("m2"))
+	imp.SetKey(handoverKey)
+	res, err := imp.Import()
+	if err != nil {
+		t.Fatalf("first sight import: %v", err)
+	}
+	if res.Applied != 1 {
+		t.Fatalf("first sight applied = %d, want 1", res.Applied)
+	}
+	if count := targetOutboxCount(t, peer); count != 0 {
+		t.Fatalf("target outbox count after first sight = %d, want 0", count)
+	}
+
+	// Existing row: peer has b2 originally written by m1, now with writer = 'm2'.
+	peer2, path2 := peerFile(t, "m2")
+	know2 := knownVersion(t, peer2)
+	seed(t, path2,
+		`INSERT INTO binding_record (id, origin, writer, owner, name, state, round, cwd, record_json, created_at, updated_at)
+		 VALUES ('b2', 'm1', 'm2', 'o1', 'b2', 'open', 1, '/x', '{}', 't', 't')`,
+		`INSERT INTO sync_binding_term (root_id, writer, upto) VALUES ('b2', 'm1', 10)`,
+		`DELETE FROM sync_outbox`,
+	)
+
+	log2 := NewMemTransport("m1")
+	b2Update := map[string]any{
+		"id": "b2", "owner": "o1", "name": "b2", "state": "active", "round": 1,
+		"cwd": "/x", "record_json": "{}", "created_at": "t", "updated_at": "t2",
+		"origin": "m1", "writer": "m2",
+	}
+	e2 := makeSignedEntry(t, handoverKey, "m1", "binding_record", `["b2"]`, OpUpsert, know2, b2Update, nil)
+	appendSignedBatch(t, log2, handoverKey, e2)
+
+	imp2 := NewImporter(peer2, log2.OnLog("m2"))
+	imp2.SetKey(handoverKey)
+	res2, err := imp2.Import()
+	if err != nil {
+		t.Fatalf("existing row import: %v", err)
+	}
+	if res2.Applied != 1 {
+		t.Fatalf("existing row applied = %d, want 1", res2.Applied)
+	}
+	if count := targetOutboxCount(t, peer2); count != 0 {
+		t.Fatalf("target outbox count after existing row = %d, want 0", count)
+	}
+}
+
