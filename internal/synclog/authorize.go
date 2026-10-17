@@ -140,7 +140,7 @@ func resolveRootAndWriter(tx *db.Tx, e Entry, values map[string]any) (rootID str
 	return rootID, writer, true, nil
 }
 
-// authorize evaluates whether entry e is valid to write, per rules 1-5 in §B.
+// authorize evaluates whether entry e is valid to write under ownership and term rules.
 func authorize(tx *db.Tx, e Entry, values map[string]any) (decision, error) {
 	if !isBindingFamily(e.Table) {
 		owner, found, err := tx.ResolveOwner(e.Table, e.PK)
