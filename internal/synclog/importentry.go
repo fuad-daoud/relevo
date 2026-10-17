@@ -16,9 +16,9 @@ import (
 // it leaves the transaction open and is set aside in deferred with its error
 // recorded in defErrs.
 // Any other error halts the transaction.
-func sweepEntries(tx *db.Tx, entries []Entry, now time.Time) (applied int, deferred []Entry, defErrs []error, refusal *entryRefusal, err error) {
+func sweepEntries(tx *db.Tx, entries []Entry, transport LogTransport, now time.Time) (applied int, deferred []Entry, defErrs []error, refusal *entryRefusal, err error) {
 	for n, e := range entries {
-		handled, aerr := applyEntry(tx, e, now)
+		handled, aerr := applyEntry(tx, e, transport, now)
 		switch {
 		case aerr == nil:
 			if handled {
@@ -40,11 +40,11 @@ func sweepEntries(tx *db.Tx, entries []Entry, now time.Time) (applied int, defer
 // retryPasses retries deferred entries in passes while each pass makes progress.
 // When passes stop (no progress or limit reached), remaining entries and their
 // latest errors are returned to be dropped individually.
-func retryPasses(tx *db.Tx, deferred []Entry, defErrs []error, maxPasses int, now time.Time) (applied int, remaining []Entry, remainingErrs []error, refusal *entryRefusal, err error) {
+func retryPasses(tx *db.Tx, deferred []Entry, defErrs []error, maxPasses int, transport LogTransport, now time.Time) (applied int, remaining []Entry, remainingErrs []error, refusal *entryRefusal, err error) {
 	cur := deferred
 	curErrs := defErrs
 	for pass := 1; pass < maxPasses && len(cur) > 0; pass++ {
-		a, next, nextErrs, ref, aerr := sweepEntries(tx, cur, now)
+		a, next, nextErrs, ref, aerr := sweepEntries(tx, cur, transport, now)
 		if ref != nil {
 			return applied, nil, nil, ref, ref.err
 		}
@@ -75,7 +75,7 @@ func (i *Importer) writeBatch(batch, rows []Entry, docs, priorDrops int, marks m
 	err = i.db.Tx(func(tx *db.Tx) error {
 		applied = 0
 		drops = nil
-		a, deferred, defErrs, ref, aerr := sweepEntries(tx, rows, i.now())
+		a, deferred, defErrs, ref, aerr := sweepEntries(tx, rows, i.transport, i.now())
 		if ref != nil {
 			refusal = ref
 			return ref.err
@@ -86,7 +86,7 @@ func (i *Importer) writeBatch(batch, rows []Entry, docs, priorDrops int, marks m
 		applied += a
 
 		if len(deferred) > 0 {
-			pa, rem, remErrs, pref, perr := retryPasses(tx, deferred, defErrs, orDefault(i.passes, maxSnapshotPasses), i.now())
+			pa, rem, remErrs, pref, perr := retryPasses(tx, deferred, defErrs, orDefault(i.passes, maxSnapshotPasses), i.transport, i.now())
 			if pref != nil {
 				refusal = pref
 				return pref.err
@@ -154,12 +154,12 @@ func indexOfEntry(entries []Entry, target Entry) int {
 }
 
 // applyEntry writes one entry, and reports whether it did its work.
-func applyEntry(tx *db.Tx, e Entry, now time.Time) (bool, error) {
+func applyEntry(tx *db.Tx, e Entry, transport LogTransport, now time.Time) (bool, error) {
 	if IsCtlTable(e.Table) {
 		if e.Table != CtlTakeover {
 			return false, fmt.Errorf("synclog: import %s %s: unknown control entry: %w", e.Table, e.PK, ErrInvalid)
 		}
-		return true, applyTakeover(tx, e, now)
+		return true, applyTakeover(tx, e, transport, now)
 	}
 	if _, ok := SharedTable(e.Table); !ok {
 		return false, fmt.Errorf("synclog: import %s %s: %q is not a shared table: %w",

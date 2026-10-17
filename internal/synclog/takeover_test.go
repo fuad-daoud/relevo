@@ -357,7 +357,7 @@ func TestApplyEntryRefusesAnUnknownControlEntryAndAMalformedTakeover(t *testing.
 	}
 	staleAfter.After = &Ref{Origin: "m1", Seq: 4}
 	for name, e := range map[string]Entry{"unknown ctl table": unknown, "malformed body": bad, "fence the After does not name": staleAfter} {
-		err := d.Tx(func(tx *db.Tx) error { _, err := applyEntry(tx, e, takeoverAt); return err })
+		err := d.Tx(func(tx *db.Tx) error { _, err := applyEntry(tx, e, nil, takeoverAt); return err })
 		if err == nil || !strings.Contains(err.Error(), ErrInvalid.Error()) {
 			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
 		}
@@ -373,7 +373,7 @@ func TestTakeoverWithoutAFenceCarriesNoAfter(t *testing.T) {
 	if err != nil || e.After != nil {
 		t.Fatalf("NewTakeover = (%+v, %v), want no After", e.After, err)
 	}
-	err = d.Tx(func(tx *db.Tx) error { _, err := applyEntry(tx, e, takeoverAt); return err })
+	err = d.Tx(func(tx *db.Tx) error { _, err := applyEntry(tx, e, nil, takeoverAt); return err })
 	if err != nil {
 		t.Fatalf("applyEntry: %v", err)
 	}
@@ -413,3 +413,69 @@ func TestSnapshotHoldsWhileAnEntryWaitsForAnotherOrigin(t *testing.T) {
 		t.Fatalf("import = %+v, want m2 held waiting for m1 at seq 5 and no snapshot applied", res)
 	}
 }
+
+// When a returning writer applies a takeover, its own entries for that binding
+// that it already exported above the fence are recorded as fenced, while entries
+// for another binding are not counted and nothing is deleted locally.
+func TestTakeoverRecordsExportedEntriesAboveFenceAsFenced(t *testing.T) {
+	t.Parallel()
+	m1, _ := peerFile(t, "m1")
+	m2, _ := peerFile(t, "m2")
+	log := NewMemTransport("m1")
+
+	putRecord(t, m1, "rec1", "hw")
+	putRecord(t, m1, "rec2", "other")
+	putFile(t, m1, "rec1", "f1")
+	putFile(t, m1, "rec2", "f2")
+	if _, err := keyedExporter(m1, log.OnLog("m1")).Export(); err != nil {
+		t.Fatalf("m1 export: %v", err)
+	}
+	if _, err := keyedImporter(m2, log.OnLog("m2")).Import(); err != nil {
+		t.Fatalf("m2 import: %v", err)
+	}
+	mark, _, err := m2.ImportMark("m1")
+	if err != nil || mark == 0 {
+		t.Fatalf("m2's mark of m1 = (%d, %v), want non-zero mark", mark, err)
+	}
+
+	// m1 writes changes to both bindings above N and exports them.
+	putFile(t, m1, "rec1", "f-hw-above-n")
+	putFile(t, m1, "rec2", "f-other-above-n")
+	if _, err := keyedExporter(m1, log.OnLog("m1")).Export(); err != nil {
+		t.Fatalf("m1 second export: %v", err)
+	}
+
+	// m2 takes over hw at fence mark N and exports the takeover.
+	takeOver(t, m2, "hw", "m1", mark)
+	if _, err := keyedExporter(m2, log.OnLog("m2")).Export(); err != nil {
+		t.Fatalf("m2 export: %v", err)
+	}
+
+	// m1 applies the takeover.
+	res, err := keyedImporter(m1, log.OnLog("m1")).Import()
+	if err != nil || len(res.Held) != 0 || len(res.Dropped) != 0 {
+		t.Fatalf("m1 import = (%+v, %v), want clean takeover application", res, err)
+	}
+
+	// Verify m1's status reports 1 fenced change for hw, and other is not counted.
+	fenced, err := m1.FencedSummary()
+	if err != nil {
+		t.Fatalf("FencedSummary: %v", err)
+	}
+	if len(fenced) != 1 {
+		t.Fatalf("FencedSummary len = %d, want 1: %+v", len(fenced), fenced)
+	}
+	if fenced[0].Name != "hw" || fenced[0].Count != 1 {
+		t.Errorf("FencedSummary[0] = %+v, want Name 'hw' and Count 1", fenced[0])
+	}
+
+	// Verify nothing was deleted locally.
+	rows := sharedRows(t, m1)
+	if !strings.Contains(rows, `round_file ["rec1","f-hw-above-n"]`) {
+		t.Errorf("local change to hw was deleted: %s", rows)
+	}
+	if !strings.Contains(rows, `round_file ["rec2","f-other-above-n"]`) {
+		t.Errorf("local change to other was deleted: %s", rows)
+	}
+}
+

@@ -287,7 +287,7 @@ func TestApplyEntryRefusesAMalformedEntry(t *testing.T) {
 			entry.Origin = "m1"
 			var handled bool
 			err := peer.Tx(func(tx *db.Tx) error {
-				ok, err := applyEntry(tx, entry, time.Now())
+				ok, err := applyEntry(tx, entry, nil, time.Now())
 				handled = ok
 				return err
 			})
