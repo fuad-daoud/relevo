@@ -390,3 +390,26 @@ func TestTakeoverWithoutAFenceCarriesNoAfter(t *testing.T) {
 		}
 	}
 }
+
+// A compacted log read as a snapshot holds the origin while an entry in it
+// waits for another origin's entry this machine has not applied, and the hold
+// names both origins.
+func TestSnapshotHoldsWhileAnEntryWaitsForAnotherOrigin(t *testing.T) {
+	t.Parallel()
+	peer, _ := peerFile(t, "m3")
+	know := knownVersion(t, peer)
+	log := NewMemTransport("m2")
+	file := map[string]any{"record_id": "b1", "name": "f1", "round": 1, "body": []byte{1}, "bytes": 1, "sha256": "s", "mtime": "t", "sealed_at": "t"}
+	after := &Ref{Origin: "m1", Seq: 5}
+	appendSignedBatch(t, log, handoverKey, makeSignedEntry(t, handoverKey, "m2", "round_file", `["b1","f1"]`, OpUpsert, know, file, after))
+	appendSignedBatch(t, log, handoverKey, makeSignedEntry(t, handoverKey, "m2", "round_file", `["b1","f1"]`, OpUpsert, know, file, after))
+	compactTo(t, log, "m2", 2, 1)
+
+	res, err := keyedImporter(peer, log.OnLog("m3")).Import()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if res.Snapshots != 0 || len(res.Held) != 1 || res.Held[0].Origin != "m2" || !strings.Contains(res.Held[0].Reason, "waiting for m1 at seq 5") {
+		t.Fatalf("import = %+v, want m2 held waiting for m1 at seq 5 and no snapshot applied", res)
+	}
+}
