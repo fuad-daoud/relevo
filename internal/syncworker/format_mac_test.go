@@ -79,14 +79,75 @@ func TestHelloUpgradesFormatTwoToThreeInPlace(t *testing.T) {
 	}
 }
 
-// TestHelloRefusesFormatFour pins that the upgrade path stops where this build's
-// knowledge does. A remote one format ahead defines the log differently, so it
-// is refused with the same reason and class every other foreign remote gets
-// rather than opened as something it is not.
-func TestHelloRefusesFormatFour(t *testing.T) {
+// TestHelloUpgradesFormatThreeToFourInPlace pins the upgrade from format three (with mac)
+// to format four (with after_origin and after_seq). Older entries survive with NULL in
+// those columns.
+func TestHelloUpgradesFormatThreeToFourInPlace(t *testing.T) {
+	path := tempReplica(t)
+	seedFormatThreeRemote(t, path)
+	for seq, pk := range []string{`["a"]`, `["b"]`} {
+		execOn(t, path, "INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at, mac)"+
+			" VALUES ('origin-a', "+strconv.Itoa(seq+1)+", 1, 'board', '"+pk+"', 'upsert', 3,"+
+			" '{\"title\":\"one\"}', '2026-10-08T09:30:00Z', NULL)")
+	}
+
+	driver := &localDriver{path: path}
+	b := backendFor(t, driver, "origin-b")
+
+	if got := metaFormat(t, path); got != strconv.Itoa(logFormatVersion) {
+		t.Errorf("meta format = %q, want %d after the upgrade", got, logFormatVersion)
+	}
+	if !tablesHaveColumn(t, path, "log", "after_origin") {
+		t.Error("the upgrade left the log without an after_origin column")
+	}
+	if !tablesHaveColumn(t, path, "log", "after_seq") {
+		t.Error("the upgrade left the log without an after_seq column")
+	}
+	if driver.pushes != 1 {
+		t.Errorf("the upgrade pushed %d times, want once", driver.pushes)
+	}
+
+	pulled, err := b.Pull(map[string]int{"origin-a": 0})
+	if err != nil {
+		t.Fatalf("pull from the upgraded log: %v", err)
+	}
+	if len(pulled) != 2 {
+		t.Errorf("pulled %d entries, want 2", len(pulled))
+	}
+	for _, e := range pulled {
+		if e.AfterOrigin != "" || e.AfterSeq != 0 {
+			t.Errorf("entry had after (%q, %d), want empty/0", e.AfterOrigin, e.AfterSeq)
+		}
+	}
+	_ = b.Close()
+}
+
+// TestUpgradeToleratesDuplicateColumnConcurrently pins that a concurrent worker's
+// ALTER adding a column is tolerated and not treated as a failure (C6).
+func TestUpgradeToleratesDuplicateColumnConcurrently(t *testing.T) {
+	path := tempReplica(t)
+	seedFormatThreeRemote(t, path)
+	// Simulate a concurrent worker already adding after_origin
+	execOn(t, path, addAfterOriginStatement)
+
+	driver := &localDriver{path: path}
+	b := backendFor(t, driver, "origin-b")
+
+	if got := metaFormat(t, path); got != strconv.Itoa(logFormatVersion) {
+		t.Errorf("meta format = %q, want %d after upgrade", got, logFormatVersion)
+	}
+	if !tablesHaveColumn(t, path, "log", "after_origin") || !tablesHaveColumn(t, path, "log", "after_seq") {
+		t.Error("missing after columns after upgrade")
+	}
+	_ = b.Close()
+}
+
+// TestHelloRefusesFormatFive pins that the upgrade path stops where this build's
+// knowledge does. A remote one format ahead defines the log differently.
+func TestHelloRefusesFormatFive(t *testing.T) {
 	path := tempReplica(t)
 	execOn(t, path, append(append([]string(nil), createStatements...),
-		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '4')")...)
+		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '5')")...)
 
 	b := NewTursoBackend(&localDriver{path: path})
 	resp := startWorker(t, b).ask(helloRequest("h"))

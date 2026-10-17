@@ -22,7 +22,10 @@ import (
 // older version and a worker on this one refuse each other here rather than
 // discovering the difference at the first key_rekey, which would be after one
 // side had already answered from material the other cannot read.
-const ProtocolVersion = 3
+//
+// Version 4 adds AfterOrigin and AfterSeq on Entry, ClaimIdentity, and the
+// ctl:takeover entry kind.
+const ProtocolVersion = 4
 
 // The refusals the worker answers with rather than dying over. A request that
 // breaks one of them has a well-formed frame around it, so the reply can carry
@@ -399,6 +402,10 @@ type Entry struct {
 	// entry written before this machine had a key. It travels as base64, which
 	// is what encoding/json does with a byte slice.
 	MAC []byte `json:"mac,omitempty"`
+	// AfterOrigin and AfterSeq point at the entry in another origin's log that
+	// this entry depends on. They are empty/zero for an entry with no dependency.
+	AfterOrigin string `json:"after_origin,omitempty"`
+	AfterSeq    int    `json:"after_seq,omitempty"`
 }
 
 // HeadRow is one row of an origin's head: the latest state of a single shared

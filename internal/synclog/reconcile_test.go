@@ -443,3 +443,36 @@ func reconciler(d *db.DB, t LogTransport) *Reconciler {
 	e.now = syncClock
 	return e
 }
+
+// TestReconcileAttachesWriterAfter pins that reconcile upserts attach After
+// when the root has a row in sync_writer_after.
+func TestReconcileAttachesWriterAfter(t *testing.T) {
+	t.Parallel()
+	d, path := exporterFile(t, "m2")
+	seed(t, path,
+		insertBinding("B1", "m2"),
+		`INSERT INTO sync_writer_after (root_id, after_origin, after_seq) VALUES ('B1', 'm1', 42)`,
+	)
+
+	log := NewMemTransport("m2")
+	r := &recording{MemTransport: log}
+	rec := reconciler(d, r)
+
+	got, err := rec.Reconcile()
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if got.Upserts != 1 {
+		t.Fatalf("Upserts = %d, want 1", got.Upserts)
+	}
+	if len(r.batches) != 1 || len(r.batches[0]) != 1 {
+		t.Fatalf("batches = %+v, want 1 entry", r.batches)
+	}
+	entry := r.batches[0][0]
+	if entry.After == nil {
+		t.Fatal("reconcile proposed entry with nil After")
+	}
+	if entry.After.Origin != "m1" || entry.After.Seq != 42 {
+		t.Errorf("entry After = %+v, want {m1 42}", entry.After)
+	}
+}

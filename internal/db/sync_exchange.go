@@ -115,6 +115,16 @@ type ExchangeRow struct {
 	Columns []ExchangeColumn
 }
 
+// Value returns the stored value for column name, and whether it was found.
+func (r ExchangeRow) Value(name string) (any, bool) {
+	for _, col := range r.Columns {
+		if col.Name == name {
+			return col.Value, true
+		}
+	}
+	return nil, false
+}
+
 // ExchangeColumn is one column of an exported row: its name and the value the
 // file holds for it, with NULL kept as a nil value rather than dropped.
 type ExchangeColumn struct {

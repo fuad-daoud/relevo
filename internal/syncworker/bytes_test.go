@@ -157,7 +157,7 @@ func TestTransferCountsAcrossAStatsCallThatFails(t *testing.T) {
 func TestWorkerRefusesWrongProtocolVersion(t *testing.T) {
 	t.Parallel()
 	backend := &fakeBackend{}
-	for _, version := range []int{1, 2, 4, 0} {
+	for _, version := range []int{1, 2, 3, 5, 0} {
 		s := &server{backend: backend}
 		resp := s.dispatch(Request{
 			ID: "1", Verb: VerbHello, Version: version,
@@ -173,8 +173,8 @@ func TestWorkerRefusesWrongProtocolVersion(t *testing.T) {
 			t.Errorf("version %d refusal %q does not name what arrived", version, resp.Error)
 		}
 	}
-	if ProtocolVersion != 3 {
-		t.Errorf("ProtocolVersion = %d, want 3", ProtocolVersion)
+	if ProtocolVersion != 4 {
+		t.Errorf("ProtocolVersion = %d, want 4", ProtocolVersion)
 	}
 }
 

@@ -210,11 +210,19 @@ func insertEntry(ctx context.Context, tx *sql.Tx, e Entry) error {
 	if len(e.MAC) > 0 {
 		mac = e.MAC
 	}
+	var afterOrigin any
+	if e.AfterOrigin != "" {
+		afterOrigin = e.AfterOrigin
+	}
+	var afterSeq any
+	if e.AfterSeq > 0 {
+		afterSeq = e.AfterSeq
+	}
 	if _, err := tx.ExecContext(ctx,
-		"INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at, mac)"+
-			" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO log (origin, seq, batch, tbl, pk, op, schema_version, body, at, mac, after_origin, after_seq)"+
+			" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		e.Origin, e.Seq, e.Batch, e.Tbl, e.PK, e.Op, e.SchemaVersion, body,
-		e.At.UTC().Format(time.RFC3339Nano), mac); err != nil {
+		e.At.UTC().Format(time.RFC3339Nano), mac, afterOrigin, afterSeq); err != nil {
 		return fmt.Errorf("syncworker: append %s %s: %w", e.Tbl, e.PK, err)
 	}
 	return nil
@@ -288,13 +296,15 @@ func (b *TursoBackend) Pull(marks map[string]int) ([]Entry, error) {
 // out for the two to agree.
 func scanEntry(rows *sql.Rows) (Entry, error) {
 	var (
-		e    Entry
-		body sql.NullString
-		mac  []byte
-		at   string
+		e           Entry
+		body        sql.NullString
+		mac         []byte
+		at          string
+		afterOrigin sql.NullString
+		afterSeq    sql.NullInt64
 	)
 	if err := rows.Scan(&e.Origin, &e.Seq, &e.Batch, &e.Tbl, &e.PK, &e.Op,
-		&e.SchemaVersion, &body, &at, &mac); err != nil {
+		&e.SchemaVersion, &body, &at, &mac, &afterOrigin, &afterSeq); err != nil {
 		return Entry{}, fmt.Errorf("syncworker: read an entry: %w", err)
 	}
 	if body.Valid {
@@ -308,6 +318,12 @@ func scanEntry(rows *sql.Rows) (Entry, error) {
 		return Entry{}, fmt.Errorf("syncworker: read %s %s time: %w", e.Tbl, e.PK, err)
 	}
 	e.At = parsed
+	if afterOrigin.Valid && afterOrigin.String != "" {
+		e.AfterOrigin = afterOrigin.String
+	}
+	if afterSeq.Valid && afterSeq.Int64 > 0 {
+		e.AfterSeq = int(afterSeq.Int64)
+	}
 	return e, nil
 }
 

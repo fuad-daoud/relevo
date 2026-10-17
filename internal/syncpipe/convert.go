@@ -25,6 +25,12 @@ func entriesToWire(entries []synclog.Entry) []syncworker.Entry {
 	}
 	out := make([]syncworker.Entry, 0, len(entries))
 	for _, e := range entries {
+		var afterOrigin string
+		var afterSeq int
+		if e.After != nil {
+			afterOrigin = e.After.Origin
+			afterSeq = e.After.Seq
+		}
 		out = append(out, syncworker.Entry{
 			Origin:        e.Origin,
 			Seq:           e.Seq,
@@ -36,6 +42,8 @@ func entriesToWire(entries []synclog.Entry) []syncworker.Entry {
 			Body:          e.Body,
 			At:            e.At,
 			MAC:           e.MAC,
+			AfterOrigin:   afterOrigin,
+			AfterSeq:      afterSeq,
 		})
 	}
 	return out
@@ -51,6 +59,13 @@ func entriesFromWire(entries []syncworker.Entry) []synclog.Entry {
 	}
 	out := make([]synclog.Entry, 0, len(entries))
 	for _, e := range entries {
+		var after *synclog.Ref
+		if e.AfterOrigin != "" || e.AfterSeq > 0 {
+			after = &synclog.Ref{
+				Origin: e.AfterOrigin,
+				Seq:    e.AfterSeq,
+			}
+		}
 		out = append(out, synclog.Entry{
 			Origin:        e.Origin,
 			Seq:           e.Seq,
@@ -62,6 +77,7 @@ func entriesFromWire(entries []syncworker.Entry) []synclog.Entry {
 			Body:          e.Body,
 			At:            e.At,
 			MAC:           e.MAC,
+			After:         after,
 		})
 	}
 	return out

@@ -387,6 +387,13 @@ func (r *Reconciler) inspectUpsert(out *[]Entry, tbl string, row db.ExchangeRow)
 	if err != nil {
 		return err
 	}
+	afterOrigin, afterSeq, found, err := r.db.WriterAfter(tbl, row.PK)
+	if err != nil {
+		return err
+	}
+	if found {
+		entry = entry.WithAfter(&Ref{Origin: afterOrigin, Seq: afterSeq})
+	}
 	*out = append(*out, entry)
 	return nil
 }

@@ -383,6 +383,14 @@ func writerAfter(ctx context.Context, q queryer, tbl, pk string) (string, int, b
 }
 
 // RecordFencedChange writes a row into sync_fenced_change.
+func (d *DB) RecordFencedChange(rootID, tbl, pk string, at time.Time) error {
+	query := `INSERT OR REPLACE INTO sync_fenced_change (root_id, tbl, pk, at) VALUES (?, ?, ?, ?)`
+	if _, err := d.sqlDB.ExecContext(context.Background(), query, rootID, tbl, pk, at.UTC().Format(time.RFC3339Nano)); err != nil {
+		return fmt.Errorf("db: record fenced change: %w", mapBusy(err))
+	}
+	return nil
+}
+
 func (t *Tx) RecordFencedChange(rootID, tbl, pk string, at time.Time) error {
 	query := `INSERT OR REPLACE INTO sync_fenced_change (root_id, tbl, pk, at) VALUES (?, ?, ?, ?)`
 	if _, err := t.exec(query, rootID, tbl, pk, at.UTC().Format(time.RFC3339Nano)); err != nil {
