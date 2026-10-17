@@ -282,3 +282,66 @@ func TestReconcileSkipsRowsOfAHandedOverBinding(t *testing.T) {
 		t.Fatalf("Reconcile = %+v, want it to append nothing for a binding it handed over", res)
 	}
 }
+
+// A takeover back by the machine that was fenced keeps its old fence and
+// records the takeover entry as a regrant: the entries it wrote while fenced
+// stay refused, and the ones after the regrant are valid.
+func TestTakeoverBackRecordsTheRegrantAndKeepsPartitionEraEntriesFenced(t *testing.T) {
+	t.Parallel()
+	peer, _ := peerFile(t, "m3")
+	know := knownVersion(t, peer)
+	log := NewMemTransport("m1")
+	root := map[string]any{"id": "b1", "owner": "", "name": "b1", "state": "open", "round": 1, "cwd": "/x", "record_json": "{}",
+		"created_at": "t", "updated_at": "t", "origin": "m1", "writer": "m1"}
+	file := func(name string) map[string]any {
+		return map[string]any{"record_id": "b1", "name": name, "round": 1, "body": []byte{1}, "bytes": 1, "sha256": "s", "mtime": "t", "sealed_at": "t"}
+	}
+	signedTakeover := func(taker, old string, upto int) Entry {
+		e, err := NewTakeover(taker, Takeover{RecordID: "b1", OldWriter: old, Upto: upto, Taker: taker}, know, takeoverAt)
+		if err != nil {
+			t.Fatalf("NewTakeover: %v", err)
+		}
+		e.MAC = EntryMAC(handoverKey, e)
+		return e
+	}
+	importAll := func() ImportResult {
+		res, err := keyedImporter(peer, log.OnLog("m3")).Import()
+		if err != nil {
+			t.Fatalf("import: %v", err)
+		}
+		return res
+	}
+
+	appendSignedBatch(t, log, handoverKey, makeSignedEntry(t, handoverKey, "m1", "binding_record", `["b1"]`, OpUpsert, know, root, nil))
+	appendSignedBatch(t, log, handoverKey, makeSignedEntry(t, handoverKey, "m1", "round_file", `["b1","f1"]`, OpUpsert, know, file("f1"), nil))
+	appendSignedBatch(t, log.OnLog("m2"), handoverKey, signedTakeover("m2", "m1", 2)) // m2 takes it, fencing m1 at 2
+	importAll()
+
+	appendSignedBatch(t, log, handoverKey, makeSignedEntry(t, handoverKey, "m1", "round_file", `["b1","f9"]`, OpUpsert, know, file("f9"), nil)) // seq 3, fenced
+	if res := importAll(); len(res.Dropped) != 1 {
+		t.Fatalf("Dropped = %+v, want the partition-era entry refused", res.Dropped)
+	}
+
+	appendSignedBatch(t, log, handoverKey, signedTakeover("m1", "m2", 1)) // seq 4: m1 takes it back
+	importAll()
+	appendSignedBatch(t, log, handoverKey, makeSignedEntry(t, handoverKey, "m1", "round_file", `["b1","f10"]`, OpUpsert, know, file("f10"), nil)) // seq 5
+	if res := importAll(); len(res.Dropped) != 0 {
+		t.Fatalf("Dropped = %+v, want the entry after the regrant accepted", res.Dropped)
+	}
+
+	upto, ro, rs, found, err := peer.Term("b1", "m1")
+	if err != nil || !found || upto != 2 || ro != "m1" || rs != 4 {
+		t.Fatalf("m1's term = (%d, %q, %d, %t, %v), want the fence at 2 with the regrant (m1, 4)", upto, ro, rs, found, err)
+	}
+	term := &Term{RootID: "b1", Writer: "m1", Upto: upto, RegrantOrigin: ro, RegrantSeq: rs}
+	if EntryValid(term, Entry{Origin: "m1", Seq: 3}) || !EntryValid(term, Entry{Origin: "m1", Seq: 5}) {
+		t.Error("the term does not keep seq 3 fenced and accept seq 5")
+	}
+	if got := columnOf(t, peer, `SELECT writer FROM binding_record WHERE id = 'b1'`); got != "m1" {
+		t.Errorf("writer = %q, want m1 after taking it back", got)
+	}
+	have := sharedRows(t, peer)
+	if strings.Contains(have, `["b1","f9"]`) || !strings.Contains(have, `["b1","f10"]`) {
+		t.Errorf("rows = %s, want f10 and not f9", have)
+	}
+}
