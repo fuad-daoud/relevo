@@ -128,6 +128,13 @@ func TestHandoverRefusesWithoutRunningAnyGit(t *testing.T) {
 func TestResumeHandedOverCutsLocalWorktreeAndStaysVisibleToTheResumingMasterMind(t *testing.T) {
 	rt, fg := handoverRuntime(t)
 	d, _ := rt.Store.DB()
+	// The history mirror of the binding, as the sync left it.
+	if err := d.Tx(func(tx *db.Tx) error {
+		_, err := tx.UpsertBinding(db.Binding{Name: "webshop", CWD: "/old", BuilderMode: "headless", CreatedAt: time.Now(), IngestSource: db.IngestLive})
+		return err
+	}); err != nil {
+		t.Fatalf("mirror: %v", err)
+	}
 	// The record was created by another installation and is written by this one.
 	for _, table := range []string{"binding_record", "binding"} {
 		if _, err := rawExec(d, `UPDATE `+table+` SET origin = 'creator-x'`); err != nil {
@@ -147,6 +154,16 @@ func TestResumeHandedOverCutsLocalWorktreeAndStaysVisibleToTheResumingMasterMind
 	}
 	if len(fg.checkoutWorktreeCalls) != 1 || fg.checkoutWorktreeCalls[0].Path != wantTree {
 		t.Errorf("checkouts = %+v, want the branch checked out at %s", fg.checkoutWorktreeCalls, wantTree)
+	}
+
+	raw, err := db.OpenRaw(d.Path())
+	if err != nil {
+		t.Fatalf("OpenRaw: %v", err)
+	}
+	defer func() { _ = raw.Close() }()
+	var mirrorURL string
+	if err := raw.QueryRow(`SELECT r.origin_url FROM binding b JOIN repo r ON r.id = b.repo_id WHERE b.name = 'webshop'`).Scan(&mirrorURL); err != nil || mirrorURL != "https://github.com/acme/webshop" {
+		t.Errorf("mirror repo = (%q, %v), want this machine's row for the normalised %s", mirrorURL, err, handoverOrigin)
 	}
 
 	rep, err := Status(context.Background(), rt)
