@@ -2118,12 +2118,14 @@ The flags rendered for each harness kind (verified 2026-09-19 on claude 2.1.278,
 
 | kind | harness | read | edit | yolo |
 |---|---|---|---|---|
-| claude | (none) | `--permission-mode plan --allowedTools=Read(//<round prompt>)` | `--permission-mode acceptEdits --allowedTools=Read(//<round prompt>)` | `--dangerously-skip-permissions` |
+| claude | (none) | `--permission-mode plan --allowedTools=Read(//<round prompt>) --allowedTools=Read(//<chain dir>/**)` | `--permission-mode acceptEdits --allowedTools=Read(//<round prompt>) --allowedTools=Read(//<chain dir>/**)` | `--dangerously-skip-permissions` |
 | agy | (none) | `--mode plan` | `--mode accept-edits` | `--dangerously-skip-permissions` |
 | opencode | (none) | refuse | refuse | `--auto` |
 | codex | (none) | refuse | `-s workspace-write -c sandbox_workspace_write.writable_roots=["<binding>/out"]` | `--dangerously-bypass-approvals-and-sandbox` |
 
 opencode does not support `read` or `edit` tiers because it has no read-only or edit-only CLI flag. Choosing `read` or `edit` for an opencode candidate is refused immediately with an error directing you to use `--tier harness` (where `opencode.jsonc` decides) or `--tier yolo` (`--auto`).
+
+For a chain member, the claude `read` and `edit` cells gain a second `--allowedTools=Read(//<chain dir>/**)` rule, where `<chain dir>` is the chain's directory under `~/.local/state/relevo/.chains/<chain>/`. It is what lets a chain member read the plan copy, the task and the staged `inputs/...` (including `inputs/repo/...`) files a chain seed names. It is a read grant only — it grants no Edit — and it is omitted entirely for a binding in no chain.
 
 codex does not support the `read` tier: `-s read-only` cannot write the report, marker, question and findings files relevo stages under `~/.local/state/relevo/<binding>/out/`, and codex ignores `writable_roots` under read-only. Choosing `read` for a codex candidate is refused with an error directing you to `--tier edit` or `--tier harness`. At `edit` relevo adds the binding's `out/` directory as a writable root; that is the only path outside the worktree the sandbox lets the builder write.
 

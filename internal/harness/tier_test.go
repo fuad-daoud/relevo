@@ -158,7 +158,7 @@ func TestLaunchAppliesTier(t *testing.T) {
 		t.Fatalf("claude Launch edit error: %v", err)
 	}
 	wantClaudePrint := []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor",
-		"--output-format", "stream-json", "--verbose", "--add-dir", OutputDirPlaceholder, "--permission-mode", "acceptEdits", PromptFilePlaceholder, "--some-flag"}
+		"--output-format", "stream-json", "--verbose", "--add-dir", OutputDirPlaceholder, "--permission-mode", "acceptEdits", PromptFilePlaceholder, ChainDirPlaceholder, "--some-flag"}
 	if !reflect.DeepEqual(cl.Print, wantClaudePrint) {
 		t.Errorf("claude Print = %v, want %v", cl.Print, wantClaudePrint)
 	}
@@ -295,8 +295,11 @@ func assertClaudePermissionPlaceholder(t *testing.T, cl Launch, expectedMode str
 	if idx < 0 || idx+2 >= len(cl.Print) || cl.Print[idx+2] != PromptFilePlaceholder {
 		t.Errorf("claude Launch: want PromptFilePlaceholder immediately after --permission-mode %s, got %v", expectedMode, cl.Print)
 	}
+	if idx+3 >= len(cl.Print) || cl.Print[idx+3] != ChainDirPlaceholder {
+		t.Errorf("claude Launch: want ChainDirPlaceholder immediately after PromptFilePlaceholder, got %v", cl.Print)
+	}
 	if cl.Print[len(cl.Print)-1] != "--extra-arg" {
-		t.Errorf("claude Launch: want extra after PromptFilePlaceholder, got %v", cl.Print)
+		t.Errorf("claude Launch: want extra after placeholders, got %v", cl.Print)
 	}
 }
 
@@ -314,6 +317,9 @@ func checkOtherKindsOmitPrompt(t *testing.T, builder RoleSpec) {
 			}
 			if contains(l.Print, PromptFilePlaceholder) {
 				t.Errorf("%s at tier %s must not contain PromptFilePlaceholder: %v", kind, tier, l.Print)
+			}
+			if contains(l.Print, ChainDirPlaceholder) {
+				t.Errorf("%s at tier %s must not contain ChainDirPlaceholder: %v", kind, tier, l.Print)
 			}
 		}
 	}
@@ -349,6 +355,9 @@ func TestLaunchClaudePromptFilePlaceholder(t *testing.T) {
 		}
 		if contains(cl.Print, PromptFilePlaceholder) {
 			t.Errorf("claude Launch %s must not contain PromptFilePlaceholder: %v", tier, cl.Print)
+		}
+		if contains(cl.Print, ChainDirPlaceholder) {
+			t.Errorf("claude Launch %s must not contain ChainDirPlaceholder: %v", tier, cl.Print)
 		}
 	}
 

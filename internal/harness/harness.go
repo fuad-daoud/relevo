@@ -278,6 +278,9 @@ const (
 	// read and edit tiers; separate from OutputDirPlaceholder because it names
 	// a file and becomes a permission rule.
 	PromptFilePlaceholder = "<prompt-file>"
+	// ChainDirPlaceholder renders a recursive read grant for a chain's staged
+	// inputs; separate from PromptFilePlaceholder because it is a directory glob.
+	ChainDirPlaceholder = "<chain-dir>"
 )
 
 // Launch describes how to start an agent process for a specific role and model.
@@ -345,7 +348,7 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 		return Launch{}, err
 	}
 	if h.Kind == "claude" && (tier == TierRead || tier == TierEdit) {
-		perm = append(perm, PromptFilePlaceholder)
+		perm = append(perm, PromptFilePlaceholder, ChainDirPlaceholder)
 	}
 	if tier != TierHarness {
 		if f := h.ExtraArgsPermissionFlag(extra); f != "" {
@@ -369,8 +372,8 @@ func writableRootsArg(root string) string {
 	return "sandbox_workspace_write.writable_roots=[" + strconv.Quote(root) + "]"
 }
 
-// PrintArgs is Print with the prompt, budget, working tree, writable root and
-// prompt file filled in: a fresh slice, so neither Print nor the caller's extra
+// PrintArgs is Print with the prompt, budget, working tree, writable root,
+// prompt file and chain dir filled in: a fresh slice, so neither Print nor the caller's extra
 // is touched. A kind whose Print lacks a placeholder ignores that argument; a
 // present WritableRootPlaceholder with an empty root is filled with a value codex
 // rejects. The root is never dropped for a kind that takes it: an empty one
@@ -379,7 +382,9 @@ func writableRootsArg(root string) string {
 // PromptFilePlaceholder is filled with an absolute single-file read grant for
 // the prompt file; an empty or relative path is dropped rather than rendered
 // because a relative or empty rule would be wider or meaningless.
-func (l Launch) PrintArgs(prompt string, budget time.Duration, dir, writableRoot, promptFile string) []string {
+// ChainDirPlaceholder is filled with an absolute recursive read grant for the
+// chain directory; an empty or relative path is dropped rather than rendered.
+func (l Launch) PrintArgs(prompt string, budget time.Duration, dir, writableRoot, promptFile, chainDir string) []string {
 	out := make([]string, 0, len(l.Print))
 	for _, a := range l.Print {
 		switch a {
@@ -396,6 +401,10 @@ func (l Launch) PrintArgs(prompt string, budget time.Duration, dir, writableRoot
 		case PromptFilePlaceholder:
 			if filepath.IsAbs(promptFile) {
 				out = append(out, "--allowedTools=Read(/"+promptFile+")")
+			}
+		case ChainDirPlaceholder:
+			if filepath.IsAbs(chainDir) {
+				out = append(out, "--allowedTools=Read(/"+chainDir+"/**)")
 			}
 		default:
 			out = append(out, a)
