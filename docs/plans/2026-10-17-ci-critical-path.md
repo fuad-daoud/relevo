@@ -272,3 +272,14 @@ this table.
 - The expected-time table restated with any change, and a note that no
   `testdata/coverage-baseline.txt` or `cover-merge.sh` edit was made.
 - The commit sha(s) pushed.
+
+## Outcome on the PR's CI
+
+Splitting internal/db and cmd/relevo by test name (section 2) was measured and
+dropped. With it, the ubuntu/stable shards summed 963 s (longest 347 s) against
+709 s (longest 284 s) without it, and macOS shard 0 rose from 442 s to 506 s:
+each split is another race test binary built and run on the same 3-4 cores, and
+a third of internal/db took 170 s on macOS where the whole package had taken
+108 s. The default split list stays internal/relevo; the weighted placement, the
+path-derived split file names, modernc without -race on PRs, the main-only 1.25
+leg and the cross-compile matrix shipped as planned.

@@ -7,7 +7,7 @@
 #   OUTDIR   default .shard; created if missing, and existing files in it are
 #            overwritten
 # Env: SPLIT_PKGS    space-separated import-path patterns whose tests are split
-#                    across shards (default ./internal/relevo ./internal/db ./cmd/relevo).
+#                    across shards (default ./internal/relevo).
 #                    Every package not matched by a pattern is assigned whole.
 #      SHARD_WEIGHTS path to the weights file (default scripts/test-shard.weights).
 #      SHARD_COVER   0 drops coverage instrumentation from every job; unset or any
@@ -86,7 +86,7 @@ if [ ! -r "$weights_file" ]; then
 	exit 2
 fi
 
-split_pkgs=${SPLIT_PKGS:-./internal/relevo ./internal/db ./cmd/relevo}
+split_pkgs=${SPLIT_PKGS:-./internal/relevo}
 
 # SHARD_COVER=0 turns coverage off for every job. darwin's coverage report
 # intermittently fails after a passing run, so the macOS legs set it.

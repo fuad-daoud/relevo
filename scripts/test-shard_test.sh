@@ -129,12 +129,10 @@ awk -v mod="$(cd "$repo" && go list -m)" \
 		}
 		close(weights_file)
 
-		# Default split packages: internal/relevo, internal/db, cmd/relevo
+		# The default split package.
 		split_list[1] = "internal/relevo"
-		split_list[2] = "internal/db"
-		split_list[3] = "cmd/relevo"
 		split_cost = 0
-		for (i = 1; i <= 3; i++) {
+		for (i = 1; i <= 1; i++) {
 			sp = split_list[i]
 			w = (sp in weights) ? weights[sp] : 5
 			split_cost += w / 3.0
@@ -352,12 +350,13 @@ chmod +x "$work/bin/go"
 record_shard() {
 	status=0
 	(cd "$repo" && PATH="$work/bin:$PATH" SHIM_LOG="$1" SHARD_COVER="$2" \
-		sh "$here/test-shard.sh" 0 3 "$work/shard") > "$work/out" 2>&1 || status=$?
+		SPLIT_PKGS="${3:-}" sh "$here/test-shard.sh" 0 3 "$work/shard") > "$work/out" 2>&1 || status=$?
 }
 
 # Default: coverage is on, so every `go test` carries -cover and race, and at
-# least one split job carries its profile.
-record_shard "$work/argv-cover" ""
+# least one split job carries its profile. Two split packages share the last
+# path element relevo, which is what the profile-name check below needs.
+record_shard "$work/argv-cover" "" "./internal/relevo ./cmd/relevo"
 if [ "$status" -ne 0 ]; then
 	echo "FAIL: a shard with coverage on exits $status, want 0"
 	fail=1
@@ -380,7 +379,7 @@ else
 		echo "FAIL: with coverage on, no go test carries -coverprofile="
 		fail=1
 	fi
-	# The split base names are distinct for the default SPLIT_PKGS
+	# Split packages sharing a last path element still get distinct profiles.
 	awk '
 		/-coverprofile=/ {
 			for (i = 1; i <= NF; i++) {

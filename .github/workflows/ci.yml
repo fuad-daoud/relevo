@@ -142,9 +142,11 @@ jobs:
         os: [ubuntu-latest]
         go: ['1.25', 'stable']
         # Each leg runs 3 shards of a weighted assignment (test-shard.sh places
-        # the whole packages longest-first onto the least loaded shard, and the
-        # tests of internal/db, cmd/relevo and internal/relevo round-robin across
-        # the shards), which is what fits the race run in the job's wall time.
+        # the whole packages longest-first onto the least loaded shard, and
+        # internal/relevo's tests round-robin across the shards), which is what
+        # fits the race run in the job's wall time. Splitting more packages by
+        # name costs more than it saves: every split is another race binary to
+        # build and run on the same 3-4 cores.
         shard: [0, 1, 2]
         # PRs skip the 1.25 floor here as well as on test-macos, so a PR runs
         # the ubuntu legs on stable only and the race runs start together;
@@ -214,9 +216,11 @@ jobs:
         os: [macos-latest]
         go: ['1.25', 'stable']
         # Each leg runs 3 shards of a weighted assignment (test-shard.sh places
-        # the whole packages longest-first onto the least loaded shard, and the
-        # tests of internal/db, cmd/relevo and internal/relevo round-robin across
-        # the shards), which is what fits the race run in the job's wall time.
+        # the whole packages longest-first onto the least loaded shard, and
+        # internal/relevo's tests round-robin across the shards), which is what
+        # fits the race run in the job's wall time. Splitting more packages by
+        # name costs more than it saves: every split is another race binary to
+        # build and run on the same 3-4 cores.
         # On main the two macOS legs make 6 macOS jobs, one over the free plan's
         # cap of 5 concurrent macOS jobs, so one of them queues. Main is never
         # cancelled, so queueing only costs time.
