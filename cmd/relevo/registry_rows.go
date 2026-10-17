@@ -388,8 +388,8 @@ var registry = []verbEntry{
 	},
 	{
 		Name:    "db sync reconcile",
-		Summary: "list the rows this machine would append to or delete from the log, and append nothing",
-		Args:    "--dry-run [--timeout D] [--json]",
+		Summary: "append the rows the log lacks or holds stale for this machine, and delete the ones this machine dropped; --dry-run lists them",
+		Args:    "[--dry-run] [--timeout D] [--json]",
 		Flags:   []string{"--dry-run", "--json", "--timeout"},
 		Output:  "json:DbSyncReconcileDoc",
 		Exit:    []int{0, 1, 2},

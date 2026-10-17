@@ -46,3 +46,14 @@ func TestReconcileDryRunOnAConvergedFile(t *testing.T) {
 		t.Fatalf("FormatPreview(empty) = %q", got)
 	}
 }
+
+func TestFormatReconcileCountsWhatWasAppended(t *testing.T) {
+	t.Parallel()
+	got := FormatReconcile(synclog.ReconcileResult{Batches: 3, Upserts: 2, Deletes: 612})
+	if got != "appended 2 upserts and 612 deletes in 3 batches\n" {
+		t.Fatalf("FormatReconcile = %q", got)
+	}
+	if got := FormatReconcile(synclog.ReconcileResult{}); got != "in step with the log; nothing to append\n" {
+		t.Fatalf("FormatReconcile(nothing) = %q", got)
+	}
+}

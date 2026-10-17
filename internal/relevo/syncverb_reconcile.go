@@ -2,33 +2,39 @@ package relevo
 
 import (
 	"context"
-	"fmt"
 
-	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
-	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
-// reconcilePreview reports what a reconcile would append. Only the dry run is
-// offered: enable and push already append, and a second route that does would
-// be a second place for the guards to drift.
-func (v *VerbRunner) reconcilePreview(ctx context.Context, verb *wire.SyncVerb) *wire.SyncResult {
-	if !verb.DryRun {
-		return verbRefusal(wire.SyncCodeInvalid,
-			fmt.Errorf("sync: reconcile only previews; pass --dry-run: %w", db.ErrInvalid))
-	}
+// reconcile compares this machine's file against what the log holds for its
+// origin and appends the difference: an upsert for every row head lacks or
+// holds stale, and a delete for every head row the file no longer holds. It is
+// the repair for a log that missed this machine's writes, which the outbox
+// cannot answer because it holds only what was written since the last export.
+// The dry run walks the same differences and appends nothing.
+func (v *VerbRunner) reconcile(ctx context.Context, verb *wire.SyncVerb) *wire.SyncResult {
 	transport, err := v.drive(ctx)
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
 	stop := relevosync.NewStopTransport(transport)
 	defer v.Runner.Track(stop)()
-	reconciler := synclog.NewReconciler(v.Shared, stop)
-	relevosync.BindDocs(reconciler, v.Shared)
-	preview, err := reconciler.Preview(relevosync.PreviewKeyLimit)
+	reconciler, err := keyedReconciler(v.Shared, stop)
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
-	return &wire.SyncResult{OK: true, Report: relevosync.FormatPreview(preview)}
+	if verb.DryRun {
+		preview, err := reconciler.Preview(relevosync.PreviewKeyLimit)
+		if err != nil {
+			return verbRefusal(verbClassify(err), err)
+		}
+		return &wire.SyncResult{OK: true, Report: relevosync.FormatPreview(preview)}
+	}
+	defer v.Runner.CountMoved(ctx, stop)
+	res, err := reconciler.Reconcile()
+	if err != nil {
+		return verbRefusal(verbClassify(err), err)
+	}
+	return &wire.SyncResult{OK: true, Applied: res.Batches > 0, Report: relevosync.FormatReconcile(res)}
 }

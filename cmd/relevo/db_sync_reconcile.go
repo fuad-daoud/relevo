@@ -19,9 +19,9 @@ type dbSyncReconcileFlagValues struct {
 
 func dbSyncReconcileFlagSet(fs *flag.FlagSet) *dbSyncReconcileFlagValues {
 	v := &dbSyncReconcileFlagValues{}
-	v.asJSON = fs.Bool("json", false, "print the document the preview produced")
-	v.timeout = fs.Duration("timeout", dbSyncDefaultTimeout, "bound the preview")
-	v.dryRun = fs.Bool("dry-run", false, "list what a reconcile would append or delete and append nothing; required")
+	v.asJSON = fs.Bool("json", false, "print the document the reconcile produced")
+	v.timeout = fs.Duration("timeout", dbSyncDefaultTimeout, "bound the reconcile")
+	v.dryRun = fs.Bool("dry-run", false, "list what a reconcile would append or delete and append nothing")
 	return v
 }
 
@@ -31,9 +31,8 @@ type dbSyncReconcileDoc struct {
 	Report string `json:"report"`
 }
 
-// cmdDBSyncReconcile previews a reconcile through the daemon, which holds the
-// log transport. Only the dry run exists, so a call without --dry-run is
-// refused before it reaches the socket.
+// cmdDBSyncReconcile runs a reconcile, or previews one, through the daemon,
+// which holds the log transport.
 func cmdDBSyncReconcile(args []string) error {
 	fs := flag.NewFlagSet("db sync reconcile", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -44,10 +43,6 @@ func cmdDBSyncReconcile(args []string) error {
 	if fs.NArg() != 0 {
 		return fail(codeUsage, "relevo db sync reconcile takes no arguments, got %d", fs.NArg())
 	}
-	if !*v.dryRun {
-		return fail(codeUsage, "relevo db sync reconcile only previews: pass --dry-run")
-	}
-
 	shared, err := dialSyncVerb()
 	if err != nil {
 		return err
@@ -58,12 +53,12 @@ func cmdDBSyncReconcile(args []string) error {
 	defer cancel()
 
 	res, err := sendSyncVerb(ctx, shared, wire.SyncVerbReconcile,
-		dbSyncVerbOptions{Timeout: *v.timeout, DryRun: true})
+		dbSyncVerbOptions{Timeout: *v.timeout, DryRun: *v.dryRun})
 	if err != nil {
 		return err
 	}
 	if *v.asJSON {
-		return printDoc(dbSyncReconcileDoc{DryRun: true, Report: res.Report})
+		return printDoc(dbSyncReconcileDoc{DryRun: *v.dryRun, Report: res.Report})
 	}
 	fmt.Print(res.Report)
 	return nil

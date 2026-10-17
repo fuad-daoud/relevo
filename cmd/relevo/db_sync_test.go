@@ -513,15 +513,6 @@ func TestDBSyncClassifyReportsAPreflightRefusalAsRefused(t *testing.T) {
 	}
 }
 
-// TestDBSyncReconcileNeedsDryRun pins that the verb refuses before dialing
-// anything: with no --dry-run there is nothing it offers to run.
-func TestDBSyncReconcileNeedsDryRun(t *testing.T) {
-	_, _, err := captureOutput(t, func() error { return cmdDBSyncReconcile(nil) })
-	if err == nil || !strings.Contains(err.Error(), "--dry-run") {
-		t.Fatalf("reconcile without --dry-run = %v, want a refusal naming the flag", err)
-	}
-}
-
 func TestDBSyncReconcileParsesItsFlags(t *testing.T) {
 	t.Parallel()
 	fs := flag.NewFlagSet("db sync reconcile", flag.ContinueOnError)
