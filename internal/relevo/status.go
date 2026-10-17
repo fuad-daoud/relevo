@@ -129,7 +129,43 @@ func Status(ctx context.Context, rt Runtime, opts ...StatusOption) (view.Report,
 	if err != nil {
 		return view.Report{}, err
 	}
-	return applyChains(rt.Store, rep, chains), nil
+	rep = applyChains(rt.Store, rep, chains)
+	rep.HandedOver = handedOverRows(rt)
+	return rep, nil
+}
+
+// handedOverRows lists the bindings another machine writes now. A failed read
+// leaves the list empty: the live rows are the report, and this is a footnote.
+func handedOverRows(rt Runtime) []view.HandedOverRow {
+	left, err := rt.Store.Left()
+	if err != nil || len(left) == 0 {
+		return nil
+	}
+	d, err := rt.Store.DB()
+	if err != nil {
+		return nil
+	}
+	labels := map[string]string{}
+	if list, lerr := d.InstallationList(); lerr == nil {
+		for _, in := range list {
+			labels[in.ID] = in.Label
+		}
+	}
+	seen := map[string]bool{}
+	var out []view.HandedOverRow
+	for _, l := range left {
+		if seen[l.Name] || l.Owner != rt.Store.Owner() {
+			continue
+		}
+		seen[l.Name] = true
+		to := labels[l.ToWriter]
+		if to == "" {
+			to = l.ToWriter
+		}
+		pending, _ := d.OutboxPendingFor(l.RootID)
+		out = append(out, view.HandedOverRow{Name: l.Name, To: to, Kind: l.Kind, NotExported: pending > 0})
+	}
+	return out
 }
 
 // StatusRow is one binding's row with the detail figures on: the counterpart

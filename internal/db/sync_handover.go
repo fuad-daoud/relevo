@@ -408,3 +408,29 @@ func (t *Tx) RepointMirror(name, repoID string) error {
 	}
 	return nil
 }
+
+// Fenced is one binding whose local changes a takeover fenced.
+type Fenced struct {
+	Name  string
+	Taker string
+	Count int
+}
+
+// FencedSummary counts, per binding, the local changes the exporter moved to
+// sync_fenced_change because another machine took the binding over.
+func (d *DB) FencedSummary() ([]Fenced, error) {
+	rows, err := d.sqlDB.QueryContext(context.Background(),
+		`SELECT l.name, l.to_writer, COUNT(*) FROM sync_fenced_change f
+		 JOIN sync_binding_left l ON l.root_id = f.root_id
+		 GROUP BY l.name, l.to_writer ORDER BY l.name`)
+	if err != nil {
+		if isMissingTable(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("db: fenced summary: %w", mapBusy(err))
+	}
+	return collectRows(rows, func(s rowScanner) (Fenced, error) {
+		var f Fenced
+		return f, s.Scan(&f.Name, &f.Taker, &f.Count)
+	})
+}

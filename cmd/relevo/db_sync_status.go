@@ -56,6 +56,9 @@ type dbSyncStatusDoc struct {
 	HeldOrigins []string `json:"held_origins,omitempty"`
 	Dropped     []string `json:"dropped,omitempty"`
 	Gaps        []string `json:"gaps,omitempty"`
+	// Fenced lists the bindings a takeover took from this machine, with how many
+	// of its local changes the takeover fenced. Nothing is deleted locally.
+	Fenced []dbSyncFencedDoc `json:"fenced,omitempty"`
 	// Joining says a join is in progress and JoinSince is when it began, read
 	// from the machine-local join marker. The daemon finishes the join whether
 	// the enable that started it waited or not, so a machine can be joining
@@ -74,6 +77,14 @@ type dbSyncStatusDoc struct {
 	Storage           *relevosync.Storage `json:"storage,omitempty"`
 	QuotaTursoStorage int64               `json:"quota_turso_storage,omitempty"`
 	QuotaR2Storage    int64               `json:"quota_r2_storage,omitempty"`
+}
+
+// dbSyncFencedDoc is one binding of the fenced list.
+type dbSyncFencedDoc struct {
+	Name      string `json:"name"`
+	OldWriter string `json:"old_writer"`
+	Taker     string `json:"taker"`
+	Count     int    `json:"count"`
 }
 
 // dbSyncStatusLine is the one line `db sync status` prints, as a function of the
@@ -123,6 +134,9 @@ func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 	}
 	for _, gap := range doc.Gaps {
 		fmt.Fprintf(&b, " · gap: %s", sanitize.Text(gap))
+	}
+	for _, f := range doc.Fenced {
+		fmt.Fprintf(&b, " · %d local changes to %s were fenced by a takeover", f.Count, sanitize.Text(f.Name))
 	}
 	if doc.Bytes != nil || doc.Storage != nil {
 		fmt.Fprintf(&b, " · %s", dbSyncQuotasLine(doc))

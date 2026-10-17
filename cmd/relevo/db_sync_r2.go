@@ -243,6 +243,13 @@ func dbSyncStatusRead(local relevosync.Local) (dbSyncStatusDoc, error) {
 		Gaps:         state.Trouble.Gaps,
 		LastAttempt:  attemptDoc(state.Attempt),
 	}
+	fenced, err := local.FencedSummary()
+	if err != nil {
+		return dbSyncStatusDoc{}, dbSyncClassify(err)
+	}
+	for _, f := range fenced {
+		doc.Fenced = append(doc.Fenced, dbSyncFencedDoc{Name: f.Name, OldWriter: local.Origin(), Taker: f.Taker, Count: f.Count})
+	}
 	month, err := relevosync.ReadBytes(local, time.Now())
 	if err != nil {
 		return dbSyncStatusDoc{}, dbSyncClassify(err)

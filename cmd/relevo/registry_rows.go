@@ -459,6 +459,15 @@ var registry = []verbEntry{
 		Errors:  []string{"internal", "not_available", "policy_refused", "usage"},
 	},
 	{
+		Name:    "handover",
+		Summary: "give a binding to another machine: push its branch, release the tree, flip the writer",
+		Args:    "NAME --to MACHINE [--remote R] [--json]",
+		Flags:   []string{"--json", "--name", "--remote", "--to"},
+		Output:  "json:HandoverDoc",
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"binding_not_found", "internal", "refused", "usage"},
+	},
+	{
 		Name:    "help",
 		Summary: "print the usage text, or the registry document with --json",
 		Args:    "[--json [<verb>]]",
@@ -740,6 +749,15 @@ var registry = []verbEntry{
 		Output:  "json:StopDoc",
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"binding_not_found", "internal", "usage"},
+	},
+	{
+		Name:    "takeover",
+		Summary: "make this machine the writer of a binding another machine writes",
+		Args:    "NAME --force [--json]",
+		Flags:   []string{"--force", "--json", "--name"},
+		Output:  "json:TakeoverDoc",
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"binding_not_found", "internal", "refused", "usage"},
 	},
 	{
 		Name:    "ui",

@@ -334,6 +334,20 @@ type Report struct {
 	// instead of blocking nothing in silence. Kept out of JSON: the status
 	// document is a pinned contract.
 	Unused []ProviderGate `json:"-"`
+	// HandedOver lists the bindings this machine gave to another machine or lost
+	// to a takeover. Absent from JSON when there are none.
+	HandedOver []HandedOverRow `json:"handed_over,omitempty"`
+}
+
+// HandedOverRow is one binding another machine writes now.
+type HandedOverRow struct {
+	Name string `json:"name"`
+	// To is the label of the machine that writes it, or its id.
+	To string `json:"to"`
+	// Kind is "handover" or "takeover".
+	Kind string `json:"kind"`
+	// NotExported is true while the flip still waits in this machine's outbox.
+	NotExported bool `json:"not_exported,omitempty"`
 }
 
 // ApplyRemoteLive sets the live facts from the remote server on the client's
