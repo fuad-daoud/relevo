@@ -143,8 +143,8 @@ func exporter(d *db.DB, r *recording) *Exporter {
 // installation. The name follows the id because one installation holds at most
 // one binding of a name.
 func insertBinding(id, origin string) string {
-	return fmt.Sprintf(`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
-		VALUES ('%s', '%s', '/x', 'local', 't', 'manual', '%s')`, id, id, origin)
+	return fmt.Sprintf(`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin, writer)
+		VALUES ('%s', '%s', '/x', 'local', 't', 'manual', '%s', '%s')`, id, id, origin, origin)
 }
 
 // insertForkedBinding writes a binding forked from a named one, so a case has a
@@ -155,8 +155,8 @@ func insertForkedBinding(id, parent, origin string) string {
 	if parent != "" {
 		forked = "'" + parent + "'"
 	}
-	return fmt.Sprintf(`INSERT INTO binding (id, name, forked_from_binding_id, cwd, builder_mode, created_at, ingest_source, origin)
-		VALUES ('%s', '%s', %s, '/x', 'local', 't', 'manual', '%s')`, id, id, forked, origin)
+	return fmt.Sprintf(`INSERT INTO binding (id, name, forked_from_binding_id, cwd, builder_mode, created_at, ingest_source, origin, writer)
+		VALUES ('%s', '%s', %s, '/x', 'local', 't', 'manual', '%s', '%s')`, id, id, forked, origin, origin)
 }
 
 // One owned insert travels as one upsert carrying the row, and the outbox entry
@@ -328,8 +328,8 @@ func TestImportedRowsNeverEcho(t *testing.T) {
 	// own entry names no owner at all, because the parent it would read is gone.
 	seed(t, path,
 		insertBinding("01A", "m2"),
-		`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin)
-		 VALUES ('02A', 'o', 'n', 'open', 1, '/z', '{}', 't', 't', 'm2')`,
+		`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin, writer)
+		 VALUES ('02A', 'o', 'n', 'open', 1, '/z', '{}', 't', 't', 'm2', 'm2')`,
 		`INSERT INTO round_file (record_id, name, round, body, bytes, sha256, mtime, sealed_at)
 		 VALUES ('02A', 'f', 1, X'00', 1, 's', 't', 't')`,
 		`DELETE FROM binding_record WHERE id = '02A'`,
@@ -357,8 +357,8 @@ func TestExporterAppendsEachDrainAsOneBatch(t *testing.T) {
 	d, path := exporterFile(t, "m1")
 	seed(t, path,
 		insertBinding("01A", "m1"),
-		`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin)
-		 VALUES ('02A', 'o', 'n', 'open', 1, '/x', '{}', 't', 't', 'm1')`,
+		`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin, writer)
+		 VALUES ('02A', 'o', 'n', 'open', 1, '/x', '{}', 't', 't', 'm1', 'm1')`,
 	)
 
 	r := &recording{MemTransport: NewMemTransport("m1")}
@@ -529,8 +529,8 @@ func insertEvent(id, bindingID, roundID string, seq int) string {
 // record takes them on the peer too.
 func insertRecord(id, origin string) string {
 	return fmt.Sprintf(`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json,
-		created_at, updated_at, origin)
-		VALUES ('%s', 'o', 'n', 'open', 1, '/z', '{}', 't', 't', '%s')`, id, origin)
+		created_at, updated_at, origin, writer)
+		VALUES ('%s', 'o', 'n', 'open', 1, '/z', '{}', 't', 't', '%s', '%s')`, id, origin, origin)
 }
 
 // insertEvent writes one binding_event of a record, keyed by the record and its

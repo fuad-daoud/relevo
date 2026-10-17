@@ -261,6 +261,7 @@ func TestImporterIgnoresUnknownColumns(t *testing.T) {
 	assertColumns(t, peer, "binding", `["01A"]`, map[string]string{
 		"id": "01A", "name": "01A", "cwd": "/x", "builder_mode": "local",
 		"created_at": "t", "ingest_source": "manual", "origin": "m1",
+		"writer": "m1",
 	})
 	// The unknown names are absent from the file's declaration rather than
 	// named in the statement: an importer that invented them would be writing
@@ -328,11 +329,13 @@ func TestImporterDefaultsMissingColumns(t *testing.T) {
 	assertColumns(t, peer, "binding", `["01A"]`, map[string]string{
 		"id": "01A", "name": "01A", "cwd": "/x", "builder_mode": "local",
 		"created_at": "t", "ingest_source": "manual", "origin": "m1",
+		"writer": "m1",
 		"ticket": "#473", "final_state": "done",
 	})
 	assertColumns(t, peer, "binding", `["01B"]`, map[string]string{
 		"id": "01B", "name": "01B", "cwd": "/x", "builder_mode": "local",
 		"created_at": "t", "ingest_source": "manual", "origin": "m1",
+		"writer": "m1",
 	})
 }
 
@@ -348,7 +351,7 @@ func TestImporterDefaultsMissingColumns(t *testing.T) {
 // pull, and once this machine knows 029 both rows apply together. Nothing is
 // rewritten in between; the entries are only read.
 
-const historySchemaVersion = 30
+const historySchemaVersion = 31
 
 // historyRoundEntry is one round row at a named schema version. It is the row
 // that must not be lost to a version the batch also carries.
@@ -384,15 +387,15 @@ func TestHistorySchemaHoldsTheBatchAndKeepsItsRoundRow(t *testing.T) {
 	peer, peerPath := peerFile(t, "m2")
 	know := knownVersion(t, peer)
 	if know != historySchemaVersion {
-		t.Fatalf("this build's schema version is %d, want %d: migration 030 is the latest",
+		t.Fatalf("this build's schema version is %d, want %d: migration 031 is the latest",
 			know, historySchemaVersion)
 	}
 	seed(t, peerPath,
 		`INSERT INTO installation (id, label, first_seen, last_seen) VALUES ('m1', 'the laptop', '2026-01-02T03:04:05.000Z', '2026-01-02T03:04:05.000Z')`,
 		// The round hangs off a binding, and the round lands under the binding's
 		// origin -- so the peer needs one to be there for the row to apply at all.
-		`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
-		 VALUES ('b1', 'b1', '/x', 'headless', '2026-01-02T03:04:05.000Z', '', 'm1')`,
+		`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin, writer)
+		 VALUES ('b1', 'b1', '/x', 'headless', '2026-01-02T03:04:05.000Z', '', 'm1', 'm1')`,
 	)
 
 	// One batch, two rows, both written at 029. The round row is the one this

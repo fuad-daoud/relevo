@@ -74,16 +74,16 @@ func seedJoin(t *testing.T, shared *db.DB, statements ...string) {
 // joinBinding is one owned root row, so an export has something of this
 // installation's to propose.
 func joinBinding(id, origin string) string {
-	return fmt.Sprintf(`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
-		VALUES ('%s', '%s', '/x', 'local', 't', 'manual', '%s')`, id, id, origin)
+	return fmt.Sprintf(`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin, writer)
+		VALUES ('%s', '%s', '/x', 'local', 't', 'manual', '%s', '%s')`, id, id, origin, origin)
 }
 
 // joinRecord and joinRoundFile are a parent with a child carrying a compressed
 // body, so the bulk content a round file holds is a row like any other.
 func joinRecord(id, origin string) string {
 	return fmt.Sprintf(`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json,
-		created_at, updated_at, origin)
-		VALUES ('%s', 'o', 'n', 'open', 1, '/z', '{}', 't', 't', '%s')`, id, origin)
+		created_at, updated_at, origin, writer)
+		VALUES ('%s', 'o', 'n', 'open', 1, '/z', '{}', 't', 't', '%s', '%s')`, id, origin, origin)
 }
 
 func joinRoundFile(recordID string) string {

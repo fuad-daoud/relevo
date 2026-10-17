@@ -8,8 +8,8 @@ import (
 )
 
 func insertBindingRecord(id, origin, owner, name string) string {
-	return fmt.Sprintf(`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin)
-		VALUES ('%s', '%s', '%s', 'open', 1, '/z', '{}', 't', 't', '%s')`, id, owner, name, origin)
+	return fmt.Sprintf(`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin, writer)
+		VALUES ('%s', '%s', '%s', 'open', 1, '/z', '{}', 't', 't', '%s', '%s')`, id, owner, name, origin, origin)
 }
 
 // Two-database rebind: machine A deletes a binding_record and inserts one with

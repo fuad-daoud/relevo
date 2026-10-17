@@ -219,7 +219,7 @@ func TestImporterGatesAChildOnItsParent(t *testing.T) {
 			Body: bodyFor(t, map[string]any{
 				"id": "04A", "owner": "o", "name": "04A", "state": "open", "round": 1,
 				"cwd": "/x", "record_json": "{}", "created_at": "t", "updated_at": "t",
-				"origin": "somebody-else",
+				"origin": "m3", "writer": "somebody-else",
 			}),
 		},
 		Entry{Origin: "m3", Table: "round_file", PK: `["04A","f"]`, Op: OpUpsert,

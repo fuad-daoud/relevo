@@ -627,7 +627,7 @@ func TestExchangeUpsertOriginImmutability(t *testing.T) {
 		"id": "b2", "name": "b2", "cwd": "/x", "builder_mode": "local",
 		"created_at": "t", "ingest_source": "manual",
 	}
-	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instA", bMissingOrigin) }); !errors.Is(err, ErrInvalid) {
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "", bMissingOrigin) }); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("upsert missing origin err = %v, want ErrInvalid", err)
 	}
 }

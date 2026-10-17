@@ -61,28 +61,8 @@ func (t *Tx) ExchangeUpsert(tbl, owner string, values map[string]any) error {
 		return err
 	}
 	if creator := creatorColumn(tbl); creator != "" {
-		bodyOrigin, _ := values[creator].(string)
-		if bodyOrigin == "" {
-			return fmt.Errorf("db: exchange upsert %s: %s is missing or empty: %w", tbl, creator, ErrInvalid)
-		}
-		keyArgs := make([]any, len(shared.PrimaryKey))
-		for i, col := range shared.PrimaryKey {
-			v, vok := values[col]
-			if !vok {
-				return fmt.Errorf("db: exchange upsert %s: body names no %s: %w", tbl, col, ErrInvalid)
-			}
-			keyArgs[i] = v
-		}
-		where, _ := keyWhere(shared.PrimaryKey, keyArgs)
-		var storedOrigin string
-		err := t.conn.QueryRowContext(t.ctx, "SELECT "+quoteIdent(creator)+" FROM "+quoteIdent(shared.Name)+" WHERE "+where, keyArgs...).Scan(&storedOrigin)
-		if err == nil {
-			if storedOrigin != bodyOrigin {
-				return fmt.Errorf("db: exchange upsert %s: %s is immutable (stored %q, body %q): %w",
-					tbl, creator, storedOrigin, bodyOrigin, ErrInvalid)
-			}
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("db: exchange upsert %s: check stored %s: %w", tbl, creator, mapRefused(mapBusy(err)))
+		if err := t.checkCreatorImmutability(shared, creator, owner, values); err != nil {
+			return err
 		}
 	}
 	owned := ownedValues(tbl, owner, values)
@@ -107,6 +87,41 @@ func (t *Tx) ExchangeUpsert(tbl, owner string, values map[string]any) error {
 		return fmt.Errorf("db: exchange upsert %s: %w", tbl, mapRefused(mapBusy(err)))
 	}
 	return nil
+}
+
+// checkCreatorImmutability validates that the creator column (origin) is immutable
+// on update, and ensures it is populated on insert (from body or owner).
+func (t *Tx) checkCreatorImmutability(shared *SharedTable, creator, owner string, values map[string]any) error {
+	keyArgs := make([]any, len(shared.PrimaryKey))
+	for i, col := range shared.PrimaryKey {
+		v, vok := values[col]
+		if !vok {
+			return fmt.Errorf("db: exchange upsert %s: body names no %s: %w", shared.Name, col, ErrInvalid)
+		}
+		keyArgs[i] = v
+	}
+	where, _ := keyWhere(shared.PrimaryKey, keyArgs)
+	var storedOrigin string
+	err := t.conn.QueryRowContext(t.ctx, "SELECT "+quoteIdent(creator)+" FROM "+quoteIdent(shared.Name)+" WHERE "+where, keyArgs...).Scan(&storedOrigin)
+	if err == nil {
+		if bodyOrigin, _ := values[creator].(string); bodyOrigin != "" && storedOrigin != bodyOrigin {
+			return fmt.Errorf("db: exchange upsert %s: %s is immutable (stored %q, body %q): %w",
+				shared.Name, creator, storedOrigin, bodyOrigin, ErrInvalid)
+		}
+		values[creator] = storedOrigin
+		return nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		if bodyOrigin, _ := values[creator].(string); bodyOrigin != "" {
+			values[creator] = bodyOrigin
+		} else if owner != "" {
+			values[creator] = owner
+		} else {
+			return fmt.Errorf("db: exchange upsert %s: %s is missing or empty: %w", shared.Name, creator, ErrInvalid)
+		}
+		return nil
+	}
+	return fmt.Errorf("db: exchange upsert %s: check stored %s: %w", shared.Name, creator, mapRefused(mapBusy(err)))
 }
 
 // MaxOutboxSeq returns the highest seq in sync_outbox, or 0 if empty.
