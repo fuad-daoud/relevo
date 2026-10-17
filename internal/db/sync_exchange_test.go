@@ -794,7 +794,7 @@ func TestOwnerResolutionMatchesTriggers(t *testing.T) {
 		}
 		for _, op := range outboxOpsFor(table.Name) {
 			alias := "NEW"
-			if op.Name == "delete" {
+			if op.Name == "delete" || (op.Name == "update" && rule.oldOnUpdate) {
 				alias = "OLD"
 			}
 			name := "sync_outbox_" + table.Name + op.Suffix
@@ -1071,5 +1071,183 @@ func copyFile(t *testing.T, src, dst string) {
 	}
 	if err := os.WriteFile(dst, data, 0o644); err != nil {
 		t.Fatalf("write %s: %v", dst, err)
+	}
+}
+
+// TestMigration031TriggerSetComplete pins that every shared table's expected triggers
+// exist in the live database schema (all operations of all shared tables, including
+// the 24 triggers recreated in migration 031).
+func TestMigration031TriggerSetComplete(t *testing.T) {
+	sqlDB := migratedSQLDB(t)
+	bodies := triggerBodies(t, sqlDB)
+
+	// 1. Every shared table has all required triggers in the live schema.
+	expectedCount := 0
+	for _, table := range SharedTables {
+		for _, op := range outboxOpsFor(table.Name) {
+			expectedCount++
+			name := "sync_outbox_" + table.Name + op.Suffix
+			if _, ok := bodies[name]; !ok {
+				t.Errorf("trigger %s is missing from the database", name)
+			}
+		}
+	}
+
+	// 2. The 24 triggers 031 recreates are all present.
+	m031Tables := []string{
+		"binding_record", "binding", "binding_event", "round_file",
+		"round", "event", "artifact", "transcript",
+	}
+	m031Count := 0
+	for _, tbl := range m031Tables {
+		for _, op := range outboxOpsFor(tbl) {
+			m031Count++
+			name := "sync_outbox_" + tbl + op.Suffix
+			if _, ok := bodies[name]; !ok {
+				t.Errorf("migration 031 trigger %s is missing", name)
+			}
+		}
+	}
+	if m031Count != 24 {
+		t.Errorf("migration 031 expected 24 triggers, got %d", m031Count)
+	}
+}
+
+// TestHandoverUpdateAttributesToOldWriter pins that an UPDATE on binding or
+// binding_record attributes the resulting sync_outbox entry to OLD.writer rather
+// than NEW.writer, which is what lets a hand-over be exported under the old
+// writer's log.
+func TestHandoverUpdateAttributesToOldWriter(t *testing.T) {
+	d := directOpenTestDB(t)
+
+	// 1. Test binding update attributes to OLD.writer.
+	var bID string
+	err := d.Tx(func(tx *Tx) error {
+		id := NewID()
+		bID = id
+		_, err := tx.exec(`INSERT INTO binding (id, origin, writer, name, cwd, created_at, builder_mode, ingest_source)
+			VALUES (?, 'creatorA', 'oldWriter1', 'b1', '/x', '2026-10-01T10:00:00.000Z', 'headless', 'live')`, id)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("insert binding: %v", err)
+	}
+
+	// Clear outbox before hand-over UPDATE.
+	if _, err := d.sqlDB.Exec(`DELETE FROM sync_outbox`); err != nil {
+		t.Fatalf("clear outbox: %v", err)
+	}
+
+	// Perform hand-over update: writer changes from oldWriter1 to newWriter2.
+	err = d.Tx(func(tx *Tx) error {
+		_, err := tx.exec(`UPDATE binding SET writer = 'newWriter2' WHERE id = ?`, bID)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("hand-over update binding: %v", err)
+	}
+
+	// Verify outbox entry origin is oldWriter1.
+	var op, origin string
+	if err := d.sqlDB.QueryRow(`SELECT op, origin FROM sync_outbox WHERE tbl = 'binding' AND pk = ?`, fmt.Sprintf(`["%s"]`, bID)).Scan(&op, &origin); err != nil {
+		t.Fatalf("read outbox for binding: %v", err)
+	}
+	if op != "update" || origin != "oldWriter1" {
+		t.Errorf("binding outbox entry = (%s, %s), want (update, oldWriter1)", op, origin)
+	}
+
+	// 2. Test binding_record update attributes to OLD.writer.
+	var rID string
+	err = d.Tx(func(tx *Tx) error {
+		id := NewID()
+		rID = id
+		_, err := tx.exec(`INSERT INTO binding_record (id, origin, writer, owner, name, state, round, cwd, record_json, created_at, updated_at)
+			VALUES (?, 'creatorA', 'oldWriter1', 'owner1', 'r1', 'open', 1, '/z', '{}', '2026-10-01T10:00:00.000Z', '2026-10-01T10:00:00.000Z')`, id)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("insert record: %v", err)
+	}
+
+	if _, err := d.sqlDB.Exec(`DELETE FROM sync_outbox`); err != nil {
+		t.Fatalf("clear outbox: %v", err)
+	}
+
+	err = d.Tx(func(tx *Tx) error {
+		_, err := tx.exec(`UPDATE binding_record SET writer = 'newWriter2' WHERE id = ?`, rID)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("hand-over update record: %v", err)
+	}
+
+	if err := d.sqlDB.QueryRow(`SELECT op, origin FROM sync_outbox WHERE tbl = 'binding_record' AND pk = ?`, fmt.Sprintf(`["%s"]`, rID)).Scan(&op, &origin); err != nil {
+		t.Fatalf("read outbox for record: %v", err)
+	}
+	if op != "update" || origin != "oldWriter1" {
+		t.Errorf("binding_record outbox entry = (%s, %s), want (update, oldWriter1)", op, origin)
+	}
+}
+
+// TestResolveOwnerHopsWhenWriterDiffersFromOrigin pins that when a root's writer
+// differs from its creator origin, child rows resolve the writer through their
+// parent hops, not the creator origin.
+func TestResolveOwnerHopsWhenWriterDiffersFromOrigin(t *testing.T) {
+	d := openTestDB(t)
+
+	const creator = "instCreator"
+	const currentWriter = "instWriter"
+
+	// Seed binding and binding_record where writer != origin.
+	err := d.Tx(func(tx *Tx) error {
+		return execTxAll(tx,
+			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin, writer)
+			 VALUES ('b1', 'n', '/x', 'headless', 't', '', '`+creator+`', '`+currentWriter+`')`,
+			`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin, writer)
+			 VALUES ('rec1', 'o', 'n', 'live', 1, '/x', '{}', 't', 't', '`+creator+`', '`+currentWriter+`')`,
+			`INSERT INTO binding_event (record_id, seq, ts, round, direction, kind, confirmed, entry_json)
+			 VALUES ('rec1', 1, 't', 1, 'in', 'k', 1, '{}')`,
+			`INSERT INTO round_file (record_id, name, round, body, body_codec, bytes, sha256, mtime, sealed_at)
+			 VALUES ('rec1', 'report.md', 1, X'00', 1, 1, 'sha', 't', 't')`,
+			`INSERT INTO round (id, binding_id, number, started_at, outcome, switches)
+			 VALUES ('rd1', 'b1', 1, 't', 'green', 0)`,
+			`INSERT INTO event (id, binding_id, round_id, seq, ts, kind, direction, confirmed, late, entry_json)
+			 VALUES ('e1', 'b1', 'rd1', 1, 't', 'k', 'in', 1, 0, '{}')`,
+			`INSERT INTO artifact (id, round_id, kind, consult_id, text, bytes, sha256, captured_at)
+			 VALUES ('a1', 'rd1', 'report', '', 'x', 1, 'sha', 't')`,
+			`INSERT INTO transcript (id, owner_kind, owner_id, seq, record_json, rendered)
+			 VALUES ('tr1', 'round', 'rd1', 1, '{}', '')`,
+		)
+	})
+	if err != nil {
+		t.Fatalf("seed rows: %v", err)
+	}
+
+	// Verify roots resolve to currentWriter.
+	for _, root := range []struct{ tbl, pk string }{
+		{"binding", `["b1"]`},
+		{"binding_record", `["rec1"]`},
+	} {
+		owner, found, err := d.ResolveOwner(root.tbl, root.pk)
+		if err != nil || !found || owner != currentWriter {
+			t.Errorf("ResolveOwner(%s, %s) = (%q, %t, %v), want (%q, true, nil)",
+				root.tbl, root.pk, owner, found, err, currentWriter)
+		}
+	}
+
+	// Verify children resolve to currentWriter through hops, not creator.
+	for _, child := range []struct{ tbl, pk string }{
+		{"binding_event", `["rec1",1]`},
+		{"round_file", `["rec1","report.md"]`},
+		{"round", `["rd1"]`},
+		{"event", `["e1"]`},
+		{"artifact", `["a1"]`},
+		{"transcript", `["tr1"]`},
+	} {
+		owner, found, err := d.ResolveOwner(child.tbl, child.pk)
+		if err != nil || !found || owner != currentWriter {
+			t.Errorf("ResolveOwner(%s, %s) = (%q, %t, %v), want (%q, true, nil)",
+				child.tbl, child.pk, owner, found, err, currentWriter)
+		}
 	}
 }
