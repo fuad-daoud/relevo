@@ -11,8 +11,8 @@
 # reason when falling back to './...'.
 set -eu
 
-# resolve_base returns the base git ref. If the ref cannot be resolved, it
-# prints ./... to stdout, a reason to stderr, and exits 0.
+# resolve_base prints the base commit, or ./... and a reason on stderr when
+# there is none to compare against.
 resolve_base() {
 	override="$1"
 	if [ -n "$override" ]; then
@@ -241,7 +241,13 @@ if [ ! -f "go.mod" ]; then
 	exit 0
 fi
 
+# resolve_base runs in a command substitution, so its exit only ends that
+# subshell: the fallback reaches here as the base itself.
 base=$(resolve_base "$base_arg")
+if [ "$base" = "./..." ]; then
+	echo "./..."
+	exit 0
+fi
 
 work=$(mktemp -d)
 trap 'rm -rf "$work" 2>/dev/null || :' EXIT

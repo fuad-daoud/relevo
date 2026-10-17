@@ -33,7 +33,7 @@ make check
 
 `make check-affected` is the day to day gate: `gofmt -l .`, `go vet ./...`, and
 `go test` over the packages your change reaches. `make check` is the full run --
-the same static set plus `go test -count=1 ./...`. CI runs exactly the full gate
+the same static set plus `go test -race -count=1 -cover ./...`. CI runs exactly the full gate
 on Linux and macOS against both
 the Go 1.22 floor and current stable, plus a cross-compile sweep. If
 `make check` passes locally it will almost certainly pass there.
