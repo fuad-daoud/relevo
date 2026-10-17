@@ -245,3 +245,64 @@ func TestMigrationsApplyInOrderIsIdempotent(t *testing.T) {
 		t.Errorf("schema_version has %d rows, want 1", count)
 	}
 }
+
+func TestMigration031AddsWriterColumn(t *testing.T) {
+	// 1. Upgraded DB from version 30 to 31
+	sqlDB := rawSQLDB(t, filepath.Join(t.TempDir(), "relevo.db"))
+
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 30)); err != nil {
+		t.Fatalf("applyMigrations through 030: %v", err)
+	}
+
+	if _, err := sqlDB.Exec(`INSERT INTO binding_record
+		(id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin)
+		VALUES ('rec1', '', 'test1', 'open', 1, '/work/1', '{}', '2026-10-17T10:00:00Z', '2026-10-17T10:00:00Z', 'inst1')`); err != nil {
+		t.Fatalf("insert binding_record at 030: %v", err)
+	}
+	if _, err := sqlDB.Exec(`INSERT INTO binding
+		(id, origin, name, cwd, builder_mode, created_at, ingest_source)
+		VALUES ('b1', 'inst2', 'test2', '/work/2', 'pane', '2026-10-17T10:00:00Z', 'live')`); err != nil {
+		t.Fatalf("insert binding at 030: %v", err)
+	}
+
+	if err := applyMigrations(sqlDB, migrationFilesUpTo(t, 31)); err != nil {
+		t.Fatalf("applyMigrations through 031: %v", err)
+	}
+
+	// Verify writer equals origin for every row
+	var recWriter string
+	if err := sqlDB.QueryRow(`SELECT writer FROM binding_record WHERE id = 'rec1'`).Scan(&recWriter); err != nil {
+		t.Fatalf("query binding_record writer: %v", err)
+	}
+	if recWriter != "inst1" {
+		t.Errorf("binding_record writer = %q, want %q", recWriter, "inst1")
+	}
+
+	var bWriter string
+	if err := sqlDB.QueryRow(`SELECT writer FROM binding WHERE id = 'b1'`).Scan(&bWriter); err != nil {
+		t.Fatalf("query binding writer: %v", err)
+	}
+	if bWriter != "inst2" {
+		t.Errorf("binding writer = %q, want %q", bWriter, "inst2")
+	}
+
+	for _, tbl := range []string{"sync_binding_term", "sync_writer_after", "sync_binding_left", "sync_fenced_change"} {
+		var name string
+		if err := sqlDB.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, tbl).Scan(&name); err != nil {
+			t.Errorf("machine-local table %s missing: %v", tbl, err)
+		}
+	}
+
+	// 2. Fresh DB
+	freshPath := filepath.Join(t.TempDir(), "fresh.db")
+	d, err := Open(freshPath)
+	if err != nil {
+		t.Fatalf("Open fresh db: %v", err)
+	}
+	defer func() { _ = d.Close() }()
+
+	have, know := d.SchemaVersions()
+	if have != 31 || know != 31 {
+		t.Errorf("SchemaVersions = (%d, %d), want (31, 31)", have, know)
+	}
+}
