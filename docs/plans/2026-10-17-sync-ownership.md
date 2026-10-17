@@ -186,3 +186,73 @@ Per-origin logs are applied strictly in sequence; the only cross-log ordering is
 
 ## 4. The report must include
 Per round: files changed vs this plan's seams, `git diff --stat`, the mutation list with the test name that failed for each, the exact `make check` result under `RELEVO_REQUIRE_COVERAGE=1`, any file over 500 lines, the list of `origin` sites found by grep vs the closed list, the deviations from §0 actually taken (especially item 4), the residuals (§D noise, §E divergence of already-applied fenced entries), and any halt (a step impossible as written, or a contradiction with the code) stated rather than worked around. Never amend or rebase a pushed commit; every round is new commits.
+
+# Deviations
+
+Deviations actually taken, by round. Earlier rounds' entries below are those the
+round reports recorded for the hand-over and takeover work (Round 3).
+
+## Round 3
+
+- A rerun of `handover` against a binding that is already handed over returns
+  "already" and pushes nothing: once the transaction commits the record cannot
+  be loaded here, so there is no branch or directory to push. A rerun after a
+  push that succeeded but a transaction that failed pushes again.
+- The takeover's fence warning prints N but not H, the old writer's head: H
+  comes from `ReadMarks().Heads`, which needs a transport the CLI does not have.
+- Round 2 code was touched: an `After` naming this installation's own log no
+  longer makes its own import wait on its own origin's mark (`batchWaitingAfter`
+  and `checkRegionAfterHold`), and `applyHandover` clears `sync_binding_left`
+  when a hand-over lands back on this machine.
+- The importer records the highest schema each origin wrote (kv
+  `sync.origin_schema.v1`); the "target below schema 31" refusal (C3) reads it.
+- Pending control entries and the left-row manifest live in kv keys rather than
+  new tables, so migration 031 stays as written.
+
+## Round 4
+
+- **C4 mechanism: join under the temporary identity, but stop before any
+  write.** Of the two mechanisms C4 allows, the first (adopt, then import X's
+  log as own) needs a transport pull of the machine's own origin and a second
+  import path for snapshots and floors; the second (join with export and mark
+  publishing off) still runs the reconcile. The code instead runs the join only
+  as far as its import (`Enabler.joinImport`): X's log lands as a foreign
+  origin's through the existing importer, snapshots and floors included, and
+  the temporary identity appends, publishes and writes nothing. The swap
+  (`db.AdoptIdentity`, then `installation.Adopt`, then the own-head fact) runs
+  only after the import reached the head and the claim was read again. The
+  joinee's local-file capture is skipped during the join, so no document item is
+  stamped with the temporary id.
+- **The enable does not turn sync on.** §F said "require a daemon restart (the
+  origin is read at open; the verb tells the owner)". The adoption leaves sync
+  off with the join marker set; after the restart a plain `relevo db sync
+  enable` resumes the join as X (import is a no-op, the reconcile is converged
+  and appends nothing) and turns the machine on.
+- **Precondition on the outbox and `shared_outbox`.** "Empty" is read as: no
+  `sync_outbox` row except the machine's own installation-row upkeep (every
+  open touches it), and no document signal except `config` (every open
+  signals it) and `secrets` (this enable's own store step signals it). The
+  signals live in the machine-local file, so that is where they are counted.
+  Any other change, or any shared row but the machine's own installation row,
+  refuses before the claim.
+- **Claim read-only mode.** `ClaimIdentity` with an empty token only reads the
+  claim; no second verb was added. The same function serves the steady attempt's
+  comparison.
+- **Claim reuse on a rerun.** The claim token is stored in kv `sync.adopted.v1`;
+  a rerun of `enable --as` for the same id reuses it, so an interrupted
+  adoption is not locked out by its own claim.
+- **`--yes` is the confirmation**, following `db_sync_yes_test.go`; `--as` with
+  an invite code is refused.
+- **Runbook line follows C3, not the Round 4 step text:** the hand-over checks
+  the target's newest entry for schema 31, not every origin's.
+- **No new wire code:** the adoption refusals classify as `invalid`.
+
+## Residuals
+
+- A local write made by the daemon between the swap and its restart is
+  attributed to the temporary identity and stays a foreign row of the adopted
+  machine.
+- The claim is exclusive per attempt and detected afterwards; two machines that
+  both read their own token back are told apart only on their next steady
+  attempt.
+- The coverage baseline was not regenerated: no code moved between packages.

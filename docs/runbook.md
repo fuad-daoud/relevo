@@ -71,6 +71,15 @@ under `~/.cache`; keep it on any rebuild.
   against `checksums.txt`, and deploy that binary with
   `~/projects/servers/contabo/srv.fish deploy relevo-serve <binary>`.
 - Deploy only when no chain round runs on that server.
+- Ownership rollout: every machine runs this build before anyone hands a
+  binding over. `relevo handover` refuses a target whose newest log entry was
+  written below schema 31, naming it, because a machine on an older build
+  cannot read the `writer` column the hand-over sets.
+- `relevo db sync enable --as <installation> --yes` takes over a dead machine's
+  identity on a fresh machine. It leaves sync off: restart the relevo daemon,
+  then run `relevo db sync enable` again to finish. `relevo db sync status`
+  says when another machine adopted the same identity; run
+  `relevo db sync disable` on one of the two.
 
 ## Running chains
 
