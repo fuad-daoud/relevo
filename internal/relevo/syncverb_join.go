@@ -66,7 +66,11 @@ type verified struct {
 // required decides whether a missing passphrase is a refusal. A --join needs one
 // -- a joiner that cannot unlock would join holding nothing -- while a plain
 // enable that was handed none has nothing to verify and goes on as it always did.
-func (v *VerbRunner) stageAndVerify(ctx context.Context, remote string, token, passphrase []byte, required bool) (*verified, error) {
+//
+// A plain enable stages its bucket credentials too: its worker is opened from
+// the stored set, and on a fresh machine the only set is the one this enable
+// carries. A join's arrive in the fleet's secrets document instead.
+func (v *VerbRunner) stageAndVerify(ctx context.Context, remote string, token, passphrase []byte, required bool, r2 relevosync.R2Intake) (*verified, error) {
 	if required && len(bytes.TrimSpace(passphrase)) == 0 {
 		return nil, errNoPassphrase
 	}
@@ -88,6 +92,12 @@ func (v *VerbRunner) stageAndVerify(ctx context.Context, remote string, token, p
 	if err := v.stageRows(remote, token); err != nil {
 		v.unstageJoin(snapshot)
 		return nil, err
+	}
+	if !required {
+		if err := v.stageR2(r2); err != nil {
+			v.unstageJoin(snapshot)
+			return nil, err
+		}
 	}
 	transport, opened, bucketless, err := v.openJoinTransport(ctx, required)
 	if err != nil {
@@ -149,6 +159,22 @@ func (v *VerbRunner) stageRows(remote string, token []byte) error {
 	return relevosync.SetToken(v.Local, token, now)
 }
 
+// stageR2 stores the bucket credentials a plain enable resolves from its flags
+// over the stored set. An incomplete set is refused here, as the enable itself
+// would refuse it, before a worker is opened that could not be built.
+func (v *VerbRunner) stageR2(r2 relevosync.R2Intake) error {
+	stored, err := relevosync.ReadR2(v.Local)
+	if err != nil {
+		return err
+	}
+	r2.Stored = stored
+	resolved, err := r2.R2Resolve()
+	if err != nil {
+		return err
+	}
+	return relevosync.SetR2(v.Local, resolved, time.Now())
+}
+
 // unstageJoin puts the staged rows back.
 //
 // It runs on every path that opened a worker to check the passphrase and did not
@@ -199,7 +225,7 @@ func (v *VerbRunner) openJoinTransport(ctx context.Context, joining bool) (syncl
 // in the secrets document, but bucket flags the joiner passed are honored.
 func (v *VerbRunner) enableJoin(ctx context.Context, verb *wire.SyncVerb, token, passphrase []byte, r2 relevosync.R2Intake) *wire.SyncResult {
 	v.beginJoin()
-	done, err := v.stageAndVerify(ctx, verb.RemoteURL, token, passphrase, true)
+	done, err := v.stageAndVerify(ctx, verb.RemoteURL, token, passphrase, true, r2)
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}

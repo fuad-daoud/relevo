@@ -271,6 +271,9 @@ type BindingView struct {
 	// linked to. Both are empty from a pre-origin server.
 	ID           string `json:"id,omitempty"`
 	Installation string `json:"installation,omitempty"`
+
+	WorktreeKept string `json:"worktree_kept,omitempty"`
+	KeptReason   string `json:"kept_reason,omitempty"`
 }
 
 // QueueView is a queued round's place in the server's queue (#285).

@@ -6,7 +6,7 @@ BIN     := $(HOME)/.local/bin/relevo
 BUILD_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo devel)
 LDFLAGS := -X main.version=$(if $(VERSION),$(VERSION),$(BUILD_VERSION))
 
-.PHONY: check check-quick check-static check-scripts check-test lint build install service uninstall release release-bump release-tag jev board-assets mod-test
+.PHONY: check check-quick check-affected check-static check-scripts check-test lint build install service uninstall release release-bump release-tag jev board-assets mod-test
 
 # lint runs golangci-lint with .golangci.yml. The binary is not vendored and
 # CI installs it in a setup step, so a machine without it still gets the rest
@@ -69,6 +69,19 @@ check-scripts:
 # it. The built assets are committed, so `check` only reads them.
 board-assets:
 	sh scripts/board-assets.sh
+
+# check-affected is the builder's inner gate: the static checks, then go test
+# (no -race, no -count=1, so Go's test cache applies) over only the packages
+# a change reaches. The full gate is CI's job (race, every package, coverage).
+# BASE overrides the base ref (default git merge-base HEAD origin/main).
+check-affected:
+	$(MAKE) check-static
+	@pkgs=$$(BASE="$(BASE)" sh scripts/affected-packages.sh) || exit $$?; \
+	if [ -z "$$pkgs" ]; then \
+		echo "no Go package affected; tests skipped"; \
+	else \
+		go test $$pkgs; \
+	fi
 
 # check-quick is the inner loop, not the gate: the static checks, then the
 # tests without -race and with Go's test cache, so a re-run after a small fix

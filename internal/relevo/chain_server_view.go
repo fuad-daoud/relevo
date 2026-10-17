@@ -262,7 +262,8 @@ func chainServerDone(ctx context.Context, rt Runtime, c db.ChainRow) (DoneResult
 	if _, err := chainResultFromMirror(ctx, rt, c.Name); err != nil && !is404(err) {
 		return DoneResult{}, err
 	}
-	if err := rt.Remote.ChainDone(ctx, c.Server, c.Name); err != nil {
+	chainView, err := rt.Remote.ChainDone(ctx, c.Server, c.Name)
+	if err != nil {
 		if remoteCode(err, 409, remote.CodeChainRunning) {
 			return DoneResult{}, fmt.Errorf("chain %s is running; relevo stop %s first: %w", c.Name, c.Name, ErrChainRunning)
 		}
@@ -292,6 +293,10 @@ func chainServerDone(ctx context.Context, rt Runtime, c db.ChainRow) (DoneResult
 			out = res
 			first = false
 		}
+	}
+	if out.WorktreeKept == "" && chainView.WorktreeKept != "" {
+		out.WorktreeKept = chainView.WorktreeKept
+		out.KeptReason = "on " + c.Server + ": " + chainView.KeptReason
 	}
 
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {

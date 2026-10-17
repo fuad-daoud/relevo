@@ -6,18 +6,22 @@
 #   TOTAL    >= 1
 #   OUTDIR   default .shard; created if missing, and existing files in it are
 #            overwritten
-# Env: SPLIT_PKGS  space-separated import-path patterns whose tests are split
-#                  across shards (default ./internal/relevo). Every package not
-#                  matched by a pattern is assigned whole, in go list order.
-#      SHARD_COVER  0 drops coverage instrumentation from every job; unset or any
-#                  other value keeps it (default on).
+# Env: SPLIT_PKGS    space-separated import-path patterns whose tests are split
+#                    across shards (default ./internal/relevo).
+#                    Every package not matched by a pattern is assigned whole.
+#      SHARD_WEIGHTS path to the weights file (default scripts/test-shard.weights).
+#      SHARD_COVER   0 drops coverage instrumentation from every job; unset or any
+#                    other value keeps it (default on).
 # Exit: 0 when every go test it ran passed, 1 when any failed, 2 on bad usage.
 #
-# CI runs three shards of one leg in parallel, which is how internal/relevo's
-# ~1,000 tests are split without splitting the package itself: whole package i
-# goes to shard i mod TOTAL, and test j of a split package goes to shard
-# j mod TOTAL, both over LC_ALL=C sorted lists. The assignment is
-# deterministic, so the shards are always disjoint and cover everything.
+# CI runs three shards of one leg in parallel to balance package test durations:
+# whole packages are placed greedily onto the currently least-loaded shard,
+# longest first (ties broken by package path in LC_ALL=C order, ties to lowest
+# index), according to SHARD_WEIGHTS (default scripts/test-shard.weights). The
+# split packages contribute an equal preload (their raw weight) to every shard,
+# and their individual tests are distributed round-robin across shards. The
+# assignment is deterministic, so the shards are always disjoint and cover
+# everything.
 #
 # Test names come from the package sources rather than `go test -list`: reading
 # a file is free, while -list would compile the package a second time.
@@ -25,6 +29,7 @@ set -eu
 
 usage() {
 	echo "usage: test-shard.sh [--dry-run] INDEX TOTAL [OUTDIR]" >&2
+	echo "  SHARD_WEIGHTS points to package weights (default scripts/test-shard.weights)" >&2
 }
 
 dry_run=0
@@ -69,6 +74,18 @@ if [ "$total" -lt 1 ] || [ "$index" -ge "$total" ]; then
 	exit 2
 fi
 
+# shellcheck disable=SC1007 # CDPATH= scopes an empty CDPATH to this one command
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck disable=SC1007 # CDPATH= scopes an empty CDPATH to this one command
+repo=$(CDPATH= cd -- "$here/.." && pwd)
+mod=$(cd "$repo" && go list -m 2>/dev/null) || mod=
+
+weights_file=${SHARD_WEIGHTS:-$here/test-shard.weights}
+if [ ! -r "$weights_file" ]; then
+	echo "test-shard: weights file not found or not readable: $weights_file" >&2
+	exit 2
+fi
+
 split_pkgs=${SPLIT_PKGS:-./internal/relevo}
 
 # SHARD_COVER=0 turns coverage off for every job. darwin's coverage report
@@ -88,23 +105,89 @@ trap 'rm -rf "$work" 2>/dev/null || :' EXIT
 # shellcheck disable=SC2086 # word splitting is the point: one pattern per word
 split=$(for pat in $split_pkgs; do go list "$pat"; done)
 
-# The resolved paths reach awk through a file, never through -v: with two split
-# packages the list holds a newline, and while GNU awk accepts a newline inside
+# The resolved paths reach awk through a file, never through -v: with several split
+# packages the list holds newlines, and while GNU awk accepts a newline inside
 # a -v assignment, the BSD awk on macOS rejects it. The file lives under $work,
 # which the EXIT trap removes.
 printf '%s\n' "$split" > "$work/split.txt"
 
-# Whole packages: go list ./... minus the split ones, in go list order.
-go list ./... | awk -v skip_file="$work/split.txt" -v idx="$index" -v total="$total" '
+# Whole packages: lookup weights, default 5 for unknown packages.
+go list ./... | awk -v weights_file="$weights_file" -v split_file="$work/split.txt" -v mod="$mod" '
+	function strip_mod(p) {
+		if (mod != "" && substr(p, 1, length(mod) + 1) == (mod "/")) {
+			return substr(p, length(mod) + 2)
+		}
+		if (p == mod) return "."
+		return p
+	}
 	BEGIN {
-		while ((getline line < skip_file) > 0) {
+		while ((getline line < split_file) > 0) {
 			if (line != "") skip[line] = 1
 		}
+		close(split_file)
+		while ((getline line < weights_file) > 0) {
+			if (line ~ /^#/ || line ~ /^[ \t]*$/) continue
+			split(line, parts)
+			if (parts[1] != "") weights[parts[1]] = parts[2] + 0
+		}
+		close(weights_file)
 	}
 	!($0 in skip) {
-		if (k++ % total == idx) print
+		rel = strip_mod($0)
+		w = (rel in weights) ? weights[rel] : 5
+		print w " " $0
 	}
-' > "$work/pkgs.txt"
+' > "$work/whole_weights.raw"
+
+LC_ALL=C sort -k1,1nr -k2,2 "$work/whole_weights.raw" > "$work/whole_weights.sorted"
+
+# Greedy assignment: longest whole package first onto the currently least-loaded shard,
+# ties broken by lowest index. Split packages preload each shard by their raw weight.
+awk -v weights_file="$weights_file" -v split_file="$work/split.txt" -v mod="$mod" \
+    -v idx="$index" -v total="$total" '
+	function strip_mod(p) {
+		if (mod != "" && substr(p, 1, length(mod) + 1) == (mod "/")) {
+			return substr(p, length(mod) + 2)
+		}
+		if (p == mod) return "."
+		return p
+	}
+	BEGIN {
+		while ((getline line < weights_file) > 0) {
+			if (line ~ /^#/ || line ~ /^[ \t]*$/) continue
+			split(line, parts)
+			if (parts[1] != "") weights[parts[1]] = parts[2] + 0
+		}
+		close(weights_file)
+		split_preload = 0
+		while ((getline line < split_file) > 0) {
+			if (line == "") continue
+			rel = strip_mod(line)
+			w = (rel in weights) ? weights[rel] : 5
+			split_preload += w
+		}
+		close(split_file)
+		for (i = 0; i < total; i++) {
+			load[i] = split_preload
+		}
+	}
+	NF >= 2 {
+		w = $1 + 0
+		pkg = substr($0, index($0, " ") + 1)
+		min_idx = 0
+		min_load = load[0]
+		for (i = 1; i < total; i++) {
+			if (load[i] < min_load) {
+				min_load = load[i]
+				min_idx = i
+			}
+		}
+		if (min_idx == idx) {
+			print pkg
+		}
+		load[min_idx] += w * total
+	}
+' "$work/whole_weights.sorted" > "$work/pkgs.txt"
 
 # Each split package's share of its test names, kept in numbered files so the
 # dry run and the real run read the same assignment.
@@ -120,7 +203,13 @@ for s in $split; do
 	mine=$(printf '%s\n' "$names" | awk -v idx="$index" -v total="$total" 'NF && (j++ % total == idx)')
 	[ -n "$mine" ] || continue
 	n=$((n + 1))
+	rel=$s
+	case $rel in
+	"$mod"/*) rel=${rel#"$mod"/} ;;
+	esac
+	base=$(printf '%s\n' "$rel" | tr '/' '-')
 	printf '%s\n' "$s" > "$work/s$n.pkg"
+	printf '%s\n' "$base" > "$work/s$n.base"
 	printf '%s\n' "$mine" > "$work/s$n.names"
 done
 
@@ -166,7 +255,7 @@ k=0
 while [ "$k" -lt "$n" ]; do
 	k=$((k + 1))
 	pkg=$(cat "$work/s$k.pkg")
-	base=${pkg##*/}
+	base=$(cat "$work/s$k.base")
 	run_re=$(awk 'NF { if (c++) printf "|"; printf "%s", $0 }' "$work/s$k.names")
 	coverprofile_flag=
 	if [ "$cover" -eq 1 ]; then
@@ -189,7 +278,8 @@ cat "$outdir/whole.txt"
 k=0
 while [ "$k" -lt "$n" ]; do
 	k=$((k + 1))
-	cat "$outdir/split-$(sed 's#.*/##' "$work/s$k.pkg").txt"
+	base=$(cat "$work/s$k.base")
+	cat "$outdir/split-$base.txt"
 done
 
 exit "$failed"

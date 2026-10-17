@@ -515,7 +515,7 @@ type RemoteClient interface {
 	Ack(ctx context.Context, server, name string, round int) (remote.BindingView, error)
 	Unavailable(ctx context.Context, server, name, token, reason string) error
 	Available(ctx context.Context, server, subject string) (remote.AvailableResponse, error)
-	Done(ctx context.Context, server, name string) error
+	Done(ctx context.Context, server, name string) (remote.BindingView, error)
 	Unbind(ctx context.Context, server, name string) error
 	Resume(ctx context.Context, server, name string) (remote.BindingView, error)
 	Stop(ctx context.Context, server, name string) (remote.BindingView, error)
@@ -526,7 +526,7 @@ type RemoteClient interface {
 	GetChain(ctx context.Context, server, name string) (remote.ChainView, error)
 	ChainStop(ctx context.Context, server, name string) (remote.ChainStopResponse, error)
 	ChainResume(ctx context.Context, server, name string, req remote.ChainResumeRequest) (remote.ChainView, error)
-	ChainDone(ctx context.Context, server, name string) error
+	ChainDone(ctx context.Context, server, name string) (remote.ChainView, error)
 	CreateCheck(ctx context.Context, server, name string, req remote.CreateCheckRequest) (remote.CheckView, error)
 	GetCheck(ctx context.Context, server, name, id string) (remote.CheckView, error)
 	SetGate(ctx context.Context, server, name string, req remote.SetGateRequest) error

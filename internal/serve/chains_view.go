@@ -192,7 +192,8 @@ func (s *Server) handleDoneChain(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, err := relevo.ChainDone(r.Context(), rt, name); err != nil {
+	res, err := relevo.ChainDone(r.Context(), rt, name)
+	if err != nil {
 		var open *relevo.RoundOpenError
 		switch {
 		case errors.Is(err, store.ErrNotFound):
@@ -242,5 +243,7 @@ func (s *Server) handleDoneChain(w http.ResponseWriter, r *http.Request) {
 		s.writeChainReadError(w, err)
 		return
 	}
+	view.WorktreeKept = res.WorktreeKept
+	view.KeptReason = res.KeptReason
 	writeJSON(w, http.StatusOK, view)
 }

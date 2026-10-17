@@ -435,6 +435,11 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	if err != nil {
 		return preflight{}, fmt.Errorf("binding %q builder: %w", b.Name, err)
 	}
+	prompt, err = launchPrompt(rt, b, c.Harness, tier, prompt, false)
+	if err != nil {
+		return preflight{}, err
+	}
+	pf.prompt = prompt
 	argv, err := spawn.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, roundTree(rt, b), rt.Store.OutDir(b.Name), promptPath, chainReadDir(rt, nil, name))
 	if err != nil {
 		return preflight{}, err

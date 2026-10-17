@@ -101,6 +101,7 @@ type fakeRemote struct {
 	availableResp     remote.AvailableResponse
 	availableErr      error
 	availableErrFor   func(server, subject string) error
+	doneResp          remote.BindingView
 	doneErr           error
 	unbindErr         error
 	resumeResp        remote.BindingView
@@ -118,6 +119,7 @@ type fakeRemote struct {
 	chainResumeResp   remote.ChainView
 	chainResumeErr    error
 	chainResumeReq    remote.ChainResumeRequest
+	chainDoneResp     remote.ChainView
 	chainDoneErr      error
 	createCheckResp   remote.CheckView
 	createCheckErr    error
@@ -284,9 +286,9 @@ func (f *fakeRemote) Available(ctx context.Context, server, subject string) (rem
 	return f.availableResp, f.availableErr
 }
 
-func (f *fakeRemote) Done(ctx context.Context, server, name string) error {
+func (f *fakeRemote) Done(ctx context.Context, server, name string) (remote.BindingView, error) {
 	f.calls = append(f.calls, fmt.Sprintf("Done:%s:%s", server, name))
-	return f.doneErr
+	return f.doneResp, f.doneErr
 }
 
 func (f *fakeRemote) Unbind(ctx context.Context, server, name string) error {
@@ -336,9 +338,9 @@ func (f *fakeRemote) ChainResume(ctx context.Context, server, name string, req r
 	return f.chainResumeResp, f.chainResumeErr
 }
 
-func (f *fakeRemote) ChainDone(ctx context.Context, server, name string) error {
+func (f *fakeRemote) ChainDone(ctx context.Context, server, name string) (remote.ChainView, error) {
 	f.calls = append(f.calls, "ChainDone:"+server+":"+name)
-	return f.chainDoneErr
+	return f.chainDoneResp, f.chainDoneErr
 }
 
 func (f *fakeRemote) CreateCheck(ctx context.Context, server, name string, req remote.CreateCheckRequest) (remote.CheckView, error) {

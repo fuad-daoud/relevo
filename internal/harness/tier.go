@@ -164,3 +164,12 @@ func (h Harness) ExtraArgsPermissionFlag(extra []string) string {
 	}
 	return ""
 }
+
+// PromptCopyWanted reports whether relevo should stage a prompt copy inside out/
+// and point the launch prompt to it. agy at read and edit tiers runs under
+// sandbox constraints (--mode plan, --mode accept-edits) without access to the
+// binding directory outside its --add-dir arguments, so relevo copies the prompt
+// into out/.
+func PromptCopyWanted(kind string, tier Tier) bool {
+	return kind == "agy" && (tier == TierRead || tier == TierEdit)
+}

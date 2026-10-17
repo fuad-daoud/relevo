@@ -285,6 +285,10 @@ func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if err != nil {
 		return b, err
 	}
+	prompt, err = launchPrompt(rt, b, c.Harness, tier, prompt, true)
+	if err != nil {
+		return b, err
+	}
 	argv, err := spawn.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, roundTree(rt, b), rt.Store.OutDir(b.Name), rt.Store.PromptPath(b.Name, b.Round), chainReadDir(rt, tx, b.Name))
 	if err != nil {
 		return b, err
@@ -469,6 +473,10 @@ func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		return b, fmt.Errorf("binding %q builder: %w", b.Name, err)
 	}
 	tier, err := launchTier(b, rt.Policy, allowYolo)
+	if err != nil {
+		return b, err
+	}
+	prompt, err = launchPrompt(rt, b, c.Harness, tier, prompt, true)
 	if err != nil {
 		return b, err
 	}

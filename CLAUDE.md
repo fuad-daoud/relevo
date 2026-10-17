@@ -34,10 +34,14 @@ follows is what is specific to this machine and this repo.
 
 ## Verifying a builder's work
 
-Do not trust the report. Run `make check` yourself -- it is stricter than
-`go test ./...` alone, adding `gofmt` over every tracked `.go` file, `go vet`, and a
-`go mod tidy` check -- and compare `git diff --stat` against the plan's
-declared scope. `make e2e` additionally runs one headless round end to end with
+Do not trust the report. Gate a builder round on `make check-affected` yourself
+-- it is stricter than `go test ./...` alone, adding `gofmt` over every tracked
+`.go` file, `go vet`, and a `go mod tidy` check, and it tests every package your
+change reaches -- and compare `git diff --stat` against the plan's
+declared scope. `make check` is the same static set over
+`go test -race -count=1 -cover ./...` and the coverage check, and stays the
+full local run. PR CI is the judge: `-race`, every package and
+coverage. `make e2e` additionally runs one headless round end to end with
 a fake harness binary; CI runs it, and it is not part of `make check`.
 
 For anything subtle, mutation-test it: break the specific condition the change

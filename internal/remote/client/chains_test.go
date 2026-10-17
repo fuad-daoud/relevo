@@ -150,7 +150,7 @@ func TestChainVerbsHitTheirRoutes(t *testing.T) {
 	if _, err := cl.ChainResume(ctx, "zen", name, remote.ChainResumeRequest{}); err != nil {
 		t.Fatalf("ChainResume: %v", err)
 	}
-	if err := cl.ChainDone(ctx, "zen", name); err != nil {
+	if _, err := cl.ChainDone(ctx, "zen", name); err != nil {
 		t.Fatalf("ChainDone: %v", err)
 	}
 
