@@ -20,3 +20,18 @@ func TestHandedOverErrorDropsTerminalControlsFromPeerText(t *testing.T) {
 		}
 	}
 }
+
+func TestHandedOverErrorMessageNamesThisMachineAndFencingTargetChanges(t *testing.T) {
+	t.Parallel()
+
+	err := &HandedOverError{
+		Name:  "hw",
+		To:    "id-zen",
+		Label: "zen",
+		Kind:  "handover",
+	}
+	want := `binding "hw" is handed over to zen; to take it back, run relevo takeover hw --force on this machine (it fences zen's later changes)`
+	if got := err.Error(); got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}

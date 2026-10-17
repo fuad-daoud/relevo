@@ -74,7 +74,7 @@ func DecodeTakeover(e Entry) (Takeover, error) {
 // and, when this installation is the old writer, the root is recorded as left.
 // Whatever the flip queued for this installation is discarded: an import never
 // exports, and a fenced change is only one the exporter drops later.
-func applyTakeover(tx *db.Tx, e Entry, now time.Time) error {
+func applyTakeover(tx *db.Tx, e Entry, transport LogTransport, now time.Time) error {
 	t, err := DecodeTakeover(e)
 	if err != nil {
 		return err
@@ -107,7 +107,74 @@ func applyTakeover(tx *db.Tx, e Entry, now time.Time) error {
 			return err
 		}
 	}
+	if t.OldWriter == tx.Origin() && transport != nil {
+		if err := recordOwnFencedEntries(tx, t, transport, now); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// recordOwnFencedEntries records entries this origin wrote for the taken-over binding
+// above the fence (upto) in sync_fenced_change.
+func recordOwnFencedEntries(tx *db.Tx, t Takeover, transport LogTransport, now time.Time) error {
+	state, err := transport.ReadMarks()
+	if err != nil {
+		return err
+	}
+	head := state.Heads[t.OldWriter]
+	if head <= t.Upto {
+		return nil
+	}
+	cursor := t.Upto
+	for cursor < head {
+		page, err := transport.PullRange(t.OldWriter, cursor, head)
+		if err != nil {
+			return err
+		}
+		if len(page) == 0 {
+			break
+		}
+		advanced := cursor
+		for _, ownEntry := range page {
+			if ownEntry.Origin != t.OldWriter || ownEntry.Seq <= cursor || ownEntry.Seq > head {
+				continue
+			}
+			advanced = max(advanced, ownEntry.Seq)
+			if err := recordFencedEntry(tx, t, ownEntry, now); err != nil {
+				return err
+			}
+		}
+		if advanced == cursor {
+			break
+		}
+		cursor = advanced
+	}
+	return nil
+}
+
+func recordFencedEntry(tx *db.Tx, t Takeover, ownEntry Entry, now time.Time) error {
+	if IsCtlTable(ownEntry.Table) {
+		return nil
+	}
+	var values map[string]any
+	if ownEntry.Op == OpUpsert && len(ownEntry.Body) > 0 {
+		values, _ = DecodeBody(ownEntry.Body)
+	}
+	rootTable, rootID := findRootIDAndTable(tx, ownEntry, values)
+	if rootID == "" || !isTakeoverRoot(t, rootID) {
+		return nil
+	}
+	fencedRootID := rootID
+	if rootTable == "binding" && t.BindingID == "" && t.RecordID != "" {
+		fencedRootID = t.RecordID
+	}
+	return tx.RecordFencedChange(fencedRootID, ownEntry.Table, ownEntry.PK, now)
+}
+
+func isTakeoverRoot(t Takeover, rootID string) bool {
+	return (t.RecordID != "" && rootID == t.RecordID) ||
+		(t.BindingID != "" && rootID == t.BindingID)
 }
 
 // exportCtl appends the control entries a takeover queued, before the rows that

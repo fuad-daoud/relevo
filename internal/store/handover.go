@@ -30,7 +30,7 @@ func (e *HandedOverError) Error() string {
 	if e.Kind == db.LeftTakeover {
 		return fmt.Sprintf("binding %q was taken over by %s; relevo unbind it here or leave it", name, who)
 	}
-	return fmt.Sprintf("binding %q is handed over to %s; take it back there with relevo takeover %s --force", name, who, name)
+	return fmt.Sprintf("binding %q is handed over to %s; to take it back, run relevo takeover %s --force on this machine (it fences %s's later changes)", name, who, name, who)
 }
 
 func (e *HandedOverError) Is(target error) bool { return target == ErrHandedOver }
