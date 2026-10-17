@@ -303,6 +303,7 @@ func (t *Tx) SealRound(name string, round int) (int, error) {
 		}
 	}
 	t.s.removeEmptyRoundDirs(name, round)
+	removePromptCopy(root, round)
 	return len(sealed), nil
 }
 
