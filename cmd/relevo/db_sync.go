@@ -124,6 +124,7 @@ type dbSyncEnableFlagValues struct {
 	joinStdin       *bool
 	timeout         *time.Duration
 	yes             *bool
+	adoptAs         *string
 	dbSyncR2Flags
 }
 
@@ -138,6 +139,7 @@ func dbSyncEnableFlagSet(fs *flag.FlagSet) *dbSyncEnableFlagValues {
 	v.joinStdin = fs.Bool("join-stdin", false, "read the join code `relevo db sync invite` printed from standard input, instead of naming the remote")
 	v.timeout = fs.Duration("timeout", dbSyncDefaultTimeout, "bound the remote probe and the open")
 	v.yes = fs.Bool("yes", false, "join even when the estimate exceeds what is left of this month's Turso quota")
+	v.adoptAs = fs.String("as", "", "continue as this installation id instead of joining as a new one; needs --yes")
 	installR2Flags(fs, &v.dbSyncR2Flags)
 	return v
 }
@@ -295,7 +297,10 @@ func cmdDBSyncEnable(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), *v.timeout+verbDialSlack)
 	defer cancel()
 
-	opts := dbSyncVerbOptions{RemoteURL: join.remote, Timeout: *v.timeout, Yes: *v.yes, Join: join.joining}
+	if err := dbSyncAdoptIntake(*v.adoptAs, *v.yes, join.joining); err != nil {
+		return err
+	}
+	opts := dbSyncVerbOptions{RemoteURL: join.remote, Timeout: *v.timeout, Yes: *v.yes, Join: join.joining, AdoptAs: *v.adoptAs}
 	tail, err := dbSyncEnableR2Tail(token, pass, v.dbSyncR2Flags, &opts)
 	if err != nil {
 		return err
@@ -320,6 +325,10 @@ func cmdDBSyncEnable(args []string) error {
 	}
 	if res.Warning != "" {
 		fmt.Fprintln(os.Stderr, "warning: "+res.Warning)
+	}
+	if *v.adoptAs != "" {
+		fmt.Println(dbSyncAdoptedLine(*v.adoptAs))
+		return nil
 	}
 	fmt.Println("sync enabled on this machine")
 	return nil

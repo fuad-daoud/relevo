@@ -220,6 +220,21 @@ func (s *Supervisor) PublishEpochCut(ctx context.Context, cut synclog.EpochCut) 
 	return s.drive("key_cut", func(c *Client) error { return c.PublishEpochCut(ctx, cut) })
 }
 
+// ClaimIdentity records this machine's claim on origin, or only reads it when
+// the token is empty.
+func (s *Supervisor) ClaimIdentity(ctx context.Context, origin, token string, at time.Time) (string, time.Time, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var winner string
+	var claimedAt time.Time
+	err := s.drive("claim_identity", func(c *Client) error {
+		var e error
+		winner, claimedAt, e = c.ClaimIdentity(ctx, origin, token, at)
+		return e
+	})
+	return winner, claimedAt, err
+}
+
 // BlobStagingDir is the folder bodies are written to before they are put. It is
 // the supervisor's own rather than a caller's, so the exporter writing the file
 // and the worker reading it are named from one place.

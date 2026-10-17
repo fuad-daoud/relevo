@@ -60,6 +60,9 @@ type dbSyncStatusDoc struct {
 	// Fenced lists the bindings a takeover took from this machine, with how many
 	// of its local changes the takeover fenced. Nothing is deleted locally.
 	Fenced []dbSyncFencedDoc `json:"fenced,omitempty"`
+	// IdentityTaken is the installation id this machine adopted whose claim
+	// another machine now holds. Export and import are stopped.
+	IdentityTaken string `json:"identity_taken,omitempty"`
 	// Joining says a join is in progress and JoinSince is when it began, read
 	// from the machine-local join marker. The daemon finishes the join whether
 	// the enable that started it waited or not, so a machine can be joining
@@ -150,6 +153,9 @@ func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 	for _, gap := range doc.Gaps {
 		fmt.Fprintf(&b, " · gap: %s", sanitize.Text(gap))
 	}
+	if doc.IdentityTaken != "" {
+		fmt.Fprintf(&b, " · %s", sanitize.Text(dbSyncIdentityTakenLine(doc.IdentityTaken)))
+	}
 	for _, f := range doc.Fenced {
 		fmt.Fprintf(&b, " · %d local changes to %s were fenced by a takeover", f.Count, sanitize.Text(f.Name))
 	}
@@ -174,4 +180,10 @@ func presentOrAbsent(present bool) string {
 		return "present"
 	}
 	return "absent"
+}
+
+// dbSyncIdentityTakenLine says another machine adopted the identity this one
+// adopted, and what to do about it.
+func dbSyncIdentityTakenLine(id string) string {
+	return "another machine adopted installation " + id + ": sync is stopped here; run `relevo db sync disable` on one of the two machines"
 }

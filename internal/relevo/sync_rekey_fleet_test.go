@@ -581,3 +581,7 @@ func TestEpoch1FleetSteadyAttemptsWriteNoEpochCutRows(t *testing.T) {
 		t.Fatalf("an epoch-1 fleet wrote epoch cuts = %+v, want none", state.EpochCuts)
 	}
 }
+
+func (f *failCutTransport) ClaimIdentity(context.Context, string, string, time.Time) (string, time.Time, error) {
+	return "", time.Time{}, nil
+}

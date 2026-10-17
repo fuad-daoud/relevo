@@ -287,3 +287,7 @@ func (c *cancelLog) KeyRekey(context.Context, synclog.KeyRekeySpec) (synclog.Key
 	return synclog.KeyMeta{}, nil
 }
 func (c *cancelLog) PublishEpochCut(context.Context, synclog.EpochCut) error { return nil }
+
+func (c *cancelLog) ClaimIdentity(context.Context, string, string, time.Time) (string, time.Time, error) {
+	return "", time.Time{}, nil
+}

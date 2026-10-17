@@ -1,6 +1,7 @@
 package syncpipe
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -504,6 +505,12 @@ func TestPipeClientDrivesAWorkerOverAPipe(t *testing.T) {
 		t.Errorf("Stats = %+v, want %+v", stats, want)
 	}
 
+	pinned := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	winner, claimedAt, err := c.ClaimIdentity(context.Background(), "inst-x", "tok", pinned)
+	if err != nil || winner != "tok" || !claimedAt.Equal(pinned) {
+		t.Errorf("ClaimIdentity = %q at %v, %v, want the token and time the worker held", winner, claimedAt, err)
+	}
+
 	// A last call after the four before it is what proves the ids advanced and
 	// the pipe stayed in step, rather than the first reply having been read for
 	// every one of them.
@@ -832,4 +839,16 @@ func (v verbsRefusingBackend) PullRange(string, int, int) ([]syncworker.Entry, e
 
 func (v verbsRefusingBackend) Compact(int) (syncworker.CompactResult, error) {
 	return syncworker.CompactResult{}, nil
+}
+
+func (r refusingBackend) ClaimIdentity(string, string, time.Time) (string, time.Time, error) {
+	return "", time.Time{}, nil
+}
+
+func (r verbsRefusingBackend) ClaimIdentity(string, string, time.Time) (string, time.Time, error) {
+	return "", time.Time{}, nil
+}
+
+func (normalBackend) ClaimIdentity(_, token string, at time.Time) (string, time.Time, error) {
+	return token, at, nil
 }

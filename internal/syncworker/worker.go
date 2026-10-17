@@ -102,6 +102,11 @@ type Backend interface {
 	// field of the call, because vouching for history is deciding what
 	// another reader may refuse above the fence.
 	PublishEpochCut(cut EpochCut) error
+	// ClaimIdentity writes the claim token for origin where the remote holds
+	// none, holds the caller's own or holds one older than synclog's TTL, then
+	// pushes, pulls and answers with the claim the remote holds. An empty token
+	// only reads.
+	ClaimIdentity(origin, token string, at time.Time) (string, time.Time, error)
 	// Close releases the remote and the replica.
 	Close() error
 }
@@ -182,6 +187,7 @@ var verbHandlers = map[Verb]func(*server, Request) Response{
 	VerbKeyInit:      (*server).keyInit,
 	VerbKeyRekey:     (*server).keyRekey,
 	VerbKeyCut:       (*server).keyCut,
+	VerbClaim:        (*server).claimIdentity,
 	VerbShutdown:     (*server).shutdown,
 }
 

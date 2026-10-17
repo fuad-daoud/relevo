@@ -1257,3 +1257,7 @@ func TestReconcileVerbRefusesWithoutDryRun(t *testing.T) {
 }
 
 func (h *hangingJoin) PublishEpochCut(context.Context, synclog.EpochCut) error { return nil }
+
+func (h *hangingJoin) ClaimIdentity(context.Context, string, string, time.Time) (string, time.Time, error) {
+	return "", time.Time{}, nil
+}

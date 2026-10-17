@@ -96,6 +96,9 @@ const (
 	// passphrase -- or whose own head has grown past the cut it holds --
 	// vouches for the tail it appended before it learned of the rekey.
 	VerbKeyCut Verb = "key_cut"
+	// VerbClaim records, and reads back, the claim a machine adopting an
+	// identity holds on it. A request with no claim token only reads.
+	VerbClaim Verb = "claim_identity"
 	// VerbShutdown ends the pipe after its reply.
 	VerbShutdown Verb = "shutdown"
 )
@@ -246,6 +249,9 @@ type Request struct {
 	// stores them only where the origin has no boundary yet.
 	BoundarySeq int    `json:"boundary_seq,omitempty"`
 	BoundaryTag []byte `json:"boundary_tag,omitempty"`
+	// ClaimToken is the random token a claim_identity writes for the identity
+	// Origin names, at At. Empty reads the claim without writing one.
+	ClaimToken string `json:"claim_token,omitempty"`
 }
 
 // Response is one line of the pipe, from the worker to the daemon.
@@ -289,6 +295,10 @@ type Response struct {
 	// KeyMeta is what a key_meta read and a key_init wrote, and is nil on a remote
 	// that holds no passphrase material at all.
 	KeyMeta *KeyMeta `json:"key_meta,omitempty"`
+	// ClaimToken and ClaimAt are the claim a claim_identity found the remote
+	// holding after its write: empty and zero when it holds none.
+	ClaimToken string     `json:"claim_token,omitempty"`
+	ClaimAt    *time.Time `json:"claim_at,omitempty"`
 }
 
 // RefusalCode is the class of a refusal the worker answered with. It is the

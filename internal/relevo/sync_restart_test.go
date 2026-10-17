@@ -128,3 +128,7 @@ func (u *unreadyTransport) KeyRekey(context.Context, synclog.KeyRekeySpec) (sync
 }
 
 func (u *unreadyTransport) PublishEpochCut(context.Context, synclog.EpochCut) error { return nil }
+
+func (u *unreadyTransport) ClaimIdentity(context.Context, string, string, time.Time) (string, time.Time, error) {
+	return "", time.Time{}, nil
+}

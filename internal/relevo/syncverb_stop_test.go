@@ -377,3 +377,15 @@ func (h *heldJoin) KeyRekey(context.Context, synclog.KeyRekeySpec) (synclog.KeyM
 }
 
 func (h *heldPush) PublishEpochCut(context.Context, synclog.EpochCut) error { return nil }
+
+func (h *hungAppend) ClaimIdentity(context.Context, string, string, time.Time) (string, time.Time, error) {
+	return "", time.Time{}, nil
+}
+
+func (h *heldJoin) ClaimIdentity(context.Context, string, string, time.Time) (string, time.Time, error) {
+	return "", time.Time{}, nil
+}
+
+func (h *heldPush) ClaimIdentity(context.Context, string, string, time.Time) (string, time.Time, error) {
+	return "", time.Time{}, nil
+}

@@ -193,6 +193,7 @@ func cmdDBSyncStatus(args []string) error {
 	if doc.Fenced, err = dbSyncFenced(shared); err != nil {
 		return err
 	}
+	doc.IdentityTaken = relevosync.IdentityTaken(local)
 	if *v.asJSON {
 		return printDoc(doc)
 	}

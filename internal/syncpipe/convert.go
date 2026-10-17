@@ -223,6 +223,25 @@ func (c *Client) PublishEpochCut(ctx context.Context, cut synclog.EpochCut) erro
 	return err
 }
 
+// ClaimIdentity records this machine's claim on origin and answers with the
+// claim the remote holds afterwards; an empty token only reads it.
+func (c *Client) ClaimIdentity(ctx context.Context, origin, token string, at time.Time) (string, time.Time, error) {
+	resp, err := c.call(syncworker.Request{
+		Verb:       syncworker.VerbClaim,
+		Origin:     origin,
+		ClaimToken: token,
+		At:         &at,
+	})
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	var claimedAt time.Time
+	if resp.ClaimAt != nil {
+		claimedAt = *resp.ClaimAt
+	}
+	return resp.ClaimToken, claimedAt, nil
+}
+
 // cutsToWire renders the cuts a key_rekey writes.
 func cutsToWire(cuts map[string]synclog.EpochCut) map[string]syncworker.EpochCut {
 	if len(cuts) == 0 {

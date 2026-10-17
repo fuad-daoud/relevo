@@ -55,6 +55,8 @@ type memLog struct {
 	// wrote it. A row is one origin's, and the newest rekey's row is the one
 	// that stands.
 	epochCut map[string]EpochCut
+	// claims is the adoption claim each identity holds.
+	claims map[string]claimRow
 }
 
 // NewMemTransport returns a handle on an empty log for the installation named

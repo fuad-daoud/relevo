@@ -117,6 +117,12 @@ func (r *Runner) attempt(ctx context.Context, shared *db.DB) SteadyResult {
 func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) SteadyResult {
 	var out SteadyResult
 	r.recordRemoteKDF(ctx, t)
+	// A machine that continues as an adopted identity checks the claim on it
+	// before either half runs: another machine holding the token means two
+	// machines would append to one log.
+	if err := r.identityGate(ctx, t); err != nil {
+		return r.failed(out, err)
+	}
 	// The stale stop reads the two local epoch facts and nothing else: a
 	// machine whose held newest epoch is below the recorded remote epoch
 	// neither exports nor imports until its owner unlocks it with the new
@@ -173,6 +179,16 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 	r.publishSize(shared.Origin(), t, compacted, out.Exported > 0, now)
 	r.measureStorage(t, now)
 	return out
+}
+
+// identityGate is CheckAdoptedClaim under the attempt's own step bound.
+func (r *Runner) identityGate(ctx context.Context, t *StopTransport) error {
+	if r.Local == nil {
+		return nil
+	}
+	return within(ctx, t, r.stepTimeout(), func() error {
+		return CheckAdoptedClaim(ctx, r.Local, t)
+	})
 }
 
 // marksEvery is the shortest gap between two publishes of this machine's marks.

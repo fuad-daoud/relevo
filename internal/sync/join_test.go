@@ -458,3 +458,7 @@ func (r *runningLog) KeyRekey(context.Context, synclog.KeyRekeySpec) (synclog.Ke
 }
 
 func (r *runningLog) PublishEpochCut(context.Context, synclog.EpochCut) error { return r.err }
+
+func (r *runningLog) ClaimIdentity(context.Context, string, string, time.Time) (string, time.Time, error) {
+	return "", time.Time{}, nil
+}
