@@ -364,7 +364,7 @@ func orDefault(n, def int) int {
 
 func (i *Importer) checkRegionAfterHold(origin string, mark int, region []Entry, marks map[string]int) (*Hold, error) {
 	for _, e := range region {
-		if e.After != nil && marks[e.After.Origin] < e.After.Seq {
+		if e.After != nil && e.After.Origin != i.db.Origin() && marks[e.After.Origin] < e.After.Seq {
 			names, err := i.labels()
 			if err != nil {
 				return nil, err
