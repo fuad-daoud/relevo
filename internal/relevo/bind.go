@@ -307,9 +307,16 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 // Errors: store.ErrNotFound; ErrBuilderAlive; ErrRunnerUnavailable; a wrapped
 // git or remote error.
 func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint) (store.Binding, Resolution, error) {
-	b, err := rt.Store.Load(opts.Name)
+	b, err := resumeLoad(rt, opts.Name)
 	if err != nil {
 		return store.Binding{}, Resolution{}, err
+	}
+	if mine, err := handedToMe(rt, opts.Name); err != nil {
+		return store.Binding{}, Resolution{}, err
+	} else if mine && carriesOldPaths(rt, b) {
+		if b, err = resumeHandedOver(ctx, rt, opts, b); err != nil {
+			return store.Binding{}, Resolution{}, err
+		}
 	}
 
 	// A remote binding has no pane and no worktree: its mode is fixed at
