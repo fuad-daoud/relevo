@@ -311,9 +311,12 @@ func (i *Importer) Import() (ImportResult, error) {
 	return total, nil
 }
 
-func batchWaitingAfter(batch []Entry, marks map[string]int) *Ref {
+// batchWaitingAfter names the entry a batch waits for in another origin's log.
+// An entry of this installation's own log is applied here by definition, so a
+// takeover that fences this machine's own entries never waits for them.
+func batchWaitingAfter(batch []Entry, marks map[string]int, own string) *Ref {
 	for _, e := range batch {
-		if e.After != nil && marks[e.After.Origin] < e.After.Seq {
+		if e.After != nil && e.After.Origin != own && marks[e.After.Origin] < e.After.Seq {
 			return e.After
 		}
 	}
@@ -321,7 +324,7 @@ func batchWaitingAfter(batch []Entry, marks map[string]int) *Ref {
 }
 
 func (i *Importer) drainOriginBatch(orig string, batch []Entry, marks map[string]int, total *ImportResult, held map[string]bool) (bool, error) {
-	if waitingOn := batchWaitingAfter(batch, marks); waitingOn != nil {
+	if waitingOn := batchWaitingAfter(batch, marks, i.db.Origin()); waitingOn != nil {
 		return false, nil
 	}
 	want := marks[orig] + 1
@@ -388,7 +391,7 @@ func (i *Importer) recordRemainingAfterHolds(originOrder []string, byOrigin map[
 			continue
 		}
 		batch := byOrigin[orig][0]
-		if waitingOn := batchWaitingAfter(batch, marks); waitingOn != nil {
+		if waitingOn := batchWaitingAfter(batch, marks, i.db.Origin()); waitingOn != nil {
 			names, err := i.labels()
 			if err != nil {
 				return err
