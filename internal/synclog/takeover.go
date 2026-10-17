@@ -141,27 +141,7 @@ func recordOwnFencedEntries(tx *db.Tx, t Takeover, transport LogTransport, now t
 				continue
 			}
 			advanced = max(advanced, ownEntry.Seq)
-			if IsCtlTable(ownEntry.Table) {
-				continue
-			}
-			var values map[string]any
-			if ownEntry.Op == OpUpsert && len(ownEntry.Body) > 0 {
-				values, _ = DecodeBody(ownEntry.Body)
-			}
-			rootTable, rootID := findRootIDAndTable(tx, ownEntry, values)
-			if rootID == "" {
-				continue
-			}
-			isTarget := (t.RecordID != "" && rootID == t.RecordID) ||
-				(t.BindingID != "" && rootID == t.BindingID)
-			if !isTarget {
-				continue
-			}
-			fencedRootID := rootID
-			if rootTable == "binding" && t.BindingID == "" && t.RecordID != "" {
-				fencedRootID = t.RecordID
-			}
-			if err := tx.RecordFencedChange(fencedRootID, ownEntry.Table, ownEntry.PK, now); err != nil {
+			if err := recordFencedEntry(tx, t, ownEntry, now); err != nil {
 				return err
 			}
 		}
@@ -171,6 +151,30 @@ func recordOwnFencedEntries(tx *db.Tx, t Takeover, transport LogTransport, now t
 		cursor = advanced
 	}
 	return nil
+}
+
+func recordFencedEntry(tx *db.Tx, t Takeover, ownEntry Entry, now time.Time) error {
+	if IsCtlTable(ownEntry.Table) {
+		return nil
+	}
+	var values map[string]any
+	if ownEntry.Op == OpUpsert && len(ownEntry.Body) > 0 {
+		values, _ = DecodeBody(ownEntry.Body)
+	}
+	rootTable, rootID := findRootIDAndTable(tx, ownEntry, values)
+	if rootID == "" || !isTakeoverRoot(t, rootID) {
+		return nil
+	}
+	fencedRootID := rootID
+	if rootTable == "binding" && t.BindingID == "" && t.RecordID != "" {
+		fencedRootID = t.RecordID
+	}
+	return tx.RecordFencedChange(fencedRootID, ownEntry.Table, ownEntry.PK, now)
+}
+
+func isTakeoverRoot(t Takeover, rootID string) bool {
+	return (t.RecordID != "" && rootID == t.RecordID) ||
+		(t.BindingID != "" && rootID == t.BindingID)
 }
 
 // exportCtl appends the control entries a takeover queued, before the rows that
