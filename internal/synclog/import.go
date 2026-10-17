@@ -45,6 +45,7 @@ type Importer struct {
 	// origin whose remote boundary did not verify; all are set per run and
 	// only with a key.
 	signedFrom  map[string]int
+	schemaSeen  map[string]int
 	localSigned map[string]int
 	badBoundary map[string]error
 	// cuts is the effective cut per origin -- this machine's own record and
@@ -466,6 +467,9 @@ func (i *Importer) applyBatch(batch []Entry, marks map[string]int) (applied int,
 		if errors.As(err, &holdErr) {
 			return 0, &Hold{Origin: origin, Seq: batch[0].Seq - 1, Reason: holdErr.Reason}, nil, nil
 		}
+		return 0, nil, nil, err
+	}
+	if err := i.noteSchema(origin, batch); err != nil {
 		return 0, nil, nil, err
 	}
 	docs, rows := splitDocs(batch)

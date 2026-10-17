@@ -65,3 +65,42 @@ func loadCtl(ctx context.Context, q queryer) ([]CtlItem, error) {
 	}
 	return list, nil
 }
+
+const originSchemaKey = "sync.origin_schema.v1"
+
+// NoteOriginSchema keeps the highest schema version an origin's entries have
+// carried, so a hand-over can refuse a target that has not upgraded.
+func (d *DB) NoteOriginSchema(origin string, schema int) error {
+	return d.Tx(func(t *Tx) error {
+		have, err := loadOriginSchemas(t.ctx, t.conn)
+		if err != nil {
+			return err
+		}
+		if have[origin] >= schema {
+			return nil
+		}
+		have[origin] = schema
+		raw, err := json.Marshal(have)
+		if err != nil {
+			return fmt.Errorf("db: origin schema: %w", err)
+		}
+		return t.KVPut(originSchemaKey, raw)
+	})
+}
+
+// OriginSchemas maps each origin to the highest schema its entries carried.
+func (d *DB) OriginSchemas() (map[string]int, error) {
+	return loadOriginSchemas(context.Background(), d.sqlDB)
+}
+
+func loadOriginSchemas(ctx context.Context, q queryer) (map[string]int, error) {
+	out := map[string]int{}
+	raw, ok, err := kvGet(ctx, q, originSchemaKey)
+	if err != nil || !ok {
+		return out, err
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("db: origin schema: %w", err)
+	}
+	return out, nil
+}

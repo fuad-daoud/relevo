@@ -144,3 +144,23 @@ func (e *Exporter) exportCtl() (int, error) {
 	noteOwnHead(e.db.LocalOrSelf(), written)
 	return len(entries), e.db.DropPendingCtl(len(pending))
 }
+
+// noteSchema records the highest schema version a verified batch carries, once
+// per increase: a hand-over reads it to refuse a target that has not upgraded.
+func (i *Importer) noteSchema(origin string, batch []Entry) error {
+	if i.schemaSeen == nil {
+		i.schemaSeen = map[string]int{}
+	}
+	top := 0
+	for _, e := range batch {
+		top = max(top, e.SchemaVersion)
+	}
+	if top <= i.schemaSeen[origin] {
+		return nil
+	}
+	if err := i.db.NoteOriginSchema(origin, top); err != nil {
+		return fmt.Errorf("synclog: import: note schema of %s: %w", origin, err)
+	}
+	i.schemaSeen[origin] = top
+	return nil
+}
