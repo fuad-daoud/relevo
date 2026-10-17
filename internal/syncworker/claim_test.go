@@ -1,6 +1,7 @@
 package syncworker
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -73,5 +74,39 @@ func TestParseClaimReadsAnUnparseableRowAsAHeldClaim(t *testing.T) {
 	token, at := parseClaim("tok not-a-time")
 	if token != "tok" || !at.IsZero() {
 		t.Errorf("parseClaim = %q at %v, want the token held since the zero time", token, at)
+	}
+}
+
+// pullFailsFrom lets the first pulls through and refuses every one from the
+// n-th on, counted from when failFrom is set.
+type pullFailsFrom struct {
+	*localDriver
+	failFrom int
+}
+
+func (d *pullFailsFrom) Pull(ctx context.Context) error {
+	err := d.localDriver.Pull(ctx)
+	if d.failFrom > 0 && d.localDriver.pulls >= d.failFrom {
+		return errors.New("the pull after the push does not answer")
+	}
+	return err
+}
+
+// TestClaimIdentityReportsAReadBackThatFails pins that a claim whose write and
+// push landed but whose read-back pull refused is an error, not a held claim:
+// the caller cannot know whether its token is the one that stuck.
+func TestClaimIdentityReportsAReadBackThatFails(t *testing.T) {
+	driver := &pullFailsFrom{localDriver: &localDriver{path: tempReplica(t)}}
+	b := backendFor(t, driver, "origin-a")
+	driver.failFrom = driver.localDriver.pulls + 2
+	if _, _, err := b.ClaimIdentity("inst-x", "t", time.Now()); err == nil {
+		t.Error("a claim whose read-back pull refused came back as a success")
+	}
+}
+
+func TestClaimIdentityBeforeHelloIsRefused(t *testing.T) {
+	b := NewTursoBackend(&localDriver{path: tempReplica(t)})
+	if _, _, err := b.ClaimIdentity("inst-x", "t", time.Now()); !errors.Is(err, ErrNoHello) {
+		t.Errorf("ClaimIdentity before hello = %v, want ErrNoHello", err)
 	}
 }
