@@ -36,6 +36,11 @@ func filterReport(rep view.Report, name string) (view.Report, error) {
 			return view.Report{Bindings: []view.BindingStatus{b}}, nil
 		}
 	}
+	for _, h := range rep.HandedOver {
+		if h.Name == name {
+			return view.Report{HandedOver: []view.HandedOverRow{h}}, nil
+		}
+	}
 	return view.Report{}, fail(codeBindingNotFound, "no binding named %q", name)
 }
 

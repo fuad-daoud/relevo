@@ -532,6 +532,9 @@ func HideDone(r Report) Report {
 		// Unused is machine-wide too: a gate on a provider no candidate uses
 		// belongs to no binding, so hiding DONE rows must not hide it.
 		Unused: r.Unused,
+		// HandedOver is machine-wide: handed-over bindings are not live bindings
+		// and must not be hidden by HideDone.
+		HandedOver: r.HandedOver,
 	}
 	for _, b := range r.Bindings {
 		if b.State == string(store.StateDone) {

@@ -46,6 +46,7 @@ func ScopedStatus(ctx context.Context, rt Runtime, sc Scope) (view.Report, error
 	if !sc.Named && !sc.All {
 		rep.DoneHidden = doneHiddenBy(rt.Store, bindings, chains, sc)
 	}
+	rep.HandedOver = handedOverRows(rt)
 	return rep, nil
 }
 

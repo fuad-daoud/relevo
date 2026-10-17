@@ -147,8 +147,16 @@ func handedOverRows(rt Runtime) []view.HandedOverRow {
 	}
 	labels := map[string]string{}
 	if list, lerr := d.InstallationList(); lerr == nil {
+		counts := map[string]int{}
 		for _, in := range list {
-			labels[in.ID] = in.Label
+			if in.Label != "" {
+				counts[in.Label]++
+			}
+		}
+		for _, in := range list {
+			if in.Label != "" && counts[in.Label] == 1 {
+				labels[in.ID] = in.Label
+			}
 		}
 	}
 	seen := map[string]bool{}
