@@ -44,7 +44,6 @@ func confirmPendingChainDeliveries(tx *store.Tx, deliveries []pendingDelivery) e
 type chainResumeSnapshot struct {
 	origRow     db.ChainRow
 	origMembers []db.ChainMemberRow
-	origEvents  []db.ChainEventRow
 	swapped     map[string]store.Binding
 	added       []string
 }
@@ -54,14 +53,9 @@ func newChainResumeSnapshot(tx *store.Tx, row db.ChainRow) (*chainResumeSnapshot
 	if err != nil {
 		return nil, err
 	}
-	events, err := tx.ChainEvents(row.Name)
-	if err != nil {
-		return nil, err
-	}
 	return &chainResumeSnapshot{
 		origRow:     row,
 		origMembers: members,
-		origEvents:  events,
 		swapped:     make(map[string]store.Binding),
 	}, nil
 }
@@ -77,45 +71,30 @@ func (s *chainResumeSnapshot) recordAdded(name string) {
 }
 
 // restore recovers the pre-resume state if an error occurs after writes began.
+// Only the rows the resume wrote are put back: the chain row, the member rows
+// (an added member's row is deleted on its own, never by deleting the chain,
+// which would take the chain's check runs with it) and the member bindings.
+// The trace keeps what the failed attempt recorded.
 func (s *chainResumeSnapshot) restore(tx *store.Tx, cause error) error {
-	var errs []error
-	errs = append(errs, cause)
-
-	if len(s.added) > 0 {
-		if err := tx.ChainDelete(s.origRow.Name); err != nil {
-			errs = append(errs, fmt.Errorf("restore chain delete: %w", err))
-		}
-		if err := tx.ChainPut(s.origRow); err != nil {
-			errs = append(errs, fmt.Errorf("restore chain put: %w", err))
-		}
-		if err := tx.ChainMembersPut(s.origRow.Name, s.origMembers); err != nil {
-			errs = append(errs, fmt.Errorf("restore chain members: %w", err))
-		}
-		for _, ev := range s.origEvents {
-			if _, err := tx.ChainEventPut(s.origRow.Name, ev); err != nil {
-				errs = append(errs, fmt.Errorf("restore chain event: %w", err))
-			}
-		}
-	} else {
-		if err := tx.ChainPut(s.origRow); err != nil {
-			errs = append(errs, fmt.Errorf("restore chain put: %w", err))
-		}
-		if err := tx.ChainMembersPut(s.origRow.Name, s.origMembers); err != nil {
-			errs = append(errs, fmt.Errorf("restore chain members: %w", err))
-		}
+	errs := []error{cause}
+	if err := tx.ChainPut(s.origRow); err != nil {
+		errs = append(errs, fmt.Errorf("restore chain put: %w", err))
 	}
-
 	for _, name := range s.added {
+		if err := tx.ChainMemberDelete(s.origRow.Name, name); err != nil {
+			errs = append(errs, fmt.Errorf("restore chain member %s: %w", name, err))
+		}
 		if err := tx.Delete(name); err != nil && !errors.Is(err, store.ErrNotFound) {
 			errs = append(errs, fmt.Errorf("restore delete added member %s: %w", name, err))
 		}
 	}
-
+	if err := tx.ChainMembersPut(s.origRow.Name, s.origMembers); err != nil {
+		errs = append(errs, fmt.Errorf("restore chain members: %w", err))
+	}
 	for _, b := range s.swapped {
 		if err := tx.Save(b); err != nil {
 			errs = append(errs, fmt.Errorf("restore save swapped member %s: %w", b.Name, err))
 		}
 	}
-
 	return errors.Join(errs...)
 }

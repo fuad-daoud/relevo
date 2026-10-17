@@ -15,6 +15,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
+// chainResumePostWriteHook is nil outside tests; a test sets it to fail a
+// resume after its first write, the one seam that reaches the undo path.
 var chainResumePostWriteHook func(tx *store.Tx, c db.ChainRow) error
 
 // chainResumeWorkflow continues a halted or stopped workflow chain: it

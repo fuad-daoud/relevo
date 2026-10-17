@@ -33,6 +33,16 @@ func (t *Tx) ChainMembersPut(chainID string, members []ChainMemberRow) error {
 	return nil
 }
 
+// ChainMemberDelete removes the one member row naming binding on chainID, so
+// a member can be taken back out without deleting the chain and with it its
+// checks and trace. No row is a no-op.
+func (t *Tx) ChainMemberDelete(chainID, binding string) error {
+	if _, err := t.exec(`DELETE FROM chain_member WHERE chain_id = ? AND binding = ?`, chainID, binding); err != nil {
+		return fmt.Errorf("db: chain member delete %s/%q: %w", chainID, binding, mapBusy(err))
+	}
+	return nil
+}
+
 // ChainMembers returns chain id's member rows in the order the chain created
 // them. A database that predates the table reads as empty.
 func (d *DB) ChainMembers(id string) ([]ChainMemberRow, error) {

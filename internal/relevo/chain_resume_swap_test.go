@@ -507,3 +507,36 @@ func TestChainStopWithNoAwaitedMemberStopsDirectly(t *testing.T) {
 		}
 	})
 }
+
+func TestChainResumeFailureKeepsTheChainChecks(t *testing.T) {
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, flowBranchWorkflow)
+	if _, err := ChainStop(context.Background(), rt, "shop"); err != nil {
+		t.Fatalf("ChainStop: %v", err)
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		return tx.ChainCheckPut("shop", db.ChainCheckRow{Run: 1, Step: "check", Visit: 1, Command: "true", Result: "green"})
+	}); err != nil {
+		t.Fatalf("ChainCheckPut: %v", err)
+	}
+
+	chainResumePostWriteHook = func(tx *store.Tx, c db.ChainRow) error {
+		return errors.New("injected post-write failure")
+	}
+	defer func() { chainResumePostWriteHook = nil }()
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{
+		Name:   "shop",
+		Params: map[string]string{"scan": "true"},
+	}); err == nil {
+		t.Fatal("ChainResume = nil, want forced failure")
+	}
+
+	check, err := rt.Store.ChainCheck("shop", 1)
+	if err != nil {
+		t.Fatalf("ChainCheck after a failed resume: %v", err)
+	}
+	if check.Result != "green" {
+		t.Errorf("check result = %q, want green", check.Result)
+	}
+}
