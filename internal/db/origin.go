@@ -202,6 +202,10 @@ func BackfillOriginOnce(d *DB, origin string, now time.Time) (stats OriginBackfi
 		terr := d.Tx(func(t *Tx) error {
 			query := `UPDATE ` + table + ` SET origin = ? WHERE origin = ''`
 			args := []any{origin}
+			if table == "binding_record" || table == "binding" {
+				query = `UPDATE ` + table + ` SET origin = ?, writer = ? WHERE origin = ''`
+				args = []any{origin, origin}
+			}
 			if len(settled) > 0 {
 				query += ` AND id NOT IN (?` + strings.Repeat(", ?", len(settled)-1) + `)`
 				for _, id := range settled {

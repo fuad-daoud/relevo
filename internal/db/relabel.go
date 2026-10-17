@@ -205,12 +205,14 @@ func setRecordFeature(raw []byte, feature string) (out []byte, changed bool) {
 
 func (t *Tx) applyRelabel(plan relabelPlan) error {
 	for _, w := range plan.labels {
-		if _, err := t.exec(`UPDATE binding SET origin = ?, feature = ? WHERE id = ?`, t.origin, w.feature, w.id); err != nil {
+		if _, err := t.exec(`UPDATE binding SET origin = CASE WHEN origin = '' THEN ? ELSE origin END, writer = ?, feature = ? WHERE id = ?`,
+			t.origin, t.origin, w.feature, w.id); err != nil {
 			return fmt.Errorf("db: relabel: update binding %s: %w", w.id, mapBusy(err))
 		}
 	}
 	for _, r := range plan.records {
-		if _, err := t.exec(`UPDATE binding_record SET origin = ?, record_json = ? WHERE id = ?`, t.origin, r.json, r.id); err != nil {
+		if _, err := t.exec(`UPDATE binding_record SET origin = CASE WHEN origin = '' THEN ? ELSE origin END, writer = ?, record_json = ? WHERE id = ?`,
+			t.origin, t.origin, r.json, r.id); err != nil {
 			return fmt.Errorf("db: relabel: update record %s: %w", r.id, mapBusy(err))
 		}
 	}

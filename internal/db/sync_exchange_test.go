@@ -214,10 +214,10 @@ func seedSharedRows() []string {
 	return []string{
 		`INSERT INTO repo (id, origin_url, common_dir, first_seen, origin) VALUES ('r1', 'u', '/c', 't', 'instP')`,
 		`INSERT INTO "mastermind" (id, harness_kind, session_id, first_seen, last_seen, origin) VALUES ('m1', 'agy', 's', 't', 't', 'instM')`,
-		`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin) VALUES ('b1', 'n', '/x', 'headless', 't', '', 'instB')`,
+		`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin, writer) VALUES ('b1', 'n', '/x', 'headless', 't', '', 'instB', 'instB')`,
 		`INSERT INTO installation (id, label, first_seen, last_seen) VALUES ('instI', 'self', 't', 't')`,
-		`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin)
-		 VALUES ('rec1', 'o', 'n', 'live', 1, '/x', '{}', 't', 't', 'instR')`,
+		`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin, writer)
+		 VALUES ('rec1', 'o', 'n', 'live', 1, '/x', '{}', 't', 't', 'instR', 'instR')`,
 		`INSERT INTO chains (id, name, status, phase, step, plan, plans, plan_paths, builder, created_at, updated_at, origin)
 		 VALUES ('c1', 'n', 'open', 'p', 's', 1, 1, '[]', 'b', 't', 't', 'instC')`,
 		`INSERT INTO binding_event (record_id, seq, ts, round, direction, kind, confirmed, entry_json)

@@ -293,8 +293,8 @@ func (t *Tx) applyRepoSide(p RenameRepoParams, pl renamePlan) error {
 		if err := t.execRename("stamp the old repo row", `UPDATE repo SET origin = ? WHERE id = ?`, t.origin, pl.fromID); err != nil {
 			return err
 		}
-		if err := t.execRename("repoint bindings", `UPDATE binding SET origin = ?, repo_id = ? WHERE repo_id = ?`,
-			t.origin, pl.toID, pl.fromID); err != nil {
+		if err := t.execRename("repoint bindings", `UPDATE binding SET origin = CASE WHEN origin = '' THEN ? ELSE origin END, writer = ?, repo_id = ? WHERE repo_id = ?`,
+			t.origin, t.origin, pl.toID, pl.fromID); err != nil {
 			return err
 		}
 	}
@@ -315,8 +315,15 @@ func (t *Tx) applyRewrites(pl renamePlan) error {
 		{"binding_record", "record_json", pl.records},
 	} {
 		for _, r := range w.rows {
-			if err := t.execRename("rewrite "+w.table, `UPDATE `+w.table+` SET origin = ?, `+w.col+` = ? WHERE id = ?`,
-				t.origin, r.value, r.id); err != nil {
+			var err error
+			if w.table == "binding" || w.table == "binding_record" {
+				err = t.execRename("rewrite "+w.table, `UPDATE `+w.table+` SET origin = CASE WHEN origin = '' THEN ? ELSE origin END, writer = ?, `+w.col+` = ? WHERE id = ?`,
+					t.origin, t.origin, r.value, r.id)
+			} else {
+				err = t.execRename("rewrite "+w.table, `UPDATE `+w.table+` SET origin = ?, `+w.col+` = ? WHERE id = ?`,
+					t.origin, r.value, r.id)
+			}
+			if err != nil {
 				return err
 			}
 		}
@@ -326,8 +333,8 @@ func (t *Tx) applyRewrites(pl renamePlan) error {
 
 func (t *Tx) applyAdopt(pl renamePlan) error {
 	for _, id := range pl.adopt {
-		if err := t.execRename("adopt a binding", `UPDATE binding SET origin = ?, repo_id = ? WHERE id = ?`,
-			t.origin, pl.targetID, id); err != nil {
+		if err := t.execRename("adopt a binding", `UPDATE binding SET origin = CASE WHEN origin = '' THEN ? ELSE origin END, writer = ?, repo_id = ? WHERE id = ?`,
+			t.origin, t.origin, pl.targetID, id); err != nil {
 			return err
 		}
 	}

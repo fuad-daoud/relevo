@@ -209,20 +209,27 @@ func (t *Tx) UpsertBinding(b Binding) (string, error) {
 
 	createdAt := formatTime(b.CreatedAt)
 
-	var id string
-	err := t.queryRow(`SELECT id FROM binding WHERE `+originScope+` AND name = ? AND created_at = ?`,
-		t.origin, b.Name, createdAt).Scan(&id)
+	var id, storedWriter string
+	err := t.queryRow(`SELECT id, writer FROM binding WHERE `+writerScope+` AND name = ? AND created_at = ?`,
+		t.origin, b.Name, createdAt).Scan(&id, &storedWriter)
 	if err == nil {
-		if uerr := t.updateIfChanged("binding", id, []string{"repo_id", "mastermind_id", "feature", "ticket",
+		cols := []string{"repo_id", "mastermind_id", "feature", "ticket",
 			"forked_from_binding_id", "forked_from_round", "cwd", "worktree", "branch", "base_commit", "tier", "gate",
-			"builder_mode", "server", "final_state", "archived_at", "archive_path", "ingest_source"},
+			"builder_mode", "server", "final_state", "archived_at", "archive_path", "ingest_source"}
+		vals := []any{
 			nullableString(b.RepoID), nullableString(b.MasterMindID), nullableString(b.Feature),
 			nullableString(b.Ticket),
 			nullableString(b.ForkedFromBindingID), nullableInt(b.ForkedFromRound),
 			b.CWD, nullableString(b.Worktree), nullableString(b.Branch), nullableString(b.BaseCommit),
 			nullableString(b.Tier), nullableString(b.Gate), b.BuilderMode, nullableString(b.Server),
 			nullableString(b.FinalState), nullableTime(b.ArchivedAt), nullableString(b.ArchivePath),
-			b.IngestSource); uerr != nil {
+			b.IngestSource,
+		}
+		if storedWriter == "" || storedWriter == t.origin {
+			cols = append(cols, "writer")
+			vals = append(vals, t.origin)
+		}
+		if uerr := t.updateIfChanged("binding", id, cols, vals...); uerr != nil {
 			return "", fmt.Errorf("db: upsert binding: update: %w", mapBusy(uerr))
 		}
 		return id, nil
@@ -232,11 +239,11 @@ func (t *Tx) UpsertBinding(b Binding) (string, error) {
 	}
 
 	id = NewID()
-	if _, err := t.exec(`INSERT INTO binding (id, origin, name, repo_id, mastermind_id, feature, ticket, forked_from_binding_id,
+	if _, err := t.exec(`INSERT INTO binding (id, origin, writer, name, repo_id, mastermind_id, feature, ticket, forked_from_binding_id,
 			forked_from_round, cwd, worktree, branch, base_commit, tier, gate, builder_mode, server,
 			created_at, final_state, archived_at, archive_path, ingest_source)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		id, t.origin, b.Name, nullableString(b.RepoID), nullableString(b.MasterMindID), nullableString(b.Feature),
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		id, t.origin, t.origin, b.Name, nullableString(b.RepoID), nullableString(b.MasterMindID), nullableString(b.Feature),
 		nullableString(b.Ticket),
 		nullableString(b.ForkedFromBindingID), nullableInt(b.ForkedFromRound),
 		b.CWD, nullableString(b.Worktree), nullableString(b.Branch), nullableString(b.BaseCommit),

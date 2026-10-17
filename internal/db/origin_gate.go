@@ -60,6 +60,9 @@ func CountEmptyOrigins(d *DB) (OriginGateCounts, error) {
 	for _, table := range originGateTables {
 		var n int64
 		query := `SELECT COUNT(*) FROM ` + table + ` WHERE origin = ''`
+		if table == "binding_record" || table == "binding" {
+			query = `SELECT COUNT(*) FROM ` + table + ` WHERE origin = '' OR writer = ''`
+		}
 		if err := d.sqlDB.QueryRowContext(context.Background(), query).Scan(&n); err != nil {
 			return OriginGateCounts{}, fmt.Errorf("db: origin gate: %s: %w", table, mapBusy(err))
 		}
