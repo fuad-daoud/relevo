@@ -8,7 +8,9 @@ import (
 
 type refusingWriter struct{}
 
-func (refusingWriter) Write([]byte) (int, error) { return 0, errors.New("the daemon's end of the pipe is closed") }
+func (refusingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("the daemon's end of the pipe is closed")
+}
 
 // TestWriteResponseReportsAPipeThatRefusesTheReply pins that a reply the pipe
 // does not take is an error on both the buffered write and the flush, so the
