@@ -526,3 +526,93 @@ func TestUniqueCollisionHold(t *testing.T) {
 		t.Fatalf("b_local name = %q, want proj1", localName)
 	}
 }
+
+// TestHandoverSchemaAboveKnownHeldBatch pins that a hand-over entry with SchemaVersion
+// above known is held and never applied in the standard batch import path.
+func TestHandoverSchemaAboveKnownHeldBatch(t *testing.T) {
+	t.Parallel()
+	peer, _ := peerFile(t, "m2")
+	log := NewMemTransport("m1")
+
+	b1Handover := map[string]any{
+		"id": "b1", "owner": "o1", "name": "b1", "state": "open", "round": 1,
+		"cwd": "/x", "record_json": "{}", "created_at": "t", "updated_at": "t",
+		"origin": "m1", "writer": "m2",
+	}
+	futureSchema := 99
+	appendSignedBatch(t, log, handoverKey,
+		makeSignedEntry(t, handoverKey, "m1", "binding_record", `["b1"]`, OpUpsert, futureSchema, b1Handover, nil),
+	)
+
+	imp := NewImporter(peer, log.OnLog("m2"))
+	imp.SetKey(handoverKey)
+	res, err := imp.Import()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(res.Held) != 1 || res.Held[0].Origin != "m1" {
+		t.Fatalf("Held = %+v, want m1 held", res.Held)
+	}
+	if res.Held[0].Schema != futureSchema {
+		t.Errorf("Held schema = %d, want %d", res.Held[0].Schema, futureSchema)
+	}
+	if res.Applied != 0 {
+		t.Errorf("Applied = %d, want 0", res.Applied)
+	}
+
+	// Verify row was never applied
+	have := sharedRows(t, peer)
+	if strings.Contains(have, "b1") {
+		t.Fatalf("binding_record was applied despite future schema: %s", have)
+	}
+	if mark, found, err := peer.ImportMark("m1"); err != nil || (found && mark != 0) {
+		t.Errorf("import mark = %d (found=%v, err=%v), want 0", mark, found, err)
+	}
+}
+
+// TestHandoverSchemaAboveKnownHeldSnapshot pins that a hand-over entry with SchemaVersion
+// above known is held and never applied in the snapshot import path.
+func TestHandoverSchemaAboveKnownHeldSnapshot(t *testing.T) {
+	t.Parallel()
+	peer, _ := peerFile(t, "m2")
+	log := NewMemTransport("m1")
+
+	b1Handover := map[string]any{
+		"id": "b1", "owner": "o1", "name": "b1", "state": "open", "round": 1,
+		"cwd": "/x", "record_json": "{}", "created_at": "t", "updated_at": "t",
+		"origin": "m1", "writer": "m2",
+	}
+	futureSchema := 99
+	appendSignedBatch(t, log, handoverKey,
+		makeSignedEntry(t, handoverKey, "m1", "binding_record", `["b1"]`, OpUpsert, futureSchema, b1Handover, nil),
+	)
+
+	if _, err := log.Compact("m1", 1); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+
+	imp := NewImporter(peer, log.OnLog("m2"))
+	imp.SetKey(handoverKey)
+	res, err := imp.Import()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(res.Held) != 1 || res.Held[0].Origin != "m1" {
+		t.Fatalf("Held = %+v, want m1 held", res.Held)
+	}
+	if res.Held[0].Schema != futureSchema {
+		t.Errorf("Held schema = %d, want %d", res.Held[0].Schema, futureSchema)
+	}
+	if res.Applied != 0 {
+		t.Errorf("Applied = %d, want 0", res.Applied)
+	}
+
+	// Verify row was never applied
+	have := sharedRows(t, peer)
+	if strings.Contains(have, "b1") {
+		t.Fatalf("binding_record was applied despite future schema: %s", have)
+	}
+	if mark, found, err := peer.ImportMark("m1"); err != nil || (found && mark != 0) {
+		t.Errorf("import mark = %d (found=%v, err=%v), want 0", mark, found, err)
+	}
+}
