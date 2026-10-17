@@ -478,4 +478,3 @@ func TestTakeoverRecordsExportedEntriesAboveFenceAsFenced(t *testing.T) {
 		t.Errorf("local change to other was deleted: %s", rows)
 	}
 }
-
