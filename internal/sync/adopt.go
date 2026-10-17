@@ -41,6 +41,11 @@ const adoptQuietFor = 24 * time.Hour
 // the same allowance synclog gives a mark.
 const adoptSkew = time.Hour
 
+// adoptIgnoredDocs are the document signals a fresh machine always carries:
+// every open signals the config document and the enable's own store step the
+// secrets one, and neither is a change the machine made under its old identity.
+var adoptIgnoredDocs = []string{"config", SecretsDocName}
+
 var (
 	// ErrAdoptionLive is an adoption of an identity that wrote or read within the
 	// day: a machine is still using it.
@@ -126,7 +131,11 @@ func IdentityTaken(local db.KV) string {
 	if err != nil || !ok {
 		return ""
 	}
-	return string(body)
+	var id string
+	if json.Unmarshal(body, &id) != nil {
+		return ""
+	}
+	return id
 }
 
 // CheckAdoptedClaim compares the claim on this machine's adopted identity with
@@ -147,7 +156,8 @@ func CheckAdoptedClaim(ctx context.Context, local db.KV, transport synclog.LogTr
 		_ = local.KVDelete(KeyIdentityTaken)
 		return nil
 	}
-	if perr := local.KVPut(KeyIdentityTaken, []byte(adopted.ID)); perr != nil {
+	fact, _ := json.Marshal(adopted.ID)
+	if perr := local.KVPut(KeyIdentityTaken, fact); perr != nil {
 		return fmt.Errorf("%w (and the fact could not be stored: %v)", ErrIdentityTaken, perr)
 	}
 	return ErrIdentityTaken
@@ -172,7 +182,7 @@ func (e *Enabler) enableAdopt(plan EnablePlan, now time.Time) (EnableResult, err
 	if a.ID == "" || a.ID == shared.Origin() {
 		return res, ErrAdoptionSelf
 	}
-	blockers, err := shared.AdoptionBlockers()
+	blockers, err := shared.AdoptionBlockers(adoptIgnoredDocs...)
 	if err != nil {
 		return res, err
 	}

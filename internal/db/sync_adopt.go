@@ -48,14 +48,32 @@ func (b AdoptionBlockers) String() string {
 }
 
 // AdoptionBlockers reads what stands between this machine and an adoption.
-func (d *DB) AdoptionBlockers() (AdoptionBlockers, error) {
+// ignoreDocs names document signals that are not changes of the machine's own:
+// every open signals the config document, and the enable's own store step
+// signals the secrets one.
+func (d *DB) AdoptionBlockers(ignoreDocs ...string) (AdoptionBlockers, error) {
 	var out AdoptionBlockers
 	err := d.Tx(func(t *Tx) error {
 		var err error
 		out, err = t.adoptionBlockers()
 		return err
 	})
-	return out, err
+	if err != nil {
+		return AdoptionBlockers{}, err
+	}
+	// The signals live in the machine-local file, where SignalDoc writes them.
+	query := `SELECT COUNT(*) FROM shared_outbox`
+	args := make([]any, 0, len(ignoreDocs))
+	if len(ignoreDocs) > 0 {
+		query += ` WHERE doc NOT IN (?` + strings.Repeat(`,?`, len(ignoreDocs)-1) + `)`
+		for _, doc := range ignoreDocs {
+			args = append(args, doc)
+		}
+	}
+	if err := d.LocalOrSelf().sqlDB.QueryRow(query, args...).Scan(&out.SharedOutbox); err != nil {
+		return AdoptionBlockers{}, fmt.Errorf("db: adoption blockers: documents: %w", mapBusy(err))
+	}
+	return out, nil
 }
 
 func (t *Tx) adoptionBlockers() (AdoptionBlockers, error) {
@@ -63,9 +81,6 @@ func (t *Tx) adoptionBlockers() (AdoptionBlockers, error) {
 	if err := t.queryRow(`SELECT COUNT(*) FROM sync_outbox
 		WHERE NOT (tbl = 'installation' AND pk = json_array(?))`, t.origin).Scan(&out.Outbox); err != nil {
 		return AdoptionBlockers{}, fmt.Errorf("db: adoption blockers: outbox: %w", mapBusy(err))
-	}
-	if err := t.queryRow(`SELECT COUNT(*) FROM shared_outbox`).Scan(&out.SharedOutbox); err != nil {
-		return AdoptionBlockers{}, fmt.Errorf("db: adoption blockers: documents: %w", mapBusy(err))
 	}
 	for _, table := range SharedTables {
 		query := `SELECT COUNT(*) FROM ` + table.Name
