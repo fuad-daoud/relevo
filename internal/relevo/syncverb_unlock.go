@@ -27,6 +27,14 @@ func (v *VerbRunner) unlock(ctx context.Context, verb *wire.SyncVerb, passphrase
 	if _, err := relevosync.DrainParkedDocs(v.Shared, v.Local, transport); err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
+	// Secrets stored before this machine held a key were never signalled, and an
+	// export only reads a signalled doc, so without this they would never
+	// travel. It follows the drain: a peer's newer value parked while locked is
+	// applied first, so the export does not send this machine's older one over
+	// it under a fresh stamp.
+	if err := v.Local.SignalDoc(relevosync.SecretsDocName); err != nil {
+		return verbRefusal(verbClassify(err), err)
+	}
 	// A join that ran while this machine was locked still owes its own history,
 	// and the key it now holds is what lets that history be sent.
 	owed := &relevosync.Enabler{Request: relevosync.EnableRequest{Local: v.Local, Shared: v.Shared}}
