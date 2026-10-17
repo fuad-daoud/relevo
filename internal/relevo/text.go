@@ -95,11 +95,15 @@ func StopText(name string, res StopResult) string {
 // the builder and where it would go, the paths, and the head of the prompt. It
 // names only what the preflight read; nothing here was sent (#149).
 func RenderDryRun(d DryRun) string {
+	tierVal := d.Tier
+	if d.TierFrom != "" {
+		tierVal = fmt.Sprintf("%s  (%s)", d.Tier, d.TierFrom)
+	}
 	lines := []string{
 		fmt.Sprintf("would send round %d to %s", d.Round, d.Name),
 		fmt.Sprintf("  %-8s  %s", "runner", dryRunBuilderLine(d)),
 		fmt.Sprintf("  %-8s  %s", "where", d.Where),
-		fmt.Sprintf("  %-8s  %s", "tier", d.Tier),
+		fmt.Sprintf("  %-8s  %s", "tier", tierVal),
 		fmt.Sprintf("  %-8s  %s  (staged from %s, %s)", "prompt", d.PromptPath, d.PromptFrom, view.HumanBytes(d.PromptBytes)),
 		fmt.Sprintf("  %-8s  %s", "report", d.ReportPath),
 		fmt.Sprintf("  %-8s  %s", "marker", d.DonePath),

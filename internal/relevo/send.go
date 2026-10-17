@@ -165,12 +165,13 @@ type SendOptions struct {
 // about the state of the world (#149). A failed precondition is an error in
 // Send's exact wording.
 type preflight struct {
-	b    store.Binding      // the binding as loaded (read-only; Send re-loads under the lock)
-	body []byte             // the plan file's bytes
-	tier harness.Tier       // effective tier for this round (opts.Tier parsed, or the stored tier); the cap is checked as it is derived for a local launch, while a served round's tier is capped by the server
-	argv []string           // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
-	gate *availability.Gate // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
-	pick *Resolution        // --candidate's resolution to apply under the lock; nil when the builder does not change
+	b        store.Binding // the binding as loaded (read-only; Send re-loads under the lock)
+	body     []byte        // the plan file's bytes
+	tier     harness.Tier  // effective tier for this round (opts.Tier parsed, or the stored tier); the cap is checked as it is derived for a local launch, while a served round's tier is capped by the server
+	tierFrom string
+	argv     []string           // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
+	gate     *availability.Gate // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
+	pick     *Resolution        // --candidate's resolution to apply under the lock; nil when the builder does not change
 	// staleToken is the binding's old BuilderCandidate when the preflight
 	// re-picked because the token was stale; "" otherwise. When it is
 	// non-empty, pick is non-nil.
@@ -233,6 +234,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	}
 
 	var tier harness.Tier
+	tierFrom := "binding (fixed at bind; rebind to pick up config changes)"
 	if opts.Tier != "" {
 		t, err := harness.ParseTier(opts.Tier)
 		if err != nil {
@@ -242,6 +244,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 			return preflight{}, err
 		}
 		tier = t
+		tierFrom = "round override (--tier)"
 	}
 
 	b, err := rt.Store.Load(name)
@@ -358,7 +361,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	prompt := composePrompt(rt, b, promptPath, reportPath, donePath)
 
 	pf := preflight{
-		b: b, body: body, tier: tier,
+		b: b, body: body, tier: tier, tierFrom: tierFrom,
 		promptPath: promptPath, reportPath: reportPath, donePath: donePath,
 		prompt: prompt, pick: pick, staleToken: staleToken,
 		remoteBuilder: remoteBuilder,
@@ -432,7 +435,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	if err != nil {
 		return preflight{}, fmt.Errorf("binding %q builder: %w", b.Name, err)
 	}
-	argv, err := spawn.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, roundTree(rt, b), rt.Store.OutDir(b.Name))
+	argv, err := spawn.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, roundTree(rt, b), rt.Store.OutDir(b.Name), promptPath)
 	if err != nil {
 		return preflight{}, err
 	}
@@ -794,6 +797,7 @@ type DryRun struct {
 	ReportPath    string   `json:"report_path"`
 	DonePath      string   `json:"done_path"`
 	Tier          string   `json:"tier"`
+	TierFrom      string   `json:"tier_from,omitempty"`
 	PromptHead    []string `json:"prompt_head"` // the prompt's first two non-empty lines
 }
 
@@ -820,6 +824,7 @@ func SendDryRun(ctx context.Context, rt Runtime, name, file string, opts SendOpt
 		ReportPath:  pf.reportPath,
 		DonePath:    pf.donePath,
 		Tier:        string(pf.tier),
+		TierFrom:    pf.tierFrom,
 		PromptHead:  promptHead(pf.prompt),
 	}
 	// A1 §4.4, round 3 F3: CandidateName is set only when the set holds the

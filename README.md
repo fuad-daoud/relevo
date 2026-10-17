@@ -2118,7 +2118,7 @@ The flags rendered for each harness kind (verified 2026-09-19 on claude 2.1.278,
 
 | kind | harness | read | edit | yolo |
 |---|---|---|---|---|
-| claude | (none) | `--permission-mode plan` | `--permission-mode acceptEdits` | `--dangerously-skip-permissions` |
+| claude | (none) | `--permission-mode plan --allowedTools=Read(//<round prompt>)` | `--permission-mode acceptEdits --allowedTools=Read(//<round prompt>)` | `--dangerously-skip-permissions` |
 | agy | (none) | `--mode plan` | `--mode accept-edits` | `--dangerously-skip-permissions` |
 | opencode | (none) | refuse | refuse | `--auto` |
 | codex | (none) | refuse | `-s workspace-write -c sandbox_workspace_write.writable_roots=["<binding>/out"]` | `--dangerously-bypass-approvals-and-sandbox` |

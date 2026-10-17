@@ -131,7 +131,7 @@ func ProbeCandidate(ctx context.Context, d Deps, x LineExec, c candidate.Candida
 		return probeFailure(d, ref, c, host, err.Error())
 	}
 
-	argv, err := spawn.HeadlessLaunch(c, role, tier, probeBudget, probePrompt, dir, dir)
+	argv, err := spawn.HeadlessLaunch(c, role, tier, probeBudget, probePrompt, dir, dir, "")
 	if err != nil {
 		return probeFailure(d, ref, c, host, err.Error())
 	}
