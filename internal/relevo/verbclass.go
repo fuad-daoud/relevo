@@ -93,6 +93,7 @@ func verbClassify(err error) string {
 	case errors.Is(err, db.ErrInvalid),
 		errors.Is(err, db.ErrAdoptionDirty),
 		errors.Is(err, relevosync.ErrAdoptionLive),
+		errors.Is(err, relevosync.ErrAdoptionStampAhead),
 		errors.Is(err, relevosync.ErrAdoptionSelf),
 		errors.Is(err, relevosync.ErrAdoptionClaimed),
 		errors.Is(err, relevosync.ErrAdoptionIncomplete),

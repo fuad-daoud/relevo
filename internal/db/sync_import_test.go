@@ -744,3 +744,47 @@ func TestDiscardOutboxSince(t *testing.T) {
 		t.Fatalf("tx: %v", err)
 	}
 }
+
+func writerBody(writer any, named bool) map[string]any {
+	body := map[string]any{
+		"id": "b1", "name": "b1", "cwd": "/x", "builder_mode": "local",
+		"created_at": "t", "ingest_source": "manual", "origin": "creator1",
+	}
+	if named {
+		body["writer"] = writer
+	}
+	return body
+}
+
+func TestExchangeUpsertRefusesAnEmptyWriterOverANonEmptyOne(t *testing.T) {
+	d := openTestDB(t)
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instX", writerBody("instX", true)) }); err != nil {
+		t.Fatalf("seed the binding: %v", err)
+	}
+	err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instX", writerBody("", true)) })
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("upsert with an empty writer = %v, want ErrInvalid", err)
+	}
+	if got := value(t, exchangeRow(t, d, "binding", `["b1"]`), "writer"); got != "instX" {
+		t.Fatalf("writer = %v, want it unchanged", got)
+	}
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instX", writerBody(nil, false)) }); err != nil {
+		t.Fatalf("upsert with no writer key: %v", err)
+	}
+}
+
+func TestExchangeUpsertAppliesAnEmptyWriterOverAnEmptyOne(t *testing.T) {
+	d := openTestDB(t)
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instX", writerBody("instX", true)) }); err != nil {
+		t.Fatalf("seed the binding: %v", err)
+	}
+	if err := d.Tx(func(tx *Tx) error {
+		_, err := tx.exec(`UPDATE binding SET writer = '' WHERE id = 'b1'`)
+		return err
+	}); err != nil {
+		t.Fatalf("make the row legacy: %v", err)
+	}
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instX", writerBody("", true)) }); err != nil {
+		t.Fatalf("upsert an empty writer over a legacy row: %v", err)
+	}
+}

@@ -209,7 +209,26 @@ func authorizeAbsentRoot(tx *db.Tx, e Entry, rootID string, values map[string]an
 	return decision{owner: e.Origin}, nil
 }
 
+// refuseEmptyWriter refuses a binding upsert whose body names an empty writer
+// over a row that has one: applied, it would hand the row to every machine. A
+// body without the key (an exporter older than the writer column) and a stored
+// writer of "" (a legacy row) are not a strip.
+func refuseEmptyWriter(e Entry, currentWriter string, values map[string]any) error {
+	if (e.Table != "binding" && e.Table != "binding_record") || e.Op != OpUpsert || currentWriter == "" {
+		return nil
+	}
+	w, named := values["writer"].(string)
+	if named && w == "" {
+		return fmt.Errorf("synclog: import %s %s: origin %s: empty writer would hand the row to every machine: %w",
+			e.Table, e.PK, e.Origin, ErrInvalid)
+	}
+	return nil
+}
+
 func authorizePresentRoot(tx *db.Tx, e Entry, rootID, currentWriter string, values map[string]any) (decision, error) {
+	if err := refuseEmptyWriter(e, currentWriter, values); err != nil {
+		return decision{}, err
+	}
 	if currentWriter == e.Origin {
 		if (e.Table == "binding" || e.Table == "binding_record") && e.Op == OpUpsert {
 			bodyWriter, _ := values["writer"].(string)

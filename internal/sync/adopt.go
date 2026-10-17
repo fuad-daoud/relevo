@@ -50,6 +50,9 @@ var (
 	// ErrAdoptionLive is an adoption of an identity that wrote or read within the
 	// day: a machine is still using it.
 	ErrAdoptionLive = errors.New("sync: that identity was active within the last 24 hours: wait, or run relevo db sync disable on the machine that holds it")
+	// ErrAdoptionStampAhead is an adoption of an identity whose log or marks are
+	// stamped further in the future than the skew allows.
+	ErrAdoptionStampAhead = errors.New("sync: that identity's log or marks are stamped in the future: its clock is wrong or the stamp is forged; fix that clock or run relevo db sync disable on the machine that holds it")
 	// ErrAdoptionSelf is an adoption of the identity the machine already has.
 	ErrAdoptionSelf = errors.New("sync: this machine already is that installation: run relevo db sync enable without --as")
 	// ErrAdoptionClaimed is an adoption another machine claimed first.
@@ -66,14 +69,23 @@ var (
 // is the time of the identity's newest log entry and lastMarkAt the newest mark
 // its reader published, either zero when there is none. A stamp within the last
 // day, or in the future by no more than the skew the marks allow, is a machine
-// still using the identity.
+// still using the identity; a stamp further ahead than the skew is refused too,
+// since it is a wrong clock or a forged stamp and neither is quiet.
+//
+// The decision trusts both the joiner's clock (now) and the remote's stamps. A
+// fast joiner clock cannot be told apart from a quiet identity without a time
+// source the remote does not offer, and that is accepted: a holder of the group
+// key can already write as any origin.
 func AdoptionRefusal(now, lastEntryAt, lastMarkAt time.Time) error {
 	for _, at := range []time.Time{lastEntryAt, lastMarkAt} {
 		if at.IsZero() {
 			continue
 		}
 		age := now.Sub(at)
-		if age < adoptQuietFor && age >= -adoptSkew {
+		if age < -adoptSkew {
+			return ErrAdoptionStampAhead
+		}
+		if age < adoptQuietFor {
 			return ErrAdoptionLive
 		}
 	}

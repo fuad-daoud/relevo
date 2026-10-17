@@ -65,6 +65,9 @@ func (t *Tx) ExchangeUpsert(tbl, owner string, values map[string]any) error {
 			return err
 		}
 	}
+	if err := t.checkWriterNotStripped(shared, values); err != nil {
+		return err
+	}
 	owned := ownedValues(tbl, owner, values)
 	named, args, err := upsertColumns(shared.PrimaryKey, columns, owned)
 	if err != nil {
@@ -122,6 +125,39 @@ func (t *Tx) checkCreatorImmutability(shared *SharedTable, creator, owner string
 		return nil
 	}
 	return fmt.Errorf("db: exchange upsert %s: check stored %s: %w", shared.Name, creator, mapRefused(mapBusy(err)))
+}
+
+// checkWriterNotStripped refuses a binding body that names writer as "" over a
+// stored row whose writer is not: other writer changes go through the hand-over
+// path, and an empty one would hand the row to every machine.
+func (t *Tx) checkWriterNotStripped(shared *SharedTable, values map[string]any) error {
+	if shared.Name != "binding" && shared.Name != "binding_record" {
+		return nil
+	}
+	if w, named := values["writer"].(string); !named || w != "" {
+		return nil
+	}
+	keyArgs := make([]any, len(shared.PrimaryKey))
+	for i, col := range shared.PrimaryKey {
+		v, ok := values[col]
+		if !ok {
+			return nil
+		}
+		keyArgs[i] = v
+	}
+	where, _ := keyWhere(shared.PrimaryKey, keyArgs)
+	var stored sql.NullString
+	err := t.conn.QueryRowContext(t.ctx, "SELECT writer FROM "+quoteIdent(shared.Name)+" WHERE "+where, keyArgs...).Scan(&stored)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("db: exchange upsert %s: check stored writer: %w", shared.Name, mapRefused(mapBusy(err)))
+	}
+	if stored.String != "" {
+		return fmt.Errorf("db: exchange upsert %s: empty writer would replace %q: %w", shared.Name, stored.String, ErrInvalid)
+	}
+	return nil
 }
 
 // MaxOutboxSeq returns the highest seq in sync_outbox, or 0 if empty.

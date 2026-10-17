@@ -32,7 +32,7 @@ func handedOverBlock(rows []HandedOverRow) string {
 		if row.Kind == "takeover" {
 			verb = "taken over by"
 		}
-		fmt.Fprintf(&sb, "%s · %s %s", row.Name, verb, row.To)
+		fmt.Fprintf(&sb, "%s · %s %s", sanitizeText(row.Name), verb, sanitizeText(row.To))
 		if row.NotExported {
 			sb.WriteString(" (not yet exported: relevo db sync)")
 		}

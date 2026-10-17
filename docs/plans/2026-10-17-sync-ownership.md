@@ -255,4 +255,12 @@ round reports recorded for the hand-over and takeover work (Round 3).
 - The claim is exclusive per attempt and detected afterwards; two machines that
   both read their own token back are told apart only on their next steady
   attempt.
+- The adoption liveness and claim checks read heads, marks and
+  `claim:<origin>` from the remote and judge them by the joiner's clock, so a
+  hostile remote or a clock-forged joiner can adopt a live identity: the same
+  split-brain the claim token detects later. Signing the claim into the log is
+  the known fix and is not built.
+- An adoption interrupted between the database swap and the identity file does
+  not finish on a rerun: the swapped rows read as changes of the machine's own
+  and the rerun refuses. Finishing it needs a resume path, which is not built.
 - The coverage baseline was not regenerated: no code moved between packages.

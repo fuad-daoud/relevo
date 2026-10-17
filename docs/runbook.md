@@ -79,7 +79,9 @@ under `~/.cache`; keep it on any rebuild.
   identity on a fresh machine. It leaves sync off: restart the relevo daemon,
   then run `relevo db sync enable` again to finish. `relevo db sync status`
   says when another machine adopted the same identity; run
-  `relevo db sync disable` on one of the two.
+  `relevo db sync disable` on one of the two. Adoption trusts the remote and the
+  joiner's clock, so run it only on a machine you control and after the old
+  machine is truly off.
 
 ## Running chains
 

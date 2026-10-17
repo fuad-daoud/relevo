@@ -219,6 +219,18 @@ func TestAdoptionRefusesAnIdentityStillInUse(t *testing.T) {
 			t.Fatalf("Enable = %v, want ErrAdoptionLive", err)
 		}
 	})
+	t.Run("the log is stamped in the future", func(t *testing.T) {
+		log := deadMachine(t)
+		shared, local, _ := freshMachine(t, "tmp-m")
+		behind := func() time.Time { return time.Now().Add(-5 * time.Hour) }
+		_, err := adopter(shared, local, log.OnLog("tmp-m"), behind, nil).Enable()
+		if !errors.Is(err, ErrAdoptionStampAhead) {
+			t.Fatalf("Enable = %v, want ErrAdoptionStampAhead", err)
+		}
+		if claims := log.Claims(); len(claims) != 0 {
+			t.Errorf("a refused adoption left claims %v", claims)
+		}
+	})
 }
 
 // TestAdoptionRefusalWindow pins the rule's edges on its own.
@@ -226,19 +238,19 @@ func TestAdoptionRefusalWindow(t *testing.T) {
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	cases := map[string]struct {
 		entry, mark time.Time
-		live        bool
+		want        error
 	}{
-		"nothing at all":            {live: false},
-		"an hour old":               {entry: now.Add(-time.Hour), live: true},
-		"just under a day":          {mark: now.Add(-24*time.Hour + time.Minute), live: true},
-		"a day old":                 {entry: now.Add(-24 * time.Hour), live: false},
-		"stamped slightly ahead":    {mark: now.Add(30 * time.Minute), live: true},
-		"stamped far in the future": {entry: now.Add(3 * time.Hour), live: false},
+		"nothing at all":            {},
+		"an hour old":               {entry: now.Add(-time.Hour), want: ErrAdoptionLive},
+		"just under a day":          {mark: now.Add(-24*time.Hour + time.Minute), want: ErrAdoptionLive},
+		"a day old":                 {entry: now.Add(-24 * time.Hour)},
+		"stamped slightly ahead":    {mark: now.Add(30 * time.Minute), want: ErrAdoptionLive},
+		"stamped far in the future": {entry: now.Add(3 * time.Hour), want: ErrAdoptionStampAhead},
 	}
 	for name, tc := range cases {
 		err := AdoptionRefusal(now, tc.entry, tc.mark)
-		if (err != nil) != tc.live {
-			t.Errorf("%s: AdoptionRefusal = %v, want live = %v", name, err, tc.live)
+		if !errors.Is(err, tc.want) || (tc.want == nil && err != nil) {
+			t.Errorf("%s: AdoptionRefusal = %v, want %v", name, err, tc.want)
 		}
 	}
 }

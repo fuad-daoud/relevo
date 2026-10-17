@@ -2,6 +2,8 @@ package synclog
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,5 +119,93 @@ func TestNewHybridClockAtReadsTheGivenWallClock(t *testing.T) {
 	second, err := clock.Now()
 	if err != nil || second <= first {
 		t.Fatalf("second stamp %v after %v, err %v", second, first, err)
+	}
+}
+
+func stripBodies(tbl, writer string, withKey bool) map[string]any {
+	var body map[string]any
+	if tbl == "binding" {
+		body = map[string]any{
+			"id": "b1", "name": "b1", "cwd": "/x", "builder_mode": "local",
+			"created_at": "t", "ingest_source": "manual", "origin": "m1",
+		}
+	} else {
+		body = map[string]any{
+			"id": "b1", "owner": "o1", "name": "b1", "state": "open", "round": 1,
+			"cwd": "/x", "record_json": "{}", "created_at": "t", "updated_at": "t",
+			"origin": "m1",
+		}
+	}
+	if withKey {
+		body["writer"] = writer
+	}
+	return body
+}
+
+// importStripAttempt has m1 create the root, optionally hand it to m2, then
+// upsert the root again with the given writer body, and returns the peer, the
+// import result and error of that last entry alone.
+func importStripAttempt(t *testing.T, tbl string, handOver, withKey bool, writer string) (*db.DB, ImportResult, error) {
+	t.Helper()
+	peer, _ := peerFile(t, "m3")
+	know := knownVersion(t, peer)
+	log := NewMemTransport("m1")
+	pk := `["b1"]`
+	appendSignedBatch(t, log, handoverKey, makeSignedEntry(t, handoverKey, "m1", tbl, pk, OpUpsert, know, stripBodies(tbl, "m1", true), nil))
+	if handOver {
+		appendSignedBatch(t, log, handoverKey, makeSignedEntry(t, handoverKey, "m1", tbl, pk, OpUpsert, know, stripBodies(tbl, "m2", true), nil))
+	}
+	first := NewImporter(peer, log.OnLog("m3"))
+	first.SetKey(handoverKey)
+	if _, err := first.Import(); err != nil {
+		t.Fatalf("import before the strip: %v", err)
+	}
+	appendSignedBatch(t, log, handoverKey, makeSignedEntry(t, handoverKey, "m1", tbl, pk, OpUpsert, know, stripBodies(tbl, writer, withKey), nil))
+	imp := NewImporter(peer, log.OnLog("m3"))
+	imp.SetKey(handoverKey)
+	res, err := imp.Import()
+	return peer, res, err
+}
+
+func TestAnEmptyWriterNeverStripsAPresentRoot(t *testing.T) {
+	t.Parallel()
+	cases := map[string]struct {
+		tbl      string
+		handOver bool
+		want     string
+	}{
+		"binding_record, current writer": {"binding_record", false, "m1"},
+		"binding, current writer":        {"binding", false, "m1"},
+		"binding_record, term path":      {"binding_record", true, "m2"},
+		"binding, term path":             {"binding", true, "m2"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			peer, res, err := importStripAttempt(t, tc.tbl, tc.handOver, true, "")
+			if err == nil && len(res.Dropped) == 0 && len(res.Held) == 0 {
+				t.Fatalf("the strip applied cleanly: %+v", res)
+			}
+			if err != nil && !errors.Is(err, ErrInvalid) {
+				t.Fatalf("import error = %v, want ErrInvalid", err)
+			}
+			if reason := fmt.Sprint(err, res.Dropped); !strings.Contains(reason, "every machine") {
+				t.Fatalf("refusal = %s, want the authorize refusal rather than the storage one", reason)
+			}
+			if got := columnOf(t, peer, `SELECT writer FROM `+tc.tbl+` WHERE id = 'b1'`); got != tc.want {
+				t.Fatalf("writer = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAWriterlessBodyStillAppliesToAPresentRoot(t *testing.T) {
+	t.Parallel()
+	peer, res, err := importStripAttempt(t, "binding_record", false, false, "")
+	if err != nil || res.Applied != 1 {
+		t.Fatalf("import = %+v, %v; want one applied entry", res, err)
+	}
+	if got := columnOf(t, peer, `SELECT writer FROM binding_record WHERE id = 'b1'`); got != "m1" {
+		t.Fatalf("writer = %q, want m1", got)
 	}
 }

@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 )
@@ -21,14 +22,15 @@ type HandedOverError struct {
 }
 
 func (e *HandedOverError) Error() string {
-	who := e.Label
+	who := stripControls(e.Label)
 	if who == "" {
-		who = e.To
+		who = stripControls(e.To)
 	}
+	name := stripControls(e.Name)
 	if e.Kind == db.LeftTakeover {
-		return fmt.Sprintf("binding %q was taken over by %s; relevo unbind it here or leave it", e.Name, who)
+		return fmt.Sprintf("binding %q was taken over by %s; relevo unbind it here or leave it", name, who)
 	}
-	return fmt.Sprintf("binding %q is handed over to %s; take it back there with relevo takeover %s --force", e.Name, who, e.Name)
+	return fmt.Sprintf("binding %q is handed over to %s; take it back there with relevo takeover %s --force", name, who, name)
 }
 
 func (e *HandedOverError) Is(target error) bool { return target == ErrHandedOver }
@@ -48,7 +50,19 @@ func (s *Store) handedOver(d *db.DB, name string) error {
 			}
 		}
 	}
-	return &HandedOverError{Name: name, To: left.ToWriter, Label: label, Kind: left.Kind}
+	return &HandedOverError{Name: name, To: stripControls(left.ToWriter), Label: stripControls(label), Kind: left.Kind}
+}
+
+// stripControls drops the C0, DEL and C1 bytes a terminal would act on: the
+// writer text comes from a peer's row and reaches stderr. internal/view owns the
+// same rule but imports this package.
+func stripControls(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // HandedOver reports whether this machine gave name away, and to whom.
