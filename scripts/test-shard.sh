@@ -78,7 +78,7 @@ fi
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # shellcheck disable=SC1007 # CDPATH= scopes an empty CDPATH to this one command
 repo=$(CDPATH= cd -- "$here/.." && pwd)
-mod=$(cd "$repo" && go list -m 2>/dev/null || :)
+mod=$(cd "$repo" && go list -m 2>/dev/null) || mod=
 
 weights_file=${SHARD_WEIGHTS:-$here/test-shard.weights}
 if [ ! -r "$weights_file" ]; then
