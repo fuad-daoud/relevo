@@ -8,6 +8,6 @@
 
 ## Checklist
 
-- [ ] `make check` passes (gofmt, `go vet`, tests)
+- [ ] `make check-affected` (or `make check`) passes (gofmt, `go vet`, tests)
 - [ ] New behaviour has a test, or the PR says why it does not
 - [ ] Docs updated if a flag, command or state file changed

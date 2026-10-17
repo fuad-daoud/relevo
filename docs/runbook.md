@@ -24,8 +24,12 @@ under `~/.cache`; keep it on any rebuild.
 - Static checks run locally: `make check-static` (gofmt over tracked and
   untracked Go files, `go vet`, golangci-lint, the comment/size/name guards,
   and a `go mod tidy` check).
-- The suite runs on zen, not on contabo: contabo (7G) OOM-kills it, and its
-  `dev run` output vanishes silently. `git archive` the tree to
+- The default local gate is `make check-affected`: `make check-static`, then
+  `go test` over only the packages the change reaches. CI is the judge.
+- The full local run is optional -- the static checks, then `make check-test`,
+  the modernc leg, and `make e2e`. The suite runs on zen, not on contabo:
+  contabo (7G) OOM-kills it, and its `dev run` output vanishes silently. `git
+  archive` the tree to
   `zen:~/.cache/mm-*`, `git init` a snapshot there, then `make check-test`,
   the modernc leg, and `make e2e`. The modernc leg is:
   `go vet -tags modernc ./internal/db/...` and
@@ -87,6 +91,8 @@ under `~/.cache`; keep it on any rebuild.
 ## Running chains
 
 - Build big slices as `relevo chain --server zen`.
+- Gate each chain round with `relevo chain --gate 'make check-affected'`, and
+  a single binding with the same `--gate` flag.
 - After a halt, finish with manual rounds on the chain's builder, then
   `relevo chain --resume`.
 - Fetch a served head with `git fetch zen:<served worktree> HEAD:refs/heads/X`.
@@ -96,4 +102,4 @@ under `~/.cache`; keep it on any rebuild.
   worktree of the head (`--cwd`, seed under 4096 bytes). They catch what the
   builders did not.
 - End plans for builders that skip gofmt with: "`gofmt -l` changed files,
-  `make check`, commit, then report".
+  `make check-affected`, commit, then report".

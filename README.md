@@ -73,7 +73,9 @@ mv -f ~/.local/bin/relevo.new ~/.local/bin/relevo
 ```
 
 `make check` runs the full gate — `gofmt -l .`, `go vet ./...`, and
-`go test -count=1 ./...` — and `make install` runs it first.
+`go test -count=1 ./...` — and `make install` runs it first. While iterating,
+`make check-affected` runs the same static checks over only the packages your
+change reaches.
 
 To run the reconciler as a background service:
 
@@ -2844,7 +2846,8 @@ code.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). In short: open an issue first, keep it
-stdlib-only, write the test, and make sure `make check` passes.
+stdlib-only, write the test, and make sure `make check-affected` passes — or
+`make check` for the full run.
 
 `make e2e` runs one headless relevo round end to end -- MasterMind init, bind,
 send, delivery -- with a fake harness binary on `PATH`. It runs in CI and is not
