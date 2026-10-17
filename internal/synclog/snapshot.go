@@ -14,6 +14,7 @@ package synclog
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -49,21 +50,33 @@ func (i *Importer) snapshots(state MarkState, marks map[string]int, total *Impor
 		origins = append(origins, origin)
 	}
 	sort.Strings(origins)
-	for _, origin := range origins {
-		floor := state.Floors[origin]
-		if origin == i.db.Origin() || floor <= marks[origin] {
-			continue
+	for {
+		progress := false
+		var lastHolds []*Hold
+		for _, origin := range origins {
+			floor := state.Floors[origin]
+			if origin == i.db.Origin() || floor <= marks[origin] || held[origin] {
+				continue
+			}
+			hold, err := i.snapshotOrigin(origin, marks[origin], floor, state.Heads[origin], marks, total)
+			switch {
+			case holdsOrigin(err):
+				total.Stalled = append(total.Stalled, Stall{Origin: origin, Label: i.labelOf(origin), Reason: err.Error()})
+				held[origin] = true
+			case err != nil:
+				return err
+			case hold != nil:
+				lastHolds = append(lastHolds, hold)
+			default:
+				progress = true
+			}
 		}
-		hold, err := i.snapshotOrigin(origin, marks[origin], floor, state.Heads[origin], marks, total)
-		switch {
-		case holdsOrigin(err):
-			total.Stalled = append(total.Stalled, Stall{Origin: origin, Label: i.labelOf(origin), Reason: err.Error()})
-			held[origin] = true
-		case err != nil:
-			return err
-		case hold != nil:
-			total.Held = append(total.Held, *hold)
-			held[origin] = true
+		if !progress {
+			for _, hold := range lastHolds {
+				total.Held = append(total.Held, *hold)
+				held[hold.Origin] = true
+			}
+			break
 		}
 	}
 	return nil
@@ -97,7 +110,30 @@ func (i *Importer) snapshotOrigin(origin string, mark, floor, head int, marks ma
 		return hold, nil
 	}
 	if err := i.verify(origin, region); err != nil {
+		var holdErr *HoldError
+		if errors.As(err, &holdErr) {
+			return &Hold{Origin: origin, Label: i.labelOf(origin), Seq: mark, Reason: holdErr.Reason}, nil
+		}
 		return nil, err
+	}
+	for _, e := range region {
+		if e.After != nil && marks[e.After.Origin] < e.After.Seq {
+			names, err := i.labels()
+			if err != nil {
+				return nil, err
+			}
+			afterLabel := names[e.After.Origin]
+			if afterLabel == "" {
+				afterLabel = e.After.Origin
+			}
+			reason := fmt.Sprintf("%s is waiting for %s at seq %d", origin, afterLabel, e.After.Seq)
+			return &Hold{
+				Origin: origin,
+				Label:  i.labelOf(origin),
+				Seq:    mark,
+				Reason: reason,
+			}, nil
+		}
 	}
 	docs, rows := splitDocs(region)
 	handled, err := i.takeDocs(origin, docs)
@@ -112,6 +148,10 @@ func (i *Importer) snapshotOrigin(origin string, mark, floor, head int, marks ma
 	for _, part := range [][]Entry{upserts, deletes} {
 		left, err := i.applyUntilDone(origin, part, total)
 		if err != nil {
+			var holdErr *HoldError
+			if errors.As(err, &holdErr) {
+				return &Hold{Origin: origin, Label: i.labelOf(origin), Seq: mark, Reason: holdErr.Reason}, nil
+			}
 			return nil, err
 		}
 		if left != nil {

@@ -293,47 +293,105 @@ func (i *Importer) Import() (ImportResult, error) {
 	if err != nil {
 		return total, fmt.Errorf("synclog: import: pull: %w", err)
 	}
-	for _, batch := range batches(entries, marks) {
-		origin := batch[0].Origin
-		if held[origin] {
+	allBatches := batches(entries, marks)
+	byOrigin := make(map[string][][]Entry)
+	var originOrder []string
+	for _, batch := range allBatches {
+		orig := batch[0].Origin
+		if _, exists := byOrigin[orig]; !exists {
+			originOrder = append(originOrder, orig)
+		}
+		byOrigin[orig] = append(byOrigin[orig], batch)
+	}
+
+	for {
+		progress := false
+		for _, orig := range originOrder {
+			if held[orig] || len(byOrigin[orig]) == 0 {
+				continue
+			}
+			batch := byOrigin[orig][0]
+
+			// Check if this batch is waiting on any After dependency
+			var waitingOn *Ref
+			for _, e := range batch {
+				if e.After != nil && marks[e.After.Origin] < e.After.Seq {
+					waitingOn = e.After
+					break
+				}
+			}
+			if waitingOn != nil {
+				continue
+			}
+
+			want := marks[orig] + 1
+			if got, broken := firstHole(batch, want); broken {
+				total.Gaps = append(total.Gaps, Gap{Origin: orig, Want: want, Got: got})
+				held[orig] = true
+				continue
+			}
+			applied, hold, drops, err := i.applyBatch(batch, marks)
+			if holdsOrigin(err) {
+				total.Stalled = append(total.Stalled, Stall{Origin: orig, Label: i.labelOf(orig), Reason: err.Error()})
+				held[orig] = true
+				continue
+			}
+			if err != nil {
+				return total, fmt.Errorf("synclog: import: %w", err)
+			}
+			if hold != nil {
+				names, err := i.labels()
+				if err != nil {
+					return total, fmt.Errorf("synclog: import: %w", err)
+				}
+				hold.Label = names[hold.Origin]
+				total.Held = append(total.Held, *hold)
+				held[hold.Origin] = true
+				continue
+			}
+			total.Dropped = append(total.Dropped, drops...)
+			total.Applied += applied
+			if applied > 0 {
+				total.Batches++
+				i.batchDone()
+			}
+			progress = true
+			byOrigin[orig] = byOrigin[orig][1:]
+		}
+		if !progress {
+			break
+		}
+	}
+
+	for _, orig := range originOrder {
+		if held[orig] || len(byOrigin[orig]) == 0 {
 			continue
 		}
-		// Sequence numbers per origin are contiguous by construction, so a
-		// batch has to carry exactly the sequences from the origin's mark on. A
-		// batch that begins later, or that jumps past a sequence inside itself,
-		// is a hole: applying it would advance the mark over the entries in
-		// between and lose them for good, so the origin holds and the hole is
-		// reported.
-		want := marks[origin] + 1
-		if got, broken := firstHole(batch, want); broken {
-			total.Gaps = append(total.Gaps, Gap{Origin: origin, Want: want, Got: got})
-			held[origin] = true
-			continue
+		batch := byOrigin[orig][0]
+		var waitingOn *Ref
+		for _, e := range batch {
+			if e.After != nil && marks[e.After.Origin] < e.After.Seq {
+				waitingOn = e.After
+				break
+			}
 		}
-		applied, hold, drops, err := i.applyBatch(batch, marks)
-		if holdsOrigin(err) {
-			total.Stalled = append(total.Stalled, Stall{Origin: origin, Label: i.labelOf(origin), Reason: err.Error()})
-			held[origin] = true
-			continue
-		}
-		if err != nil {
-			return total, fmt.Errorf("synclog: import: %w", err)
-		}
-		if hold != nil {
+		if waitingOn != nil {
 			names, err := i.labels()
 			if err != nil {
 				return total, fmt.Errorf("synclog: import: %w", err)
 			}
-			hold.Label = names[hold.Origin]
-			total.Held = append(total.Held, *hold)
-			held[hold.Origin] = true
-			continue
-		}
-		total.Dropped = append(total.Dropped, drops...)
-		total.Applied += applied
-		if applied > 0 {
-			total.Batches++
-			i.batchDone()
+			afterLabel := names[waitingOn.Origin]
+			if afterLabel == "" {
+				afterLabel = waitingOn.Origin
+			}
+			reason := fmt.Sprintf("%s is waiting for %s at seq %d", orig, afterLabel, waitingOn.Seq)
+			total.Held = append(total.Held, Hold{
+				Origin: orig,
+				Label:  names[orig],
+				Seq:    marks[orig],
+				Reason: reason,
+			})
+			held[orig] = true
 		}
 	}
 	return total, nil
@@ -392,6 +450,10 @@ func (i *Importer) applyBatch(batch []Entry, marks map[string]int) (applied int,
 		return 0, hold, nil, nil
 	}
 	if err := i.verify(origin, batch); err != nil {
+		var holdErr *HoldError
+		if errors.As(err, &holdErr) {
+			return 0, &Hold{Origin: origin, Seq: batch[0].Seq - 1, Reason: holdErr.Reason}, nil, nil
+		}
 		return 0, nil, nil, err
 	}
 	docs, rows := splitDocs(batch)
@@ -405,6 +467,10 @@ func (i *Importer) applyBatch(batch []Entry, marks map[string]int) (applied int,
 	}
 	if err == nil {
 		return applied, nil, drops, nil
+	}
+	var holdErr *HoldError
+	if errors.As(err, &holdErr) {
+		return 0, &Hold{Origin: origin, Seq: batch[0].Seq - 1, Reason: holdErr.Reason}, nil, nil
 	}
 	if !refused(err) {
 		return 0, nil, nil, err
@@ -473,105 +539,3 @@ func (i *Importer) held(batch []Entry) (Entry, bool) {
 	return Entry{}, false
 }
 
-// applyEntry writes one entry, and reports whether it did its work.
-//
-// The table name and every column name come from this machine's own schema and
-// its shared-table list, never from the entry's body, so a body can carry values
-// without carrying names to write them under.
-//
-// The owner of the row is the one thing a body never decides. It is resolved
-// from this machine's own file, and an entry whose claimed origin is not the
-// owner is refused rather than applied: otherwise one installation could remove
-// a row another installation owns, or overwrite the owner column and take the
-// row out of its machine's hands. A row this file does not hold has no owner to
-// check against, so an upsert of one places the row under the claiming origin
-// and a delete of one has already happened.
-//
-// now is the clock the append-only tables' arrival window is judged against; it
-// decides nothing about any other table. A row that arrived already older than
-// the window is skipped rather than written, and still counts as handled: it did
-// its work by being read, so the mark that covers it moves in the same
-// transaction and the batch is not offered again.
-func applyEntry(tx *db.Tx, e Entry, now time.Time) (bool, error) {
-	if _, ok := SharedTable(e.Table); !ok {
-		return false, fmt.Errorf("synclog: import %s %s: %q is not a shared table: %w",
-			e.Table, e.PK, e.Table, ErrInvalid)
-	}
-	var values map[string]any
-	switch e.Op {
-	case OpUpsert:
-		decoded, err := DecodeBody(e.Body)
-		if err != nil {
-			return false, fmt.Errorf("synclog: import %s %s: %w", e.Table, e.PK, err)
-		}
-		values = decoded
-	case OpDelete:
-	default:
-		return false, fmt.Errorf("synclog: import %s %s: op %q: %w", e.Table, e.PK, e.Op, ErrInvalid)
-	}
-	if err := owns(tx, e); err != nil {
-		return false, err
-	}
-	skip, err := historyEntry(e, values, now)
-	if err != nil {
-		return false, err
-	}
-	if skip {
-		// A row that arrives already out of the window did its work by being
-		// read: it is reported applied so the mark moves in this same
-		// transaction and the batch is not offered again.
-		return true, nil
-	}
-	if e.Op == OpDelete {
-		if err := tx.ExchangeDelete(e.Table, e.PK); err != nil {
-			return false, fmt.Errorf("synclog: import %s %s: %w", e.Table, e.PK, err)
-		}
-		return true, nil
-	}
-	// The owner is passed rather than taken from the body, so what this row's
-	// owner column ends up holding is the owner this file resolved and not what
-	// a remote claimed.
-	if err := tx.ExchangeUpsert(e.Table, e.Origin, values); err != nil {
-		return false, fmt.Errorf("synclog: import %s %s: %w", e.Table, e.PK, err)
-	}
-	if err := ownsAfterWrite(tx, e); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-// ownsAfterWrite resolves the row's owner again once it is written, inside the
-// same transaction, and refuses it unless that owner is the entry's origin. The
-// gate before the write cannot answer for a row this file did not hold -- a new
-// child -- nor for the parent a row was just re-pointed at, because both are
-// facts about the write itself. A child that landed under another installation's
-// parent would otherwise become that parent's history, and a forged entry could
-// move a row out of the hands of the installation that reconciles it.
-func ownsAfterWrite(tx *db.Tx, e Entry) error {
-	owner, found, err := tx.ResolveOwner(e.Table, e.PK)
-	if err != nil {
-		return fmt.Errorf("synclog: import %s %s: %w", e.Table, e.PK, err)
-	}
-	if !found || owner == e.Origin {
-		return nil
-	}
-	return fmt.Errorf("synclog: import %s %s: landed under %s, not %s: %w: %w",
-		e.Table, e.PK, owner, e.Origin, errNotOwner, ErrInvalid)
-}
-
-// owns is the gate an entry passes before it is written: the owner this
-// machine's file resolves for the row it names, which has to be the origin the
-// entry claims. A row this file does not hold resolves to no owner, which is not
-// a refusal -- an upsert of one places the row, and a delete of one is a no-op --
-// so only a row that is here under somebody else's name is refused.
-func owns(tx *db.Tx, e Entry) error {
-	owner, found, err := tx.ResolveOwner(e.Table, e.PK)
-	if err != nil {
-		return fmt.Errorf("synclog: import %s %s: %w", e.Table, e.PK, err)
-	}
-	if !found || owner == e.Origin {
-		return nil
-	}
-	return fmt.Errorf("synclog: import %s %s: %s does not own it, %s does: %w: %w",
-		e.Table, e.PK, e.Origin, owner, errNotOwner, ErrInvalid)
-}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ownerStep is one step from a shared row toward the installation that owns it:
@@ -277,3 +278,145 @@ func rootExpression(rule ownerRule, alias string) string {
 	}
 	return "(" + value + ")"
 }
+
+// Origin returns the installation id this Tx scopes to.
+func (t *Tx) Origin() string {
+	return t.origin
+}
+
+// HasLiveBindingRecord reports whether a live unarchived binding_record exists with the given (writer, owner, name) excluding excludeID.
+func (t *Tx) HasLiveBindingRecord(writer, owner, name, excludeID string) (bool, error) {
+	var count int
+	query := `SELECT COUNT(*) FROM binding_record WHERE writer = ? AND owner = ? AND name = ? AND archived_at IS NULL AND id <> ?`
+	err := t.conn.QueryRowContext(t.ctx, query, writer, owner, name, excludeID).Scan(&count)
+	if errors.Is(err, sql.ErrNoRows) || isMissingTable(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("db: check live binding record: %w", mapBusy(err))
+	}
+	return count > 0, nil
+}
+
+// Term returns the term for (rootID, writer) from sync_binding_term.
+func (d *DB) Term(rootID, writer string) (upto int, regrantOrigin string, regrantSeq int, found bool, err error) {
+	return termQuery(context.Background(), d.sqlDB, rootID, writer)
+}
+
+func (t *Tx) Term(rootID, writer string) (upto int, regrantOrigin string, regrantSeq int, found bool, err error) {
+	return termQuery(t.ctx, t.conn, rootID, writer)
+}
+
+func termQuery(ctx context.Context, q queryer, rootID, writer string) (int, string, int, bool, error) {
+	var (
+		upto          int
+		regrantOrigin sql.NullString
+		regrantSeq    sql.NullInt64
+	)
+	query := `SELECT upto, regrant_origin, regrant_seq FROM sync_binding_term WHERE root_id = ? AND writer = ?`
+	err := q.QueryRowContext(ctx, query, rootID, writer).Scan(&upto, &regrantOrigin, &regrantSeq)
+	if errors.Is(err, sql.ErrNoRows) || isMissingTable(err) {
+		return 0, "", 0, false, nil
+	}
+	if err != nil {
+		return 0, "", 0, false, fmt.Errorf("db: term %s %s: %w", rootID, writer, mapBusy(err))
+	}
+	return upto, regrantOrigin.String, int(regrantSeq.Int64), true, nil
+}
+
+// SetTerm upserts the term for (rootID, writer).
+func (t *Tx) SetTerm(rootID, writer string, upto int) error {
+	query := `INSERT INTO sync_binding_term (root_id, writer, upto) VALUES (?, ?, ?)
+		ON CONFLICT(root_id, writer) DO UPDATE SET upto = excluded.upto`
+	if _, err := t.exec(query, rootID, writer, upto); err != nil {
+		return fmt.Errorf("db: set term %s %s: %w", rootID, writer, mapBusy(err))
+	}
+	return nil
+}
+
+// DeleteTerm removes the term for (rootID, writer).
+func (t *Tx) DeleteTerm(rootID, writer string) error {
+	query := `DELETE FROM sync_binding_term WHERE root_id = ? AND writer = ?`
+	if _, err := t.exec(query, rootID, writer); err != nil {
+		if isMissingTable(err) {
+			return nil
+		}
+		return fmt.Errorf("db: delete term %s %s: %w", rootID, writer, mapBusy(err))
+	}
+	return nil
+}
+
+// SetWriterAfter writes the after dependency for a handed-over root.
+func (t *Tx) SetWriterAfter(rootID, afterOrigin string, afterSeq int) error {
+	query := `INSERT INTO sync_writer_after (root_id, after_origin, after_seq) VALUES (?, ?, ?)
+		ON CONFLICT(root_id) DO UPDATE SET after_origin = excluded.after_origin, after_seq = excluded.after_seq`
+	if _, err := t.exec(query, rootID, afterOrigin, afterSeq); err != nil {
+		return fmt.Errorf("db: set writer after %s: %w", rootID, mapBusy(err))
+	}
+	return nil
+}
+
+// WriterAfter returns the after dependency from sync_writer_after for the root of (tbl, pk).
+func (d *DB) WriterAfter(tbl, pk string) (string, int, bool, error) {
+	return writerAfter(context.Background(), d.sqlDB, tbl, pk)
+}
+
+func (t *Tx) WriterAfter(tbl, pk string) (string, int, bool, error) {
+	return writerAfter(t.ctx, t.conn, tbl, pk)
+}
+
+func writerAfter(ctx context.Context, q queryer, tbl, pk string) (string, int, bool, error) {
+	rootID, found, err := resolveRoot(ctx, q, tbl, pk)
+	if err != nil || !found {
+		return "", 0, false, err
+	}
+	var origin string
+	var seq int
+	err = q.QueryRowContext(ctx, `SELECT after_origin, after_seq FROM sync_writer_after WHERE root_id = ?`, rootID).Scan(&origin, &seq)
+	if errors.Is(err, sql.ErrNoRows) || isMissingTable(err) {
+		return "", 0, false, nil
+	}
+	if err != nil {
+		return "", 0, false, fmt.Errorf("db: writer after %s %s: %w", tbl, pk, mapBusy(err))
+	}
+	return origin, seq, true, nil
+}
+
+// RecordFencedChange writes a row into sync_fenced_change.
+func (t *Tx) RecordFencedChange(rootID, tbl, pk string, at time.Time) error {
+	query := `INSERT OR REPLACE INTO sync_fenced_change (root_id, tbl, pk, at) VALUES (?, ?, ?, ?)`
+	if _, err := t.exec(query, rootID, tbl, pk, at.UTC().Format(time.RFC3339Nano)); err != nil {
+		return fmt.Errorf("db: record fenced change: %w", mapBusy(err))
+	}
+	return nil
+}
+
+// IsTakeoverFenced reports whether rootID carries a takeover fence against this installation.
+func (d *DB) IsTakeoverFenced(rootID string) (bool, error) {
+	return isTakeoverFenced(context.Background(), d.sqlDB, rootID, d.origin)
+}
+
+func (t *Tx) IsTakeoverFenced(rootID string) (bool, error) {
+	return isTakeoverFenced(t.ctx, t.conn, rootID, t.origin)
+}
+
+func isTakeoverFenced(ctx context.Context, q queryer, rootID, origin string) (bool, error) {
+	var leftKind string
+	err := q.QueryRowContext(ctx, `SELECT kind FROM sync_binding_left WHERE root_id = ?`, rootID).Scan(&leftKind)
+	if err == nil && leftKind == "takeover" {
+		return true, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) && !isMissingTable(err) {
+		return false, fmt.Errorf("db: check binding left %s: %w", rootID, mapBusy(err))
+	}
+	var count int
+	err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM sync_binding_term WHERE root_id = ? AND writer = ?`, rootID, origin).Scan(&count)
+	if err == nil && count > 0 {
+		return true, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) && !isMissingTable(err) {
+		return false, fmt.Errorf("db: check binding term %s: %w", rootID, mapBusy(err))
+	}
+	return false, nil
+}
+

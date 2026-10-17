@@ -41,7 +41,7 @@ func upsert(t *testing.T, id string, schema int) Entry {
 	t.Helper()
 	body := bodyFor(t, map[string]any{
 		"id": id, "name": id, "cwd": "/x",
-		"builder_mode": "local", "created_at": "t", "ingest_source": "manual", "origin": "m1",
+		"builder_mode": "local", "created_at": "t", "ingest_source": "manual",
 	})
 	return Entry{Table: "binding", PK: `["` + id + `"]`, Op: OpUpsert, SchemaVersion: schema, Body: body}
 }

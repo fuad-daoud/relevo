@@ -2,6 +2,7 @@ package synclog
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -150,4 +151,55 @@ func indexOfEntry(entries []Entry, target Entry) int {
 		}
 	}
 	return -1
+}
+
+// applyEntry writes one entry, and reports whether it did its work.
+func applyEntry(tx *db.Tx, e Entry, now time.Time) (bool, error) {
+	if _, ok := SharedTable(e.Table); !ok {
+		return false, fmt.Errorf("synclog: import %s %s: %q is not a shared table: %w",
+			e.Table, e.PK, e.Table, ErrInvalid)
+	}
+	var values map[string]any
+	switch e.Op {
+	case OpUpsert:
+		decoded, err := DecodeBody(e.Body)
+		if err != nil {
+			return false, fmt.Errorf("synclog: import %s %s: %w", e.Table, e.PK, err)
+		}
+		values = decoded
+	case OpDelete:
+	default:
+		return false, fmt.Errorf("synclog: import %s %s: op %q: %w", e.Table, e.PK, e.Op, ErrInvalid)
+	}
+	dec, err := authorize(tx, e, values)
+	if err != nil {
+		return false, err
+	}
+	skip, err := historyEntry(e, values, now)
+	if err != nil {
+		return false, err
+	}
+	if skip {
+		return true, nil
+	}
+	sinceSeq, err := tx.MaxOutboxSeq()
+	if err != nil {
+		return false, err
+	}
+	if e.Op == OpDelete {
+		if err := tx.ExchangeDelete(e.Table, e.PK); err != nil {
+			return false, fmt.Errorf("synclog: import %s %s: %w", e.Table, e.PK, err)
+		}
+		if err := tx.DiscardOutboxSince(e.Table, e.PK, sinceSeq); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if err := tx.ExchangeUpsert(e.Table, dec.owner, values); err != nil {
+		return false, fmt.Errorf("synclog: import %s %s: %w", e.Table, e.PK, err)
+	}
+	if err := tx.DiscardOutboxSince(e.Table, e.PK, sinceSeq); err != nil {
+		return false, err
+	}
+	return true, nil
 }
