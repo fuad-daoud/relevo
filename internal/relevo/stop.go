@@ -297,10 +297,12 @@ func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 }
 
 // closeDeadMemberRound closes the round of the member a halted chain awaits
-// when that round died without a close: its process is gone. A resume is the
-// human's command, so the same close a stop writes is performed here, and the
-// resume's send can then open the next round. A round whose process is still
-// alive, or whose close already exists, is left to the resume's own refusal.
+// when resumeMayCloseRound admits it. A halted member's round is the human's to
+// end, and a resume is that human asking -- the `relevo stop <member>` the
+// refusal tells them to run -- so the same close a stop writes is performed
+// here, and the resume's send can then open the next round. Stop kills a live
+// process on the way. A member the predicate leaves, or whose close already
+// exists, is left to the resume's own refusal.
 func closeDeadMemberRound(ctx context.Context, rt Runtime, c db.ChainRow) error {
 	member, _, ok := chainAwaited(rt.Store, c)
 	if !ok {
@@ -310,7 +312,7 @@ func closeDeadMemberRound(ctx context.Context, rt Runtime, c db.ChainRow) error 
 	if err != nil {
 		return nil // a missing member is left to the resume's own failure
 	}
-	if !memberRoundProcessless(ctx, rt, b) {
+	if !resumeMayCloseRound(ctx, rt, b) {
 		return nil
 	}
 	entries, err := rt.Store.ReadLog(member)
@@ -323,13 +325,15 @@ func closeDeadMemberRound(ctx context.Context, rt Runtime, c db.ChainRow) error 
 	return nil
 }
 
-// memberRoundProcessless reports whether b is an awaited member whose round
-// has no live process left. A pid is the only evidence either way: a pid that
-// answers dead is gone whatever state the member is in, while a round with no
-// pid at all is closed only in NEEDS YOU, the state the halt leaves behind. A
-// round with a live process, a probe error, or a state Stop refuses (done,
+// resumeMayCloseRound reports whether a resume may close b's open round. A
+// halted member's round is the human's to end and a resume is that human
+// asking, so NEEDS YOU -- the state the halt writes -- is closed whatever pid
+// it kept and whether its process is still running; Stop kills a live one. Past
+// that, a pid is the only evidence either way: a pid that answers dead is gone
+// whatever state the member is in, while a round with no pid at all is never
+// evidence. A live process, a probe error, or a state Stop refuses (done,
 // paused, queued, or remote) is left to the resume's own refusal.
-func memberRoundProcessless(ctx context.Context, rt Runtime, b store.Binding) bool {
+func resumeMayCloseRound(ctx context.Context, rt Runtime, b store.Binding) bool {
 	if b.State == store.StateDone || b.State == store.StatePaused {
 		return false
 	}
@@ -339,8 +343,11 @@ func memberRoundProcessless(ctx context.Context, rt Runtime, b store.Binding) bo
 	if b.Builder.Remote() {
 		return b.State == store.StateNeedsYou && b.Builder.PID == 0
 	}
+	if b.State == store.StateNeedsYou {
+		return true
+	}
 	if b.Builder.PID == 0 {
-		return b.State == store.StateNeedsYou
+		return false
 	}
 	if rt.Runner == nil {
 		return false
