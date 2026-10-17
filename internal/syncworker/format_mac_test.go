@@ -2,9 +2,11 @@ package syncworker
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
@@ -140,6 +142,67 @@ func TestUpgradeToleratesDuplicateColumnConcurrently(t *testing.T) {
 		t.Error("missing after columns after upgrade")
 	}
 	_ = b.Close()
+}
+
+// TestTursoBackendAppendsAndPullsAfter pins that entries carrying after_origin and after_seq
+// are inserted and scanned with their After fields intact.
+func TestTursoBackendAppendsAndPullsAfter(t *testing.T) {
+	path := tempReplica(t)
+	driver := &localDriver{path: path}
+	b := backendFor(t, driver, "origin-a")
+	defer func() { _ = b.Close() }()
+
+	entries := []Entry{
+		{
+			Origin:        "origin-a",
+			Seq:           1,
+			Batch:         1,
+			Tbl:           "binding_record",
+			PK:            `["rec-1"]`,
+			Op:            "upsert",
+			SchemaVersion: 31,
+			Body:          json.RawMessage(`{"title":"hello"}`),
+			At:            time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC),
+			AfterOrigin:   "origin-0",
+			AfterSeq:      99,
+		},
+	}
+	written, err := b.Append(entries)
+	if err != nil {
+		t.Fatalf("append batch with After: %v", err)
+	}
+	if len(written) != 1 {
+		t.Fatalf("written = %d, want 1", len(written))
+	}
+	if written[0].AfterOrigin != "origin-0" || written[0].AfterSeq != 99 {
+		t.Errorf("written entry After = (%q, %d), want (origin-0, 99)", written[0].AfterOrigin, written[0].AfterSeq)
+	}
+
+	b2 := backendFor(t, driver, "origin-b")
+	defer func() { _ = b2.Close() }()
+	pulled, err := b2.Pull(map[string]int{"origin-a": 0})
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if len(pulled) != 1 {
+		t.Fatalf("pulled = %d, want 1", len(pulled))
+	}
+	if pulled[0].AfterOrigin != "origin-0" || pulled[0].AfterSeq != 99 {
+		t.Errorf("pulled entry After = (%q, %d), want (origin-0, 99)", pulled[0].AfterOrigin, pulled[0].AfterSeq)
+	}
+}
+
+// TestIsDuplicateColumnError tests the edge cases of duplicate column error check.
+func TestIsDuplicateColumnError(t *testing.T) {
+	if isDuplicateColumnError(nil) {
+		t.Error("isDuplicateColumnError(nil) = true, want false")
+	}
+	if isDuplicateColumnError(errors.New("syntax error")) {
+		t.Error("isDuplicateColumnError(syntax error) = true, want false")
+	}
+	if !isDuplicateColumnError(errors.New("duplicate column name: after_origin")) {
+		t.Error("isDuplicateColumnError(duplicate column name) = false, want true")
+	}
 }
 
 // TestHelloRefusesFormatFive pins that the upgrade path stops where this build's

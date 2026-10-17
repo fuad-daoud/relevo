@@ -762,3 +762,100 @@ func TestHandoverLandingOnTargetQueuesNothing(t *testing.T) {
 		t.Fatalf("target outbox count after existing row = %d, want 0", count)
 	}
 }
+
+func TestEntryWithAfterNil(t *testing.T) {
+	e := Entry{After: &Ref{Origin: "m1", Seq: 1}}.WithAfter(nil)
+	if e.After != nil {
+		t.Fatal("e.After != nil after WithAfter(nil)")
+	}
+}
+
+func TestBindingHandoverAndChildArtifact(t *testing.T) {
+	t.Parallel()
+	peer, path := peerFile(t, "m2")
+	know := knownVersion(t, peer)
+	seed(t, path,
+		insertBinding("b1", "m1"),
+		insertRound("r1", "b1"),
+		`INSERT INTO sync_binding_term (root_id, writer, upto) VALUES ('b1', 'm1', 10)`,
+	)
+
+	log := NewMemTransport("m1")
+	bHandover := map[string]any{
+		"id": "b1", "name": "b1", "tier": "second", "cwd": "/x", "builder_mode": "local", "created_at": "t", "ingest_source": "manual",
+		"origin": "m1", "writer": "m2",
+	}
+	e1 := makeSignedEntry(t, handoverKey, "m1", "binding", `["b1"]`, OpUpsert, know, bHandover, nil)
+
+	art := map[string]any{
+		"id": "a1", "round_id": "r1", "kind": "plan", "consult_id": "", "text": "hello",
+		"bytes": 5, "sha256": "s", "captured_at": "t",
+	}
+	e2 := makeSignedEntry(t, handoverKey, "m1", "artifact", `["a1"]`, OpUpsert, know, art, nil)
+
+	appendSignedBatch(t, log, handoverKey, e2, e1)
+
+	imp := NewImporter(peer, log.OnLog("m2"))
+	imp.SetKey(handoverKey)
+	res, err := imp.Import()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if res.Applied != 2 {
+		t.Fatalf("Applied = %d, want 2; res = %+v", res.Applied, res)
+	}
+}
+
+func TestHandoverObserverAndChildEntries(t *testing.T) {
+	t.Parallel()
+	peer, path := peerFile(t, "m2")
+	know := knownVersion(t, peer)
+	seed(t, path,
+		insertBinding("b1", "m1"),
+		insertRound("r1", "b1"),
+		`INSERT INTO repo (id, origin_url, common_dir, first_seen, origin) VALUES ('repo1', 'url', '/d', 't', 'm2')`,
+	)
+
+	log := NewMemTransport("m1")
+	// Observer hand-over: m1 hands over to m3 (neither is peer m2)
+	bHandover := map[string]any{
+		"id": "b1", "name": "b1", "tier": "second", "cwd": "/x", "builder_mode": "local", "created_at": "t", "ingest_source": "manual",
+		"origin": "m1", "writer": "m3",
+	}
+	e1 := makeSignedEntry(t, handoverKey, "m1", "binding", `["b1"]`, OpUpsert, know, bHandover, nil)
+
+	tr := map[string]any{
+		"id": "tr1", "owner_kind": "round", "owner_id": "r1", "seq": 1,
+		"record_json": "{}", "rendered": "txt",
+	}
+	e2 := makeSignedEntry(t, handoverKey, "m1", "transcript", `["tr1"]`, OpUpsert, know, tr, nil)
+
+	ev := map[string]any{
+		"id": "ev1", "binding_id": "b1", "round_id": "r1", "seq": 1,
+		"ts": "t", "kind": "note", "direction": "in", "confirmed": 1, "late": 0, "entry_json": "{}",
+	}
+	e3 := makeSignedEntry(t, handoverKey, "m1", "event", `["ev1"]`, OpUpsert, know, ev, nil)
+
+	// Non-binding foreign ownership refusal: m1 tries to update repo1 which m2 owns
+	repoRow := map[string]any{
+		"id": "repo1", "origin_url": "url", "common_dir": "/d", "first_seen": "t", "origin": "m1",
+	}
+	eForeign := makeSignedEntry(t, handoverKey, "m1", "repo", `["repo1"]`, OpUpsert, know, repoRow, nil)
+
+	appendSignedBatch(t, log, handoverKey, e2, e3, e1, eForeign)
+
+	imp := NewImporter(peer, log.OnLog("m2"))
+	imp.SetKey(handoverKey)
+	res, err := imp.Import()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(res.Dropped) != 1 {
+		t.Fatalf("Dropped = %v, want 1 dropped entry for foreign repo ownership", res.Dropped)
+	}
+	if res.Applied != 3 {
+		t.Fatalf("Applied = %d, want 3; res = %+v", res.Applied, res)
+	}
+}
+
+
