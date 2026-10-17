@@ -86,7 +86,7 @@ type pullFailsFrom struct {
 
 func (d *pullFailsFrom) Pull(ctx context.Context) error {
 	err := d.localDriver.Pull(ctx)
-	if d.failFrom > 0 && d.localDriver.pulls >= d.failFrom {
+	if d.failFrom > 0 && d.pulls >= d.failFrom {
 		return errors.New("the pull after the push does not answer")
 	}
 	return err
@@ -98,7 +98,7 @@ func (d *pullFailsFrom) Pull(ctx context.Context) error {
 func TestClaimIdentityReportsAReadBackThatFails(t *testing.T) {
 	driver := &pullFailsFrom{localDriver: &localDriver{path: tempReplica(t)}}
 	b := backendFor(t, driver, "origin-a")
-	driver.failFrom = driver.localDriver.pulls + 2
+	driver.failFrom = driver.pulls + 2
 	if _, _, err := b.ClaimIdentity("inst-x", "t", time.Now()); err == nil {
 		t.Error("a claim whose read-back pull refused came back as a success")
 	}
