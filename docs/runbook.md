@@ -30,6 +30,8 @@ under `~/.cache`; keep it on any rebuild.
   the modernc leg, and `make e2e`. The modernc leg is:
   `go vet -tags modernc ./internal/db/...` and
   `go test -race -count=1 -tags modernc ./internal/db/... ./internal/store/...`.
+  CI runs that leg without `-race` on pull requests, so the command above is
+  the stricter one.
 - Mutation-test one of your own per PR: break the condition the change turns
   on and confirm a named test fails.
 - `TestHelpJSONDocumentsTheSurface` is not selected by `-run Contract`.
