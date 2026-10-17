@@ -105,7 +105,7 @@ func retryPolicyCases() []retryCase {
 		{
 			name:         "Done is not idempotent and is never retried",
 			status:       http.StatusBadGateway,
-			call:         func(cl *Client, ctx context.Context) error { return cl.Done(ctx, "zen", "api") },
+			call:         func(cl *Client, ctx context.Context) error { _, err := cl.Done(ctx, "zen", "api"); return err },
 			wantAttempts: 1,
 			wantErr:      ErrUnreachable,
 		},

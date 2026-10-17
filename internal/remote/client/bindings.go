@@ -116,8 +116,15 @@ func (c *Client) Available(ctx context.Context, server, subject string) (remote.
 	return postJSON[remote.AvailableRequest, remote.AvailableResponse](c, ctx, server, "/v1/available", remote.AvailableRequest{Subject: subject}, "marshal available request", "decode available")
 }
 
-func (c *Client) Done(ctx context.Context, server, name string) error {
-	return postOnce(ctx, c, server, fmt.Sprintf("/v1/bindings/%s/done", url.PathEscape(name)))
+func (c *Client) Done(ctx context.Context, server, name string) (remote.BindingView, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	path := fmt.Sprintf("/v1/bindings/%s/done", url.PathEscape(name))
+	resp, err := c.do(ctx, server, "POST", path, nil, nil, "")
+	if err != nil {
+		return remote.BindingView{}, err
+	}
+	return decodeJSON[remote.BindingView](resp, "decode binding view")
 }
 
 func (c *Client) Unbind(ctx context.Context, server, name string) error {

@@ -1,9 +1,15 @@
 package serve
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -46,8 +52,16 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 
 	unpin := pinBareRepo(b.Serve.BareRepo)
 	defer unpin()
-	if err := rt.Git.CheckoutWorktree(r.Context(), b.Serve.BareRepo, b.Worktree, b.Branch); err != nil {
-		writeErr(w, http.StatusInternalServerError, "", err.Error())
+	if _, err := os.Lstat(b.Worktree); errors.Is(err, os.ErrNotExist) {
+		if err := rt.Git.CheckoutWorktree(r.Context(), b.Serve.BareRepo, b.Worktree, b.Branch); err != nil {
+			writeErr(w, http.StatusInternalServerError, "", err.Error())
+			return
+		}
+	} else if isMatchingWorktree(r.Context(), rt, b.Worktree, b.Serve.BareRepo, b.Branch) {
+		// Adopt the existing worktree without checking it out again.
+	} else {
+		msg := fmt.Sprintf("%s already exists but is not a worktree of %s on %s; move the directory aside or relevo unbind", b.Worktree, b.Serve.BareRepo, b.Branch)
+		writeErr(w, http.StatusConflict, remote.CodeInvalid, msg)
 		return
 	}
 	if resumeSeam != nil {
@@ -61,4 +75,32 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 
 	entries, _ := rt.Store.ReadLog(name)
 	writeJSON(w, http.StatusOK, s.servedView(rt, b, entries))
+}
+
+// isMatchingWorktree reports whether dir is an existing worktree of bare
+// on the given branch. Any probe error means dir cannot be safely adopted.
+func isMatchingWorktree(ctx context.Context, rt relevo.Runtime, path, bare, branch string) bool {
+	if rt.Git == nil {
+		return false
+	}
+	prefix, err := rt.Git.ShowPrefix(ctx, path)
+	if err != nil || prefix != "" {
+		return false
+	}
+	_, commonDir, err := rt.Git.RepoFacts(ctx, path)
+	if err != nil {
+		return false
+	}
+	bareEval, err := filepath.EvalSymlinks(bare)
+	if err != nil {
+		bareEval = filepath.Clean(bare)
+	}
+	if commonDir != bareEval {
+		return false
+	}
+	curr, err := rt.Git.CurrentBranch(ctx, path)
+	if err != nil {
+		return false
+	}
+	return curr == strings.TrimPrefix(branch, "refs/heads/")
 }

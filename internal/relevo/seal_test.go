@@ -265,17 +265,30 @@ func TestSealPassEmptiesADoneDirOnly(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
-		name     string
-		state    store.State
-		wantGone bool
+		name         string
+		state        store.State
+		worktreeType string
+		wantGone     bool
 	}{
-		{"done", store.StateDone, true},
-		{"active", store.StateActive, false},
+		{"done no worktree", store.StateDone, "none", true},
+		{"done worktree exists", store.StateDone, "exists", false},
+		{"done worktree missing", store.StateDone, "missing", true},
+		{"active", store.StateActive, "none", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			st := store.New(root)
 			b := store.Binding{Name: "webshop", CWD: "/repo", Round: 3, State: tc.state}
+			switch tc.worktreeType {
+			case "exists":
+				wt := filepath.Join(t.TempDir(), "wt")
+				if err := os.MkdirAll(wt, 0o755); err != nil {
+					t.Fatalf("mkdir wt: %v", err)
+				}
+				b.Worktree = wt
+			case "missing":
+				b.Worktree = filepath.Join(t.TempDir(), "missing-wt")
+			}
 			if err := st.Save(b); err != nil {
 				t.Fatalf("Save: %v", err)
 			}
