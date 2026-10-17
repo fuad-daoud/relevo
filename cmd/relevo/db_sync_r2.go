@@ -190,6 +190,9 @@ func cmdDBSyncStatus(args []string) error {
 	if err != nil {
 		return err
 	}
+	if doc.Fenced, err = dbSyncFenced(shared); err != nil {
+		return err
+	}
 	if *v.asJSON {
 		return printDoc(doc)
 	}
@@ -242,13 +245,6 @@ func dbSyncStatusRead(local relevosync.Local) (dbSyncStatusDoc, error) {
 		Dropped:      state.Trouble.Dropped,
 		Gaps:         state.Trouble.Gaps,
 		LastAttempt:  attemptDoc(state.Attempt),
-	}
-	fenced, err := local.FencedSummary()
-	if err != nil {
-		return dbSyncStatusDoc{}, dbSyncClassify(err)
-	}
-	for _, f := range fenced {
-		doc.Fenced = append(doc.Fenced, dbSyncFencedDoc{Name: f.Name, OldWriter: local.Origin(), Taker: f.Taker, Count: f.Count})
 	}
 	month, err := relevosync.ReadBytes(local, time.Now())
 	if err != nil {

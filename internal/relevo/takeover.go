@@ -145,4 +145,3 @@ func TakeoverText(name string, dec TakeoverDecision) string {
 	return fmt.Sprintf("took over %s from %s: its entries after %d are fenced\nrun relevo db sync to publish it; the binding resumes with relevo bind --resume --name %s\n",
 		name, dec.OldWriter, dec.Upto, name)
 }
-

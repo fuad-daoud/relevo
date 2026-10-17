@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
@@ -85,6 +86,20 @@ type dbSyncFencedDoc struct {
 	OldWriter string `json:"old_writer"`
 	Taker     string `json:"taker"`
 	Count     int    `json:"count"`
+}
+
+// dbSyncFenced reads the takeover fences from the shared file, where the
+// binding rows and their terms live.
+func dbSyncFenced(shared *db.DB) ([]dbSyncFencedDoc, error) {
+	fenced, err := shared.FencedSummary()
+	if err != nil {
+		return nil, dbSyncClassify(err)
+	}
+	out := make([]dbSyncFencedDoc, 0, len(fenced))
+	for _, f := range fenced {
+		out = append(out, dbSyncFencedDoc{Name: f.Name, OldWriter: shared.Origin(), Taker: f.Taker, Count: f.Count})
+	}
+	return out, nil
 }
 
 // dbSyncStatusLine is the one line `db sync status` prints, as a function of the
