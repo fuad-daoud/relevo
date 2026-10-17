@@ -125,7 +125,7 @@ func (t *Tx) MaxOutboxSeq() (int, error) {
 }
 
 // DiscardOutboxSince removes any outbox entries for (tbl, pk) with seq > sinceSeq
-// that are attributed to this installation (origin IN (?, '') or NULL).
+// that are attributed to this installation (origin IN (?, ”) or NULL).
 // This prevents import statements from queueing echoes of local writes,
 // whatever the op (insert, update, delete).
 func (t *Tx) DiscardOutboxSince(tbl, pk string, sinceSeq int) error {

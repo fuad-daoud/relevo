@@ -198,30 +198,11 @@ func BackfillOriginOnce(d *DB, origin string, now time.Time) (stats OriginBackfi
 		if serr != nil {
 			return stats, false, serr
 		}
-		var res sql.Result
-		terr := d.Tx(func(t *Tx) error {
-			query := `UPDATE ` + table + ` SET origin = ? WHERE origin = ''`
-			args := []any{origin}
-			if table == "binding_record" || table == "binding" {
-				query = `UPDATE ` + table + ` SET origin = ?, writer = ? WHERE origin = ''`
-				args = []any{origin, origin}
-			}
-			if len(settled) > 0 {
-				query += ` AND id NOT IN (?` + strings.Repeat(", ?", len(settled)-1) + `)`
-				for _, id := range settled {
-					args = append(args, id)
-				}
-			}
-			var aerr error
-			res, aerr = t.exec(query, args...)
-			return aerr
-		})
-		if terr != nil {
-			return stats, false, fmt.Errorf("origin backfill: %s: %w", table, mapBusy(terr))
+		rows, berr := backfillTable(d, table, origin, settled)
+		if berr != nil {
+			return stats, false, berr
 		}
-		if *count, err = res.RowsAffected(); err != nil {
-			return stats, false, fmt.Errorf("origin backfill: %s rows: %w", table, err)
-		}
+		*count = rows
 	}
 
 	// The marker is written only once nothing anywhere is left unstamped, so the
@@ -247,6 +228,37 @@ func BackfillOriginOnce(d *DB, origin string, now time.Time) (stats OriginBackfi
 		return stats, false, fmt.Errorf("origin backfill: record the pass: %w", mapBusy(verr))
 	}
 	return stats, true, nil
+}
+
+// backfillTable stamps unstamped rows in a single table with origin (and writer
+// for root tables), skipping any rows already settled as twins.
+func backfillTable(d *DB, table, origin string, settled []string) (int64, error) {
+	var res sql.Result
+	terr := d.Tx(func(t *Tx) error {
+		query := `UPDATE ` + table + ` SET origin = ? WHERE origin = ''`
+		args := []any{origin}
+		if table == "binding_record" || table == "binding" {
+			query = `UPDATE ` + table + ` SET origin = ?, writer = ? WHERE origin = ''`
+			args = []any{origin, origin}
+		}
+		if len(settled) > 0 {
+			query += ` AND id NOT IN (?` + strings.Repeat(", ?", len(settled)-1) + `)`
+			for _, id := range settled {
+				args = append(args, id)
+			}
+		}
+		var aerr error
+		res, aerr = t.exec(query, args...)
+		return aerr
+	})
+	if terr != nil {
+		return 0, fmt.Errorf("origin backfill: %s: %w", table, mapBusy(terr))
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("origin backfill: %s rows: %w", table, err)
+	}
+	return rows, nil
 }
 
 // backfillSettled reports whether a recorded pass is finished, which is the one
