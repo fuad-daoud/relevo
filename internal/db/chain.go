@@ -358,14 +358,19 @@ func (t *Tx) insertChain(c ChainRow, createdAt, updatedAt time.Time) error {
 	return t.chainCustomPut(c.ID, c)
 }
 
-// ChainDelete removes owner's chain named name; its trace goes with it through
-// the foreign key's ON DELETE CASCADE. The member and check rows carry no
-// foreign key, so they are removed here first. No row is a no-op.
+// ChainDelete removes owner's chain named name, with its trace and its member
+// and check rows. No row is a no-op.
+//
+// The trace is deleted here rather than left to the foreign key's ON DELETE
+// CASCADE, for the reason RecordDelete gives: a cascaded child's outbox entry
+// carries no origin, so its delete would never be exported.
 func (t *Tx) ChainDelete(owner, name string) error {
+	tables := []string{"chain_event"}
 	if t.hasChainCustom() {
-		if err := t.chainDeleteChildren(owner, name); err != nil {
-			return err
-		}
+		tables = append(tables, "chain_member", "chain_check")
+	}
+	if err := t.chainDeleteChildren(owner, name, tables); err != nil {
+		return err
 	}
 	if _, err := t.exec(`DELETE FROM chains WHERE `+originScope+` AND owner = ? AND name = ?`,
 		t.origin, owner, name); err != nil {
@@ -374,11 +379,11 @@ func (t *Tx) ChainDelete(owner, name string) error {
 	return nil
 }
 
-// chainDeleteChildren removes the rows of the member and check tables for the
-// chain named name, before the chain row itself goes.
-func (t *Tx) chainDeleteChildren(owner, name string) error {
+// chainDeleteChildren removes the rows of tables for the chain named name,
+// before the chain row itself goes.
+func (t *Tx) chainDeleteChildren(owner, name string, tables []string) error {
 	scope := `SELECT id FROM chains WHERE ` + originScope + ` AND owner = ? AND name = ?`
-	for _, table := range []string{"chain_member", "chain_check"} {
+	for _, table := range tables {
 		if _, err := t.exec(`DELETE FROM `+table+` WHERE chain_id IN (`+scope+`)`, t.origin, owner, name); err != nil {
 			return fmt.Errorf("db: chain delete %q: %s: %w", name, table, mapBusy(err))
 		}

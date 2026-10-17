@@ -27,7 +27,7 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"       relevo db sync status [--json]\n" +
 	"       relevo db sync push [--timeout D] [--json]\n" +
 	"       relevo db sync pull [--timeout D] [--json]\n" +
-	"       relevo db sync reconcile --dry-run [--timeout D] [--json]\n" +
+	"       relevo db sync reconcile [--dry-run] [--timeout D] [--json]\n" +
 	"       relevo db sync unlock [--new] [--passphrase-stdin] [--json]\n" +
 	"       relevo db sync rekey [--passphrase-stdin] [--json]\n" +
 	"       relevo db sync invite [--json]\n\n" +
@@ -37,8 +37,10 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"push drains this machine's outbox into the log and pull reads the other\n" +
 	"origins' entries and imports them; each is the half of the steady exchange\n" +
 	"it names. retry clears a latched breaker and drops the worker, so the next\n" +
-	"tick starts a fresh one. reconcile --dry-run lists the rows this machine\n" +
-	"would append to or delete from the log, and appends nothing. unlock stores\n" +
+	"tick starts a fresh one. reconcile compares this machine's rows against\n" +
+	"what the log holds for it and appends the difference, deletes included:\n" +
+	"the repair for a log that missed this machine's writes. --dry-run lists\n" +
+	"the same rows and appends nothing. unlock stores\n" +
 	"the sync key derived from the passphrase; --new creates it on a remote that\n" +
 	"holds none. The passphrase comes from --passphrase-stdin, else " + dbSyncPassphraseEnv + ",\n" +
 	"else a prompt. rekey rotates the log's key to a new epoch: the machine must\n" +

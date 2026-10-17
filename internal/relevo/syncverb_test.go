@@ -1242,20 +1242,6 @@ func (h *hangingJoin) KeyRekey(context.Context, synclog.KeyRekeySpec) (synclog.K
 	return synclog.KeyMeta{}, nil
 }
 
-// TestReconcileVerbRefusesWithoutDryRun pins that the only reconcile on offer is
-// the preview: a call that does not ask for one is refused before a transport
-// is opened.
-func TestReconcileVerbRefusesWithoutDryRun(t *testing.T) {
-	f := newVerbFixture(t)
-	res := f.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbReconcile}, nil)
-	if res.OK || res.Code != wire.SyncCodeInvalid {
-		t.Fatalf("reconcile without dry_run = %+v, want an invalid refusal", res)
-	}
-	if f.opens != 0 {
-		t.Errorf("the refusal opened %d handles, want none", f.opens)
-	}
-}
-
 func (h *hangingJoin) PublishEpochCut(context.Context, synclog.EpochCut) error { return nil }
 
 func (h *hangingJoin) ClaimIdentity(context.Context, string, string, time.Time) (string, time.Time, error) {

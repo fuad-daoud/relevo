@@ -532,7 +532,7 @@ func (t *Tx) remove(name string) error {
 		if _, err := t.SealAll(name); err != nil {
 			return err
 		}
-		// The events and sealed files go with the row, through ON DELETE CASCADE.
+		// The events and sealed files go with the row.
 		if err := d.RecordDelete(s.owner, name); err != nil {
 			return err
 		}

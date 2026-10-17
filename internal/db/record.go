@@ -341,10 +341,21 @@ func (t *Tx) RecordArchive(owner, name string, at time.Time) error {
 	return nil
 }
 
-// RecordDelete removes owner's live row for name; its events go with it
-// through the foreign key's ON DELETE CASCADE. Archived rows of the same name
-// are kept: they are history a later binding must not destroy.
+// RecordDelete removes owner's live row for name, with its events and sealed
+// files. Archived rows of the same name are kept: they are history a later
+// binding must not destroy.
+//
+// The children are deleted here, before the row, rather than left to the
+// foreign key's ON DELETE CASCADE. A child's delete trigger reads its origin
+// from the parent, and in a cascade the parent is already gone, so the outbox
+// would record the delete with no origin and the exporter would never send it.
 func (t *Tx) RecordDelete(owner, name string) error {
+	scope := `SELECT id FROM binding_record WHERE ` + writerScope + ` AND owner = ? AND name = ? AND archived_at IS NULL`
+	for _, table := range []string{"round_file", "binding_event"} {
+		if _, err := t.exec(`DELETE FROM `+table+` WHERE record_id IN (`+scope+`)`, t.origin, owner, name); err != nil {
+			return fmt.Errorf("db: record delete %s/%q: %s: %w", owner, name, table, mapBusy(err))
+		}
+	}
 	if _, err := t.exec(`DELETE FROM binding_record WHERE `+writerScope+` AND owner = ? AND name = ? AND archived_at IS NULL`,
 		t.origin, owner, name); err != nil {
 		return fmt.Errorf("db: record delete %s/%q: %w", owner, name, mapBusy(err))
