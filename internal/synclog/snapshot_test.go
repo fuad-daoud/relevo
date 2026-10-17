@@ -188,3 +188,30 @@ func TestRefusedStatementLeavesTheTransactionOpen(t *testing.T) {
 		t.Fatalf("bindings = %d, %v; want both committed", n, err)
 	}
 }
+
+// A hand-over refuses a target whose newest schema it has not seen, so an
+// origin read from a snapshot has its schema noted like one read entry by
+// entry: a quiet machine's log is the one compaction shortens first.
+func TestASnapshotNotesTheOriginSchema(t *testing.T) {
+	t.Parallel()
+	theirs, theirPath := exporterFile(t, "m1")
+	peer, _ := peerFile(t, "m2")
+	seed(t, theirPath, insertBinding("01A", "m1"))
+	log := NewMemTransport("m1")
+	if _, err := exporter(theirs, &recording{MemTransport: log}).Export(); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	seed(t, theirPath, `UPDATE binding SET name = 'renamed' WHERE id = '01A'`)
+	if _, err := exporter(theirs, &recording{MemTransport: log}).Export(); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	compactTo(t, log, "m1", 2, 1)
+	got, err := NewImporter(peer, log.OnLog("m2")).Import()
+	if err != nil || got.Snapshots != 1 {
+		t.Fatalf("import = %+v, %v; want one snapshot", got, err)
+	}
+	have, _ := theirs.SchemaVersions()
+	if schemas, err := peer.OriginSchemas(); err != nil || schemas["m1"] != have {
+		t.Fatalf("OriginSchemas = (%v, %v), want m1 at %d", schemas, err, have)
+	}
+}

@@ -119,6 +119,9 @@ func (i *Importer) snapshotOrigin(origin string, mark, floor, head int, marks ma
 	if hold, err := i.checkRegionAfterHold(origin, mark, region, marks); err != nil || hold != nil {
 		return hold, err
 	}
+	if err := i.noteSchema(origin, region); err != nil {
+		return nil, err
+	}
 	docs, rows := splitDocs(region)
 	handled, err := i.takeDocs(origin, docs)
 	if err != nil && !refused(err) {
