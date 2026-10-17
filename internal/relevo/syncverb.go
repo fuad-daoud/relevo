@@ -355,7 +355,7 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byt
 	// verify and goes on exactly as it always did.
 	var staged *verified
 	if len(bytes.TrimSpace(passphrase)) > 0 {
-		done, err := v.stageAndVerify(ctx, verb.RemoteURL, token, passphrase, false)
+		done, err := v.stageAndVerify(ctx, verb.RemoteURL, token, passphrase, false, r2)
 		if err != nil {
 			return verbRefusal(verbClassify(err), err)
 		}
