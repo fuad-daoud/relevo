@@ -897,5 +897,3 @@ func TestHandoverObserverAndChildEntries(t *testing.T) {
 		t.Fatalf("Applied = %d, want 3; res = %+v", res.Applied, res)
 	}
 }
-
-
