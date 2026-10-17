@@ -118,6 +118,9 @@ func configSetRun(args []string) error {
 	}
 
 	if len(keys) == 0 {
+		if err := guardUnknownFields(rt, sec, nil, value); err != nil {
+			return err
+		}
 		if err := guardCandidatesDrop(rt, sec, value, *force); err != nil {
 			return err
 		}
@@ -134,6 +137,9 @@ func configSetRun(args []string) error {
 		updated, err := setJSON(body, keys, value)
 		if err != nil {
 			return fail(codeConfigInvalid, "%s: %v", path, err)
+		}
+		if err := guardUnknownFields(rt, sec, body, updated); err != nil {
+			return err
 		}
 		if err := guardCandidatesDrop(rt, sec, updated, *force); err != nil {
 			return err

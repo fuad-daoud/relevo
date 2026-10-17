@@ -1948,11 +1948,23 @@ Actor entries:
   probes the list in order and `--server`/`--local` override it.
 - `check` -- writers only: whether a round closes on a gate; defaults to true.
   An actor whose agent is a reader must not set it.
+- `outputs` -- the outcomes the actor's rounds report, `{"<name>": "artifact" |
+  "count" | {"one-of": [...]}}`. A shipped agent has them built in; an actor
+  over a custom agent declares none unless you set them, and a chain step that
+  branches on an outcome the actor does not declare is refused at `chain
+  --dry-run`.
 
 An actor named `builder`, `librarian`, `reviewer` or `researcher` keeps that builtin's
 shape: `builder` and `librarian` must run a writer agent, `reviewer` and `researcher` a reader.
 An unknown agent, a reader with `check`, or a builtin actor with the wrong
 shape is refused when the config loads.
+
+A custom agent can stand in for `reviewer` in a chain by declaring the reviewer
+contract on its actor -- `relevo config set actors.morphic-reviewer.outputs '{"verdict":{"one-of":["pass","changes"]},"findings":"artifact"}'`
+-- and by ending its output with a fenced `relevo` block holding `verdict: pass`
+or `verdict: changes`, which relevo's round prompt already tells it to write;
+then `--reviewer-actor morphic-reviewer`. Outcomes are declared on actors, never
+on agents; `outcomes` or `role` on an agent is refused.
 
 - A new **reader** actor runs as a binding's actor too: `relevo bind
   --worktree --no-feature --actor <name>` or `relevo bind --no-feature --actor <name>`, then `relevo
