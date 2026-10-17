@@ -141,10 +141,16 @@ jobs:
         # starts complaining about.
         os: [ubuntu-latest]
         go: ['1.25', 'stable']
-        # Each leg runs 3 shards: a third of the packages and a third of
-        # internal/relevo's tests, which is what fits the race run in the job's
-        # wall time.
+        # Each leg runs 3 shards of a weighted assignment (test-shard.sh places
+        # the whole packages longest-first onto the least loaded shard, and the
+        # tests of internal/db, cmd/relevo and internal/relevo round-robin across
+        # the shards), which is what fits the race run in the job's wall time.
         shard: [0, 1, 2]
+        # PRs skip the 1.25 floor here as well as on test-macos, so a PR runs
+        # the ubuntu legs on stable only and the race runs start together;
+        # main still runs the full matrix on both platforms.
+        exclude:
+          - go: ${{ github.event_name == 'pull_request' && '1.25' || 'none' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -207,11 +213,13 @@ jobs:
         # starts complaining about.
         os: [macos-latest]
         go: ['1.25', 'stable']
-        # Each leg runs 3 shards: a third of the packages and a third of
-        # internal/relevo's tests, which is what fits the race run in the job's
-        # wall time. On main the two macOS legs make 6 macOS jobs, one over the
-        # free plan's cap of 5 concurrent macOS jobs, so one of them queues.
-        # Main is never cancelled, so queueing only costs time.
+        # Each leg runs 3 shards of a weighted assignment (test-shard.sh places
+        # the whole packages longest-first onto the least loaded shard, and the
+        # tests of internal/db, cmd/relevo and internal/relevo round-robin across
+        # the shards), which is what fits the race run in the job's wall time.
+        # On main the two macOS legs make 6 macOS jobs, one over the free plan's
+        # cap of 5 concurrent macOS jobs, so one of them queues. Main is never
+        # cancelled, so queueing only costs time.
         shard: [0, 1, 2]
         # PRs skip macOS on the 1.25 floor to stay under the free plan's
         # 5-concurrent-macOS-job cap; main still runs the full matrix.
@@ -306,6 +314,8 @@ jobs:
   # The way back: the same internal/db and internal/store suites under the
   # modernc engine. The default binary links modernc too, for the one-time
   # conversion, so this leg is what keeps -tags modernc from rotting.
+  # On a pull request this leg only keeps -tags modernc compiling and passing;
+  # main adds the race detector on top, which roughly doubles its wall time.
   modernc:
     name: modernc
     needs: changes
@@ -322,13 +332,33 @@ jobs:
         run: go vet -tags modernc ./internal/db/...
 
       - name: test under modernc
-        run: go test -race -count=1 -tags modernc ./internal/db/... ./internal/store/...
+        run: |
+          race=
+          if [ "${{ github.event_name }}" = push ]; then
+            race=-race
+          fi
+          go test $race -count=1 -tags modernc ./internal/db/... ./internal/store/...
 
   portability:
-    name: cross-compile
+    name: cross-compile (${{ matrix.target }})
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      # One target per job, so the five builds run in parallel instead of
+      # serially: what was ~230 s in a single job is now ~60-90 s, which stops
+      # cross-compile from being the longest path once the test legs shrink.
+      fail-fast: false
+      matrix:
+        # relevo is supported on Linux and macOS only, but the tree must keep
+        # compiling elsewhere: this is what catches a platform-specific syscall
+        # sneaking back in outside a build-tagged file.
+        target:
+          - linux/amd64
+          - linux/arm64
+          - darwin/amd64
+          - darwin/arm64
+          - windows/amd64
     steps:
       - uses: actions/checkout@v4
 
@@ -336,20 +366,15 @@ jobs:
         with:
           go-version: stable
 
-      # relevo is supported on Linux and macOS only, but the tree must keep
-      # compiling elsewhere: this is what catches a platform-specific syscall
-      # sneaking back in outside a build-tagged file.
       # CGO_ENABLED=0 because purego loads the embedded Turso library without a
       # C toolchain: without it a same-GOOS cross-compile (linux/arm64 from
       # linux/amd64) keeps cgo on and reaches for the host's gcc, which cannot
       # target arm64. The default binary is dynamically linked at run time, but
       # that linkage is purego's own dlopen, not cgo.
-      - name: build for every target
+      - name: build for ${{ matrix.target }}
         env:
           CGO_ENABLED: '0'
+          TARGET: ${{ matrix.target }}
         run: |
-          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
-            echo "==> $target"
-            GOOS=${target%/*} GOARCH=${target#*/} go build ./...
-            GOOS=${target%/*} GOARCH=${target#*/} go build -tags modernc ./...
-          done
+          GOOS=${TARGET%/*} GOARCH=${TARGET#*/} go build ./...
+          GOOS=${TARGET%/*} GOARCH=${TARGET#*/} go build -tags modernc ./...
