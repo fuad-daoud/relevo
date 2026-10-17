@@ -2,6 +2,8 @@ package db
 
 import (
 	"bytes"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -58,6 +60,14 @@ func (t *Tx) ExchangeUpsert(tbl, owner string, values map[string]any) error {
 	if err != nil {
 		return err
 	}
+	if creator := creatorColumn(tbl); creator != "" {
+		if err := t.checkCreatorImmutability(shared, creator, owner, values); err != nil {
+			return err
+		}
+	}
+	if err := t.checkWriterNotStripped(shared, values); err != nil {
+		return err
+	}
 	owned := ownedValues(tbl, owner, values)
 	named, args, err := upsertColumns(shared.PrimaryKey, columns, owned)
 	if err != nil {
@@ -78,6 +88,104 @@ func (t *Tx) ExchangeUpsert(tbl, owner string, values map[string]any) error {
 	}
 	if _, err := t.exec(upsertStatement(shared.Name, named, shared.PrimaryKey), args...); err != nil {
 		return fmt.Errorf("db: exchange upsert %s: %w", tbl, mapRefused(mapBusy(err)))
+	}
+	return nil
+}
+
+// checkCreatorImmutability validates that the creator column (origin) is immutable
+// on update, and ensures it is populated on insert (from body or owner).
+func (t *Tx) checkCreatorImmutability(shared *SharedTable, creator, owner string, values map[string]any) error {
+	keyArgs := make([]any, len(shared.PrimaryKey))
+	for i, col := range shared.PrimaryKey {
+		v, vok := values[col]
+		if !vok {
+			return fmt.Errorf("db: exchange upsert %s: body names no %s: %w", shared.Name, col, ErrInvalid)
+		}
+		keyArgs[i] = v
+	}
+	where, _ := keyWhere(shared.PrimaryKey, keyArgs)
+	var storedOrigin string
+	err := t.conn.QueryRowContext(t.ctx, "SELECT "+quoteIdent(creator)+" FROM "+quoteIdent(shared.Name)+" WHERE "+where, keyArgs...).Scan(&storedOrigin)
+	if err == nil {
+		if bodyOrigin, _ := values[creator].(string); bodyOrigin != "" && storedOrigin != bodyOrigin {
+			return fmt.Errorf("db: exchange upsert %s: %s is immutable (stored %q, body %q): %w",
+				shared.Name, creator, storedOrigin, bodyOrigin, ErrInvalid)
+		}
+		values[creator] = storedOrigin
+		return nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		if bodyOrigin, _ := values[creator].(string); bodyOrigin != "" {
+			values[creator] = bodyOrigin
+		} else if owner != "" {
+			values[creator] = owner
+		} else {
+			return fmt.Errorf("db: exchange upsert %s: %s is missing or empty: %w", shared.Name, creator, ErrInvalid)
+		}
+		return nil
+	}
+	return fmt.Errorf("db: exchange upsert %s: check stored %s: %w", shared.Name, creator, mapRefused(mapBusy(err)))
+}
+
+// checkWriterNotStripped refuses a binding body that names writer as "" over a
+// stored row whose writer is not: other writer changes go through the hand-over
+// path, and an empty one would hand the row to every machine.
+func (t *Tx) checkWriterNotStripped(shared *SharedTable, values map[string]any) error {
+	if shared.Name != "binding" && shared.Name != "binding_record" {
+		return nil
+	}
+	if w, named := values["writer"].(string); !named || w != "" {
+		return nil
+	}
+	keyArgs := make([]any, len(shared.PrimaryKey))
+	for i, col := range shared.PrimaryKey {
+		v, ok := values[col]
+		if !ok {
+			return nil
+		}
+		keyArgs[i] = v
+	}
+	where, _ := keyWhere(shared.PrimaryKey, keyArgs)
+	var stored sql.NullString
+	err := t.conn.QueryRowContext(t.ctx, "SELECT writer FROM "+quoteIdent(shared.Name)+" WHERE "+where, keyArgs...).Scan(&stored)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("db: exchange upsert %s: check stored writer: %w", shared.Name, mapRefused(mapBusy(err)))
+	}
+	if stored.String != "" {
+		return fmt.Errorf("db: exchange upsert %s: empty writer would replace %q: %w", shared.Name, stored.String, ErrInvalid)
+	}
+	return nil
+}
+
+// MaxOutboxSeq returns the highest seq in sync_outbox, or 0 if empty.
+func (t *Tx) MaxOutboxSeq() (int, error) {
+	var seq sql.Null[int]
+	if err := t.queryRow(`SELECT MAX(seq) FROM sync_outbox`).Scan(&seq); err != nil {
+		if isMissingTable(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("db: max outbox seq: %w", mapBusy(err))
+	}
+	if !seq.Valid {
+		return 0, nil
+	}
+	return seq.V, nil
+}
+
+// DiscardOutboxSince removes any outbox entries for (tbl, pk) with seq > sinceSeq
+// that are attributed to this installation (origin IN (?, ”) or NULL).
+// This prevents import statements from queueing echoes of local writes,
+// whatever the op (insert, update, delete).
+func (t *Tx) DiscardOutboxSince(tbl, pk string, sinceSeq int) error {
+	query := `DELETE FROM sync_outbox WHERE seq > ? AND tbl = ? AND pk = ? AND (origin = ? OR origin = '' OR origin IS NULL)`
+	if _, err := t.exec(query, sinceSeq, tbl, pk, t.origin); err != nil {
+		if isMissingTable(err) {
+			return nil
+		}
+		return fmt.Errorf("db: discard outbox %s %s since %d: %w", tbl, pk, sinceSeq, mapBusy(err))
 	}
 	return nil
 }

@@ -7,13 +7,21 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
 )
 
-// macDomain labels this encoding. The label travels inside the signed bytes
-// rather than beside them, so a MAC computed over some other construction that
-// happens to share these fields is not read as one of ours.
-const macDomain = "relevo-sync-entry-v1"
+// macDomainV1 labels the v1 encoding.
+const macDomainV1 = "relevo-sync-entry-v1"
+
+// macDomainV2 labels the v2 encoding, covering After and ctl: entries.
+const macDomainV2 = "relevo-sync-entry-v2"
+
+// isV2 reports whether an entry uses the v2 MAC domain: an entry carrying
+// After or naming a ctl: table.
+func isV2(e Entry) bool {
+	return e.After != nil || strings.HasPrefix(e.Table, "ctl:")
+}
 
 // EntryMAC is the entry's HMAC-SHA256 over its canonical encoding, which is
 // EntryMAC's whole definition: the two halves have to be computed over exactly
@@ -24,7 +32,11 @@ const macDomain = "relevo-sync-entry-v1"
 // signer saw and covering them would make every entry unverifiable.
 func EntryMAC(key []byte, e Entry) []byte {
 	var buf bytes.Buffer
-	writeMACField(&buf, []byte(macDomain))
+	domain := macDomainV1
+	if isV2(e) {
+		domain = macDomainV2
+	}
+	writeMACField(&buf, []byte(domain))
 	writeMACField(&buf, []byte(e.Origin))
 	writeMACField(&buf, []byte(e.Table))
 	writeMACField(&buf, []byte(e.PK))
@@ -32,6 +44,15 @@ func EntryMAC(key []byte, e Entry) []byte {
 	writeMACField(&buf, []byte(strconv.Itoa(e.SchemaVersion)))
 	writeMacBody(&buf, e.Body)
 	writeMACField(&buf, []byte(e.At.UTC().Format(time.RFC3339Nano)))
+	if isV2(e) {
+		if e.After != nil {
+			writeMACField(&buf, []byte(e.After.Origin))
+			writeMACField(&buf, []byte(strconv.Itoa(e.After.Seq)))
+		} else {
+			writeMACField(&buf, nil)
+			writeMACField(&buf, nil)
+		}
+	}
 
 	mac := hmac.New(sha256.New, key)
 	mac.Write(buf.Bytes())

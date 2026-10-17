@@ -145,6 +145,8 @@ type dbSyncVerbOptions struct {
 	Join             bool
 	// Yes is enable's --yes.
 	Yes bool
+	// AdoptAs is enable's --as.
+	AdoptAs string
 	// DryRun is reconcile's --dry-run.
 	DryRun bool
 	// New is unlock's --new.
@@ -184,6 +186,7 @@ func sendSyncVerbToken(ctx context.Context, shared *db.DB, verb string, token []
 		NewPassphraseLen: opts.NewPassphraseLen,
 		Join:             opts.Join,
 		Yes:              opts.Yes,
+		AdoptAs:          opts.AdoptAs,
 		DryRun:           opts.DryRun,
 		New:              opts.New,
 	}

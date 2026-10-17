@@ -61,6 +61,10 @@ type Reconciler struct {
 	// chunk which is never appended -- one whose entries all turn out to be
 	// already held -- leaves nothing behind.
 	pending []pendingBlob
+	// left is the rows of bindings this installation handed over or lost to a
+	// takeover: the log still names them, but the delete phase never proposes a
+	// removal for rows another machine now writes.
+	left map[db.RowRef]bool
 	// blobBudget is the body bytes past which a chunk ends early: below what an
 	// importer takes in one batch by the most one more row can add.
 	blobBudget int64
@@ -387,6 +391,13 @@ func (r *Reconciler) inspectUpsert(out *[]Entry, tbl string, row db.ExchangeRow)
 	if err != nil {
 		return err
 	}
+	afterOrigin, afterSeq, found, err := r.db.WriterAfter(tbl, row.PK)
+	if err != nil {
+		return err
+	}
+	if found {
+		entry = entry.WithAfter(&Ref{Origin: afterOrigin, Seq: afterSeq})
+	}
 	*out = append(*out, entry)
 	return nil
 }
@@ -466,7 +477,7 @@ func (r *Reconciler) nextDeletes(tx *db.Tx, limit int) ([]Entry, error) {
 // file does not hold is one that aged out here or on the machine that wrote it:
 // never one this walk may remove, and never drift worth reporting.
 func (r *Reconciler) deleteFor(tx *db.Tx, tbl, pk string) (*Entry, error) {
-	if db.AppendOnly(tbl) {
+	if db.AppendOnly(tbl) || r.left[db.RowRef{Table: tbl, PK: pk}] {
 		return nil, nil
 	}
 	_, found, err := tx.ReadExchangeRow(tbl, pk)
@@ -495,6 +506,11 @@ func (r *Reconciler) ensureHead() error {
 		return fmt.Errorf("read head: %w", err)
 	}
 	r.head = newHeadIndex(head)
+	left, err := r.db.LeftRows()
+	if err != nil {
+		return fmt.Errorf("read left rows: %w", err)
+	}
+	r.left = left
 	return nil
 }
 

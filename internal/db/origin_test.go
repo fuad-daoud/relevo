@@ -742,9 +742,9 @@ func TestBackfillHaltsOnABindingRecordTwin(t *testing.T) {
 		{"br-stale", "", "active", "/work/old"},
 		{"br-live", origin, "needs_you", "/work/live"},
 	} {
-		if _, err := d.sqlDB.Exec(`INSERT INTO binding_record (id, origin, owner, name, state, round, cwd, record_json, created_at, updated_at)
-			VALUES (?, ?, '', 'api', ?, 1, ?, '{}', '2026-09-01T10:00:00.000Z', '2026-09-01T10:00:00.000Z')`,
-			row.id, row.origin, row.state, row.cwd); err != nil {
+		if _, err := d.sqlDB.Exec(`INSERT INTO binding_record (id, origin, writer, owner, name, state, round, cwd, record_json, created_at, updated_at)
+			VALUES (?, ?, ?, '', 'api', ?, 1, ?, '{}', '2026-09-01T10:00:00.000Z', '2026-09-01T10:00:00.000Z')`,
+			row.id, row.origin, row.origin, row.state, row.cwd); err != nil {
 			t.Fatalf("insert %s: %v", row.id, err)
 		}
 	}

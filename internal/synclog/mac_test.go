@@ -1,7 +1,12 @@
 package synclog
 
 import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -243,5 +248,86 @@ func TestBoundaryTagBindsOriginAndSeq(t *testing.T) {
 	}
 	if string(tag) == string(EntryMAC(macKey, Entry{Origin: "m1"})) {
 		t.Error("a boundary tag collides with an entry MAC")
+	}
+}
+
+// v1OnlyEntryMAC computes the entry MAC using only the v1 domain and fields,
+// exactly as an older binary would compute it.
+func v1OnlyEntryMAC(key []byte, e Entry) []byte {
+	var buf bytes.Buffer
+	writeMACField(&buf, []byte("relevo-sync-entry-v1"))
+	writeMACField(&buf, []byte(e.Origin))
+	writeMACField(&buf, []byte(e.Table))
+	writeMACField(&buf, []byte(e.PK))
+	writeMACField(&buf, []byte(e.Op))
+	writeMACField(&buf, []byte(strconv.Itoa(e.SchemaVersion)))
+	writeMacBody(&buf, e.Body)
+	writeMACField(&buf, []byte(e.At.UTC().Format(time.RFC3339Nano)))
+
+	mac := hmac.New(sha256.New, key)
+	mac.Write(buf.Bytes())
+	return mac.Sum(nil)
+}
+
+// TestEntryMACV2DomainAndCoverage pins that an entry with After or a ctl: table
+// uses the v2 domain and that a v1-only check fails to verify a v2 entry.
+func TestEntryMACV2DomainAndCoverage(t *testing.T) {
+	t.Parallel()
+	base := signedEntry(t)
+
+	// An entry with no After and no ctl: table uses v1 domain byte-for-byte.
+	v1MAC := v1OnlyEntryMAC(macKey, base)
+	if got := EntryMAC(macKey, base); !hmac.Equal(got, v1MAC) {
+		t.Fatalf("v1 entry MAC = %x, want %x", got, v1MAC)
+	}
+
+	// An entry with After uses v2 domain.
+	withAfter := base.WithAfter(&Ref{Origin: "origin-peer", Seq: 42})
+	v2MAC := EntryMAC(macKey, withAfter)
+	if hmac.Equal(v2MAC, v1MAC) {
+		t.Fatal("entry with After produced same MAC as entry without After")
+	}
+
+	// A v1-only check must fail a v2 entry.
+	v1Check := v1OnlyEntryMAC(macKey, withAfter)
+	if hmac.Equal(v1Check, v2MAC) {
+		t.Fatal("v1-only check unexpectedly verified a v2 entry")
+	}
+
+	// Verify that changing After.Origin or After.Seq changes the MAC.
+	afterDiffOrigin := base.WithAfter(&Ref{Origin: "origin-other", Seq: 42})
+	if hmac.Equal(EntryMAC(macKey, afterDiffOrigin), v2MAC) {
+		t.Error("changing After.Origin did not change the MAC")
+	}
+	afterDiffSeq := base.WithAfter(&Ref{Origin: "origin-peer", Seq: 43})
+	if hmac.Equal(EntryMAC(macKey, afterDiffSeq), v2MAC) {
+		t.Error("changing After.Seq did not change the MAC")
+	}
+
+	// ctl: table entries also use v2 domain.
+	ctlEntry := base
+	ctlEntry.Table = "ctl:takeover"
+	ctlMAC := EntryMAC(macKey, ctlEntry)
+	if hmac.Equal(ctlMAC, v1OnlyEntryMAC(macKey, ctlEntry)) {
+		t.Fatal("ctl: table entry used v1 domain instead of v2")
+	}
+}
+
+// TestEntryAfterShape pins that checkShape refuses an invalid After reference.
+func TestEntryAfterShape(t *testing.T) {
+	t.Parallel()
+	base := signedEntry(t)
+
+	if err := checkShape(base.WithAfter(&Ref{Origin: "", Seq: 1})); !errors.Is(err, ErrInvalid) {
+		t.Errorf("empty After.Origin: got %v, want ErrInvalid", err)
+	}
+	if err := checkShape(base.WithAfter(&Ref{Origin: "m1", Seq: 0})); !errors.Is(err, ErrInvalid) {
+		t.Errorf("zero After.Seq: got %v, want ErrInvalid", err)
+	}
+	if err := checkShape(base.WithAfter(&Ref{Origin: "m1", Seq: -1})); !errors.Is(err, ErrInvalid) {
+		t.Errorf("negative After.Seq: got %v, want ErrInvalid", err)
+	}
+	if err := checkShape(base.WithAfter(&Ref{Origin: "m1", Seq: 10})); err != nil {
+		t.Errorf("valid After: got %v, want nil", err)
 	}
 }

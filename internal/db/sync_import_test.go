@@ -2,7 +2,9 @@ package db
 
 import (
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 )
 
 // The write half of the exchange seam, pinned on its own rather than only
@@ -201,13 +203,16 @@ func TestExchangeUpsertTakesTheOwnerNotTheBody(t *testing.T) {
 	d := openTestDB(t)
 	body := map[string]any{
 		"id": "b1", "name": "b1", "cwd": "/x", "builder_mode": "local",
-		"created_at": "t", "ingest_source": "manual", "origin": "thief",
+		"created_at": "t", "ingest_source": "manual", "origin": "creator1", "writer": "thief",
 	}
 	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instX", body) }); err != nil {
 		t.Fatalf("upsert a body naming an owner of its own: %v", err)
 	}
-	if got := value(t, exchangeRow(t, d, "binding", `["b1"]`), "origin"); got != "instX" {
-		t.Fatalf("origin = %v, want the owner the caller resolved rather than the body's", got)
+	if got := value(t, exchangeRow(t, d, "binding", `["b1"]`), "writer"); got != "instX" {
+		t.Fatalf("writer = %v, want the owner the caller resolved rather than the body's", got)
+	}
+	if got := value(t, exchangeRow(t, d, "binding", `["b1"]`), "origin"); got != "creator1" {
+		t.Fatalf("origin = %v, want the creator origin from the body", got)
 	}
 
 	// Writing it again under the same owner changes nothing, and the caller's
@@ -215,11 +220,22 @@ func TestExchangeUpsertTakesTheOwnerNotTheBody(t *testing.T) {
 	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instX", body) }); err != nil {
 		t.Fatalf("upsert the binding again: %v", err)
 	}
-	if got := value(t, exchangeRow(t, d, "binding", `["b1"]`), "origin"); got != "instX" {
-		t.Fatalf("origin = %v, want the owner's own value", got)
+	if got := value(t, exchangeRow(t, d, "binding", `["b1"]`), "writer"); got != "instX" {
+		t.Fatalf("writer = %v, want the owner's own value", got)
 	}
-	if body["origin"] != "thief" {
-		t.Fatalf("the caller's body now holds origin %v, want it left as it was", body["origin"])
+	if body["writer"] != "thief" {
+		t.Fatalf("the caller's body now holds writer %v, want it left as it was", body["writer"])
+	}
+
+	// For a table whose owner is origin (like repo), caller's owner sets origin.
+	repoBody := map[string]any{
+		"id": "r1", "origin_url": "u", "common_dir": "/c", "first_seen": "t", "origin": "thief",
+	}
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("repo", "instX", repoBody) }); err != nil {
+		t.Fatalf("upsert repo: %v", err)
+	}
+	if got := value(t, exchangeRow(t, d, "repo", `["r1"]`), "origin"); got != "instX" {
+		t.Fatalf("repo origin = %v, want instX", got)
 	}
 
 	// A child names no owner of its own: it resolves through its parent, so the
@@ -227,28 +243,32 @@ func TestExchangeUpsertTakesTheOwnerNotTheBody(t *testing.T) {
 	// of the row at all.
 	if err := d.Tx(func(tx *Tx) error {
 		if err := tx.ExchangeUpsert("binding_record", "instX", map[string]any{
-			"id": "r1", "owner": "o", "name": "n", "state": "open", "round": 1,
+			"id": "rec1", "owner": "o", "name": "n", "state": "open", "round": 1,
 			"cwd": "/z", "record_json": "{}", "created_at": "t", "updated_at": "t",
+			"origin": "creator1", "writer": "thief",
 		}); err != nil {
 			return err
 		}
 		return tx.ExchangeUpsert("round_file", "instX", map[string]any{
-			"record_id": "r1", "name": "f", "round": 1, "body": []byte{0, 1},
+			"record_id": "rec1", "name": "f", "round": 1, "body": []byte{0, 1},
 			"bytes": 2, "sha256": "s", "mtime": "t", "sealed_at": "t",
 		})
 	}); err != nil {
 		t.Fatalf("upsert a child row: %v", err)
 	}
-	if got := value(t, exchangeRow(t, d, "binding_record", `["r1"]`), "origin"); got != "instX" {
-		t.Fatalf("the record's origin = %v, want the owner the caller resolved", got)
+	if got := value(t, exchangeRow(t, d, "binding_record", `["rec1"]`), "writer"); got != "instX" {
+		t.Fatalf("the record's writer = %v, want the owner the caller resolved", got)
 	}
-	for _, col := range exchangeRow(t, d, "round_file", `["r1","f"]`).Columns {
-		if col.Name == "origin" {
-			t.Fatal("the child row grew an origin column, want its owner to resolve through the parent")
+	if got := value(t, exchangeRow(t, d, "binding_record", `["rec1"]`), "origin"); got != "creator1" {
+		t.Fatalf("the record's origin = %v, want the body's origin", got)
+	}
+	for _, col := range exchangeRow(t, d, "round_file", `["rec1","f"]`).Columns {
+		if col.Name == "origin" || col.Name == "writer" {
+			t.Fatalf("the child row grew an owner column %s, want its owner to resolve through the parent", col.Name)
 		}
 	}
-	if ownerColumn("round_file") != "" || ownerColumn("binding") != "origin" {
-		t.Fatalf("the owner columns are %q and %q, want none for the child and origin for the root",
+	if ownerColumn("round_file") != "" || ownerColumn("binding") != "writer" {
+		t.Fatalf("the owner columns are %q and %q, want none for the child and writer for the root",
 			ownerColumn("round_file"), ownerColumn("binding"))
 	}
 }
@@ -554,4 +574,217 @@ func TestExchangeUpsertUniqueConstraintLeavesTxOpen(t *testing.T) {
 	}
 
 	_ = exchangeRow(t, d, "binding_record", `["r3"]`)
+}
+
+// A body with a different origin cannot move an existing row's origin.
+func TestExchangeUpsertOriginImmutability(t *testing.T) {
+	d := openTestDB(t)
+	// 1. Initial insert of binding with creator "instA".
+	b1 := map[string]any{
+		"id": "b1", "name": "b1", "cwd": "/x", "builder_mode": "local",
+		"created_at": "t", "ingest_source": "manual", "origin": "instA",
+	}
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instA", b1) }); err != nil {
+		t.Fatalf("initial upsert b1: %v", err)
+	}
+
+	// 2. An upsert attempting to move origin to "instB" must fail with ErrInvalid.
+	b1DifferentOrigin := map[string]any{
+		"id": "b1", "name": "b1", "cwd": "/x", "builder_mode": "local",
+		"created_at": "t", "ingest_source": "manual", "origin": "instB",
+	}
+	err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instA", b1DifferentOrigin) })
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("upsert with different origin err = %v, want ErrInvalid", err)
+	}
+	// Verify stored row still has origin "instA".
+	if got := value(t, exchangeRow(t, d, "binding", `["b1"]`), "origin"); got != "instA" {
+		t.Fatalf("binding origin = %v, want original origin instA", got)
+	}
+
+	// 3. Same for binding_record.
+	r1 := map[string]any{
+		"id": "r1", "owner": "o", "name": "n", "state": "open", "round": 1,
+		"cwd": "/z", "record_json": "{}", "created_at": "t", "updated_at": "t", "origin": "instA",
+	}
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding_record", "instA", r1) }); err != nil {
+		t.Fatalf("initial upsert r1: %v", err)
+	}
+	r1DifferentOrigin := map[string]any{
+		"id": "r1", "owner": "o", "name": "n", "state": "open", "round": 1,
+		"cwd": "/z", "record_json": "{}", "created_at": "t", "updated_at": "t", "origin": "instB",
+	}
+	err = d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding_record", "instA", r1DifferentOrigin) })
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("upsert record with different origin err = %v, want ErrInvalid", err)
+	}
+	if got := value(t, exchangeRow(t, d, "binding_record", `["r1"]`), "origin"); got != "instA" {
+		t.Fatalf("record origin = %v, want original origin instA", got)
+	}
+
+	// 4. Missing or empty origin on insert must fail with ErrInvalid.
+	bMissingOrigin := map[string]any{
+		"id": "b2", "name": "b2", "cwd": "/x", "builder_mode": "local",
+		"created_at": "t", "ingest_source": "manual",
+	}
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "", bMissingOrigin) }); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("upsert missing origin err = %v, want ErrInvalid", err)
+	}
+}
+
+// A hand-over shaped upsert keeps creator origin and updates writer.
+func TestExchangeUpsertHandoverShaped(t *testing.T) {
+	d := openTestDB(t)
+	// Initial insert by creator "instA" who is also the initial writer.
+	body := map[string]any{
+		"id": "b1", "name": "b1", "cwd": "/x", "builder_mode": "local",
+		"created_at": "t", "ingest_source": "manual", "origin": "instA", "writer": "instA",
+	}
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instA", body) }); err != nil {
+		t.Fatalf("initial upsert: %v", err)
+	}
+	if got := value(t, exchangeRow(t, d, "binding", `["b1"]`), "writer"); got != "instA" {
+		t.Fatalf("initial writer = %v, want instA", got)
+	}
+
+	// Hand-over shaped upsert: target writer is "instB", body carries creator "instA".
+	handoverBody := map[string]any{
+		"id": "b1", "name": "b1", "cwd": "/x", "builder_mode": "local",
+		"created_at": "t", "ingest_source": "manual", "origin": "instA", "writer": "instB",
+	}
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instB", handoverBody) }); err != nil {
+		t.Fatalf("hand-over upsert: %v", err)
+	}
+	// Origin is unchanged ("instA"), writer is updated to "instB".
+	if got := value(t, exchangeRow(t, d, "binding", `["b1"]`), "origin"); got != "instA" {
+		t.Fatalf("origin = %v, want creator instA", got)
+	}
+	if got := value(t, exchangeRow(t, d, "binding", `["b1"]`), "writer"); got != "instB" {
+		t.Fatalf("writer = %v, want target writer instB", got)
+	}
+
+	// Same test for binding_record.
+	recBody := map[string]any{
+		"id": "r1", "owner": "o", "name": "n", "state": "open", "round": 1,
+		"cwd": "/z", "record_json": "{}", "created_at": "t", "updated_at": "t",
+		"origin": "instA", "writer": "instA",
+	}
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding_record", "instA", recBody) }); err != nil {
+		t.Fatalf("initial record upsert: %v", err)
+	}
+	recHandover := map[string]any{
+		"id": "r1", "owner": "o", "name": "n", "state": "open", "round": 1,
+		"cwd": "/z", "record_json": "{}", "created_at": "t", "updated_at": "t",
+		"origin": "instA", "writer": "instB",
+	}
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding_record", "instB", recHandover) }); err != nil {
+		t.Fatalf("hand-over record upsert: %v", err)
+	}
+	if got := value(t, exchangeRow(t, d, "binding_record", `["r1"]`), "origin"); got != "instA" {
+		t.Fatalf("record origin = %v, want creator instA", got)
+	}
+	if got := value(t, exchangeRow(t, d, "binding_record", `["r1"]`), "writer"); got != "instB" {
+		t.Fatalf("record writer = %v, want target writer instB", got)
+	}
+}
+
+// DiscardOutboxSince removes outbox entries queued since sinceSeq for (tbl, pk)
+// attributed to this machine, whatever the op.
+func TestDiscardOutboxSince(t *testing.T) {
+	d := directOpenTestDB(t) // Direct open has an origin configured
+	err := d.Tx(func(tx *Tx) error {
+		sinceSeq, err := tx.MaxOutboxSeq()
+		if err != nil {
+			return err
+		}
+
+		// Insert a binding: queues an outbox row (op='insert', origin=tx.origin).
+		b := Binding{Name: "b1", CWD: "/x", BuilderMode: "headless", CreatedAt: time.Now(), IngestSource: IngestLive}
+		id, err := tx.UpsertBinding(b)
+		if err != nil {
+			return err
+		}
+		pk := fmt.Sprintf(`["%s"]`, id)
+
+		// Update the binding: queues an outbox row (op='update', origin=tx.origin).
+		b.Feature = ptr("feat1")
+		if _, err := tx.UpsertBinding(b); err != nil {
+			return err
+		}
+
+		// Delete the binding: queues an outbox row (op='delete', origin=tx.origin).
+		if _, err := tx.exec(`DELETE FROM binding WHERE id = ?`, id); err != nil {
+			return err
+		}
+
+		// Verify 3 outbox rows were queued.
+		var count int
+		if err := tx.queryRow(`SELECT COUNT(*) FROM sync_outbox WHERE seq > ? AND tbl = 'binding' AND pk = ?`, sinceSeq, pk).Scan(&count); err != nil {
+			return err
+		}
+		if count != 3 {
+			t.Fatalf("queued outbox entries = %d, want 3 (insert, update, delete)", count)
+		}
+
+		// Discard: must discard all 3 whatever the op!
+		if err := tx.DiscardOutboxSince("binding", pk, sinceSeq); err != nil {
+			return err
+		}
+
+		// Verify all 3 were discarded.
+		if err := tx.queryRow(`SELECT COUNT(*) FROM sync_outbox WHERE seq > ? AND tbl = 'binding' AND pk = ?`, sinceSeq, pk).Scan(&count); err != nil {
+			return err
+		}
+		if count != 0 {
+			t.Fatalf("after DiscardOutboxSince, remaining entries = %d, want 0", count)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("tx: %v", err)
+	}
+}
+
+func writerBody(writer any, named bool) map[string]any {
+	body := map[string]any{
+		"id": "b1", "name": "b1", "cwd": "/x", "builder_mode": "local",
+		"created_at": "t", "ingest_source": "manual", "origin": "creator1",
+	}
+	if named {
+		body["writer"] = writer
+	}
+	return body
+}
+
+func TestExchangeUpsertRefusesAnEmptyWriterOverANonEmptyOne(t *testing.T) {
+	d := openTestDB(t)
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instX", writerBody("instX", true)) }); err != nil {
+		t.Fatalf("seed the binding: %v", err)
+	}
+	err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instX", writerBody("", true)) })
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("upsert with an empty writer = %v, want ErrInvalid", err)
+	}
+	if got := value(t, exchangeRow(t, d, "binding", `["b1"]`), "writer"); got != "instX" {
+		t.Fatalf("writer = %v, want it unchanged", got)
+	}
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instX", writerBody(nil, false)) }); err != nil {
+		t.Fatalf("upsert with no writer key: %v", err)
+	}
+}
+
+func TestExchangeUpsertAppliesAnEmptyWriterOverAnEmptyOne(t *testing.T) {
+	d := openTestDB(t)
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instX", writerBody("instX", true)) }); err != nil {
+		t.Fatalf("seed the binding: %v", err)
+	}
+	if err := d.Tx(func(tx *Tx) error {
+		_, err := tx.exec(`UPDATE binding SET writer = '' WHERE id = 'b1'`)
+		return err
+	}); err != nil {
+		t.Fatalf("make the row legacy: %v", err)
+	}
+	if err := d.Tx(func(tx *Tx) error { return tx.ExchangeUpsert("binding", "instX", writerBody("", true)) }); err != nil {
+		t.Fatalf("upsert an empty writer over a legacy row: %v", err)
+	}
 }

@@ -131,3 +131,58 @@ func TestKeyMetaCrossesThePipeBase64(t *testing.T) {
 		t.Errorf("the key arrived as %+v, want argon2id and present", got)
 	}
 }
+
+// TestConvertCarriesAfterBothWays pins that an entry with an After dependency
+// round-trips over the pipe intact.
+func TestConvertCarriesAfterBothWays(t *testing.T) {
+	t.Parallel()
+	key := []byte("the passphrase this machine stretched")
+	body := json.RawMessage(`{"title":"two"}`)
+	synclogEntry := synclog.Entry{
+		Origin:        "origin-b",
+		Seq:           1,
+		Batch:         1,
+		Table:         "binding_record",
+		PK:            `["rec-1"]`,
+		Op:            synclog.OpUpsert,
+		SchemaVersion: 31,
+		Body:          body,
+		At:            time.Date(2026, 10, 17, 10, 0, 0, 0, time.UTC),
+		After:         &synclog.Ref{Origin: "origin-a", Seq: 42},
+	}
+	synclogEntry.MAC = synclog.EntryMAC(key, synclogEntry)
+
+	wire := entriesToWire([]synclog.Entry{synclogEntry})
+	if len(wire) != 1 {
+		t.Fatalf("entriesToWire = %d entries, want 1", len(wire))
+	}
+	if wire[0].AfterOrigin != "origin-a" || wire[0].AfterSeq != 42 {
+		t.Fatalf("entriesToWire After = (%q, %d), want (origin-a, 42)", wire[0].AfterOrigin, wire[0].AfterSeq)
+	}
+
+	line, err := json.Marshal(wire)
+	if err != nil {
+		t.Fatalf("marshal wire: %v", err)
+	}
+	var decoded []syncworker.Entry
+	if err := json.Unmarshal(line, &decoded); err != nil {
+		t.Fatalf("decode wire: %v", err)
+	}
+
+	back := entriesFromWire(decoded)
+	if len(back) != 1 {
+		t.Fatalf("entriesFromWire = %d entries, want 1", len(back))
+	}
+	if back[0].After == nil {
+		t.Fatal("After was dropped across the wire")
+	}
+	if back[0].After.Origin != "origin-a" || back[0].After.Seq != 42 {
+		t.Errorf("After = %+v, want {origin-a 42}", back[0].After)
+	}
+	if !bytes.Equal(back[0].MAC, synclogEntry.MAC) {
+		t.Errorf("MAC changed across wire: %x vs %x", back[0].MAC, synclogEntry.MAC)
+	}
+	if !synclog.VerifyMAC(key, back[0]) {
+		t.Error("entry with After failed MAC verification after crossing wire")
+	}
+}

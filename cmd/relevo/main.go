@@ -55,6 +55,8 @@ Commands:
   stop      kill the runner process and close its round without a report unless one is already on disk
   unbind    forget a binding, deleting or archiving its directory (--pick to choose it on screen)
               --done clears every binding the MasterMind marked DONE [--delete] [--dry-run]
+  handover  give a binding to another machine: push its branch, release the tree, flip the writer [--to M]
+  takeover  make this machine the writer of a binding another machine writes (--force fences the old writer)
   daemon    run the long-running reconciler (daemon stop stops the daemon this CLI started)
   service   install|uninstall the daemon's service unit (systemd user unit or launchd agent) [--force] [--json]
   setup     the first-run wizard: probe the machine, ask what is still open, then write the starter configuration,
@@ -245,6 +247,10 @@ func run(args []string) error {
 		return cmdBind(args[1:])
 	case "unbind":
 		return cmdUnbind(args[1:])
+	case "handover":
+		return cmdHandover(args[1:])
+	case "takeover":
+		return cmdTakeover(args[1:])
 	case "send":
 		return cmdSend(args[1:])
 	case "ask":

@@ -103,3 +103,7 @@ func (r *retryTransport) KeyRekey(context.Context, synclog.KeyRekeySpec) (synclo
 	return synclog.KeyMeta{}, nil
 }
 func (r *retryTransport) PublishEpochCut(context.Context, synclog.EpochCut) error { return nil }
+
+func (r *retryTransport) ClaimIdentity(context.Context, string, string, time.Time) (string, time.Time, error) {
+	return "", time.Time{}, nil
+}

@@ -329,7 +329,7 @@ func seedRoots(t *testing.T, sqlDB *sql.DB) int {
 	t.Helper()
 	execAll(t, sqlDB,
 		`INSERT INTO repo (id, origin_url, common_dir, first_seen, origin) VALUES ('r1', 'u', '/c', 't', '`+repoOrigin+`')`,
-		`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin) VALUES ('b1', 'n', '/x', 'headless', 't', '', '`+bindingOrigin+`')`,
+		`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin, writer) VALUES ('b1', 'n', '/x', 'headless', 't', '', '`+bindingOrigin+`', '`+bindingOrigin+`')`,
 		`INSERT INTO "mastermind" (id, harness_kind, session_id, first_seen, last_seen, origin) VALUES ('m1', 'agy', 's', 't', 't', '`+mastermindOrigin+`')`,
 		`INSERT INTO chains (id, name, status, phase, step, plan, plans, plan_paths, builder, created_at, updated_at, origin)
 		 VALUES ('c1', 'n', 'open', 'p', 's', 1, 1, '[]', 'b', 't', 't', '`+chainsOrigin+`')`,
@@ -396,8 +396,8 @@ func testCascadeShape(t *testing.T) {
 	sqlDB := migratedWithForeignKeys(t)
 	mark := seedRoots(t, sqlDB)
 	execAll(t, sqlDB,
-		`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin)
-		 VALUES ('rec1', 'o', 'n', 'open', 1, '/x', '{}', 't', 't', '`+bindingRecordOrigin+`')`,
+		`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin, writer)
+		 VALUES ('rec1', 'o', 'n', 'open', 1, '/x', '{}', 't', 't', '`+bindingRecordOrigin+`', '`+bindingRecordOrigin+`')`,
 		`INSERT INTO binding_event (record_id, seq, ts, round, direction, kind, confirmed, entry_json)
 		 VALUES ('rec1', 1, 't', 1, 'out', 'k', 1, '{}')`,
 		`INSERT INTO round_file (record_id, name, round, body, bytes, sha256, mtime, sealed_at)
@@ -439,12 +439,12 @@ func testInheritedOriginShape(t *testing.T) {
 	execAll(t, sqlDB,
 		// The roots, each naming its own installation.
 		`INSERT INTO repo (id, origin_url, common_dir, first_seen, origin) VALUES ('r1', 'u', '/c', 't', '`+repoOrigin+`')`,
-		`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin) VALUES ('b1', 'n', '/x', 'headless', 't', '', '`+bindingOrigin+`')`,
+		`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin, writer) VALUES ('b1', 'n', '/x', 'headless', 't', '', '`+bindingOrigin+`', '`+bindingOrigin+`')`,
 		`INSERT INTO "mastermind" (id, harness_kind, session_id, first_seen, last_seen, origin) VALUES ('m1', 'agy', 's', 't', 't', '`+mastermindOrigin+`')`,
 		`INSERT INTO chains (id, name, status, phase, step, plan, plans, plan_paths, builder, created_at, updated_at, origin)
 		 VALUES ('c1', 'n', 'open', 'p', 's', 1, 1, '[]', 'b', 't', 't', '`+chainsOrigin+`')`,
-		`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin)
-		 VALUES ('rec1', 'o', 'n', 'open', 1, '/x', '{}', 't', 't', '`+bindingRecordOrigin+`')`,
+		`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin, writer)
+		 VALUES ('rec1', 'o', 'n', 'open', 1, '/x', '{}', 't', 't', '`+bindingRecordOrigin+`', '`+bindingRecordOrigin+`')`,
 		`INSERT INTO installation (id, label, first_seen, last_seen) VALUES ('`+installationID+`', 'self', 't', 't')`,
 		// The binding's own children, and a grandchild of it.
 		`INSERT INTO round (id, binding_id, number, started_at, outcome, switches) VALUES ('rd1', 'b1', 1, 't', 'done', 0)`,

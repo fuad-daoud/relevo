@@ -17,9 +17,9 @@ import (
 
 // logFormatVersion is the version this build writes into the remote's meta. A
 // remote whose meta carries another value defines the log differently, so this
-// build refuses it rather than read columns it may have moved -- except the two
+// build refuses it rather than read columns it may have moved -- except the
 // versions below, which this build knows how to bring forward in place.
-const logFormatVersion = 3
+const logFormatVersion = 4
 
 // formatOneVersion is the format this build's predecessor wrote. A remote at
 // it holds the same log without the marks table, and is upgraded rather than
@@ -33,13 +33,23 @@ const formatOneVersion = 1
 // than as a signature that failed.
 const formatTwoVersion = 2
 
+// formatThreeVersion is the format before the after_origin and after_seq columns.
+// Older entries keep NULL in those columns, which reads as having no dependency.
+const formatThreeVersion = 3
+
 // metaFormatKey names the meta row that carries the format version.
 const metaFormatKey = "format"
 
-// addMACStatement is the one DDL an upgrade to the current format runs. The
-// column is nullable so an entry written before this machine had a key reads as
-// unsigned instead of as a signature that failed.
+// addMACStatement is the DDL an upgrade from format two runs.
 const addMACStatement = "ALTER TABLE log ADD COLUMN mac BLOB"
+
+// addAfterOriginStatement and addAfterSeqStatement are the DDLs an upgrade to
+// format 4 runs. Both columns are nullable so older entries read as having no
+// dependency.
+const (
+	addAfterOriginStatement = "ALTER TABLE log ADD COLUMN after_origin TEXT"
+	addAfterSeqStatement    = "ALTER TABLE log ADD COLUMN after_seq INTEGER"
+)
 
 // upgrade is what one older format needs in order to reach this build's own:
 // the statements to run, and the tables the remote must be holding for this
@@ -60,11 +70,15 @@ type upgrade struct {
 var upgrades = map[int]upgrade{
 	formatOneVersion: {
 		tables:     []string{"head", "log", "meta"},
-		statements: []string{createMarksStatement, addMACStatement},
+		statements: []string{createMarksStatement, addMACStatement, addAfterOriginStatement, addAfterSeqStatement},
 	},
 	formatTwoVersion: {
 		tables:     []string{"head", "log", "marks", "meta"},
-		statements: []string{addMACStatement},
+		statements: []string{addMACStatement, addAfterOriginStatement, addAfterSeqStatement},
+	},
+	formatThreeVersion: {
+		tables:     []string{"head", "log", "marks", "meta"},
+		statements: []string{addAfterOriginStatement, addAfterSeqStatement},
 	},
 }
 
@@ -77,6 +91,7 @@ var createStatements = []string{
 		"origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, " +
 		"tbl TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, " +
 		"schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, mac BLOB, " +
+		"after_origin TEXT, after_seq INTEGER, " +
 		"PRIMARY KEY (origin, seq))",
 	"CREATE TABLE head (" +
 		"origin TEXT NOT NULL, tbl TEXT NOT NULL, pk TEXT NOT NULL, " +
@@ -177,6 +192,9 @@ func (b *TursoBackend) upgradeLog(ctx context.Context, statements []string) erro
 	defer func() { _ = tx.Rollback() }()
 	for _, stmt := range statements {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			if isDuplicateColumnError(err) {
+				continue
+			}
 			return fmt.Errorf("syncworker: upgrade the log: %w", err)
 		}
 	}
@@ -192,6 +210,15 @@ func (b *TursoBackend) upgradeLog(ctx context.Context, statements []string) erro
 		return fmt.Errorf("syncworker: push the upgraded log: %w", markTransferRefusal(err))
 	}
 	return nil
+}
+
+// isDuplicateColumnError reports whether err was caused by an ALTER TABLE ADD COLUMN
+// for a column that already exists (e.g. added concurrently by another worker).
+func isDuplicateColumnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "duplicate column name")
 }
 
 // userTables is the remote's own tables, which is everything sqlite_master

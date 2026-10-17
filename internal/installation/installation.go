@@ -72,6 +72,48 @@ func Load(root string) (Installation, error) {
 	return mint(path)
 }
 
+// Adopt rewrites the installation file at root to carry id, keeping the label
+// and the creation time. The new file is written beside the old one and renamed
+// over it, so a reader sees the old identity or the new one and never a partial
+// file; unlike mint it replaces, which is the point.
+func Adopt(root, id string) (Installation, error) {
+	if id == "" {
+		return Installation{}, fmt.Errorf("installation: adopt: no id: %w", db.ErrInvalid)
+	}
+	path := filepath.Join(root, FileName)
+	inst, err := read(path)
+	if err != nil {
+		return Installation{}, err
+	}
+	inst.ID = id
+	raw, err := json.Marshal(inst)
+	if err != nil {
+		return Installation{}, fmt.Errorf("installation: encode %s: %w", path, err)
+	}
+	f, err := os.CreateTemp(root, FileName+".tmp-*")
+	if err != nil {
+		return Installation{}, fmt.Errorf("installation: create temp in %s: %w", root, err)
+	}
+	tmp := f.Name()
+	defer func() {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+	}()
+	if _, err := f.Write(raw); err != nil {
+		return Installation{}, fmt.Errorf("installation: write %s: %w", tmp, err)
+	}
+	if err := f.Sync(); err != nil {
+		return Installation{}, fmt.Errorf("installation: sync %s: %w", tmp, err)
+	}
+	if err := f.Close(); err != nil {
+		return Installation{}, fmt.Errorf("installation: write %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return Installation{}, fmt.Errorf("installation: replace %s: %w", path, err)
+	}
+	return inst, nil
+}
+
 // read decodes the installation file at path. A missing file reports
 // os.ErrNotExist so Load can mint one; a file that is not this shape is an
 // error, because guessing an identity would silently restamp a machine.

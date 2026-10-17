@@ -155,6 +155,14 @@ func (s *StopTransport) PublishEpochCut(ctx context.Context, cut synclog.EpochCu
 	return s.inner.PublishEpochCut(ctx, cut)
 }
 
+// ClaimIdentity records or reads the claim on an identity.
+func (s *StopTransport) ClaimIdentity(ctx context.Context, origin, token string, at time.Time) (string, time.Time, error) {
+	if s.stopped.Load() {
+		return "", time.Time{}, ErrStopped
+	}
+	return s.inner.ClaimIdentity(ctx, origin, token, at)
+}
+
 // The blob half, forwarded so a stopped export cannot upload a body the entry
 // naming it was never appended for. BlobStagingDir reports an empty folder for a
 // client that moves nothing, which is what tells the exporter there is no mover

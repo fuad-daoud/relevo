@@ -301,6 +301,9 @@ type SyncVerb struct {
 	Join bool `json:"join,omitempty"`
 	// Yes joins past the quota guard's refusal.
 	Yes bool `json:"yes,omitempty"`
+	// AdoptAs makes an enable continue as that installation instead of joining
+	// under the machine's own identity.
+	AdoptAs string `json:"adopt_as,omitempty"`
 	// DryRun asks a reconcile to report what it would append and append
 	// nothing. A reconcile without it is refused.
 	DryRun bool `json:"dry_run,omitempty"`

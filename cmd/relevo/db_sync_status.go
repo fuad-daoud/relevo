@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
@@ -56,6 +57,15 @@ type dbSyncStatusDoc struct {
 	HeldOrigins []string `json:"held_origins,omitempty"`
 	Dropped     []string `json:"dropped,omitempty"`
 	Gaps        []string `json:"gaps,omitempty"`
+	// Fenced lists the bindings a takeover took from this machine, with how many
+	// of its local changes the takeover fenced. Nothing is deleted locally.
+	Fenced []dbSyncFencedDoc `json:"fenced,omitempty"`
+	// IdentityTaken is the installation id this machine adopted whose claim
+	// another machine now holds. Export and import are stopped.
+	IdentityTaken string `json:"identity_taken,omitempty"`
+	// AdoptPending is the installation id whose adoption is unfinished.
+	AdoptPending    string `json:"adopt_pending,omitempty"`
+	AdoptionPending string `json:"adoption_pending,omitempty"`
 	// Joining says a join is in progress and JoinSince is when it began, read
 	// from the machine-local join marker. The daemon finishes the join whether
 	// the enable that started it waited or not, so a machine can be joining
@@ -74,6 +84,28 @@ type dbSyncStatusDoc struct {
 	Storage           *relevosync.Storage `json:"storage,omitempty"`
 	QuotaTursoStorage int64               `json:"quota_turso_storage,omitempty"`
 	QuotaR2Storage    int64               `json:"quota_r2_storage,omitempty"`
+}
+
+// dbSyncFencedDoc is one binding of the fenced list.
+type dbSyncFencedDoc struct {
+	Name      string `json:"name"`
+	OldWriter string `json:"old_writer"`
+	Taker     string `json:"taker"`
+	Count     int    `json:"count"`
+}
+
+// dbSyncFenced reads the takeover fences from the shared file, where the
+// binding rows and their terms live.
+func dbSyncFenced(shared *db.DB) ([]dbSyncFencedDoc, error) {
+	fenced, err := shared.FencedSummary()
+	if err != nil {
+		return nil, dbSyncClassify(err)
+	}
+	out := make([]dbSyncFencedDoc, 0, len(fenced))
+	for _, f := range fenced {
+		out = append(out, dbSyncFencedDoc{Name: f.Name, OldWriter: shared.Origin(), Taker: f.Taker, Count: f.Count})
+	}
+	return out, nil
 }
 
 // dbSyncStatusLine is the one line `db sync status` prints, as a function of the
@@ -124,6 +156,15 @@ func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 	for _, gap := range doc.Gaps {
 		fmt.Fprintf(&b, " · gap: %s", sanitize.Text(gap))
 	}
+	if doc.IdentityTaken != "" {
+		fmt.Fprintf(&b, " · %s", sanitize.Text(dbSyncIdentityTakenLine(doc.IdentityTaken)))
+	}
+	if doc.AdoptPending != "" {
+		fmt.Fprintf(&b, " · %s", sanitize.Text(dbSyncAdoptPendingLine(doc.AdoptPending)))
+	}
+	for _, f := range doc.Fenced {
+		fmt.Fprintf(&b, " · %d local changes to %s were fenced by a takeover", f.Count, sanitize.Text(f.Name))
+	}
 	if doc.Bytes != nil || doc.Storage != nil {
 		fmt.Fprintf(&b, " · %s", dbSyncQuotasLine(doc))
 	}
@@ -145,4 +186,15 @@ func presentOrAbsent(present bool) string {
 		return "present"
 	}
 	return "absent"
+}
+
+// dbSyncIdentityTakenLine says another machine adopted the identity this one
+// adopted, and what to do about it.
+func dbSyncIdentityTakenLine(id string) string {
+	return "another machine adopted installation " + id + ": sync is stopped here; run `relevo db sync disable` on one of the two machines"
+}
+
+// dbSyncAdoptPendingLine says an adoption was interrupted and what finishes it.
+func dbSyncAdoptPendingLine(id string) string {
+	return "adoption of " + id + " is unfinished: run relevo db sync enable --as " + id
 }

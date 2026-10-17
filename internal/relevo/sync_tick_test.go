@@ -541,3 +541,11 @@ func (s *syncBlackhole) KeyRekey(context.Context, synclog.KeyRekeySpec) (synclog
 	return synclog.KeyMeta{}, nil
 }
 func (s *syncBlackhole) PublishEpochCut(context.Context, synclog.EpochCut) error { return nil }
+
+func (r *recordTransport) ClaimIdentity(context.Context, string, string, time.Time) (string, time.Time, error) {
+	return "", time.Time{}, nil
+}
+
+func (s *syncBlackhole) ClaimIdentity(context.Context, string, string, time.Time) (string, time.Time, error) {
+	return "", time.Time{}, nil
+}

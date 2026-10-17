@@ -143,8 +143,8 @@ func exporter(d *db.DB, r *recording) *Exporter {
 // installation. The name follows the id because one installation holds at most
 // one binding of a name.
 func insertBinding(id, origin string) string {
-	return fmt.Sprintf(`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
-		VALUES ('%s', '%s', '/x', 'local', 't', 'manual', '%s')`, id, id, origin)
+	return fmt.Sprintf(`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin, writer)
+		VALUES ('%s', '%s', '/x', 'local', 't', 'manual', '%s', '%s')`, id, id, origin, origin)
 }
 
 // insertForkedBinding writes a binding forked from a named one, so a case has a
@@ -155,8 +155,8 @@ func insertForkedBinding(id, parent, origin string) string {
 	if parent != "" {
 		forked = "'" + parent + "'"
 	}
-	return fmt.Sprintf(`INSERT INTO binding (id, name, forked_from_binding_id, cwd, builder_mode, created_at, ingest_source, origin)
-		VALUES ('%s', '%s', %s, '/x', 'local', 't', 'manual', '%s')`, id, id, forked, origin)
+	return fmt.Sprintf(`INSERT INTO binding (id, name, forked_from_binding_id, cwd, builder_mode, created_at, ingest_source, origin, writer)
+		VALUES ('%s', '%s', %s, '/x', 'local', 't', 'manual', '%s', '%s')`, id, id, forked, origin, origin)
 }
 
 // One owned insert travels as one upsert carrying the row, and the outbox entry
@@ -328,8 +328,8 @@ func TestImportedRowsNeverEcho(t *testing.T) {
 	// own entry names no owner at all, because the parent it would read is gone.
 	seed(t, path,
 		insertBinding("01A", "m2"),
-		`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin)
-		 VALUES ('02A', 'o', 'n', 'open', 1, '/z', '{}', 't', 't', 'm2')`,
+		`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin, writer)
+		 VALUES ('02A', 'o', 'n', 'open', 1, '/z', '{}', 't', 't', 'm2', 'm2')`,
 		`INSERT INTO round_file (record_id, name, round, body, bytes, sha256, mtime, sealed_at)
 		 VALUES ('02A', 'f', 1, X'00', 1, 's', 't', 't')`,
 		`DELETE FROM binding_record WHERE id = '02A'`,
@@ -357,8 +357,8 @@ func TestExporterAppendsEachDrainAsOneBatch(t *testing.T) {
 	d, path := exporterFile(t, "m1")
 	seed(t, path,
 		insertBinding("01A", "m1"),
-		`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin)
-		 VALUES ('02A', 'o', 'n', 'open', 1, '/x', '{}', 't', 't', 'm1')`,
+		`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin, writer)
+		 VALUES ('02A', 'o', 'n', 'open', 1, '/x', '{}', 't', 't', 'm1', 'm1')`,
 	)
 
 	r := &recording{MemTransport: NewMemTransport("m1")}
@@ -529,8 +529,8 @@ func insertEvent(id, bindingID, roundID string, seq int) string {
 // record takes them on the peer too.
 func insertRecord(id, origin string) string {
 	return fmt.Sprintf(`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json,
-		created_at, updated_at, origin)
-		VALUES ('%s', 'o', 'n', 'open', 1, '/z', '{}', 't', 't', '%s')`, id, origin)
+		created_at, updated_at, origin, writer)
+		VALUES ('%s', 'o', 'n', 'open', 1, '/z', '{}', 't', 't', '%s', '%s')`, id, origin, origin)
 }
 
 // insertEvent writes one binding_event of a record, keyed by the record and its
@@ -719,5 +719,241 @@ func TestDrainPullsAParentWhoseKeyNeedsNoEscaping(t *testing.T) {
 	}
 	if have := sharedRows(t, peer); !strings.Contains(have, `binding ["P<3&4>"]`) {
 		t.Fatalf("the peer holds %q, want the pulled parent present", have)
+	}
+}
+
+// TestExporterOrdersHandoverRootsLast pins that the exporter orders root rows whose
+// body hands over ownership to another writer last in their batch, after any children
+// queued before or with the hand-over.
+func TestExporterOrdersHandoverRootsLast(t *testing.T) {
+	t.Parallel()
+	d, path := exporterFile(t, "m1")
+	seed(t, path, insertBinding("B1", "m1"))
+
+	log := NewMemTransport("m1")
+	r := &recording{MemTransport: log}
+	e := exporter(d, r)
+	if _, err := e.ExportBatch(); err != nil {
+		t.Fatalf("initial export: %v", err)
+	}
+	r.batches = nil
+
+	// Now queue a child and the hand-over of the parent
+	seed(t, path,
+		insertRound("R1", "B1"),
+		`UPDATE binding SET writer = 'm2' WHERE id = 'B1'`,
+	)
+
+	res, err := e.ExportBatch()
+	if err != nil {
+		t.Fatalf("export batch: %v", err)
+	}
+	if res.Appended != 2 {
+		t.Fatalf("Appended = %d, want 2", res.Appended)
+	}
+	if len(r.batches) != 1 || len(r.batches[0]) != 2 {
+		t.Fatalf("batches = %+v, want 1 batch of 2 entries", r.batches)
+	}
+	batch := r.batches[0]
+	if batch[0].Table != "round" || batch[0].PK != `["R1"]` {
+		t.Errorf("entry 0 = %s %s, want round [R1] (child before root)", batch[0].Table, batch[0].PK)
+	}
+	if batch[1].Table != "binding" || batch[1].PK != `["B1"]` {
+		t.Errorf("entry 1 = %s %s, want binding [B1] (handover root last)", batch[1].Table, batch[1].PK)
+	}
+}
+
+// TestExporterAttachesWriterAfter pins that entries in a handed-over root's tree
+// attach After from sync_writer_after.
+func TestExporterAttachesWriterAfter(t *testing.T) {
+	t.Parallel()
+	d, path := exporterFile(t, "m2")
+	seed(t, path,
+		insertBinding("B1", "m2"),
+		`INSERT INTO sync_writer_after (root_id, after_origin, after_seq) VALUES ('B1', 'm1', 42)`,
+		insertRound("R1", "B1"),
+	)
+
+	log := NewMemTransport("m2")
+	r := &recording{MemTransport: log}
+	e := exporter(d, r)
+	res, err := e.ExportBatch()
+	if err != nil {
+		t.Fatalf("export batch: %v", err)
+	}
+	if res.Appended != 2 {
+		t.Fatalf("Appended = %d, want 2", res.Appended)
+	}
+	for _, entry := range r.batches[0] {
+		if entry.After == nil {
+			t.Errorf("entry %s %s had no After, want {m1 42}", entry.Table, entry.PK)
+			continue
+		}
+		if entry.After.Origin != "m1" || entry.After.Seq != 42 {
+			t.Errorf("entry %s %s After = %+v, want {m1 42}", entry.Table, entry.PK, entry.After)
+		}
+	}
+}
+
+// TestExporterTakeoverFencedDroppedAndRecorded pins that an entry for a root carrying
+// a takeover fence against this machine is dropped from export and recorded in sync_fenced_change.
+func TestExporterTakeoverFencedDroppedAndRecorded(t *testing.T) {
+	t.Parallel()
+	d, path := exporterFile(t, "m1")
+	seed(t, path, insertBinding("B1", "m1"))
+
+	log := NewMemTransport("m1")
+	r := &recording{MemTransport: log}
+	e := exporter(d, r)
+	if _, err := e.ExportBatch(); err != nil {
+		t.Fatalf("initial export: %v", err)
+	}
+	r.batches = nil
+
+	// Simulate takeover fence against m1
+	seed(t, path,
+		`INSERT INTO sync_binding_left (root_id, owner, name, to_writer, kind, at) VALUES ('B1', 'm1', 'B1', 'm2', 'takeover', '2026-10-17T10:00:00Z')`,
+		insertRound("R1", "B1"),
+	)
+
+	res, err := e.ExportBatch()
+	if err != nil {
+		t.Fatalf("export batch: %v", err)
+	}
+	if res.Appended != 0 {
+		t.Errorf("Appended = %d, want 0 (fenced change dropped)", res.Appended)
+	}
+	if res.Drained != 1 {
+		t.Errorf("Drained = %d, want 1 (fenced change cleared from outbox)", res.Drained)
+	}
+
+	raw, err := db.OpenRawReadOnly(path)
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	defer func() { _ = raw.Close() }()
+	var count int
+	if err := raw.QueryRow(`SELECT COUNT(*) FROM sync_fenced_change WHERE root_id = 'B1' AND tbl = 'round' AND pk = '["R1"]'`).Scan(&count); err != nil {
+		t.Fatalf("query fenced change: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("fenced change count = %d, want 1", count)
+	}
+}
+
+// TestExporterHandoverUnexportedChildrenC1 pins MasterMind correction C1:
+// A hand-over exports everything queued up to and including its own transaction;
+// every importer receives the children and the flip in that order, and nothing
+// lands in sync_fenced_change.
+func TestExporterHandoverUnexportedChildrenC1(t *testing.T) {
+	t.Parallel()
+	m1, m1Path := exporterFile(t, "m1")
+	m2, _ := exporterFile(t, "m2")
+
+	key := []byte("shared-secret-key-for-handover")
+
+	// m1 creates binding, writes a child, and hands over to m2 in one go before export
+	seed(t, m1Path,
+		insertBinding("B1", "m1"),
+		insertRound("R1", "B1"),
+		`UPDATE binding SET writer = 'm2' WHERE id = 'B1'`,
+	)
+
+	log := NewMemTransport("m1")
+	r := &recording{MemTransport: log}
+	e := exporter(m1, r)
+	e.SetKey(key)
+
+	res, err := e.ExportBatch()
+	if err != nil {
+		t.Fatalf("m1 export: %v", err)
+	}
+	if res.Appended != 2 {
+		t.Fatalf("m1 Appended = %d, want 2 (child and handover root)", res.Appended)
+	}
+
+	// Verify nothing lands in sync_fenced_change on m1
+	raw, err := db.OpenRawReadOnly(m1Path)
+	if err != nil {
+		t.Fatalf("open raw: %v", err)
+	}
+	defer func() { _ = raw.Close() }()
+	var fencedCount int
+	if err := raw.QueryRow(`SELECT COUNT(*) FROM sync_fenced_change`).Scan(&fencedCount); err != nil {
+		t.Fatalf("count fenced: %v", err)
+	}
+	if fencedCount != 0 {
+		t.Errorf("sync_fenced_change count = %d, want 0", fencedCount)
+	}
+
+	// Verify order in m1's export: child first, handover flip second
+	batch := r.batches[0]
+	if batch[0].Table != "round" {
+		t.Errorf("first entry = %s, want round", batch[0].Table)
+	}
+	if batch[1].Table != "binding" {
+		t.Errorf("second entry = %s, want binding", batch[1].Table)
+	}
+
+	// m2 imports m1's log
+	importer := NewImporter(m2, log.OnLog("m2"))
+	importer.SetKey(key)
+	got, err := importer.Import()
+	if err != nil {
+		t.Fatalf("m2 import: %v", err)
+	}
+	if len(got.Dropped) != 0 {
+		t.Fatalf("Dropped = %+v, want all applied", got.Dropped)
+	}
+	if got.Applied != 2 {
+		t.Fatalf("Applied = %d, want 2", got.Applied)
+	}
+
+	// Verify m2 has binding with writer m2 and round
+	writer := columnOf(t, m2, `SELECT writer FROM binding WHERE id = 'B1'`)
+	if writer != "m2" {
+		t.Errorf("m2 binding writer = %q, want m2", writer)
+	}
+	roundCount := columnOf(t, m2, `SELECT COUNT(*) FROM round WHERE id = 'R1'`)
+	if roundCount != "1" {
+		t.Errorf("m2 round count = %s, want 1", roundCount)
+	}
+}
+
+// TestMemfakeRoundTripCarriesAfter pins that memfake preserves After across append and pull.
+func TestMemfakeRoundTripCarriesAfter(t *testing.T) {
+	t.Parallel()
+	log := NewMemTransport("m1")
+	e := Entry{
+		Origin:        "m1",
+		Seq:           1,
+		Batch:         1,
+		Table:         "binding_record",
+		PK:            `["rec-1"]`,
+		Op:            OpUpsert,
+		SchemaVersion: 31,
+		Body:          []byte(`{"title":"test"}`),
+		After:         &Ref{Origin: "m0", Seq: 99},
+	}
+	written, err := log.Append([]Entry{e})
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if len(written) != 1 || written[0].After == nil {
+		t.Fatalf("written = %+v, want After preserved", written)
+	}
+
+	pulled, err := log.OnLog("m2").Pull(map[string]int{"m1": 0})
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if len(pulled) != 1 {
+		t.Fatalf("pulled %d entries, want 1", len(pulled))
+	}
+	if pulled[0].After == nil {
+		t.Fatal("pulled entry has nil After")
+	}
+	if pulled[0].After.Origin != "m0" || pulled[0].After.Seq != 99 {
+		t.Errorf("pulled After = %+v, want {m0 99}", pulled[0].After)
 	}
 }

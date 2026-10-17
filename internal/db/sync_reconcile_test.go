@@ -371,12 +371,12 @@ func TestSharedOwnedRowPageBoundsTheRead(t *testing.T) {
 	d := openTestDB(t)
 	err := d.Tx(func(t *Tx) error {
 		return execTxAll(t,
-			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
-			 VALUES ('b1', 'n1', '/x', 'headless', 't', '', 'instB')`,
-			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
-			 VALUES ('b2', 'n2', '/x', 'headless', 't', '', 'instB')`,
-			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
-			 VALUES ('b3', 'n3', '/x', 'headless', 't', '', 'instB')`,
+			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin, writer)
+			 VALUES ('b1', 'n1', '/x', 'headless', 't', '', 'instB', 'instB')`,
+			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin, writer)
+			 VALUES ('b2', 'n2', '/x', 'headless', 't', '', 'instB', 'instB')`,
+			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin, writer)
+			 VALUES ('b3', 'n3', '/x', 'headless', 't', '', 'instB', 'instB')`,
 		)
 	})
 	if err != nil {
@@ -461,12 +461,12 @@ func TestSharedOwnedRowPageContinuesAfterTheCursor(t *testing.T) {
 	d := openTestDB(t)
 	err := d.Tx(func(t *Tx) error {
 		return execTxAll(t,
-			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
-			 VALUES ('b1', 'n1', '/x', 'headless', 't', '', 'instB')`,
-			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
-			 VALUES ('b2', 'n2', '/x', 'headless', 't', '', 'instB')`,
-			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
-			 VALUES ('b3', 'n3', '/x', 'headless', 't', '', 'instB')`,
+			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin, writer)
+			 VALUES ('b1', 'n1', '/x', 'headless', 't', '', 'instB', 'instB')`,
+			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin, writer)
+			 VALUES ('b2', 'n2', '/x', 'headless', 't', '', 'instB', 'instB')`,
+			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin, writer)
+			 VALUES ('b3', 'n3', '/x', 'headless', 't', '', 'instB', 'instB')`,
 		)
 	})
 	if err != nil {
@@ -510,12 +510,12 @@ func TestSharedOwnedRowPageOrdersAndExcludesForeignRows(t *testing.T) {
 
 	err := d.Tx(func(t *Tx) error {
 		return execTxAll(t,
-			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
-			 VALUES ('b2', 'n2', '/y', 'headless', 't', '', 'instB')`,
-			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
-			 VALUES ('b0', 'n0', '/w', 'headless', 't', '', 'instB')`,
-			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin)
-			 VALUES ('b3', 'n3', '/v', 'headless', 't', '', 'instZ')`,
+			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin, writer)
+			 VALUES ('b2', 'n2', '/y', 'headless', 't', '', 'instB', 'instB')`,
+			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin, writer)
+			 VALUES ('b0', 'n0', '/w', 'headless', 't', '', 'instB', 'instB')`,
+			`INSERT INTO binding (id, name, cwd, builder_mode, created_at, ingest_source, origin, writer)
+			 VALUES ('b3', 'n3', '/v', 'headless', 't', '', 'instZ', 'instZ')`,
 		)
 	})
 	if err != nil {

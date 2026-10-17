@@ -216,6 +216,22 @@ func seedFormatTwoRemote(t *testing.T, path string) {
 		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '2')")
 }
 
+// logFormatThree creates the log table as it was in format 3 (with mac, but without after_origin and after_seq).
+const logFormatThree = "CREATE TABLE log (" +
+	"origin TEXT NOT NULL, seq INTEGER NOT NULL, batch INTEGER NOT NULL, " +
+	"tbl TEXT NOT NULL, pk TEXT NOT NULL, op TEXT NOT NULL, " +
+	"schema_version INTEGER NOT NULL, body TEXT, at TEXT NOT NULL, mac BLOB, " +
+	"PRIMARY KEY (origin, seq))"
+
+// seedFormatThreeRemote creates this build's tables with the log as it was in format 3,
+// and records format three in meta.
+func seedFormatThreeRemote(t *testing.T, path string) {
+	t.Helper()
+	execOn(t, path, logFormatThree, createStatements[1], createStatements[2],
+		createStatements[3],
+		"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '3')")
+}
+
 // signedFromMeta is the sequence the meta records an origin started signing at.
 func signedFromMeta(t *testing.T, path, origin string) (string, bool) {
 	t.Helper()
@@ -461,7 +477,7 @@ func TestWorkerRefusesARemoteThatIsNotALog(t *testing.T) {
 		// read as one.
 		"the older tables at the current format": func(t *testing.T, path string) {
 			execOn(t, path, logWithoutMAC, createStatements[1], createStatements[2],
-				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '3')")
+				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '4')")
 		},
 		"the current tables at the older format": func(t *testing.T, path string) {
 			execOn(t, path, append(append([]string(nil), createStatements...),
@@ -474,7 +490,7 @@ func TestWorkerRefusesARemoteThatIsNotALog(t *testing.T) {
 		},
 		"a format above this build's": func(t *testing.T, path string) {
 			execOn(t, path, append(append([]string(nil), createStatements...),
-				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '4')")...)
+				"INSERT INTO meta (key, value) VALUES ('"+metaFormatKey+"', '5')")...)
 		},
 	}
 	for name, seed := range cases {
@@ -1223,3 +1239,7 @@ func TestWorkerSQLUsesNoUpsert(t *testing.T) {
 func (r refusingBackend) PullRange(string, int, int) ([]Entry, error) { return nil, nil }
 
 func (r refusingBackend) Compact(int) (CompactResult, error) { return CompactResult{}, nil }
+
+func (r refusingBackend) ClaimIdentity(string, string, time.Time) (string, time.Time, error) {
+	return "", time.Time{}, nil
+}

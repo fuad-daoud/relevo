@@ -21,6 +21,27 @@ func mastermindNameOrID(b BindingStatus) string {
 
 // RenderStatus formats a Report for a terminal.
 func RenderStatus(r Report) string {
+	return renderStatusBody(r) + handedOverBlock(r.HandedOver)
+}
+
+// handedOverBlock is one line per binding another machine writes.
+func handedOverBlock(rows []HandedOverRow) string {
+	var sb strings.Builder
+	for _, row := range rows {
+		verb := "handed over to"
+		if row.Kind == "takeover" {
+			verb = "taken over by"
+		}
+		fmt.Fprintf(&sb, "%s · %s %s", sanitizeText(row.Name), verb, sanitizeText(row.To))
+		if row.NotExported {
+			sb.WriteString(" (not yet exported: relevo db sync)")
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+func renderStatusBody(r Report) string {
 	var sb strings.Builder
 
 	switch {

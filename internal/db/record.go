@@ -57,6 +57,11 @@ const recordCols = `id, owner, name, state, round, cwd, record_json, created_at,
 // to run while any empty-origin row remains.
 const originScope = `origin IN (?, '')`
 
+// writerScope is the WHERE fragment every scoped binding_record query carries,
+// with the handle's own origin as its one placeholder: a row is in scope when this
+// installation is the writer, or when its writer is empty.
+const writerScope = `writer IN (?, '')`
+
 // nullIfEmpty stores an optional TEXT column: an empty string becomes NULL.
 func nullIfEmpty(s string) any {
 	if s == "" {
@@ -105,7 +110,7 @@ func (d *DB) RecordGet(owner, name string) (Record, bool, error) {
 
 func getRecord(ctx context.Context, q queryer, origin, owner, name string) (Record, bool, error) {
 	r, err := scanRecord(q.QueryRowContext(ctx,
-		`SELECT `+recordCols+` FROM binding_record WHERE `+originScope+` AND owner = ? AND name = ? AND archived_at IS NULL`,
+		`SELECT `+recordCols+` FROM binding_record WHERE `+writerScope+` AND owner = ? AND name = ? AND archived_at IS NULL`,
 		origin, owner, name))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, false, nil
@@ -139,7 +144,7 @@ func (d *DB) RecordRevision(owner, name string) (RecordRevision, bool, error) {
 			(SELECT COALESCE(MAX(e.seq), 0) FROM binding_event e WHERE e.record_id = r.id),
 			(SELECT COUNT(*) FROM round_file f WHERE f.record_id = r.id),
 			(SELECT COALESCE(MAX(f.name), '') FROM round_file f WHERE f.record_id = r.id)
-		 FROM binding_record r WHERE `+originScope+` AND r.owner = ? AND r.name = ? AND r.archived_at IS NULL`,
+		 FROM binding_record r WHERE `+writerScope+` AND r.owner = ? AND r.name = ? AND r.archived_at IS NULL`,
 		d.origin, owner, name).Scan(&r.JSON, &r.EventCount, &r.EventMaxSeq, &r.FileCount, &r.FileMaxName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RecordRevision{}, false, nil
@@ -153,7 +158,7 @@ func (d *DB) RecordRevision(owner, name string) (RecordRevision, bool, error) {
 // RecordList returns one row per live record of owner's, name-ordered.
 func (d *DB) RecordList(owner string) ([]Record, error) {
 	rows, err := d.sqlDB.QueryContext(context.Background(),
-		`SELECT `+recordCols+` FROM binding_record WHERE `+originScope+` AND owner = ? AND archived_at IS NULL ORDER BY name ASC`,
+		`SELECT `+recordCols+` FROM binding_record WHERE `+writerScope+` AND owner = ? AND archived_at IS NULL ORDER BY name ASC`,
 		d.origin, owner)
 	if err != nil {
 		return nil, fmt.Errorf("db: record list: %w", mapBusy(err))
@@ -171,7 +176,7 @@ func (d *DB) RecordList(owner string) ([]Record, error) {
 // key store.Binding writes MasterMindID under.
 func (d *DB) RecordListForMasterMind(owner, mastermindID string) ([]Record, error) {
 	rows, err := d.sqlDB.QueryContext(context.Background(),
-		`SELECT `+recordCols+` FROM binding_record WHERE `+originScope+` AND owner = ? AND archived_at IS NULL
+		`SELECT `+recordCols+` FROM binding_record WHERE `+writerScope+` AND owner = ? AND archived_at IS NULL
 			AND json_extract(record_json, '$.planner_id') = ? ORDER BY name ASC`,
 		d.origin, owner, mastermindID)
 	if err != nil {
@@ -189,7 +194,7 @@ func (d *DB) RecordListForMasterMind(owner, mastermindID string) ([]Record, erro
 // RecordList hide.
 func (d *DB) RecordListArchived(owner string) ([]Record, error) {
 	rows, err := d.sqlDB.QueryContext(context.Background(),
-		`SELECT `+recordCols+` FROM binding_record WHERE `+originScope+` AND owner = ? AND archived_at IS NOT NULL
+		`SELECT `+recordCols+` FROM binding_record WHERE `+writerScope+` AND owner = ? AND archived_at IS NOT NULL
 			ORDER BY archived_at ASC, name ASC`, d.origin, owner)
 	if err != nil {
 		return nil, fmt.Errorf("db: record list archived: %w", mapBusy(err))
@@ -257,7 +262,7 @@ func (d *DB) RecordCounts() (live, archived int, err error) {
 func (d *DB) RecordGetArchivedByName(owner, name string) (Record, bool, error) {
 	r, err := scanRecord(d.sqlDB.QueryRowContext(context.Background(),
 		`SELECT `+recordCols+` FROM binding_record
-			WHERE `+originScope+` AND owner = ? AND name = ? AND archived_at IS NOT NULL
+			WHERE `+writerScope+` AND owner = ? AND name = ? AND archived_at IS NOT NULL
 			ORDER BY archived_at DESC, rowid DESC LIMIT 1`, d.origin, owner, name))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, false, nil
@@ -277,16 +282,22 @@ func (t *Tx) RecordPut(r Record) (string, error) {
 		updatedAt = time.Now()
 	}
 
-	var id string
-	err := t.queryRow(`SELECT id FROM binding_record WHERE `+originScope+` AND owner = ? AND name = ? AND archived_at IS NULL`,
-		t.origin, r.Owner, r.Name).Scan(&id)
+	var id, storedWriter string
+	err := t.queryRow(`SELECT id, writer FROM binding_record WHERE `+writerScope+` AND owner = ? AND name = ? AND archived_at IS NULL`,
+		t.origin, r.Owner, r.Name).Scan(&id, &storedWriter)
 	switch {
 	case err == nil:
-		// The update stamps origin too, so a row this handle touches is scoped
-		// to this installation from then on.
-		if _, uerr := t.exec(`UPDATE binding_record SET origin = ?, owner = ?, state = ?, round = ?, cwd = ?, record_json = ?, updated_at = ?, link_origin = ?, link_id = ? WHERE id = ?`,
-			t.origin, r.Owner, r.State, r.Round, r.CWD, r.JSON, formatTime(updatedAt),
-			nullIfEmpty(r.LinkOrigin), nullIfEmpty(r.LinkID), id); uerr != nil {
+		var uerr error
+		if storedWriter == "" || storedWriter == t.origin {
+			_, uerr = t.exec(`UPDATE binding_record SET writer = ?, owner = ?, state = ?, round = ?, cwd = ?, record_json = ?, updated_at = ?, link_origin = ?, link_id = ? WHERE id = ?`,
+				t.origin, r.Owner, r.State, r.Round, r.CWD, r.JSON, formatTime(updatedAt),
+				nullIfEmpty(r.LinkOrigin), nullIfEmpty(r.LinkID), id)
+		} else {
+			_, uerr = t.exec(`UPDATE binding_record SET owner = ?, state = ?, round = ?, cwd = ?, record_json = ?, updated_at = ?, link_origin = ?, link_id = ? WHERE id = ?`,
+				r.Owner, r.State, r.Round, r.CWD, r.JSON, formatTime(updatedAt),
+				nullIfEmpty(r.LinkOrigin), nullIfEmpty(r.LinkID), id)
+		}
+		if uerr != nil {
 			return "", fmt.Errorf("db: record put %q: update: %w", r.Name, mapBusy(uerr))
 		}
 		return id, nil
@@ -298,6 +309,9 @@ func (t *Tx) RecordPut(r Record) (string, error) {
 }
 
 func (t *Tx) insertRecord(r Record, updatedAt time.Time) (string, error) {
+	if err := t.guardName(r.Name); err != nil {
+		return "", err
+	}
 	id := r.ID
 	if id == "" {
 		id = NewID()
@@ -307,10 +321,10 @@ func (t *Tx) insertRecord(r Record, updatedAt time.Time) (string, error) {
 		createdAt = updatedAt
 	}
 	if _, err := t.exec(`INSERT INTO binding_record
-			(id, owner, name, state, round, cwd, record_json, created_at, updated_at, viewed_at, archived_at, origin, link_origin, link_id)
-		VALUES (?,?,?,?,?,?,?,?,?,?,NULL,?,?,?)`,
+			(id, owner, name, state, round, cwd, record_json, created_at, updated_at, viewed_at, archived_at, origin, writer, link_origin, link_id)
+		VALUES (?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?)`,
 		id, r.Owner, r.Name, r.State, r.Round, r.CWD, r.JSON,
-		formatTime(createdAt), formatTime(updatedAt), nullableTime(r.ViewedAt), t.origin,
+		formatTime(createdAt), formatTime(updatedAt), nullableTime(r.ViewedAt), t.origin, t.origin,
 		nullIfEmpty(r.LinkOrigin), nullIfEmpty(r.LinkID)); err != nil {
 		return "", fmt.Errorf("db: record put %q: insert: %w", r.Name, mapBusy(err))
 	}
@@ -320,7 +334,7 @@ func (t *Tx) insertRecord(r Record, updatedAt time.Time) (string, error) {
 // RecordArchive takes owner's live row for name out of RecordGet and
 // RecordList. No live row is a no-op.
 func (t *Tx) RecordArchive(owner, name string, at time.Time) error {
-	if _, err := t.exec(`UPDATE binding_record SET archived_at = ? WHERE `+originScope+` AND owner = ? AND name = ? AND archived_at IS NULL`,
+	if _, err := t.exec(`UPDATE binding_record SET archived_at = ? WHERE `+writerScope+` AND owner = ? AND name = ? AND archived_at IS NULL`,
 		formatTime(at), t.origin, owner, name); err != nil {
 		return fmt.Errorf("db: record archive %s/%q: %w", owner, name, mapBusy(err))
 	}
@@ -336,13 +350,13 @@ func (t *Tx) RecordArchive(owner, name string, at time.Time) error {
 // from the parent, and in a cascade the parent is already gone, so the outbox
 // would record the delete with no origin and the exporter would never send it.
 func (t *Tx) RecordDelete(owner, name string) error {
-	scope := `SELECT id FROM binding_record WHERE ` + originScope + ` AND owner = ? AND name = ? AND archived_at IS NULL`
+	scope := `SELECT id FROM binding_record WHERE ` + writerScope + ` AND owner = ? AND name = ? AND archived_at IS NULL`
 	for _, table := range []string{"round_file", "binding_event"} {
 		if _, err := t.exec(`DELETE FROM `+table+` WHERE record_id IN (`+scope+`)`, t.origin, owner, name); err != nil {
 			return fmt.Errorf("db: record delete %s/%q: %s: %w", owner, name, table, mapBusy(err))
 		}
 	}
-	if _, err := t.exec(`DELETE FROM binding_record WHERE `+originScope+` AND owner = ? AND name = ? AND archived_at IS NULL`,
+	if _, err := t.exec(`DELETE FROM binding_record WHERE `+writerScope+` AND owner = ? AND name = ? AND archived_at IS NULL`,
 		t.origin, owner, name); err != nil {
 		return fmt.Errorf("db: record delete %s/%q: %w", owner, name, mapBusy(err))
 	}
@@ -352,7 +366,7 @@ func (t *Tx) RecordDelete(owner, name string) error {
 // RecordSetViewed stamps viewed_at on owner's live row for name. No row is a
 // no-op: a read verb must not fail because a stamp could not be written.
 func (t *Tx) RecordSetViewed(owner, name string, at time.Time) error {
-	if _, err := t.exec(`UPDATE binding_record SET viewed_at = ? WHERE `+originScope+` AND owner = ? AND name = ? AND archived_at IS NULL`,
+	if _, err := t.exec(`UPDATE binding_record SET viewed_at = ? WHERE `+writerScope+` AND owner = ? AND name = ? AND archived_at IS NULL`,
 		formatTime(at), t.origin, owner, name); err != nil {
 		return fmt.Errorf("db: record set viewed %s/%q: %w", owner, name, mapBusy(err))
 	}
@@ -403,6 +417,9 @@ func scanRecordEvent(s rowScanner) (RecordEvent, error) {
 // EventAppend inserts one event; (record_id, seq) is the primary key, so an
 // existing seq fails rather than duplicating a line.
 func (t *Tx) EventAppend(recordID string, e RecordEvent) error {
+	if err := t.guardRoot(recordID); err != nil {
+		return err
+	}
 	if _, err := t.exec(`INSERT INTO binding_event
 			(record_id, seq, ts, round, direction, kind, confirmed, delivered_at, route, entry_json)
 		VALUES (?,?,?,?,?,?,?,?,?,?)`,
@@ -416,6 +433,9 @@ func (t *Tx) EventAppend(recordID string, e RecordEvent) error {
 // EventReplaceAll replaces recordID's entire log with evs in one transaction,
 // so a failed import leaves no half of a previous log behind.
 func (t *Tx) EventReplaceAll(recordID string, evs []RecordEvent) error {
+	if err := t.guardRoot(recordID); err != nil {
+		return err
+	}
 	if _, err := t.exec(`DELETE FROM binding_event WHERE record_id = ?`, recordID); err != nil {
 		return fmt.Errorf("db: event replace %s: delete: %w", recordID, mapBusy(err))
 	}
@@ -431,6 +451,9 @@ func (t *Tx) EventReplaceAll(recordID string, evs []RecordEvent) error {
 // is non-empty, and replaces the entry's JSON with the caller's patched map, so
 // unknown keys survive.
 func (t *Tx) EventConfirm(recordID string, seq int, at time.Time, route, newJSON string) error {
+	if err := t.guardRoot(recordID); err != nil {
+		return err
+	}
 	if _, err := t.exec(`UPDATE binding_event SET confirmed = 1, delivered_at = ?, route = ?, entry_json = ? WHERE record_id = ? AND seq = ?`,
 		formatTime(at), nullIfEmpty(route), newJSON, recordID, seq); err != nil {
 		return fmt.Errorf("db: event confirm %s#%d: %w", recordID, seq, mapBusy(err))
@@ -443,6 +466,9 @@ func (t *Tx) EventConfirm(recordID string, seq int, at time.Time, route, newJSON
 // confirmed, delivered_at and route columns are untouched: a later EventConfirm
 // still writes them.
 func (t *Tx) EventAdmit(recordID string, seq int, newJSON string) error {
+	if err := t.guardRoot(recordID); err != nil {
+		return err
+	}
 	if _, err := t.exec(`UPDATE binding_event SET entry_json = ? WHERE record_id = ? AND seq = ?`,
 		newJSON, recordID, seq); err != nil {
 		return fmt.Errorf("db: event admit %s#%d: %w", recordID, seq, mapBusy(err))

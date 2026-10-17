@@ -246,6 +246,7 @@ func (v *VerbRunner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, to
 		Blobs:   v.Blobs,
 		Stopped: v.joinWasStopped,
 		Now:     time.Now,
+		Adopt:   v.adoption(verb),
 	}
 	// A transport this enable already opened is handed over rather than built
 	// again: the passphrase was verified against it, and a second worker pointed
@@ -273,6 +274,12 @@ func (v *VerbRunner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, to
 			staged.unstage()
 		}
 		return verbRefusal(verbClassify(err), err)
+	}
+	if res.Adopted != "" {
+		// The worker was opened under the identity the machine just left; the
+		// daemon builds its own, as the adopted one, when it restarts.
+		closeTransport(enabler.Transport)
+		return &wire.SyncResult{OK: true, RemoteURL: res.Remote, TokenPresent: true, Warning: AdoptedWarning(res.Adopted)}
 	}
 	client := enabler.Transport
 	if stop, ok := client.(*relevosync.StopTransport); ok {

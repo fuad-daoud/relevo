@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -287,6 +288,8 @@ func writeError(err error) error {
 		return fail(codeUsage, "%v", err)
 	case errors.Is(err, relevo.ErrRoundNotFound):
 		return fail(codeRoundNotFound, "%v", err)
+	case errors.Is(err, store.ErrHandedOver), errors.Is(err, db.ErrWriterMoved):
+		return fail(codeRefused, "%v", err)
 	case errors.Is(err, store.ErrNotFound):
 		return fail(codeBindingNotFound, "%v", err)
 	case errors.Is(err, delivery.ErrAckForeignBinding):

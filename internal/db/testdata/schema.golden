@@ -18,8 +18,17 @@ index binding_record_origin_owner_name_uidx binding_record
 CREATE UNIQUE INDEX binding_record_origin_owner_name_uidx
     ON binding_record(origin, owner, name) WHERE archived_at IS NULL
 
+index binding_record_writer_idx binding_record
+CREATE INDEX binding_record_writer_idx ON binding_record(writer)
+
+index binding_record_writer_owner_name_uidx binding_record
+CREATE UNIQUE INDEX binding_record_writer_owner_name_uidx ON binding_record(writer, owner, name) WHERE archived_at IS NULL
+
 index binding_repo_id_idx binding
 CREATE INDEX binding_repo_id_idx ON binding(repo_id)
+
+index binding_writer_idx binding
+CREATE INDEX binding_writer_idx ON binding(writer)
 
 index chain_member_binding_idx chain_member
 CREATE INDEX chain_member_binding_idx ON chain_member(binding)
@@ -147,13 +156,25 @@ index sqlite_autoindex_shared_outbox_1 shared_outbox
 index sqlite_autoindex_shared_pending_1 shared_pending
 
 
+index sqlite_autoindex_sync_binding_left_1 sync_binding_left
+
+
+index sqlite_autoindex_sync_binding_term_1 sync_binding_term
+
+
 index sqlite_autoindex_sync_epoch_cut_1 sync_epoch_cut
+
+
+index sqlite_autoindex_sync_fenced_change_1 sync_fenced_change
 
 
 index sqlite_autoindex_sync_import_mark_1 sync_import_mark
 
 
 index sqlite_autoindex_sync_signed_from_1 sync_signed_from
+
+
+index sqlite_autoindex_sync_writer_after_1 sync_writer_after
 
 
 index sqlite_autoindex_transcript_1 transcript
@@ -211,7 +232,7 @@ CREATE TABLE binding (
     archived_at TEXT,
     archive_path TEXT,
     ingest_source TEXT NOT NULL
-, ticket TEXT, origin TEXT NOT NULL DEFAULT '')
+, ticket TEXT, origin TEXT NOT NULL DEFAULT '', writer TEXT NOT NULL DEFAULT '')
 
 table binding_event binding_event
 CREATE TABLE binding_event (
@@ -241,7 +262,7 @@ CREATE TABLE binding_record (
     updated_at TEXT NOT NULL,
     viewed_at TEXT,
     archived_at TEXT
-, origin TEXT NOT NULL DEFAULT '', link_origin TEXT, link_id TEXT)
+, origin TEXT NOT NULL DEFAULT '', link_origin TEXT, link_id TEXT, writer TEXT NOT NULL DEFAULT '')
 
 table chain_check chain_check
 CREATE TABLE chain_check (
@@ -538,11 +559,40 @@ CREATE TABLE shared_pending (
 table sqlite_sequence sqlite_sequence
 CREATE TABLE sqlite_sequence(name,seq)
 
+table sync_binding_left sync_binding_left
+CREATE TABLE sync_binding_left (
+    root_id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    name TEXT NOT NULL,
+    to_writer TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    at TEXT NOT NULL
+)
+
+table sync_binding_term sync_binding_term
+CREATE TABLE sync_binding_term (
+    root_id TEXT NOT NULL,
+    writer TEXT NOT NULL,
+    upto INTEGER NOT NULL,
+    regrant_origin TEXT,
+    regrant_seq INTEGER,
+    PRIMARY KEY (root_id, writer)
+)
+
 table sync_epoch_cut sync_epoch_cut
 CREATE TABLE sync_epoch_cut (
     origin TEXT PRIMARY KEY,
     epoch INTEGER NOT NULL,
     seq INTEGER NOT NULL
+)
+
+table sync_fenced_change sync_fenced_change
+CREATE TABLE sync_fenced_change (
+    root_id TEXT NOT NULL,
+    tbl TEXT NOT NULL,
+    pk TEXT NOT NULL,
+    at TEXT NOT NULL,
+    PRIMARY KEY (root_id, tbl, pk)
 )
 
 table sync_import_mark sync_import_mark
@@ -564,6 +614,13 @@ table sync_signed_from sync_signed_from
 CREATE TABLE sync_signed_from (
     origin TEXT PRIMARY KEY,
     seq INTEGER NOT NULL
+)
+
+table sync_writer_after sync_writer_after
+CREATE TABLE sync_writer_after (
+    root_id TEXT PRIMARY KEY,
+    after_origin TEXT NOT NULL,
+    after_seq INTEGER NOT NULL
 )
 
 table transcript transcript
@@ -601,19 +658,19 @@ END
 trigger sync_outbox_artifact_del artifact
 CREATE TRIGGER sync_outbox_artifact_del AFTER DELETE ON artifact BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('artifact', json_array(OLD.id), 'delete',
-        (SELECT origin FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = OLD.round_id)));
+        (SELECT writer FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = OLD.round_id)));
 END
 
 trigger sync_outbox_artifact_ins artifact
 CREATE TRIGGER sync_outbox_artifact_ins AFTER INSERT ON artifact BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('artifact', json_array(NEW.id), 'insert',
-        (SELECT origin FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = NEW.round_id)));
+        (SELECT writer FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = NEW.round_id)));
 END
 
 trigger sync_outbox_artifact_upd artifact
 CREATE TRIGGER sync_outbox_artifact_upd AFTER UPDATE ON artifact BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('artifact', json_array(NEW.id), 'update',
-        (SELECT origin FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = NEW.round_id)));
+        (SELECT writer FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = NEW.round_id)));
 END
 
 trigger sync_outbox_availability_event_ins availability_event
@@ -623,50 +680,50 @@ END
 
 trigger sync_outbox_binding_del binding
 CREATE TRIGGER sync_outbox_binding_del AFTER DELETE ON binding BEGIN
-    INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding', json_array(OLD.id), 'delete', OLD.origin);
+    INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding', json_array(OLD.id), 'delete', OLD.writer);
 END
 
 trigger sync_outbox_binding_event_del binding_event
 CREATE TRIGGER sync_outbox_binding_event_del AFTER DELETE ON binding_event BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding_event', json_array(OLD.record_id, OLD.seq), 'delete',
-        (SELECT origin FROM binding_record WHERE id = OLD.record_id));
+        (SELECT writer FROM binding_record WHERE id = OLD.record_id));
 END
 
 trigger sync_outbox_binding_event_ins binding_event
 CREATE TRIGGER sync_outbox_binding_event_ins AFTER INSERT ON binding_event BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding_event', json_array(NEW.record_id, NEW.seq), 'insert',
-        (SELECT origin FROM binding_record WHERE id = NEW.record_id));
+        (SELECT writer FROM binding_record WHERE id = NEW.record_id));
 END
 
 trigger sync_outbox_binding_event_upd binding_event
 CREATE TRIGGER sync_outbox_binding_event_upd AFTER UPDATE ON binding_event BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding_event', json_array(NEW.record_id, NEW.seq), 'update',
-        (SELECT origin FROM binding_record WHERE id = NEW.record_id));
+        (SELECT writer FROM binding_record WHERE id = NEW.record_id));
 END
 
 trigger sync_outbox_binding_ins binding
 CREATE TRIGGER sync_outbox_binding_ins AFTER INSERT ON binding BEGIN
-    INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding', json_array(NEW.id), 'insert', NEW.origin);
+    INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding', json_array(NEW.id), 'insert', NEW.writer);
 END
 
 trigger sync_outbox_binding_record_del binding_record
 CREATE TRIGGER sync_outbox_binding_record_del AFTER DELETE ON binding_record BEGIN
-    INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding_record', json_array(OLD.id), 'delete', OLD.origin);
+    INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding_record', json_array(OLD.id), 'delete', OLD.writer);
 END
 
 trigger sync_outbox_binding_record_ins binding_record
 CREATE TRIGGER sync_outbox_binding_record_ins AFTER INSERT ON binding_record BEGIN
-    INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding_record', json_array(NEW.id), 'insert', NEW.origin);
+    INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding_record', json_array(NEW.id), 'insert', NEW.writer);
 END
 
 trigger sync_outbox_binding_record_upd binding_record
 CREATE TRIGGER sync_outbox_binding_record_upd AFTER UPDATE ON binding_record BEGIN
-    INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding_record', json_array(NEW.id), 'update', NEW.origin);
+    INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding_record', json_array(NEW.id), 'update', OLD.writer);
 END
 
 trigger sync_outbox_binding_upd binding
 CREATE TRIGGER sync_outbox_binding_upd AFTER UPDATE ON binding BEGIN
-    INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding', json_array(NEW.id), 'update', NEW.origin);
+    INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('binding', json_array(NEW.id), 'update', OLD.writer);
 END
 
 trigger sync_outbox_chain_check_del chain_check
@@ -741,19 +798,19 @@ END
 trigger sync_outbox_event_del event
 CREATE TRIGGER sync_outbox_event_del AFTER DELETE ON event BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('event', json_array(OLD.id), 'delete',
-        (SELECT origin FROM binding WHERE id = OLD.binding_id));
+        (SELECT writer FROM binding WHERE id = OLD.binding_id));
 END
 
 trigger sync_outbox_event_ins event
 CREATE TRIGGER sync_outbox_event_ins AFTER INSERT ON event BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('event', json_array(NEW.id), 'insert',
-        (SELECT origin FROM binding WHERE id = NEW.binding_id));
+        (SELECT writer FROM binding WHERE id = NEW.binding_id));
 END
 
 trigger sync_outbox_event_upd event
 CREATE TRIGGER sync_outbox_event_upd AFTER UPDATE ON event BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('event', json_array(NEW.id), 'update',
-        (SELECT origin FROM binding WHERE id = NEW.binding_id));
+        (SELECT writer FROM binding WHERE id = NEW.binding_id));
 END
 
 trigger sync_outbox_installation_del installation
@@ -809,44 +866,44 @@ END
 trigger sync_outbox_round_del round
 CREATE TRIGGER sync_outbox_round_del AFTER DELETE ON round BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('round', json_array(OLD.id), 'delete',
-        (SELECT origin FROM binding WHERE id = OLD.binding_id));
+        (SELECT writer FROM binding WHERE id = OLD.binding_id));
 END
 
 trigger sync_outbox_round_file_del round_file
 CREATE TRIGGER sync_outbox_round_file_del AFTER DELETE ON round_file BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('round_file', json_array(OLD.record_id, OLD.name), 'delete',
-        (SELECT origin FROM binding_record WHERE id = OLD.record_id));
+        (SELECT writer FROM binding_record WHERE id = OLD.record_id));
 END
 
 trigger sync_outbox_round_file_ins round_file
 CREATE TRIGGER sync_outbox_round_file_ins AFTER INSERT ON round_file BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('round_file', json_array(NEW.record_id, NEW.name), 'insert',
-        (SELECT origin FROM binding_record WHERE id = NEW.record_id));
+        (SELECT writer FROM binding_record WHERE id = NEW.record_id));
 END
 
 trigger sync_outbox_round_file_upd round_file
 CREATE TRIGGER sync_outbox_round_file_upd AFTER UPDATE ON round_file BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('round_file', json_array(NEW.record_id, NEW.name), 'update',
-        (SELECT origin FROM binding_record WHERE id = NEW.record_id));
+        (SELECT writer FROM binding_record WHERE id = NEW.record_id));
 END
 
 trigger sync_outbox_round_ins round
 CREATE TRIGGER sync_outbox_round_ins AFTER INSERT ON round BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('round', json_array(NEW.id), 'insert',
-        (SELECT origin FROM binding WHERE id = NEW.binding_id));
+        (SELECT writer FROM binding WHERE id = NEW.binding_id));
 END
 
 trigger sync_outbox_round_upd round
 CREATE TRIGGER sync_outbox_round_upd AFTER UPDATE ON round BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('round', json_array(NEW.id), 'update',
-        (SELECT origin FROM binding WHERE id = NEW.binding_id));
+        (SELECT writer FROM binding WHERE id = NEW.binding_id));
 END
 
 trigger sync_outbox_transcript_del transcript
 CREATE TRIGGER sync_outbox_transcript_del AFTER DELETE ON transcript BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('transcript', json_array(OLD.id), 'delete',
         CASE OLD.owner_kind
-            WHEN 'round' THEN (SELECT origin FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = OLD.owner_id))
+            WHEN 'round' THEN (SELECT writer FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = OLD.owner_id))
             WHEN 'mastermind' THEN (SELECT origin FROM mastermind WHERE id = OLD.owner_id)
             ELSE NULL
         END);
@@ -856,7 +913,7 @@ trigger sync_outbox_transcript_ins transcript
 CREATE TRIGGER sync_outbox_transcript_ins AFTER INSERT ON transcript BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('transcript', json_array(NEW.id), 'insert',
         CASE NEW.owner_kind
-            WHEN 'round' THEN (SELECT origin FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = NEW.owner_id))
+            WHEN 'round' THEN (SELECT writer FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = NEW.owner_id))
             WHEN 'mastermind' THEN (SELECT origin FROM mastermind WHERE id = NEW.owner_id)
             ELSE NULL
         END);
@@ -866,10 +923,10 @@ trigger sync_outbox_transcript_upd transcript
 CREATE TRIGGER sync_outbox_transcript_upd AFTER UPDATE ON transcript BEGIN
     INSERT INTO sync_outbox (tbl, pk, op, origin) VALUES ('transcript', json_array(NEW.id), 'update',
         CASE NEW.owner_kind
-            WHEN 'round' THEN (SELECT origin FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = NEW.owner_id))
+            WHEN 'round' THEN (SELECT writer FROM binding WHERE id = (SELECT binding_id FROM round WHERE id = NEW.owner_id))
             WHEN 'mastermind' THEN (SELECT origin FROM mastermind WHERE id = NEW.owner_id)
             ELSE NULL
         END);
 END
 
-schema_versions have=30 know=30
+schema_versions have=31 know=31

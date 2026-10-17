@@ -20,7 +20,11 @@ are not tables and are listed under their own heading below. Migration 029 adds
 `availability_event` and `latency_sample`, which are shared like the mirror
 tables and listed in the table below; the `availability` and `latency` kv
 documents they replaced were migrated into them and deleted, and the local marker
-`sync.history_rows.v1` records that the pass ran. The rules a
+`sync.history_rows.v1` records that the pass ran. Migration 031 adds
+`writer` to `binding_record` and `binding` (with `origin` remaining creator),
+updates the 24 outbox triggers to attribute roots by `writer`, and adds four
+machine-local tables (`sync_binding_term`, `sync_writer_after`,
+`sync_binding_left`, `sync_fenced_change`). The rules a
 migration must follow are in
 [`README.md`](README.md); the file that created a table is its history.
 
@@ -32,7 +36,7 @@ it, from migration 014.
 
 | table | what it is |
 |---|---|
-| `binding_record` | A binding as `internal/store` reads and writes it: the system of record. `origin` is a live key column, and the live uniqueness key is `(origin, owner, name)`. |
+| `binding_record` | A binding as `internal/store` reads and writes it: the system of record. `origin` is the creator and stays immutable; `writer` is the current writer (added in migration 031). The uniqueness keys are `(origin, owner, name)` on creator and `(writer, owner, name)` on writer. |
 | `chains` | A chain and its members. `origin` is a live key column, and `(origin, owner, name)` is its natural key. |
 | `binding_event` | A binding record's append-only log. No column: it inherits origin through `record_id`. |
 | `chain_event` | A chain's append-only trace. No column: it inherits origin through `chain_id`. |
@@ -42,7 +46,7 @@ it, from migration 014.
 | `installation` | The display label of every installation seen, so another machine can name the writer of a row. A projection of the installation file that sits beside the database; the file is authoritative and never syncs. |
 | mirror `repo` | A git repository relevo has seen. `origin` is part of the natural keys `(origin, origin_url)` and `(origin, common_dir)`. |
 | mirror `mastermind` | A MasterMind session relevo has seen (created as `planner` by migration 001, renamed by 008). `origin` is part of the natural key `(origin, harness_kind, session_id)`. |
-| mirror `binding` | A binding as the history and stats readers see it. `origin` is part of the natural key `(origin, name, created_at)`. |
+| mirror `binding` | A binding as the history and stats readers see it. `origin` is the creator; `writer` is the current writer (added in migration 031). `origin` is part of the natural key `(origin, name, created_at)`. |
 | mirror `round` | One round of a mirror binding. No column: it inherits origin through `binding_id`. |
 | mirror `event` | One event of a mirror binding. No column: it inherits origin through `binding_id`. |
 | mirror `artifact` | One captured file of a mirror round. No column: it inherits origin through `round_id`. |
@@ -143,6 +147,18 @@ These are the destination for the second, local-only database file.
   machine has checked, so it stays here; another installation sharing the
   table would take this machine's verification on as its own, and a cut is
   exactly the fact a remote that lost its key must not be able to hand over.
+- `sync_binding_term`: per-root writer term bounds (`root_id, writer, upto, regrant_origin, regrant_seq`),
+  recording when a writer stopped being the writer of a root so post-term writes
+  are refused. Trigger-free and machine-local.
+- `sync_writer_after`: per-root `After` causal reference (`root_id, after_origin, after_seq`),
+  recording the entry that must be imported before this machine's own writes on a
+  handed-over root. Trigger-free and machine-local.
+- `sync_binding_left`: records roots handed over or taken over from this installation
+  (`root_id, owner, name, to_writer, kind, at`), so local operations refuse to
+  act on them and reconcile skips them. Trigger-free and machine-local.
+- `sync_fenced_change`: local changes that were queued before a takeover flipped
+  the root's writer (`root_id, tbl, pk, at`), tracked locally for status
+  reporting rather than exported or deleted. Trigger-free and machine-local.
 - the installation file, `<state root>/installation.json`: this installation's
   id, label and creation stamp.
 

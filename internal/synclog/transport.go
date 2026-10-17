@@ -122,7 +122,25 @@ type LogTransport interface {
 	// sequence is forward and within the log, because which key the tag
 	// verifies under is a question about the reader, not the writer.
 	PublishEpochCut(ctx context.Context, cut EpochCut) error
+
+	// ClaimIdentity records that a machine is adopting origin's identity under
+	// token, where nobody holds a live claim: the row is written when absent,
+	// when it is the caller's own token, or when it is older than ClaimTTL at
+	// the time given. It answers with the claim the log holds afterwards, read
+	// back after the write, and the caller compares the token rather than
+	// trusting that its own write was the one that stuck: two machines racing
+	// one claim can each read their own token back before the later write
+	// lands, so the claim is read again later and a mismatch is the loss.
+	//
+	// An empty token writes nothing and only reads the claim, which is how a
+	// steady attempt checks that the identity is still its own. An origin with
+	// no claim answers with an empty winner.
+	ClaimIdentity(ctx context.Context, origin, token string, at time.Time) (winner string, claimedAt time.Time, err error)
 }
+
+// ClaimTTL is how long a claim on an identity stands against another machine's:
+// the same day AdoptionRefusal gives an identity's last activity.
+const ClaimTTL = 24 * time.Hour
 
 // KeyMeta is the passphrase material a transport holds: the KDF salt, the name
 // of the derivation, and the check value derived from the key.

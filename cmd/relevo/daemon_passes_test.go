@@ -254,8 +254,8 @@ func TestDaemonStartupJournalsAHaltSeparatelyFromASkip(t *testing.T) {
 	for _, row := range []struct{ id, stamp string }{
 		{"b-stale", ""}, {"b-live", "01ORIGIN"},
 	} {
-		if _, err := raw.Exec(`INSERT INTO binding (id, origin, name, repo_id, cwd, created_at, builder_mode, ingest_source)
-			VALUES (?, ?, 'api', NULL, '/work', ?, 'runner', 'manual')`, row.id, row.stamp, created); err != nil {
+		if _, err := raw.Exec(`INSERT INTO binding (id, origin, writer, name, repo_id, cwd, created_at, builder_mode, ingest_source)
+			VALUES (?, ?, ?, 'api', NULL, '/work', ?, 'runner', 'manual')`, row.id, row.stamp, row.stamp, created); err != nil {
 			t.Fatalf("insert %s: %v", row.id, err)
 		}
 	}

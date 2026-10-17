@@ -21,6 +21,9 @@ func parseMTime(s string) (time.Time, error) { return time.Parse(rfc3339Nano, s)
 // RoundFilePut inserts or replaces one sealed round file; (record_id, name) is
 // the primary key, so a retry writes the same bytes under the same row.
 func (t *Tx) RoundFilePut(recordID, name string, round int, body []byte, mtime, now time.Time) error {
+	if err := t.guardRoot(recordID); err != nil {
+		return err
+	}
 	// A nil body binds as SQL NULL, which the body column refuses.
 	if body == nil {
 		body = []byte{}

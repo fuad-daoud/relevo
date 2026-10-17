@@ -76,6 +76,11 @@ type ExportResult struct {
 // changes it never handed over.
 func (e *Exporter) Export() (ExportResult, error) {
 	var total ExportResult
+	ctl, err := e.exportCtl()
+	total.Appended += ctl
+	if err != nil {
+		return total, fmt.Errorf("synclog: export: %w", err)
+	}
 	for {
 		one, err := e.ExportBatch()
 		total.Drained += one.Drained
@@ -166,17 +171,39 @@ func (e *Exporter) build() ([]db.DrainedEntry, []Entry, []pendingBlob, error) {
 // A delete carries no body, so it never moves a value: there is nothing in it
 // to be too large.
 func (e *Exporter) entries(drained []db.DrainedEntry) ([]Entry, []pendingBlob, error) {
-	upserts, deletes := split(coalesce(owned(drained, e.origin)))
-	sortParentsFirst(upserts)
-	sortChildrenFirst(deletes)
-	out := make([]Entry, 0, len(upserts)+len(deletes))
-	for _, d := range deletes {
-		entry, err := NewDelete(e.origin, d.Table, d.PK, e.schema, e.now())
-		if err != nil {
-			return nil, nil, err
-		}
-		out = append(out, entry)
+	ownedRows, err := e.owned(drained)
+	if err != nil {
+		return nil, nil, err
 	}
+	upserts, deletes := split(coalesce(ownedRows))
+
+	upserts = orderUpserts(upserts, e.origin)
+	sortChildrenFirst(deletes)
+
+	afterCache := make(map[rowKey]*Ref)
+	getAfter := func(tbl, pk string) (*Ref, error) {
+		k := rowKey{table: tbl, pk: pk}
+		if ref, ok := afterCache[k]; ok {
+			return ref, nil
+		}
+		afterOrigin, afterSeq, found, err := e.db.WriterAfter(tbl, pk)
+		if err != nil {
+			return nil, err
+		}
+		var ref *Ref
+		if found {
+			ref = &Ref{Origin: afterOrigin, Seq: afterSeq}
+		}
+		afterCache[k] = ref
+		return ref, nil
+	}
+
+	delEntries, err := e.deleteEntries(deletes, getAfter)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := make([]Entry, 0, len(delEntries)+len(upserts))
+	out = append(out, delEntries...)
 	var pending []pendingBlob
 	for _, d := range upserts {
 		// A row is only rewritten when there is somewhere to write it. A
@@ -198,9 +225,65 @@ func (e *Exporter) entries(drained []db.DrainedEntry) ([]Entry, []pendingBlob, e
 		if err != nil {
 			return nil, nil, err
 		}
+		ref, err := getAfter(d.Table, d.PK)
+		if err != nil {
+			return nil, nil, err
+		}
+		if ref != nil {
+			entry = entry.WithAfter(ref)
+		}
 		out = append(out, entry)
 	}
 	return out, pending, nil
+}
+
+func (e *Exporter) deleteEntries(deletes []db.DrainedEntry, getAfter func(string, string) (*Ref, error)) ([]Entry, error) {
+	out := make([]Entry, 0, len(deletes))
+	for _, d := range deletes {
+		entry, err := NewDelete(e.origin, d.Table, d.PK, e.schema, e.now())
+		if err != nil {
+			return nil, err
+		}
+		ref, err := getAfter(d.Table, d.PK)
+		if err != nil {
+			return nil, err
+		}
+		if ref != nil {
+			entry = entry.WithAfter(ref)
+		}
+		out = append(out, entry)
+	}
+	return out, nil
+}
+
+// orderUpserts orders regular upserts first (parents before children) and
+// handover roots last (parents before children).
+func orderUpserts(upserts []db.DrainedEntry, origin string) []db.DrainedEntry {
+	var regularUpserts, handoverRoots []db.DrainedEntry
+	for _, u := range upserts {
+		if isHandoverRoot(u, origin) {
+			handoverRoots = append(handoverRoots, u)
+		} else {
+			regularUpserts = append(regularUpserts, u)
+		}
+	}
+	sortParentsFirst(regularUpserts)
+	sortParentsFirst(handoverRoots)
+	return append(regularUpserts, handoverRoots...)
+}
+
+// isHandoverRoot reports whether d is a root row whose body hands over ownership
+// to another writer.
+func isHandoverRoot(d db.DrainedEntry, origin string) bool {
+	if (d.Table != "binding_record" && d.Table != "binding") || d.Row == nil {
+		return false
+	}
+	val, ok := d.Row.Value("writer")
+	if !ok || val == nil {
+		return false
+	}
+	writer, _ := val.(string)
+	return writer != "" && writer != origin
 }
 
 // split divides the drained rows into the two kinds of entry the log carries: a
@@ -231,15 +314,40 @@ func split(rows []db.DrainedEntry) (upserts, deletes []db.DrainedEntry) {
 // appended: an entry for it would travel back to the machine that wrote it, and
 // would be applied here a second time. Skipping it is what stops an imported row
 // from echoing across the log.
-func owned(drained []db.DrainedEntry, origin string) []db.DrainedEntry {
+//
+// Additionally, for rows whose root carries a takeover fence against this
+// installation, the change is moved to sync_fenced_change and dropped (C1).
+func (e *Exporter) owned(drained []db.DrainedEntry) ([]db.DrainedEntry, error) {
 	var out []db.DrainedEntry
+	fencedCache := make(map[string]bool)
 	for _, d := range drained {
-		if !d.Origin.Valid || d.Origin.String != origin {
+		if !d.Origin.Valid || d.Origin.String != e.origin {
 			continue
+		}
+		rootID, found, err := e.db.ResolveRoot(d.Table, d.PK)
+		if err != nil {
+			return nil, err
+		}
+		if found && rootID != "" {
+			fenced, ok := fencedCache[rootID]
+			if !ok {
+				f, err := e.db.IsTakeoverFenced(rootID)
+				if err != nil {
+					return nil, err
+				}
+				fenced = f
+				fencedCache[rootID] = fenced
+			}
+			if fenced {
+				if err := e.db.RecordFencedChange(rootID, d.Table, d.PK, e.now()); err != nil {
+					return nil, err
+				}
+				continue
+			}
 		}
 		out = append(out, d)
 	}
-	return out
+	return out, nil
 }
 
 // rowKey names the row one drained entry is about, so repeats of the same row

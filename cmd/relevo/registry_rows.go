@@ -352,8 +352,8 @@ var registry = []verbEntry{
 		Summary: "turn sync on for this machine: join with a code from db sync invite (--join-stdin), or name a remote with --url and --token-stdin",
 		Args: "[--url URL] [--token-stdin] [--passphrase-stdin] [--join-stdin] " +
 			"[--r2-endpoint URL] [--r2-bucket NAME] [--r2-key-id ID] [--r2-secret-stdin] " +
-			"[--yes] [--timeout D] [--json]",
-		Flags: []string{"--join-stdin", "--json", "--passphrase-stdin", "--r2-bucket", "--r2-endpoint",
+			"[--as INSTALLATION] [--yes] [--timeout D] [--json]",
+		Flags: []string{"--as", "--join-stdin", "--json", "--passphrase-stdin", "--r2-bucket", "--r2-endpoint",
 			"--r2-key-id", "--r2-secret-stdin", "--timeout", "--token-stdin", "--url", "--yes"},
 		Output: "json:DbSyncOutcomeDoc",
 		Exit:   []int{0, 1, 2},
@@ -457,6 +457,15 @@ var registry = []verbEntry{
 		Output:  "json:[]GateRow; set/clear: GateDoc",
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"internal", "not_available", "policy_refused", "usage"},
+	},
+	{
+		Name:    "handover",
+		Summary: "give a binding to another machine: push its branch, release the tree, flip the writer",
+		Args:    "NAME --to MACHINE [--remote R] [--json]",
+		Flags:   []string{"--json", "--name", "--remote", "--to"},
+		Output:  "json:HandoverDoc",
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"binding_not_found", "internal", "refused", "usage"},
 	},
 	{
 		Name:    "help",
@@ -740,6 +749,15 @@ var registry = []verbEntry{
 		Output:  "json:StopDoc",
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"binding_not_found", "internal", "usage"},
+	},
+	{
+		Name:    "takeover",
+		Summary: "make this machine the writer of a binding another machine writes",
+		Args:    "NAME --force [--json]",
+		Flags:   []string{"--force", "--json", "--name"},
+		Output:  "json:TakeoverDoc",
+		Exit:    []int{0, 1, 2},
+		Errors:  []string{"binding_not_found", "internal", "refused", "usage"},
 	},
 	{
 		Name:    "ui",

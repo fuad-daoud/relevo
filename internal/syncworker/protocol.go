@@ -22,7 +22,10 @@ import (
 // older version and a worker on this one refuse each other here rather than
 // discovering the difference at the first key_rekey, which would be after one
 // side had already answered from material the other cannot read.
-const ProtocolVersion = 3
+//
+// Version 4 adds AfterOrigin and AfterSeq on Entry, ClaimIdentity, and the
+// ctl:takeover entry kind.
+const ProtocolVersion = 4
 
 // The refusals the worker answers with rather than dying over. A request that
 // breaks one of them has a well-formed frame around it, so the reply can carry
@@ -93,6 +96,9 @@ const (
 	// passphrase -- or whose own head has grown past the cut it holds --
 	// vouches for the tail it appended before it learned of the rekey.
 	VerbKeyCut Verb = "key_cut"
+	// VerbClaim records, and reads back, the claim a machine adopting an
+	// identity holds on it. A request with no claim token only reads.
+	VerbClaim Verb = "claim_identity"
 	// VerbShutdown ends the pipe after its reply.
 	VerbShutdown Verb = "shutdown"
 )
@@ -243,6 +249,9 @@ type Request struct {
 	// stores them only where the origin has no boundary yet.
 	BoundarySeq int    `json:"boundary_seq,omitempty"`
 	BoundaryTag []byte `json:"boundary_tag,omitempty"`
+	// ClaimToken is the random token a claim_identity writes for the identity
+	// Origin names, at At. Empty reads the claim without writing one.
+	ClaimToken string `json:"claim_token,omitempty"`
 }
 
 // Response is one line of the pipe, from the worker to the daemon.
@@ -286,6 +295,10 @@ type Response struct {
 	// KeyMeta is what a key_meta read and a key_init wrote, and is nil on a remote
 	// that holds no passphrase material at all.
 	KeyMeta *KeyMeta `json:"key_meta,omitempty"`
+	// ClaimToken and ClaimAt are the claim a claim_identity found the remote
+	// holding after its write: empty and zero when it holds none.
+	ClaimToken string     `json:"claim_token,omitempty"`
+	ClaimAt    *time.Time `json:"claim_at,omitempty"`
 }
 
 // RefusalCode is the class of a refusal the worker answered with. It is the
@@ -399,6 +412,10 @@ type Entry struct {
 	// entry written before this machine had a key. It travels as base64, which
 	// is what encoding/json does with a byte slice.
 	MAC []byte `json:"mac,omitempty"`
+	// AfterOrigin and AfterSeq point at the entry in another origin's log that
+	// this entry depends on. They are empty/zero for an entry with no dependency.
+	AfterOrigin string `json:"after_origin,omitempty"`
+	AfterSeq    int    `json:"after_seq,omitempty"`
 }
 
 // HeadRow is one row of an origin's head: the latest state of a single shared

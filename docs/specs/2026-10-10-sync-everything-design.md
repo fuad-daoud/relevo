@@ -87,7 +87,7 @@ reconcile.
 
 `SCOPES.md` is rewritten to match this table in the step that changes each row.
 
-## 3. Ownership and hand-over (step 6)
+## 3. Ownership and hand-over (step 6, built)
 
 **Schema.** `binding_record` and `binding` gain `writer TEXT NOT NULL`, set to
 `origin` by the migration. Child rows get no column; they resolve their
@@ -108,7 +108,8 @@ involved.
 **`relevo handover <name> --to <machine>`**, run on the current writer:
 1. Refused while a round is open, or while the binding is a member of a
    running chain.
-2. Pushes the branch and releases the worktree, as `relevo done` does.
+2. Pushes the branch (`relevo done` does not push; the verb does) and releases
+   the worktree as `relevo done` does.
 3. Sets `writer` on the binding's root rows, in one transaction. This is an
    ordinary change by the current writer and travels in its log.
 4. The binding shows as handed over locally; `send` and `bind --resume` on it
@@ -125,11 +126,41 @@ that binding with seq > N are refused. If the old machine comes back, its
 importer applies the takeover, its exporter stops emitting the binding, and
 `db sync status` reports any local changes that were fenced off.
 
-**`relevo db sync enable --as <installation>`** recovers a whole machine by
-adopting the dead machine's identity. It's refused if that origin appended
-anything or published a mark in the last 24 hours, and it asks for
-confirmation. After adoption the machine joins as usual: its own rows come
-back as its own, and reconcile repairs anything missing.
+**`relevo db sync enable --as <installation> --yes`** recovers a whole machine
+by adopting the dead machine's identity. It is refused if that origin appended
+anything or published a mark in the last 24 hours, if another machine holds a
+live claim on it, or if the machine has changes or shared rows of its own.
+Nothing reaches the remote under any id but the adopted one, and nothing
+reaches it under that id until its log has been imported in full: the join
+runs only as far as its import under the machine's temporary identity, the
+claim is read again, and then one swap drops the temporary identity, rewrites
+the installation file and sets the own head. The daemon reads its origin at
+open, so sync stays off until the owner restarts it and runs `enable` again,
+which resumes the join as the adopted identity. The claim carries the
+adopter's random token, is read back after the push, and is compared on every
+steady attempt; a mismatch stops export and import and `db sync status` says
+another machine adopted the identity. An adoption interrupted between the
+database swap and the installation file finishes when `enable --as` is run
+again.
+
+**Known limits (step 6).**
+- A takeover fences what the taker had not imported, not what other machines
+  had. A machine that applied the old writer's entries above N before it saw
+  the takeover keeps them; every machine that sees the takeover first refuses
+  them, as a "writer moved" drop.
+- The old writer learns what was fenced when it applies the takeover: queued
+  changes and the entries it had already exported above N are both counted in
+  `db sync status`. That count reads its own log through the transport inside
+  the import transaction, once per takeover.
+- Adoption's 24-hour window and its claim read heads, marks and the claim row
+  from the remote and judge them by the joiner's clock. A hostile remote, or a
+  joiner with a forged clock, can adopt a live identity; the claim token finds
+  the double adoption on the next steady attempt. Signing the claim into the
+  log would close this and is not built.
+- **Rollout:** the remote log moves to format 4, which a build from before this
+  step cannot read: it refuses the remote ("not a relevo sync log") and latches,
+  without writing anything. Every machine is upgraded together, and a hand-over
+  is refused until the target has written at schema 31.
 
 ## 4. Shared docs (step 3)
 
@@ -772,7 +803,7 @@ Each step is one PR with sandbox evidence before merge.
    `--join` and the doctor login rows (built). 5b: `rekey` with key epochs,
    the cuts, the wrapped chain and the v2 secrets envelope (built).
 6. **Ownership.** The `writer` column, `handover`, `takeover`,
-   `enable --as`.
+   `enable --as` (built).
 
 ## 13. Settled and open questions
 

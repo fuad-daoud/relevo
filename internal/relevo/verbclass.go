@@ -91,6 +91,13 @@ func verbClassify(err error) string {
 	case errors.Is(err, db.ErrLocked):
 		return wire.SyncCodeRemoteUnreachable
 	case errors.Is(err, db.ErrInvalid),
+		errors.Is(err, db.ErrAdoptionDirty),
+		errors.Is(err, relevosync.ErrAdoptionLive),
+		errors.Is(err, relevosync.ErrAdoptionStampAhead),
+		errors.Is(err, relevosync.ErrAdoptionSelf),
+		errors.Is(err, relevosync.ErrAdoptionClaimed),
+		errors.Is(err, relevosync.ErrAdoptionIncomplete),
+		errors.Is(err, relevosync.ErrIdentityTaken),
 		errors.Is(err, relevosync.ErrStopped),
 		errors.Is(err, relevosync.ErrEnableStopped):
 		// A stop is what a disable asked for, so the enable or one-shot it

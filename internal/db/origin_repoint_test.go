@@ -156,8 +156,8 @@ func seedBinding(t *testing.T, d *DB, id, stamp, name, repoID, createdAt string)
 	if repoID != "" {
 		repo = repoID
 	}
-	if _, err := d.sqlDB.Exec(`INSERT INTO binding (id, origin, name, repo_id, cwd, created_at, builder_mode, ingest_source)
-		VALUES (?, ?, ?, ?, '/work', ?, 'runner', 'manual')`, id, stamp, name, repo, createdAt); err != nil {
+	if _, err := d.sqlDB.Exec(`INSERT INTO binding (id, origin, writer, name, repo_id, cwd, created_at, builder_mode, ingest_source)
+		VALUES (?, ?, ?, ?, ?, '/work', ?, 'runner', 'manual')`, id, stamp, stamp, name, repo, createdAt); err != nil {
 		t.Fatalf("insert the %s binding: %v", id, err)
 	}
 }
@@ -350,9 +350,9 @@ func TestBackfillRepointsRoundsAndEventsOntoTheLiveBinding(t *testing.T) {
 	seedBinding(t, d, "b-live", repointOrigin, "api", "", repointSeen)
 	seedRound(t, d, "rd-1", "b-stale")
 	seedEvent(t, d, "ev-1", "b-stale", "rd-1")
-	if _, err := d.sqlDB.Exec(`INSERT INTO binding (id, origin, name, forked_from_binding_id, cwd, created_at, builder_mode, ingest_source)
-		VALUES ('b-fork', ?, 'api-fork', 'b-stale', '/work', '2026-10-01T10:00:00.000Z', 'runner', 'manual')`,
-		repointOrigin); err != nil {
+	if _, err := d.sqlDB.Exec(`INSERT INTO binding (id, origin, writer, name, forked_from_binding_id, cwd, created_at, builder_mode, ingest_source)
+		VALUES ('b-fork', ?, ?, 'api-fork', 'b-stale', '/work', '2026-10-01T10:00:00.000Z', 'runner', 'manual')`,
+		repointOrigin, repointOrigin); err != nil {
 		t.Fatalf("insert the forked binding: %v", err)
 	}
 

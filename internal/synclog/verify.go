@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 )
@@ -116,10 +117,33 @@ func (i *Importer) loadCuts(state MarkState) error {
 	return nil
 }
 
+// requiresSigned reports whether an entry must carry a valid signature under rule 6:
+// rules 3 and 5, any After-bearing entry, or any ctl: entry.
+func requiresSigned(e Entry) bool {
+	if e.After != nil || strings.HasPrefix(e.Table, "ctl:") {
+		return true
+	}
+	if (e.Table == "binding" || e.Table == "binding_record") && e.Op == OpUpsert {
+		if body, err := DecodeBody(e.Body); err == nil {
+			if w, ok := body["writer"].(string); ok && w != "" && w != e.Origin {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // verify checks one origin's entries as pulled, before any ref is resolved. A
-// locked machine verifies nothing.
+// locked machine verifies nothing, unless entries require signatures (rule 6).
 func (i *Importer) verify(origin string, entries []Entry) error {
 	if len(i.key) == 0 {
+		for _, e := range entries {
+			if requiresSigned(e) {
+				return &HoldError{
+					Reason: fmt.Sprintf("origin %q requires a key to apply hand-over or cross-log entries", origin),
+				}
+			}
+		}
 		return nil
 	}
 	if err := i.badBoundary[origin]; err != nil {
@@ -131,6 +155,9 @@ func (i *Importer) verify(origin string, entries []Entry) error {
 	for _, e := range entries {
 		if IsDocTable(e.Table) && len(e.MAC) == 0 {
 			return &signatureError{fmt.Sprintf("doc entry %d from %q is unsigned; a document is only taken from a signed entry", e.Seq, origin)}
+		}
+		if requiresSigned(e) && len(e.MAC) == 0 {
+			return &signatureError{fmt.Sprintf("entry %d from %q requires a signature but is unsigned", e.Seq, origin)}
 		}
 	}
 	from, signs := i.signedFrom[origin]
@@ -148,6 +175,9 @@ func (i *Importer) verify(origin string, entries []Entry) error {
 	for _, e := range entries {
 		if len(e.MAC) == 0 && signs && e.Seq >= from {
 			return &signatureError{fmt.Sprintf("entry %d from %q is unsigned but %q signs from %d", e.Seq, origin, origin, from)}
+		}
+		if requiresSigned(e) && signs && e.Seq < from {
+			return &signatureError{fmt.Sprintf("entry %d from %q is in unsigned region before %d", e.Seq, origin, from)}
 		}
 	}
 	return nil
