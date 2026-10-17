@@ -763,6 +763,46 @@ func TestHandoverLandingOnTargetQueuesNothing(t *testing.T) {
 	}
 }
 
+// TestImportedDeleteQueuesNothingOnTarget pins the other half of C2: a hand-over's
+// delete reaches the target, the delete trigger attributes the row to OLD.writer,
+// which on the target is this machine, and the discard has to take that echo out
+// too. Restricting the discard to the upsert path leaves the row in the target's
+// outbox, and the target re-exports a change it only ever received.
+func TestImportedDeleteQueuesNothingOnTarget(t *testing.T) {
+	t.Parallel()
+	peer, path := peerFile(t, "m2")
+	know := knownVersion(t, peer)
+	seed(t, path,
+		`INSERT INTO binding_record (id, owner, name, state, round, cwd, record_json, created_at, updated_at, origin, writer)
+		 VALUES ('b1', 'o1', 'b1', 'open', 1, '/z', '{}', 't', 't', 'm1', 'm2')`,
+		insertRoundFile("b1", "f1", 1),
+		`INSERT INTO sync_binding_term (root_id, writer, upto) VALUES ('b1', 'm1', 10)`,
+	)
+	// The seed queued the inserts; a target that has already applied this tree
+	// starts the import with an empty outbox.
+	seed(t, path, `DELETE FROM sync_outbox`)
+
+	log := NewMemTransport("m1")
+	del := makeSignedEntry(t, handoverKey, "m1", "round_file", `["b1","f1"]`, OpDelete, know, nil, nil)
+	appendSignedBatch(t, log, handoverKey, del)
+
+	imp := NewImporter(peer, log.OnLog("m2"))
+	imp.SetKey(handoverKey)
+	res, err := imp.Import()
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if res.Applied != 1 {
+		t.Fatalf("Applied = %d, want 1; res = %+v", res.Applied, res)
+	}
+	if rows := sharedRows(t, peer); strings.Contains(rows, `round_file ["b1","f1"]`) {
+		t.Fatalf("peer still holds the deleted row: %s", rows)
+	}
+	if count := targetOutboxCount(t, peer); count != 0 {
+		t.Fatalf("target outbox count after imported delete = %d, want 0", count)
+	}
+}
+
 func TestEntryWithAfterNil(t *testing.T) {
 	e := Entry{After: &Ref{Origin: "m1", Seq: 1}}.WithAfter(nil)
 	if e.After != nil {
