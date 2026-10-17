@@ -2129,6 +2129,8 @@ opencode does not support `read` or `edit` tiers because it has no read-only or 
 
 codex does not support the `read` tier: `-s read-only` cannot write the report, marker, question and findings files relevo stages under `~/.local/state/relevo/<binding>/out/`, and codex ignores `writable_roots` under read-only. Choosing `read` for a codex candidate is refused with an error directing you to `--tier edit` or `--tier harness`. At `edit` relevo adds the binding's `out/` directory as a writable root; that is the only path outside the worktree the sandbox lets the builder write.
 
+For agy at `read` and `edit`, relevo stages a copy of the round prompt under `<binding>/out/` (`.NNN-prompt.md`) and points the launch prompt to it, since agy's sandbox restricts reads to the worktree and `out/`.
+
 ### Ceiling semantics and ordering
 
 Tiers are ordered as `read < edit < yolo`. `harness` is outside this hierarchy and is never compared as above or below other tiers.
