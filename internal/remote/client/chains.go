@@ -126,6 +126,13 @@ func (c *Client) ChainResume(ctx context.Context, server, name string, req remot
 }
 
 // ChainDone marks a chain done; it does not retry, matching the binding Done.
-func (c *Client) ChainDone(ctx context.Context, server, name string) error {
-	return postOnce(ctx, c, server, fmt.Sprintf("/v1/chains/%s/done", url.PathEscape(name)))
+func (c *Client) ChainDone(ctx context.Context, server, name string) (remote.ChainView, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	path := fmt.Sprintf("/v1/chains/%s/done", url.PathEscape(name))
+	resp, err := c.do(ctx, server, "POST", path, nil, nil, "")
+	if err != nil {
+		return remote.ChainView{}, err
+	}
+	return decodeJSON[remote.ChainView](resp, "decode chain view")
 }

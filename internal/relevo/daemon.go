@@ -659,11 +659,10 @@ func sealRounds(st *store.Store, tx *store.Tx, b store.Binding, artifactMaxBytes
 
 	// A DONE binding is finished: once its rounds are sealed and the directory
 	// holds nothing else -- no round file left to seal, no non-NNN file -- the
-	// empty directory goes too, so a finished binding
-	// leaves nothing on disk. os.Remove, never RemoveAll: anything still in
-	// there means the directory stays. The error is ignored, like every other
-	// failure in this pass.
-	if b.State == store.StateDone {
+	// empty directory goes too, provided its worktree was not kept on disk.
+	// os.Remove, never RemoveAll: anything still in there means the directory
+	// stays. The error is ignored, like every other failure in this pass.
+	if b.State == store.StateDone && !worktreeKept(b.Worktree) {
 		// An emptied out/ goes before the binding directory that holds it, so
 		// a finished binding leaves nothing on disk.
 		if entries, rerr := os.ReadDir(st.OutDir(b.Name)); rerr == nil && len(entries) == 0 {
@@ -674,6 +673,14 @@ func sealRounds(st *store.Store, tx *store.Tx, b store.Binding, artifactMaxBytes
 		}
 	}
 	return sealed
+}
+
+func worktreeKept(wt string) bool {
+	if wt == "" {
+		return false
+	}
+	_, err := os.Lstat(wt)
+	return !errors.Is(err, os.ErrNotExist)
 }
 
 // safely runs one of Tick's non-binding phases, recovering a panic so that a

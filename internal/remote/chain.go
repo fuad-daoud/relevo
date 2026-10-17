@@ -140,6 +140,8 @@ type ChainView struct {
 	Trace           []ChainEventView  `json:"trace,omitempty"`
 	Workflow        json.RawMessage   `json:"workflow,omitempty"`
 	State           json.RawMessage   `json:"state,omitempty"`
+	WorktreeKept    string            `json:"worktree_kept,omitempty"`
+	KeptReason      string            `json:"kept_reason,omitempty"`
 }
 
 // ChainResumeRequest is the body of POST /v1/chains/{name}/resume. A nil

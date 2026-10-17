@@ -440,7 +440,7 @@ func (s *Server) handleDone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = relevo.Done(r.Context(), rt, name)
+	res, err := relevo.Done(r.Context(), rt, name)
 	if err != nil {
 		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "round") && strings.Contains(errStr, "open") {
@@ -468,7 +468,10 @@ func (s *Server) handleDone(w http.ResponseWriter, r *http.Request) {
 		b = reloaded
 	}
 	entries, _ = rt.Store.ReadLog(name)
-	writeJSON(w, http.StatusOK, s.servedView(rt, b, entries))
+	view := s.servedView(rt, b, entries)
+	view.WorktreeKept = res.WorktreeKept
+	view.KeptReason = res.KeptReason
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {

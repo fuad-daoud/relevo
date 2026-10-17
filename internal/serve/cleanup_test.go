@@ -460,3 +460,91 @@ func TestTickPruneKeepsAnOwnerDirAPendingBindPinned(t *testing.T) {
 		t.Errorf("owner repo dir %s stat err = %v, want it kept for the pinned bind", ownerRepoDir, err)
 	}
 }
+
+func TestCollectSettledDirtyWorktreeSurvivesTick(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	dirtyBare, dirtyWT := seedServedBinding(t, env, "dirty", store.ServeFacts{
+		RepoID:      env.repoID,
+		ClosedRound: 1,
+		AckedRound:  1,
+	})
+	cleanBare, cleanWT := seedServedBinding(t, env, "clean", store.ServeFacts{
+		RepoID:      env.repoID,
+		ClosedRound: 1,
+		AckedRound:  1,
+	})
+
+	untracked := filepath.Join(dirtyWT, "uncommitted.txt")
+	if err := os.WriteFile(untracked, []byte("dirty content\n"), 0o644); err != nil {
+		t.Fatalf("write untracked file: %v", err)
+	}
+
+	base := env.srv.cfg.Now
+	env.srv.cfg.Now = func() time.Time { return base().Add(2 * time.Hour) }
+
+	if err := env.srv.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	rt := env.runtime(t)
+	bindings, err := rt.Store.List()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	names := map[string]bool{}
+	for _, b := range bindings {
+		names[b.Name] = true
+	}
+	if !names["dirty"] {
+		t.Error("dirty settled binding was collected; want it surviving the tick")
+	}
+	if names["clean"] {
+		t.Error("clean settled twin is still in List; want it collected")
+	}
+
+	archived, err := rt.Store.ListArchived()
+	if err != nil {
+		t.Fatalf("list archived: %v", err)
+	}
+	for _, rec := range archived {
+		if rec.Binding.Name == "dirty" {
+			t.Error("dirty binding was archived; want it live")
+		}
+	}
+	assertDirtySurvived(t, ctx, env, dirtyBare, dirtyWT, untracked)
+
+	if _, err := os.Stat(cleanWT); !os.IsNotExist(err) {
+		t.Errorf("clean worktree still present (stat err = %v); want it removed", err)
+	}
+	requireRefGone(t, ctx, env.gitClient, cleanBare, "refs/heads/relevo/clean")
+	cleanRefs, err := env.gitClient.ListRefs(ctx, cleanBare, "refs/relevo/clean/")
+	if err != nil {
+		t.Fatalf("list clean refs: %v", err)
+	}
+	if len(cleanRefs) != 0 {
+		t.Errorf("clean refs/relevo/clean/* = %v; want none", cleanRefs)
+	}
+	requireArchived(t, rt, "clean")
+}
+
+// assertDirtySurvived pins that a skipped dirty binding kept its worktree,
+// its uncommitted file, its branch and its relevo refs.
+func assertDirtySurvived(t *testing.T, ctx context.Context, env *testEnv, bare, wt, untracked string) {
+	t.Helper()
+	if _, err := os.Stat(wt); err != nil {
+		t.Errorf("dirty worktree stat = %v; want it present", err)
+	}
+	if got, err := os.ReadFile(untracked); err != nil || string(got) != "dirty content\n" {
+		t.Errorf("untracked file = %q, %v; want it intact", got, err)
+	}
+	requireRefPresent(t, ctx, env.gitClient, bare, "refs/heads/relevo/dirty")
+	refs, err := env.gitClient.ListRefs(ctx, bare, "refs/relevo/dirty/")
+	if err != nil {
+		t.Fatalf("list dirty refs: %v", err)
+	}
+	if len(refs) == 0 {
+		t.Error("refs/relevo/dirty/* missing; want them kept")
+	}
+}
