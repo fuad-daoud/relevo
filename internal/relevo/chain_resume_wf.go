@@ -7,11 +7,15 @@ import (
 	"fmt"
 	"io/fs"
 	"strconv"
+	"time"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
+
+var chainResumePostWriteHook func(tx *store.Tx, c db.ChainRow) error
 
 // chainResumeWorkflow continues a halted or stopped workflow chain: it
 // re-enters the step the engine is on -- or the one --from names -- applies
@@ -94,102 +98,14 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	// A human has looked at the plan: every budget starts fresh, exactly as a
 	// resume resets the correction count on the fixed state machine.
 	before.Visits = map[string]int{}
-	if err := supersedeChainDelivery(rt, c); err != nil {
-		return ChainResult{}, err
-	}
 
 	var out ChainResult
 	err = rt.Store.WithLock(func(tx *store.Tx) error {
-		row, err := tx.Chain(opts.Name)
-		if err != nil {
-			return err
+		res, lerr := chainResumeLocked(ctx, rt, tx, opts, def, before, from, set, merged)
+		if lerr != nil {
+			return lerr
 		}
-		if err := resumeRefusal(row); err != nil {
-			return err
-		}
-		// A fork whose children have all ended done re-enters its join here,
-		// rather than falling through to a resume that would re-enter the fork
-		// step and start the children a second time. A fork with a child still
-		// standing was already refused above.
-		if handled, res, err := chainForkResumeParent(ctx, rt, tx, row, def, before); err != nil {
-			return err
-		} else if handled {
-			out = res
-			return nil
-		}
-		if len(merged) > 0 {
-			if row, err = chainResumeAddMembers(ctx, rt, tx, row, def); err != nil {
-				return err
-			}
-		}
-		settingsJSON, err := json.Marshal(set)
-		if err != nil {
-			return fmt.Errorf("encode chain %s settings: %w", row.Name, err)
-		}
-		row.SettingsJSON = settingsJSON
-		closed, err := chainResumeClosed(ctx, rt, tx, row, before)
-		if err != nil {
-			return err
-		}
-		resumed, acts, err := workflow.Resume(def, before, workflow.ResumeOpts{From: from, Closed: closed})
-		if err != nil {
-			return refuse("%v", err)
-		}
-		// The target member's own round must be closed before anything is
-		// written: starting a new one would overwrite the round in flight.
-		for _, act := range acts {
-			if act.Kind != workflow.ActionSend {
-				continue
-			}
-			if name, merr := chainFlowMemberName(tx, row, act.Actor); merr == nil {
-				if rerr := resumeOpenRoundRefusal(tx, row, name); rerr != nil {
-					return rerr
-				}
-			}
-			break
-		}
-		defJSON, err := json.Marshal(def)
-		if err != nil {
-			return fmt.Errorf("encode chain workflow: %w", err)
-		}
-		row.WorkflowJSON = defJSON
-		row.Status = string(resumed.Status)
-		stateJSON, err := json.Marshal(resumed)
-		if err != nil {
-			return fmt.Errorf("encode chain state: %w", err)
-		}
-		row.StateJSON = stateJSON
-		applyChainLegacy(&row, def, resumed)
-		row.UpdatedAt = rt.Now().UTC()
-		if err := tx.ChainPut(row); err != nil {
-			return err
-		}
-		// The one definition of a gate change, the reroute's own: --gate and
-		// --no-gate, the --param that fills the same slot, and the wire's own
-		// gate field all count, so a staged prompt whose bytes name a replaced
-		// check is walked back whichever way the gate was named.
-		gateChanged := chainResumeChangesGate(opts)
-		for _, act := range acts {
-			if err := chainResumeRunAction(ctx, rt, tx, row, def, before, &resumed, act, gateChanged); err != nil {
-				return err
-			}
-		}
-		members, err := chainFlowStoredMembers(tx, row)
-		if err != nil {
-			return err
-		}
-		// The run actions opened the resumed round; the result carries the row
-		// as the store now holds it.
-		if current, cerr := tx.Chain(opts.Name); cerr == nil {
-			row = current
-		}
-		// A child that is running again re-opens the parent it halted, in the
-		// same transaction, so the parent is never left waiting on a child that
-		// has already moved.
-		if err := chainForkParentReopen(rt, tx, row); err != nil {
-			return err
-		}
-		out = ChainResult{Chain: row, Members: members, Plans: len(before.Iter["plans"].Items)}
+		out = res
 		return nil
 	})
 	if err != nil {
@@ -214,6 +130,104 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 		}
 	}
 	return out, nil
+}
+
+func chainResumeCommitRow(tx *store.Tx, row *db.ChainRow, def workflow.Definition, resumed workflow.State, now time.Time) error {
+	defJSON, err := json.Marshal(def)
+	if err != nil {
+		return fmt.Errorf("encode chain workflow: %w", err)
+	}
+	row.WorkflowJSON = defJSON
+	row.Status = string(resumed.Status)
+	stateJSON, err := json.Marshal(resumed)
+	if err != nil {
+		return fmt.Errorf("encode chain state: %w", err)
+	}
+	row.StateJSON = stateJSON
+	applyChainLegacy(row, def, resumed)
+	row.UpdatedAt = now
+	return tx.ChainPut(*row)
+}
+
+// chainResumeLocked performs the atomic state mutation under the store lock.
+func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts ResumeOptions, def workflow.Definition, before workflow.State, from string, set chain.Settings, merged map[string]string) (ChainResult, error) {
+	row, err := tx.Chain(opts.Name)
+	if err != nil {
+		return ChainResult{}, err
+	}
+	if err := resumeRefusal(row); err != nil {
+		return ChainResult{}, err
+	}
+	if handled, res, err := chainForkResumeParent(ctx, rt, tx, row, def, before); err != nil {
+		return ChainResult{}, err
+	} else if handled {
+		return res, nil
+	}
+	snap, err := newChainResumeSnapshot(tx, row)
+	if err != nil {
+		return ChainResult{}, err
+	}
+	toConfirm, err := collectPendingChainDeliveries(tx, row)
+	if err != nil {
+		return ChainResult{}, err
+	}
+	settingsJSON, err := json.Marshal(set)
+	if err != nil {
+		return ChainResult{}, fmt.Errorf("encode chain %s settings: %w", row.Name, err)
+	}
+	row.SettingsJSON = settingsJSON
+	closed, err := chainResumeClosed(ctx, rt, tx, row, before)
+	if err != nil {
+		return ChainResult{}, err
+	}
+	resumed, acts, err := workflow.Resume(def, before, workflow.ResumeOpts{From: from, Closed: closed})
+	if err != nil {
+		return ChainResult{}, refuse("%v", err)
+	}
+	if len(merged) > 0 {
+		if row, err = chainResumeAddMembers(ctx, rt, tx, row, def, snap); err != nil {
+			return ChainResult{}, snap.restore(tx, err)
+		}
+	}
+	for _, act := range acts {
+		if act.Kind != workflow.ActionSend {
+			continue
+		}
+		if name, merr := chainFlowMemberName(tx, row, act.Actor); merr == nil {
+			if rerr := resumeOpenRoundRefusal(tx, row, name); rerr != nil {
+				return ChainResult{}, snap.restore(tx, rerr)
+			}
+		}
+		break
+	}
+	if err := chainResumeCommitRow(tx, &row, def, resumed, rt.Now().UTC()); err != nil {
+		return ChainResult{}, snap.restore(tx, err)
+	}
+	if chainResumePostWriteHook != nil {
+		if err := chainResumePostWriteHook(tx, row); err != nil {
+			return ChainResult{}, snap.restore(tx, err)
+		}
+	}
+	gateChanged := chainResumeChangesGate(opts)
+	for _, act := range acts {
+		if err := chainResumeRunAction(ctx, rt, tx, row, def, before, &resumed, act, gateChanged); err != nil {
+			return ChainResult{}, snap.restore(tx, err)
+		}
+	}
+	if err := confirmPendingChainDeliveries(tx, toConfirm); err != nil {
+		return ChainResult{}, snap.restore(tx, err)
+	}
+	members, err := chainFlowStoredMembers(tx, row)
+	if err != nil {
+		return ChainResult{}, snap.restore(tx, err)
+	}
+	if current, cerr := tx.Chain(opts.Name); cerr == nil {
+		row = current
+	}
+	if err := chainForkParentReopen(rt, tx, row); err != nil {
+		return ChainResult{}, snap.restore(tx, err)
+	}
+	return ChainResult{Chain: row, Members: members, Plans: len(before.Iter["plans"].Items)}, nil
 }
 
 // chainResumeFlagParams translates a resume's old flags into workflow params,
@@ -381,78 +395,9 @@ func chainResumeStagedText(rt Runtime, tx *store.Tx, c db.ChainRow, before workf
 
 // chainResumeAddMembers creates the members a resume's params brought in: the
 // actors of run steps the new definition reaches that have no chain_member row
-// yet. Each is built the way a start builds a member, beside the chain's own
-// builder, and its chain_member row is written with it.
-func chainResumeAddMembers(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition) (db.ChainRow, error) {
-	actors := rt.RoleRegistry().WorkflowActors()
-	planned, err := chainMemberNames(c.Name, def, actors)
-	if err != nil {
-		return c, err
-	}
-	keeper := chainWriterKeeper(def, workflow.UsedActors(def), actors)
-	members := chainWorkflowMembers(def, planned, keeper)
-	rows, err := chainFlowMembers(tx, c)
-	if err != nil {
-		return c, err
-	}
-	have := make(map[string]bool, len(rows))
-	for _, m := range rows {
-		have[m.Binding] = true
-	}
-	var add []chainMember
-	for _, m := range members {
-		if !have[m.name] {
-			add = append(add, m)
-		}
-	}
-	if len(add) == 0 {
-		return c, nil
-	}
-	builder, err := tx.Load(c.Builder)
-	if err != nil {
-		return c, fmt.Errorf("chain %s has no builder member to place the new members beside: %w", c.Name, err)
-	}
-	// A served chain's new member is built in the served shape, the server
-	// picking its own candidate and tier, exactly as the start built the others.
-	if builder.Owner != "" {
-		return servedChainAddMembers(rt, tx, c, builder, add, len(rows))
-	}
-	set, err := resumeSettings(rt, c, ResumeOptions{})
-	if err != nil {
-		return c, err
-	}
-	resolutions, err := chainResolveActors(rt, add)
-	if err != nil {
-		return c, err
-	}
-	base := chainBase{
-		cwd: builder.CWD, mastermind: builder.MasterMind, mastermindID: c.MasterMindID,
-		repo: c.Repo, repoRef: builder.RepoRef, feature: c.Feature, ticket: c.Ticket,
-		subdir:   builder.Subdir,
-		worktree: builder.CWD,
-	}
-	built, err := chainBuildMembers(ctx, rt, add, resolutions, base, set, c.Plans)
-	if err != nil {
-		return c, err
-	}
-	newRows := make([]db.ChainMemberRow, 0, len(built))
-	for i, b := range built {
-		if _, lerr := tx.Load(b.Name); lerr == nil {
-			return c, fmt.Errorf("binding %q already exists: `relevo unbind %s` first", b.Name, b.Name)
-		} else if !errors.Is(lerr, store.ErrNotFound) {
-			return c, lerr
-		}
-		if err := tx.Save(b); err != nil {
-			return c, err
-		}
-		newRows = append(newRows, db.ChainMemberRow{Binding: b.Name, Actor: b.Role, Seq: len(rows) + i})
-		setChainMemberColumn(&c, add[i].part, b.Name)
-	}
-	if err := tx.ChainMembersPut(c.Name, newRows); err != nil {
-		return c, err
-	}
-	c.UpdatedAt = rt.Now().UTC()
-	return c, tx.ChainPut(c)
+// yet, and swaps members whose actor differs.
+func chainResumeAddMembers(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, snap *chainResumeSnapshot) (db.ChainRow, error) {
+	return chainResumeSyncMembers(ctx, rt, tx, c, def, snap)
 }
 
 // chainFlowStoredMembers loads a workflow chain's member bindings in

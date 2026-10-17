@@ -162,6 +162,9 @@ func waitFailure(err error) error {
 	if errors.Is(err, store.ErrNotFound) {
 		return fail(codeBindingNotFound, "%v", err)
 	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return fail(codeInternal, "wait was cancelled")
+	}
 	return fail(codeInternal, "%v", err)
 }
 
