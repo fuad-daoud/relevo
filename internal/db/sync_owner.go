@@ -427,4 +427,3 @@ func isTakeoverFenced(ctx context.Context, q queryer, rootID, origin string) (bo
 	}
 	return false, nil
 }
-

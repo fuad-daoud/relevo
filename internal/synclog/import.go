@@ -304,6 +304,60 @@ func (i *Importer) Import() (ImportResult, error) {
 		byOrigin[orig] = append(byOrigin[orig], batch)
 	}
 
+	if err := i.drainBatchesFixpoint(originOrder, byOrigin, marks, &total, held); err != nil {
+		return total, fmt.Errorf("synclog: import: %w", err)
+	}
+	return total, nil
+}
+
+func batchWaitingAfter(batch []Entry, marks map[string]int) *Ref {
+	for _, e := range batch {
+		if e.After != nil && marks[e.After.Origin] < e.After.Seq {
+			return e.After
+		}
+	}
+	return nil
+}
+
+func (i *Importer) drainOriginBatch(orig string, batch []Entry, marks map[string]int, total *ImportResult, held map[string]bool) (bool, error) {
+	if waitingOn := batchWaitingAfter(batch, marks); waitingOn != nil {
+		return false, nil
+	}
+	want := marks[orig] + 1
+	if got, broken := firstHole(batch, want); broken {
+		total.Gaps = append(total.Gaps, Gap{Origin: orig, Want: want, Got: got})
+		held[orig] = true
+		return false, nil
+	}
+	applied, hold, drops, err := i.applyBatch(batch, marks)
+	if holdsOrigin(err) {
+		total.Stalled = append(total.Stalled, Stall{Origin: orig, Label: i.labelOf(orig), Reason: err.Error()})
+		held[orig] = true
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if hold != nil {
+		names, err := i.labels()
+		if err != nil {
+			return false, err
+		}
+		hold.Label = names[hold.Origin]
+		total.Held = append(total.Held, *hold)
+		held[hold.Origin] = true
+		return false, nil
+	}
+	total.Dropped = append(total.Dropped, drops...)
+	total.Applied += applied
+	if applied > 0 {
+		total.Batches++
+		i.batchDone()
+	}
+	return true, nil
+}
+
+func (i *Importer) drainBatchesFixpoint(originOrder []string, byOrigin map[string][][]Entry, marks map[string]int, total *ImportResult, held map[string]bool) error {
 	for {
 		progress := false
 		for _, orig := range originOrder {
@@ -311,74 +365,32 @@ func (i *Importer) Import() (ImportResult, error) {
 				continue
 			}
 			batch := byOrigin[orig][0]
-
-			// Check if this batch is waiting on any After dependency
-			var waitingOn *Ref
-			for _, e := range batch {
-				if e.After != nil && marks[e.After.Origin] < e.After.Seq {
-					waitingOn = e.After
-					break
-				}
-			}
-			if waitingOn != nil {
-				continue
-			}
-
-			want := marks[orig] + 1
-			if got, broken := firstHole(batch, want); broken {
-				total.Gaps = append(total.Gaps, Gap{Origin: orig, Want: want, Got: got})
-				held[orig] = true
-				continue
-			}
-			applied, hold, drops, err := i.applyBatch(batch, marks)
-			if holdsOrigin(err) {
-				total.Stalled = append(total.Stalled, Stall{Origin: orig, Label: i.labelOf(orig), Reason: err.Error()})
-				held[orig] = true
-				continue
-			}
+			advanced, err := i.drainOriginBatch(orig, batch, marks, total, held)
 			if err != nil {
-				return total, fmt.Errorf("synclog: import: %w", err)
+				return err
 			}
-			if hold != nil {
-				names, err := i.labels()
-				if err != nil {
-					return total, fmt.Errorf("synclog: import: %w", err)
-				}
-				hold.Label = names[hold.Origin]
-				total.Held = append(total.Held, *hold)
-				held[hold.Origin] = true
-				continue
+			if advanced {
+				progress = true
+				byOrigin[orig] = byOrigin[orig][1:]
 			}
-			total.Dropped = append(total.Dropped, drops...)
-			total.Applied += applied
-			if applied > 0 {
-				total.Batches++
-				i.batchDone()
-			}
-			progress = true
-			byOrigin[orig] = byOrigin[orig][1:]
 		}
 		if !progress {
 			break
 		}
 	}
+	return i.recordRemainingAfterHolds(originOrder, byOrigin, marks, total, held)
+}
 
+func (i *Importer) recordRemainingAfterHolds(originOrder []string, byOrigin map[string][][]Entry, marks map[string]int, total *ImportResult, held map[string]bool) error {
 	for _, orig := range originOrder {
 		if held[orig] || len(byOrigin[orig]) == 0 {
 			continue
 		}
 		batch := byOrigin[orig][0]
-		var waitingOn *Ref
-		for _, e := range batch {
-			if e.After != nil && marks[e.After.Origin] < e.After.Seq {
-				waitingOn = e.After
-				break
-			}
-		}
-		if waitingOn != nil {
+		if waitingOn := batchWaitingAfter(batch, marks); waitingOn != nil {
 			names, err := i.labels()
 			if err != nil {
-				return total, fmt.Errorf("synclog: import: %w", err)
+				return err
 			}
 			afterLabel := names[waitingOn.Origin]
 			if afterLabel == "" {
@@ -394,7 +406,7 @@ func (i *Importer) Import() (ImportResult, error) {
 			held[orig] = true
 		}
 	}
-	return total, nil
+	return nil
 }
 
 // labels is every installation the directory carries, keyed by id. The hold a
@@ -538,4 +550,3 @@ func (i *Importer) held(batch []Entry) (Entry, bool) {
 	}
 	return Entry{}, false
 }
-

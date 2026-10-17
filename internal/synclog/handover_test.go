@@ -762,4 +762,3 @@ func TestHandoverLandingOnTargetQueuesNothing(t *testing.T) {
 		t.Fatalf("target outbox count after existing row = %d, want 0", count)
 	}
 }
-

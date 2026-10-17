@@ -331,4 +331,3 @@ func TestEntryAfterShape(t *testing.T) {
 		t.Errorf("valid After: got %v, want nil", err)
 	}
 }
-

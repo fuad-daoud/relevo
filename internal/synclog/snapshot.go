@@ -116,24 +116,8 @@ func (i *Importer) snapshotOrigin(origin string, mark, floor, head int, marks ma
 		}
 		return nil, err
 	}
-	for _, e := range region {
-		if e.After != nil && marks[e.After.Origin] < e.After.Seq {
-			names, err := i.labels()
-			if err != nil {
-				return nil, err
-			}
-			afterLabel := names[e.After.Origin]
-			if afterLabel == "" {
-				afterLabel = e.After.Origin
-			}
-			reason := fmt.Sprintf("%s is waiting for %s at seq %d", origin, afterLabel, e.After.Seq)
-			return &Hold{
-				Origin: origin,
-				Label:  i.labelOf(origin),
-				Seq:    mark,
-				Reason: reason,
-			}, nil
-		}
+	if hold, err := i.checkRegionAfterHold(origin, mark, region, marks); err != nil || hold != nil {
+		return hold, err
 	}
 	docs, rows := splitDocs(region)
 	handled, err := i.takeDocs(origin, docs)
@@ -376,4 +360,27 @@ func orDefault(n, def int) int {
 		return def
 	}
 	return n
+}
+
+func (i *Importer) checkRegionAfterHold(origin string, mark int, region []Entry, marks map[string]int) (*Hold, error) {
+	for _, e := range region {
+		if e.After != nil && marks[e.After.Origin] < e.After.Seq {
+			names, err := i.labels()
+			if err != nil {
+				return nil, err
+			}
+			afterLabel := names[e.After.Origin]
+			if afterLabel == "" {
+				afterLabel = e.After.Origin
+			}
+			reason := fmt.Sprintf("%s is waiting for %s at seq %d", origin, afterLabel, e.After.Seq)
+			return &Hold{
+				Origin: origin,
+				Label:  i.labelOf(origin),
+				Seq:    mark,
+				Reason: reason,
+			}, nil
+		}
+	}
+	return nil, nil
 }

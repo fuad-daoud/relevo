@@ -172,19 +172,7 @@ func (e *Exporter) entries(drained []db.DrainedEntry) ([]Entry, []pendingBlob, e
 	}
 	upserts, deletes := split(coalesce(ownedRows))
 
-	// Hand-over roots (upserts whose body writer differs from origin) are ordered
-	// last in their batch, with parents first within each group.
-	var regularUpserts, handoverRoots []db.DrainedEntry
-	for _, u := range upserts {
-		if isHandoverRoot(u, e.origin) {
-			handoverRoots = append(handoverRoots, u)
-		} else {
-			regularUpserts = append(regularUpserts, u)
-		}
-	}
-	sortParentsFirst(regularUpserts)
-	sortParentsFirst(handoverRoots)
-	upserts = append(regularUpserts, handoverRoots...)
+	upserts = orderUpserts(upserts, e.origin)
 	sortChildrenFirst(deletes)
 
 	afterCache := make(map[rowKey]*Ref)
@@ -205,21 +193,12 @@ func (e *Exporter) entries(drained []db.DrainedEntry) ([]Entry, []pendingBlob, e
 		return ref, nil
 	}
 
-	out := make([]Entry, 0, len(upserts)+len(deletes))
-	for _, d := range deletes {
-		entry, err := NewDelete(e.origin, d.Table, d.PK, e.schema, e.now())
-		if err != nil {
-			return nil, nil, err
-		}
-		ref, err := getAfter(d.Table, d.PK)
-		if err != nil {
-			return nil, nil, err
-		}
-		if ref != nil {
-			entry = entry.WithAfter(ref)
-		}
-		out = append(out, entry)
+	delEntries, err := e.deleteEntries(deletes, getAfter)
+	if err != nil {
+		return nil, nil, err
 	}
+	out := make([]Entry, 0, len(delEntries)+len(upserts))
+	out = append(out, delEntries...)
 	var pending []pendingBlob
 	for _, d := range upserts {
 		// A row is only rewritten when there is somewhere to write it. A
@@ -251,6 +230,41 @@ func (e *Exporter) entries(drained []db.DrainedEntry) ([]Entry, []pendingBlob, e
 		out = append(out, entry)
 	}
 	return out, pending, nil
+}
+
+func (e *Exporter) deleteEntries(deletes []db.DrainedEntry, getAfter func(string, string) (*Ref, error)) ([]Entry, error) {
+	out := make([]Entry, 0, len(deletes))
+	for _, d := range deletes {
+		entry, err := NewDelete(e.origin, d.Table, d.PK, e.schema, e.now())
+		if err != nil {
+			return nil, err
+		}
+		ref, err := getAfter(d.Table, d.PK)
+		if err != nil {
+			return nil, err
+		}
+		if ref != nil {
+			entry = entry.WithAfter(ref)
+		}
+		out = append(out, entry)
+	}
+	return out, nil
+}
+
+// orderUpserts orders regular upserts first (parents before children) and
+// handover roots last (parents before children).
+func orderUpserts(upserts []db.DrainedEntry, origin string) []db.DrainedEntry {
+	var regularUpserts, handoverRoots []db.DrainedEntry
+	for _, u := range upserts {
+		if isHandoverRoot(u, origin) {
+			handoverRoots = append(handoverRoots, u)
+		} else {
+			regularUpserts = append(regularUpserts, u)
+		}
+	}
+	sortParentsFirst(regularUpserts)
+	sortParentsFirst(handoverRoots)
+	return append(regularUpserts, handoverRoots...)
 }
 
 // isHandoverRoot reports whether d is a root row whose body hands over ownership
