@@ -155,6 +155,12 @@ func indexOfEntry(entries []Entry, target Entry) int {
 
 // applyEntry writes one entry, and reports whether it did its work.
 func applyEntry(tx *db.Tx, e Entry, now time.Time) (bool, error) {
+	if IsCtlTable(e.Table) {
+		if e.Table != CtlTakeover {
+			return false, fmt.Errorf("synclog: import %s %s: unknown control entry: %w", e.Table, e.PK, ErrInvalid)
+		}
+		return true, applyTakeover(tx, e, now)
+	}
 	if _, ok := SharedTable(e.Table); !ok {
 		return false, fmt.Errorf("synclog: import %s %s: %q is not a shared table: %w",
 			e.Table, e.PK, e.Table, ErrInvalid)

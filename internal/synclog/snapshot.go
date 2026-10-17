@@ -238,7 +238,7 @@ func badFloor(origin string, floor int, why string) error {
 // table this build does not share is dropped and reported rather than applied.
 func splitRegion(region []Entry, total *ImportResult) (upserts, deletes []Entry) {
 	for _, e := range region {
-		if _, ok := SharedTable(e.Table); !ok {
+		if _, ok := SharedTable(e.Table); !ok && e.Table != CtlTakeover {
 			total.Dropped = append(total.Dropped, Drop{Origin: e.Origin, Seq: e.Seq,
 				Reason: fmt.Sprintf("%s %s: %q is not a shared table", e.Table, e.PK, e.Table)})
 			continue

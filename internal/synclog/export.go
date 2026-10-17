@@ -76,6 +76,11 @@ type ExportResult struct {
 // changes it never handed over.
 func (e *Exporter) Export() (ExportResult, error) {
 	var total ExportResult
+	ctl, err := e.exportCtl()
+	total.Appended += ctl
+	if err != nil {
+		return total, fmt.Errorf("synclog: export: %w", err)
+	}
 	for {
 		one, err := e.ExportBatch()
 		total.Drained += one.Drained
