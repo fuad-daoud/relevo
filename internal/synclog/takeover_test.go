@@ -345,3 +345,48 @@ func TestTakeoverBackRecordsTheRegrantAndKeepsPartitionEraEntriesFenced(t *testi
 		t.Errorf("rows = %s, want f10 and not f9", have)
 	}
 }
+
+func TestApplyEntryRefusesAnUnknownControlEntryAndAMalformedTakeover(t *testing.T) {
+	t.Parallel()
+	d, _ := peerFile(t, "m3")
+	unknown := Entry{Origin: "m2", Table: "ctl:other", PK: `["x"]`, Op: OpUpsert, Body: []byte(`{}`), At: takeoverAt}
+	bad := Entry{Origin: "m2", Table: CtlTakeover, PK: `["x"]`, Op: OpUpsert, Body: []byte(`{`), At: takeoverAt}
+	staleAfter, err := NewTakeover("m2", Takeover{RecordID: "r", OldWriter: "m1", Upto: 5, Taker: "m2"}, 31, takeoverAt)
+	if err != nil {
+		t.Fatalf("NewTakeover: %v", err)
+	}
+	staleAfter.After = &Ref{Origin: "m1", Seq: 4}
+	for name, e := range map[string]Entry{"unknown ctl table": unknown, "malformed body": bad, "fence the After does not name": staleAfter} {
+		err := d.Tx(func(tx *db.Tx) error { _, err := applyEntry(tx, e, takeoverAt); return err })
+		if err == nil || !strings.Contains(err.Error(), ErrInvalid.Error()) {
+			t.Errorf("%s: err = %v, want ErrInvalid", name, err)
+		}
+	}
+}
+
+// A takeover with no fence names no entry of the old writer, so it carries no
+// After and an importer applies it at once.
+func TestTakeoverWithoutAFenceCarriesNoAfter(t *testing.T) {
+	t.Parallel()
+	d, _ := peerFile(t, "m3")
+	e, err := NewTakeover("m2", Takeover{RecordID: "r", OldWriter: "m1", Taker: "m2"}, 31, takeoverAt)
+	if err != nil || e.After != nil {
+		t.Fatalf("NewTakeover = (%+v, %v), want no After", e.After, err)
+	}
+	err = d.Tx(func(tx *db.Tx) error { _, err := applyEntry(tx, e, takeoverAt); return err })
+	if err != nil {
+		t.Fatalf("applyEntry: %v", err)
+	}
+	if upto, _, _, found, _ := d.Term("r", "m1"); !found || upto != 0 {
+		t.Errorf("term = (%d, %t), want a fence at 0 for a root this machine never held", upto, found)
+	}
+	for _, bad := range []Takeover{
+		{OldWriter: "m1", Taker: "m2"},
+		{RecordID: "r", Taker: "m2"},
+		{RecordID: "r", OldWriter: "m1", Upto: -1, Taker: "m2"},
+	} {
+		if _, err := NewTakeover("m2", bad, 31, takeoverAt); err == nil {
+			t.Errorf("NewTakeover accepted %+v", bad)
+		}
+	}
+}
