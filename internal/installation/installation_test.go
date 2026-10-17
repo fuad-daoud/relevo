@@ -156,3 +156,35 @@ func TestConcurrentLoadsNeverSeeAPartialFile(t *testing.T) {
 		}
 	}
 }
+
+// TestAdoptReplacesTheIDAndKeepsTheLabel pins that an adoption rewrites the one
+// file whole: the id changes, the label and creation time stay, and no temp
+// file is left beside it.
+func TestAdoptReplacesTheIDAndKeepsTheLabel(t *testing.T) {
+	root := t.TempDir()
+	first, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	adopted, err := Adopt(root, "inst-x")
+	if err != nil {
+		t.Fatalf("Adopt: %v", err)
+	}
+	if adopted.ID != "inst-x" || adopted.Label != first.Label || !adopted.CreatedAt.Equal(first.CreatedAt) {
+		t.Errorf("Adopt = %+v, want the id replaced and the rest of %+v kept", adopted, first)
+	}
+	again, err := Load(root)
+	if err != nil || again.ID != "inst-x" {
+		t.Errorf("Load after Adopt = %+v, %v, want inst-x", again, err)
+	}
+	entries, _ := os.ReadDir(root)
+	if len(entries) != 1 {
+		t.Errorf("the state root holds %d files after Adopt, want only the installation file", len(entries))
+	}
+	if _, err := Adopt(root, ""); err == nil {
+		t.Error("Adopt with no id succeeded")
+	}
+	if _, err := Adopt(t.TempDir(), "inst-y"); err == nil {
+		t.Error("Adopt on a root with no installation file succeeded")
+	}
+}
