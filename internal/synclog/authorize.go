@@ -165,6 +165,9 @@ func applyHandover(tx *db.Tx, e Entry, rootID, bodyWriter string, values map[str
 		if err := tx.SetWriterAfter(rootID, e.Origin, e.Seq); err != nil {
 			return decision{}, err
 		}
+		if err := tx.ClearBindingLeft(rootID); err != nil {
+			return decision{}, err
+		}
 	}
 	return decision{owner: bodyWriter, isHandover: true, targetWriter: bodyWriter}, nil
 }

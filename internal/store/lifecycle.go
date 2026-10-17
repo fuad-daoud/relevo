@@ -395,6 +395,9 @@ func (s *Store) load(name string) (Binding, error) {
 		return Binding{}, fmt.Errorf("read binding %q: %w", name, err)
 	}
 	if !ok {
+		if herr := s.handedOver(d, name); herr != nil {
+			return Binding{}, herr
+		}
 		return Binding{}, fmt.Errorf("%s: %w", name, ErrNotFound)
 	}
 	b, err := decodeBinding([]byte(rec.JSON), name)

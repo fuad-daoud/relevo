@@ -370,3 +370,41 @@ func loadLeftRows(ctx context.Context, q queryer) (map[RowRef]bool, error) {
 	}
 	return out, nil
 }
+
+// ForeignRoots finds the record and mirror ids of owner's live binding name
+// whoever writes them, with the record's creator and writer. found is false when
+// no such record exists in this file.
+func (t *Tx) ForeignRoots(owner, name string) (r Roots, creator, writer string, found bool, err error) {
+	return foreignRoots(t.ctx, t.conn, owner, name)
+}
+
+// ForeignRoots is the read-only form of Tx.ForeignRoots.
+func (d *DB) ForeignRoots(owner, name string) (Roots, string, string, bool, error) {
+	return foreignRoots(context.Background(), d.sqlDB, owner, name)
+}
+
+func foreignRoots(ctx context.Context, q queryer, owner, name string) (r Roots, creator, writer string, found bool, err error) {
+	err = q.QueryRowContext(ctx, `SELECT id, origin, writer FROM binding_record WHERE owner = ? AND name = ? AND archived_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+		owner, name).Scan(&r.RecordID, &creator, &writer)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Roots{}, "", "", false, nil
+	}
+	if err != nil {
+		return Roots{}, "", "", false, fmt.Errorf("db: foreign roots %s/%q: %w", owner, name, mapBusy(err))
+	}
+	err = q.QueryRowContext(ctx, `SELECT id FROM binding WHERE name = ? AND writer = ? AND archived_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+		name, writer).Scan(&r.BindingID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Roots{}, "", "", false, fmt.Errorf("db: foreign roots %s/%q: mirror: %w", owner, name, mapBusy(err))
+	}
+	return r, creator, writer, true, nil
+}
+
+// RepointMirror points this installation's live mirror of name at repoID.
+func (t *Tx) RepointMirror(name, repoID string) error {
+	if _, err := t.exec(`UPDATE binding SET repo_id = ? WHERE `+writerScope+` AND name = ? AND archived_at IS NULL`,
+		repoID, t.origin, name); err != nil {
+		return fmt.Errorf("db: repoint mirror %q: %w", name, mapBusy(err))
+	}
+	return nil
+}
