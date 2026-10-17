@@ -35,6 +35,12 @@ const (
 	OpDelete Op = "delete"
 )
 
+// Ref points at one entry in an origin's log.
+type Ref struct {
+	Origin string
+	Seq    int
+}
+
 // Entry is one append to the log: what one installation recorded about one
 // shared row, at one position in that installation's own sequence.
 //
@@ -70,6 +76,19 @@ type Entry struct {
 	// except Seq and Batch, which the transport assigns after the signature is
 	// made.
 	MAC []byte
+	// After points at an entry in another origin's log that this entry depends on.
+	After *Ref
+}
+
+// WithAfter returns a copy of e with After set to after.
+func (e Entry) WithAfter(after *Ref) Entry {
+	if after == nil {
+		e.After = nil
+		return e
+	}
+	r := *after
+	e.After = &r
+	return e
 }
 
 // NewUpsert builds the entry that writes a row's state.
@@ -166,6 +185,9 @@ func newDocEntry(origin string, doc SharedDoc, key string, schemaVersion int, st
 // the point the entry is built, because an entry that reaches a transport with
 // the wrong shape has already been serialized onto a pipe.
 func checkShape(e Entry) error {
+	if e.After != nil && (e.After.Origin == "" || e.After.Seq <= 0) {
+		return fmt.Errorf("synclog: entry %s %s has invalid after ref: %w", e.Table, e.PK, ErrInvalid)
+	}
 	switch e.Op {
 	case OpUpsert:
 		if len(e.Body) == 0 {
