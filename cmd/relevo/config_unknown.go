@@ -46,9 +46,14 @@ func guardUnknownFields(rt relevo.Runtime, sec config.Section, oldBody, updated 
 	known := roles.KnownFields(string(sec))
 	knownStr := strings.Join(known, ", ")
 
-	if sec == config.Agents {
-		actor := strings.Split(key, ".")[0]
-		return fail(codeConfigInvalid, "%s: unknown field (known: %s); outcomes are declared on the actor: relevo config set actors.%s.outputs '{...}'", fullPath, knownStr, actor)
+	if sec == config.Agents && agentContractField[key[strings.LastIndex(key, ".")+1:]] {
+		return fail(codeConfigInvalid, "%s: unknown field (known: %s); outcomes are declared on the actor: relevo config set actors.<actor>.outputs '{...}'", fullPath, knownStr)
 	}
 	return fail(codeConfigInvalid, "%s: unknown field (known: %s)", fullPath, knownStr)
 }
+
+// agentContractField names the fields people reach for when they try to give
+// an agent a round contract; only those get the pointer to actor outputs, so a
+// plain typo is not told about outcomes. The actor is named generically because
+// one agent can back several actors under other names.
+var agentContractField = map[string]bool{"outcomes": true, "outputs": true, "role": true}

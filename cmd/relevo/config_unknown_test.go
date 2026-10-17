@@ -19,7 +19,7 @@ func TestConfigSetRefusesUnknownFieldsOnAgents(t *testing.T) {
 	for _, want := range []string{
 		"agents.x.outcomes: unknown field",
 		"known: native, shape, source",
-		"outcomes are declared on the actor: relevo config set actors.x.outputs '{...}'",
+		"outcomes are declared on the actor: relevo config set actors.<actor>.outputs '{...}'",
 	} {
 		if !strings.Contains(ce.message, want) {
 			t.Errorf("message = %q, want it to contain %q", ce.message, want)
@@ -42,11 +42,26 @@ func TestConfigSetRefusesUnknownFieldsOnAgents(t *testing.T) {
 	for _, want := range []string{
 		"agents.x.role: unknown field",
 		"known: native, shape, source",
-		"outcomes are declared on the actor: relevo config set actors.x.outputs '{...}'",
+		"outcomes are declared on the actor: relevo config set actors.<actor>.outputs '{...}'",
 	} {
 		if !strings.Contains(ce.message, want) {
 			t.Errorf("message = %q, want it to contain %q", ce.message, want)
 		}
+	}
+}
+
+func TestConfigSetUnknownAgentTypoGetsNoOutcomesNote(t *testing.T) {
+	docsEnv(t)
+
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "set", "agents.x.sourc", `"agents/x.md"`})
+	})
+	ce := requireCLIError(t, err, codeConfigInvalid, "")
+	if !strings.Contains(ce.message, "agents.x.sourc: unknown field") {
+		t.Errorf("message = %q, want it to name agents.x.sourc", ce.message)
+	}
+	if strings.Contains(ce.message, "outcomes are declared") {
+		t.Errorf("message = %q, a typo should not point at actor outputs", ce.message)
 	}
 }
 
