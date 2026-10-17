@@ -198,6 +198,15 @@ func (t *Tx) ChainMembersPut(name string, members []db.ChainMemberRow) error {
 	return t.withDB(func(dtx *db.Tx) error { return dtx.ChainMembersPut(c.ID, members) })
 }
 
+// ChainMemberDelete removes the named chain's member row for binding.
+func (t *Tx) ChainMemberDelete(name, binding string) error {
+	c, err := t.s.chain(name)
+	if err != nil {
+		return err
+	}
+	return t.withDB(func(dtx *db.Tx) error { return dtx.ChainMemberDelete(c.ID, binding) })
+}
+
 // ChainCheck returns the named chain's check run.
 func (s *Store) ChainCheck(name string, run int) (db.ChainCheckRow, error) {
 	var row db.ChainCheckRow

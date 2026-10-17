@@ -123,8 +123,9 @@ func chainStoppedNothing(c db.ChainRow) error {
 // chainStopWorkflow stops a workflow chain's awaited member. The actor the
 // engine is on resolves through chain_member, and stopping that member's round
 // raises the chain's stopped event. A chain whose engine awaits a check has no
-// member to stop, and a member whose round already closed has nothing to stop,
-// so each is stopped directly under the lock.
+// member to stop, a member that was removed or whose binding is gone has nothing
+// to reach, and a member whose round already closed has nothing to stop, so each
+// is stopped directly under the lock.
 func chainStopWorkflow(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult, error) {
 	st, err := chainWorkflowState(c)
 	if err != nil {
@@ -140,8 +141,14 @@ func chainStopWorkflow(ctx context.Context, rt Runtime, c db.ChainRow) (StopResu
 	if err != nil {
 		return StopResult{}, err
 	}
+	if memberName == "" {
+		if derr := chainStopWorkflowDirect(ctx, rt, c.Name); derr != nil {
+			return StopResult{}, derr
+		}
+		return StopResult{Round: st.Awaiting.Round, Action: ChainStopActionStopped}, nil
+	}
 	res, err := Stop(ctx, rt, memberName, StopOptions{})
-	if errors.Is(err, ErrNothingToStop) {
+	if errors.Is(err, ErrNothingToStop) || errors.Is(err, store.ErrNotFound) {
 		if derr := chainStopWorkflowDirect(ctx, rt, c.Name); derr != nil {
 			return StopResult{}, derr
 		}
@@ -165,7 +172,7 @@ func chainStoredMemberName(rt Runtime, c db.ChainRow, actor string) (string, err
 			return m.Binding, nil
 		}
 	}
-	return "", fmt.Errorf("chain %s has no %s member to stop", c.Name, actor)
+	return "", nil
 }
 
 // chainStopWorkflowDirect marks a running workflow chain stopped when the step
