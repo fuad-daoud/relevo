@@ -76,7 +76,7 @@ board-assets:
 # BASE overrides the base ref. When BASE is empty, RELEVO_BASE (set by relevo
 # in a round) is used, then git merge-base HEAD origin/main.
 check-affected:
-	$(MAKE) check-static BASE=
+	$(MAKE) check-static
 	@pkgs=$$(BASE="$(BASE)" sh scripts/affected-packages.sh) || exit $$?; \
 	if [ -z "$$pkgs" ]; then \
 		echo "no Go package affected; tests skipped"; \
