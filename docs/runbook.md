@@ -56,6 +56,10 @@ under `~/.cache`; keep it on any rebuild.
 - Main moves constantly because several sessions merge. Loop
   `gh pr update-branch`, then `gh pr checks <n> --watch` until every job
   passes, then `gh pr merge --match-head-commit`.
+- A test that fails on main with no code cause is a flake: add it to a suite
+  in `.github/workflows/flake-hunt.yml`, which runs each suite nightly with
+  `-race -count=20` on ubuntu and macOS (`gh workflow run flake-hunt -f
+  count=50` on demand), and fix the test rather than rerunning it green.
 
 ## Installing and deploying
 
