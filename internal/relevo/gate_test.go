@@ -407,3 +407,58 @@ func TestGateTimeoutFor(t *testing.T) {
 		}
 	})
 }
+
+// TestGateAndServedCheckCarryTheBindingBase: a binding's gate and a served
+// check reach the runner with the binding's base in the spec env; a binding
+// with no base adds none.
+func TestGateAndServedCheckCarryTheBindingBase(t *testing.T) {
+	t.Parallel()
+
+	want := []string{"RELEVO_BASE=abc123"}
+
+	t.Run("gate", func(t *testing.T) {
+		for _, tc := range []struct {
+			base string
+			want []string
+		}{{"abc123", want}, {"", nil}} {
+			fr := newFakeRunner()
+			rt, b := sentBinding(t)
+			rt.Runner = fr
+			b.Gate = "make check-affected"
+			b.Base = tc.base
+			if err := rt.Store.Save(b); err != nil {
+				t.Fatal(err)
+			}
+			if err := rt.Store.WithLock(func(tx *store.Tx) error {
+				_, _, _, err := gateStep(context.Background(), rt, tx, b)
+				return err
+			}); err != nil {
+				t.Fatalf("gateStep: %v", err)
+			}
+			if len(fr.specs) != 1 || !reflect.DeepEqual(fr.specs[0].Env, tc.want) {
+				t.Errorf("base %q: gate specs = %+v, want one with Env %v", tc.base, fr.specs, tc.want)
+			}
+		}
+	})
+
+	t.Run("served check", func(t *testing.T) {
+		fr := newFakeRunner()
+		rt, b := sentBinding(t)
+		rt.Runner = fr
+		b.Base = "abc123"
+		spec := servedCheckSpec(rt, b, store.CheckRun{Command: "make check-affected", LogPath: filepath.Join(t.TempDir(), "c.log"), Round: 1})
+		if !reflect.DeepEqual(spec.Env, want) {
+			t.Fatalf("servedCheckSpec Env = %v, want %v", spec.Env, want)
+		}
+		if _, _, err := startGateProc(context.Background(), rt, spec, 0); err != nil {
+			t.Fatal(err)
+		}
+		if len(fr.specs) != 1 || !reflect.DeepEqual(fr.specs[0].Env, want) {
+			t.Errorf("check specs = %+v, want one with Env %v", fr.specs, want)
+		}
+		b.Base = ""
+		if got := servedCheckSpec(rt, b, store.CheckRun{}).Env; got != nil {
+			t.Errorf("servedCheckSpec Env with no base = %v, want nil", got)
+		}
+	})
+}

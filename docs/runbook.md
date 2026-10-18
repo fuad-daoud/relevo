@@ -98,9 +98,10 @@ under `~/.cache`; keep it on any rebuild.
 
 - Build big slices as `relevo chain --server zen`.
 - Gate each chain round with `relevo chain --gate 'make check-affected'`, and
-  a single binding with the same `--gate` flag. A served worktree has no
-  `origin/main`, so there the target tests every package: pass the bind's
-  base, `--gate 'make check-affected BASE=<sha>'` (bind prints `from <sha>`).
+  a single binding with the same `--gate` flag. relevo exports
+  `RELEVO_BASE` (the bind's base) to a round and to its gate, so
+  `--gate 'make check-affected'` tests only the affected packages on a served
+  worktree too; `BASE=<sha>` still overrides.
 - After a halt, finish with manual rounds on the chain's builder, then
   `relevo chain --resume`.
 - Fetch a served head with `git fetch zen:<served worktree> HEAD:refs/heads/X`.

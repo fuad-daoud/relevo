@@ -64,3 +64,18 @@ func TestRoundEnvPinsTheAccountHome(t *testing.T) {
 		t.Errorf("roundEnvFor(opencode) = %v, want roundEnv %v", got, base)
 	}
 }
+
+// TestRoundEnvForKeepsTheAccountEntryLastWithABase: the base entry sits before
+// the account entry, so the account's value stays the later of two same-named
+// entries.
+func TestRoundEnvForKeepsTheAccountEntryLastWithABase(t *testing.T) {
+	t.Parallel()
+
+	b := store.Binding{Name: "api", Base: "abc123"}
+	a := account.Account{Name: "work", Harness: account.Claude, Groups: []string{"test"}, ConfigDir: "/homes/work"}
+	got := roundEnvFor(b, &a)
+	want := []string{"RELEVO_RUNNER=api", "RELEVO_BASE=abc123", "CLAUDE_CONFIG_DIR=/homes/work"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("roundEnvFor = %v, want %v", got, want)
+	}
+}
