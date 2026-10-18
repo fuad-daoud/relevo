@@ -770,10 +770,10 @@ var registry = []verbEntry{
 	{
 		Name:    "unbind",
 		Summary: "forget a binding, deleting or archiving its directory",
-		Args:    "[NAME] [--done] [--delete] [--dry-run] [--json]",
+		Args:    "[NAME] [--done] [--delete] [--dry-run] [--force] [--json]",
 		Flags: []string{
 			"--all-masterminds", "--archive", "--delete", "--done", "--dry-run",
-			"--json", "--mastermind", "--name", "--pick", "--sweep",
+			"--force", "--json", "--mastermind", "--name", "--pick", "--sweep",
 		},
 		Output: "json:UnbindDoc; --done: gcDoc; --sweep: sweepDoc",
 		Exit:   []int{0, 1, 2},

@@ -22,6 +22,7 @@ type unbindFlagValues struct {
 	delete         *bool
 	dryRun         *bool
 	sweep          *bool
+	force          *bool
 	mastermindRef  *string
 	allMasterMinds *bool
 	asJSON         *bool
@@ -38,6 +39,7 @@ func unbindFlagSet(fs *flag.FlagSet) *unbindFlagValues {
 	v.delete = fs.Bool("delete", false, "with --done: remove each finished binding's directory instead of archiving it")
 	v.dryRun = fs.Bool("dry-run", false, "with --done or --sweep: list what would be cleared, change nothing")
 	v.sweep = fs.Bool("sweep", false, "delete relevo/<name> branches and refs/relevo/<name>/* refs of bindings that no longer exist, once they are on a remote-tracking ref")
+	v.force = fs.Bool("force", false, "archive or delete the binding even when its worktree is kept (uncommitted changes); with --done: the DONE bindings too")
 	v.mastermindRef = fs.String("mastermind", "", "with --done: clear this mastermind's DONE bindings (id or name; default: $RELEVO_MASTERMIND, else this session's host)")
 	v.allMasterMinds = fs.Bool("all-masterminds", false, "with --done: clear every mastermind's DONE bindings, including ones with no mastermind")
 	v.asJSON = fs.Bool("json", false, "print the result as a JSON document")
@@ -50,13 +52,13 @@ func cmdUnbind(args []string) error {
 	name, archive, pickFlag := v.name, v.archive, v.pick
 	done, delete, dryRun := v.done, v.delete, v.dryRun
 	sweep, mastermindRef, allMasterMinds := v.sweep, v.mastermindRef, v.allMasterMinds
-	asJSON := v.asJSON
+	asJSON, force := v.asJSON, v.force
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
 	if *sweep {
-		if *done || *delete || *archive || *pickFlag || *name != "" || len(fs.Args()) > 0 || *mastermindRef != "" || *allMasterMinds {
+		if *done || *delete || *archive || *pickFlag || *name != "" || len(fs.Args()) > 0 || *mastermindRef != "" || *allMasterMinds || *force {
 			return fail(codeRefused, "--sweep takes no binding and no other flag except --dry-run")
 		}
 		return runSweep(*dryRun, *asJSON)
@@ -86,10 +88,13 @@ func cmdUnbind(args []string) error {
 		if *name != "" || len(fs.Args()) > 0 || *pickFlag {
 			return fail(codeRefused, "--done clears DONE bindings; do not also name one or pass --pick")
 		}
-		return runGC(*delete, *dryRun, *mastermindRef, *allMasterMinds, *asJSON)
+		return runGC(*delete, *dryRun, *force, *mastermindRef, *allMasterMinds, *asJSON)
 	}
 
 	if *pickFlag {
+		if *force {
+			return fail(codeRefused, "--force goes with a named binding or --done, not --pick")
+		}
 		if err := pickNamesNothing(*name, fs.Args()); err != nil {
 			return err
 		}
@@ -107,7 +112,10 @@ func cmdUnbind(args []string) error {
 		return writeError(err)
 	}
 
-	res, err := relevo.Unbind(context.Background(), rt, target, *archive)
+	res, err := relevo.UnbindWith(context.Background(), rt, target, *archive, *force)
+	if errors.Is(err, relevo.ErrWorktreeKept) {
+		return failNext(codeRefused, "relevo unbind "+target+" --force", "%v", err)
+	}
 	if err != nil {
 		return writeError(err)
 	}
@@ -174,7 +182,7 @@ func runSweep(dryRun, asJSON bool) error {
 // runGC is gc's body (the old cmdGC), now reached through `unbind --done`
 // (§4.3). It clears the calling mastermind's DONE bindings, or, with
 // --all-masterminds, every mastermind's (#482).
-func runGC(delete, dryRun bool, mastermindRef string, all, asJSON bool) error {
+func runGC(delete, dryRun, force bool, mastermindRef string, all, asJSON bool) error {
 	rt, err := newRuntime()
 	if err != nil {
 		return writeError(err)
@@ -186,6 +194,7 @@ func runGC(delete, dryRun bool, mastermindRef string, all, asJSON bool) error {
 	}
 	opts.Delete = delete
 	opts.DryRun = dryRun
+	opts.Force = force
 
 	done, err := relevo.GC(context.Background(), rt, opts)
 	if err != nil {
@@ -216,48 +225,7 @@ func runGC(delete, dryRun bool, mastermindRef string, all, asJSON bool) error {
 	}
 
 	for _, r := range done {
-		lbl := label(r.MasterMindID)
-		switch {
-		case dryRun:
-			wtMsg := ""
-			if r.WorktreeRemoved != "" {
-				wtMsg = fmt.Sprintf(" (worktree %s would be removed)", r.WorktreeRemoved)
-			} else if r.WorktreeKept != "" {
-				wtMsg = fmt.Sprintf(" (worktree %s kept: %s)", r.WorktreeKept, r.KeptReason)
-			} else if r.WorktreeGone != "" {
-				wtMsg = fmt.Sprintf(" (worktree %s already gone)", r.WorktreeGone)
-			}
-			fmt.Printf("would clear %-10s %-14s %s (%d rounds)%s\n", r.Name, "["+lbl+"]", r.CWD, r.Rounds, wtMsg)
-			for _, line := range relevo.RefLines(r.Refs) {
-				fmt.Printf("            %s\n", line)
-			}
-		case r.Archived:
-			fmt.Printf("archived    %-10s [%s]\n", r.Name, lbl)
-			if r.WorktreeRemoved != "" {
-				fmt.Printf("            removed worktree %s\n", r.WorktreeRemoved)
-			} else if r.WorktreeKept != "" {
-				fmt.Printf("            kept worktree %s (%s)\n              remove by hand: git -C %s worktree remove %s\n",
-					r.WorktreeKept, r.KeptReason, r.WorktreeKept, r.WorktreeKept)
-			} else if r.WorktreeGone != "" {
-				fmt.Printf("            worktree %s was already gone\n", r.WorktreeGone)
-			}
-			for _, line := range relevo.RefLines(r.Refs) {
-				fmt.Printf("            %s\n", line)
-			}
-		default:
-			fmt.Printf("deleted     %-10s [%s] %s (%d rounds)\n", r.Name, lbl, r.CWD, r.Rounds)
-			if r.WorktreeRemoved != "" {
-				fmt.Printf("            removed worktree %s\n", r.WorktreeRemoved)
-			} else if r.WorktreeKept != "" {
-				fmt.Printf("            kept worktree %s (%s)\n              remove by hand: git -C %s worktree remove %s\n",
-					r.WorktreeKept, r.KeptReason, r.WorktreeKept, r.WorktreeKept)
-			} else if r.WorktreeGone != "" {
-				fmt.Printf("            worktree %s was already gone\n", r.WorktreeGone)
-			}
-			for _, line := range relevo.RefLines(r.Refs) {
-				fmt.Printf("            %s\n", line)
-			}
-		}
+		printGCResult(r, label(r.MasterMindID), dryRun)
 	}
 
 	if dryRun {
@@ -265,6 +233,53 @@ func runGC(delete, dryRun bool, mastermindRef string, all, asJSON bool) error {
 	}
 
 	return nil
+}
+
+func printGCResult(r relevo.GCResult, lbl string, dryRun bool) {
+	switch {
+	case dryRun:
+		verb := "would clear"
+		if r.BindingKept {
+			verb = "would keep "
+		}
+		wtMsg := ""
+		if r.WorktreeRemoved != "" {
+			wtMsg = fmt.Sprintf(" (worktree %s would be removed)", r.WorktreeRemoved)
+		} else if r.WorktreeKept != "" {
+			wtMsg = fmt.Sprintf(" (worktree %s kept: %s)", r.WorktreeKept, r.KeptReason)
+		} else if r.WorktreeGone != "" {
+			wtMsg = fmt.Sprintf(" (worktree %s already gone)", r.WorktreeGone)
+		}
+		fmt.Printf("%s %-10s %-14s %s (%d rounds)%s\n", verb, r.Name, "["+lbl+"]", r.CWD, r.Rounds, wtMsg)
+	case r.BindingKept:
+		fmt.Printf("kept        %-10s [%s]\n", r.Name, lbl)
+		fmt.Printf("            worktree %s kept: %s\n              commit or discard it, then run relevo unbind --done again, or --force to archive it anyway\n",
+			r.WorktreeKept, r.KeptReason)
+	case r.Archived:
+		fmt.Printf("archived    %-10s [%s]\n", r.Name, lbl)
+		printGCWorktree(r)
+	default:
+		fmt.Printf("deleted     %-10s [%s] %s (%d rounds)\n", r.Name, lbl, r.CWD, r.Rounds)
+		printGCWorktree(r)
+	}
+	if r.ServerErr != "" {
+		fmt.Printf("            note: server not released: %s\n", r.ServerErr)
+	}
+	for _, line := range relevo.RefLines(r.Refs) {
+		fmt.Printf("            %s\n", line)
+	}
+}
+
+func printGCWorktree(r relevo.GCResult) {
+	switch {
+	case r.WorktreeRemoved != "":
+		fmt.Printf("            removed worktree %s\n", r.WorktreeRemoved)
+	case r.WorktreeKept != "":
+		fmt.Printf("            kept worktree %s (%s)\n              remove by hand: git -C %s worktree remove %s\n",
+			r.WorktreeKept, r.KeptReason, r.WorktreeKept, r.WorktreeKept)
+	case r.WorktreeGone != "":
+		fmt.Printf("            worktree %s was already gone\n", r.WorktreeGone)
+	}
 }
 
 // gcResolver is the production resolver every scope-shaped verb shares: the

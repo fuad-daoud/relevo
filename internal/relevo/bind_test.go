@@ -1202,7 +1202,7 @@ func TestUnbindTeardown(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		res, err := Unbind(ctx, rt, "fork-dirty", false)
+		res, err := UnbindWith(ctx, rt, "fork-dirty", false, true)
 		if err != nil {
 			t.Fatalf("Unbind: %v", err)
 		}
@@ -1238,7 +1238,7 @@ func TestUnbindTeardown(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		res, err := Unbind(ctx, rt, "fork-dirty-err", false)
+		res, err := UnbindWith(ctx, rt, "fork-dirty-err", false, true)
 		if err != nil {
 			t.Fatalf("Unbind: %v", err)
 		}
@@ -1266,7 +1266,7 @@ func TestUnbindTeardown(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		res, err := Unbind(ctx, rt, "fork-nogit", false)
+		res, err := UnbindWith(ctx, rt, "fork-nogit", false, true)
 		if err != nil {
 			t.Fatalf("Unbind: %v", err)
 		}
@@ -1293,7 +1293,7 @@ func TestUnbindTeardown(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		res, err := Unbind(ctx, rt, "fork-fail", false)
+		res, err := UnbindWith(ctx, rt, "fork-fail", false, true)
 		if err != nil {
 			t.Fatalf("Unbind: %v", err)
 		}

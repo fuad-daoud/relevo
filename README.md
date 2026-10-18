@@ -510,10 +510,13 @@ gives a MasterMind a name of your own.
   `--pick` chooses from a list in the terminal.
 - `relevo stop NAME|--name N` — kill the builder process and close its open
   round without a report. See [Stopping a round](#stopping-a-round).
-- `relevo unbind NAME|--name N|--pick [--archive]` — forget a binding, deleting its directory or
-  archiving its record first. `--pick` chooses from a list in the terminal.
+- `relevo unbind NAME|--name N|--pick [--archive] [--force]` — forget a binding, deleting its directory or
+  archiving its record first. `--pick` chooses from a list in the terminal. A worktree relevo keeps
+  (uncommitted changes, or a failed check or removal) keeps the binding too and the verb refuses;
+  commit or discard the work and unbind again, or pass `--force` to archive the binding anyway
+  (`--force` goes with a named binding or `--done`, not `--pick`).
 
-- `relevo unbind --done [--dry-run] [--delete] [--mastermind P | --all-masterminds]` —
+- `relevo unbind --done [--dry-run] [--delete] [--force] [--mastermind P | --all-masterminds]` —
   clear the DONE bindings of the calling MasterMind (resolved like every
   MasterMind-scoped verb), in one pass; also deletes each cleared binding's
   `relevo/<name>` branch and `refs/relevo/<name>/*` refs once each is on a
@@ -521,7 +524,11 @@ gives a MasterMind a name of your own.
   bindings with no MasterMind. If no MasterMind resolves, it refuses rather than
   clearing everything, and each line names the binding's MasterMind. Archives by
   default; pass `--delete` to remove each binding's directory instead
-  (`relevo unbind --done --archive` is accepted as a no-op).
+  (`relevo unbind --done --archive` is accepted as a no-op). A DONE binding whose worktree is
+  kept stays DONE, reported as kept, so running it again retries once the tree is clean;
+  `--force` archives or deletes it anyway. `--done` asks a remote binding's server
+  first and keeps the binding while the server keeps its worktree; a server that
+  cannot be reached does not block it, and the line notes why.
 - `relevo unbind --sweep [--dry-run]` — delete `relevo/<name>` branches and `refs/relevo/<name>/*` refs of bindings that no longer exist, once each is on a remote-tracking ref.
 - `relevo daemon [--interval D] [--check] [--pprof <path>]` — the long-running reconciler; this is what the
   service unit runs. It reconciles builders, queues reports for the MasterMind
