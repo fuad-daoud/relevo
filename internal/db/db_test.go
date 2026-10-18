@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -413,13 +414,27 @@ func TestTxRetriesABusyBegin(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = d2.Close() })
 
+	// d1 holds its lock until d2's first BEGIN has been seen to fail busy.
+	sawBusy := make(chan struct{})
+	var busyOnce sync.Once
+	setBeginHook(t, func(ctx context.Context, conn *sql.Conn) error {
+		err := realBegin(ctx, conn)
+		if err != nil {
+			busyOnce.Do(func() { close(sawBusy) })
+		}
+		return err
+	})
+
 	holding := make(chan struct{})
 	var once sync.Once
 	d1Done := make(chan error, 1)
 	go func() {
 		d1Done <- d1.Tx(func(tx *Tx) error {
 			once.Do(func() { close(holding) })
-			time.Sleep(300 * time.Millisecond)
+			select {
+			case <-sawBusy:
+			case <-time.After(10 * time.Second):
+			}
 			return nil
 		})
 	}()

@@ -134,7 +134,7 @@ func applyOneMigration(sqlDB *sql.DB, fsys fs.FS, name string, n int) (err error
 
 	// BEGIN IMMEDIATE takes the write lock up front, so two processes opening
 	// the same fresh database serialise rather than both migrating it.
-	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	if err = beginImmediate(ctx, conn); err != nil {
 		return fmt.Errorf("begin migration %s: %w", name, mapBusy(err))
 	}
 	committed := false

@@ -71,7 +71,7 @@ func repairInvalidText(conn *sql.Conn) ([]ColumnRepair, error) {
 		return repairs, nil
 	}
 
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	if err := beginImmediate(ctx, conn); err != nil {
 		return nil, fmt.Errorf("db: repair text: begin: %w", mapBusy(err))
 	}
 	committed := false

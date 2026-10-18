@@ -399,29 +399,9 @@ func (d *DB) tx(ctx context.Context, fn func(*Tx) error) (err error) {
 	if retryFor <= 0 {
 		retryFor = beginRetryFor
 	}
-	start := time.Now()
-	for {
-		_, beginErr := conn.ExecContext(ctx, "BEGIN IMMEDIATE")
-		if beginErr == nil {
-			break
-		}
-		// The owner refused the BEGIN before executing it, so a fresh
-		// connection retried inside the same window cannot apply it twice.
-		if restartingRefusal(beginErr) && time.Since(start) < retryFor {
-			// The connection refused the request without running it, so closing
-			// it reports the refusal again rather than a failure of this attempt.
-			_ = conn.Close()
-			conn, err = d.sqlDB.Conn(ctx)
-			if err != nil {
-				return fmt.Errorf("db: tx: %w", err)
-			}
-			continue
-		}
-		mapped := mapBusy(beginErr)
-		if !errors.Is(mapped, ErrBusy) || time.Since(start) >= retryFor {
-			return fmt.Errorf("db: tx begin: %w", mapped)
-		}
-		time.Sleep(time.Duration(25+rand.Intn(76)) * time.Millisecond)
+	conn, err = d.beginWithRetry(ctx, conn, retryFor)
+	if err != nil {
+		return err
 	}
 
 	if txErr := fn(&Tx{conn: conn, ctx: ctx, origin: d.origin, have: d.have}); txErr != nil {
@@ -435,6 +415,70 @@ func (d *DB) tx(ctx context.Context, fn func(*Tx) error) (err error) {
 		return fmt.Errorf("db: tx commit: %w", mapBusy(err))
 	}
 	return nil
+}
+
+// beginHook replaces the BEGIN IMMEDIATE statement in a test, so a test can
+// make the engine's busy-begin failure deterministic; nil in production.
+var beginHook func(ctx context.Context, conn *sql.Conn) error
+
+// beginCleanupError is a failed ROLLBACK after a busy BEGIN: the connection's
+// state is unknown, so the caller must not retry on it.
+type beginCleanupError struct{ err error }
+
+func (e *beginCleanupError) Error() string { return "rollback after busy begin: " + e.err.Error() }
+func (e *beginCleanupError) Unwrap() error { return e.err }
+
+// beginImmediate runs BEGIN IMMEDIATE on conn. The engine can leave a
+// connection inside a transaction when a busy BEGIN races a commit, and the
+// next BEGIN then fails "within a transaction", so every busy failure is
+// followed by a ROLLBACK; the engine's "no transaction is active" reply is the
+// normal case and is ignored. It returns the BEGIN error unmapped.
+func beginImmediate(ctx context.Context, conn *sql.Conn) error {
+	var err error
+	if beginHook != nil {
+		err = beginHook(ctx, conn)
+	} else {
+		_, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE")
+	}
+	if err == nil || !errors.Is(mapBusy(err), ErrBusy) {
+		return err
+	}
+	if _, rerr := conn.ExecContext(ctx, "ROLLBACK"); rerr != nil && !strings.Contains(rerr.Error(), "no transaction is active") {
+		return &beginCleanupError{err: errors.Join(err, rerr)}
+	}
+	return err
+}
+
+// beginWithRetry takes the write lock, retrying a busy BEGIN IMMEDIATE until
+// retryFor has elapsed since the first attempt. It may swap conn for a fresh
+// pooled one; it always returns the conn the caller must close.
+func (d *DB) beginWithRetry(ctx context.Context, conn *sql.Conn, retryFor time.Duration) (*sql.Conn, error) {
+	start := time.Now()
+	for {
+		beginErr := beginImmediate(ctx, conn)
+		if beginErr == nil {
+			return conn, nil
+		}
+		// The owner refused the BEGIN before executing it, so a fresh
+		// connection retried inside the same window cannot apply it twice.
+		if restartingRefusal(beginErr) && time.Since(start) < retryFor {
+			// The connection refused the request without running it, so closing
+			// it reports the refusal again rather than a failure of this attempt.
+			_ = conn.Close()
+			fresh, err := d.sqlDB.Conn(ctx)
+			if err != nil {
+				return conn, fmt.Errorf("db: tx: %w", err)
+			}
+			conn = fresh
+			continue
+		}
+		var cleanup *beginCleanupError
+		mapped := mapBusy(beginErr)
+		if errors.As(beginErr, &cleanup) || !errors.Is(mapped, ErrBusy) || time.Since(start) >= retryFor {
+			return conn, fmt.Errorf("db: tx begin: %w", mapped)
+		}
+		time.Sleep(time.Duration(25+rand.Intn(76)) * time.Millisecond)
+	}
 }
 
 // restartingRefusal reports whether an error is the owner's refusal to run a

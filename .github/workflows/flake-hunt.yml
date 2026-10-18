@@ -39,7 +39,7 @@ jobs:
         suite:
           - name: db
             pkg: ./internal/db
-            run: '^(TestDrainOutboxIsOneTransaction|TestOutboxDrainIsOneSnapshot|TestCancelledExecIsNotRetried|TestReexecNewImageOpensTheDatabaseAtOnce)$'
+            run: '^(TestDrainOutboxIsOneTransaction|TestOutboxDrainIsOneSnapshot|TestTxRetriesABusyBegin|TestTxBusyBeginLeavesTheConnectionUsable|TestTxGivesUpOnABusyBeginLeavesTheConnectionUsable|TestCancelledExecIsNotRetried|TestReexecNewImageOpensTheDatabaseAtOnce)$'
           - name: e2e
             pkg: ./internal/e2e
             run: '^(TestChainRemoteBuilderE2E|TestChainServerE2E)$'
