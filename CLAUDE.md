@@ -95,7 +95,9 @@ versions corrupt each other and there is no rollback. Two flows exist:
   not yet cleaned are listed as exclusions; a round that finishes a package
   removes its entries, and a new exclusion is never added to get a round green.
 - CI's coverage job fails when a package's statement coverage drops more than
-  one point below `testdata/coverage-baseline.txt`; a round that moves code
+  one point below `testdata/coverage-baseline.txt`. On a PR it holds only the
+  packages whose own files the PR changed (a drop elsewhere is printed, not
+  failed); a push to main holds every package. A round that moves code
   between packages regenerates the baseline with
   `sh scripts/check-coverage.sh --write` and says so in its report, and no
   round lowers a baseline to get green. The baseline is tied to the Go minor
