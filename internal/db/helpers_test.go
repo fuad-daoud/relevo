@@ -344,3 +344,28 @@ func isCrockford(c byte) bool {
 	}
 	return false
 }
+
+// pollUntil polls cond in short steps until it returns true or the test's
+// deadline arrives. If t.Deadline() is set, it stops slightly before the
+// deadline and fails with msg. If no deadline is set, it polls indefinitely.
+func pollUntil(t *testing.T, cond func() bool, msg string) {
+	t.Helper()
+	var deadline time.Time
+	if dl, ok := t.Deadline(); ok {
+		const margin = 200 * time.Millisecond
+		if time.Until(dl) > 2*margin {
+			deadline = dl.Add(-margin)
+		} else {
+			deadline = dl
+		}
+	}
+	for {
+		if cond() {
+			return
+		}
+		if !deadline.IsZero() && time.Now().After(deadline) {
+			t.Fatal(msg)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}

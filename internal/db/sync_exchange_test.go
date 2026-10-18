@@ -467,67 +467,66 @@ func spinRivals(rivals []*DB, ran *int32, stop <-chan struct{}, spun, attempted 
 // from a later moment than the entry list.
 //
 // The proof is the pool, not a race: the drain's handle allows one connection at
-// a time, and a competing transaction waits on that pool. A one-transaction
-// wrapper holds the connection from its entry read through its row reads and
-// never gives the waiter a turn, so it returns at once. A wrapper split in two
-// returns the connection between them, the waiter takes it and holds it, and the
-// second transaction waits out the holder -- which is the delay measured here.
+// TestDrainOutboxIsOneTransaction pins that DrainOutbox executes in a single
+// transaction: a competing write queued on the single pooled connection cannot
+// slip between the entry read and row reads, so all drained entries see the
+// pre-drain row state rather than the competing write.
 func TestDrainOutboxIsOneTransaction(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	d := openTestDBAt(t, path)
 	seedDrainBacklog(t, d, 1000)
 	d.sqlDB.SetMaxOpenConns(1)
 
+	wantURL := "u999"
 	for attempt := 0; attempt < 3; attempt++ {
-		held, err := drainWhilePoolHeld(d, 1000)
-		if err != nil {
-			t.Fatalf("DrainOutbox under a pool waiter = %v, want one transaction across both its reads", err)
-		}
-		if held >= waiterHold {
-			t.Fatalf("DrainOutbox took %s while a waiter held the pool for %s, want one transaction: a split drain waits out the holder", held, waiterHold)
-		}
-	}
-}
+		marker := fmt.Sprintf("m%d", attempt)
 
-// waiterHold is how long the competing transaction keeps the pool. A split drain
-// waits out all of it, so the bound sits there rather than on a guess at drain
-// speed: a 1000-entry drain takes over 2s on CI's macOS runners.
-const waiterHold = 5 * time.Second
+		type drainResult struct {
+			entries []DrainedEntry
+			err     error
+		}
+		done := make(chan drainResult, 1)
+		go func() {
+			entries, err := d.DrainOutbox(1000)
+			done <- drainResult{entries: entries, err: err}
+		}()
 
-// drainWhilePoolHeld runs one drain while a competing transaction waits on the
-// same one-connection pool. It returns how long the drain took. The waiter is
-// started just after the drain, so it queues behind the drain's first
-// transaction; a drain that is one transaction keeps the connection and never
-// lets the waiter run, and a drain that is two lets the waiter take the
-// connection in between and waits out its hold.
-func drainWhilePoolHeld(d *DB, limit int) (time.Duration, error) {
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	done := make(chan error, 1)
-	start := time.Now()
-	go func() {
-		_, err := d.DrainOutbox(limit)
-		done <- err
-	}()
-	// Let the drain take the pool's one connection before the waiter asks: the
-	// waiter must queue behind it, not race it for the connection.
-	time.Sleep(time.Millisecond)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		_ = d.Tx(func(tx *Tx) error {
-			select {
-			case <-stop:
-			case <-time.After(waiterHold):
+		pollUntil(t, func() bool {
+			return d.sqlDB.Stats().InUse >= 1
+		}, "the drain never acquired the pooled connection")
+
+		var waiterWg sync.WaitGroup
+		waiterWg.Add(1)
+		go func(m string) {
+			defer waiterWg.Done()
+			_ = d.Tx(func(tx *Tx) error {
+				_, err := tx.exec(`UPDATE repo SET origin_url = ? WHERE id = 'r0'`, m)
+				return err
+			})
+		}(marker)
+
+		res := <-done
+		waiterWg.Wait()
+
+		if res.err != nil {
+			t.Fatalf("attempt %d: DrainOutbox: %v", attempt, res.err)
+		}
+		repo := findDrained(t, res.entries, "repo", `["r0"]`)
+		if repo.Row == nil {
+			t.Fatalf("attempt %d: drained repo carries no row", attempt)
+		}
+		for _, e := range res.entries {
+			if e.Table == "repo" && e.PK == `["r0"]` {
+				if e.Row == nil {
+					t.Fatalf("attempt %d: drained entry carries no row", attempt)
+				}
+				if got := exchangeColumn(t, *e.Row, "origin_url"); got != wantURL {
+					t.Fatalf("attempt %d: drained repo row reads origin_url %v, want %s", attempt, got, wantURL)
+				}
 			}
-			return nil
-		})
-	}()
-	err := <-done
-	held := time.Since(start)
-	close(stop)
-	wg.Wait()
-	return held, err
+		}
+		wantURL = marker
+	}
 }
 
 // openTestDBAt opens path as the test's own file.

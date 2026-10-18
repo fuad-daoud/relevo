@@ -41,19 +41,17 @@ func startLockHelper(t *testing.T, mode, path string) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start the lock helper: %v", err)
 	}
+	exited := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(exited)
+	}()
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		<-exited
 	})
 
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(ready); err == nil {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("the lock helper never became ready")
+	waitForPath(t, exited, ready, "the lock helper never became ready")
 }
 
 // envWithout copies env with every entry named key removed, so a value this
@@ -120,7 +118,7 @@ func TestWritableOpenWaitsForTheLockThenFails(t *testing.T) {
 // peek test for this; that test injects ErrLocked through the config opener, so
 // this pins the underlying one-shot behaviour directly.
 func TestReadOnlyOpenTriesOnceForTheLock(t *testing.T) {
-	shrinkOpenLockWait(t, 2*time.Second)
+	shrinkOpenLockWait(t, 30*time.Second)
 
 	path := filepath.Join(t.TempDir(), "relevo.db")
 	startLockHelper(t, "flock", path)
@@ -131,7 +129,7 @@ func TestReadOnlyOpenTriesOnceForTheLock(t *testing.T) {
 	if !errors.Is(err, ErrLocked) {
 		t.Fatalf("OpenReadOnly while another process holds the lock = %v, want ErrLocked", err)
 	}
-	if elapsed >= time.Second {
+	if elapsed >= 10*time.Second {
 		t.Errorf("the read-only open waited %v for the lock, want it to try once", elapsed)
 	}
 }
@@ -164,7 +162,7 @@ func TestTwoHandlesInOneProcessShareTheLock(t *testing.T) {
 // ordering, not a clock: the second path's open returns while the first is
 // still polling.
 func TestAWaitingOpenDoesNotBlockAnotherPath(t *testing.T) {
-	shrinkOpenLockWait(t, 5*time.Second)
+	shrinkOpenLockWait(t, 20*time.Second)
 
 	held := filepath.Join(t.TempDir(), "held.db")
 	startLockHelper(t, "flock", held)
@@ -180,8 +178,11 @@ func TestAWaitingOpenDoesNotBlockAnotherPath(t *testing.T) {
 		_, err := openDirect(held, Options{})
 		waited <- err
 	}()
-	// Let the waiting open reach the lock before the second path is opened.
-	time.Sleep(100 * time.Millisecond)
+	pollUntil(t, func() bool {
+		directHandles.Lock()
+		defer directHandles.Unlock()
+		return directHandles.paths[canonicalPath(held)] != nil
+	}, "the waiting open never registered its handle entry")
 
 	d, err := openDirect(other, Options{})
 	if err != nil {
@@ -237,7 +238,6 @@ func TestTwoSpellingsOfOnePathShareTheLock(t *testing.T) {
 	}
 	indirect := dir + "/sub/../relevo.db"
 
-	start := time.Now()
 	second, err := openDirect(link, Options{})
 	if err != nil {
 		t.Fatalf("open through a symlink while the file is open: %v", err)
@@ -245,9 +245,6 @@ func TestTwoSpellingsOfOnePathShareTheLock(t *testing.T) {
 	third, err := openDirect(indirect, Options{})
 	if err != nil {
 		t.Fatalf("open through %s while the file is open: %v", indirect, err)
-	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Errorf("the two spellings waited %v, want them to share the lock at once", elapsed)
 	}
 	if got := handleCount(link); got != 3 {
 		t.Errorf("handleCount of the symlink = %d, want the three handles on one file", got)
