@@ -526,7 +526,9 @@ gives a MasterMind a name of your own.
   default; pass `--delete` to remove each binding's directory instead
   (`relevo unbind --done --archive` is accepted as a no-op). A DONE binding whose worktree is
   kept stays DONE, reported as kept, so running it again retries once the tree is clean;
-  `--force` archives or deletes it anyway.
+  `--force` archives or deletes it anyway. `--done` asks a remote binding's server
+  first and keeps the binding while the server keeps its worktree; a server that
+  cannot be reached does not block it, and the line notes why.
 - `relevo unbind --sweep [--dry-run]` — delete `relevo/<name>` branches and `refs/relevo/<name>/*` refs of bindings that no longer exist, once each is on a remote-tracking ref.
 - `relevo daemon [--interval D] [--check] [--pprof <path>]` — the long-running reconciler; this is what the
   service unit runs. It reconciles builders, queues reports for the MasterMind

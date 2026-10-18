@@ -3021,8 +3021,8 @@ func TestGCRemoteOnlyWhenDone(t *testing.T) {
 	if len(results) != 1 || results[0].Name != "done-remote" {
 		t.Fatalf("results = %+v, want only done-remote", results)
 	}
-	if len(fr.calls) != 0 {
-		t.Fatalf("GC made a server call: %v, want none", fr.calls)
+	if len(fr.calls) != 1 || fr.calls[0] != "Unbind:zen:done-remote" {
+		t.Fatalf("server calls = %v, want only the DONE binding's unbind", fr.calls)
 	}
 	if _, lerr := st.Load("open-remote"); lerr != nil {
 		t.Fatalf("open-remote must survive GC: %v", lerr)

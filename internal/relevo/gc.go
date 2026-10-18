@@ -47,6 +47,9 @@ type GCResult struct {
 	KeptReason      string       `json:"kept_reason,omitempty"`
 	WorktreeGone    string       `json:"worktree_gone,omitempty"` // recorded worktree whose directory no longer exists
 	Refs            []RefOutcome `json:"refs,omitempty"`
+	// ServerErr is why a remote binding's server could not be asked to release
+	// it; the binding was archived or deleted locally anyway.
+	ServerErr string `json:"server_err,omitempty"`
 	// MasterMindID is the binding's MasterMindID, verbatim, which may be "" (#482).
 	MasterMindID string `json:"mastermind_id,omitempty"`
 }
@@ -69,8 +72,10 @@ type GCResult struct {
 // remote-tracking ref, never an adopted branch, and never while the worktree
 // is kept.
 //
-// The whole sweep runs in one critical section so a binding cannot be marked
-// done, or resumed, between the scan and the removal.
+// Local bindings are scanned and removed in one critical section, so one cannot
+// be marked done, or resumed, between the scan and the removal. A remote
+// binding's server is asked between two critical sections, never inside one,
+// and the binding is re-loaded before it is removed.
 func GC(ctx context.Context, rt Runtime, opts GCOptions) ([]GCResult, error) {
 	switch {
 	case opts.MasterMindID == "" && !opts.AllMasterMinds:
@@ -80,6 +85,7 @@ func GC(ctx context.Context, rt Runtime, opts GCOptions) ([]GCResult, error) {
 	}
 
 	var out []GCResult
+	var remotes []store.Binding
 
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
 		bindings, err := tx.List()
@@ -88,51 +94,159 @@ func GC(ctx context.Context, rt Runtime, opts GCOptions) ([]GCResult, error) {
 		}
 
 		for _, b := range bindings {
-			if b.State != store.StateDone {
+			if !gcInScope(b, opts) {
 				continue
 			}
-			if !opts.AllMasterMinds && b.MasterMindID != opts.MasterMindID {
+			// A remote binding's tree lives on its server, so the server is asked
+			// after the lock is released; a dry run never asks.
+			if b.Builder.Remote() && !opts.DryRun {
+				remotes = append(remotes, b)
 				continue
 			}
 
-			res := GCResult{Name: b.Name, CWD: b.CWD, Rounds: b.Round, MasterMindID: b.MasterMindID}
-
+			res := newGCResult(b)
 			outcome := worktreeTeardown(ctx, rt, b, opts.DryRun)
 			res.WorktreeRemoved = outcome.Removed
 			res.WorktreeKept = outcome.Kept
 			res.KeptReason = outcome.Reason
 			res.WorktreeGone = outcome.Gone
-
-			if rt.Git != nil && outcome.Kept == "" {
-				if dir := repoDirOf(b); dir != "" {
-					refs, err := bindingRefCandidates(ctx, rt, dir, b)
-					if err != nil {
-						res.Refs = []RefOutcome{{Ref: "refs/relevo/" + b.Name + "/", Reason: "check failed: " + brief(err)}}
-					} else {
-						res.Refs = cleanRefs(ctx, rt, dir, refs, opts.DryRun)
-					}
-				}
+			if outcome.Kept == "" {
+				res.Refs = gcRefs(ctx, rt, b, opts.DryRun)
 			}
 
 			res.BindingKept = outcome.Kept != "" && !opts.Force
-			if opts.DryRun || res.BindingKept {
-				out = append(out, res)
-				continue
-			}
-
-			if opts.Delete {
-				if err := tx.Delete(b.Name); err != nil {
-					return fmt.Errorf("delete %q: %w", b.Name, err)
+			if !opts.DryRun && !res.BindingKept {
+				if err := gcRemove(tx, b.Name, opts, &res); err != nil {
+					return err
 				}
-				res.Deleted = true
-			} else {
-				if _, err := tx.Archive(b.Name); err != nil {
-					return fmt.Errorf("archive %q: %w", b.Name, err)
-				}
-				res.Archived = true
 			}
 
 			out = append(out, res)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	released, kept := askRemoteServers(ctx, rt, remotes, opts)
+	out = append(out, kept...)
+
+	cleared, err := clearReleased(rt, released, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(out, cleared...), nil
+}
+
+func gcInScope(b store.Binding, opts GCOptions) bool {
+	if b.State != store.StateDone {
+		return false
+	}
+
+	return opts.AllMasterMinds || b.MasterMindID == opts.MasterMindID
+}
+
+func newGCResult(b store.Binding) GCResult {
+	return GCResult{Name: b.Name, CWD: b.CWD, Rounds: b.Round, MasterMindID: b.MasterMindID}
+}
+
+// gcRefs reports (and, unless dryRun, deletes) the binding's branch and client
+// refs that are already on a remote-tracking ref.
+func gcRefs(ctx context.Context, rt Runtime, b store.Binding, dryRun bool) []RefOutcome {
+	if rt.Git == nil {
+		return nil
+	}
+	dir := repoDirOf(b)
+	if dir == "" {
+		return nil
+	}
+	refs, err := bindingRefCandidates(ctx, rt, dir, b)
+	if err != nil {
+		return []RefOutcome{{Ref: "refs/relevo/" + b.Name + "/", Reason: "check failed: " + brief(err)}}
+	}
+
+	return cleanRefs(ctx, rt, dir, refs, dryRun)
+}
+
+func gcRemove(tx *store.Tx, name string, opts GCOptions, res *GCResult) error {
+	if opts.Delete {
+		if err := tx.Delete(name); err != nil {
+			return fmt.Errorf("delete %q: %w", name, err)
+		}
+		res.Deleted = true
+
+		return nil
+	}
+	if _, err := tx.Archive(name); err != nil {
+		return fmt.Errorf("archive %q: %w", name, err)
+	}
+	res.Archived = true
+
+	return nil
+}
+
+// releasedBinding is a remote DONE binding whose server let go of it, with the
+// result so far.
+type releasedBinding struct {
+	b   store.Binding
+	res GCResult
+}
+
+// askRemoteServers asks each remote binding's server to unbind it, outside any
+// lock. A server that keeps its worktree keeps the binding; one that is
+// unreachable or fails does not block the sweep, and its error is reported.
+func askRemoteServers(ctx context.Context, rt Runtime, remotes []store.Binding, opts GCOptions) ([]releasedBinding, []GCResult) {
+	var released []releasedBinding
+	var kept []GCResult
+
+	for _, b := range remotes {
+		res := newGCResult(b)
+		err := askServerUnbind(ctx, rt, b, opts.Force)
+		switch {
+		case errors.Is(err, ErrWorktreeKept):
+			res.BindingKept = true
+			res.WorktreeKept = "on " + b.Builder.Server
+			res.KeptReason = err.Error()
+			kept = append(kept, res)
+
+			continue
+		case err != nil:
+			res.ServerErr = err.Error()
+		}
+		res.Refs = gcRefs(ctx, rt, b, false)
+		released = append(released, releasedBinding{b: b, res: res})
+	}
+
+	return released, kept
+}
+
+// clearReleased archives or deletes the released bindings under the lock. Each
+// is re-loaded first: one resumed or removed since the scan is left alone.
+func clearReleased(rt Runtime, released []releasedBinding, opts GCOptions) ([]GCResult, error) {
+	var out []GCResult
+	if len(released) == 0 {
+		return out, nil
+	}
+
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		for _, r := range released {
+			cur, err := tx.Load(r.b.Name)
+			if errors.Is(err, store.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if cur.State != store.StateDone {
+				continue
+			}
+			if err := gcRemove(tx, r.b.Name, opts, &r.res); err != nil {
+				return err
+			}
+			out = append(out, r.res)
 		}
 
 		return nil

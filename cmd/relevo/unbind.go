@@ -262,6 +262,9 @@ func printGCResult(r relevo.GCResult, lbl string, dryRun bool) {
 		fmt.Printf("deleted     %-10s [%s] %s (%d rounds)\n", r.Name, lbl, r.CWD, r.Rounds)
 		printGCWorktree(r)
 	}
+	if r.ServerErr != "" {
+		fmt.Printf("            note: server not released: %s\n", r.ServerErr)
+	}
 	for _, line := range relevo.RefLines(r.Refs) {
 		fmt.Printf("            %s\n", line)
 	}

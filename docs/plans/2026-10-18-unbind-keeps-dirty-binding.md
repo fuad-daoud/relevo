@@ -75,3 +75,14 @@ Decision (made, pre-answered here): the keep rule goes into the shared core, so 
 - Whether `removeReaderScratch` ordering mattered and where the guard sits relative to the process stop (the builder is already stopped when a kept binding is refused).
 - The old-server caveat (no protection until redeploy; `relevo serve` redeploy needed) and the old-client behaviour.
 - `make check-affected` output tail and the mutation results for each named test.
+
+## Round 2
+
+`relevo unbind --done` (`GC`) now asks a remote DONE binding's server to unbind it, with `opts.Force`, before archiving or deleting the local record; the local record of a remote binding has no `Worktree`, so round 1's local teardown never saw the server's dirty tree.
+
+- Server answers `ErrWorktreeKept`: the binding stays DONE, the result has `BindingKept`, `WorktreeKept` and `KeptReason`, and the CLI prints the existing kept line.
+- nil or 404: archive or delete locally. Any other error (unreachable, 5xx, no remote client): archive locally and record the error in `GCResult.ServerErr` (`server_err`), which the CLI prints as a note.
+- Dry run never contacts the server.
+- No network call under `WithLock`: the locked scan handles local bindings and collects remote DONE ones; the lock is released and each server asked; a second locked pass re-loads each released binding and skips one that is no longer DONE or no longer exists.
+- Local bindings behave as in round 1. `TestGCRemoteOnlyWhenDone` now asserts the single unbind call for the DONE binding instead of none.
+- Tests: `internal/relevo/gc_remote_test.go`. README unbind entry updated.
