@@ -43,12 +43,12 @@ func seedAgyHeadless(t *testing.T, fr *fakeRunner) (Runtime, store.Binding) {
 }
 
 func TestStartRoundPromptCopy(t *testing.T) {
-	// 1. startRound on an agy candidate at edit:
+	// 1. startRound on an agy candidate at read:
 	// prompt names copy, original Read: line replaced, copy bytes equal staged original.
 	fr := newFakeRunner()
 	rt, b := seedAgyHeadless(t, fr)
 	b.Round = 1
-	b.Tier = "edit"
+	b.Tier = "read"
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -224,12 +224,12 @@ func TestStartRoundPromptCopy(t *testing.T) {
 }
 
 func TestResumeAndSecondStartRoundRewritesCopy(t *testing.T) {
-	// 4. resumeRound for agy at edit, and a second startRound for the same round (relaunch/switch):
+	// 4. resumeRound for agy at read, and a second startRound for the same round (relaunch/switch):
 	// the copy is rewritten from the original after being overwritten with garbage.
 	fr := newFakeRunner()
 	rt, b := seedAgyHeadless(t, fr)
 	b.Round = 1
-	b.Tier = "edit"
+	b.Tier = "read"
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestStartRoundPlantedSymlinkRefused(t *testing.T) {
 	fr := newFakeRunner()
 	rt, b := seedAgyHeadless(t, fr)
 	b.Round = 1
-	b.Tier = "edit"
+	b.Tier = "read"
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -355,15 +355,15 @@ func TestStartRoundPlantedSymlinkRefused(t *testing.T) {
 }
 
 func TestSendPreflightPromptCopy(t *testing.T) {
-	// 6. sendPreflight / dry run for agy at edit:
-	// pf.prompt names the copy and no file is written; with opts.Tier read/edit override
+	// 6. sendPreflight / dry run for agy at read:
+	// pf.prompt names the copy and no file is written; with opts.Tier read override
 	// on a binding whose stored tier is yolo, the decision follows the override.
 	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, testTwoReviewerJSON)
 	rt.Runner = newFakeRunner()
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "agy-preflight", Candidate: testAgyRef, Tier: "edit", MasterMindID: testMasterMindName, CWD: "/repo",
+		Name: "agy-preflight", Candidate: testAgyRef, Tier: "read", MasterMindID: testMasterMindName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -373,7 +373,7 @@ func TestSendPreflightPromptCopy(t *testing.T) {
 	origPath := rt.Store.PromptPath(b.Name, b.Round)
 	copyPath := rt.Store.PromptCopyPath(b.Name, b.Round)
 
-	// Dry run for agy at edit
+	// Dry run for agy at read
 	pf, err := sendPreflight(context.Background(), rt, b.Name, planFile, SendOptions{})
 	if err != nil {
 		t.Fatalf("sendPreflight: %v", err)
@@ -406,18 +406,6 @@ func TestSendPreflightPromptCopy(t *testing.T) {
 	}
 	if !strings.Contains(pfYoloNoOverride.prompt, "Read: "+origPathYolo) {
 		t.Errorf("pfYoloNoOverride should name original: %s", pfYoloNoOverride.prompt)
-	}
-
-	// With opts.Tier edit override on binding stored as yolo:
-	pfEditOverride, err := sendPreflight(context.Background(), rt, bYolo.Name, planFile, SendOptions{Tier: "edit"})
-	if err != nil {
-		t.Fatalf("sendPreflight edit override: %v", err)
-	}
-	if !strings.Contains(pfEditOverride.prompt, "Read: "+copyPathYolo+"\n") {
-		t.Errorf("pfEditOverride prompt %q does not name copy %s", pfEditOverride.prompt, copyPathYolo)
-	}
-	if _, err := os.Stat(copyPathYolo); !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("dry-run with edit override must not create copy file: %v", err)
 	}
 
 	// With opts.Tier read override on binding stored as yolo:
