@@ -27,6 +27,11 @@ export GOTOOLCHAIN=local
 export GOFLAGS=
 export GOPROXY=off
 
+# A gate passes BASE through make and relevo exports RELEVO_BASE to every round
+# and gate; either would point the fixture's runs at a commit outside it. Cases
+# that want one set it themselves.
+unset BASE RELEVO_BASE
+
 # shellcheck disable=SC1007 # CDPATH= scopes an empty CDPATH to this one command
 CDPATH= cd -- "$fx"
 
