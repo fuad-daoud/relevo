@@ -319,6 +319,36 @@ mkdir -p "a/sub dir"
 touch "a/sub dir/my file.txt"
 assert_stdout "a path with a space in its name maps" "$want_a"
 
+# --direct lists the changed packages without their importers
+reset_fixture
+echo "// edit" >> a/a.go
+echo "// edit" >> f/f.go
+assert_stdout "--direct on edits in a and f gives a and f" "example.test/fx/a
+example.test/fx/f" --direct
+
+reset_fixture
+mkdir -p docs
+echo "docs" > docs/x.md
+assert_stdout "--direct on a docs-only change gives empty" "" --direct
+
+reset_fixture
+echo "// edit" >> go.mod
+assert_stdout "--direct on a go.mod change gives ./..." "./..." --direct
+
+reset_fixture
+mkdir -p .github/workflows
+echo "on: push" > .github/workflows/ci.yml
+assert_stdout "a file in no package gives ./..." "./..."
+assert_stdout "--direct on a file in no package gives empty" "" --direct
+
+reset_fixture
+rm -rf a/sub
+assert_stdout "--direct on a deleted package directory gives its parent" "example.test/fx/a" --direct
+
+reset_fixture
+echo "package fixture" > a/testdata/fixture.go
+assert_stdout "--direct on a .go file under testdata gives its package" "example.test/fx/a" --direct
+
 # 13. bad flag gives exit 2
 reset_fixture
 status=0

@@ -7,6 +7,9 @@
 #   --write  rewrite testdata/coverage-baseline.txt from FILE, instead of
 #            checking against it
 #   FILE     a `go test -cover` output file (default .coverage.txt)
+# Env:   COVERAGE_SCOPE  a file of import paths, one per line: only these
+#        packages fail on a drop (a line `./...` means every package); the rest
+#        are reported and pass. Unset checks every package.
 set -eu
 
 # The baseline sits next to this script's real repo path, not the caller's cwd.
@@ -109,6 +112,19 @@ fi
 # The header line is not a package line.
 tail -n +2 "$baseline" > "$work/baseline"
 
+# A package whose tests take timing-dependent paths measures a point or two
+# apart run to run, so a change is held only to the packages it touched.
+scope=${COVERAGE_SCOPE:-}
+if [ -n "$scope" ] && [ ! -f "$scope" ]; then
+	echo "check-coverage: COVERAGE_SCOPE names $scope, which does not exist"
+	exit 1
+fi
+
+in_scope() {
+	[ -z "$scope" ] && return 0
+	grep -qxF -e "$1" -e "./..." "$scope"
+}
+
 fail=0
 
 # Every baseline package: a drop of more than one point fails; a package the
@@ -122,8 +138,12 @@ while IFS=' ' read -r pkg base; do
 		continue
 	fi
 	if awk -v pct="$pct" -v base="$base" 'BEGIN { exit !(pct < base - 1.0) }'; then
-		echo "$pkg: coverage $pct% is below baseline $base% (-1.0 allowed)"
-		fail=1
+		if in_scope "$pkg"; then
+			echo "$pkg: coverage $pct% is below baseline $base% (-1.0 allowed)"
+			fail=1
+		else
+			echo "$pkg: coverage $pct% is below baseline $base% (not changed here, not enforced)"
+		fi
 	fi
 done < "$work/baseline"
 
