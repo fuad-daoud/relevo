@@ -21,8 +21,9 @@ const (
 
 // startLockHelper runs the test binary as a second process that holds path open
 // -- the engine's own pool in mode "raw", the relevo open lock in mode "open" --
-// and waits until the ready file says it is held.
-func startLockHelper(t *testing.T, mode, path string) {
+// and waits until the ready file says it is held. The returned release ends the
+// helper, so its lock goes, for a test that must see a waiter get through.
+func startLockHelper(t *testing.T, mode, path string) (release func()) {
 	t.Helper()
 	self, err := filepath.Abs(os.Args[0])
 	if err != nil {
@@ -46,12 +47,14 @@ func startLockHelper(t *testing.T, mode, path string) {
 		_ = cmd.Wait()
 		close(exited)
 	}()
-	t.Cleanup(func() {
+	release = func() {
 		_ = cmd.Process.Kill()
 		<-exited
-	})
+	}
+	t.Cleanup(release)
 
 	waitForPath(t, exited, ready, "the lock helper never became ready")
+	return release
 }
 
 // envWithout copies env with every entry named key removed, so a value this
@@ -165,7 +168,7 @@ func TestAWaitingOpenDoesNotBlockAnotherPath(t *testing.T) {
 	shrinkOpenLockWait(t, 20*time.Second)
 
 	held := filepath.Join(t.TempDir(), "held.db")
-	startLockHelper(t, "flock", held)
+	release := startLockHelper(t, "flock", held)
 
 	other := filepath.Join(t.TempDir(), "other.db")
 	seed := directOpen(t, other, Options{})
@@ -173,10 +176,14 @@ func TestAWaitingOpenDoesNotBlockAnotherPath(t *testing.T) {
 		t.Fatalf("close the second path's seed handle: %v", err)
 	}
 
-	waited := make(chan error, 1)
+	type opened struct {
+		d   *DB
+		err error
+	}
+	waited := make(chan opened, 1)
 	go func() {
-		_, err := openDirect(held, Options{})
-		waited <- err
+		d, err := openDirect(held, Options{})
+		waited <- opened{d, err}
 	}()
 	pollUntil(t, func() bool {
 		directHandles.Lock()
@@ -191,14 +198,19 @@ func TestAWaitingOpenDoesNotBlockAnotherPath(t *testing.T) {
 	_ = d.Close()
 
 	select {
-	case werr := <-waited:
-		t.Fatalf("the waiting open ended before the second path's open returned: %v", werr)
+	case w := <-waited:
+		t.Fatalf("the waiting open ended before the second path's open returned: %v", w.err)
 	default:
 	}
 
-	if err := <-waited; !errors.Is(err, ErrLocked) {
-		t.Errorf("the waiting open = %v, want ErrLocked", err)
+	// Releasing the lock lets the waiter through at once, rather than leaving it
+	// to wait out the whole lock wait for an ErrLocked.
+	release()
+	w := <-waited
+	if w.err != nil {
+		t.Fatalf("the waiting open after the lock went = %v, want it to open", w.err)
 	}
+	_ = w.d.Close()
 }
 
 // TestOpenLockWaitOutlastsTheReadOnlyHoldBudget pins the relation the wait and
