@@ -63,6 +63,7 @@ const (
 
 // TestChainRemoteBuilderE2E is the served-remote-builder chain scenario.
 func TestChainRemoteBuilderE2E(t *testing.T) {
+	quietServerMaintenance(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
@@ -144,7 +145,7 @@ func TestChainRemoteBuilderE2E(t *testing.T) {
 
 	// Plan 1 shipped through the start's own pending-send step: the server has
 	// the binding and its runner has the served round.
-	waitChainRemote(t, 30*time.Second, "plan 1 to reach the served builder", func() bool {
+	waitChainRemote(t, chainRemoteDeadline, "plan 1 to reach the served builder", func() bool {
 		sb, err := serverStore.Load(builderName)
 		if err != nil {
 			return false

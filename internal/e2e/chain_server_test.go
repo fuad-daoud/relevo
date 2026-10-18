@@ -50,6 +50,7 @@ const (
 )
 
 func TestChainServerE2E(t *testing.T) {
+	quietServerMaintenance(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 

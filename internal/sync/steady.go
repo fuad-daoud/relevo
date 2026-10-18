@@ -349,11 +349,17 @@ func (r *Runner) failed(out SteadyResult, err error) SteadyResult {
 // after it, and the step is reported as timed out. This waits for the step to
 // come back, so no call a previous step left behind runs beside the next one.
 func within(ctx context.Context, t *StopTransport, bound time.Duration, step func() error) error {
+	timer := time.NewTimer(bound)
+	defer timer.Stop()
+	return withinUntil(ctx, t, timer.C, step)
+}
+
+// withinUntil runs one step until expired receives or ctx is done. Split from
+// within so a test can fire the bound at a chosen moment without relying on clocks.
+func withinUntil(ctx context.Context, t *StopTransport, expired <-chan time.Time, step func() error) error {
 	done := make(chan error, 1)
 	go func() { done <- step() }()
 
-	timer := time.NewTimer(bound)
-	defer timer.Stop()
 	select {
 	case err := <-done:
 		return err
@@ -361,7 +367,7 @@ func within(ctx context.Context, t *StopTransport, bound time.Duration, step fun
 		t.Stop()
 		<-done
 		return ctx.Err()
-	case <-timer.C:
+	case <-expired:
 		t.Stop()
 		<-done
 		return errStepTimedOut

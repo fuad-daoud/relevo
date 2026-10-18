@@ -75,7 +75,7 @@ board-assets:
 # a change reaches. The full gate is CI's job (race, every package, coverage).
 # BASE overrides the base ref (default git merge-base HEAD origin/main).
 check-affected:
-	$(MAKE) check-static
+	$(MAKE) check-static BASE=
 	@pkgs=$$(BASE="$(BASE)" sh scripts/affected-packages.sh) || exit $$?; \
 	if [ -z "$$pkgs" ]; then \
 		echo "no Go package affected; tests skipped"; \
