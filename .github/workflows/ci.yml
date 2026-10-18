@@ -195,11 +195,12 @@ jobs:
   # macOS is its own job so the coverage job, which only reads ubuntu/stable
   # shards, never waits behind the free plan's 5-job macOS queue.
   test-macos:
-    name: test (${{ matrix.os }}, go ${{ matrix.go }}, ${{ matrix.shard }}/3)
+    name: test (${{ matrix.os }}, go ${{ matrix.go }}, ${{ matrix.shard }}/${{ github.event_name == 'pull_request' && 4 || 3 }})
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     env:
+      SHARDS: ${{ github.event_name == 'pull_request' && 4 || 3 }}
       # Go < 1.24 does not emit an LC_UUID load command on darwin unless
       # told to, and the current macOS dyld refuses to load a binary
       # without one -- the race-test binary of any package that imports
@@ -215,7 +216,9 @@ jobs:
         # starts complaining about.
         os: [macos-latest]
         go: ['1.25', 'stable']
-        # Each leg runs 3 shards of a weighted assignment (test-shard.sh places
+        # A PR runs 4 shards on the stable leg alone, 4 macOS jobs under the
+        # free plan's cap of 5; main runs 3 on each leg.
+        # Each leg runs its shards as a weighted assignment (test-shard.sh places
         # the whole packages longest-first onto the least loaded shard, and
         # internal/relevo's tests round-robin across the shards), which is what
         # fits the race run in the job's wall time. Splitting more packages by
@@ -224,11 +227,12 @@ jobs:
         # On main the two macOS legs make 6 macOS jobs, one over the free plan's
         # cap of 5 concurrent macOS jobs, so one of them queues. Main is never
         # cancelled, so queueing only costs time.
-        shard: [0, 1, 2]
+        shard: [0, 1, 2, 3]
         # PRs skip macOS on the 1.25 floor to stay under the free plan's
         # 5-concurrent-macOS-job cap; main still runs the full matrix.
         exclude:
           - go: ${{ github.event_name == 'pull_request' && '1.25' || 'none' }}
+          - shard: ${{ github.event_name == 'pull_request' && 'none' || 3 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -240,7 +244,7 @@ jobs:
         # darwin's coverage report intermittently fails after a passing run, and only the ubuntu/stable shards feed the coverage job.
         env:
           SHARD_COVER: '0'
-        run: sh scripts/test-shard.sh ${{ matrix.shard }} 3 .shard
+        run: sh scripts/test-shard.sh ${{ matrix.shard }} "$SHARDS" .shard
 
       # Shellcheck and the scripts' own tests stay on every os x go leg, run by
       # shard 0, so the BSD userland on macOS keeps exercising them.
@@ -268,10 +272,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # A PR's checkout is its merge commit, whose first parent is the
+          # base it merges into.
+          fetch-depth: 2
 
       - uses: actions/setup-go@v5
         with:
           go-version: stable
+
+      # On a PR only the packages whose own files changed fail on a drop: some
+      # packages measure a point or two apart run to run, and a PR that never
+      # touched one must not go red on it. A push to main holds every package.
+      # This runs before the artifacts land, which would count as changed
+      # files, and writes outside the tree for the same reason.
+      - name: coverage scope
+        if: github.event_name == 'pull_request'
+        run: |
+          sh scripts/affected-packages.sh --direct --base HEAD^1 > "$RUNNER_TEMP/coverage-scope.txt"
+          echo "COVERAGE_SCOPE=$RUNNER_TEMP/coverage-scope.txt" >> "$GITHUB_ENV"
+          cat "$RUNNER_TEMP/coverage-scope.txt"
 
       # pattern matches only the ubuntu/stable leg's artifacts, the only leg
       # that uploads. Its go-version: stable resolves to the same Go as this

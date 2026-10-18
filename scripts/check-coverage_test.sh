@@ -52,7 +52,15 @@ run_ci() {
 	(cd "$work/repo" && RELEVO_REQUIRE_COVERAGE=1 sh scripts/check-coverage.sh "$@") > "$work/out" 2>&1 || status=$?
 }
 
-unset RELEVO_REQUIRE_COVERAGE 2>/dev/null || :
+# run_scoped is run_ci on coverage.txt with COVERAGE_SCOPE set to $1. The
+# assignment sits inside the subshell: a prefix assignment on a function call
+# outlives the call in some shells.
+run_scoped() {
+	status=0
+	(cd "$work/repo" && RELEVO_REQUIRE_COVERAGE=1 COVERAGE_SCOPE="$1" sh scripts/check-coverage.sh coverage.txt) > "$work/out" 2>&1 || status=$?
+}
+
+unset RELEVO_REQUIRE_COVERAGE COVERAGE_SCOPE 2>/dev/null || :
 
 expect_exit() { # description, expected exit
 	if [ "$status" -ne "$2" ]; then
@@ -82,6 +90,33 @@ run_ci coverage.txt
 expect_exit "a 1.5-point regression fails" 1
 expect_line "the regressed package is named" \
 	"example.com/pkg/b: coverage 48.5% is below baseline 50.0% (-1.0 allowed)"
+
+# COVERAGE_SCOPE holds a drop only against the packages it lists: a drop in a
+# listed package fails, a drop elsewhere is reported and passes.
+stage
+cp "$fixtures/regression.txt" "$work/repo/coverage.txt"
+echo "example.com/pkg/b" > "$work/scope"
+run_scoped "$work/scope"
+expect_exit "a drop in a scoped package fails" 1
+expect_line "the scoped drop is named" \
+	"example.com/pkg/b: coverage 48.5% is below baseline 50.0% (-1.0 allowed)"
+
+echo "example.com/pkg/a" > "$work/scope"
+run_scoped "$work/scope"
+expect_exit "a drop outside the scope passes" 0
+expect_line "the unscoped drop is still reported" \
+	"example.com/pkg/b: coverage 48.5% is below baseline 50.0% (not changed here, not enforced)"
+
+: > "$work/scope"
+run_scoped "$work/scope"
+expect_exit "an empty scope passes" 0
+
+echo "./..." > "$work/scope"
+run_scoped "$work/scope"
+expect_exit "a ./... scope holds every package" 1
+
+run_scoped "$work/no-such-scope"
+expect_exit "a missing scope file fails" 1
 
 # A package the baseline has never seen is noted but does not fail the run.
 stage
