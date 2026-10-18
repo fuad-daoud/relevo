@@ -804,6 +804,8 @@ What this means in practice:
   a MasterMind: it is there to do the round's work. The marker reaches every
   round process -- local and served, a fresh spawn, a resume after a daemon
   restart, a mid-round switch, a repair round and the admit of a queued round.
+  Every round and gate process also carries `RELEVO_BASE=<base commit>` when
+  the binding has one.
 
 **Scopes.** A local headless round runs in its own transient systemd scope
 named `relevo-round-local-<binding>-<round>` (an owned remote binding uses its

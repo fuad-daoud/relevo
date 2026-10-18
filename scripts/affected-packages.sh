@@ -2,9 +2,12 @@
 # scripts/affected-packages.sh -- list Go packages affected by changes against a base ref.
 #
 # Usage: affected-packages.sh [--base REF] [--direct]
-#   --base REF  git commit or ref to compare against (default: git merge-base HEAD origin/main)
+#   --base REF  git commit or ref to compare against (default: see precedence)
 #   --direct    list only the packages whose own files changed, not their importers
 # Env:   BASE        fallback override for base ref; the --base flag takes precedence
+#        RELEVO_BASE the commit a relevo round was cut from, set by relevo; used when
+#                    neither --base nor BASE is given, skipped with a note if unresolvable
+# Base precedence: --base, BASE, RELEVO_BASE, merge-base HEAD origin/main, ./...
 # Exit:  0 on success (including fallback to ./...), 2 on bad usage.
 #
 # Stdout is one import path per affected package, or './...' when all packages
@@ -24,6 +27,16 @@ resolve_base() {
 		fi
 		echo "$override"
 		return 0
+	fi
+
+	# RELEVO_BASE is ambient, not typed by the user: an unresolvable one is
+	# skipped, not a reason to test everything. A served tree has no origin/main.
+	if [ -n "${RELEVO_BASE:-}" ]; then
+		if git rev-parse --verify "$RELEVO_BASE^{commit}" >/dev/null 2>&1; then
+			echo "$RELEVO_BASE"
+			return 0
+		fi
+		echo "RELEVO_BASE '$RELEVO_BASE' cannot be resolved; ignoring it" >&2
 	fi
 
 	if ! git rev-parse --verify "origin/main^{commit}" >/dev/null 2>&1; then

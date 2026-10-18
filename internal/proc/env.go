@@ -20,7 +20,7 @@ var TmpDirEnv = []string{"TMPDIR", "GOTMPDIR"}
 // child cannot inherit a MasterMind, planner or runner it is not: a round's own
 // marker is appended after this filter and therefore survives, while a parent's
 // stale one cannot shadow it.
-var DeniedEnv = []string{"TYPESAFE_API_KEY", "RELEVO_MASTERMIND", "RELEVO_PLANNER", "RELEVO_RUNNER"}
+var DeniedEnv = []string{"TYPESAFE_API_KEY", "RELEVO_MASTERMIND", "RELEVO_PLANNER", "RELEVO_RUNNER", "RELEVO_BASE"}
 
 // ChildEnv returns parent with every denied name removed, then extra appended
 // verbatim. A name matches as "NAME=..." or exactly "NAME"; extra is not
