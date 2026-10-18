@@ -573,10 +573,13 @@ func TestFakeWorkerDeathSurfacesAsCallError(t *testing.T) {
 	if !strings.Contains(err.Error(), "read reply") {
 		t.Errorf("Stats = %v, want the worker's death surfaced as the call's failure", err)
 	}
-	// The worker is gone for good: a second call fails without reaching a pipe
-	// whose other end no longer exists.
-	if _, err := c.Stats(); err == nil {
-		t.Error("the second stats over a dead worker = nil, want a failure")
+	// The worker is gone for good: wait for the client to record the exit so
+	// the second call reliably takes the isGone arm rather than racing a pipe write.
+	if !waitForExit(t, c, 5*time.Second) {
+		t.Fatal("the worker is still running after death")
+	}
+	if _, err := c.Stats(); !errors.Is(err, ErrGone) {
+		t.Errorf("the second stats over a dead worker = %v, want %v", err, ErrGone)
 	}
 }
 
@@ -586,11 +589,11 @@ func TestFakeWorkerDeathSurfacesAsCallError(t *testing.T) {
 // than one still wedged.
 func TestFakeWorkerHangHitsTheDeadline(t *testing.T) {
 	cfg := handshake()
-	cfg.Timeout = 300 * time.Millisecond
 	c, err := startFakeWorker(t, modeHang, cfg)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	c.cfg.Timeout = 300 * time.Millisecond
 
 	start := time.Now()
 	_, err = c.Stats()
@@ -681,12 +684,12 @@ func TestPipeClientCountsOnlyAMissAndNotARefusal(t *testing.T) {
 	counted := 0
 	cfg := handshake()
 	cfg.OnMiss = func(error) { counted++ }
-	cfg.Timeout = 300 * time.Millisecond
 
 	c, err := startFakeWorker(t, modeHang, cfg)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	c.cfg.Timeout = 300 * time.Millisecond
 	if _, err := c.Stats(); err == nil {
 		t.Fatal("Stats over a hanging worker = nil, want the deadline")
 	}
