@@ -278,6 +278,7 @@ func servedCheckSpec(rt Runtime, b store.Binding, run store.CheckRun) gateProcSp
 		LogPath:  run.LogPath,
 		UnitName: scopeUnitNameFor(scopeGate, b.Owner, b.Name+"-check", run.Round, ""),
 		Timeout:  rt.Policy.GateTimeout(),
+		Env:      baseEnvEntry(b),
 	}
 }
 

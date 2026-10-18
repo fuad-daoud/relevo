@@ -73,7 +73,8 @@ board-assets:
 # check-affected is the builder's inner gate: the static checks, then go test
 # (no -race, no -count=1, so Go's test cache applies) over only the packages
 # a change reaches. The full gate is CI's job (race, every package, coverage).
-# BASE overrides the base ref (default git merge-base HEAD origin/main).
+# BASE overrides the base ref. When BASE is empty, RELEVO_BASE (set by relevo
+# in a round) is used, then git merge-base HEAD origin/main.
 check-affected:
 	$(MAKE) check-static BASE=
 	@pkgs=$$(BASE="$(BASE)" sh scripts/affected-packages.sh) || exit $$?; \

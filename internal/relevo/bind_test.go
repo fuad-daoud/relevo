@@ -2263,3 +2263,30 @@ func TestErrNoMasterMindSessionIsASentinel(t *testing.T) {
 		t.Fatal("ErrNoMasterMindSession must stay matchable through wrapping")
 	}
 }
+
+func TestBindAgyCandidateTierEditRefused(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	rt.Candidates = candidateSet(t, testTwoReviewerJSON)
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name:         "webshop",
+		Candidate:    testAgyRef,
+		MasterMindID: testMasterMindName,
+		CWD:          "/repo",
+		Tier:         "edit",
+	})
+	if !errors.Is(err, harness.ErrTierUnsupported) {
+		t.Fatalf("err = %v, want harness.ErrTierUnsupported", err)
+	}
+	if !strings.Contains(err.Error(), "use --tier yolo") {
+		t.Errorf("err %q should name use --tier yolo", err.Error())
+	}
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("a refused tier must start no process, got %d", got)
+	}
+	if _, loadErr := rt.Store.Load("webshop"); !errors.Is(loadErr, store.ErrNotFound) {
+		t.Errorf("Load err = %v, want store.ErrNotFound", loadErr)
+	}
+}

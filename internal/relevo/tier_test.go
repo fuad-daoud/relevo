@@ -96,3 +96,17 @@ func TestEffectiveTier(t *testing.T) {
 		t.Errorf("all empty: got %v, want harness", got)
 	}
 }
+
+func TestReaderTierAgyFallsToYolo(t *testing.T) {
+	t.Parallel()
+
+	pol := policy.Policy{}
+	for _, in := range []harness.Tier{harness.TierHarness, harness.TierEdit} {
+		if got, err := readerTier(in, "agy", pol); err != nil || got != harness.TierYolo {
+			t.Errorf("readerTier(%s, agy) = %v, %v; want yolo", in, got, err)
+		}
+		if got, err := readerTier(in, "claude", pol); err != nil || got != harness.TierEdit {
+			t.Errorf("readerTier(%s, claude) = %v, %v; want edit", in, got, err)
+		}
+	}
+}

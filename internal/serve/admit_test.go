@@ -89,7 +89,7 @@ func TestRoundSpawnCarriesAuthorEnv(t *testing.T) {
 				t.Errorf("spec.Env = %v, want it to contain %q", specs[0].Env, want)
 			}
 		}
-		want := append(append([]string{}, authorEnv...), "RELEVO_RUNNER=api")
+		want := append(append([]string{}, authorEnv...), "RELEVO_RUNNER=api", "RELEVO_BASE="+env.headSHA)
 		if !reflect.DeepEqual(specEnv, want) {
 			t.Errorf("spec.Env = %v, want exactly %v", specEnv, want)
 		}
@@ -104,7 +104,7 @@ func TestRoundSpawnCarriesAuthorEnv(t *testing.T) {
 		if len(specs) == 0 {
 			t.Fatal("round started no process")
 		}
-		if want := []string{"RELEVO_RUNNER=api"}; !reflect.DeepEqual(withoutShimPATH(t, specs[0].Env), want) {
+		if want := []string{"RELEVO_RUNNER=api", "RELEVO_BASE=" + env.headSHA}; !reflect.DeepEqual(withoutShimPATH(t, specs[0].Env), want) {
 			t.Errorf("spec.Env = %v, want exactly %v for a binding with no author", specs[0].Env, want)
 		}
 	})
