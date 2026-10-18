@@ -1,0 +1,65 @@
+name: flake-hunt
+
+# Runs the tests that have failed on main without a code cause, many times
+# over, so a timing flake turns up here overnight instead of on a merge. Its
+# own workflow for the same reason as govulncheck.yml: ci.yml's `changes` gate
+# answers code=true on every non-PR event. Nothing here is a required check.
+#
+# A test that fails here and not in ci.yml is a flake: fix the test, do not
+# rerun it green. A new flake seen on main joins the suites below.
+
+on:
+  schedule:
+    # Nightly, 03:17 UTC; off the :00 queue spike.
+    - cron: '17 3 * * *'
+  # A change to this file runs it once per test, to prove the wiring.
+  pull_request:
+    paths: ['.github/workflows/flake-hunt.yml']
+  workflow_dispatch:
+    inputs:
+      count:
+        description: go test -count for every suite
+        default: '20'
+
+permissions:
+  contents: read
+
+jobs:
+  hunt:
+    name: flake-hunt (${{ matrix.os }}, ${{ matrix.suite.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    env:
+      COUNT: ${{ github.event_name == 'pull_request' && '1' || inputs.count || '20' }}
+      RELEVO_DBTEST_OWNER: ${{ matrix.suite.owner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        suite:
+          - name: db
+            pkg: ./internal/db
+            run: '^(TestDrainOutboxIsOneTransaction|TestOutboxDrainIsOneSnapshot|TestCancelledExecIsNotRetried|TestReexecNewImageOpensTheDatabaseAtOnce)$'
+          - name: e2e
+            pkg: ./internal/e2e
+            run: '^(TestChainRemoteBuilderE2E|TestChainServerE2E)$'
+          - name: sync
+            pkg: ./internal/sync ./internal/syncworker ./internal/git
+            run: '^(TestWithinStopsTheStepAtItsBound|TestCompactIsNotQuadratic|TestMergeFF)$'
+        include:
+          # ci.yml's owner-mode job, ubuntu only, is where this test failed.
+          - os: ubuntu-latest
+            suite:
+              name: db-owner
+              pkg: ./internal/db
+              run: '^TestCancelledExecIsNotRetried$'
+              owner: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: hunt
+        run: go test -race -count="$COUNT" -timeout 80m -run '${{ matrix.suite.run }}' ${{ matrix.suite.pkg }}
