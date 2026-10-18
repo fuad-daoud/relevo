@@ -121,12 +121,11 @@ jobs:
         run: CGO_ENABLED=0 GOOS=darwin go vet ./...
 
   test:
-    name: test (${{ matrix.os }}, go ${{ matrix.go }}, ${{ matrix.shard }}/${{ github.event_name == 'pull_request' && 4 || 3 }})
+    name: test (${{ matrix.os }}, go ${{ matrix.go }}, ${{ matrix.shard }}/3)
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     env:
-      SHARDS: ${{ github.event_name == 'pull_request' && 4 || 3 }}
       # Go < 1.24 does not emit an LC_UUID load command on darwin unless
       # told to, and the current macOS dyld refuses to load a binary
       # without one -- the race-test binary of any package that imports
@@ -142,9 +141,7 @@ jobs:
         # starts complaining about.
         os: [ubuntu-latest]
         go: ['1.25', 'stable']
-        # A PR runs 4 shards on the stable leg alone, 4 macOS jobs under the
-        # free plan's cap of 5; main runs 3 on each leg.
-        # Each leg runs its shards as a weighted assignment (test-shard.sh places
+        # Each leg runs 3 shards of a weighted assignment (test-shard.sh places
         # the whole packages longest-first onto the least loaded shard, and
         # internal/relevo's tests round-robin across the shards), which is what
         # fits the race run in the job's wall time. Splitting more packages by
