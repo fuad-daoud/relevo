@@ -234,7 +234,7 @@ type serveUnbindFlagValues struct {
 func serveUnbindFlagSet(fs *flag.FlagSet) *serveUnbindFlagValues {
 	v := &serveUnbindFlagValues{}
 	v.owner = fs.String("owner", "", "client label or id")
-	v.force = fs.Bool("force", false, "unbind even if the round is running")
+	v.force = fs.Bool("force", false, "unbind a running round or a kept worktree")
 	_ = fs.String("state", "", "state directory")
 	v.asJSON = fs.Bool("json", false, "print the document the unbind produced")
 	return v
@@ -254,7 +254,7 @@ func cmdServeUnbindRun(args []string) error {
 	}
 
 	if *owner == "" || fs.NArg() < 1 {
-		return fail(codeUsage, "serve unbind wants --owner <label|id> <name> [--state <dir>] [--force]")
+		return fail(codeUsage, "serve unbind wants --owner <label|id> <name> [--state <dir>] [--force]  (--force: a running round or a kept worktree)")
 	}
 
 	name := fs.Arg(0)
@@ -273,6 +273,9 @@ func cmdServeUnbindRun(args []string) error {
 	if err != nil {
 		// A round still running on the binding is a state conflict the human
 		// can resolve with --force; anything else is classified as it comes.
+		if errors.Is(err, relevo.ErrWorktreeKept) {
+			return failNext(codeRefused, "relevo serve unbind --owner "+*owner+" "+name+" --force", "%v", err)
+		}
 		if strings.Contains(err.Error(), "is running") {
 			return failWrap(codeConflict, err, "%v", err)
 		}

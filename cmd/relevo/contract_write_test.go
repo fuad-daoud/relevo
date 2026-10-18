@@ -489,6 +489,8 @@ func TestContractWriteForcedFailures(t *testing.T) {
 		{"send verify conflict", []string{"send", "--verify", "--no-verify", "--file", "p.md", "--json"}, codeRefused, ""},
 		{"bind no feature choice", []string{"bind", "--name", "x", "--json"}, codeRefused, ""},
 		{"unbind sweep takes no binding", []string{"unbind", "--sweep", "x", "--json"}, codeRefused, ""},
+		{"unbind sweep refuses force", []string{"unbind", "--sweep", "--force", "--json"}, codeRefused, ""},
+		{"unbind pick refuses force", []string{"unbind", "--pick", "--force", "--json"}, codeRefused, ""},
 		{"done pick names one", []string{"done", "--pick", "x", "--json"}, codeRefused, ""},
 	}
 

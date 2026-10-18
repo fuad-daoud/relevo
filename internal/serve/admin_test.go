@@ -395,6 +395,29 @@ func TestAdminUnbindRefusesRunningUnlessForce(t *testing.T) {
 	}
 }
 
+func TestAdminUnbindKeptWorktreeNeedsForce(t *testing.T) {
+	s := newAdminServer(t, time.Now())
+	id := enrol(t, s, "alice")
+	wt := t.TempDir()
+	saveOwnerBinding(t, s, id, "kept", func(b *store.Binding) { b.Worktree = wt; b.Builder = store.Endpoint{} })
+	rt := ownerRuntime(t, s, id)
+
+	ctx := context.Background()
+	if _, err := AdminUnbind(ctx, s, "alice", "kept", false); !errors.Is(err, relevo.ErrWorktreeKept) {
+		t.Fatalf("AdminUnbind without force: err = %v, want ErrWorktreeKept", err)
+	}
+	if _, err := rt.Store.Load("kept"); err != nil {
+		t.Errorf("binding removed despite the kept worktree: %v", err)
+	}
+
+	if _, err := AdminUnbind(ctx, s, "alice", "kept", true); err != nil {
+		t.Fatalf("AdminUnbind with force: %v", err)
+	}
+	if _, err := rt.Store.Load("kept"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("binding still present after forced unbind: %v", err)
+	}
+}
+
 func TestAdminUnbindAmbiguousLabel(t *testing.T) {
 	s := newAdminServer(t, time.Now())
 	enrol(t, s, "dup")

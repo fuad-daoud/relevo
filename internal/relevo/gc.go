@@ -17,6 +17,9 @@ type GCOptions struct {
 	Delete bool
 	// DryRun reports what would happen and changes nothing.
 	DryRun bool
+	// Force archives or deletes a binding whose worktree was kept; without it
+	// that binding stays DONE so a later run can retry once the tree is clean.
+	Force bool
 	// MasterMindID clears only DONE bindings whose Binding.MasterMindID equals this.
 	// It must be non-empty unless AllMasterMinds is set (#482).
 	MasterMindID string
@@ -38,6 +41,7 @@ type GCResult struct {
 	Rounds          int          `json:"rounds"`
 	Archived        bool         `json:"archived"`
 	Deleted         bool         `json:"deleted"`
+	BindingKept     bool         `json:"binding_kept,omitempty"` // worktree kept, so the binding was left in place
 	WorktreeRemoved string       `json:"worktree_removed,omitempty"`
 	WorktreeKept    string       `json:"worktree_kept,omitempty"`
 	KeptReason      string       `json:"kept_reason,omitempty"`
@@ -110,7 +114,8 @@ func GC(ctx context.Context, rt Runtime, opts GCOptions) ([]GCResult, error) {
 				}
 			}
 
-			if opts.DryRun {
+			res.BindingKept = outcome.Kept != "" && !opts.Force
+			if opts.DryRun || res.BindingKept {
 				out = append(out, res)
 				continue
 			}
