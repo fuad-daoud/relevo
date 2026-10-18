@@ -17,11 +17,13 @@ import (
 // made from a call that went through.
 type restartLog struct {
 	*synclog.MemTransport
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
-	calls   atomic.Int32
-	cancels atomic.Int32
+	entered   chan struct{}
+	release   chan struct{}
+	cancelled chan struct{}
+	once      sync.Once
+	cancOnce  sync.Once
+	calls     atomic.Int32
+	cancels   atomic.Int32
 }
 
 func newRestartLog(origin string) *restartLog {
@@ -29,6 +31,7 @@ func newRestartLog(origin string) *restartLog {
 		MemTransport: synclog.NewMemTransport(origin),
 		entered:      make(chan struct{}),
 		release:      make(chan struct{}),
+		cancelled:    make(chan struct{}),
 	}
 }
 
@@ -56,7 +59,10 @@ func (r *restartLog) Stats() (synclog.Stats, error) {
 	return r.MemTransport.Stats()
 }
 
-func (r *restartLog) Cancel() { r.cancels.Add(1) }
+func (r *restartLog) Cancel() {
+	r.cancels.Add(1)
+	r.cancOnce.Do(func() { close(r.cancelled) })
+}
 
 // TestStopTransportRefusesEveryCallAfterAStop pins the stop as sticky: the
 // worker underneath is cancelled once, and no call after the stop reaches it,
@@ -146,26 +152,13 @@ func TestRunnerStopWithNoAttemptIsANoOp(t *testing.T) {
 // with its next call.
 func TestWithinStopsTheStepAtItsBound(t *testing.T) {
 	t.Parallel()
-	// On a loaded runner the bound can fire before the step's goroutine makes
-	// its first call; that attempt pins nothing about the call in flight, so the
-	// scenario is run again until the first call wins.
-	for range 20 {
-		if withinBoundsACallInFlight(t) {
-			return
-		}
-	}
-	t.Fatal("the bound fired before the step's first call on every attempt")
-}
-
-// withinBoundsACallInFlight runs one bounded step and reports whether its first
-// call reached the worker before the bound.
-func withinBoundsACallInFlight(t *testing.T) bool {
-	t.Helper()
 	log := newRestartLog("m1")
 	stop := NewStopTransport(log)
+	expired := make(chan time.Time)
 	done := make(chan error, 1)
+
 	go func() {
-		done <- within(context.Background(), stop, 50*time.Millisecond, func() error {
+		done <- withinUntil(context.Background(), stop, expired, func() error {
 			if _, err := stop.Append(nil); err != nil {
 				return err
 			}
@@ -176,31 +169,66 @@ func withinBoundsACallInFlight(t *testing.T) bool {
 
 	select {
 	case <-log.entered:
-	case err := <-done:
-		if !errors.Is(err, errStepTimedOut) {
-			t.Fatalf("within = %v before any call, want the step reported as timed out", err)
-		}
-		if got := log.calls.Load(); got != 0 {
-			t.Fatalf("%d calls reached the worker after the bound, want none", got)
-		}
-		return false
 	case <-time.After(10 * time.Second):
-		t.Fatal("the step neither reached its first call nor ended")
+		t.Fatal("the step never reached its first call")
 	}
-	// Past the bound, so the stop has landed while the first call still waits.
-	time.Sleep(300 * time.Millisecond)
+
+	close(expired)
+
+	select {
+	case <-log.cancelled:
+	case <-time.After(10 * time.Second):
+		t.Error("the stop never cancelled the worker")
+	}
+
 	close(log.release)
 
 	select {
 	case err := <-done:
 		if !errors.Is(err, errStepTimedOut) {
-			t.Errorf("within = %v, want the step reported as timed out", err)
+			t.Errorf("within = %v, want errStepTimedOut", err)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the timed-out step did not end")
 	}
+
 	if got := log.calls.Load(); got != 1 {
 		t.Errorf("%d calls reached the worker, want only the one in flight at the bound", got)
 	}
-	return true
+}
+
+// TestWithinStopsAStepBeforeItsFirstCall pins that an expired bound stops a
+// step before its first call reaches the worker, refusing subsequent calls.
+func TestWithinStopsAStepBeforeItsFirstCall(t *testing.T) {
+	t.Parallel()
+	log := newRestartLog("m1")
+	stop := NewStopTransport(log)
+	expired := make(chan time.Time)
+	close(expired)
+	done := make(chan error, 1)
+
+	go func() {
+		done <- withinUntil(context.Background(), stop, expired, func() error {
+			select {
+			case <-log.cancelled:
+			case <-time.After(10 * time.Second):
+				return errors.New("the stop never cancelled the worker")
+			}
+			_, err := stop.Append(nil)
+			return err
+		})
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, errStepTimedOut) {
+			t.Errorf("within = %v, want errStepTimedOut", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the timed-out step did not end")
+	}
+
+	if got := log.calls.Load(); got != 0 {
+		t.Errorf("%d calls reached the worker, want none", got)
+	}
 }

@@ -1,11 +1,11 @@
 package syncworker
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
-	"math"
+	"strings"
 	"testing"
-	"time"
 )
 
 func appendRow(t *testing.T, b *TursoBackend, pk string) {
@@ -115,35 +115,96 @@ func TestCompactAlignsAFloorNoReaderCanHold(t *testing.T) {
 	}
 }
 
-// Compaction is one grouped pass over the origin's log, not a lookup per entry.
-// A per-entry lookup took seconds at a few thousand entries and minutes on a
-// real log, holding the worker and every verb behind it. The test compares two
-// sizes rather than holding one to a wall-clock bound: CI runs under -race on
-// shared runners, which slows every pass by an order of magnitude, while the
-// ratio for 4x the entries stays at or under 7 for the grouped pass and near 16
-// for a per-entry one. Each pair times both sizes back to back, so a
-// load spike lands on one pair rather than skewing one side of the ratio, and
-// the lowest pair's ratio is the one judged: a host busy with other builds
-// stretched a single sample to 17x, while a per-entry pass is slow in every
-// pair.
-func TestCompactIsNotQuadratic(t *testing.T) {
-	const small, large, pairs = 2000, 8000, 3
-	best := math.Inf(1)
-	for range pairs {
-		smallTook, largeTook := timeCompact(t, small), timeCompact(t, large)
-		ratio := float64(largeTook) / float64(smallTook)
-		t.Logf("%d entries: %v, %d entries: %v, ratio %.1f", small, smallTook, large, largeTook, ratio)
-		best = min(best, ratio)
+func explainQueryPlan(t *testing.T, db *sql.DB, query string, args ...any) []string {
+	t.Helper()
+	rows, err := db.Query("EXPLAIN QUERY PLAN "+query, args...)
+	if err != nil {
+		t.Fatalf("explain query plan: %v", err)
 	}
-	if best > 10 {
-		t.Fatalf("compacting %d entries took at least %.1fx as long as %d in every pair, for 4x the entries", large, best, small)
+	defer func() { _ = rows.Close() }()
+	var details []string
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+			t.Fatalf("scan plan row: %v", err)
+		}
+		details = append(details, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows error: %v", err)
+	}
+	return details
+}
+
+type planMetrics struct {
+	scans      int
+	correlated int
+	hasGroupBy bool
+}
+
+func analyzePlan(details []string) planMetrics {
+	var m planMetrics
+	for _, d := range details {
+		if strings.Contains(d, "SCAN") || strings.Contains(d, "SEARCH") {
+			m.scans++
+		}
+		if strings.Contains(d, "CORRELATED") {
+			m.correlated++
+		}
+		if strings.Contains(d, "GROUP BY") {
+			m.hasGroupBy = true
+		}
+	}
+	return m
+}
+
+// TestCompactIsNotQuadratic pins that compaction is one grouped pass over the
+// origin's log, not a per-entry lookup, by structurally verifying the query plan.
+func TestCompactIsNotQuadratic(t *testing.T) {
+	b, _, _ := compactBackend(t)
+
+	// Control statement uses the per-entry NOT EXISTS shape described in compact.go:
+	// asking, per entry, whether a later one exists in a correlated subquery.
+	controlStatement := "DELETE FROM log WHERE origin = ? AND seq <= ? AND seq NOT IN (" +
+		"SELECT l2.seq FROM log l2 WHERE l2.origin = ? AND l2.seq <= ? AND NOT EXISTS (" +
+		"SELECT 1 FROM log l3 WHERE l3.origin = l2.origin AND l3.tbl = l2.tbl AND l3.pk = l2.pk AND l3.seq > l2.seq AND l3.seq <= ?))"
+
+	groupedPlan := explainQueryPlan(t, b.db, compactStatement, "origin-a", 100, "origin-a", 100)
+	controlPlan := explainQueryPlan(t, b.db, controlStatement, "origin-a", 100, "origin-a", 100, 100)
+
+	grouped := analyzePlan(groupedPlan)
+	control := analyzePlan(controlPlan)
+
+	if grouped.scans != 2 {
+		t.Errorf("grouped statement scans = %d, want 2 (literal from engine plan: %v)", grouped.scans, groupedPlan)
+	}
+	if control.scans != 3 {
+		t.Errorf("control statement scans = %d, want 3 (literal from engine plan: %v)", control.scans, controlPlan)
+	}
+	if grouped.scans >= control.scans {
+		t.Errorf("grouped statement scans (%d) not strictly fewer than control (%d)", grouped.scans, control.scans)
+	}
+
+	if grouped.correlated != 0 {
+		t.Errorf("grouped statement has %d correlated subqueries, want 0 (plan: %v)", grouped.correlated, groupedPlan)
+	}
+	if control.correlated != 1 {
+		t.Errorf("control statement correlated subqueries = %d, want 1 (plan: %v)", control.correlated, controlPlan)
+	}
+	if grouped.correlated >= control.correlated {
+		t.Errorf("grouped statement correlated subqueries (%d) not strictly fewer than control (%d)", grouped.correlated, control.correlated)
+	}
+
+	if !grouped.hasGroupBy {
+		t.Errorf("grouped statement plan missing GROUP BY: %v", groupedPlan)
 	}
 }
 
-// timeCompact fills a fresh log with n entries over n/3 rows and times one
-// Compact over all of them, checking it drops every superseded entry.
-func timeCompact(t *testing.T, n int) time.Duration {
-	t.Helper()
+// TestCompactDropsAllSupersededEntries asserts that compaction drops every
+// superseded entry end to end over 3000 entries without wall-clock timing.
+func TestCompactDropsAllSupersededEntries(t *testing.T) {
+	const n = 3000
 	b, _, path := compactBackend(t)
 	db := openAt(t, path)
 	tx, err := db.Begin()
@@ -159,16 +220,13 @@ func timeCompact(t *testing.T, n int) time.Duration {
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	start := time.Now()
 	res, err := b.Compact(n)
-	took := time.Since(start)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 	if want := n - n/3; res.Dropped != want {
 		t.Errorf("dropped %d of %d, want %d", res.Dropped, n, want)
 	}
-	return took
 }
 
 func TestPullRangeVerbAndCompactVerbOverThePipe(t *testing.T) {
