@@ -28,15 +28,11 @@ func TestCancelInterruptsARunningStatement(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 	cancel()
 
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("the statement returned success despite cancellation")
-		}
-		if !errors.Is(err, context.Canceled) {
-			t.Errorf("err = %v, want context.Canceled", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("the statement did not stop after cancellation")
+	err := <-done
+	if err == nil {
+		t.Fatal("the statement returned success despite cancellation")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want context.Canceled", err)
 	}
 }

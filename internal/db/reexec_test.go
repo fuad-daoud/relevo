@@ -48,17 +48,22 @@ func replaceEnv(env []string, key, value string) []string {
 	return append(out, prefix+value)
 }
 
-// waitForPath waits for path to appear, failing the test when it does not.
-func waitForPath(t *testing.T, path, msg string) {
+// waitForPath waits for path to appear, failing the test if exited closes or the
+// test deadline arrives first.
+func waitForPath(t *testing.T, exited <-chan struct{}, path, msg string) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
+	pollUntil(t, func() bool {
 		if _, err := os.Stat(path); err == nil {
-			return
+			return true
 		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatal(msg)
+		select {
+		case <-exited:
+			t.Fatal(msg)
+			return false
+		default:
+		}
+		return false
+	}, msg)
 }
 
 // writeMarker writes a one-line file, ignoring an empty path.
@@ -226,17 +231,22 @@ func TestReexecNewImageOpensTheDatabaseAtOnce(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start the helper: %v", err)
 	}
+	exited := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(exited)
+	}()
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		<-exited
 	})
 
-	waitForPath(t, ready, "the helper never became ready")
+	waitForPath(t, exited, ready, "the helper never became ready")
 	if err := cmd.Process.Signal(syscall.SIGUSR1); err != nil {
 		t.Fatalf("signal the helper: %v", err)
 	}
-	waitForPath(t, adopted, "the new image never adopted the listener")
-	waitForPath(t, opened, "the new image never opened the database: the previous image's lock survived the exec")
+	waitForPath(t, exited, adopted, "the new image never adopted the listener")
+	waitForPath(t, exited, opened, "the new image never opened the database: the previous image's lock survived the exec")
 
 	d, err := Dial(filepath.Join(root, "relevo.sock"))
 	if err != nil {

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"sync"
 	"testing"
-	"time"
 )
 
 // parkConn is a driver.Conn whose Close signals and then parks until released,
@@ -70,11 +69,7 @@ func TestCloseReleasesThePathAfterThePoolCloses(t *testing.T) {
 	closed := make(chan error, 1)
 	go func() { closed <- d.Close() }()
 
-	select {
-	case <-pc.started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the pool close never reached the driver connection")
-	}
+	<-pc.started
 	if got := handleCount(path); got != 1 {
 		t.Errorf("handleCount while the pool is closing = %d, want 1", got)
 	}

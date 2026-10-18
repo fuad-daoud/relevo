@@ -180,20 +180,13 @@ func TestClientDisconnectRollsBackAndKeepsSeq(t *testing.T) {
 		t.Fatalf("handle close: %v", err)
 	}
 
-	deadline := time.Now().Add(5 * time.Second)
-	for {
+	pollUntil(t, func() bool {
 		var n int
 		if err := d.sqlDB.QueryRow(`SELECT COUNT(*) FROM t WHERE n = 2`).Scan(&n); err != nil {
 			t.Fatalf("count: %v", err)
 		}
-		if n == 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the abandoned transaction was not rolled back")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+		return n == 0
+	}, "the abandoned transaction was not rolled back")
 
 	// The sequence continues without a gap at the value the rolled-back write
 	// would have taken.

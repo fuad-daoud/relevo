@@ -6,6 +6,8 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -18,8 +20,25 @@ import (
 // applied twice. A dedicated connection is used so the driver's own error
 // reaches the test instead of being folded into that retry.
 func TestCancelledExecIsNotRetried(t *testing.T) {
-	d := openTestDB(t)
+	path := filepath.Join(t.TempDir(), "relevo.db")
+	d, err := OpenWith(path, Options{BusyTimeout: 2 * time.Minute})
+	if err != nil {
+		t.Fatalf("OpenWith: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
 	execOn(t, d, `CREATE TABLE t (n INTEGER)`)
+
+	// Hold the write lock on a dedicated conn so the owner's INSERT blocks
+	// in the engine for as long as the test wants.
+	holder, err := d.sqlDB.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("holder Conn: %v", err)
+	}
+	defer func() { _ = holder.Close() }()
+	if _, err := holder.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+		t.Fatalf("holder BEGIN IMMEDIATE: %v", err)
+	}
+
 	sock := startOwner(t, d)
 	d2 := dialDB(t, sock)
 	baseline := ownerConns(t, sock)
@@ -29,16 +48,22 @@ func TestCancelledExecIsNotRetried(t *testing.T) {
 		t.Fatalf("Conn: %v", err)
 	}
 
-	// The insert outlives the cancel: the engine finishes a statement it has
-	// already started, so only the client's short grace ends before it does.
-	const insert = `INSERT INTO t (n) WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 1000000) SELECT x FROM c WHERE x = 1`
 	ctx, cancel := context.WithCancel(context.Background())
+
+	execErr := make(chan error, 1)
 	go func() {
-		time.Sleep(50 * time.Millisecond)
-		cancel()
+		_, err := conn.ExecContext(ctx, `INSERT INTO t (n) VALUES (1)`)
+		execErr <- err
 	}()
 
-	_, err = conn.ExecContext(ctx, insert)
+	// Wait until the owner has pinned a connection for the request.
+	pollUntil(t, func() bool {
+		return d.sqlDB.Stats().InUse > 1
+	}, "the owner never pinned a connection for the insert")
+
+	cancel()
+
+	err = <-execErr
 	if err == nil {
 		t.Fatal("the cancelled insert returned success")
 	}
@@ -48,6 +73,10 @@ func TestCancelledExecIsNotRetried(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("cancelled insert error = %v, want context.Canceled", err)
 	}
+
+	// Release the write lock and close the dedicated conn.
+	_, _ = holder.ExecContext(context.Background(), "ROLLBACK")
+	_ = holder.Close()
 
 	// Dropping the connection lets the owner finish and discard it, so the row
 	// count below sees the statement's final effect.
@@ -83,15 +112,7 @@ func ownerConns(t *testing.T, sock string) int {
 // caller can observe that a finished statement's connection was discarded.
 func waitOwnerConns(t *testing.T, sock string, want int) {
 	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
-	for {
-		n := ownerConns(t, sock)
-		if n == want {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("owner live connections = %d, want %d", n, want)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	pollUntil(t, func() bool {
+		return ownerConns(t, sock) == want
+	}, fmt.Sprintf("owner live connections did not fall back to %d", want))
 }

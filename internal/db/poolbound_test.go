@@ -122,14 +122,7 @@ func TestABlockedOpenSurfacesAsAnError(t *testing.T) {
 // scheduling delay is not reported as the failure it is not.
 func waitFor(t *testing.T, cond func() bool, msg string) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatal(msg)
+	pollUntil(t, cond, msg)
 }
 
 // note keeps the highest count any concurrent caller saw, which is the number

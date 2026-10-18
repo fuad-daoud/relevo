@@ -75,20 +75,25 @@ func TestReExecReapsAnAbandonedStatement(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start the helper: %v", err)
 	}
+	exited := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(exited)
+	}()
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		<-exited
 	})
 
-	waitForPath(t, ready, "the helper never became ready")
+	waitForPath(t, exited, ready, "the helper never became ready")
 
 	// A statement the engine will not interrupt: the client's deadline is what
 	// returns, and the pinned owner connection is left stepping.
 	abandonAStatement(t, sock)
 
-	waitForPath(t, reap, "the owner never reaped the abandoned statement")
-	waitForPath(t, adopted, "the new image never adopted the listener")
-	waitForPath(t, opened, "the new image never opened the database")
+	waitForPath(t, exited, reap, "the owner never reaped the abandoned statement")
+	waitForPath(t, exited, adopted, "the new image never adopted the listener")
+	waitForPath(t, exited, opened, "the new image never opened the database")
 
 	d2, err := Dial(sock)
 	if err != nil {
