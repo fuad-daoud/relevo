@@ -45,7 +45,10 @@ jobs:
             run: '^(TestChainRemoteBuilderE2E|TestChainServerE2E)$'
           - name: sync
             pkg: ./internal/sync ./internal/syncworker ./internal/git
-            run: '^(TestWithinStopsTheStepAtItsBound|TestCompactIsNotQuadratic|TestMergeFF)$'
+            run: '^(TestWithinStopsTheStepAtItsBound|TestWithinStopsAStepBeforeItsFirstCall|TestCompactIsNotQuadratic|TestMergeFF)$'
+          - name: syncpipe
+            pkg: ./internal/syncpipe
+            run: '^TestFakeWorkerHangHitsTheDeadline$'
         include:
           # ci.yml's owner-mode job, ubuntu only, is where this test failed.
           - os: ubuntu-latest
