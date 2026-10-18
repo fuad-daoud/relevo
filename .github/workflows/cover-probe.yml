@@ -1,0 +1,36 @@
+name: cover-probe
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  probe:
+    name: probe (${{ matrix.load }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        load: [none, busy]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: loop
+        run: |
+          mkdir -p prof
+          go test -race -c -cover -coverpkg=./internal/syncpipe -o syncpipe.test ./internal/syncpipe
+          if [ "${{ matrix.load }}" = busy ]; then
+            go test -race -c -o db.test ./internal/db
+            for k in 1 2 3; do ( while :; do ./db.test -test.count=1 >/dev/null 2>&1; done ) & done
+          fi
+          cd internal/syncpipe
+          for i in $(seq 1 30); do
+            ../../syncpipe.test -test.count=1 -test.coverprofile=../../prof/p$i.out 2>&1 | tail -1
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prof-${{ matrix.load }}
+          path: prof/
+          retention-days: 3
