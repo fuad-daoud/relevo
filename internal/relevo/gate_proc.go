@@ -20,6 +20,7 @@ type gateProcSpec struct {
 	UnitName string
 	CPUPin   string
 	Timeout  time.Duration
+	Env      []string
 }
 
 // startGateProc starts spec's command and records the handle. A Start failure
@@ -32,6 +33,7 @@ func startGateProc(ctx context.Context, rt Runtime, spec gateProcSpec, attempt i
 		Argv:       []string{"sh", "-c", spec.Command + " 2>&1"},
 		LogPath:    spec.LogPath,
 		StreamPath: spec.LogPath,
+		Env:        spec.Env,
 		Scope:      scopeFor(rt, scopeGate, spec.UnitName, spec.CPUPin),
 	})
 	if err != nil {

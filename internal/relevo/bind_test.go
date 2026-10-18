@@ -1202,7 +1202,7 @@ func TestUnbindTeardown(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		res, err := Unbind(ctx, rt, "fork-dirty", false)
+		res, err := UnbindWith(ctx, rt, "fork-dirty", false, true)
 		if err != nil {
 			t.Fatalf("Unbind: %v", err)
 		}
@@ -1238,7 +1238,7 @@ func TestUnbindTeardown(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		res, err := Unbind(ctx, rt, "fork-dirty-err", false)
+		res, err := UnbindWith(ctx, rt, "fork-dirty-err", false, true)
 		if err != nil {
 			t.Fatalf("Unbind: %v", err)
 		}
@@ -1266,7 +1266,7 @@ func TestUnbindTeardown(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		res, err := Unbind(ctx, rt, "fork-nogit", false)
+		res, err := UnbindWith(ctx, rt, "fork-nogit", false, true)
 		if err != nil {
 			t.Fatalf("Unbind: %v", err)
 		}
@@ -1293,7 +1293,7 @@ func TestUnbindTeardown(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		res, err := Unbind(ctx, rt, "fork-fail", false)
+		res, err := UnbindWith(ctx, rt, "fork-fail", false, true)
 		if err != nil {
 			t.Fatalf("Unbind: %v", err)
 		}
@@ -2261,5 +2261,32 @@ func TestErrNoMasterMindSessionIsASentinel(t *testing.T) {
 
 	if !errors.Is(errors.Join(errors.New("add"), ErrNoMasterMindSession), ErrNoMasterMindSession) {
 		t.Fatal("ErrNoMasterMindSession must stay matchable through wrapping")
+	}
+}
+
+func TestBindAgyCandidateTierEditRefused(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	rt.Candidates = candidateSet(t, testTwoReviewerJSON)
+
+	_, err := Bind(context.Background(), rt, BindOptions{
+		Name:         "webshop",
+		Candidate:    testAgyRef,
+		MasterMindID: testMasterMindName,
+		CWD:          "/repo",
+		Tier:         "edit",
+	})
+	if !errors.Is(err, harness.ErrTierUnsupported) {
+		t.Fatalf("err = %v, want harness.ErrTierUnsupported", err)
+	}
+	if !strings.Contains(err.Error(), "use --tier yolo") {
+		t.Errorf("err %q should name use --tier yolo", err.Error())
+	}
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("a refused tier must start no process, got %d", got)
+	}
+	if _, loadErr := rt.Store.Load("webshop"); !errors.Is(loadErr, store.ErrNotFound) {
+		t.Errorf("Load err = %v, want store.ErrNotFound", loadErr)
 	}
 }

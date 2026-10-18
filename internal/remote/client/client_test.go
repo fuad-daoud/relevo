@@ -409,3 +409,37 @@ func TestStartRoundSendsForceField(t *testing.T) {
 		t.Fatal("force field sent when force was false")
 	}
 }
+
+func TestUnbindRequestsForceOnlyWhenAsked(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	var uris []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		uris = append(uris, r.URL.RequestURI())
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer ts.Close()
+
+	cl := client.New(
+		remote.Servers{"zen": remote.ServerEntry{URL: ts.URL, Insecure: true}},
+		generateKey(t),
+		time.Now,
+	)
+	ctx := context.Background()
+	if err := cl.Unbind(ctx, "zen", "api", true); err != nil {
+		t.Fatalf("Unbind force: %v", err)
+	}
+	if err := cl.Unbind(ctx, "zen", "api", false); err != nil {
+		t.Fatalf("Unbind: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"/v1/bindings/api/unbind?force=1", "/v1/bindings/api/unbind"}
+	if !slices.Equal(uris, want) {
+		t.Errorf("requests = %v, want %v", uris, want)
+	}
+}

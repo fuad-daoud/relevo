@@ -403,6 +403,9 @@ const (
 	// CodeNothingToStop is a 409: the binding has no running or queued
 	// round to stop.
 	CodeNothingToStop Code = "nothing_to_stop"
+	// CodeWorktreeKept is a 409: unbind kept the binding because its
+	// worktree was kept; ?force=1 archives it anyway.
+	CodeWorktreeKept Code = "worktree_kept"
 )
 
 // FeatureTier is the WhoAmI.Features token a server with the permission-tier

@@ -427,9 +427,8 @@ func TestGCWorktreeDryRun(t *testing.T) {
 	}
 }
 
-func TestGCWorktreeDirtyCheckError(t *testing.T) {
-	t.Parallel()
-
+func gcKeptRuntime(t *testing.T) (Runtime, *fakeGit, string) {
+	t.Helper()
 	fg := &fakeGit{dirtyErr: errors.New("git lock busy\ndetails")}
 	rt := newRuntime(t)
 	rt.Git = fg
@@ -444,35 +443,55 @@ func TestGCWorktreeDirtyCheckError(t *testing.T) {
 	if err := rt.Store.Save(forked); err != nil {
 		t.Fatal(err)
 	}
+	return rt, fg, wt
+}
 
-	res, err := GC(context.Background(), rt, GCOptions{Delete: true, AllMasterMinds: true})
-	if err != nil {
-		t.Fatalf("GC: %v", err)
-	}
-	if len(res) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(res))
-	}
-	r := res[0]
-	if r.Name != "forked-dirty-err" {
-		t.Errorf("Name = %q, want forked-dirty-err", r.Name)
-	}
-	if r.WorktreeRemoved != "" {
-		t.Errorf("WorktreeRemoved = %q, want empty", r.WorktreeRemoved)
-	}
-	if r.WorktreeKept != wt {
-		t.Errorf("WorktreeKept = %q, want %q", r.WorktreeKept, wt)
-	}
-	if r.KeptReason != "dirty check failed: git lock busy" {
-		t.Errorf("KeptReason = %q, want 'dirty check failed: git lock busy'", r.KeptReason)
-	}
-	if !r.Deleted {
-		t.Errorf("Deleted = false, want true")
+func TestGCKeepsBindingWithKeptWorktree(t *testing.T) {
+	t.Parallel()
+
+	rt, fg, wt := gcKeptRuntime(t)
+
+	for _, dry := range []bool{true, false} {
+		res, err := GC(context.Background(), rt, GCOptions{Delete: true, DryRun: dry, AllMasterMinds: true})
+		if err != nil {
+			t.Fatalf("GC dry=%v: %v", dry, err)
+		}
+		if len(res) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(res))
+		}
+		r := res[0]
+		if r.WorktreeKept != wt || r.KeptReason != "dirty check failed: git lock busy" {
+			t.Errorf("kept = %q (%q), want %q with the dirty-check reason", r.WorktreeKept, r.KeptReason, wt)
+		}
+		if !r.BindingKept || r.Deleted || r.Archived {
+			t.Errorf("result = %+v, want BindingKept and neither archived nor deleted", r)
+		}
+		if got, err := rt.Store.Load("forked-dirty-err"); err != nil || got.State != store.StateDone {
+			t.Errorf("binding = %+v, err %v; want it to stay DONE", got.State, err)
+		}
 	}
 	if len(fg.removeWorktreeCalls) != 0 {
 		t.Errorf("RemoveWorktree should not be called on dirty check error, got %d calls", len(fg.removeWorktreeCalls))
 	}
+}
 
-	// Verify binding deleted from store
+func TestGCForceArchivesKeptWorktree(t *testing.T) {
+	t.Parallel()
+
+	rt, _, wt := gcKeptRuntime(t)
+
+	dry, err := GC(context.Background(), rt, GCOptions{Force: true, DryRun: true, AllMasterMinds: true})
+	if err != nil || len(dry) != 1 || dry[0].BindingKept {
+		t.Fatalf("forced dry run = %+v, %v; want a result that is not BindingKept", dry, err)
+	}
+
+	res, err := GC(context.Background(), rt, GCOptions{Delete: true, Force: true, AllMasterMinds: true})
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+	if len(res) != 1 || !res[0].Deleted || res[0].BindingKept || res[0].WorktreeKept != wt {
+		t.Fatalf("result = %+v, want deleted with the worktree reported kept", res)
+	}
 	if _, err := rt.Store.Load("forked-dirty-err"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("binding state should be deleted, got err = %v", err)
 	}

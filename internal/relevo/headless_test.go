@@ -117,6 +117,14 @@ func TestRoundEnvMarksTheRunner(t *testing.T) {
 			"RELEVO_RUNNER=api",
 		}},
 		{"reader shape", store.Binding{Name: "api", Shape: store.ShapeReader}, []string{"RELEVO_RUNNER=api"}},
+		{"base", store.Binding{Name: "api", Base: "abc123"}, []string{"RELEVO_RUNNER=api", "RELEVO_BASE=abc123"}},
+		{"author and base", store.Binding{Name: "api", Base: "abc123", Serve: &store.ServeFacts{
+			AuthorName: "Ada Lovelace", AuthorEmail: "ada@example.com",
+		}}, []string{
+			"GIT_AUTHOR_NAME=Ada Lovelace", "GIT_AUTHOR_EMAIL=ada@example.com",
+			"GIT_COMMITTER_NAME=Ada Lovelace", "GIT_COMMITTER_EMAIL=ada@example.com",
+			"RELEVO_RUNNER=api", "RELEVO_BASE=abc123",
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

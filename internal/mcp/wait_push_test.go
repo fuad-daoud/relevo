@@ -32,6 +32,10 @@ func (l liveClaimStore) Remove(string, int) error              { return nil }
 // push claim, the wait reports the outcome line plus "delivered by the mod" and
 // touches no entry.
 func TestWaitUnderPushClaimDoesNotClaimOrConfirm(t *testing.T) {
+	// The gate holds only in an interactive session; a headless parent
+	// (a builder running this suite) must not leak its entrypoint in.
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+
 	s := store.New(t.TempDir())
 	saveVerbBinding(t, s, store.Binding{Name: "webshop", CWD: "/repo-ws", MasterMindID: mcpTestMasterMindA, Round: 1, State: store.StateActive})
 
@@ -74,6 +78,10 @@ func TestWaitUnderPushClaimDoesNotClaimOrConfirm(t *testing.T) {
 // writes and acks an entry while the wait is under the same live claim, the
 // wait still claims nothing, and the log shows exactly one confirm, route push.
 func TestWaitUnderPushClaimWhileHolderDrains(t *testing.T) {
+	// The gate holds only in an interactive session; a headless parent
+	// (a builder running this suite) must not leak its entrypoint in.
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)

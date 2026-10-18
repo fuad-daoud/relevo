@@ -54,6 +54,7 @@ func tickUntil(t *testing.T, deadline time.Duration, step func() bool) {
 
 func newServer(t *testing.T) (*serve.Server, string, string, func(pub string) remote.ClientID, func(owner remote.ClientID) *store.Store, *scriptRunner) {
 	t.Helper()
+	quietServerMaintenance(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	return newServerWithContext(t, ctx, cancel, policy.Policy{})
 }
@@ -63,6 +64,7 @@ func newServer(t *testing.T) (*serve.Server, string, string, func(pub string) re
 // a builder cap -- without changing any existing caller's call site.
 func newServerWithContext(t *testing.T, ctx context.Context, cancel context.CancelFunc, pol policy.Policy, mut ...func(*serve.Config)) (*serve.Server, string, string, func(pub string) remote.ClientID, func(owner remote.ClientID) *store.Store, *scriptRunner) {
 	t.Helper()
+	quietServerMaintenance(t)
 	root := filepath.Join(t.TempDir(), "serve")
 	now := time.Now()
 

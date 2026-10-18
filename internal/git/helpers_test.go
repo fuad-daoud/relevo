@@ -9,6 +9,12 @@ import (
 	"testing"
 )
 
+func quietMaintenance(t *testing.T, dir string) {
+	t.Helper()
+	runGit(t, dir, "config", "maintenance.auto", "false")
+	runGit(t, dir, "config", "gc.auto", "0")
+}
+
 // runGit runs git in dir with a fixed identity and the machine's own git config
 // ignored: a global commit.gpgsign would otherwise send every fixture commit to
 // gpg. A repo it initialises also gets auto-maintenance off, so no detached
@@ -29,9 +35,49 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	if err != nil {
 		t.Fatalf("git %s in %s: %v\nOutput: %s", strings.Join(args, " "), dir, err, string(out))
 	}
-	if len(args) > 0 && args[0] == "init" {
-		runGit(t, dir, "config", "maintenance.auto", "false")
-		runGit(t, dir, "config", "gc.auto", "0")
+	var subcmd string
+	subcmdIdx := -1
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-c" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(args[i], "-") {
+			continue
+		}
+		subcmd = args[i]
+		subcmdIdx = i
+		break
+	}
+	if subcmd == "init" {
+		targetDir := dir
+		for _, a := range args[subcmdIdx+1:] {
+			if !strings.HasPrefix(a, "-") {
+				targetDir = a
+				if !filepath.IsAbs(targetDir) {
+					targetDir = filepath.Join(dir, targetDir)
+				}
+				break
+			}
+		}
+		quietMaintenance(t, targetDir)
+	} else if subcmd == "clone" {
+		var pos []string
+		for _, a := range args[subcmdIdx+1:] {
+			if !strings.HasPrefix(a, "-") {
+				pos = append(pos, a)
+			}
+		}
+		targetDir := dir
+		if len(pos) >= 2 {
+			targetDir = pos[1]
+			if !filepath.IsAbs(targetDir) {
+				targetDir = filepath.Join(dir, targetDir)
+			}
+		} else if len(pos) == 1 {
+			targetDir = filepath.Join(dir, strings.TrimSuffix(filepath.Base(pos[0]), ".git"))
+		}
+		quietMaintenance(t, targetDir)
 	}
 	return string(out)
 }
@@ -147,4 +193,30 @@ func dirtyWorktree(t *testing.T) string {
 	writeGitFile(t, repoDir, "d.txt", "d1\n")
 	writeGitFile(t, repoDir, "e.log", "ignored\n")
 	return repoDir
+}
+
+func TestFixtureReposHaveAutoMaintenanceOff(t *testing.T) {
+	requireGit(t)
+
+	checkRepo := func(name, dir string) {
+		t.Helper()
+		maint := strings.TrimSpace(runGit(t, dir, "config", "--get", "maintenance.auto"))
+		if maint != "false" {
+			t.Errorf("%s: maintenance.auto = %q, want %q", name, maint, "false")
+		}
+		gc := strings.TrimSpace(runGit(t, dir, "config", "--get", "gc.auto"))
+		if gc != "0" {
+			t.Errorf("%s: gc.auto = %q, want %q", name, gc, "0")
+		}
+	}
+
+	r1 := initRepo(t)
+	checkRepo("initRepo", r1)
+
+	r2, _ := initRepoWithCommit(t, "file.txt", "content\n")
+	checkRepo("initRepoWithCommit", r2)
+
+	cloneDir := filepath.Join(t.TempDir(), "clone")
+	runGit(t, filepath.Dir(cloneDir), "clone", r2, cloneDir)
+	checkRepo("clone", cloneDir)
 }

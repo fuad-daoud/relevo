@@ -195,9 +195,10 @@ func builderEnv(b store.Binding) []string {
 // harness session relevo spawns for a round must not read itself as a
 // MasterMind or planner, so the marker is what its consent hooks go silent on.
 // The spawn appends the marker after the deny filter, so a stale RELEVO_RUNNER
-// in the daemon's own environment cannot shadow it. Pure.
+// in the daemon's own environment cannot shadow it. The binding's base commit
+// follows the marker when it has one. Pure.
 func roundEnv(b store.Binding) []string {
-	return append(builderEnv(b), mastermind.RunnerEnvEntry(b.Name))
+	return append(append(builderEnv(b), mastermind.RunnerEnvEntry(b.Name)), baseEnvEntry(b)...)
 }
 
 // roundEnvFor is roundEnv with the round's builder account pinned: the same git

@@ -3597,7 +3597,7 @@ func TestUnbindKeepingADirtyWorktreeKeepsItsRefs(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	env.srv.Handler().ServeHTTP(rec, signedRequest(t, env.kp, "POST", "/v1/bindings/dirty-target/unbind", nil))
+	env.srv.Handler().ServeHTTP(rec, signedRequest(t, env.kp, "POST", "/v1/bindings/dirty-target/unbind?force=1", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST /v1/bindings/dirty-target/unbind status = %d, body: %s", rec.Code, rec.Body.String())
 	}
