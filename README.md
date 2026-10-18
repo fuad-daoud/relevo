@@ -510,10 +510,13 @@ gives a MasterMind a name of your own.
   `--pick` chooses from a list in the terminal.
 - `relevo stop NAME|--name N` — kill the builder process and close its open
   round without a report. See [Stopping a round](#stopping-a-round).
-- `relevo unbind NAME|--name N|--pick [--archive]` — forget a binding, deleting its directory or
-  archiving its record first. `--pick` chooses from a list in the terminal.
+- `relevo unbind NAME|--name N|--pick [--archive] [--force]` — forget a binding, deleting its directory or
+  archiving its record first. `--pick` chooses from a list in the terminal. A worktree relevo keeps
+  (uncommitted changes, or a failed check or removal) keeps the binding too and the verb refuses;
+  commit or discard the work and unbind again, or pass `--force` to archive the binding anyway
+  (`--force` goes with a named binding or `--done`, not `--pick`).
 
-- `relevo unbind --done [--dry-run] [--delete] [--mastermind P | --all-masterminds]` —
+- `relevo unbind --done [--dry-run] [--delete] [--force] [--mastermind P | --all-masterminds]` —
   clear the DONE bindings of the calling MasterMind (resolved like every
   MasterMind-scoped verb), in one pass; also deletes each cleared binding's
   `relevo/<name>` branch and `refs/relevo/<name>/*` refs once each is on a
@@ -521,7 +524,11 @@ gives a MasterMind a name of your own.
   bindings with no MasterMind. If no MasterMind resolves, it refuses rather than
   clearing everything, and each line names the binding's MasterMind. Archives by
   default; pass `--delete` to remove each binding's directory instead
-  (`relevo unbind --done --archive` is accepted as a no-op).
+  (`relevo unbind --done --archive` is accepted as a no-op). A DONE binding whose worktree is
+  kept stays DONE, reported as kept, so running it again retries once the tree is clean;
+  `--force` archives or deletes it anyway. `--done` asks a remote binding's server
+  first and keeps the binding while the server keeps its worktree; a server that
+  cannot be reached does not block it, and the line notes why.
 - `relevo unbind --sweep [--dry-run]` — delete `relevo/<name>` branches and `refs/relevo/<name>/*` refs of bindings that no longer exist, once each is on a remote-tracking ref.
 - `relevo daemon [--interval D] [--check] [--pprof <path>]` — the long-running reconciler; this is what the
   service unit runs. It reconciles builders, queues reports for the MasterMind
@@ -804,6 +811,8 @@ What this means in practice:
   a MasterMind: it is there to do the round's work. The marker reaches every
   round process -- local and served, a fresh spawn, a resume after a daemon
   restart, a mid-round switch, a repair round and the admit of a queued round.
+  Every round and gate process also carries `RELEVO_BASE=<base commit>` when
+  the binding has one.
 
 **Scopes.** A local headless round runs in its own transient systemd scope
 named `relevo-round-local-<binding>-<round>` (an owned remote binding uses its
@@ -2121,17 +2130,19 @@ The flags rendered for each harness kind (verified 2026-09-19 on claude 2.1.278,
 | kind | harness | read | edit | yolo |
 |---|---|---|---|---|
 | claude | (none) | `--permission-mode plan --allowedTools=Read(//<round prompt>) --allowedTools=Read(//<chain dir>/**)` | `--permission-mode acceptEdits --allowedTools=Read(//<round prompt>) --allowedTools=Read(//<chain dir>/**)` | `--dangerously-skip-permissions` |
-| agy | (none) | `--mode plan` | `--mode accept-edits` | `--dangerously-skip-permissions` |
+| agy | (none) | `--mode plan` | refuse | `--dangerously-skip-permissions` |
 | opencode | (none) | refuse | refuse | `--auto` |
 | codex | (none) | refuse | `-s workspace-write -c sandbox_workspace_write.writable_roots=["<binding>/out"]` | `--dangerously-bypass-approvals-and-sandbox` |
 
 opencode does not support `read` or `edit` tiers because it has no read-only or edit-only CLI flag. Choosing `read` or `edit` for an opencode candidate is refused immediately with an error directing you to use `--tier harness` (where `opencode.jsonc` decides) or `--tier yolo` (`--auto`).
 
+agy does not support the `edit` tier: headless `--mode accept-edits` auto-denies every shell command, and relevo cannot grant allow-rules without editing your agy settings. Choosing `edit` for an agy candidate is refused immediately with an error directing you to `--tier yolo` (`--dangerously-skip-permissions`) or `--tier harness` (where agy's `settings.json` decides). A reader on agy therefore binds at `yolo` and needs `--allow-yolo` under the default `max_tier`.
+
 For a chain member, the claude `read` and `edit` cells gain a second `--allowedTools=Read(//<chain dir>/**)` rule, where `<chain dir>` is the chain's directory under `~/.local/state/relevo/.chains/<chain>/`. It is what lets a chain member read the plan copy, the task and the staged `inputs/...` (including `inputs/repo/...`) files a chain seed names. It is a read grant only — it grants no Edit — and it is omitted entirely for a binding in no chain.
 
 codex does not support the `read` tier: `-s read-only` cannot write the report, marker, question and findings files relevo stages under `~/.local/state/relevo/<binding>/out/`, and codex ignores `writable_roots` under read-only. Choosing `read` for a codex candidate is refused with an error directing you to `--tier edit` or `--tier harness`. At `edit` relevo adds the binding's `out/` directory as a writable root; that is the only path outside the worktree the sandbox lets the builder write.
 
-For agy at `read` and `edit`, relevo stages a copy of the round prompt under `<binding>/out/` (`.NNN-prompt.md`) and points the launch prompt to it, since agy's sandbox restricts reads to the worktree and `out/`.
+For agy at `read`, relevo stages a copy of the round prompt under `<binding>/out/` (`.NNN-prompt.md`) and points the launch prompt to it, since agy's sandbox restricts reads to the worktree and `out/`.
 
 ### Ceiling semantics and ordering
 

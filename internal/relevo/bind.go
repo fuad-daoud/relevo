@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -900,15 +901,88 @@ type UnbindResult struct {
 	ProcessErr     string
 }
 
-// Unbind clears away one binding's state, leaving its builder process and
+// ErrWorktreeKept reports that unbind left the binding in place because its
+// worktree was kept; force archives it anyway.
+var ErrWorktreeKept = refusalSentinel("worktree kept")
+
+// worktreeKeptError is ErrWorktreeKept with the wording of one refusal.
+type worktreeKeptError struct{ msg string }
+
+func (e *worktreeKeptError) Error() string { return e.msg }
+
+func (e *worktreeKeptError) Unwrap() error { return ErrWorktreeKept }
+
+// NewWorktreeKept builds an ErrWorktreeKept refusal that reads as msg.
+func NewWorktreeKept(msg string) error { return &worktreeKeptError{msg: msg} }
+
+func keptRefusal(name string, res UnbindResult) error {
+	msg := fmt.Sprintf("binding %s kept: worktree %s kept (%s)", name, res.WorktreeKept, res.KeptReason)
+	if res.ProcessStopped != 0 {
+		msg += fmt.Sprintf("; its builder process (pid %d) was stopped", res.ProcessStopped)
+	}
+	return NewWorktreeKept(msg + fmt.Sprintf("; commit or discard the work, then unbind again, or `relevo unbind %s --force` archives it anyway", name))
+}
+
+// askServerUnbind tells a remote binding's server to release it before
+// anything local changes. A 404 means the server already considers it gone,
+// which is not a reason to refuse the local unbind.
+func askServerUnbind(ctx context.Context, rt Runtime, b store.Binding, force bool) error {
+	if rt.Remote == nil {
+		return ErrRemoteUnavailable
+	}
+	uerr := rt.Remote.Unbind(ctx, b.Builder.Server, b.Name, force)
+	if uerr == nil {
+		return nil
+	}
+	var httpErr *client.HTTPError
+	if errors.As(uerr, &httpErr) {
+		switch {
+		case httpErr.Status == 404:
+			return nil
+		case httpErr.Status == 409 && httpErr.Body.Code == remote.CodeWorktreeKept:
+			return NewWorktreeKept(b.Builder.Server + ": " + httpErr.Body.Message)
+		}
+	}
+	if errors.Is(uerr, client.ErrUnreachable) {
+		return fmt.Errorf("%s unreachable: %w", b.Builder.Server, uerr)
+	}
+	return fmt.Errorf("%s: %w", b.Builder.Server, uerr)
+}
+
+// reapSessions deletes the builder's session and everything already abandoned,
+// directly: the record is about to go, so nothing is saved and a failed delete
+// only warns. Deletion is safe only once the process is really stopped -- a
+// live one still holds its session.
+func reapSessions(ctx context.Context, rt Runtime, b store.Binding, res UnbindResult) {
+	if res.ProcessStopped != 0 && res.ProcessErr == "" {
+		b = abandonSession(b)
+	}
+	for _, s := range b.AbandonedSessions {
+		if rt.SessionReaper == nil {
+			break
+		}
+		if err := rt.SessionReaper.DeleteSession(ctx, s); err != nil {
+			slog.Warn("abandoned harness session not deleted", "binding", b.Name, "kind", s.Kind, "id", s.ID, "err", err)
+		}
+	}
+}
+
+// Unbind is UnbindWith without force: a kept worktree keeps the binding.
+func Unbind(ctx context.Context, rt Runtime, name string, archive bool) (UnbindResult, error) {
+	return UnbindWith(ctx, rt, name, archive, false)
+}
+
+// UnbindWith clears away one binding's state, leaving its builder process and
 // worktree release to the paths below.
 //
 // When archive is set the binding's record is archived rather than deleted,
 // which frees the name for a fresh bind while its log and every round file
-// survive as rows — the record of what the mastermind actually told the builder.
-// If relevo created a git worktree for this binding, Unbind removes it provided
-// it is clean, never removing the branch.
-func Unbind(ctx context.Context, rt Runtime, name string, archive bool) (UnbindResult, error) {
+// survive as rows -- the record of what the mastermind actually told the builder.
+// If relevo created a git worktree for this binding, UnbindWith removes it provided
+// it is clean, never removing the branch. When the worktree is kept the binding
+// stays, resumable, and the result comes back with ErrWorktreeKept; force
+// archives or deletes it anyway.
+func UnbindWith(ctx context.Context, rt Runtime, name string, archive, force bool) (UnbindResult, error) {
 	b, err := rt.Store.Load(name)
 	if err != nil {
 		return UnbindResult{}, err
@@ -922,62 +996,40 @@ func Unbind(ctx context.Context, rt Runtime, name string, archive bool) (UnbindR
 		return UnbindResult{}, err
 	}
 
-	// A remote binding's server is told first (§4.6), same shape as Done: it
-	// is asked to release the binding before anything local changes. A 404
-	// means the server already considers it gone, which is not a reason to
-	// refuse the local unbind -- it proceeds exactly as if the server had
-	// agreed.
 	if b.Builder.Remote() {
-		if rt.Remote == nil {
-			return UnbindResult{}, ErrRemoteUnavailable
-		}
-		if uerr := rt.Remote.Unbind(ctx, b.Builder.Server, b.Name); uerr != nil {
-			var httpErr *client.HTTPError
-			if !(errors.As(uerr, &httpErr) && httpErr.Status == 404) {
-				if errors.Is(uerr, client.ErrUnreachable) {
-					return UnbindResult{}, fmt.Errorf("%s unreachable: %w", b.Builder.Server, uerr)
-				}
-				return UnbindResult{}, fmt.Errorf("%s: %w", b.Builder.Server, uerr)
-			}
+		if err := askServerUnbind(ctx, rt, b, force); err != nil {
+			return UnbindResult{}, err
 		}
 	}
 
 	var res UnbindResult
-	// Stop a live headless round before touching its tree (#99, spec §4.6):
-	// a builder still writing would dirty the worktree relevo is about to
-	// judge clean or not. A failed stop is reported, never fatal -- the
-	// unbind is the human's decision and it proceeds.
+	// Stop a live headless round before touching its tree: a builder still
+	// writing would dirty the worktree relevo is about to judge clean or not.
+	// A failed stop is reported, never fatal -- the unbind is the human's
+	// decision and it proceeds.
 	if pid, err := stopProcess(ctx, rt, b, "unbind"); err != nil {
 		res.ProcessErr = fmt.Sprintf("pid %d: %v", pid, err)
 	} else if pid != 0 {
 		res.ProcessStopped = pid
 	}
 
-	// The record is about to be removed or archived, so the builder's session
-	// and everything already abandoned are deleted directly here, and nothing
-	// is saved: a failed delete only warns. Deletion is safe only once the
-	// process is really stopped -- a live one still holds its session.
-	if res.ProcessStopped != 0 && res.ProcessErr == "" {
-		b = abandonSession(b)
-	}
-	for _, s := range b.AbandonedSessions {
-		if rt.SessionReaper == nil {
-			break
-		}
-		if err := rt.SessionReaper.DeleteSession(ctx, s); err != nil {
-			slog.Warn("abandoned harness session not deleted", "binding", name, "kind", s.Kind, "id", s.ID, "err", err)
-		}
-	}
-
-	// A reader's throwaway worktree goes with the binding, before the record
-	// is archived or deleted: the sweep can no longer resolve it afterwards.
-	removeReaderScratch(ctx, rt, b, b.Round)
-
 	outcome := worktreeTeardown(ctx, rt, b, false)
 	res.WorktreeRemoved = outcome.Removed
 	res.WorktreeKept = outcome.Kept
 	res.KeptReason = outcome.Reason
 	res.WorktreeGone = outcome.Gone
+
+	// The guard sits before the session reaping so a kept binding stays
+	// resumable with its sessions intact.
+	if outcome.Kept != "" && !force {
+		return res, keptRefusal(name, res)
+	}
+
+	reapSessions(ctx, rt, b, res)
+
+	// A reader's throwaway worktree goes with the binding, before the record
+	// is archived or deleted: the sweep can no longer resolve it afterwards.
+	removeReaderScratch(ctx, rt, b, b.Round)
 
 	if archive {
 		if _, err := rt.Store.Archive(name); err != nil {

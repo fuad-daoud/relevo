@@ -1,9 +1,13 @@
 #!/bin/sh
 # scripts/affected-packages.sh -- list Go packages affected by changes against a base ref.
 #
-# Usage: affected-packages.sh [--base REF]
-#   --base REF  git commit or ref to compare against (default: git merge-base HEAD origin/main)
+# Usage: affected-packages.sh [--base REF] [--direct]
+#   --base REF  git commit or ref to compare against (default: see precedence)
+#   --direct    list only the packages whose own files changed, not their importers
 # Env:   BASE        fallback override for base ref; the --base flag takes precedence
+#        RELEVO_BASE the commit a relevo round was cut from, set by relevo; used when
+#                    neither --base nor BASE is given, skipped with a note if unresolvable
+# Base precedence: --base, BASE, RELEVO_BASE, merge-base HEAD origin/main, ./...
 # Exit:  0 on success (including fallback to ./...), 2 on bad usage.
 #
 # Stdout is one import path per affected package, or './...' when all packages
@@ -23,6 +27,16 @@ resolve_base() {
 		fi
 		echo "$override"
 		return 0
+	fi
+
+	# RELEVO_BASE is ambient, not typed by the user: an unresolvable one is
+	# skipped, not a reason to test everything. A served tree has no origin/main.
+	if [ -n "${RELEVO_BASE:-}" ]; then
+		if git rev-parse --verify "$RELEVO_BASE^{commit}" >/dev/null 2>&1; then
+			echo "$RELEVO_BASE"
+			return 0
+		fi
+		echo "RELEVO_BASE '$RELEVO_BASE' cannot be resolved; ignoring it" >&2
 	fi
 
 	if ! git rev-parse --verify "origin/main^{commit}" >/dev/null 2>&1; then
@@ -68,7 +82,10 @@ list_changed_paths() {
 }
 
 # map_paths_to_seeds maps changed paths to seeded module packages. Root build
-# configs, deleted directories, or unmapped paths fall back to ./... and exit.
+# configs fall back to ./... and exit. A deleted directory, a directory of
+# unlisted .go files or a path that reaches the root does too, except under
+# --direct: a file in no package cannot move a package's own coverage, so the
+# walk goes on upward and a path that reaches the root seeds nothing.
 map_paths_to_seeds() {
 	paths_file="$1"
 	pkg_dirs_file="$2"
@@ -93,15 +110,12 @@ map_paths_to_seeds() {
 				;;
 		esac
 
-		case "$path" in
-			*/*) cur_dir="${path%/*}" ;;
-			*)   cur_dir="." ;;
-		esac
-
+		cur_dir=$(parent_dir "$path")
 		if [ ! -d "$cur_dir" ]; then
-			echo "directory no longer exists ($cur_dir); falling back to all packages" >&2
-			echo "./..."
-			exit 0
+			fall_back "directory no longer exists ($cur_dir)"
+			while [ ! -d "$cur_dir" ]; do
+				cur_dir=$(parent_dir "$cur_dir")
+			done
 		fi
 
 		while :; do
@@ -111,31 +125,37 @@ map_paths_to_seeds() {
 				break
 			fi
 
-			has_go=0
 			for f in "$cur_dir"/*.go; do
 				if [ -f "$f" ]; then
-					has_go=1
+					fall_back "directory holds unlisted .go files ($cur_dir)"
 					break
 				fi
 			done
-			if [ "$has_go" -eq 1 ]; then
-				echo "directory holds unlisted .go files ($cur_dir); falling back to all packages" >&2
-				echo "./..."
-				exit 0
-			fi
 
 			if [ "$cur_dir" = "." ]; then
-				echo "unmapped path reaching root ($path); falling back to all packages" >&2
-				echo "./..."
-				exit 0
+				fall_back "unmapped path reaching root ($path)"
+				break
 			fi
-
-			case "$cur_dir" in
-				*/*) cur_dir="${cur_dir%/*}" ;;
-				*)   cur_dir="." ;;
-			esac
+			cur_dir=$(parent_dir "$cur_dir")
 		done
 	done < "$paths_file"
+}
+
+# parent_dir prints the directory holding path $1, . at the top.
+parent_dir() {
+	case "$1" in
+		*/*) echo "${1%/*}" ;;
+		*)   echo "." ;;
+	esac
+}
+
+# fall_back prints ./... with reason $1 and exits, unless --direct is set, when
+# it returns for the caller to carry on.
+fall_back() {
+	[ "$direct" -eq 1 ] && return 0
+	echo "$1; falling back to all packages" >&2
+	echo "./..."
+	exit 0
 }
 
 # compute_closure finds the transitive reverse closure of seeded packages
@@ -196,10 +216,11 @@ compute_closure() {
 }
 
 usage() {
-	echo "usage: affected-packages.sh [--base REF]" >&2
+	echo "usage: affected-packages.sh [--base REF] [--direct]" >&2
 }
 
 base_arg=""
+direct=0
 if [ -n "${BASE:-}" ]; then
 	base_arg="$BASE"
 fi
@@ -216,6 +237,10 @@ while [ $# -gt 0 ]; do
 			;;
 		--base=*)
 			base_arg="${1#*=}"
+			shift
+			;;
+		--direct)
+			direct=1
 			shift
 			;;
 		*)
@@ -292,4 +317,8 @@ seeds="$work/seeds.txt"
 : > "$seeds"
 map_paths_to_seeds "$changed_paths" "$pkg_dirs" "$seeds"
 
-compute_closure "$graph" "$seeds"
+if [ "$direct" -eq 1 ]; then
+	LC_ALL=C sort -u "$seeds"
+else
+	compute_closure "$graph" "$seeds"
+fi

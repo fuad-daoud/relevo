@@ -143,6 +143,18 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
+// quietServerMaintenance disables auto-maintenance across the test process so
+// repos created by server-side production code do not spawn detached
+// maintenance that races server-side git.
+func quietServerMaintenance(t *testing.T) {
+	t.Helper()
+	t.Setenv("GIT_CONFIG_COUNT", "2")
+	t.Setenv("GIT_CONFIG_KEY_0", "maintenance.auto")
+	t.Setenv("GIT_CONFIG_VALUE_0", "false")
+	t.Setenv("GIT_CONFIG_KEY_1", "gc.auto")
+	t.Setenv("GIT_CONFIG_VALUE_1", "0")
+}
+
 func finishRound(t *testing.T, serverRT relevo.Runtime, name string, round int, commitMsg string) {
 	t.Helper()
 	b, err := serverRT.Store.Load(name)

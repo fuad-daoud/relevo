@@ -1281,3 +1281,44 @@ func TestStartDisablesFsmonitorForGit(t *testing.T) {
 		t.Errorf("git config --get core.fsmonitor printed %v; want [false]: relevo disables the fsmonitor through GIT_CONFIG_*", printed)
 	}
 }
+
+// TestStartKeepsOnlyTheSpecBase: a stale RELEVO_BASE in the parent never
+// reaches a child, and the spec's own value does.
+func TestStartKeepsOnlyTheSpecBase(t *testing.T) {
+	t.Setenv("RELEVO_BASE", "stale")
+	for _, tc := range []struct {
+		name string
+		env  []string
+		want string
+	}{
+		{"spec value wins", []string{"RELEVO_BASE=fresh"}, "RELEVO_BASE=fresh"},
+		{"parent value stripped", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := New()
+			dir := t.TempDir()
+			stream := filepath.Join(dir, "001-builder.jsonl")
+			h, err := r.Start(context.Background(), spawn.ProcSpec{
+				Dir: dir, Argv: []string{"sh", "-c", "env"}, Env: tc.env,
+				LogPath: filepath.Join(dir, "001-builder.log"), StreamPath: stream,
+			})
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			waitGone(t, r, h, 5*time.Second)
+			data, err := os.ReadFile(stream)
+			if err != nil {
+				t.Fatalf("read stream: %v", err)
+			}
+			var got []string
+			for _, line := range strings.Split(string(data), "\n") {
+				if strings.HasPrefix(line, "RELEVO_BASE=") {
+					got = append(got, line)
+				}
+			}
+			if tc.want == "" && len(got) != 0 || tc.want != "" && !reflect.DeepEqual(got, []string{tc.want}) {
+				t.Errorf("child RELEVO_BASE entries = %v, want %q", got, tc.want)
+			}
+		})
+	}
+}

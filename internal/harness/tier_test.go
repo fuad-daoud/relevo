@@ -101,7 +101,7 @@ func TestPermissionArgsTable(t *testing.T) {
 
 		{"agy", TierHarness, nil, nil, ""},
 		{"agy", TierRead, []string{"--mode", "plan"}, nil, ""},
-		{"agy", TierEdit, []string{"--mode", "accept-edits"}, nil, ""},
+		{"agy", TierEdit, nil, ErrTierUnsupported, "use --tier yolo"},
 		{"agy", TierYolo, []string{"--dangerously-skip-permissions"}, nil, ""},
 
 		{"opencode", TierHarness, nil, nil, ""},
@@ -234,9 +234,9 @@ func TestLaunchRefusesExtraArgsPermissionFlag(t *testing.T) {
 	builder, _ := RoleByName("builder")
 
 	agy, _ := Lookup("agy")
-	_, err := agy.Launch("prov", "m/x", []string{"--dangerously-skip-permissions"}, builder, TierEdit)
+	_, err := agy.Launch("prov", "m/x", []string{"--dangerously-skip-permissions"}, builder, TierRead)
 	if !errors.Is(err, ErrExtraArgsPermission) {
-		t.Fatalf("agy Launch edit with extra perm flag error = %v, want ErrExtraArgsPermission", err)
+		t.Fatalf("agy Launch read with extra perm flag error = %v, want ErrExtraArgsPermission", err)
 	}
 	if !strings.Contains(err.Error(), "--dangerously-skip-permissions") {
 		t.Errorf("error %q should name --dangerously-skip-permissions", err.Error())
@@ -370,9 +370,9 @@ func TestPromptCopyWanted(t *testing.T) {
 		tier Tier
 		want bool
 	}{
-		// agy: wanted only at read and edit
+		// agy: wanted only at read
 		{"agy", TierRead, true},
-		{"agy", TierEdit, true},
+		{"agy", TierEdit, false},
 		{"agy", TierYolo, false},
 		{"agy", TierHarness, false},
 

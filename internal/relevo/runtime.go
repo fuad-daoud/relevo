@@ -516,7 +516,7 @@ type RemoteClient interface {
 	Unavailable(ctx context.Context, server, name, token, reason string) error
 	Available(ctx context.Context, server, subject string) (remote.AvailableResponse, error)
 	Done(ctx context.Context, server, name string) (remote.BindingView, error)
-	Unbind(ctx context.Context, server, name string) error
+	Unbind(ctx context.Context, server, name string, force bool) error
 	Resume(ctx context.Context, server, name string) (remote.BindingView, error)
 	Stop(ctx context.Context, server, name string) (remote.BindingView, error)
 	// CreateChain's retry is safe only because the server dedupes an

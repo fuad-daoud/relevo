@@ -27,6 +27,11 @@ export GOTOOLCHAIN=local
 export GOFLAGS=
 export GOPROXY=off
 
+# A gate passes BASE through make and relevo exports RELEVO_BASE to every round
+# and gate; either would point the fixture's runs at a commit outside it. Cases
+# that want one set it themselves.
+unset BASE RELEVO_BASE
+
 # shellcheck disable=SC1007 # CDPATH= scopes an empty CDPATH to this one command
 CDPATH= cd -- "$fx"
 
@@ -282,6 +287,54 @@ if [ ! -s "$err" ]; then
 fi
 git update-ref refs/remotes/origin/main HEAD
 
+# 9b. RELEVO_BASE: used when no --base/BASE is given, ahead of origin/main
+reset_fixture
+initial=$(git rev-parse HEAD)
+echo "// committed edit" >> a/a.go
+git commit -am "edit a" >/dev/null
+git update-ref -d refs/remotes/origin/main
+RELEVO_BASE="$initial"
+export RELEVO_BASE
+assert_stdout "RELEVO_BASE with no origin/main gives a b c d e" "$want_a"
+assert_stdout "--direct with RELEVO_BASE and no origin/main gives only a" "example.test/fx/a" --direct
+assert_stdout "--base HEAD beats RELEVO_BASE" "" --base HEAD
+BASE=HEAD
+export BASE
+assert_stdout "BASE=HEAD beats RELEVO_BASE" ""
+unset BASE
+RELEVO_BASE=""
+assert_stdout "empty RELEVO_BASE is ignored" "./..."
+unset RELEVO_BASE
+git update-ref refs/remotes/origin/main "$initial"
+
+# RELEVO_BASE beats origin/main
+RELEVO_BASE=HEAD
+export RELEVO_BASE
+assert_stdout "RELEVO_BASE beats origin/main" ""
+unset RELEVO_BASE
+
+# an unresolvable RELEVO_BASE falls through to origin/main with a note
+RELEVO_BASE=0000000000000000000000000000000000000000
+export RELEVO_BASE
+out="$work/stdout"
+err="$work/stderr"
+status=0
+(sh "$script") > "$out" 2> "$err" || status=$?
+unset RELEVO_BASE
+if [ "$status" -ne 0 ]; then
+	echo "FAIL: unresolvable RELEVO_BASE: exit $status, want 0"
+	fail=1
+fi
+if [ "$(cat "$out")" != "$want_a" ]; then
+	echo "FAIL: unresolvable RELEVO_BASE: got '$(cat "$out")', want a b c d e"
+	fail=1
+fi
+if [ ! -s "$err" ]; then
+	echo "FAIL: unresolvable RELEVO_BASE: stderr is empty, want note"
+	fail=1
+fi
+git update-ref refs/remotes/origin/main "$initial"
+
 # 10. a deleted whole package directory gives ./...
 reset_fixture
 rm -rf a/sub
@@ -318,6 +371,36 @@ reset_fixture
 mkdir -p "a/sub dir"
 touch "a/sub dir/my file.txt"
 assert_stdout "a path with a space in its name maps" "$want_a"
+
+# --direct lists the changed packages without their importers
+reset_fixture
+echo "// edit" >> a/a.go
+echo "// edit" >> f/f.go
+assert_stdout "--direct on edits in a and f gives a and f" "example.test/fx/a
+example.test/fx/f" --direct
+
+reset_fixture
+mkdir -p docs
+echo "docs" > docs/x.md
+assert_stdout "--direct on a docs-only change gives empty" "" --direct
+
+reset_fixture
+echo "// edit" >> go.mod
+assert_stdout "--direct on a go.mod change gives ./..." "./..." --direct
+
+reset_fixture
+mkdir -p .github/workflows
+echo "on: push" > .github/workflows/ci.yml
+assert_stdout "a file in no package gives ./..." "./..."
+assert_stdout "--direct on a file in no package gives empty" "" --direct
+
+reset_fixture
+rm -rf a/sub
+assert_stdout "--direct on a deleted package directory gives its parent" "example.test/fx/a" --direct
+
+reset_fixture
+echo "package fixture" > a/testdata/fixture.go
+assert_stdout "--direct on a .go file under testdata gives its package" "example.test/fx/a" --direct
 
 # 13. bad flag gives exit 2
 reset_fixture

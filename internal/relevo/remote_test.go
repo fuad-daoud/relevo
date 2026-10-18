@@ -104,6 +104,7 @@ type fakeRemote struct {
 	doneResp          remote.BindingView
 	doneErr           error
 	unbindErr         error
+	unbindForce       []bool
 	resumeResp        remote.BindingView
 	resumeErr         error
 	stopResp          remote.BindingView
@@ -291,8 +292,9 @@ func (f *fakeRemote) Done(ctx context.Context, server, name string) (remote.Bind
 	return f.doneResp, f.doneErr
 }
 
-func (f *fakeRemote) Unbind(ctx context.Context, server, name string) error {
+func (f *fakeRemote) Unbind(ctx context.Context, server, name string, force bool) error {
 	f.calls = append(f.calls, fmt.Sprintf("Unbind:%s:%s", server, name))
+	f.unbindForce = append(f.unbindForce, force)
 	if f.onUnbind != nil {
 		f.onUnbind()
 	}
@@ -3019,8 +3021,8 @@ func TestGCRemoteOnlyWhenDone(t *testing.T) {
 	if len(results) != 1 || results[0].Name != "done-remote" {
 		t.Fatalf("results = %+v, want only done-remote", results)
 	}
-	if len(fr.calls) != 0 {
-		t.Fatalf("GC made a server call: %v, want none", fr.calls)
+	if len(fr.calls) != 1 || fr.calls[0] != "Unbind:zen:done-remote" {
+		t.Fatalf("server calls = %v, want only the DONE binding's unbind", fr.calls)
 	}
 	if _, lerr := st.Load("open-remote"); lerr != nil {
 		t.Fatalf("open-remote must survive GC: %v", lerr)

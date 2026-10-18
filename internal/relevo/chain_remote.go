@@ -258,7 +258,7 @@ func chainBuildRemoteBuilder(ctx context.Context, rt Runtime, opts ChainOptions,
 			return
 		}
 		armed = false
-		if uerr := rt.Remote.Unbind(ctx, server, name); uerr != nil {
+		if uerr := rt.Remote.Unbind(ctx, server, name, true); uerr != nil {
 			err = fmt.Errorf("%w; server binding %s on %s could not be removed: %v", err, name, server, uerr)
 		}
 		if branchCreated {

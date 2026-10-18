@@ -87,11 +87,15 @@ func (d *Daemon) queueSync(ctx context.Context) {
 func (d *Daemon) idleSync(ctx context.Context) {
 	runner := d.syncRunner()
 	if !runner.On() {
+		d.noteSyncOff()
 		return
 	}
 
 	now := d.syncClock()()
 	d.syncMu.Lock()
+	if d.live.onSince.IsZero() {
+		d.live.onSince = now
+	}
 	closed := !d.syncLast.IsZero() && now.Sub(d.syncLast) < d.pullWindowLocked(now)
 	if !closed {
 		d.syncLast = now

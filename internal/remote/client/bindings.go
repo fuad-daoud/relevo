@@ -127,8 +127,12 @@ func (c *Client) Done(ctx context.Context, server, name string) (remote.BindingV
 	return decodeJSON[remote.BindingView](resp, "decode binding view")
 }
 
-func (c *Client) Unbind(ctx context.Context, server, name string) error {
-	return postOnce(ctx, c, server, fmt.Sprintf("/v1/bindings/%s/unbind", url.PathEscape(name)))
+func (c *Client) Unbind(ctx context.Context, server, name string, force bool) error {
+	path := fmt.Sprintf("/v1/bindings/%s/unbind", url.PathEscape(name))
+	if force {
+		path += "?force=1"
+	}
+	return postOnce(ctx, c, server, path)
 }
 
 // postOnce does not retry: the caller's action is not safe to repeat blindly.

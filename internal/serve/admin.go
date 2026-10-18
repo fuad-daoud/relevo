@@ -259,7 +259,7 @@ func gcArchive(ctx context.Context, rt relevo.Runtime, id remote.ClientID, b sto
 	if dryRun {
 		return false, nil
 	}
-	res, err := relevo.Unbind(ctx, rt, b.Name, true)
+	res, err := relevo.UnbindWith(ctx, rt, b.Name, true, true)
 	if err != nil {
 		return false, err
 	}
@@ -338,7 +338,8 @@ func GCAbandoned(ctx context.Context, s *Server, olderThan time.Duration, now ti
 
 // AdminUnbind archives a stale server binding: the admin's answer to a client's
 // `add --server` whose 409 means the server already holds that name. A running
-// round is refused unless force is set.
+// round is refused unless force is set, and a kept worktree keeps the binding
+// unless force is set.
 func AdminUnbind(ctx context.Context, s *Server, owner string, name string, force bool) (relevo.UnbindResult, error) {
 	id, err := s.resolveOwner(owner)
 	if err != nil {
@@ -362,7 +363,7 @@ func AdminUnbind(ctx context.Context, s *Server, owner string, name string, forc
 		}
 	}
 
-	res, err := relevo.Unbind(ctx, rt, name, true)
+	res, err := relevo.UnbindWith(ctx, rt, name, true, force)
 	if err != nil {
 		return res, err
 	}

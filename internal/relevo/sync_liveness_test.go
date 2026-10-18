@@ -66,6 +66,7 @@ type liveFixture struct {
 	known int
 	nanos atomic.Int64
 	per   int64
+	t     *testing.T
 }
 
 // newLiveFixture is a daemon over a real machine database with sync turned on
@@ -84,14 +85,50 @@ func newLiveFixture(t *testing.T) *liveFixture {
 	if err := relevosync.MarkEnabled(local, true, baseTime); err != nil {
 		t.Fatalf("MarkEnabled: %v", err)
 	}
-	f := &liveFixture{mdb: mdb, local: local, far: synclog.NewMemTransport("m2")}
+	f := &liveFixture{t: t, mdb: mdb, local: local, far: synclog.NewMemTransport("m2")}
 	_, f.known = mdb.SchemaVersions()
 	f.log = &gateLog{LogTransport: f.far.OnLog(mdb.Origin())}
 	rt := Runtime{Store: st, Sync: &relevosync.Runner{Client: f.log, Local: local}}
 	f.d = NewDaemon(rt, time.Second)
 	f.setNow(baseTime)
 	f.d.syncNow = func() time.Time { return time.Unix(0, f.nanos.Load()) }
+	// Settled: a machine that has been on for longer than the warm period, so
+	// the cold-window and debounce tests pin a long-running daemon.
+	f.d.syncMu.Lock()
+	f.d.live.onSince = baseTime.Add(-hotSince)
+	f.d.syncMu.Unlock()
 	return f
+}
+
+// newOffFixture is a daemon that has been running with sync off and is about
+// to be enabled.
+func newOffFixture(t *testing.T) *liveFixture {
+	t.Helper()
+	f := newLiveFixture(t)
+	f.baseline(t)
+	if err := relevosync.MarkEnabled(f.local, false, baseTime); err != nil {
+		t.Fatalf("MarkEnabled off: %v", err)
+	}
+	f.d.syncMu.Lock()
+	f.d.live.onSince = time.Time{}
+	f.d.syncLast = time.Time{}
+	f.d.syncMu.Unlock()
+	return f
+}
+
+// enableAt turns sync on for the fixture's daemon.
+func (f *liveFixture) enableAt(t *testing.T, on bool, at time.Time) {
+	t.Helper()
+	if err := relevosync.MarkEnabled(f.local, on, at); err != nil {
+		t.Fatalf("MarkEnabled %v: %v", on, err)
+	}
+}
+
+// tick runs one idle tick at the given time and waits for its attempt.
+func (f *liveFixture) tick(at time.Time) {
+	f.setNow(at)
+	f.d.idleSync(context.Background())
+	waitSyncIdle(f.t, f.d)
 }
 
 func (f *liveFixture) setNow(at time.Time) { f.nanos.Store(at.UnixNano()) }
@@ -236,6 +273,101 @@ func TestSyncHotWindowCoolsAfterHotSince(t *testing.T) {
 		if got := f.d.pullWindowLocked(baseTime.Add(tc.after)); got != tc.want {
 			t.Errorf("window %v after rows applied = %v, want %v", tc.after, got, tc.want)
 		}
+	}
+
+	f.d.live.appliedAt = time.Time{}
+	f.d.live.onSince = baseTime
+	for _, tc := range []struct {
+		after time.Duration
+		want  time.Duration
+	}{
+		{hotSince - time.Second, hotWindow},
+		{hotSince, coldWindow},
+	} {
+		if got := f.d.pullWindowLocked(baseTime.Add(tc.after)); got != tc.want {
+			t.Errorf("window %v after sync came on = %v, want %v", tc.after, got, tc.want)
+		}
+	}
+}
+
+// TestSyncEnableWhileRunningFollowsWithASecondAttempt pins that a daemon that
+// finds sync turned on pulls again after hotWindow, with nothing applied and
+// nothing in the outbox to account for it.
+func TestSyncEnableWhileRunningFollowsWithASecondAttempt(t *testing.T) {
+	t.Parallel()
+	f := newOffFixture(t)
+	for _, d := range []time.Duration{0, 2 * time.Second, 4 * time.Second} {
+		f.tick(baseTime.Add(d))
+	}
+	if got := f.attempts(); got != 1 {
+		t.Fatalf("attempts while off = %d, want the baseline 1", got)
+	}
+
+	t0 := baseTime.Add(10 * time.Second)
+	f.enableAt(t, true, t0)
+	f.tick(t0)
+	if got := f.attempts(); got != 2 {
+		t.Fatalf("attempts at enable = %d, want 2", got)
+	}
+	f.tick(t0.Add(hotWindow - time.Second))
+	if got := f.attempts(); got != 2 {
+		t.Fatalf("attempts inside hotWindow = %d, want 2", got)
+	}
+	f.tick(t0.Add(hotWindow))
+	if got := f.attempts(); got != 3 {
+		t.Errorf("attempts at hotWindow = %d, want 3", got)
+	}
+	if f.d.outboxPending() {
+		t.Error("outbox has entries, so the second attempt is not the warm period's")
+	}
+	f.d.syncMu.Lock()
+	applied := f.d.live.appliedAt
+	f.d.syncMu.Unlock()
+	if !applied.IsZero() {
+		t.Errorf("appliedAt = %v, want zero", applied)
+	}
+}
+
+// TestSyncWarmPeriodEndsAfterHotSince pins that a quiet machine returns to the
+// cold cadence.
+func TestSyncWarmPeriodEndsAfterHotSince(t *testing.T) {
+	t.Parallel()
+	f := newOffFixture(t)
+	t0 := baseTime.Add(10 * time.Second)
+	f.enableAt(t, true, t0)
+	f.tick(t0)
+	f.tick(t0.Add(hotSince - time.Second))
+	opened := f.attempts()
+	f.tick(t0.Add(hotSince + hotWindow))
+	if got := f.attempts() - opened; got != 0 {
+		t.Errorf("attempts after the warm period = %d, want 0", got)
+	}
+}
+
+// TestSyncReEnableWarmsAgain pins that turning sync off and on in one process
+// opens the first window at once and warms the window again.
+func TestSyncReEnableWarmsAgain(t *testing.T) {
+	t.Parallel()
+	f := newOffFixture(t)
+	t0 := baseTime.Add(10 * time.Second)
+	f.enableAt(t, true, t0)
+	f.tick(t0)
+	f.tick(t0.Add(hotWindow))
+
+	off := t0.Add(hotWindow + time.Second)
+	f.enableAt(t, false, off)
+	f.tick(off)
+
+	t1 := off.Add(time.Second)
+	f.enableAt(t, true, t1)
+	before := f.attempts()
+	f.tick(t1)
+	if got := f.attempts() - before; got != 1 {
+		t.Fatalf("attempts at re-enable = %d, want 1", got)
+	}
+	f.tick(t1.Add(hotWindow))
+	if got := f.attempts() - before; got != 2 {
+		t.Errorf("attempts at hotWindow after re-enable = %d, want 2", got)
 	}
 }
 

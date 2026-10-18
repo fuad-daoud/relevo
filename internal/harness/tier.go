@@ -77,7 +77,7 @@ func (h Harness) PermissionArgs(tier Tier) ([]string, error) {
 		case TierRead:
 			return []string{"--mode", "plan"}, nil
 		case TierEdit:
-			return []string{"--mode", "accept-edits"}, nil
+			return nil, fmt.Errorf("%w: agy cannot honour tier edit: headless --mode accept-edits auto-denies shell commands and relevo cannot grant allow-rules without editing the user's agy settings; use --tier yolo (--dangerously-skip-permissions) or --tier harness (agy's settings.json decides)", ErrTierUnsupported)
 		case TierYolo:
 			return []string{"--dangerously-skip-permissions"}, nil
 		default:
@@ -166,10 +166,9 @@ func (h Harness) ExtraArgsPermissionFlag(extra []string) string {
 }
 
 // PromptCopyWanted reports whether relevo should stage a prompt copy inside out/
-// and point the launch prompt to it. agy at read and edit tiers runs under
-// sandbox constraints (--mode plan, --mode accept-edits) without access to the
-// binding directory outside its --add-dir arguments, so relevo copies the prompt
-// into out/.
+// and point the launch prompt to it. agy at read runs under --mode plan
+// without access to the binding directory outside its --add-dir arguments, so
+// relevo copies the prompt into out/.
 func PromptCopyWanted(kind string, tier Tier) bool {
-	return kind == "agy" && (tier == TierRead || tier == TierEdit)
+	return kind == "agy" && tier == TierRead
 }

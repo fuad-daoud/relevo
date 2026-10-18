@@ -40,6 +40,7 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 		UnitName: scopeUnitNameFor(scopeGate, b.Owner, b.Name, b.Round, ""),
 		CPUPin:   cpuPinText(b),
 		Timeout:  gateTimeoutFor(b, rt.Policy),
+		Env:      baseEnvEntry(b),
 	}
 
 	if rt.Runner == nil {

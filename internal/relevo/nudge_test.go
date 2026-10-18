@@ -418,11 +418,14 @@ func TestResendAllowsAnotherNudge(t *testing.T) {
 func TestLimitExitIsGatedNotNudged(t *testing.T) {
 	t.Parallel()
 
-	const otherRef = "agy/other/m"
+	const otherRef = "claude/other/m"
 	fr := newFakeRunner()
 	rt := newRuntime(t)
 	rt.Runner = fr
-	rt.Candidates = candidateSet(t, testTwoProviderJSON)
+	rt.Candidates = candidateSet(t, `[
+  {"harness":"claude","provider":"test","model":"m","roles":["builder"]},
+  {"harness":"claude","provider":"other","model":"m","roles":["builder"]}
+]`)
 	rt.Policy = orderOf("builder", testClaudeRef, otherRef)
 	if _, err := Bind(context.Background(), rt, BindOptions{
 		Name: "webshop", Candidate: testClaudeRef, MasterMindID: testMasterMindName,

@@ -224,7 +224,7 @@ a version mismatch is `426` with the versions the server speaks.
 | `GET /v1/bindings/{name}/rounds/{n}/bundle?since=<sha>` | `git bundle create <since>..<result> [<dirty>]`, streamed; empty `since` = full |
 | `POST /v1/bindings/{name}/rounds/{n}/ack` | `acked_round = n`; idempotent |
 | `POST /v1/bindings/{name}/unavailable` | `{token, reason}`; gates the server's candidate server-wide and switches mid-round |
-| `POST /v1/bindings/{name}/done` / `unbind` | #179 semantics / drop worktree; `409 round_open` unless `?force` |
+| `POST /v1/bindings/{name}/done` / `unbind` | #179 semantics / drop worktree; `409 round_open` unless `?force`; `unbind` also `409 worktree_kept` (binding left in place) unless `?force` |
 | `POST /v1/bindings/{name}/resume` | Restore a released worktree from the branch |
 
 Not endpoints, on purpose: `answer`, `ask`, `fork`, `tab`, anything that
