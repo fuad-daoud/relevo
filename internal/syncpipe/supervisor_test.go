@@ -186,9 +186,13 @@ func TestWorkerDeathIsCounted(t *testing.T) {
 // than left wedged.
 func TestMissedDeadlineKillsAndCounts(t *testing.T) {
 	cfg := fakeWorkerCfg(modeHang)
-	cfg.Timeout = 300 * time.Millisecond
 	b := breakerOver(newMemKV())
 	s := newSupervisor(t, cfg, b)
+	if _, err := s.worker(); err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	s.cfg.Timeout = 300 * time.Millisecond
+	s.client.cfg.Timeout = 300 * time.Millisecond
 
 	if _, err := s.Stats(); err == nil {
 		t.Fatal("Stats over a worker that never answers = nil, want the deadline")
