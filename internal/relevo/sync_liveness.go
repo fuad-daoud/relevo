@@ -50,6 +50,11 @@ type syncLiveness struct {
 	// appliedAt is when the last attempt that applied rows ended. Zero means no
 	// attempt has applied anything since this daemon started.
 	appliedAt time.Time
+	// onSince is when this daemon first saw sync on in the current on-period.
+	// A machine that just came on has a peer that is likely active and no
+	// history in this process, and appliedAt cannot say so until an attempt
+	// has applied something.
+	onSince time.Time
 }
 
 // breakerDue reports whether the machine's breaker lets a call run now. An
@@ -114,12 +119,26 @@ func (d *Daemon) syncSlot(ctx context.Context, runner *relevosync.Runner, st *st
 }
 
 // pullWindowLocked is the idle gap in force at now: hot while an attempt
-// applied rows within hotSince, cold otherwise. The caller holds syncMu.
+// applied rows within hotSince or sync came on within hotSince, cold
+// otherwise. The caller holds syncMu.
 func (d *Daemon) pullWindowLocked(now time.Time) time.Duration {
-	if !d.live.appliedAt.IsZero() && now.Sub(d.live.appliedAt) < hotSince {
+	if warmSince(d.live.appliedAt, now) || warmSince(d.live.onSince, now) {
 		return hotWindow
 	}
 	return coldWindow
+}
+
+func warmSince(at, now time.Time) bool {
+	return !at.IsZero() && now.Sub(at) < hotSince
+}
+
+// noteSyncOff forgets that sync was on, so the next enable opens its first
+// window at once and is warm again.
+func (d *Daemon) noteSyncOff() {
+	d.syncMu.Lock()
+	d.live.onSince = time.Time{}
+	d.syncLast = time.Time{}
+	d.syncMu.Unlock()
 }
 
 // noteApplied records that an attempt applied rows, which is what turns the
