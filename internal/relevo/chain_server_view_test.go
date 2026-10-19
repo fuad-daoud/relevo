@@ -231,20 +231,27 @@ func TestChainStopOnAServerChainPostsStop(t *testing.T) {
 
 // TestChainStopOnAChainTheServerNoLongerHoldsNamesDone pins the stop of a
 // chain the server has let go: a mirror already marked gone is refused without
-// asking the server, and a 404 or a halted answer from the server gives the
-// same refusal, which names `relevo done`, rather than an internal failure.
+// asking the server, and a 404 on a running mirror or a halted answer from the
+// server gives the same refusal, which names `relevo done`, rather than an
+// internal failure. A mirror that already ended keeps the nothing-to-stop
+// answer through a 404.
 func TestChainStopOnAChainTheServerNoLongerHoldsNamesDone(t *testing.T) {
 	t.Parallel()
 
+	notFound := &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: remote.CodeNotFound}}
 	arms := []struct {
-		name      string
-		gone      bool
-		stopErr   error
-		wantCalls int
+		name        string
+		mark        func(t *testing.T, rt Runtime)
+		stopErr     error
+		wantCalls   int
+		wantNothing bool
 	}{
-		{"gone mirror", true, nil, 0},
-		{"server answers 404", false, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: remote.CodeNotFound}}, 1},
-		{"server answers halted", false, &client.HTTPError{Status: 409, Body: remote.ErrorBody{Code: remote.CodeChainHalted}}, 1},
+		{"gone mirror", func(t *testing.T, rt Runtime) { markChainGone(t, rt, "shop") }, nil, 0, false},
+		{"server answers 404", nil, notFound, 1, false},
+		{"server answers halted", nil, &client.HTTPError{Status: 409, Body: remote.ErrorBody{Code: remote.CodeChainHalted}}, 1, false},
+		{"done mirror, server answers 404", func(t *testing.T, rt Runtime) {
+			seedServerChainRound(t, rt, "shop", chain.StatusDone, 2)
+		}, notFound, 1, true},
 	}
 	for _, arm := range arms {
 		t.Run(arm.name, func(t *testing.T) {
@@ -254,13 +261,16 @@ func TestChainStopOnAChainTheServerNoLongerHoldsNamesDone(t *testing.T) {
 			fr.chainStopErr = arm.stopErr
 			rt := chainPullRuntime(t, fr)
 			seedServerChain(t, rt, "shop")
-			if arm.gone {
-				markChainGone(t, rt, "shop")
+			if arm.mark != nil {
+				arm.mark(t, rt)
 			}
 
 			_, err := ChainStop(context.Background(), rt, "shop")
 			var halted *ChainHaltedError
-			if !errors.As(err, &halted) || halted.Name != "shop" {
+			switch {
+			case arm.wantNothing && !errors.Is(err, ErrNothingToStop):
+				t.Fatalf("stop = %v, want ErrNothingToStop", err)
+			case !arm.wantNothing && (!errors.As(err, &halted) || halted.Name != "shop"):
 				t.Fatalf("stop = %v, want the halted refusal naming relevo done", err)
 			}
 			if n := countCalls(fr, "ChainStop:zen:shop"); n != arm.wantCalls {

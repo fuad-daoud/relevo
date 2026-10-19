@@ -173,8 +173,16 @@ func chainServerStop(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult
 		switch {
 		case remoteCode(err, 409, remote.CodeNothingToStop):
 			return StopResult{}, chainStoppedNothing(c)
-		case remoteCode(err, 409, remote.CodeChainHalted), is404(err):
+		case remoteCode(err, 409, remote.CodeChainHalted):
 			return StopResult{}, haltedChainStop(c.Name)
+		case is404(err):
+			// A mirror that already ended keeps the answer an ended chain
+			// gives; a running one is halted in all but its row, which the
+			// next pull writes.
+			if c.Status == string(chain.StatusRunning) {
+				return StopResult{}, haltedChainStop(c.Name)
+			}
+			return StopResult{}, chainStoppedNothing(c)
 		}
 		return StopResult{}, err
 	}
