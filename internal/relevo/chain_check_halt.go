@@ -36,12 +36,14 @@ func chainHaltReason(rt Runtime, tx *store.Tx, c db.ChainRow, s workflow.State) 
 	if !found {
 		return s.Reason
 	}
+	// The tail comes before the closing sentence so the reason still ends in
+	// prose: a notice appends to it, and must not run on from a log line.
 	var b strings.Builder
 	b.WriteString(s.Reason)
-	fmt.Fprintf(&b, "\n%s `%s` reads its log.", checkOutcome(rt, row), showCommand(member, round, "gate"))
 	if tail := tailLines(rt.Store.ReadFile, row.Log, haltCheckTailLines); len(tail) > 0 {
-		fmt.Fprintf(&b, "\nLast %d lines of the log:\n%s", len(tail), strings.Join(tail, "\n"))
+		fmt.Fprintf(&b, "\nLast %d lines of the check's log:\n%s", len(tail), strings.Join(tail, "\n"))
 	}
+	fmt.Fprintf(&b, "\n%s `%s` reads its log.", checkOutcome(rt, row), showCommand(member, round, "gate"))
 	return b.String()
 }
 

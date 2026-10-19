@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -33,6 +34,26 @@ func TestHaltAfterAFailedCheckNamesTheCheckAndQuotesItsLog(t *testing.T) {
 	} {
 		if !strings.Contains(c.Reason, want) {
 			t.Errorf("halt reason %q does not carry %q", c.Reason, want)
+		}
+	}
+	if !strings.HasSuffix(c.Reason, "reads its log.") {
+		t.Errorf("halt reason %q ends on the log, not on its closing sentence", c.Reason)
+	}
+}
+
+// A halt reason that is already a sentence gets no second period in the
+// notice, and one that is not gets its period.
+func TestTerminalPayloadClosesTheReasonOnce(t *testing.T) {
+	t.Parallel()
+
+	c := db.ChainRow{Name: "shop", Branch: "relevo/shop"}
+	for reason, want := range map[string]string{
+		"the check failed; `relevo show shop --gate` reads its log.": " Reason: the check failed; `relevo show shop --gate` reads its log. relevo chain",
+		"changes": " Reason: changes. relevo chain",
+	} {
+		got := chainTerminalWFPayload(c, workflow.State{Status: workflow.StatusHalted, Reason: reason})
+		if !strings.Contains(got, want) {
+			t.Errorf("payload = %q, want it to contain %q", got, want)
 		}
 	}
 }
