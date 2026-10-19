@@ -157,3 +157,23 @@ func TestHaltAfterAnErroredCheckNamesItsNote(t *testing.T) {
 		t.Errorf("halt reason %q words an error as a timeout", c.Reason)
 	}
 }
+
+// A chain whose check passed and which then halts on a later step keeps that
+// step's own reason: the green check is not why it stopped.
+func TestHaltAfterAPassingCheckKeepsItsWording(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, flowCheckLogWorkflow)
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainGreenCheck(t, rt, "shop")
+	chainReaderClose(t, rt, "shop-assistant", chainVerdictBody("changes"))
+
+	c := flowChainRow(t, rt)
+	if c.Status != string(workflow.StatusHalted) {
+		t.Fatalf("status = %s (%q), want the reviewer's halt", c.Status, c.Reason)
+	}
+	if strings.Contains(c.Reason, "relevo show") || strings.Contains(c.Reason, "last check") {
+		t.Errorf("halt reason %q carries a check detail after a passing check", c.Reason)
+	}
+}
