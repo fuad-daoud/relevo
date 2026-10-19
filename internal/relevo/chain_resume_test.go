@@ -752,7 +752,7 @@ func TestChainResumeReSendsTheStoppedRoundsOwnPrompt(t *testing.T) {
 		assertResumeReSendsTheStagedPrompt(t, rt, "# Repair round")
 	})
 
-	t.Run("a stopped repair round with a replaced gate", func(t *testing.T) {
+	t.Run("a stopped repair round with a replaced gate reruns the check", func(t *testing.T) {
 		t.Parallel()
 
 		rt, _ := chainRuntime(t)
@@ -765,24 +765,16 @@ func TestChainResumeReSendsTheStoppedRoundsOwnPrompt(t *testing.T) {
 		if _, err := Stop(context.Background(), rt, "shop", StopOptions{}); err != nil {
 			t.Fatalf("Stop the repair round: %v", err)
 		}
+		rounds := chainBinding(t, rt, "shop").Round
 		if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Gate: "make check"}); err != nil {
 			t.Fatalf("ChainResume with a replaced gate: %v", err)
 		}
 
-		resent := chainBinding(t, rt, "shop")
-		got, err := rt.Store.ReadFile(rt.Store.PromptPath("shop", resent.Round))
-		if err != nil {
-			t.Fatalf("read the re-sent round's prompt: %v", err)
+		if run, check := flowCheckRun(t, rt, "shop"); check.Command != "make check" {
+			t.Errorf("check run %d command = %q, want the replaced gate", run, check.Command)
 		}
-		if strings.Contains(string(got), repairPlanPrefix) {
-			t.Errorf("the re-sent round still carries the stale repair prompt:\n%s", got)
-		}
-		planCopy, err := rt.Store.ReadFile(rt.Store.ChainPlanPath("shop", 1))
-		if err != nil {
-			t.Fatalf("read the plan copy: %v", err)
-		}
-		if string(got) != string(planCopy) {
-			t.Errorf("the re-sent round is not the step's seed under the new gate:\ngot:\n%s\nwant:\n%s", got, planCopy)
+		if got := chainBinding(t, rt, "shop").Round; got != rounds {
+			t.Errorf("builder round = %d, want %d: a replaced gate re-runs the check and sends no round", got, rounds)
 		}
 	})
 }

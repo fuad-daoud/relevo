@@ -370,7 +370,8 @@ func chainResumeRunAction(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 // chainResumeStagedText returns the staged prompt a resume re-sends: the round
 // the state awaited, when the action re-runs that same member's step and the
 // round's staged file is still there. A replaced check walks back past any
-// repair prompts, because their bytes name the check that failed.
+// repair prompts, because their bytes name the check that failed; where that
+// walk ends on a prompt that is not a repair plan there is nothing to re-send.
 func chainResumeStagedText(rt Runtime, tx *store.Tx, c db.ChainRow, before workflow.State, act workflow.Action, gateChanged bool) (string, string, bool) {
 	if before.Awaiting.Member == "" || before.Awaiting.Round <= 0 || act.Actor != before.Awaiting.Member {
 		return "", "", false
@@ -391,6 +392,13 @@ func chainResumeStagedText(rt Runtime, tx *store.Tx, c db.ChainRow, before workf
 	}
 	body, err := rt.Store.ReadFile(rt.Store.PromptPath(name, round))
 	if err != nil {
+		return "", "", false
+	}
+	// A walk-back that left the awaited round and stopped on a prompt that is
+	// not a repair plan has found the build plan or a seed of some other step;
+	// handing it over as this step's own would run the wrong work, so the engine
+	// renders the step's seed fresh instead.
+	if round != before.Awaiting.Round && !isRepairPlan(string(body)) {
 		return "", "", false
 	}
 	return name, string(body), true
