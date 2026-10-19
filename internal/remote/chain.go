@@ -21,6 +21,10 @@ const FeatureWorkflow = "workflow"
 // wanted it otherwise cannot proceed.
 const CodeChainRunning Code = "chain_running"
 
+// CodeChainHalted is a 409: a stop found the chain halted with no open member
+// round, so the answer is the one that names `relevo done`.
+const CodeChainHalted Code = "chain_halted"
+
 // ChainSettings is a chain create request's resolved configuration. It mirrors
 // chain.Settings; internal/remote does not import internal/chain, so the two
 // are converted at the edges.

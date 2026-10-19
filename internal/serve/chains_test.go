@@ -749,6 +749,39 @@ func TestChainStopResumeDoneOverTheWire(t *testing.T) {
 	}
 }
 
+// TestStopChainOnAHaltedChainAnswersChainHalted pins the stop route's answer
+// for a halted chain with no open member round: a 409 the client turns into
+// the refusal that names `relevo done`, not a 500.
+func TestStopChainOnAHaltedChainAnswersChainHalted(t *testing.T) {
+	env := setupTestEnv(t, func(c *Config) { c.MaxBuilders = 1 })
+
+	// Occupy the single builder slot so the chain's plan 1 stays queued.
+	resp, body := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "decoy", "# Decoy")
+	requireCreated(t, resp, body, "decoy")
+	resp, body = createChain(t, env, "shop")
+	requireStatus(t, resp, body, http.StatusCreated)
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/chains/shop/stop", nil, "")
+	requireStatus(t, resp, body, http.StatusOK)
+
+	rt := env.runtime(t)
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		c, err := tx.Chain("shop")
+		if err != nil {
+			return err
+		}
+		c.Status = string(chain.StatusHalted)
+		return tx.ChainPut(c)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body = doSigned(t, env.ts, env.kp, "POST", "/v1/chains/shop/stop", nil, "")
+	requireStatus(t, resp, body, http.StatusConflict)
+	if errBody := decodeErrorBody(t, body); errBody.Code != remote.CodeChainHalted {
+		t.Fatalf("stop-while-halted code = %q, want %q", errBody.Code, remote.CodeChainHalted)
+	}
+}
+
 // TestResumeChainRefusesOutOfBoundSettings pins the resume route's bounds: a
 // max_corrections or regate outside the create's range answers 400 and leaves
 // the chain row byte-identical.
