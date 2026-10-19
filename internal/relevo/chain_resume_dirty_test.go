@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -20,16 +19,6 @@ func dirtyHaltedChain(t *testing.T) (Runtime, *fakeGit, int) {
 	c := flowChainRow(t, rt)
 	if c.Status != string(workflow.StatusHalted) || !chainHaltedOverUncommittedWork(c.Reason) {
 		t.Fatalf("setup: status = %s (%q), want halted over uncommitted work", c.Status, c.Reason)
-	}
-	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		b, err := tx.Load("shop")
-		if err != nil {
-			return err
-		}
-		b.RoundBaselineHead = "baseline-head"
-		return tx.Save(b)
-	}); err != nil {
-		t.Fatalf("record the baseline: %v", err)
 	}
 	return rt, fg, chainBinding(t, rt, "shop").Round
 }
@@ -83,11 +72,34 @@ func TestResumeCleanTreeAtBaselineRefuses(t *testing.T) {
 
 	rt, fg, round := dirtyHaltedChain(t)
 	fg.dirtyResult = false
-	fg.headCommitID = "baseline-head"
+	if chainBinding(t, rt, "shop").RoundClosedBaselineHead == "" {
+		t.Fatal("setup: the closed round kept no baseline HEAD")
+	}
 
 	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
 	if err == nil || !strings.Contains(err.Error(), chainUncommittedWorkClause) {
 		t.Fatalf("ChainResume = %v, want the uncommitted-work refusal", err)
+	}
+	if staged(rt, round) {
+		t.Errorf("a prompt was staged for round %d: something was sent", round)
+	}
+}
+
+func TestResumeCleanTreeWithUnknownBaselineRefuses(t *testing.T) {
+	t.Parallel()
+
+	rt, fg := chainRuntime(t)
+	fg.headCommitID = ""
+	startFlowChain(t, rt, flowReviewWorkflow)
+	fg.dirtyResult = true
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	fg.dirtyResult = false
+	fg.headCommitID = "commit-after-the-work"
+	round := chainBinding(t, rt, "shop").Round
+
+	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"})
+	if err == nil || !strings.Contains(err.Error(), "starting commit is unknown") {
+		t.Fatalf("ChainResume = %v, want the unknown-baseline refusal", err)
 	}
 	if staged(rt, round) {
 		t.Errorf("a prompt was staged for round %d: something was sent", round)

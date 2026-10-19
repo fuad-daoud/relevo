@@ -343,6 +343,10 @@ type Binding struct {
 	// two describe different instants.
 	RoundClosedTree   string `json:"round_closed_tree,omitempty"`
 	RoundBaselineHead string `json:"round_baseline_head,omitempty"`
+	// RoundClosedBaselineHead is the baseline HEAD of the round that last
+	// closed, kept because the close clears RoundBaselineHead before the chain
+	// judges the close.
+	RoundClosedBaselineHead string `json:"round_closed_baseline_head,omitempty"`
 	// RoundRepoBaselineTree is the source checkout's snapshot at send, so the
 	// escape check at close counts a repo the round changed, not one that was
 	// already dirty when it began. Empty falls back to a plain dirty check.

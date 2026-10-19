@@ -1,4 +1,4 @@
-format 18
+format 19
 abandoned_sessions[].attempts
 abandoned_sessions[].id
 abandoned_sessions[].kind
@@ -209,6 +209,7 @@ round
 round_baseline_head
 round_baseline_tree
 round_cap
+round_closed_baseline_head
 round_closed_tree
 round_cpu
 round_excluded[]
