@@ -72,7 +72,9 @@ func checkOutcome(rt Runtime, row db.ChainCheckRow) string {
 			(time.Duration(row.DurationMS) * time.Millisecond).Round(time.Millisecond), rt.Policy.GateTimeout().Milliseconds())
 	case "error":
 		return fmt.Sprintf("The last check could not run: %s.", row.Note)
+	case "fail":
+		return fmt.Sprintf("The last check failed (exit code %d);", row.ExitCode)
 	default:
-		return fmt.Sprintf("The last check %s (exit code %d);", row.Result, row.ExitCode)
+		return fmt.Sprintf("The last check ended %s (exit code %d);", row.Result, row.ExitCode)
 	}
 }

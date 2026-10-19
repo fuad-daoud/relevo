@@ -37,7 +37,7 @@ func chainResumeReroute(def workflow.Definition, st workflow.State, opts ResumeO
 		return checks[0], nil
 	default:
 		return "", refuse(
-			"chain halted at %s with no budget left, and %d checks reach it (%s); resume with --from <step> to name the one to rerun",
-			st.At, len(checks), strings.Join(checks, ", "))
+			"chain %s at %s, and %d checks reach it (%s); resume with --from <step> to name the one to rerun",
+			st.Status, st.At, len(checks), strings.Join(checks, ", "))
 	}
 }

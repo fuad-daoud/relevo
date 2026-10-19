@@ -26,8 +26,7 @@ func TestHaltAfterAFailedCheckNamesTheCheckAndQuotesItsLog(t *testing.T) {
 	}
 	for _, want := range []string{
 		"repair has no budget left",
-		"fail",
-		"exit code 1",
+		"The last check failed (exit code 1);",
 		"relevo show shop --round 1 --gate",
 		"FAIL TestWidget",
 		"compile ok",

@@ -96,14 +96,14 @@ func TestTailLines(t *testing.T) {
 		}
 	})
 
-	t.Run("skips the rusage trailer line", func(t *testing.T) {
+	t.Run("skips the supervisor's rusage and exit trailers", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "gate.log")
 		content := "a\nb\n\nrelevo-rusage:cpu_usec=1 mem_peak=2\n\nrelevo-exit:2\n"
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		want := []string{"a", "b", "relevo-exit:2"}
+		want := []string{"a", "b"}
 		got := tailLines(os.ReadFile, path, 3)
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("tailLines() = %v, want %v", got, want)
