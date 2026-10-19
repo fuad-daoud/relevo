@@ -196,12 +196,14 @@ func applyListKey(tail *Tail, lines []string, i, closeIdx int, key, val string) 
 }
 
 // FindRelevoBlock locates the LAST ```relevo fence among lines and its closing
-// fence, returning their indices. There is no block when openIdx is -1.
+// fence, returning their indices. There is no block when openIdx is -1. A
+// closing fence is optional: a block whose fence never arrives runs to end of
+// file, which is the only thing that can follow it, and closeIdx is then
+// len(lines).
 //
-// reason is "" when a block was found and is well formed, and non-empty when
-// a fence was found but unusable (unclosed, or followed by prose). Callers
-// use it to tell a writer that omitted the block from one whose block could
-// not be read.
+// reason is "" when a block was found and readable, and non-empty when a
+// closing fence was found but prose follows it. Callers use it to tell a
+// writer that omitted the block from one whose block could not be read.
 func FindRelevoBlock(lines []string) (openIdx, closeIdx int, reason string) {
 	openIdx = -1
 	for i, line := range lines {
@@ -221,7 +223,9 @@ func FindRelevoBlock(lines []string) (openIdx, closeIdx int, reason string) {
 		}
 	}
 	if closeIdx == -1 {
-		return openIdx, -1, "tail: unclosed fence"
+		// End of file is the only thing that can follow an unclosed fence, so
+		// the block ends there and nothing can sit after it to check.
+		return openIdx, len(lines), ""
 	}
 
 	for i := closeIdx + 1; i < len(lines); i++ {
@@ -233,14 +237,14 @@ func FindRelevoBlock(lines []string) (openIdx, closeIdx int, reason string) {
 	return openIdx, closeIdx, ""
 }
 
-// RelevoBlock is one fenced relevo block: the line indices of its opening and
-// closing fences.
+// RelevoBlock is one fenced relevo block: the index of its opening fence and
+// of what closes it, the next ``` fence or end of file.
 type RelevoBlock struct{ Open, Close int }
 
 // RelevoBlocks returns every fenced relevo block in lines, in file order:
-// each ```relevo opening fence paired with the next ``` closing fence. An
-// opening fence with no closing fence after it yields no pair and ends the
-// scan; no block returns nil.
+// each ```relevo opening fence paired with the next ``` closing fence, and an
+// opening fence with no closing fence after it paired with end of file, the
+// only thing that can follow it. No block returns nil.
 func RelevoBlocks(lines []string) []RelevoBlock {
 	var blocks []RelevoBlock
 	for i := 0; i < len(lines); i++ {
@@ -255,7 +259,8 @@ func RelevoBlocks(lines []string) []RelevoBlock {
 			}
 		}
 		if closeIdx == -1 {
-			return blocks
+			blocks = append(blocks, RelevoBlock{Open: i, Close: len(lines)})
+			break
 		}
 		blocks = append(blocks, RelevoBlock{Open: i, Close: closeIdx})
 		i = closeIdx

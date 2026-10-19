@@ -96,13 +96,6 @@ func TestParseReportTailMissingBlock(t *testing.T) {
 		}
 	})
 
-	t.Run("unclosed fence -> false", func(t *testing.T) {
-		input := "```relevo\nstatus: done\n"
-		if _, ok := Parse([]byte(input)); ok {
-			t.Fatalf("expected ok=false for unclosed fence, got true")
-		}
-	})
-
 	t.Run("a report whose prose contains a ```go fence before the relevo block still parses", func(t *testing.T) {
 		input := `Here is some Go code:
 
@@ -126,6 +119,36 @@ status: done
 			t.Fatalf("expected status: done, got %s", tail.Status)
 		}
 	})
+}
+
+// TestParseReportTailRunsToEndOfFile pins that a block whose closing fence
+// never arrives is read to end of file, the only thing that can follow it: a
+// complete block without the fence parses with its lists intact and no reason.
+func TestParseReportTailRunsToEndOfFile(t *testing.T) {
+	t.Parallel()
+
+	input := "```relevo\nstatus: done\nchanged_paths:\n  - a.go\n  - b.go\ncommands_run: [make check]\nnot_done:\n"
+	tail, ok, reason := ParseWithReason([]byte(input))
+	if !ok {
+		t.Fatalf("ok = false, reason %q", reason)
+	}
+	if reason != "" {
+		t.Errorf("reason = %q, want empty", reason)
+	}
+	if tail.Status != OutcomeDone {
+		t.Errorf("Status = %q, want %q", tail.Status, OutcomeDone)
+	}
+	wantPaths := []string{"a.go", "b.go"}
+	if !reflect.DeepEqual(tail.ChangedPaths, wantPaths) {
+		t.Errorf("ChangedPaths = %+v, want %+v", tail.ChangedPaths, wantPaths)
+	}
+	wantCmds := []string{"make check"}
+	if !reflect.DeepEqual(tail.CommandsRun, wantCmds) {
+		t.Errorf("CommandsRun = %+v, want %+v", tail.CommandsRun, wantCmds)
+	}
+	if tail.NotDone != nil {
+		t.Errorf("NotDone = %+v, want nil", tail.NotDone)
+	}
 }
 
 func TestParseReportTailLastBlockWins(t *testing.T) {
@@ -492,18 +515,40 @@ func TestParseReportTailReasons(t *testing.T) {
 			t.Fatalf("reason = %q, want empty", reason)
 		}
 	})
+}
 
-	t.Run("unclosed flow list", func(t *testing.T) {
-		input := "```relevo\nstatus: done\nchanged_paths: [\n\"a.go\",\n```\n"
-		_, ok, reason := ParseWithReason([]byte(input))
-		if ok {
-			t.Fatalf("expected ok=false")
-		}
-		wantReason := "tail: line 3: changed_paths list is not closed"
-		if reason != wantReason {
-			t.Fatalf("reason = %q, want %q", reason, wantReason)
-		}
-	})
+// TestParseReportTailUnclosedFlowList pins that a flow list still open at its
+// end is refused with the same reason whether the block is closed by a fence
+// or runs to end of file.
+func TestParseReportTailUnclosedFlowList(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		body   string
+		reason string
+	}{
+		{
+			name:   "block closed by a fence",
+			body:   "```relevo\nstatus: done\nchanged_paths: [\n\"a.go\",\n```\n",
+			reason: "tail: line 3: changed_paths list is not closed",
+		},
+		{
+			name:   "block closed by end of file",
+			body:   "```relevo\nstatus: done\nchanged_paths: [\n\"a.go\",\n",
+			reason: "tail: line 3: changed_paths list is not closed",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ok, reason := ParseWithReason([]byte(tc.body))
+			if ok {
+				t.Fatalf("expected ok=false")
+			}
+			if reason != tc.reason {
+				t.Fatalf("reason = %q, want %q", reason, tc.reason)
+			}
+		})
+	}
 }
 
 // TestParseReportTailChangedPathsSet pins ChangedPathsSet: the changed_paths
@@ -859,7 +904,8 @@ func TestParseWithReasonSanitizesHaltedAt(t *testing.T) {
 }
 
 // TestRelevoBlocksReturnsEveryBlockInOrder pins the fence-pair enumeration the
-// chain parsers scan: every block in file order, and only a closed one.
+// chain parsers scan: every block in file order, closed by its fence or, when
+// the fence never arrives, by end of file.
 func TestRelevoBlocksReturnsEveryBlockInOrder(t *testing.T) {
 	t.Parallel()
 
@@ -898,7 +944,7 @@ func TestRelevoBlocksReturnsEveryBlockInOrder(t *testing.T) {
 
 	t.Run("a closed block followed by an unclosed open", func(t *testing.T) {
 		lines := []string{"```relevo", "status: done", "```", "", "```relevo", "verdict: pass"}
-		want := []RelevoBlock{{Open: 0, Close: 2}}
+		want := []RelevoBlock{{Open: 0, Close: 2}, {Open: 4, Close: 6}}
 		if got := RelevoBlocks(lines); !reflect.DeepEqual(got, want) {
 			t.Fatalf("RelevoBlocks = %+v, want %+v", got, want)
 		}
