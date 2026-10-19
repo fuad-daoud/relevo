@@ -25,6 +25,7 @@ func chainTerminalWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRo
 		return err
 	}
 	closing := carrier.Name
+	next.Reason = chainHaltReason(rt, tx, c, next)
 	if err := chainSaveFlow(rt, tx, c, def, before, next, ev, act, closing); err != nil {
 		return err
 	}
@@ -100,7 +101,7 @@ func chainTerminalWFPayload(c db.ChainRow, s workflow.State) string {
 	fmt.Fprintf(&b, "chain %s %s: status %s, at %s, plans %d/%d, findings %d.",
 		c.Name, chainTerminalVerb(chain.Status(s.Status)), string(s.Status), flowTerminalStep(s), flowPlanPos(s), flowPlanTotal(s), flowFindings(s))
 	if s.Reason != "" {
-		fmt.Fprintf(&b, " Reason: %s.", s.Reason)
+		fmt.Fprintf(&b, " Reason: %s", reasonSentence(s.Reason))
 	}
 	if s.Status == workflow.StatusHalted {
 		fmt.Fprintf(&b, " relevo chain --resume --name %s resumes it once the cause is fixed; `relevo done %s` closes it instead.", c.Name, c.Name)
@@ -121,4 +122,13 @@ func flowTerminalStep(s workflow.State) string {
 // flowPlanTotal is a state's plan-input length.
 func flowPlanTotal(s workflow.State) int {
 	return len(s.Iter["plans"].Items)
+}
+
+// reasonSentence closes a halt reason with a period unless it already ends in
+// one, so a reason that is its own sentence is not doubled.
+func reasonSentence(reason string) string {
+	if strings.HasSuffix(reason, ".") {
+		return reason
+	}
+	return reason + "."
 }

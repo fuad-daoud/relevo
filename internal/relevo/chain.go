@@ -288,7 +288,7 @@ func chainTerminalPayload(c db.ChainRow, findings int) string {
 	fmt.Fprintf(&b, "chain %s %s: status %s, phase %s, plan %d/%d, corrections %d, findings %d.",
 		c.Name, chainTerminalVerb(chain.Status(c.Status)), c.Status, c.Phase, c.Plan, c.Plans, c.Corrections, findings)
 	if c.Reason != "" {
-		fmt.Fprintf(&b, " Reason: %s.", c.Reason)
+		fmt.Fprintf(&b, " Reason: %s", reasonSentence(c.Reason))
 	}
 	if c.Status == string(chain.StatusHalted) {
 		fmt.Fprintf(&b, " relevo chain --resume --name %s resumes it once the cause is fixed; `relevo done %s` closes it instead.", c.Name, c.Name)

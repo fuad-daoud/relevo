@@ -47,6 +47,12 @@ type ScopeSpec struct {
 	// systemd cpu-list ("2" or "0-2") pinning the process to those cores.
 	AllowedCPUs string
 
+	// NoExpand passes --expand-environment=no. From systemd 258 a scope's
+	// systemd-run expands $VAR, ${VAR} and $$ in the command line itself, which
+	// rewrites a gate's shell command or a prompt carried in argv before the
+	// process sees it. The Runner sets it when systemd-run takes the switch.
+	NoExpand bool
+
 	// GateCPUQuota is the gate's own CPU ceiling, template only. It is set on
 	// Runtime.Scope from policy and read only by scopeFor when it builds a
 	// gate's spec: scopeFor copies the template, moves this value into

@@ -133,9 +133,9 @@ func gateLine(name string, round int, rec store.GateRecord, tail []string) strin
 }
 
 // tailLines returns the last n non-empty lines of the file at path, or nil
-// when it cannot be read; never an error (the log is a convenience). Lines
-// carrying the rusage trailer are skipped (#313): any scoped spawn prints one
-// before its exit trailer, and it is not gate output.
+// when it cannot be read; never an error (the log is a convenience). The
+// supervisor's rusage and exit trailers are skipped: it appends them to every
+// stream, and neither is the command's own output.
 func tailLines(read func(string) ([]byte, error), path string, n int) []string {
 	data, err := read(path)
 	if err != nil {
@@ -143,7 +143,7 @@ func tailLines(read func(string) ([]byte, error), path string, n int) []string {
 	}
 	var nonEmpty []string
 	for _, l := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(l) == "" || strings.HasPrefix(l, spawn.RusageTrailerPrefix) {
+		if strings.TrimSpace(l) == "" || strings.HasPrefix(l, spawn.RusageTrailerPrefix) || strings.HasPrefix(l, spawn.ExitTrailer) {
 			continue
 		}
 		nonEmpty = append(nonEmpty, l)

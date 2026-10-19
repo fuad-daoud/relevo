@@ -1064,6 +1064,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	b.RoundTier = ""
 	b.RoundCPU = nil
 	b.RoundBaselineTree = ""
+	b.RoundClosedBaselineHead = b.RoundBaselineHead
 	b.RoundBaselineHead = ""
 	b.RoundRepoBaselineTree = ""
 	// A remote member's closed tree is the pulled result commit the catch-up

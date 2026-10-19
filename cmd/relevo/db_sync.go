@@ -21,6 +21,7 @@ import (
 // line and their prose are in db_sync_r2.go, which is where they are installed.
 const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [--passphrase-stdin]\n" +
 	"       relevo db sync enable [--join-stdin] [--yes] [--timeout D] [--json]\n" +
+	"       relevo db sync enable --as INSTALLATION --yes [--url URL] [--timeout D] [--json]\n" +
 	dbSyncR2Usage +
 	"       relevo db sync disable [--timeout D] [--json]\n" +
 	"       relevo db sync retry [--json]\n" +
@@ -63,6 +64,9 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"--token-stdin reads the turso.token from standard input and\n" +
 	"beats " + relevosync.EnvToken + "; with neither, the stored token is used,\n" +
 	"and enable refuses only if none is stored. The value appears nowhere else.\n" +
+	"--as continues as an installation the remote already holds instead of\n" +
+	"joining as a new one. It spends this machine's identity and cannot be\n" +
+	"undone, so it needs --yes, and it never goes beside --join-stdin.\n" +
 	dbSyncR2UsageText +
 	"disable marks this machine off, forgets the token, stops the worker,\n" +
 	"deletes relevo-sync.db and the driver's files beside it, and drops the\n" +

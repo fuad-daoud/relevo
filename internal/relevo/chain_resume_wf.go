@@ -183,7 +183,14 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts Resum
 	if err != nil {
 		return ChainResult{}, err
 	}
-	resumed, acts, err := workflow.Resume(def, before, workflow.ResumeOpts{From: from, Closed: closed})
+	sameRound := false
+	if closed == nil && opts.From == "" {
+		if closed, err = chainResumeDirtyRecovery(ctx, rt, tx, row, before); err != nil {
+			return ChainResult{}, err
+		}
+		sameRound = closed != nil
+	}
+	resumed, acts, err := workflow.Resume(def, before, workflow.ResumeOpts{From: from, Closed: closed, SameRound: sameRound})
 	if err != nil {
 		return ChainResult{}, refuse("%v", err)
 	}
@@ -307,6 +314,13 @@ func chainResumeClosed(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	if newest <= st.Awaiting.Round {
 		return nil, nil
 	}
+	return chainResumeRoundClose(ctx, rt, tx, c, member, newest)
+}
+
+// chainResumeRoundClose rebuilds the step_closed of one closed round of a
+// member from its stored report entry; a round with no report on disk gives no
+// event.
+func chainResumeRoundClose(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, member string, newest int) (*workflow.Event, error) {
 	entry, ok := memberReportEntry(tx, member, newest)
 	if !ok {
 		return nil, nil
@@ -370,7 +384,8 @@ func chainResumeRunAction(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 // chainResumeStagedText returns the staged prompt a resume re-sends: the round
 // the state awaited, when the action re-runs that same member's step and the
 // round's staged file is still there. A replaced check walks back past any
-// repair prompts, because their bytes name the check that failed.
+// repair prompts, because their bytes name the check that failed; where that
+// walk ends on a prompt that is not a repair plan there is nothing to re-send.
 func chainResumeStagedText(rt Runtime, tx *store.Tx, c db.ChainRow, before workflow.State, act workflow.Action, gateChanged bool) (string, string, bool) {
 	if before.Awaiting.Member == "" || before.Awaiting.Round <= 0 || act.Actor != before.Awaiting.Member {
 		return "", "", false
@@ -391,6 +406,13 @@ func chainResumeStagedText(rt Runtime, tx *store.Tx, c db.ChainRow, before workf
 	}
 	body, err := rt.Store.ReadFile(rt.Store.PromptPath(name, round))
 	if err != nil {
+		return "", "", false
+	}
+	// A walk-back that left the awaited round and stopped on a prompt that is
+	// not a repair plan has found the build plan or a seed of some other step;
+	// handing it over as this step's own would run the wrong work, so the engine
+	// renders the step's seed fresh instead.
+	if round != before.Awaiting.Round && !isRepairPlan(string(body)) {
 		return "", "", false
 	}
 	return name, string(body), true

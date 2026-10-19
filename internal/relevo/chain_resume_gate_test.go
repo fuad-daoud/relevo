@@ -343,9 +343,8 @@ func TestChainResumeChangesGateCountsTheParam(t *testing.T) {
 
 // TestResumeStagedTextWalksBackOnAParamGate pins the walkback's use of the
 // same definition. A repair prompt's bytes name the check that failed, so a
-// resume that replaced the gate re-hands the seed one round earlier. The
-// mutation it kills is the two-flag test the walkback used before: passing
-// false for a --param gate resume, which re-hands the stale repair prompt.
+// resume that replaced the gate must not re-hand them, and the earlier prompt
+// the walkback lands on is not a repair plan either, so nothing is re-handed.
 func TestResumeStagedTextWalksBackOnAParamGate(t *testing.T) {
 	t.Parallel()
 
@@ -377,22 +376,16 @@ func TestResumeStagedTextWalksBackOnAParamGate(t *testing.T) {
 	}
 
 	act := workflow.Action{Kind: workflow.ActionSend, Step: before.At, Actor: before.Awaiting.Member}
-	var name, text string
+	var text string
 	var ok bool
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		name, text, ok = chainResumeStagedText(rt, tx, row, before, act, true)
+		_, text, ok = chainResumeStagedText(rt, tx, row, before, act, true)
 		return nil
 	}); err != nil {
 		t.Fatalf("WithLock: %v", err)
 	}
-	if !ok {
-		t.Fatal("chainResumeStagedText = not ok, want the walked-back seed")
-	}
-	if text != "work on the plan\n" {
-		t.Errorf("re-handed prompt = %q, want the seed one round back: a replaced check makes the repair bytes stale", text)
-	}
-	if name != "shop" {
-		t.Errorf("member = %q, want shop", name)
+	if ok {
+		t.Fatalf("chainResumeStagedText = (%q, ok), want no staged text: the walk-back landed on a prompt that is not a repair plan", text)
 	}
 	// The same call without the gate change hands back the repair round's own
 	// bytes, which is what makes the walkback -- and not the flag test -- the
@@ -412,4 +405,164 @@ func TestResumeStagedTextWalksBackOnAParamGate(t *testing.T) {
 // writeStagedPrompt plants the bytes a round's staged prompt file carries.
 func writeStagedPrompt(rt Runtime, name string, round int, body string) error {
 	return os.WriteFile(rt.Store.PromptPath(name, round), []byte(body), 0o644)
+}
+
+// startRegateFlowChain starts the shipped workflow with one repair round to
+// spend and walks it to the repair arm: the build closes, the check goes red,
+// and the repair round opens on the builder.
+func startRegateFlowChain(t *testing.T, rt Runtime) {
+	t.Helper()
+	body, err := json.Marshal(workflow.Default())
+	if err != nil {
+		t.Fatalf("encode the shipped workflow: %v", err)
+	}
+	startedChain(t, rt, ChainOptions{
+		Workflow: writeWorkflowFile(t, string(body)),
+		Params:   map[string]string{"regate": "1", "gate": "make check", "scan": "false"},
+	})
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainRedCheck(t, rt, "shop", "FAIL the gate\n")
+	st, err := chainWorkflowState(flowChainRow(t, rt))
+	if err != nil {
+		t.Fatalf("chainWorkflowState: %v", err)
+	}
+	if st.At != "repair" || st.Awaiting.Member != "builder" {
+		t.Fatalf("engine at %q awaiting %+v, want the repair round open on the builder", st.At, st.Awaiting)
+	}
+}
+
+// builderRound is the round counter of shop's builder binding.
+func builderRound(t *testing.T, rt Runtime) int {
+	t.Helper()
+	b, err := rt.Store.Load("shop")
+	if err != nil {
+		t.Fatalf("Load shop: %v", err)
+	}
+	return b.Round
+}
+
+// TestResumeWithANewGateRerunsAStoppedRepairsCheck pins the stopped half of the
+// reroute: a repair round stopped mid-flight and resumed with a new gate starts
+// a check run under that command and sends no builder round, rather than
+// re-sending the chain's build plan.
+func TestResumeWithANewGateRerunsAStoppedRepairsCheck(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name string
+		opts ResumeOptions
+	}{
+		{"--gate", ResumeOptions{Name: "shop", Gate: "new-cmd"}},
+		{"--param gate", ResumeOptions{Name: "shop", Params: map[string]string{"gate": "new-cmd"}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rt, _ := chainRuntime(t)
+			startRegateFlowChain(t, rt)
+			if _, err := ChainStop(context.Background(), rt, "shop"); err != nil {
+				t.Fatalf("ChainStop: %v", err)
+			}
+			rounds := builderRound(t, rt)
+
+			if _, err := ChainResume(context.Background(), rt, tt.opts); err != nil {
+				t.Fatalf("ChainResume(%+v): %v", tt.opts, err)
+			}
+			row := flowChainRow(t, rt)
+			if row.Status != string(workflow.StatusRunning) {
+				t.Fatalf("status = %q (%q), want running", row.Status, row.Reason)
+			}
+			st, err := chainWorkflowState(row)
+			if err != nil {
+				t.Fatalf("chainWorkflowState: %v", err)
+			}
+			if st.Awaiting.Step != "check" {
+				t.Fatalf("engine at %q awaiting %+v, want the check step", st.At, st.Awaiting)
+			}
+			if _, check := flowCheckRun(t, rt, "shop"); check.Command != "new-cmd" {
+				t.Errorf("check command = %q, want the new gate", check.Command)
+			}
+			if got := builderRound(t, rt); got != rounds {
+				t.Errorf("builder round = %d, want %d: no builder round may be sent", got, rounds)
+			}
+		})
+	}
+}
+
+// TestResumeWithANewGateRerunsAHaltedRepairWithBudgetLeft pins that the reroute
+// is not tied to a spent budget: a halt at a repair arm that still has a round
+// left, resumed with a new gate, runs the check again.
+func TestResumeWithANewGateRerunsAHaltedRepairWithBudgetLeft(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startRegateFlowChain(t, rt)
+	haltFlowAt(t, rt, "repair", "the repair round was abandoned",
+		workflow.Awaiting{Step: "repair", Member: "builder", Round: 2})
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Gate: "new-cmd"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+	st, err := chainWorkflowState(flowChainRow(t, rt))
+	if err != nil {
+		t.Fatalf("chainWorkflowState: %v", err)
+	}
+	if st.Awaiting.Step != "check" {
+		t.Errorf("engine at %q awaiting %+v, want the check step", st.At, st.Awaiting)
+	}
+}
+
+// TestResumeStagedTextYieldsNothingWhenTheWalkBackLandsOffARepairPlan pins the
+// guard on the walk-back: when it leaves the awaited round for a prompt that is
+// not a repair plan, that prompt is not the step's own and is not re-sent.
+func TestResumeStagedTextYieldsNothingWhenTheWalkBackLandsOffARepairPlan(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startRegateFlowChain(t, rt)
+	row := flowChainRow(t, rt)
+	before, err := chainWorkflowState(row)
+	if err != nil {
+		t.Fatalf("chainWorkflowState: %v", err)
+	}
+	round := before.Awaiting.Round
+	if err := writeStagedPrompt(rt, "shop", round, repairPlanPrefix+"2\n\nfix it\n"); err != nil {
+		t.Fatalf("stage the repair prompt: %v", err)
+	}
+	if err := writeStagedPrompt(rt, "shop", round-1, "the build plan\n"); err != nil {
+		t.Fatalf("stage the build plan: %v", err)
+	}
+	act := workflow.Action{Kind: workflow.ActionSend, Step: before.At, Actor: before.Awaiting.Member}
+	var ok bool
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		_, _, ok = chainResumeStagedText(rt, tx, row, before, act, true)
+		return nil
+	}); err != nil {
+		t.Fatalf("WithLock: %v", err)
+	}
+	if ok {
+		t.Error("chainResumeStagedText = ok after a walk-back onto the build plan, want no staged text")
+	}
+}
+
+// TestResumeFromWinsOverTheGateOnAStoppedRepair pins --from on a stopped chain:
+// the named step is entered even though a new gate would otherwise reroute.
+func TestResumeFromWinsOverTheGateOnAStoppedRepair(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startRegateFlowChain(t, rt)
+	if _, err := ChainStop(context.Background(), rt, "shop"); err != nil {
+		t.Fatalf("ChainStop: %v", err)
+	}
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Gate: "new-cmd", From: "build"}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+	st, err := chainWorkflowState(flowChainRow(t, rt))
+	if err != nil {
+		t.Fatalf("chainWorkflowState: %v", err)
+	}
+	if st.At != "build" || st.Awaiting.Member != "builder" {
+		t.Errorf("engine at %q awaiting %+v, want the named step build", st.At, st.Awaiting)
+	}
 }

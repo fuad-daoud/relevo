@@ -27,6 +27,9 @@ func ScopeUnitFileName(unit string) string {
 // Start records is inner's own. The quota precedes the pin, the pin memory.
 func ScopeArgv(s spawn.ScopeSpec, inner []string) []string {
 	argv := []string{"systemd-run", "--user", "--scope", "--quiet", "--collect", "--unit=" + ScopeUnitFileName(s.Unit)}
+	if s.NoExpand {
+		argv = append(argv, "--expand-environment=no")
+	}
 	if s.Slice != "" {
 		argv = append(argv, "--slice="+s.Slice)
 	}
@@ -89,6 +92,45 @@ func runScopeProbe(ctx context.Context, spec spawn.ScopeSpec, prefix string) err
 		return fmt.Errorf("%s: %s", prefix, line)
 	}
 	return nil
+}
+
+// expandSwitchFrom is the first systemd whose systemd-run takes
+// --expand-environment. An older one refuses the switch, and does not expand a
+// scope's command line either, so it needs none.
+const expandSwitchFrom = 254
+
+// SystemdRunVersion is the systemd release systemd-run reports.
+func SystemdRunVersion(ctx context.Context) (int, error) {
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(cctx, "systemd-run", "--version").Output()
+	if err != nil {
+		return 0, fmt.Errorf("systemd-run --version: %w", err)
+	}
+	v, ok := parseSystemdVersion(string(out))
+	if !ok {
+		return 0, fmt.Errorf("systemd-run --version: no version in %q", firstNonEmptyLine(string(out)))
+	}
+	return v, nil
+}
+
+// parseSystemdVersion reads the release from --version's first line, such as
+// "systemd 262 (262-1-arch)". Only the leading digits count, so a pre-release
+// like "257~rc2" is 257.
+func parseSystemdVersion(out string) (int, bool) {
+	f := strings.Fields(firstNonEmptyLine(out))
+	if len(f) < 2 || f[0] != "systemd" {
+		return 0, false
+	}
+	digits := f[1]
+	for i, c := range digits {
+		if c < '0' || c > '9' {
+			digits = digits[:i]
+			break
+		}
+	}
+	v, err := strconv.Atoi(digits)
+	return v, err == nil
 }
 
 func probeUnit(prefix string) (string, error) {

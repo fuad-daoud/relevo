@@ -64,7 +64,6 @@ func TestBlockValueMissesWithoutABlock(t *testing.T) {
 	}{
 		{name: "empty body", body: nil},
 		{name: "no fence", body: []byte("plain prose, no block\n")},
-		{name: "unclosed fence", body: []byte("```relevo\nverdict: pass\n")},
 		{name: "prose after the closing fence", body: []byte("```relevo\nverdict: pass\n```\ntrailing prose\n")},
 		{name: "block without the key", body: []byte(bvFence("status: done"))},
 		{name: "empty block", body: []byte("```relevo\n\n```\n")},
@@ -76,6 +75,27 @@ func TestBlockValueMissesWithoutABlock(t *testing.T) {
 				t.Fatalf("BlockValue(%q, verdict) = (%q, true), want a miss", tc.body, got)
 			}
 		})
+	}
+}
+
+// TestBlockValueAgreesWithParseOnATrailingUnclosedBlock pins that a block
+// closed by end of file is the same block to both readers: BlockValue reads
+// its keys and ParseWithReason parses it, so neither drops a block the other
+// keeps.
+func TestBlockValueAgreesWithParseOnATrailingUnclosedBlock(t *testing.T) {
+	t.Parallel()
+
+	body := []byte("```relevo\nstatus: done\nverdict: pass\n")
+	got, ok := BlockValue(body, "status")
+	if !ok || got != OutcomeDone {
+		t.Fatalf("BlockValue(status) = (%q, %v), want (%q, true)", got, ok, OutcomeDone)
+	}
+	tail, ok, reason := ParseWithReason(body)
+	if !ok || tail.Status != got {
+		t.Fatalf("ParseWithReason ok = %v, status %q, reason %q; want status %q", ok, tail.Status, reason, got)
+	}
+	if v, ok := BlockValue(body, "verdict"); !ok || v != "pass" {
+		t.Fatalf("BlockValue(verdict) = (%q, %v), want (pass, true)", v, ok)
 	}
 }
 

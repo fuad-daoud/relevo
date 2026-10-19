@@ -34,7 +34,7 @@ func TestDBSyncUsageNamesEveryVerb(t *testing.T) {
 			t.Errorf("the usage text does not name %q:\n%s", verb, dbSyncUsage)
 		}
 	}
-	for _, want := range []string{"--url", "--token-stdin", "TURSO_TOKEN", "turso.token", "config set sync"} {
+	for _, want := range []string{"--url", "--token-stdin", "TURSO_TOKEN", "turso.token", "config set sync", "enable --as INSTALLATION --yes"} {
 		if !strings.Contains(dbSyncUsage, want) {
 			t.Errorf("the usage text does not mention %q:\n%s", want, dbSyncUsage)
 		}

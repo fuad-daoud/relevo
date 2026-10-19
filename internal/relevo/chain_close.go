@@ -161,12 +161,23 @@ func chainDirtyGateApplies(rt Runtime, b store.Binding) bool {
 	return rt.Git != nil && b.CWD != ""
 }
 
+// chainUncommittedWorkClause is the part of both dirty-tree halt wordings that
+// a stored halt reason is recognised by; the unread-tree wording leaves it out
+// because a commit does not recover a tree that could not be read.
+const chainUncommittedWorkClause = "the chain does not advance over uncommitted work"
+
+// chainHaltedOverUncommittedWork reports whether a stored halt reason came from
+// the readable-tree or the mirror dirty wording.
+func chainHaltedOverUncommittedWork(reason string) bool {
+	return strings.Contains(reason, chainUncommittedWorkClause)
+}
+
 // chainDirtyReason is the halt wording for a round that left work behind: what
 // is uncommitted, the snapshot ref that is its only durable copy, and the diff
 // key the store sealed for the round.
 func chainDirtyReason(rt Runtime, c db.ChainRow, b store.Binding, round int, summary string) string {
-	return fmt.Sprintf("round %d of %s closed done with %s left uncommitted in %s and no commit to carry it: the chain does not advance over uncommitted work; commit it, or recover it from %s (sealed diff: %s)",
-		round, c.Name, summary, b.CWD, chainRoundSnapshotRef(b, round), rt.Store.DiffPath(b.Name, round))
+	return fmt.Sprintf("round %d of %s closed done with %s left uncommitted in %s and no commit to carry it: %s; commit it, or recover it from %s (sealed diff: %s)",
+		round, c.Name, summary, b.CWD, chainUncommittedWorkClause, chainRoundSnapshotRef(b, round), rt.Store.DiffPath(b.Name, round))
 }
 
 // chainDirtyUnreadReason is the halt wording for a tree the gate could not
@@ -213,8 +224,8 @@ func chainMirrorDirtyCloseReason(rt Runtime, c db.ChainRow, b store.Binding, rou
 // place of a tree stat, the branch it never reached named where a local tree
 // would be, and the server's snapshot ref where the work survives.
 func chainMirrorDirtyReason(rt Runtime, c db.ChainRow, b store.Binding, round int) string {
-	return fmt.Sprintf("round %d of %s closed done with uncommitted work (%s) left on the server and no commit in %s to carry it: the chain does not advance over uncommitted work; commit it, or recover it from %s (sealed diff: %s)",
-		round, c.Name, chainSealedDiffPaths(rt, b, round), b.Branch, chainRoundSnapshotRef(b, round), rt.Store.DiffPath(b.Name, round))
+	return fmt.Sprintf("round %d of %s closed done with uncommitted work (%s) left on the server and no commit in %s to carry it: %s; commit it, or recover it from %s (sealed diff: %s)",
+		round, c.Name, chainSealedDiffPaths(rt, b, round), b.Branch, chainUncommittedWorkClause, chainRoundSnapshotRef(b, round), rt.Store.DiffPath(b.Name, round))
 }
 
 // chainSealedDiffPaths reads the round's sealed diff patch and names the files

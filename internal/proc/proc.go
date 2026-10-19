@@ -77,6 +77,14 @@ type Runner struct {
 	pinOnce sync.Once
 	// pinOK is that verdict: false means later Starts drop the pin only.
 	pinOK bool
+
+	// expandOnce guards the one systemd-run version read, and noExpand is its
+	// verdict: whether every scope passes --expand-environment=no.
+	expandOnce sync.Once
+	noExpand   bool
+	// systemdRunVersion reads that version; nil means SystemdRunVersion, tests
+	// inject one.
+	systemdRunVersion func(ctx context.Context) (int, error)
 }
 
 var _ spawn.Runner = (*Runner)(nil)
@@ -119,6 +127,25 @@ func (r *Runner) scopesUsable(ctx context.Context, slice string) bool {
 		}
 	}
 	return r.scopes == probeOK
+}
+
+// scopeTakesNoExpand reports whether this host's systemd-run takes
+// --expand-environment, read once. An unreadable version leaves the switch off:
+// a systemd-run that refused it would cost every scope.
+func (r *Runner) scopeTakesNoExpand(ctx context.Context) bool {
+	r.expandOnce.Do(func() {
+		read := r.systemdRunVersion
+		if read == nil {
+			read = SystemdRunVersion
+		}
+		v, err := read(ctx)
+		if err != nil {
+			slog.Warn("systemd-run version unreadable; scopes run without --expand-environment=no", "err", err)
+			return
+		}
+		r.noExpand = v >= expandSwitchFrom
+	})
+	return r.noExpand
 }
 
 // nowTime is the probe clock: the injected one in tests, else time.Now.
@@ -268,8 +295,9 @@ func openAppend(path string) (*os.File, error) {
 	return openRegular(path, os.O_APPEND)
 }
 
-// resolveScope applies both lazy probes and their fallbacks: a scope whose probe
-// fails is dropped, so the builder runs unscoped, and a refused AllowedCPUs is
+// resolveScope applies the lazy probes and their fallbacks: a scope whose probe
+// fails is dropped, so the builder runs unscoped, a systemd-run that takes the
+// switch is told not to expand the command line, and a refused AllowedCPUs is
 // cleared while the scope and its quota stay. The pin fallback re-points a
 // copied ScopeSpec, since Start took spec by value but Scope is a pointer.
 func (r *Runner) resolveScope(ctx context.Context, spec spawn.ProcSpec) spawn.ProcSpec {
@@ -279,6 +307,11 @@ func (r *Runner) resolveScope(ctx context.Context, spec spawn.ProcSpec) spawn.Pr
 	if !r.scopesUsable(ctx, spec.Scope.Slice) {
 		spec.Scope = nil
 		return spec
+	}
+	if r.scopeTakesNoExpand(ctx) {
+		sc := *spec.Scope
+		sc.NoExpand = true
+		spec.Scope = &sc
 	}
 	if spec.Scope.AllowedCPUs == "" {
 		return spec

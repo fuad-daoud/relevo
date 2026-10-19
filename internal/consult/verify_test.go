@@ -110,6 +110,12 @@ func TestParseVerdict(t *testing.T) {
 			wantVerdict: "unstructured",
 		},
 		{
+			name:        "a verdict block that runs to end of file",
+			findings:    strings.TrimSuffix(relevoBlock("verdict: rejected\nreasons: [\"a\"]"), "```\n"),
+			wantVerdict: "rejected",
+			wantReasons: []string{"a"},
+		},
+		{
 			name: "the last block wins",
 			findings: relevoBlock("verdict: rejected\nreasons: [\"stale\"]") +
 				"\nmore prose\n\n" + relevoBlock("verdict: accepted"),

@@ -185,3 +185,26 @@ func TestCurrentReportsPositionOfTotal(t *testing.T) {
 		t.Fatalf("between items: %q %d ok=%v", item, pos, ok)
 	}
 }
+
+func TestResumeSameRoundCloseNeedsItsFlag(t *testing.T) {
+	def := tdef("review", map[string]Step{
+		"review": {Run: "reviewer", On: map[string]Target{"done": DoneTarget()}},
+	})
+	same := Event{Kind: EventStepClosed, Step: "review", Member: "reviewer", Round: 2, Status: "done"}
+
+	if _, _, err := Resume(def, haltedRun("review", "reviewer", 2), ResumeOpts{Closed: &same}); err == nil {
+		t.Fatal("an equal-round close without SameRound was accepted")
+	}
+	got, _, err := Resume(def, haltedRun("review", "reviewer", 2), ResumeOpts{Closed: &same, SameRound: true})
+	if err != nil {
+		t.Fatalf("same-round close: %v", err)
+	}
+	if got.Status != StatusDone {
+		t.Errorf("status = %q, want done", got.Status)
+	}
+	newer := same
+	newer.Round = 3
+	if _, _, err := Resume(def, haltedRun("review", "reviewer", 2), ResumeOpts{Closed: &newer, SameRound: true}); err == nil {
+		t.Error("SameRound accepted a newer round")
+	}
+}
