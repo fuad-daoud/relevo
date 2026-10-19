@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -322,7 +321,8 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 	readBytes := func(path string) ([]byte, bool, error) {
 		return readBytesMissing(rt.Store.ReadFile, path)
 	}
-	if err := showSections(rt, b.Name, round, bindingRole(b), b.Shape, OutputFile(rt, b), entries, b.Builder, read, readBytes, opts, &res); err != nil {
+	list := func() ([]string, error) { return rt.Store.RoundFiles(b.Name) }
+	if err := showSections(rt, b.Name, round, bindingRole(b), b.Shape, OutputFile(rt, b), entries, b.Builder, read, readBytes, list, opts, &res); err != nil {
 		return ShowResult{}, err
 	}
 	return res, nil
@@ -338,8 +338,9 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 // yields one round file's bytes, reporting missing rather than an error when
 // the file is absent. live is the round's endpoint, which ShowTranscript needs
 // to render the stream with the endpoint's own segments and kind; readBytes is
-// read's contract for RoundTranscript.
-func showSections(rt Runtime, name string, round int, actor, shape, output string, entries []store.LogEntry, live store.Endpoint, read func(path string) (text string, missing bool, err error), readBytes func(path string) ([]byte, bool, error), opts ShowOptions, res *ShowResult) error {
+// read's contract for RoundTranscript. list lists the binding's round-file
+// names, which the gate section falls back on.
+func showSections(rt Runtime, name string, round int, actor, shape, output string, entries []store.LogEntry, live store.Endpoint, read func(path string) (text string, missing bool, err error), readBytes func(path string) ([]byte, bool, error), list func() ([]string, error), opts ShowOptions, res *ShowResult) error {
 	var err error
 	switch opts.Section {
 	case ShowPrompt:
@@ -395,6 +396,9 @@ func showSections(rt Runtime, name string, round int, actor, shape, output strin
 		// present one is (P4a round 2 §4.2); archived, it is the record's
 		// own sealed bytes.
 		res.Text, res.Missing, err = read(rt.Store.GateLogPath(name, round))
+		if err == nil && res.Missing {
+			err = showChainCheckGate(rt, name, round, read, list, res)
+		}
 	case ShowFindings:
 		res.Text, res.Missing, err = read(rt.Store.FindingsPath(name, round, opts.FindingsID))
 	case ShowLog:
@@ -478,7 +482,8 @@ func showArchived(rt Runtime, ab store.ArchivedBinding, opts ShowOptions) (ShowR
 	readBytes := func(path string) ([]byte, bool, error) {
 		return rt.Store.ArchivedFile(ab.RecordID, filepath.Base(path))
 	}
-	if err := showSections(rt, ab.Binding.Name, round, bindingRole(ab.Binding), ab.Binding.Shape, OutputFile(rt, ab.Binding), entries, ab.Binding.Builder, read, readBytes, opts, &res); err != nil {
+	list := func() ([]string, error) { return rt.Store.ArchivedFiles(ab.RecordID) }
+	if err := showSections(rt, ab.Binding.Name, round, bindingRole(ab.Binding), ab.Binding.Shape, OutputFile(rt, ab.Binding), entries, ab.Binding.Builder, read, readBytes, list, opts, &res); err != nil {
 		return ShowResult{}, err
 	}
 	return res, nil
@@ -580,18 +585,4 @@ func showDB(rt Runtime, binding db.BindingRow, opts ShowOptions) (ShowResult, er
 		return ShowResult{}, err
 	}
 	return res, nil
-}
-
-// readFileOrMissing reads path through read, reporting Missing rather than an
-// error when it does not exist. read is rt.Store.ReadFile, so a sealed
-// round's file is found in the database exactly as a present one is.
-func readFileOrMissing(read func(string) ([]byte, error), path string) (text string, missing bool, err error) {
-	data, err := read(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", true, nil
-		}
-		return "", false, err
-	}
-	return string(data), false, nil
 }
