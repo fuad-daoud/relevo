@@ -1,9 +1,12 @@
 package relevo
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -106,5 +109,52 @@ func TestOnlyAHaltedOrStoppedEndCarriesTheCheckDetail(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("WithLock: %v", err)
 		}
+	}
+}
+
+func TestHaltAfterATimedOutCheckSaysItTimedOutAndNamesTheSetting(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startNoRegateFlowChain(t, rt)
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	_, row := flowCheckRun(t, rt, "shop")
+	clock := &fakeClock{now: time.Unix(row.StartedAt, 0)}
+	rt = withClock(rt, clock)
+	clock.Advance(2 * rt.Policy.GateTimeout())
+	tickChainChecks(context.Background(), rt)
+
+	c := flowChainRow(t, rt)
+	if c.Status != string(workflow.StatusHalted) {
+		t.Fatalf("status = %s (%q), want the zero-budget halt", c.Status, c.Reason)
+	}
+	for _, want := range []string{"timed out after", "policy.gate.timeout_ms", "relevo show shop --round 1 --gate"} {
+		if !strings.Contains(c.Reason, want) {
+			t.Errorf("halt reason %q does not carry %q", c.Reason, want)
+		}
+	}
+	if strings.Contains(c.Reason, "last check fail") {
+		t.Errorf("halt reason %q words a timeout as a failure", c.Reason)
+	}
+}
+
+func TestHaltAfterAnErroredCheckNamesItsNote(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startNoRegateFlowChain(t, rt)
+	fr := rt.Runner.(*fakeRunner)
+	fr.startErr = errors.New("no such shell")
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+
+	c := flowChainRow(t, rt)
+	if c.Status != string(workflow.StatusHalted) {
+		t.Fatalf("status = %s (%q), want the zero-budget halt", c.Status, c.Reason)
+	}
+	if !strings.Contains(c.Reason, "could not run: no such shell.") {
+		t.Errorf("halt reason %q does not name the check's note", c.Reason)
+	}
+	if strings.Contains(c.Reason, "timed out") {
+		t.Errorf("halt reason %q words an error as a timeout", c.Reason)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -16,8 +17,8 @@ import (
 const haltCheckTailLines = 20
 
 // haltCheckResults are the settled check results that make a halt a check's
-// doing. Timeout and error join fail here once they are reported the same way.
-var haltCheckResults = map[string]bool{"fail": true}
+// doing.
+var haltCheckResults = map[string]bool{"fail": true, "timeout": true, "error": true}
 
 // chainHaltReason is the reason a chain that ends halted or stopped is saved
 // with: the engine's own reason, followed by the newest check's result, the
@@ -37,7 +38,7 @@ func chainHaltReason(rt Runtime, tx *store.Tx, c db.ChainRow, s workflow.State) 
 	}
 	var b strings.Builder
 	b.WriteString(s.Reason)
-	fmt.Fprintf(&b, "\nThe last check %s (exit code %d); `%s` reads its log.", row.Result, row.ExitCode, showCommand(member, round, "gate"))
+	fmt.Fprintf(&b, "\n%s `%s` reads its log.", checkOutcome(rt, row), showCommand(member, round, "gate"))
 	if tail := tailLines(rt.Store.ReadFile, row.Log, haltCheckTailLines); len(tail) > 0 {
 		fmt.Fprintf(&b, "\nLast %d lines of the log:\n%s", len(tail), strings.Join(tail, "\n"))
 	}
@@ -58,5 +59,20 @@ func chainNewestCheck(tx *store.Tx, name string) (db.ChainCheckRow, bool) {
 			return db.ChainCheckRow{}, false
 		}
 		newest, found = row, true
+	}
+}
+
+// checkOutcome words how the newest check ended. A timeout is not a failure
+// and names the policy key that raises its limit; an error carries the row's
+// note because it has no exit code worth quoting.
+func checkOutcome(rt Runtime, row db.ChainCheckRow) string {
+	switch row.Result {
+	case "timeout":
+		return fmt.Sprintf("The last check timed out after %s; raise the limit with `relevo config set policy.gate.timeout_ms <ms>` (now %d ms).",
+			(time.Duration(row.DurationMS) * time.Millisecond).Round(time.Millisecond), rt.Policy.GateTimeout().Milliseconds())
+	case "error":
+		return fmt.Sprintf("The last check could not run: %s.", row.Note)
+	default:
+		return fmt.Sprintf("The last check %s (exit code %d);", row.Result, row.ExitCode)
 	}
 }
