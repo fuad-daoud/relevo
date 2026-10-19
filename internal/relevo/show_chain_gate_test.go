@@ -68,6 +68,27 @@ func TestShowGateShowsTheNewestCheckRun(t *testing.T) {
 	}
 }
 
+// TestShowGateShowsTheRoundsOwnNewestRun pins that a later round's higher run
+// does not hide an earlier round's own check log: runs count across the chain,
+// so the newest run is chosen among the round's logs only.
+func TestShowGateShowsTheRoundsOwnNewestRun(t *testing.T) {
+	t.Parallel()
+
+	s := newShowLiveStore(t)
+	putCheckLog(t, s, "fixture", 1, 2, "check run 2 failed\n")
+	putCheckLog(t, s, "fixture", 2, 3, "check run 3 failed\n")
+	rt := Runtime{Store: s}
+
+	res, err := Show(context.Background(), rt, ShowOptions{Name: "fixture", Round: 1, Section: ShowGate})
+	if err != nil {
+		t.Fatalf("Show: %v", err)
+	}
+	want := "chain check run 2\ncheck run 2 failed\n"
+	if res.Missing || res.Text != want {
+		t.Errorf("Missing = %v, Text = %q, want %q", res.Missing, res.Text, want)
+	}
+}
+
 // TestShowGateStillMissingWithoutGateOrCheckLog pins that a round with no
 // gate log and no check log keeps the section's missing answer, and that
 // another round's check log is not shown for it.
