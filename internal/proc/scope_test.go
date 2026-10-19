@@ -39,6 +39,12 @@ func TestScopeArgv(t *testing.T) {
 			want: scopeWant("--slice=relevo.slice", "-p", "CPUWeight=200", "-p", "TasksMax=50",
 				"--", "/bin/sh", "-c", "script", "relevo-supervisor", "bin"),
 		},
+		// The switch sits right after the unit, ahead of every property.
+		"no expand": {
+			spec: spawn.ScopeSpec{Unit: "relevo-round-abc12345-foo-1", Slice: "relevo.slice", CPUWeight: 200, NoExpand: true},
+			want: scopeWant("--expand-environment=no", "--slice=relevo.slice", "-p", "CPUWeight=200",
+				"--", "/bin/sh", "-c", "script", "relevo-supervisor", "bin"),
+		},
 		"no tasks": {
 			spec: spawn.ScopeSpec{Unit: "relevo-round-abc12345-foo-1", Slice: "relevo.slice", CPUWeight: 200, MemoryMax: "2G"},
 			want: scopeWant("--slice=relevo.slice", "-p", "CPUWeight=200", "-p", "MemoryMax=2G",
