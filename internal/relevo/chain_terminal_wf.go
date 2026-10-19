@@ -25,6 +25,7 @@ func chainTerminalWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRo
 		return err
 	}
 	closing := carrier.Name
+	next.Reason = chainHaltReason(rt, tx, c, next)
 	if err := chainSaveFlow(rt, tx, c, def, before, next, ev, act, closing); err != nil {
 		return err
 	}
