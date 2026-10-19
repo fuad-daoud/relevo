@@ -265,3 +265,35 @@ func TestChainPullHaltedStaysRunningBehindMembers(t *testing.T) {
 		t.Errorf("reviewer updated_at = %v, want it stable at %v", rev2.UpdatedAt, rev.UpdatedAt)
 	}
 }
+
+// TestChainPullOfAnUnchangedWorkflowViewWritesNothing pins the no-op pass for
+// a server that ships its workflow and engine state: the stored bytes are the
+// view's own, so a repeated pass finds the chain row unchanged and writes
+// nothing.
+func TestChainPullOfAnUnchangedWorkflowViewWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	view := chainPullView("shop", string(chain.StatusRunning), 1, 1, 0)
+	fr := chainPullFake(view)
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+	pullRounds(t, rt, "shop")
+	row := chainStoredRow(t, rt, "shop")
+	if len(row.WorkflowJSON) == 0 || len(row.StateJSON) == 0 {
+		t.Fatal("the first pass stored no workflow or state to ship back")
+	}
+	view.Workflow, view.State = row.WorkflowJSON, row.StateJSON
+	fr.getChainResp = view
+	pullRounds(t, rt, "shop")
+
+	raw := outboxRaw(t, rt)
+	before := outboxPerTable(t, raw)
+	pullRounds(t, rt, "shop")
+	pullRounds(t, rt, "shop")
+	after := outboxPerTable(t, raw)
+	for _, tbl := range []string{"binding_record", "chains", "mastermind"} {
+		if after[tbl] != before[tbl] {
+			t.Errorf("outbox entries in %s = %d after, %d before: an unchanged workflow view was rewritten", tbl, after[tbl], before[tbl])
+		}
+	}
+}
