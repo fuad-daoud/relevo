@@ -10,6 +10,10 @@ import (
 type ResumeOpts struct {
 	From   string
 	Closed *Event
+	// SameRound makes Closed the close of the round the chain already awaits
+	// instead of a newer one; it is for a recovery that re-evaluates a halted
+	// round whose cause is gone.
+	SameRound bool
 }
 
 // Resume re-enters a halted or stopped chain. A running or done chain is
@@ -70,7 +74,9 @@ func resumeClosed(def Definition, s State, opts ResumeOpts, e Event) (State, []A
 		return State{}, nil, fmt.Errorf("workflow: close names step %q, not %q", e.Step, s.At)
 	case e.Member != actor:
 		return State{}, nil, fmt.Errorf("workflow: close is from %q, not %q", e.Member, actor)
-	case e.Round <= s.Awaiting.Round:
+	case opts.SameRound && e.Round != s.Awaiting.Round:
+		return State{}, nil, fmt.Errorf("workflow: close round %d is not the awaited round %d", e.Round, s.Awaiting.Round)
+	case !opts.SameRound && e.Round <= s.Awaiting.Round:
 		return State{}, nil, fmt.Errorf("workflow: close round %d is not newer than %d", e.Round, s.Awaiting.Round)
 	}
 	s = ensureMaps(s)

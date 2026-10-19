@@ -183,7 +183,14 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts Resum
 	if err != nil {
 		return ChainResult{}, err
 	}
-	resumed, acts, err := workflow.Resume(def, before, workflow.ResumeOpts{From: from, Closed: closed})
+	sameRound := false
+	if closed == nil && opts.From == "" {
+		if closed, err = chainResumeDirtyRecovery(ctx, rt, tx, row, before); err != nil {
+			return ChainResult{}, err
+		}
+		sameRound = closed != nil
+	}
+	resumed, acts, err := workflow.Resume(def, before, workflow.ResumeOpts{From: from, Closed: closed, SameRound: sameRound})
 	if err != nil {
 		return ChainResult{}, refuse("%v", err)
 	}
@@ -307,6 +314,13 @@ func chainResumeClosed(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	if newest <= st.Awaiting.Round {
 		return nil, nil
 	}
+	return chainResumeRoundClose(ctx, rt, tx, c, member, newest)
+}
+
+// chainResumeRoundClose rebuilds the step_closed of one closed round of a
+// member from its stored report entry; a round with no report on disk gives no
+// event.
+func chainResumeRoundClose(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, member string, newest int) (*workflow.Event, error) {
 	entry, ok := memberReportEntry(tx, member, newest)
 	if !ok {
 		return nil, nil
