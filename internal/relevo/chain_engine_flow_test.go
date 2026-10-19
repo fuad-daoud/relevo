@@ -371,3 +371,27 @@ func TestWorkflowCheckLogReferenceable(t *testing.T) {
 		t.Errorf("the seed's log copy = %q, want the sealed log %q", got, body)
 	}
 }
+
+// TestWorkflowUnclosedStatusBlockCloseReachesCheck pins that a builder report
+// whose status block runs to end of file closes the round done and advances the
+// chain to its check, instead of halting on an unclosed fence.
+func TestWorkflowUnclosedStatusBlockCloseReachesCheck(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, flowCheckWorkflow)
+
+	chainBuilderClose(t, rt, "shop", strings.TrimSuffix(chainDoneBody(), "```\n"))
+
+	c := flowChainRow(t, rt)
+	st, err := chainWorkflowState(c)
+	if err != nil {
+		t.Fatalf("chainWorkflowState: %v", err)
+	}
+	if st.Awaiting.Step != "check" {
+		t.Errorf("awaiting = %+v (status %s, %q), want the check step", st.Awaiting, c.Status, c.Reason)
+	}
+	if c.Status == string(workflow.StatusHalted) {
+		t.Errorf("chain halted: %q", c.Reason)
+	}
+}
