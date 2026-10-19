@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
@@ -306,6 +307,7 @@ func chainPullMember(ctx context.Context, rt Runtime, mv remote.ChainMemberView)
 		if cur.Round != b.Round {
 			return nil
 		}
+		snap := cur
 		for _, f := range fs {
 			next := cur
 			next.Round = f.round
@@ -356,7 +358,7 @@ func chainPullMember(ctx context.Context, rt Runtime, mv remote.ChainMemberView)
 		cur.Builder.RemoteStatus = string(mv.View.RoundState)
 		cur.Builder.RemoteQueue = nil
 		cur.Builder.RemoteLive = nil
-		return tx.Save(cur)
+		return chainPullSaveIfChanged(tx, snap, cur)
 	})
 	for _, f := range fs {
 		f.cf.release()
@@ -393,6 +395,7 @@ func chainPullFinish(ctx context.Context, rt Runtime, c db.ChainRow, view remote
 			return err
 		}
 		before := cur.Status
+		snap := cur
 		row, err := chainRowFromView(cur, view, now)
 		if err != nil {
 			return err
@@ -400,12 +403,19 @@ func chainPullFinish(ctx context.Context, rt Runtime, c db.ChainRow, view remote
 		switch {
 		case chain.Status(view.Status) == chain.StatusRunning:
 			row.Status = string(chain.StatusRunning)
+		case before == string(chain.StatusRunning) && chain.Status(view.Status) == chain.StatusStopped:
+			// A stopped view settles the mirror even while a member sits
+			// behind: the server ended the chain, and a member whose rounds
+			// cannot be fetched would hold the mirror open for good. The
+			// install keeps running on later passes, so rounds that land
+			// after the settle still land.
+			row.Status = view.Status
 		case before == string(chain.StatusRunning) && chainStatusTerminal(view.Status) && chainAllCaughtUp(tx, view):
 			row.Status = view.Status
 		default:
 			row.Status = before
 		}
-		if err := tx.ChainPut(row); err != nil {
+		if err := chainPullPutIfChanged(tx, snap, row); err != nil {
 			return err
 		}
 		if err := chainPullTrace(tx, c.Name, view.Trace); err != nil {
@@ -457,6 +467,33 @@ func chainStatusTerminal(status string) bool {
 		return true
 	}
 	return false
+}
+
+// chainPullSaveIfChanged saves a pull's member only when the pass actually
+// moved it: an unchanged member's record is dropped rather than rewritten with
+// a new stamp, so a repeated pass over an unchanged view writes nothing into
+// the shared tables. The snapshot is the loaded record beside the mutable
+// copy, and Save stamps UpdatedAt itself, so the only expected difference
+// between them is that stamp; it is dropped on both sides and the whole
+// values are compared, so a field the pass moved in any way still saves.
+func chainPullSaveIfChanged(tx *store.Tx, snap, cur store.Binding) error {
+	snap.UpdatedAt = time.Time{}
+	cur.UpdatedAt = time.Time{}
+	if reflect.DeepEqual(snap, cur) {
+		return nil
+	}
+	return tx.Save(cur)
+}
+
+// chainPullPutIfChanged is chainPullSaveIfChanged for the chain row the pull's
+// finish step rebuilds from the view.
+func chainPullPutIfChanged(tx *store.Tx, snap, row db.ChainRow) error {
+	snap.UpdatedAt = time.Time{}
+	row.UpdatedAt = time.Time{}
+	if reflect.DeepEqual(snap, row) {
+		return nil
+	}
+	return tx.ChainPut(row)
 }
 
 // chainRowFromView is the mirror row carrying the server's state: the fields a
