@@ -471,30 +471,57 @@ func TestChainPullAcksAfterInstall(t *testing.T) {
 	}
 }
 
-// TestChainPullQueuesTheEndDeliveryOnlyOnceCaughtUp pins the delivery's guard
-// in four arms: a terminal chain that is still behind queues nothing, a caught
-// up one queues exactly one, a second pass adds none, and a resume that ends
-// again queues one more.
+// TestChainPullQueuesTheEndDeliveryOnlyOnceCaughtUp pins the delivery's edge in
+// arms: a server-stopped chain settles even while a member is behind, a caught
+// up one queues exactly one, a second pass adds none, a resume that ends again
+// queues one more, a resumed mirror whose member still cannot fetch re-arms to
+// running, and a halted view keeps the caught-up rule.
 func TestChainPullQueuesTheEndDeliveryOnlyOnceCaughtUp(t *testing.T) {
 	t.Parallel()
 
-	t.Run("terminal but behind queues none", func(t *testing.T) {
+	t.Run("server-stopped behind settles with one delivery", func(t *testing.T) {
 		t.Parallel()
 
-		fr := chainPullFake(chainPullView("shop", string(chain.StatusStopped), 2, 0, 0))
-		fr.roundFileFunc = func(context.Context, string, string, int, string) (io.ReadCloser, error) {
-			return nil, errors.New("no round files")
-		}
+		// The builder's round files cannot be fetched, so it stays at the
+		// seeded round while the server closed two: the mirror settles to
+		// stopped anyway, with exactly one end delivery. The reviewer's
+		// closed round is installable and lands while the builder is
+		// behind, and the rounds the builder missed install on the later
+		// pass whose files come back, without a second delivery.
+		fr := chainPullFake(chainPullView("shop", string(chain.StatusStopped), 2, 1, 0))
+		base := chainPullFiles()
+		fr.roundFileFunc = chainPullRoundFilesFail("shop", base)
 		rt := chainPullRuntime(t, fr)
 		seedServerChain(t, rt, "shop")
 
 		pullRounds(t, rt, "shop")
 
-		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusRunning) {
-			t.Errorf("mirror status = %q, want running while a member is behind", row.Status)
+		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusStopped) {
+			t.Errorf("mirror status = %q, want stopped even with a member behind", row.Status)
 		}
-		if pending := chainPendingChain(t, rt, "shop"); len(pending) != 0 {
-			t.Errorf("pending deliveries = %d, want none while behind", len(pending))
+		if pending := chainPendingChain(t, rt, "shop"); len(pending) != 1 {
+			t.Fatalf("pending deliveries = %d, want 1 while the builder is behind", len(pending))
+		}
+		if got := chainBinding(t, rt, "shop-rev"); got.Round != 2 {
+			t.Errorf("reviewer round = %d, want 2: the installable round lands while a member is behind", got.Round)
+		}
+		if got := chainBinding(t, rt, "shop"); got.Round != 1 {
+			t.Errorf("builder round = %d, want 1 while its fetch fails", got.Round)
+		}
+
+		// The builder's files come back: the rounds it missed install on
+		// the later pass, and the end delivery never doubles.
+		fr.roundFileFunc = base
+		pullRounds(t, rt, "shop")
+
+		if got := chainBinding(t, rt, "shop"); got.Round != 3 {
+			t.Errorf("builder round = %d, want 3 after the rounds it missed install", got.Round)
+		}
+		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusStopped) {
+			t.Errorf("mirror status = %q, want still stopped after the builder caught up", row.Status)
+		}
+		if pending := chainPendingChain(t, rt, "shop"); len(pending) != 1 {
+			t.Errorf("pending deliveries after the builder caught up = %d, want still 1", len(pending))
 		}
 	})
 
@@ -554,21 +581,16 @@ func TestChainPullQueuesTheEndDeliveryOnlyOnceCaughtUp(t *testing.T) {
 		}
 	})
 
-	t.Run("a member level with its closed round is not caught up", func(t *testing.T) {
+	t.Run("a member level with its closed round settles with one delivery", func(t *testing.T) {
 		t.Parallel()
 
 		// The builder's round files cannot be fetched, so it stays at round 1
 		// while the server closed round 1: exactly level, not past it. The
-		// reviewer installs normally and is caught up, so the builder is the
-		// only member the guard can hold on.
+		// reviewer installs normally and is caught up. A stopped view
+		// settles the mirror anyway, and nothing doubles on the next pass.
 		fr := chainPullFake(chainPullView("shop", string(chain.StatusStopped), 1, 1, 0))
 		base := chainPullFiles()
-		fr.roundFileFunc = func(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error) {
-			if name == "shop" {
-				return nil, errors.New("the builder's round files are gone")
-			}
-			return base(ctx, server, name, round, kind)
-		}
+		fr.roundFileFunc = chainPullRoundFilesFail("shop", base)
 		rt := chainPullRuntime(t, fr)
 		seedServerChain(t, rt, "shop")
 
@@ -577,11 +599,60 @@ func TestChainPullQueuesTheEndDeliveryOnlyOnceCaughtUp(t *testing.T) {
 		if b := chainBinding(t, rt, "shop"); b.Round != 1 {
 			t.Fatalf("builder round = %d, want 1: the fetch failed, so the round cannot advance", b.Round)
 		}
-		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusRunning) {
-			t.Errorf("mirror status = %q, want running: a member level with its closed round is not caught up", row.Status)
+		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusStopped) {
+			t.Errorf("mirror status = %q, want stopped: a server-stopped chain settles even with a member level with its closed round", row.Status)
 		}
-		if pending := chainPendingChain(t, rt, "shop"); len(pending) != 0 {
-			t.Errorf("pending deliveries = %d, want none while a member sits level with its closed round", len(pending))
+		if pending := chainPendingChain(t, rt, "shop"); len(pending) != 1 {
+			t.Errorf("pending deliveries = %d, want the one end delivery", len(pending))
+		}
+
+		// The builder's files come back: the round it missed installs on the
+		// next pass and the delivery stays at one.
+		fr.roundFileFunc = base
+		pullRounds(t, rt, "shop")
+
+		if b := chainBinding(t, rt, "shop"); b.Round != 2 {
+			t.Errorf("builder round = %d, want 2 once its files come back", b.Round)
+		}
+		if pending := chainPendingChain(t, rt, "shop"); len(pending) != 1 {
+			t.Errorf("pending deliveries after the builder caught up = %d, want still 1", len(pending))
+		}
+	})
+
+	t.Run("resumed while still behind returns to running", func(t *testing.T) {
+		t.Parallel()
+
+		// A stopped view settles the mirror first pass; a running view
+		// re-arms it even while the member still cannot fetch its round, so
+		// the mirror goes on pulling until the server ends it again.
+		view := chainPullView("shop", string(chain.StatusStopped), 1, 1, 0)
+		fr := chainPullFake(view)
+		rounds := chainPullFiles()
+		fr.roundFileFunc = chainPullRoundFilesFail("shop", rounds)
+		rt := chainPullRuntime(t, fr)
+		seedServerChain(t, rt, "shop")
+
+		pullRounds(t, rt, "shop")
+		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusStopped) {
+			t.Fatalf("mirror status = %q, want stopped after the settle", row.Status)
+		}
+		if pending := chainPendingChain(t, rt, "shop"); len(pending) != 1 {
+			t.Fatalf("pending deliveries = %d, want 1", len(pending))
+		}
+
+		// The server resumes while the builder is still stuck.
+		view.Status = string(chain.StatusRunning)
+		fr.getChainResp = view
+		pullRounds(t, rt, "shop")
+
+		if row := chainStoredRow(t, rt, "shop"); row.Status != string(chain.StatusRunning) {
+			t.Errorf("mirror status = %q, want running again: a resume re-arms the mirror even with a member behind", row.Status)
+		}
+		if b := chainBinding(t, rt, "shop"); b.Round != 1 {
+			t.Errorf("builder round = %d, want 1: the fetch still fails", b.Round)
+		}
+		if pending := chainPendingChain(t, rt, "shop"); len(pending) != 1 {
+			t.Errorf("pending deliveries = %d, want still 1: the re-arm queues nothing", len(pending))
 		}
 	})
 }
