@@ -157,13 +157,31 @@ func chainServerWait(ctx context.Context, rt Runtime, name string, timeout, inte
 // status rather than the server's, so a served chain reads exactly as a local
 // one does; the mirror is this machine's own record of the chain, the same row
 // every other chain surface reads.
+//
+// A chain the server no longer holds -- the mirror the pull already marked
+// gone, or a 404 from the stop itself -- has nothing a server could stop and
+// is closed only by `relevo done`, so it answers with the halted refusal.
 func chainServerStop(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult, error) {
+	if chainGoneMirror(c) {
+		return StopResult{}, haltedChainStop(c.Name)
+	}
 	if rt.Remote == nil {
 		return StopResult{}, ErrRemoteUnavailable
 	}
 	resp, err := rt.Remote.ChainStop(ctx, c.Server, c.Name)
 	if err != nil {
-		if remoteCode(err, 409, remote.CodeNothingToStop) {
+		switch {
+		case remoteCode(err, 409, remote.CodeNothingToStop):
+			return StopResult{}, chainStoppedNothing(c)
+		case remoteCode(err, 409, remote.CodeChainHalted):
+			return StopResult{}, haltedChainStop(c.Name)
+		case is404(err):
+			// A mirror that already ended keeps the answer an ended chain
+			// gives; a running one is halted in all but its row, which the
+			// next pull writes.
+			if c.Status == string(chain.StatusRunning) {
+				return StopResult{}, haltedChainStop(c.Name)
+			}
 			return StopResult{}, chainStoppedNothing(c)
 		}
 		return StopResult{}, err

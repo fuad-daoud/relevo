@@ -229,6 +229,73 @@ func TestChainStopOnAServerChainPostsStop(t *testing.T) {
 	}
 }
 
+// TestChainStopOnAChainTheServerNoLongerHoldsNamesDone pins the stop of a
+// chain the server has let go: a mirror already marked gone is refused without
+// asking the server, and a 404 on a running mirror or a halted answer from the
+// server gives the same refusal, which names `relevo done`, rather than an
+// internal failure. A mirror that already ended keeps the nothing-to-stop
+// answer through a 404.
+func TestChainStopOnAChainTheServerNoLongerHoldsNamesDone(t *testing.T) {
+	t.Parallel()
+
+	notFound := &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: remote.CodeNotFound}}
+	arms := []struct {
+		name        string
+		mark        func(t *testing.T, rt Runtime)
+		stopErr     error
+		wantCalls   int
+		wantNothing bool
+	}{
+		{"gone mirror", func(t *testing.T, rt Runtime) { markChainGone(t, rt, "shop") }, nil, 0, false},
+		{"server answers 404", nil, notFound, 1, false},
+		{"server answers halted", nil, &client.HTTPError{Status: 409, Body: remote.ErrorBody{Code: remote.CodeChainHalted}}, 1, false},
+		{"done mirror, server answers 404", func(t *testing.T, rt Runtime) {
+			seedServerChainRound(t, rt, "shop", chain.StatusDone, 2)
+		}, notFound, 1, true},
+	}
+	for _, arm := range arms {
+		t.Run(arm.name, func(t *testing.T) {
+			t.Parallel()
+
+			fr := chainPullFake(chainPullView("shop", string(chain.StatusHalted), 0, 0, 0))
+			fr.chainStopErr = arm.stopErr
+			rt := chainPullRuntime(t, fr)
+			seedServerChain(t, rt, "shop")
+			if arm.mark != nil {
+				arm.mark(t, rt)
+			}
+
+			_, err := ChainStop(context.Background(), rt, "shop")
+			var halted *ChainHaltedError
+			switch {
+			case arm.wantNothing && !errors.Is(err, ErrNothingToStop):
+				t.Fatalf("stop = %v, want ErrNothingToStop", err)
+			case !arm.wantNothing && (!errors.As(err, &halted) || halted.Name != "shop"):
+				t.Fatalf("stop = %v, want the halted refusal naming relevo done", err)
+			}
+			if n := countCalls(fr, "ChainStop:zen:shop"); n != arm.wantCalls {
+				t.Errorf("ChainStop calls = %d, want %d", n, arm.wantCalls)
+			}
+		})
+	}
+}
+
+// markChainGone writes the halt the pull writes when the server answers 404.
+func markChainGone(t *testing.T, rt Runtime, name string) {
+	t.Helper()
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		c, err := tx.Chain(name)
+		if err != nil {
+			return err
+		}
+		c.Status = string(chain.StatusHalted)
+		c.Reason = chainGoneReason(name, c.Server)
+		return tx.ChainPut(c)
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestChainResumeOnAServerChainSendsTheResolvedGate pins the gate the resume
 // posts: an explicit --gate travels as its own command, --no-gate clears it,
 // and no flag at all leaves the field off the wire.
