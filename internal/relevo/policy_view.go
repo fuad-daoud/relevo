@@ -97,6 +97,40 @@ type RoleRefusal struct {
 	NoOrder bool     // true for the ambiguous case, false for the all-gated case
 	Serving []string // tokens serving the role, in Set.ForRole order
 	Gated   []string // providers with a gate on a serving token, deduplicated, in Serving order; nil when NoOrder
+	// Cause is set when every gate behind the refusal is a window or a cap,
+	// so the fix is to wait, not to clear a gate.
+	Cause RefusalCause
+}
+
+// RefusalCause says what kind of gate made a role's refusal.
+type RefusalCause string
+
+const (
+	CauseGate   RefusalCause = ""
+	CauseWindow RefusalCause = "window"
+	CauseCap    RefusalCause = "cap"
+)
+
+// refusalCause is CauseWindow or CauseCap when every skip on a serving token
+// is a window or a cap (a window wins when both occur), else CauseGate.
+func refusalCause(serving []candidate.Candidate, gates []availability.Gate) RefusalCause {
+	cause, seen := CauseCap, false
+	for _, c := range serving {
+		for _, sk := range skipsFor(gates, c.Ref().String()) {
+			switch sk.Kind {
+			case availability.Scheduled:
+				cause = CauseWindow
+			case availability.ConcurrencyLimit:
+			default:
+				return CauseGate
+			}
+			seen = true
+		}
+	}
+	if !seen {
+		return CauseGate
+	}
+	return cause
 }
 
 // RoleRefusals lists, in harness.RoleNames() order, every role with at
@@ -151,6 +185,7 @@ func refusalFromErr(role string, serving []candidate.Candidate, gates []availabi
 			Text:    fmt.Sprintf("every candidate serving %s is gated", role),
 			Serving: tokens,
 			Gated:   uniqStrings(providers),
+			Cause:   refusalCause(serving, gates),
 		}, true
 	}
 	return RoleRefusal{}, false
