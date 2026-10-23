@@ -114,7 +114,7 @@ func RemoteRefusal(f HandoverFacts) error {
 	if f.Remote == "" || f.Remote == "origin" || SameRepo(f.RemoteURL, f.OriginURL) {
 		return nil
 	}
-	return refuse("binding %q cannot go through remote %q because its URL is not origin's and the target's bind --resume always fetches origin, so a branch pushed anywhere else strands the binding; next: relevo handover %s --to %s with no --remote, or set %s's URL equal to origin's",
+	return refuse("binding %q cannot go through remote %q: its URL is not origin's, and the target's bind --resume fetches origin, so the branch would be stranded; run relevo handover %s --to %s without --remote, or set %s's URL to origin's",
 		f.Name, f.Remote, f.Name, f.To, f.Remote)
 }
 

@@ -244,7 +244,7 @@ func TestHandoverRefusesAForeignRemoteBeforePushing(t *testing.T) {
 	fg.remotes = []string{"origin", "mirror"}
 	fg.remoteURLs = map[string]string{"origin": handoverOrigin, "mirror": "https://github.com/other/webshop.git"}
 	_, err := Handover(context.Background(), rt, HandoverOptions{Name: "webshop", To: "zen", Remote: "mirror"})
-	if err == nil || !strings.Contains(err.Error(), "next:") {
+	if err == nil || !strings.Contains(err.Error(), "without --remote") {
 		t.Fatalf("Handover = %v, want the foreign-remote refusal", err)
 	}
 	if len(fg.pushCalls) != 0 {

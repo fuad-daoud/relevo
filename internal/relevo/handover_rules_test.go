@@ -183,7 +183,7 @@ func TestHandoverRefusalRefusesARemoteThatIsNotOrigins(t *testing.T) {
 	}{
 		{"origin by name", "origin", "", "", ""},
 		{"same URL in ssh and https form", "mirror", "git@github.com:acme/webshop.git", https, ""},
-		{"different URL", "mirror", "https://github.com/other/webshop.git", https, "next:"},
+		{"different URL", "mirror", "https://github.com/other/webshop.git", https, "without --remote"},
 		{"empty origin URL", "mirror", https, "", "origin"},
 		{"unreadable remote URL", "mirror", "", https, "origin"},
 	}
@@ -199,8 +199,8 @@ func TestHandoverRefusalRefusesARemoteThatIsNotOrigins(t *testing.T) {
 				}
 				return
 			}
-			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "next:") {
-				t.Fatalf("refusal = %v, want it to contain %q and next:", err, tc.want)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "without --remote") {
+				t.Fatalf("refusal = %v, want it to contain %q and the way forward", err, tc.want)
 			}
 		})
 	}
