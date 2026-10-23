@@ -4,7 +4,7 @@
 # Every create runs with RELEVO_SANDBOX_ROOT pointed at a temp dir and
 # --no-build, so the suite needs no toolchain, no network and never touches the
 # developer's real ~/.local/share/relevo-sandboxes. What it pins is the safety
-# that matters: the refusals, the 0700 layout, the marker, and the nine exports
+# that matters: the refusals, the 0700 layout, the marker, and the ten exports
 # in env.sh -- specifically that every path export resolves under the sandbox
 # root and never under the caller's home, and that RELEVO_SANDBOX is the marker
 # a guard line tests.
@@ -131,7 +131,7 @@ absent 'create does not run make service' 'make service'
 absent 'create does not run config agents' 'config agents'
 
 sbx="$root/demo"
-for d in bin state config data cache claude codex; do
+for d in bin state config data cache claude codex home; do
 	if [ ! -d "$sbx/$d" ]; then
 		echo "FAIL: create left no $sbx/$d"
 		fail=1
@@ -180,6 +180,7 @@ else
 	for pair in \
 		"RELEVO_SANDBOX=demo" \
 		"SB=$sbx" \
+		"HOME=$sbx/home" \
 		"XDG_STATE_HOME=$sbx/state" \
 		"XDG_CONFIG_HOME=$sbx/config" \
 		"XDG_DATA_HOME=$sbx/data" \
@@ -210,6 +211,30 @@ else
 	resolved=$(RELEVO_SANDBOX_ROOT="$root" HOME="$home" sh -c '. "$1/env.sh"; printf "%s" "$XDG_STATE_HOME/relevo"' sh "$sbx")
 	if [ "$resolved" != "$sbx/state/relevo" ]; then
 		echo "FAIL: sourcing env.sh resolves the state root to $resolved, want $sbx/state/relevo"
+		fail=1
+	fi
+
+	# Install paths are built from HOME, not from the exports: a harness
+	# definition written as $HOME/.config/opencode/... must land in the same
+	# file opencode reads from $XDG_CONFIG_HOME/opencode/..., inside the
+	# sandbox, and never in the caller's home.
+	mkdir -p "$home/.config/opencode/agents"
+	RELEVO_SANDBOX_ROOT="$root" HOME="$home" sh -c '. "$1/env.sh"
+		mkdir -p "$HOME/.config/opencode/agents" "$HOME/.claude/agents" "$HOME/.local/state/x"
+		echo branch > "$HOME/.config/opencode/agents/a.md"
+		echo branch > "$HOME/.claude/agents/a.md"' sh "$sbx"
+	if [ -e "$home/.config/opencode/agents/a.md" ]; then
+		echo "FAIL: a write to \$HOME/.config/opencode from inside the sandbox reached the caller home"
+		fail=1
+	fi
+	for f in config/opencode/agents/a.md claude/agents/a.md; do
+		if [ "$(cat "$sbx/$f" 2>/dev/null)" != branch ]; then
+			echo "FAIL: a write through the sandbox HOME did not land at $sbx/$f"
+			fail=1
+		fi
+	done
+	if [ ! -d "$sbx/state/x" ]; then
+		echo "FAIL: \$HOME/.local/state inside the sandbox is not its XDG_STATE_HOME"
 		fail=1
 	fi
 
@@ -262,6 +287,12 @@ refuses 'destroy refuses a name that does not exist' 'sandbox marker' \
 # A held state lock means a foreground daemon is still writing into the directory
 # about to be removed. flock -n fails on a held lock, which is how the check is
 # driven without a daemon: a second lock holder stands in for one.
+#
+# Go writes its module cache read-only, and with HOME inside the sandbox that
+# cache lives under it, so the destroys below must also clear a read-only tree.
+mkdir -p "$sbx/home/go/pkg/mod/m@v1"
+: > "$sbx/home/go/pkg/mod/m@v1/f"
+chmod -R a-w "$sbx/home/go"
 if command -v flock >/dev/null 2>&1; then
 	exec 9>"$sbx/state/.daemon.lock"
 	flock -x 9
@@ -420,7 +451,7 @@ fi
 # of the caller's PATH; a step without them lets that daemon's harnesses
 # resolve the developer's binaries against the sandbox's state.
 seed_line=$(printf '%s\n' "$stub_out" | grep -F 'config set candidates')
-for want in "RELEVO_SANDBOX=stubbed " "SB=$root/stubbed " \
+for want in "RELEVO_SANDBOX=stubbed " "SB=$root/stubbed " "HOME=$root/stubbed/home " \
 	"XDG_STATE_HOME=$root/stubbed/state " "XDG_CONFIG_HOME=$root/stubbed/config " \
 	"XDG_DATA_HOME=$root/stubbed/data " "XDG_CACHE_HOME=$root/stubbed/cache " \
 	"CLAUDE_CONFIG_DIR=$root/stubbed/claude " "CODEX_HOME=$root/stubbed/codex " \

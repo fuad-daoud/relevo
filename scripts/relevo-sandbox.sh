@@ -1,8 +1,8 @@
 #!/bin/sh
 # scripts/relevo-sandbox.sh -- a no-root dev sandbox: a directory under
-# ~/.local/share/relevo-sandboxes whose XDG_*, CLAUDE_CONFIG_DIR and CODEX_HOME
-# all point inside it, so a sandboxed session resolves every path under the
-# sandbox instead of the developer's own home.
+# ~/.local/share/relevo-sandboxes whose HOME, XDG_*, CLAUDE_CONFIG_DIR and
+# CODEX_HOME all point inside it, so a sandboxed session resolves every path
+# under the sandbox instead of the developer's own home.
 #
 # Isolation is not built here; it falls out of the exports. Everything a
 # process writes goes through one of those variables, so pointing them at
@@ -167,17 +167,34 @@ cmd_create() {
 
 	note "creating sandbox $_name at $_sb"
 
-	for _d in bin state config data cache claude codex; do
+	for _d in bin state config data cache claude codex home home/.local; do
 		plan mkdir -p "$_sb/$_d"
 	done
 	# 0700 on every directory: the sandbox holds harness credentials and a
 	# database, and nothing under it needs to be readable by another uid.
 	if [ "$dry_run" -eq 1 ]; then
-		note "chmod 0700 $_sb $_sb/bin $_sb/state $_sb/config $_sb/data $_sb/cache $_sb/claude $_sb/codex"
+		note "chmod 0700 $_sb $_sb/bin $_sb/state $_sb/config $_sb/data $_sb/cache $_sb/claude $_sb/codex $_sb/home $_sb/home/.local"
 	else
-		for _d in '' bin state config data cache claude codex; do
+		for _d in '' bin state config data cache claude codex home home/.local; do
 			chmod 0700 "$_sb/$_d"
 		done
+	fi
+
+	# The sandbox's HOME: harness install paths, git and agy resolve from HOME,
+	# not from the exports above, so a daemon that create's own seed steps start
+	# would otherwise refresh the developer's installed definitions. Its dot
+	# directories are links onto the sandbox's own roots, so a path built as
+	# $HOME/.config/opencode and one built as $XDG_CONFIG_HOME/opencode name the
+	# same file, as they do outside a sandbox.
+	plan ln -s ../config "$_sb/home/.config"
+	plan ln -s ../cache "$_sb/home/.cache"
+	plan ln -s ../claude "$_sb/home/.claude"
+	plan ln -s ../codex "$_sb/home/.codex"
+	plan ln -s ../../state "$_sb/home/.local/state"
+	plan ln -s ../../data "$_sb/home/.local/share"
+	# A builder commits, and git reads its identity from $HOME/.gitconfig.
+	if [ -f "$HOME/.gitconfig" ]; then
+		plan cp "$HOME/.gitconfig" "$_sb/home/.gitconfig"
 	fi
 
 	# Login, config and definition files, copied when present and never
@@ -232,6 +249,12 @@ cmd_create() {
 		plan cp "$_oc_data/auth.json" "$_sb/data/opencode/auth.json"
 	else
 		note "no running opencode service to attach; copy service.json and auth.json by hand to attach (docs/env-sandbox.md)"
+	fi
+	# agy resolves ~/.gemini from HOME, so inside the sandbox it reads the
+	# sandbox's own: its definitions are copied in, its login is not.
+	if [ -d "$HOME/.gemini/config/agents" ]; then
+		plan mkdir -p "$_sb/home/.gemini/config/agents"
+		plan cp -r "$HOME/.gemini/config/agents/." "$_sb/home/.gemini/config/agents/"
 	fi
 	note "opencode-backed builders need 'opencode auth login' inside the sandbox: relevo runs opencode standalone, and its credentials live in opencode's own database, which is never copied"
 	if [ "$_login" -eq 0 ]; then
@@ -326,18 +349,19 @@ cmd_create() {
 sb_relevo() {
 	# The caller's PATH is expanded here on purpose: env.sh prepends to the
 	# PATH of whoever sources it, and this is the same prepend.
-	plan env "RELEVO_SANDBOX=$_name" "SB=$_sb" \
+	plan env "RELEVO_SANDBOX=$_name" "SB=$_sb" "HOME=$_sb/home" \
 		"XDG_STATE_HOME=$_sb/state" "XDG_CONFIG_HOME=$_sb/config" \
 		"XDG_DATA_HOME=$_sb/data" "XDG_CACHE_HOME=$_sb/cache" \
 		"CLAUDE_CONFIG_DIR=$_sb/claude" "CODEX_HOME=$_sb/codex" \
 		"PATH=$_sb/bin:$PATH" "$_sb/bin/relevo" "$@"
 }
 
-# write_env_sh writes the export recipe that is the sandbox. Nine exports: eight
+# write_env_sh writes the export recipe that is the sandbox. Ten exports: nine
 # paths, all under the sandbox root, plus the RELEVO_SANDBOX marker.
 # XDG_STATE_HOME is what store.DefaultRoot reads, the other three XDG_ roots
 # follow the same base, CLAUDE_CONFIG_DIR and CODEX_HOME are the two
-# per-process homes, SB is the sandbox path itself for scripts, and PATH puts
+# per-process homes, HOME catches every path built from the home directory
+# instead, SB is the sandbox path itself for scripts, and PATH puts
 # the sandbox's own binary first so a sandboxed shell cannot reach the
 # developer's ~/.local/bin/relevo by accident.
 #
@@ -356,6 +380,7 @@ write_env_sh() {
 			printf '# resolves lands under the sandbox root, never the developer home.\n'
 			printf 'export RELEVO_SANDBOX=%s\n' "$_name"
 			printf 'export SB=%s\n' "$_sb"
+			printf 'export HOME=%s/home\n' "$_sb"
 			printf 'export XDG_STATE_HOME=%s/state\n' "$_sb"
 			printf 'export XDG_CONFIG_HOME=%s/config\n' "$_sb"
 			printf 'export XDG_DATA_HOME=%s/data\n' "$_sb"
@@ -434,7 +459,10 @@ cmd_destroy() {
 
 	note "destroying sandbox $_name at $_sb"
 	# rm -rf on the sandbox directory is the entire rollback: its state, config,
-	# data, cache and harness homes all live under it.
+	# data, cache and harness homes all live under it. Go writes its module
+	# cache read-only, and with HOME inside the sandbox that cache is too, so
+	# rm alone cannot empty those directories.
+	plan chmod -R u+w "$_sb"
 	plan rm -rf "$_sb"
 	if [ "$dry_run" -eq 1 ]; then
 		plan test ! -e "$_sb"
@@ -467,12 +495,12 @@ usage() {
 usage: $prog {create <name> [--no-build] | shell <name> | destroy <name> [--force] | list} [--dry-run]
 
 A no-root dev sandbox: a directory under ${RELEVO_SANDBOX_ROOT:-$HOME/.local/share/relevo-sandboxes}
-whose XDG_STATE_HOME, XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_CACHE_HOME,
+whose HOME, XDG_STATE_HOME, XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_CACHE_HOME,
 CLAUDE_CONFIG_DIR and CODEX_HOME all point inside it. The isolation is the
 exports; this script wraps them into one command.
 
   create <name>   make <root>/<name> with bin/ state/ config/ data/ cache/
-                  claude/ codex/ env.sh, a sandbox marker, a build of
+                  claude/ codex/ home/ env.sh, a sandbox marker, a build of
                   ./cmd/relevo from the invoking checkout, copied claude and
                   codex logins, and a seeded config. Copies
                   ~/.claude/.credentials.json when present.
@@ -488,7 +516,7 @@ What this script never does: it never touches ~/.local/bin, never runs
 binary lands in <root>/<name>/bin ahead of PATH, so the sandbox's own binary is
 the one a sandboxed shell finds. Installing, and logging the harnesses in
 ('relevo config agents', then 'relevo doctor' inside the sandbox), are your own
-work -- agy has no per-process home selector, so ~/.gemini stays shared.
+work; agy and opencode start logged out.
 
 --dry-run prints the actions and writes nothing; it may appear anywhere.
 Set RELEVO_SANDBOX_ROOT to move the root.
