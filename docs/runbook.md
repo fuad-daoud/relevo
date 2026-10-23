@@ -85,6 +85,8 @@ under `~/.cache`; keep it on any rebuild.
   binding over. `relevo handover` refuses a target whose newest log entry was
   written below schema 31, naming it, because a machine on an older build
   cannot read the `writer` column the hand-over sets.
+  A hand-over pushes to origin; `--remote` is accepted only for a remote with
+  origin's URL, because the target's `bind --resume` fetches origin.
 - `relevo db sync enable --as <installation> --yes` takes over a dead machine's
   identity on a fresh machine. It leaves sync off: restart the relevo daemon,
   then run `relevo db sync enable` again to finish. If interrupted or crashed
