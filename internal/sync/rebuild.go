@@ -2,10 +2,9 @@ package sync
 
 // The recovery from a replica this machine can no longer read.
 //
-// The replica is the file the sync driver owns, and a corrupt one used to be a
-// human's problem: every attempt met the same torn page, the machine sat behind
-// until somebody noticed, and the fix was a disable and an enable by hand. It
-// never had to be, because rebuilding loses no data. The outbox is cleared only
+// The replica is the file the sync driver owns. Left alone, a corrupt one meets
+// the same torn page on every attempt and the machine falls behind until a
+// human notices. Rebuilding it loses no data: the outbox is cleared only
 // after the log confirmed the append, so what this machine has not yet handed
 // over is still waiting; and the marks that say how far this machine has
 // applied live in the machine-local file, not the replica, so a fresh replica
