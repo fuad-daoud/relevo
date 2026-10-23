@@ -392,6 +392,13 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		// runs the harness binary, which is the same for every owner.
 		SessionReaper: cfg.SessionReaper,
 	}
+	// Every mode that runs builders on this host gives the owner its own tmp
+	// root, so one owner's sweep can never see another owner's entries.
+	// Container mode gets none: applyContainer's builder sees the container's
+	// own /tmp, and a host path means nothing inside it.
+	if cfg.Isolation != isolate.ModeContainer {
+		rt.TmpRoot = s.ownerTmpDir(root)
+	}
 	switch cfg.Isolation {
 	case isolate.ModeUser:
 		s.applyTenant(root, st, &rt)

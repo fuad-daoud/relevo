@@ -40,3 +40,16 @@ func TestNewRuntimeGivesBuildersTheStateTmpDir(t *testing.T) {
 		t.Errorf("Runner.TmpDir = %q, want the state root's own tmp directory", r.TmpDir)
 	}
 }
+
+// TestNewRuntimeSetsTmpRoot pins that the daemon's runtime names a tmp root
+// for its rounds' and checks' per-process entries. The wiring is pure
+// construction: no process is spawned to check it.
+func TestNewRuntimeSetsTmpRoot(t *testing.T) {
+	rt, err := newRuntime()
+	if err != nil {
+		t.Fatalf("newRuntime: %v", err)
+	}
+	if rt.TmpRoot == "" {
+		t.Error(`TmpRoot = "", want the state root's own tmp directory`)
+	}
+}
