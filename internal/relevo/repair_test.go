@@ -110,6 +110,7 @@ func repairPlanGolden() string {
 		"# Repair round 3 for shop: round 2's gate failed",
 		"Round 2's acceptance check (`make check`) did NOT pass. Fix ONLY what the check reports; do not",
 		"restyle or refactor unrelated code. If the failure is not something a code change can fix, halt and report.",
+		"Do not push, and do not create or edit a PR or issue: publishing is the MasterMind's.",
 		"Original plan: /state/shop/002-plan.md   (read it first; the same rules apply)",
 		"Acceptance check output: /state/shop/002-gate.log -- last 2 lines:",
 		"```",
