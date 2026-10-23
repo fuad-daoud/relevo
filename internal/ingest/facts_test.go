@@ -68,3 +68,145 @@ func checkPtr[T comparable](t *testing.T, field string, got *T, want T) {
 		t.Errorf("%s = %v, want %v", field, *got, want)
 	}
 }
+
+// The next five tests pin the row contract: a round's figures are
+// the newest report entry's usage plus every earlier segment of that round
+// -- each switch entry that carries a usage, and the PriorTokens a report
+// entry carries for a round another machine ran. Entries are built by hand;
+// the assertions are db.Round's own fields.
+
+func TestRoundFactsSumsANudgedRoundsSegments(t *testing.T) {
+	events := []store.LogEntry{
+		{Round: 1, Kind: store.KindPrompt},
+		// The nudge's outgoing segment, recorded on its switch entry.
+		{Round: 1, Kind: store.KindSwitch, Confirmed: true,
+			Note:  "nudged builder (ended its turn): resumed session S1",
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}, Cost: usage.Cost{USD: 0.25, Basis: usage.Measured}}},
+		{Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind,
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 30}, Cost: usage.Cost{USD: 0.40, Basis: usage.Measured}}},
+	}
+
+	r := roundFacts(events, 1)
+
+	checkPtr(t, "InTokens", r.InTokens, int64(300))
+	checkPtr(t, "CacheTokens", r.CacheTokens, int64(0))
+	checkPtr(t, "WriteTokens", r.WriteTokens, int64(0))
+	checkPtr(t, "OutTokens", r.OutTokens, int64(80))
+	checkPtr(t, "CostUSD", r.CostUSD, 0.65)
+	checkPtr(t, "CostBasis", r.CostBasis, "measured")
+}
+
+func TestRoundFactsSumsASwitchedRoundsSegments(t *testing.T) {
+	events := []store.LogEntry{
+		// Round 1's own nudge: its tokens belong to round 1's row, never to
+		// round 2's, however close in the log the entries sit.
+		{Round: 1, Kind: store.KindPrompt},
+		{Round: 1, Kind: store.KindSwitch, Confirmed: true,
+			Note:  "nudged builder (ended its turn): resumed session S1",
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 900, Out: 900}, Cost: usage.Cost{USD: 9.00, Basis: usage.Measured}}},
+		{Round: 2, Kind: store.KindPrompt},
+		// This round's own mid-round switch: no nudge in its note, a full
+		// segment all the same.
+		{Round: 2, Kind: store.KindSwitch, Confirmed: true,
+			Note:  "switched to agy/test/m: rate-limited",
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}, Cost: usage.Cost{USD: 0.25, Basis: usage.Measured}}},
+		{Round: 2, Kind: store.KindReport, Direction: store.DirToMasterMind,
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 30}, Cost: usage.Cost{USD: 0.40, Basis: usage.Measured}}},
+	}
+
+	r := roundFacts(events, 2)
+
+	checkPtr(t, "InTokens", r.InTokens, int64(300))
+	checkPtr(t, "OutTokens", r.OutTokens, int64(80))
+	checkPtr(t, "CostUSD", r.CostUSD, 0.65)
+	checkPtr(t, "CostBasis", r.CostBasis, "measured")
+}
+
+func TestRoundFactsRemoteRoundCountsPriorTokens(t *testing.T) {
+	events := []store.LogEntry{
+		{Round: 1, Kind: store.KindPrompt},
+		// A remote round's report: the client's own usage is the newest
+		// segment's bill; PriorTokens carries what another machine ran, as
+		// tokens only -- no bill rides the wire, so the row's cost is
+		// unknown rather than the priced remainder.
+		{Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind,
+			Usage:       &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}, Cost: usage.Cost{USD: 0.10, Basis: usage.Measured}},
+			PriorTokens: &usage.Tokens{In: 400, Out: 150}},
+	}
+
+	r := roundFacts(events, 1)
+
+	checkPtr(t, "InTokens", r.InTokens, int64(500))
+	checkPtr(t, "OutTokens", r.OutTokens, int64(200))
+	checkPtr(t, "CostUSD", r.CostUSD, 0.0)
+	checkPtr(t, "CostBasis", r.CostBasis, "unknown")
+}
+
+func TestRoundFactsSingleSegmentUnchanged(t *testing.T) {
+	events := []store.LogEntry{
+		{Round: 1, Kind: store.KindPrompt},
+		{Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind,
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 30}, Cost: usage.Cost{USD: 0.40, Basis: usage.Measured}}},
+	}
+
+	r := roundFacts(events, 1)
+
+	checkPtr(t, "InTokens", r.InTokens, int64(200))
+	checkPtr(t, "OutTokens", r.OutTokens, int64(30))
+	checkPtr(t, "CostUSD", r.CostUSD, 0.40)
+	checkPtr(t, "CostBasis", r.CostBasis, "measured")
+}
+
+func TestRoundFactsPlanLaneSingleSegmentUnchanged(t *testing.T) {
+	planUsage := &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 30}, Cost: usage.Cost{USD: 0.40, Basis: usage.Measured, Plan: true}}
+	events := []store.LogEntry{
+		{Round: 1, Kind: store.KindPrompt},
+		{Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind, Usage: planUsage},
+	}
+
+	r := roundFacts(events, 1)
+
+	checkPtr(t, "InTokens", r.InTokens, int64(200))
+	checkPtr(t, "OutTokens", r.OutTokens, int64(30))
+	checkPtr(t, "CostUSD", r.CostUSD, 0.40)
+	checkPtr(t, "CostBasis", r.CostBasis, "measured")
+}
+
+func TestRoundFactsPlanLaneWithNudgeSegmentIsUnknown(t *testing.T) {
+	events := []store.LogEntry{
+		{Round: 1, Kind: store.KindPrompt},
+		{Round: 1, Kind: store.KindSwitch, Confirmed: true,
+			Note:  "nudged builder (ended its turn): resumed session S1",
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}, Cost: usage.Cost{USD: 0.25, Basis: usage.Measured}}},
+		{Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind,
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 30}, Cost: usage.Cost{USD: 0.40, Basis: usage.Measured, Plan: true}}},
+	}
+
+	r := roundFacts(events, 1)
+
+	checkPtr(t, "InTokens", r.InTokens, int64(300))
+	checkPtr(t, "OutTokens", r.OutTokens, int64(80))
+	checkPtr(t, "CostUSD", r.CostUSD, 0.0)
+	checkPtr(t, "CostBasis", r.CostBasis, "unknown")
+}
+
+func TestRoundFactsReportWithoutUsageKeepsNoFigures(t *testing.T) {
+	events := []store.LogEntry{
+		{Round: 1, Kind: store.KindPrompt},
+		{Round: 1, Kind: store.KindSwitch, Confirmed: true,
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}, Cost: usage.Cost{USD: 0.25, Basis: usage.Measured}}},
+		// A report entry that carries no usage: the row keeps no figures --
+		// a round is never given a partial total in place of an absent
+		// report segment.
+		{Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind},
+	}
+
+	r := roundFacts(events, 1)
+
+	if r.InTokens != nil || r.CacheTokens != nil || r.WriteTokens != nil || r.OutTokens != nil {
+		t.Errorf("tokens = %v/%v/%v/%v, want no figures at all", r.InTokens, r.CacheTokens, r.WriteTokens, r.OutTokens)
+	}
+	if r.CostUSD != nil || r.CostBasis != nil {
+		t.Errorf("cost = %v/%v, want no figures at all", r.CostUSD, r.CostBasis)
+	}
+}

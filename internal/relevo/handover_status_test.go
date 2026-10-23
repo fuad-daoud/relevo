@@ -54,7 +54,7 @@ func TestScopedStatusHandedOverAndTakenOverRows(t *testing.T) {
 			return err
 		}
 		if err := tx.RecordBindingLeft(db.BindingLeft{
-			RootID: recHW2, Owner: "", Name: "hw2", ToWriter: "worker-c1-id", Kind: db.LeftTakeover, At: now,
+			RootID: recHW2, Owner: "", Name: "hw2", ToWriter: "worker-c1-id", Kind: db.LeftTakeover, At: now.Add(-time.Second),
 		}); err != nil {
 			return err
 		}

@@ -115,7 +115,12 @@ func nudgeResume(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	}
 	sess := b.Builder.StreamSessionID
 	keep := b.RoundStartedAt
-	prior := peekUsage(ctx, rt, b, now)
+	// The outgoing segment is read with the close's budget, not the live
+	// peek's: the session has exited and its stream is sealed, so a
+	// large record's parse must be allowed to finish -- the 500 ms live
+	// deadline can silently drop the whole first session, which is the loss
+	// this entry exists to carry.
+	prior := recordUsage(ctx, rt, roundSource(rt, b, b.RoundStartedAt, now))
 	prompt := nudgePromptFor(rt, b)
 	next, err := resumeRound(ctx, rt, tx, b, sess, prompt, false)
 	if err != nil {
