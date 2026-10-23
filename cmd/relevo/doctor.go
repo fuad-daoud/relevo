@@ -228,27 +228,6 @@ func renderReport(w io.Writer, rep doctor.Report) {
 	}
 }
 
-// roleSourceChecks is the one global row saying where the roles came from,
-// plus one warning row per legacy field roles.json makes irrelevant (#374
-// §3.5). In legacy mode there is nothing stale to warn about, so only the OK
-// row is printed.
-func roleSourceChecks(reg *roles.Registry, set *candidate.Set, pol policy.Policy) []doctor.Check {
-	detail := "legacy: candidates.json roles, policy.json order and tier"
-	if reg.FileMode() {
-		detail = "config actors"
-	}
-	out := []doctor.Check{{Name: "actor source", Severity: doctor.SevOK, Detail: detail}}
-	for _, w := range relevo.LegacyRoleFieldWarnings(reg, set, pol) {
-		out = append(out, doctor.Check{
-			Name:     "actor source",
-			Severity: doctor.SevWarn,
-			Detail:   w,
-			Fix:      "delete it; config actors is the source",
-		})
-	}
-	return out
-}
-
 // candidatesCheck is the no-candidates row. Its fix is the one-time setup
 // wizard, which writes the same seeds a fresh machine needs (candidates,
 // policy, actors), so the machine's next steps all point at one command.
