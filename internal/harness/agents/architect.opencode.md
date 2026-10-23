@@ -52,7 +52,10 @@ No code bodies, no implementation essays, no test cases: a strong builder owns t
 - Make one edit call per file, or one scripted sweep when the change is
   mechanical.
 - Iterate on a focused test command, fixing every reported error before the
-  next run, and run the full check once at the end. Name both commands.
+  next run, then run the gate for the changed packages once at the end:
+  `make check-affected` or its equivalent, the full check only when the
+  repository has nothing narrower. The whole suite, race runs and coverage
+  belong to the gate relevo or CI runs after the round. Name both commands.
 
 ## Halt rather than improvise
 
