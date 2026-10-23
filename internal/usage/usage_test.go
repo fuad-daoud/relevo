@@ -219,3 +219,25 @@ func TestAddCosts(t *testing.T) {
 		t.Errorf("Add with a zero-token unknown side = %+v, want the first side unchanged", got)
 	}
 }
+
+// TestAddPlanLane pins that a plan-lane segment keeps its cost when no other
+// segment moved tokens, and poisons the sum once a second one did.
+func TestAddPlanLane(t *testing.T) {
+	plan := Usage{Tokens: Tokens{In: 200, Out: 30}, Cost: Cost{USD: 0.40, Basis: Measured, Plan: true}}
+	billed := Usage{Tokens: Tokens{In: 100, Out: 50}, Cost: Cost{USD: 0.25, Basis: Measured}}
+
+	got := Add(plan, Usage{})
+	if got != plan {
+		t.Errorf("Add(plan, zero) = %+v, want the plan segment unchanged", got)
+	}
+
+	got = Add(plan, billed)
+	if got.Cost.Basis != Unknown || got.Cost.USD != 0 || got.Tokens != (Tokens{In: 300, Out: 80}) {
+		t.Errorf("Add(plan, billed) = %+v, want unknown/0 with summed tokens", got)
+	}
+
+	got = Add(billed, plan)
+	if got.Cost.Basis != Unknown || got.Cost.USD != 0 || got.Tokens != (Tokens{In: 300, Out: 80}) {
+		t.Errorf("Add(billed, plan) = %+v, want unknown/0 with summed tokens", got)
+	}
+}

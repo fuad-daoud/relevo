@@ -154,8 +154,8 @@ func Fold(samples []Sample, prices Prices, plan bool, note string) Usage {
 // moved tokens without a bill -- an unreadable read, a tokens-only
 // PriorTokens, a plan lane -- leaves the sum Unknown with USD 0, never the
 // priced remainder. A side that moved no tokens adds nothing and poisons
-// nothing; when neither moved any, u's own bill is the sum's, so folding a
-// zero prior leaves the figures that stand. Every other field is u's.
+// nothing; when o moved none, u's cost stands as it is, so folding a zero
+// prior leaves the figures that stand. Every other field is u's.
 func Add(u, o Usage) Usage {
 	total := u
 	total.Tokens = u.Tokens.Add(o.Tokens)
@@ -171,7 +171,7 @@ func Add(u, o Usage) Usage {
 	}
 	switch {
 	case !moved(o):
-		total.Cost = bill(u)
+		// u's cost stands untouched.
 	case !moved(u):
 		total.Cost = bill(o)
 	default:
@@ -182,7 +182,7 @@ func Add(u, o Usage) Usage {
 			if u.Cost.Basis == Estimated || o.Cost.Basis == Estimated {
 				basis = Estimated
 			}
-			total.Cost = Cost{Basis: basis, USD: u.Cost.USD + o.Cost.USD, Plan: u.Cost.Plan || o.Cost.Plan}
+			total.Cost = Cost{Basis: basis, USD: u.Cost.USD + o.Cost.USD}
 		}
 	}
 	return total

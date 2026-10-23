@@ -157,6 +157,39 @@ func TestRoundFactsSingleSegmentUnchanged(t *testing.T) {
 	checkPtr(t, "CostBasis", r.CostBasis, "measured")
 }
 
+func TestRoundFactsPlanLaneSingleSegmentUnchanged(t *testing.T) {
+	planUsage := &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 30}, Cost: usage.Cost{USD: 0.40, Basis: usage.Measured, Plan: true}}
+	events := []store.LogEntry{
+		{Round: 1, Kind: store.KindPrompt},
+		{Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind, Usage: planUsage},
+	}
+
+	r := roundFacts(events, 1)
+
+	checkPtr(t, "InTokens", r.InTokens, int64(200))
+	checkPtr(t, "OutTokens", r.OutTokens, int64(30))
+	checkPtr(t, "CostUSD", r.CostUSD, 0.40)
+	checkPtr(t, "CostBasis", r.CostBasis, "measured")
+}
+
+func TestRoundFactsPlanLaneWithNudgeSegmentIsUnknown(t *testing.T) {
+	events := []store.LogEntry{
+		{Round: 1, Kind: store.KindPrompt},
+		{Round: 1, Kind: store.KindSwitch, Confirmed: true,
+			Note:  "nudged builder (ended its turn): resumed session S1",
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 100, Out: 50}, Cost: usage.Cost{USD: 0.25, Basis: usage.Measured}}},
+		{Round: 1, Kind: store.KindReport, Direction: store.DirToMasterMind,
+			Usage: &usage.Usage{Tokens: usage.Tokens{In: 200, Out: 30}, Cost: usage.Cost{USD: 0.40, Basis: usage.Measured, Plan: true}}},
+	}
+
+	r := roundFacts(events, 1)
+
+	checkPtr(t, "InTokens", r.InTokens, int64(300))
+	checkPtr(t, "OutTokens", r.OutTokens, int64(80))
+	checkPtr(t, "CostUSD", r.CostUSD, 0.0)
+	checkPtr(t, "CostBasis", r.CostBasis, "unknown")
+}
+
 func TestRoundFactsReportWithoutUsageKeepsNoFigures(t *testing.T) {
 	events := []store.LogEntry{
 		{Round: 1, Kind: store.KindPrompt},
