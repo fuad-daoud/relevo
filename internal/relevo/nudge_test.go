@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -610,6 +611,36 @@ func TestWriterNudgeSaysBackgroundWorkDiedAndMustBeRerun(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("writer nudge = %q, want it to say %q", got, want)
+		}
+	}
+}
+
+func TestNudgePromptMentionsShellTimeoutOnOpencode(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	b := store.Binding{Name: "webshop", Round: 1, Builder: store.Endpoint{Kind: "opencode"}}
+	got := nudgePromptFor(rt, b)
+	for _, want := range []string{
+		"over 2 minutes in the foreground with an explicit `timeout` (milliseconds) on the shell call",
+		"write the report to " + rt.Store.ReportPath("webshop", 1),
+		"then create " + rt.Store.DonePath("webshop", 1),
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("opencode nudge = %q, want it to contain %q", got, want)
+		}
+	}
+}
+
+func TestNudgePromptOmitsShellTimeoutForOtherHarnesses(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	for _, kind := range []string{"claude", "agy"} {
+		b := store.Binding{Name: "webshop", Round: 1, Builder: store.Endpoint{Kind: kind}}
+		want := fmt.Sprintf(nudgePromptFormat, rt.Store.ReportPath("webshop", 1), rt.Store.DonePath("webshop", 1))
+		if got := nudgePromptFor(rt, b); got != want {
+			t.Errorf("%s nudge = %q, want exactly %q", kind, got, want)
 		}
 	}
 }

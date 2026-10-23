@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -23,6 +24,11 @@ const nudgeNotePrefix = "nudged builder"
 // "wait for it" as "wait for the run already going" and polls a job that died
 // with its process, so the prompt says that job is gone.
 const nudgePromptFormat = `You ended your turn before writing the report, and nothing will wake you: this process exits when your turn ends. Anything you started in the background in that turn was killed with it: its output and exit files will never be completed, so do not wait for them or poll them. Finish now, in the foreground: re-run any check you still need and wait for it to exit, write the report to %s, then create %s. Do not start background tasks and do not end your turn before both files exist.`
+
+// opencodeTimeoutNote is appended to an opencode builder's nudge: opencode's
+// shell tool kills a call that outlives its default timeout, so a long
+// foreground command needs an explicit one.
+const opencodeTimeoutNote = " Run anything expected to take over 2 minutes in the foreground with an explicit `timeout` (milliseconds) on the shell call."
 
 // readerContinuationPromptFormat is the continuation prompt for a reader:
 // the reader's final message is the deliverable itself, so it is told to
@@ -50,9 +56,14 @@ func nudgeLimit(shape string) int {
 	return writerNudgeLimit
 }
 
-// nudgePrompt renders nudgePromptFormat for one round's report and done paths.
-func nudgePrompt(reportPath, donePath string) string {
-	return fmt.Sprintf(nudgePromptFormat, reportPath, donePath)
+// nudgePrompt renders nudgePromptFormat for one round's report and done paths,
+// plus the shell-timeout note when the builder's harness is opencode.
+func nudgePrompt(reportPath, donePath, kind string) string {
+	prompt := fmt.Sprintf(nudgePromptFormat, reportPath, donePath)
+	if kind == string(account.OpenCode) {
+		prompt += opencodeTimeoutNote
+	}
+	return prompt
 }
 
 // nudgePromptFor renders the nudge prompt for b: a writer is told its round's
@@ -62,7 +73,7 @@ func nudgePrompt(reportPath, donePath string) string {
 func nudgePromptFor(rt Runtime, b store.Binding) string {
 	done := rt.Store.DonePath(b.Name, b.Round)
 	if b.Shape != store.ShapeReader {
-		return nudgePrompt(rt.Store.ReportPath(b.Name, b.Round), done)
+		return nudgePrompt(rt.Store.ReportPath(b.Name, b.Round), done, b.Builder.Kind)
 	}
 	prompt := fmt.Sprintf(readerContinuationPromptFormat, done)
 	if readerLostFences(rt, b) {
