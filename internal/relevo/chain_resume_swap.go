@@ -224,11 +224,16 @@ func chainResumeSwapServed(rt Runtime, tx *store.Tx, c db.ChainRow, builder stor
 	if err != nil {
 		return c, err
 	}
+	set, err := resumeSettings(rt, c, ResumeOptions{})
+	if err != nil {
+		return c, err
+	}
 	facts := servedFacts{
 		owner: builder.Owner, repoID: builder.Serve.RepoID, worktree: builder.CWD,
 		bare: builder.Serve.BareRepo, base: builder.Base, feature: c.Feature, ticket: c.Ticket,
 		subdir:     builder.Subdir,
 		authorName: builder.Serve.AuthorName, authorEmail: builder.Serve.AuthorEmail,
+		plans: c.Plans, settings: set,
 		now: rt.Now().UTC(),
 	}
 	rows, err = applyServedSwaps(tx, swap, swapPicks, rows, &c, snap)

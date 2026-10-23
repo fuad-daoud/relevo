@@ -487,3 +487,126 @@ func TestChainReadDirNoChains(t *testing.T) {
 		t.Errorf("chainReadDir with no chains = %q, want empty", got)
 	}
 }
+
+// setChainMemberRounds plants a member's round and cap, the state a member with
+// no round left is in.
+func setChainMemberRounds(t *testing.T, rt Runtime, name string, round, cap int) {
+	t.Helper()
+	b := chainBinding(t, rt, name)
+	b.Round = round
+	b.RoundCap = cap
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save %s: %v", name, err)
+	}
+}
+
+func sendToChainMember(rt Runtime, name, text string) (store.Binding, error) {
+	var sent store.Binding
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		m, err := tx.Load(name)
+		if err != nil {
+			return err
+		}
+		sent, err = chainSendMember(context.Background(), rt, tx, m, text)
+		return err
+	})
+	return sent, err
+}
+
+func TestChainSendRefusesMemberAtRoundCap(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+	setChainMemberRounds(t, rt, "shop-rev", 3, 2)
+	fr := rt.Runner.(*fakeRunner)
+	startedBefore := fr.started
+
+	_, err := sendToChainMember(rt, "shop-rev", "review the round")
+	if !errors.Is(err, ErrRoundCap) {
+		t.Fatalf("chainSendMember err = %v, want ErrRoundCap", err)
+	}
+	if _, serr := os.Stat(rt.Store.PromptPath("shop-rev", 3)); !errors.Is(serr, os.ErrNotExist) {
+		t.Errorf("staged prompt file stat err = %v, want not exist", serr)
+	}
+	entries := chainLog(t, rt, "shop-rev")
+	if HasPromptEntry(entries, 3) {
+		t.Errorf("reviewer log = %+v, want no prompt entry for round 3", entries)
+	}
+	if fr.started != startedBefore {
+		t.Errorf("runner started %d times, want %d", fr.started, startedBefore)
+	}
+	if store.RoundOpen(entries, 3) {
+		t.Error("round 3 must not be open")
+	}
+}
+
+func TestChainHaltsWithCapReasonWithoutOpeningARound(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	stoppedChain(t, rt, ChainOptions{})
+	setChainMemberRounds(t, rt, "shop", 100, 3)
+	before := chainBinding(t, rt, "shop")
+	logBefore := chainLog(t, rt, "shop")
+	fr := rt.Runner.(*fakeRunner)
+	startedBefore := fr.started
+
+	// The resume raises the cap to the one the chain recomputes, so the
+	// reason carries that cap, not the one planted.
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop"}); err == nil {
+		t.Fatal("ChainResume = nil, want the halt reported")
+	}
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusHalted) {
+		t.Fatalf("chain status = %q, want halted", row.Status)
+	}
+	st, err := chainWorkflowState(row)
+	if err != nil {
+		t.Fatalf("chainWorkflowState: %v", err)
+	}
+	want := "member shop could not start: " + roundCapRefusal("shop", chainBinding(t, rt, "shop").RoundCap).Error()
+	if st.Reason != want {
+		t.Errorf("halt reason = %q, want %q", st.Reason, want)
+	}
+	if !strings.Contains(st.Reason, ErrRoundCap.Error()) {
+		t.Errorf("halt reason %q does not carry the cap text", st.Reason)
+	}
+	after := chainBinding(t, rt, "shop")
+	if after.Round != before.Round {
+		t.Errorf("round = %d, want %d unchanged", after.Round, before.Round)
+	}
+	// The halt notice to the MasterMind is the only entry the halt adds.
+	got := chainLog(t, rt, "shop")
+	for _, e := range got[len(logBefore):] {
+		if store.IsPromptKind(e.Kind) {
+			t.Errorf("halt appended a prompt entry: %+v", e)
+		}
+	}
+	if store.RoundOpen(got, after.Round) {
+		t.Errorf("round %d must not be open", after.Round)
+	}
+	if fr.started != startedBefore {
+		t.Errorf("runner started %d times, want %d", fr.started, startedBefore)
+	}
+}
+
+func TestChainSendAllowsMemberOnItsLastRound(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+	setChainMemberRounds(t, rt, "shop-rev", 2, 2)
+
+	sent, err := sendToChainMember(rt, "shop-rev", "review the round")
+	if err != nil {
+		t.Fatalf("chainSendMember at Round == RoundCap: %v", err)
+	}
+	if sent.Round != 2 {
+		t.Errorf("round = %d, want 2", sent.Round)
+	}
+	if !HasPromptEntry(chainLog(t, rt, "shop-rev"), 2) {
+		t.Error("the last round must open")
+	}
+}

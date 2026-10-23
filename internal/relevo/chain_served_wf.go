@@ -92,11 +92,16 @@ func servedChainAddMembers(rt Runtime, tx *store.Tx, c db.ChainRow, builder stor
 	if builder.Serve == nil {
 		return c, fmt.Errorf("chain %s has a served builder with no serve facts", c.Name)
 	}
+	set, err := resumeSettings(rt, c, ResumeOptions{})
+	if err != nil {
+		return c, err
+	}
 	facts := servedFacts{
 		owner: builder.Owner, repoID: builder.Serve.RepoID, worktree: builder.CWD,
 		bare: builder.Serve.BareRepo, base: builder.Base, feature: c.Feature, ticket: c.Ticket,
 		subdir:     builder.Subdir,
 		authorName: builder.Serve.AuthorName, authorEmail: builder.Serve.AuthorEmail,
+		plans: c.Plans, settings: set,
 		now: rt.Now().UTC(),
 	}
 	rows := make([]db.ChainMemberRow, 0, len(add))

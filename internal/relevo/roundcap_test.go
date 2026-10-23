@@ -9,63 +9,55 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestChainWriterMemberGetsScaledRoundCap pins the scaling: a chain's writer
-// is built with one build round per plan plus the correction and repair
-// budgets and slack, while its reader members leave the store to stamp the
-// default.
-func TestChainWriterMemberGetsScaledRoundCap(t *testing.T) {
+// TestChainMemberRoundCapScalesEveryPart pins each part's per-plan count: the
+// builder and reviewer take 1+corrections+regate, the planner corrections+1 and
+// security 1+corrections, each plus slack.
+func TestChainMemberRoundCapScalesEveryPart(t *testing.T) {
 	t.Parallel()
 
-	rt, _ := chainRuntime(t)
-	settings := chain.Settings{
-		MaxCorrections: 3, Regate: 2,
-		ReviewerActor: "reviewer", PlannerActor: "lite-planner",
+	set := chain.Settings{MaxCorrections: 3, Regate: 2}
+	const plans = 7
+	cases := map[string]int{
+		chain.MemberBuilder:  plans*6 + chainMemberCapSlack,
+		chain.MemberReviewer: plans*6 + chainMemberCapSlack,
+		chain.MemberPlanner:  plans*4 + chainMemberCapSlack,
+		chain.MemberSecurity: plans*4 + chainMemberCapSlack,
 	}
-	opts := ChainOptions{Name: "capchain", Feature: "auth", MasterMindID: testMasterMindName}
-	members := chainMembersFor(opts, settings)
-	resolutions, err := chainResolveActors(rt, members)
-	if err != nil {
-		t.Fatalf("chainResolveActors: %v", err)
-	}
-	base := chainBase{
-		cwd: t.TempDir(), worktree: t.TempDir(), repo: t.TempDir(),
-		feature: "auth", mastermindID: testMasterMindName,
-	}
-	const plans = 8
-	built, err := chainBuildMembers(context.Background(), rt, members, resolutions, base, settings, plans)
-	if err != nil {
-		t.Fatalf("chainBuildMembers: %v", err)
-	}
-
-	want := plans*(1+settings.MaxCorrections+settings.Regate) + chainWriterCapSlack
-	if want <= store.DefaultRoundCap {
-		t.Fatalf("test setup: want %d must exceed the default %d", want, store.DefaultRoundCap)
-	}
-	for _, b := range built {
-		if chainMemberWriter(members, b.Name) {
-			if b.RoundCap != want {
-				t.Errorf("writer %s RoundCap = %d, want %d", b.Name, b.RoundCap, want)
-			}
-			continue
+	for part, want := range cases {
+		if want <= store.DefaultRoundCap {
+			t.Fatalf("test setup: %s want %d must exceed the default %d", part, want, store.DefaultRoundCap)
 		}
-		if b.RoundCap != 0 {
-			t.Errorf("reader %s RoundCap = %d, want 0 (the store stamps the default)", b.Name, b.RoundCap)
+		if got := chainMemberRoundCap(part, plans, set); got != want {
+			t.Errorf("chainMemberRoundCap(%s) = %d, want %d", part, got, want)
 		}
 	}
 }
 
-// TestChainWriterRoundCapFloorsAtTheDefault pins the floor: a one-plan chain
-// still gets the default cap, never less.
-func TestChainWriterRoundCapFloorsAtTheDefault(t *testing.T) {
+// TestChainMemberRoundCapNeverBelowDefault pins the floor: a one-plan chain
+// still gets the default cap for every part, never less.
+func TestChainMemberRoundCapNeverBelowDefault(t *testing.T) {
 	t.Parallel()
 
-	got := chainWriterRoundCap(1, chain.Settings{MaxCorrections: 0, Regate: 0})
-	if got != store.DefaultRoundCap {
-		t.Errorf("chainWriterRoundCap(1, none) = %d, want the default %d", got, store.DefaultRoundCap)
+	for _, part := range []string{chain.MemberBuilder, chain.MemberReviewer, chain.MemberPlanner, chain.MemberSecurity} {
+		if got := chainMemberRoundCap(part, 1, chain.Settings{}); got != store.DefaultRoundCap {
+			t.Errorf("chainMemberRoundCap(%s, 1, none) = %d, want the default %d", part, got, store.DefaultRoundCap)
+		}
 	}
 }
 
-// TestOrdinaryBindingKeepsTheDefaultRoundCap pins that only a chain writer is
+// TestChainMemberRoundCapUnknownPartTakesBuilderCount pins that a part the
+// table does not know is scaled like the builder.
+func TestChainMemberRoundCapUnknownPartTakesBuilderCount(t *testing.T) {
+	t.Parallel()
+
+	set := chain.Settings{MaxCorrections: 3, Regate: 2}
+	got := chainMemberRoundCap("custom", 7, set)
+	if want := chainMemberRoundCap(chain.MemberBuilder, 7, set); got != want {
+		t.Errorf("chainMemberRoundCap(custom) = %d, want the builder's %d", got, want)
+	}
+}
+
+// TestOrdinaryBindingKeepsTheDefaultRoundCap pins that only a chain member is
 // scaled: a plain bind still stores the default cap.
 func TestOrdinaryBindingKeepsTheDefaultRoundCap(t *testing.T) {
 	t.Parallel()

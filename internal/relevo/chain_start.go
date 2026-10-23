@@ -360,8 +360,8 @@ func chainBuildMembers(ctx context.Context, rt Runtime, members []chainMember, r
 		if m.writer {
 			b.Gate = set.Gate
 			b.Regate = set.Regate
-			b.RoundCap = chainWriterRoundCap(plans, set)
 		}
+		b.RoundCap = chainMemberRoundCap(m.part, plans, set)
 		built = append(built, b)
 	}
 	return built, nil

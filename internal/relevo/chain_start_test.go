@@ -212,6 +212,36 @@ func TestChainStartCreatesTheSecurityMemberWhenOn(t *testing.T) {
 	}
 }
 
+// TestChainStartGivesEveryMemberAScaledCap pins that a long chain's reader
+// members, not only its writer, are stored with a cap scaled from the plans.
+func TestChainStartGivesEveryMemberAScaledCap(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	plans := make([]string, 7)
+	for i := range plans {
+		plans[i] = writePlan(t, "build it")
+	}
+	res := startedChain(t, rt, ChainOptions{
+		Plans: plans, Security: ptr(true), MaxCorrections: ptr(3), Regate: ptr(2),
+	})
+
+	set := chain.Settings{MaxCorrections: 3, Regate: 2}
+	for name, part := range map[string]string{
+		"shop": chain.MemberBuilder, "shop-rev": chain.MemberReviewer,
+		"shop-plan": chain.MemberPlanner, "shop-sec": chain.MemberSecurity,
+	} {
+		b := memberByName(t, res.Members, name)
+		want := chainMemberRoundCap(part, len(plans), set)
+		if want <= store.DefaultRoundCap {
+			t.Fatalf("test setup: %s want %d must exceed the default %d", part, want, store.DefaultRoundCap)
+		}
+		if b.RoundCap != want {
+			t.Errorf("%s RoundCap = %d, want %d", name, b.RoundCap, want)
+		}
+	}
+}
+
 // TestChainStartRefusesAnEmptyOrUnreadablePlan pins the plan checks: no plan,
 // a missing file and a blank file each refuse, and nothing is created.
 func TestChainStartRefusesAnEmptyOrUnreadablePlan(t *testing.T) {

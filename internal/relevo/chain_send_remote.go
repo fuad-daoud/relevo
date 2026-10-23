@@ -21,6 +21,11 @@ import (
 // it are written in the same critical section. A remote stage only writes the
 // round's file; the step's own short lock does the recording.
 func chainSendMember(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, text string) (store.Binding, error) {
+	// The cap is checked before the remote/local split so a member with no
+	// round left leaves no staged file, no prompt entry and no process behind.
+	if b.RoundCap > 0 && b.Round > b.RoundCap {
+		return b, roundCapRefusal(b.Name, b.RoundCap)
+	}
 	if b.Builder.Remote() {
 		return chainStageRemote(ctx, rt, b, text)
 	}
