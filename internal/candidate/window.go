@@ -147,8 +147,9 @@ func (w Window) span() (span, error) {
 	if err != nil {
 		return span{}, fmt.Errorf("to %q: %w", w.To, err)
 	}
+	// A fixed date, not "now": a named zone is judged at one instant so the verdict never flips with the calendar.
 	ref := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	if f.At(ref).Equal(t.At(ref)) {
+	if f.At(ref).Sub(t.At(ref))%(24*time.Hour) == 0 {
 		return span{}, fmt.Errorf("from %q equals to %q: a window must cover part of a day", w.From, w.To)
 	}
 	return span{f, t}, nil
