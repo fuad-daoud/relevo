@@ -36,6 +36,15 @@ const readerContinuationPromptFormat = `you stopped before your deliverable; con
 // is a fixed string, so the same loss is worded the same way every round.
 const readerFenceNote = "Your block's opening and closing ``` fences are missing, so none of its values could be read: put ``` on its own line above the block and again below it."
 
+// planNudgeNote is the sentence a plan-writing reader's continuation gains when
+// its output holds no plan steps: the planner pointed at a file or described a
+// plan instead of writing it, and the plan must be the final message itself.
+const planNudgeNote = "Your final message must be the plan itself, as numbered steps; do not write it to a file and do not point to one."
+
+// planNudgeLimit is how many continuations a plan-writing reader is granted for
+// an output with no plan steps: after it the round closes and the chain halts.
+const planNudgeLimit = 1
+
 // readerNudgeLimit is how many continuations a reader is granted before halting.
 const readerNudgeLimit = 2
 
@@ -66,9 +75,31 @@ func nudgePromptFor(rt Runtime, b store.Binding) string {
 	}
 	prompt := fmt.Sprintf(readerContinuationPromptFormat, done)
 	if readerLostFences(rt, b) {
-		return prompt + " " + readerFenceNote
+		prompt += " " + readerFenceNote
+	}
+	if memberWritesPlan(rt, b) && !planHasSteps(readerPlanBody(rt, b)) {
+		prompt += " " + planNudgeNote
 	}
 	return prompt
+}
+
+// memberWritesPlan reports whether b is a chain member whose awaited step
+// writes the plan a builder runs next. A binding outside a chain, a chain with
+// no readable workflow or state, and any other step all give false.
+func memberWritesPlan(rt Runtime, b store.Binding) bool {
+	c, err := rt.Store.ChainByMember(b.Name)
+	if err != nil {
+		return false
+	}
+	def, err := chainWorkflowDef(c)
+	if err != nil {
+		return false
+	}
+	st, err := chainWorkflowState(c)
+	if err != nil {
+		return false
+	}
+	return chainStepWritesPlan(def, st.Awaiting.Step)
 }
 
 // nudgesSincePlan returns the count of nudge switch entries that follow the
@@ -110,7 +141,11 @@ func nudgeResume(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	if codeText != "0" || b.Builder.StreamSessionID == "" {
 		return b, false, nil
 	}
-	if nudgesSincePlan(entries, b.Round) >= nudgeLimit(b.Shape) {
+	limit := nudgeLimit(b.Shape)
+	if memberWritesPlan(rt, b) {
+		limit = min(limit, planNudgeLimit)
+	}
+	if nudgesSincePlan(entries, b.Round) >= limit {
 		return b, false, nil
 	}
 	sess := b.Builder.StreamSessionID
