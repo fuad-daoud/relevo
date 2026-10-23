@@ -64,6 +64,9 @@ func (s *Server) handleGetActor(w http.ResponseWriter, r *http.Request) {
 func actorCandidates(rt relevo.Runtime, role string) []remote.CandidateView {
 	gated := make(map[string]bool)
 	for _, g := range availability.Gates(relevo.AvailabilityDeps(rt)) {
+		if g.Demote {
+			continue
+		}
 		gated[g.Token] = true
 	}
 

@@ -48,6 +48,12 @@ const (
 	// the clock, so Load never needs to validate it. Subject is a candidate
 	// token.
 	Scheduled Kind = "scheduled"
+
+	// ConcurrencyLimit records that a candidate's pool is at its configured
+	// max_concurrency. Like Scheduled it is never written to the ledger file:
+	// concurrencyGates synthesises it from the live round count. Subject is a
+	// candidate token, and the provider is not gated.
+	ConcurrencyLimit Kind = "concurrency_limit"
 )
 
 // ErrBadEntry reports a ledger entry that fails validation.

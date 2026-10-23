@@ -475,6 +475,8 @@ func GateKindText(k Kind) string {
 		return "agents missing"
 	case Scheduled:
 		return "outside window"
+	case ConcurrencyLimit:
+		return "at concurrency limit"
 	default:
 		return string(k)
 	}
@@ -520,10 +522,14 @@ func GateUntilText(until time.Time) string {
 	return "until " + GateTimeText(until)
 }
 
+// noteIsReason reports a kind whose Note is the whole statement of why it
+// gates, so "until cleared" would be wrong for it.
+func noteIsReason(k Kind) bool { return k == Scheduled || k == ConcurrencyLimit }
+
 // GateText is the one rendering of a gate's reason: a Scheduled gate's note is
 // the whole statement, every other kind reads as its kind and its Until.
 func GateText(k Kind, until time.Time, note string) string {
-	if k == Scheduled {
+	if noteIsReason(k) {
 		return note
 	}
 	return GateKindText(k) + " " + GateUntilText(until)
@@ -532,7 +538,7 @@ func GateText(k Kind, until time.Time, note string) string {
 // UntilText is the gate's "until ..." wording, empty for a Scheduled gate
 // whose note already says when it lifts.
 func (g Gate) UntilText() string {
-	if g.Kind == Scheduled {
+	if noteIsReason(g.Kind) {
 		return ""
 	}
 	return GateUntilText(g.Until)
@@ -561,7 +567,7 @@ func gatedNote(d Deps, token string) string {
 // gatePart is one gate's clause in the advisory line: a Scheduled gate's note
 // is the whole statement, every other kind reads kind, since, until and note.
 func gatePart(g Gate) string {
-	if g.Kind == Scheduled {
+	if noteIsReason(g.Kind) {
 		return g.Note
 	}
 	part := fmt.Sprintf("%s since %s %s", GateKindText(g.Kind), GateTimeText(g.Since), g.UntilText())

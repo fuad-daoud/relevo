@@ -436,10 +436,25 @@ func roleOff(reg *roles.Registry, role, token string) bool {
 // was gated, in skipped.
 func allGated(role string, skipped []Skip) (Resolution, error) {
 	texts := make([]string, 0, len(skipped))
+	var waits, real bool
 	for _, s := range skipped {
 		texts = append(texts, skipText(s, identityName))
+		switch {
+		case s.Off:
+		case s.Kind == availability.Scheduled || s.Kind == availability.ConcurrencyLimit:
+			waits = true
+		default:
+			real = true
+		}
 	}
-	return Resolution{}, fmt.Errorf("every candidate serving %q is gated: %s; name one with --candidate to bypass, or clear a gate with relevo gate --clear <provider>: %w", role, strings.Join(uniqStrings(texts), ", "), ErrAllGated)
+	next := "name one with --candidate to bypass, or clear a gate with relevo gate --clear <provider>"
+	if waits {
+		next = "name one with --candidate to bypass, or wait for a window to open or a running round to finish"
+		if real {
+			next += ", or clear a gate with relevo gate --clear <provider>"
+		}
+	}
+	return Resolution{}, fmt.Errorf("every candidate serving %q is gated: %s; %s: %w", role, strings.Join(uniqStrings(texts), ", "), next, ErrAllGated)
 }
 
 // identityName leaves every token as it is. It is what ExplainResolution

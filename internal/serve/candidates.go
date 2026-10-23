@@ -20,6 +20,9 @@ func (s *Server) handleCandidates(w http.ResponseWriter, r *http.Request) {
 	gates := availability.Gates(relevo.AvailabilityDeps(rt))
 	gatedMap := make(map[string]bool, len(gates))
 	for _, g := range gates {
+		if g.Demote {
+			continue
+		}
 		gatedMap[g.Token] = true
 	}
 

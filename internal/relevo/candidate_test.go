@@ -646,3 +646,26 @@ func TestResolveRoleByName(t *testing.T) {
 		t.Errorf("resolveCandidate(nope) err = %v, want ErrUnknownCandidate", err)
 	}
 }
+
+func TestAllGatedNamesTheCap(t *testing.T) {
+	capped := availability.Gate{Token: testAgyRef, Kind: availability.ConcurrencyLimit, Note: "2/2"}
+	_, err := allGated("builder", skipsFor([]availability.Gate{capped}, testAgyRef))
+	if !errors.Is(err, ErrAllGated) {
+		t.Fatalf("err = %v, want ErrAllGated", err)
+	}
+	msg := err.Error()
+	for _, want := range []string{"agy/test/m (2/2)", "running round to finish"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q lacks %q", msg, want)
+		}
+	}
+	if strings.Contains(msg, "gate --clear") {
+		t.Errorf("error %q offers gate --clear for a cap", msg)
+	}
+
+	_, err = allGated("builder", skipsFor([]availability.Gate{limit(testAgyRef)}, testAgyRef))
+	want := `every candidate serving "builder" is gated: agy/test/m (rate-limited until cleared); name one with --candidate to bypass, or clear a gate with relevo gate --clear <provider>: ` + ErrAllGated.Error()
+	if err == nil || err.Error() != want {
+		t.Errorf("pure-gate text = %v, want %q", err, want)
+	}
+}

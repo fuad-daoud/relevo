@@ -231,7 +231,9 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 
 	pick := pickFor(rt)
-	gates := append(availability.Gates(AvailabilityDeps(rt)), roundExclusionGates(b)...)
+	deps := AvailabilityDeps(rt)
+	deps.InFlightExcept = b.Name
+	gates := append(availability.Gates(deps), roundExclusionGates(b)...)
 
 	// A limit gated the account this binding is on: retry the same candidate
 	// on the next ungated login of its pool before the actor order is walked

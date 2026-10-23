@@ -40,20 +40,18 @@ func (s *Server) cap() int {
 	return s.live().Policy.MaxBuildersOrDefault()
 }
 
-// census counts running headless builders and queued rounds across all owners.
-// A per-owner List error is logged and skipped; the first is returned after the
-// walk, and the census is still usable.
-func (s *Server) census() (census, error) {
-	var c census
+// walkOwners lists every owner's bindings and hands them to visit. A per-owner
+// List error is logged and skipped; the first is returned after the walk.
+func (s *Server) walkOwners(visit func(id remote.ClientID, ownerPath string, bindings []store.Binding)) error {
 	var firstErr error
 
 	bindingsDir := filepath.Join(s.cfg.Root, "bindings")
 	entries, err := os.ReadDir(bindingsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return c, nil
+			return nil
 		}
-		return c, err
+		return err
 	}
 
 	for _, entry := range entries {
@@ -71,10 +69,40 @@ func (s *Server) census() (census, error) {
 			}
 			continue
 		}
+		visit(id, ownerPath, bindings)
+	}
+	return firstErr
+}
 
+// inFlightFor is the machine-wide live-round count per candidate for a runtime
+// rooted at root: every owner's bindings, with the binding named by except
+// left out only in root's own store, because binding names repeat across
+// owners.
+func (s *Server) inFlightFor(root string) func(string) map[string]int {
+	return func(except string) map[string]int {
+		out := map[string]int{}
+		_ = s.walkOwners(func(_ remote.ClientID, ownerPath string, bindings []store.Binding) {
+			skip := ""
+			if ownerPath == root {
+				skip = except
+			}
+			for tok, n := range relevo.CountInFlight(bindings, skip) {
+				out[tok] += n
+			}
+		})
+		return out
+	}
+}
+
+// census counts running headless builders and queued rounds across all owners.
+// A per-owner List error is logged and skipped; the first is returned after the
+// walk, and the census is still usable.
+func (s *Server) census() (census, error) {
+	var c census
+	firstErr := s.walkOwners(func(id remote.ClientID, ownerPath string, bindings []store.Binding) {
 		for _, b := range bindings {
 			switch {
-			case b.Builder.Headless() && b.Builder.PID != 0 && b.State != store.StateDone && b.State != store.StatePaused:
+			case relevo.LiveBuilder(b):
 				c.Running++
 			case !b.QueuedAt.IsZero() && b.State == store.StateActive:
 				c.Queued = append(c.Queued, queuedRound{
@@ -82,7 +110,7 @@ func (s *Server) census() (census, error) {
 				})
 			}
 		}
-	}
+	})
 
 	sort.Slice(c.Queued, func(i, j int) bool {
 		a, b := c.Queued[i], c.Queued[j]

@@ -444,6 +444,7 @@ func ledgerRuntime(s *Server) relevo.Runtime {
 		Candidates: cfg.Candidates,
 		Policy:     cfg.Policy,
 		Store:      store.New(s.cfg.Root),
+		InFlight:   s.inFlightFor(""),
 		Gates:      s.gates,
 		History:    s.cfg.DB,
 		Now:        s.cfg.Now,

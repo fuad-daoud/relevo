@@ -1,0 +1,82 @@
+package relevo
+
+import (
+	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/store"
+)
+
+func inflightBinding(name, tok string, mut func(*store.Binding)) store.Binding {
+	b := store.Binding{
+		Name:             name,
+		CWD:              "/tmp/" + name,
+		BuilderCandidate: tok,
+		Builder:          store.Endpoint{Mode: store.ModeHeadless, PID: 100},
+		State:            store.StateActive,
+		Round:            1,
+	}
+	if mut != nil {
+		mut(&b)
+	}
+	return b
+}
+
+func TestInFlightCountsOnlyLiveBuilders(t *testing.T) {
+	const tok = "opencode/test/m"
+	bs := []store.Binding{
+		inflightBinding("live", tok, nil),
+		inflightBinding("noproc", tok, func(b *store.Binding) { b.Builder.PID = 0 }),
+		inflightBinding("done", tok, func(b *store.Binding) { b.State = store.StateDone }),
+		inflightBinding("paused", tok, func(b *store.Binding) { b.State = store.StatePaused }),
+		inflightBinding("remote", tok, func(b *store.Binding) { b.Builder.Mode = "" }),
+	}
+	if got := openRoundsByCandidate(bs)[tok]; got != 1 {
+		t.Errorf("count = %d, want 1 (only the live headless builder)", got)
+	}
+}
+
+func TestInFlightSpansThePool(t *testing.T) {
+	set := candidateSet(t, `[
+	  {"name":"a","harness":"opencode","provider":"p","model":"a","roles":["builder"],"max_concurrency":2},
+	  {"name":"b","harness":"opencode","provider":"p","model":"b","roles":["builder"],"max_concurrency":2}
+	]`)
+	st := store.New(t.TempDir())
+	for _, b := range []store.Binding{
+		inflightBinding("one", "opencode/p/a", nil),
+		inflightBinding("two", "opencode/p/b", nil),
+	} {
+		if err := st.Save(b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rt := Runtime{Store: st, Candidates: set}
+	gates := availability.Gates(AvailabilityDeps(rt))
+	if len(gates) != 2 {
+		t.Fatalf("gates = %+v, want both models of the pool at the cap", gates)
+	}
+	for _, g := range gates {
+		if g.Kind != availability.ConcurrencyLimit || g.Note != "2/2" {
+			t.Errorf("gate = %+v, want concurrency_limit 2/2", g)
+		}
+	}
+}
+
+func TestInFlightExceptSkipsTheResolvingBinding(t *testing.T) {
+	st := store.New(t.TempDir())
+	for _, b := range []store.Binding{
+		inflightBinding("mine", "opencode/p/a", nil),
+		inflightBinding("other", "opencode/p/a", nil),
+	} {
+		if err := st.Save(b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	in := AvailabilityDeps(Runtime{Store: st}).InFlight
+	if got := in("")["opencode/p/a"]; got != 2 {
+		t.Errorf("count = %d, want 2", got)
+	}
+	if got := in("mine")["opencode/p/a"]; got != 1 {
+		t.Errorf("count excluding mine = %d, want 1", got)
+	}
+}

@@ -45,4 +45,11 @@ type Deps struct {
 	// the normal case for a caller with no daemon behind it: the gate is written
 	// and the next ordinary trigger exports it.
 	SyncNow func()
+	// InFlight counts the rounds live on each candidate token, leaving out the
+	// binding named by except. Nil means no count is available, so every
+	// candidate reads as under its cap.
+	InFlight func(except string) map[string]int
+	// InFlightExcept names the binding whose own round must not count against
+	// its own candidate: the one being replaced, not started.
+	InFlightExcept string
 }
