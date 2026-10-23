@@ -40,18 +40,14 @@ type procRequest struct {
 // no tmp root -- container mode, whose processes see the container's own
 // /tmp, and any host that names none -- prepares nothing and errors never.
 //
-// Today the only thing prepared is a round's private temp directory, and
-// only a check of that rule distinguishes the kinds.
+// What it prepares is the process's private temp directory under the
+// runtime's tmp root, named by the rule for the request's kind and key; a
+// kind whose rule names no directory passes through with nothing prepared.
 func prepareProc(ctx context.Context, rt Runtime, req procRequest) (string, []string, func(), error) {
 	if rt.TmpRoot == "" || req.kind != procKindRound || req.binding == nil {
 		return "", nil, func() {}, nil
 	}
 
-	// C3 insertion point, cache prep: ensure this process's build-cache
-	// entry here and return its env additions with the round dir below.
-	//
-	// C3 insertion point, cache release: compose the cache's undo into the
-	// cleanup below rather than replacing it.
 	b := *req.binding
 	dir, err := rt.Store.EnsureTmpEntry(rt.TmpRoot, roundTmpRel(b.Name, b.Round))
 	if err != nil {

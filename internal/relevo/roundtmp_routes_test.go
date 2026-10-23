@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -75,6 +76,31 @@ func TestStartProcessSetsSpecTmpDir(t *testing.T) {
 		t.Errorf("spec TmpDir = %q, want %q", fr.specs[0].TmpDir, want)
 	}
 	mustExist(t, want)
+}
+
+// TestStartProcessFailedStartRemovesTmp pins the failed start's own undoing:
+// when Runner.Start errors, no process exists whose later close or kill hook
+// could take the directory away, so the start itself must put back what the
+// preparation made before it returns the error.
+func TestStartProcessFailedStartRemovesTmp(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := seedHeadless(t, fr)
+	rt.TmpRoot = t.TempDir()
+	fr.startErr = errors.New("injected start failure")
+
+	err := rt.Store.WithLock(func(tx *store.Tx) error {
+		_, err := startProcess(context.Background(), rt, tx, b, []string{"echo", "hi"}, candidate.Candidate{Harness: "agy"})
+		return err
+	})
+	if err == nil {
+		t.Fatal("startProcess = nil, want the injected Start failure")
+	}
+	if len(fr.specs) != 0 {
+		t.Errorf("specs = %d, want none: Start errored", len(fr.specs))
+	}
+	mustBeGone(t, roundTmpPath(rt, b.Name, b.Round))
 }
 
 // TestRoundTmpDirReaderSameAsWriter pins that the rule is shape-blind: a
