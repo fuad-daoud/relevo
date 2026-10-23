@@ -148,6 +148,8 @@ type Git interface {
 // daemon can be driven by a fake in tests.
 type Runtime struct {
 	Git Git
+	// SkillExists reports whether a skill file is on disk; nil means os.Stat.
+	SkillExists func(string) bool
 	// Runner starts and stops headless builder processes (#99). cmd/relevo
 	// wires proc.New(); tests wire fakeRunner. Nil means no headless path
 	// can run, and reports ErrRunnerUnavailable.

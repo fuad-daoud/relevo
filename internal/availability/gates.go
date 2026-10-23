@@ -473,6 +473,8 @@ func GateKindText(k Kind) string {
 		return "exited without a report"
 	case RolesMissing:
 		return "agents missing"
+	case SkillMissing:
+		return "skill missing"
 	case Scheduled:
 		return "outside window"
 	case ConcurrencyLimit:
@@ -524,7 +526,7 @@ func GateUntilText(until time.Time) string {
 
 // noteIsReason reports a kind whose Note is the whole statement of why it
 // gates, so "until cleared" would be wrong for it.
-func noteIsReason(k Kind) bool { return k == Scheduled || k == ConcurrencyLimit }
+func noteIsReason(k Kind) bool { return k == Scheduled || k == ConcurrencyLimit || k == SkillMissing }
 
 // GateText is the one rendering of a gate's reason: a Scheduled gate's note is
 // the whole statement, every other kind reads as its kind and its Until.

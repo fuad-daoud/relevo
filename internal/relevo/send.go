@@ -302,7 +302,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 				remoteBuilder = c.Ref().String()
 			}
 		} else {
-			p, err := ResolveSendBuilderFor(rt, bindingRole(b), b.BuilderCandidate, opts.Builder)
+			p, err := resolveSendBuilder(rt, bindingRole(b), b.BuilderCandidate, opts.Builder, b.CWD)
 			if err != nil {
 				return preflight{}, err
 			}
@@ -450,8 +450,8 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 
 	// The gate is advisory only: a gated candidate can still be sent to, it
 	// just tells the human the daemon would switch away after the start.
-	for _, g := range availability.Gates(AvailabilityDeps(rt)) {
-		if g.Token == b.BuilderCandidate && (g.Kind == availability.RateLimited || g.Kind == availability.RolesMissing || windowBlock(g)) {
+	for _, g := range withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), b.CWD) {
+		if g.Token == b.BuilderCandidate && (g.Kind == availability.RateLimited || g.Kind == availability.RolesMissing || g.Kind == availability.SkillMissing || windowBlock(g)) {
 			gate := g
 			pf.gate = &gate
 			break
@@ -885,7 +885,7 @@ func dryRunGateNote(g *availability.Gate) string {
 	if windowBlock(*g) {
 		return g.Note + "; this round runs here, the next round re-picks"
 	}
-	if g.Kind == availability.RolesMissing {
+	if g.Kind == availability.RolesMissing || g.Kind == availability.SkillMissing {
 		return g.Note + "; the daemon would switch after start"
 	}
 	return availability.GateKindText(g.Kind) + " " + availability.GateUntilText(g.Until) + "; the daemon would switch after start"

@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -255,7 +254,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	if err != nil {
 		return AddResult{}, err
 	}
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), opts.Candidate, roleName, pickFor(rt))
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, addSkillGates(ctx, rt, opts), opts.Candidate, roleName, pickFor(rt))
 	if err != nil {
 		return AddResult{}, err
 	}

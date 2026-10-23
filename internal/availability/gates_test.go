@@ -1170,3 +1170,13 @@ func TestReasonResetAtNowLiftsTheGate(t *testing.T) {
 		t.Errorf("Gates = %+v, want none: the reason's reset lifts the gate now", gates)
 	}
 }
+
+func TestSkillMissingTextIsTheNote(t *testing.T) {
+	t.Parallel()
+	if got := GateText(SkillMissing, time.Time{}, "skill x not found"); got != "skill x not found" {
+		t.Errorf("GateText = %q, want the note", got)
+	}
+	if got := GateKindText(SkillMissing); got != "skill missing" {
+		t.Errorf("GateKindText = %q", got)
+	}
+}

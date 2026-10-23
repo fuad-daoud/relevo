@@ -283,7 +283,7 @@ func resolveRoleBase(reg *roles.Registry, set *candidate.Set, gates []availabili
 		// every other explicit-pick gate does) would only spawn it to die
 		// within seconds (#238).
 		for _, g := range gates {
-			if g.Token == tok && g.Kind == availability.RolesMissing {
+			if g.Token == tok && (g.Kind == availability.RolesMissing || g.Kind == availability.SkillMissing) {
 				return Resolution{}, fmt.Errorf("%s: %s", c.Name, g.Note)
 			}
 		}

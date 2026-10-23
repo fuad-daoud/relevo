@@ -2014,6 +2014,14 @@ found: looked at <paths>` with the fix to install it there. Doctor takes
 `<repo>` from its working directory. Accounts with their own per-process home
 (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) are checked against the default home only.
 
+The pick applies the same check. A candidate whose harness cannot see a
+required skill is skipped, and the pick line says why; when every candidate is
+skipped the pick fails with that reason, and a candidate named with
+`--candidate` is refused. A bind that cuts a worktree runs in a fresh tree, so
+a project-local skill there must be committed at the base: an untracked one is
+reported as such (`commit it or install it per user`). A bind on a server is
+not judged here; the server's own pick judges its own disk.
+
 An actor named `builder`, `librarian`, `reviewer` or `researcher` keeps that builtin's
 shape: `builder` and `librarian` must run a writer agent, `reviewer` and `researcher` a reader.
 An unknown agent, a reader with `check`, or a builtin actor with the wrong
