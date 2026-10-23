@@ -242,7 +242,8 @@ func TestArchitectCarriesRoundTripGuidance(t *testing.T) {
 			"## Working efficiently",
 			"Hand over locations, not searches",
 			"one edit call",
-			"run the full check once",
+			"run the gate for the changed packages once",
+			"belong to the gate relevo or CI runs after the round",
 		} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s architect body lacks %q", h.Kind, want)
