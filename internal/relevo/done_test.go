@@ -229,3 +229,63 @@ func TestChainServerDoneKept(t *testing.T) {
 		t.Errorf("DoneText = %q, want no kept worktree line", text2)
 	}
 }
+
+func openRoundWithoutProcess(t *testing.T) Runtime {
+	t.Helper()
+	rt, b := seedHeadless(t, newFakeRunner())
+	b.Round = 1
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	return rt
+}
+
+func TestDoneWritesStopEntryForARoundThatNeverSpawned(t *testing.T) {
+	t.Parallel()
+
+	rt := openRoundWithoutProcess(t)
+	if err := rt.Store.AppendLog("webshop", store.LogEntry{
+		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: "p.md",
+	}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+	if _, err := Done(context.Background(), rt, "webshop"); err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	st := stopEntries(t, rt, "webshop")
+	if len(st) != 1 || st[0].Note != "stopped/done" || st[0].Round != 1 {
+		t.Errorf("stop entries = %+v, want one stopped/done on round 1", st)
+	}
+}
+
+func TestDoneTwiceWritesOneStopEntry(t *testing.T) {
+	t.Parallel()
+
+	rt := openRoundWithoutProcess(t)
+	if err := rt.Store.AppendLog("webshop", store.LogEntry{
+		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: "p.md",
+	}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := Done(context.Background(), rt, "webshop"); err != nil {
+			t.Fatalf("Done #%d: %v", i+1, err)
+		}
+	}
+	st := stopEntries(t, rt, "webshop")
+	if len(st) != 1 || st[0].Note != "stopped/done" || st[0].Round != 1 {
+		t.Errorf("stop entries = %+v, want exactly one stopped/done on round 1", st)
+	}
+}
+
+func TestDoneWritesNoStopEntryWhenNoRoundIsOpen(t *testing.T) {
+	t.Parallel()
+
+	rt := openRoundWithoutProcess(t)
+	if _, err := Done(context.Background(), rt, "webshop"); err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	if st := stopEntries(t, rt, "webshop"); len(st) != 0 {
+		t.Errorf("stop entries = %+v, want none", st)
+	}
+}

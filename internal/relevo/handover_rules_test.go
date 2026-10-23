@@ -172,3 +172,36 @@ func TestTakeoverPlanRules(t *testing.T) {
 		t.Errorf("a taker that never imported the writer but holds the root = (%+v, %v), want fence 0", dec, err)
 	}
 }
+
+func TestHandoverRefusalRefusesARemoteThatIsNotOrigins(t *testing.T) {
+	t.Parallel()
+	const https = "https://github.com/acme/webshop.git"
+	cases := []struct {
+		name                         string
+		remote, remoteURL, originURL string
+		want                         string
+	}{
+		{"origin by name", "origin", "", "", ""},
+		{"same URL in ssh and https form", "mirror", "git@github.com:acme/webshop.git", https, ""},
+		{"different URL", "mirror", "https://github.com/other/webshop.git", https, "without --remote"},
+		{"empty origin URL", "mirror", https, "", "origin"},
+		{"unreadable remote URL", "mirror", "", https, "origin"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := okFacts()
+			f.Remote, f.RemoteURL, f.OriginURL = tc.remote, tc.remoteURL, tc.originURL
+			_, err := HandoverRefusal(f)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "without --remote") {
+				t.Fatalf("refusal = %v, want it to contain %q and the way forward", err, tc.want)
+			}
+		})
+	}
+}

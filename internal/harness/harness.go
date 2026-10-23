@@ -347,6 +347,9 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 	if err != nil {
 		return Launch{}, err
 	}
+	if err := claudeBuilderEdit(h.Kind, role, tier); err != nil {
+		return Launch{}, err
+	}
 	if h.Kind == "claude" && (tier == TierRead || tier == TierEdit) {
 		perm = append(perm, PromptFilePlaceholder, ChainDirPlaceholder)
 	}

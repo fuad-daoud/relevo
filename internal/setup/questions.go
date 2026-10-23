@@ -56,7 +56,7 @@ const builderPrompt = "Which models build code? Pick one or more, comma-separate
 
 // tierPrompt says plainly what each tier lets a builder do, because nothing
 // else in the flow may hide it.
-const tierPrompt = "How much may a builder do without asking? yolo lets them run any command in their worktree without asking; at edit they change files but a claude builder cannot run tests or git"
+const tierPrompt = "How much may a builder do without asking? yolo lets them run any command in their worktree without asking; at edit only a codex builder can bind, and it runs inside its workspace sandbox"
 
 // Questions are the questions still open, in the order the front end asks
 // them: opencode's models where it stands, builder, planner, the optional
@@ -197,7 +197,7 @@ func tierQuestion() Question {
 		Prompt:      tierPrompt,
 		Choices: []Choice{
 			{Value: "yolo", Label: "yolo", Why: "builders run tests, git and any command in their worktree"},
-			{Value: "edit", Label: "edit", Why: "builders only edit files; a claude builder cannot run tests or git"},
+			{Value: "edit", Label: "edit", Why: "only codex builders run at edit, inside its workspace sandbox; claude, agy and opencode builders are refused"},
 		},
 	}
 }

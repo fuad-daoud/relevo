@@ -744,12 +744,12 @@ func TestPrintArgsFillsState(t *testing.T) {
 	}
 
 	claude, _ := Lookup("claude")
-	cl, err := claude.Launch("prov", "m/x", nil, builder, TierEdit)
+	cl, err := claude.Launch("prov", "m/x", nil, readerRole(t), TierEdit)
 	if err != nil {
 		t.Fatalf("claude Launch() TierEdit error = %v", err)
 	}
 	clGot := cl.PrintArgs("p", 0, "/wt", stateDir, "", "")
-	wantClaude := []string{"-p", "p", "--model", "m/x", "--agent", "plan-executor",
+	wantClaude := []string{"-p", "p", "--model", "m/x", "--agent", "reviewer",
 		"--output-format", "stream-json", "--verbose", "--add-dir", stateDir, "--permission-mode", "acceptEdits"}
 	if !reflect.DeepEqual(clGot, wantClaude) {
 		t.Errorf("claude PrintArgs = %v, want %v", clGot, wantClaude)
@@ -927,16 +927,12 @@ func TestTableExactValues(t *testing.T) {
 }
 
 func TestPrintArgsPromptFile(t *testing.T) {
-	builder, ok := RoleByName("builder")
-	if !ok {
-		t.Fatal("RoleByName(\"builder\") not found")
-	}
 	claude, ok := Lookup("claude")
 	if !ok {
 		t.Fatal("Lookup(\"claude\") not found")
 	}
 
-	l, err := claude.Launch("anthropic", "sonnet", nil, builder, TierEdit)
+	l, err := claude.Launch("anthropic", "sonnet", nil, readerRole(t), TierEdit)
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
@@ -972,16 +968,12 @@ func TestPrintArgsPromptFile(t *testing.T) {
 }
 
 func TestPrintArgsChainDir(t *testing.T) {
-	builder, ok := RoleByName("builder")
-	if !ok {
-		t.Fatal("RoleByName(\"builder\") not found")
-	}
 	claude, ok := Lookup("claude")
 	if !ok {
 		t.Fatal("Lookup(\"claude\") not found")
 	}
 
-	l, err := claude.Launch("anthropic", "sonnet", nil, builder, TierEdit)
+	l, err := claude.Launch("anthropic", "sonnet", nil, readerRole(t), TierEdit)
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}

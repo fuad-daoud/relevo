@@ -23,7 +23,7 @@ func traceChain(t *testing.T, rt Runtime) {
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
-	chainReaderClose(t, rt, "shop-plan", chainDoneBody())
+	chainReaderClose(t, rt, "shop-plan", chainPlanBody())
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
 }

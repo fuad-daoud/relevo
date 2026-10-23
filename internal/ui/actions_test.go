@@ -1237,3 +1237,26 @@ func TestFooterDropsWholeKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestCockpitUnbindOfAKeptWorktreeShowsTheHint(t *testing.T) {
+	st := store.New(t.TempDir())
+	wt := t.TempDir()
+	b := store.Binding{
+		Name: "webshop", CWD: wt, Worktree: wt, State: store.StateActive,
+		MasterMind: store.Endpoint{Kind: "claude", SessionID: "s"},
+		Builder:    store.Endpoint{Mode: store.ModeHeadless},
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	a := &mastermindActions{live: newLiveRuntime(relevo.Runtime{Store: st, Now: time.Now})}
+
+	res := a.Unbind(context.Background(), "webshop")
+	if !errors.Is(res.Err, relevo.ErrWorktreeKept) {
+		t.Fatalf("err = %v, want ErrWorktreeKept", res.Err)
+	}
+	t.Logf("cockpit message: %s", res.Err)
+	if !strings.Contains(res.Err.Error(), relevo.KeptHint("webshop")) {
+		t.Fatalf("err = %q, want the kept hint", res.Err)
+	}
+}

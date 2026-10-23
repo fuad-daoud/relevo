@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -37,6 +38,32 @@ func TestUnbindDirtyWorktreeAnswers409(t *testing.T) {
 	}
 	if _, err := os.Stat(rt.Store.Dir("dirty")); err != nil {
 		t.Errorf("binding directory missing: %v", err)
+	}
+}
+
+func TestUnbindKeptAnswerCarriesTheReasonOnly(t *testing.T) {
+	env := setupTestEnv(t)
+	rt := env.runtime(t)
+
+	_, wt := seedActiveWithNoRound(t, env, rt, "dirty")
+	if err := os.WriteFile(filepath.Join(wt, "dirty.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/dirty/unbind", nil, "")
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("unbind status = %d, want 409; body: %s", resp.StatusCode, body)
+	}
+	var eb remote.ErrorBody
+	if err := json.Unmarshal(body, &eb); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	t.Logf("message: %s", eb.Message)
+	if !strings.Contains(eb.Message, "uncommitted changes") {
+		t.Errorf("message %q lacks the reason", eb.Message)
+	}
+	if strings.Contains(eb.Message, "--force") || strings.Contains(eb.Message, "serve unbind") {
+		t.Errorf("message %q carries a verb hint", eb.Message)
 	}
 }
 

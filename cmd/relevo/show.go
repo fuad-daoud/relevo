@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -118,6 +119,18 @@ type showFlagValues struct {
 	state       *string
 }
 
+// renamedShowFlag answers --summary with the flag that replaced it. Release
+// notes and old plans still name it, so the flag package's generic "not
+// defined" would leave a reader with no way forward.
+func renamedShowFlag(args []string) error {
+	for _, a := range args {
+		if a == "--summary" || a == "-summary" || strings.HasPrefix(a, "--summary=") {
+			return failNext(codeUsage, "relevo show <name> --output", "--summary is now --output")
+		}
+	}
+	return nil
+}
+
 // showFlagSet defines those flags on fs, in the usage text's order, and
 // returns what they parse into.
 func showFlagSet(fs *flag.FlagSet) *showFlagValues {
@@ -164,6 +177,9 @@ func cmdShow(args []string) error {
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), showUsage)
 		fs.PrintDefaults()
+	}
+	if err := renamedShowFlag(args); err != nil {
+		return err
 	}
 	if err := parseFlags(fs, args); err != nil {
 		return err

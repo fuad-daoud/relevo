@@ -58,7 +58,7 @@ func TestChainSecuritySeedNamesTheWholeChainDiff(t *testing.T) {
 	// Builder round 1 is plan 1; the reviewer asks for one correction.
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
-	chainReaderClose(t, rt, "shop-plan", chainDoneBody())
+	chainReaderClose(t, rt, "shop-plan", chainPlanBody())
 
 	// Builder round 2 is the correction.
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
@@ -277,7 +277,7 @@ func TestChainFixesSeedNamesTheSameWholeChainDiff(t *testing.T) {
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
-	chainReaderClose(t, rt, "shop-plan", chainDoneBody())
+	chainReaderClose(t, rt, "shop-plan", chainPlanBody())
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass"))
 

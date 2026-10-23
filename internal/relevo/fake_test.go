@@ -116,6 +116,10 @@ type fakeGit struct {
 	// remotes is what Remotes answers; nil means a repo with just origin.
 	remotes []string
 
+	// remoteURLs is what RemoteURL answers; nil means origin is
+	// repoFactsOrigin and any other remote is unknown.
+	remoteURLs map[string]string
+
 	snapshotTreeID  string
 	snapshotTreeErr error
 	snapshotCalls   int
@@ -489,6 +493,17 @@ func (f *fakeGit) Remotes(ctx context.Context, dir string) ([]string, error) {
 		return []string{"origin"}, nil
 	}
 	return f.remotes, nil
+}
+
+func (f *fakeGit) RemoteURL(ctx context.Context, dir, remote string) (string, error) {
+	f.calls++
+	if u, ok := f.remoteURLs[remote]; ok {
+		return u, nil
+	}
+	if remote == "origin" {
+		return f.repoFactsOrigin, nil
+	}
+	return "", fmt.Errorf("no such remote: %s", remote)
 }
 
 func (f *fakeGit) DeleteBranch(ctx context.Context, dir, branch string) error {

@@ -199,6 +199,9 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts Resum
 			return ChainResult{}, snap.restore(tx, err)
 		}
 	}
+	if err := chainResumeRaiseCaps(tx, row, len(before.Iter["plans"].Items), set); err != nil {
+		return ChainResult{}, snap.restore(tx, err)
+	}
 	for _, act := range acts {
 		if act.Kind != workflow.ActionSend {
 			continue

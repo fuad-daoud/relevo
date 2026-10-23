@@ -52,6 +52,21 @@ func TestGCKeepsRemoteBindingWhenServerKeepsWorktree(t *testing.T) {
 	}
 }
 
+func TestGCRemoteKeptLineCarriesTheBareReason(t *testing.T) {
+	t.Parallel()
+
+	fr := &fakeRemote{unbindErr: &client.HTTPError{Status: 409, Body: remote.ErrorBody{Code: remote.CodeWorktreeKept, Message: oldServerKeptBody}}}
+	rt, _ := gcRemoteRuntime(t, fr)
+
+	res, err := GC(context.Background(), rt, gcRemoteOpts(GCOptions{}))
+	if err != nil {
+		t.Fatalf("GC: %v", err)
+	}
+	if len(res) != 1 || res[0].KeptReason != "uncommitted changes" || res[0].WorktreeKept != "on zen" {
+		t.Errorf("result = %+v, want reason %q on zen", res, "uncommitted changes")
+	}
+}
+
 func TestGCForcePassesForceToServer(t *testing.T) {
 	t.Parallel()
 

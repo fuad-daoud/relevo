@@ -1007,7 +1007,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// process cannot be mid-write, so the report is trusted and the
 	// omission noted (spec §4.4). A reader whose deliverable is absent
 	// skips this and falls through to the exit-without-report path.
-	if b.Shape != store.ShapeReader || readerDeliverablePresent(rt, b) {
+	if b.Shape != store.ShapeReader || (readerDeliverablePresent(rt, b) && !readerPlanNudgeDue(rt, b, entries, codeText)) {
 		reportPath, fellBack, serr := writeReaderSummary(rt, b)
 		if serr != nil {
 			slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", serr)
@@ -1298,6 +1298,32 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	return switchBuilder(ctx, rt, tx, b, fmt.Sprintf("exited (code %s) %s", codeText, withoutArtifact(b.Shape)), false, true)
 }
 
+// nudgePlanOnMarker resumes an exited plan-writing reader whose marker is down
+// but whose output holds no plan steps. The marker is removed once the resume
+// has started, so the round closes on the resumed runner's exit and not on the
+// marker that was already there. resumed is false, and nothing changes, for any
+// round that does not owe the nudge.
+func nudgePlanOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry) (store.Binding, bool, error) {
+	if rt.Runner == nil {
+		return b, false, nil
+	}
+	codeText := "unknown"
+	if code, ok := rt.Runner.ExitCode(ctx, handleOf(b.Builder), rt.Store.StreamPath(b.Name, b.Round)); ok {
+		codeText = strconv.Itoa(code)
+	}
+	if !readerPlanNudgeDue(rt, b, entries, codeText) {
+		return b, false, nil
+	}
+	next, resumed, err := nudgeResume(ctx, rt, tx, b, entries, codeText, rt.Now().UTC())
+	if err != nil || !resumed {
+		return b, false, err
+	}
+	if rerr := os.Remove(rt.Store.DonePath(b.Name, b.Round)); rerr != nil && !os.IsNotExist(rerr) {
+		slog.Warn("plan nudge could not clear the marker", "binding", b.Name, "round", b.Round, "err", rerr)
+	}
+	return next, true, nil
+}
+
 // readerFinalMessageGrace is how long a reader round whose marker is present
 // waits for its runner to exit before relevo gives up on it: a runner writes
 // its final message just after the marker and then exits, so two minutes is
@@ -1409,6 +1435,10 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		}
 		if early {
 			markerNote = joinNotes(markerNote, readerSummaryEarlyNote)
+		} else if next, resumed, nerr := nudgePlanOnMarker(ctx, rt, tx, b, entries); nerr != nil {
+			return b, false, false, nerr
+		} else if resumed {
+			return next, false, true, nil
 		}
 	}
 	base := b.RoundBaselineTree

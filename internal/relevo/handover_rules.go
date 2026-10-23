@@ -42,6 +42,11 @@ type HandoverFacts struct {
 	// ("" when it can).
 	Dirty      bool
 	Unpushable string
+	// Remote is the remote the branch is pushed to. The URLs are empty when the
+	// remote is origin or could not be read.
+	Remote    string
+	RemoteURL string
+	OriginURL string
 	// Server is a binding with a Link or a remote builder.
 	Server bool
 
@@ -100,7 +105,17 @@ func bindingStateRefusal(f HandoverFacts) error {
 	case f.Unpushable != "":
 		return refuse("binding %q has commits the push cannot carry: %s", f.Name, f.Unpushable)
 	}
-	return nil
+	return RemoteRefusal(f)
+}
+
+// RemoteRefusal refuses a push remote whose URL is not origin's, because the
+// target's bind --resume always fetches origin.
+func RemoteRefusal(f HandoverFacts) error {
+	if f.Remote == "" || f.Remote == "origin" || SameRepo(f.RemoteURL, f.OriginURL) {
+		return nil
+	}
+	return refuse("binding %q cannot go through remote %q: its URL is not origin's, and the target's bind --resume fetches origin, so the branch would be stranded; run relevo handover %s --to %s without --remote, or set %s's URL to origin's",
+		f.Name, f.Remote, f.Name, f.To, f.Remote)
 }
 
 // resolveHandoverTarget turns --to into one installation other than this one. A

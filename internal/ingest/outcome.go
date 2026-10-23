@@ -14,6 +14,7 @@ import (
 //	done marker, no report    -> done_no_report
 //	exit on the current round -> exited
 //	needs_you or Halt on n    -> halted
+//	stop entry, no report     -> done_no_report
 //	switch entry              -> switched
 //	otherwise                 -> open
 //
@@ -22,7 +23,7 @@ import (
 // on the current round names the round it halted, and only that one: a halt
 // recorded against a later round says nothing about an earlier one.
 func deriveOutcome(events []store.LogEntry, n int, b store.Binding, members map[string]bool) string {
-	var hasReport, hasExit, hasSwitch bool
+	var hasReport, hasExit, hasSwitch, hasStop bool
 	for _, e := range events {
 		if e.Round != n {
 			continue
@@ -34,6 +35,8 @@ func deriveOutcome(events []store.LogEntry, n int, b store.Binding, members map[
 			hasExit = true
 		case store.KindSwitch:
 			hasSwitch = true
+		case store.KindStop:
+			hasStop = true
 		}
 	}
 
@@ -46,6 +49,8 @@ func deriveOutcome(events []store.LogEntry, n int, b store.Binding, members map[
 		return db.OutcomeExited
 	case (b.State == store.StateNeedsYou && n == b.Round) || (b.Halt != "" && n == b.Round):
 		return db.OutcomeHalted
+	case hasStop:
+		return db.OutcomeDoneNoReport
 	case hasSwitch:
 		return db.OutcomeSwitched
 	default:

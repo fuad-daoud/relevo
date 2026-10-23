@@ -431,7 +431,7 @@ func TestLimitExitIsGatedNotNudged(t *testing.T) {
 	rt.Policy = orderOf("builder", testClaudeRef, otherRef)
 	if _, err := Bind(context.Background(), rt, BindOptions{
 		Name: "webshop", Candidate: testClaudeRef, MasterMindID: testMasterMindName,
-		CWD: "/repo", Headless: true, Tier: "edit",
+		CWD: "/repo", Headless: true, Tier: "read",
 	}); err != nil {
 		t.Fatalf("Bind --headless: %v", err)
 	}

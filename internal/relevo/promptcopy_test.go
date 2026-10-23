@@ -183,10 +183,10 @@ func TestStartRoundPromptCopy(t *testing.T) {
 		t.Errorf("harness tier copy file %s must not exist: %v", copyPath4, err)
 	}
 
-	// 3c. claude at edit:
+	// 3c. claude at read:
 	fr.specs = nil
 	bClaude, err := Bind(context.Background(), rt, BindOptions{
-		Name: "claude-test", Candidate: testClaudeRef, Tier: "edit", MasterMindID: testMasterMindName, CWD: "/claude-repo",
+		Name: "claude-test", Candidate: testClaudeRef, Tier: "read", MasterMindID: testMasterMindName, CWD: "/claude-repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind claude: %v", err)
@@ -200,7 +200,7 @@ func TestStartRoundPromptCopy(t *testing.T) {
 
 	_, err = startRound(context.Background(), rt, nil, bClaude, launchClaude, false)
 	if err != nil {
-		t.Fatalf("startRound claude edit: %v", err)
+		t.Fatalf("startRound claude read: %v", err)
 	}
 	specClaude := fr.specs[0]
 	pArgClaude := findPromptArg(specClaude.Argv)

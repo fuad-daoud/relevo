@@ -159,6 +159,15 @@ func (c *Client) Remotes(ctx context.Context, dir string) ([]string, error) {
 	return strings.Fields(string(out)), nil
 }
 
+// RemoteURL returns the URL of the named remote; an unknown remote is an error.
+func (c *Client) RemoteURL(ctx context.Context, dir, remote string) (string, error) {
+	out, err := c.run(ctx, dir, nil, "remote", "get-url", remote)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // RemoteBranchExists reports whether remote already has a branch named branch.
 func (c *Client) RemoteBranchExists(ctx context.Context, dir, remote, branch string) (bool, error) {
 	out, err := c.run(ctx, dir, nil, "ls-remote", "--heads", remote, branch)

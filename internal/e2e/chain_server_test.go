@@ -46,7 +46,7 @@ const (
 	chainServerDeadline = 3 * time.Minute
 	// chainServerPlanText is the correction plan the chain's planner writes:
 	// the bytes the builder's round 2 prompt must equal.
-	chainServerPlanText = "# Correction plan\n\nDo it the other way.\n"
+	chainServerPlanText = "# Correction plan\n\n1. Do it the other way.\n"
 )
 
 func TestChainServerE2E(t *testing.T) {

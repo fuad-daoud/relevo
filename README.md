@@ -514,7 +514,8 @@ gives a MasterMind a name of your own.
   archiving its record first. `--pick` chooses from a list in the terminal. A worktree relevo keeps
   (uncommitted changes, or a failed check or removal) keeps the binding too and the verb refuses;
   commit or discard the work and unbind again, or pass `--force` to archive the binding anyway
-  (`--force` goes with a named binding or `--done`, not `--pick`).
+  (`--force` goes with a named binding or `--done`, not `--pick`). The refusal prints the reason and a
+  `next:` line with the `--force` form; for a served binding `relevo serve unbind --force` runs on the server.
 
 - `relevo unbind --done [--dry-run] [--delete] [--force] [--mastermind P | --all-masterminds]` —
   clear the DONE bindings of the calling MasterMind (resolved like every
@@ -2139,12 +2140,14 @@ The flags rendered for each harness kind (verified 2026-09-19 on claude 2.1.278,
 
 | kind | harness | read | edit | yolo |
 |---|---|---|---|---|
-| claude | (none) | `--permission-mode plan --allowedTools=Read(//<round prompt>) --allowedTools=Read(//<chain dir>/**)` | `--permission-mode acceptEdits --allowedTools=Read(//<round prompt>) --allowedTools=Read(//<chain dir>/**)` | `--dangerously-skip-permissions` |
+| claude | (none) | `--permission-mode plan --allowedTools=Read(//<round prompt>) --allowedTools=Read(//<chain dir>/**)` | reader: `--permission-mode acceptEdits --allowedTools=Read(//<round prompt>) --allowedTools=Read(//<chain dir>/**)`; builder: refuse | `--dangerously-skip-permissions` |
 | agy | (none) | `--mode plan` | refuse | `--dangerously-skip-permissions` |
 | opencode | (none) | refuse | refuse | `--auto` |
 | codex | (none) | refuse | `-s workspace-write -c sandbox_workspace_write.writable_roots=["<binding>/out"]` | `--dangerously-bypass-approvals-and-sandbox` |
 
 opencode does not support `read` or `edit` tiers because it has no read-only or edit-only CLI flag. Choosing `read` or `edit` for an opencode candidate is refused immediately with an error directing you to use `--tier harness` (where `opencode.jsonc` decides) or `--tier yolo` (`--auto`).
+
+A claude builder does not support the `edit` tier: headless `acceptEdits` approves file edits and read-only commands such as `git status`, `git log` and `git diff`, but denies `go`, `make` and `git commit`, so a builder could change files without running the gate or committing them. Binding or sending a claude builder (`plan-executor`, `librarian` or any writer actor) at `edit` is refused immediately with an error directing you to `--tier yolo` (`--dangerously-skip-permissions`) or `--tier harness` (where claude's `settings.json` decides). A claude reader keeps `edit`: it only reads the tree and writes its own output file.
 
 agy does not support the `edit` tier: headless `--mode accept-edits` auto-denies every shell command, and relevo cannot grant allow-rules without editing your agy settings. Choosing `edit` for an agy candidate is refused immediately with an error directing you to `--tier yolo` (`--dangerously-skip-permissions`) or `--tier harness` (where agy's `settings.json` decides). A reader on agy therefore binds at `yolo` and needs `--allow-yolo` under the default `max_tier`.
 
