@@ -539,11 +539,7 @@ func gatedNote(d Deps, token string) string {
 		if g.Token != token {
 			continue
 		}
-		part := fmt.Sprintf("%s since %s", GateText(g.Kind, g.Until, g.Note), GateTimeText(g.Since))
-		if g.Note != "" && g.Kind != Scheduled {
-			part += ": " + sanitize.Text(g.Note)
-		}
-		parts = append(parts, part)
+		parts = append(parts, gatePart(g))
 	}
 	if len(parts) == 0 {
 		return ""
@@ -552,6 +548,19 @@ func gatedNote(d Deps, token string) string {
 	// The note names the candidate by its short name; a token no longer
 	// configured reads as itself (NameOf returns it unchanged).
 	return fmt.Sprintf("note: %s is gated: %s; proceeding", d.Candidates.NameOf(token), strings.Join(parts, "; "))
+}
+
+// gatePart is one gate's clause in the advisory line: a Scheduled gate's note
+// is the whole statement, every other kind reads kind, since, until and note.
+func gatePart(g Gate) string {
+	if g.Kind == Scheduled {
+		return g.Note
+	}
+	part := fmt.Sprintf("%s since %s %s", GateKindText(g.Kind), GateTimeText(g.Since), g.UntilText())
+	if g.Note != "" {
+		part += ": " + sanitize.Text(g.Note)
+	}
+	return part
 }
 
 // GatedNote is gatedNote exported for cmd/relevo, which prints it to stderr

@@ -591,6 +591,35 @@ func TestGatedNoteFormatsEveryGate(t *testing.T) {
 	}
 }
 
+func TestGatedNoteKeepsKindSinceUntilOrder(t *testing.T) {
+	now := time.Date(2026, 9, 23, 10, 0, 0, 0, time.Local)
+	t.Cleanup(SetGateClock(func() time.Time { return now }))
+
+	d := testDeps(t)
+	d.Now = func() time.Time { return now }
+	until := time.Date(2026, 9, 23, 14, 0, 0, 0, time.Local)
+	if _, err := Unavailable(d, testClaudeRef, until, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	want := "note: claude-m is gated: rate-limited since 10:00 until 14:00: 5h window; proceeding"
+	if got := gatedNote(d, testClaudeRef); got != want {
+		t.Errorf("gatedNote() = %q, want %q", got, want)
+	}
+}
+
+func TestGatedNoteScheduledIsJustTheNote(t *testing.T) {
+	d := windowDeps(t, `{"only":[{"from":"14:00Z","to":"00:00Z"}]}`, "2026-10-23T10:00:00Z")
+
+	got := gatedNote(d, windowRef)
+	if !strings.HasSuffix(got, "outside window 14:00Z-00:00Z; proceeding") {
+		t.Errorf("gatedNote() = %q, want suffix %q", got, "outside window 14:00Z-00:00Z; proceeding")
+	}
+	if strings.Contains(got, "since") {
+		t.Errorf("gatedNote() = %q, want no since clause", got)
+	}
+}
+
 func TestMutateLedgerPrunes(t *testing.T) {
 	t.Parallel()
 
