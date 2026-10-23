@@ -53,8 +53,8 @@ func TestUnbindKeepsBindingWhenWorktreeKept(t *testing.T) {
 				if !errors.Is(err, ErrWorktreeKept) || !errors.Is(err, ErrRefused) {
 					t.Fatalf("Unbind(archive=%v) err = %v, want ErrWorktreeKept and ErrRefused", archive, err)
 				}
-				if !strings.Contains(err.Error(), "relevo unbind kept --force") || !strings.Contains(err.Error(), wt) {
-					t.Errorf("message %q must name the worktree and the force command", err)
+				if !strings.Contains(err.Error(), wt) || !strings.Contains(err.Error(), "kept (") || strings.Contains(err.Error(), "--force") {
+					t.Errorf("message %q must name the worktree and the reason, with no force hint", err)
 				}
 				if res.WorktreeKept != wt || res.Archived {
 					t.Errorf("result = %+v, want the kept worktree and no archive", res)
@@ -100,7 +100,7 @@ func TestUnbindRemoteWorktreeKeptLeavesLocalBinding(t *testing.T) {
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
 	_, err := Unbind(context.Background(), rt, "api", false)
-	if !errors.Is(err, ErrWorktreeKept) || !strings.Contains(err.Error(), "zen: binding api kept") {
+	if !errors.Is(err, ErrWorktreeKept) || !strings.Contains(err.Error(), "worktree on zen kept: binding api kept") {
 		t.Fatalf("Unbind err = %v, want ErrWorktreeKept naming the server", err)
 	}
 	if _, lerr := st.Load("api"); lerr != nil {
@@ -126,5 +126,29 @@ func TestUnbindRemoteForcePassesForce(t *testing.T) {
 	}
 	if len(fr.unbindForce) != 1 || !fr.unbindForce[0] {
 		t.Errorf("force sent = %v, want [true]", fr.unbindForce)
+	}
+}
+
+const oldServerKeptBody = "binding api kept: worktree /p/api kept (uncommitted changes); commit or discard the work, then unbind again, or `relevo unbind api --force` archives it anyway; on the server: relevo serve unbind --owner SHA256:abc api --force"
+
+func TestUnbindOfAServedBindingNamesTheServerAndTheReason(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	if err := st.Save(remoteBinding("zen")); err != nil {
+		t.Fatal(err)
+	}
+	fr := &fakeRemote{unbindErr: &client.HTTPError{Status: 409, Body: remote.ErrorBody{Code: remote.CodeWorktreeKept, Message: oldServerKeptBody}}}
+	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
+
+	_, err := Unbind(context.Background(), rt, "api", false)
+	if !errors.Is(err, ErrWorktreeKept) {
+		t.Fatalf("Unbind err = %v, want ErrWorktreeKept", err)
+	}
+	if got, want := err.Error(), "worktree on zen kept: uncommitted changes"; got != want {
+		t.Errorf("error = %q, want %q", got, want)
+	}
+	if strings.Contains(err.Error(), "--force") || strings.Contains(err.Error(), "serve unbind") {
+		t.Errorf("error %q carries the server's hints", err)
 	}
 }

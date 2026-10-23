@@ -907,22 +907,12 @@ type UnbindResult struct {
 // worktree was kept; force archives it anyway.
 var ErrWorktreeKept = refusalSentinel("worktree kept")
 
-// worktreeKeptError is ErrWorktreeKept with the wording of one refusal.
-type worktreeKeptError struct{ msg string }
-
-func (e *worktreeKeptError) Error() string { return e.msg }
-
-func (e *worktreeKeptError) Unwrap() error { return ErrWorktreeKept }
-
-// NewWorktreeKept builds an ErrWorktreeKept refusal that reads as msg.
-func NewWorktreeKept(msg string) error { return &worktreeKeptError{msg: msg} }
-
 func keptRefusal(name string, res UnbindResult) error {
 	msg := fmt.Sprintf("binding %s kept: worktree %s kept (%s)", name, res.WorktreeKept, res.KeptReason)
 	if res.ProcessStopped != 0 {
 		msg += fmt.Sprintf("; its builder process (pid %d) was stopped", res.ProcessStopped)
 	}
-	return NewWorktreeKept(msg + fmt.Sprintf("; commit or discard the work, then unbind again, or `relevo unbind %s --force` archives it anyway", name))
+	return NewWorktreeKept(msg)
 }
 
 // askServerUnbind tells a remote binding's server to release it before
@@ -942,7 +932,9 @@ func askServerUnbind(ctx context.Context, rt Runtime, b store.Binding, force boo
 		case httpErr.Status == 404:
 			return nil
 		case httpErr.Status == 409 && httpErr.Body.Code == remote.CodeWorktreeKept:
-			return NewWorktreeKept(b.Builder.Server + ": " + httpErr.Body.Message)
+			reason := KeptReason(httpErr.Body.Message)
+
+			return newWorktreeKeptWithReason("worktree on "+b.Builder.Server+" kept: "+reason, reason)
 		}
 	}
 	if errors.Is(uerr, client.ErrUnreachable) {

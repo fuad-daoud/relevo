@@ -209,7 +209,10 @@ func askRemoteServers(ctx context.Context, rt Runtime, remotes []store.Binding, 
 		case errors.Is(err, ErrWorktreeKept):
 			res.BindingKept = true
 			res.WorktreeKept = "on " + b.Builder.Server
-			res.KeptReason = err.Error()
+			res.KeptReason = KeptReasonOf(err)
+			if res.KeptReason == "" {
+				res.KeptReason = err.Error()
+			}
 			kept = append(kept, res)
 
 			continue

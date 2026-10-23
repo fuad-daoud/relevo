@@ -207,6 +207,9 @@ func (a *mastermindActions) Unbind(ctx context.Context, key string) Result {
 		return Result{Err: errors.New("unknown binding")}
 	}
 	res, err := relevo.Unbind(ctx, rt, name, true)
+	if errors.Is(err, relevo.ErrWorktreeKept) {
+		err = fmt.Errorf("%w; %s", err, relevo.KeptHint(name))
+	}
 	if err != nil {
 		return Result{Err: err, Refresh: true}
 	}

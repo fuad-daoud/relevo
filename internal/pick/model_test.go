@@ -272,3 +272,23 @@ func TestCtrlCCancelsFromConfirm(t *testing.T) {
 	m, cmd := update(t, m, key("ctrl+c"))
 	wantQuit(t, m, cmd, ErrCancelled)
 }
+
+func TestPickUnbindOfAKeptWorktreeShowsTheHint(t *testing.T) {
+	b := testBinding("webshop")
+	b.Worktree = t.TempDir()
+	b.Builder = store.Endpoint{Mode: store.ModeHeadless}
+	rt := testRuntime(t, b)
+	m := newModel(context.Background(), rt, Options{Verb: VerbUnbind})
+	m, _ = update(t, m, rowsMsg(row("webshop", "ACTIVE", "working")))
+
+	m, _ = update(t, m, key("enter"))
+	m, cmd := update(t, m, key("y"))
+	m, _ = update(t, m, cmd())
+	if !errors.Is(m.result.err, relevo.ErrWorktreeKept) {
+		t.Fatalf("err = %v, want ErrWorktreeKept", m.result.err)
+	}
+	t.Logf("pick message: %s", m.result.err)
+	if !contains(m.result.err.Error(), relevo.KeptHint("webshop")) {
+		t.Fatalf("err = %q, want the kept hint", m.result.err)
+	}
+}
