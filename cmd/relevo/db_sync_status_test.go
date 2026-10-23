@@ -53,20 +53,22 @@ var syncStatusNow = time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
 // the document is what an agent reads, so both are pinned byte for byte rather
 // than compared against whatever the current renderer happens to produce.
 type dbSyncStatusCase struct {
-	name      string
-	enabled   bool
-	tickOK    bool
-	attention string
-	backlog   int64
-	held      []string
-	dropped   []string
-	gaps      []string
-	remote    string
-	namespace string
-	token     string
-	wantToken string
-	wantLine  string
-	wantDoc   string
+	name         string
+	enabled      bool
+	tickOK       bool
+	attention    string
+	rebuildAt    string
+	rebuildAside string
+	backlog      int64
+	held         []string
+	dropped      []string
+	gaps         []string
+	remote       string
+	namespace    string
+	token        string
+	wantToken    string
+	wantLine     string
+	wantDoc      string
 }
 
 // dbSyncStatusCases covers every state the statusline has a token for -- off,
@@ -147,6 +149,19 @@ var dbSyncStatusCases = []dbSyncStatusCase{
 		wantDoc:   "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true,\n  \"key\": \"none\",\n  \"latched\": true,\n  \"latch_cause\": \"the remote refused the stored credential\"\n}\n",
 	},
 	{
+		name:         "on, a replica rebuilt",
+		enabled:      true,
+		tickOK:       true,
+		remote:       syncStatusRemote,
+		namespace:    syncStatusNamespace,
+		token:        syncStatusSecret,
+		rebuildAt:    "2026-10-04T11:00:00Z",
+		rebuildAside: "/state/relevo-sync-aside",
+		wantToken:    relevosync.TokenOK,
+		wantLine:     "sync on (remote: " + syncStatusRemote + ", token: present) · rebuilt: 2026-10-04T11:00:00Z, aside: /state/relevo-sync-aside\n",
+		wantDoc:      "{\n  \"enabled\": true,\n  \"remote_url\": \"" + syncStatusRemote + "\",\n  \"namespace\": \"" + syncStatusNamespace + "\",\n  \"token_present\": true,\n  \"key\": \"none\",\n  \"rebuild_at\": \"2026-10-04T11:00:00Z\",\n  \"rebuild_aside\": \"/state/relevo-sync-aside\"\n}\n",
+	},
+	{
 		name:      "on, an origin held by a newer schema",
 		enabled:   true,
 		tickOK:    true,
@@ -218,6 +233,19 @@ func seedSyncStatusLocal(t *testing.T, local *db.DB, tc dbSyncStatusCase) {
 			t.Fatalf("write the attention marker: %v", err)
 		}
 	}
+	if tc.rebuildAt != "" {
+		at, err := time.Parse(time.RFC3339, tc.rebuildAt)
+		if err != nil {
+			t.Fatalf("parse the rebuild stamp: %v", err)
+		}
+		body, err := json.Marshal(relevosync.Rebuild{At: at, Aside: tc.rebuildAside})
+		if err != nil {
+			t.Fatalf("encode the rebuild record: %v", err)
+		}
+		if err := local.KVPut(relevosync.KeyRebuild, body); err != nil {
+			t.Fatalf("write the rebuild record: %v", err)
+		}
+	}
 	if len(tc.held) > 0 || len(tc.dropped) > 0 || len(tc.gaps) > 0 {
 		body, err := json.Marshal(relevosync.Trouble{Held: tc.held, Dropped: tc.dropped, Gaps: tc.gaps})
 		if err != nil {
@@ -280,6 +308,8 @@ func readSyncStatusDoc(t *testing.T, local *db.DB) dbSyncStatusDoc {
 		TokenPresent: hasToken,
 		Latched:      state.Attention,
 		LatchCause:   state.LatchCause,
+		RebuildAt:    statusStamp(state.Rebuild.At),
+		RebuildAside: state.Rebuild.Aside,
 		Backlog:      state.Backlog,
 		LastExport:   statusStamp(state.LastExport),
 		LastImport:   statusStamp(state.LastImport),
@@ -340,7 +370,7 @@ func TestStatusLineShowsLatchBacklogTimesAndHeldOrigins(t *testing.T) {
 // is not shown a field that claims a measurement that never happened.
 func TestStatusLineOmitsWhatNeverHappened(t *testing.T) {
 	line := dbSyncStatusLine(dbSyncStatusDoc{Enabled: true, RemoteURL: syncStatusRemote})
-	for _, word := range []string{"latched", "backlog", "exported", "imported", "held", "dropped", "gap"} {
+	for _, word := range []string{"latched", "rebuilt", "backlog", "exported", "imported", "held", "dropped", "gap"} {
 		if strings.Contains(line, word) {
 			t.Errorf("a machine with nothing recorded rendered %q (has %q)", line, word)
 		}

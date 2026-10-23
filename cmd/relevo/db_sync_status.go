@@ -45,6 +45,11 @@ type dbSyncStatusDoc struct {
 	// `relevo db sync retry`.
 	Latched    bool   `json:"latched,omitempty"`
 	LatchCause string `json:"latch_cause,omitempty"`
+	// RebuildAt and RebuildAside are the last automatic replica rebuild: when
+	// it ran and where the copy it kept is. Absent until one ran, so a machine
+	// that never rebuilt renders the document it always did.
+	RebuildAt    string `json:"rebuild_at,omitempty"`
+	RebuildAside string `json:"rebuild_aside,omitempty"`
 	// Backlog is the count of this machine's operations the last attempt left
 	// unsent.
 	Backlog int64 `json:"backlog,omitempty"`
@@ -137,6 +142,12 @@ func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 	}
 	if doc.Latched {
 		fmt.Fprintf(&b, " · latched: %s", doc.LatchCause)
+	}
+	if doc.RebuildAt != "" {
+		fmt.Fprintf(&b, " · rebuilt: %s", doc.RebuildAt)
+		if doc.RebuildAside != "" {
+			fmt.Fprintf(&b, ", aside: %s", sanitize.Text(doc.RebuildAside))
+		}
 	}
 	if doc.Backlog > 0 {
 		fmt.Fprintf(&b, " · backlog: %d", doc.Backlog)

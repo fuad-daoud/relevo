@@ -33,8 +33,10 @@ var (
 	// ErrRefused is a verb the worker answered and declined, carrying the
 	// driver's own reason. It is not a miss: the worker is alive and in step,
 	// and counting it as a death would latch a breaker over a remote that is
-	// answering perfectly well.
-	ErrRefused = errors.New("the sync worker refused")
+	// answering perfectly well. The text is the sync package's const, so the
+	// corrupt-replica classification over there recognises this refusal
+	// without this package and that one sharing an import.
+	ErrRefused = errors.New(relevosync.WorkerRefusedText)
 
 	// errCancelled is a call a deliberate Cancel stopped. It is its own error
 	// because a stopped call is not a fault: the supervisor clears the in-call
