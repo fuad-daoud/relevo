@@ -309,6 +309,10 @@ type SyncVerb struct {
 	DryRun bool `json:"dry_run,omitempty"`
 	// New lets an unlock create the key material where the remote holds none.
 	New bool `json:"new,omitempty"`
+	// Rebuild asks the retry verb to move the replica aside before the next
+	// attempt, ignoring the window an automatic rebuild waits out: it is the
+	// human's answer to a replica the machine latched on.
+	Rebuild bool `json:"rebuild,omitempty"`
 }
 
 // SyncFreshen is the hint that a reader wants current data. It carries nothing
@@ -355,4 +359,7 @@ type SyncResult struct {
 	Report string `json:"report,omitempty"`
 	// Created is whether an unlock created the remote's key material.
 	Created bool `json:"created,omitempty"`
+	// Aside is the folder a `retry --rebuild` moved the replica's copy into,
+	// so the answer names the evidence; empty when nothing was moved.
+	Aside string `json:"aside,omitempty"`
 }

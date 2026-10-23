@@ -36,6 +36,10 @@ const (
 	latchRefused = "sync: the remote refused this machine's sync log"
 	latchMissing = "sync: a body the sync log names is missing from the bucket"
 	latchQuota   = "sync: the Turso plan quota is reached; it resets with the billing month"
+	// latchReplicaCorrupt is the latch a second corruption inside the rebuild
+	// window sets. It names the manual rebuild, which is the way out the cap
+	// leaves: the automatic one already ran within the day.
+	latchReplicaCorrupt = "sync: the replica went corrupt again within a day; run `relevo db sync retry --rebuild`"
 )
 
 // ErrLatched reports a call refused because the machine is latched: it stops

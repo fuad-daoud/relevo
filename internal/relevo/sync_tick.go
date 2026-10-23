@@ -138,6 +138,14 @@ func (d *Daemon) runSync(ctx context.Context, runner *relevosync.Runner, st *sto
 	}
 	out := runner.SyncOnce(ctx, shared)
 	if out.Err != nil {
+		// A corrupt replica is the one failure the machine recovers from by
+		// itself: the branch moves the replica aside, records the rebuild and
+		// queues the fresh bootstrap. Every other failure is logged and left
+		// for the next window or for the breaker.
+		if relevosync.IsReplicaCorrupt(out.Err) {
+			d.rebuildCorruptReplica(ctx, runner, out.Err)
+			return
+		}
 		slog.Warn("sync failed", "err", out.Err, "attention", out.Attention)
 		return
 	}

@@ -69,6 +69,10 @@ type State struct {
 	// Attempt is the last steady attempt the daemon recorded, the zero value
 	// when none was.
 	Attempt Attempt
+	// Rebuild is the last automatic replica rebuild this machine ran, the
+	// zero value when it never has. It rides the same reads so every surface
+	// that reads the state says what the machine did to recover.
+	Rebuild Rebuild
 }
 
 // tick is the marker one finished tick writes. A tick that failed leaves OK
@@ -185,6 +189,7 @@ func ReadState(kv db.KV) (State, error) {
 			{KeyTimes, &tm},
 			{KeyTrouble, &tr},
 			{KeyLastAttempt, &at},
+			{KeyRebuild, &s.Rebuild},
 		}
 	)
 	for _, r := range reads {
