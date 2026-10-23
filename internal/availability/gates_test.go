@@ -591,6 +591,35 @@ func TestGatedNoteFormatsEveryGate(t *testing.T) {
 	}
 }
 
+func TestGatedNoteKeepsKindSinceUntilOrder(t *testing.T) {
+	now := time.Date(2026, 9, 23, 10, 0, 0, 0, time.Local)
+	t.Cleanup(SetGateClock(func() time.Time { return now }))
+
+	d := testDeps(t)
+	d.Now = func() time.Time { return now }
+	until := time.Date(2026, 9, 23, 14, 0, 0, 0, time.Local)
+	if _, err := Unavailable(d, testClaudeRef, until, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	want := "note: claude-m is gated: rate-limited since 10:00 until 14:00: 5h window; proceeding"
+	if got := gatedNote(d, testClaudeRef); got != want {
+		t.Errorf("gatedNote() = %q, want %q", got, want)
+	}
+}
+
+func TestGatedNoteScheduledIsJustTheNote(t *testing.T) {
+	d := windowDeps(t, `{"only":[{"from":"14:00Z","to":"00:00Z"}]}`, "2026-10-23T10:00:00Z")
+
+	got := gatedNote(d, windowRef)
+	if !strings.HasSuffix(got, "outside window 14:00Z-00:00Z; proceeding") {
+		t.Errorf("gatedNote() = %q, want suffix %q", got, "outside window 14:00Z-00:00Z; proceeding")
+	}
+	if strings.Contains(got, "since") {
+		t.Errorf("gatedNote() = %q, want no since clause", got)
+	}
+}
+
 func TestMutateLedgerPrunes(t *testing.T) {
 	t.Parallel()
 
@@ -1066,5 +1095,78 @@ func TestGateAccountsForPicksTheUngatedAccount(t *testing.T) {
 	}
 	if names := GateAccountsFor(token, nil, account.Set{}, nil, account.Failover); names != nil {
 		t.Errorf("GateAccountsFor with no accounts = %v, want nil", names)
+	}
+}
+
+// TestGateWithAnImmediateResetKeepsTheLedgerValid: a lifted-now gate arrives
+// with an until a hair before the write's At -- the scan that parsed the reset
+// ran first -- and decode refuses "until precedes at", taking the whole ledger
+// with it. Unavailable clamps such an until to At, so the entry reads as valid
+// and expires immediately: a session limit recorded at its own reset time
+// gates for zero time.
+func TestGateWithAnImmediateResetKeepsTheLedgerValid(t *testing.T) {
+	t.Parallel()
+
+	d := testDeps(t)
+
+	// A reset half an hour ago, recorded now, is a gate lifting now.
+	if _, err := Unavailable(d, testClaudeRef, baseTime.Add(-30*time.Minute), "session limit reached"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	// The ledger must still decode: without the clamp the entry carries
+	// until precedes at and LoadLedger takes the whole ledger down.
+	l := loadLedger(t, d)
+	if len(l.Entries) != 1 {
+		t.Fatalf("got %d ledger entries, want 1: %+v", len(l.Entries), l.Entries)
+	}
+	e := l.Entries[0]
+	if !e.Until.Equal(e.At) {
+		t.Errorf("entry Until = %v, At = %v, want Until == At (the clamp)", e.Until, e.At)
+	}
+	if !e.Until.Equal(baseTime) {
+		t.Errorf("entry Until = %v, want %v", e.Until, baseTime)
+	}
+
+	// And the gate lifts at once: zero time, no live gate on the provider.
+	if gates := Gates(d); len(gates) != 0 {
+		t.Errorf("Gates = %+v, want none: a reset at now gates for zero time", gates)
+	}
+}
+
+// TestReasonResetAtNowLiftsTheGate: a reason naming a clock reset at or just
+// past now is the provider saying the limit is lifting right now, so the gate
+// recorded from that reason ends at now -- zero time, valid in the ledger --
+// rather than sitting until tomorrow.
+func TestReasonResetAtNowLiftsTheGate(t *testing.T) {
+	t.Parallel()
+
+	now := baseTime
+	reason := "RESOURCE_EXHAUSTED 429: session limit reached. Resets 15:33"
+
+	until, ok := ResetFromReason(reason, now)
+	if !ok {
+		t.Fatal("ResetFromReason ok = false, want the lifted-now parse")
+	}
+	if !until.Equal(now) {
+		t.Errorf("Until = %v, want %v: the reset at now lifts the gate now", until, now)
+	}
+
+	d := testDeps(t)
+	if _, err := Unavailable(d, testClaudeRef, until, reason); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	// until == at is a valid entry -- decode refuses only until BEFORE at --
+	// and it is already expired: the gate lifts now.
+	l := loadLedger(t, d)
+	if len(l.Entries) != 1 {
+		t.Fatalf("got %d ledger entries, want 1: %+v", len(l.Entries), l.Entries)
+	}
+	if !l.Entries[0].Until.Equal(l.Entries[0].At) {
+		t.Errorf("entry Until = %v, At = %v, want Until == At", l.Entries[0].Until, l.Entries[0].At)
+	}
+	if gates := Gates(d); len(gates) != 0 {
+		t.Errorf("Gates = %+v, want none: the reason's reset lifts the gate now", gates)
 	}
 }

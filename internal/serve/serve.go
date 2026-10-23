@@ -377,6 +377,7 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		Accounts:   cfg.Accounts,
 		Policy:     cfg.Policy,
 		Gates:      s.gates, // server-wide, not the owner's own
+		InFlight:   s.inFlightFor(root),
 		History:    s.cfg.DB,
 		Usage:      cfg.Usage,
 		Prices:     cfg.Prices,

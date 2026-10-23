@@ -57,6 +57,7 @@ type Skip struct {
 	Token string
 	Kind  availability.Kind
 	Until time.Time // zero = until cleared
+	Note  string
 	// Off marks an entry skipped because it is off, not because a gate holds
 	// it. It renders as "<name> (off)".
 	Off bool
@@ -118,54 +119,6 @@ func (r Resolution) Token() string {
 	return r.Candidate.Ref().String()
 }
 
-// rankedEntry is one row of the walk; T4's FormatPolicy renders the same rows.
-type rankedEntry struct {
-	Candidate candidate.Candidate
-	How       How // HowOrder or HowUnlisted
-	Position  int // 1-based index in order[role] for HowOrder; 0 for HowUnlisted
-	Off       bool
-}
-
-// rankedRole is one role's candidates in the registry's ranked order, as the
-// walk wants them: the candidate behind each token is looked up in set, and an
-// entry whose token does not parse or is not configured is skipped here. An
-// unknown role has no ranked list, so the result is nil (#374 §4.3).
-func rankedRole(reg *roles.Registry, set *candidate.Set, role string) []rankedEntry {
-	info, ok := reg.Role(role)
-	if !ok {
-		return nil
-	}
-	var out []rankedEntry
-	for _, r := range info.Ranked {
-		ref, err := candidate.ParseRef(r.Token)
-		if err != nil {
-			continue
-		}
-		c, err := set.Lookup(ref)
-		if err != nil {
-			continue
-		}
-		if r.Position > 0 {
-			out = append(out, rankedEntry{Candidate: c, How: HowOrder, Position: r.Position, Off: r.Off})
-			continue
-		}
-		out = append(out, rankedEntry{Candidate: c, How: HowUnlisted, Off: r.Off})
-	}
-	return out
-}
-
-// rankedList is the order's configured, serving entries first, then every
-// other serving candidate in ref order; an order entry relevo cannot use is
-// skipped here and reported by PolicyWarnings (T4), never an error, because
-// removing a candidate must not break every subcommand (spec §3.1).
-//
-// It is the legacy registry's ranked list: rankedRole over the derivation of
-// set and pol, which is what every pre-roles.json caller meant. It stays for
-// policy_view.go (#374 §4.3).
-func rankedList(set *candidate.Set, pol policy.Policy, role string) []rankedEntry {
-	return rankedRole(legacyRegistry(set, pol), set, role)
-}
-
 // skipsFor is one Skip per gate whose Token == token, in gates order.
 func skipsFor(gates []availability.Gate, token string) []Skip {
 	var out []Skip
@@ -173,7 +126,7 @@ func skipsFor(gates []availability.Gate, token string) []Skip {
 		if g.Token != token {
 			continue
 		}
-		out = append(out, Skip{Token: g.Token, Kind: g.Kind, Until: g.Until})
+		out = append(out, Skip{Token: g.Token, Kind: g.Kind, Until: g.Until, Note: g.Note})
 	}
 	return out
 }
@@ -199,7 +152,7 @@ func skipText(s Skip, name func(string) string) string {
 	if s.Off {
 		return name(s.Token) + " (off)"
 	}
-	return fmt.Sprintf("%s (%s %s)", name(s.Token), availability.GateKindText(s.Kind), availability.GateUntilText(s.Until))
+	return fmt.Sprintf("%s (%s)", name(s.Token), availability.GateText(s.Kind, s.Until, s.Note))
 }
 
 // uniqStrings drops later duplicates, keeping first occurrences in order.
@@ -355,7 +308,8 @@ func resolveRoleBase(reg *roles.Registry, set *candidate.Set, gates []availabili
 		return Resolution{}, fmt.Errorf("no configured candidate serves actor %q (configured: %v): %w", role, set.Refs(), ErrRoleNotServed)
 	}
 
-	ranked := rankedRole(reg, set, role)
+	ranked := rankedRoleFor(reg, set, role, gates)
+	gates = skipGates(gates)
 	serving := make([]candidate.Candidate, 0, len(ranked))
 	for _, r := range ranked {
 		serving = append(serving, r.Candidate)
@@ -435,10 +389,25 @@ func roleOff(reg *roles.Registry, role, token string) bool {
 // was gated, in skipped.
 func allGated(role string, skipped []Skip) (Resolution, error) {
 	texts := make([]string, 0, len(skipped))
+	var waits, real bool
 	for _, s := range skipped {
 		texts = append(texts, skipText(s, identityName))
+		switch {
+		case s.Off:
+		case s.Kind == availability.Scheduled || s.Kind == availability.ConcurrencyLimit:
+			waits = true
+		default:
+			real = true
+		}
 	}
-	return Resolution{}, fmt.Errorf("every candidate serving %q is gated: %s; name one with --candidate to bypass, or clear a gate with relevo gate --clear <provider>: %w", role, strings.Join(uniqStrings(texts), ", "), ErrAllGated)
+	next := "name one with --candidate to bypass, or clear a gate with relevo gate --clear <provider>"
+	if waits {
+		next = "name one with --candidate to bypass, or wait for a window to open or a running round to finish"
+		if real {
+			next += ", or clear a gate with relevo gate --clear <provider>"
+		}
+	}
+	return Resolution{}, fmt.Errorf("every candidate serving %q is gated: %s; %s: %w", role, strings.Join(uniqStrings(texts), ", "), next, ErrAllGated)
 }
 
 // identityName leaves every token as it is. It is what ExplainResolution
@@ -484,7 +453,7 @@ func explainResolution(role string, res Resolution, name func(string) string) st
 	if res.How == HowExplicit && len(res.Gates) > 0 {
 		texts := make([]string, 0, len(res.Gates))
 		for _, g := range res.Gates {
-			texts = append(texts, availability.GateKindText(g.Kind)+" "+availability.GateUntilText(g.Until))
+			texts = append(texts, availability.GateText(g.Kind, g.Until, g.Note))
 		}
 		out += "; gated: " + strings.Join(uniqStrings(texts), ", ")
 	}

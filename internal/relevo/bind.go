@@ -495,6 +495,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 			}
 			b.BuilderCandidate = res.Token() // "" when adopting a pane
 			b.BuilderAccount = res.Account
+			b.BuilderPinned = res.How == HowExplicit
 			b = clearHaltFields(b)
 			// The owed notification goes with the halt: the replacement builder
 			// is a fresh attempt, and an entry the replaced round still owed
@@ -735,6 +736,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		Builder:          builder,
 		BuilderCandidate: res.Token(),
 		BuilderAccount:   res.Account,
+		BuilderPinned:    res.How == HowExplicit,
 		Round:            1,
 		State:            store.StateActive,
 		Tier:             string(tier),

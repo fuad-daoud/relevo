@@ -150,7 +150,7 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 
 	// A repair round must not be handed to a candidate the configured set no
 	// longer holds: pick again first, exactly as a switch does.
-	b, res, err := repickStale(rt, b, false)
+	b, res, _, err := repickForRound(rt, b, false, false)
 	if err != nil {
 		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
 	}

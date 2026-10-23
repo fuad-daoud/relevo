@@ -439,6 +439,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Builder:          builder,
 		BuilderCandidate: c.Ref().String(),
 		BuilderAccount:   res.Account,
+		BuilderPinned:    res.How == HowExplicit,
 		Round:            1,
 		State:            store.StateActive,
 		Worktree:         worktree,

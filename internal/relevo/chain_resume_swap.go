@@ -40,6 +40,7 @@ func overlaySwapBinding(existing, fresh store.Binding, m chainMember) store.Bind
 	existing.Builder.StreamSessionID = ""
 	existing.BuilderCandidate = fresh.BuilderCandidate
 	existing.BuilderAccount = fresh.BuilderAccount
+	existing.BuilderPinned = fresh.BuilderPinned
 	existing.Tier = fresh.Tier
 	return existing
 }

@@ -192,6 +192,38 @@ func TestLedgerChecks(t *testing.T) {
 	}
 }
 
+func TestDoctorHidesSynthesisedGates(t *testing.T) {
+	now := time.Date(2026, 9, 11, 15, 0, 0, 0, time.UTC)
+	gates := []availability.Gate{
+		{Token: "claude/anthropic/sonnet", Kind: availability.Scheduled, Since: now, Note: "outside window 14:00Z-00:00Z"},
+		{Token: "agy/google/m", Kind: availability.ConcurrencyLimit, Since: now, Note: "at concurrency limit 2/2"},
+	}
+	if got := ledgerChecks(gates); len(got) != 0 {
+		t.Errorf("ledgerChecks = %+v, want no row for a window or a cap", got)
+	}
+}
+
+func TestRefusalFixNamesTheWindow(t *testing.T) {
+	refusals := []relevo.RoleRefusal{
+		{Role: "builder", Text: "every candidate serving builder is gated",
+			Serving: []string{"claude/test/m"}, Gated: []string{"test"}, Cause: relevo.CauseWindow},
+		{Role: "reviewer", Text: "every candidate serving reviewer is gated",
+			Serving: []string{"agy/test/m"}, Gated: []string{"test"}, Cause: relevo.CauseCap},
+	}
+	checks := refusalChecks(refusals)
+	if len(checks) != 2 {
+		t.Fatalf("got %d checks, want 2: %+v", len(checks), checks)
+	}
+	for i, c := range checks {
+		if strings.Contains(c.Fix, "gate --clear") {
+			t.Errorf("check %d Fix = %q, must not be gate --clear", i, c.Fix)
+		}
+	}
+	if !strings.Contains(checks[0].Fix, "window") || !strings.Contains(checks[1].Fix, "round to finish") {
+		t.Errorf("fixes = %q, %q", checks[0].Fix, checks[1].Fix)
+	}
+}
+
 func TestPolicyChecks(t *testing.T) {
 	warnings := []relevo.PolicyWarning{
 		{Role: "builder", Index: 1, Token: "claude/test/nope", Text: `order.builder[1] "claude/test/nope" is not a configured candidate`},

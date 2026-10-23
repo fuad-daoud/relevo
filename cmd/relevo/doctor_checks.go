@@ -111,6 +111,9 @@ func ownerCheck(status db.OwnerStatus, probeErr error) doctor.Check {
 func ledgerChecks(gates []availability.Gate) []doctor.Check {
 	checks := make([]doctor.Check, 0, len(gates))
 	for _, g := range gates {
+		if g.Kind != availability.SpawnFailed && g.Kind != availability.RateLimited {
+			continue
+		}
 		ref, err := candidate.ParseRef(g.Token)
 		group := ""
 		provider := ""
@@ -129,7 +132,7 @@ func ledgerChecks(gates []availability.Gate) []doctor.Check {
 			Name:     "ledger",
 			Severity: doctor.SevWarn,
 			Detail: fmt.Sprintf("%s: %s since %s (%s)",
-				g.Token, availability.GateKindText(g.Kind), availability.GateTimeText(g.Since), availability.GateUntilText(g.Until)),
+				g.Token, availability.GateKindText(g.Kind), availability.GateTimeText(g.Since), g.UntilText()),
 			Fix: fix,
 		})
 	}
@@ -259,6 +262,12 @@ func refusalChecks(refusals []relevo.RoleRefusal) []doctor.Check {
 				provider = r.Gated[0]
 			}
 			fix = "relevo gate --clear " + provider
+			switch r.Cause {
+			case relevo.CauseWindow:
+				fix = "wait for the window to open, or widen it with relevo config edit"
+			case relevo.CauseCap:
+				fix = "wait for a round to finish, or raise max_concurrency with relevo config edit"
+			}
 		}
 		checks = append(checks, doctor.Check{
 			Group:    "",

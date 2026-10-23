@@ -231,7 +231,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 
 	pick := pickFor(rt)
-	gates := append(availability.Gates(AvailabilityDeps(rt)), roundExclusionGates(b)...)
+	gates := switchGates(rt, b)
 
 	// A limit gated the account this binding is on: retry the same candidate
 	// on the next ungated login of its pool before the actor order is walked
@@ -356,6 +356,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	b.Builder = carryStream(b.Builder, ep)
 	b.BuilderCandidate = res.Token()
+	b.BuilderPinned = false
 	b.BuilderAccount = res.Account
 	b.BuilderMissingSince = time.Time{}
 	b.BuilderScreen = ""

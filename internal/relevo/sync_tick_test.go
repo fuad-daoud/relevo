@@ -413,11 +413,13 @@ func TestTickRestartsACancelledWorker(t *testing.T) {
 
 	client := newRestartTransport(synclog.NewMemTransport("m2").OnLog(mdb.Origin()))
 	rt.Sync = &relevosync.Runner{Client: client, Local: local}
-	// The bound has to outlast the export's way to its first append, or the
-	// cancel lands before any worker exists and the call it was meant for
-	// starts after it: the first append waits for the cancel either way, so a
-	// longer bound costs only this much test time.
-	rt.Sync.Timeout = 500 * time.Millisecond
+	// The bound has to outlast the export's way to its first append: a bound
+	// that prep outlives stops the transport before any worker exists, and a
+	// stopped transport refuses every append after it, so the fake worker
+	// never sees one and the first tick drove no worker at all. The first
+	// append waits for the cancel either way, so a longer bound costs only
+	// this much test time.
+	rt.Sync.Timeout = 5 * time.Second
 
 	now := baseTime
 	d := NewDaemon(rt, time.Second)

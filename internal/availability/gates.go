@@ -165,6 +165,14 @@ func Unavailable(d Deps, subject string, until time.Time, reason string, keys ..
 	}
 
 	now := d.Now()
+	// A reset the parser read as lifting now can arrive a hair before this
+	// write's At -- the scan that parsed it ran first. decode refuses
+	// "until precedes at" and takes the whole ledger with it, so such an
+	// until is clamped to At: the gate then expires immediately, which is
+	// what a reset at now means.
+	if !until.IsZero() && until.Before(now) {
+		until = now
+	}
 	err = d.Store.WithLock(func(*store.Tx) error {
 		for _, s := range subjects {
 			entry := Entry{
@@ -465,6 +473,10 @@ func GateKindText(k Kind) string {
 		return "exited without a report"
 	case RolesMissing:
 		return "agents missing"
+	case Scheduled:
+		return "outside window"
+	case ConcurrencyLimit:
+		return "at concurrency limit"
 	default:
 		return string(k)
 	}
@@ -510,20 +522,38 @@ func GateUntilText(until time.Time) string {
 	return "until " + GateTimeText(until)
 }
 
+// noteIsReason reports a kind whose Note is the whole statement of why it
+// gates, so "until cleared" would be wrong for it.
+func noteIsReason(k Kind) bool { return k == Scheduled || k == ConcurrencyLimit }
+
+// GateText is the one rendering of a gate's reason: a Scheduled gate's note is
+// the whole statement, every other kind reads as its kind and its Until.
+func GateText(k Kind, until time.Time, note string) string {
+	if noteIsReason(k) {
+		return note
+	}
+	return GateKindText(k) + " " + GateUntilText(until)
+}
+
+// UntilText is the gate's "until ..." wording, empty for a Scheduled gate
+// whose note already says when it lifts.
+func (g Gate) UntilText() string {
+	if noteIsReason(g.Kind) {
+		return ""
+	}
+	return GateUntilText(g.Until)
+}
+
 // gatedNote is the one advisory line bind, add, fork and ask print after a
 // successful spawn of a candidate the ledger says is gated. Advisory only: the
 // agent is already running, and refusing is the mastermind's job.
 func gatedNote(d Deps, token string) string {
 	var parts []string
-	for _, g := range append(LedgerGates(d, []string{token}), rolesMissingGates(d)...) {
+	for _, g := range append(append(LedgerGates(d, []string{token}), rolesMissingGates(d)...), windowGates(d)...) {
 		if g.Token != token {
 			continue
 		}
-		part := fmt.Sprintf("%s since %s %s", GateKindText(g.Kind), GateTimeText(g.Since), GateUntilText(g.Until))
-		if g.Note != "" {
-			part += ": " + sanitize.Text(g.Note)
-		}
-		parts = append(parts, part)
+		parts = append(parts, gatePart(g))
 	}
 	if len(parts) == 0 {
 		return ""
@@ -532,6 +562,19 @@ func gatedNote(d Deps, token string) string {
 	// The note names the candidate by its short name; a token no longer
 	// configured reads as itself (NameOf returns it unchanged).
 	return fmt.Sprintf("note: %s is gated: %s; proceeding", d.Candidates.NameOf(token), strings.Join(parts, "; "))
+}
+
+// gatePart is one gate's clause in the advisory line: a Scheduled gate's note
+// is the whole statement, every other kind reads kind, since, until and note.
+func gatePart(g Gate) string {
+	if noteIsReason(g.Kind) {
+		return g.Note
+	}
+	part := fmt.Sprintf("%s since %s %s", GateKindText(g.Kind), GateTimeText(g.Since), g.UntilText())
+	if g.Note != "" {
+		part += ": " + sanitize.Text(g.Note)
+	}
+	return part
 }
 
 // GatedNote is gatedNote exported for cmd/relevo, which prints it to stderr

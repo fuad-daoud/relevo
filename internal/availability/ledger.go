@@ -41,6 +41,19 @@ const (
 	// synthesised in memory by relevo.Gates from an injectable
 	// Runtime.Roles checker, so Load never needs to validate it.
 	RolesMissing Kind = "roles_missing"
+
+	// Scheduled records that a candidate's configured window excludes it (or,
+	// with Demote, moves it last) at the moment of the read. It is never
+	// written to the ledger file: windowGates synthesises it from config and
+	// the clock, so Load never needs to validate it. Subject is a candidate
+	// token.
+	Scheduled Kind = "scheduled"
+
+	// ConcurrencyLimit records that a candidate's pool is at its configured
+	// max_concurrency. Like Scheduled it is never written to the ledger file:
+	// concurrencyGates synthesises it from the live round count. Subject is a
+	// candidate token, and the provider is not gated.
+	ConcurrencyLimit Kind = "concurrency_limit"
 )
 
 // ErrBadEntry reports a ledger entry that fails validation.
@@ -231,6 +244,10 @@ type Gate struct {
 	// from the ledger file and every gate Gated produces. Only
 	// rolesMissingGates sets it.
 	Role string `json:"Role,omitempty"`
+	// Demote marks a Scheduled gate from a demote window: the candidate is
+	// moved to the end of the order, not skipped, so a reader that treats a
+	// gate as "unusable" must ignore it.
+	Demote bool `json:"Demote,omitempty"`
 }
 
 // Gated is the one view every renderer uses: for each live entry, which

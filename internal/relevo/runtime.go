@@ -186,6 +186,11 @@ type Runtime struct {
 	// next ordinary trigger exports the gate.
 	SyncNow func()
 
+	// InFlight counts the live rounds per candidate token across every binding
+	// the resolver knows, leaving out the binding named by its argument. Nil
+	// means a walk over Store; the server sets its machine-wide walk.
+	InFlight func(except string) map[string]int
+
 	// DB is relevo's sqlite database (docs/specs/2026-09-20-persistence-design.md).
 	// Nil means no database: this round opens it only in `relevo db *`, never
 	// in the shared runtime constructor, so nothing else reads it yet and
@@ -408,6 +413,7 @@ func AvailabilityDeps(rt Runtime) availability.Deps {
 		RoleRegistry: rt.RoleRegistry,
 		Local:        rt.GatesDB,
 		SyncNow:      rt.SyncNow,
+		InFlight:     inFlightOf(rt),
 	}
 }
 

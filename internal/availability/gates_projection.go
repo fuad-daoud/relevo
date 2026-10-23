@@ -79,6 +79,8 @@ func GatesFrom(d Deps, l Ledger, accounts ...account.Set) []Gate {
 
 	gates := LedgerGatesFrom(d, l, d.Candidates.Refs(), accounts...)
 	gates = append(gates, rolesMissingGates(d)...)
+	gates = append(gates, windowGates(d)...)
+	gates = append(gates, concurrencyGates(d)...)
 
 	// Every gate carries the candidate's short name when the set holds its
 	// token, so the gates block and `relevo serve gates` can print it. A token

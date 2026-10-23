@@ -444,6 +444,7 @@ func ledgerRuntime(s *Server) relevo.Runtime {
 		Candidates: cfg.Candidates,
 		Policy:     cfg.Policy,
 		Store:      store.New(s.cfg.Root),
+		InFlight:   s.inFlightFor(""),
 		Gates:      s.gates,
 		History:    s.cfg.DB,
 		Now:        s.cfg.Now,
@@ -475,7 +476,7 @@ func RenderGates(gates []availability.Gate, now time.Time) string {
 		if g.Name != "" {
 			label = g.Name
 		}
-		fmt.Fprintf(&sb, "%s  %s  %s  %s\n", label, availability.GateKindText(g.Kind), availability.GateUntilText(g.Until), sanitize.Text(g.Note))
+		fmt.Fprintf(&sb, "%s  %s  %s  %s\n", label, availability.GateKindText(g.Kind), g.UntilText(), sanitize.Text(g.Note))
 	}
 	return sb.String()
 }

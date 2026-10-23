@@ -65,6 +65,12 @@ type Candidate struct {
 	// Plan marks a subscription lane: the round's cost is a quota draw, and
 	// printers say "plan", never "$0" and never "free".
 	Plan bool `json:"plan,omitempty"`
+
+	// Windows limits when the candidate may be picked; MaxConcurrency caps the
+	// rounds running on it at once, and 0 means the key is absent (Parse
+	// refuses a stored 0).
+	Windows        *Windows `json:"windows,omitempty"`
+	MaxConcurrency int      `json:"max_concurrency,omitempty"`
 }
 
 func (c Candidate) Ref() Ref {
@@ -264,6 +270,16 @@ func Parse(name string, data []byte) (*Set, []string, error) {
 		return nil, nil, fmt.Errorf("decode candidates %s: %w", name, err)
 	}
 
+	var rows []map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rows); err != nil {
+		return nil, nil, fmt.Errorf("decode candidates %s: %w", name, err)
+	}
+	for i, row := range rows {
+		if raw, ok := row["max_concurrency"]; ok && (string(raw) == "0" || string(raw) == "-0") {
+			return nil, nil, errBadConcurrency(name, i, 0)
+		}
+	}
+
 	set := newSet()
 	seen := make(map[string]int)
 	seenNames := make(map[string]int)
@@ -289,6 +305,10 @@ func Parse(name string, data []byte) (*Set, []string, error) {
 		if err := registerCandidate(name, i, c, set, seen, seenNames, providers); err != nil {
 			return nil, nil, err
 		}
+	}
+
+	for _, k := range UnknownKeys(data) {
+		warnings = append(warnings, fmt.Sprintf("%s: unknown key %q (a typo, or a key a newer relevo reads)", base, k))
 	}
 
 	return set, warnings, nil
@@ -365,7 +385,16 @@ func checkRest(name string, i int, c Candidate) error {
 			return fmt.Errorf("candidates %s: candidate %d: tier: %w", name, i, err)
 		}
 	}
-	return compilePatterns(name, i, "denial_patterns", c.DenialPatterns)
+	if err := compilePatterns(name, i, "denial_patterns", c.DenialPatterns); err != nil {
+		return err
+	}
+	if c.MaxConcurrency < 0 {
+		return errBadConcurrency(name, i, c.MaxConcurrency)
+	}
+	if c.Windows != nil {
+		return c.Windows.validate(name, i)
+	}
+	return nil
 }
 
 func compilePatterns(name string, i int, field string, patterns []string) error {
@@ -393,4 +422,8 @@ func registerCandidate(name string, i int, c Candidate, set *Set, seen, seenName
 	set.byRef[key] = c
 	set.byName[c.Name] = key
 	return nil
+}
+
+func errBadConcurrency(name string, i, n int) error {
+	return fmt.Errorf("candidates %s: candidate %d: max_concurrency %d: want 1 or more (omit the key for no cap)", name, i, n)
 }

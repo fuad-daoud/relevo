@@ -212,6 +212,80 @@ func TestParseReset(t *testing.T) {
 	}
 }
 
+// TestParseClockResetAtNowIsLifted: a clock reset at or just past now is the
+// provider saying the limit is lifting right now, so the parse reads it as
+// now -- the gate it feeds records until == at and gates for zero time --
+// instead of rolling a day ahead and gating a usable provider until tomorrow.
+func TestParseClockResetAtNowIsLifted(t *testing.T) {
+	t.Parallel()
+
+	now := testNow()
+	for _, c := range []struct {
+		name string
+		line string
+	}{
+		{name: "exactly at now", line: "resets 23:13"},
+		{name: "a minute past", line: "resets 23:12"},
+		{name: "minutes past", line: "resets at 22:45"},
+		{name: "at the grace edge", line: "resets 22:13"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, ok := parseClockReset(c.line, now)
+			if !ok {
+				t.Fatalf("parseClockReset(%q) ok = false, want the lifted-now parse", c.line)
+			}
+			if !got.Equal(now) {
+				t.Errorf("parseClockReset(%q) = %v, want %v (lifted now)", c.line, got, now)
+			}
+			if got.Location() != time.UTC {
+				t.Errorf("parseClockReset(%q) location = %v, want UTC", c.line, got.Location())
+			}
+		})
+	}
+}
+
+// TestParseClockResetWellPastIsTomorrow: a clock time further back than
+// clockResetGrace is a stale line, not a lift in progress, and rolls to
+// tomorrow as it always did.
+func TestParseClockResetWellPastIsTomorrow(t *testing.T) {
+	t.Parallel()
+
+	now := testNow()
+	for _, c := range []struct {
+		name string
+		line string
+		want time.Time
+	}{
+		{
+			name: "just past the grace edge",
+			line: "resets 22:12",
+			want: time.Date(2026, 9, 14, 22, 12, 0, 0, parseResetLoc),
+		},
+		{
+			name: "hours past",
+			line: "resets 19:00",
+			want: time.Date(2026, 9, 14, 19, 0, 0, 0, parseResetLoc),
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, ok := parseClockReset(c.line, now)
+			if !ok {
+				t.Fatalf("parseClockReset(%q) ok = false, want the tomorrow roll", c.line)
+			}
+			if !got.Equal(c.want) {
+				t.Errorf("parseClockReset(%q) = %v, want %v", c.line, got, c.want)
+			}
+			if got.Location() != time.UTC {
+				t.Errorf("parseClockReset(%q) location = %v, want UTC", c.line, got.Location())
+			}
+		})
+	}
+}
+
 func agyPatterns(t *testing.T) []*regexp.Regexp {
 	t.Helper()
 	h, ok := harness.Lookup("agy")

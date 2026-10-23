@@ -4,8 +4,10 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRefRoundTrip(t *testing.T) {
@@ -631,5 +633,239 @@ func TestResolveReachesAModelThatItselfEndsInAnEffortSuffix(t *testing.T) {
 	}
 	if got := c.Ref().Model; got != "cline-pass/deepseek#high" {
 		t.Errorf("model = %q", got)
+	}
+}
+
+const windowRowBody = `[
+	{"name":"qwen","harness":"opencode","provider":"alibaba-tp","model":"qwen3.8-flash","roles":["builder"],
+	 "max_concurrency":2,
+	 "windows":{"mode":"demote","only":[{"from":"14:00Z","to":"00:00Z"}],"avoid":[{"from":"00:30Z","to":"05:00Z"}]}}
+]`
+
+func TestParseWindowsAndConcurrencyDecode(t *testing.T) {
+	set := parseSet(t, windowRowBody)
+	c, err := set.Resolve("qwen")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.MaxConcurrency != 2 {
+		t.Errorf("MaxConcurrency = %d, want 2", c.MaxConcurrency)
+	}
+	want := Windows{
+		Mode:  "demote",
+		Only:  []Window{{From: "14:00Z", To: "00:00Z"}},
+		Avoid: []Window{{From: "00:30Z", To: "05:00Z"}},
+	}
+	if c.Windows == nil || !reflect.DeepEqual(*c.Windows, want) {
+		t.Errorf("Windows = %+v, want %+v", c.Windows, want)
+	}
+}
+
+func TestParseRefusesBadWindow(t *testing.T) {
+	row := func(extra string) string {
+		return `[{"harness":"claude","provider":"anthropic","model":"sonnet",` + extra + `}]`
+	}
+	tests := []struct{ name, extra, want string }{
+		{"unparseable clock", `"windows":{"only":[{"from":"25:00","to":"01:00"}]}`, "windows.only[0]: from"},
+		{"unknown zone", `"windows":{"avoid":[{"from":"01:00 Mars/Base","to":"02:00"}]}`, "windows.avoid[0]: from"},
+		{"from equals to", `"windows":{"only":[{"from":"14:00","to":"14:00Z"}]}`, "windows.only[0]: from"},
+		{"from equals to across offsets", `"windows":{"only":[{"from":"02:00+14:00","to":"12:00Z"}]}`, "windows.only[0]: from"},
+		{"from equals to across offsets reversed", `"windows":{"only":[{"from":"12:00Z","to":"02:00+14:00"}]}`, "windows.only[0]: from"},
+		{"from equals to in a named zone judged at the fixed ref", `"windows":{"only":[{"from":"01:00 Asia/Tokyo","to":"16:00Z"}]}`, "windows.only[0]: from"},
+		{"unknown mode", `"windows":{"mode":"soft","only":[{"from":"01:00","to":"02:00"}]}`, "windows.mode"},
+		{"both lists empty", `"windows":{}`, "windows: only and avoid"},
+		{"from Local zone", `"windows":{"only":[{"from":"14:00 Local","to":"15:00Z"}]}`, "windows.only[0]: from"},
+		{"signed clock minute", `"windows":{"only":[{"from":"12:+5","to":"15:00Z"}]}`, "windows.only[0]: from"},
+		{"signed clock hour", `"windows":{"only":[{"from":"+1:00","to":"15:00Z"}]}`, "windows.only[0]: from"},
+		{"signed offset hour", `"windows":{"only":[{"from":"14:00+-100","to":"15:00Z"}]}`, "windows.only[0]: from"},
+		{"signed offset minute", `"windows":{"only":[{"from":"14:00+08:-1","to":"15:00Z"}]}`, "windows.only[0]: from"},
+		{"both lists bad reports only", `"windows":{"avoid":[{"from":"26:00","to":"01:00"}],"only":[{"from":"25:00","to":"01:00"}]}`, "windows.only[0]: from"},
+		{"max_concurrency negative zero", `"max_concurrency":-0`, "max_concurrency 0"},
+		{"max_concurrency zero", `"max_concurrency":0`, "max_concurrency 0"},
+		{"max_concurrency negative", `"max_concurrency":-1`, "max_concurrency -1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := Parse("candidates.json", []byte(row(tt.extra)))
+			if err == nil {
+				t.Fatal("Parse succeeded, want a refusal")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "candidate 0") || !strings.Contains(msg, tt.want) {
+				t.Errorf("err = %q, want candidate index and %q", msg, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseBothListsBadIsDeterministic(t *testing.T) {
+	data := []byte(`[{"harness":"claude","provider":"anthropic","model":"sonnet","windows":{"avoid":[{"from":"26:00","to":"01:00"}],"only":[{"from":"25:00","to":"01:00"}]}}]`)
+	for i := 0; i < 50; i++ {
+		_, _, err := Parse("candidates.json", data)
+		if err == nil || !strings.Contains(err.Error(), "windows.only[0]") {
+			t.Fatalf("run %d: err = %v, want windows.only[0]", i, err)
+		}
+	}
+}
+
+func TestWindowClockFormsAgree(t *testing.T) {
+	ref := time.Date(2026, 10, 23, 3, 0, 0, 0, time.UTC)
+	want := time.Date(2026, 10, 23, 14, 0, 0, 0, time.UTC)
+	for _, s := range []string{"14:00Z", "14:00", "22:00+08:00", "22:00+0800", "17:00 Asia/Amman"} {
+		c, err := ParseWindowClock(s)
+		if err != nil {
+			t.Fatalf("ParseWindowClock(%q): %v", s, err)
+		}
+		if got := c.At(ref); !got.Equal(want) {
+			t.Errorf("%q = %v, want %v", s, got.UTC(), want)
+		}
+	}
+}
+
+func TestWindowCoversAcrossMidnight(t *testing.T) {
+	w := Window{From: "14:00Z", To: "00:00Z"}
+	for _, tt := range []struct {
+		at   string
+		want bool
+	}{{"13:59", false}, {"14:00", true}, {"23:59", true}, {"00:00", false}} {
+		now, _ := time.Parse("15:04", tt.at)
+		now = now.AddDate(2026, 9, 22)
+		if got := w.Covers(now); got != tt.want {
+			t.Errorf("Covers(%sZ) = %v, want %v", tt.at, got, tt.want)
+		}
+	}
+	ws := Windows{Only: []Window{w}}
+	now := time.Date(2026, 10, 23, 15, 0, 0, 0, time.UTC)
+	edge, ok := ws.NextEdge(now)
+	if want := time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC); !ok || !edge.Equal(want) {
+		t.Errorf("NextEdge = %v %v, want %v", edge, ok, want)
+	}
+}
+
+func TestParseWarnsOnUnknownCandidateKey(t *testing.T) {
+	_, warnings, err := Parse("candidates.json", []byte(`[{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"],"maxx":2}]`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	var found bool
+	for _, w := range warnings {
+		if strings.Contains(w, `unknown key "0.maxx"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings = %q, want one naming 0.maxx", warnings)
+	}
+}
+
+func TestUnknownKeysNamesThePath(t *testing.T) {
+	body := []byte(`[{"name":"a","harness":"claude","provider":"p","model":"m","maxx":1,"windows":{"onlyy":[],"only":[{"from":"01:00","to":"02:00","x":1}]}}]`)
+	got := UnknownKeys(body)
+	want := []string{"a.maxx", "a.windows.only[].x", "a.windows.onlyy"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("UnknownKeys = %q, want %q", got, want)
+	}
+	if k := UnknownKeys([]byte(`[{"harness":"claude","windows":{"only":[{"from":"01:00","to":"02:00"}]}}]`)); len(k) != 0 {
+		t.Errorf("UnknownKeys on a known shape = %q, want none", k)
+	}
+}
+
+func TestWindowsCoversOnlyAndAvoidTogether(t *testing.T) {
+	at := func(hm string) time.Time {
+		t.Helper()
+		c, err := ParseWindowClock(hm + "Z")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c.At(time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC))
+	}
+	night := Windows{
+		Only:  []Window{{From: "14:00Z", To: "00:00Z"}},
+		Avoid: []Window{{From: "22:00Z", To: "23:00Z"}},
+	}
+	avoidOnly := Windows{Avoid: []Window{{From: "00:30Z", To: "05:00Z"}}}
+	for _, tt := range []struct {
+		name string
+		w    Windows
+		at   string
+		want bool
+	}{
+		{"inside only", night, "15:00", true},
+		{"inside only but inside avoid", night, "22:30", false},
+		{"outside only", night, "10:00", false},
+		{"inside avoid with no only", avoidOnly, "01:00", false},
+		{"outside avoid with no only", avoidOnly, "06:00", true},
+	} {
+		if got := tt.w.Covers(at(tt.at)); got != tt.want {
+			t.Errorf("%s: Covers(%sZ) = %v, want %v", tt.name, tt.at, got, tt.want)
+		}
+	}
+}
+
+func TestParseWindowClockRefusesABadOffset(t *testing.T) {
+	for _, s := range []string{"14:00+1", "14:00+15:00", "14:00+05:60", "14:00+ab:cd", "14:00+-1:00"} {
+		if _, err := ParseWindowClock(s); err == nil || !strings.Contains(err.Error(), "bad offset") {
+			t.Errorf("ParseWindowClock(%q) err = %v, want a bad offset", s, err)
+		}
+	}
+	c, err := ParseWindowClock("11:00-03:00")
+	if err != nil {
+		t.Fatalf("a negative offset: %v", err)
+	}
+	if got, want := c.At(time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC)).UTC().Hour(), 14; got != want {
+		t.Errorf("11:00-03:00 = %d:00Z, want %d:00Z", got, want)
+	}
+}
+
+func TestKnownFieldsListsEachTopLevelKeyOnce(t *testing.T) {
+	got := KnownFields()
+	if !sort.StringsAreSorted(got) {
+		t.Errorf("KnownFields = %v, want sorted", got)
+	}
+	seen := map[string]bool{}
+	for _, k := range got {
+		if seen[k] || strings.ContainsAny(k, ".[{") {
+			t.Errorf("KnownFields has %q twice or as a nested path: %v", k, got)
+		}
+		seen[k] = true
+	}
+	for _, want := range []string{"windows", "max_concurrency", "model", "harness"} {
+		if !seen[want] {
+			t.Errorf("KnownFields = %v, lacks %q", got, want)
+		}
+	}
+}
+
+func TestParseWindowClockRefusesAMalformedClock(t *testing.T) {
+	for _, s := range []string{"14:00 ", "14:00  Asia/Amman", "1:00", "14:00X", "14h00", "14:00 Local"} {
+		if _, err := ParseWindowClock(s); err == nil {
+			t.Errorf("ParseWindowClock(%q) = nil error, want a refusal", s)
+		}
+	}
+}
+
+func TestAWindowThatDoesNotParseCoversNothingAndHasNoEdge(t *testing.T) {
+	bad := Window{From: "14:00Z", To: "25:00Z"}
+	now := time.Date(2026, 10, 23, 15, 0, 0, 0, time.UTC)
+	if bad.Covers(now) {
+		t.Error("a window with a bad to covers now, want false")
+	}
+	if _, ok := (Windows{Only: []Window{bad}}).NextEdge(now); ok {
+		t.Error("NextEdge found an edge for a window that does not parse")
+	}
+}
+
+func TestNextEdgeOutsideAWindowIsItsNextOpening(t *testing.T) {
+	ws := Windows{Avoid: []Window{{From: "00:30Z", To: "05:00Z"}}}
+	now := time.Date(2026, 10, 23, 6, 0, 0, 0, time.UTC)
+	edge, ok := ws.NextEdge(now)
+	if want := time.Date(2026, 10, 24, 0, 30, 0, 0, time.UTC); !ok || !edge.Equal(want) {
+		t.Errorf("NextEdge = %v %v, want %v", edge, ok, want)
+	}
+}
+
+func TestUnknownKeysOfABodyThatIsNotAListIsNone(t *testing.T) {
+	if got := UnknownKeys([]byte(`{"name":"x"}`)); got != nil {
+		t.Errorf("UnknownKeys(object) = %v, want nil", got)
 	}
 }

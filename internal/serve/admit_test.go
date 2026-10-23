@@ -826,3 +826,32 @@ func TestHeldCPUsSkipsAFailingOwner(t *testing.T) {
 		t.Fatalf("WithLock: %v", err)
 	}
 }
+
+func TestServerCountsInFlightAcrossOwners(t *testing.T) {
+	env := setupTestEnv(t)
+	ownerB := addOwner(t, env, "bob")
+
+	respA, bodyA := sendRound(t, env, env.kp, env.clientDir, env.repoID, env.headSHA, "api", "# Plan A")
+	requireCreated(t, respA, bodyA, "A")
+	respB, bodyB := sendRound(t, env, ownerB.kp, ownerB.clientDir, ownerB.repoID, ownerB.headSHA, "api", "# Plan B")
+	requireCreated(t, respB, bodyB, "B")
+
+	total := func(m map[string]int) (n int) {
+		for _, v := range m {
+			n += v
+		}
+		return n
+	}
+	if got := total(env.srv.inFlightFor("")("")); got != 2 {
+		t.Errorf("machine-wide in flight = %d, want 2 (one per owner)", got)
+	}
+	// The same binding name in both owners: excluding it applies to the
+	// resolving owner's root only.
+	rootB, err := env.srv.ownerRoot(ownerB.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := total(env.srv.inFlightFor(rootB)("api")); got != 1 {
+		t.Errorf("in flight excluding bob's api = %d, want 1", got)
+	}
+}

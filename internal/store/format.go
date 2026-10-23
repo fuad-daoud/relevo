@@ -31,13 +31,14 @@ import (
 // read and seal the old paths. That refusal is the intended clean break.)
 //
 // Later fields (abandoned_sessions, oom_requeue, round_oom_kills, link,
-// remote_bundle_failures, check_run, round_closed_baseline_head) are fields
+// remote_bundle_failures, check_run, round_closed_baseline_head, builder_pinned) are fields
 // recordFormat never stamps: an older relevo
 // that drops abandoned_sessions loses only pending session deletes, one that
 // drops oom_requeue or round_oom_kills loses only oom-kill tracking for
 // in-flight rounds, one that drops link loses only the name of a remote
 // binding's other copy, and one that drops remote_bundle_failures loses only a
-// failure run, which restarts from zero. One that drops
+// failure run, which restarts from zero. One that drops builder_pinned never
+// re-picks for a window, so losing the pin is harmless. One that drops
 // round_closed_baseline_head leaves the uncommitted-work recovery without a
 // starting commit, and the recovery then refuses rather than advances. subdir
 // is not one of these: a dropped
