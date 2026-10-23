@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -412,6 +413,66 @@ func TestSweepTmpLooseOnlyOldDirectories(t *testing.T) {
 	mustExist(t, rounds)
 }
 
+// TestSweepTmpCapsLooseRemovals pins the per-sweep unlinking budget: a root
+// that aged out entirely is emptied over several sweeps, not inside the one
+// tick that noticed it.
+func TestSweepTmpCapsLooseRemovals(t *testing.T) {
+	t.Parallel()
+
+	rt := tmpSweepSetup(t)
+	old := baseTime.Add(-25 * time.Hour)
+
+	const planted = 300
+	dirs := make([]string, 0, planted)
+	for i := range planted {
+		dirs = append(dirs, tmpMkDir(t, filepath.Join(rt.TmpRoot, fmt.Sprintf("stale-%03d", i)), old))
+	}
+
+	removed, err := tmpSweep(t, rt)
+	if err != nil {
+		t.Fatalf("SweepTmp: %v", err)
+	}
+	if len(removed) != tmpSweepMaxRemovals {
+		t.Fatalf("first sweep removed %d entries, want the cap of %d", len(removed), tmpSweepMaxRemovals)
+	}
+	for _, path := range removed {
+		mustBeGone(t, path)
+	}
+	left := plantedDirs(t, rt.TmpRoot)
+	if left != planted-tmpSweepMaxRemovals {
+		t.Fatalf("%d loose directories left, want %d", left, planted-tmpSweepMaxRemovals)
+	}
+
+	removed, err = tmpSweep(t, rt)
+	if err != nil {
+		t.Fatalf("second SweepTmp: %v", err)
+	}
+	if len(removed) != planted-tmpSweepMaxRemovals {
+		t.Errorf("second sweep removed %d entries, want the remaining %d", len(removed), planted-tmpSweepMaxRemovals)
+	}
+	for _, path := range dirs {
+		mustBeGone(t, path)
+	}
+}
+
+// plantedDirs counts the directories sitting directly in the root: the test
+// plants nothing under the two names the per-record rules own, so every
+// directory there is a loose one.
+func plantedDirs(t *testing.T, root string) int {
+	t.Helper()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read %s: %v", root, err)
+	}
+	n := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			n++
+		}
+	}
+	return n
+}
+
 // TestSweepTmpNeverTouchesOutsideRoot pins the confinement a tenant depends
 // on: an entry swapped for a symlink leads nowhere outside, and a subdirectory
 // swapped for one cannot even be listed, so its leftovers survive untouched.
@@ -475,8 +536,8 @@ func TestSweepTmpOneFailureDoesNotStopOthers(t *testing.T) {
 	mustExist(t, bad)
 }
 
-// TestTickRunsTmpSweep pins the hook: the sweep runs on every tick, before
-// Tick's no-bindings early return, off the tick's own binding list.
+// TestTickRunsTmpSweep pins the hook: the sweep runs on a daemon's first tick,
+// before Tick's no-bindings early return, off the tick's own binding list.
 func TestTickRunsTmpSweep(t *testing.T) {
 	t.Parallel()
 
@@ -487,6 +548,41 @@ func TestTickRunsTmpSweep(t *testing.T) {
 		t.Fatalf("Tick: %v", err)
 	}
 	mustBeGone(t, ghost)
+}
+
+// TestTickPacesTmpSweep pins the sweep's own clock: the first tick of a
+// process walks the root, later ticks wait out tmpSweepEvery on the runtime's
+// clock rather than paying for the walk every tick, and the next tick past the
+// interval walks again.
+func TestTickPacesTmpSweep(t *testing.T) {
+	t.Parallel()
+
+	rt := tmpSweepSetup(t)
+	now := baseTime
+	rt.Now = func() time.Time { return now }
+	d := NewDaemon(rt, time.Second)
+
+	old := baseTime.Add(-time.Hour)
+	ghost := tmpRoundDir(t, rt, "ghost", 1, old)
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	mustBeGone(t, ghost)
+
+	// A second entry inside the interval: the tick that must not sweep also
+	// must not remove.
+	kept := tmpRoundDir(t, rt, "ghost", 1, old)
+	now = baseTime.Add(tmpSweepEvery - time.Minute)
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	mustExist(t, kept)
+
+	now = baseTime.Add(tmpSweepEvery)
+	if err := d.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	mustBeGone(t, kept)
 }
 
 // TestTickSkipsTmpSweepWithEmptyRoot pins the empty-root skip: a runtime with

@@ -38,6 +38,12 @@ const (
 	tmpLooseAge = 24 * time.Hour
 )
 
+// tmpSweepEvery paces the sweep: one walk of a full root costs thousands of syscalls, too many for every tick to pay.
+const tmpSweepEvery = 10 * time.Minute
+
+// tmpSweepMaxRemovals bounds one sweep's unlinking so a first sweep over an aged root cannot hog a single tick.
+const tmpSweepMaxRemovals = 256
+
 // tmpSubRounds and tmpSubChecks are the two subdirectories of a runtime's tmp
 // root the per-process routes own; their names are the rules that made them in
 // roundTmpRel and checkTmpRel.
@@ -48,11 +54,12 @@ const (
 
 // SweepTmp removes the leftovers under rt.TmpRoot: round directories whose
 // binding is gone, DONE, or whose round is no longer open; check directories
-// that no live record names any more; and loose directories nobody has touched
-// for the whole age window. bindings is the caller's own binding list, so the
-// sweep decides from the same snapshot its tick is reconciling rather than a
-// second read that could disagree with it. now is the clock, passed in so the
-// rules are testable without one.
+// that no live record names any more; and up to tmpSweepMaxRemovals loose
+// directories nobody has touched for the whole age window, the rest waiting
+// for a later sweep. bindings is the caller's own binding list, so the sweep
+// decides from the same snapshot its tick is reconciling rather than a second
+// read that could disagree with it. now is the clock, passed in so the rules
+// are testable without one.
 //
 // The removed paths are returned sorted. A runtime with no tmp root has
 // nothing under it and the sweep answers empty. Every failure is per entry:
@@ -71,7 +78,7 @@ func SweepTmp(ctx context.Context, rt Runtime, bindings []store.Binding, now tim
 	if err != nil {
 		errs = append(errs, err)
 	}
-	loose, err := sweepLooseDirs(rt, now)
+	loose, err := sweepLooseDirs(rt, now, tmpSweepMaxRemovals)
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -83,18 +90,36 @@ func SweepTmp(ctx context.Context, rt Runtime, bindings []store.Binding, now tim
 // sweepTmpTick is the daemon's hook: the sweep on the tick's own binding list
 // and clock, every removal logged the way every other sweep logs its work. A
 // runtime with no tmp root -- container mode, any host that names none -- has
-// nothing to sweep and is skipped.
-func sweepTmpTick(ctx context.Context, rt Runtime, bindings []store.Binding) {
+// nothing to sweep and is skipped. The walk reads the whole root, so the hook
+// runs it at most once per tmpSweepEvery per daemon, on the daemon's own
+// first tick and never on a package-wide timer.
+func (d *Daemon) sweepTmpTick(ctx context.Context, bindings []store.Binding) {
+	rt := d.rt
 	if rt.TmpRoot == "" {
 		return
 	}
-	removed, err := SweepTmp(ctx, rt, bindings, rt.Now())
+	now := rt.Now()
+	if !d.tmpSweepDue(now) {
+		return
+	}
+	// The pace records the attempt rather than a clean sweep: the walk logs
+	// its failures per entry and returns, so a root that resists is walked
+	// again on the interval, not every tick.
+	d.tmpSweptAt = now
+	removed, err := SweepTmp(ctx, rt, bindings, now)
 	if err != nil {
 		slog.Warn("tmp sweep", "err", err)
 	}
 	for _, path := range removed {
 		slog.Info("removed tmp entry", "path", path)
 	}
+}
+
+// tmpSweepDue is the pacing decision: a zero last run means this daemon has
+// never swept, and after that the walk is due once tmpSweepEvery has passed
+// on the runtime's own clock.
+func (d *Daemon) tmpSweepDue(now time.Time) bool {
+	return d.tmpSweptAt.IsZero() || !now.Before(d.tmpSweptAt.Add(tmpSweepEvery))
 }
 
 // tmpRoundKept is the rounds rule given the facts the sweep read: the binding
@@ -290,10 +315,12 @@ func tmpLooseRemovable(isDir bool, name string, newest, now time.Time) bool {
 	return !now.Before(newest.Add(tmpLooseAge))
 }
 
-// sweepLooseDirs walks the root itself and removes the stale directories. The
-// newest touch is read before the rule is asked, so a directory whose children
-// cannot be listed is left alone rather than judged by its own mtime alone.
-func sweepLooseDirs(rt Runtime, now time.Time) ([]string, error) {
+// sweepLooseDirs walks the root itself and removes the stale directories, at
+// most max of them: a root that aged out entirely is emptied over several
+// sweeps rather than in the one tick that noticed it. The newest touch is read
+// before the rule is asked, so a directory whose children cannot be listed is
+// left alone rather than judged by its own mtime alone.
+func sweepLooseDirs(rt Runtime, now time.Time, max int) ([]string, error) {
 	entries, err := os.ReadDir(rt.TmpRoot)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -305,6 +332,9 @@ func sweepLooseDirs(rt Runtime, now time.Time) ([]string, error) {
 	var removed []string
 	var errs []error
 	for _, e := range entries {
+		if len(removed) >= max {
+			break
+		}
 		if !e.IsDir() {
 			continue
 		}
