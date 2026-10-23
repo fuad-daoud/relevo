@@ -740,3 +740,31 @@ func TestWindowCoversAcrossMidnight(t *testing.T) {
 		t.Errorf("NextEdge = %v %v, want %v", edge, ok, want)
 	}
 }
+
+func TestParseWarnsOnUnknownCandidateKey(t *testing.T) {
+	_, warnings, err := Parse("candidates.json", []byte(`[{"harness":"claude","provider":"anthropic","model":"sonnet","roles":["builder"],"maxx":2}]`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	var found bool
+	for _, w := range warnings {
+		if strings.Contains(w, `unknown key "0.maxx"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings = %q, want one naming 0.maxx", warnings)
+	}
+}
+
+func TestUnknownKeysNamesThePath(t *testing.T) {
+	body := []byte(`[{"name":"a","harness":"claude","provider":"p","model":"m","maxx":1,"windows":{"onlyy":[],"only":[{"from":"01:00","to":"02:00","x":1}]}}]`)
+	got := UnknownKeys(body)
+	want := []string{"a.maxx", "a.windows.only[].x", "a.windows.onlyy"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("UnknownKeys = %q, want %q", got, want)
+	}
+	if k := UnknownKeys([]byte(`[{"harness":"claude","windows":{"only":[{"from":"01:00","to":"02:00"}]}}]`)); len(k) != 0 {
+		t.Errorf("UnknownKeys on a known shape = %q, want none", k)
+	}
+}

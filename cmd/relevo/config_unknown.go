@@ -3,15 +3,19 @@ package main
 import (
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// guardUnknownFields refuses unknown fields on agents.<n> and actors.<n> on
-// config set, refusing only keys present in updated and absent from the stored body.
+// guardUnknownFields refuses unknown fields on agents.<n>, actors.<n>,
+// candidates and policy on config set, refusing only keys present in updated
+// and absent from the stored body.
 func guardUnknownFields(rt relevo.Runtime, sec config.Section, oldBody, updated []byte) error {
-	if sec != config.Agents && sec != config.Actors {
+	unknown, known := unknownKeyFuncs(sec)
+	if unknown == nil {
 		return nil
 	}
 	if oldBody == nil {
@@ -21,13 +25,13 @@ func guardUnknownFields(rt relevo.Runtime, sec config.Section, oldBody, updated 
 			oldBody = stored
 		}
 	}
-	newKeys := roles.UnknownKeys(string(sec), updated)
+	newKeys := unknown(updated)
 	if len(newKeys) == 0 {
 		return nil
 	}
 	oldSet := make(map[string]bool)
 	if len(oldBody) > 0 {
-		for _, k := range roles.UnknownKeys(string(sec), oldBody) {
+		for _, k := range unknown(oldBody) {
 			oldSet[k] = true
 		}
 	}
@@ -43,8 +47,7 @@ func guardUnknownFields(rt relevo.Runtime, sec config.Section, oldBody, updated 
 
 	key := added[0]
 	fullPath := string(sec) + "." + key
-	known := roles.KnownFields(string(sec))
-	knownStr := strings.Join(known, ", ")
+	knownStr := strings.Join(known(), ", ")
 
 	if sec == config.Agents && agentContractField[key[strings.LastIndex(key, ".")+1:]] {
 		return fail(codeConfigInvalid, "%s: unknown field (known: %s); outcomes are declared on the actor: relevo config set actors.<actor>.outputs '{...}'", fullPath, knownStr)
@@ -57,3 +60,18 @@ func guardUnknownFields(rt relevo.Runtime, sec config.Section, oldBody, updated 
 // plain typo is not told about outcomes. The actor is named generically because
 // one agent can back several actors under other names.
 var agentContractField = map[string]bool{"outcomes": true, "outputs": true, "role": true}
+
+// unknownKeyFuncs returns the unknown-key finder and known-key lister for sec,
+// or nils for a section whose keys are not checked.
+func unknownKeyFuncs(sec config.Section) (func([]byte) []string, func() []string) {
+	switch sec {
+	case config.Agents, config.Actors:
+		return func(b []byte) []string { return roles.UnknownKeys(string(sec), b) },
+			func() []string { return roles.KnownFields(string(sec)) }
+	case config.Candidates:
+		return candidate.UnknownKeys, candidate.KnownFields
+	case config.Policy:
+		return policy.UnknownKeys, policy.KnownFields
+	}
+	return nil, nil
+}

@@ -121,6 +121,36 @@ func ParseCPUList(s string) ([]int, error) {
 // policyUnknownKeyWarnings returns one warning per decoded key path Policy's
 // JSON shape does not declare; a key under a map-typed field is never unknown.
 func policyUnknownKeyWarnings(path string, raw []byte) []string {
+	base := filepath.Base(path)
+	paths := UnknownKeys(raw)
+	warnings := make([]string, 0, len(paths))
+	for _, p := range paths {
+		warnings = append(warnings, fmt.Sprintf("%s: unknown key %q (a typo, or a key a newer relevo reads)", base, p))
+	}
+	return warnings
+}
+
+// KnownFields returns the top-level JSON keys Policy declares, sorted.
+func KnownFields() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, l := range jsonshape.Keys(reflect.TypeOf(Policy{})) {
+		top := l
+		if i := strings.IndexAny(l, ".[{"); i >= 0 {
+			top = l[:i]
+		}
+		if !seen[top] {
+			seen[top] = true
+			out = append(out, top)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// UnknownKeys returns the sorted key paths in raw that Policy's JSON shape
+// does not declare; a key under a map-typed field is never unknown.
+func UnknownKeys(raw []byte) []string {
 	var data map[string]any
 	if err := json.Unmarshal(raw, &data); err != nil {
 		return nil
@@ -165,13 +195,7 @@ func policyUnknownKeyWarnings(path string, raw []byte) []string {
 		}
 	}
 	walk("", data)
-
-	base := filepath.Base(path)
-	warnings := make([]string, 0, len(paths))
-	for _, p := range paths {
-		warnings = append(warnings, fmt.Sprintf("%s: unknown key %q (a typo, or a key a newer relevo reads)", base, p))
-	}
-	return warnings
+	return paths
 }
 
 // hasLeafPrefix reports whether some leaf path continues p with sep.

@@ -307,6 +307,10 @@ func Parse(name string, data []byte) (*Set, []string, error) {
 		}
 	}
 
+	for _, k := range UnknownKeys(data) {
+		warnings = append(warnings, fmt.Sprintf("%s: unknown key %q (a typo, or a key a newer relevo reads)", base, k))
+	}
+
 	return set, warnings, nil
 }
 

@@ -175,3 +175,44 @@ func TestConfigSetWithPreExistingStrayKeySucceeds(t *testing.T) {
 		t.Fatalf("unrelated config set on existing stray section failed: %v (stderr: %s)", err, stderr)
 	}
 }
+
+func TestConfigSetRefusesUnknownCandidateKey(t *testing.T) {
+	docsEnv(t)
+
+	const seed = `[{"harness":"claude","provider":"p","model":"m"}]`
+	if _, stderr, err := captureOutput(t, func() error {
+		return run([]string{"config", "set", "candidates", seed})
+	}); err != nil {
+		t.Fatalf("seed candidates: %v (stderr: %s)", err, stderr)
+	}
+	before, _, _ := captureOutput(t, func() error { return run([]string{"config", "get", "candidates"}) })
+
+	for _, tc := range []struct{ body, want string }{
+		{`[{"harness":"claude","provider":"p","model":"m","maxx":2}]`, "candidates.0.maxx: unknown field"},
+		{`[{"harness":"claude","provider":"p","model":"m","windows":{"onlyy":[]}}]`, "candidates.0.windows.onlyy: unknown field"},
+	} {
+		_, _, err := captureOutput(t, func() error {
+			return run([]string{"config", "set", "candidates", tc.body})
+		})
+		ce := requireCLIError(t, err, codeConfigInvalid, "")
+		if !strings.Contains(ce.message, tc.want) || !strings.Contains(ce.message, "known:") {
+			t.Errorf("message = %q, want it to contain %q and the known keys", ce.message, tc.want)
+		}
+		after, _, _ := captureOutput(t, func() error { return run([]string{"config", "get", "candidates"}) })
+		if !bytes.Equal(before, after) {
+			t.Errorf("refused write modified candidates: before = %s, after = %s", before, after)
+		}
+	}
+}
+
+func TestConfigSetRefusesUnknownPolicyKey(t *testing.T) {
+	docsEnv(t)
+
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "set", "policy.round_cap", `40`})
+	})
+	ce := requireCLIError(t, err, codeConfigInvalid, "")
+	if !strings.Contains(ce.message, "policy.round_cap: unknown field") || !strings.Contains(ce.message, "known:") {
+		t.Errorf("message = %q, want it to name policy.round_cap and the known keys", ce.message)
+	}
+}
