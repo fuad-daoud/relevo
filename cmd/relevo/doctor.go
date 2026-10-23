@@ -341,6 +341,11 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 	// `relevo db stats`. Every open migrates, so there is no separate
 	// migrate row.
 	rep.Checks = insertGlobalCheck(rep.Checks, databaseCheck(rt.Store))
+	if machineDB := serveMachineDB(rt); machineDB != nil {
+		if rounds, bindings, err := machineDB.OpenRoundsOnFinishedBindings(); err == nil {
+			rep.Checks = insertGlobalCheck(rep.Checks, openRoundsCheck(rounds, bindings))
+		}
+	}
 	// #466: the engine row sits next to the database row, so a library the
 	// engine cannot load is visible beside the database it would open.
 	rep.Checks = insertGlobalCheck(rep.Checks, engineCheck(db.EngineStatus(stateRoot)))
