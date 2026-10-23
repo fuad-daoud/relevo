@@ -127,8 +127,10 @@ func capLine(line string) string {
 // a clock time are the vaguer forms and keep the 7-day window, because "7pm"
 // without a day is the one a line can most easily be misread out of. Anything
 // outside its window is ok=false -- garbage in a line that happened to match
-// the limit pattern must not gate a provider indefinitely. The returned time
-// is UTC.
+// the limit pattern must not gate a provider indefinitely. The one exception
+// is a clock time that just passed: within clockResetGrace it reads as a
+// reset lifting now, so a gate recorded at its own reset time gates for zero
+// time (parseClockReset). The returned time is UTC.
 func parseReset(line string, now time.Time) (time.Time, bool) {
 	if t, ok := parseDurationReset(line, now); ok {
 		return t, true
@@ -234,7 +236,9 @@ func dateReset(now time.Time, month time.Month, day int, yearStr string, hour, m
 	return windowedReset(t, now, limitWindowShort)
 }
 
-// parseClockReset handles the clock-time form.
+// parseClockReset handles the clock-time form. A clock time in the past
+// within clockResetGrace reads as a reset lifting now; further back it rolls
+// to tomorrow.
 func parseClockReset(line string, now time.Time) (time.Time, bool) {
 	m := clockRe.FindStringSubmatch(line)
 	if m == nil {
@@ -256,6 +260,13 @@ func parseClockReset(line string, now time.Time) (time.Time, bool) {
 	}
 	t := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location())
 	if !t.After(now) {
+		// A clock time within the grace in the past is a reset that just
+		// lifted: the gate this feeds ends at now, gating for zero time,
+		// instead of a day away. Further back the line is stale, and the
+		// roll to tomorrow stands.
+		if now.Sub(t) <= clockResetGrace {
+			return now.UTC(), true
+		}
 		t = t.Add(24 * time.Hour)
 	}
 	return windowedReset(t, now, limitWindowShort)
@@ -336,6 +347,15 @@ const limitWindowShort = 7 * 24 * time.Hour
 // are, so a monthly quota may state a reset two weeks out without the parser
 // discarding what it just read.
 const limitWindowDated = 31 * 24 * time.Hour
+
+// clockResetGrace is how long past a clock-time reset the parser still reads
+// the reset as lifting now rather than rolling to tomorrow. A limit whose
+// reset just passed is lifting as the scan reads it, so gating the provider
+// until the same clock time tomorrow would hide a usable provider for a day;
+// an hour outlasts the gap between a provider printing the line and relevo
+// scanning it. A clock time further back than that is a stale line, and the
+// roll to tomorrow stands.
+const clockResetGrace = time.Hour
 
 // inLimitWindow is parseReset's (now, now+max] bound.
 func inLimitWindow(t, now time.Time, max time.Duration) bool {

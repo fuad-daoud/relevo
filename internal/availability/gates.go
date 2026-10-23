@@ -165,6 +165,14 @@ func Unavailable(d Deps, subject string, until time.Time, reason string, keys ..
 	}
 
 	now := d.Now()
+	// A reset the parser read as lifting now can arrive a hair before this
+	// write's At -- the scan that parsed it ran first. decode refuses
+	// "until precedes at" and takes the whole ledger with it, so such an
+	// until is clamped to At: the gate then expires immediately, which is
+	// what a reset at now means.
+	if !until.IsZero() && until.Before(now) {
+		until = now
+	}
 	err = d.Store.WithLock(func(*store.Tx) error {
 		for _, s := range subjects {
 			entry := Entry{
