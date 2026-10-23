@@ -1026,6 +1026,7 @@ func UnbindWith(ctx context.Context, rt Runtime, name string, archive, force boo
 	// A reader's throwaway worktree goes with the binding, before the record
 	// is archived or deleted: the sweep can no longer resolve it afterwards.
 	removeReaderScratch(ctx, rt, b, b.Round)
+	removeRoundTmp(rt, b, b.Round)
 
 	if archive {
 		if _, err := rt.Store.Archive(name); err != nil {
