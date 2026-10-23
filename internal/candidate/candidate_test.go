@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRefRoundTrip(t *testing.T) {
@@ -631,5 +632,91 @@ func TestResolveReachesAModelThatItselfEndsInAnEffortSuffix(t *testing.T) {
 	}
 	if got := c.Ref().Model; got != "cline-pass/deepseek#high" {
 		t.Errorf("model = %q", got)
+	}
+}
+
+const windowRowBody = `[
+	{"name":"qwen","harness":"opencode","provider":"alibaba-tp","model":"qwen3.8-flash","roles":["builder"],
+	 "max_concurrency":2,
+	 "windows":{"mode":"demote","only":[{"from":"14:00Z","to":"00:00Z"}],"avoid":[{"from":"00:30Z","to":"05:00Z"}]}}
+]`
+
+func TestParseWindowsAndConcurrencyDecode(t *testing.T) {
+	set := parseSet(t, windowRowBody)
+	c, err := set.Resolve("qwen")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.MaxConcurrency != 2 {
+		t.Errorf("MaxConcurrency = %d, want 2", c.MaxConcurrency)
+	}
+	want := Windows{
+		Mode:  "demote",
+		Only:  []Window{{From: "14:00Z", To: "00:00Z"}},
+		Avoid: []Window{{From: "00:30Z", To: "05:00Z"}},
+	}
+	if c.Windows == nil || !reflect.DeepEqual(*c.Windows, want) {
+		t.Errorf("Windows = %+v, want %+v", c.Windows, want)
+	}
+}
+
+func TestParseRefusesBadWindow(t *testing.T) {
+	row := func(extra string) string {
+		return `[{"harness":"claude","provider":"anthropic","model":"sonnet",` + extra + `}]`
+	}
+	tests := []struct{ name, extra, want string }{
+		{"unparseable clock", `"windows":{"only":[{"from":"25:00","to":"01:00"}]}`, "windows.only[0]: from"},
+		{"unknown zone", `"windows":{"avoid":[{"from":"01:00 Mars/Base","to":"02:00"}]}`, "windows.avoid[0]: from"},
+		{"from equals to", `"windows":{"only":[{"from":"14:00","to":"14:00Z"}]}`, "windows.only[0]: from"},
+		{"unknown mode", `"windows":{"mode":"soft","only":[{"from":"01:00","to":"02:00"}]}`, "windows.mode"},
+		{"both lists empty", `"windows":{}`, "windows: only and avoid"},
+		{"max_concurrency zero", `"max_concurrency":0`, "max_concurrency 0"},
+		{"max_concurrency negative", `"max_concurrency":-1`, "max_concurrency -1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := Parse("candidates.json", []byte(row(tt.extra)))
+			if err == nil {
+				t.Fatal("Parse succeeded, want a refusal")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "candidate 0") || !strings.Contains(msg, tt.want) {
+				t.Errorf("err = %q, want candidate index and %q", msg, tt.want)
+			}
+		})
+	}
+}
+
+func TestWindowClockFormsAgree(t *testing.T) {
+	ref := time.Date(2026, 10, 23, 3, 0, 0, 0, time.UTC)
+	want := time.Date(2026, 10, 23, 14, 0, 0, 0, time.UTC)
+	for _, s := range []string{"14:00Z", "14:00", "22:00+08:00", "22:00+0800", "17:00 Asia/Amman"} {
+		c, err := ParseWindowClock(s)
+		if err != nil {
+			t.Fatalf("ParseWindowClock(%q): %v", s, err)
+		}
+		if got := c.At(ref); !got.Equal(want) {
+			t.Errorf("%q = %v, want %v", s, got.UTC(), want)
+		}
+	}
+}
+
+func TestWindowCoversAcrossMidnight(t *testing.T) {
+	w := Window{From: "14:00Z", To: "00:00Z"}
+	for _, tt := range []struct {
+		at   string
+		want bool
+	}{{"13:59", false}, {"14:00", true}, {"23:59", true}, {"00:00", false}} {
+		now, _ := time.Parse("15:04", tt.at)
+		now = now.AddDate(2026, 9, 22)
+		if got := w.Covers(now); got != tt.want {
+			t.Errorf("Covers(%sZ) = %v, want %v", tt.at, got, tt.want)
+		}
+	}
+	ws := Windows{Only: []Window{w}}
+	now := time.Date(2026, 10, 23, 15, 0, 0, 0, time.UTC)
+	edge, ok := ws.NextEdge(now)
+	if want := time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC); !ok || !edge.Equal(want) {
+		t.Errorf("NextEdge = %v %v, want %v", edge, ok, want)
 	}
 }
