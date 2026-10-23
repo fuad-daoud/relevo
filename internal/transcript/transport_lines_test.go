@@ -47,3 +47,10 @@ func TestTransportLinesReturnsNonJSONStderr(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestTransportLinesIgnoresAnErrorObjectOnAnotherEvent(t *testing.T) {
+	line := []byte(`{"type":"step_finish","error":{"type":"provider.transport","message":"ECONNRESET"}}`)
+	if got := TransportLines("opencode", line); got != nil {
+		t.Errorf("TransportLines = %q, want nil: only an error event classifies", got)
+	}
+}

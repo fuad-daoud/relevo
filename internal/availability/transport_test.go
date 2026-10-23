@@ -57,3 +57,9 @@ func TestMatchTransportTakesLastLine(t *testing.T) {
 		t.Errorf("MatchTransport = %q, %v, want the last matching line", got, ok)
 	}
 }
+
+func TestMatchTransportLeavesCreditAlone(t *testing.T) {
+	if got, ok := MatchTransport("Transport: ECONNRESET after insufficient credits"); ok {
+		t.Errorf("MatchTransport = %q, want no match: a credit line is not transport", got)
+	}
+}

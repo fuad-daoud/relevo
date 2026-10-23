@@ -205,3 +205,32 @@ func TestProcessTreeCPUTicksSumsDescendants(t *testing.T) {
 		t.Error("a missing pid reported ok")
 	}
 }
+
+func TestStalledLabelOutranksModelSilent(t *testing.T) {
+	t.Parallel()
+
+	rt, b := silentFixture(t, 12*time.Minute+30*time.Second, 20*time.Minute)
+	if got := silenceLabel(rt, b, rt.Now(), "stalled 16m"); got != "stalled 16m" {
+		t.Errorf("silenceLabel = %q, want the stalled label kept", got)
+	}
+	if got := silenceLabel(rt, b, rt.Now(), "exploring 9m"); got != "model silent for 12 min" {
+		t.Errorf("silenceLabel = %q, want model silent to replace exploring", got)
+	}
+}
+
+func TestStalledSinceCountsOnlyTheCurrentProcess(t *testing.T) {
+	t.Parallel()
+
+	started := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	b := store.Binding{Round: 3}
+	b.Builder.StartedAt = started.Unix()
+	note := func(at time.Time) []store.LogEntry {
+		return []store.LogEntry{{Round: 3, Kind: store.KindSwitch, TS: at, Note: providerStallNotePrefix + " no stream event for 9 min"}}
+	}
+	if stalledSince(b, note(started.Add(-time.Hour))) {
+		t.Error("a stall noted before this process started counts, want only the current process's")
+	}
+	if !stalledSince(b, note(started.Add(time.Minute))) {
+		t.Error("a stall noted after this process started does not count")
+	}
+}
