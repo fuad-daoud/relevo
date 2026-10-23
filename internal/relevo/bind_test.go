@@ -1757,29 +1757,29 @@ func TestBindHeadlessStillRefusesAnOverlongName(t *testing.T) {
 	}
 }
 
-func TestBindWithTierEditOnClaude(t *testing.T) {
+func TestBindClaudeBuilderTierEditRefused(t *testing.T) {
 	t.Parallel()
 
 	rt := newRuntime(t)
 
-	b, err := Bind(context.Background(), rt, BindOptions{
+	_, err := Bind(context.Background(), rt, BindOptions{
 		Name:         "webshop",
 		Candidate:    testClaudeRef,
 		MasterMindID: testMasterMindName,
 		CWD:          "/repo",
 		Tier:         "edit",
 	})
-	if err != nil {
-		t.Fatalf("Bind: %v", err)
+	if !errors.Is(err, harness.ErrTierUnsupported) {
+		t.Fatalf("err = %v, want harness.ErrTierUnsupported", err)
 	}
-	if b.Tier != "edit" {
-		t.Errorf("b.Tier = %q, want %q", b.Tier, "edit")
+	if !strings.Contains(err.Error(), "use --tier yolo") {
+		t.Errorf("err %q should name use --tier yolo", err.Error())
 	}
-	gotArgs := launchArgs(t, rt, b, harness.TierEdit)
-	for _, want := range []string{"--model", "m", "--agent", "plan-executor", "--permission-mode", "acceptEdits"} {
-		if !slicesContains(gotArgs, want) {
-			t.Errorf("expected %q in the launch args, got %v", want, gotArgs)
-		}
+	if got := len(runnerOf(t, rt).specs); got != 0 {
+		t.Errorf("a refused tier must start no process, got %d", got)
+	}
+	if _, loadErr := rt.Store.Load("webshop"); !errors.Is(loadErr, store.ErrNotFound) {
+		t.Errorf("Load err = %v, want store.ErrNotFound", loadErr)
 	}
 }
 

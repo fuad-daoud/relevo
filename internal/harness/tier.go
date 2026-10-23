@@ -110,6 +110,18 @@ func (h Harness) PermissionArgs(tier Tier) ([]string, error) {
 	}
 }
 
+// claudeBuilderEdit refuses a claude builder at tier edit. Headless
+// acceptEdits approves file edits and read-only commands such as git status,
+// but denies go, make and git commit, so a builder could change files and
+// never run the gate or commit them. A reader keeps edit: it only reads the
+// tree and writes its own output file.
+func claudeBuilderEdit(kind string, role RoleSpec, tier Tier) error {
+	if kind != "claude" || tier != TierEdit || role.Shape != ShapeBuilder {
+		return nil
+	}
+	return fmt.Errorf("%w: claude cannot run a builder at tier edit: headless acceptEdits denies go, make and git commit, so the builder could not run the gate or commit; use --tier yolo (--dangerously-skip-permissions) or --tier harness (claude's settings.json decides)", ErrTierUnsupported)
+}
+
 // PermissionFlags lists the flags relevo treats as permission flags for this
 // kind, matched against extra_args as whole elements or `flag=` prefixes. A
 // two-element `-c sandbox_mode=...` pair is not detected: -c is a generic override.

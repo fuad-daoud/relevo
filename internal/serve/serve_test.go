@@ -1822,7 +1822,7 @@ func TestRoundStartHonoursTierField(t *testing.T) {
 		t.Fatalf("binding stored at Tier = %q, want harness", before.Tier)
 	}
 
-	formBytes, ct := makeRoundFormWithTier(t, 1, "# Round 1 Plan\nDo stuff", "edit", bundleBytes)
+	formBytes, ct := makeRoundFormWithTier(t, 1, "# Round 1 Plan\nDo stuff", "read", bundleBytes)
 	resp, body := doSigned(t, env.ts, env.kp, "POST", "/v1/bindings/api/rounds", formBytes, ct)
 	requireStatus(t, resp, body, http.StatusCreated)
 
@@ -1830,16 +1830,16 @@ func TestRoundStartHonoursTierField(t *testing.T) {
 	if len(specs) != 1 {
 		t.Fatalf("runner specs count = %d, want 1", len(specs))
 	}
-	if !slices.Contains(specs[0].Argv, "--permission-mode") || !slices.Contains(specs[0].Argv, "acceptEdits") {
-		t.Fatalf("runner spec Argv = %v, want --permission-mode acceptEdits", specs[0].Argv)
+	if !slices.Contains(specs[0].Argv, "--permission-mode") || !slices.Contains(specs[0].Argv, "plan") {
+		t.Fatalf("runner spec Argv = %v, want --permission-mode plan", specs[0].Argv)
 	}
 
 	after, err := rt.Store.Load("api")
 	if err != nil {
 		t.Fatalf("load binding: %v", err)
 	}
-	if after.RoundTier != "edit" {
-		t.Fatalf("binding RoundTier = %q, want edit", after.RoundTier)
+	if after.RoundTier != "read" {
+		t.Fatalf("binding RoundTier = %q, want read", after.RoundTier)
 	}
 }
 

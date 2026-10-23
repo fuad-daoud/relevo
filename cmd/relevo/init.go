@@ -156,7 +156,7 @@ func initBuildError(err error) error {
 func tierLine(tier string) string {
 	why := "builders run commands without asking"
 	if tier == "edit" {
-		why = "builders change files but cannot run tests or git"
+		why = "only codex builders can bind; claude, agy and opencode builders are refused at edit"
 	}
 	return fmt.Sprintf("tier: %s (%s) -- relevo config set policy.max_tier edit to restrict", tier, why)
 }

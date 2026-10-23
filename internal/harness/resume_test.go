@@ -255,15 +255,11 @@ func checkResumeBuild(t *testing.T, tt resumeBuildCase, builder RoleSpec, provid
 }
 
 func TestResumeBuildForwardsPromptFile(t *testing.T) {
-	builder, ok := RoleByName("builder")
-	if !ok {
-		t.Fatal("RoleByName(\"builder\") not found")
-	}
 	claude, ok := Lookup("claude")
 	if !ok {
 		t.Fatal("Lookup(\"claude\") not found")
 	}
-	l, err := claude.Launch("anthropic", "sonnet", nil, builder, TierEdit)
+	l, err := claude.Launch("anthropic", "sonnet", nil, readerRole(t), TierEdit)
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
@@ -283,15 +279,11 @@ func TestResumeBuildForwardsPromptFile(t *testing.T) {
 }
 
 func TestResumeBuildForwardsChainDir(t *testing.T) {
-	builder, ok := RoleByName("builder")
-	if !ok {
-		t.Fatal("RoleByName(\"builder\") not found")
-	}
 	claude, ok := Lookup("claude")
 	if !ok {
 		t.Fatal("Lookup(\"claude\") not found")
 	}
-	l, err := claude.Launch("anthropic", "sonnet", nil, builder, TierEdit)
+	l, err := claude.Launch("anthropic", "sonnet", nil, readerRole(t), TierEdit)
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
