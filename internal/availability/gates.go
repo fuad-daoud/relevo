@@ -465,6 +465,8 @@ func GateKindText(k Kind) string {
 		return "exited without a report"
 	case RolesMissing:
 		return "agents missing"
+	case Scheduled:
+		return "outside window"
 	default:
 		return string(k)
 	}
@@ -510,17 +512,35 @@ func GateUntilText(until time.Time) string {
 	return "until " + GateTimeText(until)
 }
 
+// GateText is the one rendering of a gate's reason: a Scheduled gate's note is
+// the whole statement, every other kind reads as its kind and its Until.
+func GateText(k Kind, until time.Time, note string) string {
+	if k == Scheduled {
+		return note
+	}
+	return GateKindText(k) + " " + GateUntilText(until)
+}
+
+// UntilText is the gate's "until ..." wording, empty for a Scheduled gate
+// whose note already says when it lifts.
+func (g Gate) UntilText() string {
+	if g.Kind == Scheduled {
+		return ""
+	}
+	return GateUntilText(g.Until)
+}
+
 // gatedNote is the one advisory line bind, add, fork and ask print after a
 // successful spawn of a candidate the ledger says is gated. Advisory only: the
 // agent is already running, and refusing is the mastermind's job.
 func gatedNote(d Deps, token string) string {
 	var parts []string
-	for _, g := range append(LedgerGates(d, []string{token}), rolesMissingGates(d)...) {
+	for _, g := range append(append(LedgerGates(d, []string{token}), rolesMissingGates(d)...), windowGates(d)...) {
 		if g.Token != token {
 			continue
 		}
-		part := fmt.Sprintf("%s since %s %s", GateKindText(g.Kind), GateTimeText(g.Since), GateUntilText(g.Until))
-		if g.Note != "" {
+		part := fmt.Sprintf("%s since %s", GateText(g.Kind, g.Until, g.Note), GateTimeText(g.Since))
+		if g.Note != "" && g.Kind != Scheduled {
 			part += ": " + sanitize.Text(g.Note)
 		}
 		parts = append(parts, part)

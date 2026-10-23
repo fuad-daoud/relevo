@@ -57,6 +57,7 @@ type Skip struct {
 	Token string
 	Kind  availability.Kind
 	Until time.Time // zero = until cleared
+	Note  string
 	// Off marks an entry skipped because it is off, not because a gate holds
 	// it. It renders as "<name> (off)".
 	Off bool
@@ -173,7 +174,7 @@ func skipsFor(gates []availability.Gate, token string) []Skip {
 		if g.Token != token {
 			continue
 		}
-		out = append(out, Skip{Token: g.Token, Kind: g.Kind, Until: g.Until})
+		out = append(out, Skip{Token: g.Token, Kind: g.Kind, Until: g.Until, Note: g.Note})
 	}
 	return out
 }
@@ -199,7 +200,7 @@ func skipText(s Skip, name func(string) string) string {
 	if s.Off {
 		return name(s.Token) + " (off)"
 	}
-	return fmt.Sprintf("%s (%s %s)", name(s.Token), availability.GateKindText(s.Kind), availability.GateUntilText(s.Until))
+	return fmt.Sprintf("%s (%s)", name(s.Token), availability.GateText(s.Kind, s.Until, s.Note))
 }
 
 // uniqStrings drops later duplicates, keeping first occurrences in order.
@@ -484,7 +485,7 @@ func explainResolution(role string, res Resolution, name func(string) string) st
 	if res.How == HowExplicit && len(res.Gates) > 0 {
 		texts := make([]string, 0, len(res.Gates))
 		for _, g := range res.Gates {
-			texts = append(texts, availability.GateKindText(g.Kind)+" "+availability.GateUntilText(g.Until))
+			texts = append(texts, availability.GateText(g.Kind, g.Until, g.Note))
 		}
 		out += "; gated: " + strings.Join(uniqStrings(texts), ", ")
 	}

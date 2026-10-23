@@ -175,7 +175,10 @@ func mergeGateTexts(gates []availability.Gate) []string {
 	var groups []*group
 	index := make(map[[2]string]*group, len(gates))
 	for _, g := range gates {
-		kind, until := availability.GateKindText(g.Kind), availability.GateUntilText(g.Until)
+		kind, until := availability.GateKindText(g.Kind), g.UntilText()
+		if g.Kind == availability.Scheduled {
+			kind = g.Note
+		}
 		key := [2]string{kind, until}
 		grp, ok := index[key]
 		if !ok {
@@ -192,7 +195,7 @@ func mergeGateTexts(gates []availability.Gate) []string {
 	parts := make([]string, 0, len(groups))
 	for _, grp := range groups {
 		if !grp.hasRoles {
-			parts = append(parts, sanitizeText(grp.kind)+" "+sanitizeText(grp.until))
+			parts = append(parts, strings.TrimSpace(sanitizeText(grp.kind)+" "+sanitizeText(grp.until)))
 			continue
 		}
 		parts = append(parts, fmt.Sprintf("%s (%s) %s", sanitizeText(grp.kind), sanitizeText(strings.Join(uniqSorted(grp.roles), ", ")), sanitizeText(grp.until)))

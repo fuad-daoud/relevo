@@ -111,6 +111,9 @@ func ownerCheck(status db.OwnerStatus, probeErr error) doctor.Check {
 func ledgerChecks(gates []availability.Gate) []doctor.Check {
 	checks := make([]doctor.Check, 0, len(gates))
 	for _, g := range gates {
+		if g.Kind == availability.Scheduled {
+			continue
+		}
 		ref, err := candidate.ParseRef(g.Token)
 		group := ""
 		provider := ""
@@ -129,7 +132,7 @@ func ledgerChecks(gates []availability.Gate) []doctor.Check {
 			Name:     "ledger",
 			Severity: doctor.SevWarn,
 			Detail: fmt.Sprintf("%s: %s since %s (%s)",
-				g.Token, availability.GateKindText(g.Kind), availability.GateTimeText(g.Since), availability.GateUntilText(g.Until)),
+				g.Token, availability.GateKindText(g.Kind), availability.GateTimeText(g.Since), g.UntilText()),
 			Fix: fix,
 		})
 	}

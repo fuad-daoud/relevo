@@ -221,7 +221,7 @@ func formatPolicyRole(sb *strings.Builder, v policyRoleView, set *candidate.Set,
 		}
 		var gateTexts []string
 		for _, g := range byToken[tok] {
-			gateTexts = append(gateTexts, availability.GateKindText(g.Kind)+" "+availability.GateUntilText(g.Until))
+			gateTexts = append(gateTexts, availability.GateText(g.Kind, g.Until, g.Note))
 		}
 		tailParts = append(tailParts, uniqStrings(gateTexts)...)
 		tail := strings.Join(tailParts, "; ")

@@ -282,7 +282,7 @@ func writeGatedBlock(sb *strings.Builder, gates []availability.Gate, trailingBla
 
 	for _, g := range gates {
 		fmt.Fprintf(sb, "  %-*s  %-12s  %s  %s",
-			width, gateLabel(g), availability.GateKindText(g.Kind), availability.GateTimeText(g.Since), availability.GateUntilText(g.Until))
+			width, gateLabel(g), availability.GateKindText(g.Kind), availability.GateTimeText(g.Since), g.UntilText())
 		if g.Note != "" {
 			fmt.Fprintf(sb, "  %s", g.Note)
 		}
