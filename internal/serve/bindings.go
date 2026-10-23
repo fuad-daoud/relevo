@@ -495,8 +495,7 @@ func (s *Server) handleUnbind(w http.ResponseWriter, r *http.Request) {
 
 	res, err := relevo.UnbindWith(r.Context(), rt, name, true, r.URL.Query().Get("force") != "")
 	if errors.Is(err, relevo.ErrWorktreeKept) {
-		writeErr(w, http.StatusConflict, remote.CodeWorktreeKept,
-			fmt.Sprintf("%s; on the server: relevo serve unbind --owner %s %s --force", err.Error(), caller, name))
+		writeErr(w, http.StatusConflict, remote.CodeWorktreeKept, err.Error())
 		return
 	}
 	if err != nil {

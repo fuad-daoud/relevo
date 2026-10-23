@@ -922,7 +922,7 @@ func keptRefusal(name string, res UnbindResult) error {
 	if res.ProcessStopped != 0 {
 		msg += fmt.Sprintf("; its builder process (pid %d) was stopped", res.ProcessStopped)
 	}
-	return NewWorktreeKept(msg + fmt.Sprintf("; commit or discard the work, then unbind again, or `relevo unbind %s --force` archives it anyway", name))
+	return NewWorktreeKept(msg)
 }
 
 // askServerUnbind tells a remote binding's server to release it before

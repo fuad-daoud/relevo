@@ -53,8 +53,8 @@ func TestUnbindKeepsBindingWhenWorktreeKept(t *testing.T) {
 				if !errors.Is(err, ErrWorktreeKept) || !errors.Is(err, ErrRefused) {
 					t.Fatalf("Unbind(archive=%v) err = %v, want ErrWorktreeKept and ErrRefused", archive, err)
 				}
-				if !strings.Contains(err.Error(), "relevo unbind kept --force") || !strings.Contains(err.Error(), wt) {
-					t.Errorf("message %q must name the worktree and the force command", err)
+				if !strings.Contains(err.Error(), wt) || !strings.Contains(err.Error(), "kept (") || strings.Contains(err.Error(), "--force") {
+					t.Errorf("message %q must name the worktree and the reason, with no force hint", err)
 				}
 				if res.WorktreeKept != wt || res.Archived {
 					t.Errorf("result = %+v, want the kept worktree and no archive", res)
