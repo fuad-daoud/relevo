@@ -35,6 +35,15 @@ func gatedBuilder(rt Runtime, b store.Binding) (availability.Gate, bool) {
 	return availability.Gate{}, false
 }
 
+// switchGates is the gate set a mid-round switch of b resolves over: the live
+// gates without b's own round counted against a concurrency cap -- b's slot is
+// being handed over, not added to -- plus the candidates this round excluded.
+func switchGates(rt Runtime, b store.Binding) []availability.Gate {
+	deps := AvailabilityDeps(rt)
+	deps.InFlightExcept = b.Name
+	return append(availability.Gates(deps), roundExclusionGates(b)...)
+}
+
 // roundExclusionGates is one ledger.Gate per token in b.RoundExcluded --
 // candidates that exited without a report during the CURRENT round (#191).
 // Pure. switchBuilder folds these into the live ledger gates it passes to
@@ -231,9 +240,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 
 	pick := pickFor(rt)
-	deps := AvailabilityDeps(rt)
-	deps.InFlightExcept = b.Name
-	gates := append(availability.Gates(deps), roundExclusionGates(b)...)
+	gates := switchGates(rt, b)
 
 	// A limit gated the account this binding is on: retry the same candidate
 	// on the next ungated login of its pool before the actor order is walked

@@ -97,3 +97,23 @@ func TestInFlightCapsACandidateWhoseModelNamesAnEffort(t *testing.T) {
 		t.Fatalf("gates = %+v, want the effort-named candidate at its cap 1/1", gates)
 	}
 }
+
+// TestSwitchGatesLeaveTheSwitchingBindingsOwnSlotOut pins the mid-round
+// switch's count: a binding live on a pool capped at one hands its slot over,
+// so its own round must not cap the pool's other model against it.
+func TestSwitchGatesLeaveTheSwitchingBindingsOwnSlotOut(t *testing.T) {
+	set := candidateSet(t, `[
+	  {"name":"a","harness":"opencode","provider":"p","model":"a#xhigh","roles":["builder"],"max_concurrency":1},
+	  {"name":"b","harness":"opencode","provider":"p","model":"b#xhigh","roles":["builder"],"max_concurrency":1}
+	]`)
+	st := store.New(t.TempDir())
+	mine := inflightBinding("mine", "opencode/p/a#xhigh", nil)
+	if err := st.Save(mine); err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range switchGates(Runtime{Store: st, Candidates: set}, mine) {
+		if g.Kind == availability.ConcurrencyLimit {
+			t.Errorf("gate = %+v: the switching binding capped its own pool", g)
+		}
+	}
+}
