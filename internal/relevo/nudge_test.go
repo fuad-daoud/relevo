@@ -520,3 +520,19 @@ func TestWriterNudgeLimitStaysOne(t *testing.T) {
 		t.Errorf("nudges = %d, want 1: writer limit must stay 1", nudges)
 	}
 }
+
+func TestWriterNudgeSaysBackgroundWorkDiedAndMustBeRerun(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	got := nudgePromptFor(rt, store.Binding{Name: "webshop", Round: 1})
+	for _, want := range []string{
+		"started in the background in that turn was killed",
+		"do not wait for them or poll them",
+		"re-run any check you still need",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("writer nudge = %q, want it to say %q", got, want)
+		}
+	}
+}

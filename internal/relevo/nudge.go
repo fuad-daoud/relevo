@@ -19,8 +19,10 @@ const nudgeNotePrefix = "nudged builder"
 // nudgePromptFormat is the message sent into the session relevo resumes
 // because its builder ended its turn without a report. The two paths are
 // spelled out because nothing will wake the process otherwise: finishing in
-// the foreground is the whole point.
-const nudgePromptFormat = `You ended your turn before writing the report, and nothing will wake you: this process exits when your turn ends. Finish now, in the foreground: run any pending check to completion and wait for it, write the report to %s, then create %s. Do not start background tasks and do not end your turn before both files exist.`
+// the foreground is the whole point. A builder that backgrounded a check reads
+// "wait for it" as "wait for the run already going" and polls a job that died
+// with its process, so the prompt says that job is gone.
+const nudgePromptFormat = `You ended your turn before writing the report, and nothing will wake you: this process exits when your turn ends. Anything you started in the background in that turn was killed with it: its output and exit files will never be completed, so do not wait for them or poll them. Finish now, in the foreground: re-run any check you still need and wait for it to exit, write the report to %s, then create %s. Do not start background tasks and do not end your turn before both files exist.`
 
 // readerContinuationPromptFormat is the continuation prompt for a reader:
 // the reader's final message is the deliverable itself, so it is told to

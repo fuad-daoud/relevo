@@ -171,6 +171,8 @@ GATE COMMANDS RUN IN THE FOREGROUND
 
 A verification or gate command -- the plan's check line, the project's tests, a build -- runs in the foreground: you wait for it to finish and read its exit code before the next step. Never run it as a background task, never hand it to a sub-agent, never report it as passed before it has exited. If it fails, that step failed: report the failing command and its last lines, and halt there.
 
+Your shell tool kills a foreground command when its `timeout` runs out. In a relevo round the default is 15 minutes; for a command that may run longer, pass `timeout` in milliseconds. The parameter works: a command killed at its timeout timed out, it was not ignored. A command started in the background dies when your turn ends, so never background one whose result you need.
+
 NEVER GIT STASH
 
 Never use `git stash` in a relevo worktree: every worktree of one repository shares a single stash stack, so a stash or pop in your tree can take, or hand back, another builder's work. To set work aside, make a WIP commit, or copy the files outside the repo.
