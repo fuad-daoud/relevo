@@ -639,7 +639,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 				// spawn_failed (written by startRound) gates the candidate
 				// for the next pick.
 				b.State = store.StateNeedsYou
-				b.Halt = "builder spawn failed: " + err.Error()
+				b.Halt = spawnHaltText(err)
 				b.HaltAt = rt.Now().UTC()
 				// The builder change is still recorded first, so the log
 				// explains why the round was sent to the new candidate.

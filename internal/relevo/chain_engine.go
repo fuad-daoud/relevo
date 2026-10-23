@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 
@@ -310,7 +311,7 @@ func chainFlowCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 					}
 					if _, cerr := rt.Remote.CreateCheck(ctx, b.Builder.Server, b.Name, req); cerr != nil {
 						next.Status = workflow.StatusHalted
-						next.Reason = fmt.Sprintf("check %s could not start: %v", act.Step, cerr)
+						next.Reason = chainCheckStartReason(act.Step, cerr)
 						return chainTerminalWF(ctx, rt, tx, c, def, before, *next, ev, workflow.Action{Kind: workflow.ActionHalt, Reason: next.Reason})
 					}
 					next.Awaiting.Run = run
@@ -323,7 +324,7 @@ func chainFlowCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 	run, err := chainStartOrAdoptCheck(ctx, rt, tx, c, act.Step, act.Command)
 	if err != nil {
 		next.Status = workflow.StatusHalted
-		next.Reason = fmt.Sprintf("check %s could not start: %v", act.Step, err)
+		next.Reason = chainCheckStartReason(act.Step, err)
 		return chainTerminalWF(ctx, rt, tx, c, def, before, *next, ev, workflow.Action{Kind: workflow.ActionHalt, Reason: next.Reason})
 	}
 	next.Awaiting.Run = run
@@ -499,4 +500,15 @@ func flowPlanPos(st workflow.State) int {
 		return 1
 	}
 	return plan
+}
+
+// chainCheckStartReason is the halt reason of a check that could not start. A
+// preflight refusal is the machine's, so it reads as itself rather than as a
+// red check.
+func chainCheckStartReason(step string, err error) string {
+	var envErr *EnvironmentError
+	if errors.As(err, &envErr) {
+		return envErr.Error()
+	}
+	return fmt.Sprintf("check %s could not start: %v", step, err)
 }
