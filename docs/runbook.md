@@ -19,6 +19,16 @@ export TMPDIR=$HOME/.cache/relevo-chains/tmp GOTMPDIR=$HOME/.cache/go-tmp
 it. `relevo-serve` on zen carries a systemd drop-in that sets TMPDIR/GOTMPDIR
 under `~/.cache`; keep it on any rebuild.
 
+The state tmp root is now the default and needs no drop-in: every round and
+check process gets its own directory under `<state root>/tmp`, and the daemon
+sweeps the leftovers there on its ticks. Where such a drop-in is no longer
+needed, remove it by hand -- zen's
+`relevo-serve.service.d/tmpdir.conf` is the example -- because an inherited
+`TMPDIR` keeps pointing processes at a directory the sweep never sees.
+The `relevo-serve-tmp` and `relevo-serve-gotmp` directories live outside the
+root and are never swept; clear them on the same schedule you always used.
+This is an ops step, not code.
+
 ## Verifying a branch
 
 - Static checks run locally: `make check-static` (gofmt over tracked and
