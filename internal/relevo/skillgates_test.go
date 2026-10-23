@@ -122,14 +122,17 @@ func TestSkillPickSkipsAndRefuses(t *testing.T) {
 	}
 	t.Log(line)
 
-	if _, err := resolveRole(rt.RoleRegistry(), rt.Candidates, gates, testClaudeRef, "designer"); err == nil || !strings.Contains(err.Error(), "skill design-runbooks not found") {
-		t.Errorf("explicit pick err = %v, want the skill note", err)
+	if _, err := resolveRole(rt.RoleRegistry(), rt.Candidates, gates, testClaudeRef, "designer"); !errors.Is(err, ErrCandidateCannotRun) || !strings.Contains(err.Error(), "skill design-runbooks not found") {
+		t.Errorf("explicit pick err = %v, want ErrCandidateCannotRun with the skill note", err)
 	}
 
 	none := skillRuntime(t)
 	_, err = resolveRole(none.RoleRegistry(), none.Candidates, skillGatesFor(none, skillTestDir), "", "designer")
 	if !errors.Is(err, ErrAllGated) || !strings.Contains(err.Error(), "skill design-runbooks not found") {
 		t.Errorf("all-skipped err = %v, want ErrAllGated with the reason", err)
+	}
+	if msg := err.Error(); !strings.Contains(msg, "install the missing skill where relevo doctor says") || strings.Contains(msg, "--candidate") || strings.Contains(msg, "gate --clear") {
+		t.Errorf("all-skipped err = %q, want only the install hint", msg)
 	}
 }
 

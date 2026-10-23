@@ -327,6 +327,8 @@ func writeError(err error) error {
 		return fail(codeTierCap, "%v", err)
 	case errors.Is(err, relevo.ErrAllGated):
 		return fail(codeGateActive, "%v", err)
+	case errors.Is(err, relevo.ErrCandidateCannotRun):
+		return failNext(codePolicyRefused, "relevo doctor", "%v", err)
 	case errors.Is(err, relevo.ErrNoCandidates), errors.Is(err, relevo.ErrRoleNotServed):
 		// `relevo config` shows each actor's candidate list and the pick, which
 		// is where a refused candidate gets added.

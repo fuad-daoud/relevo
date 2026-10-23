@@ -391,6 +391,9 @@ func TestContractWriteUnclassifiedIsInternal(t *testing.T) {
 		{"tier above max", fmt.Errorf("bind: %w", relevo.ErrTierAboveMax), codeTierCap},
 		{"everything gated", fmt.Errorf("bind: %w", relevo.ErrAllGated), codeGateActive},
 		{"no candidate serves the actor", fmt.Errorf("bind: %w", relevo.ErrNoCandidates), codePolicyRefused},
+		// A named candidate missing a skill or its role files is fixed by
+		// installing what doctor names, not reported as a relevo bug.
+		{"named candidate cannot run", fmt.Errorf("bind: %w", relevo.ErrCandidateCannotRun), codePolicyRefused},
 		// An invalid binding name is the caller's own --name, so it is usage
 		// with `relevo help` as the way out -- never internal.
 		{"invalid binding name", fmt.Errorf("bind: %w", store.ErrInvalidName), codeUsage},

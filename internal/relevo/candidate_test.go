@@ -671,6 +671,27 @@ func TestAllGatedNamesTheCap(t *testing.T) {
 	}
 }
 
+func TestAllGatedNextOffersOnlyWhatHelps(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                 string
+		waits, real, missing bool
+		want                 string
+	}{
+		{"off only", false, false, false, "name one with --candidate to bypass, or clear a gate with relevo gate --clear <provider>"},
+		{"real", false, true, false, "name one with --candidate to bypass, or clear a gate with relevo gate --clear <provider>"},
+		{"waits", true, false, false, "name one with --candidate to bypass, or wait for a window to open or a running round to finish"},
+		{"waits and real", true, true, false, "name one with --candidate to bypass, or wait for a window to open or a running round to finish, or clear a gate with relevo gate --clear <provider>"},
+		{"missing skill", false, false, true, "install the missing skill where relevo doctor says"},
+		{"missing and real", false, true, true, "name one with --candidate to bypass, or clear a gate with relevo gate --clear <provider>, or install the missing skill where relevo doctor says"},
+		{"missing and waits", true, false, true, "name one with --candidate to bypass, or wait for a window to open or a running round to finish, or install the missing skill where relevo doctor says"},
+	} {
+		if got := allGatedNext(tc.waits, tc.real, tc.missing); got != tc.want {
+			t.Errorf("%s: allGatedNext = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 func demoteGate(token string) availability.Gate {
 	return availability.Gate{Token: token, Kind: availability.Scheduled, Note: "demoted until 14:00Z", Demote: true}
 }
