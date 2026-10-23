@@ -168,8 +168,8 @@ var registry = []verbEntry{
 	},
 	{Name: "config repo", Summary: "show this repository's own settings", Args: "[--repo <path>] [--json]", Flags: []string{"--json", "--repo"}, Output: "json:ConfigRepoDoc", Exit: []int{0, 1, 2}, Errors: []string{"internal", "usage"}},
 	{Name: "config repo list", Summary: "print one row per repository that has settings", Args: "[--json]", Flags: []string{"--json"}, Output: "json:ConfigRepoListDoc", Exit: []int{0, 1, 2}, Errors: []string{"config_invalid", "internal", "usage"}},
-	{Name: "config repo set", Summary: "store one field of this repository's settings", Args: "<name|gate|board_theme> <value> [--repo <path>] [--json]", Flags: []string{"--json", "--repo"}, Output: "json:ConfigWriteDoc", Exit: []int{0, 1, 2}, Errors: []string{"config_invalid", "conflict", "internal", "usage"}},
-	{Name: "config repo unset", Summary: "clear one field of this repository's settings", Args: "<name|gate|board_theme> [--repo <path>] [--json]", Flags: []string{"--json", "--repo"}, Output: "json:ConfigWriteDoc", Exit: []int{0, 1, 2}, Errors: []string{"config_invalid", "internal", "usage"}},
+	{Name: "config repo set", Summary: "store one field of this repository's settings", Args: "<name|gate|board_theme|trimpath> <value> [--repo <path>] [--json]", Flags: []string{"--json", "--repo"}, Output: "json:ConfigWriteDoc", Exit: []int{0, 1, 2}, Errors: []string{"config_invalid", "conflict", "internal", "usage"}},
+	{Name: "config repo unset", Summary: "clear one field of this repository's settings", Args: "<name|gate|board_theme|trimpath> [--repo <path>] [--json]", Flags: []string{"--json", "--repo"}, Output: "json:ConfigWriteDoc", Exit: []int{0, 1, 2}, Errors: []string{"config_invalid", "internal", "usage"}},
 	{
 		Name:    "config rollback",
 		Summary: "restore an earlier configuration revision",

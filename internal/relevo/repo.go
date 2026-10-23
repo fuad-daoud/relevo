@@ -38,15 +38,24 @@ func captureRepo(ctx context.Context, rt Runtime, cwd string) *store.RepoRef {
 // the gate rule that reads one entry's `gate` as the tier between the flag and
 // the policy default.
 
-// RepoSettings is one repository's stored settings as the gate and the chain
-// paths read them. Key is the identity the section is keyed on; the three
-// fields are the entry's, and the zero value means "this repository sets
-// nothing", which every caller treats as "read the next tier".
+// RepoSettings is one repository's stored settings as the gate, the board and
+// the go-flags paths read them. Key is the identity the section is keyed on;
+// every field is the entry's, and "" means the repository sets nothing, which
+// every caller reads as the next tier or the default.
 type RepoSettings struct {
 	Key        string
 	Name       string
 	Gate       string
 	BoardTheme string
+	Trimpath   string
+}
+
+// TrimpathOn is the effective trimpath setting: unset and "on" both read on,
+// and only the stored "off" opts the repository out. ParseRepos leaves
+// Trimpath empty, "on" or "off" and nothing else, so those three are the
+// whole vocabulary here.
+func (s RepoSettings) TrimpathOn() bool {
+	return s.Trimpath != "off"
 }
 
 // The words that name the tier a resolved gate came from: the printed gate and
@@ -154,7 +163,7 @@ func RepoSettingsFor(ctx context.Context, rt Runtime, dir string) (RepoSettings,
 	if !ok {
 		return out, nil
 	}
-	return RepoSettings{Key: key, Name: entry.Name, Gate: entry.Gate, BoardTheme: entry.BoardTheme}, nil
+	return RepoSettings{Key: key, Name: entry.Name, Gate: entry.Gate, BoardTheme: entry.BoardTheme, Trimpath: entry.Trimpath}, nil
 }
 
 // GateLine renders the gate line a bind or an add prints through the notice

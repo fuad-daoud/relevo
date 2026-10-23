@@ -36,8 +36,8 @@ const configUsage = `usage: relevo config [--probe [token...]]
        relevo config workflow show <name> [--json]
        relevo config workflow edit <name>
        relevo config repo [--repo <path>] [--json]
-       relevo config repo set <name|gate|board_theme> <value> [--repo <path>] [--json]
-       relevo config repo unset <name|gate|board_theme> [--repo <path>] [--json]
+       relevo config repo set <name|gate|board_theme|trimpath> <value> [--repo <path>] [--json]
+       relevo config repo unset <name|gate|board_theme|trimpath> [--repo <path>] [--json]
        relevo config repo list [--json]`
 
 // cmdConfig is the one verb that replaced init, candidates, policy, roles,
