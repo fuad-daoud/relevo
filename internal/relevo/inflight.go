@@ -1,8 +1,6 @@
 package relevo
 
 import (
-	"strings"
-
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -13,15 +11,16 @@ func LiveBuilder(b store.Binding) bool {
 	return b.Builder.Headless() && b.Builder.PID != 0 && b.State != store.StateDone && b.State != store.StatePaused
 }
 
-// openRoundsByCandidate counts the live builders per candidate token.
+// openRoundsByCandidate counts the live builders per candidate token, the
+// whole token: an opencode model names its effort ("#xhigh"), and the refs the
+// counts are looked up by carry it.
 func openRoundsByCandidate(bindings []store.Binding) map[string]int {
 	out := map[string]int{}
 	for _, b := range bindings {
 		if !LiveBuilder(b) {
 			continue
 		}
-		tok, _, _ := strings.Cut(b.BuilderCandidate, "#")
-		out[tok]++
+		out[b.BuilderCandidate]++
 	}
 	return out
 }

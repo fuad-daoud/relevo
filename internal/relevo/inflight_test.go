@@ -80,3 +80,20 @@ func TestInFlightExceptSkipsTheResolvingBinding(t *testing.T) {
 		t.Errorf("count excluding mine = %d, want 1", got)
 	}
 }
+
+// TestInFlightCapsACandidateWhoseModelNamesAnEffort pins the count against a
+// real-shaped opencode candidate: its model carries "#xhigh", so its ref does,
+// and a binding running it must count against that ref's pool.
+func TestInFlightCapsACandidateWhoseModelNamesAnEffort(t *testing.T) {
+	set := candidateSet(t, `[
+	  {"name":"qwen","harness":"opencode","provider":"alibaba-token-plan","model":"qwen3.8-flash#xhigh","roles":["builder"],"max_concurrency":1}
+	]`)
+	st := store.New(t.TempDir())
+	if err := st.Save(inflightBinding("one", "opencode/alibaba-token-plan/qwen3.8-flash#xhigh", nil)); err != nil {
+		t.Fatal(err)
+	}
+	gates := availability.Gates(AvailabilityDeps(Runtime{Store: st, Candidates: set}))
+	if len(gates) != 1 || gates[0].Kind != availability.ConcurrencyLimit || gates[0].Note != "1/1" {
+		t.Fatalf("gates = %+v, want the effort-named candidate at its cap 1/1", gates)
+	}
+}
