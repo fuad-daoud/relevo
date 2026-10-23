@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -30,6 +31,12 @@ func KeptReasonOf(err error) string {
 	}
 
 	return ""
+}
+
+// KeptHint is the one next step after a kept-worktree refusal, for a caller
+// that prints the refusal raw.
+func KeptHint(name string) string {
+	return fmt.Sprintf("commit or discard the work and unbind again, or `relevo unbind %s --force` archives it anyway", name)
 }
 
 // keptMarker opens the reason in a server's kept message.

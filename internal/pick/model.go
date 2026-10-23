@@ -2,6 +2,7 @@ package pick
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -87,6 +88,9 @@ func runVerb(ctx context.Context, rt relevo.Runtime, opts Options, name string) 
 			return verbDoneMsg{text: relevo.DoneText(name, res)}
 		case VerbUnbind:
 			res, err := relevo.Unbind(ctx, rt, name, opts.Archive)
+			if errors.Is(err, relevo.ErrWorktreeKept) {
+				err = fmt.Errorf("%w; %s", err, relevo.KeptHint(name))
+			}
 			if err != nil {
 				return verbDoneMsg{err: err}
 			}

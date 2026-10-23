@@ -514,7 +514,8 @@ gives a MasterMind a name of your own.
   archiving its record first. `--pick` chooses from a list in the terminal. A worktree relevo keeps
   (uncommitted changes, or a failed check or removal) keeps the binding too and the verb refuses;
   commit or discard the work and unbind again, or pass `--force` to archive the binding anyway
-  (`--force` goes with a named binding or `--done`, not `--pick`).
+  (`--force` goes with a named binding or `--done`, not `--pick`). The refusal prints the reason and a
+  `next:` line with the `--force` form; for a served binding `relevo serve unbind --force` runs on the server.
 
 - `relevo unbind --done [--dry-run] [--delete] [--force] [--mastermind P | --all-masterminds]` —
   clear the DONE bindings of the calling MasterMind (resolved like every

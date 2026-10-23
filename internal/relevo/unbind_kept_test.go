@@ -1,6 +1,9 @@
 package relevo
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestKeptReasonReadsNewAndOldServerMessages(t *testing.T) {
 	t.Parallel()
@@ -15,6 +18,17 @@ func TestKeptReasonReadsNewAndOldServerMessages(t *testing.T) {
 	for _, c := range cases {
 		if got := KeptReason(c.msg); got != c.want {
 			t.Errorf("%s: KeptReason = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestKeptHintNamesTheBindingAndTheForceFlag(t *testing.T) {
+	t.Parallel()
+
+	got := KeptHint("api")
+	for _, want := range []string{"commit or discard the work", "`relevo unbind api --force`"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("KeptHint = %q, want it to contain %q", got, want)
 		}
 	}
 }
