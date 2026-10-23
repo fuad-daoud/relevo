@@ -44,6 +44,7 @@ func TestShippedTableMatchesHarness(t *testing.T) {
 	wantOutput := map[string]string{
 		"plan-executor":     "report",
 		"librarian":         "report",
+		"designer":          "report",
 		"reviewer":          "findings",
 		"security-reviewer": "findings",
 		"researcher":        "notes",
@@ -62,6 +63,17 @@ func TestShippedTableMatchesHarness(t *testing.T) {
 				t.Errorf("%s is not shipped on %s", name, h.Kind)
 			}
 		}
+	}
+
+	designer, ok := Shipped("designer")
+	if !ok {
+		t.Fatal("Shipped(designer) not found")
+	}
+	if designer.Shape != agentsrc.ShapeWriter {
+		t.Errorf("designer shape = %q, want %q", designer.Shape, agentsrc.ShapeWriter)
+	}
+	if len(designer.Requires) != 0 {
+		t.Errorf("designer requires = %v, want none", designer.Requires)
 	}
 
 	if _, ok := Shipped("nonesuch"); ok {

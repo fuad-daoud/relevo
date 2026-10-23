@@ -91,6 +91,7 @@ func TestOpencodeDefinitionsDeclareMode(t *testing.T) {
 		{"architect", "primary"},
 		{"plan-executor", "all"},
 		{"librarian", "all"},
+		{"designer", "all"},
 		{"researcher", "subagent"},
 	}
 	for _, tc := range cases {
@@ -129,7 +130,7 @@ func TestOpencodeDefinitionsPinNoModel(t *testing.T) {
 
 func TestAgentDocCodexIsToml(t *testing.T) {
 	const marker = "developer_instructions = '''\n"
-	for _, role := range []string{"plan-executor", "librarian", "researcher", "reviewer", "architect"} {
+	for _, role := range []string{"plan-executor", "librarian", "designer", "researcher", "reviewer", "architect"} {
 		doc, err := AgentDoc(role, "codex")
 		if err != nil {
 			t.Fatalf("AgentDoc(%s, codex): %v", role, err)
@@ -181,7 +182,7 @@ func checkCodexResearcher(t *testing.T, s string) {
 
 func TestAgyDefinitionsFrontmatter(t *testing.T) {
 	forbidden := regexp.MustCompile(`(?m)^\s*-\s*(write_to_file|replace_file_content|create_file|delete_file|notebook_edit|invoke_subagent|send_command_input|multi_replace_file_content|sed_file|manage_subagents|define_subagent)\s*$`)
-	for _, role := range []string{"plan-executor", "librarian", "researcher", "reviewer"} {
+	for _, role := range []string{"plan-executor", "librarian", "designer", "researcher", "reviewer"} {
 		doc, err := AgentDoc(role, "agy")
 		if err != nil {
 			t.Fatalf("AgentDoc(%s, agy): %v", role, err)
@@ -197,8 +198,8 @@ func TestAgyDefinitionsFrontmatter(t *testing.T) {
 			checkAgyPlanExecutor(t, fm)
 			continue
 		}
-		if role == "librarian" {
-			checkAgyLibrarian(t, fm)
+		if role == "librarian" || role == "designer" {
+			checkAgyWriter(t, role, fm)
 			continue
 		}
 		if !strings.Contains(fm, "\ntools:\n") {
@@ -234,27 +235,27 @@ func checkAgyPlanExecutor(t *testing.T, fm string) {
 	}
 }
 
-// checkAgyLibrarian pins the docs-only writer's frontmatter: a root agent that
+// checkAgyWriter pins a non-builder writer's frontmatter: a root agent that
 // is never dispatched as a sub-agent, carrying the writer's tools and none of
 // the sub-agent ones, because a second writer in one tree is forbidden.
-func checkAgyLibrarian(t *testing.T, fm string) {
+func checkAgyWriter(t *testing.T, role, fm string) {
 	t.Helper()
 	if !strings.Contains(fm, "\nsubagent: false\n") {
-		t.Errorf("librarian must be subagent: false")
+		t.Errorf("%s must be subagent: false", role)
 	}
 	if !strings.Contains(fm, "\ntools:\n") {
-		t.Errorf("librarian must carry a tools allowlist")
+		t.Errorf("%s must carry a tools allowlist", role)
 	}
 	for _, name := range []string{"write_to_file", "replace_file_content", "run_command"} {
 		m := regexp.MustCompile(`(?m)^\s*-\s*` + name + `\s*$`)
 		if !m.MatchString(fm) {
-			t.Errorf("librarian allowlist must include %s; without it the writer cannot write", name)
+			t.Errorf("%s allowlist must include %s; without it the writer cannot write", role, name)
 		}
 	}
 	for _, name := range []string{"invoke_subagent", "manage_subagents"} {
 		m := regexp.MustCompile(`(?m)^\s*-\s*` + name + `\s*$`)
 		if m.MatchString(fm) {
-			t.Errorf("librarian allowlist must not include %s", name)
+			t.Errorf("%s allowlist must not include %s", role, name)
 		}
 	}
 }
@@ -315,6 +316,40 @@ func TestLibrarianDefinitionsPinOneDiagramFormatPerFlow(t *testing.T) {
 		} {
 			if !strings.Contains(body, want) {
 				t.Errorf("librarian.%s body lacks the never-both anchor %q", kind, want)
+			}
+		}
+	}
+}
+
+// TestDesignerDefinitionsCarryTheDraftsContract pins the prose every dialect
+// carries: the two answers to a skill that expects a human, each rule, the
+// scope and the switch that keeps the skill's history untouched.
+func TestDesignerDefinitionsCarryTheDraftsContract(t *testing.T) {
+	anchors := []string{
+		"A choice becomes options",
+		"A missing fact is a halt",
+		"Catalogue first.",
+		"One dimension per revise.",
+		"Never overwrite.",
+		"Copy is kept unless the brief says otherwise.",
+		"Contrast.",
+		"Real product screenshots only",
+		"Nothing outlives the round.",
+		"When the brief says the human locked a direction",
+		".design/",
+		"PRODUCT.md",
+		"DESIGN.md",
+		"history: off",
+	}
+	for _, kind := range []string{"claude", "opencode", "agy", "codex"} {
+		doc, err := AgentDoc("designer", kind)
+		if err != nil {
+			t.Fatalf("AgentDoc(designer, %s): %v", kind, err)
+		}
+		body := definitionBody(t, kind, string(doc))
+		for _, want := range anchors {
+			if !strings.Contains(body, want) {
+				t.Errorf("designer.%s body lacks the anchor %q", kind, want)
 			}
 		}
 	}
@@ -381,7 +416,7 @@ func agyAllowlist(fm string) []string {
 }
 
 func TestAgyAllowlistsResolve(t *testing.T) {
-	for _, role := range []string{"plan-executor", "librarian", "researcher", "reviewer"} {
+	for _, role := range []string{"plan-executor", "librarian", "designer", "researcher", "reviewer"} {
 		doc, err := AgentDoc(role, "agy")
 		if err != nil {
 			t.Fatalf("AgentDoc(%s, agy): %v", role, err)

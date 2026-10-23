@@ -3,10 +3,13 @@ package roles
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/pathscope"
+	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -343,5 +346,45 @@ func TestActorOutputsParseAndValidate(t *testing.T) {
 	badFormat := []byte(`{"reviewer": {"agent": "reviewer", "outputs": {"verdict": "unknown"}}}`)
 	if _, _, err := ParseActors(badFormat); err == nil || !errors.Is(err, ErrBadActors) {
 		t.Errorf("ParseActors(bad format) error = %v, want wrapping ErrBadActors", err)
+	}
+}
+
+// TestReadmeDesignerActorBlockValidates pins the actor block the README tells
+// a user to add: it parses, builds into a registry, and the role carries the
+// scope that keeps a designer round to its drafts.
+func TestReadmeDesignerActorBlockValidates(t *testing.T) {
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	var block string
+	for _, line := range strings.Split(string(readme), "\n") {
+		if strings.HasPrefix(line, `"designer": {`) {
+			block = line
+			break
+		}
+	}
+	if block == "" {
+		t.Fatal(`README has no line starting with "designer": {`)
+	}
+	actors, _, err := ParseActors([]byte("{" + block + "}"))
+	if err != nil {
+		t.Fatalf("ParseActors: %v", err)
+	}
+	f, _, err := FromActors(map[string]AgentEntry{}, actors)
+	if err != nil {
+		t.Fatalf("FromActors: %v", err)
+	}
+	reg, err := Build(f, nil, policy.Policy{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	role, ok := reg.Role("designer")
+	if !ok {
+		t.Fatal("Role(designer) not found")
+	}
+	want := &pathscope.Scope{Paths: []string{".design/**", "PRODUCT.md", "DESIGN.md"}}
+	if !reflect.DeepEqual(role.Scope, want) {
+		t.Errorf("Role.Scope = %+v, want %+v", role.Scope, want)
 	}
 }

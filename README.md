@@ -268,7 +268,7 @@ One line per file says `wrote`, `updated (unchanged since relevo wrote it)`,
 `kept (identical)` or `kept (differs; --force to overwrite)`. Pass `--kind` to
 name a harness that is not on `PATH` yet, `--agent` for one definition,
 `--dry-run` to look first. This writes `plan-executor`, `researcher`, `reviewer`,
-`security-reviewer`, `architect` and `librarian` for every kind; `relevo config agents --dry-run` shows what
+`security-reviewer`, `architect`, `librarian` and `designer` for every kind; `relevo config agents --dry-run` shows what
 would be written.
 
 `researcher` is the read-only agent the builder's own sub-agents run as. It
@@ -1859,6 +1859,7 @@ writer, whether its round closes on a gate.
 | --- | --- | --- | --- |
 | `plan-executor` | writer | `report` | `researcher` |
 | `librarian` | writer | `report` | -- |
+| `designer` | writer | `report` | -- |
 | `reviewer` | reader | `findings` | -- |
 | `researcher` | reader | `notes` | -- |
 | `architect` | reader | `plan` | -- |
@@ -1867,6 +1868,20 @@ writer, whether its round closes on a gate.
 edits markdown, agent instruction files, sketches and diagrams, and code
 comments, and never anything that changes behaviour. That contract is a
 **scope**, and relevo enforces it when a round closes.
+
+`designer` is a writer that produces design drafts: static HTML/CSS mockups
+under `.design/<topic>/<draft>/` for a human to choose from. It needs the
+external `design-runbooks` skill installed for the harness that runs it, and
+`relevo config init` does not add a designer actor, because a seeded actor
+would hand every new user one they cannot serve. Add it with
+`relevo config edit`, scoped to the drafts and the two contract files:
+
+```json
+"designer": {"agent": "designer", "candidates": ["sonnet"], "scope": {"paths": [".design/**", "PRODUCT.md", "DESIGN.md"]}}
+```
+
+A repo whose `.gitignore` ignores `.design/` hides its drafts from the scope
+check, so a round's drafts are neither judged nor committed.
 
 `actors.<name>.scope` is `{"paths": [...], "comments": bool}`. Each `paths`
 entry is a glob over the repo-relative path -- `*` matches within one segment,
