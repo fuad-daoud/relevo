@@ -37,7 +37,7 @@ const (
 func refusalCause(serving []candidate.Candidate, gates []availability.Gate) RefusalCause {
 	cause, seen := CauseCap, false
 	for _, c := range serving {
-		for _, sk := range skipsFor(gates, c.Ref().String()) {
+		for _, sk := range skipsFor(skipGates(gates), c.Ref().String()) {
 			switch sk.Kind {
 			case availability.Scheduled:
 				cause = CauseWindow
@@ -97,7 +97,7 @@ func refusalFromErr(role string, serving []candidate.Candidate, gates []availabi
 	case errors.Is(err, ErrAllGated):
 		var providers []string
 		for _, c := range serving {
-			if len(skipsFor(gates, c.Ref().String())) > 0 {
+			if len(skipsFor(skipGates(gates), c.Ref().String())) > 0 {
 				providers = append(providers, c.Ref().Provider)
 			}
 		}

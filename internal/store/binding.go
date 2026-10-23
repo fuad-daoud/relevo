@@ -223,6 +223,10 @@ type Binding struct {
 	MasterMindID     string   `json:"planner_id,omitempty"` // why: ditto, state already written
 	Builder          Endpoint `json:"runner"`
 	BuilderCandidate string   `json:"candidate,omitempty"`
+	// BuilderPinned is set when a person named the candidate, so a window edge
+	// never re-picks it. It is not stamped into the format: an older relevo that
+	// drops it never re-picks for a window.
+	BuilderPinned bool `json:"builder_pinned,omitempty"`
 	// BuilderAccount names the login of the candidate's pool the round drew
 	// from, empty on a host with no accounts. It is stamped at the current
 	// format, so a binary that predates it refuses the record rather than

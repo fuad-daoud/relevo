@@ -119,54 +119,6 @@ func (r Resolution) Token() string {
 	return r.Candidate.Ref().String()
 }
 
-// rankedEntry is one row of the walk; T4's FormatPolicy renders the same rows.
-type rankedEntry struct {
-	Candidate candidate.Candidate
-	How       How // HowOrder or HowUnlisted
-	Position  int // 1-based index in order[role] for HowOrder; 0 for HowUnlisted
-	Off       bool
-}
-
-// rankedRole is one role's candidates in the registry's ranked order, as the
-// walk wants them: the candidate behind each token is looked up in set, and an
-// entry whose token does not parse or is not configured is skipped here. An
-// unknown role has no ranked list, so the result is nil (#374 §4.3).
-func rankedRole(reg *roles.Registry, set *candidate.Set, role string) []rankedEntry {
-	info, ok := reg.Role(role)
-	if !ok {
-		return nil
-	}
-	var out []rankedEntry
-	for _, r := range info.Ranked {
-		ref, err := candidate.ParseRef(r.Token)
-		if err != nil {
-			continue
-		}
-		c, err := set.Lookup(ref)
-		if err != nil {
-			continue
-		}
-		if r.Position > 0 {
-			out = append(out, rankedEntry{Candidate: c, How: HowOrder, Position: r.Position, Off: r.Off})
-			continue
-		}
-		out = append(out, rankedEntry{Candidate: c, How: HowUnlisted, Off: r.Off})
-	}
-	return out
-}
-
-// rankedList is the order's configured, serving entries first, then every
-// other serving candidate in ref order; an order entry relevo cannot use is
-// skipped here and reported by PolicyWarnings (T4), never an error, because
-// removing a candidate must not break every subcommand (spec §3.1).
-//
-// It is the legacy registry's ranked list: rankedRole over the derivation of
-// set and pol, which is what every pre-roles.json caller meant. It stays for
-// policy_view.go (#374 §4.3).
-func rankedList(set *candidate.Set, pol policy.Policy, role string) []rankedEntry {
-	return rankedRole(legacyRegistry(set, pol), set, role)
-}
-
 // skipsFor is one Skip per gate whose Token == token, in gates order.
 func skipsFor(gates []availability.Gate, token string) []Skip {
 	var out []Skip
@@ -356,7 +308,8 @@ func resolveRoleBase(reg *roles.Registry, set *candidate.Set, gates []availabili
 		return Resolution{}, fmt.Errorf("no configured candidate serves actor %q (configured: %v): %w", role, set.Refs(), ErrRoleNotServed)
 	}
 
-	ranked := rankedRole(reg, set, role)
+	ranked := rankedRoleFor(reg, set, role, gates)
+	gates = skipGates(gates)
 	serving := make([]candidate.Candidate, 0, len(ranked))
 	for _, r := range ranked {
 		serving = append(serving, r.Candidate)

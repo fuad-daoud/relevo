@@ -33,6 +33,17 @@ func TestRoleRefusalsCause(t *testing.T) {
 			wantCause: CauseWindow,
 		},
 		{
+			name: "a demote window beside a cap is still a cap",
+			pol:  order,
+			gates: []availability.Gate{
+				kindGate(testOpencodeRef, availability.ConcurrencyLimit),
+				kindGate(testClaudeRef, availability.ConcurrencyLimit),
+				kindGate(testAgyRef, availability.ConcurrencyLimit),
+				{Token: testAgyRef, Kind: availability.Scheduled, Demote: true, Until: baseTime.Add(10 * time.Minute)},
+			},
+			wantCause: CauseCap,
+		},
+		{
 			name: "cap on every serving token is a cap",
 			pol:  order,
 			gates: []availability.Gate{

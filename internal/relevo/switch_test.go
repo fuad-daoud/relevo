@@ -93,6 +93,29 @@ func TestGatedSwitchesAtOnce(t *testing.T) {
 	}
 }
 
+func TestGatedSwitchUnpinsTheBinding(t *testing.T) {
+	t.Parallel()
+
+	rt, b := sentSwitchable(t)
+	if !b.BuilderPinned {
+		t.Fatalf("BuilderPinned = false before the gate, want pinned by the explicit candidate")
+	}
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.BuilderCandidate != testClaudeRef {
+		t.Errorf("BuilderCandidate = %q, want %q", got.BuilderCandidate, testClaudeRef)
+	}
+	if got.BuilderPinned {
+		t.Errorf("BuilderPinned = true after a gated switch, want false")
+	}
+}
+
 // TestGatedSwitchDoesNotCount checks the two halves of §4.5 together: a
 // gated switch does not advance RoundSwitches, but the >= limit check at
 // the top of switchBuilder still applies to it -- a binding already at the
@@ -849,4 +872,59 @@ func TestRevivePathsClearAStaleHalt(t *testing.T) {
 			t.Errorf("halt entries = %d, want %d: the new halt was deduped against the stale key", len(got), haltsBefore+1)
 		}
 	})
+}
+
+// windowSentBinding sends round 1 on the window-limited candidate inside its
+// window and returns the runtime with its clock moved past the window's close.
+func windowSentBinding(t *testing.T) (Runtime, store.Binding) {
+	t.Helper()
+	rt := windowRuntime(t, windowCandidatesJSON, windowOpenClock)
+	bindWindow(t, rt, "")
+	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	return at(rt, windowClosedFor), loadWebshop(t, rt)
+}
+
+func TestWindowGateDoesNotSwitchARunningRound(t *testing.T) {
+	t.Parallel()
+
+	rt, b := windowSentBinding(t)
+	if _, gated := gatedBuilder(rt, b); gated {
+		t.Fatal("a closed window gated the running round's builder")
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.BuilderCandidate != windowOpenRef {
+		t.Errorf("BuilderCandidate = %q, want %q: a window never moves a running round", got.BuilderCandidate, windowOpenRef)
+	}
+	if kills := runnerOf(t, rt).kills; len(kills) != 0 {
+		t.Errorf("kills = %+v, want the running round left alone", kills)
+	}
+	if sw := switches(t, rt); len(sw) != 0 {
+		t.Errorf("switch entries = %d, want 0", len(sw))
+	}
+}
+
+func TestRateLimitStillSwitchesWithAWindowGateLive(t *testing.T) {
+	t.Parallel()
+
+	rt, b := windowSentBinding(t)
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), windowOpenRef, time.Time{}, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.BuilderCandidate != windowFallback {
+		t.Errorf("BuilderCandidate = %q, want %q after a rate limit", got.BuilderCandidate, windowFallback)
+	}
+	if sw := switches(t, rt); len(sw) != 1 {
+		t.Errorf("switch entries = %d, want 1", len(sw))
+	}
 }

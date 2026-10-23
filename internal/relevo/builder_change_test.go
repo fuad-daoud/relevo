@@ -235,3 +235,28 @@ func TestCandidateSendRefusedExceptOnAHaltedServedBinding(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyBuilderPinsAnExplicitPick(t *testing.T) {
+	t.Parallel()
+
+	cand := candidate.Candidate{Harness: "claude", Provider: "test", Model: "m", Tier: "edit"}
+	reg := legacyRegistry(nil, policy.Policy{})
+	for _, tc := range []struct {
+		name   string
+		how    How
+		before bool
+		want   bool
+	}{
+		{"explicit pins", HowExplicit, false, true},
+		{"order clears the pin", HowOrder, true, false},
+		{"rotation clears the pin", HowRotation, true, false},
+	} {
+		got, err := applyBuilder(store.Binding{BuilderPinned: tc.before}, Resolution{How: tc.how, Candidate: cand}, reg, policy.Policy{}, false)
+		if err != nil {
+			t.Fatalf("%s: applyBuilder: %v", tc.name, err)
+		}
+		if got.BuilderPinned != tc.want {
+			t.Errorf("%s: BuilderPinned = %v, want %v", tc.name, got.BuilderPinned, tc.want)
+		}
+	}
+}

@@ -82,7 +82,7 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 	prompt := roundPrompt(rt, tx, cur, planPath, reportPath, donePath)
 
 	var pending []store.LogEntry
-	cur, res, err := repickStale(rt, cur, false)
+	cur, res, _, err := repickForRound(rt, cur, false, false)
 	if err != nil {
 		return b, fmt.Errorf("%s: %w", name, err)
 	}

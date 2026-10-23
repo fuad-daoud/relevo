@@ -59,6 +59,7 @@ func applyBuilder(b store.Binding, res Resolution, reg *roles.Registry, pol poli
 	}
 	b.BuilderCandidate = res.Token()
 	b.BuilderAccount = res.Account
+	b.BuilderPinned = res.How == HowExplicit
 	b.Builder.Kind = res.Candidate.Harness
 	b.Tier = string(tier)
 	b.RoundExcluded = nil

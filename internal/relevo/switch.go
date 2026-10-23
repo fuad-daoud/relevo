@@ -365,6 +365,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 
 	b.Builder = carryStream(b.Builder, ep)
 	b.BuilderCandidate = res.Token()
+	b.BuilderPinned = false
 	b.BuilderAccount = res.Account
 	b.BuilderMissingSince = time.Time{}
 	b.BuilderScreen = ""

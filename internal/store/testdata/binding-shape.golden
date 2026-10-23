@@ -7,6 +7,7 @@ actor
 base
 base_ref
 branch
+builder_pinned
 candidate
 check_run.attempt
 check_run.command
