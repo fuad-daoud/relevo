@@ -146,6 +146,48 @@ func Fold(samples []Sample, prices Prices, plan bool, note string) Usage {
 	return u
 }
 
+// Add folds o into u: one round's segments becoming one figure. Tokens always
+// sum. The cost combines by the rule Fold states for its samples, applied to
+// whole segments: a side that moved tokens must carry a bill -- measured or
+// estimated, never a plan lane -- and two billed sides sum their dollars
+// under the more cautious basis, estimated if either side is. A side that
+// moved tokens without a bill -- an unreadable read, a tokens-only
+// PriorTokens, a plan lane -- leaves the sum Unknown with USD 0, never the
+// priced remainder. A side that moved no tokens adds nothing and poisons
+// nothing; when neither moved any, u's own bill is the sum's, so folding a
+// zero prior leaves the figures that stand. Every other field is u's.
+func Add(u, o Usage) Usage {
+	total := u
+	total.Tokens = u.Tokens.Add(o.Tokens)
+	moved := func(s Usage) bool { return s.Tokens != (Tokens{}) }
+	billed := func(s Usage) bool {
+		return !s.Cost.Plan && (s.Cost.Basis == Measured || s.Cost.Basis == Estimated)
+	}
+	bill := func(s Usage) Cost {
+		if moved(s) && !billed(s) {
+			return Cost{Basis: Unknown}
+		}
+		return s.Cost
+	}
+	switch {
+	case !moved(o):
+		total.Cost = bill(u)
+	case !moved(u):
+		total.Cost = bill(o)
+	default:
+		if !billed(u) || !billed(o) {
+			total.Cost = Cost{Basis: Unknown}
+		} else {
+			basis := Measured
+			if u.Cost.Basis == Estimated || o.Cost.Basis == Estimated {
+				basis = Estimated
+			}
+			total.Cost = Cost{Basis: basis, USD: u.Cost.USD + o.Cost.USD, Plan: u.Cost.Plan || o.Cost.Plan}
+		}
+	}
+	return total
+}
+
 func clamp(t Tokens) (Tokens, bool) {
 	clamped := false
 	fix := func(v *int64) {

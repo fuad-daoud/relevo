@@ -6,6 +6,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // roundFacts derives round n's plain facts from its events. The caller sets ID,
@@ -14,6 +15,9 @@ func roundFacts(events []store.LogEntry, n int) db.Round {
 	var r db.Round
 	var earliest, planTS time.Time
 	var haveEarliest, havePlanTS bool
+	// The round's earlier segments, computed once: what the report entry's
+	// own usage must be folded with.
+	prior := view.PriorUsageOf(events, n)
 
 	for _, e := range events {
 		if e.Round != n {
@@ -33,7 +37,7 @@ func roundFacts(events []store.LogEntry, n int) db.Round {
 		case store.KindDiff:
 			applyDiff(&r, e)
 		case store.KindReport:
-			applyReport(&r, e)
+			applyReport(&r, e, prior)
 		case store.KindExit, store.KindSwitch:
 			if r.ClosedAt == nil {
 				ts := e.TS
@@ -67,16 +71,28 @@ func applyDiff(r *db.Round, e store.LogEntry) {
 	r.Tree = &tree
 }
 
-func applyReport(r *db.Round, e store.LogEntry) {
+func applyReport(r *db.Round, e store.LogEntry, prior usage.Usage) {
 	ts := e.TS
 	r.ClosedAt = &ts
 	applyGate(r, e.Gate)
-	applyUsage(r, e.Usage)
+	applyUsage(r, totalUsage(prior, e.Usage))
 	outcome := e.Outcome
 	if outcome == "" {
 		outcome = "unstructured"
 	}
 	r.ReportOutcome = &outcome
+}
+
+// totalUsage folds a round's earlier segments into the report entry's own
+// usage, so the row counts every session the round ran. A report
+// entry with no usage keeps the row figureless: a round is never given a
+// partial total in place of an absent report segment.
+func totalUsage(prior usage.Usage, u *usage.Usage) *usage.Usage {
+	if u == nil {
+		return nil
+	}
+	total := usage.Add(*u, prior)
+	return &total
 }
 
 func applyGate(r *db.Round, g *store.GateRecord) {
