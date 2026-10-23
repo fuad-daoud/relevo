@@ -1,13 +1,14 @@
   ◆ relevo    settings                                                         v0.13.0-28    14:02  
                                                                                                     
-   24 settings   3 set                                                                              
+   25 settings   3 set                                                                              
                                                                                                     
    SETTING                                         VALUE                   DEFAULT                  
-   rounds ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 4 settings · 2 set   
+   rounds ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 5 settings · 2 set   
    max_switches                                    2                       2                        
    max_tier                                        yolo                    edit                     
    verify.default                                  off                     off                      
    artifact_max_mb                                 25                      25                       
+   disk_min_free_gb                                5                       5                        
    check ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 3 settings   
    gate.default                                    none                    none                     
    gate.timeout                                    10m                     10m                      
@@ -29,6 +30,5 @@
    notify ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 setting   
    notify.webhooks                                 none                    none                     
    chain ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 5 settings   
-   chain.max_corrections                           3                       3                        
 
  enter  edit      r  reset      :  command      ?  all keys      q  quit                            

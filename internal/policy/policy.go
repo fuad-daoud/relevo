@@ -22,6 +22,10 @@ type Policy struct {
 	// ArtifactMaxMB caps a round's artifact directory; nil and 0 mean
 	// DefaultArtifactMaxMB, and a negative value is refused.
 	ArtifactMaxMB *int `json:"artifact_max_mb,omitempty"`
+	// DiskMinFreeGB is a round's preflight minimum free space; nil is
+	// DefaultDiskMinFreeGB, 0 turns the preflight off, and a negative value
+	// is refused.
+	DiskMinFreeGB *int `json:"disk_min_free_gb,omitempty"`
 	// LimitGateDefaultMS is how long a matched limit gates the provider when
 	// no reset time parses; nil is DefaultLimitGate.
 	LimitGateDefaultMS *int `json:"limit_gate_default_ms,omitempty"`
@@ -212,6 +216,10 @@ const DefaultMaxSwitches = 2
 // policy.artifact_max_mb is unset or 0: 25 MB.
 const DefaultArtifactMaxMB = 25
 
+// DefaultDiskMinFreeGB is a round's preflight minimum free space when
+// policy.disk_min_free_gb is unset: 5 GB.
+const DefaultDiskMinFreeGB = 5
+
 const DefaultLimitGate = time.Hour
 
 // DefaultStallAfter is long enough that a thinking builder is never
@@ -267,6 +275,17 @@ func (p Policy) ArtifactMaxBytes() int64 {
 		mb = *p.ArtifactMaxMB
 	}
 	return int64(mb) * (1 << 20)
+}
+
+// DiskMinFreeBytes returns the preflight's minimum free space in bytes: the
+// configured disk_min_free_gb, or DefaultDiskMinFreeGB when unset. 0 turns
+// the preflight off, so it reads as 0 bytes.
+func (p Policy) DiskMinFreeBytes() uint64 {
+	gb := DefaultDiskMinFreeGB
+	if p.DiskMinFreeGB != nil {
+		gb = *p.DiskMinFreeGB
+	}
+	return uint64(max(gb, 0)) * (1 << 30)
 }
 
 func (p Policy) LimitGateDefault() time.Duration {

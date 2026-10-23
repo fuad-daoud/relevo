@@ -1191,6 +1191,43 @@ func TestArtifactMaxMBValidates(t *testing.T) {
 	}
 }
 
+// TestDiskMinFreeGBValidates pins the disk preflight minimum's policy rule: a
+// negative disk_min_free_gb is refused, unset means the 5 GB default, and 0
+// turns the preflight off (DiskMinFreeBytes).
+func TestDiskMinFreeGBValidates(t *testing.T) {
+	t.Parallel()
+
+	if _, err := load(t, `{"disk_min_free_gb":-1}`); !errors.Is(err, ErrBadPolicy) {
+		t.Errorf("negative disk_min_free_gb err = %v, want ErrBadPolicy", err)
+	}
+	if _, err := load(t, `{"disk_min_free_gb":-1}`); err == nil || !strings.Contains(err.Error(), "disk_min_free_gb") {
+		t.Errorf("negative disk_min_free_gb err = %v, want it to name disk_min_free_gb", err)
+	}
+
+	cases := []struct {
+		name string
+		body string
+		want uint64
+	}{
+		{"unset falls back to the default", `{}`, uint64(DefaultDiskMinFreeGB) << 30},
+		{"1 is 1 GB", `{"disk_min_free_gb":1}`, 1 << 30},
+		{"explicit 5", `{"disk_min_free_gb":5}`, 5 << 30},
+		{"0 means the preflight is off", `{"disk_min_free_gb":0}`, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p, err := load(t, tc.body)
+			if err != nil {
+				t.Fatalf("load(%s): %v", tc.body, err)
+			}
+			if got := p.DiskMinFreeBytes(); got != tc.want {
+				t.Errorf("DiskMinFreeBytes(%s) = %d, want %d", tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestChainPolicyDefaults pins the chain group's defaults: a 3 correction
 // budget, reviewer / lite-planner / security actors, and security off.
 func TestChainPolicyDefaults(t *testing.T) {

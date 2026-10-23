@@ -186,7 +186,9 @@ func newSettingsForm(env Env, doc relevo.ConfigDoc, form, focusKey string) setti
 
 		amsField := textSettingField("artifact_max_mb", byKey("artifact_max_mb"), parseNonNegInt("a whole number, 0 or more"))
 
-		fields = []settingField{msField, tierField, verifyField, amsField}
+		dmfField := textSettingField("disk_min_free_gb", byKey("disk_min_free_gb"), parseNonNegInt("a whole number, 0 or more"))
+
+		fields = []settingField{msField, tierField, verifyField, amsField, dmfField}
 		switch focusKey {
 		case "max_switches":
 			focus = 0
@@ -196,6 +198,8 @@ func newSettingsForm(env Env, doc relevo.ConfigDoc, form, focusKey string) setti
 			focus = 2
 		case "artifact_max_mb":
 			focus = 3
+		case "disk_min_free_gb":
+			focus = 4
 		}
 
 	case "check":
