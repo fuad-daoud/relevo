@@ -1,10 +1,11 @@
   ◆ relevo    agents                                                                                           v0.13.0-28    14:02  
                                                                                                                                     
-   6 agents   2 writers   4 readers                                                                                                 
+   7 agents   3 writers   4 readers                                                                                                 
                                                                                                                                     
    AGENT                                             SHAPE   SOURCE   USED BY              AGY       CLAUDE    CODEX     OPENCODE   
    plan-executor                                     writer  shipped  builder              ok        ok        ok        ok         
    librarian                                         writer  shipped  no actor             ok        ok        ok        ok         
+   designer                                          writer  shipped  no actor             ok        ok        ok        ok         
    reviewer                                          reader  shipped  reviewer             ok        ok        ok        ok         
    security-reviewer                                 reader  shipped  no actor             ok        ok        ok        ok         
    researcher                                        reader  shipped  builder, researcher  ok        ok        ok        ok         
@@ -16,7 +17,6 @@
    claude    ~/.claude/agents/researcher.md                up to date    model haiku                                                
    codex     ~/.codex/researcher.config.toml               up to date    model gpt-5.6-luna                                         
    opencode  ~/.config/opencode/agents/researcher.md       up to date    model openrouter/z-ai/glm-5.3-flash                        
-                                                                                                                                    
                                                                                                                                     
                                                                                                                                     
                                                                                                                                     

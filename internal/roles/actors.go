@@ -64,6 +64,9 @@ type Actor struct {
 	// change, and whether a Go comment-only edit is allowed. nil means
 	// unscoped. It is refused on a reader.
 	Scope *pathscope.Scope `json:"scope,omitempty"`
+	// Skills names the skills this actor's harness must be able to load. Any
+	// shape may declare them; a shipped agent may carry a default.
+	Skills []string `json:"skills,omitempty"`
 }
 
 // Entry is one of an actor's candidates: JSON is either a string (on) or
@@ -242,6 +245,25 @@ func validateActor(name string, a Actor) error {
 		if err := a.Scope.Validate(); err != nil {
 			return fmt.Errorf("actors: %s.scope: %v: %w", name, err, ErrBadActors)
 		}
+	}
+	if err := validateSkills(a.Skills); err != nil {
+		return fmt.Errorf("actors: %s.%v: %w", name, err, ErrBadActors)
+	}
+	return nil
+}
+
+// validateSkills rejects a skill name that is not an agent-name shape and a
+// repeated one. The error reads "skills[i]: ..." for the caller to prefix.
+func validateSkills(skills []string) error {
+	seen := make(map[string]bool, len(skills))
+	for i, s := range skills {
+		if !agentKeyPattern.MatchString(s) {
+			return fmt.Errorf("skills[%d]: bad skill name %q", i, s)
+		}
+		if seen[s] {
+			return fmt.Errorf("skills[%d]: duplicate skill %q", i, s)
+		}
+		seen[s] = true
 	}
 	return nil
 }

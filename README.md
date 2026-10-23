@@ -268,7 +268,7 @@ One line per file says `wrote`, `updated (unchanged since relevo wrote it)`,
 `kept (identical)` or `kept (differs; --force to overwrite)`. Pass `--kind` to
 name a harness that is not on `PATH` yet, `--agent` for one definition,
 `--dry-run` to look first. This writes `plan-executor`, `researcher`, `reviewer`,
-`security-reviewer`, `architect` and `librarian` for every kind; `relevo config agents --dry-run` shows what
+`security-reviewer`, `architect`, `librarian` and `designer` for every kind; `relevo config agents --dry-run` shows what
 would be written.
 
 `researcher` is the read-only agent the builder's own sub-agents run as. It
@@ -1859,6 +1859,7 @@ writer, whether its round closes on a gate.
 | --- | --- | --- | --- |
 | `plan-executor` | writer | `report` | `researcher` |
 | `librarian` | writer | `report` | -- |
+| `designer` | writer | `report` | -- |
 | `reviewer` | reader | `findings` | -- |
 | `researcher` | reader | `notes` | -- |
 | `architect` | reader | `plan` | -- |
@@ -1867,6 +1868,20 @@ writer, whether its round closes on a gate.
 edits markdown, agent instruction files, sketches and diagrams, and code
 comments, and never anything that changes behaviour. That contract is a
 **scope**, and relevo enforces it when a round closes.
+
+`designer` is a writer that produces design drafts: static HTML/CSS mockups
+under `.design/<topic>/<draft>/` for a human to choose from. It needs the
+external `design-runbooks` skill installed for the harness that runs it, and
+`relevo config init` does not add a designer actor, because a seeded actor
+would hand every new user one they cannot serve. Add it with
+`relevo config edit`, scoped to the drafts and the two contract files:
+
+```json
+"designer": {"agent": "designer", "candidates": ["sonnet"], "scope": {"paths": [".design/**", "PRODUCT.md", "DESIGN.md"]}}
+```
+
+A repo whose `.gitignore` ignores `.design/` hides its drafts from the scope
+check, so a round's drafts are neither judged nor committed.
 
 `actors.<name>.scope` is `{"paths": [...], "comments": bool}`. Each `paths`
 entry is a glob over the repo-relative path -- `*` matches within one segment,
@@ -1975,6 +1990,39 @@ Actor entries:
   over a custom agent declares none unless you set them, and a chain step that
   branches on an outcome the actor does not declare is refused at `chain
   --dry-run`.
+- `skills` -- the skills the actor's harness must be able to load, names in the
+  agent-name shape, no repeats. The shipped `designer` agent defaults to
+  `["design-runbooks"]`; any actor may declare its own, and an actor with none
+  needs none.
+
+### Skills
+
+A skill is `<name>/SKILL.md` under a harness kind's skill directories, project
+first, then user:
+
+| Kind | Looked at, in order |
+| --- | --- |
+| `claude` | `<repo>/.claude/skills`, `~/.claude/skills` |
+| `opencode`, `agy` | `<repo>/.agents/skills`, `~/.agents/skills` |
+| `codex` | `<repo>/.agents/skills`, `~/.agents/skills`, `~/.codex/skills` |
+
+Any other kind cannot load skills. A skill at the project path wins over the
+user path. For every actor with skills and every harness kind among its
+candidates (off ones included), `relevo doctor` prints one row per skill: OK
+with the path found, or FAIL `skill design-runbooks for designer on claude not
+found: looked at <paths>` with the fix to install it there. Doctor takes
+`<repo>` from its working directory. Accounts with their own per-process home
+(`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) are checked against the default home only.
+
+The pick applies the same check. A candidate whose harness cannot see a
+required skill is skipped, and the pick line says why; when every candidate is
+skipped the pick fails with that reason, and a candidate named with
+`--candidate` is refused. A bind that cuts a worktree runs in a fresh tree, so
+a project-local skill there must be committed at the base: an untracked one is
+reported as such (`commit it or install it per user`). A bind on a server is
+not judged here; the server's own pick judges its own disk. A chain start does not skip, because its members' picks are
+made before the chain's tree exists; a designer member whose picked candidate
+cannot see the skill is refused when the members are built.
 
 An actor named `builder`, `librarian`, `reviewer` or `researcher` keeps that builtin's
 shape: `builder` and `librarian` must run a writer agent, `reviewer` and `researcher` a reader.

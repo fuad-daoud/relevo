@@ -39,7 +39,8 @@ func windowConfigured(rt Runtime, b store.Binding) bool {
 }
 
 // repickForRound picks b's builder again by its actor's order, with an empty
-// token over availability.Gates(AvailabilityDeps(rt)), then applyBuilder. It does
+// token over availability.Gates(AvailabilityDeps(rt)) and the skill gates for
+// b.CWD, then applyBuilder. It does
 // so when b's token is stale, or, when the round names no candidate (named) and
 // b is not pinned, when a window is configured and the pick now differs. It
 // returns b unchanged, a nil *Resolution and "" otherwise; the string is the
@@ -52,7 +53,7 @@ func repickForRound(rt Runtime, b store.Binding, named, allowYolo bool) (store.B
 		return b, nil, "", nil
 	}
 
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), "", bindingRole(b), pickFor(rt))
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), b.CWD, nil), "", bindingRole(b), pickFor(rt))
 	if err == nil && !stale && res.Token() == old {
 		return b, nil, "", nil
 	}

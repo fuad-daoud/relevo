@@ -828,6 +828,7 @@ var harnessTableExpected = map[string]Harness{
 			{Name: "security-reviewer", Path: ".gemini/config/agents/security-reviewer.md", Doc: "security-reviewer.agy", ExpectModel: "inherit"},
 			{Name: "architect", Path: ".gemini/config/agents/architect.md", Doc: "architect.agy", ExpectModel: "inherit"},
 			{Name: "librarian", Path: ".gemini/config/agents/librarian.md", Doc: "librarian.agy", ExpectModel: "inherit"},
+			{Name: "designer", Path: ".gemini/config/agents/designer.md", Doc: "designer.agy", ExpectModel: "inherit"},
 		},
 	},
 	"claude": {
@@ -852,6 +853,7 @@ var harnessTableExpected = map[string]Harness{
 			{Name: "security-reviewer", Path: ".claude/agents/security-reviewer.md", Doc: "security-reviewer.claude"},
 			{Name: "architect", Path: ".claude/agents/architect.md", Doc: "architect.claude"},
 			{Name: "librarian", Path: ".claude/agents/librarian.md", Doc: "librarian.claude"},
+			{Name: "designer", Path: ".claude/agents/designer.md", Doc: "designer.claude"},
 		},
 	},
 	"opencode": {
@@ -877,6 +879,7 @@ var harnessTableExpected = map[string]Harness{
 			{Name: "security-reviewer", Path: ".config/opencode/agents/security-reviewer.md", Doc: "security-reviewer.opencode"},
 			{Name: "architect", Path: ".config/opencode/agents/architect.md", Doc: "architect.opencode"},
 			{Name: "librarian", Path: ".config/opencode/agents/librarian.md", Doc: "librarian.opencode"},
+			{Name: "designer", Path: ".config/opencode/agents/designer.md", Doc: "designer.opencode"},
 		},
 		Files: []ShippedFile{
 			{Name: "opencode-plugin/package.json", Path: ".config/opencode/plugins/relevo/package.json", Embed: "opencodeplugin/package.json"},
@@ -909,6 +912,7 @@ var harnessTableExpected = map[string]Harness{
 			{Name: "security-reviewer", Path: ".codex/security-reviewer.config.toml", Doc: "security-reviewer.codex"},
 			{Name: "architect", Path: ".codex/architect.config.toml", Doc: "architect.codex"},
 			{Name: "librarian", Path: ".codex/librarian.config.toml", Doc: "librarian.codex"},
+			{Name: "designer", Path: ".codex/designer.config.toml", Doc: "designer.codex"},
 		},
 	},
 }

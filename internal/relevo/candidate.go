@@ -26,6 +26,10 @@ var ErrAmbiguousCandidate = errors.New("more than one candidate serves actor")
 // ErrUnknownRole reports a role that is not in the known role table.
 var ErrUnknownRole = errors.New("unknown actor")
 
+// ErrCandidateCannotRun reports an explicitly named candidate refused because
+// it is missing something the actor needs to start (role files or a skill).
+var ErrCandidateCannotRun = errors.New("the named candidate cannot run this actor")
+
 // ErrAllGated reports that every candidate serving the requested role is
 // currently gated by the ledger, and no token was named to bypass the check.
 var ErrAllGated = errors.New("every candidate serving the actor is gated")
@@ -283,8 +287,8 @@ func resolveRoleBase(reg *roles.Registry, set *candidate.Set, gates []availabili
 		// every other explicit-pick gate does) would only spawn it to die
 		// within seconds (#238).
 		for _, g := range gates {
-			if g.Token == tok && g.Kind == availability.RolesMissing {
-				return Resolution{}, fmt.Errorf("%s: %s", c.Name, g.Note)
+			if g.Token == tok && (g.Kind == availability.RolesMissing || g.Kind == availability.SkillMissing) {
+				return Resolution{}, fmt.Errorf("%s: %s: %w", c.Name, g.Note, ErrCandidateCannotRun)
 			}
 		}
 		// An off entry is served when named explicitly (A2 §4.3): the pick
@@ -389,25 +393,39 @@ func roleOff(reg *roles.Registry, role, token string) bool {
 // was gated, in skipped.
 func allGated(role string, skipped []Skip) (Resolution, error) {
 	texts := make([]string, 0, len(skipped))
-	var waits, real bool
+	var waits, real, missing bool
 	for _, s := range skipped {
 		texts = append(texts, skipText(s, identityName))
 		switch {
 		case s.Off:
 		case s.Kind == availability.Scheduled || s.Kind == availability.ConcurrencyLimit:
 			waits = true
+		case s.Kind == availability.SkillMissing:
+			missing = true
 		default:
 			real = true
 		}
 	}
-	next := "name one with --candidate to bypass, or clear a gate with relevo gate --clear <provider>"
-	if waits {
-		next = "name one with --candidate to bypass, or wait for a window to open or a running round to finish"
-		if real {
-			next += ", or clear a gate with relevo gate --clear <provider>"
-		}
+	return Resolution{}, fmt.Errorf("every candidate serving %q is gated: %s; %s: %w", role, strings.Join(uniqStrings(texts), ", "), allGatedNext(waits, real, missing), ErrAllGated)
+}
+
+// allGatedNext is the way out of an all-gated pick. A missing skill is neither
+// bypassed by naming the candidate nor cleared by a gate: it is installed.
+func allGatedNext(waits, real, missing bool) string {
+	var parts []string
+	if waits || real || !missing {
+		parts = append(parts, "name one with --candidate to bypass")
 	}
-	return Resolution{}, fmt.Errorf("every candidate serving %q is gated: %s; %s: %w", role, strings.Join(uniqStrings(texts), ", "), next, ErrAllGated)
+	if waits {
+		parts = append(parts, "wait for a window to open or a running round to finish")
+	}
+	if real || (!waits && !missing) {
+		parts = append(parts, "clear a gate with relevo gate --clear <provider>")
+	}
+	if missing {
+		parts = append(parts, "install the missing skill where relevo doctor says")
+	}
+	return strings.Join(parts, ", or ")
 }
 
 // identityName leaves every token as it is. It is what ExplainResolution

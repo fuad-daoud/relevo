@@ -228,27 +228,6 @@ func renderReport(w io.Writer, rep doctor.Report) {
 	}
 }
 
-// roleSourceChecks is the one global row saying where the roles came from,
-// plus one warning row per legacy field roles.json makes irrelevant (#374
-// §3.5). In legacy mode there is nothing stale to warn about, so only the OK
-// row is printed.
-func roleSourceChecks(reg *roles.Registry, set *candidate.Set, pol policy.Policy) []doctor.Check {
-	detail := "legacy: candidates.json roles, policy.json order and tier"
-	if reg.FileMode() {
-		detail = "config actors"
-	}
-	out := []doctor.Check{{Name: "actor source", Severity: doctor.SevOK, Detail: detail}}
-	for _, w := range relevo.LegacyRoleFieldWarnings(reg, set, pol) {
-		out = append(out, doctor.Check{
-			Name:     "actor source",
-			Severity: doctor.SevWarn,
-			Detail:   w,
-			Fix:      "delete it; config actors is the source",
-		})
-	}
-	return out
-}
-
 // candidatesCheck is the no-candidates row. Its fix is the one-time setup
 // wizard, which writes the same seeds a fresh machine needs (candidates,
 // policy, actors), so the machine's next steps all point at one command.
@@ -425,6 +404,7 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 	rep.Checks = append(rep.Checks, ledgerChecks(availability.Gates(relevo.AvailabilityDeps(rt)))...)
 	rep.Checks = append(rep.Checks, policyChecks(relevo.PolicyWarningsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy))...)
 	rep.Checks = append(rep.Checks, roleSourceChecks(rt.RoleRegistry(), rt.Candidates, rt.Policy)...)
+	rep.Checks = append(rep.Checks, skillChecks(env, rt.RoleRegistry(), rt.Candidates)...)
 	// #382 §5.4: a binding whose role roles.json no longer defines fails at
 	// round start, so doctor names it. A store error skips the rows silently,
 	// as mastermindCheckInput treats its own store read.

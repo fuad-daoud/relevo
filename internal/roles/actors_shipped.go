@@ -9,6 +9,9 @@ type ShippedAgent struct {
 	Shape    agentsrc.Shape
 	Output   string
 	Requires []string
+	// Skills are the skills an actor over this agent needs unless it declares
+	// its own.
+	Skills []string
 }
 
 // shippedAgents is relevo's shipped agent table (cockpit spec §3.2). It must
@@ -18,10 +21,23 @@ type ShippedAgent struct {
 var shippedAgents = []ShippedAgent{
 	{Name: "plan-executor", Shape: agentsrc.ShapeWriter, Output: "report", Requires: []string{"researcher"}},
 	{Name: "librarian", Shape: agentsrc.ShapeWriter, Output: "report"},
+	{Name: "designer", Shape: agentsrc.ShapeWriter, Output: "report", Skills: []string{"design-runbooks"}},
 	{Name: "reviewer", Shape: agentsrc.ShapeReader, Output: "findings"},
 	{Name: "security-reviewer", Shape: agentsrc.ShapeReader, Output: "findings"},
 	{Name: "researcher", Shape: agentsrc.ShapeReader, Output: "notes"},
 	{Name: "architect", Shape: agentsrc.ShapeReader, Output: "plan"},
+}
+
+// EffectiveSkills returns an actor's effective skills: its declared skills when
+// present, or its shipped agent's default. Both are copies.
+func EffectiveSkills(agent string, declared []string) []string {
+	if len(declared) > 0 {
+		return append([]string(nil), declared...)
+	}
+	if a, ok := Shipped(agent); ok && len(a.Skills) > 0 {
+		return append([]string(nil), a.Skills...)
+	}
+	return nil
 }
 
 // ShippedAgents returns relevo's shipped agents in table order, a copy the

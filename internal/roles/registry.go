@@ -89,6 +89,8 @@ type Role struct {
 	Definitions map[string]Definition
 	// Outputs is the role's declared outputs.
 	Outputs workflow.Outputs
+	// Skills are the skills the role's harness must be able to load.
+	Skills []string
 }
 
 // Registry is a set of roles, built either from roles.json or from the legacy
@@ -256,6 +258,7 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 			}
 			base.Outputs = EffectiveOutputs(agent, nil)
 		}
+		base.Skills = append([]string(nil), row.Skills...)
 		byName[name] = base
 	}
 	names = append(names, newNames...)
@@ -487,6 +490,7 @@ func copyRole(role Role) Role {
 	out.Resolved = append([]string(nil), role.Resolved...)
 	out.Placement = append([]string(nil), role.Placement...)
 	out.Outputs = copyOutputs(role.Outputs)
+	out.Skills = append([]string(nil), role.Skills...)
 	out.Scope = copyScope(role.Scope)
 	if role.Definitions != nil {
 		out.Definitions = make(map[string]Definition, len(role.Definitions))

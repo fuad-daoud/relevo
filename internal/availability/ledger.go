@@ -42,6 +42,11 @@ const (
 	// Runtime.Roles checker, so Load never needs to validate it.
 	RolesMissing Kind = "roles_missing"
 
+	// SkillMissing records that a candidate's harness cannot see a skill its
+	// actor needs. Synthesised in memory by relevo, never written to the
+	// ledger file; its Note is the whole reason.
+	SkillMissing Kind = "skill_missing"
+
 	// Scheduled records that a candidate's configured window excludes it (or,
 	// with Demote, moves it last) at the moment of the read. It is never
 	// written to the ledger file: windowGates synthesises it from config and
@@ -88,7 +93,7 @@ type Ledger struct {
 }
 
 // knownKind reports whether k is a kind this binary reads from the ledger
-// file. ExitedNoReport and RolesMissing are synthesised in memory, never
+// file. ExitedNoReport, RolesMissing and SkillMissing are synthesised in memory, never
 // written, so they are not known here either.
 func knownKind(k Kind) bool {
 	return k == SpawnFailed || k == RateLimited

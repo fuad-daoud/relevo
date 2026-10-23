@@ -83,3 +83,30 @@ func TestScopeValidateEmptyPattern(t *testing.T) {
 		t.Fatal("Validate(\"\") = nil, want an error")
 	}
 }
+
+// TestDesignScopeMatchesDraftPaths pins the designer's scope: drafts, shots
+// and the two contract files at the root are in; the same names deeper down,
+// look-alike directories and source files are out.
+func TestDesignScopeMatchesDraftPaths(t *testing.T) {
+	t.Parallel()
+
+	scope := Scope{Paths: []string{".design/**", "PRODUCT.md", "DESIGN.md"}}
+	for _, tt := range []struct {
+		path string
+		want bool
+	}{
+		{".design/t/A/index.html", true},
+		{".design/t/shots/a.png", true},
+		{"PRODUCT.md", true},
+		{"DESIGN.md", true},
+		{"src/app.go", false},
+		{"docs/DESIGN.md", false},
+		{"internal/x/PRODUCT.md", false},
+		{".designx/a", false},
+		{"web/app.ts", false},
+	} {
+		if got := scope.Match(tt.path); got != tt.want {
+			t.Errorf("Match(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}

@@ -72,6 +72,7 @@ func rowFor(name string, actor Actor, agents map[string]AgentEntry) (Row, error)
 		Shape:       &rowShape,
 		Definitions: defs,
 		Outputs:     outputs,
+		Skills:      EffectiveSkills(actor.Agent, actor.Skills),
 	}
 	row.Placement = append([]string(nil), actor.Placement...)
 	for _, e := range actor.Candidates {

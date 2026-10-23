@@ -11,7 +11,7 @@ func TestKnownFields(t *testing.T) {
 		t.Fatalf("KnownFields(agents) = %v, want %v", got, wantAgents)
 	}
 
-	wantActors := []string{"agent", "candidates", "check", "outputs", "placement", "scope", "tier"}
+	wantActors := []string{"agent", "candidates", "check", "outputs", "placement", "scope", "skills", "tier"}
 	if got := KnownFields("actors"); !reflect.DeepEqual(got, wantActors) {
 		t.Fatalf("KnownFields(actors) = %v, want %v", got, wantActors)
 	}
@@ -157,5 +157,16 @@ func TestParseAgentsAndActorsAcceptStrayKeys(t *testing.T) {
 	}
 	if _, ok := actors["custom-actor"]; !ok {
 		t.Fatalf("ParseActors did not return custom-actor")
+	}
+}
+
+func TestUnknownKeysSkills(t *testing.T) {
+	good := []byte(`{"d": {"agent": "designer", "skills": ["x"]}}`)
+	if got := UnknownKeys("actors", good); len(got) != 0 {
+		t.Errorf("skills key reported unknown: %v", got)
+	}
+	bad := []byte(`{"d": {"agent": "designer", "skill": ["x"]}}`)
+	if got := UnknownKeys("actors", bad); !reflect.DeepEqual(got, []string{"d.skill"}) {
+		t.Errorf("UnknownKeys = %v, want [d.skill]", got)
 	}
 }
