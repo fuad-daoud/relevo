@@ -30,7 +30,7 @@ func handoverFlagSet(fs *flag.FlagSet) *handoverFlagValues {
 	v := &handoverFlagValues{}
 	v.name = fs.String("name", "", "binding to hand over")
 	v.to = fs.String("to", "", "installation id or label of the machine that takes the binding")
-	v.remote = fs.String("remote", "origin", "git remote the branch is pushed to")
+	v.remote = fs.String("remote", "origin", "git remote the branch is pushed to; it must have origin's URL, because the target resumes from origin")
 	v.asJSON = fs.Bool("json", false, "print the result as a JSON document")
 	return v
 }

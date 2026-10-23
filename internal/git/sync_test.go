@@ -278,3 +278,29 @@ esac
 		t.Errorf("diff path reported %q, want GIT_OPTIONAL_LOCKS=0", got)
 	}
 }
+
+func TestRemoteURLReturnsTheConfiguredURLOfANamedRemote(t *testing.T) {
+	ctx := context.Background()
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	repoDir, _ := initRepoWithCommit(t, "f1.txt", "1\n")
+	runGit(t, repoDir, "remote", "add", "origin", "https://example.com/o/one.git")
+	runGit(t, repoDir, "remote", "add", "fork", "git@example.com:me/two.git")
+
+	for remote, want := range map[string]string{
+		"origin": "https://example.com/o/one.git",
+		"fork":   "git@example.com:me/two.git",
+	} {
+		got, err := client.RemoteURL(ctx, repoDir, remote)
+		if err != nil || got != want {
+			t.Fatalf("RemoteURL(%q) = %q, %v; want %q", remote, got, err, want)
+		}
+	}
+}
+
+func TestRemoteURLFailsForAnUnknownRemote(t *testing.T) {
+	client := NewClient("git", 5*time.Second, DefaultMaxPatchBytes)
+	repoDir, _ := initRepoWithCommit(t, "f1.txt", "1\n")
+	if got, err := client.RemoteURL(context.Background(), repoDir, "nope"); err == nil {
+		t.Fatalf("RemoteURL for unknown remote = %q, nil; want an error", got)
+	}
+}
