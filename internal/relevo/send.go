@@ -172,10 +172,10 @@ type preflight struct {
 	argv     []string           // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
 	gate     *availability.Gate // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
 	pick     *Resolution        // --candidate's resolution to apply under the lock; nil when the builder does not change
-	// staleToken is the binding's old BuilderCandidate when the preflight
-	// re-picked because the token was stale; "" otherwise. When it is
-	// non-empty, pick is non-nil.
-	staleToken string
+	// repickFrom is the binding's old BuilderCandidate when the preflight
+	// re-picked between rounds, repickWhy the reason; "" otherwise. When
+	// repickFrom is non-empty, pick is non-nil.
+	repickFrom, repickWhy string
 
 	promptPath, reportPath, donePath string
 	prompt                           string // composePrompt(...) -- computed, never sent
@@ -272,7 +272,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	// A remote binding's candidates decide on the server, so only the token's
 	// shape is checked here (§5.1).
 	var pick *Resolution
-	var staleToken string
+	var repickFrom, repickWhy string
 	// remoteBuilder is what a remote binding's sendRemote is handed: the
 	// canonical token when --candidate resolved to one, else the argument as
 	// typed (A1 §4.2).
@@ -317,20 +317,22 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		}
 	}
 
-	// A binding whose candidate was edited or deleted holds a stale token:
-	// the configured set no longer serves the triple the running round is
-	// on. Pick again by the actor's order, exactly as a switch does, so
-	// every precondition below is computed against the builder this round
-	// will actually use.
-	if pick == nil && staleBuilder(rt, b) {
+	// A binding whose candidate was edited or deleted holds a stale token,
+	// and a window edge between rounds moves a binding that was not pinned:
+	// pick again by the actor's order, exactly as a switch does, so every
+	// precondition below is computed against the builder this round will
+	// actually use.
+	if pick == nil {
 		old := b.BuilderCandidate
 		var res *Resolution
-		b, res, err = repickStale(rt, b, opts.AllowYolo)
+		var why string
+		b, res, why, err = repickForRound(rt, b, opts.Builder != "", opts.AllowYolo)
 		if err != nil {
 			return preflight{}, err
 		}
-		pick = res
-		staleToken = old
+		if res != nil {
+			pick, repickFrom, repickWhy = res, old, why
+		}
 	}
 
 	if tier == "" {
@@ -363,7 +365,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	pf := preflight{
 		b: b, body: body, tier: tier, tierFrom: tierFrom,
 		promptPath: promptPath, reportPath: reportPath, donePath: donePath,
-		prompt: prompt, pick: pick, staleToken: staleToken,
+		prompt: prompt, pick: pick, repickFrom: repickFrom, repickWhy: repickWhy,
 		remoteBuilder: remoteBuilder,
 	}
 
@@ -449,7 +451,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	// The gate is advisory only: a gated candidate can still be sent to, it
 	// just tells the human the daemon would switch away after the start.
 	for _, g := range availability.Gates(AvailabilityDeps(rt)) {
-		if g.Token == b.BuilderCandidate && (g.Kind == availability.RateLimited || g.Kind == availability.RolesMissing) {
+		if g.Token == b.BuilderCandidate && (g.Kind == availability.RateLimited || g.Kind == availability.RolesMissing || windowBlock(g)) {
 			gate := g
 			pf.gate = &gate
 			break
@@ -563,9 +565,9 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		// --candidate is re-applied under the lock, against the fresh binding:
 		// the preflight's resolution must not be trusted over a round that
 		// opened in between. The re-check writes nothing when it fires (§5.2).
-		// A stale re-pick is not a --candidate change, so it skips the refusal.
+		// A re-pick is not a --candidate change, so it skips the refusal.
 		if pf.pick != nil {
-			if pf.staleToken == "" {
+			if pf.repickFrom == "" {
 				entries, err := tx.ReadLog(name)
 				if err != nil {
 					return err
@@ -667,8 +669,8 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		// change that did not happen must not be recorded.
 		if pf.pick != nil {
 			pending = append(pending, pickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick))
-			if pf.staleToken != "" {
-				pickLine = "note: builder " + pf.staleToken + " is no longer configured; " + PickText("builder", *pf.pick, rt.Candidates)
+			if pf.repickFrom != "" {
+				pickLine = repickLine(rt, pf.repickFrom, pf.repickWhy, *pf.pick)
 			} else {
 				pickLine = PickText("builder", *pf.pick, rt.Candidates)
 			}
@@ -795,7 +797,7 @@ type DryRun struct {
 	// candidate is no longer configured, in which case Candidate is shown.
 	CandidateName string   `json:"candidate_name,omitempty"`
 	Where         string   `json:"where"`               // headless: the harness binary + first arg; remote: "server contabo, branch relevo/x @ <sha12>; server not contacted"
-	GateNote      string   `json:"gate_note,omitempty"` // "rate-limited until 00:26; the daemon would switch after start" / "agents missing: ...; the daemon would switch after start"
+	GateNote      string   `json:"gate_note,omitempty"` // "rate-limited until 00:26; the daemon would switch after start" / "agents missing: ...; the daemon would switch after start" / "outside window 14:00Z-00:00Z; this round runs here, the next round re-picks"
 	PromptPath    string   `json:"prompt_path"`
 	PromptFrom    string   `json:"prompt_from"`
 	PromptBytes   int64    `json:"prompt_bytes"`
@@ -871,9 +873,18 @@ func dryRunWhere(pf preflight) string {
 	return pf.argv[0] + " " + pf.argv[1]
 }
 
+// windowBlock reports whether g is a window that excludes its candidate: a gate
+// that never switches a running round, because only the next round re-picks.
+func windowBlock(g availability.Gate) bool {
+	return g.Kind == availability.Scheduled && !g.Demote
+}
+
 // dryRunGateNote is the advisory sentence for a gated candidate: what the gate
 // is, and that the daemon would switch the builder once the round started.
 func dryRunGateNote(g *availability.Gate) string {
+	if windowBlock(*g) {
+		return g.Note + "; this round runs here, the next round re-picks"
+	}
 	if g.Kind == availability.RolesMissing {
 		return g.Note + "; the daemon would switch after start"
 	}
