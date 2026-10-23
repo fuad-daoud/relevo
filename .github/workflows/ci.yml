@@ -402,3 +402,24 @@ jobs:
         run: |
           GOOS=${TARGET%/*} GOARCH=${TARGET#*/} go build ./...
           GOOS=${TARGET%/*} GOARCH=${TARGET#*/} go build -tags modernc ./...
+
+  # The one check the main branch ruleset requires. A required check that is
+  # skipped counts as passed, and a skipped matrix job reports under its
+  # unexpanded name, so naming the jobs themselves would either let a failing
+  # test through (coverage is skipped when test fails) or block a docs-only PR
+  # forever. This job always runs and fails when any job failed or was
+  # cancelled; a job skipped because the PR changes no code passes.
+  ci-ok:
+    name: ci-ok
+    needs: [changes, lint, test, test-macos, coverage, owner-mode, modernc, portability]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: every job passed, or was skipped for a change with no code
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "$RESULTS"
+          if printf '%s' "$RESULTS" | grep -qE '"(failure|cancelled)"'; then
+            exit 1
+          fi
