@@ -221,7 +221,6 @@ func TestServedChainCreateMapsSettingsToDefaultParams(t *testing.T) {
 	req := servedChainRequest("shop")
 	req.Settings.Security = true
 	req.Settings.SecurityActor = "security"
-	req.Settings.SecurityActor = "security"
 	req.Settings.Gate = "make test"
 	req.Settings.Regate = 3
 	servedChainStart(t, rt, req)
@@ -260,7 +259,6 @@ func TestServedMemberNamesMatchClientMirror(t *testing.T) {
 	rt, _, _ := servedChainRuntime(t)
 	req := servedChainRequest("shop")
 	req.Settings.Security = true
-	req.Settings.SecurityActor = "security"
 	req.Settings.SecurityActor = "security"
 	servedChainStart(t, rt, req)
 
