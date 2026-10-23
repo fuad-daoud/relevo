@@ -867,8 +867,14 @@ most once every `progress_interval_ms` (default thirty seconds).
   signal moves again or the process exits, and the daemon fires one
   `builder_stalled` hook event per episode and none when it clears.
 - **`exploring <age>`** -- the output or screen is changing but the tree has
-  not for `explore_after_ms` (default twenty minutes). A label only: some plans
-  are read-heavy, so it fires no hook event and no notification.
+  not for `explore_after_ms` (default twenty minutes), or for ten minutes after
+  relevo resumed the round's session. A label only: some plans are read-heavy,
+  so it fires no hook event and no notification.
+- **`model silent for <N> min`** -- an opencode builder's stream has shown no
+  event for `silent_after_ms` (default eight minutes) while its process tree
+  burned almost no CPU, so a long foreground command never reads as silent.
+  relevo aborts the step and resumes the same session once; a second silence or
+  transport error in that session switches candidate.
 - **`stale <age>`** -- a `NEEDS YOU` binding has sat unacted for
   `stale_after_ms` (default four hours). The age is measured from the halt, or
   from the newest log entry when the binding has none. The word follows the

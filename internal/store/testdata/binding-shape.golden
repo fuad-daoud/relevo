@@ -1,4 +1,4 @@
-format 20
+format 18
 abandoned_sessions[].attempts
 abandoned_sessions[].id
 abandoned_sessions[].kind
