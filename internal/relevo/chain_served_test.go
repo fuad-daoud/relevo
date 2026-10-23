@@ -221,6 +221,7 @@ func TestServedChainCreateMapsSettingsToDefaultParams(t *testing.T) {
 	req := servedChainRequest("shop")
 	req.Settings.Security = true
 	req.Settings.SecurityActor = "security"
+	req.Settings.SecurityActor = "security"
 	req.Settings.Gate = "make test"
 	req.Settings.Regate = 3
 	servedChainStart(t, rt, req)
@@ -259,6 +260,7 @@ func TestServedMemberNamesMatchClientMirror(t *testing.T) {
 	rt, _, _ := servedChainRuntime(t)
 	req := servedChainRequest("shop")
 	req.Settings.Security = true
+	req.Settings.SecurityActor = "security"
 	req.Settings.SecurityActor = "security"
 	servedChainStart(t, rt, req)
 
@@ -564,6 +566,95 @@ func TestServedChainEndQueuesNoDelivery(t *testing.T) {
 			t.Errorf("pending deliveries = %d, want the one end delivery", len(pending))
 		}
 	})
+}
+
+// longServedChainRequest is servedChainRequest with seven plans, three
+// corrections and the security phase, so every member's scaled cap exceeds the
+// default.
+func longServedChainRequest(name string) ServedChainRequest {
+	req := servedChainRequest(name)
+	req.Plans = make([]string, 7)
+	for i := range req.Plans {
+		req.Plans[i] = "build it"
+	}
+	req.Settings.MaxCorrections = 3
+	req.Settings.Security = true
+	req.Settings.SecurityActor = "security"
+	return req
+}
+
+// TestServedChainCreateGivesEveryMemberAScaledCap pins that a served create
+// stores reader members, not only the writer, with a cap scaled from the plans.
+func TestServedChainCreateGivesEveryMemberAScaledCap(t *testing.T) {
+	t.Parallel()
+
+	rt, _, _ := servedChainRuntime(t)
+	req := longServedChainRequest("shop")
+	res := servedChainStart(t, rt, req)
+
+	set := chainSettingsFromWire(req.Settings)
+	for name, part := range map[string]string{
+		"shop": chain.MemberBuilder, "shop-rev": chain.MemberReviewer,
+		"shop-plan": chain.MemberPlanner, "shop-sec": chain.MemberSecurity,
+	} {
+		b := memberByName(t, res.Members, name)
+		want := chainMemberRoundCap(part, len(req.Plans), set)
+		if want <= store.DefaultRoundCap {
+			t.Fatalf("test setup: %s want %d must exceed the default %d", part, want, store.DefaultRoundCap)
+		}
+		if b.RoundCap != want {
+			t.Errorf("%s RoundCap = %d, want %d", name, b.RoundCap, want)
+		}
+	}
+}
+
+// TestServedChainResumeGivesAnAddedMemberAScaledCap pins that a security member
+// a served resume adds carries the chain's scaled cap, not the default.
+func TestServedChainResumeGivesAnAddedMemberAScaledCap(t *testing.T) {
+	t.Parallel()
+
+	rt, _, _ := servedChainRuntime(t)
+	req := longServedChainRequest("shop")
+	req.Settings.Security = false
+	servedChainStart(t, rt, req)
+
+	builder := chainBinding(t, rt, "shop")
+	builder.Round = 2
+	if err := rt.Store.Save(builder); err != nil {
+		t.Fatalf("advance the builder: %v", err)
+	}
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		row, err := tx.Chain("shop")
+		if err != nil {
+			return err
+		}
+		row.Status = string(chain.StatusHalted)
+		var st workflow.State
+		if err := json.Unmarshal(row.StateJSON, &st); err != nil {
+			return err
+		}
+		st.Status = workflow.StatusHalted
+		stateJSON, err := json.Marshal(st)
+		if err != nil {
+			return err
+		}
+		row.StateJSON = stateJSON
+		return tx.ChainPut(row)
+	}); err != nil {
+		t.Fatalf("halt the chain: %v", err)
+	}
+
+	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Security: ptr(true)}); err != nil {
+		t.Fatalf("ChainResume: %v", err)
+	}
+
+	want := chainMemberRoundCap(chain.MemberSecurity, len(req.Plans), chainSettingsFromWire(req.Settings))
+	if want <= store.DefaultRoundCap {
+		t.Fatalf("test setup: want %d must exceed the default %d", want, store.DefaultRoundCap)
+	}
+	if got := chainBinding(t, rt, "shop-sec").RoundCap; got != want {
+		t.Errorf("shop-sec RoundCap = %d, want %d", got, want)
+	}
 }
 
 // TestServedChainResumeCreatesAServedSecurityMember pins the late security
