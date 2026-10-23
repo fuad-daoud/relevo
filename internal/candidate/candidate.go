@@ -275,7 +275,7 @@ func Parse(name string, data []byte) (*Set, []string, error) {
 		return nil, nil, fmt.Errorf("decode candidates %s: %w", name, err)
 	}
 	for i, row := range rows {
-		if raw, ok := row["max_concurrency"]; ok && string(raw) == "0" {
+		if raw, ok := row["max_concurrency"]; ok && (string(raw) == "0" || string(raw) == "-0") {
 			return nil, nil, errBadConcurrency(name, i, 0)
 		}
 	}

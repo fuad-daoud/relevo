@@ -43,7 +43,7 @@ func ParseWindowClock(s string) (Clock, error) {
 			return Clock{}, fmt.Errorf("want HH:MM, HH:MMZ, HH:MM+HH:MM or \"HH:MM Zone\"")
 		}
 		loc, err := time.LoadLocation(rest)
-		if err != nil {
+		if err != nil || rest == "Local" {
 			return Clock{}, fmt.Errorf("unknown zone %q", rest)
 		}
 		return clockHM(hm, loc)
@@ -76,6 +76,9 @@ func parseOffset(z string) (int, error) {
 	if len(d) != 4 {
 		return 0, fmt.Errorf("bad offset %q", z)
 	}
+	if !digits(d) {
+		return 0, fmt.Errorf("bad offset %q", z)
+	}
 	h, e1 := strconv.Atoi(d[:2])
 	m, e2 := strconv.Atoi(d[2:])
 	if e1 != nil || e2 != nil || h > 14 || m > 59 {
@@ -84,9 +87,22 @@ func parseOffset(z string) (int, error) {
 	return sign * (h*3600 + m*60), nil
 }
 
+// digits is checked before Atoi, which would accept a leading sign.
+func digits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func clockHM(s string, loc *time.Location) (Clock, error) {
 	if len(s) != 5 || s[2] != ':' {
 		return Clock{}, fmt.Errorf("want HH:MM, got %q", s)
+	}
+	if !digits(s[:2] + s[3:]) {
+		return Clock{}, fmt.Errorf("want HH:MM with hour 0-23 and minute 0-59, got %q", s)
 	}
 	h, e1 := strconv.Atoi(s[:2])
 	m, e2 := strconv.Atoi(s[3:])
@@ -211,10 +227,14 @@ func (w Windows) validate(name string, i int) error {
 	if len(w.Only) == 0 && len(w.Avoid) == 0 {
 		return fmt.Errorf("candidates %s: candidate %d: windows: only and avoid are both empty", name, i)
 	}
-	for field, list := range map[string][]Window{"only": w.Only, "avoid": w.Avoid} {
-		for j, win := range list {
+	lists := []struct {
+		field string
+		list  []Window
+	}{{"only", w.Only}, {"avoid", w.Avoid}}
+	for _, l := range lists {
+		for j, win := range l.list {
 			if _, err := win.span(); err != nil {
-				return fmt.Errorf("candidates %s: candidate %d: windows.%s[%d]: %w", name, i, field, j, err)
+				return fmt.Errorf("candidates %s: candidate %d: windows.%s[%d]: %w", name, i, l.field, j, err)
 			}
 		}
 	}

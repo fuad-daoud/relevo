@@ -670,6 +670,13 @@ func TestParseRefusesBadWindow(t *testing.T) {
 		{"from equals to", `"windows":{"only":[{"from":"14:00","to":"14:00Z"}]}`, "windows.only[0]: from"},
 		{"unknown mode", `"windows":{"mode":"soft","only":[{"from":"01:00","to":"02:00"}]}`, "windows.mode"},
 		{"both lists empty", `"windows":{}`, "windows: only and avoid"},
+		{"from Local zone", `"windows":{"only":[{"from":"14:00 Local","to":"15:00Z"}]}`, "windows.only[0]: from"},
+		{"signed clock minute", `"windows":{"only":[{"from":"12:+5","to":"15:00Z"}]}`, "windows.only[0]: from"},
+		{"signed clock hour", `"windows":{"only":[{"from":"+1:00","to":"15:00Z"}]}`, "windows.only[0]: from"},
+		{"signed offset hour", `"windows":{"only":[{"from":"14:00+-100","to":"15:00Z"}]}`, "windows.only[0]: from"},
+		{"signed offset minute", `"windows":{"only":[{"from":"14:00+08:-1","to":"15:00Z"}]}`, "windows.only[0]: from"},
+		{"both lists bad reports only", `"windows":{"avoid":[{"from":"26:00","to":"01:00"}],"only":[{"from":"25:00","to":"01:00"}]}`, "windows.only[0]: from"},
+		{"max_concurrency negative zero", `"max_concurrency":-0`, "max_concurrency 0"},
 		{"max_concurrency zero", `"max_concurrency":0`, "max_concurrency 0"},
 		{"max_concurrency negative", `"max_concurrency":-1`, "max_concurrency -1"},
 	}
@@ -684,6 +691,16 @@ func TestParseRefusesBadWindow(t *testing.T) {
 				t.Errorf("err = %q, want candidate index and %q", msg, tt.want)
 			}
 		})
+	}
+}
+
+func TestParseBothListsBadIsDeterministic(t *testing.T) {
+	data := []byte(`[{"harness":"claude","provider":"anthropic","model":"sonnet","windows":{"avoid":[{"from":"26:00","to":"01:00"}],"only":[{"from":"25:00","to":"01:00"}]}}]`)
+	for i := 0; i < 50; i++ {
+		_, _, err := Parse("candidates.json", data)
+		if err == nil || !strings.Contains(err.Error(), "windows.only[0]") {
+			t.Fatalf("run %d: err = %v, want windows.only[0]", i, err)
+		}
 	}
 }
 
