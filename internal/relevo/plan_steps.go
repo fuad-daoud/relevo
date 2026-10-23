@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -21,7 +22,10 @@ var (
 // lines with none of those, is false: that is a sentence pointing at a path.
 // It errs towards true, because a false negative halts a chain on a valid plan
 // while a false positive only hands the builder what it would have got anyway.
+// The trailing relevo block is cut first: every reader's message ends with one,
+// and its lines would otherwise count a one-line pointer as a plan.
 func planHasSteps(body []byte) bool {
+	body = reporttail.StripTail(body)
 	bullets, nonEmpty := 0, 0
 	for _, line := range strings.Split(string(body), "\n") {
 		if strings.TrimSpace(line) == "" {

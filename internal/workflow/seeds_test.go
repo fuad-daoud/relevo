@@ -348,3 +348,17 @@ func TestShippedCorrectAndFixSeedsSayPlanIsFinalMessage(t *testing.T) {
 		}
 	}
 }
+
+func TestShippedCorrectAndFixSeedsSayThePlanEndsInACommit(t *testing.T) {
+	t.Parallel()
+	const want = "The plan ends in its own commit"
+	for _, name := range []string{"correct", "fix"} {
+		out, err := RenderShipped(name, sampleSeedView())
+		if err != nil {
+			t.Fatalf("RenderShipped(%s): %v", name, err)
+		}
+		if !strings.Contains(out, want) {
+			t.Errorf("%s seed lacks %q:\n%s", name, want, out)
+		}
+	}
+}

@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -158,4 +159,56 @@ func TestPlanWritingReaderWithStepsClosesWithoutNudge(t *testing.T) {
 	if len(fr.specs) != before {
 		t.Errorf("specs = %d, want %d: a plan with steps needs no nudge", len(fr.specs), before)
 	}
+}
+
+func TestPlanWritingReaderExitedWithoutMarkerIsNudgedOnce(t *testing.T) {
+	t.Parallel()
+	rt, b, fr := planWriterReader(t, "The plan is at /tmp/plan.md.\n\n```relevo\nstatus: done\n```\n")
+	if err := os.Remove(rt.Store.DonePath(b.Name, b.Round)); err != nil {
+		t.Fatal(err)
+	}
+
+	next, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(fr.specs) < 2 || !argvMentions(fr.specs[len(fr.specs)-1].Argv, planNudgeNote) {
+		t.Fatalf("specs = %d, want a resume whose prompt carries the plan note", len(fr.specs))
+	}
+	if next.State != store.StateActive || next.Builder.PID != fr.handles[len(fr.handles)-1].PID {
+		t.Errorf("state = %s pid = %d, want active on the resumed handle", next.State, next.Builder.PID)
+	}
+	if notes := switchNotes(t, rt, b.Name); len(notes) != 1 {
+		t.Errorf("switch notes = %v, want exactly one nudge", notes)
+	}
+	if c := flowChainRow(t, rt); c.Status != "running" {
+		t.Errorf("chain status = %q, want running while the planner is nudged", c.Status)
+	}
+
+	// The resumed runner announces its session, so only the one-nudge limit can
+	// stop a second resume.
+	next.Builder.StreamSessionID = "S2"
+	if err := rt.Store.Save(next); err != nil {
+		t.Fatal(err)
+	}
+	before := len(fr.specs)
+	fr.script(next.Builder.PID, false)
+	fr.exit(next.Builder.PID, 0)
+	if _, err := reconcile(t, rt, next); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(fr.specs) != before {
+		t.Errorf("specs = %d, want %d: the one nudge is spent", len(fr.specs), before)
+	}
+}
+
+// argvMentions reports whether any argument contains s, for a prompt passed as
+// one argument among the flags.
+func argvMentions(argv []string, s string) bool {
+	for _, a := range argv {
+		if strings.Contains(a, s) {
+			return true
+		}
+	}
+	return false
 }

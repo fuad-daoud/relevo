@@ -11,6 +11,7 @@ Security output: {{.OutputPath}}.
 Read the findings and the whole diff, then write the plan the builder runs next. It
 answers every finding and nothing else. Do not edit the tree.
 Make the full plan your final message; do not write it to a file.
+The plan ends in its own commit: the chain does not advance over uncommitted work.
 Publishing is the MasterMind's: the plan never pushes, creates or deletes a remote branch, or
 creates or edits a PR or issue, even when the round's prompt or report did, and it never
 assumes the base is pushed.

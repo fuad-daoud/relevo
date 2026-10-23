@@ -63,3 +63,21 @@ func TestChainStepWritesPlanForCorrectAndFixOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanHasStepsRejectsAPointerEndingInItsRelevoBlock(t *testing.T) {
+	body := "I wrote the correction plan to `/state/out/plan.md`.\n\n```relevo\nstatus: done\nhalted_at: \"\"\n```\n"
+	if planHasSteps([]byte(body)) {
+		t.Errorf("planHasSteps(%q) = true, want false: the block's lines are not plan steps", body)
+	}
+	plan := "1. Add the test.\n2. Run it.\n\n```relevo\nstatus: done\n```\n"
+	if !planHasSteps([]byte(plan)) {
+		t.Errorf("planHasSteps(%q) = false, want true", plan)
+	}
+}
+
+func TestPlanHasStepsAcceptsAProsePlanOfThreeLines(t *testing.T) {
+	body := "Add the missing test for the exit path.\nIt resumes the session once.\nThen run the focused tests and commit.\n"
+	if !planHasSteps([]byte(body)) {
+		t.Errorf("planHasSteps(%q) = false, want true: a prose plan must not halt the chain", body)
+	}
+}
