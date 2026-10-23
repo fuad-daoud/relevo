@@ -161,13 +161,13 @@ func TestRemoteTierOverWire(t *testing.T) {
 		Name:   "api",
 		Server: "zen",
 		Repo:   repo,
-		Tier:   "edit",
+		Tier:   "read",
 	})
 	if err != nil {
 		t.Fatalf("relevo.Add: %v", err)
 	}
-	if res.Binding.Tier != "edit" {
-		t.Fatalf("res.Binding.Tier = %q, want edit", res.Binding.Tier)
+	if res.Binding.Tier != "read" {
+		t.Fatalf("res.Binding.Tier = %q, want read", res.Binding.Tier)
 	}
 
 	serverStore := srvStore(owner)
@@ -175,8 +175,8 @@ func TestRemoteTierOverWire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("server store Load(api): %v", err)
 	}
-	if sb.Tier != "edit" {
-		t.Fatalf("server binding Tier = %q, want edit", sb.Tier)
+	if sb.Tier != "read" {
+		t.Fatalf("server binding Tier = %q, want read", sb.Tier)
 	}
 
 	planFile := filepath.Join(t.TempDir(), "plan.md")
@@ -229,7 +229,7 @@ func TestRemoteTierOverWire(t *testing.T) {
 		return false
 	})
 
-	// RoundTier cleared by queueReport; Tier "edit" persists on the binding.
+	// RoundTier cleared by queueReport; Tier "read" persists on the binding.
 	cb, err := rt.Store.Load("api")
 	if err != nil {
 		t.Fatalf("read client binding after round 1: %v", err)
@@ -237,8 +237,8 @@ func TestRemoteTierOverWire(t *testing.T) {
 	if cb.RoundTier != "" {
 		t.Fatalf("client RoundTier = %q, want empty after round 1 closed", cb.RoundTier)
 	}
-	if cb.Tier != "edit" {
-		t.Fatalf("client Tier = %q, want edit to persist", cb.Tier)
+	if cb.Tier != "read" {
+		t.Fatalf("client Tier = %q, want read to persist", cb.Tier)
 	}
 
 	planFile2 := filepath.Join(t.TempDir(), "plan2.md")
@@ -259,8 +259,8 @@ func TestRemoteTierOverWire(t *testing.T) {
 	if specsLen != 2 {
 		t.Fatalf("runner.specs count after round 2 = %d, want 2", specsLen)
 	}
-	if !slices.Contains(spec1.Argv, "--permission-mode") || !slices.Contains(spec1.Argv, "acceptEdits") {
-		t.Fatalf("round 2 spec.Argv = %v, want --permission-mode acceptEdits", spec1.Argv)
+	if !slices.Contains(spec1.Argv, "--permission-mode") || !slices.Contains(spec1.Argv, "plan") {
+		t.Fatalf("round 2 spec.Argv = %v, want --permission-mode plan", spec1.Argv)
 	}
 }
 
