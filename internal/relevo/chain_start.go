@@ -355,6 +355,7 @@ func chainBuildMembers(ctx context.Context, rt Runtime, members []chainMember, r
 		}
 		b := chainMemberBinding(m, ep, c.Ref().String(), base)
 		b.BuilderAccount = res.Account
+		b.BuilderPinned = res.How == HowExplicit
 		b.Tier = string(tier)
 		if m.writer {
 			b.Gate = set.Gate
