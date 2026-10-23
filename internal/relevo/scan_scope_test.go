@@ -191,3 +191,18 @@ func TestStreamTailReadFallbackHonoursFrom(t *testing.T) {
 		t.Errorf("streamTail(from past the end) = %q, want empty", got)
 	}
 }
+
+func TestTransportTextIgnoresThePreviousBuildersLines(t *testing.T) {
+	fr := newFakeRunner()
+	rt, b := gateOnLimitSetup(t, fr)
+	b.Builder.Kind = "opencode"
+	b.Builder.StreamSegments = nil
+	outgoing := `{"type":"error","error":{"type":"provider.transport","message":"Connection lost while reading the response"}}` + "\n"
+	current := `{"type":"error","error":{"type":"provider.unknown","message":"Stream error occurred"}}` + "\n"
+	b = scanScopeBinding(t, rt, b, outgoing, current)
+
+	got := currentBuilderTransportText(rt, b, availability.LimitScanLines)
+	if got != "provider.unknown: Stream error occurred" {
+		t.Errorf("currentBuilderTransportText = %q, want only the current process's error", got)
+	}
+}

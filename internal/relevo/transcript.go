@@ -237,6 +237,19 @@ func currentBuilderScanText(rt Runtime, b store.Binding, n int) string {
 	return scanTail(rt.Store.StreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n, from)
 }
 
+// currentBuilderTransportText is currentBuilderScanText with
+// transcript.TransportLines as the renderer: the same bytes and the same cut.
+func currentBuilderTransportText(rt Runtime, b store.Binding, n int) string {
+	if b.Builder.LogPath != "" && b.Builder.LogPath == rt.Store.BuilderLogPath(b.Name, b.Round) {
+		return logTail(b.Builder.LogPath, n)
+	}
+	from := int64(0)
+	if b.Builder.StreamRound == b.Round {
+		from = b.Builder.StreamStart
+	}
+	return tailWith(rt.Store.StreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n, from, transcript.TransportLines)
+}
+
 // roundSegments is the segment list of one round: the live endpoint's own
 // when it holds that round and has segments, otherwise the round's stored
 // NNN-builder-segments.json row, otherwise nil (the caller then renders with
