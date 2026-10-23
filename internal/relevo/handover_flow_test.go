@@ -238,3 +238,53 @@ func rawExec(d *db.DB, stmt string) (int64, error) {
 	}
 	return res.RowsAffected()
 }
+
+func TestHandoverRefusesAForeignRemoteBeforePushing(t *testing.T) {
+	rt, fg := handoverRuntime(t)
+	fg.remotes = []string{"origin", "mirror"}
+	fg.remoteURLs = map[string]string{"origin": handoverOrigin, "mirror": "https://github.com/other/webshop.git"}
+	_, err := Handover(context.Background(), rt, HandoverOptions{Name: "webshop", To: "zen", Remote: "mirror"})
+	if err == nil || !strings.Contains(err.Error(), "next:") {
+		t.Fatalf("Handover = %v, want the foreign-remote refusal", err)
+	}
+	if len(fg.pushCalls) != 0 {
+		t.Errorf("a refused hand-over pushed: %+v", fg.pushCalls)
+	}
+	if _, err := rt.Store.Load("webshop"); err != nil {
+		t.Errorf("binding no longer loads: %v", err)
+	}
+}
+
+func TestHandoverAcceptsAnotherNameForOriginsURL(t *testing.T) {
+	rt, fg := handoverRuntime(t)
+	fg.remotes = []string{"origin", "mirror"}
+	fg.remoteURLs = map[string]string{"origin": handoverOrigin, "mirror": "git@github.com:acme/webshop.git"}
+	if _, err := Handover(context.Background(), rt, HandoverOptions{Name: "webshop", To: "zen", Remote: "mirror"}); err != nil {
+		t.Fatalf("Handover: %v", err)
+	}
+	if len(fg.pushCalls) != 1 || fg.pushCalls[0].Remote != "mirror" {
+		t.Errorf("pushes = %+v, want one to mirror", fg.pushCalls)
+	}
+}
+
+type urlCountingGit struct {
+	*fakeGit
+	urlReads int
+}
+
+func (g *urlCountingGit) RemoteURL(ctx context.Context, dir, remote string) (string, error) {
+	g.urlReads++
+	return g.fakeGit.RemoteURL(ctx, dir, remote)
+}
+
+func TestHandoverToOriginReadsNoRemoteURL(t *testing.T) {
+	rt, fg := handoverRuntime(t)
+	cg := &urlCountingGit{fakeGit: fg}
+	rt.Git = cg
+	if _, err := Handover(context.Background(), rt, HandoverOptions{Name: "webshop", To: "zen", Remote: "origin"}); err != nil {
+		t.Fatalf("Handover: %v", err)
+	}
+	if cg.urlReads != 0 {
+		t.Errorf("RemoteURL called %d times for --remote origin, want 0", cg.urlReads)
+	}
+}
