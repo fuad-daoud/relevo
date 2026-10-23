@@ -50,6 +50,18 @@ func TestShowRetiredFlagsAreUnknown(t *testing.T) {
 	}
 }
 
+// TestShowSummaryNamesOutput pins that the renamed --summary points at
+// --output instead of failing as an unknown flag. It fails before any runtime
+// is built, so no harness is reached.
+func TestShowSummaryNamesOutput(t *testing.T) {
+	_, _, err := captureOutput(t, func() error {
+		return run([]string{"show", "api", "--summary"})
+	})
+	if err == nil || !strings.Contains(err.Error(), "--output") {
+		t.Errorf("show --summary: err = %v, want a hint naming --output", err)
+	}
+}
+
 // seedShowDiffStore builds a binding under the default state root with one
 // completed round: a diff patch as a round_file row and the log entries that
 // name it. It is store-only -- no harness and no network -- so the run-based

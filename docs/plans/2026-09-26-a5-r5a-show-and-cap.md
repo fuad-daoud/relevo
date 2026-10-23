@@ -1,5 +1,7 @@
 # A5 R5a: reading a reader round's artifacts, and the size cap
 
+> Superseded in part: the `show --summary` flag described here became `show --output` (#633) before v0.15.0, and no release shipped `--summary`.
+
 Spec:
 - `docs/specs/2026-09-24-cockpit-design.md` D5, §3.4 (the size cap), §7 ("Artifacts over
   the cap: NEEDS YOU; nothing is dropped") and §4's round-detail row.
