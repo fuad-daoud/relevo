@@ -779,6 +779,9 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// The round's throwaway worktree goes away at close, after the summary is
 	// on disk: the artifact directory lives under the binding, not the scratch.
 	removeReaderScratch(ctx, rt, b, b.Round)
+	// The round's private temp dir goes with it, and no close route escapes
+	// this funnel: every one of them queues its report through here.
+	removeRoundTmp(rt, b, b.Round)
 
 	now := rt.Now().UTC()
 	roundStart := b.RoundStartedAt

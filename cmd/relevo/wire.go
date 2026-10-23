@@ -406,6 +406,7 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		Git:            gitClient,
 		Runner:         runner,
 		Store:          st,
+		TmpRoot:        tmpDir,
 		Candidates:     L.Candidates,
 		Accounts:       L.Accounts,
 		OpencodeAuth:   relevo.OSOpencodeAuth(opencodeDBPath()),

@@ -15,12 +15,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -170,86 +168,6 @@ func roundBudget(b store.Binding) time.Duration {
 	return time.Duration(b.RoundTimeoutMS) * time.Millisecond
 }
 
-// builderEnv is the environment a binding's headless builder runs with: the
-// client's git identity, so a commit the builder makes is authored and
-// committed as the client rather than as the server's OS user (#335). Pure.
-//
-// nil when the binding carries no identity -- a local binding, an old
-// client's, or one created before #335 -- which leaves the builder with
-// whatever identity the server's environment already resolved.
-func builderEnv(b store.Binding) []string {
-	if b.Serve == nil || b.Serve.AuthorName == "" || b.Serve.AuthorEmail == "" {
-		return nil
-	}
-	name, email := b.Serve.AuthorName, b.Serve.AuthorEmail
-	return []string{
-		"GIT_AUTHOR_NAME=" + name,
-		"GIT_AUTHOR_EMAIL=" + email,
-		"GIT_COMMITTER_NAME=" + name,
-		"GIT_COMMITTER_EMAIL=" + email,
-	}
-}
-
-// roundEnv is the environment a round's process runs with: builderEnv's git
-// identity plus the marker naming the binding this process is a runner for. A
-// harness session relevo spawns for a round must not read itself as a
-// MasterMind or planner, so the marker is what its consent hooks go silent on.
-// The spawn appends the marker after the deny filter, so a stale RELEVO_RUNNER
-// in the daemon's own environment cannot shadow it. The binding's base commit
-// follows the marker when it has one. Pure.
-func roundEnv(b store.Binding) []string {
-	return append(append(builderEnv(b), mastermind.RunnerEnvEntry(b.Name)), baseEnvEntry(b)...)
-}
-
-// roundEnvFor is roundEnv with the round's builder account pinned: the same git
-// identity and runner marker, plus the account home entry last. Appending it
-// after the marker puts it after proc.ChildEnv's deny filter, so the account's
-// value is the later of two entries of the same name and a stale parent value
-// cannot win. A nil account is exactly roundEnv's output, so a host with no
-// accounts configured spawns the environment it always did.
-func roundEnvFor(b store.Binding, a *account.Account) []string {
-	return append(roundEnv(b), accountEnvEntry(a)...)
-}
-
-// accountEnvEntry is the spawn environment entry that pins a round's harness to
-// the account's per-process home (CLAUDE_CONFIG_DIR, CODEX_HOME). nil for a nil
-// account, a kind with no per-process home (opencode), and an account whose
-// selector is empty: each would pin nothing.
-func accountEnvEntry(a *account.Account) []string {
-	if a == nil {
-		return nil
-	}
-	name, ok := harness.HomeEnv(string(a.Harness))
-	if !ok {
-		return nil
-	}
-	home, ok := harness.AccountHome(*a)
-	if !ok {
-		return nil
-	}
-	return []string{name + "=" + home}
-}
-
-// accountFor returns the account a round on candidate c runs as: the first
-// account of c's harness serving c's provider, or nil when accounts are
-// unconfigured or no account serves the provider. The pool's config order is
-// the failover order the pick walks, so the home this pins is the one the
-// round's recorded account will name.
-func accountFor(rt Runtime, c candidate.Candidate) *account.Account {
-	if len(rt.Accounts) == 0 {
-		return nil
-	}
-	pool := rt.Accounts.Pool(account.Kind(c.Harness), c.Provider)
-	if len(pool) == 0 {
-		return nil
-	}
-	a, ok, err := account.Select(pool, nil, account.Failover)
-	if err != nil || !ok {
-		return nil
-	}
-	return &a
-}
-
 // startRound starts the round's process for a headless binding and records
 // its handle on the endpoint (headless spec §4.3). The caller holds the
 // state lock, has staged the plan, and saves what comes back.
@@ -397,15 +315,30 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 			}
 		}
 	}
+	// The round's process gets its own temp dir through the one prepare seam
+	// before it can start. A prepare error is the host's, not the
+	// candidate's: it comes back plain -- never a spawnFailure, never a
+	// ledger record -- so a failed mkdir gates nothing and spends no
+	// relaunch attempt.
+	tmpDir, prepEnv, cleanupProc, err := prepareProc(ctx, rt, procRequest{
+		kind: procKindRound, key: b.Name, tree: roundTree(rt, b), binding: &b,
+	})
+	if err != nil {
+		return b, err
+	}
 	spec := spawn.ProcSpec{
 		Dir: roundTree(rt, b), Argv: argv,
-		Env:        append(roundEnvFor(b, accountFor(rt, c)), shimEnv...),
+		Env:        append(append(roundEnvFor(b, accountFor(rt, c)), shimEnv...), prepEnv...),
+		TmpDir:     tmpDir,
 		LogPath:    logPath,
 		StreamPath: rt.Store.StreamPath(b.Name, b.Round),
 	}
 	spec.Scope = scopeFor(rt, scopeRound, scopeUnitName(b), cpuPinText(b))
 	h, err := rt.Runner.Start(ctx, spec)
 	if err != nil {
+		// Nothing started, so the directory the preparation made goes back;
+		// a later start for this round recreates it under the same name.
+		cleanupProc()
 		// A tenant-boundary refusal is the operator's to fix, not the
 		// candidate's: it neither gates the candidate nor is a spawnFailure
 		// (which the lost-builder path would answer with a fresh relaunch).
@@ -831,6 +764,9 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 				} else {
 					slog.Warn("killed stray headless process", "binding", b.Name, "pid", b.Builder.PID)
 					b = abandonSession(b)
+					// Belt for the close hook this stray's round already ran:
+					// no kill route leaves a round's temp dir behind.
+					removeRoundTmp(rt, b, b.Round)
 				}
 			}
 			b.Builder = clearProcess(b.Builder)
@@ -1572,6 +1508,10 @@ func stopProcess(ctx context.Context, rt Runtime, b store.Binding, why string) (
 	if err := rt.Runner.Kill(ctx, handleOf(b.Builder), rt.Store.StreamPath(b.Name, b.Round)); err != nil {
 		return b.Builder.PID, err
 	}
+	// The kill took the round's process, so its temp dir goes with it: a
+	// later start recreates it under the same name, which is what makes
+	// removing on a kill safe for a round that resumes.
+	removeRoundTmp(rt, b, b.Round)
 	return b.Builder.PID, nil
 }
 

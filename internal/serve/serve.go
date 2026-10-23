@@ -392,6 +392,21 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		// runs the harness binary, which is the same for every owner.
 		SessionReaper: cfg.SessionReaper,
 	}
+	// Every mode that runs builders on this host gives the owner its own tmp
+	// root, so one owner's sweep can never see another owner's entries.
+	// Container mode gets none: applyContainer's builder sees the container's
+	// own /tmp, and a host path means nothing inside it.
+	if cfg.Isolation != isolate.ModeContainer {
+		rt.TmpRoot = s.ownerTmpDir(root)
+		// A named root must exist before a round's start prepares its
+		// directory through the store's confined helpers: mode-none serve has
+		// no ensureTenantRoots step to make it, and user mode's hands an
+		// existing one to the tenant at bind. Made at 0700, the same mode
+		// ensureTenantDir would create it with.
+		if err := os.MkdirAll(rt.TmpRoot, tenantDirMode); err != nil {
+			slog.Warn("owner tmp root not created", "root", rt.TmpRoot, "err", err)
+		}
+	}
 	switch cfg.Isolation {
 	case isolate.ModeUser:
 		s.applyTenant(root, st, &rt)
