@@ -1396,3 +1396,22 @@ func TestServeIsolationSharedLogins(t *testing.T) {
 		t.Errorf("Load error %q does not name isolation_shared_logins", err.Error())
 	}
 }
+
+func TestKnownFieldsListsEachPolicyKeyOnce(t *testing.T) {
+	got := KnownFields()
+	seen := map[string]bool{}
+	for i, k := range got {
+		if seen[k] || strings.ContainsAny(k, ".[{") || (i > 0 && got[i-1] > k) {
+			t.Errorf("KnownFields = %v: %q is repeated, nested or out of order", got, k)
+		}
+		seen[k] = true
+	}
+	for _, want := range []string{"max_switches", "gate", "order"} {
+		if !seen[want] {
+			t.Errorf("KnownFields = %v, lacks %q", got, want)
+		}
+	}
+	if seen["round_cap"] {
+		t.Errorf("KnownFields = %v, names round_cap, which Policy does not read", got)
+	}
+}
