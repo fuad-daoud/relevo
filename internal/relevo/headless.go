@@ -1257,6 +1257,11 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if !switchable {
 		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: builder exited (code %s) %s; see %s", b.Name, codeText, withoutArtifact(b.Shape), showCommand(b.Name, b.Round, "log")))
 	}
+	if next, ok, err := transportResume(ctx, rt, tx, b, entries, now); err != nil {
+		return next, err
+	} else if ok {
+		return next, nil
+	}
 	// A provider-side outage behind this exit is a provider gate, not a
 	// builder failure (#931), so it is offered the timed gate rather than the
 	// until-cleared exclusion below: one rate_limited entry whose note keeps
