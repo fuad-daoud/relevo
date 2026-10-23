@@ -28,6 +28,12 @@ func chainDoneBody() string {
 	return "finished the plan\n\n```relevo\nstatus: done\nhalted_at: \"\"\nchanged_paths: []\ncommands_run: []\nnot_done: []\n```\n"
 }
 
+// chainPlanBody is a planner's correction: a plan with a step, which the chain's
+// plan gate passes on to the builder.
+func chainPlanBody() string {
+	return "1. Make the change the review asked for.\n\n```relevo\nstatus: done\n```\n"
+}
+
 func chainVerdictBody(verdict string) string {
 	return "I reviewed the round.\n\n```relevo\nverdict: " + verdict + "\n```\n"
 }
@@ -730,7 +736,7 @@ func TestChainCorrectionPlanSendsTheBuilderAndSpendsOneCorrection(t *testing.T) 
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
-	chainReaderClose(t, rt, "shop-plan", chainDoneBody())
+	chainReaderClose(t, rt, "shop-plan", chainPlanBody())
 
 	row := chainStoredRow(t, rt, "shop")
 	if row.Corrections != 1 || row.Step != string(chain.StepBuilding) {
@@ -1318,7 +1324,7 @@ func TestChainPlanStartCommitResetOnlyOnNewPlans(t *testing.T) {
 	fg.headCommitID = "head-correction"
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
-	chainReaderClose(t, rt, "shop-plan", chainDoneBody())
+	chainReaderClose(t, rt, "shop-plan", chainPlanBody())
 	if got := chainStoredRow(t, rt, "shop").PlanStartCommit; got != "commit-head-123" {
 		t.Fatalf("plan start after a correction = %q, want it held at the plan 1 start", got)
 	}
@@ -1341,7 +1347,7 @@ func TestChainPlanStartCommitResetOnlyOnNewPlans(t *testing.T) {
 	// The security phase's fix plan moves it to that send's baseline head.
 	chainReaderClose(t, rt, "shop-sec", chainFindingsBody(1))
 	fg.headCommitID = "head-fix"
-	chainReaderClose(t, rt, "shop-plan", chainDoneBody())
+	chainReaderClose(t, rt, "shop-plan", chainPlanBody())
 	if got := chainStoredRow(t, rt, "shop").PlanStartCommit; got != "head-fix" {
 		t.Errorf("plan start after the fix plan = %q, want %q", got, "head-fix")
 	}

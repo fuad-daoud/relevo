@@ -122,7 +122,7 @@ func TestChainResumeResetsCorrections(t *testing.T) {
 	// a spent correction when the resume arrives.
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
-	chainReaderClose(t, rt, "shop-plan", chainDoneBody())
+	chainReaderClose(t, rt, "shop-plan", chainPlanBody())
 	if row := chainStoredRow(t, rt, "shop"); row.Corrections != 1 {
 		t.Fatalf("corrections = %d, want the one spent correction", row.Corrections)
 	}
