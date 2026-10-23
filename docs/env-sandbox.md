@@ -21,8 +21,8 @@ scripts/relevo-sandbox.sh shell demo
 builds the binary out of it. `--no-build` skips that step when there is no
 toolchain to hand.
 
-`create` also finishes the harness setup: it copies the claude login, config
-and agent definitions plus the codex login and config (never session data),
+`create` also finishes the harness setup: it copies the claude login, config,
+agent definitions and hooks plus the codex login and config (never session data),
 copies your tuned candidates, policy, servers, actors and agents section by
 section with `config get`/`config set`, and runs `doctor` once. A section you
 never set is skipped; a host with no database falls back to `config init

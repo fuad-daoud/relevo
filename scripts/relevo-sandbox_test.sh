@@ -113,6 +113,11 @@ done
 refuses 'an unknown subcommand is refused' 'unknown subcommand' \
 	sh "$script" frobnicate
 
+# A hook that finds its files through $HOME must find them inside the sandbox,
+# so the caller's hooks are copied in before the first create.
+mkdir -p "$home/.claude/hooks"
+echo 'echo hook' > "$home/.claude/hooks/guard.sh"
+
 # A create whose name is already taken is refused: reusing a live sandbox's name
 # would write into a directory someone is already running a daemon in.
 allows 'a first create succeeds' 'is ready' \
@@ -131,6 +136,10 @@ absent 'create does not run make service' 'make service'
 absent 'create does not run config agents' 'config agents'
 
 sbx="$root/demo"
+if [ "$(cat "$sbx/home/.claude/hooks/guard.sh" 2>/dev/null)" != 'echo hook' ]; then
+	echo "FAIL: \$HOME/.claude/hooks inside the sandbox lacks the caller's hooks"
+	fail=1
+fi
 for d in bin state config data cache claude codex home; do
 	if [ ! -d "$sbx/$d" ]; then
 		echo "FAIL: create left no $sbx/$d"

@@ -219,6 +219,13 @@ cmd_create() {
 	else
 		note "no $HOME/.claude/agents to copy; install the definitions into the sandbox before using the claude harness"
 	fi
+	# Hooks are commands settings.json runs on every tool call, and a hook that
+	# finds its own files through $HOME now looks inside the sandbox: without
+	# a copy it fails, and claude refuses every call the hook guards.
+	if [ -d "$HOME/.claude/hooks" ]; then
+		plan mkdir -p "$_sb/claude/hooks"
+		plan cp -r "$HOME/.claude/hooks/." "$_sb/claude/hooks/"
+	fi
 	# codex mirrors claude: its login plus its config, never its data.
 	if [ -d "${CODEX_HOME:-$HOME/.codex}" ]; then
 		for _f in auth.json config.toml; do
