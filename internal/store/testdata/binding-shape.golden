@@ -1,4 +1,4 @@
-format 19
+format 20
 abandoned_sessions[].attempts
 abandoned_sessions[].id
 abandoned_sessions[].kind
@@ -191,6 +191,8 @@ planner.stream_start
 planner_id
 planner_screen
 planner_screen_at
+progress.cpu_ticks
+progress.cpu_ticks_at
 progress.output
 progress.output_at
 progress.resumed_at

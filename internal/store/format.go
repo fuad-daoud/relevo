@@ -49,7 +49,7 @@ import (
 // tracked fact. Stamping a field would lock that older
 // relevo out of loading the binding. Bump BindingFormat whenever Binding's JSON
 // shape changes in a way that must lock an older relevo out.
-const BindingFormat = 19
+const BindingFormat = 20
 
 // recordFormat is the format to write b at. Every record is format 19: the
 // binary writes and migrates the out/ layout, which an older relevo cannot

@@ -92,6 +92,11 @@ type Progress struct {
 	// ResumedAt is when relevo last resumed the round's session; it shortens
 	// the exploring threshold. An older relevo that drops it loses only that.
 	ResumedAt time.Time `json:"resumed_at,omitempty"`
+	// CPUTicks is the builder's process-tree CPU at the last sample and
+	// CPUTicksAt the last sample where it burned more than the busy floor. An
+	// older relevo that drops them loses only the silence label.
+	CPUTicks   uint64    `json:"cpu_ticks,omitempty"`
+	CPUTicksAt time.Time `json:"cpu_ticks_at,omitempty"`
 }
 
 // GateRun is the gate process for the CURRENT round while it runs.

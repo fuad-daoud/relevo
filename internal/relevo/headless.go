@@ -936,6 +936,9 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			if err := noteResumedIdle(tx, b, next, now); err != nil {
 				return next, err
 			}
+			if err := noteProviderStall(ctx, rt, tx, next, entries, now); err != nil {
+				return next, err
+			}
 		}
 		// A builder that went quiet on both signals is not necessarily
 		// working (#905): it may be sitting on a provider's rate-limit
@@ -1592,7 +1595,8 @@ func headlessStatus(ctx context.Context, rt Runtime, b store.Binding, detail boo
 	}
 	// #252's label is now one of #135's progress labels, so a live
 	// headless builder can also read "exploring <age>".
-	if working, _ := labelsOf(b, rt.Now()); working != "" {
+	working, _ := labelsOf(b, rt.Now())
+	if working = silenceLabel(rt, b, rt.Now(), working); working != "" {
 		return working, info
 	}
 	return "working", info
