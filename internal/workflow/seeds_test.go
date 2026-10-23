@@ -334,3 +334,17 @@ func TestPlanWritingSeedsKeepPublishingWithTheMasterMind(t *testing.T) {
 		}
 	}
 }
+
+func TestShippedCorrectAndFixSeedsSayPlanIsFinalMessage(t *testing.T) {
+	t.Parallel()
+	const want = "Make the full plan your final message; do not write it to a file."
+	for _, name := range []string{"correct", "fix"} {
+		out, err := RenderShipped(name, sampleSeedView())
+		if err != nil {
+			t.Fatalf("RenderShipped(%s): %v", name, err)
+		}
+		if !strings.Contains(out, want) {
+			t.Errorf("%s seed lacks %q:\n%s", name, want, out)
+		}
+	}
+}

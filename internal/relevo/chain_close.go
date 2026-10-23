@@ -113,6 +113,13 @@ func chainEventFromCloseWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.C
 		}
 	}
 
+	if reason := chainPlanStepsReason(rt, c, st.Awaiting.Step, wf); reason != "" {
+		ev.Status = reporttail.OutcomeHalted
+		ev.Reason = reason
+		ev.HaltReason = reason
+		return ev, nil
+	}
+
 	artifacts := chainCloseArtifacts(rt, b, round, wf.Path, outs)
 	if miss := workflow.MissingArtifact(outs, chainArtifactSizes(rt, artifacts)); miss != "" {
 		ev.Status = reporttail.OutcomeHalted
@@ -121,6 +128,26 @@ func chainEventFromCloseWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.C
 	}
 	ev.Artifacts = artifacts
 	return ev, nil
+}
+
+// chainPlanStepsReason is the plan gate's answer for a close: the halt wording
+// when the awaited step writes a plan and the output the close saved holds no
+// plan steps, and "" otherwise. It judges the saved body, as the builder would
+// receive it, not the stream. A chain with no readable stored definition skips
+// the gate.
+func chainPlanStepsReason(rt Runtime, c db.ChainRow, step string, wf chainCloseWF) string {
+	def, err := chainWorkflowDef(c)
+	if err != nil || !chainStepWritesPlan(def, step) {
+		return ""
+	}
+	body := wf.Body
+	if len(body) == 0 && wf.Path != "" {
+		body, _ = rt.Store.ReadFile(wf.Path)
+	}
+	if planHasSteps(body) {
+		return ""
+	}
+	return fmt.Sprintf("step %s of chain %s: the planner's output has no plan steps (it may point at a file instead of containing the plan); nothing was sent to the builder", step, c.Name)
 }
 
 // chainDirtyCloseReason is the dirty gate's answer for one writer close: the

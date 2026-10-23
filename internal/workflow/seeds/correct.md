@@ -23,6 +23,7 @@ the round's prompt when it is named and the diffs. You review plan {{.Plan}} of 
 against the plan text: the plan's cumulative diff is the primary input and this
 round's diff is its latest increment. Write a plan that answers every change it
 asks for and nothing else. Do not edit the tree.
+Make the full plan your final message; do not write it to a file.
 Publishing is the MasterMind's: the plan never pushes, creates or deletes a remote branch, or
 creates or edits a PR or issue, even when the round's prompt or report did, and it never
 assumes the base is pushed.

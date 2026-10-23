@@ -728,7 +728,7 @@ func TestChainResumeReSendsTheStoppedRoundsOwnPrompt(t *testing.T) {
 		startedChain(t, rt, ChainOptions{MaxCorrections: ptr(2)})
 		chainBuilderClose(t, rt, "shop", chainDoneBody())
 		chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
-		chainReaderClose(t, rt, "shop-plan", "# Correction plan\n\nDo it.\n")
+		chainReaderClose(t, rt, "shop-plan", "# Correction plan\n\n1. Do it.\n")
 
 		// The builder's correction round is open; stop the chain there.
 		if _, err := Stop(context.Background(), rt, "shop", StopOptions{}); err != nil {

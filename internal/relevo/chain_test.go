@@ -1390,7 +1390,7 @@ func TestChainReviewerSeedNamesTheRoundPromptOfACorrection(t *testing.T) {
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
-	chainReaderClose(t, rt, "shop-plan", "# Correction plan\n\nDo it.\n")
+	chainReaderClose(t, rt, "shop-plan", "# Correction plan\n\n1. Do it.\n")
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
 	rev := chainBinding(t, rt, "shop-rev")
@@ -1685,7 +1685,7 @@ func TestChainRemoteCorrectionShipsThePlannerPlan(t *testing.T) {
 
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
 
-	const plannerPlan = "correction plan: change the one thing\n"
+	const plannerPlan = "correction plan:\n1. change the one thing\n"
 	chainReaderClose(t, rt, "shop-plan", plannerPlan)
 
 	staged, err := rt.Store.ReadFile(rt.Store.PromptPath("shop", 2))
@@ -2043,7 +2043,7 @@ func TestChainReviewerSeedNamesTheCorrectionRoundKind(t *testing.T) {
 
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("changes"))
-	chainReaderClose(t, rt, "shop-plan", "# Correction plan\n\nDo it.\n")
+	chainReaderClose(t, rt, "shop-plan", "# Correction plan\n\n1. Do it.\n")
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
 	rev := chainBinding(t, rt, "shop-rev")
