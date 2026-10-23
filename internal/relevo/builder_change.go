@@ -40,7 +40,7 @@ func ResolveSendBuilderFor(rt Runtime, role, current, token string) (*Resolution
 // resolveSendBuilder is ResolveSendBuilderFor judging skills in dir; an empty
 // dir judges none.
 func resolveSendBuilder(rt Runtime, role, current, token, dir string) (*Resolution, error) {
-	gates := withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), dir)
+	gates := withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), dir, nil)
 	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, gates, token, role, pickFor(rt))
 	if err != nil {
 		return nil, fmt.Errorf("%w %s: %w", ErrBadBuilder, token, err)

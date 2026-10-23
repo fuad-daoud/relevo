@@ -26,18 +26,10 @@ func osExists(p string) bool {
 }
 
 // withSkillGates appends the skill gates for the tree at dir. An empty dir
-// means relevo cannot judge, so it adds none.
-func withSkillGates(rt Runtime, gates []availability.Gate, dir string) []availability.Gate {
-	return withProbedSkillGates(rt, gates, dir, nil)
-}
-
-// withTrackedSkillGates is withSkillGates for a bind that cuts a worktree: a
-// project path counts only when tracked says the base commit has it.
-func withTrackedSkillGates(rt Runtime, gates []availability.Gate, dir string, tracked func(string) bool) []availability.Gate {
-	return withProbedSkillGates(rt, gates, dir, tracked)
-}
-
-func withProbedSkillGates(rt Runtime, gates []availability.Gate, dir string, tracked func(string) bool) []availability.Gate {
+// means relevo cannot judge, so it adds none. A non-nil tracked is for a bind
+// that cuts a worktree: a project path counts only when tracked says the base
+// commit has it; nil judges the disk alone.
+func withSkillGates(rt Runtime, gates []availability.Gate, dir string, tracked func(string) bool) []availability.Gate {
 	if dir == "" {
 		return gates
 	}
@@ -120,10 +112,10 @@ func trackedAtBase(ctx context.Context, rt Runtime, repo, base string) func(stri
 func addSkillGates(ctx context.Context, rt Runtime, opts AddOptions) []availability.Gate {
 	gates := availability.Gates(AvailabilityDeps(rt))
 	if opts.CWD != "" {
-		return withSkillGates(rt, gates, opts.CWD)
+		return withSkillGates(rt, gates, opts.CWD, nil)
 	}
 	if rt.Git == nil {
-		return withSkillGates(rt, gates, opts.Repo)
+		return withSkillGates(rt, gates, opts.Repo, nil)
 	}
 	base := opts.Base
 	if opts.Branch != "" {
@@ -132,5 +124,5 @@ func addSkillGates(ctx context.Context, rt Runtime, opts AddOptions) []availabil
 	if base == "" {
 		base = "HEAD"
 	}
-	return withTrackedSkillGates(rt, gates, opts.Repo, trackedAtBase(ctx, rt, opts.Repo, base))
+	return withSkillGates(rt, gates, opts.Repo, trackedAtBase(ctx, rt, opts.Repo, base))
 }

@@ -412,7 +412,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		// A resume re-points the binding at a builder; it keeps its stored
 		// writer role (#382 §2), so BindOptions.Role is ignored here.
 		opts.Role = b.Role
-		resCandidate, err := resolveRole(rt.RoleRegistry(), rt.Candidates, withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), b.CWD), opts.Candidate, bindingRole(b))
+		resCandidate, err := resolveRole(rt.RoleRegistry(), rt.Candidates, withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), b.CWD, nil), opts.Candidate, bindingRole(b))
 		if err != nil {
 			return store.Binding{}, Resolution{}, err
 		}
@@ -427,7 +427,9 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 			opts.Tier = b.Tier
 		}
 		var res2 Resolution
-		builder, res2, err = resolveBuilder(ctx, rt, nil, opts, opts.Name)
+		pick := opts
+		pick.CWD = b.CWD
+		builder, res2, err = resolveBuilder(ctx, rt, nil, pick, opts.Name)
 		if err != nil {
 			return store.Binding{}, Resolution{}, err
 		}
@@ -692,7 +694,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 
 	var tier harness.Tier
 	roleName := bindingRole(store.Binding{Role: normRole(opts.Role)})
-	resCandidate, err := resolveRole(rt.RoleRegistry(), rt.Candidates, withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), opts.CWD), opts.Candidate, roleName)
+	resCandidate, err := resolveRole(rt.RoleRegistry(), rt.Candidates, withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), opts.CWD, nil), opts.Candidate, roleName)
 	if err != nil {
 		return store.Binding{}, Resolution{}, err
 	}
@@ -803,7 +805,7 @@ func builderAgentName(name string) (string, error) {
 // The second return is the resolution, for the pick line.
 func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOptions, name string) (store.Endpoint, Resolution, error) {
 	roleName := bindingRole(store.Binding{Role: opts.Role})
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), opts.Candidate, roleName, pickFor(rt))
+	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), opts.CWD, nil), opts.Candidate, roleName, pickFor(rt))
 	if err != nil {
 		return store.Endpoint{}, Resolution{}, err
 	}

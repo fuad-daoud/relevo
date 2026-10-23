@@ -2020,7 +2020,9 @@ skipped the pick fails with that reason, and a candidate named with
 `--candidate` is refused. A bind that cuts a worktree runs in a fresh tree, so
 a project-local skill there must be committed at the base: an untracked one is
 reported as such (`commit it or install it per user`). A bind on a server is
-not judged here; the server's own pick judges its own disk.
+not judged here; the server's own pick judges its own disk. A chain start does not skip, because its members' picks are
+made before the chain's tree exists; a designer member whose picked candidate
+cannot see the skill is refused when the members are built.
 
 An actor named `builder`, `librarian`, `reviewer` or `researcher` keeps that builtin's
 shape: `builder` and `librarian` must run a writer agent, `reviewer` and `researcher` a reader.

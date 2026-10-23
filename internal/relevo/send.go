@@ -450,7 +450,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 
 	// The gate is advisory only: a gated candidate can still be sent to, it
 	// just tells the human the daemon would switch away after the start.
-	for _, g := range withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), b.CWD) {
+	for _, g := range withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), b.CWD, nil) {
 		if g.Token == b.BuilderCandidate && (g.Kind == availability.RateLimited || g.Kind == availability.RolesMissing || g.Kind == availability.SkillMissing || windowBlock(g)) {
 			gate := g
 			pf.gate = &gate
