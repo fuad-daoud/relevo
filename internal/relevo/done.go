@@ -176,7 +176,7 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		// The stop is recorded in the ledger, in the same shape relevo stop
 		// uses (closeStopped): the log marker it used to write is gone, and
 		// the round's own record of why the process went away is here.
-		if stopErr == nil && (pid != 0 || roundOpen) {
+		if stopErr == nil && oldState != store.StateDone && (pid != 0 || roundOpen) {
 			if err := tx.AppendLog(b.Name, store.LogEntry{
 				TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToMasterMind,
 				Kind: store.KindStop, Note: "stopped/done", Confirmed: true,

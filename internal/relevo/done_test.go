@@ -258,6 +258,26 @@ func TestDoneWritesStopEntryForARoundThatNeverSpawned(t *testing.T) {
 	}
 }
 
+func TestDoneTwiceWritesOneStopEntry(t *testing.T) {
+	t.Parallel()
+
+	rt := openRoundWithoutProcess(t)
+	if err := rt.Store.AppendLog("webshop", store.LogEntry{
+		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Path: "p.md",
+	}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := Done(context.Background(), rt, "webshop"); err != nil {
+			t.Fatalf("Done #%d: %v", i+1, err)
+		}
+	}
+	st := stopEntries(t, rt, "webshop")
+	if len(st) != 1 || st[0].Note != "stopped/done" || st[0].Round != 1 {
+		t.Errorf("stop entries = %+v, want exactly one stopped/done on round 1", st)
+	}
+}
+
 func TestDoneWritesNoStopEntryWhenNoRoundIsOpen(t *testing.T) {
 	t.Parallel()
 
