@@ -109,7 +109,7 @@ func progressStep(rt Runtime, b store.Binding, now time.Time, s signals) store.B
 		b.StalledSince = time.Time{}
 	}
 
-	if b.StalledSince.IsZero() && p.OutputAt.After(p.TreeAt) && now.Sub(p.TreeAt) >= rt.Policy.ExploreAfter() {
+	if b.StalledSince.IsZero() && p.OutputAt.After(p.TreeAt) && now.Sub(p.TreeAt) >= exploreThreshold(rt, p) {
 		if b.ExploringSince.IsZero() {
 			b.ExploringSince = p.TreeAt
 		}
@@ -118,6 +118,20 @@ func progressStep(rt Runtime, b store.Binding, now time.Time, s signals) store.B
 	}
 
 	return b
+}
+
+// resumedIdleAfter is how long a resumed session may leave the tree alone
+// before it is labelled exploring: about one full make check plus a retry,
+// since a 3 h round polled for 188 min.
+const resumedIdleAfter = 10 * time.Minute
+
+// exploreThreshold is how long the tree may sit still while output moves
+// before the exploring label is set.
+func exploreThreshold(rt Runtime, p *store.Progress) time.Duration {
+	if p.ResumedAt.IsZero() {
+		return rt.Policy.ExploreAfter()
+	}
+	return min(rt.Policy.ExploreAfter(), resumedIdleAfter)
 }
 
 // anySignal reports whether at least one progress source was ever sampled

@@ -1,4 +1,4 @@
-format 18
+format 19
 abandoned_sessions[].attempts
 abandoned_sessions[].id
 abandoned_sessions[].kind
@@ -193,6 +193,7 @@ planner_screen
 planner_screen_at
 progress.output
 progress.output_at
+progress.resumed_at
 progress.sampled_at
 progress.tree
 progress.tree_at

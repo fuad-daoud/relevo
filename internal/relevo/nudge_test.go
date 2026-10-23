@@ -502,14 +502,18 @@ func TestNudgeRecordsTheOutgoingSegment(t *testing.T) {
 	now := baseTime.Add(time.Minute)
 
 	var nudged bool
+	var got store.Binding
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
-		_, nudged, err = nudgeResume(context.Background(), rt, tx, b, entries, "0", now)
+		got, nudged, err = nudgeResume(context.Background(), rt, tx, b, entries, "0", now)
 		return err
 	}); err != nil {
 		t.Fatalf("nudgeResume: %v", err)
 	}
 	if !nudged {
 		t.Fatal("nudgeResume did not nudge")
+	}
+	if got.Progress == nil || !got.Progress.ResumedAt.Equal(now) {
+		t.Errorf("Progress = %+v, want ResumedAt %v", got.Progress, now)
 	}
 
 	// The read is the close-budget one: one Read, at the pre-nudge window.

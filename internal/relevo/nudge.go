@@ -147,6 +147,7 @@ func nudgeResume(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// OwedHalt is left alone -- a pending notification for an already closed
 	// round, still owed -- as the other revive paths leave it (bind.go).
 	next = clearHaltFields(next)
+	next.Progress = &store.Progress{SampledAt: now, TreeAt: now, OutputAt: now, ResumedAt: now}
 	if err := tx.AppendLog(b.Name, store.LogEntry{
 		TS: now, Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindSwitch, Confirmed: true,
 		Usage: prior,

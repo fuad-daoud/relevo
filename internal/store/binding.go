@@ -89,6 +89,9 @@ type Progress struct {
 	// old bind.json carries one.
 	Output   string    `json:"output,omitempty"`
 	OutputAt time.Time `json:"output_at"`
+	// ResumedAt is when relevo last resumed the round's session; it shortens
+	// the exploring threshold. An older relevo that drops it loses only that.
+	ResumedAt time.Time `json:"resumed_at,omitempty"`
 }
 
 // GateRun is the gate process for the CURRENT round while it runs.

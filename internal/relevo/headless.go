@@ -933,6 +933,9 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// follow-up): a tick inside it samples nothing.
 		if progressDue(next, now, rt.Policy.ProgressInterval()) {
 			next = progressStep(rt, next, now, sampleSignals(ctx, rt, next))
+			if err := noteResumedIdle(tx, b, next, now); err != nil {
+				return next, err
+			}
 		}
 		// A builder that went quiet on both signals is not necessarily
 		// working (#905): it may be sitting on a provider's rate-limit
