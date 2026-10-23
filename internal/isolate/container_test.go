@@ -75,6 +75,24 @@ func TestContainerArgv(t *testing.T) {
 	}
 }
 
+// TestContainerArgvIgnoresSpecTmpDir pins that a spec's own temp directory is
+// inert on the container path: the render forwards only the Env entries, so
+// TmpDir appears nowhere in the argv.
+func TestContainerArgvIgnoresSpecTmpDir(t *testing.T) {
+	spec := spawn.ProcSpec{
+		Dir:        "/round/tree",
+		Argv:       []string{"claude", "-p", "plan"},
+		Env:        []string{"A=1"},
+		TmpDir:     "/proc/tmp",
+		LogPath:    "/binding/log",
+		StreamPath: "/binding/r1-runner.jsonl",
+	}
+	got := ContainerArgv(spec, containerSpecFixture())
+	if joined := strings.Join(got.Argv, "\n"); strings.Contains(joined, spec.TmpDir) {
+		t.Errorf("Argv mentions the spec's TmpDir: %v", got.Argv)
+	}
+}
+
 // TestContainerArgvEnvHomes pins the Env-derived harness home mounts: an Env
 // with CLAUDE_CONFIG_DIR=/homes/work yields -v /homes/work:/homes/work in the
 // homes position, an empty value yields no mount, a non-home entry

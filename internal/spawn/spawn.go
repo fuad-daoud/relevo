@@ -18,6 +18,7 @@ type ProcSpec struct {
 	Dir        string      // working directory: the binding's CWD
 	Argv       []string    // Argv[0] is the binary name, resolved on PATH by the runner
 	Env        []string    // additions to the parent environment; nil for none
+	TmpDir     string      // this process's own temp directory: beats an inherited TMPDIR/GOTMPDIR value, and only an Env entry wins over it
 	LogPath    string      // stderr, appended, created if absent
 	StreamPath string      // stdout and the exit trailer, appended, created if absent
 	Scope      *ScopeSpec  // non-nil launches the process as a transient systemd scope

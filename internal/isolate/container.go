@@ -33,7 +33,8 @@ type ContainerSpec struct {
 // returned spec keeps Dir, Env, LogPath, StreamPath and DenyEnv unchanged,
 // clears Scope (container rounds run under no systemd scope) and Credential
 // (the container runs as the invoking user via keep-id), and replaces Argv with
-// the podman command. Pure.
+// the podman command. A spec's TmpDir is inert on this path: the container's
+// own environment is only what the Env entries name. Pure.
 func ContainerArgv(spec spawn.ProcSpec, c ContainerSpec) spawn.ProcSpec {
 	out := spec
 	out.Scope = nil

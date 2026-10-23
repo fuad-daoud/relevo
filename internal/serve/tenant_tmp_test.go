@@ -125,6 +125,35 @@ func TestTmpDirRunnerKeepsTheInheritedTmpDir(t *testing.T) {
 	}
 }
 
+// TestTmpDirRunnerPassesSpecTmpDirThrough pins that a spec carrying its own
+// temp directory reaches the base with Env unchanged: the base applies the
+// spec's directory itself, so the owner's default must not be appended beside
+// it.
+func TestTmpDirRunnerPassesSpecTmpDirThrough(t *testing.T) {
+	requireTenantBoundary(t)
+	t.Setenv("TMPDIR", "")
+	t.Setenv("GOTMPDIR", "")
+	env := newUserTestEnv(t, "alice")
+	ownerRoot := ownerRootOf(t, env)
+	rt := env.srv.runtimeAt(ownerRoot)
+
+	if _, err := rt.Runner.Start(context.Background(), spawn.ProcSpec{
+		Dir: ownerRoot, Argv: []string{"true"}, TmpDir: "/proc/tmp",
+	}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	spec := specAt(t, env.runner, len(env.runner.specs)-1)
+	for _, name := range proc.TmpDirEnv {
+		if hasEnvName(spec.Env, name) {
+			t.Errorf("owner spec Env = %v, want no %s entry: the base applies the spec's own directory", spec.Env, name)
+		}
+	}
+	if spec.TmpDir != "/proc/tmp" {
+		t.Errorf("owner spec TmpDir = %q, want the spec's own directory forwarded untouched", spec.TmpDir)
+	}
+}
+
 // TestTmpDirRunnerIsTransparentToScopes pins that the decorator keeps every
 // optional half of a Runner, so wrapping it cannot hide the base's scope
 // support from a caller that type-asserts for it.

@@ -8,9 +8,10 @@ import (
 )
 
 // TmpDirEnv names the variables that decide where a child puts its temporary
-// files. A runner with a TmpDir points both at it unless the caller or the
-// inherited environment already chose one, so parallel builds keep their
-// scratch off a shared system temp instead of filling a shared quota.
+// files. relevo points them at the process's own directory, or at the runner's
+// default when the process names none, so parallel builds keep their scratch
+// off a shared system temp instead of filling a shared quota. tmpDirEnv states
+// which source wins for each name.
 var TmpDirEnv = []string{"TMPDIR", "GOTMPDIR"}
 
 // DeniedEnv names the variables relevo never passes to a child it spawns. They
@@ -61,23 +62,29 @@ func goMaxProcsEnv(parent, extra []string, scope *spawn.ScopeSpec) []string {
 }
 
 // tmpDirEnv returns the temp-dir entries a child needs and the names those
-// entries replace in the parent. Each name is decided on its own: an extra that
-// already sets it wins, then a non-empty inherited value is left alone, and
-// only a name nothing sets takes dir. An empty dir defaults nothing, so a
-// runner without one keeps its children's environment untouched.
+// entries replace in the parent. Each name is decided on its own: an extra
+// entry wins, then the spec's own directory, then a non-empty inherited value,
+// and only a name nothing of these sets takes runnerDir. specDir is chosen for
+// this process alone, so it outranks the environment the process was launched
+// in; an empty spec and runner default nothing, so a caller that names neither
+// keeps its children's environment untouched.
 //
 // The entry is appended after the parent's and the name is denied there, so the
 // child's only copy is the default: a parent carrying an empty "TMPDIR=" would
 // otherwise reach the child first and win a first-match reader.
-func tmpDirEnv(parent, extra []string, dir string) (add, deny []string) {
-	if dir == "" {
-		return nil, nil
-	}
+func tmpDirEnv(parent, extra []string, specDir, runnerDir string) (add, deny []string) {
 	for _, name := range TmpDirEnv {
 		if hasEnvName(extra, name) {
 			continue
 		}
-		if v, ok := envLookup(parent, name); ok && v != "" {
+		dir := specDir
+		if dir == "" {
+			if v, ok := envLookup(parent, name); ok && v != "" {
+				continue
+			}
+			dir = runnerDir
+		}
+		if dir == "" {
 			continue
 		}
 		add = append(add, name+"="+dir)
