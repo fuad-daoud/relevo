@@ -93,6 +93,29 @@ func TestGatedSwitchesAtOnce(t *testing.T) {
 	}
 }
 
+func TestGatedSwitchUnpinsTheBinding(t *testing.T) {
+	t.Parallel()
+
+	rt, b := sentSwitchable(t)
+	if !b.BuilderPinned {
+		t.Fatalf("BuilderPinned = false before the gate, want pinned by the explicit candidate")
+	}
+	if _, err := availability.Unavailable(AvailabilityDeps(rt), "agy/other/m", time.Time{}, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+
+	got, err := reconcile(t, rt, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.BuilderCandidate != testClaudeRef {
+		t.Errorf("BuilderCandidate = %q, want %q", got.BuilderCandidate, testClaudeRef)
+	}
+	if got.BuilderPinned {
+		t.Errorf("BuilderPinned = true after a gated switch, want false")
+	}
+}
+
 // TestGatedSwitchDoesNotCount checks the two halves of §4.5 together: a
 // gated switch does not advance RoundSwitches, but the >= limit check at
 // the top of switchBuilder still applies to it -- a binding already at the
