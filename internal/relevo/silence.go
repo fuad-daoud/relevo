@@ -68,16 +68,37 @@ func noteProviderStall(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if !silent {
 		return nil
 	}
-	started := time.Unix(b.Builder.StartedAt, 0)
-	for _, e := range entries {
-		if e.Round == b.Round && e.Kind == store.KindSwitch &&
-			strings.HasPrefix(e.Note, providerStallNotePrefix) && e.TS.After(started) {
-			return nil
-		}
+	if stalledSince(b, entries) {
+		return nil
 	}
 	slog.Warn("provider stall", "binding", b.Name, "round", b.Round, "quiet", quiet.Truncate(time.Second))
 	return tx.AppendLog(b.Name, store.LogEntry{
 		TS: now, Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindSwitch, Confirmed: true,
 		Note: fmt.Sprintf("%s no model output for %s while the builder burned no CPU", providerStallNotePrefix, view.AgeText(quiet)),
 	})
+}
+
+// actOnSilence acts on a silent model. The first silence in a session aborts
+// the process; the exit path then resumes the same session. A second incident
+// in the session, or a session with no id, switches candidate like a gate.
+func actOnSilence(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, now time.Time) (store.Binding, bool, error) {
+	silent, quiet := silenceOf(rt, b, now)
+	if !silent {
+		return b, false, nil
+	}
+	sess := b.Builder.StreamSessionID
+	if sess != "" && sameSessionResumes(entries, b.Round, sess) == 0 {
+		if err := noteProviderStall(ctx, rt, tx, b, entries, now); err != nil {
+			return b, false, err
+		}
+		if _, err := stopProcess(ctx, rt, b, "provider stall"); err != nil {
+			slog.Warn("provider stall abort failed", "binding", b.Name, "round", b.Round, "err", err)
+			return b, false, nil
+		}
+		return b, true, nil
+	}
+	b.RoundExcluded = appendUnique(b.RoundExcluded, b.BuilderCandidate)
+	reason := fmt.Sprintf("%s no stream event for %d min", providerStallNotePrefix, int(quiet/time.Minute))
+	next, err := switchBuilder(ctx, rt, tx, b, reason, true, false)
+	return next, true, err
 }

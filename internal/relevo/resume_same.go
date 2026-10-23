@@ -18,6 +18,13 @@ const sameSessionNotePrefix = "resumed same session"
 // error cut off.
 const transportPromptFormat = `Your previous turn was cut off by a connection error. Continue from the tree as it stands and do not redo finished work. ` + backgroundDiedSentence + ` Finish in the foreground: write the report to %s, then create %s.`
 
+// stallPromptFormat is sent into a session whose model went silent and whose
+// step relevo aborted.
+const stallPromptFormat = `Your model went silent and relevo aborted the step. Continue from the tree as it stands and do not redo finished work. ` + backgroundDiedSentence + ` Finish in the foreground: write the report to %s, then create %s.`
+
+// stallReaderNote is the extra sentence a reader's continuation gains.
+const stallReaderNote = "Your model went silent and relevo aborted the step."
+
 // transportReaderNote is the extra sentence a reader's continuation gains.
 const transportReaderNote = "Your previous turn was cut off by a connection error."
 
@@ -40,6 +47,15 @@ func transportPrompt(rt Runtime, b store.Binding) string {
 		return fmt.Sprintf(readerContinuationPromptFormat, done) + " " + transportReaderNote
 	}
 	return fmt.Sprintf(transportPromptFormat, rt.Store.ReportPath(b.Name, b.Round), done) + opencodeTimeoutNote
+}
+
+// stallPrompt renders the message for a session whose silent step was aborted.
+func stallPrompt(rt Runtime, b store.Binding) string {
+	done := rt.Store.DonePath(b.Name, b.Round)
+	if b.Shape == store.ShapeReader {
+		return fmt.Sprintf(readerContinuationPromptFormat, done) + " " + stallReaderNote
+	}
+	return fmt.Sprintf(stallPromptFormat, rt.Store.ReportPath(b.Name, b.Round), done) + opencodeTimeoutNote
 }
 
 // resumeSameSession resumes b's session once, on the same candidate and

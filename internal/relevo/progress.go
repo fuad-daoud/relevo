@@ -41,7 +41,11 @@ func sampleSignals(ctx context.Context, rt Runtime, b store.Binding) signals {
 	s.outputAt = streamLastActivity(rt, b)
 
 	if silenceDue(b) {
-		s.cpuTicks, s.cpuOK = processTreeCPUTicks(b.Builder.PID)
+		read := processTreeCPUTicks
+		if rt.CPUTicks != nil {
+			read = rt.CPUTicks
+		}
+		s.cpuTicks, s.cpuOK = read(b.Builder.PID)
 	}
 
 	return s
