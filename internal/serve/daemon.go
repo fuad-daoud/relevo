@@ -41,9 +41,13 @@ func (s *Server) Tick(ctx context.Context) error {
 	// owner's slow builder cannot hold up another's.
 	for _, owner := range owners {
 		d := relevo.NewDaemon(s.runtimeAt(owner.root), s.cfg.Interval)
+		if at, ok := s.tmpSweptAt.Load(owner.root); ok {
+			d.SetTmpSweptAt(at.(time.Time))
+		}
 		if err := d.Tick(ctx); err != nil {
 			slog.Error("tick owner failed", "owner", owner.id, "err", err)
 		}
+		s.tmpSweptAt.Store(owner.root, d.TmpSweptAt())
 	}
 
 	// Every owner is reconciled, so admit can start queued rounds into the slots

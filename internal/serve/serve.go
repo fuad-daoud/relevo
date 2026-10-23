@@ -136,6 +136,9 @@ type Server struct {
 	// the bare-repo pin mutex inside that hold, and the bind paths take that
 	// mutex alone, so the order is admitMu -> pin mutex and never the reverse.
 	admitMu sync.Mutex
+	// tmpSweptAt maps an owner root to its last tmp sweep. The Daemon that
+	// sweeps lives for one tick, so the pace has to outlive it here.
+	tmpSweptAt sync.Map
 	// liveCache caches running round LiveViews per caller/binding/round.
 	liveCache *liveCache
 	// tickFn, when non-nil, replaces Tick in Run; the drain tests set it.

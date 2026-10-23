@@ -122,6 +122,13 @@ func (d *Daemon) tmpSweepDue(now time.Time) bool {
 	return d.tmpSweptAt.IsZero() || !now.Before(d.tmpSweptAt.Add(tmpSweepEvery))
 }
 
+// TmpSweptAt and SetTmpSweptAt carry the sweep's pace across Daemons: serve
+// builds a fresh Daemon per owner on every tick, so it keeps each owner's last
+// sweep itself and hands it back to the next tick's Daemon.
+func (d *Daemon) TmpSweptAt() time.Time { return d.tmpSweptAt }
+
+func (d *Daemon) SetTmpSweptAt(t time.Time) { d.tmpSweptAt = t }
+
 // tmpRoundKept is the rounds rule given the facts the sweep read: the binding
 // the entry names, or nil when no binding does, and whether the log says that
 // round is open. A round ahead of the binding's current one is kept without
