@@ -986,28 +986,28 @@ func TestSendPreflightClaudeArgvPromptReadGrant(t *testing.T) {
 	rt.Runner = newFakeRunner()
 
 	b, err := Bind(context.Background(), rt, BindOptions{
-		Name: "claude-bound", Candidate: testClaudeRef, Tier: "edit", MasterMindID: testMasterMindName, CWD: "/repo",
+		Name: "claude-bound", Candidate: testClaudeRef, Tier: "read", MasterMindID: testMasterMindName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 
 	planFile := writePlan(t, "# test plan")
-	pfEdit, err := sendPreflight(context.Background(), rt, "claude-bound", planFile, SendOptions{})
+	pfRead, err := sendPreflight(context.Background(), rt, "claude-bound", planFile, SendOptions{})
 	if err != nil {
-		t.Fatalf("sendPreflight edit: %v", err)
+		t.Fatalf("sendPreflight read: %v", err)
 	}
 
 	wantRule := "--allowedTools=Read(/" + rt.Store.PromptPath("claude-bound", b.Round) + ")"
 	found := false
-	for _, a := range pfEdit.argv {
+	for _, a := range pfRead.argv {
 		if a == wantRule {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("claude edit argv want %q, got %v", wantRule, pfEdit.argv)
+		t.Errorf("claude read argv want %q, got %v", wantRule, pfRead.argv)
 	}
 
 	pfYolo, err := sendPreflight(context.Background(), rt, "claude-bound", planFile, SendOptions{Tier: "yolo", AllowYolo: true})
@@ -1028,7 +1028,7 @@ func TestSendDryRunTierFrom(t *testing.T) {
 	rt.Runner = newFakeRunner()
 
 	_, err := Bind(context.Background(), rt, BindOptions{
-		Name: "claude-bound", Candidate: testClaudeRef, Tier: "edit", MasterMindID: testMasterMindName, CWD: "/repo",
+		Name: "claude-bound", Candidate: testClaudeRef, Tier: "read", MasterMindID: testMasterMindName, CWD: "/repo",
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)
@@ -1048,7 +1048,7 @@ func TestSendDryRunTierFrom(t *testing.T) {
 		t.Errorf("RenderDryRun must contain %q: %s", wantBindingFrom, renderedBinding)
 	}
 
-	dOverride, err := SendDryRun(context.Background(), rt, "claude-bound", planFile, SendOptions{Tier: "read"})
+	dOverride, err := SendDryRun(context.Background(), rt, "claude-bound", planFile, SendOptions{Tier: "harness"})
 	if err != nil {
 		t.Fatalf("SendDryRun with --tier: %v", err)
 	}
@@ -2136,7 +2136,7 @@ func TestSendPreflightClaudeArgvChainReadGrant(t *testing.T) {
 
 	for _, name := range []string{"member", "outsider"} {
 		if _, err := Bind(context.Background(), rt, BindOptions{
-			Name: name, Candidate: testClaudeRef, Tier: "edit", MasterMindID: testMasterMindName, CWD: t.TempDir(),
+			Name: name, Candidate: testClaudeRef, Tier: "read", MasterMindID: testMasterMindName, CWD: t.TempDir(),
 		}); err != nil {
 			t.Fatalf("Bind(%s): %v", name, err)
 		}

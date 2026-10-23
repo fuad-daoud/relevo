@@ -153,11 +153,11 @@ func TestLaunchAppliesTier(t *testing.T) {
 
 	c, _ := Lookup("claude")
 	extra := []string{"--some-flag"}
-	cl, err := c.Launch("prov", "m/x", extra, builder, TierEdit)
+	cl, err := c.Launch("prov", "m/x", extra, readerRole(t), TierEdit)
 	if err != nil {
 		t.Fatalf("claude Launch edit error: %v", err)
 	}
-	wantClaudePrint := []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "plan-executor",
+	wantClaudePrint := []string{"-p", PromptPlaceholder, "--model", "m/x", "--agent", "reviewer",
 		"--output-format", "stream-json", "--verbose", "--add-dir", OutputDirPlaceholder, "--permission-mode", "acceptEdits", PromptFilePlaceholder, ChainDirPlaceholder, "--some-flag"}
 	if !reflect.DeepEqual(cl.Print, wantClaudePrint) {
 		t.Errorf("claude Print = %v, want %v", cl.Print, wantClaudePrint)
@@ -342,7 +342,7 @@ func TestLaunchClaudePromptFilePlaceholder(t *testing.T) {
 	}
 	assertClaudePermissionPlaceholder(t, clRead, "plan")
 
-	clEdit, err := claude.Launch("anthropic", "sonnet", extra, builder, TierEdit)
+	clEdit, err := claude.Launch("anthropic", "sonnet", extra, readerRole(t), TierEdit)
 	if err != nil {
 		t.Fatalf("claude Launch edit error: %v", err)
 	}
@@ -407,5 +407,44 @@ func TestPromptCopyWanted(t *testing.T) {
 				t.Errorf("PromptCopyWanted(%q, %q) = %v, want %v", tt.kind, tt.tier, got, tt.want)
 			}
 		})
+	}
+}
+
+// readerRole is the role the claude edit cell is exercised under: a builder
+// is refused at edit, a reader keeps it.
+func readerRole(t *testing.T) RoleSpec {
+	t.Helper()
+	r, ok := RoleByName("reviewer")
+	if !ok {
+		t.Fatal("RoleByName(\"reviewer\") not found")
+	}
+	return r
+}
+
+func TestLaunchRefusesClaudeBuilderAtEdit(t *testing.T) {
+	claude, _ := Lookup("claude")
+	builder, _ := RoleByName("builder")
+	_, err := claude.Launch("anthropic", "sonnet", nil, builder, TierEdit)
+	if !errors.Is(err, ErrTierUnsupported) {
+		t.Fatalf("claude builder at edit: err = %v, want ErrTierUnsupported", err)
+	}
+	if !strings.Contains(err.Error(), "use --tier yolo") {
+		t.Errorf("err %q should name use --tier yolo", err.Error())
+	}
+	for _, tier := range []Tier{TierHarness, TierRead, TierYolo} {
+		if _, err := claude.Launch("anthropic", "sonnet", nil, builder, tier); err != nil {
+			t.Errorf("claude builder at %s: err = %v, want nil", tier, err)
+		}
+	}
+}
+
+func TestLaunchKeepsClaudeReaderAtEdit(t *testing.T) {
+	claude, _ := Lookup("claude")
+	l, err := claude.Launch("anthropic", "sonnet", nil, readerRole(t), TierEdit)
+	if err != nil {
+		t.Fatalf("claude reader at edit: err = %v, want nil", err)
+	}
+	if !containsAdjacent(l.Print, "--permission-mode", "acceptEdits") {
+		t.Errorf("claude reader Print = %v, want --permission-mode acceptEdits", l.Print)
 	}
 }
