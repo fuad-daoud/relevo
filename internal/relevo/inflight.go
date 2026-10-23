@@ -1,6 +1,7 @@
 package relevo
 
 import (
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -53,4 +54,13 @@ func inFlightOf(rt Runtime) func(string) map[string]int {
 		}
 		return CountInFlight(bindings, except)
 	}
+}
+
+// switchGates is the gate set a mid-round switch of b resolves over: the live
+// gates without b's own round counted against a concurrency cap -- b's slot is
+// being handed over, not added to -- plus the candidates this round excluded.
+func switchGates(rt Runtime, b store.Binding) []availability.Gate {
+	deps := AvailabilityDeps(rt)
+	deps.InFlightExcept = b.Name
+	return append(availability.Gates(deps), roundExclusionGates(b)...)
 }
