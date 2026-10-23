@@ -125,6 +125,76 @@ func TestGitShimPassesEverythingElseThrough(t *testing.T) {
 	}
 }
 
+func TestGitShimRewritesNetworkURLsForEveryPushForm(t *testing.T) {
+	t.Parallel()
+	shimDir, realDir := shimFixture(t)
+	shim := filepath.Join(shimDir, "git")
+	r := "url.relevo-refuses-pushes-from-a-round://.pushInsteadOf="
+	rewrite := "-c " + r + "https:// -c " + r + "http:// -c " + r + "ssh:// -c " + r + "git:// -c " + r + "git@ "
+	forms := [][]string{
+		{"push"},
+		{"push", "origin", "HEAD:main"},
+		{"-C", "dir", "push", "--delete", "origin", "x"},
+		{"--no-pager", "push", "-f"},
+	}
+	for _, args := range forms {
+		stdout, _, code := shimRun(t, shim, []string{shimDir, realDir}, "", args...)
+		want := "real git: " + rewrite + strings.Join(args, " ") + "\n"
+		if stdout != want || code != 7 {
+			t.Errorf("git %v: stdout %q code %d, want %q code 7", args, stdout, code, want)
+		}
+	}
+}
+
+// TestGitShimRefusesANetworkPushButNotALocalOne runs the real git behind the
+// shim: a push to a network URL fails before connecting, whether it names a
+// remote or the URL itself, while a push to a local bare repository lands.
+func TestGitShimRefusesANetworkPushButNotALocalOne(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("no git: %v", err)
+	}
+	root := t.TempDir()
+	shimDir := filepath.Join(root, "shims")
+	if err := ensureGitShim(shimDir); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{
+		"PATH=" + shimDir + ":" + os.Getenv("PATH"),
+		"HOME=" + root, "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+	}
+	repo := filepath.Join(root, "repo")
+	git := func(args ...string) (string, error) {
+		cmd := exec.Command(filepath.Join(shimDir, "git"), args...)
+		cmd.Env = env
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	for _, args := range [][]string{
+		{"init", "-q", "--bare", filepath.Join(root, "local.git")},
+		{"init", "-q", repo},
+		{"-C", repo, "commit", "-q", "--allow-empty", "-m", "x"},
+		{"-C", repo, "remote", "add", "origin", "https://example.invalid/r.git"},
+		{"-C", repo, "remote", "add", "scp", "git@example.invalid:r.git"},
+		{"-C", repo, "remote", "add", "local", filepath.Join(root, "local.git")},
+	} {
+		if out, err := git(args...); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	for _, target := range []string{"origin", "scp", "https://example.invalid/d.git"} {
+		out, err := git("-C", repo, "push", target, "HEAD:refs/heads/main")
+		if err == nil || !strings.Contains(out, "relevo-refuses-pushes-from-a-round") {
+			t.Errorf("push %s: err %v, output %q; want a refusal naming relevo-refuses-pushes-from-a-round", target, err, out)
+		}
+	}
+	if out, err := git("-C", repo, "push", "local", "HEAD:refs/heads/main"); err != nil {
+		t.Errorf("push to a local bare repository: %v\n%s", err, out)
+	}
+}
+
 func TestGitShimSkipsItselfWhenListedTwiceOrSymlinked(t *testing.T) {
 	t.Parallel()
 	shimDir, realDir := shimFixture(t)

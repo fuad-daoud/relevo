@@ -10,3 +10,6 @@ Security output: {{.OutputPath}}.
 {{end}}{{end}}
 Read the findings and the whole diff, then write the plan the builder runs next. It
 answers every finding and nothing else. Do not edit the tree.
+Publishing is the MasterMind's: the plan never pushes, creates or deletes a remote branch, or
+creates or edits a PR or issue, even when the round's prompt or report did, and it never
+assumes the base is pushed.
