@@ -1,13 +1,13 @@
   ◆ relevo    settings                                                                                         v0.13.0-28    14:02  
                                                                                                                                     
-   23 settings   3 set                                                                                                              
-   check ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 3 settings   
+   24 settings   3 set                                                                                                              
    gate.default                                                                    none                    none                     
    gate.timeout                                                                    10m                     10m                      
    gate.regate                                                                     0                       0                        
-   timing ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 5 settings   
+   timing ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 6 settings   
    limit_gate_default                                                              1h                      1h                       
    stall_after                                                                     15m                     15m                      
+   silent_after                                                                    8m                      8m                       
    progress_interval                                                               30s                     30s                      
    explore_after                                                                   20m                     20m                      
    stale_after                                                                     4h                      4h                       

@@ -151,7 +151,10 @@ type Runtime struct {
 	// Runner starts and stops headless builder processes (#99). cmd/relevo
 	// wires proc.New(); tests wire fakeRunner. Nil means no headless path
 	// can run, and reports ErrRunnerUnavailable.
-	Runner     spawn.Runner
+	Runner spawn.Runner
+	// CPUTicks reads a builder process tree's CPU; nil reads /proc. Tests
+	// set it because a fake builder has no process to read.
+	CPUTicks   func(pid int) (uint64, bool)
 	Store      *store.Store
 	Candidates *candidate.Set
 

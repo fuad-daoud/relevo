@@ -868,8 +868,14 @@ most once every `progress_interval_ms` (default thirty seconds).
   signal moves again or the process exits, and the daemon fires one
   `builder_stalled` hook event per episode and none when it clears.
 - **`exploring <age>`** -- the output or screen is changing but the tree has
-  not for `explore_after_ms` (default twenty minutes). A label only: some plans
-  are read-heavy, so it fires no hook event and no notification.
+  not for `explore_after_ms` (default twenty minutes), or for ten minutes after
+  relevo resumed the round's session. A label only: some plans are read-heavy,
+  so it fires no hook event and no notification.
+- **`model silent for <N> min`** -- an opencode builder's stream has shown no
+  event for `silent_after_ms` (default eight minutes) while its process tree
+  burned almost no CPU, so a long foreground command never reads as silent.
+  relevo aborts the step and resumes the same session once; a second silence or
+  transport error in that session switches candidate.
 - **`stale <age>`** -- a `NEEDS YOU` binding has sat unacted for
   `stale_after_ms` (default four hours). The age is measured from the halt, or
   from the newest log entry when the binding has none. The word follows the
@@ -1753,6 +1759,7 @@ edit`:
   "max_switches": 2,
   "limit_gate_default_ms": 3600000,
   "stall_after_ms": 900000,
+  "silent_after_ms": 480000,
   "progress_interval_ms": 30000,
   "explore_after_ms": 1200000,
   "stale_after_ms": 14400000,
@@ -1774,7 +1781,10 @@ gates the provider when the matched line names no reset time; absent
 defaults to one hour. `stall_after_ms` is how long a live headless
 builder's stream may go without an event before `relevo status` and
 `relevo ui` label it `stalled`; absent defaults to fifteen minutes, and
-must be `> 0` when present. `progress_interval_ms` is how often the
+must be `> 0` when present. `silent_after_ms` is how long a running
+opencode builder's model may go quiet before the round is aborted and
+resumed; absent defaults to eight minutes, and must be `> 0` when
+present. `progress_interval_ms` is how often the
 daemon samples a binding's progress signals while its round is open;
 absent defaults to thirty seconds, and must be `> 0` when present.
 `explore_after_ms` is how long a builder's output or screen may keep

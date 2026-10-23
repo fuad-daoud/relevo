@@ -27,26 +27,26 @@ func TestSettings(t *testing.T) {
 			PolicyRaw: json.RawMessage(raw),
 		}
 		settings := Settings(doc, 22)
-		if len(settings) != 23 {
-			t.Fatalf("len(settings) = %d, want 23", len(settings))
+		if len(settings) != 24 {
+			t.Fatalf("len(settings) = %d, want 24", len(settings))
 		}
 
-		// Rows 1, 2 and 15 are Set (1-based: indices 0, 1, 14)
+		// Rows 1, 2 and 16 are Set (1-based: indices 0, 1, 15)
 		for i, s := range settings {
-			wantSet := (i == 0 || i == 1 || i == 14)
+			wantSet := (i == 0 || i == 1 || i == 15)
 			if s.Set != wantSet {
 				t.Errorf("row %d (%s).Set = %v, want %v", i+1, s.Key, s.Set, wantSet)
 			}
 		}
 
 		// serve.scope reads slice relevo.slice
-		if settings[14].Key != "serve.scope" || settings[14].Value != "slice relevo.slice" {
-			t.Errorf("serve.scope value = %q, want %q", settings[14].Value, "slice relevo.slice")
+		if settings[15].Key != "serve.scope" || settings[15].Value != "slice relevo.slice" {
+			t.Errorf("serve.scope value = %q, want %q", settings[15].Value, "slice relevo.slice")
 		}
 
 		// serve.max_builders reads 21 / 21
-		if settings[13].Key != "serve.max_builders" || settings[13].Value != "21" || settings[13].Default != "21" {
-			t.Errorf("serve.max_builders = %s / %s, want 21 / 21", settings[13].Value, settings[13].Default)
+		if settings[14].Key != "serve.max_builders" || settings[14].Value != "21" || settings[14].Default != "21" {
+			t.Errorf("serve.max_builders = %s / %s, want 21 / 21", settings[14].Value, settings[14].Default)
 		}
 
 		// max_tier reads yolo / edit
@@ -63,8 +63,8 @@ func TestSettings(t *testing.T) {
 	t.Run("empty policy", func(t *testing.T) {
 		doc := ConfigDoc{}
 		settings := Settings(doc, 4)
-		if len(settings) != 23 {
-			t.Fatalf("len(settings) = %d, want 23", len(settings))
+		if len(settings) != 24 {
+			t.Fatalf("len(settings) = %d, want 24", len(settings))
 		}
 		for i, s := range settings {
 			if s.Set {
@@ -286,15 +286,15 @@ func TestLoadConfigDocPolicyRaw(t *testing.T) {
 	}
 }
 
-// TestSettingsCountAndGroupOrder pins the table's shape: 23 rows, the six
+// TestSettingsCountAndGroupOrder pins the table's shape: 24 rows, the six
 // groups in display order, and chain appended last so every earlier row keeps
 // the index the cockpit tests use.
 func TestSettingsCountAndGroupOrder(t *testing.T) {
 	t.Parallel()
 
 	settings := Settings(ConfigDoc{}, 4)
-	if len(settings) != 23 {
-		t.Fatalf("len(settings) = %d, want 23", len(settings))
+	if len(settings) != 24 {
+		t.Fatalf("len(settings) = %d, want 24", len(settings))
 	}
 
 	var groups []string
@@ -323,8 +323,8 @@ func TestSettingsChainRowsRenderValues(t *testing.T) {
 		t.Fatalf("policy.Parse: %v", err)
 	}
 	settings := Settings(ConfigDoc{Policy: p}, 4)
-	if len(settings) != 23 {
-		t.Fatalf("len(settings) = %d, want 23", len(settings))
+	if len(settings) != 24 {
+		t.Fatalf("len(settings) = %d, want 24", len(settings))
 	}
 
 	set := []struct {
@@ -337,9 +337,9 @@ func TestSettingsChainRowsRenderValues(t *testing.T) {
 		{"chain.security", "on", "off"},
 	}
 	for i, w := range set {
-		row := settings[18+i]
+		row := settings[19+i]
 		if row.Key != w.key || row.Group != "chain" || row.Form != "chain" {
-			t.Errorf("row %d = %s / %s / %s, want %s / chain / chain", 19+i, row.Key, row.Group, row.Form, w.key)
+			t.Errorf("row %d = %s / %s / %s, want %s / chain / chain", 20+i, row.Key, row.Group, row.Form, w.key)
 		}
 		if row.Value != w.value || row.Default != w.def || !row.Set {
 			t.Errorf("%s = %q / %q / set %v, want %q / %q / set", w.key, row.Value, row.Default, row.Set, w.value, w.def)
@@ -355,7 +355,7 @@ func TestSettingsChainRowsRenderValues(t *testing.T) {
 	}
 	settings = Settings(ConfigDoc{}, 4)
 	for i, w := range unset {
-		row := settings[18+i]
+		row := settings[19+i]
 		if row.Key != w.key || row.Value != w.value || row.Set {
 			t.Errorf("%s = %q / set %v, want %q / unset", w.key, row.Value, row.Set, w.value)
 		}

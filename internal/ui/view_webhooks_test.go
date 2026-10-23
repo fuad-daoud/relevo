@@ -61,7 +61,7 @@ func webhookStoredHooks(t *testing.T, edit relevo.ConfigEdit) []any {
 func webhooksViewFrom(t *testing.T, fa *fakeActions, env Env) webhooksView {
 	t.Helper()
 	v := settingsFixtureView(t, fa)
-	v.cur = 17 // notify.webhooks
+	v.cur = 18 // notify.webhooks
 	_, cmd := v.Update(tea.KeyMsg{Type: tea.KeyEnter}, env)
 	if cmd == nil {
 		t.Fatal("enter must return a command")
@@ -285,7 +285,7 @@ func TestSettingsScanPatternsEditorNotice(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 15 // scan_patterns
+	v.cur = 16 // scan_patterns
 
 	_, cmd := v.Update(tea.KeyMsg{Type: tea.KeyEnter}, env)
 	if cmd == nil {

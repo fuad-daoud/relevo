@@ -45,6 +45,34 @@ func LimitLines(kind string, line []byte) []string {
 	return nil
 }
 
+// TransportLines returns the text of one raw stream line that a transport scan
+// may read. Only opencode's error event qualifies, as "<error.type>:
+// <error.message>" (just the message when the type is empty), plus a non-JSON
+// line that is not a supervisor trailer, because the harness writes some
+// transport failures on stderr. Model text and tool output never classify.
+func TransportLines(kind string, line []byte) []string {
+	trimmed := bytes.TrimSpace(line)
+	if len(trimmed) == 0 || isTrailerLine(trimmed) {
+		return nil
+	}
+	var obj map[string]any
+	if trimmed[0] != '{' || json.Unmarshal(trimmed, &obj) != nil || obj == nil {
+		return []string{string(line)}
+	}
+	if kind != "opencode" || str(obj["type"]) != "error" {
+		return nil
+	}
+	e := asMap(obj["error"])
+	msg := str(e["message"])
+	if msg == "" {
+		return nil
+	}
+	if t := str(e["type"]); t != "" {
+		return []string{t + ": " + msg}
+	}
+	return []string{msg}
+}
+
 // claudeLimitLines is the claude row of the channel table: an error event's
 // message, or a result with is_error true -- its result text, else its subtype.
 func claudeLimitLines(obj map[string]any) []string {

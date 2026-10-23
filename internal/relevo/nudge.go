@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 // nudgeNotePrefix marks the switch entry a nudge writes, so the once-per-plan
@@ -22,7 +24,16 @@ const nudgeNotePrefix = "nudged builder"
 // the foreground is the whole point. A builder that backgrounded a check reads
 // "wait for it" as "wait for the run already going" and polls a job that died
 // with its process, so the prompt says that job is gone.
-const nudgePromptFormat = `You ended your turn before writing the report, and nothing will wake you: this process exits when your turn ends. Anything you started in the background in that turn was killed with it: its output and exit files will never be completed, so do not wait for them or poll them. Finish now, in the foreground: re-run any check you still need and wait for it to exit, write the report to %s, then create %s. Do not start background tasks and do not end your turn before both files exist.`
+const nudgePromptFormat = `You ended your turn before writing the report, and nothing will wake you: this process exits when your turn ends. ` + backgroundDiedSentence + ` Finish now, in the foreground: re-run any check you still need and wait for it to exit, write the report to %s, then create %s. Do not start background tasks and do not end your turn before both files exist.`
+
+// backgroundDiedSentence is shared by every prompt that resumes a session
+// whose process is gone: whatever the builder backgrounded died with it.
+const backgroundDiedSentence = `Anything you started in the background in that turn was killed with it: its output and exit files will never be completed, so do not wait for them or poll them.`
+
+// opencodeTimeoutNote is appended to an opencode builder's nudge: opencode's
+// shell tool kills a call that outlives its default timeout, so a long
+// foreground command needs an explicit one.
+const opencodeTimeoutNote = " Run anything expected to take over 2 minutes in the foreground with an explicit `timeout` (milliseconds) on the shell call."
 
 // readerContinuationPromptFormat is the continuation prompt for a reader:
 // the reader's final message is the deliverable itself, so it is told to
@@ -59,9 +70,14 @@ func nudgeLimit(shape string) int {
 	return writerNudgeLimit
 }
 
-// nudgePrompt renders nudgePromptFormat for one round's report and done paths.
-func nudgePrompt(reportPath, donePath string) string {
-	return fmt.Sprintf(nudgePromptFormat, reportPath, donePath)
+// nudgePrompt renders nudgePromptFormat for one round's report and done paths,
+// plus the shell-timeout note when the builder's harness is opencode.
+func nudgePrompt(reportPath, donePath, kind string) string {
+	prompt := fmt.Sprintf(nudgePromptFormat, reportPath, donePath)
+	if kind == string(account.OpenCode) {
+		prompt += opencodeTimeoutNote
+	}
+	return prompt
 }
 
 // nudgePromptFor renders the nudge prompt for b: a writer is told its round's
@@ -71,7 +87,7 @@ func nudgePrompt(reportPath, donePath string) string {
 func nudgePromptFor(rt Runtime, b store.Binding) string {
 	done := rt.Store.DonePath(b.Name, b.Round)
 	if b.Shape != store.ShapeReader {
-		return nudgePrompt(rt.Store.ReportPath(b.Name, b.Round), done)
+		return nudgePrompt(rt.Store.ReportPath(b.Name, b.Round), done, b.Builder.Kind)
 	}
 	prompt := fmt.Sprintf(readerContinuationPromptFormat, done)
 	if readerLostFences(rt, b) {
@@ -163,6 +179,15 @@ func nudgeResume(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 			"binding", b.Name, "round", b.Round, "session", sess, "err", err)
 		return b, false, nil
 	}
+	note := fmt.Sprintf("%s (ended its turn %s): resumed session %s of %s: same candidate, not counted",
+		nudgeNotePrefix, withoutArtifact(b.Shape), sess, b.BuilderCandidate)
+	return settleResumed(tx, b, next, keep, prior, note, now)
+}
+
+// settleResumed is the tail both same-session resumes share: the resumed
+// round keeps its clock and goes active, and one switch entry carries the
+// outgoing segment's usage.
+func settleResumed(tx *store.Tx, b, next store.Binding, keep time.Time, prior *usage.Usage, note string, now time.Time) (store.Binding, bool, error) {
 	next.RoundStartedAt = keep
 	next.State = store.StateActive
 	// The round is running again, so a halt a previous attempt in it left goes
@@ -171,11 +196,10 @@ func nudgeResume(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// OwedHalt is left alone -- a pending notification for an already closed
 	// round, still owed -- as the other revive paths leave it (bind.go).
 	next = clearHaltFields(next)
+	next.Progress = &store.Progress{SampledAt: now, TreeAt: now, OutputAt: now, ResumedAt: now}
 	if err := tx.AppendLog(b.Name, store.LogEntry{
 		TS: now, Round: b.Round, Direction: store.DirToMasterMind, Kind: store.KindSwitch, Confirmed: true,
-		Usage: prior,
-		Note: fmt.Sprintf("%s (ended its turn %s): resumed session %s of %s: same candidate, not counted",
-			nudgeNotePrefix, withoutArtifact(b.Shape), sess, b.BuilderCandidate),
+		Usage: prior, Note: note,
 	}); err != nil {
 		return next, true, err
 	}

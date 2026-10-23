@@ -277,7 +277,7 @@ func TestSettingsServeScopeFormSetsCPUQuota(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 14 // serve.scope
+	v.cur = 15 // serve.scope
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "serve.scope" {
@@ -314,7 +314,7 @@ func TestSettingsServeScopeFormClearingSliceRemovesServe(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 14 // serve.scope
+	v.cur = 15 // serve.scope
 
 	f := settingsFormFrom(t, v, env)
 	f = f.setFocus(1) // slice
@@ -348,7 +348,7 @@ func TestSettingsScopeFormBadMemoryMax(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 12 // scope
+	v.cur = 13 // scope
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "scope" {
@@ -383,7 +383,7 @@ func TestSettingsClassifyFormTurnsOn(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 16 // classify
+	v.cur = 17 // classify
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "classify" {
@@ -433,7 +433,7 @@ func TestSettingsClassifyFormTurnsOffIgnoresPendingFields(t *testing.T) {
 	fa := &fakeActions{doc: doc}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 16 // classify
+	v.cur = 17 // classify
 
 	f := settingsFormFrom(t, v, env)
 	if f.fields[0].sel != 1 {
@@ -469,7 +469,7 @@ func TestSettingsClassifyFormTabSkipsDisabledFields(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 16 // classify
+	v.cur = 17 // classify
 
 	f := settingsFormFrom(t, v, env)
 	for i := 0; i < 5; i++ {
@@ -530,7 +530,7 @@ func TestSettingsChainFormTurnsSecurityOn(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 22 // chain.security
+	v.cur = 23 // chain.security
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "chain" {
@@ -571,7 +571,7 @@ func TestSettingsChainFormSetsMaxCorrections(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 18 // chain.max_corrections
+	v.cur = 19 // chain.max_corrections
 
 	f := settingsFormFrom(t, v, env)
 	if f.title != "chain" {
@@ -604,7 +604,7 @@ func TestSettingsChainFormRejectsANegativeCount(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 18 // chain.max_corrections
+	v.cur = 19 // chain.max_corrections
 
 	f := settingsFormFrom(t, v, env)
 	f = f.setFocus(1) // max_corrections
@@ -633,7 +633,7 @@ func TestSettingsChainFormBadActorText(t *testing.T) {
 	fa := &fakeActions{doc: settingsFixtureDoc(t)}
 	env := candActionEnv(fa, view.Report{})
 	v := settingsFixtureView(t, fa)
-	v.cur = 19 // chain.reviewer_actor
+	v.cur = 20 // chain.reviewer_actor
 
 	f := settingsFormFrom(t, v, env)
 	f = f.setFocus(2) // reviewer_actor

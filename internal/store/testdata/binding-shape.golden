@@ -191,8 +191,11 @@ planner.stream_start
 planner_id
 planner_screen
 planner_screen_at
+progress.cpu_ticks
+progress.cpu_ticks_at
 progress.output
 progress.output_at
+progress.resumed_at
 progress.sampled_at
 progress.tree
 progress.tree_at

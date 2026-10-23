@@ -159,3 +159,43 @@ func TestProgressSampleCadence(t *testing.T) {
 //
 // Mutation check: without the progressDue gate the sampler runs on every tick,
 // so the first three ticks already cost three reads and the test fails.
+
+// resumedProgressAt steps a resumed round's clock to every 30s mark from the
+// resume through end, with the tree still and the output moving, and returns
+// the binding at end.
+func resumedProgressAt(rt Runtime, resumeAt time.Time, end time.Duration, resumed bool) store.Binding {
+	p := &store.Progress{SampledAt: resumeAt.Add(-30 * time.Second), TreeAt: resumeAt, OutputAt: resumeAt}
+	if resumed {
+		p.ResumedAt = resumeAt
+	}
+	b := store.Binding{Name: "webshop", Round: 1, RoundStartedAt: resumeAt.Add(-time.Hour), Progress: p}
+	for d := time.Duration(0); d <= end; d += 30 * time.Second {
+		now := resumeAt.Add(d)
+		b = progressStep(rt, b, now, signals{tree: "t0", outputAt: now})
+	}
+	return b
+}
+
+func TestProgressStepLabelsResumedSessionAfterTenMinutes(t *testing.T) {
+	t.Parallel()
+
+	rt := progressRt()
+	if b := resumedProgressAt(rt, progressStart, 9*time.Minute, true); !b.ExploringSince.IsZero() {
+		t.Errorf("ExploringSince = %s at 9m, want zero", b.ExploringSince)
+	}
+	if b := resumedProgressAt(rt, progressStart, 10*time.Minute, true); b.ExploringSince.IsZero() {
+		t.Error("ExploringSince is zero at 10m, want it set")
+	}
+}
+
+func TestProgressStepKeepsExploreAfterWhenNeverResumed(t *testing.T) {
+	t.Parallel()
+
+	rt := progressRt()
+	if b := resumedProgressAt(rt, progressStart, 10*time.Minute, false); !b.ExploringSince.IsZero() {
+		t.Errorf("ExploringSince = %s at 10m, want zero", b.ExploringSince)
+	}
+	if b := resumedProgressAt(rt, progressStart, 20*time.Minute, false); b.ExploringSince.IsZero() {
+		t.Error("ExploringSince is zero at 20m, want it set")
+	}
+}

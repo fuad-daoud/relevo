@@ -64,6 +64,7 @@ var settingHelp = map[string]string{
 	"gate.regate":        "How many repair rounds relevo may open after a failed check before it asks you.",
 	"limit_gate_default": "How long a rate limit closes a provider when its message names no reset time.",
 	"stall_after":        "A running builder whose stream is quiet this long is shown as stalled.",
+	"silent_after":       "A running opencode builder whose model goes quiet this long is aborted and resumed.",
 	"progress_interval":  "How often relevo samples a running round's tree and stream.",
 	"explore_after": "A builder whose output moves while its tree does not, for this long, is shown as " +
 		"exploring.",

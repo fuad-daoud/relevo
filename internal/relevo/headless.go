@@ -933,6 +933,12 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// follow-up): a tick inside it samples nothing.
 		if progressDue(next, now, rt.Policy.ProgressInterval()) {
 			next = progressStep(rt, next, now, sampleSignals(ctx, rt, next))
+			if err := noteResumedIdle(tx, b, next, now); err != nil {
+				return next, err
+			}
+			if acted, handled, err := actOnSilence(ctx, rt, tx, next, entries, now); err != nil || handled {
+				return acted, err
+			}
 		}
 		// A builder that went quiet on both signals is not necessarily
 		// working (#905): it may be sitting on a provider's rate-limit
@@ -1253,6 +1259,11 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 
 	if !switchable {
 		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: builder exited (code %s) %s; see %s", b.Name, codeText, withoutArtifact(b.Shape), showCommand(b.Name, b.Round, "log")))
+	}
+	if next, ok, err := sameSessionRecovery(ctx, rt, tx, b, entries, now); err != nil {
+		return next, err
+	} else if ok {
+		return next, nil
 	}
 	// A provider-side outage behind this exit is a provider gate, not a
 	// builder failure (#931), so it is offered the timed gate rather than the
@@ -1614,7 +1625,8 @@ func headlessStatus(ctx context.Context, rt Runtime, b store.Binding, detail boo
 	}
 	// #252's label is now one of #135's progress labels, so a live
 	// headless builder can also read "exploring <age>".
-	if working, _ := labelsOf(b, rt.Now()); working != "" {
+	working, _ := labelsOf(b, rt.Now())
+	if working = silenceLabel(rt, b, rt.Now(), working); working != "" {
 		return working, info
 	}
 	return "working", info
