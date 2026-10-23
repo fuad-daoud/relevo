@@ -37,6 +37,6 @@ func (d *Daemon) rebuildCorruptReplica(ctx context.Context, runner *relevosync.R
 		slog.Warn("sync: the replica is corrupt and was rebuilt", "cause", cause, "aside", out.Aside)
 		d.queueSync(ctx)
 	default:
-		slog.Warn("sync: the replica is corrupt again inside the rebuild window", "cause", cause, "aside", out.Aside)
+		slog.Warn("sync: the replica is corrupt again inside the rebuild window", "cause", cause)
 	}
 }

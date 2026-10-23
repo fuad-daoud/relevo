@@ -42,10 +42,11 @@ import (
 // one text.
 const WorkerRefusedText = "the sync worker refused"
 
-// errNoReplica is what a rebuild with no replica file to move reports. An
+// ErrNoReplica is what a rebuild with no replica file to move reports. An
 // empty path means this machine never opened a worker; a path whose file is
-// gone means there is nothing left to keep as evidence.
-var errNoReplica = errors.New("sync: no replica file to move aside")
+// gone means there is nothing left to keep as evidence. Neither is a fault:
+// the next attempt bootstraps a fresh replica either way.
+var ErrNoReplica = errors.New("sync: no replica file to move aside")
 
 // corruptNeedle is one shape the replica's own unreadability arrives in. need
 // is the fragment or fragments one link of the error chain must all carry, and
@@ -264,18 +265,18 @@ func asideDir(replicaPath string) string {
 // move that fails halfway leaves the machine a replica it can still be
 // bootstrapped from rather than a state directory that has lost its file and
 // kept only its sidecars. A file that is not there is not moved and is not an
-// error; a replica with no file at all is errNoReplica, because there is
+// error; a replica with no file at all is ErrNoReplica, because there is
 // nothing left to keep.
 func asideReplica(path string) (string, []string, error) {
 	if path == "" {
-		return "", nil, errNoReplica
+		return "", nil, ErrNoReplica
 	}
 	files, err := ReplicaFiles(path)
 	if err != nil {
 		return "", nil, fmt.Errorf("sync: list the replica's files: %w", err)
 	}
 	if len(files) == 0 {
-		return "", nil, errNoReplica
+		return "", nil, ErrNoReplica
 	}
 	aside := asideDir(path)
 	if err := os.RemoveAll(aside); err != nil {

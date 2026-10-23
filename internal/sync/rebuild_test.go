@@ -319,8 +319,8 @@ func TestRebuildReplicaRefusesWithNoReplicaPath(t *testing.T) {
 
 	runner := &Runner{Local: local}
 	out, err := runner.RebuildReplica(rebuildNow)
-	if !errors.Is(err, errNoReplica) {
-		t.Fatalf("RebuildReplica with no path = %v, want errNoReplica", err)
+	if !errors.Is(err, ErrNoReplica) {
+		t.Fatalf("RebuildReplica with no path = %v, want ErrNoReplica", err)
 	}
 	if out.Aside != "" || len(out.Moved) != 0 {
 		t.Errorf("RebuildResult = %+v, want the zero value", out)

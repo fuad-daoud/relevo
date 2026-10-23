@@ -485,12 +485,22 @@ func cmdDBSyncRetry(args []string) error {
 	if *v.asJSON {
 		return printDoc(dbSyncCallDoc{Applied: true, Aside: res.Aside})
 	}
-	if res.Aside != "" {
-		fmt.Println(dbSyncRebuiltLine(res.Aside))
-		return nil
-	}
-	fmt.Println("sync retry: the latch is cleared and the worker will restart")
+	fmt.Println(dbSyncRetryLine(*v.rebuild, res.Aside))
 	return nil
+}
+
+// dbSyncRetryLine is the retry's human answer. A --rebuild that found no
+// replica to move still succeeded: the latch is cleared and the next attempt
+// bootstraps a fresh replica, so it says that rather than claiming a move.
+func dbSyncRetryLine(rebuild bool, aside string) string {
+	switch {
+	case aside != "":
+		return dbSyncRebuiltLine(aside)
+	case rebuild:
+		return "sync retry: the latch is cleared; there was no replica to move aside, and the next attempt bootstraps a fresh one"
+	default:
+		return "sync retry: the latch is cleared and the worker will restart"
+	}
 }
 
 // dbSyncRebuiltLine is what a retry --rebuild prints: the latch is cleared and

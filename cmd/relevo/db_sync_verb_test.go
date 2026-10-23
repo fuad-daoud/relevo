@@ -260,6 +260,22 @@ func TestDBSyncRetryRebuildOutput(t *testing.T) {
 	})
 }
 
+// TestDBSyncRetryLineSaysWhenNothingWasMoved pins the --rebuild answer for a
+// machine with no replica file: it is not the moved-aside line, which would
+// name a folder that holds nothing, and not the plain line, which would hide
+// that the rebuild was asked for.
+func TestDBSyncRetryLineSaysWhenNothingWasMoved(t *testing.T) {
+	t.Parallel()
+
+	got := dbSyncRetryLine(true, "")
+	if !strings.Contains(got, "no replica to move aside") {
+		t.Errorf("retry --rebuild with nothing moved printed %q", got)
+	}
+	if got == dbSyncRetryLine(false, "") {
+		t.Errorf("retry --rebuild with nothing moved printed the plain line %q", got)
+	}
+}
+
 // testVerbStdinReader hands a verb its token without a pipe, so no test reads
 // the caller's real stdin.
 func testVerbStdinReader(t *testing.T, value string) *testReader {

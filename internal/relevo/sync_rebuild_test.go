@@ -349,29 +349,31 @@ func TestRetryWithoutTheFlagMovesNothing(t *testing.T) {
 	}
 }
 
-// TestRetryRebuildWithNoReplicaIsRefused pins the refusal for a machine with
-// nothing to move: the verb answers with member 1's errNoReplica message
-// through the existing classification, and the plain retry part has already
-// run, so the latch is cleared even where the move is refused.
-//
-// Mutation: answering OK for an empty replica folder fails this.
-func TestRetryRebuildWithNoReplicaIsRefused(t *testing.T) {
+// TestRetryRebuildWithNoReplicaClearsTheLatch pins a retry --rebuild on a
+// machine with no replica file: the latch is cleared and the verb answers OK
+// with no aside, because the next attempt bootstraps a fresh replica anyway.
+// Answering it as a failure would send the reader to a defect report for a
+// machine that is already recovering.
+func TestRetryRebuildWithNoReplicaClearsTheLatch(t *testing.T) {
 	t.Parallel()
 
 	fx := newVerbFixture(t)
 	fx.runner.Runner.ReplicaPath = filepath.Join(t.TempDir(), "relevo-sync.db")
+	if err := relevosync.LatchCorruptReplica(fx.local, time.Now()); err != nil {
+		t.Fatalf("LatchCorruptReplica: %v", err)
+	}
 	res := fx.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbRetry, Rebuild: true}, nil)
-	if res.OK {
-		t.Fatal("a retry --rebuild with no replica file was answered OK")
+	if !res.OK || res.Aside != "" {
+		t.Fatalf("retry --rebuild with no replica = %+v, want OK with no aside", res)
 	}
-	if !strings.Contains(res.Message, "no replica file to move aside") {
-		t.Errorf("the refusal %q does not name the missing replica", res.Message)
+	if latched, err := relevosync.NewBreaker(fx.local).Latched(); err != nil || latched {
+		t.Errorf("Latched = %t, %v; want the retry to have cleared the latch", latched, err)
 	}
-	// errNoReplica is a sentinel no entry of the classification lists, so its
-	// class is the table's default. The expectation is derived the way the
-	// verb derives it -- from the error's own text through verbClassify -- so
-	// a special code invented for this case fails the test.
-	if want := verbClassify(errors.New(res.Message)); res.Code != want {
-		t.Errorf("the code = %q, want the class verbClassify gives errNoReplica (%q)", res.Code, want)
+	got, err := relevosync.ReadRebuild(fx.local)
+	if err != nil {
+		t.Fatalf("ReadRebuild: %v", err)
+	}
+	if !got.At.IsZero() {
+		t.Errorf("a retry that moved nothing wrote a rebuild record: %+v", got)
 	}
 }

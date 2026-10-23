@@ -3,6 +3,7 @@ package relevo
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -283,6 +284,11 @@ func (v *VerbRunner) retry(rebuild bool) *wire.SyncResult {
 		return &wire.SyncResult{OK: true}
 	}
 	out, err := v.Runner.RebuildReplica(time.Now())
+	if errors.Is(err, relevosync.ErrNoReplica) {
+		// The latch is already cleared and a missing replica is bootstrapped by
+		// the next attempt anyway, so there is nothing left to refuse.
+		return &wire.SyncResult{OK: true}
+	}
 	if err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}

@@ -36,9 +36,12 @@ type RebuildResult struct {
    refusal classes and its printed line are byte-identical to today.
 4. **The answer says where the copy is.** The line and the `--json` document
    carry the aside folder.
-5. **A machine with no replica is refused, not silently "rebuilt".** The verb
-   refuses with member 1's `errNoReplica` message through the existing
-   classification, and the plain retry part has already run.
+5. **A machine with no replica succeeds without a move.** The plain retry part
+   has already cleared the latch, and the next attempt bootstraps a fresh
+   replica anyway, so `ErrNoReplica` is answered OK with no aside and no
+   record, and the line says there was nothing to move. (A sandbox run showed
+   the refusal this plan first asked for surfacing as `internal`, next
+   `relevo bugreport`, for a machine that was already recovering.)
 6. **The flag reaches no new secret and no new verb.** `--rebuild` rides the
    existing `retry` frame as a bool; the wire's closed sets of verbs and codes
    are unchanged.
@@ -70,7 +73,7 @@ type RebuildResult struct {
 3. **The verb.** `retry(rebuild bool)` and the four cases in
    `internal/relevo/sync_rebuild_test.go`: `TestRetryRebuildMovesTheReplicaAside`,
    `TestRetryRebuildIgnoresTheWindow`, `TestRetryWithoutTheFlagMovesNothing`,
-   `TestRetryRebuildWithNoReplicaIsRefused`. No Turso file is opened and nothing
+   `TestRetryRebuildWithNoReplicaClearsTheLatch`; `TestDBSyncRetryLineSaysWhenNothingWasMoved` pins the line. No Turso file is opened and nothing
    dials a remote.
 4. **The CLI text.** `TestDBSyncRetryRebuildOutput` pins the plain and the
    `--rebuild` output and `--json` documents through the scripted hook.
