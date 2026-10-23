@@ -42,9 +42,10 @@ func KeptHint(name string) string {
 // keptMarker opens the reason in a server's kept message.
 const keptMarker = " kept ("
 
-// keptTailMarkers start the clauses after the reason: an old server appends
-// hints that name server-side commands, a new one the stopped process's pid.
-var keptTailMarkers = []string{"; commit or discard the work", "; its builder process"}
+// keptTailMarkers start the clauses after the reason that carry their own
+// parentheses, which would otherwise end the reason at the wrong ")". An old
+// server's force hints carry none, so the last ")" already cuts them.
+var keptTailMarkers = []string{"; its builder process"}
 
 // KeptReason extracts the bare reason from a server's kept message, whether
 // it is the short form or the old long form with hints.
