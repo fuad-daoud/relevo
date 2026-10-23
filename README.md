@@ -1990,6 +1990,29 @@ Actor entries:
   over a custom agent declares none unless you set them, and a chain step that
   branches on an outcome the actor does not declare is refused at `chain
   --dry-run`.
+- `skills` -- the skills the actor's harness must be able to load, names in the
+  agent-name shape, no repeats. The shipped `designer` agent defaults to
+  `["design-runbooks"]`; any actor may declare its own, and an actor with none
+  needs none.
+
+### Skills
+
+A skill is `<name>/SKILL.md` under a harness kind's skill directories, project
+first, then user:
+
+| Kind | Looked at, in order |
+| --- | --- |
+| `claude` | `<repo>/.claude/skills`, `~/.claude/skills` |
+| `opencode`, `agy` | `<repo>/.agents/skills`, `~/.agents/skills` |
+| `codex` | `<repo>/.agents/skills`, `~/.agents/skills`, `~/.codex/skills` |
+
+Any other kind cannot load skills. A skill at the project path wins over the
+user path. For every actor with skills and every harness kind among its
+candidates (off ones included), `relevo doctor` prints one row per skill: OK
+with the path found, or FAIL `skill design-runbooks for designer on claude not
+found: looked at <paths>` with the fix to install it there. Doctor takes
+`<repo>` from its working directory. Accounts with their own per-process home
+(`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) are checked against the default home only.
 
 An actor named `builder`, `librarian`, `reviewer` or `researcher` keeps that builtin's
 shape: `builder` and `librarian` must run a writer agent, `reviewer` and `researcher` a reader.

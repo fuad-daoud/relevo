@@ -425,6 +425,7 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 	rep.Checks = append(rep.Checks, ledgerChecks(availability.Gates(relevo.AvailabilityDeps(rt)))...)
 	rep.Checks = append(rep.Checks, policyChecks(relevo.PolicyWarningsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy))...)
 	rep.Checks = append(rep.Checks, roleSourceChecks(rt.RoleRegistry(), rt.Candidates, rt.Policy)...)
+	rep.Checks = append(rep.Checks, skillChecks(env, rt.RoleRegistry(), rt.Candidates)...)
 	// #382 §5.4: a binding whose role roles.json no longer defines fails at
 	// round start, so doctor names it. A store error skips the rows silently,
 	// as mastermindCheckInput treats its own store read.

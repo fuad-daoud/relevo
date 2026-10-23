@@ -76,7 +76,7 @@ func TestConfigSetRefusesUnknownFieldsOnActors(t *testing.T) {
 	if !strings.Contains(ce.message, "actors.x.role: unknown field") {
 		t.Errorf("message = %q, want it to name actors.x.role", ce.message)
 	}
-	if !strings.Contains(ce.message, "known: agent, candidates, check, outputs, placement, scope, tier") {
+	if !strings.Contains(ce.message, "known: agent, candidates, check, outputs, placement, scope, skills, tier") {
 		t.Errorf("message = %q, want it to list known fields", ce.message)
 	}
 	if strings.Contains(ce.message, "outcomes are declared") {

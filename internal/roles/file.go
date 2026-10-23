@@ -90,6 +90,9 @@ type Row struct {
 	// edit is allowed. It is refused on a reader. A legacy roles.json may
 	// carry the key; it flows the same way.
 	Scope *pathscope.Scope `json:"scope,omitempty"`
+	// Skills are the skills the role's harness must be able to load, as the
+	// actors conversion wrote them.
+	Skills []string `json:"skills,omitempty"`
 }
 
 // DefRow is one role's definition for one harness kind.
@@ -203,6 +206,10 @@ func validate(path string, f *File) error {
 			if err := row.Scope.Validate(); err != nil {
 				return badField("scope", err.Error())
 			}
+		}
+
+		if err := validateSkills(row.Skills); err != nil {
+			return badField("skills", err.Error())
 		}
 
 		// definitions
