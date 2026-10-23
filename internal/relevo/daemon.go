@@ -260,6 +260,12 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// readers are all gone is exactly the one left carrying them. It runs off
 	// the list above rather than a second one.
 	d.safely("scratch sweep", func() { sweepReaderScratch(ctx, d.rt, bindings) })
+	// The tmp root's own leftovers go on the same list and the same side of
+	// the early return: a machine with no bindings left is exactly the one
+	// still carrying yesterday's round and check temp directories, and serve
+	// runs this Tick per owner, so every owner's root is swept by its own
+	// daemon.
+	d.safely("tmp sweep", func() { sweepTmpTick(ctx, d.rt, bindings) })
 	// Before the first tick of this process, every archived record the mirror
 	// has not seen is ingested (P3d §4.2, §4.5).
 	archivedMirrorOnce.Do(func() { mirrorArchived(ctx, d.rt) })
