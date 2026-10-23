@@ -225,6 +225,7 @@ func newSettingsForm(env Env, doc relevo.ConfigDoc, form, focusKey string) setti
 		defs := []struct{ label, key, path string }{
 			{"limit_gate_default", "limit_gate_default", "limit_gate_default_ms"},
 			{"stall_after", "stall_after", "stall_after_ms"},
+			{"silent_after", "silent_after", "silent_after_ms"},
 			{"progress_interval", "progress_interval", "progress_interval_ms"},
 			{"explore_after", "explore_after", "explore_after_ms"},
 			{"stale_after", "stale_after", "stale_after_ms"},

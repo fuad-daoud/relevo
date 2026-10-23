@@ -1,6 +1,6 @@
   ◆ relevo    settings                                                                                         v0.13.0-28    14:02  
                                                                                                                                     
-   23 settings   3 set                                                                                                              
+   24 settings   3 set                                                                                                              
                                                                                                                                     
    SETTING                                                                         VALUE                   DEFAULT                  
    rounds ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 4 settings · 2 set   
@@ -12,10 +12,11 @@
    gate.default             │ Reset max_tier to its default?                                           │   none                     
    gate.timeout             │                                                                          │   10m                      
    gate.regate              │ yolo → edit                                                              │   0                        
-   timing ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│                                                                          │┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 5 settings   
+   timing ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈│                                                                          │┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 6 settings   
    limit_gate_default       │  y  reset       n  cancel      any other key cancels                     │   1h                       
    stall_after              │                                                                          │   15m                      
-   progress_interval        ╰──────────────────────────────────────────────────────────────────────────╯   30s                      
+   silent_after             ╰──────────────────────────────────────────────────────────────────────────╯   8m                       
+   progress_interval                                                               30s                     30s                      
    explore_after                                                                   20m                     20m                      
    stale_after                                                                     4h                      4h                       
    processes ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 3 settings · 1 set   
@@ -29,6 +30,5 @@
    notify.webhooks                                                                 none                    none                     
    chain ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 5 settings   
    chain.max_corrections                                                           3                       3                        
-   chain.reviewer_actor                                                            reviewer                reviewer                 
 
  y  reset      n  cancel                                                                                                            

@@ -28,6 +28,9 @@ type Policy struct {
 	// StallAfterMS is how long a live builder's stream may go silent before
 	// it is labelled stalled; nil is DefaultStallAfter.
 	StallAfterMS *int `json:"stall_after_ms,omitempty"`
+	// SilentAfterMS is how long a running opencode builder's model may go
+	// quiet before the round is aborted and resumed; nil is DefaultSilentAfter.
+	SilentAfterMS *int `json:"silent_after_ms,omitempty"`
 	// ProgressIntervalMS is how often the daemon samples a round's progress;
 	// nil is DefaultProgressInterval.
 	ProgressIntervalMS *int `json:"progress_interval_ms,omitempty"`
@@ -215,6 +218,10 @@ const DefaultLimitGate = time.Hour
 // labelled, short enough that a hung one is.
 const DefaultStallAfter = 15 * time.Minute
 
+// DefaultSilentAfter is shorter than DefaultStallAfter: a model that has
+// produced nothing for this long is treated as wedged, not thinking.
+const DefaultSilentAfter = 8 * time.Minute
+
 // DefaultProgressInterval is often enough that a label appears promptly,
 // rare enough that sampling stays cheap.
 const DefaultProgressInterval = 30 * time.Second
@@ -267,6 +274,13 @@ func (p Policy) LimitGateDefault() time.Duration {
 		return DefaultLimitGate
 	}
 	return time.Duration(*p.LimitGateDefaultMS) * time.Millisecond
+}
+
+func (p Policy) SilentAfter() time.Duration {
+	if p.SilentAfterMS == nil {
+		return DefaultSilentAfter
+	}
+	return time.Duration(*p.SilentAfterMS) * time.Millisecond
 }
 
 func (p Policy) StallAfter() time.Duration {

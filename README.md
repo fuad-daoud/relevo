@@ -1752,6 +1752,7 @@ edit`:
   "max_switches": 2,
   "limit_gate_default_ms": 3600000,
   "stall_after_ms": 900000,
+  "silent_after_ms": 480000,
   "progress_interval_ms": 30000,
   "explore_after_ms": 1200000,
   "stale_after_ms": 14400000,
@@ -1773,7 +1774,10 @@ gates the provider when the matched line names no reset time; absent
 defaults to one hour. `stall_after_ms` is how long a live headless
 builder's stream may go without an event before `relevo status` and
 `relevo ui` label it `stalled`; absent defaults to fifteen minutes, and
-must be `> 0` when present. `progress_interval_ms` is how often the
+must be `> 0` when present. `silent_after_ms` is how long a running
+opencode builder's model may go quiet before the round is aborted and
+resumed; absent defaults to eight minutes, and must be `> 0` when
+present. `progress_interval_ms` is how often the
 daemon samples a binding's progress signals while its round is open;
 absent defaults to thirty seconds, and must be `> 0` when present.
 `explore_after_ms` is how long a builder's output or screen may keep

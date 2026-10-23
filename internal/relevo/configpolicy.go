@@ -78,12 +78,12 @@ func formatScope(sc *policy.ScopePolicy, defaultText string) string {
 	return strings.Join(parts, " · ")
 }
 
-// Settings returns the 23 policy rows in display order, filled from d.Policy.
+// Settings returns the 24 policy rows in display order, filled from d.Policy.
 func Settings(d ConfigDoc, cpus int) []Setting {
 	p := d.Policy
 	defMaxBuilders := max(1, cpus-1)
 
-	var rows [23]Setting
+	var rows [24]Setting
 
 	// 1: rounds / max_switches
 	rows[0] = Setting{
@@ -163,58 +163,11 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "check",
 	}
 
-	// 8: timing / limit_gate_default
-	rows[7] = Setting{
-		Group:   "timing",
-		Key:     "limit_gate_default",
-		Value:   FormatDuration(p.LimitGateDefault()),
-		Default: FormatDuration(policy.DefaultLimitGate),
-		Set:     p.LimitGateDefaultMS != nil,
-		Form:    "timing",
-	}
+	// 8-13: timing rows
+	copy(rows[7:13], timingSettings(p))
 
-	// 9: timing / stall_after
-	rows[8] = Setting{
-		Group:   "timing",
-		Key:     "stall_after",
-		Value:   FormatDuration(p.StallAfter()),
-		Default: FormatDuration(policy.DefaultStallAfter),
-		Set:     p.StallAfterMS != nil,
-		Form:    "timing",
-	}
-
-	// 10: timing / progress_interval
-	rows[9] = Setting{
-		Group:   "timing",
-		Key:     "progress_interval",
-		Value:   FormatDuration(p.ProgressInterval()),
-		Default: FormatDuration(policy.DefaultProgressInterval),
-		Set:     p.ProgressIntervalMS != nil,
-		Form:    "timing",
-	}
-
-	// 11: timing / explore_after
-	rows[10] = Setting{
-		Group:   "timing",
-		Key:     "explore_after",
-		Value:   FormatDuration(p.ExploreAfter()),
-		Default: FormatDuration(policy.DefaultExploreAfter),
-		Set:     p.ExploreAfterMS != nil,
-		Form:    "timing",
-	}
-
-	// 12: timing / stale_after
-	rows[11] = Setting{
-		Group:   "timing",
-		Key:     "stale_after",
-		Value:   FormatDuration(p.StaleAfter()),
-		Default: FormatDuration(policy.DefaultStaleAfter),
-		Set:     p.StaleAfterMS != nil,
-		Form:    "timing",
-	}
-
-	// 13: processes / scope
-	rows[12] = Setting{
+	// 14: processes / scope
+	rows[13] = Setting{
 		Group:   "processes",
 		Key:     "scope",
 		Value:   formatScope(p.Scope, "on · no limits"),
@@ -223,12 +176,12 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "scope",
 	}
 
-	// 14: processes / serve.max_builders
+	// 15: processes / serve.max_builders
 	smbVal := defMaxBuilders
 	if p.Serve != nil && p.Serve.MaxBuilders != nil {
 		smbVal = *p.Serve.MaxBuilders
 	}
-	rows[13] = Setting{
+	rows[14] = Setting{
 		Group:   "processes",
 		Key:     "serve.max_builders",
 		Value:   strconv.Itoa(smbVal),
@@ -237,12 +190,12 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "max_builders",
 	}
 
-	// 15: processes / serve.scope
+	// 16: processes / serve.scope
 	ssVal := "as scope"
 	if p.Serve != nil && p.Serve.Scope != nil {
 		ssVal = formatScope(p.Serve.Scope, "as scope")
 	}
-	rows[14] = Setting{
+	rows[15] = Setting{
 		Group:   "processes",
 		Key:     "serve.scope",
 		Value:   ssVal,
@@ -251,7 +204,7 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "serve.scope",
 	}
 
-	// 16: scan / scan_patterns
+	// 17: scan / scan_patterns
 	spVal := "none"
 	switch len(p.ScanPatterns) {
 	case 0:
@@ -261,7 +214,7 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 	default:
 		spVal = fmt.Sprintf("%d patterns", len(p.ScanPatterns))
 	}
-	rows[15] = Setting{
+	rows[16] = Setting{
 		Group:   "scan",
 		Key:     "scan_patterns",
 		Value:   spVal,
@@ -270,12 +223,12 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "scan_patterns",
 	}
 
-	// 17: scan / classify
+	// 18: scan / classify
 	clVal := "off"
 	if p.Classify != nil && p.Classify.Provider != "" {
 		clVal = p.Classify.Provider
 	}
-	rows[16] = Setting{
+	rows[17] = Setting{
 		Group:   "scan",
 		Key:     "classify",
 		Value:   clVal,
@@ -284,7 +237,7 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "classify",
 	}
 
-	// 18: notify / notify.webhooks
+	// 19: notify / notify.webhooks
 	nwVal := "none"
 	var nwCount int
 	if p.Notify != nil {
@@ -298,7 +251,7 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 	default:
 		nwVal = fmt.Sprintf("%d webhooks", nwCount)
 	}
-	rows[17] = Setting{
+	rows[18] = Setting{
 		Group:   "notify",
 		Key:     "notify.webhooks",
 		Value:   nwVal,
@@ -307,8 +260,8 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "webhooks",
 	}
 
-	// 19: chain / chain.max_corrections
-	rows[18] = Setting{
+	// 20: chain / chain.max_corrections
+	rows[19] = Setting{
 		Group:   "chain",
 		Key:     "chain.max_corrections",
 		Value:   strconv.Itoa(p.ChainMaxCorrections()),
@@ -317,8 +270,8 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "chain",
 	}
 
-	// 20: chain / chain.reviewer_actor
-	rows[19] = Setting{
+	// 21: chain / chain.reviewer_actor
+	rows[20] = Setting{
 		Group:   "chain",
 		Key:     "chain.reviewer_actor",
 		Value:   p.ChainReviewerActor(),
@@ -327,8 +280,8 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "chain",
 	}
 
-	// 21: chain / chain.planner_actor
-	rows[20] = Setting{
+	// 22: chain / chain.planner_actor
+	rows[21] = Setting{
 		Group:   "chain",
 		Key:     "chain.planner_actor",
 		Value:   p.ChainPlannerActor(),
@@ -337,8 +290,8 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "chain",
 	}
 
-	// 22: chain / chain.security_actor
-	rows[21] = Setting{
+	// 23: chain / chain.security_actor
+	rows[22] = Setting{
 		Group:   "chain",
 		Key:     "chain.security_actor",
 		Value:   p.ChainSecurityActor(),
@@ -347,12 +300,12 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "chain",
 	}
 
-	// 23: chain / chain.security
+	// 24: chain / chain.security
 	csVal := "off"
 	if p.ChainSecurityOn() {
 		csVal = "on"
 	}
-	rows[22] = Setting{
+	rows[23] = Setting{
 		Group:   "chain",
 		Key:     "chain.security",
 		Value:   csVal,
@@ -381,16 +334,6 @@ func SettingPaths(key string) []string {
 		return []string{"gate.timeout_ms"}
 	case "gate.regate":
 		return []string{"gate.regate"}
-	case "limit_gate_default":
-		return []string{"limit_gate_default_ms"}
-	case "stall_after":
-		return []string{"stall_after_ms"}
-	case "progress_interval":
-		return []string{"progress_interval_ms"}
-	case "explore_after":
-		return []string{"explore_after_ms"}
-	case "stale_after":
-		return []string{"stale_after_ms"}
 	case "scope":
 		return []string{"scope"}
 	case "serve.max_builders":
@@ -414,7 +357,7 @@ func SettingPaths(key string) []string {
 	case "chain.security":
 		return []string{"chain.security"}
 	default:
-		return nil
+		return timingSettingPaths(key)
 	}
 }
 

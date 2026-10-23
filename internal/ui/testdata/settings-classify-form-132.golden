@@ -1,25 +1,25 @@
   ◆ relevo    settings                                                                                         v0.13.0-28    14:02  
                                                                                                                                     
-   23 settings   3 set                                                                                                              
-   artifact_max_mb                                                                 25                      25                       
+   24 settings   3 set                                                                                                              
    check ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 3 settings   
    gate.default                                                                    none                    none                     
    gate.timeout                                                                    10m                     10m                      
    gate.regate                                                                     0                       0                        
-   timing ┈┈┈┈┈┈┈┈┈╭─ classify ─────────────────────────────────────────────────────────────────────────────────╮┈┈┈┈┈ 5 settings   
-   limit_gate_defau│                                                                                            │                   
-   stall_after     │ provider          off    jev                                                               │                   
-   progress_interva│                                                                                            │                   
-   explore_after   │ model                                       default jev-latest                             │                   
-   stale_after     │                                                                                            │                   
-   processes ┈┈┈┈┈┈│ threshold                                   default 0.7                                    │settings · 1 set   
-   scope           │                                                                                            │o limits           
-   serve.max_builde│ timeout                                     default 4s                                     │                   
-   serve.scope     │                                                                                            │pe                 
-   scan ┈┈┈┈┈┈┈┈┈┈┈│ scores each builder line for prompt injection, beside the pattern scan                     │┈┈┈┈┈ 2 settings   
-   scan_patterns   │                                                                                            │                   
-   classify        │  enter  save       tab  next field       esc  cancel       ←→  choose                      │                   
-   notify ┈┈┈┈┈┈┈┈┈╰────────────────────────────────────────────────────────────────────────────────────────────╯┈┈┈┈┈┈ 1 setting   
+   timing ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 6 settings   
+   limit_gate_default                                                              1h                      1h                       
+   stall_after                                                                     15m                     15m                      
+   silent_after                                                                    8m                      8m                       
+   progress_interval                                                               30s                     30s                      
+   explore_after                                                                   20m                     20m                      
+   stale_after                                                                     4h                      4h                       
+   processes ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 3 settings · 1 set   
+   scope                                                                           on · no limits          on · no limits           
+   serve.max_builders                                                              21                      21                       
+   serve.scope                                                                     slice relevo.slice      as scope                 
+   scan ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 2 settings   
+   scan_patterns                                                                   none                    none                     
+   classify                                                                        off                     off                      
+   notify ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 1 setting   
    notify.webhooks                                                                 none                    none                     
    chain ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ 5 settings   
    chain.max_corrections                                                           3                       3                        
@@ -28,7 +28,7 @@
    chain.security_actor                                                            security                security                 
    chain.security                                                                  off                     off                      
                                                                                                                                     
-   classify   off                                                                                                                   
-   An optional classifier that scores a builder's lines for prompt injection, beside the pattern scan.                              
+   scan_patterns   none                                                                                                             
+   Extra patterns that mark a builder's line as instruction-shaped, beside the built-in list.                                       
 
- enter  save      tab  next field      esc  cancel      ←→  choose                                                                  
+ enter  edit      r  reset      :  command      ?  all keys      q  quit       scan_patterns is edited with relevo config set policy

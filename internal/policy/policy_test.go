@@ -313,6 +313,7 @@ var msDurationCases = []struct {
 	get        func(Policy) time.Duration
 }{
 	{"stall_after_ms", 15 * time.Minute, 60000, Policy.StallAfter},
+	{"silent_after_ms", 8 * time.Minute, 600000, Policy.SilentAfter},
 	{"progress_interval_ms", 30 * time.Second, 5000, Policy.ProgressInterval},
 	{"explore_after_ms", 20 * time.Minute, 600000, Policy.ExploreAfter},
 	{"stale_after_ms", 4 * time.Hour, 1800000, Policy.StaleAfter},
@@ -1413,5 +1414,17 @@ func TestKnownFieldsListsEachPolicyKeyOnce(t *testing.T) {
 	}
 	if seen["round_cap"] {
 		t.Errorf("KnownFields = %v, names round_cap, which Policy does not read", got)
+	}
+}
+
+func TestValidateRejectsNonPositiveSilentAfter(t *testing.T) {
+	for _, body := range []string{`{"silent_after_ms":-1}`, `{"silent_after_ms":0}`} {
+		_, err := load(t, body)
+		if !errors.Is(err, ErrBadPolicy) {
+			t.Fatalf("Load(%s) error = %v, want one wrapping ErrBadPolicy", body, err)
+		}
+		if !strings.Contains(err.Error(), "silent_after_ms") || !strings.Contains(err.Error(), "must be > 0") {
+			t.Fatalf("Load(%s) error %q does not name silent_after_ms and must be > 0", body, err)
+		}
 	}
 }

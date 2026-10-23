@@ -283,20 +283,17 @@ func Parse(name string, raw []byte) (Policy, []string, error) {
 	return p, warnings, nil
 }
 
-// validateThresholds checks every numeric knob that must be positive (or
-// non-negative) when present.
-func validateThresholds(path string, p Policy) error {
-	if p.MaxSwitches != nil && *p.MaxSwitches < 0 {
-		return fmt.Errorf("%s: max_switches: must be >= 0, got %d: %w", path, *p.MaxSwitches, ErrBadPolicy)
-	}
-	if p.ArtifactMaxMB != nil && *p.ArtifactMaxMB < 0 {
-		return fmt.Errorf("%s: artifact_max_mb: must be >= 0, got %d: %w", path, *p.ArtifactMaxMB, ErrBadPolicy)
-	}
+// validateDurations checks every millisecond duration knob that must be
+// positive when present.
+func validateDurations(path string, p Policy) error {
 	if p.LimitGateDefaultMS != nil && *p.LimitGateDefaultMS <= 0 {
 		return fmt.Errorf("%s: limit_gate_default_ms: must be > 0, got %d: %w", path, *p.LimitGateDefaultMS, ErrBadPolicy)
 	}
 	if p.StallAfterMS != nil && *p.StallAfterMS <= 0 {
 		return fmt.Errorf("%s: stall_after_ms: must be > 0, got %d: %w", path, *p.StallAfterMS, ErrBadPolicy)
+	}
+	if p.SilentAfterMS != nil && *p.SilentAfterMS <= 0 {
+		return fmt.Errorf("%s: silent_after_ms: must be > 0, got %d: %w", path, *p.SilentAfterMS, ErrBadPolicy)
 	}
 	if p.ProgressIntervalMS != nil && *p.ProgressIntervalMS <= 0 {
 		return fmt.Errorf("%s: progress_interval_ms: must be > 0, got %d: %w", path, *p.ProgressIntervalMS, ErrBadPolicy)
@@ -306,6 +303,21 @@ func validateThresholds(path string, p Policy) error {
 	}
 	if p.StaleAfterMS != nil && *p.StaleAfterMS <= 0 {
 		return fmt.Errorf("%s: stale_after_ms: must be > 0, got %d: %w", path, *p.StaleAfterMS, ErrBadPolicy)
+	}
+	return nil
+}
+
+// validateThresholds checks every numeric knob that must be positive (or
+// non-negative) when present.
+func validateThresholds(path string, p Policy) error {
+	if p.MaxSwitches != nil && *p.MaxSwitches < 0 {
+		return fmt.Errorf("%s: max_switches: must be >= 0, got %d: %w", path, *p.MaxSwitches, ErrBadPolicy)
+	}
+	if p.ArtifactMaxMB != nil && *p.ArtifactMaxMB < 0 {
+		return fmt.Errorf("%s: artifact_max_mb: must be >= 0, got %d: %w", path, *p.ArtifactMaxMB, ErrBadPolicy)
+	}
+	if err := validateDurations(path, p); err != nil {
+		return err
 	}
 	if p.Gate != nil && p.Gate.TimeoutMS != nil && *p.Gate.TimeoutMS <= 0 {
 		return fmt.Errorf("%s: gate.timeout_ms: must be > 0, got %d: %w", path, *p.Gate.TimeoutMS, ErrBadPolicy)
