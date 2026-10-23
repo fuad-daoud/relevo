@@ -53,6 +53,38 @@ func readerDeliverablePresent(rt Runtime, b store.Binding) bool {
 	return false
 }
 
+// readerPlanBody is the plan a plan-writing reader round produced, read the way
+// the close reads it: the file the runner wrote itself when it holds content,
+// else the stream's last message.
+func readerPlanBody(rt Runtime, b store.Binding) []byte {
+	path := reportPathFor(rt, b)
+	if present, empty := readerOutputPresent(path); present && !empty {
+		if body, err := os.ReadFile(path); err == nil {
+			return body
+		}
+	}
+	stream, _ := rt.Store.ReadFile(rt.Store.StreamPath(b.Name, b.Round))
+	texts := transcript.Texts(lastStreamKind(b), stream)
+	if len(texts) == 0 {
+		return nil
+	}
+	return []byte(texts[len(texts)-1])
+}
+
+// readerPlanNudgeDue reports whether an exited plan-writing reader owes its one
+// continuation: it ended cleanly with a session to resume and an output that
+// holds no plan steps, and the prompt has not been nudged yet. Every other case
+// closes as it always did, and the chain's plan gate halts it.
+func readerPlanNudgeDue(rt Runtime, b store.Binding, entries []store.LogEntry, codeText string) bool {
+	if b.Shape != store.ShapeReader || codeText != "0" || b.Builder.StreamSessionID == "" {
+		return false
+	}
+	if nudgesSincePlan(entries, b.Round) >= planNudgeLimit || !memberWritesPlan(rt, b) {
+		return false
+	}
+	return !planHasSteps(readerPlanBody(rt, b))
+}
+
 // readerCandidateBodies returns the bodies a reader round's deliverable is read
 // from: the file the runner wrote itself at the output path, when it is a
 // regular file with content in it, and the stream's last block-carrying message
