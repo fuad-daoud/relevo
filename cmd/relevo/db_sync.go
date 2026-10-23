@@ -24,7 +24,7 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"       relevo db sync enable --as INSTALLATION --yes [--url URL] [--timeout D] [--json]\n" +
 	dbSyncR2Usage +
 	"       relevo db sync disable [--timeout D] [--json]\n" +
-	"       relevo db sync retry [--json]\n" +
+	"       relevo db sync retry [--rebuild] [--json]\n" +
 	"       relevo db sync status [--json]\n" +
 	"       relevo db sync push [--timeout D] [--json]\n" +
 	"       relevo db sync pull [--timeout D] [--json]\n" +
@@ -38,10 +38,12 @@ const dbSyncUsage = "usage: relevo db sync enable [--url URL] [--token-stdin] [-
 	"push drains this machine's outbox into the log and pull reads the other\n" +
 	"origins' entries and imports them; each is the half of the steady exchange\n" +
 	"it names. retry clears a latched breaker and drops the worker, so the next\n" +
-	"tick starts a fresh one. reconcile compares this machine's rows against\n" +
-	"what the log holds for it and appends the difference, deletes included:\n" +
-	"the repair for a log that missed this machine's writes. --dry-run lists\n" +
-	"the same rows and appends nothing. unlock stores\n" +
+	"tick starts a fresh one. --rebuild moves a replica the worker cannot read\n" +
+	"aside before the next attempt, and the next attempt bootstraps a fresh one\n" +
+	"from the remote with the stored token and key. reconcile compares this\n" +
+	"machine's rows against what the log holds for it and appends the difference,\n" +
+	"deletes included: the repair for a log that missed this machine's writes.\n" +
+	"--dry-run lists the same rows and appends nothing. unlock stores\n" +
 	"the sync key derived from the passphrase; --new creates it on a remote that\n" +
 	"holds none. The passphrase comes from --passphrase-stdin, else " + dbSyncPassphraseEnv + ",\n" +
 	"else a prompt. rekey rotates the log's key to a new epoch: the machine must\n" +
@@ -167,13 +169,16 @@ func dbSyncDisableFlagSet(fs *flag.FlagSet) *dbSyncDisableFlagValues {
 
 // dbSyncRetryFlagValues holds the pointers `db sync retry` parses into.
 type dbSyncRetryFlagValues struct {
-	asJSON *bool
+	asJSON  *bool
+	rebuild *bool
 }
 
-// dbSyncRetryFlagSet defines that flag on fs and returns what it parses into.
+// dbSyncRetryFlagSet defines those flags on fs and returns what they parse
+// into.
 func dbSyncRetryFlagSet(fs *flag.FlagSet) *dbSyncRetryFlagValues {
 	v := &dbSyncRetryFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the document the retry produced")
+	v.rebuild = fs.Bool("rebuild", false, "move the replica the worker cannot read aside before the next attempt")
 	return v
 }
 
@@ -239,11 +244,13 @@ type dbSyncOutcomeDoc struct {
 	Joining bool `json:"joining,omitempty"`
 }
 
-// dbSyncCallDoc is what push and pull print under --json.
+// dbSyncCallDoc is what push and pull print under --json, and retry with it:
+// Aside is the folder a `retry --rebuild` moved the replica's copy into.
 type dbSyncCallDoc struct {
 	Applied bool     `json:"applied"`
 	Holds   []string `json:"holds,omitempty"`
 	Next    string   `json:"next,omitempty"`
+	Aside   string   `json:"aside,omitempty"`
 }
 
 // cmdDBSyncEnable runs the enable path through the daemon.
@@ -471,14 +478,36 @@ func cmdDBSyncRetry(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), dbSyncDefaultTimeout+verbDialSlack)
 	defer cancel()
 
-	if _, err := sendSyncVerb(ctx, shared, wire.SyncVerbRetry, dbSyncVerbOptions{}); err != nil {
+	res, err := sendSyncVerb(ctx, shared, wire.SyncVerbRetry, dbSyncVerbOptions{Rebuild: *v.rebuild})
+	if err != nil {
 		return err
 	}
 	if *v.asJSON {
-		return printDoc(dbSyncCallDoc{Applied: true})
+		return printDoc(dbSyncCallDoc{Applied: true, Aside: res.Aside})
 	}
-	fmt.Println("sync retry: the latch is cleared and the worker will restart")
+	fmt.Println(dbSyncRetryLine(*v.rebuild, res.Aside))
 	return nil
+}
+
+// dbSyncRetryLine is the retry's human answer. A --rebuild that found no
+// replica to move still succeeded: the latch is cleared and the next attempt
+// bootstraps a fresh replica, so it says that rather than claiming a move.
+func dbSyncRetryLine(rebuild bool, aside string) string {
+	switch {
+	case aside != "":
+		return dbSyncRebuiltLine(aside)
+	case rebuild:
+		return "sync retry: the latch is cleared; there was no replica to move aside, and the next attempt bootstraps a fresh one"
+	default:
+		return "sync retry: the latch is cleared and the worker will restart"
+	}
+}
+
+// dbSyncRebuiltLine is what a retry --rebuild prints: the latch is cleared and
+// the copy's folder is named, so the user can go straight to the evidence the
+// move kept.
+func dbSyncRebuiltLine(aside string) string {
+	return fmt.Sprintf("sync retry: the latch is cleared; the replica is kept in %s and the next attempt bootstraps a fresh one", aside)
 }
 
 // dbSyncClassify maps a failure out of the sync package onto the frame's codes.

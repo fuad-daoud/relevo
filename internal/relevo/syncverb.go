@@ -3,6 +3,7 @@ package relevo
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -115,7 +116,7 @@ func (v *VerbRunner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte)
 		// releases that call before it queues: the slot it is clearing is held
 		// by the very call it must not wait out.
 		v.preempt()
-		return v.runGuarded(func() *wire.SyncResult { return v.retry() })
+		return v.runGuarded(func() *wire.SyncResult { return v.retry(verb.Rebuild) })
 	case wire.SyncVerbProbe:
 		return v.runGuarded(func() *wire.SyncResult { return v.probe(ctx) })
 	case wire.SyncVerbReconcile:
@@ -263,7 +264,15 @@ func (v *VerbRunner) setClient(transport synclog.LogTransport) {
 
 // retry clears a latched breaker and drops the worker, so the next attempt
 // tries a fresh process rather than the one that stopped answering.
-func (v *VerbRunner) retry() *wire.SyncResult {
+//
+// With rebuild set it then moves the replica and its driver files aside, the
+// manual answer to a replica this machine cannot read. The move ignores the
+// window an automatic rebuild waits out -- the human asked for it, and it is
+// the way out the latch names -- and it writes the record that restarts that
+// window, so a machine that keeps going corrupt is not answered with a move on
+// every tick. The next attempt bootstraps a fresh replica from the remote with
+// the stored token and key.
+func (v *VerbRunner) retry(rebuild bool) *wire.SyncResult {
 	if v.Runner == nil {
 		return verbRefusal(wire.SyncCodeInvalid,
 			fmt.Errorf("sync: retry: no runner is installed: %w", db.ErrInvalid))
@@ -271,7 +280,19 @@ func (v *VerbRunner) retry() *wire.SyncResult {
 	if err := v.Runner.Retry(); err != nil {
 		return verbRefusal(verbClassify(err), err)
 	}
-	return &wire.SyncResult{OK: true}
+	if !rebuild {
+		return &wire.SyncResult{OK: true}
+	}
+	out, err := v.Runner.RebuildReplica(time.Now())
+	if errors.Is(err, relevosync.ErrNoReplica) {
+		// The latch is already cleared and a missing replica is bootstrapped by
+		// the next attempt anyway, so there is nothing left to refuse.
+		return &wire.SyncResult{OK: true}
+	}
+	if err != nil {
+		return verbRefusal(verbClassify(err), err)
+	}
+	return &wire.SyncResult{OK: true, Aside: out.Aside}
 }
 
 // probe is the test-connection verb: it drives the same worker a verb does and

@@ -331,11 +331,24 @@ async function registerTools(api: any): Promise<void> {
   }
 }
 
+// opencode's shell tool kills a foreground command after 120 s unless the model
+// passes `timeout`, and models rarely do: a test suite or gate past two minutes
+// dies every time. The hook runs before the kill timer is armed, so raising
+// spec.timeout is what the timer uses. Only the untouched default is raised, and
+// only in a round relevo started: a timeout the model chose, a background
+// command (0) and a user's own session keep opencode's behaviour.
+const OPENCODE_SHELL_DEFAULT_MS = 120000;
+const RUNNER_SHELL_TIMEOUT_MS = 15 * 60 * 1000;
+
 const setup = async (api: any) => {
   if (api?.shell && typeof api.shell.hook === "function") {
+    const runner = !!process.env.RELEVO_RUNNER;
     api.shell.hook("create.before", (spec: any) => {
       if (spec?.env && spec.env.RELEVO_HARNESS === undefined) {
         spec.env.RELEVO_HARNESS = "opencode";
+      }
+      if (runner && spec?.timeout === OPENCODE_SHELL_DEFAULT_MS) {
+        spec.timeout = RUNNER_SHELL_TIMEOUT_MS;
       }
     });
   }

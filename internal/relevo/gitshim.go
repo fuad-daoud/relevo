@@ -11,6 +11,12 @@ import (
 
 // gitShimSource is POSIX sh. Every worktree of one repository shares a single
 // stash stack, so a builder's `git stash pop` can take another lane's work.
+// A push gets pushInsteadOf rewrites that turn every network URL into an
+// unknown scheme, so it fails before connecting: publishing is the
+// MasterMind's, and a round that pushed has put unreviewed commits on a PR. A
+// push to a local path still runs, because test suites push to temporary bare
+// repositories. A remote with an explicit pushurl is not rewritten; git
+// applies pushInsteadOf to url only, and insteadOf would break fetch too.
 // It finds the subcommand after git's global options (those that take a
 // separate value are skipped with it), and finds the real git on PATH while
 // skipping its own directory by canonical path, so a duplicate PATH entry or a
@@ -43,6 +49,10 @@ done
 if [ "$sub" = stash ]; then
 	echo "git stash is refused in a relevo worktree: the stash stack is shared by every worktree of the repository; make a WIP commit or copy files outside the repo instead" >&2
 	exit 1
+fi
+if [ "$sub" = push ]; then
+	r=url.relevo-refuses-pushes-from-a-round://.pushInsteadOf
+	set -- -c "$r=https://" -c "$r=http://" -c "$r=ssh://" -c "$r=git://" -c "$r=git@" "$@"
 fi
 set -f
 IFS=:

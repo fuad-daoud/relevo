@@ -154,3 +154,90 @@ func foldNegativeCountIsClamped(t *testing.T) {
 		t.Errorf("Note = %q, want the clamp mentioned", u.Note)
 	}
 }
+
+// TestAddCosts pins how two segments' costs combine: measured and
+// estimated sum their dollars under the more cautious basis, a side that
+// moved tokens without a bill poisons the sum to unknown/0, and a side that
+// moved no tokens is a no-op.
+func TestAddCosts(t *testing.T) {
+	// measured + measured stays measured, dollars sum, tokens always sum.
+	got := Add(
+		Usage{Tokens: Tokens{In: 100, Out: 50}, Cost: Cost{USD: 0.25, Basis: Measured}},
+		Usage{Tokens: Tokens{In: 200, Out: 30}, Cost: Cost{USD: 0.40, Basis: Measured}},
+	)
+	if got.Tokens != (Tokens{In: 300, Out: 80}) {
+		t.Errorf("tokens = %+v, want the sum", got.Tokens)
+	}
+	if got.Cost.Basis != Measured || got.Cost.USD != 0.65 {
+		t.Errorf("cost = %+v, want measured 0.65", got.Cost)
+	}
+
+	// measured + estimated is estimated -- an estimate must not hide inside
+	// a measurement -- with the dollars summed.
+	got = Add(
+		Usage{Tokens: Tokens{In: 100, Out: 50}, Cost: Cost{USD: 0.25, Basis: Measured}},
+		Usage{Tokens: Tokens{In: 200, Out: 30}, Cost: Cost{USD: 0.40, Basis: Estimated}},
+	)
+	if got.Cost.Basis != Estimated || got.Cost.USD != 0.65 {
+		t.Errorf("cost = %+v, want estimated 0.65", got.Cost)
+	}
+
+	// A side that moved tokens without a bill -- unknown basis -- leaves the
+	// sum unknown with USD 0, never the priced remainder; either order.
+	got = Add(
+		Usage{Tokens: Tokens{In: 100, Out: 50}, Cost: Cost{USD: 0.25, Basis: Measured}},
+		Usage{Tokens: Tokens{In: 400, Out: 150}},
+	)
+	if got.Cost.Basis != Unknown || got.Cost.USD != 0 {
+		t.Errorf("cost = %+v, want unknown 0 with the prior unbilled", got.Cost)
+	}
+	if got.Tokens != (Tokens{In: 500, Out: 200}) {
+		t.Errorf("tokens = %+v, want the sum under unknown", got.Tokens)
+	}
+	got = Add(
+		Usage{Tokens: Tokens{In: 400, Out: 150}},
+		Usage{Tokens: Tokens{In: 100, Out: 50}, Cost: Cost{USD: 0.25, Basis: Measured}},
+	)
+	if got.Cost.Basis != Unknown || got.Cost.USD != 0 {
+		t.Errorf("cost = %+v, want unknown 0 with the report unbilled", got.Cost)
+	}
+
+	// A zero-token unbilled side is a no-op: it adds nothing and poisons
+	// nothing.
+	got = Add(
+		Usage{Tokens: Tokens{In: 100, Out: 50}, Cost: Cost{USD: 0.25, Basis: Measured}},
+		Usage{},
+	)
+	if got.Tokens != (Tokens{In: 100, Out: 50}) || got.Cost.Basis != Measured || got.Cost.USD != 0.25 {
+		t.Errorf("Add with an empty side = %+v, want the first side unchanged", got)
+	}
+	got = Add(
+		Usage{Tokens: Tokens{In: 100, Out: 50}, Cost: Cost{USD: 0.25, Basis: Measured}},
+		Usage{Cost: Cost{Basis: Unknown}},
+	)
+	if got.Tokens != (Tokens{In: 100, Out: 50}) || got.Cost.Basis != Measured || got.Cost.USD != 0.25 {
+		t.Errorf("Add with a zero-token unknown side = %+v, want the first side unchanged", got)
+	}
+}
+
+// TestAddPlanLane pins that a plan-lane segment keeps its cost when no other
+// segment moved tokens, and poisons the sum once a second one did.
+func TestAddPlanLane(t *testing.T) {
+	plan := Usage{Tokens: Tokens{In: 200, Out: 30}, Cost: Cost{USD: 0.40, Basis: Measured, Plan: true}}
+	billed := Usage{Tokens: Tokens{In: 100, Out: 50}, Cost: Cost{USD: 0.25, Basis: Measured}}
+
+	got := Add(plan, Usage{})
+	if got != plan {
+		t.Errorf("Add(plan, zero) = %+v, want the plan segment unchanged", got)
+	}
+
+	got = Add(plan, billed)
+	if got.Cost.Basis != Unknown || got.Cost.USD != 0 || got.Tokens != (Tokens{In: 300, Out: 80}) {
+		t.Errorf("Add(plan, billed) = %+v, want unknown/0 with summed tokens", got)
+	}
+
+	got = Add(billed, plan)
+	if got.Cost.Basis != Unknown || got.Cost.USD != 0 || got.Tokens != (Tokens{In: 300, Out: 80}) {
+		t.Errorf("Add(billed, plan) = %+v, want unknown/0 with summed tokens", got)
+	}
+}

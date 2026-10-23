@@ -664,6 +664,32 @@ func TestSyncViewSanitizesImportTrouble(t *testing.T) {
 	}
 }
 
+// TestSyncViewShowsTheLastRebuild pins that a machine which recovered from a
+// corrupt replica by itself says so: the row carries when the rebuild ran,
+// reusing the stamps the other rows use, and names the folder the copy it kept
+// is in. A machine that never rebuilt draws no row, so its status block stays
+// the block it was.
+//
+// Mutation: dropping the render clause in postOnLines fails the first body.
+func TestSyncViewShowsTheLastRebuild(t *testing.T) {
+	snap := syncPostOnSnapshot()
+	snap.State.Rebuild = relevosync.Rebuild{At: syncNow.Add(-3 * time.Minute), Aside: "/state/relevo-sync-aside"}
+
+	env := Env{Ctx: t.Context(), Now: syncNow, Width: 200, Height: 60, Loaded: true}
+	body := plain(syncView{snap: snap, loaded: true, actions: true, now: syncNow}.Body(env, 200, 60))
+	for _, want := range []string{"last rebuild", "relevo-sync-aside"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the sync view does not show %q:\n%s", want, body)
+		}
+	}
+
+	snap.State.Rebuild = relevosync.Rebuild{}
+	body = plain(syncView{snap: snap, loaded: true, actions: true, now: syncNow}.Body(env, 200, 60))
+	if strings.Contains(body, "last rebuild") {
+		t.Errorf("a machine that never rebuilt drew a rebuild row:\n%s", body)
+	}
+}
+
 // TestSyncViewShowsAFailedAttempt pins that the daemon's last attempt is drawn:
 // a failure reads as failed with its error, sanitized, even when the older
 // export and import times beside it look healthy.

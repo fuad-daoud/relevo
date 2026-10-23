@@ -243,6 +243,8 @@ func dbSyncStatusRead(local relevosync.Local) (dbSyncStatusDoc, error) {
 		R2Bucket:     r2Bucket,
 		Latched:      state.Attention,
 		LatchCause:   state.LatchCause,
+		RebuildAt:    statusStamp(state.Rebuild.At),
+		RebuildAside: state.Rebuild.Aside,
 		Backlog:      state.Backlog,
 		LastExport:   statusStamp(state.LastExport),
 		LastImport:   statusStamp(state.LastImport),

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
 // The nudge-resume fixtures build on headless_test.go's helpers (seedClaudeHeadless,
@@ -466,6 +467,82 @@ func TestLimitExitIsGatedNotNudged(t *testing.T) {
 	}
 }
 
+// TestNudgeRecordsTheOutgoingSegment pins the nudge's own read: the
+// outgoing session has exited and its stream is sealed, so the entry records
+// what the close-budget read found -- recordUsage, not the 500 ms live peek
+// that can silently drop the whole first session -- and the read's stream
+// window starts at the pre-nudge StreamStart, before resumeRound moves it.
+func TestNudgeRecordsTheOutgoingSegment(t *testing.T) {
+	t.Parallel()
+
+	fr := newFakeRunner()
+	rt, b := seedClaudeHeadless(t, fr)
+	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
+	// samples set, peekSamples unset: only the close-budget read (Read)
+	// finds anything; the live peek (Peek) finds nothing.
+	fu := &fakeUsage{samples: []usage.Sample{{Provider: "test", Model: "m", Tokens: usage.Tokens{In: 10, Out: 2}, USD: 0.5, HasCost: true}}}
+	rt.Usage = fu
+	const sess = "S1"
+	b.Builder.StreamSessionID = sess
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatal(err)
+	}
+	// The outgoing session wrote past its spawn offset: a read sourced after
+	// the resume would start the window there and lose this segment.
+	if err := os.WriteFile(b.Builder.LogPath, []byte("starting\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	preStreamStart := b.Builder.StreamStart
+	keep := b.RoundStartedAt
+	entries, err := rt.Store.ReadLog(b.Name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	now := baseTime.Add(time.Minute)
+
+	var nudged bool
+	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+		_, nudged, err = nudgeResume(context.Background(), rt, tx, b, entries, "0", now)
+		return err
+	}); err != nil {
+		t.Fatalf("nudgeResume: %v", err)
+	}
+	if !nudged {
+		t.Fatal("nudgeResume did not nudge")
+	}
+
+	// The read is the close-budget one: one Read, at the pre-nudge window.
+	if len(fu.sources) != 1 {
+		t.Fatalf("usage reads = %d, want 1", len(fu.sources))
+	}
+	src := fu.sources[0]
+	if src.StreamFrom != preStreamStart {
+		t.Errorf("Read source StreamFrom = %d, want the pre-nudge StreamStart %d", src.StreamFrom, preStreamStart)
+	}
+	if !src.Start.Equal(keep) || !src.End.Equal(now) {
+		t.Errorf("Read window = %v..%v, want %v..%v", src.Start, src.End, keep, now)
+	}
+
+	after, err := rt.Store.ReadLog(b.Name)
+	if err != nil {
+		t.Fatalf("ReadLog: %v", err)
+	}
+	var sw *store.LogEntry
+	for i := range after {
+		e := after[i]
+		if e.Kind == store.KindSwitch && strings.HasPrefix(e.Note, nudgeNotePrefix) {
+			sw = &after[i]
+		}
+	}
+	if sw == nil {
+		t.Fatal("no nudge entry appended")
+	}
+	if sw.Usage == nil || sw.Usage.Tokens != (usage.Tokens{In: 10, Out: 2}) ||
+		sw.Usage.Cost.USD != 0.5 || sw.Usage.Cost.Basis != usage.Measured {
+		t.Errorf("nudge entry usage = %+v, want the outgoing segment's tokens and cost", sw.Usage)
+	}
+}
+
 // TestWriterNudgeLimitStaysOne pins that a writer is granted exactly one nudge
 // per plan: a second exit 0 without a report switches candidates rather than
 // continuing.
@@ -518,5 +595,21 @@ func TestWriterNudgeLimitStaysOne(t *testing.T) {
 	}
 	if nudges != 1 {
 		t.Errorf("nudges = %d, want 1: writer limit must stay 1", nudges)
+	}
+}
+
+func TestWriterNudgeSaysBackgroundWorkDiedAndMustBeRerun(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	got := nudgePromptFor(rt, store.Binding{Name: "webshop", Round: 1})
+	for _, want := range []string{
+		"started in the background in that turn was killed",
+		"do not wait for them or poll them",
+		"re-run any check you still need",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("writer nudge = %q, want it to say %q", got, want)
+		}
 	}
 }

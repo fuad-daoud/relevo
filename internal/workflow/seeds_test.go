@@ -315,3 +315,22 @@ func TestSeedsNamePathsOnly(t *testing.T) {
 		}
 	}
 }
+
+// TestPlanWritingSeedsKeepPublishingWithTheMasterMind pins the rule that keeps
+// a correction, fix or repair round from pushing or editing a PR: the planner
+// that writes the next plan copied those steps out of the round it corrected.
+func TestPlanWritingSeedsKeepPublishingWithTheMasterMind(t *testing.T) {
+	t.Parallel()
+	v := sampleSeedView()
+	v.Name, v.Gate, v.RepairRound, v.FailedRound = "shop", "make check", 3, 2
+	for name, want := range map[string]string{
+		"correct": "the plan never pushes",
+		"fix":     "the plan never pushes",
+		"repair":  "Do not push",
+	} {
+		out := assertSeedNames(t, name, v, want, "PR or issue")
+		if !strings.Contains(out, "MasterMind's") {
+			t.Errorf("%s seed does not say publishing is the MasterMind's:\n%s", name, out)
+		}
+	}
+}

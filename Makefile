@@ -13,9 +13,12 @@ LDFLAGS := -X main.version=$(if $(VERSION),$(VERSION),$(BUILD_VERSION))
 # of check -- the same pattern the shellcheck step below uses. A leg that must
 # run the linter (CI's ubuntu-latest/stable) sets RELEVO_REQUIRE_LINT=1, which
 # turns the missing binary into a failure instead of a skip.
+# --allow-serial-runners: golangci-lint holds a lock in its shared cache, and a
+# second run on the machine fails at once ("parallel golangci-lint is
+# running"); parallel chains share a server, so a run waits for the lock.
 lint:
 	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run ./...; \
+		golangci-lint run --allow-serial-runners ./...; \
 	elif [ "$${RELEVO_REQUIRE_LINT:-}" = "1" ]; then \
 		echo "golangci-lint is required (RELEVO_REQUIRE_LINT=1) but not installed"; \
 		exit 1; \

@@ -336,6 +336,16 @@ func (v syncView) postOnLines(width int) []string {
 		lines = append(lines, syncLine("last import", v.localStampPhrase(v.snap.LastImport), mutedStyle))
 	}
 	lines = append(lines, syncLine("first upload", v.uploadProgress(), mutedStyle))
+	// A machine that recovered from a corrupt replica by itself says so, and
+	// names the folder the copy it kept is in. A machine that never rebuilt
+	// draws no row, so the status block stays the block it was.
+	if !v.snap.State.Rebuild.At.IsZero() {
+		phrase := v.localStampPhrase(v.snap.State.Rebuild.At)
+		if v.snap.State.Rebuild.Aside != "" {
+			phrase += " · " + v.snap.State.Rebuild.Aside
+		}
+		lines = append(lines, syncLine("last rebuild", phrase, mutedStyle))
+	}
 	lines = append(lines, v.attemptLines()...)
 	if v.snap.Attention != "" {
 		lines = append(lines, "")

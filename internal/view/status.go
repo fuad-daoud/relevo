@@ -423,27 +423,38 @@ func IsPayloadKind(k store.Kind) bool {
 	return false
 }
 
-// PriorTokensOf returns the sum of tokens from earlier segments in the given
-// round: outgoing switch entries that recorded usage, plus any PriorTokens
-// carried on the newest report entry (for closed remote rounds). Pure; no I/O.
-func PriorTokensOf(entries []store.LogEntry, round int) usage.Tokens {
-	var total usage.Tokens
+// PriorUsageOf returns the sum of what a round's earlier segments consumed:
+// outgoing switch entries that recorded usage, plus the PriorTokens the
+// newest report entry carries (for closed remote rounds) -- as tokens and,
+// where the segments carry bills, cost. A segment that moved tokens without
+// a bill -- a remote round's tokens-only PriorTokens, an unreadable read --
+// leaves the cost Unknown with USD 0, never the priced remainder; a segment
+// that moved none adds nothing. Pure; no I/O.
+func PriorUsageOf(entries []store.LogEntry, round int) usage.Usage {
+	var total usage.Usage
 	var reportPrior *usage.Tokens
 	for _, e := range entries {
 		if e.Round != round {
 			continue
 		}
 		if e.Kind == store.KindSwitch && e.Usage != nil {
-			total = total.Add(e.Usage.Tokens)
+			total = usage.Add(total, *e.Usage)
 		}
 		if e.Kind == store.KindReport && e.Direction == store.DirToMasterMind && e.PriorTokens != nil {
 			reportPrior = e.PriorTokens
 		}
 	}
 	if reportPrior != nil {
-		total = total.Add(*reportPrior)
+		total = usage.Add(total, usage.Usage{Tokens: *reportPrior})
 	}
 	return total
+}
+
+// PriorTokensOf returns the sum of tokens from earlier segments in the given
+// round: outgoing switch entries that recorded usage, plus any PriorTokens
+// carried on the newest report entry (for closed remote rounds). Pure; no I/O.
+func PriorTokensOf(entries []store.LogEntry, round int) usage.Tokens {
+	return PriorUsageOf(entries, round).Tokens
 }
 
 // RoundFacts derives the current round's start, end and report usage from log

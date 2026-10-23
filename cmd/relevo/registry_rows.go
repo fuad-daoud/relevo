@@ -407,8 +407,8 @@ var registry = []verbEntry{
 	{
 		Name:    "db sync retry",
 		Summary: "clear a latched breaker and drop the worker so the next tick starts a fresh one",
-		Args:    "[--json]",
-		Flags:   []string{"--json"},
+		Args:    "[--rebuild] [--json]",
+		Flags:   []string{"--json", "--rebuild"},
 		Output:  "json:DbSyncCallDoc",
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"config_invalid", "internal", "refused", "usage"},
