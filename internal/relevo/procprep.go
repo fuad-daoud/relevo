@@ -3,6 +3,8 @@ package relevo
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"path/filepath"
 
 	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/candidate"
@@ -35,26 +37,65 @@ type procRequest struct {
 // prepareProc is the one seam where a process is prepared before it starts.
 // It returns the temp directory to set on the ProcSpec's TmpDir, the env
 // entries to append to the spec, and a cleanup that undoes the preparation
-// when the start never happens: once the process is running, the round owns
-// what was prepared, and the close and kill hooks remove it. A runtime with
-// no tmp root -- container mode, whose processes see the container's own
+// when the start never happens: once the process is running, the process's
+// own route owns what was prepared -- a round through its close and kill
+// hooks, a check through its advance -- and removes it. A runtime with no
+// tmp root -- container mode, whose processes see the container's own
 // /tmp, and any host that names none -- prepares nothing and errors never.
 //
 // What it prepares is the process's private temp directory under the
 // runtime's tmp root, named by the rule for the request's kind and key; a
 // kind whose rule names no directory passes through with nothing prepared.
 func prepareProc(ctx context.Context, rt Runtime, req procRequest) (string, []string, func(), error) {
-	if rt.TmpRoot == "" || req.kind != procKindRound || req.binding == nil {
+	if rt.TmpRoot == "" {
 		return "", nil, func() {}, nil
 	}
-
-	b := *req.binding
-	dir, err := rt.Store.EnsureTmpEntry(rt.TmpRoot, roundTmpRel(b.Name, b.Round))
-	if err != nil {
-		return "", nil, nil, fmt.Errorf("tmp dir for round %q: %w", b.Name, err)
+	var rel string
+	var undo func()
+	switch req.kind {
+	case procKindRound:
+		if req.binding == nil {
+			return "", nil, func() {}, nil
+		}
+		b := *req.binding
+		rel = roundTmpRel(b.Name, b.Round)
+		undo = func() { removeRoundTmp(rt, b, b.Round) }
+	case procKindCheck:
+		if req.key == "" {
+			return "", nil, func() {}, nil
+		}
+		rel = checkTmpRel(req.key)
+		undo = func() { removeCheckTmp(rt, req.key) }
+	default:
+		return "", nil, func() {}, nil
 	}
-	cleanup := func() { removeRoundTmp(rt, b, b.Round) }
-	return dir, nil, cleanup, nil
+	dir, err := rt.Store.EnsureTmpEntry(rt.TmpRoot, rel)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("tmp dir for %s %q: %w", req.kind, rel, err)
+	}
+	return dir, nil, undo, nil
+}
+
+// checkTmpRel is one check process's private temp directory under a runtime's
+// tmp root, named checks/<unit>. The unit is the sanitized scope unit name the
+// check already carries: unique per check run and stable across a restart
+// re-run, which is what lets the re-run find the directory its first run made.
+func checkTmpRel(unit string) string {
+	return filepath.Join("checks", unit)
+}
+
+// removeCheckTmp takes a check process's private temp directory away. Every
+// failure is logged and swallowed: cleanup never fails the advance it runs
+// from. A runtime with no tmp root made no directory, and an empty unit names
+// none -- a spec built without a unit name must never reach the checks/ root
+// itself.
+func removeCheckTmp(rt Runtime, unit string) {
+	if rt.TmpRoot == "" || unit == "" {
+		return
+	}
+	if err := rt.Store.RemoveTmpEntry(rt.TmpRoot, checkTmpRel(unit)); err != nil {
+		slog.Warn("check tmp dir not removed", "unit", unit, "err", err)
+	}
 }
 
 // builderEnv is the environment a binding's headless builder runs with: the

@@ -47,14 +47,14 @@ func roundTmpPath(rt Runtime, name string, round int) string {
 func mustExist(t *testing.T, dir string) {
 	t.Helper()
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-		t.Fatalf("round tmp dir %s does not exist: %v", dir, err)
+		t.Fatalf("tmp dir %s does not exist: %v", dir, err)
 	}
 }
 
 func mustBeGone(t *testing.T, dir string) {
 	t.Helper()
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("round tmp dir %s is still there (stat err = %v), want it removed", dir, err)
+		t.Errorf("tmp dir %s is still there (stat err = %v), want it removed", dir, err)
 	}
 }
 

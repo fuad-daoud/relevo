@@ -28,15 +28,28 @@ type gateProcSpec struct {
 // stored on the run: 0 for a first run, 1 for the single re-run allowed after
 // a daemon restart took the first one with it.
 func startGateProc(ctx context.Context, rt Runtime, spec gateProcSpec, attempt int) (store.GateRun, *store.GateRecord, error) {
+	// The check process is prepared through the same seam a round's start
+	// uses: a spec with a unit name gets its own temp dir, and one without a
+	// name is passed through with nothing.
+	tmpDir, _, cleanupProc, err := prepareProc(ctx, rt, procRequest{
+		kind: procKindCheck, key: spec.UnitName, tree: spec.Dir,
+	})
+	if err != nil {
+		return store.GateRun{}, &store.GateRecord{Command: spec.Command, Result: "error", Note: err.Error(), LogPath: spec.LogPath}, nil
+	}
 	h, err := rt.Runner.Start(ctx, spawn.ProcSpec{
 		Dir:        spec.Dir,
 		Argv:       []string{"sh", "-c", spec.Command + " 2>&1"},
 		LogPath:    spec.LogPath,
 		StreamPath: spec.LogPath,
 		Env:        spec.Env,
+		TmpDir:     tmpDir,
 		Scope:      scopeFor(rt, scopeGate, spec.UnitName, spec.CPUPin),
 	})
 	if err != nil {
+		// Nothing started, so the directory the preparation made goes back:
+		// no advance will ever run for a process that never existed.
+		cleanupProc()
 		return store.GateRun{}, &store.GateRecord{Command: spec.Command, Result: "error", Note: err.Error(), LogPath: spec.LogPath}, nil
 	}
 	// The daemon has now seen this process alive: a later tick never judges it
@@ -69,6 +82,9 @@ func advanceGateProc(ctx context.Context, rt Runtime, run store.GateRun, spec ga
 			if kerr := rt.Runner.Kill(ctx, h, spec.LogPath); kerr != nil {
 				slog.Warn("gate timeout kill failed", "pid", run.PID, "err", kerr)
 			}
+			// The timed-out run ends with this tick whether or not the kill
+			// landed: nothing advances it again, so its temp dir goes now.
+			removeCheckTmp(rt, spec.UnitName)
 			return nil, true, &store.GateRecord{Command: run.Command, Result: "timeout", DurationMS: elapsed.Milliseconds(), LogPath: spec.LogPath}, nil
 		}
 		return nil, false, nil, nil
@@ -99,5 +115,9 @@ func advanceGateProc(ctx context.Context, rt Runtime, run store.GateRun, spec ga
 		rec.Result = "fail"
 		rec.ExitCode = code
 	}
+	// Every path that reaches here ends the run -- pass, fail, or the error
+	// of a process that left no trailer -- so the check's temp dir goes with
+	// it. A re-run does not: it keeps the directory for the new process.
+	removeCheckTmp(rt, spec.UnitName)
 	return nil, true, rec, nil
 }
