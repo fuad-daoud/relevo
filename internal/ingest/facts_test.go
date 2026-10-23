@@ -210,3 +210,16 @@ func TestRoundFactsReportWithoutUsageKeepsNoFigures(t *testing.T) {
 		t.Errorf("cost = %v/%v, want no figures at all", r.CostUSD, r.CostBasis)
 	}
 }
+
+func TestRoundFactsStopEntryStampsClosedAt(t *testing.T) {
+	ts := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	events := []store.LogEntry{
+		{Round: 1, Kind: store.KindPrompt, TS: ts.Add(-time.Hour)},
+		{Round: 1, Kind: store.KindStop, TS: ts},
+		{Round: 1, Kind: store.KindStop, TS: ts.Add(time.Minute)},
+	}
+	r := roundFacts(events, 1)
+	if r.ClosedAt == nil || !r.ClosedAt.Equal(ts) {
+		t.Errorf("ClosedAt = %v, want %v", r.ClosedAt, ts)
+	}
+}

@@ -38,7 +38,7 @@ func roundFacts(events []store.LogEntry, n int) db.Round {
 			applyDiff(&r, e)
 		case store.KindReport:
 			applyReport(&r, e, prior)
-		case store.KindExit, store.KindSwitch:
+		case store.KindExit, store.KindSwitch, store.KindStop:
 			if r.ClosedAt == nil {
 				ts := e.TS
 				r.ClosedAt = &ts

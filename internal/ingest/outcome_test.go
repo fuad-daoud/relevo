@@ -284,3 +284,19 @@ func TestSwitchesIgnorePollEntriesWhenTheServerShippedTheHistory(t *testing.T) {
 		t.Errorf("switchesForRound(round 4) = %d, want the poll entry alone to count", got)
 	}
 }
+
+func TestDeriveOutcomeStopWithoutReportIsDoneNoReport(t *testing.T) {
+	events := []store.LogEntry{{Round: 1, Kind: store.KindPrompt}, {Round: 1, Kind: store.KindStop}}
+	b := store.Binding{Round: 1, State: store.StateDone}
+	if got := deriveOutcome(events, 1, b, map[string]bool{}); got != db.OutcomeDoneNoReport {
+		t.Errorf("deriveOutcome = %q, want %q", got, db.OutcomeDoneNoReport)
+	}
+}
+
+func TestDeriveOutcomeReportBeatsStop(t *testing.T) {
+	events := []store.LogEntry{{Round: 1, Kind: store.KindStop}, {Round: 1, Kind: store.KindReport}}
+	b := store.Binding{Round: 1, State: store.StateDone}
+	if got := deriveOutcome(events, 1, b, map[string]bool{}); got != db.OutcomeReported {
+		t.Errorf("deriveOutcome = %q, want %q", got, db.OutcomeReported)
+	}
+}

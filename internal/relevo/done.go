@@ -146,6 +146,10 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		}
 
 		oldState := b.State
+		roundOpen, err := roundIsOpen(tx, b)
+		if err != nil {
+			return err
+		}
 		b.State = store.StateDone
 
 		// A headless round's process is stopped here: the
@@ -172,7 +176,7 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		// The stop is recorded in the ledger, in the same shape relevo stop
 		// uses (closeStopped): the log marker it used to write is gone, and
 		// the round's own record of why the process went away is here.
-		if stopErr == nil && pid != 0 {
+		if stopErr == nil && (pid != 0 || roundOpen) {
 			if err := tx.AppendLog(b.Name, store.LogEntry{
 				TS: rt.Now().UTC(), Round: b.Round, Direction: store.DirToMasterMind,
 				Kind: store.KindStop, Note: "stopped/done", Confirmed: true,
@@ -236,4 +240,14 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		out.Payload = delivery.JoinDelivered(delivery.ReportLast(delivered))
 	}
 	return out, err
+}
+
+// roundIsOpen reports whether b's current round has a prompt and no report in
+// the log, read before done changes anything.
+func roundIsOpen(tx *store.Tx, b store.Binding) (bool, error) {
+	entries, err := tx.ReadLog(b.Name)
+	if err != nil {
+		return false, err
+	}
+	return store.RoundOpen(entries, b.Round), nil
 }
