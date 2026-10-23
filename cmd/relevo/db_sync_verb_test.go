@@ -19,6 +19,10 @@ import (
 const (
 	testVerbTokenStdin = "FIXTURE-TOKEN-STDIN-aaaaaaaaaaaaaaaaaaaa"
 	testVerbTokenPush  = "FIXTURE-TOKEN-PUSH-bbbbbbbbbbbbbbbbbbbb"
+	// testVerbAside is the folder the scripted hook says a rebuild moved the
+	// copy into. It is a fixture value like the tokens: unmistakable, and
+	// nowhere a real folder.
+	testVerbAside = "FIXTURE-ASIDE-relevo-sync-aside"
 )
 
 // installTestVerbHook gives an owner a verb executor that answers from a script
@@ -45,6 +49,12 @@ func installTestVerbHook(srv *owner.Server, d *db.DB) {
 		case wire.SyncVerbDisable:
 			res.Steps = []string{"final export", "mark off", "delete token", "delete key", "stop worker", "delete replica", "drop client"}
 			res.FinalPush = true
+		case wire.SyncVerbRetry:
+			// A rebuild rides the retry verb as its flag; the hook answers it
+			// with the folder a real daemon would have moved the copy into.
+			if verb.Rebuild {
+				res.Aside = testVerbAside
+			}
 		}
 		_ = len(token)
 		return res
@@ -201,6 +211,53 @@ func TestDBSyncEnableTokenNeverRendersItsValue(t *testing.T) {
 	if !strings.Contains(err.Error(), "relevo db sync enable --token-stdin") {
 		t.Errorf("the refusal does not name the flag to fix it: %v", err)
 	}
+}
+
+// TestDBSyncRetryRebuildOutput pins both halves of the retry's answer through
+// the scripted hook. The plain line is the string it is today -- byte for
+// byte, which is what proves the flag changed nothing when it was not asked
+// for -- and the --rebuild line names the folder the copy was moved into, the
+// evidence a user goes straight to. The --json documents carry the same
+// split: applied alone when nothing moved, the folder beside it when one did.
+//
+// The mutation is dropping the aside branch from cmdDBSyncRetry, which makes
+// the rebuild half print the plain line and fails the rebuild subtest.
+func TestDBSyncRetryRebuildOutput(t *testing.T) {
+	startSyncStatusDaemon(t, dbSyncStatusCases[2])
+
+	t.Run("plain", func(t *testing.T) {
+		out, _, err := captureOutput(t, func() error { return cmdDBSyncRetry(nil) })
+		if err != nil {
+			t.Fatalf("plain retry: %v", err)
+		}
+		if want := "sync retry: the latch is cleared and the worker will restart\n"; string(out) != want {
+			t.Errorf("the plain retry printed %q, want %q", out, want)
+		}
+		out, _, err = captureOutput(t, func() error { return cmdDBSyncRetry([]string{"--json"}) })
+		if err != nil {
+			t.Fatalf("plain retry --json: %v", err)
+		}
+		if want := "{\n  \"applied\": true\n}\n"; string(out) != want {
+			t.Errorf("the plain --json document = %q, want %q", out, want)
+		}
+	})
+
+	t.Run("rebuild", func(t *testing.T) {
+		out, _, err := captureOutput(t, func() error { return cmdDBSyncRetry([]string{"--rebuild"}) })
+		if err != nil {
+			t.Fatalf("retry --rebuild: %v", err)
+		}
+		if want := dbSyncRebuiltLine(testVerbAside) + "\n"; string(out) != want {
+			t.Errorf("the rebuild line = %q, want %q", out, want)
+		}
+		out, _, err = captureOutput(t, func() error { return cmdDBSyncRetry([]string{"--rebuild", "--json"}) })
+		if err != nil {
+			t.Fatalf("retry --rebuild --json: %v", err)
+		}
+		if want := "{\n  \"applied\": true,\n  \"aside\": \"" + testVerbAside + "\"\n}\n"; string(out) != want {
+			t.Errorf("the rebuild --json document = %q, want %q", out, want)
+		}
+	})
 }
 
 // testVerbStdinReader hands a verb its token without a pipe, so no test reads

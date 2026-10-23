@@ -151,6 +151,10 @@ type dbSyncVerbOptions struct {
 	DryRun bool
 	// New is unlock's --new.
 	New bool
+	// Rebuild is retry's --rebuild: it asks the retry to move the replica
+	// aside before the next attempt, ignoring the window an automatic
+	// rebuild waits out.
+	Rebuild bool
 }
 
 // sendSyncVerb sends one verb over the framed surface and classifies the answer.
@@ -189,6 +193,7 @@ func sendSyncVerbToken(ctx context.Context, shared *db.DB, verb string, token []
 		AdoptAs:          opts.AdoptAs,
 		DryRun:           opts.DryRun,
 		New:              opts.New,
+		Rebuild:          opts.Rebuild,
 	}
 	res, err := shared.SyncVerb(ctx, req, token)
 	if err != nil {

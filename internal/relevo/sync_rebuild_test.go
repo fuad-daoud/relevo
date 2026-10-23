@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
@@ -230,5 +231,147 @@ func TestOrdinarySyncFailureMovesNothingAside(t *testing.T) {
 	}
 	if !got.At.IsZero() || got.Aside != "" {
 		t.Errorf("an ordinary failure wrote a rebuild record: %+v", got)
+	}
+}
+
+// verbReplicaFixture is a verb fixture whose runner carries a replica path
+// beside seeded files, the state a machine that has opened a worker holds.
+// The replica is the same three files the tick's tests seed, in their own
+// directory, and nothing behind them is opened.
+func verbReplicaFixture(t *testing.T) (*verbFixture, string) {
+	t.Helper()
+	fx := newVerbFixture(t)
+	dir := t.TempDir()
+	seedSyncReplica(t, dir)
+	fx.runner.Runner.ReplicaPath = filepath.Join(dir, "relevo-sync.db")
+	return fx, dir
+}
+
+// TestRetryRebuildMovesTheReplicaAside pins the manual rebuild: a retry
+// carrying Rebuild stops the worker, moves the replica and its driver files
+// into the aside folder, names that folder in the result, and records the
+// rebuild in the machine-local kv.
+//
+// Mutation: dropping the Rebuild field from the retry case leaves the files
+// where they were and fails this.
+func TestRetryRebuildMovesTheReplicaAside(t *testing.T) {
+	t.Parallel()
+
+	fx, dir := verbReplicaFixture(t)
+	res := fx.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbRetry, Rebuild: true}, nil)
+	if !res.OK {
+		t.Fatalf("retry --rebuild refused: %s", res.Message)
+	}
+	aside := filepath.Join(dir, "relevo-sync-aside")
+	for _, n := range syncReplicaFiles {
+		if _, err := os.Stat(filepath.Join(dir, n)); !os.IsNotExist(err) {
+			t.Errorf("%s is still in the state directory: %v", n, err)
+		}
+		if _, err := os.Stat(filepath.Join(aside, n)); err != nil {
+			t.Errorf("%s is not in the aside folder: %v", n, err)
+		}
+	}
+	if res.Aside != aside {
+		t.Errorf("the result's aside = %q, want %q", res.Aside, aside)
+	}
+	got, err := relevosync.ReadRebuild(fx.local)
+	if err != nil {
+		t.Fatalf("ReadRebuild: %v", err)
+	}
+	if got.At.IsZero() || got.Aside != aside {
+		t.Errorf("the rebuild record = %+v, want the aside folder %s named", got, aside)
+	}
+}
+
+// TestRetryRebuildIgnoresTheWindow pins the flag against the cap: a record
+// from moments ago would make the tick latch, and the manual rebuild moves the
+// files anyway and rewrites the record, so the window restarts from the
+// human's rebuild.
+//
+// Mutation: consulting RebuildDue in the verb makes this refuse and fail.
+func TestRetryRebuildIgnoresTheWindow(t *testing.T) {
+	t.Parallel()
+
+	fx, dir := verbReplicaFixture(t)
+	now := baseTime
+	if err := relevosync.WriteRebuild(fx.local, now, ""); err != nil {
+		t.Fatalf("WriteRebuild: %v", err)
+	}
+	res := fx.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbRetry, Rebuild: true}, nil)
+	if !res.OK {
+		t.Fatalf("retry --rebuild refused inside the window: %s", res.Message)
+	}
+	aside := filepath.Join(dir, "relevo-sync-aside")
+	for _, n := range syncReplicaFiles {
+		if _, err := os.Stat(filepath.Join(aside, n)); err != nil {
+			t.Errorf("%s is not in the aside folder: %v", n, err)
+		}
+	}
+	got, err := relevosync.ReadRebuild(fx.local)
+	if err != nil {
+		t.Fatalf("ReadRebuild: %v", err)
+	}
+	if got.At.Equal(now) || got.Aside != aside {
+		t.Errorf("the rebuild record = %+v, want it rewritten with %s", got, aside)
+	}
+}
+
+// TestRetryWithoutTheFlagMovesNothing pins the plain verb's shape: without the
+// flag the retry clears the latch and touches no file, and it writes no
+// record, so the window a record paces is the machine's alone to spend.
+//
+// Mutation: moving the files unconditionally in the verb fails this.
+func TestRetryWithoutTheFlagMovesNothing(t *testing.T) {
+	t.Parallel()
+
+	fx, dir := verbReplicaFixture(t)
+	res := fx.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbRetry}, nil)
+	if !res.OK {
+		t.Fatalf("plain retry refused: %s", res.Message)
+	}
+	if res.Aside != "" {
+		t.Errorf("the plain retry named an aside folder %q", res.Aside)
+	}
+	for _, n := range syncReplicaFiles {
+		if _, err := os.Stat(filepath.Join(dir, n)); err != nil {
+			t.Errorf("%s did not stay in the state directory: %v", n, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "relevo-sync-aside")); !os.IsNotExist(err) {
+		t.Errorf("an aside folder was created: %v", err)
+	}
+	got, err := relevosync.ReadRebuild(fx.local)
+	if err != nil {
+		t.Fatalf("ReadRebuild: %v", err)
+	}
+	if !got.At.IsZero() || got.Aside != "" {
+		t.Errorf("the plain retry wrote a rebuild record: %+v", got)
+	}
+}
+
+// TestRetryRebuildWithNoReplicaIsRefused pins the refusal for a machine with
+// nothing to move: the verb answers with member 1's errNoReplica message
+// through the existing classification, and the plain retry part has already
+// run, so the latch is cleared even where the move is refused.
+//
+// Mutation: answering OK for an empty replica folder fails this.
+func TestRetryRebuildWithNoReplicaIsRefused(t *testing.T) {
+	t.Parallel()
+
+	fx := newVerbFixture(t)
+	fx.runner.Runner.ReplicaPath = filepath.Join(t.TempDir(), "relevo-sync.db")
+	res := fx.runner.Run(context.Background(), &wire.SyncVerb{Verb: wire.SyncVerbRetry, Rebuild: true}, nil)
+	if res.OK {
+		t.Fatal("a retry --rebuild with no replica file was answered OK")
+	}
+	if !strings.Contains(res.Message, "no replica file to move aside") {
+		t.Errorf("the refusal %q does not name the missing replica", res.Message)
+	}
+	// errNoReplica is a sentinel no entry of the classification lists, so its
+	// class is the table's default. The expectation is derived the way the
+	// verb derives it -- from the error's own text through verbClassify -- so
+	// a special code invented for this case fails the test.
+	if want := verbClassify(errors.New(res.Message)); res.Code != want {
+		t.Errorf("the code = %q, want the class verbClassify gives errNoReplica (%q)", res.Code, want)
 	}
 }
