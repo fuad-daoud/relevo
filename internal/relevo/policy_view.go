@@ -142,7 +142,7 @@ func refusalFromErr(role string, serving []candidate.Candidate, gates []availabi
 	case errors.Is(err, ErrAllGated):
 		var providers []string
 		for _, c := range serving {
-			if len(skipsFor(gates, c.Ref().String())) > 0 {
+			if len(skipsFor(skipGates(gates), c.Ref().String())) > 0 {
 				providers = append(providers, c.Ref().Provider)
 			}
 		}
@@ -282,7 +282,7 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []availability.Ga
 		}
 		if len(serving) > 0 {
 			if ordered {
-				v.rows = rankedList(set, pol, role)
+				v.rows = rankedList(set, pol, role, gates...)
 			} else {
 				for _, c := range serving {
 					v.rows = append(v.rows, rankedEntry{Candidate: c})
@@ -328,7 +328,7 @@ func FormatPolicyFor(reg *roles.Registry, accounts account.Set, set *candidate.S
 
 	var sb strings.Builder
 	for _, role := range reg.Names() {
-		rows := rankedRole(reg, set, role)
+		rows := rankedRoleFor(reg, set, role, gates)
 		serving := make([]candidate.Candidate, 0, len(rows))
 		for _, r := range rows {
 			serving = append(serving, r.Candidate)
@@ -423,7 +423,7 @@ func RoleRefusalsFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy,
 
 	var out []RoleRefusal
 	for _, role := range reg.Names() {
-		ranked := rankedRole(reg, set, role)
+		ranked := rankedRoleFor(reg, set, role, gates)
 		if len(ranked) == 0 {
 			continue
 		}
