@@ -32,16 +32,21 @@ const ownerVerbToken = "FIXTURE-TOKEN-9c3f81b4d27e60a5c8b1f4d9037e2a6c"
 // shortVerbSock is a socket path short enough for sun_path.
 //
 // A subtest's own t.TempDir() name carries the parent's name and the subtest's,
-// which together run past the ~104-byte limit on a unix socket. The file is under
-// the per-test temp root either way; only the name is shortened.
+// which together run past the ~104-byte limit on a unix socket. The directory
+// is under /tmp rather than TMPDIR for the same reason: the gate runs with a
+// long TMPDIR that would push even this short name past the limit.
 func shortVerbSock(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "vo")
+	dir, err := os.MkdirTemp("/tmp", "vo")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return filepath.Join(dir, "o.sock")
+	sock := filepath.Join(dir, "o.sock")
+	if len(sock) >= 104 {
+		t.Fatalf("socket path %q is %d bytes, over the 104-byte sun_path", sock, len(sock))
+	}
+	return sock
 }
 
 // servedVerbOwner is an owner over a split pair with a scripted executor, plus
