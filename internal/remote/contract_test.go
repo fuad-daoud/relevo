@@ -553,7 +553,9 @@ func TestContractProtoShapes(t *testing.T) {
 // TestGateFieldsAreAdditive pins the omitempty halves the goldens cannot: a
 // zero CreateBindingRequest and BindingView marshal without a gate/gate_result
 // key, so an old server parses an old client's body unchanged and an old client
-// sees no new key on an old server's view.
+// sees no new key on an old server's view. The trimpath halves ride here too:
+// a zero create on either route marshals with no trimpath key, so absence
+// keeps reading trimmed.
 func TestGateFieldsAreAdditive(t *testing.T) {
 	create, err := json.Marshal(CreateBindingRequest{})
 	if err != nil {
@@ -561,6 +563,16 @@ func TestGateFieldsAreAdditive(t *testing.T) {
 	}
 	if bytes.Contains(create, []byte(`"gate"`)) {
 		t.Fatalf("zero CreateBindingRequest carries a gate key: %s", create)
+	}
+	if bytes.Contains(create, []byte(`"trimpath"`)) {
+		t.Fatalf("zero CreateBindingRequest carries a trimpath key: %s", create)
+	}
+	chain, err := json.Marshal(CreateChainRequest{})
+	if err != nil {
+		t.Fatalf("marshal zero CreateChainRequest: %v", err)
+	}
+	if bytes.Contains(chain, []byte(`"trimpath"`)) {
+		t.Fatalf("zero CreateChainRequest carries a trimpath key: %s", chain)
 	}
 	view, err := json.Marshal(BindingView{})
 	if err != nil {

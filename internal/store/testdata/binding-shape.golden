@@ -291,6 +291,7 @@ serve.dirty_commit
 serve.last_seen
 serve.repo_id
 serve.result_commit
+serve.trimpath
 shape
 stale_since
 stalled_since
