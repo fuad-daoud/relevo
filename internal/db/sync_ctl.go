@@ -69,9 +69,11 @@ func loadCtl(ctx context.Context, q queryer) ([]CtlItem, error) {
 const originSchemaKey = "sync.origin_schema.v1"
 
 // NoteOriginSchema keeps the highest schema version an origin's entries have
-// carried, so a hand-over can refuse a target that has not upgraded.
+// carried, so a hand-over can refuse a target that has not upgraded. The key is
+// in the machine-local sync namespace: written to the shared file, the split
+// pass would move it out on every start, backing up the whole database to do so.
 func (d *DB) NoteOriginSchema(origin string, schema int) error {
-	return d.Tx(func(t *Tx) error {
+	return d.LocalOrSelf().Tx(func(t *Tx) error {
 		have, err := loadOriginSchemas(t.ctx, t.conn)
 		if err != nil {
 			return err
@@ -90,7 +92,7 @@ func (d *DB) NoteOriginSchema(origin string, schema int) error {
 
 // OriginSchemas maps each origin to the highest schema its entries carried.
 func (d *DB) OriginSchemas() (map[string]int, error) {
-	return loadOriginSchemas(context.Background(), d.sqlDB)
+	return loadOriginSchemas(context.Background(), d.LocalOrSelf().sqlDB)
 }
 
 func loadOriginSchemas(ctx context.Context, q queryer) (map[string]int, error) {

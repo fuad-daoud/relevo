@@ -108,3 +108,28 @@ func TestRoleRefusalsCause(t *testing.T) {
 		})
 	}
 }
+
+func TestRoleRefusalsGatedNamesOnlyClearableProviders(t *testing.T) {
+	t.Parallel()
+
+	const otherAgy = "agy/other/m"
+	set := candidateSet(t, testTwoProviderJSON)
+	pol := orderOf("builder", testOpencodeRef, testClaudeRef, otherAgy)
+	gates := []availability.Gate{
+		kindGate(testOpencodeRef, availability.Scheduled),
+		kindGate(testClaudeRef, availability.ConcurrencyLimit),
+		limit(otherAgy),
+	}
+	var got *RoleRefusal
+	for _, r := range RoleRefusals(set, pol, gates) {
+		if r.Role == "builder" {
+			got = &r
+		}
+	}
+	if got == nil {
+		t.Fatal("no builder refusal")
+	}
+	if len(got.Gated) != 1 || got.Gated[0] != "other" {
+		t.Errorf("Gated = %v, want only the rate-limited provider [other]: a window or a cap is never cleared", got.Gated)
+	}
+}

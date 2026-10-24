@@ -238,6 +238,9 @@ func chainServerResume(ctx context.Context, rt Runtime, c db.ChainRow, opts Resu
 		if remoteCode(err, 409, remote.CodeRoundOpen) {
 			return ChainResult{}, roundOpenFromWire(err)
 		}
+		if typed := chainServerCreateError(err); errors.Is(typed, ErrUnknownRole) {
+			return ChainResult{}, fmt.Errorf("server %s: %w", c.Server, typed)
+		}
 		return ChainResult{}, err
 	}
 	return chainResultFromMirror(ctx, rt, c.Name)

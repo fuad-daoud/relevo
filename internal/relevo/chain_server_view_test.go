@@ -478,6 +478,26 @@ func TestChainServerResumeRetypesAChainDone(t *testing.T) {
 	}
 }
 
+func TestChainServerResumeRetypesAnUnknownActor(t *testing.T) {
+	t.Parallel()
+
+	fr := chainPullFake(chainPullView("shop", string(chain.StatusHalted), 1, 0, 0))
+	fr.chainResumeErr = &client.HTTPError{
+		Status: http.StatusBadRequest,
+		Body:   remote.ErrorBody{Code: remote.CodeUnknownActor, Message: `step build: rule 2: run names unknown actor "builder-qwen"`},
+	}
+	rt := chainPullRuntime(t, fr)
+	seedServerChain(t, rt, "shop")
+
+	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Params: map[string]string{"builder": "builder-qwen"}})
+	if !errors.Is(err, ErrUnknownRole) {
+		t.Fatalf("err = %v, want errors.Is(err, ErrUnknownRole)", err)
+	}
+	if !strings.Contains(err.Error(), "server zen") || !strings.Contains(err.Error(), "builder-qwen") {
+		t.Errorf("err = %q, want it to name the server and the actor", err)
+	}
+}
+
 // TestChainDoneOnAServerChainPostsDone pins done: the server releases the
 // chain, the mirror members are released locally (the chain's own verb already
 // released them there, so no second round-trip per member), and the mirror row
