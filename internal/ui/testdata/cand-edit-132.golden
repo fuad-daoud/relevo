@@ -7,7 +7,7 @@
    claude-sonnet-4-6                 agy       agy-extra   claude-sonnet-4-6                    builder 2               gated 20h   
    deepseek-v4.1-fl╭─ edit deepseek-v4.1-flash ─────────────────────────────────────────────────────────────────╮       gated 1d    
    gpt-5.6-terra   │                                                                                            │wer 2  gated 24d   
-   sonnet          │ harness     agy    claude    codex    opencode                                             │wer 1  ready       
+   sonnet          │ harness     agy    claude    codex    muse    opencode                                     │wer 1  ready       
    glm-5.3-flash   │                                                                                            │       ready       
    haiku           │ provider   cline-pass                                                                      │       ready       
                    │             openrouter    cline-pass                                                       │                   
