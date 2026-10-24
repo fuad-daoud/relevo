@@ -196,8 +196,8 @@ func chainOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOptions, er
 	if err != nil {
 		return relevo.ChainOptions{}, err
 	}
-	if *v.server != "" && (*v.workflow != "" || *v.task != "" || *v.taskFile != "" || *v.from != "" || len(params) > 0) {
-		return relevo.ChainOptions{}, fail(codeUsage, "relevo chain --server does not take --workflow, --param, --task or --from: the server's workflow feature is not available yet")
+	if *v.server != "" && (*v.workflow != "" || *v.task != "" || *v.taskFile != "" || *v.from != "") {
+		return relevo.ChainOptions{}, fail(codeUsage, "relevo chain --server does not take --workflow, --task or --from: the server's workflow feature is not available yet")
 	}
 	if *v.from != "" {
 		return relevo.ChainOptions{}, fail(codeUsage, "relevo chain --from applies with --resume: it re-enters a halted chain at another step")

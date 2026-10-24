@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/isolate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -202,7 +203,16 @@ func pickServedTier(w http.ResponseWriter, rt relevo.Runtime, roleName, candidat
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
 		return "", "", "", false
 	}
-	return token, kind, string(resolved), true
+	rendered, err := relevo.RenderServedTier(rt, roleName, token, kind, resolved)
+	if err != nil {
+		if errors.Is(err, harness.ErrTierUnsupported) || errors.Is(err, harness.ErrExtraArgsPermission) {
+			writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())
+		} else {
+			writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
+		}
+		return "", "", "", false
+	}
+	return token, kind, string(rendered), true
 }
 
 // servedShape resolves a create's role against this server's registry and

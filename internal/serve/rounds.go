@@ -318,6 +318,8 @@ func writeSendError(w http.ResponseWriter, rt relevo.Runtime, name string, b sto
 		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, sendErr.Error())
 	case errors.Is(sendErr, relevo.ErrTierAboveMax):
 		writeErr(w, http.StatusUnprocessableEntity, remote.CodeTierAboveMax, sendErr.Error())
+	case errors.Is(sendErr, harness.ErrTierUnsupported), errors.Is(sendErr, harness.ErrExtraArgsPermission):
+		writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, sendErr.Error())
 	case errors.Is(sendErr, relevo.ErrBadBuilder):
 		writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, sendErr.Error())
 	default:

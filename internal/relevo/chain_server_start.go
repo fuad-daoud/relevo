@@ -164,6 +164,9 @@ func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (cha
 			opts.Server, opts.Workflow, chainFeatureList([]string{remote.FeatureWorkflow}))
 	}
 	plan.hasWorkflow = hasWorkflow
+	if len(opts.Params) > 0 && !hasWorkflow {
+		return chainServerPlan{}, fmt.Errorf("server %s does not take --param: the server's workflow feature is not available yet; upgrade it, or start the chain without --server", opts.Server)
+	}
 	if !hasWorkflow {
 		plan.members = chainMembersFor(opts, plan.settings)
 		if err := chainFreeNames(rt, plan.members); err != nil {

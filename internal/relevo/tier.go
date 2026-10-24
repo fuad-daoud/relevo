@@ -3,6 +3,7 @@ package relevo
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -86,6 +87,14 @@ func readerTier(tier harness.Tier, kind string, pol policy.Policy) (harness.Tier
 		}
 	}
 	return tier, nil
+}
+
+// tierUnsupportedMessage reports whether a wire refusal's message carries a
+// harness-tier refusal: the server answers one 422 invalid with the
+// ErrTierUnsupported text a local bind produces, on the same code other
+// create and send refusals share, so the message is what tells them apart.
+func tierUnsupportedMessage(msg string) bool {
+	return strings.Contains(msg, harness.ErrTierUnsupported.Error())
 }
 
 // effectiveTier is RoundTier if set, else Tier, else harness.
