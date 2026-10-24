@@ -8,7 +8,7 @@
    deepseek-v4.1-flash               opencode  cline-pass  cline-pass/deepseek-v4.1-flash#high  builder 3               gated 1d    
    gpt-5.6-terra   ╭─ edit glm-5.3-flash ───────────────────────────────────────────────────────────────────────╮wer 2  gated 24d   
    sonnet          │                                                                                            │wer 1  ready       
-   glm-5.3-flash   │ harness     agy    claude    codex    opencode                                             │       ready       
+   glm-5.3-flash   │ harness     agy    claude    codex    muse    opencode                                     │       ready       
    haiku           │                                                                                            │       ready       
                    │ provider   openrouter/z-ai                                                                 │                   
                    │            a provider is one word, with no /                                               │                   

@@ -1663,7 +1663,7 @@ with `relevo config edit`. The array is:
 ]
 ```
 
-- `harness` — a kind relevo knows: `agy`, `claude`, `opencode`, `codex`. Required.
+- `harness` — a kind relevo knows: `agy`, `claude`, `opencode`, `codex`, `muse`. Required.
 - `provider` — who enforces the quota; free text. Required.
 - `model` — passed to the harness as-is. Required.
 - `tree` — `binding` (the default) or `none`.
@@ -1692,6 +1692,7 @@ An actor is relevo's name for a job; its agent is the harness definition `relevo
 | `claude` | `--model <model> --agent <agent>` |
 | `opencode` | `--agent <agent> -m <provider>/<model>` |
 | `codex` | `-p <agent> -m <id> -c model_provider=<provider> [-c model_reasoning_effort=<effort>]` |
+| `muse` | `exec --json --model <model> [--reasoning-effort <effort>] -c run.developer_prompt=<agent definition>` |
 
 For `codex` the candidate's `model` is `<id>[:<effort>]`: `gpt-5.6-terra:high` runs `-m gpt-5.6-terra -c model_reasoning_effort=high`, and the suffix stays in the token so two efforts are two candidates.
 
@@ -2191,7 +2192,10 @@ The flags rendered for each harness kind (verified 2026-09-19 on claude 2.1.278,
 | claude | (none) | `--permission-mode plan --allowedTools=Read(//<round prompt>) --allowedTools=Read(//<chain dir>/**)` | reader: `--permission-mode acceptEdits --allowedTools=Read(//<round prompt>) --allowedTools=Read(//<chain dir>/**)`; builder: refuse | `--dangerously-skip-permissions` |
 | agy | (none) | `--mode plan` | refuse | `--dangerously-skip-permissions` |
 | opencode | (none) | refuse | refuse | `--auto` |
+| muse | (none) | refuse | refuse | `--yolo` |
 | codex | (none) | refuse | `-s workspace-write -c sandbox_workspace_write.writable_roots=["<binding>/out"]` | `--dangerously-bypass-approvals-and-sandbox` |
+
+muse takes only `yolo` and `harness`: Muse's own sandbox blocks unix sockets and relevo's state directory, so `read` and `edit` cannot work. Its candidates look like `muse/meta/muse-spark-1.3:xhigh`, the effort after `:`. The Muse Code subscription works only inside the `muse` CLI, which is why muse is a harness and not a provider. Setting `META_API_KEY` switches billing to pay-as-you-go. `muse login` uses a device code, so it works over SSH. `muse exec` has no agent flag, so relevo hands it each role definition as `-c run.developer_prompt=...`.
 
 opencode does not support `read` or `edit` tiers because it has no read-only or edit-only CLI flag. Choosing `read` or `edit` for an opencode candidate is refused immediately with an error directing you to use `--tier harness` (where `opencode.jsonc` decides) or `--tier yolo` (`--auto`).
 

@@ -4,6 +4,8 @@
 package harness
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -168,6 +170,36 @@ var knownHarnesses = map[string]Harness{
 			{Name: "designer", Path: ".claude/agents/designer.md", Doc: "designer.claude"},
 		},
 	},
+	"muse": {
+		Kind:       "muse",
+		Binary:     "muse",
+		MinVersion: "1.4.11",
+		Providers:  []string{"meta"},
+		// Only the shape of the quota field is known from Muse's wire schema;
+		// no real limit stream has been captured yet.
+		LimitPatterns: []string{
+			`(?i)usage limit`,
+			`(?i)tier.?limit`,
+			`(?i)quota (exceeded|reached|exhausted)`,
+			`(?i)"limit_kind"`,
+			`(?i)rate.?limit`,
+			`(?i)error 429`,
+			`(?i)too many requests`,
+		},
+		DenialPatterns: []string{
+			`(?i)permission denied`,
+			`(?i)(approval|tool call) (was )?(rejected|denied)`,
+		},
+		Roles: []Role{
+			{Name: "plan-executor", Path: ".config/muse/agents/plan-executor.md", Doc: "plan-executor.muse"},
+			{Name: "researcher", Path: ".config/muse/agents/researcher.md", Doc: "researcher.muse"},
+			{Name: "reviewer", Path: ".config/muse/agents/reviewer.md", Doc: "reviewer.muse"},
+			{Name: "security-reviewer", Path: ".config/muse/agents/security-reviewer.md", Doc: "security-reviewer.muse"},
+			{Name: "architect", Path: ".config/muse/agents/architect.md", Doc: "architect.muse"},
+			{Name: "librarian", Path: ".config/muse/agents/librarian.md", Doc: "librarian.muse"},
+			{Name: "designer", Path: ".config/muse/agents/designer.md", Doc: "designer.muse"},
+		},
+	},
 	"opencode": {
 		Kind:   "opencode",
 		Binary: "opencode",
@@ -285,6 +317,9 @@ const (
 	// ChainDirPlaceholder renders a recursive read grant for a chain's staged
 	// inputs; separate from PromptFilePlaceholder because it is a directory glob.
 	ChainDirPlaceholder = "<chain-dir>"
+	// DefinitionPlaceholder stands for muse's role definition, which `muse
+	// exec` takes only as a per-run setting rather than as an agent file.
+	DefinitionPlaceholder = "<definition>"
 )
 
 // Launch describes how to start an agent process for a specific role and model.
@@ -335,16 +370,16 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 			"--add-dir", DirPlaceholder, "--add-dir", OutputDirPlaceholder}
 		promptAt = 1
 	case "codex":
-		id, effort, err := SplitEffort(model)
-		if err != nil {
-			return Launch{}, fmt.Errorf("%w: codex model %q", ErrBadModel, model)
+		var err error
+		if print, err = codexPrint(provider, model, role); err != nil {
+			return Launch{}, err
 		}
-		cfg := []string{"-p", role.Definition, "-m", id, "-c", "model_provider=" + provider}
-		if effort != "" {
-			cfg = append(cfg, "-c", "model_reasoning_effort="+effort)
-		}
-		print = append(append([]string{"exec", PromptPlaceholder}, cfg...), "--json", "-C", DirPlaceholder)
 		promptAt = 1
+	case "muse":
+		var err error
+		if print, promptAt, err = museLaunch(model); err != nil {
+			return Launch{}, err
+		}
 	}
 
 	perm, err := h.PermissionArgs(tier)
@@ -373,10 +408,48 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 	}, nil
 }
 
+func codexPrint(provider, model string, role RoleSpec) ([]string, error) {
+	id, effort, err := SplitEffort(model)
+	if err != nil {
+		return nil, fmt.Errorf("%w: codex model %q", ErrBadModel, model)
+	}
+	cfg := []string{"-p", role.Definition, "-m", id, "-c", "model_provider=" + provider}
+	if effort != "" {
+		cfg = append(cfg, "-c", "model_reasoning_effort="+effort)
+	}
+	return append(append([]string{"exec", PromptPlaceholder}, cfg...), "--json", "-C", DirPlaceholder), nil
+}
+
+// museLaunch renders muse's print form and the index of its prompt.
+func museLaunch(model string) ([]string, int, error) {
+	id, effort, err := SplitEffort(model)
+	if err != nil {
+		return nil, -1, fmt.Errorf("%w: muse model %q", ErrBadModel, model)
+	}
+	print := []string{"exec", "--json", "--model", id}
+	if effort != "" {
+		print = append(print, "--reasoning-effort", effort)
+	}
+	// A headless run must neither double its model calls with reminders nor
+	// wait on a question nobody can answer.
+	print = append(print, "--disable-reminders", "--disable-request-user-input",
+		"--workspace", DirPlaceholder, "-c", DefinitionPlaceholder, PromptPlaceholder)
+	return print, len(print) - 1, nil
+}
+
 // writableRootsArg renders the -c value for root, quoted as a TOML basic
 // string (identical escapes for every path this program produces).
 func writableRootsArg(root string) string {
 	return "sandbox_workspace_write.writable_roots=[" + strconv.Quote(root) + "]"
+}
+
+// developerPromptArg renders muse's -c value; the setting's value is JSON.
+func developerPromptArg(definition string) string {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)   // keep the definition's <, > and & readable
+	_ = enc.Encode(definition) // a string always encodes
+	return "run.developer_prompt=" + strings.TrimSuffix(b.String(), "\n")
 }
 
 // PrintArgs is Print with the prompt, budget, working tree, writable root,
@@ -391,7 +464,9 @@ func writableRootsArg(root string) string {
 // because a relative or empty rule would be wider or meaningless.
 // ChainDirPlaceholder is filled with an absolute recursive read grant for the
 // chain directory; an empty or relative path is dropped rather than rendered.
-func (l Launch) PrintArgs(prompt string, budget time.Duration, dir, writableRoot, promptFile, chainDir string) []string {
+// DefinitionPlaceholder becomes muse's run.developer_prompt setting, whose value
+// is the JSON encoding of definition.
+func (l Launch) PrintArgs(prompt string, budget time.Duration, dir, writableRoot, promptFile, chainDir, definition string) []string {
 	out := make([]string, 0, len(l.Print))
 	for _, a := range l.Print {
 		switch a {
@@ -409,6 +484,8 @@ func (l Launch) PrintArgs(prompt string, budget time.Duration, dir, writableRoot
 			if filepath.IsAbs(promptFile) {
 				out = append(out, "--allowedTools=Read(/"+promptFile+")")
 			}
+		case DefinitionPlaceholder:
+			out = append(out, developerPromptArg(definition))
 		case ChainDirPlaceholder:
 			if filepath.IsAbs(chainDir) {
 				out = append(out, "--allowedTools=Read(/"+chainDir+"/**)")

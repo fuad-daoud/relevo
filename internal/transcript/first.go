@@ -34,6 +34,8 @@ func FirstOutput(kind string, line []byte) bool {
 			}
 		}
 		return false
+	case "muse":
+		return museFirstOutput(obj)
 	}
 
 	return false

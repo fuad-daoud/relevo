@@ -204,6 +204,12 @@ func TestResumeBuildPerKind(t *testing.T) {
 				"--format", "json", "--thinking", "--standalone", "--session", "ses-1", "--fork"},
 		},
 		{name: "codex", kind: "codex", id: "thread-1", wantErr: ErrResumeUnsupported},
+		{
+			name: "muse", kind: "muse", id: "sess-1",
+			want: []string{"exec", "--json", "--model", model, "--disable-reminders",
+				"--disable-request-user-input", "--workspace", dir, "-c", `run.developer_prompt=""`,
+				prompt, "--session-id", "sess-1"},
+		},
 		{name: "unknown kind", kind: "future", id: "id-1", wantErr: ErrResumeUnsupported},
 		{name: "empty id", kind: "claude", id: "", refuse: true},
 		{name: "whitespace id", kind: "claude", id: "a b", refuse: true},
@@ -226,7 +232,7 @@ func checkResumeBuild(t *testing.T, tt resumeBuildCase, builder RoleSpec, provid
 	if err != nil {
 		t.Fatalf("Launch(%s): %v", tt.kind, err)
 	}
-	got, err := h.ResumeBuild(tt.id, l, prompt, budget, dir, state, "", "")
+	got, err := h.ResumeBuild(tt.id, l, prompt, budget, dir, state, "", "", "")
 	switch {
 	case tt.wantErr != nil:
 		if !errors.Is(err, tt.wantErr) {
@@ -247,7 +253,7 @@ func checkResumeBuild(t *testing.T, tt resumeBuildCase, builder RoleSpec, provid
 			t.Errorf("ResumeBuild() = %v, want %v", got, tt.want)
 		}
 		// The result is the round's print form and then the selector.
-		base := l.PrintArgs(prompt, budget, dir, state, "", "")
+		base := l.PrintArgs(prompt, budget, dir, state, "", "", "")
 		if len(got) < len(base) || !reflect.DeepEqual(got[:len(base)], base) {
 			t.Errorf("ResumeBuild() = %v, want it to start with PrintArgs %v", got, base)
 		}
@@ -265,7 +271,7 @@ func TestResumeBuildForwardsPromptFile(t *testing.T) {
 	}
 
 	promptPath := "/state/binding/001-prompt.md"
-	got, err := claude.ResumeBuild("session-xyz", l, "hello", time.Minute, "/wt", "/state", promptPath, "")
+	got, err := claude.ResumeBuild("session-xyz", l, "hello", time.Minute, "/wt", "/state", promptPath, "", "")
 	if err != nil {
 		t.Fatalf("ResumeBuild() error = %v", err)
 	}
@@ -289,7 +295,7 @@ func TestResumeBuildForwardsChainDir(t *testing.T) {
 	}
 
 	chainDir := "/state/.chains/ch-1"
-	got, err := claude.ResumeBuild("session-xyz", l, "hello", time.Minute, "/wt", "/state", "", chainDir)
+	got, err := claude.ResumeBuild("session-xyz", l, "hello", time.Minute, "/wt", "/state", "", chainDir, "")
 	if err != nil {
 		t.Fatalf("ResumeBuild() error = %v", err)
 	}
@@ -304,7 +310,7 @@ func TestResumeBuildForwardsChainDir(t *testing.T) {
 		t.Errorf("ResumeBuild() want --resume session-xyz, got %v", got)
 	}
 
-	gotNone, err := claude.ResumeBuild("session-xyz", l, "hello", time.Minute, "/wt", "/state", "", "")
+	gotNone, err := claude.ResumeBuild("session-xyz", l, "hello", time.Minute, "/wt", "/state", "", "", "")
 	if err != nil {
 		t.Fatalf("ResumeBuild() with empty chainDir error = %v", err)
 	}
@@ -312,5 +318,18 @@ func TestResumeBuildForwardsChainDir(t *testing.T) {
 		if strings.HasPrefix(a, "--allowedTools=") {
 			t.Errorf("ResumeBuild() with empty chainDir rendered %q: %v", a, gotNone)
 		}
+	}
+}
+
+func TestResumeMuseContinuesSessionInPlace(t *testing.T) {
+	h, _ := Lookup("muse")
+	got, err := h.Resume("sess-1", "next", TierYolo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"exec", "--json", "--session-id", "sess-1", "--disable-reminders",
+		"--disable-request-user-input", "next", "--yolo"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Resume() = %v, want %v", got, want)
 	}
 }

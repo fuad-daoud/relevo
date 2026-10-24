@@ -33,6 +33,7 @@ func TestDefinitionPathConvention(t *testing.T) {
 		{"opencode", ".config/opencode/agents/my-executor.md"},
 		{"agy", ".gemini/config/agents/my-executor.md"},
 		{"codex", ".codex/my-executor.config.toml"},
+		{"muse", ".config/muse/agents/my-executor.md"},
 	}
 
 	for _, tt := range tests {
@@ -66,6 +67,7 @@ func TestIsShipped(t *testing.T) {
 		{"claude", "architect", true},
 		{"claude", "plan-executor", true},
 		{"codex", "researcher", true},
+		{"muse", "researcher", true},
 		{"claude", "my-executor", false},
 		{"nope", "reviewer", false},
 	}

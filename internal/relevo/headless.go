@@ -421,7 +421,11 @@ func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	if l.PromptAt < 0 {
 		return b, fmt.Errorf("harness %q has no print form", c.Harness)
 	}
-	sel, err := h.ResumeBuild(sessionID, l, prompt, roundBudget(b), roundTree(rt, b), rt.Store.OutDir(b.Name), rt.Store.PromptPath(b.Name, b.Round), chainReadDir(rt, tx, b.Name))
+	definition, err := spawn.Definition(l, c.Harness, role)
+	if err != nil {
+		return b, err
+	}
+	sel, err := h.ResumeBuild(sessionID, l, prompt, roundBudget(b), roundTree(rt, b), rt.Store.OutDir(b.Name), rt.Store.PromptPath(b.Name, b.Round), chainReadDir(rt, tx, b.Name), definition)
 	if err != nil {
 		return b, err
 	}

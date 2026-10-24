@@ -1,13 +1,13 @@
   ◆ relevo   agents ›  researcher                                                                              v0.13.0-28    14:02  
                                                                                                                                     
-   shipped · reader · used by builder, researcher   4 harnesses                                                                     
+   shipped · reader · used by builder, researcher   5 harnesses                                                                     
                                                                                                                                     
    HARNESS   FILE                                                                    MODEL                           STATE          
    agy       ~/.gemini/config/agents/researcher.md                                   inherit                         up to date     
    claude    ~/.claude/agents/researcher.md                                          haiku                           your edit      
    codex     ~/.codex/researcher.config.toml                                         gpt-5.6-luna                    up to date     
-   opencode  ~/.config/opencode/agents/researcher.md                                 openrouter/z-ai/glm-5.3-flash   up to date     
-                            ╭─ reset ──────────────────────────────────────────────────────────────────╮                            
+   muse      ~/.config/muse/agents/researcher.md                                                                     up to date     
+   opencode  ~/.config/openc╭─ reset ──────────────────────────────────────────────────────────────────╮-5.3-flash   up to date     
                             │                                                                          │                            
                             │ Reset claude's researcher?                                               │                            
                             │                                                                          │                            

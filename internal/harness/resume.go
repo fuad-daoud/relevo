@@ -47,6 +47,9 @@ func (h Harness) Resume(sessionID, prompt string, tier Tier) ([]string, error) {
 			"--output-format", "stream-json"}
 	case "opencode":
 		base = []string{"run", prompt, "--session", sessionID, "--fork", "--format", "json", "--thinking", "--standalone"}
+	case "muse":
+		base = []string{"exec", "--json", "--session-id", sessionID,
+			"--disable-reminders", "--disable-request-user-input", prompt}
 	case "codex":
 		return nil, fmt.Errorf("%w: codex", ErrResumeUnsupported)
 	default:
@@ -62,11 +65,11 @@ func (h Harness) Resume(sessionID, prompt string, tier Tier) ([]string, error) {
 
 // ResumeBuild renders the argv that continues a lost headless builder's own
 // session: the builder-grade print form l with the prompt, budget, directory,
-// writable root, prompt file and chain dir filled in, followed by this kind's resume selector. l must
+// writable root, prompt file, chain dir and definition filled in, followed by this kind's resume selector. l must
 // be the Launch the round was started with, so a resumed round keeps its model,
 // agent definition and permission flags. A kind with no verified resume
 // selector returns ErrResumeUnsupported, which the caller reads as "relaunch".
-func (h Harness) ResumeBuild(sessionID string, l Launch, prompt string, budget time.Duration, dir, writableRoot, promptFile, chainDir string) ([]string, error) {
+func (h Harness) ResumeBuild(sessionID string, l Launch, prompt string, budget time.Duration, dir, writableRoot, promptFile, chainDir, definition string) ([]string, error) {
 	if err := checkResumeSessionID(sessionID); err != nil {
 		return nil, err
 	}
@@ -79,11 +82,13 @@ func (h Harness) ResumeBuild(sessionID string, l Launch, prompt string, budget t
 		selector = []string{"--conversation", sessionID}
 	case "opencode":
 		selector = []string{"--session", sessionID, "--fork"}
+	case "muse":
+		selector = []string{"--session-id", sessionID}
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrResumeUnsupported, h.Kind)
 	}
 
-	return append(l.PrintArgs(prompt, budget, dir, writableRoot, promptFile, chainDir), selector...), nil
+	return append(l.PrintArgs(prompt, budget, dir, writableRoot, promptFile, chainDir, definition), selector...), nil
 }
 
 // DeleteSession renders the argv that deletes an existing harness session. The

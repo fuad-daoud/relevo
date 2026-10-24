@@ -2,22 +2,22 @@
                                                                                                                                     
    7 agents   3 writers   4 readers                                                                                                 
                                                                                                                                     
-   AGENT                                             SHAPE   SOURCE   USED BY              AGY       CLAUDE    CODEX     OPENCODE   
-   plan-executor                                     writer  shipped  builder              ok        ok        ok        ok         
-   librarian                                         writer  shipped  no actor             ok        ok        ok        ok         
-   designer                                          writer  shipped  no actor             ok        ok        ok        ok         
-   reviewer                                          reader  shipped  reviewer             ok        ok        ok        ok         
-   security-reviewer                                 reader  shipped  no actor             ok        ok        ok        ok         
-   researcher                                        reader  shipped  builder, researcher  ok        ok        ok        ok         
-   architect                                         reader  shipped  no actor             ok        ok        ok        ok         
+   AGENT                                   SHAPE   SOURCE   USED BY              AGY       CLAUDE    CODEX     MUSE      OPENCODE   
+   plan-executor                           writer  shipped  builder              ok        ok        ok        ok        ok         
+   librarian                               writer  shipped  no actor             ok        ok        ok        ok        ok         
+   designer                                writer  shipped  no actor             ok        ok        ok        ok        ok         
+   reviewer                                reader  shipped  reviewer             ok        ok        ok        ok        ok         
+   security-reviewer                       reader  shipped  no actor             ok        ok        ok        ok        ok         
+   researcher                              reader  shipped  builder, researcher  ok        ok        ok        ok        ok         
+   architect                               reader  shipped  no actor             ok        ok        ok        ok        ok         
                                                                                                                                     
                                                                                                                                     
    researcher   shipped · reader · used by builder, researcher                                                                      
    agy       ~/.gemini/config/agents/researcher.md         up to date    model inherit                                              
    claude    ~/.claude/agents/researcher.md                up to date    model haiku                                                
    codex     ~/.codex/researcher.config.toml               up to date    model gpt-5.6-luna                                         
+   muse      ~/.config/muse/agents/researcher.md           up to date                                                               
    opencode  ~/.config/opencode/agents/researcher.md       up to date    model openrouter/z-ai/glm-5.3-flash                        
-                                                                                                                                    
                                                                                                                                     
                                                                                                                                     
                                                                                                                                     

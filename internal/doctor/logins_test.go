@@ -11,11 +11,11 @@ func loginEnv(bins ...string) *fakeEnv {
 }
 
 func TestLoginChecksPresentMissingAndNotChecked(t *testing.T) {
-	env := loginEnv("claude", "codex", "opencode", "agy", "other")
+	env := loginEnv("claude", "codex", "muse", "opencode", "agy", "other")
 	env.existingFiles["/h/.claude/.credentials.json"] = true
 	env.existingFiles["/h/.local/share/opencode/opencode.db"] = true
-	got := LoginChecks(env, []string{"claude", "codex", "opencode", "agy", "other"}, nil)
-	want := map[string]Severity{"claude": SevOK, "codex": SevWarn, "opencode": SevOK, "agy": SevWarn, "other": SevOK}
+	got := LoginChecks(env, []string{"claude", "codex", "muse", "opencode", "agy", "other"}, nil)
+	want := map[string]Severity{"claude": SevOK, "codex": SevWarn, "muse": SevWarn, "opencode": SevOK, "agy": SevWarn, "other": SevOK}
 	if len(got) != len(want) {
 		t.Fatalf("rows = %d, want %d: %+v", len(got), len(want), got)
 	}
@@ -29,6 +29,20 @@ func TestLoginChecksPresentMissingAndNotChecked(t *testing.T) {
 		if c.Severity == SevFail {
 			t.Errorf("%s: login rows never fail", c.Group)
 		}
+	}
+}
+
+func TestLoginChecksMuseReadsItsConfigDirectory(t *testing.T) {
+	env := loginEnv("muse")
+	env.existingFiles["/h/.config/muse/auth.json"] = true
+	got := LoginChecks(env, []string{"muse"}, nil)
+	if len(got) != 1 || got[0].Severity != SevOK || got[0].Detail != "login at /h/.config/muse/auth.json" {
+		t.Fatalf("rows = %+v, want ok at the muse auth file", got)
+	}
+	env.existingFiles["/h/.config/muse/auth.json"] = false
+	got = LoginChecks(env, []string{"muse"}, nil)
+	if got[0].Severity != SevWarn || got[0].Fix != "muse login" {
+		t.Errorf("row = %+v, want a warn naming muse login", got[0])
 	}
 }
 

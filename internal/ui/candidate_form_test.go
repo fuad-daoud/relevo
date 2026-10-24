@@ -199,7 +199,8 @@ func TestCandidateFormHarnessChangePicksSoleProvider(t *testing.T) {
 	fa := &fakeActions{doc: formDoc(t)}
 
 	f := newCandidateForm(formEnv(fa), fa.doc, "", "", "opencode")
-	f = formPress(f, formArrow(tea.KeyLeft)) // opencode -> codex
+	f = formPress(f, formArrow(tea.KeyLeft)) // opencode -> muse
+	f = formPress(f, formArrow(tea.KeyLeft)) // muse -> codex
 	f = formPress(f, formArrow(tea.KeyLeft)) // codex -> claude
 	if f.kinds[f.hsel] != "claude" {
 		t.Fatalf("harness = %q, want claude", f.kinds[f.hsel])

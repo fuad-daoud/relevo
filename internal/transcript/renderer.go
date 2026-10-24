@@ -19,7 +19,8 @@ const clockLayout = "15:04:05"
 // renderStreamFrom call, one drainStream pass, or one streamTranscriptRecords
 // batch.
 type Renderer struct {
-	pending map[string]time.Time // claude tool_use id -> the event time that made the call
+	pending  map[string]time.Time // claude tool_use id -> the event time that made the call
+	museText strings.Builder      // muse output deltas not yet written
 }
 
 // NewRenderer returns a renderer for one pass over a stream.
@@ -60,6 +61,8 @@ func (r *Renderer) render(kind string, line []byte) []string {
 		return r.opencode(obj)
 	case "codex":
 		return r.codex(obj)
+	case "muse":
+		return r.muse(obj)
 	}
 	return []string{unknown(obj)}
 }

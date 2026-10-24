@@ -105,6 +105,15 @@ func (h Harness) PermissionArgs(tier Tier) ([]string, error) {
 		default:
 			return nil, fmt.Errorf("%w: codex cannot honour tier %s", ErrTierUnsupported, tier)
 		}
+	case "muse":
+		switch tier {
+		case TierYolo:
+			return []string{"--yolo"}, nil
+		case TierRead, TierEdit:
+			return nil, fmt.Errorf("%w: muse cannot honour tier %s: its sandbox blocks unix sockets and relevo's state dir; use --tier yolo (--yolo) or --tier harness (muse settings decide)", ErrTierUnsupported, tier)
+		default:
+			return nil, fmt.Errorf("%w: muse cannot honour tier %s", ErrTierUnsupported, tier)
+		}
 	default:
 		return nil, nil
 	}
@@ -157,6 +166,16 @@ func (h Harness) PermissionFlags() []string {
 			"--full-auto",
 			"--approve-for-me",
 			"--dangerously-bypass-approvals-and-sandbox",
+		}
+	case "muse":
+		return []string{
+			"--yolo",
+			"--disable-approval",
+			"--disable-sandbox",
+			"--approval-mode",
+			"--permission-profile",
+			"--sandbox-network",
+			"--trust-workspace",
 		}
 	default:
 		return nil
