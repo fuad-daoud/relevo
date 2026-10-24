@@ -243,6 +243,9 @@ func chainBuildRemoteBuilder(ctx context.Context, rt Runtime, opts ChainOptions,
 		if errors.As(err, &httpErr) && httpErr.Status == 422 && httpErr.Body.Code == remote.CodeTierAboveMax {
 			return store.Binding{}, nil, fmt.Errorf("%w: %s", ErrTierAboveMax, httpErr.Body.Message)
 		}
+		if errors.As(err, &httpErr) && httpErr.Status == 422 && httpErr.Body.Code == remote.CodeInvalid && tierUnsupportedMessage(httpErr.Body.Message) {
+			return store.Binding{}, nil, tierUnsupportedFromWire(httpErr.Body.Message)
+		}
 		return store.Binding{}, nil, err
 	}
 

@@ -918,7 +918,8 @@ func TestCreateBindingTier(t *testing.T) {
 		wantStatus int
 		wantTier   string
 	}{
-		{"policy tier", policy.Policy{Tier: map[string]string{"builder": "edit"}}, "", http.StatusCreated, "edit"},
+		{"policy tier", policy.Policy{Tier: map[string]string{"builder": "read"}}, "", http.StatusCreated, "read"},
+		{"policy tier the harness cannot run", policy.Policy{Tier: map[string]string{"builder": "edit"}}, "", http.StatusUnprocessableEntity, ""},
 		{"no policy defaults to harness", policy.Policy{}, "", http.StatusCreated, "harness"},
 		{"above max", policy.Policy{}, "yolo", http.StatusUnprocessableEntity, ""},
 		{"bogus tier", policy.Policy{}, "bogus", http.StatusBadRequest, ""},

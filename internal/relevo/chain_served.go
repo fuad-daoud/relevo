@@ -344,6 +344,10 @@ func servedActorPick(rt Runtime, actor string) (servedPick, error) {
 	if err != nil {
 		return servedPick{}, err
 	}
+	tier, err = RenderServedTier(rt, roleName, token, kind, tier)
+	if err != nil {
+		return servedPick{}, err
+	}
 	return servedPick{token: token, kind: kind, tier: string(tier)}, nil
 }
 

@@ -153,6 +153,8 @@ func remoteShip(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 				return remoteShipped{}, fmt.Errorf("%s: round %d could not start on %s: %s", name, b.Round, server, httpErr.Body.Message)
 			} else if httpErr.Status == 422 && httpErr.Body.Code == remote.CodeTierAboveMax {
 				return remoteShipped{}, fmt.Errorf("%w: %s", ErrTierAboveMax, httpErr.Body.Message)
+			} else if httpErr.Status == 422 && httpErr.Body.Code == remote.CodeInvalid && tierUnsupportedMessage(httpErr.Body.Message) {
+				return remoteShipped{}, tierUnsupportedFromWire(httpErr.Body.Message)
 			} else if httpErr.Status == 422 {
 				return remoteShipped{}, fmt.Errorf("%s: %s", server, httpErr.Body.Message)
 			} else {

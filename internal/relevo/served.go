@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -304,6 +305,45 @@ func ResolveServedTierFor(rt Runtime, role, token, explicit string) (harness.Tie
 // ResolveServedTier is ResolveServedTierFor for the built-in builder role.
 func ResolveServedTier(rt Runtime, token, explicit string) (harness.Tier, error) {
 	return ResolveServedTierFor(rt, "builder", token, explicit)
+}
+
+// RenderServedTier validates that kind can run tier for role, flooring a
+// reader through readerTier first exactly as add.go does, and returns the
+// tier to store. It renders the launch with an empty prompt, which skips the
+// definition read, so the call is a pure validation with no other file use.
+// An empty kind, an unresolvable token or an unknown role skips the render:
+// there is no harness to refuse. A refusal wraps harness.ErrTierUnsupported
+// or harness.ErrExtraArgsPermission, the same refusal a local bind produces.
+func RenderServedTier(rt Runtime, role, token, kind string, tier harness.Tier) (harness.Tier, error) {
+	if kind == "" {
+		return tier, nil
+	}
+	if shape, err := actorShape(rt.RoleRegistry(), role); err == nil && shape == store.ShapeReader {
+		var rerr error
+		if tier, rerr = readerTier(tier, kind, rt.Policy); rerr != nil {
+			return tier, rerr
+		}
+	}
+	var c candidate.Candidate
+	if rt.Candidates == nil || token == "" {
+		return tier, nil
+	}
+	ref, err := candidate.ParseRef(token)
+	if err != nil {
+		return tier, nil
+	}
+	c, err = rt.Candidates.Lookup(ref)
+	if err != nil {
+		return tier, nil
+	}
+	spec, err := rt.RoleRegistry().Spec(role, kind)
+	if err != nil {
+		return tier, nil
+	}
+	if _, err := spawn.HeadlessLaunch(c, spec, tier, 0, "", "", "", "", ""); err != nil {
+		return tier, err
+	}
+	return tier, nil
 }
 
 // ServedBuilderTier is what WhoAmI reports and relevo serve logs at startup:
