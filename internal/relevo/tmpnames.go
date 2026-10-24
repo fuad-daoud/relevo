@@ -3,7 +3,9 @@ package relevo
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"log/slog"
 	"strconv"
+	"sync"
 )
 
 // tmpSocketSuffixLen is the longest socket file name held under a handed-out
@@ -68,4 +70,20 @@ func shortCheckID(unit string) string {
 // one warning and proceed with the long path; the round never fails for it.
 func tmpOverBudget(dir string) bool {
 	return len(dir) > maxTmpDirLen
+}
+
+// tmpBudgetWarned makes the over-budget warning once per process: the state
+// dir decides the length, so every round on the host would repeat it.
+var tmpBudgetWarned sync.Once
+
+// warnTmpOverBudget warns, once, when a temp directory leaves less than
+// tmpSocketSuffixLen bytes for a socket path under it. The round proceeds:
+// most sockets need far less, and a long state dir is not the round's fault.
+func warnTmpOverBudget(dir string) {
+	if !tmpOverBudget(dir) {
+		return
+	}
+	tmpBudgetWarned.Do(func() {
+		slog.Warn("tmp dir leaves under 40 bytes for a socket path; tests that bind a socket under TMPDIR may fail", "dir", dir, "len", len(dir))
+	})
 }

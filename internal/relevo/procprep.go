@@ -91,11 +91,7 @@ func prepareTmp(rt Runtime, req procRequest) (string, func(), error) {
 	if err != nil {
 		return "", nil, fmt.Errorf("tmp dir for %s %q: %w", req.kind, rel, err)
 	}
-	// A state dir so long the short directory still leaves no room for a
-	// socket name warns once and proceeds: the round never fails for it.
-	if tmpOverBudget(dir) {
-		slog.Warn("tmp dir leaves no room for a socket name", "dir", dir)
-	}
+	warnTmpOverBudget(dir)
 	return dir, undo, nil
 }
 
