@@ -73,21 +73,26 @@ func configLocalKeys(ctx context.Context, q queryer, prefix string) ([]string, e
 	return out, nil
 }
 
-// ConfigLocalPut upserts key's patch. It does not bump config_meta.version:
-// an override that changes no shared section is not a shared-config change,
-// and a reader's reload is driven by the sections themselves.
+// ConfigLocalPut upserts key's patch. It bumps config_meta.version like any
+// other config write: the merged config the override changes is what a running
+// server and the daemon must pick up on their next tick, and the version gate
+// is the one counter both refreshers read. The bump is invisible to sync --
+// the counter is never exported, and a local write records no revision and no
+// write stamp -- so it advertises the change to this machine's readers only.
 func (t *Tx) ConfigLocalPut(key string, patch []byte, now time.Time) error {
 	if _, err := t.exec(`INSERT OR REPLACE INTO config_local (key, patch, updated_at) VALUES (?, ?, ?)`,
 		key, string(patch), formatTime(now)); err != nil {
 		return fmt.Errorf("db: config local put %s: %w", key, mapBusy(err))
 	}
-	return nil
+	return t.bumpConfigVersion()
 }
 
-// ConfigLocalDelete removes key's override. An absent key writes nothing.
+// ConfigLocalDelete removes key's override and bumps config_meta.version. An
+// absent key writes nothing but still bumps: the version is a change counter
+// for readers, not a count of stored overrides.
 func (t *Tx) ConfigLocalDelete(key string) error {
 	if _, err := t.exec(`DELETE FROM config_local WHERE key = ?`, key); err != nil {
 		return fmt.Errorf("db: config local delete %s: %w", key, mapBusy(err))
 	}
-	return nil
+	return t.bumpConfigVersion()
 }

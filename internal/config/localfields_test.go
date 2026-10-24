@@ -221,6 +221,62 @@ func TestAnOverrideNeverInventsAnAccount(t *testing.T) {
 	}
 }
 
+// TestPutLocalMovesStoreVersion pins the reload gate at the store level: a
+// --local write moves Store.Version(), the single counter both refreshers
+// compare per tick, and the next Load reads back the merged override, so a
+// running server or daemon picks the local edit up without a restart. It fails
+// against a ConfigLocalPut that does not bump.
+func TestPutLocalMovesStoreVersion(t *testing.T) {
+	t.Parallel()
+
+	s := openStore(t)
+	seedSections(t, s, map[Section]string{
+		Candidates: docCandidates,
+		Policy:     docPolicy,
+	})
+	seedSharedDoc(t, s, map[Section]string{
+		Accounts: `[{"name":"work","harness":"codex","groups":["openai"],"home":"/home/shared"}]`,
+	})
+
+	v0, err := s.Version()
+	if err != nil {
+		t.Fatalf("Version: %v", err)
+	}
+
+	const home = "/home/picked-up"
+	if err := s.PutLocal(Doc{Accounts: json.RawMessage(
+		`[{"name":"work","harness":"codex","groups":["openai"],"home":"` + home + `"}]`)}); err != nil {
+		t.Fatalf("PutLocal: %v", err)
+	}
+
+	v1, err := s.Version()
+	if err != nil {
+		t.Fatalf("Version: %v", err)
+	}
+	if v1 <= v0 {
+		t.Errorf("Version after PutLocal = %d, want > %d: a local write must move the counter the refreshers watch", v1, v0)
+	}
+
+	// The next Load is what a reload would perform: the merged document, with
+	// the local home laid over the shared one.
+	L, err := s.Load()
+	if err != nil {
+		t.Fatalf("Load after PutLocal: %v", err)
+	}
+	var found bool
+	for _, a := range L.Accounts {
+		if a.Name == "work" {
+			found = true
+			if a.Home != home {
+				t.Errorf("merged accounts home = %q, want the local %q", a.Home, home)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("Load accounts = %+v, want the work account", L.Accounts)
+	}
+}
+
 func localPatchFor(t *testing.T, s *Store, key string) string {
 	t.Helper()
 	patch, ok, err := s.db.LocalOrSelf().ConfigLocalGet(key)

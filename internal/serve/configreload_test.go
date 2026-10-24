@@ -109,6 +109,62 @@ func TestReloadUnchangedVersionDoesNotLoad(t *testing.T) {
 	}
 }
 
+// TestRefreshPicksUpALocalWrite pins the issue's behaviour at the refresher: a
+// --local config write moves the version counter (read off the same store the
+// fake exposes, exactly as production's ConfigSource.Version does), the next
+// Refresh performs exactly one reload, and that reload carries the merged
+// override; an unchanged tick after it performs no load at all. Without the
+// local-write bump the "picks up" assertion goes red while the "no load"
+// assertion stays green.
+func TestRefreshPicksUpALocalWrite(t *testing.T) {
+	st := config.Open(testServeDB(t))
+	if _, err := st.Put(config.Policy, []byte(reloadPolicyCapJSON)); err != nil {
+		t.Fatalf("seed policy: %v", err)
+	}
+	src := &countingSource{inner: st}
+	version := func() int64 {
+		v, err := st.Version()
+		if err != nil {
+			t.Fatalf("store version: %v", err)
+		}
+		return v
+	}
+	src.version = version()
+
+	r := NewConfigRefresher(src, "", time.Now)
+	cfg := r.Refresh(Config{})
+	if src.loads != 1 {
+		t.Fatalf("loads after the first refresh = %d, want 1", src.loads)
+	}
+
+	// The --local write: `config set --local policy.serve.max_builders 9`
+	// amounts to this on the store. Serve is a machine field, so it lands in
+	// the local layer and changes no shared body.
+	if err := st.PutLocal(config.Doc{config.Policy: json.RawMessage(`{"serve":{"max_builders":9}}`)}); err != nil {
+		t.Fatalf("PutLocal: %v", err)
+	}
+	moved := version()
+	src.version = moved
+
+	cfg = r.Refresh(cfg)
+	if src.loads != 2 {
+		t.Errorf("loads after a local write moved the version = %d, want exactly 2: the next Refresh must reload", src.loads)
+	}
+	if cfg.Policy.Serve == nil || cfg.Policy.Serve.MaxBuilders == nil || *cfg.Policy.Serve.MaxBuilders != 9 {
+		t.Errorf("policy after the reload = %+v, want the merged serve.max_builders 9", cfg.Policy.Serve)
+	}
+
+	// An unchanged tick: same version, no load. The count assertion holds with
+	// and without the fix; only the reload above depends on it.
+	before := src.loads
+	for i := 0; i < 3; i++ {
+		r.Refresh(cfg)
+	}
+	if src.loads != before {
+		t.Errorf("loads after 3 unchanged ticks = %d, want %d: an unchanged version must not load", src.loads, before)
+	}
+}
+
 // TestReloadKeepsLastGoodConfigOnFailure pins the failure semantics: a broken
 // reload keeps serving the last good snapshot and warns once per distinct
 // error, so a bad edit neither halts admissions nor half-replaces the config.
