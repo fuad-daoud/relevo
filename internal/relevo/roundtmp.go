@@ -1,7 +1,6 @@
 package relevo
 
 import (
-	"fmt"
 	"log/slog"
 	"path/filepath"
 
@@ -9,13 +8,13 @@ import (
 )
 
 // roundTmpRel is one round's private temp directory under a runtime's tmp
-// root, named rounds/<binding>-NNN. The round number is padded exactly like
-// every other per-round path so a start, a relaunch and every removal route
-// agree on the name without anyone carrying it between them -- which is what
-// makes removing the directory on a kill safe when the round resumes: the
-// next start recreates it under the same name.
+// root, named rounds/<short>. The short id is deterministic in the binding
+// name and round, so a start, a relaunch and every removal route agree on
+// the name without anyone carrying it between them -- which is what makes
+// removing the directory on a kill safe when the round resumes: the next
+// start recreates it under the same name.
 func roundTmpRel(name string, round int) string {
-	return filepath.Join("rounds", fmt.Sprintf("%s-%03d", name, round))
+	return filepath.Join(tmpSubRounds, shortRoundID(name, round))
 }
 
 // removeRoundTmp takes a round's private temp directory away. Every failure

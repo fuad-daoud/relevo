@@ -145,12 +145,14 @@ func tmpRoundKept(b *store.Binding, open bool, round int) bool {
 }
 
 // sweepRoundDirs walks rounds/ and removes what the rule condemns. A binding's
-// log is read only for a binding that actually has an entry at its current
-// round, and once per binding: the daemon ticks every few seconds over a store
-// that may hold a hundred records, and most ticks own no tmp entry at all. An
-// entry whose round cannot be decided -- an unreadable log, an unparseable
-// name -- is kept: the sweep removes what it is sure about, and the next tick
-// reads again.
+// log is read once per binding: the daemon ticks every few seconds over a
+// store that may hold a hundred records, and most ticks own no tmp entry at
+// all. Short entries match the expected set the sweep derives through the
+// same helpers the prepare and remove routes use; pre-change long entries
+// still parse and keep the old rule, so they self-clean without a separate
+// migration. An entry whose round cannot be decided -- an unreadable log,
+// an unparseable name -- is kept: the sweep removes what it is sure about,
+// and the next tick reads again.
 func sweepRoundDirs(rt Runtime, bindings []store.Binding) ([]string, error) {
 	entries, err := rt.Store.ListTmpEntries(rt.TmpRoot, tmpSubRounds)
 	if err != nil {
@@ -162,9 +164,48 @@ func sweepRoundDirs(rt Runtime, bindings []store.Binding) ([]string, error) {
 	}
 	logged := map[string][]store.LogEntry{}
 
-	var removed []string
+	// expected holds the short entry names a live binding still owns: its
+	// open current round, and the next round a send may be preparing before
+	// it logs the plan.
+	expected := make(map[string]bool, len(bindings)*2)
 	var errs []error
+	for _, b := range bindings {
+		if b.State == store.StateDone {
+			continue
+		}
+		next := roundTmpRel(b.Name, b.Round+1)
+		logEntries, seen := logged[b.Name]
+		if !seen {
+			var rerr error
+			logEntries, rerr = rt.Store.ReadLog(b.Name)
+			if rerr != nil {
+				errs = append(errs, fmt.Errorf("tmp sweep: rounds/%s: %w", b.Name, rerr))
+				expected[roundTmpRel(b.Name, b.Round)] = true
+				expected[next] = true
+				continue
+			}
+			logged[b.Name] = logEntries
+		}
+		expected[next] = true
+		if store.RoundOpen(logEntries, b.Round) {
+			expected[roundTmpRel(b.Name, b.Round)] = true
+		}
+	}
+
+	var removed []string
 	for _, e := range entries {
+		if expected[filepath.Join(tmpSubRounds, e.Name)] {
+			continue
+		}
+		if isShortTmpID(e.Name) {
+			path, rerr := removeTmpEntry(rt, filepath.Join(tmpSubRounds, e.Name))
+			if rerr != nil {
+				errs = append(errs, rerr)
+				continue
+			}
+			removed = append(removed, path)
+			continue
+		}
 		name, round, ok := parseScratchName(e.Name)
 		if !ok {
 			continue
@@ -177,9 +218,10 @@ func sweepRoundDirs(rt Runtime, bindings []store.Binding) ([]string, error) {
 		if b != nil && b.State != store.StateDone && round == b.Round {
 			logEntries, seen := logged[name]
 			if !seen {
-				logEntries, err = rt.Store.ReadLog(name)
-				if err != nil {
-					errs = append(errs, fmt.Errorf("tmp sweep: rounds/%s: %w", e.Name, err))
+				var rerr error
+				logEntries, rerr = rt.Store.ReadLog(name)
+				if rerr != nil {
+					errs = append(errs, fmt.Errorf("tmp sweep: rounds/%s: %w", e.Name, rerr))
 					continue
 				}
 				logged[name] = logEntries
@@ -189,9 +231,9 @@ func sweepRoundDirs(rt Runtime, bindings []store.Binding) ([]string, error) {
 		if tmpRoundKept(b, open, round) {
 			continue
 		}
-		path, err := removeTmpEntry(rt, filepath.Join(tmpSubRounds, e.Name))
-		if err != nil {
-			errs = append(errs, err)
+		path, rerr := removeTmpEntry(rt, filepath.Join(tmpSubRounds, e.Name))
+		if rerr != nil {
+			errs = append(errs, rerr)
 			continue
 		}
 		removed = append(removed, path)
@@ -287,24 +329,25 @@ func tmpChainCheckRuns(rt Runtime) ([]tmpOpenChainCheck, error) {
 	return runs, nil
 }
 
-// tmpOpenCheckUnits is the keep-set for checks/, built from the same spec
-// helpers that make the directories: a binding's running gate process, its
-// unsettled served check, and each unsettled run of a chain that has not
-// ended. Naming them through servedCheckSpec and chainCheckSpec rather than
-// spelling the unit again is what keeps the sweep's key format in step with
-// every route that creates or removes one.
+// tmpOpenCheckUnits is the keep-set for checks/ in short-name space, built
+// from the same spec helpers that make the directories: a binding's running
+// gate process, its unsettled served check, and each unsettled run of a
+// chain that has not ended. Hashing each unit through shortCheckID -- the
+// same derivation prepareTmp and removeCheckTmp use -- rather than spelling
+// the unit again is what keeps the sweep's key format in step with every
+// route that creates or removes one.
 func tmpOpenCheckUnits(rt Runtime, bindings []store.Binding, chainChecks []tmpOpenChainCheck) map[string]bool {
 	units := make(map[string]bool, len(bindings)+len(chainChecks))
 	for _, b := range bindings {
 		if b.GateRun != nil {
-			units[scopeUnitNameFor(scopeGate, b.Owner, b.Name, b.Round, "")] = true
+			units[shortCheckID(scopeUnitNameFor(scopeGate, b.Owner, b.Name, b.Round, ""))] = true
 		}
 		if b.CheckRun != nil && !b.CheckRun.Settled() {
-			units[servedCheckSpec(rt, b, *b.CheckRun).UnitName] = true
+			units[shortCheckID(servedCheckSpec(rt, b, *b.CheckRun).UnitName)] = true
 		}
 	}
 	for _, cc := range chainChecks {
-		units[chainCheckSpec(rt, cc.chain, cc.run, "", "").UnitName] = true
+		units[shortCheckID(chainCheckSpec(rt, cc.chain, cc.run, "", "").UnitName)] = true
 	}
 	return units
 }

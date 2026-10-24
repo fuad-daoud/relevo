@@ -78,14 +78,16 @@ func (s *Server) ownerTransport(root string, t isolate.Tenant, gc *git.Client) r
 
 // ensureTenantRoots creates or verifies the split layout for one owner:
 //
-//	<root>, bindings/, repos/, tmp/          root 0711
+//	<root>, bindings/, repos/, tmp/, tmp/t    root 0711
 //	bindings/<hex>                           root:<gid> 0710
 //	bindings/<hex>/.worktrees, .../.scratch  tenant 0700
-//	repos/<hex>, tmp/<hex>                   tenant 0700
+//	repos/<hex>, tmp/<hex>, tmp/t/<short>     tenant 0700
 //
-// Every component is Lstat'ed first, so a symlink or a regular file where a
-// directory belongs is refused, never followed. It runs on every resolution
-// because the daemon's prunes remove the empty tenant directories.
+// The short tmp root is what ownerTmpDir hands to round and check processes;
+// the long tmp/<hex> stays the bundle transport's home. Every component is
+// Lstat'ed first, so a symlink or a regular file where a directory belongs
+// is refused, never followed. It runs on every resolution because the
+// daemon's prunes remove the empty tenant directories.
 func (s *Server) ensureTenantRoots(owner remote.ClientID, t isolate.Tenant) error {
 	hex, ok := owner.Dir()
 	if !ok {
@@ -97,6 +99,7 @@ func (s *Server) ensureTenantRoots(owner remote.ClientID, t isolate.Tenant) erro
 		filepath.Join(root, "bindings"),
 		filepath.Join(root, "repos"),
 		filepath.Join(root, "tmp"),
+		filepath.Join(root, "tmp", "t"),
 	} {
 		if err := ensureRootDir(d, serveRootMode); err != nil {
 			return err
@@ -111,6 +114,7 @@ func (s *Server) ensureTenantRoots(owner remote.ClientID, t isolate.Tenant) erro
 		filepath.Join(ownerRoot, ".worktrees", ".scratch"),
 		filepath.Join(root, "repos", hex),
 		filepath.Join(root, "tmp", hex),
+		filepath.Join(root, "tmp", "t", shortOwnerDir(hex)),
 	} {
 		if err := ensureTenantDir(d, t); err != nil {
 			return err

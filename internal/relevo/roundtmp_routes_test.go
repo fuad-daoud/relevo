@@ -126,7 +126,7 @@ func TestRoundTmpDirReaderSameAsWriter(t *testing.T) {
 		t.Fatalf("Send(reader): %v", err)
 	}
 
-	want := filepath.Join(rt.TmpRoot, "rounds", "reader-bind-001")
+	want := roundTmpPath(rt, "reader-bind", 1)
 	if len(fr.specs) != 1 {
 		t.Fatalf("specs = %d, want the one started process", len(fr.specs))
 	}

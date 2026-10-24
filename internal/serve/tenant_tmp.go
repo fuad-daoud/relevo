@@ -12,11 +12,27 @@ import (
 	"github.com/fuad-daoud/relevo/internal/spawn"
 )
 
-// ownerTmpDir is the temp directory one user-mode owner writes through: the
-// same <root>/tmp/<hex> its bundle temps use, which ensureTenantRoots creates
+// ownerTmpDir is the temp directory one user-mode owner writes through:
+// <root>/tmp/t/<short>, where short is the owner's short id. The bundle
+// transport keeps its own <root>/tmp/<hex>; this root is only what round
+// and check processes see as TMPDIR, so it stays short enough to leave room
+// for a socket name under the sun_path limit. ensureTenantRoots creates it
 // tenant-owned, so a child running as the tenant can write there.
 func (s *Server) ownerTmpDir(root string) string {
-	return filepath.Join(s.cfg.Root, "tmp", filepath.Base(root))
+	return filepath.Join(s.cfg.Root, "tmp", "t", shortOwnerDir(filepath.Base(root)))
+}
+
+// shortOwnerDir is one owner's path component under the serve tmp root: the
+// first 8 characters of its 64-hex directory name. The digest is already
+// uniform, so truncation stays deterministic in the full owner id; shorter
+// test ids pass through untouched. Two owners sharing a prefix would share
+// a root, which takes a 32-bit collision among the handful of enrolled
+// owners.
+func shortOwnerDir(hex string) string {
+	if len(hex) > 8 {
+		return hex[:8]
+	}
+	return hex
 }
 
 // tmpDirRunner points every process one user-mode owner starts, unless that

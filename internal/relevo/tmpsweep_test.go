@@ -222,17 +222,17 @@ func TestTmpOpenCheckUnits(t *testing.T) {
 
 	units := tmpOpenCheckUnits(rt, bindings, chainChecks)
 	for _, want := range []string{
-		scopeUnitNameFor(scopeGate, "o", "gatey", 2, ""),
-		scopeUnitNameFor(scopeGate, "o", "chk-check", 1, ""),
-		scopeUnitNameFor(scopeGate, "o", "shop-check", 4, ""),
+		shortCheckID(scopeUnitNameFor(scopeGate, "o", "gatey", 2, "")),
+		shortCheckID(scopeUnitNameFor(scopeGate, "o", "chk-check", 1, "")),
+		shortCheckID(scopeUnitNameFor(scopeGate, "o", "shop-check", 4, "")),
 	} {
 		if !units[want] {
 			t.Errorf("unit %q missing from the open set", want)
 		}
 	}
 	for _, no := range []string{
-		scopeUnitNameFor(scopeGate, "o", "settled-check", 1, ""),
-		scopeUnitNameFor(scopeGate, "o", "idle", 1, ""),
+		shortCheckID(scopeUnitNameFor(scopeGate, "o", "settled-check", 1, "")),
+		shortCheckID(scopeUnitNameFor(scopeGate, "o", "idle", 1, "")),
 	} {
 		if units[no] {
 			t.Errorf("unit %q in the open set, want it out", no)
@@ -256,7 +256,7 @@ func TestSweepTmpKeepsOpenRoundRemovesClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SweepTmp: %v", err)
 	}
-	tmpWantRemoved(t, rt, removed, filepath.Join("rounds", "shop-001"))
+	tmpWantRemoved(t, rt, removed, roundTmpRel("shop", 1))
 	mustBeGone(t, closed)
 	mustExist(t, open)
 }
@@ -277,7 +277,7 @@ func TestSweepTmpRemovesRoundOfDoneOrMissingBinding(t *testing.T) {
 	}
 	// A DONE binding loses its round entry even while the log still says the
 	// round is open: done is the record's last word.
-	tmpWantRemoved(t, rt, removed, filepath.Join("rounds", "fin-001"), filepath.Join("rounds", "ghost-001"))
+	tmpWantRemoved(t, rt, removed, roundTmpRel("fin", 1), roundTmpRel("ghost", 1))
 	mustBeGone(t, done)
 	mustBeGone(t, missing)
 }
@@ -297,7 +297,7 @@ func TestSweepTmpKeepsRoundAheadOfCurrent(t *testing.T) {
 	}
 	// Send makes the directory before it logs the plan; a round ahead of the
 	// binding's current one is that send in flight, so it is kept unread.
-	tmpWantRemoved(t, rt, removed, filepath.Join("rounds", "adv-001"))
+	tmpWantRemoved(t, rt, removed, roundTmpRel("adv", 1))
 	mustBeGone(t, current)
 	mustExist(t, ahead)
 }
@@ -530,7 +530,7 @@ func TestSweepTmpOneFailureDoesNotStopOthers(t *testing.T) {
 	if !errors.Is(err, fs.ErrPermission) {
 		t.Fatalf("SweepTmp err = %v, want it to join the permission refusal", err)
 	}
-	tmpWantRemoved(t, rt, removed, filepath.Join("rounds", "ghost-001"), "oldgood")
+	tmpWantRemoved(t, rt, removed, roundTmpRel("ghost", 1), "oldgood")
 	mustBeGone(t, ghost)
 	mustBeGone(t, good)
 	mustExist(t, bad)
