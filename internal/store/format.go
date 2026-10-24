@@ -31,7 +31,8 @@ import (
 // read and seal the old paths. That refusal is the intended clean break.)
 //
 // Later fields (abandoned_sessions, oom_requeue, round_oom_kills, link,
-// remote_bundle_failures, check_run, round_closed_baseline_head, builder_pinned, and
+// remote_bundle_failures, check_run, round_closed_baseline_head, builder_pinned,
+// serve's trimpath, and
 // progress's resumed_at, cpu_ticks and cpu_ticks_at) are fields
 // recordFormat never stamps: an older relevo
 // that drops abandoned_sessions loses only pending session deletes, one that
@@ -39,7 +40,9 @@ import (
 // in-flight rounds, one that drops link loses only the name of a remote
 // binding's other copy, and one that drops remote_bundle_failures loses only a
 // failure run, which restarts from zero. One that drops builder_pinned never
-// re-picks for a window, so losing the pin is harmless. One that drops progress's resumed_at,
+// re-picks for a window, so losing the pin is harmless. One that drops serve's
+// trimpath builds trimmed, the intended default, so losing the opt-out is harmless.
+// One that drops progress's resumed_at,
 // cpu_ticks or cpu_ticks_at loses only the resumed-idle and model-silence
 // labels for the round in flight. One that drops
 // round_closed_baseline_head leaves the uncommitted-work recovery without a

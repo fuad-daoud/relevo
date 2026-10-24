@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -321,6 +322,7 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 			LastSeen:    now,
 			AuthorName:  authorName,
 			AuthorEmail: authorEmail,
+			Trimpath:    req.Trimpath,
 		},
 	}, unpin, true
 }
@@ -350,6 +352,15 @@ func (s *Server) handleListBindings(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, views)
 }
+
+// lastSeenEvery is how stale a binding's recorded contact may get before a poll
+// records it again. A client polls each of its bindings every daemon tick, and
+// every save is a binding_record row that sync exports whole and every other
+// machine pulls: recording each poll ran the shared database's traffic to
+// several gigabytes a day. Its readers -- the admin's last contact and the
+// abandoned-binding sweep -- measure in hours and days, so an hour is the
+// coarsest a contact may read without misleading either.
+const lastSeenEvery = time.Hour
 
 func (s *Server) handleGetBinding(w http.ResponseWriter, r *http.Request) {
 	caller := callerOf(r)
@@ -383,9 +394,11 @@ func (s *Server) handleGetBinding(w http.ResponseWriter, r *http.Request) {
 			if fresh.Serve == nil {
 				fresh.Serve = &store.ServeFacts{}
 			}
-			fresh.Serve.LastSeen = now
-			if err := tx.Save(fresh); err != nil {
-				return err
+			if now.Sub(fresh.Serve.LastSeen) >= lastSeenEvery {
+				fresh.Serve.LastSeen = now
+				if err := tx.Save(fresh); err != nil {
+					return err
+				}
 			}
 			b = fresh
 			return nil

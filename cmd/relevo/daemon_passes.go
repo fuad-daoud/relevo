@@ -59,6 +59,9 @@ func daemonEnablePath(d *db.DB, backupDir, origin string, now time.Time) (rowsMa
 			slog.Warn("relevo daemon: local split kept a local row over a shared stray",
 				"row", name, "backup_path", sstats.BackupPath)
 		}
+		if perr := db.PruneSplitBackups(d, backupDir, sstats.BackupPath); perr != nil {
+			slog.Warn("relevo daemon: pre-split backup prune", "err", perr)
+		}
 	}
 
 	// Both lines name the table and the counts, never a row's contents: a stale

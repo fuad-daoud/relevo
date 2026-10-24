@@ -224,6 +224,20 @@ func TestRefusalFixNamesTheWindow(t *testing.T) {
 	}
 }
 
+func TestRefusalChecksClearsEveryGatedProvider(t *testing.T) {
+	refusals := []relevo.RoleRefusal{
+		{Role: "builder", Text: "every candidate serving builder is gated",
+			Serving: []string{"opencode/a/m", "claude/b/m"}, Gated: []string{"a", "b"}},
+	}
+	checks := refusalChecks(refusals)
+	if len(checks) != 1 {
+		t.Fatalf("got %d checks, want 1: %+v", len(checks), checks)
+	}
+	if want := "relevo gate --clear a && relevo gate --clear b"; checks[0].Fix != want {
+		t.Errorf("Fix = %q, want %q", checks[0].Fix, want)
+	}
+}
+
 func TestPolicyChecks(t *testing.T) {
 	warnings := []relevo.PolicyWarning{
 		{Role: "builder", Index: 1, Token: "claude/test/nope", Text: `order.builder[1] "claude/test/nope" is not a configured candidate`},

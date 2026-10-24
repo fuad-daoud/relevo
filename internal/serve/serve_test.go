@@ -1391,7 +1391,10 @@ func TestListIsOwnerScoped(t *testing.T) {
 	}
 }
 
-func TestGetTouchesLastSeen(t *testing.T) {
+// TestGetRecordsLastSeenAtMostEveryWindow pins that a poll saves the binding
+// only once its recorded contact is lastSeenEvery old: a client polls every
+// tick, and each save is a synced row rewrite.
+func TestGetRecordsLastSeenAtMostEveryWindow(t *testing.T) {
 	s, _ := newTestServer(t, 0)
 	handler := s.Handler()
 	kp, err := remote.Generate()
@@ -1414,26 +1417,46 @@ func TestGetTouchesLastSeen(t *testing.T) {
 	if recCreate.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, want 201", recCreate.Code)
 	}
+	st := testRuntime(t, s, id).Store
 
-	b, err := testRuntime(t, s, id).Store.Load("api")
+	poll := func() store.Binding {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, signedRequest(t, kp, "GET", "/v1/bindings/api", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get status = %d, want 200", rec.Code)
+		}
+		b, err := st.Load("api")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+
+	created, err := st.Load("api")
 	if err != nil {
 		t.Fatal(err)
 	}
-	initial := b.Serve.LastSeen
-
 	time.Sleep(10 * time.Millisecond)
-	recGet := httptest.NewRecorder()
-	handler.ServeHTTP(recGet, signedRequest(t, kp, "GET", "/v1/bindings/api", nil))
-	if recGet.Code != http.StatusOK {
-		t.Fatalf("get status = %d, want 200", recGet.Code)
+	inside := poll()
+	if !inside.Serve.LastSeen.Equal(created.Serve.LastSeen) || !inside.UpdatedAt.Equal(created.UpdatedAt) {
+		t.Fatalf("a poll inside the window saved the binding: LastSeen %v -> %v, UpdatedAt %v -> %v",
+			created.Serve.LastSeen, inside.Serve.LastSeen, created.UpdatedAt, inside.UpdatedAt)
 	}
 
-	bAfter, err := testRuntime(t, s, id).Store.Load("api")
-	if err != nil {
+	stale := time.Now().Add(-lastSeenEvery)
+	if err := st.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load("api")
+		if err != nil {
+			return err
+		}
+		b.Serve.LastSeen = stale
+		return tx.Save(b)
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if !bAfter.Serve.LastSeen.After(initial) {
-		t.Fatalf("touched LastSeen = %v not after initial = %v", bAfter.Serve.LastSeen, initial)
+	if past := poll(); !past.Serve.LastSeen.After(stale) {
+		t.Fatalf("a poll past the window left LastSeen at %v", past.Serve.LastSeen)
 	}
 }
 

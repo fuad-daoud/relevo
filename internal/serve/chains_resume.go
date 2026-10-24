@@ -30,6 +30,10 @@ func writeChainResumeError(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusConflict, remote.CodeChainRunning, msg)
 	case strings.Contains(msg, "is done"):
 		writeErr(w, http.StatusConflict, remote.CodeChainDone, msg)
+	case errors.Is(err, relevo.ErrUnknownRole):
+		// A --param naming an actor this server's config lacks -- often one
+		// that has not synced here yet -- is the caller's to fix, not a crash.
+		writeErr(w, http.StatusBadRequest, remote.CodeUnknownActor, msg)
 	default:
 		writeErr(w, http.StatusInternalServerError, "", msg)
 	}

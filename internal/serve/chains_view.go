@@ -50,7 +50,8 @@ func servedChainRequestOf(caller remote.ClientID, bare string, req remote.Create
 	out := relevo.ServedChainRequest{
 		Name: req.Name, Plans: req.Plans, Settings: req.Settings,
 		Feature: req.Feature, Ticket: req.Ticket, Subdir: req.Subdir,
-		Owner: string(caller), Bare: bare, RepoID: req.RepoID, Base: req.BaseCommit,
+		Trimpath: req.Trimpath,
+		Owner:    string(caller), Bare: bare, RepoID: req.RepoID, Base: req.BaseCommit,
 		ClientInstallation: req.ClientInstallation, ClientBindingIDs: req.ClientBindingIDs,
 		Workflow: []byte(req.Workflow), ClientActorIDs: req.ClientActorIDs,
 	}

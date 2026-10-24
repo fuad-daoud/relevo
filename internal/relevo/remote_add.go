@@ -261,6 +261,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		ClientInstallation: clientInstallation,
 		ClientBindingID:    clientBindingID,
 		Subdir:             subdir,
+		Trimpath:           repoSet.Trimpath,
 	}
 	view, err := rt.Remote.CreateBinding(ctx, opts.Server, createReq)
 	if err != nil {
