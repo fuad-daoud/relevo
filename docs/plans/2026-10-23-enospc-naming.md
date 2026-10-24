@@ -64,3 +64,12 @@ Depends on T3 and T4 (it edits `gate_proc.go` and the `headless.go` exit path), 
 - Every plan's last step is to save the plan to `docs/plans/2026-10-23-<slug>.md` in the same commit.
 - Never amend or rebase a pushed commit. Fix forward with new commits.
 - If a premise below contradicts the code, halt and report. Do not improvise.
+
+## Review fix
+
+Two rules keep the disk-full text from being taken for proof of a full disk.
+
+1. **Match only the error form.** Real ENOSPC output ends `<something>: no space left on device`, so a phrase counts only when it directly follows `": "`, case-insensitively. The same holds for `no storage space`. A file a builder printed, or a test message quoting the phrase, no longer matches.
+2. **A builder's exit halts as disk full only when the disk really is short.** `haltOnDiskFullExit` halts when the stream tail matches rule 1 **and** `preflightDisk` refuses for the binding's worktree now; otherwise the exit is handled as before. The halt text is the preflight's own `environment: disk full: ...` reason, with the tail's phrase as detail. A full disk that has already cleared (a check's temp dir that was removed) falls through to the normal exit handling, as it did before.
+
+Checks keep rule 1 only: a check's temp dir is removed when it ends, so a free-space probe afterwards proves nothing.

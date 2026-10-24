@@ -28,10 +28,13 @@ const diskFullScanBytes = 64 << 10
 const environmentPrefix = "environment: "
 
 // diskFullPhrase returns the phrase tail reports, matched case-insensitively.
+// Only the error form counts: real ENOSPC output ends "<something>: <phrase>",
+// while a file a builder printed or a test message quoting the phrase does not
+// carry it directly after ": ".
 func diskFullPhrase(tail string) (string, bool) {
 	low := strings.ToLower(tail)
 	for _, p := range []string{phraseNoSpace, phraseNoStorage} {
-		if strings.Contains(low, p) {
+		if strings.Contains(low, ": "+p) {
 			return p, true
 		}
 	}
@@ -93,15 +96,29 @@ func nameDiskFull(rec *store.GateRecord) {
 	}
 }
 
-// haltOnDiskFullExit halts a round whose builder exited without a report and
-// whose stream tail reports a full disk. The candidate did not fail, so the
-// halt is neither a switch nor an exclusion.
+// haltOnDiskFullExit halts a round whose builder exited without a report, whose
+// stream tail reports a full disk and whose worktree is short of space now. The
+// candidate did not fail, so the halt is neither a switch nor an exclusion.
+//
+// The tail holds the builder's own tool output, which can carry the phrase
+// while the builder exits for an unrelated reason, so the text alone is not
+// proof: the free-space probe must refuse as well. A full disk that has already
+// cleared, such as a check's temp dir that was removed, falls through to the
+// normal exit handling.
 func haltOnDiskFullExit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, tail string) (store.Binding, bool, error) {
 	phrase, ok := diskFullPhrase(tail)
 	if !ok {
 		return b, false, nil
 	}
-	next, err := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: %s; see %s", b.Name, diskFullNote(phrase), showCommand(b.Name, b.Round, "log")))
+	tree := b.Worktree
+	if tree == "" {
+		tree = b.CWD
+	}
+	perr := preflightDisk(rt, tree)
+	if perr == nil {
+		return b, false, nil
+	}
+	next, err := haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: %s (the output also reports %q); see %s", b.Name, perr, phrase, showCommand(b.Name, b.Round, "log")))
 	return next, true, err
 }
 

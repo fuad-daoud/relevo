@@ -23,10 +23,14 @@ func TestDiskFullIn(t *testing.T) {
 		want bool
 	}{
 		{"enospc phrase", "write /tmp/x: no space left on device\n", true},
-		{"storage phrase", "There is no storage space for the file", true},
+		{"storage phrase", "copy: no storage space for the file", true},
 		{"upper case", "ERROR: No Space Left On Device", true},
 		{"near miss", "no space left on disk\nno storage available", false},
 		{"empty", "", false},
+		{"error form", "write /tmp/x: No space left on device", true},
+		{"quoted constant", `phraseNoSpace = "no space left on device"`, false},
+		{"quoted want", `want "no space left on device"`, false},
+		{"line start without prefix", "ok\nno space left on device\n", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -40,14 +44,14 @@ func TestDiskFullIn(t *testing.T) {
 	t.Run("phrase outside the bounded tail", func(t *testing.T) {
 		t.Parallel()
 		path := filepath.Join(t.TempDir(), "check.log")
-		body := phraseNoSpace + "\n" + strings.Repeat("x", diskFullScanBytes+10)
+		body := "w: " + phraseNoSpace + "\n" + strings.Repeat("x", diskFullScanBytes+10)
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if got := diskFullLogNote(path); got != "" {
 			t.Errorf("note = %q, want none for a phrase before the last %d bytes", got, diskFullScanBytes)
 		}
-		body = strings.Repeat("x", diskFullScanBytes+10) + "\n" + phraseNoSpace + "\n"
+		body = strings.Repeat("x", diskFullScanBytes+10) + "\n" + "w: " + phraseNoSpace + "\n"
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -197,10 +201,11 @@ func TestGateDiskFullDoesNotSpendRegate(t *testing.T) {
 }
 
 // diskFullExit runs a builder that exited with code 3 and left logBody behind.
-func diskFullExit(t *testing.T, logBody string) (store.Binding, Runtime, *fakeRunner) {
+func diskFullExit(t *testing.T, logBody string, free func(string) (uint64, error)) (store.Binding, Runtime, *fakeRunner) {
 	t.Helper()
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
+	rt.DiskFree = free
 	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
 	fr.script(b.Builder.PID, false)
 	fr.exit(b.Builder.PID, 3)
@@ -220,8 +225,8 @@ func diskFullExit(t *testing.T, logBody string) (store.Binding, Runtime, *fakeRu
 func TestExitWithDiskFullTailHaltsWithoutSwitch(t *testing.T) {
 	t.Parallel()
 
-	got, rt, fr := diskFullExit(t, "starting\ncp: No space left on device\nrelevo-exit:3\n")
-	if got.State != store.StateNeedsYou || !strings.Contains(got.Halt, wantDiskNote) {
+	got, rt, fr := diskFullExit(t, "starting\ncp: No space left on device\nrelevo-exit:3\n", lowDisk)
+	if got.State != store.StateNeedsYou || !strings.Contains(got.Halt, "environment: disk full: ") || !strings.Contains(got.Halt, "no space left on device") {
 		t.Errorf("state=%s halt=%q, want a halt naming the full disk", got.State, got.Halt)
 	}
 	if got.RoundSwitches != 0 || len(got.RoundExcluded) != 0 || len(switches(t, rt)) != 0 {
@@ -235,11 +240,48 @@ func TestExitWithDiskFullTailHaltsWithoutSwitch(t *testing.T) {
 func TestExitWithoutDiskFullStillSwitches(t *testing.T) {
 	t.Parallel()
 
-	got, rt, fr := diskFullExit(t, "starting\nno space left on disk\nrelevo-exit:3\n")
+	got, rt, fr := diskFullExit(t, "starting\nno space left on disk\nrelevo-exit:3\n", plentyDisk)
 	if got.State != store.StateActive || got.RoundSwitches != 1 || len(switches(t, rt)) != 1 {
 		t.Errorf("state=%s switches=%d, want the usual switch", got.State, got.RoundSwitches)
 	}
 	if len(fr.specs) != 2 {
 		t.Errorf("starts = %d, want a replacement builder", len(fr.specs))
+	}
+}
+
+func TestExitWithDiskFullTailButFreeDiskStillSwitches(t *testing.T) {
+	t.Parallel()
+
+	got, rt, fr := diskFullExit(t, "starting\ncp: No space left on device\nrelevo-exit:3\n", plentyDisk)
+	if got.State != store.StateActive || got.RoundSwitches != 1 || len(switches(t, rt)) != 1 {
+		t.Errorf("state=%s switches=%d, want the usual switch", got.State, got.RoundSwitches)
+	}
+	if len(fr.specs) != 2 {
+		t.Errorf("starts = %d, want a replacement builder", len(fr.specs))
+	}
+}
+
+func TestExitWithQuotedPhraseInTailStillSwitches(t *testing.T) {
+	t.Parallel()
+
+	got, rt, _ := diskFullExit(t, "starting\nphraseNoSpace = \"no space left on device\"\nwant \"no space left on device\"\nrelevo-exit:3\n", lowDisk)
+	if strings.Contains(got.Halt, "also reports") || len(switches(t, rt)) != 1 {
+		t.Errorf("halt=%q switches=%d, want the usual switch and no disk-full halt", got.Halt, len(switches(t, rt)))
+	}
+}
+
+func TestChainRepairsCheckThatOnlyQuotesDiskFullPhrase(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startFlowChain(t, rt, flowLocalRepairWorkflow)
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainRedCheck(t, rt, "shop", "--- FAIL: TestX\n    want \"no space left on device\"\n")
+
+	if c := flowChainRow(t, rt); c.Status == string(workflow.StatusHalted) {
+		t.Errorf("chain halted %q, want the repair loop", c.Reason)
+	}
+	if builder := chainBinding(t, rt, "shop"); builder.Round != 2 {
+		t.Errorf("builder round = %d, want the repair round 2", builder.Round)
 	}
 }
