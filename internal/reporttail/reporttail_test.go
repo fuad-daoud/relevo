@@ -89,10 +89,14 @@ func TestParseReportTailMissingBlock(t *testing.T) {
 		}
 	})
 
-	t.Run("block not at the end (prose after the closing fence) -> false", func(t *testing.T) {
+	t.Run("a parsed block followed by prose reads as the block's status", func(t *testing.T) {
 		input := "```relevo\nstatus: done\n```\nSome prose after the closing fence.\n"
-		if _, ok := Parse([]byte(input)); ok {
-			t.Fatalf("expected ok=false for prose after closing fence, got true")
+		tail, ok := Parse([]byte(input))
+		if !ok {
+			t.Fatalf("expected ok=true for a parsed block followed by prose, got false")
+		}
+		if tail.Status != OutcomeDone {
+			t.Fatalf("expected status: done, got %s", tail.Status)
 		}
 	})
 
@@ -119,6 +123,82 @@ status: done
 			t.Fatalf("expected status: done, got %s", tail.Status)
 		}
 	})
+}
+
+// TestParseWithReasonReadsBlockFollowedByText pins the tail rule: the block
+// ends at its closing fence, so text after the fence is none of the block's
+// concern. The parse reports the block's status, a rejectable body still
+// rejects with its own reason, and StripTail leaves such a body whole.
+func TestParseWithReasonReadsBlockFollowedByText(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		body       string
+		wantStatus string
+		wantHalted string
+		wantReason string
+		// trailing marks a body carrying non-blank text after the closing
+		// fence, which StripTail must leave whole.
+		trailing bool
+	}{
+		{
+			name:       "done block followed by git diff --stat lines",
+			body:       "```relevo\nstatus: done\n```\n file.go | 2 +-\n 1 file changed, 1 insertion(+)\n",
+			wantStatus: OutcomeDone,
+			trailing:   true,
+		},
+		{
+			name:       "halted block followed by text keeps halted_at",
+			body:       "```relevo\nstatus: halted\nhalted_at: \"step 2\"\n```\nsome trailing text\n",
+			wantStatus: OutcomeHalted,
+			wantHalted: "step 2",
+			trailing:   true,
+		},
+		{
+			name:       "text separated from the fence by a blank line",
+			body:       "```relevo\nstatus: done\n```\n\ntrailing text\n",
+			wantStatus: OutcomeDone,
+			trailing:   true,
+		},
+		{
+			name:       "no text after the fence",
+			body:       "```relevo\nstatus: done\n```\n",
+			wantStatus: OutcomeDone,
+		},
+		{
+			name:       "a rejectable body followed by text still rejects with its own reason",
+			body:       "```relevo\nstatus: done\nno colon on this line\n```\ntrailing text\n",
+			wantReason: "tail: line 3 has no ':'",
+			trailing:   true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tail, ok, reason := ParseWithReason([]byte(tc.body))
+			if tc.wantReason != "" {
+				if ok || reason != tc.wantReason {
+					t.Fatalf("ParseWithReason = (ok %v, reason %q), want (ok false, reason %q)", ok, reason, tc.wantReason)
+				}
+			} else {
+				if !ok {
+					t.Fatalf("ParseWithReason ok = false, reason %q; want ok", reason)
+				}
+				if reason != "" {
+					t.Errorf("reason = %q, want empty", reason)
+				}
+				if tail.Status != tc.wantStatus || tail.HaltedAt != tc.wantHalted {
+					t.Errorf("tail = %+v, want status %q halted_at %q", tail, tc.wantStatus, tc.wantHalted)
+				}
+			}
+			if tc.trailing {
+				if got := StripTail([]byte(tc.body)); string(got) != tc.body {
+					t.Errorf("StripTail = %q, want the body byte-identical to %q", got, tc.body)
+				}
+			}
+		})
+	}
 }
 
 // TestParseReportTailRunsToEndOfFile pins that a block whose closing fence

@@ -43,6 +43,11 @@ func TestBlockValueReadsTheLastBlockCarryingTheKey(t *testing.T) {
 			body: bvFence(`verdict: "pass"   # looks good`),
 			want: "pass",
 		},
+		{
+			name: "a block followed by trailing prose is still read",
+			body: bvFence("verdict: pass") + "trailing prose\n",
+			want: "pass",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -64,7 +69,6 @@ func TestBlockValueMissesWithoutABlock(t *testing.T) {
 	}{
 		{name: "empty body", body: nil},
 		{name: "no fence", body: []byte("plain prose, no block\n")},
-		{name: "prose after the closing fence", body: []byte("```relevo\nverdict: pass\n```\ntrailing prose\n")},
 		{name: "block without the key", body: []byte(bvFence("status: done"))},
 		{name: "empty block", body: []byte("```relevo\n\n```\n")},
 	}

@@ -3,8 +3,10 @@ package reporttail
 import "strings"
 
 // BlockValue returns the value of key from the last fenced relevo block of the
-// body that carries it. A missing block, an unreadable tail or a missing key
-// returns ok == false, the same way the builder report tail treats them.
+// body that carries it. The block ends at its closing fence, so prose after
+// the fence does not hide the keys inside it. A missing block, an unreadable
+// tail or a missing key returns ok == false, the same way the builder report
+// tail treats them.
 //
 // A body that carries no fenced block falls back to a closing block whose
 // backtick fences were lost, so a report that names its values in a bare
@@ -13,8 +15,8 @@ import "strings"
 // whether the value is admissible.
 func BlockValue(body []byte, key string) (string, bool) {
 	lines := SplitFenceLines(body)
-	openIdx, _, reason := FindRelevoBlock(lines)
-	if openIdx < 0 || reason != "" {
+	openIdx, _ := FindRelevoBlock(lines)
+	if openIdx < 0 {
 		return fencelessBlockValue(lines, key)
 	}
 
@@ -33,7 +35,7 @@ func BlockValue(body []byte, key string) (string, bool) {
 // fences are present and nothing needs tolerating.
 func HasFencelessBlock(body []byte) bool {
 	lines := SplitFenceLines(body)
-	if openIdx, _, reason := FindRelevoBlock(lines); openIdx >= 0 && reason == "" {
+	if openIdx, _ := FindRelevoBlock(lines); openIdx >= 0 {
 		return false
 	}
 	_, ok := fencelessOpen(lines)

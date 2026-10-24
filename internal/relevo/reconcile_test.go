@@ -1028,6 +1028,41 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 		}
 	})
 
+	t.Run("done block followed by text reads done and keeps the text", func(t *testing.T) {
+		rt, b := sentBinding(t)
+		reportContent := "```relevo\nstatus: done\n```\ntrailing text\n"
+		if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte(reportContent), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		touch(t, rt.Store.DonePath("webshop", 1))
+		if _, err := reconcile(t, rt, b); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+		entries, err := rt.Store.ReadLog("webshop")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var report store.LogEntry
+		for _, e := range entries {
+			if e.Round == 1 && e.Kind == store.KindReport {
+				report = e
+			}
+		}
+		if report.Outcome != reporttail.OutcomeDone {
+			t.Errorf("Outcome = %q, want %q", report.Outcome, reporttail.OutcomeDone)
+		}
+		if report.Note != "" {
+			t.Errorf("Note = %q, want empty", report.Note)
+		}
+		body, err := os.ReadFile(rt.Store.ReportPath("webshop", 1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), "trailing text") {
+			t.Errorf("saved report body %q lost its trailing text", body)
+		}
+	})
+
 	t.Run("no block -> unstructured no annotation", func(t *testing.T) {
 		rt, b := sentBinding(t)
 		reportContent := "Plain report without block\n"
