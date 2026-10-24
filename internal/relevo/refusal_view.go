@@ -17,7 +17,7 @@ type RoleRefusal struct {
 	Text    string   // the words after "would refuse:" in relevo config
 	NoOrder bool     // true for the ambiguous case, false for the all-gated case
 	Serving []string // tokens serving the role, in Set.ForRole order
-	Gated   []string // providers with a gate on a serving token, deduplicated, in Serving order; nil when NoOrder
+	Gated   []string // providers whose gate on a serving token gate --clear lifts (never a window or a cap), deduplicated, in Serving order; nil when NoOrder
 	// Cause is set when every gate behind the refusal is a window or a cap,
 	// so the fix is to wait, not to clear a gate.
 	Cause RefusalCause
@@ -31,6 +31,12 @@ const (
 	CauseWindow RefusalCause = "window"
 	CauseCap    RefusalCause = "cap"
 )
+
+// clearable reports whether gate --clear lifts a gate of kind: a window opens
+// and a cap frees on their own, and clearing either does nothing.
+func clearable(kind availability.Kind) bool {
+	return kind != availability.Scheduled && kind != availability.ConcurrencyLimit
+}
 
 // refusalCause is CauseWindow or CauseCap when every skip on a serving token
 // is a window or a cap (a window wins when both occur), else CauseGate.
@@ -97,8 +103,10 @@ func refusalFromErr(role string, serving []candidate.Candidate, gates []availabi
 	case errors.Is(err, ErrAllGated):
 		var providers []string
 		for _, c := range serving {
-			if len(skipsFor(skipGates(gates), c.Ref().String())) > 0 {
-				providers = append(providers, c.Ref().Provider)
+			for _, sk := range skipsFor(skipGates(gates), c.Ref().String()) {
+				if clearable(sk.Kind) {
+					providers = append(providers, c.Ref().Provider)
+				}
 			}
 		}
 		return RoleRefusal{

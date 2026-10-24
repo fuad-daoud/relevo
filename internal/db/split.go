@@ -291,7 +291,7 @@ func SplitOnce(d *DB, backupDir string, now time.Time) (stats SplitStats, ran bo
 		return stats, true, putSplitStats(local, stats)
 	}
 
-	backupPath := filepath.Join(backupDir, "relevo.db.pre-split-"+now.UTC().Format("20060102-150405"))
+	backupPath := filepath.Join(backupDir, splitBackupPrefix+now.UTC().Format("20060102-150405"))
 	if berr := d.BackupTo(backupPath); berr != nil {
 		return SplitStats{}, false, berr
 	}

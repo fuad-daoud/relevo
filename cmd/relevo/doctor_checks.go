@@ -257,11 +257,10 @@ func refusalChecks(refusals []relevo.RoleRefusal) []doctor.Check {
 		}
 		fix := "relevo config set policy '" + policyExample(r.Role, r.Serving) + "'"
 		if !r.NoOrder {
-			provider := "<provider>"
+			fix = "relevo gate --clear <provider>"
 			if len(r.Gated) > 0 {
-				provider = r.Gated[0]
+				fix = "relevo gate --clear " + strings.Join(r.Gated, " && relevo gate --clear ")
 			}
-			fix = "relevo gate --clear " + provider
 			switch r.Cause {
 			case relevo.CauseWindow:
 				fix = "wait for the window to open, or widen it with relevo config edit"

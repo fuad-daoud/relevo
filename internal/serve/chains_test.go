@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -984,6 +985,22 @@ func TestWriteChainResumeErrorMapsTheChainDone(t *testing.T) {
 	}
 	if body.Code != remote.CodeChainDone {
 		t.Errorf("code = %q, want %q", body.Code, remote.CodeChainDone)
+	}
+}
+
+func TestWriteChainResumeErrorMapsAnUnknownActor(t *testing.T) {
+	rec := httptest.NewRecorder()
+	err := fmt.Errorf("step build: rule 2: run names unknown actor %q: %w", "builder-qwen", relevo.ErrUnknownRole)
+	writeChainResumeError(rec, err)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	var body remote.ErrorBody
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Code != remote.CodeUnknownActor {
+		t.Errorf("code = %q, want %q", body.Code, remote.CodeUnknownActor)
 	}
 }
 
