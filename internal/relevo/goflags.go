@@ -30,9 +30,8 @@ const (
 
 // hasTrimpath reads the flag's presence off a GOFLAGS value: any
 // "-trimpath=..." field counts, "-trimpath=false" included. The flag's value
-// stays unread -- GOFLAGS gives no boolean form this helper could honour, so
-// an entry that names the flag at all is the caller's build choice, not this
-// repository's to flip.
+// stays unread: an entry that names the flag at all, either way, is the
+// caller's build choice, not this repository's to flip.
 func hasTrimpath(value string) bool {
 	for _, field := range strings.Fields(value) {
 		if field == trimpathFlag || strings.HasPrefix(field, trimpathFlag+"=") {
