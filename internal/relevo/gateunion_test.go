@@ -129,6 +129,34 @@ func TestGateUnionCountsASubjectHeldByBothRowsOnce(t *testing.T) {
 	}
 }
 
+func TestGateUnionShowsAHostGateWhoseServeCopyExpired(t *testing.T) {
+	t.Parallel()
+
+	rt := servedShapeRuntime(t, Runtime{
+		Candidates: candidateSet(t, `[
+  {"harness":"claude","provider":"test","model":"a","roles":["builder"]}
+]`),
+		Gates: testGateKV(t),
+		Now:   func() time.Time { return baseTime },
+	})
+	if err := availability.SaveLedger(rt.Gates, availability.Ledger{Entries: []availability.Entry{
+		{Kind: availability.RateLimited, Subject: "test", At: baseTime.Add(-3 * time.Hour), Until: baseTime.Add(-time.Hour), Source: "relevo"},
+	}}); err != nil {
+		t.Fatalf("gate the serve row: %v", err)
+	}
+	gateHostLocal(t, rt.GatesLocal, "test")
+
+	var gated int
+	for _, g := range availability.Gates(AvailabilityDeps(rt)) {
+		if g.Kind == availability.RateLimited && g.Token == "claude/test/a" {
+			gated++
+		}
+	}
+	if gated != 1 {
+		t.Errorf("live rate-limit gates on claude/test/a = %d, want 1: an expired serve-row entry must not hide the host row's live gate", gated)
+	}
+}
+
 // TestGateUnionKeepsWritesInTheirOwnRows pins the write rule a served runtime
 // needs to keep honouring the union: a gate recorded through the served
 // runtime lands in the "serve." row alone, and a ledger document the union is
