@@ -81,13 +81,13 @@ func TestDriverStatsDeltaCountsTursoBytes(t *testing.T) {
 	// worker that booted against a replica which had already moved 10,000 bytes
 	// has moved none of them itself.
 	fake.reading = turso.TursoSyncDbStats{NetworkSentBytes: 10_000, NetworkReceivedBytes: 10_000}
-	if err := backend.transfer(t.Context(), func(context.Context) error {
+	if err := backend.transfer(t.Context(), true, func(context.Context) error {
 		fake.reading = turso.TursoSyncDbStats{NetworkSentBytes: 10_300, NetworkReceivedBytes: 10_000}
 		return nil
 	}); err != nil {
 		t.Fatalf("push transfer: %v", err)
 	}
-	if err := backend.transfer(t.Context(), func(context.Context) error {
+	if err := backend.transfer(t.Context(), false, func(context.Context) error {
 		fake.reading = turso.TursoSyncDbStats{NetworkSentBytes: 10_300, NetworkReceivedBytes: 10_900}
 		return nil
 	}); err != nil {
@@ -99,6 +99,38 @@ func TestDriverStatsDeltaCountsTursoBytes(t *testing.T) {
 	}
 	if backend.bytes.TursoReceived != 900 {
 		t.Errorf("turso_received = %d, want 900", backend.bytes.TursoReceived)
+	}
+	if backend.bytes.TursoPushes != 1 || backend.bytes.TursoPulls != 1 {
+		t.Errorf("transfers = %d pushes/%d pulls, want 1/1", backend.bytes.TursoPushes, backend.bytes.TursoPulls)
+	}
+}
+
+// TestTransferCountsCompletedTransfers pins that the count follows the transfer
+// rather than its measurement: a transfer that moved but could not be measured
+// still counts, while one that failed counts nothing. The counts are read back
+// through Stats, so the assertion covers the whole path to the daemon.
+func TestTransferCountsCompletedTransfers(t *testing.T) {
+	t.Parallel()
+	driver := &localDriver{path: tempReplica(t), statsErr: errors.New("the engine could not be asked")}
+	backend := backendFor(t, driver, "m1")
+
+	if err := backend.transfer(t.Context(), true, driver.Push); err != nil {
+		t.Fatalf("transfer: %v", err)
+	}
+	driver.statsErr = nil
+	driver.pullErr = errors.New("the remote refused the pull")
+	if err := backend.transfer(t.Context(), false, driver.Pull); err == nil {
+		t.Fatal("a refused transfer reported success")
+	}
+	stats, err := backend.Stats()
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if stats.TursoPushes != 1 {
+		t.Errorf("pushes = %d, want the completed push counted without a measurement", stats.TursoPushes)
+	}
+	if stats.TursoPulls != 0 {
+		t.Errorf("pulls = %d, want the refused pull uncounted", stats.TursoPulls)
 	}
 }
 
@@ -122,7 +154,7 @@ func TestTransferCountsAcrossAStatsCallThatFails(t *testing.T) {
 
 	// The push moves 40 bytes, and every reading that would show it fails.
 	fake.readingErr = errors.New("the engine could not be asked")
-	if err := backend.transfer(t.Context(), func(context.Context) error {
+	if err := backend.transfer(t.Context(), true, func(context.Context) error {
 		fake.reading = turso.TursoSyncDbStats{NetworkSentBytes: 140}
 		return nil
 	}); err != nil {
@@ -136,7 +168,7 @@ func TestTransferCountsAcrossAStatsCallThatFails(t *testing.T) {
 	// this transfer's 60, and not the 100 the replica has moved since it was
 	// written.
 	fake.readingErr = nil
-	if err := backend.transfer(t.Context(), func(context.Context) error {
+	if err := backend.transfer(t.Context(), true, func(context.Context) error {
 		fake.reading = turso.TursoSyncDbStats{NetworkSentBytes: 200}
 		return nil
 	}); err != nil {

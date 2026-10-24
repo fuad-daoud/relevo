@@ -41,6 +41,7 @@ func drainImport(step func() (synclog.ImportResult, error), deadline time.Time, 
 func mergeImport(total *synclog.ImportResult, res synclog.ImportResult) {
 	total.Batches += res.Batches
 	total.Applied += res.Applied
+	total.Tables.Add(res.Tables)
 	total.Held = append(total.Held, res.Held...)
 	total.Dropped = append(total.Dropped, res.Dropped...)
 	total.Gaps = append(total.Gaps, res.Gaps...)

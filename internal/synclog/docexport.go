@@ -115,6 +115,7 @@ func (e *Exporter) exportDoc(doc SharedDoc, sig db.DocSignal) (int, error) {
 			return 0, fmt.Errorf("append: %w", err)
 		}
 		noteOwnHead(e.db.LocalOrSelf(), written)
+		e.tables.noteExported(written)
 	}
 	if err := e.db.RecordDocExport(sig, writes); err != nil {
 		return len(entries), err

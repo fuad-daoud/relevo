@@ -62,13 +62,15 @@ func (i *Importer) chunkFetchFailure(origin string, chunk []Entry, err error, to
 // A statement a foreign key refuses fails alone and leaves the transaction open,
 // which the engine's tests pin, so the entry is set aside and the rest go on.
 func (i *Importer) writeChunk(chunk []Entry) (applied int, deferred []Entry, refusal *entryRefusal, err error) {
+	var wrote []Entry
 	err = i.db.Tx(func(tx *db.Tx) error {
-		applied, deferred = 0, nil
+		applied, deferred, wrote = 0, nil, nil
 		for n, e := range chunk {
 			_, aerr := applyEntry(tx, e, i.transport, i.clock())
 			switch {
 			case aerr == nil:
 				applied++
+				wrote = append(wrote, e)
 			case errors.Is(aerr, ErrInvalid):
 				refusal = &entryRefusal{at: n, entry: e, err: aerr}
 				return aerr
@@ -82,6 +84,12 @@ func (i *Importer) writeChunk(chunk []Entry) (applied int, deferred []Entry, ref
 	})
 	if refusal != nil {
 		return 0, nil, refusal, nil
+	}
+	// Only the committed write is tallied: a refusal rolls the chunk back and
+	// the retry tallies what it commits, while deferred entries are tallied by
+	// the later pass that applies them.
+	if err == nil {
+		i.tables.noteImported(wrote)
 	}
 	return applied, deferred, nil, err
 }

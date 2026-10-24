@@ -37,6 +37,10 @@ type Exporter struct {
 	staging string
 	// blobCap is the most body bytes one appended batch may name.
 	blobCap int64
+	// tables accumulates the per-table breakdown across every append this
+	// exporter makes: batches, control entries and documents. Export hands it
+	// back with the result, so one export reports one breakdown.
+	tables TableTallies
 }
 
 // NewExporter returns the exporter for one installation's file and the log it
@@ -67,6 +71,9 @@ type ExportResult struct {
 	Drained int
 	// Appended is how many entries the export handed to the transport.
 	Appended int
+	// Tables is the per-table breakdown of the appended entries. Nil when the
+	// export appended nothing.
+	Tables TableTallies
 }
 
 // Export drains and appends until the outbox holds nothing.
@@ -79,6 +86,7 @@ func (e *Exporter) Export() (ExportResult, error) {
 	ctl, err := e.exportCtl()
 	total.Appended += ctl
 	if err != nil {
+		total.Tables = e.tables
 		return total, fmt.Errorf("synclog: export: %w", err)
 	}
 	for {
@@ -86,11 +94,13 @@ func (e *Exporter) Export() (ExportResult, error) {
 		total.Drained += one.Drained
 		total.Appended += one.Appended
 		if err != nil {
+			total.Tables = e.tables
 			return total, fmt.Errorf("synclog: export: %w", err)
 		}
 		if one.Drained == 0 {
 			docs, err := e.exportDocs()
 			total.Appended += docs
+			total.Tables = e.tables
 			return total, err
 		}
 	}
@@ -127,6 +137,9 @@ func (e *Exporter) ExportBatch() (ExportResult, error) {
 			return ExportResult{}, fmt.Errorf("synclog: export: append: %w", err)
 		}
 		noteOwnHead(e.db.LocalOrSelf(), written)
+		var tables TableTallies
+		tables.noteExported(written)
+		e.tables.Add(tables)
 	}
 
 	// The cut is by sequence rather than by count, so a batch that held fewer
@@ -136,7 +149,7 @@ func (e *Exporter) ExportBatch() (ExportResult, error) {
 	if err := e.db.DeleteDrainedOutbox(cut); err != nil {
 		return ExportResult{}, fmt.Errorf("synclog: export: clear: %w", err)
 	}
-	return ExportResult{Drained: len(drained), Appended: len(entries)}, nil
+	return ExportResult{Drained: len(drained), Appended: len(entries), Tables: e.tables}, nil
 }
 
 // build drains the outbox and turns what it read into the batch the log is

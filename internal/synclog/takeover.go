@@ -209,6 +209,7 @@ func (e *Exporter) exportCtl() (int, error) {
 		return 0, fmt.Errorf("synclog: export: append takeover: %w", err)
 	}
 	noteOwnHead(e.db.LocalOrSelf(), written)
+	e.tables.noteExported(written)
 	return len(entries), e.db.DropPendingCtl(len(pending))
 }
 

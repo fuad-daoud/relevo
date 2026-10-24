@@ -128,6 +128,7 @@ func (i *Importer) applyEntries(batch, rows []Entry, docs int, marks map[string]
 		}
 		if refusal == nil {
 			totalDrops = append(totalDrops, batchDrops...)
+			i.tables.noteAppliedRows(rows, totalDrops)
 			return applied + docs, totalDrops, nil
 		}
 		bad := refusal.entry

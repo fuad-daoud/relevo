@@ -60,7 +60,7 @@ func (b *TursoBackend) Compact(floor int) (CompactResult, error) {
 	if err := tx.Commit(); err != nil {
 		return CompactResult{}, fmt.Errorf("syncworker: compact: %w", err)
 	}
-	if err := b.transfer(ctx, b.driver.Push); err != nil {
+	if err := b.transfer(ctx, true, b.driver.Push); err != nil {
 		return CompactResult{}, fmt.Errorf("syncworker: push the compaction: %w", markTransferRefusal(err))
 	}
 	return CompactResult{Dropped: int(dropped), Floor: written}, nil

@@ -236,7 +236,7 @@ func (normalBackend) Head(string, string, int) ([]syncworker.HeadRow, error) {
 }
 
 func (normalBackend) Stats() (syncworker.Stats, error) {
-	return syncworker.Stats{Entries: 11, Origins: 2, Seq: 9}, nil
+	return syncworker.Stats{Entries: 11, Origins: 2, Seq: 9, TursoPushes: 3, TursoPulls: 12}, nil
 }
 
 // PublishMarks hands the publish back to the test over a file, because the
@@ -501,7 +501,7 @@ func TestPipeClientDrivesAWorkerOverAPipe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stats: %v", err)
 	}
-	if want := (synclog.Stats{Entries: 11, Origins: 2, Seq: 9}); stats != want {
+	if want := (synclog.Stats{Entries: 11, Origins: 2, Seq: 9, TursoPushes: 3, TursoPulls: 12}); stats != want {
 		t.Errorf("Stats = %+v, want %+v", stats, want)
 	}
 

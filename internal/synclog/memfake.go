@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/blobstore"
@@ -28,6 +29,12 @@ import (
 type MemTransport struct {
 	origin string
 	log    *memLog
+	// pushes and pulls count the transfers this handle completed, mirroring
+	// the worker's engine-transfer counters. They are per handle rather than
+	// per log because each installation moves its own bytes; atomics because
+	// nothing else here serializes one handle's calls.
+	pushes atomic.Int64
+	pulls  atomic.Int64
 }
 
 // memLog is the log itself: the entries in append order, each origin's latest
@@ -272,6 +279,11 @@ func (m *MemTransport) AppendSigned(entries []Entry, boundary Boundary) ([]Entry
 	if err != nil {
 		return nil, err
 	}
+	// An empty append moves nothing, as on the worker where it returns before
+	// the push, so it counts no transfer.
+	if len(entries) > 0 {
+		m.pushes.Add(1)
+	}
 	if written == nil {
 		return []Entry{}, nil
 	}
@@ -282,6 +294,7 @@ func (m *MemTransport) AppendSigned(entries []Entry, boundary Boundary) ([]Entry
 // given for it, in sequence order and in whole batches. An origin with no mark
 // is read from the start of its log.
 func (m *MemTransport) Pull(marks map[string]int) ([]Entry, error) {
+	m.pulls.Add(1)
 	return m.log.pull(m.origin, marks), nil
 }
 
@@ -294,7 +307,10 @@ func (m *MemTransport) Head(origin string) ([]HeadRow, error) {
 // Stats reports what the log holds, so a caller can tell an empty log from a
 // transport that is refusing to answer.
 func (m *MemTransport) Stats() (Stats, error) {
-	return m.log.stats(), nil
+	stats := m.log.stats()
+	stats.TursoPushes = int(m.pushes.Load())
+	stats.TursoPulls = int(m.pulls.Load())
+	return stats, nil
 }
 
 // PublishMarks records this reader's position in each origin given. The reader
@@ -302,6 +318,11 @@ func (m *MemTransport) Stats() (Stats, error) {
 // another's rows -- the rule the remote enforces by key, which a test cannot
 // exercise without two machines.
 func (m *MemTransport) PublishMarks(marks map[string]int, at time.Time) error {
+	// A publish of nothing writes nothing, as on the worker where it returns
+	// before the push, so it counts no transfer.
+	if len(marks) > 0 {
+		m.pushes.Add(1)
+	}
 	m.log.publishMarks(m.origin, marks, at)
 	return nil
 }

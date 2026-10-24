@@ -152,7 +152,7 @@ func (b *TursoBackend) AppendSigned(entries []Entry, boundary Boundary) ([]Entry
 	if err != nil {
 		return nil, err
 	}
-	if err := b.transfer(ctx, b.driver.Push); err != nil {
+	if err := b.transfer(ctx, true, b.driver.Push); err != nil {
 		return nil, fmt.Errorf("syncworker: push: %w", markTransferRefusal(err))
 	}
 	return written, nil
@@ -280,7 +280,7 @@ func (b *TursoBackend) Pull(marks map[string]int) ([]Entry, error) {
 		return nil, err
 	}
 	ctx := context.Background()
-	if err := b.transfer(ctx, b.driver.Pull); err != nil {
+	if err := b.transfer(ctx, false, b.driver.Pull); err != nil {
 		return nil, fmt.Errorf("syncworker: pull: %w", markTransferRefusal(err))
 	}
 	entries, err := b.readEntries(ctx, marks)
@@ -392,6 +392,7 @@ func (b *TursoBackend) Stats() (Stats, error) {
 	// the accumulated totals and never seeded from the engine's own running
 	// counters.
 	s.TursoSent, s.TursoReceived = b.bytes.TursoSent, b.bytes.TursoReceived
+	s.TursoPushes, s.TursoPulls = b.bytes.TursoPushes, b.bytes.TursoPulls
 	return s, nil
 }
 

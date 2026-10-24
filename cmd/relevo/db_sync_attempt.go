@@ -7,6 +7,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
 // dbSyncAttemptDoc is the daemon's last steady attempt as `db sync status`
@@ -16,6 +17,10 @@ type dbSyncAttemptDoc struct {
 	End       string `json:"end"`
 	Exported  int    `json:"exported"`
 	Applied   int    `json:"applied"`
+	Pulls     int    `json:"pulls"`
+	Pushes    int    `json:"pushes"`
+	TursoPush int64  `json:"turso_push"`
+	TursoPull int64  `json:"turso_pull"`
 	Error     string `json:"error,omitempty"`
 	Attention bool   `json:"attention,omitempty"`
 }
@@ -31,9 +36,46 @@ func attemptDoc(a relevosync.Attempt) *dbSyncAttemptDoc {
 		End:       statusStamp(a.End),
 		Exported:  a.Exported,
 		Applied:   a.Applied,
+		Pulls:     a.Pulls,
+		Pushes:    a.Pushes,
+		TursoPush: a.TursoPush,
+		TursoPull: a.TursoPull,
 		Error:     a.Error,
 		Attention: a.Attention,
 	}
+}
+
+// attemptDocs renders the attempt ring oldest first, so the document reads in
+// the order the attempts ran.
+func attemptDocs(rs []relevosync.Attempt) []dbSyncAttemptDoc {
+	out := make([]dbSyncAttemptDoc, 0, len(rs))
+	for _, r := range rs {
+		if doc := attemptDoc(r); doc != nil {
+			out = append(out, *doc)
+		}
+	}
+	return out
+}
+
+// dbSyncAttempts reads the attempt ring for the status document. A ring that
+// cannot be read is absent rather than a failed status: the ring is a recent
+// addition and a machine that has never recorded one is in the ordinary state.
+func dbSyncAttempts(local relevosync.Local) []dbSyncAttemptDoc {
+	rs, err := relevosync.ReadAttempts(local)
+	if err != nil || len(rs) == 0 {
+		return nil
+	}
+	return attemptDocs(rs)
+}
+
+// dbSyncTables reads this month's per-table breakdown for the status document,
+// absent like the ring when there is nothing to show.
+func dbSyncTables(local relevosync.Local) synclog.TableTallies {
+	tables, err := relevosync.ReadTables(local, time.Now())
+	if err != nil || len(tables) == 0 {
+		return nil
+	}
+	return tables
 }
 
 // dbSyncAttemptDetails is the status line's account of the last attempt: how it
@@ -49,7 +91,7 @@ func dbSyncAttemptDetails(a *dbSyncAttemptDoc) string {
 	} else {
 		fmt.Fprintf(&b, " · last attempt ok at %s", a.End)
 	}
-	fmt.Fprintf(&b, " (exported %d, applied %d)", a.Exported, a.Applied)
+	fmt.Fprintf(&b, " (exported %d, applied %d, pulls %d, pushes %d)", a.Exported, a.Applied, a.Pulls, a.Pushes)
 	if a.Attention {
 		b.WriteString(" · needs attention")
 	}

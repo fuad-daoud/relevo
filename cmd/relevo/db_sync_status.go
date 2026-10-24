@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
 // dbSyncStatusDoc is `db sync status --json`: what this machine is set to be,
@@ -80,6 +81,13 @@ type dbSyncStatusDoc struct {
 	// LastAttempt is the daemon's last steady attempt, absent until it has run
 	// one.
 	LastAttempt *dbSyncAttemptDoc `json:"last_attempt,omitempty"`
+	// Attempts is the ring of recent attempts, oldest first, absent until one
+	// ran. It is what turns one status read into pulls per hour and bytes per
+	// pull.
+	Attempts []dbSyncAttemptDoc `json:"attempts,omitempty"`
+	// Tables is this month's per-table breakdown, absent until an attempt
+	// tallied a row.
+	Tables synclog.TableTallies `json:"tables,omitempty"`
 	// Bytes is this month's traffic, absent until something moved, and
 	// QuotaTursoSync the allowance the Turso total is read against.
 	Bytes          *relevosync.ByteCounters `json:"bytes,omitempty"`
@@ -179,8 +187,28 @@ func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 	if doc.Bytes != nil || doc.Storage != nil {
 		fmt.Fprintf(&b, " · %s", dbSyncQuotasLine(doc))
 	}
+	if len(doc.Attempts) > 0 {
+		fmt.Fprintf(&b, " · %s", relevosync.FormatAttempts(attemptsOf(doc)))
+	}
+	if len(doc.Tables) > 0 {
+		fmt.Fprintf(&b, " · %s", relevosync.FormatTables(doc.Tables))
+	}
 	b.WriteString(dbSyncAttemptDetails(doc.LastAttempt))
 	return b.String()
+}
+
+// attemptsOf renders the document's attempt ring back into the shape the
+// formatter reads, so the line stays a function of the document alone.
+func attemptsOf(doc dbSyncStatusDoc) []relevosync.Attempt {
+	out := make([]relevosync.Attempt, 0, len(doc.Attempts))
+	for _, a := range doc.Attempts {
+		out = append(out, relevosync.Attempt{
+			Exported: a.Exported, Applied: a.Applied,
+			Pulls: a.Pulls, Pushes: a.Pushes,
+			TursoPush: a.TursoPush, TursoPull: a.TursoPull,
+		})
+	}
+	return out
 }
 
 // orNone renders an empty remote as something a reader can tell from a URL.

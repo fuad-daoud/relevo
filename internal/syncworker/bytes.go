@@ -16,17 +16,25 @@ import (
 )
 
 // transfer runs one push or pull and folds what it moved into the cumulative
-// counters, from the engine's own readings taken either side of it.
+// counters, from the engine's own readings taken either side of it. push says
+// which direction move goes, so the transfer is counted as well as measured:
+// the count is what turns a month of bytes into pulls per hour.
 //
 // A stats call that fails is not a reason to refuse the transfer: the bytes are
 // being moved either way, and losing a measurement is better than losing the
 // append or the pull that carried a user's work. The counters then stay where
 // they were, and the next transfer's difference spans the gap -- which is
-// right, because the engine's counter moved across both.
-func (b *TursoBackend) transfer(ctx context.Context, move func(context.Context) error) error {
+// right, because the engine's counter moved across both. The transfer itself
+// still counts: it happened, even though its bytes are not yet known.
+func (b *TursoBackend) transfer(ctx context.Context, push bool, move func(context.Context) error) error {
 	before, haveBefore := b.engineBytes(ctx)
 	if err := move(ctx); err != nil {
 		return err
+	}
+	if push {
+		b.bytes.TursoPushes++
+	} else {
+		b.bytes.TursoPulls++
 	}
 	after, haveAfter := b.engineBytes(ctx)
 	if haveAfter {
