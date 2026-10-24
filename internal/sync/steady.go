@@ -48,6 +48,12 @@ type SteadyResult struct {
 	Exported int
 	// Applied is how many of another origin's entries the attempt wrote.
 	Applied int
+	// Transfers is the engine pulls and pushes the attempt ran and the Turso
+	// bytes they carried, measured from the worker's own totals.
+	Transfers Transfers
+	// Tables is the per-table breakdown of the entries the attempt exported
+	// and applied.
+	Tables synclog.TableTallies
 	// Err is the first failure the attempt hit, nil on success.
 	Err error
 	// Attention is whether Err is one a human has to act on.
@@ -104,8 +110,12 @@ func (r *Runner) attempt(ctx context.Context, shared *db.DB) SteadyResult {
 	CaptureFiles(shared)
 	t := NewStopTransport(r.Client)
 	defer r.Track(t)()
+	base := r.snapshotTotals()
 	out := r.exchange(ctx, shared, t)
-	r.countBytes(ctx, t)
+	if delta, ok := r.countBytes(ctx, t, base); ok {
+		out.Transfers = delta
+	}
+	r.countTables(out.Tables)
 	return out
 }
 
@@ -143,11 +153,12 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 		out.Trouble.Held = append(out.Trouble.Held, err.Error())
 		return out
 	}
-	exported, locked, err := r.exportStep(ctx, shared, t)
+	exported, tables, locked, err := r.exportStep(ctx, shared, t)
 	if err != nil {
 		return r.failed(out, err)
 	}
 	out.Exported = exported
+	out.Tables = tables
 	// The extension that vouches for this origin's own confirmed tail goes
 	// out before the import reads the cuts, so this attempt's own reads see
 	// the fence this machine believes in.
@@ -159,6 +170,7 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 		return r.failed(out, err)
 	}
 	out.Applied = imported.Applied
+	out.Tables.Add(imported.Tables)
 	out.Trouble = TroubleFrom(imported)
 	if locked {
 		out.Trouble.Held = append(out.Trouble.Held, synclog.ErrLockedSignedOrigin.Error())
@@ -173,8 +185,8 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 
 // exportStep runs the exporter under the attempt bound. Locked signed origins
 // are tolerated so the import half still runs.
-func (r *Runner) exportStep(ctx context.Context, shared *db.DB, t *StopTransport) (int, bool, error) {
-	var exported int
+func (r *Runner) exportStep(ctx context.Context, shared *db.DB, t *StopTransport) (int, synclog.TableTallies, bool, error) {
+	var res synclog.ExportResult
 	err := within(ctx, t, r.stepTimeout(), func() error {
 		key, err := SigningKey(r.Local)
 		if err != nil {
@@ -183,17 +195,16 @@ func (r *Runner) exportStep(ctx context.Context, shared *db.DB, t *StopTransport
 		exp := synclog.NewExporter(shared, t)
 		exp.SetKey(key)
 		BindDocs(exp, shared)
-		res, err := exp.Export()
-		exported = res.Appended
+		res, err = exp.Export()
 		return err
 	})
 	if err != nil {
 		if errors.Is(err, synclog.ErrLockedSignedOrigin) {
-			return 0, true, nil
+			return 0, nil, true, nil
 		}
-		return 0, false, err
+		return 0, nil, false, err
 	}
-	return exported, false, nil
+	return res.Appended, res.Tables, false, nil
 }
 
 // identityGate is CheckAdoptedClaim under the attempt's own step bound.

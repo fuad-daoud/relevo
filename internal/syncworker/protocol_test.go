@@ -198,14 +198,7 @@ func logRequestWireCases() []wireCase {
 // responseWireCases is one case per shape a reply takes, so a field a reply
 // gained and one a reply lost are both caught.
 func responseWireCases() []wireCase {
-	// Every counter is set, because a stats reply that gained one and left the
-	// others at zero would still encode to a line a reader could mistake for a
-	// month that cost nothing.
-	stats := Stats{
-		Entries: 11, Origins: 2, Seq: 9,
-		TursoSent: 1024, TursoReceived: 2048, R2Put: 4096, R2Get: 8192,
-	}
-	return []wireCase{
+	return append([]wireCase{
 		{
 			name:  "response carrying entries",
 			value: Response{ID: "2", OK: true, Entries: []Entry{upsertAt()}},
@@ -229,12 +222,7 @@ func responseWireCases() []wireCase {
 			wire: `{"id":"4","ok":true,"head":[{"tbl":"task","pk":"[\"t-1\"]",` +
 				`"seq":7,"hash":"abc123"}]}`,
 		},
-		{
-			name:  "response carrying stats",
-			value: Response{ID: "5", OK: true, Stats: &stats},
-			wire: `{"id":"5","ok":true,"stats":{"entries":11,"origins":2,"seq":9,` +
-				`"turso_sent":1024,"turso_received":2048,"r2_put":4096,"r2_get":8192}}`,
-		},
+		statsWireCase(),
 		{
 			name:  "response carrying a put that moved bytes",
 			value: Response{ID: "7", OK: true, Bytes: 4096},
@@ -276,6 +264,25 @@ func responseWireCases() []wireCase {
 			value: Response{ID: "6", OK: true},
 			wire:  `{"id":"6","ok":true}`,
 		},
+	}, statsWireCase())
+}
+
+// statsWireCase is the stats reply's wire form on its own, because the case
+// list above is at its length limit. Every counter is set, because a stats
+// reply that gained one and left the others at zero would still encode to a
+// line a reader could mistake for a month that cost nothing.
+func statsWireCase() wireCase {
+	stats := Stats{
+		Entries: 11, Origins: 2, Seq: 9,
+		TursoSent: 1024, TursoReceived: 2048, R2Put: 4096, R2Get: 8192,
+		TursoPushes: 3, TursoPulls: 12,
+	}
+	return wireCase{
+		name:  "response carrying stats",
+		value: Response{ID: "5", OK: true, Stats: &stats},
+		wire: `{"id":"5","ok":true,"stats":{"entries":11,"origins":2,"seq":9,` +
+			`"turso_sent":1024,"turso_received":2048,"turso_pushes":3,"turso_pulls":12,` +
+			`"r2_put":4096,"r2_get":8192}}`,
 	}
 }
 

@@ -342,5 +342,7 @@ func statsFromWire(s syncworker.Stats) synclog.Stats {
 		TursoReceived: s.TursoReceived,
 		R2Put:         s.R2Put,
 		R2Get:         s.R2Get,
+		TursoPushes:   s.TursoPushes,
+		TursoPulls:    s.TursoPulls,
 	}
 }

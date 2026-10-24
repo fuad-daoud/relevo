@@ -22,6 +22,9 @@ func (m *MemTransport) ClaimIdentity(_ context.Context, origin, token string, at
 	m.log.mu.Lock()
 	defer m.log.mu.Unlock()
 
+	// The worker pulls on every claim and pushes and pulls again when it
+	// writes, so the counts mirror that shape rather than the call.
+	m.pulls.Add(1)
 	held, ok := m.log.claims[origin]
 	if token != "" && (!ok || held.token == token || at.Sub(held.at) > ClaimTTL) {
 		if m.log.claims == nil {
@@ -29,6 +32,8 @@ func (m *MemTransport) ClaimIdentity(_ context.Context, origin, token string, at
 		}
 		m.log.claims[origin] = claimRow{token: token, at: at}
 		held = m.log.claims[origin]
+		m.pushes.Add(1)
+		m.pulls.Add(1)
 	}
 	return held.token, held.at, nil
 }

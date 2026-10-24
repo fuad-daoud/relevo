@@ -22,6 +22,9 @@ func (m *MemTransport) CompactOwn(floor int) (CompactResult, error) {
 	if err != nil {
 		return CompactResult{}, err
 	}
+	// The worker pushes the compaction unconditionally once it commits, so a
+	// completed compact counts a transfer whatever it dropped.
+	m.pushes.Add(1)
 	m.log.mu.Lock()
 	defer m.log.mu.Unlock()
 	return CompactResult{Dropped: dropped, Floor: m.log.floors[m.origin]}, nil

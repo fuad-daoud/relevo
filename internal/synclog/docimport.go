@@ -131,6 +131,16 @@ func (i *Importer) takeDocs(origin string, docs []Entry) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("synclog: import docs from %s: %w", origin, err)
 	}
+	// Parked documents are stored for later, not applied: DrainPending tallies
+	// them when it applies them, so tallying here as well would count them
+	// twice.
+	if len(i.key) > 0 {
+		entries := make([]Entry, 0, len(items))
+		for _, it := range items {
+			entries = append(entries, it.entry)
+		}
+		i.tables.noteImported(entries)
+	}
 	return len(items), nil
 }
 
@@ -364,6 +374,11 @@ func (i *Importer) DrainPending() (ImportResult, error) {
 		return res, fmt.Errorf("synclog: pending docs: %w", err)
 	}
 	res.Applied += len(items)
+	entries := make([]Entry, 0, len(items))
+	for _, it := range items {
+		entries = append(entries, it.entry)
+	}
+	i.tables.noteImported(entries)
 	return res, nil
 }
 

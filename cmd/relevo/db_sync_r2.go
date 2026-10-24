@@ -252,6 +252,8 @@ func dbSyncStatusRead(local relevosync.Local) (dbSyncStatusDoc, error) {
 		Dropped:      state.Trouble.Dropped,
 		Gaps:         state.Trouble.Gaps,
 		LastAttempt:  attemptDoc(state.Attempt),
+		Attempts:     dbSyncAttempts(local),
+		Tables:       dbSyncTables(local),
 	}
 	if err := dbSyncStatusStorage(local, settings, &doc); err != nil {
 		return dbSyncStatusDoc{}, err

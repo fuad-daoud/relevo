@@ -287,4 +287,10 @@ type Stats struct {
 	TursoReceived int64
 	R2Put         int64
 	R2Get         int64
+	// TursoPushes and TursoPulls are how many engine pushes and pulls those
+	// bytes arrived in, cumulative like the byte totals. The count beside the
+	// bytes is what tells an attempt that moved megabytes in one pull from one
+	// that moved kilobytes in hundreds.
+	TursoPushes int
+	TursoPulls  int
 }

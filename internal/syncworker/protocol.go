@@ -450,6 +450,10 @@ type Stats struct {
 	// was written by before.
 	TursoSent     int64 `json:"turso_sent"`
 	TursoReceived int64 `json:"turso_received"`
+	// TursoPushes and TursoPulls are how many engine pushes and pulls those
+	// bytes arrived in, cumulative like the byte totals.
+	TursoPushes int `json:"turso_pushes"`
+	TursoPulls  int `json:"turso_pulls"`
 	// R2Put and R2Get are the body bytes sent to and received from the bucket
 	// over this worker's life, counted from object sizes rather than estimated.
 	// An upload that found the object already present adds nothing: it moved no

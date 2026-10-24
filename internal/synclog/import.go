@@ -63,6 +63,10 @@ type Importer struct {
 	// AfterBatch runs after each batch or snapshot chunk is written, so a
 	// caller can account for the transfer before the next one starts.
 	AfterBatch func()
+	// tables accumulates the per-table breakdown of every entry this run
+	// applied: batch rows, snapshot rows and documents. Import hands it back
+	// with the result, so one import reports one breakdown.
+	tables TableTallies
 }
 
 // clock is the arrival window's clock, never nil after NewImporter.
@@ -121,6 +125,9 @@ type ImportResult struct {
 	Stalled []Stall
 	// Snapshots is how many origins were brought up to their compaction floor.
 	Snapshots int
+	// Tables is the per-table breakdown of the applied entries. Nil when the
+	// import applied nothing.
+	Tables TableTallies
 }
 
 // Moved reports whether a run moved any origin's mark: it applied an entry or
@@ -267,7 +274,8 @@ var errNotOwner = errors.New("the entry names a row another installation owns")
 // names a row somebody else owns, is dropped and moved past. Only a failure of
 // this machine's own -- a log that will not answer, a file that is busy -- ends
 // the import with an error.
-func (i *Importer) Import() (ImportResult, error) {
+func (i *Importer) Import() (total ImportResult, err error) {
+	defer func() { total.Tables.Add(i.tables) }()
 	marks, err := i.db.ImportMarks()
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("synclog: import: %w", err)
@@ -279,7 +287,7 @@ func (i *Importer) Import() (ImportResult, error) {
 	if err := i.loadSigned(state); err != nil {
 		return ImportResult{}, err
 	}
-	total, err := i.DrainPending()
+	total, err = i.DrainPending()
 	if err != nil {
 		return total, err
 	}

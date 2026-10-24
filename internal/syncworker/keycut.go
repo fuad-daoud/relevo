@@ -28,13 +28,13 @@ func (b *TursoBackend) PublishEpochCut(cut EpochCut) error {
 		return err
 	}
 	ctx := context.Background()
-	if err := b.transfer(ctx, b.driver.Pull); err != nil {
+	if err := b.transfer(ctx, false, b.driver.Pull); err != nil {
 		return fmt.Errorf("syncworker: push the cut extension: %w", markTransferRefusal(err))
 	}
 	if err := b.cutExtension(ctx, cut); err != nil {
 		return err
 	}
-	if err := b.transfer(ctx, b.driver.Push); err != nil {
+	if err := b.transfer(ctx, true, b.driver.Push); err != nil {
 		return fmt.Errorf("syncworker: push the cut extension: %w", markTransferRefusal(err))
 	}
 	return nil

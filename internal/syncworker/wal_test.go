@@ -31,7 +31,7 @@ func TestTransferCheckpointsOnlyAWALPastTheBound(t *testing.T) {
 			driver := newTursoDriver("")
 			driver.sdb = fake
 			backend := &TursoBackend{driver: driver}
-			if err := backend.transfer(t.Context(), func(context.Context) error {
+			if err := backend.transfer(t.Context(), true, func(context.Context) error {
 				fake.reading = turso.TursoSyncDbStats{MainWalSize: tc.wal}
 				return nil
 			}); err != nil {
@@ -55,7 +55,7 @@ func TestAFailedCheckpointKeepsTheTransfer(t *testing.T) {
 	driver.sdb = fake
 	var log bytes.Buffer
 	backend := &TursoBackend{driver: driver, warn: &log}
-	if err := backend.transfer(t.Context(), func(context.Context) error {
+	if err := backend.transfer(t.Context(), true, func(context.Context) error {
 		fake.reading = turso.TursoSyncDbStats{MainWalSize: walCheckpointBytes}
 		return nil
 	}); err != nil {

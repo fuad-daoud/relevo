@@ -51,7 +51,7 @@ func (b *TursoBackend) PublishMarks(marks map[string]int, at time.Time) error {
 	if err := b.writeMarks(ctx, marks, at); err != nil {
 		return fmt.Errorf("syncworker: publish marks: %w", markDriverRefusal(err))
 	}
-	if err := b.transfer(ctx, b.driver.Push); err != nil {
+	if err := b.transfer(ctx, true, b.driver.Push); err != nil {
 		return fmt.Errorf("syncworker: push marks: %w", markTransferRefusal(err))
 	}
 	return nil

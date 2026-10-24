@@ -189,7 +189,7 @@ func (b *TursoBackend) KeyInit(key KeyMeta) (KeyMeta, error) {
 	if err := tx.Commit(); err != nil {
 		return KeyMeta{}, fmt.Errorf("syncworker: init the key: %w", err)
 	}
-	if err := b.transfer(ctx, b.driver.Push); err != nil {
+	if err := b.transfer(ctx, true, b.driver.Push); err != nil {
 		return KeyMeta{}, fmt.Errorf("syncworker: push the key: %w", markTransferRefusal(err))
 	}
 	return b.KeyMeta()
@@ -217,16 +217,16 @@ func (b *TursoBackend) KeyRekey(spec KeyRekeySpec) (KeyMeta, error) {
 	// The pull is what makes the reads below this attempt's remote rather than
 	// the last one's: the heads the cuts are checked against and the epoch the
 	// CAS is set against both have to be what the remote holds now.
-	if err := b.transfer(ctx, b.driver.Pull); err != nil {
+	if err := b.transfer(ctx, false, b.driver.Pull); err != nil {
 		return KeyMeta{}, fmt.Errorf("syncworker: rekey the key: %w", markTransferRefusal(err))
 	}
 	if err := b.rekeyTx(ctx, spec); err != nil {
 		return KeyMeta{}, err
 	}
-	if err := b.transfer(ctx, b.driver.Push); err != nil {
+	if err := b.transfer(ctx, true, b.driver.Push); err != nil {
 		return KeyMeta{}, fmt.Errorf("syncworker: push the rekey: %w", markTransferRefusal(err))
 	}
-	if err := b.transfer(ctx, b.driver.Pull); err != nil {
+	if err := b.transfer(ctx, false, b.driver.Pull); err != nil {
 		return KeyMeta{}, fmt.Errorf("syncworker: pull the rekey: %w", markTransferRefusal(err))
 	}
 	held, err := b.KeyMeta()

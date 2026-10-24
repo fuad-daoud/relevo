@@ -30,7 +30,7 @@ func (b *TursoBackend) ClaimIdentity(origin, token string, at time.Time) (string
 		return "", time.Time{}, err
 	}
 	ctx := context.Background()
-	if err := b.transfer(ctx, b.driver.Pull); err != nil {
+	if err := b.transfer(ctx, false, b.driver.Pull); err != nil {
 		return "", time.Time{}, fmt.Errorf("syncworker: claim an identity: %w", markTransferRefusal(err))
 	}
 	if token != "" {
@@ -39,10 +39,10 @@ func (b *TursoBackend) ClaimIdentity(origin, token string, at time.Time) (string
 			return "", time.Time{}, err
 		}
 		if wrote {
-			if err := b.transfer(ctx, b.driver.Push); err != nil {
+			if err := b.transfer(ctx, true, b.driver.Push); err != nil {
 				return "", time.Time{}, fmt.Errorf("syncworker: push the claim: %w", markTransferRefusal(err))
 			}
-			if err := b.transfer(ctx, b.driver.Pull); err != nil {
+			if err := b.transfer(ctx, false, b.driver.Pull); err != nil {
 				return "", time.Time{}, fmt.Errorf("syncworker: pull the claim: %w", markTransferRefusal(err))
 			}
 		}
