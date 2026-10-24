@@ -203,18 +203,14 @@ func pickServedTier(w http.ResponseWriter, rt relevo.Runtime, roleName, candidat
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
 		return "", "", "", false
 	}
-	// Only a wire-requested tier gets the launch render; a policy or
-	// candidate tier keeps the resolve-plus-cap behaviour.
-	rendered := resolved
-	if explicit != "" {
-		if rendered, err = relevo.RenderServedTier(rt, roleName, token, kind, resolved); err != nil {
-			if errors.Is(err, harness.ErrTierUnsupported) || errors.Is(err, harness.ErrExtraArgsPermission) {
-				writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())
-			} else {
-				writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
-			}
-			return "", "", "", false
+	rendered, err := relevo.RenderServedTier(rt, roleName, token, kind, resolved)
+	if err != nil {
+		if errors.Is(err, harness.ErrTierUnsupported) || errors.Is(err, harness.ErrExtraArgsPermission) {
+			writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())
+		} else {
+			writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
 		}
+		return "", "", "", false
 	}
 	return token, kind, string(rendered), true
 }
