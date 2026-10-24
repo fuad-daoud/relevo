@@ -221,23 +221,75 @@ func TestTmpOpenCheckUnits(t *testing.T) {
 	chainChecks := []tmpOpenChainCheck{{chain: db.ChainRow{Owner: "o", Name: "shop"}, run: 4}}
 
 	units := tmpOpenCheckUnits(rt, bindings, chainChecks)
-	for _, want := range []string{
-		shortCheckID(scopeUnitNameFor(scopeGate, "o", "gatey", 2, "")),
-		shortCheckID(scopeUnitNameFor(scopeGate, "o", "chk-check", 1, "")),
-		shortCheckID(scopeUnitNameFor(scopeGate, "o", "shop-check", 4, "")),
-	} {
-		if !units[want] {
-			t.Errorf("unit %q missing from the open set", want)
+	live := []string{
+		scopeUnitNameFor(scopeGate, "o", "gatey", 2, ""),
+		scopeUnitNameFor(scopeGate, "o", "chk-check", 1, ""),
+		scopeUnitNameFor(scopeGate, "o", "shop-check", 4, ""),
+	}
+	for _, unit := range live {
+		for _, want := range []string{unit, shortCheckID(unit)} {
+			if !units[want] {
+				t.Errorf("unit %q missing from the open set", want)
+			}
 		}
 	}
-	for _, no := range []string{
-		shortCheckID(scopeUnitNameFor(scopeGate, "o", "settled-check", 1, "")),
-		shortCheckID(scopeUnitNameFor(scopeGate, "o", "idle", 1, "")),
+	for _, unit := range []string{
+		scopeUnitNameFor(scopeGate, "o", "settled-check", 1, ""),
+		scopeUnitNameFor(scopeGate, "o", "idle", 1, ""),
 	} {
-		if units[no] {
-			t.Errorf("unit %q in the open set, want it out", no)
+		for _, no := range []string{unit, shortCheckID(unit)} {
+			if units[no] {
+				t.Errorf("unit %q in the open set, want it out", no)
+			}
 		}
 	}
+}
+
+// TestSweepTmpKeepsLiveLongChecks pins the pre-change spelling: a checks/
+// entry under the bare unit for a live run is kept at any age, while an aged
+// bare-unit entry for a settled run still goes.
+func TestSweepTmpKeepsLiveLongChecks(t *testing.T) {
+	t.Parallel()
+
+	rt := tmpSweepSetup(t)
+	gateB := store.Binding{Name: "gatey", CWD: "/repo/gatey", Owner: "o", Round: 3, State: store.StateActive,
+		GateRun: &store.GateRun{PID: 7, StartedAt: baseTime.Unix(), Round: 3, Command: "make check"}}
+	chkB := store.Binding{Name: "chk", CWD: "/repo/chk", Owner: "o", Round: 2, State: store.StateActive,
+		CheckRun: &store.CheckRun{ID: "c1", Command: "make check", Round: 2}}
+	doneB := store.Binding{Name: "done", CWD: "/repo/done", Owner: "o", Round: 1, State: store.StateDone,
+		CheckRun: &store.CheckRun{ID: "c9", Command: "make check", Round: 1, Result: "pass"}}
+	tmpSaveBinding(t, rt, gateB)
+	tmpSaveBinding(t, rt, chkB)
+	tmpSaveBinding(t, rt, doneB)
+	chain := db.ChainRow{ID: db.NewID(), Name: "shop", Status: string(workflow.StatusRunning),
+		Phase: "build", Step: "checking", Plan: 1, Plans: 1, Builder: "shop", Worktree: "/repo/shop", CreatedAt: baseTime, UpdatedAt: baseTime}
+	tmpPlantChain(t, rt, chain, db.ChainCheckRow{Run: 1, Step: "check", Command: "make check", CreatedAt: baseTime})
+	stopped := db.ChainRow{ID: db.NewID(), Name: "old", Status: string(workflow.StatusStopped),
+		Phase: "build", Step: "checking", Plan: 1, Plans: 1, Builder: "old", Worktree: "/repo/old", CreatedAt: baseTime, UpdatedAt: baseTime}
+	tmpPlantChain(t, rt, stopped, db.ChainCheckRow{Run: 1, Step: "check", Command: "make check", CreatedAt: baseTime})
+
+	old := baseTime.Add(-20 * time.Minute)
+	gateUnit := scopeUnitNameFor(scopeGate, gateB.Owner, gateB.Name, gateB.Round, "")
+	gatePath := tmpMkDir(t, filepath.Join(rt.TmpRoot, tmpSubChecks, gateUnit), old)
+	chkUnit := servedCheckSpec(rt, chkB, *chkB.CheckRun).UnitName
+	chkPath := tmpMkDir(t, filepath.Join(rt.TmpRoot, tmpSubChecks, chkUnit), old)
+	chainUnit := chainCheckSpec(rt, chain, 1, "", "").UnitName
+	chainPath := tmpMkDir(t, filepath.Join(rt.TmpRoot, tmpSubChecks, chainUnit), old)
+	doneUnit := servedCheckSpec(rt, doneB, *doneB.CheckRun).UnitName
+	donePath := tmpMkDir(t, filepath.Join(rt.TmpRoot, tmpSubChecks, doneUnit), old)
+	stoppedUnit := chainCheckSpec(rt, stopped, 1, "", "").UnitName
+	stoppedPath := tmpMkDir(t, filepath.Join(rt.TmpRoot, tmpSubChecks, stoppedUnit), old)
+
+	removed, err := tmpSweep(t, rt)
+	if err != nil {
+		t.Fatalf("SweepTmp: %v", err)
+	}
+	tmpWantRemoved(t, rt, removed, filepath.Join("checks", doneUnit), filepath.Join("checks", stoppedUnit))
+	mustExist(t, gatePath)
+	mustExist(t, chkPath)
+	mustExist(t, chainPath)
+	mustBeGone(t, donePath)
+	mustBeGone(t, stoppedPath)
 }
 
 func TestSweepTmpKeepsOpenRoundRemovesClosed(t *testing.T) {

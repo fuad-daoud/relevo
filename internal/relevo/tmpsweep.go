@@ -329,25 +329,32 @@ func tmpChainCheckRuns(rt Runtime) ([]tmpOpenChainCheck, error) {
 	return runs, nil
 }
 
-// tmpOpenCheckUnits is the keep-set for checks/ in short-name space, built
+// tmpOpenCheckUnits is the keep-set for checks/ in both spellings, built
 // from the same spec helpers that make the directories: a binding's running
 // gate process, its unsettled served check, and each unsettled run of a
-// chain that has not ended. Hashing each unit through shortCheckID -- the
-// same derivation prepareTmp and removeCheckTmp use -- rather than spelling
-// the unit again is what keeps the sweep's key format in step with every
-// route that creates or removes one.
+// chain that has not ended. Each unit contributes the bare unit -- the
+// pre-change leaf -- alongside its shortCheckID hash -- the leaf prepareTmp
+// and removeCheckTmp use -- so a live process's leftover is kept by either
+// name, while a settled row contributes neither spelling and still
+// self-cleans.
 func tmpOpenCheckUnits(rt Runtime, bindings []store.Binding, chainChecks []tmpOpenChainCheck) map[string]bool {
-	units := make(map[string]bool, len(bindings)+len(chainChecks))
+	units := make(map[string]bool, 2*(len(bindings)+len(chainChecks)))
 	for _, b := range bindings {
 		if b.GateRun != nil {
-			units[shortCheckID(scopeUnitNameFor(scopeGate, b.Owner, b.Name, b.Round, ""))] = true
+			unit := scopeUnitNameFor(scopeGate, b.Owner, b.Name, b.Round, "")
+			units[unit] = true
+			units[shortCheckID(unit)] = true
 		}
 		if b.CheckRun != nil && !b.CheckRun.Settled() {
-			units[shortCheckID(servedCheckSpec(rt, b, *b.CheckRun).UnitName)] = true
+			unit := servedCheckSpec(rt, b, *b.CheckRun).UnitName
+			units[unit] = true
+			units[shortCheckID(unit)] = true
 		}
 	}
 	for _, cc := range chainChecks {
-		units[shortCheckID(chainCheckSpec(rt, cc.chain, cc.run, "", "").UnitName)] = true
+		unit := chainCheckSpec(rt, cc.chain, cc.run, "", "").UnitName
+		units[unit] = true
+		units[shortCheckID(unit)] = true
 	}
 	return units
 }
