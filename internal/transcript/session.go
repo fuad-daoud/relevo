@@ -10,7 +10,8 @@ import (
 // always on the first line, so the caller feeds the lines in order and takes the
 // first that answers: claude's session_id, opencode's sessionID, agy's
 // conversation_id (top-level or nested in the event's own object), and codex's
-// thread_id on thread.started only.
+// thread_id on thread.started only, and muse's stream id on any line of the
+// session stream.
 func SessionID(kind string, line []byte) string {
 	trimmed := bytes.TrimSpace(line)
 	if len(trimmed) == 0 || trimmed[0] != '{' {
@@ -38,6 +39,8 @@ func SessionID(kind string, line []byte) string {
 			return str(obj["thread_id"])
 		}
 		return ""
+	case "muse":
+		return museSessionID(obj)
 	}
 	return ""
 }

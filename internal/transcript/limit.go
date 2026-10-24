@@ -41,6 +41,8 @@ func LimitLines(kind string, line []byte) []string {
 		return opencodeLimitLines(obj)
 	case "codex":
 		return codexLimitLines(obj)
+	case "muse":
+		return nonEmptyLine(museFailure(obj))
 	}
 	return nil
 }
