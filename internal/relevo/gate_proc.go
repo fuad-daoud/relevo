@@ -31,7 +31,7 @@ func startGateProc(ctx context.Context, rt Runtime, spec gateProcSpec, attempt i
 	// The check process is prepared through the same seam a round's start
 	// uses: a spec with a unit name gets its own temp dir, and one without a
 	// name is passed through with nothing.
-	tmpDir, _, cleanupProc, err := prepareProc(ctx, rt, procRequest{
+	tmpDir, prepEnv, cleanupProc, err := prepareProc(ctx, rt, procRequest{
 		kind: procKindCheck, key: spec.UnitName, tree: spec.Dir,
 	})
 	if err != nil {
@@ -42,7 +42,7 @@ func startGateProc(ctx context.Context, rt Runtime, spec gateProcSpec, attempt i
 		Argv:       []string{"sh", "-c", spec.Command + " 2>&1"},
 		LogPath:    spec.LogPath,
 		StreamPath: spec.LogPath,
-		Env:        spec.Env,
+		Env:        append(append([]string(nil), spec.Env...), prepEnv...),
 		TmpDir:     tmpDir,
 		Scope:      scopeFor(rt, scopeGate, spec.UnitName, spec.CPUPin),
 	})

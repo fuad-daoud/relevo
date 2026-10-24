@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -236,5 +237,27 @@ func TestSpawnHaltTextPlainErrorKeepsPrefix(t *testing.T) {
 	env := &EnvironmentError{Reason: "disk full: /x has 1.0 GB free (< 5 GB)"}
 	if got := spawnHaltText(env); got != env.Error() {
 		t.Errorf("got %q, want %q", got, env.Error())
+	}
+}
+
+// TestStartGateProcPassesTrimpathToTheCheck pins that a check in a Go tree
+// starts with the GOFLAGS entry its preparation made, beside the spec's own
+// environment, not just the round's builder.
+func TestStartGateProcPassesTrimpathToTheCheck(t *testing.T) {
+	t.Setenv("GOFLAGS", "")
+	fr := newFakeRunner()
+	rt, spec := gateProcFixture(t, fr)
+	spec.Dir = goTree(t)
+	spec.Env = []string{"RELEVO_CHECK=1"}
+
+	if _, rec, err := startGateProc(context.Background(), rt, spec, 0); rec != nil || err != nil {
+		t.Fatalf("startGateProc: rec = %+v, err = %v, want a clean start", rec, err)
+	}
+	if len(fr.specs) != 1 {
+		t.Fatalf("specs = %d, want the one started process", len(fr.specs))
+	}
+	env := fr.specs[0].Env
+	if !slices.Contains(env, "GOFLAGS=-trimpath") || !slices.Contains(env, "RELEVO_CHECK=1") {
+		t.Errorf("check env = %v, want GOFLAGS=-trimpath beside RELEVO_CHECK=1", env)
 	}
 }
