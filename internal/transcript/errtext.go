@@ -59,6 +59,9 @@ func errorText(kind string, obj map[string]any) string {
 			return str(asMap(obj["error"])["message"])
 		}
 
+	case "muse":
+		return museFailure(obj)
+
 	case "agy":
 		return agyErrorText(obj)
 	}

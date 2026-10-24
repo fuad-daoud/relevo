@@ -11,7 +11,7 @@ import (
 // or "" when the stream carries none. Per kind: claude's last assistant text
 // blocks, falling back to the result string; opencode's last text event; agy's
 // result.response, falling back to the last step_update text; codex's last
-// agent_message. A non-JSON line and the relevo-exit trailer are ignored.
+// agent_message; muse's terminal text. A non-JSON line and the relevo-exit trailer are ignored.
 func FinalText(kind string, stream []byte) string {
 	var last, fallback string
 
@@ -100,6 +100,8 @@ func finalCandidates(kind string, obj map[string]any) (last, fallback string) {
 		case "step_update":
 			return "", str(asMap(obj["step_update"])["text"])
 		}
+	case "muse":
+		return museFinal(obj), ""
 	case "codex":
 		if str(obj["type"]) == "item.completed" {
 			item := asMap(obj["item"])

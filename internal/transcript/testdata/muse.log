@@ -1,0 +1,13 @@
+● bash
+  ⎿ ok: {
+● read_file
+  ⎿ ok: Read text file `internal/relevo/chain_pull.go`.
+● read_skill
+  ⎿ ok: <read-skill-result name="bundled:durable-test-collateral" status="ok">
+Done. All work is committed on `muse/bench-1293`.
+
+## What changed
+
+- [`
+[usage] in 199605  cache 9073518  out 56699  reasoning 31120  window 4%  weekly 1%
+[terminal.completed]

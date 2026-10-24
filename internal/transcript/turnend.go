@@ -28,12 +28,16 @@ type turnEndTable struct {
 }
 
 // turnEndTables map the rendered kinds onto the shapes their renderer walks:
-// claude by type, opencode by type, codex by type, agy by event.
+// claude by type, opencode by type, codex by type, agy by event, muse by payload_type.
 var turnEndTables = map[string]turnEndTable{
 	"claude":   {clean: names("result"), unclean: names("assistant", "user")},
 	"opencode": {clean: names("step_finish", "text"), unclean: names("reasoning", "step_start", "tool_use", "error")},
 	"codex":    {clean: names("turn.completed"), unclean: names("turn.failed", "item.started", "item.completed")},
 	"agy":      {clean: names("result"), unclean: names("step_update")},
+	"muse": {
+		clean:   names("run.terminal.completed"),
+		unclean: names("run.terminal.failed", "run.terminal.cancelled", "tool.result", "run.output.delta"),
+	},
 }
 
 func names(ts ...string) map[string]bool {
@@ -85,6 +89,9 @@ func TurnEndState(kind string, stream []byte) TurnEnd {
 func markedEvent(kind string, obj map[string]any) string {
 	if kind == "agy" {
 		return str(obj["event"])
+	}
+	if kind == "muse" {
+		return musePayloadType(obj)
 	}
 	return str(obj["type"])
 }

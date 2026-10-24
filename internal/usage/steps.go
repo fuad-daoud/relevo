@@ -33,6 +33,8 @@ func StreamSteps(harness string, stream []byte) StepStats {
 		agySteps(stream, &st, &stepSamples)
 	case "codex":
 		codexSteps(stream, &st)
+	case "muse":
+		museSteps(stream, &st)
 	default:
 		return StepStats{}
 	}
@@ -312,6 +314,25 @@ func codexSteps(stream []byte, st *StepStats) {
 		switch ev.Item.Type {
 		case "command_execution", "file_change", "collab_tool_call", "mcp_tool_call":
 			st.ToolCalls++
+		}
+	})
+}
+
+// museSteps: a step is a model call as run.usage counts them, a tool call a
+// tool.result.
+func museSteps(stream []byte, st *StepStats) {
+	eachLine(stream, func(line []byte) {
+		var ev museEvent
+		if json.Unmarshal(line, &ev) != nil {
+			return
+		}
+		switch ev.PayloadType {
+		case "tool.result":
+			st.ToolCalls++
+		case "run.usage":
+			for _, m := range ev.Payload.Models {
+				st.Steps += int(m.Calls)
+			}
 		}
 	})
 }

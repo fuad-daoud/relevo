@@ -25,6 +25,8 @@ func newCarry(harness, provider, model string) (streamCarry, bool) {
 		return &opencodeCarry{provider: provider, model: model}, true
 	case "codex":
 		return &codexCarry{provider: provider, model: model}, true
+	case "muse":
+		return &museCarry{provider: provider, model: model}, true
 	}
 	return nil, false
 }
@@ -165,6 +167,33 @@ func (c *codexCarry) feed(line []byte) {
 }
 
 func (c *codexCarry) samples() []Sample { return c.out }
+
+// museCarry: one sample per model entry of each run.usage event.
+type museCarry struct {
+	provider string
+	model    string
+	out      []Sample
+}
+
+func (c *museCarry) feed(line []byte) {
+	var ev museEvent
+	if json.Unmarshal(line, &ev) != nil || ev.PayloadType != "run.usage" {
+		return
+	}
+	for _, m := range ev.Payload.Models {
+		model := m.Model
+		if model == "" {
+			model = c.model
+		}
+		c.out = append(c.out, Sample{Provider: c.provider, Model: model, Tokens: Tokens{
+			In:        m.Input - m.Cached,
+			CacheRead: m.Cached,
+			Out:       m.Output,
+		}})
+	}
+}
+
+func (c *museCarry) samples() []Sample { return c.out }
 
 // streamCache is one headless stream's parse state on the reader.
 type streamCache struct {

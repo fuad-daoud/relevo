@@ -22,7 +22,7 @@ const (
 
 // Source is everything a reader needs to find one round's record.
 type Source struct {
-	Harness    string // "claude" | "agy" | "opencode" | "codex"
+	Harness    string // "claude" | "agy" | "opencode" | "codex" | "muse"
 	Mode       Mode
 	Provider   string // the candidate's; "" for an adopted builder
 	Model      string // the candidate's; "" for an adopted builder
@@ -171,10 +171,10 @@ func readSealed(src Source) ([]Sample, string) {
 	return samples, ""
 }
 
-// newSourceCarry resolves a codex model's effort the way every reader path must.
+// newSourceCarry resolves a codex or muse model's effort the way every reader path must.
 func newSourceCarry(src Source) (streamCarry, bool) {
 	model := src.Model
-	if src.Harness == "codex" {
+	if src.Harness == "codex" || src.Harness == "muse" {
 		if id, _, err := harness.SplitEffort(src.Model); err == nil {
 			model = id
 		}
