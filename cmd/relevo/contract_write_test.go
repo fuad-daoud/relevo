@@ -414,6 +414,8 @@ func TestContractWriteUnclassifiedIsInternal(t *testing.T) {
 		{"ack of another route's entry", fmt.Errorf("ack: %w", delivery.ErrAckAlreadyConfirmed), codePushAlreadyConfirm},
 		{"ack of an unadmitted entry", fmt.Errorf("ack: %w", delivery.ErrAckNotAdmitted), codePushNotAdmitted},
 		{"ack with no live claim", fmt.Errorf("ack: %w", delivery.ErrAckNoClaim), codePushNoClaim},
+		// A disk preflight refusal is the host's state; doctor is the way out.
+		{"environment refusal", fmt.Errorf("send: %w", &relevo.EnvironmentError{Reason: "disk full: /w has 1.0 GB free (< 5 GB)"}), codeNotAvailable},
 		{"unclassified", errors.New("something nobody classified"), codeInternal},
 	} {
 		t.Run(c.name, func(t *testing.T) {
