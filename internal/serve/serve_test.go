@@ -2829,6 +2829,7 @@ func TestTickWalksEveryOwner(t *testing.T) {
 	}
 	runner := newScriptRunner()
 	srv, err := New(Config{
+		DiskFree:   plentyDisk,
 		DB:         testServeDB(t),
 		Root:       serverRoot,
 		Candidates: cSet,

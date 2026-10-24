@@ -107,7 +107,7 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 				}
 				return startErr
 			}
-			halted, herr := haltAndSettle(ctx, rt, tx, b, "builder spawn failed: "+startErr.Error())
+			halted, herr := haltAndSettle(ctx, rt, tx, b, spawnHaltText(startErr))
 			if herr != nil {
 				return fmt.Errorf("%v; and halting the round failed: %w", startErr, herr)
 			}

@@ -81,6 +81,11 @@ func chainStartCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRo
 		return 0, err
 	}
 	spec := chainCheckSpec(rt, c, run, command, rt.Store.CheckLogPath(member, round, run))
+	// Refused before the row is written, and returned typed: the chain halts
+	// on the environment's reason instead of recording a red check.
+	if err := preflightDisk(rt, spec.Dir); err != nil {
+		return 0, err
+	}
 	row := db.ChainCheckRow{
 		Run: run, Step: step, Visit: visit, Command: command,
 		Result: chainCheckStarting, Log: spec.LogPath, CreatedAt: rt.Now().UTC(),
@@ -345,11 +350,15 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 		if err != nil {
 			return err
 		}
-		return chainAdvance(ctx, rt, tx, c, workflow.Event{
+		ev := workflow.Event{
 			Kind: workflow.EventCheckClosed, Step: row.Step, Run: run,
 			Result: result, Log: logKey,
 			RepeatRed: chainRepeatRedCheck(rt, c, before, row.Step, logKey),
-		})
+		}
+		if halted, err := chainHaltOnEnvironment(ctx, rt, tx, c, run, ev); halted || err != nil {
+			return err
+		}
+		return chainAdvance(ctx, rt, tx, c, ev)
 	}
 }
 

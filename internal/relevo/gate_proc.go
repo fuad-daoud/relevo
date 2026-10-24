@@ -85,7 +85,9 @@ func advanceGateProc(ctx context.Context, rt Runtime, run store.GateRun, spec ga
 			// The timed-out run ends with this tick whether or not the kill
 			// landed: nothing advances it again, so its temp dir goes now.
 			removeCheckTmp(rt, spec.UnitName)
-			return nil, true, &store.GateRecord{Command: run.Command, Result: "timeout", DurationMS: elapsed.Milliseconds(), LogPath: spec.LogPath}, nil
+			rec = &store.GateRecord{Command: run.Command, Result: "timeout", DurationMS: elapsed.Milliseconds(), LogPath: spec.LogPath}
+			nameDiskFull(rec)
+			return nil, true, rec, nil
 		}
 		return nil, false, nil, nil
 	}
@@ -118,6 +120,7 @@ func advanceGateProc(ctx context.Context, rt Runtime, run store.GateRun, spec ga
 	// Every path that reaches here ends the run -- pass, fail, or the error
 	// of a process that left no trailer -- so the check's temp dir goes with
 	// it. A re-run does not: it keeps the directory for the new process.
+	nameDiskFull(rec)
 	removeCheckTmp(rt, spec.UnitName)
 	return nil, true, rec, nil
 }

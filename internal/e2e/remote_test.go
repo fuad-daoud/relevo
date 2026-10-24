@@ -99,6 +99,7 @@ func newServerWithContext(t *testing.T, ctx context.Context, cancel context.Canc
 	gitClient := git.NewClient("git", 10*time.Second, 0)
 
 	cfg := serve.Config{
+		DiskFree:       plentyDisk,
 		Root:           root,
 		DB:             machineDB,
 		Candidates:     cSet,
@@ -220,6 +221,7 @@ func newClient(t *testing.T, url, fingerprint string) (relevo.Runtime, remote.Ke
 	}
 
 	rt := relevo.Runtime{
+		DiskFree:    plentyDisk,
 		Git:         gitClient,
 		Store:       st,
 		Candidates:  cSet,
@@ -325,9 +327,10 @@ func TestRemoteRoundEndToEnd(t *testing.T) {
 	// 3. finishRound(...); srv.Tick; then tickUntil the client daemon's Tick leaves a KindReport entry for round 1.
 	gitClient := git.NewClient("git", 10*time.Second, 0)
 	serverRT := relevo.Runtime{
-		Store:  serverStore,
-		Git:    gitClient,
-		Runner: runner,
+		DiskFree: plentyDisk,
+		Store:    serverStore,
+		Git:      gitClient,
+		Runner:   runner,
 	}
 	finishRound(t, serverRT, "api", 1, "round 1 done")
 
@@ -446,9 +449,10 @@ func TestRemoteRoundCollectedAfterClientWasAway(t *testing.T) {
 	serverStore := srvStore(owner)
 	gitClient := git.NewClient("git", 10*time.Second, 0)
 	serverRT := relevo.Runtime{
-		Store:  serverStore,
-		Git:    gitClient,
-		Runner: runner,
+		DiskFree: plentyDisk,
+		Store:    serverStore,
+		Git:      gitClient,
+		Runner:   runner,
 	}
 	finishRound(t, serverRT, "api", 1, "round 1 done")
 
@@ -612,9 +616,10 @@ func TestRemoteSyncOnReadWithoutDaemon(t *testing.T) {
 	serverStore := srvStore(owner)
 	gitClient := git.NewClient("git", 10*time.Second, 0)
 	serverRT := relevo.Runtime{
-		Store:  serverStore,
-		Git:    gitClient,
-		Runner: runner,
+		DiskFree: plentyDisk,
+		Store:    serverStore,
+		Git:      gitClient,
+		Runner:   runner,
 	}
 	finishRound(t, serverRT, "api", 1, "round 1 done")
 

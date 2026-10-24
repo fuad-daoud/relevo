@@ -62,6 +62,7 @@ func newRuntime(t *testing.T) Runtime {
 		// host step of Resolve is inert.
 		MasterMinds: reg,
 		ProcStart:   func(int) (int64, error) { return 0, errors.New("no proc start in tests") },
+		DiskFree:    plentyDisk,
 	}
 }
 

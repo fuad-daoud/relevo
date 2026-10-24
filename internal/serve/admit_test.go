@@ -509,6 +509,7 @@ func TestRestartRequeuesDeadBuilder(t *testing.T) {
 
 	newRunner := newScriptRunner()
 	restarted, err := New(Config{
+		DiskFree:    plentyDisk,
 		DB:          env.srv.cfg.DB,
 		Root:        env.srv.cfg.Root,
 		Candidates:  env.srv.cfg.Candidates,

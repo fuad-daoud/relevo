@@ -428,6 +428,7 @@ func setupTestEnv(t *testing.T, cfgOpts ...func(*Config)) *testEnv {
 		t.Fatalf("isolate.Wrap: %v", err)
 	}
 	srvCfg := Config{
+		DiskFree:   plentyDisk,
 		DB:         testServeDB(t),
 		Root:       serverRoot,
 		Candidates: cSet,
@@ -757,3 +758,7 @@ func seedServedBinding(t *testing.T, env *testEnv, name string, facts store.Serv
 	}
 	return bare, worktree
 }
+
+// plentyDisk reports far more free space than any minimum, so a round's disk
+// preflight never depends on the host filesystem.
+func plentyDisk(string) (uint64, error) { return 1 << 62, nil }

@@ -986,17 +986,10 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// Exited without a report.
 	now := rt.Now().UTC()
 	h, _ := harness.Lookup(b.Builder.Kind)
-	var c candidate.Candidate
-	if ref, err := candidate.ParseRef(b.BuilderCandidate); err == nil && rt.Candidates != nil {
-		if cand, err := rt.Candidates.Lookup(ref); err == nil {
-			c = cand
-		}
-	}
-	denialLine, isDenial := matchDenial(currentBuilderTail(rt, b, availability.LimitScanLines), denialPatterns(c, h))
-	suffix := ""
-	if isDenial {
-		suffix = "; permission-blocked: " + denialLine
-	}
+	c := builderCandidateOf(rt, b)
+	tail := currentBuilderTail(rt, b, availability.LimitScanLines)
+	denialLine, isDenial := matchDenial(tail, denialPatterns(c, h))
+	suffix := denialSuffix(denialLine, isDenial)
 
 	// Detect the oom kill before the exit entry, so the entry says it. A
 	// requested stop still wins and is checked below. The kernel reports a
@@ -1060,6 +1053,9 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	b.Builder.PID, b.Builder.StartedAt = 0, 0 // LogPath stays: status and the entry point at it
 	b.StalledSince = time.Time{}              // the process is gone: not stalled any more
 
+	if next, halted, herr := haltOnDiskFullExit(ctx, rt, tx, b, tail); halted || herr != nil {
+		return next, herr
+	}
 	if lost && switchable {
 		if b.Owner != "" {
 			// On a server, a box reboot must not relaunch every builder past
@@ -1430,6 +1426,9 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// Only a done round may buy a repair: a chain member that reported halted,
 	// blocked or unstructured halts the chain instead, whatever its gate says
 	// (the gate runs on the done marker, not on the report).
+	if halted, ok, herr := haltOnEnvironmentGate(ctx, rt, tx, next, rec, closedRound); ok || herr != nil {
+		return halted, true, false, herr
+	}
 	if rec != nil && rec.Result == "fail" && next.Regate > 0 && next.State != store.StateNeedsYou {
 		repair := true
 		if chainOwnsMember(tx, b.Name) {

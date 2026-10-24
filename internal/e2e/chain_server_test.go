@@ -96,7 +96,7 @@ func TestChainServerE2E(t *testing.T) {
 	plannerName := chainServerName + "-plan"
 	serverStore := srvStore(owner)
 	gitClient := rt.Git
-	serverRT := relevo.Runtime{Store: serverStore, Git: gitClient, Runner: runner}
+	serverRT := relevo.Runtime{Store: serverStore, Git: gitClient, Runner: runner, DiskFree: plentyDisk}
 
 	t.Cleanup(func() {
 		stopRecordedBuilders(t, rt, builderName, reviewerName, plannerName)

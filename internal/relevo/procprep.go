@@ -47,33 +47,51 @@ type procRequest struct {
 // runtime's tmp root, named by the rule for the request's kind and key; a
 // kind whose rule names no directory passes through with nothing prepared.
 func prepareProc(ctx context.Context, rt Runtime, req procRequest) (string, []string, func(), error) {
+	if err := preflightDisk(rt, req.tree); err != nil {
+		return "", nil, nil, err
+	}
+	dir, undo, err := prepareTmp(rt, req)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	env, err := goFlagsEnv(ctx, rt, req.tree)
+	if err != nil {
+		undo()
+		return "", nil, nil, err
+	}
+	return dir, env, undo, nil
+}
+
+// prepareTmp makes the request's private temp directory, and returns the
+// cleanup that takes it away again.
+func prepareTmp(rt Runtime, req procRequest) (string, func(), error) {
 	if rt.TmpRoot == "" {
-		return "", nil, func() {}, nil
+		return "", func() {}, nil
 	}
 	var rel string
 	var undo func()
 	switch req.kind {
 	case procKindRound:
 		if req.binding == nil {
-			return "", nil, func() {}, nil
+			return "", func() {}, nil
 		}
 		b := *req.binding
 		rel = roundTmpRel(b.Name, b.Round)
 		undo = func() { removeRoundTmp(rt, b, b.Round) }
 	case procKindCheck:
 		if req.key == "" {
-			return "", nil, func() {}, nil
+			return "", func() {}, nil
 		}
 		rel = checkTmpRel(req.key)
 		undo = func() { removeCheckTmp(rt, req.key) }
 	default:
-		return "", nil, func() {}, nil
+		return "", func() {}, nil
 	}
 	dir, err := rt.Store.EnsureTmpEntry(rt.TmpRoot, rel)
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("tmp dir for %s %q: %w", req.kind, rel, err)
+		return "", nil, fmt.Errorf("tmp dir for %s %q: %w", req.kind, rel, err)
 	}
-	return dir, nil, undo, nil
+	return dir, undo, nil
 }
 
 // checkTmpRel is one check process's private temp directory under a runtime's
