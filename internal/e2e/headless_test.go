@@ -1182,12 +1182,13 @@ func plentyDisk(string) (uint64, error) { return 1 << 62, nil }
 // --- the per-round write ceiling -------------------------------------------
 
 const (
-	// ceilingE2EBindingRecords is the round's binding_record row count,
-	// enumerated from the measured rows, identical at ~0 and 200 streamed
-	// lines: send (the save that opens round 1), the round's first progress
-	// observation (the tick that creates the record's progress object -- its
-	// tree fields are synced), the close (the save that files the report),
-	// and Done (the save that settles the binding). The delivery confirm
+	// ceilingE2EBindingRecords is the most binding_record rows a round may
+	// queue, enumerated from the measured rows: send (the save that opens
+	// round 1), the round's first progress observation (the tick that creates
+	// the record's progress object -- its tree fields are synced), the close
+	// (the save that files the report), and Done (the save that settles the
+	// binding). A quiet round can close before its first observation, so it
+	// may queue one fewer; a ceiling, not a count, is what stays true. The delivery confirm
 	// moves only the report entry's event row, not the record; every tick
 	// in between moves the stream cursor, the progress clocks and the
 	// served live copy -- machine-local overlay fields -- and writes no
@@ -1208,25 +1209,21 @@ const (
 
 // TestHeadlessRoundQueuesNoSyncedWritePerTick pins the same ceiling on the
 // real headless round: one daemon tick loop with a fake harness streaming
-// ~0 lines and one streaming 200 lines across many ticks must each queue
-// exactly the transition rows and no mastermind rows at all.
+// ~0 lines and one streaming 200 lines across many ticks must each stay
+// within the transition rows and queue no mastermind rows at all.
 func TestHeadlessRoundQueuesNoSyncedWritePerTick(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	quiet := runCeilingRound(t, ctx, ceilingQuietLines)
-	heavy := runCeilingRound(t, ctx, ceilingHeavyLines)
-
-	if heavy != quiet {
-		t.Errorf("round streaming %s lines queued %+v, same round streaming %s queued %+v: streaming volume must not be a variable in the synced-write count",
-			ceilingHeavyLines, heavy, ceilingQuietLines, quiet)
-	}
-	if quiet.BindingRecords != ceilingE2EBindingRecords {
-		t.Errorf("the round queued %d binding_record rows, want the pinned %d (send, first observation, close, done): any other row is a per-tick shared-row rewrite",
-			quiet.BindingRecords, ceilingE2EBindingRecords)
-	}
-	if quiet.MastermindRows != ceilingE2EMastermindRows {
-		t.Errorf("the round queued %d mastermind rows, want the pinned %d", quiet.MastermindRows, ceilingE2EMastermindRows)
+	for _, lines := range []string{ceilingQuietLines, ceilingHeavyLines} {
+		got := runCeilingRound(t, ctx, lines)
+		if got.BindingRecords > ceilingE2EBindingRecords {
+			t.Errorf("a round streaming %s lines queued %d binding_record rows, want at most %d (send, first observation, close, done): any other row is a per-tick shared-row rewrite",
+				lines, got.BindingRecords, ceilingE2EBindingRecords)
+		}
+		if got.MastermindRows != ceilingE2EMastermindRows {
+			t.Errorf("a round streaming %s lines queued %d mastermind rows, want %d", lines, got.MastermindRows, ceilingE2EMastermindRows)
+		}
 	}
 }
 
