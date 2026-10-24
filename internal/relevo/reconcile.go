@@ -86,7 +86,7 @@ func emitMutations(ctx context.Context, rt Runtime, orig, next store.Binding) {
 // lock is still held -- dispatch is fire-and-forget by design -- so the probe
 // and the write that preceded it are both visible to the handler.
 func emitCommitted(ctx context.Context, rt Runtime, orig, saved store.Binding) {
-	if store.SameBinding(orig, saved) {
+	if store.SameBindingSynced(orig, saved) {
 		return
 	}
 	emitMutations(ctx, rt, orig, saved)

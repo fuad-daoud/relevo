@@ -151,19 +151,12 @@ func (t *Tx) Archive(name string) (string, error) {
 	return t.archive(name)
 }
 
+// save writes a binding, overlay included, and skips the shared row when the
+// synced state is already on disk (saveLive). Every Save caller takes this
+// path; callers that act on the shared-row verdict use Tx.SaveWithOverlay.
 func (s *Store) save(b Binding) error {
-	b, rec, err := s.prepareSave(b, nil)
-	if err != nil {
-		return err
-	}
-	d, err := s.dbForWrite()
-	if err != nil {
-		return err
-	}
-	if _, err := d.RecordPut(rec); err != nil {
-		return fmt.Errorf("save binding %q: %w", b.Name, err)
-	}
-	return nil
+	_, err := s.saveLive(b)
+	return err
 }
 
 // ensureBindingDir refuses a binding directory reached through anything but a
@@ -234,12 +227,23 @@ func (s *Store) prepareSave(b Binding, siblings []string) (Binding, db.Record, e
 		return b, db.Record{}, fmt.Errorf("create binding dir: %w", err)
 	}
 
-	raw, err := json.Marshal(b)
+	// The live fields -- the stream cursor, the progress sampling clocks and
+	// the served round's remote_live -- leave the synced row for the
+	// machine-local overlay: the record carries neither a live value nor a
+	// zero stand-in, and an absent key decodes to the zero, so no format bump
+	// is needed. mergeLiveInto puts the values back on read.
+	raw, err := strippedJSON(b)
 	if err != nil {
 		return b, db.Record{}, fmt.Errorf("marshal binding %q: %w", b.Name, err)
 	}
+	// The id is minted here, not by RecordPut's insert, so the overlay can be
+	// written overlay-first under the id the row is about to carry.
+	id := b.RecordID
+	if id == "" {
+		id = db.NewID()
+	}
 	rec := db.Record{
-		ID:        b.RecordID,
+		ID:        id,
 		Owner:     s.owner,
 		Name:      b.Name,
 		State:     string(b.State),
@@ -267,6 +271,19 @@ func (s *Store) saveWithLog(b Binding, entries []LogEntry) error {
 	}
 	d, err := s.dbForWrite()
 	if err != nil {
+		return err
+	}
+	// Overlay-first (see writeLiveOverlay). The id is the stored row's when
+	// there is one; RecordPut's UPDATE keeps it and ignores the prepared one.
+	cur, ok, err := d.RecordGet(s.owner, b.Name)
+	if err != nil {
+		return err
+	}
+	id := rec.ID
+	if ok {
+		id = cur.ID
+	}
+	if err := s.writeLiveOverlay(id, b); err != nil {
 		return err
 	}
 	err = d.Tx(func(dtx *db.Tx) error {
@@ -405,7 +422,9 @@ func (s *Store) load(name string) (Binding, error) {
 		return Binding{}, err
 	}
 	b.ViewedAt = rec.ViewedAt
-	return b, nil
+	// The live fields were stripped from record_json at save; merge the
+	// machine-local overlay back so callers keep reading Binding whole.
+	return s.mergeLiveInto(b, rec.ID)
 }
 
 // decodeBinding turns a binding's JSON into a Binding.
@@ -444,7 +463,11 @@ func (s *Store) list() ([]Binding, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read state root: %w", err)
 	}
-	return decodeRecords(recs)
+	bindings, err := decodeRecords(recs)
+	if err != nil {
+		return nil, err
+	}
+	return s.mergeLiveList(bindings, recs)
 }
 
 // ListForMasterMind is List narrowed to the bindings of one MasterMind, read
@@ -461,7 +484,11 @@ func (s *Store) ListForMasterMind(mastermindID string) ([]Binding, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read state root: %w", err)
 	}
-	return decodeRecords(recs)
+	bindings, err := decodeRecords(recs)
+	if err != nil {
+		return nil, err
+	}
+	return s.mergeLiveList(bindings, recs)
 }
 
 func decodeRecords(recs []db.Record) ([]Binding, error) {
@@ -502,6 +529,19 @@ func (t *Tx) archive(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// The overlay goes with the binding (overlay-first, like every live
+	// write): an archived or deleted name must not leave a cursor a later
+	// reader could merge back, and the record-id key already stops a re-added
+	// name reading a stale one.
+	cur, ok, err := d.RecordGet(s.owner, name)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		if err := s.deleteLiveOverlay(cur.ID); err != nil {
+			return "", err
+		}
+	}
 	if err := d.RecordArchive(s.owner, name, time.Now().UTC()); err != nil {
 		return "", err
 	}
@@ -524,11 +564,18 @@ func (t *Tx) remove(name string) error {
 	if err != nil {
 		return err
 	}
-	_, ok, err := d.RecordGet(s.owner, name)
+	rec, ok, err := d.RecordGet(s.owner, name)
 	if err != nil {
 		return err
 	}
 	if ok {
+		// Overlay-first: the live fields leave before the row they described
+		// does, so a crash between the two strands an orphan key, not a stale
+		// cursor a reader could merge back -- and the record-id key means a
+		// re-added name reads a fresh one either way.
+		if err := s.deleteLiveOverlay(rec.ID); err != nil {
+			return err
+		}
 		if _, err := t.SealAll(name); err != nil {
 			return err
 		}

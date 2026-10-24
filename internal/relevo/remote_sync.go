@@ -421,11 +421,14 @@ func settleCatchUp(ctx context.Context, rt Runtime, a *catchUpAck, reconcile boo
 				return err
 			}
 		}
-		if store.SameBinding(next, cur) {
-			return nil
-		}
-		if err := tx.Save(next); err != nil {
+		// The narrowed verdict: a save that moved only live fields persists
+		// the overlay and announces nothing, exactly as it skips the emit.
+		changed, err := tx.SaveWithOverlay(next)
+		if err != nil {
 			return err
+		}
+		if !changed {
+			return nil
 		}
 		if reconcile {
 			// Announced after the commit, like the daemon's own tick (#909):
@@ -485,11 +488,17 @@ func SyncRemote(ctx context.Context, rt Runtime) (int, error) {
 			if err != nil {
 				return err
 			}
-			if store.SameBinding(next, fresh) {
-				return nil
+			// synced counts bindings whose synced state actually changed:
+			// a pass that moved only live fields persists its overlay and
+			// counts nothing.
+			changed, err := tx.SaveWithOverlay(next)
+			if err != nil {
+				return err
 			}
-			synced++
-			return tx.Save(next)
+			if changed {
+				synced++
+			}
+			return nil
 		})
 		f.release()
 		if err == nil && f.Settle != nil {
