@@ -174,7 +174,10 @@ func initTestTLS(t *testing.T, secrets serve.SecretStore) (string, tls.Certifica
 
 func loadTestCandidates(t *testing.T) *candidate.Set {
 	t.Helper()
-	const singleBuilder = `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder"]}]`
+	// The reader-artifacts test creates a reviewer binding; a served create
+	// refuses an actor with no candidate now, exactly as a local bind does,
+	// so the one test candidate serves both roles the suite names.
+	const singleBuilder = `[{"harness":"claude","provider":"anthropic","model":"haiku","roles":["builder","reviewer"]}]`
 	path := filepath.Join(t.TempDir(), "candidates.json")
 	if err := os.WriteFile(path, []byte(singleBuilder), 0o644); err != nil {
 		t.Fatal(err)

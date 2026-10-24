@@ -246,7 +246,7 @@ func chainBuildRemoteBuilder(ctx context.Context, rt Runtime, opts ChainOptions,
 		if errors.As(err, &httpErr) && httpErr.Status == 422 && httpErr.Body.Code == remote.CodeInvalid && tierUnsupportedMessage(httpErr.Body.Message) {
 			return store.Binding{}, nil, tierUnsupportedFromWire(httpErr.Body.Message)
 		}
-		return store.Binding{}, nil, err
+		return store.Binding{}, nil, pickRefusalFromWire(err)
 	}
 
 	// From here the server has a binding this client does not. Every later

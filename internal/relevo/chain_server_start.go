@@ -312,7 +312,7 @@ func chainServerCreateError(err error) error {
 	if errors.As(err, &httpErr) && httpErr.Status == http.StatusBadRequest && httpErr.Body.Code == remote.CodeUnknownActor {
 		return classed(ErrUnknownRole, httpErr.Body.Message)
 	}
-	return err
+	return pickRefusalFromWire(err)
 }
 
 // chainServerBundle names the out ref at base and snapshots it, the two steps

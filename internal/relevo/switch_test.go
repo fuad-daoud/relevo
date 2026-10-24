@@ -441,6 +441,80 @@ func TestAllGatedHalts(t *testing.T) {
 	}
 }
 
+// TestServedSwitchSkipsAGateRecordedOnTheHost is the plan's third case: a
+// mid-round switch on a SERVED runtime resolves over the same gate set the
+// pick does. The binding's provider is gated in the server row (the served
+// 429 detection's own write), the next-ranked candidate is gated only in the
+// host's machine-local row (a `relevo gate` on the server host), and the
+// switch must land on the third candidate instead of the host-gated one.
+func TestServedSwitchSkipsAGateRecordedOnTheHost(t *testing.T) {
+	t.Parallel()
+
+	rt, b := sentSwitchable(t)
+	served := servedShapeRuntime(t, rt)
+
+	// The served 429 write: the binding's own provider, through the served
+	// runtime's deps, lands in the server row.
+	if _, err := availability.Unavailable(AvailabilityDeps(served), "agy/other/m", time.Time{}, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+	// A host-recorded gate on the next-ranked candidate only -- a spawn
+	// failure gates its own token, leaving opencode/test/m, the third in the
+	// order, ungated. The machine's own row, which the served switch must
+	// still honour.
+	if err := availability.SaveLedger(served.GatesLocal, availability.Ledger{Entries: []availability.Entry{
+		{Kind: availability.SpawnFailed, Subject: testClaudeRef, At: baseTime, Until: baseTime.Add(10 * time.Minute), Source: "relevo", Binding: "webshop"},
+	}}); err != nil {
+		t.Fatalf("gate the host row: %v", err)
+	}
+
+	got, err := reconcile(t, served, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.BuilderCandidate != testOpencodeRef {
+		t.Errorf("BuilderCandidate = %q, want %q: a host gate on the next candidate must be skipped, not switched onto", got.BuilderCandidate, testOpencodeRef)
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0; a gated switch is uncounted", got.RoundSwitches)
+	}
+}
+
+// TestServedSwitchAllGatedHaltsWithoutConsumingASwitch is the other half of
+// case 3: with the server row gating the binding's provider AND the host row
+// gating everything else, the served switch halts with the refusal instead of
+// burning a switch -- the same answer TestAllGatedHalts pins for a local
+// binding, reached through the union's gate set.
+func TestServedSwitchAllGatedHaltsWithoutConsumingASwitch(t *testing.T) {
+	t.Parallel()
+
+	rt, b := sentSwitchable(t)
+	served := servedShapeRuntime(t, rt)
+
+	if _, err := availability.Unavailable(AvailabilityDeps(served), "agy/other/m", time.Time{}, "5h window"); err != nil {
+		t.Fatalf("Unavailable: %v", err)
+	}
+	if err := availability.SaveLedger(served.GatesLocal, availability.Ledger{Entries: []availability.Entry{
+		{Kind: availability.RateLimited, Subject: "test", At: baseTime, Source: "relevo", Binding: "webshop"},
+	}}); err != nil {
+		t.Fatalf("gate the host row: %v", err)
+	}
+
+	got, err := reconcile(t, served, b)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if got.State != store.StateNeedsYou {
+		t.Errorf("state = %s, want needs_you", got.State)
+	}
+	if got.RoundSwitches != 0 {
+		t.Errorf("RoundSwitches = %d, want 0: an all-gated switch halts rather than burning a switch", got.RoundSwitches)
+	}
+	if !strings.Contains(got.Halt, `every candidate serving "builder" is gated`) {
+		t.Fatalf("Halt = %q, want the ErrAllGated refusal text", got.Halt)
+	}
+}
+
 func TestSwitchRecordsOutgoingUsage(t *testing.T) {
 	t.Parallel()
 

@@ -330,6 +330,10 @@ func servedMemberLink(key, installation string, ids map[string]string) *store.Re
 // registry, the calls serve.pickServedTier makes: no client candidate, and the
 // actor's placement list ignored. actor is the member's actor word; the empty
 // builder role is resolved as "builder", exactly as a served create resolves it.
+// A refusal the gates answer with -- every candidate serving the actor gated,
+// or no candidate serving it at all -- returns as this pick's error, and the
+// preflight and resume loops propagate it as the create's refusal, exactly as
+// the local chain start answers with chainResolveActors' error.
 func servedActorPick(rt Runtime, actor string) (servedPick, error) {
 	role := normRole(actor)
 	roleName := role

@@ -275,7 +275,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		if errors.As(err, &httpErr) && httpErr.Status == 422 && httpErr.Body.Code == remote.CodeInvalid && tierUnsupportedMessage(httpErr.Body.Message) {
 			return AddResult{}, tierUnsupportedFromWire(httpErr.Body.Message)
 		}
-		return AddResult{}, err
+		return AddResult{}, pickRefusalFromWire(err)
 	}
 
 	// From here on the server has a binding this client does not yet. Every
