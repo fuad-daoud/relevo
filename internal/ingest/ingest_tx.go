@@ -46,6 +46,11 @@ func (r *ingestRun) upsertMasterMind(tx *db.Tx) (*string, error) {
 		HarnessKind: r.b.MasterMind.Kind,
 		SessionID:   r.b.MasterMind.SessionID,
 	}
+	// A mirror run is not a new sighting: carrying the stored stamp keeps the
+	// row's sync trigger quiet when nothing else moved.
+	if existing, ok, lerr := tx.MasterMindBySession(record.HarnessKind, record.SessionID); lerr == nil && ok {
+		record.LastSeen = existing.LastSeen
+	}
 	id, err := tx.UpsertMasterMind(record)
 	if err != nil {
 		// A binding can name a mastermind id its session no longer answers to:
@@ -66,6 +71,7 @@ func (r *ingestRun) upsertMasterMind(tx *db.Tx) (*string, error) {
 		r.logger.Warn("ingest: mastermind id is stale; following the session",
 			"binding", r.b.Name, "from", record.ID, "to", held.ID)
 		record.ID = held.ID
+		record.LastSeen = held.LastSeen
 		if id, err = tx.UpsertMasterMind(record); err != nil {
 			return nil, fmt.Errorf("upsert mastermind: %w", err)
 		}
