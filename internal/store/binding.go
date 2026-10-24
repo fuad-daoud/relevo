@@ -196,6 +196,10 @@ type ServeFacts struct {
 	// builder relevo starts for this binding commits as the client.
 	AuthorName  string `json:"author_name,omitempty"`
 	AuthorEmail string `json:"author_email,omitempty"`
+	// Trimpath is the client's effective trimpath setting: "" (absent) reads
+	// trimmed, and only "off" opts out. An old record carries none and reads
+	// trimmed, the same default a missing wire value carries.
+	Trimpath string `json:"trimpath,omitempty"`
 }
 
 // Binding ties one mastermind to one builder over one working tree.

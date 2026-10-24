@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/diskfree"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // spawnHaltText is the halt a failed round start records. A preflight refusal
@@ -38,18 +39,26 @@ func preflightDisk(rt Runtime, tree string) error {
 
 // goFlagsEnv is the GOFLAGS entry a process in tree starts with, or nil when
 // it needs none. The inherited GOFLAGS is the parent the entry is built on, so
-// a value the host already set is extended rather than replaced. A runtime
-// with no Config -- every served runtime -- reads the repository default: on.
-func goFlagsEnv(ctx context.Context, rt Runtime, tree string) ([]string, error) {
-	settings, err := RepoSettingsFor(ctx, rt, tree)
-	if err != nil {
-		return nil, err
+// a value the host already set is extended rather than replaced. A binding
+// with a stored trimpath value decides: only "off" opts out. Otherwise the
+// repository's own settings answer, and a runtime with no Config -- every
+// served runtime -- reads the repository default: on.
+func goFlagsEnv(ctx context.Context, rt Runtime, tree string, binding *store.Binding) ([]string, error) {
+	on := true
+	if binding != nil && binding.Serve != nil && binding.Serve.Trimpath != "" {
+		on = binding.Serve.Trimpath != "off"
+	} else {
+		settings, err := RepoSettingsFor(ctx, rt, tree)
+		if err != nil {
+			return nil, err
+		}
+		on = settings.TrimpathOn()
 	}
 	var parent []string
 	if v := os.Getenv("GOFLAGS"); v != "" {
 		parent = []string{goFlagsKey + v}
 	}
-	out := goFlagsEntry(parent, tree, settings.TrimpathOn())
+	out := goFlagsEntry(parent, tree, on)
 	for _, e := range out {
 		if strings.HasPrefix(e, goFlagsKey) && (len(parent) == 0 || e != parent[0]) {
 			return []string{e}, nil

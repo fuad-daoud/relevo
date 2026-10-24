@@ -50,6 +50,7 @@ type CreateChainRequest struct {
 	Feature            string            `json:"feature,omitempty"`
 	Ticket             string            `json:"ticket,omitempty"`
 	Subdir             string            `json:"subdir,omitempty"`
+	Trimpath           string            `json:"trimpath,omitempty"`
 	Author             *GitIdentity      `json:"author,omitempty"`
 	ClientInstallation string            `json:"client_installation,omitempty"`
 	ClientBindingIDs   map[string]string `json:"client_binding_ids,omitempty"`

@@ -54,7 +54,7 @@ func prepareProc(ctx context.Context, rt Runtime, req procRequest) (string, []st
 	if err != nil {
 		return "", nil, nil, err
 	}
-	env, err := goFlagsEnv(ctx, rt, req.tree)
+	env, err := goFlagsEnv(ctx, rt, req.tree, req.binding)
 	if err != nil {
 		undo()
 		return "", nil, nil, err

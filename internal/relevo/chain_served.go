@@ -31,6 +31,10 @@ type ServedChainRequest struct {
 	// at, resolved on the client before the create; the server joins it into
 	// the round directory of every member it stores.
 	Subdir string
+	// Trimpath is the client's effective trimpath setting: "" (absent) reads
+	// trimmed, and only "off" opts out. It rides beside Subdir so every
+	// member's rounds read the same value.
+	Trimpath string
 	// BuilderActor is the actor the builder member runs. It is "" for every
 	// wire create -- the chain fixes the builder to the builder actor -- but a
 	// caller may name one, and the preflight's shape check then decides.
@@ -82,6 +86,7 @@ type servedFacts struct {
 	feature      string
 	ticket       string
 	subdir       string
+	trimpath     string
 	authorName   string
 	authorEmail  string
 	installation string
@@ -216,6 +221,7 @@ func ServedChainCreate(ctx context.Context, rt Runtime, plan ServedChainPlan, wo
 	facts := servedFacts{
 		owner: req.Owner, repoID: req.RepoID, worktree: worktree, bare: req.Bare,
 		base: req.Base, feature: req.Feature, ticket: req.Ticket, subdir: req.Subdir,
+		trimpath:   req.Trimpath,
 		authorName: req.AuthorName, authorEmail: req.AuthorEmail,
 		installation: req.ClientInstallation, clientIDs: clientIDs,
 		gate: plan.settings.Gate, regate: plan.settings.Regate,
@@ -293,6 +299,7 @@ func servedChainMember(m chainMember, pick servedPick, f servedFacts) store.Bind
 			LastSeen:    now,
 			AuthorName:  f.authorName,
 			AuthorEmail: f.authorEmail,
+			Trimpath:    f.trimpath,
 		},
 	}
 	if m.writer {

@@ -311,6 +311,7 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 			LastSeen:    now,
 			AuthorName:  authorName,
 			AuthorEmail: authorEmail,
+			Trimpath:    req.Trimpath,
 		},
 	}, unpin, true
 }

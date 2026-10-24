@@ -46,6 +46,10 @@ type chainServerPlan struct {
 	// repository below: the server joins the stored value into every
 	// member's round directory it cuts.
 	subdir string
+	// trimpath is the effective trimpath setting the create carries, resolved
+	// once with the repository below: "" (absent) reads trimmed, "off" opts
+	// out, and omitempty keeps an unset value off the wire.
+	trimpath string
 	// origin is whether the server advertises FeatureOrigin, which decides
 	// whether the client mints the member ids the create carries.
 	origin bool
@@ -119,6 +123,7 @@ func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (cha
 	plan.repo = repo
 	// From the same repository value, not a second working-directory probe.
 	plan.subdir = resolveSubdir(ctx, rt, repo)
+	plan.trimpath = repoSet.Trimpath
 	isCustom := origin != "shipped"
 	if isCustom {
 		if err := chainValidateWorkflowOpts(opts); err != nil {
@@ -344,6 +349,7 @@ func chainServerRequest(opts ChainOptions, plan chainServerPlan, ids chainServer
 		Feature:            opts.Feature,
 		Ticket:             plan.ticket,
 		Subdir:             plan.subdir,
+		Trimpath:           plan.trimpath,
 		Author:             &remote.GitIdentity{Name: plan.authorName, Email: plan.authorEmail},
 		ClientInstallation: ids.installation,
 	}

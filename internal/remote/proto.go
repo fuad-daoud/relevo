@@ -132,6 +132,12 @@ type CreateBindingRequest struct {
 	// remote.FeatureSubdir rather than let the round land at the root.
 	Subdir string `json:"subdir,omitempty"`
 
+	// Trimpath is the client's effective trimpath setting: "" (absent) reads
+	// trimmed, and only "off" opts the served rounds out. It is additive: an
+	// old server ignores it and a dropped value degrades to trimmed, the
+	// intended default, so no side refuses on it.
+	Trimpath string `json:"trimpath,omitempty"`
+
 	// Gate is the acceptance command this binding's rounds are checked with;
 	// "" means no check. It is additive: an old server ignores it.
 	Gate string `json:"gate,omitempty"`
