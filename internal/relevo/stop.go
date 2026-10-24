@@ -145,10 +145,14 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 			if oerr != nil {
 				return oerr
 			}
-			if store.SameBinding(next, b) {
-				return nil
+			// The observation is saved whatever the verdict: live fields go to
+			// the overlay, and only a moved synced field rewrites the row.
+			// The stop's caller reads the outcome from out, not from the
+			// shared-row flag.
+			if _, err := tx.SaveWithOverlay(next); err != nil {
+				return err
 			}
-			return tx.Save(next)
+			return nil
 		}
 
 		out.Round = b.Round

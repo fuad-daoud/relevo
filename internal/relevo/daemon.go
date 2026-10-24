@@ -481,13 +481,15 @@ func (d *Daemon) tickOne(ctx context.Context, b store.Binding) (err error) {
 			return err
 		}
 		// Compared against what was on disk, not against fresh: a back-fill
-		// is itself a change worth saving.
-		if store.SameBinding(next, loaded) {
-			return nil
-		}
-
-		if err := tx.Save(next); err != nil {
+		// is itself a change worth saving. The verdict is the shared row's:
+		// a tick that moved only live fields persists its overlay and emits
+		// nothing.
+		changed, err := tx.SaveWithOverlay(next)
+		if err != nil {
 			return err
+		}
+		if !changed {
+			return nil
 		}
 		// Announced only once the write above committed (#909). This is the
 		// single commit point for the daemon path, so a save that failed or

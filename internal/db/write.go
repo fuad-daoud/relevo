@@ -74,9 +74,10 @@ func (t *Tx) UpsertMasterMind(p MasterMind) (string, error) {
 	err := t.queryRow(`SELECT id FROM mastermind WHERE `+originScope+` AND harness_kind = ? AND session_id = ?`,
 		t.origin, p.HarnessKind, p.SessionID).Scan(&id)
 	if err == nil {
-		if _, err := t.exec(`UPDATE mastermind SET last_seen = ? WHERE id = ?`,
-			formatTime(lastSeen), id); err != nil {
-			return "", fmt.Errorf("db: upsert mastermind: update: %w", mapBusy(err))
+		// An unchanged row writes nothing: the sync trigger fires on any
+		// UPDATE, and a mirror re-ingest would otherwise export this row again.
+		if uerr := t.updateIfChanged("mastermind", id, []string{"last_seen"}, formatTime(lastSeen)); uerr != nil {
+			return "", fmt.Errorf("db: upsert mastermind: update: %w", mapBusy(uerr))
 		}
 		return id, nil
 	}
@@ -105,10 +106,9 @@ func (t *Tx) upsertMasterMindByID(p MasterMind, lastSeen time.Time) (string, err
 	err := t.queryRow(`SELECT id FROM mastermind WHERE id = ?`, p.ID).Scan(&existing)
 	switch {
 	case err == nil:
-		set := []string{"harness_kind = ?", "session_id = ?", "last_seen = ?"}
-		args := []any{p.HarnessKind, p.SessionID, formatTime(lastSeen)}
-		args = append(args, p.ID)
-		if _, uerr := t.exec(`UPDATE mastermind SET `+strings.Join(set, ", ")+` WHERE id = ?`, args...); uerr != nil {
+		if uerr := t.updateIfChanged("mastermind", p.ID,
+			[]string{"harness_kind", "session_id", "last_seen"},
+			p.HarnessKind, p.SessionID, formatTime(lastSeen)); uerr != nil {
 			return "", fmt.Errorf("db: upsert mastermind by id: update: %w", mapMasterMindKey(uerr))
 		}
 		return p.ID, nil

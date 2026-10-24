@@ -538,6 +538,17 @@ printf 'one round of fake work %s\n' "$round" >> "$worktree/fake-round.txt"
 git -C "$worktree" add -A
 git -C "$worktree" commit -q -m "fake harness: one round"
 
+# RELEVO_FAKE_STREAM_LINES streams the round before it closes: the
+# write-ceiling scenario raises it while the pinned row count stays put, so
+# streaming volume is proven not to reach the sync log. The lines are spaced
+# apart so the daemon's ticks watch the stream grow, as a real builder's does.
+i=0
+while [ "$i" -lt "${RELEVO_FAKE_STREAM_LINES:-0}" ]; do
+	i=$((i + 1))
+	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"fake stream line"}]}}'
+	sleep 0.05
+done
+
 # The completion marker is the last thing the handoff asks for.
 : > "$marker"
 
@@ -1167,3 +1178,181 @@ func contains(list []string, want string) bool {
 // plentyDisk reports far more free space than any minimum, so a round's disk
 // preflight never depends on the host filesystem.
 func plentyDisk(string) (uint64, error) { return 1 << 62, nil }
+
+// --- the per-round write ceiling -------------------------------------------
+
+const (
+	// ceilingE2EBindingRecords is the most binding_record rows a round may
+	// queue, enumerated from the measured rows: send (the save that opens
+	// round 1), the round's first progress observation (the tick that creates
+	// the record's progress object -- its tree fields are synced), the close
+	// (the save that files the report), and Done (the save that settles the
+	// binding). A quiet round can close before its first observation, so it
+	// may queue one fewer; a ceiling, not a count, is what stays true. The delivery confirm
+	// moves only the report entry's event row, not the record; every tick
+	// in between moves the stream cursor, the progress clocks and the
+	// served live copy -- machine-local overlay fields -- and writes no
+	// shared row at all.
+	ceilingE2EBindingRecords = 4
+	// The ingest mirror runs on the daemon's ticks with the machine database
+	// wired, as it does in production; its first sighting of the mastermind
+	// is burned before the window, and a mirror run is not a new sighting,
+	// so nothing in the round may queue a mastermind outbox row.
+	ceilingE2EMastermindRows = 0
+
+	// The two streaming volumes: a quiet round and one whose builder streams
+	// hundreds of lines across dozens of daemon ticks. The ceiling must not
+	// move between them.
+	ceilingQuietLines = "0"
+	ceilingHeavyLines = "200"
+)
+
+// TestHeadlessRoundQueuesNoSyncedWritePerTick pins the same ceiling on the
+// real headless round: one daemon tick loop with a fake harness streaming
+// ~0 lines and one streaming 200 lines across many ticks must each stay
+// within the transition rows and queue no mastermind rows at all.
+func TestHeadlessRoundQueuesNoSyncedWritePerTick(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	for _, lines := range []string{ceilingQuietLines, ceilingHeavyLines} {
+		got := runCeilingRound(t, ctx, lines)
+		if got.BindingRecords > ceilingE2EBindingRecords {
+			t.Errorf("a round streaming %s lines queued %d binding_record rows, want at most %d (send, first observation, close, done): any other row is a per-tick shared-row rewrite",
+				lines, got.BindingRecords, ceilingE2EBindingRecords)
+		}
+		if got.MastermindRows != ceilingE2EMastermindRows {
+			t.Errorf("a round streaming %s lines queued %d mastermind rows, want %d", lines, got.MastermindRows, ceilingE2EMastermindRows)
+		}
+	}
+}
+
+// ceilingCounts is one whole round's outbox cost on the counted tables.
+type ceilingCounts struct {
+	BindingRecords int
+	MastermindRows int
+}
+
+// runCeilingRound builds the TestHeadlessE2E world (isolated state, the fake
+// claude, the hook-registered mastermind, a live push holder), and runs one
+// full round of it with the daemon's ingest mirror wired to the machine
+// database: the same per-tick mirror a served machine runs. The outbox is
+// truncated at round start and counted after Done.
+func runCeilingRound(t *testing.T, ctx context.Context, streamLines string) ceilingCounts {
+	t.Helper()
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
+	t.Setenv("CLAUDECODE", "1")
+	t.Setenv("RELEVO_FAKE_STREAM_LINES", streamLines)
+	t.Setenv("PATH", writeFakeHarness(t)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ownerCleanup, err := dbtest.InstallOwner()
+	if err != nil {
+		t.Fatalf("install the in-process owner: %v", err)
+	}
+	t.Cleanup(ownerCleanup)
+
+	configDir := filepath.Join(home, ".config", "relevo")
+	writeCandidatesAndPolicy(t, configDir)
+	root := filepath.Join(home, ".local", "state", "relevo")
+	rt, reg := newHeadlessRuntime(t, root, configDir)
+	repo := newRepo(t)
+	return runCeilingRoundWithMirror(t, ctx, rt, reg, repo, home)
+}
+
+// runCeilingRoundWithMirror is the round itself, kept short of the setup.
+func runCeilingRoundWithMirror(t *testing.T, ctx context.Context, rt relevo.Runtime, reg *mastermind.DBRegistry, repo, home string) ceilingCounts {
+	t.Helper()
+
+	// The daemon's mirror: with the machine database wired, every tick that
+	// changes a binding's revision runs the ingest pass, exactly as it does
+	// on a synced machine -- the pass whose mastermind stamp PLAN 1 stilled.
+	mdb, err := rt.Store.DB()
+	if err != nil {
+		t.Fatalf("machine db: %v", err)
+	}
+	rt.DB = mdb
+	daemon := relevo.NewDaemon(rt, 200*time.Millisecond)
+
+	// The daemon empties the machine's outbox once every five minutes while
+	// sync is off, and prunes mastermind records no live binding names: one
+	// tick on the empty world burns that truncate before anything is
+	// registered, so the counted window holds the round's writes alone.
+	if err := daemon.Tick(ctx); err != nil {
+		t.Fatalf("warm-up Tick: %v", err)
+	}
+
+	envFile := filepath.Join(home, "claude-env.sh")
+	t.Setenv("CLAUDE_ENV_FILE", envFile)
+	first := runMasterMindHook(t, reg, rt.Now, hookPayload(t, mastermind.SourceStartup, "e2e-ceiling-session", repo))
+	t.Setenv("RELEVO_MASTERMIND", first.ID)
+
+	pusher := startPush(t, ctx, rt, first.ID)
+
+	const name = "e2e-ceiling"
+	if _, err := relevo.Add(ctx, rt, relevo.AddOptions{Name: name, Repo: repo}); err != nil {
+		t.Fatalf("relevo.Add(%s): %v", name, err)
+	}
+
+	// One tick over the just-added binding lets the mirror see it first: the
+	// mastermind row's one insert is a new sighting, not the re-stamp PLAN 1
+	// stills, and the counted window measures the running round's cost.
+	if err := daemon.Tick(ctx); err != nil {
+		t.Fatalf("mirror-prime Tick: %v", err)
+	}
+
+	// Round start: the window opens at the send, so the pinned count
+	// enumerates every shared row a running round may still write.
+	if err := mdb.TruncateOutbox(); err != nil {
+		t.Fatalf("truncate outbox: %v", err)
+	}
+
+	plan := writePlan(t, "ceiling.md", "# Ceiling round\n\nOne line of work.\n")
+	if _, err := relevo.Send(ctx, rt, name, plan, relevo.SendOptions{}); err != nil {
+		t.Fatalf("relevo.Send(%s): %v", name, err)
+	}
+
+	tickUntilRoundCloses(t, ctx, daemon, rt, name)
+
+	ev := pusher.waitEvent(t, name, "report", notifyDeadline)
+	pusher.ack(t, ev)
+	waitFor(t, notifyDeadline, func() bool {
+		e, ok := reportEntry(t, rt, name, 1)
+		return ok && e.Route == "push"
+	}, "the push holder's confirm of %s round 1 (route=push)", name)
+
+	// The measured window shape (scratch-instrumented enumeration, reported):
+	// the send save queues row 1, the first progress observation row 2, the
+	// close row 3; the push ack confirm moves only the event row; Done
+	// queues row 4. The pinned total proves the ticks queue nothing: any
+	// per-tick shared-row rewrite lands the count above four.
+	if _, err := relevo.Done(ctx, rt, name); err != nil {
+		t.Fatalf("relevo.Done(%s): %v", name, err)
+	}
+
+	br, mm := ceilingRows(t, mdb)
+	return ceilingCounts{BindingRecords: br, MastermindRows: mm}
+}
+
+// ceilingRows counts the binding_record and mastermind entries waiting in the
+// shared outbox; reading the log does not drain it.
+func ceilingRows(t *testing.T, d *db.DB) (int, int) {
+	t.Helper()
+	entries, err := d.DrainOutbox(100000)
+	if err != nil {
+		t.Fatalf("read outbox: %v", err)
+	}
+	var br, mm int
+	for _, e := range entries {
+		switch e.Table {
+		case "binding_record":
+			br++
+		case "mastermind":
+			mm++
+		}
+	}
+	return br, mm
+}
