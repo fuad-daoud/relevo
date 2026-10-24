@@ -27,6 +27,9 @@ type tmpUsageWalk struct {
 	deadline   time.Time
 	maxEntries int
 	seen       int
+	// flat sends every top-level entry to Loose, for a root with no rounds/
+	// or checks/ split.
+	flat bool
 }
 
 // TmpUsageOf measures the tmp root under a time budget and an entry budget;
@@ -36,7 +39,12 @@ type tmpUsageWalk struct {
 // outside it -- so only bytes physically under the root are counted, and a
 // link is neither descended into nor sized.
 func TmpUsageOf(root string, budget time.Duration, maxEntries int) TmpUsage {
-	w := tmpUsageWalk{deadline: time.Now().Add(budget), maxEntries: maxEntries}
+	return walkRoot(root, budget, maxEntries, false)
+}
+
+// walkRoot is the bounded walk TmpUsageOf and GoCacheUsage share.
+func walkRoot(root string, budget time.Duration, maxEntries int, flat bool) TmpUsage {
+	w := tmpUsageWalk{deadline: time.Now().Add(budget), maxEntries: maxEntries, flat: flat}
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
@@ -56,6 +64,9 @@ func TmpUsageOf(root string, budget time.Duration, maxEntries int) TmpUsage {
 // bucket routes a top-level entry's bytes by the two names the per-process
 // routes make and the sweep's rules own; anything else is loose.
 func (w *tmpUsageWalk) bucket(name string) *int64 {
+	if w.flat {
+		return &w.usage.Loose
+	}
 	switch name {
 	case tmpSubRounds:
 		return &w.usage.Rounds

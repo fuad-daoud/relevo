@@ -301,6 +301,8 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 	// newRuntime did (main.go). A failure here just leaves the check off.
 	stateRoot, _ := store.DefaultRoot()
 
+	extraChecks = append(extraChecks, runDiskChecks(rt)...)
+
 	pricesBody, _, err := rt.Config.Body(config.Prices)
 	if err != nil {
 		return doctor.Report{}, fail(codeInternal, "%v", err)
