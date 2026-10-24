@@ -64,6 +64,59 @@ func TestConfigLocalRoundTripsAPatchPerKey(t *testing.T) {
 	}
 }
 
+// TestConfigLocalWritesBumpConfigVersion pins the reload gate's contract at the
+// row level: every write to the machine-local layer moves config_meta.version,
+// the one counter both refreshers compare per tick, so the next Refresh sees a
+// --local change; reads of the same layer leave the counter where it stands, so
+// an unchanged tick stays one cheap query.
+func TestConfigLocalWritesBumpConfigVersion(t *testing.T) {
+	t.Parallel()
+
+	d := directOpenTestDB(t)
+	t.Cleanup(func() { _ = d.Close() })
+	now := time.Now().UTC()
+
+	version := func() int64 {
+		v, err := d.ConfigVersion()
+		if err != nil {
+			t.Fatalf("ConfigVersion: %v", err)
+		}
+		return v
+	}
+	v0 := version()
+
+	if err := d.Tx(func(tx *Tx) error {
+		return tx.ConfigLocalPut("accounts/work", []byte(`{"config_dir":"/tmp/x"}`), now)
+	}); err != nil {
+		t.Fatalf("ConfigLocalPut: %v", err)
+	}
+	v1 := version()
+	if v1 <= v0 {
+		t.Errorf("version after ConfigLocalPut = %d, want > %d: a local write must move the reload counter", v1, v0)
+	}
+
+	// Reading the local layer is not writing it: the counter stands, which is
+	// what lets a quiet tick skip the full config load.
+	if patch, ok, err := d.ConfigLocalGet("accounts/work"); err != nil || !ok || len(patch) == 0 {
+		t.Fatalf("ConfigLocalGet = %q, %t, %v; want the stored patch", patch, ok, err)
+	}
+	if keys, err := d.ConfigLocalKeys("accounts/"); err != nil || len(keys) != 1 {
+		t.Fatalf("ConfigLocalKeys = %v, %v; want the one stored key", keys, err)
+	}
+	if v := version(); v != v1 {
+		t.Errorf("version after no-op reads = %d, want %d unchanged", v, v1)
+	}
+
+	// A delete of a stored key moves it like any other local write.
+	if err := d.Tx(func(tx *Tx) error { return tx.ConfigLocalDelete("accounts/work") }); err != nil {
+		t.Fatalf("ConfigLocalDelete: %v", err)
+	}
+	v2 := version()
+	if v2 <= v1 {
+		t.Errorf("version after ConfigLocalDelete = %d, want > %d", v2, v1)
+	}
+}
+
 var errUnstoredOverride = &overrideError{}
 
 type overrideError struct{}
