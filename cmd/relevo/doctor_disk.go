@@ -30,6 +30,10 @@ func execRun(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, name, args...).Output()
 }
 
+// diskRun is how the doctor asks go for its cache. It is a variable so this
+// package's tests answer for go instead of starting it.
+var diskRun = execRun
+
 // diskChecks returns the tmp root row, the Go cache row, and, when the working
 // directory is a Go tree, the effective -trimpath row. A go that cannot answer
 // is never an error: its cache row is informational.
@@ -59,7 +63,7 @@ func diskChecks(ctx context.Context, in diskInputs) []doctor.Check {
 // A repository setting that will not read leaves the default, which is on.
 func runDiskChecks(rt relevo.Runtime) []doctor.Check {
 	ctx := context.Background()
-	in := diskInputs{TmpRoot: rt.TmpRoot, Run: execRun}
+	in := diskInputs{TmpRoot: rt.TmpRoot, Run: diskRun}
 	if wd, err := os.Getwd(); err == nil {
 		in.WorkDir = wd
 		if settings, serr := relevo.RepoSettingsFor(ctx, rt, wd); serr == nil {

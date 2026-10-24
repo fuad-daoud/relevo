@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/pem"
 	"errors"
 	"flag"
@@ -62,6 +63,9 @@ func TestMain(m *testing.M) {
 	// keep opening the machine database directly, and a test that wants the
 	// switch installs it itself.
 	dbRouteFromArgs = false
+	// The doctor's cache row would start a real go and walk its build cache;
+	// the package answers as a host with no go instead.
+	diskRun = func(context.Context, string, ...string) ([]byte, error) { return nil, exec.ErrNotFound }
 	installDBRoute(routeNone, verbDialBudget, 0)
 	cleanup, err := dbtest.Install()
 	if err != nil {
