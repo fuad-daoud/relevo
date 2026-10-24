@@ -26,7 +26,7 @@ func TestPrepareProcCreatesRoundDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareProc: %v", err)
 	}
-	want := filepath.Join(rt.TmpRoot, "rounds", "webshop-001")
+	want := filepath.Join(rt.TmpRoot, roundTmpRel("webshop", 1))
 	if dir != want {
 		t.Errorf("tmpDir = %q, want %q", dir, want)
 	}
@@ -79,7 +79,7 @@ func TestPrepareProcCreatesCheckDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareProc(check): %v", err)
 	}
-	want := filepath.Join(rt.TmpRoot, "checks", "relevo-gate-local-webshop-1")
+	want := filepath.Join(rt.TmpRoot, checkTmpRel("relevo-gate-local-webshop-1"))
 	if dir != want {
 		t.Errorf("tmpDir = %q, want %q", dir, want)
 	}
@@ -120,19 +120,25 @@ func TestPrepareProcCheckWithoutUnitCreatesNothing(t *testing.T) {
 	}
 }
 
-// TestCheckTmpRelNamesChecksRoot pins the check path rule: one unit name,
+// TestCheckTmpRelNamesChecksRoot pins the check path rule: the hashed unit,
 // under checks/, so a check's dir and a round's never collide however the
 // binding and the chain are named.
 func TestCheckTmpRelNamesChecksRoot(t *testing.T) {
 	t.Parallel()
 
+	seen := map[string]string{}
 	for _, unit := range []string{
 		"relevo-gate-local-webshop-1",
 		"relevo-gate-abcdef12-shop-check-3",
 	} {
-		if got := checkTmpRel(unit); got != filepath.Join("checks", unit) {
-			t.Errorf("checkTmpRel(%q) = %q, want checks/%q", unit, got, unit)
+		got := checkTmpRel(unit)
+		if got != filepath.Join("checks", shortCheckID(unit)) {
+			t.Errorf("checkTmpRel(%q) = %q, want the hashed leaf", unit, got)
 		}
+		if prev, dup := seen[got]; dup {
+			t.Errorf("checkTmpRel(%q) = %q, also the leaf of %q", unit, got, prev)
+		}
+		seen[got] = unit
 	}
 }
 
@@ -186,22 +192,29 @@ func TestPrepareProcRereadsTheRoundDir(t *testing.T) {
 	}
 }
 
-// TestRoundTmpRelPadsLikeScratchPaths pins the naming rule against the
-// store's own per-round worktree path: same zero-padding, so one round's
-// worktree and one round's temp dir carry the same NNN without a second
-// format to keep in step.
-func TestRoundTmpRelPadsLikeScratchPaths(t *testing.T) {
+// TestRoundTmpRelShortDeterministic pins the naming rule: the hashed binding
+// and round, under rounds/, stable across a restart re-run and distinct per
+// round, so one round's temp dir never collides with another's.
+func TestRoundTmpRelShortDeterministic(t *testing.T) {
 	t.Parallel()
 
-	st := store.New(t.TempDir())
+	seen := map[string]string{}
 	for _, tc := range []struct {
 		name  string
 		round int
 	}{{"api", 7}, {"webshop", 1}, {"x", 42}, {"y", 1000}} {
-		want := filepath.Join("rounds", filepath.Base(st.ScratchWorktreePath(tc.name, tc.round)))
-		if got := roundTmpRel(tc.name, tc.round); got != want {
-			t.Errorf("roundTmpRel(%q, %d) = %q, want %q", tc.name, tc.round, got, want)
+		got := roundTmpRel(tc.name, tc.round)
+		if got != filepath.Join("rounds", shortRoundID(tc.name, tc.round)) {
+			t.Errorf("roundTmpRel(%q, %d) = %q, want the hashed leaf", tc.name, tc.round, got)
 		}
+		id := tc.name + "/" + string(rune('0'+tc.round%10))
+		if prev, dup := seen[got]; dup {
+			t.Errorf("roundTmpRel(%q, %d) = %q, also the leaf of %q", tc.name, tc.round, got, prev)
+		}
+		seen[got] = id
+	}
+	if got, again := roundTmpRel("webshop", 4), roundTmpRel("webshop", 4); got != again {
+		t.Errorf("roundTmpRel not deterministic: %q vs %q", got, again)
 	}
 }
 

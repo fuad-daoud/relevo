@@ -37,6 +37,25 @@ func TestRuntimeAtTmpRootPerOwner(t *testing.T) {
 	}
 }
 
+// TestOwnerTmpDirShortShape pins the short root: t/<8> off the serve tmp
+// dir, so a 64-hex owner maps to 11 characters instead of 65. The full
+// composition is pinned by relevo's length-bound test; this pins the root
+// half it builds on.
+func TestOwnerTmpDirShortShape(t *testing.T) {
+	root := t.TempDir()
+	s, err := New(Config{DB: testServeDB(t), Root: root, Now: time.Now})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	owner := filepath.Join(root, "bindings", strings.Repeat("a", 64))
+	if got, want := s.ownerTmpDir(owner), filepath.Join(root, "tmp", "t", "aaaaaaaa"); got != want {
+		t.Errorf("ownerTmpDir = %q, want %q", got, want)
+	}
+	if got := s.ownerTmpDir(filepath.Join(root, "bindings", "bbb")); got != filepath.Join(root, "tmp", "t", "bbb") {
+		t.Errorf("short test id mapped to %q, want it passed through", got)
+	}
+}
+
 // TestRuntimeAtContainerModeHasNoTmpRoot pins that a container-mode owner is
 // left with an empty TmpRoot: its builder sees the container's own /tmp, and
 // a host path would mean nothing inside it.

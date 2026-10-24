@@ -91,15 +91,17 @@ func prepareTmp(rt Runtime, req procRequest) (string, func(), error) {
 	if err != nil {
 		return "", nil, fmt.Errorf("tmp dir for %s %q: %w", req.kind, rel, err)
 	}
+	warnTmpOverBudget(dir)
 	return dir, undo, nil
 }
 
 // checkTmpRel is one check process's private temp directory under a runtime's
-// tmp root, named checks/<unit>. The unit is the sanitized scope unit name the
-// check already carries: unique per check run and stable across a restart
-// re-run, which is what lets the re-run find the directory its first run made.
+// tmp root, named checks/<short>. The short id is deterministic in the unit
+// the check already carries -- the sanitized scope unit name, unique per
+// check run and stable across a restart re-run -- which is what lets the
+// re-run find the directory its first run made.
 func checkTmpRel(unit string) string {
-	return filepath.Join("checks", unit)
+	return filepath.Join(tmpSubChecks, shortCheckID(unit))
 }
 
 // removeCheckTmp takes a check process's private temp directory away. Every

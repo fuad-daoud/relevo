@@ -3,7 +3,6 @@ package serve
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"slices"
 	"syscall"
 	"testing"
@@ -37,7 +36,7 @@ func requireTenantBoundary(t *testing.T) {
 }
 
 // TestUserModeOwnerTmpDir pins that a user-mode owner's children start with
-// TMPDIR and GOTMPDIR pointing at its own <root>/tmp/<hex>: the daemon's state
+// TMPDIR and GOTMPDIR pointing at its own short tmp root: the daemon's state
 // tmp dir is root-owned, so a tenant cannot write there. The variables are
 // cleared in this process first, because an inherited value is the user's own
 // choice and must survive.
@@ -49,7 +48,7 @@ func TestUserModeOwnerTmpDir(t *testing.T) {
 	ownerRoot := ownerRootOf(t, env)
 	rt := env.srv.runtimeAt(ownerRoot)
 
-	want := filepath.Join(env.srv.cfg.Root, "tmp", filepath.Base(ownerRoot))
+	want := env.srv.ownerTmpDir(ownerRoot)
 	if _, err := rt.Runner.Start(context.Background(), spawn.ProcSpec{
 		Dir: ownerRoot, Argv: []string{"true"},
 	}); err != nil {
@@ -84,7 +83,7 @@ func TestUserModeOwnerTmpDirSpecWins(t *testing.T) {
 	if !slices.Contains(spec.Env, "TMPDIR=/spec/tmp") {
 		t.Errorf("owner spec Env = %v, want the spec's own TMPDIR kept", spec.Env)
 	}
-	want := filepath.Join(env.srv.cfg.Root, "tmp", filepath.Base(ownerRoot))
+	want := env.srv.ownerTmpDir(ownerRoot)
 	if !slices.Contains(spec.Env, "GOTMPDIR="+want) {
 		t.Errorf("owner spec Env = %v, want GOTMPDIR defaulted to %q", spec.Env, want)
 	}
