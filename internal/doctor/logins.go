@@ -18,6 +18,7 @@ type loginSpec struct {
 var loginSpecs = map[string]loginSpec{
 	"claude":   {home: ".claude", file: ".credentials.json", login: "claude auth login"},
 	"codex":    {home: ".codex", file: "auth.json", login: "codex login"},
+	"muse":     {home: ".config/muse", file: "auth.json", login: "muse login"},
 	"opencode": {file: opencodeDBPath, login: "opencode auth login"},
 	"agy":      {home: ".gemini", file: "oauth_creds.json", login: "agy"},
 }

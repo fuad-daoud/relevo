@@ -123,7 +123,7 @@ func TestMuseRendersTheFixture(t *testing.T) {
 	for _, line := range bytes.Split(fixture("muse.jsonl")(t), []byte{'\n'}) {
 		got = append(got, r.Render("muse", line)...)
 	}
-	if len(got) < 8 || got[0] != "● bash" || !strings.HasPrefix(got[1], "  ⎿ ok: ") {
+	if len(got) < 8 || !strings.HasPrefix(got[0], "$ ") || !strings.HasPrefix(got[1], "  ⎿ ok: ") {
 		t.Fatalf("rendered head = %q", got)
 	}
 	text := strings.Join(got, "\n")
@@ -153,6 +153,18 @@ func TestMuseRenderTable(t *testing.T) {
 		"failed tool result": {
 			[]string{`{"payload_type":"tool.result","payload":{"text":"boom","correlation_facts":{"outcome":"error","tool_name":"bash"}}}`},
 			[]string{"● bash", "  ⎿ error: boom"},
+		},
+		"bash result shows the command and exit": {
+			[]string{`{"payload_type":"tool.result","payload":{"text":"{\"command\":\"go test ./...\\nmore\",\"exit_code\":0,\"output\":\"\\n\\nok  pkg\\nlast\"}","correlation_facts":{"outcome":"success","tool_name":"bash"}}}`},
+			[]string{"$ go test ./...", "  ⎿ ok: exit 0: ok  pkg"},
+		},
+		"bash result with a nonzero exit and no output": {
+			[]string{`{"payload_type":"tool.result","payload":{"text":"{\"command\":\"false\",\"exit_code\":1,\"output\":\"\"}","correlation_facts":{"outcome":"error","tool_name":"bash"}}}`},
+			[]string{"$ false", "  ⎿ error: exit 1"},
+		},
+		"json text without bash fields keeps the tool name": {
+			[]string{`{"payload_type":"tool.result","payload":{"text":"{\"a\":1}","correlation_facts":{"outcome":"success","tool_name":"read_file"}}}`},
+			[]string{"● read_file", `  ⎿ ok: {"a":1}`},
 		},
 		"failed terminal shows the message": {
 			[]string{museFailedQuota},

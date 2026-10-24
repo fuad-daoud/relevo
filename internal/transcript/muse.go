@@ -120,10 +120,34 @@ func museToolLines(p map[string]any) []string {
 		name = "tool"
 	}
 	text := str(p["text"])
-	if str(facts["outcome"]) == "success" {
-		return []string{"● " + name, okLine(text)}
+	ok := str(facts["outcome"]) == "success"
+	head := "● " + name
+	// The bash tool reports a JSON object; its command is what a reader wants.
+	var bash struct {
+		Command  *string `json:"command"`
+		ExitCode *int    `json:"exit_code"`
+		Output   string  `json:"output"`
 	}
-	return []string{"● " + name, errLine(text)}
+	if json.Unmarshal([]byte(text), &bash) == nil && bash.Command != nil && bash.ExitCode != nil {
+		head = "$ " + oneLine(*bash.Command)
+		text = fmt.Sprintf("exit %d", *bash.ExitCode)
+		if first := museFirstLine(bash.Output); first != "" {
+			text += ": " + first
+		}
+	}
+	if ok {
+		return []string{head, okLine(text)}
+	}
+	return []string{head, errLine(text)}
+}
+
+func museFirstLine(s string) string {
+	for _, l := range strings.Split(s, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			return l
+		}
+	}
+	return ""
 }
 
 func museUsageLine(p map[string]any) string {

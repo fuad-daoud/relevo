@@ -1,5 +1,5 @@
-● bash
-  ⎿ ok: {
+$ pwd; git branch --show-current; git status --short | head -n 50; ls internal/relevo/chain_pull*.go
+  ⎿ ok: exit 0: /work/repo
 ● read_file
   ⎿ ok: Read text file `internal/relevo/chain_pull.go`.
 ● read_skill
