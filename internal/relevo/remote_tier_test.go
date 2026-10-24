@@ -51,6 +51,9 @@ func TestAddRemoteTierUnsupportedWraps(t *testing.T) {
 	if !errors.Is(err, harness.ErrTierUnsupported) {
 		t.Fatalf("err = %v, want errors.Is(err, harness.ErrTierUnsupported)", err)
 	}
+	if n := strings.Count(err.Error(), harness.ErrTierUnsupported.Error()); n != 1 {
+		t.Errorf("err = %q names the refusal %d times, want once", err, n)
+	}
 	if len(fg.createBranchCalls) != 0 {
 		t.Fatalf("createBranch called %d times, want 0", len(fg.createBranchCalls))
 	}

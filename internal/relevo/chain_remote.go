@@ -11,7 +11,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
-	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
@@ -245,7 +244,7 @@ func chainBuildRemoteBuilder(ctx context.Context, rt Runtime, opts ChainOptions,
 			return store.Binding{}, nil, fmt.Errorf("%w: %s", ErrTierAboveMax, httpErr.Body.Message)
 		}
 		if errors.As(err, &httpErr) && httpErr.Status == 422 && httpErr.Body.Code == remote.CodeInvalid && tierUnsupportedMessage(httpErr.Body.Message) {
-			return store.Binding{}, nil, fmt.Errorf("%w: %s", harness.ErrTierUnsupported, httpErr.Body.Message)
+			return store.Binding{}, nil, tierUnsupportedFromWire(httpErr.Body.Message)
 		}
 		return store.Binding{}, nil, err
 	}

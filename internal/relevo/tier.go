@@ -97,6 +97,13 @@ func tierUnsupportedMessage(msg string) bool {
 	return strings.Contains(msg, harness.ErrTierUnsupported.Error())
 }
 
+// tierUnsupportedFromWire rebuilds the harness refusal from a server's answer.
+// The server's message already opens with the sentinel's text, so it is cut
+// once here rather than printed twice.
+func tierUnsupportedFromWire(msg string) error {
+	return fmt.Errorf("%w: %s", harness.ErrTierUnsupported, strings.TrimPrefix(msg, harness.ErrTierUnsupported.Error()+": "))
+}
+
 // effectiveTier is RoundTier if set, else Tier, else harness.
 func effectiveTier(b store.Binding) harness.Tier {
 	if b.RoundTier != "" {

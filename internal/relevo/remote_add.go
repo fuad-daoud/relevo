@@ -272,7 +272,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 			return AddResult{}, fmt.Errorf("%w: %s", ErrTierAboveMax, httpErr.Body.Message)
 		}
 		if errors.As(err, &httpErr) && httpErr.Status == 422 && httpErr.Body.Code == remote.CodeInvalid && tierUnsupportedMessage(httpErr.Body.Message) {
-			return AddResult{}, fmt.Errorf("%w: %s", harness.ErrTierUnsupported, httpErr.Body.Message)
+			return AddResult{}, tierUnsupportedFromWire(httpErr.Body.Message)
 		}
 		return AddResult{}, err
 	}
