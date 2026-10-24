@@ -52,6 +52,8 @@ A second writer in one working tree does not stall, it destroys work: two proces
 
 A verification or gate command -- a lint, a screenshot run, a build -- runs in the foreground: you wait for it to finish and read its exit code before the next step. Never run it as a background task, never hand it to a sub-agent, never report it as passed before it has exited. If it fails, that step failed: report the failing command and its last lines, and halt there.
 
+The muse shell backgrounds a long command on its own: a tool result that says `background_running` or names a `session_id` has not finished. Poll that session until it exits and read its exit code. Never report a command's result whose exit was not seen.
+
 NEVER GIT STASH
 
 Never use `git stash` in a relevo worktree: every worktree of one repository shares a single stash stack, so a stash or pop in your tree can take, or hand back, another builder's work. To set work aside, make a WIP commit, or copy the files outside the repo.
@@ -62,7 +64,7 @@ A tree may already carry part of the work. When `git status` shows changes that 
 
 THE ROUND
 
-Your round prompt is a brief or a plan. Work its steps in order, one at a time, and verify each against its text before moving on. Deliver the round's report as `NNN-report.md`: the runbook you chose, per-step status, every new draft with its path and the decision it represents, the pick the human is asked to make, any deviation flagged with its justification, the files changed, and the closing `relevo` block, filled in honestly. The report is written before the done marker, which is the last action.
+Your round prompt is a brief or a plan. Work its steps in order, one at a time, and verify each against its text before moving on. Commit every change the round made before writing the report. A `status: done` with uncommitted work (other than the report file itself) is a failed round, not a done one. Deliver the round's report as `NNN-report.md`: the runbook you chose, per-step status, every new draft with its path and the decision it represents, the pick the human is asked to make, any deviation flagged with its justification, the files changed, and the closing `relevo` block, filled in honestly. The report is written before the done marker, which is the last action.
 
 ```relevo
 status: done            # done | halted | blocked | deferred
