@@ -15,6 +15,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
+// plentyDisk reports far more free space than any minimum, so a test never
+// depends on the host filesystem.
+func plentyDisk(string) (uint64, error) { return 1 << 62, nil }
+
 // lowDisk reports 1 GiB free everywhere, under the 5 GB default minimum.
 func lowDisk(string) (uint64, error) { return 1 << 30, nil }
 

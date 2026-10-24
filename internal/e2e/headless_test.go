@@ -601,6 +601,7 @@ func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *
 	reg := &mastermind.DBRegistry{KV: db.TxKV{DB: mdb}, Now: time.Now}
 
 	rt := relevo.Runtime{
+		DiskFree:    plentyDisk,
 		Git:         gitClient,
 		Runner:      proc.New(),
 		Store:       st,
@@ -1162,3 +1163,7 @@ func contains(list []string, want string) bool {
 	}
 	return false
 }
+
+// plentyDisk reports far more free space than any minimum, so a round's disk
+// preflight never depends on the host filesystem.
+func plentyDisk(string) (uint64, error) { return 1 << 62, nil }

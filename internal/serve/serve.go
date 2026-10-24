@@ -64,6 +64,9 @@ type Config struct {
 	Reloader *ConfigRefresher
 	// Hooks dispatches lifecycle events; nil means none.
 	Hooks hooks.Dispatcher
+	// DiskFree reads free bytes under a path for the disk preflight; nil means
+	// the real filesystem.
+	DiskFree func(string) (uint64, error)
 	// Scope is the systemd scope template served rounds launch under; nil means none.
 	Scope *spawn.ScopeSpec
 	// Isolation is the tenant-isolation mode this server runs under. The zero
@@ -386,6 +389,7 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		Roles:      cfg.Roles,
 		Registry:   cfg.Registry,
 		Hooks:      cfg.Hooks,
+		DiskFree:   cfg.DiskFree,
 		Scope:      cfg.Scope,
 		HeldCPUs:   func(tx *store.Tx, self string) ([]int, error) { return s.heldCPUs(root, tx, self) },
 		// The reaper is server-wide: deleting an owner's abandoned session
