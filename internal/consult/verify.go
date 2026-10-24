@@ -84,7 +84,7 @@ func parseVerdict(findings []byte) (verdict string, reasons []string) {
 	}
 
 	lines := reporttail.SplitFenceLines(findings)
-	openIdx, closeIdx, _ := reporttail.FindRelevoBlock(lines)
+	openIdx, closeIdx := reporttail.FindRelevoBlock(lines)
 	if openIdx == -1 || closeIdx == -1 {
 		return verdictUnstructured, nil
 	}

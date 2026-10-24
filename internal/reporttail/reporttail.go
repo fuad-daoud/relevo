@@ -50,12 +50,9 @@ func ParseWithReason(report []byte) (Tail, bool, string) {
 
 	lines := SplitFenceLines(report)
 
-	openIdx, closeIdx, reason := FindRelevoBlock(lines)
+	openIdx, closeIdx := FindRelevoBlock(lines)
 	if openIdx == -1 {
 		return Tail{}, false, ""
-	}
-	if reason != "" {
-		return Tail{}, false, reason
 	}
 
 	tail, statusRaw, hasStatus, haltedAtRaw, reject := scanTail(lines, openIdx, closeIdx)
@@ -201,10 +198,10 @@ func applyListKey(tail *Tail, lines []string, i, closeIdx int, key, val string) 
 // file, which is the only thing that can follow it, and closeIdx is then
 // len(lines).
 //
-// reason is "" when a block was found and readable, and non-empty when a
-// closing fence was found but prose follows it. Callers use it to tell a
-// writer that omitted the block from one whose block could not be read.
-func FindRelevoBlock(lines []string) (openIdx, closeIdx int, reason string) {
+// The block ends at its closing fence; anything after it is not the block's
+// concern. A caller that must not cut text after the block checks for it
+// itself, with textAfter.
+func FindRelevoBlock(lines []string) (openIdx, closeIdx int) {
 	openIdx = -1
 	for i, line := range lines {
 		if strings.TrimRight(line, " \t") == "```relevo" {
@@ -212,7 +209,7 @@ func FindRelevoBlock(lines []string) (openIdx, closeIdx int, reason string) {
 		}
 	}
 	if openIdx == -1 {
-		return -1, -1, ""
+		return -1, -1
 	}
 
 	closeIdx = -1
@@ -225,16 +222,21 @@ func FindRelevoBlock(lines []string) (openIdx, closeIdx int, reason string) {
 	if closeIdx == -1 {
 		// End of file is the only thing that can follow an unclosed fence, so
 		// the block ends there and nothing can sit after it to check.
-		return openIdx, len(lines), ""
+		return openIdx, len(lines)
 	}
+	return openIdx, closeIdx
+}
 
+// textAfter reports whether any non-blank line follows the closing fence at
+// closeIdx. It is false for an unclosed fence, where closeIdx is len(lines)
+// and nothing can follow.
+func textAfter(lines []string, closeIdx int) bool {
 	for i := closeIdx + 1; i < len(lines); i++ {
 		if strings.TrimSpace(lines[i]) != "" {
-			return openIdx, closeIdx, "tail: prose after closing fence"
+			return true
 		}
 	}
-
-	return openIdx, closeIdx, ""
+	return false
 }
 
 // RelevoBlock is one fenced relevo block: the index of its opening fence and
@@ -286,8 +288,8 @@ func SplitFenceLines(body []byte) []string {
 //
 //   - empty body → nil.
 //   - no ```relevo fence → body byte-identical.
-//   - last fence is followed by prose (FindRelevoBlock reason "tail: prose
-//     after closing fence") → body byte-identical; cutting it would eat prose.
+//   - closing fence is followed by prose → body byte-identical; cutting the
+//     block would eat the prose.
 //   - otherwise (well-formed block or unclosed fence): lines before the
 //     opening fence with trailing blank lines dropped, joined with "\n" and
 //     terminated by exactly one "\n"; an empty slice returns nil.
@@ -296,8 +298,8 @@ func StripTail(body []byte) []byte {
 		return nil
 	}
 	lines := SplitFenceLines(body)
-	openIdx, _, reason := FindRelevoBlock(lines)
-	if openIdx < 0 || reason == "tail: prose after closing fence" {
+	openIdx, closeIdx := FindRelevoBlock(lines)
+	if openIdx < 0 || textAfter(lines, closeIdx) {
 		return body
 	}
 	kept := lines[:openIdx]

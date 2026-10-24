@@ -278,6 +278,50 @@ func TestChainBuilderCloseSeedsReviewer(t *testing.T) {
 	}
 }
 
+// TestChainBuilderCloseWithTextAfterTheBlockAdvances pins the chain's read of
+// a builder close whose report carries text after the closing fence: the
+// block ends at its fence, so the chain reads its status and advances to the
+// reviewer instead of halting on the trailing text.
+func TestChainBuilderCloseWithTextAfterTheBlockAdvances(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	body := chainDoneBody() + " file.go | 2 +-\n 1 file changed\n"
+	chainBuilderClose(t, rt, "shop", body)
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status == string(chain.StatusHalted) {
+		t.Fatalf("chain halted: %q, want the trailing text left out of the block's way", row.Reason)
+	}
+	if row.Step != string(chain.StepReviewing) {
+		t.Errorf("step = %q, want reviewing", row.Step)
+	}
+	rev := chainBinding(t, rt, "shop-rev")
+	if row.AwaitingMember != chain.MemberReviewer || row.AwaitingRound != rev.Round {
+		t.Errorf("awaiting = (%s, %d), want (%s, %d)", row.AwaitingMember, row.AwaitingRound, chain.MemberReviewer, rev.Round)
+	}
+}
+
+// TestChainReaderCloseWithTextAfterTheBlockAdvances pins the reader path: a
+// verdict block followed by prose is read, so the pass advances the chain
+// instead of the trailing text halting it.
+func TestChainReaderCloseWithTextAfterTheBlockAdvances(t *testing.T) {
+	t.Parallel()
+
+	rt, _ := chainRuntime(t)
+	startedChain(t, rt, ChainOptions{})
+
+	chainBuilderClose(t, rt, "shop", chainDoneBody())
+	chainReaderClose(t, rt, "shop-rev", chainVerdictBody("pass")+"trailing prose\n")
+
+	row := chainStoredRow(t, rt, "shop")
+	if row.Status != string(chain.StatusDone) {
+		t.Errorf("chain status = %q, want done: a verdict block followed by prose is still read", row.Status)
+	}
+}
+
 // TestChainReviewerSeedSaysNoCheckRan pins the no-check seed: a builder round
 // with no gate reaches the reviewer as GateNone, and the staged prompt says no
 // check ran instead of naming a result and a log. The correction seed after a
