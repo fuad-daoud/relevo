@@ -54,6 +54,8 @@ func Render(s Source, kind string) ([]byte, error) {
 			"---\n\n" + s.Body), nil
 	case "codex":
 		return renderCodex(s), nil
+	case "muse":
+		return []byte("<!-- relevo agent " + s.Name + " for muse, rendered by relevo from its source; edit the source (relevo config agents), not this file. -->\n\n" + s.Body), nil
 	}
 	// Unreachable: kindRendered accepts only a known kind.
 	return nil, fmt.Errorf("agent %s: kind %s is not in its kinds: %w", s.Name, kind, ErrBadSource)

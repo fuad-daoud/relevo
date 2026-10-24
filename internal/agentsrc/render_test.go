@@ -22,7 +22,7 @@ func TestRenderGolden(t *testing.T) {
 		src     Source
 		kinds   []string
 	}{
-		{"writer", writerFixture(), []string{"claude", "opencode", "agy", "codex"}},
+		{"writer", writerFixture(), []string{"claude", "opencode", "agy", "codex", "muse"}},
 		{"reader", readerFixture(), []string{"claude", "agy"}},
 	}
 	for _, tc := range cases {

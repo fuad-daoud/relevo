@@ -37,6 +37,8 @@ func DefinitionPath(kind, name string) (string, bool) {
 		return ".gemini/config/agents/" + name + ".md", true
 	case "codex":
 		return ".codex/" + name + ".config.toml", true
+	case "muse":
+		return ".config/muse/agents/" + name + ".md", true
 	}
 	return "", false
 }

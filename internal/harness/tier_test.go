@@ -113,6 +113,11 @@ func TestPermissionArgsTable(t *testing.T) {
 		{"codex", TierRead, nil, ErrTierUnsupported, "writable_roots"},
 		{"codex", TierEdit, []string{"-s", "workspace-write", "-c", WritableRootPlaceholder}, nil, ""},
 		{"codex", TierYolo, []string{"--dangerously-bypass-approvals-and-sandbox"}, nil, ""},
+
+		{"muse", TierHarness, nil, nil, ""},
+		{"muse", TierRead, nil, ErrTierUnsupported, "unix sockets"},
+		{"muse", TierEdit, nil, ErrTierUnsupported, "--tier yolo (--yolo)"},
+		{"muse", TierYolo, []string{"--yolo"}, nil, ""},
 	}
 
 	for _, tt := range tests {
@@ -387,6 +392,10 @@ func TestPromptCopyWanted(t *testing.T) {
 		{"codex", TierEdit, false},
 		{"codex", TierYolo, false},
 		{"codex", TierHarness, false},
+
+		// muse: never wanted
+		{"muse", TierYolo, false},
+		{"muse", TierHarness, false},
 
 		// opencode: never wanted
 		{"opencode", TierRead, false},
