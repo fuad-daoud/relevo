@@ -222,6 +222,54 @@ func TestPickServedCandidateSkipsAProviderGatedOnTheServer(t *testing.T) {
 	}
 }
 
+// TestPickServedCandidateRefusesWhenEveryCandidateIsGated pins the create-time
+// refusal: with every candidate serving the role gated, the served pick
+// answers with the ErrAllGated refusal a local bind answers with, not with
+// the empty candidate that used to create a member with nothing to spawn.
+func TestPickServedCandidateRefusesWhenEveryCandidateIsGated(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
+	// Provider "test" is shared by all three configured builders.
+	if err := availability.SaveLedger(rt.Gates, availability.Ledger{Entries: []availability.Entry{
+		{Kind: availability.RateLimited, Subject: "test", At: baseTime, Source: "planner"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	token, _, err := PickServedCandidate(rt, "")
+	if !errors.Is(err, ErrAllGated) {
+		t.Fatalf("err = %v, want ErrAllGated", err)
+	}
+	if token != "" {
+		t.Errorf("token = %q, want empty beside the refusal", token)
+	}
+}
+
+// TestPickServedCandidateServesAnExplicitGatedCandidateAsNamed mirrors the
+// local explicit-pick rule on the served side: a gated candidate named with
+// --candidate is served as named, and only shape/role errors refuse it.
+func TestPickServedCandidateServesAnExplicitGatedCandidateAsNamed(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	rt.Policy = orderOf("builder", testAgyRef, testClaudeRef, testOpencodeRef)
+	if err := availability.SaveLedger(rt.Gates, availability.Ledger{Entries: []availability.Entry{
+		{Kind: availability.RateLimited, Subject: "test", At: baseTime, Source: "planner"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	token, kind, err := PickServedCandidate(rt, testClaudeRef)
+	if err != nil {
+		t.Fatalf("explicit gated pick: %v, want served as named", err)
+	}
+	if token != testClaudeRef || kind == "" {
+		t.Errorf("explicit gated pick = %q/%q, want %q with its harness kind", token, kind, testClaudeRef)
+	}
+}
+
 func runGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)

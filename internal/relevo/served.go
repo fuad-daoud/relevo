@@ -362,7 +362,11 @@ func ServedBuilderTier(rt Runtime) harness.Tier {
 // for a served binding. An explicit token the role refuses is returned as that
 // refusal, never swapped for another candidate: the create that named it must
 // answer, not silently serve someone else. With no token it is the role's
-// ranked pick, or ("", "") when nothing serves the role.
+// ranked pick, and a role the gates refuse -- every candidate serving it
+// gated, ErrAllGated -- is returned as that refusal too: a served create is
+// answered with the refusal a local bind answers with, not with a member
+// whose candidate is empty. The one non-refusal empty answer is a runtime
+// with no candidates configured at all, which is the shape's own answer.
 func PickServedCandidateFor(rt Runtime, role, token string) (string, string, error) {
 	if rt.Candidates == nil {
 		return token, "", nil
@@ -372,7 +376,7 @@ func PickServedCandidateFor(rt Runtime, role, token string) (string, string, err
 		if token != "" {
 			return token, "", err
 		}
-		return "", "", nil
+		return "", "", err
 	}
 	return res.Candidate.Ref().String(), res.Candidate.Harness, nil
 }

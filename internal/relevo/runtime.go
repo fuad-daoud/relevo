@@ -185,6 +185,10 @@ type Runtime struct {
 	// (P3b plan §4.5): the store root's database. A nil Gates means no gates
 	// store is configured -- gates read as empty, and every write is dropped
 	// with an error.
+	//
+	// The ledger map -- which writer lands in which row and which reader
+	// reads it -- is documented at the union that joins the two rows, in
+	// gateunion.go.
 	Gates db.KV
 
 	// GatesDB is the machine-local file Gates is bound to, as a handle that can
@@ -194,6 +198,17 @@ type Runtime struct {
 	// file -- the serve-wide ledger under its own prefix, a test double -- and
 	// then a gate write is stamped nowhere and signals nothing.
 	GatesDB *db.DB
+
+	// GatesLocal is the host's machine-local ledger row "ledger", set only on
+	// the server's runtimes (internal/serve runtimeAt) beside a Gates bound to
+	// the `serve.`-prefixed row. When it is set, AvailabilityDeps binds
+	// Deps.Gates to the union of the two rows: gates recorded by `relevo gate`
+	// on the server host, and gates the synced gates document applied there,
+	// steer served picks and switches exactly as they steer local ones.
+	// Reading the union never double-counts a subject live in both rows, and
+	// writing through it keeps every entry in its own row: a served write
+	// lands in "serve.ledger", never in the host's own.
+	GatesLocal db.KV
 
 	// SyncNow asks for a sync attempt now rather than at the end of the export
 	// debounce, which is what a gate a person just recorded is worth. The daemon
@@ -412,17 +427,24 @@ func IngestDeps(rt Runtime) ingest.Deps {
 // History is historyDB(rt) -- the shared file, whose outbox is the one the sync
 // drains -- while Gates is rt.Gates, the machine-local kv view the ledger lives
 // in. A row that travels and a machine-local record that does not are not the
-// same thing, so they are not the same handle.
+// same thing, so they are not the same handle. A served runtime sets
+// GatesLocal beside a prefixed Gates, and Gates then binds to their union
+// (gateunion.go): the server-wide row and the host's own, one gate per
+// subject, every write landing in its own row.
 func AvailabilityDeps(rt Runtime) availability.Deps {
 	now := rt.Now
 	if now == nil {
 		now = time.Now
 	}
+	gates := rt.Gates
+	if gates != nil && rt.GatesLocal != nil {
+		gates = gateUnionKV{primary: gates, host: rt.GatesLocal, now: now}
+	}
 	return availability.Deps{
 		Store:        rt.Store,
 		Candidates:   rt.Candidates,
 		Accounts:     rt.Accounts,
-		Gates:        rt.Gates,
+		Gates:        gates,
 		History:      historyDB(rt),
 		Now:          now,
 		Roles:        rt.Roles,

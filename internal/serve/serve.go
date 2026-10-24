@@ -128,6 +128,12 @@ type Server struct {
 	// gates is a `serve.`-prefixed view of the machine database, so a server-wide
 	// gate never collides with this machine's own rows.
 	gates db.KV
+	// gatesLocal is that machine's own ledger surface -- the unprefixed row
+	// `relevo gate <token>` recorded on this host and the synced gates document
+	// applies. Served runtimes read the union of the two (relevo.GatesLocal,
+	// gateunion.go), so a host gate steers served picks and switches; served
+	// writes still land in the prefixed row alone.
+	gatesLocal db.KV
 	// stores is one Store per owner root, guarded by s.mu. The map only ever
 	// grows; the *Store values are immutable after creation and are safe to
 	// use once read out from under s.mu.
@@ -214,15 +220,16 @@ func New(cfg Config) (*Server, error) {
 	transport := remote.NewBundleTransport(cfg.Git, tmpDir)
 
 	return &Server{
-		cfg:       cfg,
-		reloaded:  cfg,
-		clients:   clients,
-		nonces:    nonces,
-		transport: transport,
-		audiences: append([]string(nil), cfg.Audiences...),
-		gates:     db.PrefixKV{KV: local, Prefix: "serve."},
-		stores:    map[string]*store.Store{},
-		liveCache: newLiveCache(),
+		cfg:        cfg,
+		reloaded:   cfg,
+		clients:    clients,
+		nonces:     nonces,
+		transport:  transport,
+		audiences:  append([]string(nil), cfg.Audiences...),
+		gates:      db.PrefixKV{KV: local, Prefix: "serve."},
+		gatesLocal: local,
+		stores:     map[string]*store.Store{},
+		liveCache:  newLiveCache(),
 	}, nil
 }
 
@@ -382,7 +389,8 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		Candidates: cfg.Candidates,
 		Accounts:   cfg.Accounts,
 		Policy:     cfg.Policy,
-		Gates:      s.gates, // server-wide, not the owner's own
+		Gates:      s.gates,      // server-wide, not the owner's own
+		GatesLocal: s.gatesLocal, // plus this host's own ledger row: served picks and switches honour `relevo gate` here
 		InFlight:   s.inFlightFor(root),
 		History:    s.cfg.DB,
 		Usage:      cfg.Usage,

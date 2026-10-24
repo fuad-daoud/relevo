@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -121,6 +122,37 @@ func TestServedChainPreflightRefusesBeforeAnythingExists(t *testing.T) {
 		}
 		assertServedChainAbsent(t, rt, "shop")
 	})
+}
+
+// TestServedChainPreflightRefusesAnAllGatedMemberPick pins the refuse-vs-queue
+// decision of this round: a served chain whose member role has every serving
+// candidate gated refuses the whole preflight with the ErrAllGated refusal --
+// exactly what the local chain start does. chainResolveActors (chain_start.go)
+// resolves every member's pick read-only before anything is created and
+// returns the resolution error as the start's refusal; the served preflight's
+// pick loop already returns each servedActorPick error, so propagating the
+// refusal at its source makes it answer the same way. Queuing a member whose
+// candidate is empty is what the plan calls the bug: the chain row would
+// exist, plan 1 would admit, and the member's later round would have nothing
+// to spawn, with the gate's refusal never answered to the client that named
+// the chain.
+func TestServedChainPreflightRefusesAnAllGatedMemberPick(t *testing.T) {
+	t.Parallel()
+
+	rt, _, _ := servedChainRuntime(t)
+	// Every actor in the chain fixture places testClaudeRef, whose provider
+	// is "test": one rate limit gates every member's only candidate.
+	if err := availability.SaveLedger(rt.Gates, availability.Ledger{Entries: []availability.Entry{
+		{Kind: availability.RateLimited, Subject: "test", At: baseTime, Source: "planner"},
+	}}); err != nil {
+		t.Fatalf("gate the only candidate's provider: %v", err)
+	}
+
+	_, err := ServedChainPreflight(rt, servedChainRequest("shop"))
+	if !errors.Is(err, ErrAllGated) {
+		t.Fatalf("err = %v, want the ErrAllGated refusal", err)
+	}
+	assertServedChainAbsent(t, rt, "shop")
 }
 
 // TestServedChainCreateWritesTheChainAndMembersAtomically pins the served

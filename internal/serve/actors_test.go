@@ -165,9 +165,16 @@ func TestGetActorGated(t *testing.T) {
 }
 
 // TestGetActorReader: a reader actor answers its own shape, and the builder's
-// pick never leaks into it.
+// pick never leaks into it. The shared candidate set serves reviewer as well,
+// so the pin runs with the one candidate serving it gated: the view answers
+// the reader shape with a refusal reason, not another actor's pick.
 func TestGetActorReader(t *testing.T) {
 	env := setupTestEnv(t)
+
+	rt := env.runtime(t)
+	if _, err := availability.Unavailable(relevo.AvailabilityDeps(rt), testBuilderToken, time.Now().Add(time.Hour), "quota"); err != nil {
+		t.Fatalf("record gate: %v", err)
+	}
 
 	resp, view, body := getActor(t, env, "/v1/actors/reviewer")
 	requireStatus(t, resp, body, http.StatusOK)
@@ -179,10 +186,10 @@ func TestGetActorReader(t *testing.T) {
 		t.Errorf("Shape = %q, want %q", view.Shape, store.ShapeReader)
 	}
 	if view.Accepted || view.Pick != "" {
-		t.Errorf("accepted/pick = %v/%q for a reader, want false/empty", view.Accepted, view.Pick)
+		t.Errorf("accepted/pick = %v/%q for a gated reader, want false/empty", view.Accepted, view.Pick)
 	}
 	if view.Reason == "" {
-		t.Errorf("Reason is empty for an actor nothing serves, want a reason")
+		t.Errorf("Reason is empty for an actor whose only candidate is gated, want a reason")
 	}
 }
 

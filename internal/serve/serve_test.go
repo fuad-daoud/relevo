@@ -1027,7 +1027,10 @@ func TestCreateBindingRole(t *testing.T) {
 	}{
 		{"server role", "ui-builder", http.StatusCreated, "", "claude/anthropic/haiku", store.ShapeWriter, false},
 		{"unknown role", "nope", http.StatusBadRequest, `unknown actor "nope"`, "", "", true},
-		{"reader role", "reviewer", http.StatusCreated, "", "", store.ShapeReader, false},
+		// A role the registry gives no candidate answers with the refusal a
+		// local send answers with -- this release refuses the create instead
+		// of storing a binding with an empty candidate.
+		{"reader role", "reviewer", http.StatusUnprocessableEntity, "can run it", "", "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1537,6 +1540,46 @@ func TestUnavailableGatesServerWide(t *testing.T) {
 	if _, err := os.Stat(ownerDB); !os.IsNotExist(err) {
 		t.Fatalf("owner database at %s (err %v), want none", ownerDB, err)
 	}
+}
+
+// TestCreateRefusesAnAllGatedServedPick pins case 1 at the HTTP surface: a
+// served create whose every candidate is gated answers with the ErrAllGated
+// refusal -- the one a local bind answers with -- and stores no binding,
+// where the swallowed refusal fell through to a binding with an empty
+// candidate. The gate is recorded in the machine's own ledger row (what
+// `relevo gate <token>` writes on the server host), so the test also pins
+// case 4's visibility at the create.
+func TestCreateRefusesAnAllGatedServedPick(t *testing.T) {
+	// The control: an ungated served create answers 201 with the pick.
+	{
+		srv, kp := newTierTestServer(t, policy.Policy{})
+		rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+			Name:       "api",
+			RepoID:     testRepoID,
+			BaseCommit: strings.Repeat("a", 40),
+			Role:       "builder",
+		})
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("ungated control: status = %d, want 201; body: %s", rec.Code, rec.Body.String())
+		}
+	}
+
+	srv, kp := newTierTestServer(t, policy.Policy{})
+	if err := availability.SaveLedger(srv.DB().LocalOrSelf(), availability.Ledger{Entries: []availability.Entry{
+		{Kind: availability.RateLimited, Subject: "anthropic", At: time.Now(), Source: "relevo"},
+	}}); err != nil {
+		t.Fatalf("gate the host row: %v", err)
+	}
+	rec := createBindingRequest(t, srv, kp, remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     testRepoID,
+		BaseCommit: strings.Repeat("a", 40),
+		Role:       "builder",
+	})
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body.String())
+	}
+	requireCreateRefused(t, srv, kp, rec, `every candidate serving "builder" is gated`, true)
 }
 
 // TestUnavailableAcceptsBareProvider: the subject a laptop forwards for
