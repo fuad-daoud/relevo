@@ -19,11 +19,12 @@ func (s *Server) ownerTmpDir(root string) string {
 	return filepath.Join(s.cfg.Root, "tmp", filepath.Base(root))
 }
 
-// tmpDirRunner points every process one user-mode owner starts at that owner's
-// own temp directory. The daemon's default would be the root-owned state tmp
-// dir, which the tenant cannot enter, so the per-owner binding has to arrive
-// here rather than on the shared base runner. ForTenant takes no path, so this
-// wraps the boundary's own runner and the isolate interface is untouched.
+// tmpDirRunner points every process one user-mode owner starts, unless that
+// process carries a temp directory of its own, at the owner's own temp
+// directory. The daemon's default would be the root-owned state tmp dir, which
+// the tenant cannot enter, so the per-owner binding has to arrive here rather
+// than on the shared base runner. ForTenant takes no path, so this wraps the
+// boundary's own runner and the isolate interface is untouched.
 type tmpDirRunner struct {
 	base spawn.Runner
 	dir  string
@@ -45,12 +46,18 @@ func withTmpDir(base spawn.Runner, dir string) spawn.Runner {
 	return tmpDirRunner{base: base, dir: dir}
 }
 
-// Start sets the temp directory on spec and hands it to the base. The override
-// rule is the runner's own, per variable: an entry the spec already carries
-// wins, and a non-empty inherited value is the user's own choice and is left
-// alone. Appending to spec.Env also suppresses the base runner's default, so
-// exactly one of each name reaches the child.
+// Start hands the spec to the base untouched when it carries its own temp
+// directory: that directory is the process's own choice, the base runner
+// applies it ahead of the inherited environment, and appending the owner's
+// default beside it would suppress that. Otherwise the override rule is the
+// runner's own, per variable: an entry the spec already carries wins, and a
+// non-empty inherited value is the user's own choice and is left alone.
+// Appending to spec.Env also suppresses the base runner's default, so exactly
+// one of each name reaches the child.
 func (r tmpDirRunner) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.ProcHandle, error) {
+	if spec.TmpDir != "" {
+		return r.base.Start(ctx, spec)
+	}
 	env := spec.Env
 	for _, name := range proc.TmpDirEnv {
 		if hasEnvName(env, name) {

@@ -137,7 +137,7 @@ func TestChainRemoteBuilderE2E(t *testing.T) {
 
 	serverStore := srvStore(owner)
 	gitClient := git.NewClient("git", 10*time.Second, 0)
-	serverRT := relevo.Runtime{Store: serverStore, Git: gitClient, Runner: runner}
+	serverRT := relevo.Runtime{Store: serverStore, Git: gitClient, Runner: runner, DiskFree: plentyDisk}
 
 	t.Cleanup(func() {
 		stopRecordedBuilders(t, rt, builderName, reviewerName, plannerName)
@@ -527,6 +527,7 @@ func newChainRemoteClient(t *testing.T, url, fingerprint, home string) (relevo.R
 	}
 
 	rt := relevo.Runtime{
+		DiskFree:    plentyDisk,
 		Git:         gitClient,
 		Runner:      proc.New(),
 		Store:       st,

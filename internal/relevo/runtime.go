@@ -160,6 +160,16 @@ type Runtime struct {
 	Store      *store.Store
 	Candidates *candidate.Set
 
+	// TmpRoot is the state directory this runtime's rounds and checks create
+	// their per-process entries under, through the store's tmp-entry helpers.
+	// Empty means no per-process dirs: every test, and container mode, whose
+	// builders see the container's own /tmp instead of any host path.
+	TmpRoot string
+
+	// DiskFree reads the free bytes under a path for the disk preflight; nil
+	// reads the filesystem. Tests set it so no disk is ever filled.
+	DiskFree func(path string) (uint64, error)
+
 	// Accounts is the configured login pool: the logins a pick may draw a
 	// round from. Empty on every host with no accounts, where a pick records
 	// no account and every other path is byte-identical to before.

@@ -64,6 +64,9 @@ type Config struct {
 	Reloader *ConfigRefresher
 	// Hooks dispatches lifecycle events; nil means none.
 	Hooks hooks.Dispatcher
+	// DiskFree reads free bytes under a path for the disk preflight; nil means
+	// the real filesystem.
+	DiskFree func(string) (uint64, error)
 	// Scope is the systemd scope template served rounds launch under; nil means none.
 	Scope *spawn.ScopeSpec
 	// Isolation is the tenant-isolation mode this server runs under. The zero
@@ -136,6 +139,9 @@ type Server struct {
 	// the bare-repo pin mutex inside that hold, and the bind paths take that
 	// mutex alone, so the order is admitMu -> pin mutex and never the reverse.
 	admitMu sync.Mutex
+	// tmpSweptAt maps an owner root to its last tmp sweep. The Daemon that
+	// sweeps lives for one tick, so the pace has to outlive it here.
+	tmpSweptAt sync.Map
 	// liveCache caches running round LiveViews per caller/binding/round.
 	liveCache *liveCache
 	// tickFn, when non-nil, replaces Tick in Run; the drain tests set it.
@@ -386,11 +392,27 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		Roles:      cfg.Roles,
 		Registry:   cfg.Registry,
 		Hooks:      cfg.Hooks,
+		DiskFree:   cfg.DiskFree,
 		Scope:      cfg.Scope,
 		HeldCPUs:   func(tx *store.Tx, self string) ([]int, error) { return s.heldCPUs(root, tx, self) },
 		// The reaper is server-wide: deleting an owner's abandoned session
 		// runs the harness binary, which is the same for every owner.
 		SessionReaper: cfg.SessionReaper,
+	}
+	// Every mode that runs builders on this host gives the owner its own tmp
+	// root, so one owner's sweep can never see another owner's entries.
+	// Container mode gets none: applyContainer's builder sees the container's
+	// own /tmp, and a host path means nothing inside it.
+	if cfg.Isolation != isolate.ModeContainer {
+		rt.TmpRoot = s.ownerTmpDir(root)
+		// A named root must exist before a round's start prepares its
+		// directory through the store's confined helpers: mode-none serve has
+		// no ensureTenantRoots step to make it, and user mode's hands an
+		// existing one to the tenant at bind. Made at 0700, the same mode
+		// ensureTenantDir would create it with.
+		if err := os.MkdirAll(rt.TmpRoot, tenantDirMode); err != nil {
+			slog.Warn("owner tmp root not created", "root", rt.TmpRoot, "err", err)
+		}
 	}
 	switch cfg.Isolation {
 	case isolate.ModeUser:

@@ -495,7 +495,7 @@ gives a MasterMind a name of your own.
   configuration document section by section.
 - `relevo config repo [--repo <path>]` — read this repository's own settings
   (the `repos` config section, keyed by the repository's identity);
-  `config repo set <name|gate|board_theme> <value>` stores one field,
+  `config repo set <name|gate|board_theme|trimpath> <value>` stores one field,
   `config repo unset <key>` clears it, and `config repo list` prints one row
   per repository that has settings.
 - `relevo config secret set|rm|list` — store, forget or list the `typesafe`

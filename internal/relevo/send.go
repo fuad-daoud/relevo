@@ -639,7 +639,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 				// spawn_failed (written by startRound) gates the candidate
 				// for the next pick.
 				b.State = store.StateNeedsYou
-				b.Halt = "builder spawn failed: " + err.Error()
+				b.Halt = spawnHaltText(err)
 				b.HaltAt = rt.Now().UTC()
 				// The builder change is still recorded first, so the log
 				// explains why the round was sent to the new candidate.
@@ -655,6 +655,9 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			b = started
 			h := handleOf(started.Builder)
 			spawned = &h
+			// The round the started process runs: the rollback below needs
+			// it to remove the temp dir the start prepared.
+			round = b.Round
 			if sendAfterSpawn != nil {
 				if err := sendAfterSpawn(name); err != nil {
 					return err
@@ -777,6 +780,9 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			if kerr != nil {
 				return SendResult{}, fmt.Errorf("%w; and stopping the builder it started (pid %d) failed: %v", err, spawned.PID, kerr)
 			}
+			// The rollback killed the round's process outside stopProcess, so
+			// it removes the temp dir the start prepared.
+			removeRoundTmp(rt, store.Binding{Name: name}, round)
 			return SendResult{}, fmt.Errorf("%w; the builder it started (pid %d) was stopped", err, spawned.PID)
 		}
 		return SendResult{}, err

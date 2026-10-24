@@ -270,6 +270,10 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 					"%s: builder %s; could not stop its process %d to replace it: %v",
 					b.Name, reason, b.Builder.PID, err))
 			}
+			// This kill bypasses stopProcess, so it carries the temp-dir
+			// removal itself; the replacement's start below recreates the
+			// directory under the same name, empty.
+			removeRoundTmp(rt, b, b.Round)
 		}
 	}
 

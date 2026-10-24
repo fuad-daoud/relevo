@@ -316,6 +316,9 @@ func validateThresholds(path string, p Policy) error {
 	if p.ArtifactMaxMB != nil && *p.ArtifactMaxMB < 0 {
 		return fmt.Errorf("%s: artifact_max_mb: must be >= 0, got %d: %w", path, *p.ArtifactMaxMB, ErrBadPolicy)
 	}
+	if p.DiskMinFreeGB != nil && *p.DiskMinFreeGB < 0 {
+		return fmt.Errorf("%s: disk_min_free_gb: must be >= 0, got %d: %w", path, *p.DiskMinFreeGB, ErrBadPolicy)
+	}
 	if err := validateDurations(path, p); err != nil {
 		return err
 	}

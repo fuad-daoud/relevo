@@ -107,65 +107,109 @@ func TestChildEnv(t *testing.T) {
 	}
 }
 
-// TestTmpDirEnv pins the defaulting rule per variable: a spec entry wins, then
-// a non-empty inherited value, and only a name nothing sets takes the runner's
-// directory -- an empty one counts as unset. A defaulted name is denied in the
-// parent so an empty inherited copy cannot reach the child ahead of it.
-func TestTmpDirEnv(t *testing.T) {
-	const dir = "/state/tmp"
-	cases := []struct {
-		name     string
-		parent   []string
-		extra    []string
-		dir      string
-		wantAdd  []string
-		wantDeny []string
-	}{
-		{
-			name: "no directory defaults nothing", parent: []string{"TMPDIR=/tmp"},
-			wantAdd: nil, wantDeny: nil,
-		},
-		{
-			name:    "neither parent nor spec sets either",
-			dir:     dir,
-			wantAdd: []string{"TMPDIR=" + dir, "GOTMPDIR=" + dir}, wantDeny: []string{"TMPDIR", "GOTMPDIR"},
-		},
-		{
-			name:    "spec entry suppresses the default",
-			parent:  nil,
-			extra:   []string{"TMPDIR=/spec/tmp"},
-			dir:     dir,
-			wantAdd: []string{"GOTMPDIR=" + dir}, wantDeny: []string{"GOTMPDIR"},
-		},
-		{
-			name:    "non-empty inherited value suppresses the default",
-			parent:  []string{"TMPDIR=/user/tmp"},
-			dir:     dir,
-			wantAdd: []string{"GOTMPDIR=" + dir}, wantDeny: []string{"GOTMPDIR"},
-		},
-		{
-			name:     "empty inherited value is unset",
-			parent:   []string{"TMPDIR=", "GOTMPDIR"},
-			dir:      dir,
-			wantAdd:  []string{"TMPDIR=" + dir, "GOTMPDIR=" + dir},
-			wantDeny: []string{"TMPDIR", "GOTMPDIR"},
-		},
-		{
-			name:     "both already named leaves nothing to add",
-			parent:   []string{"TMPDIR=/user/tmp", "GOTMPDIR=/user/gotmp"},
-			extra:    []string{"TMPDIR=/spec/tmp"},
-			dir:      dir,
-			wantAdd:  nil,
-			wantDeny: nil,
-		},
-	}
+// tmpDirEnvDefault is the runner directory TestTmpDirEnv's rows point at.
+const tmpDirEnvDefault = "/state/tmp"
 
-	for _, tc := range cases {
+// tmpDirEnvCases is TestTmpDirEnv's table; it lives here to keep the test
+// itself short. Every row also pins that the environment inputs survive
+// unmutated.
+var tmpDirEnvCases = []struct {
+	name     string
+	parent   []string
+	extra    []string
+	spec     string
+	runner   string
+	wantAdd  []string
+	wantDeny []string
+}{
+	{
+		name: "no directory defaults nothing", parent: []string{"TMPDIR=/tmp"},
+		wantAdd: nil, wantDeny: nil,
+	},
+	{
+		name:    "neither parent nor spec sets either",
+		runner:  tmpDirEnvDefault,
+		wantAdd: []string{"TMPDIR=" + tmpDirEnvDefault, "GOTMPDIR=" + tmpDirEnvDefault}, wantDeny: []string{"TMPDIR", "GOTMPDIR"},
+	},
+	{
+		name:    "spec entry suppresses the default",
+		parent:  nil,
+		extra:   []string{"TMPDIR=/spec/tmp"},
+		runner:  tmpDirEnvDefault,
+		wantAdd: []string{"GOTMPDIR=" + tmpDirEnvDefault}, wantDeny: []string{"GOTMPDIR"},
+	},
+	{
+		name:    "non-empty inherited value suppresses the default",
+		parent:  []string{"TMPDIR=/user/tmp"},
+		runner:  tmpDirEnvDefault,
+		wantAdd: []string{"GOTMPDIR=" + tmpDirEnvDefault}, wantDeny: []string{"GOTMPDIR"},
+	},
+	{
+		name:     "empty inherited value is unset",
+		parent:   []string{"TMPDIR=", "GOTMPDIR"},
+		runner:   tmpDirEnvDefault,
+		wantAdd:  []string{"TMPDIR=" + tmpDirEnvDefault, "GOTMPDIR=" + tmpDirEnvDefault},
+		wantDeny: []string{"TMPDIR", "GOTMPDIR"},
+	},
+	{
+		name:     "both already named leaves nothing to add",
+		parent:   []string{"TMPDIR=/user/tmp", "GOTMPDIR=/user/gotmp"},
+		extra:    []string{"TMPDIR=/spec/tmp"},
+		runner:   tmpDirEnvDefault,
+		wantAdd:  nil,
+		wantDeny: nil,
+	},
+	{
+		name:     "a spec directory beats a non-empty inherited value",
+		parent:   []string{"TMPDIR=/user/tmp", "GOTMPDIR=/user/gotmp"},
+		spec:     "/proc/tmp",
+		runner:   tmpDirEnvDefault,
+		wantAdd:  []string{"TMPDIR=/proc/tmp", "GOTMPDIR=/proc/tmp"},
+		wantDeny: []string{"TMPDIR", "GOTMPDIR"},
+	},
+	{
+		name:     "a spec directory beats the runner default",
+		spec:     "/proc/tmp",
+		runner:   tmpDirEnvDefault,
+		wantAdd:  []string{"TMPDIR=/proc/tmp", "GOTMPDIR=/proc/tmp"},
+		wantDeny: []string{"TMPDIR", "GOTMPDIR"},
+	},
+	{
+		name:    "an extra entry beats the spec directory",
+		extra:   []string{"TMPDIR=/extra/tmp"},
+		spec:    "/proc/tmp",
+		runner:  tmpDirEnvDefault,
+		wantAdd: []string{"GOTMPDIR=/proc/tmp"}, wantDeny: []string{"GOTMPDIR"},
+	},
+	{
+		name:    "an empty spec directory changes nothing",
+		parent:  []string{"TMPDIR=/user/tmp"},
+		spec:    "",
+		runner:  tmpDirEnvDefault,
+		wantAdd: []string{"GOTMPDIR=" + tmpDirEnvDefault}, wantDeny: []string{"GOTMPDIR"},
+	},
+	{
+		name:    "GOTMPDIR is decided on its own, apart from TMPDIR",
+		parent:  []string{"TMPDIR=/user/tmp"},
+		extra:   []string{"GOTMPDIR=/extra/gotmp"},
+		spec:    "/proc/tmp",
+		runner:  tmpDirEnvDefault,
+		wantAdd: []string{"TMPDIR=/proc/tmp"}, wantDeny: []string{"TMPDIR"},
+	},
+}
+
+// TestTmpDirEnv pins the defaulting rule per variable: an extra entry wins,
+// then the spec's own directory, then a non-empty inherited value, and only a
+// name nothing of these sets takes the runner's directory -- an empty spec and
+// an empty runner default nothing. A defaulted name is denied in the parent so
+// an empty inherited copy cannot reach the child ahead of it.
+func TestTmpDirEnv(t *testing.T) {
+	for _, tc := range tmpDirEnvCases {
 		t.Run(tc.name, func(t *testing.T) {
 			parentCopy := slices.Clone(tc.parent)
 			extraCopy := slices.Clone(tc.extra)
 
-			add, deny := tmpDirEnv(tc.parent, tc.extra, tc.dir)
+			add, deny := tmpDirEnv(tc.parent, tc.extra, tc.spec, tc.runner)
 			if !reflect.DeepEqual(add, tc.wantAdd) {
 				t.Errorf("tmpDirEnv() add = %v, want %v", add, tc.wantAdd)
 			}
@@ -187,7 +231,7 @@ func TestTmpDirEnv(t *testing.T) {
 // an inherited value and a spec entry each keep their own.
 func TestSpawnEnvAppliesTmpDirDefaults(t *testing.T) {
 	got := spawnEnv([]string{"HOME=/root", "TMPDIR=", "KEEP=/user/tmp"}, []string{"GOTMPDIR=/spec/gotmp"},
-		nil, nil, "/state/tmp")
+		nil, nil, "", "/state/tmp")
 
 	want := []string{"TMPDIR=/state/tmp", "GOTMPDIR=/spec/gotmp", "KEEP=/user/tmp"}
 	for _, w := range want {

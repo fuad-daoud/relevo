@@ -94,6 +94,12 @@ type Daemon struct {
 	// off. The zero time means it never has been, so a fresh daemon empties it
 	// on its first tick and then settles onto the interval.
 	outboxTruncatedAt time.Time
+	// tmpSweptAt is when this daemon last ran the tmp sweep; the zero time
+	// means never, so a daemon's first tick sweeps. It is daemon state rather
+	// than package state because the sweep paces one root: one timer shared
+	// between daemons would let a sweep of one root postpone another root's
+	// first sweep.
+	tmpSweptAt time.Time
 	// syncNow is the clock the idle window reads. Nil means time.Now.
 	syncNow func() time.Time
 	// syncVerbs is the verb runner the owner serves, set once the Daemon
@@ -260,6 +266,12 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// readers are all gone is exactly the one left carrying them. It runs off
 	// the list above rather than a second one.
 	d.safely("scratch sweep", func() { sweepReaderScratch(ctx, d.rt, bindings) })
+	// The tmp root's own leftovers go on the same list and the same side of
+	// the early return: a machine with no bindings left is exactly the one
+	// still carrying yesterday's round and check temp directories, and serve
+	// runs this Tick per owner, so every owner's root is swept by its own
+	// daemon.
+	d.safely("tmp sweep", func() { d.sweepTmpTick(ctx, bindings) })
 	// Before the first tick of this process, every archived record the mirror
 	// has not seen is ingested (P3d §4.2, §4.5).
 	archivedMirrorOnce.Do(func() { mirrorArchived(ctx, d.rt) })

@@ -204,9 +204,10 @@ func TestRemoteTierOverWire(t *testing.T) {
 	// Close round 1 exactly as TestRemoteRoundEndToEnd does.
 	gitClient := git.NewClient("git", 10*time.Second, 0)
 	serverRT := relevo.Runtime{
-		Store:  serverStore,
-		Git:    gitClient,
-		Runner: runner,
+		DiskFree: plentyDisk,
+		Store:    serverStore,
+		Git:      gitClient,
+		Runner:   runner,
 	}
 	finishRound(t, serverRT, "api", 1, "round 1 done")
 

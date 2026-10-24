@@ -34,6 +34,56 @@ func TestReposEntryRoundTripsEveryField(t *testing.T) {
 	}
 }
 
+// TestParseReposTrimpath pins the fourth key: on and off both store and
+// round-trip through EncodeRepos, a value outside the two is refused naming
+// the section and the entry it was found on, and an entry whose only field is
+// the default `on` is still stored -- the explicit word is the encoding of
+// "this repository said so", without which the entry would drop as empty and
+// the setting could never be carried across a sync.
+func TestParseReposTrimpath(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ value, want string }{{"off", "off"}, {"on", "on"}} {
+		body := `{"` + reposTestKey + `":{"trimpath":"` + tc.value + `"}}`
+		out, err := ParseRepos([]byte(body))
+		if err != nil {
+			t.Fatalf("ParseRepos(%s): %v", body, err)
+		}
+		if got := out[reposTestKey].Trimpath; got != tc.want {
+			t.Errorf("trimpath = %q, want %q", got, tc.want)
+		}
+		encoded, err := EncodeRepos(out)
+		if err != nil {
+			t.Fatalf("EncodeRepos(%+v): %v", out, err)
+		}
+		round, err := ParseRepos(encoded)
+		if err != nil {
+			t.Fatalf("ParseRepos(%s): %v", encoded, err)
+		}
+		if round[reposTestKey].Trimpath != tc.want {
+			t.Errorf("round trip = %q, want %q", round[reposTestKey].Trimpath, tc.want)
+		}
+	}
+
+	_, err := ParseRepos([]byte(`{"` + reposTestKey + `":{"trimpath":"maybe"}}`))
+	if err == nil {
+		t.Fatal("ParseRepos(maybe) = nil error, want a refusal")
+	}
+	for _, want := range []string{string(Repos), reposTestKey, `trimpath is "maybe"`, "on or off"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to name %q", err, want)
+		}
+	}
+
+	out, err := ParseRepos([]byte(`{"` + reposTestKey + `":{"trimpath":"on"}}`))
+	if err != nil {
+		t.Fatalf("ParseRepos(trimpath only): %v", err)
+	}
+	if _, ok := out[reposTestKey]; !ok {
+		t.Errorf("an entry holding only trimpath on dropped: %+v, want it stored (on is stored explicitly for exactly this reason)", out)
+	}
+}
+
 func TestReposSectionRefusesABadShape(t *testing.T) {
 	t.Parallel()
 

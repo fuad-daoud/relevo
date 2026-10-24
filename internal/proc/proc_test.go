@@ -618,6 +618,49 @@ func TestStartKeepsTheUsersTmpDir(t *testing.T) {
 	}
 }
 
+// TestStartSpecTmpDirBeatsInheritedTmpDir: a process that carries its own
+// temporary directory sees it in the child even when the parent environment
+// names one and the runner has a default, because the spec's directory is
+// chosen for this process alone and outranks what it inherited.
+func TestStartSpecTmpDirBeatsInheritedTmpDir(t *testing.T) {
+	user := t.TempDir()
+	dir := t.TempDir()
+	specDir := t.TempDir()
+	runnerDir := t.TempDir()
+	t.Setenv("TMPDIR", user)
+	t.Setenv("GOTMPDIR", user)
+	r := New()
+	r.TmpDir = runnerDir
+	stream := filepath.Join(dir, "001-builder.jsonl")
+	h, err := r.Start(context.Background(), spawn.ProcSpec{
+		Dir:        dir,
+		Argv:       []string{"sh", "-c", "env"},
+		TmpDir:     specDir,
+		LogPath:    filepath.Join(dir, "001-builder.log"),
+		StreamPath: stream,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitGone(t, r, h, 5*time.Second)
+	data, err := os.ReadFile(stream)
+	if err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	out := string(data)
+	for _, name := range TmpDirEnv {
+		if !strings.Contains(out, name+"="+specDir) {
+			t.Errorf("child env does not contain %q: %q", name+"="+specDir, out)
+		}
+		if strings.Contains(out, name+"="+user) {
+			t.Errorf("the inherited value beat the spec's for %s: %q", name, out)
+		}
+		if strings.Contains(out, name+"="+runnerDir) {
+			t.Errorf("the runner default beat the spec's for %s: %q", name, out)
+		}
+	}
+}
+
 // startEchoEnv starts sh under r and returns the child's environment as env
 // printed it to the stream.
 func startEchoEnv(t *testing.T, r *Runner) string {
@@ -1229,7 +1272,7 @@ func TestBuildCmdAppliesCredential(t *testing.T) {
 func TestSpawnEnvDeniesSpecDenyEnv(t *testing.T) {
 	parent := []string{"XDG_RUNTIME_DIR=/run/1", "KEEP=yes", "CLAUDE_CONFIG_DIR=/root/.claude"}
 	got := spawnEnv(parent, []string{"HOME=/home/tenant"}, nil,
-		[]string{"XDG_RUNTIME_DIR", "CLAUDE_CONFIG_DIR"}, "")
+		[]string{"XDG_RUNTIME_DIR", "CLAUDE_CONFIG_DIR"}, "", "")
 	if slices.Contains(got, "XDG_RUNTIME_DIR=/run/1") {
 		t.Errorf("spawnEnv kept a denied entry: %v", got)
 	}

@@ -15,7 +15,7 @@ github.com/fuad-daoud/relevo/internal/classify 86.0
 github.com/fuad-daoud/relevo/internal/config 82.2
 github.com/fuad-daoud/relevo/internal/consent 69.4
 github.com/fuad-daoud/relevo/internal/consult 20.9
-github.com/fuad-daoud/relevo/internal/db 79.5
+github.com/fuad-daoud/relevo/internal/db 79.8
 github.com/fuad-daoud/relevo/internal/db/dbtest 68.9
 github.com/fuad-daoud/relevo/internal/db/wire 75.5
 github.com/fuad-daoud/relevo/internal/db/wire/client 68.7

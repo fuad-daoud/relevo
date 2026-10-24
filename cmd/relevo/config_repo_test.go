@@ -212,9 +212,114 @@ func TestConfigRepoJSONAndListJSON(t *testing.T) {
 	}
 }
 
+// TestConfigRepoTrimpathShowsTheEffectiveValue pins the fourth key through
+// the verbs: set off stores the word and show reads it back, set on stores
+// the explicit word the default never is, and unset collapses the field --
+// dropping the entry when nothing else survives, keeping it elsewhere --
+// with show then naming the state the entry stores nothing for as
+// "trimpath on (default)". An entry beside another field is what makes the
+// unset state visible, because an entry left with no field at all is not
+// stored at all, and a repository with no entry prints no settings line.
+func TestConfigRepoTrimpathShowsTheEffectiveValue(t *testing.T) {
+	initRoot(t)
+	repo := gitRepoWithACommit(t)
+	chdirRepo(t, repo)
+
+	if _, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "repo", "set", "name", "lab"})
+	}); err != nil {
+		t.Fatalf("config repo set name: %v", err)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "repo", "set", "trimpath", "off"})
+	}); err != nil {
+		t.Fatalf("config repo set trimpath off: %v", err)
+	}
+	entries := storedConfig(t).Repos
+	if len(entries) != 1 {
+		t.Fatalf("stored entries = %+v, want exactly one", entries)
+	}
+	var entry config.RepoEntry
+	for _, v := range entries {
+		entry = v
+	}
+	if entry.Trimpath != "off" {
+		t.Errorf("stored trimpath = %q, want off", entry.Trimpath)
+	}
+
+	stdout, _, err := captureOutput(t, func() error { return run([]string{"config", "repo"}) })
+	if err != nil {
+		t.Fatalf("config repo after set: %v", err)
+	}
+	if !strings.Contains(string(stdout), "trimpath off") {
+		t.Errorf("config repo after set = %q, want the stored off shown", stdout)
+	}
+
+	if _, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "repo", "set", "trimpath", "on"})
+	}); err != nil {
+		t.Fatalf("config repo set trimpath on: %v", err)
+	}
+	stdout, _, err = captureOutput(t, func() error { return run([]string{"config", "repo"}) })
+	if err != nil {
+		t.Fatalf("config repo after set on: %v", err)
+	}
+	if !strings.Contains(string(stdout), "trimpath on") {
+		t.Errorf("config repo after set on = %q, want the explicit on shown", stdout)
+	}
+
+	if _, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "repo", "unset", "trimpath"})
+	}); err != nil {
+		t.Fatalf("config repo unset trimpath: %v", err)
+	}
+	if entry := storedConfig(t).Repos; len(entry) != 1 || entry[allReposKeys(t, entry)].Trimpath != "" {
+		t.Fatalf("stored entry after unset = %+v, want the name kept and the trimpath field gone: the unset default is not stored", entry)
+	}
+	stdout, _, err = captureOutput(t, func() error { return run([]string{"config", "repo"}) })
+	if err != nil {
+		t.Fatalf("config repo after unset: %v", err)
+	}
+	if !strings.Contains(string(stdout), "trimpath on (default)") {
+		t.Errorf("config repo after unset = %q, want the effective default shown", stdout)
+	}
+
+	// Unsetting the field an entry holds alone is the drop, the same rule the
+	// empty entry pins elsewhere.
+	if _, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "repo", "unset", "name"})
+	}); err != nil {
+		t.Fatalf("config repo unset name: %v", err)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "repo", "set", "trimpath", "off"})
+	}); err != nil {
+		t.Fatalf("config repo re-set trimpath: %v", err)
+	}
+	if _, _, err := captureOutput(t, func() error {
+		return run([]string{"config", "repo", "unset", "trimpath"})
+	}); err != nil {
+		t.Fatalf("config repo unset trimpath again: %v", err)
+	}
+	if entries := storedConfig(t).Repos; len(entries) != 0 {
+		t.Errorf("stored entries after unsetting the only field = %+v, want the entry gone", entries)
+	}
+}
+
+// allReposKeys is the one identity out of m, for a map the test guards as
+// holding exactly one entry.
+func allReposKeys(t *testing.T, m map[string]config.RepoEntry) string {
+	t.Helper()
+	for k := range m {
+		return k
+	}
+	t.Fatal("no entry to read")
+	return ""
+}
+
 // TestConfigRepoRefusesAnUnknownKey pins the key vocabulary: a key outside
-// name, gate and board_theme is a usage refusal that names the three.
-// Accepting any key is the mutation this test catches.
+// name, gate, board_theme and trimpath is a usage refusal that names the
+// four. Accepting any key is the mutation this test catches.
 func TestConfigRepoRefusesAnUnknownKey(t *testing.T) {
 	initRoot(t)
 	repo := gitRepoWithACommit(t)
@@ -226,7 +331,7 @@ func TestConfigRepoRefusesAnUnknownKey(t *testing.T) {
 	} {
 		err := run(s)
 		ce := requireCLIError(t, err, codeUsage, "")
-		for _, want := range []string{"name", "gate", "board_theme"} {
+		for _, want := range []string{"name", "gate", "board_theme", "trimpath"} {
 			if !strings.Contains(ce.message, want) {
 				t.Errorf("%v: message = %q, want it to name %q", s, ce.message, want)
 			}

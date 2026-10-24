@@ -17,21 +17,25 @@ import (
 // field set to "" is stored as absent, and an entry with no field left is not
 // stored at all. Name is a display label only; gate is the acceptance command
 // the repository's bindings take when no --gate names one; board_theme is an
-// opaque string the board round owns.
+// opaque string the board round owns; trimpath is on or off, unset meaning on.
+// The unset default is never stored as itself -- an entry holding only it
+// would drop as empty -- so an entry that wants on beside nothing else stores
+// the word `on` explicitly instead.
 type RepoEntry struct {
 	Name       string `json:"name,omitempty"`
 	Gate       string `json:"gate,omitempty"`
 	BoardTheme string `json:"board_theme,omitempty"`
+	Trimpath   string `json:"trimpath,omitempty"`
 }
 
 // repoEntryFields is the field vocabulary one entry carries. A field the entry
-// carries beyond these three is refused by name rather than ignored, so a
+// carries beyond these four is refused by name rather than ignored, so a
 // typo'd key never silently stores nothing.
-var repoEntryFields = []string{"name", "gate", "board_theme"}
+var repoEntryFields = []string{"name", "gate", "board_theme", "trimpath"}
 
 // ParseRepos reads and checks the repos body: an object keyed by repository
-// identity, each value an object carrying at most the three known string
-// fields. A body that is not an object, an entry that is not an object (a null
+// identity, each value an object carrying at most the four known string
+// fields, trimpath's restricted to on and off. A body that is not an object, an entry that is not an object (a null
 // entry included), an unknown field and a non-string value are each refused,
 // naming the section and the entry they were found on. Empty fields are
 // dropped, and an entry left with no field at all is dropped, so a body this
@@ -85,7 +89,7 @@ func parseRepoEntry(key string, fields map[string]json.RawMessage) (RepoEntry, e
 	var out RepoEntry
 	for _, name := range names {
 		if !slices.Contains(repoEntryFields, name) {
-			return RepoEntry{}, fmt.Errorf("%s: %s: unknown field %q; a repos entry takes name, gate and board_theme", Repos, key, name)
+			return RepoEntry{}, fmt.Errorf("%s: %s: unknown field %q; a repos entry takes name, gate, board_theme and trimpath", Repos, key, name)
 		}
 		value := fields[name]
 		if len(value) == 0 || string(value) == "null" {
@@ -102,6 +106,11 @@ func parseRepoEntry(key string, fields map[string]json.RawMessage) (RepoEntry, e
 			out.Gate = s
 		case "board_theme":
 			out.BoardTheme = s
+		case "trimpath":
+			if s != "on" && s != "off" {
+				return RepoEntry{}, fmt.Errorf("%s: %s: trimpath is %q, want on or off", Repos, key, s)
+			}
+			out.Trimpath = s
 		}
 	}
 	return out, nil

@@ -110,7 +110,7 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 			// The plan is staged and the round is open; nothing was started.
 			// NEEDS YOU says so in status, exactly as Send's spawn failure does.
 			cur.State = store.StateNeedsYou
-			cur.Halt = "builder spawn failed: " + err.Error()
+			cur.Halt = spawnHaltText(err)
 			cur.HaltAt = rt.Now().UTC()
 			if saveErr := tx.SaveWithLog(cur, pending...); saveErr != nil {
 				return b, fmt.Errorf("%s: %v; saving NEEDS YOU failed: %w", name, err, saveErr)

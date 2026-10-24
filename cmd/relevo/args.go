@@ -262,6 +262,7 @@ func writeError(err error) error {
 	}
 	var openMember *relevo.RoundOpenError
 	var candOpen *relevo.CandidateRoundOpenError
+	var envErr *relevo.EnvironmentError
 	switch {
 	// The busy family is checked before the bare ErrRefused case, because
 	// each of these sentinels also unwraps to ErrRefused: they are refusals
@@ -350,6 +351,10 @@ func writeError(err error) error {
 		return fail(codeRemoteUnreachable, "%v", err)
 	case errors.Is(err, relevo.ErrRemoteUnavailable):
 		return fail(codeNotAvailable, "%v", err)
+	case errors.As(err, &envErr):
+		// A machine short of disk is the host's state, not a relevo bug:
+		// doctor shows where the space went.
+		return failNext(codeNotAvailable, "relevo doctor", "%v", err)
 	default:
 		return fail(codeInternal, "%v", err)
 	}

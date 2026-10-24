@@ -78,12 +78,12 @@ func formatScope(sc *policy.ScopePolicy, defaultText string) string {
 	return strings.Join(parts, " · ")
 }
 
-// Settings returns the 24 policy rows in display order, filled from d.Policy.
+// Settings returns the 25 policy rows in display order, filled from d.Policy.
 func Settings(d ConfigDoc, cpus int) []Setting {
 	p := d.Policy
 	defMaxBuilders := max(1, cpus-1)
 
-	var rows [24]Setting
+	var rows [25]Setting
 
 	// 1: rounds / max_switches
 	rows[0] = Setting{
@@ -129,12 +129,22 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "rounds",
 	}
 
-	// 5: check / gate.default
+	// 5: rounds / disk_min_free_gb
+	rows[4] = Setting{
+		Group:   "rounds",
+		Key:     "disk_min_free_gb",
+		Value:   strconv.Itoa(int(p.DiskMinFreeBytes() / (1 << 30))),
+		Default: strconv.Itoa(policy.DefaultDiskMinFreeGB),
+		Set:     p.DiskMinFreeGB != nil,
+		Form:    "rounds",
+	}
+
+	// 6: check / gate.default
 	gDef := "none"
 	if p.GateDefault() != "" {
 		gDef = p.GateDefault()
 	}
-	rows[4] = Setting{
+	rows[5] = Setting{
 		Group:   "check",
 		Key:     "gate.default",
 		Value:   gDef,
@@ -143,8 +153,8 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "check",
 	}
 
-	// 6: check / gate.timeout
-	rows[5] = Setting{
+	// 7: check / gate.timeout
+	rows[6] = Setting{
 		Group:   "check",
 		Key:     "gate.timeout",
 		Value:   FormatDuration(p.GateTimeout()),
@@ -153,8 +163,8 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "check",
 	}
 
-	// 7: check / gate.regate
-	rows[6] = Setting{
+	// 8: check / gate.regate
+	rows[7] = Setting{
 		Group:   "check",
 		Key:     "gate.regate",
 		Value:   strconv.Itoa(p.GateRegate()),
@@ -163,11 +173,11 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "check",
 	}
 
-	// 8-13: timing rows
-	copy(rows[7:13], timingSettings(p))
+	// 9-14: timing rows
+	copy(rows[8:14], timingSettings(p))
 
-	// 14: processes / scope
-	rows[13] = Setting{
+	// 15: processes / scope
+	rows[14] = Setting{
 		Group:   "processes",
 		Key:     "scope",
 		Value:   formatScope(p.Scope, "on · no limits"),
@@ -176,12 +186,12 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "scope",
 	}
 
-	// 15: processes / serve.max_builders
+	// 16: processes / serve.max_builders
 	smbVal := defMaxBuilders
 	if p.Serve != nil && p.Serve.MaxBuilders != nil {
 		smbVal = *p.Serve.MaxBuilders
 	}
-	rows[14] = Setting{
+	rows[15] = Setting{
 		Group:   "processes",
 		Key:     "serve.max_builders",
 		Value:   strconv.Itoa(smbVal),
@@ -190,12 +200,12 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "max_builders",
 	}
 
-	// 16: processes / serve.scope
+	// 17: processes / serve.scope
 	ssVal := "as scope"
 	if p.Serve != nil && p.Serve.Scope != nil {
 		ssVal = formatScope(p.Serve.Scope, "as scope")
 	}
-	rows[15] = Setting{
+	rows[16] = Setting{
 		Group:   "processes",
 		Key:     "serve.scope",
 		Value:   ssVal,
@@ -204,7 +214,7 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "serve.scope",
 	}
 
-	// 17: scan / scan_patterns
+	// 18: scan / scan_patterns
 	spVal := "none"
 	switch len(p.ScanPatterns) {
 	case 0:
@@ -214,7 +224,7 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 	default:
 		spVal = fmt.Sprintf("%d patterns", len(p.ScanPatterns))
 	}
-	rows[16] = Setting{
+	rows[17] = Setting{
 		Group:   "scan",
 		Key:     "scan_patterns",
 		Value:   spVal,
@@ -223,12 +233,12 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "scan_patterns",
 	}
 
-	// 18: scan / classify
+	// 19: scan / classify
 	clVal := "off"
 	if p.Classify != nil && p.Classify.Provider != "" {
 		clVal = p.Classify.Provider
 	}
-	rows[17] = Setting{
+	rows[18] = Setting{
 		Group:   "scan",
 		Key:     "classify",
 		Value:   clVal,
@@ -237,7 +247,7 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "classify",
 	}
 
-	// 19: notify / notify.webhooks
+	// 20: notify / notify.webhooks
 	nwVal := "none"
 	var nwCount int
 	if p.Notify != nil {
@@ -251,7 +261,7 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 	default:
 		nwVal = fmt.Sprintf("%d webhooks", nwCount)
 	}
-	rows[18] = Setting{
+	rows[19] = Setting{
 		Group:   "notify",
 		Key:     "notify.webhooks",
 		Value:   nwVal,
@@ -260,8 +270,8 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "webhooks",
 	}
 
-	// 20: chain / chain.max_corrections
-	rows[19] = Setting{
+	// 21: chain / chain.max_corrections
+	rows[20] = Setting{
 		Group:   "chain",
 		Key:     "chain.max_corrections",
 		Value:   strconv.Itoa(p.ChainMaxCorrections()),
@@ -270,8 +280,8 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "chain",
 	}
 
-	// 21: chain / chain.reviewer_actor
-	rows[20] = Setting{
+	// 22: chain / chain.reviewer_actor
+	rows[21] = Setting{
 		Group:   "chain",
 		Key:     "chain.reviewer_actor",
 		Value:   p.ChainReviewerActor(),
@@ -280,8 +290,8 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "chain",
 	}
 
-	// 22: chain / chain.planner_actor
-	rows[21] = Setting{
+	// 23: chain / chain.planner_actor
+	rows[22] = Setting{
 		Group:   "chain",
 		Key:     "chain.planner_actor",
 		Value:   p.ChainPlannerActor(),
@@ -290,8 +300,8 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "chain",
 	}
 
-	// 23: chain / chain.security_actor
-	rows[22] = Setting{
+	// 24: chain / chain.security_actor
+	rows[23] = Setting{
 		Group:   "chain",
 		Key:     "chain.security_actor",
 		Value:   p.ChainSecurityActor(),
@@ -300,12 +310,12 @@ func Settings(d ConfigDoc, cpus int) []Setting {
 		Form:    "chain",
 	}
 
-	// 24: chain / chain.security
+	// 25: chain / chain.security
 	csVal := "off"
 	if p.ChainSecurityOn() {
 		csVal = "on"
 	}
-	rows[23] = Setting{
+	rows[24] = Setting{
 		Group:   "chain",
 		Key:     "chain.security",
 		Value:   csVal,
@@ -326,6 +336,8 @@ func SettingPaths(key string) []string {
 		return []string{"max_tier"}
 	case "artifact_max_mb":
 		return []string{"artifact_max_mb"}
+	case "disk_min_free_gb":
+		return []string{"disk_min_free_gb"}
 	case "verify.default":
 		return []string{"verify"}
 	case "gate.default":
