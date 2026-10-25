@@ -30,6 +30,16 @@ const (
 	setupPluginToken    = "relevo@relevo"
 )
 
+// setupMuseName and setupMuseMarketplaceURL name the marketplace the muse
+// plugin install adds, and setupMusePluginCommand is the fix a failed
+// muse-plugin step names: the same three commands, in order. The fix lives
+// here, not in the doctor: doctor is out of scope for this step.
+const (
+	setupMuseName           = "relevo"
+	setupMuseMarketplaceURL = "https://github.com/fuad-daoud/relevo.git"
+	setupMusePluginCommand  = "muse plugins marketplace add relevo https://github.com/fuad-daoud/relevo.git && muse plugins install relevo@relevo && muse plugins approve relevo"
+)
+
 // setupCommandRunner is the CLI seam the plugin step runs through, so a test
 // never execs claude: CI has neither the binary nor a marketplace to add.
 type setupCommandRunner interface {
@@ -62,7 +72,7 @@ func refreshSetupRuntime() (relevo.Runtime, error) {
 // and agents always, the optional installs and the smoke round only on yes.
 func setupStepsFor(answers setup.Answers) []string {
 	steps := []string{"config", "agents"}
-	for _, opt := range []string{"plugin", "service", "smoke"} {
+	for _, opt := range []string{"plugin", "muse-plugin", "service", "smoke"} {
 		if setupStepYes(answers, opt) {
 			steps = append(steps, opt)
 		}
@@ -124,6 +134,11 @@ func setupApply(ctx context.Context, refresh func() (relevo.Runtime, error), env
 			return runSetupPlugin(ctx)
 		})
 	}
+	if goOn && slices.Contains(want, "muse-plugin") {
+		goOn = run("muse-plugin", func() (SetupStepDoc, error) {
+			return runSetupMusePlugin(ctx)
+		})
+	}
 	if goOn && slices.Contains(want, "service") {
 		goOn = run("service", runSetupService)
 	}
@@ -161,10 +176,11 @@ func setupExitOf(err error) error {
 // that takes seconds never reads as a hang: each waits on a CLI, the daemon
 // or a builder.
 var setupStepStarts = map[string]string{
-	"agents":  "loading the new configuration and installing agent definitions",
-	"plugin":  "installing the relevo plugin into Claude Code",
-	"service": "installing and starting the relevo user service",
-	"smoke":   "binding a builder to a throwaway repository and sending it one small plan; this takes a minute or two",
+	"agents":      "loading the new configuration and installing agent definitions",
+	"plugin":      "installing the relevo plugin into Claude Code",
+	"muse-plugin": "installing the relevo plugin into muse",
+	"service":     "installing and starting the relevo user service",
+	"smoke":       "binding a builder to a throwaway repository and sending it one small plan; this takes a minute or two",
 }
 
 // setupPrintStep renders one step's row: the step and what it did on
@@ -280,6 +296,40 @@ func runSetupPlugin(ctx context.Context) (SetupStepDoc, error) {
 // a reader with the marketplace present must not pay for the add again.
 func setupMarketplaceAdded(out []byte, exit int) bool {
 	return exit == 0 && bytes.Contains(out, []byte(setupMarketplaceRef))
+}
+
+// runSetupMusePlugin installs the muse plugin through the same seam the
+// Claude Code step uses, in order: add the marketplace only when a
+// marketplace list does not already name it, install, then approve, which
+// muse requires before its hooks and MCP servers run. An install that exits
+// 0 is a success however its first line reads -- "already installed" at
+// exit 0 included -- mirroring runSetupPlugin, which never parses install
+// stdout on success.
+func runSetupMusePlugin(ctx context.Context) (SetupStepDoc, error) {
+	r := setupPluginRunner()
+	listOut, listExit, _ := r.Run(ctx, "muse", "plugins", "marketplace", "list")
+	if !setupMarketplaceAdded(listOut, listExit) {
+		if _, exit, rerr := r.Run(ctx, "muse", "plugins", "marketplace", "add", setupMuseName, setupMuseMarketplaceURL); rerr != nil || exit != 0 {
+			return SetupStepDoc{}, failNext(codeInternal, setupMusePluginCommand, "the marketplace add failed")
+		}
+	}
+	out, exit, rerr := r.Run(ctx, "muse", "plugins", "install", setupPluginToken)
+	if rerr != nil || exit != 0 {
+		detail := "the plugin install failed"
+		if line := strings.TrimSpace(string(out)); line != "" {
+			detail = firstLine(line)
+		}
+		return SetupStepDoc{}, failNext(codeInternal, setupMusePluginCommand, "%s", detail)
+	}
+	appOut, appExit, appErr := r.Run(ctx, "muse", "plugins", "approve", setupMuseName)
+	if appErr != nil || appExit != 0 {
+		detail := "the plugin approval failed"
+		if line := strings.TrimSpace(string(appOut)); line != "" {
+			detail = firstLine(line)
+		}
+		return SetupStepDoc{}, failNext(codeInternal, setupMusePluginCommand, "%s", detail)
+	}
+	return SetupStepDoc{Step: "muse-plugin", OK: true}, nil
 }
 
 // runSetupService does what `relevo service install` does: write the unit

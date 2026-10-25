@@ -81,6 +81,12 @@ func Questions(inv Inventory, answers map[string][]string) []Question {
 			"the plugin gives Claude Code the relevo guide and verbs",
 			"skip it; the same two commands install it later"))
 	}
+	if museOnPath(inv) && len(answers["muse-plugin"]) == 0 {
+		qs = append(qs, yesNoQuestion("muse-plugin",
+			"Install the relevo plugin into muse (the MasterMind side)?",
+			"the plugin gives muse the relevo guide and verbs",
+			"skip it; the same commands install it later"))
+	}
 	if len(answers["service"]) == 0 {
 		qs = append(qs, yesNoQuestion("service",
 			"Run the relevo daemon as a user service (systemd on Linux, launchd on macOS)?",
@@ -258,6 +264,18 @@ func pickChoice(choices []Choice, prefix, contains string) (Choice, bool) {
 func claudeOnPath(inv Inventory) bool {
 	for _, s := range inv.Harnesses {
 		if s.Harness == "claude" {
+			return true
+		}
+	}
+	return false
+}
+
+// museOnPath reports whether muse has a status entry in the inventory; the
+// muse-plugin question only exists when it does. It gates on PATH presence
+// alone, exactly as the plugin question gates on claude's.
+func museOnPath(inv Inventory) bool {
+	for _, s := range inv.Harnesses {
+		if s.Harness == "muse" {
 			return true
 		}
 	}

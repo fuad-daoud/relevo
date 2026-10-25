@@ -116,6 +116,45 @@ func TestQuestionsDropsPluginWhenInstalledOrClaudeAbsent(t *testing.T) {
 	}
 }
 
+// TestQuestionsDropsMusePluginWhenAnsweredOrMuseAbsent mirrors the plugin
+// question's rules for muse-plugin: asked only when muse stands on PATH and
+// no answer for it already does -- a stored answer stands in for the fact.
+func TestQuestionsDropsMusePluginWhenAnsweredOrMuseAbsent(t *testing.T) {
+	museInv := Inventory{Harnesses: []HarnessStatus{
+		status("muse", true, "gemini-3.8-flash"),
+	}}
+	if _, ok := findID(Questions(museInv, nil), "muse-plugin"); !ok {
+		t.Fatal("muse-plugin question missing with muse on PATH and none answered")
+	}
+	if _, ok := findID(Questions(museInv, map[string][]string{"muse-plugin": {"yes"}}), "muse-plugin"); ok {
+		t.Error("muse-plugin question kept while an answer already stands for it")
+	}
+	if got := ids(Questions(Inventory{Harnesses: []HarnessStatus{status("codex", true, "gpt-6-luna")}}, nil)); contains(got, "muse-plugin") {
+		t.Errorf("questions %v carry muse-plugin with no muse on PATH, want it dropped", got)
+	}
+}
+
+// TestQuestionsPluginAndMusePluginAreIndependent pins the two questions'
+// independence: with both binaries on PATH both are asked, each gated only
+// on its own binary and not on the other's answer.
+func TestQuestionsPluginAndMusePluginAreIndependent(t *testing.T) {
+	inv := Inventory{Harnesses: []HarnessStatus{
+		status("claude", true, "sonnet", "opus", "haiku"),
+		status("muse", true, "gemini-3.8-flash"),
+	}}
+	qs := Questions(inv, nil)
+	if _, ok := findID(qs, "plugin"); !ok {
+		t.Errorf("questions %v lack plugin with claude on PATH", ids(qs))
+	}
+	if _, ok := findID(qs, "muse-plugin"); !ok {
+		t.Errorf("questions %v lack muse-plugin with muse on PATH", ids(qs))
+	}
+	qs = Questions(inv, map[string][]string{"plugin": {"yes"}})
+	if _, ok := findID(qs, "muse-plugin"); !ok {
+		t.Errorf("questions %v lack muse-plugin while plugin is answered, want it independent", ids(qs))
+	}
+}
+
 // TestQuestionsDropsServiceWhenUnitInstalled pins the service question's
 // drop rule: no unit install question while the caller knows a unit already
 // runs.
