@@ -143,3 +143,19 @@ func TestIsRunnerHostFallsBackToParentPid(t *testing.T) {
 		t.Errorf("environ read at pid %d, want the parent pid 90", read)
 	}
 }
+
+// TestIsRunnerHostReadsTheMuseAncestorNotTheParent pins that the host read
+// follows the muse ancestor the seam reports, not the caller's parent: only the
+// ancestor's environ carries the marker here.
+func TestIsRunnerHostReadsTheMuseAncestorNotTheParent(t *testing.T) {
+	env := runnerEnvOf(map[string]string{musePluginEnv: "relevo"})
+	environOf := func(pid int) (map[string]string, bool) {
+		if pid == 42 {
+			return map[string]string{RunnerEnv: "api"}, true
+		}
+		return map[string]string{}, true
+	}
+	if !IsRunnerHost(env, 7, runnerMuseAt(42), environOf) {
+		t.Fatal("IsRunnerHost read the parent pid 7 instead of the muse ancestor 42")
+	}
+}

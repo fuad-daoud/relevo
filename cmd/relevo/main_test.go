@@ -83,8 +83,8 @@ func TestMain(m *testing.M) {
 // the user's real config, state or data (#235). It then unsets the
 // harness-identity and override variables, so a test never detects the calling
 // harness or picks up the caller's overrides; it unsets a variable when its
-// name is CLAUDECODE or TYPESAFE_API_KEY, or starts with CLAUDE_, RELEVO_ or
-// ANTIGRAVITY_. It never fails: it ignores os.Setenv and os.Unsetenv errors,
+// name is CLAUDECODE or TYPESAFE_API_KEY, or starts with CLAUDE_, RELEVO_,
+// ANTIGRAVITY_ or MUSE_. It never fails: it ignores os.Setenv and os.Unsetenv errors,
 // as TestMain did before.
 func isolateTestEnv(root string) {
 	for _, entry := range os.Environ() {
@@ -105,7 +105,8 @@ func matchesUnsetRule(name string) bool {
 		name == "TYPESAFE_API_KEY" ||
 		strings.HasPrefix(name, "CLAUDE_") ||
 		strings.HasPrefix(name, "RELEVO_") ||
-		strings.HasPrefix(name, "ANTIGRAVITY_")
+		strings.HasPrefix(name, "ANTIGRAVITY_") ||
+		strings.HasPrefix(name, "MUSE_")
 }
 
 // TestIsolateTestEnv pins isolateTestEnv: it must not see the caller's harness
@@ -125,6 +126,8 @@ func TestIsolateTestEnv(t *testing.T) {
 	t.Setenv("RELEVO_MASTERMIND", "p")
 	t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "x")
 	t.Setenv("TYPESAFE_API_KEY", "k")
+	t.Setenv("MUSE_SESSION_ID", "01a17468-6186-7242-80f1-0c81e09cd1e1")
+	t.Setenv("MUSE_PLUGIN_ID", "relevo")
 	t.Setenv("CLAUDEX_KEEP", "1") // near-miss: no underscore after CLAUDE
 	t.Setenv("RELEVO", "1")       // near-miss: no trailing underscore
 
@@ -146,6 +149,7 @@ func TestIsolateTestEnv(t *testing.T) {
 		"CLAUDECODE", "CLAUDE_ENV_FILE", "CLAUDE_PID", "CLAUDE_CODE_SESSION_ID",
 		"RELEVO_HARNESS", "RELEVO_MASTERMIND", "RELEVO_PLANNER",
 		"ANTIGRAVITY_CONVERSATION_ID", "TYPESAFE_API_KEY",
+		"MUSE_SESSION_ID", "MUSE_PLUGIN_ID",
 	} {
 		if _, ok := os.LookupEnv(name); ok {
 			t.Errorf("%s must be unset by isolateTestEnv", name)
