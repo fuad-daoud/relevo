@@ -283,7 +283,10 @@ func runStatusline(asJSON bool, mastermindRef string) error {
 	}
 	rt, err := newRuntime()
 	if err != nil {
-		if errors.Is(err, errOwnerUnavailable) {
+		// A sandboxed refusal is silence too: the prompt is not the place to
+		// argue with the shell's sandbox, and the line cannot say anything
+		// true about a session it cannot read.
+		if errors.Is(err, errOwnerUnavailable) || errors.Is(err, errOwnerSandboxDenied) {
 			return nil
 		}
 		if asJSON {

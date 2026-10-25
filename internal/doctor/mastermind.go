@@ -74,12 +74,23 @@ type MasterMindCheckInput struct {
 	ConsentKnown bool
 	RepoKnown    bool
 	Consent      mastermind.Consent
+
+	// Muse says a muse candidate or mastermind record exists; it gates the
+	// muse plugin rows. MuseSession mirrors Detected for a muse session, and
+	// MuseInspect is the injected `muse plugins inspect relevo --json`
+	// reader: cmd/relevo wires it to Env.Command, tests stub it. The rows
+	// probe through it rather than the disk because muse's on-disk
+	// runtime_capabilities stores only trusted definition hashes -- whether
+	// they still match the installed package is muse's own computation.
+	Muse        bool
+	MuseSession bool
+	MuseInspect MuseInspectFn
 }
 
-// MasterMindChecks reports the plugin rows for Claude Code, the installed
-// plugin's SessionStart hook, this session's mastermind, the repository's
-// consent answer, and the stale-record note. Leaving every field zero reports
-// nothing.
+// MasterMindChecks reports the plugin rows for Claude Code and muse, the
+// installed plugin's SessionStart hook, this session's mastermind, the
+// repository's consent answer, and the stale-record note. Leaving every
+// field zero reports nothing.
 func MasterMindChecks(in MasterMindCheckInput) []Check {
 	var checks []Check
 
@@ -94,7 +105,11 @@ func MasterMindChecks(in MasterMindCheckInput) []Check {
 		checks = append(checks, pluginVersionCheck(dir, in.Running))
 	}
 
-	if in.Detected {
+	if in.Muse {
+		checks = append(checks, musePluginChecks(in)...)
+	}
+
+	if in.Detected || in.MuseSession {
 		checks = append(checks, mastermindSessionCheck(in))
 	}
 

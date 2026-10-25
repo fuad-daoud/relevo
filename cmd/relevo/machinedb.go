@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -19,6 +20,25 @@ import (
 // budget was spent. The statusline turns it into silence; every other verb
 // prints it, socket included.
 var errOwnerUnavailable = errors.New("relevo owner unavailable")
+
+// errOwnerSandboxDenied marks a dial the host's sandbox refused outright: the
+// socket call earned a permission error rather than an answer. The verb, the
+// daemon and the socket are all fine -- the shell is not -- so this is a
+// class of its own, and the way out it names is an unsandboxed shell, not a
+// bug report.
+var errOwnerSandboxDenied = errors.New("relevo owner socket denied by the sandbox")
+
+// dialSandboxDenied reports whether a dial failure is the sandbox refusing
+// the socket call: a permission errno, EACCES or EPERM, at any wrapping depth
+// -- the bare errno, the *os.SyscallError and *net.OpError a unix dial
+// returns over it, or any form os.IsPermission already resolves. A missing
+// socket, a refused connection and a spent deadline are not permission
+// denials: those keep reading as an owner that never answered.
+func dialSandboxDenied(err error) bool {
+	return errors.Is(err, syscall.EACCES) ||
+		errors.Is(err, syscall.EPERM) ||
+		os.IsPermission(err)
+}
 
 // dbRoute is how a process reaches the machine database.
 type dbRoute int
@@ -202,6 +222,12 @@ func openDBRoute(path string) (*db.DB, bool, error) {
 	cancel()
 	if err == nil {
 		return d, true, nil
+	}
+	if errors.Is(err, errOwnerSandboxDenied) {
+		// The refusal came from the shell's sandbox, not from the owner's
+		// state: starting or waiting cannot change it, so it never reaches
+		// the await-starting-owner path.
+		return nil, true, err
 	}
 	if expired {
 		// An owner that holds the listener but never answers must read as

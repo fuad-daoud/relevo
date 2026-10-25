@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -38,6 +39,7 @@ const (
 	codePushAlreadyConfirm errorCode = "push_already_confirmed"
 	codePushNotAdmitted    errorCode = "push_not_admitted"
 	codePushNoClaim        errorCode = "push_no_claim"
+	codeOwnerSandboxDenied errorCode = "owner_sandbox_denied"
 	codeInternal           errorCode = "internal"
 )
 
@@ -78,6 +80,7 @@ var catalog = map[errorCode]catalogEntry{
 	codePushAlreadyConfirm: {exit: 1},
 	codePushNotAdmitted:    {exit: 1},
 	codePushNoClaim:        {exit: 1},
+	codeOwnerSandboxDenied: {exit: 1, next: "relevo verbs need an unsandboxed shell: run the verb under muse --yolo or muse --disable-sandbox; relevo's MCP tools still work inside the sandbox"},
 	codeInternal:           {exit: 1, next: "relevo bugreport"},
 }
 
@@ -126,13 +129,39 @@ func catalogExit(code errorCode) int {
 	return entry.exit
 }
 
-// fail builds a coded error whose next hint is the catalog's own.
-func fail(code errorCode, format string, args ...any) error {
-	return newCLIError(code, "", fmt.Sprintf(format, args...))
+// sandboxCode is the one central reclassification rule: a failure a call site
+// built as internal whose arguments or cause carry the sandbox denial was not
+// relevo failing -- the shell's sandbox refused the owner socket -- so it is
+// built under its own code, whose catalog next names the unsandboxed shell.
+// Every other code, and internal without the sentinel, comes back unchanged.
+// Pure: it reads only the values it is given.
+func sandboxCode(code errorCode, args []any, cause error) errorCode {
+	if code != codeInternal {
+		return code
+	}
+	if errors.Is(cause, errOwnerSandboxDenied) {
+		return codeOwnerSandboxDenied
+	}
+	for _, a := range args {
+		if err, ok := a.(error); ok && errors.Is(err, errOwnerSandboxDenied) {
+			return codeOwnerSandboxDenied
+		}
+	}
+	return code
 }
 
-// failNext is fail with an explicit next hint, overriding the catalog's.
+// fail builds a coded error whose next hint is the catalog's own.
+func fail(code errorCode, format string, args ...any) error {
+	return newCLIError(sandboxCode(code, args, nil), "", fmt.Sprintf(format, args...))
+}
+
+// failNext is fail with an explicit next hint, overriding the catalog's --
+// unless the failure is reclassified, whose hint is the new code's own.
 func failNext(code errorCode, next, format string, args ...any) error {
+	code = sandboxCode(code, args, nil)
+	if code == codeOwnerSandboxDenied {
+		next = ""
+	}
 	return newCLIError(code, next, fmt.Sprintf(format, args...))
 }
 
@@ -142,6 +171,7 @@ func failNext(code errorCode, next, format string, args ...any) error {
 // already carry it, so a sentinel such as ErrNotConverted still reaches the
 // user instead of being reduced to a code.
 func failWrap(code errorCode, cause error, format string, args ...any) error {
+	code = sandboxCode(code, args, cause)
 	message := fmt.Sprintf(format, args...)
 	if cause != nil && !strings.Contains(message, cause.Error()) {
 		message += ": " + cause.Error()
