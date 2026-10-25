@@ -129,6 +129,28 @@ install relevo@relevo`.
 See [Claude Code plugin](#claude-code-plugin) below for how a report reaches
 the MasterMind.
 
+### Muse
+
+The same plugin serves muse, installed from the same repository:
+
+    muse plugins marketplace add relevo https://github.com/fuad-daoud/relevo.git
+    muse plugins install relevo@relevo
+    muse plugins approve relevo
+
+The last line is muse's own gate: a plugin's hooks and MCP servers stay
+inactive until it is approved. `relevo doctor` reports each state — installed,
+enabled, approved, version — through `muse plugins inspect relevo --json` and
+prints these commands as its fixes. After upgrading relevo, update the plugin
+to match (`relevo doctor` warns when they differ):
+
+    muse plugins update relevo
+
+Muse's sandbox is the one place its MasterMind differs from Claude Code's. It
+blocks unix sockets, so the verbs that reach the owner daemon over
+`relevo.sock` — `bind`, `chain` and `config` — need muse unsandboxed: run
+them under `muse --yolo` or `muse --disable-sandbox`. The MCP tools work
+either way.
+
 ## First run on a clean machine
 
 On a clean machine, install relevo and run the setup command once; it probes
