@@ -147,6 +147,7 @@ func resolveMCPMasterMind(rt relevo.Runtime, flagVal string) (mastermind.Record,
 		Env:       os.Getenv,
 		PPID:      os.Getppid(),
 		ProcStart: rt.ProcStart,
+		MuseHost:  rt.MuseHost,
 		Now:       now,
 		Heal:      true,
 	})

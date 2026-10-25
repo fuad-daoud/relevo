@@ -941,6 +941,7 @@ func TestMasterMindSessionPrecedence(t *testing.T) {
 	t.Run("reset outside a repo clears only the session", func(t *testing.T) {
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
+		t.Setenv("MUSE_SESSION_ID", "")
 		nowhere := t.TempDir()
 		mastermindSessionConsent(t, state, "opencode", "ses_outside", db.ConsentNo)
 		t.Chdir(nowhere)

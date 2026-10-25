@@ -88,6 +88,13 @@ func mastermindCaller(rt relevo.Runtime, cwd, kindFlag, sessionFlag string) (mas
 		Agent:     os.Getenv("CLAUDE_CODE_AGENT"),
 		HostPID:   ident.HostPID,
 	}
+	// A muse host is the nearest muse ancestor, not the direct parent, so
+	// the record points at the muse process before it is registered.
+	if in.Kind == "muse" && rt.MuseHost != nil {
+		if pid, ok := rt.MuseHost(os.Getppid()); ok {
+			in.HostPID = pid
+		}
+	}
 	if in.HostPID > 0 {
 		in.HostStartedAt = mastermindHostStart(in.HostPID)
 	}

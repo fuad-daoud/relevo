@@ -369,6 +369,12 @@ type Runtime struct {
 	// cannot run, and resolution falls through to the session.
 	ProcStart func(pid int) (int64, error)
 
+	// MuseHost is the nearest ancestor of the caller's parent pid whose
+	// command name is `muse`, the host a muse record resolves and heals
+	// through. Nil falls back to the parent pid. cmd/relevo wires the
+	// /proc reader.
+	MuseHost func(ppid int) (pid int, ok bool)
+
 	// OpencodeSession finds an opencode session id for the working directory (#393).
 	// Nil when sqlite3 is not on PATH or not configured.
 	OpencodeSession func(cwd string, now time.Time) (string, error)

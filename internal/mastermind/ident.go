@@ -20,18 +20,23 @@ const claudeEnvMarker = "CLAUDECODE"
 // agyConversationEnv names the agy conversation a command runs in.
 const agyConversationEnv = "ANTIGRAVITY_CONVERSATION_ID"
 
+// museSessionEnv names the muse session a command runs in.
+const museSessionEnv = "MUSE_SESSION_ID"
+
 // conversationIDRe is a lower-case 8-4-4-4-12 hex UUID.
 var conversationIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 func validConversationID(id string) bool { return conversationIDRe.MatchString(id) }
 
 // Detect reports which harness process is calling: `claude` from CLAUDECODE,
-// `agy` from a valid ANTIGRAVITY_CONVERSATION_ID, `opencode` from
-// RELEVO_HARNESS=opencode. Claude is checked first, so CLAUDECODE=1 wins
-// when both are set. Pure: it never shells out or reads a file.
+// `muse` from a valid MUSE_SESSION_ID, `agy` from a valid
+// ANTIGRAVITY_CONVERSATION_ID, `opencode` from RELEVO_HARNESS=opencode.
+// Checked in that order, so CLAUDECODE=1 wins when both are set. Pure: it
+// never shells out or reads a file.
 //
 // ppid (os.Getppid()) is HostPID's fallback when CLAUDE_PID is unset or
-// unparseable.
+// unparseable, and the muse host before the caller walks up to the muse
+// process.
 func Detect(env func(string) string, ppid int) (Ident, bool) {
 	if env == nil {
 		return Ident{}, false
@@ -48,6 +53,10 @@ func Detect(env func(string) string, ppid int) (Ident, bool) {
 			ident.HostPID = ppid
 		}
 		return ident, true
+	}
+
+	if id := env(museSessionEnv); validConversationID(id) {
+		return Ident{Kind: "muse", SessionID: id, HostPID: ppid}, true
 	}
 
 	// agy names no stable host process, so HostPID stays 0.

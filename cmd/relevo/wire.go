@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
@@ -19,6 +21,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/installation"
+	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/release"
@@ -431,6 +434,7 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		Channels:           claims,
 		Waits:              waits,
 		ProcStart:          procStartUnix,
+		MuseHost:           mastermind.MuseHostSeam(museCommOf, musePPidOf),
 		OpencodeSession:    opencodeSession,
 		OpencodeSessionDir: opencodeSessionDir,
 		SessionReaper:      relevo.NewSessionReaper(binExec{}),
@@ -465,6 +469,40 @@ func procStartUnix(pid int) (int64, error) {
 		return 0, err
 	}
 	return started.Unix(), nil
+}
+
+// museCommOf reads one process's command name from /proc/<pid>/comm, the
+// muse ancestor walk's eyes. A process that has gone reads as missing.
+func museCommOf(pid int) (string, bool) {
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+	if err != nil {
+		return "", false
+	}
+	if comm := strings.TrimSpace(string(raw)); comm != "" {
+		return comm, true
+	}
+	return "", false
+}
+
+// musePPidOf reads one process's parent pid from /proc/<pid>/status, the
+// muse ancestor walk's legs. A process that has gone, or a status without a
+// PPid line, reads as missing.
+func musePPidOf(pid int) (int, bool) {
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return 0, false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		name, value, ok := strings.Cut(line, ":")
+		if !ok || strings.TrimSpace(name) != "PPid" {
+			continue
+		}
+		if ppid, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && ppid > 0 {
+			return ppid, true
+		}
+		return 0, false
+	}
+	return 0, false
 }
 
 // newRemoteClient wires Runtime.Remote through the one rule that turns a

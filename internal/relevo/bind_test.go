@@ -1987,6 +1987,7 @@ func TestBindRegateFlagOverridesPolicy(t *testing.T) {
 func TestResolveVerbMasterMindRegistersOpencodeSession(t *testing.T) {
 	t.Setenv("RELEVO_MASTERMIND", "")
 	t.Setenv("CLAUDECODE", "")
+	t.Setenv("MUSE_SESSION_ID", "")
 	t.Setenv("ANTIGRAVITY_CONVERSATION_ID", "")
 	t.Setenv("RELEVO_HARNESS", "opencode")
 	rt := newRuntime(t)
