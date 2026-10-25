@@ -292,11 +292,11 @@ func policyExample(role string, serving []string) string {
 const staleMasterMindAge = 7 * 24 * time.Hour
 
 // mastermindCheckInput gathers §4.8's mastermind-row facts: which masterminds exist,
-// whether this process runs inside Claude Code, and whether the resolved
-// mastermind has a live push claim. Every read is best-effort -- a fact relevo
-// cannot establish reads as absent, and the checks say "not checked" rather
-// than guessing. Home comes from $HOME so the row reads the same directory
-// cmd/relevo's TestMain isolated.
+// whether this process runs inside Claude Code or muse, and whether the
+// resolved mastermind has a live push claim. Every read is best-effort -- a
+// fact relevo cannot establish reads as absent, and the checks say "not
+// checked" rather than guessing. Home comes from $HOME so the row reads the
+// same directory cmd/relevo's TestMain isolated.
 func mastermindCheckInput(rt relevo.Runtime, kinds []string) doctor.MasterMindCheckInput {
 	in := doctor.MasterMindCheckInput{Home: os.Getenv("HOME"), ClaudeDir: os.Getenv("CLAUDE_CONFIG_DIR"), Running: buildVersion()}
 	if wd, err := os.Getwd(); err == nil {
@@ -319,9 +319,7 @@ func mastermindCheckInput(rt relevo.Runtime, kinds []string) doctor.MasterMindCh
 		}
 	}
 	for _, k := range kinds {
-		if k == "claude" {
-			in.Claude = true
-		}
+		gatePluginRowsFor(k, &in)
 	}
 
 	records := []mastermind.Record{}
@@ -344,9 +342,7 @@ func mastermindCheckInput(rt relevo.Runtime, kinds []string) doctor.MasterMindCh
 
 	cutoff := rt.Now().Add(-staleMasterMindAge)
 	for _, rec := range records {
-		if rec.HarnessKind == "claude" {
-			in.Claude = true
-		}
+		gatePluginRowsFor(rec.HarnessKind, &in)
 		if rec.SeenAt.Before(cutoff) && !live[rec.ID] {
 			in.Stale = append(in.Stale, rec.Name)
 		}
@@ -378,6 +374,8 @@ func mastermindCheckInput(rt relevo.Runtime, kinds []string) doctor.MasterMindCh
 			}
 		}
 	}
+
+	museSessionGate(rt, &in)
 
 	return in
 }

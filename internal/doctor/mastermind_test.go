@@ -1,7 +1,10 @@
 package doctor
 
 import (
+	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,6 +20,58 @@ func writeDoctorFile(t *testing.T, path, body string) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+// TestMusePluginRowsThroughFakeEnv pins that the muse rows read their facts
+// through doctor.Env.Command: fakeEnv answers commandFn, and `muse` is never
+// spawned. It covers the same states as the direct reader tests.
+func TestMusePluginRowsThroughFakeEnv(t *testing.T) {
+	cases := []struct {
+		name    string
+		out     string
+		err     error
+		plugin  Severity
+		hook    Severity
+		version Severity
+	}{
+		{"installed enabled approved", museInstalledJSON("0.22.4"), nil, SevOK, SevOK, SevOK},
+		{"not installed", museNotInstalledJSON(), museExitStatusError(t), SevFail, SevOK, SevOK},
+		{"disabled", `{"active":false,"record":{"enabled":false,"version":"0.22.4"},"runtime_capabilities":[]}`, nil, SevFail, SevOK, SevOK},
+		{"unreadable", "not json", nil, SevOK, SevOK, SevOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := &fakeEnv{commandFn: func(bin string, args ...string) ([]byte, error) {
+				if bin != "muse" {
+					t.Errorf("probe ran %q, want muse", bin)
+				}
+				return []byte(tc.out), tc.err
+			}}
+			in := MasterMindCheckInput{Muse: true, Running: "0.22.4", MuseInspect: env.Command}
+			checks := Report{Checks: MasterMindChecks(in)}
+			for name, want := range map[string]Severity{
+				"plugin":         tc.plugin,
+				"plugin hook":    tc.hook,
+				"plugin version": tc.version,
+			} {
+				c := findCheck(checks, "", name)
+				if c == nil || c.Severity != want {
+					t.Errorf("%s row = %+v, want severity %v", name, c, want)
+				}
+			}
+		})
+	}
+}
+
+// museExitStatusError returns a real *exec.ExitError, the shape Env.Command
+// answers a non-zero exit with.
+func museExitStatusError(t *testing.T) error {
+	t.Helper()
+	err := exec.Command("sh", "-c", "exit 1").Run()
+	if err == nil {
+		t.Fatal("sh -c 'exit 1' must fail")
+	}
+	return err
 }
 
 func TestDoctorPluginRow(t *testing.T) {
@@ -443,4 +498,202 @@ func TestDoctorConsentRow(t *testing.T) {
 			t.Errorf("consent row present without a read: %+v", c)
 		}
 	})
+}
+
+// museInstalledJSON is one `muse plugins inspect relevo --json` answer:
+// enabled and fully trusted at the given version.
+func museInstalledJSON(version string) string {
+	return `{"active":true,"record":{"enabled":true,"version":"` + version + `"},` +
+		`"runtime_capabilities":[` +
+		`{"candidate":{"kind":"hook","stable_id":"plugin:relevo:hook:hook-a","plugin_id":"relevo"},"status":"trusted_enabled","diagnostic":null},` +
+		`{"candidate":{"kind":"mcp_server","stable_id":"plugin:relevo:mcp:mcp-a","plugin_id":"relevo"},"status":"trusted_enabled","diagnostic":null}]}`
+}
+
+func museNotInstalledJSON() string {
+	return `{"error":{"code":"unknown-plugin","message":"plugin ` + "`relevo`" + ` is not installed"}}`
+}
+
+// museInspectReader answers the injected probe with a fixed stdout and error.
+func museInspectReader(out string, err error) MuseInspectFn {
+	return func(ctx context.Context, bin string, args ...string) ([]byte, error) {
+		return []byte(out), err
+	}
+}
+
+func museChecks(t *testing.T, out string, err error, running string) []Check {
+	t.Helper()
+	return MasterMindChecks(MasterMindCheckInput{
+		Muse: true, Running: running, MuseInspect: museInspectReader(out, err),
+	})
+}
+
+// TestDoctorMusePluginRowsNoGate pins the gating: with Muse false the muse
+// rows are absent entirely, the same shape as the Claude gating.
+func TestDoctorMusePluginRowsNoGate(t *testing.T) {
+	checks := MasterMindChecks(MasterMindCheckInput{Home: t.TempDir(), Repo: t.TempDir()})
+	for _, name := range []string{"plugin", "plugin hook", "plugin version"} {
+		if c := findCheck(Report{Checks: checks}, "", name); c != nil {
+			t.Errorf("no muse gating must leave the %q row out, got %+v", name, c)
+		}
+	}
+}
+
+// TestDoctorMusePluginRowInstalledOK pins the all-green shape: plugin
+// present, enabled, approved, hooks and MCP trusted, versions matching.
+func TestDoctorMusePluginRowInstalledOK(t *testing.T) {
+	checks := museChecks(t, museInstalledJSON("0.22.4"), nil, "v0.22.4")
+	if c := findCheck(Report{Checks: checks}, "", "plugin"); c == nil || c.Severity != SevOK || !strings.Contains(c.Detail, "relevo@relevo enabled in muse") {
+		t.Fatalf("plugin row = %+v, want OK saying relevo@relevo is enabled in muse", c)
+	}
+	c := findCheck(Report{Checks: checks}, "", "plugin hook")
+	if c == nil || c.Severity != SevOK || !strings.Contains(c.Detail, museStatusTrusted) {
+		t.Fatalf("plugin hook row = %+v, want OK naming %s", c, museStatusTrusted)
+	}
+	if c := findCheck(Report{Checks: checks}, "", "plugin version"); c == nil || c.Severity != SevOK || c.Detail != "plugin 0.22.4 matches relevo" {
+		t.Fatalf("plugin version row = %+v, want the Claude row's match wording", c)
+	}
+}
+
+// museExitError runs `sh -c "echo $out; exit 1"` and returns its stdout with
+// the real *exec.ExitError muse answers a non-zero exit with, so the probe's
+// spawn-error-vs-exit-1 rule is pinned without spawning muse itself.
+func museExitError(t *testing.T, out string) ([]byte, error) {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", "printf '%s' '"+out+"' && exit 1")
+	body, err := cmd.Output()
+	if err == nil {
+		t.Fatal("the helper command must exit non-zero")
+	}
+	return body, err
+}
+
+// TestDoctorMusePluginRowMissingFailsInstall pins the missing plugin: FAIL
+// whose fix adds the marketplace and installs the plugin. muse answers this
+// with exit 1 and the error object, which the helper reproduces.
+func TestDoctorMusePluginRowMissingFailsInstall(t *testing.T) {
+	out, err := museExitError(t, museNotInstalledJSON())
+	checks := museChecks(t, string(out), err, "v0.22.4")
+	c := findCheck(Report{Checks: checks}, "", "plugin")
+	if c == nil || c.Severity != SevFail {
+		t.Fatalf("plugin row = %+v, want FAIL when muse says the plugin is not installed", c)
+	}
+	want := "muse plugins marketplace add relevo https://github.com/fuad-daoud/relevo.git && muse plugins install relevo@relevo"
+	if c.Fix != want {
+		t.Errorf("plugin row fix = %q, want %q", c.Fix, want)
+	}
+}
+
+// TestDoctorMusePluginRowDisabledFailsEnable pins a disabled plugin: FAIL
+// with the enable fix.
+func TestDoctorMusePluginRowDisabledFailsEnable(t *testing.T) {
+	out := `{"active":false,"record":{"enabled":false,"version":"0.22.4"},"runtime_capabilities":[]}`
+	checks := museChecks(t, out, nil, "v0.22.4")
+	c := findCheck(Report{Checks: checks}, "", "plugin")
+	if c == nil || c.Severity != SevFail || c.Fix != "muse plugins enable relevo" {
+		t.Fatalf("plugin row = %+v, want FAIL with the enable fix", c)
+	}
+}
+
+// TestDoctorMusePluginRowUnapprovedFailsApprove pins hooks and MCP that were
+// never approved (or drifted after a plugin update): FAIL with the approve
+// fix, and the detail names the statuses seen.
+func TestDoctorMusePluginRowUnapprovedFailsApprove(t *testing.T) {
+	out := `{"active":true,"record":{"enabled":true,"version":"0.22.4"},"runtime_capabilities":[` +
+		`{"candidate":{"kind":"hook","stable_id":"plugin:relevo:hook:hook-a","plugin_id":"relevo"},"status":"review_needed"},` +
+		`{"candidate":{"kind":"mcp_server","stable_id":"plugin:relevo:mcp:mcp-a","plugin_id":"relevo"},"status":"trusted_disabled"}]}`
+	checks := museChecks(t, out, nil, "v0.22.4")
+	c := findCheck(Report{Checks: checks}, "", "plugin hook")
+	if c == nil || c.Severity != SevFail || c.Fix != "muse plugins approve relevo" {
+		t.Fatalf("plugin hook row = %+v, want FAIL with the approve fix", c)
+	}
+	for _, want := range []string{"hook: review_needed", "mcp_server: trusted_disabled"} {
+		if !strings.Contains(c.Detail, want) {
+			t.Errorf("plugin hook detail %q must name %q", c.Detail, want)
+		}
+	}
+}
+
+// TestDoctorMusePluginRowVersionDriftWarns pins the version row: advisory
+// Warn with the update fix when record.version and relevo differ.
+func TestDoctorMusePluginRowVersionDriftWarns(t *testing.T) {
+	checks := museChecks(t, museInstalledJSON("0.22.3"), nil, "v0.22.4")
+	c := findCheck(Report{Checks: checks}, "", "plugin version")
+	if c == nil || c.Severity != SevWarn || c.Fix != "muse plugins update relevo" {
+		t.Fatalf("plugin version row = %+v, want Warn with the update fix", c)
+	}
+	if c.Detail != "plugin 0.22.3, relevo v0.22.4" {
+		t.Errorf("plugin version detail = %q, want the Claude row's drift wording", c.Detail)
+	}
+	if c := findCheck(Report{Checks: checks}, "", "plugin"); c == nil || c.Severity != SevOK {
+		t.Errorf("a version drift must not change the enabled row: %+v", c)
+	}
+}
+
+// TestDoctorMusePluginRowsUnreadableNotChecked pins the unreadable-state
+// rule: a spawn error or an unparseable body leaves every muse row
+// `not checked` OK, never FAIL.
+func TestDoctorMusePluginRowsUnreadableNotChecked(t *testing.T) {
+	cases := []struct {
+		name string
+		out  string
+		err  error
+	}{
+		{"spawn error", "", errors.New("executable file not found in $PATH")},
+		{"unparseable json", "not json", nil},
+		{"installed answer with no record", `{"active":true}`, nil},
+		{"unknown error code", `{"error":{"code":"internal"}}`, nil},
+		// Exit 1 is only a fact when muse named it: the same unknown-plugin
+		// body beside an error that is not an exit status reads unreadable.
+		{"unknown-plugin without an exit status", museNotInstalledJSON(), errors.New("not an exit status")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			checks := museChecks(t, tc.out, tc.err, "v0.22.4")
+			for _, name := range []string{"plugin", "plugin hook", "plugin version"} {
+				c := findCheck(Report{Checks: checks}, "", name)
+				if c == nil || c.Severity != SevOK || !strings.HasPrefix(c.Detail, "not checked") {
+					t.Errorf("%s row = %+v, want not checked OK", name, c)
+				}
+			}
+		})
+	}
+}
+
+// TestDoctorMuseSessionRowPinsEnvGate pins that the MasterMind row is gated
+// on the MuseSession input (cmd/relevo sets it from MUSE_SESSION_ID read
+// directly, not via Detect) and resolves like the Claude row: FAIL on a
+// Resolve miss, OK with a live claim.
+func TestDoctorMuseSessionRowPinsEnvGate(t *testing.T) {
+	rec := &mastermind.Record{ID: "pl_aaaaaaaabbbb", Name: "muse-1", HarnessKind: "muse", SessionID: "sess"}
+
+	checks := MasterMindChecks(MasterMindCheckInput{MuseSession: true})
+	c := findCheck(Report{Checks: checks}, "", "MasterMind")
+	if c == nil || c.Severity != SevFail {
+		t.Fatalf("mastermind row = %+v, want FAIL when the muse session resolves nothing", c)
+	}
+
+	checks = MasterMindChecks(MasterMindCheckInput{MuseSession: true, Resolved: rec, MCPChild: true, ClaimLive: true})
+	if c := findCheck(Report{Checks: checks}, "", "MasterMind"); c == nil || c.Severity != SevOK {
+		t.Fatalf("mastermind row = %+v, want OK for a resolved muse session with a live claim", c)
+	}
+
+	checks = MasterMindChecks(MasterMindCheckInput{Resolved: rec, MCPChild: true, ClaimLive: true})
+	if c := findCheck(Report{Checks: checks}, "", "MasterMind"); c != nil {
+		t.Errorf("the mastermind row exists only when a session was detected, got %+v", c)
+	}
+}
+
+// TestMuseInspectReaderGetsExactCommand pins the probe command: `muse
+// plugins inspect relevo --json`, through the injected reader only.
+func TestMuseInspectReaderGetsExactCommand(t *testing.T) {
+	var gotBin string
+	var gotArgs []string
+	in := MasterMindCheckInput{Muse: true, MuseInspect: func(ctx context.Context, bin string, args ...string) ([]byte, error) {
+		gotBin, gotArgs = bin, args
+		return []byte(museInstalledJSON("0.22.4")), nil
+	}}
+	MasterMindChecks(in)
+	if gotBin != "muse" || strings.Join(gotArgs, " ") != "plugins inspect relevo --json" {
+		t.Errorf("probe ran %s %v, want muse plugins inspect relevo --json", gotBin, gotArgs)
+	}
 }

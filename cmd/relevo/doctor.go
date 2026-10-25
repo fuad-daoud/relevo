@@ -427,7 +427,12 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 		}
 	}
 
-	rep.Checks = append(rep.Checks, doctor.MasterMindChecks(mastermindCheckInput(rt, kinds))...)
+	// The muse plugin rows probe through this Env's Command, never a muse
+	// spawned at another layer: the same seam every other command-backed row
+	// uses, so tests stub the inspect answer.
+	masterMindIn := mastermindCheckInput(rt, kinds)
+	masterMindIn.MuseInspect = env.Command
+	rep.Checks = append(rep.Checks, doctor.MasterMindChecks(masterMindIn)...)
 
 	// One row per configured login, saying whether its home exists and holds a
 	// login, so a round cannot fail to authenticate with no surface naming

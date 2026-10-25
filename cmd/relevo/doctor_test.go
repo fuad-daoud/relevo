@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -851,4 +852,33 @@ func TestDatabaseCheckRow(t *testing.T) {
 	if got := strings.Count(c.Detail, " · "); got != 4 {
 		t.Errorf("detail = %q, want five ` · `-separated parts, got %d separators", c.Detail, got)
 	}
+}
+
+// TestMastermindCheckInputMuseGating pins how the muse rows are gated: a
+// muse candidate or record sets Muse, and MUSE_SESSION_ID — read directly,
+// not via mastermind.Detect — sets MuseSession only when a muse exists to
+// report on, so a stray id never grows rows on a muse-less host.
+func TestMastermindCheckInputMuseGating(t *testing.T) {
+	rt := relevo.Runtime{Now: func() time.Time { return time.Now() }}
+
+	t.Setenv("MUSE_SESSION_ID", "")
+	if in := mastermindCheckInput(rt, []string{"muse"}); !in.Muse || in.MuseSession {
+		t.Errorf("muse candidate: Muse=%v MuseSession=%v, want true/false", in.Muse, in.MuseSession)
+	}
+	if in := mastermindCheckInput(rt, []string{"claude"}); in.Muse || in.MuseSession {
+		t.Errorf("claude candidate: Muse=%v MuseSession=%v, want false/false", in.Muse, in.MuseSession)
+	}
+
+	t.Setenv("MUSE_SESSION_ID", "sess-1")
+	if in := mastermindCheckInput(rt, []string{"muse"}); !in.MuseSession {
+		t.Error("a muse candidate and a set MUSE_SESSION_ID must set MuseSession")
+	}
+	if in := mastermindCheckInput(rt, []string{"claude"}); in.MuseSession && !museOnPathForTest() {
+		t.Error("MuseSession without a muse binary on PATH must be false on a muse-less host")
+	}
+}
+
+func museOnPathForTest() bool {
+	_, err := exec.LookPath("muse")
+	return err == nil
 }
