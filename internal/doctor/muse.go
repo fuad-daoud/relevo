@@ -30,7 +30,7 @@ const (
 	musePluginInstallFix = "muse plugins marketplace add relevo https://github.com/fuad-daoud/relevo.git && muse plugins install relevo@relevo"
 	musePluginEnableFix  = "muse plugins enable relevo"
 	musePluginApproveFix = "muse plugins approve relevo"
-	musePluginUpdateFix  = "muse plugins update relevo"
+	musePluginUpdateFix  = "muse plugins marketplace update relevo && muse plugins update relevo && muse plugins approve relevo"
 
 	museStatusTrusted = "trusted_enabled"
 )
