@@ -165,7 +165,7 @@ func TestProbeNoHarnessKeepsExistingMessage(t *testing.T) {
 		t.Fatalf("empty probe = %+v, want nothing", inv)
 	}
 	_, err := Build(inv, RecommendedAnswers(inv, nil))
-	if err == nil || err.Error() != "no harness binaries on PATH (agy, claude, codex, opencode); install one first" {
+	if err == nil || err.Error() != "no harness binaries on PATH (agy, claude, codex, muse, opencode); install one first" {
 		t.Fatalf("Build error = %v, want the existing no-binaries text", err)
 	}
 }
@@ -238,4 +238,159 @@ func TestProbeAsksAgyAgainAfterAFailure(t *testing.T) {
 	if len(inv.Harnesses) != 1 || !inv.Harnesses[0].LoggedIn {
 		t.Fatalf("agy = %+v after one failure then success, want logged in", inv.Harnesses)
 	}
+}
+
+// TestProbeMuseAuthFileLogsInWithCatalog pins the muse login rule and the
+// offer it carries: an auth file under the default home logs in, and a file
+// whose read fails as anything but not-exist is present-differs and logs in
+// too. Either way the status offers the three catalog models in default
+// order, each runnable at the eight efforts with default high, and carries
+// the muse login hint.
+func TestProbeMuseAuthFileLogsInWithCatalog(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		auth []byte
+	}{
+		{"present auth file", []byte("{}")},
+		{"unreadable auth file", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			env := probeEnv{pathEnv: pathEnv{
+				onPath: map[string]bool{"muse": true},
+				files:  map[string][]byte{".config/muse/auth.json": tt.auth},
+			}}
+			st, ok := statusOf(Probe(env), "muse")
+			if !ok || !st.LoggedIn {
+				t.Fatalf("muse status = %+v (ok %v), want logged in", st, ok)
+			}
+			wantModels := []string{"muse-spark-1.3", "muse-spark-1.2", "muse-wonder-1.0"}
+			if !reflect.DeepEqual(st.Models, wantModels) {
+				t.Fatalf("muse models = %v, want the catalog %v in default order", st.Models, wantModels)
+			}
+			wantEfforts := []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+			for _, m := range wantModels {
+				if !reflect.DeepEqual(st.Efforts[m], wantEfforts) {
+					t.Errorf("muse efforts for %s = %v, want %v", m, st.Efforts[m], wantEfforts)
+				}
+				if st.DefaultEffort[m] != "high" {
+					t.Errorf("muse default effort for %s = %q, want high", m, st.DefaultEffort[m])
+				}
+			}
+			if st.Login != "muse login" {
+				t.Errorf("muse login text = %q, want %q", st.Login, "muse login")
+			}
+		})
+	}
+}
+
+// TestProbeMuseEnvKeyLogsInWithoutAuthFile pins the key route and its
+// priority: META_API_KEY set with no auth file anywhere logs in with the
+// full catalog -- the key alone never needs the file -- and with both the
+// key and the file present the machine is still logged in. An empty key is
+// no key at all.
+func TestProbeMuseEnvKeyLogsInWithoutAuthFile(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		envs   map[string]string
+		files  map[string][]byte
+		logged bool
+	}{
+		{"key without any auth file", map[string]string{"META_API_KEY": "secret"}, nil, true},
+		{"key with an auth file too", map[string]string{"META_API_KEY": "secret"},
+			map[string][]byte{".config/muse/auth.json": []byte("{}")}, true},
+		{"empty key without an auth file", map[string]string{"META_API_KEY": ""}, nil, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			env := probeEnv{
+				pathEnv: pathEnv{onPath: map[string]bool{"muse": true}, files: tt.files},
+				envs:    tt.envs,
+			}
+			st, ok := statusOf(Probe(env), "muse")
+			if !ok {
+				t.Fatal("no muse status")
+			}
+			if st.LoggedIn != tt.logged {
+				t.Fatalf("muse loggedIn = %v, want %v", st.LoggedIn, tt.logged)
+			}
+			if tt.logged {
+				if want := []string{"muse-spark-1.3", "muse-spark-1.2", "muse-wonder-1.0"}; !reflect.DeepEqual(st.Models, want) {
+					t.Errorf("muse models = %v, want the catalog %v", st.Models, want)
+				}
+			}
+		})
+	}
+}
+
+// TestProbeMuseLoggedOutNamesLoginAndRunsNoCommand pins the logged-out muse
+// status: no models, no efforts, no defaults, and the `muse login` hint the
+// setup line names as the way in -- with no probe command at all, because
+// muse's login is a file or a key, never a spawn.
+func TestProbeMuseLoggedOutNamesLoginAndRunsNoCommand(t *testing.T) {
+	calls := 0
+	env := probeEnv{
+		pathEnv: pathEnv{onPath: map[string]bool{"muse": true}},
+		run: func(name string, args ...string) ([]byte, int, error) {
+			calls++
+			return nil, 1, nil
+		},
+	}
+	st, ok := statusOf(Probe(env), "muse")
+	if !ok {
+		t.Fatal("no muse status")
+	}
+	if st.LoggedIn {
+		t.Error("muse = logged in with no auth file and no key, want logged out")
+	}
+	if len(st.Models) != 0 || len(st.Efforts) != 0 || len(st.DefaultEffort) != 0 {
+		t.Errorf("muse offers %v/%v/%v, want none while logged out", st.Models, st.Efforts, st.DefaultEffort)
+	}
+	if st.Login != "muse login" {
+		t.Errorf("muse login text = %q, want %q", st.Login, "muse login")
+	}
+	if calls != 0 {
+		t.Errorf("the muse probe ran %d commands, want none", calls)
+	}
+}
+
+// TestProbeMuseHonoursXDGConfigHome pins the auth-file path: with
+// XDG_CONFIG_HOME set the probe checks $XDG_CONFIG_HOME/muse/auth.json and
+// not the home default, while an unset or empty one falls back to the
+// HomePath default.
+func TestProbeMuseHonoursXDGConfigHome(t *testing.T) {
+	t.Run("xdg file logs in", func(t *testing.T) {
+		env := probeEnv{
+			pathEnv: pathEnv{
+				onPath: map[string]bool{"muse": true},
+				files:  map[string][]byte{"/xdg/muse/auth.json": []byte("{}")},
+			},
+			envs: map[string]string{"XDG_CONFIG_HOME": "/xdg"},
+		}
+		if st, ok := statusOf(Probe(env), "muse"); !ok || !st.LoggedIn {
+			t.Fatalf("muse status = %+v (ok %v), want logged in from the XDG file", st, ok)
+		}
+	})
+	t.Run("home file ignored while xdg is set", func(t *testing.T) {
+		env := probeEnv{
+			pathEnv: pathEnv{
+				onPath: map[string]bool{"muse": true},
+				files:  map[string][]byte{".config/muse/auth.json": []byte("{}")},
+			},
+			envs: map[string]string{"XDG_CONFIG_HOME": "/xdg"},
+		}
+		if st, ok := statusOf(Probe(env), "muse"); !ok || st.LoggedIn {
+			t.Fatalf("muse status = %+v (ok %v), want logged out: the probe must check the XDG path, not the home default", st, ok)
+		}
+	})
+	t.Run("empty xdg falls back to the home default", func(t *testing.T) {
+		env := probeEnv{
+			pathEnv: pathEnv{
+				onPath: map[string]bool{"muse": true},
+				files:  map[string][]byte{".config/muse/auth.json": []byte("{}")},
+			},
+			envs: map[string]string{"XDG_CONFIG_HOME": ""},
+		}
+		if st, ok := statusOf(Probe(env), "muse"); !ok || !st.LoggedIn {
+			t.Fatalf("muse status = %+v (ok %v), want logged in through the HomePath fallback", st, ok)
+		}
+	})
 }

@@ -15,7 +15,7 @@ import (
 
 // noHarnessMessage is the refusal an empty probe earns -- the same text the
 // nothing-on-PATH paths have always printed.
-const noHarnessMessage = "no harness binaries on PATH (agy, claude, codex, opencode); install one first"
+const noHarnessMessage = "no harness binaries on PATH (agy, claude, codex, muse, opencode); install one first"
 
 // noModelMessage is the refusal when no question offers a model to build
 // with: opencode alone, with none of its models picked.
@@ -130,8 +130,8 @@ func pickedOne(q Question, tokens []string) (string, error) {
 
 // cheapestPick is the one model the reviewer, security and lite-planner
 // actors share: claude's sonnet alias first, then the codex model the offer
-// list lists last, then agy's first flash model else its first. Empty when
-// no rule can name one.
+// list lists last, then muse's first catalog model, then agy's first flash
+// model else its first. Empty when no rule can name one.
 func cheapestPick(inv Inventory) string {
 	models := loggedModels(inv)
 	if len(models["claude"]) > 0 {
@@ -139,6 +139,9 @@ func cheapestPick(inv Inventory) string {
 	}
 	if len(models["codex"]) > 0 {
 		return refFor("codex", models["codex"][len(models["codex"])-1])
+	}
+	if len(models["muse"]) > 0 {
+		return refFor("muse", models["muse"][0])
 	}
 	if m, ok := agyFlashPick(models["agy"]); ok {
 		return refFor("agy", m)

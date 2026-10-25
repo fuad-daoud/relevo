@@ -219,3 +219,74 @@ func contains(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+// TestQuestionsListMuseModelsAndRecommendThem pins the wizard over a
+// logged-in muse probed through the fake: the builder lists the catalog at
+// muse/meta values in default order with the efforts on the choice, and
+// recommends the first model at medium; with muse alone the planner falls
+// back to that model at high and the role questions carry the same choices,
+// the reviewer and the lite-planner derived from the first muse model at
+// medium. With codex logged in too, muse's models follow codex's in the
+// list and the builder recommends both.
+func TestQuestionsListMuseModelsAndRecommendThem(t *testing.T) {
+	inv := Probe(probeEnv{pathEnv: pathEnv{
+		onPath: map[string]bool{"muse": true},
+		files:  map[string][]byte{".config/muse/auth.json": []byte("{}")},
+	}})
+	qs := Questions(inv, nil)
+	builder := pickOf(t, qs, "builder")
+	wantValues := []string{"muse/meta/muse-spark-1.3", "muse/meta/muse-spark-1.2", "muse/meta/muse-wonder-1.0"}
+	var values []string
+	for _, c := range builder.Choices {
+		values = append(values, c.Value)
+	}
+	if !reflect.DeepEqual(values, wantValues) {
+		t.Fatalf("builder choices = %v, want the muse catalog at muse/meta values %v", values, wantValues)
+	}
+	wantEfforts := []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+	if !reflect.DeepEqual(builder.Choices[0].Efforts, wantEfforts) {
+		t.Errorf("muse choice efforts = %v, want %v", builder.Choices[0].Efforts, wantEfforts)
+	}
+	if got := recommendedOf(t, builder); !reflect.DeepEqual(got, []string{"muse/meta/muse-spark-1.3:medium"}) {
+		t.Errorf("builder recommends %v, want the first muse model at medium", got)
+	}
+	if got := recommendedOf(t, pickOf(t, qs, "planner")); !reflect.DeepEqual(got, []string{"muse/meta/muse-spark-1.3:high"}) {
+		t.Errorf("planner recommends %v, want the first muse model at high", got)
+	}
+	for _, id := range []string{"reviewer", "lite-planner"} {
+		if got := recommendedOf(t, pickOf(t, qs, id)); !reflect.DeepEqual(got, []string{"muse/meta/muse-spark-1.3:medium"}) {
+			t.Errorf("%s recommends %v, want the cheapest muse pick at medium", id, got)
+		}
+	}
+	if got := recommendedOf(t, pickOf(t, qs, "security")); !reflect.DeepEqual(got, []string{"muse/meta/muse-spark-1.3:high"}) {
+		t.Errorf("security recommends %v, want the planner's muse pick", got)
+	}
+
+	both := Probe(probeEnv{
+		pathEnv: pathEnv{
+			onPath: map[string]bool{"codex": true, "muse": true},
+			files:  map[string][]byte{".config/muse/auth.json": []byte("{}")},
+		},
+		run: func(name string, args ...string) ([]byte, int, error) {
+			switch callKey(name, args...) {
+			case "codex login status":
+				return nil, 0, nil
+			case "codex debug models":
+				return []byte(`[{"slug": "gpt-6-luna", "visibility": "list", "priority": 1}]`), 0, nil
+			}
+			return nil, -1, errProbeTimeout
+		},
+	})
+	q := pickOf(t, Questions(both, nil), "builder")
+	var bothValues []string
+	for _, c := range q.Choices {
+		bothValues = append(bothValues, c.Value)
+	}
+	wantBoth := []string{"codex/openai/gpt-6-luna", "muse/meta/muse-spark-1.3", "muse/meta/muse-spark-1.2", "muse/meta/muse-wonder-1.0"}
+	if !reflect.DeepEqual(bothValues, wantBoth) {
+		t.Errorf("builder choices with codex too = %v, want codex then muse %v", bothValues, wantBoth)
+	}
+	if got := recommendedOf(t, q); !reflect.DeepEqual(got, []string{"codex/openai/gpt-6-luna:medium", "muse/meta/muse-spark-1.3:medium"}) {
+		t.Errorf("builder recommends %v with codex and muse, want both first models at medium", got)
+	}
+}
