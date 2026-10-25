@@ -208,3 +208,30 @@ func actorNames(a roles.Actor) []string {
 	}
 	return names
 }
+
+// TestBuildMuseOnlyMachineWritesMuseCandidates pins Build on a machine whose
+// only harness is a logged-in muse probed through the fake: it succeeds on
+// the muse recommendations alone and writes the muse/meta/<model>:<effort>
+// candidates they name -- the first catalog model at medium for the builders
+// and at high for the planner -- with muse among the kinds the agent install
+// walks.
+func TestBuildMuseOnlyMachineWritesMuseCandidates(t *testing.T) {
+	inv := Probe(probeEnv{pathEnv: pathEnv{
+		onPath: map[string]bool{"muse": true},
+		files:  map[string][]byte{".config/muse/auth.json": []byte("{}")},
+	}})
+	files, err := Build(inv, RecommendedAnswers(inv, nil))
+	if err != nil {
+		t.Fatalf("Build on a muse-only machine: %v", err)
+	}
+	want := []candidate.Candidate{
+		{Harness: "muse", Provider: "meta", Model: "muse-spark-1.3:medium"},
+		{Harness: "muse", Provider: "meta", Model: "muse-spark-1.3:high"},
+	}
+	if got := candidatesOf(t, files); !reflect.DeepEqual(got, want) {
+		t.Errorf("candidates = %+v, want %+v", got, want)
+	}
+	if !reflect.DeepEqual(files.Kinds, []string{"muse"}) {
+		t.Errorf("kinds = %v, want the agent install to walk muse", files.Kinds)
+	}
+}

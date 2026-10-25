@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -53,8 +56,9 @@ func (runnerEnv) Run(name string, args ...string) ([]byte, int, error) {
 // HarnessStatus is one probed harness: its kind, whether it is on PATH and,
 // when it is, whether its CLI is logged in and which models it offers. Login
 // carries the login command to name wherever the status is printed; it is
-// empty for a harness not on PATH. Efforts and DefaultEffort are what a CLI
-// reports per model -- only codex does; the others' efforts are known.
+// empty for a harness not on PATH. Efforts and DefaultEffort are per-model
+// efforts where the status carries them: codex reads them off its CLI, muse
+// has them fixed, and the others' efforts are known in the questions.
 // Catalog is opencode's every runnable "provider/model", and its Models the
 // ones picked from it.
 type HarnessStatus struct {
@@ -69,8 +73,9 @@ type HarnessStatus struct {
 }
 
 // Inventory is everything a probe produced: the wizard harnesses' statuses
-// plus the notes the front end prints as they are. Only the three harnesses
-// the wizard can configure get status entries.
+// plus the notes the front end prints as they are. Only the harnesses the
+// wizard can configure -- agy, claude, codex, muse and opencode -- get
+// status entries.
 type Inventory struct {
 	Harnesses []HarnessStatus
 	Notes     []string
@@ -82,12 +87,24 @@ type Inventory struct {
 var loginCommands = map[string]string{
 	"claude": "claude auth login",
 	"codex":  "codex login",
+	"muse":   "muse login",
 	"agy":    "run agy once to sign in",
 }
 
 // claudeAliases are the only candidate models claude ever names, because
 // claude has no model-list command and the aliases always resolve.
 var claudeAliases = []string{"sonnet", "opus", "haiku"}
+
+// museModels is muse's whole fixed catalog, in default order: muse names no
+// model-list command either, the first entry is the offer's default pick,
+// and these always resolve.
+var museModels = []string{"muse-spark-1.3", "muse-spark-1.2", "muse-wonder-1.0"}
+
+// museEfforts is every effort each muse model runs at, lightest first.
+var museEfforts = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+
+// museDefaultEffort is the effort a muse model runs at when none is picked.
+const museDefaultEffort = "high"
 
 // Probe runs each harness's status and model commands through the env's
 // runner and reports what it found. A harness not on PATH gets no status at
@@ -125,6 +142,17 @@ func probeTimeoutFor(env SetupEnv) time.Duration {
 	return probeDeadline
 }
 
+// getenvFor is how a probe reads one environment variable. An env may
+// inject its own values so a test sets XDG_CONFIG_HOME or META_API_KEY on
+// the fake instead of the real process environment; otherwise the process's
+// own environment answers.
+func getenvFor(env SetupEnv) func(string) string {
+	if g, ok := env.(interface{ Getenv(string) string }); ok {
+		return g.Getenv
+	}
+	return os.Getenv
+}
+
 // runProbe runs one command through env.Run under the probe timeout. The
 // guard keeps a runner that blocks instead of timing out -- a wrapper on a
 // remote call, say -- from stalling Probe too.
@@ -157,6 +185,10 @@ func probeHarness(env SetupEnv, kind string) HarnessStatus {
 		var offer []codexEntry
 		s.LoggedIn, offer = probeCodex(env)
 		s.Models, s.Efforts, s.DefaultEffort = codexOffer(offer)
+	case "muse":
+		if s.LoggedIn = probeMuse(env); s.LoggedIn {
+			s.Models, s.Efforts, s.DefaultEffort = museOffer()
+		}
 	case "agy":
 		s.LoggedIn, s.Models = probeAgy(env)
 	case "opencode":
@@ -252,6 +284,45 @@ func codexModels(stdout []byte) []codexEntry {
 	}
 	sort.Slice(listed, func(i, j int) bool { return listed[i].Priority < listed[j].Priority })
 	return listed
+}
+
+// museAuthPath is where muse keeps its login file: $XDG_CONFIG_HOME/muse/
+// auth.json when XDG_CONFIG_HOME is set, else the home-relative default.
+func museAuthPath(env SetupEnv) (string, error) {
+	if xdg := getenvFor(env)("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "muse", "auth.json"), nil
+	}
+	return env.HomePath(".config/muse/auth.json")
+}
+
+// probeMuse reports whether muse can run a session: META_API_KEY set wins
+// outright, else the auth file's presence decides. A file read failing with
+// anything other than not-exist follows the ReadFile contract -- present,
+// differs -- and reads as logged in; a file no path can be found for reads
+// as logged out. No muse command runs: this is a local check only.
+func probeMuse(env SetupEnv) bool {
+	if getenvFor(env)("META_API_KEY") != "" {
+		return true
+	}
+	path, err := museAuthPath(env)
+	if err != nil {
+		return false
+	}
+	_, err = env.ReadFile(path)
+	return !errors.Is(err, fs.ErrNotExist)
+}
+
+// museOffer splits muse's fixed catalog into the status fields: the models
+// in default order, each one's every-runnable efforts, and its default --
+// the shape codex's CLI reports, here known.
+func museOffer() ([]string, map[string][]string, map[string]string) {
+	efforts := make(map[string][]string, len(museModels))
+	defaults := make(map[string]string, len(museModels))
+	for _, m := range museModels {
+		efforts[m] = museEfforts
+		defaults[m] = museDefaultEffort
+	}
+	return museModels, efforts, defaults
 }
 
 // probeAgy asks `agy models`: exit 0 is the login signal, because agy needs

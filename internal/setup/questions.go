@@ -48,7 +48,7 @@ type Answers map[string][]string
 
 // questionKinds is the order the questions name harnesses in: the first-pick
 // order for builder choices and their recommendations.
-var questionKinds = []string{"codex", "agy", "claude", "opencode"}
+var questionKinds = []string{"codex", "agy", "claude", "muse", "opencode"}
 
 // builderPrompt names the comma list, because a builder answer is several
 // models in the order they are tried.
@@ -148,7 +148,7 @@ func keptAnswers(q Question, answers map[string][]string) ([]string, bool) {
 // builderQuestion shows every model each logged-in harness offers, question
 // order, and recommends one model per harness at medium effort: codex's
 // first listed model, agy's first gemini flash model else its first, claude
-// sonnet.
+// sonnet, muse's first catalog model.
 func builderQuestion(inv Inventory) Question {
 	offers := loggedChoices(inv)
 	recommended := []string{}
@@ -160,6 +160,9 @@ func builderQuestion(inv Inventory) Question {
 	}
 	if c, ok := pickChoice(offers["claude"], "sonnet", ""); ok {
 		recommended = append(recommended, atEffort(c, builderEffort))
+	}
+	if cs := offers["muse"]; len(cs) > 0 {
+		recommended = append(recommended, atEffort(cs[0], builderEffort))
 	}
 	if c, ok := exactChoice(offers["opencode"], opencodeBuilder); ok {
 		recommended = append(recommended, c.Value)
@@ -174,8 +177,8 @@ func builderQuestion(inv Inventory) Question {
 }
 
 // plannerQuestion names who writes plans, at high effort: claude opus when
-// it is logged in, else codex's first listed model, else agy's first
-// claude-opus-* model else its first.
+// it is logged in, else codex's first listed model, else muse's first
+// catalog model, else agy's first claude-opus-* model else its first.
 func plannerQuestion(inv Inventory) Question {
 	offers := loggedChoices(inv)
 	q := Question{
@@ -186,6 +189,8 @@ func plannerQuestion(inv Inventory) Question {
 	if c, ok := pickChoice(offers["claude"], "opus", ""); ok {
 		q.Recommended = []string{atEffort(c, plannerEffort)}
 	} else if cs := offers["codex"]; len(cs) > 0 {
+		q.Recommended = []string{atEffort(cs[0], plannerEffort)}
+	} else if cs := offers["muse"]; len(cs) > 0 {
 		q.Recommended = []string{atEffort(cs[0], plannerEffort)}
 	} else if c, ok := pickChoice(offers["agy"], "claude-opus-", ""); ok {
 		q.Recommended = []string{atEffort(c, plannerEffort)}
