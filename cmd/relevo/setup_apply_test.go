@@ -585,3 +585,22 @@ func TestSetupExitIsSilentAfterAFailedRow(t *testing.T) {
 		t.Fatal("a clean apply exits with an error")
 	}
 }
+
+// TestSetupOpenHintNamesTheHarnessThePluginWentInto pins the closing hint:
+// muse alone points at muse, both name both, and neither keeps Claude Code.
+func TestSetupOpenHintNamesTheHarnessThePluginWentInto(t *testing.T) {
+	cases := []struct {
+		want []string
+		hint string
+	}{
+		{[]string{"config", "agents"}, "open Claude Code in a repository and ask it to plan something"},
+		{[]string{"config", "agents", "plugin"}, "open Claude Code in a repository and ask it to plan something"},
+		{[]string{"config", "agents", "muse-plugin"}, "open muse in a repository and ask it to plan something"},
+		{[]string{"config", "agents", "plugin", "muse-plugin"}, "open Claude Code or muse in a repository and ask it to plan something"},
+	}
+	for _, tc := range cases {
+		if got := setupOpenHint(tc.want); got != tc.hint {
+			t.Errorf("setupOpenHint(%v) = %q, want %q", tc.want, got, tc.hint)
+		}
+	}
+}

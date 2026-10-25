@@ -32,8 +32,7 @@ const (
 
 // setupMuseName and setupMuseMarketplaceURL name the marketplace the muse
 // plugin install adds, and setupMusePluginCommand is the fix a failed
-// muse-plugin step names: the same three commands, in order. The fix lives
-// here, not in the doctor: doctor is out of scope for this step.
+// muse-plugin step names: the same three commands, in order.
 const (
 	setupMuseName           = "relevo"
 	setupMuseMarketplaceURL = "https://github.com/fuad-daoud/relevo.git"
@@ -150,12 +149,26 @@ func setupApply(ctx context.Context, refresh func() (relevo.Runtime, error), env
 
 	if err == nil {
 		fmt.Fprintln(w, "next: relevo doctor")
-		fmt.Fprintln(w, "next: open Claude Code in a repository and ask it to plan something")
+		fmt.Fprintln(w, "next: "+setupOpenHint(want))
 	}
 	if asJSON {
 		_ = printDoc(setupResultDocOf(steps))
 	}
 	return setupExitOf(err)
+}
+
+// setupOpenHint is the closing hint: open the MasterMind harness the plugin
+// went into. A setup that installed neither plugin names Claude Code, the
+// harness the README walks through first.
+func setupOpenHint(want []string) string {
+	harness := "Claude Code"
+	switch {
+	case slices.Contains(want, "muse-plugin") && slices.Contains(want, "plugin"):
+		harness = "Claude Code or muse"
+	case slices.Contains(want, "muse-plugin"):
+		harness = "muse"
+	}
+	return "open " + harness + " in a repository and ask it to plan something"
 }
 
 // setupExitOf is the exit a failed apply takes without a second print: the
