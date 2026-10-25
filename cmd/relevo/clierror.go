@@ -38,6 +38,7 @@ const (
 	codePushAlreadyConfirm errorCode = "push_already_confirmed"
 	codePushNotAdmitted    errorCode = "push_not_admitted"
 	codePushNoClaim        errorCode = "push_no_claim"
+	codeOwnerSandboxDenied errorCode = "owner_sandbox_denied"
 	codeInternal           errorCode = "internal"
 )
 
@@ -78,6 +79,7 @@ var catalog = map[errorCode]catalogEntry{
 	codePushAlreadyConfirm: {exit: 1},
 	codePushNotAdmitted:    {exit: 1},
 	codePushNoClaim:        {exit: 1},
+	codeOwnerSandboxDenied: {exit: 1, next: "relevo verbs need an unsandboxed shell: run the verb under muse --yolo or muse --disable-sandbox; relevo's MCP tools still work inside the sandbox"},
 	codeInternal:           {exit: 1, next: "relevo bugreport"},
 }
 

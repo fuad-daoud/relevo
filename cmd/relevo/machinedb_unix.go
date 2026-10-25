@@ -84,9 +84,15 @@ func dialWithStart(ctx context.Context, sock string) (net.Conn, error) {
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
-	if nc, err := dialUDS(ctx, sock); err == nil {
+	nc, firstErr := dialUDS(ctx, sock)
+	if firstErr == nil {
 		return nc, nil
 	}
+	// A sandboxed denial is worth remembering to the end of the loop: the
+	// re-dials repeat the refusal or end on the deadline, so only the first
+	// attempt's error tells the classifier the socket was refused rather
+	// than never answered. The budget is still spent in full.
+	sandboxed := dialSandboxDenied(firstErr)
 	if err := daemonStarter(); err != nil {
 		// A failed start is not fatal here: a concurrent starter may already
 		// be coming up, and the re-dial loop below is the answer either way.
@@ -94,6 +100,9 @@ func dialWithStart(ctx context.Context, sock string) (net.Conn, error) {
 	}
 	for {
 		if !time.Now().Before(deadline) {
+			if sandboxed {
+				return nil, fmt.Errorf("%w: %s: %w", errOwnerSandboxDenied, sock, firstErr)
+			}
 			return nil, fmt.Errorf("%w: %s", errOwnerUnavailable, sock)
 		}
 		step := time.Duration(25+rand.Intn(76)) * time.Millisecond
@@ -102,6 +111,9 @@ func dialWithStart(ctx context.Context, sock string) (net.Conn, error) {
 		}
 		select {
 		case <-ctx.Done():
+			if sandboxed {
+				return nil, fmt.Errorf("%w: %s: %w: %w", errOwnerSandboxDenied, sock, firstErr, ctx.Err())
+			}
 			return nil, fmt.Errorf("%w: %s: %w", errOwnerUnavailable, sock, ctx.Err())
 		case <-time.After(step):
 		}

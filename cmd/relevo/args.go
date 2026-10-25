@@ -349,6 +349,11 @@ func writeError(err error) error {
 		return fail(codeUsage, "%s", availability.UsageText(err))
 	case errors.Is(err, client.ErrUnreachable):
 		return fail(codeRemoteUnreachable, "%v", err)
+	case errors.Is(err, errOwnerSandboxDenied):
+		// The host's sandbox refused the owner socket: the verb, the daemon
+		// and the socket are all fine and only the shell is not, so the
+		// catalog names the unsandboxed shell rather than `relevo bugreport`.
+		return fail(codeOwnerSandboxDenied, "%v", err)
 	case errors.Is(err, relevo.ErrRemoteUnavailable):
 		return fail(codeNotAvailable, "%v", err)
 	case errors.As(err, &envErr):
