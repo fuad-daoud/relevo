@@ -80,7 +80,7 @@ func mastermindCaller(rt relevo.Runtime, cwd, kindFlag, sessionFlag string) (mas
 
 	ident, ok := mastermind.Detect(os.Getenv, os.Getppid())
 	if !ok {
-		return mastermind.InitInput{}, fail(codeRefused, "not in a detectable mastermind session: run it from the MasterMind's own session (Claude Code with the relevo plugin, or opencode), or pass --kind and --session")
+		return mastermind.InitInput{}, fail(codeRefused, "not in a detectable mastermind session: run it from the MasterMind's own session (Claude Code or muse with the relevo plugin, or opencode), or pass --kind and --session")
 	}
 	in := mastermind.InitInput{
 		Kind:      ident.Kind,
@@ -456,7 +456,7 @@ func cmdMasterMindGuide(args []string) error {
 	// and returns before anything opens the database or reads a repository.
 	// The disabled state is the existing non-repository answer, which the
 	// plugin is already silent on.
-	if mastermind.IsRunner(os.Getenv) {
+	if isRunnerHost() {
 		if *asJSON {
 			fmt.Println(`{"state":"disabled","text":""}`)
 		}

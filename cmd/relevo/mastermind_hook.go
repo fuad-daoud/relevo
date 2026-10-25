@@ -71,7 +71,7 @@ func mastermindInitHook(nameFlag, hookKind string) error {
 	// registered, and must not get the failure note either, so it answers the
 	// empty object for any payload -- malformed included -- before the
 	// parse-error branch and before any state is read.
-	if mastermind.IsRunner(os.Getenv) {
+	if isRunnerHost() {
 		_, _ = os.Stdout.Write(mastermind.HookConsent(""))
 		return nil
 	}
@@ -210,7 +210,7 @@ func mastermindNoticeHook(hookKind string) error {
 	// A round's harness session is a runner and must stay silent: no notice,
 	// no failure note, and no told baseline that would let a later prompt
 	// speak. The empty object for any payload, before the parse-error branch.
-	if mastermind.IsRunner(os.Getenv) {
+	if isRunnerHost() {
 		_, _ = os.Stdout.Write(mastermind.HookConsentFor(mastermind.HookEventUserPromptSubmit, ""))
 		return nil
 	}

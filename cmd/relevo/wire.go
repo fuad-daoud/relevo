@@ -484,6 +484,18 @@ func museCommOf(pid int) (string, bool) {
 	return "", false
 }
 
+// museEnvironOf reads one process's environment from /proc/<pid>/environ,
+// the scrubbed-environment fallback's eyes: a hook or plugin MCP server sees
+// only the allowlist, while its muse host still carries the round marker. A
+// process that has gone reads as missing.
+func museEnvironOf(pid int) (map[string]string, bool) {
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
+	if err != nil {
+		return nil, false
+	}
+	return mastermind.ParseEnviron(raw), true
+}
+
 // musePPidOf reads one process's parent pid from /proc/<pid>/status, the
 // muse ancestor walk's legs. A process that has gone, or a status without a
 // PPid line, reads as missing.
