@@ -58,14 +58,14 @@ func mastermindToldBaseline(d *db.DB, rt relevo.Runtime, kind, session, token st
 	_ = d.SetSessionTold(kind, session, token, rt.Now())
 }
 
-// mastermindInitHook runs `relevo mastermind init --hook claude`.
+// mastermindInitHook runs `relevo mastermind init --hook claude|muse`.
 //
 // It never returns an error and never exits non-zero: the hook runs at the
-// start of a Claude Code session, and blocking that session because relevo could
+// start of a session, and blocking that session because relevo could
 // not read its own state would be a far worse failure than an unregistered
 // mastermind. Every failure prints HookNote on stdout -- where the model reads
 // its context -- and the error on stderr for the human.
-func mastermindInitHook(nameFlag string) error {
+func mastermindInitHook(nameFlag, hookKind string) error {
 	in, err := mastermind.ParseHookInput(os.Stdin)
 	// A round's harness session is a runner: it must not be asked, briefed or
 	// registered, and must not get the failure note either, so it answers the
@@ -90,7 +90,7 @@ func mastermindInitHook(nameFlag string) error {
 	d, closeDB := mastermindOpenTimed(rt.Store.DBPath())
 	defer closeDB()
 
-	ref, own, effective := mastermindEffective(d, rt, in.CWD, "claude", in.SessionID)
+	ref, own, effective := mastermindEffective(d, rt, in.CWD, hookKind, in.SessionID)
 
 	// A cwd the hook cannot resolve to a repository and a session with no
 	// answer of its own leave the session alone: there is nothing to remember,
@@ -104,23 +104,23 @@ func mastermindInitHook(nameFlag string) error {
 	// baseline is the silent token, so the next prompt's notice stays quiet.
 	if effective == mastermind.ConsentNo {
 		_, _ = os.Stdout.Write(mastermind.HookConsent(""))
-		mastermindToldBaseline(d, rt, "claude", in.SessionID, mastermind.StatusNone)
+		mastermindToldBaseline(d, rt, hookKind, in.SessionID, mastermind.StatusNone)
 		return nil
 	}
 
 	// An unset answer injects the ask-note and registers nothing.
 	if effective != mastermind.ConsentYes {
 		_, _ = os.Stdout.Write(mastermind.HookConsent(mastermind.ConsentText(effective, nil)))
-		mastermindToldBaseline(d, rt, "claude", in.SessionID, mastermind.StatusAsk)
+		mastermindToldBaseline(d, rt, hookKind, in.SessionID, mastermind.StatusAsk)
 		return nil
 	}
 
-	// The hook's parent is the Claude Code process, which is the same pid
-	// CLAUDE_PID names in a Bash tool and `relevo mcp`'s parent.
+	// The hook's parent is the harness process itself, so it is the session's
+	// host.
 	host := os.Getppid()
 
 	rec, err := mastermindRegisterSession(d, rt, mastermind.InitInput{
-		Kind:          "claude",
+		Kind:          hookKind,
 		SessionID:     in.SessionID,
 		CWD:           in.CWD,
 		Name:          nameFlag,
@@ -135,22 +135,29 @@ func mastermindInitHook(nameFlag string) error {
 
 	// The export line is how every later Bash call in the session learns its
 	// mastermind. Appending, never truncating: Claude Code reads the whole
-	// file, and it may already carry lines from other tools.
+	// file, and it may already carry lines from other tools. Muse sets no
+	// $CLAUDE_ENV_FILE, so the muse answer always carries the no-env wording
+	// and never touches the file, even when the variable happens to be set.
 	//
 	// With no $CLAUDE_ENV_FILE there is nowhere to export to, so the answer
 	// says so in additionalContext instead of pretending the export happened:
 	// relevo then resolves the session through the host process.
-	out := mastermind.HookOutput(rec)
-	if envFile := os.Getenv("CLAUDE_ENV_FILE"); envFile != "" {
-		if err := appendEnvLine(envFile, mastermind.EnvLine(rec.ID)); err != nil {
-			return mastermindInitHookFailure(err)
-		}
+	var out []byte
+	if hookKind == "muse" {
+		out = mastermind.HookOutputMuse(rec)
 	} else {
-		out = mastermind.HookOutputNoEnv(rec)
+		out = mastermind.HookOutput(rec)
+		if envFile := os.Getenv("CLAUDE_ENV_FILE"); envFile != "" {
+			if err := appendEnvLine(envFile, mastermind.EnvLine(rec.ID)); err != nil {
+				return mastermindInitHookFailure(err)
+			}
+		} else {
+			out = mastermind.HookOutputNoEnv(rec)
+		}
 	}
 
 	_, _ = os.Stdout.Write(out)
-	mastermindToldBaseline(d, rt, "claude", in.SessionID, mastermind.StatusToken(effective, &rec))
+	mastermindToldBaseline(d, rt, hookKind, in.SessionID, mastermind.StatusToken(effective, &rec))
 	return nil
 }
 
@@ -173,11 +180,11 @@ type mastermindNoticeFlagValues struct {
 // into.
 func mastermindNoticeFlagSet(fs *flag.FlagSet) *mastermindNoticeFlagValues {
 	v := &mastermindNoticeFlagValues{}
-	v.hook = fs.String("hook", "", "read a Claude Code UserPromptSubmit payload from stdin (only \"claude\")")
+	v.hook = fs.String("hook", "", "read a Claude-shaped UserPromptSubmit payload from stdin (only \"claude\" or \"muse\")")
 	return v
 }
 
-// cmdMasterMindNotice runs `relevo mastermind notice --hook claude`, the
+// cmdMasterMindNotice runs `relevo mastermind notice --hook claude|muse`, the
 // UserPromptSubmit hook that tells a session its status changed since the
 // baseline its SessionStart hook recorded.
 func cmdMasterMindNotice(args []string) error {
@@ -187,18 +194,18 @@ func cmdMasterMindNotice(args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if *hook != "claude" {
-		fmt.Fprintf(os.Stderr, "relevo: relevo mastermind notice --hook supports only \"claude\", got %q\n", *hook)
+	if *hook != "claude" && *hook != "muse" {
+		fmt.Fprintf(os.Stderr, "relevo: relevo mastermind notice --hook supports only \"claude\" and \"muse\", got %q\n", *hook)
 		return exitCodeErr{code: 2}
 	}
-	return mastermindNoticeHook()
+	return mastermindNoticeHook(*hook)
 }
 
 // mastermindNoticeHook is the UserPromptSubmit hook's work. Like the
 // SessionStart hook it never returns an error and never exits non-zero: a
 // notice must never block a prompt. Every failure prints the empty object on
 // stdout and the error on stderr.
-func mastermindNoticeHook() error {
+func mastermindNoticeHook(hookKind string) error {
 	in, err := mastermind.ParseHookInput(os.Stdin)
 	// A round's harness session is a runner and must stay silent: no notice,
 	// no failure note, and no told baseline that would let a later prompt
@@ -219,7 +226,7 @@ func mastermindNoticeHook() error {
 	d, closeDB := mastermindOpenTimed(rt.Store.DBPath())
 	defer closeDB()
 
-	ref, own, effective := mastermindEffective(d, rt, in.CWD, "claude", in.SessionID)
+	ref, own, effective := mastermindEffective(d, rt, in.CWD, hookKind, in.SessionID)
 
 	// Nothing is printed outside a git repo that has no session answer: there
 	// is nothing to remember and nothing to say.
@@ -234,11 +241,11 @@ func mastermindNoticeHook() error {
 	token := mastermind.StatusNone
 	var rec *mastermind.Record
 	if effective != mastermind.ConsentNo {
-		rec = mastermindExistingRecord(rt, "claude", in.SessionID)
+		rec = mastermindExistingRecord(rt, hookKind, in.SessionID)
 		if rec == nil && effective == mastermind.ConsentYes {
 			host := os.Getppid()
 			r, err := mastermindRegisterSession(d, rt, mastermind.InitInput{
-				Kind:          "claude",
+				Kind:          hookKind,
 				SessionID:     in.SessionID,
 				CWD:           in.CWD,
 				Agent:         os.Getenv("CLAUDE_CODE_AGENT"),
@@ -254,7 +261,7 @@ func mastermindNoticeHook() error {
 		token = mastermind.StatusToken(effective, rec)
 	}
 
-	prev, ok, err := d.SessionTold("claude", in.SessionID)
+	prev, ok, err := d.SessionTold(hookKind, in.SessionID)
 	if err != nil {
 		return mastermindNoticeFailure(err)
 	}
@@ -263,35 +270,44 @@ func mastermindNoticeHook() error {
 	// that failed): write it and stay silent, so the session is not told a
 	// status it already holds.
 	if !ok {
-		mastermindToldBaseline(d, rt, "claude", in.SessionID, token)
+		mastermindToldBaseline(d, rt, hookKind, in.SessionID, token)
 		_, _ = os.Stdout.Write(mastermind.HookConsentFor(mastermind.HookEventUserPromptSubmit, ""))
 		return nil
 	}
 
-	text := mastermindNoticeText(prev, token, rec)
+	text := mastermindNoticeText(hookKind, prev, token, rec)
 	if text == "" {
 		_, _ = os.Stdout.Write(mastermind.HookConsentFor(mastermind.HookEventUserPromptSubmit, ""))
 		return nil
 	}
 
 	_, _ = os.Stdout.Write(mastermind.HookConsentFor(mastermind.HookEventUserPromptSubmit, text))
-	mastermindToldBaseline(d, rt, "claude", in.SessionID, token)
+	mastermindToldBaseline(d, rt, hookKind, in.SessionID, token)
 	return nil
 }
 
 // mastermindNoticeText is StatusNotice with a grant's wording replaced by the
 // no-env version when this hook cannot rely on $CLAUDE_ENV_FILE: UserPromptSubmit
-// is not guaranteed the variable SessionStart writes. A rename or a new
-// mastermind keeps StatusNotice's own line.
-func mastermindNoticeText(prev, next string, rec *mastermind.Record) string {
+// is not guaranteed the variable SessionStart writes, and muse sets none at
+// all. A rename or a new mastermind keeps StatusNotice's own line.
+func mastermindNoticeText(hookKind, prev, next string, rec *mastermind.Record) string {
 	text := mastermind.StatusNotice(prev, next, rec)
-	if text == "" || rec == nil || os.Getenv("CLAUDE_ENV_FILE") != "" {
+	if text == "" || rec == nil {
+		return text
+	}
+	// Muse sets no $CLAUDE_ENV_FILE, so a muse grant always carries the muse
+	// no-env wording; the claude branch reaches its own wording only when the
+	// variable is unset.
+	if hookKind == "claude" && os.Getenv("CLAUDE_ENV_FILE") != "" {
 		return text
 	}
 	if _, _, prevOK := mastermind.StatusMasterMindParts(prev); prevOK {
 		return text
 	}
 	if _, _, nextOK := mastermind.StatusMasterMindParts(next); nextOK {
+		if hookKind == "muse" {
+			return mastermind.NoEnvTextMuse(*rec)
+		}
 		return mastermind.NoEnvText(*rec)
 	}
 	return text

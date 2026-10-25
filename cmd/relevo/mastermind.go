@@ -36,8 +36,8 @@ func mastermindFlagSet(*flag.FlagSet) {}
 // (#303 §4.7, #632). It touches no harness:
 // a mastermind record is relevo's own identity, not a pane.
 func cmdMasterMind(args []string) error {
-	const usage = `usage: relevo mastermind init [--name N] [--kind K --session S] [--hook claude]
-       relevo mastermind notice --hook claude
+	const usage = `usage: relevo mastermind init [--name N] [--kind K --session S] [--hook claude|muse]
+       relevo mastermind notice --hook claude|muse
        relevo mastermind enable [--repo] [--kind K --session S]
        relevo mastermind disable [--repo] [--kind K --session S]
        relevo mastermind reset [--kind K --session S]
@@ -110,7 +110,7 @@ func mastermindInitFlagSet(fs *flag.FlagSet) *mastermindInitFlagValues {
 	v.name = fs.String("name", "", "mastermind name (default: <agent>-<n>, else <kind>-<n>)")
 	v.kind = fs.String("kind", "", "harness kind for an explicit registration (e.g. opencode)")
 	v.session = fs.String("session", "", "harness session id for an explicit registration")
-	v.hook = fs.String("hook", "", "read a Claude Code SessionStart payload from stdin (only \"claude\")")
+	v.hook = fs.String("hook", "", "read a Claude-shaped SessionStart payload from stdin (only \"claude\" or \"muse\")")
 	v.asJSON = fs.Bool("json", false, "print the document init produced")
 	return v
 }
@@ -130,13 +130,13 @@ func cmdMasterMindInitRun(args []string) error {
 	if *hook != "" {
 		// The hook form's stdout is Claude's hook contract, so --json is
 		// accepted and has no effect here.
-		if *hook != "claude" {
-			return fail(codeUsage, "relevo mastermind init --hook supports only \"claude\", got %q", *hook)
+		if *hook != "claude" && *hook != "muse" {
+			return fail(codeUsage, "relevo mastermind init --hook supports only \"claude\" and \"muse\", got %q", *hook)
 		}
 		if *kind != "" || *session != "" {
 			return fail(codeUsage, "relevo mastermind init --hook reads its kind and session from the hook payload, not --kind/--session")
 		}
-		return mastermindInitHook(*name)
+		return mastermindInitHook(*name, *hook)
 	}
 
 	rt, err := newRuntime()
