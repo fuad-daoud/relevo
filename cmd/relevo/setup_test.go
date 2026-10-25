@@ -381,6 +381,19 @@ func TestSetupStepsForPinsYes(t *testing.T) {
 	}
 }
 
+// TestSetupStepsForPinsMusePluginOrder pins where the muse-plugin step
+// sits: a yes on every install question gives config, agents, plugin,
+// muse-plugin, service in apply order, the muse install between the Claude
+// Code one and the service.
+func TestSetupStepsForPinsMusePluginOrder(t *testing.T) {
+	answers := setup.Answers{"plugin": []string{"yes"}, "muse-plugin": []string{"yes"}, "service": []string{"y"}, "smoke": []string{"no"}}
+	got := setupStepsFor(answers)
+	want := []string{"config", "agents", "plugin", "muse-plugin", "service"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("steps = %v, want %v", got, want)
+	}
+}
+
 // TestSetupSmokePlanContent pins the plan the smoke round sends by its
 // words: the exact HELLO.md file, the exact line, the commit, and the
 // report that closes the round.

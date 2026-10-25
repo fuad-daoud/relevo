@@ -26,8 +26,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// fakePluginRunner answers every claude call from a script and records them,
-// so the plugin step's own order is what a test asserts.
+// fakePluginRunner answers every claude and muse plugin call from a script
+// and records them, so the plugin steps' own order is what a test asserts.
 type fakePluginRunner struct {
 	calls   []string
 	listOut string
@@ -38,6 +38,9 @@ type fakePluginRunner struct {
 	insOut  string
 	insExit int
 	insErr  bool
+	appOut  string
+	appExit int
+	appErr  bool
 }
 
 func (f *fakePluginRunner) Run(ctx context.Context, name string, args ...string) ([]byte, int, error) {
@@ -55,6 +58,13 @@ func (f *fakePluginRunner) Run(ctx context.Context, name string, args ...string)
 			return []byte(f.addOut), f.addExit, nil
 		}
 		return []byte(f.addOut), f.addExit, nil
+	}
+	if strings.Contains(joined, "approve") {
+		f.calls = append(f.calls, "approve")
+		if f.appErr {
+			return []byte(f.appOut), f.appExit, nil
+		}
+		return []byte(f.appOut), f.appExit, nil
 	}
 	f.calls = append(f.calls, "install")
 	if f.insErr {
@@ -126,6 +136,112 @@ func TestPluginStepFailsNamingTheDoctorsFix(t *testing.T) {
 	ce := requireCLIError(t, err, codeInternal, doctor.PluginInstallCommand)
 	if ce.message != "boom: no network" {
 		t.Errorf("message = %q, want the command's own first line", ce.message)
+	}
+}
+
+// museListLine is what `muse plugins marketplace list` prints once the
+// marketplace is there: the line names the repository URL, which contains
+// the setupMarketplaceRef the shared checker looks for.
+const museListLine = "relevo\tplugins=1\tsource=https://github.com/fuad-daoud/relevo.git"
+
+// TestMusePluginStepInstallsWithoutASecondAdd pins the happy path: a
+// marketplace list naming the repository means no add runs, and only the
+// install and the approve follow.
+func TestMusePluginStepInstallsWithoutASecondAdd(t *testing.T) {
+	f := &fakePluginRunner{listOut: museListLine}
+	withPluginRunner(t, f)
+	doc, err := runSetupMusePlugin(context.Background())
+	if err != nil {
+		t.Fatalf("runSetupMusePlugin: %v", err)
+	}
+	if !doc.OK || doc.Step != "muse-plugin" {
+		t.Fatalf("doc = %+v, want a passed muse-plugin row", doc)
+	}
+	if strings.Join(f.calls, ",") != "list,install,approve" {
+		t.Fatalf("calls = %v, want list then install then approve only", f.calls)
+	}
+}
+
+// TestMusePluginStepAddsAMissingMarketplace pins the other end: a list
+// without the repository name runs the add first, then install, then approve.
+func TestMusePluginStepAddsAMissingMarketplace(t *testing.T) {
+	f := &fakePluginRunner{listOut: "other/market"}
+	withPluginRunner(t, f)
+	if _, err := runSetupMusePlugin(context.Background()); err != nil {
+		t.Fatalf("runSetupMusePlugin: %v", err)
+	}
+	if got := strings.Join(f.calls, ","); got != "list,add,install,approve" {
+		t.Fatalf("calls = %s, want list, add, install then approve", got)
+	}
+}
+
+// TestMusePluginStepKeepsAFailedListFromBlocking pins that a failing list
+// does not stop the install: the add decides, as the Claude Code step does.
+func TestMusePluginStepKeepsAFailedListFromBlocking(t *testing.T) {
+	f := &fakePluginRunner{listErr: true}
+	withPluginRunner(t, f)
+	if _, err := runSetupMusePlugin(context.Background()); err != nil {
+		t.Fatalf("runSetupMusePlugin: %v", err)
+	}
+	if got := strings.Join(f.calls, ","); got != "list,add,install,approve" {
+		t.Fatalf("calls = %s, want the add still attempted", got)
+	}
+}
+
+// TestMusePluginStepFailsInstallNamingTheFix pins a failing install at a
+// non-zero exit: the step's error code is internal and its next is the muse
+// fix command, with the command's own first line as the detail.
+func TestMusePluginStepFailsInstallNamingTheFix(t *testing.T) {
+	f := &fakePluginRunner{listOut: museListLine, insErr: true, insExit: 1, insOut: "boom: no network"}
+	withPluginRunner(t, f)
+	_, err := runSetupMusePlugin(context.Background())
+	if err == nil {
+		t.Fatal("install failure parsed as success")
+	}
+	ce := requireCLIError(t, err, codeInternal, setupMusePluginCommand)
+	if ce.message != "boom: no network" {
+		t.Errorf("message = %q, want the command's own first line", ce.message)
+	}
+	if got := strings.Join(f.calls, ","); got != "list,install" {
+		t.Fatalf("calls = %s, want the approve never reached", got)
+	}
+}
+
+// TestMusePluginStepTreatsAlreadyInstalledAsSuccess pins that an install
+// exit 0 is a success however its first line reads: an "already installed"
+// line passes the step and the approve still runs, mirroring runSetupPlugin,
+// which checks only exit and runner error and never parses install stdout.
+func TestMusePluginStepTreatsAlreadyInstalledAsSuccess(t *testing.T) {
+	f := &fakePluginRunner{listOut: museListLine, insOut: "already installed: relevo@relevo"}
+	withPluginRunner(t, f)
+	doc, err := runSetupMusePlugin(context.Background())
+	if err != nil {
+		t.Fatalf("already-installed first line failed the step: %v", err)
+	}
+	if !doc.OK {
+		t.Fatalf("doc = %+v, want a passed muse-plugin row", doc)
+	}
+	if got := strings.Join(f.calls, ","); got != "list,install,approve" {
+		t.Fatalf("calls = %s, want list, install then approve", got)
+	}
+}
+
+// TestMusePluginStepFailsWhenApproveFails pins the approval: a non-zero
+// approve exit fails the step naming the muse fix, with the command's own
+// first line as the detail.
+func TestMusePluginStepFailsWhenApproveFails(t *testing.T) {
+	f := &fakePluginRunner{listOut: museListLine, appOut: "muse: plugin relevo not found", appExit: 1}
+	withPluginRunner(t, f)
+	_, err := runSetupMusePlugin(context.Background())
+	if err == nil {
+		t.Fatal("approve failure parsed as success")
+	}
+	ce := requireCLIError(t, err, codeInternal, setupMusePluginCommand)
+	if ce.message != "muse: plugin relevo not found" {
+		t.Errorf("message = %q, want the command's own first line", ce.message)
+	}
+	if got := strings.Join(f.calls, ","); got != "list,install,approve" {
+		t.Fatalf("calls = %s, want list, install then approve", got)
 	}
 }
 
@@ -467,5 +583,24 @@ func TestSetupExitIsSilentAfterAFailedRow(t *testing.T) {
 	}
 	if setupExitOf(nil) != nil {
 		t.Fatal("a clean apply exits with an error")
+	}
+}
+
+// TestSetupOpenHintNamesTheHarnessThePluginWentInto pins the closing hint:
+// muse alone points at muse, both name both, and neither keeps Claude Code.
+func TestSetupOpenHintNamesTheHarnessThePluginWentInto(t *testing.T) {
+	cases := []struct {
+		want []string
+		hint string
+	}{
+		{[]string{"config", "agents"}, "open Claude Code in a repository and ask it to plan something"},
+		{[]string{"config", "agents", "plugin"}, "open Claude Code in a repository and ask it to plan something"},
+		{[]string{"config", "agents", "muse-plugin"}, "open muse in a repository and ask it to plan something"},
+		{[]string{"config", "agents", "plugin", "muse-plugin"}, "open Claude Code or muse in a repository and ask it to plan something"},
+	}
+	for _, tc := range cases {
+		if got := setupOpenHint(tc.want); got != tc.hint {
+			t.Errorf("setupOpenHint(%v) = %q, want %q", tc.want, got, tc.hint)
+		}
 	}
 }
