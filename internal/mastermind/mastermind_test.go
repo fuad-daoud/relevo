@@ -368,6 +368,27 @@ func TestRecordValidate(t *testing.T) {
 	}
 }
 
+// TestRecordValidateMuse pins the muse session rule: a non-UUID session id
+// is ErrInvalid, a UUID passes.
+func TestRecordValidateMuse(t *testing.T) {
+	bad := record("pl_aaaaaaaaaaaa", "muse-1", "muse", "not-a-session", 0)
+	if err := bad.Validate(); !errors.Is(err, ErrInvalid) {
+		t.Errorf("muse session: %v, want ErrInvalid", err)
+	}
+	upper := record("pl_aaaaaaaaaaaa", "muse-1", "muse", strings.ToUpper(museSession), 0)
+	if err := upper.Validate(); !errors.Is(err, ErrInvalid) {
+		t.Errorf("upper-case muse session: %v, want ErrInvalid", err)
+	}
+	empty := record("pl_aaaaaaaaaaaa", "muse-1", "muse", "", 0)
+	if err := empty.Validate(); !errors.Is(err, ErrInvalid) {
+		t.Errorf("empty muse session: %v, want ErrInvalid", err)
+	}
+	ok := record("pl_aaaaaaaaaaaa", "muse-1", "muse", museSession, 0)
+	if err := ok.Validate(); err != nil {
+		t.Errorf("valid muse session: %v", err)
+	}
+}
+
 func TestErrUnknownMasterMindNamesTheRef(t *testing.T) {
 	var target ErrUnknownMasterMind
 	err := error(ErrUnknownMasterMind{Ref: "beta"})

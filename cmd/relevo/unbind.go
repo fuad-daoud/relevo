@@ -302,6 +302,7 @@ func gcResolver(rt relevo.Runtime) func(ref string) (mastermind.Record, error) {
 			Env:             os.Getenv,
 			PPID:            os.Getppid(),
 			ProcStart:       rt.ProcStart,
+			MuseHost:        rt.MuseHost,
 			Now:             now,
 			CWD:             cwd,
 			OpencodeSession: rt.OpencodeSession,
