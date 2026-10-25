@@ -312,7 +312,7 @@ func gcResolver(rt relevo.Runtime) func(ref string) (mastermind.Record, error) {
 	}
 }
 
-// mastermindLabel is a GC result line's mastermind field (#482): "(none)" for "",
+// mastermindLabel names a mastermind in a result line: "(none)" for "",
 // the record's Name when the registry has it, else the id itself.
 func mastermindLabel(rt relevo.Runtime, id string) string {
 	if id == "" {

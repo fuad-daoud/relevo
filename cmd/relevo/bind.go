@@ -359,7 +359,7 @@ func runBind(f bindFlags) error {
 	}
 
 	if !f.asJSON {
-		fmt.Println(boundLine(b, b.MasterMind.PaneID, rt.Candidates.NameOf(b.BuilderCandidate), res.Placement))
+		fmt.Println(boundLine(b, mastermindLabel(rt, b.MasterMindID), rt.Candidates.NameOf(b.BuilderCandidate), res.Placement))
 	}
 	fmt.Fprintln(notices, gateText)
 	noteRegateNoGate(notices, b)
