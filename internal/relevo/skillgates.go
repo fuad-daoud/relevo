@@ -41,6 +41,12 @@ func withSkillGates(rt Runtime, gates []availability.Gate, dir string, tracked f
 	return append(gates, skillGates(rt, dir, home, probe)...)
 }
 
+// PickGates is the gate set a bind in dir resolves over, for a view that must
+// show the same pick.
+func PickGates(rt Runtime, dir string) []availability.Gate {
+	return withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), dir, nil)
+}
+
 func skillGates(rt Runtime, dir, home string, probe skillProbe) []availability.Gate {
 	reg := rt.RoleRegistry()
 	var out []availability.Gate

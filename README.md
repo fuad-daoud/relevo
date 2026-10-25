@@ -2006,6 +2006,7 @@ first, then user:
 | `claude` | `<repo>/.claude/skills`, `~/.claude/skills` |
 | `opencode`, `agy` | `<repo>/.agents/skills`, `~/.agents/skills` |
 | `codex` | `<repo>/.agents/skills`, `~/.agents/skills`, `~/.codex/skills` |
+| `muse` | `<repo>/.agents/skills`, `<repo>/.claude/skills`, `~/.agents/skills`, `~/.claude/skills` |
 
 Any other kind cannot load skills. A skill at the project path wins over the
 user path. For every actor with skills and every harness kind among its

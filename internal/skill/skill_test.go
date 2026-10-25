@@ -14,6 +14,7 @@ func TestLocationsPerKind(t *testing.T) {
 		{"opencode", []string{"/r/.agents/skills/s/SKILL.md", "/h/.agents/skills/s/SKILL.md"}},
 		{"agy", []string{"/r/.agents/skills/s/SKILL.md", "/h/.agents/skills/s/SKILL.md"}},
 		{"codex", []string{"/r/.agents/skills/s/SKILL.md", "/h/.agents/skills/s/SKILL.md", "/h/.codex/skills/s/SKILL.md"}},
+		{"muse", []string{"/r/.agents/skills/s/SKILL.md", "/r/.claude/skills/s/SKILL.md", "/h/.agents/skills/s/SKILL.md", "/h/.claude/skills/s/SKILL.md"}},
 		{"nope", nil},
 	}
 	for _, tt := range tests {
@@ -24,7 +25,7 @@ func TestLocationsPerKind(t *testing.T) {
 }
 
 func TestServable(t *testing.T) {
-	for _, k := range []string{"claude", "opencode", "agy", "codex"} {
+	for _, k := range []string{"claude", "opencode", "agy", "codex", "muse"} {
 		if !Servable(k) {
 			t.Errorf("%s should be servable", k)
 		}

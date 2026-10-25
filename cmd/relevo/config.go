@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -135,7 +134,7 @@ func configShow(args []string) error {
 		return fail(codeConfigInvalid, "%v", err)
 	}
 	if *asJSON {
-		gates := availability.Gates(relevo.AvailabilityDeps(rt))
+		gates := pickGates(rt)
 		refusals := relevo.RoleRefusalsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, gates)
 		return printDoc(configViewOf(L, rt.RoleRegistry(), rt.Candidates, gates, refusals))
 	}

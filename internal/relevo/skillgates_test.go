@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -229,5 +230,22 @@ func TestSwitchAndSendGatesCarrySkillGates(t *testing.T) {
 	}
 	if _, err := resolveSendBuilder(rt, "designer", testOpencodeRef, testClaudeRef, skillTestDir); err == nil || !strings.Contains(err.Error(), skillBlindNote) {
 		t.Errorf("send --builder err = %v, want the skill note", err)
+	}
+}
+
+func TestPolicyViewOverPickGatesMarksTheSkillAwarePick(t *testing.T) {
+	t.Parallel()
+	rt := skillRuntime(t, "/repo/.agents/skills/design-runbooks/SKILL.md")
+	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{
+		"designer": designerRow(),
+	})
+	got := FormatPolicyFor(rt.RoleRegistry(), nil, rt.Candidates, policy.Policy{}, PickGates(rt, skillTestDir), nil, availability.History{}, baseTime, time.UTC)
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, "would pick") && !strings.Contains(line, rt.Candidates.NameOf(testOpencodeRef)) {
+			t.Fatalf("view picks %q, want the opencode candidate:\n%s", line, got)
+		}
+	}
+	if !strings.Contains(got, "would pick") || !strings.Contains(got, skillBlindNote) {
+		t.Errorf("view = %q, want the opencode pick and the claude skill note", got)
 	}
 }
