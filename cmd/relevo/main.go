@@ -136,6 +136,10 @@ func main() {
 	// command runs, and informational only: it is never signed.
 	client.Version = buildVersion()
 
+	// A muse hook or plugin MCP server runs with a scrubbed environment: take
+	// the XDG roots from the muse host before any path is resolved from them.
+	applyMuseHostEnv()
+
 	args := os.Args[1:]
 	err := run(args)
 	recordInternal(args, err)

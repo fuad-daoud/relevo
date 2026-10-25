@@ -26,6 +26,34 @@ func TestHookOutputCarriesTheGuide(t *testing.T) {
 	}
 }
 
+// TestNoEnvTextMuseNamesMuseSessionID pins the muse grant wording: the
+// identity sentence, a note naming MUSE_SESSION_ID and never the host process,
+// and the guide.
+func TestNoEnvTextMuseNamesMuseSessionID(t *testing.T) {
+	rec := Record{ID: "pl_aaaaaaaaaaaa", Name: "muse-1"}
+
+	var env hookEnvelope
+	if err := json.Unmarshal(HookOutputMuse(rec), &env); err != nil {
+		t.Fatalf("HookOutputMuse is not the hook envelope: %v", err)
+	}
+	ctx := env.HookSpecificOutput.AdditionalContext
+	if !strings.HasPrefix(ctx, hookContext(rec)) {
+		t.Errorf("additionalContext %q does not start with %q", ctx, hookContext(rec))
+	}
+	if !strings.Contains(ctx, "MUSE_SESSION_ID") {
+		t.Errorf("additionalContext %q does not name MUSE_SESSION_ID", ctx)
+	}
+	if strings.Contains(ctx, "host process") {
+		t.Errorf("additionalContext %q must not resolve through the host process", ctx)
+	}
+	if !strings.HasSuffix(ctx, Guide()) {
+		t.Error("additionalContext does not end with the guide")
+	}
+	if NoEnvTextMuse(rec) != ctx {
+		t.Error("NoEnvTextMuse and HookOutputMuse disagree")
+	}
+}
+
 // TestGuideNamesTheLabelFlags pins that the injected guide shows how a fresh
 // bind chooses a feature, and states the exactly-one rule and the ticket flag,
 // so a MasterMind reading it does not run a refused bind.

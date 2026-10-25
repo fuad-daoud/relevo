@@ -12,6 +12,9 @@ import (
 // 8-4-4-4-12 hex UUID shape Detect accepts).
 const agyConversation = "0f0e0d0c-0b0a-4998-8877-665544332211"
 
+// museSession is a valid muse session id (the same lower-case UUID shape).
+const museSession = "1a2b3c4d-5e6f-4a8b-9c0d-1e2f3a4b5c6d"
+
 func envFunc(m map[string]string) func(string) string {
 	return func(key string) string { return m[key] }
 }
@@ -344,6 +347,91 @@ func TestDetectAgy(t *testing.T) {
 	}
 }
 
+// museDetectCases is TestDetectMuse's table. Every want is a literal the
+// test compares against Detect's report, so the table needs no runtime state.
+var museDetectCases = []struct {
+	name string
+	env  map[string]string
+	want Ident
+	ok   bool
+}{
+	{
+		name: "a valid session id is muse with the parent pid as host",
+		env:  map[string]string{"MUSE_SESSION_ID": museSession},
+		want: Ident{Kind: "muse", SessionID: museSession, HostPID: 4242},
+		ok:   true,
+	},
+	{
+		name: "claude wins when both are set",
+		env: map[string]string{
+			"CLAUDECODE":             "1",
+			"CLAUDE_CODE_SESSION_ID": "sess-a",
+			"MUSE_SESSION_ID":        museSession,
+		},
+		want: Ident{Kind: "claude", SessionID: "sess-a", HostPID: 4242},
+		ok:   true,
+	},
+	{
+		name: "muse wins over agy",
+		env: map[string]string{
+			"MUSE_SESSION_ID":             museSession,
+			"ANTIGRAVITY_CONVERSATION_ID": agyConversation,
+		},
+		want: Ident{Kind: "muse", SessionID: museSession, HostPID: 4242},
+		ok:   true,
+	},
+	{
+		name: "muse wins over opencode",
+		env: map[string]string{
+			"MUSE_SESSION_ID": museSession,
+			"RELEVO_HARNESS":  "opencode",
+		},
+		want: Ident{Kind: "muse", SessionID: museSession, HostPID: 4242},
+		ok:   true,
+	},
+	{
+		name: "a malformed id is not detected",
+		env:  map[string]string{"MUSE_SESSION_ID": "not-a-uuid"},
+	},
+	{
+		name: "an upper-case UUID is not detected",
+		env:  map[string]string{"MUSE_SESSION_ID": strings.ToUpper(museSession)},
+	},
+	{
+		name: "a truncated UUID is not detected",
+		env:  map[string]string{"MUSE_SESSION_ID": "1a2b3c4d-5e6f-4a8b-9c0d-1e2f3a4b5c6"},
+	},
+	{
+		name: "an empty id is not detected",
+		env:  map[string]string{"MUSE_SESSION_ID": ""},
+	},
+	{
+		name: "no variables at all",
+		env:  map[string]string{},
+	},
+}
+
+// TestDetectMuse pins Detect's muse rule: a valid MUSE_SESSION_ID is a muse
+// ident carrying the parent pid as host, CLAUDECODE still wins when both are
+// set, and anything but a lower-case UUID is not detected.
+func TestDetectMuse(t *testing.T) {
+	for _, tc := range museDetectCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ident, ok := Detect(envFunc(tc.env), 4242)
+			if ok != tc.ok {
+				t.Fatalf("Detect ok = %v, want %v", ok, tc.ok)
+			}
+			if ident != tc.want {
+				t.Errorf("Detect = %+v, want %+v", ident, tc.want)
+			}
+		})
+	}
+
+	if _, ok := Detect(nil, 42); ok {
+		t.Error("Detect(nil) reported a harness")
+	}
+}
+
 func TestDetectOpencodeMarker(t *testing.T) {
 	ident, ok := Detect(envFunc(map[string]string{"RELEVO_HARNESS": "opencode"}), 42)
 	if !ok {
@@ -369,6 +457,75 @@ func TestDetectOpencodeMarker(t *testing.T) {
 	if !ok || ident.Kind != "agy" {
 		t.Errorf("Detect with agy conversation = %+v (ok %v), want agy", ident, ok)
 	}
+}
+
+// TestResolveMuseSession pins the MuseHost seam: a verified muse ancestor
+// resolves through the host step, while a not-found seam and a nil seam fall
+// back to the parent pid and resolve through the session step.
+func TestResolveMuseSession(t *testing.T) {
+	reg := testRegistry(t)
+	rec := mustCreate(t, reg, record("pl_mmmmmmmmmmmm", "muse-one", "muse", museSession, 303))
+
+	procStart := func(pid int) (int64, error) {
+		if pid == 303 {
+			return 3030, nil
+		}
+		return 0, errors.New("no such process")
+	}
+	base := ResolveInput{
+		Env:       envFunc(map[string]string{"MUSE_SESSION_ID": museSession}),
+		PPID:      404,
+		ProcStart: procStart,
+		Now:       testNow,
+	}
+
+	t.Run("a verified ancestor resolves through the host step", func(t *testing.T) {
+		in := base
+		in.MuseHost = func(ppid int) (int, bool) {
+			if ppid != 404 {
+				t.Errorf("MuseHost ppid = %d, want 404", ppid)
+			}
+			return 303, true
+		}
+		got, res, err := Resolve(reg, in)
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if got.ID != rec.ID {
+			t.Errorf("resolved %s, want %s", got.ID, rec.ID)
+		}
+		if res != ResolutionHost {
+			t.Errorf("resolution = %q, want %q", res, ResolutionHost)
+		}
+	})
+
+	t.Run("a not-found seam falls back to the parent pid", func(t *testing.T) {
+		in := base
+		in.MuseHost = func(int) (int, bool) { return 0, false }
+		got, res, err := Resolve(reg, in)
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if got.ID != rec.ID {
+			t.Errorf("resolved %s, want %s", got.ID, rec.ID)
+		}
+		if res != ResolutionSession {
+			t.Errorf("resolution = %q, want %q", res, ResolutionSession)
+		}
+	})
+
+	t.Run("a nil seam behaves as the parent pid", func(t *testing.T) {
+		got, res, err := Resolve(reg, base)
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if got.ID != rec.ID {
+			t.Errorf("resolved %s, want %s", got.ID, rec.ID)
+		}
+		if res != ResolutionSession {
+			t.Errorf("resolution = %q, want %q", res, ResolutionSession)
+		}
+	})
 }
 
 func TestResolveOpencodeSession(t *testing.T) {

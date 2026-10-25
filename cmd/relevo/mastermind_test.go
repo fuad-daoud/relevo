@@ -941,6 +941,7 @@ func TestMasterMindSessionPrecedence(t *testing.T) {
 	t.Run("reset outside a repo clears only the session", func(t *testing.T) {
 		state := t.TempDir()
 		t.Setenv("XDG_STATE_HOME", state)
+		t.Setenv("MUSE_SESSION_ID", "")
 		nowhere := t.TempDir()
 		mastermindSessionConsent(t, state, "opencode", "ses_outside", db.ConsentNo)
 		t.Chdir(nowhere)
@@ -1262,9 +1263,11 @@ func TestMasterMindNoticeHook(t *testing.T) {
 	})
 }
 
-// TestMasterMindNoticeRequiresClaude pins that the verb refuses any other hook.
-func TestMasterMindNoticeRequiresClaude(t *testing.T) {
+// TestMasterMindNoticeRejectsUnknownHook pins that the verb refuses any other
+// hook, naming both values it accepts.
+func TestMasterMindNoticeRejectsUnknownHook(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("MUSE_SESSION_ID", "")
 	_, stderr, runErr := captureOutput(t, func() error {
 		return run([]string{"mastermind", "notice", "--hook", "other"})
 	})
@@ -1272,8 +1275,8 @@ func TestMasterMindNoticeRequiresClaude(t *testing.T) {
 	if !errors.As(runErr, &ec) || ec.code != 2 {
 		t.Fatalf("notice --hook other = %v, want exit code 2", runErr)
 	}
-	if !strings.Contains(string(stderr), `supports only "claude"`) {
-		t.Errorf("stderr = %q, want the claude-only message", stderr)
+	if !strings.Contains(string(stderr), `supports only "claude" and "muse"`) {
+		t.Errorf("stderr = %q, want both hook values named", stderr)
 	}
 }
 

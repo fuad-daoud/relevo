@@ -190,6 +190,91 @@ func TestHealIsOffUnlessAsked(t *testing.T) {
 	}
 }
 
+// museHealFixture is one gone muse record (host 101 started at 1010) whose
+// session is museSession, behind a spy.
+func museHealFixture(t *testing.T) (*spyRegistry, Record) {
+	t.Helper()
+	reg := &spyRegistry{DBRegistry: testRegistry(t)}
+	rec := mustCreate(t, reg.DBRegistry, record("pl_mmmmmmmmmmmm", "muse-one", "muse", museSession, 101))
+	return reg, rec
+}
+
+// museHealProcStart reads 101 as gone and 202 as started at 2020.
+func museHealProcStart(pid int) (int64, error) {
+	if pid == 202 {
+		return 2020, nil
+	}
+	return 0, errors.New("no such process")
+}
+
+// museHealInput is a Resolve call from the muse session, now running as host
+// pid 202 under a muse ancestor resolved through seam.
+func museHealInput(seam func(int) (int, bool)) ResolveInput {
+	return ResolveInput{
+		Flag:      "muse-one",
+		Env:       envFunc(map[string]string{"MUSE_SESSION_ID": museSession}),
+		PPID:      202,
+		ProcStart: museHealProcStart,
+		MuseHost:  seam,
+		Now:       testNow,
+		Heal:      true,
+	}
+}
+
+// TestHealRefusesMuseAtNonMuseHost pins the muse heal guard: a muse record
+// whose host is unverified is returned unchanged, with zero SetHost calls.
+func TestHealRefusesMuseAtNonMuseHost(t *testing.T) {
+	t.Run("unverified seam", func(t *testing.T) {
+		reg, rec := museHealFixture(t)
+		got, _, err := Resolve(reg, museHealInput(func(int) (int, bool) { return 0, false }))
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if got.HostPID != rec.HostPID || reg.setHosts != 0 {
+			t.Errorf("unverified host healed the muse record: host %d, SetHost calls %d", got.HostPID, reg.setHosts)
+		}
+	})
+
+	t.Run("nil seam", func(t *testing.T) {
+		reg, rec := museHealFixture(t)
+		got, _, err := Resolve(reg, museHealInput(nil))
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if got.HostPID != rec.HostPID || reg.setHosts != 0 {
+			t.Errorf("nil seam healed the muse record: host %d, SetHost calls %d", got.HostPID, reg.setHosts)
+		}
+	})
+}
+
+// TestHealRepointsMuseAtMuseHost pins the verified path: a muse record whose
+// caller sits under a muse ancestor is re-pointed, with exactly one SetHost.
+func TestHealRepointsMuseAtMuseHost(t *testing.T) {
+	reg, rec := museHealFixture(t)
+	got, _, err := Resolve(reg, museHealInput(func(ppid int) (int, bool) {
+		if ppid != 202 {
+			t.Errorf("MuseHost ppid = %d, want 202", ppid)
+		}
+		return 202, true
+	}))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got.HostPID != 202 || got.HostStartedAt != 2020 {
+		t.Errorf("returned host = %d@%d, want 202@2020", got.HostPID, got.HostStartedAt)
+	}
+	stored, err := reg.Get(rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.HostPID != 202 || stored.HostStartedAt != 2020 {
+		t.Errorf("stored host = %d@%d, want 202@2020", stored.HostPID, stored.HostStartedAt)
+	}
+	if reg.setHosts != 1 {
+		t.Errorf("SetHost calls = %d, want exactly 1", reg.setHosts)
+	}
+}
+
 func TestHealOnEnvHit(t *testing.T) {
 	reg, rec := healFixture(t)
 	in := healInput(newHostAlive)

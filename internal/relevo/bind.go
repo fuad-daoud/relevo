@@ -61,6 +61,7 @@ func resolveVerbMasterMindHeal(rt Runtime, ref string, heal bool) (mastermind.Re
 		Env:             os.Getenv,
 		PPID:            os.Getppid(),
 		ProcStart:       rt.ProcStart,
+		MuseHost:        rt.MuseHost,
 		Now:             now,
 		CWD:             cwd,
 		OpencodeSession: rt.OpencodeSession,

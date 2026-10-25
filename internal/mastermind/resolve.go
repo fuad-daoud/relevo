@@ -43,6 +43,10 @@ type ResolveInput struct {
 	// ProcStart reads a process's start time in Unix seconds. A nil
 	// ProcStart, or an error from it, is a fall-through, not an error.
 	ProcStart func(pid int) (int64, error)
+	// MuseHost is the nearest ancestor of ppid whose command name is
+	// `muse`, a bounded walk over the process tree. ok == false, or a nil
+	// seam, falls back to the parent pid for the host and session steps.
+	MuseHost func(ppid int) (pid int, ok bool)
 	// Now stamps the seen_at of whatever Resolve hits.
 	Now time.Time
 	// CWD is the caller's working directory; "" skips the opencode step.
@@ -81,6 +85,7 @@ func Resolve(reg Registry, in ResolveInput) (Record, Resolution, error) {
 	}
 
 	ident, detected := Detect(env, in.PPID)
+	ident = museHostIdent(ident, detected, in)
 
 	// A ProcStart error falls through to the session step.
 	if detected && ident.HostPID > 0 && in.ProcStart != nil {
@@ -127,6 +132,20 @@ func Resolve(reg Registry, in ResolveInput) (Record, Resolution, error) {
 	}
 
 	return Record{}, "", ErrNoMasterMind
+}
+
+// museHostIdent rewrites a detected muse ident's host through the MuseHost
+// seam: the nearest muse ancestor, not the direct parent, since a command
+// under `bash -c` would otherwise pin a short-lived shell. Anything but a
+// verified muse ancestor keeps the parent pid.
+func museHostIdent(ident Ident, detected bool, in ResolveInput) Ident {
+	if !detected || ident.Kind != "muse" || in.MuseHost == nil {
+		return ident
+	}
+	if pid, ok := in.MuseHost(in.PPID); ok {
+		ident.HostPID = pid
+	}
+	return ident
 }
 
 // resolveFromEnv is Resolve's env step: $RELEVO_MASTERMIND first, then the

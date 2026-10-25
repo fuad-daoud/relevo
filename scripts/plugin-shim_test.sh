@@ -158,8 +158,16 @@ stub_case() { # want-argv input script [args...]
 	fi
 }
 
+# The hook scripts branch on MUSE_PLUGIN_ID, so an ambient value would leak
+# into every case below: clear it, then pin both branches explicitly.
+unset MUSE_PLUGIN_ID
 stub_case 'mastermind init --hook claude' 'session-start-json' "$plug/scripts/mastermind-init.sh"
 stub_case 'mastermind notice --hook claude' 'prompt-json' "$plug/scripts/mastermind-notice.sh"
+MUSE_PLUGIN_ID=1
+export MUSE_PLUGIN_ID
+stub_case 'mastermind init --hook muse' 'session-start-json' "$plug/scripts/mastermind-init.sh"
+stub_case 'mastermind notice --hook muse' 'prompt-json' "$plug/scripts/mastermind-notice.sh"
+unset MUSE_PLUGIN_ID
 stub_case 'mcp' 'rpc-json' "$plug/scripts/mcp.sh"
 stub_case 'mastermind disable' '' "$plug/scripts/disable.sh"
 stub_case 'mastermind disable --repo' '' "$plug/scripts/disable-repo.sh"

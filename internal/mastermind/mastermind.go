@@ -141,8 +141,8 @@ func DefaultName(agent, kind string, taken func(string) bool) string {
 	}
 }
 
-// Validate checks the required fields, the opencode session rule, and that
-// host_started_at is 0 whenever host_pid is 0.
+// Validate checks the required fields, the opencode and muse session rules,
+// and that host_started_at is 0 whenever host_pid is 0.
 func (r Record) Validate() error {
 	if err := ValidID(r.ID); err != nil {
 		return err
@@ -158,6 +158,9 @@ func (r Record) Validate() error {
 	}
 	if r.HarnessKind == "opencode" && !opencodeSessionRe.MatchString(r.SessionID) {
 		return fmt.Errorf("mastermind: opencode session_id %q must match ^ses_[A-Za-z0-9]+$: %w", r.SessionID, ErrInvalid)
+	}
+	if r.HarnessKind == "muse" && !validConversationID(r.SessionID) {
+		return fmt.Errorf("mastermind: muse session_id %q must be a lower-case UUID: %w", r.SessionID, ErrInvalid)
 	}
 	if r.CWD == "" || !filepath.IsAbs(r.CWD) {
 		return fmt.Errorf("mastermind: cwd %q must be an absolute path: %w", r.CWD, ErrInvalid)

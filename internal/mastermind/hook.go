@@ -102,6 +102,21 @@ func NoEnvText(r Record) string {
 	return hookContext(r) + " " + noEnvNote + "\n\n" + Guide()
 }
 
+const noEnvNoteMuse = "RELEVO_MASTERMIND is not exported (muse sets no $CLAUDE_ENV_FILE); relevo resolves this session through MUSE_SESSION_ID."
+
+// NoEnvTextMuse is the muse grant answer: muse sets no $CLAUDE_ENV_FILE, so a
+// muse session always gets this wording, naming MUSE_SESSION_ID as the way
+// relevo resolves it. A UserPromptSubmit notice uses it for the same reason.
+func NoEnvTextMuse(r Record) string {
+	return hookContext(r) + " " + noEnvNoteMuse + "\n\n" + Guide()
+}
+
+// HookOutputMuse is what `relevo mastermind init --hook muse` prints on
+// success: the identity sentence, the muse no-env note, and the guide.
+func HookOutputMuse(r Record) []byte {
+	return encodeHookContext(HookEventSessionStart, NoEnvTextMuse(r))
+}
+
 // HookNote is the same envelope carrying a failure note, so a failed init
 // never blocks the session.
 func HookNote(msg string) []byte { return encodeHookContext(HookEventSessionStart, msg) }

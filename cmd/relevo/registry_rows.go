@@ -535,7 +535,7 @@ var registry = []verbEntry{
 	{
 		Name:    "mastermind init",
 		Summary: "register this MasterMind, or re-attach an existing record",
-		Args:    "[--name N] [--kind K --session S] [--hook claude] [--json]",
+		Args:    "[--name N] [--kind K --session S] [--hook claude|muse] [--json]",
 		Flags:   []string{"--hook", "--json", "--kind", "--name", "--session"},
 		Output:  "json:MasterMindDoc",
 		Exit:    []int{0, 1, 2},
@@ -553,7 +553,7 @@ var registry = []verbEntry{
 	{
 		Name:    "mastermind notice",
 		Summary: "the UserPromptSubmit hook that reports a status change",
-		Args:    "--hook claude",
+		Args:    "--hook claude|muse",
 		Flags:   []string{"--hook"},
 		Exit:    []int{0, 1, 2},
 		Errors:  []string{"usage"},

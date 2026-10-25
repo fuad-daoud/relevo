@@ -17,6 +17,19 @@ func healGone(reg Registry, rec Record, in ResolveInput, env func(string) string
 	if !ok || ident.Kind != rec.HarnessKind || ident.SessionID != rec.SessionID {
 		return rec
 	}
+	// A muse record heals only at a verified muse ancestor: without the
+	// seam's word the caller may be a short-lived shell under the session,
+	// and the heal would pin it as the host.
+	if rec.HarnessKind == "muse" {
+		if in.MuseHost == nil {
+			return rec
+		}
+		pid, ok := in.MuseHost(in.PPID)
+		if !ok {
+			return rec
+		}
+		ident.HostPID = pid
+	}
 	if ident.HostPID <= 0 || in.ProcStart == nil {
 		return rec
 	}
