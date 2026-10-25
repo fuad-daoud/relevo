@@ -223,6 +223,12 @@ func openDBRoute(path string) (*db.DB, bool, error) {
 	if err == nil {
 		return d, true, nil
 	}
+	if errors.Is(err, errOwnerSandboxDenied) {
+		// The refusal came from the shell's sandbox, not from the owner's
+		// state: starting or waiting cannot change it, so it never reaches
+		// the await-starting-owner path.
+		return nil, true, err
+	}
 	if expired {
 		// An owner that holds the listener but never answers must read as
 		// unavailable, the same as one that never bound.

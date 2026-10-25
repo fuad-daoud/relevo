@@ -3,10 +3,14 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -117,5 +121,100 @@ func TestStatuslineSilentOnSandboxedDial(t *testing.T) {
 	}
 	if len(stdout) != 0 || len(stderr) != 0 {
 		t.Errorf("stdout = %q, stderr = %q; want both empty", stdout, stderr)
+	}
+}
+
+// TestDialWithStartReturnsAtOnceOnSandboxDenial pins the fail-fast rule: an
+// EPERM first dial returns the sandbox error without calling the daemon
+// starter and well inside the budget, while a missing socket still takes
+// today's start-and-retry path.
+func TestDialWithStartReturnsAtOnceOnSandboxDenial(t *testing.T) {
+	const budget = 10 * time.Second
+	withOwnerRoute(t, budget)
+
+	var starts int32
+	daemonStarter = func() error { atomic.AddInt32(&starts, 1); return nil }
+	t.Cleanup(func() { daemonStarter = startDaemon })
+
+	origDial := firstDial
+	t.Cleanup(func() { firstDial = origDial })
+	refused := sandboxDialError(syscall.EPERM)
+	firstDial = func(context.Context, string) (net.Conn, error) { return nil, refused }
+
+	start := time.Now()
+	_, err := dialWithStart(context.Background(), sandboxTestSock)
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, errOwnerSandboxDenied) {
+		t.Errorf("dialWithStart error = %v, want it to wrap errOwnerSandboxDenied", err)
+	}
+	if !errors.Is(err, syscall.EPERM) {
+		t.Errorf("dialWithStart error = %v, want the refusal errno preserved", err)
+	}
+	if got := atomic.LoadInt32(&starts); got != 0 {
+		t.Errorf("the starter ran %d times on a sandbox denial, want 0", got)
+	}
+	if elapsed > budget/5 {
+		t.Errorf("dialWithStart took %v against a %v budget, want the denial returned at once", elapsed, budget)
+	}
+
+	missing := sandboxDialError(syscall.ENOENT)
+	firstDial = func(context.Context, string) (net.Conn, error) { return nil, missing }
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	_, err = dialWithStart(ctx, sandboxTestSock)
+	if got := atomic.LoadInt32(&starts); got != 1 {
+		t.Errorf("the starter ran %d times after a missing-socket first dial, want 1", got)
+	}
+	if !errors.Is(err, errOwnerUnavailable) {
+		t.Errorf("dialWithStart error = %v, want the missing socket to end unavailable", err)
+	}
+	if errors.Is(err, errOwnerSandboxDenied) {
+		t.Errorf("dialWithStart error = %v, want no sandbox sentinel on a missing socket", err)
+	}
+}
+
+// TestStatusOnSandboxDeniedOwnerPrintsSandboxCode pins the real verb path:
+// `relevo status` turns its newRuntime failure into fail(codeInternal, ...),
+// and the constructor rule must still classify that sandbox denial as
+// owner_sandbox_denied -- not internal with a bugreport hint.
+func TestStatusOnSandboxDeniedOwnerPrintsSandboxCode(t *testing.T) {
+	blockedOwnerRoot(t)
+	noDaemon(t)
+	withOwnerRoute(t, 250*time.Millisecond)
+
+	var runErr error
+	stdout, _, _ := captureOutput(t, func() error {
+		runErr = run([]string{"status"})
+		if runErr == nil {
+			t.Error("status through a blocked state home succeeded")
+		}
+		return nil
+	})
+
+	var ce *cliError
+	if !errors.As(runErr, &ce) {
+		t.Fatalf("status error = %v (%T), want a coded error", runErr, runErr)
+	}
+	if ce.code != codeOwnerSandboxDenied {
+		t.Errorf("status code = %q, want %q", ce.code, codeOwnerSandboxDenied)
+	}
+	if ce.next != catalog[codeOwnerSandboxDenied].next {
+		t.Errorf("status next = %q, want the catalog hint", ce.next)
+	}
+
+	var human bytes.Buffer
+	if code := report(&human, runErr, false); code != 1 {
+		t.Errorf("human exit = %d, want 1", code)
+	}
+	line := human.String()
+	if !strings.HasPrefix(line, "relevo: owner_sandbox_denied: ") {
+		t.Errorf("human line = %q, want the sandbox code first", line)
+	}
+	if strings.Contains(line, "bugreport") {
+		t.Errorf("human line = %q, want no bugreport hint", line)
+	}
+	if len(stdout) != 0 {
+		t.Errorf("stdout = %q, want it clean", stdout)
 	}
 }

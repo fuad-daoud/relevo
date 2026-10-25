@@ -181,3 +181,27 @@ func TestSandboxedDialHumanAndJSONCarryCodeAndHint(t *testing.T) {
 		t.Errorf("envelope %q, want no bugreport", doc.String())
 	}
 }
+
+// TestFailReclassifiesSandboxDeniedInternal pins the central constructor
+// rule: a failure built as internal whose arguments -- or failWrap cause --
+// carry the sandbox sentinel, wrapped the way the real route wraps it
+// (errOwnerUnavailable over db.ErrOpen over the sentinel), is built as
+// owner_sandbox_denied with that code's catalog next. A plain internal
+// keeps internal and the bugreport hint, and any other code is untouched.
+func TestFailReclassifiesSandboxDeniedInternal(t *testing.T) {
+	e := fmt.Errorf("%w: %w", errOwnerUnavailable, sandboxRouteError(syscall.EPERM))
+	wantNext := catalog[codeOwnerSandboxDenied].next
+
+	ce := requireCLIError(t, fail(codeInternal, "%v", e), codeOwnerSandboxDenied, wantNext)
+	if ce.message != fmt.Sprintf("%v", e) {
+		t.Errorf("message = %q, want the formatted text unchanged", ce.message)
+	}
+	if strings.Contains(ce.next, "bugreport") {
+		t.Errorf("next = %q, want no bugreport hint", ce.next)
+	}
+	requireCLIError(t, failNext(codeInternal, "relevo bugreport", "%v", e), codeOwnerSandboxDenied, wantNext)
+	requireCLIError(t, failWrap(codeInternal, e, "relevo could not build the runtime"), codeOwnerSandboxDenied, wantNext)
+
+	requireCLIError(t, fail(codeInternal, "%v", errors.New("boom")), codeInternal, "relevo bugreport")
+	requireCLIError(t, fail(codeUsage, "%v", e), codeUsage, "relevo help")
+}

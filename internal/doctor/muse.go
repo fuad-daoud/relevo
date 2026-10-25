@@ -61,35 +61,35 @@ func musePluginChecks(in MasterMindCheckInput) []Check {
 	if err != nil {
 		notChecked := "not checked (" + museInspectCommandText + ": " + err.Error() + ")"
 		return []Check{
-			museUncheckedRow("plugin", notChecked),
-			museUncheckedRow("plugin hook", notChecked),
-			museUncheckedRow("plugin version", notChecked),
+			museUncheckedRow("muse plugin", notChecked),
+			museUncheckedRow("muse plugin hook", notChecked),
+			museUncheckedRow("muse plugin version", notChecked),
 		}
 	}
 	if state.museErr == "unknown-plugin" {
 		return []Check{
-			{Name: "plugin", Severity: SevFail, Detail: "the relevo plugin is not installed in muse", Fix: musePluginInstallFix},
-			museUncheckedRow("plugin hook", "not checked ("+museInspectCommandText+": relevo plugin not installed)"),
-			museUncheckedRow("plugin version", "not checked ("+museInspectCommandText+": relevo plugin not installed)"),
+			{Name: "muse plugin", Severity: SevFail, Detail: "the relevo plugin is not installed in muse", Fix: musePluginInstallFix},
+			museUncheckedRow("muse plugin hook", "not checked ("+museInspectCommandText+": relevo plugin not installed)"),
+			museUncheckedRow("muse plugin version", "not checked ("+museInspectCommandText+": relevo plugin not installed)"),
 		}
 	}
 	if state.museErr != "" {
 		notChecked := "not checked (" + museInspectCommandText + ": error code " + state.museErr + ")"
 		return []Check{
-			museUncheckedRow("plugin", notChecked),
-			museUncheckedRow("plugin hook", notChecked),
-			museUncheckedRow("plugin version", notChecked),
+			museUncheckedRow("muse plugin", notChecked),
+			museUncheckedRow("muse plugin hook", notChecked),
+			museUncheckedRow("muse plugin version", notChecked),
 		}
 	}
 	if !state.enabled {
 		return []Check{
-			{Name: "plugin", Severity: SevFail, Detail: "relevo@relevo is not enabled in muse", Fix: musePluginEnableFix},
-			museUncheckedRow("plugin hook", "not checked ("+museInspectCommandText+": relevo plugin disabled)"),
-			museUncheckedRow("plugin version", "not checked ("+museInspectCommandText+": relevo plugin disabled)"),
+			{Name: "muse plugin", Severity: SevFail, Detail: "relevo@relevo is not enabled in muse", Fix: musePluginEnableFix},
+			museUncheckedRow("muse plugin hook", "not checked ("+museInspectCommandText+": relevo plugin disabled)"),
+			museUncheckedRow("muse plugin version", "not checked ("+museInspectCommandText+": relevo plugin disabled)"),
 		}
 	}
 	return []Check{
-		{Name: "plugin", Severity: SevOK, Detail: "relevo@relevo enabled in muse"},
+		{Name: "muse plugin", Severity: SevOK, Detail: "relevo@relevo enabled in muse"},
 		museApprovalRow(state),
 		museVersionRow(state, in.Running),
 	}
@@ -112,18 +112,18 @@ func museApprovalRow(state musePluginState) Check {
 		}
 	}
 	if len(seen) > 0 {
-		return Check{Name: "plugin hook", Severity: SevFail,
+		return Check{Name: "muse plugin hook", Severity: SevFail,
 			Detail: "muse hook/MCP capabilities not approved: " + strings.Join(seen, ", "),
 			Fix:    musePluginApproveFix}
 	}
-	return Check{Name: "plugin hook", Severity: SevOK,
+	return Check{Name: "muse plugin hook", Severity: SevOK,
 		Detail: "muse hooks and MCP active (all capabilities " + museStatusTrusted + ")"}
 }
 
 // museVersionRow compares the installed plugin's version with the running
 // binary's, advisory only like the Claude version row.
 func museVersionRow(state musePluginState, running string) Check {
-	const name = "plugin version"
+	const name = "muse plugin version"
 
 	if running == "" || state.version == "" {
 		return museUncheckedRow(name, "not checked")

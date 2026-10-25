@@ -26,6 +26,11 @@ func dialUDS(ctx context.Context, sock string) (net.Conn, error) {
 	return d.DialContext(ctx, "unix", sock)
 }
 
+// firstDial is dialWithStart's opening dial: the seam a test replaces to hand
+// it a refusal no real socket path would answer. The re-dials stay the plain
+// dialUDS.
+var firstDial = dialUDS
+
 // ownerStarting reports whether a daemon that is still starting is evident
 // under root: a plain connect to sock that succeeds means some process holds
 // the listener, which is what survives a re-exec; when the connect fails the
@@ -76,23 +81,24 @@ func daemonLockHeld(root string) bool {
 	return held
 }
 
-// dialWithStart is the client dial hook: it dials, starts the owner when the
-// socket does not answer, then re-dials with jittered steps until the budget
-// is spent. It never falls back to opening the file.
+// dialWithStart is the client dial hook: it dials, returns a sandboxed
+// refusal at once, and otherwise starts the owner when the socket does not
+// answer, then re-dials with jittered steps until the budget is spent. A
+// refusal never resolves by waiting, and a daemon started from the same
+// sandboxed shell would be refused the same way, so neither the starter nor
+// the retry budget is spent for it. It never falls back to opening the file.
 func dialWithStart(ctx context.Context, sock string) (net.Conn, error) {
 	deadline := time.Now().Add(dbRouteBudget)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
 	}
-	nc, firstErr := dialUDS(ctx, sock)
+	nc, firstErr := firstDial(ctx, sock)
 	if firstErr == nil {
 		return nc, nil
 	}
-	// A sandboxed denial is worth remembering to the end of the loop: the
-	// re-dials repeat the refusal or end on the deadline, so only the first
-	// attempt's error tells the classifier the socket was refused rather
-	// than never answered. The budget is still spent in full.
-	sandboxed := dialSandboxDenied(firstErr)
+	if dialSandboxDenied(firstErr) {
+		return nil, fmt.Errorf("%w: %s: %w", errOwnerSandboxDenied, sock, firstErr)
+	}
 	if err := daemonStarter(); err != nil {
 		// A failed start is not fatal here: a concurrent starter may already
 		// be coming up, and the re-dial loop below is the answer either way.
@@ -100,9 +106,6 @@ func dialWithStart(ctx context.Context, sock string) (net.Conn, error) {
 	}
 	for {
 		if !time.Now().Before(deadline) {
-			if sandboxed {
-				return nil, fmt.Errorf("%w: %s: %w", errOwnerSandboxDenied, sock, firstErr)
-			}
 			return nil, fmt.Errorf("%w: %s", errOwnerUnavailable, sock)
 		}
 		step := time.Duration(25+rand.Intn(76)) * time.Millisecond
@@ -111,9 +114,6 @@ func dialWithStart(ctx context.Context, sock string) (net.Conn, error) {
 		}
 		select {
 		case <-ctx.Done():
-			if sandboxed {
-				return nil, fmt.Errorf("%w: %s: %w: %w", errOwnerSandboxDenied, sock, firstErr, ctx.Err())
-			}
 			return nil, fmt.Errorf("%w: %s: %w", errOwnerUnavailable, sock, ctx.Err())
 		case <-time.After(step):
 		}

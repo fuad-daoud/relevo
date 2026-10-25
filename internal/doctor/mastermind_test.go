@@ -50,9 +50,9 @@ func TestMusePluginRowsThroughFakeEnv(t *testing.T) {
 			in := MasterMindCheckInput{Muse: true, Running: "0.22.4", MuseInspect: env.Command}
 			checks := Report{Checks: MasterMindChecks(in)}
 			for name, want := range map[string]Severity{
-				"plugin":         tc.plugin,
-				"plugin hook":    tc.hook,
-				"plugin version": tc.version,
+				"muse plugin":         tc.plugin,
+				"muse plugin hook":    tc.hook,
+				"muse plugin version": tc.version,
 			} {
 				c := findCheck(checks, "", name)
 				if c == nil || c.Severity != want {
@@ -531,7 +531,7 @@ func museChecks(t *testing.T, out string, err error, running string) []Check {
 // rows are absent entirely, the same shape as the Claude gating.
 func TestDoctorMusePluginRowsNoGate(t *testing.T) {
 	checks := MasterMindChecks(MasterMindCheckInput{Home: t.TempDir(), Repo: t.TempDir()})
-	for _, name := range []string{"plugin", "plugin hook", "plugin version"} {
+	for _, name := range []string{"muse plugin", "muse plugin hook", "muse plugin version"} {
 		if c := findCheck(Report{Checks: checks}, "", name); c != nil {
 			t.Errorf("no muse gating must leave the %q row out, got %+v", name, c)
 		}
@@ -542,14 +542,14 @@ func TestDoctorMusePluginRowsNoGate(t *testing.T) {
 // present, enabled, approved, hooks and MCP trusted, versions matching.
 func TestDoctorMusePluginRowInstalledOK(t *testing.T) {
 	checks := museChecks(t, museInstalledJSON("0.22.4"), nil, "v0.22.4")
-	if c := findCheck(Report{Checks: checks}, "", "plugin"); c == nil || c.Severity != SevOK || !strings.Contains(c.Detail, "relevo@relevo enabled in muse") {
+	if c := findCheck(Report{Checks: checks}, "", "muse plugin"); c == nil || c.Severity != SevOK || !strings.Contains(c.Detail, "relevo@relevo enabled in muse") {
 		t.Fatalf("plugin row = %+v, want OK saying relevo@relevo is enabled in muse", c)
 	}
-	c := findCheck(Report{Checks: checks}, "", "plugin hook")
+	c := findCheck(Report{Checks: checks}, "", "muse plugin hook")
 	if c == nil || c.Severity != SevOK || !strings.Contains(c.Detail, museStatusTrusted) {
 		t.Fatalf("plugin hook row = %+v, want OK naming %s", c, museStatusTrusted)
 	}
-	if c := findCheck(Report{Checks: checks}, "", "plugin version"); c == nil || c.Severity != SevOK || c.Detail != "plugin 0.22.4 matches relevo" {
+	if c := findCheck(Report{Checks: checks}, "", "muse plugin version"); c == nil || c.Severity != SevOK || c.Detail != "plugin 0.22.4 matches relevo" {
 		t.Fatalf("plugin version row = %+v, want the Claude row's match wording", c)
 	}
 }
@@ -573,7 +573,7 @@ func museExitError(t *testing.T, out string) ([]byte, error) {
 func TestDoctorMusePluginRowMissingFailsInstall(t *testing.T) {
 	out, err := museExitError(t, museNotInstalledJSON())
 	checks := museChecks(t, string(out), err, "v0.22.4")
-	c := findCheck(Report{Checks: checks}, "", "plugin")
+	c := findCheck(Report{Checks: checks}, "", "muse plugin")
 	if c == nil || c.Severity != SevFail {
 		t.Fatalf("plugin row = %+v, want FAIL when muse says the plugin is not installed", c)
 	}
@@ -588,7 +588,7 @@ func TestDoctorMusePluginRowMissingFailsInstall(t *testing.T) {
 func TestDoctorMusePluginRowDisabledFailsEnable(t *testing.T) {
 	out := `{"active":false,"record":{"enabled":false,"version":"0.22.4"},"runtime_capabilities":[]}`
 	checks := museChecks(t, out, nil, "v0.22.4")
-	c := findCheck(Report{Checks: checks}, "", "plugin")
+	c := findCheck(Report{Checks: checks}, "", "muse plugin")
 	if c == nil || c.Severity != SevFail || c.Fix != "muse plugins enable relevo" {
 		t.Fatalf("plugin row = %+v, want FAIL with the enable fix", c)
 	}
@@ -602,7 +602,7 @@ func TestDoctorMusePluginRowUnapprovedFailsApprove(t *testing.T) {
 		`{"candidate":{"kind":"hook","stable_id":"plugin:relevo:hook:hook-a","plugin_id":"relevo"},"status":"review_needed"},` +
 		`{"candidate":{"kind":"mcp_server","stable_id":"plugin:relevo:mcp:mcp-a","plugin_id":"relevo"},"status":"trusted_disabled"}]}`
 	checks := museChecks(t, out, nil, "v0.22.4")
-	c := findCheck(Report{Checks: checks}, "", "plugin hook")
+	c := findCheck(Report{Checks: checks}, "", "muse plugin hook")
 	if c == nil || c.Severity != SevFail || c.Fix != "muse plugins approve relevo" {
 		t.Fatalf("plugin hook row = %+v, want FAIL with the approve fix", c)
 	}
@@ -617,14 +617,14 @@ func TestDoctorMusePluginRowUnapprovedFailsApprove(t *testing.T) {
 // Warn with the update fix when record.version and relevo differ.
 func TestDoctorMusePluginRowVersionDriftWarns(t *testing.T) {
 	checks := museChecks(t, museInstalledJSON("0.22.3"), nil, "v0.22.4")
-	c := findCheck(Report{Checks: checks}, "", "plugin version")
+	c := findCheck(Report{Checks: checks}, "", "muse plugin version")
 	if c == nil || c.Severity != SevWarn || c.Fix != "muse plugins update relevo" {
 		t.Fatalf("plugin version row = %+v, want Warn with the update fix", c)
 	}
 	if c.Detail != "plugin 0.22.3, relevo v0.22.4" {
 		t.Errorf("plugin version detail = %q, want the Claude row's drift wording", c.Detail)
 	}
-	if c := findCheck(Report{Checks: checks}, "", "plugin"); c == nil || c.Severity != SevOK {
+	if c := findCheck(Report{Checks: checks}, "", "muse plugin"); c == nil || c.Severity != SevOK {
 		t.Errorf("a version drift must not change the enabled row: %+v", c)
 	}
 }
@@ -649,7 +649,7 @@ func TestDoctorMusePluginRowsUnreadableNotChecked(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			checks := museChecks(t, tc.out, tc.err, "v0.22.4")
-			for _, name := range []string{"plugin", "plugin hook", "plugin version"} {
+			for _, name := range []string{"muse plugin", "muse plugin hook", "muse plugin version"} {
 				c := findCheck(Report{Checks: checks}, "", name)
 				if c == nil || c.Severity != SevOK || !strings.HasPrefix(c.Detail, "not checked") {
 					t.Errorf("%s row = %+v, want not checked OK", name, c)
