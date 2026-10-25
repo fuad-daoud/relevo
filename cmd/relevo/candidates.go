@@ -133,9 +133,15 @@ func loadHistory(rt relevo.Runtime) availability.History {
 // formatPolicy renders the per-role pick explanation the `pick` block of
 // `relevo config` shows.
 func formatPolicy(rt relevo.Runtime) string {
-	deps := relevo.AvailabilityDeps(rt)
 	return relevo.FormatPolicyFor(rt.RoleRegistry(), rt.Accounts, rt.Candidates, rt.Policy,
-		availability.Gates(deps), liveLedgerEntries(rt), loadHistory(rt), rt.Now(), time.Local)
+		pickGates(rt), liveLedgerEntries(rt), loadHistory(rt), rt.Now(), time.Local)
+}
+
+// pickGates includes the skill gates a bind from the working directory would
+// apply, so the shown pick is the one bind makes.
+func pickGates(rt relevo.Runtime) []availability.Gate {
+	wd, _ := os.Getwd()
+	return relevo.PickGates(rt, wd)
 }
 
 // liveLedgerEntries is the live availability ledger, for the policy pool view's

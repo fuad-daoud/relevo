@@ -11,6 +11,7 @@ var roots = map[string][]string{
 	"opencode": {".agents/skills", "~/.agents/skills"},
 	"agy":      {".agents/skills", "~/.agents/skills"},
 	"codex":    {".agents/skills", "~/.agents/skills", "~/.codex/skills"},
+	"muse":     {".agents/skills", ".claude/skills", "~/.agents/skills", "~/.claude/skills"},
 }
 
 // Servable reports whether kind loads skills at all.
