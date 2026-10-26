@@ -127,6 +127,30 @@ daemon_running() {
 	return 1
 }
 
+# sb_daemon_stop asks the sandbox's own daemon to exit: the sandbox binary's
+# `daemon stop` under the sandbox exports (sb_relevo), so its store default
+# root resolves to <sb>/state/relevo and only this sandbox's daemon is
+# signalled, via the pid its record carries over the daemon's own socket. The
+# binary waits bounded for the lock to clear (5s bound, 50ms poll,
+# cmd/relevo/startdaemon_unix.go:124-130,181-192) and a SIGTERM it delivers
+# itself (:168), so the wait is capped and cannot hang destroy; with no daemon
+# it prints `no daemon is running` and exits 0. Exit non-zero only when a
+# daemon did not stop (or could not be signalled), which is the timeout case
+# cmd_destroy acts on. With no sandbox binary (--no-build) there is no vehicle
+# for the stop and nothing the sandbox itself could have started to stop, so
+# the stop is skipped with exit 0: create's seed and doctor steps, the paths
+# that auto-start a daemon, are skipped with --no-build too (see cmd_create),
+# and a foreign daemon holding the sandbox state lock is refused by the
+# daemon_running probe in cmd_destroy. No ss/fuser/kill fallback: the pid
+# comes from the daemon record over the socket, so the binary needs none of
+# them, and a from-sh pid lookup without the binary is impossible in POSIX sh.
+# Under --dry-run sb_relevo plans the stop instead of running it, so the plan
+# names the full exported command.
+sb_daemon_stop() {
+	[ -x "$_sb/bin/relevo" ] || return 0
+	sb_relevo daemon stop
+}
+
 cmd_create() {
 	_name=$1
 	shift
@@ -455,13 +479,33 @@ cmd_destroy() {
 			die "refusing to remove $_sb: it carries no sandbox marker, so this script did not create it"
 	fi
 
-	# A held daemon lock means a foreground daemon is still writing into the
-	# state root about to be removed. --force is the operator saying they know.
-	if daemon_running "$_sb/state/.daemon.lock"; then
+	# Stop the sandbox's daemon before removing the directory it writes into:
+	# a CLI-spawned daemon outlives the shell that started it, and rm -rf alone
+	# would leave it listening on a deleted socket. Q3's ordering: the
+	# stop attempt comes first, and a stop that times out is refused without
+	# --force and warned past with it. With no sandbox binary, or no daemon,
+	# sb_daemon_stop is a no-op that exits 0 and destroy lands exactly on
+	# today's path: past the free lock, to the rm -rf.
+	if ! sb_daemon_stop; then
 		if [ "$force" -eq 0 ]; then
-			die "$_sb/state/.daemon.lock is held, so a daemon is still running in this sandbox; stop it, or pass --force"
+			die "$_sb's daemon did not stop; destroying around a live daemon would leave it listening on a removed socket; pass --force to destroy anyway"
 		fi
-		note "warning: a daemon still holds $_sb/state/.daemon.lock (--force)"
+		note "warning: $_sb's daemon did not stop; continuing with --force"
+	fi
+
+	# A held daemon lock means a daemon is still writing into the state root
+	# about to be removed: after a successful stop the lock is free, so this
+	# fires only when the stop was skipped (no sandbox binary) or ran under
+	# --force past a failure. The lock lives at the store default root, one
+	# level below the state home: $XDG_STATE_HOME/relevo/.daemon.lock
+	# (internal/store/store.go:156-169, daemonlock.go:65; cmd/relevo/daemon.go
+	# takes it at store.DefaultRoot), which under the sandbox exports is the
+	# path below. --force is the operator saying they know.
+	if daemon_running "$_sb/state/relevo/.daemon.lock"; then
+		if [ "$force" -eq 0 ]; then
+			die "$_sb/state/relevo/.daemon.lock is held, so a daemon is still running in this sandbox; stop it, or pass --force"
+		fi
+		note "warning: a daemon still holds $_sb/state/relevo/.daemon.lock (--force)"
 	fi
 
 	note "destroying sandbox $_name at $_sb"
@@ -514,8 +558,10 @@ exports; this script wraps them into one command.
                   --no-build skips the build (no toolchain needed).
   shell <name>    exec \$SHELL with env.sh sourced, so the session, its daemon
                   and its harness children all resolve under the sandbox.
-  destroy <name>  rm -rf the sandbox directory. Refuses a directory with no
-                  marker, and refuses a held daemon lock unless --force.
+  destroy <name>  stop the sandbox's daemon (the sandbox binary's daemon
+                  stop, under the sandbox exports), then rm -rf the sandbox
+                  directory. Refuses a directory with no marker, and refuses
+                  a held daemon lock unless --force.
   list            the sandboxes under the root.
 
 What this script never does: it never touches ~/.local/bin, never runs
