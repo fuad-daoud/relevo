@@ -209,6 +209,9 @@ func (r *Runner) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.ProcHand
 	if err != nil {
 		return spawn.ProcHandle{}, err
 	}
+	if err := r.requireScope(ctx, spec); err != nil {
+		return spawn.ProcHandle{}, err
+	}
 	logf, streamf, err := openSpawnFiles(spec)
 	if err != nil {
 		return spawn.ProcHandle{}, err
@@ -293,6 +296,23 @@ func openRegular(path string, flags int) (*os.File, error) {
 
 func openAppend(path string) (*os.File, error) {
 	return openRegular(path, os.O_APPEND)
+}
+
+// requireScope refuses a spawn that requires its scope when the scope cannot
+// be taken: no scope was given, or the probe fails. The refusal precedes any
+// file creation, so a refused Start spawns nothing and leaves nothing behind.
+// A spawn that does not require its scope keeps the silent fallback below.
+func (r *Runner) requireScope(ctx context.Context, spec spawn.ProcSpec) error {
+	if !spec.RequireScope {
+		return nil
+	}
+	if spec.Scope == nil {
+		return fmt.Errorf("proc: required scope missing: %w", spawn.ErrScopeUnavailable)
+	}
+	if !r.scopesUsable(ctx, spec.Scope.Slice) {
+		return fmt.Errorf("proc: required scope %s unavailable: %w", spec.Scope.Unit, spawn.ErrScopeUnavailable)
+	}
+	return nil
 }
 
 // resolveScope applies the lazy probes and their fallbacks: a scope whose probe
