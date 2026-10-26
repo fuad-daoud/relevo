@@ -52,6 +52,20 @@ func ParseHookInput(r io.Reader) (HookInput, error) {
 	return in, nil
 }
 
+// MuseHookInput rebuilds a muse hook's payload from the hook's own
+// environment when its stdin arrived empty: a login shell's startup file can
+// read stdin before the hook command runs (fish's bare `source` does), and muse
+// still names the session in MUSE_SESSION_ID and runs the hook in the session's
+// directory. ok is false outside a muse plugin, for an invalid session id, or
+// with no cwd. The source is unknown, so it reads as startup.
+func MuseHookInput(event string, env func(string) string, cwd string) (HookInput, bool) {
+	id := env(museSessionEnv)
+	if env(musePluginEnv) == "" || !validConversationID(id) || cwd == "" {
+		return HookInput{}, false
+	}
+	return HookInput{HookEventName: event, Source: SourceStartup, SessionID: id, CWD: cwd}, true
+}
+
 // hookSpecificOutput is the envelope both hook answers use.
 type hookSpecificOutput struct {
 	HookEventName     string `json:"hookEventName"`

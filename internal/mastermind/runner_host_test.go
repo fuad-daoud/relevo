@@ -159,3 +159,30 @@ func TestIsRunnerHostReadsTheMuseAncestorNotTheParent(t *testing.T) {
 		t.Fatal("IsRunnerHost read the parent pid 7 instead of the muse ancestor 42")
 	}
 }
+
+// TestMuseHookInputRebuildsFromTheEnvironment pins the empty-stdin fallback:
+// inside a muse plugin with a valid session id it rebuilds the payload from
+// the environment and cwd, and anywhere else it refuses.
+func TestMuseHookInputRebuildsFromTheEnvironment(t *testing.T) {
+	const id = "01a17468-6186-7242-80f1-0c81e09cd1e1"
+	muse := runnerEnvOf(map[string]string{musePluginEnv: "relevo", museSessionEnv: id})
+	in, ok := MuseHookInput(HookEventSessionStart, muse, "/repo")
+	want := HookInput{HookEventName: HookEventSessionStart, Source: SourceStartup, SessionID: id, CWD: "/repo"}
+	if !ok || in != want {
+		t.Errorf("MuseHookInput = (%+v, %v), want (%+v, true)", in, ok, want)
+	}
+	refused := []struct {
+		name string
+		env  func(string) string
+		cwd  string
+	}{
+		{"no plugin", runnerEnvOf(map[string]string{museSessionEnv: id}), "/repo"},
+		{"invalid session", runnerEnvOf(map[string]string{musePluginEnv: "relevo", museSessionEnv: "not-a-uuid"}), "/repo"},
+		{"no cwd", muse, ""},
+	}
+	for _, tc := range refused {
+		if _, ok := MuseHookInput(HookEventSessionStart, tc.env, tc.cwd); ok {
+			t.Errorf("%s: MuseHookInput ok = true, want false", tc.name)
+		}
+	}
+}

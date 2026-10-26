@@ -295,3 +295,44 @@ func TestMasterMindInitRejectsUnknownHook(t *testing.T) {
 		t.Errorf("error = %q, want both hook values named", runErr.Error())
 	}
 }
+
+// TestMasterMindInitHookMuseRegistersFromAnEmptyStdin pins the fallback a
+// shell that read the hook's stdin needs: with no payload, --hook muse inside
+// a muse plugin registers the session MUSE_SESSION_ID names in the cwd, while
+// --hook claude with the same empty stdin still reports the read failure.
+func TestMasterMindInitHookMuseRegistersFromAnEmptyStdin(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("CLAUDE_ENV_FILE", "")
+	t.Setenv("CLAUDE_CODE_AGENT", "")
+	repo := mastermindConsentRepo(t, state, db.ConsentYes)
+	t.Chdir(repo)
+	const id = "22222222-2222-2222-2222-222222222222"
+	t.Setenv("MUSE_SESSION_ID", id)
+	t.Setenv("MUSE_PLUGIN_ID", "relevo")
+	// The host's environ decides runner silence once MUSE_PLUGIN_ID is set; the
+	// test process's parent may itself be a round, so it reads as a plain host.
+	origEnviron := museRunnerEnviron
+	museRunnerEnviron = func(int) (map[string]string, bool) { return map[string]string{}, true }
+	t.Cleanup(func() { museRunnerEnviron = origEnviron })
+
+	stdout, _, err := runWithStdin(t, "", "mastermind", "init", "--hook", "muse")
+	if err != nil {
+		t.Fatalf("run = %v, want exit 0", err)
+	}
+	if !strings.Contains(string(stdout), "You are relevo MasterMind muse-1 (mm_") {
+		t.Errorf("stdout = %q, want the muse mastermind named", stdout)
+	}
+	recs := mastermindRecordsAt(t, state)
+	if len(recs) != 1 || recs[0].HarnessKind != "muse" || recs[0].SessionID != id {
+		t.Fatalf("records = %+v, want one muse record for %s", recs, id)
+	}
+
+	stdout, _, err = runWithStdin(t, "", "mastermind", "init", "--hook", "claude")
+	if err != nil {
+		t.Fatalf("claude run = %v, want exit 0", err)
+	}
+	if !strings.Contains(string(stdout), "read hook payload") {
+		t.Errorf("claude stdout = %q, want the read failure note", stdout)
+	}
+}

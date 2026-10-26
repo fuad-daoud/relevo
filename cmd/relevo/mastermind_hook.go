@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -58,6 +60,21 @@ func mastermindToldBaseline(d *db.DB, rt relevo.Runtime, kind, session, token st
 	_ = d.SetSessionTold(kind, session, token, rt.Now())
 }
 
+// readHookInput reads a hook's payload from stdin. A muse hook whose stdin
+// arrived empty rebuilds it from muse's environment instead, since the user's
+// login shell may have read stdin before the hook command ran.
+func readHookInput(hookKind, event string) (mastermind.HookInput, error) {
+	in, err := mastermind.ParseHookInput(os.Stdin)
+	if err == nil || hookKind != "muse" || !errors.Is(err, io.EOF) {
+		return in, err
+	}
+	cwd, _ := os.Getwd()
+	if rebuilt, ok := mastermind.MuseHookInput(event, os.Getenv, cwd); ok {
+		return rebuilt, nil
+	}
+	return in, err
+}
+
 // mastermindInitHook runs `relevo mastermind init --hook claude|muse`.
 //
 // It never returns an error and never exits non-zero: the hook runs at the
@@ -66,7 +83,7 @@ func mastermindToldBaseline(d *db.DB, rt relevo.Runtime, kind, session, token st
 // mastermind. Every failure prints HookNote on stdout -- where the model reads
 // its context -- and the error on stderr for the human.
 func mastermindInitHook(nameFlag, hookKind string) error {
-	in, err := mastermind.ParseHookInput(os.Stdin)
+	in, err := readHookInput(hookKind, mastermind.HookEventSessionStart)
 	// A round's harness session is a runner: it must not be asked, briefed or
 	// registered, and must not get the failure note either, so it answers the
 	// empty object for any payload -- malformed included -- before the
@@ -206,7 +223,7 @@ func cmdMasterMindNotice(args []string) error {
 // notice must never block a prompt. Every failure prints the empty object on
 // stdout and the error on stderr.
 func mastermindNoticeHook(hookKind string) error {
-	in, err := mastermind.ParseHookInput(os.Stdin)
+	in, err := readHookInput(hookKind, mastermind.HookEventUserPromptSubmit)
 	// A round's harness session is a runner and must stay silent: no notice,
 	// no failure note, and no told baseline that would let a later prompt
 	// speak. The empty object for any payload, before the parse-error branch.
