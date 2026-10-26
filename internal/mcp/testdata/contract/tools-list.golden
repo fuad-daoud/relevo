@@ -7,11 +7,17 @@
         "properties": {
           "all": {
             "description": "include every binding relevo knows about, not just this MasterMind's",
-            "type": "boolean"
+            "type": [
+              "boolean",
+              "null"
+            ]
           },
           "name": {
             "description": "show only this binding",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "type": "object"
@@ -25,11 +31,17 @@
         "properties": {
           "candidate": {
             "description": "candidate name or token to run this round and later ones on (persists); refused while a live round is open (a halted served round may be re-pointed)",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "dry_run": {
             "description": "check preconditions and report what send would do, without sending",
-            "type": "boolean"
+            "type": [
+              "boolean",
+              "null"
+            ]
           },
           "file": {
             "description": "path to the plan file",
@@ -41,15 +53,24 @@
           },
           "regate": {
             "description": "automatic repair rounds after a failing gate; 0 disables",
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "tier": {
             "description": "permission tier override: harness|read|edit|yolo",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "verify": {
             "description": "run a read-only reviewer when the round closes",
-            "type": "boolean"
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         },
         "required": [
@@ -67,15 +88,24 @@
         "properties": {
           "name": {
             "description": "binding name; omit to wait on all active bindings this MasterMind owns",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "round": {
             "description": "the round to wait for; omit or 0 for the newest planned round",
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "timeout": {
             "description": "maximum time to wait as a duration (e.g. 10m, 2h); defaults to the round budget",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "type": "object"
@@ -110,11 +140,17 @@
           },
           "round": {
             "description": "the round to read; omit for the newest completed round",
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "section": {
             "description": "prompt (the default) | report | diff | drift | log | transcript | gate | output | artifacts",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -131,15 +167,24 @@
         "properties": {
           "clear": {
             "description": "clear the gate instead of setting one",
-            "type": "boolean"
+            "type": [
+              "boolean",
+              "null"
+            ]
           },
           "for": {
             "description": "how long the gate holds, as a Go duration (e.g. 2h); omit to hold until cleared",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "reason": {
             "description": "why, for the record",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "token": {
             "description": "candidate name or token to gate, or the subject to clear",
