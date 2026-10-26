@@ -402,7 +402,7 @@ if [ ! -d "$root/other" ]; then
 	fail=1
 fi
 
-# destroy stops a running daemon before removing the sandbox (#1393): a
+# destroy stops a running daemon before removing the sandbox: a
 # CLI-spawned daemon outlives the sandbox shell, and rm -rf alone left it
 # listening on the deleted socket. The fixture daemon is a background holder
 # of the real lock path, and the sandbox bin/relevo is a stub answering

@@ -481,7 +481,7 @@ cmd_destroy() {
 
 	# Stop the sandbox's daemon before removing the directory it writes into:
 	# a CLI-spawned daemon outlives the shell that started it, and rm -rf alone
-	# would leave it listening on a deleted socket (#1393). Q3's ordering: the
+	# would leave it listening on a deleted socket. Q3's ordering: the
 	# stop attempt comes first, and a stop that times out is refused without
 	# --force and warned past with it. With no sandbox binary, or no daemon,
 	# sb_daemon_stop is a no-op that exits 0 and destroy lands exactly on
