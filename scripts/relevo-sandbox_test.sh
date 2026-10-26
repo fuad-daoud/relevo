@@ -293,9 +293,14 @@ refuses 'destroy refuses an invalid name' 'invalid sandbox name' \
 refuses 'destroy refuses a name that does not exist' 'sandbox marker' \
 	sh "$script" destroy absent
 
-# A held state lock means a foreground daemon is still writing into the directory
-# about to be removed. flock -n fails on a held lock, which is how the check is
-# driven without a daemon: a second lock holder stands in for one.
+# A held daemon lock means a foreground daemon is still writing into the
+# directory about to be removed. flock -n fails on a held lock, which is how
+# the check is driven without a daemon: a second lock holder stands in for one.
+# The lock is at the store default root -- $XDG_STATE_HOME/relevo/.daemon.lock,
+# one level below the state home (internal/store/store.go:156-169, and
+# daemonlock.go:65 joins it onto the root daemon.go:120,137 resolves through
+# store.DefaultRoot); the probe once watched the state home itself, which no
+# daemon ever held.
 #
 # Go writes its module cache read-only, and with HOME inside the sandbox that
 # cache lives under it, so the destroys below must also clear a read-only tree.
@@ -303,7 +308,8 @@ mkdir -p "$sbx/home/go/pkg/mod/m@v1"
 : > "$sbx/home/go/pkg/mod/m@v1/f"
 chmod -R a-w "$sbx/home/go"
 if command -v flock >/dev/null 2>&1; then
-	exec 9>"$sbx/state/.daemon.lock"
+	mkdir -p "$sbx/state/relevo"
+	exec 9>"$sbx/state/relevo/.daemon.lock"
 	flock -x 9
 	refuses 'destroy refuses a held daemon lock' 'is held' \
 		sh "$script" destroy demo
@@ -395,6 +401,153 @@ if [ ! -d "$root/other" ]; then
 	echo "FAIL: destroy --dry-run removed $root/other"
 	fail=1
 fi
+
+# destroy stops a running daemon before removing the sandbox (#1393): a
+# CLI-spawned daemon outlives the sandbox shell, and rm -rf alone left it
+# listening on the deleted socket. The fixture daemon is a background holder
+# of the real lock path, and the sandbox bin/relevo is a stub answering
+# `daemon stop` the way the real one does: it SIGTERMs the holder, waits
+# bounded for the lock to clear, and reports. The stub records that it ran
+# while the sandbox directory was still present, which is what pins the
+# stop-before-rm ordering: had destroy removed first, the stub could not have
+# run at all, and had it skipped the stop, the held lock would trip the
+# refusal below and destroy would exit non-zero.
+cat > "$root/daemon-stop-stub" <<'STUB'
+#!/bin/sh
+# stub sandbox relevo for the destroy-stop tests: answers `daemon stop` like
+# the real CLI -- no-op exit 0 with no fixture daemon, else SIGTERM the
+# recorded pid and wait (bounded) for the lock to clear -- and records the
+# call and whether the sandbox still existed when it ran.
+_log="${SB%/*}/stop.log"
+if [ "$1 $2" = "daemon stop" ]; then
+	_dir=dir-gone
+	[ -d "$SB" ] && _dir=dir-present
+	printf 'stop-called %s\n' "$_dir" >>"$_log"
+	if [ ! -f "$SB/holder.pid" ]; then
+		printf 'no daemon is running\n'
+		exit 0
+	fi
+	_pid=$(cat "$SB/holder.pid")
+	kill "$_pid" 2>/dev/null
+	_i=0
+	while [ "$_i" -lt 60 ]; do
+		if flock -n "$SB/state/relevo/.daemon.lock" true 2>/dev/null; then
+			printf 'stopped daemon %s\n' "$_pid"
+			exit 0
+		fi
+		sleep 0.1
+		_i=$((_i + 1))
+	done
+	printf 'daemon did not stop\n' >&2
+	exit 1
+fi
+exit 1
+STUB
+chmod +x "$root/daemon-stop-stub"
+
+if command -v flock >/dev/null 2>&1; then
+	allows 'create a sandbox with a running daemon' 'is ready' \
+		sh "$script" create stopper "$nb"
+	cp "$root/daemon-stop-stub" "$root/stopper/bin/relevo"
+	mkdir -p "$root/stopper/state/relevo"
+	(
+		exec 9>"$root/stopper/state/relevo/.daemon.lock"
+		flock -x 9
+		trap 'exit 0' TERM
+		_ht=0
+		while [ "$_ht" -lt 120 ]; do
+			sleep 0.25
+			_ht=$((_ht + 1))
+		done
+	) &
+	_holder=$!
+	printf '%s\n' "$_holder" > "$root/stopper/holder.pid"
+	# Wait until the holder actually owns the lock, so the fixture is a
+	# running daemon before destroy is pointed at it.
+	_hg=0
+	while [ "$_hg" -lt 50 ]; do
+		if flock -n "$root/stopper/state/relevo/.daemon.lock" true 2>/dev/null; then
+			sleep 0.1
+			_hg=$((_hg + 1))
+		else
+			break
+		fi
+	done
+	allows 'destroy stops a running daemon before removing the sandbox' 'is gone' \
+		sh "$script" destroy stopper
+	carries 'destroy reports the stopped daemon' 'stopped daemon'
+	if ! grep -qF 'stop-called dir-present' "$root/stop.log" 2>/dev/null; then
+		echo "FAIL: destroy did not run the daemon stop while the sandbox existed: $(cat "$root/stop.log" 2>/dev/null)"
+		fail=1
+	fi
+	kill "$_holder" 2>/dev/null || :
+	wait "$_holder" 2>/dev/null || :
+	rm -f "$root/stop.log"
+else
+	echo "skip: the daemon-stop test (no flock on this machine)"
+fi
+
+# destroy without a daemon still succeeds: the stop step is the sandbox
+# binary's own no-op (the real daemon stop prints `no daemon is running` and
+# exits 0 when the lock is free), and destroy proceeds past the free lock
+# exactly as before the stop existed.
+allows 'create a sandbox with no daemon' 'is ready' \
+	sh "$script" create nod "$nb"
+cp "$root/daemon-stop-stub" "$root/nod/bin/relevo"
+allows 'destroy without a daemon still succeeds' 'is gone' \
+	sh "$script" destroy nod
+carries 'the no-daemon stop is a no-op' 'no daemon is running'
+
+# --dry-run plans the stop and removes nothing: the plan names the exported
+# sandbox-binary daemon stop and the existing rm -rf line, and the stub binary
+# is never executed.
+allows 'create a sandbox to dry-run destroy' 'is ready' \
+	sh "$script" create dryd "$nb"
+cat > "$root/dryd/bin/relevo" <<'STUB'
+#!/bin/sh
+# stub that only records that it ran: destroy --dry-run must plan the stop,
+# never run it.
+touch "${SB%/*}/dryd-stop-ran"
+STUB
+chmod +x "$root/dryd/bin/relevo"
+dryd_out=$(RELEVO_SANDBOX_ROOT="$root" HOME="$home" sh "$script" destroy dryd --dry-run 2>&1)
+for want in 'bin/relevo daemon stop' "rm -rf $root/dryd"; do
+	if ! printf '%s' "$dryd_out" | grep -qF -- "$want"; then
+		echo "FAIL: the destroy plan names no \"$want\": $dryd_out"
+		fail=1
+	fi
+done
+if [ ! -d "$root/dryd" ]; then
+	echo "FAIL: destroy --dry-run removed $root/dryd"
+	fail=1
+fi
+if [ -e "$root/dryd-stop-ran" ]; then
+	echo "FAIL: destroy --dry-run ran the daemon stop instead of planning it"
+	fail=1
+fi
+
+# The marker refusal still runs first: a directory under the root with no
+# sandbox marker is refused before any stop is attempted, so destroy can
+# never signal a process of a directory it will not remove.
+mkdir -p "$root/nomark/bin" "$root/nomark/state/relevo"
+cat > "$root/nomark/bin/relevo" <<'STUB'
+#!/bin/sh
+# stub that records the call anywhere it runs: the stop must never be
+# attempted for a markerless directory.
+touch "${SB%/*}/nomark-stop-ran"
+STUB
+chmod +x "$root/nomark/bin/relevo"
+refuses 'destroy refuses a missing marker before stopping' 'sandbox marker' \
+	sh "$script" destroy nomark
+if [ -e "$root/nomark-stop-ran" ]; then
+	echo "FAIL: destroy attempted the daemon stop for a markerless directory"
+	fail=1
+fi
+if [ ! -d "$root/nomark/state/relevo" ]; then
+	echo "FAIL: destroy removed the contents of the refused markerless directory"
+	fail=1
+fi
+rm -rf "$root/dryd" "$root/nomark"
 
 # Without a build there is no binary to seed or check with, so --no-build
 # skips both and says so.
