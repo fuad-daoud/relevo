@@ -76,7 +76,7 @@ pjson="$plug/.claude-plugin/plugin.json"
 # reads the same in fish, sh and bash.
 n=$(grep -F -o "\$CLAUDE_PLUGIN_ROOT/scripts/" "$hooks" | wc -l | tr -d ' ')
 [ "$n" -eq 2 ] || bad "hooks.json names $n script command(s), want exactly 2"
-if grep -F -q '${' "$hooks"; then
+if grep -F -q "\${" "$hooks"; then
 	bad "hooks.json brackets a variable; fish refuses \${VAR}"
 fi
 grep -F -q "\"command\": \"\\\"\$CLAUDE_PLUGIN_ROOT/scripts/mastermind-init.sh\\\"\"" "$hooks" ||
