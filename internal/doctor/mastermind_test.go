@@ -618,7 +618,7 @@ func TestDoctorMusePluginRowUnapprovedFailsApprove(t *testing.T) {
 func TestDoctorMusePluginRowVersionDriftWarns(t *testing.T) {
 	checks := museChecks(t, museInstalledJSON("0.22.3"), nil, "v0.22.4")
 	c := findCheck(Report{Checks: checks}, "", "muse plugin version")
-	if c == nil || c.Severity != SevWarn || c.Fix != "muse plugins marketplace update relevo && muse plugins update relevo && muse plugins approve relevo" {
+	if c == nil || c.Severity != SevWarn || c.Fix != "muse plugins marketplace update relevo && muse plugins remove relevo && muse plugins install relevo@relevo && muse plugins approve relevo" {
 		t.Fatalf("plugin version row = %+v, want Warn with the update fix", c)
 	}
 	if c.Detail != "plugin 0.22.3, relevo v0.22.4" {

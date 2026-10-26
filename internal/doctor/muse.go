@@ -24,13 +24,15 @@ import (
 type MuseInspectFn func(ctx context.Context, bin string, args ...string) ([]byte, error)
 
 // Muse's plugin fixes, mirroring the Claude rows' install/enable/update hints
-// and adding the approve hint muse requires for hooks and MCP servers.
+// and adding the approve hint muse requires for hooks and MCP servers. The
+// update is a reinstall: `muse plugins update` refreshes only a plugin
+// installed from a local path, and leaves a marketplace one at its version.
 const (
 	musePluginName       = "relevo"
 	musePluginInstallFix = "muse plugins marketplace add relevo https://github.com/fuad-daoud/relevo.git && muse plugins install relevo@relevo"
 	musePluginEnableFix  = "muse plugins enable relevo"
 	musePluginApproveFix = "muse plugins approve relevo"
-	musePluginUpdateFix  = "muse plugins marketplace update relevo && muse plugins update relevo && muse plugins approve relevo"
+	musePluginUpdateFix  = "muse plugins marketplace update relevo && muse plugins remove relevo && muse plugins install relevo@relevo && muse plugins approve relevo"
 
 	museStatusTrusted = "trusted_enabled"
 )
