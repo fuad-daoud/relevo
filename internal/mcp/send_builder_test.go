@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -22,8 +24,8 @@ func TestSendToolSchemaHasCandidateProperty(t *testing.T) {
 		if !ok {
 			t.Fatalf("send schema has no candidate property: %#v", props)
 		}
-		if prop["type"] != "string" {
-			t.Errorf("candidate property type = %v, want string", prop["type"])
+		if !reflect.DeepEqual(prop["type"], []string{"string", "null"}) {
+			t.Errorf("candidate property type = %v, want [string null]", prop["type"])
 		}
 		return
 	}
@@ -78,5 +80,29 @@ func TestRelevoVerbsSendPassesCandidate(t *testing.T) {
 	}
 	if d.Candidate != "agy/test/m" {
 		t.Errorf("Candidate = %q, want agy/test/m without a candidate", d.Candidate)
+	}
+}
+
+// TestExpandHomeResolvesALeadingTilde pins the send tool's path rule: a
+// leading "~/" joins the home directory, and every other path, or a home that
+// cannot be found, comes back as written.
+func TestExpandHomeResolvesALeadingTilde(t *testing.T) {
+	home := func() (string, error) { return "/home/u", nil }
+	noHome := func() (string, error) { return "", errors.New("no home") }
+	cases := []struct {
+		path string
+		home func() (string, error)
+		want string
+	}{
+		{"~/plan.md", home, "/home/u/plan.md"},
+		{"/abs/plan.md", home, "/abs/plan.md"},
+		{"rel/plan.md", home, "rel/plan.md"},
+		{"~other/plan.md", home, "~other/plan.md"},
+		{"~/plan.md", noHome, "~/plan.md"},
+	}
+	for _, tc := range cases {
+		if got := expandHome(tc.path, tc.home); got != tc.want {
+			t.Errorf("expandHome(%q) = %q, want %q", tc.path, got, tc.want)
+		}
 	}
 }

@@ -71,11 +71,17 @@ done
 hooks="$plug/hooks/hooks.json"
 pjson="$plug/.claude-plugin/plugin.json"
 
-n=$(grep -F -o "\${CLAUDE_PLUGIN_ROOT}/scripts/" "$hooks" | wc -l | tr -d ' ')
+# The hook commands spell the variable without braces: muse runs a hook
+# command through the user's login shell, and fish rejects ${VAR}; "$VAR/..."
+# reads the same in fish, sh and bash.
+n=$(grep -F -o "\$CLAUDE_PLUGIN_ROOT/scripts/" "$hooks" | wc -l | tr -d ' ')
 [ "$n" -eq 2 ] || bad "hooks.json names $n script command(s), want exactly 2"
-grep -F -q "\"command\": \"\\\"\${CLAUDE_PLUGIN_ROOT}/scripts/mastermind-init.sh\\\"\"" "$hooks" ||
+if grep -F -q '${' "$hooks"; then
+	bad "hooks.json brackets a variable; fish refuses \${VAR}"
+fi
+grep -F -q "\"command\": \"\\\"\$CLAUDE_PLUGIN_ROOT/scripts/mastermind-init.sh\\\"\"" "$hooks" ||
 	bad "hooks.json SessionStart does not run mastermind-init.sh"
-grep -F -q "\"command\": \"\\\"\${CLAUDE_PLUGIN_ROOT}/scripts/mastermind-notice.sh\\\"\"" "$hooks" ||
+grep -F -q "\"command\": \"\\\"\$CLAUDE_PLUGIN_ROOT/scripts/mastermind-notice.sh\\\"\"" "$hooks" ||
 	bad "hooks.json UserPromptSubmit does not run mastermind-notice.sh"
 if grep -F -q '"command": "relevo"' "$hooks"; then
 	bad "hooks.json still runs the bare relevo command"
