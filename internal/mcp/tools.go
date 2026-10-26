@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"slices"
 )
 
 // ToolSpec is one entry of the tools/list document: additionalProperties is
@@ -76,7 +77,19 @@ func jsonResult(v any) (ToolResult, error) {
 	return textResult(string(raw), false), nil
 }
 
+// schemaObject builds a tool's input schema. An optional property also takes
+// null: a client that holds tools to strict schemas (muse does) must send every
+// property, and without a null its model fills an unset one with a placeholder
+// such as the string "null" or a 0 that means something. A JSON null decodes
+// to the field's zero value or a nil pointer, the same as an omitted field.
 func schemaObject(required []string, props map[string]any) map[string]any {
+	for name, p := range props {
+		if spec, ok := p.(map[string]any); ok && !slices.Contains(required, name) {
+			if t, ok := spec["type"].(string); ok {
+				spec["type"] = []string{t, "null"}
+			}
+		}
+	}
 	s := map[string]any{
 		"type":                 "object",
 		"properties":           props,

@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -125,6 +128,7 @@ func budgetOf(res any) string {
 
 // Send calls relevo.Send, or relevo.SendDryRun when a.DryRun; AllowYolo is always false.
 func (v *RelevoVerbs) Send(ctx context.Context, _ string, a SendArgs) (any, error) {
+	a.File = expandHome(a.File, os.UserHomeDir)
 	opts := relevo.SendOptions{
 		Tier:      a.Tier,
 		AllowYolo: false,
@@ -153,6 +157,22 @@ func (v *RelevoVerbs) Send(ctx context.Context, _ string, a SendArgs) (any, erro
 		}
 	}
 	return out, nil
+}
+
+// expandHome resolves a leading "~/" in a tool's path argument against the
+// home directory: a shell expands it before the CLI sees the path, but a tool
+// call hands relevo the model's text as written. Anything else, and a home
+// that cannot be found, is returned unchanged.
+func expandHome(path string, home func() (string, error)) string {
+	rest, ok := strings.CutPrefix(path, "~/")
+	if !ok {
+		return path
+	}
+	dir, err := home()
+	if err != nil || dir == "" {
+		return path
+	}
+	return filepath.Join(dir, rest)
 }
 
 type doneResult struct {
