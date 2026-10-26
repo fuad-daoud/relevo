@@ -141,12 +141,13 @@ The last line is muse's own gate: a plugin's hooks and MCP servers stay
 inactive until it is approved. `relevo doctor` reports each state — installed,
 enabled, approved, version — through `muse plugins inspect relevo --json` and
 prints these commands as its fixes. After upgrading relevo, refresh the
-marketplace and update the plugin to match (`relevo doctor` warns when they
-differ). An update changes the plugin's definitions, so muse holds its MCP
-server back until it is approved again:
+marketplace and reinstall the plugin to match (`relevo doctor` warns when they
+differ). `muse plugins update` leaves a marketplace plugin at its old version,
+and a new version's hooks and MCP server wait for approval again:
 
     muse plugins marketplace update relevo
-    muse plugins update relevo
+    muse plugins remove relevo
+    muse plugins install relevo@relevo
     muse plugins approve relevo
 
 Muse's sandbox is the one place its MasterMind differs from Claude Code's. It

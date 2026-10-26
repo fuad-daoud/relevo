@@ -15,8 +15,9 @@ hooks, MCP server, commands and skill serve both harnesses. relevo learns a
   https://github.com/fuad-daoud/relevo.git`, `muse plugins install
   relevo@relevo`, then `muse plugins approve relevo`. Hooks and MCP servers
   stay inactive until approved; commands and skills are active at once.
-  Muse caches a plugin by content hash; `muse plugins update relevo`
-  refreshes it.
+  Muse caches a plugin by content hash. `muse plugins update relevo` does
+  not move a marketplace install to a new version (measured on 1.4.11):
+  refresh the marketplace, then remove, install and approve.
 - Hook stdin is Claude's shape: `session_id`, `cwd`, `source`,
   `hook_event_name` (plus `model`, `permission_mode`, `turn_id`,
   `transcript_path: null`). `session_id` equals `MUSE_SESSION_ID`.
