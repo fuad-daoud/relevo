@@ -43,6 +43,9 @@ jobs:
           - name: e2e
             pkg: ./internal/e2e
             run: '^(TestChainRemoteBuilderE2E|TestChainServerE2E)$'
+          - name: gitshim
+            pkg: ./internal/relevo
+            run: '^(TestGitShimRefusesEveryStashForm|TestGitShimPassesEverythingElseThrough|TestGitShimRewritesNetworkURLsForEveryPushForm|TestGitShimRefusesANetworkPushButNotALocalOne|TestGitShimSkipsItselfWhenListedTwiceOrSymlinked|TestGitShimNestedUnderAnotherShimReachesTheRealGit|TestGitShimPATH)$'
           - name: sync
             pkg: ./internal/sync ./internal/syncworker ./internal/git
             run: '^(TestWithinStopsTheStepAtItsBound|TestWithinStopsAStepBeforeItsFirstCall|TestCompactIsNotQuadratic|TestMergeFF)$'
