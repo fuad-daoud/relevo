@@ -77,6 +77,11 @@ func TestRestartSafety(t *testing.T) {
 			read:  cgroupReader(map[int]string{11: v2cgroup("/user.slice/user-1000.slice/user@1000.service/relevo.service")}, nil),
 			want: want{SevWarn, "1 of 1 running outside their own scope (web builder pid 11 in relevo.service): a daemon restart may kill them",
 				"let them finish before restarting relevo.service", 1}},
+		{name: "resumed builder in a login scope is outside its scope",
+			procs: []RunningProc{{Binding: "web", Kind: "builder", PID: 11}},
+			read:  cgroupReader(map[int]string{11: v2cgroup("/user.slice/user-1000.slice/user@1000.service/session-2.scope")}, nil),
+			want: want{SevWarn, "1 of 1 running outside their own scope (web builder pid 11 in session-2.scope): a daemon restart may kill them",
+				"let them finish before restarting relevo.service", 1}},
 		{name: "mix with more than three offenders truncates",
 			procs: []RunningProc{
 				{Binding: "web", Kind: "builder", PID: 11}, {Binding: "web", Kind: "gate", PID: 12}, {Binding: "api", Kind: "consult", PID: 13},

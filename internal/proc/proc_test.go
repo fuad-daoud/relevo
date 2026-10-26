@@ -781,6 +781,36 @@ func TestStartFallsBackWhenProbeRefused(t *testing.T) {
 	}
 }
 
+// A spawn that requires its scope refuses when the probe fails, instead of
+// running unscoped where a daemon restart would kill it. Nothing is spawned
+// and no log or stream file is created, so the caller can fall through to its
+// exit path exactly as it does for any other Start refusal.
+func TestStartRefusesWhenARequiredScopeIsUnavailable(t *testing.T) {
+	stubDir := t.TempDir()
+	writeStub(t, stubDir, refusingScopeStub)
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	r := New()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "001-builder.log")
+	stream := filepath.Join(dir, "001-builder.jsonl")
+	_, err := r.Start(context.Background(), spawn.ProcSpec{
+		Dir: dir, Argv: []string{"sh", "-c", "true"},
+		LogPath: log, StreamPath: stream,
+		Scope:        &spawn.ScopeSpec{Unit: "relevo-round-local-foo-1", Slice: "relevo.slice", CPUWeight: 100},
+		RequireScope: true,
+	})
+	if !errors.Is(err, spawn.ErrScopeUnavailable) {
+		t.Fatalf("Start with a required but unavailable scope = %v; want %v", err, spawn.ErrScopeUnavailable)
+	}
+	if _, statErr := os.Stat(log); statErr == nil {
+		t.Error("a refused Start must not create the log")
+	}
+	if _, statErr := os.Stat(stream); statErr == nil {
+		t.Error("a refused Start must not create the stream")
+	}
+}
+
 // TestStartProbesOnlyWhenAsked counts the stub's invocations: each probe runs
 // once per Runner, and a Runner never asked for one never probes.
 func TestStartProbesOnlyWhenAsked(t *testing.T) {

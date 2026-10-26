@@ -15,15 +15,20 @@ import (
 
 // ProcSpec is one process a headless builder round runs.
 type ProcSpec struct {
-	Dir        string      // working directory: the binding's CWD
-	Argv       []string    // Argv[0] is the binary name, resolved on PATH by the runner
-	Env        []string    // additions to the parent environment; nil for none
-	TmpDir     string      // this process's own temp directory: beats an inherited TMPDIR/GOTMPDIR value, and only an Env entry wins over it
-	LogPath    string      // stderr, appended, created if absent
-	StreamPath string      // stdout and the exit trailer, appended, created if absent
-	Scope      *ScopeSpec  // non-nil launches the process as a transient systemd scope
-	Credential *Credential // non-nil runs the process as this uid/gid; nil keeps the serve uid
-	DenyEnv    []string    // extra names removed from the inherited environment before Env is appended
+	Dir        string     // working directory: the binding's CWD
+	Argv       []string   // Argv[0] is the binary name, resolved on PATH by the runner
+	Env        []string   // additions to the parent environment; nil for none
+	TmpDir     string     // this process's own temp directory: beats an inherited TMPDIR/GOTMPDIR value, and only an Env entry wins over it
+	LogPath    string     // stderr, appended, created if absent
+	StreamPath string     // stdout and the exit trailer, appended, created if absent
+	Scope      *ScopeSpec // non-nil launches the process as a transient systemd scope
+	// RequireScope refuses with ErrScopeUnavailable rather than silently
+	// spawning unscoped when the scope cannot be taken: a resumed builder
+	// that loses its scope is left where a daemon restart would kill it, so
+	// the resume must fail instead and let the caller fall through.
+	RequireScope bool
+	Credential   *Credential // non-nil runs the process as this uid/gid; nil keeps the serve uid
+	DenyEnv      []string    // extra names removed from the inherited environment before Env is appended
 }
 
 // Credential is the unix identity a process runs as. It carries only the uid
@@ -251,3 +256,9 @@ var ErrRunnerUnavailable = errors.New("no process runner configured")
 // the candidate's fault, so the spawn paths must not record it against the
 // candidate's availability.
 var ErrBoundarySetup = errors.New("tenant boundary not set up")
+
+// ErrScopeUnavailable marks a Start refused because its required scope could
+// not be taken: the probe failed, or no scope was given. It is a host refusal,
+// not the candidate's fault, so the spawn paths must not record it against
+// the candidate's availability.
+var ErrScopeUnavailable = errors.New("scope required but unavailable")

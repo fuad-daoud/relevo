@@ -246,6 +246,15 @@ func legacyLog(rt Runtime, name string, round int) bool {
 // Preconditions: rt.Runner non-nil (both callers check it before building
 // argv); argv is a complete command line. Postconditions: as startRound's.
 func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, argv []string, c candidate.Candidate) (store.Binding, error) {
+	return startProcessResuming(ctx, rt, tx, b, argv, c, false)
+}
+
+// startProcessResuming is startProcess for a caller that knows whether the
+// spawn resumes an existing session. A resume requires its scope when one is
+// configured: silently losing it would leave the builder where a daemon
+// restart kills it, so the spawn refuses and the caller falls through to its
+// exit path exactly as it does for any other resume Start error.
+func startProcessResuming(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, argv []string, c candidate.Candidate, resume bool) (store.Binding, error) {
 	// A writer's git shim must exist before the process can start; a write
 	// failure refuses the round with nothing spawned.
 	shimEnv, err := gitShimEnv(rt, b)
@@ -334,6 +343,10 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		StreamPath: rt.Store.StreamPath(b.Name, b.Round),
 	}
 	spec.Scope = scopeFor(rt, scopeRound, scopeUnitName(b), cpuPinText(b))
+	// Scopes-off hosts keep today's behaviour: with no template there is no
+	// scope to require. A fresh send never requires one either, so a failed
+	// probe still runs it unscoped exactly as before.
+	spec.RequireScope = resume && rt.Scope != nil
 	h, err := rt.Runner.Start(ctx, spec)
 	if err != nil {
 		// Nothing started, so the directory the preparation made goes back;
@@ -353,7 +366,7 @@ func startProcess(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		// "cannot switch: every candidate ... is gated". Returning a plain,
 		// non-spawnFailure error also keeps the lost-builder path from spending
 		// its one fresh attempt on a resume that would collide the same way.
-		if errors.Is(err, spawn.ErrBoundarySetup) || isScopeBusy(err) {
+		if errors.Is(err, spawn.ErrBoundarySetup) || isScopeBusy(err) || errors.Is(err, spawn.ErrScopeUnavailable) {
 			return b, fmt.Errorf("start headless builder for %q (%s): %w", b.Name, c.Ref().String(), err)
 		}
 		availability.RecordSpawnFailureLocked(AvailabilityDeps(rt), c.Ref().String(), b.Name, err)
@@ -430,7 +443,7 @@ func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		return b, err
 	}
 	argv := append([]string{h.Binary}, sel...)
-	return startProcess(ctx, rt, tx, b, argv, c)
+	return startProcessResuming(ctx, rt, tx, b, argv, c, true)
 }
 
 // segmentKind is the harness kind that wrote the stream byte at off: the Kind
