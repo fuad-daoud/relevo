@@ -3,11 +3,14 @@ package relevo
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -38,16 +41,55 @@ func shimTools(t *testing.T) string {
 	return dir
 }
 
+// shimETXTBSYWait is how long a test keeps rebuilding and re-execing a freshly
+// written shim before it gives up. The window the retry covers is one fork
+// holding a write descriptor across its own exec, so a few seconds of 5ms
+// steps suffices and a longer wait would hide real breakage.
+const shimETXTBSYWait = 3 * time.Second
+
+// isETXTBSY reports the only failure worth retrying: the kernel's refusal to
+// exec a binary another process still holds open for writing. A shim that
+// started and refused its command answers with an *exec.ExitError, which does
+// not match, so real refusals and every other error come back unretried.
+func isETXTBSY(err error) bool {
+	return errors.Is(err, syscall.ETXTBSY)
+}
+
+// retryShimETXTBSY runs the command build constructs with op -- cmd.Run,
+// cmd.Output or cmd.CombinedOutput -- and retries while op fails with
+// ETXTBSY. A Cmd cannot be rerun, so every attempt gets a fresh one from
+// build. The wait is a parameter so the helper's own test can exhaust it in
+// milliseconds. An error that is not ETXTBSY returns at once; exhausting the
+// wait returns the last error and the calling test fails on it as it would
+// have. Like pollUntil, the loop also stops short of the test's own deadline.
+func retryShimETXTBSY(t *testing.T, wait time.Duration, build func() *exec.Cmd, op func(*exec.Cmd) error) error {
+	t.Helper()
+	end := time.Now().Add(wait)
+	if dl, ok := t.Deadline(); ok && dl.Before(end) {
+		end = dl
+	}
+	for {
+		err := op(build())
+		if !isETXTBSY(err) || time.Now().After(end) {
+			return err
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // shimRun runs the installed shim with PATH = pathDirs (joined) plus the tools
 // directory, and returns stdout, stderr and the exit code.
 func shimRun(t *testing.T, shim string, pathDirs []string, stdin string, args ...string) (string, string, int) {
 	t.Helper()
-	cmd := exec.Command(shim, args...)
-	cmd.Env = []string{"PATH=" + strings.Join(append(pathDirs, shimTools(t)), ":")}
-	cmd.Stdin = strings.NewReader(stdin)
+	path := "PATH=" + strings.Join(append(pathDirs, shimTools(t)), ":")
 	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	err := cmd.Run()
+	err := retryShimETXTBSY(t, shimETXTBSYWait, func() *exec.Cmd {
+		cmd := exec.Command(shim, args...)
+		cmd.Env = []string{path}
+		cmd.Stdin = strings.NewReader(stdin)
+		cmd.Stdout, cmd.Stderr = &out, &errb
+		return cmd
+	}, (*exec.Cmd).Run)
 	code := 0
 	if ee, ok := err.(*exec.ExitError); ok {
 		code = ee.ExitCode()
@@ -55,6 +97,58 @@ func shimRun(t *testing.T, shim string, pathDirs []string, stdin string, args ..
 		t.Fatalf("run shim: %v", err)
 	}
 	return out.String(), errb.String(), code
+}
+
+// TestRetryShimETXTBSYRetriesOnlyETXTBSY pins the helper's three rules with
+// fake operations, no real ETXTBSY provoked: an ETXTBSY failure is retried on
+// a freshly built command until the operation succeeds, an *exec.ExitError --
+// what a shim that ran and refused its command answers with -- is returned
+// after a single attempt, and exhausting the wait returns the last error.
+func TestRetryShimETXTBSYRetriesOnlyETXTBSY(t *testing.T) {
+	fake := func() *exec.Cmd { return &exec.Cmd{Path: "fake-shim"} }
+	etxtbsy := func() error {
+		return &os.PathError{Op: "fork/exec", Path: "fake-shim", Err: syscall.ETXTBSY}
+	}
+
+	attempts, builds := 0, 0
+	err := retryShimETXTBSY(t, time.Second, func() *exec.Cmd {
+		builds++
+		return fake()
+	}, func(*exec.Cmd) error {
+		attempts++
+		if attempts == 1 {
+			return etxtbsy()
+		}
+		return nil
+	})
+	if err != nil || attempts != 2 || builds != attempts {
+		t.Errorf("etxtbsy then success: err %v attempts %d builds %d, want success on the second fresh command", err, attempts, builds)
+	}
+
+	_, exitErr := exec.Command("sh", "-c", "exit 7").Output()
+	ee, ok := exitErr.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("sh -c 'exit 7' gave %v, want a real *exec.ExitError to pin against", exitErr)
+	}
+	attempts = 0
+	err = retryShimETXTBSY(t, time.Second, fake, func(*exec.Cmd) error {
+		attempts++
+		return ee
+	})
+	if !errors.Is(err, ee) || attempts != 1 {
+		t.Errorf("exit error: err %v attempts %d, want it back unretried after one attempt", err, attempts)
+	}
+
+	attempts = 0
+	err = retryShimETXTBSY(t, 200*time.Millisecond, fake, func(*exec.Cmd) error {
+		attempts++
+		return fmt.Errorf("attempt %d: %w", attempts, etxtbsy())
+	})
+	if !errors.Is(err, syscall.ETXTBSY) || attempts < 2 {
+		t.Errorf("exhaustion: err %v after %d attempts, want ETXTBSY retried to the bound", err, attempts)
+	} else if want := fmt.Sprintf("attempt %d", attempts); !strings.Contains(err.Error(), want) {
+		t.Errorf("exhaustion: err %q, want the error of the last attempt %q", err, want)
+	}
 }
 
 func shimFixture(t *testing.T) (shimDir, realDir string) {
@@ -166,10 +260,17 @@ func TestGitShimRefusesANetworkPushButNotALocalOne(t *testing.T) {
 	}
 	repo := filepath.Join(root, "repo")
 	git := func(args ...string) (string, error) {
-		cmd := exec.Command(filepath.Join(shimDir, "git"), args...)
-		cmd.Env = env
-		cmd.Dir = root
-		out, err := cmd.CombinedOutput()
+		var out []byte
+		err := retryShimETXTBSY(t, shimETXTBSYWait, func() *exec.Cmd {
+			cmd := exec.Command(filepath.Join(shimDir, "git"), args...)
+			cmd.Env = env
+			cmd.Dir = root
+			return cmd
+		}, func(cmd *exec.Cmd) error {
+			var err error
+			out, err = cmd.CombinedOutput()
+			return err
+		})
 		return string(out), err
 	}
 	for _, args := range [][]string{
@@ -228,9 +329,17 @@ func TestGitShimNestedUnderAnotherShimReachesTheRealGit(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, filepath.Join(innerDir, "git"), "status")
-	cmd.Env = []string{"PATH=" + strings.Join([]string{innerDir, outerDir, realDir, shimTools(t)}, ":")}
-	out, err := cmd.Output()
+	path := "PATH=" + strings.Join([]string{innerDir, outerDir, realDir, shimTools(t)}, ":")
+	var out []byte
+	err := retryShimETXTBSY(t, shimETXTBSYWait, func() *exec.Cmd {
+		cmd := exec.CommandContext(ctx, filepath.Join(innerDir, "git"), "status")
+		cmd.Env = []string{path}
+		return cmd
+	}, func(cmd *exec.Cmd) error {
+		var err error
+		out, err = cmd.Output()
+		return err
+	})
 	if ctx.Err() != nil {
 		t.Fatalf("nested shims did not return within 10s: the two shims exec each other")
 	}
