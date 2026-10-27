@@ -398,7 +398,7 @@ func allGated(role string, skipped []Skip) (Resolution, error) {
 		texts = append(texts, skipText(s, identityName))
 		switch {
 		case s.Off:
-		case s.Kind == availability.Scheduled || s.Kind == availability.ConcurrencyLimit:
+		case s.Kind == availability.Scheduled || s.Kind == availability.ConcurrencyLimit || s.Kind == availability.AllowanceExhausted:
 			waits = true
 		case s.Kind == availability.SkillMissing:
 			missing = true

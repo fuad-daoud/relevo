@@ -2,9 +2,13 @@ package relevo
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/account"
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
@@ -63,7 +67,7 @@ func roundSource(rt Runtime, b store.Binding, start, end time.Time) usage.Source
 		src.StreamPath = rt.Store.StreamPath(b.Name, b.Round)
 		src.StreamFrom = b.Builder.StreamStart
 	}
-	fillCandidate(&src, rt, b.BuilderCandidate)
+	fillCandidate(&src, rt, b.BuilderCandidate, b.BuilderAccount)
 	return src
 }
 
@@ -83,7 +87,8 @@ func consultSource(rt Runtime, b store.Binding, c store.Consult, end time.Time) 
 	}
 }
 
-func fillCandidate(src *usage.Source, rt Runtime, token string) {
+func fillCandidate(src *usage.Source, rt Runtime, token, accountName string) {
+	src.Account = accountName
 	if token == "" || rt.Candidates == nil {
 		return
 	}
@@ -161,4 +166,46 @@ func recordUsage(ctx context.Context, rt Runtime, src usage.Source) *usage.Usage
 		}
 	}
 	return &u
+}
+
+// recordAllowance parses the round stream's last muse allowance and records
+// it against the round's provider account, so the next pre-round pick can
+// skip an exhausted login. The caller holds the store lock; the sibling kv
+// document is loaded, merged and saved under it. A muse harness is the only
+// one whose streams carry allowance, so anything else, an unreadable stream,
+// a stream with no allowance, a round with no provider, and a runtime with no
+// gates store all record nothing. A write failure is printed and dropped: the
+// round already closed, and bookkeeping must not fail it.
+func recordAllowance(rt Runtime, src usage.Source) {
+	if rt.Store == nil || src.Harness != "muse" || src.Provider == "" || src.StreamPath == "" {
+		return
+	}
+	data, err := rt.Store.ReadFile(src.StreamPath)
+	if err != nil {
+		return
+	}
+	a, ok := usage.ParseMuseAllowance(data)
+	if !ok {
+		return
+	}
+	d := AvailabilityDeps(rt)
+	if d.Gates == nil {
+		return
+	}
+	doc, err := availability.LoadAllowance(d.Gates)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "relevo: could not read allowance: %v\n", err)
+		return
+	}
+	doc = doc.Observe(account.GateKey(src.Provider, src.Account), availability.AllowanceObservation{
+		WindowUsed:       a.Window.UsedPercent,
+		WindowResetsAtMS: a.Window.ResetsAtMS,
+		WeeklyUsed:       a.Weekly.UsedPercent,
+		WeeklyResetsAtMS: a.Weekly.ResetsAtMS,
+		HasWindow:        a.Window.OK,
+		HasWeekly:        a.Weekly.OK,
+	})
+	if err := availability.SaveAllowance(d.Gates, doc); err != nil {
+		fmt.Fprintf(os.Stderr, "relevo: could not record allowance: %v\n", err)
+	}
 }

@@ -32,10 +32,11 @@ const (
 	CauseCap    RefusalCause = "cap"
 )
 
-// clearable reports whether gate --clear lifts a gate of kind: a window opens
-// and a cap frees on their own, and clearing either does nothing.
+// clearable reports whether gate --clear lifts a gate of kind: a window opens,
+// a cap frees, and an allowance resets on their own, and clearing any of them
+// does nothing.
 func clearable(kind availability.Kind) bool {
-	return kind != availability.Scheduled && kind != availability.ConcurrencyLimit
+	return kind != availability.Scheduled && kind != availability.ConcurrencyLimit && kind != availability.AllowanceExhausted
 }
 
 // refusalCause is CauseWindow or CauseCap when every skip on a serving token
@@ -47,7 +48,7 @@ func refusalCause(serving []candidate.Candidate, gates []availability.Gate) Refu
 			switch sk.Kind {
 			case availability.Scheduled:
 				cause = CauseWindow
-			case availability.ConcurrencyLimit:
+			case availability.ConcurrencyLimit, availability.AllowanceExhausted:
 			default:
 				return CauseGate
 			}

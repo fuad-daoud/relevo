@@ -68,7 +68,9 @@ func resumeSameSession(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return b, false, nil
 	}
 	keep := b.RoundStartedAt
-	prior := recordUsage(ctx, rt, roundSource(rt, b, b.RoundStartedAt, now))
+	src := roundSource(rt, b, b.RoundStartedAt, now)
+	prior := recordUsage(ctx, rt, src)
+	recordAllowance(rt, src)
 	next, err := resumeRound(ctx, rt, tx, b, sess, prompt, false)
 	if err != nil {
 		slog.Warn("same-session resume failed; falling through to the exit path",
