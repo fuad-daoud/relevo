@@ -25,7 +25,7 @@ func HeadlessLaunch(c candidate.Candidate, role harness.RoleSpec, tier harness.T
 	if !ok {
 		return nil, fmt.Errorf("unknown harness kind %q", c.Harness)
 	}
-	l, err := h.Launch(c.Provider, c.Model, c.ExtraArgs, role, tier)
+	l, err := h.Launch(c.Provider, c.Model, c.ExtraArgs, role, tier, c.ContributorMode)
 	if err != nil {
 		return nil, err
 	}

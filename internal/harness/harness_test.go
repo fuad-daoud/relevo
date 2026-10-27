@@ -459,7 +459,7 @@ func TestLaunchPrintPerKind(t *testing.T) {
 			if !ok {
 				t.Fatalf("Lookup(%q) not found", tt.kind)
 			}
-			got, err := h.Launch("prov", "m/x", tt.extra, builder, TierHarness)
+			got, err := h.Launch("prov", "m/x", tt.extra, builder, TierHarness, "")
 			if err != nil {
 				t.Fatalf("Launch() error = %v", err)
 			}
@@ -482,13 +482,13 @@ func checkLaunchExtras(t *testing.T, builder RoleSpec) {
 	// claude refuses stream-json in print mode without --verbose; no
 	// candidate's extra_args should have to know.
 	c, _ := Lookup("claude")
-	claudeLaunch, _ := c.Launch("prov", "m/x", nil, builder, TierHarness)
+	claudeLaunch, _ := c.Launch("prov", "m/x", nil, builder, TierHarness, "")
 	if p := claudeLaunch.Print; !containsAdjacent(p, "--output-format", "stream-json") || !contains(p, "--verbose") {
 		t.Errorf("claude print form must carry --output-format stream-json and --verbose: %v", p)
 	}
 	for _, kind := range []string{"agy", "claude"} {
 		h, _ := Lookup(kind)
-		l, _ := h.Launch("prov", "m/x", nil, builder, TierHarness)
+		l, _ := h.Launch("prov", "m/x", nil, builder, TierHarness, "")
 		if p := l.Print; contains(p, "--include-partial-messages") {
 			t.Errorf("%s: partial messages are out of scope: %v", kind, p)
 		}
@@ -497,12 +497,12 @@ func checkLaunchExtras(t *testing.T, builder RoleSpec) {
 	// agy pins its workspace to the round's tree; claude and opencode carry
 	// no such flag.
 	a, _ := Lookup("agy")
-	agyLaunch, _ := a.Launch("prov", "m/x", nil, builder, TierHarness)
+	agyLaunch, _ := a.Launch("prov", "m/x", nil, builder, TierHarness, "")
 	if p := agyLaunch.Print; !containsAdjacent(p, "--add-dir", DirPlaceholder) {
 		t.Errorf("agy print form must carry --add-dir <dir>: %v", p)
 	}
 	o, _ := Lookup("opencode")
-	ocLaunch, _ := o.Launch("prov", "m/x", nil, builder, TierHarness)
+	ocLaunch, _ := o.Launch("prov", "m/x", nil, builder, TierHarness, "")
 	if p := ocLaunch.Print; contains(p, "--add-dir") {
 		t.Errorf("opencode: --add-dir is not a flag opencode takes: %v", p)
 	}
@@ -513,20 +513,20 @@ func checkLaunchExtras(t *testing.T, builder RoleSpec) {
 	// its own --add-dir for the workspace alongside it.
 	for _, kind := range []string{"agy", "claude"} {
 		h, _ := Lookup(kind)
-		l, _ := h.Launch("prov", "m/x", nil, builder, TierHarness)
+		l, _ := h.Launch("prov", "m/x", nil, builder, TierHarness, "")
 		if p := l.Print; !containsAdjacent(p, "--add-dir", OutputDirPlaceholder) {
 			t.Errorf("%s print form must carry --add-dir <output-dir>: %v", kind, p)
 		}
 	}
 	// codex names the same directory through its sandbox, not a directory flag.
 	cx, _ := Lookup("codex")
-	cxLaunch, _ := cx.Launch("prov", "gpt-5.6-terra", nil, builder, TierEdit)
+	cxLaunch, _ := cx.Launch("prov", "gpt-5.6-terra", nil, builder, TierEdit, "")
 	if p := cxLaunch.Print; !contains(p, WritableRootPlaceholder) || contains(p, OutputDirPlaceholder) {
 		t.Errorf("codex must name the output directory through WritableRootPlaceholder only: %v", p)
 	}
 
 	unknown := Harness{Kind: "unknown"}
-	got, _ := unknown.Launch("prov", "m/x", []string{"--z"}, builder, TierHarness)
+	got, _ := unknown.Launch("prov", "m/x", []string{"--z"}, builder, TierHarness, "")
 	if len(got.Print) != 0 || got.PromptAt != -1 {
 		t.Errorf("unknown kind: Print = %v PromptAt = %d; want empty and -1", got.Print, got.PromptAt)
 	}
@@ -559,7 +559,7 @@ func TestLaunchClaudeEffort(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
-			got, err := h.Launch("anthropic", tt.model, nil, builder, TierHarness)
+			got, err := h.Launch("anthropic", tt.model, nil, builder, TierHarness, "")
 			if err != nil {
 				t.Fatalf("Launch(%q) error = %v", tt.model, err)
 			}
@@ -583,7 +583,7 @@ func TestLaunchOpencodeKeepsVariant(t *testing.T) {
 		t.Fatal("Lookup(\"opencode\") not found")
 	}
 
-	got, err := h.Launch("cline-pass", "cline-pass/deepseek-v4.1-flash#max", nil, builder, TierHarness)
+	got, err := h.Launch("cline-pass", "cline-pass/deepseek-v4.1-flash#max", nil, builder, TierHarness, "")
 	if err != nil {
 		t.Fatalf("Launch error = %v", err)
 	}
@@ -610,7 +610,7 @@ func TestLaunchCodex(t *testing.T) {
 
 	wantPrint := []string{"exec", PromptPlaceholder, "-p", "plan-executor", "-m", "gpt-5.6-terra", "-c", "model_provider=openai", "-c", "model_reasoning_effort=high", "--json", "-C", DirPlaceholder}
 
-	got, err := h.Launch("openai", "gpt-5.6-terra:high", nil, builder, TierHarness)
+	got, err := h.Launch("openai", "gpt-5.6-terra:high", nil, builder, TierHarness, "")
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
@@ -619,7 +619,7 @@ func TestLaunchCodex(t *testing.T) {
 	}
 
 	wantPrintEdit := append(append([]string(nil), wantPrint...), "-s", "workspace-write", "-c", WritableRootPlaceholder)
-	got, err = h.Launch("openai", "gpt-5.6-terra:high", nil, builder, TierEdit)
+	got, err = h.Launch("openai", "gpt-5.6-terra:high", nil, builder, TierEdit, "")
 	if err != nil {
 		t.Fatalf("Launch() TierEdit error = %v", err)
 	}
@@ -627,12 +627,12 @@ func TestLaunchCodex(t *testing.T) {
 		t.Errorf("TierEdit Print = %v, want %v", got.Print, wantPrintEdit)
 	}
 
-	_, err = h.Launch("openai", "gpt-5.6-terra:high", nil, builder, TierRead)
+	_, err = h.Launch("openai", "gpt-5.6-terra:high", nil, builder, TierRead, "")
 	if !errors.Is(err, ErrTierUnsupported) {
 		t.Fatalf("Launch() TierRead error = %v, want %v", err, ErrTierUnsupported)
 	}
 
-	got, err = h.Launch("openai", "gpt-5.6-terra:high", []string{"--foo"}, builder, TierHarness)
+	got, err = h.Launch("openai", "gpt-5.6-terra:high", []string{"--foo"}, builder, TierHarness, "")
 	if err != nil {
 		t.Fatalf("Launch() extra error = %v", err)
 	}
@@ -661,7 +661,7 @@ func TestLaunchCodexBadModel(t *testing.T) {
 		t.Fatal("Lookup(\"codex\") not found")
 	}
 	for _, model := range []string{":high", "gpt-5.6-terra:"} {
-		_, err := h.Launch("openai", model, nil, builder, TierHarness)
+		_, err := h.Launch("openai", model, nil, builder, TierHarness, "")
 		if !errors.Is(err, ErrBadModel) {
 			t.Errorf("Launch(%q) error = %v, want ErrBadModel", model, err)
 		}
@@ -672,7 +672,7 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 	builder, _ := RoleByName("builder")
 	h, _ := Lookup("agy")
 	extra := []string{"--dangerously-skip-permissions"}
-	l, err := h.Launch("prov", "m/x", extra, builder, TierHarness)
+	l, err := h.Launch("prov", "m/x", extra, builder, TierHarness, "")
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
@@ -699,7 +699,7 @@ func TestPrintArgsSubstitutesPromptAndBudgetWithoutMutating(t *testing.T) {
 
 	// A kind with no budget or dir flag ignores both; the prompt still lands.
 	c, _ := Lookup("claude")
-	cl, err := c.Launch("prov", "m/x", nil, builder, TierHarness)
+	cl, err := c.Launch("prov", "m/x", nil, builder, TierHarness, "")
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
@@ -726,7 +726,7 @@ func TestPrintArgsFillsState(t *testing.T) {
 	if !ok {
 		t.Fatal("Lookup(\"codex\") not found")
 	}
-	l, err := codex.Launch("openai", "gpt-5.6-terra", nil, builder, TierEdit)
+	l, err := codex.Launch("openai", "gpt-5.6-terra", nil, builder, TierEdit, "")
 	if err != nil {
 		t.Fatalf("codex Launch() TierEdit error: %v", err)
 	}
@@ -755,7 +755,7 @@ func TestPrintArgsFillsState(t *testing.T) {
 	}
 
 	claude, _ := Lookup("claude")
-	cl, err := claude.Launch("prov", "m/x", nil, readerRole(t), TierEdit)
+	cl, err := claude.Launch("prov", "m/x", nil, readerRole(t), TierEdit, "")
 	if err != nil {
 		t.Fatalf("claude Launch() TierEdit error = %v", err)
 	}
@@ -947,7 +947,7 @@ func TestPrintArgsPromptFile(t *testing.T) {
 		t.Fatal("Lookup(\"claude\") not found")
 	}
 
-	l, err := claude.Launch("anthropic", "sonnet", nil, readerRole(t), TierEdit)
+	l, err := claude.Launch("anthropic", "sonnet", nil, readerRole(t), TierEdit, "")
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
@@ -988,7 +988,7 @@ func TestPrintArgsChainDir(t *testing.T) {
 		t.Fatal("Lookup(\"claude\") not found")
 	}
 
-	l, err := claude.Launch("anthropic", "sonnet", nil, readerRole(t), TierEdit)
+	l, err := claude.Launch("anthropic", "sonnet", nil, readerRole(t), TierEdit, "")
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}

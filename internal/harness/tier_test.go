@@ -158,7 +158,7 @@ func TestLaunchAppliesTier(t *testing.T) {
 
 	c, _ := Lookup("claude")
 	extra := []string{"--some-flag"}
-	cl, err := c.Launch("prov", "m/x", extra, readerRole(t), TierEdit)
+	cl, err := c.Launch("prov", "m/x", extra, readerRole(t), TierEdit, "")
 	if err != nil {
 		t.Fatalf("claude Launch edit error: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestLaunchAppliesTier(t *testing.T) {
 	}
 
 	a, _ := Lookup("agy")
-	al, err := a.Launch("prov", "m/x", nil, reviewer, TierRead)
+	al, err := a.Launch("prov", "m/x", nil, reviewer, TierRead, "")
 	if err != nil {
 		t.Fatalf("agy Launch read error: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestLaunchAppliesTier(t *testing.T) {
 	}
 
 	o, _ := Lookup("opencode")
-	ol, err := o.Launch("prov", "m/x", nil, builder, TierYolo)
+	ol, err := o.Launch("prov", "m/x", nil, builder, TierYolo, "")
 	if err != nil {
 		t.Fatalf("opencode Launch yolo error: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestLaunchHarnessTierUnchanged(t *testing.T) {
 		if !ok {
 			t.Fatalf("Lookup(%q) not found", tt.kind)
 		}
-		got, err := h.Launch(tt.provider, tt.model, tt.extra, builder, TierHarness)
+		got, err := h.Launch(tt.provider, tt.model, tt.extra, builder, TierHarness, "")
 		if err != nil {
 			t.Fatalf("Launch(%s, TierHarness) error: %v", tt.kind, err)
 		}
@@ -239,7 +239,7 @@ func TestLaunchRefusesExtraArgsPermissionFlag(t *testing.T) {
 	builder, _ := RoleByName("builder")
 
 	agy, _ := Lookup("agy")
-	_, err := agy.Launch("prov", "m/x", []string{"--dangerously-skip-permissions"}, builder, TierRead)
+	_, err := agy.Launch("prov", "m/x", []string{"--dangerously-skip-permissions"}, builder, TierRead, "")
 	if !errors.Is(err, ErrExtraArgsPermission) {
 		t.Fatalf("agy Launch read with extra perm flag error = %v, want ErrExtraArgsPermission", err)
 	}
@@ -247,7 +247,7 @@ func TestLaunchRefusesExtraArgsPermissionFlag(t *testing.T) {
 		t.Errorf("error %q should name --dangerously-skip-permissions", err.Error())
 	}
 
-	l, err := agy.Launch("prov", "m/x", []string{"--dangerously-skip-permissions"}, builder, TierHarness)
+	l, err := agy.Launch("prov", "m/x", []string{"--dangerously-skip-permissions"}, builder, TierHarness, "")
 	if err != nil {
 		t.Fatalf("agy Launch harness with extra perm flag unexpected error: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestLaunchRefusesExtraArgsPermissionFlag(t *testing.T) {
 	}
 
 	claude, _ := Lookup("claude")
-	_, err = claude.Launch("prov", "m/x", []string{"--permission-mode=plan"}, builder, TierRead)
+	_, err = claude.Launch("prov", "m/x", []string{"--permission-mode=plan"}, builder, TierRead, "")
 	if !errors.Is(err, ErrExtraArgsPermission) {
 		t.Fatalf("claude Launch read with extra perm flag error = %v, want ErrExtraArgsPermission", err)
 	}
@@ -271,7 +271,7 @@ func TestLaunchRefusesExtraArgsPermissionFlag(t *testing.T) {
 	}
 
 	codex, _ := Lookup("codex")
-	_, err = codex.Launch("prov", "m/x", []string{"-s", "read-only"}, builder, TierEdit)
+	_, err = codex.Launch("prov", "m/x", []string{"-s", "read-only"}, builder, TierEdit, "")
 	if !errors.Is(err, ErrExtraArgsPermission) {
 		t.Fatalf("codex Launch edit with extra perm flag error = %v, want ErrExtraArgsPermission", err)
 	}
@@ -279,7 +279,7 @@ func TestLaunchRefusesExtraArgsPermissionFlag(t *testing.T) {
 		t.Errorf("error %q should name -s", err.Error())
 	}
 
-	cl, err := codex.Launch("prov", "m/x", []string{"-s", "read-only"}, builder, TierHarness)
+	cl, err := codex.Launch("prov", "m/x", []string{"-s", "read-only"}, builder, TierHarness, "")
 	if err != nil {
 		t.Fatalf("codex Launch harness with extra perm flag unexpected error: %v", err)
 	}
@@ -316,7 +316,7 @@ func checkOtherKindsOmitPrompt(t *testing.T, builder RoleSpec) {
 			t.Fatalf("Lookup(%q) not found", kind)
 		}
 		for _, tier := range []Tier{TierHarness, TierRead, TierEdit, TierYolo} {
-			l, err := h.Launch("prov", "model", nil, builder, tier)
+			l, err := h.Launch("prov", "model", nil, builder, tier, "")
 			if err != nil {
 				continue
 			}
@@ -341,20 +341,20 @@ func TestLaunchClaudePromptFilePlaceholder(t *testing.T) {
 	}
 	extra := []string{"--extra-arg"}
 
-	clRead, err := claude.Launch("anthropic", "sonnet", extra, builder, TierRead)
+	clRead, err := claude.Launch("anthropic", "sonnet", extra, builder, TierRead, "")
 	if err != nil {
 		t.Fatalf("claude Launch read error: %v", err)
 	}
 	assertClaudePermissionPlaceholder(t, clRead, "plan")
 
-	clEdit, err := claude.Launch("anthropic", "sonnet", extra, readerRole(t), TierEdit)
+	clEdit, err := claude.Launch("anthropic", "sonnet", extra, readerRole(t), TierEdit, "")
 	if err != nil {
 		t.Fatalf("claude Launch edit error: %v", err)
 	}
 	assertClaudePermissionPlaceholder(t, clEdit, "acceptEdits")
 
 	for _, tier := range []Tier{TierYolo, TierHarness} {
-		cl, err := claude.Launch("anthropic", "sonnet", nil, builder, tier)
+		cl, err := claude.Launch("anthropic", "sonnet", nil, builder, tier, "")
 		if err != nil {
 			t.Fatalf("claude Launch %s error: %v", tier, err)
 		}
@@ -433,7 +433,7 @@ func readerRole(t *testing.T) RoleSpec {
 func TestLaunchRefusesClaudeBuilderAtEdit(t *testing.T) {
 	claude, _ := Lookup("claude")
 	builder, _ := RoleByName("builder")
-	_, err := claude.Launch("anthropic", "sonnet", nil, builder, TierEdit)
+	_, err := claude.Launch("anthropic", "sonnet", nil, builder, TierEdit, "")
 	if !errors.Is(err, ErrTierUnsupported) {
 		t.Fatalf("claude builder at edit: err = %v, want ErrTierUnsupported", err)
 	}
@@ -441,7 +441,7 @@ func TestLaunchRefusesClaudeBuilderAtEdit(t *testing.T) {
 		t.Errorf("err %q should name use --tier yolo", err.Error())
 	}
 	for _, tier := range []Tier{TierHarness, TierRead, TierYolo} {
-		if _, err := claude.Launch("anthropic", "sonnet", nil, builder, tier); err != nil {
+		if _, err := claude.Launch("anthropic", "sonnet", nil, builder, tier, ""); err != nil {
 			t.Errorf("claude builder at %s: err = %v, want nil", tier, err)
 		}
 	}
@@ -449,7 +449,7 @@ func TestLaunchRefusesClaudeBuilderAtEdit(t *testing.T) {
 
 func TestLaunchKeepsClaudeReaderAtEdit(t *testing.T) {
 	claude, _ := Lookup("claude")
-	l, err := claude.Launch("anthropic", "sonnet", nil, readerRole(t), TierEdit)
+	l, err := claude.Launch("anthropic", "sonnet", nil, readerRole(t), TierEdit, "")
 	if err != nil {
 		t.Fatalf("claude reader at edit: err = %v, want nil", err)
 	}

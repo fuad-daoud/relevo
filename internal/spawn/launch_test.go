@@ -67,6 +67,38 @@ func TestHeadlessLaunchMuseMissingDefinitionNamesPathAndFix(t *testing.T) {
 	}
 }
 
+// TestHeadlessLaunchMuseContributorMode pins the guard through the headless
+// choke point: the candidate's field reaches muse argv verbatim, and an unset
+// field (an old candidates file) renders off.
+func TestHeadlessLaunchMuseContributorMode(t *testing.T) {
+	installMuseDefinition(t, "body\n")
+	role, _ := harness.RoleByName("builder")
+	for _, tt := range []struct{ mode, want string }{
+		{"on", "on"},
+		{"off", "off"},
+		{"", "off"},
+	} {
+		c := museCandidate()
+		c.ContributorMode = tt.mode
+		argv, err := HeadlessLaunch(c, role, harness.TierYolo, time.Hour, "go", "/w", "/s", "", "")
+		if err != nil {
+			t.Fatalf("HeadlessLaunch(mode %q): %v", tt.mode, err)
+		}
+		if !containsAdjacent(argv, "--contributor-mode", tt.want) {
+			t.Errorf("HeadlessLaunch(mode %q) argv %v lacks --contributor-mode %s", tt.mode, argv, tt.want)
+		}
+	}
+}
+
+func containsAdjacent(argv []string, flag, value string) bool {
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == flag && argv[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
 func TestHeadlessLaunchEmptyPromptSkipsDefinitionRead(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	role, _ := harness.RoleByName("builder")

@@ -66,6 +66,11 @@ type Candidate struct {
 	// printers say "plan", never "$0" and never "free".
 	Plan bool `json:"plan,omitempty"`
 
+	// ContributorMode is the muse-only per-run training-data guard: "on" or
+	// "off", rendered as an explicit --contributor-mode flag on every muse
+	// launch. "" means unset, which renders "off".
+	ContributorMode string `json:"contributor_mode,omitempty"`
+
 	// Windows limits when the candidate may be picked; MaxConcurrency caps the
 	// rounds running on it at once, and 0 means the key is absent (Parse
 	// refuses a stored 0).
@@ -294,6 +299,12 @@ func Parse(name string, data []byte) (*Set, []string, error) {
 		}
 		c.Name = names[i]
 
+		if w, err := migrateContributorMode(name, base, i, &c); err != nil {
+			return nil, nil, err
+		} else if w != "" {
+			warnings = append(warnings, w)
+		}
+
 		warn, err := validateCandidate(name, base, i, c)
 		if err != nil {
 			return nil, nil, err
@@ -369,6 +380,55 @@ func checkRoles(name, base string, i int, c Candidate, h harness.Harness) (strin
 	return "", nil
 }
 
+// migrateContributorMode moves a hand-written --contributor-mode out of a muse
+// candidate's ExtraArgs into ContributorMode, so the flag is always rendered
+// from the typed field and never passes through as a raw extra arg. A bare
+// "--contributor-mode on" pair and a "--contributor-mode=on" element both
+// migrate; the last one wins when several are present. The migration is
+// reported through the warning channel and never fails a load for a value that
+// works today; only an invalid value fails the load. When both the field and
+// extra_args set it, the field wins and the warning says so. Other harnesses
+// keep their extra_args verbatim.
+func migrateContributorMode(name, base string, i int, c *Candidate) (string, error) {
+	if c.Harness != "muse" {
+		return "", nil
+	}
+	var kept []string
+	var seen []string
+	extra := c.ExtraArgs
+	for k := 0; k < len(extra); k++ {
+		arg := extra[k]
+		if arg == "--contributor-mode" {
+			if k+1 >= len(extra) {
+				return "", fmt.Errorf("candidates %s: candidate %d: extra_args --contributor-mode needs \"on\" or \"off\" (use contributor_mode)", name, i)
+			}
+			seen = append(seen, extra[k+1])
+			k++
+			continue
+		}
+		if v, ok := strings.CutPrefix(arg, "--contributor-mode="); ok {
+			seen = append(seen, v)
+			continue
+		}
+		kept = append(kept, arg)
+	}
+	if len(seen) == 0 {
+		return "", nil
+	}
+	for _, v := range seen {
+		if v != "on" && v != "off" {
+			return "", fmt.Errorf("candidates %s: candidate %d: extra_args --contributor-mode %q: want \"on\" or \"off\" (use contributor_mode)", name, i, v)
+		}
+	}
+	c.ExtraArgs = kept
+	value := seen[len(seen)-1]
+	if c.ContributorMode != "" {
+		return fmt.Sprintf("%s: candidate %d: extra_args --contributor-mode ignored (contributor_mode %q wins)", base, i, c.ContributorMode), nil
+	}
+	c.ContributorMode = value
+	return fmt.Sprintf("%s: candidate %d: extra_args --contributor-mode migrated to contributor_mode %q", base, i, value), nil
+}
+
 // checkRest validates the remaining fields, in the order their errors are reported.
 func checkRest(name string, i int, c Candidate) error {
 	if c.Tree != "" && c.Tree != "binding" && c.Tree != "none" {
@@ -384,6 +444,12 @@ func checkRest(name string, i int, c Candidate) error {
 		if _, err := harness.ParseTier(c.Tier); err != nil {
 			return fmt.Errorf("candidates %s: candidate %d: tier: %w", name, i, err)
 		}
+	}
+	if c.ContributorMode != "" && c.ContributorMode != "on" && c.ContributorMode != "off" {
+		return fmt.Errorf("candidates %s: candidate %d: contributor_mode %q: want \"on\" or \"off\"", name, i, c.ContributorMode)
+	}
+	if c.ContributorMode != "" && c.Harness != "muse" {
+		return fmt.Errorf("candidates %s: candidate %d: contributor_mode is only valid for harness \"muse\"", name, i)
 	}
 	if err := compilePatterns(name, i, "denial_patterns", c.DenialPatterns); err != nil {
 		return err

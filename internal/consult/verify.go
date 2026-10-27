@@ -229,7 +229,7 @@ func (v verifyStart) launch(wt, diff, gateLog string) (store.Binding, error) {
 	if !ok {
 		return v.fail(fmt.Sprintf("unknown harness kind %q", c.Harness))
 	}
-	l, err := h.Launch(c.Provider, c.Model, c.ExtraArgs, role, tier)
+	l, err := h.Launch(c.Provider, c.Model, c.ExtraArgs, role, tier, c.ContributorMode)
 	if err != nil {
 		return v.fail(err.Error())
 	}
