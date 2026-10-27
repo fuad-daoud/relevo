@@ -252,6 +252,8 @@ type Request struct {
 	// ClaimToken is the random token a claim_identity writes for the identity
 	// Origin names, at At. Empty reads the claim without writing one.
 	ClaimToken string `json:"claim_token,omitempty"`
+	// Traffic is the one row a publish_traffic writes, keyed on hello.
+	Traffic *TrafficRow `json:"traffic,omitempty"`
 }
 
 // Response is one line of the pipe, from the worker to the daemon.
@@ -299,6 +301,8 @@ type Response struct {
 	// holding after its write: empty and zero when it holds none.
 	ClaimToken string     `json:"claim_token,omitempty"`
 	ClaimAt    *time.Time `json:"claim_at,omitempty"`
+	// Traffic is a publish_traffic's answer: every origin's row the replica holds.
+	Traffic map[string]TrafficRow `json:"traffic,omitempty"`
 }
 
 // RefusalCode is the class of a refusal the worker answered with. It is the

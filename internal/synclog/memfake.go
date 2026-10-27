@@ -57,6 +57,9 @@ type memLog struct {
 	epochCut map[string]EpochCut
 	// claims is the adoption claim each identity holds.
 	claims map[string]claimRow
+	// traffic is each origin's published month of sync traffic, keyed by
+	// origin: one row per machine, overwritten by its own publishes.
+	traffic map[string]TrafficRow
 }
 
 // NewMemTransport returns a handle on an empty log for the installation named
@@ -312,6 +315,14 @@ func (m *MemTransport) ReadMarks() (MarkState, error) {
 	return m.log.markState(), nil
 }
 
+// PublishTraffic records this installation's traffic row and answers with
+// every origin's row. The origin is the transport's own -- the rule
+// PublishMarks has: a handle built for one installation cannot move another's
+// row, only its own.
+func (m *MemTransport) PublishTraffic(row TrafficRow) (map[string]TrafficRow, error) {
+	return m.log.publishTraffic(m.origin, row), nil
+}
+
 // publishMarks writes one reader's rows. A mark only grows, so a repeat that
 // named a lower sequence is ignored rather than moving the row back: a mark is
 // read as the furthest a reader has got, and a stale publish must not make it
@@ -387,6 +398,23 @@ func (m *memLog) markState() MarkState {
 			out.Heads[e.Origin] = e.Seq
 		}
 		out.Entries[e.Origin]++
+	}
+	return out
+}
+
+// publishTraffic overwrites one origin's row and reads every row back, so a
+// publish answers with the account as the log holds it after this write.
+func (m *memLog) publishTraffic(origin string, row TrafficRow) map[string]TrafficRow {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.traffic == nil {
+		m.traffic = make(map[string]TrafficRow)
+	}
+	m.traffic[origin] = row
+	out := make(map[string]TrafficRow, len(m.traffic))
+	for other, held := range m.traffic {
+		out[other] = held
 	}
 	return out
 }

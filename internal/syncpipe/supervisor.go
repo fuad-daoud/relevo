@@ -134,6 +134,22 @@ func (s *Supervisor) PublishMarks(marks map[string]int, at time.Time) error {
 	return s.drive("publish_marks", func(c *Client) error { return c.PublishMarks(marks, at) })
 }
 
+// PublishTraffic writes this installation's traffic row and answers with every
+// origin's row. It runs through the breaker like every other call, for the
+// reason PublishMarks gives: a worker that stops answering is dead whatever
+// it was doing.
+func (s *Supervisor) PublishTraffic(row synclog.TrafficRow) (map[string]synclog.TrafficRow, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out map[string]synclog.TrafficRow
+	err := s.drive("publish_traffic", func(c *Client) error {
+		var e error
+		out, e = c.PublishTraffic(row)
+		return e
+	})
+	return out, err
+}
+
 // ReadMarks answers with every published mark and each origin's size.
 func (s *Supervisor) ReadMarks() (synclog.MarkState, error) {
 	s.mu.Lock()

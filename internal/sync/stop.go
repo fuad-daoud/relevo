@@ -111,6 +111,26 @@ func (s *StopTransport) ReadMarks() (synclog.MarkState, error) {
 	return s.inner.ReadMarks()
 }
 
+// errTrafficUnsupported is what PublishTraffic reports for a transport that
+// carries no traffic publisher. It is a sentinel rather than a failure: the
+// publisher is optional, and a client without it is skipped silently.
+var errTrafficUnsupported = errors.New("sync: the client publishes no traffic")
+
+// PublishTraffic writes this installation's traffic row and answers with every
+// origin's row. The publisher is an optional interface on the transport
+// underneath, so a client that carries none is reported with the sentinel
+// rather than stopping the attempt.
+func (s *StopTransport) PublishTraffic(row synclog.TrafficRow) (map[string]synclog.TrafficRow, error) {
+	if s.stopped.Load() {
+		return nil, ErrStopped
+	}
+	p, ok := s.inner.(synclog.TrafficPublisher)
+	if !ok {
+		return nil, errTrafficUnsupported
+	}
+	return p.PublishTraffic(row)
+}
+
 func (s *StopTransport) PullRange(origin string, after, upto int) ([]synclog.Entry, error) {
 	if s.stopped.Load() {
 		return nil, ErrStopped
