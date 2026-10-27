@@ -58,6 +58,11 @@ type Runner struct {
 	// the next reading is measured against.
 	readMu   gosync.Mutex
 	lastRead synclog.Stats
+
+	// roundsOpen is the daemon's last noted open-round count, stored as n+1
+	// with 0 meaning unknown: the note arrives on the daemon tick while
+	// attempts read it on the sync goroutine.
+	roundsOpen atomic.Int64
 }
 
 // Enabled reports whether there is anything to drive. A machine with no client

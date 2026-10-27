@@ -40,6 +40,7 @@ func (r *Runner) RecordAttempt(start time.Time, out SteadyResult) {
 		a.Error = out.Err.Error()
 	}
 	r.put(KeyLastAttempt, a)
+	r.recordExports(a.End, out.Exported)
 }
 
 // failedAttempt is the result an attempt that never reached the pipeline
