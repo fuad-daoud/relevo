@@ -6,7 +6,10 @@ package sync
 // and it reaches nothing but the machine's local file, so it answers with the
 // network out.
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 const (
 	// quotaWarnShare is the share of the month's quota whose use makes doctor
@@ -142,3 +145,12 @@ func (q QuotaReading) PaceNotice() bool {
 // powers of 1000 -- so every sentence about traffic on every surface quotes
 // the units the quota is set in.
 func FormatTraffic(n int64) string { return humanBytes(n) }
+
+// Machines renders a machine count for a sentence: a machine alone on the log
+// is the common first reading, and "1 machines" reads as a bug.
+func Machines(n int) string {
+	if n == 1 {
+		return "1 machine"
+	}
+	return fmt.Sprintf("%d machines", n)
+}

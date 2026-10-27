@@ -49,9 +49,9 @@ func syncQuotaCheck(q relevosync.QuotaReading, qok bool, idle relevosync.ExportH
 		return c, true
 	}
 	if qok {
-		c.Detail = fmt.Sprintf("account %s of %s (%.1f%%) across %d machines",
+		c.Detail = fmt.Sprintf("account %s of %s (%.1f%%) across %s",
 			relevosync.FormatTraffic(q.Account.Total), relevosync.FormatTraffic(q.Quota),
-			q.UsedShare()*100, q.Account.Machines)
+			q.UsedShare()*100, relevosync.Machines(q.Account.Machines))
 		if q.Projectable {
 			c.Detail += fmt.Sprintf(", on pace for %s", relevosync.FormatTraffic(q.Projected))
 		}

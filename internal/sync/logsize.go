@@ -165,7 +165,7 @@ func FormatAccount(q QuotaReading) string {
 	if q.Quota > 0 {
 		out += fmt.Sprintf(" of %s (%.1f%%)", humanBytes(q.Quota), q.UsedShare()*100)
 	}
-	out += fmt.Sprintf(" across %d machines", q.Account.Machines)
+	out += " across " + Machines(q.Account.Machines)
 	if q.Projectable && q.Projected > 0 {
 		out += fmt.Sprintf(", on pace for %s", humanBytes(q.Projected))
 	}

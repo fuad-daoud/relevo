@@ -229,3 +229,11 @@ func TestFormatAccountShapes(t *testing.T) {
 		t.Errorf("never read = %q, want %q", got, want)
 	}
 }
+
+func TestMachinesSingularForOne(t *testing.T) {
+	for n, want := range map[int]string{1: "1 machine", 2: "2 machines", 0: "0 machines"} {
+		if got := Machines(n); got != want {
+			t.Errorf("Machines(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
