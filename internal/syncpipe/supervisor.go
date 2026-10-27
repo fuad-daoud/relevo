@@ -150,6 +150,15 @@ func (s *Supervisor) PublishTraffic(row synclog.TrafficRow) (map[string]synclog.
 	return out, err
 }
 
+// The traffic publisher is an optional interface the runner asserts at run
+// time, so a transport that lost its method would build and test green while
+// every machine silently stopped publishing. These make that a build error for
+// the two transports production drives.
+var (
+	_ synclog.TrafficPublisher = (*Supervisor)(nil)
+	_ synclog.TrafficPublisher = (*Client)(nil)
+)
+
 // ReadMarks answers with every published mark and each origin's size.
 func (s *Supervisor) ReadMarks() (synclog.MarkState, error) {
 	s.mu.Lock()

@@ -27,9 +27,8 @@ const (
 )
 
 // trafficEvery is the shortest gap between two traffic publishes. A publish is
-// a Turso write and a push, and the row is one per origin overwritten in
-// place, so an hour between them costs an account-wide total measured against
-// a monthly quota no accuracy worth a transfer every tick.
+// a Turso write and a push, and the total it feeds is read against a monthly
+// quota, so an hour-old row loses nothing a transfer on every tick would buy.
 const trafficEvery = time.Hour
 
 // AccountSnapshot is what a publish read back from the log: every origin's
