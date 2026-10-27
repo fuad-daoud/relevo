@@ -186,6 +186,41 @@ func TestLoadValidation(t *testing.T) {
 			body:          `[{"harness":"claude","provider":"anthropic","model":"m","roles":["builder"],"denial_patterns":["["]}]`,
 			wantSubstring: "denial_patterns[0]",
 		},
+		{
+			name:          "invalid contributor_mode",
+			body:          `[{"harness":"muse","provider":"meta","model":"m","roles":["builder"],"contributor_mode":"yes"}]`,
+			wantSubstring: `contributor_mode "yes"`,
+		},
+		{
+			name:          "contributor_mode on claude",
+			body:          `[{"harness":"claude","provider":"anthropic","model":"m","roles":["builder"],"contributor_mode":"on"}]`,
+			wantSubstring: `contributor_mode is only valid for harness "muse"`,
+		},
+		{
+			name:          "contributor_mode on agy",
+			body:          `[{"harness":"agy","provider":"google","model":"m","roles":["builder"],"contributor_mode":"off"}]`,
+			wantSubstring: `contributor_mode is only valid for harness "muse"`,
+		},
+		{
+			name:          "contributor_mode on codex",
+			body:          `[{"harness":"codex","provider":"openai","model":"m","roles":["builder"],"contributor_mode":"on"}]`,
+			wantSubstring: `contributor_mode is only valid for harness "muse"`,
+		},
+		{
+			name:          "contributor_mode on opencode",
+			body:          `[{"harness":"opencode","provider":"test","model":"m","roles":["builder"],"contributor_mode":"on"}]`,
+			wantSubstring: `contributor_mode is only valid for harness "muse"`,
+		},
+		{
+			name:          "invalid extra_args contributor-mode",
+			body:          `[{"harness":"muse","provider":"meta","model":"m","roles":["builder"],"extra_args":["--contributor-mode","maybe"]}]`,
+			wantSubstring: "contributor_mode",
+		},
+		{
+			name:          "bare extra_args contributor-mode without a value",
+			body:          `[{"harness":"muse","provider":"meta","model":"m","roles":["builder"],"extra_args":["--contributor-mode"]}]`,
+			wantSubstring: "contributor_mode",
+		},
 	}
 
 	for _, tt := range tests {
@@ -364,6 +399,131 @@ func TestLoadPlanFlag(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestLoadContributorModeValues pins the typed field's vocabulary: on and off
+// load as written, and a missing key loads as unset without touching anything
+// else, so old candidates files behave exactly as today.
+func TestLoadContributorModeValues(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		ref  Ref
+		want string
+	}{
+		{
+			name: "on",
+			body: `[{"harness":"muse","provider":"meta","model":"m","roles":["builder"],"contributor_mode":"on"}]`,
+			ref:  Ref{"muse", "meta", "m"},
+			want: "on",
+		},
+		{
+			name: "off",
+			body: `[{"harness":"muse","provider":"meta","model":"m","roles":["builder"],"contributor_mode":"off"}]`,
+			ref:  Ref{"muse", "meta", "m"},
+			want: "off",
+		},
+		{
+			name: "unset",
+			body: `[{"harness":"muse","provider":"meta","model":"m","roles":["builder"]}]`,
+			ref:  Ref{"muse", "meta", "m"},
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := writeCandidates(t, tt.body).Lookup(tt.ref)
+			if err != nil {
+				t.Fatalf("Lookup(%s): %v", tt.ref, err)
+			}
+			if c.ContributorMode != tt.want {
+				t.Errorf("ContributorMode = %q, want %q", c.ContributorMode, tt.want)
+			}
+		})
+	}
+}
+
+// TestParseMigratesExtraArgsContributorMode pins the load-time migration of a
+// hand-written --contributor-mode in a muse candidate's extra_args: the value
+// becomes the typed field, the flag leaves the effective extra_args, and a
+// warning names the migration. The typed field wins when both are set.
+func TestParseMigratesExtraArgsContributorMode(t *testing.T) {
+	const ref = "muse/meta/m"
+	lookup := func(t *testing.T, set *Set) Candidate {
+		t.Helper()
+		r, err := ParseRef(ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := set.Lookup(r)
+		if err != nil {
+			t.Fatalf("Lookup(%s): %v", ref, err)
+		}
+		return c
+	}
+
+	t.Run("bare form migrates and warns", func(t *testing.T) {
+		set, warnings := loadWarnings(t, `[{"harness":"muse","provider":"meta","model":"m","roles":["builder"],"extra_args":["--contributor-mode","on"]}]`)
+		c := lookup(t, set)
+		if c.ContributorMode != "on" {
+			t.Errorf("ContributorMode = %q, want %q", c.ContributorMode, "on")
+		}
+		if len(c.ExtraArgs) != 0 {
+			t.Errorf("ExtraArgs = %v, want the flag dropped", c.ExtraArgs)
+		}
+		if !warnsMigration(t, warnings, "migrated") {
+			t.Errorf("warnings = %q, want one naming the migration", warnings)
+		}
+	})
+
+	t.Run("equals form migrates and keeps neighbours", func(t *testing.T) {
+		set, warnings := loadWarnings(t, `[{"harness":"muse","provider":"meta","model":"m","roles":["builder"],"extra_args":["--yolo","--contributor-mode=off"]}]`)
+		c := lookup(t, set)
+		if c.ContributorMode != "off" {
+			t.Errorf("ContributorMode = %q, want %q", c.ContributorMode, "off")
+		}
+		if want := []string{"--yolo"}; !reflect.DeepEqual(c.ExtraArgs, want) {
+			t.Errorf("ExtraArgs = %v, want %v", c.ExtraArgs, want)
+		}
+		if !warnsMigration(t, warnings, "migrated") {
+			t.Errorf("warnings = %q, want one naming the migration", warnings)
+		}
+	})
+
+	t.Run("typed field wins over extra_args", func(t *testing.T) {
+		set, warnings := loadWarnings(t, `[{"harness":"muse","provider":"meta","model":"m","roles":["builder"],"contributor_mode":"off","extra_args":["--contributor-mode=on"]}]`)
+		c := lookup(t, set)
+		if c.ContributorMode != "off" {
+			t.Errorf("ContributorMode = %q, want the typed field %q", c.ContributorMode, "off")
+		}
+		if len(c.ExtraArgs) != 0 {
+			t.Errorf("ExtraArgs = %v, want the flag dropped", c.ExtraArgs)
+		}
+		if !warnsMigration(t, warnings, "wins") {
+			t.Errorf("warnings = %q, want one saying the field wins", warnings)
+		}
+	})
+
+	t.Run("invalid extra_args value fails naming the field", func(t *testing.T) {
+		_, _, err := Parse("candidates.json", []byte(`[{"harness":"muse","provider":"meta","model":"m","roles":["builder"],"extra_args":["--contributor-mode=maybe"]}]`))
+		if err == nil {
+			t.Fatal("Parse succeeded, want a refusal for the invalid value")
+		}
+		if !strings.Contains(err.Error(), "contributor_mode") {
+			t.Errorf("Parse err = %q, want it naming contributor_mode", err.Error())
+		}
+	})
+}
+
+func warnsMigration(t *testing.T, warnings []string, want string) bool {
+	t.Helper()
+	for _, w := range warnings {
+		if strings.Contains(w, "--contributor-mode") && strings.Contains(w, "contributor_mode") && strings.Contains(w, want) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestSetProviders(t *testing.T) {

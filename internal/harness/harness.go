@@ -332,10 +332,12 @@ type Launch struct {
 }
 
 // Launch renders argv for role at tier: PermissionArgs after the base form and
-// before extra. It returns ErrTierUnsupported for a refusal cell, or
+// before extra. contributorMode is the muse-only training-data guard from the
+// candidate ("on", "off", or "" for unset, which renders "off"); other kinds
+// ignore it. It returns ErrTierUnsupported for a refusal cell, or
 // ErrExtraArgsPermission when tier is not TierHarness and extra carries a
 // permission flag for this kind.
-func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, tier Tier) (Launch, error) {
+func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, tier Tier, contributorMode string) (Launch, error) {
 	var print []string
 	promptAt := -1
 
@@ -377,7 +379,7 @@ func (h Harness) Launch(provider, model string, extra []string, role RoleSpec, t
 		promptAt = 1
 	case "muse":
 		var err error
-		if print, promptAt, err = museLaunch(model); err != nil {
+		if print, promptAt, err = museLaunch(model, contributorMode); err != nil {
 			return Launch{}, err
 		}
 	}
@@ -420,16 +422,26 @@ func codexPrint(provider, model string, role RoleSpec) ([]string, error) {
 	return append(append([]string{"exec", PromptPlaceholder}, cfg...), "--json", "-C", DirPlaceholder), nil
 }
 
-// museLaunch renders muse's print form and the index of its prompt.
-func museLaunch(model string) ([]string, int, error) {
+// museLaunch renders muse's print form and the index of its prompt. The
+// contributor guard is explicit both ways: "on" renders on, "off" or unset
+// ("") renders off, and any other value is an error.
+func museLaunch(model, contributorMode string) ([]string, int, error) {
 	id, effort, err := SplitEffort(model)
 	if err != nil {
 		return nil, -1, fmt.Errorf("%w: muse model %q", ErrBadModel, model)
+	}
+	mode := contributorMode
+	if mode == "" {
+		mode = "off"
+	}
+	if mode != "on" && mode != "off" {
+		return nil, -1, fmt.Errorf("bad contributor_mode %q: want \"on\" or \"off\"", contributorMode)
 	}
 	print := []string{"exec", "--json", "--model", id}
 	if effort != "" {
 		print = append(print, "--reasoning-effort", effort)
 	}
+	print = append(print, "--contributor-mode", mode)
 	// A headless run must neither double its model calls with reminders nor
 	// wait on a question nobody can answer.
 	print = append(print, "--disable-reminders", "--disable-request-user-input",

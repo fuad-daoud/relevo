@@ -32,7 +32,9 @@ func checkResumeSessionID(sessionID string) error {
 // Resume renders the argv that continues an existing harness session with one
 // more prompt. The returned slice is the argv after the binary. claude and agy
 // continue the session in place; opencode forks, leaving the original untouched.
-func (h Harness) Resume(sessionID, prompt string, tier Tier) ([]string, error) {
+// contributorMode is the muse-only training-data guard from the candidate
+// ("on", "off", or "" for unset, which renders "off"); other kinds ignore it.
+func (h Harness) Resume(sessionID, prompt string, tier Tier, contributorMode string) ([]string, error) {
 	if err := checkResumeSessionID(sessionID); err != nil {
 		return nil, err
 	}
@@ -48,7 +50,15 @@ func (h Harness) Resume(sessionID, prompt string, tier Tier) ([]string, error) {
 	case "opencode":
 		base = []string{"run", prompt, "--session", sessionID, "--fork", "--format", "json", "--thinking", "--standalone"}
 	case "muse":
+		mode := contributorMode
+		if mode == "" {
+			mode = "off"
+		}
+		if mode != "on" && mode != "off" {
+			return nil, fmt.Errorf("bad contributor_mode %q: want \"on\" or \"off\"", contributorMode)
+		}
 		base = []string{"exec", "--json", "--session-id", sessionID,
+			"--contributor-mode", mode,
 			"--disable-reminders", "--disable-request-user-input", prompt}
 	case "codex":
 		return nil, fmt.Errorf("%w: codex", ErrResumeUnsupported)

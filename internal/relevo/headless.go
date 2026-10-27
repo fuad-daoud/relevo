@@ -427,7 +427,7 @@ func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	if err != nil {
 		return b, err
 	}
-	l, err := h.Launch(c.Provider, c.Model, c.ExtraArgs, role, tier)
+	l, err := h.Launch(c.Provider, c.Model, c.ExtraArgs, role, tier, c.ContributorMode)
 	if err != nil {
 		return b, err
 	}

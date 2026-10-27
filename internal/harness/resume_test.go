@@ -60,7 +60,7 @@ func TestResumePerKind(t *testing.T) {
 			if !ok {
 				t.Fatalf("Lookup(%q) not found", tt.kind)
 			}
-			got, err := h.Resume(tt.id, prompt, tt.tier)
+			got, err := h.Resume(tt.id, prompt, tt.tier, "")
 			switch {
 			case tt.refuse:
 				if err == nil {
@@ -87,7 +87,7 @@ func TestResumeRefusalNamesTheKind(t *testing.T) {
 	if !ok {
 		t.Fatal("Lookup(\"codex\") not found")
 	}
-	_, err := h.Resume("thread-1", "p", TierHarness)
+	_, err := h.Resume("thread-1", "p", TierHarness, "")
 	if !errors.Is(err, ErrResumeUnsupported) {
 		t.Fatalf("error = %v, want ErrResumeUnsupported", err)
 	}
@@ -99,7 +99,7 @@ func TestResumeRefusalNamesTheKind(t *testing.T) {
 func TestResumeRefusesWhitespace(t *testing.T) {
 	h, _ := Lookup("claude")
 	for _, id := range []string{"a b", "a\tb", "a\nb"} {
-		if _, err := h.Resume(id, "p", TierRead); err == nil {
+		if _, err := h.Resume(id, "p", TierRead, ""); err == nil {
 			t.Errorf("Resume(%q) = nil error, want a refusal", id)
 		}
 	}
@@ -206,8 +206,8 @@ func TestResumeBuildPerKind(t *testing.T) {
 		{name: "codex", kind: "codex", id: "thread-1", wantErr: ErrResumeUnsupported},
 		{
 			name: "muse", kind: "muse", id: "sess-1",
-			want: []string{"exec", "--json", "--model", model, "--disable-reminders",
-				"--disable-request-user-input", "--workspace", dir, "-c", `run.developer_prompt=""`,
+			want: []string{"exec", "--json", "--model", model, "--contributor-mode", "off",
+				"--disable-reminders", "--disable-request-user-input", "--workspace", dir, "-c", `run.developer_prompt=""`,
 				prompt, "--session-id", "sess-1"},
 		},
 		{name: "unknown kind", kind: "future", id: "id-1", wantErr: ErrResumeUnsupported},
@@ -228,7 +228,7 @@ func checkResumeBuild(t *testing.T, tt resumeBuildCase, builder RoleSpec, provid
 	if known, ok := Lookup(tt.kind); ok {
 		h = known
 	}
-	l, err := h.Launch(provider, model, nil, builder, TierHarness)
+	l, err := h.Launch(provider, model, nil, builder, TierHarness, "")
 	if err != nil {
 		t.Fatalf("Launch(%s): %v", tt.kind, err)
 	}
@@ -265,7 +265,7 @@ func TestResumeBuildForwardsPromptFile(t *testing.T) {
 	if !ok {
 		t.Fatal("Lookup(\"claude\") not found")
 	}
-	l, err := claude.Launch("anthropic", "sonnet", nil, readerRole(t), TierEdit)
+	l, err := claude.Launch("anthropic", "sonnet", nil, readerRole(t), TierEdit, "")
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
@@ -289,7 +289,7 @@ func TestResumeBuildForwardsChainDir(t *testing.T) {
 	if !ok {
 		t.Fatal("Lookup(\"claude\") not found")
 	}
-	l, err := claude.Launch("anthropic", "sonnet", nil, readerRole(t), TierEdit)
+	l, err := claude.Launch("anthropic", "sonnet", nil, readerRole(t), TierEdit, "")
 	if err != nil {
 		t.Fatalf("Launch() error = %v", err)
 	}
@@ -323,13 +323,36 @@ func TestResumeBuildForwardsChainDir(t *testing.T) {
 
 func TestResumeMuseContinuesSessionInPlace(t *testing.T) {
 	h, _ := Lookup("muse")
-	got, err := h.Resume("sess-1", "next", TierYolo)
+	got, err := h.Resume("sess-1", "next", TierYolo, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"exec", "--json", "--session-id", "sess-1", "--disable-reminders",
-		"--disable-request-user-input", "next", "--yolo"}
+	want := []string{"exec", "--json", "--session-id", "sess-1", "--contributor-mode", "off",
+		"--disable-reminders", "--disable-request-user-input", "next", "--yolo"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Resume() = %v, want %v", got, want)
+	}
+}
+
+// TestResumeMuseContributorMode pins the session-resume guard both ways: on
+// renders on, off and unset render off, so a resumed session keeps the
+// candidate's value instead of the machine's saved muse setting.
+func TestResumeMuseContributorMode(t *testing.T) {
+	h, _ := Lookup("muse")
+	for _, tt := range []struct{ mode, want string }{
+		{"on", "on"},
+		{"off", "off"},
+		{"", "off"},
+	} {
+		got, err := h.Resume("sess-1", "next", TierHarness, tt.mode)
+		if err != nil {
+			t.Fatalf("Resume(mode %q): %v", tt.mode, err)
+		}
+		want := []string{"exec", "--json", "--session-id", "sess-1",
+			"--contributor-mode", tt.want,
+			"--disable-reminders", "--disable-request-user-input", "next"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("Resume(mode %q) = %v, want %v", tt.mode, got, want)
+		}
 	}
 }

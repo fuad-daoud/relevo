@@ -4,18 +4,19 @@ import (
 	"errors"
 	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
 
-func museBuilderLaunch(t *testing.T, model string, tier Tier, extra ...string) (Launch, error) {
+func museBuilderLaunch(t *testing.T, model string, tier Tier, contributorMode string, extra ...string) (Launch, error) {
 	t.Helper()
 	builder, _ := RoleByName("builder")
 	h, ok := Lookup("muse")
 	if !ok {
 		t.Fatal("muse is not a known harness")
 	}
-	return h.Launch("meta", model, extra, builder, tier)
+	return h.Launch("meta", model, extra, builder, tier, contributorMode)
 }
 
 func TestLaunchMuseArgv(t *testing.T) {
@@ -23,20 +24,33 @@ func TestLaunchMuseArgv(t *testing.T) {
 		name  string
 		model string
 		tier  Tier
+		mode  string
 		want  []string
 	}{
-		{"yolo with effort", "muse-spark-1.3:xhigh", TierYolo, []string{
+		{"yolo with effort", "muse-spark-1.3:xhigh", TierYolo, "", []string{
 			"exec", "--json", "--model", "muse-spark-1.3", "--reasoning-effort", "xhigh",
+			"--contributor-mode", "off",
 			"--disable-reminders", "--disable-request-user-input", "--workspace", "/w",
 			"-c", `run.developer_prompt="DEF"`, "the prompt", "--yolo"}},
-		{"harness without effort", "muse-spark-1.3", TierHarness, []string{
+		{"harness without effort", "muse-spark-1.3", TierHarness, "", []string{
 			"exec", "--json", "--model", "muse-spark-1.3",
+			"--contributor-mode", "off",
 			"--disable-reminders", "--disable-request-user-input", "--workspace", "/w",
 			"-c", `run.developer_prompt="DEF"`, "the prompt"}},
+		{"contributor on", "muse-spark-1.3", TierHarness, "on", []string{
+			"exec", "--json", "--model", "muse-spark-1.3",
+			"--contributor-mode", "on",
+			"--disable-reminders", "--disable-request-user-input", "--workspace", "/w",
+			"-c", `run.developer_prompt="DEF"`, "the prompt"}},
+		{"contributor off", "muse-spark-1.3", TierYolo, "off", []string{
+			"exec", "--json", "--model", "muse-spark-1.3",
+			"--contributor-mode", "off",
+			"--disable-reminders", "--disable-request-user-input", "--workspace", "/w",
+			"-c", `run.developer_prompt="DEF"`, "the prompt", "--yolo"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			l, err := museBuilderLaunch(t, tt.model, tt.tier)
+			l, err := museBuilderLaunch(t, tt.model, tt.tier, tt.mode)
 			if err != nil {
 				t.Fatalf("Launch() error = %v", err)
 			}
@@ -53,25 +67,57 @@ func TestLaunchMuseArgv(t *testing.T) {
 
 func TestLaunchMuseRefusals(t *testing.T) {
 	for _, bad := range []string{":high", "muse-spark-1.3:"} {
-		if _, err := museBuilderLaunch(t, bad, TierYolo); !errors.Is(err, ErrBadModel) {
+		if _, err := museBuilderLaunch(t, bad, TierYolo, ""); !errors.Is(err, ErrBadModel) {
 			t.Errorf("Launch(%q) error = %v, want ErrBadModel", bad, err)
 		}
 	}
 	for _, tier := range []Tier{TierRead, TierEdit} {
-		if _, err := museBuilderLaunch(t, "muse-spark-1.3", tier); !errors.Is(err, ErrTierUnsupported) {
+		if _, err := museBuilderLaunch(t, "muse-spark-1.3", tier, ""); !errors.Is(err, ErrTierUnsupported) {
 			t.Errorf("Launch at %s error = %v, want ErrTierUnsupported", tier, err)
 		}
 	}
-	if _, err := museBuilderLaunch(t, "muse-spark-1.3", TierHarness, "--yolo"); err != nil {
+	if _, err := museBuilderLaunch(t, "muse-spark-1.3", TierHarness, "", "--yolo"); err != nil {
 		t.Errorf("tier harness must accept a permission flag in extra_args: %v", err)
 	}
-	if _, err := museBuilderLaunch(t, "muse-spark-1.3", TierYolo, "--sandbox-network"); !errors.Is(err, ErrExtraArgsPermission) {
+	if _, err := museBuilderLaunch(t, "muse-spark-1.3", TierYolo, "", "--sandbox-network"); !errors.Is(err, ErrExtraArgsPermission) {
 		t.Errorf("extra_args --sandbox-network at yolo error = %v, want ErrExtraArgsPermission", err)
+	}
+	if _, err := museBuilderLaunch(t, "muse-spark-1.3", TierHarness, "sometimes"); err == nil {
+		t.Errorf("Launch with contributor_mode %q succeeded, want a refusal", "sometimes")
+	} else if !strings.Contains(err.Error(), "contributor_mode") {
+		t.Errorf("Launch with a bad contributor mode error = %q, want it naming contributor_mode", err.Error())
+	}
+}
+
+// TestLaunchIgnoresContributorModeOffMuse pins that the guard never leaks into
+// other harnesses' argv: a claude launch renders byte-identical argv whatever
+// mode it is handed.
+func TestLaunchIgnoresContributorModeOffMuse(t *testing.T) {
+	builder, _ := RoleByName("builder")
+	h, ok := Lookup("claude")
+	if !ok {
+		t.Fatal("claude is not a known harness")
+	}
+	plain, err := h.Launch("anthropic", "sonnet", nil, builder, TierHarness, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	guarded, err := h.Launch("anthropic", "sonnet", nil, builder, TierHarness, "on")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(plain.Print, guarded.Print) {
+		t.Errorf("claude argv with a mode = %v, want byte-identical %v", guarded.Print, plain.Print)
+	}
+	for _, a := range guarded.Print {
+		if a == "--contributor-mode" {
+			t.Errorf("claude argv carries --contributor-mode: %v", guarded.Print)
+		}
 	}
 }
 
 func TestPrintArgsEncodesDefinitionAsJSONString(t *testing.T) {
-	l, err := museBuilderLaunch(t, "muse-spark-1.3", TierHarness)
+	l, err := museBuilderLaunch(t, "muse-spark-1.3", TierHarness, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +134,7 @@ func TestDefinitionPlaceholderOnlyInMuse(t *testing.T) {
 		if h.Kind == "muse" {
 			continue
 		}
-		l, err := h.Launch("p", "m", nil, builder, TierHarness)
+		l, err := h.Launch("p", "m", nil, builder, TierHarness, "")
 		if err != nil {
 			continue
 		}
