@@ -1463,6 +1463,66 @@ func TestGetRecordsLastSeenAtMostEveryWindow(t *testing.T) {
 	}
 }
 
+// TestIdlePollsQueueNoSyncedWrite pins that polls inside the contact window
+// queue no synced row: a client polls every tick, and each save is a
+// binding_record row every other machine pulls.
+func TestIdlePollsQueueNoSyncedWrite(t *testing.T) {
+	s, _ := newTestServer(t, 0)
+	handler := s.Handler()
+	kp, err := remote.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := remote.IDOf(kp.Public)
+	if _, err := s.clients.Add("alice", remote.MarshalPublic(kp.Public, "alice"), "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	createBody, _ := json.Marshal(remote.CreateBindingRequest{
+		Name:       "api",
+		RepoID:     testRepoID,
+		BaseCommit: strings.Repeat("2", 40),
+		Role:       "builder",
+	})
+	recCreate := httptest.NewRecorder()
+	handler.ServeHTTP(recCreate, signedRequest(t, kp, "POST", "/v1/bindings", createBody))
+	if recCreate.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201", recCreate.Code)
+	}
+	st := testRuntime(t, s, id).Store
+	mdb, err := st.DB()
+	if err != nil {
+		t.Fatalf("store db: %v", err)
+	}
+
+	poll := func() {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, signedRequest(t, kp, "GET", "/v1/bindings/api", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get status = %d, want 200", rec.Code)
+		}
+	}
+	poll()
+	if err := mdb.TruncateOutbox(); err != nil {
+		t.Fatalf("truncate outbox: %v", err)
+	}
+	for i := 0; i < 20; i++ {
+		poll()
+	}
+	entries, err := mdb.DrainOutbox(100000)
+	if err != nil {
+		t.Fatalf("drain outbox: %v", err)
+	}
+	if len(entries) != 0 {
+		rows := make([]string, 0, len(entries))
+		for _, e := range entries {
+			rows = append(rows, e.Table+":"+e.PK)
+		}
+		t.Errorf("20 idle polls queued %d outbox rows, want 0: %v", len(entries), rows)
+	}
+}
+
 // TestGetBindingRefusesAnInvalidName pins that a {name} no binding can ever
 // carry is answered as not-found, not as an unreadable client: the mux hands a
 // percent-encoded slash over as "foo/bar" and an uppercase name through as-is.
