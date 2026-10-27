@@ -77,14 +77,14 @@ func TestStatusSaysLockedWhenTheRemoteHasAKeyAndThisMachineDoesNot(t *testing.T)
 	if err != nil {
 		t.Fatalf("LocalHandle: %v", err)
 	}
-	doc, err := dbSyncStatusRead(local)
+	doc, err := dbSyncStatusRead(local, shared.Origin())
 	if err != nil || doc.Key != "none" {
 		t.Fatalf("fresh machine key = %q, %v; want none", doc.Key, err)
 	}
 	if err := local.KVPut(relevosync.KeyRemoteKDF, []byte("1")); err != nil {
 		t.Fatalf("KVPut: %v", err)
 	}
-	doc, err = dbSyncStatusRead(local)
+	doc, err = dbSyncStatusRead(local, shared.Origin())
 	if err != nil || doc.Key != "locked" {
 		t.Fatalf("key = %q, %v; want locked", doc.Key, err)
 	}
@@ -94,7 +94,7 @@ func TestStatusSaysLockedWhenTheRemoteHasAKeyAndThisMachineDoesNot(t *testing.T)
 	if err := relevosync.SetKey(local, []byte("k"), time.Now()); err != nil {
 		t.Fatalf("SetKey: %v", err)
 	}
-	if doc, _ = dbSyncStatusRead(local); doc.Key != "unlocked" {
+	if doc, _ = dbSyncStatusRead(local, shared.Origin()); doc.Key != "unlocked" {
 		t.Errorf("key = %q, want unlocked", doc.Key)
 	}
 }

@@ -241,6 +241,14 @@ func cmdStatus(args []string) error {
 			}
 		}
 	}
+	// One line above the rows only when the account's month of Turso traffic
+	// or the last hour's idle exports need a human, read from the local file
+	// the same way and under the same rule: a read error prints nothing. JSON
+	// output above stays notice-free.
+	q, qok, idle, iok := syncMeter(rt.Store, time.Now())
+	if notice := syncMeterNotice(q, qok, idle, iok); notice != "" {
+		fmt.Println(notice)
+	}
 
 	fmt.Print(view.RenderStatus(rep))
 	return nil

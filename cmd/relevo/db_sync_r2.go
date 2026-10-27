@@ -186,7 +186,7 @@ func cmdDBSyncStatus(args []string) error {
 	}
 	defer func() { _ = shared.Close() }()
 
-	doc, err := dbSyncStatusRead(local)
+	doc, err := dbSyncStatusRead(local, shared.Origin())
 	if err != nil {
 		return err
 	}
@@ -207,8 +207,10 @@ func cmdDBSyncStatus(args []string) error {
 
 // dbSyncStatusRead builds the status document from the machine-local rows. Every
 // read here is of the local file, which is what lets status answer with the
-// network blackholed and no worker open.
-func dbSyncStatusRead(local relevosync.Local) (dbSyncStatusDoc, error) {
+// network blackholed and no worker open. Origin names this machine within the
+// account snapshot: its own row is replaced by the live counters rather than
+// counted twice.
+func dbSyncStatusRead(local relevosync.Local, origin string) (dbSyncStatusDoc, error) {
 	settings, err := relevosync.ReadSettings(local)
 	if err != nil {
 		return dbSyncStatusDoc{}, failWrap(codeConfigInvalid, err, "relevo db sync status")
@@ -256,6 +258,9 @@ func dbSyncStatusRead(local relevosync.Local) (dbSyncStatusDoc, error) {
 	if err := dbSyncStatusStorage(local, settings, &doc); err != nil {
 		return dbSyncStatusDoc{}, err
 	}
+	if err := dbSyncStatusMeter(local, origin, &doc); err != nil {
+		return dbSyncStatusDoc{}, err
+	}
 	// A join in progress is a read of the machine-local marker, so status can
 	// show one with the network blackholed and no worker open.
 	progress, joining, err := relevosync.ReadJoin(local)
@@ -295,6 +300,39 @@ func dbSyncStatusStorage(local relevosync.Local, settings relevosync.Settings, d
 	return nil
 }
 
+// dbSyncStatusMeter populates the account reading and the idle-export hour.
+// Both come from rows the sync loop already keeps in the local file -- the
+// snapshot a publish read back and the hours an attempt booked -- so neither
+// reaches the network, which is what keeps the whole of status a read.
+func dbSyncStatusMeter(local relevosync.Local, origin string, doc *dbSyncStatusDoc) error {
+	now := time.Now()
+	q, qok, err := relevosync.ReadQuota(local, origin, now)
+	if err != nil {
+		return dbSyncClassify(err)
+	}
+	if qok {
+		doc.Account = &dbSyncAccountDoc{
+			Month:     q.Account.Month,
+			Total:     q.Account.Total,
+			Machines:  q.Account.Machines,
+			Own:       q.Own,
+			Quota:     q.Quota,
+			Projected: q.Projected,
+			ReadAt:    statusStamp(q.Account.ReadAt),
+			OverWarn:  q.OverWarn(),
+			PaceOver:  q.PaceOver(),
+		}
+	}
+	idle, iok, err := relevosync.IdleExports(local, now)
+	if err != nil {
+		return dbSyncClassify(err)
+	}
+	if iok {
+		doc.IdleExports = &dbSyncIdleDoc{Hour: idle.Hour, Exported: idle.Exported, Idle: idle.Idle, Over: idle.OverIdle()}
+	}
+	return nil
+}
+
 // dbSyncR2Line is where bodies would go, or empty on a machine that has no
 // bucket. An unconfigured machine gets no clause at all rather than one that
 // says "not configured": bodies in a bucket are opt-in, and a machine that has
@@ -320,7 +358,7 @@ func dbSyncQuotasLine(doc dbSyncStatusDoc) string {
 	if doc.Storage != nil {
 		storage = *doc.Storage
 	}
-	return relevosync.FormatQuotas(month, relevosync.Settings{
+	return relevosync.FormatQuotas(month, dbSyncAccount(doc), relevosync.Settings{
 		QuotaTursoSync:    doc.QuotaTursoSync,
 		QuotaTursoStorage: doc.QuotaTursoStorage,
 		QuotaR2Storage:    doc.QuotaR2Storage,

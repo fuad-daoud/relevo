@@ -12,6 +12,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
@@ -81,7 +82,8 @@ type dbSyncStatusDoc struct {
 	// one.
 	LastAttempt *dbSyncAttemptDoc `json:"last_attempt,omitempty"`
 	// Bytes is this month's traffic, absent until something moved, and
-	// QuotaTursoSync the allowance the Turso total is read against.
+	// QuotaTursoSync the allowance the Turso total is read against. They stay
+	// after the account reading arrived because JSON consumers may read them.
 	Bytes          *relevosync.ByteCounters `json:"bytes,omitempty"`
 	QuotaTursoSync int64                    `json:"quota_turso_sync,omitempty"`
 	// Storage is the last daily measurement of the replica and the bucket,
@@ -89,6 +91,62 @@ type dbSyncStatusDoc struct {
 	Storage           *relevosync.Storage `json:"storage,omitempty"`
 	QuotaTursoStorage int64               `json:"quota_turso_storage,omitempty"`
 	QuotaR2Storage    int64               `json:"quota_r2_storage,omitempty"`
+	// Account is the month read account-wide, present when there is something
+	// to say: this machine moved bytes this month, or the snapshot holds a
+	// published row for it.
+	Account *dbSyncAccountDoc `json:"account,omitempty"`
+	// IdleExports is the last complete hour's export counts, present when that
+	// hour booked a row at all.
+	IdleExports *dbSyncIdleDoc `json:"idle_exports,omitempty"`
+}
+
+// dbSyncAccountDoc is the meter reading as one machine reports it: the
+// account's month, this machine's own share, the quota, and the warnings the
+// reading already decided. Projected is absent while the month is too young
+// to project, so its presence is the projection's answer to "projectable".
+type dbSyncAccountDoc struct {
+	Month     string `json:"month"`
+	Total     int64  `json:"total"`
+	Machines  int    `json:"machines"`
+	Own       int64  `json:"own"`
+	Quota     int64  `json:"quota"`
+	Projected int64  `json:"projected,omitempty"`
+	ReadAt    string `json:"read_at,omitempty"`
+	OverWarn  bool   `json:"over_warn"`
+	PaceOver  bool   `json:"pace_over"`
+}
+
+// dbSyncIdleDoc is one hour's export counts and whether the idle part of them
+// passed the warning line.
+type dbSyncIdleDoc struct {
+	Hour     string `json:"hour"`
+	Exported int    `json:"exported"`
+	Idle     int    `json:"idle"`
+	Over     bool   `json:"over"`
+}
+
+// dbSyncAccount is the meter reading the quotas clause renders, rebuilt from
+// the document the reader filled. A projected figure is positive exactly when
+// the month was projectable and moved bytes, so the document needs no flag
+// beside it; read_at round-trips the instant statusStamp wrote.
+func dbSyncAccount(doc dbSyncStatusDoc) relevosync.QuotaReading {
+	if doc.Account == nil {
+		return relevosync.QuotaReading{}
+	}
+	a := doc.Account
+	var readAt time.Time
+	if a.ReadAt != "" {
+		if t, err := time.Parse(time.RFC3339, a.ReadAt); err == nil {
+			readAt = t
+		}
+	}
+	return relevosync.QuotaReading{
+		Account:     relevosync.Account{Month: a.Month, Total: a.Total, Machines: a.Machines, ReadAt: readAt},
+		Own:         a.Own,
+		Quota:       a.Quota,
+		Projected:   a.Projected,
+		Projectable: a.Projected > 0,
+	}
 }
 
 // dbSyncFencedDoc is one binding of the fenced list.
@@ -179,8 +237,34 @@ func dbSyncStatusDetails(doc dbSyncStatusDoc) string {
 	if doc.Bytes != nil || doc.Storage != nil {
 		fmt.Fprintf(&b, " · %s", dbSyncQuotasLine(doc))
 	}
+	if doc.IdleExports != nil && doc.IdleExports.Over {
+		fmt.Fprintf(&b, " · %d entries exported in %sZ with no round open (more than %d an hour is unexpected)",
+			doc.IdleExports.Idle, doc.IdleExports.Hour, relevosync.IdleExportsWarn)
+	}
+	if w := dbSyncMeterWarning(doc); w != "" {
+		fmt.Fprintf(&b, " · warning: %s", w)
+	}
 	b.WriteString(dbSyncAttemptDetails(doc.LastAttempt))
 	return b.String()
+}
+
+// dbSyncMeterWarning is the one reason the account's traffic earns a warning
+// on this line: the pace that has passed the quota outranks a share still
+// climbing, the same order `relevo status` puts its notices in.
+func dbSyncMeterWarning(doc dbSyncStatusDoc) string {
+	if doc.Account == nil {
+		return ""
+	}
+	a := doc.Account
+	switch {
+	case a.PaceOver:
+		return fmt.Sprintf("the account's Turso traffic is on pace for %s this month, over its %s quota",
+			relevosync.FormatTraffic(a.Projected), relevosync.FormatTraffic(a.Quota))
+	case a.OverWarn:
+		return fmt.Sprintf("the account has used %.1f%% of this month's %s Turso quota",
+			float64(a.Total)*100/float64(a.Quota), relevosync.FormatTraffic(a.Quota))
+	}
+	return ""
 }
 
 // orNone renders an empty remote as something a reader can tell from a URL.

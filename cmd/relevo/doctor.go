@@ -322,6 +322,10 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 	// `relevo db stats`. Every open migrates, so there is no separate
 	// migrate row.
 	rep.Checks = insertGlobalCheck(rep.Checks, databaseCheck(rt.Store))
+	// The sync quota row, read from the local file; no reading, no row.
+	if check, ok := syncQuotaRow(rt); ok {
+		rep.Checks = insertGlobalCheck(rep.Checks, check)
+	}
 	if machineDB := serveMachineDB(rt); machineDB != nil {
 		if rounds, bindings, err := machineDB.OpenRoundsOnFinishedBindings(); err == nil {
 			rep.Checks = insertGlobalCheck(rep.Checks, openRoundsCheck(rounds, bindings))

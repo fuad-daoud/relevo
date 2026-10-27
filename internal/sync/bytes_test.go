@@ -98,11 +98,14 @@ func TestBytesKeyIsTheUTCMonth(t *testing.T) {
 
 func TestStatusShowsBytesAgainstQuota(t *testing.T) {
 	t.Parallel()
-	got := FormatBytes(ByteCounters{TursoPush: 1_500_000_000, TursoPull: 500_000_000, R2Put: 2_000, R2Get: 12}, Settings{}.TursoSyncQuota())
-	for _, want := range []string{"turso push 1.5 GB", "pull 500.0 MB", "r2 put 2.0 kB", "get 12 B", "turso sync 2.0 GB of 10.0 GB (20.0%)"} {
+	got := FormatBytes(ByteCounters{TursoPush: 1_500_000_000, TursoPull: 500_000_000, R2Put: 2_000, R2Get: 12})
+	for _, want := range []string{"turso push 1.5 GB", "pull 500.0 MB", "r2 put 2.0 kB", "get 12 B", "this machine: turso sync 2.0 GB"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("%q lacks %q", got, want)
 		}
+	}
+	if strings.Contains(got, " of ") {
+		t.Errorf("%q still measures this machine against the quota", got)
 	}
 	if q := (Settings{QuotaTursoSync: 5}).TursoSyncQuota(); q != 5 {
 		t.Errorf("explicit quota = %d", q)
