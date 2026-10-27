@@ -194,8 +194,8 @@ func TestOverIdleThreshold(t *testing.T) {
 }
 
 // TestMalformedExportsRowReadsEmpty pins that a row that will not parse
-// reads as empty and is rewritten, not fatal: one bad write must not wedge
-// every later read.
+// reads as empty without the reader writing, and that the next booking
+// replaces it: one bad write must not wedge every later read.
 func TestMalformedExportsRowReadsEmpty(t *testing.T) {
 	t.Parallel()
 
@@ -214,12 +214,18 @@ func TestMalformedExportsRowReadsEmpty(t *testing.T) {
 	if _, ok, err := IdleExports(local, time.Date(2026, time.October, 27, 17, 30, 0, 0, time.UTC)); err != nil || ok {
 		t.Errorf("IdleExports on a bad row = (%v, %v), want (false, nil)", ok, err)
 	}
-	body, ok, err := local.KVGet(KeyExportsHours)
-	if err != nil || !ok {
-		t.Fatalf("the bad row was dropped instead of rewritten: ok=%v err=%v", ok, err)
+	var raw0 string
+	if err := raw.QueryRow(`SELECT value_json FROM kv WHERE key = ?`, KeyExportsHours).Scan(&raw0); err != nil {
+		t.Fatalf("read the bad row back: %v", err)
 	}
-	if string(body) != "[]" {
-		t.Errorf("rewritten row = %s, want an empty list", body)
+	if raw0 != `{bad` {
+		t.Errorf("the reader wrote the row: %s, want it left as {bad", raw0)
+	}
+	r := &Runner{Local: local}
+	r.recordExports(time.Date(2026, time.October, 27, 17, 40, 0, 0, time.UTC), 3)
+	got, ok, err := IdleExports(local, time.Date(2026, time.October, 27, 18, 5, 0, 0, time.UTC))
+	if err != nil || !ok || got.Exported != 3 {
+		t.Errorf("after a booking IdleExports = (%+v, %v, %v), want the 17 o'clock row with 3 exported", got, ok, err)
 	}
 }
 

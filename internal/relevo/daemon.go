@@ -299,7 +299,7 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	d.safely("turso sync", func() { d.idleSync(ctx) })
 
 	if len(bindings) == 0 {
-		d.noteRoundsOpen(0)
+		d.noteRoundsOpen(nil)
 		return nil
 	}
 
@@ -312,7 +312,7 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// The count lands after the loop, so an attempt idleSync queued earlier
 	// this tick still classifies against the previous tick's count: one tick
 	// of lag, which an hourly rate never notices.
-	d.noteRoundsOpen(countOpenRounds(d.rt.Store, bindings))
+	d.noteRoundsOpen(bindings)
 
 	// The chain's staged rounds are shipped here, outside every lock, once per
 	// tick and after the binding loop: a tick above may have staged the next

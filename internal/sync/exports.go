@@ -127,8 +127,9 @@ func readExportHours(kv db.KV) []ExportHour {
 // UTC hour, because a partial hour cannot be compared with a per-hour
 // threshold. It returns false when that hour has no row, which is what a
 // machine that exported nothing then looks like: nothing to warn about, not
-// an error. A row that will not parse is read as empty and rewritten, so one
-// bad write does not wedge every later read.
+// an error. A row that will not parse reads as empty and is left for the next
+// booking to replace: this is the reader status and doctor call, and a read
+// never writes.
 func IdleExports(kv db.KV, now time.Time) (ExportHour, bool, error) {
 	want := now.UTC().Add(-time.Hour).Format("2006-01-02T15")
 	body, ok, err := kv.KVGet(KeyExportsHours)
@@ -141,9 +142,6 @@ func IdleExports(kv db.KV, now time.Time) (ExportHour, bool, error) {
 	var hours []ExportHour
 	if err := json.Unmarshal(body, &hours); err != nil {
 		slog.Warn("sync: read the exports marker", "err", err)
-		if werr := kv.KVPut(KeyExportsHours, []byte("[]")); werr != nil {
-			return ExportHour{}, false, fmt.Errorf("sync: exports marker: %w", werr)
-		}
 		return ExportHour{}, false, nil
 	}
 	for _, h := range hours {

@@ -14,10 +14,11 @@ import (
 // the open-round count, with no bindings, an open round, and a reported one,
 // and that the tick reaches no network to do it.
 
-// roundsRunner returns a runner with nowhere to sync to: no client and no
-// enabled mark, so the idle window stops before the slot and the tick's only
-// sync effect is the note. The caller installs it as rt.Sync.
-func roundsRunner(t *testing.T, rt Runtime) *relevosync.Runner {
+// roundsRunner returns a runner marked on but with nowhere to sync to: with no
+// client the queued attempt returns before it opens a transport, so the tick's
+// only sync effect is the note, which is taken only while sync is on. The
+// caller installs it as rt.Sync.
+func roundsRunner(t *testing.T, rt Runtime, on bool) *relevosync.Runner {
 	t.Helper()
 	mdb, err := rt.Store.DB()
 	if err != nil {
@@ -26,6 +27,9 @@ func roundsRunner(t *testing.T, rt Runtime) *relevosync.Runner {
 	local, err := relevosync.LocalHandle(mdb)
 	if err != nil {
 		t.Fatalf("LocalHandle: %v", err)
+	}
+	if err := relevosync.MarkEnabled(local, on, time.Now()); err != nil {
+		t.Fatalf("MarkEnabled: %v", err)
 	}
 	return &relevosync.Runner{Local: local}
 }
@@ -64,7 +68,7 @@ func TestTickWithNoBindingsNotesZeroRounds(t *testing.T) {
 	t.Parallel()
 
 	rt := newRuntime(t)
-	runner := roundsRunner(t, rt)
+	runner := roundsRunner(t, rt, true)
 	rt.Sync = runner
 
 	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
@@ -81,7 +85,7 @@ func TestTickWithOpenRoundNotesOneRound(t *testing.T) {
 	t.Parallel()
 
 	rt := newRuntime(t)
-	runner := roundsRunner(t, rt)
+	runner := roundsRunner(t, rt, true)
 	rt.Sync = runner
 	seedCountedBinding(t, rt, "webshop", false)
 
@@ -99,7 +103,7 @@ func TestTickWithReportedRoundNotesZeroRounds(t *testing.T) {
 	t.Parallel()
 
 	rt := newRuntime(t)
-	runner := roundsRunner(t, rt)
+	runner := roundsRunner(t, rt, true)
 	rt.Sync = runner
 	seedCountedBinding(t, rt, "webshop", true)
 
@@ -108,5 +112,23 @@ func TestTickWithReportedRoundNotesZeroRounds(t *testing.T) {
 	}
 	if got, known := runner.RoundsOpen(); !known || got != 0 {
 		t.Errorf("RoundsOpen = (%d, %v), want (0, true)", got, known)
+	}
+}
+
+// TestTickWithSyncOffCountsNoRounds pins that a machine whose sync is off pays
+// no log read per binding for a count nothing books: the count stays unknown.
+func TestTickWithSyncOffCountsNoRounds(t *testing.T) {
+	t.Parallel()
+
+	rt := newRuntime(t)
+	runner := roundsRunner(t, rt, false)
+	rt.Sync = runner
+	seedCountedBinding(t, rt, "webshop", false)
+
+	if err := NewDaemon(rt, time.Second).Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if got, known := runner.RoundsOpen(); known {
+		t.Errorf("RoundsOpen = (%d, %v) with sync off, want unknown", got, known)
 	}
 }

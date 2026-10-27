@@ -29,14 +29,15 @@ func countOpenRounds(st *store.Store, bindings []store.Binding) int {
 	return open
 }
 
-// noteRoundsOpen hands the runner the tick's open-round count. It is safe on
-// a daemon with no sync seam: the note lands nowhere rather than failing the
-// tick.
-func (d *Daemon) noteRoundsOpen(n int) {
-	if d == nil {
+// noteRoundsOpen hands the runner the tick's open-round count. Counting costs
+// a log read per binding on every tick, so a machine whose sync is off, which
+// books no exports, skips it; a daemon with no sync seam reads as off.
+func (d *Daemon) noteRoundsOpen(bindings []store.Binding) {
+	runner := d.syncRunner()
+	if !runner.On() {
 		return
 	}
-	d.syncRunner().NoteRoundsOpen(n)
+	runner.NoteRoundsOpen(countOpenRounds(d.rt.Store, bindings))
 }
 
 // outboxTruncateInterval is how often the outbox is emptied on a machine whose
