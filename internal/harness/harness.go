@@ -175,8 +175,9 @@ var knownHarnesses = map[string]Harness{
 		Binary:     "muse",
 		MinVersion: "1.4.11",
 		Providers:  []string{"meta"},
-		// Only the shape of the quota field is known from Muse's wire schema;
-		// no real limit stream has been captured yet.
+		// The quota object's shape comes from Muse's wire schema, and the
+		// prose the scan reads is pinned by a captured 429 sentence, though
+		// no raw limit stream has been sealed as a fixture yet.
 		LimitPatterns: []string{
 			`(?i)usage limit`,
 			`(?i)tier.?limit`,

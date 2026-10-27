@@ -914,7 +914,8 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// it must not record the same gate again: stallLimitGateRecorded
 		// skips the whole block once this round has recorded one.
 		if !next.StalledSince.IsZero() && !stallLimitGateRecorded(rt, next) {
-			gated, _, handled, gerr := gateOnLimit(ctx, rt, tx, next, limitText(ctx, rt, next), true)
+			scanText, scanResetMS := limitScan(ctx, rt, next)
+			gated, _, handled, gerr := gateOnLimit(ctx, rt, tx, next, scanText, scanResetMS, true)
 			if gerr != nil {
 				return next, gerr
 			}
@@ -966,7 +967,8 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			slog.Warn("reader output not written", "binding", b.Name, "round", b.Round, "err", serr)
 		}
 		if _, _, ok, _ := rt.Store.StatFile(reportPath); ok {
-			_, m, _, err := gateOnLimit(ctx, rt, tx, b, limitText(ctx, rt, b), false)
+			scanText, scanResetMS := limitScan(ctx, rt, b)
+			_, m, _, err := gateOnLimit(ctx, rt, tx, b, scanText, scanResetMS, false)
 			if err != nil {
 				return b, err
 			}
@@ -1176,7 +1178,8 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		return haltAndSettle(ctx, rt, tx, b, escapeDiagnosis(b, codeText))
 	}
 
-	next, _, handled, err := gateOnLimit(ctx, rt, tx, b, limitText(ctx, rt, b), false)
+	scanText, scanResetMS := limitScan(ctx, rt, b)
+	next, _, handled, err := gateOnLimit(ctx, rt, tx, b, scanText, scanResetMS, false)
 	if handled {
 		return next, err
 	}

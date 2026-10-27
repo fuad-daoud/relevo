@@ -606,8 +606,8 @@ func checkRoundTimeout(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	}
 
 	if b.HaltNotifiedRound != b.Round {
-		text := limitText(ctx, rt, b)
-		next, _, handled, err := gateOnLimit(ctx, rt, tx, b, text, true)
+		text, resetMS := limitScan(ctx, rt, b)
+		next, _, handled, err := gateOnLimit(ctx, rt, tx, b, text, resetMS, true)
 		if handled {
 			return next, true, err
 		}

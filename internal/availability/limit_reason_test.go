@@ -5,23 +5,15 @@ import (
 	"time"
 )
 
-// TestResetFromReason: the same parse the decision point applies to builder
-// output decides when a manually recorded gate expires. A reason naming its own
-// reset yields that instant; a reason naming none -- or one outside the window
-// a vaguer form may claim -- leaves the gate until cleared rather than
-// inventing an expiry no provider stated.
-func TestResetFromReason(t *testing.T) {
-	t.Parallel()
+type resetReasonCase struct {
+	name   string
+	reason string
+	want   time.Time
+	wantOK bool
+}
 
-	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
-
-	for _, c := range []struct {
-		name     string
-		reason   string
-		want     time.Time
-		wantOK   bool
-		wantNote string
-	}{
+func resetReasonCases(now time.Time) []resetReasonCase {
+	return []resetReasonCase{
 		{
 			name:   "429 with a minutes reset",
 			reason: "RESOURCE_EXHAUSTED 429: rate limit reached. Resets in 51m30s",
@@ -59,10 +51,35 @@ func TestResetFromReason(t *testing.T) {
 			reason: "rate limit reached. Resets in 90000000h",
 		},
 		{
+			name:   "a muse 429 sentence expires at its own instant",
+			reason: "run ended with Failed: API error 429: Subscription quota exhausted. Your usage window resets at 2026-10-24T13:22:58Z. (rate_limit_error)",
+			want:   time.Date(2026, 10, 24, 13, 22, 58, 0, time.UTC),
+			wantOK: true,
+		},
+		{
+			name:   "a lifted muse instant expires immediately",
+			reason: "run ended with Failed: API error 429: Subscription quota exhausted. Your usage window resets at 2026-09-24T13:22:58Z. (rate_limit_error)",
+			want:   now,
+			wantOK: true,
+		},
+		{
 			name:   "empty reason",
 			reason: "",
 		},
-	} {
+	}
+}
+
+// TestResetFromReason: the same parse the decision point applies to builder
+// output decides when a manually recorded gate expires. A reason naming its own
+// reset yields that instant; a reason naming none -- or one outside the window
+// a vaguer form may claim -- leaves the gate until cleared rather than
+// inventing an expiry no provider stated.
+func TestResetFromReason(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+
+	for _, c := range resetReasonCases(now) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 

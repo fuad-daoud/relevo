@@ -51,7 +51,7 @@ func TestLimitScanIgnoresThePreviousBuildersLines(t *testing.T) {
 		t.Errorf("limitText = %q, want no limit line: it must not read the outgoing builder's bytes", text)
 	}
 
-	if _, _, handled, err := gateHeadless(t, rt, b, currentBuilderTail(rt, b, availability.LimitScanLines), false); err != nil {
+	if _, _, handled, err := gateHeadless(t, rt, b, currentBuilderTail(rt, b, availability.LimitScanLines), 0, false); err != nil {
 		t.Fatalf("gateOnLimit: %v", err)
 	} else if handled {
 		t.Error("handled = true, want false: the current builder wrote no limit line")
@@ -80,7 +80,7 @@ func TestLimitScanStillSeesTheCurrentBuildersLimit(t *testing.T) {
 		t.Errorf("matched line = %q, want the current process's quota line", m.Line)
 	}
 
-	if _, _, handled, err := gateHeadless(t, rt, b, currentBuilderTail(rt, b, availability.LimitScanLines), false); err != nil {
+	if _, _, handled, err := gateHeadless(t, rt, b, currentBuilderTail(rt, b, availability.LimitScanLines), 0, false); err != nil {
 		t.Fatalf("gateOnLimit: %v", err)
 	} else if !handled {
 		t.Fatal("handled = false, want true: the current builder's own limit line gates it")
@@ -138,7 +138,7 @@ func TestLimitScanReadsOnlyHarnessChannels(t *testing.T) {
 	if _, ok := availability.MatchLimit(text, patterns, rt.Now(), rt.Policy.LimitGateDefault()); ok {
 		t.Errorf("limitText = %q, want no limit line: model text and a successful result must not gate", text)
 	}
-	if _, _, handled, err := gateHeadless(t, rt, b, text, false); err != nil {
+	if _, _, handled, err := gateHeadless(t, rt, b, text, 0, false); err != nil {
 		t.Fatalf("gateOnLimit: %v", err)
 	} else if handled {
 		t.Error("handled = true, want false: the stream holds no harness-authored limit line")

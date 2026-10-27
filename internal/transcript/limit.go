@@ -5,6 +5,55 @@ import (
 	"encoding/json"
 )
 
+// LimitResetMS reports the structured reset one raw muse stream line carries:
+// a failed run's quota resets_at_ms, else a usage event's allowance window
+// resets_at_ms. quota is true for the failed run's own field, false for the
+// allowance window, so a caller scanning a whole stream prefers the failure's
+// instant over the window's. Zero or absent reads as no reset, and any other
+// kind carries none, so only muse lines ever report one. Never errors, never
+// panics.
+func LimitResetMS(kind string, line []byte) (ms int64, quota bool) {
+	if kind != "muse" {
+		return 0, false
+	}
+	trimmed := bytes.TrimSpace(line)
+	var obj map[string]any
+	if len(trimmed) == 0 || trimmed[0] != '{' || json.Unmarshal(trimmed, &obj) != nil || obj == nil {
+		return 0, false
+	}
+	switch musePayloadType(obj) {
+	case "run.terminal.failed":
+		p := musePayload(obj)
+		if ms := quotaResetMS(p["error"]); ms != 0 {
+			return ms, true
+		}
+		if ms := quotaResetMS(p["reason"]); ms != 0 {
+			return ms, true
+		}
+	case "run.usage":
+		window := asMap(asMap(musePayload(obj)["allowance"])["window"])
+		return museMillis(window["resets_at_ms"]), false
+	}
+	return 0, false
+}
+
+// quotaResetMS reads resets_at_ms out of a failed run's error or reason
+// field, which carries the quota object under "quota". A bare string, a
+// missing object and a zero instant all read as no reset.
+func quotaResetMS(v any) int64 {
+	return museMillis(asMap(asMap(v)["quota"])["resets_at_ms"])
+}
+
+// museMillis reads a millisecond instant out of a decoded JSON number.
+// Missing, zero and negative read as no reset.
+func museMillis(v any) int64 {
+	f, _ := v.(float64)
+	if f <= 0 {
+		return 0
+	}
+	return int64(f)
+}
+
 // LimitLines returns the text of one raw stream line that a limit scan may
 // read: a line the harness itself wrote. The channel each kind keeps is the
 // harness's own report of a failure -- claude's error event and a failed
