@@ -19,10 +19,18 @@ import (
 func TestStatusShowsStorageAgainstQuotas(t *testing.T) {
 	t.Parallel()
 	settings := Settings{QuotaTursoSync: 1000, QuotaTursoStorage: 2000, QuotaR2Storage: 4000}
-	got := FormatQuotas(ByteCounters{TursoPush: 100, TursoPull: 150}, settings,
+	q := QuotaReading{
+		Account:     Account{Total: 2220, Machines: 3, ReadAt: time.Date(2026, 10, 27, 14, 5, 0, 0, time.UTC)},
+		Own:         250,
+		Quota:       1000,
+		Projected:   3010,
+		Projectable: true,
+	}
+	got := FormatQuotas(ByteCounters{TursoPush: 100, TursoPull: 150}, q, settings,
 		Storage{Turso: 500, R2: 2000, At: time.Unix(0, 0).UTC()})
 	for _, want := range []string{
-		"turso sync 250 B of 1.0 kB (25.0%)",
+		"this machine: turso sync 250 B",
+		"account: turso sync 2.2 kB of 1.0 kB (222.0%) across 3 machines, on pace for 3.0 kB, as of 14:05Z",
 		"turso storage 500 B of 2.0 kB (25.0%)",
 		"r2 storage 2.0 kB of 4.0 kB (50.0%)",
 	} {
@@ -34,7 +42,7 @@ func TestStatusShowsStorageAgainstQuotas(t *testing.T) {
 
 func TestStatusSaysStorageIsNotMeasuredYet(t *testing.T) {
 	t.Parallel()
-	got := FormatQuotas(ByteCounters{TursoPush: 1}, Settings{}, Storage{})
+	got := FormatQuotas(ByteCounters{TursoPush: 1}, QuotaReading{}, Settings{}, Storage{})
 	if !strings.Contains(got, "not measured yet") || strings.Contains(got, "storage 0 B") {
 		t.Errorf("%q should say storage is not measured yet", got)
 	}

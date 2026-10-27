@@ -82,17 +82,15 @@ func counterDelta(prev, cur int64) int64 {
 	return cur - prev
 }
 
-// FormatBytes is the status clause for a month's counters: the four counts, and
-// the Turso sync total as a share of its quota.
-func FormatBytes(c ByteCounters, quotaTursoSync int64) string {
+// FormatBytes is the status clause for a month's counters: the four counts and
+// the Turso sync total, naming its scope. The total is this machine's alone;
+// the quota is read account-wide, so the two never belonged in one fraction
+// and the machine figure stands without one.
+func FormatBytes(c ByteCounters) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "this month: turso push %s, pull %s; r2 put %s, get %s",
-		humanBytes(c.TursoPush), humanBytes(c.TursoPull), humanBytes(c.R2Put), humanBytes(c.R2Get))
-	if quotaTursoSync > 0 {
-		total := c.TursoPush + c.TursoPull
-		fmt.Fprintf(&b, "; turso sync %s of %s (%.1f%%)",
-			humanBytes(total), humanBytes(quotaTursoSync), float64(total)*100/float64(quotaTursoSync))
-	}
+	fmt.Fprintf(&b, "this month: turso push %s, pull %s; r2 put %s, get %s; this machine: turso sync %s",
+		humanBytes(c.TursoPush), humanBytes(c.TursoPull), humanBytes(c.R2Put), humanBytes(c.R2Get),
+		humanBytes(c.TursoPush+c.TursoPull))
 	return b.String()
 }
 

@@ -139,16 +139,37 @@ func (r *Runner) measureStorage(t *StopTransport, now time.Time) {
 	r.put(KeyStorage, Storage{Turso: logBytes, R2: bodies, At: now})
 }
 
-// FormatQuotas is the status clause for the month's Turso traffic against its
-// quota, and the two stores' storage against theirs. Storage never measured
-// reads "not measured yet", never zero.
-func FormatQuotas(c ByteCounters, s Settings, st Storage) string {
-	out := FormatBytes(c, s.TursoSyncQuota())
+// FormatQuotas is the status clause for the month's Turso traffic -- this
+// machine's counts, then the account's against the quota -- and the two
+// stores' storage against theirs. Storage never measured reads "not measured
+// yet", never zero.
+func FormatQuotas(c ByteCounters, q QuotaReading, s Settings, st Storage) string {
+	out := FormatBytes(c) + "; " + FormatAccount(q)
 	if st.At.IsZero() {
 		return out + "; storage: not measured yet"
 	}
 	return out + fmt.Sprintf("; turso storage %s; r2 storage %s",
 		share(st.Turso, s.TursoStorageQuota()), share(st.R2, s.R2StorageQuota()))
+}
+
+// FormatAccount is the account clause of the month: what every machine's
+// published row plus this machine's counters say the account spent against
+// the shared quota. The pace part is dropped while the month is too young to
+// project. A snapshot never read says so rather than a total that would read
+// as a quiet month.
+func FormatAccount(q QuotaReading) string {
+	if q.Account.ReadAt.IsZero() {
+		return "account: not read yet"
+	}
+	out := fmt.Sprintf("account: turso sync %s", humanBytes(q.Account.Total))
+	if q.Quota > 0 {
+		out += fmt.Sprintf(" of %s (%.1f%%)", humanBytes(q.Quota), q.UsedShare()*100)
+	}
+	out += fmt.Sprintf(" across %d machines", q.Account.Machines)
+	if q.Projectable && q.Projected > 0 {
+		out += fmt.Sprintf(", on pace for %s", humanBytes(q.Projected))
+	}
+	return out + ", as of " + q.Account.ReadAt.UTC().Format("15:04") + "Z"
 }
 
 func share(used, quota int64) string {
