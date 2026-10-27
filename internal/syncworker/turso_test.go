@@ -41,6 +41,9 @@ type localDriver struct {
 	pushErr  error
 	pullErr  error
 	statsErr error
+	// afterPush runs once a push succeeds, so a test can change the replica
+	// between a publish's push and the read that follows it.
+	afterPush func(*sql.DB)
 }
 
 func (d *localDriver) Open(context.Context, Spec) (*sql.DB, error) {
@@ -61,6 +64,9 @@ func (d *localDriver) Open(context.Context, Spec) (*sql.DB, error) {
 
 func (d *localDriver) Push(context.Context) error {
 	d.pushes++
+	if d.pushErr == nil && d.afterPush != nil {
+		d.afterPush(d.db)
+	}
 	return d.pushErr
 }
 

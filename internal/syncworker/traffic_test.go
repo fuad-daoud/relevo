@@ -6,7 +6,9 @@ package syncworker
 // SQL underneath is the same shape a sync connection takes.
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -273,5 +275,106 @@ func TestPublishTrafficReportsNoReplica(t *testing.T) {
 	b := NewTursoBackend(&localDriver{path: tempReplica(t)})
 	if _, err := b.PublishTraffic(trafficRow); !errorsIsNoReplica(err) {
 		t.Errorf("PublishTraffic without a replica = %v, want a no-replica refusal", err)
+	}
+}
+
+// TestPublishTrafficRefusedByABackendWithoutIt pins that a worker whose backend
+// carries no traffic publisher refuses the verb rather than answering with an
+// empty account: an empty answer would read as a machine alone on the log.
+func TestPublishTrafficRefusedByABackendWithoutIt(t *testing.T) {
+	s := startWorker(t, &fakeBackend{})
+	s.askHello()
+	resp := s.ask(Request{ID: "t", Verb: VerbPublishTraffic, Traffic: &trafficRow})
+	if resp.OK {
+		t.Fatalf("publish_traffic on a backend without the publisher = %+v, want a refusal", resp)
+	}
+	if !contains(resp.Error, "publishes no traffic") {
+		t.Errorf("refusal %q does not say the backend publishes no traffic", resp.Error)
+	}
+}
+
+// TestPublishTrafficTurnsAFailedPushIntoAClassedRefusal pins that a publish
+// whose push failed is not answered with rows: the local write did not reach
+// the log, so an answer would show this machine's row to nobody but itself. An
+// engine refusal keeps its class, so a refusal that will repeat is acted on
+// rather than retried.
+func TestPublishTrafficTurnsAFailedPushIntoAClassedRefusal(t *testing.T) {
+	driver := &localDriver{path: tempReplica(t)}
+	b := backendFor(t, driver, "origin-a")
+	before := driver.pushes
+	if _, err := b.PublishTraffic(trafficRow); err != nil {
+		t.Fatalf("PublishTraffic: %v", err)
+	}
+	if driver.pushes != before+1 {
+		t.Errorf("a publish pushed %d times, want once", driver.pushes-before)
+	}
+
+	driver.pushErr = errors.New("failed to execute sql: no such table")
+	rows, err := b.PublishTraffic(trafficRow)
+	if err == nil {
+		t.Fatalf("a publish whose push was refused answered %+v", rows)
+	}
+	if got := RefusalCodeOf(err); got != CodeSchema {
+		t.Errorf("refusal class = %q, want %q", got, CodeSchema)
+	}
+}
+
+// TestPublishTrafficRefusesWhenTheWriteFails pins that a publish whose local
+// write failed neither pushes nor answers: nothing new is in the replica, so
+// there is nothing for the log to learn and no account to report.
+func TestPublishTrafficRefusesWhenTheWriteFails(t *testing.T) {
+	path := tempReplica(t)
+	driver := &localDriver{path: path}
+	b := backendFor(t, driver, "origin-a")
+	if err := execOnErr(t, path, "DROP TABLE meta"); err != nil {
+		t.Fatalf("drop meta: %v", err)
+	}
+	before := driver.pushes
+	if rows, err := b.PublishTraffic(trafficRow); err == nil {
+		t.Fatalf("a publish whose write failed answered %+v", rows)
+	}
+	if driver.pushes != before {
+		t.Errorf("a publish whose write failed pushed %d times, want none", driver.pushes-before)
+	}
+}
+
+// TestPublishTrafficRefusesWhenTheReadBackFails pins that a publish whose push
+// landed but whose read-back failed is a refusal, not an answer with no rows:
+// an empty answer would be stored as an account of this machine alone.
+func TestPublishTrafficRefusesWhenTheReadBackFails(t *testing.T) {
+	driver := &localDriver{path: tempReplica(t)}
+	b := backendFor(t, driver, "origin-a")
+	driver.afterPush = func(db *sql.DB) {
+		if _, err := db.Exec("DROP TABLE meta"); err != nil {
+			t.Errorf("drop meta after the push: %v", err)
+		}
+	}
+	if rows, err := b.PublishTraffic(trafficRow); err == nil {
+		t.Fatalf("a publish whose read-back failed answered %+v", rows)
+	}
+}
+
+// TestPublishTrafficRefusesWhenTheFirstInsertFails pins the insert half of the
+// write: a row the update found nothing to overwrite is inserted, and a failed
+// insert is a refusal with nothing pushed.
+func TestPublishTrafficRefusesWhenTheFirstInsertFails(t *testing.T) {
+	path := tempReplica(t)
+	driver := &localDriver{path: path}
+	b := backendFor(t, driver, "origin-a")
+	for _, stmt := range []string{
+		"ALTER TABLE meta RENAME TO meta_old",
+		"CREATE TABLE meta (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL CHECK (key NOT LIKE 'traffic.%'))",
+		"INSERT INTO meta SELECT key, value FROM meta_old",
+	} {
+		if err := execOnErr(t, path, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	before := driver.pushes
+	if rows, err := b.PublishTraffic(trafficRow); err == nil {
+		t.Fatalf("a publish whose insert failed answered %+v", rows)
+	}
+	if driver.pushes != before {
+		t.Errorf("a publish whose insert failed pushed %d times, want none", driver.pushes-before)
 	}
 }
