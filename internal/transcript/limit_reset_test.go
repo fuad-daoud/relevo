@@ -4,20 +4,16 @@ import (
 	"testing"
 )
 
-// TestLimitResetMS pins which muse line carries a structured reset: the
-// failed run's quota instant wins, else the usage allowance window's, and
-// anything else carries none.
-func TestLimitResetMS(t *testing.T) {
-	const quotaMS = 1792848178000
-	const windowMS = 1792851778000
+type limitResetCase struct {
+	name      string
+	kind      string
+	line      string
+	wantMS    int64
+	wantQuota bool
+}
 
-	for _, c := range []struct {
-		name      string
-		kind      string
-		line      string
-		wantMS    int64
-		wantQuota bool
-	}{
+func limitResetQuotaCases(quotaMS, windowMS int64) []limitResetCase {
+	return []limitResetCase{
 		{
 			name:      "failed run quota instant",
 			kind:      "muse",
@@ -46,6 +42,11 @@ func TestLimitResetMS(t *testing.T) {
 			wantMS:    windowMS,
 			wantQuota: false,
 		},
+	}
+}
+
+func limitResetNoneCases() []limitResetCase {
+	return []limitResetCase{
 		{
 			name: "failed run without a quota carries none",
 			kind: "muse",
@@ -96,7 +97,18 @@ func TestLimitResetMS(t *testing.T) {
 			kind: "muse",
 			line: "   \n",
 		},
-	} {
+	}
+}
+
+// TestLimitResetMS pins which muse line carries a structured reset: the
+// failed run's quota instant wins, else the usage allowance window's, and
+// anything else carries none.
+func TestLimitResetMS(t *testing.T) {
+	const quotaMS = 1792848178000
+	const windowMS = 1792851778000
+
+	cases := append(limitResetQuotaCases(quotaMS, windowMS), limitResetNoneCases()...)
+	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			gotMS, gotQuota := LimitResetMS(c.kind, []byte(c.line))
 			if gotMS != c.wantMS || gotQuota != c.wantQuota {

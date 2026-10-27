@@ -54,9 +54,22 @@ const gateFixtureLine = "Individual quota reached. Please upgrade your subscript
 var museGateNow = time.Date(2026, 10, 24, 11, 3, 33, 0, time.UTC)
 
 // museGateSetup binds webshop headless on a muse candidate and writes stream,
-// the raw muse stream the scan reads: one event per line.
+// the raw muse stream the scan reads: one event per line. It points HOME and
+// the XDG roots at a fresh temp dir and installs a stub muse agent definition
+// there, so Send's HeadlessLaunch read never reaches the real home.
 func museGateSetup(t *testing.T, stream string) (Runtime, store.Binding) {
 	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	defPath := filepath.Join(home, ".config", "muse", "agents", "plan-executor.md")
+	if err := os.MkdirAll(filepath.Dir(defPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(defPath, []byte("---\nname: plan-executor\n---\n\ntest definition\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	rt := newRuntime(t)
 	rt.Runner = newFakeRunner()
 	rt.Candidates = candidateSet(t, `[{"harness":"muse","provider":"meta","model":"m","roles":["builder"]}]`)
@@ -111,7 +124,7 @@ func museGateFailedLine(quotaMS int64) string {
 // wins over the window's. The scan reads the stream file the round already
 // wrote; no other file is read.
 func TestGateOnLimitMuseStructuredStream(t *testing.T) {
-	t.Parallel()
+	// Not parallel: museGateSetup points HOME at a temp dir per subtest.
 
 	const quotaMS = 1792848178000
 	const windowMS = 1792851778000
@@ -135,8 +148,6 @@ func TestGateOnLimitMuseStructuredStream(t *testing.T) {
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-
 			rt, b := museGateSetup(t, c.stream)
 
 			text, resetMS := limitScan(context.Background(), rt, b)

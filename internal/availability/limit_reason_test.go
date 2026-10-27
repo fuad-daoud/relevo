@@ -5,23 +5,15 @@ import (
 	"time"
 )
 
-// TestResetFromReason: the same parse the decision point applies to builder
-// output decides when a manually recorded gate expires. A reason naming its own
-// reset yields that instant; a reason naming none -- or one outside the window
-// a vaguer form may claim -- leaves the gate until cleared rather than
-// inventing an expiry no provider stated.
-func TestResetFromReason(t *testing.T) {
-	t.Parallel()
+type resetReasonCase struct {
+	name   string
+	reason string
+	want   time.Time
+	wantOK bool
+}
 
-	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
-
-	for _, c := range []struct {
-		name     string
-		reason   string
-		want     time.Time
-		wantOK   bool
-		wantNote string
-	}{
+func resetReasonCases(now time.Time) []resetReasonCase {
+	return []resetReasonCase{
 		{
 			name:   "429 with a minutes reset",
 			reason: "RESOURCE_EXHAUSTED 429: rate limit reached. Resets in 51m30s",
@@ -74,7 +66,20 @@ func TestResetFromReason(t *testing.T) {
 			name:   "empty reason",
 			reason: "",
 		},
-	} {
+	}
+}
+
+// TestResetFromReason: the same parse the decision point applies to builder
+// output decides when a manually recorded gate expires. A reason naming its own
+// reset yields that instant; a reason naming none -- or one outside the window
+// a vaguer form may claim -- leaves the gate until cleared rather than
+// inventing an expiry no provider stated.
+func TestResetFromReason(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+
+	for _, c := range resetReasonCases(now) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 

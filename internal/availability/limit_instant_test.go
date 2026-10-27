@@ -33,19 +33,16 @@ var (
 	museIncidentReset = time.Date(2026, 10, 24, 13, 22, 58, 0, time.UTC)
 )
 
-// TestParseInstantResetReadsMuseSentence pins the absolute-instant form: a
-// muse-shaped line naming an RFC3339 reset gates at that instant, a lifted
-// one reads as now, and anything else refuses.
-func TestParseInstantResetReadsMuseSentence(t *testing.T) {
-	t.Parallel()
+type museInstantCase struct {
+	name string
+	line string
+	now  time.Time
+	want time.Time
+	ok   bool
+}
 
-	for _, c := range []struct {
-		name string
-		line string
-		now  time.Time
-		want time.Time
-		ok   bool
-	}{
+func museInstantResetCases() []museInstantCase {
+	return []museInstantCase{
 		{
 			name: "future instant with the guard markers",
 			line: museIncidentLine,
@@ -99,7 +96,16 @@ func TestParseInstantResetReadsMuseSentence(t *testing.T) {
 			now:  museIncidentNow,
 			ok:   false,
 		},
-	} {
+	}
+}
+
+// TestParseInstantResetReadsMuseSentence pins the absolute-instant form: a
+// muse-shaped line naming an RFC3339 reset gates at that instant, a lifted
+// one reads as now, and anything else refuses.
+func TestParseInstantResetReadsMuseSentence(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range museInstantResetCases() {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 
