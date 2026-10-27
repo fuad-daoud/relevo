@@ -6,12 +6,7 @@ package sync
 // and it reaches nothing but the machine's local file, so it answers with the
 // network out.
 
-import (
-	"fmt"
-	"time"
-
-	"github.com/fuad-daoud/relevo/internal/db"
-)
+import "time"
 
 const (
 	// quotaWarnShare is the share of the month's quota whose use makes doctor
@@ -54,23 +49,19 @@ type QuotaReading struct {
 // machine that has never synced, or one with sync off since before the month
 // began. A machine with sync off but traffic earlier in the month still
 // reports, because those bytes were spent.
-func ReadQuota(kv db.KV, origin string, now time.Time) (QuotaReading, bool, error) {
-	// The quota lives in the machine's sync section, and db.KV carries no
-	// config surface, so a kv that is not the local handle cannot name one.
-	// Every meter caller holds the local handle; the seam is narrow on purpose.
-	local, ok := kv.(Local)
-	if !ok {
-		return QuotaReading{}, false, fmt.Errorf("sync: the quota needs the local handle, which carries the sync section: %w", db.ErrInvalid)
-	}
+//
+// It takes the local handle rather than a bare kv because the quota lives in
+// the machine's sync section, which only the local file carries.
+func ReadQuota(local Local, origin string, now time.Time) (QuotaReading, bool, error) {
 	settings, err := ReadSettings(local)
 	if err != nil {
 		return QuotaReading{}, false, err
 	}
-	counters, err := ReadBytes(kv, now)
+	counters, err := ReadBytes(local, now)
 	if err != nil {
 		return QuotaReading{}, false, err
 	}
-	snap, err := ReadAccount(kv)
+	snap, err := ReadAccount(local)
 	if err != nil {
 		return QuotaReading{}, false, err
 	}
