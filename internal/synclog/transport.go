@@ -250,6 +250,32 @@ type BoundaryAppender interface {
 	AppendSigned(entries []Entry, boundary Boundary) ([]Entry, error)
 }
 
+// TrafficRow is one installation's month of sync traffic as it publishes it:
+// the Turso bytes it pushed and pulled in the named UTC month, and when it
+// read its own counters.
+type TrafficRow struct {
+	// Month is the UTC month the counts cover, spelled "2006-01".
+	Month string
+	// Push and Pull are the bytes this machine sent to and read from Turso.
+	Push int64
+	Pull int64
+	// At is when the publisher read its counters.
+	At time.Time
+}
+
+// TrafficPublisher is a transport that carries this installation's traffic row
+// to the log and answers with every origin's row the log holds. It is an
+// optional interface rather than a LogTransport method because the transport
+// is implemented by fakes across the sync packages, and a method added to the
+// interface would churn every one of them; a caller asks for it with a type
+// assertion and skips the publish where a transport does not carry it.
+type TrafficPublisher interface {
+	// PublishTraffic writes this installation's own row -- the origin is the
+	// transport's own, the rule PublishMarks states -- and answers with every
+	// origin's row as the log holds it after the write.
+	PublishTraffic(row TrafficRow) (map[string]TrafficRow, error)
+}
+
 // LogRowOverhead is the bytes a log row costs beside its body, for the columns
 // the body does not carry.
 const LogRowOverhead = 96

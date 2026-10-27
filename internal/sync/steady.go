@@ -165,6 +165,7 @@ func (r *Runner) exchange(ctx context.Context, shared *db.DB, t *StopTransport) 
 	}
 	r.publishMarks(shared, t, imported.Moved())
 	now := time.Now().UTC()
+	r.publishTraffic(t, now)
 	compacted := r.compact(shared, t, now)
 	r.publishSize(shared.Origin(), t, compacted, out.Exported > 0, now)
 	r.measureStorage(t, now)

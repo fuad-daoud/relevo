@@ -235,6 +235,16 @@ func (normalBackend) Head(string, string, int) ([]syncworker.HeadRow, error) {
 	return []syncworker.HeadRow{{Tbl: "task", PK: `["t"]`, Seq: 7, Hash: "abc"}}, nil
 }
 
+// PublishTraffic answers with the row it was handed under this worker's own
+// origin beside one other machine's, which is the shape a real replica holding
+// two publishers answers with.
+func (normalBackend) PublishTraffic(row syncworker.TrafficRow) (map[string]syncworker.TrafficRow, error) {
+	return map[string]syncworker.TrafficRow{
+		"origin-a": row,
+		"origin-b": {Month: row.Month, Push: 5, Pull: 6, At: pinnedAt},
+	}, nil
+}
+
 func (normalBackend) Stats() (syncworker.Stats, error) {
 	return syncworker.Stats{Entries: 11, Origins: 2, Seq: 9}, nil
 }
@@ -391,6 +401,10 @@ func (r verbsRefusingBackend) Stats() (syncworker.Stats, error) {
 }
 
 func (r verbsRefusingBackend) PublishMarks(map[string]int, time.Time) error { return r.fail() }
+
+func (r verbsRefusingBackend) PublishTraffic(syncworker.TrafficRow) (map[string]syncworker.TrafficRow, error) {
+	return nil, r.fail()
+}
 
 func (r verbsRefusingBackend) ReadMarks() (syncworker.MarkState, error) {
 	return syncworker.MarkState{}, r.fail()

@@ -115,6 +115,29 @@ func (c *Client) ReadMarks() (synclog.MarkState, error) {
 	return markStateFromWire(*resp.Marks), nil
 }
 
+// PublishTraffic writes this installation's traffic row and answers with every
+// origin's row the log holds.
+//
+// The request carries no origin: the worker keys the row with its own from
+// hello, so a caller here cannot name a machine that is not this one.
+//
+// A reply with no rows is a refusal rather than an empty account: the worker
+// always answers with the rows it holds after its own write, so one without
+// them did not do what was asked.
+func (c *Client) PublishTraffic(row synclog.TrafficRow) (map[string]synclog.TrafficRow, error) {
+	resp, err := c.call(syncworker.Request{
+		Verb:    syncworker.VerbPublishTraffic,
+		Traffic: trafficRowToWire(row),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Traffic == nil {
+		return nil, errors.New("syncpipe: the worker answered publish_traffic with no rows")
+	}
+	return trafficRowsFromWire(resp.Traffic), nil
+}
+
 // PullRange reads one page of an origin's entries in (after, upto].
 func (c *Client) PullRange(origin string, after, upto int) ([]synclog.Entry, error) {
 	resp, err := c.call(syncworker.Request{Verb: syncworker.VerbPullRange, Origin: origin, AfterSeq: after, Upto: upto})
@@ -307,6 +330,31 @@ func markStateFromWire(s syncworker.MarkState) synclog.MarkState {
 			Seq:    m.Seq,
 			At:     m.At,
 		})
+	}
+	return out
+}
+
+// trafficRowToWire renders this installation's row for a publish.
+func trafficRowToWire(row synclog.TrafficRow) *syncworker.TrafficRow {
+	return &syncworker.TrafficRow{
+		Month: row.Month,
+		Push:  row.Push,
+		Pull:  row.Pull,
+		At:    row.At,
+	}
+}
+
+// trafficRowsFromWire reads back the rows a publish answered with, one per
+// origin.
+func trafficRowsFromWire(rows map[string]syncworker.TrafficRow) map[string]synclog.TrafficRow {
+	out := make(map[string]synclog.TrafficRow, len(rows))
+	for origin, row := range rows {
+		out[origin] = synclog.TrafficRow{
+			Month: row.Month,
+			Push:  row.Push,
+			Pull:  row.Pull,
+			At:    row.At,
+		}
 	}
 	return out
 }
