@@ -9,6 +9,36 @@ import (
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
+// countOpenRounds is how many bindings hold an open round: a prompt went out
+// for the binding's current round and no report came back. A remote binding
+// counts too, since its prompt and report sit in the local log. Each binding
+// costs one log read: the tick's reconcile reads the log inside its own lock
+// and hands nothing back, so there is no entry list to reuse here.
+func countOpenRounds(st *store.Store, bindings []store.Binding) int {
+	open := 0
+	for _, b := range bindings {
+		entries, err := st.ReadLog(b.Name)
+		if err != nil {
+			slog.Warn("rounds: read the log for the idle count", "binding", b.Name, "err", err)
+			continue
+		}
+		if store.RoundOpen(entries, b.Round) {
+			open++
+		}
+	}
+	return open
+}
+
+// noteRoundsOpen hands the runner the tick's open-round count. It is safe on
+// a daemon with no sync seam: the note lands nowhere rather than failing the
+// tick.
+func (d *Daemon) noteRoundsOpen(n int) {
+	if d == nil {
+		return
+	}
+	d.syncRunner().NoteRoundsOpen(n)
+}
+
 // outboxTruncateInterval is how often the outbox is emptied on a machine whose
 // sync is off. It is long enough that a tick every two seconds never pays for a
 // write it did not need, and short enough that an idle machine's log does not
