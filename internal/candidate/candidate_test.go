@@ -186,6 +186,27 @@ func TestLoadValidation(t *testing.T) {
 			body:          `[{"harness":"claude","provider":"anthropic","model":"m","roles":["builder"],"denial_patterns":["["]}]`,
 			wantSubstring: "denial_patterns[0]",
 		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(writeTemp(t, tt.body))
+			if err == nil {
+				t.Fatalf("Load() expected error containing %q, got nil", tt.wantSubstring)
+			}
+			if !strings.Contains(err.Error(), tt.wantSubstring) {
+				t.Errorf("Load() error = %q, want substring %q", err.Error(), tt.wantSubstring)
+			}
+		})
+	}
+}
+
+func TestLoadContributorModeValidation(t *testing.T) {
+	tests := []struct {
+		name          string
+		body          string
+		wantSubstring string
+	}{
 		{
 			name:          "invalid contributor_mode",
 			body:          `[{"harness":"muse","provider":"meta","model":"m","roles":["builder"],"contributor_mode":"yes"}]`,
