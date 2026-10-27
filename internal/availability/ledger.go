@@ -59,6 +59,12 @@ const (
 	// concurrencyGates synthesises it from the live round count. Subject is a
 	// candidate token, and the provider is not gated.
 	ConcurrencyLimit Kind = "concurrency_limit"
+
+	// AllowanceExhausted records that a muse candidate's provider account is
+	// at or above the allowance pick threshold. Like ConcurrencyLimit it is
+	// never written to the ledger file: allowanceGates synthesises it from
+	// the machine-local allowance document. Subject is a candidate token.
+	AllowanceExhausted Kind = "allowance_exhausted"
 )
 
 // ErrBadEntry reports a ledger entry that fails validation.

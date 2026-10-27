@@ -27,6 +27,7 @@ type Source struct {
 	Provider   string // the candidate's; "" for an adopted builder
 	Model      string // the candidate's; "" for an adopted builder
 	Plan       bool   // the candidate's subscription flag
+	Account    string // the login of the candidate's pool the round drew from; "" on a host with no accounts
 	StreamPath string // headless: the round's stream, NNN-runner.jsonl, or NNN-builder.jsonl for a round from before the rename
 	StreamFrom int64  // parse only bytes at or after this offset; 0 means whole stream
 	// ReadFile, when set, reads a sealed round's stream from the store's database.

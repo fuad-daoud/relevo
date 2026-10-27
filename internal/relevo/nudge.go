@@ -171,7 +171,9 @@ func nudgeResume(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// large record's parse must be allowed to finish -- the 500 ms live
 	// deadline can silently drop the whole first session, which is the loss
 	// this entry exists to carry.
-	prior := recordUsage(ctx, rt, roundSource(rt, b, b.RoundStartedAt, now))
+	src := roundSource(rt, b, b.RoundStartedAt, now)
+	prior := recordUsage(ctx, rt, src)
+	recordAllowance(rt, src)
 	prompt := nudgePromptFor(rt, b)
 	next, err := resumeRound(ctx, rt, tx, b, sess, prompt, false)
 	if err != nil {

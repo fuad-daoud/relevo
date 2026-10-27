@@ -962,7 +962,9 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		copied := *entryUsage
 		entryUsage = &copied
 	} else {
-		entryUsage = recordUsage(ctx, rt, roundSource(rt, b, roundStart, now))
+		src := roundSource(rt, b, roundStart, now)
+		entryUsage = recordUsage(ctx, rt, src)
+		recordAllowance(rt, src)
 	}
 
 	// The closed round's cgroup measurement: what the caller already has
