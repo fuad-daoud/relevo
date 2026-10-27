@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 )
@@ -280,6 +282,13 @@ func currentBuilderTransportText(rt Runtime, b store.Binding, n int) string {
 		from = b.Builder.StreamStart
 	}
 	return tailWith(rt.Store.StreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n, from, transcript.TransportLines)
+}
+
+// limitScan is limitText paired with the structured reset the same bytes
+// carry: one scan, no new I/O. The gate decision prefers that instant over
+// whatever the text names.
+func limitScan(ctx context.Context, rt Runtime, b store.Binding) (string, int64) {
+	return currentBuilderScan(rt, b, availability.LimitScanLines)
 }
 
 // roundSegments is the segment list of one round: the live endpoint's own

@@ -455,13 +455,6 @@ func limitText(ctx context.Context, rt Runtime, b store.Binding) string {
 	return text
 }
 
-// limitScan is limitText paired with the structured reset the same bytes
-// carry: one scan, no new I/O. The gate decision prefers that instant over
-// whatever the text names.
-func limitScan(ctx context.Context, rt Runtime, b store.Binding) (string, int64) {
-	return currentBuilderScan(rt, b, availability.LimitScanLines)
-}
-
 // gateOnLimit is the one helper every decision point calls (spec §4.4).
 // Preconditions: the round is open and the caller holds the store lock.
 //
