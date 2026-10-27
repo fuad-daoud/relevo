@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"os"
 	"path/filepath"
 
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -43,7 +44,7 @@ func LoginChecks(env Env, kinds []string, homes map[string][]string) []Check {
 			checks = append(checks, Check{Group: kind, Name: "login", Severity: SevOK, Detail: "not checked"})
 			continue
 		}
-		for _, dir := range loginDirs(env, spec, homes[kind]) {
+		for _, dir := range loginDirs(env, kind, spec, homes[kind]) {
 			checks = append(checks, loginRow(env, kind, spec, dir))
 		}
 	}
@@ -69,15 +70,32 @@ func WithHomeEnv(homes map[string][]string, getenv func(string) string) map[stri
 	return out
 }
 
+// getenvFor reads one variable from the env when it carries its own values,
+// else from the process: the seam that keeps the login path injectable in
+// tests without process-global reads in the check path.
+func getenvFor(env Env) func(string) string {
+	if g, ok := env.(interface{ Getenv(string) string }); ok {
+		return g.Getenv
+	}
+	return os.Getenv
+}
+
 // loginDirs is the directories to check: the account homes when there are any,
 // else the kind's default home resolved under $HOME ("" for a kind whose login
-// file is itself home-relative).
-func loginDirs(env Env, spec loginSpec, accountHomes []string) []string {
+// file is itself home-relative). Muse's default honours XDG_CONFIG_HOME the
+// way setup's museAuthPath does: set and non-empty names $XDG/muse, otherwise
+// the home-relative default below.
+func loginDirs(env Env, kind string, spec loginSpec, accountHomes []string) []string {
 	if len(accountHomes) > 0 {
 		return accountHomes
 	}
 	if spec.home == "" {
 		return []string{""}
+	}
+	if kind == "muse" {
+		if xdg := getenvFor(env)("XDG_CONFIG_HOME"); xdg != "" {
+			return []string{filepath.Join(xdg, "muse")}
+		}
 	}
 	p, err := env.HomePath(spec.home)
 	if err != nil {

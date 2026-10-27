@@ -40,6 +40,7 @@ type fakeEnv struct {
 	fileOwners    map[string]uint32 // path -> owning uid; absent reads as unknown
 	homeDir       string
 	homeErr       error
+	getenv        map[string]string // injected variables; absent reads as empty
 	versions      map[string]string // binary path -> version output
 	versionErr    error
 	probeErr      error
@@ -89,6 +90,10 @@ func (f *fakeEnv) HomePath(rel string) (string, error) {
 		home = "/fake/home"
 	}
 	return filepath.Join(home, rel), nil
+}
+
+func (f *fakeEnv) Getenv(name string) string {
+	return f.getenv[name]
 }
 
 func (f *fakeEnv) Stat(path string) error {
