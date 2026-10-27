@@ -20,7 +20,7 @@ const LimitScanLines = 40
 type LimitMatch struct {
 	Line   string    // the matched line, trimmed, capped at 200 runes
 	Until  time.Time // gate end, UTC
-	Parsed bool      // Until came from Line, not from the fallback
+	Parsed bool      // Until came from the stream's own reset rather than the fallback
 }
 
 // durationRe matches "resets in 2h48m52s", "try again in 5 min", "resets in
@@ -40,6 +40,15 @@ var clockRe = regexp.MustCompile(`(?i)resets?\s+(?:at\s+)?~?(\d{1,2})(?::(\d{2})
 // are, in order: month, day, year (may be empty), hour, minute and am/pm (each
 // may be empty when the line names no time).
 var dateRe = regexp.MustCompile(`(?i)(?:try again|resets?)\s+(?:at|on)\s+~?(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(\d{4}))?(?:\s*,?\s*(?:at\s+)?(\d{1,2}):(\d{2})\s*(am|pm)?)?`)
+
+// instantRe matches an absolute RFC3339 reset instant, the form muse's quota
+// sentence names: "Your usage window resets at 2026-10-24T13:22:58Z".
+var instantRe = regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})`)
+
+// instantGuardRe keeps the instant form to muse-shaped lines, so another
+// provider's prose timestamp cannot set a gate: only a line carrying one of
+// the markers from muse's own limit rows is read as a muse reset.
+var instantGuardRe = regexp.MustCompile(`(?i)usage window|quota|rate_limit_error|API error 429`)
 
 // monthByName maps a month's lower-cased 3-letter prefix to its time.Month, so
 // both "sept" and "september" resolve through "sep".
@@ -64,6 +73,16 @@ var monthByName = map[string]time.Month{
 // when no line matches or patterns is empty. Thinking lines are skipped, because
 // a model reasoning about a limit is not hitting one. Never errors.
 func MatchLimit(text string, patterns []*regexp.Regexp, now time.Time, fallback time.Duration) (LimitMatch, bool) {
+	return MatchLimitWithReset(text, patterns, now, fallback, 0)
+}
+
+// MatchLimitWithReset is MatchLimit with a structured resets_at_ms threaded
+// in: the millisecond instant a muse stream already carried beside the text
+// (a failed run's quota, else an allowance window). When it is sane it wins
+// over whatever the matched line names -- Until is that instant and Parsed is
+// true -- and when it is absent or outside the dated window the text decides
+// exactly as MatchLimit. Never errors.
+func MatchLimitWithReset(text string, patterns []*regexp.Regexp, now time.Time, fallback time.Duration, resetMS int64) (LimitMatch, bool) {
 	if len(patterns) == 0 {
 		return LimitMatch{}, false
 	}
@@ -77,6 +96,9 @@ func MatchLimit(text string, patterns []*regexp.Regexp, now time.Time, fallback 
 			continue
 		}
 		capped := capLine(line)
+		if until, ok := structuredReset(resetMS, now); ok {
+			return LimitMatch{Line: capped, Until: until, Parsed: true}, true
+		}
 		until, parsed := parseReset(capped, now)
 		if !parsed {
 			until = now.Add(fallback)
@@ -84,6 +106,18 @@ func MatchLimit(text string, patterns []*regexp.Regexp, now time.Time, fallback 
 		return LimitMatch{Line: capped, Until: until.UTC(), Parsed: parsed}, true
 	}
 	return LimitMatch{}, false
+}
+
+// structuredReset reads a structured resets_at_ms beside the matched text.
+// It is sane -- and the gate's Until -- when it names an instant inside the
+// dated window, the bound a reset that states its own day earns; zero (no
+// field), a lifted instant and one further out than the window do not parse,
+// so the text decides instead. The returned time is UTC.
+func structuredReset(ms int64, now time.Time) (time.Time, bool) {
+	if ms == 0 {
+		return time.Time{}, false
+	}
+	return windowedReset(time.UnixMilli(ms).UTC(), now, limitWindowDated)
 }
 
 // ResetFromReason reports the reset instant a gate reason's own text names, and
@@ -120,18 +154,23 @@ func capLine(line string) string {
 	return string(runes)
 }
 
-// parseReset tries three forms, in this order, on the matched line only: a
-// duration ("resets in 2h48m52s"), an absolute date ("try again at Oct 19th,
-// 2026 7:14 PM"), and a clock time ("resets 7pm", "resets at 23:30"). A
-// duration and a full date may lie in (now, now+31d]; a date naming no year and
-// a clock time are the vaguer forms and keep the 7-day window, because "7pm"
-// without a day is the one a line can most easily be misread out of. Anything
-// outside its window is ok=false -- garbage in a line that happened to match
-// the limit pattern must not gate a provider indefinitely. The one exception
-// is a clock time that just passed: within clockResetGrace it reads as a
-// reset lifting now, so a gate recorded at its own reset time gates for zero
-// time (parseClockReset). The returned time is UTC.
+// parseReset tries four forms, in this order, on the matched line only: an
+// absolute instant ("resets at 2026-10-24T13:22:58Z"), a duration ("resets in
+// 2h48m52s"), an absolute date ("try again at Oct 19th, 2026 7:14 PM"), and a
+// clock time ("resets 7pm", "resets at 23:30"). The instant leads because the
+// clock form otherwise reads the instant's year as an hour ("2026" as 20:00).
+// An instant and a full date may lie in (now, now+31d]; a date naming no year
+// and a clock time are the vaguer forms and keep the 7-day window, because
+// "7pm" without a day is the one a line can most easily be misread out of.
+// Anything outside its window is ok=false -- garbage in a line that happened
+// to match the limit pattern must not gate a provider indefinitely. The two
+// exceptions read as a reset lifting now: an instant at or before now, and a
+// clock time that just passed within clockResetGrace, so a gate recorded at
+// its own reset time gates for zero time. The returned time is UTC.
 func parseReset(line string, now time.Time) (time.Time, bool) {
+	if t, ok := parseInstantReset(line, now); ok {
+		return t, true
+	}
 	if t, ok := parseDurationReset(line, now); ok {
 		return t, true
 	}
@@ -139,6 +178,28 @@ func parseReset(line string, now time.Time) (time.Time, bool) {
 		return t, true
 	}
 	return parseClockReset(line, now)
+}
+
+// parseInstantReset handles the absolute-instant form, guarded to muse-shaped
+// lines: another provider's prose timestamp must not set a gate. A future
+// instant earns the dated window; one at or before now is a reset that already
+// lifted and reads as now, so the gate it feeds expires immediately.
+func parseInstantReset(line string, now time.Time) (time.Time, bool) {
+	if !instantGuardRe.MatchString(line) {
+		return time.Time{}, false
+	}
+	m := instantRe.FindString(line)
+	if m == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, m)
+	if err != nil {
+		return time.Time{}, false
+	}
+	if !t.After(now) {
+		return now.UTC(), true
+	}
+	return windowedReset(t, now, limitWindowDated)
 }
 
 // parseDurationReset handles the "resets in <run>" form.

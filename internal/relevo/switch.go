@@ -451,7 +451,15 @@ func hostStartError(err error) bool {
 // the lines the harness itself wrote. A local builder is always headless since
 // #303.
 func limitText(ctx context.Context, rt Runtime, b store.Binding) string {
-	return currentBuilderScanText(rt, b, availability.LimitScanLines)
+	text, _ := limitScan(ctx, rt, b)
+	return text
+}
+
+// limitScan is limitText paired with the structured reset the same bytes
+// carry: one scan, no new I/O. The gate decision prefers that instant over
+// whatever the text names.
+func limitScan(ctx context.Context, rt Runtime, b store.Binding) (string, int64) {
+	return currentBuilderScan(rt, b, availability.LimitScanLines)
 }
 
 // gateOnLimit is the one helper every decision point calls (spec §4.4).
@@ -475,7 +483,7 @@ func limitText(ctx context.Context, rt Runtime, b store.Binding) string {
 // a report on disk: if so the gate is recorded but the round is left for the
 // caller to close as it would have (handled=false, m.Line set); otherwise it
 // switches the builder uncounted (handled=true) and returns the replacement.
-func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, text string, closeOld bool) (next store.Binding, m availability.LimitMatch, handled bool, err error) {
+func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, text string, resetMS int64, closeOld bool) (next store.Binding, m availability.LimitMatch, handled bool, err error) {
 	switchable := b.BuilderCandidate != "" && !b.RoundStartedAt.IsZero()
 	if !switchable {
 		return b, availability.LimitMatch{}, false, nil
@@ -487,7 +495,7 @@ func gateOnLimit(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 		credit, m.Line = true, line
 	} else {
 		patterns := availability.LimitPatterns(AvailabilityDeps(rt), b.BuilderCandidate)
-		m, ok = availability.MatchLimit(text, patterns, now, rt.Policy.LimitGateDefault())
+		m, ok = availability.MatchLimitWithReset(text, patterns, now, rt.Policy.LimitGateDefault(), resetMS)
 		if !ok {
 			return b, availability.LimitMatch{}, false, nil
 		}

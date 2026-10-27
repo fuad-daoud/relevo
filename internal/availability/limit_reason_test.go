@@ -59,6 +59,18 @@ func TestResetFromReason(t *testing.T) {
 			reason: "rate limit reached. Resets in 90000000h",
 		},
 		{
+			name:   "a muse 429 sentence expires at its own instant",
+			reason: "run ended with Failed: API error 429: Subscription quota exhausted. Your usage window resets at 2026-10-24T13:22:58Z. (rate_limit_error)",
+			want:   time.Date(2026, 10, 24, 13, 22, 58, 0, time.UTC),
+			wantOK: true,
+		},
+		{
+			name:   "a lifted muse instant expires immediately",
+			reason: "run ended with Failed: API error 429: Subscription quota exhausted. Your usage window resets at 2026-09-24T13:22:58Z. (rate_limit_error)",
+			want:   now,
+			wantOK: true,
+		},
+		{
 			name:   "empty reason",
 			reason: "",
 		},

@@ -115,7 +115,31 @@ func streamRenderer() lineRenderer {
 // the same text, so model text, tool output, a successful result and thinking
 // can never gate a provider.
 func scanTail(path string, read func(string) ([]byte, error), segs []store.StreamSegment, fallback string, n int, from int64) string {
-	return tailWith(path, read, segs, fallback, n, from, transcript.LimitLines)
+	text, _ := scanTailBoth(path, read, segs, fallback, n, from)
+	return text
+}
+
+// scanTailBoth is scanTail paired with the structured reset the same bytes
+// carry: one pass, no new I/O. The render closure sees every raw line the
+// scan already reads, keeping the last quota instant and the last allowance
+// window instant; the failure's own instant wins over the window's.
+func scanTailBoth(path string, read func(string) ([]byte, error), segs []store.StreamSegment, fallback string, n int, from int64) (string, int64) {
+	var quotaMS, allowMS int64
+	render := func(kind string, line []byte) []string {
+		if ms, quota := transcript.LimitResetMS(kind, line); ms != 0 {
+			if quota {
+				quotaMS = ms
+			} else {
+				allowMS = ms
+			}
+		}
+		return transcript.LimitLines(kind, line)
+	}
+	text := tailWith(path, read, segs, fallback, n, from, render)
+	if quotaMS != 0 {
+		return text, quotaMS
+	}
+	return text, allowMS
 }
 
 // tailWith is streamTail and scanTail's shared reader: the last n lines of a
@@ -227,14 +251,22 @@ func currentBuilderTail(rt Runtime, b store.Binding, n int) string {
 // today's rendered-tail scan, because such a round writes its stderr to the log
 // and the rendered text is what the patterns were written against.
 func currentBuilderScanText(rt Runtime, b store.Binding, n int) string {
+	text, _ := currentBuilderScan(rt, b, n)
+	return text
+}
+
+// currentBuilderScan is currentBuilderScanText paired with the structured
+// reset the same bytes carry: one pass, no new I/O. A legacy round's log is
+// rendered text with no JSON beside it, so it never carries one.
+func currentBuilderScan(rt Runtime, b store.Binding, n int) (string, int64) {
 	if b.Builder.LogPath != "" && b.Builder.LogPath == rt.Store.BuilderLogPath(b.Name, b.Round) {
-		return logTail(b.Builder.LogPath, n)
+		return logTail(b.Builder.LogPath, n), 0
 	}
 	from := int64(0)
 	if b.Builder.StreamRound == b.Round {
 		from = b.Builder.StreamStart
 	}
-	return scanTail(rt.Store.StreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n, from)
+	return scanTailBoth(rt.Store.StreamPath(b.Name, b.Round), rt.Store.ReadFile, b.Builder.StreamSegments, b.Builder.Kind, n, from)
 }
 
 // currentBuilderTransportText is currentBuilderScanText with
