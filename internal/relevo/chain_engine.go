@@ -303,7 +303,7 @@ func chainFlowCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow
 		if b, lerr := tx.Load(member); lerr == nil && b.Builder.Remote() {
 			if rt.Remote != nil {
 				who, werr := rt.Remote.WhoAmI(ctx, b.Builder.Server)
-				if werr == nil && hasFeature(who, remote.FeatureCheck) {
+				if werr == nil && remote.HasFeature(who, remote.FeatureCheck) {
 					run := chainNextPlacedCheckRun(rt, c)
 					req := remote.CreateCheckRequest{
 						ID:      chainCheckID(run),

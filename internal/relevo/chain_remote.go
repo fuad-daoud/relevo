@@ -123,7 +123,7 @@ func chainRemotePreflight(ctx context.Context, rt Runtime, opts ChainOptions, pl
 	// a server that silently dropped it would run the chain's rounds at the
 	// bare repo's root, not the subdirectory the mastermind's shell was in.
 	subdir := housekeep.ResolveSubdir(ctx, rt.Git, repo)
-	if subdir != "" && !hasFeature(who, remote.FeatureSubdir) {
+	if subdir != "" && !remote.HasFeature(who, remote.FeatureSubdir) {
 		return nil, refusal.New("server %s does not carry binding subdirectories (pre-subdir server); upgrade it or start the chain at the repository root", server)
 	}
 
