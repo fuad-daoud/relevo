@@ -1,4 +1,4 @@
-package relevo
+package verb
 
 import (
 	"context"
@@ -18,7 +18,7 @@ func joinVerbWithR2(t *testing.T, endpoint string) (*wire.SyncVerb, []byte) {
 }
 
 // keylessFleet is a remote whose fleet never shared bucket credentials.
-func keylessFleet(t *testing.T) (*VerbRunner, relevosync.Local) {
+func keylessFleet(t *testing.T) (*Runner, relevosync.Local) {
 	t.Helper()
 	runner, local := joinRunner(t)
 	log := synclog.NewMemTransport("m1")

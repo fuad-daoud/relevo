@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -497,7 +498,7 @@ func TestSyncFailedAttemptIsRecordedAndReadsBehind(t *testing.T) {
 func TestSyncUnopenableRemoteIsRecordedAndReadsBehind(t *testing.T) {
 	t.Parallel()
 	f := newLiveFixture(t)
-	f.d.SetSyncVerbs(&VerbRunner{Local: f.local, Runner: f.d.rt.Sync})
+	f.d.SetSyncVerbs(&verb.Runner{Local: f.local, Runner: f.d.rt.Sync})
 
 	f.d.queueSync(context.Background())
 	waitSyncIdle(t, f.d)

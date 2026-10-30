@@ -1,4 +1,4 @@
-package relevo
+package verb
 
 // The passphrase half of an enable: stage what the worker is built from, check
 // the passphrase against the remote's key_check, and only then let the enable go
@@ -27,7 +27,6 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
-	syncverb "github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -71,7 +70,7 @@ type verified struct {
 // A plain enable stages its bucket credentials too: its worker is opened from
 // the stored set, and on a fresh machine the only set is the one this enable
 // carries. A join's arrive in the fleet's secrets document instead.
-func (v *VerbRunner) stageAndVerify(ctx context.Context, remote string, token, passphrase []byte, required bool, r2 relevosync.R2Intake) (*verified, error) {
+func (v *Runner) stageAndVerify(ctx context.Context, remote string, token, passphrase []byte, required bool, r2 relevosync.R2Intake) (*verified, error) {
 	if required && len(bytes.TrimSpace(passphrase)) == 0 {
 		return nil, errNoPassphrase
 	}
@@ -147,7 +146,7 @@ func (v *VerbRunner) stageAndVerify(ctx context.Context, remote string, token, p
 // stageRows writes the remote and the token into the machine-local rows. It is
 // the two rows the worker is opened from and nothing else: the bucket
 // credentials a plain enable takes are written by the enable itself later.
-func (v *VerbRunner) stageRows(remote string, token []byte) error {
+func (v *Runner) stageRows(remote string, token []byte) error {
 	now := time.Now()
 	settings, err := relevosync.ReadSettings(v.Local)
 	if err != nil {
@@ -163,7 +162,7 @@ func (v *VerbRunner) stageRows(remote string, token []byte) error {
 // stageR2 stores the bucket credentials a plain enable resolves from its flags
 // over the stored set. An incomplete set is refused here, as the enable itself
 // would refuse it, before a worker is opened that could not be built.
-func (v *VerbRunner) stageR2(r2 relevosync.R2Intake) error {
+func (v *Runner) stageR2(r2 relevosync.R2Intake) error {
 	stored, err := relevosync.ReadR2(v.Local)
 	if err != nil {
 		return err
@@ -183,7 +182,7 @@ func (v *VerbRunner) stageR2(r2 relevosync.R2Intake) error {
 // The refusal that sent us here already says the enable did not happen; when the
 // restore itself fails, the log says it may not be entirely as it was, which is
 // the other half of the truth and the one an operator has to hear.
-func (v *VerbRunner) unstageJoin(snapshot relevosync.JoinSnapshot) {
+func (v *Runner) unstageJoin(snapshot relevosync.JoinSnapshot) {
 	if err := snapshot.Restore(v.Local, time.Now()); err != nil {
 		slog.Warn("sync: enable: the staged rows could not be restored", "err", err)
 	}
@@ -200,7 +199,7 @@ func (v *VerbRunner) unstageJoin(snapshot relevosync.JoinSnapshot) {
 // in hand. bucketless is the opener's answer about the worker it built -- a
 // worker started with no bucket stored, which the rest of the enable must
 // answer for.
-func (v *VerbRunner) openJoinTransport(ctx context.Context, joining bool) (synclog.LogTransport, bool, bool, error) {
+func (v *Runner) openJoinTransport(ctx context.Context, joining bool) (synclog.LogTransport, bool, bool, error) {
 	var transport synclog.LogTransport
 	var err error
 	var bucketless bool
@@ -224,11 +223,11 @@ func (v *VerbRunner) openJoinTransport(ctx context.Context, joining bool) (syncl
 // The passphrase is required here, and the enable it hands off to resolves the
 // bucket credentials leniently: a code has nowhere to carry them and they arrive
 // in the secrets document, but bucket flags the joiner passed are honored.
-func (v *VerbRunner) enableJoin(ctx context.Context, verb *wire.SyncVerb, token, passphrase []byte, r2 relevosync.R2Intake) *wire.SyncResult {
+func (v *Runner) enableJoin(ctx context.Context, verb *wire.SyncVerb, token, passphrase []byte, r2 relevosync.R2Intake) *wire.SyncResult {
 	v.beginJoin()
 	done, err := v.stageAndVerify(ctx, verb.RemoteURL, token, passphrase, true, r2)
 	if err != nil {
-		return syncverb.Refusal(syncverb.Classify(err), err)
+		return Refusal(Classify(err), err)
 	}
 	return v.enablePipeline(ctx, verb, token, r2, true, done)
 }
@@ -247,7 +246,7 @@ func refusedForGood(err error, enabler *relevosync.Enabler) bool {
 //
 // joining relaxes the preflight's bucket check: a join's credentials may arrive
 // in the secrets document, so only flags actually passed are stored.
-func (v *VerbRunner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, token []byte, r2 relevosync.R2Intake, joining bool, staged *verified) *wire.SyncResult {
+func (v *Runner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, token []byte, r2 relevosync.R2Intake, joining bool, staged *verified) *wire.SyncResult {
 	v.beginJoin()
 	var opened synclog.LogTransport
 	if staged != nil {
@@ -256,7 +255,7 @@ func (v *VerbRunner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, to
 	if joining && staged != nil {
 		if err := v.settleImportBucket(r2, staged); err != nil {
 			staged.unstage()
-			return syncverb.Refusal(syncverb.Classify(err), err)
+			return Refusal(Classify(err), err)
 		}
 		opened = staged.transport
 	}
@@ -300,13 +299,13 @@ func (v *VerbRunner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, to
 		if staged != nil && refusedForGood(err, enabler) {
 			staged.unstage()
 		}
-		return syncverb.Refusal(syncverb.Classify(err), err)
+		return Refusal(Classify(err), err)
 	}
 	if res.Adopted != "" {
 		// The worker was opened under the identity the machine just left; the
 		// daemon builds its own, as the adopted one, when it restarts.
 		closeTransport(enabler.Transport)
-		return &wire.SyncResult{OK: true, RemoteURL: res.Remote, TokenPresent: true, Warning: AdoptedWarning(res.Adopted)}
+		return &wire.SyncResult{OK: true, RemoteURL: res.Remote, TokenPresent: true, Warning: adoptedWarning(res.Adopted)}
 	}
 	client := enabler.Transport
 	if stop, ok := client.(*relevosync.StopTransport); ok {
@@ -338,7 +337,7 @@ func (v *VerbRunner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, to
 // Ordering matters on the way out: the transport is cleared from the join's
 // publication before it is closed, so a disable arriving mid-join reaches a
 // worker that is still there and never drives one already gone.
-func (v *VerbRunner) settleImportBucket(r2 relevosync.R2Intake, staged *verified) error {
+func (v *Runner) settleImportBucket(r2 relevosync.R2Intake, staged *verified) error {
 	stored, err := relevosync.ReadR2(v.Local)
 	if err != nil {
 		releaseStagedWorker(v, staged)
@@ -366,7 +365,7 @@ func (v *VerbRunner) settleImportBucket(r2 relevosync.R2Intake, staged *verified
 
 // releaseStagedWorker closes the worker the passphrase check ran on and clears
 // it from the join's publication.
-func releaseStagedWorker(v *VerbRunner, staged *verified) {
+func releaseStagedWorker(v *Runner, staged *verified) {
 	v.clearJoin(staged.transport)
 	closeTransport(staged.transport)
 	staged.transport = nil

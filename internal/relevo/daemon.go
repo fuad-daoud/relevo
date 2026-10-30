@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/sync/verb"
 )
 
 // minInterval keeps a misconfigured interval from spinning the tick.
@@ -109,13 +110,13 @@ type Daemon struct {
 	// the other instead of each path opening its own. Set through
 	// SetSyncVerbs: cmd/relevo owns the hook installation while this type
 	// owns the field.
-	syncVerbs *VerbRunner
+	syncVerbs *verb.Runner
 }
 
 // SetSyncVerbs shares the owner's verb runner with the tick, so background
 // attempts reuse the client a verb built lazily (and vice versa) instead of
 // each path opening its own handle to the same remote.
-func (d *Daemon) SetSyncVerbs(v *VerbRunner) {
+func (d *Daemon) SetSyncVerbs(v *verb.Runner) {
 	d.syncVerbs = v
 }
 

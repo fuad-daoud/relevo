@@ -36,11 +36,11 @@ var rekeyPassphraseNew = []byte("the fleet's new passphrase")
 
 // rekeyRunner is one enabled machine with a log transport installed, so a verb
 // has something to drive and nothing here opens a worker or a network.
-func rekeyRunner(t *testing.T, log *synclog.MemTransport) *VerbRunner {
+func rekeyRunner(t *testing.T, log *synclog.MemTransport) *syncverb.Runner {
 	t.Helper()
 	m := newCfgMachine(t, log, nil, true)
 	origin := m.mdb.Origin()
-	return &VerbRunner{
+	return &syncverb.Runner{
 		Shared: m.mdb,
 		Local:  m.local,
 		Path:   m.mdb.Path(),
@@ -145,7 +145,7 @@ func TestRekeyVerbRefusalsCarryTheirCodes(t *testing.T) {
 		won.Epoch = 3
 		return &won
 	}
-	racer := &VerbRunner{
+	racer := &syncverb.Runner{
 		Shared: runner.Shared, Local: runner.Local, Path: runner.Path,
 		// A runner with no client, so the verb drives the mover rather than
 		// the steady transport the earlier runs left behind.

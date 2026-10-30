@@ -1,4 +1,4 @@
-package relevo
+package verb
 
 import (
 	"github.com/fuad-daoud/relevo/internal/db/wire"
@@ -19,7 +19,7 @@ import (
 // A runner with no trigger installed answers OK rather than refusing: the write
 // the client made is on disk and signalled, so the ordinary triggers will send
 // it, and a refusal here would read as a failure of a gate that did land.
-func (v *VerbRunner) attempt() *wire.SyncResult {
+func (v *Runner) attempt() *wire.SyncResult {
 	if v.Trigger != nil {
 		v.Trigger()
 	}

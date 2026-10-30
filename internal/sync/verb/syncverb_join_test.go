@@ -1,4 +1,4 @@
-package relevo
+package verb
 
 import (
 	"context"
@@ -36,7 +36,7 @@ const (
 // is what a fleet that shares bodies looks like from a joiner. A join that gets
 // no credentials at all is refused after the document import, so a fixture with
 // no peer cannot exercise anything past the preflight.
-func joinMachine(t *testing.T, pass string) (*VerbRunner, relevosync.Local, *synclog.MemTransport) {
+func joinMachine(t *testing.T, pass string) (*Runner, relevosync.Local, *synclog.MemTransport) {
 	t.Helper()
 	runner, local := joinRunner(t)
 	log := synclog.NewMemTransport("m1")
@@ -76,7 +76,7 @@ func exportFleetR2(t *testing.T, log *synclog.MemTransport, pass string) {
 	if err := relevosync.SetR2(local, verbFixtureR2, time.Unix(0, 0).UTC()); err != nil {
 		t.Fatalf("SetR2 on the fleet: %v", err)
 	}
-	if _, err := exportOnce(shared, log.OnLog(fleetOrigin)); err != nil {
+	if _, err := ExportOnce(shared, log.OnLog(fleetOrigin)); err != nil {
 		t.Fatalf("export from the fleet: %v", err)
 	}
 }

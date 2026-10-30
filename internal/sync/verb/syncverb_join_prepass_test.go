@@ -1,4 +1,4 @@
-package relevo
+package verb
 
 // The pre-pass failure path, where the rule is the one releaseStagedWorker runs
 // and the answer to scope it by is who opened the worker: clear the transport
@@ -46,7 +46,7 @@ func brokenFleetLog(t *testing.T) *prepassBrokenLog {
 	return &prepassBrokenLog{MemTransport: mem}
 }
 
-func runJoinExpectRefused(t *testing.T, runner *VerbRunner) (message string) {
+func runJoinExpectRefused(t *testing.T, runner *Runner) (message string) {
 	t.Helper()
 	res := runner.Run(context.Background(), joinVerb(t, joinPassphrase), []byte(joinToken+joinPassphrase))
 	if res.OK {

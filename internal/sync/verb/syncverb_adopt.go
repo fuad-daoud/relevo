@@ -1,4 +1,4 @@
-package relevo
+package verb
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ import (
 
 // adoption is the enable's adoption, nil unless the verb carried --as. The
 // installation file lives beside the shared database.
-func (v *VerbRunner) adoption(verb *wire.SyncVerb) *relevosync.Adoption {
+func (v *Runner) adoption(verb *wire.SyncVerb) *relevosync.Adoption {
 	if verb.AdoptAs == "" {
 		return nil
 	}
@@ -25,8 +25,8 @@ func (v *VerbRunner) adoption(verb *wire.SyncVerb) *relevosync.Adoption {
 	}
 }
 
-// AdoptedWarning tells the owner what an adoption leaves undone: the daemon
+// adoptedWarning tells the owner what an adoption leaves undone: the daemon
 // reads its origin at open, so sync stays off until it restarts.
-func AdoptedWarning(id string) string {
+func adoptedWarning(id string) string {
 	return fmt.Sprintf("this machine is now installation %s; restart the relevo daemon, then run `relevo db sync enable` to finish", id)
 }

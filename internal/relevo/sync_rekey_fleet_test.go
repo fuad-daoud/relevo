@@ -20,6 +20,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	syncverb "github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -209,7 +210,7 @@ func TestAJoinerAfterTheRekeyVerifiesTheHistoryAndReadsTheSecrets(t *testing.T) 
 	if _, _, err := db.CompressHistoryOnce(d.mdb, t.TempDir(), time.Unix(0, 0).UTC()); err != nil {
 		t.Fatalf("CompressHistoryOnce: %v", err)
 	}
-	runner := &VerbRunner{
+	runner := &syncverb.Runner{
 		Shared: d.mdb,
 		Local:  d.local,
 		Path:   d.mdb.Path(),
@@ -267,7 +268,7 @@ func TestARekeyTheRemoteHoldsButTheStoreDoesNotRecoversThroughUnlock(t *testing.
 
 	// The owner unlocks with the new passphrase -- through the verb, which is
 	// the whole of the recovery: keyring, own cut, parked docs, join tail.
-	runner := &VerbRunner{
+	runner := &syncverb.Runner{
 		Shared: a.mdb,
 		Local:  a.local,
 		Path:   a.mdb.Path(),

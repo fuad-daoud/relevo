@@ -21,6 +21,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -44,10 +45,10 @@ var _ = synclog.BlobTransport((*noBucketLog)(nil))
 // this file is about. Blobs stays nil, which skips the join's size guard: what
 // is under test is what the import runs on, not what a bucket would have room
 // for.
-func daemonWiring(t *testing.T, m *cfgMachine) *VerbRunner {
+func daemonWiring(t *testing.T, m *cfgMachine) *verb.Runner {
 	t.Helper()
 	log := m.bodyLog
-	return &VerbRunner{
+	return &verb.Runner{
 		Shared: m.mdb,
 		Local:  m.local,
 		Path:   m.mdb.Path(),
@@ -87,7 +88,7 @@ func daemonWiring(t *testing.T, m *cfgMachine) *VerbRunner {
 // secrets stamped, the way a person's `config secret set` does, and B starts
 // with a client key it generated, unstamped, the way an install's is. The
 // runner handed back is the joiner's, wired with the daemon's openers.
-func prodFleet(t *testing.T, withBucket bool) (a, b *cfgMachine, bRunner *VerbRunner) {
+func prodFleet(t *testing.T, withBucket bool) (a, b *cfgMachine, bRunner *verb.Runner) {
 	t.Helper()
 	key := relevosync.DeriveKey([]byte(joinPassphrase), []byte("0123456789abcdef"), relevosync.DefaultKDF)
 	pair := bodyPair{log: synclog.NewMemTransport("A"), mover: synclog.NewMemBlobMover()}
@@ -194,10 +195,10 @@ func TestAWrongPassphraseThroughTheDaemonsOpenersLeavesEveryRowAsItWas(t *testin
 // hands the same healthy log back while answering bucketless whatever the
 // stored rows say. What decides whether the verify worker keeps driving is the
 // opener's word, not a re-read of the rows after the fact.
-func answerWiring(t *testing.T, m *cfgMachine) (*VerbRunner, *openerCount) {
+func answerWiring(t *testing.T, m *cfgMachine) (*verb.Runner, *openerCount) {
 	t.Helper()
 	count := &openerCount{}
-	runner := &VerbRunner{
+	runner := &verb.Runner{
 		Shared: m.mdb,
 		Local:  m.local,
 		Path:   m.mdb.Path(),
@@ -264,7 +265,7 @@ func TestAJoinedMachineAnswersTheFleetWithNoSecretsEntries(t *testing.T) {
 	// B's first export. The join's reconcile carries rows only, so this exporter
 	// is the thing that answers the fleet for the first time, and it walks the
 	// document the join left signalled.
-	if _, err := exportOnce(b.mdb, b.bodyLog); err != nil {
+	if _, err := verb.ExportOnce(b.mdb, b.bodyLog); err != nil {
 		t.Fatalf("B's first export: %v", err)
 	}
 

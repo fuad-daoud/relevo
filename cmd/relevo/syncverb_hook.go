@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire/owner"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 	"github.com/fuad-daoud/relevo/internal/syncpipe"
 )
@@ -23,8 +24,8 @@ import (
 // A writer verb opens nothing itself, so it needs no stop to free a second open
 // for it.
 //
-// Nothing here re-decides what a verb means: the hook is a VerbRunner, which is
-// the same value the cockpit's sync actions drive. Serializing it against the
+// Nothing here re-decides what a verb means: the hook is a verb.Runner, which
+// is the same value the cockpit's sync actions drive. Serializing it against the
 // daemon's own seal and idle triggers needs the Daemon's guard, which is built
 // after the owner is served, so installSyncVerbSerializing rebinds the same hook
 // with that guard attached; until it does, a verb runs unserialized rather than
@@ -52,7 +53,7 @@ func installSyncVerbHook(srv *owner.Server, d *db.DB) {
 // worker is constructed. The client starts no process until a call drives it,
 // and the opener below replaces it with one pointed at the remote and token an
 // enable stored.
-func newVerbRunner(d *db.DB) *relevo.VerbRunner {
+func newVerbRunner(d *db.DB) *verb.Runner {
 	if d == nil {
 		return nil
 	}
@@ -70,7 +71,7 @@ func newVerbRunner(d *db.DB) *relevo.VerbRunner {
 	if err := syncpipe.SecureSyncFiles(d.Path()); err != nil {
 		slog.Warn("relevo daemon: could not narrow the sync files to owner-only", "err", err)
 	}
-	runner := &relevo.VerbRunner{
+	runner := &verb.Runner{
 		Shared:      d,
 		Local:       local,
 		Path:        d.Path(),
