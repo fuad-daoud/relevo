@@ -8,6 +8,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // actorsFixtureList loads an actorsView over fa's doc, as the ':actors'
@@ -83,7 +84,7 @@ func actorPlacementView(t *testing.T, fa *fakeActions, name string) actorView {
 }
 
 // keyHelpHas reports whether one key list carries a key with that label.
-func keyHelpHas(keys []KeyHelp, k, help string) bool {
+func keyHelpHas(keys []widget.KeyHelp, k, help string) bool {
 	for _, kh := range keys {
 		if kh.Key == k && kh.Help == help {
 			return true
@@ -250,12 +251,12 @@ func TestActorViewRemoveLastNotices(t *testing.T) {
 		t.Fatal("d must return a command")
 	}
 	msg := cmd()
-	notice, ok := msg.(noticeMsg)
+	notice, ok := msg.(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("d on the only candidate gave %T, want a notice", msg)
 	}
-	if notice.text != "researcher needs at least one candidate" {
-		t.Errorf("notice = %q", notice.text)
+	if notice.Text != "researcher needs at least one candidate" {
+		t.Errorf("notice = %q", notice.Text)
 	}
 	if len(fa.configEdits) != 0 {
 		t.Error("a refused remove must not write an edit")
@@ -349,12 +350,12 @@ func TestActorsListDeleteBuiltinNotices(t *testing.T) {
 		t.Fatal("d must return a command")
 	}
 	msg := cmd()
-	notice, ok := msg.(noticeMsg)
+	notice, ok := msg.(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("d on builder gave %T, want a notice", msg)
 	}
-	if !strings.Contains(notice.text, "built in") {
-		t.Errorf("notice = %q, want it to say built in", notice.text)
+	if !strings.Contains(notice.Text, "built in") {
+		t.Errorf("notice = %q, want it to say built in", notice.Text)
 	}
 	if len(fa.configEdits) != 0 {
 		t.Error("a refused delete must not write an edit")
@@ -535,12 +536,12 @@ func TestActorViewPlacementPicker(t *testing.T) {
 		t.Fatal("a with everything listed must return a command")
 	}
 	msg := cmd()
-	notice, ok := msg.(noticeMsg)
+	notice, ok := msg.(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("a with everything listed gave %T, want a notice", msg)
 	}
-	if notice.text != "every server is already in builder's placement" {
-		t.Errorf("notice = %q", notice.text)
+	if notice.Text != "every server is already in builder's placement" {
+		t.Errorf("notice = %q", notice.Text)
 	}
 	if len(everything.configEdits) != 0 {
 		t.Error("the notice must not write an edit")

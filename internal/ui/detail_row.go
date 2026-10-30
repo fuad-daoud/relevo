@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -18,7 +19,7 @@ import (
 // A row this view brought itself is never overlaid: a chain member's document
 // is the one the pane was opened on, and the fetched row is the binding's own
 // live status rather than the chain step the human is reading.
-func (r roundView) rows(env Env) view.Report {
+func (r roundView) rows(env widget.Env) view.Report {
 	rep := mergeRows(env.Report, r.extra)
 	if row(env.Report, r.detailKey) == nil {
 		return rep

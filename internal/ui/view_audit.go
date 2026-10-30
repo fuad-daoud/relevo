@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // auditLogMsg is one ConfigLog load's reply.
@@ -55,7 +56,7 @@ type auditView struct {
 
 // newAuditView builds ':audit' and the command that loads its log.
 // env.Actions must be non-nil: execLine refuses the command otherwise.
-func newAuditView(env Env) (View, tea.Cmd) {
+func newAuditView(env widget.Env) (widget.View, tea.Cmd) {
 	v := auditView{
 		actions:    env.Actions != nil,
 		changes:    map[int64][]relevo.ChangeLine{},
@@ -65,7 +66,7 @@ func newAuditView(env Env) (View, tea.Cmd) {
 }
 
 // auditLogCmd reads the stored revisions off the update loop.
-func auditLogCmd(env Env) tea.Cmd {
+func auditLogCmd(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		revs, err := env.Actions.ConfigLog()
 		return auditLogMsg{revs: revs, err: err}
@@ -73,7 +74,7 @@ func auditLogCmd(env Env) tea.Cmd {
 }
 
 // auditChangesCmd reads one revision's changes off the update loop.
-func auditChangesCmd(env Env, rev int64) tea.Cmd {
+func auditChangesCmd(env widget.Env, rev int64) tea.Cmd {
 	return func() tea.Msg {
 		lines, err := env.Actions.ConfigChanges(rev)
 		return auditChangesMsg{rev: rev, lines: lines, err: err}
@@ -81,7 +82,7 @@ func auditChangesCmd(env Env, rev int64) tea.Cmd {
 }
 
 // auditPreviewCmd asks what rolling back to rev would change.
-func auditPreviewCmd(env Env, rev int64) tea.Cmd {
+func auditPreviewCmd(env widget.Env, rev int64) tea.Cmd {
 	return func() tea.Msg {
 		lines, err := env.Actions.RollbackPreview(rev)
 		return auditPreviewMsg{rev: rev, lines: lines, err: err}
@@ -95,23 +96,23 @@ func (v auditView) Capturing() bool { return false }
 
 // Keys are the list's keys. `R` needs the shell's write seam; `enter`
 // does not, because opening a revision changes nothing.
-func (v auditView) Keys() []KeyHelp {
-	keys := []KeyHelp{{"enter", "all changes"}}
+func (v auditView) Keys() []widget.KeyHelp {
+	keys := []widget.KeyHelp{{Key: "enter", Help: "all changes"}}
 	if v.actions {
-		keys = append(keys, KeyHelp{"R", "roll back to here"})
+		keys = append(keys, widget.KeyHelp{Key: "R", Help: "roll back to here"})
 	}
 	return keys
 }
 
 // HelpKeys is the help overlay's key list: `↑↓ move` is left out of the
 // footer, so it lives here.
-func (v auditView) HelpKeys() []KeyHelp {
-	return append([]KeyHelp{{"↑↓", "move"}}, v.Keys()...)
+func (v auditView) HelpKeys() []widget.KeyHelp {
+	return append([]widget.KeyHelp{{Key: "↑↓", Help: "move"}}, v.Keys()...)
 }
 
 // Context is the counts line on the left and the newest config version on the
 // right: m is the sum of every row's CHANGES.
-func (v auditView) Context(env Env) (string, string) {
+func (v auditView) Context(env widget.Env) (string, string) {
 	total := 0
 	for _, r := range v.revs {
 		total += revisionChangeCount(r)
@@ -120,31 +121,31 @@ func (v auditView) Context(env Env) (string, string) {
 		if count != 1 {
 			label += "s"
 		}
-		return textStyle.Bold(true).Render(fmt.Sprintf("%d", count)) + " " + mutedStyle.Render(label)
+		return widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", count)) + " " + widget.MutedStyle.Render(label)
 	}
 	left := "   " + item(len(v.revs), "revision") + "   " + item(total, "change")
 	right := ""
 	if len(v.revs) > 0 {
-		right = faintStyle.Render(fmt.Sprintf("config version %d", v.revs[0].Version))
+		right = widget.FaintStyle.Render(fmt.Sprintf("config version %d", v.revs[0].Version))
 	}
 	return left, right
 }
 
-func (v auditView) Body(env Env, width, height int) string {
+func (v auditView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
 	if !v.loaded && v.err != nil {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	if len(v.revs) == 0 {
-		return strings.Join(statsCentered("no config revisions yet", width, height), "\n")
+		return strings.Join(widget.Centered("no config revisions yet", width, height), "\n")
 	}
 	lines, _ := v.bodyLines(env, width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -152,10 +153,10 @@ func (v auditView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
-func (v auditView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v auditView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case auditLogMsg:
 		if msg.err != nil {
@@ -194,7 +195,7 @@ func (v auditView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 
 // updateKey is the list's own keys: movement over revisions, enter to
 // open the cursor revision's changes, R to roll back to it.
-func (v auditView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v auditView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	n := len(v.revs)
 	switch k.String() {
 	case "up":
@@ -214,11 +215,11 @@ func (v auditView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		v.follow(env)
 		return v, v.loadChanges(env)
 	case "pgup":
-		v.cur = candClamp(v.cur-bodyHeight(env), n)
+		v.cur = candClamp(v.cur-widget.BodyHeight(env), n)
 		v.follow(env)
 		return v, v.loadChanges(env)
 	case "pgdown":
-		v.cur = candClamp(v.cur+bodyHeight(env), n)
+		v.cur = candClamp(v.cur+widget.BodyHeight(env), n)
 		v.follow(env)
 		return v, v.loadChanges(env)
 	case "enter":
@@ -258,7 +259,7 @@ func (v auditView) newest() int64 {
 // loadChanges asks for the cursor revision's changes when they are not cached
 // yet. A cached error counts as cached: the list does not retry it on
 // every cursor move.
-func (v *auditView) loadChanges(env Env) tea.Cmd {
+func (v *auditView) loadChanges(env widget.Env) tea.Cmd {
 	if !v.actions || len(v.revs) == 0 {
 		return nil
 	}
@@ -275,12 +276,12 @@ func (v *auditView) loadChanges(env Env) tea.Cmd {
 // follow scrolls the page so the cursor's revision row stays visible:
 // the cursor is an index over revisions, so its body line is computed from the
 // grouped layout, not from the index alone.
-func (v *auditView) follow(env Env) {
+func (v *auditView) follow(env widget.Env) {
 	if len(v.revs) == 0 {
 		v.top = 0
 		return
 	}
-	avail := bodyHeight(env)
+	avail := widget.BodyHeight(env)
 	if avail <= 0 {
 		v.top = 0
 		return
@@ -292,7 +293,7 @@ func (v *auditView) follow(env Env) {
 	if sel >= v.top+avail {
 		v.top = sel - avail + 1
 	}
-	v.top = clamp(v.top, 0, max(0, len(lines)-avail))
+	v.top = widget.Clamp(v.top, 0, max(0, len(lines)-avail))
 }
 
 // auditTableWidth is the table's room: the full width less the 3-cell margin
@@ -327,12 +328,12 @@ func padLeft(s string, width int) string {
 // auditHeaderLine is the table's header row, in faint bold, with the
 // REV and CHANGES columns right-aligned as their numbers are.
 func auditHeaderLine(cw int) string {
-	style := faintStyle.Bold(true)
+	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{
-		{text: pad("WHEN", 5), style: style},
+		{text: widget.Pad("WHEN", 5), style: style},
 		{text: padLeft("REV", 4), style: style},
-		{text: pad("SOURCE", 9), style: style},
-		{text: pad("MESSAGE", auditMessageWidth(cw)), style: style},
+		{text: widget.Pad("SOURCE", 9), style: style},
+		{text: widget.Pad("MESSAGE", auditMessageWidth(cw)), style: style},
 		{text: padLeft("CHANGES", 7), style: style},
 	}
 	return candLine(cells, false, cw)
@@ -342,20 +343,20 @@ func auditHeaderLine(cw int) string {
 // revision number (bold on the cursor), the source, the message, and the change
 // count, faint at zero.
 func auditDataLine(r db.RevisionRow, sel bool, cw int) string {
-	revStyle := dimStyle
+	revStyle := widget.MutedStyle
 	if sel {
-		revStyle = dimStyle.Bold(true)
+		revStyle = widget.MutedStyle.Bold(true)
 	}
 	changes := revisionChangeCount(r)
-	changeStyle := dimStyle
+	changeStyle := widget.MutedStyle
 	if changes == 0 {
-		changeStyle = faintStyle
+		changeStyle = widget.FaintStyle
 	}
 	cells := []candCell{
-		{text: pad(r.At.Local().Format("15:04"), 5), style: dimStyle},
+		{text: widget.Pad(r.At.Local().Format("15:04"), 5), style: widget.MutedStyle},
 		{text: padLeft(fmt.Sprintf("#%d", r.Rev), 4), style: revStyle},
-		{text: pad(r.Source, 9), style: dimStyle},
-		{text: pad(r.Message, auditMessageWidth(cw)), style: textStyle},
+		{text: widget.Pad(r.Source, 9), style: widget.MutedStyle},
+		{text: widget.Pad(r.Message, auditMessageWidth(cw)), style: widget.TextStyle},
 		{text: padLeft(fmt.Sprintf("%d", changes), 7), style: changeStyle},
 	}
 	return candLine(cells, sel, cw)
@@ -373,8 +374,8 @@ func auditDayRule(label string, n, cw int) string {
 	if fill < 0 {
 		fill = 0
 	}
-	content := dimStyle.Render(label) + " " + gridStyle.Render(strings.Repeat("┈", fill)) + faintStyle.Render(right)
-	return "   " + fit(content, cw) + "   "
+	content := widget.MutedStyle.Render(label) + " " + widget.GridStyle.Render(strings.Repeat("┈", fill)) + widget.FaintStyle.Render(right)
+	return "   " + widget.Fit(content, cw) + "   "
 }
 
 // auditCount is "1 revision" or "3 revisions".
@@ -386,7 +387,7 @@ func auditCount(n int, unit string) string {
 }
 
 // auditDayCount is the size of the day group that starts at revision i.
-func auditDayCount(env Env, revs []db.RevisionRow, i int) int {
+func auditDayCount(env widget.Env, revs []db.RevisionRow, i int) int {
 	day := dash.DayLabel(revs[i].At, env.Now, time.Local)
 	n := 0
 	for j := i; j < len(revs); j++ {
@@ -412,7 +413,7 @@ func revisionChangeCount(r db.RevisionRow) int {
 // context row, the table with a rule per day, two blank lines and the cursor
 // revision's detail block. It returns the cursor row's body line too, so
 // follow can scroll to it.
-func (v auditView) bodyLines(env Env, width int) ([]string, int) {
+func (v auditView) bodyLines(env widget.Env, width int) ([]string, int) {
 	cw := auditTableWidth(width)
 	lines := []string{"", auditHeaderLine(cw)}
 	cur := candClamp(v.cur, len(v.revs))
@@ -428,7 +429,7 @@ func (v auditView) bodyLines(env Env, width int) ([]string, int) {
 		lines = append(lines, auditDataLine(r, i == cur, cw))
 	}
 	lines = append(lines, "", "")
-	room := v.top + bodyHeight(env) - len(lines)
+	room := v.top + widget.BodyHeight(env) - len(lines)
 	if room < 0 {
 		room = 0
 	}
@@ -438,24 +439,24 @@ func (v auditView) bodyLines(env Env, width int) ([]string, int) {
 // detailLines is the cursor revision's detail block: the revision's
 // header, then one line per change, up to the room left above the footer, with
 // the ones that do not fit counted in a last line.
-func (v auditView) detailLines(env Env, width, room int) []string {
+func (v auditView) detailLines(env widget.Env, width, room int) []string {
 	if len(v.revs) == 0 {
 		return nil
 	}
 	r := v.revs[candClamp(v.cur, len(v.revs))]
-	first := "   " + faintStyle.Bold(true).Render(fmt.Sprintf("#%d", r.Rev)) + "   " +
-		mutedStyle.Render(fmt.Sprintf("%s · %s · %s", r.Source, r.At.Local().Format("Jan 2 15:04"), r.Message))
-	out := []string{fit(first, width)}
+	first := "   " + widget.FaintStyle.Bold(true).Render(fmt.Sprintf("#%d", r.Rev)) + "   " +
+		widget.MutedStyle.Render(fmt.Sprintf("%s · %s · %s", r.Source, r.At.Local().Format("Jan 2 15:04"), r.Message))
+	out := []string{widget.Fit(first, width)}
 	if room <= 1 {
 		return out
 	}
 
 	if err, ok := v.changesErr[r.Rev]; ok {
-		return append(out, fit("   "+errorStyle.Render(err.Error()), width))
+		return append(out, widget.Fit("   "+widget.ErrorStyle.Render(err.Error()), width))
 	}
 	lines, ok := v.changes[r.Rev]
 	if !ok {
-		return append(out, fit("   "+mutedStyle.Render("loading…"), width))
+		return append(out, widget.Fit("   "+widget.MutedStyle.Render("loading…"), width))
 	}
 
 	budget := room - 1
@@ -468,7 +469,7 @@ func (v auditView) detailLines(env Env, width, room int) []string {
 		out = append(out, auditChangeLine(l, width))
 	}
 	if more > 0 {
-		out = append(out, fit("   "+faintStyle.Render(fmt.Sprintf("+ %d more · enter shows all", more)), width))
+		out = append(out, widget.Fit("   "+widget.FaintStyle.Render(fmt.Sprintf("+ %d more · enter shows all", more)), width))
 	}
 	return out
 }
@@ -476,7 +477,7 @@ func (v auditView) detailLines(env Env, width, room int) []string {
 // auditPreviewOpen turns a RollbackPreview reply into the command the view
 // returns: a notice for a refusal, an error or a no-change, else the
 // danger confirm that lists exactly what the roll back would change.
-func auditPreviewOpen(env Env, newest int64, msg auditPreviewMsg) tea.Cmd {
+func auditPreviewOpen(env widget.Env, newest int64, msg auditPreviewMsg) tea.Cmd {
 	var refused *relevo.RollbackRefused
 	switch {
 	case errors.Is(msg.err, config.ErrNoChange):
@@ -491,9 +492,9 @@ func auditPreviewOpen(env Env, newest int64, msg auditPreviewMsg) tea.Cmd {
 		kind:   "roll back",
 		yes:    "roll back",
 		danger: true,
-		title:  "Roll back to " + accentStyle.Bold(true).Render(fmt.Sprintf("#%d", msg.rev)) + "?",
+		title:  "Roll back to " + widget.AccentStyle.Bold(true).Render(fmt.Sprintf("#%d", msg.rev)) + "?",
 		lines:  auditConfirmLines(newest, msg.lines, innerW),
-		onYes: runAction(env.Ctx, "rollback", fmt.Sprintf("#%d", msg.rev), func(ctx context.Context) Result {
+		onYes: runAction(env.Ctx, "rollback", fmt.Sprintf("#%d", msg.rev), func(ctx context.Context) widget.Result {
 			return env.Actions.Rollback(ctx, msg.rev)
 		}),
 	})
@@ -503,7 +504,7 @@ func auditPreviewOpen(env Env, newest int64, msg auditPreviewMsg) tea.Cmd {
 // roll back undoes, every further one indented under it, then the revision it
 // saves as and the revisions it keeps.
 func auditConfirmLines(newest int64, lines []relevo.ChangeLine, innerW int) []string {
-	label := func(l string) string { return pad(l, 11) }
+	label := func(l string) string { return widget.Pad(l, 11) }
 	out := make([]string, 0, len(lines)+3)
 	for i, l := range lines {
 		prefix := label("")

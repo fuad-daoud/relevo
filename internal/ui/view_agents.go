@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // agentsMsg is one ':agents' load's reply (§4): the doc, and each agent's
@@ -60,14 +61,14 @@ type agentFileRow struct {
 // newAgentsView builds ':agents' and the command that loads its doc and file
 // states (§4). env.Actions must be non-nil: execLine refuses the command
 // otherwise.
-func newAgentsView(env Env) (View, tea.Cmd) {
+func newAgentsView(env widget.Env) (widget.View, tea.Cmd) {
 	v := agentsView{actions: env.Actions != nil}
 	return v, agentsCmd(env)
 }
 
 // agentsCmd reads the doc and every agent's definition state off the update
 // loop (§4). File reads are cheap, so they happen here, not in Body.
-func agentsCmd(env Env) tea.Cmd {
+func agentsCmd(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		doc, err := env.Actions.ConfigDoc()
 		if err != nil {
@@ -219,10 +220,10 @@ func agentListLayout(width int, kinds []string) (int, []candCol) {
 
 // agentHeaderLine is the list's header row (§4), in faint bold.
 func agentHeaderLine(nameW int, cols []candCol, cw int) string {
-	style := faintStyle.Bold(true)
-	cells := []candCell{{text: pad("AGENT", nameW), style: style}}
+	style := widget.FaintStyle.Bold(true)
+	cells := []candCell{{text: widget.Pad("AGENT", nameW), style: style}}
 	for _, c := range cols {
-		cells = append(cells, candCell{text: pad(c.head, c.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(c.head, c.w), style: style})
 	}
 	return candLine(cells, false, cw)
 }
@@ -237,15 +238,15 @@ func agentStateCell(r agentRow, kind string) (string, lipgloss.Style) {
 		}
 		switch f.State {
 		case harness.FileUpToDate:
-			return "ok", greenStyle
+			return "ok", widget.GreenStyle
 		case harness.FileStale:
-			return "stale", warnStyle
+			return "stale", widget.WarnStyle
 		case harness.FileEdited, harness.FileEditedNewer:
-			return "edited", warnStyle
+			return "edited", widget.WarnStyle
 		}
 		break
 	}
-	return "·", faintStyle
+	return "·", widget.FaintStyle
 }
 
 // agentUsedCell is the USED BY cell (§4): the actor names, or `no actor` when
@@ -269,15 +270,15 @@ func agentUsedText(r agentRow) string {
 // agentDataLine is one agent's table row (§4). A row no actor uses is faint
 // throughout; the cursor row's name is bold.
 func agentDataLine(r agentRow, sel bool, nameW int, cols []candCol, cw int) string {
-	base, meta := textStyle, mutedStyle
+	base, meta := widget.TextStyle, widget.MutedStyle
 	if len(r.usedBy) == 0 {
-		base, meta = faintStyle, faintStyle
+		base, meta = widget.FaintStyle, widget.FaintStyle
 	}
 	nameStyle := base
 	if sel {
 		nameStyle = nameStyle.Bold(true)
 	}
-	cells := []candCell{{text: pad(r.name, nameW), style: nameStyle}}
+	cells := []candCell{{text: widget.Pad(r.name, nameW), style: nameStyle}}
 	for _, col := range cols {
 		text, style := "", meta
 		switch {
@@ -290,7 +291,7 @@ func agentDataLine(r agentRow, sel bool, nameW int, cols []candCol, cw int) stri
 		default:
 			text, style = agentStateCell(r, strings.TrimPrefix(col.key, "kind:"))
 		}
-		cells = append(cells, candCell{text: pad(text, col.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(text, col.w), style: style})
 	}
 	return candLine(cells, sel, cw)
 }
@@ -361,12 +362,12 @@ func nativeAgentKinds(e roles.AgentEntry) []string {
 // when the file carries a pin. The caller passes the path already in its `~`
 // form.
 func agentFileLine(kind, path, state, model string, pathW int) string {
-	line := "   " + mutedStyle.Render(pad(kind, 10)) + pad(path, pathW)
+	line := "   " + widget.MutedStyle.Render(widget.Pad(kind, 10)) + widget.Pad(path, pathW)
 	if state != "" {
-		line += mutedStyle.Render(pad(state, 14))
+		line += widget.MutedStyle.Render(widget.Pad(state, 14))
 	}
 	if model != "" {
-		line += mutedStyle.Render("model " + model)
+		line += widget.MutedStyle.Render("model " + model)
 	}
 	return line
 }
@@ -380,8 +381,8 @@ func agentFileLine(kind, path, state, model string, pathW int) string {
 // a gap before the state and every state starts in one column.
 func agentDetailLines(doc relevo.ConfigDoc, r agentRow, width int) []string {
 	meta := r.source + " · " + r.shape + " · " + agentUsedText(r)
-	first := "   " + faintStyle.Bold(true).Render(r.name) + "   " + mutedStyle.Render(meta)
-	out := []string{fit(first, width)}
+	first := "   " + widget.FaintStyle.Bold(true).Render(r.name) + "   " + widget.MutedStyle.Render(meta)
+	out := []string{widget.Fit(first, width)}
 	// pathW is measured over the file lines drawn below, then held for all of
 	// them.
 	pathW := 46
@@ -396,7 +397,7 @@ func agentDetailLines(doc relevo.ConfigDoc, r agentRow, width int) []string {
 			grow(tildePath(f.path))
 		}
 		for _, f := range rows {
-			out = append(out, fit(agentFileLine(f.kind, tildePath(f.path), "", "", pathW), width))
+			out = append(out, widget.Fit(agentFileLine(f.kind, tildePath(f.path), "", "", pathW), width))
 		}
 		return out
 	}
@@ -408,7 +409,7 @@ func agentDetailLines(doc relevo.ConfigDoc, r agentRow, width int) []string {
 		if f.Model != "" {
 			model = f.Model
 		}
-		out = append(out, fit(agentFileLine(f.Kind, tildePath(f.Path), string(f.State), model, pathW), width))
+		out = append(out, widget.Fit(agentFileLine(f.Kind, tildePath(f.Path), string(f.State), model, pathW), width))
 	}
 	return out
 }
@@ -416,7 +417,7 @@ func agentDetailLines(doc relevo.ConfigDoc, r agentRow, width int) []string {
 // bodyLines is the whole body before it is windowed: a blank line under the
 // context row, the table, two blank lines and the cursor row's detail block
 // (§4).
-func (v agentsView) bodyLines(env Env, width int) []string {
+func (v agentsView) bodyLines(env widget.Env, width int) []string {
 	rows := v.rows()
 	nameW, cols := agentListLayout(width, agentKinds(v.files))
 	cw := width - 6
@@ -440,13 +441,13 @@ func (v agentsView) bodyLines(env Env, width int) []string {
 func (v agentsView) rows() []agentRow { return agentRows(v.doc, v.files) }
 
 // follow scrolls the page so the cursor's table row stays visible (§4).
-func (v *agentsView) follow(env Env) {
+func (v *agentsView) follow(env widget.Env) {
 	rows := v.rows()
 	if len(rows) == 0 {
 		v.top = 0
 		return
 	}
-	avail := bodyHeight(env)
+	avail := widget.BodyHeight(env)
 	if avail <= 0 {
 		v.top = 0
 		return
@@ -459,7 +460,7 @@ func (v *agentsView) follow(env Env) {
 	if sel >= v.top+avail {
 		v.top = sel - avail + 1
 	}
-	v.top = clamp(v.top, 0, max(0, len(lines)-avail))
+	v.top = widget.Clamp(v.top, 0, max(0, len(lines)-avail))
 }
 
 func (v agentsView) Crumbs() []string { return []string{"agents"} }
@@ -467,26 +468,26 @@ func (v agentsView) Crumbs() []string { return []string{"agents"} }
 // Capturing is always false: the view owns no text input of its own (§4).
 func (v agentsView) Capturing() bool { return false }
 
-// Keys are the list's keys (§4), shown only when the shell has an Actions
+// Keys are the list's keys (§4), shown only when the shell has an widget.Actions
 // seam. `d delete` is listed even on a shipped row: the footer has no dimmed
 // key (§9), so a shipped row answers a press with a notice instead.
-func (v agentsView) Keys() []KeyHelp {
+func (v agentsView) Keys() []widget.KeyHelp {
 	if !v.actions {
 		return nil
 	}
-	return []KeyHelp{
-		{"↑↓", "move"},
-		{"enter", "open"},
-		{"d", "delete"},
+	return []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "enter", Help: "open"},
+		{Key: "d", Help: "delete"},
 	}
 }
 
 // HelpKeys is the help overlay's key list (§2.2): the same set.
-func (v agentsView) HelpKeys() []KeyHelp { return v.Keys() }
+func (v agentsView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
 // Context is the counts line on the left (§4): the agents, the writer and
 // reader counts, and the custom count when there is one.
-func (v agentsView) Context(env Env) (string, string) {
+func (v agentsView) Context(env widget.Env) (string, string) {
 	rows := v.rows()
 	writers, readers, custom := 0, 0, 0
 	for _, r := range rows {
@@ -503,32 +504,32 @@ func (v agentsView) Context(env Env) (string, string) {
 		if n != 1 {
 			label += "s"
 		}
-		return textStyle.Bold(true).Render(fmt.Sprintf("%d", n)) + " " + mutedStyle.Render(label)
+		return widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", n)) + " " + widget.MutedStyle.Render(label)
 	}
 	left := "   " + word(len(rows), "agent")
 	left += "   " + word(writers, "writer")
 	left += "   " + word(readers, "reader")
 	if custom > 0 {
-		left += "   " + textStyle.Bold(true).Render(fmt.Sprintf("%d", custom)) + " " + mutedStyle.Render("custom")
+		left += "   " + widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", custom)) + " " + widget.MutedStyle.Render("custom")
 	}
 	return left, ""
 }
 
-func (v agentsView) Body(env Env, width, height int) string {
+func (v agentsView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
 	if !v.loaded && v.err != nil {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	if len(v.rows()) == 0 {
-		return strings.Join(statsCentered("no agents", width, height), "\n")
+		return strings.Join(widget.Centered("no agents", width, height), "\n")
 	}
 	lines := v.bodyLines(env, width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -536,10 +537,10 @@ func (v agentsView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
-func (v agentsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v agentsView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case agentsMsg:
 		if msg.err != nil {
@@ -568,7 +569,7 @@ func (v agentsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 }
 
 // updateKey is the list's own keys (§4).
-func (v agentsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v agentsView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	rows := v.rows()
 	n := len(rows)
 	switch k.String() {
@@ -585,10 +586,10 @@ func (v agentsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		v.cur = candClamp(n-1, n)
 		v.follow(env)
 	case "pgup":
-		v.cur = candClamp(v.cur-bodyHeight(env), n)
+		v.cur = candClamp(v.cur-widget.BodyHeight(env), n)
 		v.follow(env)
 	case "pgdown":
-		v.cur = candClamp(v.cur+bodyHeight(env), n)
+		v.cur = candClamp(v.cur+widget.BodyHeight(env), n)
 		v.follow(env)
 	case "enter":
 		if n == 0 {
@@ -605,7 +606,7 @@ func (v agentsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 }
 
 // openAgent pushes the cursor agent's detail view (§4).
-func openAgent(env Env, doc relevo.ConfigDoc, r agentRow) tea.Cmd {
+func openAgent(env widget.Env, doc relevo.ConfigDoc, r agentRow) tea.Cmd {
 	v, init := newAgentView(env, doc, r)
 	return push(v, init)
 }
@@ -614,7 +615,7 @@ func openAgent(env Env, doc relevo.ConfigDoc, r agentRow) tea.Cmd {
 // custom one is validated with relevo.DeleteAgent, whose refusal (a shipped
 // agent, or one an actor uses) is a notice too, then confirmed as a danger
 // box.
-func (v agentsView) deleteCmd(env Env, r agentRow) tea.Cmd {
+func (v agentsView) deleteCmd(env widget.Env, r agentRow) tea.Cmd {
 	if r.source == "shipped" {
 		return notice(r.name + " ships with relevo; it can't be deleted")
 	}
@@ -627,12 +628,12 @@ func (v agentsView) deleteCmd(env Env, r agentRow) tea.Cmd {
 		kind:   "delete",
 		yes:    "delete",
 		danger: true,
-		title:  "Delete agent " + accentStyle.Bold(true).Render(name) + "?",
+		title:  "Delete agent " + widget.AccentStyle.Bold(true).Render(name) + "?",
 		lines: []string{
-			pad("used by", 11) + "no actor",
-			pad("removes", 11) + "the agent from relevo's config",
+			widget.Pad("used by", 11) + "no actor",
+			widget.Pad("removes", 11) + "the agent from relevo's config",
 		},
-		onYes: runAction(env.Ctx, "delete agent", name, func(ctx context.Context) Result {
+		onYes: runAction(env.Ctx, "delete agent", name, func(ctx context.Context) widget.Result {
 			return env.Actions.ApplyConfig(ctx, edit)
 		}),
 	})

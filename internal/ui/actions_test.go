@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -51,7 +52,7 @@ type fakeActions struct {
 	// Round 2: the calls that take a file, a binding input or a candidate,
 	// plus the candidate lists the prompts cycle.
 	sends    []sendCall
-	binds    []BindInput
+	binds    []widget.BindInput
 	retries  []retryCall
 	candRole []string // the roles Candidates was asked for
 
@@ -103,16 +104,16 @@ type fakeActions struct {
 	graphs       map[string][]relevo.GraphRow
 	graphErr     error
 	adds         []workflowAddCall
-	addResults   map[string]Result
+	addResults   map[string]widget.Result
 	removes      []string
-	removeResult Result
+	removeResult widget.Result
 
 	// The edit loop: the actors an edited workflow may name, and the saves it
 	// was asked to store.
 	actors map[string]workflow.ActorInfo
 	saves  []workflowSaveCall
 
-	saveResult Result
+	saveResult widget.Result
 
 	// The sync view (S5): the snapshot to answer with, the outcome every verb
 	// returns, and the calls the view made, in order. One entry per verb is what
@@ -120,12 +121,12 @@ type fakeActions struct {
 	// counted apart, because a re-read after a Refresh is not a call on anything.
 	syncs      []syncCall
 	syncReads  int
-	snap       SyncSnapshot
+	snap       widget.SyncSnapshot
 	snapErr    error
-	syncResult Result
+	syncResult widget.Result
 	editorErr  error
 
-	result   Result
+	result   widget.Result
 	shellCmd *exec.Cmd
 	shellErr error
 }
@@ -150,27 +151,27 @@ type workflowSaveCall struct {
 	def    workflow.Definition
 }
 
-func (f *fakeActions) Stop(_ context.Context, key string) Result {
+func (f *fakeActions) Stop(_ context.Context, key string) widget.Result {
 	f.stops = append(f.stops, key)
 	return f.result
 }
 
-func (f *fakeActions) Done(_ context.Context, key string) Result {
+func (f *fakeActions) Done(_ context.Context, key string) widget.Result {
 	f.dones = append(f.dones, key)
 	return f.result
 }
 
-func (f *fakeActions) Unbind(_ context.Context, key string) Result {
+func (f *fakeActions) Unbind(_ context.Context, key string) widget.Result {
 	f.unbinds = append(f.unbinds, key)
 	return f.result
 }
 
-func (f *fakeActions) Gate(_ context.Context, subject string, forDur time.Duration, reason string) Result {
+func (f *fakeActions) Gate(_ context.Context, subject string, forDur time.Duration, reason string) widget.Result {
 	f.gates = append(f.gates, gateCall{subject: subject, forDur: forDur, reason: reason})
 	return f.result
 }
 
-func (f *fakeActions) Ungate(_ context.Context, subject string) Result {
+func (f *fakeActions) Ungate(_ context.Context, subject string) widget.Result {
 	f.ungates = append(f.ungates, subject)
 	return f.result
 }
@@ -180,17 +181,17 @@ func (f *fakeActions) Shell(key string) (*exec.Cmd, error) {
 	return f.shellCmd, f.shellErr
 }
 
-func (f *fakeActions) Send(_ context.Context, key, planFile string) Result {
+func (f *fakeActions) Send(_ context.Context, key, planFile string) widget.Result {
 	f.sends = append(f.sends, sendCall{key: key, file: planFile})
 	return f.result
 }
 
-func (f *fakeActions) Bind(_ context.Context, in BindInput) Result {
+func (f *fakeActions) Bind(_ context.Context, in widget.BindInput) widget.Result {
 	f.binds = append(f.binds, in)
 	return f.result
 }
 
-func (f *fakeActions) Retry(_ context.Context, key, candidate string) Result {
+func (f *fakeActions) Retry(_ context.Context, key, candidate string) widget.Result {
 	f.retries = append(f.retries, retryCall{key: key, candidate: candidate})
 	return f.result
 }
@@ -213,7 +214,7 @@ func (f *fakeActions) ChainTrace(_ context.Context, name string) (relevo.ChainTr
 	return f.chainTraces[name], nil
 }
 
-func (f *fakeActions) ApplyConfig(_ context.Context, e relevo.ConfigEdit) Result {
+func (f *fakeActions) ApplyConfig(_ context.Context, e relevo.ConfigEdit) widget.Result {
 	f.configEdits = append(f.configEdits, e)
 	return f.result
 }
@@ -238,7 +239,7 @@ func TestServerProbesNilRuntimeIsEmpty(t *testing.T) {
 	}
 }
 
-func (f *fakeActions) Probe(_ context.Context, name string) Result {
+func (f *fakeActions) Probe(_ context.Context, name string) widget.Result {
 	f.probes = append(f.probes, name)
 	return f.result
 }
@@ -254,7 +255,7 @@ func (f *fakeActions) AgentFiles(agent string) ([]harness.AgentFile, error) {
 
 // ResetAgentFile records the (kind, agent) pair it was asked for (§3). The
 // fake never touches $HOME: the files it scripts are strings.
-func (f *fakeActions) ResetAgentFile(_ context.Context, kind, agent string) Result {
+func (f *fakeActions) ResetAgentFile(_ context.Context, kind, agent string) widget.Result {
 	f.resets = append(f.resets, [2]string{kind, agent})
 	return f.result
 }
@@ -289,7 +290,7 @@ func (f *fakeActions) RollbackPreview(rev int64) ([]relevo.ChangeLine, error) {
 }
 
 // Rollback records the revision it was asked for (§3.3).
-func (f *fakeActions) Rollback(_ context.Context, rev int64) Result {
+func (f *fakeActions) Rollback(_ context.Context, rev int64) widget.Result {
 	f.rollbacks = append(f.rollbacks, rev)
 	return f.result
 }
@@ -319,7 +320,7 @@ func (f *fakeActions) WorkflowGraph(name string) ([]relevo.GraphRow, error) {
 
 // WorkflowAdd records the path and whether replace was set, and answers the
 // scripted result for that path, or the shared result when none is scripted.
-func (f *fakeActions) WorkflowAdd(_ context.Context, path string, replace bool) Result {
+func (f *fakeActions) WorkflowAdd(_ context.Context, path string, replace bool) widget.Result {
 	f.adds = append(f.adds, workflowAddCall{path: path, replace: replace})
 	if res, ok := f.addResults[path]; ok {
 		return res
@@ -328,7 +329,7 @@ func (f *fakeActions) WorkflowAdd(_ context.Context, path string, replace bool) 
 }
 
 // WorkflowRemove records the name and answers the scripted result.
-func (f *fakeActions) WorkflowRemove(_ context.Context, name string) Result {
+func (f *fakeActions) WorkflowRemove(_ context.Context, name string) widget.Result {
 	f.removes = append(f.removes, name)
 	return f.removeResult
 }
@@ -348,40 +349,40 @@ func (f *fakeActions) WorkflowActors() map[string]workflow.ActorInfo { return f.
 
 // WorkflowSave records what an edit loop asked to store and answers the shared
 // result.
-func (f *fakeActions) WorkflowSave(_ context.Context, name, source string, def workflow.Definition) Result {
+func (f *fakeActions) WorkflowSave(_ context.Context, name, source string, def workflow.Definition) widget.Result {
 	f.saves = append(f.saves, workflowSaveCall{name: name, source: source, def: def})
 	return f.saveResult
 }
 
-// The sync view (S5): the snapshot SyncSnapshot answers with, the scripted
+// The sync view (S5): the snapshot widget.SyncSnapshot answers with, the scripted
 // outcome of each verb, and one recorded call per verb so a test can pin that
 // a key made exactly one.
 type syncCall struct{ verb string }
 
-// SyncSnapshot is recorded apart from the verbs: a read is what the view does
+// widget.SyncSnapshot is recorded apart from the verbs: a read is what the view does
 // before and after every key, and counting it as a call would make "one call"
 // mean something different here than in every other view's key test.
-func (f *fakeActions) SyncSnapshot() (SyncSnapshot, error) {
+func (f *fakeActions) SyncSnapshot() (widget.SyncSnapshot, error) {
 	f.syncReads++
 	return f.snap, f.snapErr
 }
 
-func (f *fakeActions) SyncPush(_ context.Context) Result {
+func (f *fakeActions) SyncPush(_ context.Context) widget.Result {
 	f.syncs = append(f.syncs, syncCall{verb: "push"})
 	return f.syncResult
 }
 
-func (f *fakeActions) SyncPull(_ context.Context) Result {
+func (f *fakeActions) SyncPull(_ context.Context) widget.Result {
 	f.syncs = append(f.syncs, syncCall{verb: "pull"})
 	return f.syncResult
 }
 
-func (f *fakeActions) SyncTest(_ context.Context) Result {
+func (f *fakeActions) SyncTest(_ context.Context) widget.Result {
 	f.syncs = append(f.syncs, syncCall{verb: "test"})
 	return f.syncResult
 }
 
-func (f *fakeActions) SyncDisable(_ context.Context) Result {
+func (f *fakeActions) SyncDisable(_ context.Context) widget.Result {
 	f.syncs = append(f.syncs, syncCall{verb: "disable"})
 	return f.syncResult
 }
@@ -394,8 +395,8 @@ func (f *fakeActions) SyncEditor() (*exec.Cmd, error) {
 // key is one rune keypress, as the tests send them.
 func key(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
 
-// actionModel is a loaded shell at 140x40 with a as its Actions seam.
-func actionModel(t *testing.T, a Actions, rows ...view.BindingStatus) Model {
+// actionModel is a loaded shell at 140x40 with a as its widget.Actions seam.
+func actionModel(t *testing.T, a widget.Actions, rows ...view.BindingStatus) Model {
 	t.Helper()
 	st := store.New(t.TempDir())
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Actions: a})
@@ -408,15 +409,15 @@ func actionModel(t *testing.T, a Actions, rows ...view.BindingStatus) Model {
 }
 
 // goldenActionModel is actionModel for the goldens: the full report with a as
-// the Actions seam.
-func goldenActionModel(t *testing.T, width, height int, a Actions, rep view.Report) Model {
+// the widget.Actions seam.
+func goldenActionModel(t *testing.T, width, height int, a widget.Actions, rep view.Report) Model {
 	t.Helper()
 	return goldenActionModelWithStore(t, width, height, a, rep, store.New(t.TempDir()))
 }
 
 // goldenActionModelWithStore is goldenActionModel over st, so a fixture whose
 // plan tab reads its body and sent time from a seeded store can supply it.
-func goldenActionModelWithStore(t *testing.T, width, height int, a Actions, rep view.Report, st *store.Store) Model {
+func goldenActionModelWithStore(t *testing.T, width, height int, a widget.Actions, rep view.Report, st *store.Store) Model {
 	t.Helper()
 	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st}}, Options{Interval: time.Second, Actions: a, Version: "v0.13.0-28-gb66c6fc"})
 	m.now = func() time.Time { return railNow }
@@ -444,7 +445,7 @@ func pointer(t *testing.T, m Model, key string) Model {
 }
 
 func TestStopKeyConfirmsThenCalls(t *testing.T) {
-	fa := &fakeActions{result: Result{Text: "webshop round 4 stopped", Refresh: true}}
+	fa := &fakeActions{result: widget.Result{Text: "webshop round 4 stopped", Refresh: true}}
 	m := actionModel(t, fa, view.BindingStatus{Name: "webshop", Round: 4, Display: "ACTIVE"})
 
 	res, cmd := m.Update(key('x'))
@@ -509,7 +510,7 @@ func TestConfirmNamesTheOwningMasterMind(t *testing.T) {
 }
 
 func TestDoneKeyConfirmsThenCalls(t *testing.T) {
-	fa := &fakeActions{result: Result{Text: "atlas marked done", Refresh: true}}
+	fa := &fakeActions{result: widget.Result{Text: "atlas marked done", Refresh: true}}
 	m := actionModel(t, fa, view.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
 
 	res, cmd0 := m.Update(key('D'))
@@ -533,7 +534,7 @@ func TestDoneKeyConfirmsThenCalls(t *testing.T) {
 }
 
 func TestUnbindKeyConfirmsThenCalls(t *testing.T) {
-	fa := &fakeActions{result: Result{Text: "archived atlas", Refresh: true}}
+	fa := &fakeActions{result: widget.Result{Text: "archived atlas", Refresh: true}}
 	m := actionModel(t, fa, view.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE", Branch: "relevo/atlas"})
 
 	res, cmd0 := m.Update(key('u'))
@@ -560,7 +561,7 @@ func TestUnbindKeyConfirmsThenCalls(t *testing.T) {
 // O3 (gate's two chained prompts became one form): an invalid duration keeps
 // the form open on `for`; a valid one submits both fields at once.
 func TestGatePromptValidatesDuration(t *testing.T) {
-	fa := &fakeActions{result: Result{Text: "gated", Refresh: true}}
+	fa := &fakeActions{result: widget.Result{Text: "gated", Refresh: true}}
 	m := actionModel(t, fa, view.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE", BuilderCandidate: "opencode/cline-pass/glm"})
 
 	res, cmd0 := m.Update(key('g'))
@@ -606,7 +607,7 @@ func TestGatePromptValidatesDuration(t *testing.T) {
 }
 
 func TestUngateCommand(t *testing.T) {
-	fa := &fakeActions{result: Result{Text: "cleared cline-pass (1 entries)", Refresh: true}}
+	fa := &fakeActions{result: widget.Result{Text: "cleared cline-pass (1 entries)", Refresh: true}}
 	m := actionModel(t, fa, view.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE"})
 
 	cmd := execLine("ungate cline-pass", m.env(), m.prefs)
@@ -654,7 +655,7 @@ func TestActionResultBecomesNoticeAndLog(t *testing.T) {
 		t.Errorf("the footer must show the action in flight, got %q", got)
 	}
 
-	res, _ = m.Update(actionMsg{verb: "stop", key: "atlas", res: Result{
+	res, _ = m.Update(actionMsg{verb: "stop", key: "atlas", res: widget.Result{
 		Text:    "atlas round 4 stopped\nmore detail",
 		Refresh: true,
 	}})
@@ -674,13 +675,13 @@ func TestActionResultBecomesNoticeAndLog(t *testing.T) {
 	}
 
 	// An error is a red notice and its own log entry.
-	res, _ = m.Update(actionMsg{verb: "stop", key: "atlas", res: Result{Err: errSentinel}})
+	res, _ = m.Update(actionMsg{verb: "stop", key: "atlas", res: widget.Result{Err: errSentinel}})
 	m = res.(Model)
 	if !strings.Contains(m.notice, "sentinel") {
 		t.Errorf("notice = %q, want the error", m.notice)
 	}
 	if !m.noticeErr {
-		t.Error("an action error must render in errorStyle")
+		t.Error("an action error must render in widget.ErrorStyle")
 	}
 	if len(m.actionLog) != 2 || !strings.Contains(m.actionLog[1].Text, "sentinel") || !m.actionLog[1].Err || m.actionLog[1].Verb != "stop" {
 		t.Errorf("log = %+v, want the error appended", m.actionLog)
@@ -715,7 +716,7 @@ func TestActionKeysHiddenWithoutActions(t *testing.T) {
 	hidden := map[string]bool{"x": true, "D": true, "u": true, "g": true, "o": true, "E": true, "b": true, "r": true}
 	for _, kh := range fleet(m).Keys() {
 		if hidden[kh.Key] {
-			t.Errorf("the fleet must not advertise %q without Actions", kh.Key)
+			t.Errorf("the fleet must not advertise %q without widget.Actions", kh.Key)
 		}
 	}
 
@@ -723,7 +724,7 @@ func TestActionKeysHiddenWithoutActions(t *testing.T) {
 		res, cmd := m.Update(key(r))
 		m = res.(Model)
 		if cmd != nil || m.overlay != nil {
-			t.Errorf("%q must do nothing without Actions", r)
+			t.Errorf("%q must do nothing without widget.Actions", r)
 		}
 	}
 }
@@ -806,7 +807,7 @@ func TestSendPromptThenConfirm(t *testing.T) {
 		t.Fatalf("write plan: %v", err)
 	}
 
-	fa := &fakeActions{result: Result{Text: "sent round 5 to atlas", Refresh: true}}
+	fa := &fakeActions{result: widget.Result{Text: "sent round 5 to atlas", Refresh: true}}
 	m := actionModel(t, fa, view.BindingStatus{Name: "atlas", Round: 4, Display: "ACTIVE", CWD: dir})
 
 	res, cmd := m.Update(key('s'))
@@ -942,7 +943,7 @@ func TestBindPromptChain(t *testing.T) {
 		t.Fatalf("binds = %+v, want one", fa.binds)
 	}
 	if got := fa.binds[0]; got.Name != "inbox" || got.Candidate != "haiku" || got.Feature != "auth" {
-		t.Errorf("BindInput = %+v, want inbox/haiku/auth", got)
+		t.Errorf("widget.BindInput = %+v, want inbox/haiku/auth", got)
 	}
 }
 

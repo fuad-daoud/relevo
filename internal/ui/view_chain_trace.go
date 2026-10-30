@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // chainTraceMsg is one chain's trace, read off the update loop.
@@ -35,8 +36,8 @@ type chainTraceView struct {
 // are the trail this view contributes on its own: the chain's name plus trace
 // when it was pushed straight from the chains list, and the segments the caller
 // supplies when a view below it already names the chain.
-func newChainTraceView(env Env, name string, crumbs ...string) View {
-	v := chainTraceView{name: name, vp: viewport.New(maxInt(env.Width-6, 20), maxInt(bodyHeight(env), 1))}
+func newChainTraceView(env widget.Env, name string, crumbs ...string) widget.View {
+	v := chainTraceView{name: name, vp: viewport.New(maxInt(env.Width-6, 20), maxInt(widget.BodyHeight(env), 1))}
 	v.crumbs = crumbs
 	return v
 }
@@ -50,7 +51,7 @@ func maxInt(a, b int) int {
 }
 
 // chainTraceCmd reads the trace off the update loop.
-func chainTraceCmd(env Env, name string) tea.Cmd {
+func chainTraceCmd(env widget.Env, name string) tea.Cmd {
 	return func() tea.Msg {
 		if env.Actions == nil {
 			return chainTraceMsg{name: name}
@@ -72,55 +73,55 @@ func (v chainTraceView) Crumbs() []string {
 
 func (v chainTraceView) Capturing() bool { return false }
 
-func (v chainTraceView) Keys() []KeyHelp {
-	return []KeyHelp{
-		{"↑↓", "scroll"},
+func (v chainTraceView) Keys() []widget.KeyHelp {
+	return []widget.KeyHelp{
+		{Key: "↑↓", Help: "scroll"},
 	}
 }
 
-func (v chainTraceView) HelpKeys() []KeyHelp { return v.Keys() }
+func (v chainTraceView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
 // Context is the trace context row: how many events the trace holds, or the
 // reason it holds none.
-func (v chainTraceView) Context(env Env) (string, string) {
+func (v chainTraceView) Context(env widget.Env) (string, string) {
 	if v.err != nil && !v.loaded {
-		return "   " + errorStyle.Render(sanitizeText(v.err.Error())), ""
+		return "   " + widget.ErrorStyle.Render(sanitizeText(v.err.Error())), ""
 	}
 	if !v.loaded {
-		return "   " + mutedStyle.Render("loading…"), ""
+		return "   " + widget.MutedStyle.Render("loading…"), ""
 	}
 	n := len(v.lines)
-	left := "   " + textStyle.Bold(true).Render(strconv.Itoa(n)) + " " + mutedStyle.Render("events")
+	left := "   " + widget.TextStyle.Bold(true).Render(strconv.Itoa(n)) + " " + widget.MutedStyle.Render("events")
 	if v.err != nil {
-		return left, warnStyle.Render("stale: "+sanitizeText(v.err.Error())) + "   "
+		return left, widget.WarnStyle.Render("stale: "+sanitizeText(v.err.Error())) + "   "
 	}
 	return left, ""
 }
 
 // Body is the scrolled trace, sized to the shell's body box.
-func (v chainTraceView) Body(env Env, width, height int) string {
+func (v chainTraceView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
 	if v.err != nil && !v.loaded {
-		return strings.Join(statsCentered(sanitizeText(v.err.Error()), width, height), "\n")
+		return strings.Join(widget.Centered(sanitizeText(v.err.Error()), width, height), "\n")
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	if len(v.lines) == 0 {
-		return strings.Join(statsCentered("no trace: this chain has no events", width, height), "\n")
+		return strings.Join(widget.Centered("no trace: this chain has no events", width, height), "\n")
 	}
 	v.vp.Width = maxInt(width-6, 20)
 	v.vp.Height = height
-	body := fitLines(strings.Split(v.vp.View(), "\n"), width-6, height)
+	body := widget.FitLines(strings.Split(v.vp.View(), "\n"), width-6, height)
 	for i, l := range body {
 		body[i] = "   " + l
 	}
 	return strings.Join(body, "\n")
 }
 
-func (v chainTraceView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v chainTraceView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case chainTraceMsg:
 		if msg.name != v.name {
@@ -138,7 +139,7 @@ func (v chainTraceView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		v.vp.Width = maxInt(env.Width-6, 20)
-		v.vp.Height = maxInt(bodyHeight(env), 1)
+		v.vp.Height = maxInt(widget.BodyHeight(env), 1)
 		return v, nil
 
 	case tea.KeyMsg:

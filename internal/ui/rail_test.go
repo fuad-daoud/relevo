@@ -24,7 +24,7 @@ var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 func stripANSI(s string) string { return ansiRE.ReplaceAllString(s, "") }
 
 // plain strips ANSI and collapses runs of spaces, so an assertion pins the
-// words and their order, not the padding fit() adds.
+// words and their order, not the padding widget.Fit() adds.
 func plain(s string) string { return strings.Join(strings.Fields(stripANSI(s)), " ") }
 
 // TestClipName keeps the NAME column's truncation: it fits, clips with an

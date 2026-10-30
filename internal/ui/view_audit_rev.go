@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // auditChangeText renders one change line's styled text, cut with an
@@ -18,30 +19,30 @@ func auditChangeText(cl relevo.ChangeLine, width int) string {
 	}
 	field := ""
 	if cl.Field != "" {
-		field = dimStyle.Render(" " + cl.Field)
+		field = widget.MutedStyle.Render(" " + cl.Field)
 	}
 	var b strings.Builder
 	switch cl.Op {
 	case "~":
-		b.WriteString(accentStyle.Render("~ ") + textStyle.Render(cl.Subject) + field)
-		b.WriteString("   " + dimStyle.Render(cl.Before) + faintStyle.Render(" → ") + textStyle.Render(cl.After))
+		b.WriteString(widget.AccentStyle.Render("~ ") + widget.TextStyle.Render(cl.Subject) + field)
+		b.WriteString("   " + widget.MutedStyle.Render(cl.Before) + widget.FaintStyle.Render(" → ") + widget.TextStyle.Render(cl.After))
 	case "+":
-		b.WriteString(greenStyle.Render("+ ") + textStyle.Render(cl.Subject) + field)
-		b.WriteString("   " + dimStyle.Render(cl.After))
+		b.WriteString(widget.GreenStyle.Render("+ ") + widget.TextStyle.Render(cl.Subject) + field)
+		b.WriteString("   " + widget.MutedStyle.Render(cl.After))
 	case "-":
-		b.WriteString(redStyle.Render("- ") + textStyle.Render(cl.Subject) + field)
-		b.WriteString("   " + dimStyle.Render(cl.Before))
+		b.WriteString(widget.RedStyle.Render("- ") + widget.TextStyle.Render(cl.Subject) + field)
+		b.WriteString("   " + widget.MutedStyle.Render(cl.Before))
 	case "*":
-		b.WriteString(dimStyle.Render("* ") + textStyle.Render(cl.Subject))
+		b.WriteString(widget.MutedStyle.Render("* ") + widget.TextStyle.Render(cl.Subject))
 	default:
-		b.WriteString(textStyle.Render(strings.TrimSpace(cl.Op + " " + cl.Subject)))
+		b.WriteString(widget.TextStyle.Render(strings.TrimSpace(cl.Op + " " + cl.Subject)))
 	}
 	return ansi.Truncate(b.String(), width, "…")
 }
 
 // auditChangeLine is one change line inside the 3-cell margin.
 func auditChangeLine(cl relevo.ChangeLine, width int) string {
-	return fit("   "+auditChangeText(cl, width-3), width)
+	return widget.Fit("   "+auditChangeText(cl, width-3), width)
 }
 
 // auditRevView is `audit › #N`: every change of one revision, scrollable,
@@ -59,7 +60,7 @@ type auditRevView struct {
 // newAuditRevView pushes the cursor revision's changes. cached says the
 // list already holds its changes (or their error); when it does not, the view
 // asks for them itself.
-func newAuditRevView(env Env, rev db.RevisionRow, newest int64, lines []relevo.ChangeLine, err error, cached bool) (View, tea.Cmd) {
+func newAuditRevView(env widget.Env, rev db.RevisionRow, newest int64, lines []relevo.ChangeLine, err error, cached bool) (widget.View, tea.Cmd) {
 	v := auditRevView{
 		rev: rev, newest: newest, lines: lines, err: err,
 		loaded: cached, actions: env.Actions != nil,
@@ -77,37 +78,37 @@ func (v auditRevView) Capturing() bool { return false }
 
 // Keys are the detail view's keys: `esc back` is left to the shell's own
 // tail, and R needs the shell's write seam.
-func (v auditRevView) Keys() []KeyHelp {
+func (v auditRevView) Keys() []widget.KeyHelp {
 	if !v.actions {
 		return nil
 	}
-	return []KeyHelp{{"R", "roll back to here"}}
+	return []widget.KeyHelp{{Key: "R", Help: "roll back to here"}}
 }
 
 // HelpKeys is the help overlay's key list: the same set plus the
 // movement the footer leaves out.
-func (v auditRevView) HelpKeys() []KeyHelp {
-	return append([]KeyHelp{{"↑↓", "move"}}, v.Keys()...)
+func (v auditRevView) HelpKeys() []widget.KeyHelp {
+	return append([]widget.KeyHelp{{Key: "↑↓", Help: "move"}}, v.Keys()...)
 }
 
 // Context is the revision's own line.
-func (v auditRevView) Context(env Env) (string, string) {
+func (v auditRevView) Context(env widget.Env) (string, string) {
 	meta := fmt.Sprintf("%s · %s · %s", v.rev.Source, v.rev.At.Local().Format("Jan 2 15:04"), v.rev.Message)
-	return "   " + mutedStyle.Render(meta), ""
+	return "   " + widget.MutedStyle.Render(meta), ""
 }
 
-func (v auditRevView) Body(env Env, width, height int) string {
+func (v auditRevView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	if v.err != nil {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
 	}
 	lines := v.bodyLines(env, width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -115,14 +116,14 @@ func (v auditRevView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
 // bodyLines is the revision's whole body: one line per change, and, for
 // the baseline, the one dim line that says what it is.
-func (v auditRevView) bodyLines(env Env, width int) []string {
+func (v auditRevView) bodyLines(env widget.Env, width int) []string {
 	if v.rev.Rev == 1 {
-		return []string{fit("   "+dimStyle.Render("the config as it was when revisions began"), width)}
+		return []string{widget.Fit("   "+widget.MutedStyle.Render("the config as it was when revisions began"), width)}
 	}
 	lines := []string{""}
 	for _, l := range v.lines {
@@ -131,7 +132,7 @@ func (v auditRevView) bodyLines(env Env, width int) []string {
 	return lines
 }
 
-func (v auditRevView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v auditRevView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case auditChangesMsg:
 		if msg.rev != v.rev.Rev {
@@ -162,16 +163,16 @@ func (v auditRevView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 }
 
 // updateKey is the detail view's own keys: scrolling, and R.
-func (v auditRevView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v auditRevView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	switch k.String() {
 	case "up":
 		v.scroll(env, -1)
 	case "down":
 		v.scroll(env, 1)
 	case "pgup":
-		v.scroll(env, -bodyHeight(env))
+		v.scroll(env, -widget.BodyHeight(env))
 	case "pgdown":
-		v.scroll(env, bodyHeight(env))
+		v.scroll(env, widget.BodyHeight(env))
 	case "home":
 		v.top = 0
 	case "end":
@@ -186,11 +187,11 @@ func (v auditRevView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 }
 
 // scroll moves the window by delta body lines, clamped to the body.
-func (v *auditRevView) scroll(env Env, delta int) {
-	v.top = clamp(v.top+delta, 0, v.maxTop(env))
+func (v *auditRevView) scroll(env widget.Env, delta int) {
+	v.top = widget.Clamp(v.top+delta, 0, v.maxTop(env))
 }
 
 // maxTop is the largest first-line index that still fills the body.
-func (v auditRevView) maxTop(env Env) int {
-	return max(0, len(v.bodyLines(env, env.Width))-bodyHeight(env))
+func (v auditRevView) maxTop(env widget.Env) int {
+	return max(0, len(v.bodyLines(env, env.Width))-widget.BodyHeight(env))
 }

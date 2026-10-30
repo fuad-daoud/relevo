@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/muesli/termenv"
@@ -23,7 +24,7 @@ func TestFleetGroupsOrderAndOmission(t *testing.T) {
 		{Name: "b-work", Display: "ACTIVE", BuilderStatus: "working"},
 		{Name: "b-held", Display: "PAUSED"},
 	}
-	env := Env{Loaded: true, Report: view.Report{Bindings: rows}, Now: railNow, Width: 140, Height: 40}
+	env := widget.Env{Loaded: true, Report: view.Report{Bindings: rows}, Now: railNow, Width: 140, Height: 40}
 	f := newFleetView(true)
 	body := f.Body(env, 140, 40)
 	plainBody := stripANSI(body)
@@ -53,7 +54,7 @@ func TestFleetDoneFold(t *testing.T) {
 		{Name: "done-2", Display: "DONE", Last: &view.LastEvent{TS: railNow.Add(-2 * time.Hour)}},
 		{Name: "done-3", Display: "DONE", Last: &view.LastEvent{TS: railNow.Add(-3 * time.Hour)}},
 	}
-	env := Env{Loaded: true, Report: view.Report{Bindings: rows}, Now: railNow, Width: 140, Height: 40}
+	env := widget.Env{Loaded: true, Report: view.Report{Bindings: rows}, Now: railNow, Width: 140, Height: 40}
 	f := newFleetView(true)
 
 	// Folded: rows() excludes done rows
@@ -101,7 +102,7 @@ func TestFleetCardKeysByGroup(t *testing.T) {
 		{Name: "b-held", Display: "PAUSED"},
 		{Name: "b-done", Display: "DONE"},
 	}
-	env := Env{
+	env := widget.Env{
 		Loaded:  true,
 		Report:  view.Report{Bindings: rows},
 		Now:     railNow,
@@ -133,7 +134,7 @@ func TestFleetCardKeysByGroup(t *testing.T) {
 		}
 	}
 
-	// With Actions == nil, only open round
+	// With widget.Actions == nil, only open round
 	envNoActions := env
 	envNoActions.Actions = nil
 	for i, b := range vis {
@@ -226,7 +227,7 @@ func TestHeaderShowsVersionNotGates(t *testing.T) {
 }
 
 func TestGatedLineOneProviderLatestUntil(t *testing.T) {
-	env := Env{
+	env := widget.Env{
 		Now:   railNow,
 		Width: 140,
 		Report: view.Report{
@@ -312,7 +313,7 @@ func TestFleetCardAboveList(t *testing.T) {
 }
 
 func TestFleetCardCommitPlural(t *testing.T) {
-	env := Env{Now: railNow, Width: 132, Height: 34}
+	env := widget.Env{Now: railNow, Width: 132, Height: 34}
 	f := newFleetView(true)
 
 	b1 := view.BindingStatus{
@@ -361,7 +362,7 @@ func TestFleetUnreadTintOnlyOnIdle(t *testing.T) {
 	idleLine := fleetRowLine(bIdle, groupIdle, false, railNow, 120)
 	doneLine := fleetRowLine(bDone, groupDone, false, railNow, 120)
 
-	accentEscape := strings.Split(accentStyle.Render("X"), "X")[0]
+	accentEscape := strings.Split(widget.AccentStyle.Render("X"), "X")[0]
 	if accentEscape == "" {
 		t.Fatalf("accent colour escape sequence must not be empty in TrueColor")
 	}
@@ -379,7 +380,7 @@ func TestFleetCardNoEmptyPart(t *testing.T) {
 		Display: "ACTIVE",
 	}
 	f := fleetView{}
-	env := Env{}
+	env := widget.Env{}
 	card := f.cardLines(env, b, 140)
 	plain := stripANSI(strings.Join(card, "\n"))
 	if strings.Contains(plain, "·    ·") {
@@ -407,7 +408,7 @@ func TestFleetReportedRowShowsTheRoundThatReported(t *testing.T) {
 	}
 
 	f := fleetView{}
-	env := Env{Now: now, Width: 140, Height: 40}
+	env := widget.Env{Now: now, Width: 140, Height: 40}
 	card := stripANSI(strings.Join(f.cardLines(env, b, 140), "\n"))
 	if !strings.Contains(card, "round 2 · reported") {
 		t.Errorf("card must say %q, got:\n%s", "round 2 · reported", card)
@@ -451,7 +452,7 @@ func TestFleetRowNowWords(t *testing.T) {
 }
 
 func TestGatedLineEndsInEllipsisWhenCut(t *testing.T) {
-	env := Env{
+	env := widget.Env{
 		Now: railNow,
 		Report: view.Report{Gated: []availability.Gate{
 			{Token: "agy/antigravity-community-build/claude", Kind: availability.RateLimited, Since: railNow, Until: railNow.Add(10 * time.Minute)},

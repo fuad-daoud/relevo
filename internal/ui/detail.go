@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/fuad-daoud/relevo/internal/sanitize"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 type detailModel struct {
@@ -46,12 +47,12 @@ type detailModel struct {
 
 func styleFor(c tabContent) lipgloss.Style {
 	if c.err != nil {
-		return errorStyle
+		return widget.ErrorStyle
 	}
 	if c.empty != "" {
-		return emptyStyle
+		return widget.EmptyStyle
 	}
-	return normalStyle
+	return widget.NormalStyle
 }
 
 // bodyOf renders a tab's content for the viewport. The diff tab colours its

@@ -16,9 +16,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
-	"github.com/fuad-daoud/relevo/internal/stats"
+	datastats "github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
+	"github.com/fuad-daoud/relevo/internal/ui/stats"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 var (
@@ -53,7 +55,7 @@ type logEntry struct {
 	Word    string         // the EVENT cell
 	Style   lipgloss.Style // the EVENT cell's style
 	Detail  string         // one line; newlines replaced by " · "
-	Err     bool           // a failed action: Detail in redStyle
+	Err     bool           // a failed action: Detail in widget.RedStyle
 }
 
 type logView struct {
@@ -101,7 +103,7 @@ func bindingShapes(rt relevo.Runtime) func(string) string {
 	}
 }
 
-func newLogView(env Env) (View, tea.Cmd) {
+func newLogView(env widget.Env) (widget.View, tea.Cmd) {
 	in := newTextInput()
 	in.Prompt = ""
 	v := logView{
@@ -170,7 +172,7 @@ func shortDurationText(ms int64) string {
 	return fmt.Sprintf("%dh%02dm", minutes/60, minutes%60)
 }
 
-func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []db.RevisionRow, actions []actionEntry, since time.Time, name func(token string) string, shapes func(binding string) string) []logEntry {
+func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []db.RevisionRow, actions []widget.ActionEntry, since time.Time, name func(token string) string, shapes func(binding string) string) []logEntry {
 	picks := make(map[foldKey]string)
 	drifts := make(map[foldKey]string)
 	diffs := make(map[foldKey]string)
@@ -232,7 +234,7 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 				Binding: e.BindingName,
 				Round:   roundNum,
 				Word:    "sent",
-				Style:   accentStyle,
+				Style:   widget.AccentStyle,
 				Detail:  strings.ReplaceAll(strings.Join(parts, " · "), "\n", " · "),
 			})
 			continue
@@ -250,19 +252,19 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 			switch ej.Outcome {
 			case "done":
 				word = "done"
-				style = greenStyle
+				style = widget.GreenStyle
 			case "halted":
 				word = "halted"
-				style = warnStyle
+				style = widget.WarnStyle
 			case "blocked":
 				word = "blocked"
-				style = warnStyle
+				style = widget.WarnStyle
 			default:
 				word = "reported"
 				if shape == store.ShapeReader {
 					word = "artifact"
 				}
-				style = mutedStyle
+				style = widget.MutedStyle
 			}
 
 			var parts []string
@@ -291,7 +293,7 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 				}
 			}
 			if e.Tokens != nil {
-				parts = append(parts, stats.ShortTokens(*e.Tokens)+" tokens")
+				parts = append(parts, datastats.ShortTokens(*e.Tokens)+" tokens")
 			}
 			if e.DurationMS != nil {
 				parts = append(parts, shortDurationText(*e.DurationMS))
@@ -317,7 +319,7 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 				Binding: e.BindingName,
 				Round:   roundNum,
 				Word:    "exited",
-				Style:   redStyle,
+				Style:   widget.RedStyle,
 				Detail:  strings.ReplaceAll(detail, "\n", " · "),
 			})
 
@@ -330,7 +332,7 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 				order := m[3]
 				if strings.HasPrefix(why, "rate-limited: ") {
 					rest := strings.TrimPrefix(why, "rate-limited: ")
-					why = statsGateReason(rest)
+					why = stats.GateReason(rest)
 				} else if switchExitRe.MatchString(why) {
 					why = "exited " + outputClause(shape)
 				}
@@ -343,7 +345,7 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 				Binding: e.BindingName,
 				Round:   roundNum,
 				Word:    "switched",
-				Style:   warnStyle,
+				Style:   widget.WarnStyle,
 				Detail:  strings.ReplaceAll(detail, "\n", " · "),
 			})
 
@@ -353,7 +355,7 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 				Binding: e.BindingName,
 				Round:   roundNum,
 				Word:    "needs you",
-				Style:   warnStyle,
+				Style:   widget.WarnStyle,
 				Detail:  "blocked at a dialog",
 			})
 
@@ -363,7 +365,7 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 				Binding: e.BindingName,
 				Round:   roundNum,
 				Word:    "answered",
-				Style:   mutedStyle,
+				Style:   widget.MutedStyle,
 				Detail:  strings.ReplaceAll(derefStr(e.Note), "\n", " · "),
 			})
 
@@ -376,7 +378,7 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 				Binding: e.BindingName,
 				Round:   roundNum,
 				Word:    e.Kind,
-				Style:   mutedStyle,
+				Style:   widget.MutedStyle,
 				Detail:  strings.ReplaceAll(derefStr(e.Note), "\n", " · "),
 			})
 		}
@@ -393,18 +395,18 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 		switch h.Kind {
 		case availability.RateLimited, availability.SpawnFailed:
 			word = "gated"
-			style = warnStyle
+			style = widget.WarnStyle
 			detail = h.Provider
-			if reason := statsGateReasonText(h.Note); reason != "" {
+			if reason := stats.GateReasonText(h.Note); reason != "" {
 				detail += " · " + reason
 			}
 		case availability.Cleared:
 			word = "cleared"
-			style = greenStyle
+			style = widget.GreenStyle
 			detail = h.Provider
 		default:
 			word = string(h.Kind)
-			style = mutedStyle
+			style = widget.MutedStyle
 			detail = h.Provider
 		}
 
@@ -427,7 +429,7 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 			Binding: "",
 			Round:   0,
 			Word:    "config",
-			Style:   mutedStyle,
+			Style:   widget.MutedStyle,
 			Detail:  strings.ReplaceAll(fmt.Sprintf("rev %d · %s", rv.Rev, rv.Message), "\n", " · "),
 		})
 	}
@@ -441,7 +443,7 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 			Binding: "you",
 			Round:   0,
 			Word:    a.Verb,
-			Style:   textStyle,
+			Style:   widget.TextStyle,
 			Detail:  strings.ReplaceAll(a.Text, "\n", " · "),
 			Err:     a.Err,
 		})
@@ -464,16 +466,16 @@ func (v logView) Crumbs() []string { return []string{"log"} }
 
 func (v logView) Capturing() bool { return v.editing }
 
-func (v logView) Keys() []KeyHelp {
-	return []KeyHelp{
-		{"↑↓", "move"},
-		{"enter", "open round"},
-		{"/", "filter"},
-		{"f", "follow"},
+func (v logView) Keys() []widget.KeyHelp {
+	return []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "enter", Help: "open round"},
+		{Key: "/", Help: "filter"},
+		{Key: "f", Help: "follow"},
 	}
 }
 
-func (v logView) filteredEntries(env Env) []logEntry {
+func (v logView) filteredEntries(env widget.Env) []logEntry {
 	now := env.Now
 	if now.IsZero() {
 		now = time.Now()
@@ -500,12 +502,12 @@ func (v logView) filteredEntries(env Env) []logEntry {
 	return filtered
 }
 
-func (v logView) Context(env Env) (string, string) {
+func (v logView) Context(env widget.Env) (string, string) {
 	if v.err != nil && !v.loaded {
-		return "   " + errorStyle.Render(v.err.Error()), ""
+		return "   " + widget.ErrorStyle.Render(v.err.Error()), ""
 	}
 	if !v.loaded {
-		return "   " + mutedStyle.Render("loading…"), ""
+		return "   " + widget.MutedStyle.Render("loading…"), ""
 	}
 
 	now := env.Now
@@ -529,31 +531,31 @@ func (v logView) Context(env Env) (string, string) {
 	}
 
 	var items []string
-	items = append(items, textStyle.Bold(true).Render(fmt.Sprintf("%d", todayCount))+" "+mutedStyle.Render("events today"))
+	items = append(items, widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", todayCount))+" "+widget.MutedStyle.Render("events today"))
 	for _, w := range []string{"sent", "done", "halted", "exited", "switched", "gated"} {
 		if c := counts[w]; c > 0 {
-			items = append(items, textStyle.Bold(true).Render(fmt.Sprintf("%d", c))+" "+mutedStyle.Render(w))
+			items = append(items, widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", c))+" "+widget.MutedStyle.Render(w))
 		}
 	}
 	left := "   " + strings.Join(items, "   ")
 
 	var right string
 	if v.filter != "" {
-		right += mutedStyle.Render("/ "+clip(v.filter, 40)) + "   "
+		right += widget.MutedStyle.Render("/ "+clip(v.filter, 40)) + "   "
 	}
 	if v.follow {
-		right += accentStyle.Render("following")
+		right += widget.AccentStyle.Render("following")
 	} else {
-		right += faintStyle.Render("paused")
+		right += widget.FaintStyle.Render("paused")
 	}
 	right += "   "
 
 	return left, right
 }
 
-func (v logView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v logView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tickMsg:
+	case widget.TickMsg:
 		now := env.Now
 		if now.IsZero() {
 			now = time.Now()
@@ -622,7 +624,7 @@ func (v logView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 		}
 
 		entries := v.filteredEntries(env)
-		pageSize := bodyHeight(env) - 3
+		pageSize := widget.BodyHeight(env) - 3
 		if pageSize < 1 {
 			pageSize = 1
 		}
@@ -706,7 +708,7 @@ func pluralEvent(n int, unit string) string {
 	return fmt.Sprintf("%d %ss", n, unit)
 }
 
-func (v logView) Body(env Env, width, height int) string {
+func (v logView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
@@ -725,14 +727,14 @@ func (v logView) Body(env Env, width, height int) string {
 
 	var line1 string
 	if v.editing {
-		line1 = "   " + fit("/ "+v.input.View(), cw) + "   "
+		line1 = "   " + widget.Fit("/ "+v.input.View(), cw) + "   "
 	} else {
 		detailW := cw - 5 - 2 - 14 - 2 - 4 - 2 - 9 - 2
 		if detailW < 0 {
 			detailW = 0
 		}
 		header := fmt.Sprintf("%-5s  %-14s  %-4s  %-9s  %-*s", "TIME", "BINDING", "RND", "EVENT", detailW, "DETAIL")
-		line1 = "   " + fit(faintStyle.Bold(true).Render(header), cw) + "   "
+		line1 = "   " + widget.Fit(widget.FaintStyle.Bold(true).Render(header), cw) + "   "
 	}
 
 	entries := v.filteredEntries(env)
@@ -740,7 +742,7 @@ func (v logView) Body(env Env, width, height int) string {
 	if v.loaded && len(entries) == 0 {
 		var lines []string
 		lines = append(lines, blankRow, line1)
-		lines = append(lines, "   "+fit(emptyStyle.Render("no events in the last 7 days"), cw)+"   ")
+		lines = append(lines, "   "+widget.Fit(widget.EmptyStyle.Render("no events in the last 7 days"), cw)+"   ")
 		for len(lines) < height {
 			lines = append(lines, blankRow)
 		}
@@ -791,8 +793,8 @@ func (v logView) Body(env Env, width, height int) string {
 		if fill < 0 {
 			fill = 0
 		}
-		ruleContent := mutedStyle.Render(label) + " " + gridStyle.Render(strings.Repeat("┈", fill)) + faintStyle.Render(rightText)
-		dayRuleLine := "   " + fit(ruleContent, cw) + "   "
+		ruleContent := widget.MutedStyle.Render(label) + " " + widget.GridStyle.Render(strings.Repeat("┈", fill)) + widget.FaintStyle.Render(rightText)
+		dayRuleLine := "   " + widget.Fit(ruleContent, cw) + "   "
 		bodyLines = append(bodyLines, dayRuleLine)
 
 		for subIdx, e := range runs[r] {
@@ -801,9 +803,9 @@ func (v logView) Body(env Env, width, height int) string {
 			isCursor := (entryIdx == v.cursor)
 
 			timeText := e.At.Local().Format("15:04")
-			tStyle := mutedStyle
+			tStyle := widget.MutedStyle
 			if isCursor {
-				tStyle = tStyle.Background(selBandStyle.GetBackground())
+				tStyle = tStyle.Background(widget.SelBandStyle.GetBackground())
 			}
 			col1 := tStyle.Render(timeText)
 
@@ -811,46 +813,46 @@ func (v logView) Body(env Env, width, height int) string {
 			var bStyle lipgloss.Style
 			if bindText == "" {
 				bindText = "—"
-				bStyle = faintStyle
+				bStyle = widget.FaintStyle
 			} else if bindText == "you" {
-				bStyle = accentStyle
+				bStyle = widget.AccentStyle
 			} else {
-				bStyle = textStyle
+				bStyle = widget.TextStyle
 			}
 			if isCursor {
-				bStyle = bStyle.Bold(true).Background(selBandStyle.GetBackground())
+				bStyle = bStyle.Bold(true).Background(widget.SelBandStyle.GetBackground())
 			}
-			col2 := bStyle.Render(pad(clip(bindText, 14), 14))
+			col2 := bStyle.Render(widget.Pad(clip(bindText, 14), 14))
 
 			rndText := ""
 			if e.Round > 0 {
 				rndText = fmt.Sprintf("r%d", e.Round)
 			}
-			rStyle := mutedStyle
+			rStyle := widget.MutedStyle
 			if isCursor {
-				rStyle = rStyle.Background(selBandStyle.GetBackground())
+				rStyle = rStyle.Background(widget.SelBandStyle.GetBackground())
 			}
-			col3 := rStyle.Render(pad(rndText, 4))
+			col3 := rStyle.Render(widget.Pad(rndText, 4))
 
 			eStyle := e.Style
 			if isCursor {
-				eStyle = eStyle.Background(selBandStyle.GetBackground())
+				eStyle = eStyle.Background(widget.SelBandStyle.GetBackground())
 			}
-			col4 := eStyle.Render(pad(clip(e.Word, 9), 9))
+			col4 := eStyle.Render(widget.Pad(clip(e.Word, 9), 9))
 
-			dStyle := mutedStyle
+			dStyle := widget.MutedStyle
 			if e.Err {
-				dStyle = redStyle
+				dStyle = widget.RedStyle
 			}
 			if isCursor {
-				dStyle = dStyle.Background(selBandStyle.GetBackground())
+				dStyle = dStyle.Background(widget.SelBandStyle.GetBackground())
 			}
 			detailText := clip(e.Detail, detailW)
 			col5 := dStyle.Render(detailText)
 
 			sep := "  "
 			if isCursor {
-				sep = selBandStyle.Render("  ")
+				sep = widget.SelBandStyle.Render("  ")
 			}
 			rowContent := col1 + sep + col2 + sep + col3 + sep + col4 + sep + col5
 			var line string
@@ -859,11 +861,11 @@ func (v logView) Body(env Env, width, height int) string {
 					rowContent = lipgloss.NewStyle().MaxWidth(cw).Render(rowContent)
 				}
 				if w := lipgloss.Width(rowContent); w < cw {
-					rowContent += selBandStyle.Render(strings.Repeat(" ", cw-w))
+					rowContent += widget.SelBandStyle.Render(strings.Repeat(" ", cw-w))
 				}
 				line = "   " + rowContent + "   "
 			} else {
-				line = "   " + fit(rowContent, cw) + "   "
+				line = "   " + widget.Fit(rowContent, cw) + "   "
 			}
 			bodyLines = append(bodyLines, line)
 		}

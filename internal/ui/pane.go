@@ -6,11 +6,12 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/fuad-daoud/relevo/internal/transcript"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // sep joins a pane head's parts with a faint middle dot (X2). Its only user
 // is roundPane.paneHead.
-var sep = faintStyle.Render(" · ")
+var sep = widget.FaintStyle.Render(" · ")
 
 // spread puts right at the right edge of a width-wide line, after left,
 // dropping the gap when they would overlap (left wins; the caller decides
@@ -49,13 +50,13 @@ func colourDiff(patch string) string {
 	for i, l := range lines {
 		switch {
 		case strings.HasPrefix(l, "diff --git "), strings.HasPrefix(l, "+++ "), strings.HasPrefix(l, "--- "):
-			lines[i] = diffFileStyle.Render(l)
+			lines[i] = widget.DiffFileStyle.Render(l)
 		case strings.HasPrefix(l, "@@"):
-			lines[i] = diffHunkStyle.Render(l)
+			lines[i] = widget.DiffHunkStyle.Render(l)
 		case strings.HasPrefix(l, "+"):
-			lines[i] = diffAddStyle.Render(l)
+			lines[i] = widget.DiffAddStyle.Render(l)
 		case strings.HasPrefix(l, "-"):
-			lines[i] = diffDelStyle.Render(l)
+			lines[i] = widget.DiffDelStyle.Render(l)
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -73,23 +74,23 @@ func colourTranscript(body string) string {
 		stamp, text := transcript.SplitStamp(l)
 		faint := ""
 		if stamp != "" {
-			faint = faintStyle.Render(stamp)
+			faint = widget.FaintStyle.Render(stamp)
 		}
 		switch {
 		case transcript.IsThinking(l):
-			lines[i] = faint + dimStyle.Italic(true).Render(text)
+			lines[i] = faint + widget.MutedStyle.Italic(true).Render(text)
 		case strings.HasPrefix(text, "● "):
 			rest := strings.TrimPrefix(text, "● ")
 			name, arg, _ := strings.Cut(rest, " ")
-			out := stateActiveStyle.Render("●") + " " + lipgloss.NewStyle().Bold(true).Render(name)
+			out := widget.StateActiveStyle.Render("●") + " " + lipgloss.NewStyle().Bold(true).Render(name)
 			if arg != "" {
-				out += dimStyle.Render("(" + arg + ")")
+				out += widget.MutedStyle.Render("(" + arg + ")")
 			}
 			lines[i] = faint + out
 		case strings.HasPrefix(text, "  ⎿ error"):
-			lines[i] = faint + errorStyle.Render(text)
+			lines[i] = faint + widget.ErrorStyle.Render(text)
 		case strings.HasPrefix(text, "  ⎿ "):
-			lines[i] = faint + dimStyle.Render(text)
+			lines[i] = faint + widget.MutedStyle.Render(text)
 		default:
 			lines[i] = l
 		}
@@ -113,13 +114,13 @@ func emptyPaneBlock(width, height int) []string {
 	lines := make([]string, 0, height)
 	for _, l := range raw {
 		if l == "" {
-			lines = append(lines, fit("", width))
+			lines = append(lines, widget.Fit("", width))
 		} else {
-			lines = append(lines, fit(emptyStyle.Render(l), width))
+			lines = append(lines, widget.Fit(widget.EmptyStyle.Render(l), width))
 		}
 	}
 	for len(lines) < height {
-		lines = append(lines, fit("", width))
+		lines = append(lines, widget.Fit("", width))
 	}
 	if len(lines) > height {
 		lines = lines[:height]

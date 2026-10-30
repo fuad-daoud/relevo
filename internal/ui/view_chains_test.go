@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -46,14 +47,14 @@ func TestChainsViewSortsAndNests(t *testing.T) {
 }
 
 func TestChainsViewWithoutActionsRefused(t *testing.T) {
-	env := Env{Actions: nil}
+	env := widget.Env{Actions: nil}
 	cmd := execLine("chains", env, prefs{})
-	msg, ok := cmd().(noticeMsg)
+	msg, ok := cmd().(widget.NoticeMsg)
 	if !ok {
-		t.Fatalf("chains without Actions must return noticeMsg, got %T", cmd())
+		t.Fatalf("chains without widget.Actions must return widget.NoticeMsg, got %T", cmd())
 	}
-	if msg.text != "the config views need relevo ui on this machine" {
-		t.Errorf("notice = %q, want %q", msg.text, "the config views need relevo ui on this machine")
+	if msg.Text != "the config views need relevo ui on this machine" {
+		t.Errorf("notice = %q, want %q", msg.Text, "the config views need relevo ui on this machine")
 	}
 }
 
@@ -162,12 +163,12 @@ func TestChainDrillNoRoundYetNotices(t *testing.T) {
 
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = res.(Model)
-	msg, ok := cmd().(noticeMsg)
+	msg, ok := cmd().(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("enter on a step that never ran returned %T, want a notice", cmd())
 	}
-	if msg.text != "no round yet: repair has not run" {
-		t.Errorf("notice = %q, want the no-round-yet notice", msg.text)
+	if msg.Text != "no round yet: repair has not run" {
+		t.Errorf("notice = %q, want the no-round-yet notice", msg.Text)
 	}
 	if len(m.stack) != 2 {
 		t.Errorf("stack depth = %d, want the steps view still on top", len(m.stack))
@@ -444,7 +445,7 @@ func TestChainStepsViewSanitizesPeerFields(t *testing.T) {
 // Mutation: draw v.err.Error() raw in chainTraceView.Body.
 func TestChainTraceErrorBodySanitizes(t *testing.T) {
 	tv := chainTraceView{err: errors.New("pull failed: 502\r\a\033[2J")}
-	body := stripANSI(tv.Body(Env{}, 132, 20))
+	body := stripANSI(tv.Body(widget.Env{}, 132, 20))
 
 	if !strings.Contains(body, "pull failed") {
 		t.Fatalf("the error body is not on screen, so nothing was pinned:\n%q", body)

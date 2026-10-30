@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/muesli/termenv"
 )
@@ -60,21 +61,21 @@ func TestFleetWindowTopLines(t *testing.T) {
 
 // TestBodyHeight ports the old bodyRows budget to frame.bodyHeight.
 func TestBodyHeight(t *testing.T) {
-	env := Env{Height: 24}
-	if got := bodyHeight(env); got != 19 {
-		t.Errorf("height 24, no error: bodyHeight = %d, want 19", got)
+	env := widget.Env{Height: 24}
+	if got := widget.BodyHeight(env); got != 19 {
+		t.Errorf("height 24, no error: widget.BodyHeight = %d, want 19", got)
 	}
 	env.ErrRows = 2
-	if got := bodyHeight(env); got != 17 {
-		t.Errorf("height 24, two-line error: bodyHeight = %d, want 17", got)
+	if got := widget.BodyHeight(env); got != 17 {
+		t.Errorf("height 24, two-line error: widget.BodyHeight = %d, want 17", got)
 	}
-	env = Env{Height: 2}
-	if got := bodyHeight(env); got != 0 {
-		t.Errorf("height 2: bodyHeight = %d, want 0", got)
+	env = widget.Env{Height: 2}
+	if got := widget.BodyHeight(env); got != 0 {
+		t.Errorf("height 2: widget.BodyHeight = %d, want 0", got)
 	}
-	env = Env{Height: 0}
-	if got := bodyHeight(env); got != 0 {
-		t.Errorf("height 0: bodyHeight = %d, want 0", got)
+	env = widget.Env{Height: 0}
+	if got := widget.BodyHeight(env); got != 0 {
+		t.Errorf("height 0: widget.BodyHeight = %d, want 0", got)
 	}
 }
 
@@ -294,10 +295,15 @@ func TestStateStylesDistinguishable(t *testing.T) {
 	defer lipgloss.SetColorProfile(orig)
 	lipgloss.SetColorProfile(termenv.TrueColor)
 
+	byState := map[string]lipgloss.Style{
+		"NEEDS YOU": widget.StateNeedsYouStyle,
+		"ACTIVE":    widget.StateActiveStyle,
+		"DONE":      widget.StateDoneStyle,
+	}
 	states := []string{"NEEDS YOU", "ACTIVE", "DONE"}
 	rendered := make(map[string]string, len(states))
 	for _, s := range states {
-		rendered[s] = stateStyle(s).Render(s)
+		rendered[s] = byState[s].Render(s)
 	}
 	for i, a := range states {
 		for _, b := range states[i+1:] {
@@ -374,7 +380,7 @@ func TestRenderErrorAndErrorBlock(t *testing.T) {
 	m = res.(Model)
 	rendered := m.View()
 
-	errRendered := renderError(threeLineErr, 60)
+	errRendered := widget.RenderError(threeLineErr, 60)
 	errLines := strings.Split(errRendered, "\n")
 	if len(errLines) != 3 {
 		t.Fatalf("expected 3 error lines, got %d: %q", len(errLines), errLines)
@@ -402,9 +408,9 @@ func TestRenderErrorAndErrorBlock(t *testing.T) {
 
 	// 3. More than maxErrorLines is capped and ends with "…".
 	tenLineMsg := "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10"
-	cappedLines := strings.Split(renderError(errors.New(tenLineMsg), 80), "\n")
-	if len(cappedLines) != maxErrorLines {
-		t.Fatalf("expected %d lines, got %d", maxErrorLines, len(cappedLines))
+	cappedLines := strings.Split(widget.RenderError(errors.New(tenLineMsg), 80), "\n")
+	if len(cappedLines) != widget.MaxErrorLines {
+		t.Fatalf("expected %d lines, got %d", widget.MaxErrorLines, len(cappedLines))
 	}
 	if !strings.HasSuffix(cappedLines[len(cappedLines)-1], "…") {
 		t.Fatalf("expected capped error to end with '…', got %q", cappedLines[len(cappedLines)-1])

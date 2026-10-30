@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // attemptLines is the daemon's last steady attempt: when it ended, what it
@@ -14,12 +16,12 @@ func (v syncView) attemptLines() []string {
 	}
 	moved := fmt.Sprintf("exported %d · applied %d", a.Exported, a.Applied)
 	if !a.Failed() {
-		return []string{syncLine("last attempt", "ok · "+v.localStampPhrase(a.End)+" · "+moved, mutedStyle)}
+		return []string{syncLine("last attempt", "ok · "+v.localStampPhrase(a.End)+" · "+moved, widget.MutedStyle)}
 	}
-	out := []string{syncLine("last attempt", "failed · "+v.localStampPhrase(a.End)+" · "+moved, errorStyle)}
-	out = append(out, "   "+errorStyle.Render(sanitizeText(a.Error)))
+	out := []string{syncLine("last attempt", "failed · "+v.localStampPhrase(a.End)+" · "+moved, widget.ErrorStyle)}
+	out = append(out, "   "+widget.ErrorStyle.Render(sanitizeText(a.Error)))
 	if a.Attention {
-		out = append(out, "   "+errorStyle.Render("needs attention"))
+		out = append(out, "   "+widget.ErrorStyle.Render("needs attention"))
 	}
 	return out
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // actorTierNames is the tier row's chip order (§3).
@@ -51,7 +52,7 @@ func actorAgents(doc relevo.ConfigDoc, name string) []string {
 // check, each on a chip row. The check row is disabled for a reader agent.
 type actorForm struct {
 	ctx     context.Context
-	actions Actions
+	actions widget.Actions
 	doc     relevo.ConfigDoc
 	actor   string
 	agents  []string
@@ -65,7 +66,7 @@ type actorForm struct {
 }
 
 // newActorForm builds the edit actor overlay (§4).
-func newActorForm(env Env, doc relevo.ConfigDoc, name string) actorForm {
+func newActorForm(env widget.Env, doc relevo.ConfigDoc, name string) actorForm {
 	a := doc.Actors[name]
 	_, builtin := harness.RoleByName(name)
 	f := actorForm{
@@ -112,8 +113,8 @@ func (f actorForm) checkSel() int {
 }
 
 // keys are the form's own keys, shown in the footer through overlayKeyer (§4).
-func (f actorForm) keys() []KeyHelp {
-	return []KeyHelp{{"enter", "save"}, {"tab", "next field"}, {"esc", "cancel"}}
+func (f actorForm) keys() []widget.KeyHelp {
+	return []widget.KeyHelp{{Key: "enter", Help: "save"}, {Key: "tab", Help: "next field"}, {Key: "esc", Help: "cancel"}}
 }
 
 // setFocus moves focus to i (0 agent, 1 tier, 2 check), without the disabled
@@ -216,7 +217,7 @@ func (f actorForm) submit() (overlay, tea.Cmd, bool) {
 		f.err = err.Error()
 		return f, nil, false
 	}
-	return f, runAction(f.ctx, "edit actor", "actor:"+f.actor, func(ctx context.Context) Result {
+	return f, runAction(f.ctx, "edit actor", "actor:"+f.actor, func(ctx context.Context) widget.Result {
 		return f.actions.ApplyConfig(ctx, edit)
 	}), true
 }
@@ -233,10 +234,10 @@ func (f actorForm) modal(width int) (string, []string, int, bool) {
 	_ = modalInnerW(want, width)
 
 	rows := []string{""}
-	rows = append(rows, formLabel("name", false)+mutedStyle.Render(f.actor))
+	rows = append(rows, formLabel("name", false)+widget.MutedStyle.Render(f.actor))
 	rows = append(rows, "")
 	rows = append(rows, formLabel("agent", f.focus == 0)+formChips(f.agents, f.asel, false))
-	rows = append(rows, strings.Repeat(" ", 11)+mutedStyle.Render(agentShapeOf(f.doc, f.selectedAgent())))
+	rows = append(rows, strings.Repeat(" ", 11)+widget.MutedStyle.Render(agentShapeOf(f.doc, f.selectedAgent())))
 	rows = append(rows, "")
 	rows = append(rows, formLabel("tier", f.focus == 1)+formChips(f.tiers, f.tsel, false))
 	rows = append(rows, "")
@@ -255,7 +256,7 @@ func (f actorForm) modal(width int) (string, []string, int, bool) {
 // and agent.
 type addActorForm struct {
 	ctx     context.Context
-	actions Actions
+	actions widget.Actions
 	doc     relevo.ConfigDoc
 	nameIn  textinput.Model
 	agents  []string
@@ -267,7 +268,7 @@ type addActorForm struct {
 
 // newAddActorForm builds the add actor overlay (§4). Every agent is offered:
 // the name is new, so no builtin shape filters the list.
-func newAddActorForm(env Env, doc relevo.ConfigDoc) addActorForm {
+func newAddActorForm(env widget.Env, doc relevo.ConfigDoc) addActorForm {
 	in := newFormInput(true)
 	in.Placeholder = "lowercase, e.g. security-review"
 	return addActorForm{
@@ -288,8 +289,8 @@ func (f addActorForm) selectedAgent() string {
 }
 
 // keys are the form's own keys, shown in the footer through overlayKeyer (§4).
-func (f addActorForm) keys() []KeyHelp {
-	return []KeyHelp{{"enter", "add"}, {"tab", "next field"}, {"esc", "cancel"}}
+func (f addActorForm) keys() []widget.KeyHelp {
+	return []widget.KeyHelp{{Key: "enter", Help: "add"}, {Key: "tab", Help: "next field"}, {Key: "esc", Help: "cancel"}}
 }
 
 // setFocus moves focus to i (0 name, 1 agent), focusing that row's field.
@@ -342,7 +343,7 @@ func (f addActorForm) submit() (overlay, tea.Cmd, bool) {
 		f.err = err.Error()
 		return f, nil, false
 	}
-	return f, runAction(f.ctx, "add actor", name, func(ctx context.Context) Result {
+	return f, runAction(f.ctx, "add actor", name, func(ctx context.Context) widget.Result {
 		return f.actions.ApplyConfig(ctx, edit)
 	}), true
 }
