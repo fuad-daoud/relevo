@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
@@ -83,7 +84,7 @@ func closeMuseRound(t *testing.T, rt Runtime, b store.Binding, stream string, sh
 			return err
 		}
 		next, err := queueReport(context.Background(), rt, tx, cur, entries, reportPath,
-			"done", "test", nil, shipped, nil, nil, "", false, "", scopeVerdict{})
+			"done", "test", nil, shipped, nil, nil, "", false, "", pathscope.Verdict{})
 		if err != nil {
 			return err
 		}

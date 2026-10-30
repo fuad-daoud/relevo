@@ -12,10 +12,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// fakeView is a minimal View the routing tests can push and interrogate.
+// fakeView is a minimal widget.View the routing tests can push and interrogate.
 type fakeView struct {
 	crumbs  []string
 	capture bool
@@ -30,10 +31,10 @@ func (f fakeView) Crumbs() []string {
 	}
 	return f.crumbs
 }
-func (f fakeView) Context(Env) (string, string) { return "fake", "" }
-func (f fakeView) Keys() []KeyHelp              { return nil }
-func (f fakeView) Capturing() bool              { return f.capture }
-func (f fakeView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (f fakeView) Context(widget.Env) (string, string) { return "fake", "" }
+func (f fakeView) Keys() []widget.KeyHelp              { return nil }
+func (f fakeView) Capturing() bool                     { return f.capture }
+func (f fakeView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	if k, ok := msg.(tea.KeyMsg); ok {
 		f.last = k
 		f.seen = append(f.seen, k.String())
@@ -43,7 +44,7 @@ func (f fakeView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	}
 	return f, nil
 }
-func (f fakeView) Body(env Env, w, h int) string {
+func (f fakeView) Body(env widget.Env, w, h int) string {
 	return strings.Repeat("\n", h-1)
 }
 
@@ -344,7 +345,7 @@ func TestSnapshotRoutingForwardsToEveryView(t *testing.T) {
 	m := splitModel(t, 140, 40, view.BindingStatus{Name: "webshop", Round: 2, Display: "ACTIVE"})
 	v, _ := newRoundView(m.env(), "webshop", 0)
 	rv := v.(roundView)
-	m.stack = []View{rv, fakeView{}}
+	m.stack = []widget.View{rv, fakeView{}}
 
 	res, _ := m.Update(tabMsg{name: "webshop", round: rv.pane.detail.round, t: tabReport, content: tabContent{loaded: true, body: "snap"}})
 	m = res.(Model)
@@ -370,7 +371,7 @@ func TestHelpListsGlobalAndViewKeys(t *testing.T) {
 		t.Fatal("? must open help")
 	}
 
-	body := plain(m.helpBody(m.env(), bodyHeight(m.env())))
+	body := plain(m.helpBody(m.env(), widget.BodyHeight(m.env())))
 	for _, want := range []string{"MOVE & VIEW", "ACT ON THE ROW", "ANYWHERE", "command", "filter", "help", "back", "quit / back", "round", "next tab"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("help must list %q:\n%s", want, body)
@@ -380,16 +381,16 @@ func TestHelpListsGlobalAndViewKeys(t *testing.T) {
 
 type sentinelMsg struct{}
 
-// TestPushDeliversInitAfterPush verifies that push returns a pushMsg, not a
+// TestPushDeliversInitAfterPush verifies that push returns a widget.PushMsg, not a
 // tea.BatchMsg, and that Model.Update grows the stack and returns the init cmd.
 func TestPushDeliversInitAfterPush(t *testing.T) {
 	v := fakeView{}
 	init := func() tea.Msg { return sentinelMsg{} }
 	cmd := push(v, init)
 	msg := cmd()
-	pushM, ok := msg.(pushMsg)
+	pushM, ok := msg.(widget.PushMsg)
 	if !ok {
-		t.Fatalf("push(v, init) result must be pushMsg, got %T", msg)
+		t.Fatalf("push(v, init) result must be widget.PushMsg, got %T", msg)
 	}
 	if _, ok := msg.(tea.BatchMsg); ok {
 		t.Fatalf("push(v, init) must not return tea.BatchMsg")
@@ -403,7 +404,7 @@ func TestPushDeliversInitAfterPush(t *testing.T) {
 		t.Errorf("stack depth = %d, want %d", len(m.stack), origDepth+1)
 	}
 	if returnedCmd == nil {
-		t.Fatal("expected non-nil cmd from pushMsg")
+		t.Fatal("expected non-nil cmd from widget.PushMsg")
 	}
 	gotSentinel := returnedCmd()
 	if _, ok := gotSentinel.(sentinelMsg); !ok {
@@ -411,16 +412,16 @@ func TestPushDeliversInitAfterPush(t *testing.T) {
 	}
 }
 
-// TestRootThenDeliversInitAfterRoot verifies that rootThen returns a rootMsg,
+// TestRootThenDeliversInitAfterRoot verifies that rootThen returns a widget.RootMsg,
 // not a tea.BatchMsg, and that Model.Update replaces the stack and returns the init cmd.
 func TestRootThenDeliversInitAfterRoot(t *testing.T) {
 	v := fakeView{}
 	init := func() tea.Msg { return sentinelMsg{} }
 	cmd := rootThen(init, v)
 	msg := cmd()
-	rootM, ok := msg.(rootMsg)
+	rootM, ok := msg.(widget.RootMsg)
 	if !ok {
-		t.Fatalf("rootThen(init, v) result must be rootMsg, got %T", msg)
+		t.Fatalf("rootThen(init, v) result must be widget.RootMsg, got %T", msg)
 	}
 	if _, ok := msg.(tea.BatchMsg); ok {
 		t.Fatalf("rootThen(init, v) must not return tea.BatchMsg")
@@ -434,7 +435,7 @@ func TestRootThenDeliversInitAfterRoot(t *testing.T) {
 		t.Errorf("stack depth = %d, want 1", len(m.stack))
 	}
 	if returnedCmd == nil {
-		t.Fatal("expected non-nil cmd from rootMsg")
+		t.Fatal("expected non-nil cmd from widget.RootMsg")
 	}
 	gotSentinel := returnedCmd()
 	if _, ok := gotSentinel.(sentinelMsg); !ok {
@@ -444,7 +445,7 @@ func TestRootThenDeliversInitAfterRoot(t *testing.T) {
 
 // TestOpenRoundReplyNeverBeatsPush:
 // - From :fleet with a working row and a plan file on a temp store, press enter. Execute the returned cmd once.
-// - The message must be a pushMsg, with no tabMsg among the messages that cmd produces.
+// - The message must be a widget.PushMsg, with no tabMsg among the messages that cmd produces.
 // - Feed it to Update, run the returned init, and feed its tabMsg to Update. The plan tab is loaded and tabInFlight is false.
 func TestOpenRoundReplyNeverBeatsPush(t *testing.T) {
 	st := store.New(t.TempDir())
@@ -479,12 +480,12 @@ func TestOpenRoundReplyNeverBeatsPush(t *testing.T) {
 		t.Fatal("expected cmd from enter")
 	}
 	msg := cmd()
-	pushM, ok := msg.(pushMsg)
+	pushM, ok := msg.(widget.PushMsg)
 	if !ok {
-		t.Fatalf("expected pushMsg from enter cmd, got %T", msg)
+		t.Fatalf("expected widget.PushMsg from enter cmd, got %T", msg)
 	}
 	if _, ok := msg.(tea.BatchMsg); ok {
-		t.Fatalf("expected pushMsg, not tea.BatchMsg")
+		t.Fatalf("expected widget.PushMsg, not tea.BatchMsg")
 	}
 	if _, ok := msg.(tabMsg); ok {
 		t.Fatalf("cmd must not produce tabMsg")
@@ -496,7 +497,7 @@ func TestOpenRoundReplyNeverBeatsPush(t *testing.T) {
 		t.Fatalf("stack depth = %d, want 2", len(m.stack))
 	}
 	if initCmd == nil {
-		t.Fatal("expected init cmd from pushMsg")
+		t.Fatal("expected init cmd from widget.PushMsg")
 	}
 	// Opening a round issues its visible tab's fetch and the pane's own
 	// detail-row fetch side by side, so the command may be a batch. Only a
@@ -561,7 +562,7 @@ func TestFrameBlankRowUnderHeader(t *testing.T) {
 	}
 	// line index 2 is the context row
 	ctxLeft, ctxRight := m.top().Context(m.env())
-	expectedContext := fit(spread(ctxLeft, ctxRight, 132), 132)
+	expectedContext := widget.Fit(spread(ctxLeft, ctxRight, 132), 132)
 	if lines[2] != expectedContext {
 		t.Errorf("line index 2 must be context row:\n got  %q\n want %q", lines[2], expectedContext)
 	}

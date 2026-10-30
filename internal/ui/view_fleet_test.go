@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -121,7 +122,7 @@ func TestSpendText(t *testing.T) {
 // and neither the loading nor the empty body has one.
 func TestFleetBodyHeader(t *testing.T) {
 	rows := []view.BindingStatus{{Name: "webshop", Round: 4, Display: "ACTIVE", BuilderStatus: "working"}}
-	loaded := Env{Loaded: true, Now: railNow, Report: view.Report{Bindings: rows}, Width: 140, Height: 40}
+	loaded := widget.Env{Loaded: true, Now: railNow, Report: view.Report{Bindings: rows}, Width: 140, Height: 40}
 	f := newFleetView(true)
 
 	body := stripANSI(f.Body(loaded, 140, 40))
@@ -195,7 +196,7 @@ func TestFleetFilter(t *testing.T) {
 		{Name: "docs", Round: 1, Display: "DONE"},
 		{Name: "api", Round: 2, Display: "ACTIVE"},
 	}
-	env := Env{Loaded: true, Now: railNow, Report: view.Report{Bindings: rows}, Width: 140, Height: 40, StatusAt: railNow}
+	env := widget.Env{Loaded: true, Now: railNow, Report: view.Report{Bindings: rows}, Width: 140, Height: 40, StatusAt: railNow}
 	f := newFleetView(true)
 	f.showDone = true
 	key := func(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
@@ -336,7 +337,7 @@ func TestFleetNeedsYouSecondLine(t *testing.T) {
 		Waiting: &view.Waiting{Cause: "blocked", Line: "which database should r4 use?"},
 	}
 	f := newFleetView(true)
-	env := Env{Loaded: true, Now: railNow, Report: view.Report{Bindings: []view.BindingStatus{b}}, Width: 140, Height: 40}
+	env := widget.Env{Loaded: true, Now: railNow, Report: view.Report{Bindings: []view.BindingStatus{b}}, Width: 140, Height: 40}
 	lines := f.fleetListLines(env, 140)
 	if len(lines) != 4 {
 		t.Fatalf("%d lines, want 4 (section + row + question + blank)", len(lines))

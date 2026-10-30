@@ -1,8 +1,7 @@
 name: govulncheck
 
-# Its own workflow, not a job in ci.yml: ci.yml's `changes` gate answers
-# code=true on every non-PR event (its `git diff` has no BASE/HEAD and its
-# checkout is PR-only), so a schedule there would run the whole suite weekly.
+# Its own workflow, not a job in ci.yml, so a weekly schedule does not run the
+# whole suite.
 # This job also reaches vuln.go.dev, which `make check` must not: a new
 # advisory must not redden unrelated PRs. Nothing here is a required check.
 

@@ -14,6 +14,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/ui/stats"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // candDocMsg is one ConfigDoc load's reply (§4).
@@ -45,13 +47,13 @@ type candRow struct {
 
 // newCandidatesView builds ':candidates' and the command that loads its doc
 // (§4). env.Actions must be non-nil: execLine refuses the command otherwise.
-func newCandidatesView(env Env) (View, tea.Cmd) {
+func newCandidatesView(env widget.Env) (widget.View, tea.Cmd) {
 	v := candidatesView{actions: env.Actions != nil}
 	return v, candDocCmd(env)
 }
 
 // candDocCmd reads the stored config off the update loop.
-func candDocCmd(env Env) tea.Cmd {
+func candDocCmd(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		doc, err := env.Actions.ConfigDoc()
 		return candDocMsg{doc: doc, err: err}
@@ -159,11 +161,11 @@ func servesText(r candRow) string {
 func candStatus(r candRow, now time.Time) (string, lipgloss.Style) {
 	switch {
 	case !r.on:
-		return "off", faintStyle
+		return "off", widget.FaintStyle
 	case r.gate != nil:
-		return statsGateLeft(*r.gate, now), redStyle
+		return stats.GateLeft(*r.gate, now), widget.RedStyle
 	}
-	return "ready", greenStyle
+	return "ready", widget.GreenStyle
 }
 
 // candCol is one fixed-width table column after CANDIDATE.
@@ -228,36 +230,36 @@ func candLine(cells []candCell, sel bool, cw int) string {
 	for i, c := range cells {
 		if i > 0 {
 			if sel {
-				b.WriteString(selBandStyle.Render("  "))
+				b.WriteString(widget.SelBandStyle.Render("  "))
 			} else {
 				b.WriteString("  ")
 			}
 		}
 		st := c.style
 		if sel {
-			st = st.Background(selBandStyle.GetBackground())
+			st = st.Background(widget.SelBandStyle.GetBackground())
 		}
 		b.WriteString(st.Render(c.text))
 	}
 	row := b.String()
 	if !sel {
-		return "   " + fit(row, cw) + "   "
+		return "   " + widget.Fit(row, cw) + "   "
 	}
 	if lipgloss.Width(row) > cw {
 		row = lipgloss.NewStyle().MaxWidth(cw).Render(row)
 	}
 	if w := lipgloss.Width(row); w < cw {
-		row += selBandStyle.Render(strings.Repeat(" ", cw-w))
+		row += widget.SelBandStyle.Render(strings.Repeat(" ", cw-w))
 	}
 	return "   " + row + "   "
 }
 
 // candHeaderLine is the table's header row, in faint bold.
 func candHeaderLine(nameW int, cols []candCol, cw int) string {
-	style := faintStyle.Bold(true)
-	cells := []candCell{{text: pad("CANDIDATE", nameW), style: style}}
+	style := widget.FaintStyle.Bold(true)
+	cells := []candCell{{text: widget.Pad("CANDIDATE", nameW), style: style}}
 	for _, c := range cols {
-		cells = append(cells, candCell{text: pad(c.head, c.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(c.head, c.w), style: style})
 	}
 	return candLine(cells, false, cw)
 }
@@ -265,15 +267,15 @@ func candHeaderLine(nameW int, cols []candCol, cw int) string {
 // candDataLine is one candidate's table row (§4). An off row is faint
 // throughout; the cursor row's name is bold.
 func candDataLine(r candRow, sel bool, nameW int, cols []candCol, cw int, now time.Time) string {
-	base, meta := textStyle, mutedStyle
+	base, meta := widget.TextStyle, widget.MutedStyle
 	if !r.on {
-		base, meta = faintStyle, faintStyle
+		base, meta = widget.FaintStyle, widget.FaintStyle
 	}
 	nameStyle := base
 	if sel {
 		nameStyle = nameStyle.Bold(true)
 	}
-	cells := []candCell{{text: pad(r.c.Name, nameW), style: nameStyle}}
+	cells := []candCell{{text: widget.Pad(r.c.Name, nameW), style: nameStyle}}
 	for _, col := range cols {
 		var text string
 		style := meta
@@ -289,7 +291,7 @@ func candDataLine(r candRow, sel bool, nameW int, cols []candCol, cw int, now ti
 		case "status":
 			text, style = candStatus(r, now)
 		}
-		cells = append(cells, candCell{text: pad(text, col.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(text, col.w), style: style})
 	}
 	return candLine(cells, sel, cw)
 }
@@ -304,13 +306,13 @@ func candSince(t, now time.Time) string {
 	return l.Format("Jan 2 15:04")
 }
 
-// candUntilText is a gate's expiry text (§4): "until cleared" for a gate with
-// no expiry, else "until " and statsGateUntil's time.
+// candUntilText is a gate's expiry text: "until cleared" for a gate with
+// no expiry, else "until " and the gate's time.
 func candUntilText(g availability.Gate, now time.Time) string {
 	if g.Until.IsZero() {
 		return "until cleared"
 	}
-	return "until " + statsGateUntil(g, now)
+	return "until " + stats.GateUntil(g, now)
 }
 
 // candOrdinal is a slot's ordinal (§4): first … tenth, then #11.
@@ -343,32 +345,32 @@ func candOrdinal(n int) string {
 // candPickSentence is the detail block's pick line (§4): the slots that pick
 // it, and, when it is gated, who the first slot's actor takes instead. Muted,
 // with actor and candidate names in text.
-func candPickSentence(doc relevo.ConfigDoc, env Env, r candRow) string {
+func candPickSentence(doc relevo.ConfigDoc, env widget.Env, r candRow) string {
 	if !r.on {
-		return mutedStyle.Render("off: no actor has it on")
+		return widget.MutedStyle.Render("off: no actor has it on")
 	}
 	parts := make([]string, 0, len(r.slots))
 	for _, s := range r.slots {
-		parts = append(parts, mutedStyle.Render("the ")+textStyle.Render(s.Actor)+
-			mutedStyle.Render("'s "+candOrdinal(s.Position)+" pick"))
+		parts = append(parts, widget.MutedStyle.Render("the ")+widget.TextStyle.Render(s.Actor)+
+			widget.MutedStyle.Render("'s "+candOrdinal(s.Position)+" pick"))
 	}
-	out := strings.Join(parts, mutedStyle.Render(" and "))
+	out := strings.Join(parts, widget.MutedStyle.Render(" and "))
 	if r.gate == nil || len(r.slots) == 0 {
 		return out
 	}
 	actor := r.slots[0].Actor
 	if next, ok := nextReady(doc, env, actor, r.c.Name); ok {
-		return out + mutedStyle.Render("; while it is gated the ") + textStyle.Render(actor) +
-			mutedStyle.Render(" takes ") + textStyle.Render(next)
+		return out + widget.MutedStyle.Render("; while it is gated the ") + widget.TextStyle.Render(actor) +
+			widget.MutedStyle.Render(" takes ") + widget.TextStyle.Render(next)
 	}
-	return out + mutedStyle.Render("; the ") + textStyle.Render(actor) +
-		mutedStyle.Render(" has no other ready candidate")
+	return out + widget.MutedStyle.Render("; the ") + widget.TextStyle.Render(actor) +
+		widget.MutedStyle.Render(" has no other ready candidate")
 }
 
 // nextReady is the pick the actor takes while name is gated (§4): the first
 // entry in that actor's list after, then before, this one that is on and not
 // gated.
-func nextReady(doc relevo.ConfigDoc, env Env, actor, name string) (string, bool) {
+func nextReady(doc relevo.ConfigDoc, env widget.Env, actor, name string) (string, bool) {
 	type slot struct {
 		name string
 		on   bool
@@ -422,28 +424,28 @@ func nextReady(doc relevo.ConfigDoc, env Env, actor, name string) (string, bool)
 
 // candDetailLines is the cursor row's detail block (§4): the name and its
 // triple, the gate when there is one, and the pick sentence.
-func candDetailLines(doc relevo.ConfigDoc, env Env, r candRow, width int) []string {
+func candDetailLines(doc relevo.ConfigDoc, env widget.Env, r candRow, width int) []string {
 	c := r.c
 	meta := c.Harness + " · " + c.Provider + " · " + c.Model
-	first := "   " + faintStyle.Bold(true).Render(c.Name) + "   " + mutedStyle.Render(meta)
-	out := []string{fit(first, width)}
+	first := "   " + widget.FaintStyle.Bold(true).Render(c.Name) + "   " + widget.MutedStyle.Render(meta)
+	out := []string{widget.Fit(first, width)}
 	if r.gate != nil {
 		g := *r.gate
-		line := "   " + redStyle.Render("gated") +
-			mutedStyle.Render(" since "+candSince(g.Since, env.Now)) +
-			mutedStyle.Render(", "+candUntilText(g, env.Now))
-		if reason := statsGateReasonText(g.Note); reason != "" {
-			line += "   " + textStyle.Render(reason)
+		line := "   " + widget.RedStyle.Render("gated") +
+			widget.MutedStyle.Render(" since "+candSince(g.Since, env.Now)) +
+			widget.MutedStyle.Render(", "+candUntilText(g, env.Now))
+		if reason := stats.GateReasonText(g.Note); reason != "" {
+			line += "   " + widget.TextStyle.Render(reason)
 		}
-		out = append(out, fit(line, width))
+		out = append(out, widget.Fit(line, width))
 	}
-	return append(out, fit("   "+candPickSentence(doc, env, r), width))
+	return append(out, widget.Fit("   "+candPickSentence(doc, env, r), width))
 }
 
 // bodyLines is the whole body before it is windowed: a blank line under the
 // context row, the table, the unused-provider table when there is one, two
 // blank lines and the cursor row's detail block (§4).
-func (v candidatesView) bodyLines(env Env, width int) []string {
+func (v candidatesView) bodyLines(env widget.Env, width int) []string {
 	rows := v.rows(env)
 	unused := env.Report.Unused
 	nameW, cols := candLayout(width)
@@ -472,7 +474,7 @@ func (v candidatesView) bodyLines(env Env, width int) []string {
 }
 
 // rows is the table for the newest report, in pick order (§4).
-func (v candidatesView) rows(env Env) []candRow { return candRows(v.doc, env.Report.Gated) }
+func (v candidatesView) rows(env widget.Env) []candRow { return candRows(v.doc, env.Report.Gated) }
 
 // candClamp keeps an index inside [0, n).
 func candClamp(i, n int) int {
@@ -486,14 +488,14 @@ func candClamp(i, n int) int {
 }
 
 // follow scrolls the page so the cursor's table row stays visible (§4).
-func (v *candidatesView) follow(env Env) {
+func (v *candidatesView) follow(env widget.Env) {
 	rows := v.rows(env)
 	n := len(rows)
 	if n == 0 && len(env.Report.Unused) == 0 {
 		v.top = 0
 		return
 	}
-	avail := bodyHeight(env)
+	avail := widget.BodyHeight(env)
 	if avail <= 0 {
 		v.top = 0
 		return
@@ -511,7 +513,7 @@ func (v *candidatesView) follow(env Env) {
 	if sel >= v.top+avail {
 		v.top = sel - avail + 1
 	}
-	v.top = clamp(v.top, 0, max(0, len(lines)-avail))
+	v.top = widget.Clamp(v.top, 0, max(0, len(lines)-avail))
 }
 
 func (v candidatesView) Crumbs() []string { return []string{"candidates"} }
@@ -519,44 +521,44 @@ func (v candidatesView) Crumbs() []string { return []string{"candidates"} }
 // Capturing is always false: the view owns no text input of its own (§4).
 func (v candidatesView) Capturing() bool { return false }
 
-// Keys are the view's keys, shown only when the shell has an Actions seam
+// Keys are the view's keys, shown only when the shell has an widget.Actions seam
 // (§4). `↑↓ move` is left out: the footer has no room for it at 132 columns
 // once `p probe` is included (§10), so it lives in HelpKeys alone.
-func (v candidatesView) Keys() []KeyHelp {
+func (v candidatesView) Keys() []widget.KeyHelp {
 	if !v.actions {
 		return nil
 	}
-	return []KeyHelp{
-		{"enter", "edit"},
-		{"a", "add"},
-		{"d", "delete"},
-		{"g", "gate"},
-		{"u", "ungate"},
-		{"p", "probe"},
+	return []widget.KeyHelp{
+		{Key: "enter", Help: "edit"},
+		{Key: "a", Help: "add"},
+		{Key: "d", Help: "delete"},
+		{Key: "g", Help: "gate"},
+		{Key: "u", Help: "ungate"},
+		{Key: "p", Help: "probe"},
 	}
 }
 
 // HelpKeys is the help overlay's key list (§2.2, §10): every key the view has,
 // `↑↓ move` included, so the `?` modal shows what the footer cannot.
-func (v candidatesView) HelpKeys() []KeyHelp {
+func (v candidatesView) HelpKeys() []widget.KeyHelp {
 	if !v.actions {
 		return nil
 	}
-	return []KeyHelp{
-		{"↑↓", "move"},
-		{"enter", "edit"},
-		{"a", "add"},
-		{"d", "delete"},
-		{"g", "gate"},
-		{"u", "ungate"},
-		{"p", "probe"},
+	return []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "enter", Help: "edit"},
+		{Key: "a", Help: "add"},
+		{Key: "d", Help: "delete"},
+		{Key: "g", Help: "gate"},
+		{Key: "u", Help: "ungate"},
+		{Key: "p", Help: "probe"},
 	}
 }
 
 // OffKeys greys the candidate-only keys on an unused-provider row (§4): the
 // cursor row is not a candidate, so editing, deleting, gating and probing it
-// do nothing. Nil everywhere else, including a view with no Actions seam.
-func (v candidatesView) OffKeys(env Env) []string {
+// do nothing. Nil everywhere else, including a view with no widget.Actions seam.
+func (v candidatesView) OffKeys(env widget.Env) []string {
 	if !v.actions {
 		return nil
 	}
@@ -567,7 +569,7 @@ func (v candidatesView) OffKeys(env Env) []string {
 }
 
 // Context is the counts line on the left and the row order on the right (§4).
-func (v candidatesView) Context(env Env) (string, string) {
+func (v candidatesView) Context(env widget.Env) (string, string) {
 	rows := v.rows(env)
 	total, ready, gated, off := 0, 0, 0, 0
 	for _, r := range rows {
@@ -582,7 +584,7 @@ func (v candidatesView) Context(env Env) (string, string) {
 		}
 	}
 	item := func(count int, label string) string {
-		return textStyle.Bold(true).Render(fmt.Sprintf("%d", count)) + " " + mutedStyle.Render(label)
+		return widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", count)) + " " + widget.MutedStyle.Render(label)
 	}
 	left := "   " + item(total, "candidates")
 	left += "   " + item(ready, "ready")
@@ -597,26 +599,26 @@ func (v candidatesView) Context(env Env) (string, string) {
 		}
 		left += "   " + item(m, label)
 	}
-	right := faintStyle.Render("sort ") + mutedStyle.Render("pick order")
+	right := widget.FaintStyle.Render("sort ") + widget.MutedStyle.Render("pick order")
 	return left, right
 }
 
-func (v candidatesView) Body(env Env, width, height int) string {
+func (v candidatesView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
 	if !v.loaded && v.err != nil {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	rows := v.rows(env)
 	if len(rows) == 0 {
-		return strings.Join(statsCentered("no candidates; a adds one", width, height), "\n")
+		return strings.Join(widget.Centered("no candidates; a adds one", width, height), "\n")
 	}
 	lines := v.bodyLines(env, width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -624,10 +626,10 @@ func (v candidatesView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
-func (v candidatesView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v candidatesView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case candDocMsg:
 		if msg.err != nil {
@@ -657,7 +659,7 @@ func (v candidatesView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 // updateKey is the view's own keys (§4). The cursor ranges over the candidate
 // rows then the unused-provider rows; the candidate-only keys do nothing on an
 // unused row, where `u` clears the provider's gate and `a` still adds one.
-func (v candidatesView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v candidatesView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	rows := v.rows(env)
 	n := len(rows)
 	total := n + len(env.Report.Unused)
@@ -676,10 +678,10 @@ func (v candidatesView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		v.cur = candClamp(total-1, total)
 		v.follow(env)
 	case "pgup":
-		v.cur = candClamp(v.cur-bodyHeight(env), total)
+		v.cur = candClamp(v.cur-widget.BodyHeight(env), total)
 		v.follow(env)
 	case "pgdown":
-		v.cur = candClamp(v.cur+bodyHeight(env), total)
+		v.cur = candClamp(v.cur+widget.BodyHeight(env), total)
 		v.follow(env)
 	case "enter":
 		if n == 0 || onUnused {
@@ -710,12 +712,12 @@ func (v candidatesView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		}
 		if onUnused {
 			provider := env.Report.Unused[v.cur-n].Provider
-			return v, runAction(env.Ctx, "ungate", provider, func(ctx context.Context) Result {
+			return v, runAction(env.Ctx, "ungate", provider, func(ctx context.Context) widget.Result {
 				return env.Actions.Ungate(ctx, provider)
 			})
 		}
 		name := rows[v.cur].c.Name
-		return v, runAction(env.Ctx, "ungate", name, func(ctx context.Context) Result {
+		return v, runAction(env.Ctx, "ungate", name, func(ctx context.Context) widget.Result {
 			return env.Actions.Ungate(ctx, name)
 		})
 	case "p":
@@ -723,7 +725,7 @@ func (v candidatesView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 			return v, nil
 		}
 		name := rows[v.cur].c.Name
-		return v, runAction(env.Ctx, "probe", name, func(ctx context.Context) Result {
+		return v, runAction(env.Ctx, "probe", name, func(ctx context.Context) widget.Result {
 			return env.Actions.Probe(ctx, name)
 		})
 	}
@@ -732,7 +734,7 @@ func (v candidatesView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 
 // deleteCmd is the d key (§4): validate the delete, then confirm it as a
 // danger box. A refused delete is a notice, not an overlay.
-func (v candidatesView) deleteCmd(env Env, r candRow) tea.Cmd {
+func (v candidatesView) deleteCmd(env widget.Env, r candRow) tea.Cmd {
 	edit, err := relevo.DeleteCandidate(v.doc, r.c.Name)
 	if err != nil {
 		return notice(err.Error())
@@ -742,9 +744,9 @@ func (v candidatesView) deleteCmd(env Env, r candRow) tea.Cmd {
 		kind:   "delete",
 		yes:    "delete",
 		danger: true,
-		title:  "Delete " + accentStyle.Bold(true).Render(name) + "?",
+		title:  "Delete " + widget.AccentStyle.Bold(true).Render(name) + "?",
 		lines:  candDeleteLines(v.doc, env, r),
-		onYes: runAction(env.Ctx, "delete", name, func(ctx context.Context) Result {
+		onYes: runAction(env.Ctx, "delete", name, func(ctx context.Context) widget.Result {
 			return env.Actions.ApplyConfig(ctx, edit)
 		}),
 	})
@@ -781,8 +783,8 @@ func candActorsLeft(doc relevo.ConfigDoc, name string) []candLeft {
 // candDeleteLines is the delete confirm's text (§4): who picked it and whether
 // they drop it, who is left with one candidate, the gate kept, and where its
 // past rounds are.
-func candDeleteLines(doc relevo.ConfigDoc, env Env, r candRow) []string {
-	label := func(l string) string { return pad(l, 11) }
+func candDeleteLines(doc relevo.ConfigDoc, env widget.Env, r candRow) []string {
+	label := func(l string) string { return widget.Pad(l, 11) }
 	var out []string
 	if len(r.slots) > 0 {
 		drop := "it drops it"
@@ -802,7 +804,7 @@ func candDeleteLines(doc relevo.ConfigDoc, env Env, r candRow) []string {
 
 // gateForm is the g key (§4): the same form gateCmd builds, for a candidate
 // instead of a binding row.
-func (v candidatesView) gateForm(env Env, r candRow) tea.Cmd {
+func (v candidatesView) gateForm(env widget.Env, r candRow) tea.Cmd {
 	name, provider := r.c.Name, r.c.Provider
 
 	forField := formField{
@@ -826,8 +828,8 @@ func (v candidatesView) gateForm(env Env, r candRow) tea.Cmd {
 	}
 	reasonField := formField{label: "reason", input: newFormInput(false), hint: "optional"}
 
-	header := accentStyle.Bold(true).Render("Gate "+name) +
-		faintStyle.Render("  (provider "+provider+")")
+	header := widget.AccentStyle.Bold(true).Render("Gate "+name) +
+		widget.FaintStyle.Render("  (provider "+provider+")")
 
 	return openOverlay(formBox{
 		kind:   "gate",
@@ -838,7 +840,7 @@ func (v candidatesView) gateForm(env Env, r candRow) tea.Cmd {
 		onSubmit: func(values []string) tea.Cmd {
 			forDur, _ := time.ParseDuration(strings.TrimSpace(values[0]))
 			reason := values[1]
-			return runAction(env.Ctx, "gate", name, func(ctx context.Context) Result {
+			return runAction(env.Ctx, "gate", name, func(ctx context.Context) widget.Result {
 				return env.Actions.Gate(ctx, name, forDur, reason)
 			})
 		},

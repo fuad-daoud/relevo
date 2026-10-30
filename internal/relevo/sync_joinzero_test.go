@@ -22,6 +22,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -212,7 +213,7 @@ func newBodyCfgMachine(t *testing.T, pair bodyPair, origin string, key []byte, e
 // threshold is uploaded and its entry written as a `$ref`.
 func (m *cfgMachine) exportThrough(t *testing.T) {
 	t.Helper()
-	if _, err := exportOnce(m.mdb, m.bodyLog); err != nil {
+	if _, err := verb.ExportOnce(m.mdb, m.bodyLog); err != nil {
 		t.Fatalf("export: %v", err)
 	}
 }

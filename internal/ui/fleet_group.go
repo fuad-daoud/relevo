@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -49,43 +50,43 @@ var groupMetas = map[fleetGroup]groupMeta{
 	groupNeedsYou: {
 		label: "needs you",
 		hint:  "a builder is waiting on an answer",
-		pill:  chipWarnStyle,
-		dot:   warnStyle,
+		pill:  widget.ChipWarnStyle,
+		dot:   widget.WarnStyle,
 		glyph: "●",
 	},
 	groupWorking: {
 		label: "working",
 		hint:  "a round is running",
-		pill:  chipGreenStyle,
-		dot:   greenStyle,
+		pill:  widget.ChipGreenStyle,
+		dot:   widget.GreenStyle,
 		glyph: "●",
 	},
 	groupIdle: {
 		label: "idle",
 		hint:  "finished, waiting for the next plan",
-		pill:  kbdStyle,
-		dot:   mutedStyle,
+		pill:  widget.KbdStyle,
+		dot:   widget.MutedStyle,
 		glyph: "○",
 	},
 	groupHeld: {
 		label: "on hold",
 		hint:  "paused or held",
-		pill:  kbdStyle,
-		dot:   mutedStyle,
+		pill:  widget.KbdStyle,
+		dot:   widget.MutedStyle,
 		glyph: "◐",
 	},
 	groupOther: {
 		label: "other",
 		hint:  "",
-		pill:  kbdStyle,
-		dot:   mutedStyle,
+		pill:  widget.KbdStyle,
+		dot:   widget.MutedStyle,
 		glyph: "○",
 	},
 	groupDone: {
 		label: "done",
 		hint:  "",
-		pill:  kbdStyle,
-		dot:   faintStyle,
+		pill:  widget.KbdStyle,
+		dot:   widget.FaintStyle,
 		glyph: "✓",
 	},
 }

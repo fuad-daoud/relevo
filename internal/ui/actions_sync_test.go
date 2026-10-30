@@ -13,10 +13,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // syncRealActions opens a split database pair in a temp directory and returns
-// the real Actions over it. Every method here reads or writes the machine-local
+// the real widget.Actions over it. Every method here reads or writes the machine-local
 // file beside the shared one, so a test that used a fake for them would never
 // learn whether the local/shared split was actually honoured -- which is the one
 // thing about these actions that matters most.
@@ -80,7 +81,7 @@ func TestSyncSnapshotOnAFreshInstall(t *testing.T) {
 	a := syncRealActions(t)
 	snap, err := a.SyncSnapshot()
 	if err != nil {
-		t.Fatalf("SyncSnapshot: %v", err)
+		t.Fatalf("widget.SyncSnapshot: %v", err)
 	}
 	if snap.Token != relevosync.TokenOff {
 		t.Errorf("token is %q, want %q", snap.Token, relevosync.TokenOff)
@@ -114,7 +115,7 @@ func TestSyncSnapshotReadsTheLocalFileOnly(t *testing.T) {
 
 	snap, err := a.SyncSnapshot()
 	if err != nil {
-		t.Fatalf("SyncSnapshot: %v", err)
+		t.Fatalf("widget.SyncSnapshot: %v", err)
 	}
 	if snap.RemoteURL != syncRemote || !snap.State.Enabled {
 		t.Errorf("the local section was not read: %+v", snap)
@@ -134,7 +135,7 @@ func TestSyncSnapshotReadsTheLocalFileOnly(t *testing.T) {
 	}
 	snap, err = a.SyncSnapshot()
 	if err != nil {
-		t.Fatalf("SyncSnapshot after the shared write: %v", err)
+		t.Fatalf("widget.SyncSnapshot after the shared write: %v", err)
 	}
 	if snap.RemoteURL != syncRemote {
 		t.Errorf("the read took the shared section: %q", snap.RemoteURL)
@@ -157,7 +158,7 @@ func TestSyncSnapshotReportsAttention(t *testing.T) {
 	}
 	snap, err := a.SyncSnapshot()
 	if err != nil {
-		t.Fatalf("SyncSnapshot: %v", err)
+		t.Fatalf("widget.SyncSnapshot: %v", err)
 	}
 	if snap.Token != relevosync.TokenErr {
 		t.Errorf("token is %q, want %q", snap.Token, relevosync.TokenErr)
@@ -177,7 +178,7 @@ func TestSyncSnapshotCarriesTheExchangeTimesAndItsAbsence(t *testing.T) {
 
 	snap, err := a.SyncSnapshot()
 	if err != nil {
-		t.Fatalf("SyncSnapshot: %v", err)
+		t.Fatalf("widget.SyncSnapshot: %v", err)
 	}
 	if snap.Measured {
 		t.Errorf("an unmeasured machine reports a measurement")
@@ -191,7 +192,7 @@ func TestSyncSnapshotCarriesTheExchangeTimesAndItsAbsence(t *testing.T) {
 	}
 	snap, err = a.SyncSnapshot()
 	if err != nil {
-		t.Fatalf("SyncSnapshot after the markers: %v", err)
+		t.Fatalf("widget.SyncSnapshot after the markers: %v", err)
 	}
 	if !snap.Measured || snap.State.Backlog != 7 || snap.LastExport.IsZero() {
 		t.Errorf("the exchange times did not reach the view: %+v", snap)
@@ -221,7 +222,7 @@ func TestSyncSnapshotCarriesTheLatchBacklogTimesAndTrouble(t *testing.T) {
 
 	snap, err := a.SyncSnapshot()
 	if err != nil {
-		t.Fatalf("SyncSnapshot: %v", err)
+		t.Fatalf("widget.SyncSnapshot: %v", err)
 	}
 	if snap.Token != relevosync.TokenErr {
 		t.Errorf("token = %q, want %q", snap.Token, relevosync.TokenErr)
@@ -249,9 +250,9 @@ func TestSyncActionsWithoutARuntimeRefuse(t *testing.T) {
 		{live: newLiveRuntime(relevo.Runtime{})}, // a holder with no database
 	} {
 		if _, err := a.SyncSnapshot(); err == nil {
-			t.Errorf("SyncSnapshot on a runtime-less adapter succeeded")
+			t.Errorf("widget.SyncSnapshot on a runtime-less adapter succeeded")
 		}
-		for _, res := range []Result{
+		for _, res := range []widget.Result{
 			a.SyncPush(context.Background()),
 			a.SyncPull(context.Background()),
 			a.SyncTest(context.Background()),
@@ -315,14 +316,14 @@ func TestSyncEditorIsReadOnly(t *testing.T) {
 
 	before, err := a.SyncSnapshot()
 	if err != nil {
-		t.Fatalf("SyncSnapshot: %v", err)
+		t.Fatalf("widget.SyncSnapshot: %v", err)
 	}
 	if _, err := a.SyncEditor(); err != nil {
 		t.Fatalf("SyncEditor: %v", err)
 	}
 	after, err := a.SyncSnapshot()
 	if err != nil {
-		t.Fatalf("SyncSnapshot: %v", err)
+		t.Fatalf("widget.SyncSnapshot: %v", err)
 	}
 	if before.RemoteURL != after.RemoteURL || before.State.Enabled != after.State.Enabled {
 		t.Errorf("opening the editor changed the section: %+v -> %+v", before, after)
@@ -344,7 +345,7 @@ func TestSyncSnapshotOnAHandleWithNoLocalFile(t *testing.T) {
 	a := &mastermindActions{live: newLiveRuntime(relevo.Runtime{DB: shared})}
 	snap, err := a.SyncSnapshot()
 	if err != nil {
-		t.Fatalf("SyncSnapshot on a handle with no local file: %v", err)
+		t.Fatalf("widget.SyncSnapshot on a handle with no local file: %v", err)
 	}
 	if snap.Token != relevosync.TokenOff {
 		t.Errorf("token is %q, want %q", snap.Token, relevosync.TokenOff)

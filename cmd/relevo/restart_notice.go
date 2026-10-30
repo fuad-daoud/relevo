@@ -68,5 +68,5 @@ func insertRestartRow(checks []doctor.Check, c doctor.Check) []doctor.Check {
 			return append(out, checks[i+1:]...)
 		}
 	}
-	return insertGlobalCheck(checks, c)
+	return doctor.InsertGlobalCheck(checks, c)
 }

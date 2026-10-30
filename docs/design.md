@@ -1,7 +1,5 @@
 # Relevo — automated MasterMind↔builder handoff across agent harnesses
 
-Superseded in part by `docs/specs/2026-09-22-drop-herdr-design.md` (#303).
-
 Date: 2026-09-04
 Status: **historical record.** This is the design as approved before relevo was
 built, kept because it explains *why* the pieces are shaped the way they are.
@@ -163,7 +161,7 @@ session survives the move and `refreshEndpoint` updates the pane ID normally.
 ### Candidates (config)
 
 Candidates are the `candidates` section of `relevo.db`, edited with
-`relevo config`; see [Candidates](../README.md#candidates) and the design spec (`docs/specs/2026-09-11-candidates-design.md`) for configuration format and semantics. Relevo renders harness launch arguments per kind:
+`relevo config`; see [Candidates](../README.md#candidates) for configuration format and semantics. Relevo renders harness launch arguments per kind:
 
 | kind | args |
 | --- | --- |
@@ -178,7 +176,7 @@ section (`order[role]`) together with the
 availability ledger: the first ungated candidate in the order, refusing
 when nothing ungated serves the role or when several serve it and
 nothing is ordered. Each resolution is a `pick` entry in the binding's
-round log. See `docs/specs/2026-09-11-policy-order-design.md`.
+round log.
 
 ### The round log entry
 
@@ -309,7 +307,7 @@ Three display states cover everything: **ACTIVE** (someone is working), **NEEDS 
 - `relevo show <name> --log` — every relayed message: round, direction, file, timestamp. The
   audit trail for "what did the MasterMind actually tell the builder".
 - `relevo ui [:view [args]]` — the cockpit: the `:fleet` table, round detail and the `:rounds` grid.
-- `relevo status --line` — one row per binding this MasterMind owns, for Claude Code's `statusLine` setting; store-only, never probes the harness (spec `docs/specs/2026-09-13-statusline-design.md`).
+- `relevo status --line` — one row per binding this MasterMind owns, for Claude Code's `statusLine` setting; store-only, never probes the harness.
 
 All agent rows are derived live from herdr on each call. Relevo holds no truth herdr already
 has, except bindings and the round log, so `status` cannot disagree with reality.
@@ -326,7 +324,7 @@ has, except bindings and the round log, so `status` cannot disagree with reality
 | relayd restart | Rebuilds from `bind.json` + `log.jsonl` + live herdr state. A pending record is written *before* a prompt is sent and cleared on confirmation; on restart, re-deliver only if the target is idle **and** the log shows no confirmation. Bias toward under-delivering. |
 | Second bind on the same cwd | **Refused**, naming the binding that owns it. For genuine parallelism, `herdr worktree create` yields a different cwd and the check passes with no special code path. |
 | Human camps in the MasterMind pane | Delivery stays `held`; notification escalates. Human says "go" and the MasterMind runs `relevo pull`, receiving the payload as tool output rather than as injected keystrokes. After `--held-grace` of screen quiet the daemon injects anyway. |
-| Builder gone for 30s, or its provider gated mid-round | The daemon switches to the next ungated candidate in `policy.json` order, bounded by `max_switches`; see `docs/specs/2026-09-11-builder-switching-design.md`. |
+| Builder gone for 30s, or its provider gated mid-round | The daemon switches to the next ungated candidate in `policy.json` order, bounded by `max_switches`. |
 
 ## Decisions and rationale
 
@@ -408,7 +406,5 @@ so the next send is silent. It self-heals after one round.
 - Any MasterMind-side intelligence in the daemon.
 - Cross-machine relaying (herdr `--remote` exists; not needed yet).
 - A TUI in the original scope: `relevo status` / `relevo watch` were enough. Superseded by
-  [`docs/specs/2026-09-08-relevo-tui-design.md`](specs/2026-09-08-relevo-tui-design.md), which
-  designs `relevo ui` as the cockpit, read-only until B2 of the cockpit plan
-  (docs/specs/2026-09-24-cockpit-design.md). `relevo watch` (status on a ticker) was dropped in
+  `relevo ui`, the cockpit. `relevo watch` (status on a ticker) was dropped in
   favour of `watch -n2 relevo status` once `ui` existed (#114).

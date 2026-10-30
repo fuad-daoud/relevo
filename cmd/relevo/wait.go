@@ -38,9 +38,8 @@ func waitDocOf(name string, res relevo.WaitResult) WaitDoc {
 	return doc
 }
 
-// cmdWait blocks until a round closes or needs a human, per spec
-// docs/specs/2026-09-14-wait-and-waiting-on-you-design.md §4.8. It reads
-// relevo's own state only: it launches nothing.
+// cmdWait blocks until a round closes or needs a human. It reads relevo's own
+// state only: it launches nothing.
 // waitFlagValues holds the pointers wait parses into.
 type waitFlagValues struct {
 	name    *string

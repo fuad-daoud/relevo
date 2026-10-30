@@ -10,9 +10,6 @@ cmd/relevo/config_log.go
 cmd/relevo/config_server.go
 cmd/relevo/daemon.go
 cmd/relevo/daemon_notice.go
-cmd/relevo/doctor.go
-cmd/relevo/doctor_checks.go
-cmd/relevo/doctor_test.go
 cmd/relevo/done.go
 cmd/relevo/edge.go
 cmd/relevo/gate.go
@@ -261,7 +258,6 @@ internal/ui/source_test.go
 internal/ui/split_test.go
 internal/ui/stderr.go
 internal/ui/stderr_test.go
-internal/ui/styles.go
 internal/ui/ui.go
 internal/ui/version.go
 internal/ui/view_actor.go
@@ -279,8 +275,6 @@ internal/ui/view_log.go
 internal/ui/view_log_test.go
 internal/ui/view_round.go
 internal/ui/view_rounds.go
-internal/ui/view_stats.go
-internal/ui/view_stats_test.go
 scripts/testdata/check-comments/cites-issue.go
 scripts/testdata/check-comments/cites-section.go
 scripts/testdata/check-comments/in-string.go

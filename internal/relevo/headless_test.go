@@ -3093,8 +3093,8 @@ func TestHeadlessMarkerCloseEscapedNote(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("report must be queued: found=%v err=%v", found, err)
 	}
-	if pending.Note != escapeNote {
-		t.Errorf("note = %q, want %q", pending.Note, escapeNote)
+	if pending.Note != git.EscapedNote {
+		t.Errorf("note = %q, want %q", pending.Note, git.EscapedNote)
 	}
 }
 

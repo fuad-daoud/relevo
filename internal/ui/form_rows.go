@@ -4,17 +4,18 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // formLabel is one form row's label: padded to 11 cells, accent when its field
 // is focused and faint otherwise. 11 matches formBox's 10-column label plus its
 // one separating space, so the two forms line up.
 func formLabel(label string, focused bool) string {
-	style := faintStyle
+	style := widget.FaintStyle
 	if focused {
-		style = accentStyle
+		style = widget.AccentStyle
 	}
-	return style.Render(pad(label, 11))
+	return style.Render(widget.Pad(label, 11))
 }
 
 // formChips renders one row of chips ("agy  claude  codex"): sel is the
@@ -26,11 +27,11 @@ func formChips(items []string, sel int, disabled bool) string {
 	for i, item := range items {
 		switch {
 		case disabled:
-			parts = append(parts, chip(faintStyle, item))
+			parts = append(parts, widget.Chip(widget.FaintStyle, item))
 		case i == sel:
-			parts = append(parts, chip(chipAccentStyle, item))
+			parts = append(parts, widget.Chip(widget.ChipAccentStyle, item))
 		default:
-			parts = append(parts, chip(kbdStyle, item))
+			parts = append(parts, widget.Chip(widget.KbdStyle, item))
 		}
 	}
 	return strings.Join(parts, "  ")
@@ -41,11 +42,11 @@ func formChips(items []string, sel int, disabled bool) string {
 // faint instead of its (empty) value.
 func formInput(in textinput.Model, focused bool, placeholder string, width int) string {
 	if in.Value() == "" && placeholder != "" && !focused {
-		return faintStyle.Render(pad(placeholder, width))
+		return widget.FaintStyle.Render(widget.Pad(placeholder, width))
 	}
-	view := fit(in.View(), width)
+	view := widget.Fit(in.View(), width)
 	if focused {
-		return selBandStyle.Render(view)
+		return widget.SelBandStyle.Render(view)
 	}
 	return view
 }
@@ -67,19 +68,19 @@ func formSubRow(s string) string {
 
 // formError is one field's error: red, indented to the value column.
 func formError(msg string) string {
-	return redStyle.Render(formSubRow(msg))
+	return widget.RedStyle.Render(formSubRow(msg))
 }
 
 // formKeys renders a form's keys: kbd chips with muted labels, six spaces
 // apart. A key named in disabled is faint, its chip and its label both.
-func formKeys(keys []KeyHelp, disabled map[string]bool) string {
+func formKeys(keys []widget.KeyHelp, disabled map[string]bool) string {
 	parts := make([]string, 0, len(keys))
 	for _, kh := range keys {
-		chipStyle, labelStyle := kbdStyle, mutedStyle
+		chipStyle, labelStyle := widget.KbdStyle, widget.MutedStyle
 		if disabled[kh.Key] {
-			chipStyle, labelStyle = faintStyle, faintStyle
+			chipStyle, labelStyle = widget.FaintStyle, widget.FaintStyle
 		}
-		parts = append(parts, chip(chipStyle, kh.Key)+" "+labelStyle.Render(kh.Help))
+		parts = append(parts, widget.Chip(chipStyle, kh.Key)+" "+labelStyle.Render(kh.Help))
 	}
 	return strings.Join(parts, "      ")
 }

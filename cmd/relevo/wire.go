@@ -27,6 +27,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/setup"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
@@ -115,8 +116,7 @@ func captureAgyEnv() {
 }
 
 // newDeliverers builds Runtime.Deliverers: the agy deliverer always, and an
-// OpencodeDeliverer keyed by "opencode" when sqlite3 is on PATH
-// (docs/specs/2026-09-22-opencode-delivery-design.md). No sqlite3 means the
+// OpencodeDeliverer keyed by "opencode" when sqlite3 is on PATH. No sqlite3 means the
 // opencode deliverer could never confirm a delivery, so an opencode mastermind's
 // reports stay pending for the background wait. agy needs no external tool: it reads
 // the captured credential secret from the machine database and runs agy
@@ -250,7 +250,7 @@ func newRuntimeWith(root string, d *db.DB, st *store.Store) (relevo.Runtime, err
 		return relevo.Runtime{}, err
 	}
 	rt.Config = cs
-	noteUnconfigured(activeVerb, rt.Candidates.Len() > 0)
+	setup.NoteUnconfigured(activeVerb, rt.Candidates.Len() > 0)
 	return rt, nil
 }
 

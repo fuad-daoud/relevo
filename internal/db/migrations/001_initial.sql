@@ -1,4 +1,4 @@
--- Schema v1 (docs/specs/2026-09-20-persistence-design.md §4). Turso-safe
+-- Schema v1. Turso-safe
 -- dialect: CREATE TABLE/INDEX IF NOT EXISTS only, no AUTOINCREMENT, no
 -- WITHOUT ROWID, no triggers/views/FTS/virtual tables, no RETURNING. Ids are
 -- text ULIDs; timestamps are RFC3339 UTC text with millisecond precision;

@@ -20,6 +20,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/dbtest"
+	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/release"
@@ -66,7 +67,7 @@ func TestMain(m *testing.M) {
 	dbRouteFromArgs = false
 	// The doctor's cache row would start a real go and walk its build cache;
 	// the package answers as a host with no go instead.
-	diskRun = func(context.Context, string, ...string) ([]byte, error) { return nil, exec.ErrNotFound }
+	doctor.DiskRun = func(context.Context, string, ...string) ([]byte, error) { return nil, exec.ErrNotFound }
 	installDBRoute(routeNone, verbDialBudget, 0)
 	cleanup, err := dbtest.Install()
 	if err != nil {

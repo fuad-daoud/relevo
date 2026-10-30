@@ -69,8 +69,8 @@ versions corrupt each other and there is no rollback. Two flows exist:
 
 ## Conventions
 
-- Specs live in `docs/specs/YYYY-MM-DD-<topic>-design.md`. Implementation
-  plans live in `docs/plans/YYYY-MM-DD-<name>.md`.
+- Plans and specs are local working files. `docs/plans/`, `docs/specs/` and
+  `docs/superpowers/` are gitignored and never committed.
 - State lives in `$XDG_STATE_HOME/relevo` (default `~/.local/state/relevo`);
   config resolves via `$XDG_CONFIG_HOME` (default `~/.config`).
   Compose relevo config paths through `userConfigRoot()` (`cmd/relevo/main.go`),

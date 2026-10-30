@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // workflowSourceMsg is one workflow's source text, read off the update loop.
@@ -47,12 +48,12 @@ type workflowView struct {
 }
 
 // newWorkflowView pushes one workflow's graph, before either read has landed.
-func newWorkflowView(name string) View {
+func newWorkflowView(name string) widget.View {
 	return workflowView{name: name}
 }
 
 // workflowSourceCmd reads one workflow's source text off the update loop.
-func workflowSourceCmd(env Env, name string) tea.Cmd {
+func workflowSourceCmd(env widget.Env, name string) tea.Cmd {
 	return func() tea.Msg {
 		if env.Actions == nil {
 			return workflowSourceMsg{name: name}
@@ -63,7 +64,7 @@ func workflowSourceCmd(env Env, name string) tea.Cmd {
 }
 
 // workflowGraphCmd reads one workflow's step graph off the update loop.
-func workflowGraphCmd(env Env, name string) tea.Cmd {
+func workflowGraphCmd(env widget.Env, name string) tea.Cmd {
 	return func() tea.Msg {
 		if env.Actions == nil {
 			return workflowGraphMsg{name: name}
@@ -80,28 +81,28 @@ func (v workflowView) Capturing() bool { return false }
 // Keys are the view's keys: the graph's own movement and the source toggle.
 // On the source the same movement scrolls it, so the two differ only in what
 // they say. esc back is the shell's own and is not repeated here.
-func (v workflowView) Keys() []KeyHelp {
+func (v workflowView) Keys() []widget.KeyHelp {
 	if v.src {
-		return []KeyHelp{{"↑↓", "scroll"}, {"s", "graph"}}
+		return []widget.KeyHelp{{Key: "↑↓", Help: "scroll"}, {Key: "s", Help: "graph"}}
 	}
-	return []KeyHelp{{"↑↓", "move"}, {"s", "source"}}
+	return []widget.KeyHelp{{Key: "↑↓", Help: "move"}, {Key: "s", Help: "source"}}
 }
 
 // HelpKeys is the help overlay's key list: the same set.
-func (v workflowView) HelpKeys() []KeyHelp { return v.Keys() }
+func (v workflowView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
 // Context is the view's summary line: what the workflow is and how many steps
 // it declares, or which of the two texts s is showing.
-func (v workflowView) Context(env Env) (string, string) {
-	left := "   " + textStyle.Bold(true).Render(v.name)
+func (v workflowView) Context(env widget.Env) (string, string) {
+	left := "   " + widget.TextStyle.Bold(true).Render(v.name)
 	if v.src {
 		what := "source"
 		if v.shipped {
 			what = "definition (json)"
 		}
-		return left + mutedStyle.Render("   "+what), ""
+		return left + widget.MutedStyle.Render("   "+what), ""
 	}
-	return left + mutedStyle.Render("   "+strconv.Itoa(len(v.rows))+" steps"), ""
+	return left + widget.MutedStyle.Render("   "+strconv.Itoa(len(v.rows))+" steps"), ""
 }
 
 // workflowGraphLayout is the graph table's columns: STEP takes the width the
@@ -142,10 +143,10 @@ func workflowGraphLayout(width int) (int, []workflowCol) {
 
 // workflowGraphHeaderLine is the graph table's header row, in faint bold.
 func workflowGraphHeaderLine(stepW int, cols []workflowCol, cw int) string {
-	style := faintStyle.Bold(true)
-	cells := []candCell{{text: pad("STEP", stepW), style: style}}
+	style := widget.FaintStyle.Bold(true)
+	cells := []candCell{{text: widget.Pad("STEP", stepW), style: style}}
 	for _, c := range cols {
-		cells = append(cells, candCell{text: pad(c.head, c.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(c.head, c.w), style: style})
 	}
 	return candLine(cells, false, cw)
 }
@@ -155,34 +156,34 @@ func workflowGraphHeaderLine(stepW int, cols []workflowCol, cw int) string {
 // paths read apart from the node names. A step that declares no edge shows a
 // dash, which is a step that ends its path.
 func workflowStepLine(row relevo.GraphRow, sel bool, stepW int, cols []workflowCol, cw int) string {
-	nameStyle := textStyle
+	nameStyle := widget.TextStyle
 	if sel {
 		nameStyle = nameStyle.Bold(true)
 	}
-	cells := []candCell{{text: pad(row.ID, stepW), style: nameStyle}}
+	cells := []candCell{{text: widget.Pad(row.ID, stepW), style: nameStyle}}
 	for _, col := range cols {
 		text := ""
-		style := mutedStyle
+		style := widget.MutedStyle
 		switch col.key {
 		case "kind":
 			text = sanitizeText(row.Kind)
 			if text == "" {
-				text, style = "—", faintStyle
+				text, style = "—", widget.FaintStyle
 			}
 		case "actor":
 			text = sanitizeText(row.Actors)
 			if text == "" {
-				text, style = "—", faintStyle
+				text, style = "—", widget.FaintStyle
 			}
 		case "edges":
 			text = sanitizeText(row.EdgeText)
 			if text == "" {
-				text, style = "—", faintStyle
+				text, style = "—", widget.FaintStyle
 			} else {
-				style = greenStyle
+				style = widget.GreenStyle
 			}
 		}
-		cells = append(cells, candCell{text: pad(text, col.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(text, col.w), style: style})
 	}
 	return candLine(cells, sel, cw)
 }
@@ -204,12 +205,12 @@ func (v workflowView) graphBodyLines(width int) []string {
 }
 
 // follow scrolls the graph so the cursor's step stays visible.
-func (v *workflowView) follow(env Env) {
+func (v *workflowView) follow(env widget.Env) {
 	if len(v.rows) == 0 {
 		v.top = 0
 		return
 	}
-	avail := bodyHeight(env)
+	avail := widget.BodyHeight(env)
 	if avail <= 0 {
 		v.top = 0
 		return
@@ -221,10 +222,10 @@ func (v *workflowView) follow(env Env) {
 	if sel >= v.top+avail {
 		v.top = sel - avail + 1
 	}
-	v.top = clamp(v.top, 0, max(0, len(v.rows)+2-avail))
+	v.top = widget.Clamp(v.top, 0, max(0, len(v.rows)+2-avail))
 }
 
-func (v workflowView) Body(env Env, width, height int) string {
+func (v workflowView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
@@ -232,16 +233,16 @@ func (v workflowView) Body(env Env, width, height int) string {
 		return v.sourceBody(env, width, height)
 	}
 	if v.graphErr != nil && !v.graphLoaded {
-		return strings.Join(statsCentered(sanitizeText(v.graphErr.Error()), width, height), "\n")
+		return strings.Join(widget.Centered(sanitizeText(v.graphErr.Error()), width, height), "\n")
 	}
 	if !v.graphLoaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	if len(v.rows) == 0 {
-		return strings.Join(statsCentered("no steps: this workflow has an empty graph", width, height), "\n")
+		return strings.Join(widget.Centered("no steps: this workflow has an empty graph", width, height), "\n")
 	}
 	lines := v.graphBodyLines(width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -249,31 +250,31 @@ func (v workflowView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
 // sourceBody is the scrolled source text, sized to the shell's body box.
-func (v workflowView) sourceBody(env Env, width, height int) string {
+func (v workflowView) sourceBody(env widget.Env, width, height int) string {
 	if v.sourceErr != nil && !v.sourceLoaded {
-		return strings.Join(statsCentered(sanitizeText(v.sourceErr.Error()), width, height), "\n")
+		return strings.Join(widget.Centered(sanitizeText(v.sourceErr.Error()), width, height), "\n")
 	}
 	if !v.sourceLoaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	if strings.TrimSpace(v.source) == "" {
-		return strings.Join(statsCentered("no source: a shipped workflow shows its definition under s", width, height), "\n")
+		return strings.Join(widget.Centered("no source: a shipped workflow shows its definition under s", width, height), "\n")
 	}
 	vp := v.vp
 	vp.Width = maxInt(width-6, 20)
 	vp.Height = height
-	body := fitLines(strings.Split(vp.View(), "\n"), width-6, height)
+	body := widget.FitLines(strings.Split(vp.View(), "\n"), width-6, height)
 	for i, l := range body {
 		body[i] = "   " + l
 	}
 	return strings.Join(body, "\n")
 }
 
-func (v workflowView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v workflowView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case workflowSourceMsg:
 		if msg.name != v.name {
@@ -288,7 +289,7 @@ func (v workflowView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 		v.shipped = msg.shipped
 		v.source = sanitizeText(msg.text)
 		if v.vp.Width == 0 {
-			v.vp = viewport.New(maxInt(env.Width-6, 20), maxInt(bodyHeight(env), 1))
+			v.vp = viewport.New(maxInt(env.Width-6, 20), maxInt(widget.BodyHeight(env), 1))
 		}
 		v.vp.SetContent(wrapBody(v.source, v.vp.Width))
 		return v, nil
@@ -309,10 +310,10 @@ func (v workflowView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		if v.vp.Width == 0 {
-			v.vp = viewport.New(maxInt(env.Width-6, 20), maxInt(bodyHeight(env), 1))
+			v.vp = viewport.New(maxInt(env.Width-6, 20), maxInt(widget.BodyHeight(env), 1))
 		} else {
 			v.vp.Width = maxInt(env.Width-6, 20)
-			v.vp.Height = maxInt(bodyHeight(env), 1)
+			v.vp.Height = maxInt(widget.BodyHeight(env), 1)
 			v.vp.SetContent(wrapBody(v.source, v.vp.Width))
 		}
 		return v, nil
@@ -325,7 +326,7 @@ func (v workflowView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 
 // updateKey is the view's own keys. s toggles between the graph and the source;
 // on the source every other key scrolls it, so the same key set works in both.
-func (v workflowView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v workflowView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	if k.String() == "s" && !v.src {
 		// The source was not read yet when the graph opened, so the first s
 		// asks for it rather than showing an empty pane.
@@ -363,10 +364,10 @@ func (v workflowView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		v.cur = candClamp(n-1, n)
 		v.follow(env)
 	case "pgup":
-		v.cur = candClamp(v.cur-bodyHeight(env), n)
+		v.cur = candClamp(v.cur-widget.BodyHeight(env), n)
 		v.follow(env)
 	case "pgdown":
-		v.cur = candClamp(v.cur+bodyHeight(env), n)
+		v.cur = candClamp(v.cur+widget.BodyHeight(env), n)
 		v.follow(env)
 	case "esc":
 		return v, pop()

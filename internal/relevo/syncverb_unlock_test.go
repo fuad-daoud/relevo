@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	syncverb "github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -20,7 +21,7 @@ import (
 // where the steps that follow the key's storing live.
 func (m *cfgMachine) unlockVerb(t *testing.T, isNew bool) {
 	t.Helper()
-	runner := &VerbRunner{
+	runner := &syncverb.Runner{
 		Shared: m.mdb,
 		Local:  m.local,
 		Path:   m.mdb.Path(),

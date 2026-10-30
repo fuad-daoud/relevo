@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -155,10 +156,10 @@ func TestPushAndPullVerbsCarryAConfigEdit(t *testing.T) {
 	b := newCfgMachine(t, log, cfgSyncKey, true)
 
 	a.set(t, config.Candidates, cfgCandidate)
-	if _, err := exportOnce(a.mdb, log.OnLog(a.mdb.Origin())); err != nil {
+	if _, err := verb.ExportOnce(a.mdb, log.OnLog(a.mdb.Origin())); err != nil {
 		t.Fatalf("push from A: %v", err)
 	}
-	if _, err := importOnce(b.mdb, log.OnLog(b.mdb.Origin())); err != nil {
+	if _, err := verb.ImportOnce(b.mdb, log.OnLog(b.mdb.Origin())); err != nil {
 		t.Fatalf("pull on B: %v", err)
 	}
 	if got := b.body(t, config.Candidates); !strings.Contains(got, "sonnet") {
@@ -289,7 +290,7 @@ func TestServedDaemonCountsConfigSignalsWithTheSharedRunnersKey(t *testing.T) {
 	log := synclog.NewMemTransport("x")
 	m := newCfgMachine(t, log, cfgSyncKey, true)
 	d := NewDaemon(Runtime{Store: m.st, Sync: &relevosync.Runner{}}, time.Second)
-	d.SetSyncVerbs(&VerbRunner{Runner: m.runner})
+	d.SetSyncVerbs(&verb.Runner{Runner: m.runner})
 	m.attempt(t)
 
 	m.set(t, config.Candidates, cfgCandidate)

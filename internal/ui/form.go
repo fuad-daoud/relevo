@@ -4,6 +4,7 @@ import (
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // formField is one field of a formBox: its label, its input, an optional faint
@@ -29,12 +30,12 @@ type formBox struct {
 }
 
 // keys is the form's footer: enter submits, tab moves, esc cancels (§3.3).
-func (f formBox) keys() []KeyHelp {
+func (f formBox) keys() []widget.KeyHelp {
 	submit := f.submit
 	if submit == "" {
 		submit = "submit"
 	}
-	return []KeyHelp{{"enter", submit}, {"tab", "next field"}, {"esc", "cancel"}}
+	return []widget.KeyHelp{{Key: "enter", Help: submit}, {Key: "tab", Help: "next field"}, {Key: "esc", Help: "cancel"}}
 }
 
 func (f formBox) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
@@ -112,32 +113,32 @@ func (f formBox) modal(width int) (string, []string, int, bool) {
 	rows := append([]string(nil), f.header...)
 	rows = append(rows, "")
 	for i, field := range f.fields {
-		labelStyle := faintStyle
+		labelStyle := widget.FaintStyle
 		inputView := field.input.View()
 		if i == f.focus {
-			labelStyle = accentStyle
-			inputView = selBandStyle.Render(inputView)
+			labelStyle = widget.AccentStyle
+			inputView = widget.SelBandStyle.Render(inputView)
 		}
-		rows = append(rows, labelStyle.Render(pad(field.label, 10))+inputView)
+		rows = append(rows, labelStyle.Render(widget.Pad(field.label, 10))+inputView)
 		if field.hint != "" {
-			rows = append(rows, faintStyle.Render(field.hint))
+			rows = append(rows, widget.FaintStyle.Render(field.hint))
 		}
 		rows = append(rows, "")
 	}
 	for _, line := range f.note {
-		rows = append(rows, faintStyle.Render(line))
+		rows = append(rows, widget.FaintStyle.Render(line))
 	}
 	if f.err != "" {
-		rows = append(rows, errorStyle.Render(f.err))
+		rows = append(rows, widget.ErrorStyle.Render(f.err))
 	}
 	rows = append(rows, "")
 	submit := f.submit
 	if submit == "" {
 		submit = "submit"
 	}
-	rows = append(rows, chip(kbdStyle, "enter")+" "+mutedStyle.Render(submit)+
-		"   "+chip(kbdStyle, "tab")+mutedStyle.Render(" next field")+
-		"   "+chip(kbdStyle, "esc")+mutedStyle.Render(" cancel"))
+	rows = append(rows, widget.Chip(widget.KbdStyle, "enter")+" "+widget.MutedStyle.Render(submit)+
+		"   "+widget.Chip(widget.KbdStyle, "tab")+widget.MutedStyle.Render(" next field")+
+		"   "+widget.Chip(widget.KbdStyle, "esc")+widget.MutedStyle.Render(" cancel"))
 	return f.kind, rows, want, false
 }
 

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Smoke driver for relevo OpenCode plugin (#393)
-# See docs/plans/2026-09-24-opencode-tui-b1-plugin.md §5.2
+# Smoke driver for relevo OpenCode plugin
 #
 # SC2329 (shellcheck >= 0.10) and SC2317 (older, e.g. CI's Ubuntu runner):
 # `cleanup` runs from `trap ... EXIT`, and each `check_assertion_*` helper is

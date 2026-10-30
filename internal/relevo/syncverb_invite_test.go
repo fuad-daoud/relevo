@@ -14,6 +14,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/sync/verb"
 )
 
 const inviteRemote = "libsql://fleet.invalid"
@@ -68,7 +69,7 @@ func TestInvitePrintsACodeCarryingTheRemoteAndTheToken(t *testing.T) {
 	l := inviteMachine(t)
 	readyInvite(t, l, true)
 
-	got, err := InviteCode(l)
+	got, err := verb.InviteCode(l)
 	if err != nil {
 		t.Fatalf("InviteCode: %v", err)
 	}
@@ -95,7 +96,7 @@ func TestInviteOnALockedMachineStillPrintsACodeAndSaysItIsLocked(t *testing.T) {
 	l := inviteMachine(t)
 	readyInvite(t, l, false)
 
-	got, err := InviteCode(l)
+	got, err := verb.InviteCode(l)
 	if err != nil {
 		t.Fatalf("a locked machine refused to print a code: %v", err)
 	}
@@ -121,7 +122,7 @@ func TestInviteSaysWhenThisMachineHoldsAnOldKey(t *testing.T) {
 		t.Fatalf("KVPut %s: %v", relevosync.SyncRemoteEpoch, err)
 	}
 
-	got, err := InviteCode(l)
+	got, err := verb.InviteCode(l)
 	if err != nil {
 		t.Fatalf("a stale machine refused to print a code: %v", err)
 	}
@@ -136,7 +137,7 @@ func TestInviteSaysWhenThisMachineHoldsAnOldKey(t *testing.T) {
 	if err := l.KVPut(relevosync.SyncRemoteEpoch, []byte("1")); err != nil {
 		t.Fatalf("KVPut %s: %v", relevosync.SyncRemoteEpoch, err)
 	}
-	if got, err := InviteCode(l); err != nil || got.Stale {
+	if got, err := verb.InviteCode(l); err != nil || got.Stale {
 		t.Fatalf("a current machine's invite = (stale %v, %v), want stale false", got.Stale, err)
 	}
 }
@@ -202,7 +203,7 @@ func TestInviteRefusesAMachineThatCannotHandOutACode(t *testing.T) {
 			t.Parallel()
 			l := inviteMachine(t)
 			tc.arrange(t, l)
-			got, err := InviteCode(l)
+			got, err := verb.InviteCode(l)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("InviteCode = (%+v, %v), want %v", got, err, tc.want)
 			}
@@ -223,7 +224,7 @@ func TestInvitesNoKeyRefusalNamesUnlockNew(t *testing.T) {
 	if err := l.KVDelete(relevosync.KeyRemoteKDF); err != nil {
 		t.Fatalf("KVDelete: %v", err)
 	}
-	_, err := InviteCode(l)
+	_, err := verb.InviteCode(l)
 	if !errors.Is(err, relevosync.ErrNoKDF) {
 		t.Fatalf("InviteCode = %v, want ErrNoKDF", err)
 	}

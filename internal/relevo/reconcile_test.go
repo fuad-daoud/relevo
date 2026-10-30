@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -588,7 +589,7 @@ func TestQueueReportRecordsRusage(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			next, err := queueReport(context.Background(), rt, tx, cur, entries, rt.Store.ReportPath(b.Name, b.Round), "done", "test", nil, nil, nil, nil, "", false, "", scopeVerdict{})
+			next, err := queueReport(context.Background(), rt, tx, cur, entries, rt.Store.ReportPath(b.Name, b.Round), "done", "test", nil, nil, nil, nil, "", false, "", pathscope.Verdict{})
 			if err != nil {
 				return err
 			}
@@ -976,7 +977,7 @@ func TestReconcileReportTailAndOrigin(t *testing.T) {
 				return err
 			}
 			legacy := fmt.Sprintf("Builder finished round %d. Report: relevo show webshop --round %d --report", cur.Round, cur.Round)
-			next, err := queueReport(context.Background(), rt, tx, cur, entries, reportPath, legacy, "", nil, nil, nil, nil, "", false, "", scopeVerdict{})
+			next, err := queueReport(context.Background(), rt, tx, cur, entries, reportPath, legacy, "", nil, nil, nil, nil, "", false, "", pathscope.Verdict{})
 			if err != nil {
 				return err
 			}

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/board"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
 )
@@ -191,7 +192,7 @@ func TestBoardReadsThemesThroughTheOwnerWhenTheFileIsHeld(t *testing.T) {
 
 	// The whole resolution rides the same handle: --theme night resolves the
 	// section's palette, not the seed's.
-	th, err := boardResolveTheme(repoDir, "night")
+	th, err := board.ResolveTheme(boardDeps(), repoDir, "night")
 	if err != nil || th.Name != "night" || th.Accent != "#8be9fd" {
 		t.Errorf("--theme night = %v, %v; want the stored palette the owner served", th, err)
 	}

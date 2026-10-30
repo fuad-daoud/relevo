@@ -1,4 +1,4 @@
-# relevo plan-executor role for codex (docs/specs/2026-09-19-codex-harness-design.md §5).
+# relevo plan-executor role for codex.
 # Installed by `relevo config agents --kind codex`; relevo selects it with
 # `codex -p plan-executor`. The `agents.researcher` table at the end is the
 # sub-agent role this builder spawns for read-only research; that role's

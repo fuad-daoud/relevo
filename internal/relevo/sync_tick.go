@@ -7,37 +7,14 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/store"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/sync/verb"
 )
-
-// countOpenRounds is how many bindings hold an open round: a prompt went out
-// for the binding's current round and no report came back. A remote binding
-// counts too, since its prompt and report sit in the local log. Each binding
-// costs one log read: the tick's reconcile reads the log inside its own lock
-// and hands nothing back, so there is no entry list to reuse here.
-func countOpenRounds(st *store.Store, bindings []store.Binding) int {
-	open := 0
-	for _, b := range bindings {
-		entries, err := st.ReadLog(b.Name)
-		if err != nil {
-			slog.Warn("rounds: read the log for the idle count", "binding", b.Name, "err", err)
-			continue
-		}
-		if store.RoundOpen(entries, b.Round) {
-			open++
-		}
-	}
-	return open
-}
 
 // noteRoundsOpen hands the runner the tick's open-round count. Counting costs
 // a log read per binding on every tick, so a machine whose sync is off, which
 // books no exports, skips it; a daemon with no sync seam reads as off.
 func (d *Daemon) noteRoundsOpen(bindings []store.Binding) {
-	runner := d.syncRunner()
-	if !runner.On() {
-		return
-	}
-	runner.NoteRoundsOpen(countOpenRounds(d.rt.Store, bindings))
+	verb.NoteRoundsOpen(d.syncRunner(), d.rt.Store, bindings)
 }
 
 // outboxTruncateInterval is how often the outbox is emptied on a machine whose
@@ -47,10 +24,10 @@ func (d *Daemon) noteRoundsOpen(bindings []store.Binding) {
 const outboxTruncateInterval = 5 * time.Minute
 
 // SyncNow queues an attempt without waiting out the export debounce. It is the
-// whole of what a gate write asks for: the gate is already stamped and signalled
-// by the time it is called, and a person who has just recorded a rate limit
-// wants the other machines to see it in seconds rather than a quarter of a
-// minute from now.
+// whole of what a gate write asks for: the gate is already stamped and
+// signalled by the time it is called, and a person who has just recorded a
+// rate limit wants the other machines to see it in seconds rather than a
+// quarter of a minute from now.
 //
 // It bypasses only the age check. Every other rule still applies -- sync off,
 // a breaker that is not due, and the slot itself -- so a burst of gate writes
@@ -60,7 +37,7 @@ func (d *Daemon) SyncNow(ctx context.Context) {
 	if d == nil {
 		return
 	}
-	d.queueSync(ctx)
+	verb.SyncNow(ctx, syncEngine{d})
 }
 
 // queueSync hands a sync to the background and returns at once. The seal that
@@ -90,19 +67,19 @@ func (d *Daemon) queueSync(ctx context.Context) {
 	// A backing-off or latched machine refuses the trigger before it takes the
 	// slot: the per-call gate would refuse every call anyway, and holding the
 	// slot for that would make a verb wait behind an attempt that does nothing.
-	if !breakerDue(runner) {
+	if !verb.BreakerDue(runner) {
 		return
 	}
 
 	now := d.syncClock()()
 	d.syncMu.Lock()
 	if d.syncInFlight {
-		d.live.dirty = true
+		d.live.Dirty = true
 		d.syncMu.Unlock()
 		return
 	}
 	d.syncInFlight = true
-	d.live.startedAt = now
+	d.live.StartedAt = now
 	d.syncMu.Unlock()
 
 	go d.syncSlot(ctx, runner, st)
@@ -124,8 +101,8 @@ func (d *Daemon) idleSync(ctx context.Context) {
 
 	now := d.syncClock()()
 	d.syncMu.Lock()
-	if d.live.onSince.IsZero() {
-		d.live.onSince = now
+	if d.live.OnSince.IsZero() {
+		d.live.OnSince = now
 	}
 	closed := !d.syncLast.IsZero() && now.Sub(d.syncLast) < d.pullWindowLocked(now)
 	if !closed {

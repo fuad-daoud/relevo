@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // serverEntryAt reads the entry a form's url, fingerprint, ca and insecure
@@ -62,7 +63,7 @@ func serverNameField(doc relevo.ConfigDoc, fields []formField) error {
 
 // newAddServerForm builds the a key's overlay: the new server's name, url and
 // trust fields.
-func newAddServerForm(env Env, doc relevo.ConfigDoc) formBox {
+func newAddServerForm(env widget.Env, doc relevo.ConfigDoc) formBox {
 	nameIn := newFormInput(true)
 	nameIn.Placeholder = "lowercase, e.g. zen"
 	fields := []formField{
@@ -78,7 +79,7 @@ func newAddServerForm(env Env, doc relevo.ConfigDoc) formBox {
 	return formBox{
 		kind:   "add server",
 		submit: "add",
-		header: []string{accentStyle.Bold(true).Render("Add a remote builder's server")},
+		header: []string{widget.AccentStyle.Bold(true).Render("Add a remote builder's server")},
 		note:   []string{"The client key stays with relevo config server key; this view never edits it."},
 		fields: fields,
 		onSubmit: func([]string) tea.Cmd {
@@ -86,7 +87,7 @@ func newAddServerForm(env Env, doc relevo.ConfigDoc) formBox {
 			if err != nil {
 				return notice(err.Error())
 			}
-			return runAction(env.Ctx, "add server", edit.Name, func(ctx context.Context) Result {
+			return runAction(env.Ctx, "add server", edit.Name, func(ctx context.Context) widget.Result {
 				return env.Actions.ApplyConfig(ctx, edit)
 			})
 		},
@@ -95,7 +96,7 @@ func newAddServerForm(env Env, doc relevo.ConfigDoc) formBox {
 
 // newEditServerForm builds the e key's overlay: the selected server's url and
 // trust fields. The name cannot change, so it is the header's, not a field.
-func newEditServerForm(env Env, doc relevo.ConfigDoc, r serverRow) formBox {
+func newEditServerForm(env widget.Env, doc relevo.ConfigDoc, r serverRow) formBox {
 	urlIn := newFormInput(true)
 	urlIn.SetValue(r.url)
 	urlIn.CursorEnd()
@@ -117,14 +118,14 @@ func newEditServerForm(env Env, doc relevo.ConfigDoc, r serverRow) formBox {
 	return formBox{
 		kind:   "edit server",
 		submit: "save",
-		header: []string{accentStyle.Bold(true).Render("Edit server " + r.name)},
+		header: []string{widget.AccentStyle.Bold(true).Render("Edit server " + r.name)},
 		fields: fields,
 		onSubmit: func([]string) tea.Cmd {
 			edit, err := relevo.EditServer(doc, r.name, serverEntryAt(fields, 0))
 			if err != nil {
 				return notice(err.Error())
 			}
-			return runAction(env.Ctx, "edit server", r.name, func(ctx context.Context) Result {
+			return runAction(env.Ctx, "edit server", r.name, func(ctx context.Context) widget.Result {
 				return env.Actions.ApplyConfig(ctx, edit)
 			})
 		},

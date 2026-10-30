@@ -10,8 +10,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/stats"
+	datastats "github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/stats"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/muesli/termenv"
 )
 
@@ -130,7 +132,7 @@ func TestLogFoldsReport(t *testing.T) {
 	if e.Word != "halted" {
 		t.Errorf("Word = %q, want halted", e.Word)
 	}
-	wantTokens := stats.ShortTokens(tokens) + " tokens"
+	wantTokens := datastats.ShortTokens(tokens) + " tokens"
 	wantDetail := fmt.Sprintf("at step 2 · 1 file +1 -0 · 0 commits · dirty · %s · 1m", wantTokens)
 	if e.Detail != wantDetail {
 		t.Errorf("Detail = %q, want %q", e.Detail, wantDetail)
@@ -213,7 +215,7 @@ func TestLogSwitchAndExit(t *testing.T) {
 		t.Errorf("entries[1] = %+v, want exited / without a report (code 0)", entries[1])
 	}
 
-	// Rate-limited switch reason is shortened by statsGateReason
+	// Rate-limited switch reason is shortened by GateReason
 	rateLimitSwitch := []db.EventLogRow{
 		{
 			TS:          now,
@@ -229,7 +231,7 @@ func TestLogSwitchAndExit(t *testing.T) {
 	if len(rlEntries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(rlEntries))
 	}
-	wantReason := statsGateReason("AGY_ERROR: Error 429: weekly limit reached")
+	wantReason := stats.GateReason("AGY_ERROR: Error 429: weekly limit reached")
 	wantDetail := fmt.Sprintf("to glm-5.3-flash (#6) · %s", wantReason)
 	if rlEntries[0].Detail != wantDetail {
 		t.Errorf("Detail = %q, want %q", rlEntries[0].Detail, wantDetail)
@@ -325,7 +327,7 @@ func TestLogGatesRevisionsActions(t *testing.T) {
 		},
 	}
 
-	actions := []actionEntry{
+	actions := []widget.ActionEntry{
 		{
 			At:   now.Add(-30 * time.Minute),
 			Verb: "gate",
@@ -371,7 +373,7 @@ func TestLogNewestFirst(t *testing.T) {
 	revs := []db.RevisionRow{
 		{Rev: 1, At: now.Add(-2 * time.Minute), Message: "init"},
 	}
-	actions := []actionEntry{
+	actions := []widget.ActionEntry{
 		{At: now.Add(-1 * time.Minute), Verb: "stop", Text: "stopped"},
 	}
 
@@ -409,7 +411,7 @@ func TestLogViewDayRulesAndMargins(t *testing.T) {
 		},
 	}
 
-	env := Env{Now: now, Width: 132, Height: 30}
+	env := widget.Env{Now: now, Width: 132, Height: 30}
 	body := v.Body(env, 132, 30)
 	lines := strings.Split(body, "\n")
 
@@ -417,7 +419,7 @@ func TestLogViewDayRulesAndMargins(t *testing.T) {
 		t.Fatalf("len(lines) = %d, want 30", len(lines))
 	}
 
-	band := strings.Split(selBandStyle.Render("·"), "·")[0]
+	band := strings.Split(widget.SelBandStyle.Render("·"), "·")[0]
 	bg := strings.TrimSuffix(strings.TrimPrefix(band, "\x1b["), "m")
 
 	var ruleFound bool
@@ -482,7 +484,7 @@ func TestLogViewFollow(t *testing.T) {
 			{TS: now.Add(-20 * time.Minute), Seq: 2, Kind: "exit", BindingName: "webshop"},
 		},
 	}
-	env := Env{Now: now, Width: 132, Height: 30}
+	env := widget.Env{Now: now, Width: 132, Height: 30}
 
 	// Down sets follow false
 	res, _ := v.Update(tea.KeyMsg{Type: tea.KeyDown}, env)
@@ -531,7 +533,7 @@ func TestLogViewEnterOpensRound(t *testing.T) {
 			},
 		},
 	}
-	env := Env{Now: now, Width: 132, Height: 30}
+	env := widget.Env{Now: now, Width: 132, Height: 30}
 
 	// Cursor 0 is the sent entry: enter returns non-nil command
 	v.cursor = 0
@@ -558,7 +560,7 @@ func TestLogViewFilter(t *testing.T) {
 			{TS: now.Add(-20 * time.Minute), Seq: 2, Kind: "exit", BindingName: "atlas"},
 		},
 	}
-	env := Env{Now: now, Width: 132, Height: 30}
+	env := widget.Env{Now: now, Width: 132, Height: 30}
 
 	// Type /
 	res, _ := v.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}}, env)
@@ -653,7 +655,7 @@ func TestLogViewBlankRowAboveHeader(t *testing.T) {
 			{TS: now.Add(-10 * time.Minute), Seq: 1, Kind: "exit", BindingName: "oc-496"},
 		},
 	}
-	env := Env{Now: now, Width: 132, Height: 30}
+	env := widget.Env{Now: now, Width: 132, Height: 30}
 	body := v.Body(env, 132, 30)
 	lines := strings.Split(body, "\n")
 	if len(lines) < 2 {
@@ -669,7 +671,7 @@ func TestLogViewBlankRowAboveHeader(t *testing.T) {
 
 func TestLogViewPageDown(t *testing.T) {
 	now := time.Date(2026, 9, 25, 19, 0, 0, 0, time.Local)
-	makeView := func(n int) (logView, Env) {
+	makeView := func(n int) (logView, widget.Env) {
 		var events []db.EventLogRow
 		for i := 0; i < n; i++ {
 			events = append(events, db.EventLogRow{
@@ -680,7 +682,7 @@ func TestLogViewPageDown(t *testing.T) {
 			})
 		}
 		v := logView{loaded: true, events: events}
-		env := Env{Now: now, Width: 132, Height: 34}
+		env := widget.Env{Now: now, Width: 132, Height: 34}
 		return v, env
 	}
 
@@ -688,7 +690,7 @@ func TestLogViewPageDown(t *testing.T) {
 	v, env := makeView(40)
 	res, _ := v.Update(tea.KeyMsg{Type: tea.KeyPgDown}, env)
 	v = res.(logView)
-	want1 := bodyHeight(env) - 3
+	want1 := widget.BodyHeight(env) - 3
 	if v.cursor != want1 {
 		t.Errorf("cursor after 1st pgdown = %d, want %d", v.cursor, want1)
 	}
@@ -718,7 +720,7 @@ func TestLogViewPageDown(t *testing.T) {
 // entry's Detail at the end of buildLogEntries.
 func TestLogViewDetailStripsControlBytes(t *testing.T) {
 	now := time.Date(2026, 9, 25, 18, 30, 0, 0, time.UTC)
-	actions := []actionEntry{{At: now, Verb: "stop", Text: "stopped \x1b[2J"}}
+	actions := []widget.ActionEntry{{At: now, Verb: "stop", Text: "stopped \x1b[2J"}}
 
 	entries := buildLogEntries(nil, availability.History{}, nil, actions, time.Time{}, nil, nil)
 	if len(entries) != 1 {

@@ -1,5 +1,7 @@
 package ui
 
+import "github.com/fuad-daoud/relevo/internal/ui/widget"
+
 // barCells is the round pane's one-cell scrollbar: one cell per viewport row,
 // the track on every row with the thumb over the visible fraction of the
 // content. It is pure geometry over the viewport's own numbers after view()
@@ -18,10 +20,10 @@ func barCells(total, height, offset int) []string {
 	cells := make([]string, height)
 	for i := range cells {
 		if i >= top && i < top+size {
-			cells[i] = mutedStyle.Render("█")
+			cells[i] = widget.MutedStyle.Render("█")
 			continue
 		}
-		cells[i] = borderStyle.Render("│")
+		cells[i] = widget.BorderStyle.Render("│")
 	}
 	return cells
 }

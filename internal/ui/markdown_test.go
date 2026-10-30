@@ -3,6 +3,8 @@ package ui
 import (
 	"strings"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 func TestRenderMarkdown(t *testing.T) {
@@ -84,7 +86,7 @@ func TestRenderMarkdown(t *testing.T) {
 
 	// Check one styled case contains the accent's escape
 	styled := renderMarkdown("`accented`")
-	if !strings.Contains(styled, accentStyle.Render("accented")) {
+	if !strings.Contains(styled, widget.AccentStyle.Render("accented")) {
 		t.Errorf("styled case does not contain accent escape: %q", styled)
 	}
 }

@@ -6,16 +6,17 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/muesli/termenv"
 )
 
 func TestComposeBoxKeepsBothSides(t *testing.T) {
 	width := 60
 	raw := "“quoted” 日本 text"
-	styled := accentStyle.Render(raw)
+	styled := widget.AccentStyle.Render(raw)
 	base := []string{
-		fit(styled, width),
-		fit("second line", width),
+		widget.Fit(styled, width),
+		widget.Fit("second line", width),
 	}
 	box := []string{"[MODAL]"}
 	boxW := lipgloss.Width(box[0])
@@ -72,11 +73,11 @@ func TestDimLinesStripsStyle(t *testing.T) {
 	defer lipgloss.SetColorProfile(orig)
 	lipgloss.SetColorProfile(termenv.TrueColor)
 
-	accented := accentStyle.Render("sample line")
+	accented := widget.AccentStyle.Render("sample line")
 	dimmed := dimLines([]string{accented})[0]
 
-	accentSeq := strings.Split(accentStyle.Render("·"), "·")[0]
-	shadeSeq := strings.Split(shadeStyle.Render("·"), "·")[0]
+	accentSeq := strings.Split(widget.AccentStyle.Render("·"), "·")[0]
+	shadeSeq := strings.Split(widget.ShadeStyle.Render("·"), "·")[0]
 
 	if strings.Contains(dimmed, accentSeq) {
 		t.Errorf("dimmed output contains accent escape %q:\n%q", accentSeq, dimmed)
@@ -97,7 +98,7 @@ func TestModalInteriorHasNoBackground(t *testing.T) {
 	// The escape the deleted panelStyle used to paint behind every row.
 	oldBG := strings.Split(lipgloss.NewStyle().Background(lipgloss.Color("#161a21")).Render("·"), "·")[0]
 
-	rows := []string{textStyle.Render("one"), accentStyle.Render("two"), ""}
+	rows := []string{widget.TextStyle.Render("one"), widget.AccentStyle.Render("two"), ""}
 	box := renderModal("modal", rows, 40, 120, false)
 	for i, r := range box {
 		if strings.Contains(r, oldBG) {
@@ -115,14 +116,14 @@ func TestModalRowBandCoversRow(t *testing.T) {
 	lipgloss.SetColorProfile(termenv.TrueColor)
 
 	const innerW = 30
-	out := modalRow(true, "atlas", "r4 · demo", "", innerW, accentStyle, dimStyle)
+	out := modalRow(true, "atlas", "r4 · demo", "", innerW, widget.AccentStyle, widget.MutedStyle)
 
 	plain := "▸ atlas  r4 · demo"
-	if got := ansi.Strip(out); got != fit(plain, innerW) {
-		t.Errorf("plain text = %q, want %q:\n%q", got, fit(plain, innerW), out)
+	if got := ansi.Strip(out); got != widget.Fit(plain, innerW) {
+		t.Errorf("plain text = %q, want %q:\n%q", got, widget.Fit(plain, innerW), out)
 	}
 
-	band := strings.Split(selBandStyle.Render("·"), "·")[0]
+	band := strings.Split(widget.SelBandStyle.Render("·"), "·")[0]
 	bg := strings.TrimSuffix(strings.TrimPrefix(band, "\x1b["), "m")
 	if !strings.HasPrefix(out, "\x1b[") {
 		t.Errorf("the band must start at the first cell, got %q", out)
@@ -152,13 +153,13 @@ func TestListBoxBandCoversRow(t *testing.T) {
 	lb := listBox{
 		kind: "retry on…",
 		items: []listItem{
-			{name: "deepseek-v4.1-flash", status: "ready", statusStyle: greenStyle},
+			{name: "deepseek-v4.1-flash", status: "ready", statusStyle: widget.GreenStyle},
 		},
 		sel: 0,
 	}
 	rows := lb.view(width)
 
-	band := strings.Split(selBandStyle.Render("·"), "·")[0]
+	band := strings.Split(widget.SelBandStyle.Render("·"), "·")[0]
 	bg := strings.TrimSuffix(strings.TrimPrefix(band, "\x1b["), "m")
 
 	var selected []string

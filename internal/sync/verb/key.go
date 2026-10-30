@@ -1,0 +1,63 @@
+package verb
+
+import (
+	"github.com/fuad-daoud/relevo/internal/db"
+	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/synclog"
+)
+
+// keyedExporter is an exporter that signs with the machine's stored key, read
+// now so an unlock takes effect on the next call.
+func keyedExporter(shared *db.DB, t synclog.LogTransport) (*synclog.Exporter, error) {
+	key, err := relevosync.SigningKey(shared.Local())
+	if err != nil {
+		return nil, err
+	}
+	e := synclog.NewExporter(shared, t)
+	e.SetKey(key)
+	relevosync.BindDocs(e, shared)
+	return e, nil
+}
+
+// keyedReconciler is a reconciler that signs with the machine's stored key, as
+// the steady export does, so a repair appends entries a peer verifies like any
+// other.
+func keyedReconciler(shared *db.DB, t synclog.LogTransport) (*synclog.Reconciler, error) {
+	key, err := relevosync.SigningKey(shared.Local())
+	if err != nil {
+		return nil, err
+	}
+	r := synclog.NewReconciler(shared, t)
+	r.SetKey(key)
+	relevosync.BindDocs(r, shared)
+	return r, nil
+}
+
+// keyedImporter is an importer that verifies with the machine's stored
+// keyring -- the whole chain, not only its newest key.
+func keyedImporter(shared *db.DB, t synclog.LogTransport) (*synclog.Importer, error) {
+	i := synclog.NewImporter(shared, t)
+	if err := relevosync.BindVerifier(i, shared.Local()); err != nil {
+		return nil, err
+	}
+	relevosync.BindDocs(i, shared)
+	return i, nil
+}
+
+// ExportOnce exports with the machine's stored key.
+func ExportOnce(shared *db.DB, t synclog.LogTransport) (synclog.ExportResult, error) {
+	e, err := keyedExporter(shared, t)
+	if err != nil {
+		return synclog.ExportResult{}, err
+	}
+	return e.Export()
+}
+
+// ImportOnce imports with the machine's stored key.
+func ImportOnce(shared *db.DB, t synclog.LogTransport) (synclog.ImportResult, error) {
+	i, err := keyedImporter(shared, t)
+	if err != nil {
+		return synclog.ImportResult{}, err
+	}
+	return i.Import()
+}

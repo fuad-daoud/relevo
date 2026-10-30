@@ -3,7 +3,7 @@ package main
 // The invite verb's CLI shape. Like the rest of this file's tests these parse
 // flags, read the usage text and walk the dispatch: nothing here opens a
 // database, dials an owner or reaches a network. The rule invite implements
-// against the rows is covered where it lives, in internal/relevo.
+// against the rows is covered where it lives, in internal/sync/verb.
 
 import (
 	"encoding/json"
@@ -14,8 +14,8 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/db/wire/client"
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/sync/verb"
 )
 
 // The usage text names invite and says what the code carries. A reader who
@@ -124,17 +124,17 @@ func TestInviteNoKDFIsNotADefectReport(t *testing.T) {
 // nobody reads.
 func TestInviteSaysWhenThisMachineIsLocked(t *testing.T) {
 	t.Parallel()
-	notes := dbSyncInviteNotes(relevo.Invite{Locked: true})
+	notes := dbSyncInviteNotes(verb.Invite{Locked: true})
 	if len(notes) != 1 || !strings.Contains(notes[0], "locked") {
 		t.Fatalf("a locked machine prints notes %q, want one line saying it is locked", notes)
 	}
-	if got := dbSyncInviteNotes(relevo.Invite{}); len(got) != 0 {
+	if got := dbSyncInviteNotes(verb.Invite{}); len(got) != 0 {
 		t.Errorf("an unlocked machine prints notes %q, want none", got)
 	}
 	// A stale machine adds the one line that names the act that unblocks it,
 	// whether or not it is also locked -- a locked machine holds no epoch, so
 	// the two are apart in practice, and the rule does not guess.
-	if got := dbSyncInviteNotes(relevo.Invite{Stale: true}); len(got) != 1 ||
+	if got := dbSyncInviteNotes(verb.Invite{Stale: true}); len(got) != 1 ||
 		!strings.Contains(got[0], "holds an old key") ||
 		!strings.Contains(got[0], "relevo db sync unlock") {
 		t.Errorf("a stale machine prints notes %q, want the one line naming the unlock", got)

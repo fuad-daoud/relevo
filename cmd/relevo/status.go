@@ -329,7 +329,7 @@ func runStatusline(asJSON bool, mastermindRef string) error {
 		// binding row.
 		fmt.Print(view.RenderMasterMindLine(rec.Name, columns))
 		if root, rerr := tmpdir.DefaultRoot(); rerr == nil {
-			fmt.Print(view.RenderBoardLine(boardBlockFor(root, sc.MasterMindID, boardProcStart), rec.Name, columns))
+			fmt.Print(view.RenderBoardLine(boardBlockFor(root, sc.MasterMindID, procStartUnix), rec.Name, columns))
 		}
 		if relevo.PushLive(rt, sc.MasterMindID) {
 			return nil
@@ -347,7 +347,7 @@ func runStatusline(asJSON bool, mastermindRef string) error {
 	doc.PushLive = relevo.PushLive(rt, sc.MasterMindID)
 	doc.MasterMind = &view.StatusLineMasterMind{ID: sc.MasterMindID, Name: rec.Name}
 	if root, rerr := tmpdir.DefaultRoot(); rerr == nil {
-		doc.Board = boardBlockFor(root, sc.MasterMindID, boardProcStart)
+		doc.Board = boardBlockFor(root, sc.MasterMindID, procStartUnix)
 	}
 	if rep, err := relevo.MasterMindStatus(context.Background(), rt, sc.MasterMindID); err == nil {
 		doc.Rows = view.StatusLineRows(rep, rt.Now())

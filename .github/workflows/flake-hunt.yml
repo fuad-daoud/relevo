@@ -2,8 +2,8 @@ name: flake-hunt
 
 # Runs the tests that have failed on main without a code cause, many times
 # over, so a timing flake turns up here overnight instead of on a merge. Its
-# own workflow for the same reason as govulncheck.yml: ci.yml's `changes` gate
-# answers code=true on every non-PR event. Nothing here is a required check.
+# own workflow so a schedule does not run the whole suite. Nothing here is a
+# required check.
 #
 # A test that fails here and not in ci.yml is a flake: fix the test, do not
 # rerun it green. A new flake seen on main joins the suites below.

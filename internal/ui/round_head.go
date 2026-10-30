@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -26,7 +27,7 @@ func (p roundPane) tokensLine(b *view.BindingStatus) string {
 // spaces as the body's first line is.
 func (p roundPane) tokensParts(b *view.BindingStatus) (string, string) {
 	if b == nil || !p.detail.live {
-		left := "   " + faintStyle.Render("no live facts for a released binding")
+		left := "   " + widget.FaintStyle.Render("no live facts for a released binding")
 		return left, ""
 	}
 
@@ -73,11 +74,11 @@ func (p roundPane) tokensParts(b *view.BindingStatus) (string, string) {
 		body += " · spend " + s
 	}
 
-	left := "   " + faintStyle.Render(body)
+	left := "   " + widget.FaintStyle.Render(body)
 
 	var right string
 	if b.Headless != nil && b.Headless.PID != 0 {
-		right = faintStyle.Render(fmt.Sprintf("pid %d since %s", b.Headless.PID, b.Headless.StartedAt.Local().Format("15:04"))) + "  "
+		right = widget.FaintStyle.Render(fmt.Sprintf("pid %d since %s", b.Headless.PID, b.Headless.StartedAt.Local().Format("15:04"))) + "  "
 	}
 
 	return left, right
@@ -90,15 +91,15 @@ func (p roundPane) tabsRow() string {
 	words := make([]string, len(tabs))
 	for i, t := range tabs {
 		if t == p.detail.active {
-			words[i] = chip(chipAccentStyle, p.tabLabel(t))
+			words[i] = widget.Chip(widget.ChipAccentStyle, p.tabLabel(t))
 		} else {
-			words[i] = mutedStyle.Render(chip(normalStyle, p.tabLabel(t)))
+			words[i] = widget.MutedStyle.Render(widget.Chip(widget.NormalStyle, p.tabLabel(t)))
 		}
 	}
 	left := "  " + strings.Join(words, "   ")
 
 	rightText := fmt.Sprintf("  r%d of %d  ", p.detail.round, p.detail.rounds)
-	right := faintStyle.Render("round  ") + chip(kbdStyle, "[") + textStyle.Bold(true).Render(rightText) + chip(kbdStyle, "]") + "  "
+	right := widget.FaintStyle.Render("round  ") + widget.Chip(widget.KbdStyle, "[") + widget.TextStyle.Bold(true).Render(rightText) + widget.Chip(widget.KbdStyle, "]") + "  "
 
 	return spread(left, right, p.width)
 }
@@ -119,13 +120,13 @@ func (p roundPane) moveArtifact(delta int) (roundPane, tea.Cmd) {
 }
 
 // openCmd is enter on an artifacts row: the selected file in the pager, the
-// browser or the editor, through the Actions seam, so no test ever runs one.
+// browser or the editor, through the widget.Actions seam, so no test ever runs one.
 // A file still on disk opens where it is; a sealed file -- one the seal pass
 // moved into round_file -- is first written to a temp file under os.TempDir()
 // whose name starts with its own, and that is what opens. An .excalidraw scene
 // with a companion .svg opens that svg instead, through the same decision the
 // OPENS IN cell reads.
-func (p roundPane) openCmd(env Env) tea.Cmd {
+func (p roundPane) openCmd(env widget.Env) tea.Cmd {
 	c := p.detail.cache[tabArtifacts]
 	if !c.loaded || c.artifactRel == "" || env.Actions == nil {
 		return nil
@@ -168,7 +169,7 @@ func (p roundPane) openCmd(env Env) tea.Cmd {
 		// The browser is started detached, without waiting.
 		return func() tea.Msg {
 			if serr := cmd.Start(); serr != nil {
-				return noticeMsg{text: serr.Error()}
+				return widget.NoticeMsg{Text: serr.Error()}
 			}
 			if cmd.Process != nil {
 				cmd.Process.Release()
@@ -178,7 +179,7 @@ func (p roundPane) openCmd(env Env) tea.Cmd {
 	}
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		if err != nil {
-			return noticeMsg{text: err.Error()}
+			return widget.NoticeMsg{Text: err.Error()}
 		}
 		return nil
 	})

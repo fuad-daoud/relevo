@@ -10,22 +10,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
-
-// fit pads or truncates s to width cells. Truncation is by cell, no
-// ellipsis: at a narrow width an ellipsis costs more than it says.
-func fit(s string, width int) string {
-	w := lipgloss.Width(s)
-	if w == width {
-		return s
-	}
-	if w < width {
-		return s + strings.Repeat(" ", width-w)
-	}
-	return lipgloss.NewStyle().MaxWidth(width).Render(s)
-}
 
 // ago is a coarse age: minutes under an hour, hours under a day, then days.
 // "" for a zero time, so a caller can omit the fact.
@@ -129,7 +117,7 @@ type fleetView struct {
 	sticky    string // the selected row's Key(), so the selection survives reordering
 	top       int    // first visible line index
 	attention bool   // sort order: attention (SortRows true) or name; from the sort pref
-	actions   bool   // Actions != nil at construction: the action keys are shown (r1)
+	actions   bool   // widget.Actions != nil at construction: the action keys are shown (r1)
 	showDone  bool   // '.' toggles done section expansion (§2.3)
 
 	filtering  bool            // the '/' filter input is open and owns every key (A4)
@@ -179,7 +167,7 @@ func firstRow(rows []view.BindingStatus) *view.BindingStatus {
 	return &rows[0]
 }
 
-// withActions marks whether the shell has an Actions seam, so Keys() shows
+// withActions marks whether the shell has an widget.Actions seam, so Keys() shows
 // the action keys exactly when one exists (r1).
 func (f fleetView) withActions(a bool) fleetView {
 	f.actions = a
@@ -197,7 +185,7 @@ func newFilterInput() textinput.Model {
 // rows returns visible rows in GROUP order with fold and filter applied (§4, §5.1).
 // The set is computed once per cycle and shared: every reader in a frame --
 // Update, the window, the card, the list -- reads the memo.
-func (f fleetView) rows(env Env) []view.BindingStatus {
+func (f fleetView) rows(env widget.Env) []view.BindingStatus {
 	if f.memo == nil {
 		return fleetRows(env.Report.Bindings, f.attention, f.activeFilter(), f.showDone)
 	}
@@ -285,45 +273,45 @@ func (f fleetView) Crumbs() []string { return []string{"fleet"} }
 func (f fleetView) Capturing() bool { return f.filtering }
 
 // Keys returns the footer's action or standard keys (§2.3).
-func (f fleetView) Keys() []KeyHelp {
+func (f fleetView) Keys() []widget.KeyHelp {
 	if f.actions {
-		return []KeyHelp{
-			{"enter", "open"},
-			{"s", "send"},
-			{"x", "stop"},
-			{"D", "done"},
-			{"g", "gate"},
-			{"/", "filter"},
+		return []widget.KeyHelp{
+			{Key: "enter", Help: "open"},
+			{Key: "s", Help: "send"},
+			{Key: "x", Help: "stop"},
+			{Key: "D", Help: "done"},
+			{Key: "g", Help: "gate"},
+			{Key: "/", Help: "filter"},
 		}
 	}
-	return []KeyHelp{
-		{"enter", "open"},
-		{"/", "filter"},
-		{"a", "sort"},
+	return []widget.KeyHelp{
+		{Key: "enter", Help: "open"},
+		{Key: "/", Help: "filter"},
+		{Key: "a", Help: "sort"},
 	}
 }
 
-// HelpKeys implements helpKeyer, listing all fleet keys for the '?' overlay (§2.3).
-func (f fleetView) HelpKeys() []KeyHelp {
-	keys := []KeyHelp{
-		{"↑↓", "move"},
-		{"home/end", "first/last"},
-		{"enter", "open"},
-		{"a", "sort"},
-		{".", "done rows"},
-		{"/", "filter"},
+// HelpKeys implements widget.HelpKeyer, listing all fleet keys for the '?' overlay (§2.3).
+func (f fleetView) HelpKeys() []widget.KeyHelp {
+	keys := []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "home/end", Help: "first/last"},
+		{Key: "enter", Help: "open"},
+		{Key: "a", Help: "sort"},
+		{Key: ".", Help: "done rows"},
+		{Key: "/", Help: "filter"},
 	}
 	if f.actions {
 		keys = append(keys,
-			KeyHelp{"s", "send"},
-			KeyHelp{"E", "edit+send"},
-			KeyHelp{"b", "bind"},
-			KeyHelp{"x", "stop"},
-			KeyHelp{"D", "done"},
-			KeyHelp{"u", "unbind"},
-			KeyHelp{"g", "gate"},
-			KeyHelp{"r", "retry on…"},
-			KeyHelp{"o", "shell"},
+			widget.KeyHelp{Key: "s", Help: "send"},
+			widget.KeyHelp{Key: "E", Help: "edit+send"},
+			widget.KeyHelp{Key: "b", Help: "bind"},
+			widget.KeyHelp{Key: "x", Help: "stop"},
+			widget.KeyHelp{Key: "D", Help: "done"},
+			widget.KeyHelp{Key: "u", Help: "unbind"},
+			widget.KeyHelp{Key: "g", Help: "gate"},
+			widget.KeyHelp{Key: "r", Help: "retry on…"},
+			widget.KeyHelp{Key: "o", Help: "shell"},
 		)
 	}
 	return keys
@@ -331,7 +319,7 @@ func (f fleetView) HelpKeys() []KeyHelp {
 
 // Context is the counts line on the left and the sort, filter and refresh
 // state on the right (§2.3).
-func (f fleetView) Context(env Env) (string, string) {
+func (f fleetView) Context(env widget.Env) (string, string) {
 	liveCount, needCount, workingCount, idleCount, heldCount, doneCount := 0, 0, 0, 0, 0, 0
 	for _, b := range env.Report.Bindings {
 		if b.Display == "DONE" {
@@ -352,7 +340,7 @@ func (f fleetView) Context(env Env) (string, string) {
 	}
 
 	item := func(count int, label string) string {
-		return textStyle.Bold(true).Render(fmt.Sprintf("%d", count)) + " " + mutedStyle.Render(label)
+		return widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", count)) + " " + widget.MutedStyle.Render(label)
 	}
 
 	var parts []string
@@ -388,7 +376,7 @@ func (f fleetView) Context(env Env) (string, string) {
 		right = fmt.Sprintf("filter %q · ", q) + right
 	}
 	if !env.StatusAt.IsZero() {
-		right += faintStyle.Render(" · refreshed " + ago(env.StatusAt, env.Now) + " ago")
+		right += widget.FaintStyle.Render(" · refreshed " + ago(env.StatusAt, env.Now) + " ago")
 	}
 	return left, right
 }
@@ -434,7 +422,7 @@ func (f *fleetView) moveCursor(rows []view.BindingStatus, delta int) {
 }
 
 // Update handles the fleet's own keys (§2.3, §5.3, §5.4).
-func (f fleetView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (f fleetView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case statusMsg:
 		rows := f.rows(env)
@@ -487,7 +475,7 @@ func (f fleetView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 			if !f.attention {
 				order = "name"
 			}
-			return f, func() tea.Msg { return prefMsg{"sort", order} }
+			return f, func() tea.Msg { return widget.PrefMsg{Key: "sort", Value: order} }
 		case "enter":
 			if len(rows) == 0 {
 				return f, nil
@@ -506,7 +494,7 @@ func (f fleetView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 }
 
 // updateFilter owns every key while the filter input is open (A4).
-func (f fleetView) updateFilter(msg tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (f fleetView) updateFilter(msg tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
 		f.filterText = f.filter.Value()
@@ -526,7 +514,7 @@ func (f fleetView) updateFilter(msg tea.KeyMsg, env Env) (View, tea.Cmd) {
 }
 
 // repointed re-resolves the cursor and the window after the rows or filter changed.
-func (f fleetView) repointed(env Env) fleetView {
+func (f fleetView) repointed(env widget.Env) fleetView {
 	rows := f.rows(env)
 	f.resolveSticky(rows)
 	f.top = f.windowTop(rows, env)
@@ -626,17 +614,6 @@ func repoCell(b view.BindingStatus) string {
 	return s
 }
 
-// pad pads s to width cells, truncating with an ellipsis past it.
-func pad(s string, width int) string {
-	if w := lipgloss.Width(s); w < width {
-		return s + strings.Repeat(" ", width-w)
-	}
-	if lipgloss.Width(s) == width {
-		return s
-	}
-	return clipName(s, width)
-}
-
 // fleetRowPlan computes which optional columns fit at width (§2.3 narrow rule).
 func fleetRowPlan(width int) (candidate, spend, mastermind bool) {
 	if width >= 94 {
@@ -655,62 +632,62 @@ func fleetRowPlan(width int) (candidate, spend, mastermind bool) {
 func fleetRowLine(b view.BindingStatus, g fleetGroup, selected bool, now time.Time, width int) string {
 	gutter := "   "
 	if selected {
-		gutter = " " + accentStyle.Render("▍") + " "
+		gutter = " " + widget.AccentStyle.Render("▍") + " "
 	}
 	meta := groupMetas[g]
 	dot := meta.dot.Render(meta.glyph)
 
-	nameText := pad(clipName(b.Key(), 20), 20)
-	nameStyled := textStyle.Render(nameText)
+	nameText := widget.Pad(clipName(b.Key(), 20), 20)
+	nameStyled := widget.TextStyle.Render(nameText)
 	if selected {
-		nameStyled = textStyle.Bold(true).Render(nameText)
+		nameStyled = widget.TextStyle.Bold(true).Render(nameText)
 	}
 
 	nowVal := rowNow(b, now)
-	nowText := pad(clipName(nowVal, 24), 24)
+	nowText := widget.Pad(clipName(nowVal, 24), 24)
 	var nowStyled string
 	switch {
 	case strings.HasPrefix(b.BuilderStatus, "exited") || strings.HasPrefix(b.BuilderStatus, "stalled"):
-		nowStyled = redStyle.Render(nowText)
+		nowStyled = widget.RedStyle.Render(nowText)
 	case b.Unread && g == groupIdle:
-		nowStyled = accentStyle.Render(nowText)
+		nowStyled = widget.AccentStyle.Render(nowText)
 	case selected:
-		nowStyled = textStyle.Render(nowText)
+		nowStyled = widget.TextStyle.Render(nowText)
 	default:
-		nowStyled = mutedStyle.Render(nowText)
+		nowStyled = widget.MutedStyle.Render(nowText)
 	}
 
 	line := gutter + dot + "  " + nameStyled + nowStyled
 
 	cand, spend, plan := fleetRowPlan(width)
 	if cand {
-		candText := pad(clipName(candidateText(b), 24), 24)
-		line += mutedStyle.Render(candText)
+		candText := widget.Pad(clipName(candidateText(b), 24), 24)
+		line += widget.MutedStyle.Render(candText)
 	}
 	if plan {
-		planText := pad(clipName(mastermindCell(b), 14), 14)
-		line += faintStyle.Render(planText)
+		planText := widget.Pad(clipName(mastermindCell(b), 14), 14)
+		line += widget.FaintStyle.Render(planText)
 	}
 	if spend {
 		s := spendCell(b)
 		if len([]rune(s)) < 6 {
 			s = strings.Repeat(" ", 6-len([]rune(s))) + s
 		}
-		line += faintStyle.Render(s)
+		line += widget.FaintStyle.Render(s)
 	}
 	if b.Role != "" {
-		line += "  " + faintStyle.Render(b.Role)
+		line += "  " + widget.FaintStyle.Render(b.Role)
 	}
 
 	if selected {
-		return selBandStyle.Render(fit(line, width))
+		return widget.SelBandStyle.Render(widget.Fit(line, width))
 	}
-	return fit(line, width)
+	return widget.Fit(line, width)
 }
 
 // doneFoldLine renders the single summary line replacing folded DONE rows (§2.3).
 func doneFoldLine(rows []view.BindingStatus, now time.Time, width int) string {
-	line := "   " + faintStyle.Render("✓") + "  " + mutedStyle.Render(fmt.Sprintf("%d done", len(rows)))
+	line := "   " + widget.FaintStyle.Render("✓") + "  " + widget.MutedStyle.Render(fmt.Sprintf("%d done", len(rows)))
 
 	todayCount := 0
 	var newestRow *view.BindingStatus
@@ -732,15 +709,15 @@ func doneFoldLine(rows []view.BindingStatus, now time.Time, width int) string {
 	}
 
 	if newestRow != nil {
-		line += faintStyle.Render(fmt.Sprintf("  ·  %d today  ·  last %s %s ago", todayCount, newestRow.Key(), ago(newestTS, now)))
+		line += widget.FaintStyle.Render(fmt.Sprintf("  ·  %d today  ·  last %s %s ago", todayCount, newestRow.Key(), ago(newestTS, now)))
 	}
 
-	line += "      " + chip(kbdStyle, ".") + faintStyle.Render(" show")
-	return fit(line, width)
+	line += "      " + widget.Chip(widget.KbdStyle, ".") + widget.FaintStyle.Render(" show")
+	return widget.Fit(line, width)
 }
 
 // cardLines renders the 5-line detail card at the top of the body (§2.3).
-func (f fleetView) cardLines(env Env, b view.BindingStatus, width int) []string {
+func (f fleetView) cardLines(env widget.Env, b view.BindingStatus, width int) []string {
 	g := groupOf(b)
 
 	// Top line
@@ -753,73 +730,73 @@ func (f fleetView) cardLines(env Env, b view.BindingStatus, width int) []string 
 	if sr == 0 {
 		roundPart = rn
 	}
-	title := accentStyle.Bold(true).Render(b.Key()) + "  " + faintStyle.Render(roundPart)
+	title := widget.AccentStyle.Bold(true).Render(b.Key()) + "  " + widget.FaintStyle.Render(roundPart)
 
 	// Meta line
 	var metaParts []string
 	mastermindName := mastermindCell(b)
 	if g == groupNeedsYou {
-		metaParts = append(metaParts, mutedStyle.Render("MasterMind ")+warnStyle.Render(mastermindName))
+		metaParts = append(metaParts, widget.MutedStyle.Render("MasterMind ")+widget.WarnStyle.Render(mastermindName))
 	} else {
-		metaParts = append(metaParts, mutedStyle.Render("MasterMind "+mastermindName))
+		metaParts = append(metaParts, widget.MutedStyle.Render("MasterMind "+mastermindName))
 	}
-	metaParts = append(metaParts, mutedStyle.Render(candidateText(b)))
+	metaParts = append(metaParts, widget.MutedStyle.Render(candidateText(b)))
 	branch := b.Branch
 	if branch == "" {
 		branch = repoCell(b)
 	}
 	if branch != "" {
-		metaParts = append(metaParts, mutedStyle.Render(branch))
+		metaParts = append(metaParts, widget.MutedStyle.Render(branch))
 	}
 	if b.LastClose != nil && b.LastClose.Commits > 0 {
 		commitWord := "commits"
 		if b.LastClose.Commits == 1 {
 			commitWord = "commit"
 		}
-		metaParts = append(metaParts, mutedStyle.Render(fmt.Sprintf("+%d %s", b.LastClose.Commits, commitWord)))
+		metaParts = append(metaParts, widget.MutedStyle.Render(fmt.Sprintf("+%d %s", b.LastClose.Commits, commitWord)))
 	}
 	if s := spendCell(b); s != "" {
-		metaParts = append(metaParts, mutedStyle.Render(s))
+		metaParts = append(metaParts, widget.MutedStyle.Render(s))
 	}
-	metaContent := "  " + strings.Join(metaParts, mutedStyle.Render("  ·  "))
+	metaContent := "  " + strings.Join(metaParts, widget.MutedStyle.Render("  ·  "))
 
 	// Keys line
-	var cardKeys []KeyHelp
+	var cardKeys []widget.KeyHelp
 	if env.Actions == nil {
-		cardKeys = []KeyHelp{{"enter", "open round"}}
+		cardKeys = []widget.KeyHelp{{Key: "enter", Help: "open round"}}
 	} else {
 		switch g {
 		case groupNeedsYou:
-			cardKeys = []KeyHelp{
-				{"enter", "open round"},
-				{"s", "send the next plan"},
-				{"o", "shell"},
-				{"x", "stop"},
+			cardKeys = []widget.KeyHelp{
+				{Key: "enter", Help: "open round"},
+				{Key: "s", Help: "send the next plan"},
+				{Key: "o", Help: "shell"},
+				{Key: "x", Help: "stop"},
 			}
 		case groupWorking:
-			cardKeys = []KeyHelp{
-				{"enter", "open round"},
-				{"x", "stop"},
-				{"g", "gate"},
-				{"o", "shell"},
+			cardKeys = []widget.KeyHelp{
+				{Key: "enter", Help: "open round"},
+				{Key: "x", Help: "stop"},
+				{Key: "g", Help: "gate"},
+				{Key: "o", Help: "shell"},
 			}
 		case groupIdle:
-			cardKeys = []KeyHelp{
-				{"s", "send the next plan"},
-				{"enter", "open round"},
-				{"D", "done"},
-				{"o", "shell"},
+			cardKeys = []widget.KeyHelp{
+				{Key: "s", Help: "send the next plan"},
+				{Key: "enter", Help: "open round"},
+				{Key: "D", Help: "done"},
+				{Key: "o", Help: "shell"},
 			}
 		case groupHeld, groupOther:
-			cardKeys = []KeyHelp{
-				{"enter", "open round"},
-				{"s", "send"},
-				{"D", "done"},
+			cardKeys = []widget.KeyHelp{
+				{Key: "enter", Help: "open round"},
+				{Key: "s", Help: "send"},
+				{Key: "D", Help: "done"},
 			}
 		case groupDone:
-			cardKeys = []KeyHelp{
-				{"enter", "open round"},
-				{"u", "unbind"},
+			cardKeys = []widget.KeyHelp{
+				{Key: "enter", Help: "open round"},
+				{Key: "u", Help: "unbind"},
 			}
 		}
 	}
@@ -829,7 +806,7 @@ func (f fleetView) cardLines(env Env, b view.BindingStatus, width int) []string 
 }
 
 // gatedLine renders the provider gate notice as the last line of the body (§2.3).
-func gatedLine(env Env, width int) string {
+func gatedLine(env widget.Env, width int) string {
 	if len(env.Report.Gated) == 0 {
 		return ""
 	}
@@ -859,10 +836,10 @@ func gatedLine(env Env, width int) string {
 		entries = append(entries, fmt.Sprintf("%s %s", p, left))
 	}
 
-	line := "   " + redStyle.Render("◌") + faintStyle.Render(" gated  ") +
-		strings.Join(entries, faintStyle.Render("  ·  ")) +
-		faintStyle.Render("  ·  the pick skips them")
-	return fit(clipName(line, width), width)
+	line := "   " + widget.RedStyle.Render("◌") + widget.FaintStyle.Render(" gated  ") +
+		strings.Join(entries, widget.FaintStyle.Render("  ·  ")) +
+		widget.FaintStyle.Render("  ·  the pick skips them")
+	return widget.Fit(clipName(line, width), width)
 }
 
 // fleetLine is one drawn body line and the row it belongs to.
@@ -898,7 +875,7 @@ type fleetSlot struct {
 // fleetListSlots lays out the grouped sections and fold line (§2.3, §5.2)
 // without painting any of them: one slot per drawn line, carrying the row it
 // belongs to.
-func (f fleetView) fleetListSlots(env Env, rows []view.BindingStatus) []fleetSlot {
+func (f fleetView) fleetListSlots(env widget.Env, rows []view.BindingStatus) []fleetSlot {
 	q := f.activeFilter()
 	groups := []fleetGroup{groupNeedsYou, groupWorking, groupIdle, groupHeld, groupOther}
 	if f.showDone || q != "" {
@@ -936,10 +913,10 @@ func (f fleetView) fleetListSlots(env Env, rows []view.BindingStatus) []fleetSlo
 }
 
 // paintSlot renders one list line at width.
-func (f fleetView) paintSlot(s fleetSlot, rows []view.BindingStatus, env Env, width int) string {
+func (f fleetView) paintSlot(s fleetSlot, rows []view.BindingStatus, env widget.Env, width int) string {
 	switch s.kind {
 	case slotSection:
-		return fit(sectionLine(s.group, s.count), width)
+		return widget.Fit(sectionLine(s.group, s.count), width)
 	case slotRow:
 		return fleetRowLine(rows[s.row], s.group, s.row == f.cursor, env.Now, width)
 	case slotQuote:
@@ -947,7 +924,7 @@ func (f fleetView) paintSlot(s fleetSlot, rows []view.BindingStatus, env Env, wi
 	case slotFold:
 		return doneFoldLine(doneRows(env.Report.Bindings), env.Now, width)
 	}
-	return fit("", width)
+	return widget.Fit("", width)
 }
 
 // sectionLine is a section's header: its pill, how many rows it holds, and the
@@ -958,9 +935,9 @@ func sectionLine(g fleetGroup, count int) string {
 	if g == groupDone {
 		hint = ". hide"
 	}
-	sec := "    " + chip(meta.pill, meta.label) + "  " + faintStyle.Render(fmt.Sprintf("%d", count))
+	sec := "    " + widget.Chip(meta.pill, meta.label) + "  " + widget.FaintStyle.Render(fmt.Sprintf("%d", count))
 	if hint != "" {
-		sec += "    " + faintStyle.Italic(true).Render(hint)
+		sec += "    " + widget.FaintStyle.Italic(true).Render(hint)
 	}
 	return sec
 }
@@ -968,11 +945,11 @@ func sectionLine(g fleetGroup, count int) string {
 // quoteLine is the second line under a NEEDS YOU row, carrying the builder's
 // question; on the cursor's row it wears the selection band.
 func quoteLine(quote string, selected bool, width int) string {
-	line := "        " + faintStyle.Render("╰ ") + mutedStyle.Italic(true).Render(quote)
+	line := "        " + widget.FaintStyle.Render("╰ ") + widget.MutedStyle.Italic(true).Render(quote)
 	if selected {
-		return selBandStyle.Render(fit(line, width))
+		return widget.SelBandStyle.Render(widget.Fit(line, width))
 	}
-	return fit(line, width)
+	return widget.Fit(line, width)
 }
 
 // doneRows is a report's DONE rows, for the fold line's summary.
@@ -999,7 +976,7 @@ func anyDone(bindings []view.BindingStatus) bool {
 
 // fleetListLines renders every line of the grouped sections and fold line
 // (§2.3, §5.2). A frame paints one window of them; this is the whole list.
-func (f fleetView) fleetListLines(env Env, width int) []fleetLine {
+func (f fleetView) fleetListLines(env widget.Env, width int) []fleetLine {
 	rows := f.rows(env)
 	slots := f.fleetListSlots(env, rows)
 	list := make([]fleetLine, 0, len(slots))
@@ -1011,26 +988,26 @@ func (f fleetView) fleetListLines(env Env, width int) []fleetLine {
 
 // cardBlock returns the card's 5 lines plus one trailing blank line, or nil
 // when there is no selected row or height < 16 (§2, §3).
-func (f fleetView) cardBlock(env Env, width, height int) []string {
+func (f fleetView) cardBlock(env widget.Env, width, height int) []string {
 	rows := f.rows(env)
 	if len(rows) == 0 || height < 16 {
 		return nil
 	}
 	sel := rows[clampCursor(f.cursor, len(rows))]
 	card := f.cardLines(env, sel, width)
-	return append(card, fit("", width))
+	return append(card, widget.Fit("", width))
 }
 
 // gatedBlock returns the gated line in a single-element slice, or nil when empty (§2, §3).
-func gatedBlock(env Env, width int) []string {
+func gatedBlock(env widget.Env, width int) []string {
 	if gl := gatedLine(env, width); gl != "" {
 		return []string{gl}
 	}
 	return nil
 }
 
-func (f fleetView) tableHeight(env Env) int {
-	bh := bodyHeight(env)
+func (f fleetView) tableHeight(env widget.Env) int {
+	bh := widget.BodyHeight(env)
 	fixedH := 1
 	if f.filtering {
 		fixedH++
@@ -1088,7 +1065,7 @@ func windowTopIndex(n, height, cursor, top int, rowOf func(int) int) int {
 	return top
 }
 
-func (f fleetView) windowTop(rows []view.BindingStatus, env Env) int {
+func (f fleetView) windowTop(rows []view.BindingStatus, env widget.Env) int {
 	slots := f.fleetListSlots(env, rows)
 	return f.windowTopSlots(slots, f.tableHeight(env))
 }
@@ -1096,7 +1073,7 @@ func (f fleetView) windowTop(rows []view.BindingStatus, env Env) int {
 // fleetWindowLines renders only the lines of the list a frame of listH lines
 // paints, padded out to listH. The window is chosen on the layout, so a line
 // that falls outside it is never rendered.
-func (f fleetView) fleetWindowLines(env Env, width, listH int) []string {
+func (f fleetView) fleetWindowLines(env widget.Env, width, listH int) []string {
 	rows := f.rows(env)
 	slots := f.fleetListSlots(env, rows)
 	start := f.windowTopSlots(slots, listH)
@@ -1112,24 +1089,24 @@ func (f fleetView) fleetWindowLines(env Env, width, listH int) []string {
 		}
 	}
 	for len(window) < listH {
-		window = append(window, fit("", width))
+		window = append(window, widget.Fit("", width))
 	}
 	return window
 }
 
 // Body renders the card, grouped list, done fold and gated line (§2.3, §5.2).
-func (f fleetView) Body(env Env, width, height int) string {
+func (f fleetView) Body(env widget.Env, width, height int) string {
 	if !env.Loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	if len(env.Report.Bindings) == 0 {
 		return strings.Join(emptyPaneBlock(width, height), "\n")
 	}
 
 	var fixed []string
-	fixed = append(fixed, fit("", width))
+	fixed = append(fixed, widget.Fit("", width))
 	if f.filtering {
-		fixed = append(fixed, fit(f.filter.View(), width))
+		fixed = append(fixed, widget.Fit(f.filter.View(), width))
 	}
 
 	card := f.cardBlock(env, width, height)
@@ -1148,35 +1125,5 @@ func (f fleetView) Body(env Env, width, height int) string {
 	out = append(out, window...)
 	out = append(out, gated...)
 
-	return strings.Join(fitLines(out, width, height), "\n")
-}
-
-// blockLines renders raw prose lines fitted to width and padded to height.
-func blockLines(raw []string, width, height int) []string {
-	out := make([]string, 0, height)
-	for _, l := range raw {
-		out = append(out, fit(emptyStyle.Render(l), width))
-	}
-	for len(out) < height {
-		out = append(out, fit("", width))
-	}
-	if len(out) > height {
-		out = out[:height]
-	}
-	return out
-}
-
-// fitLines pads lines to height, truncates the overflow and fits each to width.
-func fitLines(lines []string, width, height int) []string {
-	out := make([]string, 0, height)
-	for _, l := range lines {
-		out = append(out, fit(l, width))
-	}
-	for len(out) < height {
-		out = append(out, fit("", width))
-	}
-	if len(out) > height {
-		out = out[:height]
-	}
-	return out
+	return strings.Join(widget.FitLines(out, width, height), "\n")
 }

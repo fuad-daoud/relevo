@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -74,7 +75,7 @@ func closeSwitchedRound(t *testing.T, switchNotes ...string) (Runtime, store.Log
 			return err
 		}
 		next, err := queueReport(context.Background(), rt, tx, cur, entries,
-			rt.Store.ReportPath(b.Name, b.Round), "done", "", nil, nil, nil, nil, "", false, "", scopeVerdict{})
+			rt.Store.ReportPath(b.Name, b.Round), "done", "", nil, nil, nil, nil, "", false, "", pathscope.Verdict{})
 		if err != nil {
 			return err
 		}
