@@ -51,7 +51,7 @@ func validArtifactRel(rel string) bool {
 	if rel == "" || strings.HasPrefix(rel, "/") || filepath.IsAbs(rel) || strings.Contains(rel, "\\") {
 		return false
 	}
-	return !containsDotDotRel(rel)
+	return !remote.ContainsDotDotRel(rel)
 }
 
 // firstBadArtifactRel returns the index of the first rel the client refuses,

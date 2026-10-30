@@ -47,7 +47,7 @@ func chainRoundView(mv remote.ChainMemberView, r int) remote.BindingView {
 func chainRoundEntry(mv remote.ChainMemberView, r int) (remote.ClosedRoundView, bool) {
 	for _, cr := range mv.Rounds {
 		if cr.Round == r {
-			return chainRoundFacts(cr, mv.View), true
+			return remote.ChainRoundFacts(cr, mv.View), true
 		}
 	}
 	return remote.ClosedRoundView{}, false
