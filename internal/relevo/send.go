@@ -443,7 +443,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		return preflight{}, err
 	}
 	pf.prompt = prompt
-	argv, err := candidate.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, housekeep.RoundTree(housekeepDeps(rt), b), rt.Store.OutDir(b.Name), promptPath, chainReadDir(rt, nil, name))
+	argv, err := candidate.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, housekeep.RoundTree(HousekeepDeps(rt), b), rt.Store.OutDir(b.Name), promptPath, chainReadDir(rt, nil, name))
 	if err != nil {
 		return preflight{}, err
 	}
@@ -625,7 +625,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			// before anything is spawned; if it cannot be created, the round
 			// does not start, and there is never a fallback to b.CWD.
 			if b.Shape == store.ShapeReader {
-				if _, err := housekeep.CreateScratchFrom(ctx, housekeepDeps(rt), b, b.Round, baselineHead, baseline); err != nil {
+				if _, err := housekeep.CreateScratchFrom(ctx, HousekeepDeps(rt), b, b.Round, baselineHead, baseline); err != nil {
 					return err
 				}
 			}
@@ -783,7 +783,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			}
 			// The rollback killed the round's process outside stopProcess, so
 			// it removes the temp dir the start prepared.
-			housekeep.RemoveRoundTmp(housekeepDeps(rt), store.Binding{Name: name}, round)
+			housekeep.RemoveRoundTmp(HousekeepDeps(rt), store.Binding{Name: name}, round)
 			return SendResult{}, fmt.Errorf("%w; the builder it started (pid %d) was stopped", err, spawned.PID)
 		}
 		return SendResult{}, err
@@ -968,7 +968,7 @@ func chainReaderPromptFor(rt Runtime, b store.Binding, promptPath, donePath, blo
 	actor := bindingRole(b)
 	label := readerOutputLabel(rt, b)
 	outputPath := rt.Store.OutputPath(b.Name, b.Round, actor, label)
-	return fmt.Sprintf(chainReaderPrompt, housekeep.RoundTree(housekeepDeps(rt), b), b.CWD, promptPath, label, outputPath, donePath, block)
+	return fmt.Sprintf(chainReaderPrompt, housekeep.RoundTree(HousekeepDeps(rt), b), b.CWD, promptPath, label, outputPath, donePath, block)
 }
 
 // readerPromptFor renders readerPrompt for one reader round. The output label
@@ -981,5 +981,5 @@ func readerPromptFor(rt Runtime, b store.Binding, promptPath, donePath string) s
 	actor := bindingRole(b)
 	label := readerOutputLabel(rt, b)
 	outputPath := rt.Store.OutputPath(b.Name, b.Round, actor, label)
-	return fmt.Sprintf(readerPrompt, housekeep.RoundTree(housekeepDeps(rt), b), b.CWD, promptPath, label, outputPath, donePath)
+	return fmt.Sprintf(readerPrompt, housekeep.RoundTree(HousekeepDeps(rt), b), b.CWD, promptPath, label, outputPath, donePath)
 }

@@ -105,7 +105,7 @@ func TestTickSkipsTmpSweepWithEmptyRoot(t *testing.T) {
 		t.Fatalf("Tick: %v", err)
 	}
 	mustExist(t, decoy)
-	if removed, err := housekeep.SweepTmp(context.Background(), housekeepDeps(rt), nil, baseTime); removed != nil || err != nil {
+	if removed, err := housekeep.SweepTmp(context.Background(), HousekeepDeps(rt), nil, baseTime); removed != nil || err != nil {
 		t.Errorf("SweepTmp with no tmp root = (%v, %v), want (nil, nil)", removed, err)
 	}
 }

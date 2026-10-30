@@ -173,7 +173,7 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		// A reader binding's throwaway worktree goes with it: done is the
 		// human's "this binding is finished", so nothing of it is left behind.
 		removeReaderScratch(ctx, rt, b, b.Round)
-		housekeep.RemoveRoundTmp(housekeepDeps(rt), b, b.Round)
+		housekeep.RemoveRoundTmp(HousekeepDeps(rt), b, b.Round)
 
 		// The stop is recorded in the ledger, in the same shape relevo stop
 		// uses (closeStopped): the log marker it used to write is gone, and

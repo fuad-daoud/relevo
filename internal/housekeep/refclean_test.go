@@ -1,4 +1,4 @@
-package relevo
+package housekeep
 
 import (
 	"context"
@@ -120,9 +120,9 @@ func TestBindingRefCandidates(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			fg := &fakeGit{listRefsResult: tc.listRefs}
-			rt := Runtime{Git: fg}
-			got, err := bindingRefCandidates(ctx, rt, "/repo", tc.b)
+			fg := &fakeRefs{listRefsResult: tc.listRefs}
+			deps := Deps{Refs: fg}
+			got, err := bindingRefCandidates(ctx, deps, "/repo", tc.b)
 			if err != nil {
 				t.Fatalf("bindingRefCandidates: %v", err)
 			}
@@ -145,103 +145,128 @@ func TestCleanRefs(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("on remote: branch uses deleteBranchCalls and non-branch uses deleteRefCalls", func(t *testing.T) {
-		fg := &fakeGit{
-			refOnRemote: map[string]bool{
-				"refs/heads/relevo/api": true,
-				"refs/relevo/api/out":   true,
-			},
-		}
-		rt := Runtime{Git: fg}
-		got := cleanRefs(ctx, rt, "/repo", []string{"refs/heads/relevo/api", "refs/relevo/api/out"}, false)
-		if len(got) != 2 {
-			t.Fatalf("got %v, want 2 outcomes", got)
-		}
-		if !got[0].Deleted || got[0].Ref != "refs/heads/relevo/api" {
-			t.Errorf("got[0] = %+v, want Deleted", got[0])
-		}
-		if !got[1].Deleted || got[1].Ref != "refs/relevo/api/out" {
-			t.Errorf("got[1] = %+v, want Deleted", got[1])
-		}
-		if len(fg.deleteBranchCalls) != 1 || fg.deleteBranchCalls[0].Branch != "refs/heads/relevo/api" {
-			t.Errorf("deleteBranchCalls = %v", fg.deleteBranchCalls)
-		}
-		if len(fg.deleteRefCalls) != 1 || fg.deleteRefCalls[0].Ref != "refs/relevo/api/out" {
-			t.Errorf("deleteRefCalls = %v", fg.deleteRefCalls)
-		}
+		testCleanRefsOnRemote(t, ctx)
 	})
 
 	t.Run("not on remote", func(t *testing.T) {
-		fg := &fakeGit{
-			refOnRemote: map[string]bool{},
-		}
-		rt := Runtime{Git: fg}
-		got := cleanRefs(ctx, rt, "/repo", []string{"refs/heads/relevo/api"}, false)
-		if len(got) != 1 {
-			t.Fatalf("got %v, want 1 outcome", got)
-		}
-		if got[0].Deleted || got[0].WouldDelete || got[0].Reason != "not on any remote-tracking ref" {
-			t.Errorf("got[0] = %+v, want reason 'not on any remote-tracking ref'", got[0])
-		}
-		if len(fg.deleteBranchCalls) != 0 || len(fg.deleteRefCalls) != 0 {
-			t.Errorf("expected no delete calls, got branch: %v, ref: %v", fg.deleteBranchCalls, fg.deleteRefCalls)
-		}
+		testCleanRefsNotOnRemote(t, ctx)
 	})
 
 	t.Run("refOnRemoteErr", func(t *testing.T) {
-		fg := &fakeGit{
-			refOnRemoteErr: errors.New("remote check boom"),
-		}
-		rt := Runtime{Git: fg}
-		got := cleanRefs(ctx, rt, "/repo", []string{"refs/heads/relevo/api"}, false)
-		if len(got) != 1 {
-			t.Fatalf("got %v, want 1 outcome", got)
-		}
-		wantReason := "check failed: remote check boom"
-		if got[0].Reason != wantReason {
-			t.Errorf("got reason %q, want %q", got[0].Reason, wantReason)
-		}
-		if len(fg.deleteBranchCalls) != 0 {
-			t.Errorf("expected no delete calls, got %v", fg.deleteBranchCalls)
-		}
+		testCleanRefsCheckFailed(t, ctx)
 	})
 
 	t.Run("deleteBranchErr", func(t *testing.T) {
-		fg := &fakeGit{
-			refOnRemote:     map[string]bool{"refs/heads/relevo/api": true},
-			deleteBranchErr: errors.New("cannot delete branch checked out"),
-		}
-		rt := Runtime{Git: fg}
-		got := cleanRefs(ctx, rt, "/repo", []string{"refs/heads/relevo/api"}, false)
-		if len(got) != 1 {
-			t.Fatalf("got %v, want 1 outcome", got)
-		}
-		wantReason := "delete failed: cannot delete branch checked out"
-		if got[0].Reason != wantReason {
-			t.Errorf("got reason %q, want %q", got[0].Reason, wantReason)
-		}
+		testCleanRefsDeleteFailed(t, ctx)
 	})
 
 	t.Run("dryRun", func(t *testing.T) {
-		fg := &fakeGit{
-			refOnRemote: map[string]bool{
-				"refs/heads/relevo/api": true,
-				"refs/relevo/api/out":   true,
-			},
-		}
-		rt := Runtime{Git: fg}
-		got := cleanRefs(ctx, rt, "/repo", []string{"refs/heads/relevo/api", "refs/relevo/api/out"}, true)
-		if len(got) != 2 {
-			t.Fatalf("got %v, want 2 outcomes", got)
-		}
-		for i, r := range got {
-			if !r.WouldDelete || r.Deleted || r.Reason != "" {
-				t.Errorf("[%d] = %+v, want WouldDelete", i, r)
-			}
-		}
-		if len(fg.deleteBranchCalls) != 0 || len(fg.deleteRefCalls) != 0 {
-			t.Errorf("expected no delete calls on dry-run, got branch: %v, ref: %v", fg.deleteBranchCalls, fg.deleteRefCalls)
-		}
+		testCleanRefsDryRun(t, ctx)
 	})
+}
+
+func testCleanRefsOnRemote(t *testing.T, ctx context.Context) {
+	t.Helper()
+	fg := &fakeRefs{
+		refOnRemote: map[string]bool{
+			"refs/heads/relevo/api": true,
+			"refs/relevo/api/out":   true,
+		},
+	}
+	deps := Deps{Refs: fg}
+	got := cleanRefs(ctx, deps, "/repo", []string{"refs/heads/relevo/api", "refs/relevo/api/out"}, false)
+	if len(got) != 2 {
+		t.Fatalf("got %v, want 2 outcomes", got)
+	}
+	if !got[0].Deleted || got[0].Ref != "refs/heads/relevo/api" {
+		t.Errorf("got[0] = %+v, want Deleted", got[0])
+	}
+	if !got[1].Deleted || got[1].Ref != "refs/relevo/api/out" {
+		t.Errorf("got[1] = %+v, want Deleted", got[1])
+	}
+	if len(fg.deleteBranchCalls) != 1 || fg.deleteBranchCalls[0].Branch != "refs/heads/relevo/api" {
+		t.Errorf("deleteBranchCalls = %v", fg.deleteBranchCalls)
+	}
+	if len(fg.deleteRefCalls) != 1 || fg.deleteRefCalls[0].Ref != "refs/relevo/api/out" {
+		t.Errorf("deleteRefCalls = %v", fg.deleteRefCalls)
+	}
+}
+
+func testCleanRefsNotOnRemote(t *testing.T, ctx context.Context) {
+	t.Helper()
+	fg := &fakeRefs{
+		refOnRemote: map[string]bool{},
+	}
+	deps := Deps{Refs: fg}
+	got := cleanRefs(ctx, deps, "/repo", []string{"refs/heads/relevo/api"}, false)
+	if len(got) != 1 {
+		t.Fatalf("got %v, want 1 outcome", got)
+	}
+	if got[0].Deleted || got[0].WouldDelete || got[0].Reason != "not on any remote-tracking ref" {
+		t.Errorf("got[0] = %+v, want reason 'not on any remote-tracking ref'", got[0])
+	}
+	if len(fg.deleteBranchCalls) != 0 || len(fg.deleteRefCalls) != 0 {
+		t.Errorf("expected no delete calls, got branch: %v, ref: %v", fg.deleteBranchCalls, fg.deleteRefCalls)
+	}
+}
+
+func testCleanRefsCheckFailed(t *testing.T, ctx context.Context) {
+	t.Helper()
+	fg := &fakeRefs{
+		refOnRemoteErr: errors.New("remote check boom"),
+	}
+	deps := Deps{Refs: fg}
+	got := cleanRefs(ctx, deps, "/repo", []string{"refs/heads/relevo/api"}, false)
+	if len(got) != 1 {
+		t.Fatalf("got %v, want 1 outcome", got)
+	}
+	wantReason := "check failed: remote check boom"
+	if got[0].Reason != wantReason {
+		t.Errorf("got reason %q, want %q", got[0].Reason, wantReason)
+	}
+	if len(fg.deleteBranchCalls) != 0 {
+		t.Errorf("expected no delete calls, got %v", fg.deleteBranchCalls)
+	}
+}
+
+func testCleanRefsDeleteFailed(t *testing.T, ctx context.Context) {
+	t.Helper()
+	fg := &fakeRefs{
+		refOnRemote:     map[string]bool{"refs/heads/relevo/api": true},
+		deleteBranchErr: errors.New("cannot delete branch checked out"),
+	}
+	deps := Deps{Refs: fg}
+	got := cleanRefs(ctx, deps, "/repo", []string{"refs/heads/relevo/api"}, false)
+	if len(got) != 1 {
+		t.Fatalf("got %v, want 1 outcome", got)
+	}
+	wantReason := "delete failed: cannot delete branch checked out"
+	if got[0].Reason != wantReason {
+		t.Errorf("got reason %q, want %q", got[0].Reason, wantReason)
+	}
+}
+
+func testCleanRefsDryRun(t *testing.T, ctx context.Context) {
+	t.Helper()
+	fg := &fakeRefs{
+		refOnRemote: map[string]bool{
+			"refs/heads/relevo/api": true,
+			"refs/relevo/api/out":   true,
+		},
+	}
+	deps := Deps{Refs: fg}
+	got := cleanRefs(ctx, deps, "/repo", []string{"refs/heads/relevo/api", "refs/relevo/api/out"}, true)
+	if len(got) != 2 {
+		t.Fatalf("got %v, want 2 outcomes", got)
+	}
+	for i, r := range got {
+		if !r.WouldDelete || r.Deleted || r.Reason != "" {
+			t.Errorf("[%d] = %+v, want WouldDelete", i, r)
+		}
+	}
+	if len(fg.deleteBranchCalls) != 0 || len(fg.deleteRefCalls) != 0 {
+		t.Errorf("expected no delete calls on dry-run, got branch: %v, ref: %v", fg.deleteBranchCalls, fg.deleteRefCalls)
+	}
 }
 
 // N5: TestSweepRefs
@@ -249,7 +274,7 @@ func TestSweepRefs(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	rt := newRuntime(t)
+	deps := gcTestDeps(t)
 
 	// Save a live binding api in StateDone
 	b := store.Binding{
@@ -260,11 +285,11 @@ func TestSweepRefs(t *testing.T) {
 		Round:      1,
 		State:      store.StateDone,
 	}
-	if err := rt.Store.Save(b); err != nil {
+	if err := deps.Store.Save(b); err != nil {
 		t.Fatalf("save api: %v", err)
 	}
 
-	fg := &fakeGit{
+	fg := &fakeRefs{
 		listRefsByPrefix: map[string][]string{
 			"refs/heads/relevo/": {
 				"refs/heads/relevo/api",
@@ -281,9 +306,9 @@ func TestSweepRefs(t *testing.T) {
 			// refs/relevo/old/round-2 is false (not on remote)
 		},
 	}
-	rt.Git = fg
+	deps.Refs = fg
 
-	res, err := SweepRefs(ctx, rt, "/repo", false)
+	res, err := SweepRefs(ctx, deps, "/repo", false)
 	if err != nil {
 		t.Fatalf("SweepRefs: %v", err)
 	}
@@ -333,15 +358,14 @@ func TestRefLines(t *testing.T) {
 func TestGCDeletesPushedRelevoBranch(t *testing.T) {
 	t.Parallel()
 
-	rt := newRuntime(t)
+	deps := gcTestDeps(t)
 	wt := t.TempDir()
-	fg := &fakeGit{
-		dirtyResult: false,
+	fg := &fakeRefs{
 		refOnRemote: map[string]bool{
 			"refs/heads/relevo/web": true,
 		},
 	}
-	rt.Git = fg
+	deps.Refs = fg
 
 	b := store.Binding{
 		Name:       "web",
@@ -354,11 +378,11 @@ func TestGCDeletesPushedRelevoBranch(t *testing.T) {
 		MasterMind: store.Endpoint{PaneID: "w1:p1"},
 		Builder:    store.Endpoint{PaneID: "w1:p2"},
 	}
-	if err := rt.Store.Save(b); err != nil {
+	if err := deps.Store.Save(b); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := GC(context.Background(), rt, GCOptions{AllMasterMinds: true})
+	res, err := GC(context.Background(), deps, GCOptions{AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -377,15 +401,14 @@ func TestGCDeletesPushedRelevoBranch(t *testing.T) {
 func TestGCKeepsUnpushedBranch(t *testing.T) {
 	t.Parallel()
 
-	rt := newRuntime(t)
+	deps := gcTestDeps(t)
 	wt := t.TempDir()
-	fg := &fakeGit{
-		dirtyResult: false,
+	fg := &fakeRefs{
 		refOnRemote: map[string]bool{
 			"refs/heads/relevo/web": false,
 		},
 	}
-	rt.Git = fg
+	deps.Refs = fg
 
 	b := store.Binding{
 		Name:       "web",
@@ -398,11 +421,11 @@ func TestGCKeepsUnpushedBranch(t *testing.T) {
 		MasterMind: store.Endpoint{PaneID: "w1:p1"},
 		Builder:    store.Endpoint{PaneID: "w1:p2"},
 	}
-	if err := rt.Store.Save(b); err != nil {
+	if err := deps.Store.Save(b); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := GC(context.Background(), rt, GCOptions{AllMasterMinds: true})
+	res, err := GC(context.Background(), deps, GCOptions{AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -421,15 +444,17 @@ func TestGCKeepsUnpushedBranch(t *testing.T) {
 func TestGCKeptWorktreeTouchesNoRef(t *testing.T) {
 	t.Parallel()
 
-	rt := newRuntime(t)
+	deps := gcTestDeps(t)
 	wt := t.TempDir()
-	fg := &fakeGit{
-		dirtyResult: true, // dirty worktree keeps it
+	fg := &fakeRefs{
 		refOnRemote: map[string]bool{
 			"refs/heads/relevo/web": true,
 		},
 	}
-	rt.Git = fg
+	deps.Refs = fg
+	deps.Teardown = func(_ context.Context, b store.Binding, _ bool) TeardownOutcome {
+		return TeardownOutcome{Kept: b.Worktree, Reason: "uncommitted changes"}
+	}
 
 	b := store.Binding{
 		Name:       "web",
@@ -442,11 +467,11 @@ func TestGCKeptWorktreeTouchesNoRef(t *testing.T) {
 		MasterMind: store.Endpoint{PaneID: "w1:p1"},
 		Builder:    store.Endpoint{PaneID: "w1:p2"},
 	}
-	if err := rt.Store.Save(b); err != nil {
+	if err := deps.Store.Save(b); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := GC(context.Background(), rt, GCOptions{AllMasterMinds: true})
+	res, err := GC(context.Background(), deps, GCOptions{AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -466,15 +491,14 @@ func TestGCKeptWorktreeTouchesNoRef(t *testing.T) {
 func TestGCDryRunDeletesNoRef(t *testing.T) {
 	t.Parallel()
 
-	rt := newRuntime(t)
+	deps := gcTestDeps(t)
 	wt := t.TempDir()
-	fg := &fakeGit{
-		dirtyResult: false,
+	fg := &fakeRefs{
 		refOnRemote: map[string]bool{
 			"refs/heads/relevo/web": true,
 		},
 	}
-	rt.Git = fg
+	deps.Refs = fg
 
 	b := store.Binding{
 		Name:       "web",
@@ -487,11 +511,11 @@ func TestGCDryRunDeletesNoRef(t *testing.T) {
 		MasterMind: store.Endpoint{PaneID: "w1:p1"},
 		Builder:    store.Endpoint{PaneID: "w1:p2"},
 	}
-	if err := rt.Store.Save(b); err != nil {
+	if err := deps.Store.Save(b); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := GC(context.Background(), rt, GCOptions{DryRun: true, AllMasterMinds: true})
+	res, err := GC(context.Background(), deps, GCOptions{DryRun: true, AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -507,7 +531,7 @@ func TestGCDryRunDeletesNoRef(t *testing.T) {
 }
 
 // N9: bindingRefCandidates proposes the relevo head ref only when the repo
-// has it (#452), still proposes it when RefSHA errors, and keeps the refs it
+// has it, still proposes it when RefSHA errors, and keeps the refs it
 // listed. Mutation: ignore ok and the missing-branch case proposes a
 // nonexistent ref.
 func TestBindingRefCandidatesSkipsAMissingBranch(t *testing.T) {
@@ -518,8 +542,8 @@ func TestBindingRefCandidatesSkipsAMissingBranch(t *testing.T) {
 	adopted := store.Binding{Name: "api", Branch: "feature/x", ExistingBranch: true, Builder: store.Endpoint{Mode: store.ModeRemote}}
 
 	t.Run("relevo-cut shape, missing head ref", func(t *testing.T) {
-		fg := &fakeGit{refSHA: map[string]string{}, listRefsResult: []string{"refs/relevo/api/out"}}
-		got, err := bindingRefCandidates(ctx, Runtime{Git: fg}, "/repo", cut)
+		fg := &fakeRefs{refSHA: map[string]string{}, listRefsResult: []string{"refs/relevo/api/out"}}
+		got, err := bindingRefCandidates(ctx, Deps{Refs: fg}, "/repo", cut)
 		if err != nil {
 			t.Fatalf("bindingRefCandidates: %v", err)
 		}
@@ -529,11 +553,11 @@ func TestBindingRefCandidatesSkipsAMissingBranch(t *testing.T) {
 	})
 
 	t.Run("relevo-cut shape, present head ref", func(t *testing.T) {
-		fg := &fakeGit{
+		fg := &fakeRefs{
 			refSHA:         map[string]string{"refs/heads/relevo/api": "tip"},
 			listRefsResult: []string{"refs/relevo/api/out"},
 		}
-		got, err := bindingRefCandidates(ctx, Runtime{Git: fg}, "/repo", cut)
+		got, err := bindingRefCandidates(ctx, Deps{Refs: fg}, "/repo", cut)
 		if err != nil {
 			t.Fatalf("bindingRefCandidates: %v", err)
 		}
@@ -543,8 +567,8 @@ func TestBindingRefCandidatesSkipsAMissingBranch(t *testing.T) {
 	})
 
 	t.Run("RefSHA error still proposes the head ref", func(t *testing.T) {
-		fg := &fakeGit{refSHAErr: errors.New("resolve boom"), listRefsResult: []string{"refs/relevo/api/out"}}
-		got, err := bindingRefCandidates(ctx, Runtime{Git: fg}, "/repo", cut)
+		fg := &fakeRefs{refSHAErr: errors.New("resolve boom"), listRefsResult: []string{"refs/relevo/api/out"}}
+		got, err := bindingRefCandidates(ctx, Deps{Refs: fg}, "/repo", cut)
 		if err != nil {
 			t.Fatalf("bindingRefCandidates: %v", err)
 		}
@@ -554,8 +578,8 @@ func TestBindingRefCandidatesSkipsAMissingBranch(t *testing.T) {
 	})
 
 	t.Run("adopted remote shape, missing head ref", func(t *testing.T) {
-		fg := &fakeGit{refSHA: map[string]string{}, listRefsResult: []string{"refs/relevo/api/out"}}
-		got, err := bindingRefCandidates(ctx, Runtime{Git: fg}, "/repo", adopted)
+		fg := &fakeRefs{refSHA: map[string]string{}, listRefsResult: []string{"refs/relevo/api/out"}}
+		got, err := bindingRefCandidates(ctx, Deps{Refs: fg}, "/repo", adopted)
 		if err != nil {
 			t.Fatalf("bindingRefCandidates: %v", err)
 		}

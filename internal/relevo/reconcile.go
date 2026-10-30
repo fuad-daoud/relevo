@@ -783,7 +783,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	removeReaderScratch(ctx, rt, b, b.Round)
 	// The round's private temp dir goes with it, and no close route escapes
 	// this funnel: every one of them queues its report through here.
-	housekeep.RemoveRoundTmp(housekeepDeps(rt), b, b.Round)
+	housekeep.RemoveRoundTmp(HousekeepDeps(rt), b, b.Round)
 
 	now := rt.Now().UTC()
 	roundStart := b.RoundStartedAt

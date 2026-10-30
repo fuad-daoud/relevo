@@ -78,7 +78,7 @@ func prepareTmp(rt Runtime, req procRequest) (string, func(), error) {
 		}
 		b := *req.binding
 		rel = housekeep.RoundTmpRel(b.Name, b.Round)
-		undo = func() { housekeep.RemoveRoundTmp(housekeepDeps(rt), b, b.Round) }
+		undo = func() { housekeep.RemoveRoundTmp(HousekeepDeps(rt), b, b.Round) }
 	case procKindCheck:
 		if req.key == "" {
 			return "", func() {}, nil

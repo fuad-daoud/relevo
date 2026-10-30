@@ -480,13 +480,24 @@ func captureDeps(rt Runtime) capture.Deps {
 	return capture.Deps{Git: rt.Git, Store: rt.Store}
 }
 
-// housekeepDeps builds internal/housekeep's Deps from rt.
-func housekeepDeps(rt Runtime) housekeep.Deps {
-	return housekeep.Deps{Store: rt.Store, TmpRoot: rt.TmpRoot, Git: rt.Git,
+// HousekeepDeps builds internal/housekeep's Deps from rt. Git and Refs carry
+// through nil-safe: a nil rt.Git converts to a nil interface on both, since
+// the assignments are between identical interface shapes.
+func HousekeepDeps(rt Runtime) housekeep.Deps {
+	return housekeep.Deps{Store: rt.Store, TmpRoot: rt.TmpRoot, Git: rt.Git, Refs: rt.Git,
 		ChainCheckSettled: chainCheckSettled, ChainFlowTerminal: chainFlowTerminal,
 		GateUnit:        func(o, n string, r int) string { return scopeUnitNameFor(scopeGate, o, n, r, "") },
 		ServedCheckUnit: func(b store.Binding, run store.CheckRun) string { return servedCheckSpec(rt, b, run).UnitName },
-		ChainCheckUnit:  func(c db.ChainRow, run int) string { return chainCheckSpec(rt, c, run, "", "").UnitName }}
+		ChainCheckUnit:  func(c db.ChainRow, run int) string { return chainCheckSpec(rt, c, run, "", "").UnitName },
+		Teardown: func(ctx context.Context, b store.Binding, dryRun bool) housekeep.TeardownOutcome {
+			o := worktreeTeardown(ctx, rt, b, dryRun)
+			return housekeep.TeardownOutcome{Removed: o.Removed, Kept: o.Kept, Reason: o.Reason, Gone: o.Gone}
+		},
+		AskUnbind: func(ctx context.Context, b store.Binding, force bool) error {
+			return askServerUnbind(ctx, rt, b, force)
+		},
+		ErrKept:    ErrWorktreeKept,
+		KeptReason: KeptReasonOf}
 }
 
 // consultDeps builds internal/consult's Deps from rt. Git carries through

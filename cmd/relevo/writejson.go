@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/delivery"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -166,35 +167,35 @@ func unbindDocOf(name string, res relevo.UnbindResult) UnbindDoc {
 }
 
 // gcDoc is `relevo unbind --done --json`: what the sweep would clear or did,
-// with one relevo.GCResult per binding. The slice is never nil, so an empty
+// with one housekeep.GCResult per binding. The slice is never nil, so an empty
 // sweep marshals [] rather than null.
 type gcDoc struct {
-	DryRun   bool              `json:"dry_run"`
-	Bindings []relevo.GCResult `json:"bindings"`
+	DryRun   bool                 `json:"dry_run"`
+	Bindings []housekeep.GCResult `json:"bindings"`
 }
 
 // gcDocOf is the --done route's document.
-func gcDocOf(dryRun bool, bindings []relevo.GCResult) gcDoc {
+func gcDocOf(dryRun bool, bindings []housekeep.GCResult) gcDoc {
 	if bindings == nil {
-		bindings = []relevo.GCResult{}
+		bindings = []housekeep.GCResult{}
 	}
 	return gcDoc{DryRun: dryRun, Bindings: bindings}
 }
 
 // sweepDoc is `relevo unbind --sweep --json`: the directory swept and one
-// relevo.RefOutcome per relevo ref. The slice is never nil, so an empty sweep
+// housekeep.RefOutcome per relevo ref. The slice is never nil, so an empty sweep
 // marshals [] rather than null.
 type sweepDoc struct {
-	DryRun bool                `json:"dry_run"`
-	Dir    string              `json:"dir"`
-	Refs   []relevo.RefOutcome `json:"refs"`
+	DryRun bool                   `json:"dry_run"`
+	Dir    string                 `json:"dir"`
+	Refs   []housekeep.RefOutcome `json:"refs"`
 }
 
 // sweepDocOf is the --sweep route's document.
-func sweepDocOf(dryRun bool, res relevo.SweepResult) sweepDoc {
+func sweepDocOf(dryRun bool, res housekeep.SweepResult) sweepDoc {
 	refs := res.Refs
 	if refs == nil {
-		refs = []relevo.RefOutcome{}
+		refs = []housekeep.RefOutcome{}
 	}
 	return sweepDoc{DryRun: dryRun, Dir: res.Dir, Refs: refs}
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/pick"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -143,7 +144,7 @@ func runSweep(dryRun, asJSON bool) error {
 		return writeError(fmt.Errorf("resolve working directory: %w", err))
 	}
 
-	res, err := relevo.SweepRefs(context.Background(), rt, dir, dryRun)
+	res, err := housekeep.SweepRefs(context.Background(), relevo.HousekeepDeps(rt), dir, dryRun)
 	if err != nil {
 		return writeError(err)
 	}
@@ -157,7 +158,7 @@ func runSweep(dryRun, asJSON bool) error {
 		return nil
 	}
 
-	for _, line := range relevo.RefLines(res.Refs) {
+	for _, line := range housekeep.RefLines(res.Refs) {
 		fmt.Println(line)
 	}
 
@@ -196,7 +197,7 @@ func runGC(delete, dryRun, force bool, mastermindRef string, all, asJSON bool) e
 	opts.DryRun = dryRun
 	opts.Force = force
 
-	done, err := relevo.GC(context.Background(), rt, opts)
+	done, err := housekeep.GC(context.Background(), relevo.HousekeepDeps(rt), opts)
 	if err != nil {
 		return writeError(err)
 	}
@@ -235,7 +236,7 @@ func runGC(delete, dryRun, force bool, mastermindRef string, all, asJSON bool) e
 	return nil
 }
 
-func printGCResult(r relevo.GCResult, lbl string, dryRun bool) {
+func printGCResult(r housekeep.GCResult, lbl string, dryRun bool) {
 	switch {
 	case dryRun:
 		verb := "would clear"
@@ -265,12 +266,12 @@ func printGCResult(r relevo.GCResult, lbl string, dryRun bool) {
 	if r.ServerErr != "" {
 		fmt.Printf("            note: server not released: %s\n", r.ServerErr)
 	}
-	for _, line := range relevo.RefLines(r.Refs) {
+	for _, line := range housekeep.RefLines(r.Refs) {
 		fmt.Printf("            %s\n", line)
 	}
 }
 
-func printGCWorktree(r relevo.GCResult) {
+func printGCWorktree(r housekeep.GCResult) {
 	switch {
 	case r.WorktreeRemoved != "":
 		fmt.Printf("            removed worktree %s\n", r.WorktreeRemoved)

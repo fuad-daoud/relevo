@@ -35,7 +35,7 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 	}
 
 	spec := gateProcSpec{
-		Dir:      housekeep.RoundTree(housekeepDeps(rt), b),
+		Dir:      housekeep.RoundTree(HousekeepDeps(rt), b),
 		Command:  b.Gate,
 		LogPath:  rt.Store.GateLogPath(b.Name, b.Round),
 		UnitName: scopeUnitNameFor(scopeGate, b.Owner, b.Name, b.Round, ""),

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -24,7 +25,7 @@ func gcRemoteRuntime(t *testing.T, fr *fakeRemote) (Runtime, *store.Store) {
 	return Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}, st
 }
 
-func gcRemoteOpts(o GCOptions) GCOptions {
+func gcRemoteOpts(o housekeep.GCOptions) housekeep.GCOptions {
 	o.MasterMindID = "mm"
 
 	return o
@@ -36,7 +37,7 @@ func TestGCKeepsRemoteBindingWhenServerKeepsWorktree(t *testing.T) {
 	fr := &fakeRemote{unbindErr: &client.HTTPError{Status: 409, Body: remote.ErrorBody{Code: remote.CodeWorktreeKept, Message: "binding api kept"}}}
 	rt, st := gcRemoteRuntime(t, fr)
 
-	res, err := GC(context.Background(), rt, gcRemoteOpts(GCOptions{}))
+	res, err := housekeep.GC(context.Background(), HousekeepDeps(rt), gcRemoteOpts(housekeep.GCOptions{}))
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -58,7 +59,7 @@ func TestGCRemoteKeptLineCarriesTheBareReason(t *testing.T) {
 	fr := &fakeRemote{unbindErr: &client.HTTPError{Status: 409, Body: remote.ErrorBody{Code: remote.CodeWorktreeKept, Message: oldServerKeptBody}}}
 	rt, _ := gcRemoteRuntime(t, fr)
 
-	res, err := GC(context.Background(), rt, gcRemoteOpts(GCOptions{}))
+	res, err := housekeep.GC(context.Background(), HousekeepDeps(rt), gcRemoteOpts(housekeep.GCOptions{}))
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -73,7 +74,7 @@ func TestGCForcePassesForceToServer(t *testing.T) {
 	fr := &fakeRemote{}
 	rt, st := gcRemoteRuntime(t, fr)
 
-	res, err := GC(context.Background(), rt, gcRemoteOpts(GCOptions{Force: true}))
+	res, err := housekeep.GC(context.Background(), HousekeepDeps(rt), gcRemoteOpts(housekeep.GCOptions{Force: true}))
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -94,7 +95,7 @@ func TestGCArchivesRemoteBindingWhenServerUnreachable(t *testing.T) {
 	fr := &fakeRemote{unbindErr: client.ErrUnreachable}
 	rt, st := gcRemoteRuntime(t, fr)
 
-	res, err := GC(context.Background(), rt, gcRemoteOpts(GCOptions{}))
+	res, err := housekeep.GC(context.Background(), HousekeepDeps(rt), gcRemoteOpts(housekeep.GCOptions{}))
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -123,7 +124,7 @@ func TestGCRemoteResumedBetweenPassesIsSkipped(t *testing.T) {
 		}
 	}
 
-	res, err := GC(context.Background(), rt, gcRemoteOpts(GCOptions{}))
+	res, err := housekeep.GC(context.Background(), HousekeepDeps(rt), gcRemoteOpts(housekeep.GCOptions{}))
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -142,7 +143,7 @@ func TestGCDryRunDoesNotContactServer(t *testing.T) {
 	fr := &fakeRemote{}
 	rt, st := gcRemoteRuntime(t, fr)
 
-	res, err := GC(context.Background(), rt, gcRemoteOpts(GCOptions{DryRun: true}))
+	res, err := housekeep.GC(context.Background(), HousekeepDeps(rt), gcRemoteOpts(housekeep.GCOptions{DryRun: true}))
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}

@@ -304,7 +304,7 @@ func (d *Daemon) Tick(ctx context.Context) error {
 		if d.rt.TmpRoot == "" {
 			return
 		}
-		housekeep.SweepTick(ctx, housekeepDeps(d.rt), bindings, &d.tmpSweptAt, d.rt.Now())
+		housekeep.SweepTick(ctx, HousekeepDeps(d.rt), bindings, &d.tmpSweptAt, d.rt.Now())
 	})
 	// Before the first tick of this process, every archived record the mirror
 	// has not seen is ingested (P3d §4.2, §4.5).
@@ -659,7 +659,7 @@ func sweepReaderScratch(ctx context.Context, rt Runtime, bindings []store.Bindin
 		keep[b.Name] = b.Round
 	}
 
-	removed, err := housekeep.SweepScratch(ctx, housekeepDeps(rt), func(name string, round int) bool {
+	removed, err := housekeep.SweepScratch(ctx, HousekeepDeps(rt), func(name string, round int) bool {
 		r, ok := keep[name]
 		return ok && round >= r
 	})

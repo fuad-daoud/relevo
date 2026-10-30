@@ -226,7 +226,7 @@ func TestRemoveRoundTmpWithoutRootRemovesNothing(t *testing.T) {
 	t.Parallel()
 
 	rt := newRuntime(t)
-	housekeep.RemoveRoundTmp(housekeepDeps(rt), store.Binding{Name: "webshop", Round: 1}, 1)
+	housekeep.RemoveRoundTmp(HousekeepDeps(rt), store.Binding{Name: "webshop", Round: 1}, 1)
 }
 
 // TestRemoveRoundTmpMissingDirIsSilent pins the route-sharing shape: the
@@ -243,9 +243,9 @@ func TestRemoveRoundTmpMissingDirIsSilent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareProc: %v", err)
 	}
-	housekeep.RemoveRoundTmp(housekeepDeps(rt), b, 1)
+	housekeep.RemoveRoundTmp(HousekeepDeps(rt), b, 1)
 	if _, serr := os.Stat(dir); !os.IsNotExist(serr) {
 		t.Fatalf("the first removal left %s behind", dir)
 	}
-	housekeep.RemoveRoundTmp(housekeepDeps(rt), b, 1)
+	housekeep.RemoveRoundTmp(HousekeepDeps(rt), b, 1)
 }

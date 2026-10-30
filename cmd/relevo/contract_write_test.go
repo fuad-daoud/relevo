@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/delivery"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
@@ -76,16 +77,16 @@ func writeDocFixtures() []struct {
 			WorktreeRemoved: "/w/alpha",
 			ProcessStopped:  4242,
 		})},
-		{"unbind-done-json", gcDocOf(true, []relevo.GCResult{{
+		{"unbind-done-json", gcDocOf(true, []housekeep.GCResult{{
 			Name:         "alpha",
 			CWD:          "/c/alpha",
 			Rounds:       3,
 			Archived:     true,
 			MasterMindID: "pl_alpha",
 		}})},
-		{"unbind-sweep-json", sweepDocOf(false, relevo.SweepResult{
+		{"unbind-sweep-json", sweepDocOf(false, housekeep.SweepResult{
 			Dir: "/repo",
-			Refs: []relevo.RefOutcome{{
+			Refs: []housekeep.RefOutcome{{
 				Ref:     "refs/heads/relevo/alpha",
 				Deleted: true,
 			}},

@@ -519,7 +519,7 @@ func TestSweepScratchKeepsOpenReaderRounds(t *testing.T) {
 		store.LogEntry{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport})
 
 	for _, name := range []string{"open-reader", "closed-reader", "ghost"} {
-		if _, err := housekeep.CreateScratch(ctx, housekeepDeps(rt), store.Binding{Name: name, CWD: repo}, 1); err != nil {
+		if _, err := housekeep.CreateScratch(ctx, HousekeepDeps(rt), store.Binding{Name: name, CWD: repo}, 1); err != nil {
 			t.Fatalf("CreateScratch(%s): %v", name, err)
 		}
 	}
@@ -559,7 +559,7 @@ func TestSweepKeepsTheCurrentRoundsScratchBeforeItOpens(t *testing.T) {
 		store.LogEntry{Round: 1, Direction: store.DirToMasterMind, Kind: store.KindReport})
 
 	for _, round := range []int{1, 2} {
-		if _, err := housekeep.CreateScratch(ctx, housekeepDeps(rt), store.Binding{Name: "reader-bind", CWD: repo}, round); err != nil {
+		if _, err := housekeep.CreateScratch(ctx, HousekeepDeps(rt), store.Binding{Name: "reader-bind", CWD: repo}, round); err != nil {
 			t.Fatalf("CreateScratch(%d): %v", round, err)
 		}
 	}

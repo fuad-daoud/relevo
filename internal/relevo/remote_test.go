@@ -20,6 +20,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -3014,7 +3015,7 @@ func TestGCRemoteOnlyWhenDone(t *testing.T) {
 	fr := &fakeRemote{}
 	rt := Runtime{Store: st, Remote: fr, Now: func() time.Time { return baseTime }}
 
-	results, err := GC(ctx, rt, GCOptions{AllMasterMinds: true})
+	results, err := housekeep.GC(ctx, HousekeepDeps(rt), housekeep.GCOptions{AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}

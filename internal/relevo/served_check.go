@@ -274,7 +274,7 @@ func applyServedCheckRecord(run *store.CheckRun, rec *store.GateRecord) {
 // stored gate.
 func servedCheckSpec(rt Runtime, b store.Binding, run store.CheckRun) gateProcSpec {
 	return gateProcSpec{
-		Dir:      housekeep.RoundTree(housekeepDeps(rt), b),
+		Dir:      housekeep.RoundTree(HousekeepDeps(rt), b),
 		Command:  run.Command,
 		LogPath:  run.LogPath,
 		UnitName: scopeUnitNameFor(scopeGate, b.Owner, b.Name+"-check", run.Round, ""),

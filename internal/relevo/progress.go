@@ -32,7 +32,7 @@ func sampleSignals(ctx context.Context, rt Runtime, b store.Binding) signals {
 	var s signals
 
 	if rt.Git != nil && b.CWD != "" {
-		if fp, err := rt.Git.TreeFingerprint(ctx, housekeep.RoundTree(housekeepDeps(rt), b)); err == nil {
+		if fp, err := rt.Git.TreeFingerprint(ctx, housekeep.RoundTree(HousekeepDeps(rt), b)); err == nil {
 			s.tree = fp
 		}
 	}

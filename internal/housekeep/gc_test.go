@@ -1,4 +1,4 @@
-package relevo
+package housekeep
 
 import (
 	"context"
@@ -11,7 +11,107 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-func seedDone(t *testing.T, rt Runtime, name, cwd string) {
+// fakeRefs is the slice of the git CLI ref cleanup drives: the head
+// existence probe, the relevo ref listing, the pushed check, and the branch
+// and ref deletes.
+type fakeRefs struct {
+	refSHA    map[string]string
+	refSHAErr error
+
+	listRefsResult   []string
+	listRefsByPrefix map[string][]string
+	listRefsErr      error
+	listRefsCalls    []listRefsCall
+
+	refOnRemote      map[string]bool
+	refOnRemoteErr   error
+	refOnRemoteCalls []refOnRemoteCall
+
+	deleteBranchCalls []deleteBranchCall
+	deleteBranchErr   error
+
+	deleteRefCalls []deleteRefCall
+	deleteRefErr   error
+
+	refSHACalls []refSHACall
+}
+
+type refSHACall struct {
+	Dir, Ref string
+}
+
+type listRefsCall struct {
+	Dir, Prefix string
+}
+
+type refOnRemoteCall struct {
+	Dir, Ref string
+}
+
+type deleteBranchCall struct {
+	Dir, Branch string
+}
+
+type deleteRefCall struct {
+	Dir, Ref string
+}
+
+func (f *fakeRefs) RefSHA(_ context.Context, dir, ref string) (string, bool, error) {
+	f.refSHACalls = append(f.refSHACalls, refSHACall{Dir: dir, Ref: ref})
+	if f.refSHAErr != nil {
+		return "", false, f.refSHAErr
+	}
+	if f.refSHA != nil {
+		sha, ok := f.refSHA[ref]
+		return sha, ok, nil
+	}
+	return "fakerefsha", true, nil
+}
+
+func (f *fakeRefs) ListRefs(_ context.Context, dir, prefix string) ([]string, error) {
+	f.listRefsCalls = append(f.listRefsCalls, listRefsCall{Dir: dir, Prefix: prefix})
+	if f.listRefsErr != nil {
+		return nil, f.listRefsErr
+	}
+	if f.listRefsByPrefix != nil {
+		return f.listRefsByPrefix[prefix], nil
+	}
+	return f.listRefsResult, nil
+}
+
+func (f *fakeRefs) RefOnRemote(_ context.Context, dir, ref string) (bool, error) {
+	f.refOnRemoteCalls = append(f.refOnRemoteCalls, refOnRemoteCall{Dir: dir, Ref: ref})
+	if f.refOnRemoteErr != nil {
+		return false, f.refOnRemoteErr
+	}
+	return f.refOnRemote[ref], nil
+}
+
+func (f *fakeRefs) DeleteBranch(_ context.Context, dir, branch string) error {
+	f.deleteBranchCalls = append(f.deleteBranchCalls, deleteBranchCall{Dir: dir, Branch: branch})
+	return f.deleteBranchErr
+}
+
+func (f *fakeRefs) DeleteRef(_ context.Context, dir, ref string) error {
+	f.deleteRefCalls = append(f.deleteRefCalls, deleteRefCall{Dir: dir, Ref: ref})
+	return f.deleteRefErr
+}
+
+// gcTestDeps is a Deps over a temp store for GC tests: no git, a teardown
+// that reports nothing, and an ask that releases. Tests that need git or a
+// livelier engine set the fields they need.
+func gcTestDeps(t *testing.T) Deps {
+	t.Helper()
+	return Deps{
+		Store: store.New(t.TempDir()),
+		Teardown: func(context.Context, store.Binding, bool) TeardownOutcome {
+			return TeardownOutcome{}
+		},
+		AskUnbind: func(context.Context, store.Binding, bool) error { return nil },
+	}
+}
+
+func seedDone(t *testing.T, deps Deps, name, cwd string) {
 	t.Helper()
 	b := store.Binding{
 		Name: name, CWD: cwd,
@@ -19,14 +119,13 @@ func seedDone(t *testing.T, rt Runtime, name, cwd string) {
 		Builder:    store.Endpoint{PaneID: "w1:p2"},
 		Round:      3, State: store.StateDone,
 	}
-	if err := rt.Store.Save(b); err != nil {
+	if err := deps.Store.Save(b); err != nil {
 		t.Fatalf("save %s: %v", name, err)
 	}
 }
 
-// seedDoneFor is seedDone with an explicit MasterMindID, for the GC scope tests
-// (#482).
-func seedDoneFor(t *testing.T, rt Runtime, name, cwd, mastermindID string) {
+// seedDoneFor is seedDone with an explicit MasterMindID, for the GC scope tests.
+func seedDoneFor(t *testing.T, deps Deps, name, cwd, mastermindID string) {
 	t.Helper()
 	b := store.Binding{
 		Name: name, CWD: cwd,
@@ -35,23 +134,24 @@ func seedDoneFor(t *testing.T, rt Runtime, name, cwd, mastermindID string) {
 		Round:      3, State: store.StateDone,
 		MasterMindID: mastermindID,
 	}
-	if err := rt.Store.Save(b); err != nil {
+	if err := deps.Store.Save(b); err != nil {
 		t.Fatalf("save %s: %v", name, err)
 	}
 }
 
-// TestGCClearsOnlyThisMasterMindsBindings pins #482: GC in mastermind-scoped mode
-// only clears bindings whose MasterMindID matches, leaving another mastermind's
-// bindings and a legacy (MasterMindID-less) binding untouched.
+// TestGCClearsOnlyThisMasterMindsBindings pins the scope rule: GC in
+// mastermind-scoped mode only clears bindings whose MasterMindID matches,
+// leaving another mastermind's bindings and a legacy (MasterMindID-less)
+// binding untouched.
 func TestGCClearsOnlyThisMasterMindsBindings(t *testing.T) {
 	t.Parallel()
 
-	rt := newRuntime(t)
-	seedDoneFor(t, rt, "a1", "/repo-a1", "pl_aaa")
-	seedDoneFor(t, rt, "b1", "/repo-b1", "pl_bbb")
-	seedDoneFor(t, rt, "legacy", "/repo-legacy", "")
+	deps := gcTestDeps(t)
+	seedDoneFor(t, deps, "a1", "/repo-a1", "pl_aaa")
+	seedDoneFor(t, deps, "b1", "/repo-b1", "pl_bbb")
+	seedDoneFor(t, deps, "legacy", "/repo-legacy", "")
 
-	got, err := GC(context.Background(), rt, GCOptions{MasterMindID: "pl_aaa", Delete: true})
+	got, err := GC(context.Background(), deps, GCOptions{MasterMindID: "pl_aaa", Delete: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -59,7 +159,7 @@ func TestGCClearsOnlyThisMasterMindsBindings(t *testing.T) {
 		t.Fatalf("gc result = %+v, want only a1 with MasterMindID pl_aaa", got)
 	}
 
-	remaining, err := rt.Store.List()
+	remaining, err := deps.Store.List()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -72,17 +172,18 @@ func TestGCClearsOnlyThisMasterMindsBindings(t *testing.T) {
 	}
 }
 
-// TestGCAllMasterMindsClearsEveryDoneBinding pins #482: AllMasterMinds clears every
-// DONE binding regardless of mastermind, including a legacy MasterMindID-less one.
+// TestGCAllMasterMindsClearsEveryDoneBinding pins the AllMasterMinds rule: it
+// clears every DONE binding regardless of mastermind, including a legacy
+// MasterMindID-less one.
 func TestGCAllMasterMindsClearsEveryDoneBinding(t *testing.T) {
 	t.Parallel()
 
-	rt := newRuntime(t)
-	seedDoneFor(t, rt, "a1", "/repo-a1", "pl_aaa")
-	seedDoneFor(t, rt, "b1", "/repo-b1", "pl_bbb")
-	seedDoneFor(t, rt, "legacy", "/repo-legacy", "")
+	deps := gcTestDeps(t)
+	seedDoneFor(t, deps, "a1", "/repo-a1", "pl_aaa")
+	seedDoneFor(t, deps, "b1", "/repo-b1", "pl_bbb")
+	seedDoneFor(t, deps, "legacy", "/repo-legacy", "")
 
-	got, err := GC(context.Background(), rt, GCOptions{AllMasterMinds: true, Delete: true})
+	got, err := GC(context.Background(), deps, GCOptions{AllMasterMinds: true, Delete: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -97,25 +198,25 @@ func TestGCAllMasterMindsClearsEveryDoneBinding(t *testing.T) {
 	}
 }
 
-// TestGCRefusesWithoutScope pins #482: GC refuses to run with neither a
-// MasterMindID nor AllMasterMinds, and refuses when both are set, so no caller can
-// get "everything" by leaving the scope empty.
+// TestGCRefusesWithoutScope pins the scope refusal: GC refuses to run with
+// neither a MasterMindID nor AllMasterMinds, and refuses when both are set, so
+// no caller can get "everything" by leaving the scope empty.
 func TestGCRefusesWithoutScope(t *testing.T) {
 	t.Parallel()
 
-	rt := newRuntime(t)
-	seedDoneFor(t, rt, "a1", "/repo-a1", "pl_aaa")
-	seedDoneFor(t, rt, "b1", "/repo-b1", "pl_bbb")
-	seedDoneFor(t, rt, "legacy", "/repo-legacy", "")
+	deps := gcTestDeps(t)
+	seedDoneFor(t, deps, "a1", "/repo-a1", "pl_aaa")
+	seedDoneFor(t, deps, "b1", "/repo-b1", "pl_bbb")
+	seedDoneFor(t, deps, "legacy", "/repo-legacy", "")
 
-	if _, err := GC(context.Background(), rt, GCOptions{}); !errors.Is(err, ErrGCNoScope) {
+	if _, err := GC(context.Background(), deps, GCOptions{}); !errors.Is(err, ErrGCNoScope) {
 		t.Fatalf("GC with no scope: err = %v, want ErrGCNoScope", err)
 	}
-	if _, err := GC(context.Background(), rt, GCOptions{MasterMindID: "pl_aaa", AllMasterMinds: true}); !errors.Is(err, ErrGCNoScope) {
+	if _, err := GC(context.Background(), deps, GCOptions{MasterMindID: "pl_aaa", AllMasterMinds: true}); !errors.Is(err, ErrGCNoScope) {
 		t.Fatalf("GC with both scopes: err = %v, want ErrGCNoScope", err)
 	}
 
-	remaining, err := rt.Store.List()
+	remaining, err := deps.Store.List()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -124,17 +225,17 @@ func TestGCRefusesWithoutScope(t *testing.T) {
 	}
 }
 
-// TestGCMasterMindDryRunListsOnlyThisMasterMind pins #482: a mastermind-scoped dry run
+// TestGCMasterMindDryRunListsOnlyThisMasterMind pins the scoped dry run: it
 // lists only that mastermind's bindings and changes nothing.
 func TestGCMasterMindDryRunListsOnlyThisMasterMind(t *testing.T) {
 	t.Parallel()
 
-	rt := newRuntime(t)
-	seedDoneFor(t, rt, "a1", "/repo-a1", "pl_aaa")
-	seedDoneFor(t, rt, "b1", "/repo-b1", "pl_bbb")
-	seedDoneFor(t, rt, "legacy", "/repo-legacy", "")
+	deps := gcTestDeps(t)
+	seedDoneFor(t, deps, "a1", "/repo-a1", "pl_aaa")
+	seedDoneFor(t, deps, "b1", "/repo-b1", "pl_bbb")
+	seedDoneFor(t, deps, "legacy", "/repo-legacy", "")
 
-	got, err := GC(context.Background(), rt, GCOptions{MasterMindID: "pl_bbb", DryRun: true})
+	got, err := GC(context.Background(), deps, GCOptions{MasterMindID: "pl_bbb", DryRun: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -142,7 +243,7 @@ func TestGCMasterMindDryRunListsOnlyThisMasterMind(t *testing.T) {
 		t.Fatalf("gc result = %+v, want only b1", got)
 	}
 
-	remaining, err := rt.Store.List()
+	remaining, err := deps.Store.List()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -154,8 +255,8 @@ func TestGCMasterMindDryRunListsOnlyThisMasterMind(t *testing.T) {
 func TestGCClearsOnlyDoneBindings(t *testing.T) {
 	t.Parallel()
 
-	rt := newRuntime(t)
-	seedDone(t, rt, "finished", "/repo-done")
+	deps := gcTestDeps(t)
+	seedDone(t, deps, "finished", "/repo-done")
 
 	live := store.Binding{
 		Name: "live", CWD: "/repo-live",
@@ -163,7 +264,7 @@ func TestGCClearsOnlyDoneBindings(t *testing.T) {
 		Builder:    store.Endpoint{PaneID: "w1:p4"},
 		Round:      1, State: store.StateActive,
 	}
-	if err := rt.Store.Save(live); err != nil {
+	if err := deps.Store.Save(live); err != nil {
 		t.Fatalf("save live: %v", err)
 	}
 	// A binding needing a human must survive: removing it would throw away
@@ -174,11 +275,11 @@ func TestGCClearsOnlyDoneBindings(t *testing.T) {
 		Builder:    store.Endpoint{PaneID: "w1:p6"},
 		Round:      2, State: store.StateBroken,
 	}
-	if err := rt.Store.Save(broken); err != nil {
+	if err := deps.Store.Save(broken); err != nil {
 		t.Fatalf("save broken: %v", err)
 	}
 
-	got, err := GC(context.Background(), rt, GCOptions{Delete: true, AllMasterMinds: true})
+	got, err := GC(context.Background(), deps, GCOptions{Delete: true, AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -186,7 +287,7 @@ func TestGCClearsOnlyDoneBindings(t *testing.T) {
 		t.Fatalf("gc result = %+v, want only the done binding deleted", got)
 	}
 
-	remaining, err := rt.Store.List()
+	remaining, err := deps.Store.List()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -198,17 +299,17 @@ func TestGCClearsOnlyDoneBindings(t *testing.T) {
 func TestGCDryRunChangesNothing(t *testing.T) {
 	t.Parallel()
 
-	rt := newRuntime(t)
-	seedDone(t, rt, "finished", "/repo-done")
+	deps := gcTestDeps(t)
+	seedDone(t, deps, "finished", "/repo-done")
 
-	got, err := GC(context.Background(), rt, GCOptions{DryRun: true, AllMasterMinds: true})
+	got, err := GC(context.Background(), deps, GCOptions{DryRun: true, AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
 	if len(got) != 1 || got[0].Deleted || got[0].Archived {
 		t.Fatalf("dry run must report without acting, got %+v", got)
 	}
-	if _, err := rt.Store.Load("finished"); err != nil {
+	if _, err := deps.Store.Load("finished"); err != nil {
 		t.Errorf("dry run deleted the binding: %v", err)
 	}
 }
@@ -216,29 +317,29 @@ func TestGCDryRunChangesNothing(t *testing.T) {
 func TestGCArchivesByDefault(t *testing.T) {
 	t.Parallel()
 
-	rt := newRuntime(t)
-	seedDone(t, rt, "finished", "/repo-done")
-	if err := rt.Store.AppendLog("finished", store.LogEntry{
+	deps := gcTestDeps(t)
+	seedDone(t, deps, "finished", "/repo-done")
+	if err := deps.Store.AppendLog("finished", store.LogEntry{
 		Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt, Confirmed: true,
 	}); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}
 
-	got, err := GC(context.Background(), rt, GCOptions{AllMasterMinds: true})
+	got, err := GC(context.Background(), deps, GCOptions{AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
 	if len(got) != 1 || !got[0].Archived || got[0].Deleted {
 		t.Fatalf("gc result = %+v, want an archive not a delete", got)
 	}
-	archived, err := rt.Store.ListArchived()
+	archived, err := deps.Store.ListArchived()
 	if err != nil {
 		t.Fatalf("ListArchived: %v", err)
 	}
 	if len(archived) != 1 || archived[0].Binding.Name != "finished" {
 		t.Fatalf("ListArchived = %+v, want the archived binding", archived)
 	}
-	events, err := rt.Store.ArchivedLog(archived[0].RecordID)
+	events, err := deps.Store.ArchivedLog(archived[0].RecordID)
 	if err != nil || len(events) != 1 || events[0].Kind != store.KindPrompt {
 		t.Errorf("ArchivedLog = %+v, %v; want the plan entry the archive kept", events, err)
 	}
@@ -247,11 +348,21 @@ func TestGCArchivesByDefault(t *testing.T) {
 func TestGCWorktreeTeardown(t *testing.T) {
 	t.Parallel()
 
-	fg := &fakeGit{}
-	rt := newRuntime(t)
-	rt.Git = fg
+	deps := gcTestDeps(t)
+	type teardownCall struct {
+		name   string
+		dryRun bool
+	}
+	var calls []teardownCall
+	deps.Teardown = func(_ context.Context, b store.Binding, dryRun bool) TeardownOutcome {
+		calls = append(calls, teardownCall{name: b.Name, dryRun: dryRun})
+		if b.Worktree == "" {
+			return TeardownOutcome{}
+		}
+		return TeardownOutcome{Removed: b.Worktree}
+	}
 
-	seedDone(t, rt, "ordinary", "/repo-ordinary")
+	seedDone(t, deps, "ordinary", "/repo-ordinary")
 
 	wt := t.TempDir()
 	forked := store.Binding{
@@ -260,11 +371,11 @@ func TestGCWorktreeTeardown(t *testing.T) {
 		State:    store.StateDone, Round: 2,
 		MasterMind: store.Endpoint{PaneID: "w1:p1"}, Builder: store.Endpoint{PaneID: "w1:p2"},
 	}
-	if err := rt.Store.Save(forked); err != nil {
+	if err := deps.Store.Save(forked); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := GC(context.Background(), rt, GCOptions{AllMasterMinds: true})
+	res, err := GC(context.Background(), deps, GCOptions{AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -272,6 +383,30 @@ func TestGCWorktreeTeardown(t *testing.T) {
 		t.Fatalf("expected 2 results, got %d", len(res))
 	}
 
+	checkGCTeardownResults(t, res, wt)
+	if len(calls) != 2 {
+		t.Fatalf("teardown calls = %d, want one per binding", len(calls))
+	}
+	for _, c := range calls {
+		if c.dryRun {
+			t.Error("teardown must run with dryRun: false")
+		}
+	}
+
+	// Verify both bindings were cleared from the store
+	list, err := deps.Store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Errorf("all bindings should be cleared, found %d", len(list))
+	}
+}
+
+// checkGCTeardownResults pins the per-binding worktree fields of a GC over
+// one plain binding and one the teardown removed.
+func checkGCTeardownResults(t *testing.T, res []GCResult, wt string) {
+	t.Helper()
 	var foundOrdinary, foundForked bool
 	for _, r := range res {
 		if r.Name == "ordinary" {
@@ -290,60 +425,37 @@ func TestGCWorktreeTeardown(t *testing.T) {
 	if !foundOrdinary || !foundForked {
 		t.Errorf("missing results: ordinary=%v, forked=%v", foundOrdinary, foundForked)
 	}
-	if len(fg.removeWorktreeCalls) != 1 {
-		t.Fatalf("RemoveWorktree calls = %d, want 1", len(fg.removeWorktreeCalls))
-	}
-	if fg.removeWorktreeCalls[0].Force {
-		t.Error("teardown must use force: false")
-	}
-
-	// Verify both bindings deleted from store
-	list, err := rt.Store.List()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(list) != 0 {
-		t.Errorf("all bindings should be cleared, found %d", len(list))
-	}
 }
 
 func TestGCAfterDoneReportsGone(t *testing.T) {
 	t.Parallel()
 
-	fg := &fakeGit{dirtyResult: false}
-	rt := newRuntime(t)
-	rt.Git = fg
-
+	deps := gcTestDeps(t)
 	wt := t.TempDir()
 	b := store.Binding{
 		Name:       "webshop",
 		CWD:        wt,
 		Worktree:   wt,
 		Branch:     "relevo/webshop",
-		State:      store.StateActive,
+		State:      store.StateDone,
 		Round:      1,
 		MasterMind: store.Endpoint{PaneID: "w1:p1"},
 		Builder:    store.Endpoint{PaneID: "w1:p2"},
 	}
-	if err := rt.Store.Save(b); err != nil {
+	if err := deps.Store.Save(b); err != nil {
 		t.Fatal(err)
 	}
 
-	res, err := Done(context.Background(), rt, "webshop")
-	if err != nil {
-		t.Fatalf("Done: %v", err)
-	}
-	if res.WorktreeRemoved != wt {
-		t.Fatalf("WorktreeRemoved = %q, want %q", res.WorktreeRemoved, wt)
-	}
-
-	// The temp dir still exists on disk because fakeGit removes nothing --
-	// so before GC, do os.RemoveAll(wt) to model what real git did.
+	// The temp dir still exists on disk -- so before GC, do os.RemoveAll(wt)
+	// to model what the teardown's removal left behind.
 	if err := os.RemoveAll(wt); err != nil {
 		t.Fatal(err)
 	}
+	deps.Teardown = func(_ context.Context, b store.Binding, _ bool) TeardownOutcome {
+		return TeardownOutcome{Gone: b.Worktree}
+	}
 
-	gcRes, err := GC(context.Background(), rt, GCOptions{AllMasterMinds: true})
+	gcRes, err := GC(context.Background(), deps, GCOptions{AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -359,8 +471,8 @@ func TestGCAfterDoneReportsGone(t *testing.T) {
 }
 
 // rootNames lists a state root's entry names, ignoring the database files the
-// store itself owns: relevo.db and its WAL sidecars (P3a: the record lives
-// there, so a raw ReadDir sees more than the bindings).
+// store itself owns: relevo.db and its WAL sidecars, so a raw ReadDir sees
+// more than the bindings.
 func rootNames(t *testing.T, root string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(root)
@@ -380,11 +492,17 @@ func rootNames(t *testing.T, root string) []string {
 func TestGCWorktreeDryRun(t *testing.T) {
 	t.Parallel()
 
-	fg := &fakeGit{}
-	rt := newRuntime(t)
-	rt.Git = fg
+	deps := gcTestDeps(t)
+	var sawDryRun bool
+	deps.Teardown = func(_ context.Context, b store.Binding, dryRun bool) TeardownOutcome {
+		if b.Worktree == "" {
+			return TeardownOutcome{}
+		}
+		sawDryRun = dryRun
+		return TeardownOutcome{Removed: b.Worktree}
+	}
 
-	seedDone(t, rt, "ordinary", "/repo-ordinary")
+	seedDone(t, deps, "ordinary", "/repo-ordinary")
 
 	wt := t.TempDir()
 	forked := store.Binding{
@@ -393,14 +511,14 @@ func TestGCWorktreeDryRun(t *testing.T) {
 		State:    store.StateDone, Round: 2,
 		MasterMind: store.Endpoint{PaneID: "w1:p1"}, Builder: store.Endpoint{PaneID: "w1:p2"},
 	}
-	if err := rt.Store.Save(forked); err != nil {
+	if err := deps.Store.Save(forked); err != nil {
 		t.Fatal(err)
 	}
 
 	// Read state root before
-	entriesBefore := rootNames(t, rt.Store.Dir(""))
+	entriesBefore := rootNames(t, deps.Store.Dir(""))
 
-	res, err := GC(context.Background(), rt, GCOptions{DryRun: true, AllMasterMinds: true})
+	res, err := GC(context.Background(), deps, GCOptions{DryRun: true, AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC dry run: %v", err)
 	}
@@ -410,12 +528,12 @@ func TestGCWorktreeDryRun(t *testing.T) {
 			t.Errorf("dry-run should report WorktreeRemoved, got %q", r.WorktreeRemoved)
 		}
 	}
-	if len(fg.removeWorktreeCalls) != 0 {
-		t.Errorf("dry-run must not call RemoveWorktree, got %d calls", len(fg.removeWorktreeCalls))
+	if !sawDryRun {
+		t.Error("dry-run must reach the teardown as dryRun: true")
 	}
 
 	// Verify disk state unchanged
-	entriesAfter := rootNames(t, rt.Store.Dir(""))
+	entriesAfter := rootNames(t, deps.Store.Dir(""))
 	if len(entriesBefore) != len(entriesAfter) {
 		t.Errorf("entries changed: before=%v, after=%v", entriesBefore, entriesAfter)
 		return
@@ -427,11 +545,9 @@ func TestGCWorktreeDryRun(t *testing.T) {
 	}
 }
 
-func gcKeptRuntime(t *testing.T) (Runtime, *fakeGit, string) {
+func gcKeptDeps(t *testing.T) (Deps, string) {
 	t.Helper()
-	fg := &fakeGit{dirtyErr: errors.New("git lock busy\ndetails")}
-	rt := newRuntime(t)
-	rt.Git = fg
+	deps := gcTestDeps(t)
 
 	wt := t.TempDir()
 	forked := store.Binding{
@@ -440,19 +556,22 @@ func gcKeptRuntime(t *testing.T) (Runtime, *fakeGit, string) {
 		State:    store.StateDone, Round: 2,
 		MasterMind: store.Endpoint{PaneID: "w1:p1"}, Builder: store.Endpoint{PaneID: "w1:p2"},
 	}
-	if err := rt.Store.Save(forked); err != nil {
+	if err := deps.Store.Save(forked); err != nil {
 		t.Fatal(err)
 	}
-	return rt, fg, wt
+	deps.Teardown = func(_ context.Context, b store.Binding, _ bool) TeardownOutcome {
+		return TeardownOutcome{Kept: b.Worktree, Reason: "dirty check failed: git lock busy"}
+	}
+	return deps, wt
 }
 
 func TestGCKeepsBindingWithKeptWorktree(t *testing.T) {
 	t.Parallel()
 
-	rt, fg, wt := gcKeptRuntime(t)
+	deps, wt := gcKeptDeps(t)
 
 	for _, dry := range []bool{true, false} {
-		res, err := GC(context.Background(), rt, GCOptions{Delete: true, DryRun: dry, AllMasterMinds: true})
+		res, err := GC(context.Background(), deps, GCOptions{Delete: true, DryRun: dry, AllMasterMinds: true})
 		if err != nil {
 			t.Fatalf("GC dry=%v: %v", dry, err)
 		}
@@ -466,33 +585,30 @@ func TestGCKeepsBindingWithKeptWorktree(t *testing.T) {
 		if !r.BindingKept || r.Deleted || r.Archived {
 			t.Errorf("result = %+v, want BindingKept and neither archived nor deleted", r)
 		}
-		if got, err := rt.Store.Load("forked-dirty-err"); err != nil || got.State != store.StateDone {
+		if got, err := deps.Store.Load("forked-dirty-err"); err != nil || got.State != store.StateDone {
 			t.Errorf("binding = %+v, err %v; want it to stay DONE", got.State, err)
 		}
-	}
-	if len(fg.removeWorktreeCalls) != 0 {
-		t.Errorf("RemoveWorktree should not be called on dirty check error, got %d calls", len(fg.removeWorktreeCalls))
 	}
 }
 
 func TestGCForceArchivesKeptWorktree(t *testing.T) {
 	t.Parallel()
 
-	rt, _, wt := gcKeptRuntime(t)
+	deps, wt := gcKeptDeps(t)
 
-	dry, err := GC(context.Background(), rt, GCOptions{Force: true, DryRun: true, AllMasterMinds: true})
+	dry, err := GC(context.Background(), deps, GCOptions{Force: true, DryRun: true, AllMasterMinds: true})
 	if err != nil || len(dry) != 1 || dry[0].BindingKept {
 		t.Fatalf("forced dry run = %+v, %v; want a result that is not BindingKept", dry, err)
 	}
 
-	res, err := GC(context.Background(), rt, GCOptions{Delete: true, Force: true, AllMasterMinds: true})
+	res, err := GC(context.Background(), deps, GCOptions{Delete: true, Force: true, AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
 	if len(res) != 1 || !res[0].Deleted || res[0].BindingKept || res[0].WorktreeKept != wt {
 		t.Fatalf("result = %+v, want deleted with the worktree reported kept", res)
 	}
-	if _, err := rt.Store.Load("forked-dirty-err"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := deps.Store.Load("forked-dirty-err"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("binding state should be deleted, got err = %v", err)
 	}
 }
@@ -500,10 +616,10 @@ func TestGCForceArchivesKeptWorktree(t *testing.T) {
 func TestGCDeleteRemovesTheDirectory(t *testing.T) {
 	t.Parallel()
 
-	rt := newRuntime(t)
-	seedDone(t, rt, "finished", "/repo-done")
+	deps := gcTestDeps(t)
+	seedDone(t, deps, "finished", "/repo-done")
 
-	got, err := GC(context.Background(), rt, GCOptions{Delete: true, AllMasterMinds: true})
+	got, err := GC(context.Background(), deps, GCOptions{Delete: true, AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -517,11 +633,11 @@ func TestGCDeleteRemovesTheDirectory(t *testing.T) {
 		t.Error("Archived = true, want a delete")
 	}
 
-	if _, err := rt.Store.Load("finished"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := deps.Store.Load("finished"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("binding state still exists in store: %v", err)
 	}
 
-	if archived, err := rt.Store.ListArchived(); err != nil || len(archived) != 0 {
+	if archived, err := deps.Store.ListArchived(); err != nil || len(archived) != 0 {
 		t.Errorf("ListArchived = %+v, %v; want nothing archived", archived, err)
 	}
 }
@@ -529,9 +645,10 @@ func TestGCDeleteRemovesTheDirectory(t *testing.T) {
 func TestGCReportsAnAlreadyGoneWorktree(t *testing.T) {
 	t.Parallel()
 
-	fg := &fakeGit{}
-	rt := newRuntime(t)
-	rt.Git = fg
+	deps := gcTestDeps(t)
+	deps.Teardown = func(_ context.Context, b store.Binding, _ bool) TeardownOutcome {
+		return TeardownOutcome{Gone: b.Worktree}
+	}
 
 	missingWT := filepath.Join(t.TempDir(), "nonexistent-worktree")
 	b := store.Binding{
@@ -543,11 +660,11 @@ func TestGCReportsAnAlreadyGoneWorktree(t *testing.T) {
 		Round:      3,
 		State:      store.StateDone,
 	}
-	if err := rt.Store.Save(b); err != nil {
+	if err := deps.Store.Save(b); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
-	got, err := GC(context.Background(), rt, GCOptions{AllMasterMinds: true})
+	got, err := GC(context.Background(), deps, GCOptions{AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
@@ -561,9 +678,6 @@ func TestGCReportsAnAlreadyGoneWorktree(t *testing.T) {
 	if r.WorktreeKept != "" {
 		t.Errorf("WorktreeKept = %q, want empty", r.WorktreeKept)
 	}
-	if fg.dirtyCalls != 0 {
-		t.Errorf("dirtyCalls = %d, want 0", fg.dirtyCalls)
-	}
 	if !r.Archived || r.Deleted {
 		t.Errorf("binding was not archived: %+v", r)
 	}
@@ -574,7 +688,7 @@ func TestGCReportsAnAlreadyGoneWorktree(t *testing.T) {
 func TestGCIgnoresPaused(t *testing.T) {
 	t.Parallel()
 
-	rt := newRuntime(t)
+	deps := gcTestDeps(t)
 
 	b := store.Binding{
 		Name: "parked", CWD: "/repo-parked", Worktree: "/wt/parked",
@@ -582,18 +696,18 @@ func TestGCIgnoresPaused(t *testing.T) {
 		Builder:    store.Endpoint{Kind: "agy"},
 		Round:      3, State: store.StatePaused,
 	}
-	if err := rt.Store.Save(b); err != nil {
+	if err := deps.Store.Save(b); err != nil {
 		t.Fatalf("save paused: %v", err)
 	}
 
-	got, err := GC(context.Background(), rt, GCOptions{Delete: true, AllMasterMinds: true})
+	got, err := GC(context.Background(), deps, GCOptions{Delete: true, AllMasterMinds: true})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}
 	if len(got) != 0 {
 		t.Fatalf("gc considered %+v, want no paused binding", got)
 	}
-	if _, err := rt.Store.Load("parked"); err != nil {
+	if _, err := deps.Store.Load("parked"); err != nil {
 		t.Fatalf("paused binding must survive gc: %v", err)
 	}
 }
