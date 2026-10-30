@@ -82,7 +82,7 @@ type Daemon struct {
 	// behind it only makes the backlog worse.
 	syncInFlight bool
 	// live is the liveness state that qualifies the slot, guarded by syncMu.
-	live syncLiveness
+	live verb.Liveness
 	// syncIdle is signalled whenever syncInFlight goes false, so a caller
 	// waiting for the slot -- a sync verb -- is woken rather than polling. It is
 	// created once in NewDaemon and never replaced, which is what lets Wait
@@ -131,6 +131,26 @@ func (d *Daemon) SetSyncVerbs(v *verb.Runner) {
 // the export to the ordinary triggers.
 func (d *Daemon) BindSyncNow(ctx context.Context) {
 	d.rt.SyncNow = func() { d.SyncNow(ctx) }
+}
+
+// syncEngine adapts the Daemon to the verb package's Engine: the clock the
+// idle window reads, the signal that wakes the slot's waiters, and the trigger
+// that hands a sync to the background. The moved hook logic drives the engine
+// through this adapter so the verb package never imports this one.
+type syncEngine struct {
+	d *Daemon
+}
+
+func (e syncEngine) Clock() func() time.Time {
+	return e.d.syncClock()
+}
+
+func (e syncEngine) SignalIdle() {
+	e.d.signalIdleLocked()
+}
+
+func (e syncEngine) QueueSync(ctx context.Context) {
+	e.d.queueSync(ctx)
 }
 
 // NewDaemon returns a Daemon ticking at interval, floored at minInterval.
@@ -192,7 +212,7 @@ func (d *Daemon) WaitSyncSlot(fn func()) {
 		d.syncInFlight = false
 		// A trigger that arrived while the verb held the slot is dropped: the
 		// verb moved the same data.
-		d.live.dirty = false
+		d.live.Dirty = false
 		d.signalIdleLocked()
 		d.syncMu.Unlock()
 	}()
