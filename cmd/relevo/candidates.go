@@ -134,7 +134,7 @@ func loadHistory(rt relevo.Runtime) availability.History {
 // formatPolicy renders the per-role pick explanation the `pick` block of
 // `relevo config` shows.
 func formatPolicy(rt relevo.Runtime) string {
-	return relevo.FormatPolicyFor(rt.RoleRegistry(), rt.Accounts, rt.Candidates, rt.Policy,
+	return resolve.FormatPolicyFor(rt.RoleRegistry(), rt.Accounts, rt.Candidates, rt.Policy,
 		pickGates(rt), liveLedgerEntries(rt), loadHistory(rt), rt.Now(), time.Local)
 }
 

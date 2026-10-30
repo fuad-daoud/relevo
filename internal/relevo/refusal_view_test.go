@@ -6,6 +6,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 )
 
 func kindGate(token string, kind availability.Kind) availability.Gate {
@@ -20,7 +21,7 @@ func TestRoleRefusalsCause(t *testing.T) {
 		name      string
 		pol       policy.Policy
 		gates     []availability.Gate
-		wantCause RefusalCause
+		wantCause resolve.RefusalCause
 	}{
 		{
 			name: "window on every serving token is a window",
@@ -30,7 +31,7 @@ func TestRoleRefusalsCause(t *testing.T) {
 				kindGate(testClaudeRef, availability.Scheduled),
 				kindGate(testAgyRef, availability.Scheduled),
 			},
-			wantCause: CauseWindow,
+			wantCause: resolve.CauseWindow,
 		},
 		{
 			name: "a demote window beside a cap is still a cap",
@@ -41,7 +42,7 @@ func TestRoleRefusalsCause(t *testing.T) {
 				kindGate(testAgyRef, availability.ConcurrencyLimit),
 				{Token: testAgyRef, Kind: availability.Scheduled, Demote: true, Until: baseTime.Add(10 * time.Minute)},
 			},
-			wantCause: CauseCap,
+			wantCause: resolve.CauseCap,
 		},
 		{
 			name: "cap on every serving token is a cap",
@@ -51,7 +52,7 @@ func TestRoleRefusalsCause(t *testing.T) {
 				kindGate(testClaudeRef, availability.ConcurrencyLimit),
 				kindGate(testAgyRef, availability.ConcurrencyLimit),
 			},
-			wantCause: CauseCap,
+			wantCause: resolve.CauseCap,
 		},
 		{
 			name: "window beside a cap is a window",
@@ -61,7 +62,7 @@ func TestRoleRefusalsCause(t *testing.T) {
 				kindGate(testClaudeRef, availability.Scheduled),
 				kindGate(testAgyRef, availability.ConcurrencyLimit),
 			},
-			wantCause: CauseWindow,
+			wantCause: resolve.CauseWindow,
 		},
 		{
 			name: "window beside a rate limit is a gate",
@@ -71,7 +72,7 @@ func TestRoleRefusalsCause(t *testing.T) {
 				limit(testClaudeRef),
 				kindGate(testAgyRef, availability.Scheduled),
 			},
-			wantCause: CauseGate,
+			wantCause: resolve.CauseGate,
 		},
 		{
 			name: "window beside a spawn failure is a gate",
@@ -81,19 +82,19 @@ func TestRoleRefusalsCause(t *testing.T) {
 				spawnGate(testClaudeRef),
 				kindGate(testAgyRef, availability.Scheduled),
 			},
-			wantCause: CauseGate,
+			wantCause: resolve.CauseGate,
 		},
 		{
 			name:      "no order and no gates leaves the cause empty",
 			pol:       policy.Policy{},
-			wantCause: CauseGate,
+			wantCause: resolve.CauseGate,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			set := candidateSet(t, testCandidatesJSON)
-			var got *RoleRefusal
+			var got *resolve.RoleRefusal
 			for _, r := range RoleRefusals(set, tt.pol, tt.gates) {
 				if r.Role == "builder" {
 					got = &r
@@ -120,7 +121,7 @@ func TestRoleRefusalsGatedNamesOnlyClearableProviders(t *testing.T) {
 		kindGate(testClaudeRef, availability.ConcurrencyLimit),
 		limit(otherAgy),
 	}
-	var got *RoleRefusal
+	var got *resolve.RoleRefusal
 	for _, r := range RoleRefusals(set, pol, gates) {
 		if r.Role == "builder" {
 			got = &r

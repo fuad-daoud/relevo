@@ -147,7 +147,7 @@ func TestPolicyViewOverPickGatesMarksTheSkillAwarePick(t *testing.T) {
 	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{
 		"designer": designerRow(),
 	})
-	got := FormatPolicyFor(rt.RoleRegistry(), nil, rt.Candidates, policy.Policy{}, resolve.PickGates(ResolveDeps(rt), skillTestDir), nil, availability.History{}, baseTime, time.UTC)
+	got := resolve.FormatPolicyFor(rt.RoleRegistry(), nil, rt.Candidates, policy.Policy{}, resolve.PickGates(ResolveDeps(rt), skillTestDir), nil, availability.History{}, baseTime, time.UTC)
 	for _, line := range strings.Split(got, "\n") {
 		if strings.Contains(line, "would pick") && !strings.Contains(line, rt.Candidates.NameOf(testOpencodeRef)) {
 			t.Fatalf("view picks %q, want the opencode candidate:\n%s", line, got)

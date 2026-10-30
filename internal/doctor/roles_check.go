@@ -3,7 +3,7 @@ package doctor
 import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/policy"
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
@@ -17,7 +17,7 @@ func roleSourceChecks(reg *roles.Registry, set *candidate.Set, pol policy.Policy
 		detail = "config actors"
 	}
 	out := []Check{{Name: "actor source", Severity: SevOK, Detail: detail}}
-	for _, w := range relevo.LegacyRoleFieldWarnings(reg, set, pol) {
+	for _, w := range resolve.LegacyRoleFieldWarnings(reg, set, pol) {
 		out = append(out, Check{
 			Name:     "actor source",
 			Severity: SevWarn,

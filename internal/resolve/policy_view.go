@@ -1,4 +1,4 @@
-package relevo
+package resolve
 
 import (
 	"fmt"
@@ -12,7 +12,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
-	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 )
@@ -21,7 +20,7 @@ import (
 // candidates: a listed token that is not configured, a listed token that
 // does not serve the role it is listed under, or a candidate that serves a
 // role but is missing from that role's order. policy.Load deliberately does
-// not check any of this against candidates.json (spec §3.1): an order entry
+// not check any of this against candidates.json: an order entry
 // naming a removed candidate must not stop every subcommand from starting.
 // It is tolerated at resolve time instead, and reported here for `relevo
 // policy` and `doctor` to render.
@@ -46,10 +45,10 @@ func PolicyWarnings(set *candidate.Set, pol policy.Policy) []PolicyWarning {
 
 		listed := make(map[string]bool)
 		for i, entry := range order {
-			// An entry may be a candidate name or a canonical token (A1
-			// §4.2). A token that resolves is shown as the candidate's short
+			// An entry may be a candidate name or a canonical token.
+			// A token that resolves is shown as the candidate's short
 			// name; one that does not stays raw, since naming it is the
-			// point of the warning (A1 §4.4).
+			// point of the warning.
 			c, err := set.Resolve(entry)
 			if err != nil {
 				out = append(out, PolicyWarning{
@@ -90,7 +89,7 @@ func PolicyWarnings(set *candidate.Set, pol policy.Policy) []PolicyWarning {
 }
 
 // refWidth is the widest configured candidate as it is printed: its short
-// name (A1 §4.4), so every policy row pads to the width of what it shows.
+// name, so every policy row pads to the width of what it shows.
 func refWidth(set *candidate.Set) int {
 	width := 0
 	for _, ref := range set.Refs() {
@@ -104,19 +103,18 @@ func refWidth(set *candidate.Set) int {
 // policyRoleView is one role's rendering inputs for formatPolicyRole. The two
 // callers differ only in how they fill it in -- FormatPolicy from
 // candidates.json and policy.json, FormatPolicyFor from the registry -- so a
-// row can never render one way in one view and another way in the other
-// (#374 §3.1).
+// row can never render one way in one view and another way in the other.
 type policyRoleView struct {
 	role    string
 	header  string
-	rows    []resolve.RankedEntry
+	rows    []RankedEntry
 	serving []candidate.Candidate
 	// sole forces the "sole" tag on the single row. FormatPolicy means "one
 	// serving candidate"; FormatPolicyFor means "one row".
 	sole bool
 	// noRows is the line printed when there are no rows at all.
 	noRows string
-	res    resolve.Resolution
+	res    Resolution
 	err    error
 }
 
@@ -135,7 +133,7 @@ func formatPolicyRole(sb *strings.Builder, v policyRoleView, set *candidate.Set,
 		return
 	}
 
-	roleGates := resolve.GatesForRole(gates, v.role)
+	roleGates := GatesForRole(gates, v.role)
 	byToken := make(map[string][]availability.Gate)
 	for _, g := range roleGates {
 		byToken[g.Token] = append(byToken[g.Token], g)
@@ -156,7 +154,7 @@ func formatPolicyRole(sb *strings.Builder, v policyRoleView, set *candidate.Set,
 		for _, g := range byToken[tok] {
 			gateTexts = append(gateTexts, availability.GateText(g.Kind, g.Until, g.Note))
 		}
-		tailParts = append(tailParts, resolve.UniqStrings(gateTexts)...)
+		tailParts = append(tailParts, UniqStrings(gateTexts)...)
 		tail := strings.Join(tailParts, "; ")
 
 		// This combination cannot occur: a gated or off row is never picked.
@@ -169,7 +167,8 @@ func formatPolicyRole(sb *strings.Builder, v policyRoleView, set *candidate.Set,
 
 		// The status column is the tag, padded to 8. An off entry reads the
 		// plain word "off", padded like the other status words, and is never
-		// marked as the pick (A2 §4.4, round 2 R1: no escape codes).
+		// marked as the pick. It prints no escape codes: the output is read
+		// through a pipe.
 		tagField := fmt.Sprintf("%-8s", tag)
 		if r.Off {
 			tagField = fmt.Sprintf("%-8s", "off")
@@ -178,14 +177,14 @@ func formatPolicyRole(sb *strings.Builder, v policyRoleView, set *candidate.Set,
 		sb.WriteString(strings.TrimRight(row, " ") + "\n")
 	}
 
-	if r, ok := refusalFromErr(v.role, v.serving, roleGates, v.err); ok {
+	if r, ok := RefusalFromErr(v.role, v.serving, roleGates, v.err); ok {
 		sb.WriteString("  would refuse: " + r.Text + "\n")
 	}
 }
 
 // FormatPolicy renders, per role, what resolveCandidate would do right now
 // and why -- computed by calling it, so the marker here can never disagree
-// with what bind actually picks (spec §4.7). It is a listing, not a check:
+// with what bind actually picks. It is a listing, not a check:
 // `relevo config` prints this and always exits 0.
 func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []availability.Gate, hist availability.History, now time.Time, loc *time.Location) string {
 	if set == nil || set.Len() == 0 {
@@ -215,13 +214,13 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []availability.Ga
 		}
 		if len(serving) > 0 {
 			if ordered {
-				v.rows = resolve.RankedList(set, pol, role, gates...)
+				v.rows = RankedList(set, pol, role, gates...)
 			} else {
 				for _, c := range serving {
-					v.rows = append(v.rows, resolve.RankedEntry{Candidate: c})
+					v.rows = append(v.rows, RankedEntry{Candidate: c})
 				}
 			}
-			v.res, v.err = resolve.Resolve(set, pol, gates, "", role)
+			v.res, v.err = Resolve(set, pol, gates, "", role)
 		}
 		formatPolicyRole(&sb, v, set, width, gates, hist, now, loc)
 	}
@@ -244,7 +243,7 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []availability.Ga
 	return sb.String()
 }
 
-// FormatPolicyFor is FormatPolicy with the roles read from reg (#374 §3.1). In
+// FormatPolicyFor is FormatPolicy with the roles read from reg. In
 // legacy mode it returns FormatPolicy's bytes exactly; in file mode the roles,
 // their candidate lists and their refusal come from roles.json, the header
 // names the file, a role with nothing to rank says so, and the "no policy
@@ -261,7 +260,7 @@ func FormatPolicyFor(reg *roles.Registry, accounts account.Set, set *candidate.S
 
 	var sb strings.Builder
 	for _, role := range reg.Names() {
-		rows := resolve.RankedRoleFor(reg, set, role, gates)
+		rows := RankedRoleFor(reg, set, role, gates)
 		serving := make([]candidate.Candidate, 0, len(rows))
 		for _, r := range rows {
 			serving = append(serving, r.Candidate)
@@ -269,14 +268,14 @@ func FormatPolicyFor(reg *roles.Registry, accounts account.Set, set *candidate.S
 
 		v := policyRoleView{
 			role:    role,
-			header:  role + "  (" + resolve.RoleSectionText(reg) + ")",
+			header:  role + "  (" + RoleSectionText(reg) + ")",
 			rows:    rows,
 			serving: serving,
 			sole:    len(rows) == 1,
-			noRows:  fmt.Sprintf("  no candidate listed in %s %s.candidates", resolve.RoleSectionText(reg), role),
+			noRows:  fmt.Sprintf("  no candidate listed in %s %s.candidates", RoleSectionText(reg), role),
 		}
 		if len(rows) > 0 {
-			v.res, v.err = resolve.ResolveRole(reg, set, gates, "", role)
+			v.res, v.err = ResolveRole(reg, set, gates, "", role)
 		}
 		formatPolicyRole(&sb, v, set, width, gates, hist, now, loc)
 	}
@@ -297,8 +296,8 @@ func FormatPolicyFor(reg *roles.Registry, accounts account.Set, set *candidate.S
 	return sb.String()
 }
 
-// PolicyWarningsFor is PolicyWarnings with the role assignments read from reg
-// (#374 §3.1). In legacy mode it delegates, so the findings are unchanged; in
+// PolicyWarningsFor is PolicyWarnings with the role assignments read from reg.
+// In legacy mode it delegates, so the findings are unchanged; in
 // file mode the candidates list is the assignment, so there is no
 // "serves but not listed" finding -- a token that is not configured, or whose
 // kind has no definition for the role, is the whole story.
@@ -316,16 +315,16 @@ func PolicyWarningsFor(reg *roles.Registry, set *candidate.Set, pol policy.Polic
 	for _, role := range reg.Names() {
 		info, _ := reg.Role(role)
 		for i, entry := range info.Candidates {
-			// An entry may be a candidate name or a canonical token (A1
-			// §4.2); a resolving one is shown as its short name, an
-			// unresolved one stays raw (A1 §4.4).
+			// An entry may be a candidate name or a canonical token; a
+			// resolving one is shown as its short name, an unresolved one
+			// stays raw.
 			c, err := set.Resolve(entry)
 			if err != nil {
 				out = append(out, PolicyWarning{
 					Role:  role,
 					Index: i,
 					Token: entry,
-					Text:  fmt.Sprintf("%s %s.candidates[%d] %q is not a configured candidate", resolve.RoleSectionText(reg), role, i, entry),
+					Text:  fmt.Sprintf("%s %s.candidates[%d] %q is not a configured candidate", RoleSectionText(reg), role, i, entry),
 				})
 				continue
 			}
@@ -334,7 +333,7 @@ func PolicyWarningsFor(reg *roles.Registry, set *candidate.Set, pol policy.Polic
 					Role:  role,
 					Index: i,
 					Token: entry,
-					Text:  fmt.Sprintf("%s %s.candidates[%d] %q: %s has no definition for %s", resolve.RoleSectionText(reg), role, i, c.Name, role, c.Ref().Harness),
+					Text:  fmt.Sprintf("%s %s.candidates[%d] %q: %s has no definition for %s", RoleSectionText(reg), role, i, c.Name, role, c.Ref().Harness),
 				})
 			}
 		}
@@ -343,7 +342,7 @@ func PolicyWarningsFor(reg *roles.Registry, set *candidate.Set, pol policy.Polic
 }
 
 // RoleRefusalsFor is RoleRefusals with the roles, their candidates and their
-// gating read from reg (#374 §3.1). In legacy mode it delegates, so the rows
+// gating read from reg. In legacy mode it delegates, so the rows
 // are unchanged; in file mode it walks reg.Names() and each role's ranked
 // candidates.
 func RoleRefusalsFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy, gates []availability.Gate) []RoleRefusal {
@@ -356,7 +355,7 @@ func RoleRefusalsFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy,
 
 	var out []RoleRefusal
 	for _, role := range reg.Names() {
-		ranked := resolve.RankedRoleFor(reg, set, role, gates)
+		ranked := RankedRoleFor(reg, set, role, gates)
 		if len(ranked) == 0 {
 			continue
 		}
@@ -364,8 +363,8 @@ func RoleRefusalsFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy,
 		for _, r := range ranked {
 			serving = append(serving, r.Candidate)
 		}
-		_, err := resolve.ResolveRole(reg, set, gates, "", role)
-		if r, ok := refusalFromErr(role, serving, resolve.GatesForRole(gates, role), err); ok {
+		_, err := ResolveRole(reg, set, gates, "", role)
+		if r, ok := RefusalFromErr(role, serving, GatesForRole(gates, role), err); ok {
 			out = append(out, r)
 		}
 	}
@@ -373,7 +372,7 @@ func RoleRefusalsFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy,
 }
 
 // LegacyRoleFieldWarnings names every legacy field roles.json makes
-// irrelevant, one string per finding, in role order (#374 §3.1). It is pure,
+// irrelevant, one string per finding, in role order. It is pure,
 // and nil in legacy mode: without a roles.json those fields are the source,
 // not stale copies of it.
 func LegacyRoleFieldWarnings(reg *roles.Registry, set *candidate.Set, pol policy.Policy) []string {
@@ -416,7 +415,7 @@ func LegacyRoleFieldWarnings(reg *roles.Registry, set *candidate.Set, pol policy
 
 // peakText is a candidate row's cue that its provider was recently
 // rate-limited: "limited <n>x around <HH>:00 (30d)" for the local hour
-// around now, or "" when the window around now saw none (spec §4.2).
+// around now, or "" when the window around now saw none.
 // History never changes a pick -- resolveCandidate is untouched -- this is
 // display only.
 func peakText(hist availability.History, provider string, now time.Time, loc *time.Location) string {
@@ -431,9 +430,9 @@ func peakText(hist availability.History, provider string, now time.Time, loc *ti
 
 // formatHistory renders the "history (30d, local hours)" block: one row per
 // (provider, kind) with at least one event in hist, providers sorted and
-// RateLimited before SpawnFailed before Cleared within a provider (spec
-// §4.2). A provider whose Cleared events carry a Since also gets a row in
-// the "blocked for" summary under the grid (#302). It returns "" when hist
+// RateLimited before SpawnFailed before Cleared within a provider. A
+// provider whose Cleared events carry a Since also gets a row in the
+// "blocked for" summary under the grid. It returns "" when hist
 // has no events, so a fresh install's `relevo config` prints nothing extra.
 //
 // A provider name here is a column of a history row, and a history row can have
@@ -448,25 +447,43 @@ func formatHistory(hist availability.History, loc *time.Location) string {
 		return ""
 	}
 
-	type pair struct {
-		provider string
-		kind     availability.Kind
-	}
-	seen := make(map[pair]bool)
+	providers, seen := historyScopes(hist)
+
+	var sb strings.Builder
+	sb.WriteString("history (30d, local hours)\n")
+	writeHistoryGrid(&sb, hist, loc, providers, seen)
+	writeBlockedSummary(&sb, hist, providers)
+
+	return sb.String()
+}
+
+// historyScope is one drawn history row: the provider and the kind counted
+// on it.
+type historyScope struct {
+	provider string
+	kind     availability.Kind
+}
+
+// historyScopes is every drawn row's scope, plus the providers in first-seen
+// order, sorted for the grid.
+func historyScopes(hist availability.History) ([]string, map[historyScope]bool) {
+	seen := make(map[historyScope]bool)
 	providerSeen := make(map[string]bool)
 	var providers []string
 	for _, e := range hist.Events {
-		seen[pair{e.Provider, e.Kind}] = true
+		seen[historyScope{e.Provider, e.Kind}] = true
 		if !providerSeen[e.Provider] {
 			providerSeen[e.Provider] = true
 			providers = append(providers, e.Provider)
 		}
 	}
 	sort.Strings(providers)
+	return providers, seen
+}
 
-	var sb strings.Builder
-	sb.WriteString("history (30d, local hours)\n")
-
+// writeHistoryGrid draws the hour ruler and one row per scope: providers in
+// order with RateLimited before SpawnFailed before Cleared within one.
+func writeHistoryGrid(sb *strings.Builder, hist availability.History, loc *time.Location, providers []string, seen map[historyScope]bool) {
 	var labels [24]string
 	for h := range labels {
 		labels[h] = fmt.Sprintf("%02d", h)
@@ -476,7 +493,7 @@ func formatHistory(hist availability.History, loc *time.Location) string {
 	kinds := []availability.Kind{availability.RateLimited, availability.SpawnFailed, availability.Cleared}
 	for _, p := range providers {
 		for _, k := range kinds {
-			if !seen[pair{p, k}] {
+			if !seen[historyScope{p, k}] {
 				continue
 			}
 			counts := availability.HourCounts(hist, p, k, loc)
@@ -491,7 +508,11 @@ func formatHistory(hist availability.History, loc *time.Location) string {
 			sb.WriteString(row + "\n")
 		}
 	}
+}
 
+// writeBlockedSummary appends the "blocked for" block: one row per provider
+// whose Cleared events carry a Since, or nothing when no provider has one.
+func writeBlockedSummary(sb *strings.Builder, hist availability.History, providers []string) {
 	var blocked strings.Builder
 	for _, p := range providers {
 		durations := availability.BlockedDurations(hist, p)
@@ -512,12 +533,10 @@ func formatHistory(hist availability.History, loc *time.Location) string {
 		if len(durations) == 1 {
 			count = "1 clear"
 		}
-		blocked.WriteString(fmt.Sprintf("  %-10s %s  median %s  longest %s\n", sanitize.StripControls(p), count, blockedText(median), blockedText(longest)))
+		fmt.Fprintf(&blocked, "  %-10s %s  median %s  longest %s\n", sanitize.StripControls(p), count, blockedText(median), blockedText(longest))
 	}
 	if blocked.Len() > 0 {
 		sb.WriteString("blocked for (30d, gates cleared by hand)\n")
 		sb.WriteString(blocked.String())
 	}
-
-	return sb.String()
 }

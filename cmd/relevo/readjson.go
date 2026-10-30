@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -110,7 +111,7 @@ type ConfigCandidate struct {
 // stored section; the legacy form falls back to the registry's role names.
 // pick is the first on-and-ungated entry per role, and why carries the
 // refusal text when the role would refuse.
-func configViewOf(L config.Loaded, reg *roles.Registry, set *candidate.Set, gates []availability.Gate, refusals []relevo.RoleRefusal) ConfigView {
+func configViewOf(L config.Loaded, reg *roles.Registry, set *candidate.Set, gates []availability.Gate, refusals []resolve.RoleRefusal) ConfigView {
 	out := ConfigView{}
 
 	var names []string

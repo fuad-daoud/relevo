@@ -124,8 +124,6 @@ internal/relevo/off_test.go
 internal/relevo/opencode_session.go
 internal/relevo/opencode_session_test.go
 internal/relevo/origin.go
-internal/relevo/policy_view.go
-internal/relevo/policy_view_test.go
 internal/relevo/probe.go
 internal/relevo/probe_test.go
 internal/relevo/progress.go

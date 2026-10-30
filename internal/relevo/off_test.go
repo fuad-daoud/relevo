@@ -151,7 +151,7 @@ func TestFormatPolicyShowsOff(t *testing.T) {
 		},
 	})
 
-	got := FormatPolicyFor(reg, nil, set, policy.Policy{}, nil, nil, availability.History{}, baseTime, time.UTC)
+	got := resolve.FormatPolicyFor(reg, nil, set, policy.Policy{}, nil, nil, availability.History{}, baseTime, time.UTC)
 
 	want := "builder  (config actors)\n" +
 		"  1  a  order     <- would pick\n" +
@@ -185,13 +185,13 @@ func TestFormatPolicyHeaderSaysActors(t *testing.T) {
 	rows := map[string]roles.Row{"builder": {Candidates: []string{testClaudeRef}}}
 
 	actors := actorsFileRegistry(t, set, policy.Policy{}, rows)
-	got := FormatPolicyFor(actors, nil, set, policy.Policy{}, nil, nil, availability.History{}, baseTime, time.UTC)
+	got := resolve.FormatPolicyFor(actors, nil, set, policy.Policy{}, nil, nil, availability.History{}, baseTime, time.UTC)
 	if !strings.Contains(got, "builder  (config actors)") {
 		t.Errorf("actors registry header:\n%s", got)
 	}
 
 	fileMode := rolesFileRegistry(t, set, policy.Policy{}, rows)
-	got = FormatPolicyFor(fileMode, nil, set, policy.Policy{}, nil, nil, availability.History{}, baseTime, time.UTC)
+	got = resolve.FormatPolicyFor(fileMode, nil, set, policy.Policy{}, nil, nil, availability.History{}, baseTime, time.UTC)
 	if !strings.Contains(got, "builder  (config actors)") {
 		t.Errorf("roles registry header:\n%s", got)
 	}

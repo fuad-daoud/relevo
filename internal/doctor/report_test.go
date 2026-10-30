@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -204,11 +205,11 @@ func TestDoctorHidesSynthesisedGates(t *testing.T) {
 }
 
 func TestRefusalFixNamesTheWindow(t *testing.T) {
-	refusals := []relevo.RoleRefusal{
+	refusals := []resolve.RoleRefusal{
 		{Role: "builder", Text: "every candidate serving builder is gated",
-			Serving: []string{"claude/test/m"}, Gated: []string{"test"}, Cause: relevo.CauseWindow},
+			Serving: []string{"claude/test/m"}, Gated: []string{"test"}, Cause: resolve.CauseWindow},
 		{Role: "reviewer", Text: "every candidate serving reviewer is gated",
-			Serving: []string{"agy/test/m"}, Gated: []string{"test"}, Cause: relevo.CauseCap},
+			Serving: []string{"agy/test/m"}, Gated: []string{"test"}, Cause: resolve.CauseCap},
 	}
 	checks := refusalChecks(refusals)
 	if len(checks) != 2 {
@@ -225,7 +226,7 @@ func TestRefusalFixNamesTheWindow(t *testing.T) {
 }
 
 func TestRefusalChecksClearsEveryGatedProvider(t *testing.T) {
-	refusals := []relevo.RoleRefusal{
+	refusals := []resolve.RoleRefusal{
 		{Role: "builder", Text: "every candidate serving builder is gated",
 			Serving: []string{"opencode/a/m", "claude/b/m"}, Gated: []string{"a", "b"}},
 	}
@@ -239,7 +240,7 @@ func TestRefusalChecksClearsEveryGatedProvider(t *testing.T) {
 }
 
 func TestPolicyChecks(t *testing.T) {
-	warnings := []relevo.PolicyWarning{
+	warnings := []resolve.PolicyWarning{
 		{Role: "builder", Index: 1, Token: "claude/test/nope", Text: `order.builder[1] "claude/test/nope" is not a configured candidate`},
 		{Role: "builder", Index: -1, Token: "opencode/test/m", Text: `builder: opencode/test/m serves the role but is not in order.builder`},
 	}
@@ -360,7 +361,7 @@ func TestServerChecksScopesWarning(t *testing.T) {
 }
 
 func TestRefusalChecks(t *testing.T) {
-	refusals := []relevo.RoleRefusal{
+	refusals := []resolve.RoleRefusal{
 		{Role: "builder", Text: "3 candidates serve builder and no order is set", NoOrder: true,
 			Serving: []string{"agy/test/m", "claude/test/m", "opencode/test/m"}},
 		{Role: "reviewer", Text: "every candidate serving reviewer is gated",

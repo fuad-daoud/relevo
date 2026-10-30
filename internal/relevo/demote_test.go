@@ -56,7 +56,7 @@ func TestDemoteNeverRefusesTheSoleCandidate(t *testing.T) {
 	if err != nil || res.Candidate.Name != "a" {
 		t.Fatalf("pick = %v, %v; want a", res.Candidate.Name, err)
 	}
-	if got := RoleRefusalsFor(reg, set, policy.Policy{}, gates); len(got) != 0 {
+	if got := resolve.RoleRefusalsFor(reg, set, policy.Policy{}, gates); len(got) != 0 {
 		t.Errorf("RoleRefusalsFor = %v, want none", got)
 	}
 }
@@ -67,7 +67,7 @@ func TestDemoteRowShowsAtTheDemotedPosition(t *testing.T) {
 	set, reg := demoteRegistry(t)
 	gates := []availability.Gate{demoteGate("claude/test/a")}
 
-	got := FormatPolicyFor(reg, nil, set, policy.Policy{}, gates, nil, availability.History{}, baseTime, time.UTC)
+	got := resolve.FormatPolicyFor(reg, nil, set, policy.Policy{}, gates, nil, availability.History{}, baseTime, time.UTC)
 
 	b := strings.Index(got, "  1  b")
 	c := strings.Index(got, "  2  c")
