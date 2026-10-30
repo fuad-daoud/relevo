@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -80,7 +81,7 @@ func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.Ch
 	}
 	childPlan := chainWFStart{
 		def:          childDef,
-		settings:     chainSettings(rt.Policy, childOpts, roleChecks(rt.RoleRegistry(), "builder"), childRepoSet),
+		settings:     chainSettings(rt.Policy, childOpts, resolve.RoleChecks(rt.RoleRegistry(), "builder"), childRepoSet),
 		repo:         parent.Repo,
 		ticket:       parent.Ticket,
 		bodies:       bodies,

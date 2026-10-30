@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -170,9 +171,9 @@ type preflight struct {
 	body     []byte        // the plan file's bytes
 	tier     harness.Tier  // effective tier for this round (opts.Tier parsed, or the stored tier); the cap is checked as it is derived for a local launch, while a served round's tier is capped by the server
 	tierFrom string
-	argv     []string           // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
-	gate     *availability.Gate // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
-	pick     *Resolution        // --candidate's resolution to apply under the lock; nil when the builder does not change
+	argv     []string            // headless: headlessLaunch's argv (proves the launch is well-formed); nil for remote
+	gate     *availability.Gate  // advisory: a gate on b.BuilderCandidate (rate-limited or roles_missing), nil when none
+	pick     *resolve.Resolution // --candidate's resolution to apply under the lock; nil when the builder does not change
 	// repickFrom is the binding's old BuilderCandidate when the preflight
 	// re-picked between rounds, repickWhy the reason; "" otherwise. When
 	// repickFrom is non-empty, pick is non-nil.
@@ -241,7 +242,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 		if err != nil {
 			return preflight{}, err
 		}
-		if err := checkTierCap(t, rt.Policy, opts.AllowYolo); err != nil {
+		if err := resolve.CheckTierCap(t, rt.Policy, opts.AllowYolo); err != nil {
 			return preflight{}, err
 		}
 		tier = t
@@ -272,7 +273,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	// use. Nothing is saved here: Send re-applies the change under its lock.
 	// A remote binding's candidates decide on the server, so only the token's
 	// shape is checked here (§5.1).
-	var pick *Resolution
+	var pick *resolve.Resolution
 	var repickFrom, repickWhy string
 	// remoteBuilder is what a remote binding's sendRemote is handed: the
 	// canonical token when --candidate resolved to one, else the argument as
@@ -303,7 +304,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 				remoteBuilder = c.Ref().String()
 			}
 		} else {
-			p, err := resolveSendBuilder(rt, bindingRole(b), b.BuilderCandidate, opts.Builder, b.CWD)
+			p, err := resolveSendBuilder(rt, resolve.BindingRole(b), b.BuilderCandidate, opts.Builder, b.CWD)
 			if err != nil {
 				return preflight{}, err
 			}
@@ -325,7 +326,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	// actually use.
 	if pick == nil {
 		old := b.BuilderCandidate
-		var res *Resolution
+		var res *resolve.Resolution
 		var why string
 		b, res, why, err = repickForRound(rt, b, opts.Builder != "", opts.AllowYolo)
 		if err != nil {
@@ -341,9 +342,9 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 			// A served round is launched by the server, which caps its tier
 			// against the server's own policy; the client's max_tier must not
 			// refuse the send.
-			tier = effectiveTier(b)
+			tier = resolve.EffectiveTier(b)
 		} else {
-			t, err := launchTier(b, rt.Policy, opts.AllowYolo)
+			t, err := resolve.LaunchTier(b, rt.Policy, opts.AllowYolo)
 			if err != nil {
 				return preflight{}, err
 			}
@@ -434,7 +435,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	if err != nil {
 		return preflight{}, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
 	}
-	role, err := bindingSpec(rt, b, c.Harness)
+	role, err := resolve.BindingSpec(rt.RoleRegistry(), b, c.Harness)
 	if err != nil {
 		return preflight{}, fmt.Errorf("binding %q builder: %w", b.Name, err)
 	}
@@ -451,7 +452,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 
 	// The gate is advisory only: a gated candidate can still be sent to, it
 	// just tells the human the daemon would switch away after the start.
-	for _, g := range withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), b.CWD, nil) {
+	for _, g := range resolve.WithSkillGates(ResolveDeps(rt), availability.Gates(AvailabilityDeps(rt)), b.CWD, nil) {
 		if g.Token == b.BuilderCandidate && (g.Kind == availability.RateLimited || g.Kind == availability.RolesMissing || g.Kind == availability.SkillMissing || windowBlock(g)) {
 			gate := g
 			pf.gate = &gate
@@ -467,7 +468,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 // resolves is not this check's business: the existing error surfaces where it
 // does today.
 func actorRunsPlanner(rt Runtime, b store.Binding) bool {
-	spec, err := bindingSpec(rt, b, b.Builder.Kind)
+	spec, err := resolve.BindingSpec(rt.RoleRegistry(), b, b.Builder.Kind)
 	return err == nil && spec.Definition == plannerAgent
 }
 
@@ -646,7 +647,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 				// explains why the round was sent to the new candidate.
 				var failEntries []store.LogEntry
 				if pf.pick != nil {
-					failEntries = append(failEntries, pickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick))
+					failEntries = append(failEntries, resolve.PickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick))
 				}
 				if saveErr := tx.SaveWithLog(b, failEntries...); saveErr != nil {
 					return fmt.Errorf("%v; and saving NEEDS YOU failed: %w", err, saveErr)
@@ -672,11 +673,11 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		// ErrExtraArgsPermission early return saves nothing, so a builder
 		// change that did not happen must not be recorded.
 		if pf.pick != nil {
-			pending = append(pending, pickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick))
+			pending = append(pending, resolve.PickEntry(rt.Now().UTC(), b.Round, "builder", *pf.pick))
 			if pf.repickFrom != "" {
 				pickLine = repickLine(rt, pf.repickFrom, pf.repickWhy, *pf.pick)
 			} else {
-				pickLine = PickText("builder", *pf.pick, rt.Candidates)
+				pickLine = resolve.PickText("builder", *pf.pick, rt.Candidates)
 			}
 		}
 
@@ -684,7 +685,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			TS: rt.Now().UTC(), Round: b.Round,
 			Direction: store.DirToBuilder, Kind: store.KindPrompt,
 			Path: planPath, Confirmed: true, Late: late,
-			Tier: string(effectiveTier(b)),
+			Tier: string(resolve.EffectiveTier(b)),
 		}
 		pending = append(pending, entry)
 
@@ -965,7 +966,7 @@ func roundPrompt(rt Runtime, tx *store.Tx, b store.Binding, promptPath, reportPa
 // chainReaderPromptFor renders chainReaderPrompt for one chain reader round,
 // resolving the output label and path exactly as readerPromptFor does.
 func chainReaderPromptFor(rt Runtime, b store.Binding, promptPath, donePath, block string) string {
-	actor := bindingRole(b)
+	actor := resolve.BindingRole(b)
 	label := readerOutputLabel(rt, b)
 	outputPath := rt.Store.OutputPath(b.Name, b.Round, actor, label)
 	return fmt.Sprintf(chainReaderPrompt, housekeep.RoundTree(HousekeepDeps(rt), b), b.CWD, promptPath, label, outputPath, donePath, block)
@@ -978,7 +979,7 @@ func chainReaderPromptFor(rt Runtime, b store.Binding, promptPath, donePath, blo
 // gets its own label. The saved path is the output path reportPathFor records,
 // so the prompt and the close cannot drift.
 func readerPromptFor(rt Runtime, b store.Binding, promptPath, donePath string) string {
-	actor := bindingRole(b)
+	actor := resolve.BindingRole(b)
 	label := readerOutputLabel(rt, b)
 	outputPath := rt.Store.OutputPath(b.Name, b.Round, actor, label)
 	return fmt.Sprintf(readerPrompt, housekeep.RoundTree(HousekeepDeps(rt), b), b.CWD, promptPath, label, outputPath, donePath)

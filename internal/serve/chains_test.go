@@ -22,6 +22,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -337,7 +338,7 @@ func TestCreateChainRefusesUntrustedFields(t *testing.T) {
 }
 
 // TestCreateChainUnknownActorIsTyped pins the refusal's wire code: an actor no
-// role defines is 400 unknown_actor, the twin of relevo.ErrUnknownRole the
+// role defines is 400 unknown_actor, the twin of resolve.ErrUnknownRole the
 // client re-types, not a bare invalid.
 func TestCreateChainUnknownActorIsTyped(t *testing.T) {
 	env := setupTestEnv(t)
@@ -990,7 +991,7 @@ func TestWriteChainResumeErrorMapsTheChainDone(t *testing.T) {
 
 func TestWriteChainResumeErrorMapsAnUnknownActor(t *testing.T) {
 	rec := httptest.NewRecorder()
-	err := fmt.Errorf("step build: rule 2: run names unknown actor %q: %w", "builder-qwen", relevo.ErrUnknownRole)
+	err := fmt.Errorf("step build: rule 2: run names unknown actor %q: %w", "builder-qwen", resolve.ErrUnknownRole)
 	writeChainResumeError(rec, err)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)

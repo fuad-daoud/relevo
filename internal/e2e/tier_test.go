@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -287,7 +288,7 @@ func TestRemoteTierAboveServerMax(t *testing.T) {
 		Tier:      "yolo",
 		AllowYolo: true,
 	})
-	if !errors.Is(err, relevo.ErrTierAboveMax) {
+	if !errors.Is(err, resolve.ErrTierAboveMax) {
 		t.Fatalf("relevo.Add err = %v, want ErrTierAboveMax", err)
 	}
 

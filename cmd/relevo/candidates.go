@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -17,11 +18,11 @@ import (
 // an explicit token (the mastermind already knows) and for adoption
 // (nothing was chosen); the gated note, if any, is printed separately.
 // A1 §4.4: the line names the candidate by its short name.
-func notePick(rt relevo.Runtime, role string, res relevo.Resolution) {
-	if res.How == "" || res.How == relevo.HowExplicit {
+func notePick(rt relevo.Runtime, role string, res resolve.Resolution) {
+	if res.How == "" || res.How == resolve.HowExplicit {
 		return
 	}
-	fmt.Fprintln(os.Stderr, relevo.PickText(role, res, rt.Candidates))
+	fmt.Fprintln(os.Stderr, resolve.PickText(role, res, rt.Candidates))
 }
 
 // roleOrBuilder is the role name a flag value means: "builder" for "", else
@@ -133,7 +134,7 @@ func loadHistory(rt relevo.Runtime) availability.History {
 // formatPolicy renders the per-role pick explanation the `pick` block of
 // `relevo config` shows.
 func formatPolicy(rt relevo.Runtime) string {
-	return relevo.FormatPolicyFor(rt.RoleRegistry(), rt.Accounts, rt.Candidates, rt.Policy,
+	return resolve.FormatPolicyFor(rt.RoleRegistry(), rt.Accounts, rt.Candidates, rt.Policy,
 		pickGates(rt), liveLedgerEntries(rt), loadHistory(rt), rt.Now(), time.Local)
 }
 
@@ -141,7 +142,7 @@ func formatPolicy(rt relevo.Runtime) string {
 // apply, so the shown pick is the one bind makes.
 func pickGates(rt relevo.Runtime) []availability.Gate {
 	wd, _ := os.Getwd()
-	return relevo.PickGates(rt, wd)
+	return resolve.PickGates(relevo.ResolveDeps(rt), wd)
 }
 
 // liveLedgerEntries is the live availability ledger, for the policy pool view's

@@ -3,6 +3,7 @@ package relevo
 import (
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -40,7 +41,7 @@ func chainSingleCheckCommand(def workflow.Definition) string {
 // chainCheckReport is the check a chain's start line names: the commands its
 // check steps run, local or placed, with where the command came from. A
 // member's own gate is no guide, since a local writer carries none.
-func chainCheckReport(def workflow.Definition, res GateResolution, params map[string]string) (string, string) {
+func chainCheckReport(def workflow.Definition, res resolve.GateResolution, params map[string]string) (string, string) {
 	cmds := chainCheckCommands(def)
 	switch {
 	case len(cmds) == 0:

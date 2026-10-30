@@ -8,6 +8,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -22,7 +23,7 @@ func pickServedTier(w http.ResponseWriter, rt relevo.Runtime, roleName, candidat
 	}
 	resolved, err := relevo.ResolveServedTierFor(rt, roleName, token, explicit)
 	if err != nil {
-		if errors.Is(err, relevo.ErrTierAboveMax) {
+		if errors.Is(err, resolve.ErrTierAboveMax) {
 			offending := explicit
 			format := "tier %s exceeds this server's max_tier %s; raise max_tier in the server's config policy"
 			if offending == "" {
@@ -56,10 +57,10 @@ func (s *Server) servedShape(w http.ResponseWriter, rt relevo.Runtime, reqRole, 
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "actor is required")
 		return "", false
 	}
-	role := relevo.NormRole(reqRole)
+	role := resolve.NormRole(reqRole)
 	shape := store.ShapeWriter
 	if role != "" {
-		s, err := relevo.ActorShape(rt, role)
+		s, err := resolve.ActorShape(rt.RoleRegistry(), role)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
 			return "", false

@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -173,12 +174,12 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		if err != nil {
 			return AddResult{}, err
 		}
-		if err := checkTierCap(t, rt.Policy, opts.AllowYolo); err != nil {
+		if err := resolve.CheckTierCap(t, rt.Policy, opts.AllowYolo); err != nil {
 			return AddResult{}, err
 		}
 		wireTier = string(t)
 	}
-	wireRole := normRole(opts.Role)
+	wireRole := resolve.NormRole(opts.Role)
 	// The wire always names the actor; a default binding sends "builder".
 	actor := wireRole
 	if actor == "" {
@@ -241,7 +242,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	if err != nil {
 		return AddResult{}, err
 	}
-	gateRes := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), bindingRole(store.Binding{Role: normRole(opts.Role)})), repoSet)
+	gateRes := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, resolve.RoleChecks(rt.RoleRegistry(), resolve.BindingRole(store.Binding{Role: resolve.NormRole(opts.Role)})), repoSet)
 	gate := gateRes.Command
 	// The regate resolves the same way, and for the same reason: the mirror
 	// and the served binding must agree on the repair budget.
@@ -271,10 +272,10 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 			return AddResult{}, fmt.Errorf("binding %s already exists on %s for this client but not here; relevo serve unbind --owner <your label> %s on the server, or choose another name", opts.Name, opts.Server, opts.Name)
 		}
 		if errors.As(err, &httpErr) && httpErr.Status == 422 && httpErr.Body.Code == remote.CodeTierAboveMax {
-			return AddResult{}, fmt.Errorf("%w: %s", ErrTierAboveMax, httpErr.Body.Message)
+			return AddResult{}, fmt.Errorf("%w: %s", resolve.ErrTierAboveMax, httpErr.Body.Message)
 		}
-		if errors.As(err, &httpErr) && httpErr.Status == 422 && httpErr.Body.Code == remote.CodeInvalid && tierUnsupportedMessage(httpErr.Body.Message) {
-			return AddResult{}, tierUnsupportedFromWire(httpErr.Body.Message)
+		if errors.As(err, &httpErr) && httpErr.Status == 422 && httpErr.Body.Code == remote.CodeInvalid && resolve.TierUnsupportedMessage(httpErr.Body.Message) {
+			return AddResult{}, resolve.TierUnsupportedFromWire(httpErr.Body.Message)
 		}
 		return AddResult{}, pickRefusalFromWire(err)
 	}
@@ -384,9 +385,9 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		// the client copy the server recorded is this row.
 		RecordID: clientBindingID,
 	}
-	res := Resolution{
+	res := resolve.Resolution{
 		Candidate: cand,
-		How:       HowExplicit,
+		How:       resolve.HowExplicit,
 		Placement: opts.Placement,
 		Gate:      gateRes,
 	}
@@ -436,7 +437,7 @@ func remoteLink(view remote.BindingView) *store.RemoteLink {
 // the pick is filed under: 1 for a fresh binding, the sent round for a
 // `relevo send --candidate` (#318). A placement appends its own clause; a zero
 // one leaves the sentence byte-identical.
-func remotePickEntry(now time.Time, server, token string, explicit bool, round int, placement PlacementResolution) store.LogEntry {
+func remotePickEntry(now time.Time, server, token string, explicit bool, round int, placement resolve.PlacementResolution) store.LogEntry {
 	how := "server's pick"
 	if explicit {
 		how = "explicit"
@@ -444,6 +445,6 @@ func remotePickEntry(now time.Time, server, token string, explicit bool, round i
 	return store.LogEntry{
 		TS: now.UTC(), Round: round, Direction: store.DirToMasterMind,
 		Kind: store.KindPick, Confirmed: true,
-		Note: fmt.Sprintf("picked %s on %s: %s", token, server, how) + placementClause(placement),
+		Note: fmt.Sprintf("picked %s on %s: %s", token, server, how) + resolve.PlacementClause(placement),
 	}
 }

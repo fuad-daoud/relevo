@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/fuad-daoud/relevo/internal/reporttail"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -128,7 +129,7 @@ func readerBlockText(rt Runtime, b store.Binding) string {
 // actor is unknown. It is the same declaration the outcome parse validates
 // against, so the two cannot disagree about what the round owes.
 func readerDeclaredOutcomes(rt Runtime, b store.Binding) workflow.Outputs {
-	info, ok := rt.RoleRegistry().ActorInfo(bindingRole(b))
+	info, ok := rt.RoleRegistry().ActorInfo(resolve.BindingRole(b))
 	if !ok {
 		return nil
 	}

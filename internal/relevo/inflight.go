@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -62,5 +63,5 @@ func inFlightOf(rt Runtime) func(string) map[string]int {
 func switchGates(rt Runtime, b store.Binding) []availability.Gate {
 	deps := AvailabilityDeps(rt)
 	deps.InFlightExcept = b.Name
-	return withSkillGates(rt, append(availability.Gates(deps), roundExclusionGates(b)...), b.CWD, nil)
+	return resolve.WithSkillGates(ResolveDeps(rt), append(availability.Gates(deps), roundExclusionGates(b)...), b.CWD, nil)
 }

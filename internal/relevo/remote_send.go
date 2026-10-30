@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/text"
 )
@@ -153,9 +154,9 @@ func remoteShip(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 			} else if httpErr.Status == 409 && httpErr.Body.Code == remote.CodeRoundHalted {
 				return remoteShipped{}, fmt.Errorf("%s: round %d could not start on %s: %s", name, b.Round, server, httpErr.Body.Message)
 			} else if httpErr.Status == 422 && httpErr.Body.Code == remote.CodeTierAboveMax {
-				return remoteShipped{}, fmt.Errorf("%w: %s", ErrTierAboveMax, httpErr.Body.Message)
-			} else if httpErr.Status == 422 && httpErr.Body.Code == remote.CodeInvalid && tierUnsupportedMessage(httpErr.Body.Message) {
-				return remoteShipped{}, tierUnsupportedFromWire(httpErr.Body.Message)
+				return remoteShipped{}, fmt.Errorf("%w: %s", resolve.ErrTierAboveMax, httpErr.Body.Message)
+			} else if httpErr.Status == 422 && httpErr.Body.Code == remote.CodeInvalid && resolve.TierUnsupportedMessage(httpErr.Body.Message) {
+				return remoteShipped{}, resolve.TierUnsupportedFromWire(httpErr.Body.Message)
 			} else if httpErr.Status == 422 {
 				return remoteShipped{}, fmt.Errorf("%s: %s", server, httpErr.Body.Message)
 			} else {
@@ -222,7 +223,7 @@ func remoteRecord(rt Runtime, tx *store.Tx, b store.Binding, ship remoteShipped,
 	// b.BuilderCandidate and writes no spurious "switched on <server>".
 	// The pick entry is filed under the sent round, before its plan entry.
 	if !chain && builder != "" && view.Candidate != "" && view.Candidate != cur.BuilderCandidate {
-		pick := remotePickEntry(now, server, view.Candidate, true, cur.Round, PlacementResolution{})
+		pick := remotePickEntry(now, server, view.Candidate, true, cur.Round, resolve.PlacementResolution{})
 		if err := tx.AppendLog(name, pick); err != nil {
 			return 0, "", fmt.Errorf("append builder pick log: %w", err)
 		}

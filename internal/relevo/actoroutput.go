@@ -2,6 +2,7 @@ package relevo
 
 import (
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -45,9 +46,9 @@ func actorOutput(rt Runtime, actor, definition string) string {
 // The prompt that words the reader's artifact directory and the close line
 // that names the artifact both call this, so the two labels cannot drift.
 func readerOutputLabel(rt Runtime, b store.Binding) string {
-	actor := bindingRole(b)
+	actor := resolve.BindingRole(b)
 	definition := actor
-	if spec, err := bindingSpec(rt, b, b.Builder.Kind); err == nil {
+	if spec, err := resolve.BindingSpec(rt.RoleRegistry(), b, b.Builder.Kind); err == nil {
 		definition = spec.Definition
 	}
 	return actorOutput(rt, actor, definition)

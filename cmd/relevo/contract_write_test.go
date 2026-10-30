@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
@@ -390,12 +391,12 @@ func TestContractWriteUnclassifiedIsInternal(t *testing.T) {
 	}{
 		{"missing binding", fmt.Errorf("load: %w", store.ErrNotFound), codeBindingNotFound},
 		{"working tree taken", fmt.Errorf("bind: %w", store.ErrCWDTaken), codeConflict},
-		{"tier above max", fmt.Errorf("bind: %w", relevo.ErrTierAboveMax), codeTierCap},
-		{"everything gated", fmt.Errorf("bind: %w", relevo.ErrAllGated), codeGateActive},
-		{"no candidate serves the actor", fmt.Errorf("bind: %w", relevo.ErrNoCandidates), codePolicyRefused},
+		{"tier above max", fmt.Errorf("bind: %w", resolve.ErrTierAboveMax), codeTierCap},
+		{"everything gated", fmt.Errorf("bind: %w", resolve.ErrAllGated), codeGateActive},
+		{"no candidate serves the actor", fmt.Errorf("bind: %w", resolve.ErrNoCandidates), codePolicyRefused},
 		// A named candidate missing a skill or its role files is fixed by
 		// installing what doctor names, not reported as a relevo bug.
-		{"named candidate cannot run", fmt.Errorf("bind: %w", relevo.ErrCandidateCannotRun), codePolicyRefused},
+		{"named candidate cannot run", fmt.Errorf("bind: %w", resolve.ErrCandidateCannotRun), codePolicyRefused},
 		// An invalid binding name is the caller's own --name, so it is usage
 		// with `relevo help` as the way out -- never internal.
 		{"invalid binding name", fmt.Errorf("bind: %w", store.ErrInvalidName), codeUsage},
@@ -441,7 +442,7 @@ func TestContractWriteUnclassifiedIsInternal(t *testing.T) {
 // TestContractWriteRoleNotServedNamesConfig pins the way out of a candidate the
 // actor does not list: `relevo config` shows the actor's list and the pick.
 func TestContractWriteRoleNotServedNamesConfig(t *testing.T) {
-	for _, err := range []error{relevo.ErrRoleNotServed, relevo.ErrNoCandidates} {
+	for _, err := range []error{resolve.ErrRoleNotServed, resolve.ErrNoCandidates} {
 		var ce *cliError
 		if !errors.As(writeError(fmt.Errorf("bind: %w", err)), &ce) {
 			t.Fatalf("writeError(%v) is not a coded error", err)

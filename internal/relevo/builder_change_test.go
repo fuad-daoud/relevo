@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -56,7 +57,7 @@ func TestResolveSendBuilderRolesMissingRefused(t *testing.T) {
 
 // TestResolveSendBuilderGatedResolves pins the explicit-pick rule: a
 // rate-limited candidate still resolves, and the live gate is recorded on the
-// Resolution so the pick line can name the bypass.
+// resolve.Resolution so the pick line can name the bypass.
 func TestResolveSendBuilderGatedResolves(t *testing.T) {
 	t.Parallel()
 
@@ -75,8 +76,8 @@ func TestResolveSendBuilderGatedResolves(t *testing.T) {
 	if res.Token() != testAgyRef {
 		t.Errorf("Token() = %q, want %q", res.Token(), testAgyRef)
 	}
-	if res.How != HowExplicit {
-		t.Errorf("How = %q, want %q", res.How, HowExplicit)
+	if res.How != resolve.HowExplicit {
+		t.Errorf("How = %q, want %q", res.How, resolve.HowExplicit)
 	}
 	if len(res.Gates) == 0 {
 		t.Error("Gates is empty, want the live rate-limit gate recorded")
@@ -115,8 +116,8 @@ func TestApplyBuilderSetsCandidateKindTierAndClearsExcluded(t *testing.T) {
 			Kind: "agy", Mode: store.ModeHeadless, AgentName: "webshop", Server: "contabo",
 		},
 	}
-	res := Resolution{
-		How:       HowExplicit,
+	res := resolve.Resolution{
+		How:       resolve.HowExplicit,
 		Candidate: candidate.Candidate{Harness: "claude", Provider: "test", Model: "m", Tier: "edit"},
 	}
 
@@ -145,8 +146,8 @@ func TestApplyBuilderTierAboveCapRefused(t *testing.T) {
 	t.Parallel()
 
 	b := store.Binding{BuilderCandidate: testAgyRef, Tier: "harness"}
-	res := Resolution{
-		How:       HowExplicit,
+	res := resolve.Resolution{
+		How:       resolve.HowExplicit,
 		Candidate: candidate.Candidate{Harness: "claude", Provider: "test", Model: "m", Tier: "yolo"},
 	}
 
@@ -157,8 +158,8 @@ func TestApplyBuilderTierAboveCapRefused(t *testing.T) {
 	if !errors.Is(err, ErrBadBuilder) {
 		t.Errorf("err = %v, want it to wrap ErrBadBuilder", err)
 	}
-	if !errors.Is(err, ErrTierAboveMax) {
-		t.Errorf("err = %v, want it to wrap ErrTierAboveMax", err)
+	if !errors.Is(err, resolve.ErrTierAboveMax) {
+		t.Errorf("err = %v, want it to wrap resolve.ErrTierAboveMax", err)
 	}
 	if !reflect.DeepEqual(got, b) {
 		t.Errorf("binding changed: got %+v, want the original %+v", got, b)
@@ -243,15 +244,15 @@ func TestApplyBuilderPinsAnExplicitPick(t *testing.T) {
 	reg := legacyRegistry(nil, policy.Policy{})
 	for _, tc := range []struct {
 		name   string
-		how    How
+		how    resolve.How
 		before bool
 		want   bool
 	}{
-		{"explicit pins", HowExplicit, false, true},
-		{"order clears the pin", HowOrder, true, false},
-		{"rotation clears the pin", HowRotation, true, false},
+		{"explicit pins", resolve.HowExplicit, false, true},
+		{"order clears the pin", resolve.HowOrder, true, false},
+		{"rotation clears the pin", resolve.HowRotation, true, false},
 	} {
-		got, err := applyBuilder(store.Binding{BuilderPinned: tc.before}, Resolution{How: tc.how, Candidate: cand}, reg, policy.Policy{}, false)
+		got, err := applyBuilder(store.Binding{BuilderPinned: tc.before}, resolve.Resolution{How: tc.how, Candidate: cand}, reg, policy.Policy{}, false)
 		if err != nil {
 			t.Fatalf("%s: applyBuilder: %v", tc.name, err)
 		}

@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -27,75 +28,11 @@ func uiBuilderRow(candidates ...string) roles.Row {
 	}
 }
 
-// TestBindingRole pins #382 §5.1: one accessor names the writer role a binding
-// runs. An empty stored role and the literal "builder" both mean builder, and
-// normRole is the inverse for the stored form.
-func TestBindingRole(t *testing.T) {
-	t.Parallel()
-
-	if got := bindingRole(store.Binding{}); got != "builder" {
-		t.Errorf("bindingRole(Role \"\") = %q, want builder", got)
-	}
-	if got := bindingRole(store.Binding{Role: "builder"}); got != "builder" {
-		t.Errorf("bindingRole(Role builder) = %q, want builder", got)
-	}
-	if got := bindingRole(store.Binding{Role: "ui-builder"}); got != "ui-builder" {
-		t.Errorf("bindingRole(Role ui-builder) = %q, want ui-builder", got)
-	}
-
-	if got := normRole("builder"); got != "" {
-		t.Errorf("normRole(builder) = %q, want empty", got)
-	}
-	if got := normRole(""); got != "" {
-		t.Errorf("normRole(\"\") = %q, want empty", got)
-	}
-	if got := normRole("ui-builder"); got != "ui-builder" {
-		t.Errorf("normRole(ui-builder) = %q, want ui-builder", got)
-	}
-}
-
-// TestActorShape pins A5 §2: a writer role (or the builder default) reads as
-// a writer, a reader as a reader, and an unknown name is refused with
-// ErrUnknownRole.
-func TestActorShape(t *testing.T) {
-	t.Parallel()
-
-	set := candidateSet(t, rolesRuntimeCandidatesJSON)
-	reg := rolesFileRegistry(t, set, policy.Policy{}, map[string]roles.Row{
-		"builder":    {Candidates: []string{testClaudeRef}},
-		"ui-builder": uiBuilderRow(testClaudeRef),
-	})
-
-	for _, role := range []string{"builder", "", "ui-builder"} {
-		shape, err := actorShape(reg, role)
-		if err != nil {
-			t.Errorf("actorShape(%q) = %v, want nil", role, err)
-			continue
-		}
-		if shape != store.ShapeWriter {
-			t.Errorf("actorShape(%q) = %q, want writer", role, shape)
-		}
-	}
-
-	shape, err := actorShape(reg, "reviewer")
-	if err != nil {
-		t.Fatalf("actorShape(reviewer) err = %v, want nil", err)
-	}
-	if shape != store.ShapeReader {
-		t.Errorf("actorShape(reviewer) = %q, want reader", shape)
-	}
-
-	if _, err := actorShape(reg, "nope"); !errors.Is(err, ErrUnknownRole) {
-		t.Fatalf("actorShape(nope) err = %v, want ErrUnknownRole", err)
-	}
-}
-
-// TestBindUnknownRoleRefused pins #382 §6: an unknown role is refused before
-// any candidate resolution or launch. The plan asked for this through the
-// cmd/relevo CLI, but cmdBind resolves this session's mastermind (in BindResolved)
-// before create runs actorShape, so a CLI run without a mastermind stops on
-// ErrNoMasterMindSession -- the role refusal is only reachable through
-// relevo.Bind, which is what this test drives (the plan's §7 test 3 fallback).
+// TestBindUnknownRoleRefused pins an unknown role refused before any
+// candidate resolution or launch. cmdBind resolves this session's mastermind
+// (in BindResolved) before create checks the actor, so a CLI run without a
+// mastermind stops on ErrNoMasterMindSession -- the role refusal is only
+// reachable through relevo.Bind, which is what this test drives.
 func TestBindUnknownRoleRefused(t *testing.T) {
 	t.Parallel()
 
@@ -116,8 +53,8 @@ func TestBindUnknownRoleRefused(t *testing.T) {
 	}
 }
 
-// TestBindCustomWriterLaunchesItsDefinition pins #382 §2: a binding's round
-// runs its own role's definition, and the role is persisted.
+// TestBindCustomWriterLaunchesItsDefinition pins a binding's round running
+// its own role's definition, with the role persisted.
 func TestBindCustomWriterLaunchesItsDefinition(t *testing.T) {
 	t.Parallel()
 
@@ -156,9 +93,8 @@ func TestBindCustomWriterLaunchesItsDefinition(t *testing.T) {
 	}
 }
 
-// TestBindCustomWriterPicksFromItsList pins #382 §2: with a custom writer role
-// and no --candidate, the pick comes from the role's own candidates list, not
-// the builder's.
+// TestBindCustomWriterPicksFromItsList pins a custom writer role's own
+// candidates list winning with no --candidate, never the builder's.
 func TestBindCustomWriterPicksFromItsList(t *testing.T) {
 	t.Parallel()
 
@@ -180,8 +116,8 @@ func TestBindCustomWriterPicksFromItsList(t *testing.T) {
 	}
 }
 
-// TestBindAReaderRecordsItsShape pins A5 §1 and §2: a reader actor can be
-// bound locally, and the binding records shape "reader".
+// TestBindAReaderRecordsItsShape pins a reader actor bound locally recording
+// shape "reader".
 func TestBindAReaderRecordsItsShape(t *testing.T) {
 	t.Parallel()
 
@@ -205,9 +141,8 @@ func TestBindAReaderRecordsItsShape(t *testing.T) {
 	}
 }
 
-// TestReaderSharesAWritersTree pins A5 §3: a reader is never blocked by, and
-// never blocks, another binding on the same CWD, while two writers are still
-// refused.
+// TestReaderSharesAWritersTree pins a reader neither blocked by nor blocking
+// another binding on the same CWD, while two writers are still refused.
 func TestReaderSharesAWritersTree(t *testing.T) {
 	t.Parallel()
 
@@ -236,9 +171,9 @@ func TestReaderSharesAWritersTree(t *testing.T) {
 	}
 }
 
-// TestReaderRefusesGateRegateAndVerify pins A5 §2: the writer-only knobs are
-// refused for a reader, each error naming its flag, and the policy defaults
-// gate.default and verify.default do not reach a reader binding.
+// TestReaderRefusesGateRegateAndVerify pins the writer-only knobs refused for
+// a reader, each error naming its flag, with the gate and verify policy
+// defaults not reaching a reader binding.
 func TestReaderRefusesGateRegateAndVerify(t *testing.T) {
 	t.Parallel()
 
@@ -282,10 +217,9 @@ func TestReaderRefusesGateRegateAndVerify(t *testing.T) {
 	}
 }
 
-// TestRemoteReaderRefusedByAPreReadersServer pins #607's client rule: a
-// remote add of a reader is refused, with the old local-only wording, when the
-// server does not advertise remote.FeatureReaders -- after the WhoAmI probe,
-// and before any create call.
+// TestRemoteReaderRefusedByAPreReadersServer pins a remote reader add refused
+// with the local-only wording when the server does not advertise
+// remote.FeatureReaders -- after the WhoAmI probe, and before any create call.
 func TestRemoteReaderRefusedByAPreReadersServer(t *testing.T) {
 	t.Parallel()
 
@@ -311,9 +245,9 @@ func TestRemoteReaderRefusedByAPreReadersServer(t *testing.T) {
 	}
 }
 
-// TestGateFollowsRole pins #382 §5.1's gate rule: a writer with gate false
-// takes no policy default, a writer with no gate key takes it, builder keeps
-// taking it, and an explicit --gate still wins.
+// TestGateFollowsRole pins the gate rule: a writer with gate false takes no
+// policy default, a writer with no gate key takes it, builder keeps taking
+// it, and an explicit --gate still wins.
 func TestGateFollowsRole(t *testing.T) {
 	t.Parallel()
 
@@ -363,8 +297,8 @@ func TestGateFollowsRole(t *testing.T) {
 	}
 }
 
-// TestSwitchPicksFromRoleList pins #382 §5.1: a mid-round switch takes the
-// next candidate from the binding's own role's list, never a builder-only one.
+// TestSwitchPicksFromRoleList pins a mid-round switch taking the next
+// candidate from the binding's own role's list, never a builder-only one.
 //
 // The candidates sit on distinct providers so the rate limit gates only the
 // one that ran.
@@ -416,9 +350,9 @@ func TestSwitchPicksFromRoleList(t *testing.T) {
 	}
 }
 
-// TestVanishedRoleFailsRoundStart pins #382 §5.4: a binding whose role
-// roles.json no longer defines fails at round start with ErrUnknownRole, and
-// no process is started -- there is no fallback to builder.
+// TestVanishedRoleFailsRoundStart pins a binding whose role the registry
+// misses failing at round start with resolve.ErrUnknownRole, with no process
+// started and no fallback to builder.
 func TestVanishedRoleFailsRoundStart(t *testing.T) {
 	t.Parallel()
 
@@ -442,8 +376,8 @@ func TestVanishedRoleFailsRoundStart(t *testing.T) {
 	if err == nil {
 		t.Fatal("startRound on a vanished role = nil, want an error")
 	}
-	if !errors.Is(err, ErrUnknownRole) {
-		t.Errorf("err = %v, want ErrUnknownRole", err)
+	if !errors.Is(err, resolve.ErrUnknownRole) {
+		t.Errorf("err = %v, want resolve.ErrUnknownRole", err)
 	}
 	if !strings.Contains(err.Error(), "which config actors no longer defines") {
 		t.Errorf("err = %q, want it to name the vanished role", err.Error())
@@ -453,12 +387,11 @@ func TestVanishedRoleFailsRoundStart(t *testing.T) {
 	}
 }
 
-// TestAddCustomRoleOnServerRefused pins #382 §4 (round 3; this is round 1's
-// test ported): a remote add with a custom role is refused before any binding
-// is created on the server, because the server does not advertise
-// remote.FeatureRoles -- an old server would ignore the field and run its
-// builder. The client's own registry knows ui-builder, which must not matter:
-// the server's roles never come from here.
+// TestAddCustomRoleOnServerRefused pins a remote add with a custom role
+// refused before any binding is created on the server, because the server
+// does not advertise remote.FeatureRoles -- an old server would ignore the
+// field and run its builder. The client's own registry knows ui-builder,
+// which must not matter: the server's roles never come from here.
 func TestAddCustomRoleOnServerRefused(t *testing.T) {
 	t.Parallel()
 
@@ -492,9 +425,9 @@ func TestAddCustomRoleOnServerRefused(t *testing.T) {
 	}
 }
 
-// TestStatusShowsRole pins #382 §4 and §5: a non-builder actor is on the
-// status row and printed on the runner line, while a builder row's runner line
-// has no actor suffix and its JSON names the actor "builder".
+// TestStatusShowsRole pins a non-builder actor on the status row and the
+// runner line, while a builder row's runner line has no actor suffix and its
+// JSON names the actor "builder".
 func TestStatusShowsRole(t *testing.T) {
 	rt := newRuntime(t)
 	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{

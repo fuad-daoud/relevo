@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -185,7 +186,7 @@ func TestAllowanceExhaustionSkipsTheCandidate(t *testing.T) {
 		WeeklyUsed: 3, WeeklyResetsAtMS: allowanceTestFutureMS,
 	})
 	pol := orderOf("builder", "muse/meta/a", "opencode/other/b")
-	res, err := resolveCandidate(rt.Candidates, pol, availability.Gates(AvailabilityDeps(rt)), "", "builder")
+	res, err := resolve.Resolve(rt.Candidates, pol, availability.Gates(AvailabilityDeps(rt)), "", "builder")
 	if err != nil {
 		t.Fatalf("resolveCandidate: %v", err)
 	}
@@ -195,7 +196,7 @@ func TestAllowanceExhaustionSkipsTheCandidate(t *testing.T) {
 	if len(res.Skipped) != 1 || res.Skipped[0].Token != "muse/meta/a" {
 		t.Fatalf("Skipped = %+v, want the exhausted muse candidate", res.Skipped)
 	}
-	note := ExplainResolution("builder", res)
+	note := resolve.ExplainResolution("builder", res)
 	if !strings.Contains(note, "muse allowance exhausted: window 92%") {
 		t.Errorf("note = %q, want the allowance reason through the skip text", note)
 	}
@@ -207,7 +208,7 @@ func TestAllowanceBelowThresholdPicksExactlyAsBefore(t *testing.T) {
 	rt := newRuntime(t)
 	rt.Candidates = candidateSet(t, allowanceTestJSON)
 	pol := orderOf("builder", "muse/meta/a", "opencode/other/b")
-	plain, err := resolveCandidate(rt.Candidates, pol, availability.Gates(AvailabilityDeps(rt)), "", "builder")
+	plain, err := resolve.Resolve(rt.Candidates, pol, availability.Gates(AvailabilityDeps(rt)), "", "builder")
 	if err != nil {
 		t.Fatalf("resolveCandidate without allowance: %v", err)
 	}
@@ -215,14 +216,14 @@ func TestAllowanceBelowThresholdPicksExactlyAsBefore(t *testing.T) {
 		WindowUsed: 84, WindowResetsAtMS: allowanceTestFutureMS,
 		WeeklyUsed: 84, WeeklyResetsAtMS: allowanceTestFutureMS,
 	})
-	gated, err := resolveCandidate(rt.Candidates, pol, availability.Gates(AvailabilityDeps(rt)), "", "builder")
+	gated, err := resolve.Resolve(rt.Candidates, pol, availability.Gates(AvailabilityDeps(rt)), "", "builder")
 	if err != nil {
 		t.Fatalf("resolveCandidate below threshold: %v", err)
 	}
 	if gated.Token() != "muse/meta/a" || len(gated.Skipped) != 0 {
 		t.Errorf("pick = %+v, want the muse candidate with no skips", gated)
 	}
-	if a, b := ExplainResolution("builder", plain), ExplainResolution("builder", gated); a != b {
+	if a, b := resolve.ExplainResolution("builder", plain), resolve.ExplainResolution("builder", gated); a != b {
 		t.Errorf("notes differ:\n%s\n%s\nwant byte-identical picks", a, b)
 	}
 }
@@ -237,7 +238,7 @@ func TestAllowanceStaleResetPicksNormally(t *testing.T) {
 		WeeklyUsed: 99, WeeklyResetsAtMS: allowanceTestPastMS,
 	})
 	pol := orderOf("builder", "muse/meta/a", "opencode/other/b")
-	res, err := resolveCandidate(rt.Candidates, pol, availability.Gates(AvailabilityDeps(rt)), "", "builder")
+	res, err := resolve.Resolve(rt.Candidates, pol, availability.Gates(AvailabilityDeps(rt)), "", "builder")
 	if err != nil {
 		t.Fatalf("resolveCandidate: %v", err)
 	}
@@ -255,11 +256,11 @@ func TestAllowanceExplicitPickProceedsWithAnAdvisorySkip(t *testing.T) {
 		WindowUsed: 92, WindowResetsAtMS: allowanceTestFutureMS,
 		WeeklyUsed: 3, WeeklyResetsAtMS: allowanceTestFutureMS,
 	})
-	res, err := resolveCandidate(rt.Candidates, policy.Policy{}, availability.Gates(AvailabilityDeps(rt)), "muse-a", "builder")
+	res, err := resolve.Resolve(rt.Candidates, policy.Policy{}, availability.Gates(AvailabilityDeps(rt)), "muse-a", "builder")
 	if err != nil {
 		t.Fatalf("resolveCandidate named: %v", err)
 	}
-	if res.How != HowExplicit || res.Token() != "muse/meta/a" {
+	if res.How != resolve.HowExplicit || res.Token() != "muse/meta/a" {
 		t.Errorf("pick = %+v, want the named candidate run explicitly", res)
 	}
 	if len(res.Gates) != 1 || res.Gates[0].Kind != availability.AllowanceExhausted {
@@ -288,7 +289,7 @@ func TestAllowanceRefusalNamesWaitingNotClearing(t *testing.T) {
 		WeeklyUsed: 3, WeeklyResetsAtMS: allowanceTestFutureMS,
 	})
 	pol := orderOf("builder", "muse/meta/a", "muse/other/b")
-	_, err := resolveCandidate(rt.Candidates, pol, availability.Gates(AvailabilityDeps(rt)), "", "builder")
+	_, err := resolve.Resolve(rt.Candidates, pol, availability.Gates(AvailabilityDeps(rt)), "", "builder")
 	if err == nil {
 		t.Fatal("resolveCandidate err = nil, want every candidate gated")
 	}

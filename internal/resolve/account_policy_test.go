@@ -1,4 +1,4 @@
-package relevo
+package resolve
 
 import (
 	"strings"

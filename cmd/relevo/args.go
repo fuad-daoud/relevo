@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -310,22 +311,22 @@ func writeError(err error) error {
 		return failNext(codeConflict, "relevo stop "+openMember.Member, "%v", err)
 	case errors.As(err, &candOpen):
 		return failNext(codeConflict, "relevo stop "+candOpen.Name, "%v", err)
-	case errors.Is(err, relevo.ErrNoViablePlacement):
+	case errors.Is(err, resolve.ErrNoViablePlacement):
 		return failNext(codePolicyRefused, "relevo config", "%v", err)
 	case errors.Is(err, relevo.ErrNoMasterMindSession):
 		return failNext(codeUsage, "relevo mastermind init", "%v", err)
-	case errors.Is(err, relevo.ErrTierAboveMax), errors.Is(err, harness.ErrTierUnsupported):
+	case errors.Is(err, resolve.ErrTierAboveMax), errors.Is(err, harness.ErrTierUnsupported):
 		return fail(codeTierCap, "%v", err)
-	case errors.Is(err, relevo.ErrAllGated):
+	case errors.Is(err, resolve.ErrAllGated):
 		return fail(codeGateActive, "%v", err)
-	case errors.Is(err, relevo.ErrCandidateCannotRun):
+	case errors.Is(err, resolve.ErrCandidateCannotRun):
 		return failNext(codePolicyRefused, "relevo doctor", "%v", err)
-	case errors.Is(err, relevo.ErrNoCandidates), errors.Is(err, relevo.ErrRoleNotServed):
+	case errors.Is(err, resolve.ErrNoCandidates), errors.Is(err, resolve.ErrRoleNotServed):
 		// `relevo config` shows each actor's candidate list and the pick, which
 		// is where a refused candidate gets added.
 		return failNext(codePolicyRefused, "relevo config", "%v", err)
-	case errors.Is(err, relevo.ErrAmbiguousCandidate),
-		errors.Is(err, relevo.ErrUnknownRole),
+	case errors.Is(err, resolve.ErrAmbiguousCandidate),
+		errors.Is(err, resolve.ErrUnknownRole),
 		errors.Is(err, roles.ErrBadActors),
 		errors.Is(err, roles.ErrBadRoles):
 		return failNext(codePolicyRefused, "relevo config", "%v", err)

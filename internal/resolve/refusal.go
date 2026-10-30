@@ -1,4 +1,4 @@
-package relevo
+package resolve
 
 import (
 	"errors"
@@ -44,7 +44,7 @@ func clearable(kind availability.Kind) bool {
 func refusalCause(serving []candidate.Candidate, gates []availability.Gate) RefusalCause {
 	cause, seen := CauseCap, false
 	for _, c := range serving {
-		for _, sk := range skipsFor(skipGates(gates), c.Ref().String()) {
+		for _, sk := range SkipsFor(SkipGates(gates), c.Ref().String()) {
 			switch sk.Kind {
 			case availability.Scheduled:
 				cause = CauseWindow
@@ -62,8 +62,8 @@ func refusalCause(serving []candidate.Candidate, gates []availability.Gate) Refu
 }
 
 // RoleRefusals lists, in harness.RoleNames() order, every role with at
-// least one serving candidate that resolveCandidate would refuse with no
-// token named. It is the one source of doctor's policy rows and relevo
+// least one serving candidate that Resolve would refuse with no token
+// named. It is the one source of doctor's policy rows and relevo
 // policy's "would refuse" lines.
 func RoleRefusals(set *candidate.Set, pol policy.Policy, gates []availability.Gate) []RoleRefusal {
 	if set == nil || set.Len() == 0 {
@@ -75,20 +75,20 @@ func RoleRefusals(set *candidate.Set, pol policy.Policy, gates []availability.Ga
 		if len(serving) == 0 {
 			continue
 		}
-		_, err := resolveCandidate(set, pol, gates, "", role)
+		_, err := Resolve(set, pol, gates, "", role)
 		// A roles-missing gate scoped to another role must not make this
 		// role's refusal name a provider it never uses.
-		if r, ok := refusalFromErr(role, serving, gatesForRole(gates, role), err); ok {
+		if r, ok := RefusalFromErr(role, serving, GatesForRole(gates, role), err); ok {
 			out = append(out, r)
 		}
 	}
 	return out
 }
 
-// refusalFromErr maps resolveCandidate's error for role to a RoleRefusal.
+// RefusalFromErr maps Resolve's error for role to a RoleRefusal.
 // FormatPolicy and RoleRefusals both go through here, so relevo config and
 // relevo doctor print the same words for the same state.
-func refusalFromErr(role string, serving []candidate.Candidate, gates []availability.Gate, err error) (RoleRefusal, bool) {
+func RefusalFromErr(role string, serving []candidate.Candidate, gates []availability.Gate, err error) (RoleRefusal, bool) {
 	tokens := make([]string, 0, len(serving))
 	for _, c := range serving {
 		tokens = append(tokens, c.Ref().String())
@@ -104,7 +104,7 @@ func refusalFromErr(role string, serving []candidate.Candidate, gates []availabi
 	case errors.Is(err, ErrAllGated):
 		var providers []string
 		for _, c := range serving {
-			for _, sk := range skipsFor(skipGates(gates), c.Ref().String()) {
+			for _, sk := range SkipsFor(SkipGates(gates), c.Ref().String()) {
 				if clearable(sk.Kind) {
 					providers = append(providers, c.Ref().Provider)
 				}
@@ -114,7 +114,7 @@ func refusalFromErr(role string, serving []candidate.Candidate, gates []availabi
 			Role:    role,
 			Text:    fmt.Sprintf("every candidate serving %s is gated", role),
 			Serving: tokens,
-			Gated:   uniqStrings(providers),
+			Gated:   UniqStrings(providers),
 			Cause:   refusalCause(serving, gates),
 		}, true
 	}

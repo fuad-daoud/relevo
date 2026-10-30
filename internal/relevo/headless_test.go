@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -393,7 +394,7 @@ func seedOverCapClaude(t *testing.T, rt Runtime) store.Binding {
 
 // TestStartRoundRefusesStoredTierAboveMaxWithoutAllowYolo pins that a stored
 // tier above max_tier never launches without the explicit allowance: the
-// no-allowance call refuses with ErrTierAboveMax and starts nothing, and only
+// no-allowance call refuses with resolve.ErrTierAboveMax and starts nothing, and only
 // the allowance-carrying call launches at the stored tier.
 func TestStartRoundRefusesStoredTierAboveMaxWithoutAllowYolo(t *testing.T) {
 	t.Parallel()
@@ -403,8 +404,8 @@ func TestStartRoundRefusesStoredTierAboveMaxWithoutAllowYolo(t *testing.T) {
 	rt.Runner = fr
 	b := seedOverCapClaude(t, rt)
 
-	if _, err := startRound(context.Background(), rt, nil, b, "p", false); !errors.Is(err, ErrTierAboveMax) {
-		t.Fatalf("startRound(allowYolo=false) = %v, want errors.Is(..., ErrTierAboveMax)", err)
+	if _, err := startRound(context.Background(), rt, nil, b, "p", false); !errors.Is(err, resolve.ErrTierAboveMax) {
+		t.Fatalf("startRound(allowYolo=false) = %v, want errors.Is(..., resolve.ErrTierAboveMax)", err)
 	}
 	if len(fr.specs) != 0 {
 		t.Errorf("the refused start launched %d processes, want none", len(fr.specs))
@@ -432,8 +433,8 @@ func TestResumeRoundRefusesStoredTierAboveMaxWithoutAllowYolo(t *testing.T) {
 	rt.Runner = fr
 	b := seedOverCapClaude(t, rt)
 
-	if _, err := resumeRound(context.Background(), rt, nil, b, "sess-1", "p", false); !errors.Is(err, ErrTierAboveMax) {
-		t.Fatalf("resumeRound(allowYolo=false) = %v, want errors.Is(..., ErrTierAboveMax)", err)
+	if _, err := resumeRound(context.Background(), rt, nil, b, "sess-1", "p", false); !errors.Is(err, resolve.ErrTierAboveMax) {
+		t.Fatalf("resumeRound(allowYolo=false) = %v, want errors.Is(..., resolve.ErrTierAboveMax)", err)
 	}
 	if len(fr.specs) != 0 {
 		t.Errorf("the refused resume launched %d processes, want none", len(fr.specs))

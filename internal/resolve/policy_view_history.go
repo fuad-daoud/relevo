@@ -1,13 +1,10 @@
-package relevo
+package resolve
 
 import (
 	"fmt"
 	"time"
 )
 
-// blockedText, out of policy_view.go so that file stays inside the 600-line
-// ceiling with the history grid it is the duration renderer for. Same package,
-// same name, same callers; nothing about it changed in the move.
 // blockedText renders a blocked duration compactly, flooring:
 //
 //	d < 1h   -> "<m>m"          45m -> "45m"; 0 -> "0m"

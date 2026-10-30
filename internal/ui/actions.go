@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
@@ -262,11 +263,11 @@ func (a *mastermindActions) Bind(ctx context.Context, in widget.BindInput) widge
 // bindPickNote is notePick's line (cmd/relevo/main.go:842-847): the pick, in
 // the candidates' short names, and only when relevo actually chose (neither an
 // explicit token nor an adoption has anything to explain).
-func bindPickNote(rt relevo.Runtime, res relevo.Resolution) string {
-	if res.How == "" || res.How == relevo.HowExplicit {
+func bindPickNote(rt relevo.Runtime, res resolve.Resolution) string {
+	if res.How == "" || res.How == resolve.HowExplicit {
 		return ""
 	}
-	return relevo.PickText("builder", res, rt.Candidates)
+	return resolve.PickText("builder", res, rt.Candidates)
 }
 
 // Retry resends a round's plan on another candidate (§4.5): stop the open

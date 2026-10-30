@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -260,7 +261,7 @@ func dryRunPlacement(rt Runtime, actor string) string {
 	if r, ok := rt.RoleRegistry().Role(actor); ok && len(r.Placement) > 0 {
 		return strings.Join(r.Placement, ",")
 	}
-	return localPlacement
+	return resolve.LocalPlacement
 }
 
 // RenderChainDryRun renders a dry-run document as text: the workflow and its

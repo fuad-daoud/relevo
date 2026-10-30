@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -22,9 +22,9 @@ func TestBoundLineNamesTheRemoteServer(t *testing.T) {
 		Round:      1,
 	}
 
-	chosen := relevo.PlacementResolution{
+	chosen := resolve.PlacementResolution{
 		Name: "zen", How: "actor",
-		Skipped: []relevo.PlacementSkip{{Name: "backup", Reason: "unreachable"}},
+		Skipped: []resolve.PlacementSkip{{Name: "backup", Reason: "unreachable"}},
 	}
 	wantChosen := "bound api: mastermind mm -> builder flash on zen, round 1; placement zen (actor); skipped backup (unreachable)"
 	if got := boundLine(remote, "mm", "flash", chosen); got != wantChosen {
@@ -32,7 +32,7 @@ func TestBoundLineNamesTheRemoteServer(t *testing.T) {
 	}
 
 	// An explicit --server, and a placement nothing chose, add no clause.
-	for _, placement := range []relevo.PlacementResolution{
+	for _, placement := range []resolve.PlacementResolution{
 		{Name: "zen", How: "explicit"},
 		{},
 	} {
@@ -49,7 +49,7 @@ func TestBoundLineNamesTheRemoteServer(t *testing.T) {
 		Round:      1,
 	}
 	wantLocal := "bound api: mastermind mm -> builder headless (flash), round 1"
-	if got := boundLine(local, "mm", "flash", relevo.PlacementResolution{}); got != wantLocal {
+	if got := boundLine(local, "mm", "flash", resolve.PlacementResolution{}); got != wantLocal {
 		t.Fatalf("boundLine for a local builder = %q, want %q", got, wantLocal)
 	}
 }

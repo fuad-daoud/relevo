@@ -26,6 +26,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
@@ -2390,7 +2391,7 @@ func TestSendRemoteStartRoundRetryFollowsTheFeature(t *testing.T) {
 }
 
 // TestSendRemoteTierAboveMaxWraps pins that a 422 tier_above_max from
-// StartRound maps back to ErrTierAboveMax client-side, matching the local
+// StartRound maps back to resolve.ErrTierAboveMax client-side, matching the local
 // refusal's wording (#141 remote half).
 func TestSendRemoteTierAboveMaxWraps(t *testing.T) {
 	t.Parallel()
@@ -2446,8 +2447,8 @@ func TestSendRemoteTierAboveMaxWraps(t *testing.T) {
 	}
 
 	_, err := Send(ctx, rt, "api", planFile, SendOptions{})
-	if !errors.Is(err, ErrTierAboveMax) {
-		t.Fatalf("Send err = %v, want ErrTierAboveMax", err)
+	if !errors.Is(err, resolve.ErrTierAboveMax) {
+		t.Fatalf("Send err = %v, want resolve.ErrTierAboveMax", err)
 	}
 }
 

@@ -2,14 +2,13 @@ package relevo
 
 import (
 	"context"
-	"errors"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -43,98 +42,7 @@ func skillRuntime(t *testing.T, onDisk ...string) Runtime {
 }
 
 func skillGatesFor(rt Runtime, dir string) []availability.Gate {
-	return withSkillGates(rt, nil, dir, nil)
-}
-
-func TestSkillGateEmptyDirAddsNone(t *testing.T) {
-	t.Parallel()
-	rt := skillRuntime(t)
-	if g := skillGatesFor(rt, ""); len(g) != 0 {
-		t.Errorf("gates = %+v, want none without a directory", g)
-	}
-}
-
-func TestSkillGateAbsentNote(t *testing.T) {
-	t.Parallel()
-	rt := skillRuntime(t, "/repo/.claude/skills/design-runbooks/SKILL.md")
-	home, _ := os.UserHomeDir()
-	gates := skillGatesFor(rt, skillTestDir)
-	if len(gates) != 1 {
-		t.Fatalf("gates = %+v, want one (opencode lacks the skill)", gates)
-	}
-	g := gates[0]
-	want := "skill design-runbooks not found for designer on opencode: looked at /repo/.agents/skills/design-runbooks/SKILL.md, " +
-		home + "/.agents/skills/design-runbooks/SKILL.md"
-	if g.Kind != availability.SkillMissing || g.Role != "designer" || g.Token != testOpencodeRef || g.Note != want {
-		t.Errorf("gate = %+v, want note %q", g, want)
-	}
-}
-
-func TestSkillGateUserPathSatisfies(t *testing.T) {
-	t.Parallel()
-	home, _ := os.UserHomeDir()
-	rt := skillRuntime(t, home+"/.claude/skills/design-runbooks/SKILL.md", home+"/.agents/skills/design-runbooks/SKILL.md")
-	if g := skillGatesFor(rt, skillTestDir); len(g) != 0 {
-		t.Errorf("gates = %+v, want none when the user path has the skill", g)
-	}
-}
-
-func TestSkillGateIgnoresActorWithoutSkills(t *testing.T) {
-	t.Parallel()
-	rt := skillRuntime(t)
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, skillGatesFor(rt, skillTestDir), "", "builder")
-	if err != nil || res.Token() != testClaudeRef {
-		t.Fatalf("builder pick = %v, %v; want %s", res.Token(), err, testClaudeRef)
-	}
-}
-
-func TestSkillGateWorktreeUntrackedAndTracked(t *testing.T) {
-	t.Parallel()
-	rt := skillRuntime(t, "/repo/.claude/skills/design-runbooks/SKILL.md", "/repo/.agents/skills/design-runbooks/SKILL.md")
-	untracked := withSkillGates(rt, nil, skillTestDir, func(string) bool { return false })
-	if len(untracked) != 2 {
-		t.Fatalf("gates = %+v, want one per candidate", untracked)
-	}
-	for _, g := range untracked {
-		if !strings.Contains(g.Note, "untracked in /repo; commit it or install it per user") {
-			t.Errorf("note = %q, want the untracked hint", g.Note)
-		}
-	}
-	tracked := withSkillGates(rt, nil, skillTestDir, func(string) bool { return true })
-	if len(tracked) != 0 {
-		t.Errorf("gates = %+v, want none when the base tracks the skill", tracked)
-	}
-}
-
-func TestSkillPickSkipsAndRefuses(t *testing.T) {
-	t.Parallel()
-	rt := skillRuntime(t, "/repo/.agents/skills/design-runbooks/SKILL.md")
-	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{
-		"designer": designerRow(),
-	})
-	gates := skillGatesFor(rt, skillTestDir)
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, gates, "", "designer")
-	if err != nil || res.Token() != testOpencodeRef {
-		t.Fatalf("pick = %q, %v; want %s", res.Token(), err, testOpencodeRef)
-	}
-	line := ExplainResolution("designer", res)
-	if !strings.Contains(line, "skipped ") || !strings.Contains(line, "(skill design-runbooks not found for designer on claude: looked at /repo/.claude/skills/design-runbooks/SKILL.md") {
-		t.Errorf("pick line = %q", line)
-	}
-	t.Log(line)
-
-	if _, err := resolveRole(rt.RoleRegistry(), rt.Candidates, gates, testClaudeRef, "designer"); !errors.Is(err, ErrCandidateCannotRun) || !strings.Contains(err.Error(), "skill design-runbooks not found") {
-		t.Errorf("explicit pick err = %v, want ErrCandidateCannotRun with the skill note", err)
-	}
-
-	none := skillRuntime(t)
-	_, err = resolveRole(none.RoleRegistry(), none.Candidates, skillGatesFor(none, skillTestDir), "", "designer")
-	if !errors.Is(err, ErrAllGated) || !strings.Contains(err.Error(), "skill design-runbooks not found") {
-		t.Errorf("all-skipped err = %v, want ErrAllGated with the reason", err)
-	}
-	if msg := err.Error(); !strings.Contains(msg, "install the missing skill where relevo doctor says") || strings.Contains(msg, "--candidate") || strings.Contains(msg, "gate --clear") {
-		t.Errorf("all-skipped err = %q, want only the install hint", msg)
-	}
+	return resolve.WithSkillGates(ResolveDeps(rt), nil, dir, nil)
 }
 
 const skillBlindNote = "skill design-runbooks not found for designer on claude"
@@ -153,7 +61,7 @@ func TestBindDesignerSkipsSkillBlindCandidate(t *testing.T) {
 	if b.BuilderCandidate != testOpencodeRef || res.Token() != testOpencodeRef {
 		t.Errorf("builder = %q, pick = %q; want %s", b.BuilderCandidate, res.Token(), testOpencodeRef)
 	}
-	line := ExplainResolution("designer", res)
+	line := resolve.ExplainResolution("designer", res)
 	if !strings.Contains(line, "skipped ") || !strings.Contains(line, "("+skillBlindNote+": looked at") {
 		t.Errorf("pick line = %q", line)
 	}
@@ -200,7 +108,7 @@ func TestResumeDesignerRepicksOverSkillGates(t *testing.T) {
 	if b.BuilderCandidate != testOpencodeRef {
 		t.Errorf("builder = %q, want %s", b.BuilderCandidate, testOpencodeRef)
 	}
-	if line := ExplainResolution("designer", res); !strings.Contains(line, "("+skillBlindNote+": looked at") {
+	if line := resolve.ExplainResolution("designer", res); !strings.Contains(line, "("+skillBlindNote+": looked at") {
 		t.Errorf("pick line = %q", line)
 	}
 }
@@ -239,7 +147,7 @@ func TestPolicyViewOverPickGatesMarksTheSkillAwarePick(t *testing.T) {
 	rt.Registry = rolesFileRegistry(t, rt.Candidates, policy.Policy{}, map[string]roles.Row{
 		"designer": designerRow(),
 	})
-	got := FormatPolicyFor(rt.RoleRegistry(), nil, rt.Candidates, policy.Policy{}, PickGates(rt, skillTestDir), nil, availability.History{}, baseTime, time.UTC)
+	got := resolve.FormatPolicyFor(rt.RoleRegistry(), nil, rt.Candidates, policy.Policy{}, resolve.PickGates(ResolveDeps(rt), skillTestDir), nil, availability.History{}, baseTime, time.UTC)
 	for _, line := range strings.Split(got, "\n") {
 		if strings.Contains(line, "would pick") && !strings.Contains(line, rt.Candidates.NameOf(testOpencodeRef)) {
 			t.Fatalf("view picks %q, want the opencode candidate:\n%s", line, got)

@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -228,7 +229,7 @@ func buildersText(p relevo.ServerProbe) string {
 // policyChecks turns policy/candidates inconsistencies into doctor rows.
 // Warnings, not failures: an unlisted candidate is a degraded order, not
 // a broken machine.
-func policyChecks(warnings []relevo.PolicyWarning) []Check {
+func policyChecks(warnings []resolve.PolicyWarning) []Check {
 	checks := make([]Check, 0, len(warnings))
 	for _, w := range warnings {
 		checks = append(checks, Check{
@@ -246,7 +247,7 @@ func policyChecks(warnings []relevo.PolicyWarning) []Check {
 // into doctor rows. Warnings, not failures: the machine is fine, the
 // configuration is not. The fix is a literal policy.json built
 // from the tokens that serve the role, so it can be pasted as is.
-func refusalChecks(refusals []relevo.RoleRefusal) []Check {
+func refusalChecks(refusals []resolve.RoleRefusal) []Check {
 	checks := make([]Check, 0, len(refusals))
 	for _, r := range refusals {
 		detail := r.Text + " -- bind --actor " + r.Role + " without --candidate would refuse"
@@ -260,9 +261,9 @@ func refusalChecks(refusals []relevo.RoleRefusal) []Check {
 				fix = "relevo gate --clear " + strings.Join(r.Gated, " && relevo gate --clear ")
 			}
 			switch r.Cause {
-			case relevo.CauseWindow:
+			case resolve.CauseWindow:
 				fix = "wait for the window to open, or widen it with relevo config edit"
-			case relevo.CauseCap:
+			case resolve.CauseCap:
 				fix = "wait for a round to finish, or raise max_concurrency with relevo config edit"
 			}
 		}

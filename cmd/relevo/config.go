@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -135,7 +135,7 @@ func configShow(args []string) error {
 	}
 	if *asJSON {
 		gates := pickGates(rt)
-		refusals := relevo.RoleRefusalsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, gates)
+		refusals := resolve.RoleRefusalsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, gates)
 		return printDoc(configViewOf(L, rt.RoleRegistry(), rt.Candidates, gates, refusals))
 	}
 	if len(L.Actors) > 0 {

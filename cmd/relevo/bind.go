@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -215,7 +216,7 @@ func refuseFlag(err error) error {
 // actor's own placement list chose that server; an explicit --server and a local
 // builder read as they always did. It is pure, so the wording is pinned without
 // a live server.
-func boundLine(b store.Binding, mastermind, candidate string, placement relevo.PlacementResolution) string {
+func boundLine(b store.Binding, mastermind, candidate string, placement resolve.PlacementResolution) string {
 	if b.Builder.Remote() {
 		return fmt.Sprintf("bound %s: mastermind %s -> builder %s on %s, round %d%s",
 			b.Name, mastermind, candidate, b.Builder.Server, b.Round, relevo.PlacementText(placement))
@@ -281,19 +282,19 @@ func runBind(f bindFlags) error {
 		// If the load fails, today's behaviour (roleName) stands.
 		if f.name != "" {
 			if existing, err := rt.Store.Load(f.name); err == nil {
-				specRole = relevo.BindingRole(existing)
+				specRole = resolve.BindingRole(existing)
 			}
 		}
-		kind = relevo.CandidateKindFor(rt, opts.Candidate, specRole)
+		kind = resolve.CandidateKindFor(relevo.ResolveDeps(rt), opts.Candidate, specRole)
 	case adopted:
 		if f.name != "" {
 			if existing, err := rt.Store.Load(f.name); err == nil {
 				kind = existing.Builder.Kind
-				specRole = relevo.BindingRole(existing)
+				specRole = resolve.BindingRole(existing)
 			}
 		}
 	default:
-		kind = relevo.CandidateKindFor(rt, opts.Candidate, roleName)
+		kind = resolve.CandidateKindFor(relevo.ResolveDeps(rt), opts.Candidate, roleName)
 	}
 
 	// Preflight is advisory only: it never blocks the bind, and any probe
@@ -318,7 +319,7 @@ func runBind(f bindFlags) error {
 		return writeError(err)
 	}
 	// A resume keeps the binding's stored role, so the pick note names it.
-	roleName = relevo.BindingRole(b)
+	roleName = resolve.BindingRole(b)
 	// Every supplementary line goes to the human default's stdout, or to
 	// stderr under --json, where stdout must carry the document alone (§2.1).
 	notices := noticeWriter(f.asJSON)
@@ -328,7 +329,7 @@ func runBind(f bindFlags) error {
 	// carries no fresh resolution to name a tier from.
 	gateCmd, gateSource := res.Gate.Command, res.Gate.Source
 	if f.resume {
-		gateCmd, gateSource = b.Gate, relevo.GateSourceBinding
+		gateCmd, gateSource = b.Gate, resolve.GateSourceBinding
 	}
 	gateText := relevo.GateLine(gateCmd, gateSource)
 	if t := relevo.RestoreText(res); t != "" {
@@ -465,7 +466,7 @@ func runAdd(f bindFlags) error {
 	warnWaitingOnYou(rt, res.Binding.Name)
 
 	if f.asJSON {
-		return printDoc(bindDocOf(res.Binding, housekeep.RoundDir(res.Binding), relevo.BindingRole(res.Binding), candidateLabel(rt, res.Binding.BuilderCandidate), false))
+		return printDoc(bindDocOf(res.Binding, housekeep.RoundDir(res.Binding), resolve.BindingRole(res.Binding), candidateLabel(rt, res.Binding.BuilderCandidate), false))
 	}
 
 	return nil
