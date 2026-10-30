@@ -103,7 +103,7 @@ type ShowResult struct {
 // Show resolves opts against a live binding's files; then, for a name that is
 // not live, against the newest archived record of that name and its sealed
 // round files and log; and finally against rt.DB, for a binding the live
-// store never held (docs/specs/2026-09-20-persistence-design.md §5.7). It
+// store never held. It
 // returns store.ErrNotFound, wrapped, when opts.Name is none of the three --
 // including a live name whose database row was never archived.
 func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error) {

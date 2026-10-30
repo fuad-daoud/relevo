@@ -19,7 +19,7 @@ import (
 type prefs struct {
 	Sort string `json:"sort"` // "attention" | "name"
 	// Dashboard is the :rounds view's applied query text and its sort
-	// column (docs/specs/2026-09-21-dashboard-design.md §6). Empty means
+	// column. Empty means
 	// the defaults: every round, newest first.
 	Dashboard     string `json:"dashboard,omitempty"`
 	DashboardSort string `json:"dashboard_sort,omitempty"`

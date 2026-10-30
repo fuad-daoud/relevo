@@ -222,7 +222,7 @@ type Runtime struct {
 	// means a walk over Store; the server sets its machine-wide walk.
 	InFlight func(except string) map[string]int
 
-	// DB is relevo's sqlite database (docs/specs/2026-09-20-persistence-design.md).
+	// DB is relevo's sqlite database.
 	// Nil means no database: this round opens it only in `relevo db *`, never
 	// in the shared runtime constructor, so nothing else reads it yet and
 	// every call site that will (later rounds) must treat nil the same as a
@@ -245,7 +245,7 @@ type Runtime struct {
 	History *db.DB
 
 	// Config is the database-backed config store newRuntime imports into and
-	// loads from (docs/specs/2026-09-24-db-as-record-design.md). It is nil
+	// loads from. It is nil
 	// only for a runtime built by newRuntimePeek, which opens no database.
 	Config *config.Store
 
@@ -343,7 +343,7 @@ type Runtime struct {
 	HeldCPUs func(tx *store.Tx, self string) ([]int, error)
 
 	// Channels arbitrates a mastermind's mailbox between the daemon and a live
-	// `relevo push` holder (docs/specs/2026-09-21-mastermind-channel-design.md).
+	// `relevo push` holder.
 	// Nil means no claims exist, so DeliverPending leaves the entry pending
 	// for `relevo wait`; cmd/relevo wires delivery.KVClaims.
 	Channels delivery.ClaimStore
@@ -385,7 +385,7 @@ type Runtime struct {
 	OpencodeSessionDir func(sessionID string) (string, error)
 
 	// Deliverers routes a mastermind-bound payload to that mastermind kind's own
-	// push path (docs/specs/2026-09-22-opencode-delivery-design.md). A kind
+	// push path. A kind
 	// with no entry, and a nil map, leave the entry pending for `relevo wait`.
 	Deliverers map[string]delivery.MasterMindDeliverer
 

@@ -162,9 +162,7 @@ func showFlagSet(fs *flag.FlagSet) *showFlagValues {
 
 // cmdShow prints one round's plan, report, diff, drift, log or transcript,
 // read from a live binding's files or, for anything not live, from the
-// database (docs/specs/2026-09-20-persistence-design.md §5.7). Its --diff,
-// --drift and whole-log forms are today's diff and log verbs, byte for byte
-// (§4.2).
+// database.
 func cmdShow(args []string) error {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
 	v := showFlagSet(fs)
@@ -303,10 +301,7 @@ func printShow(rt relevo.Runtime, opts relevo.ShowOptions, markViewed, allowDB b
 	name := opts.Name
 
 	// A live binding needs no database at all; only open one -- and only
-	// fail on it -- once we know the binding is not live
-	// (docs/specs/2026-09-20-persistence-design.md §4: "show on a live
-	// binding still works ... and on a non-live one exits 1 with the
-	// error").
+	// fail on it -- once we know the binding is not live.
 	live := false
 	if _, loadErr := rt.Store.Load(name); loadErr != nil {
 		if !errors.Is(loadErr, store.ErrNotFound) {

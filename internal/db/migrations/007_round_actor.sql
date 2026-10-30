@@ -1,4 +1,4 @@
--- Schema v7 (docs/specs/2026-09-26-a4-state-rename-design.md §3.4): the round
+-- Schema v7: the round
 -- table names its candidate and its actor. Same dialect as 001, 003 and 005:
 -- CREATE ... IF NOT EXISTS, no AUTOINCREMENT, no WITHOUT ROWID, no
 -- triggers/views/FTS/virtual tables, no RETURNING. 005 shows that DROP INDEX

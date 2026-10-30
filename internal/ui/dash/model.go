@@ -1,7 +1,6 @@
 // Package dash is the drawer's dashboard screen: a totals line, a grid of
 // every round matching a query line, an optional regroup by axis with sums,
-// sortable, over one db.Query per refresh
-// (docs/specs/2026-09-21-dashboard-design.md §6).
+// sortable, over one db.Query per refresh.
 //
 // It is its own model, hosted by internal/ui's fleet Model the way the
 // detail pane is. It must never import internal/ui: the host draws it and

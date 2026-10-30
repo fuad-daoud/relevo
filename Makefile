@@ -110,8 +110,8 @@ check-test:
 e2e:
 	go test ./internal/e2e/ -run 'TestHeadlessE2E|TestChainE2E|TestChainTriageE2E|TestChainForkE2E|TestChainRemoteBuilderE2E|TestChainServerE2E' -count=1
 
-# jev runs the classifier fixtures against the real TypeSafe endpoint
-# (docs/plans/2026-09-19-injection-classify.md §8). Local only: it needs
+# jev runs the classifier fixtures against the real TypeSafe endpoint.
+# Local only: it needs
 # TYPESAFE_API_KEY or ~/.config/relevo/typesafe.key and skips otherwise.
 # Not part of check.
 jev:

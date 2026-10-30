@@ -114,8 +114,7 @@ func captureAgyEnv() {
 }
 
 // newDeliverers builds Runtime.Deliverers: the agy deliverer always, and an
-// OpencodeDeliverer keyed by "opencode" when sqlite3 is on PATH
-// (docs/specs/2026-09-22-opencode-delivery-design.md). No sqlite3 means the
+// OpencodeDeliverer keyed by "opencode" when sqlite3 is on PATH. No sqlite3 means the
 // opencode deliverer could never confirm a delivery, so an opencode mastermind's
 // reports stay pending for the background wait. agy needs no external tool: it reads
 // the captured credential secret from the machine database and runs agy

@@ -1,4 +1,4 @@
--- Schema v2 (docs/specs/2026-09-24-db-as-record-design.md §3.1). Turso-safe
+-- Schema v2. Turso-safe
 -- dialect, same rules as 001: CREATE TABLE IF NOT EXISTS only, no
 -- AUTOINCREMENT, no WITHOUT ROWID, no triggers/views/FTS/virtual tables, no
 -- RETURNING. config_import.id is an INTEGER PRIMARY KEY rowid alias, which

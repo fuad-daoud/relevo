@@ -337,8 +337,7 @@ func TestTickWithoutRefreshIsUnchanged(t *testing.T) {
 // only that Tick wires both into the pass, using a binding with a closed
 // round, no pending payload, and an idle mastermind so the toast fires within
 // this one tick.
-// TestTickIngestsLiveBindings guards the daemon's end-of-tick ingest hook
-// (docs/specs/2026-09-20-persistence-design.md §5.5): with a db configured,
+// TestTickIngestsLiveBindings guards the daemon's end-of-tick ingest hook: with a db configured,
 // a tick over a live, sent binding must leave a matching binding and round
 // row behind.
 func TestTickIngestsLiveBindings(t *testing.T) {

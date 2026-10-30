@@ -15,54 +15,11 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Docs gate: skip heavy CI when a PR only touches docs/plans, specs, or superpowers.
-  # See scripts/ci-code-changed.sh for the prefix rules.
-  changes:
-    name: changes
-    runs-on: ubuntu-latest
-    outputs:
-      code: ${{ steps.gate.outputs.code }}
-    steps:
-      - if: github.event_name == 'pull_request'
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - id: gate
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD: ${{ github.event.pull_request.head.sha }}
-        run: |
-          if [ "$EVENT_NAME" = "push" ]; then
-            echo "code=true" >> "$GITHUB_OUTPUT"
-            echo "code=true (push to main)"
-            exit 0
-          fi
-
-          if ! paths=$(git diff --name-only "$BASE...$HEAD" 2>/dev/null); then
-            echo "code=true" >> "$GITHUB_OUTPUT"
-            echo "code=true (git diff failed)"
-            exit 0
-          fi
-
-          if [ -z "$paths" ]; then
-            count=0
-          else
-            count=$(printf '%s\n' "$paths" | wc -l | tr -d ' ')
-          fi
-
-          code=$(printf '%s\n' "$paths" | sh scripts/ci-code-changed.sh)
-          echo "code=$code" >> "$GITHUB_OUTPUT"
-          echo "code=$code ($count changed paths)"
-
   # The static checks run once, on ubuntu with go stable, instead of on every
   # os x go leg: gofmt, vet, the linter, the mod-tidy guard and the shell
   # lints. The test legs keep go test's own vet subset.
   lint:
     name: lint
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     env:
       GOLANGCI_LINT_VERSION: 2.14.0
@@ -122,8 +79,6 @@ jobs:
 
   test:
     name: test (${{ matrix.os }}, go ${{ matrix.go }}, ${{ matrix.shard }}/3)
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     env:
       # Go < 1.24 does not emit an LC_UUID load command on darwin unless
@@ -196,8 +151,6 @@ jobs:
   # shards, never waits behind the free plan's 5-job macOS queue.
   test-macos:
     name: test (${{ matrix.os }}, go ${{ matrix.go }}, ${{ matrix.shard }}/${{ github.event_name == 'pull_request' && 4 || 3 }})
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     env:
       SHARDS: ${{ github.event_name == 'pull_request' && 4 || 3 }}
@@ -267,8 +220,7 @@ jobs:
   # than let the guard pass vacuously.
   coverage:
     name: coverage
-    needs: [changes, test]
-    if: needs.changes.outputs.code == 'true'
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -320,8 +272,6 @@ jobs:
   # everywhere. It uploads no artifact, so the coverage job is unaffected.
   owner-mode:
     name: owner-mode
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     env:
       RELEVO_DBTEST_OWNER: '1'
@@ -342,8 +292,6 @@ jobs:
   # main adds the race detector on top, which roughly doubles its wall time.
   modernc:
     name: modernc
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -365,8 +313,6 @@ jobs:
 
   portability:
     name: cross-compile (${{ matrix.target }})
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     strategy:
       # One target per job, so the five builds run in parallel instead of
@@ -405,17 +351,16 @@ jobs:
 
   # The one check the main branch ruleset requires. A required check that is
   # skipped counts as passed, and a skipped matrix job reports under its
-  # unexpanded name, so naming the jobs themselves would either let a failing
-  # test through (coverage is skipped when test fails) or block a docs-only PR
-  # forever. This job always runs and fails when any job failed or was
-  # cancelled; a job skipped because the PR changes no code passes.
+  # unexpanded name, so naming the jobs themselves would let a failing test
+  # through (coverage is skipped when test fails). This job always runs and
+  # fails when any job failed or was cancelled.
   ci-ok:
     name: ci-ok
-    needs: [changes, lint, test, test-macos, coverage, owner-mode, modernc, portability]
+    needs: [lint, test, test-macos, coverage, owner-mode, modernc, portability]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: every job passed, or was skipped for a change with no code
+      - name: every job passed
         env:
           RESULTS: ${{ toJSON(needs.*.result) }}
         run: |

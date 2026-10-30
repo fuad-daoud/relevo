@@ -404,7 +404,7 @@ func sendCmd(env Env, b view.BindingStatus) tea.Cmd {
 
 // plansDir is the send picker's pre-fill: the binding tree's docs/plans/
 // directory, made relative to that tree ("docs/plans/"), when it exists, ""
-// when it does not (§4.5, §2.5).
+// when it does not.
 func plansDir(b view.BindingStatus) string {
 	if b.CWD == "" {
 		return ""

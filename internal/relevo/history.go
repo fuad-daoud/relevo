@@ -36,7 +36,7 @@ func ParseSince(s string, now time.Time) (time.Time, error) { return histq.Parse
 // a row (name, round count, last activity, feature, repo, final state,
 // archived facts) without the caller touching internal/db directly. Live is
 // left false here -- the ui sets it once it knows which names are also in
-// the live report (docs/specs/2026-09-20-persistence-design.md §5.8).
+// the live report.
 type HistoryBinding struct {
 	Name         string
 	ID           string

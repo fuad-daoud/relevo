@@ -14,7 +14,7 @@ import (
 )
 
 // captureRepo best-effort captures cwd's git identity for the coming history
-// database (docs/specs/2026-09-20-persistence-design.md §5.4). It never
+// database. It never
 // fails the caller: a nil Git, or any error RepoFacts returns, is logged at
 // Debug and reported as a nil *store.RepoRef.
 func captureRepo(ctx context.Context, rt Runtime, cwd string) *store.RepoRef {

@@ -1,7 +1,6 @@
 package e2e
 
-// TestHeadlessE2E is #303 step 5: the headless end-to-end round CI runs
-// (docs/specs/2026-09-22-drop-herdr-design.md §6.4). No build tag, so plain
+// TestHeadlessE2E is the headless end-to-end round CI runs. No build tag, so plain
 // `go test ./...` runs it. No network, no real harness, no herdr: a fake
 // `claude` on PATH, this process as the Claude Code session, and `relevo mcp`
 // served in-process over a pipe pair.

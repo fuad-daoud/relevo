@@ -1,4 +1,4 @@
--- Schema v6 (docs/specs/2026-09-24-cockpit-design.md §6.4). Turso-safe
+-- Schema v6. Turso-safe
 -- dialect, same rules as 001 and 002: CREATE TABLE IF NOT EXISTS only, no
 -- AUTOINCREMENT, no WITHOUT ROWID, no triggers/views/FTS/virtual tables, no
 -- RETURNING. rev is an INTEGER PRIMARY KEY rowid alias, which auto-assigns on
