@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
@@ -39,17 +40,17 @@ type TakeoverDecision struct {
 func TakeoverPlan(f TakeoverFacts) (TakeoverDecision, error) {
 	switch {
 	case !f.SyncEnabled:
-		return TakeoverDecision{}, refuse("sync is off on this machine: relevo db sync enable first; a takeover travels through the sync log")
+		return TakeoverDecision{}, refusal.New("sync is off on this machine: relevo db sync enable first; a takeover travels through the sync log")
 	case f.Locked:
-		return TakeoverDecision{}, refuse("sync is locked on this machine: relevo db sync unlock first; a takeover is signed")
+		return TakeoverDecision{}, refusal.New("sync is locked on this machine: relevo db sync unlock first; a takeover is signed")
 	case !f.Force:
-		return TakeoverDecision{}, refuse("relevo takeover fences the old writer's later changes to %q: pass --force once you are sure it will not write again", f.Name)
+		return TakeoverDecision{}, refusal.New("relevo takeover fences the old writer's later changes to %q: pass --force once you are sure it will not write again", f.Name)
 	case !f.RootFound:
-		return TakeoverDecision{}, refuse("this machine holds no record of %q: run relevo db sync pull, then take it over", f.Name)
+		return TakeoverDecision{}, refusal.New("this machine holds no record of %q: run relevo db sync pull, then take it over", f.Name)
 	case f.Writer == "":
-		return TakeoverDecision{}, refuse("binding %q has no writer to take it from", f.Name)
+		return TakeoverDecision{}, refusal.New("binding %q has no writer to take it from", f.Name)
 	case f.Writer == f.This:
-		return TakeoverDecision{}, refuse("this machine already writes %q", f.Name)
+		return TakeoverDecision{}, refusal.New("this machine already writes %q", f.Name)
 	}
 	d := TakeoverDecision{OldWriter: f.Writer, Upto: f.Mark}
 	d.Warning = fmt.Sprintf("entries of %s after %d for %q will be fenced; anything it wrote that this machine has not imported is refused everywhere", f.Writer, f.Mark, f.Name)

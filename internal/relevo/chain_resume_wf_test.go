@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -306,8 +307,8 @@ func TestResumeGateOnPlacedWriterWithoutCheckFeatureRefused(t *testing.T) {
 			t.Errorf("ChainResume(%+v) = nil, want the placed-writer gate refusal", opts)
 			continue
 		}
-		if !errors.Is(err, ErrRefused) {
-			t.Errorf("ChainResume(%+v) = %v, want ErrRefused", opts, err)
+		if !errors.Is(err, refusal.ErrRefused) {
+			t.Errorf("ChainResume(%+v) = %v, want refusal.ErrRefused", opts, err)
 		}
 		if !strings.Contains(err.Error(), "zen") || !strings.Contains(err.Error(), `"check"`) {
 			t.Errorf("ChainResume(%+v) refusal = %q, want it to name server zen and feature check", opts, err)

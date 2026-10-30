@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -30,7 +31,7 @@ func (a *mastermindActions) WorkflowSource(name string) (string, bool, error) {
 	if err != nil || !shipped {
 		return source, shipped, err
 	}
-	def, _, derr := relevo.ResolveWorkflow(a.runtime(), name)
+	def, _, derr := resolve.ResolveWorkflow(a.runtime().Config, name)
 	if derr != nil {
 		return "", true, derr
 	}
@@ -44,7 +45,7 @@ func (a *mastermindActions) WorkflowSource(name string) (string, bool, error) {
 // WorkflowGraph is one workflow's steps as graph rows, read from its definition
 // the same way whether it is saved or shipped.
 func (a *mastermindActions) WorkflowGraph(name string) ([]relevo.GraphRow, error) {
-	def, _, err := relevo.ResolveWorkflow(a.runtime(), name)
+	def, _, err := resolve.ResolveWorkflow(a.runtime().Config, name)
 	if err != nil {
 		return nil, err
 	}

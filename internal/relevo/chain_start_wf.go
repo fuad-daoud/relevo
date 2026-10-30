@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -59,7 +60,7 @@ func chainStartWorkflow(ctx context.Context, rt Runtime, opts ChainOptions) (Cha
 // read-only: the definition, its params, the inputs, the actors, the members
 // and the caller's mastermind.
 func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOptions) (chainWFStart, error) {
-	def, _, err := ResolveWorkflow(rt, opts.Workflow)
+	def, _, err := resolve.ResolveWorkflow(rt.Config, opts.Workflow)
 	if err != nil {
 		return chainWFStart{}, err
 	}
@@ -79,7 +80,7 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 		return chainWFStart{}, err
 	}
 	if def, err = workflow.WithParams(def, values); err != nil {
-		return chainWFStart{}, refuse("%v", err)
+		return chainWFStart{}, refusal.New("%v", err)
 	}
 	checks := resolve.RoleChecks(rt.RoleRegistry(), "builder")
 	plan := chainWFStart{
@@ -119,7 +120,7 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 	plan.planned = planned
 	plan.keeper = chainWriterKeeper(def, workflow.UsedActors(def), actors)
 	if cap := chainNameCap(opts.Name, planned); len(opts.Name) > cap {
-		return chainWFStart{}, refuse("chain name %q exceeds %d characters (the longest member suffix is %s)", opts.Name, cap, longestMemberSuffix(opts.Name, planned))
+		return chainWFStart{}, refusal.New("chain name %q exceeds %d characters (the longest member suffix is %s)", opts.Name, cap, longestMemberSuffix(opts.Name, planned))
 	}
 	plan.members = chainWorkflowMembers(def, planned, plan.keeper)
 	if err := chainFreeNames(rt, plan.members); err != nil {
@@ -165,7 +166,7 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 			return chainWFStart{}, err
 		}
 		if chainHasCheckStep(def) && !hasFeature(plan.remote.who, remote.FeatureCheck) {
-			return chainWFStart{}, refuse("chain %s places a writer on server %s, which lacks the %q feature", plan.planned[0].Name, plan.remote.server, remote.FeatureCheck)
+			return chainWFStart{}, refusal.New("chain %s places a writer on server %s, which lacks the %q feature", plan.planned[0].Name, plan.remote.server, remote.FeatureCheck)
 		}
 	}
 	return plan, nil
@@ -183,7 +184,7 @@ func chainRefuseReaderBuilder(def workflow.Definition, actors map[string]workflo
 	}
 	name := workflow.RenderParams(def, "{{params.builder}}")
 	if info, ok := actors[name]; ok && info.Shape != workflow.ShapeWriter {
-		return refuse("chain builder actor %q must be a writer actor, not a reader", name)
+		return refusal.New("chain builder actor %q must be a writer actor, not a reader", name)
 	}
 	return nil
 }
@@ -195,12 +196,12 @@ func chainRefuseForkPlacedWriter(opts ChainOptions, def workflow.Definition, pla
 		return nil
 	}
 	if opts.Server != "" {
-		return refuse("workflow %s has a fork step: forks on a server are not supported yet (W4)", def.Name)
+		return refusal.New("workflow %s has a fork step: forks on a server are not supported yet (W4)", def.Name)
 	}
 	for _, m := range plan.members {
 		if m.writer {
 			if p := plan.placements[m.part]; !p.Local() {
-				return refuse("workflow %s has a fork step: forks on placed writer %s are not supported yet (W4)", def.Name, m.name)
+				return refusal.New("workflow %s has a fork step: forks on placed writer %s are not supported yet (W4)", def.Name, m.name)
 			}
 		}
 	}
@@ -222,7 +223,7 @@ func workflowHasFork(def workflow.Definition) bool {
 // after the members are resolved.
 func chainValidateWorkflowOpts(opts ChainOptions) error {
 	if err := store.ValidName(opts.Name); err != nil {
-		return refuse("%v", err)
+		return refusal.New("%v", err)
 	}
 	if err := RequireFeatureChoice(opts.Feature, opts.NoFeature, false); err != nil {
 		return err
@@ -253,7 +254,7 @@ func chainValidateWorkflow(rt Runtime, def workflow.Definition, given workflow.G
 		Given:  &given,
 		Seeds:  workflow.ShippedSeeds(),
 		Workflow: func(name string) (workflow.Definition, bool) {
-			d, _, err := ResolveWorkflow(rt, name)
+			d, _, err := resolve.ResolveWorkflow(rt.Config, name)
 			return d, err == nil
 		},
 	}
@@ -261,9 +262,9 @@ func chainValidateWorkflow(rt Runtime, def workflow.Definition, given workflow.G
 	if len(problems) > 0 {
 		p := problems[0]
 		if p.Rule == workflow.RuleKind && strings.Contains(p.Detail, "unknown actor") {
-			return classed(resolve.ErrUnknownRole, p.String())
+			return refusal.Classed(resolve.ErrUnknownRole, p.String())
 		}
-		return refuse("%s", p)
+		return refusal.New("%s", p)
 	}
 	return nil
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -204,7 +205,7 @@ func RequireFeatureChoice(feature string, noFeature, resume bool) error {
 }
 
 // errFeatureChoice is the one line RequireFeatureChoice returns.
-var errFeatureChoice = badInputf("choose exactly one of --feature <label> or --no-feature")
+var errFeatureChoice = refusal.BadInputf("choose exactly one of --feature <label> or --no-feature")
 
 // parseTicket turns a raw --ticket value into its stored form (#637), using
 // ref's origin as the repository hint when the value names no repository. An
@@ -230,7 +231,7 @@ func BindResolved(ctx context.Context, rt Runtime, opts BindOptions) (store.Bind
 		return store.Binding{}, resolve.Resolution{}, err
 	}
 	if opts.CWD == "" {
-		return store.Binding{}, resolve.Resolution{}, badInputf("no working directory")
+		return store.Binding{}, resolve.Resolution{}, refusal.BadInputf("no working directory")
 	}
 
 	if !haveRec {
@@ -565,12 +566,12 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 // error; or a message naming the binding when its branch is gone.
 func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint, b store.Binding) (store.Binding, resolve.Resolution, error) {
 	if opts.Rebind || opts.Candidate != "" || opts.Headless {
-		return store.Binding{}, resolve.Resolution{}, badInputf("cannot change a remote builder; unbind and add")
+		return store.Binding{}, resolve.Resolution{}, refusal.BadInputf("cannot change a remote builder; unbind and add")
 	}
 	// #637: --feature/--no-feature/--ticket have no server endpoint to reach,
 	// so a remote resume refuses them rather than changing only the mirror.
 	if opts.Feature != "" || opts.NoFeature || opts.Ticket != "" {
-		return store.Binding{}, resolve.Resolution{}, badInputf("cannot change a remote binding's feature or ticket; unbind and add")
+		return store.Binding{}, resolve.Resolution{}, refusal.BadInputf("cannot change a remote binding's feature or ticket; unbind and add")
 	}
 	if rt.Remote == nil {
 		return store.Binding{}, resolve.Resolution{}, ErrRemoteUnavailable
@@ -649,10 +650,10 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	// bind, naming the flag (A5 §2).
 	if shape == store.ShapeReader {
 		if opts.Gate != "" {
-			return store.Binding{}, resolve.Resolution{}, badInputf("--gate: a reader round has no check")
+			return store.Binding{}, resolve.Resolution{}, refusal.BadInputf("--gate: a reader round has no check")
 		}
 		if opts.Regate != nil {
-			return store.Binding{}, resolve.Resolution{}, badInputf("--regate: a reader round has no check")
+			return store.Binding{}, resolve.Resolution{}, refusal.BadInputf("--regate: a reader round has no check")
 		}
 	}
 	name := opts.Name
@@ -674,7 +675,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	// session's round 1 and Reconcile would read that old report entry as
 	// "already handled" -- silently, with no error and no notification.
 	if _, err := rt.Store.Load(name); err == nil {
-		return store.Binding{}, resolve.Resolution{}, badInputf(
+		return store.Binding{}, resolve.Resolution{}, refusal.BadInputf(
 			"binding %q already exists: `relevo unbind %s` to start fresh, or `relevo bind --resume --name %s` to adopt it",
 			name, name, name)
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -913,7 +914,7 @@ type UnbindResult struct {
 
 // ErrWorktreeKept reports that unbind left the binding in place because its
 // worktree was kept; force archives it anyway.
-var ErrWorktreeKept = refusalSentinel("worktree kept")
+var ErrWorktreeKept = refusal.Sentinel("worktree kept")
 
 func keptRefusal(name string, res UnbindResult) error {
 	msg := fmt.Sprintf("binding %s kept: worktree %s kept (%s)", name, res.WorktreeKept, res.KeptReason)

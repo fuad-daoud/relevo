@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -37,7 +38,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	if opts.CWD != "" {
 		// The input is simply wrong, so this is the input boundary's refusal
 		// class: the CLI renders it as `refused` (exit 2), never `internal`.
-		return AddResult{}, refuse("remote builders are add-only: --cwd and --server cannot be combined")
+		return AddResult{}, refusal.New("remote builders are add-only: --cwd and --server cannot be combined")
 	}
 	if rt.Remote == nil {
 		return AddResult{}, ErrRemoteUnavailable

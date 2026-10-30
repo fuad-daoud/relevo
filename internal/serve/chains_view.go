@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -143,7 +144,7 @@ func writeChainPreflightError(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusBadRequest, remote.CodeUnknownActor, err.Error())
 	case strings.Contains(err.Error(), "already exists"):
 		writeErr(w, http.StatusConflict, remote.CodeInvalid, err.Error())
-	case errors.Is(err, relevo.ErrRefused) || strings.Contains(err.Error(), "must be a"):
+	case errors.Is(err, refusal.ErrRefused) || strings.Contains(err.Error(), "must be a"):
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
 	default:
 		writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())

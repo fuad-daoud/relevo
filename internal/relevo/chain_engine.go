@@ -8,6 +8,7 @@ import (
 	"maps"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -73,11 +74,11 @@ func chainResumeWorkflowRow(rt Runtime, c db.ChainRow) (db.ChainRow, workflow.De
 		why = serr
 	}
 	if c.Reason != "" {
-		return c, workflow.Definition{}, workflow.State{}, refuse(
+		return c, workflow.Definition{}, workflow.State{}, refusal.New(
 			"chain %s cannot be resumed: %v; its own reason reads %q -- `relevo status %s` shows it",
 			c.Name, why, c.Reason, c.Name)
 	}
-	return c, workflow.Definition{}, workflow.State{}, refuse(
+	return c, workflow.Definition{}, workflow.State{}, refusal.New(
 		"chain %s cannot be resumed: %v; this row predates the workflow engine and carries nothing to migrate -- `relevo status %s` shows what it holds",
 		c.Name, why, c.Name)
 }

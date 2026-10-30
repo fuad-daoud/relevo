@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -161,8 +162,8 @@ func TestBusySentinelsAreRefusals(t *testing.T) {
 		if !errors.Is(wrapped, c.sent) {
 			t.Errorf("%s: wrapping lost the specific sentinel", c.name)
 		}
-		if !errors.Is(wrapped, relevo.ErrRefused) {
-			t.Errorf("%s: errors.Is(%v, ErrRefused) = false, want the refusal class", c.name, wrapped)
+		if !errors.Is(wrapped, refusal.ErrRefused) {
+			t.Errorf("%s: errors.Is(%v, refusal.ErrRefused) = false, want the refusal class", c.name, wrapped)
 		}
 	}
 }
@@ -223,9 +224,9 @@ func TestOutOfRangeRoundIsRoundNotFound(t *testing.T) {
 		name string
 		err  error
 	}{
-		{"range error", fmt.Errorf("round 5: binding has 2 rounds: %w", relevo.ErrRoundNotFound)},
-		{"in-package constructor", relevo.RoundOutOfRange("plb", 5, 2, false)},
-		{"drift constructor names --drift", relevo.RoundOutOfRange("webshop", 99, 2, true)},
+		{"range error", fmt.Errorf("round 5: binding has 2 rounds: %w", refusal.ErrRoundNotFound)},
+		{"in-package constructor", refusal.RoundOutOfRange("plb", 5, 2, false)},
+		{"drift constructor names --drift", refusal.RoundOutOfRange("webshop", 99, 2, true)},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -249,7 +250,7 @@ func TestOutOfRangeRoundIsRoundNotFound(t *testing.T) {
 
 	// The drift form must keep naming --drift, which the artifact error it
 	// replaces did.
-	if got := classifyReadErr(relevo.RoundOutOfRange("webshop", 99, 2, true)).Error(); !strings.Contains(got, "--drift") {
+	if got := classifyReadErr(refusal.RoundOutOfRange("webshop", 99, 2, true)).Error(); !strings.Contains(got, "--drift") {
 		t.Errorf("drift out-of-range message %q must name --drift", got)
 	}
 }

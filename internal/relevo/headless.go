@@ -22,6 +22,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/pathscope"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -34,23 +35,23 @@ import (
 // ErrBuilderBusy reports a send against a headless binding whose previous
 // round's process is still running (headless spec §5.2). One process per
 // round is the model; two at once in one tree would race each other's
-// edits. Being a refusalSentinel, anything wrapping it also unwraps to
-// ErrRefused, so the CLI classifies the busy send as refused (exit 2) rather
+// edits. Being a refusal.Sentinel, anything wrapping it also unwraps to
+// refusal.ErrRefused, so the CLI classifies the busy send as refused (exit 2) rather
 // than internal without each call site naming both sentinels.
-var ErrBuilderBusy = refusalSentinel("the previous process is still running; wait for the round to close, or relevo done")
+var ErrBuilderBusy = refusal.Sentinel("the previous process is still running; wait for the round to close, or relevo done")
 
 // ErrReportPending reports a send refused because the current round already
 // has its completion marker or report on disk, but the daemon has not yet
 // ingested the close. The round is over: restaging its plan and starting a
 // second builder would make the daemon close on the stale marker and deliver
 // the old report. The caller retries once the report is delivered.
-var ErrReportPending = refusalSentinel("the round's output is on disk but not yet delivered; relevo wait delivers it, then send the next round")
+var ErrReportPending = refusal.Sentinel("the round's output is on disk but not yet delivered; relevo wait delivers it, then send the next round")
 
 // ErrScopeActive reports a send refused because this round's systemd scope
 // unit is still loaded: a builder for the round is already alive, most
 // likely started by an earlier send whose bookkeeping failed (#445). Nothing
 // was spawned and nothing was saved.
-var ErrScopeActive = refusalSentinel("this round's builder scope is still running")
+var ErrScopeActive = refusal.Sentinel("this round's builder scope is still running")
 
 // isScopeBusy reports whether a Start error is the host refusing this round's
 // scope unit rather than the candidate failing to run: systemd-run's own

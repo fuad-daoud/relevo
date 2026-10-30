@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -22,7 +23,7 @@ type childCreated struct {
 // caller's transaction, cutting its branch from the parent writer's tip.
 func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.ChainRow, spec workflow.ChildSpec) (childCreated, error) {
 	childName := parent.Name + "." + spec.Key
-	childDef, _, err := ResolveWorkflow(rt, spec.Workflow)
+	childDef, _, err := resolve.ResolveWorkflow(rt.Config, spec.Workflow)
 	if err != nil {
 		return childCreated{}, err
 	}
@@ -32,7 +33,7 @@ func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.Ch
 		return childCreated{}, err
 	}
 	if cap := chainNameCap(childName, planned); len(childName) > cap {
-		return childCreated{}, refuse("chain name %q exceeds %d characters (the longest member suffix is %s)", childName, cap, longestMemberSuffix(childName, planned))
+		return childCreated{}, refusal.New("chain name %q exceeds %d characters (the longest member suffix is %s)", childName, cap, longestMemberSuffix(childName, planned))
 	}
 
 	bodies, err := chainPlanBodiesFor(ChainOptions{Plans: spec.Plans})

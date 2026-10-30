@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -385,7 +386,7 @@ func TestWorkflowGraphEdgeTextFromDefinition(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("write workflow: %v", err)
 	}
-	def, _, err := relevo.ResolveWorkflow(relevo.Runtime{Config: workflowTestStore(t)}, path)
+	def, _, err := resolve.ResolveWorkflow(workflowTestStore(t), path)
 	if err != nil {
 		t.Fatalf("ResolveWorkflow: %v", err)
 	}

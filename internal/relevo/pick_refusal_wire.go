@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -24,7 +25,7 @@ func pickRefusalFromWire(err error) error {
 	msg := httpErr.Body.Message
 	for _, sentinel := range []error{resolve.ErrAllGated, resolve.ErrRoleNotServed} {
 		if strings.Contains(msg, sentinel.Error()) {
-			return classed(sentinel, msg)
+			return refusal.Classed(sentinel, msg)
 		}
 	}
 	return err

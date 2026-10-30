@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -328,11 +329,11 @@ func chainDoneWorkflowRow(rt Runtime, c db.ChainRow) (db.ChainRow, error) {
 		return c, nil
 	}
 	if c.Reason != "" {
-		return c, refuse(
+		return c, refusal.New(
 			"chain %s cannot be done: %v; its own reason reads %q -- `relevo status %s` shows it",
 			c.Name, why, c.Reason, c.Name)
 	}
-	return c, refuse(
+	return c, refusal.New(
 		"chain %s cannot be done: %v; this row predates the workflow engine and carries nothing to migrate -- `relevo status %s` shows what it holds",
 		c.Name, why, c.Name)
 }

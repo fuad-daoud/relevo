@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -174,10 +175,10 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 			// refused here too, naming the flag, exactly as the local path
 			// below does.
 			if opts.Gate != "" {
-				return AddResult{}, badInputf("--gate: a reader round has no check")
+				return AddResult{}, refusal.BadInputf("--gate: a reader round has no check")
 			}
 			if opts.Regate != nil {
-				return AddResult{}, badInputf("--regate: a reader round has no check")
+				return AddResult{}, refusal.BadInputf("--regate: a reader round has no check")
 			}
 		}
 		// A caller that resolved the actor's list (a plain bind that landed
@@ -208,10 +209,10 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 				return AddResult{}, err
 			}
 			if opts.Gate != "" {
-				return AddResult{}, badInputf("--gate: a reader round has no check")
+				return AddResult{}, refusal.BadInputf("--gate: a reader round has no check")
 			}
 			if opts.Regate != nil {
-				return AddResult{}, badInputf("--regate: a reader round has no check")
+				return AddResult{}, refusal.BadInputf("--regate: a reader round has no check")
 			}
 		}
 		return addRemote(ctx, rt, opts, rec, haveRec)
@@ -227,10 +228,10 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// add, naming the flag.
 	if shape == store.ShapeReader {
 		if opts.Gate != "" {
-			return AddResult{}, badInputf("--gate: a reader round has no check")
+			return AddResult{}, refusal.BadInputf("--gate: a reader round has no check")
 		}
 		if opts.Regate != nil {
-			return AddResult{}, badInputf("--regate: a reader round has no check")
+			return AddResult{}, refusal.BadInputf("--regate: a reader round has no check")
 		}
 	}
 	if err := store.ValidName(opts.Name); err != nil {
@@ -287,7 +288,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	mastermindEP := recordEndpoint(rec)
 
 	if _, err := rt.Store.Load(opts.Name); err == nil {
-		return AddResult{}, badInputf(
+		return AddResult{}, refusal.BadInputf(
 			"binding %q already exists: `relevo unbind %s` to start fresh, or `relevo bind --resume --name %s` to adopt it",
 			opts.Name, opts.Name, opts.Name)
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -315,7 +316,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 
 	if opts.Branch != "" && opts.CWD != "" {
-		return AddResult{}, badInputf("--branch and --cwd are exclusive")
+		return AddResult{}, refusal.BadInputf("--branch and --cwd are exclusive")
 	}
 
 	if opts.CWD != "" {
@@ -390,7 +391,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		}
 		if !exists {
 			rollback()
-			return AddResult{}, refuse("subdirectory %s does not exist at %s: nothing to run the round in", subdir, base)
+			return AddResult{}, refusal.New("subdirectory %s does not exist at %s: nothing to run the round in", subdir, base)
 		}
 	}
 
@@ -510,7 +511,7 @@ func cutWorktree(ctx context.Context, rt Runtime, name, repo, base string) (work
 			return "", "", "", "", rerr
 		}
 		if !ok {
-			return "", "", "", "", refuse("base %q not found", base)
+			return "", "", "", "", refusal.New("base %q not found", base)
 		}
 		commit = sha
 	} else if commit, err = rt.Git.HeadCommit(ctx, repo); err != nil {

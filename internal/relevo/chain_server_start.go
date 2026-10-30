@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/installation"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -93,7 +94,7 @@ func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (cha
 	if rt.Transport == nil {
 		return chainServerPlan{}, errors.New("no remote transport configured")
 	}
-	def, origin, err := ResolveWorkflow(rt, opts.Workflow)
+	def, origin, err := resolve.ResolveWorkflow(rt.Config, opts.Workflow)
 	if err != nil {
 		return chainServerPlan{}, err
 	}
@@ -113,7 +114,7 @@ func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (cha
 		return chainServerPlan{}, err
 	}
 	if def, err = workflow.WithParams(def, values); err != nil {
-		return chainServerPlan{}, refuse("%v", err)
+		return chainServerPlan{}, refusal.New("%v", err)
 	}
 	checks := resolve.RoleChecks(rt.RoleRegistry(), "builder")
 	plan := chainServerPlan{
@@ -312,7 +313,7 @@ func chainMirrorStored(rt Runtime, members []store.Binding) ([]store.Binding, er
 func chainServerCreateError(err error) error {
 	var httpErr *client.HTTPError
 	if errors.As(err, &httpErr) && httpErr.Status == http.StatusBadRequest && httpErr.Body.Code == remote.CodeUnknownActor {
-		return classed(resolve.ErrUnknownRole, httpErr.Body.Message)
+		return refusal.Classed(resolve.ErrUnknownRole, httpErr.Body.Message)
 	}
 	return pickRefusalFromWire(err)
 }

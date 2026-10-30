@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -258,8 +259,8 @@ func TestChainStartRefusesAnEmptyOrUnreadablePlan(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "plans is required") {
 			t.Fatalf("err = %v, want the workflow's missing-plans refusal", err)
 		}
-		if !errors.Is(err, ErrRefused) {
-			t.Errorf("err = %v, want errors.Is(err, ErrRefused): a bad argument is refused, not internal", err)
+		if !errors.Is(err, refusal.ErrRefused) {
+			t.Errorf("err = %v, want errors.Is(err, refusal.ErrRefused): a bad argument is refused, not internal", err)
 		}
 		assertNothingCreated(t, rt, fg, "shop")
 	})
@@ -275,8 +276,8 @@ func TestChainStartRefusesAnEmptyOrUnreadablePlan(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "read plan") {
 			t.Fatalf("err = %v, want a read failure", err)
 		}
-		if !errors.Is(err, ErrRefused) {
-			t.Errorf("err = %v, want errors.Is(err, ErrRefused)", err)
+		if !errors.Is(err, refusal.ErrRefused) {
+			t.Errorf("err = %v, want errors.Is(err, refusal.ErrRefused)", err)
 		}
 		assertNothingCreated(t, rt, fg, "shop")
 	})
@@ -292,8 +293,8 @@ func TestChainStartRefusesAnEmptyOrUnreadablePlan(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "is empty") {
 			t.Fatalf("err = %v, want an empty-plan refusal", err)
 		}
-		if !errors.Is(err, ErrRefused) {
-			t.Errorf("err = %v, want errors.Is(err, ErrRefused)", err)
+		if !errors.Is(err, refusal.ErrRefused) {
+			t.Errorf("err = %v, want errors.Is(err, refusal.ErrRefused)", err)
 		}
 		assertNothingCreated(t, rt, fg, "shop")
 	})
@@ -318,8 +319,8 @@ func TestChainStartRefusesATakenMemberName(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), `"shop-rev" already exists`) {
 			t.Fatalf("err = %v, want a taken-name refusal", err)
 		}
-		if !errors.Is(err, ErrRefused) {
-			t.Errorf("err = %v, want errors.Is(err, ErrRefused): a taken name is refused, not internal", err)
+		if !errors.Is(err, refusal.ErrRefused) {
+			t.Errorf("err = %v, want errors.Is(err, refusal.ErrRefused): a taken name is refused, not internal", err)
 		}
 		if len(fg.addWorktreeCalls) != 0 {
 			t.Errorf("a refusal must cut no worktree: %+v", fg.addWorktreeCalls)
@@ -340,8 +341,8 @@ func TestChainStartRefusesATakenMemberName(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), `chain "shop-plan" already exists`) {
 			t.Fatalf("err = %v, want a taken-chain refusal", err)
 		}
-		if !errors.Is(err, ErrRefused) {
-			t.Errorf("err = %v, want errors.Is(err, ErrRefused)", err)
+		if !errors.Is(err, refusal.ErrRefused) {
+			t.Errorf("err = %v, want errors.Is(err, refusal.ErrRefused)", err)
 		}
 		if len(fg.addWorktreeCalls) != 0 {
 			t.Errorf("a refusal must cut no worktree: %+v", fg.addWorktreeCalls)
@@ -367,8 +368,8 @@ func TestChainStartRefusesANameOver27(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "27") {
 		t.Fatalf("err = %v, want a refusal naming 27", err)
 	}
-	if !errors.Is(err, ErrRefused) {
-		t.Errorf("err = %v, want errors.Is(err, ErrRefused)", err)
+	if !errors.Is(err, refusal.ErrRefused) {
+		t.Errorf("err = %v, want errors.Is(err, refusal.ErrRefused)", err)
 	}
 	assertNothingCreated(t, rt, fg, name)
 }
@@ -388,8 +389,8 @@ func TestChainStartRefusesAMissingBase(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `base "refs/heads/nope" not found`) {
 		t.Fatalf("err = %v, want a missing-base refusal", err)
 	}
-	if !errors.Is(err, ErrRefused) {
-		t.Errorf("err = %v, want errors.Is(err, ErrRefused)", err)
+	if !errors.Is(err, refusal.ErrRefused) {
+		t.Errorf("err = %v, want errors.Is(err, refusal.ErrRefused)", err)
 	}
 	if len(fg.addWorktreeCalls) != 0 {
 		t.Errorf("a refusal must cut no worktree: %+v", fg.addWorktreeCalls)
@@ -410,8 +411,8 @@ func TestChainStartRefusesAWriterReviewer(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "rule 3") {
 		t.Fatalf("err = %v, want the workflow's reviewer refusal", err)
 	}
-	if !errors.Is(err, ErrRefused) {
-		t.Errorf("err = %v, want errors.Is(err, ErrRefused): a bad reviewer actor is refused, not internal", err)
+	if !errors.Is(err, refusal.ErrRefused) {
+		t.Errorf("err = %v, want errors.Is(err, refusal.ErrRefused): a bad reviewer actor is refused, not internal", err)
 	}
 	assertNothingCreated(t, rt, fg, "shop")
 }

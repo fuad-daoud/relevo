@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -182,7 +183,7 @@ func WorkflowAdd(rt Runtime, path string, replace, force bool) (string, error) {
 	if err := checkWorkflowName(rt, def.Name, replace, force); err != nil {
 		return "", err
 	}
-	embedded, err := EmbedFileSeeds(def, filepath.Dir(path))
+	embedded, err := resolve.EmbedFileSeeds(def, filepath.Dir(path))
 	if err != nil {
 		return "", workflowErrorf(ErrWorkflowSource, def.Name, "%v", err)
 	}
@@ -274,7 +275,7 @@ func WorkflowValidateProblems(rt Runtime, def workflow.Definition) []string {
 		Given:  nil,
 		Seeds:  workflow.ShippedSeeds(),
 		Workflow: func(name string) (workflow.Definition, bool) {
-			d, _, err := ResolveWorkflow(rt, name)
+			d, _, err := resolve.ResolveWorkflow(rt.Config, name)
 			return d, err == nil
 		},
 	}

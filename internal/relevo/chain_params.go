@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -65,7 +66,7 @@ func chainParamsFor(def workflow.Definition, pol policy.Policy, opts ChainOption
 			continue
 		}
 		if !hasChainParam(def, f.param) {
-			return nil, refuse("%s: workflow %q has no param %q; it takes: %s",
+			return nil, refusal.New("%s: workflow %q has no param %q; it takes: %s",
 				f.flag, def.Name, f.param, strings.Join(chainParamNames(def), ", "))
 		}
 		out[f.param] = f.value

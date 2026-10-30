@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -442,8 +443,8 @@ func TestResumeGateOnPlacedWriterSkipsSetGateOnBadParam(t *testing.T) {
 	_, err := ChainResume(context.Background(), rt, ResumeOptions{
 		Name: "shop", Gate: "make other", Params: map[string]string{"nosuchparam": "x"},
 	})
-	if !errors.Is(err, ErrRefused) {
-		t.Fatalf("ChainResume = %v, want ErrRefused for a param the workflow has no slot for", err)
+	if !errors.Is(err, refusal.ErrRefused) {
+		t.Fatalf("ChainResume = %v, want refusal.ErrRefused for a param the workflow has no slot for", err)
 	}
 	if slices.Contains(fr.calls, "SetGate:zen:shop") {
 		t.Errorf("calls = %v, want no gate route call for a refused resume", fr.calls)

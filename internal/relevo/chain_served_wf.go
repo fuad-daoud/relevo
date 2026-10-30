@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -34,7 +35,7 @@ func servedChainDefinition(req ServedChainRequest) (workflow.Definition, error) 
 	}
 	def, err := workflow.WithParams(workflow.Default(), values)
 	if err != nil {
-		return workflow.Definition{}, refuse("%v", err)
+		return workflow.Definition{}, refusal.New("%v", err)
 	}
 	return def, nil
 }

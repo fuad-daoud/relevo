@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -203,7 +204,7 @@ func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error)
 func findingsRound(requested, upper int, exists func(round int) (bool, error)) (int, error) {
 	if requested > 0 {
 		if requested > upper {
-			return 0, roundRangef("round %d: binding has %d rounds", requested, upper)
+			return 0, refusal.Rangef("round %d: binding has %d rounds", requested, upper)
 		}
 		return requested, nil
 	}
@@ -304,7 +305,7 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 			return ShowResult{}, oerr
 		}
 		if !open {
-			return ShowResult{}, roundRangef("round %d: binding has %d rounds", round, rounds)
+			return ShowResult{}, refusal.Rangef("round %d: binding has %d rounds", round, rounds)
 		}
 	}
 
@@ -454,7 +455,7 @@ func showArchived(rt Runtime, ab store.ArchivedBinding, opts ShowOptions) (ShowR
 		}
 		round = completed
 	} else if round < 1 || round > rounds {
-		return ShowResult{}, roundRangef("round %d: binding has %d rounds", round, rounds)
+		return ShowResult{}, refusal.Rangef("round %d: binding has %d rounds", round, rounds)
 	}
 
 	res := ShowResult{
@@ -513,7 +514,7 @@ func showDB(rt Runtime, binding db.BindingRow, opts ShowOptions) (ShowResult, er
 		}
 		round = completed
 	} else if round < 1 || round > total {
-		return ShowResult{}, roundRangef("round %d: binding has %d rounds", round, total)
+		return ShowResult{}, refusal.Rangef("round %d: binding has %d rounds", round, total)
 	}
 
 	var target *db.Round
@@ -524,7 +525,7 @@ func showDB(rt Runtime, binding db.BindingRow, opts ShowOptions) (ShowResult, er
 		}
 	}
 	if target == nil {
-		return ShowResult{}, roundRangef("round %d: binding has %d rounds", round, total)
+		return ShowResult{}, refusal.Rangef("round %d: binding has %d rounds", round, total)
 	}
 
 	res := ShowResult{

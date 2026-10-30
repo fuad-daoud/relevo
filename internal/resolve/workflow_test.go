@@ -1,4 +1,4 @@
-package relevo
+package resolve
 
 import (
 	"errors"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -59,7 +60,6 @@ func saveTestWorkflow(t *testing.T, cs *config.Store, name, source string) {
 func TestResolveWorkflowOrder(t *testing.T) {
 	cs := workflowStore(t)
 	saveTestWorkflow(t, cs, "saved-one", resolveSavedSource)
-	rt := Runtime{Config: cs}
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "saved-one")
@@ -67,7 +67,7 @@ func TestResolveWorkflowOrder(t *testing.T) {
 		t.Fatalf("write workflow file: %v", err)
 	}
 
-	def, origin, err := ResolveWorkflow(rt, path)
+	def, origin, err := ResolveWorkflow(cs, path)
 	if err != nil {
 		t.Fatalf("ResolveWorkflow(file): %v", err)
 	}
@@ -75,7 +75,7 @@ func TestResolveWorkflowOrder(t *testing.T) {
 		t.Errorf("file resolution = (%q, %q), want (custom, file)", def.Name, origin)
 	}
 
-	def, origin, err = ResolveWorkflow(rt, "saved-one")
+	def, origin, err = ResolveWorkflow(cs, "saved-one")
 	if err != nil {
 		t.Fatalf("ResolveWorkflow(saved): %v", err)
 	}
@@ -83,7 +83,7 @@ func TestResolveWorkflowOrder(t *testing.T) {
 		t.Errorf("saved resolution = (%q, %q), want (saved-one, saved)", def.Name, origin)
 	}
 
-	def, origin, err = ResolveWorkflow(rt, "default")
+	def, origin, err = ResolveWorkflow(cs, "default")
 	if err != nil {
 		t.Fatalf("ResolveWorkflow(shipped): %v", err)
 	}
@@ -91,8 +91,8 @@ func TestResolveWorkflowOrder(t *testing.T) {
 		t.Errorf("shipped resolution = (%q, %q), want (%q, shipped)", def.Name, origin, workflow.Default().Name)
 	}
 
-	if _, _, err := ResolveWorkflow(rt, "no-such-workflow"); !errors.Is(err, ErrRefused) {
-		t.Errorf("unknown workflow error = %v, want ErrRefused", err)
+	if _, _, err := ResolveWorkflow(cs, "no-such-workflow"); !errors.Is(err, refusal.ErrRefused) {
+		t.Errorf("unknown workflow error = %v, want refusal.ErrRefused", err)
 	}
 }
 
@@ -125,8 +125,8 @@ func TestEmbedFileSeedsRefusesEscape(t *testing.T) {
 			t.Errorf("EmbedFileSeeds(%q) = %+v, want a refusal", seed, got)
 			continue
 		}
-		if !errors.Is(err, ErrRefused) {
-			t.Errorf("EmbedFileSeeds(%q) error = %v, want ErrRefused", seed, err)
+		if !errors.Is(err, refusal.ErrRefused) {
+			t.Errorf("EmbedFileSeeds(%q) error = %v, want refusal.ErrRefused", seed, err)
 		}
 	}
 }
@@ -156,8 +156,8 @@ func TestEmbedFileSeedsRefusesASymlink(t *testing.T) {
 			t.Errorf("EmbedFileSeeds(%q) = %+v, want a refusal", seed, got)
 			continue
 		}
-		if !errors.Is(err, ErrRefused) {
-			t.Errorf("EmbedFileSeeds(%q) error = %v, want ErrRefused", seed, err)
+		if !errors.Is(err, refusal.ErrRefused) {
+			t.Errorf("EmbedFileSeeds(%q) error = %v, want refusal.ErrRefused", seed, err)
 		}
 	}
 }

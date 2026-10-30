@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -176,7 +177,7 @@ func resumeRemoteGateRefusal(ctx context.Context, rt Runtime, c db.ChainRow) err
 		return err
 	}
 	if !hasFeature(who, remote.FeatureCheck) {
-		return refuse("chain %s: server %s lacks the %q feature, so a served binding's gate cannot be changed", c.Name, b.Builder.Server, remote.FeatureCheck)
+		return refusal.New("chain %s: server %s lacks the %q feature, so a served binding's gate cannot be changed", c.Name, b.Builder.Server, remote.FeatureCheck)
 	}
 	return nil
 }

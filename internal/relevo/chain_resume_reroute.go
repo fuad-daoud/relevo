@@ -3,6 +3,7 @@ package relevo
 import (
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -36,7 +37,7 @@ func chainResumeReroute(def workflow.Definition, st workflow.State, opts ResumeO
 	case 1:
 		return checks[0], nil
 	default:
-		return "", refuse(
+		return "", refusal.New(
 			"chain %s at %s, and %d checks reach it (%s); resume with --from <step> to name the one to rerun",
 			st.Status, st.At, len(checks), strings.Join(checks, ", "))
 	}
