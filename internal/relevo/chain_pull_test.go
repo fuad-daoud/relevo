@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	relevoview "github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -692,7 +693,7 @@ func TestChainPullCreatesAMemberTheServerAdded(t *testing.T) {
 
 // TestChainPullAddedMemberGetsAMemberRow pins the chain_member write for a late
 // member: a server member the mirror creates gets its chain_member row beside
-// its binding, so chainReadMembers and chainEndMembers include it.
+// its binding, so view.ReadMembers and view.EndMembers include it.
 func TestChainPullAddedMemberGetsAMemberRow(t *testing.T) {
 	t.Parallel()
 
@@ -726,11 +727,11 @@ func TestChainPullAddedMemberGetsAMemberRow(t *testing.T) {
 	}
 
 	row := chainStoredRow(t, rt, "shop")
-	if got := chainReadMembers(rt.Store, row); !slices.Contains(got, "shop-sec") {
-		t.Errorf("chainReadMembers = %v, want shop-sec", got)
+	if got := relevoview.ReadMembers(rt.Store, row); !slices.Contains(got, "shop-sec") {
+		t.Errorf("view.ReadMembers = %v, want shop-sec", got)
 	}
-	if got := chainEndMembers(rt.Store, row); !slices.Contains(got, "shop-sec") {
-		t.Errorf("chainEndMembers = %v, want shop-sec", got)
+	if got := relevoview.EndMembers(rt.Store, row); !slices.Contains(got, "shop-sec") {
+		t.Errorf("view.EndMembers = %v, want shop-sec", got)
 	}
 }
 
@@ -816,7 +817,7 @@ func TestChainPullStopsPollingAHaltedMirrorOnceTheServerDropsIt(t *testing.T) {
 	if row.Reason != view.Reason {
 		t.Fatalf("reason = %q, want the chain's own halt reason %q", row.Reason, view.Reason)
 	}
-	if row.Reason == chainGoneReason("shop", "zen") {
+	if row.Reason == chain.GoneReason("shop", "zen") {
 		t.Fatalf("reason = %q, want it not the gone wording", row.Reason)
 	}
 	before := len(chainPendingChain(t, rt, "shop"))
@@ -830,7 +831,7 @@ func TestChainPullStopsPollingAHaltedMirrorOnceTheServerDropsIt(t *testing.T) {
 	if row.Status != string(chain.StatusHalted) {
 		t.Errorf("mirror status = %q, want still halted", row.Status)
 	}
-	if row.Reason != chainGoneReason("shop", "zen") {
+	if row.Reason != chain.GoneReason("shop", "zen") {
 		t.Errorf("reason = %q, want the gone wording", row.Reason)
 	}
 	if after := len(chainPendingChain(t, rt, "shop")); after != before {

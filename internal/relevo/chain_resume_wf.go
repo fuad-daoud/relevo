@@ -251,7 +251,7 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts Resum
 func chainResumeFlagParams(def workflow.Definition, rt Runtime, opts ResumeOptions) (map[string]string, error) {
 	out := map[string]string{}
 	add := func(flag, param, value string) error {
-		if !hasChainParam(def, param) {
+		if !chain.HasParam(def, param) {
 			return refusal.New("%s: workflow %q has no param %q", flag, def.Name, param)
 		}
 		out[param] = value

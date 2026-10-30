@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -53,9 +54,9 @@ func forkHaltedAtJoin(t *testing.T, rt Runtime, fg *fakeGit) {
 	if c.Status != string(workflow.StatusHalted) {
 		t.Fatalf("parent status = %q (%q), want the failed merge to halt it", c.Status, c.Reason)
 	}
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if !st.Awaiting.Merging {
 		t.Fatalf("parent awaiting %+v, want it left merging with every child ended", st.Awaiting)
@@ -105,9 +106,9 @@ func TestForkChildResumeReopensTheParentAndRejoins(t *testing.T) {
 	}
 
 	reopened := chainStoredRow(t, rt, "shop")
-	st, err := chainWorkflowState(reopened)
+	st, err := chain.WorkflowState(reopened)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if reopened.Status != string(workflow.StatusRunning) {
 		t.Fatalf("parent status = %q (%q), want running after the child's resume", reopened.Status, reopened.Reason)
@@ -130,9 +131,9 @@ func TestForkChildResumeReopensTheParentAndRejoins(t *testing.T) {
 
 	chainBuilderClose(t, rt, "shop.1", chainDoneBody())
 
-	st, err = chainWorkflowState(chainStoredRow(t, rt, "shop"))
+	st, err = chain.WorkflowState(chainStoredRow(t, rt, "shop"))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if got := st.Results["split"]; got.Status != chainMergeJoined {
 		t.Errorf("fork result = %+v, want joined once the re-opened child ended done", got)
@@ -261,9 +262,9 @@ func TestForkParentResumeReentersTheJoin(t *testing.T) {
 	if got := len(fg.mergeKeepCalls) - merges; got != 2 {
 		t.Errorf("merge calls = %d, want the resume to merge both children again", got)
 	}
-	st, err := chainWorkflowState(chainStoredRow(t, rt, "shop"))
+	st, err := chain.WorkflowState(chainStoredRow(t, rt, "shop"))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if got := st.Results["split"]; got.Status != chainMergeJoined {
 		t.Errorf("fork result = %+v, want joined from the resume's merge", got)
@@ -304,9 +305,9 @@ func TestForkParentResumeNeverForksAgain(t *testing.T) {
 // mustChainState reads a chain's stored engine state.
 func mustChainState(t *testing.T, c db.ChainRow) workflow.State {
 	t.Helper()
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
-		t.Fatalf("chainWorkflowState(%s): %v", c.Name, err)
+		t.Fatalf("chain.WorkflowState(%s): %v", c.Name, err)
 	}
 	return st
 }

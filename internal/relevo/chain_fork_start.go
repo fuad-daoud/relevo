@@ -3,6 +3,7 @@ package relevo
 import (
 	"context"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -28,7 +29,7 @@ func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.Ch
 		return childCreated{}, err
 	}
 	actors := rt.RoleRegistry().WorkflowActors()
-	planned, err := chainMemberNames(childName, childDef, actors)
+	planned, err := chain.MemberNames(childName, childDef, actors)
 	if err != nil {
 		return childCreated{}, err
 	}
@@ -45,7 +46,7 @@ func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.Ch
 		return childCreated{}, err
 	}
 
-	keeper := chainWriterKeeper(childDef, workflow.UsedActors(childDef), actors)
+	keeper := chain.WriterKeeper(childDef, workflow.UsedActors(childDef), actors)
 	members := chainWorkflowMembers(childDef, planned, keeper)
 	if err := chainFreeNames(rt, members); err != nil {
 		return childCreated{}, err

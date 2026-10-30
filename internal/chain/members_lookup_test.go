@@ -1,11 +1,11 @@
-package relevo
+package chain
 
 import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -14,9 +14,9 @@ import (
 // <name>-plan as its planner, running on server when one is set, with that
 // planner bound beside it. It is the store shape the notice reads: raw records
 // plus the owning chain.
-func newMemberChainRow(t *testing.T, rt Runtime, name, status, server string) store.Binding {
+func newMemberChainRow(t *testing.T, s *store.Store, name, status, server string) store.Binding {
 	t.Helper()
-	now := rt.Now().UTC()
+	now := time.Now().UTC()
 	row := db.ChainRow{
 		ID:           db.NewID(),
 		Name:         name,
@@ -29,16 +29,15 @@ func newMemberChainRow(t *testing.T, rt Runtime, name, status, server string) st
 		Builder:      name,
 		Planner:      name + "-plan",
 		Server:       server,
-		Worktree:     rt.Store.Dir(name),
-		MasterMindID: testMasterMindID,
+		Worktree:     s.Dir(name),
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
 	member := store.Binding{
-		Name: name + "-plan", CWD: rt.Store.Dir(name + "-plan"), Round: 2,
-		State: store.StateNeedsYou, MasterMindID: testMasterMindID,
+		Name: name + "-plan", CWD: s.Dir(name + "-plan"), Round: 2,
+		State: store.StateNeedsYou,
 	}
-	if err := rt.Store.WithLock(func(tx *store.Tx) error {
+	if err := s.WithLock(func(tx *store.Tx) error {
 		if err := tx.ChainPut(row); err != nil {
 			return err
 		}
@@ -61,18 +60,18 @@ func TestMemberChainPicksTheOwningChain(t *testing.T) {
 		status string
 		server string
 	}{
-		{"xdone", string(chain.StatusDone), ""},
-		{"xrun", string(chain.StatusRunning), ""},
-		{"xhalt", string(chain.StatusHalted), ""},
-		{"xserved", string(chain.StatusRunning), "zen"},
+		{"xdone", string(StatusDone), ""},
+		{"xrun", string(StatusRunning), ""},
+		{"xhalt", string(StatusHalted), ""},
+		{"xserved", string(StatusRunning), "zen"},
 	} {
 		t.Run(tc.chain, func(t *testing.T) {
 			t.Parallel()
 
-			rt := newRuntime(t)
-			member := newMemberChainRow(t, rt, tc.chain, tc.status, tc.server)
+			s := store.New(t.TempDir())
+			member := newMemberChainRow(t, s, tc.chain, tc.status, tc.server)
 
-			c, ok := MemberChain(rt.Store.ChainByMember, member.Name)
+			c, ok := MemberChain(s.ChainByMember, member.Name)
 			if !ok {
 				t.Fatalf("MemberChain(%q) misses, want the owning chain", member.Name)
 			}
@@ -118,17 +117,17 @@ func TestMemberHintPicksTheWord(t *testing.T) {
 		wantBoth bool
 	}{
 		{"done chain: both commands",
-			MemberHint("api", db.ChainRow{Status: string(chain.StatusDone)}, true), true},
+			MemberHint("api", db.ChainRow{Status: string(StatusDone)}, true), true},
 		{"stopped chain: both commands",
-			MemberHint("api", db.ChainRow{Status: string(chain.StatusStopped)}, true), true},
+			MemberHint("api", db.ChainRow{Status: string(StatusStopped)}, true), true},
 		{"running chain: status only",
-			MemberHint("api", db.ChainRow{Status: string(chain.StatusRunning)}, true), false},
+			MemberHint("api", db.ChainRow{Status: string(StatusRunning)}, true), false},
 		{"halted chain: status only",
-			MemberHint("api", db.ChainRow{Status: string(chain.StatusHalted)}, true), false},
+			MemberHint("api", db.ChainRow{Status: string(StatusHalted)}, true), false},
 		{"served chain: the same words",
-			MemberHint("api", db.ChainRow{Status: string(chain.StatusDone), Server: "zen"}, true), true},
+			MemberHint("api", db.ChainRow{Status: string(StatusDone), Server: "zen"}, true), true},
 		{"non-member: the ordinary hint",
-			MemberHint("api", db.ChainRow{Status: string(chain.StatusDone)}, false), false},
+			MemberHint("api", db.ChainRow{Status: string(StatusDone)}, false), false},
 	} {
 		if !strings.Contains(tc.hint, "relevo status --name api") {
 			t.Errorf("%s: hint = %q, want it to name the status", tc.name, tc.hint)
@@ -137,7 +136,7 @@ func TestMemberHintPicksTheWord(t *testing.T) {
 			t.Errorf("%s: hint = %q, want no unbind in it", tc.name, tc.hint)
 		}
 		if both := strings.Contains(tc.hint, "; relevo done api clears it"); both != tc.wantBoth {
-			t.Errorf("%s: hint = %q, want the both-commands form = %v", tc.name, tc.hint, tc.wantBoth)
+			t.Errorf("%s: hint = %q, want the both-commands form = %v", tc.name, tc.hint, both)
 		}
 	}
 }

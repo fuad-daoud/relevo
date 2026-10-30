@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
@@ -13,7 +14,7 @@ import (
 // failed ship records the halt and returns nil. A local awaited member, and a
 // step whose awaited run names no member, have nothing to ship.
 func shipResumedRound(ctx context.Context, rt Runtime, name string, c db.ChainRow) error {
-	member, _, ok := chainAwaited(rt.Store, c)
+	member, _, ok := chain.Awaited(rt.Store, c)
 	if !ok {
 		return nil
 	}

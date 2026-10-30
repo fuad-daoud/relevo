@@ -42,7 +42,7 @@ func chainServerStatus(ctx context.Context, rt Runtime, c db.ChainRow) (view.Rep
 		return view.Report{}, err
 	}
 
-	row := viewChainRow(rt.Store, c)
+	row := view.ChainRow(rt.Store, c)
 	if v, gerr := chainGetView(ctx, rt, c); gerr != nil {
 		row.Detail = fmt.Sprintf("server %s unreachable: %v", c.Server, gerr)
 	} else {
@@ -50,11 +50,11 @@ func chainServerStatus(ctx context.Context, rt Runtime, c db.ChainRow) (view.Rep
 		if merr != nil {
 			return view.Report{}, merr
 		}
-		row = viewChainRow(rt.Store, mirrored)
+		row = view.ChainRow(rt.Store, mirrored)
 	}
 
 	rows := []view.BindingStatus{row}
-	for _, member := range chainMembersOf(c) {
+	for _, member := range view.MembersOf(c) {
 		for _, b := range rep.Bindings {
 			if b.Name == member {
 				rows = append(rows, b)
@@ -163,7 +163,7 @@ func chainServerWait(ctx context.Context, rt Runtime, name string, timeout, inte
 // gone, or a 404 from the stop itself -- has nothing a server could stop and
 // is closed only by `relevo done`, so it answers with the halted refusal.
 func chainServerStop(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult, error) {
-	if chainGoneMirror(c) {
+	if chain.GoneMirror(c) {
 		return StopResult{}, haltedChainStop(c.Name)
 	}
 	if rt.Remote == nil {
@@ -188,7 +188,7 @@ func chainServerStop(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult
 		return StopResult{}, err
 	}
 	out := StopResult{Round: resp.Round, Action: resp.Action}
-	if b, lerr := rt.Store.Load(chainMemberName(c, c.AwaitingMember)); lerr == nil {
+	if b, lerr := rt.Store.Load(chain.MemberName(c, c.AwaitingMember)); lerr == nil {
 		out.Shape = b.Shape
 	}
 	return out, nil
@@ -303,7 +303,7 @@ func chainServerDone(ctx context.Context, rt Runtime, c db.ChainRow) (DoneResult
 	}
 	var out DoneResult
 	first := true
-	for _, member := range chainMembersOf(row) {
+	for _, member := range view.MembersOf(row) {
 		res, derr := Done(ctx, rt, member)
 		if errors.Is(derr, store.ErrNotFound) {
 			continue
@@ -373,8 +373,8 @@ func chainResultFromMirror(ctx context.Context, rt Runtime, name string) (ChainR
 // chainStoredMembersOf loads the members a row names, skipping a record that
 // is gone: a released member is not an error for a read verb.
 func chainStoredMembersOf(rt Runtime, c db.ChainRow) ([]store.Binding, error) {
-	out := make([]store.Binding, 0, len(chainMembersOf(c)))
-	for _, name := range chainMembersOf(c) {
+	out := make([]store.Binding, 0, len(view.MembersOf(c)))
+	for _, name := range view.MembersOf(c) {
 		b, err := rt.Store.Load(name)
 		if errors.Is(err, store.ErrNotFound) {
 			continue

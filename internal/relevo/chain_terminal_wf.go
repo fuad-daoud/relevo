@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -99,7 +100,7 @@ func chainTerminalCarrier(tx *store.Tx, c db.ChainRow) (store.Binding, bool, err
 func chainTerminalWFPayload(c db.ChainRow, s workflow.State) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "chain %s %s: status %s, at %s, plans %d/%d, findings %d.",
-		c.Name, chainTerminalVerb(chain.Status(s.Status)), string(s.Status), flowTerminalStep(s), flowPlanPos(s), flowPlanTotal(s), flowFindings(s))
+		c.Name, chainTerminalVerb(chain.Status(s.Status)), string(s.Status), flowTerminalStep(s), flowPlanPos(s), flowPlanTotal(s), view.FlowFindings(s))
 	if s.Reason != "" {
 		fmt.Fprintf(&b, " Reason: %s", reasonSentence(s.Reason))
 	}

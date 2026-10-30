@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -67,7 +68,7 @@ func ChainStop(ctx context.Context, rt Runtime, name string) (StopResult, error)
 	if err != nil {
 		return StopResult{}, err
 	}
-	if chainOnServer(c) {
+	if chain.OnServer(c) {
 		return chainServerStop(ctx, rt, c)
 	}
 	if c.Status != string(chain.StatusRunning) {
@@ -96,7 +97,7 @@ func ChainStop(ctx context.Context, rt Runtime, name string) (StopResult, error)
 // nothing-to-stop answer -- it has already ended, and a release is a different
 // verb -- so the refusal is asked of the halted status alone.
 func chainStopHaltedMember(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult, error) {
-	member, _, ok := chainAwaited(rt.Store, c)
+	member, _, ok := chain.Awaited(rt.Store, c)
 	if !ok {
 		return StopResult{}, chainStoppedNothing(c)
 	}
@@ -128,7 +129,7 @@ func chainStoppedNothing(c db.ChainRow) error {
 // to reach, and a member whose round already closed has nothing to stop, so each
 // is stopped directly under the lock.
 func chainStopWorkflow(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult, error) {
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		return StopResult{}, err
 	}
@@ -169,7 +170,7 @@ func chainStoredMemberName(rt Runtime, c db.ChainRow, actor string) (string, err
 		return "", err
 	}
 	for _, m := range rows {
-		if chainFlowActorMatch(m.Actor, actor) {
+		if chain.FlowActorMatch(m.Actor, actor) {
 			return m.Binding, nil
 		}
 	}
@@ -193,11 +194,11 @@ func chainStopWorkflowDirect(ctx context.Context, rt Runtime, name string) error
 		if err := chainKillRunningChecks(ctx, rt, tx, c); err != nil {
 			return err
 		}
-		def, err := chainWorkflowDef(c)
+		def, err := chain.WorkflowDef(c)
 		if err != nil {
 			return err
 		}
-		before, err := chainWorkflowState(c)
+		before, err := chain.WorkflowState(c)
 		if err != nil {
 			return err
 		}
@@ -230,7 +231,7 @@ func ChainDone(ctx context.Context, rt Runtime, name string) (DoneResult, error)
 	if err != nil {
 		return DoneResult{}, err
 	}
-	if chainOnServer(c) {
+	if chain.OnServer(c) {
 		return chainServerDone(ctx, rt, c)
 	}
 	if c.Status == string(chain.StatusRunning) {
@@ -264,7 +265,7 @@ func ChainDone(ctx context.Context, rt Runtime, name string) (DoneResult, error)
 	// The builder's result is the chain's: its worktree and branch are the
 	// chain's tree, which is what the verb's document names.
 	var out DoneResult
-	for i, member := range chainEndMembers(rt.Store, c) {
+	for i, member := range view.EndMembers(rt.Store, c) {
 		res, derr := Done(ctx, rt, member)
 		if errors.Is(derr, store.ErrNotFound) {
 			// A member whose record is gone is already released.
@@ -319,8 +320,8 @@ func chainDoneWorkflowRow(rt Runtime, c db.ChainRow) (db.ChainRow, error) {
 		}
 		c = fresh
 	}
-	_, derr := chainWorkflowDef(c)
-	_, serr := chainWorkflowState(c)
+	_, derr := chain.WorkflowDef(c)
+	_, serr := chain.WorkflowState(c)
 	why := derr
 	if why == nil {
 		why = serr
@@ -358,11 +359,11 @@ func chainInputsSweep(rt Runtime, name, status string) {
 // release was carried out from. No payload is queued -- the human ran this verb,
 // so there is nobody to tell.
 func chainDoneRow(rt Runtime, tx *store.Tx, c db.ChainRow) error {
-	def, err := chainWorkflowDef(c)
+	def, err := chain.WorkflowDef(c)
 	if err != nil {
 		return err
 	}
-	before, err := chainWorkflowState(c)
+	before, err := chain.WorkflowState(c)
 	if err != nil {
 		return err
 	}
@@ -376,7 +377,7 @@ func chainDoneRow(rt Runtime, tx *store.Tx, c db.ChainRow) error {
 	part := ""
 	round := 0
 	if ok {
-		part = chainPartOf(c, member)
+		part = chain.PartOf(c, member)
 		round = carrier.Round
 	}
 	ev := workflow.Event{Kind: workflow.EventNeedsYou, Member: part, Round: round, Reason: chainDoneReason}
@@ -389,7 +390,7 @@ func chainDoneRow(rt Runtime, tx *store.Tx, c db.ChainRow) error {
 // no longer true the moment they resume it. The next end queues its own.
 func supersedeChainDelivery(rt Runtime, c db.ChainRow) error {
 	return rt.Store.WithLock(func(tx *store.Tx) error {
-		for _, member := range chainEndMembers(tx, c) {
+		for _, member := range view.EndMembers(tx, c) {
 			pending, err := tx.PendingForMasterMindThrough(member, 0)
 			if err != nil {
 				return err

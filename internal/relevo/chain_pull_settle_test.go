@@ -115,7 +115,7 @@ func TestChainPullStoppedViewSettlesBehindMembers(t *testing.T) {
 	if rev2 := chainBinding(t, rt, "shop-rev"); !rev2.UpdatedAt.Equal(rev.UpdatedAt) {
 		t.Errorf("reviewer updated_at = %v, want it stable at %v: an unchanged member keeps its stamp", rev2.UpdatedAt, rev.UpdatedAt)
 	}
-	if !chainStatusTerminal(chainStoredRow(t, rt, "shop").Status) {
+	if !chain.StatusTerminal(chainStoredRow(t, rt, "shop").Status) {
 		t.Errorf("mirror status after a second pass = %q, want still stopped", chainStoredRow(t, rt, "shop").Status)
 	}
 }

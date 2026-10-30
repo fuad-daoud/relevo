@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/chain"
 )
 
 // TestChainStatusThroughMemberNameShowsLocalRowsAndTheServerFailure pins the
@@ -19,7 +21,7 @@ func TestChainStatusThroughMemberNameShowsLocalRowsAndTheServerFailure(t *testin
 	seedServerChain(t, rt, "shop")
 
 	// The two-step read cmdStatus runs for a member name.
-	c, ok := MemberChain(rt.Store.ChainByMember, "shop-plan")
+	c, ok := chain.MemberChain(rt.Store.ChainByMember, "shop-plan")
 	if !ok || c.Name != "shop" {
 		t.Fatalf("MemberChain(shop-plan) = %s/%v, want the chain shop", c.Name, ok)
 	}

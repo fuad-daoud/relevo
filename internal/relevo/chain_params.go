@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -55,7 +56,7 @@ func chainParamsFor(def workflow.Definition, pol policy.Policy, opts ChainOption
 			"max_corrections": strconv.Itoa(pol.ChainMaxCorrections()),
 		}
 		for name, value := range policyValues {
-			if hasChainParam(def, name) {
+			if chain.HasParam(def, name) {
 				out[name] = value
 			}
 		}
@@ -65,7 +66,7 @@ func chainParamsFor(def workflow.Definition, pol policy.Policy, opts ChainOption
 		if !f.given {
 			continue
 		}
-		if !hasChainParam(def, f.param) {
+		if !chain.HasParam(def, f.param) {
 			return nil, refusal.New("%s: workflow %q has no param %q; it takes: %s",
 				f.flag, def.Name, f.param, strings.Join(chainParamNames(def), ", "))
 		}
@@ -105,12 +106,6 @@ func chainParamFlags(opts ChainOptions) []chainParamFlag {
 		flags = append(flags, chainParamFlag{flag: "--max-corrections", param: "max_corrections", value: strconv.Itoa(*opts.MaxCorrections), given: true})
 	}
 	return flags
-}
-
-// hasChainParam reports whether a workflow declares the named param.
-func hasChainParam(def workflow.Definition, name string) bool {
-	_, ok := def.Params[name]
-	return ok
 }
 
 // chainParamNames lists a workflow's params, sorted, for the refusal that names

@@ -13,6 +13,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -351,7 +352,7 @@ func TestRelevoVerbsDoneRefusedOnARunningChain(t *testing.T) {
 		t.Errorf("err = %v, want it to name `relevo stop shop first`", err)
 	}
 
-	if _, err := v.Done(context.Background(), "", DoneArgs{Name: "shop-rev"}); !errors.Is(err, relevo.ErrRunningChainMember) {
+	if _, err := v.Done(context.Background(), "", DoneArgs{Name: "shop-rev"}); !errors.Is(err, chain.ErrRunningMember) {
 		t.Errorf("Done on a running chain's member = %v, want ErrRunningChainMember", err)
 	}
 

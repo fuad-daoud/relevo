@@ -53,10 +53,10 @@ func WaitingOnYou(rt Runtime, except string) ([]string, error) {
 		// A member whose owning chain is finished is clearable by hand, so its
 		// hint names the clear a person can run. Every other row's own word --
 		// the running-chain member's, the broken binding's rebind -- stands.
-		if c, memberOf := MemberChain(rt.Store.ChainByMember, b.Name); memberOf {
+		if c, memberOf := chain.MemberChain(rt.Store.ChainByMember, b.Name); memberOf {
 			switch chain.Status(c.Status) {
 			case chain.StatusDone, chain.StatusStopped:
-				w.Hint = MemberHint(b.Name, c, memberOf)
+				w.Hint = chain.MemberHint(b.Name, c, memberOf)
 			}
 		}
 		lines = append(lines, view.WaitingLine(w, rt.Now().UTC()))

@@ -112,7 +112,7 @@ func chainDocEntry(ctx context.Context, rt Runtime, c db.ChainRow, now time.Time
 	var liveTrace []db.ChainEventRow
 	var staleErr string
 
-	if chainOnServer(c) && rt.Remote != nil {
+	if chain.OnServer(c) && rt.Remote != nil {
 		if v, err := chainGetView(ctx, rt, c); err != nil {
 			switch {
 			case remote.Is404(err) && chainTerminalStatus(c.Status):
@@ -120,7 +120,7 @@ func chainDocEntry(ctx context.Context, rt Runtime, c db.ChainRow, now time.Time
 				// a server that no longer holds it is not stale.
 			case remote.Is404(err):
 				c.Status = string(chain.StatusGone)
-				c.Reason = chainGoneReason(c.Name, c.Server)
+				c.Reason = chain.GoneReason(c.Name, c.Server)
 			default:
 				staleErr = err.Error()
 			}
@@ -145,7 +145,7 @@ func chainDocEntry(ctx context.Context, rt Runtime, c db.ChainRow, now time.Time
 		traceRows, _ = rt.Store.ChainEvents(c.Name)
 	}
 
-	memberNames := chainReadMembers(rt.Store, c)
+	memberNames := view.ReadMembers(rt.Store, c)
 	members := make([]view.BindingStatus, 0, len(memberNames))
 	for _, mName := range memberNames {
 		if bs, ok := repByName[mName]; ok {
@@ -194,11 +194,11 @@ func chainDocStepsAndFacts(c db.ChainRow, memberRows []db.ChainMemberRow, traceR
 		return nil, c.Step, planPos, planTotal
 	}
 
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		return nil, c.Step, c.Plan, c.Plans
 	}
-	def, err := chainWorkflowDef(c)
+	def, err := chain.WorkflowDef(c)
 	if err != nil {
 		return nil, c.Step, c.Plan, c.Plans
 	}
@@ -211,7 +211,7 @@ func chainDocStepsAndFacts(c db.ChainRow, memberRows []db.ChainMemberRow, traceR
 		currentStep = c.Step
 	}
 
-	planPos, planTotal := chainFlowPlanPos(st)
+	planPos, planTotal := view.FlowPlanPos(st)
 	if planTotal == 0 {
 		planTotal = c.Plans
 		planPos = c.Plan
@@ -277,7 +277,7 @@ func chainDocSteps(c db.ChainRow, def workflow.Definition, st workflow.State, me
 // stepMemberBinding matches an actor to its member binding name.
 func stepMemberBinding(c db.ChainRow, def workflow.Definition, actor string, memberRows []db.ChainMemberRow) string {
 	for _, m := range memberRows {
-		if chainFlowActorMatch(m.Actor, actor) {
+		if chain.FlowActorMatch(m.Actor, actor) {
 			return m.Binding
 		}
 	}

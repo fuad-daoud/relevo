@@ -24,7 +24,7 @@ func chainResumeRaiseCaps(tx *store.Tx, c db.ChainRow, plans int, set chain.Sett
 		if b.Owner != "" || b.Builder.Remote() {
 			continue
 		}
-		want := chainMemberRoundCap(chainPartOf(c, b.Name), plans, set)
+		want := chainMemberRoundCap(chain.PartOf(c, b.Name), plans, set)
 		if want <= b.RoundCap {
 			continue
 		}

@@ -23,7 +23,7 @@ import (
 // stopped or done is left alone, and one whose row has been deleted is skipped,
 // because a rollback or a manual deletion has already dealt with it.
 func chainStopForkChildren(ctx context.Context, rt Runtime, c db.ChainRow) error {
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		return err
 	}

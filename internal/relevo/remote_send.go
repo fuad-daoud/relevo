@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	chainpkg "github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -205,7 +206,7 @@ func remoteRecord(rt Runtime, tx *store.Tx, b store.Binding, ship remoteShipped,
 	// Re-check under the lock: the chain may have started between the
 	// preflight and here.
 	if !chain {
-		if err := refuseRunningChainMember(tx, name); err != nil {
+		if err := chainpkg.RefuseRunningMember(tx, name); err != nil {
 			return 0, "", err
 		}
 	}

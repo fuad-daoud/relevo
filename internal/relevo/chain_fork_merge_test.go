@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -151,9 +152,9 @@ func TestForkMergeJoinsEveryChildInKeyOrder(t *testing.T) {
 	forkEndChild(t, rt, "shop.1", "done", "")
 	forkEndChild(t, rt, "shop.2", "done", "")
 
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	got := st.Results["split"]
 	if got.Status != chainMergeJoined {
@@ -198,9 +199,9 @@ func TestForkMergeKeepsTheConflictAndNamesTheUnmergedBranches(t *testing.T) {
 		forkEndChild(t, rt, "shop."+key, "done", "")
 	}
 
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	got := st.Results["split"]
 	if got.Status != chainMergeConflict {
@@ -244,9 +245,9 @@ func TestForkConflictEdgeSendsTheReportToTheBuilder(t *testing.T) {
 	forkEndChild(t, rt, "shop.1", "done", "")
 	forkEndChild(t, rt, "shop.2", "done", "")
 
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Awaiting.Step != "resolve" || st.Awaiting.Member != "builder" {
 		t.Fatalf("awaiting = %+v, want the builder on the conflict edge", st.Awaiting)
@@ -374,9 +375,9 @@ func TestForkConflictReportCarriesTheFlaggedWording(t *testing.T) {
 	forkEndChild(t, rt, "shop.1", "done", "")
 	forkEndChild(t, rt, "shop.2", "done", "")
 
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	conflicts := st.Results["split"].Artifacts["conflict"]
 	if len(conflicts) != 1 || conflicts[0] == "" {

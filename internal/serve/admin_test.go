@@ -731,7 +731,7 @@ func TestAdminStatusLastSeen(t *testing.T) {
 // saveMemberlessChain plants a chain row named name whose member bindings do
 // not exist in the store, which is the shape applyChains still emits a row for:
 // the chain itself outlives the bindings it was made of. A legacy row (no
-// workflow) is the one chainReadMembers reads the member names off, so the
+// workflow) is the one view.ReadMembers reads the member names off, so the
 // Builder column is what makes the chain a chain rather than an orphan record.
 // Owner comes off the store, because no prepareSave stamps a chain row and a
 // row scoped to "" would be invisible to this owner's own Chains() read.

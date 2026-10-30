@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -17,32 +18,6 @@ import (
 // A chain that runs a user workflow stores its definition and its engine state
 // on the row: a non-empty workflow column selects the engine path, an empty one
 // the chain's own fixed state machine.
-
-// chainWorkflowDef decodes a chain's stored workflow definition. The stored
-// form is the workflow package's own JSON, so it is read back through its
-// parser, which owns the step and target shapes.
-func chainWorkflowDef(c db.ChainRow) (workflow.Definition, error) {
-	if len(c.WorkflowJSON) == 0 {
-		return workflow.Definition{}, fmt.Errorf("chain %s carries no workflow", c.Name)
-	}
-	def, err := workflow.Parse(c.WorkflowJSON)
-	if err != nil {
-		return workflow.Definition{}, fmt.Errorf("chain %s workflow: %w", c.Name, err)
-	}
-	return def, nil
-}
-
-// chainWorkflowState decodes a chain's stored engine state.
-func chainWorkflowState(c db.ChainRow) (workflow.State, error) {
-	var st workflow.State
-	if len(c.StateJSON) == 0 {
-		return st, fmt.Errorf("chain %s has no engine state", c.Name)
-	}
-	if err := json.Unmarshal(c.StateJSON, &st); err != nil {
-		return workflow.State{}, fmt.Errorf("chain %s state: %w", c.Name, err)
-	}
-	return st, nil
-}
 
 // chainResumeWorkflowRow is the resume path's read of a chain row's engine
 // definition and state. The sweep that migrates pre-engine rows runs at daemon
@@ -64,8 +39,8 @@ func chainResumeWorkflowRow(rt Runtime, c db.ChainRow) (db.ChainRow, workflow.De
 		}
 		c = fresh
 	}
-	def, derr := chainWorkflowDef(c)
-	st, serr := chainWorkflowState(c)
+	def, derr := chain.WorkflowDef(c)
+	st, serr := chain.WorkflowState(c)
 	if derr == nil && serr == nil {
 		return c, def, st, nil
 	}
@@ -96,7 +71,7 @@ func chainFlowMemberName(tx *store.Tx, c db.ChainRow, actor string) (string, err
 		return "", err
 	}
 	for _, m := range rows {
-		if chainFlowActorMatch(m.Actor, actor) {
+		if chain.FlowActorMatch(m.Actor, actor) {
 			return m.Binding, nil
 		}
 	}
@@ -111,25 +86,10 @@ func chainFlowActor(tx *store.Tx, c db.ChainRow, binding string) string {
 	}
 	for _, m := range rows {
 		if m.Binding == binding {
-			return chainFlowActorName(m.Actor)
+			return chain.FlowActorName(m.Actor)
 		}
 	}
 	return ""
-}
-
-// chainFlowActorMatch reports whether a stored actor names the actor a
-// workflow's run step asked for. A builder binding stores no role word, so an
-// empty stored actor matches the builder.
-func chainFlowActorMatch(stored, actor string) bool {
-	return chainFlowActorName(stored) == actor
-}
-
-// chainFlowActorName is the actor a stored chain-member role names.
-func chainFlowActorName(stored string) string {
-	if stored == "" {
-		return "builder"
-	}
-	return stored
 }
 
 // chainAdvance moves a workflow chain by one event: it runs the pure transition
@@ -137,11 +97,11 @@ func chainFlowActorName(stored string) string {
 // close that is not the awaited one -- or that arrives once the chain is
 // terminal -- changes nothing and writes no trace row.
 func chainAdvance(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, ev workflow.Event) error {
-	def, err := chainWorkflowDef(c)
+	def, err := chain.WorkflowDef(c)
 	if err != nil {
 		return err
 	}
-	before, err := chainWorkflowState(c)
+	before, err := chain.WorkflowState(c)
 	if err != nil {
 		return err
 	}

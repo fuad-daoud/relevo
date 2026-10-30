@@ -113,7 +113,7 @@ func statusConfigOf(opts []StatusOption) statusConfig {
 // Status builds every row from the store and what relevo can determine
 // locally: the mastermind record, a live push claim and the configured
 // deliverers. Only store failures fail the call. Each chain's member rows
-// are replaced by the chain's own row (applyChains).
+// are replaced by the chain's own row (view.ApplyChains).
 //
 // Detail(false) leaves Live, LiveUsage and Headless.Tail nil on every row;
 // every other field is exactly what the same store read returns with them on.
@@ -131,7 +131,7 @@ func Status(ctx context.Context, rt Runtime, opts ...StatusOption) (view.Report,
 	if err != nil {
 		return view.Report{}, err
 	}
-	rep = applyChains(rt.Store, rep, chains)
+	rep = view.ApplyChains(rt.Store, rep, chains)
 	rep.HandedOver = handedOverRows(rt)
 	return rep, nil
 }
@@ -215,10 +215,9 @@ func buildReportWith(ctx context.Context, rt Runtime, bindings []store.Binding, 
 		rows = append(rows, row)
 	}
 
-	// status now uses the same attention-first order ui already did --
-	// NEEDS YOU, HELD, ACTIVE, PAUSED, DONE, stale first, newest Last.TS
-	// first -- so `status`, `status --json` and the statusline agree with
-	// `ui` instead of the plain name order this used to be.
+	// The rows sort attention-first -- NEEDS YOU, HELD, ACTIVE, PAUSED, DONE,
+	// stale first, newest Last.TS first -- so `status`, `status --json` and
+	// the statusline agree.
 	rows = view.SortRows(rows, true)
 
 	rep := view.Report{Bindings: rows}
