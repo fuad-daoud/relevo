@@ -105,7 +105,7 @@ func seedServerChain(t *testing.T, rt Runtime, name string) store.Binding {
 			MasterMindID:     testMasterMindID,
 			Builder:          store.Endpoint{Mode: store.ModeRemote, Server: "zen", AgentName: m.name},
 			BuilderCandidate: testClaudeRef, Round: 1, State: store.StateActive,
-			Role: normRole(m.actor), Shape: m.shape, RepoRef: repoRef,
+			Role: resolve.NormRole(m.actor), Shape: m.shape, RepoRef: repoRef,
 			Feature: "auth",
 		}
 		if m.writer {

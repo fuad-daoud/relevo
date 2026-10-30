@@ -142,7 +142,7 @@ func formatPolicy(rt relevo.Runtime) string {
 // apply, so the shown pick is the one bind makes.
 func pickGates(rt relevo.Runtime) []availability.Gate {
 	wd, _ := os.Getwd()
-	return relevo.PickGates(rt, wd)
+	return resolve.PickGates(relevo.ResolveDeps(rt), wd)
 }
 
 // liveLedgerEntries is the live availability ledger, for the policy pool view's

@@ -57,10 +57,10 @@ func (s *Server) servedShape(w http.ResponseWriter, rt relevo.Runtime, reqRole, 
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "actor is required")
 		return "", false
 	}
-	role := relevo.NormRole(reqRole)
+	role := resolve.NormRole(reqRole)
 	shape := store.ShapeWriter
 	if role != "" {
-		s, err := relevo.ActorShape(rt, role)
+		s, err := resolve.ActorShape(rt.RoleRegistry(), role)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, remote.CodeInvalid, err.Error())
 			return "", false

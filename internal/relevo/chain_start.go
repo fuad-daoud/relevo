@@ -309,7 +309,7 @@ func chainFreeNames(rt Runtime, members []chainMember) error {
 func chainResolveActors(rt Runtime, members []chainMember) (map[string]resolve.Resolution, error) {
 	out := make(map[string]resolve.Resolution, len(members))
 	for _, m := range members {
-		shape, err := actorShape(rt.RoleRegistry(), m.actor)
+		shape, err := resolve.ActorShape(rt.RoleRegistry(), m.actor)
 		if err != nil {
 			return nil, err
 		}
@@ -317,7 +317,7 @@ func chainResolveActors(rt Runtime, members []chainMember) (map[string]resolve.R
 			return nil, fmt.Errorf("chain %s actor %q must be a %s actor, not a %s", m.part, m.actor, m.shape, shape)
 		}
 		res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates,
-			availability.Gates(AvailabilityDeps(rt)), "", bindingRole(store.Binding{Role: normRole(m.actor)}), resolve.PickFor(ResolveDeps(rt)))
+			availability.Gates(AvailabilityDeps(rt)), "", resolve.BindingRole(store.Binding{Role: resolve.NormRole(m.actor)}), resolve.PickFor(ResolveDeps(rt)))
 		if err != nil {
 			return nil, err
 		}
@@ -337,7 +337,7 @@ func chainBuildMembers(ctx context.Context, rt Runtime, members []chainMember, r
 	for _, m := range members {
 		res := resolutions[m.part]
 		c := res.Candidate
-		role := bindingRole(store.Binding{Role: normRole(m.actor)})
+		role := resolve.BindingRole(store.Binding{Role: resolve.NormRole(m.actor)})
 		tier := resolve.ResolveTier("", c, reg, role)
 		if !m.writer {
 			var err error
@@ -386,7 +386,7 @@ func chainMemberBinding(m chainMember, ep store.Endpoint, token string, base cha
 		State:            store.StateActive,
 		Repo:             base.repo,
 		RepoRef:          base.repoRef,
-		Role:             normRole(m.actor),
+		Role:             resolve.NormRole(m.actor),
 		Shape:            m.shape,
 		Feature:          base.feature,
 		Ticket:           base.ticket,

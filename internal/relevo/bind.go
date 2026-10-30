@@ -245,7 +245,7 @@ func BindResolved(ctx context.Context, rt Runtime, opts BindOptions) (store.Bind
 	// decides. A remote result is created through add's own path, so the wire
 	// and the client's record keep one implementation.
 	placement, perr := resolve.CreatePlacement(ctx, ResolveDeps(rt),
-		bindingRole(store.Binding{Role: normRole(opts.Role)}), opts.Candidate, "", opts.Local,
+		resolve.BindingRole(store.Binding{Role: resolve.NormRole(opts.Role)}), opts.Candidate, "", opts.Local,
 		resolve.PlacementFlags{Tier: opts.Tier, Feature: opts.Feature, Ticket: opts.Ticket})
 	if perr != nil {
 		return store.Binding{}, resolve.Resolution{}, perr
@@ -415,12 +415,12 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		// A resume re-points the binding at a builder; it keeps its stored
 		// writer role (#382 §2), so BindOptions.Role is ignored here.
 		opts.Role = b.Role
-		resCandidate, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), b.CWD, nil), opts.Candidate, bindingRole(b))
+		resCandidate, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, resolve.WithSkillGates(ResolveDeps(rt), availability.Gates(AvailabilityDeps(rt)), b.CWD, nil), opts.Candidate, resolve.BindingRole(b))
 		if err != nil {
 			return store.Binding{}, resolve.Resolution{}, err
 		}
 		if opts.Tier != "" {
-			tier := resolve.ResolveTier(opts.Tier, resCandidate.Candidate, rt.RoleRegistry(), bindingRole(b))
+			tier := resolve.ResolveTier(opts.Tier, resCandidate.Candidate, rt.RoleRegistry(), resolve.BindingRole(b))
 			if err := resolve.CheckTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
 				return store.Binding{}, resolve.Resolution{}, err
 			}
@@ -638,7 +638,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	if err != nil {
 		return store.Binding{}, resolve.Resolution{}, err
 	}
-	shape, err := actorShape(rt.RoleRegistry(), opts.Role)
+	shape, err := resolve.ActorShape(rt.RoleRegistry(), opts.Role)
 	if err != nil {
 		return store.Binding{}, resolve.Resolution{}, err
 	}
@@ -696,8 +696,8 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	}
 
 	var tier harness.Tier
-	roleName := bindingRole(store.Binding{Role: normRole(opts.Role)})
-	resCandidate, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), opts.CWD, nil), opts.Candidate, roleName)
+	roleName := resolve.BindingRole(store.Binding{Role: resolve.NormRole(opts.Role)})
+	resCandidate, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, resolve.WithSkillGates(ResolveDeps(rt), availability.Gates(AvailabilityDeps(rt)), opts.CWD, nil), opts.Candidate, roleName)
 	if err != nil {
 		return store.Binding{}, resolve.Resolution{}, err
 	}
@@ -722,7 +722,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	res.Placement = placement
 	// The gate resolution rides on the resolution too, so the CLI can print
 	// which tier supplied the command the binding stored.
-	gateRes := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), roleName), repoSet)
+	gateRes := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, resolve.RoleChecks(rt.RoleRegistry(), roleName), repoSet)
 	res.Gate = gateRes
 
 	// #637: the ticket is parsed against the binding's own captured origin, so
@@ -745,7 +745,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		Round:            1,
 		State:            store.StateActive,
 		Tier:             string(tier),
-		Role:             normRole(opts.Role),
+		Role:             resolve.NormRole(opts.Role),
 		Shape:            shape,
 		Gate:             gateRes.Command,
 		Regate:           ResolveRegate(opts.Regate, rt.Policy),
@@ -807,8 +807,8 @@ func builderAgentName(name string) (string, error) {
 //
 // The second return is the resolution, for the pick line.
 func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOptions, name string) (store.Endpoint, resolve.Resolution, error) {
-	roleName := bindingRole(store.Binding{Role: opts.Role})
-	res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), opts.CWD, nil), opts.Candidate, roleName, resolve.PickFor(ResolveDeps(rt)))
+	roleName := resolve.BindingRole(store.Binding{Role: opts.Role})
+	res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, resolve.WithSkillGates(ResolveDeps(rt), availability.Gates(AvailabilityDeps(rt)), opts.CWD, nil), opts.Candidate, roleName, resolve.PickFor(ResolveDeps(rt)))
 	if err != nil {
 		return store.Endpoint{}, resolve.Resolution{}, err
 	}

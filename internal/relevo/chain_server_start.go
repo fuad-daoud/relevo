@@ -114,7 +114,7 @@ func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (cha
 	if def, err = workflow.WithParams(def, values); err != nil {
 		return chainServerPlan{}, refuse("%v", err)
 	}
-	checks := roleChecks(rt.RoleRegistry(), "builder")
+	checks := resolve.RoleChecks(rt.RoleRegistry(), "builder")
 	plan := chainServerPlan{
 		def:      def,
 		settings: chainSettings(rt.Policy, opts, checks, repoSet),
@@ -526,7 +526,7 @@ func chainMirrorMember(opts ChainOptions, plan chainServerPlan, v remote.ChainMe
 		Round:            chainIntOr(bv.Round, 1),
 		State:            chainMemberState(bv.State),
 		Tier:             bv.Tier,
-		Role:             normRole(v.Actor),
+		Role:             resolve.NormRole(v.Actor),
 		Shape:            shape,
 		RepoRef:          repoRef,
 		Feature:          opts.Feature,

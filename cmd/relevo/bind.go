@@ -281,7 +281,7 @@ func runBind(f bindFlags) error {
 		// If the load fails, today's behaviour (roleName) stands.
 		if f.name != "" {
 			if existing, err := rt.Store.Load(f.name); err == nil {
-				specRole = relevo.BindingRole(existing)
+				specRole = resolve.BindingRole(existing)
 			}
 		}
 		kind = resolve.CandidateKindFor(relevo.ResolveDeps(rt), opts.Candidate, specRole)
@@ -289,7 +289,7 @@ func runBind(f bindFlags) error {
 		if f.name != "" {
 			if existing, err := rt.Store.Load(f.name); err == nil {
 				kind = existing.Builder.Kind
-				specRole = relevo.BindingRole(existing)
+				specRole = resolve.BindingRole(existing)
 			}
 		}
 	default:
@@ -318,7 +318,7 @@ func runBind(f bindFlags) error {
 		return writeError(err)
 	}
 	// A resume keeps the binding's stored role, so the pick note names it.
-	roleName = relevo.BindingRole(b)
+	roleName = resolve.BindingRole(b)
 	// Every supplementary line goes to the human default's stdout, or to
 	// stderr under --json, where stdout must carry the document alone (§2.1).
 	notices := noticeWriter(f.asJSON)
@@ -465,7 +465,7 @@ func runAdd(f bindFlags) error {
 	warnWaitingOnYou(rt, res.Binding.Name)
 
 	if f.asJSON {
-		return printDoc(bindDocOf(res.Binding, relevo.RoundDir(res.Binding), relevo.BindingRole(res.Binding), candidateLabel(rt, res.Binding.BuilderCandidate), false))
+		return printDoc(bindDocOf(res.Binding, relevo.RoundDir(res.Binding), resolve.BindingRole(res.Binding), candidateLabel(rt, res.Binding.BuilderCandidate), false))
 	}
 
 	return nil

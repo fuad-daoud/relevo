@@ -200,8 +200,6 @@ internal/relevo/waiting.go
 internal/relevo/wait_test.go
 internal/relevo/watched.go
 internal/relevo/watched_test.go
-internal/relevo/writer_role.go
-internal/relevo/writer_role_test.go
 internal/remote/bundle_test.go
 internal/remote/proto.go
 internal/remote/proto_test.go

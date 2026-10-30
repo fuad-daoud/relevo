@@ -31,7 +31,7 @@ func windowConfigured(rt Runtime, b store.Binding) bool {
 	if rt.Candidates == nil {
 		return false
 	}
-	for _, e := range resolve.RankedRole(rt.RoleRegistry(), rt.Candidates, bindingRole(b)) {
+	for _, e := range resolve.RankedRole(rt.RoleRegistry(), rt.Candidates, resolve.BindingRole(b)) {
 		if e.Candidate.Windows != nil {
 			return true
 		}
@@ -54,7 +54,7 @@ func repickForRound(rt Runtime, b store.Binding, named, allowYolo bool) (store.B
 		return b, nil, "", nil
 	}
 
-	res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), b.CWD, nil), "", bindingRole(b), resolve.PickFor(ResolveDeps(rt)))
+	res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, resolve.WithSkillGates(ResolveDeps(rt), availability.Gates(AvailabilityDeps(rt)), b.CWD, nil), "", resolve.BindingRole(b), resolve.PickFor(ResolveDeps(rt)))
 	if err == nil && !stale && res.Token() == old {
 		return b, nil, "", nil
 	}

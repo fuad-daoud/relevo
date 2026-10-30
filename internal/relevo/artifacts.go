@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -205,7 +206,7 @@ func containsDotDotRel(rel string) bool {
 // artifactDirSize returns the total size in bytes of round's artifact files
 // for b's actor, live or sealed.
 func artifactDirSize(st *store.Store, b store.Binding, round int) (int64, error) {
-	files, err := roundArtifacts(st, b.Name, round, bindingRole(b), "")
+	files, err := roundArtifacts(st, b.Name, round, resolve.BindingRole(b), "")
 	if err != nil {
 		return 0, err
 	}

@@ -318,7 +318,7 @@ func RenderServedTier(rt Runtime, role, token, kind string, tier harness.Tier) (
 	if kind == "" {
 		return tier, nil
 	}
-	if shape, err := actorShape(rt.RoleRegistry(), role); err == nil && shape == store.ShapeReader {
+	if shape, err := resolve.ActorShape(rt.RoleRegistry(), role); err == nil && shape == store.ShapeReader {
 		var rerr error
 		if tier, rerr = resolve.ReaderTier(tier, kind, rt.Policy); rerr != nil {
 			return tier, rerr

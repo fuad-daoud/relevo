@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -142,7 +143,7 @@ func ServedChainPreflight(rt Runtime, req ServedChainRequest) (ServedChainPlan, 
 	}
 	picks := make(map[string]servedPick, len(members))
 	for _, m := range members {
-		shape, err := ActorShape(rt, m.actor)
+		shape, err := resolve.ActorShape(rt.RoleRegistry(), m.actor)
 		if err != nil {
 			return ServedChainPlan{}, err
 		}
@@ -287,7 +288,7 @@ func servedChainMember(m chainMember, pick servedPick, f servedFacts) store.Bind
 		BuilderCandidate: pick.token,
 		Link:             servedMemberLink(linkKey, f.installation, f.clientIDs),
 		Tier:             pick.tier,
-		Role:             normRole(m.actor),
+		Role:             resolve.NormRole(m.actor),
 		Shape:            m.shape,
 		Round:            1,
 		State:            store.StateActive,
@@ -335,7 +336,7 @@ func servedMemberLink(key, installation string, ids map[string]string) *store.Re
 // preflight and resume loops propagate it as the create's refusal, exactly as
 // the local chain start answers with chainResolveActors' error.
 func servedActorPick(rt Runtime, actor string) (servedPick, error) {
-	role := normRole(actor)
+	role := resolve.NormRole(actor)
 	roleName := role
 	if roleName == "" {
 		roleName = "builder"

@@ -28,7 +28,7 @@ func chainAppendPickNotes(tx *store.Tx, rt Runtime, members []chainMember, resol
 		if res.How == "" || res.Placement.How == "" {
 			continue
 		}
-		role := bindingRole(store.Binding{Role: normRole(m.actor)})
+		role := resolve.BindingRole(store.Binding{Role: resolve.NormRole(m.actor)})
 		if err := tx.AppendLog(m.name, resolve.PickEntry(rt.Now(), 1, role, res)); err != nil {
 			return err
 		}
@@ -98,8 +98,8 @@ func chainRemotePreflight(ctx context.Context, rt Runtime, opts ChainOptions, pl
 	}
 
 	res := plan.resolutions[chain.MemberBuilder]
-	role := normRole(chainActorOrBuilder(opts.BuilderActor))
-	tier := resolve.ResolveTier("", res.Candidate, rt.RoleRegistry(), bindingRole(store.Binding{Role: role}))
+	role := resolve.NormRole(chainActorOrBuilder(opts.BuilderActor))
+	tier := resolve.ResolveTier("", res.Candidate, rt.RoleRegistry(), resolve.BindingRole(store.Binding{Role: role}))
 	if err := resolve.CheckTierCap(tier, rt.Policy, false); err != nil {
 		return nil, err
 	}

@@ -80,7 +80,7 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 	if def, err = workflow.WithParams(def, values); err != nil {
 		return chainWFStart{}, refuse("%v", err)
 	}
-	checks := roleChecks(rt.RoleRegistry(), "builder")
+	checks := resolve.RoleChecks(rt.RoleRegistry(), "builder")
 	plan := chainWFStart{
 		def:      def,
 		settings: chainSettings(rt.Policy, opts, checks, repoSet),

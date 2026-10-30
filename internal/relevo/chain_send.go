@@ -88,7 +88,7 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		return b, fmt.Errorf("%s: %w", name, err)
 	}
 	if res != nil {
-		pending = append(pending, resolve.PickEntry(rt.Now().UTC(), cur.Round, bindingRole(cur), *res))
+		pending = append(pending, resolve.PickEntry(rt.Now().UTC(), cur.Round, resolve.BindingRole(cur), *res))
 	}
 
 	// A served member (a chain member on a server) never starts its round
@@ -174,7 +174,7 @@ func chainMemberBlock(rt Runtime, tx *store.Tx, b store.Binding) (string, bool) 
 			return "", false
 		}
 	}
-	actor := BindingRole(b)
+	actor := resolve.BindingRole(b)
 	info, ok := rt.RoleRegistry().ActorInfo(actor)
 	if !ok {
 		return "", false

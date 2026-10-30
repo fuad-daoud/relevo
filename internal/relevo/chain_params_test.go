@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -112,7 +113,7 @@ func TestChainParamsMatchChainSettings(t *testing.T) {
 		if err != nil {
 			t.Fatalf("WithParams(%+v): %v", opts, err)
 		}
-		set := chainSettings(rt.Policy, opts, roleChecks(rt.RoleRegistry(), "builder"), RepoSettings{})
+		set := chainSettings(rt.Policy, opts, resolve.RoleChecks(rt.RoleRegistry(), "builder"), RepoSettings{})
 		render := func(param string) string {
 			return workflow.RenderParams(applied, "{{params."+param+"}}")
 		}

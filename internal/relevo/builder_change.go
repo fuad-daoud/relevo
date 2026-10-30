@@ -41,7 +41,7 @@ func ResolveSendBuilderFor(rt Runtime, role, current, token string) (*resolve.Re
 // resolveSendBuilder is ResolveSendBuilderFor judging skills in dir; an empty
 // dir judges none.
 func resolveSendBuilder(rt Runtime, role, current, token, dir string) (*resolve.Resolution, error) {
-	gates := withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), dir, nil)
+	gates := resolve.WithSkillGates(ResolveDeps(rt), availability.Gates(AvailabilityDeps(rt)), dir, nil)
 	res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, gates, token, role, resolve.PickFor(ResolveDeps(rt)))
 	if err != nil {
 		return nil, fmt.Errorf("%w %s: %w", ErrBadBuilder, token, err)
@@ -61,7 +61,7 @@ func resolveSendBuilder(rt Runtime, role, current, token, dir string) (*resolve.
 // re-derived tier is above max_tier without allowYolo is refused with
 // ErrBadBuilder, leaving the binding unchanged. Pure.
 func applyBuilder(b store.Binding, res resolve.Resolution, reg *roles.Registry, pol policy.Policy, allowYolo bool) (store.Binding, error) {
-	tier := resolve.ResolveTier("", res.Candidate, reg, bindingRole(b))
+	tier := resolve.ResolveTier("", res.Candidate, reg, resolve.BindingRole(b))
 	if err := resolve.CheckTierCap(tier, pol, allowYolo); err != nil {
 		return b, fmt.Errorf("%w %s: %w", ErrBadBuilder, res.Token(), err)
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -742,7 +743,7 @@ func fetchArtifacts(ctx context.Context, src widget.Source, key string, round, s
 				},
 			}
 		}
-		actor := relevo.BindingRole(b)
+		actor := resolve.BindingRole(b)
 		output := relevo.OutputFile(rt, b)
 		files, err := relevo.RoundArtifacts(rt, name, round, actor, output)
 		if err != nil {

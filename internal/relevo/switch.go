@@ -250,7 +250,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	}
 	if !rotated {
 		var err error
-		res, err = resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, gates, "", bindingRole(b), pick)
+		res, err = resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, gates, "", resolve.BindingRole(b), pick)
 		if err != nil {
 			if b.Builder.PID == 0 {
 				b = abandonSession(b)

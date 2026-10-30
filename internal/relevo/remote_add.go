@@ -178,7 +178,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		}
 		wireTier = string(t)
 	}
-	wireRole := normRole(opts.Role)
+	wireRole := resolve.NormRole(opts.Role)
 	// The wire always names the actor; a default binding sends "builder".
 	actor := wireRole
 	if actor == "" {
@@ -241,7 +241,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	if err != nil {
 		return AddResult{}, err
 	}
-	gateRes := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), bindingRole(store.Binding{Role: normRole(opts.Role)})), repoSet)
+	gateRes := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, resolve.RoleChecks(rt.RoleRegistry(), resolve.BindingRole(store.Binding{Role: resolve.NormRole(opts.Role)})), repoSet)
 	gate := gateRes.Command
 	// The regate resolves the same way, and for the same reason: the mirror
 	// and the served binding must agree on the repair budget.

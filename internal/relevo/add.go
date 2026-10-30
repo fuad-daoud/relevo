@@ -165,7 +165,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		// touch the served tree, so the refusal here is feature-gated. A role
 		// this client's registry does not know is left to the server's own
 		// check.
-		if shape, rerr := actorShape(rt.RoleRegistry(), opts.Role); rerr == nil && shape == store.ShapeReader {
+		if shape, rerr := resolve.ActorShape(rt.RoleRegistry(), opts.Role); rerr == nil && shape == store.ShapeReader {
 			if err := requireRemoteReaders(ctx, rt, opts.Server); err != nil {
 				return AddResult{}, err
 			}
@@ -193,7 +193,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// passes its choice in, so nothing is probed twice.
 	if opts.Placement.How == "" {
 		placement, perr := resolve.CreatePlacement(ctx, ResolveDeps(rt),
-			bindingRole(store.Binding{Role: normRole(opts.Role)}), opts.Candidate, "", opts.Local,
+			resolve.BindingRole(store.Binding{Role: resolve.NormRole(opts.Role)}), opts.Candidate, "", opts.Local,
 			resolve.PlacementFlags{Tier: opts.Tier, Feature: opts.Feature, Ticket: opts.Ticket})
 		if perr != nil {
 			return AddResult{}, perr
@@ -202,7 +202,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 	if !opts.Placement.Local() {
 		opts.Server = opts.Placement.Name
-		if shape, rerr := actorShape(rt.RoleRegistry(), opts.Role); rerr == nil && shape == store.ShapeReader {
+		if shape, rerr := resolve.ActorShape(rt.RoleRegistry(), opts.Role); rerr == nil && shape == store.ShapeReader {
 			if err := requireRemoteReaders(ctx, rt, opts.Server); err != nil {
 				return AddResult{}, err
 			}
@@ -218,7 +218,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// A binding runs one actor, writer or reader (A5 §2). Refuse an unknown
 	// one here, on the local path only: a remote binding's actor is resolved
 	// against the server's own roles.json, never this client's (§5.3).
-	shape, err := actorShape(rt.RoleRegistry(), opts.Role)
+	shape, err := resolve.ActorShape(rt.RoleRegistry(), opts.Role)
 	if err != nil {
 		return AddResult{}, err
 	}
@@ -248,14 +248,14 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 	// Resolve before AddWorktree for the same reason builderAgentName runs
 	// here -- a refused add must leave no worktree.
-	roleName := bindingRole(store.Binding{Role: normRole(opts.Role)})
+	roleName := resolve.BindingRole(store.Binding{Role: resolve.NormRole(opts.Role)})
 	// The repository's own settings, read before anything is created: the
 	// gate tier reads them, and opts.Repo -- not cwd -- is the tree they key.
 	repoSet, err := RepoSettingsFor(ctx, rt, opts.Repo)
 	if err != nil {
 		return AddResult{}, err
 	}
-	res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, addSkillGates(ctx, rt, opts), opts.Candidate, roleName, resolve.PickFor(ResolveDeps(rt)))
+	res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, resolve.AddSkillGates(ctx, ResolveDeps(rt), opts.CWD, opts.Repo, opts.Branch, opts.Base), opts.Candidate, roleName, resolve.PickFor(ResolveDeps(rt)))
 	if err != nil {
 		return AddResult{}, err
 	}
@@ -264,7 +264,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	res.Placement = opts.Placement
 	// The gate resolution rides on the resolution too, so the CLI can print
 	// which tier supplied the command the binding stored.
-	res.Gate = resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), roleName), repoSet)
+	res.Gate = resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, resolve.RoleChecks(rt.RoleRegistry(), roleName), repoSet)
 	c := res.Candidate
 
 	tier := resolve.ResolveTier(opts.Tier, c, rt.RoleRegistry(), roleName)
@@ -414,7 +414,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Headless:     opts.Headless,
 		Tier:         string(tier),
 		AllowYolo:    opts.AllowYolo,
-		Role:         normRole(opts.Role),
+		Role:         resolve.NormRole(opts.Role),
 	}
 	// Discard resolveBuilder's own resolution: bindOpts.Candidate is already
 	// pinned to c (explicit), so resolveBuilder's internal resolveCandidate
@@ -449,7 +449,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		ExistingBranch:   existingBranch,
 		Repo:             opts.Repo,
 		Tier:             string(tier),
-		Role:             normRole(opts.Role),
+		Role:             resolve.NormRole(opts.Role),
 		Shape:            shape,
 		Gate:             res.Gate.Command,
 		Regate:           ResolveRegate(opts.Regate, rt.Policy),
