@@ -23,7 +23,7 @@ func TestConvertedRowAndNewRowNameMembersAlike(t *testing.T) {
 	def, _ := convertedState(t, rt, "shop")
 	got, err := chain.MemberNames("shop", def, rt.RoleRegistry().WorkflowActors())
 	if err != nil {
-		t.Fatalf("chainMemberNames: %v", err)
+		t.Fatalf("chain.MemberNames: %v", err)
 	}
 	names := memberNames(t, got)
 	want := map[string]string{

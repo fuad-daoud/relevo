@@ -56,7 +56,7 @@ func forkHaltedAtJoin(t *testing.T, rt Runtime, fg *fakeGit) {
 	}
 	st, err := chain.WorkflowState(c)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if !st.Awaiting.Merging {
 		t.Fatalf("parent awaiting %+v, want it left merging with every child ended", st.Awaiting)
@@ -108,7 +108,7 @@ func TestForkChildResumeReopensTheParentAndRejoins(t *testing.T) {
 	reopened := chainStoredRow(t, rt, "shop")
 	st, err := chain.WorkflowState(reopened)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if reopened.Status != string(workflow.StatusRunning) {
 		t.Fatalf("parent status = %q (%q), want running after the child's resume", reopened.Status, reopened.Reason)
@@ -133,7 +133,7 @@ func TestForkChildResumeReopensTheParentAndRejoins(t *testing.T) {
 
 	st, err = chain.WorkflowState(chainStoredRow(t, rt, "shop"))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if got := st.Results["split"]; got.Status != chainMergeJoined {
 		t.Errorf("fork result = %+v, want joined once the re-opened child ended done", got)
@@ -264,7 +264,7 @@ func TestForkParentResumeReentersTheJoin(t *testing.T) {
 	}
 	st, err := chain.WorkflowState(chainStoredRow(t, rt, "shop"))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if got := st.Results["split"]; got.Status != chainMergeJoined {
 		t.Errorf("fork result = %+v, want joined from the resume's merge", got)
@@ -307,7 +307,7 @@ func mustChainState(t *testing.T, c db.ChainRow) workflow.State {
 	t.Helper()
 	st, err := chain.WorkflowState(c)
 	if err != nil {
-		t.Fatalf("chainWorkflowState(%s): %v", c.Name, err)
+		t.Fatalf("chain.WorkflowState(%s): %v", c.Name, err)
 	}
 	return st
 }

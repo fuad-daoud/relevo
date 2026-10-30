@@ -146,7 +146,7 @@ func TestWorkflowCloseParsesDeclaredOutcomes(t *testing.T) {
 	c := flowChainRow(t, rt)
 	st, err := chain.WorkflowState(c)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Awaiting.Step != "review" || st.Awaiting.Member != "assistant" || st.Awaiting.Round != 1 {
 		t.Fatalf("awaiting = %+v, want review/assistant round 1", st.Awaiting)
@@ -211,7 +211,7 @@ func TestWorkflowCheckGreenRoutesGreen(t *testing.T) {
 
 	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Awaiting.Step != "check" || st.Awaiting.Member != "" {
 		t.Fatalf("awaiting = %+v, want the check step", st.Awaiting)
@@ -263,7 +263,7 @@ func TestChainSegmentStepRoundPlans(t *testing.T) {
 	startFlowChain(t, rt, flowReviewWorkflow)
 	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
 
-	f := chainFactsOf(rt.Store, flowChainRow(t, rt))
+	f := view.FactsOf(rt.Store, flowChainRow(t, rt))
 	if f.StepAt != "review" || f.Round != 1 || f.PlanPos != 1 || f.PlanTotal != 1 || f.Check {
 		t.Fatalf("facts = %+v, want review r1 plans 1/1", f)
 	}
@@ -369,7 +369,7 @@ func TestWorkflowResumeFromStep(t *testing.T) {
 	}
 	st, err := chain.WorkflowState(res.Chain)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Awaiting.Step != "build" || st.Awaiting.Member != "builder" {
 		t.Errorf("awaiting = %+v, want build/builder", st.Awaiting)

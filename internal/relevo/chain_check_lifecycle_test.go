@@ -136,7 +136,7 @@ func TestWorkflowResumeDoesNotRunTwoChecksAtOnce(t *testing.T) {
 	}
 	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Awaiting.Step != "check" || st.Awaiting.Run != run {
 		t.Errorf("awaiting = %+v, want the check awaiting run %d", st.Awaiting, run)

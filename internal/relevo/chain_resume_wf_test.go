@@ -91,7 +91,7 @@ func TestWorkflowResumeTakesNewerManualRound(t *testing.T) {
 	}
 	st, err := chain.WorkflowState(row)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Awaiting.Step != "review" || st.Awaiting.Member != "assistant" || st.Awaiting.Round != 1 {
 		t.Fatalf("awaiting = %+v, want review/assistant round 1: the manual round's done close routes to the review", st.Awaiting)
@@ -138,7 +138,7 @@ func TestWorkflowResumeResendsStoppedPrompt(t *testing.T) {
 	row := flowChainRow(t, rt)
 	st, err := chain.WorkflowState(row)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if row.Status != string(workflow.StatusRunning) || st.Awaiting.Step != "build" || st.Awaiting.Round != 2 {
 		t.Errorf("chain = %s awaiting %+v, want running on build round 2", row.Status, st.Awaiting)
@@ -203,7 +203,7 @@ func TestOldPlacedChainStillAnswersFromPulledGate(t *testing.T) {
 	})
 	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Awaiting.Step != "check" || st.Awaiting.Member != "" || st.Awaiting.Run != 0 {
 		t.Fatalf("awaiting = %+v, want the check step with no run", st.Awaiting)

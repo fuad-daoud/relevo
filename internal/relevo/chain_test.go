@@ -1093,19 +1093,19 @@ func TestSendRefusedOnARunningChainMember(t *testing.T) {
 
 	plan := writePlan(t, "x")
 	if _, err := Send(context.Background(), rt, "shop", plan, SendOptions{}); !errors.Is(err, chain.ErrRunningMember) {
-		t.Errorf("Send = %v, want ErrRunningChainMember", err)
+		t.Errorf("Send = %v, want chain.ErrRunningMember", err)
 	}
 	if _, err := SendDryRun(context.Background(), rt, "shop", plan, SendOptions{}); !errors.Is(err, chain.ErrRunningMember) {
-		t.Errorf("SendDryRun = %v, want ErrRunningChainMember", err)
+		t.Errorf("SendDryRun = %v, want chain.ErrRunningMember", err)
 	}
 	// The under-lock checks, the read-only store check and the chain's own
 	// member would all refuse through the one wording.
 	err := rt.Store.WithLock(func(tx *store.Tx) error { return chain.RefuseRunningMember(tx, "shop") })
 	if !errors.Is(err, chain.ErrRunningMember) {
-		t.Errorf("refuseRunningChainMember = %v, want ErrRunningChainMember", err)
+		t.Errorf("chain.RefuseRunningMember = %v, want chain.ErrRunningMember", err)
 	}
 	if err := chain.RefuseRunningMemberStore(rt.Store, "shop-rev"); !errors.Is(err, chain.ErrRunningMember) {
-		t.Errorf("refuseRunningChainMemberStore = %v, want ErrRunningChainMember", err)
+		t.Errorf("chain.RefuseRunningMemberStore = %v, want chain.ErrRunningMember", err)
 	}
 	if err := chain.RefuseRunningMemberStore(rt.Store, "unrelated"); err != nil {
 		t.Errorf("a binding that is no chain member = %v, want nil", err)
@@ -1149,7 +1149,7 @@ func chainSourceBody(status, haltedAt, notDone string) string {
 // TestChainBuilderHaltCarriesTheReportTailReason pins the whole halt path: a
 // builder body whose tail names where it stopped reaches the chain row, the
 // trace row, the encoded event and the one end delivery with the labelled
-// reason, not the empty note the wiring used to format.
+// reason.
 func TestChainBuilderHaltCarriesTheReportTailReason(t *testing.T) {
 	t.Parallel()
 

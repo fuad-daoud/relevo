@@ -154,7 +154,7 @@ func TestForkMergeJoinsEveryChildInKeyOrder(t *testing.T) {
 
 	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	got := st.Results["split"]
 	if got.Status != chainMergeJoined {
@@ -201,7 +201,7 @@ func TestForkMergeKeepsTheConflictAndNamesTheUnmergedBranches(t *testing.T) {
 
 	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	got := st.Results["split"]
 	if got.Status != chainMergeConflict {
@@ -247,7 +247,7 @@ func TestForkConflictEdgeSendsTheReportToTheBuilder(t *testing.T) {
 
 	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Awaiting.Step != "resolve" || st.Awaiting.Member != "builder" {
 		t.Fatalf("awaiting = %+v, want the builder on the conflict edge", st.Awaiting)
@@ -377,7 +377,7 @@ func TestForkConflictReportCarriesTheFlaggedWording(t *testing.T) {
 
 	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	conflicts := st.Results["split"].Artifacts["conflict"]
 	if len(conflicts) != 1 || conflicts[0] == "" {

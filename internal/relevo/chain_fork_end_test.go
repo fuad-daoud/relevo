@@ -30,7 +30,7 @@ func forkChildClose(t *testing.T, rt Runtime, child string) workflow.Event {
 	}
 	st, err := chain.WorkflowState(c)
 	if err != nil {
-		t.Fatalf("chainWorkflowState(%s): %v", child, err)
+		t.Fatalf("chain.WorkflowState(%s): %v", child, err)
 	}
 	return workflow.Event{Step: st.Awaiting.Step, Member: st.Awaiting.Member, Round: st.Awaiting.Round}
 }
@@ -102,7 +102,7 @@ func TestForkChildDoneEndsTheParentForkAndDeliversNothing(t *testing.T) {
 	parent := flowChainRow(t, rt)
 	st, err := chain.WorkflowState(parent)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	end, ok := st.Awaiting.Ended["1"]
 	if !ok {
@@ -122,7 +122,7 @@ func TestForkChildDoneEndsTheParentForkAndDeliversNothing(t *testing.T) {
 
 	st, err = chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if got := st.Results["split"]; got.Status != chainMergeJoined {
 		t.Errorf("fork result = %+v, want joined after both children ended", got)
@@ -146,7 +146,7 @@ func TestForkChildHaltedWaitsForItsSiblingThenHaltsTheParent(t *testing.T) {
 
 	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if got := flowChainRow(t, rt).Status; got != string(workflow.StatusRunning) {
 		t.Fatalf("parent status = %q, want running while the sibling still runs", got)
@@ -182,7 +182,7 @@ func TestForkChildStoppedEndsAsStopped(t *testing.T) {
 
 	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if end := st.Awaiting.Ended["1"]; end.Status != string(workflow.StatusStopped) {
 		t.Errorf("child 1 end = %+v, want stopped", end)

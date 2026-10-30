@@ -281,7 +281,7 @@ func TestWorkflowRemoteSendFailureHaltsTheEngineState(t *testing.T) {
 	}
 	st, err := chain.WorkflowState(row)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Status != workflow.StatusHalted {
 		t.Errorf("state status = %q, want halted", st.Status)
@@ -321,7 +321,7 @@ func TestChainSendPendingResolvesAwaitedFromState(t *testing.T) {
 	}
 	st, err := chain.WorkflowState(row)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Awaiting.Member != "builder" {
 		t.Fatalf("state awaiting = %+v, want the builder actor", st.Awaiting)

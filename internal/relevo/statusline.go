@@ -68,7 +68,7 @@ func scopedStatus(ctx context.Context, rt Runtime, sc Scope) (view.Report, []sto
 	if err != nil {
 		return view.Report{}, nil, nil, err
 	}
-	return applyChains(rt.Store, rep, scopedChains(chains, sc)), bindings, chains, nil
+	return view.ApplyChains(rt.Store, rep, scopedChains(chains, sc)), bindings, chains, nil
 }
 
 // narrowBindings is scopeBinding applied to every stored binding: the set the
@@ -137,7 +137,7 @@ func doneHiddenBy(s *store.Store, bindings []store.Binding, chains []db.ChainRow
 		if c.Parent != "" || !inMastermindScope(c.MasterMindID, sc) {
 			continue
 		}
-		if chainStoreState(c.Status) == store.StateDone && anyPresent(view.ReadMembers(s, c), present) {
+		if view.ChainStoreState(c.Status) == store.StateDone && anyPresent(view.ReadMembers(s, c), present) {
 			hidden++
 		}
 	}

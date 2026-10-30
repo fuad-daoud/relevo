@@ -49,7 +49,7 @@ func planStepCloseEvent(t *testing.T, body string) (workflow.Event, string) {
 	flowAdvance(t, rt, ev)
 	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	return ev, st.Awaiting.Step
 }

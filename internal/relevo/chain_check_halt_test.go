@@ -99,7 +99,7 @@ func TestHaltWithNoFailedCheckKeepsItsWording(t *testing.T) {
 	}
 	st, err := chain.WorkflowState(c)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Reason != c.Reason {
 		t.Errorf("state reason %q differs from row reason %q", st.Reason, c.Reason)

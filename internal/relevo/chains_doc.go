@@ -210,7 +210,7 @@ func chainDocStepsAndFacts(c db.ChainRow, memberRows []db.ChainMemberRow, traceR
 		currentStep = c.Step
 	}
 
-	planPos, planTotal := chainFlowPlanPos(st)
+	planPos, planTotal := view.FlowPlanPos(st)
 	if planTotal == 0 {
 		planTotal = c.Plans
 		planPos = c.Plan

@@ -122,7 +122,7 @@ func TestWorkflowDirtyWriterCloseDoesNotAdvance(t *testing.T) {
 	c := flowChainRow(t, rt)
 	st, err := chain.WorkflowState(c)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Awaiting.Step == "review" {
 		t.Errorf("the chain advanced to review over an uncommitted tree: status %s", c.Status)
@@ -153,7 +153,7 @@ func TestWorkflowCleanWriterCloseStillAdvances(t *testing.T) {
 	c := flowChainRow(t, rt)
 	st, err := chain.WorkflowState(c)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Awaiting.Step != "review" || st.Awaiting.Member != "assistant" {
 		t.Errorf("awaiting = %+v, want review/assistant from a clean close", st.Awaiting)
@@ -234,7 +234,7 @@ func TestWorkflowRedCheckWithNoRegateNeverReachesReview(t *testing.T) {
 	c := flowChainRow(t, rt)
 	st, err := chain.WorkflowState(c)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Awaiting.Step == "review" {
 		t.Errorf("the red check sent the plan to review with no repair budget: %s (%q)", c.Status, c.Reason)
@@ -387,7 +387,7 @@ func TestWorkflowUnclosedStatusBlockCloseReachesCheck(t *testing.T) {
 	c := flowChainRow(t, rt)
 	st, err := chain.WorkflowState(c)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Awaiting.Step != "check" {
 		t.Errorf("awaiting = %+v (status %s, %q), want the check step", st.Awaiting, c.Status, c.Reason)

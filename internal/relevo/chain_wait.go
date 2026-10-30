@@ -36,29 +36,10 @@ func ChainWaitTarget(rt Runtime, name string) (binding string, chainArm bool, er
 	if chain.Status(c.Status) == chain.StatusRunning {
 		return name, true, nil
 	}
-	if chainBuilderRoundOpen(rt.Store, c) {
+	if view.BuilderRoundOpen(rt.Store, c) {
 		return c.Builder, false, nil
 	}
 	return name, true, nil
-}
-
-// chainBuilderRoundOpen reports whether a chain's builder member has a round
-// open: a prompt entry for its current round with no report entry for it yet,
-// or a queued round that has not started. A builder record that is gone, or
-// unreadable, has no open round.
-func chainBuilderRoundOpen(s *store.Store, c db.ChainRow) bool {
-	b, err := s.Load(c.Builder)
-	if err != nil {
-		return false
-	}
-	if !b.QueuedAt.IsZero() {
-		return true
-	}
-	entries, err := s.ReadLog(c.Builder)
-	if err != nil {
-		return false
-	}
-	return store.RoundOpen(entries, b.Round)
 }
 
 // WaitChain polls a chain until it is no longer running and reports how it
@@ -188,7 +169,7 @@ func chainHaltsFirst(collected []delivery.Delivered) []delivery.Delivered {
 // running, in the shape a chain row uses: its name and status, the plan it
 // reached and the correction rounds it spent, plus the halt reason.
 func chainEndLine(c db.ChainRow) string {
-	lf := chainStoredFactsOf(c)
+	lf := view.StoredFactsOf(c)
 	line := fmt.Sprintf("chain %s: %s · plan %d/%d · %d corrections", c.Name, c.Status, lf.Plan, lf.Plans, lf.Corrections)
 	if c.Reason != "" {
 		line += " · " + c.Reason

@@ -134,7 +134,7 @@ func TestChainStartSendsPlanOneThroughTheChainPath(t *testing.T) {
 	// The refusal the start had to avoid exists: a manual send to the same
 	// running member is refused.
 	if _, err := Send(context.Background(), rt, "shop", writePlan(t, "x"), SendOptions{}); !errors.Is(err, chain.ErrRunningMember) {
-		t.Errorf("Send to a running chain member = %v, want ErrRunningChainMember", err)
+		t.Errorf("Send to a running chain member = %v, want chain.ErrRunningMember", err)
 	}
 }
 
@@ -492,7 +492,7 @@ func TestChainHaltsWithCapReasonWithoutOpeningARound(t *testing.T) {
 	}
 	st, err := chain.WorkflowState(row)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	want := "member shop could not start: " + roundCapRefusal("shop", chainBinding(t, rt, "shop").RoundCap).Error()
 	if st.Reason != want {

@@ -42,7 +42,7 @@ func chainServerStatus(ctx context.Context, rt Runtime, c db.ChainRow) (view.Rep
 		return view.Report{}, err
 	}
 
-	row := viewChainRow(rt.Store, c)
+	row := view.ChainRow(rt.Store, c)
 	if v, gerr := chainGetView(ctx, rt, c); gerr != nil {
 		row.Detail = fmt.Sprintf("server %s unreachable: %v", c.Server, gerr)
 	} else {
@@ -50,7 +50,7 @@ func chainServerStatus(ctx context.Context, rt Runtime, c db.ChainRow) (view.Rep
 		if merr != nil {
 			return view.Report{}, merr
 		}
-		row = viewChainRow(rt.Store, mirrored)
+		row = view.ChainRow(rt.Store, mirrored)
 	}
 
 	rows := []view.BindingStatus{row}

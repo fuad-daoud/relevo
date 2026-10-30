@@ -183,7 +183,7 @@ func mirrorAwaitedCheck(t *testing.T, rt Runtime) (string, int) {
 	t.Helper()
 	st, err := chain.WorkflowState(chainStoredRow(t, rt, "shop"))
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	return st.Awaiting.Step, st.Awaiting.Run
 }

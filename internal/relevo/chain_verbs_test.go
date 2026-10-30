@@ -245,7 +245,7 @@ func TestDoneRefusedOnARunningChainMember(t *testing.T) {
 	for _, name := range []string{"shop", "shop-rev"} {
 		_, err := Done(context.Background(), rt, name)
 		if !errors.Is(err, chain.ErrRunningMember) {
-			t.Errorf("Done(%s) = %v, want ErrRunningChainMember", name, err)
+			t.Errorf("Done(%s) = %v, want chain.ErrRunningMember", name, err)
 		} else if !strings.Contains(err.Error(), "relevo stop shop first") {
 			t.Errorf("Done(%s) message = %v, want it to name `relevo stop shop first`", name, err)
 		}
@@ -283,7 +283,7 @@ func TestUnbindRefusedOnARunningChainMember(t *testing.T) {
 
 	for _, archive := range []bool{false, true} {
 		if _, err := Unbind(context.Background(), rt, "shop-rev", archive); !errors.Is(err, chain.ErrRunningMember) {
-			t.Errorf("Unbind(archive=%v) = %v, want ErrRunningChainMember", archive, err)
+			t.Errorf("Unbind(archive=%v) = %v, want chain.ErrRunningMember", archive, err)
 		}
 	}
 
@@ -375,10 +375,10 @@ func TestRefuseRunningMemberReadsState(t *testing.T) {
 
 	err := rt.Store.WithLock(func(tx *store.Tx) error { return chain.RefuseRunningMember(tx, "shop-assistant") })
 	if !errors.Is(err, chain.ErrRunningMember) {
-		t.Errorf("refuseRunningChainMember = %v, want ErrRunningChainMember", err)
+		t.Errorf("chain.RefuseRunningMember = %v, want chain.ErrRunningMember", err)
 	}
 	if err := chain.RefuseRunningMemberStore(rt.Store, "shop-assistant"); !errors.Is(err, chain.ErrRunningMember) {
-		t.Errorf("refuseRunningChainMemberStore = %v, want ErrRunningChainMember", err)
+		t.Errorf("chain.RefuseRunningMemberStore = %v, want chain.ErrRunningMember", err)
 	}
 }
 
@@ -571,7 +571,7 @@ func TestWorkflowChainDoneWritesTheEngineState(t *testing.T) {
 	row := chainStoredRow(t, rt, "shop")
 	st, err := chain.WorkflowState(row)
 	if err != nil {
-		t.Fatalf("chainWorkflowState before done: %v", err)
+		t.Fatalf("chain.WorkflowState before done: %v", err)
 	}
 	if st.Status != workflow.StatusStopped {
 		t.Fatalf("state before done = %q, want stopped", st.Status)
@@ -587,7 +587,7 @@ func TestWorkflowChainDoneWritesTheEngineState(t *testing.T) {
 	}
 	st, err = chain.WorkflowState(row)
 	if err != nil {
-		t.Fatalf("chainWorkflowState after done: %v", err)
+		t.Fatalf("chain.WorkflowState after done: %v", err)
 	}
 	if st.Status != workflow.StatusDone {
 		t.Errorf("state status after done = %q, want done", st.Status)
@@ -638,7 +638,7 @@ func TestChainDoneOnAWorkflowlessChainNeverInternal(t *testing.T) {
 		}
 		st, err := chain.WorkflowState(row)
 		if err != nil {
-			t.Fatalf("chainWorkflowState after the migrated done: %v", err)
+			t.Fatalf("chain.WorkflowState after the migrated done: %v", err)
 		}
 		if st.Status != workflow.StatusDone {
 			t.Errorf("engine state status = %q, want done", st.Status)

@@ -43,7 +43,7 @@ func TestResumeAfterCommitAdvancesWithoutResending(t *testing.T) {
 	row := flowChainRow(t, rt)
 	st, err := chain.WorkflowState(row)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Awaiting.Step != "review" || row.Status != string(workflow.StatusRunning) {
 		t.Fatalf("chain = %s awaiting %+v (%q), want running on review", row.Status, st.Awaiting, row.Reason)

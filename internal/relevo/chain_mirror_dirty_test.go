@@ -142,7 +142,7 @@ func TestMirrorCleanDoneCloseStillAdvances(t *testing.T) {
 	c := flowChainRow(t, rt)
 	st, err := chain.WorkflowState(c)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Awaiting.Step != "review" || st.Awaiting.Member != "assistant" {
 		t.Errorf("status = %s (%q), awaiting %+v, want the review step from a clean close", c.Status, c.Reason, st.Awaiting)

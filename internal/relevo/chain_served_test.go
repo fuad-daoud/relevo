@@ -302,7 +302,7 @@ func TestServedMemberNamesMatchClientMirror(t *testing.T) {
 	}
 	planned, err := chain.MemberNames("shop", def, rt.RoleRegistry().WorkflowActors())
 	if err != nil {
-		t.Fatalf("chainMemberNames: %v", err)
+		t.Fatalf("chain.MemberNames: %v", err)
 	}
 	engineNames := map[string]string{}
 	for _, m := range planned {
@@ -545,7 +545,7 @@ func TestWorkflowCleanServedWriterCloseStillAdvances(t *testing.T) {
 	c := flowChainRow(t, rt)
 	st, err := chain.WorkflowState(c)
 	if err != nil {
-		t.Fatalf("chainWorkflowState: %v", err)
+		t.Fatalf("chain.WorkflowState: %v", err)
 	}
 	if st.Awaiting.Step != "review" {
 		t.Errorf("awaiting = %+v (%q), want the review step from a clean close", st.Awaiting, c.Reason)
@@ -889,7 +889,7 @@ steps:
 	actors := rt.RoleRegistry().WorkflowActors()
 	wantPlanned, err := chain.MemberNames(req.Name, def, actors)
 	if err != nil {
-		t.Fatalf("chainMemberNames: %v", err)
+		t.Fatalf("chain.MemberNames: %v", err)
 	}
 	keeper := chain.WriterKeeper(def, workflow.UsedActors(def), actors)
 	wantMembers := chainWorkflowMembers(def, wantPlanned, keeper)
