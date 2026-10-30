@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -123,7 +124,7 @@ type ServedChainPlan struct {
 // PickServedCandidateFor / ResolveServedTierFor.
 func ServedChainPreflight(rt Runtime, req ServedChainRequest) (ServedChainPlan, error) {
 	if err := store.ValidName(req.Name); err != nil {
-		return ServedChainPlan{}, refuse("%s", err)
+		return ServedChainPlan{}, refusal.New("%s", err)
 	}
 	if len(req.Workflow) > 0 {
 		return servedChainPreflightWorkflow(rt, req)
@@ -166,11 +167,11 @@ func ServedChainPreflight(rt Runtime, req ServedChainRequest) (ServedChainPlan, 
 func servedChainPreflightWorkflow(rt Runtime, req ServedChainRequest) (ServedChainPlan, error) {
 	def, err := workflow.Parse(req.Workflow)
 	if err != nil {
-		return ServedChainPlan{}, refuse("%s", err)
+		return ServedChainPlan{}, refusal.New("%s", err)
 	}
 	for _, step := range def.Steps {
 		if strings.HasPrefix(step.Seed, "file:") {
-			return ServedChainPlan{}, refuse("file seeds must be inlined by the client")
+			return ServedChainPlan{}, refusal.New("file seeds must be inlined by the client")
 		}
 	}
 	given := workflow.Given{Plans: len(req.Plans) > 0}
@@ -184,7 +185,7 @@ func servedChainPreflightWorkflow(rt Runtime, req ServedChainRequest) (ServedCha
 	}
 	keeper := chainWriterKeeper(def, workflow.UsedActors(def), actors)
 	if cap := chainNameCap(req.Name, planned); len(req.Name) > cap {
-		return ServedChainPlan{}, refuse("chain name %q exceeds %d characters (the longest member suffix is %s)", req.Name, cap, longestMemberSuffix(req.Name, planned))
+		return ServedChainPlan{}, refusal.New("chain name %q exceeds %d characters (the longest member suffix is %s)", req.Name, cap, longestMemberSuffix(req.Name, planned))
 	}
 	members := chainWorkflowMembers(def, planned, keeper)
 	if err := chainFreeNames(rt, members); err != nil {

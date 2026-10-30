@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/installation"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -123,7 +124,7 @@ func chainRemotePreflight(ctx context.Context, rt Runtime, opts ChainOptions, pl
 	// bare repo's root, not the subdirectory the mastermind's shell was in.
 	subdir := housekeep.ResolveSubdir(ctx, rt.Git, repo)
 	if subdir != "" && !hasFeature(who, remote.FeatureSubdir) {
-		return nil, refuse("server %s does not carry binding subdirectories (pre-subdir server); upgrade it or start the chain at the repository root", server)
+		return nil, refusal.New("server %s does not carry binding subdirectories (pre-subdir server); upgrade it or start the chain at the repository root", server)
 	}
 
 	return &chainRemotePlan{
@@ -156,7 +157,7 @@ func chainRemoteFacts(ctx context.Context, rt Runtime, repo, base string) (resol
 			return "", "", "", "", fmt.Errorf("resolve base %s: %w", resolved, rerr)
 		}
 		if !ok {
-			return "", "", "", "", refuse("base %q not found", resolved)
+			return "", "", "", "", refusal.New("base %q not found", resolved)
 		}
 		resolved = sha
 	}

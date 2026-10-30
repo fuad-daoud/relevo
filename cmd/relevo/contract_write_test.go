@@ -14,6 +14,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -402,14 +403,14 @@ func TestContractWriteUnclassifiedIsInternal(t *testing.T) {
 		{"invalid binding name", fmt.Errorf("bind: %w", store.ErrInvalidName), codeUsage},
 		{"invalid feature label", fmt.Errorf("bind: %w", store.ErrInvalidFeature), codeUsage},
 		{"invalid ticket", fmt.Errorf("bind: %w", store.ErrInvalidTicket), codeUsage},
-		{"caller input refusal", fmt.Errorf("bind: %w", relevo.ErrBadInput), codeUsage},
+		{"caller input refusal", fmt.Errorf("bind: %w", refusal.ErrBadInput), codeUsage},
 		// A send against a round whose previous process is still alive is a
 		// refusal: the caller waits or stops, nothing is relevo's fault.
 		{"builder busy", fmt.Errorf("send: %w", relevo.ErrBuilderBusy), codeRefused},
 		{"report pending", fmt.Errorf("send: %w", relevo.ErrReportPending), codeRefused},
 		{"scope active", fmt.Errorf("send: %w", relevo.ErrScopeActive), codeRefused},
-		{"bare refusal", fmt.Errorf("chain: %w", relevo.ErrRefused), codeRefused},
-		{"round out of range", fmt.Errorf("show: %w", relevo.ErrRoundNotFound), codeRoundNotFound},
+		{"bare refusal", fmt.Errorf("chain: %w", refusal.ErrRefused), codeRefused},
+		{"round out of range", fmt.Errorf("show: %w", refusal.ErrRoundNotFound), codeRoundNotFound},
 		// The push ack refusals: each sentinel is one precondition the entry did
 		// not meet, and each earns its own code rather than falling into internal.
 		{"ack of another mastermind's binding", fmt.Errorf("ack: %w", delivery.ErrAckForeignBinding), codeMastermindMismatch},

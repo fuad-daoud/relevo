@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -50,8 +51,8 @@ func TestUnbindKeepsBindingWhenWorktreeKept(t *testing.T) {
 
 			for _, archive := range []bool{false, true} {
 				res, err := Unbind(context.Background(), rt, "kept", archive)
-				if !errors.Is(err, ErrWorktreeKept) || !errors.Is(err, ErrRefused) {
-					t.Fatalf("Unbind(archive=%v) err = %v, want ErrWorktreeKept and ErrRefused", archive, err)
+				if !errors.Is(err, ErrWorktreeKept) || !errors.Is(err, refusal.ErrRefused) {
+					t.Fatalf("Unbind(archive=%v) err = %v, want ErrWorktreeKept and refusal.ErrRefused", archive, err)
 				}
 				if !strings.Contains(err.Error(), wt) || !strings.Contains(err.Error(), "kept (") || strings.Contains(err.Error(), "--force") {
 					t.Errorf("message %q must name the worktree and the reason, with no force hint", err)

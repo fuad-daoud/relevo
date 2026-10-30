@@ -24,6 +24,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -1382,8 +1383,8 @@ func TestAddRemoteRefusesCWD(t *testing.T) {
 	}
 	// The input boundary's class, so the CLI renders `refused` with exit 2
 	// rather than an `internal` failure with a bugreport hint.
-	if !errors.Is(err, ErrRefused) {
-		t.Errorf("err = %v, want errors.Is(err, ErrRefused)", err)
+	if !errors.Is(err, refusal.ErrRefused) {
+		t.Errorf("err = %v, want errors.Is(err, refusal.ErrRefused)", err)
 	}
 }
 

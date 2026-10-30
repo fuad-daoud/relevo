@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/fuad-daoud/relevo/internal/refusal"
 )
 
 // resolveAdoptedBranch resolves the branch `bind --branch` adopts and returns
@@ -47,14 +49,14 @@ func resolveAdoptedBranch(ctx context.Context, rt Runtime, repo, branch string) 
 			// Neither the local repo nor the cache has it: fetch exactly
 			// this one ref, then re-read the cache the fetch just wrote.
 			if ferr := rt.Git.Fetch(ctx, repo, remote, branch); ferr != nil {
-				return "", false, refuse("branch %q not found locally or on %s: fetching it failed (%v); run `git fetch %s %s` and retry", branch, remote, ferr, remote, branch)
+				return "", false, refusal.New("branch %q not found locally or on %s: fetching it failed (%v); run `git fetch %s %s` and retry", branch, remote, ferr, remote, branch)
 			}
 			if cached, err = originRefResolves(ctx, rt, repo, originRef); err != nil {
 				return "", false, err
 			}
 		}
 		if !cached {
-			return "", false, refuse("branch %q not found locally or on %s: the fetch found no such branch; run `git fetch %s %s` and retry", branch, remote, remote, branch)
+			return "", false, refusal.New("branch %q not found locally or on %s: the fetch found no such branch; run `git fetch %s %s` and retry", branch, remote, remote, branch)
 		}
 		if err := rt.Git.CreateTrackingBranch(ctx, repo, branch, originRef); err != nil {
 			return "", false, err
@@ -82,11 +84,11 @@ func adoptionRemote(branch string, remotes []string) (string, error) {
 	}
 	switch len(remotes) {
 	case 0:
-		return "", refuse("branch %q not found locally, and the repository has no remote to fetch it from", branch)
+		return "", refusal.New("branch %q not found locally, and the repository has no remote to fetch it from", branch)
 	case 1:
 		return remotes[0], nil
 	}
-	return "", refuse("branch %q not found locally, and the repository has no origin remote to fetch it from; remotes: %s. Fetch it yourself, e.g. `git fetch %s %s`, and retry",
+	return "", refusal.New("branch %q not found locally, and the repository has no origin remote to fetch it from; remotes: %s. Fetch it yourself, e.g. `git fetch %s %s`, and retry",
 		branch, strings.Join(remotes, ", "), remotes[0], branch)
 }
 

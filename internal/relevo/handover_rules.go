@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 )
 
 // MinHandoverSchema is the schema a hand-over target must have written at least
@@ -66,10 +67,10 @@ type HandoverTarget struct {
 // first refusal wins; each is one sentence the owner can act on.
 func HandoverRefusal(f HandoverFacts) (HandoverTarget, error) {
 	if !f.SyncEnabled {
-		return HandoverTarget{}, refuse("sync is off on this machine: relevo db sync enable first; a hand-over travels through the sync log")
+		return HandoverTarget{}, refusal.New("sync is off on this machine: relevo db sync enable first; a hand-over travels through the sync log")
 	}
 	if f.Locked {
-		return HandoverTarget{}, refuse("sync is locked on this machine: relevo db sync unlock first; a hand-over is signed and a locked machine cannot sign")
+		return HandoverTarget{}, refusal.New("sync is locked on this machine: relevo db sync unlock first; a hand-over is signed and a locked machine cannot sign")
 	}
 	target, err := resolveHandoverTarget(f)
 	if err != nil {
@@ -77,7 +78,7 @@ func HandoverRefusal(f HandoverFacts) (HandoverTarget, error) {
 	}
 	if f.HandedTo != "" {
 		if f.HandedTo != target.ID {
-			return HandoverTarget{}, refuse("binding %q is already handed over to %s; relevo takeover %s --force takes it back first", f.Name, f.HandedTo, f.Name)
+			return HandoverTarget{}, refusal.New("binding %q is already handed over to %s; relevo takeover %s --force takes it back first", f.Name, f.HandedTo, f.Name)
 		}
 		return HandoverTarget{InstallationFact: target, Already: true}, nil
 	}
@@ -85,7 +86,7 @@ func HandoverRefusal(f HandoverFacts) (HandoverTarget, error) {
 		return HandoverTarget{}, err
 	}
 	if target.NewestSchema < MinHandoverSchema {
-		return HandoverTarget{}, refuse("%s (%s) has not written at schema %d or newer yet (newest seen: %d): upgrade it, let it sync once, then hand over",
+		return HandoverTarget{}, refusal.New("%s (%s) has not written at schema %d or newer yet (newest seen: %d): upgrade it, let it sync once, then hand over",
 			label(target), target.ID, MinHandoverSchema, target.NewestSchema)
 	}
 	return HandoverTarget{InstallationFact: target}, nil
@@ -95,15 +96,15 @@ func HandoverRefusal(f HandoverFacts) (HandoverTarget, error) {
 func bindingStateRefusal(f HandoverFacts) error {
 	switch {
 	case f.Server:
-		return refuse("binding %q runs on a server: its runner, queue and round state live there under this machine's client key, so the copy cannot change hands; finish or unbind it on the server first", f.Name)
+		return refusal.New("binding %q runs on a server: its runner, queue and round state live there under this machine's client key, so the copy cannot change hands; finish or unbind it on the server first", f.Name)
 	case f.RoundOpen:
-		return refuse("binding %q has round %d open: relevo stop %s ends it, or wait for it to close, then hand over", f.Name, f.Round, f.Name)
+		return refusal.New("binding %q has round %d open: relevo stop %s ends it, or wait for it to close, then hand over", f.Name, f.Round, f.Name)
 	case f.ChainErr != nil:
 		return f.ChainErr
 	case f.Dirty:
-		return refuse("binding %q has uncommitted changes: they do not travel and releasing the tree would strand them; commit or discard them first", f.Name)
+		return refusal.New("binding %q has uncommitted changes: they do not travel and releasing the tree would strand them; commit or discard them first", f.Name)
 	case f.Unpushable != "":
-		return refuse("binding %q has commits the push cannot carry: %s", f.Name, f.Unpushable)
+		return refusal.New("binding %q has commits the push cannot carry: %s", f.Name, f.Unpushable)
 	}
 	return RemoteRefusal(f)
 }
@@ -114,7 +115,7 @@ func RemoteRefusal(f HandoverFacts) error {
 	if f.Remote == "" || f.Remote == "origin" || SameRepo(f.RemoteURL, f.OriginURL) {
 		return nil
 	}
-	return refuse("binding %q cannot go through remote %q: its URL is not origin's, and the target's bind --resume fetches origin, so the branch would be stranded; run relevo handover %s --to %s without --remote, or set %s's URL to origin's",
+	return refusal.New("binding %q cannot go through remote %q: its URL is not origin's, and the target's bind --resume fetches origin, so the branch would be stranded; run relevo handover %s --to %s without --remote, or set %s's URL to origin's",
 		f.Name, f.Remote, f.Name, f.To, f.Remote)
 }
 
@@ -123,12 +124,12 @@ func RemoteRefusal(f HandoverFacts) error {
 // always accepted and an ambiguous label is refused with the ids it matches.
 func resolveHandoverTarget(f HandoverFacts) (InstallationFact, error) {
 	if f.To == "" {
-		return InstallationFact{}, refuse("relevo handover needs --to <installation id or label>")
+		return InstallationFact{}, refusal.New("relevo handover needs --to <installation id or label>")
 	}
 	for _, in := range f.Installations {
 		if in.ID == f.To {
 			if in.ID == f.This {
-				return InstallationFact{}, refuse("--to %s names this machine: a binding cannot be handed to itself", f.To)
+				return InstallationFact{}, refusal.New("--to %s names this machine: a binding cannot be handed to itself", f.To)
 			}
 			return in, nil
 		}
@@ -141,10 +142,10 @@ func resolveHandoverTarget(f HandoverFacts) (InstallationFact, error) {
 	}
 	switch len(matches) {
 	case 0:
-		return InstallationFact{}, refuse("--to %q matches no installation the remote knows: relevo db sync pull, then check relevo db query 'SELECT id, label FROM installation'", f.To)
+		return InstallationFact{}, refusal.New("--to %q matches no installation the remote knows: relevo db sync pull, then check relevo db query 'SELECT id, label FROM installation'", f.To)
 	case 1:
 		if matches[0].ID == f.This {
-			return InstallationFact{}, refuse("--to %s names this machine: a binding cannot be handed to itself", f.To)
+			return InstallationFact{}, refusal.New("--to %s names this machine: a binding cannot be handed to itself", f.To)
 		}
 		return matches[0], nil
 	}
@@ -152,7 +153,7 @@ func resolveHandoverTarget(f HandoverFacts) (InstallationFact, error) {
 	for n, m := range matches {
 		ids[n] = m.ID
 	}
-	return InstallationFact{}, refuse("--to %q matches %d installations (%s): pass one of the ids", f.To, len(matches), strings.Join(ids, ", "))
+	return InstallationFact{}, refusal.New("--to %q matches %d installations (%s): pass one of the ids", f.To, len(matches), strings.Join(ids, ", "))
 }
 
 func label(in InstallationFact) string {
@@ -183,9 +184,9 @@ func ResumeRefusal(f ResumeFacts) error {
 	case f.Mine:
 		return nil
 	case f.LeftTo != "":
-		return refuse("binding %q is handed over to %s: resume it there, or relevo takeover %s --force here", f.Name, f.LeftTo, f.Name)
+		return refusal.New("binding %q is handed over to %s: resume it there, or relevo takeover %s --force here", f.Name, f.LeftTo, f.Name)
 	case f.ForeignWriter != "":
-		return refuse("binding %q is not handed to this machine yet (it is written by %s): run relevo db sync, then resume again", f.Name, f.ForeignWriter)
+		return refusal.New("binding %q is not handed to this machine yet (it is written by %s): run relevo db sync, then resume again", f.Name, f.ForeignWriter)
 	}
 	return nil
 }
@@ -201,15 +202,15 @@ func SameRepo(recorded, local string) bool {
 // is not a checkout of the binding's repository.
 func ResumeCheckoutRefusal(name, recorded, local string) error {
 	if local == "" {
-		return refuse("binding %q was cut from %s, and this directory has no origin remote: run relevo bind --resume from a checkout of it", name, recorded)
+		return refusal.New("binding %q was cut from %s, and this directory has no origin remote: run relevo bind --resume from a checkout of it", name, recorded)
 	}
-	return refuse("binding %q was cut from %s, and this directory's origin is %s: run relevo bind --resume from a checkout of the first", name, recorded, local)
+	return refusal.New("binding %q was cut from %s, and this directory's origin is %s: run relevo bind --resume from a checkout of the first", name, recorded, local)
 }
 
 // ResumeBranchRefusal is the sentence for a handed-over branch the checkout
 // cannot fetch.
 func ResumeBranchRefusal(name, branch string) error {
-	return refuse("branch %s of binding %q is not on origin: ask the old machine to run relevo handover %s again", branch, name, name)
+	return refusal.New("branch %s of binding %q is not on origin: ask the old machine to run relevo handover %s again", branch, name, name)
 }
 
 // HandoverText renders a hand-over's result for the old machine.

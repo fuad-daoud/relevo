@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -1039,8 +1040,8 @@ func corruptChainSettings(t *testing.T, rt Runtime, name string) {
 func assertResumeRefusedNotInternal(t *testing.T, err error) {
 	t.Helper()
 
-	if !errors.Is(err, ErrRefused) {
-		t.Fatalf("refusal %v is not in the input class: errors.Is(err, ErrRefused) is false, so the CLI reads it as internal", err)
+	if !errors.Is(err, refusal.ErrRefused) {
+		t.Fatalf("refusal %v is not in the input class: errors.Is(err, refusal.ErrRefused) is false, so the CLI reads it as internal", err)
 	}
 	if !strings.Contains(err.Error(), "relevo status shop") {
 		t.Errorf("refusal %q names no working next step", err)

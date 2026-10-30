@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -215,14 +216,14 @@ func pendingRoundFile(rt Runtime, name string, round int) (string, bool) {
 // which the candidate re-points.
 // readPromptFile reads the plan a caller named with --file. The path is their
 // own argument, so a missing or unreadable one is a usage refusal naming the
-// path -- ErrBadInput, which the CLI maps to exit 2 with `relevo help` -- rather
+// path -- refusal.ErrBadInput, which the CLI maps to exit 2 with `relevo help` -- rather
 // than an internal failure with `relevo bugreport` for a path that never
 // existed. It is the one read of a caller-named file on the send path: send and
 // send --dry-run both come through here, so neither can drift from the other.
 func readPromptFile(file string) ([]byte, error) {
 	body, err := os.ReadFile(file)
 	if err != nil {
-		return nil, badInputf("--file %s: %v", file, err)
+		return nil, refusal.BadInputf("--file %s: %v", file, err)
 	}
 	return body, nil
 }

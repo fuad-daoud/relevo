@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -32,7 +33,7 @@ func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.Ch
 		return childCreated{}, err
 	}
 	if cap := chainNameCap(childName, planned); len(childName) > cap {
-		return childCreated{}, refuse("chain name %q exceeds %d characters (the longest member suffix is %s)", childName, cap, longestMemberSuffix(childName, planned))
+		return childCreated{}, refusal.New("chain name %q exceeds %d characters (the longest member suffix is %s)", childName, cap, longestMemberSuffix(childName, planned))
 	}
 
 	bodies, err := chainPlanBodiesFor(ChainOptions{Plans: spec.Plans})
