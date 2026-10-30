@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // ErrNothingToStop reports a stop on a binding with no round in flight. The
@@ -255,7 +256,7 @@ func stopPayload(how, name string, round int, where string, haveReport bool, cla
 	if haveReport {
 		return fmt.Sprintf("The runner was stopped (%s) for round %d%s. %s", how, round, where, clause), "stopped"
 	}
-	return fmt.Sprintf("The runner was stopped (%s) for round %d%s; no %s was written.", how, round, where, outputWord(shape)), "noreport stopped"
+	return fmt.Sprintf("The runner was stopped (%s) for round %d%s; no %s was written.", how, round, where, text.OutputWord(shape == store.ShapeReader)), "noreport stopped"
 }
 
 // closeStopped closes an open round whose builder was stopped (#138): the

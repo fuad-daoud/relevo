@@ -5,33 +5,15 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/resolve"
+	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // The result lines of the three pick-able verbs live here, not in cmd/relevo,
 // because the picker's result screen (internal/pick) prints the same text the
-// terminal does. Each returns the exact bytes cmd/relevo printed before #15,
-// without a trailing newline; the caller adds one.
-
-// showCommand renders the `relevo show` command that prints one round's
-// artifact, the durable way to name a closed round whose files may be sealed
-// into the database.
-func showCommand(name string, round int, section string) string {
-	return fmt.Sprintf("relevo show %s --round %d --%s", name, round, section)
-}
-
-// brief reduces an error to one line, for a reason or note field where a
-// multi-line git message would break the line's shape.
-func brief(err error) string {
-	if err == nil {
-		return ""
-	}
-	s := strings.TrimSpace(err.Error())
-	if idx := strings.Index(s, "\n"); idx != -1 {
-		s = strings.TrimSpace(s[:idx])
-	}
-	return s
-}
+// terminal does. Each returns the exact bytes cmd/relevo printed, without a
+// trailing newline; the caller adds one.
 
 // DoneText is what `relevo done` says on success: one line for the binding,
 // then at most one for its worktree.
@@ -77,7 +59,7 @@ func PlacementText(p resolve.PlacementResolution) string {
 
 // StopText is what `relevo stop` says on success: what happened to the round.
 func StopText(name string, res StopResult) string {
-	clause := withoutArtifact(res.Shape)
+	clause := text.WithoutArtifact(res.Shape == store.ShapeReader)
 	switch res.Action {
 	case "killed":
 		return fmt.Sprintf("%s round %d stopped: process killed; round closed %s unless one was on disk", name, res.Round, clause)
@@ -94,7 +76,7 @@ func StopText(name string, res StopResult) string {
 
 // RenderDryRun is what `relevo send --dry-run` prints: the round it would open,
 // the builder and where it would go, the paths, and the head of the prompt. It
-// names only what the preflight read; nothing here was sent (#149).
+// names only what the preflight read; nothing here was sent.
 func RenderDryRun(d DryRun) string {
 	tierVal := d.Tier
 	if d.TierFrom != "" {
@@ -121,8 +103,8 @@ func RenderDryRun(d DryRun) string {
 }
 
 // dryRunBuilderLine is the builder line's value: the mode and candidate, with
-// the advisory gate note in parentheses when one applies. A1 §4.4: the
-// candidate's short name is printed when it has one.
+// the advisory gate note in parentheses when one applies. The candidate's
+// short name is printed when it has one.
 func dryRunBuilderLine(d DryRun) string {
 	candidate := d.Candidate
 	if d.CandidateName != "" {
