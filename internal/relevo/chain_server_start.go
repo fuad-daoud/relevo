@@ -94,7 +94,7 @@ func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (cha
 	if rt.Transport == nil {
 		return chainServerPlan{}, errors.New("no remote transport configured")
 	}
-	def, origin, err := ResolveWorkflow(rt, opts.Workflow)
+	def, origin, err := resolve.ResolveWorkflow(rt.Config, opts.Workflow)
 	if err != nil {
 		return chainServerPlan{}, err
 	}

@@ -113,7 +113,7 @@ func chainDryRunWorkflow(rt Runtime, name string) (workflow.Definition, string, 
 	if name == "" {
 		return workflow.Default(), "shipped", nil
 	}
-	return ResolveWorkflow(rt, name)
+	return resolve.ResolveWorkflow(rt.Config, name)
 }
 
 // dryRunEnv is the workflow environment a dry run validates against: the actors
@@ -125,7 +125,7 @@ func dryRunEnv(rt Runtime, opts ChainOptions) workflow.Env {
 		Given:  &workflow.Given{Plans: len(opts.Plans) > 0, Task: opts.Task != ""},
 		Seeds:  workflow.ShippedSeeds(),
 		Workflow: func(name string) (workflow.Definition, bool) {
-			def, _, err := ResolveWorkflow(rt, name)
+			def, _, err := resolve.ResolveWorkflow(rt.Config, name)
 			return def, err == nil
 		},
 	}

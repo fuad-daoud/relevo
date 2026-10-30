@@ -23,7 +23,7 @@ type childCreated struct {
 // caller's transaction, cutting its branch from the parent writer's tip.
 func chainStartChild(ctx context.Context, rt Runtime, tx *store.Tx, parent db.ChainRow, spec workflow.ChildSpec) (childCreated, error) {
 	childName := parent.Name + "." + spec.Key
-	childDef, _, err := ResolveWorkflow(rt, spec.Workflow)
+	childDef, _, err := resolve.ResolveWorkflow(rt.Config, spec.Workflow)
 	if err != nil {
 		return childCreated{}, err
 	}

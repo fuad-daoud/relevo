@@ -60,7 +60,7 @@ func chainStartWorkflow(ctx context.Context, rt Runtime, opts ChainOptions) (Cha
 // read-only: the definition, its params, the inputs, the actors, the members
 // and the caller's mastermind.
 func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOptions) (chainWFStart, error) {
-	def, _, err := ResolveWorkflow(rt, opts.Workflow)
+	def, _, err := resolve.ResolveWorkflow(rt.Config, opts.Workflow)
 	if err != nil {
 		return chainWFStart{}, err
 	}
@@ -254,7 +254,7 @@ func chainValidateWorkflow(rt Runtime, def workflow.Definition, given workflow.G
 		Given:  &given,
 		Seeds:  workflow.ShippedSeeds(),
 		Workflow: func(name string) (workflow.Definition, bool) {
-			d, _, err := ResolveWorkflow(rt, name)
+			d, _, err := resolve.ResolveWorkflow(rt.Config, name)
 			return d, err == nil
 		},
 	}
