@@ -1,17 +1,15 @@
-package main
+package board
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
-
-	"github.com/fuad-daoud/relevo/internal/board"
 )
 
 // boardHTMLEnv isolates the state root and returns the live root plus the
-// MasterMind's live directory, seeded with one record so boardMasterMind can
+// MasterMind's live directory, seeded with one record so Mastermind can
 // resolve a name.
 func boardHTMLEnv(t *testing.T) (liveRoot, liveDir string) {
 	t.Helper()
@@ -30,19 +28,19 @@ func boardHTMLEnv(t *testing.T) (liveRoot, liveDir string) {
 // than a sibling .excalidraw file.
 func TestResolveBoardHTMLBareNamesALiveBoard(t *testing.T) {
 	liveRoot, liveDir := boardHTMLEnv(t)
-	stubRepoSeamAbsent(t)
+	deps := testDeps(t)
 
-	res, err := resolveBoardHTML(t.TempDir(), "alpha", "", "")
+	res, err := ResolveSceneHTML(deps, t.TempDir(), "alpha", "", "")
 	if err != nil {
-		t.Fatalf("resolveBoardHTML bare: %v", err)
+		t.Fatalf("ResolveSceneHTML bare: %v", err)
 	}
-	if res.Scope != board.ScopeLive {
+	if res.Scope != ScopeLive {
 		t.Errorf("scope = %q, want live", res.Scope)
 	}
-	if res.Scene != board.DefaultBoard {
-		t.Errorf("scene = %q, want %q", res.Scene, board.DefaultBoard)
+	if res.Scene != DefaultBoard {
+		t.Errorf("scene = %q, want %q", res.Scene, DefaultBoard)
 	}
-	want := filepath.Join(liveDir, board.DefaultBoard, "board.html")
+	want := filepath.Join(liveDir, DefaultBoard, "board.html")
 	if res.Path != want {
 		t.Errorf("path = %q, want %q", res.Path, want)
 	}
@@ -56,11 +54,11 @@ func TestResolveBoardHTMLBareNamesALiveBoard(t *testing.T) {
 // and FromPointer is false so the caller knows to write the pointer.
 func TestResolveBoardHTMLBoardFlagNamesALiveBoard(t *testing.T) {
 	_, liveDir := boardHTMLEnv(t)
-	stubRepoSeamAbsent(t)
+	deps := testDeps(t)
 
-	res, err := resolveBoardHTML(t.TempDir(), "alpha", "api", "")
+	res, err := ResolveSceneHTML(deps, t.TempDir(), "alpha", "api", "")
 	if err != nil {
-		t.Fatalf("resolveBoardHTML --board: %v", err)
+		t.Fatalf("ResolveSceneHTML --board: %v", err)
 	}
 	if res.Scene != "api" || res.FromPointer {
 		t.Errorf("Resolved = %+v, want scene api not from the pointer", res)
@@ -74,14 +72,14 @@ func TestResolveBoardHTMLBoardFlagNamesALiveBoard(t *testing.T) {
 // is read, not rewritten.
 func TestResolveBoardHTMLPointerNamesALiveBoard(t *testing.T) {
 	_, liveDir := boardHTMLEnv(t)
-	stubRepoSeamAbsent(t)
-	if err := board.WritePointer(liveDir, "from-pointer"); err != nil {
+	deps := testDeps(t)
+	if err := WritePointer(liveDir, "from-pointer"); err != nil {
 		t.Fatalf("WritePointer: %v", err)
 	}
 
-	res, err := resolveBoardHTML(t.TempDir(), "alpha", "", "")
+	res, err := ResolveSceneHTML(deps, t.TempDir(), "alpha", "", "")
 	if err != nil {
-		t.Fatalf("resolveBoardHTML pointer: %v", err)
+		t.Fatalf("ResolveSceneHTML pointer: %v", err)
 	}
 	if res.Scene != "from-pointer" || !res.FromPointer {
 		t.Errorf("Resolved = %+v, want from-pointer read from the pointer", res)
@@ -92,14 +90,14 @@ func TestResolveBoardHTMLPointerNamesALiveBoard(t *testing.T) {
 // resolves to the live scope and names its owner.
 func TestResolveBoardHTMLExplicitLivePath(t *testing.T) {
 	_, liveDir := boardHTMLEnv(t)
-	stubRepoSeamAbsent(t)
+	deps := testDeps(t)
 
 	arg := filepath.Join(liveDir, "api", "board.html")
-	res, err := resolveBoardHTML(t.TempDir(), "alpha", "", arg)
+	res, err := ResolveSceneHTML(deps, t.TempDir(), "alpha", "", arg)
 	if err != nil {
-		t.Fatalf("resolveBoardHTML live path: %v", err)
+		t.Fatalf("ResolveSceneHTML live path: %v", err)
 	}
-	if res.Scope != board.ScopeLive || res.Scene != "api" {
+	if res.Scope != ScopeLive || res.Scene != "api" {
 		t.Errorf("Resolved = %+v, want live scope, scene api", res)
 	}
 	if res.Owner != "alpha" {
@@ -110,15 +108,16 @@ func TestResolveBoardHTMLExplicitLivePath(t *testing.T) {
 // TestResolveBoardHTMLExplicitRepoPath: an explicit path under the git top level
 // is the repo scope, and its slug is the board name.
 func TestResolveBoardHTMLExplicitRepoPath(t *testing.T) {
-	repo := withTempRepoRoot(t)
+	deps := testDeps(t)
+	repo := withTempRepoRoot(t, &deps)
 	boardHTMLEnv(t)
 	arg := filepath.Join(repo, "docs", "boards", "api", "board.html")
 
-	res, err := resolveBoardHTML(t.TempDir(), "", "", arg)
+	res, err := ResolveSceneHTML(deps, t.TempDir(), "", "", arg)
 	if err != nil {
-		t.Fatalf("resolveBoardHTML repo path: %v", err)
+		t.Fatalf("ResolveSceneHTML repo path: %v", err)
 	}
-	if res.Scope != board.ScopeRepo {
+	if res.Scope != ScopeRepo {
 		t.Errorf("scope = %q, want repo", res.Scope)
 	}
 	if res.Scene != "api" || res.LiveDir != "" {
@@ -132,28 +131,21 @@ func TestResolveBoardHTMLExplicitRepoPath(t *testing.T) {
 // TestResolveBoardHTMLPathAndBoardAreExclusive: a path and --board name
 // different things, so naming both is usage.
 func TestResolveBoardHTMLPathAndBoardAreExclusive(t *testing.T) {
-	withTempRepoRoot(t)
+	deps := testDeps(t)
+	_ = withTempRepoRoot(t, &deps)
 	boardHTMLEnv(t)
 	arg := filepath.Join(t.TempDir(), "docs", "boards", "api", "board.html")
-	requireCLIError(t, mustResolveBoardHTMLErr(t, arg, "api"), codeUsage, "relevo help")
-}
-
-// mustResolveBoardHTMLErr resolves with both a path and --board and returns the
-// error it produced.
-func mustResolveBoardHTMLErr(t *testing.T, arg, name string) error {
-	t.Helper()
-	_, err := resolveBoardHTML(t.TempDir(), "", name, arg)
-	if err == nil {
-		t.Fatal("resolveBoardHTML with a path and --board = nil, want usage")
+	if _, err := ResolveSceneHTML(deps, t.TempDir(), "", "api", arg); !errors.Is(err, ErrUsage) {
+		t.Errorf("ResolveSceneHTML(path and --board) = %v, want ErrUsage", err)
 	}
-	return err
 }
 
 // TestResolveBoardHTMLRefusesBadShapes: a bare slug directory, a wrong file name
 // and a bad slug are all usage, so a path can never reach a subverb-shaped
 // target.
 func TestResolveBoardHTMLRefusesBadShapes(t *testing.T) {
-	repo := withTempRepoRoot(t)
+	deps := testDeps(t)
+	repo := withTempRepoRoot(t, &deps)
 	boardHTMLEnv(t)
 	cases := map[string]string{
 		"bare slug":    filepath.Join(repo, "docs", "boards", "api"),
@@ -165,8 +157,8 @@ func TestResolveBoardHTMLRefusesBadShapes(t *testing.T) {
 	}
 	for name, arg := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := resolveBoardHTML(t.TempDir(), "", "", arg); err == nil {
-				t.Errorf("resolveBoardHTML(%q) = nil, want a refusal", arg)
+			if _, err := ResolveSceneHTML(deps, t.TempDir(), "", "", arg); err == nil {
+				t.Errorf("ResolveSceneHTML(%q) = nil, want a refusal", arg)
 			}
 		})
 	}
@@ -177,12 +169,12 @@ func TestResolveBoardHTMLRefusesBadShapes(t *testing.T) {
 // reach different targets for the same .excalidraw path.
 func TestResolveBoardHTMLExcalidrawStillResolvesThroughTheOldPath(t *testing.T) {
 	_, liveDir := boardHTMLEnv(t)
-	stubRepoSeamAbsent(t)
+	deps := testDeps(t)
 	scene := filepath.Join(liveDir, "api.excalidraw")
 
-	legacy, err := resolveBoard(t.TempDir(), "", "", scene)
+	legacy, err := ResolveScene(deps, t.TempDir(), "", "", scene)
 	if err != nil {
-		t.Fatalf("resolveBoard: %v", err)
+		t.Fatalf("ResolveScene: %v", err)
 	}
 	// Temp roots can carry symlinks (/var -> /private/var on macos), and the
 	// resolver may return either form. The scene file itself need not exist,
@@ -197,14 +189,14 @@ func TestResolveBoardHTMLExcalidrawStillResolvesThroughTheOldPath(t *testing.T) 
 		t.Fatalf("EvalSymlinks legacy dir: %v", gerr)
 	}
 	if gotDir != wantDir || filepath.Base(legacy.Path) != filepath.Base(scene) {
-		t.Errorf("resolveBoard path = %q, want %q", legacy.Path, scene)
+		t.Errorf("ResolveScene path = %q, want %q", legacy.Path, scene)
 	}
-	if _, err := resolveBoardHTML(t.TempDir(), "", "", scene); err == nil {
-		t.Error("resolveBoardHTML on an .excalidraw path = nil, want a refusal")
+	if _, err := ResolveSceneHTML(deps, t.TempDir(), "", "", scene); err == nil {
+		t.Error("ResolveSceneHTML on an .excalidraw path = nil, want a refusal")
 	}
 }
 
-// TestCmdBoardDispatchesExcalidrawToTheLegacyFlow: cmdBoard routes on the path
+// TestCmdBoardDispatchesExcalidrawToTheLegacyFlow: the run routes on the path
 // alone, so an explicit .excalidraw path reaches the legacy resolver and the
 // Excalidraw server, and only a board.html path (or a bare board) reaches the
 // single-file flow. The route is proved by the refusals each flow produces:
@@ -212,24 +204,23 @@ func TestResolveBoardHTMLExcalidrawStillResolvesThroughTheOldPath(t *testing.T) 
 // subverb-shaped paths cannot both be accepted.
 func TestCmdBoardDispatchesExcalidrawToTheLegacyFlow(t *testing.T) {
 	_, liveDir := boardHTMLEnv(t)
-	stubRepoSeamAbsent(t)
-	cockpitConfig(t)
+	deps := testDeps(t)
 
 	excalidraw := filepath.Join(liveDir, "api.excalidraw")
-	if _, err := resolveBoard(t.TempDir(), "alpha", "", excalidraw); err != nil {
+	if _, err := ResolveScene(deps, t.TempDir(), "alpha", "", excalidraw); err != nil {
 		t.Errorf("the legacy resolver refused its own scene: %v", err)
 	}
-	if _, err := resolveBoardHTML(t.TempDir(), "alpha", "", excalidraw); err == nil {
+	if _, err := ResolveSceneHTML(deps, t.TempDir(), "alpha", "", excalidraw); err == nil {
 		t.Error("the HTML resolver accepted an .excalidraw path, so the dispatch cannot be on the file name")
 	}
 
 	// The HTML flow's own target, which the legacy resolver refuses: the two
 	// shapes are disjoint in both directions.
 	html := filepath.Join(liveDir, "api", "board.html")
-	if _, err := resolveBoardHTML(t.TempDir(), "alpha", "", html); err != nil {
-		t.Errorf("resolveBoardHTML refused its own board: %v", err)
+	if _, err := ResolveSceneHTML(deps, t.TempDir(), "alpha", "", html); err != nil {
+		t.Errorf("ResolveSceneHTML refused its own board: %v", err)
 	}
-	if _, err := resolveBoard(t.TempDir(), "alpha", "", html); err == nil {
+	if _, err := ResolveScene(deps, t.TempDir(), "alpha", "", html); err == nil {
 		t.Error("the legacy resolver accepted a board.html path")
 	}
 }
@@ -237,18 +228,18 @@ func TestCmdBoardDispatchesExcalidrawToTheLegacyFlow(t *testing.T) {
 // TestCmdBoardPromoteIsDispatched pins the subverb: `promote` reaches the verb,
 // so a board directory named "promote" can never shadow it.
 func TestCmdBoardPromoteIsDispatched(t *testing.T) {
-	repo := withTempRepoRoot(t)
+	deps := testDeps(t)
+	repo := withTempRepoRoot(t, &deps)
 	boardHTMLEnv(t)
 
 	// The verb gets past dispatch and flag parsing and reaches its own slug
 	// check, which is what proves it was dispatched as the subverb rather than
 	// treated as a scene path.
-	err := cmdBoard([]string{"promote", "--to", "API"})
-	if err == nil {
-		t.Fatal("cmdBoard promote --to API = nil, want the slug refusal")
+	err := PromoteToRepo(deps, t.TempDir(), "", "", "API", false)
+	if !errors.Is(err, ErrUsage) {
+		t.Fatalf("promote --to API = %v, want the slug refusal", err)
 	}
-	ce, ok := err.(*cliError)
-	if !ok || ce.code != codeUsage || !strings.Contains(ce.message, "API") {
+	if !strings.Contains(err.Error(), "API") {
 		t.Errorf("promote --to API = %v, want a usage refusal naming the value", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(repo, "docs")); !os.IsNotExist(statErr) {
@@ -256,76 +247,40 @@ func TestCmdBoardPromoteIsDispatched(t *testing.T) {
 	}
 }
 
-// TestResolveBoardHTMLNeverStartsTheDaemon extends R5 to the HTML resolver:
-// resolving a name against a seeded database starts nothing and writes nothing.
-func TestResolveBoardHTMLNeverStartsTheDaemon(t *testing.T) {
-	stateHome := boardHTMLStateHome(t)
-	seedBoardRecords(t, stateHome, boardRecord("mm_aaaaaaaaaaaa", "alpha"))
-
-	var calls int32
-	daemonStarter = func() error { atomic.AddInt32(&calls, 1); return nil }
-	t.Cleanup(func() { daemonStarter = startDaemon })
-	stubRepoSeamAbsent(t)
-
-	res, err := resolveBoardHTML(t.TempDir(), "alpha", "", "")
-	if err != nil {
-		t.Fatalf("resolveBoardHTML(name): %v", err)
-	}
-	if res.Scope != board.ScopeLive || res.Scene != board.DefaultBoard {
-		t.Errorf("resolveBoardHTML(name) = %+v, want the live default", res)
-	}
-	if got := atomic.LoadInt32(&calls); got != 0 {
-		t.Errorf("resolution started the daemon %d times, want 0", got)
-	}
-	if _, err := os.Stat(filepath.Join(stateHome, "relevo", "relevo.sock")); !os.IsNotExist(err) {
-		t.Errorf("resolution created a socket: stat error = %v, want not-exist", err)
-	}
-}
-
-// boardHTMLStateHome isolates the whole XDG state and config home, so a test
-// never reads the machine's own state root.
-func boardHTMLStateHome(t *testing.T) string {
-	t.Helper()
-	stateHome := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", stateHome)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(stateHome, "config"))
-	t.Setenv("HOME", stateHome)
-	return stateHome
-}
-
 // TestBoardHTMLPointerIsWrittenForLiveAndNotForRepo: the pointer always names the
 // board the user is looking at, so a live board writes it and a repo board does
 // not. The write goes through the resolver's own rule -- live and not read from
-// the pointer -- which cmdBoard applies.
+// the pointer -- which the run applies.
 func TestBoardHTMLPointerIsWrittenForLiveAndNotForRepo(t *testing.T) {
 	t.Run("live writes", func(t *testing.T) {
 		_, liveDir := boardHTMLEnv(t)
-		stubRepoSeamAbsent(t)
-		res, err := resolveBoardHTML(t.TempDir(), "alpha", "api", "")
+		deps := testDeps(t)
+		res, err := ResolveSceneHTML(deps, t.TempDir(), "alpha", "api", "")
 		if err != nil {
-			t.Fatalf("resolveBoardHTML: %v", err)
+			t.Fatalf("ResolveSceneHTML: %v", err)
 		}
 		if res.FromPointer {
 			t.Fatal("the board came from the pointer, so no write is expected")
 		}
-		if err := board.WritePointer(res.LiveDir, res.Scene); err != nil {
+		if err := WritePointer(res.LiveDir, res.Scene); err != nil {
 			t.Fatalf("WritePointer: %v", err)
 		}
-		name, present, err := board.Pointer(liveDir)
+		name, present, err := Pointer(liveDir)
 		if err != nil || !present || name != "api" {
 			t.Errorf("pointer = %q/%v/%v, want api/true/nil", name, present, err)
 		}
 	})
 
 	t.Run("repo does not write", func(t *testing.T) {
-		repo := withTempRepoRoot(t)
+		deps := testDeps(t)
+		repo := withTempRepoRoot(t, &deps)
 		boardHTMLEnv(t)
 		arg := filepath.Join(repo, "docs", "boards", "api", "board.html")
-		res, err := resolveBoardHTML(t.TempDir(), "", "", arg)
+		res, err := ResolveSceneHTML(deps, t.TempDir(), "", "", arg)
 		if err != nil {
-			t.Fatalf("resolveBoardHTML: %v", err)
+			t.Fatalf("ResolveSceneHTML: %v", err)
 		}
-		if res.Scope == board.ScopeLive {
+		if res.Scope == ScopeLive {
 			t.Fatalf("scope = %q, want repo", res.Scope)
 		}
 		if liveDirOf(res) != "" {
@@ -341,9 +296,9 @@ func TestBoardHTMLPointerIsWrittenForLiveAndNotForRepo(t *testing.T) {
 // board: the advertisement names the slug, because a board.html path's base name
 // would be "board" for every board in both scopes.
 func TestBoardServerInfoCarriesTheSlug(t *testing.T) {
-	got := boardServerInfo("api", "http://127.0.0.1:41234/alpha/#t=x", 7, 1700000000, "/live")
+	got := Advertise("api", "http://127.0.0.1:41234/alpha/#t=x", 7, 1700000000, "/live")
 	if got == nil {
-		t.Fatal("boardServerInfo = nil, want the live advertisement")
+		t.Fatal("Advertise = nil, want the live advertisement")
 	}
 	if got.Scene != "api" {
 		t.Errorf("scene = %q, want the slug api", got.Scene)
@@ -356,48 +311,11 @@ func TestBoardServerInfoCarriesTheSlug(t *testing.T) {
 	}
 }
 
-// TestBoardBlockForAnHTMLLiveBoard: the statusline finds a live HTML board from
-// the state root's files alone, on the same terms as any other live board.
-func TestBoardBlockForAnHTMLLiveBoard(t *testing.T) {
-	root := t.TempDir()
-	liveDir := filepath.Join(root, "boards", "mm_aaaaaaaaaaaa")
-	if err := board.WritePointer(liveDir, "api"); err != nil {
-		t.Fatalf("WritePointer: %v", err)
-	}
-	info := board.ServerInfo{
-		Scene: "api", URL: "http://127.0.0.1:41234/alpha/#t=x",
-		Port: 41234, PID: 7, StartedAt: 1700000000,
-	}
-	if err := board.WriteServerInfo(liveDir, info); err != nil {
-		t.Fatalf("WriteServerInfo: %v", err)
-	}
-	procStart := func(pid int) (int64, error) {
-		if pid == 7 {
-			return 1700000000, nil
-		}
-		return 0, os.ErrNotExist
-	}
-
-	got := boardBlockFor(root, "mm_aaaaaaaaaaaa", procStart)
-	if got == nil {
-		t.Fatal("boardBlockFor = nil, want the live HTML board")
-	}
-	if got.Name != "api" {
-		t.Errorf("name = %q, want the slug api", got.Name)
-	}
-	if got.URL != info.URL {
-		t.Errorf("url = %q, want %q", got.URL, info.URL)
-	}
-	if got.Scope != string(board.ScopeLive) {
-		t.Errorf("scope = %q, want live", got.Scope)
-	}
-}
-
 // TestBoardHTMLExternalWarningNamesTheFirstReference is the startup warning: one
 // line, naming the first reference and the count.
 func TestBoardHTMLExternalWarningNamesTheFirstReference(t *testing.T) {
 	dir := t.TempDir()
-	got := boardHTMLExternalRefs(seedBoardHTML(t, dir, []byte(
+	got := HTMLExternalRefs(seedBoardHTML(t, dir, []byte(
 		`<img src="https://cdn.example/a.png"><img src="https://cdn.example/b.png">`)))
 	if len(got) != 2 {
 		t.Fatalf("refs = %v, want two", got)
@@ -411,11 +329,11 @@ func TestBoardHTMLExternalWarningNamesTheFirstReference(t *testing.T) {
 // board that does not exist yet both say nothing.
 func TestBoardHTMLExternalWarningIsQuietWhenOffline(t *testing.T) {
 	dir := t.TempDir()
-	if got := boardHTMLExternalRefs(seedBoardHTML(t, dir, []byte(
+	if got := HTMLExternalRefs(seedBoardHTML(t, dir, []byte(
 		`<h1>board</h1><svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>`))); len(got) != 0 {
 		t.Errorf("refs = %v, want none", got)
 	}
-	if got := boardHTMLExternalRefs(filepath.Join(dir, "does-not-exist", "board.html")); len(got) != 0 {
+	if got := HTMLExternalRefs(filepath.Join(dir, "does-not-exist", "board.html")); len(got) != 0 {
 		t.Errorf("refs for a missing board = %v, want none", got)
 	}
 }

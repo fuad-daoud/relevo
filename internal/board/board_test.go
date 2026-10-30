@@ -1,73 +1,80 @@
-package main
+package board
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync/atomic"
 	"testing"
+	"time"
 
-	"github.com/fuad-daoud/relevo/internal/board"
+	"github.com/fuad-daoud/relevo/internal/board/theme"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 )
 
-// TestBoardIsAPeekVerb pins the route: board and its subverbs neither dial the
-// machine database nor capture the agy environment.
-func TestBoardIsAPeekVerb(t *testing.T) {
-	for _, args := range [][]string{{"board"}, {"board", "url"}, {"board", "comments"}, {"board", "comment"}} {
-		if !isPeekArgs(args) {
-			t.Errorf("isPeekArgs(%q) = false, want true", args)
-		}
-		if mode, _, _ := routeForArgs(args); mode != routeNone {
-			t.Errorf("routeForArgs(%q) = %v, want none", args, mode)
-		}
-		if peek := installRouteForArgs(args); !peek {
-			t.Errorf("installRouteForArgs(%q) = false, want the peek that skips capture", args)
-		}
+// testDeps returns Deps with hermetic defaults: no repository, an empty git
+// config, the seed palettes, the real clock, the isolated live root, a real
+// read-only opener, and a registry lookup without CLI codes. Tests override
+// the fields they pin.
+func testDeps(t *testing.T) Deps {
+	t.Helper()
+	return Deps{
+		Listen: func() (net.Listener, error) {
+			return nil, errors.New("board: no listener in tests")
+		},
+		Open: func(string) error {
+			return errors.New("board: no browser in tests")
+		},
+		ProcStart: func(int) (int64, error) {
+			return 0, errors.New("board: no proc start in tests")
+		},
+		RepoRoot: func(string) (string, error) {
+			return "", errors.New("no repository")
+		},
+		GitConfig: func(string, string) (string, error) {
+			return "", nil
+		},
+		ThemeSets: func(string) (string, map[string]Theme, error) {
+			return "", theme.Seed(), nil
+		},
+		Now:      time.Now,
+		LiveRoot: LiveRoot,
+		DialOwner: func(context.Context, string, time.Duration) (*db.DB, error) {
+			return nil, errors.New("board: no owner in tests")
+		},
+		OpenDB: func(path string, o db.Options) (*db.DB, error) {
+			return db.OpenReadOnlySplit(path, o)
+		},
+		DialBudget: time.Second,
+		OwnerSocket: func(string) (string, error) {
+			return "", errors.New("board: no owner socket in tests")
+		},
+		MastermindLookup: testMastermindLookup,
 	}
 }
 
-// TestBoardRefusesOutsideRepoForAnExplicitPath: without a repository an
-// explicit scene path is usage. A bare board is the live board now, so it no
-// longer consults the repository at all.
-func TestBoardRefusesOutsideRepoForAnExplicitPath(t *testing.T) {
-	orig := boardRepoRootFn
-	boardRepoRootFn = func(string) (string, error) { return "", errors.New("not a git repository") }
-	t.Cleanup(func() { boardRepoRootFn = orig })
-
-	err := cmdBoard([]string{"docs/boards/board.excalidraw"})
-	requireCLIError(t, err, codeUsage, "relevo help")
-}
-
-// TestBoardRefusesBadTheme: an unknown theme is usage and names the set the
-// resolution consulted.
-func TestBoardRefusesBadTheme(t *testing.T) {
-	withTempRepoRoot(t)
-	ce := requireCLIError(t, cmdBoard([]string{"--theme", "nope"}), codeUsage, "relevo help")
-	if !strings.Contains(ce.message, "cockpit") || !strings.Contains(ce.message, "blueprint") {
-		t.Errorf("refusal %q does not list the consulted set", ce.message)
+// testMastermindLookup resolves one ref against the registry without CLI
+// codes: an id ref through Get, a name ref through ByName.
+func testMastermindLookup(reg mastermind.Registry, ref string) (mastermind.Record, error) {
+	if mastermind.ValidID(ref) == nil {
+		return reg.Get(ref)
 	}
+	return reg.ByName(ref)
 }
 
-// TestBoardRefusesBadPath: a path that is not a scene is usage.
-func TestBoardRefusesBadPath(t *testing.T) {
-	withTempRepoRoot(t)
-	requireCLIError(t, cmdBoard([]string{"notes.txt"}), codeUsage, "")
-}
-
-// withTempRepoRoot points the repo-root seam at a temp dir for one test.
-func withTempRepoRoot(t *testing.T) string {
+// withTempRepoRoot points the repo-root dependency at a temp dir for one test.
+func withTempRepoRoot(t *testing.T, deps *Deps) string {
 	t.Helper()
 	dir := t.TempDir()
-	orig := boardRepoRootFn
-	boardRepoRootFn = func(string) (string, error) { return dir, nil }
-	t.Cleanup(func() { boardRepoRootFn = orig })
-	seamlessBoard(t)
+	deps.RepoRoot = func(string) (string, error) { return dir, nil }
 	return dir
 }
 
@@ -111,19 +118,84 @@ func boardStateRoot(t *testing.T) string {
 	return filepath.Join(stateHome, "relevo", "boards")
 }
 
-// stubRepoSeamAbsent stubs the repository seam to report no repository. A live
-// board outside a repository still resolves (S2/R6), so a missing repository is
-// tolerated rather than a test failure.
-func stubRepoSeamAbsent(t *testing.T) {
+// captureOutput runs fn with stdout and stderr redirected and returns what
+// each printed. It reads the pipes only after the writers are closed, so a
+// small print cannot fill the pipe buffer and deadlock the verb under test.
+func captureOutput(t *testing.T, fn func() error) (stdout []byte, stderr []byte, err error) {
 	t.Helper()
-	orig := boardRepoRootFn
-	boardRepoRootFn = func(string) (string, error) { return "", errors.New("no repository") }
-	t.Cleanup(func() { boardRepoRootFn = orig })
+
+	origStdout := os.Stdout
+	origStderr := os.Stderr
+
+	rOut, wOut, errOut := os.Pipe()
+	if errOut != nil {
+		t.Fatalf("pipe: %v", errOut)
+	}
+	rErr, wErr, errPipe := os.Pipe()
+	if errPipe != nil {
+		t.Fatalf("pipe: %v", errPipe)
+	}
+
+	os.Stdout = wOut
+	os.Stderr = wErr
+
+	runErr := fn()
+
+	_ = wOut.Close()
+	_ = wErr.Close()
+
+	os.Stdout = origStdout
+	os.Stderr = origStderr
+
+	outBytes, _ := io.ReadAll(rOut)
+	errBytes, _ := io.ReadAll(rErr)
+
+	return outBytes, errBytes, runErr
+}
+
+// TestBoardRefusesOutsideRepoForAnExplicitPath: without a repository an
+// explicit scene path is usage. A bare board is the live board now, so it no
+// longer consults the repository at all.
+func TestBoardRefusesOutsideRepoForAnExplicitPath(t *testing.T) {
+	boardStateRoot(t)
+	deps := testDeps(t)
+
+	err := Run(deps, t.TempDir(), "", "", "", "docs/boards/board.excalidraw", false, nil)
+	if !errors.Is(err, ErrUsage) {
+		t.Errorf("Run(explicit path, no repo) = %v, want ErrUsage", err)
+	}
+}
+
+// TestBoardRefusesBadTheme: an unknown theme is usage and names the set the
+// resolution consulted.
+func TestBoardRefusesBadTheme(t *testing.T) {
+	boardStateRoot(t)
+	deps := testDeps(t)
+	dir := withTempRepoRoot(t, &deps)
+
+	err := Run(deps, dir, "", "nope", "", "", false, nil)
+	if !errors.Is(err, theme.ErrUsage) {
+		t.Fatalf("Run(--theme nope) = %v, want the palette refusal", err)
+	}
+	if !strings.Contains(err.Error(), "cockpit") || !strings.Contains(err.Error(), "blueprint") {
+		t.Errorf("refusal %q does not list the consulted set", err)
+	}
+}
+
+// TestBoardRefusesBadPath: a path that is not a scene is usage.
+func TestBoardRefusesBadPath(t *testing.T) {
+	boardStateRoot(t)
+	deps := testDeps(t)
+	dir := withTempRepoRoot(t, &deps)
+
+	if err := Run(deps, dir, "", "", "", "notes.txt", false, nil); !errors.Is(err, ErrUsage) {
+		t.Errorf("Run(notes.txt) = %v, want ErrUsage", err)
+	}
 }
 
 func TestBoardResolvesExplicitLivePath(t *testing.T) {
 	liveRoot := boardStateRoot(t)
-	stubRepoSeamAbsent(t)
+	deps := testDeps(t)
 	id := "mm_aaaaaaaaaaaa"
 	liveDir := filepath.Join(liveRoot, id)
 	if err := os.MkdirAll(liveDir, 0o700); err != nil {
@@ -131,9 +203,9 @@ func TestBoardResolvesExplicitLivePath(t *testing.T) {
 	}
 	scene := filepath.Join(liveDir, "board.excalidraw")
 
-	res, err := resolveBoard(t.TempDir(), "", "", scene)
+	res, err := ResolveScene(deps, t.TempDir(), "", "", scene)
 	if err != nil {
-		t.Fatalf("resolveBoard: %v", err)
+		t.Fatalf("ResolveScene: %v", err)
 	}
 	// Paths leave canonicalized, so compare against the symlink-resolved
 	// spellings: on macOS t.TempDir sits under /var, a symlink to /private/var.
@@ -143,21 +215,22 @@ func TestBoardResolvesExplicitLivePath(t *testing.T) {
 		t.Fatalf("EvalSymlinks liveDir: %v", err)
 	}
 	wantPath := filepath.Join(wantDir, "board.excalidraw")
-	if res.Scope != board.ScopeLive || res.Scene != "board" || res.Path != wantPath || res.LiveDir != wantDir {
-		t.Errorf("resolveBoard = %+v", res)
+	if res.Scope != ScopeLive || res.Scene != "board" || res.Path != wantPath || res.LiveDir != wantDir {
+		t.Errorf("ResolveScene = %+v", res)
 	}
 }
 
 func TestBoardResolvesExplicitRepoPath(t *testing.T) {
 	boardStateRoot(t)
-	repoRoot := withTempRepoRoot(t)
+	deps := testDeps(t)
+	repoRoot := withTempRepoRoot(t, &deps)
 
-	res, err := resolveBoard(repoRoot, "", "", "docs/boards/api.excalidraw")
+	res, err := ResolveScene(deps, repoRoot, "", "", "docs/boards/api.excalidraw")
 	if err != nil {
-		t.Fatalf("resolveBoard: %v", err)
+		t.Fatalf("ResolveScene: %v", err)
 	}
-	if res.Scope != board.ScopeRepo || res.Scene != "api" {
-		t.Errorf("resolveBoard = %+v, want a repo api scene", res)
+	if res.Scope != ScopeRepo || res.Scene != "api" {
+		t.Errorf("ResolveScene = %+v, want a repo api scene", res)
 	}
 	if want := filepath.Join(repoRoot, "docs", "boards", "api.excalidraw"); res.Path != want {
 		t.Errorf("path = %q, want %q", res.Path, want)
@@ -166,31 +239,31 @@ func TestBoardResolvesExplicitRepoPath(t *testing.T) {
 
 func TestBoardBareAndFlagAreLiveWithoutARepo(t *testing.T) {
 	liveRoot := boardStateRoot(t)
+	deps := testDeps(t)
 	seedBoardRecords(t, filepath.Dir(filepath.Dir(liveRoot)), boardRecord("mm_aaaaaaaaaaaa", "alpha"))
-	stubRepoSeamAbsent(t)
 	cwd := t.TempDir()
 
-	res, err := resolveBoard(cwd, "", "", "")
+	res, err := ResolveScene(deps, cwd, "", "", "")
 	if err != nil {
-		t.Fatalf("resolveBoard(bare): %v", err)
+		t.Fatalf("ResolveScene(bare): %v", err)
 	}
-	if res.Scope != board.ScopeLive || res.Scene != board.DefaultBoard || res.FromPointer {
+	if res.Scope != ScopeLive || res.Scene != DefaultBoard || res.FromPointer {
 		t.Errorf("bare board = %+v, want live default", res)
 	}
 	if want := filepath.Join(liveRoot, "mm_aaaaaaaaaaaa"); res.LiveDir != want {
 		t.Errorf("live dir = %q, want %q", res.LiveDir, want)
 	}
 
-	res, err = resolveBoard(cwd, "", "notes", "")
+	res, err = ResolveScene(deps, cwd, "", "notes", "")
 	if err != nil {
-		t.Fatalf("resolveBoard(--board): %v", err)
+		t.Fatalf("ResolveScene(--board): %v", err)
 	}
-	if res.Scope != board.ScopeLive || res.Scene != "notes" {
+	if res.Scope != ScopeLive || res.Scene != "notes" {
 		t.Errorf("--board notes = %+v, want live notes", res)
 	}
 }
 
-// TestBoardRefusesNestedScopes pins S5 at the CLI: every form of `relevo board`
+// TestBoardRefusesNestedScopes pins S5: every form of `relevo board`
 // refuses when the repository root and the live scope nest, in either
 // direction, before any pointer write or listener.
 func TestBoardRefusesNestedScopes(t *testing.T) {
@@ -207,6 +280,7 @@ func TestBoardRefusesNestedScopes(t *testing.T) {
 	for _, form := range forms {
 		t.Run(form.name, func(t *testing.T) {
 			liveRoot := boardStateRoot(t)
+			deps := testDeps(t)
 			id := "mm_aaaaaaaaaaaa"
 			liveDir := filepath.Join(liveRoot, id)
 			repoRoot := filepath.Dir(filepath.Dir(liveRoot))
@@ -218,20 +292,20 @@ func TestBoardRefusesNestedScopes(t *testing.T) {
 				arg = filepath.Join(liveDir, "board.excalidraw")
 			}
 
-			orig := boardRepoRootFn
-			boardRepoRootFn = func(string) (string, error) { return repoRoot, nil }
-			t.Cleanup(func() { boardRepoRootFn = orig })
+			deps.RepoRoot = func(string) (string, error) { return repoRoot, nil }
 
 			// cwd is the repo root so the explicit-repo-path form would
 			// resolve -- not refuse -- without C2's wiring.
-			_, err := resolveBoard(repoRoot, id, form.flag, arg)
-			requireCLIError(t, err, codeUsage, "")
+			if _, err := ResolveScene(deps, repoRoot, id, form.flag, arg); !errors.Is(err, ErrUsage) {
+				t.Errorf("ResolveScene(%q) = %v, want ErrUsage", form.name, err)
+			}
 		})
 	}
 
 	// And the reverse: the repository root under the live scope.
 	t.Run("repository root under the live scope", func(t *testing.T) {
 		liveRoot := boardStateRoot(t)
+		deps := testDeps(t)
 		id := "mm_aaaaaaaaaaaa"
 		liveDir := filepath.Join(liveRoot, id)
 		repoRoot := filepath.Join(liveDir, "repo")
@@ -239,72 +313,87 @@ func TestBoardRefusesNestedScopes(t *testing.T) {
 			t.Fatalf("MkdirAll: %v", err)
 		}
 
-		orig := boardRepoRootFn
-		boardRepoRootFn = func(string) (string, error) { return repoRoot, nil }
-		t.Cleanup(func() { boardRepoRootFn = orig })
+		deps.RepoRoot = func(string) (string, error) { return repoRoot, nil }
 
-		_, err := resolveBoard(repoRoot, id, "", "")
-		requireCLIError(t, err, codeUsage, "")
+		if _, err := ResolveScene(deps, repoRoot, id, "", ""); !errors.Is(err, ErrUsage) {
+			t.Errorf("ResolveScene(repo under live) = %v, want ErrUsage", err)
+		}
 	})
 }
 
 func TestBoardPathAndFlagAreExclusive(t *testing.T) {
 	boardStateRoot(t)
-	_, err := resolveBoard(t.TempDir(), "", "notes", "docs/boards/x.excalidraw")
-	requireCLIError(t, err, codeUsage, "")
+	deps := testDeps(t)
+	if _, err := ResolveScene(deps, t.TempDir(), "", "notes", "docs/boards/x.excalidraw"); !errors.Is(err, ErrUsage) {
+		t.Errorf("ResolveScene(path and --board) = %v, want ErrUsage", err)
+	}
 }
 
 func TestBoardDisagreeingMastermindRefused(t *testing.T) {
 	liveRoot := boardStateRoot(t)
+	deps := testDeps(t)
 	liveDir := filepath.Join(liveRoot, "mm_aaaaaaaaaaaa")
 	if err := os.MkdirAll(liveDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	scene := filepath.Join(liveDir, "board.excalidraw")
-	_, err := resolveBoard(t.TempDir(), "mm_bbbbbbbbbbbb", "", scene)
-	requireCLIError(t, err, codeUsage, "")
+	if _, err := ResolveScene(deps, t.TempDir(), "mm_bbbbbbbbbbbb", "", scene); !errors.Is(err, ErrUsage) {
+		t.Errorf("ResolveScene(disagreeing ref) = %v, want ErrUsage", err)
+	}
 }
 
 func TestBoardUnknownRefIsNotFound(t *testing.T) {
 	stateHome := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", stateHome)
+	deps := testDeps(t)
 	seedBoardRecords(t, stateHome, boardRecord("mm_aaaaaaaaaaaa", "alpha"))
-	_, err := resolveBoard(t.TempDir(), "nosuch", "", "")
-	requireCLIError(t, err, codeMastermindNotFound, "")
+	if _, err := ResolveScene(deps, t.TempDir(), "nosuch", "", ""); !errors.Is(err, mastermind.ErrNotFound) {
+		t.Errorf("ResolveScene(unknown ref) = %v, want mastermind.ErrNotFound", err)
+	}
 }
 
 func TestBoardTwoRecordsAreListed(t *testing.T) {
 	stateHome := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", stateHome)
+	deps := testDeps(t)
 	seedBoardRecords(t, stateHome,
 		boardRecord("mm_aaaaaaaaaaaa", "alpha"),
 		boardRecord("mm_bbbbbbbbbbbb", "beta"),
 	)
-	_, err := resolveBoard(t.TempDir(), "", "", "")
-	ce := requireCLIError(t, err, codeUsage, "")
-	if !strings.Contains(ce.message, "alpha") || !strings.Contains(ce.message, "beta") {
-		t.Errorf("refusal %q does not list both records", ce.message)
+	_, err := ResolveScene(deps, t.TempDir(), "", "", "")
+	if !errors.Is(err, ErrUsage) {
+		t.Fatalf("ResolveScene(two records) = %v, want ErrUsage", err)
+	}
+	if !strings.Contains(err.Error(), "alpha") || !strings.Contains(err.Error(), "beta") {
+		t.Errorf("refusal %q does not list both records", err)
 	}
 }
 
 func TestBoardZeroRecordsNamesInit(t *testing.T) {
 	stateHome := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", stateHome)
+	deps := testDeps(t)
 	seedBoardRecords(t, stateHome) // an existing database with no records
-	_, err := resolveBoard(t.TempDir(), "", "", "")
-	ce := requireCLIError(t, err, codeUsage, "")
-	if !strings.Contains(ce.message, "mastermind init") {
-		t.Errorf("refusal %q does not name relevo mastermind init", ce.message)
+	_, err := ResolveScene(deps, t.TempDir(), "", "", "")
+	if !errors.Is(err, ErrUsage) {
+		t.Fatalf("ResolveScene(zero records) = %v, want ErrUsage", err)
+	}
+	if !strings.Contains(err.Error(), "mastermind init") {
+		t.Errorf("refusal %q does not name relevo mastermind init", err)
 	}
 }
 
 func TestBoardNoDatabaseNameRefRefuses(t *testing.T) {
 	boardStateRoot(t) // no relevo.db is created
+	deps := testDeps(t)
 	for _, ref := range []string{"alpha", ""} {
-		_, err := resolveBoard(t.TempDir(), ref, "", "")
-		ce := requireCLIError(t, err, codeRefused, "")
-		if !strings.Contains(ce.message, "--mastermind") {
-			t.Errorf("refusal %q does not name --mastermind", ce.message)
+		_, err := ResolveScene(deps, t.TempDir(), ref, "", "")
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("ResolveScene(%q, no database) = %v, want ErrNotFound", ref, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "--mastermind") {
+			t.Errorf("refusal %q does not name --mastermind", err)
 		}
 	}
 }
@@ -312,14 +401,15 @@ func TestBoardNoDatabaseNameRefRefuses(t *testing.T) {
 func TestBoardIDRefNeedsNoDatabase(t *testing.T) {
 	stateHome := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", stateHome)
+	deps := testDeps(t)
 	liveRoot := filepath.Join(stateHome, "relevo", "boards")
 
-	res, err := resolveBoard(t.TempDir(), "mm_bbbbbbbbbbbb", "", "")
+	res, err := ResolveScene(deps, t.TempDir(), "mm_bbbbbbbbbbbb", "", "")
 	if err != nil {
-		t.Fatalf("resolveBoard(id ref): %v", err)
+		t.Fatalf("ResolveScene(id ref): %v", err)
 	}
-	if res.Scope != board.ScopeLive || res.LiveDir != filepath.Join(liveRoot, "mm_bbbbbbbbbbbb") {
-		t.Errorf("resolveBoard(id ref) = %+v", res)
+	if res.Scope != ScopeLive || res.LiveDir != filepath.Join(liveRoot, "mm_bbbbbbbbbbbb") {
+		t.Errorf("ResolveScene(id ref) = %+v", res)
 	}
 	if _, err := os.Stat(filepath.Join(stateHome, "relevo", "relevo.db")); !os.IsNotExist(err) {
 		t.Errorf("an id ref created a database: stat error = %v, want not-exist", err)
@@ -331,28 +421,35 @@ func TestBoardIDRefNeedsNoDatabase(t *testing.T) {
 func seedLiveBoard(t *testing.T, liveRoot, id, scene, url string) string {
 	t.Helper()
 	liveDir := filepath.Join(liveRoot, id)
-	if err := board.WritePointer(liveDir, scene); err != nil {
+	if err := WritePointer(liveDir, scene); err != nil {
 		t.Fatalf("WritePointer: %v", err)
 	}
-	started, err := procStartUnix(os.Getpid())
-	if err != nil {
-		t.Skipf("process start time unavailable: %v", err)
-	}
-	info := board.ServerInfo{Scene: scene, URL: url, Port: 1, PID: os.Getpid(), StartedAt: started}
-	if err := board.WriteServerInfo(liveDir, info); err != nil {
+	info := ServerInfo{Scene: scene, URL: url, Port: 1, PID: os.Getpid(), StartedAt: 4242}
+	if err := WriteServerInfo(liveDir, info); err != nil {
 		t.Fatalf("WriteServerInfo: %v", err)
 	}
 	return liveDir
 }
 
+// liveProcStart answers this process's start with 4242 and refuses every other
+// pid, so a live server.json the test wrote reads live and any other pid reads
+// dead.
+func liveProcStart(pid int) (int64, error) {
+	if pid == os.Getpid() {
+		return 4242, nil
+	}
+	return 0, errors.New("gone")
+}
+
 func TestBoardURLAlive(t *testing.T) {
 	liveRoot := boardStateRoot(t)
+	deps := testDeps(t)
+	deps.ProcStart = liveProcStart
 	id := "mm_aaaaaaaaaaaa"
 	url := "http://127.0.0.1:41234/#t=deadbeef"
 	seedLiveBoard(t, liveRoot, id, "board", url)
-	t.Setenv("RELEVO_MASTERMIND", id)
 
-	stdout, stderr, err := captureOutput(t, func() error { return cmdBoardURL(nil) })
+	stdout, stderr, err := captureOutput(t, func() error { return URL(deps, id, "") })
 	if err != nil {
 		t.Fatalf("board url: %v (stderr %s)", err, stderr)
 	}
@@ -363,12 +460,13 @@ func TestBoardURLAlive(t *testing.T) {
 
 func TestBoardURLBoardFlag(t *testing.T) {
 	liveRoot := boardStateRoot(t)
+	deps := testDeps(t)
+	deps.ProcStart = liveProcStart
 	id := "mm_aaaaaaaaaaaa"
 	url := "http://127.0.0.1:40001/#t=cafe"
 	seedLiveBoard(t, liveRoot, id, "notes", url)
-	t.Setenv("RELEVO_MASTERMIND", id)
 
-	stdout, stderr, err := captureOutput(t, func() error { return cmdBoardURL([]string{"--board", "notes"}) })
+	stdout, stderr, err := captureOutput(t, func() error { return URL(deps, id, "notes") })
 	if err != nil {
 		t.Fatalf("board url --board notes: %v (stderr %s)", err, stderr)
 	}
@@ -383,21 +481,21 @@ func TestBoardURLNotAvailable(t *testing.T) {
 		setup func(t *testing.T, liveRoot, id string) string
 	}{
 		{"missing pointer", func(t *testing.T, liveRoot, id string) string {
-			return board.DefaultBoard
+			return DefaultBoard
 		}},
 		{"pointer without server", func(t *testing.T, liveRoot, id string) string {
-			if err := board.WritePointer(filepath.Join(liveRoot, id), "board"); err != nil {
+			if err := WritePointer(filepath.Join(liveRoot, id), "board"); err != nil {
 				t.Fatalf("WritePointer: %v", err)
 			}
 			return "board"
 		}},
 		{"dead pid", func(t *testing.T, liveRoot, id string) string {
 			liveDir := filepath.Join(liveRoot, id)
-			if err := board.WritePointer(liveDir, "board"); err != nil {
+			if err := WritePointer(liveDir, "board"); err != nil {
 				t.Fatalf("WritePointer: %v", err)
 			}
-			info := board.ServerInfo{Scene: "board", URL: "http://127.0.0.1:1/#t=x", Port: 1, PID: 1 << 30, StartedAt: 123}
-			if err := board.WriteServerInfo(liveDir, info); err != nil {
+			info := ServerInfo{Scene: "board", URL: "http://127.0.0.1:1/#t=x", Port: 1, PID: 1 << 30, StartedAt: 123}
+			if err := WriteServerInfo(liveDir, info); err != nil {
 				t.Fatalf("WriteServerInfo: %v", err)
 			}
 			return "board"
@@ -406,17 +504,20 @@ func TestBoardURLNotAvailable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			liveRoot := boardStateRoot(t)
+			deps := testDeps(t)
+			deps.ProcStart = liveProcStart
 			id := "mm_aaaaaaaaaaaa"
 			scene := tc.setup(t, liveRoot, id)
-			t.Setenv("RELEVO_MASTERMIND", id)
 
-			stdout, _, err := captureOutput(t, func() error { return cmdBoardURL(nil) })
-			ce := requireCLIError(t, err, codeNotAvailable, "")
+			stdout, _, err := captureOutput(t, func() error { return URL(deps, id, "") })
+			if !errors.Is(err, ErrNotAvailable) {
+				t.Fatalf("board url = %v, want ErrNotAvailable", err)
+			}
 			if len(stdout) != 0 {
 				t.Errorf("stdout = %q, want it empty", stdout)
 			}
-			if !strings.Contains(ce.message, scene) || !strings.Contains(ce.message, id) {
-				t.Errorf("refusal %q must name scene %q and MasterMind %s", ce.message, scene, id)
+			if !strings.Contains(err.Error(), scene) || !strings.Contains(err.Error(), id) {
+				t.Errorf("refusal %q must name scene %q and MasterMind %s", err, scene, id)
 			}
 		})
 	}
@@ -424,66 +525,30 @@ func TestBoardURLNotAvailable(t *testing.T) {
 
 func TestBoardURLDoesNotWritePointer(t *testing.T) {
 	liveRoot := boardStateRoot(t)
+	deps := testDeps(t)
+	deps.ProcStart = liveProcStart
 	id := "mm_aaaaaaaaaaaa"
-	t.Setenv("RELEVO_MASTERMIND", id)
 
-	_, _, err := captureOutput(t, func() error { return cmdBoardURL(nil) })
-	requireCLIError(t, err, codeNotAvailable, "")
+	_, _, err := captureOutput(t, func() error { return URL(deps, id, "") })
+	if !errors.Is(err, ErrNotAvailable) {
+		t.Fatalf("board url = %v, want ErrNotAvailable", err)
+	}
 	if _, statErr := os.Stat(filepath.Join(liveRoot, id, "current")); !os.IsNotExist(statErr) {
 		t.Errorf("board url wrote the pointer: stat error = %v, want not-exist", statErr)
-	}
-}
-
-// TestBoardResolutionNeverStartsTheDaemon is R5's proof: resolving a name
-// against a seeded database starts nothing, binds no socket and writes nothing.
-func TestBoardResolutionNeverStartsTheDaemon(t *testing.T) {
-	stateHome := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", stateHome)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(stateHome, "config"))
-	t.Setenv("HOME", stateHome)
-	seedBoardRecords(t, stateHome, boardRecord("mm_aaaaaaaaaaaa", "alpha"))
-
-	var calls int32
-	daemonStarter = func() error { atomic.AddInt32(&calls, 1); return nil }
-	t.Cleanup(func() { daemonStarter = startDaemon })
-	stubRepoSeamAbsent(t)
-
-	res, err := resolveBoard(t.TempDir(), "alpha", "", "")
-	if err != nil {
-		t.Fatalf("resolveBoard(name): %v", err)
-	}
-	if res.Scope != board.ScopeLive || res.Scene != board.DefaultBoard {
-		t.Errorf("resolveBoard(name) = %+v, want the live default", res)
-	}
-	if got := atomic.LoadInt32(&calls); got != 0 {
-		t.Errorf("resolution started the daemon %d times, want 0", got)
-	}
-	if _, err := os.Stat(filepath.Join(stateHome, "relevo", "relevo.sock")); !os.IsNotExist(err) {
-		t.Errorf("resolution created a socket: stat error = %v, want not-exist", err)
 	}
 }
 
 // TestBoardServerInfoComposition pins the advertisement a live board composes:
 // nil for a repo board, the five fields for a live one (S6).
 func TestBoardServerInfoComposition(t *testing.T) {
-	if got := boardServerInfo("board", "http://127.0.0.1:41234/#t=x", 7, 1700000000, ""); got != nil {
+	if got := Advertise("board", "http://127.0.0.1:41234/#t=x", 7, 1700000000, ""); got != nil {
 		t.Errorf("repo scope = %+v, want nil", got)
 	}
-	got := boardServerInfo("board", "http://127.0.0.1:41234/#t=x", 7, 1700000000, "/live")
-	want := board.ServerInfo{Scene: "board", URL: "http://127.0.0.1:41234/#t=x", Port: 41234, PID: 7, StartedAt: 1700000000}
+	got := Advertise("board", "http://127.0.0.1:41234/#t=x", 7, 1700000000, "/live")
+	want := ServerInfo{Scene: "board", URL: "http://127.0.0.1:41234/#t=x", Port: 41234, PID: 7, StartedAt: 1700000000}
 	if got == nil || *got != want {
 		t.Errorf("live scope = %+v, want %+v", got, want)
 	}
-}
-
-// cockpitConfig points the theme resolver at the built-in default, so a test
-// never reads the machine's git config or its own state.
-func cockpitConfig(t *testing.T) {
-	t.Helper()
-	seamlessBoard(t)
-	orig := boardGitConfig
-	boardGitConfig = func(string, string) (string, error) { return "", nil }
-	t.Cleanup(func() { boardGitConfig = orig })
 }
 
 // seedBoardScene writes a scene into root and returns its absolute path.
@@ -515,9 +580,9 @@ func readBoardElements(t *testing.T, path string) []map[string]any {
 // TestBoardTextJSONDocument pins `board text --json`: one line, field order
 // id/x/y/text, x/y as JSON numbers, deleted and non-text elements skipped.
 func TestBoardTextJSONDocument(t *testing.T) {
-	cockpitConfig(t)
-	root := withTempRepoRoot(t)
-	t.Chdir(root)
+	boardStateRoot(t)
+	deps := testDeps(t)
+	root := withTempRepoRoot(t, &deps)
 	seedBoardScene(t, root, "board.excalidraw",
 		`{"type":"excalidraw","elements":[`+
 			`{"id":"a","type":"text","x":10,"y":20,"text":"hello"},`+
@@ -526,7 +591,7 @@ func TestBoardTextJSONDocument(t *testing.T) {
 			`{"id":"c","type":"text","x":1,"y":1,"text":"gone","isDeleted":true}]}`)
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return run([]string{"board", "text", "board.excalidraw", "--json"})
+		return Text(deps, root, "board.excalidraw", true)
 	})
 	if err != nil {
 		t.Fatalf("board text --json: %v (stderr %s)", err, stderr)
@@ -540,13 +605,13 @@ func TestBoardTextJSONDocument(t *testing.T) {
 
 // TestTextJSONEmptyIsEmptyArray pins the empty document as `[]`, never `null`.
 func TestTextJSONEmptyIsEmptyArray(t *testing.T) {
-	cockpitConfig(t)
-	root := withTempRepoRoot(t)
-	t.Chdir(root)
+	boardStateRoot(t)
+	deps := testDeps(t)
+	root := withTempRepoRoot(t, &deps)
 	seedBoardScene(t, root, "board.excalidraw", `{"type":"excalidraw","elements":[]}`)
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return run([]string{"board", "text", "board.excalidraw", "--json"})
+		return Text(deps, root, "board.excalidraw", true)
 	})
 	if err != nil {
 		t.Fatalf("board text --json: %v (stderr %s)", err, stderr)
@@ -559,16 +624,16 @@ func TestTextJSONEmptyIsEmptyArray(t *testing.T) {
 // TestBoardTextHumanRows pins the human form: one row per element through the
 // tabwriter, no header, and nothing at all for an empty scene.
 func TestBoardTextHumanRows(t *testing.T) {
-	cockpitConfig(t)
-	root := withTempRepoRoot(t)
-	t.Chdir(root)
+	boardStateRoot(t)
+	deps := testDeps(t)
+	root := withTempRepoRoot(t, &deps)
 	seedBoardScene(t, root, "board.excalidraw",
 		`{"type":"excalidraw","elements":[`+
 			`{"id":"a","type":"text","x":10,"y":20,"text":"hello"},`+
 			`{"id":"b","type":"text","x":12.5,"y":0,"text":"two"}]}`)
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return run([]string{"board", "text", "board.excalidraw"})
+		return Text(deps, root, "board.excalidraw", false)
 	})
 	if err != nil {
 		t.Fatalf("board text: %v (stderr %s)", err, stderr)
@@ -586,7 +651,7 @@ func TestBoardTextHumanRows(t *testing.T) {
 
 	seedBoardScene(t, root, "empty.excalidraw", `{"type":"excalidraw","elements":[]}`)
 	stdout, _, err = captureOutput(t, func() error {
-		return run([]string{"board", "text", "empty.excalidraw"})
+		return Text(deps, root, "empty.excalidraw", false)
 	})
 	if err != nil {
 		t.Fatalf("board text empty: %v", err)
@@ -599,13 +664,13 @@ func TestBoardTextHumanRows(t *testing.T) {
 // TestBoardAnnotateAppends pins the annotate happy path: the stdout line, and
 // a well-formed appended element that keeps the scene's other bytes.
 func TestBoardAnnotateAppends(t *testing.T) {
-	cockpitConfig(t)
-	root := withTempRepoRoot(t)
-	t.Chdir(root)
+	boardStateRoot(t)
+	deps := testDeps(t)
+	root := withTempRepoRoot(t, &deps)
 	path := seedBoardScene(t, root, "board.excalidraw", `{"type":"excalidraw","elements":[]}`)
 
 	stdout, stderr, err := captureOutput(t, func() error {
-		return run([]string{"board", "annotate", "board.excalidraw", "--text", "hello"})
+		return AnnotateScene(deps, root, "board.excalidraw", AnnotateRequest{Text: "hello", HasText: true})
 	})
 	if err != nil {
 		t.Fatalf("board annotate: %v (stderr %s)", err, stderr)
@@ -646,16 +711,15 @@ func TestBoardAnnotateAppends(t *testing.T) {
 // TestBoardAnnotateThemeInk pins that the repo-local theme key reaches the
 // appended element's stroke colour.
 func TestBoardAnnotateThemeInk(t *testing.T) {
-	orig := boardGitConfig
-	boardGitConfig = func(string, string) (string, error) { return "blueprint", nil }
-	t.Cleanup(func() { boardGitConfig = orig })
+	boardStateRoot(t)
+	deps := testDeps(t)
+	deps.GitConfig = func(string, string) (string, error) { return "blueprint", nil }
 
-	root := withTempRepoRoot(t)
-	t.Chdir(root)
+	root := withTempRepoRoot(t, &deps)
 	path := seedBoardScene(t, root, "board.excalidraw", `{"type":"excalidraw","elements":[]}`)
 
 	if _, _, err := captureOutput(t, func() error {
-		return run([]string{"board", "annotate", "board.excalidraw", "--text", "hi"})
+		return AnnotateScene(deps, root, "board.excalidraw", AnnotateRequest{Text: "hi", HasText: true})
 	}); err != nil {
 		t.Fatalf("board annotate: %v", err)
 	}
@@ -666,77 +730,74 @@ func TestBoardAnnotateThemeInk(t *testing.T) {
 
 // TestBoardTextRefusals pins text's usage and refused outcomes.
 func TestBoardTextRefusals(t *testing.T) {
-	cockpitConfig(t)
-	root := withTempRepoRoot(t)
-	t.Chdir(root)
+	boardStateRoot(t)
+	deps := testDeps(t)
+	root := withTempRepoRoot(t, &deps)
 	seedBoardScene(t, root, "bad.excalidraw", `{"type":"other","elements":[]}`)
 
 	cases := []struct {
 		name string
-		args []string
-		code errorCode
+		arg  string
+		want error
 		msg  string
 	}{
-		{"no path", []string{"board", "text"}, codeUsage, "needs one scene path"},
-		{"two paths", []string{"board", "text", "a.excalidraw", "b.excalidraw"}, codeUsage, "needs one scene path"},
-		{"unknown flag", []string{"board", "text", "--bogus", "a.excalidraw"}, codeUsage, ""},
-		{"bad extension", []string{"board", "text", "notes.txt"}, codeUsage, "excalidraw"},
-		{"missing scene", []string{"board", "text", "missing.excalidraw"}, codeRefused, "no scene at"},
-		{"invalid scene", []string{"board", "text", "bad.excalidraw"}, codeRefused, "scene type is not"},
+		{"bad extension", "notes.txt", ErrUsage, "excalidraw"},
+		{"missing scene", "missing.excalidraw", ErrNotFound, "no scene at"},
+		{"invalid scene", "bad.excalidraw", ErrInvalid, "scene type is not"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := captureOutput(t, func() error { return run(tc.args) })
-			ce := requireCLIError(t, err, tc.code, "")
-			if tc.msg != "" && !strings.Contains(ce.message, tc.msg) {
-				t.Errorf("message = %q, want it to contain %q", ce.message, tc.msg)
+			_, _, err := captureOutput(t, func() error { return Text(deps, root, tc.arg, false) })
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("Text(%q) = %v, want %v", tc.arg, err, tc.want)
+			}
+			if tc.msg != "" && !strings.Contains(err.Error(), tc.msg) {
+				t.Errorf("message = %q, want it to contain %q", err.Error(), tc.msg)
 			}
 		})
 	}
 
 	t.Run("outside repo", func(t *testing.T) {
-		orig := boardRepoRootFn
-		boardRepoRootFn = func(string) (string, error) { return "", errors.New("not a git repository") }
-		t.Cleanup(func() { boardRepoRootFn = orig })
-		_, _, err := captureOutput(t, func() error {
-			return run([]string{"board", "text", "a.excalidraw"})
-		})
-		requireCLIError(t, err, codeUsage, "")
+		deps := testDeps(t)
+		_, _, err := captureOutput(t, func() error { return Text(deps, t.TempDir(), "a.excalidraw", false) })
+		if !errors.Is(err, ErrUsage) {
+			t.Errorf("Text(outside repo) = %v, want ErrUsage", err)
+		}
 	})
 }
 
 // TestBoardAnnotateRefusals pins annotate's usage and refused outcomes, and
 // that every usage check runs before any repository or file work.
 func TestBoardAnnotateRefusals(t *testing.T) {
-	cockpitConfig(t)
-	root := withTempRepoRoot(t)
-	t.Chdir(root)
+	boardStateRoot(t)
+	deps := testDeps(t)
+	root := withTempRepoRoot(t, &deps)
 	seedBoardScene(t, root, "bad.excalidraw", `{"type":"other","elements":[]}`)
 
 	cases := []struct {
 		name string
-		args []string
-		code errorCode
+		arg  string
+		req  AnnotateRequest
+		want error
 		msg  string
 	}{
-		{"no path", []string{"board", "annotate"}, codeUsage, "needs one scene path"},
-		{"two paths", []string{"board", "annotate", "a.excalidraw", "b.excalidraw"}, codeUsage, "needs one scene path"},
-		{"text absent", []string{"board", "annotate", "a.excalidraw"}, codeUsage, "--text is required"},
-		{"text empty", []string{"board", "annotate", "a.excalidraw", "--text", ""}, codeUsage, "--text must not be empty"},
-		{"lone x", []string{"board", "annotate", "a.excalidraw", "--text", "hi", "--x", "1"}, codeUsage, "--x and --y come together"},
-		{"lone y", []string{"board", "annotate", "a.excalidraw", "--text", "hi", "--y", "1"}, codeUsage, "--x and --y come together"},
-		{"non-finite x", []string{"board", "annotate", "a.excalidraw", "--text", "hi", "--x", "NaN", "--y", "1"}, codeUsage, "--x must be a finite number"},
-		{"non-finite y", []string{"board", "annotate", "a.excalidraw", "--text", "hi", "--x", "1", "--y", "Inf"}, codeUsage, "--y must be a finite number"},
-		{"unknown flag", []string{"board", "annotate", "--bogus", "a.excalidraw", "--text", "hi"}, codeUsage, ""},
-		{"missing scene", []string{"board", "annotate", "missing.excalidraw", "--text", "hi"}, codeRefused, "no scene at"},
-		{"invalid scene", []string{"board", "annotate", "bad.excalidraw", "--text", "hi"}, codeRefused, "scene type is not"},
+		{"text absent", "a.excalidraw", AnnotateRequest{}, ErrUsage, "--text is required"},
+		{"text empty", "a.excalidraw", AnnotateRequest{Text: "", HasText: true}, ErrUsage, "--text must not be empty"},
+		{"lone x", "a.excalidraw", AnnotateRequest{Text: "hi", HasText: true, HasX: true, X: 1}, ErrUsage, "--x and --y come together"},
+		{"lone y", "a.excalidraw", AnnotateRequest{Text: "hi", HasText: true, HasY: true, Y: 1}, ErrUsage, "--x and --y come together"},
+		{"non-finite x", "a.excalidraw", AnnotateRequest{Text: "hi", HasText: true, HasX: true, HasY: true, Y: 1, X: math.NaN()}, ErrUsage, "--x must be a finite number"},
+		{"non-finite y", "a.excalidraw", AnnotateRequest{Text: "hi", HasText: true, HasX: true, HasY: true, X: 1, Y: math.Inf(1)}, ErrUsage, "--y must be a finite number"},
+		{"missing scene", "missing.excalidraw", AnnotateRequest{Text: "hi", HasText: true}, ErrNotFound, "no scene at"},
+		{"invalid scene", "bad.excalidraw", AnnotateRequest{Text: "hi", HasText: true}, ErrInvalid, "scene type is not"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := captureOutput(t, func() error { return run(tc.args) })
-			ce := requireCLIError(t, err, tc.code, "")
-			if tc.msg != "" && !strings.Contains(ce.message, tc.msg) {
-				t.Errorf("message = %q, want it to contain %q", ce.message, tc.msg)
+			_, _, err := captureOutput(t, func() error { return AnnotateScene(deps, root, tc.arg, tc.req) })
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("AnnotateScene(%q) = %v, want %v", tc.arg, err, tc.want)
+			}
+			if tc.msg != "" && !strings.Contains(err.Error(), tc.msg) {
+				t.Errorf("message = %q, want it to contain %q", err.Error(), tc.msg)
 			}
 		})
 	}
@@ -746,13 +807,13 @@ func TestBoardAnnotateRefusals(t *testing.T) {
 // owner segment (so a copied URL says whose board it is), a repo board carries
 // none, and the per-run token always stays in the fragment.
 func TestBoardURLNamesTheOwner(t *testing.T) {
-	if got, want := boardURL("127.0.0.1:9", "opencode-120", "abc"), "http://127.0.0.1:9/opencode-120/#t=abc"; got != want {
-		t.Errorf("boardURL(owner) = %q, want %q", got, want)
+	if got, want := FormatURL("127.0.0.1:9", "opencode-120", "abc"), "http://127.0.0.1:9/opencode-120/#t=abc"; got != want {
+		t.Errorf("FormatURL(owner) = %q, want %q", got, want)
 	}
-	if got, want := boardURL("127.0.0.1:9", "", "abc"), "http://127.0.0.1:9/#t=abc"; got != want {
-		t.Errorf("boardURL(repo) = %q, want %q", got, want)
+	if got, want := FormatURL("127.0.0.1:9", "", "abc"), "http://127.0.0.1:9/#t=abc"; got != want {
+		t.Errorf("FormatURL(repo) = %q, want %q", got, want)
 	}
-	if got, want := boardURL("127.0.0.1:9", "a b", "abc"), "http://127.0.0.1:9/a%20b/#t=abc"; got != want {
-		t.Errorf("boardURL(escaped) = %q, want %q", got, want)
+	if got, want := FormatURL("127.0.0.1:9", "a b", "abc"), "http://127.0.0.1:9/a%20b/#t=abc"; got != want {
+		t.Errorf("FormatURL(escaped) = %q, want %q", got, want)
 	}
 }

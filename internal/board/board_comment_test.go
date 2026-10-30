@@ -1,31 +1,18 @@
-package main
+package board
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/fuad-daoud/relevo/internal/board"
 )
 
-// stubBoardTheme points the theme seam at cockpit, so a comment test never
-// depends on this repository's git config or this machine's own state.
-func stubBoardTheme(t *testing.T) {
-	t.Helper()
-	seamlessBoard(t)
-	orig := boardGitConfig
-	boardGitConfig = func(string, string) (string, error) { return "", nil }
-	t.Cleanup(func() { boardGitConfig = orig })
-}
-
 // stubBoardClock freezes the comment clock.
-func stubBoardClock(t *testing.T, at time.Time) {
+func stubBoardClock(t *testing.T, deps *Deps, at time.Time) {
 	t.Helper()
-	orig := boardNow
-	boardNow = func() time.Time { return at }
-	t.Cleanup(func() { boardNow = orig })
+	deps.Now = func() time.Time { return at }
 }
 
 // liveBoardFor seeds a live directory for id and returns (liveDir, scenePath).
@@ -38,7 +25,7 @@ func liveBoardFor(t *testing.T, liveRoot, id string) (string, string) {
 	return liveDir, filepath.Join(liveDir, "board.excalidraw")
 }
 
-func writeScene(t *testing.T, path, body string) {
+func writeSceneAt(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write scene: %v", err)
@@ -50,16 +37,15 @@ func writeScene(t *testing.T, path, body string) {
 // null -- when there are none.
 func TestBoardCommentsJSONShape(t *testing.T) {
 	liveRoot := boardStateRoot(t)
-	stubRepoSeamAbsent(t)
+	deps := testDeps(t)
 	id := "mm_aaaaaaaaaaaa"
 	_, scene := liveBoardFor(t, liveRoot, id)
-	writeScene(t, scene, `{"type":"excalidraw","elements":[`+
+	writeSceneAt(t, scene, `{"type":"excalidraw","elements":[`+
 		`{"id":"c1","type":"text","x":1,"y":2,"text":"hi","customData":{"relevo":{"comment":true,"by":"human","at":"2026-10-01T12:00:00Z"}}},`+
 		`{"id":"c2","type":"text","x":3,"y":4,"text":"yo","customData":{"relevo":{"comment":true,"by":"mm_x","at":"2026-10-02T12:00:00Z"}}}`+
 		`]}`)
-	t.Setenv("RELEVO_MASTERMIND", id)
 
-	stdout, stderr, err := captureOutput(t, func() error { return cmdBoardComments([]string{"--json"}) })
+	stdout, stderr, err := captureOutput(t, func() error { return Comments(deps, t.TempDir(), id, "", "", true) })
 	if err != nil {
 		t.Fatalf("board comments --json: %v (stderr %s)", err, stderr)
 	}
@@ -73,8 +59,8 @@ func TestBoardCommentsJSONShape(t *testing.T) {
 	}
 
 	// Zero comments is [].
-	writeScene(t, scene, `{"type":"excalidraw","elements":[]}`)
-	stdout, _, err = captureOutput(t, func() error { return cmdBoardComments([]string{"--json"}) })
+	writeSceneAt(t, scene, `{"type":"excalidraw","elements":[]}`)
+	stdout, _, err = captureOutput(t, func() error { return Comments(deps, t.TempDir(), id, "", "", true) })
 	if err != nil {
 		t.Fatalf("board comments --json (none): %v", err)
 	}
@@ -87,15 +73,14 @@ func TestBoardCommentsJSONShape(t *testing.T) {
 // comment, nothing else on stdout.
 func TestBoardCommentsTextRows(t *testing.T) {
 	liveRoot := boardStateRoot(t)
-	stubRepoSeamAbsent(t)
+	deps := testDeps(t)
 	id := "mm_aaaaaaaaaaaa"
 	_, scene := liveBoardFor(t, liveRoot, id)
-	writeScene(t, scene, `{"type":"excalidraw","elements":[`+
+	writeSceneAt(t, scene, `{"type":"excalidraw","elements":[`+
 		`{"id":"c1","type":"text","x":1,"y":2,"text":"hi","customData":{"relevo":{"comment":true,"by":"human","at":"2026-10-01T12:00:00Z"}}}`+
 		`]}`)
-	t.Setenv("RELEVO_MASTERMIND", id)
 
-	stdout, _, err := captureOutput(t, func() error { return cmdBoardComments(nil) })
+	stdout, _, err := captureOutput(t, func() error { return Comments(deps, t.TempDir(), id, "", "", false) })
 	if err != nil {
 		t.Fatalf("board comments: %v", err)
 	}
@@ -109,11 +94,10 @@ func TestBoardCommentsTextRows(t *testing.T) {
 // the live pointer is not created.
 func TestBoardCommentsNeverWritesPointer(t *testing.T) {
 	liveRoot := boardStateRoot(t)
-	stubRepoSeamAbsent(t)
+	deps := testDeps(t)
 	id := "mm_aaaaaaaaaaaa"
-	t.Setenv("RELEVO_MASTERMIND", id)
 
-	stdout, _, err := captureOutput(t, func() error { return cmdBoardComments(nil) })
+	stdout, _, err := captureOutput(t, func() error { return Comments(deps, t.TempDir(), id, "", "", false) })
 	if err != nil {
 		t.Fatalf("board comments: %v", err)
 	}
@@ -129,13 +113,14 @@ func TestBoardCommentsNeverWritesPointer(t *testing.T) {
 // board: a live scene that did not come from the pointer writes it.
 func TestBoardCommentWritesPointer(t *testing.T) {
 	liveRoot := boardStateRoot(t)
-	stubRepoSeamAbsent(t)
-	stubBoardTheme(t)
-	stubBoardClock(t, time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC))
+	deps := testDeps(t)
+	stubBoardClock(t, &deps, time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC))
 	id := "mm_aaaaaaaaaaaa"
 	t.Setenv("RELEVO_MASTERMIND", id)
 
-	stdout, _, err := captureOutput(t, func() error { return cmdBoardComment([]string{"--text", "hello"}) })
+	stdout, _, err := captureOutput(t, func() error {
+		return WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Text: "hello"})
+	})
 	if err != nil {
 		t.Fatalf("board comment: %v", err)
 	}
@@ -155,17 +140,18 @@ func TestBoardCommentWritesPointer(t *testing.T) {
 // RELEVO_MASTERMIND set and no --by, the marker carries the MasterMind id.
 func TestBoardCommentByDefaultsToMasterMind(t *testing.T) {
 	liveRoot := boardStateRoot(t)
-	stubRepoSeamAbsent(t)
-	stubBoardTheme(t)
-	stubBoardClock(t, time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC))
+	deps := testDeps(t)
+	stubBoardClock(t, &deps, time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC))
 	id := "mm_aaaaaaaaaaaa"
 	_, scene := liveBoardFor(t, liveRoot, id)
 	t.Setenv("RELEVO_MASTERMIND", id)
 
-	if _, _, err := captureOutput(t, func() error { return cmdBoardComment([]string{"--text", "hello"}) }); err != nil {
+	if _, _, err := captureOutput(t, func() error {
+		return WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Text: "hello"})
+	}); err != nil {
 		t.Fatalf("board comment: %v", err)
 	}
-	comments, err := board.ReadComments(scene)
+	comments, err := ReadComments(scene)
 	if err != nil {
 		t.Fatalf("ReadComments: %v", err)
 	}
@@ -178,16 +164,16 @@ func TestBoardCommentByDefaultsToMasterMind(t *testing.T) {
 // comment: <id>  <path>, and the scene reads the comment back.
 func TestBoardCommentPrintsLineAndAppends(t *testing.T) {
 	liveRoot := boardStateRoot(t)
-	stubRepoSeamAbsent(t)
-	stubBoardTheme(t)
-	stubBoardClock(t, time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC))
+	deps := testDeps(t)
+	stubBoardClock(t, &deps, time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC))
 	id := "mm_aaaaaaaaaaaa"
 	_, scene := liveBoardFor(t, liveRoot, id)
-	writeScene(t, scene, `{"type":"excalidraw","elements":[]}`)
+	writeSceneAt(t, scene, `{"type":"excalidraw","elements":[]}`)
 	t.Setenv("RELEVO_MASTERMIND", id)
 
+	x, y := 5.0, 6.0
 	stdout, _, err := captureOutput(t, func() error {
-		return cmdBoardComment([]string{"--text", "a note", "--by", "human", "--x", "5", "--y", "6"})
+		return WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Text: "a note", By: "human", X: &x, Y: &y})
 	})
 	if err != nil {
 		t.Fatalf("board comment: %v", err)
@@ -198,7 +184,7 @@ func TestBoardCommentPrintsLineAndAppends(t *testing.T) {
 		t.Fatalf("stdout = %q, want \"comment: <id>  %s\"", stdout, scene)
 	}
 	gotID := strings.TrimSuffix(rest, "  "+scene)
-	comments, err := board.ReadComments(scene)
+	comments, err := ReadComments(scene)
 	if err != nil {
 		t.Fatalf("ReadComments: %v", err)
 	}
@@ -212,38 +198,49 @@ func TestBoardCommentPrintsLineAndAppends(t *testing.T) {
 // non-scene are refused, and a bad author is usage.
 func TestBoardCommentRefusalCodes(t *testing.T) {
 	liveRoot := boardStateRoot(t)
-	stubRepoSeamAbsent(t)
-	stubBoardTheme(t)
+	deps := testDeps(t)
 	id := "mm_aaaaaaaaaaaa"
 	_, scene := liveBoardFor(t, liveRoot, id)
 
 	t.Run("malformed marker", func(t *testing.T) {
-		writeScene(t, scene, `{"type":"excalidraw","elements":[`+
+		writeSceneAt(t, scene, `{"type":"excalidraw","elements":[`+
 			`{"id":"bad1","type":"rectangle","text":"x","customData":{"relevo":{"comment":true,"by":"a","at":"2026-01-01T00:00:00Z"}}}]}`)
-		ce := requireCLIError(t, cmdBoardComments([]string{scene}), codeRefused, "")
-		if !strings.Contains(ce.message, "bad1") {
-			t.Errorf("refusal %q does not name the element id", ce.message)
+		err := Comments(deps, t.TempDir(), id, "", scene, false)
+		if !errors.Is(err, ErrInvalid) {
+			t.Fatalf("comments(malformed marker) = %v, want ErrInvalid", err)
+		}
+		if !strings.Contains(err.Error(), "bad1") {
+			t.Errorf("refusal %q does not name the element id", err)
 		}
 	})
 
 	t.Run("non-scene", func(t *testing.T) {
-		writeScene(t, scene, `not json`)
-		ce := requireCLIError(t, cmdBoardComments([]string{scene}), codeRefused, "")
-		if !strings.Contains(ce.message, scene) {
-			t.Errorf("refusal %q does not name the path", ce.message)
+		writeSceneAt(t, scene, `not json`)
+		err := Comments(deps, t.TempDir(), id, "", scene, false)
+		if !errors.Is(err, ErrInvalid) {
+			t.Fatalf("comments(non-scene) = %v, want ErrInvalid", err)
+		}
+		if !strings.Contains(err.Error(), scene) {
+			t.Errorf("refusal %q does not name the path", err)
 		}
 	})
 
 	t.Run("bad author flag", func(t *testing.T) {
-		ce := requireCLIError(t, cmdBoardComment([]string{scene, "--text", "x", "--by", strings.Repeat("a", 65)}), codeUsage, "")
-		if !strings.Contains(ce.message, "author") {
-			t.Errorf("refusal %q does not name the author", ce.message)
+		err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Arg: scene, Text: "x", By: strings.Repeat("a", 65)})
+		if !errors.Is(err, ErrUsage) {
+			t.Fatalf("comment(bad author) = %v, want ErrUsage", err)
+		}
+		if !strings.Contains(err.Error(), "author") {
+			t.Errorf("refusal %q does not name the author", err)
 		}
 	})
 
 	t.Run("bad author from environment", func(t *testing.T) {
 		t.Setenv("RELEVO_MASTERMIND", "bad\tby")
-		requireCLIError(t, cmdBoardComment([]string{scene, "--text", "x"}), codeUsage, "")
+		err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Arg: scene, Text: "x"})
+		if !errors.Is(err, ErrUsage) {
+			t.Errorf("comment(bad author env) = %v, want ErrUsage", err)
+		}
 	})
 }
 
@@ -251,30 +248,39 @@ func TestBoardCommentRefusalCodes(t *testing.T) {
 // --x and --y go together.
 func TestBoardCommentInputRefusals(t *testing.T) {
 	liveRoot := boardStateRoot(t)
-	stubRepoSeamAbsent(t)
+	deps := testDeps(t)
 	id := "mm_aaaaaaaaaaaa"
 	_, scene := liveBoardFor(t, liveRoot, id)
+	x := 1.0
 
-	requireCLIError(t, cmdBoardComment([]string{scene}), codeUsage, "")
-	requireCLIError(t, cmdBoardComment([]string{scene, "--text", ""}), codeUsage, "")
-	requireCLIError(t, cmdBoardComment([]string{scene, "--text", "x", "--x", "1"}), codeUsage, "")
-	requireCLIError(t, cmdBoardComment([]string{scene, "--text", "x", "--y", "1"}), codeUsage, "")
+	if err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Arg: scene}); !errors.Is(err, ErrUsage) {
+		t.Errorf("comment(no text) = %v, want ErrUsage", err)
+	}
+	if err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Arg: scene, Text: ""}); !errors.Is(err, ErrUsage) {
+		t.Errorf("comment(empty text) = %v, want ErrUsage", err)
+	}
+	if err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Arg: scene, Text: "x", X: &x}); !errors.Is(err, ErrUsage) {
+		t.Errorf("comment(lone x) = %v, want ErrUsage", err)
+	}
+	if err := WriteComment(deps, t.TempDir(), CommentInput{Ref: id, Arg: scene, Text: "x", Y: &x}); !errors.Is(err, ErrUsage) {
+		t.Errorf("comment(lone y) = %v, want ErrUsage", err)
+	}
 }
 
 // TestBoardCommentRepoScopeNeverWritesPointer: a repo scene is never a live
 // pointer write.
 func TestBoardCommentRepoScopeNeverWritesPointer(t *testing.T) {
 	boardStateRoot(t)
-	repoRoot := withTempRepoRoot(t)
-	stubBoardTheme(t)
-	stubBoardClock(t, time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC))
+	deps := testDeps(t)
+	stubBoardClock(t, &deps, time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC))
+	repoRoot := withTempRepoRoot(t, &deps)
 
 	scene := filepath.Join(repoRoot, "docs", "boards", "api.excalidraw")
 	if err := os.MkdirAll(filepath.Dir(scene), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	if _, _, err := captureOutput(t, func() error {
-		return cmdBoardComment([]string{scene, "--text", "hi", "--by", "human"})
+		return WriteComment(deps, t.TempDir(), CommentInput{Arg: scene, Text: "hi", By: "human"})
 	}); err != nil {
 		t.Fatalf("board comment repo scene: %v", err)
 	}
@@ -282,7 +288,7 @@ func TestBoardCommentRepoScopeNeverWritesPointer(t *testing.T) {
 		t.Errorf("a repo comment created a pointer: stat error = %v, want not-exist", statErr)
 	}
 	// And the scene exists with the comment in it.
-	comments, err := board.ReadComments(scene)
+	comments, err := ReadComments(scene)
 	if err != nil {
 		t.Fatalf("ReadComments: %v", err)
 	}
