@@ -6,6 +6,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/refusal"
+	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -42,6 +43,19 @@ func MemberName(c db.ChainRow, part string) string {
 		return c.Security
 	}
 	return ""
+}
+
+// StepNote names the chain step a member round runs, for its prompt entry's
+// note: the part the member fills. A binding that is not a chain member reads
+// as the plain word.
+func StepNote(tx *store.Tx, name string) string {
+	c, err := tx.ChainByMember(name)
+	if err == nil {
+		if part := PartOf(c, name); part != "" {
+			return "chain " + part
+		}
+	}
+	return "chain"
 }
 
 // MemberChain resolves member to the chain that names it, reading through

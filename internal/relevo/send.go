@@ -601,7 +601,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		planPath := rt.Store.PromptPath(name, b.Round)
 		reportPath := rt.Store.ReportPath(name, b.Round)
 		donePath := rt.Store.DonePath(name, b.Round)
-		if err := stagePlan(planPath, pf.body); err != nil {
+		if err := StagePlan(planPath, pf.body); err != nil {
 			return fmt.Errorf("stage plan at %s: %w", planPath, err)
 		}
 
@@ -722,7 +722,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		// The halt that stopped the previous attempt goes with the attempt, all
 		// of it: reason, stamp and the kind naming its episode. A human re-send
 		// is a fresh attempt, so the next halt in this round notifies again.
-		b = clearHaltFields(b)
+		b = ClearHaltFields(b)
 		// An owed notification goes with the halt it was about: the re-send is
 		// the human answering that halt, so the entry it still owes would land
 		// under a round the human has already moved past.

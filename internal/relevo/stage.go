@@ -9,14 +9,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 )
 
-// stagePlan writes a round's plan to path, creating it when it is absent and
+// StagePlan writes a round's plan to path, creating it when it is absent and
 // replacing an existing regular file in place. The plan path sits in a
 // runner-writable binding directory, so a symlink planted at it must not be
 // followed out of that directory: the Lstat is the refusal, and the flags are
 // the race backstop behind it, the same discipline writeReaderOutput and
 // replaceReaderOutput state. Without O_CREATE the mode is inert, so an existing
 // file's mode and owner are left as they were.
-func stagePlan(path string, data []byte) error {
+func StagePlan(path string, data []byte) error {
 	if fi, err := os.Lstat(path); err == nil {
 		if !fi.Mode().IsRegular() {
 			return fmt.Errorf("%s is not a regular file", path)
@@ -28,7 +28,7 @@ func stagePlan(path string, data []byte) error {
 	return writeStagedPlan(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|housekeep.NoFollow, data)
 }
 
-// writeStagedPlan is stagePlan's write half: open, write, close. A close error
+// writeStagedPlan is StagePlan's write half: open, write, close. A close error
 // is the write's own and is surfaced rather than swallowed.
 func writeStagedPlan(path string, flag int, data []byte) error {
 	f, err := os.OpenFile(path, flag, 0o644)

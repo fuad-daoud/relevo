@@ -376,7 +376,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	// other human revive paths leave it (bind.go). A startRound failure below
 	// halts fresh on the way out, which is correct: this halt really is the
 	// round's current reason.
-	b = clearHaltFields(b)
+	b = ClearHaltFields(b)
 
 	if err := tx.AppendLog(b.Name, switchEntry(now, b.Round, reason, res, prior)); err != nil {
 		return b, err

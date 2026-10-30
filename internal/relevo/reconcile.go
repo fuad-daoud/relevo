@@ -329,14 +329,14 @@ func stampHalt(b store.Binding, text, kind string, now time.Time) store.Binding 
 	return b
 }
 
-// clearHaltFields drops the halt a binding carries, every field of it: the
+// ClearHaltFields drops the halt a binding carries, every field of it: the
 // reason a human reads, the time it began, the per-round notification key and
 // the kind naming the episode. Clearing a halt means clearing all four, because
 // each answers a question the binding no longer has. A kind left behind names
 // an episode for a halt that is gone: the next answering view then clears a
 // halt nothing wrote. A key left behind silences the next halt of the round it
 // still names.
-func clearHaltFields(b store.Binding) store.Binding {
+func ClearHaltFields(b store.Binding) store.Binding {
 	b.Halt = ""
 	b.HaltAt = time.Time{}
 	b.HaltNotifiedRound = 0
@@ -1061,7 +1061,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// next round that goes wrong gets its own single notification. The clear
 	// takes the kind with the rest: a kind left from an unreachable episode
 	// would answer for a halt the new round never had.
-	b = clearHaltFields(b)
+	b = ClearHaltFields(b)
 	// A switch counted against the old round says nothing about the new one,
 	// and neither does an exclusion recorded against it (#191).
 	b.RoundSwitches = 0

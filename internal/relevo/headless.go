@@ -803,7 +803,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			// round is still stopped: the next send is refused with 409
 			// round_halted naming a switch that has already been replaced, and
 			// the round classifies as halted for as long as the binding lives.
-			b = clearHaltFields(b)
+			b = ClearHaltFields(b)
 		}
 		return deliverAndSettle(ctx, rt, tx, b)
 	}
@@ -1174,7 +1174,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// carries dedups the next halt of this same round. OwedHalt is left
 		// alone -- a pending notification for an already closed round, still owed
 		// -- as the other revive paths leave it (bind.go).
-		b = clearHaltFields(b)
+		b = ClearHaltFields(b)
 		slog.Info("headless builder relaunched after daemon restart", "binding", b.Name, "round", b.Round, "candidate", b.BuilderCandidate)
 		return b, nil
 	}

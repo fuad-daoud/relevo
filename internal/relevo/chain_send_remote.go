@@ -41,7 +41,7 @@ func chainSendMember(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 // the stage failure the resume's halt names.
 func chainStageRemote(ctx context.Context, rt Runtime, b store.Binding, text string) (store.Binding, error) {
 	path := rt.Store.PromptPath(b.Name, b.Round)
-	if err := stagePlan(path, []byte(text)); err != nil {
+	if err := StagePlan(path, []byte(text)); err != nil {
 		return b, fmt.Errorf("%s: stage plan at %s: %w", b.Name, path, err)
 	}
 	head, err := chainBranchHead(ctx, rt, b)

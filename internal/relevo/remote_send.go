@@ -224,7 +224,7 @@ func remoteRecord(rt Runtime, tx *store.Tx, b store.Binding, ship remoteShipped,
 	// b.BuilderCandidate and writes no spurious "switched on <server>".
 	// The pick entry is filed under the sent round, before its plan entry.
 	if !chain && builder != "" && view.Candidate != "" && view.Candidate != cur.BuilderCandidate {
-		pick := remotePickEntry(now, server, view.Candidate, true, cur.Round, resolve.PlacementResolution{})
+		pick := RemotePickEntry(now, server, view.Candidate, true, cur.Round, resolve.PlacementResolution{})
 		if err := tx.AppendLog(name, pick); err != nil {
 			return 0, "", fmt.Errorf("append builder pick log: %w", err)
 		}
@@ -238,13 +238,13 @@ func remoteRecord(rt Runtime, tx *store.Tx, b store.Binding, ship remoteShipped,
 	}
 
 	planPath := rt.Store.PromptPath(name, cur.Round)
-	if err := stagePlan(planPath, planBody); err != nil {
+	if err := StagePlan(planPath, planBody); err != nil {
 		return 0, "", fmt.Errorf("write plan %s: %w", planPath, err)
 	}
 
 	note := ""
 	if chain {
-		note = chainStepNote(tx, name)
+		note = chainpkg.StepNote(tx, name)
 	}
 	if err := tx.AppendLog(name, store.LogEntry{
 		TS:        now.UTC(),
@@ -270,7 +270,7 @@ func remoteRecord(rt Runtime, tx *store.Tx, b store.Binding, ship remoteShipped,
 	// The halt that stopped the previous attempt goes with the attempt, all of
 	// it: reason, stamp and the kind naming its episode. A human re-send is a
 	// fresh attempt, so the next halt in this round notifies again.
-	cur = clearHaltFields(cur)
+	cur = ClearHaltFields(cur)
 	// An owed notification goes with the halt it was about: the re-send is the
 	// human answering that halt, so the entry it still owes would land under a
 	// round the human has already moved past.
