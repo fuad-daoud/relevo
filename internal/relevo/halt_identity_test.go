@@ -705,39 +705,40 @@ func TestFreshAttemptDropsTheOwedHaltMarker(t *testing.T) {
 		const head = "1111111111111111111111111111111111111111"
 		st := store.New(t.TempDir())
 		b := remoteBinding("zen")
-		b.OwedHalt = &store.OwedHalt{Round: 1, Text: "round 1 needs a hand"}
 		if err := st.Save(b); err != nil {
 			t.Fatalf("Save: %v", err)
 		}
 		fr := &fakeRemote{
-			startRoundResp: remote.BindingView{RoundState: remote.RoundRunning},
 			// The tick after the send reads a queued view, which the apply
 			// answers with the status word alone.
 			getBindingResp: remote.BindingView{RoundState: remote.RoundQueued},
 		}
 		rt := Runtime{
 			Store:  st,
-			Git:    &fakeGit{refSHA: map[string]string{"refs/heads/relevo/api": head}},
 			Remote: fr,
-			Transport: &fakeTransport{snapshotResp: remote.Snapshot{
-				Heads: map[string]string{"refs/relevo/api/out": head},
-			}},
-			Now: func() time.Time { return baseTime },
+			Now:    func() time.Time { return baseTime },
 		}
 
-		planFile := filepath.Join(t.TempDir(), "plan.md")
-		if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
-			t.Fatal(err)
+		// The re-send already ran above the engine: the fresh round is
+		// active, the owed notification went with the halt it was about,
+		// and the prompt is filed. uplink's record tests pin that reset;
+		// the tick below pins what happens after.
+		b.State = store.StateActive
+		b.RoundStartedAt = baseTime
+		b.FinishPending = true
+		b.Builder.LastShipped = head
+		b.Builder.RemoteStatus = string(remote.RoundRunning)
+		if err := st.Save(b); err != nil {
+			t.Fatalf("Save the re-sent round: %v", err)
 		}
-		if _, err := Send(context.Background(), rt, "api", planFile, SendOptions{}); err != nil {
-			t.Fatalf("Send: %v", err)
+		if err := st.AppendLog("api", store.LogEntry{
+			TS: baseTime, Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+			Path: st.PromptPath("api", 1), Confirmed: true,
+		}); err != nil {
+			t.Fatalf("AppendLog: %v", err)
 		}
-		stored, err := st.Load("api")
-		if err != nil {
-			t.Fatalf("Load: %v", err)
-		}
-		if stored.OwedHalt != nil {
-			t.Errorf("OwedHalt = %+v, want nil: the remote re-send answers the halt the marker is about", stored.OwedHalt)
+		if err := StagePlan(st.PromptPath("api", 1), []byte("# Plan")); err != nil {
+			t.Fatalf("StagePlan: %v", err)
 		}
 
 		var got store.Binding

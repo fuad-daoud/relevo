@@ -395,6 +395,14 @@ type Runtime struct {
 	// Nil means deletes are skipped and the abandoned entries stay on the
 	// binding; cmd/relevo wires the real one.
 	SessionReaper SessionDeleter
+
+	// RemoteSend is the above-engine remote-send orchestration (declared
+	// beside SendOptions): the network half and the under-lock record half a
+	// remote send is made of, plus the two-phase chain path that ships
+	// outside the lock and records inside it. cmd/relevo and internal/serve
+	// wire the uplink functions; a send with no hook fails on the nil call
+	// rather than silently skipping the server.
+	RemoteSend RemoteSendDeps
 }
 
 // legacyRegistry is the registry derived from candidates.json and

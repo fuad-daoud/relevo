@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -251,6 +252,81 @@ func chainPlacedRuntime(t *testing.T, fr *fakeRemote, rows map[string]roles.Row)
 	return rt, fg
 }
 
+// shipCall is what the pending step handed the ship half: the member, the
+// staged body and the send options the hook carries.
+type shipCall struct {
+	name    string
+	round   int
+	body    []byte
+	tier    string
+	builder string
+	force   bool
+	verify  *bool
+}
+
+// recordCall is what the pending step handed the record half: the server's
+// answer as flat values, the staged body and the chain flag.
+type recordCall struct {
+	name    string
+	view    remote.BindingView
+	outRef  string
+	heads   map[string]string
+	body    []byte
+	builder string
+	isChain bool
+}
+
+// remoteSendStub is the hook double a remote-chain test installs when it pins
+// the step around the send rather than the send itself. The ship runs the
+// staged plan through the fake server and returns its answer with the out ref,
+// so the StartRound a test observes is the one the step shipped; the record
+// files a bare prompt entry and remembers what it was handed, so the step's
+// own skip and re-check logic stays covered while the moved record effects
+// live in uplink's tests. shipErr fails the ship the way a dead server would.
+type remoteSendStub struct {
+	shipCalls   []shipCall
+	recordCalls []recordCall
+	shipErr     error
+}
+
+// stubRemoteSend installs the hook double on rt and returns it, so a test can
+// fail the ship or read what the step handed each half.
+func stubRemoteSend(rt *Runtime) *remoteSendStub {
+	s := &remoteSendStub{}
+	rt.RemoteSend = RemoteSendDeps{
+		Ship: func(ctx context.Context, rt Runtime, b store.Binding, body []byte, tier, builder string, force bool, verify *bool) (remote.BindingView, string, map[string]string, error) {
+			s.shipCalls = append(s.shipCalls, shipCall{name: b.Name, round: b.Round, body: body, tier: tier, builder: builder, force: force, verify: verify})
+			if s.shipErr != nil {
+				return remote.BindingView{}, "", nil, s.shipErr
+			}
+			view, err := rt.Remote.StartRound(ctx, b.Builder.Server, b.Name, b.Round, body, nil, tier, builder, force, nil, false, verify)
+			if err != nil {
+				return remote.BindingView{}, "", nil, err
+			}
+			return view, "refs/relevo/" + b.Name + "/out", nil, nil
+		},
+		Record: func(rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, outRef string, heads map[string]string, body []byte, builder string, isChain bool) (int, string, error) {
+			s.recordCalls = append(s.recordCalls, recordCall{name: b.Name, view: view, outRef: outRef, heads: heads, body: body, builder: builder, isChain: isChain})
+			now := time.Now().UTC()
+			if rt.Now != nil {
+				now = rt.Now().UTC()
+			}
+			if err := tx.AppendLog(b.Name, store.LogEntry{
+				TS:        now,
+				Round:     b.Round,
+				Direction: store.DirToBuilder,
+				Kind:      store.KindPrompt,
+				Path:      rt.Store.PromptPath(b.Name, b.Round),
+				Confirmed: true,
+			}); err != nil {
+				return 0, "", err
+			}
+			return b.Round, "", nil
+		},
+	}
+	return s
+}
+
 // TestChainStartRemoteBuilderCreatesThereAndShipsPlanOne pins the whole remote
 // start: the server create carries the repo id, the base, the builder role, the
 // mapped candidate, the chain's gate and labels and the author; the local
@@ -262,6 +338,7 @@ func TestChainStartRemoteBuilderCreatesThereAndShipsPlanOne(t *testing.T) {
 
 	fr := chainRemoteFake()
 	rt, fg, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	repo, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("Getwd: %v", err)
@@ -340,6 +417,7 @@ func TestChainStartRemoteBuilderKeepsReadersOnTheChainRepo(t *testing.T) {
 
 	fr := chainRemoteFake()
 	rt, fg, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	repo, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("Getwd: %v", err)
@@ -372,6 +450,7 @@ func TestChainStartRemoteBuilderCarriesTheResolvedCheck(t *testing.T) {
 
 		fr := chainCheckFake()
 		rt, _, _ := chainRemoteRuntime(t, fr)
+		stubRemoteSend(&rt)
 		rt.Policy = policyWithGate("make check", ptr(2))
 
 		res := startedChain(t, rt, ChainOptions{})
@@ -396,6 +475,7 @@ func TestChainStartRemoteBuilderCarriesTheResolvedCheck(t *testing.T) {
 
 		fr := chainCheckFake()
 		rt, _, _ := chainRemoteRuntime(t, fr)
+		stubRemoteSend(&rt)
 		rt.Policy = policyWithGate("make check", ptr(2))
 
 		res := startedChain(t, rt, ChainOptions{NoGate: true})
@@ -413,6 +493,7 @@ func TestChainStartRemoteBuilderCarriesTheResolvedCheck(t *testing.T) {
 
 		fr := chainCheckFake()
 		rt, _, _ := chainRemoteRuntime(t, fr)
+		stubRemoteSend(&rt)
 
 		res := startedChain(t, rt, ChainOptions{Regate: ptr(3)})
 

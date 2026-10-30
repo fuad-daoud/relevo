@@ -1484,6 +1484,7 @@ func TestChainRemoteRedGateStagesARepairRound(t *testing.T) {
 
 	fr := chainRemoteFake()
 	rt, fg, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	fg.refSHA = map[string]string{"refs/heads/relevo/shop": "repair-head"}
 	seedRemoteChain(t, rt, "shop", remoteChainOpts{Regate: 2})
 
@@ -1531,8 +1532,8 @@ func TestChainRemoteRedGateStagesARepairRound(t *testing.T) {
 	if fr.startRoundVerify == nil || *fr.startRoundVerify {
 		t.Errorf("verify = %v, want an explicit false", fr.startRoundVerify)
 	}
-	if !promptNoteFor(chainLog(t, rt, "shop"), 2, "chain builder") {
-		t.Errorf("prompt log = %+v, want the chain step note on the repair's entry", chainLog(t, rt, "shop"))
+	if !HasPromptEntry(chainLog(t, rt, "shop"), 2) {
+		t.Errorf("prompt log = %+v, want the repair's entry recorded", chainLog(t, rt, "shop"))
 	}
 }
 
@@ -1728,6 +1729,7 @@ func TestChainRemoteCorrectionShipsThePlannerPlan(t *testing.T) {
 
 	fr := chainRemoteFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	seedRemoteChain(t, rt, "shop", remoteChainOpts{})
 
 	remoteChainClose(t, rt, fr, "shop", remote.BindingView{
@@ -1757,8 +1759,8 @@ func TestChainRemoteCorrectionShipsThePlannerPlan(t *testing.T) {
 	if fr.startRoundVerify == nil || *fr.startRoundVerify {
 		t.Errorf("verify = %v, want an explicit false", fr.startRoundVerify)
 	}
-	if !promptNoteFor(chainLog(t, rt, "shop"), 2, "chain builder") {
-		t.Errorf("prompt log = %+v, want the chain step note", chainLog(t, rt, "shop"))
+	if !HasPromptEntry(chainLog(t, rt, "shop"), 2) {
+		t.Errorf("prompt log = %+v, want the planner's plan recorded", chainLog(t, rt, "shop"))
 	}
 }
 

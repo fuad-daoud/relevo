@@ -564,6 +564,7 @@ func TestChainResumeRemoteBuilderShipsThroughThePendingStep(t *testing.T) {
 
 	fr := chainRemoteFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	seedRemoteChain(t, rt, "shop", remoteChainOpts{})
 	advanceRemoteChain(t, rt, 2)
 	haltRemoteChain(t, rt)
@@ -583,8 +584,8 @@ func TestChainResumeRemoteBuilderShipsThroughThePendingStep(t *testing.T) {
 	if string(fr.startRoundPlan) != "plan 1\n" {
 		t.Errorf("shipped plan = %q, want the plan copy", fr.startRoundPlan)
 	}
-	if !promptNoteFor(chainLog(t, rt, "shop"), 2, "chain builder") {
-		t.Errorf("log = %+v, want the round-2 prompt entry with the chain step note", chainLog(t, rt, "shop"))
+	if !HasPromptEntry(chainLog(t, rt, "shop"), 2) {
+		t.Errorf("log = %+v, want the round-2 prompt entry recorded", chainLog(t, rt, "shop"))
 	}
 	row := chainStoredRow(t, rt, "shop")
 	if row.Status != string(chain.StatusRunning) || row.AwaitingMember != chain.MemberBuilder || row.AwaitingRound != 2 {

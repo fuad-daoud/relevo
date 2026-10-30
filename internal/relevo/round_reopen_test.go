@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -63,75 +61,6 @@ func roundFiles(body string) func(context.Context, string, string, int, string) 
 			return io.NopCloser(bytes.NewReader([]byte("builder log\n"))), nil
 		}
 		return nil, &client.HTTPError{Status: 404, Body: remote.ErrorBody{Code: remote.CodeNotFound}}
-	}
-}
-
-// TestRemoteResendOverNeedsYouClearsTheHalt is the send half of the
-// reproduction: a resend that starts (or restarts) a round is a fresh attempt,
-// so the client's own copy must leave NEEDS YOU exactly as Send's local branch
-// does -- state active, halt and halt-at cleared, and the per-round bookkeeping
-// a fresh process implies cleared with it.
-func TestRemoteResendOverNeedsYouClearsTheHalt(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	b := haltedRemoteBinding("zen")
-	rt, fr := reopenRemoteRuntime(t, b)
-	fr.startRoundResp = remote.BindingView{RoundState: remote.RoundRunning}
-
-	planFile := filepath.Join(t.TempDir(), "plan.md")
-	if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := Send(ctx, rt, "api", planFile, SendOptions{}); err != nil {
-		t.Fatalf("Send over NEEDS YOU: %v", err)
-	}
-
-	got, err := rt.Store.Load("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.State != store.StateActive {
-		t.Errorf("State = %q, want %q: a resend that started a round left the binding %q", got.State, store.StateActive, got.State)
-	}
-	if got.Halt != "" {
-		t.Errorf("Halt = %q, want empty", got.Halt)
-	}
-	if !got.HaltAt.IsZero() {
-		t.Errorf("HaltAt = %v, want zero", got.HaltAt)
-	}
-	if got.HaltNotifiedRound != 0 {
-		t.Errorf("HaltNotifiedRound = %d, want 0", got.HaltNotifiedRound)
-	}
-	if !got.StalledSince.IsZero() {
-		t.Errorf("StalledSince = %v, want zero", got.StalledSince)
-	}
-	if got.RoundSwitches != 0 {
-		t.Errorf("RoundSwitches = %d, want 0", got.RoundSwitches)
-	}
-	if got.RoundExcluded != nil {
-		t.Errorf("RoundExcluded = %v, want nil", got.RoundExcluded)
-	}
-	if got.RoundOOMKills != 0 {
-		t.Errorf("RoundOOMKills = %d, want 0", got.RoundOOMKills)
-	}
-	if !got.StopRequestedAt.IsZero() {
-		t.Errorf("StopRequestedAt = %v, want zero", got.StopRequestedAt)
-	}
-	if got.RoundClosedTree != "" {
-		t.Errorf("RoundClosedTree = %q, want empty", got.RoundClosedTree)
-	}
-	if !got.FinishPending {
-		t.Error("FinishPending = false, want true after a resend opens the round")
-	}
-
-	entries, err := rt.Store.ReadLog("api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !HasPromptEntry(entries, b.Round) {
-		t.Errorf("no prompt entry for round %d: the resend left no open round: %+v", b.Round, entries)
 	}
 }
 
@@ -303,14 +232,28 @@ func TestWaitOutcomeOnAReSentRoundDoesNotExitNeedsYou(t *testing.T) {
 	b.Round = 1
 	rt, fr := reopenRemoteRuntime(t, b)
 
-	// The human re-sends. The server accepts and starts the round again.
-	fr.startRoundResp = remote.BindingView{RoundState: remote.RoundRunning}
-	planFile := filepath.Join(t.TempDir(), "plan.md")
-	if err := os.WriteFile(planFile, []byte("# Plan"), 0o644); err != nil {
-		t.Fatal(err)
+	// The human re-sent and the server started the round again: the binding
+	// is active with the halt gone and the prompt filed, the post-send shape
+	// uplink's record tests pin. The wait below classifies that shape.
+	b.State = store.StateActive
+	b.Halt = ""
+	b.HaltAt = time.Time{}
+	b.HaltNotifiedRound = 0
+	b.RoundStartedAt = baseTime
+	b.StalledSince = time.Time{}
+	b.FinishPending = true
+	b.Builder.RemoteStatus = string(remote.RoundRunning)
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save the re-sent round: %v", err)
 	}
-	if _, err := Send(ctx, rt, "api", planFile, SendOptions{}); err != nil {
-		t.Fatalf("resend over NEEDS YOU: %v", err)
+	if err := rt.Store.AppendLog("api", store.LogEntry{
+		TS: baseTime, Round: 1, Direction: store.DirToBuilder, Kind: store.KindPrompt,
+		Path: rt.Store.PromptPath("api", 1), Confirmed: true,
+	}); err != nil {
+		t.Fatalf("AppendLog: %v", err)
+	}
+	if err := StagePlan(rt.Store.PromptPath("api", 1), []byte("# Plan")); err != nil {
+		t.Fatalf("StagePlan: %v", err)
 	}
 
 	// The round then finished, and the server halted again while closing it:

@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/refusal"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -160,6 +161,26 @@ type SendOptions struct {
 	// Force sends a planner actor's seed even when it is over seedMaxBytes: a
 	// planner's input is a seed, and forcing is the explicit escape.
 	Force bool
+}
+
+// RemoteSendDeps holds the remote-send orchestration above the engine as
+// plain func values over exported types only. Ship returns the server's
+// answer as flat values -- the binding view, the out ref the bundle was cut
+// from, and the heads the bundle carried -- and Record takes those same
+// values, so the chain two-phase path crosses the boundary without an
+// unexported struct.
+type RemoteSendDeps struct {
+	// Send ships one round to a remote server: the network half outside any
+	// lock, then the under-lock tail that writes the round's state.
+	Send func(ctx context.Context, rt Runtime, b store.Binding, planBody []byte, tier, builder string, force bool) (SendResult, error)
+	// Ship is the network half, unlocked: it moves the out ref, snapshots the
+	// bundle and starts the round, writing nothing local.
+	Ship func(ctx context.Context, rt Runtime, b store.Binding, planBody []byte, tier, builder string, force bool, verify *bool) (remote.BindingView, string, map[string]string, error)
+	// Record is the under-lock tail: it reloads the binding, checks the round
+	// did not advance, stages the plan and writes the round's state. isChain
+	// is the chain's own record half, which owns the member and files a
+	// chain-step note instead of refusing.
+	Record func(rt Runtime, tx *store.Tx, b store.Binding, view remote.BindingView, outRef string, heads map[string]string, planBody []byte, builder string, isChain bool) (int, string, error)
 }
 
 // preflight is everything Send checks before it takes the state lock and
@@ -493,9 +514,9 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 	}
 
 	// A remote binding's preflight stops at the read-only checks; the round
-	// itself is still shipped by sendRemote, which contacts the server.
+	// itself is still shipped above the engine, which contacts the server.
 	if pf.b.Builder.Remote() {
-		return sendRemote(ctx, rt, pf.b, pf.body, opts.Tier, pf.remoteBuilder, opts.Force)
+		return rt.RemoteSend.Send(ctx, rt, pf.b, pf.body, opts.Tier, pf.remoteBuilder, opts.Force)
 	}
 
 	// The baseline snapshot adds git objects, so it stays out of the

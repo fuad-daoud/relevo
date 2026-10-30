@@ -31,6 +31,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
+	"github.com/fuad-daoud/relevo/internal/uplink"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
@@ -429,6 +430,13 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 		s.applyTenant(root, st, &rt)
 	case isolate.ModeContainer:
 		s.applyContainer(root, &rt)
+	}
+	// The remote send runs above the engine: the served runtime ships through
+	// the same uplink functions as the CLI runtime.
+	rt.RemoteSend = relevo.RemoteSendDeps{
+		Send:   uplink.SendRemote,
+		Ship:   uplink.Ship,
+		Record: uplink.Record,
 	}
 	return rt
 }
