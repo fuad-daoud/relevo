@@ -37,23 +37,23 @@ func installSyncVerbHook(srv *owner.Server, d *db.DB) {
 	if srv == nil || d == nil {
 		return
 	}
-	runner := newVerbRunner(d)
+	runner := buildVerbRunner(d)
 	if runner == nil {
 		return
 	}
 	srv.OnSyncVerb = runner.OwnerVerb
 }
 
-// newVerbRunner is the one constructor for a verb runner, so the hook the owner
-// serves and the cockpit's actions run are the same value over the same handles.
-// A handle with no local file yields nil: there is no row sync could own, and a
-// runner built without one would have to be handed a nil seam.
+// buildVerbRunner resolves the machine-local handle and builds the runner the
+// hook and the cockpit share: one value over one pair of handles. Construction
+// itself is verb.NewRunner; this stays in cmd because resolving the handles
+// means the sync pipe, which lives below the verb package.
 //
-// The runner is built holding the pipe client, so the daemon has one place a
-// worker is constructed. The client starts no process until a call drives it,
-// and the opener below replaces it with one pointed at the remote and token an
-// enable stored.
-func newVerbRunner(d *db.DB) *verb.Runner {
+// A handle with no local file yields nil: there is no row sync could own, and
+// a runner built without one would have to be handed a nil seam. The guards
+// the runner waits on stay unset here: installSyncVerbSerializing binds them
+// once the daemon exists.
+func buildVerbRunner(d *db.DB) *verb.Runner {
 	if d == nil {
 		return nil
 	}
@@ -71,32 +71,37 @@ func newVerbRunner(d *db.DB) *verb.Runner {
 	if err := syncpipe.SecureSyncFiles(d.Path()); err != nil {
 		slog.Warn("relevo daemon: could not narrow the sync files to owner-only", "err", err)
 	}
-	runner := &verb.Runner{
+	// The daemon has one place a worker is constructed. The client starts no
+	// process until a call drives it, and the opener below replaces it with one
+	// pointed at the remote and token an enable stored.
+	inner := syncpipe.NewSyncRunner(syncpipe.Config{}, local)
+	inner.Blobs = func() blobstore.BlobStore { return relevosync.StoreFromLocal(local) }
+	replicaPath := syncpipe.ReplicaPath(d.Path())
+	inner.ReplicaPath = replicaPath
+	return verb.NewRunner(verb.RunnerDeps{
 		Shared:      d,
 		Local:       local,
 		Path:        d.Path(),
-		ReplicaPath: syncpipe.ReplicaPath(d.Path()),
+		ReplicaPath: replicaPath,
 		StagingDir:  syncpipe.BlobStagingDir(d.Path()),
-		Runner:      syncpipe.NewSyncRunner(syncpipe.Config{}, local),
+		Inner:       inner,
 		ClientName:  dbSyncHandleName,
 		Blobs:       relevosync.NewR2Store,
-	}
-	runner.Runner.Blobs = func() blobstore.BlobStore { return relevosync.StoreFromLocal(local) }
-	runner.Runner.ReplicaPath = runner.ReplicaPath
-	// The opener reads the machine-local rows at the moment an enable runs, so
-	// the worker it builds is pointed at the remote and token the enable just
-	// stored rather than the empty section the daemon started with.
-	runner.Open = func(context.Context) (synclog.LogTransport, error) {
-		return syncpipe.OpenSupervisor(d, local)
-	}
-	// A join's rows hold no bucket until the fleet's secrets document has been
-	// applied, and the document is only on the remote the worker is opened to
-	// read: the join's first worker starts with none, and the enable it became
-	// answers for handing the import a bucketed one.
-	runner.OpenNoBucket = func(context.Context) (synclog.LogTransport, bool, error) {
-		return syncpipe.OpenNoBucketSupervisor(d, local)
-	}
-	return runner
+		// The opener reads the machine-local rows at the moment an enable runs,
+		// so the worker it builds is pointed at the remote and token the
+		// enable just stored rather than the empty section the daemon started
+		// with.
+		Open: func(context.Context) (synclog.LogTransport, error) {
+			return syncpipe.OpenSupervisor(d, local)
+		},
+		// A join's rows hold no bucket until the fleet's secrets document has
+		// been applied, and the document is only on the remote the worker is
+		// opened to read: the join's first worker starts with none, and the
+		// enable it became answers for handing the import a bucketed one.
+		OpenNoBucket: func(context.Context) (synclog.LogTransport, bool, error) {
+			return syncpipe.OpenNoBucketSupervisor(d, local)
+		},
+	})
 }
 
 // installSyncVerbSerializing rebinds the owner's verb hook with the daemon's
@@ -114,7 +119,7 @@ func installSyncVerbSerializing(ctx context.Context, d *relevo.Daemon, srv *owne
 	if srv == nil || handle == nil || srv.OnSyncVerb == nil {
 		return
 	}
-	runner := newVerbRunner(handle)
+	runner := buildVerbRunner(handle)
 	if runner == nil {
 		return
 	}
