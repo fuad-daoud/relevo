@@ -38,11 +38,11 @@ github.com/fuad-daoud/relevo/internal/pathscope 86.1
 github.com/fuad-daoud/relevo/internal/pick 48.4
 github.com/fuad-daoud/relevo/internal/policy 97.1
 github.com/fuad-daoud/relevo/internal/proc 88.9
+github.com/fuad-daoud/relevo/internal/refusal 100.0
 github.com/fuad-daoud/relevo/internal/release 87.6
 github.com/fuad-daoud/relevo/internal/relevo 84.3
 github.com/fuad-daoud/relevo/internal/remote 90.8
 github.com/fuad-daoud/relevo/internal/remote/client 75.8
-github.com/fuad-daoud/relevo/internal/refusal 100.0
 github.com/fuad-daoud/relevo/internal/reporttail 97.6
 github.com/fuad-daoud/relevo/internal/resolve 76.0
 github.com/fuad-daoud/relevo/internal/roles 92.3
