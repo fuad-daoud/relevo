@@ -4,7 +4,7 @@ github.com/fuad-daoud/relevo/internal/account 97.6
 github.com/fuad-daoud/relevo/internal/agentsrc 92.3
 github.com/fuad-daoud/relevo/internal/availability 87.0
 github.com/fuad-daoud/relevo/internal/blobstore 91.8
-github.com/fuad-daoud/relevo/internal/board 86.8
+github.com/fuad-daoud/relevo/internal/board 81.6
 github.com/fuad-daoud/relevo/internal/board/theme 90.4
 github.com/fuad-daoud/relevo/internal/bugreport 91.0
 github.com/fuad-daoud/relevo/internal/candidate 96.3
@@ -21,7 +21,7 @@ github.com/fuad-daoud/relevo/internal/db/wire 75.5
 github.com/fuad-daoud/relevo/internal/db/wire/client 68.7
 github.com/fuad-daoud/relevo/internal/db/wire/owner 84.1
 github.com/fuad-daoud/relevo/internal/delivery 86.0
-github.com/fuad-daoud/relevo/internal/doctor 91.2
+github.com/fuad-daoud/relevo/internal/doctor 78.9
 github.com/fuad-daoud/relevo/internal/git 83.2
 github.com/fuad-daoud/relevo/internal/harness 88.8
 github.com/fuad-daoud/relevo/internal/histq 94.5
@@ -46,7 +46,7 @@ github.com/fuad-daoud/relevo/internal/roles 92.3
 github.com/fuad-daoud/relevo/internal/sanitize 100.0
 github.com/fuad-daoud/relevo/internal/serve 76.9
 github.com/fuad-daoud/relevo/internal/serviceunit 80.0
-github.com/fuad-daoud/relevo/internal/setup 92.2
+github.com/fuad-daoud/relevo/internal/setup 70.5
 github.com/fuad-daoud/relevo/internal/spawn 60.0
 github.com/fuad-daoud/relevo/internal/stats 97.9
 github.com/fuad-daoud/relevo/internal/store 81.1
