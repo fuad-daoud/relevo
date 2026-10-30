@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -1130,7 +1131,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// Filed under closedRound, and its failed queue owed, for the
 	// reasons the cap halt above gives.
 	if verdict.Refused {
-		b = closeHaltOrOwe(ctx, rt, tx, b, closedRound, pathscope.HaltText(b.Name, bindingRole(b), closedRound, verdict))
+		b = closeHaltOrOwe(ctx, rt, tx, b, closedRound, pathscope.HaltText(b.Name, resolve.BindingRole(b), closedRound, verdict))
 	}
 
 	// The round has advanced, so the chain may now move: the close is mapped

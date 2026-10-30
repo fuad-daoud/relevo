@@ -1,4 +1,4 @@
-package relevo
+package resolve
 
 import (
 	"context"
@@ -25,37 +25,37 @@ func osExists(p string) bool {
 	return err == nil
 }
 
-// withSkillGates appends the skill gates for the tree at dir. An empty dir
-// means relevo cannot judge, so it adds none. A non-nil tracked is for a bind
-// that cuts a worktree: a project path counts only when tracked says the base
-// commit has it; nil judges the disk alone.
-func withSkillGates(rt Runtime, gates []availability.Gate, dir string, tracked func(string) bool) []availability.Gate {
+// WithSkillGates appends the skill gates for the tree at dir. An empty dir
+// means resolve cannot judge, so it adds none. A non-nil tracked is for a
+// bind that cuts a worktree: a project path counts only when tracked says the
+// base commit has it; nil judges the disk alone.
+func WithSkillGates(d Deps, gates []availability.Gate, dir string, tracked func(string) bool) []availability.Gate {
 	if dir == "" {
 		return gates
 	}
-	probe := skillProbe{Exists: rt.SkillExists, Tracked: tracked}
+	probe := skillProbe{Exists: d.SkillExists, Tracked: tracked}
 	if probe.Exists == nil {
 		probe.Exists = osExists
 	}
 	home, _ := os.UserHomeDir()
-	return append(gates, skillGates(rt, dir, home, probe)...)
+	return append(gates, skillGates(d, dir, home, probe)...)
 }
 
 // PickGates is the gate set a bind in dir resolves over, for a view that must
 // show the same pick.
-func PickGates(rt Runtime, dir string) []availability.Gate {
-	return withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), dir, nil)
+func PickGates(d Deps, dir string) []availability.Gate {
+	return WithSkillGates(d, availability.Gates(d.Deps), dir, nil)
 }
 
-func skillGates(rt Runtime, dir, home string, probe skillProbe) []availability.Gate {
-	reg := rt.RoleRegistry()
+func skillGates(d Deps, dir, home string, probe skillProbe) []availability.Gate {
+	reg := d.RoleRegistry()
 	var out []availability.Gate
 	for _, actor := range reg.Names() {
 		role, _ := reg.Role(actor)
-		if len(role.Skills) == 0 || rt.Candidates == nil {
+		if len(role.Skills) == 0 || d.Candidates == nil {
 			continue
 		}
-		for _, tok := range rt.Candidates.Refs() {
+		for _, tok := range d.Candidates.Refs() {
 			ref, err := candidate.ParseRef(tok)
 			if err != nil || !reg.Serves(actor, ref) {
 				continue
@@ -101,34 +101,33 @@ func missingSkillNote(probe skillProbe, actor, kind, name, dir, home string) str
 }
 
 // trackedAtBase reports whether a project path is in the tree at base. A git
-// error counts as tracked: relevo cannot judge, so it does not guess.
-func trackedAtBase(ctx context.Context, rt Runtime, repo, base string) func(string) bool {
+// error counts as tracked: resolve cannot judge, so it does not guess.
+func trackedAtBase(ctx context.Context, d Deps, repo, base string) func(string) bool {
 	return func(p string) bool {
 		rel, err := filepath.Rel(repo, filepath.Dir(p))
 		if err != nil {
 			return true
 		}
-		ok, err := rt.Git.DirAt(ctx, repo, base, filepath.ToSlash(rel))
+		ok, err := d.GitDirAt(ctx, repo, base, filepath.ToSlash(rel))
 		return err != nil || ok
 	}
 }
 
-// addSkillGates is the gate set an add resolves over. A bind that cuts a
+// AddSkillGates is the gate set an add resolves over. A bind that cuts a
 // worktree runs in a fresh tree holding only what the base commit tracks.
-func addSkillGates(ctx context.Context, rt Runtime, opts AddOptions) []availability.Gate {
-	gates := availability.Gates(AvailabilityDeps(rt))
-	if opts.CWD != "" {
-		return withSkillGates(rt, gates, opts.CWD, nil)
+func AddSkillGates(ctx context.Context, d Deps, cwd, repo, branch, base string) []availability.Gate {
+	gates := availability.Gates(d.Deps)
+	if cwd != "" {
+		return WithSkillGates(d, gates, cwd, nil)
 	}
-	if rt.Git == nil {
-		return withSkillGates(rt, gates, opts.Repo, nil)
+	if d.GitDirAt == nil {
+		return WithSkillGates(d, gates, repo, nil)
 	}
-	base := opts.Base
-	if opts.Branch != "" {
-		base = opts.Branch
+	if branch != "" {
+		base = branch
 	}
 	if base == "" {
 		base = "HEAD"
 	}
-	return withSkillGates(rt, gates, opts.Repo, trackedAtBase(ctx, rt, opts.Repo, base))
+	return WithSkillGates(d, gates, repo, trackedAtBase(ctx, d, repo, base))
 }

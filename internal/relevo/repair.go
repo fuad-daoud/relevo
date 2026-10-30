@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/capture"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -155,7 +156,7 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
 	}
 	if res != nil {
-		if err := tx.AppendLog(b.Name, pickEntry(rt.Now().UTC(), b.Round, bindingRole(b), *res)); err != nil {
+		if err := tx.AppendLog(b.Name, resolve.PickEntry(rt.Now().UTC(), b.Round, resolve.BindingRole(b), *res)); err != nil {
 			return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: repair round %d could not start: %v", b.Name, b.Round, err))
 		}
 	}
@@ -173,7 +174,7 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 		Kind:      store.KindPrompt,
 		Path:      planPath,
 		Confirmed: true,
-		Tier:      string(effectiveTier(b)),
+		Tier:      string(resolve.EffectiveTier(b)),
 		Note:      fmt.Sprintf("repair %d/%d", b.RepairCount, b.Regate),
 	}); err != nil {
 		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: repair round %d could not record its plan: %v", b.Name, b.Round, err))

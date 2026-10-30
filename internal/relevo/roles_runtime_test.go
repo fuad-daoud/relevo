@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
@@ -83,30 +84,30 @@ func TestRolesRuntimeFileModeRanking(t *testing.T) {
 		"builder": {Candidates: []string{"claude/test/b", "claude/test/a"}},
 	})
 
-	res, err := resolveRole(reg, set, nil, "", "builder")
+	res, err := resolve.ResolveRole(reg, set, nil, "", "builder")
 	if err != nil {
 		t.Fatalf("resolveRole: %v", err)
 	}
 	if got := res.Token(); got != "claude/test/b" {
 		t.Errorf("picked %q, want claude/test/b", got)
 	}
-	if res.How != HowOrder || res.Position != 1 {
-		t.Errorf("How/Position = %q/%d, want %q/1", res.How, res.Position, HowOrder)
+	if res.How != resolve.HowOrder || res.Position != 1 {
+		t.Errorf("How/Position = %q/%d, want %q/1", res.How, res.Position, resolve.HowOrder)
 	}
 
 	// Gate the first choice: the walk takes the second, at its own position.
 	gates := []availability.Gate{{
 		Token: "claude/test/b", Kind: availability.RateLimited, Until: baseTime.Add(time.Hour),
 	}}
-	res, err = resolveRole(reg, set, gates, "", "builder")
+	res, err = resolve.ResolveRole(reg, set, gates, "", "builder")
 	if err != nil {
 		t.Fatalf("resolveRole with b gated: %v", err)
 	}
 	if got := res.Token(); got != "claude/test/a" {
 		t.Errorf("picked %q, want claude/test/a", got)
 	}
-	if res.How != HowOrder || res.Position != 2 {
-		t.Errorf("How/Position = %q/%d, want %q/2", res.How, res.Position, HowOrder)
+	if res.How != resolve.HowOrder || res.Position != 2 {
+		t.Errorf("How/Position = %q/%d, want %q/2", res.How, res.Position, resolve.HowOrder)
 	}
 	if len(res.Skipped) != 1 || res.Skipped[0].Token != "claude/test/b" {
 		t.Errorf("Skipped = %+v, want claude/test/b", res.Skipped)
@@ -120,9 +121,9 @@ func TestRolesRuntimeFileModeRanking(t *testing.T) {
 		{Token: "claude/test/b", Kind: availability.RateLimited, Until: baseTime.Add(time.Hour)},
 		{Token: "claude/test/a", Kind: availability.RateLimited, Until: baseTime.Add(time.Hour)},
 	}
-	_, err = resolveRole(reg, set, both, "", "builder")
-	if !errors.Is(err, ErrAllGated) {
-		t.Fatalf("resolveRole with both listed candidates gated err = %v, want ErrAllGated", err)
+	_, err = resolve.ResolveRole(reg, set, both, "", "builder")
+	if !errors.Is(err, resolve.ErrAllGated) {
+		t.Fatalf("resolveRole with both listed candidates gated err = %v, want resolve.ErrAllGated", err)
 	}
 	if strings.Contains(err.Error(), "claude/test/c") {
 		t.Errorf("err = %q, want it not to name the unlisted c", err.Error())
@@ -140,12 +141,12 @@ func TestRolesRuntimeFileModeExplicitTokenNotListed(t *testing.T) {
 		"builder": {Candidates: []string{"claude/test/b", "claude/test/a"}},
 	})
 
-	_, err := resolveRole(reg, set, nil, "claude/test/c", "builder")
+	_, err := resolve.ResolveRole(reg, set, nil, "claude/test/c", "builder")
 	if err == nil {
-		t.Fatal("resolveRole accepted an unlisted explicit token, want ErrRoleNotServed")
+		t.Fatal("resolveRole accepted an unlisted explicit token, want resolve.ErrRoleNotServed")
 	}
-	if !errors.Is(err, ErrRoleNotServed) {
-		t.Errorf("err = %v, want ErrRoleNotServed", err)
+	if !errors.Is(err, resolve.ErrRoleNotServed) {
+		t.Errorf("err = %v, want resolve.ErrRoleNotServed", err)
 	}
 	if !strings.Contains(err.Error(), "roles.json") {
 		t.Errorf("err = %q, want it to name roles.json", err.Error())
@@ -170,11 +171,11 @@ func TestRolesRuntimeFileModeTier(t *testing.T) {
 		t.Fatalf("test candidate tier = %q, want yolo", b.Tier)
 	}
 
-	if got := resolveRoleTier("", b, reg, "builder"); got != harness.TierEdit {
-		t.Errorf("resolveRoleTier(\"\", b) = %q, want edit: the candidate tier is ignored in file mode", got)
+	if got := resolve.ResolveTier("", b, reg, "builder"); got != harness.TierEdit {
+		t.Errorf("resolve.ResolveTier(\"\", b) = %q, want edit: the candidate tier is ignored in file mode", got)
 	}
-	if got := resolveRoleTier("read", b, reg, "builder"); got != harness.TierRead {
-		t.Errorf("resolveRoleTier(\"read\", b) = %q, want read", got)
+	if got := resolve.ResolveTier("read", b, reg, "builder"); got != harness.TierRead {
+		t.Errorf("resolve.ResolveTier(\"read\", b) = %q, want read", got)
 	}
 }
 

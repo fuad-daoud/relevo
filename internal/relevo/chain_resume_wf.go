@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -285,7 +286,7 @@ func chainResumeFlagParams(def workflow.Definition, rt Runtime, opts ResumeOptio
 	if opts.Gate != "" || opts.NoGate {
 		// The gate flags win over every lower tier, so a resume reads no
 		// repository's settings here.
-		gate := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), "builder"), RepoSettings{}).Command
+		gate := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, resolve.RoleChecks(rt.RoleRegistry(), "builder"), RepoSettings{}).Command
 		if err := add("--gate/--no-gate", "gate", gate); err != nil {
 			return nil, err
 		}

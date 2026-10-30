@@ -3,6 +3,7 @@ package relevo
 import (
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -85,12 +86,12 @@ func TestRestoreText(t *testing.T) {
 
 	cases := []struct {
 		name string
-		res  Resolution
+		res  resolve.Resolution
 		want string
 	}{
-		{"zero result", Resolution{},
+		{"zero result", resolve.Resolution{},
 			""},
-		{"restored", Resolution{RestoredWorktree: "/w", RestoredBranch: "relevo/x"},
+		{"restored", resolve.Resolution{RestoredWorktree: "/w", RestoredBranch: "relevo/x"},
 			"restored worktree /w on relevo/x"},
 	}
 	for _, c := range cases {

@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/text"
@@ -205,7 +206,7 @@ func (s *Server) handleStartRound(w http.ResponseWriter, r *http.Request) {
 	// token refuses with nothing absorbed and no ref touched. Send re-resolves
 	// it under its own lock as a backstop.
 	if req.Candidate != "" {
-		if _, err := relevo.ResolveSendBuilderFor(rt, relevo.BindingRole(b), b.BuilderCandidate, req.Candidate); err != nil {
+		if _, err := relevo.ResolveSendBuilderFor(rt, resolve.BindingRole(b), b.BuilderCandidate, req.Candidate); err != nil {
 			writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, err.Error())
 			return
 		}
@@ -317,7 +318,7 @@ func writeSendError(w http.ResponseWriter, rt relevo.Runtime, name string, b sto
 		writeErr(w, http.StatusServiceUnavailable, remote.CodeNoRunner, sendErr.Error())
 	case errors.Is(sendErr, relevo.ErrBuilderBusy), errors.Is(sendErr, relevo.ErrReportPending):
 		writeErr(w, http.StatusConflict, remote.CodeRoundOpen, sendErr.Error())
-	case errors.Is(sendErr, relevo.ErrTierAboveMax):
+	case errors.Is(sendErr, resolve.ErrTierAboveMax):
 		writeErr(w, http.StatusUnprocessableEntity, remote.CodeTierAboveMax, sendErr.Error())
 	case errors.Is(sendErr, harness.ErrTierUnsupported), errors.Is(sendErr, harness.ErrExtraArgsPermission):
 		writeErr(w, http.StatusUnprocessableEntity, remote.CodeInvalid, sendErr.Error())

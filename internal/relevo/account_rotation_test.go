@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -207,7 +208,7 @@ func TestNextBuilderRotatesWithinPool(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			b := store.Binding{BuilderCandidate: testOpencodeRef, BuilderAccount: c.account}
-			got, ok := nextBuilder(b, AccountPick{Set: c.set, Gates: c.gates})
+			got, ok := nextBuilder(b, resolve.AccountPick{Set: c.set, Gates: c.gates})
 			if ok != c.ok {
 				t.Fatalf("nextBuilder ok = %v, want %v", ok, c.ok)
 			}
@@ -366,13 +367,13 @@ func TestNoAccountsKeepsTheGateBare(t *testing.T) {
 	t.Parallel()
 
 	rt, b := sentSwitchable(t) // no accounts configured
-	if got := pickFor(rt); len(got.Set) != 0 || got.Gates != nil || got.Mode != "" {
+	if got := resolve.PickFor(ResolveDeps(rt)); len(got.Set) != 0 || got.Gates != nil || got.Mode != "" {
 		t.Fatalf("pickFor with no accounts = %+v, want the zero value", got)
 	}
-	if got, ok := nextBuilder(b, pickFor(rt)); ok {
+	if got, ok := nextBuilder(b, resolve.PickFor(ResolveDeps(rt))); ok {
 		t.Fatalf("nextBuilder with no accounts = %v, %v; want no rotation", got.Name, ok)
 	}
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), "", "builder", pickFor(rt))
+	res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), "", "builder", resolve.PickFor(ResolveDeps(rt)))
 	if err != nil {
 		t.Fatalf("resolveRole: %v", err)
 	}

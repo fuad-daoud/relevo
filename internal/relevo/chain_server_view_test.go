@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -490,8 +491,8 @@ func TestChainServerResumeRetypesAnUnknownActor(t *testing.T) {
 	seedServerChain(t, rt, "shop")
 
 	_, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Params: map[string]string{"builder": "builder-qwen"}})
-	if !errors.Is(err, ErrUnknownRole) {
-		t.Fatalf("err = %v, want errors.Is(err, ErrUnknownRole)", err)
+	if !errors.Is(err, resolve.ErrUnknownRole) {
+		t.Fatalf("err = %v, want errors.Is(err, resolve.ErrUnknownRole)", err)
 	}
 	if !strings.Contains(err.Error(), "server zen") || !strings.Contains(err.Error(), "builder-qwen") {
 		t.Errorf("err = %q, want it to name the server and the actor", err)

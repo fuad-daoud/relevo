@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -52,7 +53,7 @@ func DoneText(name string, r DoneResult) string {
 }
 
 // RestoreText is what `relevo bind --resume` prints when a missing worktree was restored.
-func RestoreText(res Resolution) string {
+func RestoreText(res resolve.Resolution) string {
 	if res.RestoredWorktree == "" {
 		return ""
 	}
@@ -67,11 +68,11 @@ func RestoreText(res Resolution) string {
 // appends. A placement a flag named, and one nothing named, render nothing, so
 // an explicit --server reads as it always did. placementClause stays unexported
 // and unedited, which is what keeps the pick note byte-identical.
-func PlacementText(p PlacementResolution) string {
-	if p.How != placementHowActor {
+func PlacementText(p resolve.PlacementResolution) string {
+	if p.How != resolve.PlacementActor {
 		return ""
 	}
-	return placementClause(p)
+	return resolve.PlacementClause(p)
 }
 
 // StopText is what `relevo stop` says on success: what happened to the round.

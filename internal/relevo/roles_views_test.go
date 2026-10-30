@@ -16,6 +16,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -61,7 +62,7 @@ func TestRolesViewsFormatPolicyForFileMode(t *testing.T) {
 		"reviewer": {},
 	})
 
-	got := FormatPolicyFor(reg, nil, set, policy.Policy{}, nil, nil, availability.History{}, baseTime, time.UTC)
+	got := resolve.FormatPolicyFor(reg, nil, set, policy.Policy{}, nil, nil, availability.History{}, baseTime, time.UTC)
 
 	want := "builder  (config actors)\n" +
 		"  1  b  order     <- would pick\n" +
@@ -102,8 +103,8 @@ func TestRolesViewsFormatPolicyForLegacyMatches(t *testing.T) {
 	gates := []availability.Gate{{Token: testClaudeRef, Kind: availability.RateLimited, Until: baseTime.Add(time.Hour)}}
 
 	legacy, _ := roles.Build(nil, set, pol)
-	want := FormatPolicy(set, pol, gates, availability.History{}, baseTime, time.UTC)
-	got := FormatPolicyFor(legacy, nil, set, pol, gates, nil, availability.History{}, baseTime, time.UTC)
+	want := resolve.FormatPolicy(set, pol, gates, availability.History{}, baseTime, time.UTC)
+	got := resolve.FormatPolicyFor(legacy, nil, set, pol, gates, nil, availability.History{}, baseTime, time.UTC)
 	if got != want {
 		t.Errorf("FormatPolicyFor(legacy) =\n%q\nwant FormatPolicy's:\n%q", got, want)
 	}
@@ -124,7 +125,7 @@ func TestRolesViewsPerRoleGateFiltering(t *testing.T) {
 		Note: "agents missing for reviewer",
 	}}
 
-	got := FormatPolicy(set, policy.Policy{}, gates, availability.History{}, baseTime, time.UTC)
+	got := resolve.FormatPolicy(set, policy.Policy{}, gates, availability.History{}, baseTime, time.UTC)
 
 	builder := rolesViewsSection(t, got, "builder  (no order set)", "reviewer  (no order set)")
 	if strings.Contains(builder, "agents missing") {
@@ -150,8 +151,8 @@ func TestRolesViewsPolicyWarningsForFileMode(t *testing.T) {
 		"scout": {Shape: ptr("reader"), Candidates: []string{"claude/test/m", "claude/test/ghost"}},
 	})
 
-	got := PolicyWarningsFor(reg, set, policy.Policy{})
-	want := []PolicyWarning{
+	got := resolve.PolicyWarningsFor(reg, set, policy.Policy{})
+	want := []resolve.PolicyWarning{
 		{
 			Role: "scout", Index: 0, Token: "claude/test/m",
 			Text: `config actors scout.candidates[0] "m": scout has no definition for claude`,
@@ -182,7 +183,7 @@ func TestRolesViewsRoleRefusalsForFileMode(t *testing.T) {
 		{Token: testOpencodeRef, Kind: availability.RateLimited, Role: "builder", Until: baseTime.Add(time.Hour)},
 	}
 
-	got := RoleRefusalsFor(reg, set, policy.Policy{}, gates)
+	got := resolve.RoleRefusalsFor(reg, set, policy.Policy{}, gates)
 	if len(got) != 1 {
 		t.Fatalf("RoleRefusalsFor = %+v, want exactly the builder refusal", got)
 	}
@@ -243,7 +244,7 @@ func TestRolesViewsLegacyRoleFieldWarnings(t *testing.T) {
 		"builder": {Candidates: []string{testClaudeRef}},
 	})
 
-	got := LegacyRoleFieldWarnings(reg, set, pol)
+	got := resolve.LegacyRoleFieldWarnings(reg, set, pol)
 	want := []string{
 		"candidates: claude/test/m: roles is ignored; config roles assigns candidates to roles",
 		"candidates: claude/test/m: tier is ignored; set the role's tier in config roles",
@@ -255,7 +256,7 @@ func TestRolesViewsLegacyRoleFieldWarnings(t *testing.T) {
 	}
 
 	legacy, _ := roles.Build(nil, set, pol)
-	if got := LegacyRoleFieldWarnings(legacy, set, pol); got != nil {
+	if got := resolve.LegacyRoleFieldWarnings(legacy, set, pol); got != nil {
 		t.Errorf("LegacyRoleFieldWarnings(legacy) = %q, want nil", got)
 	}
 }
@@ -291,7 +292,7 @@ func TestRolesViewsMergedGateTexts(t *testing.T) {
 
 // TestRolesViewsResolveRoleFileModeNothingServes pins §3.4: in file mode a role
 // whose row lists nothing gives the roles.json wording, and the error still
-// matches ErrRoleNotServed.
+// matches resolve.ErrRoleNotServed.
 func TestRolesViewsResolveRoleFileModeNothingServes(t *testing.T) {
 	t.Parallel()
 
@@ -300,15 +301,15 @@ func TestRolesViewsResolveRoleFileModeNothingServes(t *testing.T) {
 		"builder": {Candidates: []string{}},
 	})
 
-	_, err := resolveRole(reg, set, nil, "", "builder")
+	_, err := resolve.ResolveRole(reg, set, nil, "", "builder")
 	if err == nil {
 		t.Fatal("resolveRole with an empty config actors builder.candidates = nil, want an error")
 	}
 	if !strings.Contains(err.Error(), "config actors builder.candidates") {
 		t.Errorf("err = %q, want it to name config actors builder.candidates", err)
 	}
-	if !errors.Is(err, ErrRoleNotServed) {
-		t.Errorf("err = %q, want errors.Is(err, ErrRoleNotServed)", err)
+	if !errors.Is(err, resolve.ErrRoleNotServed) {
+		t.Errorf("err = %q, want errors.Is(err, resolve.ErrRoleNotServed)", err)
 	}
 }
 

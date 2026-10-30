@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -263,7 +264,7 @@ func TestWriteErrorClassifiesUserSideRefusals(t *testing.T) {
 		next string
 	}{
 		{"candidate on open round", fmt.Errorf("send: %w", &relevo.CandidateRoundOpenError{Name: "smoke", Round: 1}), codeConflict, "relevo stop smoke"},
-		{"no viable placement", fmt.Errorf("bind: %w", relevo.ErrNoViablePlacement), codePolicyRefused, "relevo config"},
+		{"no viable placement", fmt.Errorf("bind: %w", resolve.ErrNoViablePlacement), codePolicyRefused, "relevo config"},
 		{"no mastermind session", fmt.Errorf("bind: %w", relevo.ErrNoMasterMindSession), codeUsage, "relevo mastermind init"},
 		{"missing binding", fmt.Errorf("wait: %w", store.ErrNotFound), codeBindingNotFound, "relevo status --all"},
 	} {

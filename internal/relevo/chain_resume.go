@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -109,7 +110,7 @@ func resumeSettings(rt Runtime, c db.ChainRow, opts ResumeOptions) (chain.Settin
 		// The gate flags are the one tier a resume reads fresh, and the one
 		// tier that never falls back: the flag wins over every lower tier, so
 		// a resume reads no repository's settings here.
-		set.Gate = resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), "builder"), RepoSettings{}).Command
+		set.Gate = resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, resolve.RoleChecks(rt.RoleRegistry(), "builder"), RepoSettings{}).Command
 	}
 	if opts.Regate != nil {
 		set.Regate = ResolveRegate(opts.Regate, rt.Policy)

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/reporttail"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -114,7 +115,7 @@ func TestWorkflowParseOutcomesReadsTheClosedRound(t *testing.T) {
 	rt, _ := chainRuntime(t)
 	startedChain(t, rt, ChainOptions{})
 	rev := chainBinding(t, rt, "shop-rev")
-	info, ok := rt.RoleRegistry().ActorInfo(BindingRole(rev))
+	info, ok := rt.RoleRegistry().ActorInfo(resolve.BindingRole(rev))
 	if !ok {
 		t.Fatalf("no actor info for reviewer")
 	}

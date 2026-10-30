@@ -1,7 +1,7 @@
 package relevo
 
 // A2 round 1's pick tests: off entries are skipped by an omitted token, served
-// when named explicitly, refused with ErrAllGated when nothing else is left,
+// when named explicitly, refused with resolve.ErrAllGated when nothing else is left,
 // and shown as "off" in the pick block.
 
 import (
@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
@@ -33,21 +34,21 @@ func TestResolveSkipsOff(t *testing.T) {
 	set := candidateSet(t, rolesRuntimeCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, offRows())
 
-	res, err := resolveRole(reg, set, nil, "", "builder")
+	res, err := resolve.ResolveRole(reg, set, nil, "", "builder")
 	if err != nil {
 		t.Fatalf("resolveRole: %v", err)
 	}
 	if got := res.Token(); got != "claude/test/b" {
 		t.Errorf("picked %q, want claude/test/b", got)
 	}
-	if res.How != HowOrder || res.Position != 2 {
-		t.Errorf("How/Position = %q/%d, want %q/2", res.How, res.Position, HowOrder)
+	if res.How != resolve.HowOrder || res.Position != 2 {
+		t.Errorf("How/Position = %q/%d, want %q/2", res.How, res.Position, resolve.HowOrder)
 	}
 	if len(res.Skipped) != 1 || !res.Skipped[0].Off || res.Skipped[0].Token != "claude/test/a" {
 		t.Fatalf("Skipped = %+v, want one off skip for claude/test/a", res.Skipped)
 	}
 
-	note := ExplainResolution("builder", res)
+	note := resolve.ExplainResolution("builder", res)
 	if !strings.Contains(note, "skipped claude/test/a (off)") {
 		t.Errorf("ExplainResolution = %q, want an off skip clause", note)
 	}
@@ -61,24 +62,24 @@ func TestResolveExplicitOffNotes(t *testing.T) {
 	set := candidateSet(t, rolesRuntimeCandidatesJSON)
 	reg := rolesFileRegistry(t, set, policy.Policy{}, offRows())
 
-	res, err := resolveRole(reg, set, nil, "claude/test/a", "builder")
+	res, err := resolve.ResolveRole(reg, set, nil, "claude/test/a", "builder")
 	if err != nil {
-		t.Fatalf("resolveRole(explicit off): %v", err)
+		t.Fatalf("resolve.ResolveRole(explicit off): %v", err)
 	}
 	if got := res.Token(); got != "claude/test/a" {
 		t.Errorf("picked %q, want claude/test/a", got)
 	}
-	if res.How != HowExplicit {
-		t.Errorf("How = %q, want %q", res.How, HowExplicit)
+	if res.How != resolve.HowExplicit {
+		t.Errorf("How = %q, want %q", res.How, resolve.HowExplicit)
 	}
-	note := ExplainResolution("builder", res)
+	note := resolve.ExplainResolution("builder", res)
 	if want := "note: a is off for builder; running it because you named it"; !strings.Contains(note, want) {
 		t.Errorf("ExplainResolution = %q, want it to contain %q", note, want)
 	}
 }
 
 // TestAllOffOrGated pins §4.3's last rule: when every remaining entry is off
-// or gated the error is today's ErrAllGated, with the off entries listed as
+// or gated the error is today's resolve.ErrAllGated, with the off entries listed as
 // "<name> (off)".
 func TestAllOffOrGated(t *testing.T) {
 	t.Parallel()
@@ -92,9 +93,9 @@ func TestAllOffOrGated(t *testing.T) {
 			},
 		})
 
-		_, err := resolveRole(reg, set, nil, "", "builder")
-		if !errors.Is(err, ErrAllGated) {
-			t.Fatalf("err = %v, want ErrAllGated", err)
+		_, err := resolve.ResolveRole(reg, set, nil, "", "builder")
+		if !errors.Is(err, resolve.ErrAllGated) {
+			t.Fatalf("err = %v, want resolve.ErrAllGated", err)
 		}
 		for _, want := range []string{"claude/test/a (off)", "claude/test/b (off)"} {
 			if !strings.Contains(err.Error(), want) {
@@ -108,9 +109,9 @@ func TestAllOffOrGated(t *testing.T) {
 		reg := rolesFileRegistry(t, set, policy.Policy{}, offRows())
 		gates := []availability.Gate{{Token: "claude/test/b", Kind: availability.RateLimited}}
 
-		_, err := resolveRole(reg, set, gates, "", "builder")
-		if !errors.Is(err, ErrAllGated) {
-			t.Fatalf("err = %v, want ErrAllGated", err)
+		_, err := resolve.ResolveRole(reg, set, gates, "", "builder")
+		if !errors.Is(err, resolve.ErrAllGated) {
+			t.Fatalf("err = %v, want resolve.ErrAllGated", err)
 		}
 		if !strings.Contains(err.Error(), "claude/test/a (off)") {
 			t.Errorf("err = %q, want the off entry named", err.Error())
@@ -126,9 +127,9 @@ func TestAllOffOrGated(t *testing.T) {
 			},
 		})
 
-		_, err := resolveRole(reg, set, nil, "", "builder")
-		if !errors.Is(err, ErrAllGated) {
-			t.Fatalf("err = %v, want ErrAllGated", err)
+		_, err := resolve.ResolveRole(reg, set, nil, "", "builder")
+		if !errors.Is(err, resolve.ErrAllGated) {
+			t.Fatalf("err = %v, want resolve.ErrAllGated", err)
 		}
 		if !strings.Contains(err.Error(), "claude/test/a (off)") {
 			t.Errorf("err = %q, want the off entry named", err.Error())
@@ -150,7 +151,7 @@ func TestFormatPolicyShowsOff(t *testing.T) {
 		},
 	})
 
-	got := FormatPolicyFor(reg, nil, set, policy.Policy{}, nil, nil, availability.History{}, baseTime, time.UTC)
+	got := resolve.FormatPolicyFor(reg, nil, set, policy.Policy{}, nil, nil, availability.History{}, baseTime, time.UTC)
 
 	want := "builder  (config actors)\n" +
 		"  1  a  order     <- would pick\n" +
@@ -184,13 +185,13 @@ func TestFormatPolicyHeaderSaysActors(t *testing.T) {
 	rows := map[string]roles.Row{"builder": {Candidates: []string{testClaudeRef}}}
 
 	actors := actorsFileRegistry(t, set, policy.Policy{}, rows)
-	got := FormatPolicyFor(actors, nil, set, policy.Policy{}, nil, nil, availability.History{}, baseTime, time.UTC)
+	got := resolve.FormatPolicyFor(actors, nil, set, policy.Policy{}, nil, nil, availability.History{}, baseTime, time.UTC)
 	if !strings.Contains(got, "builder  (config actors)") {
 		t.Errorf("actors registry header:\n%s", got)
 	}
 
 	fileMode := rolesFileRegistry(t, set, policy.Policy{}, rows)
-	got = FormatPolicyFor(fileMode, nil, set, policy.Policy{}, nil, nil, availability.History{}, baseTime, time.UTC)
+	got = resolve.FormatPolicyFor(fileMode, nil, set, policy.Policy{}, nil, nil, availability.History{}, baseTime, time.UTC)
 	if !strings.Contains(got, "builder  (config actors)") {
 		t.Errorf("roles registry header:\n%s", got)
 	}

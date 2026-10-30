@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/isolate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/text"
 )
@@ -192,7 +193,7 @@ var bindCreateSeam func()
 // references it is saved, because between InitBare and that save no row names
 // the repo and the tick's prune would otherwise delete it.
 func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, rt relevo.Runtime, caller remote.ClientID, req remote.CreateBindingRequest) (store.Binding, func(), bool) {
-	role := relevo.NormRole(req.Role)
+	role := resolve.NormRole(req.Role)
 	shape, ok := s.servedShape(w, rt, req.Role, req.Gate)
 	if !ok {
 		return store.Binding{}, nil, false

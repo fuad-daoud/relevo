@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -1960,8 +1961,8 @@ func TestSendRefusesStoredTierAboveMaxWithoutAllowYolo(t *testing.T) {
 	b := seedOverCapClaude(t, rt)
 
 	src := writePlan(t, "# over cap")
-	if _, err := Send(context.Background(), rt, "over-cap", src, SendOptions{}); !errors.Is(err, ErrTierAboveMax) {
-		t.Fatalf("Send without --allow-yolo = %v, want errors.Is(..., ErrTierAboveMax)", err)
+	if _, err := Send(context.Background(), rt, "over-cap", src, SendOptions{}); !errors.Is(err, resolve.ErrTierAboveMax) {
+		t.Fatalf("Send without --allow-yolo = %v, want errors.Is(..., resolve.ErrTierAboveMax)", err)
 	}
 	if len(fr.specs) != 0 {
 		t.Errorf("the refused send started %d processes, want none", len(fr.specs))

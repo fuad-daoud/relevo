@@ -27,6 +27,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -509,7 +510,7 @@ func consultDeps(rt Runtime) consult.Deps {
 		},
 		Delivery: deliveryDeps(rt),
 		ResolveReviewer: func() (candidate.Candidate, harness.RoleSpec, harness.Tier, error) {
-			res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), "", "reviewer")
+			res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), "", "reviewer")
 			if err != nil {
 				return candidate.Candidate{}, harness.RoleSpec{}, "", err
 			}

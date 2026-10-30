@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -51,7 +52,7 @@ func chainEventFromCloseWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.C
 	}
 	actor := chainFlowActor(tx, c, b.Name)
 	if actor == "" {
-		actor = BindingRole(b)
+		actor = resolve.BindingRole(b)
 	}
 	round := wf.Round
 	if round == 0 {
@@ -342,7 +343,7 @@ func chainReaderCloseOutcome(rt Runtime, tx *store.Tx, b store.Binding, round in
 	}
 	actor := chainFlowActor(tx, c, b.Name)
 	if actor == "" {
-		actor = BindingRole(b)
+		actor = resolve.BindingRole(b)
 	}
 	info, _ := rt.RoleRegistry().ActorInfo(actor)
 	bodies := chainOutcomeBodies(rt, b, round, body)

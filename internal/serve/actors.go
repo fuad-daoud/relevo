@@ -8,6 +8,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/text"
 )
 
@@ -23,9 +24,9 @@ func (s *Server) handleGetActor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role := relevo.NormRole(r.PathValue("actor"))
+	role := resolve.NormRole(r.PathValue("actor"))
 	roleName := text.OrText(role, "builder")
-	shape, err := relevo.ActorShape(rt, role)
+	shape, err := resolve.ActorShape(rt.RoleRegistry(), role)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, err.Error())
 		return

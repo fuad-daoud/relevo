@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -23,8 +24,8 @@ func TestPickRefusalFromWireRebuildsTheTypedRefusal(t *testing.T) {
 		err  error
 		want error
 	}{
-		{"all gated", wire(422, remote.CodeInvalid, gated), ErrAllGated},
-		{"role not served", wire(422, remote.CodeInvalid, notServed), ErrRoleNotServed},
+		{"all gated", wire(422, remote.CodeInvalid, gated), resolve.ErrAllGated},
+		{"role not served", wire(422, remote.CodeInvalid, notServed), resolve.ErrRoleNotServed},
 	}
 	for _, tc := range cases {
 		got := pickRefusalFromWire(tc.err)
@@ -65,8 +66,8 @@ func TestAddRemoteAllGatedIsARefusal(t *testing.T) {
 		Now:         time.Now,
 	}
 	_, err := Add(context.Background(), rt, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo"})
-	if !errors.Is(err, ErrAllGated) {
-		t.Fatalf("err = %v, want errors.Is(err, ErrAllGated)", err)
+	if !errors.Is(err, resolve.ErrAllGated) {
+		t.Fatalf("err = %v, want errors.Is(err, resolve.ErrAllGated)", err)
 	}
 	if len(fg.createBranchCalls) != 0 {
 		t.Fatalf("createBranch called %d times, want 0", len(fg.createBranchCalls))

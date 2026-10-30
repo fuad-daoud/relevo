@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -98,11 +99,11 @@ func TestPeerHistoryNeverGatesAPick(t *testing.T) {
 	// asks: given this machine's ledger, which candidate serves the role.
 	pol := orderOf("builder", testOpencodeRef, testClaudeRef, testAgyRef)
 
-	before, err := resolveCandidate(bare.Candidates, pol, availability.Gates(AvailabilityDeps(bare)), "", "builder")
+	before, err := resolve.Resolve(bare.Candidates, pol, availability.Gates(AvailabilityDeps(bare)), "", "builder")
 	if err != nil {
 		t.Fatalf("resolveCandidate on the bare runtime: %v", err)
 	}
-	after, err := resolveCandidate(loaded.Candidates, pol, availability.Gates(AvailabilityDeps(loaded)), "", "builder")
+	after, err := resolve.Resolve(loaded.Candidates, pol, availability.Gates(AvailabilityDeps(loaded)), "", "builder")
 	if err != nil {
 		t.Fatalf("resolveCandidate with the peer's history present: %v", err)
 	}
@@ -147,7 +148,7 @@ func TestSpawnFailedStaysLocal(t *testing.T) {
 	}
 
 	pol := orderOf("builder", testOpencodeRef, testClaudeRef, testAgyRef)
-	got, err := resolveCandidate(rt.Candidates, pol, gates, "", "builder")
+	got, err := resolve.Resolve(rt.Candidates, pol, gates, "", "builder")
 	if err != nil {
 		t.Fatalf("resolveCandidate: %v", err)
 	}

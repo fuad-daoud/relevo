@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -225,7 +226,7 @@ func chainServerResume(ctx context.Context, rt Runtime, c db.ChainRow, opts Resu
 	if opts.Gate != "" || opts.NoGate {
 		// The gate flags win over every lower tier, so a resume reads no
 		// repository's settings here.
-		gate := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), "builder"), RepoSettings{}).Command
+		gate := resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, resolve.RoleChecks(rt.RoleRegistry(), "builder"), RepoSettings{}).Command
 		req.Gate = &gate
 	}
 	if _, err := rt.Remote.ChainResume(ctx, c.Server, c.Name, req); err != nil {
@@ -238,7 +239,7 @@ func chainServerResume(ctx context.Context, rt Runtime, c db.ChainRow, opts Resu
 		if remoteCode(err, 409, remote.CodeRoundOpen) {
 			return ChainResult{}, roundOpenFromWire(err)
 		}
-		if typed := chainServerCreateError(err); errors.Is(typed, ErrUnknownRole) {
+		if typed := chainServerCreateError(err); errors.Is(typed, resolve.ErrUnknownRole) {
 			return ChainResult{}, fmt.Errorf("server %s: %w", c.Server, typed)
 		}
 		return ChainResult{}, err

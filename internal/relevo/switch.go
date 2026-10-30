@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
@@ -62,7 +63,7 @@ func roundExclusionGates(b store.Binding) []availability.Gate {
 // through its logins rather than restarting at the first one. It is decided
 // before the actor order is walked, so a limit rotates within the pool before
 // it ever changes candidate. Pure.
-func nextBuilder(b store.Binding, pick AccountPick) (account.Account, bool) {
+func nextBuilder(b store.Binding, pick resolve.AccountPick) (account.Account, bool) {
 	if len(pick.Set) == 0 || b.BuilderAccount == "" {
 		return account.Account{}, false
 	}
@@ -95,7 +96,7 @@ func nextBuilder(b store.Binding, pick AccountPick) (account.Account, bool) {
 
 // poolForPick is the pool a pick drew from, for the opencode flip's drift
 // check. Nil when the token does not parse or the pool is empty.
-func poolForPick(pick AccountPick, token string) []account.Account {
+func poolForPick(pick resolve.AccountPick, token string) []account.Account {
 	ref, err := candidate.ParseRef(token)
 	if err != nil {
 		return nil
@@ -179,12 +180,12 @@ func switchLines(entries []store.LogEntry, round int, serverSwitch bool) []strin
 // is status, and its trace to the mastermind is the switch line in the closing
 // round's report -- switchLine below, appended by queueReport. No new stored
 // fact is added for it: the note written here is what that line renders.
-func switchEntry(now time.Time, round int, reason string, res Resolution, u *usage.Usage) store.LogEntry {
+func switchEntry(now time.Time, round int, reason string, res resolve.Resolution, u *usage.Usage) store.LogEntry {
 	return store.LogEntry{
 		TS: now.UTC(), Round: round, Direction: store.DirToMasterMind,
 		Kind: store.KindSwitch, Confirmed: true,
 		Usage: u,
-		Note:  "switched builder (" + reason + "): " + ExplainResolution("builder", res),
+		Note:  "switched builder (" + reason + "): " + resolve.ExplainResolution("builder", res),
 	}
 }
 
@@ -200,8 +201,8 @@ func switchEntry(now time.Time, round int, reason string, res Resolution, u *usa
 // to kill and passes closeOld=false, the gated trigger's process is still
 // running and passes true.
 //
-// resolveBuilder's own Resolution is always HowExplicit -- it is handed the
-// already-chosen token -- and is discarded. The Resolution switchBuilder
+// resolveBuilder's own resolve.Resolution is always resolve.HowExplicit -- it is handed the
+// already-chosen token -- and is discarded. The resolve.Resolution switchBuilder
 // records in the switch log entry is the one it makes itself, by calling
 // resolveCandidate with an omitted token, so the audit trail explains the
 // real policy decision rather than the trivial "explicit" one. This is the
@@ -230,26 +231,26 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 			b.Name, reason, b.BuilderCandidate, b.RoundSwitches, limit))
 	}
 
-	pick := pickFor(rt)
+	pick := resolve.PickFor(ResolveDeps(rt))
 	gates := switchGates(rt, b)
 
 	// A limit gated the account this binding is on: retry the same candidate
 	// on the next ungated login of its pool before the actor order is walked
 	// at all. The rotation is decided here, purely.
 	var (
-		res     Resolution
+		res     resolve.Resolution
 		next    account.Account
 		rotated bool
 	)
 	if a, ok := nextBuilder(b, pick); ok {
 		if c, cerr := rt.Candidates.Resolve(b.BuilderCandidate); cerr == nil {
-			res = Resolution{Candidate: c, How: HowRotation, Account: a.Name}
+			res = resolve.Resolution{Candidate: c, How: resolve.HowRotation, Account: a.Name}
 			next, rotated = a, true
 		}
 	}
 	if !rotated {
 		var err error
-		res, err = resolveRole(rt.RoleRegistry(), rt.Candidates, gates, "", bindingRole(b), pick)
+		res, err = resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, gates, "", resolve.BindingRole(b), pick)
 		if err != nil {
 			if b.Builder.PID == 0 {
 				b = abandonSession(b)
@@ -302,7 +303,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 		Candidate: res.Token(),
 		CWD:       b.CWD,
 		Headless:  b.Builder.Headless(),
-		Tier:      string(effectiveTier(b)),
+		Tier:      string(resolve.EffectiveTier(b)),
 		Role:      b.Role,
 	}, b.Name)
 	if err != nil {

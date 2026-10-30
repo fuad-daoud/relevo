@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
@@ -146,7 +147,7 @@ func appendServeScopeRows(rep *Report, rt relevo.Runtime, env Env) {
 // as mastermindCheckInput treats its own store read.
 func appendPolicyRows(rep *Report, rt relevo.Runtime, env Env, L config.Loaded) {
 	rep.Checks = append(rep.Checks, ledgerChecks(availability.Gates(relevo.AvailabilityDeps(rt)))...)
-	rep.Checks = append(rep.Checks, policyChecks(relevo.PolicyWarningsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy))...)
+	rep.Checks = append(rep.Checks, policyChecks(resolve.PolicyWarningsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy))...)
 	rep.Checks = append(rep.Checks, roleSourceChecks(rt.RoleRegistry(), rt.Candidates, rt.Policy)...)
 	rep.Checks = append(rep.Checks, skillChecks(env, rt.RoleRegistry(), rt.Candidates)...)
 	if bindings, err := rt.Store.List(); err == nil {
@@ -157,7 +158,7 @@ func appendPolicyRows(rep *Report, rt relevo.Runtime, env Env, L config.Loaded) 
 	}
 	_, st := classify.Resolve(rt.Policy.Classify, L.Typesafe, os.Getenv)
 	rep.Checks = append(rep.Checks, ClassifyCheck(st))
-	refusals := relevo.RoleRefusalsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, availability.Gates(relevo.AvailabilityDeps(rt)))
+	refusals := resolve.RoleRefusalsFor(rt.RoleRegistry(), rt.Candidates, rt.Policy, availability.Gates(relevo.AvailabilityDeps(rt)))
 	rep.Checks = append(rep.Checks, refusalChecks(refusals)...)
 	for _, r := range refusals {
 		if r.Role == "builder" {

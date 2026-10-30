@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
@@ -70,16 +71,16 @@ func TestResolveServedTier(t *testing.T) {
 		t.Fatalf("all empty: got %v, err %v, want harness, nil", got, err)
 	}
 
-	// Explicit above max_tier -> ErrTierAboveMax.
+	// Explicit above max_tier -> resolve.ErrTierAboveMax.
 	rt = Runtime{Candidates: set, Policy: policy.Policy{}}
-	if _, err := ResolveServedTier(rt, token, "yolo"); !errors.Is(err, ErrTierAboveMax) {
-		t.Fatalf("explicit above max_tier: err = %v, want ErrTierAboveMax", err)
+	if _, err := ResolveServedTier(rt, token, "yolo"); !errors.Is(err, resolve.ErrTierAboveMax) {
+		t.Fatalf("explicit above max_tier: err = %v, want resolve.ErrTierAboveMax", err)
 	}
 
-	// Policy tier above max_tier with explicit "" -> ErrTierAboveMax.
+	// Policy tier above max_tier with explicit "" -> resolve.ErrTierAboveMax.
 	rt = Runtime{Candidates: nil, Policy: policy.Policy{Tier: map[string]string{"builder": "yolo"}}}
-	if _, err := ResolveServedTier(rt, "", ""); !errors.Is(err, ErrTierAboveMax) {
-		t.Fatalf("policy tier above max_tier: err = %v, want ErrTierAboveMax", err)
+	if _, err := ResolveServedTier(rt, "", ""); !errors.Is(err, resolve.ErrTierAboveMax) {
+		t.Fatalf("policy tier above max_tier: err = %v, want resolve.ErrTierAboveMax", err)
 	}
 
 	// explicit=yolo, MaxTier=yolo -> ok (allowYolo is never consulted).
@@ -176,8 +177,8 @@ func TestPickServedCandidateRefusesAnUnservedExplicitToken(t *testing.T) {
 	}
 
 	// c is configured, but the row does not list it for builder.
-	if _, _, err := PickServedCandidate(rt, "claude/test/c"); !errors.Is(err, ErrRoleNotServed) {
-		t.Fatalf("unserved explicit token: err = %v, want ErrRoleNotServed", err)
+	if _, _, err := PickServedCandidate(rt, "claude/test/c"); !errors.Is(err, resolve.ErrRoleNotServed) {
+		t.Fatalf("unserved explicit token: err = %v, want resolve.ErrRoleNotServed", err)
 	}
 
 	// A listed explicit token still resolves.
@@ -224,7 +225,7 @@ func TestPickServedCandidateSkipsAProviderGatedOnTheServer(t *testing.T) {
 
 // TestPickServedCandidateRefusesWhenEveryCandidateIsGated pins the create-time
 // refusal: with every candidate serving the role gated, the served pick
-// answers with the ErrAllGated refusal a local bind answers with, not with
+// answers with the resolve.ErrAllGated refusal a local bind answers with, not with
 // the empty candidate that used to create a member with nothing to spawn.
 func TestPickServedCandidateRefusesWhenEveryCandidateIsGated(t *testing.T) {
 	t.Parallel()
@@ -239,8 +240,8 @@ func TestPickServedCandidateRefusesWhenEveryCandidateIsGated(t *testing.T) {
 	}
 
 	token, _, err := PickServedCandidate(rt, "")
-	if !errors.Is(err, ErrAllGated) {
-		t.Fatalf("err = %v, want ErrAllGated", err)
+	if !errors.Is(err, resolve.ErrAllGated) {
+		t.Fatalf("err = %v, want resolve.ErrAllGated", err)
 	}
 	if token != "" {
 		t.Errorf("token = %q, want empty beside the refusal", token)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -34,7 +35,7 @@ func overlaySwapBinding(existing, fresh store.Binding, m chainMember) store.Bind
 	existing = abandonSession(existing)
 	existing.Builder.StreamSessionID = ""
 	existing.RoundSwitches = 0
-	existing.Role = normRole(m.actor)
+	existing.Role = resolve.NormRole(m.actor)
 	existing.Shape = fresh.Shape
 	existing.Builder = fresh.Builder
 	existing.Builder.StreamSessionID = ""
@@ -51,7 +52,7 @@ func overlayServedSwapBinding(existing store.Binding, m chainMember, pick served
 	existing = abandonSession(existing)
 	existing.Builder.StreamSessionID = ""
 	existing.RoundSwitches = 0
-	existing.Role = normRole(m.actor)
+	existing.Role = resolve.NormRole(m.actor)
 	existing.Shape = m.shape
 	existing.Builder.Kind = pick.kind
 	existing.BuilderCandidate = pick.token
@@ -71,7 +72,7 @@ func validateSwapOpenRounds(tx *store.Tx, c db.ChainRow, swap []chainMember) err
 func validateServedSwapActors(rt Runtime, members []chainMember) (map[string]servedPick, error) {
 	picks := make(map[string]servedPick, len(members))
 	for _, m := range members {
-		shape, err := actorShape(rt.RoleRegistry(), m.actor)
+		shape, err := resolve.ActorShape(rt.RoleRegistry(), m.actor)
 		if err != nil {
 			return nil, err
 		}
@@ -101,7 +102,7 @@ func applyLocalSwaps(tx *store.Tx, swap []chainMember, built []store.Binding, ro
 		setChainMemberColumn(c, m.part, m.name)
 		for j := range rows {
 			if rows[j].Binding == m.name {
-				rows[j].Actor = normRole(m.actor)
+				rows[j].Actor = resolve.NormRole(m.actor)
 			}
 		}
 	}
@@ -122,7 +123,7 @@ func applyServedSwaps(tx *store.Tx, swap []chainMember, picks map[string]servedP
 		setChainMemberColumn(c, m.part, m.name)
 		for j := range rows {
 			if rows[j].Binding == m.name {
-				rows[j].Actor = normRole(m.actor)
+				rows[j].Actor = resolve.NormRole(m.actor)
 			}
 		}
 	}

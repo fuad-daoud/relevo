@@ -23,6 +23,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
@@ -198,11 +199,11 @@ func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if err != nil {
 		return b, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
 	}
-	role, err := bindingSpec(rt, b, c.Harness)
+	role, err := resolve.BindingSpec(rt.RoleRegistry(), b, c.Harness)
 	if err != nil {
 		return b, fmt.Errorf("binding %q builder: %w", b.Name, err)
 	}
-	tier, err := launchTier(b, rt.Policy, allowYolo)
+	tier, err := resolve.LaunchTier(b, rt.Policy, allowYolo)
 	if err != nil {
 		return b, err
 	}
@@ -408,7 +409,7 @@ func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// The session only resolves under the login that wrote it, so a row a
 	// human moved meanwhile is put back before the harness resumes.
 	if b.BuilderAccount != "" {
-		pick := pickFor(rt)
+		pick := resolve.PickFor(ResolveDeps(rt))
 		if rec, ok := accountByName(pick.Set, b.BuilderAccount); ok {
 			ensureOpencodeActive(ctx, rt, rec, pick.Gates)
 		}
@@ -417,11 +418,11 @@ func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	if !ok {
 		return b, fmt.Errorf("unknown harness kind %q", c.Harness)
 	}
-	role, err := bindingSpec(rt, b, c.Harness)
+	role, err := resolve.BindingSpec(rt.RoleRegistry(), b, c.Harness)
 	if err != nil {
 		return b, fmt.Errorf("binding %q builder: %w", b.Name, err)
 	}
-	tier, err := launchTier(b, rt.Policy, allowYolo)
+	tier, err := resolve.LaunchTier(b, rt.Policy, allowYolo)
 	if err != nil {
 		return b, err
 	}

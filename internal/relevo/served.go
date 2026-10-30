@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -176,7 +177,7 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 		RoundStartedAt: chainServedRoundStart(b, facts.RoundStartedAt),
 		RoundCap:       b.RoundCap,
 		RoundTimeoutMS: b.RoundTimeoutMS,
-		Tier:           string(effectiveTier(b)),
+		Tier:           string(resolve.EffectiveTier(b)),
 		Feature:        b.Feature,
 		Ticket:         b.Ticket,
 		Usage:          facts.Usage,
@@ -271,13 +272,13 @@ func servedRoundFacts(entries []store.LogEntry, n int) remote.ClosedRoundView {
 // contributes no tier); explicit is the wire tier ("" = none).
 //
 //	chain: explicit > candidate.Tier > policy's tier.<role> > harness
-//	cap:   checkTierCap(tier, rt.Policy, allowYolo=false) -- the server's
+//	cap:   resolve.CheckTierCap(tier, rt.Policy, allowYolo=false) -- the server's
 //	       max_tier is a ceiling nothing on the wire lifts
 //
 // Errors: harness.ParseTier's error for a malformed explicit;
-// ErrTierAboveMax (wrapped, message names the ceiling) above the cap.
+// resolve.ErrTierAboveMax (wrapped, message names the ceiling) above the cap.
 // explicit == "" can still fail: a policy tier.<role> above max_tier is a
-// policy authoring error and returns ErrTierAboveMax too, so the create
+// policy authoring error and returns resolve.ErrTierAboveMax too, so the create
 // fails loudly instead of launching at a tier the policy forbids (add.go
 // behaves the same locally).
 func ResolveServedTierFor(rt Runtime, role, token, explicit string) (harness.Tier, error) {
@@ -294,8 +295,8 @@ func ResolveServedTierFor(rt Runtime, role, token, explicit string) (harness.Tie
 			return "", err
 		}
 	}
-	tier := resolveRoleTier(explicit, c, rt.RoleRegistry(), role)
-	if err := checkTierCap(tier, rt.Policy, false); err != nil {
+	tier := resolve.ResolveTier(explicit, c, rt.RoleRegistry(), role)
+	if err := resolve.CheckTierCap(tier, rt.Policy, false); err != nil {
 		return tier, err
 	}
 	return tier, nil
@@ -317,9 +318,9 @@ func RenderServedTier(rt Runtime, role, token, kind string, tier harness.Tier) (
 	if kind == "" {
 		return tier, nil
 	}
-	if shape, err := actorShape(rt.RoleRegistry(), role); err == nil && shape == store.ShapeReader {
+	if shape, err := resolve.ActorShape(rt.RoleRegistry(), role); err == nil && shape == store.ShapeReader {
 		var rerr error
-		if tier, rerr = readerTier(tier, kind, rt.Policy); rerr != nil {
+		if tier, rerr = resolve.ReaderTier(tier, kind, rt.Policy); rerr != nil {
 			return tier, rerr
 		}
 	}
@@ -362,7 +363,7 @@ func ServedBuilderTier(rt Runtime) harness.Tier {
 // refusal, never swapped for another candidate: the create that named it must
 // answer, not silently serve someone else. With no token it is the role's
 // ranked pick, and a role the gates refuse -- every candidate serving it
-// gated, ErrAllGated -- is returned as that refusal too: a served create is
+// gated, resolve.ErrAllGated -- is returned as that refusal too: a served create is
 // answered with the refusal a local bind answers with, not with a member
 // whose candidate is empty. The one non-refusal empty answer is a runtime
 // with no candidates configured at all, which is the shape's own answer.
@@ -370,7 +371,7 @@ func PickServedCandidateFor(rt Runtime, role, token string) (string, string, err
 	if rt.Candidates == nil {
 		return token, "", nil
 	}
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), token, role)
+	res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), token, role)
 	if err != nil {
 		if token != "" {
 			return token, "", err

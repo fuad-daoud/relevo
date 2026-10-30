@@ -1,4 +1,4 @@
-package relevo
+package resolve
 
 import (
 	"errors"
@@ -327,8 +327,8 @@ func TestFormatPolicyGateAndPeakOrder(t *testing.T) {
 func TestFormatPolicyRepeatedGateRendersOnce(t *testing.T) {
 	t.Parallel()
 
-	// #93: `relevo gate <token>` three times without a `--clear` between
-	// leaves three live ledger entries on one token. The row says it once.
+	// Three `relevo gate <token>` runs without a `--clear` between leave
+	// three live ledger entries on one token. The row says it once.
 	set := candidateSet(t, testCandidatesJSON)
 	pol := orderOf("builder", testAgyRef, testClaudeRef)
 	gates := []availability.Gate{
@@ -358,7 +358,7 @@ func TestAllGatedErrorNamesEachGateOnce(t *testing.T) {
 		{Token: testAgyRef, Kind: availability.RateLimited},
 	}
 
-	_, err := resolveCandidate(set, policy.Policy{}, gates, "", "builder")
+	_, err := Resolve(set, policy.Policy{}, gates, "", "builder")
 	if !errors.Is(err, ErrAllGated) {
 		t.Fatalf("got %v, want ErrAllGated", err)
 	}
@@ -436,7 +436,7 @@ func clearedEvent(provider string, at time.Time, d time.Duration) availability.E
 }
 
 // TestFormatHistoryBlockedFor: a provider with clears gains both a `cleared`
-// row in the hourly grid and a "blocked for" row summarising them (#302).
+// row in the hourly grid and a "blocked for" row summarising them.
 // The even-count case pins the lower middle as the median, so it is always
 // a duration that was observed rather than an average of two.
 func TestFormatHistoryBlockedFor(t *testing.T) {

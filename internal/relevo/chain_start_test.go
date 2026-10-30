@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -732,13 +733,13 @@ func TestChainCheckReportNamesTheCheckStepsCommand(t *testing.T) {
 	cases := []struct {
 		name        string
 		def         workflow.Definition
-		res         GateResolution
+		res         resolve.GateResolution
 		params      map[string]string
 		cmd, source string
 	}{
-		{"--param gate", withGate("go test ./..."), GateResolution{}, map[string]string{"gate": "go test ./..."}, "go test ./...", "--param gate"},
-		{"policy default", withGate("make check"), GateResolution{Command: "make check", Source: GateSourcePolicy}, nil, "make check", GateSourcePolicy},
-		{"no check", withGate(""), GateResolution{}, nil, "", ""},
+		{"--param gate", withGate("go test ./..."), resolve.GateResolution{}, map[string]string{"gate": "go test ./..."}, "go test ./...", "--param gate"},
+		{"policy default", withGate("make check"), resolve.GateResolution{Command: "make check", Source: resolve.GateSourcePolicy}, nil, "make check", resolve.GateSourcePolicy},
+		{"no check", withGate(""), resolve.GateResolution{}, nil, "", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
