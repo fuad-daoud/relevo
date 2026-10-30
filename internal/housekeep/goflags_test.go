@@ -1,4 +1,4 @@
-package relevo
+package housekeep
 
 import (
 	"os"
@@ -39,9 +39,9 @@ func TestGoFlagsEntry(t *testing.T) {
 		{"go.work only", nil, goWork, true, []string{"GOFLAGS=-trimpath"}},
 	}
 	for _, tc := range cases {
-		got := goFlagsEntry(tc.parent, tc.tree, tc.on)
+		got := GoFlagsEntry(tc.parent, tc.tree, tc.on)
 		if !reflect.DeepEqual(got, tc.want) {
-			t.Errorf("%s: goFlagsEntry = %v, want %v", tc.name, got, tc.want)
+			t.Errorf("%s: GoFlagsEntry = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }
@@ -54,23 +54,4 @@ func tempTreeWith(t *testing.T, name string) string {
 		t.Fatalf("write %s: %v", name, err)
 	}
 	return dir
-}
-
-// TestRepoSettingsTrimpathOn pins the effective value off one method: unset
-// and on both read on, and only the stored refusal opts a repository out.
-func TestRepoSettingsTrimpathOn(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		stored string
-		want   bool
-	}{
-		{"", true},
-		{"on", true},
-		{"off", false},
-	} {
-		if got := (RepoSettings{Trimpath: tc.stored}).TrimpathOn(); got != tc.want {
-			t.Errorf("TrimpathOn(%q) = %v, want %v", tc.stored, got, tc.want)
-		}
-	}
 }

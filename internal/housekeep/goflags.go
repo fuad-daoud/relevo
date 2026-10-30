@@ -1,4 +1,4 @@
-package relevo
+package housekeep
 
 import (
 	"os"
@@ -24,7 +24,7 @@ func isGoTree(dir string) bool {
 }
 
 const (
-	goFlagsKey   = "GOFLAGS="
+	GoFlagsKey   = "GOFLAGS="
 	trimpathFlag = "-trimpath"
 )
 
@@ -41,18 +41,18 @@ func hasTrimpath(value string) bool {
 	return false
 }
 
-// goFlagsEntry is the env parent, with -trimpath carried by GOFLAGS when on
+// GoFlagsEntry is the env parent, with -trimpath carried by GOFLAGS when on
 // and tree's root carries a go.mod or go.work. An existing GOFLAGS value is
 // appended to rather than replaced, and no other entry is touched; a GOFLAGS
 // already naming -trimpath leaves parent unchanged, as do an `off` setting
 // and a tree that is not a Go tree, so a caller can hand parent to the child
 // unchanged in every state this helper does not own.
-func goFlagsEntry(parent []string, tree string, on bool) []string {
+func GoFlagsEntry(parent []string, tree string, on bool) []string {
 	if !on || !isGoTree(tree) {
 		return parent
 	}
 	for i, entry := range parent {
-		rest, ok := strings.CutPrefix(entry, goFlagsKey)
+		rest, ok := strings.CutPrefix(entry, GoFlagsKey)
 		if !ok {
 			continue
 		}
@@ -60,8 +60,8 @@ func goFlagsEntry(parent []string, tree string, on bool) []string {
 			return parent
 		}
 		out := slices.Clone(parent)
-		out[i] = goFlagsKey + strings.TrimSpace(rest+" "+trimpathFlag)
+		out[i] = GoFlagsKey + strings.TrimSpace(rest+" "+trimpathFlag)
 		return out
 	}
-	return append(slices.Clone(parent), goFlagsKey+trimpathFlag)
+	return append(slices.Clone(parent), GoFlagsKey+trimpathFlag)
 }

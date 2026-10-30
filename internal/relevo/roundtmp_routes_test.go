@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -41,7 +42,7 @@ func sentWithTmpRoot(t *testing.T, fr *fakeRunner) (Runtime, store.Binding) {
 
 // roundTmpPath is the directory prepareProc made for one round.
 func roundTmpPath(rt Runtime, name string, round int) string {
-	return filepath.Join(rt.TmpRoot, roundTmpRel(name, round))
+	return filepath.Join(rt.TmpRoot, housekeep.RoundTmpRel(name, round))
 }
 
 func mustExist(t *testing.T, dir string) {

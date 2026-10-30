@@ -20,6 +20,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
@@ -785,7 +786,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 					b = abandonSession(b)
 					// Belt for the close hook this stray's round already ran:
 					// no kill route leaves a round's temp dir behind.
-					removeRoundTmp(rt, b, b.Round)
+					housekeep.RemoveRoundTmp(housekeepDeps(rt), b, b.Round)
 				}
 			}
 			b.Builder = clearProcess(b.Builder)
@@ -1532,7 +1533,7 @@ func stopProcess(ctx context.Context, rt Runtime, b store.Binding, why string) (
 	// The kill took the round's process, so its temp dir goes with it: a
 	// later start recreates it under the same name, which is what makes
 	// removing on a kill safe for a round that resumes.
-	removeRoundTmp(rt, b, b.Round)
+	housekeep.RemoveRoundTmp(housekeepDeps(rt), b, b.Round)
 	return b.Builder.PID, nil
 }
 

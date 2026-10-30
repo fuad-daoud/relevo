@@ -1,4 +1,4 @@
-package relevo
+package housekeep
 
 import (
 	"fmt"
@@ -7,6 +7,26 @@ import (
 	"testing"
 	"time"
 )
+
+// baseTime is the fixed clock the planted entries carry, so mtimes stay
+// deterministic across the walk tests.
+var baseTime = time.Unix(1757000000, 0).UTC()
+
+// tmpMkFile plants one file with its own mtime, the way a leftover looks to
+// the walk: the name and the clock are all it reads.
+func tmpMkFile(t *testing.T, path string, mod time.Time) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	if err := os.Chtimes(path, mod, mod); err != nil {
+		t.Fatalf("chtimes %s: %v", path, err)
+	}
+	return path
+}
 
 // The usage walk splits one root's regular-file bytes by the same three
 // groups the sweep decides on. Any budget that runs out flags the numbers as

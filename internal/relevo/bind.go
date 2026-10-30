@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -1028,7 +1029,7 @@ func UnbindWith(ctx context.Context, rt Runtime, name string, archive, force boo
 	// A reader's throwaway worktree goes with the binding, before the record
 	// is archived or deleted: the sweep can no longer resolve it afterwards.
 	removeReaderScratch(ctx, rt, b, b.Round)
-	removeRoundTmp(rt, b, b.Round)
+	housekeep.RemoveRoundTmp(housekeepDeps(rt), b, b.Round)
 
 	if archive {
 		if _, err := rt.Store.Archive(name); err != nil {

@@ -25,9 +25,9 @@ func TestTmpDirLengthBound(t *testing.T) {
 	longestUnit := scopeUnitNameFor(scopeGate, string(zeroID), longestName+"-check", 999999, "")
 
 	cases := map[string]string{
-		"served round": filepath.Join(servedRoot, roundTmpRel(longestName, 999999)),
+		"served round": filepath.Join(servedRoot, housekeep.RoundTmpRel(longestName, 999999)),
 		"served check": filepath.Join(servedRoot, checkTmpRel(longestUnit)),
-		"local round":  filepath.Join(localRoot, roundTmpRel(longestName, 999999)),
+		"local round":  filepath.Join(localRoot, housekeep.RoundTmpRel(longestName, 999999)),
 		"local check":  filepath.Join(localRoot, checkTmpRel(longestUnit)),
 	}
 	for name, dir := range cases {

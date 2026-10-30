@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -782,7 +783,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 			}
 			// The rollback killed the round's process outside stopProcess, so
 			// it removes the temp dir the start prepared.
-			removeRoundTmp(rt, store.Binding{Name: name}, round)
+			housekeep.RemoveRoundTmp(housekeepDeps(rt), store.Binding{Name: name}, round)
 			return SendResult{}, fmt.Errorf("%w; the builder it started (pid %d) was stopped", err, spawned.PID)
 		}
 		return SendResult{}, err

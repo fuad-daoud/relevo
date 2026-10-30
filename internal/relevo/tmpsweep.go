@@ -45,16 +45,8 @@ const tmpSweepEvery = 10 * time.Minute
 // tmpSweepMaxRemovals bounds one sweep's unlinking so a first sweep over an aged root cannot hog a single tick.
 const tmpSweepMaxRemovals = 256
 
-// tmpSubRounds and tmpSubChecks are the two subdirectories of a runtime's tmp
-// root the per-process routes own; their names are the rules that made them in
-// roundTmpRel and checkTmpRel.
-const (
-	tmpSubRounds = "rounds"
-	tmpSubChecks = "checks"
-)
-
 // SweepTmp removes the leftovers under rt.TmpRoot: round directories whose
-// binding is gone, DONE, or whose round is no longer open; check directories
+// binding is gone, DONE, or whose round is not open; check directories
 // that no live record names any more; and up to tmpSweepMaxRemovals loose
 // directories nobody has touched for the whole age window, the rest waiting
 // for a later sweep. bindings is the caller's own binding list, so the sweep
@@ -155,9 +147,9 @@ func tmpRoundKept(b *store.Binding, open bool, round int) bool {
 // an unparseable name -- is kept: the sweep removes what it is sure about,
 // and the next tick reads again.
 func sweepRoundDirs(rt Runtime, bindings []store.Binding) ([]string, error) {
-	entries, err := rt.Store.ListTmpEntries(rt.TmpRoot, tmpSubRounds)
+	entries, err := rt.Store.ListTmpEntries(rt.TmpRoot, housekeep.SubRounds)
 	if err != nil {
-		return nil, fmt.Errorf("tmp sweep: list %s: %w", tmpSubRounds, err)
+		return nil, fmt.Errorf("tmp sweep: list %s: %w", housekeep.SubRounds, err)
 	}
 	byName := make(map[string]store.Binding, len(bindings))
 	for _, b := range bindings {
@@ -174,14 +166,14 @@ func sweepRoundDirs(rt Runtime, bindings []store.Binding) ([]string, error) {
 		if b.State == store.StateDone {
 			continue
 		}
-		next := roundTmpRel(b.Name, b.Round+1)
+		next := housekeep.RoundTmpRel(b.Name, b.Round+1)
 		logEntries, seen := logged[b.Name]
 		if !seen {
 			var rerr error
 			logEntries, rerr = rt.Store.ReadLog(b.Name)
 			if rerr != nil {
 				errs = append(errs, fmt.Errorf("tmp sweep: rounds/%s: %w", b.Name, rerr))
-				expected[roundTmpRel(b.Name, b.Round)] = true
+				expected[housekeep.RoundTmpRel(b.Name, b.Round)] = true
 				expected[next] = true
 				continue
 			}
@@ -189,17 +181,17 @@ func sweepRoundDirs(rt Runtime, bindings []store.Binding) ([]string, error) {
 		}
 		expected[next] = true
 		if store.RoundOpen(logEntries, b.Round) {
-			expected[roundTmpRel(b.Name, b.Round)] = true
+			expected[housekeep.RoundTmpRel(b.Name, b.Round)] = true
 		}
 	}
 
 	var removed []string
 	for _, e := range entries {
-		if expected[filepath.Join(tmpSubRounds, e.Name)] {
+		if expected[filepath.Join(housekeep.SubRounds, e.Name)] {
 			continue
 		}
 		if housekeep.IsShortTmpID(e.Name) {
-			path, rerr := removeTmpEntry(rt, filepath.Join(tmpSubRounds, e.Name))
+			path, rerr := removeTmpEntry(rt, filepath.Join(housekeep.SubRounds, e.Name))
 			if rerr != nil {
 				errs = append(errs, rerr)
 				continue
@@ -232,7 +224,7 @@ func sweepRoundDirs(rt Runtime, bindings []store.Binding) ([]string, error) {
 		if tmpRoundKept(b, open, round) {
 			continue
 		}
-		path, rerr := removeTmpEntry(rt, filepath.Join(tmpSubRounds, e.Name))
+		path, rerr := removeTmpEntry(rt, filepath.Join(housekeep.SubRounds, e.Name))
 		if rerr != nil {
 			errs = append(errs, rerr)
 			continue
@@ -252,9 +244,9 @@ func tmpCheckKept(unitOpen bool, modTime, now time.Time) bool {
 // sweepCheckDirs walks checks/ and removes every entry no live record names
 // and the fresh guard does not cover.
 func sweepCheckDirs(rt Runtime, bindings []store.Binding, now time.Time) ([]string, error) {
-	entries, err := rt.Store.ListTmpEntries(rt.TmpRoot, tmpSubChecks)
+	entries, err := rt.Store.ListTmpEntries(rt.TmpRoot, housekeep.SubChecks)
 	if err != nil {
-		return nil, fmt.Errorf("tmp sweep: list %s: %w", tmpSubChecks, err)
+		return nil, fmt.Errorf("tmp sweep: list %s: %w", housekeep.SubChecks, err)
 	}
 	if len(entries) == 0 {
 		return nil, nil
@@ -274,7 +266,7 @@ func sweepCheckDirs(rt Runtime, bindings []store.Binding, now time.Time) ([]stri
 		if tmpCheckKept(open[e.Name], e.ModTime, now) {
 			continue
 		}
-		path, err := removeTmpEntry(rt, filepath.Join(tmpSubChecks, e.Name))
+		path, err := removeTmpEntry(rt, filepath.Join(housekeep.SubChecks, e.Name))
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -367,7 +359,7 @@ func tmpOpenCheckUnits(rt Runtime, bindings []store.Binding, chainChecks []tmpOp
 // holds live transport bundles, request and plan bodies, and the database
 // library's own temp files, and anything else is nobody's to remove.
 func tmpLooseRemovable(isDir bool, name string, newest, now time.Time) bool {
-	if !isDir || name == tmpSubRounds || name == tmpSubChecks {
+	if !isDir || name == housekeep.SubRounds || name == housekeep.SubChecks {
 		return false
 	}
 	return !now.Before(newest.Add(tmpLooseAge))
@@ -375,9 +367,9 @@ func tmpLooseRemovable(isDir bool, name string, newest, now time.Time) bool {
 
 // sweepLooseDirs walks the root itself and removes the stale directories, at
 // most max of them: a root that aged out entirely is emptied over several
-// sweeps rather than in the one tick that noticed it. The newest touch is read
-// before the rule is asked, so a directory whose children cannot be listed is
-// left alone rather than judged by its own mtime alone.
+// sweeps rather than in the one tick that noticed it. The newest touch leads,
+// so a directory whose children cannot be listed is left alone rather than
+// judged by its own mtime alone.
 func sweepLooseDirs(rt Runtime, now time.Time, max int) ([]string, error) {
 	entries, err := os.ReadDir(rt.TmpRoot)
 	if err != nil {

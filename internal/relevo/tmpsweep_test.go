@@ -79,7 +79,7 @@ func tmpSweep(t *testing.T, rt Runtime) ([]string, error) {
 
 func tmpRoundDir(t *testing.T, rt Runtime, name string, round int, mod time.Time) string {
 	t.Helper()
-	return tmpMkDir(t, filepath.Join(rt.TmpRoot, roundTmpRel(name, round)), mod)
+	return tmpMkDir(t, filepath.Join(rt.TmpRoot, housekeep.RoundTmpRel(name, round)), mod)
 }
 
 func tmpCheckDir(t *testing.T, rt Runtime, unit string, mod time.Time) string {
@@ -271,15 +271,15 @@ func TestSweepTmpKeepsLiveLongChecks(t *testing.T) {
 
 	old := baseTime.Add(-20 * time.Minute)
 	gateUnit := scopeUnitNameFor(scopeGate, gateB.Owner, gateB.Name, gateB.Round, "")
-	gatePath := tmpMkDir(t, filepath.Join(rt.TmpRoot, tmpSubChecks, gateUnit), old)
+	gatePath := tmpMkDir(t, filepath.Join(rt.TmpRoot, housekeep.SubChecks, gateUnit), old)
 	chkUnit := servedCheckSpec(rt, chkB, *chkB.CheckRun).UnitName
-	chkPath := tmpMkDir(t, filepath.Join(rt.TmpRoot, tmpSubChecks, chkUnit), old)
+	chkPath := tmpMkDir(t, filepath.Join(rt.TmpRoot, housekeep.SubChecks, chkUnit), old)
 	chainUnit := chainCheckSpec(rt, chain, 1, "", "").UnitName
-	chainPath := tmpMkDir(t, filepath.Join(rt.TmpRoot, tmpSubChecks, chainUnit), old)
+	chainPath := tmpMkDir(t, filepath.Join(rt.TmpRoot, housekeep.SubChecks, chainUnit), old)
 	doneUnit := servedCheckSpec(rt, doneB, *doneB.CheckRun).UnitName
-	donePath := tmpMkDir(t, filepath.Join(rt.TmpRoot, tmpSubChecks, doneUnit), old)
+	donePath := tmpMkDir(t, filepath.Join(rt.TmpRoot, housekeep.SubChecks, doneUnit), old)
 	stoppedUnit := chainCheckSpec(rt, stopped, 1, "", "").UnitName
-	stoppedPath := tmpMkDir(t, filepath.Join(rt.TmpRoot, tmpSubChecks, stoppedUnit), old)
+	stoppedPath := tmpMkDir(t, filepath.Join(rt.TmpRoot, housekeep.SubChecks, stoppedUnit), old)
 
 	removed, err := tmpSweep(t, rt)
 	if err != nil {
@@ -309,7 +309,7 @@ func TestSweepTmpKeepsOpenRoundRemovesClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SweepTmp: %v", err)
 	}
-	tmpWantRemoved(t, rt, removed, roundTmpRel("shop", 1))
+	tmpWantRemoved(t, rt, removed, housekeep.RoundTmpRel("shop", 1))
 	mustBeGone(t, closed)
 	mustExist(t, open)
 }
@@ -330,7 +330,7 @@ func TestSweepTmpRemovesRoundOfDoneOrMissingBinding(t *testing.T) {
 	}
 	// A DONE binding loses its round entry even while the log still says the
 	// round is open: done is the record's last word.
-	tmpWantRemoved(t, rt, removed, roundTmpRel("fin", 1), roundTmpRel("ghost", 1))
+	tmpWantRemoved(t, rt, removed, housekeep.RoundTmpRel("fin", 1), housekeep.RoundTmpRel("ghost", 1))
 	mustBeGone(t, done)
 	mustBeGone(t, missing)
 }
@@ -350,7 +350,7 @@ func TestSweepTmpKeepsRoundAheadOfCurrent(t *testing.T) {
 	}
 	// Send makes the directory before it logs the plan; a round ahead of the
 	// binding's current one is that send in flight, so it is kept unread.
-	tmpWantRemoved(t, rt, removed, roundTmpRel("adv", 1))
+	tmpWantRemoved(t, rt, removed, housekeep.RoundTmpRel("adv", 1))
 	mustBeGone(t, current)
 	mustExist(t, ahead)
 }
@@ -583,7 +583,7 @@ func TestSweepTmpOneFailureDoesNotStopOthers(t *testing.T) {
 	if !errors.Is(err, fs.ErrPermission) {
 		t.Fatalf("SweepTmp err = %v, want it to join the permission refusal", err)
 	}
-	tmpWantRemoved(t, rt, removed, roundTmpRel("ghost", 1), "oldgood")
+	tmpWantRemoved(t, rt, removed, housekeep.RoundTmpRel("ghost", 1), "oldgood")
 	mustBeGone(t, ghost)
 	mustBeGone(t, good)
 	mustExist(t, bad)

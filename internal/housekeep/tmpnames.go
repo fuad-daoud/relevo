@@ -8,6 +8,14 @@ import (
 	"sync"
 )
 
+// SubRounds and SubChecks are the two subdirectories of a tmp root the
+// per-process routes own; their names are the rules that made them in
+// RoundTmpRel and the check routes.
+const (
+	SubRounds = "rounds"
+	SubChecks = "checks"
+)
+
 // TmpSocketSuffixLen is the longest socket file name held under a handed-out
 // temp directory: every TMPDIR relevo hands out must leave room for it under
 // Linux's 108-byte sun_path limit.

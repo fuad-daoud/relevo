@@ -1,4 +1,4 @@
-package relevo
+package housekeep
 
 import (
 	"errors"
@@ -68,9 +68,9 @@ func (w *tmpUsageWalk) bucket(name string) *int64 {
 		return &w.usage.Loose
 	}
 	switch name {
-	case tmpSubRounds:
+	case SubRounds:
 		return &w.usage.Rounds
-	case tmpSubChecks:
+	case SubChecks:
 		return &w.usage.Checks
 	default:
 		return &w.usage.Loose

@@ -77,8 +77,8 @@ func prepareTmp(rt Runtime, req procRequest) (string, func(), error) {
 			return "", func() {}, nil
 		}
 		b := *req.binding
-		rel = roundTmpRel(b.Name, b.Round)
-		undo = func() { removeRoundTmp(rt, b, b.Round) }
+		rel = housekeep.RoundTmpRel(b.Name, b.Round)
+		undo = func() { housekeep.RemoveRoundTmp(housekeepDeps(rt), b, b.Round) }
 	case procKindCheck:
 		if req.key == "" {
 			return "", func() {}, nil
@@ -102,7 +102,7 @@ func prepareTmp(rt Runtime, req procRequest) (string, func(), error) {
 // check run and stable across a restart re-run -- which is what lets the
 // re-run find the directory its first run made.
 func checkTmpRel(unit string) string {
-	return filepath.Join(tmpSubChecks, housekeep.ShortCheckID(unit))
+	return filepath.Join(housekeep.SubChecks, housekeep.ShortCheckID(unit))
 }
 
 // removeCheckTmp takes a check process's private temp directory away. Every

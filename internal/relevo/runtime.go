@@ -21,6 +21,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/pathscope"
@@ -477,6 +478,12 @@ func historyDB(rt Runtime) *db.DB {
 // nil interfaces at the assignment.
 func captureDeps(rt Runtime) capture.Deps {
 	return capture.Deps{Git: rt.Git, Store: rt.Store}
+}
+
+// housekeepDeps builds internal/housekeep's Deps from rt: the store confines
+// every temp entry, and the tmp root names whose entries they are.
+func housekeepDeps(rt Runtime) housekeep.Deps {
+	return housekeep.Deps{Store: rt.Store, TmpRoot: rt.TmpRoot}
 }
 
 // consultDeps builds internal/consult's Deps from rt. Git carries through
