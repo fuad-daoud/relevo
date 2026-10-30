@@ -16,9 +16,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
-	"github.com/fuad-daoud/relevo/internal/stats"
+	datastats "github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
+	"github.com/fuad-daoud/relevo/internal/ui/stats"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
@@ -292,7 +293,7 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 				}
 			}
 			if e.Tokens != nil {
-				parts = append(parts, stats.ShortTokens(*e.Tokens)+" tokens")
+				parts = append(parts, datastats.ShortTokens(*e.Tokens)+" tokens")
 			}
 			if e.DurationMS != nil {
 				parts = append(parts, shortDurationText(*e.DurationMS))
@@ -331,7 +332,7 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 				order := m[3]
 				if strings.HasPrefix(why, "rate-limited: ") {
 					rest := strings.TrimPrefix(why, "rate-limited: ")
-					why = statsGateReason(rest)
+					why = stats.GateReason(rest)
 				} else if switchExitRe.MatchString(why) {
 					why = "exited " + outputClause(shape)
 				}
@@ -396,7 +397,7 @@ func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []
 			word = "gated"
 			style = widget.WarnStyle
 			detail = h.Provider
-			if reason := statsGateReasonText(h.Note); reason != "" {
+			if reason := stats.GateReasonText(h.Note); reason != "" {
 				detail += " · " + reason
 			}
 		case availability.Cleared:

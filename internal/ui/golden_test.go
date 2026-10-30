@@ -21,6 +21,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
+	uistats "github.com/fuad-daoud/relevo/internal/ui/stats"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -626,10 +627,10 @@ func goldenStatsModel(t *testing.T, width, height int, rep stats.Report) Model {
 	m.statusInFlight = false
 	res, cmd := m.Update(statusMsg{report: view.Report{}})
 	m = drain(t, res.(Model), cmd)
-	if _, ok := m.top().(statsView); !ok {
-		t.Fatalf("Start=stats must replace the stack, top is %T", m.top())
+	if got := m.top().Crumbs(); len(got) != 1 || got[0] != "stats" {
+		t.Fatalf("Start=stats must replace the stack, crumbs are %q", got)
 	}
-	res, _ = m.Update(statsMsg{window: "30d", rep: rep})
+	res, _ = m.Update(uistats.StatsMsg{Window: "30d", Rep: rep})
 	return res.(Model)
 }
 

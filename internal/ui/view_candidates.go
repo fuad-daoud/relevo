@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/ui/stats"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
@@ -162,7 +163,7 @@ func candStatus(r candRow, now time.Time) (string, lipgloss.Style) {
 	case !r.on:
 		return "off", widget.FaintStyle
 	case r.gate != nil:
-		return statsGateLeft(*r.gate, now), widget.RedStyle
+		return stats.GateLeft(*r.gate, now), widget.RedStyle
 	}
 	return "ready", widget.GreenStyle
 }
@@ -305,13 +306,13 @@ func candSince(t, now time.Time) string {
 	return l.Format("Jan 2 15:04")
 }
 
-// candUntilText is a gate's expiry text (§4): "until cleared" for a gate with
-// no expiry, else "until " and statsGateUntil's time.
+// candUntilText is a gate's expiry text: "until cleared" for a gate with
+// no expiry, else "until " and the gate's time.
 func candUntilText(g availability.Gate, now time.Time) string {
 	if g.Until.IsZero() {
 		return "until cleared"
 	}
-	return "until " + statsGateUntil(g, now)
+	return "until " + stats.GateUntil(g, now)
 }
 
 // candOrdinal is a slot's ordinal (§4): first … tenth, then #11.
@@ -433,7 +434,7 @@ func candDetailLines(doc relevo.ConfigDoc, env widget.Env, r candRow, width int)
 		line := "   " + widget.RedStyle.Render("gated") +
 			widget.MutedStyle.Render(" since "+candSince(g.Since, env.Now)) +
 			widget.MutedStyle.Render(", "+candUntilText(g, env.Now))
-		if reason := statsGateReasonText(g.Note); reason != "" {
+		if reason := stats.GateReasonText(g.Note); reason != "" {
 			line += "   " + widget.TextStyle.Render(reason)
 		}
 		out = append(out, widget.Fit(line, width))

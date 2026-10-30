@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/stats"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
@@ -503,8 +504,8 @@ func (f candidateForm) infoLines() []string {
 	g, gated := f.gateFor(provider)
 
 	if gated {
-		suffix := " until " + statsGateUntil(g, f.now)
-		if reason := statsGateReasonText(g.Note); reason != "" {
+		suffix := " until " + stats.GateUntil(g, f.now)
+		if reason := stats.GateReasonText(g.Note); reason != "" {
 			suffix += " · " + reason
 		}
 		out = append(out, widget.MutedStyle.Render(provider+" is ")+widget.RedStyle.Render("gated")+widget.MutedStyle.Render(suffix))

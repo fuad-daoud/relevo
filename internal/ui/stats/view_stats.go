@@ -1,4 +1,6 @@
-package ui
+// Package stats owns the cockpit's stats view: the windowed rounds, cost and
+// health board and its gate helpers.
+package stats
 
 import (
 	"fmt"
@@ -15,7 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/stats"
+	datastats "github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -27,7 +29,7 @@ var statsWindows = []string{"7d", "30d", "90d", "all"}
 // statsRefreshEvery is how stale a report may grow before a tick refetches it.
 const statsRefreshEvery = 30 * time.Second
 
-// statsTabs is the `:stats` tab bar, in tab-key order (§3.1). A new view
+// statsTabs is the `:stats` tab bar, in tab-key order. A new view
 // starts on overview.
 var statsTabs = []string{"overview", "candidates", "tokens", "reliability", "repos"}
 
@@ -40,22 +42,22 @@ const (
 	statsTabRepos
 )
 
-// statsMsg is one stats fetch's reply: the report for window, or the fetch
+// StatsMsg is one stats fetch's reply: the report for Window, or the fetch
 // error, plus any non-fatal read warnings.
-type statsMsg struct {
-	window   string
-	rep      stats.Report
-	err      error
-	warnings []string
+type StatsMsg struct {
+	Window   string
+	Rep      datastats.Report
+	Err      error
+	Warnings []string
 }
 
-// statsView is ':stats': the four-question board of C2a's report (§4.3, spec
-// §5). It reads the report from a fetch and never opens the database on the
+// statsView is ':stats': the four-question board of C2a's report
+// It reads the report from a fetch and never opens the database on the
 // render path.
 type statsView struct {
 	window     string // "7d" | "30d" | "90d" | "all"
 	tab        int    // index into statsTabs
-	rep        stats.Report
+	rep        datastats.Report
 	loaded     bool  // a report has arrived at least once
 	err        error // the last fetch error
 	fetching   bool  // a fetch is in flight
@@ -68,15 +70,17 @@ type statsView struct {
 	ovCursor   [2]int   // selected row per overview table
 	configured []string // every configured candidate's token, sorted; nil when the set is nil
 	// expanded is the repos tab's view state: the repo keys whose children
-	// show (§4.1). A nil map is every repo collapsed.
+	// show. A nil map is every repo collapsed.
 	expanded map[string]bool
+	// open opens the rounds view for an enter query, injected by the caller.
+	open OpenRounds
 }
 
 // statsCandStatusW is the candidates tab's STATUS cell: three cells of gutter
-// before it and it ends at width-3 (§3.3).
+// before it and it ends at width-3.
 const statsCandStatusW = 10
 
-// statsCandCol is one candidates-tab column after the name column (§3.3).
+// statsCandCol is one candidates-tab column after the name column.
 type statsCandCol struct {
 	Head string // the header label
 	W    int    // the cell width; numbers are right-aligned in it
@@ -85,7 +89,7 @@ type statsCandCol struct {
 	Drop int
 }
 
-// statsCandCols is the candidates tab's column set, left to right (§3.3).
+// statsCandCols is the candidates tab's column set, left to right.
 var statsCandCols = []statsCandCol{
 	{Head: "RNDS", W: 6},
 	{Head: "DONE", W: 6},
@@ -98,7 +102,7 @@ var statsCandCols = []statsCandCol{
 }
 
 // statsCandVisible is the columns the candidates tab shows at width and the
-// name column's room (§3.3): the table is width-6 wide from column 3, and the
+// name column's room: the table is width-6 wide from column 3, and the
 // droppable columns leave in their rank order while the name column would fall
 // under 16 cells.
 func statsCandVisible(width int) ([]statsCandCol, int) {
@@ -117,7 +121,7 @@ func statsCandVisible(width int) ([]statsCandCol, int) {
 	return visible, statsCandNameW(width, visible)
 }
 
-// statsCandNameW is the candidates table's name column (§3.3): width - 6 less
+// statsCandNameW is the candidates table's name column: width - 6 less
 // the visible columns, the three-cell gap and the STATUS cell.
 func statsCandNameW(width int, visible []statsCandCol) int {
 	sum := 0
@@ -127,10 +131,10 @@ func statsCandNameW(width int, visible []statsCandCol) int {
 	return statsMinWidth(width - 6 - sum - 3 - statsCandStatusW)
 }
 
-// statsGateLeft is a gate's STATUS text (§4.1): "gated" when it has no expiry,
+// GateLeft is a gate's STATUS text: "gated" when it has no expiry,
 // else the time left rounded down -- minutes (at least 1m) under an hour,
 // hours under a day, then days.
-func statsGateLeft(g availability.Gate, now time.Time) string {
+func GateLeft(g availability.Gate, now time.Time) string {
 	if g.Until.IsZero() {
 		return "gated"
 	}
@@ -149,7 +153,7 @@ func statsGateLeft(g availability.Gate, now time.Time) string {
 	}
 }
 
-// statsCandStatus is one candidate's STATUS cell (§4.2): the first active gate
+// statsCandStatus is one candidate's STATUS cell: the first active gate
 // on the token that scopes to the builder role names the time left in red;
 // with no such gate the candidate is ready, in green. An idle or Few row keeps
 // this colour -- only its name and numbers dim.
@@ -161,7 +165,7 @@ func (v statsView) statsCandStatus(token string, now time.Time) (string, lipglos
 		if g.Role != "" && g.Role != "builder" {
 			continue
 		}
-		return statsGateLeft(g, now), widget.RedStyle
+		return GateLeft(g, now), widget.RedStyle
 	}
 	return "ready", widget.GreenStyle
 }
@@ -179,20 +183,32 @@ func cutFor(window string, now time.Time) time.Time {
 	return cut
 }
 
-// newStatsView builds ':stats' on window. It refuses without a database,
-// exactly as newRoundsView does; the returned command is the first fetch.
-func newStatsView(env widget.Env, window string) (widget.View, tea.Cmd, error) {
+// OpenRounds opens the rounds view for a stats enter query. The ui passes an
+// adapter over its own rounds constructor; a test passes a stub.
+type OpenRounds func(env widget.Env, query string) (widget.View, tea.Cmd, error)
+
+// NewStatsView builds ':stats' on window. It refuses without a database; the
+// returned command is the first fetch.
+func NewStatsView(env widget.Env, window string, open OpenRounds) (widget.View, tea.Cmd, error) {
 	if env.Src.Base().DB == nil {
 		return nil, nil, relevo.ErrNoDatabase
 	}
-	v := statsView{window: window, fetching: true, split: 1}
+	v := statsView{window: window, fetching: true, split: 1, open: open}
 	if rt := env.Src.Base(); rt.Candidates != nil {
 		v.configured = rt.Candidates.Refs()
 	}
 	return v, v.fetch(env), nil
 }
 
-// fetch is the async read: StatsInputs then Build, reported as a statsMsg.
+// notice sets the shell's sticky footer notice.
+func notice(text string) tea.Cmd { return func() tea.Msg { return widget.NoticeMsg{Text: text} } }
+
+// push pushes a view on the shell's stack and runs its init command.
+func push(v widget.View, init tea.Cmd) tea.Cmd {
+	return func() tea.Msg { return widget.PushMsg{View: v, Init: init} }
+}
+
+// fetch is the async read: StatsInputs then Build, reported as a StatsMsg.
 func (v statsView) fetch(env widget.Env) tea.Cmd {
 	window := v.window
 	rt := env.Src.Base()
@@ -200,9 +216,9 @@ func (v statsView) fetch(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		in, warnings, err := relevo.StatsInputs(rt, cut)
 		if err != nil {
-			return statsMsg{window: window, err: err}
+			return StatsMsg{Window: window, Err: err}
 		}
-		return statsMsg{window: window, rep: stats.Build(in), warnings: warnings}
+		return StatsMsg{Window: window, Rep: datastats.Build(in), Warnings: warnings}
 	}
 }
 
@@ -256,7 +272,7 @@ func (v statsView) Keys() []widget.KeyHelp {
 }
 
 // Context is the tabs row on the left and the windows and refresh state on the
-// right (§2.1). The totals are the overview's tiles now. No dollars: tokens are
+// right. The totals are the overview's tiles now. No dollars: tokens are
 // what a subscription lane can watch.
 func (v statsView) Context(env widget.Env) (string, string) {
 	chips := make([]string, len(statsWindows))
@@ -279,18 +295,18 @@ func (v statsView) Context(env widget.Env) (string, string) {
 
 func (v statsView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
-	case statsMsg:
+	case StatsMsg:
 		// A reply for another window is stale after a `w`: drop it.
-		if msg.window != v.window {
+		if msg.Window != v.window {
 			return v, nil
 		}
 		v.fetching = false
 		v.fetchedAt = env.Now
-		if msg.err != nil {
+		if msg.Err != nil {
 			// The last good report stays on screen.
-			v.err = msg.err
+			v.err = msg.Err
 		} else {
-			v.rep = msg.rep
+			v.rep = msg.Rep
 			v.err = nil
 			v.loaded = true
 			v.configured = nil
@@ -298,8 +314,8 @@ func (v statsView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 				v.configured = rt.Candidates.Refs()
 			}
 		}
-		if len(msg.warnings) > 0 {
-			return v, notice(msg.warnings[0])
+		if len(msg.Warnings) > 0 {
+			return v, notice(msg.Warnings[0])
 		}
 		return v, nil
 
@@ -342,24 +358,8 @@ func (v statsView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd
 		v.top = 0
 		v.setFocus()
 		return v, nil
-	case "up", "k":
-		if v.tabHasCursor() {
-			v.moveStatsCursor(-1)
-			v.follow(env)
-			return v, nil
-		}
-		lines, _, avail := v.page(env)
-		v.top = widget.Clamp(v.top-1, 0, statsMaxTop(len(lines), avail))
-		return v, nil
-	case "down", "j":
-		if v.tabHasCursor() {
-			v.moveStatsCursor(1)
-			v.follow(env)
-			return v, nil
-		}
-		lines, _, avail := v.page(env)
-		v.top = widget.Clamp(v.top+1, 0, statsMaxTop(len(lines), avail))
-		return v, nil
+	case "up", "k", "down", "j", "pgup", "pgdown", "pgdn", " ", "home", "end":
+		return v.updatePageKey(k.String(), env)
 	case "left", "h":
 		switch statsTabs[v.tab] {
 		case "overview":
@@ -384,6 +384,40 @@ func (v statsView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd
 			v.top = 0
 		}
 		return v, nil
+	case "enter":
+		switch statsTabs[v.tab] {
+		case "overview":
+			return v.enterOverview(env)
+		case "candidates", "repos":
+			return v.enter(env)
+		}
+		return v, nil
+	}
+	return v, nil
+}
+
+// updatePageKey moves the page for the keys that scroll it: the cursor tabs
+// move their own cursor and follow it, the rest move the top line.
+func (v statsView) updatePageKey(key string, env widget.Env) (widget.View, tea.Cmd) {
+	switch key {
+	case "up", "k":
+		if v.tabHasCursor() {
+			v.moveStatsCursor(-1)
+			v.follow(env)
+			return v, nil
+		}
+		lines, _, avail := v.page(env)
+		v.top = widget.Clamp(v.top-1, 0, statsMaxTop(len(lines), avail))
+		return v, nil
+	case "down", "j":
+		if v.tabHasCursor() {
+			v.moveStatsCursor(1)
+			v.follow(env)
+			return v, nil
+		}
+		lines, _, avail := v.page(env)
+		v.top = widget.Clamp(v.top+1, 0, statsMaxTop(len(lines), avail))
+		return v, nil
 	case "pgup":
 		_, _, avail := v.page(env)
 		v.top = max(0, v.top-max(1, avail-1))
@@ -394,7 +428,7 @@ func (v statsView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd
 		return v, nil
 	case " ":
 		// Space pages every other tab; on repos it toggles the selected row's
-		// repo's expansion (§4.1).
+		// repo's expansion.
 		if statsTabs[v.tab] == "repos" {
 			return v, v.toggleSelectedRepo(env)
 		}
@@ -408,20 +442,12 @@ func (v statsView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd
 		lines, _, avail := v.page(env)
 		v.top = statsMaxTop(len(lines), avail)
 		return v, nil
-	case "enter":
-		switch statsTabs[v.tab] {
-		case "overview":
-			return v.enterOverview(env)
-		case "candidates", "repos":
-			return v.enter(env)
-		}
-		return v, nil
 	}
 	return v, nil
 }
 
 // setFocus points the focusable panels' cursor at the tab's panel: candidates
-// is focus 0, repos focus 1, and the other tabs leave focus alone (§3.1).
+// is focus 0, repos focus 1, and the other tabs leave focus alone.
 func (v *statsView) setFocus() {
 	switch statsTabs[v.tab] {
 	case "candidates":
@@ -488,7 +514,7 @@ func (v statsView) repoRowIndex(key string) int {
 }
 
 // toggleSelectedRepo flips the expansion of the repo owning the selected row
-// (§4.1): a child collapses its repo and leaves the cursor on the repo's row; a
+// A child collapses its repo and leaves the cursor on the repo's row; a
 // repo row toggles in place, so the cursor does not move. A repo with nothing to
 // show notices instead of expanding, so the key never looks dead.
 func (v *statsView) toggleSelectedRepo(env widget.Env) tea.Cmd {
@@ -505,7 +531,7 @@ func (v *statsView) toggleSelectedRepo(env widget.Env) tea.Cmd {
 }
 
 // expandSelectedRepo shows the selected row's repo's children; expanding never
-// moves the cursor (§4.1).
+// moves the cursor.
 func (v *statsView) expandSelectedRepo(env widget.Env) tea.Cmd {
 	if key, _, ok := v.reposSelected(); ok {
 		return v.expandRepo(key)
@@ -514,7 +540,7 @@ func (v *statsView) expandSelectedRepo(env widget.Env) tea.Cmd {
 }
 
 // collapseSelectedRepo hides the selected row's repo's children; a cursor on one
-// of them lands on the repo's own row (§4.1).
+// of them lands on the repo's own row.
 func (v *statsView) collapseSelectedRepo(env widget.Env) {
 	if key, child, ok := v.reposSelected(); ok {
 		v.collapseRepo(key, child)
@@ -577,7 +603,6 @@ func (v *statsView) moveCursor(delta int) {
 
 // moveStatsCursor moves the active tab's cursor: the overview's own table
 // cursor on overview, the candidates/repos panels' shared one otherwise
-// (§4.10).
 func (v *statsView) moveStatsCursor(delta int) {
 	switch statsTabs[v.tab] {
 	case "overview":
@@ -588,7 +613,7 @@ func (v *statsView) moveStatsCursor(delta int) {
 }
 
 // moveOverviewCursor moves the focused overview table's cursor, clamped to its
-// row count (§4.10).
+// row count.
 func (v *statsView) moveOverviewCursor(delta int) {
 	n := v.overviewRows(v.ovFocus)
 	if n == 0 {
@@ -606,7 +631,7 @@ func (v *statsView) moveOverviewCursor(delta int) {
 }
 
 // overviewRows is one overview table's row count: every scorecard row, or the
-// repo rows in tokens order (§3.3).
+// repo rows in tokens order.
 func (v statsView) overviewRows(focus int) int {
 	if focus == 0 {
 		return len(v.overviewCandRows(func(s string) string { return s }))
@@ -622,8 +647,8 @@ func (v statsView) sinceTerm() string {
 	return " since:" + v.window
 }
 
-// enter opens `:rounds` filtered to the focused panel's selected row (§4.3,
-// §4.4). On the repos tab the cursor indexes the visible rows: every repo row,
+// enter opens `:rounds` filtered to the focused panel's selected row
+// On the repos tab the cursor indexes the visible rows: every repo row,
 // plus the children of the expanded repos.
 func (v statsView) enter(env widget.Env) (widget.View, tea.Cmd) {
 	if v.focus == 0 {
@@ -653,14 +678,14 @@ func (v statsView) enter(env widget.Env) (widget.View, tea.Cmd) {
 	if key == "(none)" {
 		return v, notice("rounds with no repo cannot be filtered")
 	}
-	if key == stats.ScratchKey {
+	if key == datastats.ScratchKey {
 		return v, notice("scratch repos cannot be filtered as one")
 	}
 	return v.roundsForRepo(env, key)
 }
 
 // enterRepoChild opens `:rounds` for a feature or ticket child, scoped to its
-// repo (§4.4). A ticket under a labelled feature also carries that feature's
+// repo. A ticket under a labelled feature also carries that feature's
 // term; a ticket under the (no feature) bucket has none. A "(none)" label keeps
 // its notice, and a child of the "(none)" repo cannot be expressed -- no query
 // term means "no repo" -- so it notices.
@@ -678,8 +703,8 @@ func (v statsView) enterRepoChild(env widget.Env, r repoTabRow, term string) (wi
 	return v.openRounds(env, query+` `+term+`:"`+r.group.Key+`"`+v.sinceTerm())
 }
 
-// enterOverview opens `:rounds` filtered to the overview table's selected row
-// (§4.10): the candidates table's token, or the repos table's key.
+// enterOverview opens filtered rounds for the overview table's selected row:
+// the candidates table's token, or the repos table's key.
 func (v statsView) enterOverview(env widget.Env) (widget.View, tea.Cmd) {
 	if v.ovFocus == 0 {
 		names := env.Src.Base().Candidates.NameOf
@@ -702,27 +727,27 @@ func (v statsView) enterOverview(env widget.Env) (widget.View, tea.Cmd) {
 	if key == "(none)" {
 		return v, notice("rounds with no repo cannot be filtered")
 	}
-	if key == stats.ScratchKey {
+	if key == datastats.ScratchKey {
 		return v, notice("scratch repos cannot be filtered as one")
 	}
 	return v.roundsForRepo(env, key)
 }
 
 // roundsForCandidate is the `candidate:<token><since>` query both the tabs'
-// enter and the overview's share (§4.10).
+// enter and the overview's share.
 func (v statsView) roundsForCandidate(env widget.Env, token string) (widget.View, tea.Cmd) {
 	return v.openRounds(env, "candidate:"+token+v.sinceTerm())
 }
 
 // roundsForRepo is the `repo:"<key>"<since>` query both the tabs' enter and
-// the overview's share (§4.10).
+// the overview's share.
 func (v statsView) roundsForRepo(env widget.Env, key string) (widget.View, tea.Cmd) {
 	return v.openRounds(env, `repo:"`+key+`"`+v.sinceTerm())
 }
 
 // openRounds pushes a rounds view on q, or notices the error.
 func (v statsView) openRounds(env widget.Env, q string) (widget.View, tea.Cmd) {
-	rv, init, err := newRoundsView(env, q, "")
+	rv, init, err := v.open(env, q)
 	if err != nil {
 		return v, notice("no database: " + err.Error())
 	}
@@ -740,9 +765,9 @@ func statsClamp(i, n int) int {
 	return i
 }
 
-// Body is the whole board (§4.3): a blank line under the context row, then the
+// Body is the whole board: a blank line under the context row, then the
 // active tab's body, or a state line before the first report. When the body is
-// taller than the room, that head line carries the page hint (§3.5).
+// taller than the room, that head line carries the page hint.
 func (v statsView) Body(env widget.Env, width, height int) string {
 	if !v.loaded && v.err != nil {
 		lines := strings.Split(widget.RenderError(v.err, width), "\n")
@@ -776,16 +801,17 @@ func (v statsView) Body(env widget.Env, width, height int) string {
 
 // scrollHint is the body's head line: blank while the whole body fits, else a
 // faint, right-aligned hint ending at width-3 that names the way off this page
-// (§3.5). start is the clamped first body line shown.
+// start is the clamped first body line shown.
 func (v statsView) scrollHint(width, n, avail, start int) string {
 	if n <= avail {
 		return ""
 	}
 	text := "pgup · pgdn"
-	switch maxTop := statsMaxTop(n, avail); {
-	case start == maxTop:
+	maxTop := statsMaxTop(n, avail)
+	switch start {
+	case maxTop:
 		text = "more above · pgup"
-	case start == 0:
+	case 0:
 		text = "more below · pgdn"
 	}
 	pad := width - 3 - lipgloss.Width(text)
@@ -796,7 +822,7 @@ func (v statsView) scrollHint(width, n, avail, start int) string {
 }
 
 // statsTabsRow is the tab bar: the round view's chips, the active tab filled,
-// three spaces between, and a three-space gutter (§2.1).
+// three spaces between, and a three-space gutter.
 func (v statsView) statsTabsRow() string {
 	words := make([]string, len(statsTabs))
 	for i, t := range statsTabs {
@@ -810,8 +836,8 @@ func (v statsView) statsTabsRow() string {
 }
 
 // tabLines is the active tab's body. The tabs that have not been redone yet
-// keep their existing panel at full width (§3.1). sel is the visible line of
-// the overview's selected table row, or -1 on every other tab (§3.1).
+// keep their existing panel at full width. sel is the visible line of
+// the overview's selected table row, or -1 on every other tab.
 func (v statsView) tabLines(env widget.Env, width, height int) ([]string, int) {
 	switch statsTabs[v.tab] {
 	case "candidates":
@@ -829,7 +855,7 @@ func (v statsView) tabLines(env widget.Env, width, height int) ([]string, int) {
 // page is the body lines as Body would lay them out for the shell's current
 // size: the active tab at the body's width and the room it has under the head
 // line. sel is the tab's selected line, -1 when the tab has none. It is only
-// meaningful once a report is loaded and non-empty (§3.2).
+// meaningful once a report is loaded and non-empty.
 func (v statsView) page(env widget.Env) (lines []string, sel, avail int) {
 	avail = widget.BodyHeight(env) - 1
 	if !v.loaded || v.rep.Totals.Rounds == 0 {
@@ -840,13 +866,13 @@ func (v statsView) page(env widget.Env) (lines []string, sel, avail int) {
 }
 
 // statsMaxTop is the largest top that still shows the body's last line: the
-// body's length less the room above it (§3.3).
+// body's length less the room above it.
 func statsMaxTop(n, avail int) int {
 	return max(0, n-avail)
 }
 
 // follow scrolls the page to keep the overview's selected row visible after a
-// cursor or focus move; on a tab with no selected row it does nothing (§3.4).
+// cursor or focus move; on a tab with no selected row it does nothing.
 func (v *statsView) follow(env widget.Env) {
 	lines, sel, avail := v.page(env)
 	if sel < 0 {
@@ -868,18 +894,18 @@ func (v *statsView) follow(env widget.Env) {
 }
 
 // statsOverviewWide is the width at or above which the overview lays its tiles
-// in four columns and its two tables side by side (§2.2, §2.4). Below it the
+// in four columns and its two tables side by side. Below it the
 // tiles are 2x2 and the tables stack.
 const statsOverviewWide = 96
 
 // statsOverviewTablesWide is the width at or above which the overview's two
-// tables sit side by side; below it they stack (§4.5).
+// tables sit side by side; below it they stack.
 const statsOverviewTablesWide = 120
 
 // overviewLines is the overview tab: the four tiles, the token chart and the
 // candidates and busiest-repos tables. Each leaves three cells on the right
-// (§3.3). height is the room the overview may fill. sel is the visible line of
-// the focused table's selected row, or -1 when that table is empty (§3.1).
+// height is the room the overview may fill. sel is the visible line of
+// the focused table's selected row, or -1 when that table is empty.
 func (v statsView) overviewLines(env widget.Env, width, height int) ([]string, int) {
 	t := v.rep.Totals
 	k := t.TokenKinds
@@ -890,19 +916,19 @@ func (v statsView) overviewLines(env widget.Env, width, height int) ([]string, i
 	}
 	outPerRound := "· per round"
 	if per, ok := k.PerRound(k.Out); ok {
-		outPerRound = stats.ShortTokens(per) + " per round"
+		outPerRound = datastats.ShortTokens(per) + " per round"
 	}
 	tiles := [][3]string{
 		{"ROUNDS", fmt.Sprintf("%d", t.Rounds),
 			fmt.Sprintf("%d halted · %d open · %s median",
 				v.rep.Outcomes.ByReport["halted"], v.rep.Outcomes.ByRound[db.OutcomeOpen],
-				stats.Duration(t.MedianMS))},
-		{"TOKENS", stats.ShortTokens(k.Total()), fmt.Sprintf("%d rounds measured", k.Measured)},
+				datastats.Duration(t.MedianMS))},
+		{"TOKENS", datastats.ShortTokens(k.Total()), fmt.Sprintf("%d rounds measured", k.Measured)},
 		{"CACHE", cache, "of input served from cache"},
-		{"OUTPUT", stats.ShortTokens(k.Out), outPerRound},
+		{"OUTPUT", datastats.ShortTokens(k.Out), outPerRound},
 	}
 
-	// The chart's height depends on the screen only (§2.2): the block's other
+	// The chart's height depends on the screen only: the block's other
 	// lines -- the tiles (3, or 6 below 96 columns), two blanks, the heading,
 	// the axis, the labels and a blank -- plus a floor of about eight lines for
 	// the tables.
@@ -924,7 +950,7 @@ func (v statsView) overviewLines(env widget.Env, width, height int) ([]string, i
 		left, leftSel := v.statsOverviewCandidates(env, leftW, rows)
 		right, rightSel := v.statsOverviewRepos(rightW, rows)
 		// Side by side: both tables start at fixed, and each row's line is its
-		// header and the rows before it (§3.1).
+		// header and the rows before it.
 		sel := leftSel
 		if v.ovFocus != 0 {
 			sel = rightSel
@@ -944,7 +970,7 @@ func (v statsView) overviewLines(env widget.Env, width, height int) ([]string, i
 	out = append(out, statsStackedTable(left, width)...)
 	out = append(out, "")
 	// Stacked: the repos rows start after the candidates block, its blank line,
-	// and the repos header line (§3.1).
+	// and the repos header line.
 	repos := len(out)
 	out = append(out, statsStackedTable(right, width)...)
 	sel := -1
@@ -959,7 +985,7 @@ func (v statsView) overviewLines(env widget.Env, width, height int) ([]string, i
 }
 
 // statsTilesLines lays the tiles out: four columns pitched (width-4)/4 from
-// column 3, or 2x2 below statsOverviewWide (§4.5).
+// column 3, or 2x2 below statsOverviewWide.
 func statsTilesLines(tiles [][3]string, width int) []string {
 	rows := [][]int{{0, 1, 2, 3}}
 	pitch := (width - 4) / 4
@@ -983,7 +1009,7 @@ func statsTilesLines(tiles [][3]string, width int) []string {
 
 // statsTileCell is one of a tile's three lines: its label faint bold, its
 // value text bold, its note faint. A longer line is cut to pitch - 2 with an
-// ellipsis before it is styled (§2.2).
+// ellipsis before it is styled.
 func statsTileCell(tile [3]string, line, pitch int) string {
 	text := tile[2]
 	style := widget.FaintStyle
@@ -997,7 +1023,7 @@ func statsTileCell(tile [3]string, line, pitch int) string {
 }
 
 // statsCut cuts s to at most w cells, with a trailing ellipsis when it is
-// longer (§2.2). Widths are runes: "…" counts as one.
+// longer. Widths are runes: "…" counts as one.
 func statsCut(s string, w int) string {
 	r := []rune(s)
 	if len(r) <= w {
@@ -1011,7 +1037,7 @@ func statsCut(s string, w int) string {
 
 // statsTokenChartLines is the overview's per-day token chart: the heading and
 // the timeline chart below it. rows is the plot's row count. With no tokens in
-// the window, one faint line in the gutter replaces the plot (§4.4).
+// the window, one faint line in the gutter replaces the plot.
 func (v statsView) statsTokenChartLines(width, rows int) []string {
 	out := []string{"   " + widget.FaintStyle.Bold(true).Render("TOKENS")}
 	days := v.rep.Spend.Days
@@ -1025,7 +1051,7 @@ func (v statsView) statsTokenChartLines(width, rows int) []string {
 
 // statsNiceStep is the smallest "nice" y-axis step at or above max/4: a value
 // from {1, 2, 2.5, 5} × 10^k, with 2.5 only above the ones. The step is never
-// below 1, so ceil(max/step) is always in 1..4 (§4.1).
+// below 1, so ceil(max/step) is always in 1..4.
 func statsNiceStep(max float64) float64 {
 	threshold := max / 4
 	base := 1.0
@@ -1047,7 +1073,7 @@ func statsNiceStep(max float64) float64 {
 // statsTimeGeom is a time chart's x geometry: how days bucket into columns,
 // where each column's bar and centre sit, and which columns carry an x tick.
 // statsTimelineVals and the stacked charts share it, so their columns and
-// ticks line up exactly (§3.4).
+// ticks line up exactly.
 type statsTimeGeom struct {
 	Cols   []int  // Cols[i]..Cols[i+1] are the day indexes column i sums; the last is nDays
 	Chunk  int    // the days per column
@@ -1061,7 +1087,7 @@ type statsTimeGeom struct {
 // statsGeom is the x geometry for nDays days across avail plot cells: at most
 // avail/2 columns (statsBuckets' bucketing), the pitch, the bar width and the
 // x-tick rule -- exactly what statsTimelineLines computed inline before this
-// extraction (§3.4).
+// extraction.
 func statsGeom(nDays, avail int) statsTimeGeom {
 	if avail < 1 {
 		avail = 1
@@ -1114,7 +1140,7 @@ func statsGeom(nDays, avail int) statsTimeGeom {
 	}
 
 	// The x tick step: the smallest allowed day count whose columns take ten
-	// cells, so a 30-day window at 132 columns ticks weekly (§4.3).
+	// cells, so a 30-day window at 132 columns ticks weekly.
 	xSteps := []int{1, 7, 14, 28, 56, 91, 182, 364}
 	stepCols := xSteps[len(xSteps)-1]
 	for _, s := range xSteps {
@@ -1130,12 +1156,12 @@ func statsGeom(nDays, avail int) statsTimeGeom {
 }
 
 // colVals sums vals into the geometry's columns, as statsBuckets does: the
-// bucket count is the geometry's column count, so its chunk is Chunk (§3.4).
+// bucket count is the geometry's column count, so its chunk is Chunk.
 func (g statsTimeGeom) colVals(vals []float64) []float64 {
 	return statsBuckets(vals, len(g.Cols)-1)
 }
 
-// statsChartOpts are a chart body's options (§2.1): the plot rows, a fixed y
+// statsChartOpts are a chart body's options: the plot rows, a fixed y
 // scale, and a minimum y-label width for the stacked charts.
 type statsChartOpts struct {
 	Rows     int     // the plot rows
@@ -1144,7 +1170,7 @@ type statsChartOpts struct {
 }
 
 // tokensOf is a day series' token counts, one value per day, for a chart body.
-func tokensOf(days []stats.DayCost) []float64 {
+func tokensOf(days []datastats.DayCost) []float64 {
 	toks := make([]float64, len(days))
 	for i, d := range days {
 		toks[i] = float64(d.Tokens)
@@ -1154,33 +1180,17 @@ func tokensOf(days []stats.DayCost) []float64 {
 
 // statsTimelineLines is the overview's chart body: the timeline of a day
 // series' tokens, drawn by statsTimelineVals.
-func statsTimelineLines(days []stats.DayCost, width, rows int) []string {
+func statsTimelineLines(days []datastats.DayCost, width, rows int) []string {
 	return statsTimelineVals(tokensOf(days), days, width, statsChartOpts{Rows: rows})
 }
 
-// statsTimelineVals is the chart body under the heading: H plot rows, the axis
-// row and the date-label row, over vals, one value per day, with days supplying
-// the date labels. rows is the plot's row count and H is max(rows, m), so every
-// y interval keeps at least one row and a tiny rows still draws. A faint
-// gridline runs at every y tick (┈) and every x tick (┊) inside the plot; a bar
-// cell always wins over a grid cell. Each line starts with the three-cell gutter
-// and none extends past width-3 (§4.2, §4.3). A positive o.FixedMax replaces the
-// data's column max as the y scale and o.AxisW widens the y-label column at its
-// narrowest, so stacked charts share a scale and start their plots on one column
-// (§2.1, §2.2).
-func statsTimelineVals(vals []float64, days []stats.DayCost, width int, o statsChartOpts) []string {
-	rows := o.Rows
-
-	// The y labels' width decides the plot's room, so it is corrected against
-	// the ticks the axis will carry (§5).
-	axisW := 4
+// statsTimelineScale settles the y axis: the label width corrected against
+// the ticks it carries, and the tick count and step from the column max.
+func statsTimelineScale(vals []float64, width int, o statsChartOpts) (g statsTimeGeom, cols []float64, axisW, m int, step float64) {
+	axisW = 4
 	if o.AxisW > axisW {
 		axisW = o.AxisW
 	}
-	var g statsTimeGeom
-	var cols []float64
-	var m int
-	var step float64
 	for pass := 0; pass < 2; pass++ {
 		avail := width - axisW - 8
 		if avail < 1 {
@@ -1206,7 +1216,7 @@ func statsTimelineVals(vals []float64, days []stats.DayCost, width int, o statsC
 		}
 		newW := lipgloss.Width("0")
 		for j := 1; j <= m; j++ {
-			if w := lipgloss.Width(stats.ShortTokens(int64(math.Round(float64(j) * step)))); w > newW {
+			if w := lipgloss.Width(datastats.ShortTokens(int64(math.Round(float64(j) * step)))); w > newW {
 				newW = w
 			}
 		}
@@ -1218,19 +1228,15 @@ func statsTimelineVals(vals []float64, days []stats.DayCost, width int, o statsC
 		}
 		axisW = newW
 	}
+	return g, cols, axisW, m, step
+}
 
-	avail := width - axisW - 8
-	if avail < 1 {
-		avail = 1
-	}
-	// The plot's columns and ticks are the shared x geometry (§3.4).
-	g = statsGeom(len(vals), avail)
-	cols = g.colVals(vals)
-	H := max(rows, m)
-	axisMax := float64(m) * step
-
+// statsTimelinePlotRows draws the H plot rows: the y labels and rules on the
+// left, then one bar, grid or blank cell per plot column. A bar cell always
+// wins over a grid cell.
+func statsTimelinePlotRows(cols []float64, g statsTimeGeom, H, m int, step float64, axisW, avail int, axisMax float64) []string {
 	// Tick j sits on row H - round(j*H/m), with row 0 at the top, so tick m is
-	// always row 0 and the ticks are as even as the division allows (§2.1).
+	// always row 0 and the ticks are as even as the division allows.
 	tickAtRow := make(map[int]int, m)
 	for j := 1; j <= m; j++ {
 		tickAtRow[H-int(math.Round(float64(j)*float64(H)/float64(m)))] = j
@@ -1240,12 +1246,12 @@ func statsTimelineVals(vals []float64, days []stats.DayCost, width int, o statsC
 		return j, ok
 	}
 
-	out := make([]string, 0, H+2)
+	out := make([]string, 0, H)
 	for r := 0; r < H; r++ {
 		var b statsRunBuilder
 		j, tick := tickRow(r)
 		if tick {
-			b.add(statsCellMuted, fmt.Sprintf("%*s", axisW, stats.ShortTokens(int64(math.Round(float64(j)*step)))))
+			b.add(statsCellMuted, fmt.Sprintf("%*s", axisW, datastats.ShortTokens(int64(math.Round(float64(j)*step)))))
 			b.add(statsCellRule, " ┤")
 		} else {
 			b.add(statsCellPlain, strings.Repeat(" ", axisW))
@@ -1278,6 +1284,30 @@ func statsTimelineVals(vals []float64, days []stats.DayCost, width int, o statsC
 		}
 		out = append(out, "   "+b.String())
 	}
+	return out
+}
+
+// statsTimelineVals is the chart body under the heading: H plot rows, the axis
+// row and the date-label row, over vals, one value per day, with days supplying
+// the date labels. rows is the plot's row count and H is max(rows, m), so every
+// y interval keeps at least one row and a tiny rows still draws. A faint
+// gridline runs at every y tick (┈) and every x tick (┊) inside the plot; a bar
+// cell always wins over a grid cell. Each line starts with the three-cell gutter
+// and none extends past width-3. A positive o.FixedMax replaces the
+// data's column max as the y scale and o.AxisW widens the y-label column at its
+// narrowest, so stacked charts share a scale and start their plots on one column
+func statsTimelineVals(vals []float64, days []datastats.DayCost, width int, o statsChartOpts) []string {
+	rows := o.Rows
+	g, cols, axisW, m, step := statsTimelineScale(vals, width, o)
+
+	avail := width - axisW - 8
+	if avail < 1 {
+		avail = 1
+	}
+	H := max(rows, m)
+	axisMax := float64(m) * step
+
+	out := statsTimelinePlotRows(cols, g, H, m, step, axisW, avail, axisMax)
 
 	var ab statsRunBuilder
 	ab.add(statsCellMuted, fmt.Sprintf("%*s", axisW, "0"))
@@ -1298,8 +1328,8 @@ func statsTimelineVals(vals []float64, days []stats.DayCost, width int, o statsC
 // as MM-DD, five cells centred on the column's centre and placed right to
 // left. offset is the plot's first cell, so every stacked chart shares these
 // rules. A label that would leave the frame or crowd the one to
-// its right is skipped; its ┊ and ┴ stay (§4.3).
-func statsTimelineLabels(days []stats.DayCost, cols []float64, chunk int, centers []int, tickCol func(int) bool, offset, width int) string {
+// its right is skipped; its ┊ and ┴ stay.
+func statsTimelineLabels(days []datastats.DayCost, cols []float64, chunk int, centers []int, tickCol func(int) bool, offset, width int) string {
 	type placedLabel struct {
 		start int
 		text  string
@@ -1311,7 +1341,7 @@ func statsTimelineLabels(days []stats.DayCost, cols []float64, chunk int, center
 		if !tickCol(i) {
 			continue
 		}
-		text := stats.MonthDay(days[i*chunk].Day)
+		text := datastats.MonthDay(days[i*chunk].Day)
 		w := lipgloss.Width(text)
 		start := offset + centers[i] - (w-1)/2
 		if start+w > limit {
@@ -1354,7 +1384,7 @@ func statsTimelineLabels(days []stats.DayCost, cols []float64, chunk int, center
 }
 
 // statsCellKind names the style a timeline cell uses, so runs of cells can be
-// merged without comparing lipgloss styles (§4.2).
+// merged without comparing lipgloss styles.
 type statsCellKind int
 
 const (
@@ -1382,7 +1412,7 @@ func statsCellStyle(kind statsCellKind) lipgloss.Style {
 
 // statsRunBuilder renders a chart line cell by cell, merging each maximal run
 // of same-styled cells into one styled string rather than one ANSI span per
-// cell (§4.2).
+// cell.
 type statsRunBuilder struct {
 	out  []string
 	kind statsCellKind
@@ -1417,7 +1447,7 @@ func (b *statsRunBuilder) String() string {
 }
 
 // statsTableWindow is the visible slice [first, last) of n rows that keeps
-// cursor visible, with no stored offset (§4.6).
+// cursor visible, with no stored offset.
 func statsTableWindow(n, cursor, rows int) (first, last int) {
 	if cursor < rows {
 		first = 0
@@ -1432,23 +1462,23 @@ func statsTableWindow(n, cursor, rows int) (first, last int) {
 }
 
 // overviewRepoRows is the BUSIEST REPOS table's order: a copy of the report's
-// repos, stable-sorted by tokens desc (§3.3).
-func (v statsView) overviewRepoRows() []stats.RepoRow {
-	rows := append([]stats.RepoRow(nil), v.rep.Repos...)
+// repos, stable-sorted by tokens desc.
+func (v statsView) overviewRepoRows() []datastats.RepoRow {
+	rows := append([]datastats.RepoRow(nil), v.rep.Repos...)
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Tokens > rows[j].Tokens })
 	return rows
 }
 
 // statsOverviewCand is one overview candidate row: its canonical token, its
 // scorecard row (the zero value when Idle) and whether it is a configured
-// candidate with no scorecard row in this window (§3.2).
+// candidate with no scorecard row in this window.
 type statsOverviewCand struct {
 	Token string
-	Row   stats.ScoreRow
+	Row   datastats.ScoreRow
 	Idle  bool
 }
 
-// overviewCandRows is the overview CANDIDATES table's order (§3.3): every
+// overviewCandRows is the overview CANDIDATES table's order: every
 // scorecard row in report order, then every configured token no row carries,
 // sorted by its display name. A scorecard token that is no longer configured
 // stays: its row is data, not config.
@@ -1470,11 +1500,11 @@ func (v statsView) overviewCandRows(names func(string) string) []statsOverviewCa
 	return append(rows, idle...)
 }
 
-// statsOverviewCandidates is the overview's CANDIDATES table (§4.7): a header
+// statsOverviewCandidates is the overview's CANDIDATES table: a header
 // row and the visible slice of every scorecard row, under-5 rows dimmed. When
 // the table overflows, the `a–b of n` count rides in the header's name column.
 // cellW is the table's width and rows its viewport. sel is the selected row's
-// visible offset, or -1 when the table has no rows (§3.1).
+// visible offset, or -1 when the table has no rows.
 func (v statsView) statsOverviewCandidates(env widget.Env, cellW, rows int) ([]string, int) {
 	nameW := statsCandidateNameW(cellW)
 	names := env.Src.Base().Candidates.NameOf
@@ -1491,12 +1521,12 @@ func (v statsView) statsOverviewCandidates(env widget.Env, cellW, rows int) ([]s
 	}
 	out := []string{
 		widget.FaintStyle.Bold(true).Render(fmt.Sprintf("%-*s%6s%6s%9s%9s%7s",
-			nameW, stats.FitKey(label, nameW, false), "RNDS", "DONE", "IN/RND", "OUT/RND", "CACHE")),
+			nameW, datastats.FitKey(label, nameW, false), "RNDS", "DONE", "IN/RND", "OUT/RND", "CACHE")),
 	}
 	for i := first; i < last; i++ {
 		c := cands[i]
 		if c.Idle {
-			text := stats.FitKey(names(c.Token), nameW, false) +
+			text := datastats.FitKey(names(c.Token), nameW, false) +
 				fmt.Sprintf("%6d%6s%9s%9s%7s", 0, "·", "·", "·", "·")
 			if v.ovFocus == 0 && i == cur {
 				out = append(out, widget.SelBandStyle.Foreground(widget.TextStyle.GetForeground()).Bold(true).Render(widget.Fit(text, cellW)))
@@ -1521,33 +1551,32 @@ func (v statsView) statsOverviewCandidates(env widget.Env, cellW, rows int) ([]s
 }
 
 // statsOverviewCandidateCells is one CANDIDATES row as its two parts, name and
-// numbers, so a selected row can also be rebuilt as plain text (§4.7). IN/RND
+// numbers, so a selected row can also be rebuilt as plain text. IN/RND
 // is (In+Cache)/Measured, OUT/RND is Out/Measured, both via ShortTokens; a
 // lane with nothing measured shows "·".
-func statsOverviewCandidateCells(name string, s stats.ScoreRow, nameW int) (string, string) {
+func statsOverviewCandidateCells(name string, s datastats.ScoreRow, nameW int) (string, string) {
 	k := s.TokenKinds
 	inRound, outRound, cache := "·", "·", "·"
 	if k.Measured > 0 {
 		if n, ok := k.PerRound(k.In + k.Cache); ok {
-			inRound = stats.ShortTokens(n)
+			inRound = datastats.ShortTokens(n)
 		}
 		if n, ok := k.PerRound(k.Out); ok {
-			outRound = stats.ShortTokens(n)
+			outRound = datastats.ShortTokens(n)
 		}
 		if pct, ok := k.CachePct(); ok {
 			cache = fmt.Sprintf("%.0f%%", pct)
 		}
 	}
-	return stats.FitKey(name, nameW, false),
+	return datastats.FitKey(name, nameW, false),
 		fmt.Sprintf("%6d%6s%9s%9s%7s",
-			s.Rounds, stats.PctText(s.DonePct, s.Closed), inRound, outRound, cache)
+			s.Rounds, datastats.PctText(s.DonePct, s.Closed), inRound, outRound, cache)
 }
 
 // statsOverviewCandidateRow is one CANDIDATES row: the name in the name column,
 // then rounds, done %, input per round, output per round and the cache share,
 // the numbers in muted. A few-round lane's name and numbers are both faint
-// (§4.7).
-func statsOverviewCandidateRow(name string, s stats.ScoreRow, nameW int, few bool) string {
+func statsOverviewCandidateRow(name string, s datastats.ScoreRow, nameW int, few bool) string {
 	key, nums := statsOverviewCandidateCells(name, s, nameW)
 	if few {
 		return widget.FaintStyle.Render(key + nums)
@@ -1555,12 +1584,12 @@ func statsOverviewCandidateRow(name string, s stats.ScoreRow, nameW int, few boo
 	return widget.TextStyle.Render(key) + widget.MutedStyle.Render(nums)
 }
 
-// statsOverviewRepos is the overview's BUSIEST REPOS table (§4.8): a header row
+// statsOverviewRepos is the overview's BUSIEST REPOS table: a header row
 // and the visible slice of every repo by tokens, each with an accent share bar
 // and its share of the window's tokens. When the table overflows, the `a–b of
 // n` count rides in the header's name column. cellW is the table's width and
 // rows its viewport. sel is the selected row's visible offset, or -1 when the
-// table has no rows (§3.1).
+// table has no rows.
 func (v statsView) statsOverviewRepos(cellW, rows int) ([]string, int) {
 	nameW := statsRepoNameW(cellW)
 	all := v.overviewRepoRows()
@@ -1575,20 +1604,20 @@ func (v statsView) statsOverviewRepos(cellW, rows int) ([]string, int) {
 		label = fmt.Sprintf("REPO   %d–%d of %d", first+1, last, n)
 	}
 	out := []string{
-		widget.FaintStyle.Bold(true).Render(fmt.Sprintf("%-*s%6s%9s", nameW, stats.FitKey(label, nameW, false), "RNDS", "TOKENS") + fmt.Sprintf("%17s", "% TOKENS")),
+		widget.FaintStyle.Bold(true).Render(fmt.Sprintf("%-*s%6s%9s", nameW, datastats.FitKey(label, nameW, false), "RNDS", "TOKENS") + fmt.Sprintf("%17s", "% TOKENS")),
 	}
 	total := v.rep.Totals.TokenKinds.Total()
 	for i := first; i < last; i++ {
 		g := all[i]
 		if v.ovFocus == 1 && i == cur {
-			text := stats.FitKey(shortRepo(g.Key), nameW, false) +
-				fmt.Sprintf("%6d%9s", g.Rounds, stats.ShortTokens(g.Tokens)) +
+			text := datastats.FitKey(shortRepo(g.Key), nameW, false) +
+				fmt.Sprintf("%6d%9s", g.Rounds, datastats.ShortTokens(g.Tokens)) +
 				statsSharePlain(g.Tokens, total)
 			out = append(out, widget.SelBandStyle.Foreground(widget.TextStyle.GetForeground()).Bold(true).Render(widget.Fit(text, cellW)))
 			continue
 		}
-		out = append(out, widget.TextStyle.Render(stats.FitKey(shortRepo(g.Key), nameW, false))+
-			widget.TextStyle.Render(fmt.Sprintf("%6d%9s", g.Rounds, stats.ShortTokens(g.Tokens)))+
+		out = append(out, widget.TextStyle.Render(datastats.FitKey(shortRepo(g.Key), nameW, false))+
+			widget.TextStyle.Render(fmt.Sprintf("%6d%9s", g.Rounds, datastats.ShortTokens(g.Tokens)))+
 			statsShareCell(g.Tokens, total))
 	}
 	sel := -1
@@ -1600,7 +1629,7 @@ func (v statsView) statsOverviewRepos(cellW, rows int) ([]string, int) {
 
 // statsShareParts splits a % TOKENS cell into its bar length and its
 // four-cell percent: pct is 100*tokens/total, and the bar is round(pct/10)
-// cells, clamped to 0..10 -- no minimum, so under 5% draws no bar (§4.9).
+// cells, clamped to 0..10 -- no minimum, so under 5% draws no bar.
 func statsShareParts(tokens, total int64) (bars int, pct string) {
 	value := 0.0
 	if total > 0 {
@@ -1617,14 +1646,14 @@ func statsShareParts(tokens, total int64) (bars int, pct string) {
 }
 
 // statsSharePlain is a % TOKENS cell without styling, always 17 cells: two
-// spaces, a ten-cell bar area, a space and the percent (§4.9).
+// spaces, a ten-cell bar area, a space and the percent.
 func statsSharePlain(tokens, total int64) string {
 	bars, pct := statsShareParts(tokens, total)
 	return "  " + strings.Repeat("▇", bars) + strings.Repeat(" ", 10-bars) + " " + pct
 }
 
 // statsShareCell is the % TOKENS column, styled: the bar in accent and the
-// percent in text, always 17 cells (§4.9).
+// percent in text, always 17 cells.
 func statsShareCell(tokens, total int64) string {
 	bars, pct := statsShareParts(tokens, total)
 	bar := ""
@@ -1635,11 +1664,11 @@ func statsShareCell(tokens, total int64) string {
 }
 
 // statsCandidateNameW is the CANDIDATES table's name column: cellW less the
-// fixed widths RNDS 6, DONE 6, IN/RND 9, OUT/RND 9 and CACHE 7 (§4.7).
+// fixed widths RNDS 6, DONE 6, IN/RND 9, OUT/RND 9 and CACHE 7.
 func statsCandidateNameW(cellW int) int { return statsMinWidth(cellW - 37) }
 
 // statsRepoNameW is the BUSIEST REPOS table's name column: cellW less the
-// fixed widths RNDS 6, TOKENS 9 and the share cell 17 (§4.8).
+// fixed widths RNDS 6, TOKENS 9 and the share cell 17.
 func statsRepoNameW(cellW int) int { return statsMinWidth(cellW - 32) }
 
 // statsMinWidth keeps a table's name column at least one cell wide.
@@ -1651,19 +1680,19 @@ func statsMinWidth(w int) int {
 }
 
 // shortRepo delegates to dash.ShortRepo; the unrecorded "(none)" bucket reads
-// "(no repo)" and the scratch repos' fold "scratch" (§3.3).
+// "(no repo)" and the scratch repos' fold "scratch".
 func shortRepo(key string) string {
 	if key == "(none)" {
 		return "(no repo)"
 	}
-	if key == stats.ScratchKey {
+	if key == datastats.ScratchKey {
 		return "scratch"
 	}
 	return dash.ShortRepo(key)
 }
 
 // shortFeature is a feature key's display name; the unlabelled "(none)"
-// bucket reads "(no feature)" (§2.3).
+// bucket reads "(no feature)".
 func shortFeature(key string) string {
 	if key == "(none)" {
 		return "(no feature)"
@@ -1672,7 +1701,7 @@ func shortFeature(key string) string {
 }
 
 // shortTicket is a ticket key's display name; the unlabelled "(none)" bucket
-// reads "(no ticket)" (#637).
+// reads "(no ticket)".
 func shortTicket(key string) string {
 	if key == "(none)" {
 		return "(no ticket)"
@@ -1680,7 +1709,7 @@ func shortTicket(key string) string {
 	return key
 }
 
-// statsTableColumns lays the two overview tables side by side (§4.5): a
+// statsTableColumns lays the two overview tables side by side: a
 // three-cell gutter, the left table leftW wide, three cells, then the right
 // table rightW wide, whose last cell is width-4 so the pair ends at width-3.
 // Their header and body rows therefore sit on the same lines.
@@ -1703,7 +1732,7 @@ func statsTableColumns(left, right []string, leftW, rightW, width int) []string 
 	return out
 }
 
-// statsStackedTable lays one overview table under the other (§2.4): its cells
+// statsStackedTable lays one overview table under the other: its cells
 // width - 6 wide below statsOverviewWide.
 func statsStackedTable(cells []string, width int) []string {
 	out := make([]string, 0, len(cells))
@@ -1713,17 +1742,17 @@ func statsStackedTable(cells []string, width int) []string {
 	return out
 }
 
-// candidatesTabLines is the candidates tab (§4.3): one full-width table of
+// candidatesTabLines is the candidates tab: one full-width table of
 // every configured candidate -- the header row, then every overviewCandRows
 // row with no windowing, because the page scrolls -- two blank lines and the
 // selected row's detail block. sel is the selected row's line, 1+i, which the
-// page follows. A table with no row is its header alone, and sel is -1 (§5).
+// page follows. A table with no row is its header alone, and sel is -1.
 func (v statsView) candidatesTabLines(env widget.Env, width int) ([]string, int) {
 	names := env.Src.Base().Candidates.NameOf
 	rows := v.overviewCandRows(names)
 	visible, nameW := statsCandVisible(width)
 
-	head := stats.FitKey("CANDIDATE", nameW, false)
+	head := datastats.FitKey("CANDIDATE", nameW, false)
 	for _, col := range visible {
 		head += fmt.Sprintf("%*s", col.W, col.Head)
 	}
@@ -1769,7 +1798,7 @@ func (v statsView) candidatesTabLines(env widget.Env, width int) ([]string, int)
 // always did. Status is per candidate, so this table has none.
 func (v statsView) accountTabLines(width int) []string {
 	visible, nameW := statsCandVisible(width)
-	head := stats.FitKey("ACCOUNT", nameW, false)
+	head := datastats.FitKey("ACCOUNT", nameW, false)
 	for _, col := range visible {
 		head += fmt.Sprintf("%*s", col.W, col.Head)
 	}
@@ -1781,18 +1810,18 @@ func (v statsView) accountTabLines(width int) []string {
 	return out
 }
 
-// statsCandCells is one candidates-tab row's plain parts (§4.3): the name
+// statsCandCells is one candidates-tab row's plain parts: the name
 // fitted to the name column and the numbers right-aligned in each visible
 // column.
-func statsCandCells(s stats.ScoreRow, name string, visible []statsCandCol, nameW int) (string, string) {
+func statsCandCells(s datastats.ScoreRow, name string, visible []statsCandCol, nameW int) (string, string) {
 	var b strings.Builder
 	for _, col := range visible {
-		b.WriteString(fmt.Sprintf("%*s", col.W, statsCandCell(s, col.Head)))
+		fmt.Fprintf(&b, "%*s", col.W, statsCandCell(s, col.Head))
 	}
-	return stats.FitKey(name, nameW, false), b.String()
+	return datastats.FitKey(name, nameW, false), b.String()
 }
 
-// statsCandIdleCells is an idle candidate's row (§4.3): 0 rounds and "·" in
+// statsCandIdleCells is an idle candidate's row: 0 rounds and "·" in
 // every other visible column.
 func statsCandIdleCells(name string, visible []statsCandCol, nameW int) (string, string) {
 	var b strings.Builder
@@ -1801,38 +1830,38 @@ func statsCandIdleCells(name string, visible []statsCandCol, nameW int) (string,
 		if col.Head == "RNDS" {
 			value = "0"
 		}
-		b.WriteString(fmt.Sprintf("%*s", col.W, value))
+		fmt.Fprintf(&b, "%*s", col.W, value)
 	}
-	return stats.FitKey(name, nameW, false), b.String()
+	return datastats.FitKey(name, nameW, false), b.String()
 }
 
-// statsCandCell is one cell of a non-idle row (§3.3). A lane with nothing
+// statsCandCell is one cell of a non-idle row. A lane with nothing
 // measured shows "·" where its median, ttft, per-round mean or cache share
 // would be.
-func statsCandCell(s stats.ScoreRow, head string) string {
+func statsCandCell(s datastats.ScoreRow, head string) string {
 	k := s.TokenKinds
 	switch head {
 	case "RNDS":
 		return strconv.Itoa(s.Rounds)
 	case "DONE":
-		return stats.PctText(s.DonePct, s.Closed)
+		return datastats.PctText(s.DonePct, s.Closed)
 	case "HALTED":
 		return strconv.Itoa(s.ReportHalted)
 	case "MED":
 		if s.Closed > 0 && s.HasMedian {
-			return stats.Duration(s.MedianMS)
+			return datastats.Duration(s.MedianMS)
 		}
 	case "TTFT":
 		if s.HasTTFT {
-			return stats.TTFTText(s)
+			return datastats.TTFTText(s)
 		}
 	case "IN/RND":
 		if n, ok := k.PerRound(k.In + k.Cache); ok {
-			return stats.ShortTokens(n)
+			return datastats.ShortTokens(n)
 		}
 	case "OUT/RND":
 		if n, ok := k.PerRound(k.Out); ok {
-			return stats.ShortTokens(n)
+			return datastats.ShortTokens(n)
 		}
 	case "CACHE":
 		if pct, ok := k.CachePct(); ok {
@@ -1842,7 +1871,7 @@ func statsCandCell(s stats.ScoreRow, head string) string {
 	return "·"
 }
 
-// statsCandDetail is the selected candidates row's detail block (§4.4): the
+// statsCandDetail is the selected candidates row's detail block: the
 // name with its harness, provider and roles, then the round, binding and token
 // totals, then the measured split, then the rounds that reported token usage.
 // An idle row says it has no rounds instead of the last three lines. Each line
@@ -1867,7 +1896,7 @@ func (v statsView) statsCandDetail(env widget.Env, c statsOverviewCand) []string
 		widget.Fit(statsCandMeasuredLine(c.Row), width))
 }
 
-// statsCandMeta is a candidate token's "harness · provider · roles" (§4.4):
+// statsCandMeta is a candidate token's "harness · provider · roles":
 // the harness and provider come from the token, the roles from the runtime's
 // role registry (view.CandidateRoles), which is where the actors config
 // keeps them. They are omitted, with their " · ", when the token does not
@@ -1885,11 +1914,11 @@ func statsCandMeta(env widget.Env, token string) string {
 	return strings.Join(parts, " · ")
 }
 
-// statsCandRoundLine is the detail block's second line (§4.4): the rounds and
+// statsCandRoundLine is the detail block's second line: the rounds and
 // the bindings they ran on, then the lane's tokens and their share of the
 // window's. "round" and "binding" are singular at one; the share is omitted
 // when the window measured no token at all.
-func (v statsView) statsCandRoundLine(s stats.ScoreRow) string {
+func (v statsView) statsCandRoundLine(s datastats.ScoreRow) string {
 	roundWord, bindingWord := "rounds", "bindings"
 	if s.Rounds == 1 {
 		roundWord = "round"
@@ -1902,7 +1931,7 @@ func (v statsView) statsCandRoundLine(s stats.ScoreRow) string {
 		widget.MutedStyle.Render(" "+roundWord+" on ") +
 		widget.TextStyle.Bold(true).Render(strconv.Itoa(s.Bindings)) +
 		widget.MutedStyle.Render(" "+bindingWord+"   ") +
-		widget.TextStyle.Bold(true).Render(stats.ShortTokens(total))
+		widget.TextStyle.Bold(true).Render(datastats.ShortTokens(total))
 	if window := v.rep.Totals.TokenKinds.Total(); window > 0 {
 		p := int(math.Round(100 * float64(total) / float64(window)))
 		return line + widget.MutedStyle.Render(fmt.Sprintf(" tokens, %d%% of the window", p))
@@ -1910,20 +1939,20 @@ func (v statsView) statsCandRoundLine(s stats.ScoreRow) string {
 	return line + widget.MutedStyle.Render(" tokens")
 }
 
-// statsCandTokenLine is the detail block's third line (§4.4), all muted: the
+// statsCandTokenLine is the detail block's third line, all muted: the
 // measured input, cache and output tokens, then the median, the ttft, the
 // report halts and the switches. The "in … out" group and its three trailing
 // spaces go when the lane measured no token, and the median and the ttft
 // clause go when their value is unknown, so a missing value never leaves an
 // empty clause behind.
-func statsCandTokenLine(s stats.ScoreRow) string {
+func statsCandTokenLine(s datastats.ScoreRow) string {
 	k := s.TokenKinds
 	var clauses []string
 	if s.Closed > 0 && s.HasMedian {
-		clauses = append(clauses, "median "+stats.Duration(s.MedianMS))
+		clauses = append(clauses, "median "+datastats.Duration(s.MedianMS))
 	}
 	if s.HasTTFT {
-		clauses = append(clauses, "ttft "+stats.TTFTText(s))
+		clauses = append(clauses, "ttft "+datastats.TTFTText(s))
 	}
 	clauses = append(clauses,
 		fmt.Sprintf("%d halted", s.ReportHalted),
@@ -1931,21 +1960,21 @@ func statsCandTokenLine(s stats.ScoreRow) string {
 	measured := ""
 	if k.Measured > 0 {
 		measured = fmt.Sprintf("in %s · cache %s · out %s   ",
-			stats.ShortTokens(k.In), stats.ShortTokens(k.Cache), stats.ShortTokens(k.Out))
+			datastats.ShortTokens(k.In), datastats.ShortTokens(k.Cache), datastats.ShortTokens(k.Out))
 	}
 	return "   " + widget.MutedStyle.Render(measured+strings.Join(clauses, " · "))
 }
 
-// statsCandMeasuredLine is the detail block's fourth line (§4.4), all muted:
+// statsCandMeasuredLine is the detail block's fourth line, all muted:
 // how many of the lane's rounds reported token usage, in plain words. Every
 // round and no round read as sentences; the numeric form names the counts and
 // uses the singular "round" at one.
-func statsCandMeasuredLine(s stats.ScoreRow) string {
+func statsCandMeasuredLine(s datastats.ScoreRow) string {
 	k := s.TokenKinds
-	switch {
-	case k.Measured == 0:
+	switch k.Measured {
+	case 0:
 		return "   " + widget.MutedStyle.Render("no round reported token usage")
-	case k.Measured == s.Rounds:
+	case s.Rounds:
 		return "   " + widget.MutedStyle.Render("every round reported token usage")
 	}
 	roundWord := "rounds"
@@ -1981,11 +2010,11 @@ func statsBuckets(vals []float64, plotW int) []float64 {
 var statsBarRunes = []rune(" ▁▂▃▄▅▆▇█")
 
 // statsSplitNames are the tokens tab's splits, in `s` cycle order: 0 total, 1
-// candidate, 2 provider, 3 kind (§4.6).
+// candidate, 2 provider, 3 kind.
 var statsSplitNames = []string{"total", "candidate", "provider", "kind"}
 
 // statsSplitChips is the tokens tab's chip row: the four split names, the
-// selected one a filled chip and the rest muted, with no label (§4.1).
+// selected one a filled chip and the rest muted, with no label.
 func statsSplitChips(split int) string {
 	chips := make([]string, len(statsSplitNames))
 	for i, name := range statsSplitNames {
@@ -1996,14 +2025,13 @@ func statsSplitChips(split int) string {
 		chips[i] = widget.MutedStyle.Render(widget.Chip(widget.NormalStyle, name))
 	}
 	// widget.Chip() pads one cell each side, so one space here leaves three cells
-	// between two names, as the sketch shows (§4.1).
+	// between two names, as the sketch shows.
 	return "   " + strings.Join(chips, " ")
 }
 
 // statsSeries is one series of the tokens tab: a label, one value per day
 // and the window's total. Idle marks a configured candidate or provider with
 // no tokens in the window, which the stacked charts leave to the idle line
-// (§3.3).
 type statsSeries struct {
 	Name  string
 	Vals  []float64
@@ -2022,7 +2050,7 @@ func statsSeriesOrder(series []statsSeries) []statsSeries {
 	return series
 }
 
-// statsSeriesFor is the active split's series (§2.2). shared reports whether
+// statsSeriesFor is the active split's series. shared reports whether
 // they compare on one scale: candidate and provider do, kind does not.
 func (v statsView) statsSeriesFor(env widget.Env, split int) (series []statsSeries, shared bool) {
 	switch split {
@@ -2036,10 +2064,10 @@ func (v statsView) statsSeriesFor(env widget.Env, split int) (series []statsSeri
 	return nil, true
 }
 
-// statsCandidateSeries is the candidate split (§4.2): one chart per candidate
+// statsCandidateSeries is the candidate split: one chart per candidate
 // with tokens in the window, then every configured candidate without any. A
 // round with no candidate carries no tokens now, so "(none)" is skipped.
-func (v statsView) statsCandidateSeries(env widget.Env, days []stats.DayCost) []statsSeries {
+func (v statsView) statsCandidateSeries(env widget.Env, days []datastats.DayCost) []statsSeries {
 	names := env.Src.Base().Candidates.NameOf
 	totals := map[string]int64{}
 	for _, d := range days {
@@ -2074,10 +2102,10 @@ func (v statsView) statsCandidateSeries(env widget.Env, days []stats.DayCost) []
 	return append(statsSeriesOrder(series), idle...)
 }
 
-// statsProviderSeries is the provider split (§4.2): the same charts, from the
+// statsProviderSeries is the provider split: the same charts, from the
 // days' tokens per provider. The idle ones are the configured candidates'
 // providers, which the token's reference names.
-func (v statsView) statsProviderSeries(days []stats.DayCost) []statsSeries {
+func (v statsView) statsProviderSeries(days []datastats.DayCost) []statsSeries {
 	totals := map[string]int64{}
 	for _, d := range days {
 		for prov, n := range d.TokensByProvider {
@@ -2112,17 +2140,17 @@ func (v statsView) statsProviderSeries(days []stats.DayCost) []statsSeries {
 	return append(statsSeriesOrder(series), idle...)
 }
 
-// statsKindSeries is the kind split (§4.2): four charts, always in this order
+// statsKindSeries is the kind split: four charts, always in this order
 // and never idle, each on its own scale because cache reads dwarf the rest.
-func (v statsView) statsKindSeries(days []stats.DayCost) []statsSeries {
+func (v statsView) statsKindSeries(days []datastats.DayCost) []statsSeries {
 	kinds := []struct {
 		name string
-		val  func(stats.TokenCounts) int64
+		val  func(datastats.TokenCounts) int64
 	}{
-		{"cache read", func(k stats.TokenCounts) int64 { return k.Cache }},
-		{"fresh input", func(k stats.TokenCounts) int64 { return k.In }},
-		{"output", func(k stats.TokenCounts) int64 { return k.Out }},
-		{"cache write", func(k stats.TokenCounts) int64 { return k.Write }},
+		{"cache read", func(k datastats.TokenCounts) int64 { return k.Cache }},
+		{"fresh input", func(k datastats.TokenCounts) int64 { return k.In }},
+		{"output", func(k datastats.TokenCounts) int64 { return k.Out }},
+		{"cache write", func(k datastats.TokenCounts) int64 { return k.Write }},
 	}
 	series := make([]statsSeries, 0, len(kinds))
 	for _, kind := range kinds {
@@ -2138,12 +2166,12 @@ func (v statsView) statsKindSeries(days []stats.DayCost) []statsSeries {
 	return series
 }
 
-// statsStackedCharts is the candidate, provider and kind splits' body (§2.2):
+// statsStackedCharts is the candidate, provider and kind splits' body:
 // one full timeline chart per non-idle series, stacked in the order the series
 // arrive, then one faint line naming the idle ones. shared draws every chart on
 // one scale; windowTotal is the window's tokens, which each chart's share is
 // of.
-func statsStackedCharts(series []statsSeries, days []stats.DayCost, shared bool, width int, windowTotal int64) []string {
+func statsStackedCharts(series []statsSeries, days []datastats.DayCost, shared bool, width int, windowTotal int64) []string {
 	var active []statsSeries
 	var idle []string
 	for _, s := range series {
@@ -2156,7 +2184,7 @@ func statsStackedCharts(series []statsSeries, days []stats.DayCost, shared bool,
 
 	// The y-label width: the widest label any chart in the stack carries, so
 	// every plot starts on the same column. The passes settle it against the
-	// geometry the renderer will use (§2.2).
+	// geometry the renderer will use.
 	axisW := 4
 	for pass := 0; pass < 3; pass++ {
 		w := statsStackTicks(active, shared, width, axisW)
@@ -2194,7 +2222,7 @@ func statsStackedCharts(series []statsSeries, days []stats.DayCost, shared bool,
 }
 
 // statsStackTicks is the y-label width the stack needs at axisW: the widest
-// label any of its charts carries, on the shared scale or its own (§2.2).
+// label any of its charts carries, on the shared scale or its own.
 func statsStackTicks(active []statsSeries, shared bool, width, axisW int) int {
 	avail := statsStackAvail(width, axisW)
 	sharedMax := 0.0
@@ -2219,7 +2247,7 @@ func statsStackTicks(active []statsSeries, shared bool, width, axisW int) int {
 }
 
 // statsStackAvail is a stacked chart's plot room: the width less the gutter,
-// the y-label column and the right margin (§2.2).
+// the y-label column and the right margin.
 func statsStackAvail(width, axisW int) int {
 	avail := width - axisW - 8
 	if avail < 1 {
@@ -2229,7 +2257,7 @@ func statsStackAvail(width, axisW int) int {
 }
 
 // statsStackColMax is the largest column a series' values draw over avail plot
-// cells, with the same statsGeom bucketing the renderer uses (§2.2).
+// cells, with the same statsGeom bucketing the renderer uses.
 func statsStackColMax(vals []float64, avail int) float64 {
 	var max float64
 	for _, c := range statsGeom(len(vals), avail).colVals(vals) {
@@ -2241,14 +2269,14 @@ func statsStackColMax(vals []float64, avail int) float64 {
 }
 
 // statsStackLabelW is the widest y label a chart whose scale maximum is max
-// carries: statsNiceStep's step, its tick count and stats.ShortTokens, exactly
-// as the renderer's axis computes them (§2.2).
+// carries: statsNiceStep's step, its tick count and datastats.ShortTokens, exactly
+// as the renderer's axis computes them.
 func statsStackLabelW(max float64) int {
 	step := statsNiceStep(max)
 	m := widget.Clamp(int(math.Ceil(max/step)), 1, 4)
 	w := lipgloss.Width("0")
 	for j := 1; j <= m; j++ {
-		if lw := lipgloss.Width(stats.ShortTokens(int64(math.Round(float64(j) * step)))); lw > w {
+		if lw := lipgloss.Width(datastats.ShortTokens(int64(math.Round(float64(j) * step)))); lw > w {
 			w = lw
 		}
 	}
@@ -2257,10 +2285,10 @@ func statsStackLabelW(max float64) int {
 
 // statsChartTitle is one stacked chart's title: the series name in the gutter,
 // then its total in bold and its share of the window muted, right aligned to
-// end at width-3 (§2.2).
+// end at width-3.
 func statsChartTitle(name string, total, windowTotal int64, width int) string {
 	left := "   " + widget.TextStyle.Bold(true).Render(name)
-	right := widget.TextStyle.Bold(true).Render(stats.ShortTokens(total))
+	right := widget.TextStyle.Bold(true).Render(datastats.ShortTokens(total))
 	if windowTotal != 0 {
 		right += widget.MutedStyle.Render(fmt.Sprintf(" · %.0f%%", 100*float64(total)/float64(windowTotal)))
 	}
@@ -2271,10 +2299,10 @@ func statsChartTitle(name string, total, windowTotal int64, width int) string {
 	return left + strings.Repeat(" ", pad) + right
 }
 
-// statsWeekLine is the tokens tab's footer (§4.4): the window's last seven days
+// statsWeekLine is the tokens tab's footer: the window's last seven days
 // against the seven before, then the busiest day. The busiest-day clause goes
 // when every day is zero, and last week reads 0 under eight days.
-func statsWeekLine(days []stats.DayCost) string {
+func statsWeekLine(days []datastats.DayCost) string {
 	var thisWeek, lastWeek int64
 	start := len(days) - 7
 	if start < 0 {
@@ -2292,8 +2320,8 @@ func statsWeekLine(days []stats.DayCost) string {
 			lastWeek += d.Tokens
 		}
 	}
-	line := "   " + widget.MutedStyle.Render("this week ") + widget.TextStyle.Bold(true).Render(stats.ShortTokens(thisWeek)) +
-		widget.MutedStyle.Render("   last week ") + widget.TextStyle.Bold(true).Render(stats.ShortTokens(lastWeek))
+	line := "   " + widget.MutedStyle.Render("this week ") + widget.TextStyle.Bold(true).Render(datastats.ShortTokens(thisWeek)) +
+		widget.MutedStyle.Render("   last week ") + widget.TextStyle.Bold(true).Render(datastats.ShortTokens(lastWeek))
 	busiest, max := -1, int64(0)
 	for i, d := range days {
 		if d.Tokens > max {
@@ -2303,11 +2331,11 @@ func statsWeekLine(days []stats.DayCost) string {
 	if busiest < 0 {
 		return line
 	}
-	return line + widget.MutedStyle.Render("   busiest day ") + widget.TextStyle.Bold(true).Render(stats.MonthDay(days[busiest].Day)) +
-		widget.MutedStyle.Render(" "+stats.ShortTokens(max))
+	return line + widget.MutedStyle.Render("   busiest day ") + widget.TextStyle.Bold(true).Render(datastats.MonthDay(days[busiest].Day)) +
+		widget.MutedStyle.Render(" "+datastats.ShortTokens(max))
 }
 
-// tokensTabLines is the tokens tab (§4.5): the split chips, the total split's
+// tokensTabLines is the tokens tab: the split chips, the total split's
 // timeline or the selected split's stacked charts, then the week line. With no
 // tokens in the window one faint line replaces the chart.
 func (v statsView) tokensTabLines(env widget.Env, width, height int) []string {
@@ -2335,7 +2363,7 @@ func (v statsView) tokensTabLines(env widget.Env, width, height int) []string {
 	return append(out, statsWeekLine(days))
 }
 
-// statsReliableGates is the gates the reliability tab counts and shows (§5.1):
+// statsReliableGates is the gates the reliability tab counts and shows:
 // the active gates that scope to the builder role. A gate scoped to another
 // role is not a builder waiting on a limit.
 func (v statsView) statsReliableGates() []availability.Gate {
@@ -2348,10 +2376,10 @@ func (v statsView) statsReliableGates() []availability.Gate {
 	return out
 }
 
-// statsGateUntil is a gate row's UNTIL text (§5.1): the time of day when the
+// GateUntil is a gate row's UNTIL text: the time of day when the
 // expiry is today, the date and time otherwise, and "until cleared" for a gate
 // with no expiry.
-func statsGateUntil(g availability.Gate, now time.Time) string {
+func GateUntil(g availability.Gate, now time.Time) string {
 	if g.Until.IsZero() {
 		return "until cleared"
 	}
@@ -2363,26 +2391,25 @@ func statsGateUntil(g availability.Gate, now time.Time) string {
 }
 
 // statsShortErrorRe pulls the agy JSON error form's short_error value
-// (§2.4).
 var statsShortErrorRe = regexp.MustCompile(`"short_error":"([^"]*)"`)
 
 // statsGateReasonParens matches one parenthesised aside and the space before
-// it, for statsGateReason to strip (§2.4).
+// it, for GateReason to strip.
 var statsGateReasonParens = regexp.MustCompile(`\s?\([^()]*\)`)
 
 // statsGateReasonStatus matches a leading HTTP status code prefix for
-// statsGateReason to strip.
+// GateReason to strip.
 var statsGateReasonStatus = regexp.MustCompile(`(?i)^(error\s+)?\d{3}:\s*`)
 
-// statsGateReasonPrefixes are the leading protocol prefixes statsGateReason
-// strips, case-insensitively, in order (§2.4).
+// statsGateReasonPrefixes are the leading protocol prefixes GateReason
+// strips, case-insensitively, in order.
 var statsGateReasonPrefixes = []string{"AGY_ERROR:", "error:", "RESOURCE_EXHAUSTED (code 429):"}
 
-// statsGateReason is the reliability tab's REASON cell (§2.4): the agy JSON
+// GateReason is the reliability tab's REASON cell: the agy JSON
 // form's short_error value when present, then its readable lead clause --
 // any leading protocol prefix and parenthesised aside stripped, cut at the
 // first ". " or ": ", and a trailing "." dropped. "·" when nothing is left.
-func statsGateReason(note string) string {
+func GateReason(note string) string {
 	if m := statsShortErrorRe.FindStringSubmatch(note); m != nil {
 		note = m[1]
 	}
@@ -2421,19 +2448,19 @@ func statsGateReason(note string) string {
 	return note
 }
 
-// statsGateReasonText is statsGateReason(note) when there is a reason to show,
+// GateReasonText is GateReason(note) when there is a reason to show,
 // and "" when there is not: an empty note and the "·" placeholder both mean
-// "no reason" (§1, round 6). A gate line joins it with " · " only when it is
+// "no reason". A gate line joins it with " · " only when it is
 // non-empty.
-func statsGateReasonText(note string) string {
-	r := statsGateReason(note)
+func GateReasonText(note string) string {
+	r := GateReason(note)
 	if r == "·" {
 		return ""
 	}
 	return r
 }
 
-// statsGatesReasonW is the gates table's default REASON cell width (§2.1),
+// statsGatesReasonW is the gates table's default REASON cell width,
 // and statsGatesReasonMinW, statsGatesNameMinW its floors: reasonW shrinks
 // first when nameW would fall under 16, down to reasonW's own floor of 12.
 const (
@@ -2442,7 +2469,7 @@ const (
 	statsGatesNameMinW   = 16
 )
 
-// statsGatesCols is the gates table's responsive columns (§2.1): the table
+// statsGatesCols is the gates table's responsive columns: the table
 // spans width-6 cells from column 3, with PROVIDER 14, UNTIL 16, LEFT 6 and a
 // 3-cell gap fixed, CANDIDATE taking the rest and REASON the default 30. When
 // nameW would fall under 16, reasonW shrinks first, to a floor of 12, before
@@ -2463,7 +2490,7 @@ func statsGatesCols(width int) (nameW, reasonW int) {
 	return nameW, reasonW
 }
 
-// statsGatesLines is the reliability tab's gates table (§5.1, §2.1): the
+// statsGatesLines is the reliability tab's gates table: the
 // header and one row per counted gate, in Active order, or one faint line
 // when none is. The table fills [3, width-3): CANDIDATE takes the room left
 // after PROVIDER, UNTIL, LEFT and the gap, and REASON is cut with statsCut
@@ -2483,18 +2510,18 @@ func (v statsView) statsGatesLines(env widget.Env, width int) []string {
 		if ref, err := candidate.ParseRef(g.Token); err == nil {
 			provider = ref.Provider
 		}
-		note := statsGateReason(g.Note)
+		note := GateReason(g.Note)
 		out = append(out, "   "+
-			widget.TextStyle.Render(stats.FitKey(names(g.Token), nameW, false))+
-			widget.MutedStyle.Render(stats.FitKey(provider, 14, false))+
-			widget.MutedStyle.Render(stats.FitKey(statsGateUntil(g, env.Now), 16, false))+
-			widget.RedStyle.Render(fmt.Sprintf("%6s", strings.TrimPrefix(statsGateLeft(g, env.Now), "gated ")))+
+			widget.TextStyle.Render(datastats.FitKey(names(g.Token), nameW, false))+
+			widget.MutedStyle.Render(datastats.FitKey(provider, 14, false))+
+			widget.MutedStyle.Render(datastats.FitKey(GateUntil(g, env.Now), 16, false))+
+			widget.RedStyle.Render(fmt.Sprintf("%6s", strings.TrimPrefix(GateLeft(g, env.Now), "gated ")))+
 			"   "+widget.FaintStyle.Render(fmt.Sprintf("%-*s", reasonW, statsCut(note, reasonW))))
 	}
 	return out
 }
 
-// statsHourCell is one LIMITS BY HOUR cell (§5.1, §2.2): widget.GridStyle's "·" at
+// statsHourCell is one LIMITS BY HOUR cell: widget.GridStyle's "·" at
 // zero, widget.TextStyle's count at one or two, and red bold at three or more, each
 // right-aligned in cellW.
 func statsHourCell(count, cellW int) string {
@@ -2508,7 +2535,7 @@ func statsHourCell(count, cellW int) string {
 	return strings.Repeat(" ", cellW-1) + widget.GridStyle.Render("·")
 }
 
-// statsHourLines is the reliability tab's limits-by-hour table (§5.1, §2.2):
+// statsHourLines is the reliability tab's limits-by-hour table:
 // the header names the hours 0-23, each right-aligned in cellW, then one row
 // per provider, or one faint line when no provider recorded a limit in the
 // window. cellW is (width-6-labelW)/24, at least 3, so the table fills
@@ -2521,9 +2548,9 @@ func (v statsView) statsHourLines(width int) []string {
 	const labelW = 16
 	cellW := max(3, (width-6-labelW)/24)
 	var head strings.Builder
-	head.WriteString(fmt.Sprintf("%-*s", labelW, "LIMITS BY HOUR"))
+	fmt.Fprintf(&head, "%-*s", labelW, "LIMITS BY HOUR")
 	for h := 0; h < 24; h++ {
-		head.WriteString(fmt.Sprintf("%*d", cellW, h))
+		fmt.Fprintf(&head, "%*d", cellW, h)
 	}
 	out := []string{"   " + widget.FaintStyle.Bold(true).Render(head.String())}
 	for _, row := range rows {
@@ -2537,7 +2564,7 @@ func (v statsView) statsHourLines(width int) []string {
 	return out
 }
 
-// reliabilityTabLines is the reliability tab (§5.1): the four tiles, the gates
+// reliabilityTabLines is the reliability tab: the four tiles, the gates
 // table and the limits-by-hour table, each pair separated by two blank lines.
 // The tab has no cursor and no detail block.
 func (v statsView) reliabilityTabLines(env widget.Env, width int) []string {
@@ -2559,10 +2586,10 @@ func (v statsView) reliabilityTabLines(env widget.Env, width int) []string {
 }
 
 // statsRepoShareW is the repos table's share cell: statsShareCell's fixed 17
-// cells (§4.2).
+// cells.
 const statsRepoShareW = 17
 
-// statsRepoCol is one repos-tab column after the name column (§4.2).
+// statsRepoCol is one repos-tab column after the name column.
 type statsRepoCol struct {
 	Head string // the header label
 	W    int    // the cell width; numbers are right-aligned in it
@@ -2571,7 +2598,7 @@ type statsRepoCol struct {
 	Drop int
 }
 
-// statsRepoCols is the repos table's column set, left to right (§4.2).
+// statsRepoCols is the repos table's column set, left to right.
 var statsRepoCols = []statsRepoCol{
 	{Head: "RNDS", W: 6},
 	{Head: "BINDINGS", W: 10},
@@ -2582,7 +2609,7 @@ var statsRepoCols = []statsRepoCol{
 }
 
 // statsRepoVisible is the columns the repos table shows at width and the name
-// column's room (§4.2): the table is width-6 wide from column 3, and the
+// column's room: the table is width-6 wide from column 3, and the
 // droppable columns leave in their rank order -- COMMITS, then BINDINGS, then
 // DONE -- while the name column would fall under 16 cells.
 func statsRepoVisible(width int) ([]statsRepoCol, int) {
@@ -2601,7 +2628,7 @@ func statsRepoVisible(width int) ([]statsRepoCol, int) {
 	return visible, statsRepoColNameW(width, visible)
 }
 
-// statsRepoColNameW is the repos table's name column (§4.2): width - 6 less
+// statsRepoColNameW is the repos table's name column: width - 6 less
 // the visible columns and the share cell.
 func statsRepoColNameW(width int, visible []statsRepoCol) int {
 	sum := 0
@@ -2611,7 +2638,7 @@ func statsRepoColNameW(width int, visible []statsRepoCol) int {
 	return statsMinWidth(width - 6 - sum - statsRepoShareW)
 }
 
-// statsRepoCellW is the repos table's row width (§4.2): the name column, the
+// statsRepoCellW is the repos table's row width: the name column, the
 // visible columns and the share cell.
 func statsRepoCellW(nameW int, visible []statsRepoCol) int {
 	w := nameW + statsRepoShareW
@@ -2621,7 +2648,7 @@ func statsRepoCellW(nameW int, visible []statsRepoCol) int {
 	return w
 }
 
-// repoTabRows is the repos tab's visible rows (§4.1): every repo row, plus the
+// repoTabRows is the repos tab's visible rows: every repo row, plus the
 // children of the repos the view has expanded. The cursor walks only these.
 func (v statsView) repoTabRows() []repoTabRow {
 	repos := v.overviewRepoRows()
@@ -2641,25 +2668,25 @@ func (v statsView) repoTabRows() []repoTabRow {
 // bucket and "" for every other row.
 type repoTabRow struct {
 	kind    repoKind
-	group   stats.GroupRow
+	group   datastats.GroupRow
 	parent  string
 	feature string
 }
 
-// repoChildren is an expanded repo's child rows in display order (§4.1): each
+// repoChildren is an expanded repo's child rows in display order: each
 // labelled feature by tokens desc with its labelled tickets nested under it by
 // tokens desc, then the (no feature) row with its tickets under the same rule.
 // The (no feature) row shows when the repo has featureless rounds and either a
 // labelled feature or a labelled ticket, so a featureless round's ticket stays
 // reachable; a repo with no labels at all has no children.
-func repoChildren(r stats.RepoRow) []repoTabRow {
+func repoChildren(r datastats.RepoRow) []repoTabRow {
 	if len(r.Scratch) > 0 {
 		return scratchRepoChildren(r)
 	}
 	var out []repoTabRow
-	for _, f := range reposByTokens(r.Features, func(f stats.FeatureRow) int64 { return f.Tokens }) {
+	for _, f := range reposByTokens(r.Features, func(f datastats.FeatureRow) int64 { return f.Tokens }) {
 		out = append(out, repoTabRow{kind: kindFeature, group: f.GroupRow, parent: r.Key})
-		for _, t := range reposByTokens(f.Tickets, func(g stats.GroupRow) int64 { return g.Tokens }) {
+		for _, t := range reposByTokens(f.Tickets, func(g datastats.GroupRow) int64 { return g.Tokens }) {
 			out = append(out, repoTabRow{kind: kindTicket, group: t, parent: r.Key, feature: f.Key})
 		}
 	}
@@ -2667,7 +2694,7 @@ func repoChildren(r stats.RepoRow) []repoTabRow {
 		return out
 	}
 	out = append(out, repoTabRow{kind: kindFeature, group: r.NoFeature.GroupRow, parent: r.Key})
-	for _, t := range reposByTokens(r.NoFeature.Tickets, func(g stats.GroupRow) int64 { return g.Tokens }) {
+	for _, t := range reposByTokens(r.NoFeature.Tickets, func(g datastats.GroupRow) int64 { return g.Tokens }) {
 		out = append(out, repoTabRow{kind: kindTicket, group: t, parent: r.Key, feature: "(none)"})
 	}
 	return out
@@ -2676,8 +2703,8 @@ func repoChildren(r stats.RepoRow) []repoTabRow {
 // scratchRepoChildren is the fold row's child rows: one row per scratch repo by
 // tokens desc, each parented to the fold. They are leaf rows -- a repo has no
 // children of its own -- so a child expands to nothing.
-func scratchRepoChildren(r stats.RepoRow) []repoTabRow {
-	rows := reposByTokens(r.Scratch, func(s stats.RepoRow) int64 { return s.Tokens })
+func scratchRepoChildren(r datastats.RepoRow) []repoTabRow {
+	rows := reposByTokens(r.Scratch, func(s datastats.RepoRow) int64 { return s.Tokens })
 	out := make([]repoTabRow, 0, len(rows))
 	for _, s := range rows {
 		out = append(out, repoTabRow{kind: kindRepo, group: s.GroupRow, parent: r.Key})
@@ -2685,15 +2712,15 @@ func scratchRepoChildren(r stats.RepoRow) []repoTabRow {
 	return out
 }
 
-// repoNoFeatureShown is the (no feature) row's visibility rule (§4.1): the repo
+// repoNoFeatureShown is the (no feature) row's visibility rule: the repo
 // has featureless rounds and either a labelled feature or a ticket to keep
 // reachable. A repo with no labels at all expands to nothing.
-func repoNoFeatureShown(r stats.RepoRow) bool {
+func repoNoFeatureShown(r datastats.RepoRow) bool {
 	return r.NoFeature.Rounds > 0 && (len(r.Features) > 0 || len(r.NoFeature.Tickets) > 0)
 }
 
 // reposByTokens is the repos tab's per-section ordering: a copy of rows,
-// stable-sorted by tokens desc (§4.1). A feature section and each feature's
+// stable-sorted by tokens desc. A feature section and each feature's
 // ticket section both use it.
 func reposByTokens[Row any](rows []Row, tokens func(Row) int64) []Row {
 	out := append([]Row(nil), rows...)
@@ -2701,11 +2728,11 @@ func reposByTokens[Row any](rows []Row, tokens func(Row) int64) []Row {
 	return out
 }
 
-// statsRepoHead is a repos-table header row (§4.2): the name label clipped to
+// statsRepoHead is a repos-table header row: the name label clipped to
 // the name column, the visible column heads right-aligned, and % TOKENS
 // right-aligned over its cell, as the overview's repos table does.
 func statsRepoHead(label string, nameW int, visible []statsRepoCol) string {
-	head := stats.FitKey(label, nameW, false)
+	head := datastats.FitKey(label, nameW, false)
 	for _, col := range visible {
 		head += fmt.Sprintf("%*s", col.W, col.Head)
 	}
@@ -2716,18 +2743,18 @@ func statsRepoHead(label string, nameW int, visible []statsRepoCol) string {
 	return "   " + widget.FaintStyle.Bold(true).Render(head)
 }
 
-// statsRepoCells is one repos-table row's numbers (§4.2): each visible
+// statsRepoCells is one repos-table row's numbers: each visible
 // column's value right-aligned in its cell.
-func statsRepoCells(g stats.GroupRow, visible []statsRepoCol) string {
+func statsRepoCells(g datastats.GroupRow, visible []statsRepoCol) string {
 	var b strings.Builder
 	for _, col := range visible {
-		b.WriteString(fmt.Sprintf("%*s", col.W, statsRepoCell(g, col.Head)))
+		fmt.Fprintf(&b, "%*s", col.W, statsRepoCell(g, col.Head))
 	}
 	return b.String()
 }
 
-// statsRepoCell is one repos-table cell's value (§4.2).
-func statsRepoCell(g stats.GroupRow, head string) string {
+// statsRepoCell is one repos-table cell's value.
+func statsRepoCell(g datastats.GroupRow, head string) string {
 	switch head {
 	case "RNDS":
 		return strconv.Itoa(g.Rounds)
@@ -2740,7 +2767,7 @@ func statsRepoCell(g stats.GroupRow, head string) string {
 	case "COMMITS":
 		return strconv.Itoa(g.Commits)
 	case "TOKENS":
-		return stats.ShortTokens(g.Tokens)
+		return datastats.ShortTokens(g.Tokens)
 	}
 	return "·"
 }
@@ -2755,14 +2782,14 @@ const (
 	kindTicket
 )
 
-// statsRepoRow is one repos-table row (§4.2): the fitted name, the numbers in
+// statsRepoRow is one repos-table row: the fitted name, the numbers in
 // muted and the share cell. depth is the row's level in the nested table: the
 // name is indented 2*depth cells inside the name column -- two for a feature,
 // four for a ticket -- the dash grid's convention; its numbers and share stay
 // on the repo rows' columns. The selected row is rebuilt as plain text, share
 // included, and rendered once with the band, fitted to the row width so it
 // ends at width-3.
-func statsRepoRow(g stats.GroupRow, kind repoKind, windowTotal int64, nameW int, visible []statsRepoCol, depth int, selected bool) string {
+func statsRepoRow(g datastats.GroupRow, kind repoKind, windowTotal int64, nameW int, visible []statsRepoCol, depth int, selected bool) string {
 	name := shortRepo(g.Key)
 	switch kind {
 	case kindFeature:
@@ -2774,7 +2801,7 @@ func statsRepoRow(g stats.GroupRow, kind repoKind, windowTotal int64, nameW int,
 	pad := 2 * depth
 	key := strings.Repeat(" ", pad)
 	nameW = statsMinWidth(nameW - pad)
-	key += stats.FitKey(name, nameW, false)
+	key += datastats.FitKey(name, nameW, false)
 	cells := statsRepoCells(g, visible)
 	if selected {
 		text := key + cells + statsSharePlain(g.Tokens, windowTotal)
@@ -2784,7 +2811,7 @@ func statsRepoRow(g stats.GroupRow, kind repoKind, windowTotal int64, nameW int,
 		statsShareCell(g.Tokens, windowTotal)
 }
 
-// reposTabLines is the repos tab (§4.1): one REPO table over the visible rows --
+// reposTabLines is the repos tab: one REPO table over the visible rows --
 // every repo, plus the children of the expanded ones, each nesting level
 // indented two cells further inside the name column -- then two blank lines and
 // the selected row's detail block. sel is the selected row's line, so the page
@@ -2821,10 +2848,10 @@ func (v statsView) reposTabLines(env widget.Env, width int) ([]string, int) {
 	return out, sel
 }
 
-// statsGroupDetail is the selected repos-tab row's detail block (§4.3): the
+// statsGroupDetail is the selected repos-tab row's detail block: the
 // name and its kind, the totals, the outcomes and the top candidates. Each
 // line starts with the three-cell gutter and is cut to width-6.
-func (v statsView) statsGroupDetail(env widget.Env, g stats.GroupRow, kind repoKind, windowTotal int64) []string {
+func (v statsView) statsGroupDetail(env widget.Env, g datastats.GroupRow, kind repoKind, windowTotal int64) []string {
 	w := env.Width - 6
 	if w < 1 {
 		w = 1
@@ -2844,7 +2871,7 @@ func (v statsView) statsGroupDetail(env widget.Env, g stats.GroupRow, kind repoK
 		first += "   " + widget.MutedStyle.Render("ticket")
 	// The fold's key is a placeholder, not a repo, so it gets no echo; a
 	// child's is its own path and does.
-	case g.Key != "(none)" && g.Key != stats.ScratchKey:
+	case g.Key != "(none)" && g.Key != datastats.ScratchKey:
 		first += "   " + widget.MutedStyle.Render(g.Key)
 	}
 	out := []string{widget.Fit(first, w)}
@@ -2860,7 +2887,7 @@ func (v statsView) statsGroupDetail(env widget.Env, g stats.GroupRow, kind repoK
 		widget.MutedStyle.Render(" "+roundWord+" on ") +
 		widget.TextStyle.Bold(true).Render(strconv.Itoa(g.Bindings)) +
 		widget.MutedStyle.Render(" "+bindingWord+"   ") +
-		widget.TextStyle.Bold(true).Render(stats.ShortTokens(g.Tokens))
+		widget.TextStyle.Bold(true).Render(datastats.ShortTokens(g.Tokens))
 	if windowTotal > 0 {
 		pct := int(math.Round(100 * float64(g.Tokens) / float64(windowTotal)))
 		totals += widget.MutedStyle.Render(fmt.Sprintf(" tokens, %d%% of the window", pct))
@@ -2882,7 +2909,7 @@ func (v statsView) statsGroupDetail(env widget.Env, g stats.GroupRow, kind repoK
 }
 
 // statsGroupCandidates is a group's top candidates for the detail block's last
-// line (§4.3): the three largest round counts, ties by name, each as
+// line: the three largest round counts, ties by name, each as
 // "<name> <n> rounds" ("round" at one).
 func (v statsView) statsGroupCandidates(env widget.Env, byCandidate map[string]int) string {
 	type cand struct {

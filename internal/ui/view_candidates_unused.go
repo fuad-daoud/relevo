@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/ui/stats"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -54,12 +55,12 @@ func unusedDataLine(g view.ProviderGate, sel bool, nameW, reasonW, setByW, cw in
 	}
 	cells := []candCell{
 		{text: widget.Pad(g.Provider, nameW), style: nameStyle},
-		{text: widget.Pad(statsGateReasonText(g.Note), reasonW), style: widget.MutedStyle},
+		{text: widget.Pad(stats.GateReasonText(g.Note), reasonW), style: widget.MutedStyle},
 	}
 	if setByW > 0 {
 		cells = append(cells, candCell{text: widget.Pad(setBy, setByW), style: widget.TextStyle})
 	}
-	cells = append(cells, candCell{text: widget.Pad(statsGateLeft(asGate(g), now), 9), style: widget.RedStyle})
+	cells = append(cells, candCell{text: widget.Pad(stats.GateLeft(asGate(g), now), 9), style: widget.RedStyle})
 	return candLine(cells, sel, cw)
 }
 
@@ -85,7 +86,7 @@ func unusedDetailLines(g view.ProviderGate, now time.Time, width int) []string {
 	line := "   " + widget.RedStyle.Render("gated") +
 		widget.MutedStyle.Render(" since "+candSince(g.Since, now)) +
 		widget.MutedStyle.Render(", "+candUntilText(asGate(g), now))
-	if reason := statsGateReasonText(g.Note); reason != "" {
+	if reason := stats.GateReasonText(g.Note); reason != "" {
 		line += "   " + widget.TextStyle.Render(reason)
 	}
 

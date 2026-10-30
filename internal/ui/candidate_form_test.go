@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/stats"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
@@ -227,13 +228,13 @@ func TestCandidateFormGatedProviderLine(t *testing.T) {
 	}
 
 	text := formText(f, 132)
-	want := "cline-pass is gated until " + statsGateUntil(gate, railNow)
+	want := "cline-pass is gated until " + stats.GateUntil(gate, railNow)
 	if !strings.Contains(text, want) {
 		t.Errorf("form does not show %q:\n%s", want, text)
 	}
 	// The fixture's note renders as "·", so the line must omit the reason
-	// rather than carry an empty one (§2, round 6).
-	if reason := statsGateReason(gate.Note); strings.Contains(text, " · "+reason) {
+	// rather than carry an empty one.
+	if reason := stats.GateReason(gate.Note); strings.Contains(text, " · "+reason) {
 		t.Errorf("form shows an empty gate reason %q:\n%s", reason, text)
 	}
 }

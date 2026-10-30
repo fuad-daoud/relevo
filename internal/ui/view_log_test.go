@@ -10,8 +10,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/stats"
+	datastats "github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/stats"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/muesli/termenv"
 )
@@ -131,7 +132,7 @@ func TestLogFoldsReport(t *testing.T) {
 	if e.Word != "halted" {
 		t.Errorf("Word = %q, want halted", e.Word)
 	}
-	wantTokens := stats.ShortTokens(tokens) + " tokens"
+	wantTokens := datastats.ShortTokens(tokens) + " tokens"
 	wantDetail := fmt.Sprintf("at step 2 · 1 file +1 -0 · 0 commits · dirty · %s · 1m", wantTokens)
 	if e.Detail != wantDetail {
 		t.Errorf("Detail = %q, want %q", e.Detail, wantDetail)
@@ -214,7 +215,7 @@ func TestLogSwitchAndExit(t *testing.T) {
 		t.Errorf("entries[1] = %+v, want exited / without a report (code 0)", entries[1])
 	}
 
-	// Rate-limited switch reason is shortened by statsGateReason
+	// Rate-limited switch reason is shortened by GateReason
 	rateLimitSwitch := []db.EventLogRow{
 		{
 			TS:          now,
@@ -230,7 +231,7 @@ func TestLogSwitchAndExit(t *testing.T) {
 	if len(rlEntries) != 1 {
 		t.Fatalf("got %d entries, want 1", len(rlEntries))
 	}
-	wantReason := statsGateReason("AGY_ERROR: Error 429: weekly limit reached")
+	wantReason := stats.GateReason("AGY_ERROR: Error 429: weekly limit reached")
 	wantDetail := fmt.Sprintf("to glm-5.3-flash (#6) · %s", wantReason)
 	if rlEntries[0].Detail != wantDetail {
 		t.Errorf("Detail = %q, want %q", rlEntries[0].Detail, wantDetail)

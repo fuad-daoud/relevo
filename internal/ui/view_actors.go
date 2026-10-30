@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/ui/stats"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
@@ -96,7 +97,7 @@ func entryStatus(doc relevo.ConfigDoc, e roles.Entry, gated []availability.Gate,
 	}
 	name := candName(doc, e.Candidate)
 	if g, ok := gateOn(gated, actorToken(doc, name)); ok {
-		return statsGateLeft(g, now), widget.RedStyle
+		return stats.GateLeft(g, now), widget.RedStyle
 	}
 	return "ready", widget.GreenStyle
 }

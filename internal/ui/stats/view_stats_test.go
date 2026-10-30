@@ -1,8 +1,7 @@
-package ui
+package stats
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -20,53 +19,59 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
-	"github.com/fuad-daoud/relevo/internal/stats"
+	datastats "github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// statsFixture builds a rich stats.Report by hand, so the view tests and the
-// goldens never need a database (§7).
-func statsFixture() stats.Report {
+// statsFixture builds a rich datastats.Report by hand, so the view tests and the
+// statsFixtureScorecard is the fixture's two scorecard rows: a five-round
+// lane with a halt and a two-round done lane.
+func statsFixtureScorecard() []datastats.ScoreRow {
+	return []datastats.ScoreRow{
+		{
+			Token:  "opencode/cline-pass/deepseek-v4.1-flash",
+			Rounds: 5, Closed: 4, Reported: 3, Halted: 1,
+			DonePct: 75, HaltPct: 25,
+			MedianMS: 27 * 60_000, HasMedian: true,
+			TTFTMS: 2500, HasTTFT: true,
+			CostPerRound: 0.04, HasCost: true,
+			CommitsPerRound: 1.2, HasCommits: true,
+			TokenKinds: datastats.TokenCounts{
+				In: 30_000, Cache: 2_200_000, Write: 8_000, Out: 40_000, Measured: 4,
+			},
+		},
+		{
+			Token:  "agy/antigravity/claude-sonnet-4-6",
+			Rounds: 2, Closed: 2, Reported: 2, DonePct: 100, HaltPct: 0,
+			MedianMS: 9 * 60_000, HasMedian: true, Plan: true, Few: true,
+			TokenKinds: datastats.TokenCounts{
+				In: 10_000, Cache: 200_000, Write: 2_000, Out: 10_000, Measured: 1,
+			},
+		},
+	}
+}
+
+// goldens never need a database.
+func statsFixture() datastats.Report {
 	at := func(day int) time.Time {
 		return time.Date(2026, time.September, day, 12, 0, 0, 0, time.UTC)
 	}
 	var counts [24]int
 	counts[9], counts[14] = 2, 1
-	return stats.Report{
+	return datastats.Report{
 		Since: at(16), Until: at(24),
-		Totals: stats.Totals{
+		Totals: datastats.Totals{
 			Rounds: 6, Bindings: 2, Candidates: 2, Unrecorded: 1,
 			CostUSD: 1.40, PlanRounds: 1, Tokens: 2_500_000, MedianMS: 27 * 60_000,
-			TokenKinds: stats.TokenCounts{
+			TokenKinds: datastats.TokenCounts{
 				In: 40_000, Cache: 2_400_000, Write: 10_000, Out: 50_000, Measured: 5,
 			},
 		},
-		Scorecard: []stats.ScoreRow{
-			{
-				Token:  "opencode/cline-pass/deepseek-v4.1-flash",
-				Rounds: 5, Closed: 4, Reported: 3, Halted: 1,
-				DonePct: 75, HaltPct: 25,
-				MedianMS: 27 * 60_000, HasMedian: true,
-				TTFTMS: 2500, HasTTFT: true,
-				CostPerRound: 0.04, HasCost: true,
-				CommitsPerRound: 1.2, HasCommits: true,
-				TokenKinds: stats.TokenCounts{
-					In: 30_000, Cache: 2_200_000, Write: 8_000, Out: 40_000, Measured: 4,
-				},
-			},
-			{
-				Token:  "agy/antigravity/claude-sonnet-4-6",
-				Rounds: 2, Closed: 2, Reported: 2, DonePct: 100, HaltPct: 0,
-				MedianMS: 9 * 60_000, HasMedian: true, Plan: true, Few: true,
-				TokenKinds: stats.TokenCounts{
-					In: 10_000, Cache: 200_000, Write: 2_000, Out: 10_000, Measured: 1,
-				},
-			},
-		},
-		Spend: stats.Spend{
-			Days: []stats.DayCost{
+		Scorecard: statsFixtureScorecard(),
+		Spend: datastats.Spend{
+			Days: []datastats.DayCost{
 				{Day: "2026-09-16", USD: 0.40, Tokens: 900_000, ByProvider: map[string]float64{"cline-pass": 0.40}},
 				{Day: "2026-09-17", USD: 0.20, Tokens: 400_000, ByProvider: map[string]float64{"cline-pass": 0.20}},
 				{Day: "2026-09-18", USD: 0.00, ByProvider: map[string]float64{}},
@@ -74,27 +79,27 @@ func statsFixture() stats.Report {
 			},
 			ThisWeek: 1.40, LastWeek: 0.55,
 		},
-		Reliability: stats.Reliability{
+		Reliability: datastats.Reliability{
 			Switches: 2, RoundsSwitched: 1, SwitchPct: 33, RateLimits: 3, SpawnFailures: 1,
-			ByHour: []stats.HourRow{{Provider: "google", Counts: counts}},
+			ByHour: []datastats.HourRow{{Provider: "google", Counts: counts}},
 			Active: []availability.Gate{{
 				Token: "gemini-3.8-flash-high", Kind: availability.RateLimited,
 				Since: at(24), Until: at(19).AddDate(0, 1, 0),
 			}},
 		},
-		Repos: []stats.RepoRow{
+		Repos: []datastats.RepoRow{
 			{
-				GroupRow: stats.GroupRow{Key: "https://github.com/fuad-daoud/relevo", Rounds: 5, Halted: 1, Landed: 1, CostUSD: 1.30, Tokens: 2_400_000, RoundsPerLand: 3.0},
-				Features: []stats.FeatureRow{
-					{GroupRow: stats.GroupRow{Key: "cockpit", Rounds: 3, CostUSD: 0.90, Tokens: 1_500_000, Landed: 1, RoundsPerLand: 2.0}},
+				GroupRow: datastats.GroupRow{Key: "https://github.com/fuad-daoud/relevo", Rounds: 5, Halted: 1, Landed: 1, CostUSD: 1.30, Tokens: 2_400_000, RoundsPerLand: 3.0},
+				Features: []datastats.FeatureRow{
+					{GroupRow: datastats.GroupRow{Key: "cockpit", Rounds: 3, CostUSD: 0.90, Tokens: 1_500_000, Landed: 1, RoundsPerLand: 2.0}},
 				},
-				NoFeature: stats.FeatureRow{GroupRow: stats.GroupRow{Key: "(none)", Rounds: 2, Tokens: 900_000}},
+				NoFeature: datastats.FeatureRow{GroupRow: datastats.GroupRow{Key: "(none)", Rounds: 2, Tokens: 900_000}},
 			},
 			{
-				GroupRow: stats.GroupRow{Key: "(none)", Rounds: 1, CostUSD: 0.10, Tokens: 100_000},
+				GroupRow: datastats.GroupRow{Key: "(none)", Rounds: 1, CostUSD: 0.10, Tokens: 100_000},
 			},
 		},
-		Outcomes: stats.Outcomes{
+		Outcomes: datastats.Outcomes{
 			ByRound: map[string]int{
 				db.OutcomeReported: 4, db.OutcomeHalted: 1, db.OutcomeOpen: 1,
 			},
@@ -113,12 +118,12 @@ func statsTestView(window string) statsView {
 }
 
 // statsTwentyCandidates is the 20-row scorecard the overview scroll tests use:
-// every row a closed, done round, the last five Few (§4.6).
-func statsTwentyCandidates() stats.Report {
+// every row a closed, done round, the last five Few.
+func statsTwentyCandidates() datastats.Report {
 	rep := statsFixture()
 	rep.Scorecard = nil
 	for i := 0; i < 20; i++ {
-		rep.Scorecard = append(rep.Scorecard, stats.ScoreRow{
+		rep.Scorecard = append(rep.Scorecard, datastats.ScoreRow{
 			Token:  fmt.Sprintf("cand-%02d", i),
 			Rounds: 6, Closed: 6, Reported: 6, DonePct: 100, Few: i >= 15,
 		})
@@ -126,63 +131,49 @@ func statsTwentyCandidates() stats.Report {
 	return rep
 }
 
-// statsTestEnv is a view widget.Env with a store but no database.
+// statsTestSource is the tests' widget.Source: one runtime with a store
+// and no database, like the shell's mastermind source without the shell.
+type statsTestSource struct{ rt relevo.Runtime }
+
+func (s statsTestSource) Status(ctx context.Context) (view.Report, error) {
+	return view.Report{}, nil
+}
+
+func (s statsTestSource) Runtime(key string) (relevo.Runtime, string, bool) {
+	return s.rt, key, true
+}
+
+func (s statsTestSource) Base() relevo.Runtime { return s.rt }
+
+func (s statsTestSource) MarkViewed(key string) {}
+
+// statsTestEnv is a view widget.Env over the test source at width x height,
+// clock railNow.
 func statsTestEnv(t *testing.T, width, height int) widget.Env {
 	t.Helper()
-	return testEnv(mastermindSource{relevo.Runtime{Store: store.New(t.TempDir())}}, view.Report{}, width, height)
+	return widget.Env{
+		Ctx:    context.Background(),
+		Src:    statsTestSource{rt: relevo.Runtime{Store: store.New(t.TempDir())}},
+		Report: view.Report{}, Loaded: true,
+		StatusAt: railNow, Now: railNow, Width: width, Height: height,
+	}
 }
+
+// railNow is in the local zone on purpose: the view formats clocks with
+// .Local(), and a UTC fixture would make "13:02" depend on the machine.
+var railNow = time.Date(2026, 9, 17, 14, 2, 0, 0, time.Local)
+
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func stripANSI(s string) string { return ansiRE.ReplaceAllString(s, "") }
 
 // statsKey builds a rune key.
 func statsKey(r rune) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
 }
 
-// statsShell builds the shell over a temp DB with the stats view at window
-// pushed and its first fetch drained.
-func statsShell(t *testing.T, width, height int, window string) Model {
-	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
-	if err != nil {
-		t.Fatalf("db.Open: %v", err)
-	}
-	t.Cleanup(func() { d.Close() })
-	st := store.New(t.TempDir())
-	m := newModel(context.Background(), mastermindSource{relevo.Runtime{Store: st, DB: d}},
-		Options{Interval: time.Second})
-	m.now = func() time.Time { return railNow }
-	res, _ := m.Update(tea.WindowSizeMsg{Width: width, Height: height})
-	m = res.(Model)
-	m.statusInFlight = false
-	res, _ = m.Update(statusMsg{report: view.Report{}})
-	m = res.(Model)
-	m = drain(t, m, execLine("stats "+window, m.env(), m.prefs))
-	if _, ok := m.top().(statsView); !ok {
-		t.Fatalf(":stats must replace the stack, top is %T", m.top())
-	}
-	return m
-}
-
-// statsReposShell is statsShell at 160x40 with the report fed and the repos
-// tab open, already expanded on the given repo keys. It lets a test place the
-// cursor on a child row without pressing the expansion keys.
-func statsReposShell(t *testing.T, rep stats.Report, expanded ...string) Model {
-	t.Helper()
-	m := statsShell(t, 160, 40, "30d")
-	res, _ := m.Update(statsMsg{window: "30d", rep: rep})
-	m = res.(Model)
-	res, _ = m.Update(statsKey('5'))
-	m = res.(Model)
-	v := m.top().(statsView)
-	v.expanded = map[string]bool{}
-	for _, k := range expanded {
-		v.expanded[k] = true
-	}
-	m.stack[len(m.stack)-1] = v
-	return m
-}
-
 // TestStatsWindowCycle: `w` cycles 7d → 30d → 90d → all → 7d, each returns a
-// fetch, and a statsMsg for another window is dropped (§4.3, §7).
+// fetch, and a statsMsg for another window is dropped.
 func TestStatsWindowCycle(t *testing.T) {
 	env := statsTestEnv(t, 160, 40)
 	v := widget.View(statsTestView("30d"))
@@ -200,98 +191,13 @@ func TestStatsWindowCycle(t *testing.T) {
 
 	// A stale reply for another window must not touch the report.
 	sv := v.(statsView)
-	next, _ := sv.Update(statsMsg{window: "7d", rep: stats.Report{Totals: stats.Totals{Rounds: 99}}}, env)
+	next, _ := sv.Update(StatsMsg{Window: "7d", Rep: datastats.Report{Totals: datastats.Totals{Rounds: 99}}}, env)
 	if got := next.(statsView).rep.Totals.Rounds; got != 6 {
 		t.Errorf("stale statsMsg changed rep.Rounds to %d, want the fixture's", got)
 	}
 }
 
-// TestStatsEnterOpensFilteredRounds: enter pushes `:rounds` filtered to the
-// selected row, with the window's since term unless the window is all, and
-// the (none) repo row notices (§4.3, §7). The candidates subtests are ported
-// to the new table (§4.6): focus 0 indexes overviewCandRows, not the
-// scorecard.
-func TestStatsEnterOpensFilteredRounds(t *testing.T) {
-	t.Run("candidates row", func(t *testing.T) {
-		m := statsShell(t, 160, 40, "30d")
-		res, _ := m.Update(statsMsg{window: "30d", rep: statsFixture()})
-		m = res.(Model)
-		res, _ = m.Update(statsKey('2'))
-		m = res.(Model)
-		rows := m.top().(statsView).overviewCandRows(func(s string) string { return s })
-		if len(rows) == 0 {
-			t.Fatal("the candidates table has no rows")
-		}
-		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		m = drain(t, res.(Model), cmd)
-		rv, ok := m.top().(roundsView)
-		if !ok {
-			t.Fatalf("enter must push a rounds view, got %T", m.top())
-		}
-		if got, want := rv.dash.QueryText(), "candidate:"+rows[0].Token+" since:30d"; got != want {
-			t.Errorf("QueryText = %q, want %q", got, want)
-		}
-	})
-
-	t.Run("under all there is no since", func(t *testing.T) {
-		m := statsShell(t, 160, 40, "all")
-		res, _ := m.Update(statsMsg{window: "all", rep: statsFixture()})
-		m = res.(Model)
-		res, _ = m.Update(statsKey('2'))
-		m = res.(Model)
-		rows := m.top().(statsView).overviewCandRows(func(s string) string { return s })
-		if len(rows) == 0 {
-			t.Fatal("the candidates table has no rows")
-		}
-		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		m = drain(t, res.(Model), cmd)
-		rv, ok := m.top().(roundsView)
-		if !ok {
-			t.Fatalf("enter must push a rounds view, got %T", m.top())
-		}
-		if got, want := rv.dash.QueryText(), "candidate:"+rows[0].Token; got != want {
-			t.Errorf("QueryText = %q, want no since term", got)
-		}
-	})
-
-	t.Run("repos row", func(t *testing.T) {
-		m := statsShell(t, 160, 40, "30d")
-		res, _ := m.Update(statsMsg{window: "30d", rep: statsFixture()})
-		m = res.(Model)
-		res, _ = m.Update(statsKey('5'))
-		m = res.(Model)
-		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		m = drain(t, res.(Model), cmd)
-		rv, ok := m.top().(roundsView)
-		if !ok {
-			t.Fatalf("enter must push a rounds view, got %T", m.top())
-		}
-		want := `repo:"https://github.com/fuad-daoud/relevo" since:30d`
-		if got := rv.dash.QueryText(); got != want {
-			t.Errorf("QueryText = %q, want %q", got, want)
-		}
-	})
-
-	t.Run("none row notices", func(t *testing.T) {
-		m := statsShell(t, 160, 40, "30d")
-		res, _ := m.Update(statsMsg{window: "30d", rep: statsFixture()})
-		m = res.(Model)
-		res, _ = m.Update(statsKey('5'))
-		m = res.(Model)
-		res, _ = m.Update(statsKey('j'))
-		m = res.(Model)
-		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		m = drain(t, res.(Model), cmd)
-		if _, ok := m.top().(roundsView); ok {
-			t.Fatal("the (none) row must not push a rounds view")
-		}
-		if !strings.Contains(m.notice, "rounds with no repo cannot be filtered") {
-			t.Errorf("notice = %q", m.notice)
-		}
-	})
-}
-
-// TestStatsContextNoDollars ports round 1's S3 test to §2.1: the totals are
+// TestStatsContextNoDollars: the totals are
 // the overview's now, and the context row still never shows a dollar amount.
 func TestStatsContextNoDollars(t *testing.T) {
 	v := statsTestView("30d")
@@ -302,7 +208,7 @@ func TestStatsContextNoDollars(t *testing.T) {
 	}
 }
 
-// TestStatsContextIsTabs pins §2.1: the context row's left side is the tabs
+// TestStatsContextIsTabs pins the context row: its left side is the tabs
 // row and its right side the window chips; the totals line is gone. The word
 // "tokens" is a tab name, so the totals check is on the fact strings the old
 // row carried.
@@ -329,7 +235,7 @@ func TestStatsContextIsTabs(t *testing.T) {
 	}
 }
 
-// TestStatsOverviewFillsWidth pins §4.5: at 132 and 180 columns the four tiles
+// TestStatsOverviewFillsWidth pins the four tiles at 132 and 180 columns:
 // fill the width (ROUNDS value at column 3, OUTPUT at 3 + 3*((w-6)/4)) and the
 // right table's first repo row ends exactly at w-3.
 func TestStatsOverviewFillsWidth(t *testing.T) {
@@ -347,7 +253,7 @@ func TestStatsOverviewFillsWidth(t *testing.T) {
 			t.Errorf("w=%d: ROUNDS value starts at %d, want 3", w, got)
 		}
 		want := 3 + 3*((w-4)/4)
-		out := stats.ShortTokens(statsFixture().Totals.TokenKinds.Out)
+		out := datastats.ShortTokens(statsFixture().Totals.TokenKinds.Out)
 		if got := strings.Index(value, out); got != want {
 			t.Errorf("w=%d: OUTPUT value at %d, want %d", w, got, want)
 		}
@@ -363,7 +269,7 @@ func TestStatsOverviewFillsWidth(t *testing.T) {
 	}
 }
 
-// TestStatsOverviewColumnsAligned pins §4.7 and §4.8: the column where the
+// TestStatsOverviewColumnsAligned pins the column where the
 // header's DONE ends is the column where every scorecard row's done % ends,
 // and the same holds for TOKENS on the repos table.
 func TestStatsOverviewColumnsAligned(t *testing.T) {
@@ -385,7 +291,7 @@ func TestStatsOverviewColumnsAligned(t *testing.T) {
 	}
 	for i, s := range rep.Scorecard {
 		row := lines[candHdr+1+i]
-		want := stats.PctText(s.DonePct, s.Closed)
+		want := datastats.PctText(s.DonePct, s.Closed)
 		if end := statsColEnd(row, want); end != doneEnd {
 			t.Errorf("candidate row %d: done %% ends at %d, want %d\n%q", i, end, doneEnd, row)
 		}
@@ -399,18 +305,18 @@ func TestStatsOverviewColumnsAligned(t *testing.T) {
 	if tokEnd < 0 {
 		t.Fatalf("no TOKENS header:\n%s", body)
 	}
-	rows := append([]stats.RepoRow(nil), rep.Repos...)
+	rows := append([]datastats.RepoRow(nil), rep.Repos...)
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Tokens > rows[j].Tokens })
 	for i, g := range rows {
 		row := lines[repoHdr+1+i]
-		want := stats.ShortTokens(g.Tokens)
+		want := datastats.ShortTokens(g.Tokens)
 		if end := statsColEnd(row, want); end != tokEnd {
 			t.Errorf("repo row %d: tokens ends at %d, want %d\n%q", i, end, tokEnd, row)
 		}
 	}
 }
 
-// TestStatsOverviewNarrowStacks pins §2.2 and §2.4 at 90 columns: the tiles
+// TestStatsOverviewNarrowStacks pins the tiles at 90 columns:
 // are 2x2 and the two tables stack.
 func TestStatsOverviewNarrowStacks(t *testing.T) {
 	const w = 90
@@ -423,7 +329,7 @@ func TestStatsOverviewNarrowStacks(t *testing.T) {
 		t.Fatalf("no ROUNDS tile:\n%s", body)
 	}
 	tileW := (w - 4) / 2
-	tokens, out := stats.ShortTokens(statsFixture().Totals.TokenKinds.Total()), "50k"
+	tokens, out := datastats.ShortTokens(statsFixture().Totals.TokenKinds.Total()), "50k"
 	if got := strings.Index(lines[i+1], tokens); got != 3+tileW {
 		t.Errorf("2x2 tiles: TOKENS value at %d, want %d", got, 3+tileW)
 	}
@@ -497,7 +403,7 @@ func statsCellAt(line string, end int) string {
 }
 
 // TestStatsOverviewTiles pins the overview's four tiles against the fixture's
-// known TokenKinds (§3.3).
+// known TokenKinds.
 func TestStatsOverviewTiles(t *testing.T) {
 	v := statsTestView("30d")
 	body := stripANSI(v.Body(statsTestEnv(t, 132, 34), 132, 34))
@@ -509,11 +415,11 @@ func TestStatsOverviewTiles(t *testing.T) {
 	}
 }
 
-// TestStatsOverviewNoTokens pins §3.3's empty chart: a report whose days
+// TestStatsOverviewNoTokens pins the empty chart: a report whose days
 // recorded no tokens says so instead of drawing bars.
 func TestStatsOverviewNoTokens(t *testing.T) {
 	rep := statsFixture()
-	rep.Totals.TokenKinds = stats.TokenCounts{}
+	rep.Totals.TokenKinds = datastats.TokenCounts{}
 	rep.Totals.Tokens = 0
 	for i := range rep.Spend.Days {
 		rep.Spend.Days[i].Tokens = 0
@@ -526,51 +432,9 @@ func TestStatsOverviewNoTokens(t *testing.T) {
 	}
 }
 
-// TestStatsNoDatabase: `:stats` against a source with a nil DB is refused
-// with the notice and the stack is unchanged (§4.6, §7).
-func TestStatsNoDatabase(t *testing.T) {
-	m := splitModel(t, 140, 40)
-	cmd := execLine("stats", m.env(), m.prefs)
-	m = drain(t, m, cmd)
-	if len(m.stack) != 1 {
-		t.Errorf("stack depth = %d, want 1 (unchanged)", len(m.stack))
-	}
-	if !strings.Contains(m.notice, "no database") {
-		t.Errorf("notice = %q, want the no-database notice", m.notice)
-	}
-
-	if _, _, err := newStatsView(m.env(), "30d"); !errors.Is(err, relevo.ErrNoDatabase) {
-		t.Errorf("newStatsView err = %v, want ErrNoDatabase", err)
-	}
-}
-
-// TestStatsRefreshThrottle: a tick within 30s does not refetch; one after
-// does (§4.3, §7).
-func TestStatsRefreshThrottle(t *testing.T) {
-	sv := statsTestView("30d")
-	sv.fetchedAt = railNow
-
-	soon := testEnv(mastermindSource{relevo.Runtime{Store: store.New(t.TempDir())}}, view.Report{}, 160, 40)
-	soon.Now = railNow.Add(10 * time.Second)
-	next, cmd := sv.Update(widget.TickMsg(soon.Now), soon)
-	if cmd != nil {
-		t.Error("a tick within 30s must not refetch")
-	}
-
-	late := soon
-	late.Now = railNow.Add(31 * time.Second)
-	next, cmd = next.Update(widget.TickMsg(late.Now), late)
-	if cmd == nil {
-		t.Error("a tick after 30s must refetch")
-	}
-	if !next.(statsView).fetching {
-		t.Error("a refetch must mark the view fetching")
-	}
-}
-
 // TestStatsFocusAndCursor ports the old two-panel focus test (S2): the tab bar
 // decides which panel owns ↑↓, and j/k move that panel's cursor within bounds
-// (§4.3, §4.4, §7). The repos cursor walks the visible rows: the fixture's two
+// The repos cursor walks the visible rows: the fixture's two
 // repo rows while every repo is collapsed.
 func TestStatsFocusAndCursor(t *testing.T) {
 	env := statsTestEnv(t, 100, 30)
@@ -611,72 +475,7 @@ func TestStatsFocusAndCursor(t *testing.T) {
 	}
 }
 
-// TestStatsTabsKeys pins §3.1's tab bar and §3.4's per-tab keys: tab cycles
-// the five tabs and wraps, shift+tab goes back, a digit jumps to its tab, ↑↓
-// move the overview's table cursor or the candidates and repos panel cursor,
-// and enter on repos opens the filtered rounds (S2).
-func TestStatsTabsKeys(t *testing.T) {
-	env := statsTestEnv(t, 100, 30)
-	v := widget.View(statsTestView("30d"))
-
-	// tab cycles five tabs and wraps back to overview.
-	for i := 1; i <= len(statsTabs); i++ {
-		next, _ := v.Update(tea.KeyMsg{Type: tea.KeyTab}, env)
-		v = next
-		if got := v.(statsView).tab; got != i%len(statsTabs) {
-			t.Fatalf("tab #%d: tab = %d, want %d", i, got, i%len(statsTabs))
-		}
-	}
-	// shift+tab goes back.
-	next, _ := v.Update(tea.KeyMsg{Type: tea.KeyShiftTab}, env)
-	v = next
-	if got := v.(statsView).tab; got != statsTabRepos {
-		t.Fatalf("shift+tab: tab = %d, want %d (repos)", got, statsTabRepos)
-	}
-	// 3 jumps to tokens.
-	next, _ = v.Update(statsKey('3'), env)
-	v = next
-	if got := v.(statsView).tab; got != statsTabTokens {
-		t.Fatalf("3: tab = %d, want tokens", got)
-	}
-
-	// ↑↓ move the overview's own table cursor, not the tabs' panels...
-	next, _ = v.Update(statsKey('1'), env)
-	v = next
-	next, _ = v.Update(statsKey('j'), env)
-	v = next
-	if got := v.(statsView); got.tab != statsTabOverview || got.ovCursor[0] != 1 ||
-		got.cursor[0] != 0 || got.cursor[1] != 0 {
-		t.Fatalf("j on overview must move ovCursor[0] to 1: %+v", got)
-	}
-	// ...and move the cursor on candidates.
-	next, _ = v.Update(statsKey('2'), env)
-	v = next
-	next, _ = v.Update(statsKey('j'), env)
-	v = next
-	if got := v.(statsView).cursor[0]; got != 1 {
-		t.Fatalf("j on candidates: cursor[0] = %d, want 1", got)
-	}
-
-	// enter on repos opens :rounds, through the existing shell helper.
-	m := statsShell(t, 160, 40, "30d")
-	res, _ := m.Update(statsMsg{window: "30d", rep: statsFixture()})
-	m = res.(Model)
-	res, _ = m.Update(statsKey('5'))
-	m = res.(Model)
-	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = drain(t, res.(Model), cmd)
-	rv, ok := m.top().(roundsView)
-	if !ok {
-		t.Fatalf("enter on repos must push a rounds view, got %T", m.top())
-	}
-	want := `repo:"https://github.com/fuad-daoud/relevo" since:30d`
-	if got := rv.dash.QueryText(); got != want {
-		t.Errorf("QueryText = %q, want %q", got, want)
-	}
-}
-
-// TestStatsNiceStep pins §4.1: the step is the smallest nice value at or above
+// TestStatsNiceStep pins the step: it is the smallest nice value at or above
 // max/4, so ceil(max/step) lands in 1..4 and m*step is the axis maximum.
 func TestStatsNiceStep(t *testing.T) {
 	cases := []struct {
@@ -707,8 +506,8 @@ func TestStatsNiceStep(t *testing.T) {
 
 // statsTimelineDays30 is the timeline tests' 30-day series: five days carry
 // tokens, the largest 6.8M, so statsNiceStep gives a 2M step and m is 4.
-func statsTimelineDays30() []stats.DayCost {
-	days := make([]stats.DayCost, 30)
+func statsTimelineDays30() []datastats.DayCost {
+	days := make([]datastats.DayCost, 30)
 	for i := range days {
 		days[i].Day = time.Date(2026, time.August, 19, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i).Format("2006-01-02")
 	}
@@ -720,7 +519,7 @@ func statsTimelineDays30() []stats.DayCost {
 	return days
 }
 
-// TestStatsTimelineTicks pins §4.2 and §4.3 at 132 columns over 30 days: the
+// TestStatsTimelineTicks pins the ticks at 132 columns over 30 days: the
 // plot is eight rows, the y ticks sit on rows 0, 2, 4 and 6 with their labels,
 // the empty plot cells carry the gridlines, the axis carries one ┴ per x tick,
 // and the x labels are five, seven days apart, ending at 09-17.
@@ -768,10 +567,10 @@ func TestStatsTimelineTicks(t *testing.T) {
 	}
 }
 
-// TestStatsTimelineDailyTicksOnAWeek pins §4.3's daily step: a seven-day window
+// TestStatsTimelineDailyTicksOnAWeek pins the daily step: a seven-day window
 // at 132 columns gives every day a label.
 func TestStatsTimelineDailyTicksOnAWeek(t *testing.T) {
-	days := make([]stats.DayCost, 7)
+	days := make([]datastats.DayCost, 7)
 	for i := range days {
 		days[i].Day = time.Date(2026, time.September, 11, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i).Format("2006-01-02")
 	}
@@ -790,14 +589,14 @@ func TestStatsTimelineDailyTicksOnAWeek(t *testing.T) {
 	}
 }
 
-// TestStatsTimelineConstantWidth pins §2.3's constant width: whatever the day
+// TestStatsTimelineConstantWidth pins the constant width: whatever the day
 // count, the plot fills its room -- the axis row is exactly width-3 cells -- and
 // no plot row overruns that. At 90 and 400 days each bar is one cell wide, so
 // bars of different columns never touch.
 func TestStatsTimelineConstantWidth(t *testing.T) {
 	const width = 132
 	for _, n := range []int{7, 21, 30, 90, 200, 400} {
-		days := make([]stats.DayCost, n)
+		days := make([]datastats.DayCost, n)
 		for i := range days {
 			days[i].Day = time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i).Format("2006-01-02")
 		}
@@ -842,7 +641,7 @@ func statsBarCell(r rune) bool {
 	return strings.ContainsRune("▁▂▃▄▅▆▇█", r)
 }
 
-// TestStatsOverviewSidePadding pins §4.5's three-cell right margin: at 100, 132
+// TestStatsOverviewSidePadding pins the three-cell right margin: at 100, 132
 // and 200 columns no overview line runs past w-3, and at 132 the right table's
 // last cell is at w-4.
 func TestStatsOverviewSidePadding(t *testing.T) {
@@ -869,10 +668,9 @@ func TestStatsOverviewSidePadding(t *testing.T) {
 	}
 }
 
-// TestStatsOverviewScrolls pins §4.6 and §4.7: the candidates table is a
+// TestStatsOverviewScrolls pins that the candidates table is a
 // fixed-height viewport over every scorecard row, and the cursor scrolls it.
-// §2.1 moved the `a–b of n` count from the dropped section line onto the header
-// line, so the count is asserted there.
+// The `a–b of n` count rides on the header line, so the count is asserted there.
 func TestStatsOverviewScrolls(t *testing.T) {
 	env := statsTestEnv(t, 132, 34)
 	v := widget.View(statsView{window: "30d", loaded: true, rep: statsTwentyCandidates()})
@@ -911,51 +709,7 @@ func TestStatsOverviewScrolls(t *testing.T) {
 	}
 }
 
-// TestStatsOverviewEnter pins §4.10: on the overview, enter opens the selected
-// table row's rounds -- the top-tokens repo after `l`, the second candidate
-// after `j`.
-func TestStatsOverviewEnter(t *testing.T) {
-	t.Run("repos row", func(t *testing.T) {
-		m := statsShell(t, 160, 40, "30d")
-		res, _ := m.Update(statsMsg{window: "30d", rep: statsFixture()})
-		m = res.(Model)
-		res, _ = m.Update(statsKey('l'))
-		m = res.(Model)
-		if got := m.top().(statsView).ovFocus; got != 1 {
-			t.Fatalf("l: ovFocus = %d, want 1", got)
-		}
-		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		m = drain(t, res.(Model), cmd)
-		rv, ok := m.top().(roundsView)
-		if !ok {
-			t.Fatalf("enter on the repos table must push a rounds view, got %T", m.top())
-		}
-		want := `repo:"https://github.com/fuad-daoud/relevo" since:30d`
-		if got := rv.dash.QueryText(); got != want {
-			t.Errorf("QueryText = %q, want %q", got, want)
-		}
-	})
-
-	t.Run("candidate row", func(t *testing.T) {
-		m := statsShell(t, 160, 40, "30d")
-		res, _ := m.Update(statsMsg{window: "30d", rep: statsFixture()})
-		m = res.(Model)
-		res, _ = m.Update(statsKey('j'))
-		m = res.(Model)
-		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		m = drain(t, res.(Model), cmd)
-		rv, ok := m.top().(roundsView)
-		if !ok {
-			t.Fatalf("enter on the candidates table must push a rounds view, got %T", m.top())
-		}
-		want := "candidate:agy/antigravity/claude-sonnet-4-6 since:30d"
-		if got := rv.dash.QueryText(); got != want {
-			t.Errorf("QueryText = %q, want %q", got, want)
-		}
-	})
-}
-
-// TestStatsShareCell pins §4.9's honest-share rule: the bar is round(pct/10)
+// TestStatsShareCell pins the honest-share rule: the bar is round(pct/10)
 // cells with no minimum, so under 5% draws none, and the cell is always 17
 // cells, two spaces, a ten-cell bar and a four-cell percent.
 func TestStatsShareCell(t *testing.T) {
@@ -982,7 +736,7 @@ func TestStatsShareCell(t *testing.T) {
 	}
 }
 
-// TestStatsOverviewNoCaptions pins §4.1 and §4.2: each section line keeps only
+// TestStatsOverviewNoCaptions pins that each section line keeps only
 // its title, plus the `a–b of n` scroll count when the table overflows.
 func TestStatsOverviewNoCaptions(t *testing.T) {
 	v := statsTestView("30d")
@@ -994,7 +748,7 @@ func TestStatsOverviewNoCaptions(t *testing.T) {
 	}
 }
 
-// TestStatsOverviewNoTableTitles pins §1.1 and §2.1: the two overview tables
+// TestStatsOverviewNoTableTitles pins the two overview tables
 // start at their header rows -- no CANDIDATES or BUSIEST REPOS section lines --
 // the chart heading has no `per day` subtitle, and an overflowing table carries
 // its `a–b of n` count in the header's name column.
@@ -1035,7 +789,34 @@ func TestStatsOverviewNoTableTitles(t *testing.T) {
 	}
 }
 
-// TestStatsOverviewConfiguredCandidates pins §3.3 and §4.1: every configured
+// statsEnterFirstIdle moves scorecard rows down onto the first idle row and
+// enters: a notice, no push. It returns the view the enter left behind.
+func statsEnterFirstIdle(t *testing.T, v statsView, env widget.Env, scorecard int, idleToken string) statsView {
+	t.Helper()
+	view := widget.View(v)
+	for i := 0; i < scorecard; i++ {
+		next, _ := view.Update(statsKey('j'), env)
+		view = next
+	}
+	next, cmd := view.Update(tea.KeyMsg{Type: tea.KeyEnter}, env)
+	if cmd == nil {
+		t.Fatal("enter on an idle row must return the notice command")
+	}
+	out, ok := next.(statsView)
+	if !ok {
+		t.Fatalf("enter on an idle row must not push, top is %T", next)
+	}
+	msg, ok := cmd().(widget.NoticeMsg)
+	if !ok {
+		t.Fatalf("enter on an idle row produced %T, want widget.NoticeMsg", cmd())
+	}
+	if msg.Text != idleToken+" has no rounds in this window" {
+		t.Errorf("notice = %q, want the no-rounds notice for %s", msg.Text, idleToken)
+	}
+	return out
+}
+
+// TestStatsOverviewConfiguredCandidates pins that every configured
 // candidate the window has no scorecard row for follows the scorecard rows as
 // a faint, zero-round row, and enter on such a row notices instead of pushing
 // `:rounds`.
@@ -1080,35 +861,17 @@ func TestStatsOverviewConfiguredCandidates(t *testing.T) {
 		t.Errorf("idle rows = %q, %q; want each to end %q", stripANSI(idleRows[0]), stripANSI(idleRows[1]), idleTail)
 	}
 	nameW := statsCandidateNameW(leftW)
-	if !strings.HasPrefix(stripANSI(idleRows[0]), stats.FitKey(haiku, nameW, false)) ||
-		!strings.HasPrefix(stripANSI(idleRows[1]), stats.FitKey(terra, nameW, false)) {
+	if !strings.HasPrefix(stripANSI(idleRows[0]), datastats.FitKey(haiku, nameW, false)) ||
+		!strings.HasPrefix(stripANSI(idleRows[1]), datastats.FitKey(terra, nameW, false)) {
 		t.Errorf("idle rows = %q, %q; want %s then %s", stripANSI(idleRows[0]), stripANSI(idleRows[1]), haiku, terra)
 	}
-	plain := stats.FitKey(haiku, nameW, false) + "     " + idleTail
+	plain := datastats.FitKey(haiku, nameW, false) + "     " + idleTail
 	if idleRows[0] != widget.FaintStyle.Render(plain) {
 		t.Errorf("idle row = %q, want widget.FaintStyle over its plain text %q", idleRows[0], plain)
 	}
 
 	// j onto the first idle row, then enter: a notice, no push.
-	view := widget.View(v)
-	for i := 0; i < len(rep.Scorecard); i++ {
-		next, _ := view.Update(statsKey('j'), env)
-		view = next
-	}
-	next, cmd := view.Update(tea.KeyMsg{Type: tea.KeyEnter}, env)
-	if cmd == nil {
-		t.Fatal("enter on an idle row must return the notice command")
-	}
-	if _, ok := next.(statsView); !ok {
-		t.Fatalf("enter on an idle row must not push, top is %T", next)
-	}
-	msg, ok := cmd().(widget.NoticeMsg)
-	if !ok {
-		t.Fatalf("enter on an idle row produced %T, want widget.NoticeMsg", cmd())
-	}
-	if msg.Text != haiku+" has no rounds in this window" {
-		t.Errorf("notice = %q, want the no-rounds notice for %s", msg.Text, haiku)
-	}
+	v = statsEnterFirstIdle(t, v, env, len(rep.Scorecard), haiku)
 
 	// A scorecard token that is no longer configured keeps its row.
 	v.configured = []string{haiku, terra}
@@ -1124,7 +887,7 @@ func TestStatsOverviewConfiguredCandidates(t *testing.T) {
 	}
 }
 
-// TestStatsOverviewTilesUncut pins §4.4: the tile pitch leaves two cells of
+// TestStatsOverviewTilesUncut pins the tile pitch leaves two cells of
 // every tile for the gap, so a tile's note is never cut at 132 columns.
 func TestStatsOverviewTilesUncut(t *testing.T) {
 	v := statsTestView("30d")
@@ -1144,7 +907,7 @@ func TestStatsOverviewTilesUncut(t *testing.T) {
 	}
 }
 
-// TestStatsOverviewTablesStackBelow120 pins §4.5: the two tables sit side by
+// TestStatsOverviewTablesStackBelow120 pins the two tables sit side by
 // side from 120 columns and stack below it, and the clipped header labels never
 // crowd the numeric columns out of the table.
 func TestStatsOverviewTablesStackBelow120(t *testing.T) {
@@ -1179,7 +942,7 @@ func TestStatsOverviewTablesStackBelow120(t *testing.T) {
 	}
 }
 
-// TestStatsTimelineGrows pins §2.1: rows is the plot's row count, H is
+// TestStatsTimelineGrows pins that rows is the plot's row count, H is
 // max(rows, m), and tick j sits on row H - round(j*H/m).
 func TestStatsTimelineGrows(t *testing.T) {
 	days := statsTimelineDays30()
@@ -1223,7 +986,7 @@ func TestStatsTimelineGrows(t *testing.T) {
 	}
 }
 
-// TestStatsOverviewChartUsesSpareRows pins §2.2: the chart's rows are
+// TestStatsOverviewChartUsesSpareRows pins the chart's rows are
 // widget.Clamp(height-20, 8, 16), so a taller screen draws more plot rows -- 16 at
 // 132x60 against 8 at 132x22, the floor -- and the heading is just TOKENS with
 // no subtitle.
@@ -1261,7 +1024,7 @@ func TestStatsOverviewChartUsesSpareRows(t *testing.T) {
 	}
 }
 
-// TestStatsOverviewChartHeightIsFixedAcrossWindows pins §2.2: at 132x50 the
+// TestStatsOverviewChartHeightIsFixedAcrossWindows pins the height at 132x50: the
 // chart's plot rows are widget.Clamp(avail-20, 8, 16) and do not move with the data --
 // four reports with different maxima and row counts draw the same height.
 func TestStatsOverviewChartHeightIsFixedAcrossWindows(t *testing.T) {
@@ -1270,8 +1033,8 @@ func TestStatsOverviewChartHeightIsFixedAcrossWindows(t *testing.T) {
 
 	// scale returns rep with every day's tokens multiplied by num/den, so the
 	// chart's maximum and its y intervals change.
-	scale := func(rep stats.Report, num, den int64) stats.Report {
-		days := append([]stats.DayCost(nil), rep.Spend.Days...)
+	scale := func(rep datastats.Report, num, den int64) datastats.Report {
+		days := append([]datastats.DayCost(nil), rep.Spend.Days...)
 		for i := range days {
 			days[i].Tokens = days[i].Tokens * num / den
 		}
@@ -1281,7 +1044,7 @@ func TestStatsOverviewChartHeightIsFixedAcrossWindows(t *testing.T) {
 
 	reports := []struct {
 		name string
-		rep  stats.Report
+		rep  datastats.Report
 	}{
 		{"fixture", statsFixture()},
 		{"tokens ×10", scale(statsFixture(), 10, 1)},
@@ -1323,7 +1086,7 @@ func TestStatsOverviewChartHeightIsFixedAcrossWindows(t *testing.T) {
 	}
 }
 
-// TestStatsPageScrollBounds pins §3.4's scroll bounds at a short pane: pgdn
+// TestStatsPageScrollBounds pins the scroll bounds at a short pane: pgdn
 // stops at the max top instead of growing past the body, one pgup lowers the
 // page by avail-1 (or to 0), and end and home jump to the max top and 0.
 func TestStatsPageScrollBounds(t *testing.T) {
@@ -1362,7 +1125,7 @@ func TestStatsPageScrollBounds(t *testing.T) {
 	}
 }
 
-// TestStatsPageFollowsCursor pins §3.4's follow: on the overview at a short
+// TestStatsPageFollowsCursor pins the follow: on the overview at a short
 // pane `l` scrolls the page down to the repos table's band, and `h` then `k`
 // scroll back up to the candidates' first row.
 func TestStatsPageFollowsCursor(t *testing.T) {
@@ -1385,13 +1148,13 @@ func TestStatsPageFollowsCursor(t *testing.T) {
 	v = next
 	body = stripANSI(v.Body(env, 132, widget.BodyHeight(env)))
 	nameW := statsCandidateNameW((132 - 9) / 2)
-	want := stats.FitKey(statsFixture().Scorecard[0].Token, nameW, false)
+	want := datastats.FitKey(statsFixture().Scorecard[0].Token, nameW, false)
 	if !strings.Contains(body, want) {
 		t.Errorf("after h and k the body must show the candidates' first row %q:\n%s", want, body)
 	}
 }
 
-// TestStatsPageHint pins §3.5: the head line names the way off the page while
+// TestStatsPageHint pins the head line names the way off the page while
 // the body overflows -- more below at the top, more above at the bottom -- and
 // stays blank when everything fits.
 func TestStatsPageHint(t *testing.T) {
@@ -1421,7 +1184,7 @@ func TestStatsPageHint(t *testing.T) {
 	}
 }
 
-// TestStatsTabResetsTop pins §3.4: after a pgdn, `tab` puts the page back at
+// TestStatsTabResetsTop pins that after a pgdn, `tab` puts the page back at
 // its top.
 func TestStatsTabResetsTop(t *testing.T) {
 	env := statsTestEnv(t, 132, 12)
@@ -1444,11 +1207,11 @@ func TestStatsTabResetsTop(t *testing.T) {
 // pane -- `j` and `k` scroll the page one line and clamp at 0 and statsMaxTop.
 func TestStatsArrowsScrollWithoutCursor(t *testing.T) {
 	rep := statsFixture()
-	rep.Spend.Days = []stats.DayCost{{
+	rep.Spend.Days = []datastats.DayCost{{
 		Day: "2026-09-24", Tokens: 7_080_000,
-		Kinds: stats.TokenCounts{Cache: 6_000_000, In: 1_000_000, Out: 60_000, Write: 20_000, Measured: 1},
+		Kinds: datastats.TokenCounts{Cache: 6_000_000, In: 1_000_000, Out: 60_000, Write: 20_000, Measured: 1},
 	}}
-	rep.Totals.TokenKinds = stats.TokenCounts{Cache: 6_000_000, In: 1_000_000, Out: 60_000, Write: 20_000, Measured: 1}
+	rep.Totals.TokenKinds = datastats.TokenCounts{Cache: 6_000_000, In: 1_000_000, Out: 60_000, Write: 20_000, Measured: 1}
 	rep.Totals.Tokens = 7_080_000
 	env := statsTestEnv(t, 132, 20)
 	v := widget.View(statsView{window: "30d", loaded: true, rep: rep, tab: statsTabTokens, split: 3})
@@ -1520,7 +1283,7 @@ func TestStatsTokensKeysScroll(t *testing.T) {
 	}
 }
 
-// TestStatsCandidatesTabRows pins §4.3's table: at 132 columns the candidates
+// TestStatsCandidatesTabRows pins the table: at 132 columns the candidates
 // tab is a header and one row per overviewCandRows row -- the same order the
 // overview's table shows -- with no titled rule and no footnote, an idle
 // candidate reading 0 and "·", and nothing past w-3.
@@ -1564,7 +1327,7 @@ func TestStatsCandidatesTabRows(t *testing.T) {
 	visible, nameW := statsCandVisible(132)
 	for i, c := range rows {
 		line := lines[hdr+1+i]
-		if got, want := line[3:3+nameW], stats.FitKey(c.Token, nameW, false); got != want {
+		if got, want := line[3:3+nameW], datastats.FitKey(c.Token, nameW, false); got != want {
 			t.Errorf("row %d name = %q, want %q (overviewCandRows order)", i, got, want)
 		}
 		if !c.Idle {
@@ -1591,8 +1354,8 @@ func TestStatsCandidatesTabRows(t *testing.T) {
 	}
 }
 
-// TestStatsCandidatesTabHaltedIsReportCount pins §4.3's HALTED column: it is
-// the report count (§3.1), not the round-outcome HaltPct, so a row with
+// TestStatsCandidatesTabHaltedIsReportCount pins the HALTED column: it is
+// the report count, not the round-outcome HaltPct, so a row with
 // ReportHalted 7 and HaltPct 0 shows 7 under the header's HALTED.
 func TestStatsCandidatesTabHaltedIsReportCount(t *testing.T) {
 	rep := statsFixture()
@@ -1617,9 +1380,9 @@ func TestStatsCandidatesTabHaltedIsReportCount(t *testing.T) {
 	}
 }
 
-// TestStatsCandidatesTabStatus pins §4.1 and §4.2: a gate on a row's token
+// TestStatsCandidatesTabStatus pins that a gate on a row's token
 // shows the time left in its STATUS cell while the others read ready, and
-// statsGateLeft rounds the time left down.
+// GateLeft rounds the time left down.
 func TestStatsCandidatesTabStatus(t *testing.T) {
 	rep := statsFixture()
 	rep.Reliability.Active = append(rep.Reliability.Active,
@@ -1649,20 +1412,30 @@ func TestStatsCandidatesTabStatus(t *testing.T) {
 		{24*24*time.Hour + 5*time.Hour, "gated 24d"},
 	}
 	for _, c := range cases {
-		if got := statsGateLeft(availability.Gate{Until: railNow.Add(c.left)}, railNow); got != c.want {
-			t.Errorf("statsGateLeft(%v) = %q, want %q", c.left, got, c.want)
+		if got := GateLeft(availability.Gate{Until: railNow.Add(c.left)}, railNow); got != c.want {
+			t.Errorf("GateLeft(%v) = %q, want %q", c.left, got, c.want)
 		}
 	}
-	if got := statsGateLeft(availability.Gate{}, railNow); got != "gated" {
-		t.Errorf("statsGateLeft(zero Until) = %q, want gated", got)
+	if got := GateLeft(availability.Gate{}, railNow); got != "gated" {
+		t.Errorf("GateLeft(zero Until) = %q, want gated", got)
 	}
 }
 
-// TestStatsCandidatesTabDetail pins §4.4: the selected row's detail block
-// counts its rounds, bindings, window share and switches, an idle row says it
-// has no rounds, and enter on that idle row notices instead of pushing
-// `:rounds`.
-func TestStatsCandidatesTabDetail(t *testing.T) {
+// statsCandDetailLine renders one detail line for a tweaked scorecard row,
+// so the clause tests name the row and the line they pin.
+func statsCandDetailLine(t *testing.T, row datastats.ScoreRow, line int) string {
+	t.Helper()
+	rep := statsFixture()
+	rep.Scorecard[0] = row
+	env := statsTestEnv(t, 132, 40)
+	v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabCandidates}
+	return stripANSI(v.statsCandDetail(env, statsOverviewCand{Token: row.Token, Row: row})[line])
+}
+
+// TestStatsCandidatesTabDetailContent pins the selected row's detail block:
+// it counts its rounds, bindings, window share and switches, and an idle row
+// says it has no rounds.
+func TestStatsCandidatesTabDetailContent(t *testing.T) {
 	const haiku = "claude/anthropic/haiku"
 
 	rep := statsFixture()
@@ -1688,31 +1461,12 @@ func TestStatsCandidatesTabDetail(t *testing.T) {
 		t.Errorf("the idle row's detail must say it has no rounds:\n%s", body)
 	}
 
-	next, cmd := view.Update(tea.KeyMsg{Type: tea.KeyEnter}, env)
-	if cmd == nil {
-		t.Fatal("enter on an idle row must return the notice command")
-	}
-	if _, ok := next.(statsView); !ok {
-		t.Fatalf("enter on an idle row must not push, top is %T", next)
-	}
-	msg, ok := cmd().(widget.NoticeMsg)
-	if !ok {
-		t.Fatalf("enter on an idle row produced %T, want widget.NoticeMsg", cmd())
-	}
-	if msg.Text != haiku+" has no rounds in this window" {
-		t.Errorf("notice = %q, want the no-rounds notice for %s", msg.Text, haiku)
-	}
-
-	// §2.3 with a row whose ttft is unknown: the clause goes whole, so no
+	// With a row whose ttft is unknown: the clause goes whole, so no
 	// dangling "· ·" is left behind.
 	t.Run("unknown ttft clause", func(t *testing.T) {
-		rep := statsFixture()
-		rep.Scorecard[0].HasTTFT = false
-		env := statsTestEnv(t, 132, 40)
-		v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabCandidates}
-		line := stripANSI(v.statsCandDetail(env, statsOverviewCand{
-			Token: rep.Scorecard[0].Token, Row: rep.Scorecard[0],
-		})[2])
+		row := statsFixture().Scorecard[0]
+		row.HasTTFT = false
+		line := statsCandDetailLine(t, row, 2)
 		if strings.Contains(line, "ttft") {
 			t.Errorf("line 3 = %q, want no ttft clause", line)
 		}
@@ -1721,21 +1475,17 @@ func TestStatsCandidatesTabDetail(t *testing.T) {
 		}
 	})
 
-	// §2.3 with a row whose median is unknown: that clause goes too.
+	// With a row whose median is unknown: that clause goes too.
 	t.Run("unknown median clause", func(t *testing.T) {
-		rep := statsFixture()
-		rep.Scorecard[0].HasMedian = false
-		env := statsTestEnv(t, 132, 40)
-		v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabCandidates}
-		line := stripANSI(v.statsCandDetail(env, statsOverviewCand{
-			Token: rep.Scorecard[0].Token, Row: rep.Scorecard[0],
-		})[2])
+		row := statsFixture().Scorecard[0]
+		row.HasMedian = false
+		line := statsCandDetailLine(t, row, 2)
 		if strings.Contains(line, "median") {
 			t.Errorf("line 3 = %q, want no median clause", line)
 		}
 	})
 
-	// §2.2's fourth line: the rounds that reported token usage, in plain
+	// The fourth line: the rounds that reported token usage, in plain
 	// words. The no-round row carries rounds so the row is not itself idle.
 	measured := []struct {
 		name     string
@@ -1749,12 +1499,9 @@ func TestStatsCandidatesTabDetail(t *testing.T) {
 	}
 	for _, tc := range measured {
 		t.Run(tc.name, func(t *testing.T) {
-			rep := statsFixture()
-			row := rep.Scorecard[0]
+			row := statsFixture().Scorecard[0]
 			row.Rounds, row.TokenKinds.Measured = tc.rounds, tc.measured
-			env := statsTestEnv(t, 132, 40)
-			v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabCandidates}
-			line := stripANSI(v.statsCandDetail(env, statsOverviewCand{Token: row.Token, Row: row})[3])
+			line := statsCandDetailLine(t, row, 3)
 			if !strings.Contains(line, tc.want) {
 				t.Errorf("Measured %d, Rounds %d: line 4 = %q, want %q",
 					tc.measured, tc.rounds, line, tc.want)
@@ -1764,15 +1511,17 @@ func TestStatsCandidatesTabDetail(t *testing.T) {
 }
 
 // statsRolesEnv is statsTestEnv with the runtime carrying a candidate set and
-// a registry, so the detail block's roles read from the registry (§2.2).
+// a registry, so the detail block's roles read from the registry.
 func statsRolesEnv(t *testing.T, set *candidate.Set, reg *roles.Registry) widget.Env {
 	t.Helper()
-	return testEnv(mastermindSource{relevo.Runtime{
+	env := statsTestEnv(t, 132, 40)
+	env.Src = statsTestSource{rt: relevo.Runtime{
 		Store: store.New(t.TempDir()), Candidates: set, Registry: reg,
-	}}, view.Report{}, 132, 40)
+	}}
+	return env
 }
 
-// TestStatsCandidatesTabRoles pins §2.2: detail line 1 takes its roles from the
+// TestStatsCandidatesTabRoles pins that detail line 1 takes its roles from the
 // runtime's role registry, which is where an actors-config machine keeps them,
 // so a token the candidate set lists builder for shows `· builder` even when
 // the code never reads the candidate's own Roles.
@@ -1810,7 +1559,7 @@ func TestStatsCandidatesTabRoles(t *testing.T) {
 	}
 }
 
-// TestStatsCandidatesTabDropsColumns pins §3.3's dropping: TTFT leaves first,
+// TestStatsCandidatesTabDropsColumns pins the dropping: TTFT leaves first,
 // then MED, the name column never falls under 16 cells, and no line passes
 // w-3.
 func TestStatsCandidatesTabDropsColumns(t *testing.T) {
@@ -1853,7 +1602,7 @@ func TestStatsCandidatesTabDropsColumns(t *testing.T) {
 	}
 }
 
-// TestStatsCandidatesTabFollows pins §4.6: the candidates tab's page scrolls
+// TestStatsCandidatesTabFollows pins the candidates tab's page scrolls
 // with its cursor, so on a short pane the last of 12 rows comes into view.
 func TestStatsCandidatesTabFollows(t *testing.T) {
 	rep := statsFixture()
@@ -1879,7 +1628,27 @@ func TestStatsCandidatesTabFollows(t *testing.T) {
 	}
 }
 
-// The tokens tab's three candidate tokens; the idle one carries no tokens. §6.
+// TestCandidatesTabAccountSection pins the account breakdown: it appears
+// under the candidate table only when the report carries accounts, so a host
+// with none shows the tab it always did.
+func TestCandidatesTabAccountSection(t *testing.T) {
+	env := statsTestEnv(t, 132, 34)
+	v := statsView{window: "30d", loaded: true, rep: statsFixture()}
+
+	lines, _ := v.candidatesTabLines(env, 132)
+	if body := stripANSI(strings.Join(lines, "\n")); strings.Contains(body, "ACCOUNT") {
+		t.Errorf("candidate tab printed an account section with no accounts:\n%s", body)
+	}
+
+	v.rep.Accounts = []datastats.ScoreRow{{Token: "cp1", Rounds: 3, Closed: 2, Reported: 2, DonePct: 100}}
+	lines, _ = v.candidatesTabLines(env, 132)
+	body := stripANSI(strings.Join(lines, "\n"))
+	if !strings.Contains(body, "ACCOUNT") || !strings.Contains(body, "cp1") {
+		t.Errorf("candidate tab missing the account section:\n%s", body)
+	}
+}
+
+// The tokens tab's three candidate tokens; the idle one carries no tokens.
 const (
 	statsTokensBig   = "h/p1/m1"
 	statsTokensSmall = "h/p2/m2"
@@ -1887,30 +1656,30 @@ const (
 )
 
 // statsTokensReport is the tokens tests' report: two days carrying tokens for
-// two candidates and two providers, with the three kinds (§6).
-func statsTokensReport() stats.Report {
+// two candidates and two providers, with the three kinds.
+func statsTokensReport() datastats.Report {
 	rep := statsFixture()
-	rep.Spend.Days = []stats.DayCost{
+	rep.Spend.Days = []datastats.DayCost{
 		{
 			Day: "2026-09-16", Tokens: 1000,
 			ByCandidate:      map[string]int64{statsTokensBig: 900, statsTokensSmall: 100},
 			TokensByProvider: map[string]int64{"p1": 900, "p2": 100},
-			Kinds:            stats.TokenCounts{Cache: 800, In: 100, Out: 80, Write: 20, Measured: 1},
+			Kinds:            datastats.TokenCounts{Cache: 800, In: 100, Out: 80, Write: 20, Measured: 1},
 		},
 		{
 			Day: "2026-09-17", Tokens: 2000,
 			ByCandidate:      map[string]int64{statsTokensBig: 1500, statsTokensSmall: 500},
 			TokensByProvider: map[string]int64{"p1": 1500, "p2": 500},
-			Kinds:            stats.TokenCounts{Cache: 1600, In: 200, Out: 160, Write: 40, Measured: 1},
+			Kinds:            datastats.TokenCounts{Cache: 1600, In: 200, Out: 160, Write: 40, Measured: 1},
 		},
 	}
-	rep.Totals.TokenKinds = stats.TokenCounts{In: 300, Cache: 2400, Out: 240, Write: 60, Measured: 2}
+	rep.Totals.TokenKinds = datastats.TokenCounts{In: 300, Cache: 2400, Out: 240, Write: 60, Measured: 2}
 	rep.Totals.Tokens = 3000
 	return rep
 }
 
 // statsTokensView is the tokens tab at split over the tokens report, with the
-// two token-carrying candidates plus one idle candidate configured (§6).
+// two token-carrying candidates plus one idle candidate configured.
 func statsTokensView(split int) statsView {
 	return statsView{
 		window: "30d", loaded: true, tab: statsTabTokens, split: split,
@@ -1920,7 +1689,7 @@ func statsTokensView(split int) statsView {
 }
 
 // statsChartTitleRow is the index of the line whose title names the series, or
-// -1. A title starts with the gutter and the name in bold (§2.2).
+// -1. A title starts with the gutter and the name in bold.
 func statsChartTitleRow(lines []string, name string) int {
 	want := "   " + widget.TextStyle.Bold(true).Render(name)
 	for i, l := range lines {
@@ -1982,36 +1751,9 @@ func statsBarCells(lines []string) int {
 // split's test checks that no strip survives there.
 const statsStripBarCol = 3 + 22 + 1
 
-// TestStatsTokensSplitCycle pins §4.6: a new view starts on candidate, `s`
-// cycles 1→2→3→0→1 on the tokens tab, `s` on the overview does nothing, and
-// the tokens tab's keys name `s` and no `p`.
-func TestStatsTokensSplitCycle(t *testing.T) {
-	m := statsShell(t, 132, 40, "30d")
-	if got := m.top().(statsView).split; got != 1 {
-		t.Fatalf("a new view's split = %d, want 1 (candidate)", got)
-	}
-
-	res, _ := m.Update(statsKey('3'))
-	m = res.(Model)
-	for i, want := range []int{2, 3, 0, 1} {
-		res, _ := m.Update(statsKey('s'))
-		m = res.(Model)
-		if got := m.top().(statsView).split; got != want {
-			t.Fatalf("s #%d: split = %d, want %d", i+1, got, want)
-		}
-	}
-
-	// s on the overview tab does nothing.
-	res, _ = m.Update(statsKey('1'))
-	m = res.(Model)
-	before := m.top().(statsView).split
-	res, _ = m.Update(statsKey('s'))
-	m = res.(Model)
-	if got := m.top().(statsView).split; got != before {
-		t.Errorf("s on the overview changed the split to %d, want %d", got, before)
-	}
-
-	// The tokens tab's keys name s and never p.
+// TestStatsTokensSplitKeys pins the tokens tab's keys: they name s with the
+// split help and never p.
+func TestStatsTokensSplitKeys(t *testing.T) {
 	v := statsTestView("30d")
 	v.tab = statsTabTokens
 	var hasS bool
@@ -2032,7 +1774,7 @@ func TestStatsTokensSplitCycle(t *testing.T) {
 	}
 }
 
-// TestStatsTokensChips pins §4.1 and §4.5: the tokens tab's first line is only
+// TestStatsTokensChips pins the tokens tab's first line is only
 // the four split chips, with no `split` label.
 func TestStatsTokensChips(t *testing.T) {
 	v := statsTokensView(1)
@@ -2049,7 +1791,7 @@ func TestStatsTokensChips(t *testing.T) {
 	}
 }
 
-// TestStatsTokensCandidateCharts pins §2.2: the candidate split draws one full
+// TestStatsTokensCandidateCharts pins the candidate split draws one full
 // chart per non-idle candidate on one shared scale and one ┤ column, and names
 // the idle one only on a final faint line.
 func TestStatsTokensCandidateCharts(t *testing.T) {
@@ -2069,10 +1811,10 @@ func TestStatsTokensCandidateCharts(t *testing.T) {
 	}
 
 	// Each title ends with its total and its share at column width-3.
-	if want := stats.ShortTokens(2400) + " · 80%"; !strings.HasSuffix(strings.TrimRight(lines[big], " "), want) {
+	if want := datastats.ShortTokens(2400) + " · 80%"; !strings.HasSuffix(strings.TrimRight(lines[big], " "), want) {
 		t.Errorf("the large title = %q, want it to end %q", lines[big], want)
 	}
-	if want := stats.ShortTokens(600) + " · 20%"; !strings.HasSuffix(strings.TrimRight(lines[small], " "), want) {
+	if want := datastats.ShortTokens(600) + " · 20%"; !strings.HasSuffix(strings.TrimRight(lines[small], " "), want) {
 		t.Errorf("the small title = %q, want it to end %q", lines[small], want)
 	}
 	for _, i := range []int{big, small} {
@@ -2128,16 +1870,16 @@ func TestStatsTokensCandidateCharts(t *testing.T) {
 	}
 }
 
-// TestStatsTokensKindOwnScale pins §2.2's kind split: the four kinds always in
+// TestStatsTokensKindOwnScale pins the kind split: the four kinds always in
 // order, each on its own scale so their top y labels differ, yet all aligned on
 // one ┤ column.
 func TestStatsTokensKindOwnScale(t *testing.T) {
 	rep := statsFixture()
-	rep.Spend.Days = []stats.DayCost{{
+	rep.Spend.Days = []datastats.DayCost{{
 		Day: "2026-09-24", Tokens: 7_080_000,
-		Kinds: stats.TokenCounts{Cache: 6_000_000, In: 1_000_000, Out: 60_000, Write: 20_000, Measured: 1},
+		Kinds: datastats.TokenCounts{Cache: 6_000_000, In: 1_000_000, Out: 60_000, Write: 20_000, Measured: 1},
 	}}
-	rep.Totals.TokenKinds = stats.TokenCounts{Cache: 6_000_000, In: 1_000_000, Out: 60_000, Write: 20_000, Measured: 1}
+	rep.Totals.TokenKinds = datastats.TokenCounts{Cache: 6_000_000, In: 1_000_000, Out: 60_000, Write: 20_000, Measured: 1}
 	rep.Totals.Tokens = 7_080_000
 	v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabTokens, split: 3}
 	lines := strings.Split(stripANSI(v.Body(statsTestEnv(t, 132, 60), 132, 60)), "\n")
@@ -2186,7 +1928,7 @@ func TestStatsTokensKindOwnScale(t *testing.T) {
 	}
 }
 
-// TestStatsTimelineValsMatchesLines pins §2.1's wrapper: the values form draws
+// TestStatsTimelineValsMatchesLines pins the wrapper: the values form draws
 // the same chart, line for line, as the day-series form.
 func TestStatsTimelineValsMatchesLines(t *testing.T) {
 	days := statsTimelineDays30()
@@ -2202,7 +1944,7 @@ func TestStatsTimelineValsMatchesLines(t *testing.T) {
 	}
 }
 
-// TestStatsTimelineFixedMax pins §2.1's FixedMax: a scale fixed at ten times
+// TestStatsTimelineFixedMax pins the FixedMax: a scale fixed at ten times
 // the data's max takes statsNiceStep's top tick and shortens the bars.
 func TestStatsTimelineFixedMax(t *testing.T) {
 	days := statsTimelineDays30()
@@ -2218,7 +1960,7 @@ func TestStatsTimelineFixedMax(t *testing.T) {
 
 	step := statsNiceStep(fixed)
 	m := widget.Clamp(int(math.Ceil(fixed/step)), 1, 4)
-	top := stats.ShortTokens(int64(math.Round(float64(m) * step)))
+	top := datastats.ShortTokens(int64(math.Round(float64(m) * step)))
 
 	lines := statsTimelineVals(vals, days, 132, statsChartOpts{Rows: 8, FixedMax: fixed})
 	for i, l := range lines {
@@ -2237,7 +1979,7 @@ func TestStatsTimelineFixedMax(t *testing.T) {
 	}
 }
 
-// TestStatsTokensTotalIsTimeline pins §4.5: split 0 draws the overview's
+// TestStatsTokensTotalIsTimeline pins that split 0 draws the overview's
 // timeline -- TOKENS, ┤ and └, no strip names -- at a height that depends on
 // the screen, not on the data.
 func TestStatsTokensTotalIsTimeline(t *testing.T) {
@@ -2245,19 +1987,19 @@ func TestStatsTokensTotalIsTimeline(t *testing.T) {
 	env := statsTestEnv(t, width, height)
 
 	// scale returns rep with every day's tokens multiplied by num/den.
-	scale := func(rep stats.Report, num, den int64) stats.Report {
-		days := append([]stats.DayCost(nil), rep.Spend.Days...)
+	scale := func(rep datastats.Report, num, den int64) datastats.Report {
+		days := append([]datastats.DayCost(nil), rep.Spend.Days...)
 		for i := range days {
 			days[i].Tokens = days[i].Tokens * num / den
 		}
 		rep.Spend.Days = days
 		return rep
 	}
-	body := func(rep stats.Report) []string {
+	body := func(rep datastats.Report) []string {
 		v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabTokens, split: 0}
 		return strings.Split(stripANSI(v.Body(env, width, height)), "\n")
 	}
-	plotRows := func(t *testing.T, rep stats.Report) int {
+	plotRows := func(t *testing.T, rep datastats.Report) int {
 		t.Helper()
 		lines := body(rep)
 		head, axis := -1, -1
@@ -2297,10 +2039,10 @@ func TestStatsTokensTotalIsTimeline(t *testing.T) {
 	}
 }
 
-// TestStatsWeekLine pins §4.4: the last seven days, the seven before and the
+// TestStatsWeekLine pins the last seven days, the seven before and the
 // busiest day, with the busiest clause gone on an all-zero window.
 func TestStatsWeekLine(t *testing.T) {
-	days := make([]stats.DayCost, 14)
+	days := make([]datastats.DayCost, 14)
 	for i := range days {
 		days[i].Day = time.Date(2026, time.September, 10+i, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
 		days[i].Tokens = 1000
@@ -2315,7 +2057,7 @@ func TestStatsWeekLine(t *testing.T) {
 		t.Errorf("statsWeekLine = %q, want %q", got, want)
 	}
 
-	zero := make([]stats.DayCost, len(days))
+	zero := make([]datastats.DayCost, len(days))
 	for i := range zero {
 		zero[i].Day = days[i].Day
 	}
@@ -2331,11 +2073,11 @@ func TestStatsWeekLine(t *testing.T) {
 	}
 }
 
-// TestStatsTokensEmpty pins §4.5: a window with no tokens shows the no-token
+// TestStatsTokensEmpty pins a window with no tokens shows the no-token
 // line under the chips instead of a chart.
 func TestStatsTokensEmpty(t *testing.T) {
 	rep := statsTokensReport()
-	rep.Totals.TokenKinds = stats.TokenCounts{}
+	rep.Totals.TokenKinds = datastats.TokenCounts{}
 	rep.Totals.Tokens = 0
 	for i := range rep.Spend.Days {
 		rep.Spend.Days[i].Tokens = 0
@@ -2354,7 +2096,7 @@ func TestStatsTokensEmpty(t *testing.T) {
 	}
 }
 
-// TestStatsReposTabTables pins §4.1's repos tab at 132 columns: one REPO table
+// TestStatsReposTabTables pins the repos tab at 132 columns: one REPO table
 // with one cursor, no FEATURE or TICKET header, no titled rule, no outcomes
 // block, no dollars and no RNDS/LAND column; the header names BINDINGS,
 // COMMITS and % TOKENS; an expanded repo's children sit under it, indented two
@@ -2412,107 +2154,112 @@ func TestStatsReposTabTables(t *testing.T) {
 	}
 }
 
-// TestStatsRepoChildren pins an expanded repo's children (§4.1): each labelled
+// TestStatsRepoChildren pins an expanded repo's children: each labelled
 // feature by tokens desc, its labelled tickets nested under it by tokens desc,
 // then the (no feature) row with its tickets under the same rule. The (no
 // feature) row shows when the repo has featureless rounds and either a labelled
 // feature or a labelled ticket; a repo with no labels has no children.
+// statsCheckChildKeys asserts the children's keys arrive in want order.
+func statsCheckChildKeys(t *testing.T, got []repoTabRow, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("children = %+v, want %v", got, want)
+	}
+	for i, key := range want {
+		if got[i].group.Key != key {
+			t.Errorf("child %d = %q, want %q", i, got[i].group.Key, key)
+		}
+	}
+}
+
+// statsLabelledChildren pins the labelled case: each labelled feature by
+// tokens desc, its labelled tickets nested under it by tokens desc.
+func statsLabelledChildren(t *testing.T, repo datastats.RepoRow) {
+	t.Helper()
+	labelled := repo
+	labelled.Features = []datastats.FeatureRow{
+		{GroupRow: datastats.GroupRow{Key: "small", Tokens: 10}},
+		{GroupRow: datastats.GroupRow{Key: "big", Tokens: 100}, Tickets: []datastats.GroupRow{
+			{Key: "t1", Tokens: 5}, {Key: "t2", Tokens: 50},
+		}},
+	}
+	// Zero featureless rounds: no (no feature) row even though the bucket
+	// carries tokens.
+	labelled.NoFeature = datastats.FeatureRow{GroupRow: datastats.GroupRow{Key: "(none)", Tokens: 5}}
+	got := repoChildren(labelled)
+	statsCheckChildKeys(t, got, []string{"big", "t2", "t1", "small"})
+	if got[0].kind != kindFeature || got[1].kind != kindTicket || got[2].kind != kindTicket ||
+		got[3].kind != kindFeature {
+		t.Errorf("kinds = %v, %v, %v, %v; want feature, ticket, ticket, feature",
+			got[0].kind, got[1].kind, got[2].kind, got[3].kind)
+	}
+	for _, r := range got {
+		if r.parent != "r" {
+			t.Errorf("child = %+v, want a child of repo r", r)
+		}
+	}
+	for _, r := range got[1:3] {
+		if r.feature != "big" {
+			t.Errorf("ticket row = %+v, want it owned by feature big", r)
+		}
+	}
+}
+
+// statsMixedChildren pins a feature with featureless rounds beside it: the
+// (no feature) row with its tickets under the same rule.
+func statsMixedChildren(t *testing.T, repo datastats.RepoRow) {
+	t.Helper()
+	mixed := repo
+	mixed.Features = []datastats.FeatureRow{{GroupRow: datastats.GroupRow{Key: "f1", Tokens: 100}}}
+	mixed.NoFeature = datastats.FeatureRow{
+		GroupRow: datastats.GroupRow{Key: "(none)", Rounds: 2, Tokens: 50},
+		Tickets:  []datastats.GroupRow{{Key: "t1", Tokens: 70}},
+	}
+	got := repoChildren(mixed)
+	statsCheckChildKeys(t, got, []string{"f1", "(none)", "t1"})
+	if got[1].kind != kindFeature || got[2].kind != kindTicket {
+		t.Errorf("kinds = %v, %v; want a (no feature) row then its ticket", got[1].kind, got[2].kind)
+	}
+	if got[2].feature != "(none)" {
+		t.Errorf("the (no feature) ticket's feature = %q, want %q", got[2].feature, "(none)")
+	}
+}
+
+// statsTicketsChildren pins the tickets-only case: no labelled feature, but
+// featureless rounds carrying tickets, so the (no feature) row shows and
+// those tickets stay reachable.
+func statsTicketsChildren(t *testing.T, repo datastats.RepoRow) {
+	t.Helper()
+	tickets := repo
+	tickets.NoFeature = datastats.FeatureRow{
+		GroupRow: datastats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 30},
+		Tickets:  []datastats.GroupRow{{Key: "t9", Tokens: 30}},
+	}
+	got := repoChildren(tickets)
+	statsCheckChildKeys(t, got, []string{"(none)", "t9"})
+	if got[0].kind != kindFeature || got[1].kind != kindTicket {
+		t.Errorf("kinds = %v, %v; want a (no feature) row then its ticket", got[0].kind, got[1].kind)
+	}
+}
+
+// statsUnlabelledChildren pins the unlabelled case: no labelled child and
+// no ticket to nest, so no children at all.
+func statsUnlabelledChildren(t *testing.T, repo datastats.RepoRow) {
+	t.Helper()
+	plain := repo
+	plain.NoFeature = datastats.FeatureRow{GroupRow: datastats.GroupRow{Key: "(none)", Rounds: 3, Tokens: 30}}
+	if got := repoChildren(plain); len(got) != 0 {
+		t.Errorf("children = %+v, want none: no labelled child and no ticket to nest", got)
+	}
+}
+
 func TestStatsRepoChildren(t *testing.T) {
-	repo := stats.RepoRow{GroupRow: stats.GroupRow{Key: "r"}}
+	repo := datastats.RepoRow{GroupRow: datastats.GroupRow{Key: "r"}}
 
-	t.Run("labelled only", func(t *testing.T) {
-		labelled := repo
-		labelled.Features = []stats.FeatureRow{
-			{GroupRow: stats.GroupRow{Key: "small", Tokens: 10}},
-			{GroupRow: stats.GroupRow{Key: "big", Tokens: 100}, Tickets: []stats.GroupRow{
-				{Key: "t1", Tokens: 5}, {Key: "t2", Tokens: 50},
-			}},
-		}
-		// Zero featureless rounds: no (no feature) row even though the bucket
-		// carries tokens.
-		labelled.NoFeature = stats.FeatureRow{GroupRow: stats.GroupRow{Key: "(none)", Tokens: 5}}
-		got := repoChildren(labelled)
-		want := []string{"big", "t2", "t1", "small"}
-		if len(got) != len(want) {
-			t.Fatalf("children = %+v, want %v", got, want)
-		}
-		for i, key := range want {
-			if got[i].group.Key != key {
-				t.Errorf("child %d = %q, want %q", i, got[i].group.Key, key)
-			}
-		}
-		if got[0].kind != kindFeature || got[1].kind != kindTicket || got[2].kind != kindTicket ||
-			got[3].kind != kindFeature {
-			t.Errorf("kinds = %v, %v, %v, %v; want feature, ticket, ticket, feature",
-				got[0].kind, got[1].kind, got[2].kind, got[3].kind)
-		}
-		for _, r := range got {
-			if r.parent != "r" {
-				t.Errorf("child = %+v, want a child of repo r", r)
-			}
-		}
-		for _, r := range got[1:3] {
-			if r.feature != "big" {
-				t.Errorf("ticket row = %+v, want it owned by feature big", r)
-			}
-		}
-	})
-
-	t.Run("labelled and unlabelled", func(t *testing.T) {
-		mixed := repo
-		mixed.Features = []stats.FeatureRow{{GroupRow: stats.GroupRow{Key: "f1", Tokens: 100}}}
-		mixed.NoFeature = stats.FeatureRow{
-			GroupRow: stats.GroupRow{Key: "(none)", Rounds: 2, Tokens: 50},
-			Tickets:  []stats.GroupRow{{Key: "t1", Tokens: 70}},
-		}
-		got := repoChildren(mixed)
-		want := []string{"f1", "(none)", "t1"}
-		if len(got) != len(want) {
-			t.Fatalf("children = %+v, want %v", got, want)
-		}
-		for i, key := range want {
-			if got[i].group.Key != key {
-				t.Errorf("child %d = %q, want %q", i, got[i].group.Key, key)
-			}
-		}
-		if got[1].kind != kindFeature || got[2].kind != kindTicket {
-			t.Errorf("kinds = %v, %v; want a (no feature) row then its ticket", got[1].kind, got[2].kind)
-		}
-		if got[2].feature != "(none)" {
-			t.Errorf("the (no feature) ticket's feature = %q, want %q", got[2].feature, "(none)")
-		}
-	})
-
-	t.Run("tickets only", func(t *testing.T) {
-		// No labelled feature, but featureless rounds carrying tickets: the
-		// (no feature) row shows so those tickets stay reachable.
-		tickets := repo
-		tickets.NoFeature = stats.FeatureRow{
-			GroupRow: stats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 30},
-			Tickets:  []stats.GroupRow{{Key: "t9", Tokens: 30}},
-		}
-		got := repoChildren(tickets)
-		want := []string{"(none)", "t9"}
-		if len(got) != len(want) {
-			t.Fatalf("children = %+v, want %v", got, want)
-		}
-		for i, key := range want {
-			if got[i].group.Key != key {
-				t.Errorf("child %d = %q, want %q", i, got[i].group.Key, key)
-			}
-		}
-		if got[0].kind != kindFeature || got[1].kind != kindTicket {
-			t.Errorf("kinds = %v, %v; want a (no feature) row then its ticket", got[0].kind, got[1].kind)
-		}
-	})
-
-	t.Run("unlabelled only", func(t *testing.T) {
-		plain := repo
-		plain.NoFeature = stats.FeatureRow{GroupRow: stats.GroupRow{Key: "(none)", Rounds: 3, Tokens: 30}}
-		if got := repoChildren(plain); len(got) != 0 {
-			t.Errorf("children = %+v, want none: no labelled child and no ticket to nest", got)
-		}
-	})
+	t.Run("labelled only", func(t *testing.T) { statsLabelledChildren(t, repo) })
+	t.Run("labelled and unlabelled", func(t *testing.T) { statsMixedChildren(t, repo) })
+	t.Run("tickets only", func(t *testing.T) { statsTicketsChildren(t, repo) })
+	t.Run("unlabelled only", func(t *testing.T) { statsUnlabelledChildren(t, repo) })
 }
 
 // statsCheckShareAligned asserts that on the line at lines[hdr], the "% TOKENS"
@@ -2543,14 +2290,14 @@ func statsCheckShareAligned(t *testing.T, lines []string, hdr, n int) {
 	}
 }
 
-// TestStatsShareHeaderAligned pins round 5's fix: the "% TOKENS" header is
+// TestStatsShareHeaderAligned pins the "% TOKENS" header fix:
 // right-aligned over its cell, so its final "S" sits over the "%" of every
-// row's percentage. Checked on the repos tab's one table (§4.2) expanded so
-// the children are rows too, and on the overview's BUSIEST REPOS table (§4.8),
+// row's percentage. Checked on the repos tab's one table expanded so
+// the children are rows too, and on the overview's BUSIEST REPOS table,
 // both at 132 columns.
 func TestStatsShareHeaderAligned(t *testing.T) {
 	rep := statsFixture()
-	repos := append([]stats.RepoRow(nil), rep.Repos...)
+	repos := append([]datastats.RepoRow(nil), rep.Repos...)
 	sort.SliceStable(repos, func(i, j int) bool { return repos[i].Tokens > repos[j].Tokens })
 
 	t.Run("repos tab", func(t *testing.T) {
@@ -2583,43 +2330,13 @@ func TestStatsShareHeaderAligned(t *testing.T) {
 	})
 }
 
-// TestStatsReposTabDetail pins §4.3: the selected row's detail block names the
+// TestStatsReposTabDetail pins the selected row's detail block names the
 // row and its kind, its round and binding totals with the window share, its
-// outcomes and its top candidates -- and a feature child's line 1 ends
-// `feature`.
-func TestStatsReposTabDetail(t *testing.T) {
-	env := statsTestEnv(t, 132, 40)
-	rep := statsFixture()
-	rep.Repos[0].GroupRow.ByCandidate = map[string]int{"deepseek-v4.1-flash": 3}
-	v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabRepos,
-		expanded: map[string]bool{statsFixtureRepoKey: true}}
-
-	body := stripANSI(v.Body(env, 132, 40))
-	for _, want := range []string{"rounds on", "% of the window", "by candidate:", "deepseek-v4.1-flash"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("repos detail missing %q:\n%s", want, body)
-		}
-	}
-
-	// The repo is row 0 and its feature child row 1: move onto the child and
-	// check its detail's first line.
-	v.cursor[1] = 1
-	lines, sel := v.reposTabLines(env, 132)
-	if sel < 0 || sel >= len(lines) {
-		t.Fatalf("sel = %d, want a line in the feature's block", sel)
-	}
-	first := lines[len(lines)-3]
-	if got := strings.TrimRight(stripANSI(first), " "); !strings.HasSuffix(got, "feature") {
-		t.Errorf("feature detail line 1 = %q, want it to end `feature`\n%s", got, strings.Join(lines, "\n"))
-	}
-}
-
-// TestStatsReposNoFeatureRow pins §2.3 at repo scope: a repo with both a
-// labelled feature and a featureless round ends its feature section with a
-// (no feature) row, enter on it notices instead of pushing rounds, and a repo
-// whose featureless rounds carry no ticket and whose features are gone shows
-// nothing.
-func TestStatsReposNoFeatureRow(t *testing.T) {
+// TestStatsReposNoFeatureRowContent pins the (no feature) row at repo scope:
+// a repo with both a labelled feature and a featureless round ends its
+// feature section with a (no feature) row, and a repo whose featureless
+// rounds carry no ticket and whose features are gone shows nothing.
+func TestStatsReposNoFeatureRowContent(t *testing.T) {
 	t.Run("row and detail", func(t *testing.T) {
 		v := statsView{window: "30d", loaded: true, rep: statsFixture(), tab: statsTabRepos,
 			expanded: map[string]bool{statsFixtureRepoKey: true}}
@@ -2632,23 +2349,6 @@ func TestStatsReposNoFeatureRow(t *testing.T) {
 		body := stripANSI(v.Body(statsTestEnv(t, 132, 40), 132, 40))
 		if !strings.Contains(body, "(no feature)") {
 			t.Errorf("repos tab missing the (no feature) row:\n%s", body)
-		}
-	})
-
-	t.Run("enter notices", func(t *testing.T) {
-		// The fixture's repo relevo: its feature child then its (no feature).
-		m := statsReposShell(t, statsFixture(), statsFixtureRepoKey)
-		for i := 0; i < 2; i++ {
-			res, _ := m.Update(statsKey('j'))
-			m = res.(Model)
-		}
-		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		m = drain(t, res.(Model), cmd)
-		if _, ok := m.top().(roundsView); ok {
-			t.Fatal("the (no feature) row must not push a rounds view")
-		}
-		if !strings.Contains(m.notice, "rounds with no feature cannot be filtered") {
-			t.Errorf("notice = %q", m.notice)
 		}
 	})
 
@@ -2673,7 +2373,36 @@ func TestStatsReposNoFeatureRow(t *testing.T) {
 	})
 }
 
-// TestStatsReposTabDropsColumns pins §4.2's dropping: at 80 columns COMMITS
+// outcomes and its top candidates -- and a feature child's line 1 ends
+// `feature`.
+func TestStatsReposTabDetail(t *testing.T) {
+	env := statsTestEnv(t, 132, 40)
+	rep := statsFixture()
+	rep.Repos[0].ByCandidate = map[string]int{"deepseek-v4.1-flash": 3}
+	v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabRepos,
+		expanded: map[string]bool{statsFixtureRepoKey: true}}
+
+	body := stripANSI(v.Body(env, 132, 40))
+	for _, want := range []string{"rounds on", "% of the window", "by candidate:", "deepseek-v4.1-flash"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("repos detail missing %q:\n%s", want, body)
+		}
+	}
+
+	// The repo is row 0 and its feature child row 1: move onto the child and
+	// check its detail's first line.
+	v.cursor[1] = 1
+	lines, sel := v.reposTabLines(env, 132)
+	if sel < 0 || sel >= len(lines) {
+		t.Fatalf("sel = %d, want a line in the feature's block", sel)
+	}
+	first := lines[len(lines)-3]
+	if got := strings.TrimRight(stripANSI(first), " "); !strings.HasSuffix(got, "feature") {
+		t.Errorf("feature detail line 1 = %q, want it to end `feature`\n%s", got, strings.Join(lines, "\n"))
+	}
+}
+
+// TestStatsReposTabDropsColumns pins the dropping: at 80 columns COMMITS
 // leaves first, the name column stays at least 16 cells, and no line passes
 // w-3.
 func TestStatsReposTabDropsColumns(t *testing.T) {
@@ -2701,7 +2430,7 @@ func TestStatsReposTabDropsColumns(t *testing.T) {
 	}
 }
 
-// TestStatsReliabilityTab pins §5.1 at 132 columns: the four tiles, the gates
+// TestStatsReliabilityTab pins the four tiles at 132 columns, the gates
 // table with a reviewer-scoped gate left out of both the count and the table,
 // the UNTIL and LEFT cells, and the limits-by-hour table's red bold three.
 func TestStatsReliabilityTab(t *testing.T) {
@@ -2716,7 +2445,7 @@ func TestStatsReliabilityTab(t *testing.T) {
 	}
 	hours := [24]int{}
 	hours[4] = 3
-	rep.Reliability.ByHour = []stats.HourRow{
+	rep.Reliability.ByHour = []datastats.HourRow{
 		{Provider: "google", Counts: hours},
 		{Provider: "openai", Counts: [24]int{6: 1}},
 	}
@@ -2763,7 +2492,7 @@ func TestStatsReliabilityTab(t *testing.T) {
 	}
 }
 
-// TestStatsReliabilityEmpty pins §5.1's empty states: with no gates and no
+// TestStatsReliabilityEmpty pins the empty states: with no gates and no
 // ByHour the tab says so on one faint line each.
 func TestStatsReliabilityEmpty(t *testing.T) {
 	rep := statsFixture()
@@ -2779,7 +2508,7 @@ func TestStatsReliabilityEmpty(t *testing.T) {
 	}
 }
 
-// TestStatsReliabilityFillsWidth pins §2's responsive columns at 132 and 200:
+// TestStatsReliabilityFillsWidth pins the responsive columns at 132 and 200:
 // the gates table's REASON cell is padded to reasonW so a row (margin
 // included) is exactly w-3 runes wide, and the hours table's per-hour cells
 // share one cellW so the header's hour labels and each row's counts land in
@@ -2792,7 +2521,7 @@ func TestStatsReliabilityFillsWidth(t *testing.T) {
 	}
 	hours := [24]int{}
 	hours[9] = 7
-	rep.Reliability.ByHour = []stats.HourRow{{Provider: "google", Counts: hours}}
+	rep.Reliability.ByHour = []datastats.HourRow{{Provider: "google", Counts: hours}}
 	v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabReliability}
 
 	for _, w := range []int{132, 200} {
@@ -2800,7 +2529,7 @@ func TestStatsReliabilityFillsWidth(t *testing.T) {
 
 		// The gates table has one header line and one data row; the data
 		// row's REASON cell is padded to reasonW, which is what makes the
-		// row -- margin included -- exactly w-3 runes wide (§2.1).
+		// row -- margin included -- exactly w-3 runes wide.
 		gateLines := v.statsGatesLines(env, w)
 		if len(gateLines) != 2 {
 			t.Fatalf("w=%d: gates table has %d lines, want 2 (header + one row)", w, len(gateLines))
@@ -2838,7 +2567,7 @@ func TestStatsReliabilityFillsWidth(t *testing.T) {
 	}
 }
 
-// TestStatsGateReason pins §2.4: the reliability tab's REASON cell keeps only
+// TestStatsGateReason pins the reliability tab's REASON cell keeps only
 // the readable lead clause of the provider's raw note.
 func TestStatsGateReason(t *testing.T) {
 	cases := []struct {
@@ -2863,8 +2592,8 @@ func TestStatsGateReason(t *testing.T) {
 		{note: "", want: "·"},
 	}
 	for _, c := range cases {
-		if got := statsGateReason(c.note); got != c.want {
-			t.Errorf("statsGateReason(%q) = %q, want %q", c.note, got, c.want)
+		if got := GateReason(c.note); got != c.want {
+			t.Errorf("GateReason(%q) = %q, want %q", c.note, got, c.want)
 		}
 	}
 }
@@ -2883,9 +2612,84 @@ func TestStatsGateReasonHTTPStatus(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := statsGateReason(c.note); got != c.want {
-			t.Errorf("statsGateReason(%q) = %q, want %q", c.note, got, c.want)
+		if got := GateReason(c.note); got != c.want {
+			t.Errorf("GateReason(%q) = %q, want %q", c.note, got, c.want)
 		}
+	}
+}
+
+// statsTicketRowsDetail pins the ticket rows: a labelled ticket under its
+// feature four cells in against the feature's two, the (no feature) bucket
+// nesting its own tickets, and a ticket row's detail naming it a ticket.
+func statsTicketRowsDetail(t *testing.T, rep datastats.Report) {
+	t.Helper()
+	v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabRepos,
+		expanded: map[string]bool{statsFixtureRepoKey: true}}
+	children := repoChildren(rep.Repos[0])
+	if len(children) != 4 || children[0].group.Key != "cockpit" || children[1].group.Key != "o/r#607" ||
+		children[2].group.Key != "(none)" || children[3].group.Key != "o/r#608" {
+		t.Fatalf("children = %+v, want cockpit, its ticket, (no feature) and its ticket", children)
+	}
+	if children[1].feature != "cockpit" || children[3].feature != "(none)" {
+		t.Errorf("ticket owners = %q, %q; want cockpit and (none)", children[1].feature, children[3].feature)
+	}
+	v.focus = 1
+	// The repo, its four children, then the second repo.
+	if got := v.panelRows(); got != 6 {
+		t.Fatalf("panelRows = %d, want 6 visible rows", got)
+	}
+
+	body := stripANSI(v.Body(statsTestEnv(t, 132, 60), 132, 60))
+	lines := strings.Split(body, "\n")
+	if strings.Contains(body, "TICKET") {
+		t.Errorf("repos tab still shows a TICKET header:\n%s", body)
+	}
+	if strings.Contains(body, "(no ticket)") {
+		t.Errorf("repos tab shows a (no ticket) row:\n%s", body)
+	}
+	repoLine := statsLineIndex(lines, "fuad-daoud/relevo")
+	featureLine := statsLineIndex(lines, "cockpit")
+	ticketLine := statsLineIndex(lines, "o/r#607")
+	if repoLine < 0 || featureLine < 0 || ticketLine < 0 {
+		t.Fatalf("missing a row: repo %d, feature %d, ticket %d\n%s", repoLine, featureLine, ticketLine, body)
+	}
+	repoCol := statsFirstCol(lines[repoLine])
+	if got, want := statsFirstCol(lines[featureLine]), repoCol+2; got != want {
+		t.Errorf("the feature name starts at col %d, want %d (two cells inside)\n%q",
+			got, want, lines[featureLine])
+	}
+	if got, want := statsFirstCol(lines[ticketLine]), repoCol+4; got != want {
+		t.Errorf("the ticket name starts at col %d, want %d (four cells inside)\n%q\n%q",
+			got, want, lines[featureLine], lines[ticketLine])
+	}
+
+	// The ticket's detail names its kind.
+	v.cursor[1] = 2
+	lines, sel := v.reposTabLines(statsTestEnv(t, 132, 60), 132)
+	if sel < 0 || sel >= len(lines) {
+		t.Fatalf("sel = %d, want a line in the ticket's block", sel)
+	}
+	first := stripANSI(lines[len(lines)-3])
+	if !strings.Contains(first, "o/r#607") || !strings.Contains(first, "ticket") {
+		t.Errorf("ticket detail line 1 = %q, want it to name the ticket\n%s", first, strings.Join(lines, "\n"))
+	}
+}
+
+// statsNoTicketRows pins the ticketless repos: no TICKET header and no
+// (no ticket) row anywhere.
+func statsNoTicketRows(t *testing.T) {
+	t.Helper()
+	v := statsView{window: "30d", loaded: true, rep: statsFixture(), tab: statsTabRepos,
+		expanded: map[string]bool{statsFixtureRepoKey: true}}
+	if got := repoChildren(v.rep.Repos[0]); len(got) != 2 {
+		t.Fatalf("children = %+v, want only the feature rows", got)
+	}
+	body := stripANSI(v.Body(statsTestEnv(t, 132, 60), 132, 60))
+	if strings.Contains(body, "TICKET") {
+		t.Errorf("repos tab shows a TICKET header with no labelled tickets:\n%s", body)
+	}
+	if strings.Contains(body, "(no ticket)") {
+		t.Errorf("repos tab shows (no ticket) with no labelled tickets:\n%s", body)
 	}
 }
 
@@ -2895,79 +2699,14 @@ func TestStatsGateReasonHTTPStatus(t *testing.T) {
 // ticket, and no (no ticket) row exists anywhere.
 func TestStatsReposTicketRows(t *testing.T) {
 	rep := statsFixture()
-	rep.Repos[0].Features[0].Tickets = []stats.GroupRow{{Key: "o/r#607", Rounds: 2, Tokens: 700_000}}
-	rep.Repos[0].NoFeature.Tickets = []stats.GroupRow{{Key: "o/r#608", Rounds: 1, Tokens: 400_000}}
+	rep.Repos[0].Features[0].Tickets = []datastats.GroupRow{{Key: "o/r#607", Rounds: 2, Tokens: 700_000}}
+	rep.Repos[0].NoFeature.Tickets = []datastats.GroupRow{{Key: "o/r#608", Rounds: 1, Tokens: 400_000}}
 
-	t.Run("rows, indent and detail", func(t *testing.T) {
-		v := statsView{window: "30d", loaded: true, rep: rep, tab: statsTabRepos,
-			expanded: map[string]bool{statsFixtureRepoKey: true}}
-		children := repoChildren(rep.Repos[0])
-		if len(children) != 4 || children[0].group.Key != "cockpit" || children[1].group.Key != "o/r#607" ||
-			children[2].group.Key != "(none)" || children[3].group.Key != "o/r#608" {
-			t.Fatalf("children = %+v, want cockpit, its ticket, (no feature) and its ticket", children)
-		}
-		if children[1].feature != "cockpit" || children[3].feature != "(none)" {
-			t.Errorf("ticket owners = %q, %q; want cockpit and (none)", children[1].feature, children[3].feature)
-		}
-		v.focus = 1
-		// The repo, its four children, then the second repo.
-		if got := v.panelRows(); got != 6 {
-			t.Fatalf("panelRows = %d, want 6 visible rows", got)
-		}
-
-		body := stripANSI(v.Body(statsTestEnv(t, 132, 60), 132, 60))
-		lines := strings.Split(body, "\n")
-		if strings.Contains(body, "TICKET") {
-			t.Errorf("repos tab still shows a TICKET header:\n%s", body)
-		}
-		if strings.Contains(body, "(no ticket)") {
-			t.Errorf("repos tab shows a (no ticket) row:\n%s", body)
-		}
-		repoLine := statsLineIndex(lines, "fuad-daoud/relevo")
-		featureLine := statsLineIndex(lines, "cockpit")
-		ticketLine := statsLineIndex(lines, "o/r#607")
-		if repoLine < 0 || featureLine < 0 || ticketLine < 0 {
-			t.Fatalf("missing a row: repo %d, feature %d, ticket %d\n%s", repoLine, featureLine, ticketLine, body)
-		}
-		repoCol := statsFirstCol(lines[repoLine])
-		if got, want := statsFirstCol(lines[featureLine]), repoCol+2; got != want {
-			t.Errorf("the feature name starts at col %d, want %d (two cells inside)\n%q",
-				got, want, lines[featureLine])
-		}
-		if got, want := statsFirstCol(lines[ticketLine]), repoCol+4; got != want {
-			t.Errorf("the ticket name starts at col %d, want %d (four cells inside)\n%q\n%q",
-				got, want, lines[featureLine], lines[ticketLine])
-		}
-
-		// The ticket's detail names its kind.
-		v.cursor[1] = 2
-		lines, sel := v.reposTabLines(statsTestEnv(t, 132, 60), 132)
-		if sel < 0 || sel >= len(lines) {
-			t.Fatalf("sel = %d, want a line in the ticket's block", sel)
-		}
-		first := stripANSI(lines[len(lines)-3])
-		if !strings.Contains(first, "o/r#607") || !strings.Contains(first, "ticket") {
-			t.Errorf("ticket detail line 1 = %q, want it to name the ticket\n%s", first, strings.Join(lines, "\n"))
-		}
-	})
-
-	t.Run("no labelled tickets means no ticket rows", func(t *testing.T) {
-		v := statsView{window: "30d", loaded: true, rep: statsFixture(), tab: statsTabRepos,
-			expanded: map[string]bool{statsFixtureRepoKey: true}}
-		if got := repoChildren(v.rep.Repos[0]); len(got) != 2 {
-			t.Fatalf("children = %+v, want only the feature rows", got)
-		}
-		body := stripANSI(v.Body(statsTestEnv(t, 132, 60), 132, 60))
-		if strings.Contains(body, "TICKET") {
-			t.Errorf("repos tab shows a TICKET header with no labelled tickets:\n%s", body)
-		}
-		if strings.Contains(body, "(no ticket)") {
-			t.Errorf("repos tab shows (no ticket) with no labelled tickets:\n%s", body)
-		}
-	})
+	t.Run("rows, indent and detail", func(t *testing.T) { statsTicketRowsDetail(t, rep) })
+	t.Run("no labelled tickets means no ticket rows", func(t *testing.T) { statsNoTicketRows(t) })
 }
 
-// TestStatsReposExpandKeys pins §4.1's expansion keys: space toggles the repo
+// TestStatsReposExpandKeys pins the expansion keys: space toggles the repo
 // owning the selected row, → expands it, ← collapses it, several repos may be
 // expanded at once, expanding never moves the cursor, and ← on a child lands
 // the cursor on that repo's row.
@@ -2975,8 +2714,8 @@ func TestStatsReposExpandKeys(t *testing.T) {
 	env := statsTestEnv(t, 100, 30)
 	// A second labelled repo, so both repos have children to expand.
 	rep := statsFixture()
-	rep.Repos[1].Features = []stats.FeatureRow{{GroupRow: stats.GroupRow{Key: "loose", Tokens: 50_000}}}
-	rep.Repos[1].NoFeature = stats.FeatureRow{GroupRow: stats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 50_000}}
+	rep.Repos[1].Features = []datastats.FeatureRow{{GroupRow: datastats.GroupRow{Key: "loose", Tokens: 50_000}}}
+	rep.Repos[1].NoFeature = datastats.FeatureRow{GroupRow: datastats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 50_000}}
 	v := widget.View(statsView{window: "30d", loaded: true, rep: rep})
 
 	next, _ := v.Update(statsKey('5'), env)
@@ -3048,7 +2787,7 @@ func TestStatsReposExpandKeys(t *testing.T) {
 	}
 }
 
-// TestStatsReposExpandEmptyRepo pins #669: a repo with no features or tickets
+// TestStatsReposExpandEmptyRepo pins empty repos: one with no features or tickets
 // stays collapsed and answers the expand keys with a notice instead of silence,
 // while a featureless repo whose rounds carry tickets still expands to its
 // (no feature) row.
@@ -3056,7 +2795,7 @@ func TestStatsReposExpandEmptyRepo(t *testing.T) {
 	env := statsTestEnv(t, 100, 30)
 	rep := statsFixture()
 	rep.Repos[0].Features = nil
-	rep.Repos[0].NoFeature = stats.FeatureRow{}
+	rep.Repos[0].NoFeature = datastats.FeatureRow{}
 	v := widget.View(statsView{window: "30d", loaded: true, rep: rep})
 	next, _ := v.Update(statsKey('5'), env)
 	v = next
@@ -3084,9 +2823,9 @@ func TestStatsReposExpandEmptyRepo(t *testing.T) {
 
 	// The reachability case keeps working: featureless rounds with tickets
 	// expand to (no feature) and its tickets, with no notice.
-	rep.Repos[0].NoFeature = stats.FeatureRow{
-		GroupRow: stats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 30},
-		Tickets:  []stats.GroupRow{{Key: "t9", Tokens: 30}},
+	rep.Repos[0].NoFeature = datastats.FeatureRow{
+		GroupRow: datastats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 30},
+		Tickets:  []datastats.GroupRow{{Key: "t9", Tokens: 30}},
 	}
 	v = widget.View(statsView{window: "30d", loaded: true, rep: rep})
 	next, _ = v.Update(statsKey('5'), env)
@@ -3099,7 +2838,7 @@ func TestStatsReposExpandEmptyRepo(t *testing.T) {
 	}
 }
 
-// TestStatsReposVisibleCursor pins §4.1's cursor: ↑↓ walk only the visible rows
+// TestStatsReposVisibleCursor pins the cursor: ↑↓ walk only the visible rows
 // and stop at the list's ends, and a collapsed repo's children are unreachable.
 func TestStatsReposVisibleCursor(t *testing.T) {
 	env := statsTestEnv(t, 100, 30)
@@ -3156,94 +2895,6 @@ func TestStatsReposVisibleCursor(t *testing.T) {
 	}
 }
 
-// TestStatsReposExpansionSurvivesRefresh pins §4.1: expansion is view state
-// keyed by repo key, so a fresh statsMsg (a tick, r or w reply) leaves it
-// untouched and the children stay shown.
-func TestStatsReposExpansionSurvivesRefresh(t *testing.T) {
-	m := statsShell(t, 160, 40, "30d")
-	res, _ := m.Update(statsMsg{window: "30d", rep: statsFixture()})
-	m = res.(Model)
-	res, _ = m.Update(statsKey('5'))
-	m = res.(Model)
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
-	m = res.(Model)
-
-	res, _ = m.Update(statsMsg{window: "30d", rep: statsFixture()})
-	m = res.(Model)
-	v := m.top().(statsView)
-	if !v.expanded[statsFixtureRepoKey] {
-		t.Fatalf("a fresh statsMsg dropped the expansion: expanded = %v", v.expanded)
-	}
-	if body := stripANSI(m.View()); !strings.Contains(body, "cockpit") {
-		t.Errorf("the expanded repo's child is gone after a refresh:\n%s", body)
-	}
-}
-
-// TestStatsReposChildEnter pins §4.4: enter on a feature child opens `:rounds`
-// scoped to its repo and its label; a ticket under a feature adds the feature
-// term; a ticket under (no feature) scopes to the repo and the ticket; the
-// (no feature) row keeps its notice; and a child of the (none) repo notices
-// because no query term means "no repo".
-func TestStatsReposChildEnter(t *testing.T) {
-	cases := []struct {
-		name         string
-		expanded     []string
-		tickets      bool
-		downs        int
-		want         string
-		wantNotice   string
-		labelledNone bool
-	}{
-		{name: "feature child", expanded: []string{statsFixtureRepoKey}, downs: 1,
-			want: `repo:"https://github.com/fuad-daoud/relevo" feature:"cockpit" since:30d`},
-		{name: "ticket under a feature", expanded: []string{statsFixtureRepoKey}, tickets: true, downs: 2,
-			want: `repo:"https://github.com/fuad-daoud/relevo" feature:"cockpit" ticket:"o/r#607" since:30d`},
-		{name: "ticket under (no feature)", expanded: []string{statsFixtureRepoKey}, tickets: true, downs: 4,
-			want: `repo:"https://github.com/fuad-daoud/relevo" ticket:"o/r#608" since:30d`},
-		{name: "no feature child", expanded: []string{statsFixtureRepoKey}, downs: 2,
-			wantNotice: "rounds with no feature cannot be filtered"},
-		{name: "child of the (none) repo", expanded: []string{"(none)"}, downs: 2,
-			wantNotice: "rounds with no repo cannot be filtered", labelledNone: true},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			rep := statsFixture()
-			if c.tickets {
-				rep.Repos[0].Features[0].Tickets = []stats.GroupRow{{Key: "o/r#607", Rounds: 2, Tokens: 700_000}}
-				rep.Repos[0].NoFeature.Tickets = []stats.GroupRow{{Key: "o/r#608", Rounds: 1, Tokens: 400_000}}
-			}
-			if c.labelledNone {
-				// A label on the (none) repo, so it has a child to select.
-				rep.Repos[1].Features = []stats.FeatureRow{{GroupRow: stats.GroupRow{Key: "loose", Rounds: 1, Tokens: 50_000}}}
-				rep.Repos[1].NoFeature = stats.FeatureRow{GroupRow: stats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 50_000}}
-			}
-			m := statsReposShell(t, rep, c.expanded...)
-			for i := 0; i < c.downs; i++ {
-				res, _ := m.Update(statsKey('j'))
-				m = res.(Model)
-			}
-			res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-			m = drain(t, res.(Model), cmd)
-			if c.wantNotice != "" {
-				if _, ok := m.top().(roundsView); ok {
-					t.Fatal("this row must not push a rounds view")
-				}
-				if !strings.Contains(m.notice, c.wantNotice) {
-					t.Errorf("notice = %q, want %q", m.notice, c.wantNotice)
-				}
-				return
-			}
-			rv, ok := m.top().(roundsView)
-			if !ok {
-				t.Fatalf("enter on a child must push a rounds view, got %T", m.top())
-			}
-			if got := rv.dash.QueryText(); got != c.want {
-				t.Errorf("QueryText = %q, want %q", got, c.want)
-			}
-		})
-	}
-}
-
 // statsScratchPaths are the two scratch repos the scratch tests use: absolute
 // paths, which is how a repo with no origin_url keys itself.
 var (
@@ -3251,11 +2902,11 @@ var (
 	statsScratchTwo = "/tmp/relevo-scratch/beta/.git"
 )
 
-// statsScratchReport builds the scratch fixture through stats.Build over
+// statsScratchReport builds the scratch fixture through datastats.Build over
 // absolute-path Repo keys, so the fold is exercised end to end and a stats
 // regression fails these too. It carries one remote repo and one repo-less
 // round beside the scratch pair, so the fold never sits alone in the table.
-func statsScratchReport() stats.Report {
+func statsScratchReport() datastats.Report {
 	s := func(v string) *string { return &v }
 	i64 := func(v int64) *int64 { return &v }
 	at := func(d int) time.Time { return time.Date(2026, 9, d, 12, 0, 0, 0, time.UTC) }
@@ -3281,7 +2932,7 @@ func statsScratchReport() stats.Report {
 		row("b3", remote, nil, 24, 50_000, 5_000),
 		row("b4", nil, nil, 24, 10_000, 1_000),
 	}
-	return stats.Build(stats.Inputs{
+	return datastats.Build(datastats.Inputs{
 		Rows: rows, Until: stScratchNow, Loc: time.UTC,
 		Since: stScratchNow.AddDate(0, 0, -29),
 	})
@@ -3310,7 +2961,7 @@ func TestStatsScratchRowCollapsed(t *testing.T) {
 	if len(rows) != 3 {
 		t.Fatalf("rows = %d, want the fold, the remote repo and (none)", len(rows))
 	}
-	if rows[0].group.Key != stats.ScratchKey || rows[0].kind != kindRepo {
+	if rows[0].group.Key != datastats.ScratchKey || rows[0].kind != kindRepo {
 		t.Fatalf("first row = %+v, want the fold repo row", rows[0])
 	}
 	if rows[0].group.Rounds != 4 || rows[0].group.Tokens != 1_715_000 {
@@ -3332,13 +2983,13 @@ func TestStatsScratchRowCollapsed(t *testing.T) {
 // scratch repo at depth 1 with the two-cell indent, ordered by tokens desc, each
 // parented to the fold.
 func TestStatsScratchRowExpandsToItsRepos(t *testing.T) {
-	v := statsScratchView(stats.ScratchKey)
+	v := statsScratchView(datastats.ScratchKey)
 	rows := v.repoTabRows()
 	if len(rows) != 5 {
 		t.Fatalf("rows = %d, want the fold, two children, the remote repo and (none)", len(rows))
 	}
 	for _, r := range rows[1:3] {
-		if r.kind != kindRepo || r.parent != stats.ScratchKey {
+		if r.kind != kindRepo || r.parent != datastats.ScratchKey {
 			t.Errorf("child = %+v, want a kindRepo row parented to the fold", r)
 		}
 		if r.feature != "" {
@@ -3362,38 +3013,10 @@ func TestStatsScratchRowExpandsToItsRepos(t *testing.T) {
 	}
 }
 
-// TestStatsScratchChildIsALeaf pins the existing child convention on a scratch
-// child: space collapses the fold, leaves the cursor on the fold row, and the
-// child names leave the body -- a child has nothing to expand.
-func TestStatsScratchChildIsALeaf(t *testing.T) {
-	m := statsReposShell(t, statsScratchReport(), stats.ScratchKey)
-	res, _ := m.Update(statsKey('j'))
-	m = res.(Model)
-	if got := m.top().(statsView).cursor[1]; got != 1 {
-		t.Fatalf("cursor = %d, want 1 (the first child)", got)
-	}
-
-	res, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
-	m = res.(Model)
-	v := m.top().(statsView)
-	if v.expanded[stats.ScratchKey] {
-		t.Error("space on a child must collapse the fold")
-	}
-	if got := v.cursor[1]; got != 0 {
-		t.Errorf("cursor = %d, want the fold row after collapsing", got)
-	}
-	body := stripANSI(v.Body(statsTestEnv(t, 132, 40), 132, 40))
-	for _, path := range []string{"alpha", "beta"} {
-		if strings.Contains(body, path) {
-			t.Errorf("collapsed fold still shows %s:\n%s", path, body)
-		}
-	}
-}
-
 // TestStatsScratchChildDetail pins a child's detail block: its short name and
 // full path on line 1, and its own totals rather than the fold's.
 func TestStatsScratchChildDetail(t *testing.T) {
-	v := statsScratchView(stats.ScratchKey)
+	v := statsScratchView(datastats.ScratchKey)
 	v.cursor[1] = 1
 	lines, sel := v.reposTabLines(statsTestEnv(t, 132, 40), 132)
 	if sel < 0 || sel >= len(lines) {
@@ -3406,65 +3029,13 @@ func TestStatsScratchChildDetail(t *testing.T) {
 	if !strings.Contains(first, statsScratchOne) {
 		t.Errorf("child detail line 1 = %q, want the full path echoed", first)
 	}
-	if strings.Contains(first, stats.ScratchKey) {
+	if strings.Contains(first, datastats.ScratchKey) {
 		t.Errorf("child detail line 1 = %q, want no fold key echo", first)
 	}
 	totals := stripANSI(lines[len(lines)-2])
 	if !strings.Contains(totals, "2 rounds") {
 		t.Errorf("child totals = %q, want its own 2 rounds, not the fold's 4", totals)
 	}
-}
-
-// TestStatsScratchRowEnterNotices pins the fold key's notice on both tables,
-// while a child falls to the default branch and filters on its own key.
-func TestStatsScratchRowEnterNotices(t *testing.T) {
-	t.Run("fold on the repos tab", func(t *testing.T) {
-		m := statsShell(t, 132, 40, "30d")
-		res, _ := m.Update(statsMsg{window: "30d", rep: statsScratchReport()})
-		m = res.(Model)
-		res, _ = m.Update(statsKey('5'))
-		m = res.(Model)
-		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		m = drain(t, res.(Model), cmd)
-		if _, ok := m.top().(roundsView); ok {
-			t.Fatal("the fold row must not push a rounds view")
-		}
-		if !strings.Contains(m.notice, "scratch repos cannot be filtered as one") {
-			t.Errorf("notice = %q", m.notice)
-		}
-	})
-
-	t.Run("fold on the overview", func(t *testing.T) {
-		m := statsShell(t, 132, 40, "30d")
-		res, _ := m.Update(statsMsg{window: "30d", rep: statsScratchReport()})
-		m = res.(Model)
-		res, _ = m.Update(statsKey('l'))
-		m = res.(Model)
-		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		m = drain(t, res.(Model), cmd)
-		if _, ok := m.top().(roundsView); ok {
-			t.Fatal("the overview's fold row must not push a rounds view")
-		}
-		if !strings.Contains(m.notice, "scratch repos cannot be filtered as one") {
-			t.Errorf("notice = %q", m.notice)
-		}
-	})
-
-	t.Run("child filters its own path", func(t *testing.T) {
-		m := statsReposShell(t, statsScratchReport(), stats.ScratchKey)
-		res, _ := m.Update(statsKey('j'))
-		m = res.(Model)
-		res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		m = drain(t, res.(Model), cmd)
-		rv, ok := m.top().(roundsView)
-		if !ok {
-			t.Fatalf("enter on a child must push a rounds view, got %T", m.top())
-		}
-		want := `repo:"` + statsScratchOne + `" since:30d`
-		if got := rv.dash.QueryText(); got != want {
-			t.Errorf("QueryText = %q, want %q", got, want)
-		}
-	})
 }
 
 // TestStatsScratchOverviewRow pins the overview BUSIEST REPOS table: it reads
@@ -3475,7 +3046,7 @@ func TestStatsScratchOverviewRow(t *testing.T) {
 	if len(rows) != 3 {
 		t.Fatalf("overview repos = %d, want the fold, the remote repo and (none)", len(rows))
 	}
-	if rows[0].Key != stats.ScratchKey || rows[0].Tokens != 1_715_000 {
+	if rows[0].Key != datastats.ScratchKey || rows[0].Tokens != 1_715_000 {
 		t.Errorf("first overview row = %+v, want the fold leading on tokens", rows[0].GroupRow)
 	}
 

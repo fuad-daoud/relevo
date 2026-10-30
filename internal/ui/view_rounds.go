@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
+	"github.com/fuad-daoud/relevo/internal/ui/stats"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
@@ -260,7 +261,10 @@ func execLine(line string, env widget.Env, p prefs) tea.Cmd {
 		default:
 			return notice("stats: want 7d, 30d, 90d or all")
 		}
-		v, init, err := newStatsView(env, window)
+		open := func(env widget.Env, q string) (widget.View, tea.Cmd, error) {
+			return newRoundsView(env, q, "")
+		}
+		v, init, err := stats.NewStatsView(env, window, open)
 		if err != nil {
 			return notice("no database: " + err.Error())
 		}
