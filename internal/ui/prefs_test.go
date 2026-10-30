@@ -98,7 +98,7 @@ func TestPrefsDashboardRoundTrip(t *testing.T) {
 }
 
 // TestChangesSaveWhenAStoreIsSet pins the shell's save path: the `a` sort
-// key returns a save command when a store is set, and the prefMsg path
+// key returns a save command when a store is set, and the widget.PrefMsg path
 // saves through the same store.
 func TestChangesSaveWhenAStoreIsSet(t *testing.T) {
 	ps := testPrefsStore(t)

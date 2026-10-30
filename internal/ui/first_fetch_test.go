@@ -19,7 +19,7 @@ import (
 // releases the park before the shell's refetch runs, so that fetch answers
 // immediately. Every other method is the wrapped source's.
 type slowSource struct {
-	inner   Source
+	inner   widget.Source
 	release chan struct{}
 
 	mu     sync.Mutex
@@ -27,7 +27,7 @@ type slowSource struct {
 	calls  int
 }
 
-func newSlowSource(inner Source) *slowSource {
+func newSlowSource(inner widget.Source) *slowSource {
 	return &slowSource{inner: inner, release: make(chan struct{}), parked: true}
 }
 
@@ -97,7 +97,7 @@ func (p pending) stillBlocked(t *testing.T) {
 	t.Helper()
 	select {
 	case msg := <-p.done:
-		t.Fatalf("a parked Source.Status must not deliver a statusMsg, got %#v", msg)
+		t.Fatalf("a parked widget.Source.Status must not deliver a statusMsg, got %#v", msg)
 	case <-time.After(50 * time.Millisecond):
 	}
 }
@@ -280,7 +280,7 @@ func TestSlowSourceStatusNeverYieldsAPartialStatusMsg(t *testing.T) {
 		t.Errorf("the landed statusMsg must carry the whole fleet: %d rows, want 2", got)
 	}
 	if got := sh.src.callCount(); got != 1 {
-		t.Errorf("a parked Source.Status was entered %d times, want 1", got)
+		t.Errorf("a parked widget.Source.Status was entered %d times, want 1", got)
 	}
 }
 

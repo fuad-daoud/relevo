@@ -185,13 +185,13 @@ func (v chainStepsView) entry() (relevo.ChainEntry, bool) {
 }
 
 // follow scrolls the viewport so the cursor's step stays visible.
-func (v *chainStepsView) follow(env Env) {
+func (v *chainStepsView) follow(env widget.Env) {
 	entry, ok := v.entry()
 	if !ok {
 		v.top = 0
 		return
 	}
-	avail := bodyHeight(env)
+	avail := widget.BodyHeight(env)
 	if avail <= 0 {
 		v.top = 0
 		return
@@ -208,7 +208,7 @@ func (v *chainStepsView) follow(env Env) {
 
 // newChainStepsView pushes one chain's steps, out of a read model the chains
 // view already holds, so no second read is issued.
-func newChainStepsView(doc relevo.ChainsDoc, name string) View {
+func newChainStepsView(doc relevo.ChainsDoc, name string) widget.View {
 	return chainStepsView{doc: doc, chain: name}
 }
 
@@ -216,19 +216,19 @@ func (v chainStepsView) Crumbs() []string { return []string{v.chain} }
 
 func (v chainStepsView) Capturing() bool { return false }
 
-func (v chainStepsView) Keys() []KeyHelp {
-	return []KeyHelp{
-		{"↑↓", "move"},
-		{"enter", "open round"},
-		{"t", "trace"},
+func (v chainStepsView) Keys() []widget.KeyHelp {
+	return []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "enter", Help: "open round"},
+		{Key: "t", Help: "trace"},
 	}
 }
 
-func (v chainStepsView) HelpKeys() []KeyHelp { return v.Keys() }
+func (v chainStepsView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
 // Context is the steps context row: the chain's status word and the step the
 // engine is on, or its step count when no step is in flight.
-func (v chainStepsView) Context(env Env) (string, string) {
+func (v chainStepsView) Context(env widget.Env) (string, string) {
 	entry, ok := v.entry()
 	if !ok {
 		return "   " + widget.MutedStyle.Render(v.chain+" is gone"), ""
@@ -255,7 +255,7 @@ func pluralStep(n int) string {
 	return strconv.Itoa(n) + " steps"
 }
 
-func (v chainStepsView) Body(env Env, width, height int) string {
+func (v chainStepsView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
@@ -278,7 +278,7 @@ func (v chainStepsView) Body(env Env, width, height int) string {
 	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
-func (v chainStepsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v chainStepsView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return v.updateKey(msg, env)
@@ -286,7 +286,7 @@ func (v chainStepsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	return v, nil
 }
 
-func (v chainStepsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v chainStepsView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	entry, ok := v.entry()
 	if !ok {
 		return v, notice(v.chain + " is gone")
@@ -306,10 +306,10 @@ func (v chainStepsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		v.cur = candClamp(n-1, n)
 		v.follow(env)
 	case "pgup":
-		v.cur = candClamp(v.cur-bodyHeight(env), n)
+		v.cur = candClamp(v.cur-widget.BodyHeight(env), n)
 		v.follow(env)
 	case "pgdown":
-		v.cur = candClamp(v.cur+bodyHeight(env), n)
+		v.cur = candClamp(v.cur+widget.BodyHeight(env), n)
 		v.follow(env)
 	case "enter":
 		return v, v.openStep(env, entry, candClamp(v.cur, n))
@@ -327,7 +327,7 @@ func (v chainStepsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 // openStep is the enter on a step: the member's own round at the step's
 // round. A step that never ran has no round to open, and a check step has a
 // run rather than a member round, so it says so instead of guessing.
-func (v chainStepsView) openStep(env Env, entry relevo.ChainEntry, i int) tea.Cmd {
+func (v chainStepsView) openStep(env widget.Env, entry relevo.ChainEntry, i int) tea.Cmd {
 	s := entry.Steps[i]
 	if !stepReached(s) {
 		return notice("no round yet: " + s.ID + " has not run")

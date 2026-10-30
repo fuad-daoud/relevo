@@ -102,7 +102,7 @@ func bindingShapes(rt relevo.Runtime) func(string) string {
 	}
 }
 
-func newLogView(env Env) (View, tea.Cmd) {
+func newLogView(env widget.Env) (widget.View, tea.Cmd) {
 	in := newTextInput()
 	in.Prompt = ""
 	v := logView{
@@ -171,7 +171,7 @@ func shortDurationText(ms int64) string {
 	return fmt.Sprintf("%dh%02dm", minutes/60, minutes%60)
 }
 
-func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []db.RevisionRow, actions []actionEntry, since time.Time, name func(token string) string, shapes func(binding string) string) []logEntry {
+func buildLogEntries(events []db.EventLogRow, hist availability.History, revs []db.RevisionRow, actions []widget.ActionEntry, since time.Time, name func(token string) string, shapes func(binding string) string) []logEntry {
 	picks := make(map[foldKey]string)
 	drifts := make(map[foldKey]string)
 	diffs := make(map[foldKey]string)
@@ -465,16 +465,16 @@ func (v logView) Crumbs() []string { return []string{"log"} }
 
 func (v logView) Capturing() bool { return v.editing }
 
-func (v logView) Keys() []KeyHelp {
-	return []KeyHelp{
-		{"↑↓", "move"},
-		{"enter", "open round"},
-		{"/", "filter"},
-		{"f", "follow"},
+func (v logView) Keys() []widget.KeyHelp {
+	return []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "enter", Help: "open round"},
+		{Key: "/", Help: "filter"},
+		{Key: "f", Help: "follow"},
 	}
 }
 
-func (v logView) filteredEntries(env Env) []logEntry {
+func (v logView) filteredEntries(env widget.Env) []logEntry {
 	now := env.Now
 	if now.IsZero() {
 		now = time.Now()
@@ -501,7 +501,7 @@ func (v logView) filteredEntries(env Env) []logEntry {
 	return filtered
 }
 
-func (v logView) Context(env Env) (string, string) {
+func (v logView) Context(env widget.Env) (string, string) {
 	if v.err != nil && !v.loaded {
 		return "   " + widget.ErrorStyle.Render(v.err.Error()), ""
 	}
@@ -552,7 +552,7 @@ func (v logView) Context(env Env) (string, string) {
 	return left, right
 }
 
-func (v logView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v logView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case widget.TickMsg:
 		now := env.Now
@@ -623,7 +623,7 @@ func (v logView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 		}
 
 		entries := v.filteredEntries(env)
-		pageSize := bodyHeight(env) - 3
+		pageSize := widget.BodyHeight(env) - 3
 		if pageSize < 1 {
 			pageSize = 1
 		}
@@ -707,7 +707,7 @@ func pluralEvent(n int, unit string) string {
 	return fmt.Sprintf("%d %ss", n, unit)
 }
 
-func (v logView) Body(env Env, width, height int) string {
+func (v logView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}

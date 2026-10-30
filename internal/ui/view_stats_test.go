@@ -126,8 +126,8 @@ func statsTwentyCandidates() stats.Report {
 	return rep
 }
 
-// statsTestEnv is a view Env with a store but no database.
-func statsTestEnv(t *testing.T, width, height int) Env {
+// statsTestEnv is a view widget.Env with a store but no database.
+func statsTestEnv(t *testing.T, width, height int) widget.Env {
 	t.Helper()
 	return testEnv(mastermindSource{relevo.Runtime{Store: store.New(t.TempDir())}}, view.Report{}, width, height)
 }
@@ -185,7 +185,7 @@ func statsReposShell(t *testing.T, rep stats.Report, expanded ...string) Model {
 // fetch, and a statsMsg for another window is dropped (§4.3, §7).
 func TestStatsWindowCycle(t *testing.T) {
 	env := statsTestEnv(t, 160, 40)
-	v := View(statsTestView("30d"))
+	v := widget.View(statsTestView("30d"))
 
 	for i, want := range []string{"90d", "all", "7d", "30d"} {
 		next, cmd := v.Update(statsKey('w'), env)
@@ -574,7 +574,7 @@ func TestStatsRefreshThrottle(t *testing.T) {
 // repo rows while every repo is collapsed.
 func TestStatsFocusAndCursor(t *testing.T) {
 	env := statsTestEnv(t, 100, 30)
-	v := View(statsTestView("30d"))
+	v := widget.View(statsTestView("30d"))
 
 	// The repos tab focuses the repos panel.
 	next, _ := v.Update(statsKey('5'), env)
@@ -617,7 +617,7 @@ func TestStatsFocusAndCursor(t *testing.T) {
 // and enter on repos opens the filtered rounds (S2).
 func TestStatsTabsKeys(t *testing.T) {
 	env := statsTestEnv(t, 100, 30)
-	v := View(statsTestView("30d"))
+	v := widget.View(statsTestView("30d"))
 
 	// tab cycles five tabs and wraps back to overview.
 	for i := 1; i <= len(statsTabs); i++ {
@@ -875,7 +875,7 @@ func TestStatsOverviewSidePadding(t *testing.T) {
 // line, so the count is asserted there.
 func TestStatsOverviewScrolls(t *testing.T) {
 	env := statsTestEnv(t, 132, 34)
-	v := View(statsView{window: "30d", loaded: true, rep: statsTwentyCandidates()})
+	v := widget.View(statsView{window: "30d", loaded: true, rep: statsTwentyCandidates()})
 
 	body := stripANSI(v.Body(env, 132, 34))
 	lines := strings.Split(body, "\n")
@@ -1090,7 +1090,7 @@ func TestStatsOverviewConfiguredCandidates(t *testing.T) {
 	}
 
 	// j onto the first idle row, then enter: a notice, no push.
-	view := View(v)
+	view := widget.View(v)
 	for i := 0; i < len(rep.Scorecard); i++ {
 		next, _ := view.Update(statsKey('j'), env)
 		view = next
@@ -1102,12 +1102,12 @@ func TestStatsOverviewConfiguredCandidates(t *testing.T) {
 	if _, ok := next.(statsView); !ok {
 		t.Fatalf("enter on an idle row must not push, top is %T", next)
 	}
-	msg, ok := cmd().(noticeMsg)
+	msg, ok := cmd().(widget.NoticeMsg)
 	if !ok {
-		t.Fatalf("enter on an idle row produced %T, want noticeMsg", cmd())
+		t.Fatalf("enter on an idle row produced %T, want widget.NoticeMsg", cmd())
 	}
-	if msg.text != haiku+" has no rounds in this window" {
-		t.Errorf("notice = %q, want the no-rounds notice for %s", msg.text, haiku)
+	if msg.Text != haiku+" has no rounds in this window" {
+		t.Errorf("notice = %q, want the no-rounds notice for %s", msg.Text, haiku)
 	}
 
 	// A scorecard token that is no longer configured keeps its row.
@@ -1328,7 +1328,7 @@ func TestStatsOverviewChartHeightIsFixedAcrossWindows(t *testing.T) {
 // page by avail-1 (or to 0), and end and home jump to the max top and 0.
 func TestStatsPageScrollBounds(t *testing.T) {
 	env := statsTestEnv(t, 132, 12)
-	v := View(statsTestView("30d"))
+	v := widget.View(statsTestView("30d"))
 	lines, _, avail := v.(statsView).page(env)
 	maxTop := statsMaxTop(len(lines), avail)
 
@@ -1367,14 +1367,14 @@ func TestStatsPageScrollBounds(t *testing.T) {
 // scroll back up to the candidates' first row.
 func TestStatsPageFollowsCursor(t *testing.T) {
 	env := statsTestEnv(t, 132, 12)
-	v := View(statsTestView("30d"))
+	v := widget.View(statsTestView("30d"))
 
 	next, _ := v.Update(statsKey('l'), env)
 	v = next
 	if got := v.(statsView).top; got == 0 {
 		t.Fatal("l must scroll the page to the repos table, top is still 0")
 	}
-	body := stripANSI(v.Body(env, 132, bodyHeight(env)))
+	body := stripANSI(v.Body(env, 132, widget.BodyHeight(env)))
 	if !strings.Contains(body, "fuad-daoud/relevo") {
 		t.Errorf("after l the body must show the top-tokens repo:\n%s", body)
 	}
@@ -1383,7 +1383,7 @@ func TestStatsPageFollowsCursor(t *testing.T) {
 	v = next
 	next, _ = v.Update(statsKey('k'), env)
 	v = next
-	body = stripANSI(v.Body(env, 132, bodyHeight(env)))
+	body = stripANSI(v.Body(env, 132, widget.BodyHeight(env)))
 	nameW := statsCandidateNameW((132 - 9) / 2)
 	want := stats.FitKey(statsFixture().Scorecard[0].Token, nameW, false)
 	if !strings.Contains(body, want) {
@@ -1396,9 +1396,9 @@ func TestStatsPageFollowsCursor(t *testing.T) {
 // stays blank when everything fits.
 func TestStatsPageHint(t *testing.T) {
 	env := statsTestEnv(t, 132, 12)
-	v := View(statsTestView("30d"))
+	v := widget.View(statsTestView("30d"))
 
-	first := strings.TrimRight(strings.Split(stripANSI(v.Body(env, 132, bodyHeight(env))), "\n")[0], " ")
+	first := strings.TrimRight(strings.Split(stripANSI(v.Body(env, 132, widget.BodyHeight(env))), "\n")[0], " ")
 	if !strings.HasSuffix(first, "more below · pgdn") {
 		t.Errorf("first body line = %q, want the more-below hint", first)
 	}
@@ -1408,14 +1408,14 @@ func TestStatsPageHint(t *testing.T) {
 
 	next, _ := v.Update(tea.KeyMsg{Type: tea.KeyEnd}, env)
 	v = next
-	first = strings.TrimRight(strings.Split(stripANSI(v.Body(env, 132, bodyHeight(env))), "\n")[0], " ")
+	first = strings.TrimRight(strings.Split(stripANSI(v.Body(env, 132, widget.BodyHeight(env))), "\n")[0], " ")
 	if !strings.HasSuffix(first, "more above · pgup") {
 		t.Errorf("first body line at the end = %q, want the more-above hint", first)
 	}
 
 	tall := statsTestEnv(t, 132, 34)
-	fits := View(statsTestView("30d"))
-	first = strings.Split(stripANSI(fits.Body(tall, 132, bodyHeight(tall))), "\n")[0]
+	fits := widget.View(statsTestView("30d"))
+	first = strings.Split(stripANSI(fits.Body(tall, 132, widget.BodyHeight(tall))), "\n")[0]
 	if strings.TrimRight(first, " ") != "" {
 		t.Errorf("at 132x34 the first body line = %q, want blank", first)
 	}
@@ -1425,7 +1425,7 @@ func TestStatsPageHint(t *testing.T) {
 // its top.
 func TestStatsTabResetsTop(t *testing.T) {
 	env := statsTestEnv(t, 132, 12)
-	v := View(statsTestView("30d"))
+	v := widget.View(statsTestView("30d"))
 
 	next, _ := v.Update(tea.KeyMsg{Type: tea.KeyPgDown}, env)
 	v = next
@@ -1451,7 +1451,7 @@ func TestStatsArrowsScrollWithoutCursor(t *testing.T) {
 	rep.Totals.TokenKinds = stats.TokenCounts{Cache: 6_000_000, In: 1_000_000, Out: 60_000, Write: 20_000, Measured: 1}
 	rep.Totals.Tokens = 7_080_000
 	env := statsTestEnv(t, 132, 20)
-	v := View(statsView{window: "30d", loaded: true, rep: rep, tab: statsTabTokens, split: 3})
+	v := widget.View(statsView{window: "30d", loaded: true, rep: rep, tab: statsTabTokens, split: 3})
 
 	lines, _, avail := v.(statsView).page(env)
 	maxTop := statsMaxTop(len(lines), avail)
@@ -1488,7 +1488,7 @@ func TestStatsArrowsScrollWithoutCursor(t *testing.T) {
 // still moves its cursor and leaves top to follow alone.
 func TestStatsArrowsMoveCursorWithTable(t *testing.T) {
 	env := statsTestEnv(t, 132, 34)
-	v := View(statsTestView("30d"))
+	v := widget.View(statsTestView("30d"))
 	before := v.(statsView).top
 
 	next, _ := v.Update(statsKey('j'), env)
@@ -1678,7 +1678,7 @@ func TestStatsCandidatesTabDetail(t *testing.T) {
 		}
 	}
 
-	view := View(v)
+	view := widget.View(v)
 	for i := 0; i < len(rep.Scorecard); i++ {
 		next, _ := view.Update(statsKey('j'), env)
 		view = next
@@ -1695,12 +1695,12 @@ func TestStatsCandidatesTabDetail(t *testing.T) {
 	if _, ok := next.(statsView); !ok {
 		t.Fatalf("enter on an idle row must not push, top is %T", next)
 	}
-	msg, ok := cmd().(noticeMsg)
+	msg, ok := cmd().(widget.NoticeMsg)
 	if !ok {
-		t.Fatalf("enter on an idle row produced %T, want noticeMsg", cmd())
+		t.Fatalf("enter on an idle row produced %T, want widget.NoticeMsg", cmd())
 	}
-	if msg.text != haiku+" has no rounds in this window" {
-		t.Errorf("notice = %q, want the no-rounds notice for %s", msg.text, haiku)
+	if msg.Text != haiku+" has no rounds in this window" {
+		t.Errorf("notice = %q, want the no-rounds notice for %s", msg.Text, haiku)
 	}
 
 	// §2.3 with a row whose ttft is unknown: the clause goes whole, so no
@@ -1765,7 +1765,7 @@ func TestStatsCandidatesTabDetail(t *testing.T) {
 
 // statsRolesEnv is statsTestEnv with the runtime carrying a candidate set and
 // a registry, so the detail block's roles read from the registry (§2.2).
-func statsRolesEnv(t *testing.T, set *candidate.Set, reg *roles.Registry) Env {
+func statsRolesEnv(t *testing.T, set *candidate.Set, reg *roles.Registry) widget.Env {
 	t.Helper()
 	return testEnv(mastermindSource{relevo.Runtime{
 		Store: store.New(t.TempDir()), Candidates: set, Registry: reg,
@@ -1864,7 +1864,7 @@ func TestStatsCandidatesTabFollows(t *testing.T) {
 	v.configured = append(v.configured, rep.Scorecard[0].Token, rep.Scorecard[1].Token)
 
 	env := statsTestEnv(t, 132, 12)
-	view := View(v)
+	view := widget.View(v)
 	for i := 0; i < 11; i++ {
 		next, _ := view.Update(statsKey('j'), env)
 		view = next
@@ -1873,7 +1873,7 @@ func TestStatsCandidatesTabFollows(t *testing.T) {
 	if sv.top == 0 {
 		t.Fatal("following the last row must scroll the page, top is still 0")
 	}
-	body := stripANSI(sv.Body(env, 132, bodyHeight(env)))
+	body := stripANSI(sv.Body(env, 132, widget.BodyHeight(env)))
 	if !strings.Contains(body, "cand-09") {
 		t.Errorf("the page must show the last row cand-09:\n%s", body)
 	}
@@ -2977,7 +2977,7 @@ func TestStatsReposExpandKeys(t *testing.T) {
 	rep := statsFixture()
 	rep.Repos[1].Features = []stats.FeatureRow{{GroupRow: stats.GroupRow{Key: "loose", Tokens: 50_000}}}
 	rep.Repos[1].NoFeature = stats.FeatureRow{GroupRow: stats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 50_000}}
-	v := View(statsView{window: "30d", loaded: true, rep: rep})
+	v := widget.View(statsView{window: "30d", loaded: true, rep: rep})
 
 	next, _ := v.Update(statsKey('5'), env)
 	v = next
@@ -3057,7 +3057,7 @@ func TestStatsReposExpandEmptyRepo(t *testing.T) {
 	rep := statsFixture()
 	rep.Repos[0].Features = nil
 	rep.Repos[0].NoFeature = stats.FeatureRow{}
-	v := View(statsView{window: "30d", loaded: true, rep: rep})
+	v := widget.View(statsView{window: "30d", loaded: true, rep: rep})
 	next, _ := v.Update(statsKey('5'), env)
 	v = next
 
@@ -3066,12 +3066,12 @@ func TestStatsReposExpandEmptyRepo(t *testing.T) {
 		if cmd == nil {
 			t.Fatalf("%v on a repo with no children must notice", key)
 		}
-		msg, ok := cmd().(noticeMsg)
+		msg, ok := cmd().(widget.NoticeMsg)
 		if !ok {
 			t.Fatalf("%v: msg = %T, want a notice", key, msg)
 		}
-		if !strings.Contains(msg.text, "has no features or tickets") {
-			t.Errorf("%v: notice = %q, want it to name what is missing", key, msg.text)
+		if !strings.Contains(msg.Text, "has no features or tickets") {
+			t.Errorf("%v: notice = %q, want it to name what is missing", key, msg.Text)
 		}
 		got := next.(statsView)
 		if got.expanded[statsFixtureRepoKey] {
@@ -3088,7 +3088,7 @@ func TestStatsReposExpandEmptyRepo(t *testing.T) {
 		GroupRow: stats.GroupRow{Key: "(none)", Rounds: 1, Tokens: 30},
 		Tickets:  []stats.GroupRow{{Key: "t9", Tokens: 30}},
 	}
-	v = View(statsView{window: "30d", loaded: true, rep: rep})
+	v = widget.View(statsView{window: "30d", loaded: true, rep: rep})
 	next, _ = v.Update(statsKey('5'), env)
 	next, cmd := next.Update(tea.KeyMsg{Type: tea.KeySpace}, env)
 	if cmd != nil {
@@ -3103,7 +3103,7 @@ func TestStatsReposExpandEmptyRepo(t *testing.T) {
 // and stop at the list's ends, and a collapsed repo's children are unreachable.
 func TestStatsReposVisibleCursor(t *testing.T) {
 	env := statsTestEnv(t, 100, 30)
-	v := View(statsTestView("30d"))
+	v := widget.View(statsTestView("30d"))
 	next, _ := v.Update(statsKey('5'), env)
 	v = next
 

@@ -54,7 +54,7 @@ func renderCard(width int, title, right string, rows []string) []string {
 
 // cardKeysRow formats keys for the card footer:
 // "   " + widget.Chip(kbd,key)+" "+muted(label) joined by 6 spaces.
-func cardKeysRow(keys []KeyHelp) string {
+func cardKeysRow(keys []widget.KeyHelp) string {
 	if len(keys) == 0 {
 		return ""
 	}

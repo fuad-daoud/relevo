@@ -27,13 +27,13 @@ type webhookForm struct {
 	touched []bool
 	tried   bool
 	doc     relevo.ConfigDoc
-	env     Env
+	env     widget.Env
 	formErr string // a FieldError from SetWebhooks, kept while the form stays open
 }
 
 // newWebhookForm builds the add (editing < 0) or edit form over doc, prefilled
 // from the hook an edit replaces.
-func newWebhookForm(env Env, doc relevo.ConfigDoc, editing int) webhookForm {
+func newWebhookForm(env widget.Env, doc relevo.ConfigDoc, editing int) webhookForm {
 	hooks := webhooksOf(doc)
 	var hook policy.Webhook
 	if editing >= 0 && editing < len(hooks) {
@@ -214,12 +214,12 @@ func (f webhookForm) hooks() ([]policy.Webhook, bool) {
 }
 
 // footerKeys is the form's keys: enter, tab, the format row's ←→, esc.
-func (f webhookForm) footerKeys() []KeyHelp {
-	return []KeyHelp{{"enter", "save"}, {"tab", "next field"}, {"←→", "choose"}, {"esc", "cancel"}}
+func (f webhookForm) footerKeys() []widget.KeyHelp {
+	return []widget.KeyHelp{{Key: "enter", Help: "save"}, {Key: "tab", Help: "next field"}, {Key: "←→", Help: "choose"}, {Key: "esc", Help: "cancel"}}
 }
 
 // keys is the form's own keys, shown in the footer through overlayKeyer.
-func (f webhookForm) keys() []KeyHelp { return f.footerKeys() }
+func (f webhookForm) keys() []widget.KeyHelp { return f.footerKeys() }
 
 // update handles one key: esc cancels, tab moves focus, left/right move the
 // format row, typing edits a text field, enter submits.
@@ -262,7 +262,7 @@ func (f webhookForm) submit() (overlay, tea.Cmd, bool) {
 	edit, err := relevo.SetWebhooks(f.doc, hooks, f.message(hook))
 	switch {
 	case err == nil:
-		return f, runAction(f.env.Ctx, "set webhook", f.title, func(ctx context.Context) Result {
+		return f, runAction(f.env.Ctx, "set webhook", f.title, func(ctx context.Context) widget.Result {
 			return f.env.Actions.ApplyConfig(ctx, edit)
 		}), true
 	case errors.Is(err, relevo.ErrNoChange):

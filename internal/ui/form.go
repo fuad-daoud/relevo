@@ -30,12 +30,12 @@ type formBox struct {
 }
 
 // keys is the form's footer: enter submits, tab moves, esc cancels (§3.3).
-func (f formBox) keys() []KeyHelp {
+func (f formBox) keys() []widget.KeyHelp {
 	submit := f.submit
 	if submit == "" {
 		submit = "submit"
 	}
-	return []KeyHelp{{"enter", submit}, {"tab", "next field"}, {"esc", "cancel"}}
+	return []widget.KeyHelp{{Key: "enter", Help: submit}, {Key: "tab", Help: "next field"}, {Key: "esc", Help: "cancel"}}
 }
 
 func (f formBox) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {

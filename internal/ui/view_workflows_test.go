@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -118,12 +119,12 @@ func TestWorkflowsRemoveRefusesShipped(t *testing.T) {
 
 	res, cmd := m.Update(key('d'))
 	m = res.(Model)
-	msg, ok := cmd().(noticeMsg)
+	msg, ok := cmd().(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("d on a shipped workflow must return a notice, got %T", cmd())
 	}
-	if msg.text != "shipped workflows cannot be removed" {
-		t.Errorf("notice = %q, want the shipped refusal", msg.text)
+	if msg.Text != "shipped workflows cannot be removed" {
+		t.Errorf("notice = %q, want the shipped refusal", msg.Text)
 	}
 	if m.overlay != nil {
 		t.Errorf("no confirm may open for a shipped workflow, got %T", m.overlay)
@@ -138,7 +139,7 @@ func TestWorkflowsRemoveRefusesShipped(t *testing.T) {
 func TestWorkflowsAddExistingAsksReplace(t *testing.T) {
 	const path = "~/workflows/fix-first.yaml"
 	fa := workflowsFake()
-	fa.addResults = map[string]Result{path: {Err: workflowSavedErr(t, workflowsFixtureSources()["fix-first"].text)}}
+	fa.addResults = map[string]widget.Result{path: {Err: workflowSavedErr(t, workflowsFixtureSources()["fix-first"].text)}}
 
 	m := goldenActionModel(t, 132, 34, fa, view.Report{})
 	m = drain(t, m, execLine("workflows", m.env(), m.prefs))
@@ -181,7 +182,7 @@ func TestWorkflowsAddExistingAsksReplace(t *testing.T) {
 func TestWorkflowsAddInvalidKeepsFormOpen(t *testing.T) {
 	const path = "~/workflows/broken.yaml"
 	fa := workflowsFake()
-	fa.addResults = map[string]Result{path: {Err: workflowInvalidErr(t)}}
+	fa.addResults = map[string]widget.Result{path: {Err: workflowInvalidErr(t)}}
 
 	m := workflowsFormModel(t, fa, path)
 	f := addWorkflowFormOverlay(t, m)
@@ -205,7 +206,7 @@ func TestWorkflowsAddInvalidKeepsFormOpen(t *testing.T) {
 func TestWorkflowsAddShippedRefused(t *testing.T) {
 	const path = "~/workflows/default.yaml"
 	fa := workflowsFake()
-	fa.addResults = map[string]Result{path: {Err: workflowShippedErr(t)}}
+	fa.addResults = map[string]widget.Result{path: {Err: workflowShippedErr(t)}}
 
 	m := workflowsFormModel(t, fa, path)
 	f := addWorkflowFormOverlay(t, m)
@@ -278,7 +279,7 @@ func TestWorkflowsShippedSourceIsItsDefinition(t *testing.T) {
 // calls nothing.
 func TestWorkflowsRemoveCallsRemoveOnYes(t *testing.T) {
 	fa := workflowsFake()
-	fa.removeResult = Result{Text: "removed workflow audit-only", Refresh: true}
+	fa.removeResult = widget.Result{Text: "removed workflow audit-only", Refresh: true}
 
 	m := workflowsViewModelOn(t, 132, 34, fa, "audit-only")
 	res, cmd := m.Update(key('d'))
@@ -316,13 +317,13 @@ func TestWorkflowsRemoveCallsRemoveOnYes(t *testing.T) {
 // TestWorkflowsWithoutActionsRefused: the command needs the write seam, since
 // every one of its keys writes or reads config. Mutation: drop the guard.
 func TestWorkflowsWithoutActionsRefused(t *testing.T) {
-	cmd := execLine("workflows", Env{Actions: nil}, prefs{})
-	msg, ok := cmd().(noticeMsg)
+	cmd := execLine("workflows", widget.Env{Actions: nil}, prefs{})
+	msg, ok := cmd().(widget.NoticeMsg)
 	if !ok {
-		t.Fatalf(":workflows without Actions must return noticeMsg, got %T", cmd())
+		t.Fatalf(":workflows without widget.Actions must return widget.NoticeMsg, got %T", cmd())
 	}
-	if msg.text != "the config views need relevo ui on this machine" {
-		t.Errorf("notice = %q, want the config-views refusal", msg.text)
+	if msg.Text != "the config views need relevo ui on this machine" {
+		t.Errorf("notice = %q, want the config-views refusal", msg.Text)
 	}
 }
 

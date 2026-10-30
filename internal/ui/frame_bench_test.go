@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -25,11 +26,11 @@ var (
 	frameLinesSink []fleetLine
 )
 
-// frameBenchEnv is a loaded Env at the benchmark terminal size whose report
+// frameBenchEnv is a loaded widget.Env at the benchmark terminal size whose report
 // holds n rows. The rows come from allStatesRows -- the golden fixture -- cycled
 // and renamed, so both row counts carry the same mix of display states,
 // routes, usage and headless facts the goldens read.
-func frameBenchEnv(n int) Env {
+func frameBenchEnv(n int) widget.Env {
 	seed := allStatesRows()
 	rows := make([]view.BindingStatus, 0, n)
 	for i := range n {
@@ -37,7 +38,7 @@ func frameBenchEnv(n int) Env {
 		r.Name = fmt.Sprintf("%s-%d", r.Name, i/len(seed))
 		rows = append(rows, r)
 	}
-	return Env{
+	return widget.Env{
 		Loaded: true,
 		Report: view.Report{Bindings: rows},
 		Now:    railNow,

@@ -35,7 +35,7 @@ const syncVerbTest = "sync test"
 // syncMsg is one snapshot read's reply. The snapshot is a value, not a handle:
 // it arrives whole and the frame that draws it touches nothing.
 type syncMsg struct {
-	snap SyncSnapshot
+	snap widget.SyncSnapshot
 	err  error
 }
 
@@ -49,7 +49,7 @@ type syncMsg struct {
 // opens when something has already gone wrong, and it must not be able to make
 // anything worse.
 type syncView struct {
-	snap    SyncSnapshot
+	snap    widget.SyncSnapshot
 	loaded  bool
 	err     error
 	actions bool
@@ -67,7 +67,7 @@ type syncView struct {
 
 // syncToker is optionally implemented by a view that carries a sync status
 // phrase for the shell header to show. The phrase is read off the stack rather
-// than put on Env, so a screen that is not open cannot make the header say
+// than put on widget.Env, so a screen that is not open cannot make the header say
 // anything about sync.
 type syncToker interface{ SyncAttention() string }
 
@@ -116,13 +116,13 @@ func (v syncView) SyncAttention() string {
 // newSyncView builds ':sync' and the command that reads its snapshot. env.Actions
 // must be non-nil: execLine refuses the command otherwise, exactly as it does
 // for every other config view.
-func newSyncView(env Env) (View, tea.Cmd) {
+func newSyncView(env widget.Env) (widget.View, tea.Cmd) {
 	v := syncView{actions: env.Actions != nil}
 	return v, syncSnapshotCmd(env)
 }
 
 // syncSnapshotCmd reads the whole snapshot off the update loop.
-func syncSnapshotCmd(env Env) tea.Cmd {
+func syncSnapshotCmd(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		if env.Actions == nil {
 			return syncMsg{}
@@ -139,31 +139,31 @@ func (v syncView) Crumbs() []string { return []string{"sync"} }
 // key here a single keystroke.
 func (v syncView) Capturing() bool { return false }
 
-// Keys are the five verbs, shown only when the shell has an Actions seam:
+// Keys are the five verbs, shown only when the shell has an widget.Actions seam:
 // without one there is nothing to push, pull, test, edit or turn off, and a
 // footer advertising them would be a lie rather than a shortcut.
-func (v syncView) Keys() []KeyHelp {
+func (v syncView) Keys() []widget.KeyHelp {
 	if !v.actions {
 		return nil
 	}
-	return []KeyHelp{
-		{"p", "push"},
-		{"l", "pull"},
-		{"t", "test"},
-		{"e", "edit"},
-		{"d", "disable"},
+	return []widget.KeyHelp{
+		{Key: "p", Help: "push"},
+		{Key: "l", Help: "pull"},
+		{Key: "t", Help: "test"},
+		{Key: "e", Help: "edit"},
+		{Key: "d", Help: "disable"},
 	}
 }
 
 // HelpKeys is the help overlay's key list: the same set.
-func (v syncView) HelpKeys() []KeyHelp { return v.Keys() }
+func (v syncView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
 // OffKeys are the keys that do not apply right now. Nothing about a machine's
 // configuration changes that in this build: push, pull and test all refuse
 // whatever the section says, so the footer stops advertising them and a press
 // cannot turn into a refusal the user has to read past. The editor and the
 // turn-off still work and stay on the footer.
-func (v syncView) OffKeys(env Env) []string {
+func (v syncView) OffKeys(env widget.Env) []string {
 	if !v.actions {
 		return nil
 	}
@@ -172,7 +172,7 @@ func (v syncView) OffKeys(env Env) []string {
 
 // Context is the state line: what sync is doing, and how much of this machine
 // is still waiting on a human.
-func (v syncView) Context(env Env) (string, string) {
+func (v syncView) Context(env widget.Env) (string, string) {
 	if !v.loaded {
 		return "", ""
 	}
@@ -233,7 +233,7 @@ func (v syncView) reachPhrase() string {
 	}
 }
 
-func (v syncView) Body(env Env, width, height int) string {
+func (v syncView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
@@ -460,7 +460,7 @@ func (v syncView) unlinkedLines(width int) []string {
 	return out
 }
 
-func (v syncView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v syncView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case syncMsg:
 		if msg.err != nil {
@@ -504,18 +504,18 @@ func (v syncView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 
 // updateKey is the view's own keys. Each one records exactly one call, or opens
 // one confirm that will.
-func (v syncView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v syncView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	switch k.String() {
 	case "p":
-		return v, runAction(env.Ctx, "sync push", "", func(ctx context.Context) Result {
+		return v, runAction(env.Ctx, "sync push", "", func(ctx context.Context) widget.Result {
 			return env.Actions.SyncPush(ctx)
 		})
 	case "l":
-		return v, runAction(env.Ctx, "sync pull", "", func(ctx context.Context) Result {
+		return v, runAction(env.Ctx, "sync pull", "", func(ctx context.Context) widget.Result {
 			return env.Actions.SyncPull(ctx)
 		})
 	case "t":
-		return v, runAction(env.Ctx, syncVerbTest, "", func(ctx context.Context) Result {
+		return v, runAction(env.Ctx, syncVerbTest, "", func(ctx context.Context) widget.Result {
 			return env.Actions.SyncTest(ctx)
 		})
 	case "e":
@@ -534,7 +534,7 @@ func (v syncView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 // turn-off whole. The confirm names the remote rather than saying "this machine",
 // because the thing a user is about to stop is a copy of their data living
 // somewhere else, and which somewhere is the whole question.
-func (v syncView) disableCmd(env Env) tea.Cmd {
+func (v syncView) disableCmd(env widget.Env) tea.Cmd {
 	target := v.snap.RemoteURL
 	if target == "" {
 		target = "the remote"
@@ -549,7 +549,7 @@ func (v syncView) disableCmd(env Env) tea.Cmd {
 			widget.Pad("kept", 13) + "every local file and row, still servable",
 			widget.Pad("remote", 13) + "left alone; you delete that with Turso's own tooling",
 		},
-		onYes: runAction(env.Ctx, "sync disable", "", func(ctx context.Context) Result {
+		onYes: runAction(env.Ctx, "sync disable", "", func(ctx context.Context) widget.Result {
 			return env.Actions.SyncDisable(ctx)
 		}),
 	})

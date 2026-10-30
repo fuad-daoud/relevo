@@ -26,12 +26,12 @@ type listBox struct {
 }
 
 // keys is the list's footer (§3.5).
-func (l listBox) keys() []KeyHelp {
+func (l listBox) keys() []widget.KeyHelp {
 	submit := l.submit
 	if submit == "" {
 		submit = "choose"
 	}
-	return []KeyHelp{{"↑↓", "choose"}, {"enter", submit}, {"esc", "cancel"}}
+	return []widget.KeyHelp{{Key: "↑↓", Help: "choose"}, {Key: "enter", Help: submit}, {Key: "esc", Help: "cancel"}}
 }
 
 func (l listBox) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {

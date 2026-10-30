@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -33,9 +34,9 @@ func splitModel(t *testing.T, width, height int, rows ...view.BindingStatus) Mod
 // fleet is the shell's root fleet view.
 func fleet(m Model) fleetView { return m.stack[0].(fleetView) }
 
-// testEnv is a view's Env for a test at width x height, clock railNow.
-func testEnv(src Source, rep view.Report, width, height int) Env {
-	return Env{Ctx: context.Background(), Src: src, Report: rep, Loaded: true,
+// testEnv is a view's widget.Env for a test at width x height, clock railNow.
+func testEnv(src widget.Source, rep view.Report, width, height int) widget.Env {
+	return widget.Env{Ctx: context.Background(), Src: src, Report: rep, Loaded: true,
 		StatusAt: railNow, Now: railNow, Width: width, Height: height}
 }
 
@@ -170,7 +171,7 @@ func TestSortToggleKeepsSelection(t *testing.T) {
 	}
 }
 
-// TestSendKeyDoesNotSortWithoutActions pins W2: with no Actions seam, `s` is
+// TestSendKeyDoesNotSortWithoutActions pins W2: with no widget.Actions seam, `s` is
 // neither send nor sort. It does nothing: no command, and the sort order is
 // untouched.
 func TestSendKeyDoesNotSortWithoutActions(t *testing.T) {
@@ -180,10 +181,10 @@ func TestSendKeyDoesNotSortWithoutActions(t *testing.T) {
 	}
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	if cmd != nil {
-		t.Errorf("s without Actions must return no command, got %v", cmd)
+		t.Errorf("s without widget.Actions must return no command, got %v", cmd)
 	}
 	if !fleet(res.(Model)).attention {
-		t.Error("s without Actions must not sort")
+		t.Error("s without widget.Actions must not sort")
 	}
 }
 
@@ -201,7 +202,7 @@ func TestFooterNoticesAndRefreshAge(t *testing.T) {
 	}
 
 	// A notice is the keys row's right side (§5.3).
-	res, _ := m.Update(noticeMsg{text: "hello"})
+	res, _ := m.Update(widget.NoticeMsg{Text: "hello"})
 	m = res.(Model)
 	if !strings.Contains(stripANSI(m.keysView(m.env())), "hello") {
 		t.Errorf("keys row must carry the notice: %q", stripANSI(m.keysView(m.env())))

@@ -60,7 +60,7 @@ type auditRevView struct {
 // newAuditRevView pushes the cursor revision's changes. cached says the
 // list already holds its changes (or their error); when it does not, the view
 // asks for them itself.
-func newAuditRevView(env Env, rev db.RevisionRow, newest int64, lines []relevo.ChangeLine, err error, cached bool) (View, tea.Cmd) {
+func newAuditRevView(env widget.Env, rev db.RevisionRow, newest int64, lines []relevo.ChangeLine, err error, cached bool) (widget.View, tea.Cmd) {
 	v := auditRevView{
 		rev: rev, newest: newest, lines: lines, err: err,
 		loaded: cached, actions: env.Actions != nil,
@@ -78,26 +78,26 @@ func (v auditRevView) Capturing() bool { return false }
 
 // Keys are the detail view's keys: `esc back` is left to the shell's own
 // tail, and R needs the shell's write seam.
-func (v auditRevView) Keys() []KeyHelp {
+func (v auditRevView) Keys() []widget.KeyHelp {
 	if !v.actions {
 		return nil
 	}
-	return []KeyHelp{{"R", "roll back to here"}}
+	return []widget.KeyHelp{{Key: "R", Help: "roll back to here"}}
 }
 
 // HelpKeys is the help overlay's key list: the same set plus the
 // movement the footer leaves out.
-func (v auditRevView) HelpKeys() []KeyHelp {
-	return append([]KeyHelp{{"↑↓", "move"}}, v.Keys()...)
+func (v auditRevView) HelpKeys() []widget.KeyHelp {
+	return append([]widget.KeyHelp{{Key: "↑↓", Help: "move"}}, v.Keys()...)
 }
 
 // Context is the revision's own line.
-func (v auditRevView) Context(env Env) (string, string) {
+func (v auditRevView) Context(env widget.Env) (string, string) {
 	meta := fmt.Sprintf("%s · %s · %s", v.rev.Source, v.rev.At.Local().Format("Jan 2 15:04"), v.rev.Message)
 	return "   " + widget.MutedStyle.Render(meta), ""
 }
 
-func (v auditRevView) Body(env Env, width, height int) string {
+func (v auditRevView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
@@ -121,7 +121,7 @@ func (v auditRevView) Body(env Env, width, height int) string {
 
 // bodyLines is the revision's whole body: one line per change, and, for
 // the baseline, the one dim line that says what it is.
-func (v auditRevView) bodyLines(env Env, width int) []string {
+func (v auditRevView) bodyLines(env widget.Env, width int) []string {
 	if v.rev.Rev == 1 {
 		return []string{widget.Fit("   "+widget.MutedStyle.Render("the config as it was when revisions began"), width)}
 	}
@@ -132,7 +132,7 @@ func (v auditRevView) bodyLines(env Env, width int) []string {
 	return lines
 }
 
-func (v auditRevView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v auditRevView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case auditChangesMsg:
 		if msg.rev != v.rev.Rev {
@@ -163,16 +163,16 @@ func (v auditRevView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 }
 
 // updateKey is the detail view's own keys: scrolling, and R.
-func (v auditRevView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v auditRevView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	switch k.String() {
 	case "up":
 		v.scroll(env, -1)
 	case "down":
 		v.scroll(env, 1)
 	case "pgup":
-		v.scroll(env, -bodyHeight(env))
+		v.scroll(env, -widget.BodyHeight(env))
 	case "pgdown":
-		v.scroll(env, bodyHeight(env))
+		v.scroll(env, widget.BodyHeight(env))
 	case "home":
 		v.top = 0
 	case "end":
@@ -187,11 +187,11 @@ func (v auditRevView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 }
 
 // scroll moves the window by delta body lines, clamped to the body.
-func (v *auditRevView) scroll(env Env, delta int) {
+func (v *auditRevView) scroll(env widget.Env, delta int) {
 	v.top = widget.Clamp(v.top+delta, 0, v.maxTop(env))
 }
 
 // maxTop is the largest first-line index that still fills the body.
-func (v auditRevView) maxTop(env Env) int {
-	return max(0, len(v.bodyLines(env, env.Width))-bodyHeight(env))
+func (v auditRevView) maxTop(env widget.Env) int {
+	return max(0, len(v.bodyLines(env, env.Width))-widget.BodyHeight(env))
 }

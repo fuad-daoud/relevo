@@ -24,7 +24,7 @@ import (
 // its doc.
 type candidateForm struct {
 	ctx     context.Context
-	actions Actions
+	actions widget.Actions
 	doc     relevo.ConfigDoc
 	gates   []availability.Gate // env.Report.Gated at open
 	now     time.Time
@@ -43,7 +43,7 @@ type candidateForm struct {
 
 // newCandidateForm builds the add/edit candidate overlay (§4). harnessKind seeds
 // an add's harness: the cursor row's kind, or the first kind when "".
-func newCandidateForm(env Env, doc relevo.ConfigDoc, editing, slots, harnessKind string) candidateForm {
+func newCandidateForm(env widget.Env, doc relevo.ConfigDoc, editing, slots, harnessKind string) candidateForm {
 	all := harness.All()
 	kinds := make([]string, 0, len(all))
 	for _, h := range all {
@@ -205,12 +205,12 @@ func (f candidateForm) modelPlaceholder() string {
 }
 
 // keys are the form's own keys, shown in the footer through overlayKeyer (§1).
-func (f candidateForm) keys() []KeyHelp {
+func (f candidateForm) keys() []widget.KeyHelp {
 	submit := "add"
 	if f.editing != "" {
 		submit = "save"
 	}
-	return []KeyHelp{{"enter", submit}, {"tab", "next field"}, {"esc", "cancel"}}
+	return []widget.KeyHelp{{Key: "enter", Help: submit}, {Key: "tab", Help: "next field"}, {Key: "esc", Help: "cancel"}}
 }
 
 // update handles one key (§4): esc closes, tab moves focus, the harness row
@@ -351,7 +351,7 @@ func (f candidateForm) submit() (overlay, tea.Cmd, bool) {
 			verb = "edit candidate"
 		}
 		name := edit.Name
-		return f, runAction(f.ctx, verb, name, func(ctx context.Context) Result {
+		return f, runAction(f.ctx, verb, name, func(ctx context.Context) widget.Result {
 			return f.actions.ApplyConfig(ctx, edit)
 		}), true
 	case errors.Is(err, relevo.ErrNoChange):

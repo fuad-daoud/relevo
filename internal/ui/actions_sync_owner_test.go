@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/synclog"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // Every cockpit sync action is a client of the daemon: it sends its verb over
@@ -30,7 +31,7 @@ import (
 
 // syncOwnerActions opens a split pair and serves it on a socket short enough
 // for sun_path, installing the production-shaped verb hook. It returns the real
-// Actions over a dialled handle -- the shape the cockpit has when the daemon is
+// widget.Actions over a dialled handle -- the shape the cockpit has when the daemon is
 // running.
 func syncOwnerActions(t *testing.T) (*mastermindActions, *db.DB) {
 	t.Helper()
@@ -163,7 +164,7 @@ func TestCockpitActionsReachTheOwnerVerbHook(t *testing.T) {
 	}
 	a, _ := syncOwnerActionsWithHook(t, hook)
 
-	for _, call := range []func(context.Context) Result{
+	for _, call := range []func(context.Context) widget.Result{
 		a.SyncPush, a.SyncPull, a.SyncTest, a.SyncDisable,
 	} {
 		if res := call(context.Background()); res.Err != nil {
@@ -201,7 +202,7 @@ func TestSyncActionsRefuseWithoutARemoteOrToken(t *testing.T) {
 			tc.setup(t, dialled)
 			for _, verb := range []struct {
 				name string
-				call func(context.Context) Result
+				call func(context.Context) widget.Result
 			}{
 				{"push", a.SyncPush},
 				{"pull", a.SyncPull},
@@ -239,7 +240,7 @@ func TestSyncSnapshotOverTheOwnerRouteShowsRealValues(t *testing.T) {
 
 	snap, err := a.SyncSnapshot()
 	if err != nil {
-		t.Fatalf("SyncSnapshot over the owner route: %v", err)
+		t.Fatalf("widget.SyncSnapshot over the owner route: %v", err)
 	}
 	if snap.RemoteURL != syncRemote {
 		t.Errorf("remote = %q, want %q: the local section did not reach the cockpit over the dial", snap.RemoteURL, syncRemote)
@@ -298,7 +299,7 @@ func TestSyncDisableOverTheOwnerRouteTurnsSyncOff(t *testing.T) {
 	}
 	snap, err := a.SyncSnapshot()
 	if err != nil {
-		t.Fatalf("SyncSnapshot: %v", err)
+		t.Fatalf("widget.SyncSnapshot: %v", err)
 	}
 	if snap.State.Enabled || snap.Token != relevosync.TokenOff {
 		t.Errorf("sync is still on after the turn-off over the owner route: %+v", snap)
@@ -356,7 +357,7 @@ func TestSyncOverTheOwnerRouteStillReadsOnlyTheLocalFile(t *testing.T) {
 	}
 	snap, err := a.SyncSnapshot()
 	if err != nil {
-		t.Fatalf("SyncSnapshot: %v", err)
+		t.Fatalf("widget.SyncSnapshot: %v", err)
 	}
 	if snap.RemoteURL != syncRemote {
 		t.Errorf("the read took the shared section over the owner route: %q", snap.RemoteURL)
@@ -399,7 +400,7 @@ func TestSyncSnapshotOverAnOwnerWithoutALocalFileStaysOff(t *testing.T) {
 	a := &mastermindActions{live: newLiveRuntime(relevo.Runtime{DB: dialled})}
 	snap, err := a.SyncSnapshot()
 	if err != nil {
-		t.Fatalf("SyncSnapshot on an owner with no local file: %v", err)
+		t.Fatalf("widget.SyncSnapshot on an owner with no local file: %v", err)
 	}
 	if snap.Token != relevosync.TokenOff || snap.RemoteURL != "" || snap.TokenSet || snap.Measured {
 		t.Errorf("an owner with no local file reported local state: %+v", snap)

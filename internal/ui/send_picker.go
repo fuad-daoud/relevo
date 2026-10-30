@@ -55,7 +55,7 @@ func recentPlans(dir, filter string, n int) []planFile {
 // sendPicker is the s key's plan picker (§3.4): the plan-file input with its
 // path completion, and a list of the directory's recent markdown plans.
 type sendPicker struct {
-	env   Env
+	env   widget.Env
 	b     view.BindingStatus
 	input textinput.Model
 
@@ -83,13 +83,13 @@ func (p sendPicker) resolve(v string) string {
 }
 
 // keys is the picker's footer (§3.4).
-func (p sendPicker) keys() []KeyHelp {
-	return []KeyHelp{
-		{"↑↓", "choose"},
-		{"tab", "complete"},
-		{"enter", "choose"},
-		{"ctrl+e", "$EDITOR"},
-		{"esc", "cancel"},
+func (p sendPicker) keys() []widget.KeyHelp {
+	return []widget.KeyHelp{
+		{Key: "↑↓", Help: "choose"},
+		{Key: "tab", Help: "complete"},
+		{Key: "enter", Help: "choose"},
+		{Key: "ctrl+e", Help: "$EDITOR"},
+		{Key: "esc", Help: "cancel"},
 	}
 }
 
@@ -213,7 +213,7 @@ func (p sendPicker) enter() (overlay, tea.Cmd, bool) {
 		danger: false,
 		title:  sendConfirmTitle(p.b, file),
 		lines:  sendConfirmLines(p.b),
-		onYes: runAction(p.env.Ctx, "send", key, func(ctx context.Context) Result {
+		onYes: runAction(p.env.Ctx, "send", key, func(ctx context.Context) widget.Result {
 			return p.env.Actions.Send(ctx, key, resolved)
 		}),
 	}), true

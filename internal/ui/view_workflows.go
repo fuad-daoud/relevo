@@ -31,13 +31,13 @@ type workflowsView struct {
 
 // newWorkflowsView builds ':workflows' and the command that loads its list.
 // env.Actions must be non-nil: execLine refuses the command otherwise.
-func newWorkflowsView(env Env) (View, tea.Cmd) {
+func newWorkflowsView(env widget.Env) (widget.View, tea.Cmd) {
 	v := workflowsView{actions: env.Actions != nil}
 	return v, workflowsDocCmd(env)
 }
 
 // workflowsDocCmd reads the list off the update loop.
-func workflowsDocCmd(env Env) tea.Cmd {
+func workflowsDocCmd(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		if env.Actions == nil {
 			return workflowsDocMsg{}
@@ -190,7 +190,7 @@ func workflowDetailLines(w relevo.WorkflowSummary, width int) []string {
 
 // bodyLines is the whole list body before it is windowed: a blank line under
 // the context row, the table, two blank lines and the cursor row's detail block.
-func (v workflowsView) bodyLines(env Env, width int) []string {
+func (v workflowsView) bodyLines(env widget.Env, width int) []string {
 	nameW, cols := workflowsLayout(width)
 	cw := width - 6
 	if cw < 0 {
@@ -210,12 +210,12 @@ func (v workflowsView) bodyLines(env Env, width int) []string {
 }
 
 // follow scrolls the page so the cursor's row stays visible.
-func (v *workflowsView) follow(env Env) {
+func (v *workflowsView) follow(env widget.Env) {
 	if len(v.list) == 0 {
 		v.top = 0
 		return
 	}
-	avail := bodyHeight(env)
+	avail := widget.BodyHeight(env)
 	if avail <= 0 {
 		v.top = 0
 		return
@@ -237,25 +237,25 @@ func (v workflowsView) Crumbs() []string { return []string{"workflows"} }
 // form is an overlay.
 func (v workflowsView) Capturing() bool { return false }
 
-// Keys are the list's keys, shown only when the shell has an Actions seam.
-func (v workflowsView) Keys() []KeyHelp {
+// Keys are the list's keys, shown only when the shell has an widget.Actions seam.
+func (v workflowsView) Keys() []widget.KeyHelp {
 	if !v.actions {
 		return nil
 	}
-	return []KeyHelp{
-		{"↑↓", "move"},
-		{"enter", "view"},
-		{"a", "add"},
-		{"d", "remove"},
-		{"e", "edit"},
+	return []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "enter", Help: "view"},
+		{Key: "a", Help: "add"},
+		{Key: "d", Help: "remove"},
+		{Key: "e", Help: "edit"},
 	}
 }
 
 // HelpKeys is the help overlay's key list: the same set.
-func (v workflowsView) HelpKeys() []KeyHelp { return v.Keys() }
+func (v workflowsView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
 // Context is the counts line on the left; the list has no right side.
-func (v workflowsView) Context(env Env) (string, string) {
+func (v workflowsView) Context(env widget.Env) (string, string) {
 	saved, shipped := 0, 0
 	for _, w := range v.list {
 		if w.Origin == relevo.WorkflowOriginShipped {
@@ -278,7 +278,7 @@ func (v workflowsView) Context(env Env) (string, string) {
 	return left, ""
 }
 
-func (v workflowsView) Body(env Env, width, height int) string {
+func (v workflowsView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
@@ -303,7 +303,7 @@ func (v workflowsView) Body(env Env, width, height int) string {
 	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
-func (v workflowsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v workflowsView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case workflowsDocMsg:
 		if msg.err != nil {
@@ -334,7 +334,7 @@ func (v workflowsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 }
 
 // updateKey is the list's own keys.
-func (v workflowsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v workflowsView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	n := len(v.list)
 	switch k.String() {
 	case "up", "k":
@@ -350,10 +350,10 @@ func (v workflowsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		v.cur = candClamp(n-1, n)
 		v.follow(env)
 	case "pgup":
-		v.cur = candClamp(v.cur-bodyHeight(env), n)
+		v.cur = candClamp(v.cur-widget.BodyHeight(env), n)
 		v.follow(env)
 	case "pgdown":
-		v.cur = candClamp(v.cur+bodyHeight(env), n)
+		v.cur = candClamp(v.cur+widget.BodyHeight(env), n)
 		v.follow(env)
 	case "enter":
 		if n == 0 {
@@ -377,14 +377,14 @@ func (v workflowsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 }
 
 // openCmd pushes the cursor workflow's graph, with the two reads that fill it.
-func (v workflowsView) openCmd(env Env) tea.Cmd {
+func (v workflowsView) openCmd(env widget.Env) tea.Cmd {
 	name := v.list[candClamp(v.cur, len(v.list))].Name
 	return tea.Batch(push(newWorkflowView(name), nil), workflowSourceCmd(env, name), workflowGraphCmd(env, name))
 }
 
 // removeCmd is the d key. A shipped workflow is not saved, so there is nothing
 // here to remove: that is a notice, and no confirm opens.
-func (v workflowsView) removeCmd(env Env, i int) tea.Cmd {
+func (v workflowsView) removeCmd(env widget.Env, i int) tea.Cmd {
 	w := v.list[i]
 	if w.Origin == relevo.WorkflowOriginShipped {
 		return notice("shipped workflows cannot be removed")
@@ -398,7 +398,7 @@ func (v workflowsView) removeCmd(env Env, i int) tea.Cmd {
 			widget.Pad("source", 11) + "goes with it",
 			widget.Pad("others", 11) + "are kept",
 		},
-		onYes: runAction(env.Ctx, "remove workflow", workflowWriteKey("remove", w.Name), func(ctx context.Context) Result {
+		onYes: runAction(env.Ctx, "remove workflow", workflowWriteKey("remove", w.Name), func(ctx context.Context) widget.Result {
 			return env.Actions.WorkflowRemove(ctx, w.Name)
 		}),
 	})

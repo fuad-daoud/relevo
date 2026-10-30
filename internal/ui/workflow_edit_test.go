@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -131,8 +132,8 @@ func workflowEditNoticeOf(t *testing.T, cmd tea.Cmd) string {
 			continue
 		}
 		for _, inner := range batch {
-			if msg, ok := inner().(noticeMsg); ok {
-				return msg.text
+			if msg, ok := inner().(widget.NoticeMsg); ok {
+				return msg.Text
 			}
 		}
 	}
@@ -240,10 +241,10 @@ func TestWorkflowEditLoopQuitUnchangedEnds(t *testing.T) {
 	step := workflowEditStepFor(t, m, "fix-first")
 
 	m, cmd := workflowEditLoop(t, m, step, workflowEditDone)
-	if msg, ok := cmd().(noticeMsg); !ok {
+	if msg, ok := cmd().(widget.NoticeMsg); !ok {
 		t.Fatalf("an unchanged buffer must end with a notice, got %T", cmd())
-	} else if msg.text != "no changes" {
-		t.Errorf("notice = %q, want no changes", msg.text)
+	} else if msg.Text != "no changes" {
+		t.Errorf("notice = %q, want no changes", msg.Text)
 	}
 	if len(fa.saves) != 0 {
 		t.Errorf("nothing may be stored, saves = %d", len(fa.saves))
@@ -263,10 +264,10 @@ func TestWorkflowEditLoopAbortedOnEmpty(t *testing.T) {
 	step := workflowEditStepFor(t, m, "fix-first")
 
 	_, cmd, _ := workflowEditPass(t, m, step)
-	if msg, ok := cmd().(noticeMsg); !ok {
+	if msg, ok := cmd().(widget.NoticeMsg); !ok {
 		t.Fatalf("an emptied buffer must end with a notice, got %T", cmd())
-	} else if msg.text != "aborted; nothing changed" {
-		t.Errorf("notice = %q, want the abort", msg.text)
+	} else if msg.Text != "aborted; nothing changed" {
+		t.Errorf("notice = %q, want the abort", msg.Text)
 	}
 	if len(fa.saves) != 0 {
 		t.Errorf("nothing may be stored, saves = %d", len(fa.saves))
@@ -347,13 +348,13 @@ func TestWorkflowEditShippedRefused(t *testing.T) {
 
 	res, cmd := m.Update(key('e'))
 	m = res.(Model)
-	msg, ok := cmd().(noticeMsg)
+	msg, ok := cmd().(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("e on a shipped workflow must return a notice, got %T", cmd())
 	}
 	m = drain(t, m, cmd)
-	if msg.text != workflowEditShippedNotice {
-		t.Errorf("notice = %q, want the shipped refusal", msg.text)
+	if msg.Text != workflowEditShippedNotice {
+		t.Errorf("notice = %q, want the shipped refusal", msg.Text)
 	}
 	if len(fa.edited) != 0 {
 		t.Errorf("no editor may open for a shipped workflow, opened %v", fa.edited)
@@ -377,12 +378,12 @@ func TestWorkflowEditEditorNonZeroExitIsNoChange(t *testing.T) {
 	step := workflowEditStepFor(t, m, "fix-first")
 
 	_, cmd, _ := workflowEditPass(t, m, step)
-	msg, ok := cmd().(noticeMsg)
+	msg, ok := cmd().(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("a failed editor must end with a notice, got %T", cmd())
 	}
-	if msg.text != "editor exited; nothing changed" {
-		t.Errorf("notice = %q, want nothing changed", msg.text)
+	if msg.Text != "editor exited; nothing changed" {
+		t.Errorf("notice = %q, want nothing changed", msg.Text)
 	}
 	if len(fa.saves) != 0 {
 		t.Errorf("a failed editor must store nothing, saves = %d", len(fa.saves))
@@ -436,13 +437,13 @@ func TestWorkflowEditKeyOpensEditorOnSource(t *testing.T) {
 func TestWorkflowEditKeysHiddenWithoutActions(t *testing.T) {
 	v := workflowsView{}
 	if keys := v.Keys(); keys != nil {
-		t.Errorf("without Actions the keys must be hidden, got %v", keys)
+		t.Errorf("without widget.Actions the keys must be hidden, got %v", keys)
 	}
-	cmd := v.editCmd(Env{}, workflowsFixtureList()[0])
-	if msg, ok := cmd().(noticeMsg); !ok {
+	cmd := v.editCmd(widget.Env{}, workflowsFixtureList()[0])
+	if msg, ok := cmd().(widget.NoticeMsg); !ok {
 		t.Fatalf("a shipped row must answer with a notice, got %T", cmd())
-	} else if msg.text != workflowEditShippedNotice {
-		t.Errorf("notice = %q, want the shipped refusal", msg.text)
+	} else if msg.Text != workflowEditShippedNotice {
+		t.Errorf("notice = %q, want the shipped refusal", msg.Text)
 	}
 }
 
@@ -541,7 +542,7 @@ func workflowEditReopenModel(t *testing.T, width, height int) Model {
 		t.Fatalf("the golden's pass must reopen, ended %v", res.end)
 	}
 	for _, inner := range cmd().(tea.BatchMsg) {
-		if msg, ok := inner().(noticeMsg); ok {
+		if msg, ok := inner().(widget.NoticeMsg); ok {
 			res, _ := m.Update(msg)
 			return res.(Model)
 		}

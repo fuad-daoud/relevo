@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -352,44 +353,44 @@ func TestServersDeleteRefusedNamesTheActor(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("d must return a command")
 	}
-	notice, ok := cmd().(noticeMsg)
+	notice, ok := cmd().(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("d on a placed server gave %T, want a notice", cmd())
 	}
-	if !strings.Contains(notice.text, "builder") {
-		t.Errorf("notice = %q, want it to name the actor", notice.text)
+	if !strings.Contains(notice.Text, "builder") {
+		t.Errorf("notice = %q, want it to name the actor", notice.Text)
 	}
 	if len(fa.configEdits) != 0 {
 		t.Errorf("a refused delete must write nothing, edits = %v", fa.configEdits)
 	}
 }
 
-// Without an Actions seam the edit and probe keys are hidden and inert.
+// Without an widget.Actions seam the edit and probe keys are hidden and inert.
 func TestServersKeysNeedActions(t *testing.T) {
 	v := serversView{}
 	if keys := v.Keys(); len(keys) != 0 {
-		t.Errorf("Keys = %v, want none without Actions", keys)
+		t.Errorf("Keys = %v, want none without widget.Actions", keys)
 	}
 	for _, r := range []rune{'r', 'a', 'e', 'd'} {
-		_, cmd := v.Update(key(r), Env{})
+		_, cmd := v.Update(key(r), widget.Env{})
 		if cmd != nil {
-			t.Errorf("%q must do nothing without Actions", r)
+			t.Errorf("%q must do nothing without widget.Actions", r)
 		}
 	}
 }
 
-// :servers without an Actions seam is a notice, as the other config views are.
+// :servers without an widget.Actions seam is a notice, as the other config views are.
 func TestServersNeedsActions(t *testing.T) {
-	env := Env{Ctx: context.Background(), Loaded: true, Now: railNow, Width: 132, Height: 34}
+	env := widget.Env{Ctx: context.Background(), Loaded: true, Now: railNow, Width: 132, Height: 34}
 	cmd := execLine("servers", env, prefs{})
 	if cmd == nil {
-		t.Fatal(":servers with no Actions must return a notice")
+		t.Fatal(":servers with no widget.Actions must return a notice")
 	}
-	msg, ok := cmd().(noticeMsg)
+	msg, ok := cmd().(widget.NoticeMsg)
 	if !ok {
-		t.Fatalf(":servers with no Actions gave %T, want a notice", cmd())
+		t.Fatalf(":servers with no widget.Actions gave %T, want a notice", cmd())
 	}
-	if !strings.Contains(msg.text, "need relevo ui") {
-		t.Errorf("notice = %q", msg.text)
+	if !strings.Contains(msg.Text, "need relevo ui") {
+		t.Errorf("notice = %q", msg.Text)
 	}
 }

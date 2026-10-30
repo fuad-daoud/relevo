@@ -212,12 +212,12 @@ func TestWindowSizeMsgSetsReady(t *testing.T) {
 
 	// A round view resizes its viewport from the same message (R2.4).
 	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
-	next, _ := rv.Update(tea.WindowSizeMsg{Width: 100, Height: 40}, Env{Width: 100, Height: 40, Now: railNow, Report: rv.pane.report})
+	next, _ := rv.Update(tea.WindowSizeMsg{Width: 100, Height: 40}, widget.Env{Width: 100, Height: 40, Now: railNow, Report: rv.pane.report})
 	got := next.(roundView)
 	if got.pane.width != 100 {
 		t.Errorf("round view width after resize = %d, want 100", got.pane.width)
 	}
-	if want := bodyHeight(Env{Height: 40}); got.pane.rows != want {
+	if want := widget.BodyHeight(widget.Env{Height: 40}); got.pane.rows != want {
 		t.Errorf("round view rows = %d, want %d", got.pane.rows, want)
 	}
 	if got.pane.detail.vp.Width != got.pane.contentWidth() {
@@ -496,7 +496,7 @@ func TestStepRoundEdgesNoop(t *testing.T) {
 }
 
 // TestPointDetailAtMarksViewed ports #143: opening a live binding's round
-// view stamps its viewed mark through the Source.
+// view stamps its viewed mark through the widget.Source.
 func TestPointDetailAtMarksViewed(t *testing.T) {
 	st := store.New(t.TempDir())
 	if err := st.Save(store.Binding{Name: "webshop", CWD: "/repo", Round: 2, State: store.StateActive}); err != nil {
@@ -511,7 +511,7 @@ func TestPointDetailAtMarksViewed(t *testing.T) {
 	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
 
 	if _, ok := st.ViewedAt("webshop"); !ok {
-		t.Fatal("opening the round view did not stamp .viewed through the Source")
+		t.Fatal("opening the round view did not stamp .viewed through the widget.Source")
 	}
 	if rv.pane.detail.name != "webshop" {
 		t.Errorf("the pane must be pointed at the binding: detail.name = %q", rv.pane.detail.name)

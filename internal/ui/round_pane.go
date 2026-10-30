@@ -19,12 +19,12 @@ import (
 // holds exactly one and lends it the fields it cannot own -- src, ctx, now,
 // report, width and rows -- through syncPane on every call.
 type roundPane struct {
-	src     Source
+	src     widget.Source
 	ctx     context.Context
 	now     func() time.Time
 	report  view.Report
 	detail  detailModel
-	actions bool // Actions != nil: action keys are shown
+	actions bool // widget.Actions != nil: action keys are shown
 
 	// tabInFlight is the pane's own fetch guard, moved from
 	// Model.tabInFlight: true while a fetch is in flight for the tab on
@@ -204,7 +204,7 @@ func (p roundPane) pointDetailAt(key string) (roundPane, tea.Cmd) {
 		return p, nil
 	}
 	// #143: opening a binding's detail pane is what "viewed" means; the
-	// stamp is best-effort (each Source swallows its own errors) and must
+	// stamp is best-effort (each widget.Source swallows its own errors) and must
 	// never block re-targeting the pane.
 	p.src.MarkViewed(key)
 	vp := viewport.New(p.contentWidth(), p.viewportHeight())

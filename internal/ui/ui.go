@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // Options configures the reader. Interval is the only knob: the ReadAgent line
@@ -37,12 +38,12 @@ type Options struct {
 	// e.g. `rounds harness:agy`. "" starts at :fleet.
 	Start string
 
-	// Actions is the cockpit's write seam (§1, §4.2). Nil hides every
+	// widget.Actions is the cockpit's write seam (§1, §4.2). Nil hides every
 	// action key and makes one do nothing when pressed: `relevo serve ui`
 	// passes none, and `relevo ui` gets the mastermind adapter Run builds.
-	Actions Actions
+	Actions widget.Actions
 
-	// ProbeExec is what Actions.Probe runs a candidate's harness through
+	// ProbeExec is what widget.Actions.Probe runs a candidate's harness through
 	// (§4.2): cmd/relevo passes its os/exec seam so a probe spawns a real
 	// harness from the cockpit.
 	ProbeExec availability.LineExec
@@ -60,7 +61,7 @@ const defaultInterval = 2 * time.Second
 var stdoutStat = os.Stdout.Stat
 
 // Run renders relevo's state until the user quits or ctx is cancelled.
-// It never mutates state on its own: every write goes through Actions, which
+// It never mutates state on its own: every write goes through widget.Actions, which
 // Run fills with the real mastermind adapter when the caller passed none (§1).
 //
 // Preconditions:  stdout is a character device; rt.Store non-nil.

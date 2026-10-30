@@ -189,12 +189,12 @@ func TestAgentsDeleteShippedNotices(t *testing.T) {
 		t.Fatal("d must return a command")
 	}
 	msg := cmd()
-	notice, ok := msg.(noticeMsg)
+	notice, ok := msg.(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("d on researcher gave %T, want a notice", msg)
 	}
-	if notice.text != "researcher ships with relevo; it can't be deleted" {
-		t.Errorf("notice = %q", notice.text)
+	if notice.Text != "researcher ships with relevo; it can't be deleted" {
+		t.Errorf("notice = %q", notice.Text)
 	}
 	if len(fa.configEdits) != 0 {
 		t.Error("a refused delete must not write an edit")
@@ -252,12 +252,12 @@ func TestAgentsDeleteUsedCustomAgentNotices(t *testing.T) {
 		t.Fatal("d must return a command")
 	}
 	msg := cmd()
-	notice, ok := msg.(noticeMsg)
+	notice, ok := msg.(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("d on a used custom agent gave %T, want a notice", msg)
 	}
-	if !strings.Contains(notice.text, "used by ") {
-		t.Errorf("notice = %q, want it to name the actor", notice.text)
+	if !strings.Contains(notice.Text, "used by ") {
+		t.Errorf("notice = %q, want it to name the actor", notice.Text)
 	}
 	if len(fa.configEdits) != 0 {
 		t.Error("a refused delete must not write an edit")
@@ -275,12 +275,12 @@ func TestAgentResetUpToDateNotices(t *testing.T) {
 		t.Fatal("r must return a command")
 	}
 	msg := cmd()
-	notice, ok := msg.(noticeMsg)
+	notice, ok := msg.(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("r on an up-to-date file gave %T, want a notice", msg)
 	}
-	if notice.text != "claude's researcher is up to date" {
-		t.Errorf("notice = %q", notice.text)
+	if notice.Text != "claude's researcher is up to date" {
+		t.Errorf("notice = %q", notice.Text)
 	}
 	if len(fa.resets) != 0 {
 		t.Errorf("resets = %v, want none", fa.resets)
@@ -296,7 +296,7 @@ func TestAgentResetEditedConfirms(t *testing.T) {
 			files["researcher"][i].State = harness.FileEdited
 		}
 	}
-	fa := &fakeActions{doc: candFixtureDoc(t), files: files, result: Result{Text: "reset claude's researcher", Refresh: true}}
+	fa := &fakeActions{doc: candFixtureDoc(t), files: files, result: widget.Result{Text: "reset claude's researcher", Refresh: true}}
 	v := agentFixtureView(t, fa, "researcher")
 	v.cur = 1 // claude
 
@@ -342,7 +342,7 @@ func TestAgentResetOnEditNewerSaysNewerCopy(t *testing.T) {
 			files["researcher"][i].State = harness.FileEditedNewer
 		}
 	}
-	fa := &fakeActions{doc: candFixtureDoc(t), files: files, result: Result{Text: "reset claude's researcher", Refresh: true}}
+	fa := &fakeActions{doc: candFixtureDoc(t), files: files, result: widget.Result{Text: "reset claude's researcher", Refresh: true}}
 	v := agentFixtureView(t, fa, "researcher")
 	v.cur = 1 // claude
 
@@ -416,7 +416,7 @@ func TestAgentResetMissingConfirmsWrite(t *testing.T) {
 			files["researcher"][i].State = harness.FileMissing
 		}
 	}
-	fa := &fakeActions{doc: candFixtureDoc(t), files: files, result: Result{Text: "write claude's researcher", Refresh: true}}
+	fa := &fakeActions{doc: candFixtureDoc(t), files: files, result: widget.Result{Text: "write claude's researcher", Refresh: true}}
 	v := agentFixtureView(t, fa, "researcher")
 	v.cur = 1 // claude
 
@@ -596,31 +596,31 @@ func TestAgentEditMissingNotices(t *testing.T) {
 		t.Fatal("e must return a command")
 	}
 	msg := cmd()
-	notice, ok := msg.(noticeMsg)
+	notice, ok := msg.(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("e on a missing file gave %T, want a notice", msg)
 	}
-	if notice.text != "claude has no researcher file yet" {
-		t.Errorf("notice = %q", notice.text)
+	if notice.Text != "claude has no researcher file yet" {
+		t.Errorf("notice = %q", notice.Text)
 	}
 	if len(fa.edited) != 0 {
 		t.Errorf("a missing file must open nothing, edited = %v", fa.edited)
 	}
 }
 
-// :agents without an Actions seam is a notice, as :candidates and :actors are
+// :agents without an widget.Actions seam is a notice, as :candidates and :actors are
 // (§4).
 func TestAgentsNeedsActions(t *testing.T) {
-	env := Env{Ctx: context.Background(), Loaded: true, Now: railNow, Width: 132, Height: 34}
+	env := widget.Env{Ctx: context.Background(), Loaded: true, Now: railNow, Width: 132, Height: 34}
 	cmd := execLine("agents", env, prefs{})
 	if cmd == nil {
-		t.Fatal(":agents with no Actions must return a notice")
+		t.Fatal(":agents with no widget.Actions must return a notice")
 	}
-	msg, ok := cmd().(noticeMsg)
+	msg, ok := cmd().(widget.NoticeMsg)
 	if !ok {
-		t.Fatalf(":agents with no Actions gave %T, want a notice", cmd())
+		t.Fatalf(":agents with no widget.Actions gave %T, want a notice", cmd())
 	}
-	if !strings.Contains(msg.text, "need relevo ui") {
-		t.Errorf("notice = %q", msg.text)
+	if !strings.Contains(msg.Text, "need relevo ui") {
+		t.Errorf("notice = %q", msg.Text)
 	}
 }

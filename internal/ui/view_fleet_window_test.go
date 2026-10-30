@@ -33,7 +33,7 @@ func windowExpect(f fleetView, full []string, slots []fleetSlot, width, listH in
 // pass removed; clipping one line too few is the pixel change it must not make.
 func TestWindowPaintMatchesTheFullList(t *testing.T) {
 	const width = 120
-	env := Env{Loaded: true, Now: railNow, Report: realFleetReport(), StatusAt: railNow, Width: width, Height: 50}
+	env := widget.Env{Loaded: true, Now: railNow, Report: realFleetReport(), StatusAt: railNow, Width: width, Height: 50}
 
 	for _, cursor := range []int{0, 1, 4, 9, 20} {
 		f := newFleetView(true)
@@ -71,7 +71,7 @@ func TestRowsAreComputedOncePerCycle(t *testing.T) {
 		width  = 160
 		height = 50
 	)
-	env := Env{Loaded: true, Now: railNow, Report: realFleetReport(), StatusAt: railNow, Width: width, Height: height}
+	env := widget.Env{Loaded: true, Now: railNow, Report: realFleetReport(), StatusAt: railNow, Width: width, Height: height}
 
 	f := newFleetView(true)
 	for range 3 {

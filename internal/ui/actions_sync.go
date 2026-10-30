@@ -9,64 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/db/wire/client"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
-
-// SyncSnapshot is the whole read side of the :sync view: what the machine is
-// set to be, what the remote last reported, and which rows are waiting on a
-// human. Every field is a value already read; nothing here can open a handle.
-//
-// The zero Snapshot is what a view renders when no read has answered yet, and
-// it is also what a read that found nothing describes: sync off, no remote, no
-// token, no measurement, one installation (this one) and nothing unlinked.
-type SyncSnapshot struct {
-	// State is the machine-local state the statusline token is derived from,
-	// and Token is that derivation itself -- the view renders S2's mapping and
-	// does not repeat its order.
-	State relevosync.State
-	Token string
-	// Settings is the machine-local sync section: where the remote is and how
-	// eager this machine is.
-	Settings relevosync.Settings
-	// TokenSet is whether a token is stored. The value is never here.
-	TokenSet bool
-	// Measured says whether a completed attempt has ever stamped the exchange
-	// times. A machine that has measured nothing shows placeholders rather than
-	// zeros, because a zero backlog and no backlog read identically and mean
-	// opposite things.
-	Measured bool
-	// Attention is the message the attention marker carries, when one does.
-	Attention string
-	// LastExport and LastImport are when the steady pipeline last finished each
-	// half of the exchange, zero when it never has.
-	LastExport time.Time
-	LastImport time.Time
-	// Trouble is what the last import reported besides applied entries: an
-	// origin a newer writer held, a batch a refusal dropped, a sequence gap.
-	Trouble relevosync.Trouble
-	// RemoteURL is the configured remote, empty when this machine has none.
-	RemoteURL string
-	// Installation is the directory: one row per installation that has written
-	// here, and OwnID is this machine's own id, so a row that is not this
-	// machine's can be shown as read-only attribution.
-	Installation []db.Installation
-	OwnID        string
-	// Unlinked is every remote binding row carrying no link, listed for
-	// re-bind. Nothing backfills them: they are here until someone binds them.
-	Unlinked []db.Record
-	// SharedBytes is the size of the shared file on disk, which is what the
-	// first-upload estimate is a multiple of.
-	SharedBytes int64
-	// Reachable is whether the last test connection reached the remote, and
-	// Unknown says no test has run yet. The two are separate because "never
-	// tried" and "tried and failed" are different states and one chip cannot
-	// say both.
-	Reachable bool
-	Unknown   bool
-}
 
 // ready is the one guard every action shares: a nil adapter is not the only way
 // to have no runtime, because the holder itself is nil until the first load. A
@@ -129,25 +76,25 @@ func (a *mastermindActions) syncVerb(ctx context.Context, verb string) (*wire.Sy
 
 // SyncPush sends this machine's local change set. The result re-reads, so the
 // view shows what the remote measured rather than what the push assumed.
-func (a *mastermindActions) SyncPush(ctx context.Context) Result {
+func (a *mastermindActions) SyncPush(ctx context.Context) widget.Result {
 	if _, err := a.syncVerb(ctx, wire.SyncVerbPush); err != nil {
 		return syncErrResult("push", err)
 	}
-	return Result{Text: "pushed this machine's change set", Refresh: true}
+	return widget.Result{Text: "pushed this machine's change set", Refresh: true}
 }
 
 // SyncPull fetches the remote's changes and rebases the local ones on top. The
 // applied flag becomes words, because "nothing to apply" is the answer a user
 // needs and a boolean is not one.
-func (a *mastermindActions) SyncPull(ctx context.Context) Result {
+func (a *mastermindActions) SyncPull(ctx context.Context) widget.Result {
 	res, err := a.syncVerb(ctx, wire.SyncVerbPull)
 	if err != nil {
 		return syncErrResult("pull", err)
 	}
 	if !res.Applied {
-		return Result{Text: "pulled: the remote had nothing to apply", Refresh: true}
+		return widget.Result{Text: "pulled: the remote had nothing to apply", Refresh: true}
 	}
-	return Result{Text: "pulled and applied the remote's changes", Refresh: true}
+	return widget.Result{Text: "pulled and applied the remote's changes", Refresh: true}
 }
 
 // SyncTest asks the remote whether it is there. It changes no byte here, so a
@@ -157,18 +104,18 @@ func (a *mastermindActions) SyncPull(ctx context.Context) Result {
 // It runs through the same executor the other actions do, so the worker it
 // builds is the one a later push or pull reuses, and there is one set of
 // verbs' semantics in the tree.
-func (a *mastermindActions) SyncTest(ctx context.Context) Result {
+func (a *mastermindActions) SyncTest(ctx context.Context) widget.Result {
 	if _, err := a.syncVerb(ctx, wire.SyncVerbProbe); err != nil {
 		return syncErrResult("test connection", err)
 	}
-	return Result{Text: "the remote answered", Refresh: true}
+	return widget.Result{Text: "the remote answered", Refresh: true}
 }
 
 // SyncDisable runs S4's turn-off whole: the same six steps, in the order its
 // contract fixes, through the same executor the CLI verb drives. The final
 // export stays best-effort, so a remote that cannot be reached is a warning on
 // a successful turn-off rather than a refusal to leave.
-func (a *mastermindActions) SyncDisable(ctx context.Context) Result {
+func (a *mastermindActions) SyncDisable(ctx context.Context) widget.Result {
 	res, err := a.syncVerb(ctx, wire.SyncVerbDisable)
 	if err != nil {
 		return syncErrResult("disable", err)
@@ -177,15 +124,15 @@ func (a *mastermindActions) SyncDisable(ctx context.Context) Result {
 	if res.Warning != "" {
 		text += " · the final export was skipped: " + res.Warning
 	}
-	return Result{Text: text, Refresh: true}
+	return widget.Result{Text: text, Refresh: true}
 }
 
-// SyncSnapshot assembles the view's whole read side, off the update loop and
+// widget.SyncSnapshot assembles the view's whole read side, off the update loop and
 // with no handle in reach. A machine with no local file, no remote or no
 // measurement answers with the fields it does have rather than an error, so the
 // pre-on form renders on a machine that has never enabled sync.
-func (a *mastermindActions) SyncSnapshot() (SyncSnapshot, error) {
-	var snap SyncSnapshot
+func (a *mastermindActions) SyncSnapshot() (widget.SyncSnapshot, error) {
+	var snap widget.SyncSnapshot
 	if err := a.ready(); err != nil {
 		return snap, err
 	}
@@ -300,6 +247,6 @@ func editorCommand(path string) *exec.Cmd {
 // syncErrResult is one failed action, named the way a log line should name it:
 // the verb, then the cause. A refused sync says what it could not do rather
 // than that something went wrong.
-func syncErrResult(verb string, err error) Result {
-	return Result{Text: verb + " failed: " + err.Error(), Err: err}
+func syncErrResult(verb string, err error) widget.Result {
+	return widget.Result{Text: verb + " failed: " + err.Error(), Err: err}
 }

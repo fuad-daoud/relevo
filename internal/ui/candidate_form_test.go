@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // formDoc is the round 2 fixture doc, the one the goldens and these tests use.
@@ -14,7 +15,7 @@ func formDoc(t *testing.T) relevo.ConfigDoc { return candFixtureDoc(t) }
 
 // formEnv is the form's Env: the fake under test, the fixture gates and a
 // 132x34 shell.
-func formEnv(fa *fakeActions) Env {
+func formEnv(fa *fakeActions) widget.Env {
 	return candActionEnv(fa, candGatedReport())
 }
 
@@ -75,12 +76,12 @@ func TestCandidateFormUnchangedEditNotices(t *testing.T) {
 		t.Fatal("enter must return the notice")
 	}
 	msg := cmd()
-	notice, ok := msg.(noticeMsg)
+	notice, ok := msg.(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("enter gave %T, want a notice", msg)
 	}
-	if notice.text != "nothing changed" {
-		t.Errorf("notice = %q, want nothing changed", notice.text)
+	if notice.Text != "nothing changed" {
+		t.Errorf("notice = %q, want nothing changed", notice.Text)
 	}
 	if len(fa.configEdits) != 0 {
 		t.Error("an unchanged edit must not write one")

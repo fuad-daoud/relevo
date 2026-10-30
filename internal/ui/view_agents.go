@@ -61,14 +61,14 @@ type agentFileRow struct {
 // newAgentsView builds ':agents' and the command that loads its doc and file
 // states (§4). env.Actions must be non-nil: execLine refuses the command
 // otherwise.
-func newAgentsView(env Env) (View, tea.Cmd) {
+func newAgentsView(env widget.Env) (widget.View, tea.Cmd) {
 	v := agentsView{actions: env.Actions != nil}
 	return v, agentsCmd(env)
 }
 
 // agentsCmd reads the doc and every agent's definition state off the update
 // loop (§4). File reads are cheap, so they happen here, not in Body.
-func agentsCmd(env Env) tea.Cmd {
+func agentsCmd(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		doc, err := env.Actions.ConfigDoc()
 		if err != nil {
@@ -417,7 +417,7 @@ func agentDetailLines(doc relevo.ConfigDoc, r agentRow, width int) []string {
 // bodyLines is the whole body before it is windowed: a blank line under the
 // context row, the table, two blank lines and the cursor row's detail block
 // (§4).
-func (v agentsView) bodyLines(env Env, width int) []string {
+func (v agentsView) bodyLines(env widget.Env, width int) []string {
 	rows := v.rows()
 	nameW, cols := agentListLayout(width, agentKinds(v.files))
 	cw := width - 6
@@ -441,13 +441,13 @@ func (v agentsView) bodyLines(env Env, width int) []string {
 func (v agentsView) rows() []agentRow { return agentRows(v.doc, v.files) }
 
 // follow scrolls the page so the cursor's table row stays visible (§4).
-func (v *agentsView) follow(env Env) {
+func (v *agentsView) follow(env widget.Env) {
 	rows := v.rows()
 	if len(rows) == 0 {
 		v.top = 0
 		return
 	}
-	avail := bodyHeight(env)
+	avail := widget.BodyHeight(env)
 	if avail <= 0 {
 		v.top = 0
 		return
@@ -468,26 +468,26 @@ func (v agentsView) Crumbs() []string { return []string{"agents"} }
 // Capturing is always false: the view owns no text input of its own (§4).
 func (v agentsView) Capturing() bool { return false }
 
-// Keys are the list's keys (§4), shown only when the shell has an Actions
+// Keys are the list's keys (§4), shown only when the shell has an widget.Actions
 // seam. `d delete` is listed even on a shipped row: the footer has no dimmed
 // key (§9), so a shipped row answers a press with a notice instead.
-func (v agentsView) Keys() []KeyHelp {
+func (v agentsView) Keys() []widget.KeyHelp {
 	if !v.actions {
 		return nil
 	}
-	return []KeyHelp{
-		{"↑↓", "move"},
-		{"enter", "open"},
-		{"d", "delete"},
+	return []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "enter", Help: "open"},
+		{Key: "d", Help: "delete"},
 	}
 }
 
 // HelpKeys is the help overlay's key list (§2.2): the same set.
-func (v agentsView) HelpKeys() []KeyHelp { return v.Keys() }
+func (v agentsView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
 // Context is the counts line on the left (§4): the agents, the writer and
 // reader counts, and the custom count when there is one.
-func (v agentsView) Context(env Env) (string, string) {
+func (v agentsView) Context(env widget.Env) (string, string) {
 	rows := v.rows()
 	writers, readers, custom := 0, 0, 0
 	for _, r := range rows {
@@ -515,7 +515,7 @@ func (v agentsView) Context(env Env) (string, string) {
 	return left, ""
 }
 
-func (v agentsView) Body(env Env, width, height int) string {
+func (v agentsView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
@@ -540,7 +540,7 @@ func (v agentsView) Body(env Env, width, height int) string {
 	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
-func (v agentsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v agentsView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case agentsMsg:
 		if msg.err != nil {
@@ -569,7 +569,7 @@ func (v agentsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 }
 
 // updateKey is the list's own keys (§4).
-func (v agentsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v agentsView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	rows := v.rows()
 	n := len(rows)
 	switch k.String() {
@@ -586,10 +586,10 @@ func (v agentsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		v.cur = candClamp(n-1, n)
 		v.follow(env)
 	case "pgup":
-		v.cur = candClamp(v.cur-bodyHeight(env), n)
+		v.cur = candClamp(v.cur-widget.BodyHeight(env), n)
 		v.follow(env)
 	case "pgdown":
-		v.cur = candClamp(v.cur+bodyHeight(env), n)
+		v.cur = candClamp(v.cur+widget.BodyHeight(env), n)
 		v.follow(env)
 	case "enter":
 		if n == 0 {
@@ -606,7 +606,7 @@ func (v agentsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 }
 
 // openAgent pushes the cursor agent's detail view (§4).
-func openAgent(env Env, doc relevo.ConfigDoc, r agentRow) tea.Cmd {
+func openAgent(env widget.Env, doc relevo.ConfigDoc, r agentRow) tea.Cmd {
 	v, init := newAgentView(env, doc, r)
 	return push(v, init)
 }
@@ -615,7 +615,7 @@ func openAgent(env Env, doc relevo.ConfigDoc, r agentRow) tea.Cmd {
 // custom one is validated with relevo.DeleteAgent, whose refusal (a shipped
 // agent, or one an actor uses) is a notice too, then confirmed as a danger
 // box.
-func (v agentsView) deleteCmd(env Env, r agentRow) tea.Cmd {
+func (v agentsView) deleteCmd(env widget.Env, r agentRow) tea.Cmd {
 	if r.source == "shipped" {
 		return notice(r.name + " ships with relevo; it can't be deleted")
 	}
@@ -633,7 +633,7 @@ func (v agentsView) deleteCmd(env Env, r agentRow) tea.Cmd {
 			widget.Pad("used by", 11) + "no actor",
 			widget.Pad("removes", 11) + "the agent from relevo's config",
 		},
-		onYes: runAction(env.Ctx, "delete agent", name, func(ctx context.Context) Result {
+		onYes: runAction(env.Ctx, "delete agent", name, func(ctx context.Context) widget.Result {
 			return env.Actions.ApplyConfig(ctx, edit)
 		}),
 	})

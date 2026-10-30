@@ -10,26 +10,17 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// actionEntry is one recorded cockpit action result for the session (:log).
-type actionEntry struct {
-	At   time.Time // when the result arrived (m.now())
-	Verb string    // actionMsg.verb
-	Key  string    // actionMsg.key (the binding key acted on; may be "")
-	Text string    // the result text, or the error text
-	Err  bool
-}
-
 // Model is the cockpit shell: a stack of views, status polling, global keys
 // and message routing (§4.2). It keeps its name because RunSource and the
 // tests construct it.
 type Model struct {
-	src  Source
+	src  widget.Source
 	ctx  context.Context
 	opts Options
 
 	// stack is the view stack; stack[0] is the root and it is never empty
 	// after newModel.
-	stack []View
+	stack []widget.View
 
 	report view.Report // newest good status; kept on a failed refresh
 	err    error       // last refresh error
@@ -65,18 +56,18 @@ type Model struct {
 
 	// actionLog is ':log': every action result this session, newest last, no
 	// persistence (§4.3).
-	actionLog []actionEntry
+	actionLog []widget.ActionEntry
 
 	// noticeErr and noticeFaint pick the notice's style: a red failure, a
 	// faint captured stderr line, or the amber default (§4.3, §4.4).
 	noticeErr   bool
 	noticeFaint bool
 
-	prefs prefs // the reduced prefs struct (§4.6); saved on every prefMsg
+	prefs prefs // the reduced prefs struct (§4.6); saved on every widget.PrefMsg
 }
 
 // newModel builds the shell at ':fleet'.
-func newModel(ctx context.Context, src Source, opts Options) Model {
+func newModel(ctx context.Context, src widget.Source, opts Options) Model {
 	m := Model{
 		src:            src,
 		ctx:            ctx,
@@ -87,7 +78,7 @@ func newModel(ctx context.Context, src Source, opts Options) Model {
 		running:        map[string]string{},
 		prefs:          prefs{Sort: "attention"},
 	}
-	m.stack = []View{newFleetView(true).withActions(opts.Actions != nil)}
+	m.stack = []widget.View{newFleetView(true).withActions(opts.Actions != nil)}
 	return m
 }
 
@@ -110,7 +101,7 @@ func (m Model) save() tea.Cmd {
 	return savePrefs(m.opts.Prefs, m.prefs)
 }
 
-// setPref applies one prefMsg: the sort pref also re-points the root fleet.
+// setPref applies one widget.PrefMsg: the sort pref also re-points the root fleet.
 func (m Model) setPref(key, value string) Model {
 	switch key {
 	case "sort":
@@ -128,11 +119,11 @@ func (m Model) setPref(key, value string) Model {
 }
 
 // top is the top view.
-func (m Model) top() View { return m.stack[len(m.stack)-1] }
+func (m Model) top() widget.View { return m.stack[len(m.stack)-1] }
 
 // env is what the shell lends a view on every call (§4.1).
-func (m Model) env() Env {
-	return Env{
+func (m Model) env() widget.Env {
+	return widget.Env{
 		Ctx:       m.ctx,
 		Src:       m.src,
 		Report:    m.report,
@@ -155,7 +146,7 @@ func tick(d time.Duration) tea.Cmd {
 
 // watchdog is the first fetch's time-box: one timer, armed alongside the
 // first fetch, that says whether that fetch outran a poll interval. It
-// carries no report, so a slow Source.Status cannot merge a partial one.
+// carries no report, so a slow widget.Source.Status cannot merge a partial one.
 func watchdog(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(t time.Time) tea.Msg { return watchdogMsg(t) })
 }
@@ -204,24 +195,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case watchdogMsg:
 		return m.onWatchdog()
 
-	case pushMsg:
-		m.stack = append(m.stack, msg.v)
-		return m, msg.init
+	case widget.PushMsg:
+		m.stack = append(m.stack, msg.View)
+		return m, msg.Init
 
-	case popMsg:
+	case widget.PopMsg:
 		if len(m.stack) > 1 {
 			m.stack = m.stack[:len(m.stack)-1]
 		}
 		return m, nil
 
-	case rootMsg:
-		if len(msg.vs) > 0 {
-			m.stack = msg.vs
+	case widget.RootMsg:
+		if len(msg.Views) > 0 {
+			m.stack = msg.Views
 		}
-		return m, msg.init
+		return m, msg.Init
 
-	case noticeMsg:
-		m.notice = msg.text
+	case widget.NoticeMsg:
+		m.notice = msg.Text
 		m.noticeErr = false
 		m.noticeFaint = false
 		return m, nil
@@ -246,19 +237,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.noticeFaint = true
 		return m, nil
 
-	case logMsg:
+	case widget.LogMsg:
 		v, cmd := newLogView(m.env())
-		m.stack = []View{
+		m.stack = []widget.View{
 			newFleetView(m.prefs.Sort != "name").withActions(m.opts.Actions != nil),
 			v,
 		}
 		return m, cmd
 
-	case prefMsg:
-		m = m.setPref(msg.key, msg.value)
+	case widget.PrefMsg:
+		m = m.setPref(msg.Key, msg.Value)
 		return m, m.save()
 
-	case helpMsg:
+	case widget.HelpMsg:
 		m.help = true
 		return m, nil
 	}
@@ -324,7 +315,7 @@ func (m Model) finishAction(msg actionMsg) (tea.Model, tea.Cmd) {
 	} else {
 		m.notice = firstLine(msg.res.Text)
 	}
-	m.actionLog = append(m.actionLog, actionEntry{
+	m.actionLog = append(m.actionLog, widget.ActionEntry{
 		At:   m.now(),
 		Verb: msg.verb,
 		Key:  msg.key,
@@ -463,7 +454,7 @@ func (m Model) updateStack(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// View draws the frame: header, context, error block, body, rule, keys
+// widget.View draws the frame: header, context, error block, body, rule, keys
 // (§5.3).
 func (m Model) View() string {
 	if !m.ready {

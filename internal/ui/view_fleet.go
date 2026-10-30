@@ -117,7 +117,7 @@ type fleetView struct {
 	sticky    string // the selected row's Key(), so the selection survives reordering
 	top       int    // first visible line index
 	attention bool   // sort order: attention (SortRows true) or name; from the sort pref
-	actions   bool   // Actions != nil at construction: the action keys are shown (r1)
+	actions   bool   // widget.Actions != nil at construction: the action keys are shown (r1)
 	showDone  bool   // '.' toggles done section expansion (§2.3)
 
 	filtering  bool            // the '/' filter input is open and owns every key (A4)
@@ -167,7 +167,7 @@ func firstRow(rows []view.BindingStatus) *view.BindingStatus {
 	return &rows[0]
 }
 
-// withActions marks whether the shell has an Actions seam, so Keys() shows
+// withActions marks whether the shell has an widget.Actions seam, so Keys() shows
 // the action keys exactly when one exists (r1).
 func (f fleetView) withActions(a bool) fleetView {
 	f.actions = a
@@ -185,7 +185,7 @@ func newFilterInput() textinput.Model {
 // rows returns visible rows in GROUP order with fold and filter applied (§4, §5.1).
 // The set is computed once per cycle and shared: every reader in a frame --
 // Update, the window, the card, the list -- reads the memo.
-func (f fleetView) rows(env Env) []view.BindingStatus {
+func (f fleetView) rows(env widget.Env) []view.BindingStatus {
 	if f.memo == nil {
 		return fleetRows(env.Report.Bindings, f.attention, f.activeFilter(), f.showDone)
 	}
@@ -273,45 +273,45 @@ func (f fleetView) Crumbs() []string { return []string{"fleet"} }
 func (f fleetView) Capturing() bool { return f.filtering }
 
 // Keys returns the footer's action or standard keys (§2.3).
-func (f fleetView) Keys() []KeyHelp {
+func (f fleetView) Keys() []widget.KeyHelp {
 	if f.actions {
-		return []KeyHelp{
-			{"enter", "open"},
-			{"s", "send"},
-			{"x", "stop"},
-			{"D", "done"},
-			{"g", "gate"},
-			{"/", "filter"},
+		return []widget.KeyHelp{
+			{Key: "enter", Help: "open"},
+			{Key: "s", Help: "send"},
+			{Key: "x", Help: "stop"},
+			{Key: "D", Help: "done"},
+			{Key: "g", Help: "gate"},
+			{Key: "/", Help: "filter"},
 		}
 	}
-	return []KeyHelp{
-		{"enter", "open"},
-		{"/", "filter"},
-		{"a", "sort"},
+	return []widget.KeyHelp{
+		{Key: "enter", Help: "open"},
+		{Key: "/", Help: "filter"},
+		{Key: "a", Help: "sort"},
 	}
 }
 
-// HelpKeys implements helpKeyer, listing all fleet keys for the '?' overlay (§2.3).
-func (f fleetView) HelpKeys() []KeyHelp {
-	keys := []KeyHelp{
-		{"↑↓", "move"},
-		{"home/end", "first/last"},
-		{"enter", "open"},
-		{"a", "sort"},
-		{".", "done rows"},
-		{"/", "filter"},
+// HelpKeys implements widget.HelpKeyer, listing all fleet keys for the '?' overlay (§2.3).
+func (f fleetView) HelpKeys() []widget.KeyHelp {
+	keys := []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "home/end", Help: "first/last"},
+		{Key: "enter", Help: "open"},
+		{Key: "a", Help: "sort"},
+		{Key: ".", Help: "done rows"},
+		{Key: "/", Help: "filter"},
 	}
 	if f.actions {
 		keys = append(keys,
-			KeyHelp{"s", "send"},
-			KeyHelp{"E", "edit+send"},
-			KeyHelp{"b", "bind"},
-			KeyHelp{"x", "stop"},
-			KeyHelp{"D", "done"},
-			KeyHelp{"u", "unbind"},
-			KeyHelp{"g", "gate"},
-			KeyHelp{"r", "retry on…"},
-			KeyHelp{"o", "shell"},
+			widget.KeyHelp{Key: "s", Help: "send"},
+			widget.KeyHelp{Key: "E", Help: "edit+send"},
+			widget.KeyHelp{Key: "b", Help: "bind"},
+			widget.KeyHelp{Key: "x", Help: "stop"},
+			widget.KeyHelp{Key: "D", Help: "done"},
+			widget.KeyHelp{Key: "u", Help: "unbind"},
+			widget.KeyHelp{Key: "g", Help: "gate"},
+			widget.KeyHelp{Key: "r", Help: "retry on…"},
+			widget.KeyHelp{Key: "o", Help: "shell"},
 		)
 	}
 	return keys
@@ -319,7 +319,7 @@ func (f fleetView) HelpKeys() []KeyHelp {
 
 // Context is the counts line on the left and the sort, filter and refresh
 // state on the right (§2.3).
-func (f fleetView) Context(env Env) (string, string) {
+func (f fleetView) Context(env widget.Env) (string, string) {
 	liveCount, needCount, workingCount, idleCount, heldCount, doneCount := 0, 0, 0, 0, 0, 0
 	for _, b := range env.Report.Bindings {
 		if b.Display == "DONE" {
@@ -422,7 +422,7 @@ func (f *fleetView) moveCursor(rows []view.BindingStatus, delta int) {
 }
 
 // Update handles the fleet's own keys (§2.3, §5.3, §5.4).
-func (f fleetView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (f fleetView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case statusMsg:
 		rows := f.rows(env)
@@ -475,7 +475,7 @@ func (f fleetView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 			if !f.attention {
 				order = "name"
 			}
-			return f, func() tea.Msg { return prefMsg{"sort", order} }
+			return f, func() tea.Msg { return widget.PrefMsg{Key: "sort", Value: order} }
 		case "enter":
 			if len(rows) == 0 {
 				return f, nil
@@ -494,7 +494,7 @@ func (f fleetView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 }
 
 // updateFilter owns every key while the filter input is open (A4).
-func (f fleetView) updateFilter(msg tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (f fleetView) updateFilter(msg tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
 		f.filterText = f.filter.Value()
@@ -514,7 +514,7 @@ func (f fleetView) updateFilter(msg tea.KeyMsg, env Env) (View, tea.Cmd) {
 }
 
 // repointed re-resolves the cursor and the window after the rows or filter changed.
-func (f fleetView) repointed(env Env) fleetView {
+func (f fleetView) repointed(env widget.Env) fleetView {
 	rows := f.rows(env)
 	f.resolveSticky(rows)
 	f.top = f.windowTop(rows, env)
@@ -717,7 +717,7 @@ func doneFoldLine(rows []view.BindingStatus, now time.Time, width int) string {
 }
 
 // cardLines renders the 5-line detail card at the top of the body (§2.3).
-func (f fleetView) cardLines(env Env, b view.BindingStatus, width int) []string {
+func (f fleetView) cardLines(env widget.Env, b view.BindingStatus, width int) []string {
 	g := groupOf(b)
 
 	// Top line
@@ -761,42 +761,42 @@ func (f fleetView) cardLines(env Env, b view.BindingStatus, width int) []string 
 	metaContent := "  " + strings.Join(metaParts, widget.MutedStyle.Render("  ·  "))
 
 	// Keys line
-	var cardKeys []KeyHelp
+	var cardKeys []widget.KeyHelp
 	if env.Actions == nil {
-		cardKeys = []KeyHelp{{"enter", "open round"}}
+		cardKeys = []widget.KeyHelp{{Key: "enter", Help: "open round"}}
 	} else {
 		switch g {
 		case groupNeedsYou:
-			cardKeys = []KeyHelp{
-				{"enter", "open round"},
-				{"s", "send the next plan"},
-				{"o", "shell"},
-				{"x", "stop"},
+			cardKeys = []widget.KeyHelp{
+				{Key: "enter", Help: "open round"},
+				{Key: "s", Help: "send the next plan"},
+				{Key: "o", Help: "shell"},
+				{Key: "x", Help: "stop"},
 			}
 		case groupWorking:
-			cardKeys = []KeyHelp{
-				{"enter", "open round"},
-				{"x", "stop"},
-				{"g", "gate"},
-				{"o", "shell"},
+			cardKeys = []widget.KeyHelp{
+				{Key: "enter", Help: "open round"},
+				{Key: "x", Help: "stop"},
+				{Key: "g", Help: "gate"},
+				{Key: "o", Help: "shell"},
 			}
 		case groupIdle:
-			cardKeys = []KeyHelp{
-				{"s", "send the next plan"},
-				{"enter", "open round"},
-				{"D", "done"},
-				{"o", "shell"},
+			cardKeys = []widget.KeyHelp{
+				{Key: "s", Help: "send the next plan"},
+				{Key: "enter", Help: "open round"},
+				{Key: "D", Help: "done"},
+				{Key: "o", Help: "shell"},
 			}
 		case groupHeld, groupOther:
-			cardKeys = []KeyHelp{
-				{"enter", "open round"},
-				{"s", "send"},
-				{"D", "done"},
+			cardKeys = []widget.KeyHelp{
+				{Key: "enter", Help: "open round"},
+				{Key: "s", Help: "send"},
+				{Key: "D", Help: "done"},
 			}
 		case groupDone:
-			cardKeys = []KeyHelp{
-				{"enter", "open round"},
-				{"u", "unbind"},
+			cardKeys = []widget.KeyHelp{
+				{Key: "enter", Help: "open round"},
+				{Key: "u", Help: "unbind"},
 			}
 		}
 	}
@@ -806,7 +806,7 @@ func (f fleetView) cardLines(env Env, b view.BindingStatus, width int) []string 
 }
 
 // gatedLine renders the provider gate notice as the last line of the body (§2.3).
-func gatedLine(env Env, width int) string {
+func gatedLine(env widget.Env, width int) string {
 	if len(env.Report.Gated) == 0 {
 		return ""
 	}
@@ -875,7 +875,7 @@ type fleetSlot struct {
 // fleetListSlots lays out the grouped sections and fold line (§2.3, §5.2)
 // without painting any of them: one slot per drawn line, carrying the row it
 // belongs to.
-func (f fleetView) fleetListSlots(env Env, rows []view.BindingStatus) []fleetSlot {
+func (f fleetView) fleetListSlots(env widget.Env, rows []view.BindingStatus) []fleetSlot {
 	q := f.activeFilter()
 	groups := []fleetGroup{groupNeedsYou, groupWorking, groupIdle, groupHeld, groupOther}
 	if f.showDone || q != "" {
@@ -913,7 +913,7 @@ func (f fleetView) fleetListSlots(env Env, rows []view.BindingStatus) []fleetSlo
 }
 
 // paintSlot renders one list line at width.
-func (f fleetView) paintSlot(s fleetSlot, rows []view.BindingStatus, env Env, width int) string {
+func (f fleetView) paintSlot(s fleetSlot, rows []view.BindingStatus, env widget.Env, width int) string {
 	switch s.kind {
 	case slotSection:
 		return widget.Fit(sectionLine(s.group, s.count), width)
@@ -976,7 +976,7 @@ func anyDone(bindings []view.BindingStatus) bool {
 
 // fleetListLines renders every line of the grouped sections and fold line
 // (§2.3, §5.2). A frame paints one window of them; this is the whole list.
-func (f fleetView) fleetListLines(env Env, width int) []fleetLine {
+func (f fleetView) fleetListLines(env widget.Env, width int) []fleetLine {
 	rows := f.rows(env)
 	slots := f.fleetListSlots(env, rows)
 	list := make([]fleetLine, 0, len(slots))
@@ -988,7 +988,7 @@ func (f fleetView) fleetListLines(env Env, width int) []fleetLine {
 
 // cardBlock returns the card's 5 lines plus one trailing blank line, or nil
 // when there is no selected row or height < 16 (§2, §3).
-func (f fleetView) cardBlock(env Env, width, height int) []string {
+func (f fleetView) cardBlock(env widget.Env, width, height int) []string {
 	rows := f.rows(env)
 	if len(rows) == 0 || height < 16 {
 		return nil
@@ -999,15 +999,15 @@ func (f fleetView) cardBlock(env Env, width, height int) []string {
 }
 
 // gatedBlock returns the gated line in a single-element slice, or nil when empty (§2, §3).
-func gatedBlock(env Env, width int) []string {
+func gatedBlock(env widget.Env, width int) []string {
 	if gl := gatedLine(env, width); gl != "" {
 		return []string{gl}
 	}
 	return nil
 }
 
-func (f fleetView) tableHeight(env Env) int {
-	bh := bodyHeight(env)
+func (f fleetView) tableHeight(env widget.Env) int {
+	bh := widget.BodyHeight(env)
 	fixedH := 1
 	if f.filtering {
 		fixedH++
@@ -1065,7 +1065,7 @@ func windowTopIndex(n, height, cursor, top int, rowOf func(int) int) int {
 	return top
 }
 
-func (f fleetView) windowTop(rows []view.BindingStatus, env Env) int {
+func (f fleetView) windowTop(rows []view.BindingStatus, env widget.Env) int {
 	slots := f.fleetListSlots(env, rows)
 	return f.windowTopSlots(slots, f.tableHeight(env))
 }
@@ -1073,7 +1073,7 @@ func (f fleetView) windowTop(rows []view.BindingStatus, env Env) int {
 // fleetWindowLines renders only the lines of the list a frame of listH lines
 // paints, padded out to listH. The window is chosen on the layout, so a line
 // that falls outside it is never rendered.
-func (f fleetView) fleetWindowLines(env Env, width, listH int) []string {
+func (f fleetView) fleetWindowLines(env widget.Env, width, listH int) []string {
 	rows := f.rows(env)
 	slots := f.fleetListSlots(env, rows)
 	start := f.windowTopSlots(slots, listH)
@@ -1095,7 +1095,7 @@ func (f fleetView) fleetWindowLines(env Env, width, listH int) []string {
 }
 
 // Body renders the card, grouped list, done fold and gated line (§2.3, §5.2).
-func (f fleetView) Body(env Env, width, height int) string {
+func (f fleetView) Body(env widget.Env, width, height int) string {
 	if !env.Loaded {
 		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}

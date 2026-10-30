@@ -130,9 +130,9 @@ func candUnusedReport() view.Report {
 	return rep
 }
 
-// candEnv is the Env the view's pure helpers are called with.
-func candEnv(rep view.Report) Env {
-	return Env{Loaded: true, Now: railNow, Report: rep, Width: 132, Height: 34}
+// candEnv is the widget.Env the view's pure helpers are called with.
+func candEnv(rep view.Report) widget.Env {
+	return widget.Env{Loaded: true, Now: railNow, Report: rep, Width: 132, Height: 34}
 }
 
 // goldenCandidatesModel is the candidates goldens' builder: a loaded shell, the
@@ -143,17 +143,17 @@ func goldenCandidatesModel(t *testing.T, width, height int, fa *fakeActions, rep
 	return drain(t, m, execLine("candidates", m.env(), m.prefs))
 }
 
-// candActionEnv is the view's Env with an Actions seam: the key tests pass an
-// env whose Actions is the fake under test.
-func candActionEnv(a Actions, rep view.Report) Env {
-	return Env{Ctx: context.Background(), Actions: a, Loaded: true, Now: railNow,
+// candActionEnv is the view's widget.Env with an widget.Actions seam: the key tests pass an
+// env whose widget.Actions is the fake under test.
+func candActionEnv(a widget.Actions, rep view.Report) widget.Env {
+	return widget.Env{Ctx: context.Background(), Actions: a, Loaded: true, Now: railNow,
 		Report: rep, Width: 132, Height: 34}
 }
 
 // candView loads a candidates view over fa's doc at width x height.
 func candView(t *testing.T, fa *fakeActions, rep view.Report, width, height int) candidatesView {
 	t.Helper()
-	env := Env{Ctx: context.Background(), Actions: fa, Report: rep, Loaded: true,
+	env := widget.Env{Ctx: context.Background(), Actions: fa, Report: rep, Loaded: true,
 		Now: railNow, Width: width, Height: height}
 	v, cmd := newCandidatesView(env)
 	next, _ := v.Update(cmd(), env)
@@ -288,12 +288,12 @@ func TestCandidatesDeleteRefusedIsNotice(t *testing.T) {
 		t.Fatal("d must return a command")
 	}
 	msg := cmd()
-	notice, ok := msg.(noticeMsg)
+	notice, ok := msg.(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("d on the researcher's only candidate gave %T, want a notice", msg)
 	}
-	if !strings.Contains(notice.text, "researcher has no other candidate") {
-		t.Errorf("notice = %q, want it to name the researcher", notice.text)
+	if !strings.Contains(notice.Text, "researcher has no other candidate") {
+		t.Errorf("notice = %q, want it to name the researcher", notice.Text)
 	}
 	if len(fa.configEdits) != 0 {
 		t.Error("a refused delete must not write an edit")
@@ -428,17 +428,17 @@ func TestCandidatesKeysAndHelpKeys(t *testing.T) {
 }
 
 func TestCandidatesNeedsActions(t *testing.T) {
-	env := Env{Ctx: context.Background(), Loaded: true, Now: railNow, Width: 132, Height: 34}
+	env := widget.Env{Ctx: context.Background(), Loaded: true, Now: railNow, Width: 132, Height: 34}
 	cmd := execLine("candidates", env, prefs{})
 	if cmd == nil {
-		t.Fatal(":candidates with no Actions must return a notice")
+		t.Fatal(":candidates with no widget.Actions must return a notice")
 	}
-	msg, ok := cmd().(noticeMsg)
+	msg, ok := cmd().(widget.NoticeMsg)
 	if !ok {
-		t.Fatalf(":candidates with no Actions gave %T, want a notice", cmd())
+		t.Fatalf(":candidates with no widget.Actions gave %T, want a notice", cmd())
 	}
-	if !strings.Contains(msg.text, "need relevo ui") {
-		t.Errorf("notice = %q", msg.text)
+	if !strings.Contains(msg.Text, "need relevo ui") {
+		t.Errorf("notice = %q", msg.Text)
 	}
 }
 

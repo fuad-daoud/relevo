@@ -19,7 +19,7 @@ import (
 
 // unresolvableSource resolves no key at all: the way a server source answers a
 // key whose owner it does not hold.
-type unresolvableSource struct{ Source }
+type unresolvableSource struct{ widget.Source }
 
 func (unresolvableSource) Runtime(string) (relevo.Runtime, string, bool) {
 	return relevo.Runtime{}, "", false
@@ -127,7 +127,7 @@ func TestFleetReportCarriesNoDetailFigures(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
-		src  Source
+		src  widget.Source
 	}{
 		{"mastermindSource", mastermindSource{rt}},
 		{"liveSource", liveSource{newLiveRuntime(rt)}},

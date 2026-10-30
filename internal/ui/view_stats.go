@@ -181,7 +181,7 @@ func cutFor(window string, now time.Time) time.Time {
 
 // newStatsView builds ':stats' on window. It refuses without a database,
 // exactly as newRoundsView does; the returned command is the first fetch.
-func newStatsView(env Env, window string) (View, tea.Cmd, error) {
+func newStatsView(env widget.Env, window string) (widget.View, tea.Cmd, error) {
 	if env.Src.Base().DB == nil {
 		return nil, nil, relevo.ErrNoDatabase
 	}
@@ -193,7 +193,7 @@ func newStatsView(env Env, window string) (View, tea.Cmd, error) {
 }
 
 // fetch is the async read: StatsInputs then Build, reported as a statsMsg.
-func (v statsView) fetch(env Env) tea.Cmd {
+func (v statsView) fetch(env widget.Env) tea.Cmd {
 	window := v.window
 	rt := env.Src.Base()
 	cut := cutFor(window, env.Now)
@@ -210,55 +210,55 @@ func (v statsView) Crumbs() []string { return []string{"stats"} }
 
 func (v statsView) Capturing() bool { return false }
 
-func (v statsView) Keys() []KeyHelp {
+func (v statsView) Keys() []widget.KeyHelp {
 	switch statsTabs[v.tab] {
 	case "overview":
-		return []KeyHelp{
-			{"↑↓", "move"},
-			{"←→", "table"},
-			{"enter", "its rounds"},
-			{"tab", "next tab"},
-			{"w", "window"},
+		return []widget.KeyHelp{
+			{Key: "↑↓", Help: "move"},
+			{Key: "←→", Help: "table"},
+			{Key: "enter", Help: "its rounds"},
+			{Key: "tab", Help: "next tab"},
+			{Key: "w", Help: "window"},
 		}
 	case "candidates":
-		return []KeyHelp{
-			{"↑↓", "move"},
-			{"enter", "its rounds"},
-			{"tab", "next tab"},
-			{"w", "window"},
+		return []widget.KeyHelp{
+			{Key: "↑↓", Help: "move"},
+			{Key: "enter", Help: "its rounds"},
+			{Key: "tab", Help: "next tab"},
+			{Key: "w", Help: "window"},
 		}
 	case "repos":
-		return []KeyHelp{
-			{"↑↓", "move"},
-			{"space", "expand"},
-			{"enter", "its rounds"},
-			{"tab", "next tab"},
-			{"w", "window"},
+		return []widget.KeyHelp{
+			{Key: "↑↓", Help: "move"},
+			{Key: "space", Help: "expand"},
+			{Key: "enter", Help: "its rounds"},
+			{Key: "tab", Help: "next tab"},
+			{Key: "w", Help: "window"},
 		}
 	case "tokens":
-		return []KeyHelp{
-			{"↑↓", "scroll"},
-			{"s", "split"},
-			{"tab", "next tab"},
-			{"w", "window"},
+		return []widget.KeyHelp{
+			{Key: "↑↓", Help: "scroll"},
+			{Key: "s", Help: "split"},
+			{Key: "tab", Help: "next tab"},
+			{Key: "w", Help: "window"},
 		}
 	case "reliability":
-		return []KeyHelp{
-			{"↑↓", "scroll"},
-			{"tab", "next tab"},
-			{"w", "window"},
+		return []widget.KeyHelp{
+			{Key: "↑↓", Help: "scroll"},
+			{Key: "tab", Help: "next tab"},
+			{Key: "w", Help: "window"},
 		}
 	}
-	return []KeyHelp{
-		{"tab", "next tab"},
-		{"w", "window"},
+	return []widget.KeyHelp{
+		{Key: "tab", Help: "next tab"},
+		{Key: "w", Help: "window"},
 	}
 }
 
 // Context is the tabs row on the left and the windows and refresh state on the
 // right (§2.1). The totals are the overview's tiles now. No dollars: tokens are
 // what a subscription lane can watch.
-func (v statsView) Context(env Env) (string, string) {
+func (v statsView) Context(env widget.Env) (string, string) {
 	chips := make([]string, len(statsWindows))
 	for i, w := range statsWindows {
 		if w == v.window {
@@ -277,7 +277,7 @@ func (v statsView) Context(env Env) (string, string) {
 	return v.statsTabsRow(), right
 }
 
-func (v statsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v statsView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case statsMsg:
 		// A reply for another window is stale after a `w`: drop it.
@@ -316,7 +316,7 @@ func (v statsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	return v, nil
 }
 
-func (v statsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v statsView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	switch k.String() {
 	case "w":
 		v.window = nextStatsWindow(v.window)
@@ -491,7 +491,7 @@ func (v statsView) repoRowIndex(key string) int {
 // (§4.1): a child collapses its repo and leaves the cursor on the repo's row; a
 // repo row toggles in place, so the cursor does not move. A repo with nothing to
 // show notices instead of expanding, so the key never looks dead.
-func (v *statsView) toggleSelectedRepo(env Env) tea.Cmd {
+func (v *statsView) toggleSelectedRepo(env widget.Env) tea.Cmd {
 	key, child, ok := v.reposSelected()
 	if !ok {
 		return nil
@@ -506,7 +506,7 @@ func (v *statsView) toggleSelectedRepo(env Env) tea.Cmd {
 
 // expandSelectedRepo shows the selected row's repo's children; expanding never
 // moves the cursor (§4.1).
-func (v *statsView) expandSelectedRepo(env Env) tea.Cmd {
+func (v *statsView) expandSelectedRepo(env widget.Env) tea.Cmd {
 	if key, _, ok := v.reposSelected(); ok {
 		return v.expandRepo(key)
 	}
@@ -515,7 +515,7 @@ func (v *statsView) expandSelectedRepo(env Env) tea.Cmd {
 
 // collapseSelectedRepo hides the selected row's repo's children; a cursor on one
 // of them lands on the repo's own row (§4.1).
-func (v *statsView) collapseSelectedRepo(env Env) {
+func (v *statsView) collapseSelectedRepo(env widget.Env) {
 	if key, child, ok := v.reposSelected(); ok {
 		v.collapseRepo(key, child)
 		v.follow(env)
@@ -625,7 +625,7 @@ func (v statsView) sinceTerm() string {
 // enter opens `:rounds` filtered to the focused panel's selected row (§4.3,
 // §4.4). On the repos tab the cursor indexes the visible rows: every repo row,
 // plus the children of the expanded repos.
-func (v statsView) enter(env Env) (View, tea.Cmd) {
+func (v statsView) enter(env widget.Env) (widget.View, tea.Cmd) {
 	if v.focus == 0 {
 		names := env.Src.Base().Candidates.NameOf
 		rows := v.overviewCandRows(names)
@@ -664,7 +664,7 @@ func (v statsView) enter(env Env) (View, tea.Cmd) {
 // term; a ticket under the (no feature) bucket has none. A "(none)" label keeps
 // its notice, and a child of the "(none)" repo cannot be expressed -- no query
 // term means "no repo" -- so it notices.
-func (v statsView) enterRepoChild(env Env, r repoTabRow, term string) (View, tea.Cmd) {
+func (v statsView) enterRepoChild(env widget.Env, r repoTabRow, term string) (widget.View, tea.Cmd) {
 	if r.group.Key == "(none)" {
 		return v, notice("rounds with no " + term + " cannot be filtered")
 	}
@@ -680,7 +680,7 @@ func (v statsView) enterRepoChild(env Env, r repoTabRow, term string) (View, tea
 
 // enterOverview opens `:rounds` filtered to the overview table's selected row
 // (§4.10): the candidates table's token, or the repos table's key.
-func (v statsView) enterOverview(env Env) (View, tea.Cmd) {
+func (v statsView) enterOverview(env widget.Env) (widget.View, tea.Cmd) {
 	if v.ovFocus == 0 {
 		names := env.Src.Base().Candidates.NameOf
 		rows := v.overviewCandRows(names)
@@ -710,18 +710,18 @@ func (v statsView) enterOverview(env Env) (View, tea.Cmd) {
 
 // roundsForCandidate is the `candidate:<token><since>` query both the tabs'
 // enter and the overview's share (§4.10).
-func (v statsView) roundsForCandidate(env Env, token string) (View, tea.Cmd) {
+func (v statsView) roundsForCandidate(env widget.Env, token string) (widget.View, tea.Cmd) {
 	return v.openRounds(env, "candidate:"+token+v.sinceTerm())
 }
 
 // roundsForRepo is the `repo:"<key>"<since>` query both the tabs' enter and
 // the overview's share (§4.10).
-func (v statsView) roundsForRepo(env Env, key string) (View, tea.Cmd) {
+func (v statsView) roundsForRepo(env widget.Env, key string) (widget.View, tea.Cmd) {
 	return v.openRounds(env, `repo:"`+key+`"`+v.sinceTerm())
 }
 
 // openRounds pushes a rounds view on q, or notices the error.
-func (v statsView) openRounds(env Env, q string) (View, tea.Cmd) {
+func (v statsView) openRounds(env widget.Env, q string) (widget.View, tea.Cmd) {
 	rv, init, err := newRoundsView(env, q, "")
 	if err != nil {
 		return v, notice("no database: " + err.Error())
@@ -743,7 +743,7 @@ func statsClamp(i, n int) int {
 // Body is the whole board (§4.3): a blank line under the context row, then the
 // active tab's body, or a state line before the first report. When the body is
 // taller than the room, that head line carries the page hint (§3.5).
-func (v statsView) Body(env Env, width, height int) string {
+func (v statsView) Body(env widget.Env, width, height int) string {
 	if !v.loaded && v.err != nil {
 		lines := strings.Split(widget.RenderError(v.err, width), "\n")
 		return strings.Join(widget.FitLines(lines, width, height), "\n")
@@ -812,7 +812,7 @@ func (v statsView) statsTabsRow() string {
 // tabLines is the active tab's body. The tabs that have not been redone yet
 // keep their existing panel at full width (§3.1). sel is the visible line of
 // the overview's selected table row, or -1 on every other tab (§3.1).
-func (v statsView) tabLines(env Env, width, height int) ([]string, int) {
+func (v statsView) tabLines(env widget.Env, width, height int) ([]string, int) {
 	switch statsTabs[v.tab] {
 	case "candidates":
 		return v.candidatesTabLines(env, width)
@@ -830,8 +830,8 @@ func (v statsView) tabLines(env Env, width, height int) ([]string, int) {
 // size: the active tab at the body's width and the room it has under the head
 // line. sel is the tab's selected line, -1 when the tab has none. It is only
 // meaningful once a report is loaded and non-empty (§3.2).
-func (v statsView) page(env Env) (lines []string, sel, avail int) {
-	avail = bodyHeight(env) - 1
+func (v statsView) page(env widget.Env) (lines []string, sel, avail int) {
+	avail = widget.BodyHeight(env) - 1
 	if !v.loaded || v.rep.Totals.Rounds == 0 {
 		return nil, -1, avail
 	}
@@ -847,7 +847,7 @@ func statsMaxTop(n, avail int) int {
 
 // follow scrolls the page to keep the overview's selected row visible after a
 // cursor or focus move; on a tab with no selected row it does nothing (§3.4).
-func (v *statsView) follow(env Env) {
+func (v *statsView) follow(env widget.Env) {
 	lines, sel, avail := v.page(env)
 	if sel < 0 {
 		return
@@ -880,7 +880,7 @@ const statsOverviewTablesWide = 120
 // candidates and busiest-repos tables. Each leaves three cells on the right
 // (§3.3). height is the room the overview may fill. sel is the visible line of
 // the focused table's selected row, or -1 when that table is empty (§3.1).
-func (v statsView) overviewLines(env Env, width, height int) ([]string, int) {
+func (v statsView) overviewLines(env widget.Env, width, height int) ([]string, int) {
 	t := v.rep.Totals
 	k := t.TokenKinds
 
@@ -1475,7 +1475,7 @@ func (v statsView) overviewCandRows(names func(string) string) []statsOverviewCa
 // the table overflows, the `a–b of n` count rides in the header's name column.
 // cellW is the table's width and rows its viewport. sel is the selected row's
 // visible offset, or -1 when the table has no rows (§3.1).
-func (v statsView) statsOverviewCandidates(env Env, cellW, rows int) ([]string, int) {
+func (v statsView) statsOverviewCandidates(env widget.Env, cellW, rows int) ([]string, int) {
 	nameW := statsCandidateNameW(cellW)
 	names := env.Src.Base().Candidates.NameOf
 	cands := v.overviewCandRows(names)
@@ -1718,7 +1718,7 @@ func statsStackedTable(cells []string, width int) []string {
 // row with no windowing, because the page scrolls -- two blank lines and the
 // selected row's detail block. sel is the selected row's line, 1+i, which the
 // page follows. A table with no row is its header alone, and sel is -1 (§5).
-func (v statsView) candidatesTabLines(env Env, width int) ([]string, int) {
+func (v statsView) candidatesTabLines(env widget.Env, width int) ([]string, int) {
 	names := env.Src.Base().Candidates.NameOf
 	rows := v.overviewCandRows(names)
 	visible, nameW := statsCandVisible(width)
@@ -1847,7 +1847,7 @@ func statsCandCell(s stats.ScoreRow, head string) string {
 // totals, then the measured split, then the rounds that reported token usage.
 // An idle row says it has no rounds instead of the last three lines. Each line
 // starts with the three-cell gutter and is cut to width-6.
-func (v statsView) statsCandDetail(env Env, c statsOverviewCand) []string {
+func (v statsView) statsCandDetail(env widget.Env, c statsOverviewCand) []string {
 	width := env.Width - 6
 	if width < 1 {
 		width = 1
@@ -1872,7 +1872,7 @@ func (v statsView) statsCandDetail(env Env, c statsOverviewCand) []string {
 // role registry (view.CandidateRoles), which is where the actors config
 // keeps them. They are omitted, with their " · ", when the token does not
 // parse, the set is nil, or the candidate has no role.
-func statsCandMeta(env Env, token string) string {
+func statsCandMeta(env widget.Env, token string) string {
 	ref, err := candidate.ParseRef(token)
 	if err != nil {
 		return ""
@@ -2024,7 +2024,7 @@ func statsSeriesOrder(series []statsSeries) []statsSeries {
 
 // statsSeriesFor is the active split's series (§2.2). shared reports whether
 // they compare on one scale: candidate and provider do, kind does not.
-func (v statsView) statsSeriesFor(env Env, split int) (series []statsSeries, shared bool) {
+func (v statsView) statsSeriesFor(env widget.Env, split int) (series []statsSeries, shared bool) {
 	switch split {
 	case 2:
 		return v.statsProviderSeries(v.rep.Spend.Days), true
@@ -2039,7 +2039,7 @@ func (v statsView) statsSeriesFor(env Env, split int) (series []statsSeries, sha
 // statsCandidateSeries is the candidate split (§4.2): one chart per candidate
 // with tokens in the window, then every configured candidate without any. A
 // round with no candidate carries no tokens now, so "(none)" is skipped.
-func (v statsView) statsCandidateSeries(env Env, days []stats.DayCost) []statsSeries {
+func (v statsView) statsCandidateSeries(env widget.Env, days []stats.DayCost) []statsSeries {
 	names := env.Src.Base().Candidates.NameOf
 	totals := map[string]int64{}
 	for _, d := range days {
@@ -2310,7 +2310,7 @@ func statsWeekLine(days []stats.DayCost) string {
 // tokensTabLines is the tokens tab (§4.5): the split chips, the total split's
 // timeline or the selected split's stacked charts, then the week line. With no
 // tokens in the window one faint line replaces the chart.
-func (v statsView) tokensTabLines(env Env, width, height int) []string {
+func (v statsView) tokensTabLines(env widget.Env, width, height int) []string {
 	days := v.rep.Spend.Days
 	out := []string{statsSplitChips(v.split), ""}
 
@@ -2468,7 +2468,7 @@ func statsGatesCols(width int) (nameW, reasonW int) {
 // when none is. The table fills [3, width-3): CANDIDATE takes the room left
 // after PROVIDER, UNTIL, LEFT and the gap, and REASON is cut with statsCut
 // and padded to reasonW so every row ends at exactly width-3.
-func (v statsView) statsGatesLines(env Env, width int) []string {
+func (v statsView) statsGatesLines(env widget.Env, width int) []string {
 	gates := v.statsReliableGates()
 	if len(gates) == 0 {
 		return []string{"   " + widget.FaintStyle.Render("no candidate is gated")}
@@ -2540,7 +2540,7 @@ func (v statsView) statsHourLines(width int) []string {
 // reliabilityTabLines is the reliability tab (§5.1): the four tiles, the gates
 // table and the limits-by-hour table, each pair separated by two blank lines.
 // The tab has no cursor and no detail block.
-func (v statsView) reliabilityTabLines(env Env, width int) []string {
+func (v statsView) reliabilityTabLines(env widget.Env, width int) []string {
 	rel := v.rep.Reliability
 	tiles := [][3]string{
 		{"SWITCHES", strconv.Itoa(rel.Switches),
@@ -2789,7 +2789,7 @@ func statsRepoRow(g stats.GroupRow, kind repoKind, windowTotal int64, nameW int,
 // indented two cells further inside the name column -- then two blank lines and
 // the selected row's detail block. sel is the selected row's line, so the page
 // follows the cursor.
-func (v statsView) reposTabLines(env Env, width int) ([]string, int) {
+func (v statsView) reposTabLines(env widget.Env, width int) ([]string, int) {
 	rows := v.repoTabRows()
 	n := len(rows)
 	visible, nameW := statsRepoVisible(width)
@@ -2824,7 +2824,7 @@ func (v statsView) reposTabLines(env Env, width int) ([]string, int) {
 // statsGroupDetail is the selected repos-tab row's detail block (§4.3): the
 // name and its kind, the totals, the outcomes and the top candidates. Each
 // line starts with the three-cell gutter and is cut to width-6.
-func (v statsView) statsGroupDetail(env Env, g stats.GroupRow, kind repoKind, windowTotal int64) []string {
+func (v statsView) statsGroupDetail(env widget.Env, g stats.GroupRow, kind repoKind, windowTotal int64) []string {
 	w := env.Width - 6
 	if w < 1 {
 		w = 1
@@ -2884,7 +2884,7 @@ func (v statsView) statsGroupDetail(env Env, g stats.GroupRow, kind repoKind, wi
 // statsGroupCandidates is a group's top candidates for the detail block's last
 // line (§4.3): the three largest round counts, ties by name, each as
 // "<name> <n> rounds" ("round" at one).
-func (v statsView) statsGroupCandidates(env Env, byCandidate map[string]int) string {
+func (v statsView) statsGroupCandidates(env widget.Env, byCandidate map[string]int) string {
 	type cand struct {
 		name   string
 		rounds int

@@ -28,7 +28,7 @@ type actorView struct {
 }
 
 // newActorView pushes the actor's detail view (§4).
-func newActorView(env Env, doc relevo.ConfigDoc, name string) (View, tea.Cmd) {
+func newActorView(env widget.Env, doc relevo.ConfigDoc, name string) (widget.View, tea.Cmd) {
 	v := actorView{name: name, doc: doc, loaded: true}
 	return v, candDocCmd(env)
 }
@@ -75,7 +75,7 @@ func actorPickHeaderLine(nameW int, cols []actorCol, cw int) string {
 // actorPickLine is one entry's row (§4). An off row is faint throughout; the
 // cursor row's candidate name is bold; the entry that would be picked next
 // carries the `next pick` marker in its STATUS cell.
-func actorPickLine(doc relevo.ConfigDoc, env Env, name string, i int, sel bool, nameW int, cols []actorCol, cw int) string {
+func actorPickLine(doc relevo.ConfigDoc, env widget.Env, name string, i int, sel bool, nameW int, cols []actorCol, cw int) string {
 	a := doc.Actors[name]
 	e := a.Candidates[i]
 	base, meta := widget.TextStyle, widget.MutedStyle
@@ -136,7 +136,7 @@ func actorScopeText(scope *pathscope.Scope) string {
 
 // bodyLines is the whole detail body before it is windowed: a blank line under
 // the context row, the table, two blank lines and the check line (§4).
-func (v actorView) bodyLines(env Env, width int) []string {
+func (v actorView) bodyLines(env widget.Env, width int) []string {
 	a := v.doc.Actors[v.name]
 	nameW, cols := actorPickLayout(width)
 	cw := width - 6
@@ -162,8 +162,8 @@ func (v actorView) bodyLines(env Env, width int) []string {
 }
 
 // follow scrolls the page so the cursor's table row stays visible (§4).
-func (v *actorView) follow(env Env) {
-	avail := bodyHeight(env)
+func (v *actorView) follow(env widget.Env) {
+	avail := widget.BodyHeight(env)
 	if avail <= 0 {
 		v.top = 0
 		return
@@ -192,45 +192,45 @@ func (v actorView) Capturing() bool { return false }
 
 // Keys are the detail view's keys (§4), for the pane that owns them: a
 // placement entry has no on/off, and tab names the pane it would move to.
-func (v actorView) Keys() []KeyHelp {
-	tab := KeyHelp{"tab", "placement"}
+func (v actorView) Keys() []widget.KeyHelp {
+	tab := widget.KeyHelp{Key: "tab", Help: "placement"}
 	if v.placementFocus() {
-		tab = KeyHelp{"tab", "candidates"}
+		tab = widget.KeyHelp{Key: "tab", Help: "candidates"}
 	}
-	keys := []KeyHelp{
-		{"↑↓", "move"},
-		{"shift+↑↓", "reorder"},
+	keys := []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "shift+↑↓", Help: "reorder"},
 	}
 	if !v.placementFocus() {
-		keys = append(keys, KeyHelp{"space", "on / off"})
+		keys = append(keys, widget.KeyHelp{Key: "space", Help: "on / off"})
 	}
 	return append(keys,
-		KeyHelp{"a", "add"},
-		KeyHelp{"d", "remove"},
-		KeyHelp{"e", "edit"},
+		widget.KeyHelp{Key: "a", Help: "add"},
+		widget.KeyHelp{Key: "d", Help: "remove"},
+		widget.KeyHelp{Key: "e", Help: "edit"},
 		tab,
-		KeyHelp{"esc", "back"},
+		widget.KeyHelp{Key: "esc", Help: "back"},
 	)
 }
 
 // HelpKeys is the help overlay's key list (§2.2): both panes' keys, so the
 // overlay documents the pane that does not own them right now too.
-func (v actorView) HelpKeys() []KeyHelp {
-	return []KeyHelp{
-		{"↑↓", "move"},
-		{"shift+↑↓", "reorder"},
-		{"space", "on / off"},
-		{"a", "add"},
-		{"d", "remove"},
-		{"e", "edit"},
-		{"tab", "switch list"},
-		{"esc", "back"},
+func (v actorView) HelpKeys() []widget.KeyHelp {
+	return []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "shift+↑↓", Help: "reorder"},
+		{Key: "space", Help: "on / off"},
+		{Key: "a", Help: "add"},
+		{Key: "d", Help: "remove"},
+		{Key: "e", Help: "edit"},
+		{Key: "tab", Help: "switch list"},
+		{Key: "esc", Help: "back"},
 	}
 }
 
 // Context is the actor's summary line (§4): the agent and shape, the tier, the
 // candidate count and the next pick.
-func (v actorView) Context(env Env) (string, string) {
+func (v actorView) Context(env widget.Env) (string, string) {
 	a := v.doc.Actors[v.name]
 	tier, tierStyle := a.Tier, widget.TextStyle
 	if tier == "" {
@@ -247,7 +247,7 @@ func (v actorView) Context(env Env) (string, string) {
 	return left, ""
 }
 
-func (v actorView) Body(env Env, width, height int) string {
+func (v actorView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
@@ -269,7 +269,7 @@ func (v actorView) Body(env Env, width, height int) string {
 	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
-func (v actorView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v actorView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case candDocMsg:
 		if msg.err != nil {
@@ -298,7 +298,7 @@ func (v actorView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 // in flight, every change key is ignored -- in both panes, since either one
 // would build a second edit on a list the first has not written yet. tab
 // changes nothing on its own, so it still moves the focus.
-func (v actorView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v actorView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	entries := v.doc.Actors[v.name].Candidates
 	n := len(entries)
 
@@ -336,10 +336,10 @@ func (v actorView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		v.cur = candClamp(n-1, n)
 		v.follow(env)
 	case "pgup":
-		v.cur = candClamp(v.cur-bodyHeight(env), n)
+		v.cur = candClamp(v.cur-widget.BodyHeight(env), n)
 		v.follow(env)
 	case "pgdown":
-		v.cur = candClamp(v.cur+bodyHeight(env), n)
+		v.cur = candClamp(v.cur+widget.BodyHeight(env), n)
 		v.follow(env)
 	case "shift+up":
 		if n < 2 || v.cur <= 0 {
@@ -407,20 +407,20 @@ func withActorEntries(doc relevo.ConfigDoc, name string, entries []roles.Entry) 
 // change is every entry change's one path (§4): validate next with
 // SetActorEntries, update the local doc, then apply the edit. A refused edit
 // is a notice.
-func (v actorView) change(env Env, next []roles.Entry) (View, tea.Cmd) {
+func (v actorView) change(env widget.Env, next []roles.Entry) (widget.View, tea.Cmd) {
 	edit, err := relevo.SetActorEntries(v.doc, v.name, next)
 	if err != nil {
 		return v, notice(err.Error())
 	}
 	v.doc = withActorEntries(v.doc, v.name, next)
-	return v, runAction(env.Ctx, "edit actor", "actor:"+v.name, func(ctx context.Context) Result {
+	return v, runAction(env.Ctx, "edit actor", "actor:"+v.name, func(ctx context.Context) widget.Result {
 		return env.Actions.ApplyConfig(ctx, edit)
 	})
 }
 
 // pickCmd is the a key (§4): a listBox of the doc's candidates not already in
 // this actor's list, in stored order.
-func (v actorView) pickCmd(env Env) tea.Cmd {
+func (v actorView) pickCmd(env widget.Env) tea.Cmd {
 	items := actorPickItems(v.doc, v.name, env)
 	if len(items) == 0 {
 		return notice("every candidate is already in " + v.name + "'s list")
@@ -441,7 +441,7 @@ func (v actorView) pickCmd(env Env) tea.Cmd {
 
 // actorPickItems is the picker's rows (§4): each candidate not already in the
 // actor's list, its status the entry's own, its note `harness · provider`.
-func actorPickItems(doc relevo.ConfigDoc, name string, env Env) []listItem {
+func actorPickItems(doc relevo.ConfigDoc, name string, env widget.Env) []listItem {
 	inList := make(map[string]bool, len(doc.Actors[name].Candidates))
 	for _, e := range doc.Actors[name].Candidates {
 		if n := candName(doc, e.Candidate); n != "" {

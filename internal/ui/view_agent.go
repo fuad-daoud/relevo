@@ -38,7 +38,7 @@ type agentView struct {
 
 // newAgentView pushes the agent's detail view (§4). env.Actions must be
 // non-nil: ':agents' refuses to open without it.
-func newAgentView(env Env, doc relevo.ConfigDoc, r agentRow) (View, tea.Cmd) {
+func newAgentView(env widget.Env, doc relevo.ConfigDoc, r agentRow) (widget.View, tea.Cmd) {
 	v := agentView{name: r.name, row: r, doc: doc, files: r.files, loaded: true}
 	if env.Actions == nil {
 		return v, nil
@@ -47,7 +47,7 @@ func newAgentView(env Env, doc relevo.ConfigDoc, r agentRow) (View, tea.Cmd) {
 }
 
 // agentFilesCmd reads one agent's definition states off the update loop.
-func agentFilesCmd(env Env, name string) tea.Cmd {
+func agentFilesCmd(env widget.Env, name string) tea.Cmd {
 	return func() tea.Msg {
 		files, err := env.Actions.AgentFiles(name)
 		return agentFilesMsg{name: name, files: files, err: err}
@@ -139,7 +139,7 @@ func agentFileLineOf(f agentFileRow, sel bool, nameW int, cols []candCol, cw int
 
 // bodyLines is the whole detail body before it is windowed: a blank line under
 // the context row, then the table (§4).
-func (v agentView) bodyLines(env Env, width int) []string {
+func (v agentView) bodyLines(env widget.Env, width int) []string {
 	rows := v.rows()
 	nameW, cols := agentFileLayout(width)
 	cw := width - 6
@@ -169,13 +169,13 @@ func (v agentView) bodyLines(env Env, width int) []string {
 }
 
 // follow scrolls the page so the cursor's table row stays visible (§4).
-func (v *agentView) follow(env Env) {
+func (v *agentView) follow(env widget.Env) {
 	rows := v.rows()
 	if len(rows) == 0 {
 		v.top = 0
 		return
 	}
-	avail := bodyHeight(env)
+	avail := widget.BodyHeight(env)
 	if avail <= 0 {
 		v.top = 0
 		return
@@ -199,30 +199,30 @@ func (v agentView) Capturing() bool { return false }
 // Keys are the detail view's keys. A native custom agent's view has no `r`:
 // relevo writes no file for it, so a reset has nothing to restore. `esc back`
 // is left to the shell's own tail.
-func (v agentView) Keys() []KeyHelp {
-	keys := []KeyHelp{
-		{"↑↓", "move"},
-		{"e", "edit in $EDITOR"},
+func (v agentView) Keys() []widget.KeyHelp {
+	keys := []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "e", Help: "edit in $EDITOR"},
 	}
 	if v.row.source == "shipped" || relevo.IsSourceAgent(v.doc.Agents, v.name) {
-		keys = append(keys, KeyHelp{"r", "reset"})
+		keys = append(keys, widget.KeyHelp{Key: "r", Help: "reset"})
 	}
 	return keys
 }
 
 // HelpKeys is the help overlay's key list (§2.2): the same set.
-func (v agentView) HelpKeys() []KeyHelp { return v.Keys() }
+func (v agentView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
 // Context is the agent's summary line (§4): the source and shape, who uses it,
 // and how many harness kinds carry a file.
-func (v agentView) Context(env Env) (string, string) {
+func (v agentView) Context(env widget.Env) (string, string) {
 	rows := v.rows()
 	left := "   " + widget.MutedStyle.Render(v.row.source+" · "+v.row.shape+" · "+agentUsedText(v.row)) +
 		"   " + widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", len(rows))) + widget.MutedStyle.Render(" harnesses")
 	return left, ""
 }
 
-func (v agentView) Body(env Env, width, height int) string {
+func (v agentView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
@@ -244,7 +244,7 @@ func (v agentView) Body(env Env, width, height int) string {
 	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
-func (v agentView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v agentView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case agentFilesMsg:
 		if msg.err != nil {
@@ -272,7 +272,7 @@ func (v agentView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 }
 
 // updateKey is the detail view's own keys (§4).
-func (v agentView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v agentView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	if env.Actions == nil {
 		return v, nil
 	}
@@ -292,10 +292,10 @@ func (v agentView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		v.cur = candClamp(n-1, n)
 		v.follow(env)
 	case "pgup":
-		v.cur = candClamp(v.cur-bodyHeight(env), n)
+		v.cur = candClamp(v.cur-widget.BodyHeight(env), n)
 		v.follow(env)
 	case "pgdown":
-		v.cur = candClamp(v.cur+bodyHeight(env), n)
+		v.cur = candClamp(v.cur+widget.BodyHeight(env), n)
 		v.follow(env)
 	case "e":
 		if n == 0 {
@@ -314,7 +314,7 @@ func (v agentView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 // editCmd is the e key (§4): the user's editor on the cursor file, run with
 // the terminal released. A file not on disk has nothing to open, and a failure
 // to build the command is a notice.
-func (v agentView) editCmd(env Env, f agentFileRow) tea.Cmd {
+func (v agentView) editCmd(env widget.Env, f agentFileRow) tea.Cmd {
 	if f.state == harness.FileMissing {
 		return notice(f.kind + " has no " + v.name + " file yet")
 	}
@@ -324,7 +324,7 @@ func (v agentView) editCmd(env Env, f agentFileRow) tea.Cmd {
 	}
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		if err != nil {
-			return noticeMsg{text: err.Error()}
+			return widget.NoticeMsg{Text: err.Error()}
 		}
 		return agentReloadMsg{}
 	})
@@ -345,7 +345,7 @@ func copyNoun(custom bool) string {
 // A reset is a danger confirm, because the edit it discards cannot come back. A
 // missing file is a write rather than a reset: nothing is lost, the confirm's
 // title, label and note say so.
-func (v agentView) resetCmd(env Env, f agentFileRow) tea.Cmd {
+func (v agentView) resetCmd(env widget.Env, f agentFileRow) tea.Cmd {
 	if f.state != harness.FileEdited && f.state != harness.FileEditedNewer && f.state != harness.FileStale && f.state != harness.FileMissing {
 		return notice(f.kind + "'s " + v.name + " is up to date")
 	}
@@ -373,7 +373,7 @@ func (v agentView) resetCmd(env Env, f agentFileRow) tea.Cmd {
 			widget.Pad(label, 11) + tildePath(f.path),
 			widget.Pad("", 11) + note,
 		},
-		onYes: runAction(env.Ctx, "reset agent", kind+"/"+name, func(ctx context.Context) Result {
+		onYes: runAction(env.Ctx, "reset agent", kind+"/"+name, func(ctx context.Context) widget.Result {
 			return env.Actions.ResetAgentFile(ctx, kind, name)
 		}),
 	})

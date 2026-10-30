@@ -120,13 +120,13 @@ func (p roundPane) moveArtifact(delta int) (roundPane, tea.Cmd) {
 }
 
 // openCmd is enter on an artifacts row: the selected file in the pager, the
-// browser or the editor, through the Actions seam, so no test ever runs one.
+// browser or the editor, through the widget.Actions seam, so no test ever runs one.
 // A file still on disk opens where it is; a sealed file -- one the seal pass
 // moved into round_file -- is first written to a temp file under os.TempDir()
 // whose name starts with its own, and that is what opens. An .excalidraw scene
 // with a companion .svg opens that svg instead, through the same decision the
 // OPENS IN cell reads.
-func (p roundPane) openCmd(env Env) tea.Cmd {
+func (p roundPane) openCmd(env widget.Env) tea.Cmd {
 	c := p.detail.cache[tabArtifacts]
 	if !c.loaded || c.artifactRel == "" || env.Actions == nil {
 		return nil
@@ -169,7 +169,7 @@ func (p roundPane) openCmd(env Env) tea.Cmd {
 		// The browser is started detached, without waiting.
 		return func() tea.Msg {
 			if serr := cmd.Start(); serr != nil {
-				return noticeMsg{text: serr.Error()}
+				return widget.NoticeMsg{Text: serr.Error()}
 			}
 			if cmd.Process != nil {
 				cmd.Process.Release()
@@ -179,7 +179,7 @@ func (p roundPane) openCmd(env Env) tea.Cmd {
 	}
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		if err != nil {
-			return noticeMsg{text: err.Error()}
+			return widget.NoticeMsg{Text: err.Error()}
 		}
 		return nil
 	})

@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -60,7 +61,7 @@ func settingsFixtureView(t *testing.T, fa *fakeActions) settingsView {
 
 // settingsFormFrom presses enter on the view's cursor row and returns the
 // settingsForm it opens.
-func settingsFormFrom(t *testing.T, v settingsView, env Env) settingsForm {
+func settingsFormFrom(t *testing.T, v settingsView, env widget.Env) settingsForm {
 	t.Helper()
 	_, cmd := v.Update(tea.KeyMsg{Type: tea.KeyEnter}, env)
 	if cmd == nil {
@@ -235,12 +236,12 @@ func TestSettingsResetRefusedBeforeConfirm(t *testing.T) {
 		t.Fatal("r must return a command")
 	}
 	msg := cmd()
-	n, ok := msg.(noticeMsg)
+	n, ok := msg.(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("r on a refused reset gave %T, want a notice", msg)
 	}
-	if !strings.HasPrefix(n.text, "can't reset max_tier:") {
-		t.Errorf("notice = %q, want prefix %q", n.text, "can't reset max_tier:")
+	if !strings.HasPrefix(n.Text, "can't reset max_tier:") {
+		t.Errorf("notice = %q, want prefix %q", n.Text, "can't reset max_tier:")
 	}
 	if len(fa.configEdits) != 0 {
 		t.Error("a refused reset must not write an edit")
@@ -259,12 +260,12 @@ func TestSettingsResetUnsetNotices(t *testing.T) {
 		t.Fatal("r must return a command")
 	}
 	msg := cmd()
-	n, ok := msg.(noticeMsg)
+	n, ok := msg.(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("r on an unset row gave %T, want a notice", msg)
 	}
-	if n.text != "gate.default is already the default" {
-		t.Errorf("notice = %q", n.text)
+	if n.Text != "gate.default is already the default" {
+		t.Errorf("notice = %q", n.Text)
 	}
 	if len(fa.configEdits) != 0 {
 		t.Error("an unset reset must not write an edit")
@@ -495,13 +496,13 @@ func TestSettingsResetRefusalIsPlainWords(t *testing.T) {
 		t.Fatal("r must return a command")
 	}
 	msg := cmd()
-	n, ok := msg.(noticeMsg)
+	n, ok := msg.(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("r on a refused reset gave %T, want a notice", msg)
 	}
 	want := "can't reset max_tier: builder runs at yolo, above edit; lower its tier in :actors first"
-	if n.text != want {
-		t.Errorf("notice = %q, want %q", n.text, want)
+	if n.Text != want {
+		t.Errorf("notice = %q, want %q", n.Text, want)
 	}
 }
 

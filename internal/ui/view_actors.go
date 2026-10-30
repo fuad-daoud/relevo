@@ -29,7 +29,7 @@ type actorsView struct {
 
 // newActorsView builds ':actors' and the command that loads its doc (§4).
 // env.Actions must be non-nil: execLine refuses the command otherwise.
-func newActorsView(env Env) (View, tea.Cmd) {
+func newActorsView(env widget.Env) (widget.View, tea.Cmd) {
 	v := actorsView{actions: env.Actions != nil}
 	return v, candDocCmd(env)
 }
@@ -160,7 +160,7 @@ func actorHeaderLine(nameW int, cols []actorCol, cw int) string {
 
 // actorDataLine is one actor's table row (§4). The cursor row's name is bold;
 // NEXT PICK is green, and `—` faint when there is none.
-func actorDataLine(doc relevo.ConfigDoc, env Env, name string, sel bool, nameW int, cols []actorCol, cw int) string {
+func actorDataLine(doc relevo.ConfigDoc, env widget.Env, name string, sel bool, nameW int, cols []actorCol, cw int) string {
 	a := doc.Actors[name]
 	nameStyle := widget.TextStyle
 	if sel {
@@ -211,7 +211,7 @@ func actorMetaText(doc relevo.ConfigDoc, a roles.Actor) string {
 // actorDetailLines is the cursor row's detail block (§4): two blanks are added
 // by the caller, then the name and its triple, then one line per entry
 // `" %2d  %-23s%-10s"` with the `next pick` marker.
-func actorDetailLines(doc relevo.ConfigDoc, env Env, name string, width int) []string {
+func actorDetailLines(doc relevo.ConfigDoc, env widget.Env, name string, width int) []string {
 	a := doc.Actors[name]
 	first := "   " + widget.FaintStyle.Bold(true).Render(name) + "   " + widget.MutedStyle.Render(actorMetaText(doc, a))
 	out := []string{widget.Fit(first, width)}
@@ -232,7 +232,7 @@ func actorDetailLines(doc relevo.ConfigDoc, env Env, name string, width int) []s
 // bodyLines is the whole list body before it is windowed: a blank line under
 // the context row, the table, two blank lines and the cursor row's detail
 // block (§4).
-func (v actorsView) bodyLines(env Env, width int) []string {
+func (v actorsView) bodyLines(env widget.Env, width int) []string {
 	names := actorOrder(v.doc.Actors)
 	nameW, cols := actorListLayout(width)
 	cw := width - 6
@@ -253,13 +253,13 @@ func (v actorsView) bodyLines(env Env, width int) []string {
 }
 
 // follow scrolls the page so the cursor's table row stays visible (§4).
-func (v *actorsView) follow(env Env) {
+func (v *actorsView) follow(env widget.Env) {
 	names := actorOrder(v.doc.Actors)
 	if len(names) == 0 {
 		v.top = 0
 		return
 	}
-	avail := bodyHeight(env)
+	avail := widget.BodyHeight(env)
 	if avail <= 0 {
 		v.top = 0
 		return
@@ -280,25 +280,25 @@ func (v actorsView) Crumbs() []string { return []string{"actors"} }
 // Capturing is always false: the view owns no text input of its own (§4).
 func (v actorsView) Capturing() bool { return false }
 
-// Keys are the list's keys (§4), shown only when the shell has an Actions
+// Keys are the list's keys (§4), shown only when the shell has an widget.Actions
 // seam.
-func (v actorsView) Keys() []KeyHelp {
+func (v actorsView) Keys() []widget.KeyHelp {
 	if !v.actions {
 		return nil
 	}
-	return []KeyHelp{
-		{"↑↓", "move"},
-		{"enter", "open"},
-		{"a", "add"},
-		{"d", "delete"},
+	return []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "enter", Help: "open"},
+		{Key: "a", Help: "add"},
+		{Key: "d", Help: "delete"},
 	}
 }
 
 // HelpKeys is the help overlay's key list (§2.2): the same set.
-func (v actorsView) HelpKeys() []KeyHelp { return v.Keys() }
+func (v actorsView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
 // Context is the counts line on the left (§4); the list has no right side.
-func (v actorsView) Context(env Env) (string, string) {
+func (v actorsView) Context(env widget.Env) (string, string) {
 	names := actorOrder(v.doc.Actors)
 	writers, readers := 0, 0
 	for _, name := range names {
@@ -320,7 +320,7 @@ func (v actorsView) Context(env Env) (string, string) {
 	return left, ""
 }
 
-func (v actorsView) Body(env Env, width, height int) string {
+func (v actorsView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
@@ -345,7 +345,7 @@ func (v actorsView) Body(env Env, width, height int) string {
 	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
-func (v actorsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v actorsView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case candDocMsg:
 		if msg.err != nil {
@@ -373,7 +373,7 @@ func (v actorsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 }
 
 // updateKey is the list's own keys (§4).
-func (v actorsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v actorsView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	names := actorOrder(v.doc.Actors)
 	n := len(names)
 	switch k.String() {
@@ -390,10 +390,10 @@ func (v actorsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		v.cur = candClamp(n-1, n)
 		v.follow(env)
 	case "pgup":
-		v.cur = candClamp(v.cur-bodyHeight(env), n)
+		v.cur = candClamp(v.cur-widget.BodyHeight(env), n)
 		v.follow(env)
 	case "pgdown":
-		v.cur = candClamp(v.cur+bodyHeight(env), n)
+		v.cur = candClamp(v.cur+widget.BodyHeight(env), n)
 		v.follow(env)
 	case "enter":
 		if n == 0 {
@@ -412,14 +412,14 @@ func (v actorsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 }
 
 // openActor pushes the cursor actor's detail view (§4).
-func openActor(doc relevo.ConfigDoc, name string, env Env) tea.Cmd {
+func openActor(doc relevo.ConfigDoc, name string, env widget.Env) tea.Cmd {
 	v, init := newActorView(env, doc, name)
 	return push(v, init)
 }
 
 // deleteCmd is the list's d key (§4): validate the delete, then confirm it as
 // a danger box. A refused delete (a builtin actor) is a notice.
-func (v actorsView) deleteCmd(env Env, name string) tea.Cmd {
+func (v actorsView) deleteCmd(env widget.Env, name string) tea.Cmd {
 	edit, err := relevo.DeleteActor(v.doc, name)
 	if err != nil {
 		return notice(err.Error())
@@ -435,7 +435,7 @@ func (v actorsView) deleteCmd(env Env, name string) tea.Cmd {
 			widget.Pad("candidates", 11) + fmt.Sprintf("%d", len(a.Candidates)),
 			widget.Pad("kept", 11) + "the candidates themselves",
 		},
-		onYes: runAction(env.Ctx, "delete actor", name, func(ctx context.Context) Result {
+		onYes: runAction(env.Ctx, "delete actor", name, func(ctx context.Context) widget.Result {
 			return env.Actions.ApplyConfig(ctx, edit)
 		}),
 	})

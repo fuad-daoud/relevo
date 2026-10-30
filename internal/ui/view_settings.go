@@ -39,13 +39,13 @@ type settingsView struct {
 // newSettingsView builds ':settings' and the command that loads its doc.
 // env.Actions must be non-nil: execLine refuses the command
 // otherwise.
-func newSettingsView(env Env) (settingsView, tea.Cmd) {
+func newSettingsView(env widget.Env) (settingsView, tea.Cmd) {
 	v := settingsView{actions: env.Actions != nil}
 	return v, settingsDocCmd(env)
 }
 
 // settingsDocCmd reads the stored config off the update loop.
-func settingsDocCmd(env Env) tea.Cmd {
+func settingsDocCmd(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		doc, err := env.Actions.ConfigDoc()
 		return settingsDocMsg{doc: doc, err: err}
@@ -280,13 +280,13 @@ func (v settingsView) bodyLines(width int) []string {
 }
 
 // follow scrolls the page so the cursor's table row stays visible.
-func (v *settingsView) follow(env Env) {
+func (v *settingsView) follow(env widget.Env) {
 	settings := relevo.Settings(v.doc, numCPU())
 	if len(settings) == 0 {
 		v.top = 0
 		return
 	}
-	avail := bodyHeight(env)
+	avail := widget.BodyHeight(env)
 	if avail <= 0 {
 		v.top = 0
 		return
@@ -316,33 +316,33 @@ func (v settingsView) Crumbs() []string { return []string{"settings"} }
 func (v settingsView) Capturing() bool { return false }
 
 // Keys are the view's own keys, shown only when the shell has an
-// Actions seam; the shell appends the global tail (`: command`, `? all keys`,
+// widget.Actions seam; the shell appends the global tail (`: command`, `? all keys`,
 // `q quit`/`esc back`).
-func (v settingsView) Keys() []KeyHelp {
+func (v settingsView) Keys() []widget.KeyHelp {
 	if !v.actions {
 		return nil
 	}
-	return []KeyHelp{
-		{"enter", "edit"},
-		{"r", "reset"},
+	return []widget.KeyHelp{
+		{Key: "enter", Help: "edit"},
+		{Key: "r", Help: "reset"},
 	}
 }
 
 // HelpKeys is the help overlay's key list: the same set plus ↑↓ move.
-func (v settingsView) HelpKeys() []KeyHelp {
+func (v settingsView) HelpKeys() []widget.KeyHelp {
 	if !v.actions {
 		return nil
 	}
-	return []KeyHelp{
-		{"↑↓", "move"},
-		{"enter", "edit"},
-		{"r", "reset"},
+	return []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "enter", Help: "edit"},
+		{Key: "r", Help: "reset"},
 	}
 }
 
 // Context is the counts line on the left; the right side is empty this
 // round (round 2 adds the revision).
-func (v settingsView) Context(env Env) (string, string) {
+func (v settingsView) Context(env widget.Env) (string, string) {
 	settings := relevo.Settings(v.doc, numCPU())
 	set := 0
 	for _, s := range settings {
@@ -357,7 +357,7 @@ func (v settingsView) Context(env Env) (string, string) {
 	return left, ""
 }
 
-func (v settingsView) Body(env Env, width, height int) string {
+func (v settingsView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
@@ -379,7 +379,7 @@ func (v settingsView) Body(env Env, width, height int) string {
 	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
-func (v settingsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v settingsView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case settingsDocMsg:
 		if msg.err != nil {
@@ -407,7 +407,7 @@ func (v settingsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 }
 
 // updateKey is the view's own keys.
-func (v settingsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v settingsView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	settings := relevo.Settings(v.doc, numCPU())
 	n := len(settings)
 	switch k.String() {
@@ -424,10 +424,10 @@ func (v settingsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		v.cur = candClamp(n-1, n)
 		v.follow(env)
 	case "pgup":
-		v.cur = candClamp(v.cur-bodyHeight(env), n)
+		v.cur = candClamp(v.cur-widget.BodyHeight(env), n)
 		v.follow(env)
 	case "pgdown":
-		v.cur = candClamp(v.cur+bodyHeight(env), n)
+		v.cur = candClamp(v.cur+widget.BodyHeight(env), n)
 		v.follow(env)
 	case "enter":
 		if n == 0 {
@@ -460,7 +460,7 @@ func (v settingsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 // max_tier) becomes a "can't reset" notice, and opens no confirm. Only a
 // successful reset opens the confirm, whose y applies that precomputed edit
 // through ApplyConfig.
-func (v settingsView) resetCmd(env Env, row relevo.Setting) tea.Cmd {
+func (v settingsView) resetCmd(env widget.Env, row relevo.Setting) tea.Cmd {
 	if !row.Set {
 		return notice(row.Key + " is already the default")
 	}
@@ -477,7 +477,7 @@ func (v settingsView) resetCmd(env Env, row relevo.Setting) tea.Cmd {
 		danger: false,
 		title:  "Reset " + widget.AccentStyle.Bold(true).Render(row.Key) + " to its default?",
 		lines:  []string{row.Value + " → " + row.Default},
-		onYes: runAction(env.Ctx, "reset", row.Key, func(ctx context.Context) Result {
+		onYes: runAction(env.Ctx, "reset", row.Key, func(ctx context.Context) widget.Result {
 			return env.Actions.ApplyConfig(ctx, edit)
 		}),
 	})

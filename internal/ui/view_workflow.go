@@ -48,12 +48,12 @@ type workflowView struct {
 }
 
 // newWorkflowView pushes one workflow's graph, before either read has landed.
-func newWorkflowView(name string) View {
+func newWorkflowView(name string) widget.View {
 	return workflowView{name: name}
 }
 
 // workflowSourceCmd reads one workflow's source text off the update loop.
-func workflowSourceCmd(env Env, name string) tea.Cmd {
+func workflowSourceCmd(env widget.Env, name string) tea.Cmd {
 	return func() tea.Msg {
 		if env.Actions == nil {
 			return workflowSourceMsg{name: name}
@@ -64,7 +64,7 @@ func workflowSourceCmd(env Env, name string) tea.Cmd {
 }
 
 // workflowGraphCmd reads one workflow's step graph off the update loop.
-func workflowGraphCmd(env Env, name string) tea.Cmd {
+func workflowGraphCmd(env widget.Env, name string) tea.Cmd {
 	return func() tea.Msg {
 		if env.Actions == nil {
 			return workflowGraphMsg{name: name}
@@ -81,19 +81,19 @@ func (v workflowView) Capturing() bool { return false }
 // Keys are the view's keys: the graph's own movement and the source toggle.
 // On the source the same movement scrolls it, so the two differ only in what
 // they say. esc back is the shell's own and is not repeated here.
-func (v workflowView) Keys() []KeyHelp {
+func (v workflowView) Keys() []widget.KeyHelp {
 	if v.src {
-		return []KeyHelp{{"↑↓", "scroll"}, {"s", "graph"}}
+		return []widget.KeyHelp{{Key: "↑↓", Help: "scroll"}, {Key: "s", Help: "graph"}}
 	}
-	return []KeyHelp{{"↑↓", "move"}, {"s", "source"}}
+	return []widget.KeyHelp{{Key: "↑↓", Help: "move"}, {Key: "s", Help: "source"}}
 }
 
 // HelpKeys is the help overlay's key list: the same set.
-func (v workflowView) HelpKeys() []KeyHelp { return v.Keys() }
+func (v workflowView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
 // Context is the view's summary line: what the workflow is and how many steps
 // it declares, or which of the two texts s is showing.
-func (v workflowView) Context(env Env) (string, string) {
+func (v workflowView) Context(env widget.Env) (string, string) {
 	left := "   " + widget.TextStyle.Bold(true).Render(v.name)
 	if v.src {
 		what := "source"
@@ -205,12 +205,12 @@ func (v workflowView) graphBodyLines(width int) []string {
 }
 
 // follow scrolls the graph so the cursor's step stays visible.
-func (v *workflowView) follow(env Env) {
+func (v *workflowView) follow(env widget.Env) {
 	if len(v.rows) == 0 {
 		v.top = 0
 		return
 	}
-	avail := bodyHeight(env)
+	avail := widget.BodyHeight(env)
 	if avail <= 0 {
 		v.top = 0
 		return
@@ -225,7 +225,7 @@ func (v *workflowView) follow(env Env) {
 	v.top = widget.Clamp(v.top, 0, max(0, len(v.rows)+2-avail))
 }
 
-func (v workflowView) Body(env Env, width, height int) string {
+func (v workflowView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
@@ -254,7 +254,7 @@ func (v workflowView) Body(env Env, width, height int) string {
 }
 
 // sourceBody is the scrolled source text, sized to the shell's body box.
-func (v workflowView) sourceBody(env Env, width, height int) string {
+func (v workflowView) sourceBody(env widget.Env, width, height int) string {
 	if v.sourceErr != nil && !v.sourceLoaded {
 		return strings.Join(widget.Centered(sanitizeText(v.sourceErr.Error()), width, height), "\n")
 	}
@@ -274,7 +274,7 @@ func (v workflowView) sourceBody(env Env, width, height int) string {
 	return strings.Join(body, "\n")
 }
 
-func (v workflowView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v workflowView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case workflowSourceMsg:
 		if msg.name != v.name {
@@ -289,7 +289,7 @@ func (v workflowView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 		v.shipped = msg.shipped
 		v.source = sanitizeText(msg.text)
 		if v.vp.Width == 0 {
-			v.vp = viewport.New(maxInt(env.Width-6, 20), maxInt(bodyHeight(env), 1))
+			v.vp = viewport.New(maxInt(env.Width-6, 20), maxInt(widget.BodyHeight(env), 1))
 		}
 		v.vp.SetContent(wrapBody(v.source, v.vp.Width))
 		return v, nil
@@ -310,10 +310,10 @@ func (v workflowView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		if v.vp.Width == 0 {
-			v.vp = viewport.New(maxInt(env.Width-6, 20), maxInt(bodyHeight(env), 1))
+			v.vp = viewport.New(maxInt(env.Width-6, 20), maxInt(widget.BodyHeight(env), 1))
 		} else {
 			v.vp.Width = maxInt(env.Width-6, 20)
-			v.vp.Height = maxInt(bodyHeight(env), 1)
+			v.vp.Height = maxInt(widget.BodyHeight(env), 1)
 			v.vp.SetContent(wrapBody(v.source, v.vp.Width))
 		}
 		return v, nil
@@ -326,7 +326,7 @@ func (v workflowView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 
 // updateKey is the view's own keys. s toggles between the graph and the source;
 // on the source every other key scrolls it, so the same key set works in both.
-func (v workflowView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v workflowView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	if k.String() == "s" && !v.src {
 		// The source was not read yet when the graph opened, so the first s
 		// asks for it rather than showing an empty pane.
@@ -364,10 +364,10 @@ func (v workflowView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		v.cur = candClamp(n-1, n)
 		v.follow(env)
 	case "pgup":
-		v.cur = candClamp(v.cur-bodyHeight(env), n)
+		v.cur = candClamp(v.cur-widget.BodyHeight(env), n)
 		v.follow(env)
 	case "pgdown":
-		v.cur = candClamp(v.cur+bodyHeight(env), n)
+		v.cur = candClamp(v.cur+widget.BodyHeight(env), n)
 		v.follow(env)
 	case "esc":
 		return v, pop()

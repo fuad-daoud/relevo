@@ -167,7 +167,7 @@ func TestResizeReflowsViewportWithoutLosingActiveTab(t *testing.T) {
 	rv.pane.detail.active = tabDiff
 	rv.pane.detail.vp = viewport.New(80, 20)
 
-	next, _ := rv.Update(tea.WindowSizeMsg{Width: 100, Height: 60}, Env{Width: 100, Height: 60, Now: railNow, Report: rv.pane.report})
+	next, _ := rv.Update(tea.WindowSizeMsg{Width: 100, Height: 60}, widget.Env{Width: 100, Height: 60, Now: railNow, Report: rv.pane.report})
 	got := next.(roundView)
 
 	if got.pane.detail.active != tabDiff {

@@ -45,7 +45,7 @@ func dashStyles() dash.Styles {
 }
 
 // runningRounds builds a lookup for rounds currently running in the working group.
-func runningRounds(env Env) func(string, int) bool {
+func runningRounds(env widget.Env) func(string, int) bool {
 	m := make(map[string]int)
 	for _, b := range env.Report.Bindings {
 		if groupOf(b) == groupWorking {
@@ -60,7 +60,7 @@ func runningRounds(env Env) func(string, int) bool {
 
 // newRoundsView hosts the dashboard as a view (§4.5). It refuses without a
 // database, exactly as enterDash does today (model.go:551-570).
-func newRoundsView(env Env, query, sortKey string) (View, tea.Cmd, error) {
+func newRoundsView(env widget.Env, query, sortKey string) (widget.View, tea.Cmd, error) {
 	if env.Src.Base().DB == nil {
 		return nil, nil, relevo.ErrNoDatabase
 	}
@@ -69,7 +69,7 @@ func newRoundsView(env Env, query, sortKey string) (View, tea.Cmd, error) {
 	d.Running = runningRounds(env)
 	d.Names = func(token string) string { return env.Src.Base().Candidates.NameOf(token) }
 	d.SetStyles(dashStyles())
-	d.SetSize(env.Width, bodyHeight(env))
+	d.SetSize(env.Width, widget.BodyHeight(env))
 	return roundsView{dash: d}, d.Init(), nil
 }
 
@@ -85,7 +85,7 @@ func (r roundsView) Capturing() bool { return r.dash.Editing() }
 func clip(s string, width int) string { return clipName(s, width) }
 
 // Context names the summary line or problem, and the regroup axis or sort key (§5.5).
-func (r roundsView) Context(env Env) (string, string) {
+func (r roundsView) Context(env widget.Env) (string, string) {
 	r.dash.Running = runningRounds(env)
 	var right string
 	if f := r.dash.FilterText(); f != "" {
@@ -112,23 +112,23 @@ func (r roundsView) Context(env Env) (string, string) {
 	return left, right
 }
 
-func (r roundsView) Keys() []KeyHelp {
+func (r roundsView) Keys() []widget.KeyHelp {
 	enterHelp := "open round"
 	if r.dash.GroupAxis() != "" {
 		enterHelp = "expand"
 	}
-	return []KeyHelp{
-		{"↑↓", "move"},
-		{"enter", enterHelp},
-		{"/", "filter"},
-		{"b", "regroup"},
-		{"s", "sort"},
-		{"S", "flip"},
-		{"r", "refresh"},
+	return []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "enter", Help: enterHelp},
+		{Key: "/", Help: "filter"},
+		{Key: "b", Help: "regroup"},
+		{Key: "s", Help: "sort"},
+		{Key: "S", Help: "flip"},
+		{Key: "r", Help: "refresh"},
 	}
 }
 
-func (r roundsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (r roundsView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case widget.TickMsg:
 		if r.dash.ShouldRefresh(env.Now) {
@@ -137,7 +137,7 @@ func (r roundsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 		return r, nil
 
 	case tea.WindowSizeMsg:
-		r.dash.SetSize(env.Width, bodyHeight(env))
+		r.dash.SetSize(env.Width, widget.BodyHeight(env))
 		return r, nil
 
 	case dash.JumpMsg:
@@ -161,16 +161,16 @@ func (r roundsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 		cmds = append(cmds, cmd)
 	}
 	if q1 != q0 {
-		cmds = append(cmds, func() tea.Msg { return prefMsg{"dashboard", q1} })
+		cmds = append(cmds, func() tea.Msg { return widget.PrefMsg{Key: "dashboard", Value: q1} })
 	}
 	if s1 != s0 {
-		cmds = append(cmds, func() tea.Msg { return prefMsg{"dashboard_sort", s1} })
+		cmds = append(cmds, func() tea.Msg { return widget.PrefMsg{Key: "dashboard_sort", Value: s1} })
 	}
 	return r, tea.Batch(cmds...)
 }
 
 // Body is the dashboard grid, sized to the shell's body box.
-func (r roundsView) Body(env Env, width, height int) string {
+func (r roundsView) Body(env widget.Env, width, height int) string {
 	r.dash.Running = runningRounds(env)
 	r.dash.SetSize(width, height)
 	return r.dash.View()
@@ -179,7 +179,7 @@ func (r roundsView) Body(env Env, width, height int) string {
 // openRound resolves a dashboard jump to the round it names: a live row
 // first, then the database, then a notice (§5.4). Asynchronous, because the
 // database read can block.
-func openRound(env Env, msg dash.JumpMsg) tea.Cmd {
+func openRound(env widget.Env, msg dash.JumpMsg) tea.Cmd {
 	return func() tea.Msg {
 		for i := range env.Report.Bindings {
 			if env.Report.Bindings[i].Name == msg.BindingName {
@@ -201,13 +201,13 @@ func openRound(env Env, msg dash.JumpMsg) tea.Cmd {
 				}
 			}
 		}
-		return noticeMsg{text: fmt.Sprintf("%s not found", msg.BindingName)}
+		return widget.NoticeMsg{Text: fmt.Sprintf("%s not found", msg.BindingName)}
 	}
 }
 
 // execLine runs one command line against env, as the ':' command line does
 // and the shell does for Options.Start (§6).
-func execLine(line string, env Env, p prefs) tea.Cmd {
+func execLine(line string, env widget.Env, p prefs) tea.Cmd {
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
 		return nil
@@ -218,7 +218,7 @@ func execLine(line string, env Env, p prefs) tea.Cmd {
 	case "fleet":
 		return root(newFleetView(p.Sort != "name").withActions(env.Actions != nil))
 	case "log":
-		return func() tea.Msg { return logMsg{} }
+		return func() tea.Msg { return widget.LogMsg{} }
 	case "rounds":
 		q := strings.Join(args, " ")
 		if q == "" {
@@ -327,11 +327,11 @@ func execLine(line string, env Env, p prefs) tea.Cmd {
 			return nil
 		}
 		subject := args[0]
-		return runAction(env.Ctx, "ungate", subject, func(ctx context.Context) Result {
+		return runAction(env.Ctx, "ungate", subject, func(ctx context.Context) widget.Result {
 			return env.Actions.Ungate(ctx, subject)
 		})
 	case "help":
-		return func() tea.Msg { return helpMsg{} }
+		return func() tea.Msg { return widget.HelpMsg{} }
 	case "quit":
 		return tea.Quit
 	}

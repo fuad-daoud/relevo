@@ -68,6 +68,16 @@ func Clamp(v, lo, hi int) int {
 	return min(max(v, lo), hi)
 }
 
+// BodyHeight is the shell's body height: height minus the header, blank row
+// and the context row, the error block, and the rule and keys rows.
+func BodyHeight(env Env) int {
+	h := env.Height - 3 - env.ErrRows - 2
+	if h < 0 {
+		return 0
+	}
+	return h
+}
+
 // Centered centres one line in the body box.
 func Centered(text string, width, height int) []string {
 	out := FitLines(nil, width, height)

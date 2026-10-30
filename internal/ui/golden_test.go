@@ -21,6 +21,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -591,7 +592,7 @@ func goldenLogModel(t *testing.T, width, height int) Model {
 	if _, ok := m.top().(logView); !ok {
 		t.Fatalf("Start=log must replace the stack, top is %T", m.top())
 	}
-	m.actionLog = []actionEntry{
+	m.actionLog = []widget.ActionEntry{
 		{
 			At:   time.Date(railNow.Year(), railNow.Month(), railNow.Day(), 11, 20, 0, 0, railNow.Location()),
 			Verb: "gate",
@@ -880,15 +881,15 @@ func goldenWorkflowsModel(t *testing.T, width, height int, fa *fakeActions) Mode
 	return drain(t, m, execLine("workflows", m.env(), m.prefs))
 }
 
-// workflowsFake is the scripted Actions the workflows goldens run on.
+// workflowsFake is the scripted widget.Actions the workflows goldens run on.
 func workflowsFake() *fakeActions {
 	return &fakeActions{
 		workflows: workflowsFixtureList(),
 		sources:   workflowsFixtureSources(),
 		graphs:    workflowsFixtureGraphs(),
 		actors:    workflowsFixtureActors(),
-		result:    Result{Text: "stored workflow fix-first", Refresh: true},
-		saveResult: Result{
+		result:    widget.Result{Text: "stored workflow fix-first", Refresh: true},
+		saveResult: widget.Result{
 			Text:    "workflow edit fix-first (config version 4)",
 			Refresh: true,
 		},
@@ -922,7 +923,7 @@ func workflowsOn(t *testing.T, m Model, name string) Model {
 	return m
 }
 
-// workflowsViewModelOn is the list with the cursor on name, over the Actions a
+// workflowsViewModelOn is the list with the cursor on name, over the widget.Actions a
 // test scripted, so a key test can inspect what it recorded.
 func workflowsViewModelOn(t *testing.T, width, height int, fa *fakeActions, name string) Model {
 	t.Helper()
@@ -1164,7 +1165,7 @@ func goldenActorViewModel(t *testing.T, width, height int) Model {
 	return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 }
 
-// agentFileFixtures is the fake Actions' per-agent file states for the agents
+// agentFileFixtures is the fake widget.Actions' per-agent file states for the agents
 // goldens (§8): every shipped agent installed and up to date on all four
 // kinds, with the pins the plan fixes. The paths are built under the real home
 // so the views' `~` form is what the golden shows; the test only reads $HOME,
@@ -1959,7 +1960,7 @@ func TestGoldenViews(t *testing.T) {
 			name: "workflow-add-invalid-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				fa := workflowsFake()
-				fa.addResults = map[string]Result{
+				fa.addResults = map[string]widget.Result{
 					"~/workflows/broken.yaml": {Err: workflowInvalidErr(t)},
 				}
 				m := goldenWorkflowsModel(t, 132, 34, fa)
@@ -1973,7 +1974,7 @@ func TestGoldenViews(t *testing.T) {
 			name: "workflow-replace-confirm-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
 				fa := workflowsFake()
-				fa.addResults = map[string]Result{
+				fa.addResults = map[string]widget.Result{
 					"~/workflows/fix-first.yaml": {Err: workflowSavedErr(t, workflowsFixtureSources()["fix-first"].text)},
 				}
 				m := goldenWorkflowsModel(t, 132, 34, fa)

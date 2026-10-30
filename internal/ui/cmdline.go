@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // command is one entry of the ':' command table (§4.7). done marks a
@@ -70,7 +71,7 @@ func (c cmdLine) typed() string { return strings.TrimSpace(c.input.Value()) }
 // matches is every completion candidate whose name has the typed text as a
 // case-insensitive subsequence, ranked by prefix, then live before done, then
 // length, then alphabetical, capped at 8. Pure: the tests drive it directly.
-func (c cmdLine) matches(env Env) []command {
+func (c cmdLine) matches(env widget.Env) []command {
 	out := c.allMatches(env)
 	if len(out) > 8 {
 		out = out[:8]
@@ -80,7 +81,7 @@ func (c cmdLine) matches(env Env) []command {
 
 // matchCount is how many completions match, before matches' cap of 8. It is
 // what the command modal's "+ N more match" row counts (§3.1).
-func (c cmdLine) matchCount(env Env) int {
+func (c cmdLine) matchCount(env widget.Env) int {
 	return len(c.allMatches(env))
 }
 
@@ -88,7 +89,7 @@ func (c cmdLine) matchCount(env Env) int {
 // case-insensitive subsequence, ranked by prefix, then live before done, then
 // length, then alphabetical, before matches' cap of 8. Pure: the tests drive
 // it directly.
-func (c cmdLine) allMatches(env Env) []command {
+func (c cmdLine) allMatches(env widget.Env) []command {
 	typed := strings.ToLower(c.typed())
 	cands := make([]command, 0, len(commands)+len(env.Report.Bindings)+len(env.Report.Gated))
 	cands = append(cands, commands...)
@@ -169,7 +170,7 @@ func subsequence(sub, s string) bool {
 // update handles one key while the command line is open: up/down move the
 // selection, tab completes, enter executes, esc closes, everything else goes
 // to the input (§4.7, §6).
-func (c cmdLine) update(k tea.KeyMsg, env Env, p prefs) (cmdLine, tea.Cmd) {
+func (c cmdLine) update(k tea.KeyMsg, env widget.Env, p prefs) (cmdLine, tea.Cmd) {
 	ms := c.matches(env)
 	switch k.String() {
 	case "up", "ctrl+p":
@@ -208,7 +209,7 @@ func (c cmdLine) update(k tea.KeyMsg, env Env, p prefs) (cmdLine, tea.Cmd) {
 
 // execute runs the typed command: an exact name wins, otherwise the
 // selected completion (§6).
-func (c cmdLine) execute(env Env, p prefs) (cmdLine, tea.Cmd) {
+func (c cmdLine) execute(env widget.Env, p prefs) (cmdLine, tea.Cmd) {
 	value := c.input.Value()
 	c.open = false
 	c.input.Blur()

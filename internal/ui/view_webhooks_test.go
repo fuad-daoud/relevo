@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -58,7 +59,7 @@ func webhookStoredHooks(t *testing.T, edit relevo.ConfigEdit) []any {
 
 // webhooksViewFrom enters notify.webhooks on a loaded settings view and drains
 // the pushed view's doc load.
-func webhooksViewFrom(t *testing.T, fa *fakeActions, env Env) webhooksView {
+func webhooksViewFrom(t *testing.T, fa *fakeActions, env widget.Env) webhooksView {
 	t.Helper()
 	v := settingsFixtureView(t, fa)
 	v.cur = 19 // notify.webhooks
@@ -66,21 +67,21 @@ func webhooksViewFrom(t *testing.T, fa *fakeActions, env Env) webhooksView {
 	if cmd == nil {
 		t.Fatal("enter must return a command")
 	}
-	pushed, ok := cmd().(pushMsg)
+	pushed, ok := cmd().(widget.PushMsg)
 	if !ok {
 		t.Fatalf("enter gave %T, want a push", cmd())
 	}
-	wv, ok := pushed.v.(webhooksView)
+	wv, ok := pushed.View.(webhooksView)
 	if !ok {
-		t.Fatalf("enter pushed %T, want a webhooksView", pushed.v)
+		t.Fatalf("enter pushed %T, want a webhooksView", pushed.View)
 	}
-	next, _ := wv.Update(pushed.init(), env)
+	next, _ := wv.Update(pushed.Init(), env)
 	return next.(webhooksView)
 }
 
 // openWebhookForm runs an opening key on the list and returns the form it
 // raised.
-func openWebhookForm(t *testing.T, wv webhooksView, k tea.KeyMsg, env Env) webhookForm {
+func openWebhookForm(t *testing.T, wv webhooksView, k tea.KeyMsg, env widget.Env) webhookForm {
 	t.Helper()
 	_, cmd := wv.Update(k, env)
 	if cmd == nil {
@@ -291,11 +292,11 @@ func TestSettingsScanPatternsEditorNotice(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("enter must return a command")
 	}
-	n, ok := cmd().(noticeMsg)
+	n, ok := cmd().(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("enter gave %T, want a notice", cmd())
 	}
-	if want := "scan_patterns is edited with relevo config set policy"; n.text != want {
-		t.Errorf("notice = %q, want %q", n.text, want)
+	if want := "scan_patterns is edited with relevo config set policy"; n.Text != want {
+		t.Errorf("notice = %q, want %q", n.Text, want)
 	}
 }

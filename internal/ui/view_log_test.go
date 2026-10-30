@@ -326,7 +326,7 @@ func TestLogGatesRevisionsActions(t *testing.T) {
 		},
 	}
 
-	actions := []actionEntry{
+	actions := []widget.ActionEntry{
 		{
 			At:   now.Add(-30 * time.Minute),
 			Verb: "gate",
@@ -372,7 +372,7 @@ func TestLogNewestFirst(t *testing.T) {
 	revs := []db.RevisionRow{
 		{Rev: 1, At: now.Add(-2 * time.Minute), Message: "init"},
 	}
-	actions := []actionEntry{
+	actions := []widget.ActionEntry{
 		{At: now.Add(-1 * time.Minute), Verb: "stop", Text: "stopped"},
 	}
 
@@ -410,7 +410,7 @@ func TestLogViewDayRulesAndMargins(t *testing.T) {
 		},
 	}
 
-	env := Env{Now: now, Width: 132, Height: 30}
+	env := widget.Env{Now: now, Width: 132, Height: 30}
 	body := v.Body(env, 132, 30)
 	lines := strings.Split(body, "\n")
 
@@ -483,7 +483,7 @@ func TestLogViewFollow(t *testing.T) {
 			{TS: now.Add(-20 * time.Minute), Seq: 2, Kind: "exit", BindingName: "webshop"},
 		},
 	}
-	env := Env{Now: now, Width: 132, Height: 30}
+	env := widget.Env{Now: now, Width: 132, Height: 30}
 
 	// Down sets follow false
 	res, _ := v.Update(tea.KeyMsg{Type: tea.KeyDown}, env)
@@ -532,7 +532,7 @@ func TestLogViewEnterOpensRound(t *testing.T) {
 			},
 		},
 	}
-	env := Env{Now: now, Width: 132, Height: 30}
+	env := widget.Env{Now: now, Width: 132, Height: 30}
 
 	// Cursor 0 is the sent entry: enter returns non-nil command
 	v.cursor = 0
@@ -559,7 +559,7 @@ func TestLogViewFilter(t *testing.T) {
 			{TS: now.Add(-20 * time.Minute), Seq: 2, Kind: "exit", BindingName: "atlas"},
 		},
 	}
-	env := Env{Now: now, Width: 132, Height: 30}
+	env := widget.Env{Now: now, Width: 132, Height: 30}
 
 	// Type /
 	res, _ := v.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}}, env)
@@ -654,7 +654,7 @@ func TestLogViewBlankRowAboveHeader(t *testing.T) {
 			{TS: now.Add(-10 * time.Minute), Seq: 1, Kind: "exit", BindingName: "oc-496"},
 		},
 	}
-	env := Env{Now: now, Width: 132, Height: 30}
+	env := widget.Env{Now: now, Width: 132, Height: 30}
 	body := v.Body(env, 132, 30)
 	lines := strings.Split(body, "\n")
 	if len(lines) < 2 {
@@ -670,7 +670,7 @@ func TestLogViewBlankRowAboveHeader(t *testing.T) {
 
 func TestLogViewPageDown(t *testing.T) {
 	now := time.Date(2026, 9, 25, 19, 0, 0, 0, time.Local)
-	makeView := func(n int) (logView, Env) {
+	makeView := func(n int) (logView, widget.Env) {
 		var events []db.EventLogRow
 		for i := 0; i < n; i++ {
 			events = append(events, db.EventLogRow{
@@ -681,7 +681,7 @@ func TestLogViewPageDown(t *testing.T) {
 			})
 		}
 		v := logView{loaded: true, events: events}
-		env := Env{Now: now, Width: 132, Height: 34}
+		env := widget.Env{Now: now, Width: 132, Height: 34}
 		return v, env
 	}
 
@@ -689,7 +689,7 @@ func TestLogViewPageDown(t *testing.T) {
 	v, env := makeView(40)
 	res, _ := v.Update(tea.KeyMsg{Type: tea.KeyPgDown}, env)
 	v = res.(logView)
-	want1 := bodyHeight(env) - 3
+	want1 := widget.BodyHeight(env) - 3
 	if v.cursor != want1 {
 		t.Errorf("cursor after 1st pgdown = %d, want %d", v.cursor, want1)
 	}
@@ -719,7 +719,7 @@ func TestLogViewPageDown(t *testing.T) {
 // entry's Detail at the end of buildLogEntries.
 func TestLogViewDetailStripsControlBytes(t *testing.T) {
 	now := time.Date(2026, 9, 25, 18, 30, 0, 0, time.UTC)
-	actions := []actionEntry{{At: now, Verb: "stop", Text: "stopped \x1b[2J"}}
+	actions := []widget.ActionEntry{{At: now, Verb: "stop", Text: "stopped \x1b[2J"}}
 
 	entries := buildLogEntries(nil, availability.History{}, nil, actions, time.Time{}, nil, nil)
 	if len(entries) != 1 {

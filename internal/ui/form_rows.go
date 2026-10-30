@@ -73,7 +73,7 @@ func formError(msg string) string {
 
 // formKeys renders a form's keys: kbd chips with muted labels, six spaces
 // apart. A key named in disabled is faint, its chip and its label both.
-func formKeys(keys []KeyHelp, disabled map[string]bool) string {
+func formKeys(keys []widget.KeyHelp, disabled map[string]bool) string {
 	parts := make([]string, 0, len(keys))
 	for _, kh := range keys {
 		chipStyle, labelStyle := widget.KbdStyle, widget.MutedStyle

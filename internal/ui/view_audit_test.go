@@ -34,7 +34,7 @@ func auditViewOf(t *testing.T, m Model) auditView {
 func TestAuditRollbackConfirmsThenCalls(t *testing.T) {
 	fa := auditFixtureFake()
 	fa.preview = []relevo.ChangeLine{{Op: "-", Subject: "actor planner", Before: "agent architect"}}
-	fa.result = Result{Text: "rolled back to #4 as #6", Refresh: true}
+	fa.result = widget.Result{Text: "rolled back to #4 as #6", Refresh: true}
 	m := auditFixtureShell(t, fa)
 
 	res, cmd := m.Update(key('R'))
@@ -171,19 +171,19 @@ func TestAuditChangesRequestedOncePerRevision(t *testing.T) {
 	}
 }
 
-// :audit without an Actions seam is a notice, as :candidates, :actors and
+// :audit without an widget.Actions seam is a notice, as :candidates, :actors and
 // :agents are.
 func TestAuditNeedsActions(t *testing.T) {
-	env := Env{Ctx: context.Background(), Loaded: true, Now: railNow, Width: 132, Height: 34}
+	env := widget.Env{Ctx: context.Background(), Loaded: true, Now: railNow, Width: 132, Height: 34}
 	cmd := execLine("audit", env, prefs{})
 	if cmd == nil {
-		t.Fatal(":audit with no Actions must return a notice")
+		t.Fatal(":audit with no widget.Actions must return a notice")
 	}
-	msg, ok := cmd().(noticeMsg)
+	msg, ok := cmd().(widget.NoticeMsg)
 	if !ok {
-		t.Fatalf(":audit with no Actions gave %T, want a notice", cmd())
+		t.Fatalf(":audit with no widget.Actions gave %T, want a notice", cmd())
 	}
-	if !strings.Contains(msg.text, "need relevo ui") {
-		t.Errorf("notice = %q", msg.text)
+	if !strings.Contains(msg.Text, "need relevo ui") {
+		t.Errorf("notice = %q", msg.Text)
 	}
 }

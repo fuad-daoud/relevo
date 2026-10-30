@@ -13,18 +13,18 @@ import (
 )
 
 // envNow is the clock a view hands the roundPane: the shell reads time once
-// per call (Env.Now).
-func envNow(env Env) func() time.Time { return func() time.Time { return env.Now } }
+// per call (widget.Env.Now).
+func envNow(env widget.Env) func() time.Time { return func() time.Time { return env.Now } }
 
-// newRoundPane builds a pane lent everything Env carries (§4.4, R2.4).
-func newRoundPane(env Env) roundPane {
+// newRoundPane builds a pane lent everything widget.Env carries (§4.4, R2.4).
+func newRoundPane(env widget.Env) roundPane {
 	return roundPane{
 		src:     env.Src,
 		ctx:     env.Ctx,
 		now:     envNow(env),
 		report:  env.Report,
 		width:   env.Width,
-		rows:    bodyHeight(env),
+		rows:    widget.BodyHeight(env),
 		actions: env.Actions != nil,
 	}
 }
@@ -33,7 +33,7 @@ func newRoundPane(env Env) roundPane {
 // default: pointDetailAt's rule (paneRound). A non-zero round is set
 // after the point, with the caches cleared like stepRound does, and its
 // fetch is issued (§4.5, R2.4).
-func newRoundView(env Env, key string, round int) (View, tea.Cmd) {
+func newRoundView(env widget.Env, key string, round int) (widget.View, tea.Cmd) {
 	p := newRoundPane(env)
 	p.actions = env.Actions != nil
 	var cmd tea.Cmd
@@ -66,7 +66,7 @@ func newRoundView(env Env, key string, round int) (View, tea.Cmd) {
 // the member's row is not in the shell's report: it opens the round against a
 // report carrying the chain's own member rows, and carries them as the view's
 // extra so every later status refresh keeps the pane's target resolvable.
-func newChainRoundView(env Env, key string, round int, members []view.BindingStatus, crumbs []string) (View, tea.Cmd) {
+func newChainRoundView(env widget.Env, key string, round int, members []view.BindingStatus, crumbs []string) (widget.View, tea.Cmd) {
 	env.Report = mergeRows(env.Report, members)
 	v, cmd := newRoundView(env, key, round)
 	if rv, ok := v.(roundView); ok {
@@ -79,7 +79,7 @@ func newChainRoundView(env Env, key string, round int, members []view.BindingSta
 
 // newHistRoundView targets an archived binding's round through
 // pointDetailAtHist. round == 0 means the default (Rounds) (§4.5, R2.4).
-func newHistRoundView(env Env, h relevo.HistoryBinding, round int) (View, tea.Cmd) {
+func newHistRoundView(env widget.Env, h relevo.HistoryBinding, round int) (widget.View, tea.Cmd) {
 	p := newRoundPane(env)
 	p.actions = false
 	var cmd tea.Cmd
@@ -136,7 +136,7 @@ func roundsOf(r view.BindingStatus) int {
 // view (§4.5).
 type roundView struct {
 	pane    roundPane
-	actions bool // Actions != nil at construction: the action keys are shown (r1)
+	actions bool // widget.Actions != nil at construction: the action keys are shown (r1)
 	// extra carries report rows the shell's report no longer holds: a chain's
 	// own members are folded into its synthetic row by the cockpit's read
 	// model, so a round drilled in from the chains view lends them back for
@@ -188,7 +188,7 @@ func (r roundView) Crumbs() []string {
 // Context is the context row. It reads the same report the pane does, with
 // the view's own rows merged in, so a chain member's round names its binding
 // after a status refresh as it did when it was opened.
-func (r roundView) Context(env Env) (string, string) {
+func (r roundView) Context(env widget.Env) (string, string) {
 	b := row(r.rows(env), r.pane.detail.name)
 
 	rightText := fmt.Sprintf("round %d of %d", r.pane.detail.round, r.pane.detail.rounds)
@@ -360,55 +360,55 @@ func scratchText(head string) string {
 	return "scratch @ " + head + " + dirty diff"
 }
 
-func (r roundView) Keys() []KeyHelp {
+func (r roundView) Keys() []widget.KeyHelp {
 	// A reader round's footer is its own (round 5b): no x stop, no g gate,
 	// no o shell; enter opens the artifacts tab's selected file, and send
 	// next and retry on are the reader's actions.
 	if r.pane.reader {
-		var keys []KeyHelp
+		var keys []widget.KeyHelp
 		if r.pane.detail.active == tabArtifacts {
-			keys = append(keys, KeyHelp{"enter", "open file"})
+			keys = append(keys, widget.KeyHelp{Key: "enter", Help: "open file"})
 		}
-		keys = append(keys, KeyHelp{"tab", "next tab"}, KeyHelp{"[ ]", "round"})
+		keys = append(keys, widget.KeyHelp{Key: "tab", Help: "next tab"}, widget.KeyHelp{Key: "[ ]", Help: "round"})
 		if r.pane.detail.active == tabArtifacts {
-			keys = append(keys, KeyHelp{"↑↓", "move"})
+			keys = append(keys, widget.KeyHelp{Key: "↑↓", Help: "move"})
 		}
 		if r.actions {
-			keys = append(keys, KeyHelp{"s", "send next"}, KeyHelp{"r", "retry on…"})
+			keys = append(keys, widget.KeyHelp{Key: "s", Help: "send next"}, widget.KeyHelp{Key: "r", Help: "retry on…"})
 		}
 		return keys
 	}
-	keys := []KeyHelp{
-		{"tab", "next tab"},
-		{"[ ]", "round"},
+	keys := []widget.KeyHelp{
+		{Key: "tab", Help: "next tab"},
+		{Key: "[ ]", Help: "round"},
 	}
 	if r.actions {
 		keys = append(keys,
-			KeyHelp{"x", "stop"},
-			KeyHelp{"g", "gate"},
-			KeyHelp{"o", "shell"},
+			widget.KeyHelp{Key: "x", Help: "stop"},
+			widget.KeyHelp{Key: "g", Help: "gate"},
+			widget.KeyHelp{Key: "o", Help: "shell"},
 		)
 	}
 	return keys
 }
 
-func (r roundView) HelpKeys() []KeyHelp {
-	keys := []KeyHelp{
-		{"tab", "next tab"},
-		{"1-5", "tab"},
-		{"[ ]", "round"},
-		{"↑↓", "scroll"},
+func (r roundView) HelpKeys() []widget.KeyHelp {
+	keys := []widget.KeyHelp{
+		{Key: "tab", Help: "next tab"},
+		{Key: "1-5", Help: "tab"},
+		{Key: "[ ]", Help: "round"},
+		{Key: "↑↓", Help: "scroll"},
 	}
 	if r.actions {
 		keys = append(keys,
-			KeyHelp{"s", "send"},
-			KeyHelp{"E", "edit+send"},
-			KeyHelp{"x", "stop"},
-			KeyHelp{"D", "done"},
-			KeyHelp{"u", "unbind"},
-			KeyHelp{"g", "gate"},
-			KeyHelp{"o", "shell"},
-			KeyHelp{"r", "retry on…"},
+			widget.KeyHelp{Key: "s", Help: "send"},
+			widget.KeyHelp{Key: "E", Help: "edit+send"},
+			widget.KeyHelp{Key: "x", Help: "stop"},
+			widget.KeyHelp{Key: "D", Help: "done"},
+			widget.KeyHelp{Key: "u", Help: "unbind"},
+			widget.KeyHelp{Key: "g", Help: "gate"},
+			widget.KeyHelp{Key: "o", Help: "shell"},
+			widget.KeyHelp{Key: "r", Help: "retry on…"},
 		)
 	}
 	return keys
@@ -416,7 +416,7 @@ func (r roundView) HelpKeys() []KeyHelp {
 
 func (r roundView) Capturing() bool { return false }
 
-func (r roundView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (r roundView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	// Every call lends the pane the shell's current report and box (§4.4):
 	// invalidate, the ages and the fetch all read these. The pane's own rows
 	// and its fetched detail row ride along, or a member the shell's report
@@ -425,7 +425,7 @@ func (r roundView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	r.pane.report = r.rows(env)
 	r.pane.now = envNow(env)
 	r.pane.width = env.Width
-	r.pane.rows = bodyHeight(env)
+	r.pane.rows = widget.BodyHeight(env)
 	r.pane.actions = r.actions
 	switch msg := msg.(type) {
 	case widget.TickMsg:
@@ -463,7 +463,7 @@ func (r roundView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		r.pane.width = env.Width
-		r.pane.rows = bodyHeight(env)
+		r.pane.rows = widget.BodyHeight(env)
 		r.pane.actions = r.actions
 		r.pane.detail.vp.Width = r.pane.contentWidth()
 		r.pane.detail.vp.Height = r.pane.viewportHeight()
@@ -476,7 +476,7 @@ func (r roundView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	return r, nil
 }
 
-func (r roundView) updateKey(msg tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (r roundView) updateKey(msg tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	if b := row(r.pane.report, r.pane.detail.name); b != nil {
 		if cmd, ok := actionKey(env, *b, msg.String()); ok {
 			return r, cmd
@@ -543,7 +543,7 @@ func (r roundView) updateKey(msg tea.KeyMsg, env Env) (View, tea.Cmd) {
 }
 
 // Body is the pane, given the shell's full body box (§5.4).
-func (r roundView) Body(env Env, width, height int) string {
+func (r roundView) Body(env widget.Env, width, height int) string {
 	r.pane.width = width
 	r.pane.rows = height
 	r.pane.report = r.rows(env)

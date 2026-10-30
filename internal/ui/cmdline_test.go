@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -17,12 +18,12 @@ func dashJump(name, id string, round int) dash.JumpMsg {
 	return dash.JumpMsg{BindingName: name, BindingID: id, Round: round}
 }
 
-func cmdEnv(rows ...string) Env {
+func cmdEnv(rows ...string) widget.Env {
 	bs := make([]view.BindingStatus, len(rows))
 	for i, r := range rows {
 		bs[i] = view.BindingStatus{Name: r, Display: "ACTIVE"}
 	}
-	return Env{Report: view.Report{Bindings: bs}, Loaded: true, Now: railNow}
+	return widget.Env{Report: view.Report{Bindings: bs}, Loaded: true, Now: railNow}
 }
 
 // TestCmdLineMatchesRanks pins §4.7's matching and ranking: a
@@ -75,7 +76,7 @@ func TestCommandMatchesLiveBeforeDone(t *testing.T) {
 	bindings = append(bindings, view.BindingStatus{
 		Name: "live-binding-long", Round: 2, Display: "ACTIVE",
 	})
-	env := Env{Report: view.Report{Bindings: bindings}}
+	env := widget.Env{Report: view.Report{Bindings: bindings}}
 
 	c := newCmdLine()
 	c.input.SetValue("r")
@@ -112,21 +113,21 @@ func TestCmdLineExecuteCommands(t *testing.T) {
 
 	t.Run("fleet", func(t *testing.T) {
 		cmd := execLine("fleet", env, p)
-		msg, ok := cmd().(rootMsg)
+		msg, ok := cmd().(widget.RootMsg)
 		if !ok {
-			t.Fatalf("fleet must return rootMsg, got %T", cmd())
+			t.Fatalf("fleet must return widget.RootMsg, got %T", cmd())
 		}
-		if len(msg.vs) != 1 {
-			t.Fatalf("fleet must root one view, got %d", len(msg.vs))
+		if len(msg.Views) != 1 {
+			t.Fatalf("fleet must root one view, got %d", len(msg.Views))
 		}
-		if _, ok := msg.vs[0].(fleetView); !ok {
-			t.Errorf("fleet must root a fleetView, got %T", msg.vs[0])
+		if _, ok := msg.Views[0].(fleetView); !ok {
+			t.Errorf("fleet must root a fleetView, got %T", msg.Views[0])
 		}
 	})
 
 	t.Run("help", func(t *testing.T) {
-		if _, ok := execLine("help", env, p)().(helpMsg); !ok {
-			t.Error("help must return helpMsg")
+		if _, ok := execLine("help", env, p)().(widget.HelpMsg); !ok {
+			t.Error("help must return widget.HelpMsg")
 		}
 	})
 
@@ -137,34 +138,34 @@ func TestCmdLineExecuteCommands(t *testing.T) {
 	})
 
 	t.Run("unknown command", func(t *testing.T) {
-		msg, ok := execLine("bogus", env, p)().(noticeMsg)
+		msg, ok := execLine("bogus", env, p)().(widget.NoticeMsg)
 		if !ok {
 			t.Fatalf("unknown command must notice, got %T", execLine("bogus", env, p)())
 		}
-		if !strings.Contains(msg.text, "unknown command") {
-			t.Errorf("notice = %q", msg.text)
+		if !strings.Contains(msg.Text, "unknown command") {
+			t.Errorf("notice = %q", msg.Text)
 		}
 	})
 
 	t.Run("unknown binding", func(t *testing.T) {
-		msg, ok := execLine("round nope", env, p)().(noticeMsg)
+		msg, ok := execLine("round nope", env, p)().(widget.NoticeMsg)
 		if !ok {
 			t.Fatalf("unknown binding must notice, got %T", execLine("round nope", env, p)())
 		}
-		if !strings.Contains(msg.text, `unknown binding "nope"`) {
-			t.Errorf("notice = %q", msg.text)
+		if !strings.Contains(msg.Text, `unknown binding "nope"`) {
+			t.Errorf("notice = %q", msg.Text)
 		}
 	})
 
 	t.Run("rounds without a DB", func(t *testing.T) {
 		st := store.New(t.TempDir())
 		noDB := testEnv(mastermindSource{relevo.Runtime{Store: st}}, view.Report{}, 140, 40)
-		msg, ok := execLine("rounds", noDB, p)().(noticeMsg)
+		msg, ok := execLine("rounds", noDB, p)().(widget.NoticeMsg)
 		if !ok {
 			t.Fatalf("rounds without a DB must notice, got %T", execLine("rounds", noDB, p)())
 		}
-		if !strings.Contains(msg.text, "no database") {
-			t.Errorf("notice = %q", msg.text)
+		if !strings.Contains(msg.Text, "no database") {
+			t.Errorf("notice = %q", msg.Text)
 		}
 	})
 
@@ -187,12 +188,12 @@ func TestCmdLineExecuteCommands(t *testing.T) {
 func TestOpenRoundNotFound(t *testing.T) {
 	st := store.New(t.TempDir())
 	env := testEnv(mastermindSource{relevo.Runtime{Store: st}}, view.Report{}, 140, 40)
-	msg, ok := openRound(env, dashJump("ghost", "h1", 1))().(noticeMsg)
+	msg, ok := openRound(env, dashJump("ghost", "h1", 1))().(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf("openRound must notice, got %T", openRound(env, dashJump("ghost", "h1", 1))())
 	}
-	if !strings.Contains(msg.text, "ghost not found") {
-		t.Errorf("notice = %q, want %q", msg.text, "ghost not found")
+	if !strings.Contains(msg.Text, "ghost not found") {
+		t.Errorf("notice = %q, want %q", msg.Text, "ghost not found")
 	}
 }
 
@@ -224,14 +225,14 @@ func TestCmdLineServersCompletesAndDispatches(t *testing.T) {
 	if cmd == nil {
 		t.Fatal(":servers must return a command")
 	}
-	msg, ok := cmd().(rootMsg)
+	msg, ok := cmd().(widget.RootMsg)
 	if !ok {
 		t.Fatalf(":servers gave %T, want a root message", msg)
 	}
-	if len(msg.vs) != 1 {
-		t.Fatalf(":servers rooted %d views, want one", len(msg.vs))
+	if len(msg.Views) != 1 {
+		t.Fatalf(":servers rooted %d views, want one", len(msg.Views))
 	}
-	if _, ok := msg.vs[0].(serversView); !ok {
-		t.Errorf(":servers rooted %T, want a serversView", msg.vs[0])
+	if _, ok := msg.Views[0].(serversView); !ok {
+		t.Errorf(":servers rooted %T, want a serversView", msg.Views[0])
 	}
 }

@@ -48,7 +48,7 @@ type settingsForm struct {
 	touched []bool
 	tried   bool
 	doc     relevo.ConfigDoc
-	env     Env
+	env     widget.Env
 	note    string // one dim sentence row, may be ""
 }
 
@@ -144,7 +144,7 @@ func parseCommand(s string) (any, error) {
 // newSettingsForm builds the form named form, focused on focusKey's field.
 // form is one of the closed list: rounds, check, timing,
 // max_builders, scope, serve.scope, classify.
-func newSettingsForm(env Env, doc relevo.ConfigDoc, form, focusKey string) settingsForm {
+func newSettingsForm(env widget.Env, doc relevo.ConfigDoc, form, focusKey string) settingsForm {
 	cpus := numCPU()
 	byKey := func(key string) relevo.Setting { return settingByKey(doc, cpus, key) }
 
@@ -297,18 +297,18 @@ func (f settingsForm) setFocus(i int) settingsForm {
 
 // footerKeys is the form's keys: enter, tab, esc, plus ←→ choose when
 // any field is a chip row.
-func (f settingsForm) footerKeys() []KeyHelp {
-	keys := []KeyHelp{{"enter", "save"}, {"tab", "next field"}, {"esc", "cancel"}}
+func (f settingsForm) footerKeys() []widget.KeyHelp {
+	keys := []widget.KeyHelp{{Key: "enter", Help: "save"}, {Key: "tab", Help: "next field"}, {Key: "esc", Help: "cancel"}}
 	for _, fld := range f.fields {
 		if fld.chips != nil {
-			return append(keys, KeyHelp{"←→", "choose"})
+			return append(keys, widget.KeyHelp{Key: "←→", Help: "choose"})
 		}
 	}
 	return keys
 }
 
 // keys is the form's own keys, shown in the footer through overlayKeyer.
-func (f settingsForm) keys() []KeyHelp { return f.footerKeys() }
+func (f settingsForm) keys() []widget.KeyHelp { return f.footerKeys() }
 
 // moveChip is left/right on a chip row.
 func (f settingsForm) moveChip(delta int) settingsForm {
@@ -504,7 +504,7 @@ func (f settingsForm) submit() (overlay, tea.Cmd, bool) {
 	edit, err := relevo.EditPolicy(f.doc, sets, f.message())
 	switch {
 	case err == nil:
-		return f, runAction(f.env.Ctx, "set "+f.title, f.title, func(ctx context.Context) Result {
+		return f, runAction(f.env.Ctx, "set "+f.title, f.title, func(ctx context.Context) widget.Result {
 			return f.env.Actions.ApplyConfig(ctx, edit)
 		}), true
 	case errors.Is(err, relevo.ErrNoChange):

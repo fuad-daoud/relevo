@@ -30,13 +30,13 @@ type chainsView struct {
 }
 
 // newChainsView builds ':chains' and the command that loads its doc.
-func newChainsView(env Env) (View, tea.Cmd) {
+func newChainsView(env widget.Env) (widget.View, tea.Cmd) {
 	v := chainsView{actions: env.Actions != nil}
 	return v, chainsDocCmd(env)
 }
 
 // chainsDocCmd reads chains off the update loop.
-func chainsDocCmd(env Env) tea.Cmd {
+func chainsDocCmd(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		if env.Actions == nil {
 			return chainsDocMsg{}
@@ -250,7 +250,7 @@ func chainReasonLine(c relevo.ChainEntry, sel bool, cw int) string {
 }
 
 // bodyLines builds all rendered table lines before viewport windowing.
-func (v chainsView) bodyLines(env Env, width int) []string {
+func (v chainsView) bodyLines(env widget.Env, width int) []string {
 	nameW, cols := chainsLayout(width, v.doc)
 	cw := width - 6
 	if cw < 0 {
@@ -270,12 +270,12 @@ func (v chainsView) bodyLines(env Env, width int) []string {
 }
 
 // follow scrolls the viewport to keep the selected chain visible.
-func (v *chainsView) follow(env Env) {
+func (v *chainsView) follow(env widget.Env) {
 	if len(v.doc.Chains) == 0 {
 		v.top = 0
 		return
 	}
-	avail := bodyHeight(env)
+	avail := widget.BodyHeight(env)
 	if avail <= 0 {
 		v.top = 0
 		return
@@ -301,19 +301,19 @@ func (v chainsView) Crumbs() []string { return []string{"chains"} }
 
 func (v chainsView) Capturing() bool { return false }
 
-func (v chainsView) Keys() []KeyHelp {
+func (v chainsView) Keys() []widget.KeyHelp {
 	if !v.actions {
 		return nil
 	}
-	return []KeyHelp{
-		{"↑↓", "move"},
-		{"enter", "steps"},
-		{"t", "trace"},
-		{"esc", "back"},
+	return []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "enter", Help: "steps"},
+		{Key: "t", Help: "trace"},
+		{Key: "esc", Help: "back"},
 	}
 }
 
-func (v chainsView) HelpKeys() []KeyHelp { return v.Keys() }
+func (v chainsView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
 func pluralChain(n int) string {
 	if n == 1 {
@@ -322,7 +322,7 @@ func pluralChain(n int) string {
 	return "chains"
 }
 
-func (v chainsView) Context(env Env) (string, string) {
+func (v chainsView) Context(env widget.Env) (string, string) {
 	running, halted, stopped, done, gone := 0, 0, 0, 0, 0
 	for _, c := range v.doc.Chains {
 		switch c.Status {
@@ -360,7 +360,7 @@ func (v chainsView) Context(env Env) (string, string) {
 	return left, ""
 }
 
-func (v chainsView) Body(env Env, width, height int) string {
+func (v chainsView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
@@ -385,7 +385,7 @@ func (v chainsView) Body(env Env, width, height int) string {
 	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
-func (v chainsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v chainsView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case chainsDocMsg:
 		if msg.err != nil {
@@ -413,7 +413,7 @@ func (v chainsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	return v, nil
 }
 
-func (v chainsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v chainsView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	n := len(v.doc.Chains)
 	switch k.String() {
 	case "up", "k":
@@ -429,10 +429,10 @@ func (v chainsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		v.cur = candClamp(n-1, n)
 		v.follow(env)
 	case "pgup":
-		v.cur = candClamp(v.cur-bodyHeight(env), n)
+		v.cur = candClamp(v.cur-widget.BodyHeight(env), n)
 		v.follow(env)
 	case "pgdown":
-		v.cur = candClamp(v.cur+bodyHeight(env), n)
+		v.cur = candClamp(v.cur+widget.BodyHeight(env), n)
 		v.follow(env)
 	case "enter":
 		v, cmd := v.open(env)
@@ -448,7 +448,7 @@ func (v chainsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 // open pushes the cursor's chain's steps, carrying the read model it already
 // holds so the steps view needs no second read. A chain with no steps of its
 // own says so rather than opening an empty table.
-func (v chainsView) open(env Env) (View, tea.Cmd) {
+func (v chainsView) open(env widget.Env) (widget.View, tea.Cmd) {
 	c := v.doc.Chains[candClamp(v.cur, len(v.doc.Chains))]
 	if len(c.Steps) == 0 {
 		return v, notice(c.Name + " has no steps: it ran on the fixed state machine")
@@ -457,7 +457,7 @@ func (v chainsView) open(env Env) (View, tea.Cmd) {
 }
 
 // openTrace pushes the cursor's chain's trace, read off the update loop.
-func (v chainsView) openTrace(env Env) tea.Cmd {
+func (v chainsView) openTrace(env widget.Env) tea.Cmd {
 	c := v.doc.Chains[candClamp(v.cur, len(v.doc.Chains))]
 	if env.Actions == nil {
 		return notice("a chain's trace needs relevo ui on this machine")
