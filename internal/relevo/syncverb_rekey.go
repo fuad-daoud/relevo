@@ -6,6 +6,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	syncverb "github.com/fuad-daoud/relevo/internal/sync/verb"
 )
 
 // rekey rotates the log's key from the epoch the remote holds to the next one.
@@ -19,16 +20,16 @@ import (
 // The tail is the one part of a frame a reader of a captured stream never sees,
 // so two secrets on it are two secrets a log cannot leak.
 func (v *VerbRunner) rekey(ctx context.Context, verb *wire.SyncVerb, tail []byte) *wire.SyncResult {
-	current, newPass, err := rekeyIntake(verb, tail)
+	current, newPass, err := syncverb.RekeyIntake(verb, tail)
 	if err != nil {
-		return verbRefusal(wire.SyncCodeInvalid, err)
+		return syncverb.Refusal(wire.SyncCodeInvalid, err)
 	}
 	transport, err := v.drive(ctx)
 	if err != nil {
-		return verbRefusal(verbClassify(err), err)
+		return syncverb.Refusal(syncverb.Classify(err), err)
 	}
 	if err := relevosync.Rekey(ctx, v.Local, transport, current, newPass, rand.Reader); err != nil {
-		return verbRefusal(verbClassify(err), err)
+		return syncverb.Refusal(syncverb.Classify(err), err)
 	}
 	return &wire.SyncResult{OK: true}
 }

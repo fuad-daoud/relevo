@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	syncverb "github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -55,26 +56,26 @@ func rekeyRunner(t *testing.T, log *synclog.MemTransport) *VerbRunner {
 func TestRekeyIntakeSplitsTheTailAtItsOwnLengths(t *testing.T) {
 	current, newPass := []byte("the current"), []byte("the new one")
 	verb, tail := rekeyTail(current, newPass)
-	gotCurrent, gotNew, err := rekeyIntake(verb, tail)
+	gotCurrent, gotNew, err := syncverb.RekeyIntake(verb, tail)
 	if err != nil || string(gotCurrent) != string(current) || string(gotNew) != string(newPass) {
-		t.Fatalf("rekeyIntake = (%q, %q, %v), want the split as named", gotCurrent, gotNew, err)
+		t.Fatalf("syncverb.RekeyIntake = (%q, %q, %v), want the split as named", gotCurrent, gotNew, err)
 	}
 
 	// A tail shorter than the two lengths name would store part of one
 	// passphrase as the other, so it is refused.
 	verb.NewPassphraseLen = len(newPass) + 1
-	if _, _, err := rekeyIntake(verb, tail); err == nil {
+	if _, _, err := syncverb.RekeyIntake(verb, tail); err == nil {
 		t.Fatal("a tail shorter than its lengths was accepted")
 	}
 	// A tail longer than the two lengths name carries bytes neither names, and
 	// splitting it anyway would make them part of the new passphrase.
 	verb.NewPassphraseLen = len(newPass) - 1
-	if _, _, err := rekeyIntake(verb, tail); err == nil {
+	if _, _, err := syncverb.RekeyIntake(verb, tail); err == nil {
 		t.Fatal("a tail longer than its lengths was accepted")
 	}
 	// A negative length names nothing and is refused the same way.
 	verb.NewPassphraseLen = -1
-	if _, _, err := rekeyIntake(verb, tail); err == nil {
+	if _, _, err := syncverb.RekeyIntake(verb, tail); err == nil {
 		t.Fatal("a negative length was accepted")
 	}
 }
@@ -160,13 +161,13 @@ func TestRekeyVerbRefusalsCarryTheirCodes(t *testing.T) {
 // the two rekey sentinels land on their own codes, not on internal.
 func TestVerbClassifyNamesTheRekeyCodes(t *testing.T) {
 	t.Parallel()
-	if got := verbClassify(relevosync.ErrMachineLocked); got != wire.SyncCodeMachineLocked {
+	if got := syncverb.Classify(relevosync.ErrMachineLocked); got != wire.SyncCodeMachineLocked {
 		t.Errorf("ErrMachineLocked = %q, want %q", got, wire.SyncCodeMachineLocked)
 	}
-	if got := verbClassify(relevosync.ErrEpochRace); got != wire.SyncCodeEpochRace {
+	if got := syncverb.Classify(relevosync.ErrEpochRace); got != wire.SyncCodeEpochRace {
 		t.Errorf("ErrEpochRace = %q, want %q", got, wire.SyncCodeEpochRace)
 	}
-	if got := verbClassify(errors.Join(relevosync.ErrEpochRace)); got != wire.SyncCodeEpochRace {
+	if got := syncverb.Classify(errors.Join(relevosync.ErrEpochRace)); got != wire.SyncCodeEpochRace {
 		t.Errorf("a wrapped ErrEpochRace = %q, want the same code", got)
 	}
 }

@@ -11,8 +11,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
-	"github.com/fuad-daoud/relevo/internal/db/wire/client"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	syncverb "github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -274,11 +274,11 @@ func (v *VerbRunner) setClient(transport synclog.LogTransport) {
 // the stored token and key.
 func (v *VerbRunner) retry(rebuild bool) *wire.SyncResult {
 	if v.Runner == nil {
-		return verbRefusal(wire.SyncCodeInvalid,
+		return syncverb.Refusal(wire.SyncCodeInvalid,
 			fmt.Errorf("sync: retry: no runner is installed: %w", db.ErrInvalid))
 	}
 	if err := v.Runner.Retry(); err != nil {
-		return verbRefusal(verbClassify(err), err)
+		return syncverb.Refusal(syncverb.Classify(err), err)
 	}
 	if !rebuild {
 		return &wire.SyncResult{OK: true}
@@ -290,7 +290,7 @@ func (v *VerbRunner) retry(rebuild bool) *wire.SyncResult {
 		return &wire.SyncResult{OK: true}
 	}
 	if err != nil {
-		return verbRefusal(verbClassify(err), err)
+		return syncverb.Refusal(syncverb.Classify(err), err)
 	}
 	return &wire.SyncResult{OK: true, Aside: out.Aside}
 }
@@ -301,7 +301,7 @@ func (v *VerbRunner) retry(rebuild bool) *wire.SyncResult {
 // other action, and the daemon's one worker is the one that answers.
 func (v *VerbRunner) probe(ctx context.Context) *wire.SyncResult {
 	if err := v.Probe(ctx); err != nil {
-		return verbRefusal(verbClassify(err), err)
+		return syncverb.Refusal(syncverb.Classify(err), err)
 	}
 	return &wire.SyncResult{OK: true}
 }
@@ -364,9 +364,9 @@ func transportReady(transport synclog.LogTransport) bool {
 // worker left behind holds the replica open against the next one; a run that
 // finishes leaves it on the runner, where the daemon can drive it again.
 func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byte) *wire.SyncResult {
-	token, passphrase, r2, err := enableIntake(verb, tail)
+	token, passphrase, r2, err := syncverb.EnableIntake(verb, tail)
 	if err != nil {
-		return verbRefusal(verbClassify(err), err)
+		return syncverb.Refusal(syncverb.Classify(err), err)
 	}
 	if verb.Join {
 		return v.enableJoin(ctx, verb, token, passphrase, r2)
@@ -378,7 +378,7 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byt
 	if len(bytes.TrimSpace(passphrase)) > 0 {
 		done, err := v.stageAndVerify(ctx, verb.RemoteURL, token, passphrase, false, r2)
 		if err != nil {
-			return verbRefusal(verbClassify(err), err)
+			return syncverb.Refusal(syncverb.Classify(err), err)
 		}
 		staged = done
 	}
@@ -431,7 +431,7 @@ func (v *VerbRunner) disable(ctx context.Context, verb *wire.SyncVerb) *wire.Syn
 	// not parse before anything else happens. Nothing here reads it again: the
 	// turn-off's own rows are the mark, the marker and the token.
 	if _, err := relevosync.ReadSettings(v.Local); err != nil {
-		return verbRefusal(wire.SyncCodeInvalid, err)
+		return syncverb.Refusal(wire.SyncCodeInvalid, err)
 	}
 
 	transport := v.disableTransport(ctx)
@@ -448,7 +448,7 @@ func (v *VerbRunner) disable(ctx context.Context, verb *wire.SyncVerb) *wire.Syn
 	}
 	res, err := disabler.Disable(ctx)
 	if err != nil {
-		return verbRefusal(verbClassify(err), err)
+		return syncverb.Refusal(syncverb.Classify(err), err)
 	}
 	out := &wire.SyncResult{OK: true, Steps: res.Steps, FinalPush: res.FinalPush}
 	if res.FinalPushErr != nil {
@@ -550,20 +550,9 @@ func verbTimeout(verb *wire.SyncVerb) time.Duration {
 	return relevosync.DefaultTimeout
 }
 
-// refusal is a failed verb as the owner answers it: the class a caller maps and
-// the message it shows. Both come from the same error the sync package raised,
-// so a refusal a caller can act on keeps the wording the package gave it.
-func verbRefusal(code string, err error) *wire.SyncResult {
-	return &wire.SyncResult{OK: false, Code: code, Message: err.Error()}
-}
-
 // OwnerVerb is the owner.Server hook that makes a verb run with this daemon's
 // handles. It is a method rather than a closure so the daemon, a test and the
 // re-exec'd image all install exactly the same function.
 func (v *VerbRunner) OwnerVerb(ctx context.Context, verb *wire.SyncVerb, token []byte) *wire.SyncResult {
 	return v.Run(ctx, verb, token)
 }
-
-// VerbRefusal turns a result into the error a caller classifies, so the client
-// side of the surface maps codes without importing the sync package's sentinels.
-func VerbRefusal(res *wire.SyncResult) error { return client.VerbError(res) }

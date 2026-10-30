@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	syncverb "github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -863,7 +864,7 @@ func TestSyncVerbClassificationIsTotal(t *testing.T) {
 		{errors.New("something else"), wire.SyncCodeInternal},
 	}
 	for _, tc := range cases {
-		if got := verbClassify(tc.err); got != tc.want {
+		if got := syncverb.Classify(tc.err); got != tc.want {
 			t.Errorf("classify(%v) = %q, want %q", tc.err, got, tc.want)
 		}
 	}
@@ -873,7 +874,7 @@ func TestSyncVerbClassificationIsTotal(t *testing.T) {
 // breaker waits out a stopped worker's delay comes back as the retryable
 // class rather than internal: the delay ends on its own, and the reader's
 // answer is the retry verb, not a defect report for a machine that is doing
-// exactly what its breaker is for. Dropping the case from verbClassify kills
+// exactly what its breaker is for. Dropping the case from syncverb.Classify kills
 // this (the code falls back to internal).
 func TestABackingOffVerbIsARefusal(t *testing.T) {
 	t.Parallel()
@@ -882,7 +883,7 @@ func TestABackingOffVerbIsARefusal(t *testing.T) {
 		t.Run(verb, func(t *testing.T) {
 			t.Parallel()
 
-			res := verbRefusal(verbClassify(relevosync.ErrBackingOff), relevosync.ErrBackingOff)
+			res := syncverb.Refusal(syncverb.Classify(relevosync.ErrBackingOff), relevosync.ErrBackingOff)
 			if res.OK {
 				t.Fatalf("the %s refusal reports OK", verb)
 			}
@@ -914,10 +915,10 @@ func TestARemoteRefusalIsAClassNotAnInternal(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := verbClassify(tc.err); got == wire.SyncCodeInternal {
-				t.Errorf("verbClassify(%v) = internal, want %q", tc.err, tc.want)
+			if got := syncverb.Classify(tc.err); got == wire.SyncCodeInternal {
+				t.Errorf("syncverb.Classify(%v) = internal, want %q", tc.err, tc.want)
 			} else if got != tc.want {
-				t.Errorf("verbClassify(%v) = %q, want %q", tc.err, got, tc.want)
+				t.Errorf("syncverb.Classify(%v) = %q, want %q", tc.err, got, tc.want)
 			}
 		})
 	}

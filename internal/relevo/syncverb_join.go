@@ -27,6 +27,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	syncverb "github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -227,7 +228,7 @@ func (v *VerbRunner) enableJoin(ctx context.Context, verb *wire.SyncVerb, token,
 	v.beginJoin()
 	done, err := v.stageAndVerify(ctx, verb.RemoteURL, token, passphrase, true, r2)
 	if err != nil {
-		return verbRefusal(verbClassify(err), err)
+		return syncverb.Refusal(syncverb.Classify(err), err)
 	}
 	return v.enablePipeline(ctx, verb, token, r2, true, done)
 }
@@ -255,7 +256,7 @@ func (v *VerbRunner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, to
 	if joining && staged != nil {
 		if err := v.settleImportBucket(r2, staged); err != nil {
 			staged.unstage()
-			return verbRefusal(verbClassify(err), err)
+			return syncverb.Refusal(syncverb.Classify(err), err)
 		}
 		opened = staged.transport
 	}
@@ -299,7 +300,7 @@ func (v *VerbRunner) enablePipeline(ctx context.Context, verb *wire.SyncVerb, to
 		if staged != nil && refusedForGood(err, enabler) {
 			staged.unstage()
 		}
-		return verbRefusal(verbClassify(err), err)
+		return syncverb.Refusal(syncverb.Classify(err), err)
 	}
 	if res.Adopted != "" {
 		// The worker was opened under the identity the machine just left; the

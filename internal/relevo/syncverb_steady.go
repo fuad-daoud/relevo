@@ -5,6 +5,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	syncverb "github.com/fuad-daoud/relevo/internal/sync/verb"
 )
 
 // The two halves of the steady exchange, each run alone for a client that asked
@@ -18,14 +19,14 @@ import (
 func (v *VerbRunner) push(ctx context.Context) *wire.SyncResult {
 	transport, err := v.drive(ctx)
 	if err != nil {
-		return verbRefusal(verbClassify(err), err)
+		return syncverb.Refusal(syncverb.Classify(err), err)
 	}
 	stop := relevosync.NewStopTransport(transport)
 	defer v.Runner.Track(stop)()
 	defer v.Runner.CountMoved(ctx, stop)
 	res, err := exportOnce(v.Shared, stop)
 	if err != nil {
-		return verbRefusal(verbClassify(err), err)
+		return syncverb.Refusal(syncverb.Classify(err), err)
 	}
 	return &wire.SyncResult{OK: true, Applied: res.Appended > 0}
 }
@@ -37,14 +38,14 @@ func (v *VerbRunner) push(ctx context.Context) *wire.SyncResult {
 func (v *VerbRunner) pull(ctx context.Context) *wire.SyncResult {
 	transport, err := v.drive(ctx)
 	if err != nil {
-		return verbRefusal(verbClassify(err), err)
+		return syncverb.Refusal(syncverb.Classify(err), err)
 	}
 	stop := relevosync.NewStopTransport(transport)
 	defer v.Runner.Track(stop)()
 	defer v.Runner.CountMoved(ctx, stop)
 	res, err := importOnce(v.Shared, stop)
 	if err != nil {
-		return verbRefusal(verbClassify(err), err)
+		return syncverb.Refusal(syncverb.Classify(err), err)
 	}
 	trouble := relevosync.TroubleFrom(res)
 	relevosync.RecordTrouble(v.Local, trouble)
