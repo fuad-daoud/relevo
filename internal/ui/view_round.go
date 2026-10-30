@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -196,10 +197,10 @@ func (r roundView) Context(env Env) (string, string) {
 	} else if b != nil && r.pane.detail.live && r.pane.detail.round == r.pane.detail.rounds && b.RoundEnd.IsZero() {
 		rightText += " · live"
 	}
-	right := faintStyle.Render(rightText) + " "
+	right := widget.FaintStyle.Render(rightText) + " "
 
 	if b == nil || !r.pane.detail.live {
-		left := "   " + mutedStyle.Render(r.pane.detailHeader())
+		left := "   " + widget.MutedStyle.Render(r.pane.detailHeader())
 		if lipgloss.Width(left)+1+lipgloss.Width(right) > env.Width {
 			right = ""
 		}
@@ -249,37 +250,37 @@ func roundState(b view.BindingStatus, now time.Time) (pill, age string) {
 	var pWord string
 	switch g {
 	case groupNeedsYou:
-		pStyle, pWord = chipWarnStyle.Bold(true), "needs you"
+		pStyle, pWord = widget.ChipWarnStyle.Bold(true), "needs you"
 	case groupWorking:
-		pStyle, pWord = chipGreenStyle.Bold(true), "working"
+		pStyle, pWord = widget.ChipGreenStyle.Bold(true), "working"
 	case groupIdle:
-		pStyle, pWord = kbdStyle, "idle"
+		pStyle, pWord = widget.KbdStyle, "idle"
 	case groupHeld:
-		pStyle, pWord = kbdStyle, "on hold"
+		pStyle, pWord = widget.KbdStyle, "on hold"
 	case groupDone:
-		pStyle, pWord = kbdStyle, "done"
+		pStyle, pWord = widget.KbdStyle, "done"
 	default:
-		pStyle, pWord = kbdStyle, strings.ToLower(b.Display)
+		pStyle, pWord = widget.KbdStyle, strings.ToLower(b.Display)
 	}
 
 	var ageStr string
 	if g == groupWorking {
 		if a := ago(b.RoundStart, now); a != "" {
-			ageStr = textStyle.Bold(true).Render(a)
+			ageStr = widget.TextStyle.Bold(true).Render(a)
 			if b.QuietFor != "" {
-				ageStr += mutedStyle.Render(" · quiet " + b.QuietFor)
+				ageStr += widget.MutedStyle.Render(" · quiet " + b.QuietFor)
 			}
 		} else if b.QuietFor != "" {
-			ageStr = mutedStyle.Render("quiet " + b.QuietFor)
+			ageStr = widget.MutedStyle.Render("quiet " + b.QuietFor)
 		}
 	} else {
 		rn := rowNow(b, now)
 		if b.Round > 0 {
 			rn = strings.TrimPrefix(rn, fmt.Sprintf("r%d · ", b.Round))
 		}
-		ageStr = textStyle.Render(rn)
+		ageStr = widget.TextStyle.Render(rn)
 	}
-	return "   " + chip(pStyle, pWord), "   " + ageStr
+	return "   " + widget.Chip(pStyle, pWord), "   " + ageStr
 }
 
 // contextCells is what line 1 draws after its state-and-time cell. A reader
@@ -292,17 +293,17 @@ func (p roundPane) contextCells(b view.BindingStatus) []string {
 	if p.reader {
 		return p.readerContextCells(b)
 	}
-	cells := []string{"      " + textStyle.Render(candidateText(b))}
-	cells = append(cells, faintStyle.Render("  ·  ")+mutedStyle.Render(mastermindWordOf(b)))
+	cells := []string{"      " + widget.TextStyle.Render(candidateText(b))}
+	cells = append(cells, widget.FaintStyle.Render("  ·  ")+widget.MutedStyle.Render(mastermindWordOf(b)))
 	branch := b.Branch
 	if branch == "" {
 		branch = repoCell(b)
 	}
 	if branch != "" {
-		cells = append(cells, faintStyle.Render("  ·  ")+mutedStyle.Render(branch))
+		cells = append(cells, widget.FaintStyle.Render("  ·  ")+widget.MutedStyle.Render(branch))
 	}
 	if b.Dirty {
-		cells = append(cells, faintStyle.Render("  ·  ")+redStyle.Render("dirty"))
+		cells = append(cells, widget.FaintStyle.Render("  ·  ")+widget.RedStyle.Render("dirty"))
 	}
 	return cells
 }
@@ -315,17 +316,17 @@ func (p roundPane) readerContextCells(b view.BindingStatus) []string {
 	c := p.detail.cache[tabArtifacts]
 	if artifactCount(c) > 0 {
 		cells = append(cells,
-			faintStyle.Render("  ·  ")+mutedStyle.Render(artifactsWord(artifactCount(c))),
-			faintStyle.Render("  ·  ")+mutedStyle.Render(relevo.ArtifactSizeText(artifactTotalSize(c))))
+			widget.FaintStyle.Render("  ·  ")+widget.MutedStyle.Render(artifactsWord(artifactCount(c))),
+			widget.FaintStyle.Render("  ·  ")+widget.MutedStyle.Render(relevo.ArtifactSizeText(artifactTotalSize(c))))
 	}
 	if !p.roundOpen(b) {
-		cells = append(cells, faintStyle.Render("  ·  ")+mutedStyle.Render("repository unchanged"))
+		cells = append(cells, widget.FaintStyle.Render("  ·  ")+widget.MutedStyle.Render("repository unchanged"))
 	}
 	cells = append(cells,
-		"      "+textStyle.Render(actorCell(b))+faintStyle.Render(" on ")+textStyle.Render(candidateText(b)),
-		faintStyle.Render("  ·  ")+mutedStyle.Render("reader"),
-		faintStyle.Render("  ·  ")+mutedStyle.Render(mastermindWordOf(b)),
-		faintStyle.Render("  ·  ")+mutedStyle.Render(scratchText(p.baselineHead)))
+		"      "+widget.TextStyle.Render(actorCell(b))+widget.FaintStyle.Render(" on ")+widget.TextStyle.Render(candidateText(b)),
+		widget.FaintStyle.Render("  ·  ")+widget.MutedStyle.Render("reader"),
+		widget.FaintStyle.Render("  ·  ")+widget.MutedStyle.Render(mastermindWordOf(b)),
+		widget.FaintStyle.Render("  ·  ")+widget.MutedStyle.Render(scratchText(p.baselineHead)))
 	return cells
 }
 
@@ -427,7 +428,7 @@ func (r roundView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	r.pane.rows = bodyHeight(env)
 	r.pane.actions = r.actions
 	switch msg := msg.(type) {
-	case tickMsg:
+	case widget.TickMsg:
 		if !r.pane.tabInFlight {
 			if cmd := r.pane.visibleTabFetch(); cmd != nil {
 				r.pane.tabInFlight = true

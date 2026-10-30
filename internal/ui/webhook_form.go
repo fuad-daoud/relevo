@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // webhookFormats are the format chip row's values, in order. json is the
@@ -324,7 +325,7 @@ func (f webhookForm) modal(width int) (string, []string, int, bool) {
 		} else {
 			valuePart = formInput(fld.input, focused, "", fieldW)
 			if fld.hint != "" {
-				valuePart += "   " + faintStyle.Render(fld.hint)
+				valuePart += "   " + widget.FaintStyle.Render(fld.hint)
 			}
 		}
 		rows = append(rows, settingsFormLabel(fld.label, focused)+valuePart)
@@ -334,7 +335,7 @@ func (f webhookForm) modal(width int) (string, []string, int, bool) {
 		rows = append(rows, "")
 	}
 	for _, ref := range webhookRefRows() {
-		rows = append(rows, mutedStyle.Render(ref))
+		rows = append(rows, widget.MutedStyle.Render(ref))
 	}
 	rows = append(rows, "")
 	if formErr != "" {

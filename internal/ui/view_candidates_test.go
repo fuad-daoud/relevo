@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/muesli/termenv"
 )
@@ -252,7 +253,7 @@ func TestCandidatesOffRow(t *testing.T) {
 	if text != "off" {
 		t.Errorf("STATUS = %q, want off", text)
 	}
-	if style.GetForeground() != faintStyle.GetForeground() {
+	if style.GetForeground() != widget.FaintStyle.GetForeground() {
 		t.Error("an off STATUS must be faint")
 	}
 }
@@ -455,11 +456,11 @@ func TestFooterGreysAViewsOffKeys(t *testing.T) {
 	m = candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnd})
 
 	got := m.keysView(m.env())
-	wantOff := chip(offKbdStyle, "d") + " " + offStyle.Render("delete")
+	wantOff := widget.Chip(widget.OffKbdStyle, "d") + " " + widget.OffStyle.Render("delete")
 	if !strings.Contains(got, wantOff) {
 		t.Errorf("footer does not grey d: want %q in %q", wantOff, got)
 	}
-	wantOn := chip(kbdStyle, "u") + " " + mutedStyle.Render("ungate")
+	wantOn := widget.Chip(widget.KbdStyle, "u") + " " + widget.MutedStyle.Render("ungate")
 	if !strings.Contains(got, wantOn) {
 		t.Errorf("footer does not keep u normal: want %q in %q", wantOn, got)
 	}

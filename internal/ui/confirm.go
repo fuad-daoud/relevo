@@ -16,6 +16,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -75,21 +76,21 @@ func (c confirmBox) modal(width int) (string, []string, int, bool) {
 	if yes == "" {
 		yes = "yes"
 	}
-	yStyle := kbdStyle
+	yStyle := widget.KbdStyle
 	if c.danger {
-		yStyle = chipDangerStyle
+		yStyle = widget.ChipDangerStyle
 	}
-	buttons := chip(yStyle, "y") + " " + mutedStyle.Render(yes) +
-		"      " + chip(kbdStyle, "n") + mutedStyle.Render(" cancel") +
-		"      " + faintStyle.Render("any other key cancels")
+	buttons := widget.Chip(yStyle, "y") + " " + widget.MutedStyle.Render(yes) +
+		"      " + widget.Chip(widget.KbdStyle, "n") + widget.MutedStyle.Render(" cancel") +
+		"      " + widget.FaintStyle.Render("any other key cancels")
 
 	rows := []string{
 		"",
-		textStyle.Bold(true).Render(c.title),
+		widget.TextStyle.Bold(true).Render(c.title),
 		"",
 	}
 	for _, l := range c.lines {
-		rows = append(rows, mutedStyle.Render(l))
+		rows = append(rows, widget.MutedStyle.Render(l))
 	}
 	rows = append(rows,
 		"",
@@ -100,9 +101,9 @@ func (c confirmBox) modal(width int) (string, []string, int, bool) {
 }
 
 func (c confirmBox) view(width int) []string {
-	out := []string{fit(accentStyle.Render(c.title), width)}
+	out := []string{widget.Fit(widget.AccentStyle.Render(c.title), width)}
 	for _, l := range c.lines {
-		out = append(out, fit(dimStyle.Render(l), width))
+		out = append(out, widget.Fit(widget.MutedStyle.Render(l), width))
 	}
 	return out
 }
@@ -206,9 +207,9 @@ func (p promptBox) completeTab() promptBox {
 }
 
 func (p promptBox) view(width int) []string {
-	out := []string{fit(accentStyle.Render(p.title), width), fit(p.input.View(), width)}
+	out := []string{widget.Fit(widget.AccentStyle.Render(p.title), width), widget.Fit(p.input.View(), width)}
 	if p.err != "" {
-		out = append(out, fit(errorStyle.Render(p.err), width))
+		out = append(out, widget.Fit(widget.ErrorStyle.Render(p.err), width))
 	}
 	return out
 }
@@ -223,15 +224,15 @@ func (p promptBox) modal(width int) (string, []string, int, bool) {
 	}
 	rows := []string{
 		"",
-		textStyle.Render(p.title),
+		widget.TextStyle.Render(p.title),
 		"",
 		p.input.View(),
 	}
 	if len(p.choices) > 0 {
-		rows = append(rows, faintStyle.Render("tab cycles: "+strings.Join(p.choices, " · ")))
+		rows = append(rows, widget.FaintStyle.Render("tab cycles: "+strings.Join(p.choices, " · ")))
 	}
 	if p.err != "" {
-		rows = append(rows, errorStyle.Render(p.err))
+		rows = append(rows, widget.ErrorStyle.Render(p.err))
 	}
 	rows = append(rows, "")
 	return kind, rows, want, false
@@ -370,8 +371,8 @@ func gateCmd(env Env, b view.BindingStatus) tea.Cmd {
 	}
 	reasonField := formField{label: "reason", input: newFormInput(false), hint: "optional"}
 
-	header := accentStyle.Bold(true).Render("Gate "+candidateText(b)) +
-		faintStyle.Render("  (provider "+secondSegment(subject)+")")
+	header := widget.AccentStyle.Bold(true).Render("Gate "+candidateText(b)) +
+		widget.FaintStyle.Render("  (provider "+secondSegment(subject)+")")
 
 	return openOverlay(formBox{
 		kind:   "gate",
@@ -603,7 +604,7 @@ func retryCmd(env Env, b view.BindingStatus) tea.Cmd {
 			}
 			items = append(items, listItem{
 				name: name, status: "current", note: note,
-				statusStyle: mutedStyle, disabled: true,
+				statusStyle: widget.MutedStyle, disabled: true,
 			})
 		case gatedBy(env, name) != nil:
 			g := gatedBy(env, name)
@@ -613,10 +614,10 @@ func retryCmd(env Env, b view.BindingStatus) tea.Cmd {
 			}
 			items = append(items, listItem{
 				name: name, status: status, note: gateProvider(g.Token),
-				statusStyle: faintStyle, disabled: true,
+				statusStyle: widget.FaintStyle, disabled: true,
 			})
 		default:
-			items = append(items, listItem{name: name, status: "ready", statusStyle: greenStyle})
+			items = append(items, listItem{name: name, status: "ready", statusStyle: widget.GreenStyle})
 		}
 	}
 
@@ -628,8 +629,8 @@ func retryCmd(env Env, b view.BindingStatus) tea.Cmd {
 		}
 	}
 
-	header := accentStyle.Bold(true).Render("Retry "+key) +
-		textStyle.Render(fmt.Sprintf(" round %d on another candidate", b.Round))
+	header := widget.AccentStyle.Bold(true).Render("Retry "+key) +
+		widget.TextStyle.Render(fmt.Sprintf(" round %d on another candidate", b.Round))
 
 	var note []string
 	if roundOpen(b) {

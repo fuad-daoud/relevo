@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // Which pane of the actor detail view owns the keys: the candidate table, or
@@ -43,7 +44,7 @@ func actorPlacementLines(doc relevo.ConfigDoc, name string, focus bool, cur, wid
 // actorPlacementHeaderLine is the pane's header row, in faint bold, over the
 // same two columns as its rows.
 func actorPlacementHeaderLine(width int) string {
-	style := faintStyle.Bold(true)
+	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{
 		{text: fmt.Sprintf("%2s", "#"), style: style},
 		{text: "PLACEMENT", style: style},
@@ -61,16 +62,16 @@ func actorPlacementHeaderLine(width int) string {
 // shows where its cursor sits.
 func actorPlacementLine(doc relevo.ConfigDoc, name string, i int, sel bool, width int) string {
 	entry := doc.Actors[name].Placement[i]
-	nameStyle := textStyle
+	nameStyle := widget.TextStyle
 	if sel {
 		nameStyle = nameStyle.Bold(true)
 	}
 	cells := []candCell{
-		{text: fmt.Sprintf("%2d", i+1), style: faintStyle},
+		{text: fmt.Sprintf("%2d", i+1), style: widget.FaintStyle},
 		{text: entry, style: nameStyle},
 	}
 	if entry == placementLocal {
-		cells = append(cells, candCell{text: "this machine", style: mutedStyle})
+		cells = append(cells, candCell{text: "this machine", style: widget.MutedStyle})
 	}
 	cw := width - 6
 	if cw < 0 {
@@ -83,7 +84,7 @@ func actorPlacementLine(doc relevo.ConfigDoc, name string, i int, sel bool, widt
 // the value the store reads back, marked as the default, muted throughout so
 // it does not read as a row the keys act on.
 func actorPlacementDefaultLine(width int) string {
-	return fit("   "+mutedStyle.Render(placementLocal)+"  "+faintStyle.Render("default"), width)
+	return widget.Fit("   "+widget.MutedStyle.Render(placementLocal)+"  "+widget.FaintStyle.Render("default"), width)
 }
 
 // copyPlacement is a fresh copy of an actor's placement list: a change builds

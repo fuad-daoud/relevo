@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // chainTraceMsg is one chain's trace, read off the update loop.
@@ -84,15 +85,15 @@ func (v chainTraceView) HelpKeys() []KeyHelp { return v.Keys() }
 // reason it holds none.
 func (v chainTraceView) Context(env Env) (string, string) {
 	if v.err != nil && !v.loaded {
-		return "   " + errorStyle.Render(sanitizeText(v.err.Error())), ""
+		return "   " + widget.ErrorStyle.Render(sanitizeText(v.err.Error())), ""
 	}
 	if !v.loaded {
-		return "   " + mutedStyle.Render("loading…"), ""
+		return "   " + widget.MutedStyle.Render("loading…"), ""
 	}
 	n := len(v.lines)
-	left := "   " + textStyle.Bold(true).Render(strconv.Itoa(n)) + " " + mutedStyle.Render("events")
+	left := "   " + widget.TextStyle.Bold(true).Render(strconv.Itoa(n)) + " " + widget.MutedStyle.Render("events")
 	if v.err != nil {
-		return left, warnStyle.Render("stale: "+sanitizeText(v.err.Error())) + "   "
+		return left, widget.WarnStyle.Render("stale: "+sanitizeText(v.err.Error())) + "   "
 	}
 	return left, ""
 }
@@ -103,17 +104,17 @@ func (v chainTraceView) Body(env Env, width, height int) string {
 		return ""
 	}
 	if v.err != nil && !v.loaded {
-		return strings.Join(statsCentered(sanitizeText(v.err.Error()), width, height), "\n")
+		return strings.Join(widget.Centered(sanitizeText(v.err.Error()), width, height), "\n")
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	if len(v.lines) == 0 {
-		return strings.Join(statsCentered("no trace: this chain has no events", width, height), "\n")
+		return strings.Join(widget.Centered("no trace: this chain has no events", width, height), "\n")
 	}
 	v.vp.Width = maxInt(width-6, 20)
 	v.vp.Height = height
-	body := fitLines(strings.Split(v.vp.View(), "\n"), width-6, height)
+	body := widget.FitLines(strings.Split(v.vp.View(), "\n"), width-6, height)
 	for i, l := range body {
 		body[i] = "   " + l
 	}

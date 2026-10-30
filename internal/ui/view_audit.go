@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // auditLogMsg is one ConfigLog load's reply.
@@ -120,12 +121,12 @@ func (v auditView) Context(env Env) (string, string) {
 		if count != 1 {
 			label += "s"
 		}
-		return textStyle.Bold(true).Render(fmt.Sprintf("%d", count)) + " " + mutedStyle.Render(label)
+		return widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", count)) + " " + widget.MutedStyle.Render(label)
 	}
 	left := "   " + item(len(v.revs), "revision") + "   " + item(total, "change")
 	right := ""
 	if len(v.revs) > 0 {
-		right = faintStyle.Render(fmt.Sprintf("config version %d", v.revs[0].Version))
+		right = widget.FaintStyle.Render(fmt.Sprintf("config version %d", v.revs[0].Version))
 	}
 	return left, right
 }
@@ -135,16 +136,16 @@ func (v auditView) Body(env Env, width, height int) string {
 		return ""
 	}
 	if !v.loaded && v.err != nil {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	if len(v.revs) == 0 {
-		return strings.Join(statsCentered("no config revisions yet", width, height), "\n")
+		return strings.Join(widget.Centered("no config revisions yet", width, height), "\n")
 	}
 	lines, _ := v.bodyLines(env, width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -152,7 +153,7 @@ func (v auditView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
 func (v auditView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
@@ -292,7 +293,7 @@ func (v *auditView) follow(env Env) {
 	if sel >= v.top+avail {
 		v.top = sel - avail + 1
 	}
-	v.top = clamp(v.top, 0, max(0, len(lines)-avail))
+	v.top = widget.Clamp(v.top, 0, max(0, len(lines)-avail))
 }
 
 // auditTableWidth is the table's room: the full width less the 3-cell margin
@@ -327,12 +328,12 @@ func padLeft(s string, width int) string {
 // auditHeaderLine is the table's header row, in faint bold, with the
 // REV and CHANGES columns right-aligned as their numbers are.
 func auditHeaderLine(cw int) string {
-	style := faintStyle.Bold(true)
+	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{
-		{text: pad("WHEN", 5), style: style},
+		{text: widget.Pad("WHEN", 5), style: style},
 		{text: padLeft("REV", 4), style: style},
-		{text: pad("SOURCE", 9), style: style},
-		{text: pad("MESSAGE", auditMessageWidth(cw)), style: style},
+		{text: widget.Pad("SOURCE", 9), style: style},
+		{text: widget.Pad("MESSAGE", auditMessageWidth(cw)), style: style},
 		{text: padLeft("CHANGES", 7), style: style},
 	}
 	return candLine(cells, false, cw)
@@ -342,20 +343,20 @@ func auditHeaderLine(cw int) string {
 // revision number (bold on the cursor), the source, the message, and the change
 // count, faint at zero.
 func auditDataLine(r db.RevisionRow, sel bool, cw int) string {
-	revStyle := dimStyle
+	revStyle := widget.MutedStyle
 	if sel {
-		revStyle = dimStyle.Bold(true)
+		revStyle = widget.MutedStyle.Bold(true)
 	}
 	changes := revisionChangeCount(r)
-	changeStyle := dimStyle
+	changeStyle := widget.MutedStyle
 	if changes == 0 {
-		changeStyle = faintStyle
+		changeStyle = widget.FaintStyle
 	}
 	cells := []candCell{
-		{text: pad(r.At.Local().Format("15:04"), 5), style: dimStyle},
+		{text: widget.Pad(r.At.Local().Format("15:04"), 5), style: widget.MutedStyle},
 		{text: padLeft(fmt.Sprintf("#%d", r.Rev), 4), style: revStyle},
-		{text: pad(r.Source, 9), style: dimStyle},
-		{text: pad(r.Message, auditMessageWidth(cw)), style: textStyle},
+		{text: widget.Pad(r.Source, 9), style: widget.MutedStyle},
+		{text: widget.Pad(r.Message, auditMessageWidth(cw)), style: widget.TextStyle},
 		{text: padLeft(fmt.Sprintf("%d", changes), 7), style: changeStyle},
 	}
 	return candLine(cells, sel, cw)
@@ -373,8 +374,8 @@ func auditDayRule(label string, n, cw int) string {
 	if fill < 0 {
 		fill = 0
 	}
-	content := dimStyle.Render(label) + " " + gridStyle.Render(strings.Repeat("┈", fill)) + faintStyle.Render(right)
-	return "   " + fit(content, cw) + "   "
+	content := widget.MutedStyle.Render(label) + " " + widget.GridStyle.Render(strings.Repeat("┈", fill)) + widget.FaintStyle.Render(right)
+	return "   " + widget.Fit(content, cw) + "   "
 }
 
 // auditCount is "1 revision" or "3 revisions".
@@ -443,19 +444,19 @@ func (v auditView) detailLines(env Env, width, room int) []string {
 		return nil
 	}
 	r := v.revs[candClamp(v.cur, len(v.revs))]
-	first := "   " + faintStyle.Bold(true).Render(fmt.Sprintf("#%d", r.Rev)) + "   " +
-		mutedStyle.Render(fmt.Sprintf("%s · %s · %s", r.Source, r.At.Local().Format("Jan 2 15:04"), r.Message))
-	out := []string{fit(first, width)}
+	first := "   " + widget.FaintStyle.Bold(true).Render(fmt.Sprintf("#%d", r.Rev)) + "   " +
+		widget.MutedStyle.Render(fmt.Sprintf("%s · %s · %s", r.Source, r.At.Local().Format("Jan 2 15:04"), r.Message))
+	out := []string{widget.Fit(first, width)}
 	if room <= 1 {
 		return out
 	}
 
 	if err, ok := v.changesErr[r.Rev]; ok {
-		return append(out, fit("   "+errorStyle.Render(err.Error()), width))
+		return append(out, widget.Fit("   "+widget.ErrorStyle.Render(err.Error()), width))
 	}
 	lines, ok := v.changes[r.Rev]
 	if !ok {
-		return append(out, fit("   "+mutedStyle.Render("loading…"), width))
+		return append(out, widget.Fit("   "+widget.MutedStyle.Render("loading…"), width))
 	}
 
 	budget := room - 1
@@ -468,7 +469,7 @@ func (v auditView) detailLines(env Env, width, room int) []string {
 		out = append(out, auditChangeLine(l, width))
 	}
 	if more > 0 {
-		out = append(out, fit("   "+faintStyle.Render(fmt.Sprintf("+ %d more · enter shows all", more)), width))
+		out = append(out, widget.Fit("   "+widget.FaintStyle.Render(fmt.Sprintf("+ %d more · enter shows all", more)), width))
 	}
 	return out
 }
@@ -491,7 +492,7 @@ func auditPreviewOpen(env Env, newest int64, msg auditPreviewMsg) tea.Cmd {
 		kind:   "roll back",
 		yes:    "roll back",
 		danger: true,
-		title:  "Roll back to " + accentStyle.Bold(true).Render(fmt.Sprintf("#%d", msg.rev)) + "?",
+		title:  "Roll back to " + widget.AccentStyle.Bold(true).Render(fmt.Sprintf("#%d", msg.rev)) + "?",
 		lines:  auditConfirmLines(newest, msg.lines, innerW),
 		onYes: runAction(env.Ctx, "rollback", fmt.Sprintf("#%d", msg.rev), func(ctx context.Context) Result {
 			return env.Actions.Rollback(ctx, msg.rev)
@@ -503,7 +504,7 @@ func auditPreviewOpen(env Env, newest int64, msg auditPreviewMsg) tea.Cmd {
 // roll back undoes, every further one indented under it, then the revision it
 // saves as and the revisions it keeps.
 func auditConfirmLines(newest int64, lines []relevo.ChangeLine, innerW int) []string {
-	label := func(l string) string { return pad(l, 11) }
+	label := func(l string) string { return widget.Pad(l, 11) }
 	out := make([]string, 0, len(lines)+3)
 	for i, l := range lines {
 		prefix := label("")

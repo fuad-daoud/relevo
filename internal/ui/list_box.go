@@ -5,6 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // listItem is one selectable row of a listBox.
@@ -100,23 +101,23 @@ func (l listBox) modal(width int) (string, []string, int, bool) {
 		}
 	}
 	if !enabled {
-		rows = append(rows, faintStyle.Render("no other candidate is ready"))
+		rows = append(rows, widget.FaintStyle.Render("no other candidate is ready"))
 	}
 	for i, item := range l.items {
-		name := pad(item.name, 26)
-		status := pad(item.status, 16)
+		name := widget.Pad(item.name, 26)
+		status := widget.Pad(item.status, 16)
 		var row string
 		switch {
 		case item.disabled:
-			row = faintStyle.Render(name + " " + status + " " + item.note)
+			row = widget.FaintStyle.Render(name + " " + status + " " + item.note)
 		case i == l.sel:
 			// The band covers the whole row: build the selected row from plain
 			// text and render it once, as modalRow does, so no inner reset ends
 			// the band (§2.2).
-			row = selBandStyle.Foreground(textStyle.GetForeground()).Bold(true).
-				Render(fit(name+" "+status+" "+item.note, innerW))
+			row = widget.SelBandStyle.Foreground(widget.TextStyle.GetForeground()).Bold(true).
+				Render(widget.Fit(name+" "+status+" "+item.note, innerW))
 		default:
-			row = name + " " + item.statusStyle.Render(status) + " " + faintStyle.Render(item.note)
+			row = name + " " + item.statusStyle.Render(status) + " " + widget.FaintStyle.Render(item.note)
 		}
 		rows = append(rows, row)
 	}
@@ -127,8 +128,8 @@ func (l listBox) modal(width int) (string, []string, int, bool) {
 	if submit == "" {
 		submit = "choose"
 	}
-	rows = append(rows, chip(kbdStyle, "enter")+" "+mutedStyle.Render(submit)+
-		"   "+chip(kbdStyle, "esc")+mutedStyle.Render(" cancel"))
+	rows = append(rows, widget.Chip(widget.KbdStyle, "enter")+" "+widget.MutedStyle.Render(submit)+
+		"   "+widget.Chip(widget.KbdStyle, "esc")+widget.MutedStyle.Render(" cancel"))
 	return l.kind, rows, want, false
 }
 

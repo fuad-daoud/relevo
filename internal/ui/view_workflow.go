@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // workflowSourceMsg is one workflow's source text, read off the update loop.
@@ -93,15 +94,15 @@ func (v workflowView) HelpKeys() []KeyHelp { return v.Keys() }
 // Context is the view's summary line: what the workflow is and how many steps
 // it declares, or which of the two texts s is showing.
 func (v workflowView) Context(env Env) (string, string) {
-	left := "   " + textStyle.Bold(true).Render(v.name)
+	left := "   " + widget.TextStyle.Bold(true).Render(v.name)
 	if v.src {
 		what := "source"
 		if v.shipped {
 			what = "definition (json)"
 		}
-		return left + mutedStyle.Render("   "+what), ""
+		return left + widget.MutedStyle.Render("   "+what), ""
 	}
-	return left + mutedStyle.Render("   "+strconv.Itoa(len(v.rows))+" steps"), ""
+	return left + widget.MutedStyle.Render("   "+strconv.Itoa(len(v.rows))+" steps"), ""
 }
 
 // workflowGraphLayout is the graph table's columns: STEP takes the width the
@@ -142,10 +143,10 @@ func workflowGraphLayout(width int) (int, []workflowCol) {
 
 // workflowGraphHeaderLine is the graph table's header row, in faint bold.
 func workflowGraphHeaderLine(stepW int, cols []workflowCol, cw int) string {
-	style := faintStyle.Bold(true)
-	cells := []candCell{{text: pad("STEP", stepW), style: style}}
+	style := widget.FaintStyle.Bold(true)
+	cells := []candCell{{text: widget.Pad("STEP", stepW), style: style}}
 	for _, c := range cols {
-		cells = append(cells, candCell{text: pad(c.head, c.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(c.head, c.w), style: style})
 	}
 	return candLine(cells, false, cw)
 }
@@ -155,34 +156,34 @@ func workflowGraphHeaderLine(stepW int, cols []workflowCol, cw int) string {
 // paths read apart from the node names. A step that declares no edge shows a
 // dash, which is a step that ends its path.
 func workflowStepLine(row relevo.GraphRow, sel bool, stepW int, cols []workflowCol, cw int) string {
-	nameStyle := textStyle
+	nameStyle := widget.TextStyle
 	if sel {
 		nameStyle = nameStyle.Bold(true)
 	}
-	cells := []candCell{{text: pad(row.ID, stepW), style: nameStyle}}
+	cells := []candCell{{text: widget.Pad(row.ID, stepW), style: nameStyle}}
 	for _, col := range cols {
 		text := ""
-		style := mutedStyle
+		style := widget.MutedStyle
 		switch col.key {
 		case "kind":
 			text = sanitizeText(row.Kind)
 			if text == "" {
-				text, style = "—", faintStyle
+				text, style = "—", widget.FaintStyle
 			}
 		case "actor":
 			text = sanitizeText(row.Actors)
 			if text == "" {
-				text, style = "—", faintStyle
+				text, style = "—", widget.FaintStyle
 			}
 		case "edges":
 			text = sanitizeText(row.EdgeText)
 			if text == "" {
-				text, style = "—", faintStyle
+				text, style = "—", widget.FaintStyle
 			} else {
-				style = greenStyle
+				style = widget.GreenStyle
 			}
 		}
-		cells = append(cells, candCell{text: pad(text, col.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(text, col.w), style: style})
 	}
 	return candLine(cells, sel, cw)
 }
@@ -221,7 +222,7 @@ func (v *workflowView) follow(env Env) {
 	if sel >= v.top+avail {
 		v.top = sel - avail + 1
 	}
-	v.top = clamp(v.top, 0, max(0, len(v.rows)+2-avail))
+	v.top = widget.Clamp(v.top, 0, max(0, len(v.rows)+2-avail))
 }
 
 func (v workflowView) Body(env Env, width, height int) string {
@@ -232,16 +233,16 @@ func (v workflowView) Body(env Env, width, height int) string {
 		return v.sourceBody(env, width, height)
 	}
 	if v.graphErr != nil && !v.graphLoaded {
-		return strings.Join(statsCentered(sanitizeText(v.graphErr.Error()), width, height), "\n")
+		return strings.Join(widget.Centered(sanitizeText(v.graphErr.Error()), width, height), "\n")
 	}
 	if !v.graphLoaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	if len(v.rows) == 0 {
-		return strings.Join(statsCentered("no steps: this workflow has an empty graph", width, height), "\n")
+		return strings.Join(widget.Centered("no steps: this workflow has an empty graph", width, height), "\n")
 	}
 	lines := v.graphBodyLines(width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -249,24 +250,24 @@ func (v workflowView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
 // sourceBody is the scrolled source text, sized to the shell's body box.
 func (v workflowView) sourceBody(env Env, width, height int) string {
 	if v.sourceErr != nil && !v.sourceLoaded {
-		return strings.Join(statsCentered(sanitizeText(v.sourceErr.Error()), width, height), "\n")
+		return strings.Join(widget.Centered(sanitizeText(v.sourceErr.Error()), width, height), "\n")
 	}
 	if !v.sourceLoaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	if strings.TrimSpace(v.source) == "" {
-		return strings.Join(statsCentered("no source: a shipped workflow shows its definition under s", width, height), "\n")
+		return strings.Join(widget.Centered("no source: a shipped workflow shows its definition under s", width, height), "\n")
 	}
 	vp := v.vp
 	vp.Width = maxInt(width-6, 20)
 	vp.Height = height
-	body := fitLines(strings.Split(vp.View(), "\n"), width-6, height)
+	body := widget.FitLines(strings.Split(vp.View(), "\n"), width-6, height)
 	for i, l := range body {
 		body[i] = "   " + l
 	}

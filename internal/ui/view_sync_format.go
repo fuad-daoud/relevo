@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // The formatting this view draws with, kept apart from the view that draws.
@@ -78,13 +79,13 @@ func syncDate(t time.Time) string {
 func syncTokenStyle(token string) lipgloss.Style {
 	switch token {
 	case relevosync.TokenOff:
-		return faintStyle
+		return widget.FaintStyle
 	case relevosync.TokenErr:
-		return redStyle
+		return widget.RedStyle
 	case relevosync.TokenBehind:
-		return warnStyle
+		return widget.WarnStyle
 	default:
-		return greenStyle
+		return widget.GreenStyle
 	}
 }
 
@@ -117,7 +118,7 @@ var syncLockedTables = []string{
 // The three-space indent is the cockpit's body gutter, so these rows line up with
 // the section headings below them rather than sitting out at the margin.
 func syncLine(label, value string, style lipgloss.Style) string {
-	return "   " + pad(label, syncLabelW) + style.Render(value)
+	return "   " + widget.Pad(label, syncLabelW) + style.Render(value)
 }
 
 // preOnLines is the form for a machine that has not enabled sync: where the

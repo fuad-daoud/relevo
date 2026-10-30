@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // settingsLabelWidth is a settings form field's label column: wider
@@ -555,10 +556,10 @@ func (f settingsForm) modal(width int) (string, []string, int, bool) {
 		} else {
 			valuePart = formInput(fld.input, focused, "", fieldW)
 			if disabled {
-				valuePart = faintStyle.Render(valuePart)
+				valuePart = widget.FaintStyle.Render(valuePart)
 			}
 			if fld.hint != "" {
-				valuePart += "   " + faintStyle.Render(fld.hint)
+				valuePart += "   " + widget.FaintStyle.Render(fld.hint)
 			}
 		}
 		rows = append(rows, settingsFormLabel(fld.label, focused)+valuePart)
@@ -568,7 +569,7 @@ func (f settingsForm) modal(width int) (string, []string, int, bool) {
 		rows = append(rows, "")
 	}
 	if f.note != "" {
-		rows = append(rows, mutedStyle.Render(f.note))
+		rows = append(rows, widget.MutedStyle.Render(f.note))
 		rows = append(rows, "")
 	}
 	if formErr != "" {
@@ -582,9 +583,9 @@ func (f settingsForm) modal(width int) (string, []string, int, bool) {
 // settingsFormLabel is a settings form row's label, padded wider than
 // formLabel's (17 cells, not 11) because these labels run longer.
 func settingsFormLabel(label string, focused bool) string {
-	style := faintStyle
+	style := widget.FaintStyle
 	if focused {
-		style = accentStyle
+		style = widget.AccentStyle
 	}
-	return style.Render(pad(label, settingsLabelWidth))
+	return style.Render(widget.Pad(label, settingsLabelWidth))
 }

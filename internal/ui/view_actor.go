@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // actorView is `actors › <name>` (§4): the actor's candidate list, reordered,
@@ -60,13 +61,13 @@ func actorPickLayout(width int) (int, []actorCol) {
 
 // actorPickHeaderLine is the detail table's header row (§4), in faint bold.
 func actorPickHeaderLine(nameW int, cols []actorCol, cw int) string {
-	style := faintStyle.Bold(true)
+	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{
 		{text: fmt.Sprintf("%2s", "#"), style: style},
-		{text: pad("CANDIDATE", nameW), style: style},
+		{text: widget.Pad("CANDIDATE", nameW), style: style},
 	}
 	for _, c := range cols {
-		cells = append(cells, candCell{text: pad(c.head, c.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(c.head, c.w), style: style})
 	}
 	return candLine(cells, false, cw)
 }
@@ -77,9 +78,9 @@ func actorPickHeaderLine(nameW int, cols []actorCol, cw int) string {
 func actorPickLine(doc relevo.ConfigDoc, env Env, name string, i int, sel bool, nameW int, cols []actorCol, cw int) string {
 	a := doc.Actors[name]
 	e := a.Candidates[i]
-	base, meta := textStyle, mutedStyle
+	base, meta := widget.TextStyle, widget.MutedStyle
 	if e.Off {
-		base, meta = faintStyle, faintStyle
+		base, meta = widget.FaintStyle, widget.FaintStyle
 	}
 	nameStyle := base
 	if sel {
@@ -93,10 +94,10 @@ func actorPickLine(doc relevo.ConfigDoc, env Env, name string, i int, sel bool, 
 	}
 	cells := []candCell{
 		{text: fmt.Sprintf("%2d", i+1), style: meta},
-		{text: pad(cname, nameW), style: nameStyle},
-		{text: pad(c.Harness, 8), style: meta},
-		{text: pad(c.Provider, 10), style: meta},
-		{text: pad(text, 20), style: style},
+		{text: widget.Pad(cname, nameW), style: nameStyle},
+		{text: widget.Pad(c.Harness, 8), style: meta},
+		{text: widget.Pad(c.Provider, 10), style: meta},
+		{text: widget.Pad(text, 20), style: style},
 	}
 	return candLine(cells, sel, cw)
 }
@@ -110,14 +111,14 @@ func actorCheckLine(doc relevo.ConfigDoc, name string, width int) (string, bool)
 		return "", false
 	}
 	if !actorCheckOn(a.Check) {
-		return "   " + mutedStyle.Render("no check after each round"), true
+		return "   " + widget.MutedStyle.Render("no check after each round"), true
 	}
 	if cmd := doc.Policy.GateDefault(); cmd != "" {
-		return "   " + mutedStyle.Render("runs ") + textStyle.Render(cmd) +
-			mutedStyle.Render(" after each round"), true
+		return "   " + widget.MutedStyle.Render("runs ") + widget.TextStyle.Render(cmd) +
+			widget.MutedStyle.Render(" after each round"), true
 	}
-	return "   " + mutedStyle.Render("check after each round is on, but no check command is set; set one in ") +
-		textStyle.Render(":settings"), true
+	return "   " + widget.MutedStyle.Render("check after each round is on, but no check command is set; set one in ") +
+		widget.TextStyle.Render(":settings"), true
 }
 
 // actorScopeText renders a writer's scope for the detail view: its path
@@ -152,10 +153,10 @@ func (v actorView) bodyLines(env Env, width int) []string {
 	lines = append(lines, actorPlacementLines(v.doc, v.name, v.placementFocus(), v.placeCur, width)...)
 	lines = append(lines, "", "")
 	if check, ok := actorCheckLine(v.doc, v.name, width); ok {
-		lines = append(lines, fit(check, width))
+		lines = append(lines, widget.Fit(check, width))
 	}
 	if scope := a.Scope; scope != nil {
-		lines = append(lines, fit("   "+mutedStyle.Render("scope ")+textStyle.Render(actorScopeText(scope)), width))
+		lines = append(lines, widget.Fit("   "+widget.MutedStyle.Render("scope ")+widget.TextStyle.Render(actorScopeText(scope)), width))
 	}
 	return lines
 }
@@ -181,7 +182,7 @@ func (v *actorView) follow(env Env) {
 	if sel >= v.top+avail {
 		v.top = sel - avail + 1
 	}
-	v.top = clamp(v.top, 0, max(0, len(lines)-avail))
+	v.top = widget.Clamp(v.top, 0, max(0, len(lines)-avail))
 }
 
 func (v actorView) Crumbs() []string { return []string{v.name} }
@@ -231,18 +232,18 @@ func (v actorView) HelpKeys() []KeyHelp {
 // candidate count and the next pick.
 func (v actorView) Context(env Env) (string, string) {
 	a := v.doc.Actors[v.name]
-	tier, tierStyle := a.Tier, textStyle
+	tier, tierStyle := a.Tier, widget.TextStyle
 	if tier == "" {
-		tier, tierStyle = "—", faintStyle
+		tier, tierStyle = "—", widget.FaintStyle
 	}
-	np, nextStyle := nextPick(v.doc, v.name, env.Report.Gated), greenStyle
+	np, nextStyle := nextPick(v.doc, v.name, env.Report.Gated), widget.GreenStyle
 	if np == "" {
-		np, nextStyle = "—", faintStyle
+		np, nextStyle = "—", widget.FaintStyle
 	}
-	left := "   " + textStyle.Render(a.Agent) + mutedStyle.Render(" · "+agentShapeOf(v.doc, a.Agent)+"   ") +
-		faintStyle.Render("tier ") + tierStyle.Render(tier) +
-		"   " + textStyle.Bold(true).Render(fmt.Sprintf("%d", len(a.Candidates))) +
-		mutedStyle.Render(" candidates   ") + faintStyle.Render("next pick ") + nextStyle.Render(np)
+	left := "   " + widget.TextStyle.Render(a.Agent) + widget.MutedStyle.Render(" · "+agentShapeOf(v.doc, a.Agent)+"   ") +
+		widget.FaintStyle.Render("tier ") + tierStyle.Render(tier) +
+		"   " + widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", len(a.Candidates))) +
+		widget.MutedStyle.Render(" candidates   ") + widget.FaintStyle.Render("next pick ") + nextStyle.Render(np)
 	return left, ""
 }
 
@@ -251,13 +252,13 @@ func (v actorView) Body(env Env, width, height int) string {
 		return ""
 	}
 	if !v.loaded && v.err != nil {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	lines := v.bodyLines(env, width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -265,7 +266,7 @@ func (v actorView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
 func (v actorView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {

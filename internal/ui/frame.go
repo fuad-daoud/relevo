@@ -7,115 +7,9 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
-
-const maxErrorLines = 8
-
-// renderError wraps err across the terminal width, preserving the newlines
-// the message already has, capped at maxErrorLines with a trailing "…" when
-// it overflows. Moved here from list.go (R2.7).
-func renderError(err error, width int) string {
-	if err == nil {
-		return ""
-	}
-	if width <= 0 {
-		width = 80
-	}
-	rawLines := strings.Split(err.Error(), "\n")
-	var wrapped []string
-	for _, l := range rawLines {
-		wrapped = append(wrapped, wrapLine(l, width)...)
-	}
-	if len(wrapped) == 0 {
-		return ""
-	}
-	if len(wrapped) > maxErrorLines {
-		wrapped = wrapped[:maxErrorLines]
-		last := wrapped[maxErrorLines-1]
-		ellipsis := "…"
-		ew := lipgloss.Width(ellipsis)
-		for lipgloss.Width(last)+ew > width && len(last) > 0 {
-			runes := []rune(last)
-			last = string(runes[:len(runes)-1])
-		}
-		wrapped[maxErrorLines-1] = last + ellipsis
-	}
-	return strings.Join(wrapped, "\n")
-}
-
-// wrapLine word-wraps one line to width. Moved here from list.go (R2.7).
-func wrapLine(line string, width int) []string {
-	if width <= 0 {
-		width = 80
-	}
-	if lipgloss.Width(line) <= width {
-		return []string{line}
-	}
-	words := strings.Split(line, " ")
-	var lines []string
-	var cur strings.Builder
-	curW := 0
-
-	for _, w := range words {
-		ww := lipgloss.Width(w)
-		if cur.Len() == 0 {
-			if ww > width {
-				for _, r := range w {
-					rw := lipgloss.Width(string(r))
-					if curW+rw > width && cur.Len() > 0 {
-						lines = append(lines, cur.String())
-						cur.Reset()
-						curW = 0
-					}
-					cur.WriteRune(r)
-					curW += rw
-				}
-			} else {
-				cur.WriteString(w)
-				curW = ww
-			}
-		} else {
-			if curW+1+ww <= width {
-				cur.WriteByte(' ')
-				cur.WriteString(w)
-				curW += 1 + ww
-			} else {
-				lines = append(lines, cur.String())
-				cur.Reset()
-				curW = 0
-				if ww > width {
-					for _, r := range w {
-						rw := lipgloss.Width(string(r))
-						if curW+rw > width && cur.Len() > 0 {
-							lines = append(lines, cur.String())
-							cur.Reset()
-							curW = 0
-						}
-						cur.WriteRune(r)
-						curW += rw
-					}
-				} else {
-					cur.WriteString(w)
-					curW = ww
-				}
-			}
-		}
-	}
-	if cur.Len() > 0 {
-		lines = append(lines, cur.String())
-	}
-	return lines
-}
-
-// errorRows is the line count of renderError(err, width) when err != nil,
-// else 0.
-func errorRows(err error, width int) int {
-	if err == nil {
-		return 0
-	}
-	return strings.Count(renderError(err, width), "\n") + 1
-}
 
 // bodyHeight is the shell's body height: height minus the header, blank row and the
 // context row, the error block, and the rule and keys rows (§5.3).
@@ -145,15 +39,15 @@ func (m Model) headerView(env Env) string {
 	for _, v := range m.stack {
 		allCrumbs = append(allCrumbs, v.Crumbs()...)
 	}
-	left := "  " + accentStyle.Bold(true).Render("◆ relevo")
+	left := "  " + widget.AccentStyle.Bold(true).Render("◆ relevo")
 	if len(allCrumbs) == 1 {
-		left += "   " + chip(kbdStyle, allCrumbs[0])
+		left += "   " + widget.Chip(widget.KbdStyle, allCrumbs[0])
 	} else if len(allCrumbs) > 1 {
 		var crumbParts []string
 		for i := 0; i < len(allCrumbs)-1; i++ {
-			crumbParts = append(crumbParts, mutedStyle.Render(allCrumbs[i]))
+			crumbParts = append(crumbParts, widget.MutedStyle.Render(allCrumbs[i]))
 		}
-		left += "   " + strings.Join(crumbParts, faintStyle.Render(" › ")) + faintStyle.Render(" › ") + chip(kbdStyle, allCrumbs[len(allCrumbs)-1])
+		left += "   " + strings.Join(crumbParts, widget.FaintStyle.Render(" › ")) + widget.FaintStyle.Render(" › ") + widget.Chip(widget.KbdStyle, allCrumbs[len(allCrumbs)-1])
 	}
 
 	n := 0
@@ -167,22 +61,22 @@ func (m Model) headerView(env Env) string {
 
 	var rightParts []string
 	if n > 0 {
-		rightParts = append(rightParts, chip(chipWarnStyle.Bold(true), "● "+needsYouCount(n)))
+		rightParts = append(rightParts, widget.Chip(widget.ChipWarnStyle.Bold(true), "● "+needsYouCount(n)))
 	}
 	// The sync chip joins the needs-you chip rather than competing with it: both
 	// can be true at once and a header that could show only one would be hiding
 	// one of them. It is asked of the stack rather than kept on Env, so a
 	// cockpit with no :sync open says nothing about sync.
 	if s := m.syncAttention(); s != "" {
-		rightParts = append(rightParts, chip(chipWarnStyle.Bold(true), "● "+s))
+		rightParts = append(rightParts, widget.Chip(widget.ChipWarnStyle.Bold(true), "● "+s))
 	}
 	if sv := shortVersion(m.opts.Version); sv != "" {
-		rightParts = append(rightParts, faintStyle.Render(sv))
+		rightParts = append(rightParts, widget.FaintStyle.Render(sv))
 	}
-	rightParts = append(rightParts, mutedStyle.Render(env.Now.Local().Format("15:04")))
+	rightParts = append(rightParts, widget.MutedStyle.Render(env.Now.Local().Format("15:04")))
 	right := strings.Join(rightParts, "    ") + "  "
 
-	return fit(spread(left, right, env.Width), env.Width)
+	return widget.Fit(spread(left, right, env.Width), env.Width)
 }
 
 // syncAttention is the header's sync phrase, or "" when there is nothing to
@@ -208,13 +102,13 @@ func (m Model) syncAttention() string {
 // contextView is row 2: the top view's context, spread to width (§5.3).
 func (m Model) contextView(env Env) string {
 	left, right := m.top().Context(env)
-	return fit(spread(left, right, env.Width), env.Width)
+	return widget.Fit(spread(left, right, env.Width), env.Width)
 }
 
 // errorBlock is the optional rows under the context: the refresh error,
 // wrapped and capped (§5.3).
 func (m Model) errorBlock(env Env) string {
-	return renderError(m.err, env.Width)
+	return widget.RenderError(m.err, env.Width)
 }
 
 // keysView is the last row: the global tail and as many of the top view's
@@ -226,7 +120,7 @@ func (m Model) errorBlock(env Env) string {
 // overlayKeyer is up, that overlay's own keys stand in for the view's keys and
 // the global tail (§2.1).
 func (m Model) keysView(env Env) string {
-	key := func(k, v string) string { return chip(kbdStyle, k) + " " + mutedStyle.Render(v) }
+	key := func(k, v string) string { return widget.Chip(widget.KbdStyle, k) + " " + widget.MutedStyle.Render(v) }
 	tail := []string{key(":", "command"), key("?", "all keys")}
 	if len(m.stack) > 1 {
 		tail = append(tail, key("esc", "back"))
@@ -237,13 +131,13 @@ func (m Model) keysView(env Env) string {
 
 	var notes []string
 	if w := m.workingText(); w != "" {
-		notes = append(notes, mutedStyle.Render(w))
+		notes = append(notes, widget.MutedStyle.Render(w))
 	}
 	if m.notice != "" {
 		notes = append(notes, m.noticeStyle().Render(m.notice))
 	}
 	if m.err != nil {
-		notes = append(notes, errorStyle.Render("! refresh failed (retrying)"))
+		notes = append(notes, widget.ErrorStyle.Render("! refresh failed (retrying)"))
 	}
 	right := strings.Join(notes, "   ")
 
@@ -266,7 +160,7 @@ func (m Model) keysView(env Env) string {
 			offKeys := off.OffKeys(env)
 			viewKey = func(k, v string) string {
 				if slices.Contains(offKeys, k) {
-					return chip(offKbdStyle, k) + " " + offStyle.Render(v)
+					return widget.Chip(widget.OffKbdStyle, k) + " " + widget.OffStyle.Render(v)
 				}
 				return key(k, v)
 			}
@@ -283,7 +177,7 @@ func (m Model) keysView(env Env) string {
 		}
 		left = lipgloss.NewStyle().MaxWidth(room).Render(left)
 	}
-	return fit(spread(left, right, env.Width), env.Width)
+	return widget.Fit(spread(left, right, env.Width), env.Width)
 }
 
 // modalKeys is the keys of whichever overlay is up, and whether one is: the
@@ -347,7 +241,7 @@ func (m Model) body(env Env) string {
 		for i := 0; i < len(box) && start+i < len(lines); i++ {
 			lines[start+i] = box[i]
 		}
-		return strings.Join(fitLines(lines, env.Width, bh), "\n")
+		return strings.Join(widget.FitLines(lines, env.Width, bh), "\n")
 	}
 	return m.top().Body(env, env.Width, bh)
 }
@@ -368,7 +262,7 @@ func (m Model) overlayBody(env Env, bh int, title string, rows []string, want in
 		y = 0
 	}
 	composed := composeBox(dimmed, box, x, y, env.Width)
-	return strings.Join(fitLines(composed, env.Width, bh), "\n")
+	return strings.Join(widget.FitLines(composed, env.Width, bh), "\n")
 }
 
 // noticeStyle is the sticky notice's colour: red for an action's error, faint
@@ -376,11 +270,11 @@ func (m Model) overlayBody(env Env, bh int, title string, rows []string, want in
 func (m Model) noticeStyle() lipgloss.Style {
 	switch {
 	case m.noticeErr:
-		return errorStyle
+		return widget.ErrorStyle
 	case m.noticeFaint:
-		return faintStyle
+		return widget.FaintStyle
 	}
-	return stateNeedsYouStyle
+	return widget.StateNeedsYouStyle
 }
 
 // workingText is the footer's action indicator: "working: <verb> <key>…" for
@@ -449,13 +343,13 @@ func (m Model) cmdModal(env Env) (string, []string, int, bool) {
 					}, " · ")
 				}
 			}
-			rows = append(rows, modalRow(e.idx == m.cmd.sel, name, desc, "", innerW, accentStyle, dimStyle))
+			rows = append(rows, modalRow(e.idx == m.cmd.sel, name, desc, "", innerW, widget.AccentStyle, widget.MutedStyle))
 		}
 	}
 	if n := m.cmd.matchCount(env); n > len(ms) {
-		rows = append(rows, faintStyle.Render(fmt.Sprintf("+ %d more match; keep typing", n-len(ms))))
+		rows = append(rows, widget.FaintStyle.Render(fmt.Sprintf("+ %d more match; keep typing", n-len(ms))))
 	}
-	rows = append(rows, rightAligned(faintStyle.Render("tab complete · enter go · esc close"), innerW))
+	rows = append(rows, rightAligned(widget.FaintStyle.Render("tab complete · enter go · esc close"), innerW))
 	return "command", rows, want, false
 }
 
@@ -541,7 +435,7 @@ func (m Model) helpModal(env Env) (string, []string, int, bool) {
 	var rows []string
 	head := ""
 	for _, h := range headers {
-		head += fit(modalSection(h), colW)
+		head += widget.Fit(modalSection(h), colW)
 	}
 	rows = append(rows, head)
 
@@ -558,7 +452,7 @@ func (m Model) helpModal(env Env) (string, []string, int, bool) {
 			if i < len(col) {
 				cell = helpEntry(col[i])
 			}
-			line += fit(cell, colW)
+			line += widget.Fit(cell, colW)
 		}
 		rows = append(rows, line)
 	}
@@ -573,5 +467,5 @@ func (m Model) helpModal(env Env) (string, []string, int, bool) {
 // helpEntry is one help line: the key as a kbd chip padded to 12 cells, then
 // its help in muted (§3.2).
 func helpEntry(kh KeyHelp) string {
-	return fit(chip(kbdStyle, kh.Key), 12) + " " + mutedStyle.Render(kh.Help)
+	return widget.Fit(widget.Chip(widget.KbdStyle, kh.Key), 12) + " " + widget.MutedStyle.Render(kh.Help)
 }

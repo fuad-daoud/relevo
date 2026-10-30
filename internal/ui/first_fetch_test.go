@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -234,7 +235,7 @@ func TestSlowFirstStatusRefetchesOnLanding(t *testing.T) {
 	}
 
 	// The tick that arrives during the refetch starts no second fetch.
-	res, cmd = landed.Update(tickMsg(time.Now()))
+	res, cmd = landed.Update(widget.TickMsg(time.Now()))
 	if statusFetches(cmd) {
 		t.Error("a tick during the refetch must not start a second fetch")
 	}
@@ -293,7 +294,7 @@ func TestInitArmsTheWatchdogBesideTheFirstFetch(t *testing.T) {
 	var ticks, dogs, fetches int
 	for _, c := range extractBatch(m.Init()) {
 		switch c().(type) {
-		case tickMsg:
+		case widget.TickMsg:
 			ticks++
 		case watchdogMsg:
 			dogs++

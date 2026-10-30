@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -460,7 +461,7 @@ func (p roundPane) sourceLine() string {
 	}
 	c := p.detail.cache[p.detail.active]
 	if !c.loaded {
-		return faintStyle.Render("loading…")
+		return widget.FaintStyle.Render("loading…")
 	}
 	if p.detail.active == tabArtifacts {
 		// The header carries the count and the total size (round 5b); a
@@ -535,7 +536,7 @@ func (p roundPane) sourceLine() string {
 			s = "log"
 		}
 	}
-	return faintStyle.Render(s)
+	return widget.FaintStyle.Render(s)
 }
 
 // hintLine is the one rendered line under a blocked builder's dialog on
@@ -545,7 +546,7 @@ func (p roundPane) hintLine(b *view.BindingStatus) (string, bool) {
 	if b == nil || b.Waiting == nil || b.Waiting.Cause != "blocked" || p.detail.active != tabTerminal {
 		return "", false
 	}
-	return accentStyle.Render("relevo: ") + fgStyle.Render(b.Waiting.Hint), true
+	return widget.AccentStyle.Render("relevo: ") + widget.TextStyle.Render(b.Waiting.Hint), true
 }
 
 // view draws exactly rows rows at width (§2.5, §5).
@@ -589,7 +590,7 @@ func (p roundPane) view(width int) string {
 	}
 	out = out[:p.rows]
 	for i := range out {
-		out[i] = fit(out[i], width)
+		out[i] = widget.Fit(out[i], width)
 	}
 	return strings.Join(out, "\n")
 }

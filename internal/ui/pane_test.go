@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -100,8 +101,8 @@ func TestTabBarWordsAndUnderline(t *testing.T) {
 	if strings.Contains(plain, tabTitles[tabArtifacts]) {
 		t.Errorf("writer tabs must not carry the artifacts tab: %q", plain)
 	}
-	if !strings.Contains(tabs, chip(chipAccentStyle, "diff")) {
-		t.Errorf("active tab not chipAccentStyle: %q", tabs)
+	if !strings.Contains(tabs, widget.Chip(widget.ChipAccentStyle, "diff")) {
+		t.Errorf("active tab not widget.ChipAccentStyle: %q", tabs)
 	}
 	if !strings.Contains(plain, "round") || !strings.Contains(plain, "[") || !strings.Contains(plain, "]") {
 		t.Errorf("tabs missing stepper: %q", plain)
@@ -314,16 +315,16 @@ func TestDiffStatAndColour(t *testing.T) {
 		t.Errorf("diffStat = %d files +%d -%d", files, add, del)
 	}
 	out := strings.Split(colourDiff(patch), "\n")
-	if out[0] != diffFileStyle.Render("diff --git a/x.go b/x.go") {
+	if out[0] != widget.DiffFileStyle.Render("diff --git a/x.go b/x.go") {
 		t.Errorf("file header not styled: %q", out[0])
 	}
-	if out[3] != diffHunkStyle.Render("@@ -1,2 +1,3 @@") {
+	if out[3] != widget.DiffHunkStyle.Render("@@ -1,2 +1,3 @@") {
 		t.Errorf("hunk not styled: %q", out[3])
 	}
-	if out[5] != diffDelStyle.Render("-old") || out[6] != diffAddStyle.Render("+new") {
+	if out[5] != widget.DiffDelStyle.Render("-old") || out[6] != widget.DiffAddStyle.Render("+new") {
 		t.Errorf("+/- not styled: %q %q", out[5], out[6])
 	}
-	if out[1] != diffFileStyle.Render("--- a/x.go") || out[2] != diffFileStyle.Render("+++ b/x.go") {
+	if out[1] != widget.DiffFileStyle.Render("--- a/x.go") || out[2] != widget.DiffFileStyle.Render("+++ b/x.go") {
 		t.Errorf("---/+++ must be file headers, not del/add: %q %q", out[1], out[2])
 	}
 	if out[4] != " context" {
@@ -462,19 +463,19 @@ func TestColourTranscript(t *testing.T) {
 	if p := stripANSI(out[1]); p != "● Bash(go test ./...)" {
 		t.Errorf("call = %q", p)
 	}
-	if !strings.Contains(out[1], stateActiveStyle.Render("●")) || !strings.Contains(out[1], lipgloss.NewStyle().Bold(true).Render("Bash")) {
+	if !strings.Contains(out[1], widget.StateActiveStyle.Render("●")) || !strings.Contains(out[1], lipgloss.NewStyle().Bold(true).Render("Bash")) {
 		t.Errorf("call not styled: %q", out[1])
 	}
 	if p := stripANSI(out[2]); p != "  ⎿ ok: ok  github.com/x 0.4s" {
 		t.Errorf("ok result text changed: %q", p)
 	}
-	if out[2] != dimStyle.Render("  ⎿ ok: ok  github.com/x 0.4s") {
+	if out[2] != widget.MutedStyle.Render("  ⎿ ok: ok  github.com/x 0.4s") {
 		t.Errorf("ok result not dim: %q", out[2])
 	}
 	if p := stripANSI(out[3]); p != "● Read" {
 		t.Errorf("call without argument = %q (no empty parens)", p)
 	}
-	if out[4] != errorStyle.Render("  ⎿ error: no such file") {
+	if out[4] != widget.ErrorStyle.Render("  ⎿ error: no such file") {
 		t.Errorf("error result not styled: %q", out[4])
 	}
 	if out[5] != "[system]" {
@@ -488,13 +489,13 @@ func TestColourTranscriptDimsThinking(t *testing.T) {
 	if p := stripANSI(out[0]); p != "∴ considering" {
 		t.Errorf("thinking text changed: %q", p)
 	}
-	if out[0] != dimStyle.Italic(true).Render("∴ considering") {
+	if out[0] != widget.MutedStyle.Italic(true).Render("∴ considering") {
 		t.Errorf("thinking line not dim italic: %q", out[0])
 	}
 	if p := stripANSI(out[1]); p != "● Bash(ls)" {
 		t.Errorf("call = %q", p)
 	}
-	if !strings.Contains(out[1], stateActiveStyle.Render("●")) || !strings.Contains(out[1], lipgloss.NewStyle().Bold(true).Render("Bash")) {
+	if !strings.Contains(out[1], widget.StateActiveStyle.Render("●")) || !strings.Contains(out[1], lipgloss.NewStyle().Bold(true).Render("Bash")) {
 		t.Errorf("call not styled: %q", out[1])
 	}
 }
@@ -745,21 +746,21 @@ func TestColourTranscriptKeepsTheStampFaint(t *testing.T) {
 		if got := stripANSI(out[c.i]); got != c.stamp+c.text {
 			t.Errorf("line %d = %q, want %q", c.i, got, c.stamp+c.text)
 		}
-		if !strings.HasPrefix(out[c.i], faintStyle.Render(c.stamp)) {
+		if !strings.HasPrefix(out[c.i], widget.FaintStyle.Render(c.stamp)) {
 			t.Errorf("line %d stamp is not faint: %q", c.i, out[c.i])
 		}
 	}
-	if !strings.Contains(out[0], stateActiveStyle.Render("●")) ||
+	if !strings.Contains(out[0], widget.StateActiveStyle.Render("●")) ||
 		!strings.Contains(out[0], lipgloss.NewStyle().Bold(true).Render("Bash")) {
 		t.Errorf("call not styled: %q", out[0])
 	}
-	if want := faintStyle.Render("12:41:03 ") + dimStyle.Render("  ⎿ ok: ok  github.com/x 0.4s"); out[1] != want {
+	if want := widget.FaintStyle.Render("12:41:03 ") + widget.MutedStyle.Render("  ⎿ ok: ok  github.com/x 0.4s"); out[1] != want {
 		t.Errorf("ok result not dim: %q", out[1])
 	}
-	if want := faintStyle.Render("12:41:03 ") + dimStyle.Italic(true).Render("∴ considering"); out[2] != want {
+	if want := widget.FaintStyle.Render("12:41:03 ") + widget.MutedStyle.Italic(true).Render("∴ considering"); out[2] != want {
 		t.Errorf("thinking line not dim italic: %q", out[2])
 	}
-	if want := faintStyle.Render("+0.9s ") + errorStyle.Render("  ⎿ error: no such file"); out[3] != want {
+	if want := widget.FaintStyle.Render("+0.9s ") + widget.ErrorStyle.Render("  ⎿ error: no such file"); out[3] != want {
 		t.Errorf("error result not red: %q", out[3])
 	}
 }
@@ -776,7 +777,7 @@ func TestScrollbarGeometry(t *testing.T) {
 
 	thumbRow := func(offset int) int {
 		for i, c := range barCells(100, 10, offset) {
-			if c == mutedStyle.Render("█") {
+			if c == widget.MutedStyle.Render("█") {
 				return i
 			}
 		}
@@ -792,9 +793,9 @@ func TestScrollbarGeometry(t *testing.T) {
 		}
 	}
 	for i, c := range barCells(100, 10, 45) {
-		want := borderStyle.Render("│")
+		want := widget.BorderStyle.Render("│")
 		if i == 4 {
-			want = mutedStyle.Render("█")
+			want = widget.MutedStyle.Render("█")
 		}
 		if c != want {
 			t.Errorf("cell %d = %q, want %q", i, c, want)
@@ -808,7 +809,7 @@ func TestScrollbarGeometry(t *testing.T) {
 	}
 	thumbs := 0
 	for _, c := range cells {
-		if c == mutedStyle.Render("█") {
+		if c == widget.MutedStyle.Render("█") {
 			thumbs++
 		}
 	}

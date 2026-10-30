@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -53,7 +54,7 @@ func TestSingleFlightStatusInFlightBlocksSecondFetch(t *testing.T) {
 
 	m.statusInFlight = true
 
-	res, cmd := m.Update(tickMsg(time.Now()))
+	res, cmd := m.Update(widget.TickMsg(time.Now()))
 	updated := res.(Model)
 
 	if !updated.statusInFlight {
@@ -62,7 +63,7 @@ func TestSingleFlightStatusInFlightBlocksSecondFetch(t *testing.T) {
 
 	batch := extractBatch(cmd)
 	if hasStatusMsg(batch) {
-		t.Error("tickMsg while statusInFlight must not issue fetchStatus")
+		t.Error("widget.TickMsg while statusInFlight must not issue fetchStatus")
 	}
 }
 
@@ -73,7 +74,7 @@ func TestSingleFlightTabInFlightStillIssuesStatus(t *testing.T) {
 
 	m.statusInFlight = false
 
-	res, cmd := m.Update(tickMsg(time.Now()))
+	res, cmd := m.Update(widget.TickMsg(time.Now()))
 	updated := res.(Model)
 
 	if !updated.statusInFlight {
@@ -82,7 +83,7 @@ func TestSingleFlightTabInFlightStillIssuesStatus(t *testing.T) {
 
 	batch := extractBatch(cmd)
 	if !hasStatusMsg(batch) {
-		t.Fatal("tickMsg while statusInFlight is clear MUST issue fetchStatus")
+		t.Fatal("widget.TickMsg while statusInFlight is clear MUST issue fetchStatus")
 	}
 }
 
@@ -99,11 +100,11 @@ func TestSingleFlightTabInFlightBlocksSecondTabFetch(t *testing.T) {
 	rv.pane.detail.active = tabTerminal
 	rv.pane.tabInFlight = true
 
-	next, cmd := rv.Update(tickMsg(time.Now()), testEnv(mastermindSource{rt}, rv.pane.report, 140, 40))
+	next, cmd := rv.Update(widget.TickMsg(time.Now()), testEnv(mastermindSource{rt}, rv.pane.report, 140, 40))
 	_ = next
 	if cmd != nil {
 		if hasTabMsg(extractBatch(cmd)) {
-			t.Error("tickMsg while tabInFlight must not issue second tab fetch")
+			t.Error("widget.TickMsg while tabInFlight must not issue second tab fetch")
 		}
 	}
 }
@@ -335,13 +336,13 @@ func TestRoundPaneIssuesOneFetchAtATime(t *testing.T) {
 	rv := newTestRound(t, rt, view.Report{Bindings: []view.BindingStatus{{Name: "webshop", Round: 2, Display: "ACTIVE"}}}, "webshop", 0)
 	rv.pane.tabInFlight = false
 
-	_, cmd1 := rv.Update(tickMsg(time.Now()), testEnv(mastermindSource{rt}, rv.pane.report, 140, 40))
+	_, cmd1 := rv.Update(widget.TickMsg(time.Now()), testEnv(mastermindSource{rt}, rv.pane.report, 140, 40))
 	if cmd1 == nil {
 		t.Fatal("first tick must return non-nil cmd")
 	}
 	// The tick set tabInFlight; a second tick must issue nothing.
 	rv.pane.tabInFlight = true
-	_, cmd2 := rv.Update(tickMsg(time.Now()), testEnv(mastermindSource{rt}, rv.pane.report, 140, 40))
+	_, cmd2 := rv.Update(widget.TickMsg(time.Now()), testEnv(mastermindSource{rt}, rv.pane.report, 140, 40))
 	if cmd2 != nil {
 		t.Fatal("second tick while tabInFlight is set must return nil cmd")
 	}
@@ -356,10 +357,10 @@ func TestTickBeforeFirstStatusIssuesNoSecondFetch(t *testing.T) {
 		t.Fatal("newModel must initialize statusInFlight = true to guard the Init fetch")
 	}
 
-	_, cmd := m.Update(tickMsg(time.Now()))
+	_, cmd := m.Update(widget.TickMsg(time.Now()))
 	batch := extractBatch(cmd)
 	if hasStatusMsg(batch) {
-		t.Fatal("tickMsg arriving before first statusMsg must not issue second status fetch")
+		t.Fatal("widget.TickMsg arriving before first statusMsg must not issue second status fetch")
 	}
 }
 

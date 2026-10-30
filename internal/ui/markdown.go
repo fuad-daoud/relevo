@@ -2,6 +2,8 @@ package ui
 
 import (
 	"strings"
+
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // renderMarkdown renders light markdown for prompt and report tabs (§2.6).
@@ -16,11 +18,11 @@ func renderMarkdown(body string) string {
 	for i, line := range lines {
 		if strings.HasPrefix(line, "```") {
 			inFence = !inFence
-			out[i] = faintStyle.Render(line)
+			out[i] = widget.FaintStyle.Render(line)
 			continue
 		}
 		if inFence {
-			out[i] = mutedStyle.Render(line)
+			out[i] = widget.MutedStyle.Render(line)
 			continue
 		}
 
@@ -33,9 +35,9 @@ func renderMarkdown(body string) string {
 			if n < len(line) && line[n] == ' ' {
 				x := strings.TrimLeft(line[n:], " ")
 				if n <= 2 {
-					out[i] = accentStyle.Bold(true).Render(x)
+					out[i] = widget.AccentStyle.Bold(true).Render(x)
 				} else {
-					out[i] = textStyle.Bold(true).Render(x)
+					out[i] = widget.TextStyle.Bold(true).Render(x)
 				}
 				continue
 			}
@@ -46,13 +48,13 @@ func renderMarkdown(body string) string {
 		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
 			indent := line[:len(line)-len(trimmed)]
 			rest := trimmed[2:]
-			out[i] = indent + faintStyle.Render("•") + " " + renderInline(rest)
+			out[i] = indent + widget.FaintStyle.Render("•") + " " + renderInline(rest)
 			continue
 		}
 
 		// Table
 		if strings.HasPrefix(line, "|") {
-			out[i] = mutedStyle.Render(line)
+			out[i] = widget.MutedStyle.Render(line)
 			continue
 		}
 
@@ -74,7 +76,7 @@ func renderInline(s string) string {
 
 	flushPlain := func() {
 		if plain.Len() > 0 {
-			out.WriteString(textStyle.Render(plain.String()))
+			out.WriteString(widget.TextStyle.Render(plain.String()))
 			plain.Reset()
 		}
 	}
@@ -84,7 +86,7 @@ func renderInline(s string) string {
 			if next := strings.IndexByte(s[i+1:], '`'); next != -1 {
 				flushPlain()
 				code := s[i+1 : i+1+next]
-				out.WriteString(accentStyle.Render(code))
+				out.WriteString(widget.AccentStyle.Render(code))
 				i = i + 1 + next + 1
 				continue
 			}
@@ -97,7 +99,7 @@ func renderInline(s string) string {
 			if next := strings.Index(s[i+2:], "**"); next != -1 {
 				flushPlain()
 				bold := s[i+2 : i+2+next]
-				out.WriteString(textStyle.Bold(true).Render(bold))
+				out.WriteString(widget.TextStyle.Bold(true).Render(bold))
 				i = i + 2 + next + 2
 				continue
 			}

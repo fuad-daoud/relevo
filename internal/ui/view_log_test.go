@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/muesli/termenv"
 )
 
@@ -417,7 +418,7 @@ func TestLogViewDayRulesAndMargins(t *testing.T) {
 		t.Fatalf("len(lines) = %d, want 30", len(lines))
 	}
 
-	band := strings.Split(selBandStyle.Render("·"), "·")[0]
+	band := strings.Split(widget.SelBandStyle.Render("·"), "·")[0]
 	bg := strings.TrimSuffix(strings.TrimPrefix(band, "\x1b["), "m")
 
 	var ruleFound bool

@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // candDocMsg is one ConfigDoc load's reply (§4).
@@ -159,11 +160,11 @@ func servesText(r candRow) string {
 func candStatus(r candRow, now time.Time) (string, lipgloss.Style) {
 	switch {
 	case !r.on:
-		return "off", faintStyle
+		return "off", widget.FaintStyle
 	case r.gate != nil:
-		return statsGateLeft(*r.gate, now), redStyle
+		return statsGateLeft(*r.gate, now), widget.RedStyle
 	}
-	return "ready", greenStyle
+	return "ready", widget.GreenStyle
 }
 
 // candCol is one fixed-width table column after CANDIDATE.
@@ -228,36 +229,36 @@ func candLine(cells []candCell, sel bool, cw int) string {
 	for i, c := range cells {
 		if i > 0 {
 			if sel {
-				b.WriteString(selBandStyle.Render("  "))
+				b.WriteString(widget.SelBandStyle.Render("  "))
 			} else {
 				b.WriteString("  ")
 			}
 		}
 		st := c.style
 		if sel {
-			st = st.Background(selBandStyle.GetBackground())
+			st = st.Background(widget.SelBandStyle.GetBackground())
 		}
 		b.WriteString(st.Render(c.text))
 	}
 	row := b.String()
 	if !sel {
-		return "   " + fit(row, cw) + "   "
+		return "   " + widget.Fit(row, cw) + "   "
 	}
 	if lipgloss.Width(row) > cw {
 		row = lipgloss.NewStyle().MaxWidth(cw).Render(row)
 	}
 	if w := lipgloss.Width(row); w < cw {
-		row += selBandStyle.Render(strings.Repeat(" ", cw-w))
+		row += widget.SelBandStyle.Render(strings.Repeat(" ", cw-w))
 	}
 	return "   " + row + "   "
 }
 
 // candHeaderLine is the table's header row, in faint bold.
 func candHeaderLine(nameW int, cols []candCol, cw int) string {
-	style := faintStyle.Bold(true)
-	cells := []candCell{{text: pad("CANDIDATE", nameW), style: style}}
+	style := widget.FaintStyle.Bold(true)
+	cells := []candCell{{text: widget.Pad("CANDIDATE", nameW), style: style}}
 	for _, c := range cols {
-		cells = append(cells, candCell{text: pad(c.head, c.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(c.head, c.w), style: style})
 	}
 	return candLine(cells, false, cw)
 }
@@ -265,15 +266,15 @@ func candHeaderLine(nameW int, cols []candCol, cw int) string {
 // candDataLine is one candidate's table row (§4). An off row is faint
 // throughout; the cursor row's name is bold.
 func candDataLine(r candRow, sel bool, nameW int, cols []candCol, cw int, now time.Time) string {
-	base, meta := textStyle, mutedStyle
+	base, meta := widget.TextStyle, widget.MutedStyle
 	if !r.on {
-		base, meta = faintStyle, faintStyle
+		base, meta = widget.FaintStyle, widget.FaintStyle
 	}
 	nameStyle := base
 	if sel {
 		nameStyle = nameStyle.Bold(true)
 	}
-	cells := []candCell{{text: pad(r.c.Name, nameW), style: nameStyle}}
+	cells := []candCell{{text: widget.Pad(r.c.Name, nameW), style: nameStyle}}
 	for _, col := range cols {
 		var text string
 		style := meta
@@ -289,7 +290,7 @@ func candDataLine(r candRow, sel bool, nameW int, cols []candCol, cw int, now ti
 		case "status":
 			text, style = candStatus(r, now)
 		}
-		cells = append(cells, candCell{text: pad(text, col.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(text, col.w), style: style})
 	}
 	return candLine(cells, sel, cw)
 }
@@ -345,24 +346,24 @@ func candOrdinal(n int) string {
 // with actor and candidate names in text.
 func candPickSentence(doc relevo.ConfigDoc, env Env, r candRow) string {
 	if !r.on {
-		return mutedStyle.Render("off: no actor has it on")
+		return widget.MutedStyle.Render("off: no actor has it on")
 	}
 	parts := make([]string, 0, len(r.slots))
 	for _, s := range r.slots {
-		parts = append(parts, mutedStyle.Render("the ")+textStyle.Render(s.Actor)+
-			mutedStyle.Render("'s "+candOrdinal(s.Position)+" pick"))
+		parts = append(parts, widget.MutedStyle.Render("the ")+widget.TextStyle.Render(s.Actor)+
+			widget.MutedStyle.Render("'s "+candOrdinal(s.Position)+" pick"))
 	}
-	out := strings.Join(parts, mutedStyle.Render(" and "))
+	out := strings.Join(parts, widget.MutedStyle.Render(" and "))
 	if r.gate == nil || len(r.slots) == 0 {
 		return out
 	}
 	actor := r.slots[0].Actor
 	if next, ok := nextReady(doc, env, actor, r.c.Name); ok {
-		return out + mutedStyle.Render("; while it is gated the ") + textStyle.Render(actor) +
-			mutedStyle.Render(" takes ") + textStyle.Render(next)
+		return out + widget.MutedStyle.Render("; while it is gated the ") + widget.TextStyle.Render(actor) +
+			widget.MutedStyle.Render(" takes ") + widget.TextStyle.Render(next)
 	}
-	return out + mutedStyle.Render("; the ") + textStyle.Render(actor) +
-		mutedStyle.Render(" has no other ready candidate")
+	return out + widget.MutedStyle.Render("; the ") + widget.TextStyle.Render(actor) +
+		widget.MutedStyle.Render(" has no other ready candidate")
 }
 
 // nextReady is the pick the actor takes while name is gated (§4): the first
@@ -425,19 +426,19 @@ func nextReady(doc relevo.ConfigDoc, env Env, actor, name string) (string, bool)
 func candDetailLines(doc relevo.ConfigDoc, env Env, r candRow, width int) []string {
 	c := r.c
 	meta := c.Harness + " · " + c.Provider + " · " + c.Model
-	first := "   " + faintStyle.Bold(true).Render(c.Name) + "   " + mutedStyle.Render(meta)
-	out := []string{fit(first, width)}
+	first := "   " + widget.FaintStyle.Bold(true).Render(c.Name) + "   " + widget.MutedStyle.Render(meta)
+	out := []string{widget.Fit(first, width)}
 	if r.gate != nil {
 		g := *r.gate
-		line := "   " + redStyle.Render("gated") +
-			mutedStyle.Render(" since "+candSince(g.Since, env.Now)) +
-			mutedStyle.Render(", "+candUntilText(g, env.Now))
+		line := "   " + widget.RedStyle.Render("gated") +
+			widget.MutedStyle.Render(" since "+candSince(g.Since, env.Now)) +
+			widget.MutedStyle.Render(", "+candUntilText(g, env.Now))
 		if reason := statsGateReasonText(g.Note); reason != "" {
-			line += "   " + textStyle.Render(reason)
+			line += "   " + widget.TextStyle.Render(reason)
 		}
-		out = append(out, fit(line, width))
+		out = append(out, widget.Fit(line, width))
 	}
-	return append(out, fit("   "+candPickSentence(doc, env, r), width))
+	return append(out, widget.Fit("   "+candPickSentence(doc, env, r), width))
 }
 
 // bodyLines is the whole body before it is windowed: a blank line under the
@@ -511,7 +512,7 @@ func (v *candidatesView) follow(env Env) {
 	if sel >= v.top+avail {
 		v.top = sel - avail + 1
 	}
-	v.top = clamp(v.top, 0, max(0, len(lines)-avail))
+	v.top = widget.Clamp(v.top, 0, max(0, len(lines)-avail))
 }
 
 func (v candidatesView) Crumbs() []string { return []string{"candidates"} }
@@ -582,7 +583,7 @@ func (v candidatesView) Context(env Env) (string, string) {
 		}
 	}
 	item := func(count int, label string) string {
-		return textStyle.Bold(true).Render(fmt.Sprintf("%d", count)) + " " + mutedStyle.Render(label)
+		return widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", count)) + " " + widget.MutedStyle.Render(label)
 	}
 	left := "   " + item(total, "candidates")
 	left += "   " + item(ready, "ready")
@@ -597,7 +598,7 @@ func (v candidatesView) Context(env Env) (string, string) {
 		}
 		left += "   " + item(m, label)
 	}
-	right := faintStyle.Render("sort ") + mutedStyle.Render("pick order")
+	right := widget.FaintStyle.Render("sort ") + widget.MutedStyle.Render("pick order")
 	return left, right
 }
 
@@ -606,17 +607,17 @@ func (v candidatesView) Body(env Env, width, height int) string {
 		return ""
 	}
 	if !v.loaded && v.err != nil {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	rows := v.rows(env)
 	if len(rows) == 0 {
-		return strings.Join(statsCentered("no candidates; a adds one", width, height), "\n")
+		return strings.Join(widget.Centered("no candidates; a adds one", width, height), "\n")
 	}
 	lines := v.bodyLines(env, width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -624,7 +625,7 @@ func (v candidatesView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
 func (v candidatesView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
@@ -742,7 +743,7 @@ func (v candidatesView) deleteCmd(env Env, r candRow) tea.Cmd {
 		kind:   "delete",
 		yes:    "delete",
 		danger: true,
-		title:  "Delete " + accentStyle.Bold(true).Render(name) + "?",
+		title:  "Delete " + widget.AccentStyle.Bold(true).Render(name) + "?",
 		lines:  candDeleteLines(v.doc, env, r),
 		onYes: runAction(env.Ctx, "delete", name, func(ctx context.Context) Result {
 			return env.Actions.ApplyConfig(ctx, edit)
@@ -782,7 +783,7 @@ func candActorsLeft(doc relevo.ConfigDoc, name string) []candLeft {
 // they drop it, who is left with one candidate, the gate kept, and where its
 // past rounds are.
 func candDeleteLines(doc relevo.ConfigDoc, env Env, r candRow) []string {
-	label := func(l string) string { return pad(l, 11) }
+	label := func(l string) string { return widget.Pad(l, 11) }
 	var out []string
 	if len(r.slots) > 0 {
 		drop := "it drops it"
@@ -826,8 +827,8 @@ func (v candidatesView) gateForm(env Env, r candRow) tea.Cmd {
 	}
 	reasonField := formField{label: "reason", input: newFormInput(false), hint: "optional"}
 
-	header := accentStyle.Bold(true).Render("Gate "+name) +
-		faintStyle.Render("  (provider "+provider+")")
+	header := widget.AccentStyle.Bold(true).Render("Gate "+name) +
+		widget.FaintStyle.Render("  (provider "+provider+")")
 
 	return openOverlay(formBox{
 		kind:   "gate",

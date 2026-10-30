@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // syncDash is the placeholder this view uses for every value it has not been
@@ -175,10 +176,10 @@ func (v syncView) Context(env Env) (string, string) {
 	if !v.loaded {
 		return "", ""
 	}
-	left := "   " + textStyle.Bold(true).Render(v.SyncToken()) + "   " + mutedStyle.Render(v.statePhrase())
+	left := "   " + widget.TextStyle.Bold(true).Render(v.SyncToken()) + "   " + widget.MutedStyle.Render(v.statePhrase())
 	right := ""
 	if n := len(v.snap.Unlinked); n > 0 {
-		right = textStyle.Bold(true).Render(fmt.Sprintf("%d", n)) + " " + mutedStyle.Render(syncUnlinkedWord(n))
+		right = widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", n)) + " " + widget.MutedStyle.Render(syncUnlinkedWord(n))
 	}
 	return left, right
 }
@@ -240,18 +241,18 @@ func (v syncView) Body(env Env, width, height int) string {
 	// it, so an age and the clock in the header can never disagree.
 	v.now = env.Now
 	if v.err != nil && !v.loaded {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
 	}
 	// No snapshot yet is a blank-padded "loading…", the same shape :servers uses
 	// for a row whose probe has not answered. It is not an error: the read is in
 	// flight and there is nothing to report until it lands.
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	lines := v.bodyLines(width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	end := min(top+height, len(lines))
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
 // bodyLines is the whole body before it is windowed: the form when sync is off,
@@ -271,19 +272,19 @@ func (v syncView) bodyLines(width int) []string {
 // fact about it the view states is whether one exists.
 func (v syncView) preOnLines() []string {
 	lines := []string{""}
-	lines = append(lines, syncLine("remote", syncOr(v.snap.RemoteURL, "not configured"), mutedStyle))
-	lines = append(lines, syncLine("token", v.tokenPhrase(), mutedStyle))
-	lines = append(lines, syncLine("reachability", v.reachPhrase(), mutedStyle))
-	lines = append(lines, syncLine("first upload", v.uploadEstimate(), mutedStyle))
+	lines = append(lines, syncLine("remote", syncOr(v.snap.RemoteURL, "not configured"), widget.MutedStyle))
+	lines = append(lines, syncLine("token", v.tokenPhrase(), widget.MutedStyle))
+	lines = append(lines, syncLine("reachability", v.reachPhrase(), widget.MutedStyle))
+	lines = append(lines, syncLine("first upload", v.uploadEstimate(), widget.MutedStyle))
 	lines = append(lines, "")
-	lines = append(lines, "   "+faintStyle.Bold(true).Render("WHAT SYNCS"))
+	lines = append(lines, "   "+widget.FaintStyle.Bold(true).Render("WHAT SYNCS"))
 	for _, s := range syncSharedTables {
-		lines = append(lines, "     "+greenStyle.Render("+")+"  "+mutedStyle.Render(s))
+		lines = append(lines, "     "+widget.GreenStyle.Render("+")+"  "+widget.MutedStyle.Render(s))
 	}
 	lines = append(lines, "")
-	lines = append(lines, "   "+faintStyle.Bold(true).Render("NEVER SYNCS"))
+	lines = append(lines, "   "+widget.FaintStyle.Bold(true).Render("NEVER SYNCS"))
 	for _, s := range syncLockedTables {
-		lines = append(lines, "     "+redStyle.Render("×")+"  "+mutedStyle.Render(s))
+		lines = append(lines, "     "+widget.RedStyle.Render("×")+"  "+widget.MutedStyle.Render(s))
 	}
 	lines = append(lines, "")
 	lines = append(lines, v.confirmLines()...)
@@ -297,8 +298,8 @@ func (v syncView) preOnLines() []string {
 // offer it cannot keep.
 func (v syncView) confirmLines() []string {
 	return []string{
-		"   " + warnStyle.Bold(true).Render("NO ENGINE") + "  enable, push and pull refuse in this build",
-		"               " + mutedStyle.Render("nothing leaves this machine, and no remote is contacted"),
+		"   " + widget.WarnStyle.Bold(true).Render("NO ENGINE") + "  enable, push and pull refuse in this build",
+		"               " + widget.MutedStyle.Render("nothing leaves this machine, and no remote is contacted"),
 	}
 }
 
@@ -327,15 +328,15 @@ func (v syncView) uploadEstimate() string {
 func (v syncView) postOnLines(width int) []string {
 	lines := []string{""}
 	lines = append(lines, syncLine("sync", v.SyncToken()+" · "+v.statePhrase(), syncTokenStyle(v.SyncToken())))
-	lines = append(lines, syncLine("remote", syncOr(v.snap.RemoteURL, "not configured"), mutedStyle))
-	lines = append(lines, syncLine("unpushed", v.backlogPhrase(), mutedStyle))
+	lines = append(lines, syncLine("remote", syncOr(v.snap.RemoteURL, "not configured"), widget.MutedStyle))
+	lines = append(lines, syncLine("unpushed", v.backlogPhrase(), widget.MutedStyle))
 	if !v.snap.LastExport.IsZero() {
-		lines = append(lines, syncLine("last export", v.localStampPhrase(v.snap.LastExport), mutedStyle))
+		lines = append(lines, syncLine("last export", v.localStampPhrase(v.snap.LastExport), widget.MutedStyle))
 	}
 	if !v.snap.LastImport.IsZero() {
-		lines = append(lines, syncLine("last import", v.localStampPhrase(v.snap.LastImport), mutedStyle))
+		lines = append(lines, syncLine("last import", v.localStampPhrase(v.snap.LastImport), widget.MutedStyle))
 	}
-	lines = append(lines, syncLine("first upload", v.uploadProgress(), mutedStyle))
+	lines = append(lines, syncLine("first upload", v.uploadProgress(), widget.MutedStyle))
 	// A machine that recovered from a corrupt replica by itself says so, and
 	// names the folder the copy it kept is in. A machine that never rebuilt
 	// draws no row, so the status block stays the block it was.
@@ -344,12 +345,12 @@ func (v syncView) postOnLines(width int) []string {
 		if v.snap.State.Rebuild.Aside != "" {
 			phrase += " · " + v.snap.State.Rebuild.Aside
 		}
-		lines = append(lines, syncLine("last rebuild", phrase, mutedStyle))
+		lines = append(lines, syncLine("last rebuild", phrase, widget.MutedStyle))
 	}
 	lines = append(lines, v.attemptLines()...)
 	if v.snap.Attention != "" {
 		lines = append(lines, "")
-		lines = append(lines, "   "+errorStyle.Render(v.snap.Attention))
+		lines = append(lines, "   "+widget.ErrorStyle.Render(v.snap.Attention))
 	}
 	lines = append(lines, v.troubleLines()...)
 	lines = append(lines, "")
@@ -367,15 +368,15 @@ func (v syncView) troubleLines() []string {
 	if v.snap.Trouble.Empty() {
 		return nil
 	}
-	out := []string{"", "   " + warnStyle.Bold(true).Render("IMPORT TROUBLE")}
+	out := []string{"", "   " + widget.WarnStyle.Bold(true).Render("IMPORT TROUBLE")}
 	for _, held := range v.snap.Trouble.Held {
-		out = append(out, "     "+warnStyle.Render("held    ")+mutedStyle.Render(sanitizeText(held)))
+		out = append(out, "     "+widget.WarnStyle.Render("held    ")+widget.MutedStyle.Render(sanitizeText(held)))
 	}
 	for _, dropped := range v.snap.Trouble.Dropped {
-		out = append(out, "     "+warnStyle.Render("dropped ")+mutedStyle.Render(sanitizeText(dropped)))
+		out = append(out, "     "+widget.WarnStyle.Render("dropped ")+widget.MutedStyle.Render(sanitizeText(dropped)))
 	}
 	for _, gap := range v.snap.Trouble.Gaps {
-		out = append(out, "     "+warnStyle.Render("gap     ")+mutedStyle.Render(sanitizeText(gap)))
+		out = append(out, "     "+widget.WarnStyle.Render("gap     ")+widget.MutedStyle.Render(sanitizeText(gap)))
 	}
 	return out
 }
@@ -417,25 +418,25 @@ func (v syncView) uploadProgress() string {
 // is drawn faint to say that a label here is something to read rather than
 // something to correct.
 func (v syncView) installationLines() []string {
-	out := []string{"   " + faintStyle.Bold(true).Render("INSTALLATIONS")}
+	out := []string{"   " + widget.FaintStyle.Bold(true).Render("INSTALLATIONS")}
 	if len(v.snap.Installation) == 0 {
-		return append(out, "     "+emptyStyle.Render("none recorded yet"))
+		return append(out, "     "+widget.EmptyStyle.Render("none recorded yet"))
 	}
-	header := pad("LABEL", 18) + pad("ID", 18) + mutedStyle.Render("LAST SEEN")
+	header := widget.Pad("LABEL", 18) + widget.Pad("ID", 18) + widget.MutedStyle.Render("LAST SEEN")
 	out = append(out, "     "+header)
 	for _, in := range v.snap.Installation {
 		own := in.ID != "" && in.ID == v.snap.OwnID
-		style := mutedStyle
+		style := widget.MutedStyle
 		label := in.Label
 		if label == "" {
 			label = syncDash
 		}
 		if own {
-			style = textStyle
+			style = widget.TextStyle
 		} else {
-			style = faintStyle
+			style = widget.FaintStyle
 		}
-		row := pad(label, 18) + pad(clipMiddle(in.ID, 16), 18) + style.Render(syncDate(in.LastSeen))
+		row := widget.Pad(label, 18) + widget.Pad(clipMiddle(in.ID, 16), 18) + style.Render(syncDate(in.LastSeen))
 		out = append(out, "     "+row)
 	}
 	return out
@@ -446,15 +447,15 @@ func (v syncView) installationLines() []string {
 // it and none has been backfilled, so these are listed for a deliberate re-bind
 // rather than repaired on the way past.
 func (v syncView) unlinkedLines(width int) []string {
-	out := []string{"   " + faintStyle.Bold(true).Render("UNLINKED REMOTE BINDINGS") +
-		mutedStyle.Render(fmt.Sprintf("  (%d) · nothing backfills these; they re-bind on purpose", len(v.snap.Unlinked)))}
+	out := []string{"   " + widget.FaintStyle.Bold(true).Render("UNLINKED REMOTE BINDINGS") +
+		widget.MutedStyle.Render(fmt.Sprintf("  (%d) · nothing backfills these; they re-bind on purpose", len(v.snap.Unlinked)))}
 	if len(v.snap.Unlinked) == 0 {
-		return append(out, "     "+emptyStyle.Render("every remote binding carries a link"))
+		return append(out, "     "+widget.EmptyStyle.Render("every remote binding carries a link"))
 	}
-	out = append(out, "     "+pad("NAME", 24)+pad("OWNER", 16)+mutedStyle.Render("LINK"))
+	out = append(out, "     "+widget.Pad("NAME", 24)+widget.Pad("OWNER", 16)+widget.MutedStyle.Render("LINK"))
 	for _, r := range v.snap.Unlinked {
-		out = append(out, "     "+pad(clipName(r.Name, 22), 24)+pad(clipName(r.Owner, 14), 16)+
-			faintStyle.Render("none"))
+		out = append(out, "     "+widget.Pad(clipName(r.Name, 22), 24)+widget.Pad(clipName(r.Owner, 14), 16)+
+			widget.FaintStyle.Render("none"))
 	}
 	return out
 }
@@ -542,11 +543,11 @@ func (v syncView) disableCmd(env Env) tea.Cmd {
 		kind:   "sync disable",
 		yes:    "disable",
 		danger: true,
-		title:  "Turn sync off for " + accentStyle.Bold(true).Render(target) + "?",
+		title:  "Turn sync off for " + widget.AccentStyle.Bold(true).Render(target) + "?",
 		lines: []string{
-			pad("final export", 13) + "one last attempt, bounded; a remote that does not answer does not refuse",
-			pad("kept", 13) + "every local file and row, still servable",
-			pad("remote", 13) + "left alone; you delete that with Turso's own tooling",
+			widget.Pad("final export", 13) + "one last attempt, bounded; a remote that does not answer does not refuse",
+			widget.Pad("kept", 13) + "every local file and row, still servable",
+			widget.Pad("remote", 13) + "left alone; you delete that with Turso's own tooling",
 		},
 		onYes: runAction(env.Ctx, "sync disable", "", func(ctx context.Context) Result {
 			return env.Actions.SyncDisable(ctx)

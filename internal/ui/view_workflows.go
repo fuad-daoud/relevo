@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -94,10 +95,10 @@ func workflowsLayout(width int) (int, []workflowCol) {
 
 // workflowsHeaderLine is the list's header row, in faint bold.
 func workflowsHeaderLine(nameW int, cols []workflowCol, cw int) string {
-	style := faintStyle.Bold(true)
-	cells := []candCell{{text: pad("NAME", nameW), style: style}}
+	style := widget.FaintStyle.Bold(true)
+	cells := []candCell{{text: widget.Pad("NAME", nameW), style: style}}
 	for _, c := range cols {
-		cells = append(cells, candCell{text: pad(c.head, c.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(c.head, c.w), style: style})
 	}
 	return candLine(cells, false, cw)
 }
@@ -142,36 +143,36 @@ func workflowsParamsText(params []relevo.WorkflowParam) string {
 // the shipped one accented, because it is the one the remove key refuses.
 func workflowOriginText(origin string) (string, lipgloss.Style) {
 	if origin == relevo.WorkflowOriginShipped {
-		return origin, accentStyle
+		return origin, widget.AccentStyle
 	}
-	return origin, mutedStyle
+	return origin, widget.MutedStyle
 }
 
 // workflowsDataLine is one workflow's row. The cursor row's name is bold and
 // the shipped row's origin accented, so the row the d key refuses stands out.
 func workflowsDataLine(w relevo.WorkflowSummary, sel bool, nameW int, cols []workflowCol, cw int) string {
-	nameStyle := textStyle
+	nameStyle := widget.TextStyle
 	if sel {
 		nameStyle = nameStyle.Bold(true)
 	}
-	cells := []candCell{{text: pad(w.Name, nameW), style: nameStyle}}
+	cells := []candCell{{text: widget.Pad(w.Name, nameW), style: nameStyle}}
 	for _, col := range cols {
 		text := ""
-		style := mutedStyle
+		style := widget.MutedStyle
 		switch col.key {
 		case "origin":
 			text, style = workflowOriginText(w.Origin)
 		case "desc":
 			text = sanitizeText(w.Description)
 			if text == "" {
-				text, style = "—", faintStyle
+				text, style = "—", widget.FaintStyle
 			}
 		case "inputs":
 			text = workflowsInputsText(w.Inputs)
 		case "params":
 			text = workflowsParamsText(w.Params)
 		}
-		cells = append(cells, candCell{text: pad(text, col.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(text, col.w), style: style})
 	}
 	return candLine(cells, sel, cw)
 }
@@ -181,10 +182,10 @@ func workflowsDataLine(w relevo.WorkflowSummary, sel bool, nameW int, cols []wor
 // table truncates them.
 func workflowDetailLines(w relevo.WorkflowSummary, width int) []string {
 	origin, originStyle := workflowOriginText(w.Origin)
-	first := "   " + faintStyle.Bold(true).Render(w.Name) + "   " + originStyle.Render(origin)
-	second := "   " + mutedStyle.Render("inputs ") + textStyle.Render(workflowsInputsText(w.Inputs))
-	third := "   " + mutedStyle.Render("params ") + textStyle.Render(workflowsParamsText(w.Params))
-	return []string{fit(first, width), fit(second, width), fit(third, width)}
+	first := "   " + widget.FaintStyle.Bold(true).Render(w.Name) + "   " + originStyle.Render(origin)
+	second := "   " + widget.MutedStyle.Render("inputs ") + widget.TextStyle.Render(workflowsInputsText(w.Inputs))
+	third := "   " + widget.MutedStyle.Render("params ") + widget.TextStyle.Render(workflowsParamsText(w.Params))
+	return []string{widget.Fit(first, width), widget.Fit(second, width), widget.Fit(third, width)}
 }
 
 // bodyLines is the whole list body before it is windowed: a blank line under
@@ -227,7 +228,7 @@ func (v *workflowsView) follow(env Env) {
 	if sel >= v.top+avail {
 		v.top = sel - avail + 1
 	}
-	v.top = clamp(v.top, 0, max(0, len(lines)-avail))
+	v.top = widget.Clamp(v.top, 0, max(0, len(lines)-avail))
 }
 
 func (v workflowsView) Crumbs() []string { return []string{"workflows"} }
@@ -265,7 +266,7 @@ func (v workflowsView) Context(env Env) (string, string) {
 	}
 	// "saved" and "shipped" are already plural, so only the total takes an s.
 	count := func(n int, label string) string {
-		return textStyle.Bold(true).Render(fmt.Sprintf("%d", n)) + " " + mutedStyle.Render(label)
+		return widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", n)) + " " + widget.MutedStyle.Render(label)
 	}
 	total := "workflow"
 	if len(v.list) != 1 {
@@ -282,16 +283,16 @@ func (v workflowsView) Body(env Env, width, height int) string {
 		return ""
 	}
 	if !v.loaded && v.err != nil {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	if len(v.list) == 0 {
-		return strings.Join(statsCentered("no workflows; a adds one", width, height), "\n")
+		return strings.Join(widget.Centered("no workflows; a adds one", width, height), "\n")
 	}
 	lines := v.bodyLines(env, width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -299,7 +300,7 @@ func (v workflowsView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
 func (v workflowsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
@@ -392,10 +393,10 @@ func (v workflowsView) removeCmd(env Env, i int) tea.Cmd {
 		kind:   "remove workflow",
 		yes:    "remove",
 		danger: true,
-		title:  "Remove workflow " + accentStyle.Bold(true).Render(w.Name) + "?",
+		title:  "Remove workflow " + widget.AccentStyle.Bold(true).Render(w.Name) + "?",
 		lines: []string{
-			pad("source", 11) + "goes with it",
-			pad("others", 11) + "are kept",
+			widget.Pad("source", 11) + "goes with it",
+			widget.Pad("others", 11) + "are kept",
 		},
 		onYes: runAction(env.Ctx, "remove workflow", workflowWriteKey("remove", w.Name), func(ctx context.Context) Result {
 			return env.Actions.WorkflowRemove(ctx, w.Name)

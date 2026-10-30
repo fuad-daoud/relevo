@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // serverEntryAt reads the entry a form's url, fingerprint, ca and insecure
@@ -78,7 +79,7 @@ func newAddServerForm(env Env, doc relevo.ConfigDoc) formBox {
 	return formBox{
 		kind:   "add server",
 		submit: "add",
-		header: []string{accentStyle.Bold(true).Render("Add a remote builder's server")},
+		header: []string{widget.AccentStyle.Bold(true).Render("Add a remote builder's server")},
 		note:   []string{"The client key stays with relevo config server key; this view never edits it."},
 		fields: fields,
 		onSubmit: func([]string) tea.Cmd {
@@ -117,7 +118,7 @@ func newEditServerForm(env Env, doc relevo.ConfigDoc, r serverRow) formBox {
 	return formBox{
 		kind:   "edit server",
 		submit: "save",
-		header: []string{accentStyle.Bold(true).Render("Edit server " + r.name)},
+		header: []string{widget.AccentStyle.Bold(true).Render("Edit server " + r.name)},
 		fields: fields,
 		onSubmit: func([]string) tea.Cmd {
 			edit, err := relevo.EditServer(doc, r.name, serverEntryAt(fields, 0))

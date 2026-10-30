@@ -680,7 +680,7 @@ func TestActionResultBecomesNoticeAndLog(t *testing.T) {
 		t.Errorf("notice = %q, want the error", m.notice)
 	}
 	if !m.noticeErr {
-		t.Error("an action error must render in errorStyle")
+		t.Error("an action error must render in widget.ErrorStyle")
 	}
 	if len(m.actionLog) != 2 || !strings.Contains(m.actionLog[1].Text, "sentinel") || !m.actionLog[1].Err || m.actionLog[1].Verb != "stop" {
 		t.Errorf("log = %+v, want the error appended", m.actionLog)

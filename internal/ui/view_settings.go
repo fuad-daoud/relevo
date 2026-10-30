@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // numCPU is runtime.NumCPU, kept as a package var so a golden test can pin the
@@ -158,18 +159,18 @@ func settingsLayout(width int) (settingW, valueW, defaultW, cw int) {
 
 // settingsHeaderLine is the table's header row, in faint bold.
 func settingsHeaderLine(settingW, valueW, defaultW, cw int) string {
-	style := faintStyle.Bold(true)
+	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{
-		{text: pad("SETTING", settingW), style: style},
-		{text: pad("VALUE", valueW), style: style},
-		{text: pad("DEFAULT", defaultW), style: style},
+		{text: widget.Pad("SETTING", settingW), style: style},
+		{text: widget.Pad("VALUE", valueW), style: style},
+		{text: widget.Pad("DEFAULT", defaultW), style: style},
 	}
 	return candLine(cells, false, cw)
 }
 
 // settingsGroupRuleLine is one group's rule: the group name (dim), a
-// gridStyle fill, then the row and set counts (faint). Modelled on
-// dash.Model.dayRuleLine's styles (Dim/Grid/Faint = mutedStyle/gridStyle/faintStyle);
+// widget.GridStyle fill, then the row and set counts (faint). Modelled on
+// dash.Model.dayRuleLine's styles (Dim/Grid/Faint = widget.MutedStyle/widget.GridStyle/widget.FaintStyle);
 // that method lives on dash.Model and is not reusable directly.
 func settingsGroupRuleLine(group string, n, set, cw int) string {
 	rightText := fmt.Sprintf(" %d %s", n, pluralSetting(n))
@@ -182,8 +183,8 @@ func settingsGroupRuleLine(group string, n, set, cw int) string {
 	if fill < 0 {
 		fill = 0
 	}
-	content := mutedStyle.Render(group) + " " + gridStyle.Render(strings.Repeat("┈", fill)) + faintStyle.Render(rightText)
-	return "   " + fit(content, cw) + "   "
+	content := widget.MutedStyle.Render(group) + " " + widget.GridStyle.Render(strings.Repeat("┈", fill)) + widget.FaintStyle.Render(rightText)
+	return "   " + widget.Fit(content, cw) + "   "
 }
 
 // settingsDataLine is one setting's table row: a set row's key and
@@ -192,18 +193,18 @@ func settingsGroupRuleLine(group string, n, set, cw int) string {
 // other cursor row (candLine); only VALUE and DEFAULT keep an unset row's dim
 // colour.
 func settingsDataLine(s relevo.Setting, sel bool, settingW, valueW, defaultW, cw int) string {
-	base := textStyle
+	base := widget.TextStyle
 	if !s.Set {
-		base = faintStyle
+		base = widget.FaintStyle
 	}
 	nameStyle := base
 	if sel {
-		nameStyle = textStyle.Bold(true)
+		nameStyle = widget.TextStyle.Bold(true)
 	}
 	cells := []candCell{
-		{text: pad(s.Key, settingW), style: nameStyle},
-		{text: pad(s.Value, valueW), style: base},
-		{text: pad(s.Default, defaultW), style: faintStyle},
+		{text: widget.Pad(s.Key, settingW), style: nameStyle},
+		{text: widget.Pad(s.Value, valueW), style: base},
+		{text: widget.Pad(s.Default, defaultW), style: widget.FaintStyle},
 	}
 	return candLine(cells, sel, cw)
 }
@@ -212,8 +213,8 @@ func settingsDataLine(s relevo.Setting, sel bool, settingW, valueW, defaultW, cw
 // value, then the row's sentence(s), wrapped, dim. gate.default's sentence is
 // followed by the check sentence.
 func settingsDetailLines(doc relevo.ConfigDoc, row relevo.Setting, width int) []string {
-	first := "   " + faintStyle.Bold(true).Render(row.Key) + "   " + mutedStyle.Render(row.Value)
-	out := []string{fit(first, width)}
+	first := "   " + widget.FaintStyle.Bold(true).Render(row.Key) + "   " + widget.MutedStyle.Render(row.Value)
+	out := []string{widget.Fit(first, width)}
 
 	sentence := settingHelp[row.Key]
 	if row.Key == "gate.default" {
@@ -221,7 +222,7 @@ func settingsDetailLines(doc relevo.ConfigDoc, row relevo.Setting, width int) []
 	}
 	wrapW := width - 6
 	for _, l := range wrapText(sentence, wrapW) {
-		out = append(out, fit("   "+mutedStyle.Render(l), width))
+		out = append(out, widget.Fit("   "+widget.MutedStyle.Render(l), width))
 	}
 	return out
 }
@@ -306,7 +307,7 @@ func (v *settingsView) follow(env Env) {
 	if maxTop > v.top && sel >= maxTop {
 		v.top = maxTop
 	}
-	v.top = clamp(v.top, 0, maxTop)
+	v.top = widget.Clamp(v.top, 0, maxTop)
 }
 
 func (v settingsView) Crumbs() []string { return []string{"settings"} }
@@ -350,7 +351,7 @@ func (v settingsView) Context(env Env) (string, string) {
 		}
 	}
 	item := func(count int, label string) string {
-		return textStyle.Bold(true).Render(fmt.Sprintf("%d", count)) + " " + mutedStyle.Render(label)
+		return widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", count)) + " " + widget.MutedStyle.Render(label)
 	}
 	left := "   " + item(len(settings), "settings") + "   " + item(set, "set")
 	return left, ""
@@ -361,13 +362,13 @@ func (v settingsView) Body(env Env, width, height int) string {
 		return ""
 	}
 	if !v.loaded && v.err != nil {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	lines := v.bodyLines(width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -375,7 +376,7 @@ func (v settingsView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
 func (v settingsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
@@ -474,7 +475,7 @@ func (v settingsView) resetCmd(env Env, row relevo.Setting) tea.Cmd {
 		kind:   "reset",
 		yes:    "reset",
 		danger: false,
-		title:  "Reset " + accentStyle.Bold(true).Render(row.Key) + " to its default?",
+		title:  "Reset " + widget.AccentStyle.Bold(true).Render(row.Key) + " to its default?",
 		lines:  []string{row.Value + " → " + row.Default},
 		onYes: runAction(env.Ctx, "reset", row.Key, func(ctx context.Context) Result {
 			return env.Actions.ApplyConfig(ctx, edit)

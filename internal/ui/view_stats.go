@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -160,9 +161,9 @@ func (v statsView) statsCandStatus(token string, now time.Time) (string, lipglos
 		if g.Role != "" && g.Role != "builder" {
 			continue
 		}
-		return statsGateLeft(g, now), redStyle
+		return statsGateLeft(g, now), widget.RedStyle
 	}
-	return "ready", greenStyle
+	return "ready", widget.GreenStyle
 }
 
 // cutFor turns a stats window into the instant before which rounds are
@@ -261,16 +262,16 @@ func (v statsView) Context(env Env) (string, string) {
 	chips := make([]string, len(statsWindows))
 	for i, w := range statsWindows {
 		if w == v.window {
-			chips[i] = chip(chipAccentStyle, w)
+			chips[i] = widget.Chip(widget.ChipAccentStyle, w)
 		} else {
-			chips[i] = mutedStyle.Render(chip(normalStyle, w))
+			chips[i] = widget.MutedStyle.Render(widget.Chip(widget.NormalStyle, w))
 		}
 	}
-	right := faintStyle.Render("window  ") + strings.Join(chips, " ")
+	right := widget.FaintStyle.Render("window  ") + strings.Join(chips, " ")
 	if v.fetching {
 		right += " · refreshing"
 	} else if v.err != nil {
-		right += " · " + errorStyle.Render(v.err.Error())
+		right += " · " + widget.ErrorStyle.Render(v.err.Error())
 	}
 	right += "  "
 	return v.statsTabsRow(), right
@@ -302,7 +303,7 @@ func (v statsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 		}
 		return v, nil
 
-	case tickMsg:
+	case widget.TickMsg:
 		if !v.fetching && env.Now.Sub(v.fetchedAt) > statsRefreshEvery {
 			v.fetching = true
 			return v, v.fetch(env)
@@ -348,7 +349,7 @@ func (v statsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 			return v, nil
 		}
 		lines, _, avail := v.page(env)
-		v.top = clamp(v.top-1, 0, statsMaxTop(len(lines), avail))
+		v.top = widget.Clamp(v.top-1, 0, statsMaxTop(len(lines), avail))
 		return v, nil
 	case "down", "j":
 		if v.tabHasCursor() {
@@ -357,7 +358,7 @@ func (v statsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 			return v, nil
 		}
 		lines, _, avail := v.page(env)
-		v.top = clamp(v.top+1, 0, statsMaxTop(len(lines), avail))
+		v.top = widget.Clamp(v.top+1, 0, statsMaxTop(len(lines), avail))
 		return v, nil
 	case "left", "h":
 		switch statsTabs[v.tab] {
@@ -728,11 +729,6 @@ func (v statsView) openRounds(env Env, q string) (View, tea.Cmd) {
 	return v, push(rv, init)
 }
 
-// clamp keeps v inside [lo, hi] (§2.2).
-func clamp(v, lo, hi int) int {
-	return min(max(v, lo), hi)
-}
-
 // statsClamp keeps an index inside [0, n).
 func statsClamp(i, n int) int {
 	if i < 0 {
@@ -749,14 +745,14 @@ func statsClamp(i, n int) int {
 // taller than the room, that head line carries the page hint (§3.5).
 func (v statsView) Body(env Env, width, height int) string {
 	if !v.loaded && v.err != nil {
-		lines := strings.Split(renderError(v.err, width), "\n")
-		return strings.Join(fitLines(lines, width, height), "\n")
+		lines := strings.Split(widget.RenderError(v.err, width), "\n")
+		return strings.Join(widget.FitLines(lines, width, height), "\n")
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	if v.rep.Totals.Rounds == 0 {
-		return strings.Join(statsCentered("no rounds in this window", width, height), "\n")
+		return strings.Join(widget.Centered("no rounds in this window", width, height), "\n")
 	}
 	avail := height - 1
 	body, _ := v.tabLines(env, width, avail)
@@ -775,7 +771,7 @@ func (v statsView) Body(env Env, width, height int) string {
 		end = len(body)
 	}
 	head := v.scrollHint(width, len(body), avail, start)
-	return strings.Join(fitLines(append([]string{head}, body[start:end]...), width, height), "\n")
+	return strings.Join(widget.FitLines(append([]string{head}, body[start:end]...), width, height), "\n")
 }
 
 // scrollHint is the body's head line: blank while the whole body fits, else a
@@ -796,7 +792,7 @@ func (v statsView) scrollHint(width, n, avail, start int) string {
 	if pad < 0 {
 		pad = 0
 	}
-	return strings.Repeat(" ", pad) + faintStyle.Render(text)
+	return strings.Repeat(" ", pad) + widget.FaintStyle.Render(text)
 }
 
 // statsTabsRow is the tab bar: the round view's chips, the active tab filled,
@@ -805,9 +801,9 @@ func (v statsView) statsTabsRow() string {
 	words := make([]string, len(statsTabs))
 	for i, t := range statsTabs {
 		if i == v.tab {
-			words[i] = chip(chipAccentStyle, t)
+			words[i] = widget.Chip(widget.ChipAccentStyle, t)
 		} else {
-			words[i] = mutedStyle.Render(chip(normalStyle, t))
+			words[i] = widget.MutedStyle.Render(widget.Chip(widget.NormalStyle, t))
 		}
 	}
 	return "   " + strings.Join(words, "   ")
@@ -910,7 +906,7 @@ func (v statsView) overviewLines(env Env, width, height int) ([]string, int) {
 	// lines -- the tiles (3, or 6 below 96 columns), two blanks, the heading,
 	// the axis, the labels and a blank -- plus a floor of about eight lines for
 	// the tables.
-	chartRows := clamp(height-20, 8, 16)
+	chartRows := widget.Clamp(height-20, 8, 16)
 
 	out := statsTilesLines(tiles, width)
 	out = append(out, "", "")
@@ -977,7 +973,7 @@ func statsTilesLines(tiles [][3]string, width int) []string {
 			var b strings.Builder
 			b.WriteString("   ")
 			for _, i := range row {
-				b.WriteString(fit(statsTileCell(tiles[i], line, pitch), pitch))
+				b.WriteString(widget.Fit(statsTileCell(tiles[i], line, pitch), pitch))
 			}
 			out = append(out, b.String())
 		}
@@ -990,12 +986,12 @@ func statsTilesLines(tiles [][3]string, width int) []string {
 // ellipsis before it is styled (§2.2).
 func statsTileCell(tile [3]string, line, pitch int) string {
 	text := tile[2]
-	style := faintStyle
+	style := widget.FaintStyle
 	switch line {
 	case 0:
-		text, style = tile[0], faintStyle.Bold(true)
+		text, style = tile[0], widget.FaintStyle.Bold(true)
 	case 1:
-		text, style = tile[1], textStyle.Bold(true)
+		text, style = tile[1], widget.TextStyle.Bold(true)
 	}
 	return style.Render(statsCut(text, pitch-2))
 }
@@ -1017,14 +1013,14 @@ func statsCut(s string, w int) string {
 // the timeline chart below it. rows is the plot's row count. With no tokens in
 // the window, one faint line in the gutter replaces the plot (§4.4).
 func (v statsView) statsTokenChartLines(width, rows int) []string {
-	out := []string{"   " + faintStyle.Bold(true).Render("TOKENS")}
+	out := []string{"   " + widget.FaintStyle.Bold(true).Render("TOKENS")}
 	days := v.rep.Spend.Days
 	for _, d := range days {
 		if d.Tokens > 0 {
 			return append(out, statsTimelineLines(days, width, rows)...)
 		}
 	}
-	return append(out, "   "+faintStyle.Render("no token usage recorded in this window"))
+	return append(out, "   "+widget.FaintStyle.Render("no token usage recorded in this window"))
 }
 
 // statsNiceStep is the smallest "nice" y-axis step at or above max/4: a value
@@ -1373,15 +1369,15 @@ const (
 func statsCellStyle(kind statsCellKind) lipgloss.Style {
 	switch kind {
 	case statsCellBar:
-		return accentStyle
+		return widget.AccentStyle
 	case statsCellGrid:
-		return gridStyle
+		return widget.GridStyle
 	case statsCellMuted:
-		return mutedStyle
+		return widget.MutedStyle
 	case statsCellRule:
-		return ruleStyle
+		return widget.BorderStyle
 	}
-	return normalStyle
+	return widget.NormalStyle
 }
 
 // statsRunBuilder renders a chart line cell by cell, merging each maximal run
@@ -1494,7 +1490,7 @@ func (v statsView) statsOverviewCandidates(env Env, cellW, rows int) ([]string, 
 		label = fmt.Sprintf("CANDIDATE   %d–%d of %d", first+1, last, n)
 	}
 	out := []string{
-		faintStyle.Bold(true).Render(fmt.Sprintf("%-*s%6s%6s%9s%9s%7s",
+		widget.FaintStyle.Bold(true).Render(fmt.Sprintf("%-*s%6s%6s%9s%9s%7s",
 			nameW, stats.FitKey(label, nameW, false), "RNDS", "DONE", "IN/RND", "OUT/RND", "CACHE")),
 	}
 	for i := first; i < last; i++ {
@@ -1503,16 +1499,16 @@ func (v statsView) statsOverviewCandidates(env Env, cellW, rows int) ([]string, 
 			text := stats.FitKey(names(c.Token), nameW, false) +
 				fmt.Sprintf("%6d%6s%9s%9s%7s", 0, "·", "·", "·", "·")
 			if v.ovFocus == 0 && i == cur {
-				out = append(out, selBandStyle.Foreground(textStyle.GetForeground()).Bold(true).Render(fit(text, cellW)))
+				out = append(out, widget.SelBandStyle.Foreground(widget.TextStyle.GetForeground()).Bold(true).Render(widget.Fit(text, cellW)))
 				continue
 			}
-			out = append(out, faintStyle.Render(text))
+			out = append(out, widget.FaintStyle.Render(text))
 			continue
 		}
 		s := c.Row
 		if v.ovFocus == 0 && i == cur {
 			key, nums := statsOverviewCandidateCells(names(s.Token), s, nameW)
-			out = append(out, selBandStyle.Foreground(textStyle.GetForeground()).Bold(true).Render(fit(key+nums, cellW)))
+			out = append(out, widget.SelBandStyle.Foreground(widget.TextStyle.GetForeground()).Bold(true).Render(widget.Fit(key+nums, cellW)))
 			continue
 		}
 		out = append(out, statsOverviewCandidateRow(names(s.Token), s, nameW, s.Few))
@@ -1554,9 +1550,9 @@ func statsOverviewCandidateCells(name string, s stats.ScoreRow, nameW int) (stri
 func statsOverviewCandidateRow(name string, s stats.ScoreRow, nameW int, few bool) string {
 	key, nums := statsOverviewCandidateCells(name, s, nameW)
 	if few {
-		return faintStyle.Render(key + nums)
+		return widget.FaintStyle.Render(key + nums)
 	}
-	return fgStyle.Render(key) + mutedStyle.Render(nums)
+	return widget.TextStyle.Render(key) + widget.MutedStyle.Render(nums)
 }
 
 // statsOverviewRepos is the overview's BUSIEST REPOS table (§4.8): a header row
@@ -1579,7 +1575,7 @@ func (v statsView) statsOverviewRepos(cellW, rows int) ([]string, int) {
 		label = fmt.Sprintf("REPO   %d–%d of %d", first+1, last, n)
 	}
 	out := []string{
-		faintStyle.Bold(true).Render(fmt.Sprintf("%-*s%6s%9s", nameW, stats.FitKey(label, nameW, false), "RNDS", "TOKENS") + fmt.Sprintf("%17s", "% TOKENS")),
+		widget.FaintStyle.Bold(true).Render(fmt.Sprintf("%-*s%6s%9s", nameW, stats.FitKey(label, nameW, false), "RNDS", "TOKENS") + fmt.Sprintf("%17s", "% TOKENS")),
 	}
 	total := v.rep.Totals.TokenKinds.Total()
 	for i := first; i < last; i++ {
@@ -1588,11 +1584,11 @@ func (v statsView) statsOverviewRepos(cellW, rows int) ([]string, int) {
 			text := stats.FitKey(shortRepo(g.Key), nameW, false) +
 				fmt.Sprintf("%6d%9s", g.Rounds, stats.ShortTokens(g.Tokens)) +
 				statsSharePlain(g.Tokens, total)
-			out = append(out, selBandStyle.Foreground(textStyle.GetForeground()).Bold(true).Render(fit(text, cellW)))
+			out = append(out, widget.SelBandStyle.Foreground(widget.TextStyle.GetForeground()).Bold(true).Render(widget.Fit(text, cellW)))
 			continue
 		}
-		out = append(out, fgStyle.Render(stats.FitKey(shortRepo(g.Key), nameW, false))+
-			fgStyle.Render(fmt.Sprintf("%6d%9s", g.Rounds, stats.ShortTokens(g.Tokens)))+
+		out = append(out, widget.TextStyle.Render(stats.FitKey(shortRepo(g.Key), nameW, false))+
+			widget.TextStyle.Render(fmt.Sprintf("%6d%9s", g.Rounds, stats.ShortTokens(g.Tokens)))+
 			statsShareCell(g.Tokens, total))
 	}
 	sel := -1
@@ -1633,9 +1629,9 @@ func statsShareCell(tokens, total int64) string {
 	bars, pct := statsShareParts(tokens, total)
 	bar := ""
 	if bars > 0 {
-		bar = accentStyle.Render(strings.Repeat("▇", bars))
+		bar = widget.AccentStyle.Render(strings.Repeat("▇", bars))
 	}
-	return "  " + bar + strings.Repeat(" ", 10-bars) + " " + fgStyle.Render(pct)
+	return "  " + bar + strings.Repeat(" ", 10-bars) + " " + widget.TextStyle.Render(pct)
 }
 
 // statsCandidateNameW is the CANDIDATES table's name column: cellW less the
@@ -1702,7 +1698,7 @@ func statsTableColumns(left, right []string, leftW, rightW, width int) []string 
 		if i < len(right) {
 			r = right[i]
 		}
-		out = append(out, fit("   "+fit(l, leftW)+"   "+fit(r, rightW), width))
+		out = append(out, widget.Fit("   "+widget.Fit(l, leftW)+"   "+widget.Fit(r, rightW), width))
 	}
 	return out
 }
@@ -1712,22 +1708,8 @@ func statsTableColumns(left, right []string, leftW, rightW, width int) []string 
 func statsStackedTable(cells []string, width int) []string {
 	out := make([]string, 0, len(cells))
 	for _, c := range cells {
-		out = append(out, fit("   "+fit(c, width-6), width))
+		out = append(out, widget.Fit("   "+widget.Fit(c, width-6), width))
 	}
-	return out
-}
-
-// statsCentered centres one line in the body box.
-func statsCentered(text string, width, height int) []string {
-	out := fitLines(nil, width, height)
-	if height <= 0 {
-		return out
-	}
-	pad := (width - lipgloss.Width(text)) / 2
-	if pad < 0 {
-		pad = 0
-	}
-	out[height/2] = fit(strings.Repeat(" ", pad)+emptyStyle.Render(text), width)
 	return out
 }
 
@@ -1745,7 +1727,7 @@ func (v statsView) candidatesTabLines(env Env, width int) ([]string, int) {
 	for _, col := range visible {
 		head += fmt.Sprintf("%*s", col.W, col.Head)
 	}
-	out := []string{"   " + faintStyle.Bold(true).Render(head+"   STATUS")}
+	out := []string{"   " + widget.FaintStyle.Bold(true).Render(head+"   STATUS")}
 	if len(rows) == 0 {
 		return out, -1
 	}
@@ -1760,16 +1742,16 @@ func (v statsView) candidatesTabLines(env Env, width int) ([]string, int) {
 			key, nums = statsCandCells(c.Row, name, visible, nameW)
 		}
 		status, statusStyle := v.statsCandStatus(c.Token, env.Now)
-		cell := fit(status, statsCandStatusW)
+		cell := widget.Fit(status, statsCandStatusW)
 		switch {
 		case i == cur:
 			out = append(out, "   "+
-				selBandStyle.Foreground(textStyle.GetForeground()).Bold(true).Render(key+nums)+
-				selBandStyle.Inherit(statusStyle).Render("   "+cell))
+				widget.SelBandStyle.Foreground(widget.TextStyle.GetForeground()).Bold(true).Render(key+nums)+
+				widget.SelBandStyle.Inherit(statusStyle).Render("   "+cell))
 		case c.Idle || c.Row.Few:
-			out = append(out, "   "+faintStyle.Render(key+nums)+"   "+statusStyle.Render(cell))
+			out = append(out, "   "+widget.FaintStyle.Render(key+nums)+"   "+statusStyle.Render(cell))
 		default:
-			out = append(out, "   "+fgStyle.Render(key)+mutedStyle.Render(nums)+"   "+statusStyle.Render(cell))
+			out = append(out, "   "+widget.TextStyle.Render(key)+widget.MutedStyle.Render(nums)+"   "+statusStyle.Render(cell))
 		}
 	}
 	out = append(out, "", "")
@@ -1791,10 +1773,10 @@ func (v statsView) accountTabLines(width int) []string {
 	for _, col := range visible {
 		head += fmt.Sprintf("%*s", col.W, col.Head)
 	}
-	out := []string{"   " + faintStyle.Bold(true).Render(head)}
+	out := []string{"   " + widget.FaintStyle.Bold(true).Render(head)}
 	for _, s := range v.rep.Accounts {
 		key, nums := statsCandCells(s, s.Token, visible, nameW)
-		out = append(out, "   "+fgStyle.Render(key)+mutedStyle.Render(nums))
+		out = append(out, "   "+widget.TextStyle.Render(key)+widget.MutedStyle.Render(nums))
 	}
 	return out
 }
@@ -1871,18 +1853,18 @@ func (v statsView) statsCandDetail(env Env, c statsOverviewCand) []string {
 		width = 1
 	}
 	name := env.Src.Base().Candidates.NameOf(c.Token)
-	first := "   " + faintStyle.Bold(true).Render(name)
+	first := "   " + widget.FaintStyle.Bold(true).Render(name)
 	if meta := statsCandMeta(env, c.Token); meta != "" {
-		first += "   " + mutedStyle.Render(meta)
+		first += "   " + widget.MutedStyle.Render(meta)
 	}
-	out := []string{fit(first, width)}
+	out := []string{widget.Fit(first, width)}
 	if c.Idle {
-		return append(out, fit("   "+mutedStyle.Render("no rounds in this window"), width))
+		return append(out, widget.Fit("   "+widget.MutedStyle.Render("no rounds in this window"), width))
 	}
 	return append(out,
-		fit(v.statsCandRoundLine(c.Row), width),
-		fit(statsCandTokenLine(c.Row), width),
-		fit(statsCandMeasuredLine(c.Row), width))
+		widget.Fit(v.statsCandRoundLine(c.Row), width),
+		widget.Fit(statsCandTokenLine(c.Row), width),
+		widget.Fit(statsCandMeasuredLine(c.Row), width))
 }
 
 // statsCandMeta is a candidate token's "harness · provider · roles" (§4.4):
@@ -1916,16 +1898,16 @@ func (v statsView) statsCandRoundLine(s stats.ScoreRow) string {
 		bindingWord = "binding"
 	}
 	total := s.TokenKinds.Total()
-	line := "   " + textStyle.Bold(true).Render(strconv.Itoa(s.Rounds)) +
-		mutedStyle.Render(" "+roundWord+" on ") +
-		textStyle.Bold(true).Render(strconv.Itoa(s.Bindings)) +
-		mutedStyle.Render(" "+bindingWord+"   ") +
-		textStyle.Bold(true).Render(stats.ShortTokens(total))
+	line := "   " + widget.TextStyle.Bold(true).Render(strconv.Itoa(s.Rounds)) +
+		widget.MutedStyle.Render(" "+roundWord+" on ") +
+		widget.TextStyle.Bold(true).Render(strconv.Itoa(s.Bindings)) +
+		widget.MutedStyle.Render(" "+bindingWord+"   ") +
+		widget.TextStyle.Bold(true).Render(stats.ShortTokens(total))
 	if window := v.rep.Totals.TokenKinds.Total(); window > 0 {
 		p := int(math.Round(100 * float64(total) / float64(window)))
-		return line + mutedStyle.Render(fmt.Sprintf(" tokens, %d%% of the window", p))
+		return line + widget.MutedStyle.Render(fmt.Sprintf(" tokens, %d%% of the window", p))
 	}
-	return line + mutedStyle.Render(" tokens")
+	return line + widget.MutedStyle.Render(" tokens")
 }
 
 // statsCandTokenLine is the detail block's third line (§4.4), all muted: the
@@ -1951,7 +1933,7 @@ func statsCandTokenLine(s stats.ScoreRow) string {
 		measured = fmt.Sprintf("in %s · cache %s · out %s   ",
 			stats.ShortTokens(k.In), stats.ShortTokens(k.Cache), stats.ShortTokens(k.Out))
 	}
-	return "   " + mutedStyle.Render(measured+strings.Join(clauses, " · "))
+	return "   " + widget.MutedStyle.Render(measured+strings.Join(clauses, " · "))
 }
 
 // statsCandMeasuredLine is the detail block's fourth line (§4.4), all muted:
@@ -1962,15 +1944,15 @@ func statsCandMeasuredLine(s stats.ScoreRow) string {
 	k := s.TokenKinds
 	switch {
 	case k.Measured == 0:
-		return "   " + mutedStyle.Render("no round reported token usage")
+		return "   " + widget.MutedStyle.Render("no round reported token usage")
 	case k.Measured == s.Rounds:
-		return "   " + mutedStyle.Render("every round reported token usage")
+		return "   " + widget.MutedStyle.Render("every round reported token usage")
 	}
 	roundWord := "rounds"
 	if s.Rounds == 1 {
 		roundWord = "round"
 	}
-	return "   " + mutedStyle.Render(fmt.Sprintf("%d of %d %s reported token usage",
+	return "   " + widget.MutedStyle.Render(fmt.Sprintf("%d of %d %s reported token usage",
 		k.Measured, s.Rounds, roundWord))
 }
 
@@ -2008,12 +1990,12 @@ func statsSplitChips(split int) string {
 	chips := make([]string, len(statsSplitNames))
 	for i, name := range statsSplitNames {
 		if i == split {
-			chips[i] = chip(kbdStyle.Bold(true), name)
+			chips[i] = widget.Chip(widget.KbdStyle.Bold(true), name)
 			continue
 		}
-		chips[i] = mutedStyle.Render(chip(normalStyle, name))
+		chips[i] = widget.MutedStyle.Render(widget.Chip(widget.NormalStyle, name))
 	}
-	// chip() pads one cell each side, so one space here leaves three cells
+	// widget.Chip() pads one cell each side, so one space here leaves three cells
 	// between two names, as the sketch shows (§4.1).
 	return "   " + strings.Join(chips, " ")
 }
@@ -2206,7 +2188,7 @@ func statsStackedCharts(series []statsSeries, days []stats.DayCost, shared bool,
 	}
 	if len(idle) > 0 {
 		out = append(out, "")
-		out = append(out, "   "+faintStyle.Render(statsCut("no tokens in this window: "+strings.Join(idle, " · "), width-6)))
+		out = append(out, "   "+widget.FaintStyle.Render(statsCut("no tokens in this window: "+strings.Join(idle, " · "), width-6)))
 	}
 	return out
 }
@@ -2263,7 +2245,7 @@ func statsStackColMax(vals []float64, avail int) float64 {
 // as the renderer's axis computes them (§2.2).
 func statsStackLabelW(max float64) int {
 	step := statsNiceStep(max)
-	m := clamp(int(math.Ceil(max/step)), 1, 4)
+	m := widget.Clamp(int(math.Ceil(max/step)), 1, 4)
 	w := lipgloss.Width("0")
 	for j := 1; j <= m; j++ {
 		if lw := lipgloss.Width(stats.ShortTokens(int64(math.Round(float64(j) * step)))); lw > w {
@@ -2277,10 +2259,10 @@ func statsStackLabelW(max float64) int {
 // then its total in bold and its share of the window muted, right aligned to
 // end at width-3 (§2.2).
 func statsChartTitle(name string, total, windowTotal int64, width int) string {
-	left := "   " + textStyle.Bold(true).Render(name)
-	right := textStyle.Bold(true).Render(stats.ShortTokens(total))
+	left := "   " + widget.TextStyle.Bold(true).Render(name)
+	right := widget.TextStyle.Bold(true).Render(stats.ShortTokens(total))
 	if windowTotal != 0 {
-		right += mutedStyle.Render(fmt.Sprintf(" · %.0f%%", 100*float64(total)/float64(windowTotal)))
+		right += widget.MutedStyle.Render(fmt.Sprintf(" · %.0f%%", 100*float64(total)/float64(windowTotal)))
 	}
 	pad := width - 3 - lipgloss.Width(left) - lipgloss.Width(right)
 	if pad < 1 {
@@ -2310,8 +2292,8 @@ func statsWeekLine(days []stats.DayCost) string {
 			lastWeek += d.Tokens
 		}
 	}
-	line := "   " + mutedStyle.Render("this week ") + textStyle.Bold(true).Render(stats.ShortTokens(thisWeek)) +
-		mutedStyle.Render("   last week ") + textStyle.Bold(true).Render(stats.ShortTokens(lastWeek))
+	line := "   " + widget.MutedStyle.Render("this week ") + widget.TextStyle.Bold(true).Render(stats.ShortTokens(thisWeek)) +
+		widget.MutedStyle.Render("   last week ") + widget.TextStyle.Bold(true).Render(stats.ShortTokens(lastWeek))
 	busiest, max := -1, int64(0)
 	for i, d := range days {
 		if d.Tokens > max {
@@ -2321,8 +2303,8 @@ func statsWeekLine(days []stats.DayCost) string {
 	if busiest < 0 {
 		return line
 	}
-	return line + mutedStyle.Render("   busiest day ") + textStyle.Bold(true).Render(stats.MonthDay(days[busiest].Day)) +
-		mutedStyle.Render(" "+stats.ShortTokens(max))
+	return line + widget.MutedStyle.Render("   busiest day ") + widget.TextStyle.Bold(true).Render(stats.MonthDay(days[busiest].Day)) +
+		widget.MutedStyle.Render(" "+stats.ShortTokens(max))
 }
 
 // tokensTabLines is the tokens tab (§4.5): the split chips, the total split's
@@ -2340,11 +2322,11 @@ func (v statsView) tokensTabLines(env Env, width, height int) []string {
 		}
 	}
 	if !hasTokens {
-		return append(out, "   "+faintStyle.Render("no token usage recorded in this window"), "", statsWeekLine(days))
+		return append(out, "   "+widget.FaintStyle.Render("no token usage recorded in this window"), "", statsWeekLine(days))
 	}
 	if v.split == 0 {
-		out = append(out, "   "+faintStyle.Bold(true).Render("TOKENS"))
-		out = append(out, statsTimelineLines(days, width, clamp(height-8, 8, 20))...)
+		out = append(out, "   "+widget.FaintStyle.Bold(true).Render("TOKENS"))
+		out = append(out, statsTimelineLines(days, width, widget.Clamp(height-8, 8, 20))...)
 	} else {
 		series, shared := v.statsSeriesFor(env, v.split)
 		out = append(out, statsStackedCharts(series, days, shared, width, v.rep.Totals.TokenKinds.Total())...)
@@ -2489,11 +2471,11 @@ func statsGatesCols(width int) (nameW, reasonW int) {
 func (v statsView) statsGatesLines(env Env, width int) []string {
 	gates := v.statsReliableGates()
 	if len(gates) == 0 {
-		return []string{"   " + faintStyle.Render("no candidate is gated")}
+		return []string{"   " + widget.FaintStyle.Render("no candidate is gated")}
 	}
 	names := env.Src.Base().Candidates.NameOf
 	nameW, reasonW := statsGatesCols(width)
-	out := []string{"   " + faintStyle.Bold(true).Render(
+	out := []string{"   " + widget.FaintStyle.Bold(true).Render(
 		fmt.Sprintf("%-*s%-*s%-*s%*s   %-*s", nameW, "CANDIDATE", 14, "PROVIDER", 16, "UNTIL", 6, "LEFT", reasonW, "REASON"))}
 
 	for _, g := range gates {
@@ -2503,27 +2485,27 @@ func (v statsView) statsGatesLines(env Env, width int) []string {
 		}
 		note := statsGateReason(g.Note)
 		out = append(out, "   "+
-			fgStyle.Render(stats.FitKey(names(g.Token), nameW, false))+
-			mutedStyle.Render(stats.FitKey(provider, 14, false))+
-			mutedStyle.Render(stats.FitKey(statsGateUntil(g, env.Now), 16, false))+
-			redStyle.Render(fmt.Sprintf("%6s", strings.TrimPrefix(statsGateLeft(g, env.Now), "gated ")))+
-			"   "+faintStyle.Render(fmt.Sprintf("%-*s", reasonW, statsCut(note, reasonW))))
+			widget.TextStyle.Render(stats.FitKey(names(g.Token), nameW, false))+
+			widget.MutedStyle.Render(stats.FitKey(provider, 14, false))+
+			widget.MutedStyle.Render(stats.FitKey(statsGateUntil(g, env.Now), 16, false))+
+			widget.RedStyle.Render(fmt.Sprintf("%6s", strings.TrimPrefix(statsGateLeft(g, env.Now), "gated ")))+
+			"   "+widget.FaintStyle.Render(fmt.Sprintf("%-*s", reasonW, statsCut(note, reasonW))))
 	}
 	return out
 }
 
-// statsHourCell is one LIMITS BY HOUR cell (§5.1, §2.2): gridStyle's "·" at
-// zero, textStyle's count at one or two, and red bold at three or more, each
+// statsHourCell is one LIMITS BY HOUR cell (§5.1, §2.2): widget.GridStyle's "·" at
+// zero, widget.TextStyle's count at one or two, and red bold at three or more, each
 // right-aligned in cellW.
 func statsHourCell(count, cellW int) string {
 	text := strconv.Itoa(count)
 	switch {
 	case count >= 3:
-		return strings.Repeat(" ", cellW-len(text)) + redStyle.Bold(true).Render(text)
+		return strings.Repeat(" ", cellW-len(text)) + widget.RedStyle.Bold(true).Render(text)
 	case count > 0:
-		return strings.Repeat(" ", cellW-len(text)) + textStyle.Render(text)
+		return strings.Repeat(" ", cellW-len(text)) + widget.TextStyle.Render(text)
 	}
-	return strings.Repeat(" ", cellW-1) + gridStyle.Render("·")
+	return strings.Repeat(" ", cellW-1) + widget.GridStyle.Render("·")
 }
 
 // statsHourLines is the reliability tab's limits-by-hour table (§5.1, §2.2):
@@ -2534,7 +2516,7 @@ func statsHourCell(count, cellW int) string {
 func (v statsView) statsHourLines(width int) []string {
 	rows := v.rep.Reliability.ByHour
 	if len(rows) == 0 {
-		return []string{"   " + faintStyle.Render("no rate limits in this window")}
+		return []string{"   " + widget.FaintStyle.Render("no rate limits in this window")}
 	}
 	const labelW = 16
 	cellW := max(3, (width-6-labelW)/24)
@@ -2543,10 +2525,10 @@ func (v statsView) statsHourLines(width int) []string {
 	for h := 0; h < 24; h++ {
 		head.WriteString(fmt.Sprintf("%*d", cellW, h))
 	}
-	out := []string{"   " + faintStyle.Bold(true).Render(head.String())}
+	out := []string{"   " + widget.FaintStyle.Bold(true).Render(head.String())}
 	for _, row := range rows {
 		var b strings.Builder
-		b.WriteString("   " + mutedStyle.Render(fmt.Sprintf("%-*s", labelW, row.Provider)))
+		b.WriteString("   " + widget.MutedStyle.Render(fmt.Sprintf("%-*s", labelW, row.Provider)))
 		for h := 0; h < 24; h++ {
 			b.WriteString(statsHourCell(row.Counts[h], cellW))
 		}
@@ -2731,7 +2713,7 @@ func statsRepoHead(label string, nameW int, visible []statsRepoCol) string {
 	// percent, 17 cells total; the header is right-aligned over the same 17
 	// cells so its final "S" sits over the percent's "%".
 	head += fmt.Sprintf("%17s", "% TOKENS")
-	return "   " + faintStyle.Bold(true).Render(head)
+	return "   " + widget.FaintStyle.Bold(true).Render(head)
 }
 
 // statsRepoCells is one repos-table row's numbers (§4.2): each visible
@@ -2796,9 +2778,9 @@ func statsRepoRow(g stats.GroupRow, kind repoKind, windowTotal int64, nameW int,
 	cells := statsRepoCells(g, visible)
 	if selected {
 		text := key + cells + statsSharePlain(g.Tokens, windowTotal)
-		return "   " + selBandStyle.Foreground(textStyle.GetForeground()).Bold(true).Render(fit(text, cellW))
+		return "   " + widget.SelBandStyle.Foreground(widget.TextStyle.GetForeground()).Bold(true).Render(widget.Fit(text, cellW))
 	}
-	return "   " + fgStyle.Render(key) + mutedStyle.Render(cells) +
+	return "   " + widget.TextStyle.Render(key) + widget.MutedStyle.Render(cells) +
 		statsShareCell(g.Tokens, windowTotal)
 }
 
@@ -2815,7 +2797,7 @@ func (v statsView) reposTabLines(env Env, width int) ([]string, int) {
 	if n == 0 {
 		return []string{statsRepoHead("REPO", nameW, visible)}, -1
 	}
-	cur := clamp(v.cursor[1], 0, n-1)
+	cur := widget.Clamp(v.cursor[1], 0, n-1)
 
 	out := []string{statsRepoHead("REPO", nameW, visible)}
 	sel := -1
@@ -2854,18 +2836,18 @@ func (v statsView) statsGroupDetail(env Env, g stats.GroupRow, kind repoKind, wi
 	case kindTicket:
 		name = shortTicket(g.Key)
 	}
-	first := "   " + faintStyle.Bold(true).Render(name)
+	first := "   " + widget.FaintStyle.Bold(true).Render(name)
 	switch {
 	case kind == kindFeature && g.Key != "(none)":
-		first += "   " + mutedStyle.Render("feature")
+		first += "   " + widget.MutedStyle.Render("feature")
 	case kind == kindTicket && g.Key != "(none)":
-		first += "   " + mutedStyle.Render("ticket")
+		first += "   " + widget.MutedStyle.Render("ticket")
 	// The fold's key is a placeholder, not a repo, so it gets no echo; a
 	// child's is its own path and does.
 	case g.Key != "(none)" && g.Key != stats.ScratchKey:
-		first += "   " + mutedStyle.Render(g.Key)
+		first += "   " + widget.MutedStyle.Render(g.Key)
 	}
-	out := []string{fit(first, w)}
+	out := []string{widget.Fit(first, w)}
 
 	roundWord, bindingWord := "rounds", "bindings"
 	if g.Rounds == 1 {
@@ -2874,27 +2856,27 @@ func (v statsView) statsGroupDetail(env Env, g stats.GroupRow, kind repoKind, wi
 	if g.Bindings == 1 {
 		bindingWord = "binding"
 	}
-	totals := "   " + textStyle.Bold(true).Render(strconv.Itoa(g.Rounds)) +
-		mutedStyle.Render(" "+roundWord+" on ") +
-		textStyle.Bold(true).Render(strconv.Itoa(g.Bindings)) +
-		mutedStyle.Render(" "+bindingWord+"   ") +
-		textStyle.Bold(true).Render(stats.ShortTokens(g.Tokens))
+	totals := "   " + widget.TextStyle.Bold(true).Render(strconv.Itoa(g.Rounds)) +
+		widget.MutedStyle.Render(" "+roundWord+" on ") +
+		widget.TextStyle.Bold(true).Render(strconv.Itoa(g.Bindings)) +
+		widget.MutedStyle.Render(" "+bindingWord+"   ") +
+		widget.TextStyle.Bold(true).Render(stats.ShortTokens(g.Tokens))
 	if windowTotal > 0 {
 		pct := int(math.Round(100 * float64(g.Tokens) / float64(windowTotal)))
-		totals += mutedStyle.Render(fmt.Sprintf(" tokens, %d%% of the window", pct))
+		totals += widget.MutedStyle.Render(fmt.Sprintf(" tokens, %d%% of the window", pct))
 	} else {
-		totals += mutedStyle.Render(" tokens")
+		totals += widget.MutedStyle.Render(" tokens")
 	}
-	out = append(out, fit(totals, w))
+	out = append(out, widget.Fit(totals, w))
 
-	outcomes := "   " + mutedStyle.Render(fmt.Sprintf("%d done · %d halted · %d commits", g.Done, g.ReportHalted, g.Commits))
+	outcomes := "   " + widget.MutedStyle.Render(fmt.Sprintf("%d done · %d halted · %d commits", g.Done, g.ReportHalted, g.Commits))
 	if g.Landed > 0 {
-		outcomes += mutedStyle.Render(fmt.Sprintf("   %.1f rounds per landed binding", g.RoundsPerLand))
+		outcomes += widget.MutedStyle.Render(fmt.Sprintf("   %.1f rounds per landed binding", g.RoundsPerLand))
 	}
-	out = append(out, fit(outcomes, w))
+	out = append(out, widget.Fit(outcomes, w))
 
 	if len(g.ByCandidate) > 0 {
-		out = append(out, fit("   "+mutedStyle.Render("by candidate: "+v.statsGroupCandidates(env, g.ByCandidate)), w))
+		out = append(out, widget.Fit("   "+widget.MutedStyle.Render("by candidate: "+v.statsGroupCandidates(env, g.ByCandidate)), w))
 	}
 	return out
 }

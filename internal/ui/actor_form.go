@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // actorTierNames is the tier row's chip order (§3).
@@ -233,10 +234,10 @@ func (f actorForm) modal(width int) (string, []string, int, bool) {
 	_ = modalInnerW(want, width)
 
 	rows := []string{""}
-	rows = append(rows, formLabel("name", false)+mutedStyle.Render(f.actor))
+	rows = append(rows, formLabel("name", false)+widget.MutedStyle.Render(f.actor))
 	rows = append(rows, "")
 	rows = append(rows, formLabel("agent", f.focus == 0)+formChips(f.agents, f.asel, false))
-	rows = append(rows, strings.Repeat(" ", 11)+mutedStyle.Render(agentShapeOf(f.doc, f.selectedAgent())))
+	rows = append(rows, strings.Repeat(" ", 11)+widget.MutedStyle.Render(agentShapeOf(f.doc, f.selectedAgent())))
 	rows = append(rows, "")
 	rows = append(rows, formLabel("tier", f.focus == 1)+formChips(f.tiers, f.tsel, false))
 	rows = append(rows, "")

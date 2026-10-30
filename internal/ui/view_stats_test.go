@@ -22,6 +22,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -551,14 +552,14 @@ func TestStatsRefreshThrottle(t *testing.T) {
 
 	soon := testEnv(mastermindSource{relevo.Runtime{Store: store.New(t.TempDir())}}, view.Report{}, 160, 40)
 	soon.Now = railNow.Add(10 * time.Second)
-	next, cmd := sv.Update(tickMsg(soon.Now), soon)
+	next, cmd := sv.Update(widget.TickMsg(soon.Now), soon)
 	if cmd != nil {
 		t.Error("a tick within 30s must not refetch")
 	}
 
 	late := soon
 	late.Now = railNow.Add(31 * time.Second)
-	next, cmd = next.Update(tickMsg(late.Now), late)
+	next, cmd = next.Update(widget.TickMsg(late.Now), late)
 	if cmd == nil {
 		t.Error("a tick after 30s must refetch")
 	}
@@ -1084,8 +1085,8 @@ func TestStatsOverviewConfiguredCandidates(t *testing.T) {
 		t.Errorf("idle rows = %q, %q; want %s then %s", stripANSI(idleRows[0]), stripANSI(idleRows[1]), haiku, terra)
 	}
 	plain := stats.FitKey(haiku, nameW, false) + "     " + idleTail
-	if idleRows[0] != faintStyle.Render(plain) {
-		t.Errorf("idle row = %q, want faintStyle over its plain text %q", idleRows[0], plain)
+	if idleRows[0] != widget.FaintStyle.Render(plain) {
+		t.Errorf("idle row = %q, want widget.FaintStyle over its plain text %q", idleRows[0], plain)
 	}
 
 	// j onto the first idle row, then enter: a notice, no push.
@@ -1223,7 +1224,7 @@ func TestStatsTimelineGrows(t *testing.T) {
 }
 
 // TestStatsOverviewChartUsesSpareRows pins §2.2: the chart's rows are
-// clamp(height-20, 8, 16), so a taller screen draws more plot rows -- 16 at
+// widget.Clamp(height-20, 8, 16), so a taller screen draws more plot rows -- 16 at
 // 132x60 against 8 at 132x22, the floor -- and the heading is just TOKENS with
 // no subtitle.
 func TestStatsOverviewChartUsesSpareRows(t *testing.T) {
@@ -1261,7 +1262,7 @@ func TestStatsOverviewChartUsesSpareRows(t *testing.T) {
 }
 
 // TestStatsOverviewChartHeightIsFixedAcrossWindows pins §2.2: at 132x50 the
-// chart's plot rows are clamp(avail-20, 8, 16) and do not move with the data --
+// chart's plot rows are widget.Clamp(avail-20, 8, 16) and do not move with the data --
 // four reports with different maxima and row counts draw the same height.
 func TestStatsOverviewChartHeightIsFixedAcrossWindows(t *testing.T) {
 	const width, height = 132, 50
@@ -1290,7 +1291,7 @@ func TestStatsOverviewChartHeightIsFixedAcrossWindows(t *testing.T) {
 
 	// avail is the room Body gives the overview: its height less its head line.
 	avail := height - 1
-	want := clamp(avail-20, 8, 16)
+	want := widget.Clamp(avail-20, 8, 16)
 
 	for _, tc := range reports {
 		v := statsView{window: "30d", loaded: true, rep: tc.rep}
@@ -1921,7 +1922,7 @@ func statsTokensView(split int) statsView {
 // statsChartTitleRow is the index of the line whose title names the series, or
 // -1. A title starts with the gutter and the name in bold (§2.2).
 func statsChartTitleRow(lines []string, name string) int {
-	want := "   " + textStyle.Bold(true).Render(name)
+	want := "   " + widget.TextStyle.Bold(true).Render(name)
 	for i, l := range lines {
 		if strings.Contains(l, want) {
 			return i
@@ -2113,7 +2114,7 @@ func TestStatsTokensCandidateCharts(t *testing.T) {
 	}
 
 	// The idle series appears only on the final faint line.
-	if !strings.Contains(raw, faintStyle.Render("no tokens in this window: "+statsTokensIdle)) {
+	if !strings.Contains(raw, widget.FaintStyle.Render("no tokens in this window: "+statsTokensIdle)) {
 		t.Errorf("the idle series must be named on the faint line:\n%s", raw)
 	}
 	if got := strings.Count(raw, statsTokensIdle); got != 1 {
@@ -2216,7 +2217,7 @@ func TestStatsTimelineFixedMax(t *testing.T) {
 	fixed := 10 * max
 
 	step := statsNiceStep(fixed)
-	m := clamp(int(math.Ceil(fixed/step)), 1, 4)
+	m := widget.Clamp(int(math.Ceil(fixed/step)), 1, 4)
 	top := stats.ShortTokens(int64(math.Round(float64(m) * step)))
 
 	lines := statsTimelineVals(vals, days, 132, statsChartOpts{Rows: 8, FixedMax: fixed})
@@ -2754,8 +2755,8 @@ func TestStatsReliabilityTab(t *testing.T) {
 	}
 
 	// The hours row's three is red bold.
-	if !strings.Contains(raw, redStyle.Bold(true).Render("3")) {
-		t.Errorf("the hours row's 3 is not redStyle bold:\n%q", raw)
+	if !strings.Contains(raw, widget.RedStyle.Bold(true).Render("3")) {
+		t.Errorf("the hours row's 3 is not widget.RedStyle bold:\n%q", raw)
 	}
 	if strings.Contains(body, "──") {
 		t.Errorf("the reliability tab must have no titled rule:\n%s", body)

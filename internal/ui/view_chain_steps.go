@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // chainStepsView is one chain's steps: the step in flight accented, a step
@@ -91,10 +92,10 @@ func chainStepWidth(steps []relevo.ChainStep) int {
 
 // chainStepsHeaderLine renders the steps table's header row.
 func chainStepsHeaderLine(stepW int, cols []chainCol, cw int) string {
-	style := faintStyle.Bold(true)
-	cells := []candCell{{text: pad("STEP", stepW), style: style}}
+	style := widget.FaintStyle.Bold(true)
+	cells := []candCell{{text: widget.Pad("STEP", stepW), style: style}}
 	for _, c := range cols {
-		cells = append(cells, candCell{text: pad(c.head, c.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(c.head, c.w), style: style})
 	}
 	return candLine(cells, false, cw)
 }
@@ -109,18 +110,18 @@ func stepReached(s relevo.ChainStep) bool {
 // throughout, so an unopened plan reads as unopened; the step in flight is
 // accented and the cursor row carries the selection band.
 func chainStepLine(s relevo.ChainStep, sel bool, stepW int, cols []chainCol, cw int) string {
-	base := textStyle
+	base := widget.TextStyle
 	if !stepReached(s) {
-		base = faintStyle
+		base = widget.FaintStyle
 	}
 	nameStyle := base
 	if s.InFlight {
-		nameStyle = accentStyle
+		nameStyle = widget.AccentStyle
 	}
 	if sel {
 		nameStyle = nameStyle.Bold(true)
 	}
-	cells := []candCell{{text: pad(sanitizeText(s.ID), stepW), style: nameStyle}}
+	cells := []candCell{{text: widget.Pad(sanitizeText(s.ID), stepW), style: nameStyle}}
 	for _, col := range cols {
 		text := ""
 		style := base
@@ -128,27 +129,27 @@ func chainStepLine(s relevo.ChainStep, sel bool, stepW int, cols []chainCol, cw 
 		case "kind":
 			text = sanitizeText(s.Kind)
 			if text == "" {
-				text, style = "—", faintStyle
+				text, style = "—", widget.FaintStyle
 			}
 		case "actor":
 			text = sanitizeText(s.Actor)
 			if text == "" {
-				text, style = "—", faintStyle
+				text, style = "—", widget.FaintStyle
 			}
 		case "visits":
 			text = "—"
 			if s.Visits > 0 {
 				text = strconv.Itoa(s.Visits)
 			} else {
-				style = faintStyle
+				style = widget.FaintStyle
 			}
 		case "outcome":
 			text = sanitizeText(s.LastOutcome)
 			if text == "" {
-				text, style = "—", faintStyle
+				text, style = "—", widget.FaintStyle
 			}
 		}
-		cells = append(cells, candCell{text: pad(text, col.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(text, col.w), style: style})
 	}
 	return candLine(cells, sel, cw)
 }
@@ -202,7 +203,7 @@ func (v *chainStepsView) follow(env Env) {
 	if sel >= v.top+avail {
 		v.top = sel - avail + 1
 	}
-	v.top = clamp(v.top, 0, max(0, len(entry.Steps)+2-avail))
+	v.top = widget.Clamp(v.top, 0, max(0, len(entry.Steps)+2-avail))
 }
 
 // newChainStepsView pushes one chain's steps, out of a read model the chains
@@ -230,15 +231,15 @@ func (v chainStepsView) HelpKeys() []KeyHelp { return v.Keys() }
 func (v chainStepsView) Context(env Env) (string, string) {
 	entry, ok := v.entry()
 	if !ok {
-		return "   " + mutedStyle.Render(v.chain+" is gone"), ""
+		return "   " + widget.MutedStyle.Render(v.chain+" is gone"), ""
 	}
 	statusText, statusStyle := chainStatusText(entry)
 	left := "   " + statusStyle.Bold(true).Render(statusText)
 	right := ""
 	if entry.Step != "" {
-		right = mutedStyle.Render(sanitizeText(entry.Step)) + "   "
+		right = widget.MutedStyle.Render(sanitizeText(entry.Step)) + "   "
 	} else {
-		right = mutedStyle.Render(pluralStep(len(entry.Steps))) + "   "
+		right = widget.MutedStyle.Render(pluralStep(len(entry.Steps))) + "   "
 	}
 	if lipgloss.Width(left)+1+lipgloss.Width(right) > env.Width {
 		right = ""
@@ -260,13 +261,13 @@ func (v chainStepsView) Body(env Env, width, height int) string {
 	}
 	entry, ok := v.entry()
 	if !ok {
-		return strings.Join(statsCentered(v.chain+" is gone", width, height), "\n")
+		return strings.Join(widget.Centered(v.chain+" is gone", width, height), "\n")
 	}
 	if len(entry.Steps) == 0 {
-		return strings.Join(statsCentered("no steps: this chain ran on the fixed state machine", width, height), "\n")
+		return strings.Join(widget.Centered("no steps: this chain ran on the fixed state machine", width, height), "\n")
 	}
 	lines := v.bodyLines(width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -274,7 +275,7 @@ func (v chainStepsView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
 func (v chainStepsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {

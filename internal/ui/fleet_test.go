@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/muesli/termenv"
@@ -361,7 +362,7 @@ func TestFleetUnreadTintOnlyOnIdle(t *testing.T) {
 	idleLine := fleetRowLine(bIdle, groupIdle, false, railNow, 120)
 	doneLine := fleetRowLine(bDone, groupDone, false, railNow, 120)
 
-	accentEscape := strings.Split(accentStyle.Render("X"), "X")[0]
+	accentEscape := strings.Split(widget.AccentStyle.Render("X"), "X")[0]
 	if accentEscape == "" {
 		t.Fatalf("accent colour escape sequence must not be empty in TrueColor")
 	}

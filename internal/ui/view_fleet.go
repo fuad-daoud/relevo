@@ -10,22 +10,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
-
-// fit pads or truncates s to width cells. Truncation is by cell, no
-// ellipsis: at a narrow width an ellipsis costs more than it says.
-func fit(s string, width int) string {
-	w := lipgloss.Width(s)
-	if w == width {
-		return s
-	}
-	if w < width {
-		return s + strings.Repeat(" ", width-w)
-	}
-	return lipgloss.NewStyle().MaxWidth(width).Render(s)
-}
 
 // ago is a coarse age: minutes under an hour, hours under a day, then days.
 // "" for a zero time, so a caller can omit the fact.
@@ -352,7 +340,7 @@ func (f fleetView) Context(env Env) (string, string) {
 	}
 
 	item := func(count int, label string) string {
-		return textStyle.Bold(true).Render(fmt.Sprintf("%d", count)) + " " + mutedStyle.Render(label)
+		return widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", count)) + " " + widget.MutedStyle.Render(label)
 	}
 
 	var parts []string
@@ -388,7 +376,7 @@ func (f fleetView) Context(env Env) (string, string) {
 		right = fmt.Sprintf("filter %q · ", q) + right
 	}
 	if !env.StatusAt.IsZero() {
-		right += faintStyle.Render(" · refreshed " + ago(env.StatusAt, env.Now) + " ago")
+		right += widget.FaintStyle.Render(" · refreshed " + ago(env.StatusAt, env.Now) + " ago")
 	}
 	return left, right
 }
@@ -626,17 +614,6 @@ func repoCell(b view.BindingStatus) string {
 	return s
 }
 
-// pad pads s to width cells, truncating with an ellipsis past it.
-func pad(s string, width int) string {
-	if w := lipgloss.Width(s); w < width {
-		return s + strings.Repeat(" ", width-w)
-	}
-	if lipgloss.Width(s) == width {
-		return s
-	}
-	return clipName(s, width)
-}
-
 // fleetRowPlan computes which optional columns fit at width (§2.3 narrow rule).
 func fleetRowPlan(width int) (candidate, spend, mastermind bool) {
 	if width >= 94 {
@@ -655,62 +632,62 @@ func fleetRowPlan(width int) (candidate, spend, mastermind bool) {
 func fleetRowLine(b view.BindingStatus, g fleetGroup, selected bool, now time.Time, width int) string {
 	gutter := "   "
 	if selected {
-		gutter = " " + accentStyle.Render("▍") + " "
+		gutter = " " + widget.AccentStyle.Render("▍") + " "
 	}
 	meta := groupMetas[g]
 	dot := meta.dot.Render(meta.glyph)
 
-	nameText := pad(clipName(b.Key(), 20), 20)
-	nameStyled := textStyle.Render(nameText)
+	nameText := widget.Pad(clipName(b.Key(), 20), 20)
+	nameStyled := widget.TextStyle.Render(nameText)
 	if selected {
-		nameStyled = textStyle.Bold(true).Render(nameText)
+		nameStyled = widget.TextStyle.Bold(true).Render(nameText)
 	}
 
 	nowVal := rowNow(b, now)
-	nowText := pad(clipName(nowVal, 24), 24)
+	nowText := widget.Pad(clipName(nowVal, 24), 24)
 	var nowStyled string
 	switch {
 	case strings.HasPrefix(b.BuilderStatus, "exited") || strings.HasPrefix(b.BuilderStatus, "stalled"):
-		nowStyled = redStyle.Render(nowText)
+		nowStyled = widget.RedStyle.Render(nowText)
 	case b.Unread && g == groupIdle:
-		nowStyled = accentStyle.Render(nowText)
+		nowStyled = widget.AccentStyle.Render(nowText)
 	case selected:
-		nowStyled = textStyle.Render(nowText)
+		nowStyled = widget.TextStyle.Render(nowText)
 	default:
-		nowStyled = mutedStyle.Render(nowText)
+		nowStyled = widget.MutedStyle.Render(nowText)
 	}
 
 	line := gutter + dot + "  " + nameStyled + nowStyled
 
 	cand, spend, plan := fleetRowPlan(width)
 	if cand {
-		candText := pad(clipName(candidateText(b), 24), 24)
-		line += mutedStyle.Render(candText)
+		candText := widget.Pad(clipName(candidateText(b), 24), 24)
+		line += widget.MutedStyle.Render(candText)
 	}
 	if plan {
-		planText := pad(clipName(mastermindCell(b), 14), 14)
-		line += faintStyle.Render(planText)
+		planText := widget.Pad(clipName(mastermindCell(b), 14), 14)
+		line += widget.FaintStyle.Render(planText)
 	}
 	if spend {
 		s := spendCell(b)
 		if len([]rune(s)) < 6 {
 			s = strings.Repeat(" ", 6-len([]rune(s))) + s
 		}
-		line += faintStyle.Render(s)
+		line += widget.FaintStyle.Render(s)
 	}
 	if b.Role != "" {
-		line += "  " + faintStyle.Render(b.Role)
+		line += "  " + widget.FaintStyle.Render(b.Role)
 	}
 
 	if selected {
-		return selBandStyle.Render(fit(line, width))
+		return widget.SelBandStyle.Render(widget.Fit(line, width))
 	}
-	return fit(line, width)
+	return widget.Fit(line, width)
 }
 
 // doneFoldLine renders the single summary line replacing folded DONE rows (§2.3).
 func doneFoldLine(rows []view.BindingStatus, now time.Time, width int) string {
-	line := "   " + faintStyle.Render("✓") + "  " + mutedStyle.Render(fmt.Sprintf("%d done", len(rows)))
+	line := "   " + widget.FaintStyle.Render("✓") + "  " + widget.MutedStyle.Render(fmt.Sprintf("%d done", len(rows)))
 
 	todayCount := 0
 	var newestRow *view.BindingStatus
@@ -732,11 +709,11 @@ func doneFoldLine(rows []view.BindingStatus, now time.Time, width int) string {
 	}
 
 	if newestRow != nil {
-		line += faintStyle.Render(fmt.Sprintf("  ·  %d today  ·  last %s %s ago", todayCount, newestRow.Key(), ago(newestTS, now)))
+		line += widget.FaintStyle.Render(fmt.Sprintf("  ·  %d today  ·  last %s %s ago", todayCount, newestRow.Key(), ago(newestTS, now)))
 	}
 
-	line += "      " + chip(kbdStyle, ".") + faintStyle.Render(" show")
-	return fit(line, width)
+	line += "      " + widget.Chip(widget.KbdStyle, ".") + widget.FaintStyle.Render(" show")
+	return widget.Fit(line, width)
 }
 
 // cardLines renders the 5-line detail card at the top of the body (§2.3).
@@ -753,35 +730,35 @@ func (f fleetView) cardLines(env Env, b view.BindingStatus, width int) []string 
 	if sr == 0 {
 		roundPart = rn
 	}
-	title := accentStyle.Bold(true).Render(b.Key()) + "  " + faintStyle.Render(roundPart)
+	title := widget.AccentStyle.Bold(true).Render(b.Key()) + "  " + widget.FaintStyle.Render(roundPart)
 
 	// Meta line
 	var metaParts []string
 	mastermindName := mastermindCell(b)
 	if g == groupNeedsYou {
-		metaParts = append(metaParts, mutedStyle.Render("MasterMind ")+warnStyle.Render(mastermindName))
+		metaParts = append(metaParts, widget.MutedStyle.Render("MasterMind ")+widget.WarnStyle.Render(mastermindName))
 	} else {
-		metaParts = append(metaParts, mutedStyle.Render("MasterMind "+mastermindName))
+		metaParts = append(metaParts, widget.MutedStyle.Render("MasterMind "+mastermindName))
 	}
-	metaParts = append(metaParts, mutedStyle.Render(candidateText(b)))
+	metaParts = append(metaParts, widget.MutedStyle.Render(candidateText(b)))
 	branch := b.Branch
 	if branch == "" {
 		branch = repoCell(b)
 	}
 	if branch != "" {
-		metaParts = append(metaParts, mutedStyle.Render(branch))
+		metaParts = append(metaParts, widget.MutedStyle.Render(branch))
 	}
 	if b.LastClose != nil && b.LastClose.Commits > 0 {
 		commitWord := "commits"
 		if b.LastClose.Commits == 1 {
 			commitWord = "commit"
 		}
-		metaParts = append(metaParts, mutedStyle.Render(fmt.Sprintf("+%d %s", b.LastClose.Commits, commitWord)))
+		metaParts = append(metaParts, widget.MutedStyle.Render(fmt.Sprintf("+%d %s", b.LastClose.Commits, commitWord)))
 	}
 	if s := spendCell(b); s != "" {
-		metaParts = append(metaParts, mutedStyle.Render(s))
+		metaParts = append(metaParts, widget.MutedStyle.Render(s))
 	}
-	metaContent := "  " + strings.Join(metaParts, mutedStyle.Render("  ·  "))
+	metaContent := "  " + strings.Join(metaParts, widget.MutedStyle.Render("  ·  "))
 
 	// Keys line
 	var cardKeys []KeyHelp
@@ -859,10 +836,10 @@ func gatedLine(env Env, width int) string {
 		entries = append(entries, fmt.Sprintf("%s %s", p, left))
 	}
 
-	line := "   " + redStyle.Render("◌") + faintStyle.Render(" gated  ") +
-		strings.Join(entries, faintStyle.Render("  ·  ")) +
-		faintStyle.Render("  ·  the pick skips them")
-	return fit(clipName(line, width), width)
+	line := "   " + widget.RedStyle.Render("◌") + widget.FaintStyle.Render(" gated  ") +
+		strings.Join(entries, widget.FaintStyle.Render("  ·  ")) +
+		widget.FaintStyle.Render("  ·  the pick skips them")
+	return widget.Fit(clipName(line, width), width)
 }
 
 // fleetLine is one drawn body line and the row it belongs to.
@@ -939,7 +916,7 @@ func (f fleetView) fleetListSlots(env Env, rows []view.BindingStatus) []fleetSlo
 func (f fleetView) paintSlot(s fleetSlot, rows []view.BindingStatus, env Env, width int) string {
 	switch s.kind {
 	case slotSection:
-		return fit(sectionLine(s.group, s.count), width)
+		return widget.Fit(sectionLine(s.group, s.count), width)
 	case slotRow:
 		return fleetRowLine(rows[s.row], s.group, s.row == f.cursor, env.Now, width)
 	case slotQuote:
@@ -947,7 +924,7 @@ func (f fleetView) paintSlot(s fleetSlot, rows []view.BindingStatus, env Env, wi
 	case slotFold:
 		return doneFoldLine(doneRows(env.Report.Bindings), env.Now, width)
 	}
-	return fit("", width)
+	return widget.Fit("", width)
 }
 
 // sectionLine is a section's header: its pill, how many rows it holds, and the
@@ -958,9 +935,9 @@ func sectionLine(g fleetGroup, count int) string {
 	if g == groupDone {
 		hint = ". hide"
 	}
-	sec := "    " + chip(meta.pill, meta.label) + "  " + faintStyle.Render(fmt.Sprintf("%d", count))
+	sec := "    " + widget.Chip(meta.pill, meta.label) + "  " + widget.FaintStyle.Render(fmt.Sprintf("%d", count))
 	if hint != "" {
-		sec += "    " + faintStyle.Italic(true).Render(hint)
+		sec += "    " + widget.FaintStyle.Italic(true).Render(hint)
 	}
 	return sec
 }
@@ -968,11 +945,11 @@ func sectionLine(g fleetGroup, count int) string {
 // quoteLine is the second line under a NEEDS YOU row, carrying the builder's
 // question; on the cursor's row it wears the selection band.
 func quoteLine(quote string, selected bool, width int) string {
-	line := "        " + faintStyle.Render("╰ ") + mutedStyle.Italic(true).Render(quote)
+	line := "        " + widget.FaintStyle.Render("╰ ") + widget.MutedStyle.Italic(true).Render(quote)
 	if selected {
-		return selBandStyle.Render(fit(line, width))
+		return widget.SelBandStyle.Render(widget.Fit(line, width))
 	}
-	return fit(line, width)
+	return widget.Fit(line, width)
 }
 
 // doneRows is a report's DONE rows, for the fold line's summary.
@@ -1018,7 +995,7 @@ func (f fleetView) cardBlock(env Env, width, height int) []string {
 	}
 	sel := rows[clampCursor(f.cursor, len(rows))]
 	card := f.cardLines(env, sel, width)
-	return append(card, fit("", width))
+	return append(card, widget.Fit("", width))
 }
 
 // gatedBlock returns the gated line in a single-element slice, or nil when empty (§2, §3).
@@ -1112,7 +1089,7 @@ func (f fleetView) fleetWindowLines(env Env, width, listH int) []string {
 		}
 	}
 	for len(window) < listH {
-		window = append(window, fit("", width))
+		window = append(window, widget.Fit("", width))
 	}
 	return window
 }
@@ -1120,16 +1097,16 @@ func (f fleetView) fleetWindowLines(env Env, width, listH int) []string {
 // Body renders the card, grouped list, done fold and gated line (§2.3, §5.2).
 func (f fleetView) Body(env Env, width, height int) string {
 	if !env.Loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	if len(env.Report.Bindings) == 0 {
 		return strings.Join(emptyPaneBlock(width, height), "\n")
 	}
 
 	var fixed []string
-	fixed = append(fixed, fit("", width))
+	fixed = append(fixed, widget.Fit("", width))
 	if f.filtering {
-		fixed = append(fixed, fit(f.filter.View(), width))
+		fixed = append(fixed, widget.Fit(f.filter.View(), width))
 	}
 
 	card := f.cardBlock(env, width, height)
@@ -1148,35 +1125,5 @@ func (f fleetView) Body(env Env, width, height int) string {
 	out = append(out, window...)
 	out = append(out, gated...)
 
-	return strings.Join(fitLines(out, width, height), "\n")
-}
-
-// blockLines renders raw prose lines fitted to width and padded to height.
-func blockLines(raw []string, width, height int) []string {
-	out := make([]string, 0, height)
-	for _, l := range raw {
-		out = append(out, fit(emptyStyle.Render(l), width))
-	}
-	for len(out) < height {
-		out = append(out, fit("", width))
-	}
-	if len(out) > height {
-		out = out[:height]
-	}
-	return out
-}
-
-// fitLines pads lines to height, truncates the overflow and fits each to width.
-func fitLines(lines []string, width, height int) []string {
-	out := make([]string, 0, height)
-	for _, l := range lines {
-		out = append(out, fit(l, width))
-	}
-	for len(out) < height {
-		out = append(out, fit("", width))
-	}
-	if len(out) > height {
-		out = out[:height]
-	}
-	return out
+	return strings.Join(widget.FitLines(out, width, height), "\n")
 }

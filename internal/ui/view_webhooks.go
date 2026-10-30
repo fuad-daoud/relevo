@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // webhooksDocMsg is one ConfigDoc load's reply for the pushed webhook list: a
@@ -94,11 +95,11 @@ func webhooksLayout(width int) (urlW, cw int) {
 
 // webhooksHeaderLine is the table's header row, in faint bold.
 func webhooksHeaderLine(urlW, cw int) string {
-	style := faintStyle.Bold(true)
+	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{
-		{text: pad("URL", urlW), style: style},
-		{text: pad("FORMAT", 8), style: style},
-		{text: pad("EVENTS", 34), style: style},
+		{text: widget.Pad("URL", urlW), style: style},
+		{text: widget.Pad("FORMAT", 8), style: style},
+		{text: widget.Pad("EVENTS", 34), style: style},
 	}
 	return candLine(cells, false, cw)
 }
@@ -106,14 +107,14 @@ func webhooksHeaderLine(urlW, cw int) string {
 // webhooksDataLine is one webhook's row: the URL in the text colour, its format
 // and events muted, and the cursor row's URL bold on the selection band.
 func webhooksDataLine(h policy.Webhook, sel bool, urlW, cw int) string {
-	urlStyle := textStyle
+	urlStyle := widget.TextStyle
 	if sel {
 		urlStyle = urlStyle.Bold(true)
 	}
 	cells := []candCell{
-		{text: pad(h.URL, urlW), style: urlStyle},
-		{text: pad(webhookFormatText(h.Format), 8), style: mutedStyle},
-		{text: pad(webhookEventsText(h.Events), 34), style: mutedStyle},
+		{text: widget.Pad(h.URL, urlW), style: urlStyle},
+		{text: widget.Pad(webhookFormatText(h.Format), 8), style: widget.MutedStyle},
+		{text: widget.Pad(webhookEventsText(h.Events), 34), style: widget.MutedStyle},
 	}
 	return candLine(cells, sel, cw)
 }
@@ -121,10 +122,10 @@ func webhooksDataLine(h policy.Webhook, sel bool, urlW, cw int) string {
 // webhooksDetailLines is the cursor row's detail block: the URL in faint bold,
 // then its format and events, dim.
 func webhooksDetailLines(h policy.Webhook, width int) []string {
-	first := "   " + faintStyle.Bold(true).Render(h.URL)
-	second := "   " + mutedStyle.Render("format "+webhookFormatText(h.Format)+
+	first := "   " + widget.FaintStyle.Bold(true).Render(h.URL)
+	second := "   " + widget.MutedStyle.Render("format "+webhookFormatText(h.Format)+
 		"   events "+webhookEventsText(h.Events))
-	return []string{fit(first, width), fit(second, width)}
+	return []string{widget.Fit(first, width), widget.Fit(second, width)}
 }
 
 // bodyLines is the whole body before it is windowed: a blank line, the header,
@@ -136,7 +137,7 @@ func (v webhooksView) bodyLines(width int) []string {
 
 	lines := []string{"", webhooksHeaderLine(urlW, cw)}
 	if len(hooks) == 0 {
-		return append(lines, "   "+mutedStyle.Render("none yet"))
+		return append(lines, "   "+widget.MutedStyle.Render("none yet"))
 	}
 	cur := candClamp(v.cur, len(hooks))
 	for i, h := range hooks {
@@ -161,7 +162,7 @@ func (v *webhooksView) follow(env Env) {
 	if sel >= v.top+avail {
 		v.top = sel - avail + 1
 	}
-	v.top = clamp(v.top, 0, max(0, len(lines)-avail))
+	v.top = widget.Clamp(v.top, 0, max(0, len(lines)-avail))
 }
 
 func (v webhooksView) Crumbs() []string { return []string{"notify.webhooks"} }
@@ -191,7 +192,7 @@ func (v webhooksView) HelpKeys() []KeyHelp {
 // Context is the counts line on the left; the list has no right side.
 func (v webhooksView) Context(env Env) (string, string) {
 	n := len(webhooksOf(v.doc))
-	left := "   " + textStyle.Bold(true).Render(fmt.Sprintf("%d", n)) + " " + mutedStyle.Render(webhooksCount(n))
+	left := "   " + widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", n)) + " " + widget.MutedStyle.Render(webhooksCount(n))
 	return left, ""
 }
 
@@ -200,13 +201,13 @@ func (v webhooksView) Body(env Env, width, height int) string {
 		return ""
 	}
 	if !v.loaded && v.err != nil {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	lines := v.bodyLines(width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -214,7 +215,7 @@ func (v webhooksView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
 func (v webhooksView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {

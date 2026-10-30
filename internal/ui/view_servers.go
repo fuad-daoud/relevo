@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // serverNoProbe is the state cell's placeholder: the row exists but the probe
@@ -160,13 +161,13 @@ func clipMiddle(s string, n int) string {
 func serverStateStyle(state string) lipgloss.Style {
 	switch {
 	case state == serverNoProbe:
-		return faintStyle
+		return widget.FaintStyle
 	case strings.HasPrefix(state, "enrolled"):
-		return greenStyle
+		return widget.GreenStyle
 	case state == "not enrolled", state == "no key", state == "cert changed":
-		return warnStyle
+		return widget.WarnStyle
 	default:
-		return redStyle
+		return widget.RedStyle
 	}
 }
 
@@ -210,10 +211,10 @@ func serverListLayout(width int) (int, []candCol) {
 
 // serverHeaderLine is the table's header row, in faint bold.
 func serverHeaderLine(nameW int, cols []candCol, cw int) string {
-	style := faintStyle.Bold(true)
-	cells := []candCell{{text: pad("SERVER", nameW), style: style}}
+	style := widget.FaintStyle.Bold(true)
+	cells := []candCell{{text: widget.Pad("SERVER", nameW), style: style}}
 	for _, c := range cols {
-		cells = append(cells, candCell{text: pad(c.head, c.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(c.head, c.w), style: style})
 	}
 	return candLine(cells, false, cw)
 }
@@ -222,13 +223,13 @@ func serverHeaderLine(nameW int, cols []candCol, cw int) string {
 // the url and the abbreviated fingerprint in muted, and the state in its own
 // colour.
 func serverDataLine(r serverRow, sel bool, nameW int, cols []candCol, cw int) string {
-	nameStyle := textStyle
+	nameStyle := widget.TextStyle
 	if sel {
 		nameStyle = nameStyle.Bold(true)
 	}
-	cells := []candCell{{text: pad(r.name, nameW), style: nameStyle}}
+	cells := []candCell{{text: widget.Pad(r.name, nameW), style: nameStyle}}
 	for _, col := range cols {
-		text, style := "", mutedStyle
+		text, style := "", widget.MutedStyle
 		switch col.key {
 		case "url":
 			text = r.url
@@ -237,7 +238,7 @@ func serverDataLine(r serverRow, sel bool, nameW int, cols []candCol, cw int) st
 		case "state":
 			text, style = r.state, serverStateStyle(r.state)
 		}
-		cells = append(cells, candCell{text: pad(text, col.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(text, col.w), style: style})
 	}
 	return candLine(cells, sel, cw)
 }
@@ -253,10 +254,10 @@ func serverDetailLines(r serverRow, width int) []string {
 	if r.insecure {
 		meta += " · insecure"
 	}
-	first := "   " + faintStyle.Bold(true).Render(r.name) + "   " + mutedStyle.Render(meta)
-	out := []string{fit(first, width)}
+	first := "   " + widget.FaintStyle.Bold(true).Render(r.name) + "   " + widget.MutedStyle.Render(meta)
+	out := []string{widget.Fit(first, width)}
 	if r.detail != "" {
-		out = append(out, fit("   "+mutedStyle.Render(r.detail), width))
+		out = append(out, widget.Fit("   "+widget.MutedStyle.Render(r.detail), width))
 	}
 	return out
 }
@@ -306,7 +307,7 @@ func (v *serversView) follow(env Env) {
 	if sel >= v.top+avail {
 		v.top = sel - avail + 1
 	}
-	v.top = clamp(v.top, 0, max(0, len(lines)-avail))
+	v.top = widget.Clamp(v.top, 0, max(0, len(lines)-avail))
 }
 
 func (v serversView) Crumbs() []string { return []string{"servers"} }
@@ -346,7 +347,7 @@ func (v serversView) Context(env Env) (string, string) {
 		if n != 1 {
 			label += "s"
 		}
-		return textStyle.Bold(true).Render(fmt.Sprintf("%d", n)) + " " + mutedStyle.Render(label)
+		return widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", n)) + " " + widget.MutedStyle.Render(label)
 	}
 	left := "   " + word(len(rows), "server")
 	if len(rows) > 0 {
@@ -360,16 +361,16 @@ func (v serversView) Body(env Env, width, height int) string {
 		return ""
 	}
 	if !v.loaded && v.err != nil {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	if len(v.rows()) == 0 {
-		return strings.Join(statsCentered("no servers configured; relevo config server add <name> <url>", width, height), "\n")
+		return strings.Join(widget.Centered("no servers configured; relevo config server add <name> <url>", width, height), "\n")
 	}
 	lines := v.bodyLines(env, width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -377,7 +378,7 @@ func (v serversView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
 func (v serversView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
@@ -468,11 +469,11 @@ func (v serversView) deleteCmd(env Env, r serverRow) tea.Cmd {
 		kind:   "delete",
 		yes:    "delete",
 		danger: true,
-		title:  "Delete server " + accentStyle.Bold(true).Render(r.name) + "?",
+		title:  "Delete server " + widget.AccentStyle.Bold(true).Render(r.name) + "?",
 		lines: []string{
-			pad("url", 11) + r.url,
-			pad("removed", 11) + "the server from relevo's config",
-			pad("kept", 11) + "this client's key",
+			widget.Pad("url", 11) + r.url,
+			widget.Pad("removed", 11) + "the server from relevo's config",
+			widget.Pad("kept", 11) + "this client's key",
 		},
 		onYes: runAction(env.Ctx, "delete server", r.name, func(ctx context.Context) Result {
 			return env.Actions.ApplyConfig(ctx, edit)

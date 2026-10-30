@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -27,15 +28,15 @@ func unusedCols(width, nameW int) (reasonW, setByW int) {
 
 // unusedHeaderLine is the unused table's header row, in faint bold.
 func unusedHeaderLine(nameW, reasonW, setByW, cw int) string {
-	style := faintStyle.Bold(true)
+	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{
-		{text: pad("UNUSED PROVIDER", nameW), style: style},
-		{text: pad("REASON", reasonW), style: style},
+		{text: widget.Pad("UNUSED PROVIDER", nameW), style: style},
+		{text: widget.Pad("REASON", reasonW), style: style},
 	}
 	if setByW > 0 {
-		cells = append(cells, candCell{text: pad("SET BY", setByW), style: style})
+		cells = append(cells, candCell{text: widget.Pad("SET BY", setByW), style: style})
 	}
-	cells = append(cells, candCell{text: pad("STATUS", 9), style: style})
+	cells = append(cells, candCell{text: widget.Pad("STATUS", 9), style: style})
 	return candLine(cells, false, cw)
 }
 
@@ -43,7 +44,7 @@ func unusedHeaderLine(nameW, reasonW, setByW, cw int) string {
 // the cursor row, the reason is the gate note's readable lead, SET BY names
 // the recorder, and STATUS is the time left in red.
 func unusedDataLine(g view.ProviderGate, sel bool, nameW, reasonW, setByW, cw int, now time.Time) string {
-	nameStyle := textStyle
+	nameStyle := widget.TextStyle
 	if sel {
 		nameStyle = nameStyle.Bold(true)
 	}
@@ -52,13 +53,13 @@ func unusedDataLine(g view.ProviderGate, sel bool, nameW, reasonW, setByW, cw in
 		setBy = g.Source + " · " + g.Binding
 	}
 	cells := []candCell{
-		{text: pad(g.Provider, nameW), style: nameStyle},
-		{text: pad(statsGateReasonText(g.Note), reasonW), style: mutedStyle},
+		{text: widget.Pad(g.Provider, nameW), style: nameStyle},
+		{text: widget.Pad(statsGateReasonText(g.Note), reasonW), style: widget.MutedStyle},
 	}
 	if setByW > 0 {
-		cells = append(cells, candCell{text: pad(setBy, setByW), style: textStyle})
+		cells = append(cells, candCell{text: widget.Pad(setBy, setByW), style: widget.TextStyle})
 	}
-	cells = append(cells, candCell{text: pad(statsGateLeft(asGate(g), now), 9), style: redStyle})
+	cells = append(cells, candCell{text: widget.Pad(statsGateLeft(asGate(g), now), 9), style: widget.RedStyle})
 	return candLine(cells, sel, cw)
 }
 
@@ -79,17 +80,17 @@ func asGate(g view.ProviderGate) availability.Gate {
 // the gate itself, and how to clear it.
 func unusedDetailLines(g view.ProviderGate, now time.Time, width int) []string {
 	p := g.Provider
-	first := "   " + faintStyle.Bold(true).Render(p) + "   " + mutedStyle.Render("a provider no candidate uses")
+	first := "   " + widget.FaintStyle.Bold(true).Render(p) + "   " + widget.MutedStyle.Render("a provider no candidate uses")
 
-	line := "   " + redStyle.Render("gated") +
-		mutedStyle.Render(" since "+candSince(g.Since, now)) +
-		mutedStyle.Render(", "+candUntilText(asGate(g), now))
+	line := "   " + widget.RedStyle.Render("gated") +
+		widget.MutedStyle.Render(" since "+candSince(g.Since, now)) +
+		widget.MutedStyle.Render(", "+candUntilText(asGate(g), now))
 	if reason := statsGateReasonText(g.Note); reason != "" {
-		line += "   " + textStyle.Render(reason)
+		line += "   " + widget.TextStyle.Render(reason)
 	}
 
-	last := "   " + mutedStyle.Render("no candidate uses "+p+"; ") +
-		textStyle.Render("u") + mutedStyle.Render(" clears it")
+	last := "   " + widget.MutedStyle.Render("no candidate uses "+p+"; ") +
+		widget.TextStyle.Render("u") + widget.MutedStyle.Render(" clears it")
 
-	return []string{fit(first, width), fit(line, width), fit(last, width)}
+	return []string{widget.Fit(first, width), widget.Fit(line, width), widget.Fit(last, width)}
 }

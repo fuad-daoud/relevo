@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // roundOpenMsg asks the rounds view to push a round detail. Exactly one of
@@ -24,22 +25,22 @@ type roundOpenMsg struct {
 // never duplicates a colour (§5). Moved here from model.go:549 (R2.5).
 func dashStyles() dash.Styles {
 	return dash.Styles{
-		Fg:        fgStyle,
-		Dim:       dimStyle,
-		Faint:     faintStyle,
-		Error:     errorStyle,
-		Empty:     emptyStyle,
-		Selected:  selectedBg,
-		Archived:  archivedStyle,
-		Attention: stateNeedsYouStyle,
-		Live:      stateActiveStyle,
-		Strong:    textStyle.Bold(true),
-		Accent:    accentStyle,
-		Warn:      warnStyle,
-		Ok:        greenStyle,
-		Danger:    redStyle,
-		Grid:      gridStyle,
-		Chip:      chipAccentStyle,
+		Fg:        widget.TextStyle,
+		Dim:       widget.MutedStyle,
+		Faint:     widget.FaintStyle,
+		Error:     widget.ErrorStyle,
+		Empty:     widget.EmptyStyle,
+		Selected:  widget.SelBandStyle,
+		Archived:  widget.ArchivedStyle,
+		Attention: widget.StateNeedsYouStyle,
+		Live:      widget.StateActiveStyle,
+		Strong:    widget.TextStyle.Bold(true),
+		Accent:    widget.AccentStyle,
+		Warn:      widget.WarnStyle,
+		Ok:        widget.GreenStyle,
+		Danger:    widget.RedStyle,
+		Grid:      widget.GridStyle,
+		Chip:      widget.ChipAccentStyle,
 	}
 }
 
@@ -88,22 +89,22 @@ func (r roundsView) Context(env Env) (string, string) {
 	r.dash.Running = runningRounds(env)
 	var right string
 	if f := r.dash.FilterText(); f != "" {
-		right += dimStyle.Render("/ "+clip(f, 40)) + "   "
+		right += widget.MutedStyle.Render("/ "+clip(f, 40)) + "   "
 	}
 	if axis := r.dash.GroupAxis(); axis != "" {
 		axisLabel := axis
 		if axis == "builder" {
 			axisLabel = "candidate"
 		}
-		right += faintStyle.Render("by ") + chip(chipAccentStyle, axisLabel)
+		right += widget.FaintStyle.Render("by ") + widget.Chip(widget.ChipAccentStyle, axisLabel)
 	} else {
-		right += faintStyle.Render("sort ") + dimStyle.Render(r.dash.SortLabel())
+		right += widget.FaintStyle.Render("sort ") + widget.MutedStyle.Render(r.dash.SortLabel())
 	}
 	right += "   "
 
 	var left string
 	if p := r.dash.Problem(); p != "" {
-		left = "   " + errorStyle.Render(p)
+		left = "   " + widget.ErrorStyle.Render(p)
 	} else {
 		maxW := env.Width - 3 - lipgloss.Width(right) - 3
 		left = "   " + r.dash.SummaryLine(maxW)
@@ -129,7 +130,7 @@ func (r roundsView) Keys() []KeyHelp {
 
 func (r roundsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tickMsg:
+	case widget.TickMsg:
 		if r.dash.ShouldRefresh(env.Now) {
 			return r, r.dash.Refresh()
 		}

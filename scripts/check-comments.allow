@@ -261,7 +261,7 @@ internal/ui/source_test.go
 internal/ui/split_test.go
 internal/ui/stderr.go
 internal/ui/stderr_test.go
-internal/ui/styles.go
+internal/ui/widget/styles.go
 internal/ui/ui.go
 internal/ui/version.go
 internal/ui/view_actor.go

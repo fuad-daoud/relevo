@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // auditChangeText renders one change line's styled text, cut with an
@@ -18,30 +19,30 @@ func auditChangeText(cl relevo.ChangeLine, width int) string {
 	}
 	field := ""
 	if cl.Field != "" {
-		field = dimStyle.Render(" " + cl.Field)
+		field = widget.MutedStyle.Render(" " + cl.Field)
 	}
 	var b strings.Builder
 	switch cl.Op {
 	case "~":
-		b.WriteString(accentStyle.Render("~ ") + textStyle.Render(cl.Subject) + field)
-		b.WriteString("   " + dimStyle.Render(cl.Before) + faintStyle.Render(" → ") + textStyle.Render(cl.After))
+		b.WriteString(widget.AccentStyle.Render("~ ") + widget.TextStyle.Render(cl.Subject) + field)
+		b.WriteString("   " + widget.MutedStyle.Render(cl.Before) + widget.FaintStyle.Render(" → ") + widget.TextStyle.Render(cl.After))
 	case "+":
-		b.WriteString(greenStyle.Render("+ ") + textStyle.Render(cl.Subject) + field)
-		b.WriteString("   " + dimStyle.Render(cl.After))
+		b.WriteString(widget.GreenStyle.Render("+ ") + widget.TextStyle.Render(cl.Subject) + field)
+		b.WriteString("   " + widget.MutedStyle.Render(cl.After))
 	case "-":
-		b.WriteString(redStyle.Render("- ") + textStyle.Render(cl.Subject) + field)
-		b.WriteString("   " + dimStyle.Render(cl.Before))
+		b.WriteString(widget.RedStyle.Render("- ") + widget.TextStyle.Render(cl.Subject) + field)
+		b.WriteString("   " + widget.MutedStyle.Render(cl.Before))
 	case "*":
-		b.WriteString(dimStyle.Render("* ") + textStyle.Render(cl.Subject))
+		b.WriteString(widget.MutedStyle.Render("* ") + widget.TextStyle.Render(cl.Subject))
 	default:
-		b.WriteString(textStyle.Render(strings.TrimSpace(cl.Op + " " + cl.Subject)))
+		b.WriteString(widget.TextStyle.Render(strings.TrimSpace(cl.Op + " " + cl.Subject)))
 	}
 	return ansi.Truncate(b.String(), width, "…")
 }
 
 // auditChangeLine is one change line inside the 3-cell margin.
 func auditChangeLine(cl relevo.ChangeLine, width int) string {
-	return fit("   "+auditChangeText(cl, width-3), width)
+	return widget.Fit("   "+auditChangeText(cl, width-3), width)
 }
 
 // auditRevView is `audit › #N`: every change of one revision, scrollable,
@@ -93,7 +94,7 @@ func (v auditRevView) HelpKeys() []KeyHelp {
 // Context is the revision's own line.
 func (v auditRevView) Context(env Env) (string, string) {
 	meta := fmt.Sprintf("%s · %s · %s", v.rev.Source, v.rev.At.Local().Format("Jan 2 15:04"), v.rev.Message)
-	return "   " + mutedStyle.Render(meta), ""
+	return "   " + widget.MutedStyle.Render(meta), ""
 }
 
 func (v auditRevView) Body(env Env, width, height int) string {
@@ -101,13 +102,13 @@ func (v auditRevView) Body(env Env, width, height int) string {
 		return ""
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	if v.err != nil {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
 	}
 	lines := v.bodyLines(env, width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -115,14 +116,14 @@ func (v auditRevView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
 // bodyLines is the revision's whole body: one line per change, and, for
 // the baseline, the one dim line that says what it is.
 func (v auditRevView) bodyLines(env Env, width int) []string {
 	if v.rev.Rev == 1 {
-		return []string{fit("   "+dimStyle.Render("the config as it was when revisions began"), width)}
+		return []string{widget.Fit("   "+widget.MutedStyle.Render("the config as it was when revisions began"), width)}
 	}
 	lines := []string{""}
 	for _, l := range v.lines {
@@ -187,7 +188,7 @@ func (v auditRevView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 
 // scroll moves the window by delta body lines, clamped to the body.
 func (v *auditRevView) scroll(env Env, delta int) {
-	v.top = clamp(v.top+delta, 0, v.maxTop(env))
+	v.top = widget.Clamp(v.top+delta, 0, v.maxTop(env))
 }
 
 // maxTop is the largest first-line index that still fills the body.

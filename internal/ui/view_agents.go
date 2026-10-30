@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // agentsMsg is one ':agents' load's reply (§4): the doc, and each agent's
@@ -219,10 +220,10 @@ func agentListLayout(width int, kinds []string) (int, []candCol) {
 
 // agentHeaderLine is the list's header row (§4), in faint bold.
 func agentHeaderLine(nameW int, cols []candCol, cw int) string {
-	style := faintStyle.Bold(true)
-	cells := []candCell{{text: pad("AGENT", nameW), style: style}}
+	style := widget.FaintStyle.Bold(true)
+	cells := []candCell{{text: widget.Pad("AGENT", nameW), style: style}}
 	for _, c := range cols {
-		cells = append(cells, candCell{text: pad(c.head, c.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(c.head, c.w), style: style})
 	}
 	return candLine(cells, false, cw)
 }
@@ -237,15 +238,15 @@ func agentStateCell(r agentRow, kind string) (string, lipgloss.Style) {
 		}
 		switch f.State {
 		case harness.FileUpToDate:
-			return "ok", greenStyle
+			return "ok", widget.GreenStyle
 		case harness.FileStale:
-			return "stale", warnStyle
+			return "stale", widget.WarnStyle
 		case harness.FileEdited, harness.FileEditedNewer:
-			return "edited", warnStyle
+			return "edited", widget.WarnStyle
 		}
 		break
 	}
-	return "·", faintStyle
+	return "·", widget.FaintStyle
 }
 
 // agentUsedCell is the USED BY cell (§4): the actor names, or `no actor` when
@@ -269,15 +270,15 @@ func agentUsedText(r agentRow) string {
 // agentDataLine is one agent's table row (§4). A row no actor uses is faint
 // throughout; the cursor row's name is bold.
 func agentDataLine(r agentRow, sel bool, nameW int, cols []candCol, cw int) string {
-	base, meta := textStyle, mutedStyle
+	base, meta := widget.TextStyle, widget.MutedStyle
 	if len(r.usedBy) == 0 {
-		base, meta = faintStyle, faintStyle
+		base, meta = widget.FaintStyle, widget.FaintStyle
 	}
 	nameStyle := base
 	if sel {
 		nameStyle = nameStyle.Bold(true)
 	}
-	cells := []candCell{{text: pad(r.name, nameW), style: nameStyle}}
+	cells := []candCell{{text: widget.Pad(r.name, nameW), style: nameStyle}}
 	for _, col := range cols {
 		text, style := "", meta
 		switch {
@@ -290,7 +291,7 @@ func agentDataLine(r agentRow, sel bool, nameW int, cols []candCol, cw int) stri
 		default:
 			text, style = agentStateCell(r, strings.TrimPrefix(col.key, "kind:"))
 		}
-		cells = append(cells, candCell{text: pad(text, col.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(text, col.w), style: style})
 	}
 	return candLine(cells, sel, cw)
 }
@@ -361,12 +362,12 @@ func nativeAgentKinds(e roles.AgentEntry) []string {
 // when the file carries a pin. The caller passes the path already in its `~`
 // form.
 func agentFileLine(kind, path, state, model string, pathW int) string {
-	line := "   " + mutedStyle.Render(pad(kind, 10)) + pad(path, pathW)
+	line := "   " + widget.MutedStyle.Render(widget.Pad(kind, 10)) + widget.Pad(path, pathW)
 	if state != "" {
-		line += mutedStyle.Render(pad(state, 14))
+		line += widget.MutedStyle.Render(widget.Pad(state, 14))
 	}
 	if model != "" {
-		line += mutedStyle.Render("model " + model)
+		line += widget.MutedStyle.Render("model " + model)
 	}
 	return line
 }
@@ -380,8 +381,8 @@ func agentFileLine(kind, path, state, model string, pathW int) string {
 // a gap before the state and every state starts in one column.
 func agentDetailLines(doc relevo.ConfigDoc, r agentRow, width int) []string {
 	meta := r.source + " · " + r.shape + " · " + agentUsedText(r)
-	first := "   " + faintStyle.Bold(true).Render(r.name) + "   " + mutedStyle.Render(meta)
-	out := []string{fit(first, width)}
+	first := "   " + widget.FaintStyle.Bold(true).Render(r.name) + "   " + widget.MutedStyle.Render(meta)
+	out := []string{widget.Fit(first, width)}
 	// pathW is measured over the file lines drawn below, then held for all of
 	// them.
 	pathW := 46
@@ -396,7 +397,7 @@ func agentDetailLines(doc relevo.ConfigDoc, r agentRow, width int) []string {
 			grow(tildePath(f.path))
 		}
 		for _, f := range rows {
-			out = append(out, fit(agentFileLine(f.kind, tildePath(f.path), "", "", pathW), width))
+			out = append(out, widget.Fit(agentFileLine(f.kind, tildePath(f.path), "", "", pathW), width))
 		}
 		return out
 	}
@@ -408,7 +409,7 @@ func agentDetailLines(doc relevo.ConfigDoc, r agentRow, width int) []string {
 		if f.Model != "" {
 			model = f.Model
 		}
-		out = append(out, fit(agentFileLine(f.Kind, tildePath(f.Path), string(f.State), model, pathW), width))
+		out = append(out, widget.Fit(agentFileLine(f.Kind, tildePath(f.Path), string(f.State), model, pathW), width))
 	}
 	return out
 }
@@ -459,7 +460,7 @@ func (v *agentsView) follow(env Env) {
 	if sel >= v.top+avail {
 		v.top = sel - avail + 1
 	}
-	v.top = clamp(v.top, 0, max(0, len(lines)-avail))
+	v.top = widget.Clamp(v.top, 0, max(0, len(lines)-avail))
 }
 
 func (v agentsView) Crumbs() []string { return []string{"agents"} }
@@ -503,13 +504,13 @@ func (v agentsView) Context(env Env) (string, string) {
 		if n != 1 {
 			label += "s"
 		}
-		return textStyle.Bold(true).Render(fmt.Sprintf("%d", n)) + " " + mutedStyle.Render(label)
+		return widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", n)) + " " + widget.MutedStyle.Render(label)
 	}
 	left := "   " + word(len(rows), "agent")
 	left += "   " + word(writers, "writer")
 	left += "   " + word(readers, "reader")
 	if custom > 0 {
-		left += "   " + textStyle.Bold(true).Render(fmt.Sprintf("%d", custom)) + " " + mutedStyle.Render("custom")
+		left += "   " + widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", custom)) + " " + widget.MutedStyle.Render("custom")
 	}
 	return left, ""
 }
@@ -519,16 +520,16 @@ func (v agentsView) Body(env Env, width, height int) string {
 		return ""
 	}
 	if !v.loaded && v.err != nil {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	if len(v.rows()) == 0 {
-		return strings.Join(statsCentered("no agents", width, height), "\n")
+		return strings.Join(widget.Centered("no agents", width, height), "\n")
 	}
 	lines := v.bodyLines(env, width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -536,7 +537,7 @@ func (v agentsView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
 func (v agentsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
@@ -627,10 +628,10 @@ func (v agentsView) deleteCmd(env Env, r agentRow) tea.Cmd {
 		kind:   "delete",
 		yes:    "delete",
 		danger: true,
-		title:  "Delete agent " + accentStyle.Bold(true).Render(name) + "?",
+		title:  "Delete agent " + widget.AccentStyle.Bold(true).Render(name) + "?",
 		lines: []string{
-			pad("used by", 11) + "no actor",
-			pad("removes", 11) + "the agent from relevo's config",
+			widget.Pad("used by", 11) + "no actor",
+			widget.Pad("removes", 11) + "the agent from relevo's config",
 		},
 		onYes: runAction(env.Ctx, "delete agent", name, func(ctx context.Context) Result {
 			return env.Actions.ApplyConfig(ctx, edit)

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // windowExpect is the slice of the whole list a window of listH lines must
@@ -20,7 +21,7 @@ func windowExpect(f fleetView, full []string, slots []fleetSlot, width, listH in
 		want = append(want, full[start:end]...)
 	}
 	for len(want) < listH {
-		want = append(want, fit("", width))
+		want = append(want, widget.Fit("", width))
 	}
 	return want
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // addWorkflowForm is the a key's overlay: one field for the path of a workflow
@@ -102,10 +103,10 @@ func replaceWorkflowConfirm(ctx context.Context, a Actions, path, name string) c
 		kind:   "replace workflow",
 		yes:    "replace",
 		danger: true,
-		title:  "replace " + accentStyle.Bold(true).Render(name) + "?",
+		title:  "replace " + widget.AccentStyle.Bold(true).Render(name) + "?",
 		lines: []string{
-			pad("from", 11) + path,
-			pad("kept", 11) + "the other saved workflows",
+			widget.Pad("from", 11) + path,
+			widget.Pad("kept", 11) + "the other saved workflows",
 		},
 		onYes: runAction(ctx, "add workflow", workflowWriteKey("add", name), func(ctx context.Context) Result {
 			return a.WorkflowAdd(ctx, path, true)

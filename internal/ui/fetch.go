@@ -81,8 +81,6 @@ type tabContent struct {
 // runaway one. A builder's log is a file, not a screen.
 const headlessLogLines = 5000
 
-type tickMsg time.Time
-
 // watchdogMsg is the first fetch's time-box: it fires one poll interval after
 // Init and says only that the first status has not landed yet. It carries no
 // report, so a slow Source.Status can never merge a partial one -- the fleet

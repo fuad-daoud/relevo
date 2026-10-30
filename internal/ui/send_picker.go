@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -229,13 +230,13 @@ func (p sendPicker) modal(width int) (string, []string, int, bool) {
 	const want = 80
 	innerW := modalInnerW(want, width)
 
-	header := accentStyle.Bold(true).Render("Send a plan to "+p.b.Key()) +
-		faintStyle.Render(fmt.Sprintf("  as round %d · on %s", p.b.Round, candidateText(p.b)))
+	header := widget.AccentStyle.Bold(true).Render("Send a plan to "+p.b.Key()) +
+		widget.FaintStyle.Render(fmt.Sprintf("  as round %d · on %s", p.b.Round, candidateText(p.b)))
 
 	rows := []string{
 		header,
 		"",
-		faintStyle.Render(pad("plan file", 10)) + p.input.View(),
+		widget.FaintStyle.Render(widget.Pad("plan file", 10)) + p.input.View(),
 		"",
 	}
 	for i, pf := range p.plans() {
@@ -243,16 +244,16 @@ func (p sendPicker) modal(width int) (string, []string, int, bool) {
 		if age := ago(pf.mod, p.env.Now); age != "" {
 			note = age + " ago"
 		}
-		rows = append(rows, modalRow(i == p.pick, filepath.Base(pf.path), "", note, innerW, textStyle, dimStyle))
+		rows = append(rows, modalRow(i == p.pick, filepath.Base(pf.path), "", note, innerW, widget.TextStyle, widget.MutedStyle))
 	}
 	rows = append(rows, "")
-	rows = append(rows, faintStyle.Render("ctrl+e  write it in $EDITOR instead"))
+	rows = append(rows, widget.FaintStyle.Render("ctrl+e  write it in $EDITOR instead"))
 	if p.err != "" {
-		rows = append(rows, errorStyle.Render(p.err))
+		rows = append(rows, widget.ErrorStyle.Render(p.err))
 	}
 	rows = append(rows, "")
-	rows = append(rows, chip(kbdStyle, "enter")+mutedStyle.Render(" choose")+
-		"   "+chip(kbdStyle, "tab")+mutedStyle.Render(" complete")+
-		"   "+chip(kbdStyle, "esc")+mutedStyle.Render(" cancel"))
+	rows = append(rows, widget.Chip(widget.KbdStyle, "enter")+widget.MutedStyle.Render(" choose")+
+		"   "+widget.Chip(widget.KbdStyle, "tab")+widget.MutedStyle.Render(" complete")+
+		"   "+widget.Chip(widget.KbdStyle, "esc")+widget.MutedStyle.Render(" cancel"))
 	return "send", rows, want, false
 }

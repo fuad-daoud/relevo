@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -140,7 +141,7 @@ func (m Model) env() Env {
 		Now:       m.now(),
 		Width:     m.width,
 		Height:    m.height,
-		ErrRows:   errorRows(m.err, m.width),
+		ErrRows:   widget.ErrorRows(m.err, m.width),
 		Actions:   m.opts.Actions,
 		Running:   m.running,
 		ActionLog: m.actionLog,
@@ -149,7 +150,7 @@ func (m Model) env() Env {
 
 // tick re-arms the poll. It is the ONLY timer; there is no goroutine.
 func tick(d time.Duration) tea.Cmd {
-	return tea.Tick(d, func(t time.Time) tea.Msg { return tickMsg(t) })
+	return tea.Tick(d, func(t time.Time) tea.Msg { return widget.TickMsg(t) })
 }
 
 // watchdog is the first fetch's time-box: one timer, armed alongside the
@@ -186,7 +187,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 		return m.updateStack(msg)
 
-	case tickMsg:
+	case widget.TickMsg:
 		cmds := []tea.Cmd{tick(m.opts.Interval)}
 		if !m.statusInFlight {
 			m.statusInFlight = true
@@ -307,7 +308,7 @@ func (m Model) onWatchdog() (tea.Model, tea.Cmd) {
 }
 
 // finishAction applies one actionMsg (§4.3, §6): the notice is the first
-// line of Text, or the error in errorStyle; the whole text -- or the error --
+// line of Text, or the error in widget.ErrorStyle; the whole text -- or the error --
 // is appended to ':log'; and a Refresh refetches status immediately.
 func (m Model) finishAction(msg actionMsg) (tea.Model, tea.Cmd) {
 	delete(m.running, msg.key)
@@ -469,7 +470,7 @@ func (m Model) View() string {
 		return "loading…"
 	}
 	env := m.env()
-	rows := []string{m.headerView(env), fit("", env.Width), m.contextView(env)}
+	rows := []string{m.headerView(env), widget.Fit("", env.Width), m.contextView(env)}
 	if m.err != nil {
 		rows = append(rows, strings.Split(m.errorBlock(env), "\n")...)
 	}

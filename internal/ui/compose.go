@@ -5,14 +5,15 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
-// dimLines strips every style from each line and re-renders it in shadeStyle, so
+// dimLines strips every style from each line and re-renders it in widget.ShadeStyle, so
 // the screen behind a modal reads as one flat dark tone.
 func dimLines(lines []string) []string {
 	out := make([]string, len(lines))
 	for i, l := range lines {
-		out[i] = shadeStyle.Render(ansi.Strip(l))
+		out[i] = widget.ShadeStyle.Render(ansi.Strip(l))
 	}
 	return out
 }
@@ -20,7 +21,7 @@ func dimLines(lines []string) []string {
 // composeBox draws box over base at column x, row y. For each box row i with
 // y+i in range: left := ansi.Truncate(base[y+i], x, ""); right :=
 // ansi.TruncateLeft(base[y+i], x+boxW, ""); line = left + box[i] + right, then
-// fit(line, width). Rows outside base are dropped; x is clamped to [0, width-boxW]
+// widget.Fit(line, width). Rows outside base are dropped; x is clamped to [0, width-boxW]
 // (0 when the box is wider than width). base is not modified.
 func composeBox(base, box []string, x, y, width int) []string {
 	out := make([]string, len(base))
@@ -51,7 +52,7 @@ func composeBox(base, box []string, x, y, width int) []string {
 		left := ansi.Truncate(base[rowIdx], x, "")
 		right := ansi.TruncateLeft(base[rowIdx], x+boxW, "")
 		line := left + bRow + right
-		out[rowIdx] = fit(line, width)
+		out[rowIdx] = widget.Fit(line, width)
 	}
 
 	return out
@@ -73,14 +74,14 @@ func modalInnerW(want, width int) int {
 // renderModal draws the D2 box: innerW = min(want, width-6) (floor 20); a top
 // border "╭─ " + title + " " + "─"… + "╮"; one line per row, "│ " + row padded
 // to innerW + " │"; "╰─…─╯". No background is painted: the box interior is the
-// terminal background (§2.1). The border and title use dangerStyle when
-// danger, else accentStyle; the title is bold.
+// terminal background (§2.1). The border and title use widget.DangerStyle when
+// danger, else widget.AccentStyle; the title is bold.
 func renderModal(title string, rows []string, want, width int, danger bool) []string {
 	innerW := modalInnerW(want, width)
 
-	borderSt := accentStyle
+	borderSt := widget.AccentStyle
 	if danger {
-		borderSt = dangerStyle
+		borderSt = widget.DangerStyle
 	}
 	titleSt := borderSt.Bold(true)
 
@@ -99,7 +100,7 @@ func renderModal(title string, rows []string, want, width int, danger bool) []st
 	out := make([]string, 0, len(rows)+2)
 	out = append(out, topBorder)
 	for _, row := range rows {
-		fitted := fit(row, innerW)
+		fitted := widget.Fit(row, innerW)
 		line := borderSt.Render("│ ") + fitted + borderSt.Render(" │")
 		out = append(out, line)
 	}
@@ -111,7 +112,7 @@ func renderModal(title string, rows []string, want, width int, danger bool) []st
 
 // modalRow renders one list row inside a modal: marker "▸ " (accent) when
 // selected else "  ", name, desc, and an optional right-aligned note. A
-// selected row is rebuilt as plain text and rendered once with selBandStyle,
+// selected row is rebuilt as plain text and rendered once with widget.SelBandStyle,
 // so the band covers the whole row (§2.2). Unselected rows are unchanged.
 func modalRow(selected bool, name, desc, note string, innerW int, nameStyle, descStyle lipgloss.Style) string {
 	if selected {
@@ -126,7 +127,7 @@ func modalRow(selected bool, name, desc, note string, innerW int, nameStyle, des
 			}
 			line += strings.Repeat(" ", gap) + note
 		}
-		return selBandStyle.Foreground(textStyle.GetForeground()).Bold(true).Render(fit(line, innerW))
+		return widget.SelBandStyle.Foreground(widget.TextStyle.GetForeground()).Bold(true).Render(widget.Fit(line, innerW))
 	}
 	marker := "  "
 	left := marker + nameStyle.Render(name)
@@ -139,12 +140,12 @@ func modalRow(selected bool, name, desc, note string, innerW int, nameStyle, des
 		if gap < 1 {
 			gap = 1
 		}
-		line = left + strings.Repeat(" ", gap) + faintStyle.Render(note)
+		line = left + strings.Repeat(" ", gap) + widget.FaintStyle.Render(note)
 	}
-	return fit(line, innerW)
+	return widget.Fit(line, innerW)
 }
 
 // modalSection renders a faint bold section label ("VIEWS").
 func modalSection(label string) string {
-	return faintStyle.Bold(true).Render(label)
+	return widget.FaintStyle.Bold(true).Render(label)
 }

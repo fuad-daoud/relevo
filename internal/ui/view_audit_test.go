@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // auditFixtureShell is a loaded shell with ':audit' open and the cursor on
@@ -48,7 +49,7 @@ func TestAuditRollbackConfirmsThenCalls(t *testing.T) {
 	if !box.danger || box.kind != "roll back" {
 		t.Errorf("confirm = kind %q danger %v, want roll back danger", box.kind, box.danger)
 	}
-	if want := "Roll back to " + accentStyle.Bold(true).Render("#4") + "?"; box.title != want {
+	if want := "Roll back to " + widget.AccentStyle.Bold(true).Render("#4") + "?"; box.title != want {
 		t.Errorf("title = %q, want %q", box.title, want)
 	}
 	got := stripANSI(strings.Join(box.lines, "\n"))

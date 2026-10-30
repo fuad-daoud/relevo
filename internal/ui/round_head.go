@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -26,7 +27,7 @@ func (p roundPane) tokensLine(b *view.BindingStatus) string {
 // spaces as the body's first line is.
 func (p roundPane) tokensParts(b *view.BindingStatus) (string, string) {
 	if b == nil || !p.detail.live {
-		left := "   " + faintStyle.Render("no live facts for a released binding")
+		left := "   " + widget.FaintStyle.Render("no live facts for a released binding")
 		return left, ""
 	}
 
@@ -73,11 +74,11 @@ func (p roundPane) tokensParts(b *view.BindingStatus) (string, string) {
 		body += " · spend " + s
 	}
 
-	left := "   " + faintStyle.Render(body)
+	left := "   " + widget.FaintStyle.Render(body)
 
 	var right string
 	if b.Headless != nil && b.Headless.PID != 0 {
-		right = faintStyle.Render(fmt.Sprintf("pid %d since %s", b.Headless.PID, b.Headless.StartedAt.Local().Format("15:04"))) + "  "
+		right = widget.FaintStyle.Render(fmt.Sprintf("pid %d since %s", b.Headless.PID, b.Headless.StartedAt.Local().Format("15:04"))) + "  "
 	}
 
 	return left, right
@@ -90,15 +91,15 @@ func (p roundPane) tabsRow() string {
 	words := make([]string, len(tabs))
 	for i, t := range tabs {
 		if t == p.detail.active {
-			words[i] = chip(chipAccentStyle, p.tabLabel(t))
+			words[i] = widget.Chip(widget.ChipAccentStyle, p.tabLabel(t))
 		} else {
-			words[i] = mutedStyle.Render(chip(normalStyle, p.tabLabel(t)))
+			words[i] = widget.MutedStyle.Render(widget.Chip(widget.NormalStyle, p.tabLabel(t)))
 		}
 	}
 	left := "  " + strings.Join(words, "   ")
 
 	rightText := fmt.Sprintf("  r%d of %d  ", p.detail.round, p.detail.rounds)
-	right := faintStyle.Render("round  ") + chip(kbdStyle, "[") + textStyle.Bold(true).Render(rightText) + chip(kbdStyle, "]") + "  "
+	right := widget.FaintStyle.Render("round  ") + widget.Chip(widget.KbdStyle, "[") + widget.TextStyle.Bold(true).Render(rightText) + widget.Chip(widget.KbdStyle, "]") + "  "
 
 	return spread(left, right, p.width)
 }

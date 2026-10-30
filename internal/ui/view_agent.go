@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // agentFilesMsg is one agentView load's reply (§4).
@@ -92,10 +93,10 @@ func agentFileLayout(width int) (int, []candCol) {
 
 // agentFileHeaderLine is the detail table's header row (§4), in faint bold.
 func agentFileHeaderLine(nameW int, cols []candCol, cw int) string {
-	style := faintStyle.Bold(true)
-	cells := []candCell{{text: pad("HARNESS", 8), style: style}, {text: pad("FILE", nameW), style: style}}
+	style := widget.FaintStyle.Bold(true)
+	cells := []candCell{{text: widget.Pad("HARNESS", 8), style: style}, {text: widget.Pad("FILE", nameW), style: style}}
 	for _, c := range cols {
-		cells = append(cells, candCell{text: pad(c.head, c.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(c.head, c.w), style: style})
 	}
 	return candLine(cells, false, cw)
 }
@@ -105,33 +106,33 @@ func agentFileHeaderLine(nameW int, cols []candCol, cw int) string {
 func agentStateStyle(state harness.FileState) lipgloss.Style {
 	switch state {
 	case harness.FileUpToDate:
-		return mutedStyle
+		return widget.MutedStyle
 	case harness.FileStale, harness.FileEdited, harness.FileEditedNewer:
-		return warnStyle
+		return widget.WarnStyle
 	case harness.FileMissing:
-		return faintStyle
+		return widget.FaintStyle
 	}
-	return mutedStyle
+	return widget.MutedStyle
 }
 
 // agentFileLine is one definition file's row (§4). The cursor row's harness
 // name is bold; its path, model pin and state carry their own styles.
 func agentFileLineOf(f agentFileRow, sel bool, nameW int, cols []candCol, cw int) string {
-	nameStyle := textStyle
+	nameStyle := widget.TextStyle
 	if sel {
 		nameStyle = nameStyle.Bold(true)
 	}
 	cells := []candCell{
-		{text: pad(f.kind, 8), style: nameStyle},
-		{text: pad(tildePath(f.path), nameW), style: mutedStyle},
+		{text: widget.Pad(f.kind, 8), style: nameStyle},
+		{text: widget.Pad(tildePath(f.path), nameW), style: widget.MutedStyle},
 	}
 	for _, col := range cols {
 		text := f.model
-		style := mutedStyle
+		style := widget.MutedStyle
 		if col.key == "state" {
 			text, style = string(f.state), agentStateStyle(f.state)
 		}
-		cells = append(cells, candCell{text: pad(text, col.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(text, col.w), style: style})
 	}
 	return candLine(cells, sel, cw)
 }
@@ -159,9 +160,9 @@ func (v agentView) bodyLines(env Env, width int) []string {
 			newer = "relevo renders a newer copy from your config"
 		}
 		lines = append(lines, "", "",
-			fit("   "+faintStyle.Bold(true).Render(f.kind)+"   "+mutedStyle.Render(tildePath(f.path)), width),
-			fit("   "+warnStyle.Render("edit + newer")+mutedStyle.Render("  you edited this file, and "+newer), width),
-			fit("   "+textStyle.Render("e")+mutedStyle.Render(" shows your edit; ")+textStyle.Render("r")+mutedStyle.Render(" replaces it with the newer copy"), width),
+			widget.Fit("   "+widget.FaintStyle.Bold(true).Render(f.kind)+"   "+widget.MutedStyle.Render(tildePath(f.path)), width),
+			widget.Fit("   "+widget.WarnStyle.Render("edit + newer")+widget.MutedStyle.Render("  you edited this file, and "+newer), width),
+			widget.Fit("   "+widget.TextStyle.Render("e")+widget.MutedStyle.Render(" shows your edit; ")+widget.TextStyle.Render("r")+widget.MutedStyle.Render(" replaces it with the newer copy"), width),
 		)
 	}
 	return lines
@@ -187,7 +188,7 @@ func (v *agentView) follow(env Env) {
 	if sel >= v.top+avail {
 		v.top = sel - avail + 1
 	}
-	v.top = clamp(v.top, 0, max(0, len(lines)-avail))
+	v.top = widget.Clamp(v.top, 0, max(0, len(lines)-avail))
 }
 
 func (v agentView) Crumbs() []string { return []string{v.name} }
@@ -216,8 +217,8 @@ func (v agentView) HelpKeys() []KeyHelp { return v.Keys() }
 // and how many harness kinds carry a file.
 func (v agentView) Context(env Env) (string, string) {
 	rows := v.rows()
-	left := "   " + mutedStyle.Render(v.row.source+" · "+v.row.shape+" · "+agentUsedText(v.row)) +
-		"   " + textStyle.Bold(true).Render(fmt.Sprintf("%d", len(rows))) + mutedStyle.Render(" harnesses")
+	left := "   " + widget.MutedStyle.Render(v.row.source+" · "+v.row.shape+" · "+agentUsedText(v.row)) +
+		"   " + widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", len(rows))) + widget.MutedStyle.Render(" harnesses")
 	return left, ""
 }
 
@@ -226,13 +227,13 @@ func (v agentView) Body(env Env, width, height int) string {
 		return ""
 	}
 	if v.err != nil {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	lines := v.bodyLines(env, width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -240,7 +241,7 @@ func (v agentView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
 func (v agentView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
@@ -350,7 +351,7 @@ func (v agentView) resetCmd(env Env, f agentFileRow) tea.Cmd {
 	}
 	kind, name := f.kind, v.name
 	noun := copyNoun(relevo.IsSourceAgent(v.doc.Agents, v.name))
-	title := "Reset " + kind + "'s " + accentStyle.Bold(true).Render(name) + "?"
+	title := "Reset " + kind + "'s " + widget.AccentStyle.Bold(true).Render(name) + "?"
 	label := "overwrites"
 	note := "with the " + noun + "; your edit is lost"
 	switch f.state {
@@ -359,7 +360,7 @@ func (v agentView) resetCmd(env Env, f agentFileRow) tea.Cmd {
 	case harness.FileEditedNewer:
 		note = "with the newer " + noun + "; your edit is lost"
 	case harness.FileMissing:
-		title = "Write " + kind + "'s " + accentStyle.Bold(true).Render(name) + "?"
+		title = "Write " + kind + "'s " + widget.AccentStyle.Bold(true).Render(name) + "?"
 		label = "writes"
 		note = "the " + noun
 	}
@@ -369,8 +370,8 @@ func (v agentView) resetCmd(env Env, f agentFileRow) tea.Cmd {
 		danger: true,
 		title:  title,
 		lines: []string{
-			pad(label, 11) + tildePath(f.path),
-			pad("", 11) + note,
+			widget.Pad(label, 11) + tildePath(f.path),
+			widget.Pad("", 11) + note,
 		},
 		onYes: runAction(env.Ctx, "reset agent", kind+"/"+name, func(ctx context.Context) Result {
 			return env.Actions.ResetAgentFile(ctx, kind, name)
