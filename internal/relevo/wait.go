@@ -1,5 +1,3 @@
-// Package relevo wait: relevo wait's polling loop and exit classification, per
-// docs/specs/2026-09-14-wait-and-waiting-on-you-design.md §3.3-4.7.
 package relevo
 
 import (

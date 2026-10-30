@@ -681,8 +681,7 @@ live bindings. `relevo status` remains the tool for shell pipes and scripts
 (`watch -n2 relevo status` for a ticker); `relevo ui` is the interactive
 sibling that lets you inspect substance instead of just state.
 
-It is **read-only** until B2 of the cockpit plan
-(`docs/specs/2026-09-24-cockpit-design.md`): it never mutates state and never
+It is **read-only**: it never mutates state and never
 appends to round logs. It holds the state lock only for the duration of a
 read, exactly as `relevo status` does.
 
@@ -1160,9 +1159,7 @@ relevo status --chains
 
 A `--workflow` runs a saved workflow instead of the shipped
 build-review-correct graph; `relevo config workflow` lists, adds and edits the
-saved ones. `relevo help --json chain` lists every flag; the design records are
-[`docs/specs/2026-09-30-chains-design.md`](docs/specs/2026-09-30-chains-design.md)
-and [`docs/specs/2026-10-01-custom-chains-design.md`](docs/specs/2026-10-01-custom-chains-design.md).
+saved ones. `relevo help --json chain` lists every flag.
 
 ### Stopping a round
 
@@ -1307,9 +1304,7 @@ machines share the same bindings. It is off until joined:
 `relevo db sync enable` joins this machine to the remote,
 `relevo db sync status` shows the exchange, and `push` and `pull` drive each
 half by hand. `relevo help --json db sync` lists every verb (`enable`,
-`disable`, `retry`, `status`, `push`, `pull`, `reconcile`, `unlock`, `invite`);
-the design record is
-[`docs/specs/2026-10-10-sync-everything-design.md`](docs/specs/2026-10-10-sync-everything-design.md).
+`disable`, `retry`, `status`, `push`, `pull`, `reconcile`, `unlock`, `invite`).
 
 ### relevo history
 
@@ -1358,8 +1353,7 @@ started time in the local zone; the binding name, truncated with `…` past
 measured, `~$0.42` estimated, `unknown`, or `-` when the round recorded no
 usage at all); `(archived)` for a round from a binding `unbind --done` has archived.
 
-`-q` takes the query language the dashboard's filter line shares
-(`docs/specs/2026-09-21-dashboard-design.md` §3):
+`-q` takes the query language the dashboard's filter line shares:
 
 ```
 query  := token*                              whitespace separated
@@ -1771,8 +1765,7 @@ per login, with the quota groups its candidates use, so several logins for one
 provider cover for each other — the pick fails over to the first login no gate
 covers, or spreads fresh rounds across the pool. Read it with
 `relevo config get accounts` and write it with
-`relevo config set accounts '[…]'`; the design record is
-[`docs/specs/2026-09-30-account-pools-design.md`](docs/specs/2026-09-30-account-pools-design.md).
+`relevo config set accounts '[…]'`.
 
 ### Policy
 

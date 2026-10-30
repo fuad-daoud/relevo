@@ -13,7 +13,7 @@ import (
 )
 
 // ConfigSource is the database-backed config the daemon reloads and imports
-// from (docs/specs/2026-09-24-db-as-record-design.md §4.7). config.Store
+// from. config.Store
 // satisfies it; cmd/relevo passes the runtime's own store. Nothing in
 // internal/relevo builds a config path itself (CLAUDE.md).
 type ConfigSource interface {

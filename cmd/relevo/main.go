@@ -389,7 +389,7 @@ func cmdUI(args []string) error {
 
 	// An open failure never blocks the ui from starting -- it runs in
 	// live scope, with a sticky notice, exactly as pressing "a" with no
-	// database does (docs/specs/2026-09-20-persistence-design.md §6).
+	// database does.
 	var notice string
 	if d, dbErr := openDB(rt.Store.DBPath()); dbErr != nil {
 		notice = fmt.Sprintf("no database: %v", dbErr)

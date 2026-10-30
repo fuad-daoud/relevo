@@ -40,8 +40,7 @@ const (
 	opencodeClockSkew = agyClockSkew
 )
 
-// OpencodeDeliverer is the MasterMindDeliverer for opencode masterminds
-// (docs/specs/2026-09-22-opencode-delivery-design.md): it POSTs the
+// OpencodeDeliverer is the MasterMindDeliverer for opencode masterminds: it POSTs the
 // payload to opencode's own HTTP API and confirms delivery by reading the
 // session back out of opencode's sqlite db, because a 2xx from the wrong
 // server process is not evidence anything arrived.
