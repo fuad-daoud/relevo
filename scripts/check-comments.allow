@@ -261,7 +261,6 @@ internal/ui/source_test.go
 internal/ui/split_test.go
 internal/ui/stderr.go
 internal/ui/stderr_test.go
-internal/ui/widget/styles.go
 internal/ui/ui.go
 internal/ui/version.go
 internal/ui/view_actor.go
@@ -279,8 +278,6 @@ internal/ui/view_log.go
 internal/ui/view_log_test.go
 internal/ui/view_round.go
 internal/ui/view_rounds.go
-internal/ui/stats/view_stats.go
-internal/ui/stats/view_stats_test.go
 scripts/testdata/check-comments/cites-issue.go
 scripts/testdata/check-comments/cites-section.go
 scripts/testdata/check-comments/in-string.go
