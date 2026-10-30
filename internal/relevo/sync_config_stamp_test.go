@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/config"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -26,14 +27,14 @@ func (m *cfgMachine) setAt(t *testing.T, at time.Time, sec config.Section, body 
 
 func (m *cfgMachine) export(t *testing.T) {
 	t.Helper()
-	if _, err := exportOnce(m.mdb, m.log.OnLog(m.mdb.Origin())); err != nil {
+	if _, err := verb.ExportOnce(m.mdb, m.log.OnLog(m.mdb.Origin())); err != nil {
 		t.Fatalf("export: %v", err)
 	}
 }
 
 func (m *cfgMachine) pull(t *testing.T) {
 	t.Helper()
-	if _, err := importOnce(m.mdb, m.log.OnLog(m.mdb.Origin())); err != nil {
+	if _, err := verb.ImportOnce(m.mdb, m.log.OnLog(m.mdb.Origin())); err != nil {
 		t.Fatalf("import: %v", err)
 	}
 }

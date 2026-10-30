@@ -1,4 +1,4 @@
-package relevo
+package verb
 
 // The mapping from a sync failure onto the closed set of codes the wire carries.
 //
@@ -15,10 +15,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
-// classify maps a sync package error onto the closed set of refusal codes. The
+// Classify maps a sync package error onto the closed set of refusal codes. The
 // mapping is by sentinel rather than by message, so a wording change cannot
 // change which code a caller maps and no remote-chosen body can name a class.
-func verbClassify(err error) string {
+func Classify(err error) string {
 	switch {
 	case errors.Is(err, relevosync.ErrNoToken):
 		return wire.SyncCodeNoToken

@@ -1,4 +1,4 @@
-package relevo
+package verb
 
 import (
 	"strings"

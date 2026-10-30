@@ -1,4 +1,4 @@
-package relevo
+package verb
 
 // `relevo db sync invite`: the code a machine that already syncs prints so a
 // new machine can point itself at the same remote.

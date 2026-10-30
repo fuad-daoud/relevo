@@ -1,4 +1,4 @@
-package relevo
+package verb
 
 import (
 	"bytes"
@@ -11,12 +11,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/blobstore"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
-	"github.com/fuad-daoud/relevo/internal/db/wire/client"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
-// VerbRunner runs one sync verb against handles a process already holds.
+// Runner runs one sync verb against handles a process already holds.
 //
 // It is what the owner's OnSyncVerb hook calls and what the cockpit's sync
 // actions call, so there is exactly one set of verbs' semantics in the tree and
@@ -34,7 +33,7 @@ import (
 //
 // A verb is serialized against the daemon's own sync triggers through the same
 // guard: one push-then-pull at a time per daemon, whatever asked for it.
-type VerbRunner struct {
+type Runner struct {
 	// Shared is the daemon's direct shared handle.
 	Shared *db.DB
 	// Local is the machine-local file beside it, where the settings, the token
@@ -103,7 +102,7 @@ type VerbRunner struct {
 // caller that maps codes needs something to map. Only a verb name the executor
 // does not know is an error here, because that is a client asking for something
 // that does not exist rather than a machine failing to sync.
-func (v *VerbRunner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte) *wire.SyncResult {
+func (v *Runner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte) *wire.SyncResult {
 	switch verb.Verb {
 	case wire.SyncVerbEnable:
 		return v.runGuarded(func() *wire.SyncResult { return v.enable(ctx, verb, token) })
@@ -154,7 +153,7 @@ func (v *VerbRunner) Run(ctx context.Context, verb *wire.SyncVerb, token []byte)
 // tick is cheap to lose; a verb does not take that path -- a caller asked for it
 // explicitly, so it waits its turn rather than being answered "nothing
 // happened".
-func (v *VerbRunner) runGuarded(fn func() *wire.SyncResult) *wire.SyncResult {
+func (v *Runner) runGuarded(fn func() *wire.SyncResult) *wire.SyncResult {
 	if v.Serialize == nil {
 		return fn()
 	}
@@ -172,7 +171,7 @@ func (v *VerbRunner) runGuarded(fn func() *wire.SyncResult) *wire.SyncResult {
 
 // publishJoin records the transport an enable's join drives, so a disable that
 // arrives before the join finishes reaches it while the machine is still off.
-func (v *VerbRunner) publishJoin(t synclog.LogTransport) {
+func (v *Runner) publishJoin(t synclog.LogTransport) {
 	v.joinMu.Lock()
 	v.joinClient = t
 	v.joinMu.Unlock()
@@ -180,7 +179,7 @@ func (v *VerbRunner) publishJoin(t synclog.LogTransport) {
 
 // clearJoin forgets the join transport once the enable that published it has
 // settled, so a later disable does not try to stop a worker already gone.
-func (v *VerbRunner) clearJoin(t synclog.LogTransport) {
+func (v *Runner) clearJoin(t synclog.LogTransport) {
 	v.joinMu.Lock()
 	if v.joinClient == t {
 		v.joinClient = nil
@@ -189,7 +188,7 @@ func (v *VerbRunner) clearJoin(t synclog.LogTransport) {
 }
 
 // joinTransport is the transport an enable's join is driving, or nil.
-func (v *VerbRunner) joinTransport() synclog.LogTransport {
+func (v *Runner) joinTransport() synclog.LogTransport {
 	v.joinMu.Lock()
 	defer v.joinMu.Unlock()
 	return v.joinClient
@@ -197,7 +196,7 @@ func (v *VerbRunner) joinTransport() synclog.LogTransport {
 
 // joinWasStopped reports whether a disable released the join this runner is
 // driving, which is what keeps the released enable from marking the machine on.
-func (v *VerbRunner) joinWasStopped() bool {
+func (v *Runner) joinWasStopped() bool {
 	v.joinMu.Lock()
 	defer v.joinMu.Unlock()
 	return v.joinStopped
@@ -205,7 +204,7 @@ func (v *VerbRunner) joinWasStopped() bool {
 
 // beginJoin clears a stop a previous disable left, so a fresh enable is not
 // held back by -- or kept off because of -- a stop aimed at an earlier join.
-func (v *VerbRunner) beginJoin() {
+func (v *Runner) beginJoin() {
 	v.joinMu.Lock()
 	v.joinStopped = false
 	v.joinMu.Unlock()
@@ -219,7 +218,7 @@ func (v *VerbRunner) beginJoin() {
 // finish its last step still leaves the mark off; a runner with neither in
 // flight is left alone, which keeps every other verb on the daemon's ordinary
 // serialization.
-func (v *VerbRunner) preempt() {
+func (v *Runner) preempt() {
 	v.joinMu.Lock()
 	join := v.joinClient
 	if join != nil {
@@ -242,7 +241,7 @@ func (v *VerbRunner) preempt() {
 // the transport a queued disable or retry must release before it waits for the
 // slot. A runner with no worker reports nil, and cancelTransport then has
 // nothing to cancel.
-func (v *VerbRunner) steadyTransport() synclog.LogTransport {
+func (v *Runner) steadyTransport() synclog.LogTransport {
 	if v.Runner == nil {
 		return nil
 	}
@@ -253,7 +252,7 @@ func (v *VerbRunner) steadyTransport() synclog.LogTransport {
 
 // setClient records the worker the runner drives steady calls through, under the
 // same lock a preempt reads it with. A runner with no holder is left alone.
-func (v *VerbRunner) setClient(transport synclog.LogTransport) {
+func (v *Runner) setClient(transport synclog.LogTransport) {
 	if v.Runner == nil {
 		return
 	}
@@ -272,13 +271,13 @@ func (v *VerbRunner) setClient(transport synclog.LogTransport) {
 // window, so a machine that keeps going corrupt is not answered with a move on
 // every tick. The next attempt bootstraps a fresh replica from the remote with
 // the stored token and key.
-func (v *VerbRunner) retry(rebuild bool) *wire.SyncResult {
+func (v *Runner) retry(rebuild bool) *wire.SyncResult {
 	if v.Runner == nil {
-		return verbRefusal(wire.SyncCodeInvalid,
+		return Refusal(wire.SyncCodeInvalid,
 			fmt.Errorf("sync: retry: no runner is installed: %w", db.ErrInvalid))
 	}
 	if err := v.Runner.Retry(); err != nil {
-		return verbRefusal(verbClassify(err), err)
+		return Refusal(Classify(err), err)
 	}
 	if !rebuild {
 		return &wire.SyncResult{OK: true}
@@ -290,7 +289,7 @@ func (v *VerbRunner) retry(rebuild bool) *wire.SyncResult {
 		return &wire.SyncResult{OK: true}
 	}
 	if err != nil {
-		return verbRefusal(verbClassify(err), err)
+		return Refusal(Classify(err), err)
 	}
 	return &wire.SyncResult{OK: true, Aside: out.Aside}
 }
@@ -299,16 +298,16 @@ func (v *VerbRunner) retry(rebuild bool) *wire.SyncResult {
 // reads its stats, which moves no change set in this file. It is a verb rather
 // than a direct call so the cockpit reaches it over the owner socket like every
 // other action, and the daemon's one worker is the one that answers.
-func (v *VerbRunner) probe(ctx context.Context) *wire.SyncResult {
-	if err := v.Probe(ctx); err != nil {
-		return verbRefusal(verbClassify(err), err)
+func (v *Runner) probe(ctx context.Context) *wire.SyncResult {
+	if err := v.probeConn(ctx); err != nil {
+		return Refusal(Classify(err), err)
 	}
 	return &wire.SyncResult{OK: true}
 }
 
-// Probe asks the log whether it answers: it drives the same worker a verb does
-// and reads its stats, which moves no change set in this file.
-func (v *VerbRunner) Probe(ctx context.Context) error {
+// probeConn asks the log whether it answers: it drives the same worker a verb
+// does and reads its stats, which moves no change set in this file.
+func (v *Runner) probeConn(ctx context.Context) error {
 	transport, err := v.drive(ctx)
 	if err != nil {
 		return err
@@ -321,7 +320,7 @@ func (v *VerbRunner) Probe(ctx context.Context) error {
 // runner is reused, so a push or pull after an enable drives the same process;
 // a machine whose runner holds only the placeholder opens one through the
 // wiring's opener and keeps it, so the next call and the tick share it.
-func (v *VerbRunner) drive(ctx context.Context) (synclog.LogTransport, error) {
+func (v *Runner) drive(ctx context.Context) (synclog.LogTransport, error) {
 	if v.Shared == nil {
 		return nil, fmt.Errorf("sync: no shared database: %w", db.ErrInvalid)
 	}
@@ -339,7 +338,7 @@ func (v *VerbRunner) drive(ctx context.Context) (synclog.LogTransport, error) {
 // EnsureTransport leaves the runner holding a transport opened from the stored
 // rows, opening one when it holds only the placeholder. The daemon's tick calls
 // it before each steady attempt.
-func (v *VerbRunner) EnsureTransport(ctx context.Context) error {
+func (v *Runner) EnsureTransport(ctx context.Context) error {
 	_, err := v.drive(ctx)
 	return err
 }
@@ -363,10 +362,10 @@ func transportReady(transport synclog.LogTransport) bool {
 // starts a worker. A run that fails closes the transport it opened, because a
 // worker left behind holds the replica open against the next one; a run that
 // finishes leaves it on the runner, where the daemon can drive it again.
-func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byte) *wire.SyncResult {
-	token, passphrase, r2, err := enableIntake(verb, tail)
+func (v *Runner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byte) *wire.SyncResult {
+	token, passphrase, r2, err := EnableIntake(verb, tail)
 	if err != nil {
-		return verbRefusal(verbClassify(err), err)
+		return Refusal(Classify(err), err)
 	}
 	if verb.Join {
 		return v.enableJoin(ctx, verb, token, passphrase, r2)
@@ -378,7 +377,7 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byt
 	if len(bytes.TrimSpace(passphrase)) > 0 {
 		done, err := v.stageAndVerify(ctx, verb.RemoteURL, token, passphrase, false, r2)
 		if err != nil {
-			return verbRefusal(verbClassify(err), err)
+			return Refusal(Classify(err), err)
 		}
 		staged = done
 	}
@@ -389,7 +388,7 @@ func (v *VerbRunner) enable(ctx context.Context, verb *wire.SyncVerb, tail []byt
 // installed, or a client the runner already holds. A runner with neither has no
 // way to reach a remote, so the enable refuses rather than opening something of
 // its own.
-func (v *VerbRunner) openTransport(ctx context.Context) (synclog.LogTransport, error) {
+func (v *Runner) openTransport(ctx context.Context) (synclog.LogTransport, error) {
 	if v.Open != nil {
 		return v.Open(ctx)
 	}
@@ -426,12 +425,12 @@ func closeTransportErr(transport synclog.LogTransport) error {
 // recorded and skipped. The worker is stopped before its replica goes, and the
 // client is dropped last so a later attempt rebuilds it rather than driving a
 // state that is gone.
-func (v *VerbRunner) disable(ctx context.Context, verb *wire.SyncVerb) *wire.SyncResult {
+func (v *Runner) disable(ctx context.Context, verb *wire.SyncVerb) *wire.SyncResult {
 	// The section is read only to refuse a machine whose stored settings will
 	// not parse before anything else happens. Nothing here reads it again: the
 	// turn-off's own rows are the mark, the marker and the token.
 	if _, err := relevosync.ReadSettings(v.Local); err != nil {
-		return verbRefusal(wire.SyncCodeInvalid, err)
+		return Refusal(wire.SyncCodeInvalid, err)
 	}
 
 	transport := v.disableTransport(ctx)
@@ -448,7 +447,7 @@ func (v *VerbRunner) disable(ctx context.Context, verb *wire.SyncVerb) *wire.Syn
 	}
 	res, err := disabler.Disable(ctx)
 	if err != nil {
-		return verbRefusal(verbClassify(err), err)
+		return Refusal(Classify(err), err)
 	}
 	out := &wire.SyncResult{OK: true, Steps: res.Steps, FinalPush: res.FinalPush}
 	if res.FinalPushErr != nil {
@@ -460,7 +459,7 @@ func (v *VerbRunner) disable(ctx context.Context, verb *wire.SyncVerb) *wire.Syn
 // disableTransport is the log the turn-off's final export drives: the worker
 // the machine's stored rows build, or nothing when sync is off or no worker can
 // be built, because a machine with nothing behind it has nothing to hand over.
-func (v *VerbRunner) disableTransport(ctx context.Context) synclog.LogTransport {
+func (v *Runner) disableTransport(ctx context.Context) synclog.LogTransport {
 	// A join in flight is reached first, whatever the enabled mark says: the
 	// joined machine reads off for the whole join, so the gate below would
 	// find no transport and leave the join's worker running.
@@ -497,7 +496,7 @@ func exportThrough(shared *db.DB, transport synclog.LogTransport) func(context.C
 		stop := relevosync.NewStopTransport(transport)
 		done := make(chan error, 1)
 		go func() {
-			_, err := exportOnce(shared, stop)
+			_, err := ExportOnce(shared, stop)
 			done <- err
 		}()
 		select {
@@ -534,7 +533,7 @@ func cancelTransport(transport synclog.LogTransport) func() {
 // dropClient forgets the runner's client so the next attempt rebuilds it. The
 // turn-off calls it last: the machine is off, and a cached client would outlive
 // the mark that governs it.
-func (v *VerbRunner) dropClient() error {
+func (v *Runner) dropClient() error {
 	v.setClient(nil)
 	return nil
 }
@@ -550,20 +549,9 @@ func verbTimeout(verb *wire.SyncVerb) time.Duration {
 	return relevosync.DefaultTimeout
 }
 
-// refusal is a failed verb as the owner answers it: the class a caller maps and
-// the message it shows. Both come from the same error the sync package raised,
-// so a refusal a caller can act on keeps the wording the package gave it.
-func verbRefusal(code string, err error) *wire.SyncResult {
-	return &wire.SyncResult{OK: false, Code: code, Message: err.Error()}
-}
-
 // OwnerVerb is the owner.Server hook that makes a verb run with this daemon's
 // handles. It is a method rather than a closure so the daemon, a test and the
 // re-exec'd image all install exactly the same function.
-func (v *VerbRunner) OwnerVerb(ctx context.Context, verb *wire.SyncVerb, token []byte) *wire.SyncResult {
+func (v *Runner) OwnerVerb(ctx context.Context, verb *wire.SyncVerb, token []byte) *wire.SyncResult {
 	return v.Run(ctx, verb, token)
 }
-
-// VerbRefusal turns a result into the error a caller classifies, so the client
-// side of the surface maps codes without importing the sync package's sentinels.
-func VerbRefusal(res *wire.SyncResult) error { return client.VerbError(res) }

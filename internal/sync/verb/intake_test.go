@@ -1,4 +1,4 @@
-package relevo
+package verb
 
 import (
 	"errors"
@@ -37,9 +37,9 @@ func TestEnableTailSplitsTheThreeSecretsApart(t *testing.T) {
 				R2SecretLen:   len(tc.r2),
 				PassphraseLen: len(tc.passphrase),
 			}
-			token, passphrase, r2, err := enableIntake(verb, tail)
+			token, passphrase, r2, err := EnableIntake(verb, tail)
 			if err != nil {
-				t.Fatalf("enableIntake: %v", err)
+				t.Fatalf("EnableIntake: %v", err)
 			}
 			if string(token) != tc.token {
 				t.Errorf("token = %q, want %q", token, tc.token)
@@ -74,9 +74,9 @@ func TestEnableIntakeRefusesALengthTheTailCannotHold(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			verb := &wire.SyncVerb{R2SecretLen: tc.secretLen, PassphraseLen: tc.passLen}
-			token, passphrase, _, err := enableIntake(verb, tail)
+			token, passphrase, _, err := EnableIntake(verb, tail)
 			if err == nil {
-				t.Fatalf("enableIntake = (%q, %q, nil), want a refusal", token, passphrase)
+				t.Fatalf("EnableIntake = (%q, %q, nil), want a refusal", token, passphrase)
 			}
 			if !errors.Is(err, db.ErrInvalid) {
 				t.Errorf("err = %v, want it to wrap db.ErrInvalid", err)
@@ -95,9 +95,9 @@ func TestEnableIntakePairsTheSecretWithTheFrameBucketFlags(t *testing.T) {
 		R2KeyID:     "key-id",
 		R2SecretLen: len("R2SECRET"),
 	}
-	_, _, r2, err := enableIntake(verb, []byte("TOKENR2SECRET"))
+	_, _, r2, err := EnableIntake(verb, []byte("TOKENR2SECRET"))
 	if err != nil {
-		t.Fatalf("enableIntake: %v", err)
+		t.Fatalf("EnableIntake: %v", err)
 	}
 	if r2.Endpoint != "https://acct.r2.invalid" || r2.Bucket != "bodies" || r2.KeyID != "key-id" {
 		t.Errorf("bucket flags = %+v, want the three the frame named", r2)

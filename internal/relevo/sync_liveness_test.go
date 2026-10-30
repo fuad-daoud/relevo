@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -95,7 +96,7 @@ func newLiveFixture(t *testing.T) *liveFixture {
 	// Settled: a machine that has been on for longer than the warm period, so
 	// the cold-window and debounce tests pin a long-running daemon.
 	f.d.syncMu.Lock()
-	f.d.live.onSince = baseTime.Add(-hotSince)
+	f.d.live.OnSince = baseTime.Add(-verb.HotSince)
 	f.d.syncMu.Unlock()
 	return f
 }
@@ -110,7 +111,7 @@ func newOffFixture(t *testing.T) *liveFixture {
 		t.Fatalf("MarkEnabled off: %v", err)
 	}
 	f.d.syncMu.Lock()
-	f.d.live.onSince = time.Time{}
+	f.d.live.OnSince = time.Time{}
 	f.d.syncLast = time.Time{}
 	f.d.syncMu.Unlock()
 	return f
@@ -193,21 +194,21 @@ func TestSyncExportDebounce(t *testing.T) {
 	opened := f.attempts()
 
 	seedOutboxWrite(t, f.mdb, "debounce")
-	f.setNow(baseTime.Add(exportDebounce - time.Second))
+	f.setNow(baseTime.Add(verb.ExportDebounce - time.Second))
 	f.d.idleSync(ctx)
 	waitSyncIdle(t, f.d)
 	if got := f.attempts(); got != opened {
 		t.Errorf("an export one second inside the debounce started an attempt (%d -> %d)", opened, got)
 	}
 
-	f.setNow(baseTime.Add(exportDebounce))
+	f.setNow(baseTime.Add(verb.ExportDebounce))
 	f.d.idleSync(ctx)
 	waitSyncIdle(t, f.d)
 	if got := f.attempts(); got != opened+1 {
 		t.Errorf("attempts at the debounce boundary = %d, want %d", got, opened+1)
 	}
 
-	f.setNow(baseTime.Add(3 * exportDebounce))
+	f.setNow(baseTime.Add(3 * verb.ExportDebounce))
 	f.d.idleSync(ctx)
 	waitSyncIdle(t, f.d)
 	if got := f.attempts(); got != opened+1 {
@@ -223,10 +224,10 @@ func TestSyncPullWindowIsHotAfterAppliedRowsAndColdOtherwise(t *testing.T) {
 		at   time.Duration
 		want int64
 	}{
-		{"hot window opens after hotWindow", true, hotWindow, 1},
-		{"hot window is closed inside hotWindow", true, hotWindow - time.Second, 0},
-		{"cold machine is closed after hotWindow", false, hotWindow, 0},
-		{"cold window opens after coldWindow", false, coldWindow, 1},
+		{"hot window opens after verb.HotWindow", true, verb.HotWindow, 1},
+		{"hot window is closed inside verb.HotWindow", true, verb.HotWindow - time.Second, 0},
+		{"cold machine is closed after verb.HotWindow", false, verb.HotWindow, 0},
+		{"cold window opens after verb.ColdWindow", false, verb.ColdWindow, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -240,7 +241,7 @@ func TestSyncPullWindowIsHotAfterAppliedRowsAndColdOtherwise(t *testing.T) {
 			opened := f.attempts()
 			if tc.hot {
 				f.d.syncMu.Lock()
-				f.d.live.appliedAt = baseTime
+				f.d.live.AppliedAt = baseTime
 				f.d.syncMu.Unlock()
 			}
 
@@ -255,34 +256,34 @@ func TestSyncPullWindowIsHotAfterAppliedRowsAndColdOtherwise(t *testing.T) {
 }
 
 // TestSyncHotWindowCoolsAfterHotSince pins that the hot window ends: a machine
-// that applied rows once must not pull every hotWindow for the rest of its life.
+// that applied rows once must not pull every verb.HotWindow for the rest of its life.
 func TestSyncHotWindowCoolsAfterHotSince(t *testing.T) {
 	t.Parallel()
 	f := newLiveFixture(t)
 	f.d.syncMu.Lock()
 	defer f.d.syncMu.Unlock()
-	f.d.live.appliedAt = baseTime
+	f.d.live.AppliedAt = baseTime
 	for _, tc := range []struct {
 		after time.Duration
 		want  time.Duration
 	}{
-		{hotSince - time.Second, hotWindow},
-		{hotSince, coldWindow},
-		{24 * time.Hour, coldWindow},
+		{verb.HotSince - time.Second, verb.HotWindow},
+		{verb.HotSince, verb.ColdWindow},
+		{24 * time.Hour, verb.ColdWindow},
 	} {
 		if got := f.d.pullWindowLocked(baseTime.Add(tc.after)); got != tc.want {
 			t.Errorf("window %v after rows applied = %v, want %v", tc.after, got, tc.want)
 		}
 	}
 
-	f.d.live.appliedAt = time.Time{}
-	f.d.live.onSince = baseTime
+	f.d.live.AppliedAt = time.Time{}
+	f.d.live.OnSince = baseTime
 	for _, tc := range []struct {
 		after time.Duration
 		want  time.Duration
 	}{
-		{hotSince - time.Second, hotWindow},
-		{hotSince, coldWindow},
+		{verb.HotSince - time.Second, verb.HotWindow},
+		{verb.HotSince, verb.ColdWindow},
 	} {
 		if got := f.d.pullWindowLocked(baseTime.Add(tc.after)); got != tc.want {
 			t.Errorf("window %v after sync came on = %v, want %v", tc.after, got, tc.want)
@@ -291,7 +292,7 @@ func TestSyncHotWindowCoolsAfterHotSince(t *testing.T) {
 }
 
 // TestSyncEnableWhileRunningFollowsWithASecondAttempt pins that a daemon that
-// finds sync turned on pulls again after hotWindow, with nothing applied and
+// finds sync turned on pulls again after verb.HotWindow, with nothing applied and
 // nothing in the outbox to account for it.
 func TestSyncEnableWhileRunningFollowsWithASecondAttempt(t *testing.T) {
 	t.Parallel()
@@ -309,19 +310,19 @@ func TestSyncEnableWhileRunningFollowsWithASecondAttempt(t *testing.T) {
 	if got := f.attempts(); got != 2 {
 		t.Fatalf("attempts at enable = %d, want 2", got)
 	}
-	f.tick(t0.Add(hotWindow - time.Second))
+	f.tick(t0.Add(verb.HotWindow - time.Second))
 	if got := f.attempts(); got != 2 {
-		t.Fatalf("attempts inside hotWindow = %d, want 2", got)
+		t.Fatalf("attempts inside verb.HotWindow = %d, want 2", got)
 	}
-	f.tick(t0.Add(hotWindow))
+	f.tick(t0.Add(verb.HotWindow))
 	if got := f.attempts(); got != 3 {
-		t.Errorf("attempts at hotWindow = %d, want 3", got)
+		t.Errorf("attempts at verb.HotWindow = %d, want 3", got)
 	}
 	if f.d.outboxPending() {
 		t.Error("outbox has entries, so the second attempt is not the warm period's")
 	}
 	f.d.syncMu.Lock()
-	applied := f.d.live.appliedAt
+	applied := f.d.live.AppliedAt
 	f.d.syncMu.Unlock()
 	if !applied.IsZero() {
 		t.Errorf("appliedAt = %v, want zero", applied)
@@ -336,9 +337,9 @@ func TestSyncWarmPeriodEndsAfterHotSince(t *testing.T) {
 	t0 := baseTime.Add(10 * time.Second)
 	f.enableAt(t, true, t0)
 	f.tick(t0)
-	f.tick(t0.Add(hotSince - time.Second))
+	f.tick(t0.Add(verb.HotSince - time.Second))
 	opened := f.attempts()
-	f.tick(t0.Add(hotSince + hotWindow))
+	f.tick(t0.Add(verb.HotSince + verb.HotWindow))
 	if got := f.attempts() - opened; got != 0 {
 		t.Errorf("attempts after the warm period = %d, want 0", got)
 	}
@@ -352,9 +353,9 @@ func TestSyncReEnableWarmsAgain(t *testing.T) {
 	t0 := baseTime.Add(10 * time.Second)
 	f.enableAt(t, true, t0)
 	f.tick(t0)
-	f.tick(t0.Add(hotWindow))
+	f.tick(t0.Add(verb.HotWindow))
 
-	off := t0.Add(hotWindow + time.Second)
+	off := t0.Add(verb.HotWindow + time.Second)
 	f.enableAt(t, false, off)
 	f.tick(off)
 
@@ -365,9 +366,9 @@ func TestSyncReEnableWarmsAgain(t *testing.T) {
 	if got := f.attempts() - before; got != 1 {
 		t.Fatalf("attempts at re-enable = %d, want 1", got)
 	}
-	f.tick(t1.Add(hotWindow))
+	f.tick(t1.Add(verb.HotWindow))
 	if got := f.attempts() - before; got != 2 {
-		t.Errorf("attempts at hotWindow after re-enable = %d, want 2", got)
+		t.Errorf("attempts at verb.HotWindow after re-enable = %d, want 2", got)
 	}
 }
 
@@ -380,8 +381,8 @@ func TestSyncAppliedRowsTurnTheWindowHot(t *testing.T) {
 	f.d.syncMu.Lock()
 	hot := f.d.pullWindowLocked(f.d.syncClock()())
 	f.d.syncMu.Unlock()
-	if hot != hotWindow {
-		t.Errorf("window after an attempt applied rows = %v, want %v", hot, hotWindow)
+	if hot != verb.HotWindow {
+		t.Errorf("window after an attempt applied rows = %v, want %v", hot, verb.HotWindow)
 	}
 }
 
@@ -396,14 +397,14 @@ func TestSyncFreshenThrottle(t *testing.T) {
 	waitSyncIdle(t, f.d)
 	started := f.attempts()
 
-	f.setNow(baseTime.Add(exportDebounce))
+	f.setNow(baseTime.Add(verb.ExportDebounce))
 	f.d.Freshen(ctx)
 	waitSyncIdle(t, f.d)
 	if got := f.attempts(); got != started {
 		t.Errorf("a freshen within the throttle started an attempt (%d -> %d)", started, got)
 	}
 
-	f.setNow(baseTime.Add(exportDebounce + time.Second))
+	f.setNow(baseTime.Add(verb.ExportDebounce + time.Second))
 	f.d.Freshen(ctx)
 	waitSyncIdle(t, f.d)
 	if got := f.attempts(); got != started+1 {
@@ -497,7 +498,7 @@ func TestSyncFailedAttemptIsRecordedAndReadsBehind(t *testing.T) {
 func TestSyncUnopenableRemoteIsRecordedAndReadsBehind(t *testing.T) {
 	t.Parallel()
 	f := newLiveFixture(t)
-	f.d.SetSyncVerbs(&VerbRunner{Local: f.local, Runner: f.d.rt.Sync})
+	f.d.SetSyncVerbs(&verb.Runner{Local: f.local, Runner: f.d.rt.Sync})
 
 	f.d.queueSync(context.Background())
 	waitSyncIdle(t, f.d)
