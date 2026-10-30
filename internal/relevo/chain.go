@@ -58,7 +58,7 @@ func chainApply(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	// A chain that runs on a server is advanced by that server's daemon, not
 	// by a close here: this machine mirrors it, and the chain pull is what
 	// moves the mirror.
-	if chainOnServer(c) {
+	if chain.OnServer(c) {
 		return b, nil
 	}
 	if wf == nil {

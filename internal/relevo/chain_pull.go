@@ -36,7 +36,7 @@ func chainPullServers(ctx context.Context, rt Runtime) error {
 	}
 	var errs []error
 	for _, c := range chains {
-		if !chainOnServer(c) || c.Status == string(chain.StatusDone) || chainGoneMirror(c) {
+		if !chain.OnServer(c) || c.Status == string(chain.StatusDone) || chain.GoneMirror(c) {
 			continue
 		}
 		if err := chainPullOne(ctx, rt, c); err != nil {
@@ -80,7 +80,7 @@ func chainPullOne(ctx context.Context, rt Runtime, c db.ChainRow) error {
 // so the walk stops reading it, and nothing is delivered a second time.
 func chainPullGone(ctx context.Context, rt Runtime, c db.ChainRow) error {
 	name, server := c.Name, c.Server
-	gone := chainGoneReason(name, server)
+	gone := chain.GoneReason(name, server)
 	return rt.Store.WithLock(func(tx *store.Tx) error {
 		cur, err := tx.Chain(name)
 		if err != nil {
@@ -410,7 +410,7 @@ func chainPullFinish(ctx context.Context, rt Runtime, c db.ChainRow, view remote
 			// install keeps running on later passes, so rounds that land
 			// after the settle still land.
 			row.Status = view.Status
-		case before == string(chain.StatusRunning) && chainStatusTerminal(view.Status) && chainAllCaughtUp(tx, view):
+		case before == string(chain.StatusRunning) && chain.StatusTerminal(view.Status) && chainAllCaughtUp(tx, view):
 			row.Status = view.Status
 		default:
 			row.Status = before
@@ -421,7 +421,7 @@ func chainPullFinish(ctx context.Context, rt Runtime, c db.ChainRow, view remote
 		if err := chainPullTrace(tx, c.Name, view.Trace); err != nil {
 			return err
 		}
-		if before != string(chain.StatusRunning) || !chainStatusTerminal(row.Status) {
+		if before != string(chain.StatusRunning) || !chain.StatusTerminal(row.Status) {
 			return nil
 		}
 		member, carrier, ok, err := chainDeliveryMember(tx, row)
@@ -457,16 +457,6 @@ func chainAllCaughtUp(tx *store.Tx, view remote.ChainView) bool {
 		}
 	}
 	return len(view.Members) > 0
-}
-
-// chainStatusTerminal reports whether a chain status word is one of the three
-// the state machine stops on.
-func chainStatusTerminal(status string) bool {
-	switch chain.Status(status) {
-	case chain.StatusDone, chain.StatusHalted, chain.StatusStopped:
-		return true
-	}
-	return false
 }
 
 // chainPullSaveIfChanged saves a pull's member only when the pass actually

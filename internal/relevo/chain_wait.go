@@ -79,7 +79,7 @@ func WaitChain(ctx context.Context, rt Runtime, name string, timeout, interval t
 	}
 	// A chain that runs on a server waits by pulling the mirror; a name that
 	// is no chain, or a local one, keeps the loop below.
-	if c, err := rt.Store.Chain(name); err == nil && chainOnServer(c) {
+	if c, err := rt.Store.Chain(name); err == nil && chain.OnServer(c) {
 		return chainServerWait(ctx, rt, name, timeout, interval, peek)
 	}
 

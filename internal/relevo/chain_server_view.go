@@ -163,7 +163,7 @@ func chainServerWait(ctx context.Context, rt Runtime, name string, timeout, inte
 // gone, or a 404 from the stop itself -- has nothing a server could stop and
 // is closed only by `relevo done`, so it answers with the halted refusal.
 func chainServerStop(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult, error) {
-	if chainGoneMirror(c) {
+	if chain.GoneMirror(c) {
 		return StopResult{}, haltedChainStop(c.Name)
 	}
 	if rt.Remote == nil {

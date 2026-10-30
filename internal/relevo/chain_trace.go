@@ -65,7 +65,7 @@ func ChainTrace(ctx context.Context, rt Runtime, name string) (ChainTraceDoc, er
 	if err != nil {
 		return ChainTraceDoc{}, err
 	}
-	if chainOnServer(c) {
+	if chain.OnServer(c) {
 		return chainServerTrace(ctx, rt, c)
 	}
 	return chainStoredTrace(rt, c)

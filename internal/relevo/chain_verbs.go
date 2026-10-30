@@ -67,7 +67,7 @@ func ChainStop(ctx context.Context, rt Runtime, name string) (StopResult, error)
 	if err != nil {
 		return StopResult{}, err
 	}
-	if chainOnServer(c) {
+	if chain.OnServer(c) {
 		return chainServerStop(ctx, rt, c)
 	}
 	if c.Status != string(chain.StatusRunning) {
@@ -96,7 +96,7 @@ func ChainStop(ctx context.Context, rt Runtime, name string) (StopResult, error)
 // nothing-to-stop answer -- it has already ended, and a release is a different
 // verb -- so the refusal is asked of the halted status alone.
 func chainStopHaltedMember(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult, error) {
-	member, _, ok := chainAwaited(rt.Store, c)
+	member, _, ok := chain.Awaited(rt.Store, c)
 	if !ok {
 		return StopResult{}, chainStoppedNothing(c)
 	}
@@ -230,7 +230,7 @@ func ChainDone(ctx context.Context, rt Runtime, name string) (DoneResult, error)
 	if err != nil {
 		return DoneResult{}, err
 	}
-	if chainOnServer(c) {
+	if chain.OnServer(c) {
 		return chainServerDone(ctx, rt, c)
 	}
 	if c.Status == string(chain.StatusRunning) {

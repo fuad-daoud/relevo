@@ -319,7 +319,7 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	// installs the server's outcome, so a GetCheck this machine mints an id
 	// for would 404 (no such served check run) and halt the mirror on every
 	// tick while the server runs the gate normally.
-	if chainOnServer(c) {
+	if chain.OnServer(c) {
 		return nil
 	}
 	st, err := chain.WorkflowState(c)

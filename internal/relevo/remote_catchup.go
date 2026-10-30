@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/capture"
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -346,7 +347,7 @@ func catchUpPayload(b store.Binding, view remote.BindingView, haveReport bool, c
 	// this line names, so a lone round -- no chain to halt over it -- still
 	// reads as one with something to recover before it is landed.
 	if view.DirtyCommit != "" {
-		ref := chainRoundSnapshotRef(b, n)
+		ref := chain.SnapshotRef(b, n)
 		note = joinNotes(note, fmt.Sprintf("uncommitted work at %s", ref))
 		payload = payload + "\n" + fmt.Sprintf("Uncommitted work: the branch %s holds no round %d commit; recover by commit from %s -- the round diff above is sealed around the worktree, so it names what is uncommitted.", b.Branch, n, ref)
 	}

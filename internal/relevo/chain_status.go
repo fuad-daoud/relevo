@@ -248,7 +248,7 @@ func ChainStatus(ctx context.Context, rt Runtime, name string) (view.Report, err
 	}
 	// A chain that runs on a server answers from the server's view, so the
 	// status a human reads is the chain's, not this machine's stale mirror.
-	if chainOnServer(c) {
+	if chain.OnServer(c) {
 		return chainServerStatus(ctx, rt, c)
 	}
 	bindings, err := rt.Store.List()

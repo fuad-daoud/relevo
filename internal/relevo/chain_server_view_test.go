@@ -290,7 +290,7 @@ func markChainGone(t *testing.T, rt Runtime, name string) {
 			return err
 		}
 		c.Status = string(chain.StatusHalted)
-		c.Reason = chainGoneReason(name, c.Server)
+		c.Reason = chain.GoneReason(name, c.Server)
 		return tx.ChainPut(c)
 	}); err != nil {
 		t.Fatal(err)

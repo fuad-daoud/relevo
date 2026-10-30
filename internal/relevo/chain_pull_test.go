@@ -816,7 +816,7 @@ func TestChainPullStopsPollingAHaltedMirrorOnceTheServerDropsIt(t *testing.T) {
 	if row.Reason != view.Reason {
 		t.Fatalf("reason = %q, want the chain's own halt reason %q", row.Reason, view.Reason)
 	}
-	if row.Reason == chainGoneReason("shop", "zen") {
+	if row.Reason == chain.GoneReason("shop", "zen") {
 		t.Fatalf("reason = %q, want it not the gone wording", row.Reason)
 	}
 	before := len(chainPendingChain(t, rt, "shop"))
@@ -830,7 +830,7 @@ func TestChainPullStopsPollingAHaltedMirrorOnceTheServerDropsIt(t *testing.T) {
 	if row.Status != string(chain.StatusHalted) {
 		t.Errorf("mirror status = %q, want still halted", row.Status)
 	}
-	if row.Reason != chainGoneReason("shop", "zen") {
+	if row.Reason != chain.GoneReason("shop", "zen") {
 		t.Errorf("reason = %q, want the gone wording", row.Reason)
 	}
 	if after := len(chainPendingChain(t, rt, "shop")); after != before {

@@ -80,7 +80,7 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		// released, and the refusal would fail a done that has already
 		// happened where it matters.
 		var remoteKept, remoteReason string
-		if b.Builder.Remote() && !serverChainMember(tx, b.Name) {
+		if b.Builder.Remote() && !chain.ServerMember(tx, b.Name) {
 			if rt.Remote == nil {
 				return ErrRemoteUnavailable
 			}

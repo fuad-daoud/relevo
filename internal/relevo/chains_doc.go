@@ -111,7 +111,7 @@ func chainDocEntry(ctx context.Context, rt Runtime, c db.ChainRow, now time.Time
 	var liveTrace []db.ChainEventRow
 	var staleErr string
 
-	if chainOnServer(c) && rt.Remote != nil {
+	if chain.OnServer(c) && rt.Remote != nil {
 		if v, err := chainGetView(ctx, rt, c); err != nil {
 			switch {
 			case is404(err) && chainTerminalStatus(c.Status):
@@ -119,7 +119,7 @@ func chainDocEntry(ctx context.Context, rt Runtime, c db.ChainRow, now time.Time
 				// a server that no longer holds it is not stale.
 			case is404(err):
 				c.Status = string(chain.StatusGone)
-				c.Reason = chainGoneReason(c.Name, c.Server)
+				c.Reason = chain.GoneReason(c.Name, c.Server)
 			default:
 				staleErr = err.Error()
 			}

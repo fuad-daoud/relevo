@@ -31,7 +31,7 @@ func tickChains(ctx context.Context, rt Runtime) {
 		}
 		// A server chain is swept by the server's daemon; this machine must
 		// not halt it from a mirror that has not been pulled.
-		if chainOnServer(c) {
+		if chain.OnServer(c) {
 			continue
 		}
 		running = append(running, c.Name)

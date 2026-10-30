@@ -10,47 +10,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// chainMemberLister is the member read the store and a tx both answer: the
-// chain_member rows that name a chain's members.
-type chainMemberLister interface {
-	ChainMembers(name string) ([]db.ChainMemberRow, error)
-}
-
-// chainAwaited resolves the member a chain waits on and the round it awaits.
-// A row that carries an engine state answers from the state's awaiting actor
-// through chain_member, so a workflow whose actor fills no legacy part still
-// resolves; a row without a state keeps the legacy awaiting columns.
-func chainAwaited(m chainMemberLister, c db.ChainRow) (name string, round int, ok bool) {
-	if len(c.StateJSON) > 0 {
-		return chainStateAwaited(m, c)
-	}
-	name = chain.MemberName(c, c.AwaitingMember)
-	if name == "" {
-		return "", 0, false
-	}
-	return name, c.AwaitingRound, true
-}
-
-// chainStateAwaited is chainAwaited's state arm: the state's awaiting actor
-// through chain_member. ok is false for a state that awaits a check run, which
-// names no member, or an actor no member runs.
-func chainStateAwaited(m chainMemberLister, c db.ChainRow) (name string, round int, ok bool) {
-	st, err := chain.WorkflowState(c)
-	if err != nil || st.Awaiting.Member == "" {
-		return "", 0, false
-	}
-	rows, err := m.ChainMembers(c.Name)
-	if err != nil {
-		return "", 0, false
-	}
-	for _, row := range rows {
-		if chain.FlowActorMatch(row.Actor, st.Awaiting.Member) {
-			return row.Binding, st.Awaiting.Round, true
-		}
-	}
-	return "", 0, false
-}
-
 // chainReadMembers names a chain's members for a read surface: the bindings its
 // engine recorded, in creation order, when the row carries a state; the legacy
 // part columns otherwise. A part the row leaves empty is skipped.
@@ -113,7 +72,7 @@ func chainHoldsUncollected(entries []store.LogEntry) bool {
 // workflow; the legacy part columns otherwise. A binding the row leaves empty
 // is skipped. A read failure keeps the legacy path, so an end verb on a legacy
 // row is unchanged.
-func chainEndMembers(m chainMemberLister, c db.ChainRow) []string {
+func chainEndMembers(m chain.MemberLister, c db.ChainRow) []string {
 	if len(c.WorkflowJSON) == 0 {
 		return chainMembersOf(c)
 	}
