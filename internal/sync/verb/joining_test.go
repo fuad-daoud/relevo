@@ -1,4 +1,4 @@
-package relevo
+package verb
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 
 // joinRunner is a machine that holds no token and no bucket credentials, so
 // whatever an enable stores came from the verb.
-func joinRunner(t *testing.T) (*VerbRunner, relevosync.Local) {
+func joinRunner(t *testing.T) (*Runner, relevosync.Local) {
 	t.Helper()
 	shared, err := db.OpenSplit(filepath.Join(t.TempDir(), "relevo.db"), db.Options{Origin: "m1"})
 	if err != nil {
@@ -29,7 +29,7 @@ func joinRunner(t *testing.T) (*VerbRunner, relevosync.Local) {
 		t.Fatalf("CompressHistoryOnce: %v", err)
 	}
 	log := synclog.NewMemTransport("m1")
-	return &VerbRunner{
+	return &Runner{
 		Shared: shared,
 		Local:  local,
 		Path:   shared.Path(),
@@ -97,7 +97,7 @@ func TestEnableRefusesASecretLongerThanTheTail(t *testing.T) {
 // runner reported a join in progress.
 type pullWatch struct {
 	*synclog.MemTransport
-	runner *VerbRunner
+	runner *Runner
 	seen   []bool
 }
 
@@ -129,7 +129,7 @@ func TestJoiningIsTrueOnlyWhileTheJoinRuns(t *testing.T) {
 	if runner.Joining() {
 		t.Error("Joining after the enable settled")
 	}
-	if (*VerbRunner)(nil).Joining() || (*Daemon)(nil).Joining() {
-		t.Error("a runner or daemon not yet built reports a join")
+	if (*Runner)(nil).Joining() {
+		t.Error("a runner not yet built reports a join")
 	}
 }

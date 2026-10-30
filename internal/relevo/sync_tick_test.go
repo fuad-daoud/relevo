@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -440,7 +441,7 @@ func TestTickRestartsACancelledWorker(t *testing.T) {
 	// The second tick is about which worker the next call reaches, not about
 	// the bound, so its bound is one no runner can overrun.
 	rt.Sync.Timeout = time.Minute
-	now = now.Add(coldWindow + time.Minute)
+	now = now.Add(verb.ColdWindow + time.Minute)
 	if err := d.Tick(context.Background()); err != nil {
 		t.Fatalf("second Tick: %v", err)
 	}

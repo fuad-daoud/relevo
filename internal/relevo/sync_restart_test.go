@@ -7,6 +7,7 @@ import (
 	"time"
 
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -78,7 +79,7 @@ func TestTickOpensTheStoredRemoteAfterARestart(t *testing.T) {
 
 	placeholder := &unreadyTransport{}
 	opens := 0
-	verbs := &VerbRunner{
+	verbs := &verb.Runner{
 		Shared: mdb,
 		Local:  local,
 		Runner: &relevosync.Runner{Client: placeholder, Local: local},

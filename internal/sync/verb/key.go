@@ -1,4 +1,4 @@
-package relevo
+package verb
 
 import (
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -44,8 +44,8 @@ func keyedImporter(shared *db.DB, t synclog.LogTransport) (*synclog.Importer, er
 	return i, nil
 }
 
-// exportOnce exports with the machine's stored key.
-func exportOnce(shared *db.DB, t synclog.LogTransport) (synclog.ExportResult, error) {
+// ExportOnce exports with the machine's stored key.
+func ExportOnce(shared *db.DB, t synclog.LogTransport) (synclog.ExportResult, error) {
 	e, err := keyedExporter(shared, t)
 	if err != nil {
 		return synclog.ExportResult{}, err
@@ -53,8 +53,8 @@ func exportOnce(shared *db.DB, t synclog.LogTransport) (synclog.ExportResult, er
 	return e.Export()
 }
 
-// importOnce imports with the machine's stored key.
-func importOnce(shared *db.DB, t synclog.LogTransport) (synclog.ImportResult, error) {
+// ImportOnce imports with the machine's stored key.
+func ImportOnce(shared *db.DB, t synclog.LogTransport) (synclog.ImportResult, error) {
 	i, err := keyedImporter(shared, t)
 	if err != nil {
 		return synclog.ImportResult{}, err

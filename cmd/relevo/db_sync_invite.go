@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/sync/verb"
 )
 
 // dbSyncInviteDoc is what `db sync invite --json` prints. Code is the whole
@@ -94,7 +94,7 @@ func cmdDBSyncInvite(args []string) error {
 	}
 	defer func() { _ = shared.Close() }()
 
-	invite, err := relevo.InviteCode(local)
+	invite, err := verb.InviteCode(local)
 	if err != nil {
 		return dbSyncInviteClassify(err)
 	}
@@ -130,7 +130,7 @@ func cmdDBSyncInvite(args []string) error {
 // unlocked, current one adds nothing. Leaving the ordinary case out is
 // deliberate -- an unconditional warning trains a reader to skip the lines that
 // matter on the machines they are true for.
-func dbSyncInviteNotes(invite relevo.Invite) []string {
+func dbSyncInviteNotes(invite verb.Invite) []string {
 	var notes []string
 	if invite.Locked {
 		notes = append(notes, dbSyncInviteLockedLine)

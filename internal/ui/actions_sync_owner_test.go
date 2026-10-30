@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
@@ -85,18 +86,18 @@ func syncOwnerActionsWithHook(t *testing.T, hook func(context.Context, *wire.Syn
 }
 
 // newOwnerVerbRunner is the daemon-shaped executor the served owner installs: a
-// VerbRunner over the same handles, whose opener refuses on the machine-local
+// verb.Runner over the same handles, whose opener refuses on the machine-local
 // rows exactly as the supervisor opener does. A machine with a remote and a
 // token reaches the generic error below rather than a worker, because no ui
 // test may spawn one; a machine missing either refuses with the same sentence
 // the real daemon gives.
-func newOwnerVerbRunner(t *testing.T, shared *db.DB) *relevo.VerbRunner {
+func newOwnerVerbRunner(t *testing.T, shared *db.DB) *verb.Runner {
 	t.Helper()
 	local, err := relevosync.LocalHandle(shared)
 	if err != nil {
 		t.Fatalf("LocalHandle: %v", err)
 	}
-	return &relevo.VerbRunner{
+	return &verb.Runner{
 		Shared:      shared,
 		Local:       local,
 		Path:        shared.Path(),

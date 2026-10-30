@@ -1,4 +1,4 @@
-package relevo
+package verb
 
 import (
 	"context"
@@ -18,17 +18,17 @@ import (
 //
 // The tail is the one part of a frame a reader of a captured stream never sees,
 // so two secrets on it are two secrets a log cannot leak.
-func (v *VerbRunner) rekey(ctx context.Context, verb *wire.SyncVerb, tail []byte) *wire.SyncResult {
-	current, newPass, err := rekeyIntake(verb, tail)
+func (v *Runner) rekey(ctx context.Context, verb *wire.SyncVerb, tail []byte) *wire.SyncResult {
+	current, newPass, err := RekeyIntake(verb, tail)
 	if err != nil {
-		return verbRefusal(wire.SyncCodeInvalid, err)
+		return Refusal(wire.SyncCodeInvalid, err)
 	}
 	transport, err := v.drive(ctx)
 	if err != nil {
-		return verbRefusal(verbClassify(err), err)
+		return Refusal(Classify(err), err)
 	}
 	if err := relevosync.Rekey(ctx, v.Local, transport, current, newPass, rand.Reader); err != nil {
-		return verbRefusal(verbClassify(err), err)
+		return Refusal(Classify(err), err)
 	}
 	return &wire.SyncResult{OK: true}
 }

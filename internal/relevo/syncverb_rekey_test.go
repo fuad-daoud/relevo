@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	syncverb "github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -35,11 +36,11 @@ var rekeyPassphraseNew = []byte("the fleet's new passphrase")
 
 // rekeyRunner is one enabled machine with a log transport installed, so a verb
 // has something to drive and nothing here opens a worker or a network.
-func rekeyRunner(t *testing.T, log *synclog.MemTransport) *VerbRunner {
+func rekeyRunner(t *testing.T, log *synclog.MemTransport) *syncverb.Runner {
 	t.Helper()
 	m := newCfgMachine(t, log, nil, true)
 	origin := m.mdb.Origin()
-	return &VerbRunner{
+	return &syncverb.Runner{
 		Shared: m.mdb,
 		Local:  m.local,
 		Path:   m.mdb.Path(),
@@ -55,26 +56,26 @@ func rekeyRunner(t *testing.T, log *synclog.MemTransport) *VerbRunner {
 func TestRekeyIntakeSplitsTheTailAtItsOwnLengths(t *testing.T) {
 	current, newPass := []byte("the current"), []byte("the new one")
 	verb, tail := rekeyTail(current, newPass)
-	gotCurrent, gotNew, err := rekeyIntake(verb, tail)
+	gotCurrent, gotNew, err := syncverb.RekeyIntake(verb, tail)
 	if err != nil || string(gotCurrent) != string(current) || string(gotNew) != string(newPass) {
-		t.Fatalf("rekeyIntake = (%q, %q, %v), want the split as named", gotCurrent, gotNew, err)
+		t.Fatalf("syncverb.RekeyIntake = (%q, %q, %v), want the split as named", gotCurrent, gotNew, err)
 	}
 
 	// A tail shorter than the two lengths name would store part of one
 	// passphrase as the other, so it is refused.
 	verb.NewPassphraseLen = len(newPass) + 1
-	if _, _, err := rekeyIntake(verb, tail); err == nil {
+	if _, _, err := syncverb.RekeyIntake(verb, tail); err == nil {
 		t.Fatal("a tail shorter than its lengths was accepted")
 	}
 	// A tail longer than the two lengths name carries bytes neither names, and
 	// splitting it anyway would make them part of the new passphrase.
 	verb.NewPassphraseLen = len(newPass) - 1
-	if _, _, err := rekeyIntake(verb, tail); err == nil {
+	if _, _, err := syncverb.RekeyIntake(verb, tail); err == nil {
 		t.Fatal("a tail longer than its lengths was accepted")
 	}
 	// A negative length names nothing and is refused the same way.
 	verb.NewPassphraseLen = -1
-	if _, _, err := rekeyIntake(verb, tail); err == nil {
+	if _, _, err := syncverb.RekeyIntake(verb, tail); err == nil {
 		t.Fatal("a negative length was accepted")
 	}
 }
@@ -144,7 +145,7 @@ func TestRekeyVerbRefusalsCarryTheirCodes(t *testing.T) {
 		won.Epoch = 3
 		return &won
 	}
-	racer := &VerbRunner{
+	racer := &syncverb.Runner{
 		Shared: runner.Shared, Local: runner.Local, Path: runner.Path,
 		// A runner with no client, so the verb drives the mover rather than
 		// the steady transport the earlier runs left behind.
@@ -160,13 +161,13 @@ func TestRekeyVerbRefusalsCarryTheirCodes(t *testing.T) {
 // the two rekey sentinels land on their own codes, not on internal.
 func TestVerbClassifyNamesTheRekeyCodes(t *testing.T) {
 	t.Parallel()
-	if got := verbClassify(relevosync.ErrMachineLocked); got != wire.SyncCodeMachineLocked {
+	if got := syncverb.Classify(relevosync.ErrMachineLocked); got != wire.SyncCodeMachineLocked {
 		t.Errorf("ErrMachineLocked = %q, want %q", got, wire.SyncCodeMachineLocked)
 	}
-	if got := verbClassify(relevosync.ErrEpochRace); got != wire.SyncCodeEpochRace {
+	if got := syncverb.Classify(relevosync.ErrEpochRace); got != wire.SyncCodeEpochRace {
 		t.Errorf("ErrEpochRace = %q, want %q", got, wire.SyncCodeEpochRace)
 	}
-	if got := verbClassify(errors.Join(relevosync.ErrEpochRace)); got != wire.SyncCodeEpochRace {
+	if got := syncverb.Classify(errors.Join(relevosync.ErrEpochRace)); got != wire.SyncCodeEpochRace {
 		t.Errorf("a wrapped ErrEpochRace = %q, want the same code", got)
 	}
 }

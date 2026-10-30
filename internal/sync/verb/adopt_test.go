@@ -1,4 +1,4 @@
-package relevo
+package verb
 
 import (
 	"path/filepath"
@@ -15,7 +15,7 @@ func TestAdoptionIsOnlyBuiltForAnAsEnable(t *testing.T) {
 	if _, err := installation.Load(root); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	v := &VerbRunner{Path: filepath.Join(root, "relevo.db")}
+	v := &Runner{Path: filepath.Join(root, "relevo.db")}
 	if got := v.adoption(&wire.SyncVerb{Verb: wire.SyncVerbEnable}); got != nil {
 		t.Fatalf("an enable without --as built an adoption: %+v", got)
 	}
@@ -29,7 +29,7 @@ func TestAdoptionIsOnlyBuiltForAnAsEnable(t *testing.T) {
 	if inst, _, err := installation.Read(root); err != nil || inst.ID != "inst-x" {
 		t.Errorf("installation file = %+v, %v, want inst-x", inst, err)
 	}
-	if AdoptedWarning("inst-x") == "" {
+	if adoptedWarning("inst-x") == "" {
 		t.Error("the adoption warning is empty")
 	}
 }

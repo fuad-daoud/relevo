@@ -13,13 +13,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/dbtest"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
+	"github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
 // reconcileVerb runs the reconcile verb on the machine, as a dry run or for real.
 func (m *cfgMachine) reconcileVerb(t *testing.T, dryRun bool) *wire.SyncResult {
 	t.Helper()
-	runner := &VerbRunner{
+	runner := &verb.Runner{
 		Shared: m.mdb,
 		Local:  m.local,
 		Path:   m.mdb.Path(),

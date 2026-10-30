@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db/wire"
-	"github.com/fuad-daoud/relevo/internal/relevo"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/sync/verb"
 	"github.com/fuad-daoud/relevo/internal/synclog"
 )
 
@@ -75,7 +75,7 @@ func TestPullThenStatusShowsTheHoldWithoutATick(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runner := &relevo.VerbRunner{
+	runner := &verb.Runner{
 		Shared: shared, Local: local, Path: shared.Path(),
 		Runner: &relevosync.Runner{Client: log, Local: local},
 	}

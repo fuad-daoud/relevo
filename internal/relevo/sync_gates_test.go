@@ -222,7 +222,7 @@ func TestGateWriteInsideDebounceStartsAnAttempt(t *testing.T) {
 	d.SyncNow(context.Background())
 	waitSyncIdle(t, d)
 	d.syncMu.Lock()
-	started := d.live.startedAt
+	started := d.live.StartedAt
 	d.syncMu.Unlock()
 	if started.IsZero() {
 		t.Fatal("the daemon recorded no attempt start, so nothing below is inside the debounce")
@@ -266,7 +266,7 @@ func TestGateBurstInsideOneAttemptCostsOneRerun(t *testing.T) {
 	}
 
 	d.syncMu.Lock()
-	dirty := d.live.dirty
+	dirty := d.live.Dirty
 	inFlight := d.syncInFlight
 	d.syncMu.Unlock()
 	if !dirty {
