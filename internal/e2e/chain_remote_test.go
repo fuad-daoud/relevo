@@ -42,6 +42,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/uplink"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -542,6 +543,14 @@ func newChainRemoteClient(t *testing.T, url, fingerprint, home string) (relevo.R
 		ProcStart:   procStartUnix,
 		Remote:      client.New(servers, kp, time.Now),
 		Transport:   remote.NewBundleTransport(gitClient, t.TempDir()),
+		// The remote send runs above the engine: the scenario's client ships
+		// served rounds through the same uplink functions the CLI runtime
+		// gets from buildRuntime.
+		RemoteSend: relevo.RemoteSendDeps{
+			Send:   uplink.SendRemote,
+			Ship:   uplink.Ship,
+			Record: uplink.Record,
+		},
 	}
 	return rt, reg, kp
 }
