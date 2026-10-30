@@ -395,6 +395,12 @@ type Runtime struct {
 	// Nil means deletes are skipped and the abandoned entries stay on the
 	// binding; cmd/relevo wires the real one.
 	SessionReaper SessionDeleter
+
+	// CloseServedRound records an owned binding's closed round, through the
+	// server package that owns the served close. Nil keeps the binding
+	// unchanged, which is what a hook-less test runtime gets; both production
+	// builders wire the serve implementation.
+	CloseServedRound func(ctx context.Context, rt Runtime, b store.Binding) store.Binding
 }
 
 // legacyRegistry is the registry derived from candidates.json and

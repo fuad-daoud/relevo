@@ -200,10 +200,10 @@ func Stop(ctx context.Context, rt Runtime, name string, opts StopOptions) (StopR
 		if err != nil {
 			return err
 		}
-		if b.Owner != "" {
+		if b.Owner != "" && rt.CloseServedRound != nil {
 			// Same order as markerClose: queueReport first, then the served
-			// close, so the closed round's facts are recorded (#344).
-			b = closeServedRound(ctx, rt, b)
+			// close, so the closed round's facts are recorded.
+			b = rt.CloseServedRound(ctx, rt, b)
 		}
 		b.StalledSince = time.Time{}
 		out.Action = how

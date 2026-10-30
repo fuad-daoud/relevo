@@ -5,13 +5,11 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
-	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -599,174 +597,18 @@ func TestServedViewCarriesStalledSince(t *testing.T) {
 	}
 }
 
-func TestCloseServedRoundClean(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	client := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
-
-	bare := t.TempDir()
-	runGit(t, bare, "init", "--bare")
-
-	seedDir := t.TempDir()
-	runGit(t, seedDir, "clone", bare, ".")
-	if err := os.WriteFile(filepath.Join(seedDir, "file.txt"), []byte("seed\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, seedDir, "add", "file.txt")
-	runGit(t, seedDir, "commit", "-m", "init")
-	runGit(t, seedDir, "push", "origin", "HEAD:refs/heads/relevo/api")
-
-	branchHead := strings.TrimSpace(runGit(t, bare, "rev-parse", "refs/heads/relevo/api"))
-
-	wt := t.TempDir()
-	runGit(t, bare, "worktree", "add", wt, "refs/heads/relevo/api")
-
-	rt := Runtime{Git: client}
-	b := store.Binding{
-		Name:     "api",
-		Owner:    "client1",
-		Branch:   "relevo/api",
-		Worktree: wt,
-		Round:    2, // queueReport already advanced Round from 1 to 2
-		Serve: &store.ServeFacts{
-			BareRepo: bare,
-		},
-	}
-
-	res := closeServedRound(ctx, rt, b)
-	if res.Serve.ClosedRound != 1 {
-		t.Fatalf("ClosedRound: got %d, want 1", res.Serve.ClosedRound)
-	}
-	if res.Serve.ResultCommit != branchHead {
-		t.Fatalf("ResultCommit: got %q, want %q", res.Serve.ResultCommit, branchHead)
-	}
-	if res.Serve.DirtyCommit != "" {
-		t.Fatalf("DirtyCommit on clean worktree: got %q, want empty", res.Serve.DirtyCommit)
-	}
-
-	// Side ref must not exist
-	sideSHA, ok, err := client.RefSHA(ctx, bare, "refs/relevo/api/round-1")
-	if err != nil || ok {
-		t.Fatalf("side ref exists on clean worktree: sha=%q, ok=%v, err=%v", sideSHA, ok, err)
-	}
-
-	// Branch must be unchanged
-	headAfter, ok, err := client.RefSHA(ctx, bare, "refs/heads/relevo/api")
-	if err != nil || !ok || headAfter != branchHead {
-		t.Fatalf("branch changed: got %q, want %q", headAfter, branchHead)
-	}
-}
-
-func TestCloseServedRoundDirty(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	client := git.NewClient("git", 5*time.Second, git.DefaultMaxPatchBytes)
-
-	bare := t.TempDir()
-	runGit(t, bare, "init", "--bare")
-
-	seedDir := t.TempDir()
-	runGit(t, seedDir, "clone", bare, ".")
-	if err := os.WriteFile(filepath.Join(seedDir, "file.txt"), []byte("seed\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, seedDir, "add", "file.txt")
-	runGit(t, seedDir, "commit", "-m", "init")
-	runGit(t, seedDir, "push", "origin", "HEAD:refs/heads/relevo/api")
-
-	branchHead := strings.TrimSpace(runGit(t, bare, "rev-parse", "refs/heads/relevo/api"))
-
-	wt := t.TempDir()
-	runGit(t, bare, "worktree", "add", wt, "refs/heads/relevo/api")
-
-	// Make worktree dirty with an untracked file
-	if err := os.WriteFile(filepath.Join(wt, "dirty.txt"), []byte("dirty work\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	rt := Runtime{Git: client}
-	b := store.Binding{
-		Name:     "api",
-		Owner:    "client1",
-		Branch:   "relevo/api",
-		Worktree: wt,
-		Round:    2,
-		Serve: &store.ServeFacts{
-			BareRepo: bare,
-		},
-	}
-
-	res := closeServedRound(ctx, rt, b)
-	if res.Serve.ClosedRound != 1 {
-		t.Fatalf("ClosedRound: got %d, want 1", res.Serve.ClosedRound)
-	}
-	if res.Serve.ResultCommit != branchHead {
-		t.Fatalf("ResultCommit: got %q, want %q", res.Serve.ResultCommit, branchHead)
-	}
-	if res.Serve.DirtyCommit == "" {
-		t.Fatal("DirtyCommit is empty on dirty worktree")
-	}
-
-	// Side ref must exist in bare repo and equal DirtyCommit
-	sideSHA, ok, err := client.RefSHA(ctx, bare, "refs/relevo/api/round-1")
-	if err != nil || !ok {
-		t.Fatalf("side ref missing: ok=%v, err=%v", ok, err)
-	}
-	if sideSHA != res.Serve.DirtyCommit {
-		t.Fatalf("side ref %q != DirtyCommit %q", sideSHA, res.Serve.DirtyCommit)
-	}
-
-	// Side ref parent must be branch head
-	parent := strings.TrimSpace(runGit(t, bare, "rev-parse", sideSHA+"^"))
-	if parent != branchHead {
-		t.Fatalf("side ref parent %q != branchHead %q", parent, branchHead)
-	}
-
-	// Branch must be unchanged
-	headAfter, ok, err := client.RefSHA(ctx, bare, "refs/heads/relevo/api")
-	if err != nil || !ok || headAfter != branchHead {
-		t.Fatalf("branch changed: got %q, want %q", headAfter, branchHead)
-	}
-}
-
-func TestCloseServedRoundGitFailureKeepsFacts(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	fGit := &fakeGit{
-		refSHA: map[string]string{
-			"refs/heads/relevo/api": "commit123",
-		},
-		dirtyErr: errors.New("dirty failure"),
-	}
-
-	rt := Runtime{Git: fGit}
-	b := store.Binding{
-		Name:     "api",
-		Owner:    "client1",
-		Branch:   "relevo/api",
-		Worktree: "/tmp/fake-wt",
-		Round:    2,
-		Serve: &store.ServeFacts{
-			BareRepo:     "/tmp/fake-bare",
-			ClosedRound:  0,
-			ResultCommit: "old-head",
-			DirtyCommit:  "",
-		},
-	}
-
-	// Must not panic, and must leave facts unchanged
-	res := closeServedRound(ctx, rt, b)
-	if res.Serve.ClosedRound != 0 {
-		t.Fatalf("ClosedRound changed on git error: got %d, want 0", res.Serve.ClosedRound)
-	}
-	if res.Serve.ResultCommit != "old-head" {
-		t.Fatalf("ResultCommit changed on git error: got %q, want old-head", res.Serve.ResultCommit)
-	}
-	if res.Serve.DirtyCommit != "" {
-		t.Fatalf("DirtyCommit changed on git error: got %q, want empty", res.Serve.DirtyCommit)
+// recordCloseServedRound is the CloseServedRound hook for the engine tests
+// that pin the close call sites: it records the call and applies the close
+// outcome, so the test proves the site fires while the facts themselves are
+// pinned by internal/serve's tests.
+func recordCloseServedRound(called *bool, resultCommit string) func(context.Context, Runtime, store.Binding) store.Binding {
+	return func(_ context.Context, _ Runtime, b store.Binding) store.Binding {
+		*called = true
+		if b.Serve != nil {
+			b.Serve.ClosedRound = b.Round - 1
+			b.Serve.ResultCommit = resultCommit
+		}
+		return b
 	}
 }
 
@@ -796,7 +638,8 @@ func TestDeliverAndSettleOwnedLeavesQueued(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rt := Runtime{Store: st, Now: time.Now}
+	called := false
+	rt := Runtime{Store: st, Now: time.Now, CloseServedRound: recordCloseServedRound(&called, "")}
 	var got store.Binding
 	err := st.WithLock(func(tx *store.Tx) error {
 		var err error
@@ -817,6 +660,9 @@ func TestDeliverAndSettleOwnedLeavesQueued(t *testing.T) {
 	}
 	if len(entries) == 0 || entries[0].Confirmed {
 		t.Fatalf("payload was confirmed: %+v", entries)
+	}
+	if called {
+		t.Fatal("CloseServedRound hook called: deliverAndSettle never closes")
 	}
 }
 
@@ -873,11 +719,13 @@ func TestReconcileHeadlessOwnedCloseRecordsFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	called := false
 	rt := Runtime{
-		Store:  st,
-		Git:    fGit,
-		Runner: fr,
-		Now:    time.Now,
+		Store:            st,
+		Git:              fGit,
+		Runner:           fr,
+		Now:              time.Now,
+		CloseServedRound: recordCloseServedRound(&called, expectedSHA),
 	}
 
 	var reconciled store.Binding
@@ -901,6 +749,9 @@ func TestReconcileHeadlessOwnedCloseRecordsFacts(t *testing.T) {
 	}
 	if reconciled.Serve.ResultCommit != expectedSHA {
 		t.Fatalf("Serve.ResultCommit: got %q, want %q", reconciled.Serve.ResultCommit, expectedSHA)
+	}
+	if !called {
+		t.Fatal("CloseServedRound hook not called: the marked close must record the served round")
 	}
 }
 
@@ -963,6 +814,8 @@ func TestReconcileHeadlessOwnedUnmarkedCloseRecordsFacts(t *testing.T) {
 	t.Parallel()
 
 	rt, b, _, sha := ownedExitFixture(t)
+	called := false
+	rt.CloseServedRound = recordCloseServedRound(&called, sha)
 	if err := os.MkdirAll(rt.Store.OutDir("api"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -979,6 +832,9 @@ func TestReconcileHeadlessOwnedUnmarkedCloseRecordsFacts(t *testing.T) {
 	if got.Serve.ResultCommit != sha {
 		t.Errorf("Serve.ResultCommit = %q, want %q", got.Serve.ResultCommit, sha)
 	}
+	if !called {
+		t.Fatal("CloseServedRound hook not called: the unmarked close must record the served round")
+	}
 }
 
 // TestReconcileHeadlessOwnedStopRequestedExitRecordsFacts: a served builder
@@ -988,6 +844,8 @@ func TestReconcileHeadlessOwnedStopRequestedExitRecordsFacts(t *testing.T) {
 	t.Parallel()
 
 	rt, b, _, _ := ownedExitFixture(t)
+	called := false
+	rt.CloseServedRound = recordCloseServedRound(&called, "")
 	b.StopRequestedAt = time.Now().Add(-time.Second)
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
@@ -995,6 +853,9 @@ func TestReconcileHeadlessOwnedStopRequestedExitRecordsFacts(t *testing.T) {
 	got := reconcileOwned(t, rt, b)
 	if got.Serve == nil || got.Serve.ClosedRound != 1 {
 		t.Fatalf("Serve.ClosedRound = %+v, want 1", got.Serve)
+	}
+	if !called {
+		t.Fatal("CloseServedRound hook not called: the stop-requested close must record the served round")
 	}
 }
 

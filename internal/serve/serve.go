@@ -430,6 +430,7 @@ func (s *Server) runtimeAt(root string) relevo.Runtime {
 	case isolate.ModeContainer:
 		s.applyContainer(root, &rt)
 	}
+	rt.CloseServedRound = CloseServedRound
 	return rt
 }
 
