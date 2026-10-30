@@ -212,7 +212,7 @@ func sweepOneRoundDir(deps Deps, byName map[string]store.Binding, logged map[str
 		}
 		return path, true, nil
 	}
-	name, round, ok := deps.ParseScratchName(e.Name)
+	name, round, ok := parseScratchName(e.Name)
 	if !ok {
 		return "", false, nil
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -273,7 +274,7 @@ func applyServedCheckRecord(run *store.CheckRun, rec *store.GateRecord) {
 // stored gate.
 func servedCheckSpec(rt Runtime, b store.Binding, run store.CheckRun) gateProcSpec {
 	return gateProcSpec{
-		Dir:      roundTree(rt, b),
+		Dir:      housekeep.RoundTree(housekeepDeps(rt), b),
 		Command:  run.Command,
 		LogPath:  run.LogPath,
 		UnitName: scopeUnitNameFor(scopeGate, b.Owner, b.Name+"-check", run.Round, ""),

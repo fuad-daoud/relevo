@@ -1,11 +1,10 @@
-package relevo
+package housekeep
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -14,6 +13,68 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
+
+// fakeGit is the slice of the git CLI the scratch tests drive: the HEAD and
+// snapshot reads and the detached-worktree add, materialize and remove.
+type fakeGit struct {
+	headCommitID  string
+	headCommitErr error
+
+	snapshotTreeID  string
+	snapshotTreeErr error
+
+	addDetachedWorktreeCalls []addDetachedWorktreeCall
+	addDetachedWorktreeErr   error
+
+	materializeCalls []materializeCall
+	materializeErr   error
+
+	removeWorktreeCalls []removeWorktreeCall
+	removeWorktreeErr   error
+}
+
+type addDetachedWorktreeCall struct{ Dir, Path, Commit string }
+
+type materializeCall struct{ dir, tree string }
+
+type removeWorktreeCall struct {
+	Dir   string
+	Path  string
+	Force bool
+}
+
+func (f *fakeGit) HeadCommit(_ context.Context, dir string) (string, error) {
+	if f.headCommitErr != nil {
+		return "", f.headCommitErr
+	}
+	return f.headCommitID, nil
+}
+
+func (f *fakeGit) SnapshotTree(_ context.Context, dir string) (string, error) {
+	if f.snapshotTreeErr != nil {
+		return "", f.snapshotTreeErr
+	}
+	return f.snapshotTreeID, nil
+}
+
+func (f *fakeGit) AddDetachedWorktree(_ context.Context, dir, path, commit string) error {
+	f.addDetachedWorktreeCalls = append(f.addDetachedWorktreeCalls, addDetachedWorktreeCall{
+		Dir: dir, Path: path, Commit: commit,
+	})
+	return f.addDetachedWorktreeErr
+}
+
+func (f *fakeGit) MaterializeTree(_ context.Context, dir, tree string) error {
+	f.materializeCalls = append(f.materializeCalls, materializeCall{dir, tree})
+	return f.materializeErr
+}
+
+func (f *fakeGit) RemoveWorktree(_ context.Context, dir, path string, force bool) error {
+	f.removeWorktreeCalls = append(f.removeWorktreeCalls, removeWorktreeCall{
+		Dir: dir, Path: path, Force: force,
+	})
+	return f.removeWorktreeErr
+}
 
 // orderedGit wraps fakeGit to record the order of the calls CreateScratch
 // makes: fakeGit's per-method counters cannot tell one sequence from another.
@@ -53,10 +114,10 @@ func TestCreateScratchOrder(t *testing.T) {
 	ctx := context.Background()
 	fg := &fakeGit{headCommitID: "head1", snapshotTreeID: "tree1"}
 	og := &orderedGit{fakeGit: fg}
-	rt := Runtime{Git: og, Store: store.New(t.TempDir())}
+	deps := Deps{Store: store.New(t.TempDir()), Git: og}
 	b := store.Binding{Name: "api", CWD: "/repo"}
 
-	s, err := CreateScratch(ctx, rt, b, 7)
+	s, err := CreateScratch(ctx, deps, b, 7)
 	if err != nil {
 		t.Fatalf("CreateScratch: %v", err)
 	}
@@ -66,7 +127,7 @@ func TestCreateScratchOrder(t *testing.T) {
 		t.Errorf("call order = %v, want %v", og.calls, want)
 	}
 
-	path := rt.Store.ScratchWorktreePath("api", 7)
+	path := deps.Store.ScratchWorktreePath("api", 7)
 	if len(fg.addDetachedWorktreeCalls) != 1 {
 		t.Fatalf("AddDetachedWorktree calls = %d, want 1", len(fg.addDetachedWorktreeCalls))
 	}
@@ -89,10 +150,10 @@ func TestCreateScratchMaterializeFailureRemoves(t *testing.T) {
 
 	ctx := context.Background()
 	fg := &fakeGit{headCommitID: "head1", snapshotTreeID: "tree1", materializeErr: errors.New("boom")}
-	rt := Runtime{Git: fg, Store: store.New(t.TempDir())}
+	deps := Deps{Store: store.New(t.TempDir()), Git: fg}
 	b := store.Binding{Name: "api", CWD: "/repo"}
 
-	if _, err := CreateScratch(ctx, rt, b, 1); err == nil {
+	if _, err := CreateScratch(ctx, deps, b, 1); err == nil {
 		t.Fatal("CreateScratch succeeded, want the materialize error")
 	} else {
 		if !errors.Is(err, ErrScratch) {
@@ -103,7 +164,7 @@ func TestCreateScratchMaterializeFailureRemoves(t *testing.T) {
 		}
 	}
 
-	path := rt.Store.ScratchWorktreePath("api", 1)
+	path := deps.Store.ScratchWorktreePath("api", 1)
 	found := false
 	for _, c := range fg.removeWorktreeCalls {
 		if c.Dir == "/repo" && c.Path == path && c.Force {
@@ -121,15 +182,15 @@ func TestCreateScratchRemovesLeftover(t *testing.T) {
 	ctx := context.Background()
 	fg := &fakeGit{headCommitID: "head1", snapshotTreeID: "tree1"}
 	og := &orderedGit{fakeGit: fg}
-	rt := Runtime{Git: og, Store: store.New(t.TempDir())}
+	deps := Deps{Store: store.New(t.TempDir()), Git: og}
 	b := store.Binding{Name: "api", CWD: "/repo"}
 
-	path := rt.Store.ScratchWorktreePath("api", 1)
+	path := deps.Store.ScratchWorktreePath("api", 1)
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := CreateScratch(ctx, rt, b, 1); err != nil {
+	if _, err := CreateScratch(ctx, deps, b, 1); err != nil {
 		t.Fatalf("CreateScratch: %v", err)
 	}
 
@@ -159,7 +220,44 @@ func TestScratchPathShape(t *testing.T) {
 	}
 }
 
-// TestCreateScratchRealGit drives the lifecycle against real git: a dirty edit
+// scratchRunGit runs git in dir with the test identity pinned, so the
+// real-git tests below do not depend on the developer's own config.
+func scratchRunGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=Test",
+		"GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_COMMITTER_NAME=Test",
+		"GIT_COMMITTER_EMAIL=test@example.com",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_SYSTEM=/dev/null",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return string(out)
+}
+
+// scratchSeedRepo builds a real git repository holding one committed file,
+// so a scratch worktree has something to carry over.
+func scratchSeedRepo(t *testing.T, initial string) string {
+	t.Helper()
+	repo := t.TempDir()
+	scratchRunGit(t, repo, "init")
+	scratchRunGit(t, repo, "config", "user.name", "Test")
+	scratchRunGit(t, repo, "config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte(initial), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scratchRunGit(t, repo, "add", "a.txt")
+	scratchRunGit(t, repo, "commit", "-m", "first")
+	return repo
+}
+
+// TestScratchRealGit drives the lifecycle against real git: a dirty edit
 // survives into the scratch tree, RemoveScratch takes the tree away (twice),
 // and a sweep over three leftovers removes exactly the two whose round is
 // closed.
@@ -168,25 +266,17 @@ func TestScratchRealGit(t *testing.T) {
 
 	ctx := context.Background()
 
-	repo := t.TempDir()
-	runGit(t, repo, "init")
-	runGit(t, repo, "config", "user.name", "Test")
-	runGit(t, repo, "config", "user.email", "test@example.com")
-	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("one\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, repo, "add", "a.txt")
-	runGit(t, repo, "commit", "-m", "first")
+	repo := scratchSeedRepo(t, "one\n")
 	// The dirty edit CreateScratch must carry over.
 	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("two\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	st := store.New(t.TempDir())
-	rt := Runtime{Git: git.NewClient("git", 0, 0), Store: st}
+	deps := Deps{Store: st, Git: git.NewClient("git", 0, 0)}
 	b := store.Binding{Name: "api", CWD: repo}
 
-	s, err := CreateScratch(ctx, rt, b, 1)
+	s, err := CreateScratch(ctx, deps, b, 1)
 	if err != nil {
 		t.Fatalf("CreateScratch: %v", err)
 	}
@@ -204,23 +294,31 @@ func TestScratchRealGit(t *testing.T) {
 		t.Errorf("scratch a.txt = %q, want the dirty edit %q", got, "two\n")
 	}
 
-	if err := RemoveScratch(ctx, rt, b, 1); err != nil {
+	if err := RemoveScratch(ctx, deps, b, 1); err != nil {
 		t.Fatalf("RemoveScratch: %v", err)
 	}
 	if _, err := os.Stat(s.Path); !os.IsNotExist(err) {
 		t.Errorf("scratch still present after RemoveScratch: %v", err)
 	}
-	if err := RemoveScratch(ctx, rt, b, 1); err != nil {
+	if err := RemoveScratch(ctx, deps, b, 1); err != nil {
 		t.Errorf("second RemoveScratch = %v, want nil", err)
 	}
 
-	// Three leftovers. api-002 has a binding record, so the sweep takes the
-	// RemoveWorktree branch; web's have none and go through their .git file.
+	scratchSweepClosedRounds(t, ctx, deps, repo)
+}
+
+// scratchSweepClosedRounds leaves three leftover scratches and sweeps with
+// round 4 kept: api-002 has a binding record, so the sweep takes the
+// RemoveWorktree branch, while web's have none and go through their .git
+// file. Exactly the two whose round is closed are removed.
+func scratchSweepClosedRounds(t *testing.T, ctx context.Context, deps Deps, repo string) {
+	t.Helper()
+	st := deps.Store
 	for _, lo := range []struct {
 		binding string
 		round   int
 	}{{"api", 2}, {"web", 3}, {"web", 4}} {
-		if _, err := CreateScratch(ctx, rt, store.Binding{Name: lo.binding, CWD: repo}, lo.round); err != nil {
+		if _, err := CreateScratch(ctx, deps, store.Binding{Name: lo.binding, CWD: repo}, lo.round); err != nil {
 			t.Fatalf("CreateScratch(%s, %d): %v", lo.binding, lo.round, err)
 		}
 	}
@@ -228,7 +326,7 @@ func TestScratchRealGit(t *testing.T) {
 		t.Fatalf("save binding api: %v", err)
 	}
 
-	removed, err := SweepScratch(ctx, rt, func(binding string, round int) bool {
+	removed, err := SweepScratch(ctx, deps, func(binding string, round int) bool {
 		return binding == "web" && round == 4
 	})
 	if err != nil {
@@ -257,29 +355,21 @@ func TestCreateScratchFromUsesTheGivenTree(t *testing.T) {
 
 	ctx := context.Background()
 
-	repo := t.TempDir()
-	runGit(t, repo, "init")
-	runGit(t, repo, "config", "user.name", "Test")
-	runGit(t, repo, "config", "user.email", "test@example.com")
-	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("one\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit(t, repo, "add", "a.txt")
-	runGit(t, repo, "commit", "-m", "first")
+	repo := scratchSeedRepo(t, "one\n")
 
 	st := store.New(t.TempDir())
-	rt := Runtime{Git: git.NewClient("git", 0, 0), Store: st}
+	deps := Deps{Store: st, Git: git.NewClient("git", 0, 0)}
 	b := store.Binding{Name: "api", CWD: repo}
 
 	// The earlier state: a.txt holds "two".
 	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("two\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	head, err := rt.Git.HeadCommit(ctx, repo)
+	head, err := deps.Git.HeadCommit(ctx, repo)
 	if err != nil {
 		t.Fatalf("HeadCommit: %v", err)
 	}
-	tree, err := rt.Git.SnapshotTree(ctx, repo)
+	tree, err := deps.Git.SnapshotTree(ctx, repo)
 	if err != nil {
 		t.Fatalf("SnapshotTree: %v", err)
 	}
@@ -289,7 +379,7 @@ func TestCreateScratchFromUsesTheGivenTree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := CreateScratchFrom(ctx, rt, b, 1, head, tree)
+	s, err := CreateScratchFrom(ctx, deps, b, 1, head, tree)
 	if err != nil {
 		t.Fatalf("CreateScratchFrom: %v", err)
 	}
@@ -304,7 +394,7 @@ func TestCreateScratchFromUsesTheGivenTree(t *testing.T) {
 		t.Errorf("scratch a.txt = %q, want the earlier state %q", got, "two\n")
 	}
 
-	if err := RemoveScratch(ctx, rt, b, 1); err != nil {
+	if err := RemoveScratch(ctx, deps, b, 1); err != nil {
 		t.Fatalf("RemoveScratch: %v", err)
 	}
 }
@@ -312,14 +402,13 @@ func TestCreateScratchFromUsesTheGivenTree(t *testing.T) {
 // TestSweepScratchDoesNotFollowSymlinkedScratchDir pins that a .scratch entry
 // swapped for a symlink out of .worktrees is refused by the sweep, by the
 // per-entry removal and by the .git read, so a directory outside the binding is
-// never removed. It covers scratch.go's SweepScratch, removeScratchEntry and
-// scratchRepoFromRoot, and removeScratchPath.
+// never removed.
 func TestSweepScratchDoesNotFollowSymlinkedScratchDir(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	st := store.New(t.TempDir())
-	rt := Runtime{Store: st, Git: &fakeGit{}}
+	deps := Deps{Store: st, Git: &fakeGit{}}
 
 	if err := os.MkdirAll(st.WorktreeDir(), 0o755); err != nil {
 		t.Fatal(err)
@@ -336,7 +425,7 @@ func TestSweepScratchDoesNotFollowSymlinkedScratchDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := SweepScratch(ctx, rt, nil); err == nil {
+	if _, err := SweepScratch(ctx, deps, nil); err == nil {
 		t.Errorf("SweepScratch followed a symlinked .scratch, want a refusal")
 	}
 	if _, err := os.Stat(work); err != nil {
@@ -347,9 +436,9 @@ func TestSweepScratchDoesNotFollowSymlinkedScratchDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	rel := filepath.Join(".scratch", "x-001")
-	if err := removeScratchEntry(ctx, rt, root, "x", rel, st.ScratchWorktreePath("x", 1)); err == nil {
+	if err := removeScratchEntry(ctx, deps, root, "x", rel, st.ScratchWorktreePath("x", 1)); err == nil {
 		t.Errorf("removeScratchEntry followed an escaping .scratch, want a refusal")
 	}
 	if _, err := os.Stat(work); err != nil {
@@ -369,16 +458,14 @@ func TestSweepScratchDoesNotFollowSymlinkedScratchDir(t *testing.T) {
 // cut from that tree then cleans a scratch whose source no longer exists. Both
 // gone means the scratch is already removed -- no git call, no cleanup warning.
 func TestRemoveScratchSkipsWhenTheSourceAndTheScratchAreGone(t *testing.T) {
-	t.Parallel()
-
-	rt := newRuntime(t)
+	st := store.New(t.TempDir())
 	fg := &fakeGit{}
-	rt.Git = fg
+	deps := Deps{Store: st, Git: fg}
 	b := store.Binding{
 		Name: "reader-bind", CWD: filepath.Join(t.TempDir(), "gone"), Shape: store.ShapeReader, Round: 1,
 	}
 
-	if err := RemoveScratch(context.Background(), rt, b, 1); err != nil {
+	if err := RemoveScratch(context.Background(), deps, b, 1); err != nil {
 		t.Fatalf("RemoveScratch = %v, want nil when the source tree and the scratch are both gone", err)
 	}
 	if len(fg.removeWorktreeCalls) != 0 {
@@ -390,12 +477,10 @@ func TestRemoveScratchSkipsWhenTheSourceAndTheScratchAreGone(t *testing.T) {
 // narrow: a scratch path that still exists is removed even when its source
 // tree is gone.
 func TestRemoveScratchRemovesARealScratchEvenWhenTheSourceIsGone(t *testing.T) {
-	t.Parallel()
-
-	rt := newRuntime(t)
+	st := store.New(t.TempDir())
 	fg := &fakeGit{}
-	rt.Git = fg
-	scratch := rt.Store.ScratchWorktreePath("reader-bind", 1)
+	deps := Deps{Store: st, Git: fg}
+	scratch := st.ScratchWorktreePath("reader-bind", 1)
 	if err := os.MkdirAll(scratch, 0o755); err != nil {
 		t.Fatalf("mkdir scratch: %v", err)
 	}
@@ -403,40 +488,38 @@ func TestRemoveScratchRemovesARealScratchEvenWhenTheSourceIsGone(t *testing.T) {
 		Name: "reader-bind", CWD: filepath.Join(t.TempDir(), "gone"), Shape: store.ShapeReader, Round: 1,
 	}
 
-	if err := RemoveScratch(context.Background(), rt, b, 1); err != nil {
-		t.Fatalf("RemoveScratch = %v, want nil", err)
+	if err := RemoveScratch(context.Background(), deps, b, 1); err != nil {
+		t.Fatalf("RemoveScratch: %v, want nil", err)
 	}
 	if len(fg.removeWorktreeCalls) != 1 {
 		t.Errorf("RemoveWorktree calls = %d, want 1", len(fg.removeWorktreeCalls))
 	}
 }
 
-// TestDoneOnAReaderWithAGoneSourceAndScratchLogsNoWarning pins the release
-// symptom end to end: a reader whose source tree is gone and whose scratch is
-// gone runs done without the "scratch worktree not removed" warning, even when
-// the git cleanup would fail.
-func TestDoneOnAReaderWithAGoneSourceAndScratchLogsNoWarning(t *testing.T) {
-	var logged bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
-	defer slog.SetDefault(previous)
+// TestRoundTreeKeepsTheRootUntouched pins the root case: no subdirectory, the
+// tree itself, unchanged. A join that turned an empty prefix into "./" would
+// leave a different string.
+func TestRoundTreeKeepsTheRootUntouched(t *testing.T) {
+	t.Parallel()
 
-	rt := newRuntime(t)
-	fg := &fakeGit{removeWorktreeErr: errors.New("chdir /gone: no such file or directory")}
-	rt.Git = fg
-	b := store.Binding{
-		Name: "reader-bind", CWD: filepath.Join(t.TempDir(), "gone"),
-		Shape: store.ShapeReader, Round: 1, State: store.StateActive,
-		Builder: store.Endpoint{Mode: store.ModeHeadless},
+	deps := Deps{Store: store.New(t.TempDir())}
+	b := store.Binding{Name: "a", CWD: "/tree"}
+	if got := RoundTree(deps, b); got != "/tree" {
+		t.Errorf("RoundTree = %q, want the tree itself", got)
 	}
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
+}
 
-	if _, err := Done(context.Background(), rt, "reader-bind"); err != nil {
-		t.Fatalf("Done: %v", err)
-	}
-	if strings.Contains(logged.String(), "scratch worktree not removed") {
-		t.Errorf("done logged the scratch cleanup warning:\n%s", logged.String())
+// TestReaderRoundRunsInTheScratchSubdirectory pins the reader side of the
+// round's directory: the throwaway worktree plus the same subdirectory. A
+// join left on the writer side only would put the scratch round at the
+// worktree's root.
+func TestReaderRoundRunsInTheScratchSubdirectory(t *testing.T) {
+	t.Parallel()
+
+	deps := Deps{Store: store.New(t.TempDir())}
+	b := store.Binding{Name: "rdr", CWD: "/tree", Shape: store.ShapeReader, Round: 3, Subdir: "src/api"}
+	want := filepath.Join(deps.Store.ScratchWorktreePath("rdr", 3), "src", "api")
+	if got := RoundTree(deps, b); got != want {
+		t.Errorf("RoundTree = %q, want %q", got, want)
 	}
 }

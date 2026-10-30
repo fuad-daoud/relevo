@@ -327,7 +327,7 @@ func removeReaderScratch(ctx context.Context, rt Runtime, b store.Binding, round
 	if b.Shape != store.ShapeReader || rt.Git == nil {
 		return
 	}
-	if err := RemoveScratch(ctx, rt, b, round); err != nil {
+	if err := housekeep.RemoveScratch(ctx, housekeepDeps(rt), b, round); err != nil {
 		slog.Warn("scratch worktree not removed", "binding", b.Name, "round", round, "err", err)
 	}
 }

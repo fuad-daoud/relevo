@@ -30,8 +30,9 @@ type Deps struct {
 	ServedCheckUnit func(b store.Binding, run store.CheckRun) string
 	// ChainCheckUnit names the gate scope unit for one chain check run.
 	ChainCheckUnit func(c db.ChainRow, run int) string
-	// ParseScratchName splits a scratch directory name "<name>-<NNN>".
-	ParseScratchName func(entry string) (name string, round int, ok bool)
+	// Git is the slice of the git CLI scratch worktrees need. The engine's
+	// git client satisfies it.
+	Git Git
 }
 
 // Prefixer is the narrow git surface ResolveSubdir needs: the repository
@@ -39,4 +40,15 @@ type Deps struct {
 // satisfies it.
 type Prefixer interface {
 	ShowPrefix(ctx context.Context, dir string) (string, error)
+}
+
+// Git is the narrow git surface scratch worktrees need: the HEAD and
+// snapshot reads and the detached-worktree add, materialize and remove. The
+// engine's git client satisfies it.
+type Git interface {
+	HeadCommit(ctx context.Context, dir string) (string, error)
+	SnapshotTree(ctx context.Context, dir string) (string, error)
+	AddDetachedWorktree(ctx context.Context, dir, path, commit string) error
+	MaterializeTree(ctx context.Context, dir, tree string) error
+	RemoveWorktree(ctx context.Context, dir, path string, force bool) error
 }

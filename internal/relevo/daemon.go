@@ -659,7 +659,7 @@ func sweepReaderScratch(ctx context.Context, rt Runtime, bindings []store.Bindin
 		keep[b.Name] = b.Round
 	}
 
-	removed, err := SweepScratch(ctx, rt, func(name string, round int) bool {
+	removed, err := housekeep.SweepScratch(ctx, housekeepDeps(rt), func(name string, round int) bool {
 		r, ok := keep[name]
 		return ok && round >= r
 	})

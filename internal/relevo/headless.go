@@ -211,7 +211,7 @@ func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if err != nil {
 		return b, err
 	}
-	argv, err := candidate.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, roundTree(rt, b), rt.Store.OutDir(b.Name), rt.Store.PromptPath(b.Name, b.Round), chainReadDir(rt, tx, b.Name))
+	argv, err := candidate.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, housekeep.RoundTree(housekeepDeps(rt), b), rt.Store.OutDir(b.Name), rt.Store.PromptPath(b.Name, b.Round), chainReadDir(rt, tx, b.Name))
 	if err != nil {
 		return b, err
 	}
@@ -321,8 +321,8 @@ func startProcessResuming(ctx context.Context, rt Runtime, tx *store.Tx, b store
 	// missing scratch fails the round rather than running in the binding's
 	// tree, and never falls back to b.CWD.
 	if b.Shape == store.ShapeReader {
-		if _, err := os.Stat(roundTree(rt, b)); err != nil {
-			if _, err := CreateScratchFrom(ctx, rt, b, b.Round, b.RoundBaselineHead, b.RoundBaselineTree); err != nil {
+		if _, err := os.Stat(housekeep.RoundTree(housekeepDeps(rt), b)); err != nil {
+			if _, err := housekeep.CreateScratchFrom(ctx, housekeepDeps(rt), b, b.Round, b.RoundBaselineHead, b.RoundBaselineTree); err != nil {
 				return b, err
 			}
 		}
@@ -333,13 +333,13 @@ func startProcessResuming(ctx context.Context, rt Runtime, tx *store.Tx, b store
 	// ledger record -- so a failed mkdir gates nothing and spends no
 	// relaunch attempt.
 	tmpDir, prepEnv, cleanupProc, err := prepareProc(ctx, rt, procRequest{
-		kind: procKindRound, key: b.Name, tree: roundTree(rt, b), binding: &b,
+		kind: procKindRound, key: b.Name, tree: housekeep.RoundTree(housekeepDeps(rt), b), binding: &b,
 	})
 	if err != nil {
 		return b, err
 	}
 	spec := spawn.ProcSpec{
-		Dir: roundTree(rt, b), Argv: argv,
+		Dir: housekeep.RoundTree(housekeepDeps(rt), b), Argv: argv,
 		Env:        append(append(roundEnvFor(b, accountFor(rt, c)), shimEnv...), prepEnv...),
 		TmpDir:     tmpDir,
 		LogPath:    logPath,
@@ -441,7 +441,7 @@ func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	if err != nil {
 		return b, err
 	}
-	sel, err := h.ResumeBuild(sessionID, l, prompt, roundBudget(b), roundTree(rt, b), rt.Store.OutDir(b.Name), rt.Store.PromptPath(b.Name, b.Round), chainReadDir(rt, tx, b.Name), definition)
+	sel, err := h.ResumeBuild(sessionID, l, prompt, roundBudget(b), housekeep.RoundTree(housekeepDeps(rt), b), rt.Store.OutDir(b.Name), rt.Store.PromptPath(b.Name, b.Round), chainReadDir(rt, tx, b.Name), definition)
 	if err != nil {
 		return b, err
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/trail"
@@ -34,7 +35,7 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 	}
 
 	spec := gateProcSpec{
-		Dir:      roundTree(rt, b),
+		Dir:      housekeep.RoundTree(housekeepDeps(rt), b),
 		Command:  b.Gate,
 		LogPath:  rt.Store.GateLogPath(b.Name, b.Round),
 		UnitName: scopeUnitNameFor(scopeGate, b.Owner, b.Name, b.Round, ""),

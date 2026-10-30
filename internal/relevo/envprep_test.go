@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -162,7 +163,7 @@ func TestSendHaltsWithEnvironmentReason(t *testing.T) {
 		t.Fatal("Send succeeded on a full disk")
 	}
 	b, _ := rt.Store.Load("webshop")
-	if want := diskFullText(roundTree(rt, b)); b.Halt != want {
+	if want := diskFullText(housekeep.RoundTree(housekeepDeps(rt), b)); b.Halt != want {
 		t.Errorf("Halt = %q, want %q", b.Halt, want)
 	}
 	if b.State != store.StateNeedsYou {
@@ -220,7 +221,7 @@ func TestServedCheckRecordsEnvironmentNote(t *testing.T) {
 	if got.CheckRun == nil || got.CheckRun.Result != "error" {
 		t.Fatalf("CheckRun = %+v, want an errored run", got.CheckRun)
 	}
-	if want := diskFullText(roundTree(rt, b)); got.CheckRun.Note != want {
+	if want := diskFullText(housekeep.RoundTree(housekeepDeps(rt), b)); got.CheckRun.Note != want {
 		t.Errorf("Note = %q, want %q", got.CheckRun.Note, want)
 	}
 	if len(fr.specs) != 0 {

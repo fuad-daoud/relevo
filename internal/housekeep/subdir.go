@@ -57,7 +57,7 @@ func ResolveSubdir(ctx context.Context, git Prefixer, repo string) string {
 // plus its subdirectory. CWD keeps the tree's own meaning -- the tree relevo
 // cut, the repository every git call runs against -- so only the round's
 // working directory is joined here; every surface that launches a process in
-// it goes through roundTree, which calls this.
+// it goes through RoundTree, which calls this.
 func RoundDir(b store.Binding) string {
 	if b.Subdir == "" {
 		return b.CWD

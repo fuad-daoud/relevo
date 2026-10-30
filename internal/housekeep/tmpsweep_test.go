@@ -54,25 +54,6 @@ func testScopeUnit(owner, name string, round int) string {
 	return "relevo-gate-" + testScopeOwner8(owner) + "-" + testSafeUnitPart(name) + "-" + strconv.Itoa(round)
 }
 
-func testParseScratchName(entry string) (string, int, bool) {
-	i := strings.LastIndex(entry, "-")
-	if i <= 0 || i == len(entry)-1 {
-		return "", 0, false
-	}
-	name := entry[:i]
-	digits := entry[i+1:]
-	for j := 0; j < len(digits); j++ {
-		if digits[j] < '0' || digits[j] > '9' {
-			return "", 0, false
-		}
-	}
-	round, err := strconv.Atoi(digits)
-	if err != nil {
-		return "", 0, false
-	}
-	return name, round, true
-}
-
 func testSweepDeps(st *store.Store, root string) Deps {
 	return Deps{
 		Store:             st,
@@ -90,7 +71,6 @@ func testSweepDeps(st *store.Store, root string) Deps {
 		ChainCheckUnit: func(c db.ChainRow, run int) string {
 			return testScopeUnit(c.Owner, c.Name+"-check", run)
 		},
-		ParseScratchName: testParseScratchName,
 	}
 }
 

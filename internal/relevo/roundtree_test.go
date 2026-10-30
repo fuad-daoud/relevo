@@ -8,34 +8,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestRoundTreeKeepsTheRootUntouched pins the root case: no subdirectory, the
-// tree itself, unchanged. A join that turned an empty prefix into "./" would
-// leave a different string.
-func TestRoundTreeKeepsTheRootUntouched(t *testing.T) {
-	t.Parallel()
-
-	rt := newRuntime(t)
-	b := store.Binding{Name: "a", CWD: "/tree"}
-	if got := roundTree(rt, b); got != "/tree" {
-		t.Errorf("roundTree = %q, want the tree itself", got)
-	}
-}
-
-// TestReaderRoundRunsInTheScratchSubdirectory pins the reader side of the
-// round's directory: the throwaway worktree plus the same subdirectory. A
-// join left on the writer side only would put the scratch round at the
-// worktree's root.
-func TestReaderRoundRunsInTheScratchSubdirectory(t *testing.T) {
-	t.Parallel()
-
-	rt := newRuntime(t)
-	b := store.Binding{Name: "rdr", CWD: "/tree", Shape: store.ShapeReader, Round: 3, Subdir: "src/api"}
-	want := filepath.Join(rt.Store.ScratchWorktreePath("rdr", 3), "src", "api")
-	if got := roundTree(rt, b); got != want {
-		t.Errorf("roundTree = %q, want %q", got, want)
-	}
-}
-
 // TestGateRunsInTheRoundDirectory pins the gate's directory on the same rule:
 // the gate process of a bind started below the root runs in the tree plus its
 // subdirectory. A spec that named b.CWD would check the round's files at the
