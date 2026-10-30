@@ -1309,7 +1309,7 @@ func TestAddRemoteRefusesWithoutGitIdentity(t *testing.T) {
 	rt := Runtime{Store: st, Git: fg, Remote: fr, Now: time.Now, MasterMinds: addRemoteMasterMind(t)}
 
 	_, err := Add(ctx, rt, AddOptions{Name: "api", Server: "zen", Repo: "/fake/repo"})
-	if !errors.Is(err, ErrNoGitIdentity) {
+	if !errors.Is(err, remote.ErrNoGitIdentity) {
 		t.Fatalf("Add err = %v, want ErrNoGitIdentity", err)
 	}
 	if !strings.Contains(err.Error(), "git config user.email") {

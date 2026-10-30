@@ -533,7 +533,7 @@ func chainMirrorMember(opts ChainOptions, plan chainServerPlan, v remote.ChainMe
 		RepoRef:          repoRef,
 		Feature:          opts.Feature,
 		Ticket:           plan.ticket,
-		Link:             remoteLink(bv),
+		Link:             remote.Link(bv),
 		RecordID:         id,
 	}
 	if writer {
