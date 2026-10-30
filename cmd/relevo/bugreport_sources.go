@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/bugreport"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/release"
@@ -182,9 +183,9 @@ func doctorSource(rt relevo.Runtime, L config.Loaded) bugreport.Source {
 		if rt.Config == nil {
 			return bugreport.Section{}, errors.New("no machine database")
 		}
-		rep, err := doctorReport(rt, L)
+		rep, err := doctor.RunReport(rt, L, doctorDeps(rt))
 		if err != nil {
-			return bugreport.Section{}, err
+			return bugreport.Section{}, fail(codeInternal, "%v", err)
 		}
 		return bugreport.DoctorSection(doctorMirror(doctorDocOf(rep))), nil
 	}}

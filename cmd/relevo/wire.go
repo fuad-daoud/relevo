@@ -27,6 +27,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/setup"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -248,7 +249,7 @@ func newRuntimeWith(root string, d *db.DB, st *store.Store) (relevo.Runtime, err
 		return relevo.Runtime{}, err
 	}
 	rt.Config = cs
-	noteUnconfigured(activeVerb, rt.Candidates.Len() > 0)
+	setup.NoteUnconfigured(activeVerb, rt.Candidates.Len() > 0)
 	return rt, nil
 }
 
