@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -520,7 +521,7 @@ func chainCheckVisit(tx *store.Tx, name, step string) (int, error) {
 func chainCheckLogTarget(tx *store.Tx, c db.ChainRow) (string, int, error) {
 	member := c.Builder
 	if member == "" {
-		if members := chainMembersOf(c); len(members) > 0 {
+		if members := view.MembersOf(c); len(members) > 0 {
 			member = members[0]
 		}
 	}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 type pendingDelivery struct {
@@ -17,7 +18,7 @@ type pendingDelivery struct {
 // members of c that a resume should supersede upon success.
 func collectPendingChainDeliveries(tx *store.Tx, c db.ChainRow) ([]pendingDelivery, error) {
 	var out []pendingDelivery
-	for _, member := range chainEndMembers(tx, c) {
+	for _, member := range view.EndMembers(tx, c) {
 		pending, err := tx.PendingForMasterMindThrough(member, 0)
 		if err != nil {
 			return nil, err

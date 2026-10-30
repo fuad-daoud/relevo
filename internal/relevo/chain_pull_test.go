@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
+	relevoview "github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -692,7 +693,7 @@ func TestChainPullCreatesAMemberTheServerAdded(t *testing.T) {
 
 // TestChainPullAddedMemberGetsAMemberRow pins the chain_member write for a late
 // member: a server member the mirror creates gets its chain_member row beside
-// its binding, so chainReadMembers and chainEndMembers include it.
+// its binding, so view.ReadMembers and view.EndMembers include it.
 func TestChainPullAddedMemberGetsAMemberRow(t *testing.T) {
 	t.Parallel()
 
@@ -726,11 +727,11 @@ func TestChainPullAddedMemberGetsAMemberRow(t *testing.T) {
 	}
 
 	row := chainStoredRow(t, rt, "shop")
-	if got := chainReadMembers(rt.Store, row); !slices.Contains(got, "shop-sec") {
-		t.Errorf("chainReadMembers = %v, want shop-sec", got)
+	if got := relevoview.ReadMembers(rt.Store, row); !slices.Contains(got, "shop-sec") {
+		t.Errorf("view.ReadMembers = %v, want shop-sec", got)
 	}
-	if got := chainEndMembers(rt.Store, row); !slices.Contains(got, "shop-sec") {
-		t.Errorf("chainEndMembers = %v, want shop-sec", got)
+	if got := relevoview.EndMembers(rt.Store, row); !slices.Contains(got, "shop-sec") {
+		t.Errorf("view.EndMembers = %v, want shop-sec", got)
 	}
 }
 

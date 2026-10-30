@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -466,7 +467,7 @@ func TestChainDoneReleasesEveryMemberAndMarksDone(t *testing.T) {
 	if row.Status != string(chain.StatusDone) || row.Phase != string(chain.PhaseFinished) {
 		t.Errorf("chain = status %q phase %q, want done/finished", row.Status, row.Phase)
 	}
-	for _, name := range chainMembersOf(row) {
+	for _, name := range view.MembersOf(row) {
 		if b := chainBinding(t, rt, name); b.State != store.StateDone {
 			t.Errorf("member %s state = %q, want done", name, b.State)
 		}

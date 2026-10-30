@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // ChainWaitTarget decides what `relevo wait --name <n>` waits on when the
@@ -148,7 +149,7 @@ func waitChainEnd(ctx context.Context, rt Runtime, c db.ChainRow, peek bool) (Wa
 // delivery.
 func chainEndEntries(ctx context.Context, rt Runtime, c db.ChainRow) ([]delivery.Delivered, error) {
 	var collected []delivery.Delivered
-	for _, member := range chainReadMembers(rt.Store, c) {
+	for _, member := range view.ReadMembers(rt.Store, c) {
 		entries, err := delivery.PullPendingThroughEntries(ctx, rt.Store, member, "wait", 0)
 		if err != nil {
 			return nil, err

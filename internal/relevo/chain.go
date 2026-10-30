@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -179,7 +180,7 @@ func chainRoundGate(tx *store.Tx, builder string, round int) (*store.GateRecord,
 // which is the one case a chain ends silently. A read failure that is not
 // "gone" is returned rather than treated as a missing member.
 func chainDeliveryMember(tx *store.Tx, c db.ChainRow) (name string, b store.Binding, ok bool, err error) {
-	for _, member := range chainEndMembers(tx, c) {
+	for _, member := range view.EndMembers(tx, c) {
 		mb, lerr := tx.Load(member)
 		if errors.Is(lerr, store.ErrNotFound) {
 			continue

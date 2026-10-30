@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -205,7 +206,7 @@ func chainPullPlan(rt Runtime, c db.ChainRow) (plan chainServerPlan, repoRef *st
 		settings: set, repo: c.Repo, ticket: c.Ticket,
 		base: c.Base, server: c.Server, mastermindID: c.MasterMindID,
 	}
-	for _, name := range chainMembersOf(c) {
+	for _, name := range view.MembersOf(c) {
 		b, lerr := rt.Store.Load(name)
 		if errors.Is(lerr, store.ErrNotFound) {
 			continue

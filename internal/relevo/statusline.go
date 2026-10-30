@@ -92,7 +92,7 @@ func narrowBindings(bindings []store.Binding, sc Scope) []store.Binding {
 func chainScopeBindings(rt Runtime, bindings []store.Binding, chains []db.ChainRow, sc Scope) []store.Binding {
 	member := map[string]bool{}
 	for _, c := range chains {
-		for _, name := range chainReadMembers(rt.Store, c) {
+		for _, name := range view.ReadMembers(rt.Store, c) {
 			member[name] = true
 		}
 	}
@@ -123,7 +123,7 @@ func doneHiddenBy(s *store.Store, bindings []store.Binding, chains []db.ChainRow
 		present[b.Name] = true
 	}
 	for _, c := range chains {
-		for _, name := range chainReadMembers(s, c) {
+		for _, name := range view.ReadMembers(s, c) {
 			member[name] = true
 		}
 	}
@@ -137,7 +137,7 @@ func doneHiddenBy(s *store.Store, bindings []store.Binding, chains []db.ChainRow
 		if c.Parent != "" || !inMastermindScope(c.MasterMindID, sc) {
 			continue
 		}
-		if chainStoreState(c.Status) == store.StateDone && anyPresent(chainReadMembers(s, c), present) {
+		if chainStoreState(c.Status) == store.StateDone && anyPresent(view.ReadMembers(s, c), present) {
 			hidden++
 		}
 	}

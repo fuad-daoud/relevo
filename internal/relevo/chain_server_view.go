@@ -54,7 +54,7 @@ func chainServerStatus(ctx context.Context, rt Runtime, c db.ChainRow) (view.Rep
 	}
 
 	rows := []view.BindingStatus{row}
-	for _, member := range chainMembersOf(c) {
+	for _, member := range view.MembersOf(c) {
 		for _, b := range rep.Bindings {
 			if b.Name == member {
 				rows = append(rows, b)
@@ -303,7 +303,7 @@ func chainServerDone(ctx context.Context, rt Runtime, c db.ChainRow) (DoneResult
 	}
 	var out DoneResult
 	first := true
-	for _, member := range chainMembersOf(row) {
+	for _, member := range view.MembersOf(row) {
 		res, derr := Done(ctx, rt, member)
 		if errors.Is(derr, store.ErrNotFound) {
 			continue
@@ -373,8 +373,8 @@ func chainResultFromMirror(ctx context.Context, rt Runtime, name string) (ChainR
 // chainStoredMembersOf loads the members a row names, skipping a record that
 // is gone: a released member is not an error for a read verb.
 func chainStoredMembersOf(rt Runtime, c db.ChainRow) ([]store.Binding, error) {
-	out := make([]store.Binding, 0, len(chainMembersOf(c)))
-	for _, name := range chainMembersOf(c) {
+	out := make([]store.Binding, 0, len(view.MembersOf(c)))
+	for _, name := range view.MembersOf(c) {
 		b, err := rt.Store.Load(name)
 		if errors.Is(err, store.ErrNotFound) {
 			continue

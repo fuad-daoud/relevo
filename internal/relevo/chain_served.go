@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
+	relevoview "github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -448,7 +449,7 @@ func ServedChainView(rt Runtime, name string, recordID func(string) string, inst
 	if len(c.StateJSON) > 0 {
 		view.State = c.StateJSON
 	}
-	for _, member := range chainMembersOf(c) {
+	for _, member := range relevoview.MembersOf(c) {
 		b, err := rt.Store.Load(member)
 		if err != nil {
 			return remote.ChainView{}, err
@@ -487,6 +488,6 @@ func ServedChainView(rt Runtime, name string, recordID func(string) string, inst
 			Round: e.Round, Plan: e.Plan, Event: e.Event, Action: e.Action, Reason: e.Reason,
 		})
 	}
-	view.Findings = chainFindingsOfState(c)
+	view.Findings = relevoview.FindingsOfState(c)
 	return view, nil
 }

@@ -144,7 +144,7 @@ func chainDocEntry(ctx context.Context, rt Runtime, c db.ChainRow, now time.Time
 		traceRows, _ = rt.Store.ChainEvents(c.Name)
 	}
 
-	memberNames := chainReadMembers(rt.Store, c)
+	memberNames := view.ReadMembers(rt.Store, c)
 	members := make([]view.BindingStatus, 0, len(memberNames))
 	for _, mName := range memberNames {
 		if bs, ok := repByName[mName]; ok {

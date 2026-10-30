@@ -10,19 +10,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
-// chainMembersOf is a chain's member binding names in the order a chain view
-// lists them: the builder first, then the reviewer, the planner and the
-// security member. A part the row leaves empty is skipped.
-func chainMembersOf(c db.ChainRow) []string {
-	var out []string
-	for _, name := range []string{c.Builder, c.Reviewer, c.Planner, c.Security} {
-		if name != "" {
-			out = append(out, name)
-		}
-	}
-	return out
-}
-
 // chainFactsOf is one chain row as the view types carry it. A halted or
 // stopped chain whose builder member has a round open -- a manual round a
 // human sent while the chain was down -- carries that round as ManualRound, so
@@ -54,7 +41,7 @@ func chainFactsOf(s *store.Store, c db.ChainRow) view.ChainFacts {
 	// pending forever. Halted and stopped chains keep the names, where pending
 	// is meaningful and interacts with ManualRound.
 	if c.Status != string(chain.StatusDone) {
-		f.PendingMembers = chainPendingMembers(s, c)
+		f.PendingMembers = view.PendingMembers(s, c)
 	}
 	if (c.Status == string(chain.StatusHalted) || c.Status == string(chain.StatusStopped)) &&
 		chainBuilderRoundOpen(s, c) {
@@ -149,7 +136,7 @@ func viewChainRow(s *store.Store, c db.ChainRow) view.BindingStatus {
 func applyChains(s *store.Store, rep view.Report, chains []db.ChainRow) view.Report {
 	member := map[string]db.ChainRow{}
 	for _, c := range chains {
-		for _, name := range chainReadMembers(s, c) {
+		for _, name := range view.ReadMembers(s, c) {
 			member[name] = c
 		}
 	}
@@ -261,7 +248,7 @@ func ChainStatus(ctx context.Context, rt Runtime, name string) (view.Report, err
 	}
 
 	rows := []view.BindingStatus{viewChainRow(rt.Store, c)}
-	for _, member := range chainReadMembers(rt.Store, c) {
+	for _, member := range view.ReadMembers(rt.Store, c) {
 		for _, b := range rep.Bindings {
 			if b.Name == member {
 				rows = append(rows, b)
