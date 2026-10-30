@@ -23,12 +23,6 @@ var ErrInvalid = errors.New("invalid")
 // agent leg refuses it rather than treating a missing file as a new scene.
 var ErrNotFound = errors.New("not found")
 
-// Etag is the content address of a scene: the sha256 of its bytes on disk.
-func Etag(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
-
 // Load reads the scene at path. A missing file is not an error: it is a new
 // scene with an empty etag, and nothing is created until the first save.
 func Load(path string) (data []byte, etag string, isNew bool, err error) {
@@ -39,7 +33,8 @@ func Load(path string) (data []byte, etag string, isNew bool, err error) {
 		}
 		return nil, "", false, err
 	}
-	return data, Etag(data), false, nil
+	sum := sha256.Sum256(data)
+	return data, hex.EncodeToString(sum[:]), false, nil
 }
 
 // ValidateScene reports whether body is an Excalidraw scene: a JSON object
@@ -93,7 +88,8 @@ var renameFile = os.Rename
 func Save(path string, scene, svg []byte, ifMatch string) (string, error) {
 	current := ""
 	if old, err := os.ReadFile(path); err == nil {
-		current = Etag(old)
+		sum := sha256.Sum256(old)
+		current = hex.EncodeToString(sum[:])
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
@@ -106,7 +102,8 @@ func Save(path string, scene, svg []byte, ifMatch string) (string, error) {
 	if err := writeAtomic(svgPath(path), svg); err != nil {
 		return "", err
 	}
-	return Etag(scene), nil
+	sum := sha256.Sum256(scene)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // svgPath is the companion svg's path: the scene's path with .svg for

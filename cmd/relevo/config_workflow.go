@@ -11,7 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -257,7 +257,7 @@ func editWorkflowLoop(rt relevo.Runtime, name string, saved config.StoredWorkflo
 	if rt.Store != nil {
 		root = rt.Store.Root()
 	}
-	tmp, err := store.CreateTemp(root, "relevo-workflow-*.yaml")
+	tmp, err := tmpdir.CreateTemp(root, "relevo-workflow-*.yaml")
 	if err != nil {
 		return err
 	}

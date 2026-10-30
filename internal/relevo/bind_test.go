@@ -15,7 +15,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
-	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -280,7 +279,7 @@ func launchArgs(t *testing.T, rt Runtime, b store.Binding, tier harness.Tier) []
 		t.Fatalf("lookup %q: %v", ref, err)
 	}
 	role, _ := harness.RoleByName("builder")
-	argv, err := spawn.HeadlessLaunch(c, role, tier, 0, "", b.CWD, rt.Store.Dir(b.Name), "", "")
+	argv, err := candidate.HeadlessLaunch(c, role, tier, 0, "", b.CWD, rt.Store.Dir(b.Name), "", "")
 	if err != nil {
 		t.Fatalf("headlessLaunch: %v", err)
 	}

@@ -27,7 +27,7 @@ trap 'rm -rf "$work" 2>/dev/null || :' EXIT
 #    exits 1 when nothing matches, which is a clean tree, not a failure.
 git grep -nIE "$pattern" -- . \
 	':(exclude)go.sum' \
-	':(exclude)internal/harness/agents/shipped.sha256' \
+	':(exclude)internal/shipped/agents.sha256' \
 	':(exclude)scripts/check-name.sh' \
 	':(exclude)scripts/check-name_test.sh' \
 	':(exclude)internal/harness/install_test.go' \

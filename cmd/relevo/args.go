@@ -54,16 +54,6 @@ func bindingHint(verb string) string {
 	return fmt.Sprintf("\nthis directory is bound as %q, so you probably want: relevo %s %s", b.Name, verb, b.Name)
 }
 
-// firstLine is the first non-empty line of s, for a preflight failure's
-// reason. It is what daemon.json and the log record, not the whole stderr.
-func firstLine(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return strings.TrimSpace(s[:i])
-	}
-	return s
-}
-
 // withEnv sets key=val in env, replacing every existing KEY= entry (collapsing
 // duplicates) or appending when none is present. It is how the re-exec passes
 // the previous version on without duplicating an inherited value. Pure.

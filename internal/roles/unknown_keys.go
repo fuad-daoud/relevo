@@ -2,7 +2,9 @@ package roles
 
 import (
 	"encoding/json"
+	"maps"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -51,23 +53,23 @@ func UnknownKeys(section string, body []byte) []string {
 	case "agents":
 		agentKeys := jsonshape.Keys(reflect.TypeOf(AgentEntry{}))
 		defKeys := jsonshape.Keys(reflect.TypeOf(DefRow{}))
-		for _, name := range sortedObjectKeys(data) {
+		for _, name := range slices.Sorted(maps.Keys(data)) {
 			row, ok := data[name].(map[string]any)
 			if !ok {
 				continue
 			}
-			for _, key := range sortedObjectKeys(row) {
+			for _, key := range slices.Sorted(maps.Keys(row)) {
 				if key == "native" {
 					defs, ok := row[key].(map[string]any)
 					if !ok {
 						continue
 					}
-					for _, kind := range sortedObjectKeys(defs) {
+					for _, kind := range slices.Sorted(maps.Keys(defs)) {
 						def, ok := defs[kind].(map[string]any)
 						if !ok {
 							continue
 						}
-						for _, defKey := range sortedObjectKeys(def) {
+						for _, defKey := range slices.Sorted(maps.Keys(def)) {
 							if !hasShapeKey(defKeys, defKey) {
 								paths = append(paths, name+".native."+kind+"."+defKey)
 							}
@@ -83,18 +85,18 @@ func UnknownKeys(section string, body []byte) []string {
 	case "actors":
 		actorKeys := jsonshape.Keys(reflect.TypeOf(Actor{}))
 		scopeKeys := jsonshape.Keys(reflect.TypeOf(pathscope.Scope{}))
-		for _, name := range sortedObjectKeys(data) {
+		for _, name := range slices.Sorted(maps.Keys(data)) {
 			row, ok := data[name].(map[string]any)
 			if !ok {
 				continue
 			}
-			for _, key := range sortedObjectKeys(row) {
+			for _, key := range slices.Sorted(maps.Keys(row)) {
 				if key == "scope" {
 					scopeObj, ok := row[key].(map[string]any)
 					if !ok {
 						continue
 					}
-					for _, scopeKey := range sortedObjectKeys(scopeObj) {
+					for _, scopeKey := range slices.Sorted(maps.Keys(scopeObj)) {
 						if !hasShapeKey(scopeKeys, scopeKey) {
 							paths = append(paths, name+".scope."+scopeKey)
 						}

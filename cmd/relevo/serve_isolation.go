@@ -12,7 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/serve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // containerLookPath resolves the container runtime at startup. It is a var so a
@@ -26,7 +26,7 @@ var containerLookPath = exec.LookPath
 // and container mode keeps it out of the container entirely, since
 // ContainerArgv passes only the spec's own entries.
 func serveProcRunner(stateRoot string) (*proc.Runner, error) {
-	dir, err := store.TempDir(stateRoot)
+	dir, err := tmpdir.TempDir(stateRoot)
 	if err != nil {
 		return nil, err
 	}

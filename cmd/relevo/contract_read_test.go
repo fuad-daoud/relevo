@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // seedWaitJSONBinding seeds one active binding whose round 1 carries a report
@@ -19,7 +21,7 @@ import (
 func seedWaitJSONBinding(t *testing.T, name string) {
 	t.Helper()
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -54,7 +56,7 @@ func TestContractWaitJSON(t *testing.T) {
 	seedWaitJSONBinding(t, "wait-json-any")
 	seedWaitJSONBinding(t, "wait-json-peek")
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -103,7 +105,7 @@ func TestContractWaitJSON(t *testing.T) {
 func seedReadVerbErrorStore(t *testing.T) {
 	t.Helper()
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}

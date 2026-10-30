@@ -4,12 +4,12 @@
 #
 # units/shipped.sha256 lets a later relevo recognise an installed unit as an
 # unmodified copy of an older release, not a user edit, so the daemon may
-# refresh it (internal/serviceunit/shipped.go, ShippedUnitBefore). The plist is
+# refresh it (internal/shipped, UnitBefore). The plist is
 # indexed as its template, placeholders intact; an installed plist is
 # canonicalised before it is hashed.
 #
 # Modes:
-#   --write   regenerate internal/serviceunit/units/shipped.sha256 from the
+#   --write   regenerate internal/shipped/units.sha256 from the
 #             full git history of both sources plus the working tree, unioned
 #             with the lines already committed. A line, once written, is never
 #             dropped by a later --write.
@@ -68,7 +68,7 @@ fi
 
 root=${root%/}
 units_dir=$root/internal/serviceunit/units
-shipped=$units_dir/shipped.sha256
+shipped=$root/internal/shipped/units.sha256
 sources='relevo.service com.github.fuad-daoud.relevo.plist.in'
 
 # hash_stdin prints the lowercase hex sha256 of stdin: sha256sum on Linux,

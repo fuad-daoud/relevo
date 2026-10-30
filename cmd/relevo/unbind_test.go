@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // TestUnbindRefusesFlagsItsPathDoesNotHonour pins that a flag the chosen
@@ -47,7 +49,7 @@ func TestUnbindRefusesFlagsItsPathDoesNotHonour(t *testing.T) {
 
 			// The refusal precedes newRuntime: the seeded binding still loads
 			// from the same root, so no store write happened.
-			root, err := store.DefaultRoot()
+			root, err := tmpdir.DefaultRoot()
 			if err != nil {
 				t.Fatalf("DefaultRoot: %v", err)
 			}

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/stats"
 )
 
 // basisUnknown is the CostBasis word a round's cost is not trusted for; histq
@@ -142,7 +143,7 @@ func Totals(rows []db.RoundRow) Tiles {
 	}
 	t.Bindings = len(bindings)
 	t.Builders = len(builders)
-	t.MedianDurationMS = median(durations)
+	t.MedianDurationMS = stats.Median(durations)
 	return t
 }
 
@@ -195,17 +196,4 @@ func sortRowsNewestFirst(rows []db.RoundRow) {
 	sort.SliceStable(rows, func(i, j int) bool {
 		return rows[i].StartedAt.After(rows[j].StartedAt)
 	})
-}
-
-func median(xs []int64) int64 {
-	if len(xs) == 0 {
-		return 0
-	}
-	sorted := append([]int64(nil), xs...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	n := len(sorted)
-	if n%2 == 1 {
-		return sorted[n/2]
-	}
-	return (sorted[n/2-1] + sorted[n/2]) / 2
 }

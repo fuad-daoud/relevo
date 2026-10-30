@@ -5,10 +5,10 @@
 # shipped.sha256 lets a later relevo recognise an on-disk definition as an
 # unmodified copy of an older release -- not a user edit -- so an existing
 # install auto-updates instead of being kept forever
-# (internal/harness/shipped.go, ShippedBefore).
+# (internal/shipped, Before).
 #
 # Modes:
-#   --write   regenerate internal/harness/agents/shipped.sha256 from the full
+#   --write   regenerate internal/shipped/agents.sha256 from the full
 #             git history of every definition plus the working tree, unioned
 #             with the lines already committed. Append-only in spirit: a line,
 #             once written, is never dropped by a later --write.
@@ -72,7 +72,7 @@ fi
 
 root=${root%/}
 agents_dir=$root/internal/harness/agents
-shipped=$agents_dir/shipped.sha256
+shipped=$root/internal/shipped/agents.sha256
 
 # hash_stdin prints the lowercase hex sha256 of stdin: sha256sum on Linux,
 # shasum -a 256 (macOS) otherwise.

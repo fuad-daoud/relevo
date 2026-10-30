@@ -12,8 +12,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/db/wire/client"
-	"github.com/fuad-daoud/relevo/internal/store"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // The one-shot calls. They share every step but the one the verb exists to make,
@@ -109,7 +109,7 @@ func syncCallText(name string, res *wire.SyncResult) string {
 // handles -- so the token never travels between two processes at all, and this
 // client holds nothing but the socket.
 func dialSyncVerb() (*db.DB, error) {
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return nil, failWrap(codeRefused, err, "relevo db sync: no state root")
 	}
@@ -326,7 +326,7 @@ func openDBSyncStatus() (shared *db.DB, local *db.DB, err error) {
 	if !fileExists(path) {
 		return nil, nil, fail(codeRefused, "no relevo.db at %s", path)
 	}
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return nil, nil, failWrap(codeRefused, err, "relevo db sync status: no state root")
 	}

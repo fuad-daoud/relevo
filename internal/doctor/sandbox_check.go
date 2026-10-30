@@ -6,7 +6,6 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/serve"
 )
 
 // sandboxMarkerName is the file under the state root that
@@ -43,7 +42,7 @@ func sandboxChecks(env Env, d *db.DB, stateRoot, configRoot string, checks []Che
 	// The port row needs a serve pointer to have a port to read. A sandbox
 	// that runs no `relevo serve` has none, so there is no row rather than a
 	// row with nothing behind it.
-	p, pok, err := serve.ReadDaemonPointer(d)
+	p, pok, err := db.ReadDaemonPointer(d)
 	if err != nil || !pok {
 		return checks
 	}

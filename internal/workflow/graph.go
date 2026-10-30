@@ -1,6 +1,8 @@
 package workflow
 
 import (
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -11,7 +13,7 @@ func stepEdges(def Definition) map[string][]string {
 	edges := make(map[string][]string, len(def.Steps))
 	for id := range def.Steps {
 		step := def.Steps[id]
-		for _, key := range sortedKeys(step.On) {
+		for _, key := range slices.Sorted(maps.Keys(step.On)) {
 			if t := step.On[key]; t.Kind == TargetStep {
 				edges[id] = append(edges[id], t.Step)
 			}
@@ -134,7 +136,7 @@ func dominators(def Definition, start string) map[string]map[string]bool {
 	dom := seedDominators(reach, start)
 	for changed := true; changed; {
 		changed = false
-		for _, n := range sortedKeys(reach) {
+		for _, n := range slices.Sorted(maps.Keys(reach)) {
 			if n == start {
 				continue
 			}
@@ -273,7 +275,7 @@ func graphCycle(edges map[string][]string, keep map[string]bool) []string {
 		color[n] = black
 		return false
 	}
-	for _, n := range sortedKeys(keep) {
+	for _, n := range slices.Sorted(maps.Keys(keep)) {
 		if color[n] == white && dfs(n) {
 			return found
 		}
@@ -328,7 +330,7 @@ func boundedCycles(def Definition) []cycle {
 		out = append(out, cycle{c[0], "an unbounded cycle: no for-each and no budget"})
 	}
 
-	for _, id := range sortedKeys(def.Steps) {
+	for _, id := range slices.Sorted(maps.Keys(def.Steps)) {
 		step := def.Steps[id]
 		if step.Budget == nil || step.Budget.Per.Chain {
 			continue

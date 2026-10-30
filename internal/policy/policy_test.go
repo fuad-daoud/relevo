@@ -770,7 +770,7 @@ func TestMaxBuildersOrDefault(t *testing.T) {
 		want    int
 		wantErr bool
 	}{
-		{name: "absent defaults to max(1, NumCPU-1)", body: `{}`, want: maxInt(1, runtime.NumCPU()-1)},
+		{name: "absent defaults to max(1, NumCPU-1)", body: `{}`, want: max(1, runtime.NumCPU()-1)},
 		{name: "one is ok", body: `{"serve":{"max_builders":1}}`, want: 1},
 		{name: "zero is an error", body: `{"serve":{"max_builders":0}}`, wantErr: true},
 		{name: "negative is an error", body: `{"serve":{"max_builders":-1}}`, wantErr: true},
@@ -800,16 +800,9 @@ func TestMaxBuildersOrDefault(t *testing.T) {
 		})
 	}
 
-	if got := (Policy{}).MaxBuildersOrDefault(); got != maxInt(1, runtime.NumCPU()-1) {
-		t.Fatalf("Policy{}.MaxBuildersOrDefault() = %d, want %d", got, maxInt(1, runtime.NumCPU()-1))
+	if got := (Policy{}).MaxBuildersOrDefault(); got != max(1, runtime.NumCPU()-1) {
+		t.Fatalf("Policy{}.MaxBuildersOrDefault() = %d, want %d", got, max(1, runtime.NumCPU()-1))
 	}
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // TestServeIsolationValidation pins the two serve isolation keys: a known mode
@@ -1038,39 +1031,6 @@ func TestScopeForWholeBlockOverride(t *testing.T) {
 			t.Fatalf("ScopeFor(false) with no top-level block = %+v, want nil", got)
 		}
 	})
-}
-
-// TestParseCPUList pins the cpu-list grammar: sorted, de-duplicated cores;
-// a backwards range or a core above 1023 is an error.
-func TestParseCPUList(t *testing.T) {
-	good := []struct {
-		in   string
-		want []int
-	}{
-		{"0", []int{0}},
-		{"0-2", []int{0, 1, 2}},
-		{"1,3,5-7", []int{1, 3, 5, 6, 7}},
-		{"3,1-3", []int{1, 2, 3}},
-	}
-	for _, c := range good {
-		t.Run("good/"+c.in, func(t *testing.T) {
-			got, err := ParseCPUList(c.in)
-			if err != nil {
-				t.Fatalf("ParseCPUList(%q): %v", c.in, err)
-			}
-			if !reflect.DeepEqual(got, c.want) {
-				t.Fatalf("ParseCPUList(%q) = %v, want %v", c.in, got, c.want)
-			}
-		})
-	}
-
-	for _, in := range []string{"", "0-", "a", "1 ,2", "3-1", "0-1024"} {
-		t.Run("bad/"+in, func(t *testing.T) {
-			if _, err := ParseCPUList(in); err == nil {
-				t.Fatalf("ParseCPUList(%q): got nil error, want one", in)
-			}
-		})
-	}
 }
 
 // TestScopeAllowedCPUsValidation pins allowed_cpus in both blocks: a good

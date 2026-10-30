@@ -4,20 +4,21 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // AgentInstallEnv is the InstallEnv every agent-definition surface reads and
 // writes through -- `relevo config agents` and the cockpit's `:agents` view
-// alike (cockpit config r5 §3): the OS-backed env with the role manifest in
-// the machine database's kv row "agents-manifest" (#371 §4.10, P3b plan §4.4).
+// alike: the OS-backed env with the role manifest in the machine database's
+// kv row "agents-manifest".
 //
-// The state root is composed here through store.DefaultRoot, the one path
-// relevo's state always resolves through (CLAUDE.md, #42), and its database is
-// opened here because internal/harness cannot import internal/store. It moved
-// here from cmd/relevo/agent.go in round 5: internal/ui cannot import package
-// main, and the cockpit's mastermindActions needs the same env.
+// The state root is composed here through tmpdir.DefaultRoot, the one path
+// relevo's state always resolves through, and its database is opened here
+// because internal/harness cannot import internal/store. It lives here rather
+// than in cmd because internal/ui cannot import package main, and the
+// cockpit's mastermindActions needs the same env.
 func AgentInstallEnv() (harness.InstallEnv, error) {
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +39,7 @@ func AgentInstallEnv() (harness.InstallEnv, error) {
 // scripts are written where the argv rows name them rather than only held in
 // the database.
 func MachineConfig() (*config.Store, error) {
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return nil, err
 	}

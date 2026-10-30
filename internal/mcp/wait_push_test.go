@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"io"
@@ -202,7 +203,7 @@ func TestHeadlessByEntrypoint(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range cases {
-		t.Run("entrypoint "+firstNonEmpty(tt.entrypoint, "unset"), func(t *testing.T) {
+		t.Run("entrypoint "+cmp.Or(tt.entrypoint, "unset"), func(t *testing.T) {
 			getenv := func(key string) string {
 				if key == "CLAUDE_CODE_ENTRYPOINT" {
 					return tt.entrypoint
@@ -214,13 +215,6 @@ func TestHeadlessByEntrypoint(t *testing.T) {
 			}
 		})
 	}
-}
-
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }
 
 // readPushEvent reads one NDJSON push event.

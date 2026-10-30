@@ -83,7 +83,7 @@ func (a *scoreAcc) row(in Inputs, tok string) ScoreRow {
 		Closed:       a.closed,
 		Reported:     a.reported,
 		Halted:       a.halted,
-		MedianMS:     median(a.durations),
+		MedianMS:     Median(a.durations),
 		HasMedian:    len(a.durations) > 0,
 		Few:          a.rounds < 5,
 		Bindings:     len(a.bindings),

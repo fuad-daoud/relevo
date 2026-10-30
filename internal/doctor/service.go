@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/fuad-daoud/relevo/internal/serviceunit"
+	"github.com/fuad-daoud/relevo/internal/shipped"
 )
 
 // serviceRow reports the daemon unit's state as warnings only: the daemon
@@ -21,7 +22,7 @@ func serviceRow(env Env) (Check, bool) {
 	if u.Doc == serviceunit.PlistName {
 		fix = "relevo service install"
 	}
-	act := serviceunit.DecideUnitAction(u.Doc, u.Installed, true, u.Shipped, serviceunit.ShippedUnitBefore)
+	act := serviceunit.DecideUnitAction(u.Doc, u.Installed, true, u.Shipped, shipped.UnitBefore)
 	switch act {
 	case serviceunit.ActionStale:
 		return Check{Name: "service", Severity: SevWarn, Detail: "unit older than shipped", Fix: "relevo service install"}, true

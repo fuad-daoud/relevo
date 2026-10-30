@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // daemonLabel is the launchd label the Makefile's plist installs.
@@ -80,11 +82,11 @@ func spawnDetachedDaemon() error {
 	if err != nil {
 		return fmt.Errorf("relevo daemon: resolve executable: %w", err)
 	}
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(root, store.StateRootMode); err != nil {
+	if err := os.MkdirAll(root, tmpdir.StateRootMode); err != nil {
 		return fmt.Errorf("relevo daemon: create %s: %w", root, err)
 	}
 	log, err := os.OpenFile(daemonLogPath(root), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -142,7 +144,7 @@ func daemonStop() error {
 		return fmt.Errorf("relevo daemon: the launchd agent owns the daemon; stop it with launchctl kill SIGTERM gui/%d/%s", os.Getuid(), daemonLabel)
 	}
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return err
 	}

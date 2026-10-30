@@ -22,6 +22,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 	"github.com/fuad-daoud/relevo/internal/upgrade"
 )
 
@@ -117,7 +118,7 @@ func cmdDaemon(args []string) error {
 	// --preflight's does, so a malformed config fails before the lock and the
 	// root stays read-only until then. The loaded value is discarded --
 	// newRuntime reloads config from the database it imports into.
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return err
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // sameSavedPlan reports whether planText is byte-identical to the plan saved for
@@ -335,7 +336,7 @@ func writeSendError(w http.ResponseWriter, rt relevo.Runtime, name string, b sto
 		// broken and is the one thing here it is not.
 		if b.State == store.StateNeedsYou || b.State == store.StateBroken || b.Halt != "" {
 			slog.Warn("round start failed", "binding", name, "round", b.Round, "err", sendErr, "halt", b.Halt)
-			writeErr(w, http.StatusConflict, remote.CodeRoundHalted, orText(b.Halt, sendErr.Error()))
+			writeErr(w, http.StatusConflict, remote.CodeRoundHalted, text.OrText(b.Halt, sendErr.Error()))
 			return
 		}
 		writeErr(w, http.StatusInternalServerError, "", sendErr.Error())

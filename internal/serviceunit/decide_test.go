@@ -3,6 +3,8 @@ package serviceunit
 import (
 	"bytes"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/shipped"
 )
 
 func TestDecideUnitAction(t *testing.T) {
@@ -50,7 +52,7 @@ func TestPlistCanonicalRoundTrip(t *testing.T) {
 	if got := CanonicalPlist(rendered, bin, home); !bytes.Equal(got, tpl) {
 		t.Error("CanonicalPlist(RenderPlist(t)) != t")
 	}
-	got := DecideUnitAction(PlistName, CanonicalPlist(rendered, bin, home), true, tpl, ShippedUnitBefore)
+	got := DecideUnitAction(PlistName, CanonicalPlist(rendered, bin, home), true, tpl, shipped.UnitBefore)
 	if got != ActionCurrent {
 		t.Errorf("a freshly rendered plist = %q, want %q", got, ActionCurrent)
 	}
@@ -78,7 +80,7 @@ func TestServiceCanonicalRoundTrip(t *testing.T) {
 	if got := CanonicalService(rendered, bin, path); !bytes.Equal(got, ShippedService()) {
 		t.Error("CanonicalService(RenderService(t)) != t")
 	}
-	got := DecideUnitAction(ServiceName, CanonicalService(rendered, bin, path), true, ShippedService(), ShippedUnitBefore)
+	got := DecideUnitAction(ServiceName, CanonicalService(rendered, bin, path), true, ShippedService(), shipped.UnitBefore)
 	if got != ActionCurrent {
 		t.Errorf("a freshly rendered service = %q, want %q", got, ActionCurrent)
 	}
@@ -142,7 +144,7 @@ WantedBy=default.target
 // A pre-template unit's bytes are the raw bytes the index holds, so the unit
 // an older release wrote stays stale instead of reading as a user edit.
 func TestOldServiceUnitIsStillStale(t *testing.T) {
-	got := DecideUnitAction(ServiceName, []byte(oldServiceUnit), true, ShippedService(), ShippedUnitBefore)
+	got := DecideUnitAction(ServiceName, []byte(oldServiceUnit), true, ShippedService(), shipped.UnitBefore)
 	if got != ActionStale {
 		t.Errorf("a pre-template unit = %q, want %q", got, ActionStale)
 	}
@@ -158,7 +160,7 @@ func TestOldServiceUnitIsStillStale(t *testing.T) {
 
 func TestHandEditedServiceUnitIsEdited(t *testing.T) {
 	edited := []byte("[Service]\nExecStart=/opt/relevo daemon --interval 2s\n")
-	got := DecideUnitAction(ServiceName, edited, true, ShippedService(), ShippedUnitBefore)
+	got := DecideUnitAction(ServiceName, edited, true, ShippedService(), shipped.UnitBefore)
 	if got != ActionEdited {
 		t.Errorf("an unshipped unit = %q, want %q", got, ActionEdited)
 	}
@@ -166,7 +168,7 @@ func TestHandEditedServiceUnitIsEdited(t *testing.T) {
 
 func TestShippedServiceIsCurrentAgainstItself(t *testing.T) {
 	cur := ShippedService()
-	if got := DecideUnitAction(ServiceName, cur, true, cur, ShippedUnitBefore); got != ActionCurrent {
+	if got := DecideUnitAction(ServiceName, cur, true, cur, shipped.UnitBefore); got != ActionCurrent {
 		t.Errorf("got %q, want current", got)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/spawn"
+	"github.com/fuad-daoud/relevo/internal/trail"
 )
 
 // scopeWant prepends systemd-run's fixed scope flags to tail, so each row's
@@ -107,26 +108,26 @@ func TestRusageFindsTheTrailerLine(t *testing.T) {
 	}{
 		"real supervisor layout": {
 			body: "builder said hi\n" +
-				"\n" + spawn.RusageTrailerPrefix + "cpu_usec=19071588 mem_peak=403206144\n" +
-				"\n" + spawn.ExitTrailer + "0\n",
+				"\n" + trail.RusageTrailerPrefix + "cpu_usec=19071588 mem_peak=403206144\n" +
+				"\n" + trail.ExitTrailer + "0\n",
 			want: spawn.ProcRusage{CPUMS: 19071, PeakMemBytes: 403206144},
 			ok:   true,
 		},
 		"trailer before the exit trailer": {
-			body: "builder output\n\n" + spawn.RusageTrailerPrefix + "cpu_usec=12345 mem_peak=1048576\n" + spawn.ExitTrailer + "0\n",
+			body: "builder output\n\n" + trail.RusageTrailerPrefix + "cpu_usec=12345 mem_peak=1048576\n" + trail.ExitTrailer + "0\n",
 			want: spawn.ProcRusage{CPUMS: 12, PeakMemBytes: 1048576},
 			ok:   true,
 		},
 		"output after the exit trailer": {
 			body: "builder said hi\n" +
-				"\n" + spawn.RusageTrailerPrefix + "cpu_usec=19071588 mem_peak=403206144\n" +
-				"\n" + spawn.ExitTrailer + "0\n" +
+				"\n" + trail.RusageTrailerPrefix + "cpu_usec=19071588 mem_peak=403206144\n" +
+				"\n" + trail.ExitTrailer + "0\n" +
 				"stray output after exit\n",
 			want: spawn.ProcRusage{CPUMS: 19071, PeakMemBytes: 403206144},
 			ok:   true,
 		},
 		"no trailer": {
-			body: "builder output\n\n" + spawn.ExitTrailer + "0\n",
+			body: "builder output\n\n" + trail.ExitTrailer + "0\n",
 			want: spawn.ProcRusage{},
 			ok:   false,
 		},

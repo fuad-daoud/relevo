@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/fuad-daoud/relevo/internal/serviceunit"
+	"github.com/fuad-daoud/relevo/internal/shipped"
 )
 
 // newServiceRunner is the init-system seam: tests swap it so nothing under go
@@ -102,7 +103,7 @@ func cmdServiceInstall(args []string) error {
 // installServiceUnit writes the unit and starts it. An edited unit is kept
 // unless force: the user's changes are theirs.
 func installServiceUnit(u unitSpec, r serviceunit.Runner, force bool) (ServiceDoc, error) {
-	act, err := u.decide(serviceunit.ShippedUnitBefore)
+	act, err := u.decide(shipped.UnitBefore)
 	if err != nil {
 		return ServiceDoc{}, fail(codeInternal, "%v", err)
 	}

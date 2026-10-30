@@ -12,14 +12,14 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // spoolCreateChain writes the create's multipart body once to a temp file so a
 // retry re-reads the same chain JSON and bundle bytes; on error the temp file
 // is removed.
 func spoolCreateChain(req remote.CreateChainRequest, bundle io.Reader) (tmp *os.File, size int64, bodySHA []byte, contentType string, err error) {
-	tmp, err = store.CreateTemp("", "relevo-create-chain-*.tmp")
+	tmp, err = tmpdir.CreateTemp("", "relevo-create-chain-*.tmp")
 	if err != nil {
 		return nil, 0, nil, "", fmt.Errorf("create temp file: %w", err)
 	}

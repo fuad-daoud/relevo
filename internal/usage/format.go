@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // Money is the cost word. Plan wins over basis: a subscription lane never shows
@@ -52,14 +54,6 @@ func ShortDuration(ms int64) string {
 	return fmt.Sprintf("%dh%02dm", minutes/60, minutes%60)
 }
 
-// msText renders "640ms" below a second, "3.1s" from there up.
-func msText(ms int64) string {
-	if ms < 1000 {
-		return fmt.Sprintf("%dms", ms)
-	}
-	return fmt.Sprintf("%.1fs", float64(ms)/1000)
-}
-
 // tokenCells is the four token cells in order, or nil when there are no samples.
 // `write` is printed even when 0, so a reader learns the field exists.
 func tokenCells(t Tokens, samples int) []string {
@@ -102,10 +96,10 @@ func Line(u Usage) string {
 		parts = append(parts, fmt.Sprintf("%d tool calls", u.ToolCalls))
 	}
 	if u.StepP50MS > 0 {
-		parts = append(parts, "step p50 "+msText(u.StepP50MS))
+		parts = append(parts, "step p50 "+text.MS(u.StepP50MS))
 	}
 	if u.FirstOutputP50MS > 0 {
-		parts = append(parts, "first out p50 "+msText(u.FirstOutputP50MS))
+		parts = append(parts, "first out p50 "+text.MS(u.FirstOutputP50MS))
 	}
 	money := Money(u.Cost)
 	if u.Cost.Basis == Unknown && !u.Cost.Plan && u.Note != "" {

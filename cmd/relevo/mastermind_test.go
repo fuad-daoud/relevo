@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // mastermindRegistryAt is a registry over the database the state root holds, for
@@ -660,7 +661,7 @@ func TestMasterMindVerbsListRenameForget(t *testing.T) {
 	}
 
 	// A live binding that names the mastermind refuses the forget.
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}

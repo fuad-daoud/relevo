@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -186,7 +187,7 @@ func TestChainResumeRefusesStartOnlyFlags(t *testing.T) {
 func seedCLIChain(t *testing.T, name, status string) {
 	t.Helper()
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -276,7 +277,7 @@ func TestChainStopAndDoneThroughTheCLI(t *testing.T) {
 		t.Errorf("done document = %+v, want the chain's name with chain carried", doneDoc)
 	}
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -670,7 +671,7 @@ func TestSeedOverCapIsAUsageRefusal(t *testing.T) {
 func seedCLIOpenMemberChain(t *testing.T, name string) {
 	t.Helper()
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -730,7 +731,7 @@ func seedCLIReportlessRound(t *testing.T, name string) {
 	t.Helper()
 
 	seedCLIChain(t, name, "stopped")
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -802,7 +803,7 @@ func TestStopOnAHaltedChainWithAnOpenMemberRoundIsNotNothingToStop(t *testing.T)
 	if strings.Contains(string(out), "nothing to stop") {
 		t.Errorf("output = %q, want the member's stop", out)
 	}
-	root, rerr := store.DefaultRoot()
+	root, rerr := tmpdir.DefaultRoot()
 	if rerr != nil {
 		t.Fatalf("DefaultRoot: %v", rerr)
 	}
@@ -823,7 +824,7 @@ func TestChainResumeWorkflowlessChainIsRefused(t *testing.T) {
 	const name = "cliresumenolegacy"
 	seedCLIChain(t, name, "halted")
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -890,7 +891,7 @@ func TestChainDoneWorkflowlessChainIsRefused(t *testing.T) {
 			const name = "clidonenolegacy"
 			seedCLIChain(t, name, "halted")
 
-			root, err := store.DefaultRoot()
+			root, err := tmpdir.DefaultRoot()
 			if err != nil {
 				t.Fatalf("DefaultRoot: %v", err)
 			}
@@ -954,7 +955,7 @@ func TestChainResumeOpenRoundIsAConflict(t *testing.T) {
 	const name = "cliresumeopen"
 	seedCLIChain(t, name, "stopped")
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}

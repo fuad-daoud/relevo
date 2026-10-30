@@ -1,4 +1,4 @@
-package spawn
+package candidate
 
 import (
 	"os"
@@ -7,12 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
-func museCandidate() candidate.Candidate {
-	return candidate.Candidate{Harness: "muse", Provider: "meta", Model: "muse-spark-1.3"}
+func museCandidate() Candidate {
+	return Candidate{Harness: "muse", Provider: "meta", Model: "muse-spark-1.3"}
 }
 
 func installMuseDefinition(t *testing.T, body string) {

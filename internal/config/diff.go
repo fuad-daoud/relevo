@@ -95,8 +95,8 @@ func EncodeDoc(doc Doc) ([]byte, error) {
 // walking them; a side that does not decode is compared compactly as bytes.
 func diffRaw(path string, a, b json.RawMessage) []Change {
 	out := []Change{}
-	av, aok := decodeValue(a)
-	bv, bok := decodeValue(b)
+	av, aok := DecodeValue(a)
+	bv, bok := DecodeValue(b)
 	if !aok || !bok {
 		ca, cb := compactCopy(a), compactCopy(b)
 		if !bytes.Equal(ca, cb) {
@@ -167,9 +167,9 @@ func diffValue(path string, a, b any, out *[]Change) {
 	}
 }
 
-// decodeValue decodes one JSON value, keeping numbers as their literal text so
-// 2 and 2.0 are not conflated.
-func decodeValue(raw json.RawMessage) (any, bool) {
+// DecodeValue decodes one JSON value, keeping numbers as their literal text
+// so 2 and 2.0 are not conflated.
+func DecodeValue(raw json.RawMessage) (any, bool) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var v any

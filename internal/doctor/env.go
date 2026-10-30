@@ -9,9 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // Env abstracts external system facts for testability.
@@ -116,7 +118,7 @@ func (e *realEnv) StatOwner(path string) (uint32, bool) {
 	if err != nil {
 		return 0, false
 	}
-	uid, _, ok := statOwner(fi)
+	uid, _, ok := db.StatOwner(fi)
 	return uid, ok
 }
 
@@ -128,7 +130,7 @@ func (e *realEnv) ReadFile(path string) ([]byte, error) {
 // "agents-manifest" kv row. A root with no database reads as an empty
 // manifest.
 func (e *realEnv) LoadManifest() (map[string]string, error) {
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +178,7 @@ func (e *realEnv) Command(ctx context.Context, bin string, args ...string) ([]by
 func (e *realEnv) ReleaseState() (string, string, bool, release.Kind) {
 	kind := release.Detect(e.self)
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return e.self.Version, "", false, kind
 	}

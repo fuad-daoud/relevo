@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // remoteShipped is what remoteShip produced: the server's answer and the two
@@ -179,7 +180,7 @@ func remoteShip(ctx context.Context, rt Runtime, b store.Binding, planBody []byt
 	// says no round started; recording a prompt for it would reset the round
 	// and file the next halt twice with the same text.
 	if view.RoundState == remote.RoundNeedsYou || view.RoundState == remote.RoundBroken {
-		return remoteShipped{}, fmt.Errorf("%s: round %d could not start on %s: %s", name, b.Round, server, orText(view.Halt, "no reason given"))
+		return remoteShipped{}, fmt.Errorf("%s: round %d could not start on %s: %s", name, b.Round, server, text.OrText(view.Halt, "no reason given"))
 	}
 
 	return remoteShipped{view: view, outRef: outRef, heads: heads}, nil

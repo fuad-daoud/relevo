@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -86,7 +86,7 @@ func assignRoundCPU(rt Runtime, tx *store.Tx, b store.Binding) store.Binding {
 	if rt.Scope != nil && rt.Scope.AllowedCPUs != "" {
 		// A parse error cannot happen after policy.Load validated the field;
 		// treat it as no pool rather than failing a round.
-		if p, err := policy.ParseCPUList(rt.Scope.AllowedCPUs); err == nil {
+		if p, err := spawn.ParseCPUList(rt.Scope.AllowedCPUs); err == nil {
 			pool = p
 		}
 	}

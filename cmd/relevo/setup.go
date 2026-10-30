@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/setup"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // setupAnswerList is the repeatable --answer flag: a Set keeps every value,
@@ -136,7 +137,7 @@ func setupServiceInstall() error {
 		if errors.As(err, &ce) {
 			return &setup.StepError{Message: ce.message, Next: ce.next}
 		}
-		return &setup.StepError{Message: firstLine(err.Error())}
+		return &setup.StepError{Message: text.FirstLine(err.Error())}
 	}
 	return nil
 }

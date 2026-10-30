@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -37,7 +39,7 @@ func (o Outputs) MarshalJSON() ([]byte, error) {
 		return []byte("null"), nil
 	}
 	m := make(map[string]any, len(o))
-	for _, key := range sortedKeys(o) {
+	for _, key := range slices.Sorted(maps.Keys(o)) {
 		out := o[key]
 		switch out.Kind {
 		case OutputOneOf:
@@ -147,7 +149,7 @@ func decodeOutputs(v any, path string) (Outputs, error) {
 		return nil, err
 	}
 	outputs := make(Outputs, len(obj))
-	for _, key := range sortedKeys(obj) {
+	for _, key := range slices.Sorted(maps.Keys(obj)) {
 		out, err := decodeOutput(obj[key], entryPath(path, key))
 		if err != nil {
 			return nil, err

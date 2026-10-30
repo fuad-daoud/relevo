@@ -2,7 +2,9 @@ package workflow
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -85,10 +87,10 @@ func WithParams(def Definition, values map[string]string) (Definition, error) {
 	}
 	out := def
 	out.Params = params
-	for _, key := range sortedKeys(values) {
+	for _, key := range slices.Sorted(maps.Keys(values)) {
 		p, ok := params[key]
 		if !ok {
-			return Definition{}, fmt.Errorf("workflow: unknown param %q; the workflow takes: %s", key, strings.Join(sortedKeys(def.Params), ", "))
+			return Definition{}, fmt.Errorf("workflow: unknown param %q; the workflow takes: %s", key, strings.Join(slices.Sorted(maps.Keys(def.Params)), ", "))
 		}
 		parsed, err := p.withValue(values[key])
 		if err != nil {

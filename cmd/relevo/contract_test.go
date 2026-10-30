@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // update rewrites every testdata/contract/*.golden file this test binary
@@ -143,7 +144,7 @@ func seedStatusFixture(t *testing.T) statusFixture {
 	stateHome := filepath.Join(t.TempDir(), "state")
 	t.Setenv("XDG_STATE_HOME", stateHome)
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -373,7 +374,7 @@ func seedShowSectionsFixture(t *testing.T) (name string, roots []string) {
 	stateHome := filepath.Join(t.TempDir(), "state")
 	t.Setenv("XDG_STATE_HOME", stateHome)
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -667,7 +668,7 @@ func TestContractConfigLog(t *testing.T) {
 
 func seedWaitBinding(t *testing.T, name string, b store.Binding, entries []store.LogEntry) {
 	t.Helper()
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}

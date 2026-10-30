@@ -16,7 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // serverProbeChecks builds the pre-run rows for the configured servers and
@@ -116,7 +116,7 @@ func appendIdentityRows(rep *Report, rt relevo.Runtime, hasServers bool) {
 // a store whose open failed leaves the serve rows off, as every other
 // best-effort row does.
 func appendServeScopeRows(rep *Report, rt relevo.Runtime, env Env) {
-	if stateRoot, err := store.DefaultRoot(); err == nil {
+	if stateRoot, err := tmpdir.DefaultRoot(); err == nil {
 		serveRoot := filepath.Join(stateRoot, "serve")
 		serveDB := serveMachineDB(rt)
 		rep.Checks = append(rep.Checks, ServeChecks(env, serveDB, serveRoot, time.Now(), rt.Policy.ServeIsolation(), rt.Policy.ServeIsolationImage(), rt.Policy.ServeIsolationSharedLogins())...)

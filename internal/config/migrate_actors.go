@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
@@ -257,7 +258,7 @@ func actorForRole(name string, role roles.Role, row roles.Row, set *candidate.Se
 			continue
 		}
 		seen[display] = true
-		a.Candidates = append(a.Candidates, roles.Entry{Candidate: display, Off: containsString(row.Off, raw)})
+		a.Candidates = append(a.Candidates, roles.Entry{Candidate: display, Off: slices.Contains(row.Off, raw)})
 	}
 	if rf != nil && row.Check != nil {
 		a.Check = row.Check
@@ -346,7 +347,7 @@ func shippedAgentFor(role roles.Role) (string, bool) {
 		if !ok {
 			return "", false
 		}
-		if d.Agent != spec.Definition || !sameStrings(d.Requires, wants) {
+		if d.Agent != spec.Definition || !slices.Equal(d.Requires, wants) {
 			return "", false
 		}
 	}
@@ -363,7 +364,7 @@ func nativeAgentName(role roles.Role) string {
 		if kind == "claude" {
 			continue
 		}
-		if d.Agent != claude.Agent || !sameStrings(d.Requires, claude.Requires) {
+		if d.Agent != claude.Agent || !slices.Equal(d.Requires, claude.Requires) {
 			return role.Name + "-agent"
 		}
 	}
@@ -375,27 +376,6 @@ func shapeWord(shape harness.RoleShape) string {
 		return "writer"
 	}
 	return "reader"
-}
-
-func sameStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func containsString(list []string, want string) bool {
-	for _, s := range list {
-		if s == want {
-			return true
-		}
-	}
-	return false
 }
 
 func jsonHasAnyKey(body []byte, keys ...string) bool {
@@ -434,7 +414,7 @@ func stripObjectKeys(body []byte, sec Section, keys ...string) ([]byte, error) {
 	for _, k := range keys {
 		delete(obj, k)
 	}
-	return encodeSection(obj)
+	return roles.Encode(obj)
 }
 
 func stripCandidateKeys(body []byte, set *candidate.Set, roleTiers map[string]string) ([]byte, []string, error) {
@@ -456,7 +436,7 @@ func stripCandidateKeys(body []byte, set *candidate.Set, roleTiers map[string]st
 		notes = append(notes, fmt.Sprintf("candidate %s: tier %s dropped; set it on the actor", candidateLabel(row, set), tier))
 	}
 
-	encoded, err := encodeSection(rows)
+	encoded, err := roles.Encode(rows)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -515,12 +495,4 @@ func rawStrings(raw json.RawMessage) []string {
 		return nil
 	}
 	return out
-}
-
-func encodeSection(v any) ([]byte, error) {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append(data, '\n'), nil
 }

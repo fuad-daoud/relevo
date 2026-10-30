@@ -1,6 +1,8 @@
 package harness
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"testing"
 )
 
@@ -14,6 +16,10 @@ func TestAgentFilesStates(t *testing.T) {
 	}
 	old := []byte("an older relevo definition\n")
 	edited := []byte("---\nname: reviewer\nmodel: haiku\n---\n\nbody\n")
+	oldSum := sha256.Sum256(old)
+	oldSHA := hex.EncodeToString(oldSum[:])
+	shippedSum := sha256.Sum256(shipped)
+	shippedSHA := hex.EncodeToString(shippedSum[:])
 
 	tests := []struct {
 		name      string
@@ -23,10 +29,10 @@ func TestAgentFilesStates(t *testing.T) {
 		wantModel string
 	}{
 		{"identical file gives up to date", shipped, nil, FileUpToDate, "inherit"},
-		{"manifest-matching old copy gives stale", old, map[string]string{".gemini/config/agents/reviewer.md": docSHA(old)}, FileStale, ""},
+		{"manifest-matching old copy gives stale", old, map[string]string{".gemini/config/agents/reviewer.md": oldSHA}, FileStale, ""},
 		{"hand-edited file gives your edit, with its model pin read", edited, nil, FileEdited, "haiku"},
-		{"your edit over an older shipped copy gives edit + newer", edited, map[string]string{".gemini/config/agents/reviewer.md": docSHA(old)}, FileEditedNewer, "haiku"},
-		{"your edit over the current shipped copy stays your edit", edited, map[string]string{".gemini/config/agents/reviewer.md": docSHA(shipped)}, FileEdited, "haiku"},
+		{"your edit over an older shipped copy gives edit + newer", edited, map[string]string{".gemini/config/agents/reviewer.md": oldSHA}, FileEditedNewer, "haiku"},
+		{"your edit over the current shipped copy stays your edit", edited, map[string]string{".gemini/config/agents/reviewer.md": shippedSHA}, FileEdited, "haiku"},
 		{"absent file gives missing", nil, nil, FileMissing, ""},
 	}
 	for _, tc := range tests {

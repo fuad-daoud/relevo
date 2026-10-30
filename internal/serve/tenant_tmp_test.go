@@ -115,7 +115,7 @@ func TestTmpDirRunnerKeepsTheInheritedTmpDir(t *testing.T) {
 	// base runner's own rule then passes the user's value through.
 	spec := specAt(t, env.runner, len(env.runner.specs)-1)
 	for _, name := range proc.TmpDirEnv {
-		if hasEnvName(spec.Env, name) {
+		if proc.HasEnvName(spec.Env, name) {
 			t.Errorf("owner spec Env = %v, want no %s entry: the user's value is inherited", spec.Env, name)
 		}
 	}
@@ -144,7 +144,7 @@ func TestTmpDirRunnerPassesSpecTmpDirThrough(t *testing.T) {
 
 	spec := specAt(t, env.runner, len(env.runner.specs)-1)
 	for _, name := range proc.TmpDirEnv {
-		if hasEnvName(spec.Env, name) {
+		if proc.HasEnvName(spec.Env, name) {
 			t.Errorf("owner spec Env = %v, want no %s entry: the base applies the spec's own directory", spec.Env, name)
 		}
 	}

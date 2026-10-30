@@ -2,6 +2,8 @@ package ingest
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -173,7 +175,8 @@ func planArtifacts(plan *dedupePlan, d *db.DB, record db.Record, rd db.Round) er
 			if ferr != nil {
 				return fmt.Errorf("dedupe: round file %s/%s: %w", record.Name, base, ferr)
 			}
-			if found && sha256Hex(body) == a.SHA256 && int64(len(body)) == a.Bytes {
+			bodySum := sha256.Sum256(body)
+			if found && hex.EncodeToString(bodySum[:]) == a.SHA256 && int64(len(body)) == a.Bytes {
 				duplicate = true
 				break
 			}

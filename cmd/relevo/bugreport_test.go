@@ -21,6 +21,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // datedBundleName is the default bundle's file name: a UTC timestamp, so each
@@ -130,7 +131,7 @@ func collectReadOnly(t *testing.T, root string) {
 func TestReadOnlyRuntimeWritesNothing(t *testing.T) {
 	docsEnv(t)
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -177,7 +178,7 @@ func TestBugreportNeverCaptures(t *testing.T) {
 	t.Setenv("ANTIGRAVITY_CSRF_TOKEN", "the-csrf-token")
 	fakeBugreportExec(t, nil, nil)
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -227,7 +228,7 @@ func captureBigOutput(t *testing.T, fn func() error) ([]byte, error) {
 func seedBugreportMachine(t *testing.T, name string) string {
 	t.Helper()
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -789,7 +790,7 @@ func TestBugreportBodyUnreadableIsUsage(t *testing.T) {
 	if len(stdout) != 0 {
 		t.Errorf("stdout = %q, want nothing printed", stdout)
 	}
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}

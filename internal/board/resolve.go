@@ -10,12 +10,12 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // LiveRoot is <state root>/boards, the live scope's root (S1).
 func LiveRoot() (string, error) {
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return "", err
 	}
@@ -30,7 +30,7 @@ func LiveRoot() (string, error) {
 // is held it makes one more dial, and otherwise it refuses. It never starts the
 // owner, and it never calls mastermind.Resolve (whose hit writes seen_at).
 func OpenRegistry(deps Deps) (*mastermind.DBRegistry, *db.DB, error) {
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return nil, nil, err
 	}

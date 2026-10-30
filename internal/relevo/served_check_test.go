@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -367,7 +368,7 @@ func TestServedCheckRerunsOnceAfterDaemonRestart(t *testing.T) {
 		if len(fr.specs) != 1 {
 			t.Fatalf("Start calls = %d, want the one re-run", len(fr.specs))
 		}
-		if want := []string{"sh", "-c", "make check 2>&1"}; !equalStrings(fr.specs[0].Argv, want) {
+		if want := []string{"sh", "-c", "make check 2>&1"}; !slices.Equal(fr.specs[0].Argv, want) {
 			t.Errorf("re-run Argv = %v, want the first run's %v", fr.specs[0].Argv, want)
 		}
 
@@ -600,18 +601,4 @@ func TestServedCheckRunInTheBindingsWorktree(t *testing.T) {
 	if got := tickCheck(t, rt); got.Result != "" {
 		t.Errorf("Result = %q a second in, want none", got.Result)
 	}
-}
-
-// equalStrings is reflect.DeepEqual over two string slices, spelled out so the
-// spec assertions above read as the equality they are.
-func equalStrings(got, want []string) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			return false
-		}
-	}
-	return true
 }

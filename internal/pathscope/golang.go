@@ -6,6 +6,7 @@ import (
 	"go/scanner"
 	"go/token"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -143,7 +144,7 @@ func judgeGo(oldSrc, newSrc []byte) (ok bool, reason string) {
 	if !tokensEqual(o.tokens, n.tokens) {
 		return false, ReasonCodeChange
 	}
-	if !equalStrings(o.directives, n.directives) {
+	if !slices.Equal(o.directives, n.directives) {
 		return false, ReasonDirectiveComment
 	}
 	return true, ""
@@ -164,18 +165,6 @@ func tokensEqual(a, b []goToken) bool {
 			continue
 		}
 		if a[i].lit != b[i].lit {
-			return false
-		}
-	}
-	return true
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
 			return false
 		}
 	}

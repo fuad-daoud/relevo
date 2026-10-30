@@ -23,6 +23,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // logBindings is how many bindings --logs reads a round from when no --name
@@ -42,7 +43,7 @@ var journalArgv = []string{
 // rather than a failed run. The loaded config comes back with it, so a caller
 // needs no second read.
 func newRuntimeReadOnly() (relevo.Runtime, config.Loaded, error) {
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return relevo.Runtime{}, config.Loaded{}, err
 	}

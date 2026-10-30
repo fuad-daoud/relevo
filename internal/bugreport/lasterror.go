@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // LastErrorFile is the state-root slot the failure record lives in: one file,
@@ -35,7 +35,7 @@ func WriteLastError(root string, e LastError) error {
 	if root == "" {
 		return errors.New("last error: no state root")
 	}
-	if err := os.MkdirAll(root, store.StateRootMode); err != nil {
+	if err := os.MkdirAll(root, tmpdir.StateRootMode); err != nil {
 		return fmt.Errorf("last error: create %s: %w", root, err)
 	}
 	raw, err := json.MarshalIndent(e, "", "  ")

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -146,7 +146,7 @@ func (p roundPane) openCmd(env widget.Env) tea.Cmd {
 		if c.artifactErr != nil {
 			return notice(c.artifactErr.Error())
 		}
-		tmp, terr := store.CreateTemp(rt.Store.Root(), filepath.Base(rel)+"-*")
+		tmp, terr := tmpdir.CreateTemp(rt.Store.Root(), filepath.Base(rel)+"-*")
 		if terr != nil {
 			return notice(terr.Error())
 		}

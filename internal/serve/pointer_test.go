@@ -9,40 +9,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 )
 
-func TestDaemonPointerKVRoundTrip(t *testing.T) {
-	d := testServeDB(t)
-	startedAt := time.Date(2026, 9, 20, 12, 34, 56, 0, time.UTC)
-	want := DaemonPointer{
-		Root:      "/srv/data/relevo-serve/serve",
-		PID:       4242,
-		Listen:    ":7777",
-		StartedAt: startedAt,
-	}
-	if err := WriteDaemonPointer(d, want); err != nil {
-		t.Fatalf("WriteDaemonPointer: %v", err)
-	}
-	got, ok, err := ReadDaemonPointer(d)
-	if err != nil {
-		t.Fatalf("ReadDaemonPointer: %v", err)
-	}
-	if !ok {
-		t.Fatal("ReadDaemonPointer ok = false, want true")
-	}
-	if got != want {
-		t.Errorf("ReadDaemonPointer = %+v, want %+v", got, want)
-	}
-	if err := RemoveDaemonPointer(d); err != nil {
-		t.Fatalf("RemoveDaemonPointer: %v", err)
-	}
-	_, ok, err = ReadDaemonPointer(d)
-	if err != nil {
-		t.Fatalf("ReadDaemonPointer after remove: %v", err)
-	}
-	if ok {
-		t.Error("ReadDaemonPointer after remove ok = true, want false")
-	}
-}
-
 func emptyRoot(t *testing.T, _ *db.DB) string { return t.TempDir() }
 
 func missingRoot(t *testing.T, _ *db.DB) string { return filepath.Join(t.TempDir(), "nope") }
@@ -117,16 +83,16 @@ func TestResolveAdminRoot(t *testing.T) {
 	cases := []struct {
 		name          string
 		explicitState string
-		pointer       *DaemonPointer
+		pointer       *db.DaemonPointer
 		alive         bool
 		wantRoot      string
 		wantNote      string
 	}{
 		{"explicit state", "/explicit", nil, false, "/explicit/serve", ""},
 		{"missing pointer", "", nil, false, "default", ""},
-		{"live different pointer", "", &DaemonPointer{Root: "/daemon/serve", PID: 4242}, true, "/daemon/serve", "using the running daemon's state: /daemon/serve (pid 4242)"},
-		{"live default pointer", "", &DaemonPointer{Root: "default", PID: 4242}, true, "default", ""},
-		{"stale pointer", "", &DaemonPointer{Root: "/daemon/serve", PID: 4242}, false, "default", "stale daemon pointer: /daemon/serve (pid 4242 is not running)"},
+		{"live different pointer", "", &db.DaemonPointer{Root: "/daemon/serve", PID: 4242}, true, "/daemon/serve", "using the running daemon's state: /daemon/serve (pid 4242)"},
+		{"live default pointer", "", &db.DaemonPointer{Root: "default", PID: 4242}, true, "default", ""},
+		{"stale pointer", "", &db.DaemonPointer{Root: "/daemon/serve", PID: 4242}, false, "default", "stale daemon pointer: /daemon/serve (pid 4242 is not running)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -137,7 +103,7 @@ func TestResolveAdminRoot(t *testing.T) {
 				if p.Root == "default" {
 					p.Root = defaultRoot
 				}
-				if err := WriteDaemonPointer(d, p); err != nil {
+				if err := db.WriteDaemonPointer(d, p); err != nil {
 					t.Fatalf("WriteDaemonPointer: %v", err)
 				}
 			}

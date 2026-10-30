@@ -13,7 +13,7 @@ import (
 // TestTmpDirLengthBound pins the budget end to end: the longest TMPDIR
 // relevo hands a served or local round or check, plus the socket suffix,
 // stays under the sun_path limit. The served root below has ownerTmpDir's
-// shape (tmp/t/<8>); the local root is store.TempDir's (<state>/tmp).
+// shape (tmp/t/<8>); the local root is tmpdir.TempDir's (<state>/tmp).
 func TestTmpDirLengthBound(t *testing.T) {
 	t.Parallel()
 

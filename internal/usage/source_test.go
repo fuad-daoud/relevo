@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/spawn"
+	"github.com/fuad-daoud/relevo/internal/trail"
 )
 
 func copyFixture(t *testing.T, src, dst string) {
@@ -145,7 +145,7 @@ func TestPeekOpenStreamReturnsPartial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = fmt.Fprintf(f, "{\"type\":\"result\",\"total_cost_usd\":0.5,\"usage\":{\"input_tokens\":12,\"cache_creation_input_tokens\":100,\"cache_read_input_tokens\":100,\"output_tokens\":25}}\n%s0\n", spawn.ExitTrailer)
+	_, _ = fmt.Fprintf(f, "{\"type\":\"result\",\"total_cost_usd\":0.5,\"usage\":{\"input_tokens\":12,\"cache_creation_input_tokens\":100,\"cache_read_input_tokens\":100,\"output_tokens\":25}}\n%s0\n", trail.ExitTrailer)
 	_ = f.Close()
 	got, note = New().Read(context.Background(), Source{Harness: "claude", Mode: ModeHeadless, Provider: "anthropic", StreamPath: path})
 	if note != "" || len(got) != 1 || !got[0].HasCost {

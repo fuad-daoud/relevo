@@ -400,7 +400,7 @@ func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusC
 		}
 	}
 	row.RoundStart, row.RoundEnd, row.RoundUsage = view.RoundFacts(entries)
-	row.RoundPriorTokens = view.PriorTokensOf(entries, row.PlanRound)
+	row.RoundPriorTokens = store.PriorTokensOf(entries, row.PlanRound)
 	if b.Builder.Remote() && row.RoundEnd.IsZero() && b.Builder.RemoteLive != nil {
 		row.RoundPriorTokens = b.Builder.RemoteLive.PriorTokens
 	}

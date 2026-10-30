@@ -17,7 +17,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/isolate"
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/serve"
 )
 
 // containerPodmanLookPath resolves the container runtime for the isolation
@@ -63,7 +62,7 @@ var tenantStat = func(path string) (uid, gid uint32, mode os.FileMode, err error
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	uid, gid, ok := statOwner(fi)
+	uid, gid, ok := db.StatOwner(fi)
 	if !ok {
 		return 0, 0, fi.Mode().Perm(), nil
 	}
@@ -94,7 +93,7 @@ func ServeChecks(env Env, d *db.DB, serveRoot string, now time.Time, isolation, 
 	}
 
 	root := serveRoot
-	if p, ok, err := serve.ReadDaemonPointer(d); err == nil && ok && p.Root != "" {
+	if p, ok, err := db.ReadDaemonPointer(d); err == nil && ok && p.Root != "" {
 		root = p.Root
 	}
 

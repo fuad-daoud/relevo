@@ -61,7 +61,8 @@ func TestS3SignatureMatchesKnownVector(t *testing.T) {
 	if canonical != awsExampleCanonicalRequest {
 		t.Fatalf("canonical request =\n%q\nwant\n%q", canonical, awsExampleCanonicalRequest)
 	}
-	if sum := sha256Hex([]byte(canonical)); sum != awsExampleCanonSHA {
+	canonicalSum := sha256.Sum256([]byte(canonical))
+	if sum := hex.EncodeToString(canonicalSum[:]); sum != awsExampleCanonSHA {
 		t.Errorf("canonical request hash = %s, want the documented %s", sum, awsExampleCanonSHA)
 	}
 

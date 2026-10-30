@@ -159,7 +159,7 @@ func buildTotals(in Inputs, rows []db.RoundRow) Totals {
 	}
 	t.Bindings = len(bindings)
 	t.Candidates = len(candidates)
-	t.MedianMS = median(durations)
+	t.MedianMS = Median(durations)
 	t.Tokens = t.TokenKinds.Total()
 	return t
 }
@@ -220,8 +220,9 @@ func dayStart(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 }
 
-// median is histq's, copied so the two stat surfaces agree.
-func median(xs []int64) int64 {
+// Median is the median of xs, 0 when empty; an even count takes the mean of
+// the two middles.
+func Median(xs []int64) int64 {
 	if len(xs) == 0 {
 		return 0
 	}

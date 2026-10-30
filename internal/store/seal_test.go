@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/spawn"
+	"github.com/fuad-daoud/relevo/internal/trail"
 )
 
 // TestSealableTable pins the pure predicate: a closed, quiet round is
@@ -100,7 +100,7 @@ func streamPathForCase(s *Store, b Binding, drained int, legacy bool) string {
 func TestStreamDrained(t *testing.T) {
 	const drained = 2
 	payload := `{"type":"step","part":{"time":{"end":1}}}`
-	relevoOnly := payload + "\n\n" + spawn.ExitTrailer + "0\n"
+	relevoOnly := payload + "\n\n" + trail.ExitTrailer + "0\n"
 
 	cases := []struct {
 		name   string
@@ -163,13 +163,13 @@ func TestStreamDrainedReadsOnlyTheTail(t *testing.T) {
 	payload := `{"type":"step","part":{"time":{"end":1}}}`
 	// A stream far larger than the tail, ended by the supervisor's trailer.
 	prefix := strings.Repeat(payload+"\n", streamTailBytes/len(payload)/2+1)
-	trailed := prefix + spawn.ExitTrailer + "0\n"
+	trailed := prefix + trail.ExitTrailer + "0\n"
 	// The same stream with a non-trailer line after the cursor, inside the tail.
-	lateLine := prefix + spawn.ExitTrailer + "0\n" + "still flushing\n"
+	lateLine := prefix + trail.ExitTrailer + "0\n" + "still flushing\n"
 	// A trailer far from the end: after it, more than a tail's worth of lines
 	// the supervisor's exit allows. Only a whole-file read can see the trailer,
 	// so the bounded read refuses to call this drained while it is fresh.
-	buried := "\n" + spawn.ExitTrailer + "0\n" + strings.Repeat(spawn.RusageTrailerPrefix+" 1 2 3 4\n", streamTailBytes/16+16)
+	buried := "\n" + trail.ExitTrailer + "0\n" + strings.Repeat(trail.RusageTrailerPrefix+" 1 2 3 4\n", streamTailBytes/16+16)
 
 	cases := []struct {
 		name   string
@@ -178,7 +178,7 @@ func TestStreamDrainedReadsOnlyTheTail(t *testing.T) {
 		want   bool
 	}{
 		{"cursor at EOF behind a trailer in the tail", trailed, func(s string) int64 { return int64(len(s)) }, true},
-		{"a fresh line after the trailer is not drained", lateLine, func(s string) int64 { return int64(len(prefix)) + int64(len(spawn.ExitTrailer)) + 2 }, false},
+		{"a fresh line after the trailer is not drained", lateLine, func(s string) int64 { return int64(len(prefix)) + int64(len(trail.ExitTrailer)) + 2 }, false},
 		{"a trailer buried before the tail is not drained", buried, func(string) int64 { return 0 }, false},
 	}
 

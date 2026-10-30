@@ -19,11 +19,6 @@ const headSampleBytes = 4096
 // idle member costs one head sample per read, not its whole length.
 const prefixChunkBytes = 64 << 10
 
-func sha256Hex(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
-
 // cursorSourceKey is the ingest_cursor natural key for member of src.
 func cursorSourceKey(src Source, member string) string {
 	kind, path := src.Origin()
@@ -74,7 +69,8 @@ func readAppendOnly(opener func() (io.ReadSeekCloser, error), sourceKey string, 
 			if herr != nil {
 				return nil, 0, db.Cursor{}, false, herr
 			}
-			if sha256Hex(sample) == cur.HeadSHA {
+			sampleSum := sha256.Sum256(sample)
+			if hex.EncodeToString(sampleSum[:]) == cur.HeadSHA {
 				offset, head = cur.ByteOffset, sample
 			} else {
 				reset = true
@@ -106,7 +102,8 @@ func readAppendOnly(opener func() (io.ReadSeekCloser, error), sourceKey string, 
 			return nil, 0, db.Cursor{}, false, err
 		}
 	}
-	return lines, startSeq, db.Cursor{Source: sourceKey, ByteOffset: newOffset, HeadSHA: sha256Hex(head)}, reset, nil
+	headSum := sha256.Sum256(head)
+	return lines, startSeq, db.Cursor{Source: sourceKey, ByteOffset: newOffset, HeadSHA: hex.EncodeToString(headSum[:])}, reset, nil
 }
 
 // readHead reads the first n bytes of rc, for the rewrite check and the cursor

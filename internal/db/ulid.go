@@ -26,10 +26,12 @@ func NewID() string {
 		panic("db: crypto/rand: " + err.Error())
 	}
 
-	return encodeULID(id)
+	return EncodeULID(id)
 }
 
-func encodeULID(id [16]byte) string {
+// EncodeULID writes the 16 bytes as the 26 characters a ULID is: Crockford
+// base32, the layout NewID mints.
+func EncodeULID(id [16]byte) string {
 	var out [26]byte
 
 	out[0] = crockford[(id[0]&224)>>5]

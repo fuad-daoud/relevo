@@ -13,7 +13,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // configGetFlagValues holds the pointer `config get` parses into. It prints
@@ -295,7 +295,7 @@ func configEdit(args []string) error {
 	if rt.Store != nil {
 		root = rt.Store.Root()
 	}
-	tmp, err := store.CreateTemp(root, "relevo-config-*.json")
+	tmp, err := tmpdir.CreateTemp(root, "relevo-config-*.json")
 	if err != nil {
 		return err
 	}

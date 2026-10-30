@@ -2,6 +2,8 @@ package board
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -34,7 +36,8 @@ func TestSaveWritesCompanionSVG(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if want := Etag([]byte(sceneJSON)); etag != want {
+	sum := sha256.Sum256([]byte(sceneJSON))
+	if want := hex.EncodeToString(sum[:]); etag != want {
 		t.Errorf("etag = %q, want %q", etag, want)
 	}
 	gotScene, err := os.ReadFile(scene)
@@ -77,7 +80,8 @@ func TestSaveRenameFailureLeavesOldFile(t *testing.T) {
 	renameFile = func(string, string) error { return errors.New("crash before rename") }
 	t.Cleanup(func() { renameFile = orig })
 
-	_, err := Save(scene, []byte(`{"type":"excalidraw","elements":[{"id":"x"}]}`), []byte("<svg/>"), Etag([]byte(sceneJSON)))
+	sum := sha256.Sum256([]byte(sceneJSON))
+	_, err := Save(scene, []byte(`{"type":"excalidraw","elements":[{"id":"x"}]}`), []byte("<svg/>"), hex.EncodeToString(sum[:]))
 	if err == nil {
 		t.Fatal("Save with a failing rename succeeded")
 	}

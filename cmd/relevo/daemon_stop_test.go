@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/store"
+
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // swapDaemonStopSeams saves the stop seams and restores them when the test
@@ -35,7 +37,7 @@ func stopEnv(t *testing.T) string {
 	t.Setenv("XDG_STATE_HOME", stateHome)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}

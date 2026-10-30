@@ -1,6 +1,9 @@
 package transcript
 
-import "time"
+import (
+	"cmp"
+	"time"
+)
 
 // claude is the table for claude -p --output-format stream-json --verbose: an
 // assistant message's blocks render in order; tool results are user events.
@@ -17,7 +20,7 @@ func (r *Renderer) claude(obj map[string]any) []string {
 	case "result":
 		return claudeResult(obj, s)
 	case "error":
-		return []string{s.line(errLine(firstNonEmpty(str(obj["message"]), str(asMap(obj["error"])["message"]))))}
+		return []string{s.line(errLine(cmp.Or(str(obj["message"]), str(asMap(obj["error"])["message"]))))}
 	case "system", "rate_limit_event":
 		return nil
 	}

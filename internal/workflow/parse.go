@@ -5,7 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
+	"maps"
+	"slices"
 	"strconv"
 
 	yaml "go.yaml.in/yaml/v3"
@@ -188,7 +189,7 @@ func decodeParams(v any, path string) (map[string]Param, error) {
 		return nil, err
 	}
 	params := make(map[string]Param, len(obj))
-	for _, key := range sortedKeys(obj) {
+	for _, key := range slices.Sorted(maps.Keys(obj)) {
 		p, err := decodeParam(obj[key], entryPath(path, key))
 		if err != nil {
 			return nil, err
@@ -224,7 +225,7 @@ func decodeSteps(v any, path string) (map[string]Step, error) {
 		return nil, err
 	}
 	steps := make(map[string]Step, len(obj))
-	for _, key := range sortedKeys(obj) {
+	for _, key := range slices.Sorted(maps.Keys(obj)) {
 		step, err := decodeStep(obj[key], entryPath(path, key))
 		if err != nil {
 			return nil, err
@@ -289,7 +290,7 @@ func decodeOn(v any, path string) (map[string]Target, error) {
 		return nil, err
 	}
 	on := make(map[string]Target, len(obj))
-	for _, key := range sortedKeys(obj) {
+	for _, key := range slices.Sorted(maps.Keys(obj)) {
 		target, err := decodeTarget(obj[key], entryPath(path, key))
 		if err != nil {
 			return nil, err
@@ -523,7 +524,7 @@ func onlyKeys(obj map[string]any, path string, allowed ...string) error {
 	for _, key := range allowed {
 		known[key] = true
 	}
-	for _, key := range sortedKeys(obj) {
+	for _, key := range slices.Sorted(maps.Keys(obj)) {
 		if !known[key] {
 			return fmt.Errorf("%s: unknown field %q", orRoot(path), key)
 		}
@@ -571,15 +572,4 @@ func fieldPath(base, key string) string {
 // entryPath extends a path with a map entry key.
 func entryPath(base, key string) string {
 	return base + "[" + strconv.Quote(key) + "]"
-}
-
-// sortedKeys returns a string-keyed map's keys, sorted, so decoding and error
-// reporting are deterministic.
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // pushAckMasterMind is the MasterMind id push_ack_env registers and seeds. It
@@ -25,7 +26,7 @@ const pushAckMasterMind = "pl_aaaaaaaabbbb"
 func pushAckEnv(t *testing.T) string {
 	t.Helper()
 	docsEnv(t)
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -46,7 +47,7 @@ func pushAckEnv(t *testing.T) string {
 // holder process being spawned.
 func seedPushAckEntry(t *testing.T, name, mastermindID string) {
 	t.Helper()
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}

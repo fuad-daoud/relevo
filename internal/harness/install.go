@@ -2,6 +2,8 @@ package harness
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -10,7 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/shipped"
 )
 
 // InstallEnv defines the filesystem and PATH seams required by Install.
@@ -256,36 +258,39 @@ func installOne(env InstallEnv, opts InstallOptions, kind string, r Role, manife
 // installBytes applies the decision table to one shipped file: an agent
 // definition or an opt-in shipped file. homeRel is the home-relative path whose
 // sha the manifest records; shippedBeforeKey is the embedded basename
-// ShippedBefore indexes, "" for a shipped file with no pre-manifest history.
-func installBytes(env InstallEnv, opts InstallOptions, res InstallResult, homeRel string, shipped []byte, manifest map[string]string, shippedBeforeKey string) (InstallResult, bool, error) {
+// shipped.Before indexes, "" for a shipped file with no pre-manifest history.
+func installBytes(env InstallEnv, opts InstallOptions, res InstallResult, homeRel string, want []byte, manifest map[string]string, shippedBeforeKey string) (InstallResult, bool, error) {
 	full, err := env.HomePath(homeRel)
 	if err != nil {
 		return InstallResult{}, false, err
 	}
-	return installAt(env, opts, res, full, homeRel, shipped, manifest, shippedBeforeKey)
+	return installAt(env, opts, res, full, homeRel, want, manifest, shippedBeforeKey)
 }
 
 // installAt is installBytes with the destination and the manifest key chosen by
 // the caller, so an account-home install follows exactly the decision table a
 // $HOME install does while recording its own manifest entry.
-func installAt(env InstallEnv, opts InstallOptions, res InstallResult, full, manifestKey string, shipped []byte, manifest map[string]string, shippedBeforeKey string) (InstallResult, bool, error) {
+func installAt(env InstallEnv, opts InstallOptions, res InstallResult, full, manifestKey string, want []byte, manifest map[string]string, shippedBeforeKey string) (InstallResult, bool, error) {
 	existing, rerr := env.ReadFile(full)
-	existingSHA := docSHA(existing)
+	existingSum := sha256.Sum256(existing)
+	existingSHA := hex.EncodeToString(existingSum[:])
+	shippedSum := sha256.Sum256(want)
+	shippedSHA := hex.EncodeToString(shippedSum[:])
 	switch {
 	case errors.Is(rerr, fs.ErrNotExist):
 		if opts.DryRun {
 			res.Outcome = OutcomeWouldWrite
 			return res, false, nil
 		}
-		res = writeDoc(env, full, shipped, res, OutcomeWrote)
+		res = writeDoc(env, full, want, res, OutcomeWrote)
 		if res.Outcome != OutcomeWrote {
 			return res, false, nil
 		}
-		return res, record(manifest, manifestKey, docSHA(shipped)), nil
-	case rerr == nil && DocEqual(shipped, existing):
+		return res, record(manifest, manifestKey, shippedSHA), nil
+	case rerr == nil && DocEqual(want, existing):
 		res.Outcome = OutcomeKeptIdentical
 		return res, record(manifest, manifestKey, existingSHA), nil
-	case rerr == nil && (manifest[manifestKey] == existingSHA || (shippedBeforeKey != "" && ShippedBefore(shippedBeforeKey, existingSHA))):
+	case rerr == nil && (manifest[manifestKey] == existingSHA || (shippedBeforeKey != "" && shipped.Before(shippedBeforeKey, existingSHA))):
 		// The bytes are what relevo last wrote, or a blob some past relevo
 		// shipped before manifests existed, so the difference is relevo's own
 		// older release, not the user's edit: safe to refresh.
@@ -293,16 +298,16 @@ func installAt(env InstallEnv, opts InstallOptions, res InstallResult, full, man
 			res.Outcome = OutcomeWouldUpdate
 			return res, false, nil
 		}
-		res = writeDoc(env, full, shipped, res, OutcomeUpdated)
+		res = writeDoc(env, full, want, res, OutcomeUpdated)
 		if res.Outcome != OutcomeUpdated {
 			return res, false, nil
 		}
-		return res, record(manifest, manifestKey, docSHA(shipped)), nil
+		return res, record(manifest, manifestKey, shippedSHA), nil
 	default:
 		// The manifest holds what relevo last wrote here. A record that is not
 		// the definition relevo ships now means the user's edit sits on an
 		// older copy, which a reset replaces with the newer one.
-		res.NewerShipped = manifest[manifestKey] != "" && manifest[manifestKey] != docSHA(shipped)
+		res.NewerShipped = manifest[manifestKey] != "" && manifest[manifestKey] != shippedSHA
 		if !opts.Force {
 			res.Outcome = OutcomeKeptDiffers
 			return res, false, nil
@@ -311,11 +316,11 @@ func installAt(env InstallEnv, opts InstallOptions, res InstallResult, full, man
 			res.Outcome = OutcomeWouldOverwrite
 			return res, false, nil
 		}
-		res = writeDoc(env, full, shipped, res, OutcomeOverwrote)
+		res = writeDoc(env, full, want, res, OutcomeOverwrote)
 		if res.Outcome != OutcomeOverwrote {
 			return res, false, nil
 		}
-		return res, record(manifest, manifestKey, docSHA(shipped)), nil
+		return res, record(manifest, manifestKey, shippedSHA), nil
 	}
 }
 
@@ -413,7 +418,7 @@ type osInstallEnv struct {
 	// kv is the database the role manifest lives in; an env with no database
 	// reads as "nothing recorded" and refuses to save. Only OSInstallEnvKV
 	// sets it.
-	kv db.KV
+	kv KV
 }
 
 // OSInstallEnv returns an InstallEnv backed by the OS and exec packages,
@@ -426,7 +431,7 @@ func OSInstallEnv() InstallEnv {
 // OSInstallEnvKV is OSInstallEnv with the role manifest kept in kv. The caller
 // opens the machine database (this package cannot, since harness <- usage <-
 // store) and passes the handle in.
-func OSInstallEnvKV(kv db.KV) InstallEnv {
+func OSInstallEnvKV(kv KV) InstallEnv {
 	return osInstallEnv{kv: kv}
 }
 
