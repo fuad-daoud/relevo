@@ -43,6 +43,7 @@ github.com/fuad-daoud/relevo/internal/relevo 84.3
 github.com/fuad-daoud/relevo/internal/remote 90.8
 github.com/fuad-daoud/relevo/internal/remote/client 75.8
 github.com/fuad-daoud/relevo/internal/reporttail 97.6
+github.com/fuad-daoud/relevo/internal/refusal 100.0
 github.com/fuad-daoud/relevo/internal/resolve 76.0
 github.com/fuad-daoud/relevo/internal/roles 92.3
 github.com/fuad-daoud/relevo/internal/sanitize 100.0
