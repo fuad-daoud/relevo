@@ -586,7 +586,7 @@ func TestReaderRoundIsNotAnEscape(t *testing.T) {
 		Shape: store.ShapeReader, RoundBaselineTree: "tree1",
 		Builder: store.Endpoint{Mode: store.ModeHeadless},
 	}
-	if got := escapeCheck(context.Background(), rt, reader, true); got != EscapeNone {
+	if got := escapeCheck(context.Background(), rt, reader, true); got != git.EscapeNone {
 		t.Errorf("escapeCheck(reader) = %v, want EscapeNone", got)
 	}
 	if fg.snapshotCalls != 0 {
@@ -597,7 +597,7 @@ func TestReaderRoundIsNotAnEscape(t *testing.T) {
 	// the reader arm is what makes the difference.
 	writer := reader
 	writer.Shape = store.ShapeWriter
-	if got := escapeCheck(context.Background(), rt, writer, true); got != EscapeNote {
+	if got := escapeCheck(context.Background(), rt, writer, true); got != git.EscapeNote {
 		t.Errorf("escapeCheck(writer) = %v, want EscapeNote", got)
 	}
 }
