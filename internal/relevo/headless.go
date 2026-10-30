@@ -18,7 +18,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/consult"
+	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -815,15 +817,15 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	//
 	// The escape check runs before closeOnMarker, not inside it: queueReport
 	// clears RoundBaselineTree, and the snapshot must be compared against it
-	// while it is still on b (#192). It runs only when the marker is there --
+	// while it is still on b. It runs only when the marker is there --
 	// the close is the only reader of its answer -- so a live round pays two
 	// git subprocesses once, at its close, not every tick under the state
 	// lock. That per-tick pair was the largest cost of a live headless tick
 	// and it warned every tick for a repository git could not read.
 	markerNote := ""
 	if _, _, ok, _ := rt.Store.StatFile(rt.Store.DonePath(b.Name, b.Round)); ok {
-		if escapeCheck(ctx, rt, b, true) == EscapeNote {
-			markerNote = escapeNote
+		if escapeCheck(ctx, rt, b, true) == git.EscapeNote {
+			markerNote = git.EscapedNote
 		}
 	}
 	// queueReport's reset block clears RoundVerify: read the round's verify
@@ -947,8 +949,8 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	if _, _, ok, _ := rt.Store.StatFile(rt.Store.DonePath(b.Name, b.Round)); ok {
 		slog.Debug("marker appeared before exit was observed", "binding", b.Name, "round", b.Round, "pid", b.Builder.PID)
 		markerNote := ""
-		if escapeCheck(ctx, rt, b, true) == EscapeNote {
-			markerNote = escapeNote
+		if escapeCheck(ctx, rt, b, true) == git.EscapeNote {
+			markerNote = git.EscapedNote
 		}
 		next, _, _, err := markerClose(ctx, rt, tx, b, entries, markerNote, wantVerify)
 		if err != nil {
@@ -983,10 +985,10 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 			if fellBack {
 				note = joinNotes(note, readerFallbackNote)
 			}
-			if escapeCheck(ctx, rt, b, true) == EscapeNote {
-				note = joinNotes(note, escapeNote)
+			if escapeCheck(ctx, rt, b, true) == git.EscapeNote {
+				note = joinNotes(note, git.EscapedNote)
 			}
-			next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "", false, "", scopeVerdict{})
+			next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "", false, "", pathscope.Verdict{})
 			if err != nil {
 				return b, err
 			}
@@ -1173,8 +1175,8 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	}
 
 	// The escape halt comes before gateOnLimit: a limit line in the log of
-	// an escaped round must not turn a halt into a switch (#192).
-	if escapeCheck(ctx, rt, b, false) == EscapeHalt {
+	// an escaped round must not turn a halt into a switch.
+	if escapeCheck(ctx, rt, b, false) == git.EscapeHalt {
 		return haltAndSettle(ctx, rt, tx, b, escapeDiagnosis(b, codeText))
 	}
 

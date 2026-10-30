@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -146,7 +147,7 @@ func TestQueueReportScopeRefusalHaltWaitOnClosedRound(t *testing.T) {
 	}
 	touch(t, rt.Store.DonePath("webshop", 1))
 
-	refused := scopeVerdict{Scoped: true, Refused: true, Path: "internal/other.go", Reason: "outside scope"}
+	refused := pathscope.Verdict{Scoped: true, Refused: true, Path: "internal/other.go", Reason: "outside scope"}
 
 	var got store.Binding
 	err := rt.Store.WithLock(func(tx *store.Tx) error {
@@ -419,8 +420,8 @@ func freeLogRoom(t *testing.T, rt Runtime, name string) {
 
 // refusedScope is the verdict both tests below close a writer round with. The
 // judging is not what either of them pins.
-func refusedScope() scopeVerdict {
-	return scopeVerdict{Scoped: true, Refused: true, Path: "internal/other.go", Reason: "outside scope"}
+func refusedScope() pathscope.Verdict {
+	return pathscope.Verdict{Scoped: true, Refused: true, Path: "internal/other.go", Reason: "outside scope"}
 }
 
 // closeWithUnwritableHaltEntry closes b's open round with a refused scope
