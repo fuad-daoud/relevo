@@ -502,7 +502,7 @@ func TestStopOwnedRunningRoundClosesServedRound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state := RoundStateOf(got, entries); state != remote.RoundClosed {
+	if state := remote.RoundStateOf(got, entries); state != remote.RoundClosed {
 		t.Errorf("RoundStateOf = %v, want %v", state, remote.RoundClosed)
 	}
 }
@@ -539,7 +539,7 @@ func TestStopOwnedQueuedRoundDequeues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state := RoundStateOf(got, entries); state != remote.RoundClosed {
+	if state := remote.RoundStateOf(got, entries); state != remote.RoundClosed {
 		t.Errorf("RoundStateOf = %v, want %v", state, remote.RoundClosed)
 	}
 	if text := StopText("api", res); !strings.Contains(text, "dropped from the server queue") {
