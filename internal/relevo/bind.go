@@ -948,6 +948,22 @@ func askServerUnbind(ctx context.Context, rt Runtime, b store.Binding, force boo
 	return fmt.Errorf("%s: %w", b.Builder.Server, uerr)
 }
 
+// housekeepTeardown adapts the engine's worktree teardown to the plain values
+// housekeep.GC reports.
+func housekeepTeardown(rt Runtime) func(context.Context, store.Binding, bool) housekeep.TeardownOutcome {
+	return func(ctx context.Context, b store.Binding, dryRun bool) housekeep.TeardownOutcome {
+		o := worktreeTeardown(ctx, rt, b, dryRun)
+		return housekeep.TeardownOutcome{Removed: o.Removed, Kept: o.Kept, Reason: o.Reason, Gone: o.Gone}
+	}
+}
+
+// housekeepAskUnbind adapts the engine's server ask to housekeep.GC's ask.
+func housekeepAskUnbind(rt Runtime) func(context.Context, store.Binding, bool) error {
+	return func(ctx context.Context, b store.Binding, force bool) error {
+		return askServerUnbind(ctx, rt, b, force)
+	}
+}
+
 // reapSessions deletes the builder's session and everything already abandoned,
 // directly: the record is about to go, so nothing is saved and a failed delete
 // only warns. Deletion is safe only once the process is really stopped -- a
