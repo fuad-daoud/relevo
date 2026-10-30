@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
 )
 
@@ -367,7 +368,7 @@ func auditDataLine(r db.RevisionRow, sel bool, cw int) string {
 // unexported dash type, so it cannot be called from here; only its shape and
 // dash.DayLabel, which formats the label, are shared.
 func auditDayRule(label string, n, cw int) string {
-	right := " " + auditCount(n, "revision")
+	right := " " + text.Plural(n, "revision")
 	leftWidth := lipgloss.Width(label) + 1
 	fill := cw - leftWidth - lipgloss.Width(right)
 	if fill < 0 {
@@ -375,14 +376,6 @@ func auditDayRule(label string, n, cw int) string {
 	}
 	content := dimStyle.Render(label) + " " + gridStyle.Render(strings.Repeat("┈", fill)) + faintStyle.Render(right)
 	return "   " + fit(content, cw) + "   "
-}
-
-// auditCount is "1 revision" or "3 revisions".
-func auditCount(n int, unit string) string {
-	if n == 1 {
-		return fmt.Sprintf("1 %s", unit)
-	}
-	return fmt.Sprintf("%d %ss", n, unit)
 }
 
 // auditDayCount is the size of the day group that starts at revision i.

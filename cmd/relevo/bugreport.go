@@ -13,6 +13,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/bugreport"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // bugreportFlagValues holds the pointers bugreport parses into.
@@ -182,11 +183,11 @@ func fileBundle(b bugreport.Bundle, opts bugreportOptions, root string) error {
 	if path == "" {
 		path = filepath.Join(root, "bugreports", "bugreport-"+time.Now().UTC().Format("20060102T150405Z")+".md")
 	}
-	text, err := bugreport.MarkdownCapped(b, bugreport.GhBodyLimit)
+	capped, err := bugreport.MarkdownCapped(b, bugreport.GhBodyLimit)
 	if err != nil {
 		return fail(codeUsage, "%v", err)
 	}
-	if err := writeBundleFile(path, text); err != nil {
+	if err := writeBundleFile(path, capped); err != nil {
 		return fail(codeInternal, "%v", err)
 	}
 
@@ -202,7 +203,7 @@ func fileBundle(b bugreport.Bundle, opts bugreportOptions, root string) error {
 		if errors.Is(err, exec.ErrNotFound) {
 			return fail(codeNotAvailable, "%s", line)
 		}
-		reason := firstLine(string(out))
+		reason := text.FirstLine(string(out))
 		if reason == "" {
 			reason = err.Error()
 		}

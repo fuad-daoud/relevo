@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os/exec"
 	"strings"
+
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // SplitCapability is the token a split-aware binary's `daemon --preflight`
@@ -41,22 +43,11 @@ func SplitGuardPreflight(splitActive bool) func(context.Context, string) error {
 	return func(ctx context.Context, path string) error {
 		out, err := exec.CommandContext(ctx, path, "daemon", "--preflight").CombinedOutput()
 		if err != nil {
-			if line := firstOutputLine(string(out)); line != "" {
+			if line := text.FirstLine(string(out)); line != "" {
 				return errors.New(line)
 			}
 			return err
 		}
 		return CheckSplitCapability(string(out), splitActive)
 	}
-}
-
-// firstOutputLine is the first non-empty line of s, for a preflight
-// failure's reason. It is what daemon.json and the log record, not the
-// whole stderr.
-func firstOutputLine(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return strings.TrimSpace(s[:i])
-	}
-	return s
 }

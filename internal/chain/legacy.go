@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // Status is where a chain is. Halted, stopped and done are terminal: a close
@@ -194,7 +195,7 @@ func BuilderHaltReason(tail reporttail.Tail, note, outcome string) string {
 		{"note", note},
 		{"not_done", firstOrEmpty(tail.NotDone)},
 	} {
-		if v := firstLine(src.value); v != "" {
+		if v := text.FirstLine(src.value); v != "" {
 			return src.label + ": " + sanitize.Text(v)
 		}
 	}
@@ -207,15 +208,6 @@ func firstOrEmpty(list []string) string {
 		return ""
 	}
 	return list[0]
-}
-
-// firstLine is value cut at its first newline and trimmed, or "" when nothing
-// but whitespace is left.
-func firstLine(value string) string {
-	if idx := strings.IndexByte(value, '\n'); idx != -1 {
-		value = value[:idx]
-	}
-	return strings.TrimSpace(value)
 }
 
 // Encode writes the event as the one document DecodeEvent reads back. Marshal

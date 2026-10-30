@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/setup"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // SetupQuestionsDoc is the machine shape of "questions are still open": the
@@ -164,7 +165,7 @@ func setupPrintQuestions(doc SetupQuestionsDoc) error {
 // setupStepDocOf turns a coded failure into its result row: the code's own
 // message and the next it carries.
 func setupStepDocOf(step string, err error) SetupStepDoc {
-	doc := SetupStepDoc{Step: step, OK: false, Detail: firstLine(err.Error())}
+	doc := SetupStepDoc{Step: step, OK: false, Detail: text.FirstLine(err.Error())}
 	var ce *cliError
 	if errors.As(err, &ce) {
 		doc.Detail = ce.message

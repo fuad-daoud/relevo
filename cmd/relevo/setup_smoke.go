@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // smokeName is the binding and the repo name the smoke round uses: one
@@ -67,7 +68,7 @@ func smokeStepDocOf(err error) error {
 	if errors.As(err, &ce) {
 		return failNext(ce.code, "relevo doctor", "%s", ce.message)
 	}
-	return failNext(codeInternal, "relevo doctor", "%s", firstLine(err.Error()))
+	return failNext(codeInternal, "relevo doctor", "%s", text.FirstLine(err.Error()))
 }
 
 // setupSmokePrepare frees a leftover smoke binding, then rebuilds the
@@ -121,7 +122,7 @@ func smokeGit(dir string, args ...string) error {
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("git %s: %s", strings.Join(args, " "), firstLine(string(out)))
+		return fmt.Errorf("git %s: %s", strings.Join(args, " "), text.FirstLine(string(out)))
 	}
 	return nil
 }
@@ -207,7 +208,7 @@ func setupSmokeFinish(ctx context.Context, rt relevo.Runtime, b store.Binding, r
 		if lerr := smokeLimitFailure(ctx, rt, smokeDir); lerr != nil {
 			return SetupStepDoc{}, lerr
 		}
-		return SetupStepDoc{}, failNext(codeInternal, next, "%s", firstLine(res.Line))
+		return SetupStepDoc{}, failNext(codeInternal, next, "%s", text.FirstLine(res.Line))
 	}
 	if herr := smokeHelloOkay(b.CWD); herr != nil {
 		return SetupStepDoc{}, failNext(codeInternal, next, "%s", herr)
@@ -269,7 +270,7 @@ func smokeHelloOkay(repo string) error {
 func smokeProof(repo string) string {
 	proof := ""
 	if body, err := os.ReadFile(filepath.Join(repo, "HELLO.md")); err == nil {
-		proof += "\n  HELLO.md: " + firstLine(strings.TrimSpace(string(body)))
+		proof += "\n  HELLO.md: " + text.FirstLine(strings.TrimSpace(string(body)))
 	}
 	cmd := exec.Command("git", "log", "-2", "--format=%h %s")
 	cmd.Dir = repo

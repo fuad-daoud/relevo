@@ -15,14 +15,6 @@ var ErrServerPreTier = errors.New("server does not carry a permission tier")
 // is created, on the server or locally.
 var ErrNoGitIdentity = errors.New("no git identity")
 
-// orText returns s, or fallback when s is empty.
-func orText(s, fallback string) string {
-	if s != "" {
-		return s
-	}
-	return fallback
-}
-
 func is40Hex(s string) bool {
 	if len(s) != 40 {
 		return false

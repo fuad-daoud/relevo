@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 )
 
@@ -280,15 +281,6 @@ func recordLatency(d Deps, r ProbeResult) {
 	}
 }
 
-// ProbeMS renders a millisecond count the way a listing reads: whole
-// milliseconds below a second, one decimal above.
-func ProbeMS(ms int64) string {
-	if ms < 1000 {
-		return fmt.Sprintf("%dms", ms)
-	}
-	return fmt.Sprintf("%.1fs", float64(ms)/1000)
-}
-
 // ProbeNameWidth is the column width FormatProbe is given: the longest name
 // among the results about to print. An empty slice is width 0.
 func ProbeNameWidth(names []string) int {
@@ -311,12 +303,12 @@ func FormatProbe(r ProbeResult, width int) string {
 		label = r.Token
 	}
 	if r.Err == "" {
-		return fmt.Sprintf("%-*s  ttft %s  total %s", width, label, ProbeMS(r.TTFTMS), ProbeMS(r.TotalMS))
+		return fmt.Sprintf("%-*s  ttft %s  total %s", width, label, text.MS(r.TTFTMS), text.MS(r.TotalMS))
 	}
 
 	out := fmt.Sprintf("%-*s  error: %s", width, label, r.Err)
 	if r.TTFTMS > 0 {
-		out += "  (ttft " + ProbeMS(r.TTFTMS) + ")"
+		out += "  (ttft " + text.MS(r.TTFTMS) + ")"
 	}
 	return out
 }

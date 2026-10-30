@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/release"
+	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/upgrade"
 )
 
@@ -202,7 +203,7 @@ func runCandidate(ctx context.Context, bin string, args ...string) ([]byte, erro
 // preflightReason is the first line of the child's output, or the error when
 // the child printed nothing.
 func preflightReason(out []byte, err error) string {
-	if line := firstLine(string(out)); line != "" {
+	if line := text.FirstLine(string(out)); line != "" {
 		return line
 	}
 	return err.Error()

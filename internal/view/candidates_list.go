@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // FormatCandidates renders the configured candidates without latency: the
@@ -138,7 +139,7 @@ func formatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat 
 			sb.WriteString("   [" + sanitize.StripControls(strings.Join(c.ExtraArgs, " ")) + "]")
 		}
 		if s, ok := lat[ref]; ok && s.N > 0 {
-			fmt.Fprintf(&sb, "   ttft p50 %s (n=%d, 30d)", availability.ProbeMS(s.TTFTP50MS), s.N)
+			fmt.Fprintf(&sb, "   ttft p50 %s (n=%d, 30d)", text.MS(s.TTFTP50MS), s.N)
 		}
 		h, _ := harness.Lookup(c.Harness)
 		if flag := h.ExtraArgsPermissionFlag(c.ExtraArgs); flag != "" {

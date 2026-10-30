@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // Allowed reports whether caller may perform verb on binding b. Exported for
@@ -207,7 +208,7 @@ func (s *Server) buildServedBinding(w http.ResponseWriter, ctx context.Context, 
 		writeErr(w, http.StatusBadRequest, remote.CodeInvalid, "repo_id escapes the owner's repo root")
 		return store.Binding{}, nil, false
 	}
-	roleName := orText(role, "builder")
+	roleName := text.OrText(role, "builder")
 	candidateToken, harnessKind, tier, ok := pickServedTier(w, rt, roleName, req.Candidate, req.Tier)
 	if !ok {
 		return store.Binding{}, nil, false

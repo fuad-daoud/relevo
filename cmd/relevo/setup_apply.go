@@ -21,6 +21,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/setup"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // setupMarketplaceRef and setupPluginToken are the marketplace and the
@@ -297,7 +298,7 @@ func runSetupPlugin(ctx context.Context) (SetupStepDoc, error) {
 	if rerr != nil || exit != 0 {
 		detail := "the plugin install failed"
 		if line := strings.TrimSpace(string(out)); line != "" {
-			detail = firstLine(line)
+			detail = text.FirstLine(line)
 		}
 		return SetupStepDoc{}, failNext(codeInternal, doctor.PluginInstallCommand, "%s", detail)
 	}
@@ -330,7 +331,7 @@ func runSetupMusePlugin(ctx context.Context) (SetupStepDoc, error) {
 	if rerr != nil || exit != 0 {
 		detail := "the plugin install failed"
 		if line := strings.TrimSpace(string(out)); line != "" {
-			detail = firstLine(line)
+			detail = text.FirstLine(line)
 		}
 		return SetupStepDoc{}, failNext(codeInternal, setupMusePluginCommand, "%s", detail)
 	}
@@ -338,7 +339,7 @@ func runSetupMusePlugin(ctx context.Context) (SetupStepDoc, error) {
 	if appErr != nil || appExit != 0 {
 		detail := "the plugin approval failed"
 		if line := strings.TrimSpace(string(appOut)); line != "" {
-			detail = firstLine(line)
+			detail = text.FirstLine(line)
 		}
 		return SetupStepDoc{}, failNext(codeInternal, setupMusePluginCommand, "%s", detail)
 	}

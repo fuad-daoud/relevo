@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/stats"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/ui/dash"
 )
 
@@ -699,13 +700,6 @@ func (v logView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	return v, nil
 }
 
-func pluralEvent(n int, unit string) string {
-	if n == 1 {
-		return fmt.Sprintf("1 %s", unit)
-	}
-	return fmt.Sprintf("%d %ss", n, unit)
-}
-
 func (v logView) Body(env Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
@@ -784,7 +778,7 @@ func (v logView) Body(env Env, width, height int) string {
 
 	for r := range runs {
 		label := labels[r]
-		rightText := " " + pluralEvent(len(runs[r]), "event")
+		rightText := " " + text.Plural(len(runs[r]), "event")
 		leftWidth := lipgloss.Width(label) + 1
 		rightWidth := lipgloss.Width(rightText)
 		fill := cw - leftWidth - rightWidth

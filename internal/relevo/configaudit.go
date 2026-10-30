@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // This file is the cockpit's audit seam: a stored revision's changes in human
@@ -400,7 +401,7 @@ func RollbackPreview(s *config.Store, rev int64) ([]ChangeLine, error) {
 		return nil, err
 	}
 	if e := CheckDoc(snap); e != nil {
-		return nil, &RollbackRefused{Rev: rev, Reason: firstLine(e.Error())}
+		return nil, &RollbackRefused{Rev: rev, Reason: text.FirstRaw(e.Error())}
 	}
 
 	out := make([]ChangeLine, 0, len(changes))
@@ -408,12 +409,4 @@ func RollbackPreview(s *config.Store, rev int64) ([]ChangeLine, error) {
 		out = append(out, DescribeChange(c, cur, snap))
 	}
 	return out, nil
-}
-
-// firstLine is s up to its first newline.
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
-	}
-	return s
 }
