@@ -2,8 +2,10 @@ package housekeep
 
 import (
 	"context"
+	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -49,6 +51,46 @@ type Deps struct {
 	// KeptReason projects the reason out of an ErrKept error, or "" when the
 	// error carries none.
 	KeptReason func(err error) string
+	// Abandon records the binding's current builder session as abandoned and
+	// clears the id. The caller saves.
+	Abandon func(b store.Binding) store.Binding
+	// ClearProcess is the endpoint between rounds: no pid, no start time, no
+	// log. Identity is untouched.
+	ClearProcess func(e store.Endpoint) store.Endpoint
+	// Halt settles a binding into needs-you with the message, through the
+	// same path every other halt takes.
+	Halt func(ctx context.Context, tx *store.Tx, b store.Binding, message string) (store.Binding, error)
+	// Preflight refuses a process start when the tree is short of space. A nil
+	// refusal means the disk is fine.
+	Preflight func(tree string) error
+	// ShowCommand renders the relevo show command that prints one round's
+	// artifact, the durable way a halt names a closed round.
+	ShowCommand func(name string, round int, section string) string
+	// Admit starts a queued round's builder. NotQueued is the engine's
+	// sentinel for a round that already left the queue, which an admit that
+	// lost a race answers with.
+	Admit     func(ctx context.Context, name string) error
+	NotQueued error
+	// AllowedCPUs is the runtime scope's allowed_cpus the round pool is
+	// parsed from. Empty means no pool: the round runs unpinned.
+	AllowedCPUs string
+	// HeldCPUs returns the cores held by live rounds other than self. Nil
+	// means the local census, which reads only the caller's tx.
+	HeldCPUs func(tx *store.Tx, self string) ([]int, error)
+	// Scope is the runtime's scope template. Nil means scopes are off, so no
+	// oom probe runs.
+	Scope *spawn.ScopeSpec
+	// UnitName is the per-round scope unit's base name the oom probe asks for.
+	UnitName func(b store.Binding) string
+	// ScopeProber reports a scope unit's final result from the journal. Nil
+	// means the runner cannot probe, so nothing is oom-killed.
+	ScopeProber spawn.ScopeResultProber
+	// Now is the runtime's clock.
+	Now func() time.Time
+	// HaltChainEnv runs the engine's chain halt for an environment note: the
+	// definition and state reads, the cloned halted state and the terminal
+	// transition, for the check row the caller already loaded.
+	HaltChainEnv func(ctx context.Context, tx *store.Tx, c db.ChainRow, row db.ChainCheckRow, ev workflow.Event) (bool, error)
 }
 
 // TeardownOutcome is what the engine's worktree teardown decided, as plain

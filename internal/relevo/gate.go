@@ -39,7 +39,7 @@ func gateStep(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding) (s
 		Command:  b.Gate,
 		LogPath:  rt.Store.GateLogPath(b.Name, b.Round),
 		UnitName: scopeUnitNameFor(scopeGate, b.Owner, b.Name, b.Round, ""),
-		CPUPin:   cpuPinText(b),
+		CPUPin:   housekeep.CPUPinText(b),
 		Timeout:  gateTimeoutFor(b, rt.Policy),
 		Env:      baseEnvEntry(b),
 	}

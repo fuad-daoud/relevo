@@ -21,7 +21,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/hooks"
-	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/pathscope"
@@ -338,7 +337,7 @@ type Runtime struct {
 
 	// HeldCPUs returns the cores held by live rounds other than the binding
 	// named self, in every store that shares this host's pool (#314). Nil
-	// means localHeldCPUs, which reads only the caller's tx. The server sets
+	// means the local census, which reads only the caller's tx. The server sets
 	// it to a closure over its owner root, so internal/relevo stays unaware of
 	// owners.
 	HeldCPUs func(tx *store.Tx, self string) ([]int, error)
@@ -478,21 +477,6 @@ func historyDB(rt Runtime) *db.DB {
 // nil interfaces at the assignment.
 func captureDeps(rt Runtime) capture.Deps {
 	return capture.Deps{Git: rt.Git, Store: rt.Store}
-}
-
-// HousekeepDeps builds internal/housekeep's Deps from rt. Git and Refs carry
-// through nil-safe: a nil rt.Git converts to a nil interface on both, since
-// the assignments are between identical interface shapes.
-func HousekeepDeps(rt Runtime) housekeep.Deps {
-	return housekeep.Deps{Store: rt.Store, TmpRoot: rt.TmpRoot, Git: rt.Git, Refs: rt.Git,
-		ChainCheckSettled: chainCheckSettled, ChainFlowTerminal: chainFlowTerminal,
-		GateUnit:        func(o, n string, r int) string { return scopeUnitNameFor(scopeGate, o, n, r, "") },
-		ServedCheckUnit: func(b store.Binding, run store.CheckRun) string { return servedCheckSpec(rt, b, run).UnitName },
-		ChainCheckUnit:  func(c db.ChainRow, run int) string { return chainCheckSpec(rt, c, run, "", "").UnitName },
-		Teardown:        housekeepTeardown(rt),
-		AskUnbind:       housekeepAskUnbind(rt),
-		ErrKept:         ErrWorktreeKept,
-		KeptReason:      KeptReasonOf}
 }
 
 // consultDeps builds internal/consult's Deps from rt. Git carries through

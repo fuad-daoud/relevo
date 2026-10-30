@@ -1,4 +1,4 @@
-package relevo
+package housekeep
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -25,22 +24,22 @@ const (
 	scopeResultOOM = "oom-kill"
 )
 
-// oomKilled reads the killed round's scope result from the user journal and
+// OOMKilled reads the killed round's scope result from the user journal and
 // reports the memory peak it reached, or (0, false) when there is nothing to
 // report. It probes only a scoped round whose process start time is known,
 // because only entries at or after that start belong to this attempt; anything
 // else -- no scope, no probe, a probe error, a non-oom result -- counts as not
-// oom-killed, so detection can only ever take today's path.
-func oomKilled(ctx context.Context, rt Runtime, b store.Binding) (int64, bool) {
-	if rt.Scope == nil || b.Builder.StartedAt == 0 {
+// oom-killed.
+func OOMKilled(ctx context.Context, deps Deps, b store.Binding) (int64, bool) {
+	if deps.Scope == nil || b.Builder.StartedAt == 0 {
 		return 0, false
 	}
-	prober, ok := rt.Runner.(spawn.ScopeResultProber)
-	if !ok {
+	prober := deps.ScopeProber
+	if prober == nil {
 		return 0, false
 	}
 	since := time.Unix(b.Builder.StartedAt, 0).UTC()
-	res, err := prober.ScopeResult(ctx, scopeUnitName(b), since)
+	res, err := prober.ScopeResult(ctx, deps.UnitName(b), since)
 	if err != nil {
 		slog.Debug("scope result probe failed; treating as not oom-killed",
 			"binding", b.Name, "round", b.Round, "err", err)
@@ -49,10 +48,10 @@ func oomKilled(ctx context.Context, rt Runtime, b store.Binding) (int64, bool) {
 	return res.PeakBytes, res.Result == scopeResultOOM
 }
 
-// oomWords is how every surface of an oom kill names it: a scoped cgroup was
+// OOMWords is how every surface of an oom kill names it: a scoped cgroup was
 // killed by the kernel's out-of-memory killer, with the journal's peak when it
-// reported one. It never claims a host-wide kill, which a cgroup OOM is not.
-func oomWords(peak int64) string {
+// reported one.
+func OOMWords(peak int64) string {
 	if peak <= 0 {
 		return "killed: out of memory (peak unknown)"
 	}
@@ -80,17 +79,19 @@ func localRunning(tx *store.Tx, self string) (int, error) {
 	return n, nil
 }
 
-func requeueOOM(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, peak int64, now time.Time) (store.Binding, error) {
+// RequeueOOM re-queues a local round whose builder the oom killer took, on the
+// same candidate with no switch and no exclusion.
+func RequeueOOM(ctx context.Context, deps Deps, tx *store.Tx, b store.Binding, peak int64, now time.Time) (store.Binding, error) {
 	b.RoundOOMKills++
-	b = abandonSession(b)
+	b = deps.Abandon(b)
 	b.Builder.PID, b.Builder.StartedAt = 0, 0
-	b.Builder = clearProcess(b.Builder)
+	b.Builder = deps.ClearProcess(b.Builder)
 	b.StalledSince = time.Time{}
 
 	if b.RoundOOMKills >= oomMaxKills {
-		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf(
+		return deps.Halt(ctx, tx, b, fmt.Sprintf(
 			"%s: builder %s %d times this round; free memory, then relevo send --name %s --file <plan> again",
-			b.Name, oomWords(peak), b.RoundOOMKills, b.Name))
+			b.Name, OOMWords(peak), b.RoundOOMKills, b.Name))
 	}
 
 	running := 1
@@ -102,8 +103,8 @@ func requeueOOM(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 		running = n + 1
 	}
 
-	// Queue at the head (same as the served lost path): use RoundStartedAt so
-	// this round is first in line.
+	// Queue at the head (the same as the served lost path): RoundStartedAt is
+	// what puts this round first in line.
 	b.QueuedAt = b.RoundStartedAt
 	if b.QueuedAt.IsZero() {
 		b.QueuedAt = now
@@ -113,9 +114,9 @@ func requeueOOM(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 
 	var note string
 	if b.Owner == "" {
-		note = fmt.Sprintf("re-queued (builder %s; %d local round(s) were running)", oomWords(peak), running)
+		note = fmt.Sprintf("re-queued (builder %s; %d local round(s) were running)", OOMWords(peak), running)
 	} else {
-		note = fmt.Sprintf("re-queued (builder %s)", oomWords(peak))
+		note = fmt.Sprintf("re-queued (builder %s)", OOMWords(peak))
 	}
 	if err := tx.AppendLog(b.Name, store.LogEntry{
 		TS:        now,
@@ -132,10 +133,10 @@ func requeueOOM(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	return b, nil
 }
 
-// oomAdmissible reports whether a local oom-queued round may be re-admitted:
+// OOMAdmissible reports whether a local oom-queued round may be re-admitted:
 // the host ran out of memory with this many rounds running, so the round waits
 // until fewer are running.
-func oomAdmissible(b store.Binding, running int, now time.Time) bool {
+func OOMAdmissible(b store.Binding, running int, now time.Time) bool {
 	if b.Owner != "" {
 		return false
 	}
@@ -157,10 +158,10 @@ func oomAdmissible(b store.Binding, running int, now time.Time) bool {
 	return true
 }
 
-// admitOOMQueued runs with no lock held and admits at most one oom-queued round
+// AdmitOOMQueued runs with no lock held and admits at most one oom-queued round
 // per tick: a just-started builder's memory grows only after admission.
-func admitOOMQueued(ctx context.Context, rt Runtime, bindings []store.Binding) {
-	now := rt.Now().UTC()
+func AdmitOOMQueued(ctx context.Context, deps Deps, bindings []store.Binding) {
+	now := deps.Now().UTC()
 
 	running := 0
 	for _, b := range bindings {
@@ -172,7 +173,7 @@ func admitOOMQueued(ctx context.Context, rt Runtime, bindings []store.Binding) {
 	var best *store.Binding
 	for i := range bindings {
 		b := &bindings[i]
-		if !oomAdmissible(*b, running, now) {
+		if !OOMAdmissible(*b, running, now) {
 			continue
 		}
 		if best == nil || b.QueuedAt.Before(best.QueuedAt) {
@@ -183,8 +184,8 @@ func admitOOMQueued(ctx context.Context, rt Runtime, bindings []store.Binding) {
 		return
 	}
 
-	if err := Admit(ctx, rt, best.Name); err != nil {
-		if errors.Is(err, ErrNotQueued) {
+	if err := deps.Admit(ctx, best.Name); err != nil {
+		if errors.Is(err, deps.NotQueued) {
 			slog.Debug("oom admit: round already started by another writer", "binding", best.Name)
 			return
 		}
@@ -192,10 +193,10 @@ func admitOOMQueued(ctx context.Context, rt Runtime, bindings []store.Binding) {
 	}
 }
 
-// oomNote is the prompt addition for a round that was interrupted by an oom
+// OOMNote is the prompt addition for a round that was interrupted by an oom
 // kill. It tells the builder what happened and to run git status and git diff
 // first.
-func oomNote(t time.Time) string {
+func OOMNote(t time.Time) string {
 	return fmt.Sprintf(oomNoteFormat, t.UTC().Format("2006-01-02T15:04:05Z"))
 }
 

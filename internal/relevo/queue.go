@@ -44,7 +44,7 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 
 		// Add the oom note because the worktree may hold partial work.
 		if b.OOMRequeue != nil {
-			prompt += "\n\n" + oomNote(b.OOMRequeue.At)
+			prompt += "\n\n" + housekeep.OOMNote(b.OOMRequeue.At)
 			b.OOMRequeue = nil
 		}
 

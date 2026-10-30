@@ -190,7 +190,7 @@ func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if rt.Runner == nil {
 		return b, spawn.ErrRunnerUnavailable
 	}
-	b = assignRoundCPU(rt, tx, b)
+	b = housekeep.AssignRoundCPU(HousekeepDeps(rt), tx, b)
 	ref, err := candidate.ParseRef(b.BuilderCandidate)
 	if err != nil {
 		return b, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
@@ -345,7 +345,7 @@ func startProcessResuming(ctx context.Context, rt Runtime, tx *store.Tx, b store
 		LogPath:    logPath,
 		StreamPath: rt.Store.StreamPath(b.Name, b.Round),
 	}
-	spec.Scope = scopeFor(rt, scopeRound, scopeUnitName(b), cpuPinText(b))
+	spec.Scope = scopeFor(rt, scopeRound, scopeUnitName(b), housekeep.CPUPinText(b))
 	// Scopes-off hosts keep today's behaviour: with no template there is no
 	// scope to require. A fresh send never requires one either, so a failed
 	// probe still runs it unscoped exactly as before.
@@ -1020,9 +1020,9 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	var oomPeak int64
 	oom := false
 	if codeText == "unknown" || codeText == "137" {
-		if peak, killed := oomKilled(ctx, rt, b); killed {
+		if peak, killed := housekeep.OOMKilled(ctx, HousekeepDeps(rt), b); killed {
 			oom, oomPeak = true, peak
-			suffix += "; " + oomWords(peak)
+			suffix += "; " + housekeep.OOMWords(peak)
 		}
 	}
 
@@ -1053,7 +1053,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// An oom kill is not the candidate's failure, so re-queue on the same
 	// candidate with no switch and no exclusion.
 	if oom {
-		return requeueOOM(ctx, rt, tx, b, oomPeak, now)
+		return housekeep.RequeueOOM(ctx, HousekeepDeps(rt), tx, b, oomPeak, now)
 	}
 
 	// A cgroup/group kill of the daemon (systemd restart, kill -9 of the
@@ -1075,7 +1075,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	b.Builder.PID, b.Builder.StartedAt = 0, 0 // LogPath stays: status and the entry point at it
 	b.StalledSince = time.Time{}              // the process is gone: not stalled any more
 
-	if next, halted, herr := haltOnDiskFullExit(ctx, rt, tx, b, tail); halted || herr != nil {
+	if next, halted, herr := housekeep.HaltOnDiskFullExit(ctx, HousekeepDeps(rt), tx, b, tail); halted || herr != nil {
 		return next, herr
 	}
 	if lost && switchable {
@@ -1449,7 +1449,7 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// Only a done round may buy a repair: a chain member that reported halted,
 	// blocked or unstructured halts the chain instead, whatever its gate says
 	// (the gate runs on the done marker, not on the report).
-	if halted, ok, herr := haltOnEnvironmentGate(ctx, rt, tx, next, rec, closedRound); ok || herr != nil {
+	if halted, ok, herr := housekeep.HaltOnEnvironmentGate(ctx, HousekeepDeps(rt), tx, next, rec, closedRound); ok || herr != nil {
 		return halted, true, false, herr
 	}
 	if rec != nil && rec.Result == "fail" && next.Regate > 0 && next.State != store.StateNeedsYou {

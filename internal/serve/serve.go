@@ -21,6 +21,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/isolate"
 	"github.com/fuad-daoud/relevo/internal/policy"
@@ -523,7 +524,7 @@ func (s *Server) heldCPUs(root string, tx *store.Tx, self string) ([]int, error)
 				}
 				continue
 			}
-			held = append(held, relevo.HeldIn(bindings, self)...)
+			held = append(held, housekeep.HeldIn(bindings, self)...)
 			continue
 		}
 		bindings, err := s.ownerStore(ownerPath).List()
@@ -534,7 +535,7 @@ func (s *Server) heldCPUs(root string, tx *store.Tx, self string) ([]int, error)
 			}
 			continue
 		}
-		held = append(held, relevo.HeldIn(bindings, "")...)
+		held = append(held, housekeep.HeldIn(bindings, "")...)
 	}
 
 	return held, firstErr

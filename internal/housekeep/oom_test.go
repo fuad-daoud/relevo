@@ -1,4 +1,4 @@
-package relevo
+package housekeep
 
 import (
 	"context"
@@ -10,26 +10,63 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestOOMKilledFalseWithScopesOff pins that oomKilled is always false when
-// rt.Scope is nil, and that it never queries the runner.
-//
-// Mutation check: remove the `rt.Scope == nil` guard in oomKilled and this
-// test fails on scopeResultQueries being non-empty.
+// stubProber is the journal probe OOMKilled drives: the scripted scope result
+// per unit, with every query and since recorded so a test can prove what the
+// probe asked for -- or that none ran.
+type stubProber struct {
+	results map[string]spawn.ScopeResult
+	queries []string
+	sinces  []time.Time
+	err     error
+}
+
+func (s *stubProber) ScopeResult(_ context.Context, unit string, since time.Time) (spawn.ScopeResult, error) {
+	s.queries = append(s.queries, unit)
+	s.sinces = append(s.sinces, since)
+	if s.err != nil {
+		return spawn.ScopeResult{}, s.err
+	}
+	return s.results[unit], nil
+}
+
+// oomBinding is a local headless binding with a live process, the shape the
+// oom probe and the admit rule read.
+func oomBinding(name string, startedAt int64) store.Binding {
+	b := store.Binding{Name: name, State: store.StateActive}
+	b.Builder.PID = 4001
+	b.Builder.StartedAt = startedAt
+	b.Builder.Mode = "headless"
+	return b
+}
+
+// oomDeps is a Deps with scopes on, the unit name fixed and the probe stubbed.
+func oomDeps(st *store.Store, prober *stubProber, now time.Time) Deps {
+	return Deps{
+		Store:       st,
+		Scope:       &spawn.ScopeSpec{},
+		UnitName:    func(b store.Binding) string { return "relevo-round-local-" + b.Name + "-1" },
+		ScopeProber: prober,
+		Now:         func() time.Time { return now },
+	}
+}
+
+// TestOOMKilledFalseWithScopesOff pins that OOMKilled is always false when
+// scopes are off, and that it never queries the runner.
 func TestOOMKilledFalseWithScopesOff(t *testing.T) {
 	t.Parallel()
 
-	fr := newFakeRunner()
-	fr.scopeResults = map[string]spawn.ScopeResult{
-		"relevo-round-local-webshop-1.scope": {Result: scopeResultOOM},
-	}
-	rt, b := sentHeadless(t, fr)
-	rt.Scope = nil // scopes off
+	prober := &stubProber{results: map[string]spawn.ScopeResult{
+		"relevo-round-local-webshop-1": {Result: scopeResultOOM},
+	}}
+	b := oomBinding("webshop", baseTime.Unix())
+	deps := oomDeps(store.New(t.TempDir()), prober, baseTime)
+	deps.Scope = nil // scopes off
 
-	if peak, ok := oomKilled(context.Background(), rt, b); ok || peak != 0 {
-		t.Error("oomKilled with scopes off = true, want false")
+	if peak, ok := OOMKilled(context.Background(), deps, b); ok || peak != 0 {
+		t.Error("OOMKilled with scopes off = true, want false")
 	}
-	if len(fr.scopeResultQueries) != 0 {
-		t.Errorf("scopeResultQueries = %v, want none (scopes off must not probe)", fr.scopeResultQueries)
+	if len(prober.queries) != 0 {
+		t.Errorf("queries = %v, want none (scopes off must not probe)", prober.queries)
 	}
 }
 
@@ -38,14 +75,13 @@ func TestOOMKilledFalseWithScopesOff(t *testing.T) {
 func TestOOMKilledFalseForSuccess(t *testing.T) {
 	t.Parallel()
 
-	fr := newFakeRunner()
-	rt, b := sentHeadless(t, fr)
-	rt.Scope = &spawn.ScopeSpec{Unit: "test", Slice: "relevo.slice", CPUWeight: 100}
-	unit := scopeUnitName(b)
-	fr.scopeResults = map[string]spawn.ScopeResult{unit: {Result: "success"}}
+	prober := &stubProber{results: map[string]spawn.ScopeResult{
+		"relevo-round-local-webshop-1": {Result: "success"},
+	}}
+	b := oomBinding("webshop", baseTime.Unix())
 
-	if _, ok := oomKilled(context.Background(), rt, b); ok {
-		t.Error("oomKilled with result=success = true, want false")
+	if _, ok := OOMKilled(context.Background(), oomDeps(store.New(t.TempDir()), prober, baseTime), b); ok {
+		t.Error("OOMKilled with result=success = true, want false")
 	}
 }
 
@@ -54,15 +90,14 @@ func TestOOMKilledFalseForSuccess(t *testing.T) {
 func TestOOMKilledTrueForOOMKill(t *testing.T) {
 	t.Parallel()
 
-	fr := newFakeRunner()
-	rt, b := sentHeadless(t, fr)
-	rt.Scope = &spawn.ScopeSpec{Unit: "test", Slice: "relevo.slice", CPUWeight: 100}
-	unit := scopeUnitName(b)
-	fr.scopeResults = map[string]spawn.ScopeResult{unit: {Result: scopeResultOOM, PeakBytes: 8178532352}}
+	prober := &stubProber{results: map[string]spawn.ScopeResult{
+		"relevo-round-local-webshop-1": {Result: scopeResultOOM, PeakBytes: 8178532352},
+	}}
+	b := oomBinding("webshop", baseTime.Unix())
 
-	peak, ok := oomKilled(context.Background(), rt, b)
+	peak, ok := OOMKilled(context.Background(), oomDeps(store.New(t.TempDir()), prober, baseTime), b)
 	if !ok {
-		t.Error("oomKilled with result=oom-kill = false, want true")
+		t.Error("OOMKilled with result=oom-kill = false, want true")
 	}
 	if peak != 8178532352 {
 		t.Errorf("peak = %d, want the journal's 8178532352", peak)
@@ -70,7 +105,7 @@ func TestOOMKilledTrueForOOMKill(t *testing.T) {
 }
 
 // TestOOMAdmissibleHoldsOnlyAtCooldown pins the exact conditions under which
-// oomAdmissible returns true.
+// OOMAdmissible returns true.
 func TestOOMAdmissibleHoldsOnlyAtCooldown(t *testing.T) {
 	t.Parallel()
 
@@ -84,102 +119,124 @@ func TestOOMAdmissibleHoldsOnlyAtCooldown(t *testing.T) {
 	}
 
 	// Not yet at cooldown.
-	if oomAdmissible(b, 2, killTime.Add(oomCooldown-time.Second)) {
-		t.Error("oomAdmissible before cooldown = true, want false")
+	if OOMAdmissible(b, 2, killTime.Add(oomCooldown-time.Second)) {
+		t.Error("OOMAdmissible before cooldown = true, want false")
 	}
 
 	// Exactly at cooldown, running < recorded.
-	if !oomAdmissible(b, 2, killTime.Add(oomCooldown)) {
-		t.Error("oomAdmissible at cooldown, running 2 < 3 = false, want true")
+	if !OOMAdmissible(b, 2, killTime.Add(oomCooldown)) {
+		t.Error("OOMAdmissible at cooldown, running 2 < 3 = false, want true")
 	}
 
 	// Running equals recorded: not admissible.
-	if oomAdmissible(b, 3, killTime.Add(oomCooldown)) {
-		t.Error("oomAdmissible running == recorded = true, want false")
+	if OOMAdmissible(b, 3, killTime.Add(oomCooldown)) {
+		t.Error("OOMAdmissible running == recorded = true, want false")
 	}
 
 	// Running exceeds recorded: not admissible.
-	if oomAdmissible(b, 4, killTime.Add(oomCooldown)) {
-		t.Error("oomAdmissible running > recorded = true, want false")
+	if OOMAdmissible(b, 4, killTime.Add(oomCooldown)) {
+		t.Error("OOMAdmissible running > recorded = true, want false")
 	}
 
 	// Served round: not admissible.
 	served := b
 	served.Owner = "owner1"
-	if oomAdmissible(served, 0, killTime.Add(oomCooldown)) {
-		t.Error("oomAdmissible on served round = true, want false")
+	if OOMAdmissible(served, 0, killTime.Add(oomCooldown)) {
+		t.Error("OOMAdmissible on served round = true, want false")
 	}
 
 	// Not queued: not admissible.
 	notQueued := b
 	notQueued.QueuedAt = time.Time{}
-	if oomAdmissible(notQueued, 0, killTime.Add(oomCooldown)) {
-		t.Error("oomAdmissible with zero QueuedAt = true, want false")
+	if OOMAdmissible(notQueued, 0, killTime.Add(oomCooldown)) {
+		t.Error("OOMAdmissible with zero QueuedAt = true, want false")
 	}
 
 	// OOMRequeue nil: not admissible.
 	notOOM := b
 	notOOM.OOMRequeue = nil
-	if oomAdmissible(notOOM, 0, killTime.Add(oomCooldown)) {
-		t.Error("oomAdmissible with nil OOMRequeue = true, want false")
+	if OOMAdmissible(notOOM, 0, killTime.Add(oomCooldown)) {
+		t.Error("OOMAdmissible with nil OOMRequeue = true, want false")
 	}
 
 	// State not active: not admissible.
 	inactive := b
 	inactive.State = store.StateNeedsYou
-	if oomAdmissible(inactive, 0, killTime.Add(oomCooldown)) {
-		t.Error("oomAdmissible with state=needs_you = true, want false")
+	if OOMAdmissible(inactive, 0, killTime.Add(oomCooldown)) {
+		t.Error("OOMAdmissible with state=needs_you = true, want false")
 	}
 }
 
-// TestAdmitOOMQueuedAdmitsOldest pins that admitOOMQueued picks the binding
+// admitStub is the engine admission AdmitOOMQueued drives: it records the name
+// and marks the binding live, the way a real start would.
+type admitStub struct {
+	t        *testing.T
+	store    *store.Store
+	admitted []string
+}
+
+func (f *admitStub) admit(_ context.Context, name string) error {
+	f.admitted = append(f.admitted, name)
+	return f.store.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load(name)
+		if err != nil {
+			return err
+		}
+		b.Builder.PID = 5001
+		return tx.Save(b)
+	})
+}
+
+// oomQueueBinding saves an oom-queued binding: re-queued at killTime, queued
+// since queuedAt, running the recorded count at the kill.
+func oomQueueBinding(t *testing.T, st *store.Store, name string, queuedAt time.Time) {
+	t.Helper()
+	killTime := baseTime.Add(-oomCooldown - time.Minute) // well past cooldown
+	b := store.Binding{
+		Name:           name,
+		CWD:            "/repo-" + name,
+		State:          store.StateActive,
+		QueuedAt:       queuedAt,
+		OOMRequeue:     &store.OOMRequeue{At: killTime, Running: 2},
+		RoundStartedAt: time.Time{},
+	}
+	if err := st.Save(b); err != nil {
+		t.Fatalf("Save %s: %v", name, err)
+	}
+}
+
+// TestAdmitOOMQueuedAdmitsOldest pins that AdmitOOMQueued picks the binding
 // with the oldest QueuedAt when multiple are admissible.
-//
-// Mutation check: drop the running < b.OOMRequeue.Running condition in
-// oomAdmissible (always return true) and TestAdmitOOMQueuedWaitsForLowerRunning
-// fails because it admits despite running being equal.
 func TestAdmitOOMQueuedAdmitsOldest(t *testing.T) {
 	t.Parallel()
 
-	fr := newFakeRunner()
-	rt, _ := seedHeadless(t, fr)
-
-	// Queue two oom-queued bindings on the same runtime store.
-	killTime := baseTime.Add(-oomCooldown - time.Minute) // well past cooldown
-	bindAndOOMQueue := func(name string, queuedAt time.Time) {
-		t.Helper()
-		if _, err := Bind(context.Background(), rt, BindOptions{
-			Name: name, Candidate: testAgyRef, MasterMindID: testMasterMindName, CWD: "/repo-" + name,
-		}); err != nil {
-			t.Fatalf("Bind %s: %v", name, err)
-		}
-		b, err := rt.Store.Load(name)
-		if err != nil {
-			t.Fatalf("Load %s: %v", name, err)
-		}
-		b.OOMRequeue = &store.OOMRequeue{At: killTime, Running: 2}
-		b.QueuedAt = queuedAt
-		b.State = store.StateActive
-		if err := rt.Store.Save(b); err != nil {
-			t.Fatalf("Save %s: %v", name, err)
-		}
-	}
-
+	st := store.New(t.TempDir())
 	older := baseTime.Add(-2 * time.Minute)
 	newer := baseTime.Add(-time.Minute)
-	bindAndOOMQueue("alpha", older)
-	bindAndOOMQueue("beta", newer)
+	oomQueueBinding(t, st, "alpha", older)
+	oomQueueBinding(t, st, "beta", newer)
 
-	bindings, err := rt.Store.List()
+	stub := &admitStub{t: t, store: st}
+	deps := Deps{
+		Store: st,
+		Now:   func() time.Time { return baseTime.Add(2 * time.Hour) },
+		Admit: stub.admit,
+	}
+
+	bindings, err := st.List()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
 
 	// running = 0 < 2 (recorded), past cooldown: admissible.
-	admitOOMQueued(context.Background(), at(rt, 2*time.Hour), bindings)
+	AdmitOOMQueued(context.Background(), deps, bindings)
+
+	if len(stub.admitted) != 1 || stub.admitted[0] != "alpha" {
+		t.Errorf("admitted = %v, want [alpha] (the oldest-queued binding)", stub.admitted)
+	}
 
 	// The oldest-queued (alpha) must have been admitted (PID != 0).
-	alpha, err := rt.Store.Load("alpha")
+	alpha, err := st.Load("alpha")
 	if err != nil {
 		t.Fatalf("Load alpha: %v", err)
 	}
@@ -188,7 +245,7 @@ func TestAdmitOOMQueuedAdmitsOldest(t *testing.T) {
 	}
 
 	// beta must still be queued.
-	beta, err := rt.Store.Load("beta")
+	beta, err := st.Load("beta")
 	if err != nil {
 		t.Fatalf("Load beta: %v", err)
 	}
@@ -197,59 +254,38 @@ func TestAdmitOOMQueuedAdmitsOldest(t *testing.T) {
 	}
 }
 
-// TestAdmitOOMQueuedWaitsForLowerRunning pins that admitOOMQueued does not
+// TestAdmitOOMQueuedWaitsForLowerRunning pins that AdmitOOMQueued does not
 // admit when running is not below the recorded count.
-//
-// Mutation check: drop the running < b.OOMRequeue.Running condition in
-// oomAdmissible (make it always return true regardless of running count) and
-// this test fails because it admits despite running being equal.
 func TestAdmitOOMQueuedWaitsForLowerRunning(t *testing.T) {
 	t.Parallel()
 
-	fr := newFakeRunner()
-	rt, _ := seedHeadless(t, fr)
+	st := store.New(t.TempDir())
+	oomQueueBinding(t, st, "shop", baseTime.Add(-2*time.Minute))
 
-	// Create one oom-queued binding with Running=2.
-	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "shop", Candidate: testAgyRef, MasterMindID: testMasterMindName, CWD: "/repo-shop",
-	}); err != nil {
-		t.Fatalf("Bind: %v", err)
-	}
-	b, err := rt.Store.Load("shop")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	killTime := baseTime.Add(-oomCooldown - time.Minute)
-	b.OOMRequeue = &store.OOMRequeue{At: killTime, Running: 2}
-	b.QueuedAt = baseTime.Add(-2 * time.Minute)
-	b.State = store.StateActive
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatalf("Save: %v", err)
+	stub := &admitStub{t: t, store: st}
+	deps := Deps{
+		Store: st,
+		Now:   func() time.Time { return baseTime.Add(2 * time.Hour) },
+		Admit: stub.admit,
 	}
 
-	// Simulate 2 live local rounds (running == recorded, not fewer).
-	// Inject two fake live bindings into the list by loading a snapshot with PID set.
-	bindings, err := rt.Store.List()
+	bindings, err := st.List()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	// Add a fake live local headless binding so running==2.
-	liveFake := store.Binding{
-		Name:  "live-fake",
-		State: store.StateActive,
+	// Two live local headless rounds, so running == 2 == recorded: not fewer.
+	for _, name := range []string{"live-fake", "live-fake2"} {
+		b := oomBinding(name, baseTime.Unix())
+		b.Builder.PID = 6000 + len(name)
+		bindings = append(bindings, b)
 	}
-	liveFake.Builder.PID = 9999
-	liveFake.Builder.Mode = "headless"
-	bindings = append(bindings, liveFake)
-	liveFake2 := store.Binding{Name: "live-fake2", State: store.StateActive}
-	liveFake2.Builder.PID = 9998
-	liveFake2.Builder.Mode = "headless"
-	bindings = append(bindings, liveFake2)
 
-	admitOOMQueued(context.Background(), at(rt, 2*time.Hour), bindings)
+	AdmitOOMQueued(context.Background(), deps, bindings)
 
-	// shop must not have been admitted (running==2 is not < 2).
-	shop, err := rt.Store.Load("shop")
+	if len(stub.admitted) != 0 {
+		t.Errorf("admitted = %v, want none with running==recorded", stub.admitted)
+	}
+	shop, err := st.Load("shop")
 	if err != nil {
 		t.Fatalf("Load shop: %v", err)
 	}
@@ -258,30 +294,28 @@ func TestAdmitOOMQueuedWaitsForLowerRunning(t *testing.T) {
 	}
 }
 
-// TestOOMNoteContainsKeyWords pins that oomNote includes the key context: the
+// TestOOMNoteContainsKeyWords pins that OOMNote includes the key context: the
 // time, the oom-kill mention, and the git instructions.
 func TestOOMNoteContainsKeyWords(t *testing.T) {
 	t.Parallel()
 
-	note := oomNote(baseTime)
+	note := OOMNote(baseTime)
 	for _, want := range []string{"out of memory", "cgroup scope", "git status", "git diff"} {
 		if !strings.Contains(note, want) {
-			t.Errorf("oomNote missing %q:\n%s", want, note)
+			t.Errorf("OOMNote missing %q:\n%s", want, note)
 		}
 	}
 }
 
-// TestOOMNoteSaysScopeNotHost pins the fourth wording surface: the note in the
-// builder's own prompt names the round's cgroup scope and the kernel's killer,
-// never a host-wide systemd-oomd kill that would send the builder looking at
-// the wrong layer.
+// TestOOMNoteSaysScopeNotHost pins that the note names the round's cgroup
+// scope and the kernel's killer, never a host-wide systemd-oomd kill.
 func TestOOMNoteSaysScopeNotHost(t *testing.T) {
 	t.Parallel()
 
-	note := oomNote(baseTime)
+	note := OOMNote(baseTime)
 	for _, bad := range []string{"systemd-oomd", "host out of memory", "host ran out of memory"} {
 		if strings.Contains(note, bad) {
-			t.Errorf("oomNote contains %q, want a scope/kernel cause only:\n%s", bad, note)
+			t.Errorf("OOMNote contains %q, want a scope/kernel cause only:\n%s", bad, note)
 		}
 	}
 }
@@ -297,8 +331,8 @@ func TestOOMWordsRendersThePeak(t *testing.T) {
 		8178532352: "killed: out of memory (peak 7.6 GiB)",
 	}
 	for peak, want := range cases {
-		if got := oomWords(peak); got != want {
-			t.Errorf("oomWords(%d) = %q, want %q", peak, got, want)
+		if got := OOMWords(peak); got != want {
+			t.Errorf("OOMWords(%d) = %q, want %q", peak, got, want)
 		}
 	}
 }
@@ -309,21 +343,20 @@ func TestOOMWordsRendersThePeak(t *testing.T) {
 func TestOOMKilledProbesSinceTheProcessStart(t *testing.T) {
 	t.Parallel()
 
-	fr := newFakeRunner()
-	rt, b := sentHeadless(t, fr)
-	rt = oomRT(rt, fr, b, scopeOOM)
-	if b.Builder.StartedAt == 0 {
-		t.Fatal("fixture left StartedAt zero; the probe would be skipped")
-	}
+	prober := &stubProber{results: map[string]spawn.ScopeResult{
+		"relevo-round-local-webshop-1": {Result: scopeResultOOM, PeakBytes: 8178532352},
+	}}
+	b := oomBinding("webshop", baseTime.Unix())
+	deps := oomDeps(store.New(t.TempDir()), prober, baseTime)
 
-	if _, ok := oomKilled(context.Background(), rt, b); !ok {
-		t.Fatal("oomKilled = false, want the scripted oom kill")
+	if _, ok := OOMKilled(context.Background(), deps, b); !ok {
+		t.Fatal("OOMKilled = false, want the scripted oom kill")
 	}
-	if len(fr.scopeResultSince) != 1 {
-		t.Fatalf("scopeResultSince = %v, want one query", fr.scopeResultSince)
+	if len(prober.sinces) != 1 {
+		t.Fatalf("sinces = %v, want one query", prober.sinces)
 	}
-	if want := time.Unix(b.Builder.StartedAt, 0).UTC(); !fr.scopeResultSince[0].Equal(want) {
-		t.Errorf("since = %v, want the process start %v", fr.scopeResultSince[0], want)
+	if want := time.Unix(b.Builder.StartedAt, 0).UTC(); !prober.sinces[0].Equal(want) {
+		t.Errorf("since = %v, want the process start %v", prober.sinces[0], want)
 	}
 }
 
@@ -333,15 +366,14 @@ func TestOOMKilledProbesSinceTheProcessStart(t *testing.T) {
 func TestOOMKilledSkipsAnAnchorlessProcess(t *testing.T) {
 	t.Parallel()
 
-	fr := newFakeRunner()
-	rt, b := sentHeadless(t, fr)
-	rt = oomRT(rt, fr, b, scopeOOM)
-	b.Builder.StartedAt = 0
+	prober := &stubProber{}
+	b := oomBinding("webshop", 0)
+	deps := oomDeps(store.New(t.TempDir()), prober, baseTime)
 
-	if peak, ok := oomKilled(context.Background(), rt, b); ok || peak != 0 {
-		t.Error("oomKilled with no process start = true, want false")
+	if peak, ok := OOMKilled(context.Background(), deps, b); ok || peak != 0 {
+		t.Error("OOMKilled with no process start = true, want false")
 	}
-	if len(fr.scopeResultQueries) != 0 {
-		t.Errorf("scopeResultQueries = %v, want none", fr.scopeResultQueries)
+	if len(prober.queries) != 0 {
+		t.Errorf("queries = %v, want none", prober.queries)
 	}
 }

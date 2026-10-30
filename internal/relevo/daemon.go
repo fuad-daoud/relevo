@@ -370,7 +370,7 @@ func (d *Daemon) Tick(ctx context.Context) error {
 
 	// Local oom-queued rounds are re-admitted here, because nothing else
 	// admits a local queue.
-	d.safely("admit oom-queued", func() { admitOOMQueued(ctx, d.rt, fresh) })
+	d.safely("admit oom-queued", func() { housekeep.AdmitOOMQueued(ctx, HousekeepDeps(d.rt), fresh) })
 
 	// Each of Tick's non-binding phases runs through safely, so a panic in
 	// one cannot take the whole daemon down (#370, spec §4.6): it is logged

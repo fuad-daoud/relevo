@@ -1,13 +1,14 @@
-package relevo
+package housekeep
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -35,8 +36,8 @@ func TestDiskFullIn(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := diskFullIn(tc.tail); got != tc.want {
-				t.Errorf("diskFullIn(%q) = %v, want %v", tc.tail, got, tc.want)
+			if got := DiskFullIn(tc.tail); got != tc.want {
+				t.Errorf("DiskFullIn(%q) = %v, want %v", tc.tail, got, tc.want)
 			}
 		})
 	}
@@ -48,240 +49,358 @@ func TestDiskFullIn(t *testing.T) {
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if got := diskFullLogNote(path); got != "" {
+		if got := DiskFullLogNote(path); got != "" {
 			t.Errorf("note = %q, want none for a phrase before the last %d bytes", got, diskFullScanBytes)
 		}
 		body = strings.Repeat("x", diskFullScanBytes+10) + "\n" + "w: " + phraseNoSpace + "\n"
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if got := diskFullLogNote(path); got != wantDiskNote {
+		if got := DiskFullLogNote(path); got != wantDiskNote {
 			t.Errorf("note = %q, want %q", got, wantDiskNote)
 		}
 	})
 }
 
-// diskFullGateRun scripts one finished or timed-out check process whose log
-// holds body, and returns what advanceGateProc made of it.
-func diskFullGateRun(t *testing.T, body string, exitCode int, timedOut bool) *store.GateRecord {
+// gateLogWith writes a check log carrying body and returns its path.
+func gateLogWith(t *testing.T, body string) string {
 	t.Helper()
-	fr := newFakeRunner()
-	rt, _ := sentBinding(t)
-	rt.Runner = fr
-	rt.StartedAt = baseTime
-	rt.Watched = NewWatched()
-	logPath := filepath.Join(t.TempDir(), "gate.log")
-	if err := os.WriteFile(logPath, []byte(body), 0o644); err != nil {
+	path := filepath.Join(t.TempDir(), "gate.log")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	pid, started := 9001, baseTime.Add(-time.Hour).Unix()
-	run := store.GateRun{PID: pid, StartedAt: started, Command: "make check"}
-	spec := gateProcSpec{Command: "make check", LogPath: logPath, Timeout: time.Minute}
-	if timedOut {
-		fr.script(pid, true)
-	} else {
-		fr.script(pid, false)
-		fr.exit(pid, exitCode)
-	}
-	_, done, rec, err := advanceGateProc(context.Background(), rt, run, spec)
-	if err != nil || !done || rec == nil {
-		t.Fatalf("advanceGateProc: done=%v rec=%+v err=%v", done, rec, err)
-	}
-	return rec
+	return path
 }
 
-func TestAdvanceGateProcNamesDiskFullOnFail(t *testing.T) {
+// TestNameDiskFullSetsNoteOnFail pins that a failed check whose log reports a
+// full disk carries the environment note, while a pass and a failure without
+// the phrase are left alone.
+func TestNameDiskFullSetsNoteOnFail(t *testing.T) {
 	t.Parallel()
 
-	rec := diskFullGateRun(t, "compile\nlink: No space left on device\n", 1, false)
-	if rec.Result != "fail" || rec.Note != wantDiskNote {
-		t.Errorf("rec = %+v, want result fail and note %q", rec, wantDiskNote)
+	logPath := gateLogWith(t, "compile\nlink: No space left on device\n")
+	rec := &store.GateRecord{Command: "make check", Result: "fail", LogPath: logPath}
+	NameDiskFull(rec)
+	if rec.Note != wantDiskNote {
+		t.Errorf("note = %q, want %q", rec.Note, wantDiskNote)
 	}
-	if rec := diskFullGateRun(t, "all fine\n", 1, false); rec.Note != "" {
-		t.Errorf("note = %q, want none for a failure without the phrase", rec.Note)
+
+	pass := &store.GateRecord{Command: "make check", Result: "pass", LogPath: logPath}
+	NameDiskFull(pass)
+	if pass.Note != "" {
+		t.Errorf("note = %q, want none for a pass", pass.Note)
 	}
-	if rec := diskFullGateRun(t, "no space left on device\n", 0, false); rec.Result != "pass" || rec.Note != "" {
-		t.Errorf("rec = %+v, want a pass left alone", rec)
+
+	cleanLog := gateLogWith(t, "all fine\n")
+	clean := &store.GateRecord{Command: "make check", Result: "fail", LogPath: cleanLog}
+	NameDiskFull(clean)
+	if clean.Note != "" {
+		t.Errorf("note = %q, want none for a failure without the phrase", clean.Note)
 	}
 }
 
-func TestAdvanceGateProcNamesDiskFullOnTimeout(t *testing.T) {
+// TestNameDiskFullSetsNoteOnTimeout pins that a timed-out check whose log
+// reports a full disk carries the environment note.
+func TestNameDiskFullSetsNoteOnTimeout(t *testing.T) {
 	t.Parallel()
 
-	rec := diskFullGateRun(t, "tar: no space left on device\n", 0, true)
-	if rec.Result != "timeout" || rec.Note != wantDiskNote {
-		t.Errorf("rec = %+v, want result timeout and note %q", rec, wantDiskNote)
+	logPath := gateLogWith(t, "tar: no space left on device\n")
+	rec := &store.GateRecord{Command: "make check", Result: "timeout", LogPath: logPath}
+	NameDiskFull(rec)
+	if rec.Note != wantDiskNote {
+		t.Errorf("note = %q, want %q", rec.Note, wantDiskNote)
 	}
 }
 
-func TestChainHaltsOnDiskFullCheck(t *testing.T) {
-	t.Parallel()
-
-	rt, _ := chainRuntime(t)
-	fr := rt.Runner.(*fakeRunner)
-	run, row := startCheckChain(t, rt)
-	if err := os.WriteFile(row.Log, []byte("cc: no space left on device\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	fr.script(row.PID, false)
-	fr.exit(row.PID, 2)
-	starts := len(fr.specs)
-
-	tickChainChecks(context.Background(), rt)
-
-	c := flowChainRow(t, rt)
-	if c.Status != string(workflow.StatusHalted) || !strings.Contains(c.Reason, "check check: "+wantDiskNote) {
-		t.Errorf("chain = %s %q, want halted with the environment note", c.Status, c.Reason)
-	}
-	if len(fr.specs) != starts {
-		t.Errorf("starts = %d, want %d: no repair round may start", len(fr.specs), starts)
-	}
-	if got := loadChainCheck(t, rt, run); got.Note != wantDiskNote {
-		t.Errorf("check note = %q", got.Note)
-	}
-}
-
-// diskFullGateBinding runs a failing round gate with a regate budget of one and
-// returns the binding after the gate closed.
-func diskFullGateBinding(t *testing.T, logBody string) (store.Binding, *fakeRunner, int) {
+// diskChainRow plants a chain with one check run carrying note, and returns
+// the row and the run number.
+func diskChainRow(t *testing.T, st *store.Store, note string) (db.ChainRow, int) {
 	t.Helper()
-	fr := newFakeRunner()
-	rt, b := seedHeadless(t, fr)
-	b.Gate = "make check"
-	b.Regate = 1
-	if err := rt.Store.Save(b); err != nil {
-		t.Fatal(err)
+	c := db.ChainRow{
+		ID: db.NewID(), Name: "shop", Status: string(workflow.StatusRunning),
+		Phase: "build", Step: "checking", Plan: 1, Plans: 1,
+		Builder: "shop", Worktree: "/repo/shop", CreatedAt: baseTime, UpdatedAt: baseTime,
 	}
-	if _, err := Send(context.Background(), rt, "webshop", writePlan(t, "do it"), SendOptions{}); err != nil {
-		t.Fatalf("Send: %v", err)
+	if err := st.WithLock(func(tx *store.Tx) error { return tx.ChainPut(c) }); err != nil {
+		t.Fatalf("ChainPut: %v", err)
 	}
-	b, err := rt.Store.Load("webshop")
+	row := db.ChainCheckRow{
+		Run: 1, Step: "check", Command: "make check",
+		Result: "fail", Note: note, CreatedAt: baseTime,
+	}
+	if err := st.WithLock(func(tx *store.Tx) error { return tx.ChainCheckPut(c.Name, row) }); err != nil {
+		t.Fatalf("ChainCheckPut: %v", err)
+	}
+	return c, 1
+}
+
+// TestChainHaltOnEnvironmentHalts pins that a settled check carrying an
+// environment note halts the chain through the engine's transition.
+func TestChainHaltOnEnvironmentHalts(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	c, run := diskChainRow(t, st, wantDiskNote)
+
+	var gotRow db.ChainCheckRow
+	deps := Deps{
+		Store: st,
+		HaltChainEnv: func(_ context.Context, _ *store.Tx, _ db.ChainRow, row db.ChainCheckRow, _ workflow.Event) (bool, error) {
+			gotRow = row
+			return true, nil
+		},
+	}
+
+	var halted bool
+	err := st.WithLock(func(tx *store.Tx) error {
+		var herr error
+		halted, herr = ChainHaltOnEnvironment(context.Background(), deps, tx, c, run, workflow.Event{})
+		return herr
+	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("ChainHaltOnEnvironment: %v", err)
 	}
-	if err := os.WriteFile(rt.Store.ReportPath("webshop", 1), []byte("done"), 0o644); err != nil {
-		t.Fatal(err)
+	if !halted {
+		t.Error("halted = false, want the environment note to halt the chain")
 	}
-	touch(t, rt.Store.DonePath("webshop", 1))
-	got, err := reconcile(t, rt, b)
-	if err != nil || got.GateRun == nil {
-		t.Fatalf("start gate: %v %+v", err, got.GateRun)
+	if gotRow.Note != wantDiskNote {
+		t.Errorf("halted on note %q, want %q", gotRow.Note, wantDiskNote)
 	}
-	if err := os.WriteFile(rt.Store.GateLogPath("webshop", 1), []byte(logBody), 0o644); err != nil {
-		t.Fatal(err)
+}
+
+// TestChainHaltOnEnvironmentKeepsRedCheck pins that a settled check carrying
+// an ordinary failure note does not halt: only an environment note stops the
+// repair loop.
+func TestChainHaltOnEnvironmentKeepsRedCheck(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	c, run := diskChainRow(t, st, "--- FAIL: TestX")
+
+	called := false
+	deps := Deps{
+		Store: st,
+		HaltChainEnv: func(_ context.Context, _ *store.Tx, _ db.ChainRow, _ db.ChainCheckRow, _ workflow.Event) (bool, error) {
+			called = true
+			return true, nil
+		},
 	}
-	fr.script(got.GateRun.PID, false)
-	fr.exit(got.GateRun.PID, 2)
-	before := len(fr.specs)
-	got, err = reconcile(t, rt, got)
+
+	var halted bool
+	err := st.WithLock(func(tx *store.Tx) error {
+		var herr error
+		halted, herr = ChainHaltOnEnvironment(context.Background(), deps, tx, c, run, workflow.Event{})
+		return herr
+	})
 	if err != nil {
-		t.Fatalf("close gate: %v", err)
+		t.Fatalf("ChainHaltOnEnvironment: %v", err)
 	}
-	return got, fr, before
+	if halted || called {
+		t.Error("halted a plain red check, want the repair loop to keep it")
+	}
 }
 
-func TestGateDiskFullDoesNotSpendRegate(t *testing.T) {
+// haltStub is the engine halt the disk-full paths drive: it records the
+// message and answers the binding unchanged.
+type haltStub struct {
+	message string
+	calls   int
+}
+
+func (f *haltStub) halt(_ context.Context, _ *store.Tx, b store.Binding, message string) (store.Binding, error) {
+	f.message = message
+	f.calls++
+	return b, nil
+}
+
+func diskHaltDeps(st *store.Store, halt *haltStub) Deps {
+	return Deps{
+		Store:       st,
+		Preflight:   func(string) error { return nil },
+		Halt:        halt.halt,
+		ShowCommand: func(name string, round int, section string) string { return "show " + name + " " + section },
+	}
+}
+
+// TestHaltOnEnvironmentGateHalts pins that a binding whose just-closed round's
+// gate carries an environment note halts before any repair round is bought.
+func TestHaltOnEnvironmentGateHalts(t *testing.T) {
 	t.Parallel()
 
-	got, fr, before := diskFullGateBinding(t, "FAIL pkg\nwrite: no space left on device\n")
-	if got.State != store.StateNeedsYou || !strings.Contains(got.Halt, wantDiskNote) {
-		t.Errorf("state=%s halt=%q, want a halt naming the full disk", got.State, got.Halt)
-	}
-	if got.RepairCount != 0 || got.LastGateSig != "" {
-		t.Errorf("repairs=%d sig=%q, want the regate budget untouched", got.RepairCount, got.LastGateSig)
-	}
-	if len(fr.specs) != before {
-		t.Errorf("specs = %d, want %d: no repair process", len(fr.specs), before)
-	}
+	st := store.New(t.TempDir())
+	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, State: store.StateActive}
+	rec := &store.GateRecord{Command: "make check", Result: "fail", Note: wantDiskNote}
 
-	got, _, _ = diskFullGateBinding(t, "FAIL pkg\n")
-	if got.RepairCount != 1 {
-		t.Errorf("RepairCount = %d, want 1 for an ordinary red gate", got.RepairCount)
-	}
-}
+	halt := &haltStub{}
+	deps := diskHaltDeps(st, halt)
 
-// diskFullExit runs a builder that exited with code 3 and left logBody behind.
-func diskFullExit(t *testing.T, logBody string, free func(string) (uint64, error)) (store.Binding, Runtime, *fakeRunner) {
-	t.Helper()
-	fr := newFakeRunner()
-	rt, b := sentHeadless(t, fr)
-	rt.DiskFree = free
-	rt.Policy = orderOf("builder", testClaudeRef, testAgyRef)
-	fr.script(b.Builder.PID, false)
-	fr.exit(b.Builder.PID, 3)
-	if err := os.MkdirAll(filepath.Dir(b.Builder.LogPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(b.Builder.LogPath, []byte(logBody), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	got, err := reconcile(t, at(rt, time.Minute), b)
+	var halted bool
+	err := st.WithLock(func(tx *store.Tx) error {
+		_, h, herr := HaltOnEnvironmentGate(context.Background(), deps, tx, b, rec, 1)
+		halted = h
+		return herr
+	})
 	if err != nil {
-		t.Fatalf("Reconcile: %v", err)
+		t.Fatalf("HaltOnEnvironmentGate: %v", err)
 	}
-	return got, rt, fr
-}
-
-func TestExitWithDiskFullTailHaltsWithoutSwitch(t *testing.T) {
-	t.Parallel()
-
-	got, rt, fr := diskFullExit(t, "starting\ncp: No space left on device\nrelevo-exit:3\n", lowDisk)
-	if got.State != store.StateNeedsYou || !strings.Contains(got.Halt, "environment: disk full: ") || !strings.Contains(got.Halt, "no space left on device") {
-		t.Errorf("state=%s halt=%q, want a halt naming the full disk", got.State, got.Halt)
+	if !halted {
+		t.Fatal("halted = false, want the environment note to halt the binding")
 	}
-	if got.RoundSwitches != 0 || len(got.RoundExcluded) != 0 || len(switches(t, rt)) != 0 {
-		t.Errorf("switches=%d excluded=%v, want no switch and no exclusion", got.RoundSwitches, got.RoundExcluded)
+	if !strings.Contains(halt.message, wantDiskNote) {
+		t.Errorf("halt message = %q, want it to name the environment note", halt.message)
 	}
-	if len(fr.specs) != 1 {
-		t.Errorf("starts = %d, want only the original builder", len(fr.specs))
+	if !strings.Contains(halt.message, "show webshop gate") {
+		t.Errorf("halt message = %q, want it to point at the gate", halt.message)
 	}
 }
 
-func TestExitWithoutDiskFullStillSwitches(t *testing.T) {
+// TestHaltOnEnvironmentGateKeepsRedGate pins that an ordinary red gate, a pass
+// note, a missing record and a binding already waiting on a human do not halt.
+func TestHaltOnEnvironmentGateKeepsRedGate(t *testing.T) {
 	t.Parallel()
 
-	got, rt, fr := diskFullExit(t, "starting\nno space left on disk\nrelevo-exit:3\n", plentyDisk)
-	if got.State != store.StateActive || got.RoundSwitches != 1 || len(switches(t, rt)) != 1 {
-		t.Errorf("state=%s switches=%d, want the usual switch", got.State, got.RoundSwitches)
+	st := store.New(t.TempDir())
+	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, State: store.StateActive}
+
+	cases := []struct {
+		name string
+		b    store.Binding
+		rec  *store.GateRecord
+	}{
+		{"ordinary red gate", b, &store.GateRecord{Command: "make check", Result: "fail", Note: "--- FAIL: TestX"}},
+		{"missing record", b, nil},
+		{"already needs you", store.Binding{Name: "webshop", CWD: "/repo", Round: 1, State: store.StateNeedsYou}, &store.GateRecord{Command: "make check", Result: "fail", Note: wantDiskNote}},
 	}
-	if len(fr.specs) != 2 {
-		t.Errorf("starts = %d, want a replacement builder", len(fr.specs))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			halt := &haltStub{}
+			deps := diskHaltDeps(st, halt)
+			var halted bool
+			err := st.WithLock(func(tx *store.Tx) error {
+				_, h, herr := HaltOnEnvironmentGate(context.Background(), deps, tx, tc.b, tc.rec, 1)
+				halted = h
+				return herr
+			})
+			if err != nil {
+				t.Fatalf("HaltOnEnvironmentGate: %v", err)
+			}
+			if halted || halt.calls != 0 {
+				t.Errorf("halted an ordinary gate, want the repair path to keep it")
+			}
+		})
 	}
 }
 
-func TestExitWithDiskFullTailButFreeDiskStillSwitches(t *testing.T) {
+// errRefusedDisk is the preflight answer when the tree is short of space.
+var errRefusedDisk = errors.New("disk full: /repo has 1.0 GB free (< 2 GB)")
+
+// TestHaltOnDiskFullExitHalts pins that a builder exit whose tail reports a
+// full disk halts when the free-space probe refuses too, naming the phrase and
+// the halt's show command.
+func TestHaltOnDiskFullExitHalts(t *testing.T) {
 	t.Parallel()
 
-	got, rt, fr := diskFullExit(t, "starting\ncp: No space left on device\nrelevo-exit:3\n", plentyDisk)
-	if got.State != store.StateActive || got.RoundSwitches != 1 || len(switches(t, rt)) != 1 {
-		t.Errorf("state=%s switches=%d, want the usual switch", got.State, got.RoundSwitches)
+	st := store.New(t.TempDir())
+	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, State: store.StateActive}
+
+	var probed string
+	halt := &haltStub{}
+	deps := diskHaltDeps(st, halt)
+	deps.Preflight = func(tree string) error {
+		probed = tree
+		return errRefusedDisk
 	}
-	if len(fr.specs) != 2 {
-		t.Errorf("starts = %d, want a replacement builder", len(fr.specs))
+
+	var halted bool
+	err := st.WithLock(func(tx *store.Tx) error {
+		_, h, herr := HaltOnDiskFullExit(context.Background(), deps, tx, b, "starting\ncp: No space left on device\n")
+		halted = h
+		return herr
+	})
+	if err != nil {
+		t.Fatalf("HaltOnDiskFullExit: %v", err)
+	}
+	if !halted {
+		t.Fatal("halted = false, want the refused probe to halt the round")
+	}
+	if probed != "/repo" {
+		t.Errorf("probed = %q, want the binding's tree", probed)
+	}
+	for _, want := range []string{"the output also reports", "no space left on device", "show webshop log"} {
+		if !strings.Contains(halt.message, want) {
+			t.Errorf("halt message = %q, want it to contain %q", halt.message, want)
+		}
 	}
 }
 
-func TestExitWithQuotedPhraseInTailStillSwitches(t *testing.T) {
+// TestHaltOnDiskFullExitProbesWorktree pins that a binding with a worktree
+// probes the worktree, not the bare CWD.
+func TestHaltOnDiskFullExitProbesWorktree(t *testing.T) {
 	t.Parallel()
 
-	got, rt, _ := diskFullExit(t, "starting\nphraseNoSpace = \"no space left on device\"\nwant \"no space left on device\"\nrelevo-exit:3\n", lowDisk)
-	if strings.Contains(got.Halt, "also reports") || len(switches(t, rt)) != 1 {
-		t.Errorf("halt=%q switches=%d, want the usual switch and no disk-full halt", got.Halt, len(switches(t, rt)))
+	st := store.New(t.TempDir())
+	b := store.Binding{Name: "webshop", CWD: "/repo", Worktree: "/wt/shop", Round: 1, State: store.StateActive}
+
+	var probed string
+	halt := &haltStub{}
+	deps := diskHaltDeps(st, halt)
+	deps.Preflight = func(tree string) error {
+		probed = tree
+		return nil
+	}
+
+	var halted bool
+	err := st.WithLock(func(tx *store.Tx) error {
+		_, h, herr := HaltOnDiskFullExit(context.Background(), deps, tx, b, "cp: No space left on device\n")
+		halted = h
+		return herr
+	})
+	if err != nil {
+		t.Fatalf("HaltOnDiskFullExit: %v", err)
+	}
+	if halted || halt.calls != 0 {
+		t.Errorf("halted on a fine disk, want the normal exit path")
+	}
+	if probed != "/wt/shop" {
+		t.Errorf("probed = %q, want the worktree", probed)
 	}
 }
 
-func TestChainRepairsCheckThatOnlyQuotesDiskFullPhrase(t *testing.T) {
+// TestHaltOnDiskFullExitKeepsOrdinaryExit pins that a tail without the error
+// form, a quoted phrase and a cleared disk all fall through to the normal
+// exit handling.
+func TestHaltOnDiskFullExitKeepsOrdinaryExit(t *testing.T) {
 	t.Parallel()
 
-	rt, _ := chainRuntime(t)
-	startFlowChain(t, rt, flowLocalRepairWorkflow)
-	chainBuilderClose(t, rt, "shop", chainDoneBody())
-	chainRedCheck(t, rt, "shop", "--- FAIL: TestX\n    want \"no space left on device\"\n")
+	st := store.New(t.TempDir())
+	b := store.Binding{Name: "webshop", CWD: "/repo", Round: 1, State: store.StateActive}
 
-	if c := flowChainRow(t, rt); c.Status == string(workflow.StatusHalted) {
-		t.Errorf("chain halted %q, want the repair loop", c.Reason)
+	cases := []struct {
+		name      string
+		tail      string
+		preflight error
+	}{
+		{"no phrase", "starting\nno space left on disk\n", errRefusedDisk},
+		{"quoted phrase", "starting\nphraseNoSpace = \"no space left on device\"\n", errRefusedDisk},
+		{"cleared disk", "starting\ncp: No space left on device\n", nil},
 	}
-	if builder := chainBinding(t, rt, "shop"); builder.Round != 2 {
-		t.Errorf("builder round = %d, want the repair round 2", builder.Round)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			halt := &haltStub{}
+			deps := diskHaltDeps(st, halt)
+			deps.Preflight = func(string) error { return tc.preflight }
+			var halted bool
+			err := st.WithLock(func(tx *store.Tx) error {
+				_, h, herr := HaltOnDiskFullExit(context.Background(), deps, tx, b, tc.tail)
+				halted = h
+				return herr
+			})
+			if err != nil {
+				t.Fatalf("HaltOnDiskFullExit: %v", err)
+			}
+			if halted || halt.calls != 0 {
+				t.Errorf("halted %q, want the normal exit path", tc.tail)
+			}
+		})
 	}
 }

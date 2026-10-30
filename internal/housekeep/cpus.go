@@ -1,4 +1,4 @@
-package relevo
+package housekeep
 
 import (
 	"log/slog"
@@ -9,9 +9,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// pickCPU returns the lowest core in pool that is not in held (#314). ok is
-// false when every pool core is held, or when pool is empty. held may contain
-// cores outside the pool and duplicates, and both are ignored. Pure.
+// pickCPU returns the lowest core in pool that is not in held. ok is false
+// when every pool core is held, or when pool is empty. held may contain cores
+// outside the pool and duplicates, and both are ignored. Pure.
 func pickCPU(pool, held []int) (int, bool) {
 	used := make(map[int]bool, len(held))
 	for _, c := range held {
@@ -33,11 +33,10 @@ func pickCPU(pool, held []int) (int, bool) {
 }
 
 // HeldIn collects the cores held by live rounds other than the binding named
-// self (#314): every binding whose RoundCPU is set and whose builder process
-// is live (PID != 0) or whose gate is running (GateRun != nil). Using liveness
-// rather than "the field is set" means a halted, done, re-queued or crashed
-// round never blocks a core, even on a path that forgets to clear the field.
-// Pure; exported because the server's cross-owner census calls it.
+// self: every binding whose RoundCPU is set and whose builder process is live
+// (PID != 0) or whose gate is running (GateRun != nil). Using liveness rather
+// than "the field is set" means a halted, done, re-queued or crashed round
+// never blocks a core, even on a path that forgets to clear the field. Pure.
 func HeldIn(bindings []store.Binding, self string) []int {
 	var held []int
 	for _, b := range bindings {
@@ -61,18 +60,18 @@ func localHeldCPUs(tx *store.Tx, self string) ([]int, error) {
 	return HeldIn(bindings, self), nil
 }
 
-// cpuPinText is the core a binding's round is pinned to, as a systemd
-// cpu-list, or "" when RoundCPU is nil (#314). scopeFor treats "" as "use the
-// pool". Pure.
-func cpuPinText(b store.Binding) string {
+// CPUPinText is the core a binding's round is pinned to, as a systemd
+// cpu-list, or "" when RoundCPU is nil. An empty pin runs on the whole pool.
+// Pure.
+func CPUPinText(b store.Binding) string {
 	if b.RoundCPU == nil {
 		return ""
 	}
 	return strconv.Itoa(*b.RoundCPU)
 }
 
-// assignRoundCPU gives b the core its round runs on (#314), called by
-// startRound right before it builds the spec. It never fails.
+// AssignRoundCPU gives b the core its round runs on, called by startRound
+// right before it builds the spec. It never fails.
 //
 // The pool is the runtime scope's allowed_cpus, parsed; an empty pool or a nil
 // tx (a caller that has no round to pin) leaves RoundCPU nil. A census error
@@ -81,12 +80,12 @@ func cpuPinText(b store.Binding) string {
 // mid-round switch keeps its core when that core is still in the pool and
 // still free. The returned binding carries RoundCPU, so the caller's tx.Save
 // persists it.
-func assignRoundCPU(rt Runtime, tx *store.Tx, b store.Binding) store.Binding {
+func AssignRoundCPU(deps Deps, tx *store.Tx, b store.Binding) store.Binding {
 	var pool []int
-	if rt.Scope != nil && rt.Scope.AllowedCPUs != "" {
-		// A parse error cannot happen after policy.Load validated the field;
+	if deps.AllowedCPUs != "" {
+		// A parse error cannot happen after policy validated the field;
 		// treat it as no pool rather than failing a round.
-		if p, err := spawn.ParseCPUList(rt.Scope.AllowedCPUs); err == nil {
+		if p, err := spawn.ParseCPUList(deps.AllowedCPUs); err == nil {
 			pool = p
 		}
 	}
@@ -95,7 +94,7 @@ func assignRoundCPU(rt Runtime, tx *store.Tx, b store.Binding) store.Binding {
 		return b
 	}
 
-	heldFn := rt.HeldCPUs
+	heldFn := deps.HeldCPUs
 	if heldFn == nil {
 		heldFn = localHeldCPUs
 	}
@@ -114,7 +113,7 @@ func assignRoundCPU(rt Runtime, tx *store.Tx, b store.Binding) store.Binding {
 
 	cpu, ok := pickCPU(pool, held)
 	if !ok {
-		slog.Warn("cpu pool exhausted; round runs on the whole pool", "binding", b.Name, "round", b.Round, "pool", rt.Scope.AllowedCPUs, "held", len(held))
+		slog.Warn("cpu pool exhausted; round runs on the whole pool", "binding", b.Name, "round", b.Round, "pool", deps.AllowedCPUs, "held", len(held))
 		b.RoundCPU = nil
 		return b
 	}

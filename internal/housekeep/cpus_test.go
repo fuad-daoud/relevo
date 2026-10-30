@@ -1,20 +1,16 @@
-package relevo
+package housekeep
 
 import (
-	"context"
 	"encoding/json"
-	"os"
 	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/pathscope"
-	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestPickCPU pins #314's allocator: the lowest core in the pool that no other
+// TestPickCPU pins the allocator: the lowest core in the pool that no other
 // live round holds; not ok when every core is held or the pool is empty; held
 // cores outside the pool and duplicates are ignored.
 func TestPickCPU(t *testing.T) {
@@ -44,7 +40,7 @@ func TestPickCPU(t *testing.T) {
 	}
 }
 
-// TestHeldIn pins #314's census rule: self is excluded; a binding with a
+// TestHeldIn pins the census rule: self is excluded; a binding with a
 // RoundCPU but no live process and no gate blocks nothing; a nil RoundCPU is
 // excluded even with a live process or a running gate.
 func TestHeldIn(t *testing.T) {
@@ -66,7 +62,7 @@ func TestHeldIn(t *testing.T) {
 }
 
 // TestLocalHeldCPUs reads a real temp store's bindings through the caller's
-// transaction, the local census path startRound uses.
+// transaction, the local census path round starts use.
 func TestLocalHeldCPUs(t *testing.T) {
 	t.Parallel()
 
@@ -93,7 +89,7 @@ func TestLocalHeldCPUs(t *testing.T) {
 	}
 }
 
-// TestRoundCPUJSON pins #314's field shape: core 0 is a valid pin and survives
+// TestRoundCPUJSON pins the field shape: core 0 is a valid pin and survives
 // a JSON round trip, a binding JSON without the key decodes to nil, and a nil
 // pin is omitted.
 func TestRoundCPUJSON(t *testing.T) {
@@ -129,8 +125,8 @@ func TestRoundCPUJSON(t *testing.T) {
 	}
 }
 
-// TestCPUPinText pins the pin string scopeFor consumes: "" when no core is
-// pinned, the decimal core otherwise -- core 0 included.
+// TestCPUPinText pins the pin string: "" when no core is pinned, the decimal
+// core otherwise -- core 0 included.
 func TestCPUPinText(t *testing.T) {
 	t.Parallel()
 
@@ -146,8 +142,8 @@ func TestCPUPinText(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := cpuPinText(c.b); got != c.want {
-				t.Errorf("cpuPinText = %q, want %q", got, c.want)
+			if got := CPUPinText(c.b); got != c.want {
+				t.Errorf("CPUPinText = %q, want %q", got, c.want)
 			}
 		})
 	}
@@ -161,46 +157,47 @@ func cpuPtrText(p *int) string {
 	return strconv.Itoa(*p)
 }
 
-// bindSecond adds a second headless binding ("second", its own worktree) to rt
-// so a test can give two live rounds distinct cores.
-func bindSecond(t *testing.T, rt Runtime) store.Binding {
-	t.Helper()
-	if _, err := Bind(context.Background(), rt, BindOptions{
-		Name: "second", Candidate: testAgyRef, MasterMindID: testMasterMindName, CWD: "/repo2",
-	}); err != nil {
-		t.Fatalf("Bind second: %v", err)
-	}
-	b, err := rt.Store.Load("second")
-	if err != nil {
-		t.Fatalf("Load second: %v", err)
-	}
-	return b
+// cpuTestDeps is a Deps with the pool pinned to the list and the census left
+// to the caller's transaction.
+func cpuTestDeps(st *store.Store, pool string) Deps {
+	return Deps{Store: st, AllowedCPUs: pool}
 }
 
-// TestTwoRoundsGetDistinctCores pins #314's allocation: with pool "0-1", the
-// first round takes the lowest free core and, while it is live, the second
+// saveCPUBinding saves a plain binding the allocator can pin.
+func saveCPUBinding(t *testing.T, st *store.Store, name string) {
+	t.Helper()
+	if err := st.Save(store.Binding{Name: name, CWD: "/repo-" + name}); err != nil {
+		t.Fatalf("Save %s: %v", name, err)
+	}
+}
+
+// TestAssignRoundCPUGivesDistinctCores pins the allocation: with pool "0-1",
+// the first round takes the lowest free core and, while it is live, the next
 // takes the next one.
-func TestTwoRoundsGetDistinctCores(t *testing.T) {
+func TestAssignRoundCPUGivesDistinctCores(t *testing.T) {
 	t.Parallel()
 
-	fr := newFakeRunner()
-	rt, b := seedHeadless(t, fr)
-	b2 := bindSecond(t, rt)
-	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0-1"}
+	st := store.New(t.TempDir())
+	saveCPUBinding(t, st, "webshop")
+	saveCPUBinding(t, st, "second")
+	deps := cpuTestDeps(st, "0-1")
 
 	var first, second store.Binding
-	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		var err error
-		if first, err = startRound(context.Background(), rt, tx, b, "one", false); err != nil {
-			return err
-		}
-		if err := tx.Save(first); err != nil {
-			return err
-		}
-		second, err = startRound(context.Background(), rt, tx, b2, "two", false)
+	err := st.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load("webshop")
 		if err != nil {
 			return err
 		}
+		first = AssignRoundCPU(deps, tx, b)
+		first.Builder.PID = 4001
+		if err := tx.Save(first); err != nil {
+			return err
+		}
+		b2, err := tx.Load("second")
+		if err != nil {
+			return err
+		}
+		second = AssignRoundCPU(deps, tx, b2)
 		return tx.Save(second)
 	})
 	if err != nil {
@@ -213,38 +210,35 @@ func TestTwoRoundsGetDistinctCores(t *testing.T) {
 	if second.RoundCPU == nil || *second.RoundCPU != 1 {
 		t.Errorf("second RoundCPU = %s, want 1", cpuPtrText(second.RoundCPU))
 	}
-	if len(fr.specs) != 2 {
-		t.Fatalf("specs = %d, want 2", len(fr.specs))
-	}
-	if got := fr.specs[0].Scope.AllowedCPUs; got != "0" {
-		t.Errorf("first spec AllowedCPUs = %q, want 0", got)
-	}
-	if got := fr.specs[1].Scope.AllowedCPUs; got != "1" {
-		t.Errorf("second spec AllowedCPUs = %q, want 1", got)
-	}
 }
 
-// TestExhaustedPoolRunsOnWholePool pins #314's exhaustion rule: when every pool
-// core is held, the round runs on the whole pool with no RoundCPU.
-func TestExhaustedPoolRunsOnWholePool(t *testing.T) {
+// TestAssignRoundCPUExhaustedPoolRunsWholePool pins the exhaustion rule: when
+// every pool core is held, the round runs on the whole pool with no RoundCPU.
+func TestAssignRoundCPUExhaustedPoolRunsWholePool(t *testing.T) {
 	t.Parallel()
 
-	fr := newFakeRunner()
-	rt, b := seedHeadless(t, fr)
-	b2 := bindSecond(t, rt)
-	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0"}
+	st := store.New(t.TempDir())
+	saveCPUBinding(t, st, "webshop")
+	saveCPUBinding(t, st, "second")
+	deps := cpuTestDeps(st, "0")
 
 	var second store.Binding
-	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		first, err := startRound(context.Background(), rt, tx, b, "one", false)
+	err := st.WithLock(func(tx *store.Tx) error {
+		first, err := tx.Load("webshop")
 		if err != nil {
 			return err
 		}
+		first = AssignRoundCPU(deps, tx, first)
+		first.Builder.PID = 4001
 		if err := tx.Save(first); err != nil {
 			return err
 		}
-		second, err = startRound(context.Background(), rt, tx, b2, "two", false)
-		return err
+		b2, err := tx.Load("second")
+		if err != nil {
+			return err
+		}
+		second = AssignRoundCPU(deps, tx, b2)
+		return tx.Save(second)
 	})
 	if err != nil {
 		t.Fatalf("WithLock: %v", err)
@@ -253,132 +247,113 @@ func TestExhaustedPoolRunsOnWholePool(t *testing.T) {
 	if second.RoundCPU != nil {
 		t.Errorf("an exhausted pool left RoundCPU = %s, want none", cpuPtrText(second.RoundCPU))
 	}
-	if len(fr.specs) != 2 {
-		t.Fatalf("specs = %d, want 2", len(fr.specs))
-	}
-	if got := fr.specs[1].Scope.AllowedCPUs; got != "0" {
-		t.Errorf("second spec AllowedCPUs = %q, want the pool 0", got)
-	}
 }
 
-// TestRelaunchKeepsItsCore pins #314's relaunch/switch rule: a binding whose
-// RoundCPU is still in the pool and still free keeps it.
-func TestRelaunchKeepsItsCore(t *testing.T) {
+// TestAssignRoundCPUKeepsCoreOnRelaunch pins the relaunch rule: a binding
+// whose RoundCPU is still in the pool and still free keeps it.
+func TestAssignRoundCPUKeepsCoreOnRelaunch(t *testing.T) {
 	t.Parallel()
 
-	fr := newFakeRunner()
-	rt, b := seedHeadless(t, fr)
-	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0-3"}
-	one := 1
-	b.RoundCPU = &one
+	st := store.New(t.TempDir())
+	saveCPUBinding(t, st, "webshop")
+	deps := cpuTestDeps(st, "0-3")
 
+	one := 1
 	var got store.Binding
-	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		var err error
-		got, err = startRound(context.Background(), rt, tx, b, "again", false)
-		return err
+	err := st.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		b.RoundCPU = &one
+		got = AssignRoundCPU(deps, tx, b)
+		return nil
 	})
 	if err != nil {
-		t.Fatalf("startRound: %v", err)
+		t.Fatalf("WithLock: %v", err)
 	}
 	if got.RoundCPU == nil || *got.RoundCPU != 1 {
 		t.Errorf("RoundCPU = %s, want the kept core 1", cpuPtrText(got.RoundCPU))
 	}
-	if fr.specs[0].Scope.AllowedCPUs != "1" {
-		t.Errorf("spec AllowedCPUs = %q, want 1", fr.specs[0].Scope.AllowedCPUs)
+}
+
+// TestAssignRoundCPUReusesReleasedCore pins the release: once a live round's
+// pin is cleared, the next round on another binding can take that core.
+func TestAssignRoundCPUReusesReleasedCore(t *testing.T) {
+	t.Parallel()
+
+	st := store.New(t.TempDir())
+	saveCPUBinding(t, st, "webshop")
+	saveCPUBinding(t, st, "second")
+	saveCPUBinding(t, st, "third")
+	deps := cpuTestDeps(st, "0-1")
+
+	var second, third store.Binding
+	err := st.WithLock(func(tx *store.Tx) error {
+		first, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		first = AssignRoundCPU(deps, tx, first)
+		first.Builder.PID = 4001
+		if err := tx.Save(first); err != nil {
+			return err
+		}
+		b2, err := tx.Load("second")
+		if err != nil {
+			return err
+		}
+		second = AssignRoundCPU(deps, tx, b2)
+		second.Builder.PID = 4002
+		if err := tx.Save(second); err != nil {
+			return err
+		}
+		// The first round closes: its pin and its process go with it.
+		first.RoundCPU = nil
+		first.Builder.PID = 0
+		if err := tx.Save(first); err != nil {
+			return err
+		}
+		b3, err := tx.Load("third")
+		if err != nil {
+			return err
+		}
+		third = AssignRoundCPU(deps, tx, b3)
+		return tx.Save(third)
+	})
+	if err != nil {
+		t.Fatalf("WithLock: %v", err)
+	}
+	if second.RoundCPU == nil || *second.RoundCPU != 1 {
+		t.Fatalf("second RoundCPU = %s, want 1", cpuPtrText(second.RoundCPU))
+	}
+	if third.RoundCPU == nil || *third.RoundCPU != 0 {
+		t.Errorf("third RoundCPU = %s, want the released core 0", cpuPtrText(third.RoundCPU))
 	}
 }
 
-// TestRoundCloseReleasesCore pins #314's release: queueReport's reset block
-// clears RoundCPU, and the next round on another binding can take that core.
-func TestRoundCloseReleasesCore(t *testing.T) {
+// TestAssignRoundCPUNoPoolWritesNoField pins the off switch: a pool with no
+// allowed_cpus leaves RoundCPU nil.
+func TestAssignRoundCPUNoPoolWritesNoField(t *testing.T) {
 	t.Parallel()
 
-	fr := newFakeRunner()
-	rt, b := seedHeadless(t, fr)
-	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100, AllowedCPUs: "0-1"}
-
-	var first store.Binding
-	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		var err error
-		first, err = startRound(context.Background(), rt, tx, b, "one", false)
-		if err != nil {
-			return err
-		}
-		return tx.Save(first)
-	})
-	if err != nil {
-		t.Fatalf("startRound: %v", err)
-	}
-	if first.RoundCPU == nil || *first.RoundCPU != 0 {
-		t.Fatalf("RoundCPU = %s, want 0", cpuPtrText(first.RoundCPU))
-	}
-
-	if err := os.WriteFile(rt.Store.ReportPath(b.Name, b.Round), []byte("report body"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	err = rt.Store.WithLock(func(tx *store.Tx) error {
-		cur, err := tx.Load(b.Name)
-		if err != nil {
-			return err
-		}
-		entries, err := tx.ReadLog(b.Name)
-		if err != nil {
-			return err
-		}
-		next, err := queueReport(context.Background(), rt, tx, cur, entries, rt.Store.ReportPath(b.Name, b.Round), "done", "test", nil, nil, nil, nil, "", false, "", pathscope.Verdict{})
-		if err != nil {
-			return err
-		}
-		if next.RoundCPU != nil {
-			t.Errorf("RoundCPU after queueReport = %s, want none", cpuPtrText(next.RoundCPU))
-		}
-		return tx.Save(next)
-	})
-	if err != nil {
-		t.Fatalf("queueReport: %v", err)
-	}
-
-	b2 := bindSecond(t, rt)
-	var second store.Binding
-	err = rt.Store.WithLock(func(tx *store.Tx) error {
-		var err error
-		second, err = startRound(context.Background(), rt, tx, b2, "two", false)
-		if err != nil {
-			return err
-		}
-		return tx.Save(second)
-	})
-	if err != nil {
-		t.Fatalf("startRound second: %v", err)
-	}
-	if second.RoundCPU == nil || *second.RoundCPU != 0 {
-		t.Errorf("second RoundCPU = %s, want the released core 0", cpuPtrText(second.RoundCPU))
-	}
-}
-
-// TestNoPoolWritesNoField pins #314's off switch: a scope with no allowed_cpus
-// leaves RoundCPU nil and the spec's AllowedCPUs empty.
-func TestNoPoolWritesNoField(t *testing.T) {
-	t.Parallel()
-
-	fr := newFakeRunner()
-	rt, b := seedHeadless(t, fr)
-	rt.Scope = &spawn.ScopeSpec{Slice: "relevo.slice", CPUWeight: 100}
+	st := store.New(t.TempDir())
+	saveCPUBinding(t, st, "webshop")
+	deps := cpuTestDeps(st, "")
 
 	var got store.Binding
-	err := rt.Store.WithLock(func(tx *store.Tx) error {
-		var err error
-		got, err = startRound(context.Background(), rt, tx, b, "x", false)
-		return err
+	err := st.WithLock(func(tx *store.Tx) error {
+		b, err := tx.Load("webshop")
+		if err != nil {
+			return err
+		}
+		got = AssignRoundCPU(deps, tx, b)
+		return nil
 	})
 	if err != nil {
-		t.Fatalf("startRound: %v", err)
+		t.Fatalf("WithLock: %v", err)
 	}
 	if got.RoundCPU != nil {
 		t.Errorf("RoundCPU = %s, want none with no pool", cpuPtrText(got.RoundCPU))
-	}
-	if got := fr.specs[0].Scope.AllowedCPUs; got != "" {
-		t.Errorf("spec AllowedCPUs = %q, want \"\"", got)
 	}
 }
