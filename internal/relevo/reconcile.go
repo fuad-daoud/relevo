@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
@@ -681,7 +682,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	var (
 		done    bool
 		rec     *store.GateRecord
-		verdict scopeVerdict
+		verdict pathscope.Verdict
 	)
 	if b.Shape == store.ShapeReader {
 		done = true
@@ -756,7 +757,7 @@ func closeOnMarker(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 	return next, true, false, rec, nil
 }
 
-func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string, gate *store.GateRecord, usage *usage.Usage, rusage *store.Rusage, prior *usage.Tokens, fallbackOutcome string, stopped bool, dirtyCommit string, verdict scopeVerdict) (store.Binding, error) {
+func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, entries []store.LogEntry, path, payload, note string, gate *store.GateRecord, usage *usage.Usage, rusage *store.Rusage, prior *usage.Tokens, fallbackOutcome string, stopped bool, dirtyCommit string, verdict pathscope.Verdict) (store.Binding, error) {
 	// The round this close is closing: the cap check below sizes that round's
 	// artifact directory after b.Round has advanced.
 	closedRound := b.Round
@@ -830,14 +831,14 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	sc := scanForInjection(ctx, rt, "report", b, body)
 	note = joinNotes(note, sc.Note)
 
-	// The scope verdict (#801): a refusal forces the outcome to halted and
+	// The scope verdict: a refusal forces the outcome to halted and
 	// names the path, before the chain event below is built, so a chain
 	// member's refusal halts its chain instead of advancing it.
 	if verdict.Scoped {
-		note = joinNotes(note, scopeNote(verdict))
+		note = joinNotes(note, pathscope.Note(verdict))
 		if verdict.Refused {
 			outcome = reporttail.OutcomeHalted
-			tail.HaltedAt = scopeHaltedAt(verdict)
+			tail.HaltedAt = pathscope.HaltedAt(verdict)
 		}
 	}
 
@@ -897,7 +898,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	}
 	payload = pFirst + pRest
 	if verdict.Refused {
-		payload += "\n" + scopePayloadLine(b, verdict)
+		payload += "\n" + pathscope.PayloadLine(showCommand(b.Name, b.Round, "diff"), verdict)
 	}
 
 	closed := ""
@@ -1125,11 +1126,11 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	}
 
 	// A scope refusal asks for a human, exactly where the reader artifact
-	// cap does: after the round has advanced, naming the offending file
-	// (#801). Filed under closedRound, and its failed queue owed, for the
+	// cap does: after the round has advanced, naming the offending file.
+	// Filed under closedRound, and its failed queue owed, for the
 	// reasons the cap halt above gives.
 	if verdict.Refused {
-		b = closeHaltOrOwe(ctx, rt, tx, b, closedRound, scopeHaltText(b, closedRound, verdict))
+		b = closeHaltOrOwe(ctx, rt, tx, b, closedRound, pathscope.HaltText(b.Name, bindingRole(b), closedRound, verdict))
 	}
 
 	// The round has advanced, so the chain may now move: the close is mapped

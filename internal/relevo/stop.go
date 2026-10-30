@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -286,7 +287,7 @@ func closeStopped(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding
 		note = joinNotes(note, readerFallbackNote)
 	}
 
-	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "", true, "", scopeVerdict{})
+	next, err := queueReport(ctx, rt, tx, b, entries, reportPath, payload, note, nil, nil, nil, nil, "", true, "", pathscope.Verdict{})
 	if err != nil {
 		return b, err
 	}

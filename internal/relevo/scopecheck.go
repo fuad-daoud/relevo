@@ -2,24 +2,11 @@ package relevo
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
-
-// scopeVerdict is one close's scope judgement. Its zero value is "the actor
-// has no scope", which changes nothing. Scoped is set for an actor that
-// declared a scope; Refused is set when a changed path (or an unjudgeable
-// round) refuses.
-type scopeVerdict struct {
-	Scoped  bool
-	Refused bool
-	Path    string
-	Reason  string
-	More    int
-}
 
 // judgeRoundScope resolves the closing binding's actor and judges the round's
 // changed paths against its scope.
@@ -29,19 +16,19 @@ type scopeVerdict struct {
 // config change does not strand an in-flight round. An actor that declared a
 // scope but whose round cannot be judged (no baseline, no git, a git error)
 // is refused with the reason: refuse, never guess.
-func judgeRoundScope(ctx context.Context, rt Runtime, b store.Binding) scopeVerdict {
+func judgeRoundScope(ctx context.Context, rt Runtime, b store.Binding) pathscope.Verdict {
 	role := bindingRole(b)
 	r, ok := rt.RoleRegistry().Role(role)
 	if !ok {
 		slog.Warn("round close: actor not in the registry; treating as unscoped",
 			"binding", b.Name, "actor", role, "round", b.Round)
-		return scopeVerdict{}
+		return pathscope.Verdict{}
 	}
 	if r.Scope == nil {
-		return scopeVerdict{}
+		return pathscope.Verdict{}
 	}
 
-	v := scopeVerdict{Scoped: true}
+	v := pathscope.Verdict{Scoped: true}
 	if rt.Git == nil {
 		v.Refused, v.Reason = true, "git unavailable"
 		return v
@@ -72,58 +59,4 @@ func judgeRoundScope(ctx context.Context, rt Runtime, b store.Binding) scopeVerd
 	v.Reason = violations[0].Reason
 	v.More = len(violations) - 1
 	return v
-}
-
-// scopeNote is the note a scoped close adds: "scope=ok" on a pass and
-// "scope=refused" on a refusal. An unscoped actor adds nothing.
-func scopeNote(v scopeVerdict) string {
-	switch {
-	case !v.Scoped:
-		return ""
-	case v.Refused:
-		return "scope=refused"
-	default:
-		return "scope=ok"
-	}
-}
-
-// scopeHaltedAt is the report entry's HaltedAt for a refusal:
-// "scope: <first path>".
-func scopeHaltedAt(v scopeVerdict) string {
-	if v.Path == "" {
-		return "scope"
-	}
-	return "scope: " + v.Path
-}
-
-// scopePayloadLine is the payload's refusal line, followed by the
-// `relevo show … --diff` hint.
-func scopePayloadLine(b store.Binding, v scopeVerdict) string {
-	var line string
-	if v.Path == "" {
-		line = "Scope: refused -- " + v.Reason
-	} else {
-		line = fmt.Sprintf("Scope: refused -- %s: %s", v.Path, v.Reason)
-		if v.More > 0 {
-			line += fmt.Sprintf(" (+%d more)", v.More)
-		}
-	}
-	return line + ". Diff: " + showCommand(b.Name, b.Round, "diff")
-}
-
-// scopeHaltText is the NEEDS YOU message a refusal sets after the round has
-// advanced: it names the offending file, or the reason the round could not be
-// judged.
-func scopeHaltText(b store.Binding, round int, v scopeVerdict) string {
-	role := bindingRole(b)
-	if v.Path == "" {
-		return fmt.Sprintf("%s: round %d cannot be judged against actor %s's scope (%s)",
-			b.Name, round, role, v.Reason)
-	}
-	msg := fmt.Sprintf("%s: round %d changed %s outside actor %s's scope (%s)",
-		b.Name, round, v.Path, role, v.Reason)
-	if v.More > 0 {
-		msg += fmt.Sprintf("; %d more", v.More)
-	}
-	return msg
 }
