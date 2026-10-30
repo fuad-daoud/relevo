@@ -29,6 +29,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
@@ -160,7 +161,7 @@ type Server struct {
 // returns the raw error, as New does. The root is owner-only: it holds the
 // database and every binding's files, and MkdirAll never chmods an existing one.
 func EnsureStateRoot(root string) error {
-	return os.MkdirAll(filepath.Join(root, "bindings"), store.StateRootMode)
+	return os.MkdirAll(filepath.Join(root, "bindings"), tmpdir.StateRootMode)
 }
 
 // UserModeRoot is where a user-mode server keeps its state when --state is
@@ -203,7 +204,7 @@ func New(cfg Config) (*Server, error) {
 		cfg.Isolation = isolate.ModeNone
 	}
 	tmpDir := filepath.Join(cfg.Root, "tmp")
-	if err := os.MkdirAll(tmpDir, store.StateRootMode); err != nil {
+	if err := os.MkdirAll(tmpDir, tmpdir.StateRootMode); err != nil {
 		return nil, err
 	}
 	// Before anything listens, drop the request temp files a previous process left

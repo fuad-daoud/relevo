@@ -27,6 +27,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // bindPreflightTimeout bounds the bind-time preflight. The hot path must not be
@@ -299,7 +300,7 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 	// allowlist against the state root relevo stages plans and reports under.
 	// store has no root accessor on rt.Store, so resolve it the way
 	// newRuntime did (main.go). A failure here just leaves the check off.
-	stateRoot, _ := store.DefaultRoot()
+	stateRoot, _ := tmpdir.DefaultRoot()
 
 	extraChecks = append(extraChecks, runDiskChecks(rt)...)
 
@@ -382,7 +383,7 @@ func doctorReport(rt relevo.Runtime, L config.Loaded) (doctor.Report, error) {
 		rep.Checks = insertGlobalCheck(rep.Checks, candidatesCheck())
 	}
 
-	if stateRoot, err := store.DefaultRoot(); err == nil {
+	if stateRoot, err := tmpdir.DefaultRoot(); err == nil {
 		serveRoot := filepath.Join(stateRoot, "serve")
 		// The serve checks read the machine database (P5 §4.7). It is the same
 		// database rt.Store holds; a store whose open failed leaves the serve

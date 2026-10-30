@@ -5,17 +5,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/fuad-daoud/relevo/internal/db"
 )
 
 // manifestKey is the kv row the role manifest lives in.
 const manifestKey = "agents-manifest"
 
+// KV is the minimal key-value surface the role manifest needs. The database
+// handle satisfies it structurally; harness takes the interface so it does
+// not import the database package.
+type KV interface {
+	KVGet(key string) ([]byte, bool, error)
+	KVPut(key string, value []byte) error
+	KVDelete(key string) error
+}
+
 // ReadManifest loads the role manifest from kv. An absent row is an empty map
 // and no error; malformed JSON is an error, and the caller decides what to do
 // with it.
-func ReadManifest(kv db.KV) (map[string]string, error) {
+func ReadManifest(kv KV) (map[string]string, error) {
 	raw, ok, err := kv.KVGet(manifestKey)
 	if err != nil {
 		return nil, err
@@ -35,7 +42,7 @@ func ReadManifest(kv db.KV) (map[string]string, error) {
 }
 
 // WriteManifest stores the whole manifest in the kv row "agents-manifest".
-func WriteManifest(kv db.KV, m map[string]string) error {
+func WriteManifest(kv KV, m map[string]string) error {
 	raw, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal role manifest: %w", err)

@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/bugreport"
-	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/text"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // bugreportFlagValues holds the pointers bugreport parses into.
@@ -125,7 +125,7 @@ func cmdBugreport(args []string) error {
 // internal, a bundle too large to cut for a file is usage, and a missing gh is
 // not_available. A failing source is a line in the bundle, never a failed run.
 func runBugreport(opts bugreportOptions) error {
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return fail(codeInternal, "%v", err)
 	}

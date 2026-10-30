@@ -14,7 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // boardThemeSets is where the theme resolution reads this machine's stored
@@ -29,7 +29,7 @@ import (
 // fallback: no database exists yet, or the section was never seeded.
 var boardThemeSets = func(cwd string) (relevo.RepoSettings, map[string]board.Theme, error) {
 	repo := relevo.RepoSettings{}
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return repo, nil, err
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // seedWaitChain seeds the default state root with one finished chain whose end
@@ -18,7 +19,7 @@ import (
 func seedWaitChain(t *testing.T, name string) {
 	t.Helper()
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -96,7 +97,7 @@ func TestWaitOnAChainReturnsItsEnd(t *testing.T) {
 func seedWaitChainOpenBuilderRound(t *testing.T, name string) {
 	t.Helper()
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -150,7 +151,7 @@ func TestWaitOnAHaltedChainFollowsAnOpenBuilderRound(t *testing.T) {
 func TestWaitOnAHaltedChainWithNoOpenRoundReturnsTheHalt(t *testing.T) {
 	const name = "waitnohalt"
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -188,7 +189,7 @@ func TestWaitOnAHaltedChainWithNoOpenRoundReturnsTheHalt(t *testing.T) {
 // as it did before wait learned about chains.
 func TestWaitOnABindingIsUnchanged(t *testing.T) {
 	const name = "waitplain"
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}

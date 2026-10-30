@@ -30,7 +30,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/serve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 type hostSlice []string
@@ -91,7 +91,7 @@ func serveRoot(fs *flag.FlagSet) (string, error) {
 }
 
 func defaultServeRoot() (string, error) {
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return "", err
 	}
@@ -111,12 +111,12 @@ func pidAlive(pid int) bool {
 	return p.Signal(syscall.Signal(0)) == nil
 }
 
-// openMachineDB opens the machine database (store.DefaultRoot()/relevo.db),
+// openMachineDB opens the machine database (tmpdir.DefaultRoot()/relevo.db),
 // which every serve verb reads clients, TLS, the daemon pointer and config
 // from (P5 §4.3). The caller closes it. It returns the state root too, because
 // the hook run log is keyed on it.
 func openMachineDB() (*db.DB, string, error) {
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return nil, "", err
 	}
@@ -321,7 +321,7 @@ func loadConfig(d *db.DB) (config.Loaded, error) {
 }
 
 // loadServeConfig opens the machine database exactly as newRuntime does
-// (store.DefaultRoot(), not --state), imports any config file present, and
+// (tmpdir.DefaultRoot(), not --state), imports any config file present, and
 // returns the loaded config, the handle it read from and the state root; the
 // caller closes the handle. It is the one copy of that loading: cmdServeRun
 // starts a daemon with it. An admin verb that already holds the machine
@@ -552,7 +552,7 @@ func cmdServeRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := serve.WriteDaemonPointer(d, serve.DaemonPointer{
+	if err := db.WriteDaemonPointer(d, db.DaemonPointer{
 		Root:      root,
 		PID:       os.Getpid(),
 		Listen:    sf.listen,
@@ -560,7 +560,7 @@ func cmdServeRun(args []string) error {
 	}); err != nil {
 		slog.Warn("daemon pointer not written", "err", err)
 	}
-	defer func() { _ = serve.RemoveDaemonPointer(d) }()
+	defer func() { _ = db.RemoveDaemonPointer(d) }()
 
 	var cert *tls.Certificate
 	var fp string

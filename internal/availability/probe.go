@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/text"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 )
 
@@ -121,7 +122,7 @@ func ProbeCandidate(ctx context.Context, d Deps, x LineExec, c candidate.Candida
 		return probeFailure(d, ref, c, host, "no known role")
 	}
 
-	dir, err := store.MkdirTemp("", "relevo-probe-")
+	dir, err := tmpdir.MkdirTemp("", "relevo-probe-")
 	if err != nil {
 		return probeFailure(d, ref, c, host, err.Error())
 	}

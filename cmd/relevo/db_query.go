@@ -16,7 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // dbUsage is what a bare `relevo db` prints: the verb only dispatches
@@ -284,7 +284,7 @@ func classifyDBQuery(err error) error {
 // the daemon holding the file. It never starts the owner. ctx bounds the dial,
 // and an expired ctx refuses rather than falling back to a direct open.
 func openDBQuery(ctx context.Context) (*db.DB, error) {
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return nil, err
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire/client"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // errOwnerUnavailable marks a dial the owner never answered, after the whole
@@ -189,7 +190,7 @@ func hasArg(args []string, names ...string) bool {
 // machineDBPath is <state root>/relevo.db, the one path every client dials and
 // every other path opens directly.
 func machineDBPath() string {
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return ""
 	}
@@ -207,7 +208,7 @@ func openDBRoute(path string) (*db.DB, bool, error) {
 	if dbRouteMode != routeOwner || path != machineDBPath() {
 		return nil, false, nil
 	}
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return nil, true, err
 	}

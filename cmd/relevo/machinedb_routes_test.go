@@ -19,7 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/dbtest"
 	"github.com/fuad-daoud/relevo/internal/db/wire/owner"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // cmdTestHelperEnv marks the one-opener child: TestMain answers it before any
@@ -48,7 +48,7 @@ func shortStateRoot(t *testing.T) string {
 // machineRoot resolves the state root the current XDG_STATE_HOME selects.
 func machineRoot(t *testing.T) string {
 	t.Helper()
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -472,7 +472,7 @@ type daemonHelperReport struct {
 // own ingest decision, and reports the handle identity plus how many descriptors
 // the process holds on relevo.db itself.
 func runCmdTestDaemonHelper() int {
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "daemon helper: root: %v\n", err)
 		return 1

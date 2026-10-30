@@ -20,6 +20,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/text"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // smokeName is the binding and the repo name the smoke round uses: one
@@ -74,7 +75,7 @@ func smokeStepDocOf(err error) error {
 // setupSmokePrepare frees a leftover smoke binding, then rebuilds the
 // throwaway repository with one committed README from scratch.
 func setupSmokePrepare(ctx context.Context, rt relevo.Runtime) (string, error) {
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return "", err
 	}

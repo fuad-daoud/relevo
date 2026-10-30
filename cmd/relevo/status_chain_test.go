@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -24,7 +25,7 @@ func seedChainContractFixture(t *testing.T) statusFixture {
 	stateHome := filepath.Join(t.TempDir(), "state")
 	t.Setenv("XDG_STATE_HOME", stateHome)
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}

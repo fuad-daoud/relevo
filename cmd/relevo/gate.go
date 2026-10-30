@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/serve"
@@ -297,10 +298,10 @@ func gateClear(subject string, asJSON bool) error {
 
 	// On a box that also runs a serve daemon, the client ledger just cleared
 	// is not the record that gates anything: a serve daemon keeps its own
-	// gates, in its own database (P3b plan §4.5).
+	// gates, in its own database.
 	if d, _, err := openMachineDB(); err == nil {
 		defer d.Close()
-		if p, ok, _ := serve.ReadDaemonPointer(d); ok && pidAlive(p.PID) {
+		if p, ok, _ := db.ReadDaemonPointer(d); ok && pidAlive(p.PID) {
 			fmt.Fprint(notices, "note: a relevo serve daemon runs here with its own gates; use relevo gate --serve\n")
 		}
 	}

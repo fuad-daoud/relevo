@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // TestShowSectionFlagsConflict pins `relevo show`'s section-flag rules:
@@ -68,7 +69,7 @@ func TestShowSummaryNamesOutput(t *testing.T) {
 // assertions below reach no builder.
 func seedShowDiffStore(t *testing.T, name string) (*store.Store, relevo.Runtime) {
 	t.Helper()
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -196,7 +197,7 @@ func TestShowSectionFlagsSummaryAndArtifacts(t *testing.T) {
 // rt.Store.ReadFile. It is store-only -- no harness and no network.
 func TestShowGateAndFindings(t *testing.T) {
 	const name = "showgate"
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -246,7 +247,7 @@ func TestShowGateAndFindings(t *testing.T) {
 // -- no harness and no network.
 func TestShowOutputArtifactsCLI(t *testing.T) {
 	const name = "showsummary"
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -336,7 +337,7 @@ func TestShowOutputArtifactsCLI(t *testing.T) {
 // returns the store so a test can inspect the entry's route after the run.
 func seedShowPendingStore(t *testing.T, name string) *store.Store {
 	t.Helper()
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -430,7 +431,7 @@ func TestShowPeekFlagLeavesPendingMasterMindPayload(t *testing.T) {
 // round's output while --artifact stays a raw file copy.
 func TestPrintShowSanitizesControlBytes(t *testing.T) {
 	const name = "showsanitize"
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}

@@ -167,20 +167,4 @@ func TestPathBuilders(t *testing.T) {
 	if got := s.WorktreePath("webshop"); got != filepath.Join("/root", ".worktrees", "webshop") {
 		t.Errorf("WorktreePath = %q", got)
 	}
-
-	t.Run("XDG_STATE_HOME wins", func(t *testing.T) {
-		t.Setenv("XDG_STATE_HOME", "/xdg")
-		got, err := DefaultRoot()
-		if err != nil || got != filepath.Join("/xdg", "relevo") {
-			t.Errorf("DefaultRoot = (%q, %v), want /xdg/relevo", got, err)
-		}
-	})
-	t.Run("falls back to home", func(t *testing.T) {
-		t.Setenv("XDG_STATE_HOME", "")
-		t.Setenv("HOME", "/home/u")
-		got, err := DefaultRoot()
-		if err != nil || got != filepath.Join("/home/u", ".local", "state", "relevo") {
-			t.Errorf("DefaultRoot = (%q, %v), want the home fallback", got, err)
-		}
-	})
 }

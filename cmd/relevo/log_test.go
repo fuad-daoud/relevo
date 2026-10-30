@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // seedLogStore saves a binding with n entries under the package's temp state
@@ -17,7 +18,7 @@ import (
 // where none exists.
 func seedLogStore(t *testing.T, name string, state store.State, n int) *store.Store {
 	t.Helper()
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}

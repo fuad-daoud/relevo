@@ -9,8 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/doctor"
-	"github.com/fuad-daoud/relevo/internal/serve"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // sandboxStateRoot is the state root TestMain's temp HOME implies, so the
@@ -18,9 +17,9 @@ import (
 // under the developer's real state.
 func sandboxStateRoot(t *testing.T) string {
 	t.Helper()
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
-		t.Fatalf("store.DefaultRoot: %v", err)
+		t.Fatalf("tmpdir.DefaultRoot: %v", err)
 	}
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatalf("MkdirAll(%s): %v", root, err)
@@ -112,7 +111,7 @@ func TestSandboxChecksMarkerAndPointerAddsPortRow(t *testing.T) {
 	writeSandboxMarker(t, root, "demo", 7801)
 
 	d := sandboxTestDB(t)
-	if err := serve.WriteDaemonPointer(d, serve.DaemonPointer{
+	if err := db.WriteDaemonPointer(d, db.DaemonPointer{
 		Root:      filepath.Join(root, "serve"),
 		PID:       1234,
 		Listen:    ":7777",

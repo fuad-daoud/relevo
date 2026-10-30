@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/shipped"
 )
 
@@ -419,7 +418,7 @@ type osInstallEnv struct {
 	// kv is the database the role manifest lives in; an env with no database
 	// reads as "nothing recorded" and refuses to save. Only OSInstallEnvKV
 	// sets it.
-	kv db.KV
+	kv KV
 }
 
 // OSInstallEnv returns an InstallEnv backed by the OS and exec packages,
@@ -432,7 +431,7 @@ func OSInstallEnv() InstallEnv {
 // OSInstallEnvKV is OSInstallEnv with the role manifest kept in kv. The caller
 // opens the machine database (this package cannot, since harness <- usage <-
 // store) and passes the handle in.
-func OSInstallEnvKV(kv db.KV) InstallEnv {
+func OSInstallEnvKV(kv KV) InstallEnv {
 	return osInstallEnv{kv: kv}
 }
 
