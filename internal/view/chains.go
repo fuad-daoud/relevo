@@ -396,8 +396,7 @@ func appendChainChildRows(s *store.Store, rows []BindingStatus, chains []db.Chai
 // ChildRows is a chain's child chains in key order, with how many of them
 // have ended. The rows whose Parent names this chain are its children; the key
 // order is the order the engine named them in ("1".."N"), so the listing reads
-// in fork order rather than in whatever order the query returned. It is
-// exported only because the staying fork-ordering test calls down to it.
+// in fork order rather than in whatever order the query returned.
 func ChildRows(s *store.Store, c db.ChainRow) (children []db.ChainRow, done int) {
 	if s == nil {
 		return nil, 0
