@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/classify"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -26,7 +27,7 @@ type injectionScan struct {
 // classifier call is bounded by context.WithTimeout(ctx, cfg.Timeout()).
 // source is "report" or "dialog"; the harness comes from b.Builder.Kind.
 func scanForInjection(ctx context.Context, rt Runtime, source string, b store.Binding, text []byte) injectionScan {
-	regexLines := scanLines(text, compileScanPatterns(rt.Policy))
+	regexLines := housekeep.ScanLines(text, housekeep.CompileScanPatterns(rt.Policy))
 	regexCount := len(regexLines)
 	cfg := rt.Policy.Classify
 	if cfg == nil || rt.Classify == nil {

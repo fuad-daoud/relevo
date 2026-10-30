@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -105,7 +106,7 @@ func TestReaderScratchFailureDoesNotStartTheRound(t *testing.T) {
 	if err == nil {
 		t.Fatal("Send = nil, want an ErrScratch error")
 	}
-	if !errors.Is(err, ErrScratch) {
+	if !errors.Is(err, housekeep.ErrScratch) {
 		t.Fatalf("Send err = %v, want it to wrap ErrScratch", err)
 	}
 	if !strings.Contains(err.Error(), "add") {

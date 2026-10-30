@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -76,8 +77,8 @@ func prepareTmp(rt Runtime, req procRequest) (string, func(), error) {
 			return "", func() {}, nil
 		}
 		b := *req.binding
-		rel = roundTmpRel(b.Name, b.Round)
-		undo = func() { removeRoundTmp(rt, b, b.Round) }
+		rel = housekeep.RoundTmpRel(b.Name, b.Round)
+		undo = func() { housekeep.RemoveRoundTmp(HousekeepDeps(rt), b, b.Round) }
 	case procKindCheck:
 		if req.key == "" {
 			return "", func() {}, nil
@@ -91,7 +92,7 @@ func prepareTmp(rt Runtime, req procRequest) (string, func(), error) {
 	if err != nil {
 		return "", nil, fmt.Errorf("tmp dir for %s %q: %w", req.kind, rel, err)
 	}
-	warnTmpOverBudget(dir)
+	housekeep.WarnTmpOverBudget(dir)
 	return dir, undo, nil
 }
 
@@ -101,7 +102,7 @@ func prepareTmp(rt Runtime, req procRequest) (string, func(), error) {
 // check run and stable across a restart re-run -- which is what lets the
 // re-run find the directory its first run made.
 func checkTmpRel(unit string) string {
-	return filepath.Join(tmpSubChecks, shortCheckID(unit))
+	return filepath.Join(housekeep.SubChecks, housekeep.ShortCheckID(unit))
 }
 
 // removeCheckTmp takes a check process's private temp directory away. Every

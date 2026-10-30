@@ -12,6 +12,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -355,7 +356,7 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 			Result: result, Log: logKey,
 			RepeatRed: chainRepeatRedCheck(rt, c, before, row.Step, logKey),
 		}
-		if halted, err := chainHaltOnEnvironment(ctx, rt, tx, c, run, ev); halted || err != nil {
+		if halted, err := housekeep.ChainHaltOnEnvironment(ctx, HousekeepDeps(rt), tx, c, run, ev); halted || err != nil {
 			return err
 		}
 		return chainAdvance(ctx, rt, tx, c, ev)

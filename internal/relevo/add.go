@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -310,7 +311,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// below, where the branch it would consult lives.
 	subdir := ""
 	if opts.CWD == "" && rt.Git != nil {
-		subdir = resolveSubdir(ctx, rt, opts.Repo)
+		subdir = housekeep.ResolveSubdir(ctx, rt.Git, opts.Repo)
 	}
 
 	if opts.Branch != "" && opts.CWD != "" {

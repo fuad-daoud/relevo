@@ -26,6 +26,7 @@ github.com/fuad-daoud/relevo/internal/git 83.2
 github.com/fuad-daoud/relevo/internal/harness 88.8
 github.com/fuad-daoud/relevo/internal/histq 94.5
 github.com/fuad-daoud/relevo/internal/hooks 87.6
+github.com/fuad-daoud/relevo/internal/housekeep 75.9
 github.com/fuad-daoud/relevo/internal/ingest 82.7
 github.com/fuad-daoud/relevo/internal/installation 76.5
 github.com/fuad-daoud/relevo/internal/isolate 95.0

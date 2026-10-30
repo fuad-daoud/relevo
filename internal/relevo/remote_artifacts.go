@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -28,7 +29,7 @@ func is404(err error) bool {
 func downloadTemp(root, final string, r io.ReadCloser) (string, error) {
 	defer r.Close()
 	dir := filepath.Dir(final)
-	if err := ensureRealDir(root, dir); err != nil {
+	if err := housekeep.EnsureRealDir(root, dir); err != nil {
 		return "", err
 	}
 	tmp, err := os.CreateTemp(dir, filepath.Base(final)+".fetch.*")

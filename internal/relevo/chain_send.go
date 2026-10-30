@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/capture"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -101,7 +102,7 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		// create it from the round's captured baseline before anything is
 		// spawned, exactly as Send does.
 		if cur.Shape == store.ShapeReader {
-			if _, err := CreateScratchFrom(ctx, rt, cur, cur.Round, baselineHead, baseline); err != nil {
+			if _, err := housekeep.CreateScratchFrom(ctx, HousekeepDeps(rt), cur, cur.Round, baselineHead, baseline); err != nil {
 				return b, fmt.Errorf("%s: %w", name, err)
 			}
 		}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -107,7 +108,7 @@ func readSeedFile(dir, rel string) (string, error) {
 	if !fi.Mode().IsRegular() {
 		return "", refuse("seed file %q is not a regular file", rel)
 	}
-	f, err := os.OpenFile(full, os.O_RDONLY|oNoFollow, 0)
+	f, err := os.OpenFile(full, os.O_RDONLY|housekeep.NoFollow, 0)
 	if err != nil {
 		return "", err
 	}

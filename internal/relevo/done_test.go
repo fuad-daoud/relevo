@@ -1,7 +1,10 @@
 package relevo
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -287,5 +290,35 @@ func TestDoneWritesNoStopEntryWhenNoRoundIsOpen(t *testing.T) {
 	}
 	if st := stopEntries(t, rt, "webshop"); len(st) != 0 {
 		t.Errorf("stop entries = %+v, want none", st)
+	}
+}
+
+// TestDoneOnAReaderWithAGoneSourceAndScratchLogsNoWarning pins the release
+// symptom end to end: a reader whose source tree is gone and whose scratch is
+// gone runs done without the "scratch worktree not removed" warning, even when
+// the git cleanup would fail.
+func TestDoneOnAReaderWithAGoneSourceAndScratchLogsNoWarning(t *testing.T) {
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	defer slog.SetDefault(previous)
+
+	rt := newRuntime(t)
+	fg := &fakeGit{removeWorktreeErr: errors.New("chdir /gone: no such file or directory")}
+	rt.Git = fg
+	b := store.Binding{
+		Name: "reader-bind", CWD: filepath.Join(t.TempDir(), "gone"),
+		Shape: store.ShapeReader, Round: 1, State: store.StateActive,
+		Builder: store.Endpoint{Mode: store.ModeHeadless},
+	}
+	if err := rt.Store.Save(b); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if _, err := Done(context.Background(), rt, "reader-bind"); err != nil {
+		t.Fatalf("Done: %v", err)
+	}
+	if strings.Contains(logged.String(), "scratch worktree not removed") {
+		t.Errorf("done logged the scratch cleanup warning:\n%s", logged.String())
 	}
 }

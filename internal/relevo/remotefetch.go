@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -265,11 +266,11 @@ func applyLogMirror(rt Runtime, name string, round int, m *logMirror) {
 		slog.Debug("mirror builder log moved since fetch; skipping", "name", name, "round", round)
 		return
 	}
-	if err := ensureRealDir(root, filepath.Dir(m.Path)); err != nil {
+	if err := housekeep.EnsureRealDir(root, filepath.Dir(m.Path)); err != nil {
 		slog.Warn("mirror builder log failed", "name", name, "round", round, "err", err)
 		return
 	}
-	f, err := openAppendRegular(m.Path)
+	f, err := housekeep.OpenAppendRegular(m.Path)
 	if err != nil {
 		slog.Warn("mirror builder log failed", "name", name, "round", round, "err", err)
 		return

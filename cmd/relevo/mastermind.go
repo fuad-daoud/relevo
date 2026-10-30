@@ -15,6 +15,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chatlabel"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -513,20 +514,20 @@ func (e errGCUsage) Error() string { return string(e) }
 // scope, with no fallback to "everything" (#482). resolve is injected so the
 // function stays pure and needs no registry to test; in production it closes
 // over a Runtime and calls mastermind.Resolve.
-func gcScope(mastermindFlag string, all bool, resolve func(ref string) (mastermind.Record, error)) (relevo.GCOptions, error) {
+func gcScope(mastermindFlag string, all bool, resolve func(ref string) (mastermind.Record, error)) (housekeep.GCOptions, error) {
 	switch {
 	case all && mastermindFlag != "":
-		return relevo.GCOptions{}, errGCUsage("relevo: --all-masterminds and --mastermind are exclusive")
+		return housekeep.GCOptions{}, errGCUsage("relevo: --all-masterminds and --mastermind are exclusive")
 	case all:
-		return relevo.GCOptions{AllMasterMinds: true}, nil
+		return housekeep.GCOptions{AllMasterMinds: true}, nil
 	}
 
 	rec, err := resolve(mastermindFlag)
 	if err != nil {
-		return relevo.GCOptions{}, errGCUsage(fmt.Sprintf(
+		return housekeep.GCOptions{}, errGCUsage(fmt.Sprintf(
 			"relevo: unbind --done clears this mastermind's DONE bindings, and no mastermind resolved (%v); pass --mastermind <name|id>, or --all-masterminds to clear every mastermind's", err))
 	}
-	return relevo.GCOptions{MasterMindID: rec.ID}, nil
+	return housekeep.GCOptions{MasterMindID: rec.ID}, nil
 }
 
 // mastermindInUse is Forget's guard (§4.7): a record any binding that is not DONE

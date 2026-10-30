@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -24,17 +25,17 @@ func TestTmpDirLengthBound(t *testing.T) {
 	longestUnit := scopeUnitNameFor(scopeGate, string(zeroID), longestName+"-check", 999999, "")
 
 	cases := map[string]string{
-		"served round": filepath.Join(servedRoot, roundTmpRel(longestName, 999999)),
+		"served round": filepath.Join(servedRoot, housekeep.RoundTmpRel(longestName, 999999)),
 		"served check": filepath.Join(servedRoot, checkTmpRel(longestUnit)),
-		"local round":  filepath.Join(localRoot, roundTmpRel(longestName, 999999)),
+		"local round":  filepath.Join(localRoot, housekeep.RoundTmpRel(longestName, 999999)),
 		"local check":  filepath.Join(localRoot, checkTmpRel(longestUnit)),
 	}
 	for name, dir := range cases {
-		t.Logf("longest %s TMPDIR = %d bytes (+%d suffix)", name, len(dir), tmpSocketSuffixLen)
-		if tmpOverBudget(dir) {
+		t.Logf("longest %s TMPDIR = %d bytes (+%d suffix)", name, len(dir), housekeep.TmpSocketSuffixLen)
+		if housekeep.TmpOverBudget(dir) {
 			t.Errorf("longest %s TMPDIR = %q (%d bytes) is over budget", name, dir, len(dir))
 		}
-		if len(dir)+tmpSocketSuffixLen >= 108 {
+		if len(dir)+housekeep.TmpSocketSuffixLen >= 108 {
 			t.Errorf("longest %s TMPDIR %q plus suffix reaches the sun_path limit", name, dir)
 		}
 	}

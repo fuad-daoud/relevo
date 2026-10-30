@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -43,7 +44,7 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 
 		// Add the oom note because the worktree may hold partial work.
 		if b.OOMRequeue != nil {
-			prompt += "\n\n" + oomNote(b.OOMRequeue.At)
+			prompt += "\n\n" + housekeep.OOMNote(b.OOMRequeue.At)
 			b.OOMRequeue = nil
 		}
 
@@ -61,7 +62,7 @@ func Admit(ctx context.Context, rt Runtime, name string) error {
 		// captured. A failure leaves the binding NEEDS YOU below, like any
 		// other admit failure, and never falls back to b.CWD.
 		if b.Shape == store.ShapeReader {
-			if _, err := CreateScratchFrom(ctx, rt, b, b.Round, b.RoundBaselineHead, b.RoundBaselineTree); err != nil {
+			if _, err := housekeep.CreateScratchFrom(ctx, HousekeepDeps(rt), b, b.Round, b.RoundBaselineHead, b.RoundBaselineTree); err != nil {
 				startErr = err
 			}
 		}

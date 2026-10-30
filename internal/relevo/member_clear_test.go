@@ -7,6 +7,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -120,7 +121,7 @@ func TestGCArchivesAStaleChainMember(t *testing.T) {
 		t.Fatalf("Done: %v", err)
 	}
 
-	done, err := GC(context.Background(), rt, GCOptions{MasterMindID: testMasterMindID})
+	done, err := housekeep.GC(context.Background(), HousekeepDeps(rt), housekeep.GCOptions{MasterMindID: testMasterMindID})
 	if err != nil {
 		t.Fatalf("GC: %v", err)
 	}

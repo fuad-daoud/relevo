@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -26,7 +27,7 @@ func TestPrepareProcCreatesRoundDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareProc: %v", err)
 	}
-	want := filepath.Join(rt.TmpRoot, roundTmpRel("webshop", 1))
+	want := filepath.Join(rt.TmpRoot, housekeep.RoundTmpRel("webshop", 1))
 	if dir != want {
 		t.Errorf("tmpDir = %q, want %q", dir, want)
 	}
@@ -132,7 +133,7 @@ func TestCheckTmpRelNamesChecksRoot(t *testing.T) {
 		"relevo-gate-abcdef12-shop-check-3",
 	} {
 		got := checkTmpRel(unit)
-		if got != filepath.Join("checks", shortCheckID(unit)) {
+		if got != filepath.Join("checks", housekeep.ShortCheckID(unit)) {
 			t.Errorf("checkTmpRel(%q) = %q, want the hashed leaf", unit, got)
 		}
 		if prev, dup := seen[got]; dup {
@@ -203,18 +204,18 @@ func TestRoundTmpRelShortDeterministic(t *testing.T) {
 		name  string
 		round int
 	}{{"api", 7}, {"webshop", 1}, {"x", 42}, {"y", 1000}} {
-		got := roundTmpRel(tc.name, tc.round)
-		if got != filepath.Join("rounds", shortRoundID(tc.name, tc.round)) {
-			t.Errorf("roundTmpRel(%q, %d) = %q, want the hashed leaf", tc.name, tc.round, got)
+		got := housekeep.RoundTmpRel(tc.name, tc.round)
+		if got != filepath.Join("rounds", housekeep.ShortRoundID(tc.name, tc.round)) {
+			t.Errorf("housekeep.RoundTmpRel(%q, %d) = %q, want the hashed leaf", tc.name, tc.round, got)
 		}
 		id := tc.name + "/" + string(rune('0'+tc.round%10))
 		if prev, dup := seen[got]; dup {
-			t.Errorf("roundTmpRel(%q, %d) = %q, also the leaf of %q", tc.name, tc.round, got, prev)
+			t.Errorf("housekeep.RoundTmpRel(%q, %d) = %q, also the leaf of %q", tc.name, tc.round, got, prev)
 		}
 		seen[got] = id
 	}
-	if got, again := roundTmpRel("webshop", 4), roundTmpRel("webshop", 4); got != again {
-		t.Errorf("roundTmpRel not deterministic: %q vs %q", got, again)
+	if got, again := housekeep.RoundTmpRel("webshop", 4), housekeep.RoundTmpRel("webshop", 4); got != again {
+		t.Errorf("housekeep.RoundTmpRel not deterministic: %q vs %q", got, again)
 	}
 }
 
@@ -225,7 +226,7 @@ func TestRemoveRoundTmpWithoutRootRemovesNothing(t *testing.T) {
 	t.Parallel()
 
 	rt := newRuntime(t)
-	removeRoundTmp(rt, store.Binding{Name: "webshop", Round: 1}, 1)
+	housekeep.RemoveRoundTmp(HousekeepDeps(rt), store.Binding{Name: "webshop", Round: 1}, 1)
 }
 
 // TestRemoveRoundTmpMissingDirIsSilent pins the route-sharing shape: the
@@ -242,9 +243,9 @@ func TestRemoveRoundTmpMissingDirIsSilent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareProc: %v", err)
 	}
-	removeRoundTmp(rt, b, 1)
+	housekeep.RemoveRoundTmp(HousekeepDeps(rt), b, 1)
 	if _, serr := os.Stat(dir); !os.IsNotExist(serr) {
 		t.Fatalf("the first removal left %s behind", dir)
 	}
-	removeRoundTmp(rt, b, 1)
+	housekeep.RemoveRoundTmp(HousekeepDeps(rt), b, 1)
 }

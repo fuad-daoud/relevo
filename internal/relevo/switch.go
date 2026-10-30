@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/account"
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -274,7 +275,7 @@ func switchBuilder(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindin
 			// This kill bypasses stopProcess, so it carries the temp-dir
 			// removal itself; the replacement's start below recreates the
 			// directory under the same name, empty.
-			removeRoundTmp(rt, b, b.Round)
+			housekeep.RemoveRoundTmp(HousekeepDeps(rt), b, b.Round)
 		}
 	}
 
