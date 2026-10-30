@@ -104,7 +104,7 @@ func MemberNames(name string, def workflow.Definition, actors map[string]workflo
 		if actor == keeper {
 			memberName = name
 		} else if part := parts[actor]; part != "" {
-			memberName = name + chainDefaultSuffix(part)
+			memberName = name + defaultSuffix(part)
 		}
 		out = append(out, PlannedMember{Actor: actor, Name: memberName, Writer: actors[actor].Shape == workflow.ShapeWriter})
 	}
@@ -133,8 +133,8 @@ func DefaultParts(def workflow.Definition) map[string]string {
 	return parts
 }
 
-// chainDefaultSuffix is the name suffix a default workflow's part carries.
-func chainDefaultSuffix(part string) string {
+// defaultSuffix is the name suffix a default workflow's part carries.
+func defaultSuffix(part string) string {
 	switch part {
 	case MemberReviewer:
 		return "-rev"

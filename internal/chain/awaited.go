@@ -14,7 +14,7 @@ type MemberLister interface {
 // resolves; a row without a state keeps the legacy awaiting columns.
 func Awaited(m MemberLister, c db.ChainRow) (name string, round int, ok bool) {
 	if len(c.StateJSON) > 0 {
-		return chainStateAwaited(m, c)
+		return stateAwaited(m, c)
 	}
 	name = MemberName(c, c.AwaitingMember)
 	if name == "" {
@@ -23,10 +23,10 @@ func Awaited(m MemberLister, c db.ChainRow) (name string, round int, ok bool) {
 	return name, c.AwaitingRound, true
 }
 
-// chainStateAwaited is Awaited's state arm: the state's awaiting actor
+// stateAwaited is Awaited's state arm: the state's awaiting actor
 // through chain_member. ok is false for a state that awaits a check run, which
 // names no member, or an actor no member runs.
-func chainStateAwaited(m MemberLister, c db.ChainRow) (name string, round int, ok bool) {
+func stateAwaited(m MemberLister, c db.ChainRow) (name string, round int, ok bool) {
 	st, err := WorkflowState(c)
 	if err != nil || st.Awaiting.Member == "" {
 		return "", 0, false
