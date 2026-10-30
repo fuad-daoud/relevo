@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
@@ -58,7 +59,7 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		// nor NEEDS YOU, and the chain would wait forever for a close that
 		// can no longer come. Checked in this critical section, with the
 		// state write below, exactly as the send path checks it.
-		if err := refuseRunningChainMember(tx, name); err != nil {
+		if err := chain.RefuseRunningMember(tx, name); err != nil {
 			return err
 		}
 

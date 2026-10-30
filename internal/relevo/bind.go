@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -1101,7 +1102,7 @@ func UnbindWith(ctx context.Context, rt Runtime, name string, archive, force boo
 	// record the chain's next send needs, and the chain has no way to resume
 	// it. The refusal is read-only and sits before every side effect below --
 	// a late one would stop a process and then keep the record.
-	if err := refuseRunningChainMemberStore(rt.Store, name); err != nil {
+	if err := chain.RefuseRunningMemberStore(rt.Store, name); err != nil {
 		return UnbindResult{}, err
 	}
 

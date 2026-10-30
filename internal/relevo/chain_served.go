@@ -458,7 +458,7 @@ func ServedChainView(rt Runtime, name string, recordID func(string) string, inst
 			return remote.ChainView{}, err
 		}
 		mv := remote.ChainMemberView{
-			Part:  chainPartOf(c, member),
+			Part:  chain.PartOf(c, member),
 			Name:  member,
 			Actor: b.Role,
 			View:  ServedView(b, entries, recordID(member), installation),

@@ -376,7 +376,7 @@ func chainDoneRow(rt Runtime, tx *store.Tx, c db.ChainRow) error {
 	part := ""
 	round := 0
 	if ok {
-		part = chainPartOf(c, member)
+		part = chain.PartOf(c, member)
 		round = carrier.Round
 	}
 	ev := workflow.Event{Kind: workflow.EventNeedsYou, Member: part, Round: round, Reason: chainDoneReason}

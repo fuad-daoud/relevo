@@ -188,7 +188,7 @@ func chainServerStop(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult
 		return StopResult{}, err
 	}
 	out := StopResult{Round: resp.Round, Action: resp.Action}
-	if b, lerr := rt.Store.Load(chainMemberName(c, c.AwaitingMember)); lerr == nil {
+	if b, lerr := rt.Store.Load(chain.MemberName(c, c.AwaitingMember)); lerr == nil {
 		out.Shape = b.Shape
 	}
 	return out, nil

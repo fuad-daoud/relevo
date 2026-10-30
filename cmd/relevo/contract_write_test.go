@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/refusal"
@@ -530,7 +531,7 @@ func TestContractWriteForcedFailures(t *testing.T) {
 // script can tell "the chain owns it" from an internal failure.
 func TestSendRefusedErrorIsAConflict(t *testing.T) {
 	wrapped := fmt.Errorf("binding %q belongs to running chain %s; relevo stop %s first: %w",
-		"shop", "shop", "shop", relevo.ErrRunningChainMember)
+		"shop", "shop", "shop", chain.ErrRunningMember)
 
 	var ce *cliError
 	if !errors.As(writeError(wrapped), &ce) {

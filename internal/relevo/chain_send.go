@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/capture"
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -156,7 +157,7 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 func chainStepNote(tx *store.Tx, name string) string {
 	c, err := tx.ChainByMember(name)
 	if err == nil {
-		if part := chainPartOf(c, name); part != "" {
+		if part := chain.PartOf(c, name); part != "" {
 			return "chain " + part
 		}
 	}

@@ -134,7 +134,7 @@ func TestChainStartSendsPlanOneThroughTheChainPath(t *testing.T) {
 
 	// The refusal the start had to avoid exists: a manual send to the same
 	// running member is refused.
-	if _, err := Send(context.Background(), rt, "shop", writePlan(t, "x"), SendOptions{}); !errors.Is(err, ErrRunningChainMember) {
+	if _, err := Send(context.Background(), rt, "shop", writePlan(t, "x"), SendOptions{}); !errors.Is(err, chain.ErrRunningMember) {
 		t.Errorf("Send to a running chain member = %v, want ErrRunningChainMember", err)
 	}
 }

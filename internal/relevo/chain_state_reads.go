@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -23,7 +24,7 @@ func chainAwaited(m chainMemberLister, c db.ChainRow) (name string, round int, o
 	if len(c.StateJSON) > 0 {
 		return chainStateAwaited(m, c)
 	}
-	name = chainMemberName(c, c.AwaitingMember)
+	name = chain.MemberName(c, c.AwaitingMember)
 	if name == "" {
 		return "", 0, false
 	}

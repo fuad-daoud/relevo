@@ -145,7 +145,7 @@ func chainPullMembers(rt Runtime, c db.ChainRow, view remote.ChainView) (db.Chai
 		var added []db.ChainMemberRow
 		changed := false
 		for _, mv := range view.Members {
-			if mv.Part == "" || mv.Name == "" || chainMemberName(cur, mv.Part) == mv.Name {
+			if mv.Part == "" || mv.Name == "" || chain.MemberName(cur, mv.Part) == mv.Name {
 				continue
 			}
 			if _, lerr := tx.Load(mv.Name); errors.Is(lerr, store.ErrNotFound) {

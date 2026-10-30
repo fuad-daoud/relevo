@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/capture"
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
@@ -256,7 +257,7 @@ func sendPreflight(ctx context.Context, rt Runtime, name, file string, opts Send
 	}
 	// A running chain owns its members' rounds: a manual send would race the
 	// chain's own next send. Read-only, so a dry run refuses identically.
-	if err := refuseRunningChainMemberStore(rt.Store, name); err != nil {
+	if err := chain.RefuseRunningMemberStore(rt.Store, name); err != nil {
 		return preflight{}, err
 	}
 	if b.State == store.StatePaused {
@@ -527,7 +528,7 @@ func Send(ctx context.Context, rt Runtime, name, file string, opts SendOptions) 
 		}
 		// Re-check under the lock, exactly as the preflight's read-only check
 		// did: the chain may have started between the two.
-		if err := refuseRunningChainMember(tx, name); err != nil {
+		if err := chain.RefuseRunningMember(tx, name); err != nil {
 			return err
 		}
 		if b.State == store.StateBroken {

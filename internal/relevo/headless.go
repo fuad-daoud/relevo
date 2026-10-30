@@ -17,6 +17,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -1456,7 +1457,7 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	}
 	if rec != nil && rec.Result == "fail" && next.Regate > 0 && next.State != store.StateNeedsYou {
 		repair := true
-		if chainOwnsMember(tx, b.Name) {
+		if chain.OwnsMember(tx, b.Name) {
 			repair, _ = repairDecision(next, gateSignature(rt.Store.ReadFile, rec.LogPath))
 			repair = repair && closedReportOutcome(tx, b.Name, closedRound) == reporttail.OutcomeDone
 		}

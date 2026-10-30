@@ -1,11 +1,45 @@
-package relevo
+package chain
 
 import (
 	"fmt"
 
-	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 )
+
+// PartOf names the part a member fills, from the chain row's columns.
+func PartOf(c db.ChainRow, name string) string {
+	if name == "" {
+		return ""
+	}
+	switch name {
+	case c.Builder:
+		return MemberBuilder
+	case c.Reviewer:
+		return MemberReviewer
+	case c.Planner:
+		return MemberPlanner
+	case c.Security:
+		return MemberSecurity
+	}
+	return ""
+}
+
+// MemberName is PartOf's inverse: the binding name the row holds for
+// a part. "" when the part is not on this chain (the security member of a chain
+// whose phase is off).
+func MemberName(c db.ChainRow, part string) string {
+	switch part {
+	case MemberBuilder:
+		return c.Builder
+	case MemberReviewer:
+		return c.Reviewer
+	case MemberPlanner:
+		return c.Planner
+	case MemberSecurity:
+		return c.Security
+	}
+	return ""
+}
 
 // MemberChain resolves member to the chain that names it, reading through
 // byMember (production: Store.ChainByMember). ok is false for a name that is
@@ -29,8 +63,8 @@ func MemberChain(byMember func(string) (db.ChainRow, error), member string) (db.
 // status-only hint.
 func MemberHint(member string, c db.ChainRow, memberOf bool) string {
 	if memberOf {
-		switch chain.Status(c.Status) {
-		case chain.StatusDone, chain.StatusStopped:
+		switch Status(c.Status) {
+		case StatusDone, StatusStopped:
 			return fmt.Sprintf("relevo status --name %s; relevo done %s clears it", member, member)
 		}
 	}

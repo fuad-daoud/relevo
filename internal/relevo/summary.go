@@ -261,7 +261,7 @@ func chainReaderPart(rt Runtime, name string) bool {
 	if err != nil {
 		return false
 	}
-	switch chainPartOf(c, name) {
+	switch chain.PartOf(c, name) {
 	case chain.MemberReviewer, chain.MemberSecurity:
 		return true
 	}

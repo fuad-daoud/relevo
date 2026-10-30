@@ -243,7 +243,7 @@ func TestDoneRefusedOnARunningChainMember(t *testing.T) {
 
 	for _, name := range []string{"shop", "shop-rev"} {
 		_, err := Done(context.Background(), rt, name)
-		if !errors.Is(err, ErrRunningChainMember) {
+		if !errors.Is(err, chain.ErrRunningMember) {
 			t.Errorf("Done(%s) = %v, want ErrRunningChainMember", name, err)
 		} else if !strings.Contains(err.Error(), "relevo stop shop first") {
 			t.Errorf("Done(%s) message = %v, want it to name `relevo stop shop first`", name, err)
@@ -281,7 +281,7 @@ func TestUnbindRefusedOnARunningChainMember(t *testing.T) {
 	rowBefore := chainStoredRow(t, rt, "shop")
 
 	for _, archive := range []bool{false, true} {
-		if _, err := Unbind(context.Background(), rt, "shop-rev", archive); !errors.Is(err, ErrRunningChainMember) {
+		if _, err := Unbind(context.Background(), rt, "shop-rev", archive); !errors.Is(err, chain.ErrRunningMember) {
 			t.Errorf("Unbind(archive=%v) = %v, want ErrRunningChainMember", archive, err)
 		}
 	}
@@ -372,11 +372,11 @@ func TestRefuseRunningMemberReadsState(t *testing.T) {
 			row.Reviewer, row.Planner, row.Security)
 	}
 
-	err := rt.Store.WithLock(func(tx *store.Tx) error { return refuseRunningChainMember(tx, "shop-assistant") })
-	if !errors.Is(err, ErrRunningChainMember) {
+	err := rt.Store.WithLock(func(tx *store.Tx) error { return chain.RefuseRunningMember(tx, "shop-assistant") })
+	if !errors.Is(err, chain.ErrRunningMember) {
 		t.Errorf("refuseRunningChainMember = %v, want ErrRunningChainMember", err)
 	}
-	if err := refuseRunningChainMemberStore(rt.Store, "shop-assistant"); !errors.Is(err, ErrRunningChainMember) {
+	if err := chain.RefuseRunningMemberStore(rt.Store, "shop-assistant"); !errors.Is(err, chain.ErrRunningMember) {
 		t.Errorf("refuseRunningChainMemberStore = %v, want ErrRunningChainMember", err)
 	}
 }

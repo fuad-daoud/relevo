@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -301,7 +302,7 @@ func writeError(err error) error {
 		// A binding that used every round its cap allows needs a fresh
 		// builder; the cap is not an internal failure.
 		return failWrap(codeRoundCap, err, "%v", err)
-	case errors.Is(err, store.ErrCWDTaken), errors.Is(err, relevo.ErrRunningChainMember), errors.Is(err, relevo.ErrChainRunning), errors.Is(err, relevo.ErrChainDone), errors.Is(err, relevo.ErrChainHalted):
+	case errors.Is(err, store.ErrCWDTaken), errors.Is(err, chain.ErrRunningMember), errors.Is(err, relevo.ErrChainRunning), errors.Is(err, relevo.ErrChainDone), errors.Is(err, relevo.ErrChainHalted):
 		// A halted chain's stop answer is a statement about the chain's own
 		// state -- stop it and nothing is running to stop -- so it is the
 		// conflict family, the same class its running and done siblings have.

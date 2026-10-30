@@ -1092,22 +1092,22 @@ func TestSendRefusedOnARunningChainMember(t *testing.T) {
 	startedChain(t, rt, ChainOptions{})
 
 	plan := writePlan(t, "x")
-	if _, err := Send(context.Background(), rt, "shop", plan, SendOptions{}); !errors.Is(err, ErrRunningChainMember) {
+	if _, err := Send(context.Background(), rt, "shop", plan, SendOptions{}); !errors.Is(err, chain.ErrRunningMember) {
 		t.Errorf("Send = %v, want ErrRunningChainMember", err)
 	}
-	if _, err := SendDryRun(context.Background(), rt, "shop", plan, SendOptions{}); !errors.Is(err, ErrRunningChainMember) {
+	if _, err := SendDryRun(context.Background(), rt, "shop", plan, SendOptions{}); !errors.Is(err, chain.ErrRunningMember) {
 		t.Errorf("SendDryRun = %v, want ErrRunningChainMember", err)
 	}
 	// The under-lock checks, the read-only store check and the chain's own
 	// member would all refuse through the one wording.
-	err := rt.Store.WithLock(func(tx *store.Tx) error { return refuseRunningChainMember(tx, "shop") })
-	if !errors.Is(err, ErrRunningChainMember) {
+	err := rt.Store.WithLock(func(tx *store.Tx) error { return chain.RefuseRunningMember(tx, "shop") })
+	if !errors.Is(err, chain.ErrRunningMember) {
 		t.Errorf("refuseRunningChainMember = %v, want ErrRunningChainMember", err)
 	}
-	if err := refuseRunningChainMemberStore(rt.Store, "shop-rev"); !errors.Is(err, ErrRunningChainMember) {
+	if err := chain.RefuseRunningMemberStore(rt.Store, "shop-rev"); !errors.Is(err, chain.ErrRunningMember) {
 		t.Errorf("refuseRunningChainMemberStore = %v, want ErrRunningChainMember", err)
 	}
-	if err := refuseRunningChainMemberStore(rt.Store, "unrelated"); err != nil {
+	if err := chain.RefuseRunningMemberStore(rt.Store, "unrelated"); err != nil {
 		t.Errorf("a binding that is no chain member = %v, want nil", err)
 	}
 }
