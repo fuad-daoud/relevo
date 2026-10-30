@@ -63,7 +63,7 @@ var tenantStat = func(path string) (uid, gid uint32, mode os.FileMode, err error
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	uid, gid, ok := statOwner(fi)
+	uid, gid, ok := db.StatOwner(fi)
 	if !ok {
 		return 0, 0, fi.Mode().Perm(), nil
 	}

@@ -55,7 +55,7 @@ func goMaxProcsEnv(parent, extra []string, scope *spawn.ScopeSpec) []string {
 	if !ok {
 		return nil
 	}
-	if hasEnvName(extra, "GOMAXPROCS") {
+	if HasEnvName(extra, "GOMAXPROCS") {
 		return nil
 	}
 	return []string{"GOMAXPROCS=" + strconv.Itoa(n)}
@@ -74,7 +74,7 @@ func goMaxProcsEnv(parent, extra []string, scope *spawn.ScopeSpec) []string {
 // otherwise reach the child first and win a first-match reader.
 func tmpDirEnv(parent, extra []string, specDir, runnerDir string) (add, deny []string) {
 	for _, name := range TmpDirEnv {
-		if hasEnvName(extra, name) {
+		if HasEnvName(extra, name) {
 			continue
 		}
 		dir := specDir
@@ -93,8 +93,8 @@ func tmpDirEnv(parent, extra []string, specDir, runnerDir string) (add, deny []s
 	return add, deny
 }
 
-// hasEnvName reports whether env carries name, matching as ChildEnv's deny does.
-func hasEnvName(env []string, name string) bool {
+// HasEnvName reports whether env carries name, matching as ChildEnv's deny does.
+func HasEnvName(env []string, name string) bool {
 	for _, e := range env {
 		if n, _, _ := strings.Cut(e, "="); n == name {
 			return true

@@ -26,6 +26,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/proc"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/serve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -569,7 +570,7 @@ func cmdServeRun(args []string) error {
 			return err
 		}
 		cert = &c
-		fp = serve.FingerprintOf(c.Leaf.Raw)
+		fp = client.FingerprintOf(c.Leaf.Raw)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

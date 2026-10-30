@@ -1,7 +1,6 @@
 package relevo
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -227,23 +226,11 @@ func changeValue(raw json.RawMessage, ms bool) string {
 	if len(raw) == 0 {
 		return ""
 	}
-	v, ok := decodeJSONValue(raw)
+	v, ok := config.DecodeValue(raw)
 	if !ok {
 		return cutAudit(string(raw))
 	}
 	return cutAudit(valueText(v, ms))
-}
-
-// decodeJSONValue decodes one JSON value, keeping numbers as their literal
-// text so 2 and 2.0 are not conflated.
-func decodeJSONValue(raw json.RawMessage) (any, bool) {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	var v any
-	if err := dec.Decode(&v); err != nil {
-		return nil, false
-	}
-	return v, true
 }
 
 // valueText is one decoded JSON value in words: a string unquoted, a

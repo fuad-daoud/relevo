@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/proc"
@@ -76,7 +75,7 @@ func (r tmpDirRunner) Start(ctx context.Context, spec spawn.ProcSpec) (spawn.Pro
 	}
 	env := spec.Env
 	for _, name := range proc.TmpDirEnv {
-		if hasEnvName(env, name) {
+		if proc.HasEnvName(env, name) {
 			continue
 		}
 		if v, ok := os.LookupEnv(name); ok && v != "" {
@@ -134,15 +133,4 @@ func (r tmpDirRunner) ScopeResult(ctx context.Context, unit string, since time.T
 		return p.ScopeResult(ctx, unit, since)
 	}
 	return spawn.ScopeResult{}, nil
-}
-
-// hasEnvName reports whether env carries name, matching "NAME=..." or a bare
-// "NAME" as the runner's own deny list does.
-func hasEnvName(env []string, name string) bool {
-	for _, e := range env {
-		if n, _, _ := strings.Cut(e, "="); n == name {
-			return true
-		}
-	}
-	return false
 }

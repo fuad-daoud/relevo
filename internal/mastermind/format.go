@@ -9,12 +9,3 @@ package mastermind
 // keys a relevo does not know: an older relevo reading a newer record sees the
 // removed field missing, and a key it writes back is ignored by the new one.
 const MasterMindFormat = 1
-
-// storedFormat is the number written on disk for format n: format 1 is
-// omitted (written as 0); every other format is written as itself.
-func storedFormat(n int) int {
-	if n == 1 {
-		return 0
-	}
-	return n
-}

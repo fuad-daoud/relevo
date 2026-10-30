@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/fuad-daoud/relevo/internal/reporttail"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
@@ -124,7 +125,7 @@ func statusLineRowText(row StatusLineRow, nameW, statusW, clockW, columns int, d
 	// row's own Chain text and the Reason a member row concatenates, and it
 	// runs before truncate, so no downstream helper has to know a control byte
 	// can be here.
-	mid = sanitizeText(mid)
+	mid = sanitize.StripControls(mid)
 
 	leftW := 2 + nameW + 2
 	midW := columns - leftW - 1 - statusW - 2 - clockW

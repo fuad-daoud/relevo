@@ -155,15 +155,6 @@ func TestRecordShapeFailurePath(t *testing.T) {
 	}
 }
 
-func TestStoredFormat(t *testing.T) {
-	if got := storedFormat(MasterMindFormat); got != 0 {
-		t.Errorf("storedFormat(%d) = %d, want 0: format 1 is absent on disk", MasterMindFormat, got)
-	}
-	if got := storedFormat(2); got != 2 {
-		t.Errorf("storedFormat(2) = %d, want 2", got)
-	}
-}
-
 // TestRegistryWriteRefusesANewerFormat pins that a record written by a
 // newer relevo loads, and writing it back is refused with ErrNewerFormat.
 func TestRegistryWriteRefusesANewerFormat(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -116,7 +117,7 @@ func (e *realEnv) StatOwner(path string) (uint32, bool) {
 	if err != nil {
 		return 0, false
 	}
-	uid, _, ok := statOwner(fi)
+	uid, _, ok := db.StatOwner(fi)
 	return uid, ok
 }
 

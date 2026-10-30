@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/shipped"
 )
 
 const (
@@ -419,7 +421,7 @@ If any answer is "no," revise before presenting the plan.
 func TestInstallRecognizesOlderShippedBlob(t *testing.T) {
 	const full = "/home/u/.claude/agents/architect.md"
 	olderSum := sha256.Sum256([]byte(olderArchitectDoc))
-	if !ShippedBefore("architect.claude.md", hex.EncodeToString(olderSum[:])) {
+	if !shipped.Before("architect.claude.md", hex.EncodeToString(olderSum[:])) {
 		t.Fatal("the fixture sha is not in agents/shipped.sha256; regenerate the fixture")
 	}
 	shipped, err := AgentDoc("architect", "claude")

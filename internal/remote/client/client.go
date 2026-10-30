@@ -80,7 +80,8 @@ func New(servers remote.Servers, key remote.Keypair, now func() time.Time) *Clie
 	}
 }
 
-func fingerprintOf(der []byte) string {
+// FingerprintOf returns "sha256:" + lower-case hex of sha256(der).
+func FingerprintOf(der []byte) string {
 	sum := sha256.Sum256(der)
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
@@ -142,7 +143,7 @@ func tlsConfigFor(entry remote.ServerEntry) *tls.Config {
 				if len(rawCerts) == 0 {
 					return errors.New("no certificates presented")
 				}
-				if !strings.EqualFold(fingerprintOf(rawCerts[0]), entry.Fingerprint) {
+				if !strings.EqualFold(FingerprintOf(rawCerts[0]), entry.Fingerprint) {
 					return ErrCertChanged
 				}
 				return nil

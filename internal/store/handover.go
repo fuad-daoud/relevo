@@ -3,9 +3,9 @@ package store
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 )
 
 // ErrHandedOver reports a binding this machine gave to another machine: its
@@ -22,11 +22,11 @@ type HandedOverError struct {
 }
 
 func (e *HandedOverError) Error() string {
-	who := stripControls(e.Label)
+	who := sanitize.StripControls(e.Label)
 	if who == "" {
-		who = stripControls(e.To)
+		who = sanitize.StripControls(e.To)
 	}
-	name := stripControls(e.Name)
+	name := sanitize.StripControls(e.Name)
 	if e.Kind == db.LeftTakeover {
 		return fmt.Sprintf("binding %q was taken over by %s; relevo unbind it here or leave it", name, who)
 	}
@@ -50,19 +50,7 @@ func (s *Store) handedOver(d *db.DB, name string) error {
 			}
 		}
 	}
-	return &HandedOverError{Name: name, To: stripControls(left.ToWriter), Label: stripControls(label), Kind: left.Kind}
-}
-
-// stripControls drops the C0, DEL and C1 bytes a terminal would act on: the
-// writer text comes from a peer's row and reaches stderr. internal/view owns the
-// same rule but imports this package.
-func stripControls(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
-			return -1
-		}
-		return r
-	}, s)
+	return &HandedOverError{Name: name, To: sanitize.StripControls(left.ToWriter), Label: sanitize.StripControls(label), Kind: left.Kind}
 }
 
 // HandedOver reports whether this machine gave name away, and to whom.

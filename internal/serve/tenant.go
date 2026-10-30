@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/isolate"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -183,7 +184,7 @@ func (s *Server) ensureOwnerRoot(path string, t isolate.Tenant) error {
 	if st.Mode().Perm() != ownerRootMode {
 		return fmt.Errorf("%s has mode %04o, want %04o: run `chmod %04o %s`", path, st.Mode().Perm(), ownerRootMode, ownerRootMode, path)
 	}
-	uid, gid, ok := statOwner(st)
+	uid, gid, ok := db.StatOwner(st)
 	if !ok {
 		return nil
 	}

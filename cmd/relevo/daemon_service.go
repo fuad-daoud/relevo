@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/serviceunit"
+	"github.com/fuad-daoud/relevo/internal/shipped"
 )
 
 // launchdLabel names the macOS agent; the Makefile's LABEL is the same string.
@@ -206,7 +207,7 @@ func refreshServiceUnitAtStart() {
 		slog.Warn("service unit not refreshed", "err", err)
 		return
 	}
-	act, err := refreshServiceUnit(u, serviceunit.OSRunner{}, serviceunit.ShippedUnitBefore)
+	act, err := refreshServiceUnit(u, serviceunit.OSRunner{}, shipped.UnitBefore)
 	if err != nil {
 		slog.Warn("service unit not refreshed", "path", u.path, "err", err)
 		return

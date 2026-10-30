@@ -33,13 +33,13 @@ func (s *Store) WorktreeRoot() (*os.Root, error) {
 // own home -- the legacy flat layout, which stays raw because that directory is
 // root-owned -- and for any path outside the binding.
 func (s *Store) outRelOf(name, path string) (string, bool) {
-	return relWithin(s.OutDir(name), path)
+	return RelWithin(s.OutDir(name), path)
 }
 
-// relWithin reports path's name relative to dir, and whether path lies in dir.
+// RelWithin reports path's name relative to dir, and whether path lies in dir.
 // The comparison is lexical: a component that only looks like ".." does not
 // escape, and a sibling whose name shares dir's prefix is outside.
-func relWithin(dir, path string) (string, bool) {
+func RelWithin(dir, path string) (string, bool) {
 	rel, err := filepath.Rel(filepath.Clean(dir), path)
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", false

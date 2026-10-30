@@ -414,7 +414,7 @@ func stripObjectKeys(body []byte, sec Section, keys ...string) ([]byte, error) {
 	for _, k := range keys {
 		delete(obj, k)
 	}
-	return encodeSection(obj)
+	return roles.Encode(obj)
 }
 
 func stripCandidateKeys(body []byte, set *candidate.Set, roleTiers map[string]string) ([]byte, []string, error) {
@@ -436,7 +436,7 @@ func stripCandidateKeys(body []byte, set *candidate.Set, roleTiers map[string]st
 		notes = append(notes, fmt.Sprintf("candidate %s: tier %s dropped; set it on the actor", candidateLabel(row, set), tier))
 	}
 
-	encoded, err := encodeSection(rows)
+	encoded, err := roles.Encode(rows)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -495,12 +495,4 @@ func rawStrings(raw json.RawMessage) []string {
 		return nil
 	}
 	return out
-}
-
-func encodeSection(v any) ([]byte, error) {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append(data, '\n'), nil
 }

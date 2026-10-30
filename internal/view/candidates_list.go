@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 )
 
 // FormatCandidates renders the configured candidates without latency: the
@@ -88,7 +89,7 @@ func CandidateRoles(reg *roles.Registry, set *candidate.Set, token string) []str
 // renders the roles column, and withTier prints the candidate's own tier
 // segment, which only legacy mode does.
 //
-// Every free-text piece of a row goes through sanitizeText on the way out. The
+// Every free-text piece of a row goes through sanitize.StripControls on the way out. The
 // block is a table of columns, so a single control byte in a token, a role name
 // or a gate's wording does not merely print: it shifts every column after it and
 // lets the row repaint whatever the terminal draws next. The gate texts come
@@ -109,10 +110,10 @@ func formatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat 
 	refs := set.Refs()
 	nameWidth, tokWidth := 0, 0
 	for _, ref := range refs {
-		if n := len(sanitizeText(set.NameOf(ref))); n > nameWidth {
+		if n := len(sanitize.StripControls(set.NameOf(ref))); n > nameWidth {
 			nameWidth = n
 		}
-		if n := len(sanitizeText(ref)); n > tokWidth {
+		if n := len(sanitize.StripControls(ref)); n > tokWidth {
 			tokWidth = n
 		}
 	}
@@ -129,12 +130,12 @@ func formatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat 
 		// carry no SGR escapes. The name and the token size their columns
 		// separately.
 		fmt.Fprintf(&sb, "%-*s  %-*s  %s",
-			nameWidth, sanitizeText(set.NameOf(ref)), tokWidth, sanitizeText(ref), sanitizeText(rolesFor(c)))
+			nameWidth, sanitize.StripControls(set.NameOf(ref)), tokWidth, sanitize.StripControls(ref), sanitize.StripControls(rolesFor(c)))
 		if withTier && c.Tier != "" {
-			sb.WriteString("   tier: " + sanitizeText(c.Tier))
+			sb.WriteString("   tier: " + sanitize.StripControls(c.Tier))
 		}
 		if len(c.ExtraArgs) > 0 {
-			sb.WriteString("   [" + sanitizeText(strings.Join(c.ExtraArgs, " ")) + "]")
+			sb.WriteString("   [" + sanitize.StripControls(strings.Join(c.ExtraArgs, " ")) + "]")
 		}
 		if s, ok := lat[ref]; ok && s.N > 0 {
 			fmt.Fprintf(&sb, "   ttft p50 %s (n=%d, 30d)", availability.ProbeMS(s.TTFTP50MS), s.N)
@@ -144,7 +145,7 @@ func formatCandidatesLatency(set *candidate.Set, gates []availability.Gate, lat 
 			fmt.Fprintf(&sb, `   note: extra_args carries %s; launches at tier harness only -- move it to "tier"`, flag)
 		}
 		if rowGates := byToken[ref]; len(rowGates) > 0 {
-			sb.WriteString("   unavailable: " + sanitizeText(strings.Join(mergeGateTexts(rowGates), "; ")))
+			sb.WriteString("   unavailable: " + sanitize.StripControls(strings.Join(mergeGateTexts(rowGates), "; ")))
 		}
 		sb.WriteString("\n")
 	}
@@ -195,10 +196,10 @@ func mergeGateTexts(gates []availability.Gate) []string {
 	parts := make([]string, 0, len(groups))
 	for _, grp := range groups {
 		if !grp.hasRoles {
-			parts = append(parts, strings.TrimSpace(sanitizeText(grp.kind)+" "+sanitizeText(grp.until)))
+			parts = append(parts, strings.TrimSpace(sanitize.StripControls(grp.kind)+" "+sanitize.StripControls(grp.until)))
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s (%s) %s", sanitizeText(grp.kind), sanitizeText(strings.Join(uniqSorted(grp.roles), ", ")), sanitizeText(grp.until)))
+		parts = append(parts, fmt.Sprintf("%s (%s) %s", sanitize.StripControls(grp.kind), sanitize.StripControls(strings.Join(uniqSorted(grp.roles), ", ")), sanitize.StripControls(grp.until)))
 	}
 	return parts
 }

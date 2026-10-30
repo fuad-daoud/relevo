@@ -272,16 +272,16 @@ func validateSkills(skills []string) error {
 // EncodeAgents renders the agents section: keys sorted, two-space indent, a
 // trailing newline (encoding/json sorts map keys already).
 func EncodeAgents(agents map[string]AgentEntry) ([]byte, error) {
-	return encode(agents)
+	return Encode(agents)
 }
 
 // EncodeActors renders the actors section with the same rules as EncodeAgents.
 func EncodeActors(actors map[string]Actor) ([]byte, error) {
-	return encode(actors)
+	return Encode(actors)
 }
 
-// encode is the one encoder both EncodeAgents and EncodeActors call.
-func encode(v any) ([]byte, error) {
+// Encode is the one encoder both EncodeAgents and EncodeActors call.
+func Encode(v any) ([]byte, error) {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return nil, err

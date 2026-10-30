@@ -4,11 +4,9 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"math/big"
@@ -17,6 +15,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
 )
 
 var ErrTLSExists = errors.New("server key or certificate already exists")
@@ -50,12 +49,6 @@ func (s SecretStore) SecretPut(name string, value []byte, now time.Time) error {
 	return s.store().Tx(func(t *db.Tx) error { return t.SecretPut(name, value, now) })
 }
 
-// FingerprintOf returns "sha256:" + lower-case hex of sha256(der).
-func FingerprintOf(der []byte) string {
-	sum := sha256.Sum256(der)
-	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
 func Fingerprint(secrets SecretStore) (string, error) {
 	data, ok, err := secrets.SecretGet(tlsCertSecret)
 	if err != nil {
@@ -68,7 +61,7 @@ func Fingerprint(secrets SecretStore) (string, error) {
 	if block == nil {
 		return "", errors.New("no PEM certificate found")
 	}
-	return FingerprintOf(block.Bytes), nil
+	return client.FingerprintOf(block.Bytes), nil
 }
 
 func addSANs(t *x509.Certificate, hosts []string) {
@@ -161,7 +154,7 @@ func InitTLS(secrets SecretStore, hosts []string, now time.Time) (string, error)
 		return "", err
 	}
 
-	return FingerprintOf(certDER), nil
+	return client.FingerprintOf(certDER), nil
 }
 
 // LoadTLS loads the server TLS certificate and key from the secrets, populating

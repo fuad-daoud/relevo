@@ -13,7 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
-	"github.com/fuad-daoud/relevo/internal/view"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 )
 
 // PolicyWarning is one inconsistency between order[role] and the configured
@@ -437,7 +437,7 @@ func peakText(hist availability.History, provider string, now time.Time, loc *ti
 //
 // A provider name here is a column of a history row, and a history row can have
 // arrived from another installation, so the drawn label goes through
-// view.SanitizeText: this is a table of columns, and a control byte in a
+// sanitize.StripControls: this is a table of columns, and a control byte in a
 // provider would repaint the terminal and shift every column after it. Only the
 // label is sanitized -- grouping, sorting and the hour lookup still run on the
 // names the history holds, since a lookup against a sanitized key would find
@@ -479,7 +479,7 @@ func formatHistory(hist availability.History, loc *time.Location) string {
 				continue
 			}
 			counts := availability.HourCounts(hist, p, k, loc)
-			row := fmt.Sprintf("  %-10s %-13s", view.SanitizeText(p), availability.GateKindText(k))
+			row := fmt.Sprintf("  %-10s %-13s", sanitize.StripControls(p), availability.GateKindText(k))
 			for _, n := range counts {
 				cell := "."
 				if n != 0 {
@@ -511,7 +511,7 @@ func formatHistory(hist availability.History, loc *time.Location) string {
 		if len(durations) == 1 {
 			count = "1 clear"
 		}
-		blocked.WriteString(fmt.Sprintf("  %-10s %s  median %s  longest %s\n", view.SanitizeText(p), count, blockedText(median), blockedText(longest)))
+		blocked.WriteString(fmt.Sprintf("  %-10s %s  median %s  longest %s\n", sanitize.StripControls(p), count, blockedText(median), blockedText(longest)))
 	}
 	if blocked.Len() > 0 {
 		sb.WriteString("blocked for (30d, gates cleared by hand)\n")

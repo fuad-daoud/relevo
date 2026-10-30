@@ -181,7 +181,7 @@ func readerFallbackHeader(entries []store.LogEntry, round int) string {
 // a legacy artifact path. out/ is created first when it is the home, and the
 // name the root takes is returned; the caller closes the root.
 func readerOutputRoot(st *store.Store, b store.Binding, path string) (*os.Root, string, error) {
-	if rel, ok := relWithin(st.OutDir(b.Name), path); ok {
+	if rel, ok := store.RelWithin(st.OutDir(b.Name), path); ok {
 		if err := st.EnsureOutDir(b.Name); err != nil {
 			return nil, "", err
 		}
@@ -191,7 +191,7 @@ func readerOutputRoot(st *store.Store, b store.Binding, path string) (*os.Root, 
 		}
 		return root, rel, nil
 	}
-	rel, ok := relWithin(st.Dir(b.Name), path)
+	rel, ok := store.RelWithin(st.Dir(b.Name), path)
 	if !ok {
 		return nil, "", fmt.Errorf("reader output %s is outside the binding", path)
 	}
@@ -200,15 +200,6 @@ func readerOutputRoot(st *store.Store, b store.Binding, path string) (*os.Root, 
 		return nil, "", err
 	}
 	return root, rel, nil
-}
-
-// relWithin reports path's name relative to dir, and whether path lies in dir.
-func relWithin(dir, path string) (string, bool) {
-	rel, err := filepath.Rel(filepath.Clean(dir), path)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", false
-	}
-	return rel, true
 }
 
 // readerOutputText is the message a reader's output file is written from. A

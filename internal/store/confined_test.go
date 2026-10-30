@@ -23,9 +23,9 @@ func TestRelWithin(t *testing.T) {
 		{dir: "/a/b", path: "/a/c"},
 	}
 	for _, tc := range cases {
-		got, ok := relWithin(tc.dir, tc.path)
+		got, ok := RelWithin(tc.dir, tc.path)
 		if ok != tc.ok || (ok && got != tc.want) {
-			t.Errorf("relWithin(%q, %q) = (%q, %v), want (%q, %v)", tc.dir, tc.path, got, ok, tc.want, tc.ok)
+			t.Errorf("RelWithin(%q, %q) = (%q, %v), want (%q, %v)", tc.dir, tc.path, got, ok, tc.want, tc.ok)
 		}
 	}
 }
