@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -100,7 +101,7 @@ func roundTree(rt Runtime, b store.Binding) string {
 	if b.Shape == store.ShapeReader {
 		return filepath.Join(rt.Store.ScratchWorktreePath(b.Name, b.Round), b.Subdir)
 	}
-	return RoundDir(b)
+	return housekeep.RoundDir(b)
 }
 
 // prepareScratchPath returns the path b's round should use, with the scratch
@@ -335,7 +336,7 @@ func readRootRegularFile(root *os.Root, name string) ([]byte, error) {
 	if !fi.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file", filepath.Join(root.Name(), name))
 	}
-	f, err := root.OpenFile(name, os.O_RDONLY|oNoFollow, 0)
+	f, err := root.OpenFile(name, os.O_RDONLY|housekeep.NoFollow, 0)
 	if err != nil {
 		return nil, err
 	}

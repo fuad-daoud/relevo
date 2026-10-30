@@ -1,18 +1,18 @@
-package relevo
+package housekeep
 
 import "github.com/fuad-daoud/relevo/internal/store"
 
 // RunningProcRef is one local process a daemon restart could kill, as a plain
-// tuple (#370 §4.8). The collector lives here, next to the binding model it
-// reads; cmd/relevo converts the tuples to doctor.RunningProc, so neither
-// internal/relevo nor internal/doctor imports the other.
+// tuple. The collector reads only the binding model; cmd/relevo converts the
+// tuples to doctor.RunningProc, so neither internal/housekeep nor
+// internal/doctor imports the other.
 type RunningProcRef struct {
 	Binding string
 	Kind    string // "builder", "gate" or "consult"
 	PID     int
 }
 
-// RunningProcs collects the processes bs says are running locally (#370 §4.8):
+// RunningProcs collects the processes bs says are running locally:
 // only local bindings (no owner, not remote), and only processes with a pid --
 // a headless builder, the current round's gate, and every running consult with
 // a headless endpoint. Pure: it reads bs and nothing else.

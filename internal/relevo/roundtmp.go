@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"path/filepath"
 
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -14,7 +15,7 @@ import (
 // removing the directory on a kill safe when the round resumes: the next
 // start recreates it under the same name.
 func roundTmpRel(name string, round int) string {
-	return filepath.Join(tmpSubRounds, shortRoundID(name, round))
+	return filepath.Join(tmpSubRounds, housekeep.ShortRoundID(name, round))
 }
 
 // removeRoundTmp takes a round's private temp directory away. Every failure

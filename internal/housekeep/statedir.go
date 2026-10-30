@@ -1,4 +1,4 @@
-package relevo
+package housekeep
 
 import (
 	"errors"
@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// ensureRealDir creates dir under root after walking every component between
+// EnsureRealDir creates dir under root after walking every component between
 // them and refusing anything on the way that is not a real directory. MkdirAll
 // on its own descends a symlink, so a runner who plants one inside its own
 // state directory -- the deepest directory it may write -- would redirect the
@@ -21,7 +21,7 @@ import (
 // The walk is the refusal; it cannot close the check-then-MkdirAll window, so a
 // link swapped in after the check still wins. That is the honest limit of
 // portable Go, which has no openat2/RESOLVE_NO_SYMLINKS.
-func ensureRealDir(root, dir string) error {
+func EnsureRealDir(root, dir string) error {
 	rel, err := filepath.Rel(root, dir)
 	if err != nil {
 		return err
@@ -49,14 +49,14 @@ func ensureRealDir(root, dir string) error {
 	return os.MkdirAll(dir, 0o755)
 }
 
-// openAppendRegular opens path for appending, refusing anything that is not a
+// OpenAppendRegular opens path for appending, refusing anything that is not a
 // regular file. A round's state directory is runner-writable, so a link planted
 // at the log path must not be followed out of it. It duplicates proc's
 // unexported openAppend because that one lives in another package and widening
 // it would export an API with no caller here. The Lstat is the refusal and
 // O_NOFOLLOW the race backstop behind it; the Lstat also keeps a planted fifo
 // from blocking the open, which would wait for a reader that never comes.
-func openAppendRegular(path string) (*os.File, error) {
+func OpenAppendRegular(path string) (*os.File, error) {
 	if fi, err := os.Lstat(path); err == nil {
 		if !fi.Mode().IsRegular() {
 			return nil, fmt.Errorf("%s is not a regular file", path)
@@ -64,5 +64,5 @@ func openAppendRegular(path string) (*os.File, error) {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
-	return os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|oNoFollow, 0o644)
+	return os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|NoFollow, 0o644)
 }

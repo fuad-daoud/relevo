@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -30,11 +31,11 @@ func TestTmpDirLengthBound(t *testing.T) {
 		"local check":  filepath.Join(localRoot, checkTmpRel(longestUnit)),
 	}
 	for name, dir := range cases {
-		t.Logf("longest %s TMPDIR = %d bytes (+%d suffix)", name, len(dir), tmpSocketSuffixLen)
-		if tmpOverBudget(dir) {
+		t.Logf("longest %s TMPDIR = %d bytes (+%d suffix)", name, len(dir), housekeep.TmpSocketSuffixLen)
+		if housekeep.TmpOverBudget(dir) {
 			t.Errorf("longest %s TMPDIR = %q (%d bytes) is over budget", name, dir, len(dir))
 		}
-		if len(dir)+tmpSocketSuffixLen >= 108 {
+		if len(dir)+housekeep.TmpSocketSuffixLen >= 108 {
 			t.Errorf("longest %s TMPDIR %q plus suffix reaches the sun_path limit", name, dir)
 		}
 	}

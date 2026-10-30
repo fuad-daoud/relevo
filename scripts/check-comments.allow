@@ -158,10 +158,7 @@ internal/relevo/roles_list.go
 internal/relevo/roles_list_test.go
 internal/relevo/roles_runtime_test.go
 internal/relevo/roles_views_test.go
-internal/relevo/runningprocs.go
-internal/relevo/runningprocs_test.go
 internal/relevo/runtime.go
-internal/relevo/scan.go
 internal/relevo/scratch.go
 internal/relevo/seal_test.go
 internal/relevo/send.go

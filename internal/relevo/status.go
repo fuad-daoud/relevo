@@ -9,6 +9,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/delivery"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
@@ -251,7 +252,7 @@ func bindingShape(b store.Binding) string {
 // which reads each fact directly.
 func statusRowWith(ctx context.Context, rt Runtime, b store.Binding, cfg statusConfig, loads *rowLoads) (view.BindingStatus, error) {
 	row := view.BindingStatus{
-		Name: b.Name, CWD: RoundDir(b), Round: b.Round,
+		Name: b.Name, CWD: housekeep.RoundDir(b), Round: b.Round,
 		State: string(b.State), Display: view.DisplayState(b.State),
 		BuilderCandidate: b.BuilderCandidate,
 		BuilderAccount:   b.BuilderAccount,

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -227,7 +228,7 @@ func TestTmpOpenCheckUnits(t *testing.T) {
 		scopeUnitNameFor(scopeGate, "o", "shop-check", 4, ""),
 	}
 	for _, unit := range live {
-		for _, want := range []string{unit, shortCheckID(unit)} {
+		for _, want := range []string{unit, housekeep.ShortCheckID(unit)} {
 			if !units[want] {
 				t.Errorf("unit %q missing from the open set", want)
 			}
@@ -237,7 +238,7 @@ func TestTmpOpenCheckUnits(t *testing.T) {
 		scopeUnitNameFor(scopeGate, "o", "settled-check", 1, ""),
 		scopeUnitNameFor(scopeGate, "o", "idle", 1, ""),
 	} {
-		for _, no := range []string{unit, shortCheckID(unit)} {
+		for _, no := range []string{unit, housekeep.ShortCheckID(unit)} {
 			if units[no] {
 				t.Errorf("unit %q in the open set, want it out", no)
 			}

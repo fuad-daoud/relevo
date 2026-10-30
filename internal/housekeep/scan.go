@@ -1,4 +1,4 @@
-package relevo
+package housekeep
 
 import (
 	"bytes"
@@ -8,7 +8,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
-// Built-in instruction-shaped scan patterns (#139, §3.6).
+// Built-in instruction-shaped scan patterns.
 var builtInPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)<system-reminder`),
 	regexp.MustCompile(`(?i)</?(human|assistant)>`),
@@ -17,9 +17,9 @@ var builtInPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^\s*IMPORTANT:.*you must`),
 }
 
-// scanLines returns the 1-based line numbers ScanInstructionShaped counts,
+// ScanLines returns the 1-based line numbers ScanInstructionShaped counts,
 // in order.
-func scanLines(text []byte, extra []*regexp.Regexp) []int {
+func ScanLines(text []byte, extra []*regexp.Regexp) []int {
 	if len(text) == 0 {
 		return nil
 	}
@@ -65,11 +65,11 @@ func scanLines(text []byte, extra []*regexp.Regexp) []int {
 // ScanInstructionShaped counts lines in text that match any built-in pattern or extra patterns outside of fences.
 // Pure; no I/O; returns 0 for empty input.
 func ScanInstructionShaped(text []byte, extra []*regexp.Regexp) int {
-	return len(scanLines(text, extra))
+	return len(ScanLines(text, extra))
 }
 
-// compileScanPatterns compiles policy extra scan patterns.
-func compileScanPatterns(p policy.Policy) []*regexp.Regexp {
+// CompileScanPatterns compiles policy extra scan patterns.
+func CompileScanPatterns(p policy.Policy) []*regexp.Regexp {
 	if len(p.ScanPatterns) == 0 {
 		return nil
 	}

@@ -1,7 +1,8 @@
-package relevo
+package housekeep
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -21,27 +22,27 @@ import (
 func NormalizeSubdir(raw string) (string, error) {
 	s := strings.TrimSuffix(raw, "/")
 	if strings.HasPrefix(s, "/") {
-		return "", refuse("subdirectory %q must be relative to the tree root", raw)
+		return "", fmt.Errorf("subdirectory %q must be relative to the tree root", raw)
 	}
 	if s != "" {
 		for _, seg := range strings.Split(s, "/") {
 			if seg == "" || seg == "." || seg == ".." {
-				return "", refuse("subdirectory %q is not a plain path under the tree root", raw)
+				return "", fmt.Errorf("subdirectory %q is not a plain path under the tree root", raw)
 			}
 		}
 	} else if strings.Contains(raw, "/") {
-		return "", refuse("subdirectory %q is not a plain path under the tree root", raw)
+		return "", fmt.Errorf("subdirectory %q is not a plain path under the tree root", raw)
 	}
 	return s, nil
 }
 
-// resolveSubdir reads the subdirectory rt was started from, the prefix of repo
+// ResolveSubdir reads the subdirectory rt was started from, the prefix of repo
 // the worktree or branch the round is cut from is cut relative to. A tree git
 // cannot answer for -- not a repository, no git -- resolves to "", which is the
 // room at its root, because that refusal belongs to the steps that need git
 // and not to a rule that only offsets the round's directory.
-func resolveSubdir(ctx context.Context, rt Runtime, repo string) string {
-	prefix, err := rt.Git.ShowPrefix(ctx, repo)
+func ResolveSubdir(ctx context.Context, git Prefixer, repo string) string {
+	prefix, err := git.ShowPrefix(ctx, repo)
 	if err != nil {
 		return ""
 	}

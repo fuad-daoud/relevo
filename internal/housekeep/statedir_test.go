@@ -1,4 +1,4 @@
-package relevo
+package housekeep
 
 import (
 	"os"
@@ -17,8 +17,8 @@ func TestEnsureRealDirRefusesALinkedComponent(t *testing.T) {
 		if err := os.Symlink(target, dir); err != nil {
 			t.Fatal(err)
 		}
-		if err := ensureRealDir(root, dir); err == nil {
-			t.Fatal("ensureRealDir accepted a linked destination directory")
+		if err := EnsureRealDir(root, dir); err == nil {
+			t.Fatal("EnsureRealDir accepted a linked destination directory")
 		}
 		if entries, _ := os.ReadDir(target); len(entries) != 0 {
 			t.Errorf("the link target holds %d entries, want none", len(entries))
@@ -31,8 +31,8 @@ func TestEnsureRealDirRefusesALinkedComponent(t *testing.T) {
 		if err := os.Symlink(target, filepath.Join(root, "001-reviewer")); err != nil {
 			t.Fatal(err)
 		}
-		if err := ensureRealDir(root, filepath.Join(root, "001-reviewer", "site")); err == nil {
-			t.Fatal("ensureRealDir descended a linked parent component")
+		if err := EnsureRealDir(root, filepath.Join(root, "001-reviewer", "site")); err == nil {
+			t.Fatal("EnsureRealDir descended a linked parent component")
 		}
 		if entries, _ := os.ReadDir(target); len(entries) != 0 {
 			t.Errorf("the link target holds %d entries, want none", len(entries))
@@ -44,16 +44,16 @@ func TestEnsureRealDirRefusesALinkedComponent(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(root, "001-reviewer"), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := ensureRealDir(root, filepath.Join(root, "001-reviewer", "site")); err == nil {
-			t.Fatal("ensureRealDir descended a plain file")
+		if err := EnsureRealDir(root, filepath.Join(root, "001-reviewer", "site")); err == nil {
+			t.Fatal("EnsureRealDir descended a plain file")
 		}
 	})
 
 	t.Run("a real nested directory is created", func(t *testing.T) {
 		root := t.TempDir()
 		dir := filepath.Join(root, "001-reviewer", "site")
-		if err := ensureRealDir(root, dir); err != nil {
-			t.Fatalf("ensureRealDir: %v", err)
+		if err := EnsureRealDir(root, dir); err != nil {
+			t.Fatalf("EnsureRealDir: %v", err)
 		}
 		path := filepath.Join(dir, "index.html")
 		if err := os.WriteFile(path, []byte("hi"), 0o644); err != nil {
@@ -78,8 +78,8 @@ func TestOpenAppendRegularRefusesANonRegularFile(t *testing.T) {
 		if err := os.Symlink(victim, path); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := openAppendRegular(path); err == nil {
-			t.Fatal("openAppendRegular followed a planted link")
+		if _, err := OpenAppendRegular(path); err == nil {
+			t.Fatal("OpenAppendRegular followed a planted link")
 		}
 		if got, _ := os.ReadFile(victim); string(got) != "keep" {
 			t.Errorf("victim = %q, want it untouched", got)
@@ -92,8 +92,8 @@ func TestOpenAppendRegularRefusesANonRegularFile(t *testing.T) {
 		if err := os.Mkdir(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := openAppendRegular(path); err == nil {
-			t.Fatal("openAppendRegular accepted a directory")
+		if _, err := OpenAppendRegular(path); err == nil {
+			t.Fatal("OpenAppendRegular accepted a directory")
 		}
 	})
 
@@ -103,9 +103,9 @@ func TestOpenAppendRegularRefusesANonRegularFile(t *testing.T) {
 		if err := os.WriteFile(path, []byte("a\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		f, err := openAppendRegular(path)
+		f, err := OpenAppendRegular(path)
 		if err != nil {
-			t.Fatalf("openAppendRegular: %v", err)
+			t.Fatalf("OpenAppendRegular: %v", err)
 		}
 		if _, err := f.WriteString("b\n"); err != nil {
 			t.Fatal(err)

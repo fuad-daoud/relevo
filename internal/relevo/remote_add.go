@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -47,7 +48,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	// checkout: the worktree the server cuts is at the bare repo's root, so
 	// the offset the bind was started under travels on the create and the
 	// server's own paths join it in.
-	subdir := resolveSubdir(ctx, rt, opts.Repo)
+	subdir := housekeep.ResolveSubdir(ctx, rt.Git, opts.Repo)
 
 	// 1. store.ValidName; binding must not exist locally.
 	if err := store.ValidName(opts.Name); err != nil {

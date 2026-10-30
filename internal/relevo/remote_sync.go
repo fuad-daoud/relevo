@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -37,7 +38,7 @@ var checkedOutWarned sync.Map // binding name -> struct{}
 
 func writeTempAndRename(root, dest string, r io.Reader) error {
 	dir := filepath.Dir(dest)
-	if err := ensureRealDir(root, dir); err != nil {
+	if err := housekeep.EnsureRealDir(root, dir); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, filepath.Base(dest)+".tmp.*")

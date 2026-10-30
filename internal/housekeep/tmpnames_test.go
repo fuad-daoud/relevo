@@ -1,4 +1,4 @@
-package relevo
+package housekeep
 
 import (
 	"strings"
@@ -26,8 +26,8 @@ func TestShortTmpIDShape(t *testing.T) {
 				break
 			}
 		}
-		if !isShortTmpID(got) {
-			t.Errorf("isShortTmpID(%q) = false, want the derivation's own output recognised", got)
+		if !IsShortTmpID(got) {
+			t.Errorf("IsShortTmpID(%q) = false, want the derivation's own output recognised", got)
 		}
 	}
 }
@@ -37,11 +37,11 @@ func TestShortTmpIDShape(t *testing.T) {
 func TestShortTmpIDDeterministic(t *testing.T) {
 	t.Parallel()
 
-	if got, again := shortRoundID("webshop", 4), shortRoundID("webshop", 4); got != again {
-		t.Errorf("shortRoundID not deterministic: %q vs %q", got, again)
+	if got, again := ShortRoundID("webshop", 4), ShortRoundID("webshop", 4); got != again {
+		t.Errorf("ShortRoundID not deterministic: %q vs %q", got, again)
 	}
-	if got, again := shortCheckID("relevo-gate-local-webshop-1"), shortCheckID("relevo-gate-local-webshop-1"); got != again {
-		t.Errorf("shortCheckID not deterministic: %q vs %q", got, again)
+	if got, again := ShortCheckID("relevo-gate-local-webshop-1"), ShortCheckID("relevo-gate-local-webshop-1"); got != again {
+		t.Errorf("ShortCheckID not deterministic: %q vs %q", got, again)
 	}
 }
 
@@ -61,7 +61,7 @@ func TestShortTmpIDSplitsIdentities(t *testing.T) {
 	for _, name := range []string{"shop", "shop2", strings.Repeat("s", 32)} {
 		for _, round := range []int{1, 2, 1000} {
 			id := name + "/" + string(rune('0'+round%10))
-			add(id, shortRoundID(name, round))
+			add(id, ShortRoundID(name, round))
 		}
 	}
 	for _, unit := range []string{
@@ -69,7 +69,7 @@ func TestShortTmpIDSplitsIdentities(t *testing.T) {
 		"relevo-gate-abcdef12-shop-check-3",
 		"relevo-gate-abcdef12-shop-check-4",
 	} {
-		add(unit, shortCheckID(unit))
+		add(unit, ShortCheckID(unit))
 	}
 }
 
@@ -79,8 +79,8 @@ func TestIsShortTmpIDRejectsLongNames(t *testing.T) {
 	t.Parallel()
 
 	for _, name := range []string{"webshop-001", "relevo-gate-local-webshop-1", "ABCDEFGH", "abc", "", "rounds"} {
-		if isShortTmpID(name) {
-			t.Errorf("isShortTmpID(%q) = true, want false", name)
+		if IsShortTmpID(name) {
+			t.Errorf("IsShortTmpID(%q) = true, want false", name)
 		}
 	}
 }
@@ -90,13 +90,13 @@ func TestIsShortTmpIDRejectsLongNames(t *testing.T) {
 func TestTmpOverBudgetRule(t *testing.T) {
 	t.Parallel()
 
-	if tmpOverBudget(strings.Repeat("a", maxTmpDirLen)) {
+	if TmpOverBudget(strings.Repeat("a", maxTmpDirLen)) {
 		t.Errorf("a %d-byte dir must not warn", maxTmpDirLen)
 	}
-	if !tmpOverBudget(strings.Repeat("a", maxTmpDirLen+1)) {
+	if !TmpOverBudget(strings.Repeat("a", maxTmpDirLen+1)) {
 		t.Errorf("a %d-byte dir must warn", maxTmpDirLen+1)
 	}
-	if maxTmpDirLen+tmpSocketSuffixLen >= 108 {
-		t.Errorf("bound %d + suffix %d must stay under 108", maxTmpDirLen, tmpSocketSuffixLen)
+	if maxTmpDirLen+TmpSocketSuffixLen >= 108 {
+		t.Errorf("bound %d + suffix %d must stay under 108", maxTmpDirLen, TmpSocketSuffixLen)
 	}
 }

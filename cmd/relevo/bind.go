@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/doctor"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -464,7 +465,7 @@ func runAdd(f bindFlags) error {
 	warnWaitingOnYou(rt, res.Binding.Name)
 
 	if f.asJSON {
-		return printDoc(bindDocOf(res.Binding, relevo.RoundDir(res.Binding), relevo.BindingRole(res.Binding), candidateLabel(rt, res.Binding.BuilderCandidate), false))
+		return printDoc(bindDocOf(res.Binding, housekeep.RoundDir(res.Binding), relevo.BindingRole(res.Binding), candidateLabel(rt, res.Binding.BuilderCandidate), false))
 	}
 
 	return nil
@@ -492,7 +493,7 @@ func addedTreeLines(res relevo.AddResult) []string {
 	// the checkout the bind ran in), so only a provisioned tree can differ
 	// from where the round runs.
 	if res.Binding.Subdir != "" {
-		lines = append(lines, fmt.Sprintf("  round runs in %s", relevo.RoundDir(res.Binding)))
+		lines = append(lines, fmt.Sprintf("  round runs in %s", housekeep.RoundDir(res.Binding)))
 	}
 	return lines
 }

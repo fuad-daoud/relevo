@@ -80,7 +80,7 @@ type Git interface {
 	// such regular file.
 	BlobAt(ctx context.Context, dir, ref, path string) (oid string, ok bool, err error)
 	// ShowPrefix reports dir's path relative to its repository's root, as
-	// `rev-parse --show-prefix`; empty at the root. resolveSubdir's one call
+	// `rev-parse --show-prefix`; empty at the root. housekeep.ResolveSubdir's one call
 	// site: it is what a bind started below the root tells its round apart
 	// with.
 	ShowPrefix(ctx context.Context, dir string) (string, error)

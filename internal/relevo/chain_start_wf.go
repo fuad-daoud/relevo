@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -94,7 +95,7 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 	// above: resolving it a second time -- from the caller's shell -- would
 	// name a prefix the chain's starting commit and cut have no say about
 	// when the two differ.
-	plan.subdir = resolveSubdir(ctx, rt, repo)
+	plan.subdir = housekeep.ResolveSubdir(ctx, rt.Git, repo)
 	if err := chainValidateWorkflowOpts(opts); err != nil {
 		return chainWFStart{}, err
 	}

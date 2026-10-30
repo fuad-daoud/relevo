@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -132,7 +133,7 @@ func TestCheckTmpRelNamesChecksRoot(t *testing.T) {
 		"relevo-gate-abcdef12-shop-check-3",
 	} {
 		got := checkTmpRel(unit)
-		if got != filepath.Join("checks", shortCheckID(unit)) {
+		if got != filepath.Join("checks", housekeep.ShortCheckID(unit)) {
 			t.Errorf("checkTmpRel(%q) = %q, want the hashed leaf", unit, got)
 		}
 		if prev, dup := seen[got]; dup {
@@ -204,7 +205,7 @@ func TestRoundTmpRelShortDeterministic(t *testing.T) {
 		round int
 	}{{"api", 7}, {"webshop", 1}, {"x", 42}, {"y", 1000}} {
 		got := roundTmpRel(tc.name, tc.round)
-		if got != filepath.Join("rounds", shortRoundID(tc.name, tc.round)) {
+		if got != filepath.Join("rounds", housekeep.ShortRoundID(tc.name, tc.round)) {
 			t.Errorf("roundTmpRel(%q, %d) = %q, want the hashed leaf", tc.name, tc.round, got)
 		}
 		id := tc.name + "/" + string(rune('0'+tc.round%10))

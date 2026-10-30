@@ -1,4 +1,4 @@
-package relevo
+package housekeep
 
 import (
 	"reflect"
@@ -7,18 +7,38 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestRunningProcs is #370 §4.8's collector table: a local headless builder,
-// the round's gate, and running headless consults are gathered; a served
-// (owner-carrying) or remote binding, a done consult, a pane process and a
-// zero pid are not.
-func TestRunningProcs(t *testing.T) {
+// runningProcsCase is one collector row: the bindings in and the tuples out.
+type runningProcsCase struct {
+	name string
+	bs   []store.Binding
+	want []RunningProcRef
+}
+
+// checkRunningProcs runs the table: a local headless builder, the round's
+// gate, and running headless consults are gathered; anything else is not.
+func checkRunningProcs(t *testing.T, cases []runningProcsCase) {
+	t.Helper()
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := RunningProcs(c.bs)
+			if len(got) == 0 && len(c.want) == 0 {
+				return
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Errorf("RunningProcs() = %+v; want %+v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestRunningProcsGathersLocalHeads pins the gathered rows: a local headless
+// builder, the round's gate, a running headless consult, and binding order
+// across several bindings.
+func TestRunningProcsGathersLocalHeads(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		name string
-		bs   []store.Binding
-		want []RunningProcRef
-	}{
+	checkRunningProcs(t, []runningProcsCase{
 		{
 			name: "a headless builder and its gate",
 			bs: []store.Binding{{
@@ -43,6 +63,26 @@ func TestRunningProcs(t *testing.T) {
 			want: []RunningProcRef{{Binding: "web", Kind: "consult", PID: 13}},
 		},
 		{
+			name: "several bindings keep binding order",
+			bs: []store.Binding{
+				{Name: "b", Builder: store.Endpoint{Mode: store.ModeHeadless, PID: 2}},
+				{Name: "a", Builder: store.Endpoint{Mode: store.ModeHeadless, PID: 1}},
+			},
+			want: []RunningProcRef{
+				{Binding: "b", Kind: "builder", PID: 2},
+				{Binding: "a", Kind: "builder", PID: 1},
+			},
+		},
+	})
+}
+
+// TestRunningProcsSkipsForeignBindings pins the binding-level exclusions: a
+// served (owner-carrying) or remote binding contributes nothing.
+func TestRunningProcsSkipsForeignBindings(t *testing.T) {
+	t.Parallel()
+
+	checkRunningProcs(t, []runningProcsCase{
+		{
 			name: "a served binding is excluded",
 			bs: []store.Binding{{
 				Name:    "web",
@@ -59,6 +99,16 @@ func TestRunningProcs(t *testing.T) {
 			}},
 			want: nil,
 		},
+	})
+}
+
+// TestRunningProcsSkipsIdleProcesses pins the process-level exclusions: a
+// pane builder, a zero pid, a non-running consult, and a running pane
+// consult are not gathered.
+func TestRunningProcsSkipsIdleProcesses(t *testing.T) {
+	t.Parallel()
+
+	checkRunningProcs(t, []runningProcsCase{
 		{
 			name: "a pane builder is excluded",
 			bs: []store.Binding{{
@@ -99,27 +149,5 @@ func TestRunningProcs(t *testing.T) {
 			}},
 			want: nil,
 		},
-		{
-			name: "several bindings keep binding order",
-			bs: []store.Binding{
-				{Name: "b", Builder: store.Endpoint{Mode: store.ModeHeadless, PID: 2}},
-				{Name: "a", Builder: store.Endpoint{Mode: store.ModeHeadless, PID: 1}},
-			},
-			want: []RunningProcRef{
-				{Binding: "b", Kind: "builder", PID: 2},
-				{Binding: "a", Kind: "builder", PID: 1},
-			},
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := RunningProcs(c.bs)
-			if len(got) == 0 && len(c.want) == 0 {
-				return
-			}
-			if !reflect.DeepEqual(got, c.want) {
-				t.Errorf("RunningProcs() = %+v; want %+v", got, c.want)
-			}
-		})
-	}
+	})
 }

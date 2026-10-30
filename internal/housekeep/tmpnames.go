@@ -1,4 +1,4 @@
-package relevo
+package housekeep
 
 import (
 	"crypto/sha256"
@@ -8,15 +8,15 @@ import (
 	"sync"
 )
 
-// tmpSocketSuffixLen is the longest socket file name held under a handed-out
+// TmpSocketSuffixLen is the longest socket file name held under a handed-out
 // temp directory: every TMPDIR relevo hands out must leave room for it under
 // Linux's 108-byte sun_path limit.
-const tmpSocketSuffixLen = 40
+const TmpSocketSuffixLen = 40
 
 // maxTmpDirLen is the longest temp directory relevo hands out: sun_path
 // holds 108 bytes NUL included, so 107 usable bytes must fit the directory
 // plus the socket suffix above.
-const maxTmpDirLen = 107 - tmpSocketSuffixLen
+const maxTmpDirLen = 107 - TmpSocketSuffixLen
 
 // tmpShortHexLen is the width of every short temp name: 8 hex characters (32
 // bits), so a served root reads t/<8> and a leaf rounds/<8> or checks/<8>.
@@ -34,10 +34,10 @@ func shortTmpID(input string) string {
 	return hex.EncodeToString(sum[:])[:tmpShortHexLen]
 }
 
-// isShortTmpID reports whether name has the shape shortTmpID makes, so the
+// IsShortTmpID reports whether name has the shape shortTmpID makes, so the
 // sweep can tell a stale short entry (remove) from a pre-change long one
 // (the old rules own it).
-func isShortTmpID(name string) bool {
+func IsShortTmpID(name string) bool {
 	if len(name) != tmpShortHexLen {
 		return false
 	}
@@ -50,25 +50,25 @@ func isShortTmpID(name string) bool {
 	return true
 }
 
-// shortRoundID is one round's leaf name: the binding name and round once
+// ShortRoundID is one round's leaf name: the binding name and round once
 // spelled rounds/<name>-NNN, hashed. The owner stays in the root above it
 // for served runtimes (one root per owner) and is always empty for local
 // ones, so name plus round is the whole identity the leaf must cover.
-func shortRoundID(name string, round int) string {
+func ShortRoundID(name string, round int) string {
 	return shortTmpID(name + "\x00" + strconv.Itoa(round))
 }
 
-// shortCheckID is one check's leaf name: the gate scope unit once spelled
+// ShortCheckID is one check's leaf name: the gate scope unit once spelled
 // checks/<unit>, hashed. The unit already carries owner, binding and round,
 // so it alone is the whole identity the leaf must cover.
-func shortCheckID(unit string) string {
+func ShortCheckID(unit string) string {
 	return shortTmpID(unit)
 }
 
-// tmpOverBudget is the long-root selection rule: a temp directory this long
+// TmpOverBudget is the long-root selection rule: a temp directory this long
 // leaves no room for the socket suffix under the sun_path limit. Callers log
 // one warning and proceed with the long path; the round never fails for it.
-func tmpOverBudget(dir string) bool {
+func TmpOverBudget(dir string) bool {
 	return len(dir) > maxTmpDirLen
 }
 
@@ -76,11 +76,11 @@ func tmpOverBudget(dir string) bool {
 // dir decides the length, so every round on the host would repeat it.
 var tmpBudgetWarned sync.Once
 
-// warnTmpOverBudget warns, once, when a temp directory leaves less than
-// tmpSocketSuffixLen bytes for a socket path under it. The round proceeds:
+// WarnTmpOverBudget warns, once, when a temp directory leaves less than
+// TmpSocketSuffixLen bytes for a socket path under it. The round proceeds:
 // most sockets need far less, and a long state dir is not the round's fault.
-func warnTmpOverBudget(dir string) {
-	if !tmpOverBudget(dir) {
+func WarnTmpOverBudget(dir string) {
+	if !TmpOverBudget(dir) {
 		return
 	}
 	tmpBudgetWarned.Do(func() {

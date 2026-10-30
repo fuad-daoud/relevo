@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -197,7 +198,7 @@ func sweepRoundDirs(rt Runtime, bindings []store.Binding) ([]string, error) {
 		if expected[filepath.Join(tmpSubRounds, e.Name)] {
 			continue
 		}
-		if isShortTmpID(e.Name) {
+		if housekeep.IsShortTmpID(e.Name) {
 			path, rerr := removeTmpEntry(rt, filepath.Join(tmpSubRounds, e.Name))
 			if rerr != nil {
 				errs = append(errs, rerr)
@@ -333,7 +334,7 @@ func tmpChainCheckRuns(rt Runtime) ([]tmpOpenChainCheck, error) {
 // from the same spec helpers that make the directories: a binding's running
 // gate process, its unsettled served check, and each unsettled run of a
 // chain that has not ended. Each unit contributes the bare unit -- the
-// pre-change leaf -- alongside its shortCheckID hash -- the leaf prepareTmp
+// pre-change leaf -- alongside its ShortCheckID hash -- the leaf prepareTmp
 // and removeCheckTmp use -- so a live process's leftover is kept by either
 // name, while a settled row contributes neither spelling and still
 // self-cleans.
@@ -343,18 +344,18 @@ func tmpOpenCheckUnits(rt Runtime, bindings []store.Binding, chainChecks []tmpOp
 		if b.GateRun != nil {
 			unit := scopeUnitNameFor(scopeGate, b.Owner, b.Name, b.Round, "")
 			units[unit] = true
-			units[shortCheckID(unit)] = true
+			units[housekeep.ShortCheckID(unit)] = true
 		}
 		if b.CheckRun != nil && !b.CheckRun.Settled() {
 			unit := servedCheckSpec(rt, b, *b.CheckRun).UnitName
 			units[unit] = true
-			units[shortCheckID(unit)] = true
+			units[housekeep.ShortCheckID(unit)] = true
 		}
 	}
 	for _, cc := range chainChecks {
 		unit := chainCheckSpec(rt, cc.chain, cc.run, "", "").UnitName
 		units[unit] = true
-		units[shortCheckID(unit)] = true
+		units[housekeep.ShortCheckID(unit)] = true
 	}
 	return units
 }
