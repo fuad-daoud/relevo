@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -121,7 +122,7 @@ func TestHelpModalColumns(t *testing.T) {
 	m = res.(Model)
 
 	move, act, anywhere := m.helpColumns(m.env())
-	has := func(keys []KeyHelp, k string) bool {
+	has := func(keys []widget.KeyHelp, k string) bool {
 		for _, kh := range keys {
 			if kh.Key == k {
 				return true
@@ -166,11 +167,11 @@ func TestHelpNoDuplicateKeys(t *testing.T) {
 	}
 }
 
-// TestGateFormOneSubmitCallsGateOnce: a fake Actions. Type 2h, tab, type
+// TestGateFormOneSubmitCallsGateOnce: a fake widget.Actions. Type 2h, tab, type
 // quota, enter. Gate is called once with 2h and quota. An invalid 2x keeps the
 // box open with an error and focus on for (§3.3, §5).
 func TestGateFormOneSubmitCallsGateOnce(t *testing.T) {
-	fa := &fakeActions{result: Result{Text: "gated", Refresh: true}}
+	fa := &fakeActions{result: widget.Result{Text: "gated", Refresh: true}}
 	m := actionModel(t, fa, view.BindingStatus{
 		Name: "atlas", Round: 4, Display: "ACTIVE",
 		BuilderCandidate: "opencode/cline-pass/glm",
@@ -227,7 +228,7 @@ func TestGateFormOneSubmitCallsGateOnce(t *testing.T) {
 // TestGateFormEmptyDurationIsUntilCleared: an empty for field calls Gate with 0
 // (§3.3, §5).
 func TestGateFormEmptyDurationIsUntilCleared(t *testing.T) {
-	fa := &fakeActions{result: Result{Text: "gated", Refresh: true}}
+	fa := &fakeActions{result: widget.Result{Text: "gated", Refresh: true}}
 	m := actionModel(t, fa, view.BindingStatus{
 		Name: "atlas", Round: 4, Display: "ACTIVE",
 		BuilderCandidate: "opencode/cline-pass/glm",
@@ -420,7 +421,7 @@ func TestSendPickerListsNewestFirst(t *testing.T) {
 
 // TestSendPickerRelativePath: a binding tree with docs/plans/ pre-fills the
 // relative "docs/plans/"; typing a.md resolves against the tree and the send
-// confirm's Actions.Send receives the absolute path. An absolute path typed by
+// confirm's widget.Actions.Send receives the absolute path. An absolute path typed by
 // the human also works, and the confirm title shows the value as typed
 // (§2.5, §5).
 func TestSendPickerRelativePath(t *testing.T) {

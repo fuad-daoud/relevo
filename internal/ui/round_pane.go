@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -18,12 +19,12 @@ import (
 // holds exactly one and lends it the fields it cannot own -- src, ctx, now,
 // report, width and rows -- through syncPane on every call.
 type roundPane struct {
-	src     Source
+	src     widget.Source
 	ctx     context.Context
 	now     func() time.Time
 	report  view.Report
 	detail  detailModel
-	actions bool // Actions != nil: action keys are shown
+	actions bool // widget.Actions != nil: action keys are shown
 
 	// tabInFlight is the pane's own fetch guard, moved from
 	// Model.tabInFlight: true while a fetch is in flight for the tab on
@@ -203,7 +204,7 @@ func (p roundPane) pointDetailAt(key string) (roundPane, tea.Cmd) {
 		return p, nil
 	}
 	// #143: opening a binding's detail pane is what "viewed" means; the
-	// stamp is best-effort (each Source swallows its own errors) and must
+	// stamp is best-effort (each widget.Source swallows its own errors) and must
 	// never block re-targeting the pane.
 	p.src.MarkViewed(key)
 	vp := viewport.New(p.contentWidth(), p.viewportHeight())
@@ -460,7 +461,7 @@ func (p roundPane) sourceLine() string {
 	}
 	c := p.detail.cache[p.detail.active]
 	if !c.loaded {
-		return faintStyle.Render("loading…")
+		return widget.FaintStyle.Render("loading…")
 	}
 	if p.detail.active == tabArtifacts {
 		// The header carries the count and the total size (round 5b); a
@@ -535,7 +536,7 @@ func (p roundPane) sourceLine() string {
 			s = "log"
 		}
 	}
-	return faintStyle.Render(s)
+	return widget.FaintStyle.Render(s)
 }
 
 // hintLine is the one rendered line under a blocked builder's dialog on
@@ -545,7 +546,7 @@ func (p roundPane) hintLine(b *view.BindingStatus) (string, bool) {
 	if b == nil || b.Waiting == nil || b.Waiting.Cause != "blocked" || p.detail.active != tabTerminal {
 		return "", false
 	}
-	return accentStyle.Render("relevo: ") + fgStyle.Render(b.Waiting.Hint), true
+	return widget.AccentStyle.Render("relevo: ") + widget.TextStyle.Render(b.Waiting.Hint), true
 }
 
 // view draws exactly rows rows at width (§2.5, §5).
@@ -589,7 +590,7 @@ func (p roundPane) view(width int) string {
 	}
 	out = out[:p.rows]
 	for i := range out {
-		out[i] = fit(out[i], width)
+		out[i] = widget.Fit(out[i], width)
 	}
 	return strings.Join(out, "\n")
 }

@@ -12,13 +12,14 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // unresolvableSource resolves no key at all: the way a server source answers a
 // key whose owner it does not hold.
-type unresolvableSource struct{ Source }
+type unresolvableSource struct{ widget.Source }
 
 func (unresolvableSource) Runtime(string) (relevo.Runtime, string, bool) {
 	return relevo.Runtime{}, "", false
@@ -126,7 +127,7 @@ func TestFleetReportCarriesNoDetailFigures(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
-		src  Source
+		src  widget.Source
 	}{
 		{"mastermindSource", mastermindSource{rt}},
 		{"liveSource", liveSource{newLiveRuntime(rt)}},
@@ -312,7 +313,7 @@ func TestDetailFetchDoesNotOutliveTheTick(t *testing.T) {
 	if rv.pane.tabInFlight {
 		rv.pane.tabInFlight = false
 	}
-	_, cmd := rv.Update(tickMsg(railNow.Add(time.Second)), testEnv(mastermindSource{rt}, fleet, 140, 40))
+	_, cmd := rv.Update(widget.TickMsg(railNow.Add(time.Second)), testEnv(mastermindSource{rt}, fleet, 140, 40))
 	for _, msg := range batchMsgs(cmd) {
 		if _, ok := msg.(detailRowMsg); ok {
 			t.Fatal("a tick must not issue a second detail-row fetch")

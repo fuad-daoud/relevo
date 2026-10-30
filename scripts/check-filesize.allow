@@ -13,5 +13,5 @@ internal/ui/view_agents.go
 internal/ui/view_candidates.go
 internal/ui/view_fleet.go
 internal/ui/view_log.go
-internal/ui/view_stats.go
+internal/ui/stats/view_stats.go
 scripts/testdata/check-filesize/big.go

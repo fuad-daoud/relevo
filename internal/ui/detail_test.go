@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/muesli/termenv"
 )
@@ -115,20 +116,20 @@ func TestEmptyContentNotStyledAsError(t *testing.T) {
 	}
 
 	st := styleFor(c)
-	if reflect.DeepEqual(st, errorStyle) {
-		t.Fatalf("empty content style must not be errorStyle")
+	if reflect.DeepEqual(st, widget.ErrorStyle) {
+		t.Fatalf("empty content style must not be widget.ErrorStyle")
 	}
-	if st.GetForeground() == errorStyle.GetForeground() {
-		t.Fatalf("empty content foreground must not match errorStyle foreground")
+	if st.GetForeground() == widget.ErrorStyle.GetForeground() {
+		t.Fatalf("empty content foreground must not match widget.ErrorStyle foreground")
 	}
 
 	orig := lipgloss.ColorProfile()
 	defer lipgloss.SetColorProfile(orig)
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	rendered := bodyOf(tabDiff, c, false)
-	errRendered := errorStyle.Render(c.empty)
+	errRendered := widget.ErrorStyle.Render(c.empty)
 	if rendered == errRendered {
-		t.Fatalf("empty prose must NOT be styled with errorStyle")
+		t.Fatalf("empty prose must NOT be styled with widget.ErrorStyle")
 	}
 }
 
@@ -166,7 +167,7 @@ func TestResizeReflowsViewportWithoutLosingActiveTab(t *testing.T) {
 	rv.pane.detail.active = tabDiff
 	rv.pane.detail.vp = viewport.New(80, 20)
 
-	next, _ := rv.Update(tea.WindowSizeMsg{Width: 100, Height: 60}, Env{Width: 100, Height: 60, Now: railNow, Report: rv.pane.report})
+	next, _ := rv.Update(tea.WindowSizeMsg{Width: 100, Height: 60}, widget.Env{Width: 100, Height: 60, Now: railNow, Report: rv.pane.report})
 	got := next.(roundView)
 
 	if got.pane.detail.active != tabDiff {

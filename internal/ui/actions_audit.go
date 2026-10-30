@@ -8,6 +8,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // ConfigLog is every stored revision, newest first. The rows carry no
@@ -41,19 +42,19 @@ func (a *mastermindActions) RollbackPreview(rev int64) ([]relevo.ChangeLine, err
 // A write error is a failure; a failed reload after a successful write is not,
 // because the write already happened, so the text says so. ErrNoChange is not
 // an error to show red: it is the answer "already equals".
-func (a *mastermindActions) Rollback(ctx context.Context, rev int64) Result {
+func (a *mastermindActions) Rollback(ctx context.Context, rev int64) widget.Result {
 	if a.runtime().Config == nil {
-		return Result{Err: errors.New("no config store")}
+		return widget.Result{Err: errors.New("no config store")}
 	}
 	row, err := a.runtime().Config.As("rollback", "").Rollback(rev)
 	if err != nil {
 		if errors.Is(err, config.ErrNoChange) {
-			return Result{Text: fmt.Sprintf("config already equals #%d", rev)}
+			return widget.Result{Text: fmt.Sprintf("config already equals #%d", rev)}
 		}
-		return Result{Err: err, Refresh: true}
+		return widget.Result{Err: err, Refresh: true}
 	}
 	if err := a.live.Refresh(); err != nil {
-		return Result{Text: "saved; reload failed: " + err.Error(), Refresh: true}
+		return widget.Result{Text: "saved; reload failed: " + err.Error(), Refresh: true}
 	}
-	return Result{Text: fmt.Sprintf("rolled back to #%d as #%d", rev, row.Rev), Refresh: true}
+	return widget.Result{Text: fmt.Sprintf("rolled back to #%d as #%d", rev, row.Rev), Refresh: true}
 }

@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -146,7 +147,7 @@ func TestTerminalTabPollsOnEveryTickWhenVisible(t *testing.T) {
 	rv.pane.detail.vp = viewport.New(80, 20)
 	rv.pane.tabInFlight = false
 
-	next, cmd := rv.Update(tickMsg(time.Now()), testEnv(mastermindSource{rt}, rep, 140, 40))
+	next, cmd := rv.Update(widget.TickMsg(time.Now()), testEnv(mastermindSource{rt}, rep, 140, 40))
 	rv = next.(roundView)
 	if cmd == nil {
 		t.Fatal("terminal tab must issue a fetch on every tick while visible")
@@ -159,7 +160,7 @@ func TestTerminalTabPollsOnEveryTickWhenVisible(t *testing.T) {
 	rv.pane.detail.active = tabReport
 	rv.pane.detail.cache[tabReport] = tabContent{loaded: true, body: "report"}
 	rv.pane.tabInFlight = false
-	_, cmd2 := rv.Update(tickMsg(time.Now()), testEnv(mastermindSource{rt}, rep, 140, 40))
+	_, cmd2 := rv.Update(widget.TickMsg(time.Now()), testEnv(mastermindSource{rt}, rep, 140, 40))
 	if cmd2 != nil {
 		if _, ok := cmd2().(tabMsg); ok {
 			t.Error("file-backed cached tab must NOT issue fetch on tick")

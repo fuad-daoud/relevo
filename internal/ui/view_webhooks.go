@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // webhooksDocMsg is one ConfigDoc load's reply for the pushed webhook list: a
@@ -31,13 +32,13 @@ type webhooksView struct {
 
 // newWebhooksView pushes the webhook list over the doc the settings view holds,
 // so the first frame draws before the reload's reply lands.
-func newWebhooksView(env Env, doc relevo.ConfigDoc) (View, tea.Cmd) {
+func newWebhooksView(env widget.Env, doc relevo.ConfigDoc) (widget.View, tea.Cmd) {
 	v := webhooksView{doc: doc, loaded: true, actions: env.Actions != nil}
 	return v, webhooksDocCmd(env)
 }
 
 // webhooksDocCmd reads the stored config off the update loop.
-func webhooksDocCmd(env Env) tea.Cmd {
+func webhooksDocCmd(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		doc, err := env.Actions.ConfigDoc()
 		return webhooksDocMsg{doc: doc, err: err}
@@ -94,11 +95,11 @@ func webhooksLayout(width int) (urlW, cw int) {
 
 // webhooksHeaderLine is the table's header row, in faint bold.
 func webhooksHeaderLine(urlW, cw int) string {
-	style := faintStyle.Bold(true)
+	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{
-		{text: pad("URL", urlW), style: style},
-		{text: pad("FORMAT", 8), style: style},
-		{text: pad("EVENTS", 34), style: style},
+		{text: widget.Pad("URL", urlW), style: style},
+		{text: widget.Pad("FORMAT", 8), style: style},
+		{text: widget.Pad("EVENTS", 34), style: style},
 	}
 	return candLine(cells, false, cw)
 }
@@ -106,14 +107,14 @@ func webhooksHeaderLine(urlW, cw int) string {
 // webhooksDataLine is one webhook's row: the URL in the text colour, its format
 // and events muted, and the cursor row's URL bold on the selection band.
 func webhooksDataLine(h policy.Webhook, sel bool, urlW, cw int) string {
-	urlStyle := textStyle
+	urlStyle := widget.TextStyle
 	if sel {
 		urlStyle = urlStyle.Bold(true)
 	}
 	cells := []candCell{
-		{text: pad(h.URL, urlW), style: urlStyle},
-		{text: pad(webhookFormatText(h.Format), 8), style: mutedStyle},
-		{text: pad(webhookEventsText(h.Events), 34), style: mutedStyle},
+		{text: widget.Pad(h.URL, urlW), style: urlStyle},
+		{text: widget.Pad(webhookFormatText(h.Format), 8), style: widget.MutedStyle},
+		{text: widget.Pad(webhookEventsText(h.Events), 34), style: widget.MutedStyle},
 	}
 	return candLine(cells, sel, cw)
 }
@@ -121,10 +122,10 @@ func webhooksDataLine(h policy.Webhook, sel bool, urlW, cw int) string {
 // webhooksDetailLines is the cursor row's detail block: the URL in faint bold,
 // then its format and events, dim.
 func webhooksDetailLines(h policy.Webhook, width int) []string {
-	first := "   " + faintStyle.Bold(true).Render(h.URL)
-	second := "   " + mutedStyle.Render("format "+webhookFormatText(h.Format)+
+	first := "   " + widget.FaintStyle.Bold(true).Render(h.URL)
+	second := "   " + widget.MutedStyle.Render("format "+webhookFormatText(h.Format)+
 		"   events "+webhookEventsText(h.Events))
-	return []string{fit(first, width), fit(second, width)}
+	return []string{widget.Fit(first, width), widget.Fit(second, width)}
 }
 
 // bodyLines is the whole body before it is windowed: a blank line, the header,
@@ -136,7 +137,7 @@ func (v webhooksView) bodyLines(width int) []string {
 
 	lines := []string{"", webhooksHeaderLine(urlW, cw)}
 	if len(hooks) == 0 {
-		return append(lines, "   "+mutedStyle.Render("none yet"))
+		return append(lines, "   "+widget.MutedStyle.Render("none yet"))
 	}
 	cur := candClamp(v.cur, len(hooks))
 	for i, h := range hooks {
@@ -147,8 +148,8 @@ func (v webhooksView) bodyLines(width int) []string {
 }
 
 // follow scrolls the page so the cursor's row stays visible.
-func (v *webhooksView) follow(env Env) {
-	avail := bodyHeight(env)
+func (v *webhooksView) follow(env widget.Env) {
+	avail := widget.BodyHeight(env)
 	if avail <= 0 {
 		v.top = 0
 		return
@@ -161,7 +162,7 @@ func (v *webhooksView) follow(env Env) {
 	if sel >= v.top+avail {
 		v.top = sel - avail + 1
 	}
-	v.top = clamp(v.top, 0, max(0, len(lines)-avail))
+	v.top = widget.Clamp(v.top, 0, max(0, len(lines)-avail))
 }
 
 func (v webhooksView) Crumbs() []string { return []string{"notify.webhooks"} }
@@ -169,44 +170,44 @@ func (v webhooksView) Crumbs() []string { return []string{"notify.webhooks"} }
 // Capturing is always false: the view owns no text input of its own.
 func (v webhooksView) Capturing() bool { return false }
 
-// Keys are the list's action keys, shown only when the shell has an Actions
+// Keys are the list's action keys, shown only when the shell has an widget.Actions
 // seam; `esc back` and the rest of the global tail are the shell's own.
-func (v webhooksView) Keys() []KeyHelp {
+func (v webhooksView) Keys() []widget.KeyHelp {
 	if !v.actions {
 		return nil
 	}
-	return []KeyHelp{
-		{"a", "add"},
-		{"e", "edit"},
-		{"d", "delete"},
+	return []widget.KeyHelp{
+		{Key: "a", Help: "add"},
+		{Key: "e", Help: "edit"},
+		{Key: "d", Help: "delete"},
 	}
 }
 
 // HelpKeys is the help overlay's key list: `↑↓ move` is left out of the footer
 // so it lives here.
-func (v webhooksView) HelpKeys() []KeyHelp {
-	return append([]KeyHelp{{"↑↓", "move"}}, v.Keys()...)
+func (v webhooksView) HelpKeys() []widget.KeyHelp {
+	return append([]widget.KeyHelp{{Key: "↑↓", Help: "move"}}, v.Keys()...)
 }
 
 // Context is the counts line on the left; the list has no right side.
-func (v webhooksView) Context(env Env) (string, string) {
+func (v webhooksView) Context(env widget.Env) (string, string) {
 	n := len(webhooksOf(v.doc))
-	left := "   " + textStyle.Bold(true).Render(fmt.Sprintf("%d", n)) + " " + mutedStyle.Render(webhooksCount(n))
+	left := "   " + widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", n)) + " " + widget.MutedStyle.Render(webhooksCount(n))
 	return left, ""
 }
 
-func (v webhooksView) Body(env Env, width, height int) string {
+func (v webhooksView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
 	if !v.loaded && v.err != nil {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	lines := v.bodyLines(width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -214,10 +215,10 @@ func (v webhooksView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
-func (v webhooksView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v webhooksView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case webhooksDocMsg:
 		if msg.err != nil {
@@ -242,8 +243,8 @@ func (v webhooksView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 }
 
 // updateKey is the list's own keys. Movement and esc always work; the keys that
-// write config do nothing without the shell's Actions seam.
-func (v webhooksView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+// write config do nothing without the shell's widget.Actions seam.
+func (v webhooksView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	hooks := webhooksOf(v.doc)
 	n := len(hooks)
 	switch k.String() {
@@ -260,10 +261,10 @@ func (v webhooksView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		v.cur = candClamp(n-1, n)
 		v.follow(env)
 	case "pgup":
-		v.cur = candClamp(v.cur-bodyHeight(env), n)
+		v.cur = candClamp(v.cur-widget.BodyHeight(env), n)
 		v.follow(env)
 	case "pgdown":
-		v.cur = candClamp(v.cur+bodyHeight(env), n)
+		v.cur = candClamp(v.cur+widget.BodyHeight(env), n)
 		v.follow(env)
 	case "esc":
 		return v, pop()
@@ -288,7 +289,7 @@ func (v webhooksView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 
 // deleteCmd is the d key: validate the shorter list, then confirm the loss as a
 // danger box. A refused edit is a notice, and no confirm opens.
-func (v webhooksView) deleteCmd(env Env, i int) tea.Cmd {
+func (v webhooksView) deleteCmd(env widget.Env, i int) tea.Cmd {
 	hooks := webhooksOf(v.doc)
 	if i < 0 || i >= len(hooks) {
 		return nil
@@ -308,7 +309,7 @@ func (v webhooksView) deleteCmd(env Env, i int) tea.Cmd {
 		danger: true,
 		title:  "delete",
 		lines:  []string{"Delete this webhook?", h.URL},
-		onYes: runAction(env.Ctx, "delete webhook", h.URL, func(ctx context.Context) Result {
+		onYes: runAction(env.Ctx, "delete webhook", h.URL, func(ctx context.Context) widget.Result {
 			return env.Actions.ApplyConfig(ctx, edit)
 		}),
 	})

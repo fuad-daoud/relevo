@@ -1,6 +1,6 @@
 package ui
 
-// This file holds the Actions methods that return a command for the cockpit
+// This file holds the widget.Actions methods that return a command for the cockpit
 // to run in another program: the user's editor, and the pager, browser or
 // editor that opens a round artifact (round 5b).
 

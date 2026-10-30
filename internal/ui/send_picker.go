@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -54,7 +55,7 @@ func recentPlans(dir, filter string, n int) []planFile {
 // sendPicker is the s key's plan picker (§3.4): the plan-file input with its
 // path completion, and a list of the directory's recent markdown plans.
 type sendPicker struct {
-	env   Env
+	env   widget.Env
 	b     view.BindingStatus
 	input textinput.Model
 
@@ -82,13 +83,13 @@ func (p sendPicker) resolve(v string) string {
 }
 
 // keys is the picker's footer (§3.4).
-func (p sendPicker) keys() []KeyHelp {
-	return []KeyHelp{
-		{"↑↓", "choose"},
-		{"tab", "complete"},
-		{"enter", "choose"},
-		{"ctrl+e", "$EDITOR"},
-		{"esc", "cancel"},
+func (p sendPicker) keys() []widget.KeyHelp {
+	return []widget.KeyHelp{
+		{Key: "↑↓", Help: "choose"},
+		{Key: "tab", Help: "complete"},
+		{Key: "enter", Help: "choose"},
+		{Key: "ctrl+e", Help: "$EDITOR"},
+		{Key: "esc", Help: "cancel"},
 	}
 }
 
@@ -212,7 +213,7 @@ func (p sendPicker) enter() (overlay, tea.Cmd, bool) {
 		danger: false,
 		title:  sendConfirmTitle(p.b, file),
 		lines:  sendConfirmLines(p.b),
-		onYes: runAction(p.env.Ctx, "send", key, func(ctx context.Context) Result {
+		onYes: runAction(p.env.Ctx, "send", key, func(ctx context.Context) widget.Result {
 			return p.env.Actions.Send(ctx, key, resolved)
 		}),
 	}), true
@@ -229,13 +230,13 @@ func (p sendPicker) modal(width int) (string, []string, int, bool) {
 	const want = 80
 	innerW := modalInnerW(want, width)
 
-	header := accentStyle.Bold(true).Render("Send a plan to "+p.b.Key()) +
-		faintStyle.Render(fmt.Sprintf("  as round %d · on %s", p.b.Round, candidateText(p.b)))
+	header := widget.AccentStyle.Bold(true).Render("Send a plan to "+p.b.Key()) +
+		widget.FaintStyle.Render(fmt.Sprintf("  as round %d · on %s", p.b.Round, candidateText(p.b)))
 
 	rows := []string{
 		header,
 		"",
-		faintStyle.Render(pad("plan file", 10)) + p.input.View(),
+		widget.FaintStyle.Render(widget.Pad("plan file", 10)) + p.input.View(),
 		"",
 	}
 	for i, pf := range p.plans() {
@@ -243,16 +244,16 @@ func (p sendPicker) modal(width int) (string, []string, int, bool) {
 		if age := ago(pf.mod, p.env.Now); age != "" {
 			note = age + " ago"
 		}
-		rows = append(rows, modalRow(i == p.pick, filepath.Base(pf.path), "", note, innerW, textStyle, dimStyle))
+		rows = append(rows, modalRow(i == p.pick, filepath.Base(pf.path), "", note, innerW, widget.TextStyle, widget.MutedStyle))
 	}
 	rows = append(rows, "")
-	rows = append(rows, faintStyle.Render("ctrl+e  write it in $EDITOR instead"))
+	rows = append(rows, widget.FaintStyle.Render("ctrl+e  write it in $EDITOR instead"))
 	if p.err != "" {
-		rows = append(rows, errorStyle.Render(p.err))
+		rows = append(rows, widget.ErrorStyle.Render(p.err))
 	}
 	rows = append(rows, "")
-	rows = append(rows, chip(kbdStyle, "enter")+mutedStyle.Render(" choose")+
-		"   "+chip(kbdStyle, "tab")+mutedStyle.Render(" complete")+
-		"   "+chip(kbdStyle, "esc")+mutedStyle.Render(" cancel"))
+	rows = append(rows, widget.Chip(widget.KbdStyle, "enter")+widget.MutedStyle.Render(" choose")+
+		"   "+widget.Chip(widget.KbdStyle, "tab")+widget.MutedStyle.Render(" complete")+
+		"   "+widget.Chip(widget.KbdStyle, "esc")+widget.MutedStyle.Render(" cancel"))
 	return "send", rows, want, false
 }

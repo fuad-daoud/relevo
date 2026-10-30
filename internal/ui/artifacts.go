@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // The artifacts table's column widths, from the approved board: FILE 30,
@@ -110,40 +111,40 @@ func artifactsBody(c tabContent) string {
 	}
 
 	var b strings.Builder
-	b.WriteString(faintStyle.Bold(true).Render(
-		fit("FILE", artifactFileWidth) +
-			fit("SIZE", artifactSizeWidth) +
-			fit("WRITTEN", artifactTimeWidth) +
-			fit("OPENS IN", artifactOpensWidth)))
+	b.WriteString(widget.FaintStyle.Bold(true).Render(
+		widget.Fit("FILE", artifactFileWidth) +
+			widget.Fit("SIZE", artifactSizeWidth) +
+			widget.Fit("WRITTEN", artifactTimeWidth) +
+			widget.Fit("OPENS IN", artifactOpensWidth)))
 	b.WriteByte('\n')
 	for i, f := range c.artifacts {
 		rel := sanitizeText(f.Rel)
 		size := relevo.ArtifactSizeText(f.Size)
 		when := f.MTime.Local().Format("15:04")
 		opens := artifactOpensIn(c, f.Rel)
-		row := fit(rel, artifactFileWidth) + fit(size, artifactSizeWidth) +
-			fit(when, artifactTimeWidth) + fit(opens, artifactOpensWidth)
+		row := widget.Fit(rel, artifactFileWidth) + widget.Fit(size, artifactSizeWidth) +
+			widget.Fit(when, artifactTimeWidth) + widget.Fit(opens, artifactOpensWidth)
 		if i == sel {
-			b.WriteString(selBandStyle.Foreground(textStyle.GetForeground()).Bold(true).Render(row))
+			b.WriteString(widget.SelBandStyle.Foreground(widget.TextStyle.GetForeground()).Bold(true).Render(row))
 		} else {
-			b.WriteString(textStyle.Render(fit(rel, artifactFileWidth)) +
-				mutedStyle.Render(fit(size, artifactSizeWidth)) +
-				mutedStyle.Render(fit(when, artifactTimeWidth)) +
-				faintStyle.Render(fit(opens, artifactOpensWidth)))
+			b.WriteString(widget.TextStyle.Render(widget.Fit(rel, artifactFileWidth)) +
+				widget.MutedStyle.Render(widget.Fit(size, artifactSizeWidth)) +
+				widget.MutedStyle.Render(widget.Fit(when, artifactTimeWidth)) +
+				widget.FaintStyle.Render(widget.Fit(opens, artifactOpensWidth)))
 		}
 		b.WriteByte('\n')
 	}
 
 	b.WriteByte('\n')
-	b.WriteString(faintStyle.Render(artifactCaption(c)))
+	b.WriteString(widget.FaintStyle.Render(artifactCaption(c)))
 	b.WriteByte('\n')
 	if hint := artifactEditHint(c); hint != "" {
-		b.WriteString(faintStyle.Render(hint))
+		b.WriteString(widget.FaintStyle.Render(hint))
 		b.WriteByte('\n')
 	}
 
 	if c.artifactErr != nil {
-		b.WriteString(errorStyle.Render("error: " + sanitizeText(c.artifactErr.Error())))
+		b.WriteString(widget.ErrorStyle.Render("error: " + sanitizeText(c.artifactErr.Error())))
 		return b.String()
 	}
 	b.WriteString(artifactFileBody(c))
@@ -168,7 +169,7 @@ func artifactCaption(c tabContent) string {
 // "binary file, <size>" line when it is not valid UTF-8.
 func artifactFileBody(c tabContent) string {
 	if !utf8.ValidString(c.artifactBody) {
-		return mutedStyle.Render("binary file, " + relevo.ArtifactSizeText(artifactSizeOf(c)))
+		return widget.MutedStyle.Render("binary file, " + relevo.ArtifactSizeText(artifactSizeOf(c)))
 	}
 	text := sanitizeText(c.artifactBody)
 	if artifactOpenKind(c.artifactRel) == "pager" {

@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // Which pane of the actor detail view owns the keys: the candidate table, or
@@ -43,7 +44,7 @@ func actorPlacementLines(doc relevo.ConfigDoc, name string, focus bool, cur, wid
 // actorPlacementHeaderLine is the pane's header row, in faint bold, over the
 // same two columns as its rows.
 func actorPlacementHeaderLine(width int) string {
-	style := faintStyle.Bold(true)
+	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{
 		{text: fmt.Sprintf("%2s", "#"), style: style},
 		{text: "PLACEMENT", style: style},
@@ -61,16 +62,16 @@ func actorPlacementHeaderLine(width int) string {
 // shows where its cursor sits.
 func actorPlacementLine(doc relevo.ConfigDoc, name string, i int, sel bool, width int) string {
 	entry := doc.Actors[name].Placement[i]
-	nameStyle := textStyle
+	nameStyle := widget.TextStyle
 	if sel {
 		nameStyle = nameStyle.Bold(true)
 	}
 	cells := []candCell{
-		{text: fmt.Sprintf("%2d", i+1), style: faintStyle},
+		{text: fmt.Sprintf("%2d", i+1), style: widget.FaintStyle},
 		{text: entry, style: nameStyle},
 	}
 	if entry == placementLocal {
-		cells = append(cells, candCell{text: "this machine", style: mutedStyle})
+		cells = append(cells, candCell{text: "this machine", style: widget.MutedStyle})
 	}
 	cw := width - 6
 	if cw < 0 {
@@ -83,7 +84,7 @@ func actorPlacementLine(doc relevo.ConfigDoc, name string, i int, sel bool, widt
 // the value the store reads back, marked as the default, muted throughout so
 // it does not read as a row the keys act on.
 func actorPlacementDefaultLine(width int) string {
-	return fit("   "+mutedStyle.Render(placementLocal)+"  "+faintStyle.Render("default"), width)
+	return widget.Fit("   "+widget.MutedStyle.Render(placementLocal)+"  "+widget.FaintStyle.Render("default"), width)
 }
 
 // copyPlacement is a fresh copy of an actor's placement list: a change builds
@@ -110,13 +111,13 @@ func withActorPlacement(doc relevo.ConfigDoc, name string, entries []string) rel
 // path over the placement list: validate next, update the local doc, then
 // apply the edit, so the write, the in-flight guard and the log row are the
 // same for both panes. A refused edit is a notice.
-func (v actorView) changePlacement(env Env, next []string) (View, tea.Cmd) {
+func (v actorView) changePlacement(env widget.Env, next []string) (widget.View, tea.Cmd) {
 	edit, err := relevo.SetActorPlacement(v.doc, v.name, next)
 	if err != nil {
 		return v, notice(err.Error())
 	}
 	v.doc = withActorPlacement(v.doc, v.name, next)
-	return v, runAction(env.Ctx, "edit actor", "actor:"+v.name, func(ctx context.Context) Result {
+	return v, runAction(env.Ctx, "edit actor", "actor:"+v.name, func(ctx context.Context) widget.Result {
 		return env.Actions.ApplyConfig(ctx, edit)
 	})
 }
@@ -125,7 +126,7 @@ func (v actorView) changePlacement(env Env, next []string) (View, tea.Cmd) {
 // most preferred first, so reorder is the edit that matters most; removing the
 // last entry is allowed and clears the list back to the default, unlike the
 // candidate table where an actor needs one candidate.
-func (v actorView) updatePlacementKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v actorView) updatePlacementKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	entries := v.doc.Actors[v.name].Placement
 	n := len(entries)
 
@@ -143,10 +144,10 @@ func (v actorView) updatePlacementKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		v.placeCur = candClamp(n-1, n)
 		v.follow(env)
 	case "pgup":
-		v.placeCur = candClamp(v.placeCur-bodyHeight(env), n)
+		v.placeCur = candClamp(v.placeCur-widget.BodyHeight(env), n)
 		v.follow(env)
 	case "pgdown":
-		v.placeCur = candClamp(v.placeCur+bodyHeight(env), n)
+		v.placeCur = candClamp(v.placeCur+widget.BodyHeight(env), n)
 		v.follow(env)
 	case "shift+up":
 		if n < 2 || v.placeCur <= 0 {
@@ -187,7 +188,7 @@ func (v actorView) updatePlacementKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 // placementPickCmd is the a key here: a listBox of the placements the actor
 // does not list yet. With nothing left to add a listBox would open on its
 // candidates wording, so an empty list is a notice instead.
-func (v actorView) placementPickCmd(env Env) tea.Cmd {
+func (v actorView) placementPickCmd(env widget.Env) tea.Cmd {
 	items := placementPickItems(v.doc, v.name)
 	if len(items) == 0 {
 		return notice("every server is already in " + v.name + "'s placement")

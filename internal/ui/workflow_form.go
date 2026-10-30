@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // addWorkflowForm is the a key's overlay: one field for the path of a workflow
@@ -15,22 +16,22 @@ import (
 // replace confirm an existing name earns.
 type addWorkflowForm struct {
 	ctx      context.Context
-	actions  Actions
+	actions  widget.Actions
 	pathIn   textinput.Model
 	tried    bool
 	problems []string
 }
 
 // newAddWorkflowForm builds the add workflow overlay.
-func newAddWorkflowForm(env Env) addWorkflowForm {
+func newAddWorkflowForm(env widget.Env) addWorkflowForm {
 	in := newFormInput(true)
 	in.Placeholder = "~/workflows/review.yaml"
 	return addWorkflowForm{ctx: env.Ctx, actions: env.Actions, pathIn: in}
 }
 
 // keys is the form's own keys, shown in the footer through overlayKeyer.
-func (f addWorkflowForm) keys() []KeyHelp {
-	return []KeyHelp{{"enter", "add"}, {"esc", "cancel"}}
+func (f addWorkflowForm) keys() []widget.KeyHelp {
+	return []widget.KeyHelp{{Key: "enter", Help: "add"}, {Key: "esc", Help: "cancel"}}
 }
 
 // update handles one key: esc cancels, enter submits, every other key types.
@@ -78,7 +79,7 @@ func (f addWorkflowForm) submit() (overlay, tea.Cmd, bool) {
 // addWorkflowDone reports a stored workflow the way runAction would: the text
 // becomes the notice and the log entry, and Refresh refetches the list. The
 // write already happened, so nothing runs off the update loop here.
-func addWorkflowDone(ctx context.Context, path string, res Result) tea.Cmd {
+func addWorkflowDone(ctx context.Context, path string, res widget.Result) tea.Cmd {
 	return func() tea.Msg {
 		return actionMsg{verb: "add workflow", key: workflowWriteKey("add", path), res: res}
 	}
@@ -97,17 +98,17 @@ func workflowName(err error) string {
 // replaceWorkflowConfirm is the confirm an already-saved name earns. The path
 // is named, and the yes re-calls WorkflowAdd with replace set, so the only
 // thing the second call adds is the overwrite the first refused.
-func replaceWorkflowConfirm(ctx context.Context, a Actions, path, name string) confirmBox {
+func replaceWorkflowConfirm(ctx context.Context, a widget.Actions, path, name string) confirmBox {
 	return confirmBox{
 		kind:   "replace workflow",
 		yes:    "replace",
 		danger: true,
-		title:  "replace " + accentStyle.Bold(true).Render(name) + "?",
+		title:  "replace " + widget.AccentStyle.Bold(true).Render(name) + "?",
 		lines: []string{
-			pad("from", 11) + path,
-			pad("kept", 11) + "the other saved workflows",
+			widget.Pad("from", 11) + path,
+			widget.Pad("kept", 11) + "the other saved workflows",
 		},
-		onYes: runAction(ctx, "add workflow", workflowWriteKey("add", name), func(ctx context.Context) Result {
+		onYes: runAction(ctx, "add workflow", workflowWriteKey("add", name), func(ctx context.Context) widget.Result {
 			return a.WorkflowAdd(ctx, path, true)
 		}),
 	}

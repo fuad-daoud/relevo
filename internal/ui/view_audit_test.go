@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // auditFixtureShell is a loaded shell with ':audit' open and the cursor on
@@ -33,7 +34,7 @@ func auditViewOf(t *testing.T, m Model) auditView {
 func TestAuditRollbackConfirmsThenCalls(t *testing.T) {
 	fa := auditFixtureFake()
 	fa.preview = []relevo.ChangeLine{{Op: "-", Subject: "actor planner", Before: "agent architect"}}
-	fa.result = Result{Text: "rolled back to #4 as #6", Refresh: true}
+	fa.result = widget.Result{Text: "rolled back to #4 as #6", Refresh: true}
 	m := auditFixtureShell(t, fa)
 
 	res, cmd := m.Update(key('R'))
@@ -48,7 +49,7 @@ func TestAuditRollbackConfirmsThenCalls(t *testing.T) {
 	if !box.danger || box.kind != "roll back" {
 		t.Errorf("confirm = kind %q danger %v, want roll back danger", box.kind, box.danger)
 	}
-	if want := "Roll back to " + accentStyle.Bold(true).Render("#4") + "?"; box.title != want {
+	if want := "Roll back to " + widget.AccentStyle.Bold(true).Render("#4") + "?"; box.title != want {
 		t.Errorf("title = %q, want %q", box.title, want)
 	}
 	got := stripANSI(strings.Join(box.lines, "\n"))
@@ -170,19 +171,19 @@ func TestAuditChangesRequestedOncePerRevision(t *testing.T) {
 	}
 }
 
-// :audit without an Actions seam is a notice, as :candidates, :actors and
+// :audit without an widget.Actions seam is a notice, as :candidates, :actors and
 // :agents are.
 func TestAuditNeedsActions(t *testing.T) {
-	env := Env{Ctx: context.Background(), Loaded: true, Now: railNow, Width: 132, Height: 34}
+	env := widget.Env{Ctx: context.Background(), Loaded: true, Now: railNow, Width: 132, Height: 34}
 	cmd := execLine("audit", env, prefs{})
 	if cmd == nil {
-		t.Fatal(":audit with no Actions must return a notice")
+		t.Fatal(":audit with no widget.Actions must return a notice")
 	}
-	msg, ok := cmd().(noticeMsg)
+	msg, ok := cmd().(widget.NoticeMsg)
 	if !ok {
-		t.Fatalf(":audit with no Actions gave %T, want a notice", cmd())
+		t.Fatalf(":audit with no widget.Actions gave %T, want a notice", cmd())
 	}
-	if !strings.Contains(msg.text, "need relevo ui") {
-		t.Errorf("notice = %q", msg.text)
+	if !strings.Contains(msg.Text, "need relevo ui") {
+		t.Errorf("notice = %q", msg.Text)
 	}
 }

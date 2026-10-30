@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // settingsLabelWidth is a settings form field's label column: wider
@@ -47,7 +48,7 @@ type settingsForm struct {
 	touched []bool
 	tried   bool
 	doc     relevo.ConfigDoc
-	env     Env
+	env     widget.Env
 	note    string // one dim sentence row, may be ""
 }
 
@@ -143,7 +144,7 @@ func parseCommand(s string) (any, error) {
 // newSettingsForm builds the form named form, focused on focusKey's field.
 // form is one of the closed list: rounds, check, timing,
 // max_builders, scope, serve.scope, classify.
-func newSettingsForm(env Env, doc relevo.ConfigDoc, form, focusKey string) settingsForm {
+func newSettingsForm(env widget.Env, doc relevo.ConfigDoc, form, focusKey string) settingsForm {
 	cpus := numCPU()
 	byKey := func(key string) relevo.Setting { return settingByKey(doc, cpus, key) }
 
@@ -296,18 +297,18 @@ func (f settingsForm) setFocus(i int) settingsForm {
 
 // footerKeys is the form's keys: enter, tab, esc, plus ←→ choose when
 // any field is a chip row.
-func (f settingsForm) footerKeys() []KeyHelp {
-	keys := []KeyHelp{{"enter", "save"}, {"tab", "next field"}, {"esc", "cancel"}}
+func (f settingsForm) footerKeys() []widget.KeyHelp {
+	keys := []widget.KeyHelp{{Key: "enter", Help: "save"}, {Key: "tab", Help: "next field"}, {Key: "esc", Help: "cancel"}}
 	for _, fld := range f.fields {
 		if fld.chips != nil {
-			return append(keys, KeyHelp{"←→", "choose"})
+			return append(keys, widget.KeyHelp{Key: "←→", Help: "choose"})
 		}
 	}
 	return keys
 }
 
 // keys is the form's own keys, shown in the footer through overlayKeyer.
-func (f settingsForm) keys() []KeyHelp { return f.footerKeys() }
+func (f settingsForm) keys() []widget.KeyHelp { return f.footerKeys() }
 
 // moveChip is left/right on a chip row.
 func (f settingsForm) moveChip(delta int) settingsForm {
@@ -503,7 +504,7 @@ func (f settingsForm) submit() (overlay, tea.Cmd, bool) {
 	edit, err := relevo.EditPolicy(f.doc, sets, f.message())
 	switch {
 	case err == nil:
-		return f, runAction(f.env.Ctx, "set "+f.title, f.title, func(ctx context.Context) Result {
+		return f, runAction(f.env.Ctx, "set "+f.title, f.title, func(ctx context.Context) widget.Result {
 			return f.env.Actions.ApplyConfig(ctx, edit)
 		}), true
 	case errors.Is(err, relevo.ErrNoChange):
@@ -555,10 +556,10 @@ func (f settingsForm) modal(width int) (string, []string, int, bool) {
 		} else {
 			valuePart = formInput(fld.input, focused, "", fieldW)
 			if disabled {
-				valuePart = faintStyle.Render(valuePart)
+				valuePart = widget.FaintStyle.Render(valuePart)
 			}
 			if fld.hint != "" {
-				valuePart += "   " + faintStyle.Render(fld.hint)
+				valuePart += "   " + widget.FaintStyle.Render(fld.hint)
 			}
 		}
 		rows = append(rows, settingsFormLabel(fld.label, focused)+valuePart)
@@ -568,7 +569,7 @@ func (f settingsForm) modal(width int) (string, []string, int, bool) {
 		rows = append(rows, "")
 	}
 	if f.note != "" {
-		rows = append(rows, mutedStyle.Render(f.note))
+		rows = append(rows, widget.MutedStyle.Render(f.note))
 		rows = append(rows, "")
 	}
 	if formErr != "" {
@@ -582,9 +583,9 @@ func (f settingsForm) modal(width int) (string, []string, int, bool) {
 // settingsFormLabel is a settings form row's label, padded wider than
 // formLabel's (17 cells, not 11) because these labels run longer.
 func settingsFormLabel(label string, focused bool) string {
-	style := faintStyle
+	style := widget.FaintStyle
 	if focused {
-		style = accentStyle
+		style = widget.AccentStyle
 	}
-	return style.Render(pad(label, settingsLabelWidth))
+	return style.Render(widget.Pad(label, settingsLabelWidth))
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/db"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -38,7 +39,7 @@ const syncSecretValue = "eyJhbGciOiJIUzI1NiJ9.super-secret-token-value"
 // syncPreOnSnapshot is the fixture for a machine that has never enabled sync: a
 // remote configured and a token stored, no measurement, and one installation --
 // this one. Everything the pre-on form shows comes from here and nowhere else.
-func syncPreOnSnapshot() SyncSnapshot {
+func syncPreOnSnapshot() widget.SyncSnapshot {
 	snap := syncBaseSnapshot()
 	snap.Settings = relevosync.Settings{RemoteURL: syncRemote}
 	snap.RemoteURL = syncRemote
@@ -51,7 +52,7 @@ func syncPreOnSnapshot() SyncSnapshot {
 // opaque revision. The backlog is non-zero on purpose, because a fixture whose
 // backlog is zero cannot tell a view that renders the count from one that
 // hard-codes it.
-func syncPostOnSnapshot() SyncSnapshot {
+func syncPostOnSnapshot() widget.SyncSnapshot {
 	snap := syncBaseSnapshot()
 	snap.Settings = relevosync.Settings{Enabled: true, RemoteURL: syncRemote, Namespace: "default"}
 	snap.RemoteURL = syncRemote
@@ -66,8 +67,8 @@ func syncPostOnSnapshot() SyncSnapshot {
 
 // syncBaseSnapshot is what every fixture shares: this machine's own
 // installation, its size on disk, and the two reads that have not answered yet.
-func syncBaseSnapshot() SyncSnapshot {
-	snap := SyncSnapshot{
+func syncBaseSnapshot() widget.SyncSnapshot {
+	snap := widget.SyncSnapshot{
 		OwnID:       syncOwnID,
 		SharedBytes: 1_610_612_736,
 		Unknown:     true,
@@ -80,12 +81,12 @@ func syncBaseSnapshot() SyncSnapshot {
 }
 
 // syncFake is the fake carrying one snapshot.
-func syncFake(snap SyncSnapshot) *fakeActions {
-	return &fakeActions{snap: snap, syncResult: Result{Text: "ok", Refresh: true}}
+func syncFake(snap widget.SyncSnapshot) *fakeActions {
+	return &fakeActions{snap: snap, syncResult: widget.Result{Text: "ok", Refresh: true}}
 }
 
 // syncModel is the shell with ':sync' open over a snapshot, its read drained.
-func syncModel(t *testing.T, width, height int, snap SyncSnapshot) (Model, *fakeActions) {
+func syncModel(t *testing.T, width, height int, snap widget.SyncSnapshot) (Model, *fakeActions) {
 	t.Helper()
 	fa := syncFake(snap)
 	m := goldenActionModel(t, width, height, fa, view.Report{})
@@ -190,7 +191,7 @@ func TestSyncHaltedErrorGolden(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
-		snap SyncSnapshot
+		snap widget.SyncSnapshot
 	}{
 		{"sync-behind-132", behind},
 		{"sync-err-132", errSnap},
@@ -305,7 +306,7 @@ func TestSyncViewRendersOff(t *testing.T) {
 	if got := detached.SyncToken(); got != relevosync.TokenOff {
 		t.Errorf("an empty snapshot reads as %q, want %q", got, relevosync.TokenOff)
 	}
-	env := Env{Ctx: t.Context(), Now: syncNow, Width: 132, Height: 34, Loaded: true}
+	env := widget.Env{Ctx: t.Context(), Now: syncNow, Width: 132, Height: 34, Loaded: true}
 	if n := len(strings.Split(detached.Body(env, 132, 34), "\n")); n != 34 {
 		t.Errorf("%d lines, want 34", n)
 	}
@@ -313,7 +314,7 @@ func TestSyncViewRendersOff(t *testing.T) {
 
 // TestSyncRendersWithNoNetworkHandle pins the view's safety property: it draws
 // from the snapshot it was handed and from nothing else, on a shell that has an
-// Actions seam within reach of a dial.
+// widget.Actions seam within reach of a dial.
 //
 // The mutation is touching the network on the render path. This test cannot
 // intercept a real dial, so it does the next best thing: the fake records every
@@ -341,9 +342,9 @@ func TestSyncRendersWithNoNetworkHandle(t *testing.T) {
 
 	// And the same view with no seam at all: the shape a serve ui has. It still
 	// renders, because a snapshot is a value and needs nothing to arrive with.
-	env := Env{Ctx: t.Context(), Now: syncNow, Width: 132, Height: 34, Loaded: true}
+	env := widget.Env{Ctx: t.Context(), Now: syncNow, Width: 132, Height: 34, Loaded: true}
 	if env.Actions != nil {
-		t.Fatalf("the no-seam env has an Actions seam")
+		t.Fatalf("the no-seam env has an widget.Actions seam")
 	}
 	detached := syncView{snap: syncPostOnSnapshot(), loaded: true}
 	body := detached.Body(env, 132, 34)
@@ -477,7 +478,7 @@ func TestSyncHeaderAttention(t *testing.T) {
 	behind.State.Backlog = 0 // forced to zero on purpose, see the mutation above
 	behind.Token = relevosync.Token(behind.State)
 
-	syncSay := func(t *testing.T, snap SyncSnapshot) string {
+	syncSay := func(t *testing.T, snap widget.SyncSnapshot) string {
 		t.Helper()
 		fa := syncFake(snap)
 		m := goldenActionModel(t, 132, 34, fa, rep)
@@ -540,20 +541,20 @@ func TestSyncHeaderAttention(t *testing.T) {
 }
 
 // TestSyncCommandRefusedWithoutActions pins the one case the other views already
-// have and this one inherits: without the Actions seam the command is a notice,
+// have and this one inherits: without the widget.Actions seam the command is a notice,
 // not a crash and not a half-working screen.
 func TestSyncCommandRefusedWithoutActions(t *testing.T) {
 	m := goldenModel(t, 132, 34, view.Report{})
 	if m.env().Actions != nil {
-		t.Skip("this shell has an Actions seam")
+		t.Skip("this shell has an widget.Actions seam")
 	}
 	cmd := execLine("sync", m.env(), m.prefs)
-	msg, ok := cmd().(noticeMsg)
+	msg, ok := cmd().(widget.NoticeMsg)
 	if !ok {
 		t.Fatalf(":sync without a seam returned %T, want a notice", cmd())
 	}
-	if !strings.Contains(msg.text, "relevo ui") {
-		t.Errorf("the refusal does not say what is needed: %q", msg.text)
+	if !strings.Contains(msg.Text, "relevo ui") {
+		t.Errorf("the refusal does not say what is needed: %q", msg.Text)
 	}
 }
 
@@ -580,7 +581,7 @@ func TestSyncSnapshotNeverCarriesTheToken(t *testing.T) {
 // dumpSyncSnapshot renders every field of a snapshot, so a test can assert on
 // what a snapshot can and cannot carry rather than on what one render chose to
 // draw.
-func dumpSyncSnapshot(s SyncSnapshot) string {
+func dumpSyncSnapshot(s widget.SyncSnapshot) string {
 	var b strings.Builder
 	b.WriteString(s.Token + "\n")
 	b.WriteString(s.RemoteURL + "\n")
@@ -602,7 +603,7 @@ func dumpSyncSnapshot(s SyncSnapshot) string {
 // message on the screen rather than a panic, because the machine whose section
 // will not parse is exactly the machine a user opens this screen to fix.
 func TestSyncViewRefusesAnUnreadableSection(t *testing.T) {
-	fa := syncFake(SyncSnapshot{})
+	fa := syncFake(widget.SyncSnapshot{})
 	fa.snapErr = errors.New("sync: read the sync section: bad body")
 	m := goldenActionModel(t, 132, 34, fa, view.Report{})
 	m = drain(t, m, execLine("sync", m.env(), m.prefs))
@@ -629,7 +630,7 @@ func TestSyncViewShowsImportTrouble(t *testing.T) {
 		Gaps:    []string{"m3 is held at 7"},
 	}
 
-	env := Env{Ctx: t.Context(), Now: syncNow, Width: 200, Height: 60, Loaded: true}
+	env := widget.Env{Ctx: t.Context(), Now: syncNow, Width: 200, Height: 60, Loaded: true}
 	body := plain(syncView{snap: snap, loaded: true, actions: true}.Body(env, 200, 60))
 	for _, want := range []string{"last export", "last import", "IMPORT TROUBLE", "zen", "m2", "m3"} {
 		if !strings.Contains(body, want) {
@@ -651,7 +652,7 @@ func TestSyncViewSanitizesImportTrouble(t *testing.T) {
 		Gaps:    []string{"m3\x1b]52;c;Zm9v\x07 is held at 7"},
 	}
 
-	env := Env{Ctx: t.Context(), Now: syncNow, Width: 200, Height: 60, Loaded: true}
+	env := widget.Env{Ctx: t.Context(), Now: syncNow, Width: 200, Height: 60, Loaded: true}
 	body := plain(syncView{snap: snap, loaded: true, actions: true}.Body(env, 200, 60))
 	if !strings.Contains(body, "IMPORT TROUBLE") {
 		t.Fatalf("the trouble block is not on screen, so nothing was pinned:\n%s", body)
@@ -675,7 +676,7 @@ func TestSyncViewShowsTheLastRebuild(t *testing.T) {
 	snap := syncPostOnSnapshot()
 	snap.State.Rebuild = relevosync.Rebuild{At: syncNow.Add(-3 * time.Minute), Aside: "/state/relevo-sync-aside"}
 
-	env := Env{Ctx: t.Context(), Now: syncNow, Width: 200, Height: 60, Loaded: true}
+	env := widget.Env{Ctx: t.Context(), Now: syncNow, Width: 200, Height: 60, Loaded: true}
 	body := plain(syncView{snap: snap, loaded: true, actions: true, now: syncNow}.Body(env, 200, 60))
 	for _, want := range []string{"last rebuild", "relevo-sync-aside"} {
 		if !strings.Contains(body, want) {
@@ -702,7 +703,7 @@ func TestSyncViewShowsAFailedAttempt(t *testing.T) {
 		Exported: 2, Applied: 1, Error: "remote down\x1b[2J", Attention: true,
 	}
 
-	env := Env{Ctx: t.Context(), Now: syncNow, Width: 200, Height: 60, Loaded: true}
+	env := widget.Env{Ctx: t.Context(), Now: syncNow, Width: 200, Height: 60, Loaded: true}
 	body := plain(syncView{snap: snap, loaded: true, actions: true, now: syncNow}.Body(env, 200, 60))
 	for _, want := range []string{"last attempt", "failed", "remote down", "exported 2", "applied 1", "needs attention"} {
 		if !strings.Contains(body, want) {
@@ -714,7 +715,7 @@ func TestSyncViewShowsAFailedAttempt(t *testing.T) {
 
 func TestSyncViewShowsACleanAttemptAndNoneWhenAbsent(t *testing.T) {
 	snap := syncPostOnSnapshot()
-	env := Env{Ctx: t.Context(), Now: syncNow, Width: 200, Height: 60, Loaded: true}
+	env := widget.Env{Ctx: t.Context(), Now: syncNow, Width: 200, Height: 60, Loaded: true}
 	body := plain(syncView{snap: snap, loaded: true, actions: true, now: syncNow}.Body(env, 200, 60))
 	if strings.Contains(body, "last attempt") {
 		t.Errorf("a machine with no recorded attempt drew one:\n%s", body)

@@ -77,7 +77,7 @@ func (l *liveRuntime) Refresh() error {
 	return nil
 }
 
-// liveSource is the Source `relevo ui` runs on: every read goes through the
+// liveSource is the widget.Source `relevo ui` runs on: every read goes through the
 // shared runtime, so the fleet refresh and the tab views always agree.
 type liveSource struct {
 	live *liveRuntime

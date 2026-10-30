@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -106,7 +107,7 @@ type workflowEditAfterMsg struct {
 // the editor works on. The stored source and definition come with it, so an edit
 // can keep the file: seeds the stored copy embedded and can check the name
 // against the workflow it was opened on.
-func workflowEditStart(env Env, name string) (workflowEditStep, error) {
+func workflowEditStart(env widget.Env, name string) (workflowEditStep, error) {
 	source, shipped, err := env.Actions.WorkflowSource(name)
 	if err != nil {
 		return workflowEditStep{}, err
@@ -154,7 +155,7 @@ func workflowEditWrite(step workflowEditStep, buf []byte) error {
 // workflowEditRunCmd runs the editor on the buffer and hands the loop's state
 // back to the view when it exits. The editor never runs, so a command that
 // cannot be built ends the loop here rather than leaving a temp file behind.
-func workflowEditRunCmd(env Env, step workflowEditStep) tea.Cmd {
+func workflowEditRunCmd(env widget.Env, step workflowEditStep) tea.Cmd {
 	cmd, err := env.Actions.AgentEditor(step.path)
 	if err != nil {
 		return workflowEditStop(step, err.Error())
@@ -173,7 +174,7 @@ func workflowEditStop(step workflowEditStep, text string) tea.Cmd {
 // editCmd is the e key: the user's editor on the cursor workflow's source, with
 // the terminal released while it runs. A shipped workflow has no saved source,
 // so the key is a notice and no editor opens.
-func (v workflowsView) editCmd(env Env, w relevo.WorkflowSummary) tea.Cmd {
+func (v workflowsView) editCmd(env widget.Env, w relevo.WorkflowSummary) tea.Cmd {
 	if w.Origin == relevo.WorkflowOriginShipped {
 		return notice(workflowEditShippedNotice)
 	}
@@ -192,7 +193,7 @@ func (v workflowsView) editCmd(env Env, w relevo.WorkflowSummary) tea.Cmd {
 // Otherwise the pass decides: a workflow to store goes through the same audited
 // config edit every other cockpit write makes, a no-op ends the loop, and any
 // other result rewrites the temp file and opens the editor again on it.
-func (v workflowsView) editAfter(env Env, msg workflowEditAfterMsg) tea.Cmd {
+func (v workflowsView) editAfter(env widget.Env, msg workflowEditAfterMsg) tea.Cmd {
 	step := msg.step
 	if msg.err != nil {
 		return workflowEditStop(step, "editor exited; nothing changed")
@@ -206,13 +207,13 @@ func (v workflowsView) editAfter(env Env, msg workflowEditAfterMsg) tea.Cmd {
 
 // editPass carries out one transition. It is its own step so a test can drive the
 // loop's decisions without an editor.
-func (v workflowsView) editPass(env Env, step workflowEditStep, res workflowEditResult) tea.Cmd {
+func (v workflowsView) editPass(env widget.Env, step workflowEditStep, res workflowEditResult) tea.Cmd {
 	switch res.end {
 	case workflowEditSaved:
 		step.prev = res.prev
 		os.Remove(step.path)
 		return runAction(env.Ctx, "edit workflow", workflowWriteKey("edit", step.name),
-			func(ctx context.Context) Result {
+			func(ctx context.Context) widget.Result {
 				return env.Actions.WorkflowSave(ctx, step.name, res.source, res.def)
 			})
 	case workflowEditDone:

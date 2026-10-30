@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -29,13 +30,13 @@ type chainsView struct {
 }
 
 // newChainsView builds ':chains' and the command that loads its doc.
-func newChainsView(env Env) (View, tea.Cmd) {
+func newChainsView(env widget.Env) (widget.View, tea.Cmd) {
 	v := chainsView{actions: env.Actions != nil}
 	return v, chainsDocCmd(env)
 }
 
 // chainsDocCmd reads chains off the update loop.
-func chainsDocCmd(env Env) tea.Cmd {
+func chainsDocCmd(env widget.Env) tea.Cmd {
 	return func() tea.Msg {
 		if env.Actions == nil {
 			return chainsDocMsg{}
@@ -168,10 +169,10 @@ func chainsWhereWidth(doc relevo.ChainsDoc) int {
 
 // chainsHeaderLine renders the table header row.
 func chainsHeaderLine(nameW int, cols []chainCol, cw int) string {
-	style := faintStyle.Bold(true)
-	cells := []candCell{{text: pad("NAME", nameW), style: style}}
+	style := widget.FaintStyle.Bold(true)
+	cells := []candCell{{text: widget.Pad("NAME", nameW), style: style}}
 	for _, c := range cols {
-		cells = append(cells, candCell{text: pad(c.head, c.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(c.head, c.w), style: style})
 	}
 	return candLine(cells, false, cw)
 }
@@ -179,55 +180,55 @@ func chainsHeaderLine(nameW int, cols []chainCol, cw int) string {
 // chainStatusText returns the status display text and style, marking stale server chains.
 func chainStatusText(c relevo.ChainEntry) (string, lipgloss.Style) {
 	if c.Stale != "" {
-		return "stale", warnStyle
+		return "stale", widget.WarnStyle
 	}
 	switch c.Status {
 	case string(chain.StatusRunning):
-		return "running", greenStyle
+		return "running", widget.GreenStyle
 	case string(chain.StatusHalted):
-		return "halted", redStyle
+		return "halted", widget.RedStyle
 	case string(chain.StatusStopped):
-		return "stopped", mutedStyle
+		return "stopped", widget.MutedStyle
 	case string(chain.StatusDone):
-		return "done", faintStyle
+		return "done", widget.FaintStyle
 	case string(chain.StatusGone):
 		// A chain the server released: the warn tone says its status could not
 		// be read, not that the chain is waiting on the human.
-		return "gone", warnStyle
+		return "gone", widget.WarnStyle
 	default:
-		return sanitizeText(c.Status), mutedStyle
+		return sanitizeText(c.Status), widget.MutedStyle
 	}
 }
 
 // chainDataLine renders one chain's table row with indentation for depth.
 func chainDataLine(c relevo.ChainEntry, sel bool, nameW int, cols []chainCol, cw int) string {
-	nameStyle := textStyle
+	nameStyle := widget.TextStyle
 	if sel {
 		nameStyle = nameStyle.Bold(true)
 	}
 	indent := strings.Repeat("  ", c.Depth)
 	displayName := indent + c.Name
-	cells := []candCell{{text: pad(displayName, nameW), style: nameStyle}}
+	cells := []candCell{{text: widget.Pad(displayName, nameW), style: nameStyle}}
 
 	statusText, statusStyle := chainStatusText(c)
 
 	for _, col := range cols {
 		text := ""
-		style := mutedStyle
+		style := widget.MutedStyle
 		switch col.key {
 		case "status":
 			text, style = statusText, statusStyle
 		case "step":
 			text = sanitizeText(c.Step)
 			if text == "" {
-				text, style = "—", faintStyle
+				text, style = "—", widget.FaintStyle
 			}
 		case "plans":
 			text = fmt.Sprintf("%d/%d", c.PlanPos, c.PlanTotal)
 		case "age":
 			text = view.AgeText(c.Elapsed)
 			if text == "" {
-				text, style = "—", faintStyle
+				text, style = "—", widget.FaintStyle
 			}
 		case "where":
 			text = c.Where
@@ -235,7 +236,7 @@ func chainDataLine(c relevo.ChainEntry, sel bool, nameW int, cols []chainCol, cw
 				text = "local"
 			}
 		}
-		cells = append(cells, candCell{text: pad(text, col.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(text, col.w), style: style})
 	}
 	return candLine(cells, sel, cw)
 }
@@ -244,12 +245,12 @@ func chainDataLine(c relevo.ChainEntry, sel bool, nameW int, cols []chainCol, cw
 func chainReasonLine(c relevo.ChainEntry, sel bool, cw int) string {
 	indent := strings.Repeat("  ", c.Depth)
 	text := indent + "  " + sanitizeText(c.Reason)
-	cells := []candCell{{text: text, style: faintStyle}}
+	cells := []candCell{{text: text, style: widget.FaintStyle}}
 	return candLine(cells, sel, cw)
 }
 
 // bodyLines builds all rendered table lines before viewport windowing.
-func (v chainsView) bodyLines(env Env, width int) []string {
+func (v chainsView) bodyLines(env widget.Env, width int) []string {
 	nameW, cols := chainsLayout(width, v.doc)
 	cw := width - 6
 	if cw < 0 {
@@ -269,12 +270,12 @@ func (v chainsView) bodyLines(env Env, width int) []string {
 }
 
 // follow scrolls the viewport to keep the selected chain visible.
-func (v *chainsView) follow(env Env) {
+func (v *chainsView) follow(env widget.Env) {
 	if len(v.doc.Chains) == 0 {
 		v.top = 0
 		return
 	}
-	avail := bodyHeight(env)
+	avail := widget.BodyHeight(env)
 	if avail <= 0 {
 		v.top = 0
 		return
@@ -293,26 +294,26 @@ func (v *chainsView) follow(env Env) {
 	if sel >= v.top+avail {
 		v.top = sel - avail + 1
 	}
-	v.top = clamp(v.top, 0, max(0, len(lines)-avail))
+	v.top = widget.Clamp(v.top, 0, max(0, len(lines)-avail))
 }
 
 func (v chainsView) Crumbs() []string { return []string{"chains"} }
 
 func (v chainsView) Capturing() bool { return false }
 
-func (v chainsView) Keys() []KeyHelp {
+func (v chainsView) Keys() []widget.KeyHelp {
 	if !v.actions {
 		return nil
 	}
-	return []KeyHelp{
-		{"↑↓", "move"},
-		{"enter", "steps"},
-		{"t", "trace"},
-		{"esc", "back"},
+	return []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "enter", Help: "steps"},
+		{Key: "t", Help: "trace"},
+		{Key: "esc", Help: "back"},
 	}
 }
 
-func (v chainsView) HelpKeys() []KeyHelp { return v.Keys() }
+func (v chainsView) HelpKeys() []widget.KeyHelp { return v.Keys() }
 
 func pluralChain(n int) string {
 	if n == 1 {
@@ -321,7 +322,7 @@ func pluralChain(n int) string {
 	return "chains"
 }
 
-func (v chainsView) Context(env Env) (string, string) {
+func (v chainsView) Context(env widget.Env) (string, string) {
 	running, halted, stopped, done, gone := 0, 0, 0, 0, 0
 	for _, c := range v.doc.Chains {
 		switch c.Status {
@@ -338,42 +339,42 @@ func (v chainsView) Context(env Env) (string, string) {
 		}
 	}
 	part := func(n int, label string, style lipgloss.Style) string {
-		return textStyle.Bold(true).Render(fmt.Sprintf("%d", n)) + " " + style.Render(label)
+		return widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", n)) + " " + style.Render(label)
 	}
-	left := "   " + part(len(v.doc.Chains), pluralChain(len(v.doc.Chains)), mutedStyle)
+	left := "   " + part(len(v.doc.Chains), pluralChain(len(v.doc.Chains)), widget.MutedStyle)
 	if running > 0 {
-		left += "   " + part(running, "running", greenStyle)
+		left += "   " + part(running, "running", widget.GreenStyle)
 	}
 	if halted > 0 {
-		left += "   " + part(halted, "halted", redStyle)
+		left += "   " + part(halted, "halted", widget.RedStyle)
 	}
 	if stopped > 0 {
-		left += "   " + part(stopped, "stopped", mutedStyle)
+		left += "   " + part(stopped, "stopped", widget.MutedStyle)
 	}
 	if done > 0 {
-		left += "   " + part(done, "done", faintStyle)
+		left += "   " + part(done, "done", widget.FaintStyle)
 	}
 	if gone > 0 {
-		left += "   " + part(gone, "gone", warnStyle)
+		left += "   " + part(gone, "gone", widget.WarnStyle)
 	}
 	return left, ""
 }
 
-func (v chainsView) Body(env Env, width, height int) string {
+func (v chainsView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
 	if !v.loaded && v.err != nil {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	if len(v.doc.Chains) == 0 {
-		return strings.Join(statsCentered("no chains", width, height), "\n")
+		return strings.Join(widget.Centered("no chains", width, height), "\n")
 	}
 	lines := v.bodyLines(env, width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -381,10 +382,10 @@ func (v chainsView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
-func (v chainsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v chainsView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case chainsDocMsg:
 		if msg.err != nil {
@@ -400,7 +401,7 @@ func (v chainsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	case statusMsg:
 		return v, chainsDocCmd(env)
 
-	case tickMsg:
+	case widget.TickMsg:
 		return v, chainsDocCmd(env)
 
 	case tea.KeyMsg:
@@ -412,7 +413,7 @@ func (v chainsView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 	return v, nil
 }
 
-func (v chainsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v chainsView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	n := len(v.doc.Chains)
 	switch k.String() {
 	case "up", "k":
@@ -428,10 +429,10 @@ func (v chainsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		v.cur = candClamp(n-1, n)
 		v.follow(env)
 	case "pgup":
-		v.cur = candClamp(v.cur-bodyHeight(env), n)
+		v.cur = candClamp(v.cur-widget.BodyHeight(env), n)
 		v.follow(env)
 	case "pgdown":
-		v.cur = candClamp(v.cur+bodyHeight(env), n)
+		v.cur = candClamp(v.cur+widget.BodyHeight(env), n)
 		v.follow(env)
 	case "enter":
 		v, cmd := v.open(env)
@@ -447,7 +448,7 @@ func (v chainsView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 // open pushes the cursor's chain's steps, carrying the read model it already
 // holds so the steps view needs no second read. A chain with no steps of its
 // own says so rather than opening an empty table.
-func (v chainsView) open(env Env) (View, tea.Cmd) {
+func (v chainsView) open(env widget.Env) (widget.View, tea.Cmd) {
 	c := v.doc.Chains[candClamp(v.cur, len(v.doc.Chains))]
 	if len(c.Steps) == 0 {
 		return v, notice(c.Name + " has no steps: it ran on the fixed state machine")
@@ -456,7 +457,7 @@ func (v chainsView) open(env Env) (View, tea.Cmd) {
 }
 
 // openTrace pushes the cursor's chain's trace, read off the update loop.
-func (v chainsView) openTrace(env Env) tea.Cmd {
+func (v chainsView) openTrace(env widget.Env) tea.Cmd {
 	c := v.doc.Chains[candClamp(v.cur, len(v.doc.Chains))]
 	if env.Actions == nil {
 		return notice("a chain's trace needs relevo ui on this machine")

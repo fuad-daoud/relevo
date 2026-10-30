@@ -206,13 +206,13 @@ func TestColonInsideRoundsFilterIsForwarded(t *testing.T) {
 }
 
 // TestRoundsSavePrefsOnChange: a query and a sort change in the rounds view
-// are persisted through prefMsg.
+// are persisted through widget.PrefMsg.
 func TestRoundsSavePrefsOnChange(t *testing.T) {
 	ps := testPrefsStore(t)
 	m := dashHostModel(t, 140, 40, Options{Prefs: ps}, threeRows()...)
 	m = typeLine(t, m, "rounds")
 
-	// Sort: s changes the screen's sort key, and the prefMsg must save.
+	// Sort: s changes the screen's sort key, and the widget.PrefMsg must save.
 	res, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m = res.(Model)
 	m = drain(t, m, cmd)

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -14,123 +13,12 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/chain"
-	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
-	"github.com/fuad-daoud/relevo/internal/workflow"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
-
-// Actions is the cockpit's write seam (§1, §4.2): one method per key that
-// changes something, each one a thin call into the same internal/relevo
-// function the CLI verb calls. A nil Actions (serve ui) hides every action
-// key and makes one do nothing.
-type Actions interface {
-	Stop(ctx context.Context, key string) Result
-	Done(ctx context.Context, key string) Result
-	Unbind(ctx context.Context, key string) Result // always archives
-	Gate(ctx context.Context, subject string, forDur time.Duration, reason string) Result
-	Ungate(ctx context.Context, subject string) Result
-	Shell(key string) (*exec.Cmd, error) // a shell in the binding's tree
-
-	// Round 2: the acts that need a file (send, retry) or a new binding
-	// (bind).
-	Send(ctx context.Context, key, planFile string) Result
-	Bind(ctx context.Context, in BindInput) Result
-	Retry(ctx context.Context, key, candidate string) Result
-	Candidates(role string) []string // names, in the role's order
-	Chains(ctx context.Context) (relevo.ChainsDoc, error)
-	// ChainTrace is one chain's ordered trace rows, read the same way for a
-	// local and a server chain: a server chain's rows come from the server.
-	ChainTrace(ctx context.Context, name string) (relevo.ChainTraceDoc, error)
-
-	// The config views (round 2): the stored config, one validated edit
-	// applied and reloaded, and one candidate probed.
-	ConfigDoc() (relevo.ConfigDoc, error)                        // the stored config, freshly read
-	ApplyConfig(ctx context.Context, e relevo.ConfigEdit) Result // write one edit, then reload this adapter's runtime
-	// ServerProbes checks every configured server's reachability and this
-	// client's enrollment on it, the same relevo.ProbeServers `relevo config
-	// server list` runs. No config store, or a nil adapter, is an empty
-	// answer rather than a failure.
-	ServerProbes(ctx context.Context) []relevo.ServerProbe
-	// The audit view (round 6): every revision, one revision's changes in
-	// human words, the same for a roll back's preview, and the roll back
-	// itself.
-	ConfigLog() ([]db.RevisionRow, error)                 // every revision, newest first, no snapshots
-	ConfigChanges(rev int64) ([]relevo.ChangeLine, error) // one revision's changes, in human words
-	RollbackPreview(rev int64) ([]relevo.ChangeLine, error)
-	Rollback(ctx context.Context, rev int64) Result
-	Probe(ctx context.Context, name string) Result // probe one candidate (spawns its harness)
-
-	// The agents view (round 5): one agent's definition files across the
-	// harnesses that carry it, one file reset to the copy relevo ships,
-	// and the user's editor for one file.
-	AgentFiles(agent string) ([]harness.AgentFile, error)          // the dry-run install state of one agent
-	ResetAgentFile(ctx context.Context, kind, agent string) Result // overwrite one definition file
-	AgentEditor(path string) (*exec.Cmd, error)                    // the user's editor on one file
-
-	// The round view's artifacts tab (round 5b): the pager, browser or
-	// editor for one artifact. Like Shell and AgentEditor it returns the
-	// command without running it, so the cockpit can run the pager and the
-	// editor under tea.ExecProcess and start the browser detached.
-	OpenArtifact(path, kind string) (*exec.Cmd, error)
-
-	// The workflows view: every workflow this machine can start a chain
-	// with, one workflow's source (or, for a shipped one, its definition as
-	// JSON), one workflow's step graph, and the two writes that add from a
-	// file and remove a saved one. Each write's Result.Refresh reloads this
-	// adapter's runtime, the way ApplyConfig's does.
-	Workflows() ([]relevo.WorkflowSummary, error)
-	WorkflowSource(name string) (string, bool, error)
-	WorkflowGraph(name string) ([]relevo.GraphRow, error)
-	WorkflowAdd(ctx context.Context, path string, replace bool) Result
-	WorkflowRemove(ctx context.Context, name string) Result
-	// The edit loop's three reads and its write. WorkflowDefinition is the
-	// parsed definition WorkflowEditRound validates the edited source
-	// against, and WorkflowActors the actors it may name, both read the way the
-	// CLI's edit loop reads them.
-	WorkflowDefinition(name string) (workflow.Definition, error)
-	WorkflowActors() map[string]workflow.ActorInfo
-	WorkflowSave(ctx context.Context, name, source string, def workflow.Definition) Result
-
-	// The sync view (S5). SyncSnapshot is every value the view renders that no
-	// key changes: the machine-local state and its token, the settings, the
-	// snapshot the last measured tick recorded, the installation directory and
-	// the remote bindings that carry no link. It is read off the update loop
-	// and holds no handle, so the view can draw it with the network blackholed.
-	//
-	// The token is reported only as present or absent. Its value never leaves
-	// the function that read it: a snapshot that could render a credential is a
-	// snapshot that can leak one into a screen or a log.
-	SyncSnapshot() (SyncSnapshot, error)
-	// SyncPush and SyncPull are S3's two calls, each bounded the way the CLI
-	// verb bounds it.
-	SyncPush(ctx context.Context) Result
-	SyncPull(ctx context.Context) Result
-	// SyncTest asks the remote for its stats without changing a byte here.
-	SyncTest(ctx context.Context) Result
-	// SyncDisable is S4's turn-off, run whole and in the order its contract
-	// fixes.
-	SyncDisable(ctx context.Context) Result
-	// SyncEditor is the user's editor on the sync section, like AgentEditor
-	// and Shell return the command rather than running it.
-	SyncEditor() (*exec.Cmd, error)
-}
-
-// BindInput is one b key's answers (§3): the new binding's name, the
-// candidate it should run ("" means resolve the policy pick), and its feature
-// label.
-type BindInput struct{ Name, Candidate, Feature string }
-
-// Result is what one action did. Text is what the CLI would print on success
-// (StopText, DoneText, ...), multi-line allowed; Err is the failure the CLI
-// would have returned; Refresh asks the shell to refetch status now.
-type Result struct {
-	Text    string
-	Err     error
-	Refresh bool
-}
 
 // mastermindActions is the real Actions: a thin adapter over internal/relevo.
 // repo is os.Getwd() at start, or "" when not inside a git repo (round 2's
@@ -158,10 +46,10 @@ func (a *mastermindActions) resolve(key string) (relevo.Runtime, string, bool) {
 // Stop ends the binding's open round (§4.2). Nothing to stop is an answer,
 // not a failure: the text says so and Err stays nil, exactly as
 // `relevo stop` prints it (cmd/relevo/main.go cmdStop).
-func (a *mastermindActions) Stop(ctx context.Context, key string) Result {
+func (a *mastermindActions) Stop(ctx context.Context, key string) widget.Result {
 	rt, name, ok := a.resolve(key)
 	if !ok {
-		return Result{Err: errors.New("unknown binding")}
+		return widget.Result{Err: errors.New("unknown binding")}
 	}
 	res, err := relevo.Stop(ctx, rt, name, relevo.StopOptions{})
 	if errors.Is(err, relevo.ErrNothingToStop) {
@@ -171,28 +59,28 @@ func (a *mastermindActions) Stop(ctx context.Context, key string) Result {
 		// command. It is an answer, not a failure, exactly as the binding case
 		// is -- Err stays nil either way.
 		if row, cerr := rt.Store.Chain(name); cerr == nil && row.Status == string(chain.StatusHalted) {
-			return Result{Text: relevo.ChainHaltedStopText(name), Refresh: true}
+			return widget.Result{Text: relevo.ChainHaltedStopText(name), Refresh: true}
 		}
-		return Result{Text: fmt.Sprintf("nothing to stop: %s has no open round", name), Refresh: true}
+		return widget.Result{Text: fmt.Sprintf("nothing to stop: %s has no open round", name), Refresh: true}
 	}
 	if err != nil {
-		return Result{Err: err, Refresh: true}
+		return widget.Result{Err: err, Refresh: true}
 	}
-	return Result{Text: relevo.StopText(name, res), Refresh: true}
+	return widget.Result{Text: relevo.StopText(name, res), Refresh: true}
 }
 
 // Done marks the binding done. On ErrStopFailed the CLI prints the text and
 // still returns the error, so both come back (§4.2).
-func (a *mastermindActions) Done(ctx context.Context, key string) Result {
+func (a *mastermindActions) Done(ctx context.Context, key string) widget.Result {
 	rt, name, ok := a.resolve(key)
 	if !ok {
-		return Result{Err: errors.New("unknown binding")}
+		return widget.Result{Err: errors.New("unknown binding")}
 	}
 	res, err := relevo.Done(ctx, rt, name)
 	if err != nil && !errors.Is(err, relevo.ErrStopFailed) {
-		return Result{Err: err, Refresh: true}
+		return widget.Result{Err: err, Refresh: true}
 	}
-	out := Result{Text: relevo.DoneText(name, res), Refresh: true}
+	out := widget.Result{Text: relevo.DoneText(name, res), Refresh: true}
 	if err != nil {
 		out.Err = err
 	}
@@ -201,29 +89,29 @@ func (a *mastermindActions) Done(ctx context.Context, key string) Result {
 
 // Unbind archives the binding: the cockpit's unbind always passes archive
 // true, so the round log survives (§4.2).
-func (a *mastermindActions) Unbind(ctx context.Context, key string) Result {
+func (a *mastermindActions) Unbind(ctx context.Context, key string) widget.Result {
 	rt, name, ok := a.resolve(key)
 	if !ok {
-		return Result{Err: errors.New("unknown binding")}
+		return widget.Result{Err: errors.New("unknown binding")}
 	}
 	res, err := relevo.Unbind(ctx, rt, name, true)
 	if errors.Is(err, relevo.ErrWorktreeKept) {
 		err = fmt.Errorf("%w; %s", err, relevo.KeptHint(name))
 	}
 	if err != nil {
-		return Result{Err: err, Refresh: true}
+		return widget.Result{Err: err, Refresh: true}
 	}
-	return Result{Text: relevo.UnbindText(name, res), Refresh: true}
+	return widget.Result{Text: relevo.UnbindText(name, res), Refresh: true}
 }
 
 // Gate records a rate limit on subject's provider and forwards it, the same
 // text `relevo gate <token>` prints (cmd/relevo/main.go gateUnavailable).
 // subject is a candidate name or canonical token; forDur 0 means "until
 // cleared" (§4.2, §4.3).
-func (a *mastermindActions) Gate(ctx context.Context, subject string, forDur time.Duration, reason string) Result {
+func (a *mastermindActions) Gate(ctx context.Context, subject string, forDur time.Duration, reason string) widget.Result {
 	rt, _, ok := a.resolve(subject)
 	if !ok {
-		return Result{Err: errors.New("unknown binding")}
+		return widget.Result{Err: errors.New("unknown binding")}
 	}
 
 	var until time.Time
@@ -233,7 +121,7 @@ func (a *mastermindActions) Gate(ctx context.Context, subject string, forDur tim
 
 	provider, err := availability.Unavailable(relevo.AvailabilityDeps(rt), subject, until, reason)
 	if err != nil {
-		return Result{Err: err, Refresh: true}
+		return widget.Result{Err: err, Refresh: true}
 	}
 	count := 0
 	if rt.Candidates != nil {
@@ -253,21 +141,21 @@ func (a *mastermindActions) Gate(ctx context.Context, subject string, forDur tim
 	}
 	lines = append(lines, relevo.ForwardUnavailable(ctx, rt, subject, reason, until)...)
 
-	return Result{Text: strings.Join(lines, "\n"), Refresh: true}
+	return widget.Result{Text: strings.Join(lines, "\n"), Refresh: true}
 }
 
 // Ungate clears every rate-limit gate on subject's provider and forwards the
 // clear, the same text `relevo gate --clear` prints (cmd/relevo/main.go
 // gateClear). An ungate is never destructive, so it has no confirm (§4.3).
-func (a *mastermindActions) Ungate(ctx context.Context, subject string) Result {
+func (a *mastermindActions) Ungate(ctx context.Context, subject string) widget.Result {
 	rt, _, ok := a.resolve(subject)
 	if !ok {
-		return Result{Err: errors.New("unknown binding")}
+		return widget.Result{Err: errors.New("unknown binding")}
 	}
 
 	provider, removed, err := availability.Available(relevo.AvailabilityDeps(rt), subject, availability.ClearedByMasterMind)
 	if err != nil {
-		return Result{Err: err, Refresh: true}
+		return widget.Result{Err: err, Refresh: true}
 	}
 
 	var lines []string
@@ -278,7 +166,7 @@ func (a *mastermindActions) Ungate(ctx context.Context, subject string) Result {
 	}
 	lines = append(lines, relevo.ForwardAvailable(ctx, rt, subject)...)
 
-	return Result{Text: strings.Join(lines, "\n"), Refresh: true}
+	return widget.Result{Text: strings.Join(lines, "\n"), Refresh: true}
 }
 
 // ensureYou returns the human mastermind's id, creating the record on first use
@@ -307,16 +195,16 @@ func ensureYou(rt relevo.Runtime) (string, error) {
 // Send files planFile as the binding's next round, the same call `relevo send`
 // makes (§4.5). The text is the pick line, the drift line when there is one,
 // then the round that was filed.
-func (a *mastermindActions) Send(ctx context.Context, key, planFile string) Result {
+func (a *mastermindActions) Send(ctx context.Context, key, planFile string) widget.Result {
 	rt, name, ok := a.resolve(key)
 	if !ok {
-		return Result{Err: errors.New("unknown binding")}
+		return widget.Result{Err: errors.New("unknown binding")}
 	}
 	res, err := relevo.Send(ctx, rt, name, planFile, relevo.SendOptions{})
 	if err != nil {
-		return Result{Err: err, Refresh: true}
+		return widget.Result{Err: err, Refresh: true}
 	}
-	return Result{Text: sendText(name, res), Refresh: true}
+	return widget.Result{Text: sendText(name, res), Refresh: true}
 }
 
 // sendText is what a send prints: the pick line, the drift line when there is
@@ -337,13 +225,13 @@ func sendText(name string, res relevo.SendResult) string {
 // relevo.Add the `relevo bind` verb calls, with `you` as the owner. The text
 // is `added <name>: builder <candidate> on <tree>`, then the gated note and
 // the pick note, as runAdd prints them (cmd/relevo/main.go:1509-1604).
-func (a *mastermindActions) Bind(ctx context.Context, in BindInput) Result {
+func (a *mastermindActions) Bind(ctx context.Context, in widget.BindInput) widget.Result {
 	if a.repo == "" {
-		return Result{Err: errors.New("start relevo ui inside a git repository to bind")}
+		return widget.Result{Err: errors.New("start relevo ui inside a git repository to bind")}
 	}
 	you, err := ensureYou(a.runtime())
 	if err != nil {
-		return Result{Err: err, Refresh: true}
+		return widget.Result{Err: err, Refresh: true}
 	}
 	res, err := relevo.Add(ctx, a.runtime(), relevo.AddOptions{
 		Name:         in.Name,
@@ -353,7 +241,7 @@ func (a *mastermindActions) Bind(ctx context.Context, in BindInput) Result {
 		Feature:      in.Feature,
 	})
 	if err != nil {
-		return Result{Err: err, Refresh: true}
+		return widget.Result{Err: err, Refresh: true}
 	}
 
 	tree := res.Worktree
@@ -368,7 +256,7 @@ func (a *mastermindActions) Bind(ctx context.Context, in BindInput) Result {
 	if n := bindPickNote(a.runtime(), res.Resolution); n != "" {
 		lines = append(lines, n)
 	}
-	return Result{Text: strings.Join(lines, "\n"), Refresh: true}
+	return widget.Result{Text: strings.Join(lines, "\n"), Refresh: true}
 }
 
 // bindPickNote is notePick's line (cmd/relevo/main.go:842-847): the pick, in
@@ -385,10 +273,10 @@ func bindPickNote(rt relevo.Runtime, res relevo.Resolution) string {
 // round if there is one (and resend that round), else resend the newest round
 // with a recorded plan; then Send the plan bytes with the candidate, which
 // persists as the binding's builder from that round on.
-func (a *mastermindActions) Retry(ctx context.Context, key, candidate string) Result {
+func (a *mastermindActions) Retry(ctx context.Context, key, candidate string) widget.Result {
 	rt, name, ok := a.resolve(key)
 	if !ok {
-		return Result{Err: errors.New("unknown binding")}
+		return widget.Result{Err: errors.New("unknown binding")}
 	}
 
 	stopped, err := relevo.Stop(ctx, rt, name, relevo.StopOptions{})
@@ -404,30 +292,30 @@ func (a *mastermindActions) Retry(ctx context.Context, key, candidate string) Re
 			// "no plan recorded for <name> round <N>" is the notice (§6).
 			b, lerr := rt.Store.Load(name)
 			if lerr != nil {
-				return Result{Err: lerr, Refresh: true}
+				return widget.Result{Err: lerr, Refresh: true}
 			}
 			round = b.Round - 1
 		}
 	default:
-		return Result{Err: err, Refresh: true}
+		return widget.Result{Err: err, Refresh: true}
 	}
 
 	plan, err := relevo.RetryPlan(rt, name, round)
 	if err != nil {
-		return Result{Err: err, Refresh: true}
+		return widget.Result{Err: err, Refresh: true}
 	}
 
 	tmpPath, err := store.WriteTemp(store.StoreRoot(rt.Store), "relevo-retry-"+name+"-*.md", plan)
 	if err != nil {
-		return Result{Err: err, Refresh: true}
+		return widget.Result{Err: err, Refresh: true}
 	}
 	defer os.Remove(tmpPath)
 
 	res, err := relevo.Send(ctx, rt, name, tmpPath, relevo.SendOptions{Builder: candidate})
 	if err != nil {
-		return Result{Err: err, Refresh: true}
+		return widget.Result{Err: err, Refresh: true}
 	}
-	return Result{Text: sendText(name, res), Refresh: true}
+	return widget.Result{Text: sendText(name, res), Refresh: true}
 }
 
 // lastPlannedRound is the highest round with a plan recorded, 0 when none is:
@@ -488,39 +376,39 @@ func (a *mastermindActions) ConfigDoc() (relevo.ConfigDoc, error) {
 // the store (§4.2): the sections ConfigWatcher.Refresh would replace. An error
 // from the write is a failure; a failed reload after a successful write is not,
 // because the write already happened, so the text says so.
-func (a *mastermindActions) ApplyConfig(ctx context.Context, e relevo.ConfigEdit) Result {
+func (a *mastermindActions) ApplyConfig(ctx context.Context, e relevo.ConfigEdit) widget.Result {
 	if a.runtime().Config == nil {
-		return Result{Err: errors.New("no config store")}
+		return widget.Result{Err: errors.New("no config store")}
 	}
 	if err := relevo.WriteConfigEdit(a.runtime().Config, e); err != nil {
-		return Result{Err: err, Refresh: true}
+		return widget.Result{Err: err, Refresh: true}
 	}
 	if err := a.live.Refresh(); err != nil {
-		return Result{Text: "saved; reload failed: " + err.Error(), Refresh: true}
+		return widget.Result{Text: "saved; reload failed: " + err.Error(), Refresh: true}
 	}
-	return Result{Text: e.Message, Refresh: true}
+	return widget.Result{Text: e.Message, Refresh: true}
 }
 
 // Probe spawns one candidate's harness headless and measures it (§4.2), the
 // same relevo.Probe `relevo probe <token>` runs. The result is one formatted
 // line; a sample carrying an error is that error.
-func (a *mastermindActions) Probe(ctx context.Context, name string) Result {
+func (a *mastermindActions) Probe(ctx context.Context, name string) widget.Result {
 	if a.probe == nil {
-		return Result{Err: errors.New("probing needs relevo ui")}
+		return widget.Result{Err: errors.New("probing needs relevo ui")}
 	}
 	host, _ := os.Hostname()
 	rs, err := availability.Probe(ctx, relevo.AvailabilityDeps(a.runtime()), a.probe, []string{name}, host, nil)
 	if err != nil {
-		return Result{Err: err}
+		return widget.Result{Err: err}
 	}
 	if len(rs) == 0 {
-		return Result{}
+		return widget.Result{}
 	}
 	r := rs[0]
 	if r.Err != "" {
-		return Result{Err: errors.New(r.Err)}
+		return widget.Result{Err: errors.New(r.Err)}
 	}
-	return Result{Text: availability.FormatProbe(r, availability.ProbeNameWidth([]string{name}))}
+	return widget.Result{Text: availability.FormatProbe(r, availability.ProbeNameWidth([]string{name}))}
 }
 
 // AgentFiles is one agent's definition state on every harness kind whose
@@ -543,30 +431,30 @@ func (a *mastermindActions) AgentFiles(agent string) ([]harness.AgentFile, error
 // relevo renders or ships: a source custom agent resets through
 // relevo.ResetCustomAgentFile, everything else through harness.ResetAgentFile.
 // Its text is `reset <kind>'s <agent>`; Refresh re-reads the view's rows.
-func (a *mastermindActions) ResetAgentFile(ctx context.Context, kind, agent string) Result {
+func (a *mastermindActions) ResetAgentFile(ctx context.Context, kind, agent string) widget.Result {
 	env, err := relevo.AgentInstallEnv()
 	if err != nil {
-		return Result{Err: err}
+		return widget.Result{Err: err}
 	}
 	cfg := a.runtime().Config
 	if cfg != nil {
 		if loaded, lerr := cfg.Load(); lerr == nil && relevo.IsSourceAgent(loaded.Agents, agent) {
 			if _, err := relevo.ResetCustomAgentFile(cfg, env, kind, agent); err != nil {
-				return Result{Err: err}
+				return widget.Result{Err: err}
 			}
-			return Result{Text: "reset " + kind + "'s " + agent, Refresh: true}
+			return widget.Result{Text: "reset " + kind + "'s " + agent, Refresh: true}
 		}
 	}
 	if _, err := harness.ResetAgentFile(env, kind, agent); err != nil {
-		return Result{Err: err}
+		return widget.Result{Err: err}
 	}
-	return Result{Text: "reset " + kind + "'s " + agent, Refresh: true}
+	return widget.Result{Text: "reset " + kind + "'s " + agent, Refresh: true}
 }
 
 // actionMsg is what an action's tea.Cmd returns (§3).
 type actionMsg struct {
 	verb, key string
-	res       Result
+	res       widget.Result
 }
 
 // stderrMsg carries one captured stderr/slog line (§3, §4.4).
@@ -586,7 +474,7 @@ func openOverlay(ov overlay) tea.Cmd {
 
 // runAction is what a confirm's yes or a prompt's enter returns: mark the
 // action in flight, then run it off the update loop (§5).
-func runAction(ctx context.Context, verb, key string, f func(context.Context) Result) tea.Cmd {
+func runAction(ctx context.Context, verb, key string, f func(context.Context) widget.Result) tea.Cmd {
 	return tea.Batch(
 		func() tea.Msg { return workingMsg{verb: verb, key: key} },
 		func() tea.Msg { return actionMsg{verb: verb, key: key, res: f(ctx)} },

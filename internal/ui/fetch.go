@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -81,11 +82,9 @@ type tabContent struct {
 // runaway one. A builder's log is a file, not a screen.
 const headlessLogLines = 5000
 
-type tickMsg time.Time
-
 // watchdogMsg is the first fetch's time-box: it fires one poll interval after
 // Init and says only that the first status has not landed yet. It carries no
-// report, so a slow Source.Status can never merge a partial one -- the fleet
+// report, so a slow widget.Source.Status can never merge a partial one -- the fleet
 // keeps painting the bounded loading state until the whole status arrives.
 type watchdogMsg time.Time
 
@@ -125,7 +124,7 @@ func unresolvedKey(key string) error {
 // fetchStatus calls src.Status(ctx) and returns statusMsg{report, err}. It
 // never returns a partial report alongside a report-level error. The scope
 // argument and the relevo.Bindings call it carried are gone (X3).
-func fetchStatus(ctx context.Context, src Source) tea.Cmd {
+func fetchStatus(ctx context.Context, src widget.Source) tea.Cmd {
 	return func() tea.Msg {
 		rep, err := src.Status(ctx)
 		if err != nil {
@@ -141,7 +140,7 @@ func fetchStatus(ctx context.Context, src Source) tea.Cmd {
 // resolve -- or resolves to a runtime carrying no store, as a server source
 // does for an owner it does not hold -- is the same prose an unknown owner's
 // tab reads, never a blank row and never a panic.
-func fetchStatusRow(ctx context.Context, src Source, key string) tea.Cmd {
+func fetchStatusRow(ctx context.Context, src widget.Source, key string) tea.Cmd {
 	return func() tea.Msg {
 		rt, name, ok := src.Runtime(key)
 		if !ok || rt.Store == nil {
@@ -158,7 +157,7 @@ func fetchStatusRow(ctx context.Context, src Source, key string) tea.Cmd {
 // fetchPrompt reads round's prompt file. It is small enough not to need
 // capture.ReadDiff's stored-patch indirection: the file is either there or it
 // is not.
-func fetchPrompt(ctx context.Context, src Source, key string, round int) tea.Cmd {
+func fetchPrompt(ctx context.Context, src widget.Source, key string, round int) tea.Cmd {
 	return func() tea.Msg {
 		rt, name, ok := src.Runtime(key)
 		if !ok {
@@ -245,7 +244,7 @@ func fetchPrompt(ctx context.Context, src Source, key string, round int) tea.Cmd
 // nothing for round: an empty log at round 1 keeps the familiar "round 1 in
 // flight" prose; anything else reads as round being the open round, not yet
 // closed (#183).
-func fetchReport(ctx context.Context, src Source, key string, round int) tea.Cmd {
+func fetchReport(ctx context.Context, src widget.Source, key string, round int) tea.Cmd {
 	return func() tea.Msg {
 		rt, name, ok := src.Runtime(key)
 		if !ok {
@@ -386,7 +385,7 @@ func logTab(key, name string, read func(string) ([]byte, error), logPath string)
 // has a live process, so a headless builder's non-current round with no round
 // log of its own reads as the empty prose "terminal is live; round N left no
 // log" (#183).
-func fetchTerminal(ctx context.Context, src Source, key string, round, lines int) tea.Cmd {
+func fetchTerminal(ctx context.Context, src widget.Source, key string, round, lines int) tea.Cmd {
 	if lines < 1 {
 		lines = 1
 	}
@@ -548,7 +547,7 @@ func fetchTerminal(ctx context.Context, src Source, key string, round, lines int
 }
 
 // fetchDiff retrieves the stored patch for the specified round.
-func fetchDiff(ctx context.Context, src Source, key string, round int) tea.Cmd {
+func fetchDiff(ctx context.Context, src widget.Source, key string, round int) tea.Cmd {
 	if round < 1 {
 		return func() tea.Msg {
 			return tabMsg{
@@ -629,7 +628,7 @@ func fetchDiff(ctx context.Context, src Source, key string, round int) tea.Cmd {
 }
 
 // fetchLog formats round's log entries with the cmdLog layout.
-func fetchLog(ctx context.Context, src Source, key string, round int) tea.Cmd {
+func fetchLog(ctx context.Context, src widget.Source, key string, round int) tea.Cmd {
 	return func() tea.Msg {
 		rt, name, ok := src.Runtime(key)
 		if !ok {
@@ -703,7 +702,7 @@ func fetchLog(ctx context.Context, src Source, key string, round int) tea.Cmd {
 // tab (round 5b): the file list RoundArtifacts orders, and the sel-th file's
 // bytes through ReadArtifact. Both answer a live round's files on disk and a
 // sealed round's round_file rows, so the tab renders the same either way.
-func fetchArtifacts(ctx context.Context, src Source, key string, round, sel int) tea.Cmd {
+func fetchArtifacts(ctx context.Context, src widget.Source, key string, round, sel int) tea.Cmd {
 	return func() tea.Msg {
 		rt, name, ok := src.Runtime(key)
 		if !ok {
@@ -907,7 +906,7 @@ func fetchShow(ctx context.Context, rt relevo.Runtime, name string, round int, s
 // It takes explicit parameters rather than a Model: fetch.go is built in
 // Step 2 and Model does not exist until Step 3, so a Model parameter here
 // would not compile in the step that introduces it.
-func fetchFor(ctx context.Context, src Source, t tab, key string, round, lines, sel int, live bool) tea.Cmd {
+func fetchFor(ctx context.Context, src widget.Source, t tab, key string, round, lines, sel int, live bool) tea.Cmd {
 	if !live {
 		return fetchShow(ctx, src.Base(), key, round, sectionForTab(t))
 	}

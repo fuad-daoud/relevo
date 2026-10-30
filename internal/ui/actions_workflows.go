@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -54,27 +55,27 @@ func (a *mastermindActions) WorkflowGraph(name string) ([]relevo.GraphRow, error
 // passed: the cockpit offers no way to shadow a shipped workflow, so the name
 // is refused rather than shadowed. The write goes through the same reload
 // ApplyConfig's does, so the next read sees what was stored.
-func (a *mastermindActions) WorkflowAdd(_ context.Context, path string, replace bool) Result {
+func (a *mastermindActions) WorkflowAdd(_ context.Context, path string, replace bool) widget.Result {
 	name, err := relevo.WorkflowAdd(a.runtime(), expandHome(path), replace, false)
 	if err != nil {
-		return Result{Err: err, Refresh: true}
+		return widget.Result{Err: err, Refresh: true}
 	}
 	if err := a.live.Refresh(); err != nil {
-		return Result{Text: "stored " + name + "; reload failed: " + err.Error(), Refresh: true}
+		return widget.Result{Text: "stored " + name + "; reload failed: " + err.Error(), Refresh: true}
 	}
-	return Result{Text: "stored workflow " + name, Refresh: true}
+	return widget.Result{Text: "stored workflow " + name, Refresh: true}
 }
 
 // WorkflowRemove drops a saved workflow. A shipped one is refused by
 // WorkflowRemove itself: it is not saved, so there is nothing here to remove.
-func (a *mastermindActions) WorkflowRemove(_ context.Context, name string) Result {
+func (a *mastermindActions) WorkflowRemove(_ context.Context, name string) widget.Result {
 	if err := relevo.WorkflowRemove(a.runtime(), name); err != nil {
-		return Result{Err: err, Refresh: true}
+		return widget.Result{Err: err, Refresh: true}
 	}
 	if err := a.live.Refresh(); err != nil {
-		return Result{Text: "removed " + name + "; reload failed: " + err.Error(), Refresh: true}
+		return widget.Result{Text: "removed " + name + "; reload failed: " + err.Error(), Refresh: true}
 	}
-	return Result{Text: "removed workflow " + name, Refresh: true}
+	return widget.Result{Text: "removed workflow " + name, Refresh: true}
 }
 
 // workflowWriteKey is the action key a workflow write runs under, so a second
@@ -103,10 +104,10 @@ func (a *mastermindActions) WorkflowActors() map[string]workflow.ActorInfo {
 // through ApplyConfig, so it is recorded under the ui actor and reloads this
 // adapter's runtime, and the notice carries the config version the write left
 // behind, which is what tells two saves apart.
-func (a *mastermindActions) WorkflowSave(ctx context.Context, name, source string, def workflow.Definition) Result {
+func (a *mastermindActions) WorkflowSave(ctx context.Context, name, source string, def workflow.Definition) widget.Result {
 	edit, err := relevo.WorkflowEdit(a.runtime(), name, []byte(source), def, "workflow edit "+name)
 	if err != nil {
-		return Result{Err: err, Refresh: true}
+		return widget.Result{Err: err, Refresh: true}
 	}
 	res := a.ApplyConfig(ctx, edit)
 	// A failure, or a write that landed but did not reload, already says
@@ -118,7 +119,7 @@ func (a *mastermindActions) WorkflowSave(ctx context.Context, name, source strin
 	if verr != nil {
 		return res
 	}
-	return Result{Text: fmt.Sprintf("%s (config version %d)", edit.Message, version), Refresh: res.Refresh}
+	return widget.Result{Text: fmt.Sprintf("%s (config version %d)", edit.Message, version), Refresh: res.Refresh}
 }
 
 // expandHome resolves a leading ~ in a path the way a shell does, so the form

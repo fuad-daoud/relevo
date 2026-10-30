@@ -13,6 +13,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/ui/stats"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // candidateForm is the one overlay the `:candidates` view uses to add and to
@@ -23,7 +25,7 @@ import (
 // its doc.
 type candidateForm struct {
 	ctx     context.Context
-	actions Actions
+	actions widget.Actions
 	doc     relevo.ConfigDoc
 	gates   []availability.Gate // env.Report.Gated at open
 	now     time.Time
@@ -42,7 +44,7 @@ type candidateForm struct {
 
 // newCandidateForm builds the add/edit candidate overlay (§4). harnessKind seeds
 // an add's harness: the cursor row's kind, or the first kind when "".
-func newCandidateForm(env Env, doc relevo.ConfigDoc, editing, slots, harnessKind string) candidateForm {
+func newCandidateForm(env widget.Env, doc relevo.ConfigDoc, editing, slots, harnessKind string) candidateForm {
 	all := harness.All()
 	kinds := make([]string, 0, len(all))
 	for _, h := range all {
@@ -204,12 +206,12 @@ func (f candidateForm) modelPlaceholder() string {
 }
 
 // keys are the form's own keys, shown in the footer through overlayKeyer (§1).
-func (f candidateForm) keys() []KeyHelp {
+func (f candidateForm) keys() []widget.KeyHelp {
 	submit := "add"
 	if f.editing != "" {
 		submit = "save"
 	}
-	return []KeyHelp{{"enter", submit}, {"tab", "next field"}, {"esc", "cancel"}}
+	return []widget.KeyHelp{{Key: "enter", Help: submit}, {Key: "tab", Help: "next field"}, {Key: "esc", Help: "cancel"}}
 }
 
 // update handles one key (§4): esc closes, tab moves focus, the harness row
@@ -350,7 +352,7 @@ func (f candidateForm) submit() (overlay, tea.Cmd, bool) {
 			verb = "edit candidate"
 		}
 		name := edit.Name
-		return f, runAction(f.ctx, verb, name, func(ctx context.Context) Result {
+		return f, runAction(f.ctx, verb, name, func(ctx context.Context) widget.Result {
 			return f.actions.ApplyConfig(ctx, edit)
 		}), true
 	case errors.Is(err, relevo.ErrNoChange):
@@ -455,7 +457,7 @@ func (f candidateForm) providerNote(fe *relevo.FieldError, showErr bool) string 
 	s := f.suggestions()
 	value := strings.TrimSpace(f.provIn.Value())
 	if value != "" && candIndex(s, value) < 0 {
-		return formSubRow(chip(chipAccentStyle, "new provider"))
+		return formSubRow(widget.Chip(widget.ChipAccentStyle, "new provider"))
 	}
 	if len(s) == 0 {
 		return ""
@@ -476,18 +478,18 @@ func (f candidateForm) nameRow() string {
 
 	if f.editing == "" {
 		if strings.TrimSpace(f.modelIn.Value()) == "" {
-			return label + mutedStyle.Render("follows the model")
+			return label + widget.MutedStyle.Render("follows the model")
 		}
-		return label + textStyle.Render(name)
+		return label + widget.TextStyle.Render(name)
 	}
 
-	row := label + textStyle.Render(name)
+	row := label + widget.TextStyle.Render(name)
 	if name != f.editing {
 		suffix := "   was " + f.editing
 		if f.slots != "" {
 			suffix += " · still " + f.slots
 		}
-		row += faintStyle.Render(suffix)
+		row += widget.FaintStyle.Render(suffix)
 	}
 	return row
 }
@@ -502,20 +504,20 @@ func (f candidateForm) infoLines() []string {
 	g, gated := f.gateFor(provider)
 
 	if gated {
-		suffix := " until " + statsGateUntil(g, f.now)
-		if reason := statsGateReasonText(g.Note); reason != "" {
+		suffix := " until " + stats.GateUntil(g, f.now)
+		if reason := stats.GateReasonText(g.Note); reason != "" {
 			suffix += " · " + reason
 		}
-		out = append(out, mutedStyle.Render(provider+" is ")+redStyle.Render("gated")+mutedStyle.Render(suffix))
+		out = append(out, widget.MutedStyle.Render(provider+" is ")+widget.RedStyle.Render("gated")+widget.MutedStyle.Render(suffix))
 	}
 	if f.editing != "" && gated {
 		if c, ok := candByName(f.doc, f.editing); ok && c.Provider == provider {
-			out = append(out, mutedStyle.Render("the gate is the provider's, so the new model stays gated"))
+			out = append(out, widget.MutedStyle.Render("the gate is the provider's, so the new model stays gated"))
 		}
 	}
 	if f.editing == "" {
-		out = append(out, mutedStyle.Render("no actor picks it until you add it to one in ")+
-			textStyle.Render(":actors"))
+		out = append(out, widget.MutedStyle.Render("no actor picks it until you add it to one in ")+
+			widget.TextStyle.Render(":actors"))
 	}
 	return out
 }

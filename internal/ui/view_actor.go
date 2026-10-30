@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
 // actorView is `actors › <name>` (§4): the actor's candidate list, reordered,
@@ -27,7 +28,7 @@ type actorView struct {
 }
 
 // newActorView pushes the actor's detail view (§4).
-func newActorView(env Env, doc relevo.ConfigDoc, name string) (View, tea.Cmd) {
+func newActorView(env widget.Env, doc relevo.ConfigDoc, name string) (widget.View, tea.Cmd) {
 	v := actorView{name: name, doc: doc, loaded: true}
 	return v, candDocCmd(env)
 }
@@ -60,13 +61,13 @@ func actorPickLayout(width int) (int, []actorCol) {
 
 // actorPickHeaderLine is the detail table's header row (§4), in faint bold.
 func actorPickHeaderLine(nameW int, cols []actorCol, cw int) string {
-	style := faintStyle.Bold(true)
+	style := widget.FaintStyle.Bold(true)
 	cells := []candCell{
 		{text: fmt.Sprintf("%2s", "#"), style: style},
-		{text: pad("CANDIDATE", nameW), style: style},
+		{text: widget.Pad("CANDIDATE", nameW), style: style},
 	}
 	for _, c := range cols {
-		cells = append(cells, candCell{text: pad(c.head, c.w), style: style})
+		cells = append(cells, candCell{text: widget.Pad(c.head, c.w), style: style})
 	}
 	return candLine(cells, false, cw)
 }
@@ -74,12 +75,12 @@ func actorPickHeaderLine(nameW int, cols []actorCol, cw int) string {
 // actorPickLine is one entry's row (§4). An off row is faint throughout; the
 // cursor row's candidate name is bold; the entry that would be picked next
 // carries the `next pick` marker in its STATUS cell.
-func actorPickLine(doc relevo.ConfigDoc, env Env, name string, i int, sel bool, nameW int, cols []actorCol, cw int) string {
+func actorPickLine(doc relevo.ConfigDoc, env widget.Env, name string, i int, sel bool, nameW int, cols []actorCol, cw int) string {
 	a := doc.Actors[name]
 	e := a.Candidates[i]
-	base, meta := textStyle, mutedStyle
+	base, meta := widget.TextStyle, widget.MutedStyle
 	if e.Off {
-		base, meta = faintStyle, faintStyle
+		base, meta = widget.FaintStyle, widget.FaintStyle
 	}
 	nameStyle := base
 	if sel {
@@ -93,10 +94,10 @@ func actorPickLine(doc relevo.ConfigDoc, env Env, name string, i int, sel bool, 
 	}
 	cells := []candCell{
 		{text: fmt.Sprintf("%2d", i+1), style: meta},
-		{text: pad(cname, nameW), style: nameStyle},
-		{text: pad(c.Harness, 8), style: meta},
-		{text: pad(c.Provider, 10), style: meta},
-		{text: pad(text, 20), style: style},
+		{text: widget.Pad(cname, nameW), style: nameStyle},
+		{text: widget.Pad(c.Harness, 8), style: meta},
+		{text: widget.Pad(c.Provider, 10), style: meta},
+		{text: widget.Pad(text, 20), style: style},
 	}
 	return candLine(cells, sel, cw)
 }
@@ -110,14 +111,14 @@ func actorCheckLine(doc relevo.ConfigDoc, name string, width int) (string, bool)
 		return "", false
 	}
 	if !actorCheckOn(a.Check) {
-		return "   " + mutedStyle.Render("no check after each round"), true
+		return "   " + widget.MutedStyle.Render("no check after each round"), true
 	}
 	if cmd := doc.Policy.GateDefault(); cmd != "" {
-		return "   " + mutedStyle.Render("runs ") + textStyle.Render(cmd) +
-			mutedStyle.Render(" after each round"), true
+		return "   " + widget.MutedStyle.Render("runs ") + widget.TextStyle.Render(cmd) +
+			widget.MutedStyle.Render(" after each round"), true
 	}
-	return "   " + mutedStyle.Render("check after each round is on, but no check command is set; set one in ") +
-		textStyle.Render(":settings"), true
+	return "   " + widget.MutedStyle.Render("check after each round is on, but no check command is set; set one in ") +
+		widget.TextStyle.Render(":settings"), true
 }
 
 // actorScopeText renders a writer's scope for the detail view: its path
@@ -135,7 +136,7 @@ func actorScopeText(scope *pathscope.Scope) string {
 
 // bodyLines is the whole detail body before it is windowed: a blank line under
 // the context row, the table, two blank lines and the check line (§4).
-func (v actorView) bodyLines(env Env, width int) []string {
+func (v actorView) bodyLines(env widget.Env, width int) []string {
 	a := v.doc.Actors[v.name]
 	nameW, cols := actorPickLayout(width)
 	cw := width - 6
@@ -152,17 +153,17 @@ func (v actorView) bodyLines(env Env, width int) []string {
 	lines = append(lines, actorPlacementLines(v.doc, v.name, v.placementFocus(), v.placeCur, width)...)
 	lines = append(lines, "", "")
 	if check, ok := actorCheckLine(v.doc, v.name, width); ok {
-		lines = append(lines, fit(check, width))
+		lines = append(lines, widget.Fit(check, width))
 	}
 	if scope := a.Scope; scope != nil {
-		lines = append(lines, fit("   "+mutedStyle.Render("scope ")+textStyle.Render(actorScopeText(scope)), width))
+		lines = append(lines, widget.Fit("   "+widget.MutedStyle.Render("scope ")+widget.TextStyle.Render(actorScopeText(scope)), width))
 	}
 	return lines
 }
 
 // follow scrolls the page so the cursor's table row stays visible (§4).
-func (v *actorView) follow(env Env) {
-	avail := bodyHeight(env)
+func (v *actorView) follow(env widget.Env) {
+	avail := widget.BodyHeight(env)
 	if avail <= 0 {
 		v.top = 0
 		return
@@ -181,7 +182,7 @@ func (v *actorView) follow(env Env) {
 	if sel >= v.top+avail {
 		v.top = sel - avail + 1
 	}
-	v.top = clamp(v.top, 0, max(0, len(lines)-avail))
+	v.top = widget.Clamp(v.top, 0, max(0, len(lines)-avail))
 }
 
 func (v actorView) Crumbs() []string { return []string{v.name} }
@@ -191,73 +192,73 @@ func (v actorView) Capturing() bool { return false }
 
 // Keys are the detail view's keys (§4), for the pane that owns them: a
 // placement entry has no on/off, and tab names the pane it would move to.
-func (v actorView) Keys() []KeyHelp {
-	tab := KeyHelp{"tab", "placement"}
+func (v actorView) Keys() []widget.KeyHelp {
+	tab := widget.KeyHelp{Key: "tab", Help: "placement"}
 	if v.placementFocus() {
-		tab = KeyHelp{"tab", "candidates"}
+		tab = widget.KeyHelp{Key: "tab", Help: "candidates"}
 	}
-	keys := []KeyHelp{
-		{"↑↓", "move"},
-		{"shift+↑↓", "reorder"},
+	keys := []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "shift+↑↓", Help: "reorder"},
 	}
 	if !v.placementFocus() {
-		keys = append(keys, KeyHelp{"space", "on / off"})
+		keys = append(keys, widget.KeyHelp{Key: "space", Help: "on / off"})
 	}
 	return append(keys,
-		KeyHelp{"a", "add"},
-		KeyHelp{"d", "remove"},
-		KeyHelp{"e", "edit"},
+		widget.KeyHelp{Key: "a", Help: "add"},
+		widget.KeyHelp{Key: "d", Help: "remove"},
+		widget.KeyHelp{Key: "e", Help: "edit"},
 		tab,
-		KeyHelp{"esc", "back"},
+		widget.KeyHelp{Key: "esc", Help: "back"},
 	)
 }
 
 // HelpKeys is the help overlay's key list (§2.2): both panes' keys, so the
 // overlay documents the pane that does not own them right now too.
-func (v actorView) HelpKeys() []KeyHelp {
-	return []KeyHelp{
-		{"↑↓", "move"},
-		{"shift+↑↓", "reorder"},
-		{"space", "on / off"},
-		{"a", "add"},
-		{"d", "remove"},
-		{"e", "edit"},
-		{"tab", "switch list"},
-		{"esc", "back"},
+func (v actorView) HelpKeys() []widget.KeyHelp {
+	return []widget.KeyHelp{
+		{Key: "↑↓", Help: "move"},
+		{Key: "shift+↑↓", Help: "reorder"},
+		{Key: "space", Help: "on / off"},
+		{Key: "a", Help: "add"},
+		{Key: "d", Help: "remove"},
+		{Key: "e", Help: "edit"},
+		{Key: "tab", Help: "switch list"},
+		{Key: "esc", Help: "back"},
 	}
 }
 
 // Context is the actor's summary line (§4): the agent and shape, the tier, the
 // candidate count and the next pick.
-func (v actorView) Context(env Env) (string, string) {
+func (v actorView) Context(env widget.Env) (string, string) {
 	a := v.doc.Actors[v.name]
-	tier, tierStyle := a.Tier, textStyle
+	tier, tierStyle := a.Tier, widget.TextStyle
 	if tier == "" {
-		tier, tierStyle = "—", faintStyle
+		tier, tierStyle = "—", widget.FaintStyle
 	}
-	np, nextStyle := nextPick(v.doc, v.name, env.Report.Gated), greenStyle
+	np, nextStyle := nextPick(v.doc, v.name, env.Report.Gated), widget.GreenStyle
 	if np == "" {
-		np, nextStyle = "—", faintStyle
+		np, nextStyle = "—", widget.FaintStyle
 	}
-	left := "   " + textStyle.Render(a.Agent) + mutedStyle.Render(" · "+agentShapeOf(v.doc, a.Agent)+"   ") +
-		faintStyle.Render("tier ") + tierStyle.Render(tier) +
-		"   " + textStyle.Bold(true).Render(fmt.Sprintf("%d", len(a.Candidates))) +
-		mutedStyle.Render(" candidates   ") + faintStyle.Render("next pick ") + nextStyle.Render(np)
+	left := "   " + widget.TextStyle.Render(a.Agent) + widget.MutedStyle.Render(" · "+agentShapeOf(v.doc, a.Agent)+"   ") +
+		widget.FaintStyle.Render("tier ") + tierStyle.Render(tier) +
+		"   " + widget.TextStyle.Bold(true).Render(fmt.Sprintf("%d", len(a.Candidates))) +
+		widget.MutedStyle.Render(" candidates   ") + widget.FaintStyle.Render("next pick ") + nextStyle.Render(np)
 	return left, ""
 }
 
-func (v actorView) Body(env Env, width, height int) string {
+func (v actorView) Body(env widget.Env, width, height int) string {
 	if width <= 0 || height <= 0 {
 		return ""
 	}
 	if !v.loaded && v.err != nil {
-		return strings.Join(statsCentered(v.err.Error(), width, height), "\n")
+		return strings.Join(widget.Centered(v.err.Error(), width, height), "\n")
 	}
 	if !v.loaded {
-		return strings.Join(blockLines([]string{"loading…"}, width, height), "\n")
+		return strings.Join(widget.BlockLines([]string{"loading…"}, width, height), "\n")
 	}
 	lines := v.bodyLines(env, width)
-	top := clamp(v.top, 0, max(0, len(lines)-height))
+	top := widget.Clamp(v.top, 0, max(0, len(lines)-height))
 	if top > len(lines) {
 		top = len(lines)
 	}
@@ -265,10 +266,10 @@ func (v actorView) Body(env Env, width, height int) string {
 	if end > len(lines) {
 		end = len(lines)
 	}
-	return strings.Join(fitLines(lines[top:end], width, height), "\n")
+	return strings.Join(widget.FitLines(lines[top:end], width, height), "\n")
 }
 
-func (v actorView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
+func (v actorView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	switch msg := msg.(type) {
 	case candDocMsg:
 		if msg.err != nil {
@@ -297,7 +298,7 @@ func (v actorView) Update(msg tea.Msg, env Env) (View, tea.Cmd) {
 // in flight, every change key is ignored -- in both panes, since either one
 // would build a second edit on a list the first has not written yet. tab
 // changes nothing on its own, so it still moves the focus.
-func (v actorView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
+func (v actorView) updateKey(k tea.KeyMsg, env widget.Env) (widget.View, tea.Cmd) {
 	entries := v.doc.Actors[v.name].Candidates
 	n := len(entries)
 
@@ -335,10 +336,10 @@ func (v actorView) updateKey(k tea.KeyMsg, env Env) (View, tea.Cmd) {
 		v.cur = candClamp(n-1, n)
 		v.follow(env)
 	case "pgup":
-		v.cur = candClamp(v.cur-bodyHeight(env), n)
+		v.cur = candClamp(v.cur-widget.BodyHeight(env), n)
 		v.follow(env)
 	case "pgdown":
-		v.cur = candClamp(v.cur+bodyHeight(env), n)
+		v.cur = candClamp(v.cur+widget.BodyHeight(env), n)
 		v.follow(env)
 	case "shift+up":
 		if n < 2 || v.cur <= 0 {
@@ -406,20 +407,20 @@ func withActorEntries(doc relevo.ConfigDoc, name string, entries []roles.Entry) 
 // change is every entry change's one path (§4): validate next with
 // SetActorEntries, update the local doc, then apply the edit. A refused edit
 // is a notice.
-func (v actorView) change(env Env, next []roles.Entry) (View, tea.Cmd) {
+func (v actorView) change(env widget.Env, next []roles.Entry) (widget.View, tea.Cmd) {
 	edit, err := relevo.SetActorEntries(v.doc, v.name, next)
 	if err != nil {
 		return v, notice(err.Error())
 	}
 	v.doc = withActorEntries(v.doc, v.name, next)
-	return v, runAction(env.Ctx, "edit actor", "actor:"+v.name, func(ctx context.Context) Result {
+	return v, runAction(env.Ctx, "edit actor", "actor:"+v.name, func(ctx context.Context) widget.Result {
 		return env.Actions.ApplyConfig(ctx, edit)
 	})
 }
 
 // pickCmd is the a key (§4): a listBox of the doc's candidates not already in
 // this actor's list, in stored order.
-func (v actorView) pickCmd(env Env) tea.Cmd {
+func (v actorView) pickCmd(env widget.Env) tea.Cmd {
 	items := actorPickItems(v.doc, v.name, env)
 	if len(items) == 0 {
 		return notice("every candidate is already in " + v.name + "'s list")
@@ -440,7 +441,7 @@ func (v actorView) pickCmd(env Env) tea.Cmd {
 
 // actorPickItems is the picker's rows (§4): each candidate not already in the
 // actor's list, its status the entry's own, its note `harness · provider`.
-func actorPickItems(doc relevo.ConfigDoc, name string, env Env) []listItem {
+func actorPickItems(doc relevo.ConfigDoc, name string, env widget.Env) []listItem {
 	inList := make(map[string]bool, len(doc.Actors[name].Candidates))
 	for _, e := range doc.Actors[name].Candidates {
 		if n := candName(doc, e.Candidate); n != "" {
