@@ -480,10 +480,14 @@ func captureDeps(rt Runtime) capture.Deps {
 	return capture.Deps{Git: rt.Git, Store: rt.Store}
 }
 
-// housekeepDeps builds internal/housekeep's Deps from rt: the store confines
-// every temp entry, and the tmp root names whose entries they are.
+// housekeepDeps builds internal/housekeep's Deps from rt.
 func housekeepDeps(rt Runtime) housekeep.Deps {
-	return housekeep.Deps{Store: rt.Store, TmpRoot: rt.TmpRoot}
+	return housekeep.Deps{Store: rt.Store, TmpRoot: rt.TmpRoot,
+		ChainCheckSettled: chainCheckSettled, ChainFlowTerminal: chainFlowTerminal,
+		GateUnit:         func(o, n string, r int) string { return scopeUnitNameFor(scopeGate, o, n, r, "") },
+		ServedCheckUnit:  func(b store.Binding, run store.CheckRun) string { return servedCheckSpec(rt, b, run).UnitName },
+		ChainCheckUnit:   func(c db.ChainRow, run int) string { return chainCheckSpec(rt, c, run, "", "").UnitName },
+		ParseScratchName: parseScratchName}
 }
 
 // consultDeps builds internal/consult's Deps from rt. Git carries through

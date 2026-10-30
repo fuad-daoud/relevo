@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/ingest"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/release"
@@ -182,6 +183,13 @@ func (d *Daemon) WithUpgrade(f func(ctx context.Context) bool) *Daemon {
 	return d
 }
 
+// TmpSweptAt and SetTmpSweptAt carry the sweep's pace across Daemons: serve
+// builds a fresh Daemon per owner on every tick, so it keeps each owner's last
+// sweep itself and hands it back to the next tick's Daemon.
+func (d *Daemon) TmpSweptAt() time.Time { return d.tmpSweptAt }
+
+func (d *Daemon) SetTmpSweptAt(t time.Time) { d.tmpSweptAt = t }
+
 // WaitSyncSlot runs fn with this daemon's sync to itself, waiting its turn
 // rather than dropping the work.
 //
@@ -292,7 +300,12 @@ func (d *Daemon) Tick(ctx context.Context) error {
 	// still carrying yesterday's round and check temp directories, and serve
 	// runs this Tick per owner, so every owner's root is swept by its own
 	// daemon.
-	d.safely("tmp sweep", func() { d.sweepTmpTick(ctx, bindings) })
+	d.safely("tmp sweep", func() {
+		if d.rt.TmpRoot == "" {
+			return
+		}
+		housekeep.SweepTick(ctx, housekeepDeps(d.rt), bindings, &d.tmpSweptAt, d.rt.Now())
+	})
 	// Before the first tick of this process, every archived record the mirror
 	// has not seen is ingested (P3d §4.2, §4.5).
 	archivedMirrorOnce.Do(func() { mirrorArchived(ctx, d.rt) })
