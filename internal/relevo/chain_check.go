@@ -322,7 +322,7 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	if chainOnServer(c) {
 		return nil
 	}
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		return err
 	}
@@ -347,7 +347,7 @@ func chainAdvanceOneCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 		if result == "" {
 			return nil
 		}
-		before, err := chainWorkflowState(c)
+		before, err := chain.WorkflowState(c)
 		if err != nil {
 			return err
 		}
@@ -371,7 +371,7 @@ func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	if len(c.WorkflowJSON) == 0 || c.Status != string(chain.StatusRunning) {
 		return nil
 	}
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		return err
 	}
@@ -379,7 +379,7 @@ func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	if st.Awaiting.Step == "" || st.Awaiting.Member != "" {
 		return nil
 	}
-	def, err := chainWorkflowDef(c)
+	def, err := chain.WorkflowDef(c)
 	if err != nil {
 		return err
 	}
@@ -425,7 +425,7 @@ func chainTickPlacedCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Ch
 	if err != nil {
 		return err
 	}
-	before, err := chainWorkflowState(saved)
+	before, err := chain.WorkflowState(saved)
 	if err != nil {
 		return err
 	}

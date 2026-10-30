@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -37,11 +38,11 @@ func chainForkChildEnded(ctx context.Context, rt Runtime, tx *store.Tx, c db.Cha
 	if err != nil {
 		return err
 	}
-	def, err := chainWorkflowDef(parent)
+	def, err := chain.WorkflowDef(parent)
 	if err != nil {
 		return err
 	}
-	before, err := chainWorkflowState(parent)
+	before, err := chain.WorkflowState(parent)
 	if err != nil {
 		return err
 	}

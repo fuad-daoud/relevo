@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -27,7 +28,7 @@ func forkChildClose(t *testing.T, rt Runtime, child string) workflow.Event {
 	if err != nil {
 		t.Fatalf("load child %s: %v", child, err)
 	}
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		t.Fatalf("chainWorkflowState(%s): %v", child, err)
 	}
@@ -99,7 +100,7 @@ func TestForkChildDoneEndsTheParentForkAndDeliversNothing(t *testing.T) {
 	forkEndChild(t, rt, "shop.1", "done", "")
 
 	parent := flowChainRow(t, rt)
-	st, err := chainWorkflowState(parent)
+	st, err := chain.WorkflowState(parent)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -119,7 +120,7 @@ func TestForkChildDoneEndsTheParentForkAndDeliversNothing(t *testing.T) {
 
 	forkEndChild(t, rt, "shop.2", "done", "")
 
-	st, err = chainWorkflowState(flowChainRow(t, rt))
+	st, err = chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -143,7 +144,7 @@ func TestForkChildHaltedWaitsForItsSiblingThenHaltsTheParent(t *testing.T) {
 
 	forkEndChild(t, rt, "shop.1", "halted", "the disk is on fire")
 
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -179,7 +180,7 @@ func TestForkChildStoppedEndsAsStopped(t *testing.T) {
 
 	forkStopChild(t, rt, "shop.1")
 
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}

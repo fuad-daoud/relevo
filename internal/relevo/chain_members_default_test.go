@@ -4,62 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/workflow"
+	"github.com/fuad-daoud/relevo/internal/chain"
 )
 
-// TestMemberNamesCustomWorkflowUsesActorSuffix pins that the legacy suffixes
-// belong to the shipped default alone: a workflow with any other name gives its
-// reviewer param's actor the "<chain>-<actor>" name.
-func TestMemberNamesCustomWorkflowUsesActorSuffix(t *testing.T) {
-	rt, _ := chainRuntime(t)
-	def := workflow.Definition{
-		Name:   "review-only",
-		Params: map[string]workflow.Param{"reviewer": {Kind: workflow.ParamString, Str: "reviewer"}},
-		Start:  "review",
-		Steps:  map[string]workflow.Step{"review": {Run: "{{params.reviewer}}", On: map[string]workflow.Target{"done": workflow.DoneTarget()}}},
-	}
-	got, err := chainMemberNames("shop", def, rt.RoleRegistry().WorkflowActors())
-	if err != nil {
-		t.Fatalf("chainMemberNames: %v", err)
-	}
-	names := memberNames(t, got)
-	if names["shop-reviewer"] != "reviewer" {
-		t.Errorf("members = %v, want shop-reviewer -> reviewer", names)
-	}
-	if _, legacy := names["shop-rev"]; legacy {
-		t.Errorf("members = %v, want no legacy name on a custom workflow", names)
-	}
-}
-
-// TestMemberNamesDefaultSharedActorTakesFirstPart pins the shared-actor rule:
-// when one actor fills several parts of the default, the first in reviewer,
-// planner, security order names it, so it takes "-rev".
-func TestMemberNamesDefaultSharedActorTakesFirstPart(t *testing.T) {
-	rt, _ := chainRuntime(t)
-	def := workflow.Definition{
-		Name: "default",
-		Params: map[string]workflow.Param{
-			"reviewer": {Kind: workflow.ParamString, Str: "reviewer"},
-			"planner":  {Kind: workflow.ParamString, Str: "reviewer"},
-		},
-		Start: "review",
-		Steps: map[string]workflow.Step{"review": {Run: "{{params.reviewer}}", On: map[string]workflow.Target{"done": workflow.DoneTarget()}}},
-	}
-	got, err := chainMemberNames("shop", def, rt.RoleRegistry().WorkflowActors())
-	if err != nil {
-		t.Fatalf("chainMemberNames: %v", err)
-	}
-	names := memberNames(t, got)
-	if names["shop-rev"] != "reviewer" {
-		t.Errorf("members = %v, want the shared actor to take shop-rev", names)
-	}
-	if _, planner := names["shop-plan"]; planner {
-		t.Errorf("members = %v, want the reviewer part to win over the planner", names)
-	}
-}
-
 // TestConvertedRowAndNewRowNameMembersAlike pins that a converted row and a new
-// start agree: chainMemberNames on a converted row's stored definition returns
+// start agree: chain.MemberNames on a converted row's stored definition returns
 // exactly the legacy names its member bindings already carry, so a resume never
 // creates a second member for an actor the chain already runs.
 func TestConvertedRowAndNewRowNameMembersAlike(t *testing.T) {
@@ -72,7 +21,7 @@ func TestConvertedRowAndNewRowNameMembersAlike(t *testing.T) {
 		t.Fatalf("ConvertLegacyChains: %v", err)
 	}
 	def, _ := convertedState(t, rt, "shop")
-	got, err := chainMemberNames("shop", def, rt.RoleRegistry().WorkflowActors())
+	got, err := chain.MemberNames("shop", def, rt.RoleRegistry().WorkflowActors())
 	if err != nil {
 		t.Fatalf("chainMemberNames: %v", err)
 	}

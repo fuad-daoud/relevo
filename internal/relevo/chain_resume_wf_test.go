@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -88,7 +89,7 @@ func TestWorkflowResumeTakesNewerManualRound(t *testing.T) {
 	if row.Status != string(workflow.StatusRunning) {
 		t.Fatalf("status = %s (%q), want running", row.Status, row.Reason)
 	}
-	st, err := chainWorkflowState(row)
+	st, err := chain.WorkflowState(row)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -135,7 +136,7 @@ func TestWorkflowResumeResendsStoppedPrompt(t *testing.T) {
 		t.Errorf("the resumed round's prompt = %q, want the stopped round's own staged prompt %q", got, staged)
 	}
 	row := flowChainRow(t, rt)
-	st, err := chainWorkflowState(row)
+	st, err := chain.WorkflowState(row)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -200,7 +201,7 @@ func TestOldPlacedChainStillAnswersFromPulledGate(t *testing.T) {
 		st.Awaiting = workflow.Awaiting{Step: "check"}
 		st.Status = workflow.StatusRunning
 	})
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}

@@ -562,7 +562,7 @@ func TestChainHaltsWithCapReasonWithoutOpeningARound(t *testing.T) {
 	if row.Status != string(chain.StatusHalted) {
 		t.Fatalf("chain status = %q, want halted", row.Status)
 	}
-	st, err := chainWorkflowState(row)
+	st, err := chain.WorkflowState(row)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}

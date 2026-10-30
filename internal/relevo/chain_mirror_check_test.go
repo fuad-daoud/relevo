@@ -180,7 +180,7 @@ func TestMirrorChainCheckSurvivesPullTickPull(t *testing.T) {
 // mirrorAwaitedCheck returns the mirror's awaiting check step and run.
 func mirrorAwaitedCheck(t *testing.T, rt Runtime) (string, int) {
 	t.Helper()
-	st, err := chainWorkflowState(chainStoredRow(t, rt, "shop"))
+	st, err := chain.WorkflowState(chainStoredRow(t, rt, "shop"))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}

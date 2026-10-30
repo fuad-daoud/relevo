@@ -67,7 +67,7 @@ func chainForkParentRefusal(parent, child db.ChainRow) error {
 	case chain.StatusDone:
 		return refusal.New("chain %s cannot resume: its parent %s is done", child.Name, parent.Name)
 	}
-	st, err := chainWorkflowState(parent)
+	st, err := chain.WorkflowState(parent)
 	if err != nil {
 		return err
 	}
@@ -98,11 +98,11 @@ func chainForkParentReopen(rt Runtime, tx *store.Tx, child db.ChainRow) error {
 	if err != nil {
 		return err
 	}
-	def, err := chainWorkflowDef(parent)
+	def, err := chain.WorkflowDef(parent)
 	if err != nil {
 		return err
 	}
-	before, err := chainWorkflowState(parent)
+	before, err := chain.WorkflowState(parent)
 	if err != nil {
 		return err
 	}

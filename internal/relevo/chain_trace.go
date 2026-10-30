@@ -296,7 +296,7 @@ func showWorkflow(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult
 		}
 		return ShowResult{}, err
 	}
-	def, err := chainWorkflowDef(c)
+	def, err := chain.WorkflowDef(c)
 	if err != nil {
 		return ShowResult{}, err
 	}

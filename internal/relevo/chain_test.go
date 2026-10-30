@@ -1549,7 +1549,7 @@ func TestChainRemoteRedGateAfterTheBudgetReachesTheReviewer(t *testing.T) {
 	// The engine's repair budget is the repair step's visit count: spend it, so
 	// the next red check routes to the reviewer.
 	row := chainStoredRow(t, rt, "shop")
-	st, serr := chainWorkflowState(row)
+	st, serr := chain.WorkflowState(row)
 	if serr != nil {
 		t.Fatalf("state: %v", serr)
 	}

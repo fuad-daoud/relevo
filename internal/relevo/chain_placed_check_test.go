@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
@@ -35,7 +36,7 @@ func chainSetWorkflowState(t *testing.T, rt Runtime, edit func(st *workflow.Stat
 		if err != nil {
 			return err
 		}
-		st, err := chainWorkflowState(c)
+		st, err := chain.WorkflowState(c)
 		if err != nil {
 			return err
 		}
@@ -63,7 +64,7 @@ func chainAwaitingWithoutRun(t *testing.T, rt Runtime) {
 // chainAwaitedCheck returns the chain's awaiting check step and run.
 func chainAwaitedCheck(t *testing.T, rt Runtime) (string, int) {
 	t.Helper()
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -197,7 +198,7 @@ func TestPlacedCheckRedFeedsRepeatRed(t *testing.T) {
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		return tx.ChainEventAppend("shop", db.ChainEventRow{
 			TS: baseTime, Step: "check", Plan: flowPlanPos(func() workflow.State {
-				st, _ := chainWorkflowState(flowChainRow(t, rt))
+				st, _ := chain.WorkflowState(flowChainRow(t, rt))
 				return st
 			}()),
 			Event:  workflow.EncodeEvent(workflow.Event{Kind: workflow.EventCheckClosed, Step: "check", Run: 1, Result: chainCheckRed, Log: prevLog}),

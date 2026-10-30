@@ -568,7 +568,7 @@ func TestWorkflowChainDoneWritesTheEngineState(t *testing.T) {
 	stoppedChain(t, rt, ChainOptions{})
 
 	row := chainStoredRow(t, rt, "shop")
-	st, err := chainWorkflowState(row)
+	st, err := chain.WorkflowState(row)
 	if err != nil {
 		t.Fatalf("chainWorkflowState before done: %v", err)
 	}
@@ -584,7 +584,7 @@ func TestWorkflowChainDoneWritesTheEngineState(t *testing.T) {
 	if row.Status != string(chain.StatusDone) {
 		t.Fatalf("chain status = %q, want done", row.Status)
 	}
-	st, err = chainWorkflowState(row)
+	st, err = chain.WorkflowState(row)
 	if err != nil {
 		t.Fatalf("chainWorkflowState after done: %v", err)
 	}
@@ -635,7 +635,7 @@ func TestChainDoneOnAWorkflowlessChainNeverInternal(t *testing.T) {
 			t.Errorf("chain carries workflow %d and state %d bytes, want the migration to have written both",
 				len(row.WorkflowJSON), len(row.StateJSON))
 		}
-		st, err := chainWorkflowState(row)
+		st, err := chain.WorkflowState(row)
 		if err != nil {
 			t.Fatalf("chainWorkflowState after the migrated done: %v", err)
 		}

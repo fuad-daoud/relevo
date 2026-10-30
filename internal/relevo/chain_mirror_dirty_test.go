@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -139,7 +140,7 @@ func TestMirrorCleanDoneCloseStillAdvances(t *testing.T) {
 	mirrorCatchUp(t, rt, b, "")
 
 	c := flowChainRow(t, rt)
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}

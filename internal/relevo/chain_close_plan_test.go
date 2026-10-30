@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -46,7 +47,7 @@ func planStepCloseEvent(t *testing.T, body string) (workflow.Event, string) {
 		t.Fatalf("chainEventFromCloseWF: %v", err)
 	}
 	flowAdvance(t, rt, ev)
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}

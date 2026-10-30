@@ -1044,11 +1044,11 @@ func housekeepNow(rt Runtime) func() time.Time {
 // transition, for the check row the caller already loaded.
 func housekeepHaltChainEnv(rt Runtime) func(context.Context, *store.Tx, db.ChainRow, db.ChainCheckRow, workflow.Event) (bool, error) {
 	return func(ctx context.Context, tx *store.Tx, c db.ChainRow, row db.ChainCheckRow, ev workflow.Event) (bool, error) {
-		def, err := chainWorkflowDef(c)
+		def, err := chain.WorkflowDef(c)
 		if err != nil {
 			return false, err
 		}
-		before, err := chainWorkflowState(c)
+		before, err := chain.WorkflowState(c)
 		if err != nil {
 			return false, err
 		}

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -40,7 +41,7 @@ func TestResumeAfterCommitAdvancesWithoutResending(t *testing.T) {
 	}
 
 	row := flowChainRow(t, rt)
-	st, err := chainWorkflowState(row)
+	st, err := chain.WorkflowState(row)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}

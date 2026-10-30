@@ -46,7 +46,7 @@ type chainCloseWF struct {
 // outcomes, keys its artifacts and closes the step halted when a declared
 // artifact is missing.
 func chainEventFromCloseWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, b store.Binding, wf chainCloseWF) (workflow.Event, error) {
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		return workflow.Event{}, err
 	}
@@ -137,7 +137,7 @@ func chainEventFromCloseWF(ctx context.Context, rt Runtime, tx *store.Tx, c db.C
 // receive it, not the stream. A chain with no readable stored definition skips
 // the gate.
 func chainPlanStepsReason(rt Runtime, c db.ChainRow, step string, wf chainCloseWF) string {
-	def, err := chainWorkflowDef(c)
+	def, err := chain.WorkflowDef(c)
 	if err != nil || !chainStepWritesPlan(def, step) {
 		return ""
 	}

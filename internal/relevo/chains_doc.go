@@ -193,11 +193,11 @@ func chainDocStepsAndFacts(c db.ChainRow, memberRows []db.ChainMemberRow, traceR
 		return nil, c.Step, planPos, planTotal
 	}
 
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		return nil, c.Step, c.Plan, c.Plans
 	}
-	def, err := chainWorkflowDef(c)
+	def, err := chain.WorkflowDef(c)
 	if err != nil {
 		return nil, c.Step, c.Plan, c.Plans
 	}
@@ -276,7 +276,7 @@ func chainDocSteps(c db.ChainRow, def workflow.Definition, st workflow.State, me
 // stepMemberBinding matches an actor to its member binding name.
 func stepMemberBinding(c db.ChainRow, def workflow.Definition, actor string, memberRows []db.ChainMemberRow) string {
 	for _, m := range memberRows {
-		if chainFlowActorMatch(m.Actor, actor) {
+		if chain.FlowActorMatch(m.Actor, actor) {
 			return m.Binding
 		}
 	}

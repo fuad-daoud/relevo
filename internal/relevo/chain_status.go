@@ -68,7 +68,7 @@ func chainFactsOf(s *store.Store, c db.ChainRow) view.ChainFacts {
 // chainFlowFacts fills a workflow chain's own facts: the step its engine is
 // on, the round (or check run) it awaits, and its position in the plan input.
 func chainFlowFacts(f *view.ChainFacts, c db.ChainRow) {
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		return
 	}

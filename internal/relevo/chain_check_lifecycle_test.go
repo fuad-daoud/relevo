@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -37,7 +38,7 @@ func forceChainStatus(t *testing.T, rt Runtime, status workflow.Status) {
 		if err != nil {
 			return err
 		}
-		st, err := chainWorkflowState(c)
+		st, err := chain.WorkflowState(c)
 		if err != nil {
 			return err
 		}
@@ -133,7 +134,7 @@ func TestWorkflowResumeDoesNotRunTwoChecksAtOnce(t *testing.T) {
 	if second, err := rt.Store.ChainCheck("shop", 2); err == nil {
 		t.Fatalf("a second check run exists: %+v", second)
 	}
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}

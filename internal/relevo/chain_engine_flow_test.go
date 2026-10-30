@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -119,7 +120,7 @@ func TestWorkflowDirtyWriterCloseDoesNotAdvance(t *testing.T) {
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
 	c := flowChainRow(t, rt)
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -150,7 +151,7 @@ func TestWorkflowCleanWriterCloseStillAdvances(t *testing.T) {
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 
 	c := flowChainRow(t, rt)
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -231,7 +232,7 @@ func TestWorkflowRedCheckWithNoRegateNeverReachesReview(t *testing.T) {
 	chainRedCheck(t, rt, "shop", "FAIL the gate\n")
 
 	c := flowChainRow(t, rt)
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -384,7 +385,7 @@ func TestWorkflowUnclosedStatusBlockCloseReachesCheck(t *testing.T) {
 	chainBuilderClose(t, rt, "shop", strings.TrimSuffix(chainDoneBody(), "```\n"))
 
 	c := flowChainRow(t, rt)
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}

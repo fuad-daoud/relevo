@@ -35,7 +35,7 @@ func chainAwaited(m chainMemberLister, c db.ChainRow) (name string, round int, o
 // through chain_member. ok is false for a state that awaits a check run, which
 // names no member, or an actor no member runs.
 func chainStateAwaited(m chainMemberLister, c db.ChainRow) (name string, round int, ok bool) {
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil || st.Awaiting.Member == "" {
 		return "", 0, false
 	}
@@ -44,7 +44,7 @@ func chainStateAwaited(m chainMemberLister, c db.ChainRow) (name string, round i
 		return "", 0, false
 	}
 	for _, row := range rows {
-		if chainFlowActorMatch(row.Actor, st.Awaiting.Member) {
+		if chain.FlowActorMatch(row.Actor, st.Awaiting.Member) {
 			return row.Binding, st.Awaiting.Round, true
 		}
 	}
@@ -134,7 +134,7 @@ func chainEndMembers(m chainMemberLister, c db.ChainRow) []string {
 // state: the `findings` outcome the workflow's scan step recorded in Results. A
 // row with no engine state, or a scan that never closed, carries 0.
 func chainFindingsOfState(c db.ChainRow) int {
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		return 0
 	}
@@ -186,8 +186,8 @@ type chainStoredFacts struct {
 // kept at least one, as the row's own validity asks.
 func chainStoredFactsOf(c db.ChainRow) chainStoredFacts {
 	if len(c.StateJSON) > 0 {
-		def, derr := chainWorkflowDef(c)
-		st, serr := chainWorkflowState(c)
+		def, derr := chain.WorkflowDef(c)
+		st, serr := chain.WorkflowState(c)
 		if derr == nil && serr == nil {
 			lf := workflow.LegacyView(def, st)
 			plan, plans := lf.Plan, lf.Plans

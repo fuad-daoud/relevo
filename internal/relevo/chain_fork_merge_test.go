@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -151,7 +152,7 @@ func TestForkMergeJoinsEveryChildInKeyOrder(t *testing.T) {
 	forkEndChild(t, rt, "shop.1", "done", "")
 	forkEndChild(t, rt, "shop.2", "done", "")
 
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -198,7 +199,7 @@ func TestForkMergeKeepsTheConflictAndNamesTheUnmergedBranches(t *testing.T) {
 		forkEndChild(t, rt, "shop."+key, "done", "")
 	}
 
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -244,7 +245,7 @@ func TestForkConflictEdgeSendsTheReportToTheBuilder(t *testing.T) {
 	forkEndChild(t, rt, "shop.1", "done", "")
 	forkEndChild(t, rt, "shop.2", "done", "")
 
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -374,7 +375,7 @@ func TestForkConflictReportCarriesTheFlaggedWording(t *testing.T) {
 	forkEndChild(t, rt, "shop.1", "done", "")
 	forkEndChild(t, rt, "shop.2", "done", "")
 
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}

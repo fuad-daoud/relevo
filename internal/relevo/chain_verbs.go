@@ -128,7 +128,7 @@ func chainStoppedNothing(c db.ChainRow) error {
 // to reach, and a member whose round already closed has nothing to stop, so each
 // is stopped directly under the lock.
 func chainStopWorkflow(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult, error) {
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		return StopResult{}, err
 	}
@@ -169,7 +169,7 @@ func chainStoredMemberName(rt Runtime, c db.ChainRow, actor string) (string, err
 		return "", err
 	}
 	for _, m := range rows {
-		if chainFlowActorMatch(m.Actor, actor) {
+		if chain.FlowActorMatch(m.Actor, actor) {
 			return m.Binding, nil
 		}
 	}
@@ -193,11 +193,11 @@ func chainStopWorkflowDirect(ctx context.Context, rt Runtime, name string) error
 		if err := chainKillRunningChecks(ctx, rt, tx, c); err != nil {
 			return err
 		}
-		def, err := chainWorkflowDef(c)
+		def, err := chain.WorkflowDef(c)
 		if err != nil {
 			return err
 		}
-		before, err := chainWorkflowState(c)
+		before, err := chain.WorkflowState(c)
 		if err != nil {
 			return err
 		}
@@ -319,8 +319,8 @@ func chainDoneWorkflowRow(rt Runtime, c db.ChainRow) (db.ChainRow, error) {
 		}
 		c = fresh
 	}
-	_, derr := chainWorkflowDef(c)
-	_, serr := chainWorkflowState(c)
+	_, derr := chain.WorkflowDef(c)
+	_, serr := chain.WorkflowState(c)
 	why := derr
 	if why == nil {
 		why = serr
@@ -358,11 +358,11 @@ func chainInputsSweep(rt Runtime, name, status string) {
 // release was carried out from. No payload is queued -- the human ran this verb,
 // so there is nobody to tell.
 func chainDoneRow(rt Runtime, tx *store.Tx, c db.ChainRow) error {
-	def, err := chainWorkflowDef(c)
+	def, err := chain.WorkflowDef(c)
 	if err != nil {
 		return err
 	}
-	before, err := chainWorkflowState(c)
+	before, err := chain.WorkflowState(c)
 	if err != nil {
 		return err
 	}

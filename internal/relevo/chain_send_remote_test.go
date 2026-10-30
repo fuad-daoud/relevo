@@ -31,7 +31,7 @@ func advanceRemoteChain(t *testing.T, rt Runtime, round int) {
 			return err
 		}
 		if len(c.StateJSON) > 0 {
-			st, serr := chainWorkflowState(c)
+			st, serr := chain.WorkflowState(c)
 			if serr != nil {
 				return serr
 			}
@@ -63,7 +63,7 @@ func haltRemoteChain(t *testing.T, rt Runtime) {
 		}
 		c.Status = string(chain.StatusHalted)
 		if len(c.StateJSON) > 0 {
-			st, serr := chainWorkflowState(c)
+			st, serr := chain.WorkflowState(c)
 			if serr != nil {
 				return serr
 			}
@@ -279,7 +279,7 @@ func TestWorkflowRemoteSendFailureHaltsTheEngineState(t *testing.T) {
 	if row.Status != string(chain.StatusHalted) {
 		t.Fatalf("chain status = %q, want halted", row.Status)
 	}
-	st, err := chainWorkflowState(row)
+	st, err := chain.WorkflowState(row)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -319,7 +319,7 @@ func TestChainSendPendingResolvesAwaitedFromState(t *testing.T) {
 	if row.AwaitingMember != "" {
 		t.Fatalf("awaiting column = %q, want empty for a custom workflow", row.AwaitingMember)
 	}
-	st, err := chainWorkflowState(row)
+	st, err := chain.WorkflowState(row)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}

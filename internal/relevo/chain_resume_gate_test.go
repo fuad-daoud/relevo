@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 
 	"github.com/fuad-daoud/relevo/internal/refusal"
@@ -27,7 +28,7 @@ func haltFlowAt(t *testing.T, rt Runtime, at, reason string, awaiting workflow.A
 		if err != nil {
 			return err
 		}
-		st, err := chainWorkflowState(c)
+		st, err := chain.WorkflowState(c)
 		if err != nil {
 			return err
 		}
@@ -62,7 +63,7 @@ func haltAtZeroBudgetRepair(t *testing.T, rt Runtime) {
 	if c.Status != string(workflow.StatusHalted) {
 		t.Fatalf("chain status = %q (%q), want the zero-budget halt", c.Status, c.Reason)
 	}
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -106,7 +107,7 @@ func TestResumeWithANewGateRerunsTheHaltedArmsCheck(t *testing.T) {
 			if row.Status != string(workflow.StatusRunning) {
 				t.Fatalf("status = %q (%q), want running: the check must rerun, not re-halt", row.Status, row.Reason)
 			}
-			st, err := chainWorkflowState(row)
+			st, err := chain.WorkflowState(row)
 			if err != nil {
 				t.Fatalf("chainWorkflowState: %v", err)
 			}
@@ -138,7 +139,7 @@ func TestResumeWithANewGateOnTheFixArmRerunsFixCheck(t *testing.T) {
 	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Gate: "new-cmd"}); err != nil {
 		t.Fatalf("ChainResume: %v", err)
 	}
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -178,7 +179,7 @@ steps:
 	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Gate: "new-cmd"}); err != nil {
 		t.Fatalf("ChainResume: %v", err)
 	}
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -208,7 +209,7 @@ func TestResumeFromWinsOverTheGateReroute(t *testing.T) {
 			if _, err := ChainResume(context.Background(), rt, tt.opts); err != nil {
 				t.Fatalf("ChainResume(%+v): %v", tt.opts, err)
 			}
-			st, err := chainWorkflowState(flowChainRow(t, rt))
+			st, err := chain.WorkflowState(flowChainRow(t, rt))
 			if err != nil {
 				t.Fatalf("chainWorkflowState: %v", err)
 			}
@@ -237,7 +238,7 @@ func TestResumeGateChangeOffARedArmDoesNotReroute(t *testing.T) {
 	if row.Status != string(workflow.StatusRunning) {
 		t.Fatalf("status = %q (%q), want running", row.Status, row.Reason)
 	}
-	st, err := chainWorkflowState(row)
+	st, err := chain.WorkflowState(row)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -360,7 +361,7 @@ func TestResumeStagedTextWalksBackOnAParamGate(t *testing.T) {
 	// to re-hand, not the walk that got to it.
 	row := haltFlowAt(t, rt, "repair", "repair has no budget left",
 		workflow.Awaiting{Step: "repair", Member: "builder", Round: 2})
-	before, err := chainWorkflowState(row)
+	before, err := chain.WorkflowState(row)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -423,7 +424,7 @@ func startRegateFlowChain(t *testing.T, rt Runtime) {
 	})
 	chainBuilderClose(t, rt, "shop", chainDoneBody())
 	chainRedCheck(t, rt, "shop", "FAIL the gate\n")
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -473,7 +474,7 @@ func TestResumeWithANewGateRerunsAStoppedRepairsCheck(t *testing.T) {
 			if row.Status != string(workflow.StatusRunning) {
 				t.Fatalf("status = %q (%q), want running", row.Status, row.Reason)
 			}
-			st, err := chainWorkflowState(row)
+			st, err := chain.WorkflowState(row)
 			if err != nil {
 				t.Fatalf("chainWorkflowState: %v", err)
 			}
@@ -504,7 +505,7 @@ func TestResumeWithANewGateRerunsAHaltedRepairWithBudgetLeft(t *testing.T) {
 	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Gate: "new-cmd"}); err != nil {
 		t.Fatalf("ChainResume: %v", err)
 	}
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -522,7 +523,7 @@ func TestResumeStagedTextYieldsNothingWhenTheWalkBackLandsOffARepairPlan(t *test
 	rt, _ := chainRuntime(t)
 	startRegateFlowChain(t, rt)
 	row := flowChainRow(t, rt)
-	before, err := chainWorkflowState(row)
+	before, err := chain.WorkflowState(row)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -559,7 +560,7 @@ func TestResumeFromWinsOverTheGateOnAStoppedRepair(t *testing.T) {
 	if _, err := ChainResume(context.Background(), rt, ResumeOptions{Name: "shop", Gate: "new-cmd", From: "build"}); err != nil {
 		t.Fatalf("ChainResume: %v", err)
 	}
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}

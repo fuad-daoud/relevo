@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -96,7 +97,7 @@ func TestHaltWithNoFailedCheckKeepsItsWording(t *testing.T) {
 	if c.Status != string(workflow.StatusHalted) {
 		t.Fatalf("status = %s (%q), want halted", c.Status, c.Reason)
 	}
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -143,7 +144,7 @@ func TestWorkflowCloseParsesDeclaredOutcomes(t *testing.T) {
 	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
 
 	c := flowChainRow(t, rt)
-	st, err := chainWorkflowState(c)
+	st, err := chain.WorkflowState(c)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -208,7 +209,7 @@ func TestWorkflowCheckGreenRoutesGreen(t *testing.T) {
 	startFlowChain(t, rt, flowCheckWorkflow)
 	flowAdvance(t, rt, workflow.Event{Kind: workflow.EventStepClosed, Step: "build", Member: "builder", Round: 1, Status: "done"})
 
-	st, err := chainWorkflowState(flowChainRow(t, rt))
+	st, err := chain.WorkflowState(flowChainRow(t, rt))
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
@@ -366,7 +367,7 @@ func TestWorkflowResumeFromStep(t *testing.T) {
 	if res.Chain.Status != string(workflow.StatusRunning) {
 		t.Fatalf("resumed status = %s, want running", res.Chain.Status)
 	}
-	st, err := chainWorkflowState(res.Chain)
+	st, err := chain.WorkflowState(res.Chain)
 	if err != nil {
 		t.Fatalf("chainWorkflowState: %v", err)
 	}
