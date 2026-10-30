@@ -33,12 +33,6 @@ func ResolveTier(explicit string, c candidate.Candidate, reg *roles.Registry, ro
 	return harness.TierHarness
 }
 
-// resolveTier is ResolveTier over the legacy registry derived from pol,
-// which is what every caller without a registry means.
-func resolveTier(explicit string, c candidate.Candidate, pol policy.Policy, role string) harness.Tier {
-	return ResolveTier(explicit, c, legacyRegistry(nil, pol), role)
-}
-
 // CheckTierCap refuses tier when tier.Above(pol.MaxTierOrDefault()) and
 // !allowYolo: `tier %s exceeds max_tier %s; pass --allow-yolo or raise
 // max_tier in ~/.config/relevo/policy.json`. harness never refuses.
