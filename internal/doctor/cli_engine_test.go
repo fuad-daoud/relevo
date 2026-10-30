@@ -1,4 +1,4 @@
-package main
+package doctor
 
 import (
 	"errors"
@@ -6,14 +6,13 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/doctor"
 )
 
 // TestEngineCheckWarnsOnAMissingLibrary pins the fresh-root row: no extracted
 // library yet is a warning, not a failure.
 func TestEngineCheckWarnsOnAMissingLibrary(t *testing.T) {
 	c := engineCheck(db.EngineState{Name: "turso", CacheDir: "/root/turso-go", Missing: true})
-	if c.Severity != doctor.SevWarn {
+	if c.Severity != SevWarn {
 		t.Errorf("severity = %v, want warn", c.Severity)
 	}
 	if !strings.Contains(c.Detail, "/root/turso-go") {
@@ -33,7 +32,7 @@ func TestEngineCheckFailsOnAMismatchedLibrary(t *testing.T) {
 		CacheDir: "/root/turso-go",
 		Err:      errors.New("cached library file hash sum mismatch"),
 	})
-	if c.Severity != doctor.SevFail {
+	if c.Severity != SevFail {
 		t.Errorf("severity = %v, want fail", c.Severity)
 	}
 	if !strings.Contains(c.Fix, "remove /root/turso-go") {

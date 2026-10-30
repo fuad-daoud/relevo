@@ -1,4 +1,4 @@
-package main
+package doctor
 
 import (
 	"errors"
@@ -6,12 +6,11 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/doctor"
 )
 
 func TestOwnerCheck(t *testing.T) {
 	ok := ownerCheck(db.OwnerStatus{Socket: "/tmp/rvo/o.sock", PID: 42, Version: 1, Conns: 3}, nil)
-	if ok.Name != "owner" || ok.Severity != doctor.SevOK {
+	if ok.Name != "owner" || ok.Severity != SevOK {
 		t.Fatalf("ok row = %+v, want name owner and severity ok", ok)
 	}
 	for _, want := range []string{"/tmp/rvo/o.sock", "pid 42", "relevo-owner v1", "3 connections"} {
@@ -21,7 +20,7 @@ func TestOwnerCheck(t *testing.T) {
 	}
 
 	warn := ownerCheck(db.OwnerStatus{Socket: "/tmp/rvo/o.sock"}, errors.New("no such file"))
-	if warn.Severity != doctor.SevWarn {
+	if warn.Severity != SevWarn {
 		t.Errorf("a refused probe must warn, got %v", warn.Severity)
 	}
 	if warn.Fix == "" {

@@ -1,22 +1,20 @@
-package main
+package doctor
 
 import (
 	"strings"
 	"testing"
-
-	"github.com/fuad-daoud/relevo/internal/doctor"
 )
 
 func TestOpenRoundsCheckOKWhenNone(t *testing.T) {
 	c := openRoundsCheck(0, 0)
-	if c.Severity != doctor.SevOK || c.Name != "open rounds" || c.Detail != "no open round on a finished binding" || c.Fix != "" {
+	if c.Severity != SevOK || c.Name != "open rounds" || c.Detail != "no open round on a finished binding" || c.Fix != "" {
 		t.Errorf("openRoundsCheck(0, 0) = %+v", c)
 	}
 }
 
 func TestOpenRoundsCheckWarnsWithCountsAndSaysReportOnly(t *testing.T) {
 	c := openRoundsCheck(3, 2)
-	if c.Severity != doctor.SevWarn {
+	if c.Severity != SevWarn {
 		t.Errorf("severity = %v, want warn", c.Severity)
 	}
 	want := "3 round(s) still open on 2 finished binding(s); report only, doctor repairs nothing"

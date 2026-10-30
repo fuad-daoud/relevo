@@ -1,4 +1,4 @@
-package main
+package doctor
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"os/exec"
 
 	"github.com/fuad-daoud/relevo/internal/chatlabel"
-	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
@@ -14,7 +13,7 @@ import (
 // gatePluginRowsFor sets the plugin-row gate matching a harness kind, from a
 // candidate kind or a mastermind record's HarnessKind: claude gates the
 // Claude rows, muse the muse rows.
-func gatePluginRowsFor(kind string, in *doctor.MasterMindCheckInput) {
+func gatePluginRowsFor(kind string, in *MasterMindCheckInput) {
 	switch kind {
 	case "claude":
 		in.Claude = true
@@ -29,7 +28,7 @@ func gatePluginRowsFor(kind string, in *doctor.MasterMindCheckInput) {
 // lands there; Detect owns session detection and this gate is the duplicate
 // to converge on it. A stray id on a host with no muse candidate, record or
 // binary reports no rows, the same shape as the Claude gating.
-func museSessionGate(rt relevo.Runtime, in *doctor.MasterMindCheckInput) {
+func museSessionGate(rt relevo.Runtime, in *MasterMindCheckInput, resolver chatlabel.Resolver) {
 	if os.Getenv("MUSE_SESSION_ID") == "" {
 		return
 	}
@@ -37,7 +36,7 @@ func museSessionGate(rt relevo.Runtime, in *doctor.MasterMindCheckInput) {
 		return
 	}
 	in.MuseSession = true
-	museMasterMindFacts(rt, in)
+	museMasterMindFacts(rt, in, resolver)
 }
 
 // museMasterMindFacts fills the session-row fields for a muse session exactly
@@ -45,7 +44,7 @@ func museSessionGate(rt relevo.Runtime, in *doctor.MasterMindCheckInput) {
 // mastermind.Resolve, which reads MUSE_SESSION_ID only once Detect in
 // internal/mastermind/ident.go knows the muse kind; until then the row reads
 // FAIL (no record resolved), never guesses an identity.
-func museMasterMindFacts(rt relevo.Runtime, in *doctor.MasterMindCheckInput) {
+func museMasterMindFacts(rt relevo.Runtime, in *MasterMindCheckInput, resolver chatlabel.Resolver) {
 	in.MCPChild = HasMCPChild(hostChildProcesses(os.Getppid()))
 	if rt.MasterMinds == nil {
 		return
@@ -60,7 +59,7 @@ func museMasterMindFacts(rt relevo.Runtime, in *doctor.MasterMindCheckInput) {
 		return
 	}
 	in.Resolved = &rec
-	if lbl := chatResolver().Resolve(context.Background(), rec.HarnessKind, rec.SessionID); lbl != (chatlabel.Label{}) {
+	if lbl := resolver.Resolve(context.Background(), rec.HarnessKind, rec.SessionID); lbl != (chatlabel.Label{}) {
 		in.Chat = lbl.String()
 	}
 	if rt.Channels != nil {

@@ -1,4 +1,4 @@
-package main
+package doctor
 
 import (
 	"context"
@@ -8,10 +8,9 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/account"
-	"github.com/fuad-daoud/relevo/internal/doctor"
 )
 
-// accountEnv is a doctor.Env whose only facts are the files and sqlite3
+// accountEnv is an Env whose only facts are the files and sqlite3
 // answers a test sets. No harness binary is ever spawned: the account checks
 // read through this injected FS and command runner alone.
 type accountEnv struct {
@@ -98,7 +97,7 @@ func TestAccountCheckProbeFailure(t *testing.T) {
 	accounts := account.Set{{Name: "cp1", Harness: account.OpenCode, Groups: []string{"cline-pass"}, Integration: "cline-pass", Label: "C1"}}
 
 	c := accountCheck(context.Background(), accounts[0], env)
-	if c.Severity != doctor.SevWarn || !c.ProbeFailed {
+	if c.Severity != SevWarn || !c.ProbeFailed {
 		t.Errorf("unreadable opencode.db = %+v, want a warn probe failure", c)
 	}
 }

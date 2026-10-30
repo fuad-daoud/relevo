@@ -1,4 +1,4 @@
-package main
+package doctor
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -30,18 +29,18 @@ func execRun(ctx context.Context, name string, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, name, args...).Output()
 }
 
-// diskRun is how the doctor asks go for its cache. It is a variable so this
-// package's tests answer for go instead of starting it.
-var diskRun = execRun
+// DiskRun is how the doctor asks go for its cache. It is a variable so tests
+// answer for go instead of starting it.
+var DiskRun = execRun
 
 // diskChecks returns the tmp root row, the Go cache row, and, when the working
 // directory is a Go tree, the effective -trimpath row. A go that cannot answer
 // is never an error: its cache row is informational.
-func diskChecks(ctx context.Context, in diskInputs) []doctor.Check {
-	var out []doctor.Check
+func diskChecks(ctx context.Context, in diskInputs) []Check {
+	var out []Check
 	if in.TmpRoot != "" {
 		u := relevo.TmpUsageOf(in.TmpRoot, diskWalkBudget, diskWalkMaxEntries)
-		out = append(out, doctor.TmpRootCheck(u.Rounds, u.Checks, u.Loose, u.Truncated, doctor.DefaultTmpWarnBytes))
+		out = append(out, TmpRootCheck(u.Rounds, u.Checks, u.Loose, u.Truncated, DefaultTmpWarnBytes))
 	}
 	dir, err := relevo.GoCacheDir(ctx, in.Run)
 	if err != nil {
@@ -52,18 +51,18 @@ func diskChecks(ctx context.Context, in diskInputs) []doctor.Check {
 	if dir != "" {
 		size, truncated = relevo.GoCacheUsage(dir, diskWalkBudget, diskWalkMaxEntries)
 	}
-	out = append(out, doctor.GoCacheCheck(dir, size, truncated, doctor.DefaultGoCacheWarnBytes))
+	out = append(out, GoCacheCheck(dir, size, truncated, DefaultGoCacheWarnBytes))
 	if in.WorkDir != "" && relevo.IsGoTree(in.WorkDir) {
-		out = append(out, doctor.TrimpathCheck(in.Settings.TrimpathOn()))
+		out = append(out, TrimpathCheck(in.Settings.TrimpathOn()))
 	}
 	return out
 }
 
 // runDiskChecks wires diskChecks to the real working directory and go binary.
 // A repository setting that will not read leaves the default, which is on.
-func runDiskChecks(rt relevo.Runtime) []doctor.Check {
+func runDiskChecks(rt relevo.Runtime) []Check {
 	ctx := context.Background()
-	in := diskInputs{TmpRoot: rt.TmpRoot, Run: diskRun}
+	in := diskInputs{TmpRoot: rt.TmpRoot, Run: DiskRun}
 	if wd, err := os.Getwd(); err == nil {
 		in.WorkDir = wd
 		if settings, serr := relevo.RepoSettingsFor(ctx, rt, wd); serr == nil {

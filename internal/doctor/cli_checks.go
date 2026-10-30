@@ -1,4 +1,4 @@
-package main
+package doctor
 
 import (
 	"context"
@@ -13,42 +13,39 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
-	"github.com/fuad-daoud/relevo/internal/chatlabel"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/db/wire"
-	"github.com/fuad-daoud/relevo/internal/doctor"
-	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// databaseCheck is doctor's `database` row (P3d §4.7): the path, the file
+// databaseCheck is doctor's `database` row: the path, the file
 // size, the schema version, the binding_record live/archived counts and the
 // route this process reached the row by -- `via file` for a direct open, `via
 // owner <sock>` for a dialled handle (stage 1b). It is OK unless the open
 // fails; there is no migrate row, because every open migrates.
-func databaseCheck(st *store.Store) doctor.Check {
+func databaseCheck(st *store.Store) Check {
 	path := st.DBPath()
-	c := doctor.Check{Name: "database", Severity: doctor.SevOK}
+	c := Check{Name: "database", Severity: SevOK}
 
 	d, err := st.DB()
 	if err != nil {
-		c.Severity = doctor.SevFail
+		c.Severity = SevFail
 		c.Detail = fmt.Sprintf("%s · %v", path, err)
 		c.Fix = "fix the state root, or move the database aside"
 		return c
 	}
 	version, err := d.Version()
 	if err != nil {
-		c.Severity = doctor.SevFail
+		c.Severity = SevFail
 		c.Detail = fmt.Sprintf("%s · %v", path, err)
 		return c
 	}
 	live, archived, err := d.RecordCounts()
 	if err != nil {
-		c.Severity = doctor.SevFail
+		c.Severity = SevFail
 		c.Detail = fmt.Sprintf("%s · %v", path, err)
 		return c
 	}
@@ -66,15 +63,15 @@ func databaseCheck(st *store.Store) doctor.Check {
 // with, and whether its library is usable. A missing library warns -- a fresh
 // root has none until something opens a database there -- and a library the
 // loader refuses fails, because nothing can open until it is removed.
-func engineCheck(status db.EngineState) doctor.Check {
-	c := doctor.Check{Name: "engine", Severity: doctor.SevOK}
+func engineCheck(status db.EngineState) Check {
+	c := Check{Name: "engine", Severity: SevOK}
 	switch {
 	case status.Err != nil:
-		c.Severity = doctor.SevFail
+		c.Severity = SevFail
 		c.Detail = fmt.Sprintf("%s · %s · %v", status.Name, status.Library, status.Err)
 		c.Fix = fmt.Sprintf("remove %s and restart the daemon", status.CacheDir)
 	case status.Missing:
-		c.Severity = doctor.SevWarn
+		c.Severity = SevWarn
 		c.Detail = fmt.Sprintf("%s · no library under %s yet", status.Name, status.CacheDir)
 	default:
 		c.Detail = status.Name
@@ -88,10 +85,10 @@ func engineCheck(status db.EngineState) doctor.Check {
 // ownerCheck is doctor's `owner` row: whether the daemon serves relevo.sock,
 // and what it answers. A refused dial or an absent socket warns with the fix,
 // since a daemon that predates the socket still runs.
-func ownerCheck(status db.OwnerStatus, probeErr error) doctor.Check {
-	c := doctor.Check{Name: "owner", Severity: doctor.SevOK}
+func ownerCheck(status db.OwnerStatus, probeErr error) Check {
+	c := Check{Name: "owner", Severity: SevOK}
 	if probeErr != nil {
-		c.Severity = doctor.SevWarn
+		c.Severity = SevWarn
 		detail := probeErr.Error()
 		if status.Socket != "" {
 			detail = status.Socket + " · " + detail
@@ -108,8 +105,8 @@ func ownerCheck(status db.OwnerStatus, probeErr error) doctor.Check {
 // ledgerChecks turns live gates into doctor rows under the candidate's
 // harness. They warn, never fail: a gated provider is a fact about right
 // now, not a broken install, and must not change doctor's exit code.
-func ledgerChecks(gates []availability.Gate) []doctor.Check {
-	checks := make([]doctor.Check, 0, len(gates))
+func ledgerChecks(gates []availability.Gate) []Check {
+	checks := make([]Check, 0, len(gates))
 	for _, g := range gates {
 		if g.Kind != availability.SpawnFailed && g.Kind != availability.RateLimited {
 			continue
@@ -127,10 +124,10 @@ func ledgerChecks(gates []availability.Gate) []doctor.Check {
 			fix = "relevo gate --clear " + provider
 		}
 
-		checks = append(checks, doctor.Check{
+		checks = append(checks, Check{
 			Group:    group,
 			Name:     "ledger",
-			Severity: doctor.SevWarn,
+			Severity: SevWarn,
 			Detail: fmt.Sprintf("%s: %s since %s (%s)",
 				g.Token, availability.GateKindText(g.Kind), availability.GateTimeText(g.Since), g.UntilText()),
 			Fix: fix,
@@ -140,66 +137,66 @@ func ledgerChecks(gates []availability.Gate) []doctor.Check {
 }
 
 // serverChecks turns each configured server's probe (relevo.ProbeServers)
-// into a doctor row (remote-builders spec §5.5): reachable and enrolled is
+// into a doctor row: reachable and enrolled is
 // ok; not enrolled and unreachable warn (an unreachable probe is
 // ProbeFailed -- relevo could not establish the fact, not that anything is
 // wrong); a changed certificate fails, since the client hard-refuses it.
-func serverChecks(probes []relevo.ServerProbe) []doctor.Check {
-	checks := make([]doctor.Check, 0, len(probes))
+func serverChecks(probes []relevo.ServerProbe) []Check {
+	checks := make([]Check, 0, len(probes))
 	for _, p := range probes {
-		c := doctor.Check{Group: "", Name: "servers"}
+		c := Check{Group: "", Name: "servers"}
 		switch p.State {
 		case "enrolled":
-			c.Severity = doctor.SevOK
+			c.Severity = SevOK
 			c.Detail = fmt.Sprintf("%s: enrolled as %s", p.Name, p.Label)
 			if p.QueueAware && p.Builders != nil {
 				c.Detail += fmt.Sprintf(", %s", buildersText(p))
 			}
 			checks = append(checks, c)
 			if warning := relevo.ServerTierWarning(p); warning != "" {
-				checks = append(checks, doctor.Check{
+				checks = append(checks, Check{
 					Group:    "",
 					Name:     "servers",
-					Severity: doctor.SevWarn,
+					Severity: SevWarn,
 					Detail:   fmt.Sprintf("%s: %s", p.Name, warning),
 					Fix:      "set tier.builder in the server's config policy",
 				})
 			} else if !p.TierAware {
-				checks = append(checks, doctor.Check{
+				checks = append(checks, Check{
 					Group:       "",
 					Name:        "servers",
-					Severity:    doctor.SevWarn,
+					Severity:    SevWarn,
 					Detail:      fmt.Sprintf("%s: builder tier unknown (pre-tier server)", p.Name),
 					ProbeFailed: true,
 				})
 			}
 			if p.QueueAware && p.Builders != nil && !p.Builders.Scopes {
-				checks = append(checks, doctor.Check{
+				checks = append(checks, Check{
 					Group:    "",
 					Name:     "servers",
-					Severity: doctor.SevWarn,
+					Severity: SevWarn,
 					Detail:   fmt.Sprintf("scopes unavailable on %s: a daemon restart kills its builders", p.Name),
 				})
 			}
 			continue
 		case "not enrolled":
-			c.Severity = doctor.SevWarn
+			c.Severity = SevWarn
 			c.Detail = fmt.Sprintf("%s: not enrolled", p.Name)
 			c.Fix = "give the admin: " + p.Detail
 		case "unreachable":
-			c.Severity = doctor.SevWarn
+			c.Severity = SevWarn
 			c.Detail = fmt.Sprintf("%s: unreachable: %s", p.Name, p.Detail)
 			c.ProbeFailed = true
 		case "cert changed":
-			c.Severity = doctor.SevFail
+			c.Severity = SevFail
 			c.Detail = fmt.Sprintf("%s: certificate changed", p.Name)
 			c.Fix = fmt.Sprintf("relevo config server add %s <url> --fingerprint <new>", p.Name)
 		case "no key":
-			c.Severity = doctor.SevWarn
+			c.Severity = SevWarn
 			c.Detail = fmt.Sprintf("%s: %s", p.Name, p.Detail)
 			c.ProbeFailed = true
 		default:
-			c.Severity = doctor.SevWarn
+			c.Severity = SevWarn
 			c.Detail = fmt.Sprintf("%s: %s", p.Name, p.Detail)
 			c.ProbeFailed = true
 		}
@@ -209,7 +206,7 @@ func serverChecks(probes []relevo.ServerProbe) []doctor.Check {
 }
 
 // buildersText is a queue-aware, enrolled probe's runner census, the same
-// words RenderServers appends to its row (#285): "runners %d/%d, %d
+// words RenderServers appends to its row: "runners %d/%d, %d
 // queued, scopes %s".
 func buildersText(p relevo.ServerProbe) string {
 	scopes := "off"
@@ -229,14 +226,14 @@ func buildersText(p relevo.ServerProbe) string {
 
 // policyChecks turns policy/candidates inconsistencies into doctor rows.
 // Warnings, not failures: an unlisted candidate is a degraded order, not
-// a broken machine (spec §4.8).
-func policyChecks(warnings []relevo.PolicyWarning) []doctor.Check {
-	checks := make([]doctor.Check, 0, len(warnings))
+// a broken machine.
+func policyChecks(warnings []relevo.PolicyWarning) []Check {
+	checks := make([]Check, 0, len(warnings))
 	for _, w := range warnings {
-		checks = append(checks, doctor.Check{
+		checks = append(checks, Check{
 			Group:    "",
 			Name:     "policy",
-			Severity: doctor.SevWarn,
+			Severity: SevWarn,
 			Detail:   w.Text,
 			Fix:      "run relevo config edit",
 		})
@@ -246,10 +243,10 @@ func policyChecks(warnings []relevo.PolicyWarning) []doctor.Check {
 
 // refusalChecks turns the roles an omitted candidate would be refused for
 // into doctor rows. Warnings, not failures: the machine is fine, the
-// configuration is not (#165). The fix is a literal policy.json built
+// configuration is not. The fix is a literal policy.json built
 // from the tokens that serve the role, so it can be pasted as is.
-func refusalChecks(refusals []relevo.RoleRefusal) []doctor.Check {
-	checks := make([]doctor.Check, 0, len(refusals))
+func refusalChecks(refusals []relevo.RoleRefusal) []Check {
+	checks := make([]Check, 0, len(refusals))
 	for _, r := range refusals {
 		detail := r.Text + " -- bind --actor " + r.Role + " without --candidate would refuse"
 		if r.Role == "builder" {
@@ -268,10 +265,10 @@ func refusalChecks(refusals []relevo.RoleRefusal) []doctor.Check {
 				fix = "wait for a round to finish, or raise max_concurrency with relevo config edit"
 			}
 		}
-		checks = append(checks, doctor.Check{
+		checks = append(checks, Check{
 			Group:    "",
 			Name:     "policy",
-			Severity: doctor.SevWarn,
+			Severity: SevWarn,
 			Detail:   detail,
 			Fix:      fix,
 		})
@@ -288,108 +285,47 @@ func policyExample(role string, serving []string) string {
 }
 
 // staleMasterMindAge is how old a mastermind record's seen_at must be before the
-// stale-record note names it (§4.8, row 5).
+// stale-record note names it.
 const staleMasterMindAge = 7 * 24 * time.Hour
 
-// mastermindCheckInput gathers §4.8's mastermind-row facts: which masterminds exist,
+// mastermindCheckInput gathers the mastermind-row facts: which masterminds exist,
 // whether this process runs inside Claude Code or muse, and whether the
 // resolved mastermind has a live push claim. Every read is best-effort -- a
 // fact relevo cannot establish reads as absent, and the checks say "not
 // checked" rather than guessing. Home comes from $HOME so the row reads the
-// same directory cmd/relevo's TestMain isolated.
-func mastermindCheckInput(rt relevo.Runtime, kinds []string) doctor.MasterMindCheckInput {
-	in := doctor.MasterMindCheckInput{Home: os.Getenv("HOME"), ClaudeDir: os.Getenv("CLAUDE_CONFIG_DIR"), Running: buildVersion()}
+// same directory cmd/relevo's TestMain isolated. The cmd-owned facts arrive
+// through deps; everything else is read here.
+func mastermindCheckInput(rt relevo.Runtime, kinds []string, deps Deps) MasterMindCheckInput {
+	in := MasterMindCheckInput{Home: os.Getenv("HOME"), ClaudeDir: os.Getenv("CLAUDE_CONFIG_DIR"), Running: deps.Version}
 	if wd, err := os.Getwd(); err == nil {
 		in.Repo = wd
 	}
-	// The repository's consent answer (#632). Each read is best-effort like the
-	// rest of the row: a store or git read that fails leaves the row off.
-	if rt.Git != nil && in.Repo != "" {
-		ref := mastermindRepoOf(context.Background(), rt, in.Repo)
-		in.RepoKnown = mastermindRepoKnown(ref)
-		if rt.Store != nil {
-			if d, err := rt.Store.DB(); err == nil {
-				in.ConsentKnown = true
-				if in.RepoKnown {
-					if c, err := d.RepoConsent(ref); err == nil {
-						in.Consent = c
-					}
-				}
-			}
-		}
-	}
+	mastermindConsent(rt, &in, deps)
 	for _, k := range kinds {
 		gatePluginRowsFor(k, &in)
 	}
 
-	records := []mastermind.Record{}
-	if rt.MasterMinds != nil {
-		if recs, err := rt.MasterMinds.List(); err == nil {
-			records = recs
-		}
-	}
-
-	live := map[string]bool{}
-	if rt.Store != nil {
-		if bindings, err := rt.Store.List(); err == nil {
-			for _, b := range bindings {
-				if b.State != store.StateDone && b.MasterMindID != "" {
-					live[b.MasterMindID] = true
-				}
-			}
-		}
-	}
-
+	live := liveMasterMindIDs(rt)
 	cutoff := rt.Now().Add(-staleMasterMindAge)
-	for _, rec := range records {
+	for _, rec := range mastermindRecords(rt) {
 		gatePluginRowsFor(rec.HarnessKind, &in)
-		if rec.SeenAt.Before(cutoff) && !live[rec.ID] {
+		if isStaleMasterMind(rec, live, cutoff) {
 			in.Stale = append(in.Stale, rec.Name)
 		}
 	}
 
-	if ident, ok := mastermind.Detect(os.Getenv, os.Getppid()); ok && ident.Kind == "claude" {
-		in.Detected = true
-		in.MCPChild = HasMCPChild(hostChildProcesses(ident.HostPID))
-		if rt.MasterMinds != nil {
-			rec, _, err := mastermind.Resolve(rt.MasterMinds, mastermind.ResolveInput{
-				Env:       os.Getenv,
-				PPID:      os.Getppid(),
-				ProcStart: rt.ProcStart,
-				Now:       rt.Now(),
-			})
-			if err == nil {
-				in.Resolved = &rec
-				// #386: the mastermind's chat label, read here so the row can
-				// name the mastermind as the harness does. An empty label
-				// leaves the detail byte-identical.
-				if lbl := chatResolver().Resolve(context.Background(), rec.HarnessKind, rec.SessionID); lbl != (chatlabel.Label{}) {
-					in.Chat = lbl.String()
-				}
-				if rt.Channels != nil {
-					if c, cerr := rt.Channels.Live(rec.ID, rt.Now()); cerr == nil && c != nil {
-						in.ClaimLive = true
-					}
-				}
-			}
-		}
-	}
-
-	museSessionGate(rt, &in)
+	mastermindClaudeSession(rt, &in, deps)
+	museSessionGate(rt, &in, deps.ChatResolver)
 
 	return in
 }
-
-// HasMCPChild is doctor.HasMCPChild, re-exported so the pure rule is visible
-// at this call site without importing internal/doctor into a test's mind.
-func HasMCPChild(children []doctor.ChildProcess) bool { return doctor.HasMCPChild(children) }
 
 // hostChildProcesses reads the child processes of pid: /proc/<pid>/task/*/children
 // names them, and each child's /proc/<pid>/cmdline its argv. On a host with no
 // /proc (macOS) it falls back to `ps -o pid=,args= --ppid`. A pid that has gone
 // or a read that fails yields nil, which reads as "no relevo mcp child" -- the
-// FAIL #4.8 asks for when a Claude session has no push route.
-func hostChildProcesses(pid int) []doctor.ChildProcess {
+// FAIL the mastermind row asks for when a Claude session has no push route.
+func hostChildProcesses(pid int) []ChildProcess {
 	if pid <= 0 {
 		return nil
 	}
@@ -398,7 +334,7 @@ func hostChildProcesses(pid int) []doctor.ChildProcess {
 		return psChildren(pid)
 	}
 	seen := make(map[int]bool)
-	var out []doctor.ChildProcess
+	var out []ChildProcess
 	for _, p := range paths {
 		raw, err := os.ReadFile(p)
 		if err != nil {
@@ -411,7 +347,7 @@ func hostChildProcesses(pid int) []doctor.ChildProcess {
 			}
 			seen[cpid] = true
 			if args := processArgs(cpid); len(args) > 0 {
-				out = append(out, doctor.ChildProcess{PID: cpid, Args: args})
+				out = append(out, ChildProcess{PID: cpid, Args: args})
 			}
 		}
 	}
@@ -435,7 +371,7 @@ func processArgs(pid int) []string {
 // psChildren is hostChildProcesses' portable fallback: `ps -o pid=,args=
 // --ppid <pid>`, which the tree's other process probes already use. An
 // unsupported flag or a missing ps reads as no children.
-func psChildren(pid int) []doctor.ChildProcess {
+func psChildren(pid int) []ChildProcess {
 	out, err := exec.Command("ps", "-o", "pid=,args=", "--ppid", strconv.Itoa(pid)).Output()
 	if err != nil {
 		return nil
@@ -446,8 +382,8 @@ func psChildren(pid int) []doctor.ChildProcess {
 // ParsePSChildren parses `ps -o pid=,args=` output: one line per process, the
 // pid first, the argv as the rest of the line. Pure, so the parsing is
 // testable without a process tree.
-func ParsePSChildren(out []byte) []doctor.ChildProcess {
-	var procs []doctor.ChildProcess
+func ParsePSChildren(out []byte) []ChildProcess {
+	var procs []ChildProcess
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -462,57 +398,57 @@ func ParsePSChildren(out []byte) []doctor.ChildProcess {
 		if len(fields) > 1 {
 			args = strings.Fields(fields[1])
 		}
-		procs = append(procs, doctor.ChildProcess{PID: pid, Args: args})
+		procs = append(procs, ChildProcess{PID: pid, Args: args})
 	}
 	return procs
 }
 
-// insertGlobalCheck puts c after the last global row, so render order stays
+// InsertGlobalCheck puts c after the last global row, so render order stays
 // "globals first, then one block per kind".
-func insertGlobalCheck(checks []doctor.Check, c doctor.Check) []doctor.Check {
+func InsertGlobalCheck(checks []Check, c Check) []Check {
 	last := 0
 	for i, existing := range checks {
 		if existing.Group == "" {
 			last = i + 1
 		}
 	}
-	out := make([]doctor.Check, 0, len(checks)+1)
+	out := make([]Check, 0, len(checks)+1)
 	out = append(out, checks[:last]...)
 	out = append(out, c)
 	return append(out, checks[last:]...)
 }
 
-// bindPreflightDefs runs the bind-time preflight for one kind and renders its
+// BindPreflightDefs runs the bind-time preflight for one kind and renders its
 // warning lines, checking the definitions the caller resolved for the kind --
 // the registry's builder definitions when roles.json is loaded, the shipped
-// ones otherwise (#374 §3.5). The timeout lives here, not at the call site, so
-// it cannot be dropped by accident; adopted is passed through to doctor.Run,
+// ones otherwise. The timeout lives here, not at the call site, so
+// it cannot be dropped by accident; adopted is passed through to Run,
 // which owns what an adopted pane is and is not checked for.
-func bindPreflightDefs(ctx context.Context, env doctor.Env, kind string, adopted bool, defs []string) []string {
+func BindPreflightDefs(ctx context.Context, env Env, kind string, adopted bool, defs []string) []string {
 	if defs == nil {
 		defs = builderDefinitions()
 	}
 	ctx, cancel := context.WithTimeout(ctx, bindPreflightTimeout)
 	defer cancel()
-	return bindWarningLines(doctor.Run(ctx, env, []string{kind}, doctor.WithAdopted(adopted), doctor.WithDefinitions(map[string][]string{kind: defs})))
+	return bindWarningLines(Run(ctx, env, []string{kind}, WithAdopted(adopted), WithDefinitions(map[string][]string{kind: defs})))
 }
 
-// bindPreflight is bindPreflightDefs with the builder's shipped definitions:
+// bindPreflight is BindPreflightDefs with the builder's shipped definitions:
 // the behaviour every pre-roles.json caller had.
-func bindPreflight(ctx context.Context, env doctor.Env, kind string, adopted bool) []string {
-	return bindPreflightDefs(ctx, env, kind, adopted, builderDefinitions())
+func bindPreflight(ctx context.Context, env Env, kind string, adopted bool) []string {
+	return BindPreflightDefs(ctx, env, kind, adopted, builderDefinitions())
 }
 
-func bindWarningLines(rep doctor.Report) []string {
+func bindWarningLines(rep Report) []string {
 	var warnings []string
 	for _, c := range rep.Checks {
-		if c.Severity == doctor.SevOK {
+		if c.Severity == SevOK {
 			continue
 		}
 		// A row relevo could not establish is not actionable, so it stays off the
 		// hot path -- unless it is a SevFail, which means relevo cannot run at
 		// all and the user needs to hear it even when the cause was a bad probe.
-		if c.ProbeFailed && c.Severity != doctor.SevFail {
+		if c.ProbeFailed && c.Severity != SevFail {
 			continue
 		}
 
@@ -571,11 +507,11 @@ func enabledScope(sc *policy.ScopePolicy) *policy.ScopePolicy {
 	return sc
 }
 
-// scopeBlock is one doctor.ScopeBlock for a policy scope that sets allowed_cpus
-// (#314). MaxCPU is the highest core the pool names, computed with
+// scopeBlock is one ScopeBlock for a policy scope that sets allowed_cpus.
+// MaxCPU is the highest core the pool names, computed with
 // policy.ParseCPUList so internal/doctor never imports policy.
-func scopeBlock(key string, sc *policy.ScopePolicy) doctor.ScopeBlock {
-	b := doctor.ScopeBlock{Key: key, AllowedCPUs: sc.AllowedCPUs}
+func scopeBlock(key string, sc *policy.ScopePolicy) ScopeBlock {
+	b := ScopeBlock{Key: key, AllowedCPUs: sc.AllowedCPUs}
 	if cpus, err := policy.ParseCPUList(sc.AllowedCPUs); err == nil && len(cpus) > 0 {
 		b.MaxCPU = cpus[len(cpus)-1]
 	}

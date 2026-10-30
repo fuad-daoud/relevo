@@ -1,11 +1,10 @@
-package main
+package doctor
 
 import (
 	"reflect"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
-	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
@@ -33,7 +32,7 @@ func TestSkillNeedsOneRowPerActorKindSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	want := []doctor.SkillNeed{
+	want := []SkillNeed{
 		{Actor: "designer", Kind: "claude", Skill: "design-runbooks"},
 		{Actor: "designer", Kind: "codex", Skill: "design-runbooks"},
 	}

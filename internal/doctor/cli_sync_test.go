@@ -1,4 +1,4 @@
-package main
+package doctor
 
 // The doctor row is pinned as a pure function of the readings: no test here
 // opens a store, spawns a harness or reaches a network.
@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/doctor"
 	relevosync "github.com/fuad-daoud/relevo/internal/sync"
 )
 
@@ -31,7 +30,7 @@ func TestSyncQuotaCheckOKNamesAccountAndPace(t *testing.T) {
 	if !ok {
 		t.Fatal("a read month got no row")
 	}
-	if c.Name != "sync quota" || c.Severity != doctor.SevOK {
+	if c.Name != "sync quota" || c.Severity != SevOK {
 		t.Errorf("row = %q, sev %v; want a calm sync quota row", c.Name, c.Severity)
 	}
 	if want := "account 1.0 GB of 10.0 GB (10.0%) across 2 machines, on pace for 4.0 GB"; c.Detail != want {
@@ -61,7 +60,7 @@ func TestSyncQuotaCheckWarnNamesEveryReason(t *testing.T) {
 	if !ok {
 		t.Fatal("a warning month got no row")
 	}
-	if c.Severity != doctor.SevWarn {
+	if c.Severity != SevWarn {
 		t.Fatalf("sev = %v, want a warning", c.Severity)
 	}
 	for _, want := range []string{
@@ -84,7 +83,7 @@ func TestSyncQuotaCheckIdleAloneReadsCalm(t *testing.T) {
 	t.Parallel()
 	idle := relevosync.ExportHour{Hour: "2026-10-27T13", Exported: 40, Idle: 40}
 	c, ok := syncQuotaCheck(relevosync.QuotaReading{}, false, idle, true)
-	if !ok || c.Severity != doctor.SevOK {
+	if !ok || c.Severity != SevOK {
 		t.Fatalf("ok %v, sev %v; want a calm row for an under-line hour", ok, c.Severity)
 	}
 	if !strings.Contains(c.Detail, "40 entries exported in 2026-10-27T13Z") {

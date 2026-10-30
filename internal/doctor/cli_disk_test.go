@@ -1,4 +1,4 @@
-package main
+package doctor
 
 import (
 	"context"
@@ -9,17 +9,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
-func rowNamed(rows []doctor.Check, name string) (doctor.Check, bool) {
+func rowNamed(rows []Check, name string) (Check, bool) {
 	for _, c := range rows {
 		if c.Name == name {
 			return c, true
 		}
 	}
-	return doctor.Check{}, false
+	return Check{}, false
 }
 
 func TestDoctorIncludesTmpAndCacheRows(t *testing.T) {
@@ -53,7 +52,7 @@ func TestDoctorMissingGoIsInfoRow(t *testing.T) {
 	}
 	rows := diskChecks(context.Background(), diskInputs{Run: run})
 	c, ok := rowNamed(rows, "go cache")
-	if !ok || c.Severity != doctor.SevInfo {
+	if !ok || c.Severity != SevInfo {
 		t.Errorf("go cache row = %+v, %v; want info", c, ok)
 	}
 }

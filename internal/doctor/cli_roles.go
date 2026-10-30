@@ -1,8 +1,7 @@
-package main
+package doctor
 
 import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
-	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
@@ -12,16 +11,16 @@ import (
 // plus one warning row per legacy field the actors section makes irrelevant.
 // In legacy mode there is nothing stale to warn about, so only the OK row is
 // printed.
-func roleSourceChecks(reg *roles.Registry, set *candidate.Set, pol policy.Policy) []doctor.Check {
+func roleSourceChecks(reg *roles.Registry, set *candidate.Set, pol policy.Policy) []Check {
 	detail := "legacy: candidates.json roles, policy.json order and tier"
 	if reg.FileMode() {
 		detail = "config actors"
 	}
-	out := []doctor.Check{{Name: "actor source", Severity: doctor.SevOK, Detail: detail}}
+	out := []Check{{Name: "actor source", Severity: SevOK, Detail: detail}}
 	for _, w := range relevo.LegacyRoleFieldWarnings(reg, set, pol) {
-		out = append(out, doctor.Check{
+		out = append(out, Check{
 			Name:     "actor source",
-			Severity: doctor.SevWarn,
+			Severity: SevWarn,
 			Detail:   w,
 			Fix:      "delete it; config actors is the source",
 		})

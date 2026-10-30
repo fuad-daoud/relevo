@@ -1,4 +1,4 @@
-package main
+package doctor
 
 import (
 	"bytes"
@@ -14,7 +14,6 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/candidate"
-	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -174,14 +173,14 @@ func TestLedgerChecks(t *testing.T) {
 		t.Fatalf("got %d checks, want 2: %+v", len(checks), checks)
 	}
 
-	if checks[0].Group != "claude" || checks[0].Name != "ledger" || checks[0].Severity != doctor.SevWarn {
+	if checks[0].Group != "claude" || checks[0].Name != "ledger" || checks[0].Severity != SevWarn {
 		t.Errorf("check 0 = %+v", checks[0])
 	}
 	if !strings.HasPrefix(checks[0].Fix, "relevo gate --clear ") {
 		t.Errorf("check 0 Fix = %q, want prefix %q", checks[0].Fix, "relevo gate --clear ")
 	}
 
-	if checks[1].Group != "agy" || checks[1].Name != "ledger" || checks[1].Severity != doctor.SevWarn {
+	if checks[1].Group != "agy" || checks[1].Name != "ledger" || checks[1].Severity != SevWarn {
 		t.Errorf("check 1 = %+v", checks[1])
 	}
 	if !strings.HasPrefix(checks[1].Fix, "wait until ") {
@@ -252,7 +251,7 @@ func TestPolicyChecks(t *testing.T) {
 
 	for i, w := range warnings {
 		c := checks[i]
-		if c.Group != "" || c.Name != "policy" || c.Severity != doctor.SevWarn {
+		if c.Group != "" || c.Name != "policy" || c.Severity != SevWarn {
 			t.Errorf("check %d = %+v", i, c)
 		}
 		if c.Detail != w.Text {
@@ -268,17 +267,11 @@ func TestPolicyChecks(t *testing.T) {
 	}
 }
 
-// TestServerChecksScopesWarning pins #285's scopes warning and #295's quota:
-// a queue-aware, enrolled server without systemd scopes gets a SevWarn row
-// naming the daemon-restart risk, in addition to its builders census text on
-// the ok row; Scopes:true gets no such warning row; a server that is not
-// queue-aware (a pre-queue server) carries no builders text at all. Pure
-// over a hand-built []relevo.ServerProbe -- no harness, no network.
-//
-// Mutation check: drop the `!p.Builders.Scopes` guard in serverChecks and
-// the contabo warning row (Scopes:true) reappears, failing this test.
-func TestServerChecksScopesWarning(t *testing.T) {
-	probes := []relevo.ServerProbe{
+// serverScopesProbes is the enrolled-server table the scopes warning test
+// reads: one queue-aware server without scopes, scoped variants naming the
+// quota, the slice, both or neither, and a pre-queue server with no builders.
+func serverScopesProbes() []relevo.ServerProbe {
+	return []relevo.ServerProbe{
 		{
 			Name: "zen", State: "enrolled", Label: "laptop", TierAware: true, BuilderTier: "edit", MaxTier: "edit",
 			QueueAware: true, Builders: &remote.BuildersView{Running: 2, Queued: 1, Cap: 3, Scopes: false},
@@ -303,57 +296,64 @@ func TestServerChecksScopesWarning(t *testing.T) {
 			Name: "old", State: "enrolled", Label: "laptop", TierAware: true, BuilderTier: "edit", MaxTier: "edit",
 		},
 	}
+}
 
-	checks := serverChecks(probes)
-
-	var zenOK, zenWarn, contaboOK, contaboWarn, quotaOK, sliceOK, plainOK, oldOK *doctor.Check
+// checkWithDetailPrefix finds the first check whose detail starts with prefix,
+// or nil when no check does. The scopes test asserts presence and absence
+// through the same lookup.
+func checkWithDetailPrefix(checks []Check, prefix string) *Check {
 	for i := range checks {
-		c := &checks[i]
-		switch {
-		case strings.HasPrefix(c.Detail, "zen: enrolled"):
-			zenOK = c
-		case strings.HasPrefix(c.Detail, "scopes unavailable on zen"):
-			zenWarn = c
-		case strings.HasPrefix(c.Detail, "contabo: enrolled"):
-			contaboOK = c
-		case strings.HasPrefix(c.Detail, "scopes unavailable on contabo"):
-			contaboWarn = c
-		case strings.HasPrefix(c.Detail, "quotaonly: enrolled"):
-			quotaOK = c
-		case strings.HasPrefix(c.Detail, "sliceonly: enrolled"):
-			sliceOK = c
-		case strings.HasPrefix(c.Detail, "plain: enrolled"):
-			plainOK = c
-		case strings.HasPrefix(c.Detail, "old: enrolled"):
-			oldOK = c
+		if strings.HasPrefix(checks[i].Detail, prefix) {
+			return &checks[i]
 		}
 	}
+	return nil
+}
 
+// TestServerChecksScopesWarning pins the scopes warning and the quota:
+// a queue-aware, enrolled server without systemd scopes gets a SevWarn row
+// naming the daemon-restart risk, in addition to its builders census text on
+// the ok row; Scopes:true gets no such warning row; a server that is not
+// queue-aware (a pre-queue server) carries no builders text at all. Pure
+// over a hand-built []relevo.ServerProbe -- no harness, no network.
+//
+// Mutation check: drop the `!p.Builders.Scopes` guard in serverChecks and
+// the contabo warning row (Scopes:true) reappears, failing this test.
+func TestServerChecksScopesWarning(t *testing.T) {
+	checks := serverChecks(serverScopesProbes())
+
+	zenOK := checkWithDetailPrefix(checks, "zen: enrolled")
 	if zenOK == nil || !strings.Contains(zenOK.Detail, "runners 2/3, 1 queued, scopes off") {
 		t.Fatalf("zen ok check = %+v, want it naming the builders census", zenOK)
 	}
-	if zenWarn == nil || zenWarn.Severity != doctor.SevWarn ||
+	zenWarn := checkWithDetailPrefix(checks, "scopes unavailable on zen")
+	if zenWarn == nil || zenWarn.Severity != SevWarn ||
 		zenWarn.Detail != "scopes unavailable on zen: a daemon restart kills its builders" {
 		t.Fatalf("zen scopes warning = %+v, want the exact message", zenWarn)
 	}
 
+	contaboOK := checkWithDetailPrefix(checks, "contabo: enrolled")
 	if contaboOK == nil || !strings.Contains(contaboOK.Detail, "runners 2/3, 1 queued, scopes on (relevo.slice, 200%)") {
 		t.Fatalf("contabo ok check = %+v, want it naming the builders census and quota", contaboOK)
 	}
-	if contaboWarn != nil {
+	if contaboWarn := checkWithDetailPrefix(checks, "scopes unavailable on contabo"); contaboWarn != nil {
 		t.Fatalf("contabo scopes warning = %+v, want none (Scopes is true)", contaboWarn)
 	}
 
+	quotaOK := checkWithDetailPrefix(checks, "quotaonly: enrolled")
 	if quotaOK == nil || !strings.Contains(quotaOK.Detail, "runners 1/3, 0 queued, scopes on (150%)") {
 		t.Fatalf("quotaonly ok check = %+v, want it naming the quota alone", quotaOK)
 	}
+	sliceOK := checkWithDetailPrefix(checks, "sliceonly: enrolled")
 	if sliceOK == nil || !strings.Contains(sliceOK.Detail, "runners 1/3, 0 queued, scopes on (relevo.slice)") {
 		t.Fatalf("sliceonly ok check = %+v, want it naming the slice alone", sliceOK)
 	}
+	plainOK := checkWithDetailPrefix(checks, "plain: enrolled")
 	if plainOK == nil || !strings.HasSuffix(plainOK.Detail, "runners 1/3, 0 queued, scopes on") {
 		t.Fatalf("plain ok check = %+v, want it naming scopes on", plainOK)
 	}
 
+	oldOK := checkWithDetailPrefix(checks, "old: enrolled")
 	if oldOK == nil || strings.Contains(oldOK.Detail, "runners ") {
 		t.Fatalf("old (pre-queue) ok check = %+v, want no builders text", oldOK)
 	}
@@ -372,7 +372,7 @@ func TestRefusalChecks(t *testing.T) {
 		t.Fatalf("got %d checks, want 2: %+v", len(checks), checks)
 	}
 	for i, c := range checks {
-		if c.Group != "" || c.Name != "policy" || c.Severity != doctor.SevWarn {
+		if c.Group != "" || c.Name != "policy" || c.Severity != SevWarn {
 			t.Errorf("check %d = %+v", i, c)
 		}
 	}
@@ -396,12 +396,12 @@ func TestRefusalChecks(t *testing.T) {
 // The unreadable-store gap is reported as a global row, positioned with the
 // other global rows rather than after the per-kind blocks.
 func TestInsertGlobalCheckKeepsRenderOrder(t *testing.T) {
-	checks := []doctor.Check{
-		{Name: "release", Severity: doctor.SevOK},
-		{Name: "daemon", Severity: doctor.SevOK},
-		{Group: "claude", Name: "binary", Severity: doctor.SevOK},
+	checks := []Check{
+		{Name: "release", Severity: SevOK},
+		{Name: "daemon", Severity: SevOK},
+		{Group: "claude", Name: "binary", Severity: SevOK},
 	}
-	out := insertGlobalCheck(checks, doctor.Check{Name: "bindings", Severity: doctor.SevWarn, Detail: "could not list bindings"})
+	out := InsertGlobalCheck(checks, Check{Name: "bindings", Severity: SevWarn, Detail: "could not list bindings"})
 	if len(out) != 4 {
 		t.Fatalf("len = %d, want 4", len(out))
 	}
@@ -415,18 +415,18 @@ func TestInsertGlobalCheckKeepsRenderOrder(t *testing.T) {
 
 func TestRenderReportVerdict(t *testing.T) {
 	// Success case
-	repOk := doctor.Report{
-		Checks: []doctor.Check{
-			{Group: "", Name: "release", Severity: doctor.SevOK, Detail: "v0.7.0 is current"},
-			{Group: "", Name: "daemon", Severity: doctor.SevOK, Detail: "running"},
-			{Group: "claude", Name: "binary", Severity: doctor.SevOK, Detail: "/usr/bin/claude"},
-			{Group: "claude", Name: "plan-executor", Severity: doctor.SevWarn, Detail: "missing: ~/.claude/agents/plan-executor.md", Fix: "relevo config agents --kind claude --role plan-executor"},
+	repOk := Report{
+		Checks: []Check{
+			{Group: "", Name: "release", Severity: SevOK, Detail: "v0.7.0 is current"},
+			{Group: "", Name: "daemon", Severity: SevOK, Detail: "running"},
+			{Group: "claude", Name: "binary", Severity: SevOK, Detail: "/usr/bin/claude"},
+			{Group: "claude", Name: "plan-executor", Severity: SevWarn, Detail: "missing: ~/.claude/agents/plan-executor.md", Fix: "relevo config agents --kind claude --role plan-executor"},
 		},
 		UsableBuilder: true,
 	}
 
 	var buf bytes.Buffer
-	renderReport(&buf, repOk)
+	Render(&buf, repOk)
 	out := buf.String()
 
 	if !strings.Contains(out, "1 warning, 0 failures -- relevo can run.") {
@@ -437,15 +437,15 @@ func TestRenderReportVerdict(t *testing.T) {
 	}
 
 	// Failure case
-	repFail := doctor.Report{
-		Checks: []doctor.Check{
-			{Group: "agy", Name: "version", Severity: doctor.SevFail, Detail: "1.1.5 (below floor 1.1.6)"},
+	repFail := Report{
+		Checks: []Check{
+			{Group: "agy", Name: "version", Severity: SevFail, Detail: "1.1.5 (below floor 1.1.6)"},
 		},
 		UsableBuilder: false,
 	}
 
 	buf.Reset()
-	renderReport(&buf, repFail)
+	Render(&buf, repFail)
 	outFail := buf.String()
 
 	if !strings.Contains(outFail, "1 failure, 0 warnings -- relevo is not ready. Fix the failure above.") {
@@ -457,7 +457,7 @@ func TestRenderReportVerdict(t *testing.T) {
 		daemonRun: true,
 		lookPaths: map[string]string{},
 	}
-	repUnverified := doctor.Run(context.Background(), envStub, []string{"claude"})
+	repUnverified := Run(context.Background(), envStub, []string{"claude"})
 	if repUnverified.Failures() != 0 {
 		t.Fatalf("expected 0 failures, got %d", repUnverified.Failures())
 	}
@@ -466,7 +466,7 @@ func TestRenderReportVerdict(t *testing.T) {
 	}
 
 	buf.Reset()
-	renderReport(&buf, repUnverified)
+	Render(&buf, repUnverified)
 	outUnverified := buf.String()
 	if !strings.Contains(outUnverified, "could not establish a usable builder: no checked harness") {
 		t.Errorf("expected 'could not establish a usable builder.', got: %s", outUnverified)
@@ -474,37 +474,37 @@ func TestRenderReportVerdict(t *testing.T) {
 }
 
 func TestRenderReportFooterPrecedence(t *testing.T) {
-	healthy := []doctor.Check{
-		{Name: "release", Severity: doctor.SevOK, Detail: "v0.7.0 is current"},
-		{Name: "daemon", Severity: doctor.SevOK, Detail: "running"},
-		{Group: "claude", Name: "binary", Severity: doctor.SevOK, Detail: "/usr/bin/claude"},
-		{Group: "claude", Name: "plan-executor", Severity: doctor.SevOK, Detail: "~/.claude/agents/plan-executor.md"},
+	healthy := []Check{
+		{Name: "release", Severity: SevOK, Detail: "v0.7.0 is current"},
+		{Name: "daemon", Severity: SevOK, Detail: "running"},
+		{Group: "claude", Name: "binary", Severity: SevOK, Detail: "/usr/bin/claude"},
+		{Group: "claude", Name: "plan-executor", Severity: SevOK, Detail: "~/.claude/agents/plan-executor.md"},
 	}
 	cases := []struct {
 		name string
-		rep  doctor.Report
+		rep  Report
 		want string
 	}{
 		{"refusal beats can run",
-			doctor.Report{Checks: healthy, UsableBuilder: true, BuilderRefusal: "3 candidates serve builder and no order is set"},
+			Report{Checks: healthy, UsableBuilder: true, BuilderRefusal: "3 candidates serve builder and no order is set"},
 			"0 warnings, 0 failures -- relevo cannot pick a builder: 3 candidates serve builder and no order is set."},
 		{"no usable builder beats refusal",
-			doctor.Report{Checks: healthy, UsableBuilder: false, BuilderRefusal: "3 candidates serve builder and no order is set"},
+			Report{Checks: healthy, UsableBuilder: false, BuilderRefusal: "3 candidates serve builder and no order is set"},
 			"could not establish a usable builder"},
 		{"no candidates beats no usable builder",
-			doctor.Report{Checks: healthy, UsableBuilder: false, NoCandidates: true},
+			Report{Checks: healthy, UsableBuilder: false, NoCandidates: true},
 			"0 warnings, 0 failures -- no candidates configured; run relevo setup."},
 		{"a failure beats everything",
-			doctor.Report{Checks: append(append([]doctor.Check(nil), healthy...), doctor.Check{Group: "agy", Name: "version", Severity: doctor.SevFail, Detail: "1.1.5 (below floor 1.1.6)"}), NoCandidates: true, BuilderRefusal: "y"},
+			Report{Checks: append(append([]Check(nil), healthy...), Check{Group: "agy", Name: "version", Severity: SevFail, Detail: "1.1.5 (below floor 1.1.6)"}), NoCandidates: true, BuilderRefusal: "y"},
 			"Fix the failure above."},
 		{"clean machine can run",
-			doctor.Report{Checks: healthy, UsableBuilder: true},
+			Report{Checks: healthy, UsableBuilder: true},
 			"0 warnings, 0 failures -- relevo can run."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			renderReport(&buf, tc.rep)
+			Render(&buf, tc.rep)
 			if !strings.Contains(buf.String(), tc.want) {
 				t.Errorf("footer missing %q in:\n%s", tc.want, buf.String())
 			}
@@ -519,7 +519,7 @@ func TestDoctorSetupRowFix(t *testing.T) {
 	if row.Fix != "relevo setup" {
 		t.Errorf("the no-candidates row's fix = %q, want relevo setup", row.Fix)
 	}
-	if row.Name != "candidates" || row.Severity != doctor.SevWarn || row.Detail != "none configured" {
+	if row.Name != "candidates" || row.Severity != SevWarn || row.Detail != "none configured" {
 		t.Errorf("the no-candidates row changed shape: %+v", row)
 	}
 }
@@ -535,7 +535,7 @@ func TestPolicyExample(t *testing.T) {
 type stubDoctorEnv struct {
 	daemonRun bool
 	daemonErr error
-	// daemonInfo/daemonInfoOK satisfy doctor.Env (#371). The zero value here
+	// daemonInfo/daemonInfoOK satisfy Env. The zero value here
 	// means "no record", which is what a test that does not set them is
 	// exercising; the silent-machine fixture records a matching version.
 	daemonInfo   store.DaemonInfo
@@ -548,12 +548,12 @@ func (s *stubDoctorEnv) DaemonRunning(ctx context.Context) (bool, error) {
 	return s.daemonRun, s.daemonErr
 }
 
-// DaemonInfo satisfies doctor.Env (#371): the recorded daemon state, or "no
+// DaemonInfo satisfies Env: the recorded daemon state, or "no
 // record" when daemonInfoOK is false.
 func (s *stubDoctorEnv) DaemonInfo() (store.DaemonInfo, bool, error) {
 	return s.daemonInfo, s.daemonInfoOK, nil
 }
-func (s *stubDoctorEnv) ServiceUnit() (doctor.ServiceUnit, error) { return doctor.ServiceUnit{}, nil }
+func (s *stubDoctorEnv) ServiceUnit() (ServiceUnit, error) { return ServiceUnit{}, nil }
 func (s *stubDoctorEnv) LookPath(binary string) (string, error) {
 	if p, ok := s.lookPaths[binary]; ok {
 		return p, nil
@@ -567,31 +567,31 @@ func (s *stubDoctorEnv) Stat(path string) error {
 	return s.statErr
 }
 
-// StatOwner satisfies doctor.Env. No test in this file asserts on an owner, so
+// StatOwner satisfies Env. No test in this file asserts on an owner, so
 // it reports no owner and every owner-sensitive row reads as "not established".
 func (s *stubDoctorEnv) StatOwner(string) (uint32, bool) { return 0, false }
 
-// ReleaseState satisfies doctor.Env (#293). These tests assert on severities
+// ReleaseState satisfies Env. These tests assert on severities
 // and fix commands for the other rows, so every release state here reads as
 // "no usable cache": the release row is SevOK/not checked and cannot mask one.
 func (s *stubDoctorEnv) ReleaseState() (string, string, bool, release.Kind) {
 	return "", "", false, release.KindUnknown
 }
 
-// LoadManifest satisfies doctor.Env (#371 §4.10): these stubs record no
+// LoadManifest satisfies Env: these stubs record no
 // manifest, so the role-staleness row reads every definition as "would write".
 func (s *stubDoctorEnv) LoadManifest() (map[string]string, error) {
 	return nil, nil
 }
 
-// ReadFile satisfies doctor.Env. These tests assert on severities and fix
+// ReadFile satisfies Env. These tests assert on severities and fix
 // commands, not on role-file contents, so every file reads as empty -- which
 // doctor must render as a role row with no model suffix.
 func (s *stubDoctorEnv) ReadFile(path string) ([]byte, error) {
 	return nil, nil
 }
 
-// BinaryVersion satisfies doctor.Env. None of these tests exercise a kind
+// BinaryVersion satisfies Env. None of these tests exercise a kind
 // with a MinVersion floor, so this is never called; it exists only to keep
 // stubDoctorEnv implementing the interface.
 func (s *stubDoctorEnv) BinaryVersion(ctx context.Context, path string) (string, error) {
@@ -602,7 +602,7 @@ func (s *stubDoctorEnv) Probe(dir string) error {
 	return nil
 }
 
-// Command satisfies doctor.Env. None of these tests exercise a kind whose
+// Command satisfies Env. None of these tests exercise a kind whose
 // checks shell out (the opencode session-count note is kind-gated and these
 // tests only ever pass "claude"), so this exists only to keep stubDoctorEnv
 // implementing the interface.
@@ -620,7 +620,7 @@ func TestBindWarningLinesSkipsOnlyTheRowItCouldNotEstablish(t *testing.T) {
 		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
 		statErr:   os.ErrNotExist,
 	}
-	rep := doctor.Run(context.Background(), env, []string{"claude"})
+	rep := Run(context.Background(), env, []string{"claude"})
 	joined := strings.Join(bindWarningLines(rep), "\n")
 
 	if strings.Contains(joined, "probe error") {
@@ -634,8 +634,8 @@ func TestBindWarningLinesSkipsOnlyTheRowItCouldNotEstablish(t *testing.T) {
 // The exception: a failed probe whose verdict is SevFail means relevo cannot run.
 // Silence would be the worst possible answer, so it prints anyway.
 func TestBindWarningLinesReportsAFailureEvenWhenTheProbeFailed(t *testing.T) {
-	rep := doctor.Report{Checks: []doctor.Check{
-		{Group: "agy", Name: "version", Severity: doctor.SevFail,
+	rep := Report{Checks: []Check{
+		{Group: "agy", Name: "version", Severity: SevFail,
 			Detail: "1.1.5 (below floor 1.1.6)", Fix: "upgrade agy to >= 1.1.6", ProbeFailed: true},
 	}}
 	joined := strings.Join(bindWarningLines(rep), "\n")
@@ -650,18 +650,18 @@ func TestBindWarningLinesSilentWhenNothingIsWrong(t *testing.T) {
 		daemonInfoOK: true, // a running daemon with a recorded, matching version
 		lookPaths:    map[string]string{"claude": "/usr/bin/claude"},
 	}
-	rep := doctor.Run(context.Background(), env, []string{"claude"})
+	rep := Run(context.Background(), env, []string{"claude"})
 	if lines := bindWarningLines(rep); len(lines) != 0 {
 		t.Errorf("a healthy machine must yield zero lines, got: %v", lines)
 	}
 }
 
 // Global rows reach bind too: a stopped daemon makes a binding exactly as inert
-// as a missing role file, which is the failure #24 is about.
+// as a missing role file, since either leaves a binding with nowhere to run.
 func TestBindWarningLinesIncludesGlobalRows(t *testing.T) {
-	rep := doctor.Report{Checks: []doctor.Check{
-		{Name: "daemon", Severity: doctor.SevWarn, Detail: "not running", Fix: "relevo daemon"},
-		{Group: "claude", Name: "plan-executor", Severity: doctor.SevOK, Detail: "~/.claude/agents/plan-executor.md"},
+	rep := Report{Checks: []Check{
+		{Name: "daemon", Severity: SevWarn, Detail: "not running", Fix: "relevo daemon"},
+		{Group: "claude", Name: "plan-executor", Severity: SevOK, Detail: "~/.claude/agents/plan-executor.md"},
 	}}
 	joined := strings.Join(bindWarningLines(rep), "\n")
 	if !strings.Contains(joined, "daemon not running") {
@@ -730,7 +730,7 @@ func TestBindWarningAdoptedRealRunMissingBinary(t *testing.T) {
 	}
 
 	// Normal Run: the absent binary is reported
-	normalRep := doctor.Run(context.Background(), envStub, []string{"claude"})
+	normalRep := Run(context.Background(), envStub, []string{"claude"})
 	normalLines := bindWarningLines(normalRep)
 	joinedNormal := strings.Join(normalLines, "\n")
 	if !strings.Contains(joinedNormal, "binary") {
@@ -738,7 +738,7 @@ func TestBindWarningAdoptedRealRunMissingBinary(t *testing.T) {
 	}
 
 	// Adopted Run: the binary is the user's own agent, so it must not warn
-	adoptedRep := doctor.Run(context.Background(), envStub, []string{"claude"}, doctor.WithAdopted(true))
+	adoptedRep := Run(context.Background(), envStub, []string{"claude"}, WithAdopted(true))
 	adoptedLines := bindWarningLines(adoptedRep)
 	joinedAdopted := strings.Join(adoptedLines, "\n")
 	if strings.Contains(joinedAdopted, "binary") {
@@ -751,7 +751,7 @@ func TestBindWarningDaemonDownRealRun(t *testing.T) {
 		daemonRun: false,
 		lookPaths: map[string]string{"claude": "/usr/bin/claude"},
 	}
-	rep := doctor.Run(context.Background(), envStub, []string{"claude"})
+	rep := Run(context.Background(), envStub, []string{"claude"})
 	lines := bindWarningLines(rep)
 	joined := strings.Join(lines, "\n")
 	if !strings.Contains(joined, "daemon not running") {
@@ -759,7 +759,7 @@ func TestBindWarningDaemonDownRealRun(t *testing.T) {
 	}
 }
 
-// TestAssembleRoleDefinitionsFileMode pins §3.5: in file mode the per-kind
+// TestAssembleRoleDefinitionsFileMode pins file mode: in file mode the per-kind
 // definitions come from what the registry resolves for the roles serving each
 // candidate, a kind reachable only through a binding gets the builder's
 // definitions for that kind, and each list is sorted. Pure: no harness runs.
@@ -788,7 +788,7 @@ func TestAssembleRoleDefinitionsFileMode(t *testing.T) {
 	}
 }
 
-// TestDoctorChecksCustomWriterDefinition pins #382 §5.4: a custom writer role's
+// TestDoctorChecksCustomWriterDefinition pins custom-writer coverage: a custom writer role's
 // definition is in the doctor scope for its kind, so the on-disk check covers
 // it the same way it covers a custom reader's. Pure: no harness runs.
 func TestDoctorChecksCustomWriterDefinition(t *testing.T) {
@@ -818,11 +818,10 @@ func TestDoctorChecksCustomWriterDefinition(t *testing.T) {
 	}
 }
 
-// TestDatabaseCheckRow pins doctor's `database` row (P3d §4.7, extended in
-// stage 1b): the path, the file size, the schema version, the binding_record
-// live/archived counts, and the route the row was reached by. It replaces
-// `relevo db path` and `relevo db stats`, and there is no migrate row because
-// every open migrates.
+// TestDatabaseCheckRow pins the `database` row: the path, the file size,
+// the schema version, the binding_record live/archived counts, and the route
+// the row was reached by. Every open migrates, so the row carries the migrated
+// state directly.
 func TestDatabaseCheckRow(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "relevo")
 	st := store.New(root)
@@ -841,7 +840,7 @@ func TestDatabaseCheckRow(t *testing.T) {
 	if c.Name != "database" || c.Group != "" {
 		t.Fatalf("check = %+v, want the global `database` row", c)
 	}
-	if c.Severity != doctor.SevOK {
+	if c.Severity != SevOK {
 		t.Errorf("severity = %v, want ok", c.Severity)
 	}
 	for _, want := range []string{st.DBPath(), "schema v", "1 live, 1 archived", "via file"} {
@@ -862,18 +861,18 @@ func TestMastermindCheckInputMuseGating(t *testing.T) {
 	rt := relevo.Runtime{Now: func() time.Time { return time.Now() }}
 
 	t.Setenv("MUSE_SESSION_ID", "")
-	if in := mastermindCheckInput(rt, []string{"muse"}); !in.Muse || in.MuseSession {
+	if in := mastermindCheckInput(rt, []string{"muse"}, Deps{}); !in.Muse || in.MuseSession {
 		t.Errorf("muse candidate: Muse=%v MuseSession=%v, want true/false", in.Muse, in.MuseSession)
 	}
-	if in := mastermindCheckInput(rt, []string{"claude"}); in.Muse || in.MuseSession {
+	if in := mastermindCheckInput(rt, []string{"claude"}, Deps{}); in.Muse || in.MuseSession {
 		t.Errorf("claude candidate: Muse=%v MuseSession=%v, want false/false", in.Muse, in.MuseSession)
 	}
 
 	t.Setenv("MUSE_SESSION_ID", "sess-1")
-	if in := mastermindCheckInput(rt, []string{"muse"}); !in.MuseSession {
+	if in := mastermindCheckInput(rt, []string{"muse"}, Deps{}); !in.MuseSession {
 		t.Error("a muse candidate and a set MUSE_SESSION_ID must set MuseSession")
 	}
-	if in := mastermindCheckInput(rt, []string{"claude"}); in.MuseSession && !museOnPathForTest() {
+	if in := mastermindCheckInput(rt, []string{"claude"}, Deps{}); in.MuseSession && !museOnPathForTest() {
 		t.Error("MuseSession without a muse binary on PATH must be false on a muse-less host")
 	}
 }

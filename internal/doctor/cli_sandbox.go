@@ -1,11 +1,10 @@
-package main
+package doctor
 
 import (
 	"os"
 	"os/user"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/serve"
 )
@@ -22,18 +21,16 @@ const sandboxMarkerName = "sandbox"
 // does. It reads the marker off the state root, the serve pointer off d (nil
 // when the machine database could not be opened, which simply leaves the port
 // row with no listen address to read), and the running identity from the OS.
-func sandboxChecks(env doctor.Env, d *db.DB, stateRoot string, checks []doctor.Check) []doctor.Check {
-	in := doctor.SandboxInput{StateRoot: stateRoot, UID: os.Getuid()}
+func sandboxChecks(env Env, d *db.DB, stateRoot, configRoot string, checks []Check) []Check {
+	in := SandboxInput{StateRoot: stateRoot, UID: os.Getuid()}
 	in.StateHome = os.Getenv("XDG_STATE_HOME")
 	in.ConfigHome = os.Getenv("XDG_CONFIG_HOME")
-	if root, err := userConfigRoot(); err == nil {
-		in.ConfigRoot = root
-	}
+	in.ConfigRoot = configRoot
 	if u, err := user.Current(); err == nil {
 		in.User = u.Username
 	}
 
-	checks = insertGlobalCheck(checks, doctor.XDGCheck(env, in))
+	checks = InsertGlobalCheck(checks, XDGCheck(env, in))
 
 	marker, ok := sandboxMarker(stateRoot)
 	if !ok {
@@ -41,7 +38,7 @@ func sandboxChecks(env doctor.Env, d *db.DB, stateRoot string, checks []doctor.C
 	}
 	in.MarkerPort = marker.Port
 
-	checks = insertGlobalCheck(checks, doctor.LingerCheck(env, in))
+	checks = InsertGlobalCheck(checks, LingerCheck(env, in))
 
 	// The port row needs a serve pointer to have a port to read. A sandbox
 	// that runs no `relevo serve` has none, so there is no row rather than a
@@ -51,7 +48,7 @@ func sandboxChecks(env doctor.Env, d *db.DB, stateRoot string, checks []doctor.C
 		return checks
 	}
 	in.Listen = p.Listen
-	return insertGlobalCheck(checks, doctor.PortCheck(in))
+	return InsertGlobalCheck(checks, PortCheck(in))
 }
 
 // serveMachineDB opens the machine database rt.Store holds, or nil when it
@@ -70,13 +67,13 @@ func serveMachineDB(rt relevo.Runtime) *db.DB {
 // that does not exist, that cannot be read, or that names no sandbox reads as
 // no sandbox at all, so a corrupt file turns the extra rows off rather than
 // reporting on one it cannot name.
-func sandboxMarker(stateRoot string) (doctor.SandboxMarker, bool) {
+func sandboxMarker(stateRoot string) (SandboxMarker, bool) {
 	if stateRoot == "" {
-		return doctor.SandboxMarker{}, false
+		return SandboxMarker{}, false
 	}
 	raw, err := os.ReadFile(stateRoot + "/" + sandboxMarkerName)
 	if err != nil {
-		return doctor.SandboxMarker{}, false
+		return SandboxMarker{}, false
 	}
-	return doctor.ParseSandboxMarker(raw)
+	return ParseSandboxMarker(raw)
 }

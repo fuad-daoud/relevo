@@ -307,7 +307,7 @@ func runBind(f bindFlags) error {
 		if spec, err := rt.RoleRegistry().Spec(specRole, kind); err == nil {
 			defs = spec.Definitions
 		}
-		for _, line := range bindPreflightDefs(context.Background(), env, kind, adopted, defs) {
+		for _, line := range doctor.BindPreflightDefs(context.Background(), env, kind, adopted, defs) {
 			fmt.Fprintln(os.Stderr, line)
 		}
 	}

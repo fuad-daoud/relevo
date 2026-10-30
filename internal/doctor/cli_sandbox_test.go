@@ -1,4 +1,4 @@
-package main
+package doctor
 
 import (
 	"os"
@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/serve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -55,14 +54,14 @@ func sandboxTestDB(t *testing.T) *db.DB {
 }
 
 // findSandboxRow pulls the named global row out of a check slice.
-func findSandboxRow(t *testing.T, checks []doctor.Check, name string) (doctor.Check, bool) {
+func findSandboxRow(t *testing.T, checks []Check, name string) (Check, bool) {
 	t.Helper()
 	for _, c := range checks {
 		if c.Group == "" && c.Name == name {
 			return c, true
 		}
 	}
-	return doctor.Check{}, false
+	return Check{}, false
 }
 
 // A state root with no marker yields the xdg row alone: the linger and port
@@ -72,7 +71,7 @@ func TestSandboxChecksNoMarkerShowsOnlyXDG(t *testing.T) {
 	root := sandboxStateRoot(t)
 	_ = os.Remove(filepath.Join(root, sandboxMarkerName))
 
-	out := sandboxChecks(&stubDoctorEnv{statErr: os.ErrNotExist}, sandboxTestDB(t), root, nil)
+	out := sandboxChecks(&stubDoctorEnv{statErr: os.ErrNotExist}, sandboxTestDB(t), root, "", nil)
 
 	if _, ok := findSandboxRow(t, out, "xdg"); !ok {
 		t.Error("no xdg row, want one for every user")
@@ -91,13 +90,13 @@ func TestSandboxChecksMarkerAddsLingerRow(t *testing.T) {
 	root := sandboxStateRoot(t)
 	writeSandboxMarker(t, root, "demo", 7801)
 
-	out := sandboxChecks(&stubDoctorEnv{statErr: os.ErrNotExist}, sandboxTestDB(t), root, nil)
+	out := sandboxChecks(&stubDoctorEnv{statErr: os.ErrNotExist}, sandboxTestDB(t), root, "", nil)
 
 	c, ok := findSandboxRow(t, out, "linger")
 	if !ok {
 		t.Fatal("no linger row, want one where the marker exists")
 	}
-	if c.Severity != doctor.SevWarn {
+	if c.Severity != SevWarn {
 		t.Errorf("linger severity = %v, want warn", c.Severity)
 	}
 	if c.Fix == "" {
@@ -121,13 +120,13 @@ func TestSandboxChecksMarkerAndPointerAddsPortRow(t *testing.T) {
 		t.Fatalf("WriteDaemonPointer: %v", err)
 	}
 
-	out := sandboxChecks(&stubDoctorEnv{statErr: os.ErrNotExist}, d, root, nil)
+	out := sandboxChecks(&stubDoctorEnv{statErr: os.ErrNotExist}, d, root, "", nil)
 
 	c, ok := findSandboxRow(t, out, "port")
 	if !ok {
 		t.Fatal("no port row, want one where the marker and the pointer both exist")
 	}
-	if c.Severity != doctor.SevWarn {
+	if c.Severity != SevWarn {
 		t.Errorf("port severity = %v, want warn", c.Severity)
 	}
 	if c.Fix != "relevo serve --listen :7801" {
@@ -140,7 +139,7 @@ func TestSandboxChecksMarkerWithoutPointerHasNoPortRow(t *testing.T) {
 	root := sandboxStateRoot(t)
 	writeSandboxMarker(t, root, "demo", 7801)
 
-	out := sandboxChecks(&stubDoctorEnv{statErr: os.ErrNotExist}, sandboxTestDB(t), root, nil)
+	out := sandboxChecks(&stubDoctorEnv{statErr: os.ErrNotExist}, sandboxTestDB(t), root, "", nil)
 
 	if c, ok := findSandboxRow(t, out, "port"); ok {
 		t.Errorf("port row present (%s) without a serve pointer, want it absent", c.Detail)
@@ -160,7 +159,7 @@ func TestSandboxChecksNamelessMarkerIsNoSandbox(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Remove(marker) })
 
-	out := sandboxChecks(&stubDoctorEnv{statErr: os.ErrNotExist}, sandboxTestDB(t), root, nil)
+	out := sandboxChecks(&stubDoctorEnv{statErr: os.ErrNotExist}, sandboxTestDB(t), root, "", nil)
 
 	if _, ok := findSandboxRow(t, out, "xdg"); !ok {
 		t.Error("no xdg row, want one for every user")
@@ -178,12 +177,12 @@ func TestSandboxChecksKeepsGlobalRenderOrder(t *testing.T) {
 	root := sandboxStateRoot(t)
 	writeSandboxMarker(t, root, "demo", 7801)
 
-	in := []doctor.Check{
+	in := []Check{
 		{Name: "release"},
 		{Group: "claude", Name: "binary"},
 		{Name: "daemon"},
 	}
-	out := sandboxChecks(&stubDoctorEnv{statErr: os.ErrNotExist}, sandboxTestDB(t), root, in)
+	out := sandboxChecks(&stubDoctorEnv{statErr: os.ErrNotExist}, sandboxTestDB(t), root, "", in)
 
 	firstGrouped := -1
 	for i, c := range out {
