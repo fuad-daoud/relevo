@@ -28,7 +28,7 @@ func scopeEnvWith(contents string) *fakeEnv {
 	return &fakeEnv{fileContents: map[string]string{scopeControllersPath: contents}}
 }
 
-func scopeBlock(key, cpus string, max int) []ScopeBlock {
+func testScopeBlocks(key, cpus string, max int) []ScopeBlock {
 	return []ScopeBlock{{Key: key, AllowedCPUs: cpus, MaxCPU: max}}
 }
 
@@ -39,7 +39,7 @@ func TestScopeChecksEmpty(t *testing.T) {
 	if got := ScopeChecks(env, nil, scopeControllersPath, 4); got != nil {
 		t.Errorf("ScopeChecks(nil) = %+v, want nil", got)
 	}
-	blocks := append(scopeBlock("scope.allowed_cpus", "", 0), scopeBlock("serve.scope.allowed_cpus", "", 0)...)
+	blocks := append(testScopeBlocks("scope.allowed_cpus", "", 0), testScopeBlocks("serve.scope.allowed_cpus", "", 0)...)
 	if got := ScopeChecks(env, blocks, scopeControllersPath, 4); got != nil {
 		t.Errorf("ScopeChecks(empty blocks) = %+v, want nil", got)
 	}
@@ -70,7 +70,7 @@ func TestScopeChecksRow(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ScopeChecks(tc.env, scopeBlock("scope.allowed_cpus", tc.cpus, tc.max), scopeControllersPath, tc.ncpu)
+			got := ScopeChecks(tc.env, testScopeBlocks("scope.allowed_cpus", tc.cpus, tc.max), scopeControllersPath, tc.ncpu)
 			if len(got) != 1 {
 				t.Fatalf("checks = %+v, want one", got)
 			}
@@ -97,7 +97,7 @@ func TestScopeChecksRow(t *testing.T) {
 // TestScopeChecksTwoBlocks pins that each block in scope gets its own row,
 // named and detailed independently.
 func TestScopeChecksTwoBlocks(t *testing.T) {
-	blocks := append(scopeBlock("scope.allowed_cpus", "0-2", 2), scopeBlock("serve.scope.allowed_cpus", "0-3", 3)...)
+	blocks := append(testScopeBlocks("scope.allowed_cpus", "0-2", 2), testScopeBlocks("serve.scope.allowed_cpus", "0-3", 3)...)
 	got := ScopeChecks(scopeEnvWith("cpuset cpu io memory pids\n"), blocks, scopeControllersPath, 8)
 	if len(got) != 2 {
 		t.Fatalf("checks = %+v, want two", got)

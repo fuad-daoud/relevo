@@ -277,10 +277,6 @@ func TestContractStatusLine(t *testing.T) {
 // calling mastermind shows the block in both --line --json and --line; a dead
 // pid shows "board":null and no text line.
 func TestStatuslineBoardBlock(t *testing.T) {
-	orig := boardProcStart
-	t.Cleanup(func() { boardProcStart = orig })
-	boardProcStart = func(int) (int64, error) { return 4242, nil }
-
 	fx := seedStatusFixture(t)
 	t.Setenv("RELEVO_MASTERMIND", fx.mastermindID)
 	liveDir := filepath.Join(fx.roots[0], "boards", fx.mastermindID)
@@ -288,7 +284,11 @@ func TestStatuslineBoardBlock(t *testing.T) {
 	if err := board.WritePointer(liveDir, "board"); err != nil {
 		t.Fatalf("WritePointer: %v", err)
 	}
-	info := board.ServerInfo{Scene: "board", URL: url, Port: 41234, PID: os.Getpid(), StartedAt: 4242}
+	started, err := procStartUnix(os.Getpid())
+	if err != nil {
+		t.Skipf("process start time unavailable: %v", err)
+	}
+	info := board.ServerInfo{Scene: "board", URL: url, Port: 41234, PID: os.Getpid(), StartedAt: started}
 	if err := board.WriteServerInfo(liveDir, info); err != nil {
 		t.Fatalf("WriteServerInfo: %v", err)
 	}
@@ -310,7 +310,10 @@ func TestStatuslineBoardBlock(t *testing.T) {
 	}
 
 	// A dead pid: the block is null and no board line is drawn.
-	boardProcStart = func(int) (int64, error) { return 0, errors.New("gone") }
+	dead := board.ServerInfo{Scene: "board", URL: url, Port: 41234, PID: 1 << 30, StartedAt: 123}
+	if err := board.WriteServerInfo(liveDir, dead); err != nil {
+		t.Fatalf("WriteServerInfo (dead): %v", err)
+	}
 	stdout, stderr, err = captureOutput(t, func() error { return run([]string{"status", "--line", "--json"}) })
 	if err != nil {
 		t.Fatalf("status --line --json (dead): %v (stderr %s)", err, stderr)
@@ -331,9 +334,6 @@ func TestStatuslineBoardBlock(t *testing.T) {
 // state root with no relevo.db still yields it (S8).
 func TestBoardBlockForWithoutADatabase(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir()) // a state root with no database
-	orig := boardProcStart
-	t.Cleanup(func() { boardProcStart = orig })
-	boardProcStart = func(int) (int64, error) { return 4242, nil }
 
 	root := t.TempDir()
 	id := "mm_aaaaaaaaaaaa"
@@ -341,12 +341,16 @@ func TestBoardBlockForWithoutADatabase(t *testing.T) {
 	if err := board.WritePointer(liveDir, "board"); err != nil {
 		t.Fatalf("WritePointer: %v", err)
 	}
-	info := board.ServerInfo{Scene: "board", URL: "http://127.0.0.1:9/#t=abc", Port: 9, PID: os.Getpid(), StartedAt: 4242}
+	started, err := procStartUnix(os.Getpid())
+	if err != nil {
+		t.Skipf("process start time unavailable: %v", err)
+	}
+	info := board.ServerInfo{Scene: "board", URL: "http://127.0.0.1:9/#t=abc", Port: 9, PID: os.Getpid(), StartedAt: started}
 	if err := board.WriteServerInfo(liveDir, info); err != nil {
 		t.Fatalf("WriteServerInfo: %v", err)
 	}
 
-	blk := boardBlockFor(root, id, boardProcStart)
+	blk := boardBlockFor(root, id, procStartUnix)
 	if blk == nil || blk.Name != "board" || blk.Scope != "live" || blk.URL != info.URL {
 		t.Errorf("boardBlockFor = %+v, want the live block", blk)
 	}

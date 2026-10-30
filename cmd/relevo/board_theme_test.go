@@ -8,7 +8,6 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/board"
 	"github.com/fuad-daoud/relevo/internal/board/theme"
-	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
 // The board's theme tiers: the flag, the repository's own setting, the
@@ -25,99 +24,6 @@ func nightPalette() board.Theme {
 		panic(err)
 	}
 	return out
-}
-
-// withBoardSets points the stored-set seam at the given palette set for one
-// test, so the tiers are pinned without a machine state. The seed file is the
-// usual set a test without a database resolves against.
-func withBoardSets(t *testing.T, stored map[string]board.Theme) {
-	t.Helper()
-	withBoardRepo(t, relevo.RepoSettings{}, stored)
-}
-
-// withBoardRepo points the seam at both halves: the repository's settings and
-// the palette set the lookup resolves against.
-func withBoardRepo(t *testing.T, repo relevo.RepoSettings, stored map[string]board.Theme) {
-	t.Helper()
-	orig := boardThemeSets
-	boardThemeSets = func(string) (relevo.RepoSettings, map[string]board.Theme, error) {
-		return repo, stored, nil
-	}
-	t.Cleanup(func() { boardThemeSets = orig })
-}
-
-// TestBoardThemePrecedence pins the tiers as a pure rule, then how the verb
-// feeds them: --theme, then the repository's board_theme, then the repo-local
-// git config key, then the default name. The rule is pure on purpose: no test
-// here spawns a harness or reaches the network.
-func TestBoardThemePrecedence(t *testing.T) {
-	// The pure rule, tier by tier.
-	if got := boardThemeTier("flag", "repo", "git"); got != "flag" {
-		t.Errorf("--theme tier: %s, want flag", got)
-	}
-	if got := boardThemeTier("", "repo", "git"); got != "repo" {
-		t.Errorf("repo tier: %s, want repo (swapping repo and git here would invert which setting wins)", got)
-	}
-	if got := boardThemeTier("", "", "git"); got != "git" {
-		t.Errorf("git tier: %s, want git", got)
-	}
-	if got := boardThemeTier("", "", ""); got != theme.DefaultName {
-		t.Errorf("default tier: %s, want %s", got, theme.DefaultName)
-	}
-
-	// The verb feeds the same tiers from the real seams.
-	withBoardRepo(t, relevo.RepoSettings{BoardTheme: "blueprint"}, theme.Seed())
-	if th, err := boardResolveTheme("", ""); err != nil || th.Name != "blueprint" {
-		t.Errorf("repo board_theme = %v, %v; want blueprint", th, err)
-	}
-
-	orig := boardGitConfig
-	boardGitConfig = func(string, string) (string, error) { return "blueprint", nil }
-	withBoardRepo(t, relevo.RepoSettings{}, theme.Seed())
-	if th, err := boardResolveTheme("", ""); err != nil || th.Name != "blueprint" {
-		t.Errorf("git tier = %v, %v; want blueprint", th, err)
-	}
-	if th, err := boardResolveTheme("", "cockpit"); err != nil || th.Name != "cockpit" {
-		t.Errorf("--theme cockpit = %v, %v; want cockpit", th, err)
-	}
-	boardGitConfig = orig
-
-	withBoardSets(t, theme.Seed())
-	if th, err := boardResolveTheme("", ""); err != nil || th.Name != "cockpit" {
-		t.Errorf("default = %v, %v; want cockpit", th, err)
-	}
-}
-
-// TestBoardRefusesAnUnknownThemeNamingStoredThemes: a name no stored palette
-// carries is a usage refusal naming the set it consulted, stored and seed
-// alike, and saying how to add one.
-func TestBoardRefusesAnUnknownThemeNamingStoredThemes(t *testing.T) {
-	withTempRepoRoot(t)
-	stored := map[string]board.Theme{theme.DefaultName: theme.Seed()[theme.DefaultName], "night": nightPalette()}
-	withBoardSets(t, stored)
-
-	// A stored name resolves to its own palette, not the seed's.
-	if th, err := boardResolveTheme("", "night"); err != nil || th.Name != "night" || th.Accent != "#8be9fd" {
-		t.Errorf("--theme night = %v, %v; want the stored night palette", th, err)
-	}
-
-	if _, err := boardResolveTheme("", "nope"); err == nil {
-		t.Fatal("an unknown --theme resolved")
-	} else {
-		for _, want := range []string{"cockpit", "night", `relevo config set themes.nope '{...}'`} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("refusal %q does not carry %q", err, want)
-			}
-		}
-	}
-
-	// The same rule reaches the verb as a usage exit naming the seed's names,
-	// the set a machine without a stored section consults.
-	withBoardSets(t, theme.Seed())
-	ce := requireCLIError(t, cmdBoard([]string{"--theme", "nope"}), codeUsage, "relevo help")
-	if !strings.Contains(ce.message, "cockpit") || !strings.Contains(ce.message, "blueprint") {
-		t.Errorf("verb refusal %q does not name the consulted set", ce.message)
-	}
 }
 
 // TestBoardWithoutADatabaseReadsTheSeedFile pins the one fallback: a runtime
@@ -237,8 +143,8 @@ func TestConfigGetThemesPrintsIt(t *testing.T) {
 func TestBoardKeepsCreatingNothing(t *testing.T) {
 	initRoot(t)
 
-	if _, err := boardResolveTheme(".", ""); err != nil {
-		t.Fatalf("boardResolveTheme over an empty state: %v", err)
+	if _, err := board.ResolveTheme(boardDeps(), ".", ""); err != nil {
+		t.Fatalf("ResolveTheme over an empty state: %v", err)
 	}
 	if entries := stateEntries(t, os.Getenv("XDG_STATE_HOME")); len(entries) != 0 {
 		t.Errorf("resolving a theme wrote %v under the state root, want nothing", entries)
@@ -261,13 +167,4 @@ func stateEntries(t *testing.T, dir string) []string {
 		out = append(out, e.Name())
 	}
 	return out
-}
-
-// seamlessBoard points the resolution at an empty repository setting and the
-// seed file's palettes, so the tests that ride it never read the machine's
-// own state. The git seam stays as the pointer it is: the tests that tier
-// through `relevo.boardTheme` point it themselves.
-func seamlessBoard(t *testing.T) {
-	t.Helper()
-	withBoardRepo(t, relevo.RepoSettings{}, theme.Seed())
 }

@@ -1,28 +1,25 @@
+// board.go is the board verb's thin front end: flag parsing, the dependency
+// wiring and the exit mapping. The verb's work lives in internal/board; this
+// file only translates between it and the CLI frame.
 package main
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
-	"fmt"
-	"math"
-	"net"
-	"net/http"
-	neturl "net/url"
 	"os"
-	"os/exec"
-	"os/signal"
 	"path/filepath"
-	"runtime"
-	"strconv"
 	"strings"
-	"syscall"
-	"text/tabwriter"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/board"
 	"github.com/fuad-daoud/relevo/internal/board/theme"
+	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/store"
 )
 
 // boardFlagValues holds the pointers board parses into.
@@ -44,92 +41,6 @@ func boardFlagSet(fs *flag.FlagSet) *boardFlagValues {
 	return v
 }
 
-// boardListen and boardOpen are the two effects no cmd test runs: the loopback
-// listener and the browser opener, both replaceable seams.
-var (
-	boardListen = func() (net.Listener, error) { return net.Listen("tcp", "127.0.0.1:0") }
-	boardOpen   = func(url string) error {
-		opener := "xdg-open"
-		if runtime.GOOS == "darwin" {
-			opener = "open"
-		}
-		return exec.Command(opener, url).Start()
-	}
-)
-
-// boardRepoRootFn is the repository-root resolver, a seam so a test can refuse
-// or accept without depending on where the test binary runs.
-var boardRepoRootFn = boardRepoRoot
-
-// boardRepoRoot is cwd's git top level, the root scenes are confined to.
-func boardRepoRoot(cwd string) (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	cmd.Dir = cwd
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-// boardGitConfig reads one repo-local git config key; an unset key is
-// ("", nil), the same fact git reports with exit 1. A seam for the tests.
-var boardGitConfig = func(cwd, key string) (string, error) {
-	cmd := exec.Command("git", "config", "--get", key)
-	cmd.Dir = cwd
-	out, err := cmd.Output()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			return "", nil
-		}
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-// boardProcStart reads a process's start time in Unix seconds; a seam so the
-// statusline and the server lifecycle can be tested without a real pid.
-var boardProcStart = procStartUnix
-
-// boardOptions is what one run of the verb was asked for. scene and slug carry
-// the resolved board twice over: scene is the path the server reads, and slug is
-// the scene name the advertisement carries. They are separate because the scene
-// name is the slug -- a board.html path's base name would be "board" for every
-// board in both scopes -- and deriving it from the file name is what made every
-// HTML board advertise the same scene.
-type boardOptions struct {
-	scene   string
-	theme   *board.Theme
-	noOpen  bool
-	liveDir string
-	// owner names the MasterMind a live board belongs to (its name, else its
-	// id); empty for the repo scope. It only shapes the printed URL.
-	owner string
-	// slug is the resolved scene name, the one server.json advertises.
-	slug string
-	// scope, host and token are filled by the run's caller: scope tells the HTML
-	// server which scope it is serving, and host and token come from the listener
-	// and the per-run token.
-	scope board.Scope
-	host  string
-	token string
-}
-
-// boardServerInfo composes the advertisement a live board writes after its
-// listener binds; a repo board -- liveDir empty -- writes none (S6). url is the
-// printed board URL (host and per-run token), from which the port is read.
-func boardServerInfo(scene, url string, pid int, startedAt int64, liveDir string) *board.ServerInfo {
-	if liveDir == "" {
-		return nil
-	}
-	port := 0
-	if u, err := neturl.Parse(url); err == nil {
-		port, _ = strconv.Atoi(u.Port())
-	}
-	return &board.ServerInfo{Scene: scene, URL: url, Port: port, PID: pid, StartedAt: startedAt}
-}
-
 // boardURLFlagValues holds the pointers `board url` parses into.
 type boardURLFlagValues struct {
 	board      *string
@@ -145,74 +56,122 @@ func boardURLFlagSet(fs *flag.FlagSet) *boardURLFlagValues {
 	return v
 }
 
-// cmdBoardURL prints the live board's URL for a shell copy when the statusline
-// is not at hand (S9). It is read-only: no pointer write, no database write, no
-// listener. The scene is --board, else the pointer -- never the default and
-// never written. Without a live server it exits 1 not_available, printing
-// nothing on stdout and one line naming the scene and the MasterMind.
-func cmdBoardURL(args []string) error {
-	fs := flag.NewFlagSet("relevo board url", flag.ContinueOnError)
-	v := boardURLFlagSet(fs)
-	if err := parseFlags(fs, args); err != nil {
-		return err
-	}
-	if len(fs.Args()) > 0 {
-		return fail(codeUsage, "relevo board url takes no scene path, got %q", fs.Args()[0])
-	}
-
-	id, _, err := boardMasterMind(*v.mastermind)
-	if err != nil {
-		return err
-	}
-	liveRoot, err := boardLiveRoot()
-	if err != nil {
-		return fail(codeInternal, "%v", err)
-	}
-	liveDir := filepath.Join(liveRoot, id)
-
-	scene := *v.board
-	if scene != "" {
-		if err := board.ValidSceneName(scene); err != nil {
-			return boardRefusal(err)
-		}
-	} else {
-		name, present, err := board.Pointer(liveDir)
-		if err != nil {
-			return boardRefusal(err)
-		}
-		if !present {
-			return boardNotAvailable(scene, id)
-		}
-		scene = name
-	}
-
-	url, ok, err := board.LiveURL(liveDir, scene, procStartUnix)
-	if err != nil {
-		return fail(codeInternal, "%v", err)
-	}
-	if !ok {
-		return boardNotAvailable(scene, id)
-	}
-	fmt.Println(url)
-	return nil
+// boardCommentsFlagValues holds the pointers `board comments` parses into.
+type boardCommentsFlagValues struct {
+	board *string
+	json  *bool
 }
 
-// boardNotAvailable is S9's refusal: exit 1 not_available, one line naming the
-// scene and the MasterMind, nothing on stdout.
-func boardNotAvailable(scene, id string) error {
-	if scene == "" {
-		scene = board.DefaultBoard
-	}
-	return fail(codeNotAvailable, "relevo board url: no live server for scene %s of MasterMind %s", scene, id)
+// boardCommentsFlagSet defines `board comments`'s flags on fs.
+func boardCommentsFlagSet(fs *flag.FlagSet) *boardCommentsFlagValues {
+	v := &boardCommentsFlagValues{}
+	v.board = fs.String("board", "", "the live scene name to read (default: the pointer, else board)")
+	v.json = fs.Bool("json", false, "print the comments as one compact JSON array")
+	return v
 }
 
-// cmdBoard parses the verb, resolves the scene and scope, writes the pointer
-// for a live board that was not read from the pointer, and then runs the
-// foreground server. The subverbs dispatch first. A scene path is what cannot
-// collide with one of them, and now it names a format rather than a scope: an
-// explicit .excalidraw path keeps the Excalidraw flow and everything else is a
-// single-file board, whose path must end in /board.html. So a bare slug is not
-// a path in either format and the collision cannot arise.
+// boardCommentFlagValues holds the pointers `board comment` parses into.
+type boardCommentFlagValues struct {
+	board *string
+	text  *string
+	x     *float64
+	y     *float64
+	by    *string
+}
+
+// boardCommentFlagSet defines `board comment`'s flags on fs.
+func boardCommentFlagSet(fs *flag.FlagSet) *boardCommentFlagValues {
+	v := &boardCommentFlagValues{}
+	v.board = fs.String("board", "", "the live scene name to write (default: the pointer, else board)")
+	v.text = fs.String("text", "", "the comment text (required)")
+	v.x = fs.Float64("x", 0, "the comment's x position, with --y (default: below the scene)")
+	v.y = fs.Float64("y", 0, "the comment's y position, with --x (default: below the scene)")
+	v.by = fs.String("by", "", "the comment's author (default: RELEVO_MASTERMIND, else human)")
+	return v
+}
+
+// boardPromoteFlagValues holds the pointers `board promote` parses into.
+type boardPromoteFlagValues struct {
+	board      *string
+	mastermind *string
+	to         *string
+	force      *bool
+}
+
+// boardPromoteFlagSet defines `board promote`'s flags on fs and returns what it
+// parses into, so the registry's parity test finds exactly one installer.
+func boardPromoteFlagSet(fs *flag.FlagSet) *boardPromoteFlagValues {
+	v := &boardPromoteFlagValues{}
+	v.board = fs.String("board", "", "the live board name to promote (default: the pointer, else board)")
+	v.mastermind = fs.String("mastermind", "", "the MasterMind whose live board to promote (id or name)")
+	v.to = fs.String("to", "", "the repo board name to write (default: the live board's own name)")
+	v.force = fs.Bool("force", false, "overwrite an existing repo board")
+	return v
+}
+
+// boardTextFlagValues holds the pointers board text parses into.
+type boardTextFlagValues struct {
+	asJSON *bool
+}
+
+// boardTextFlagSet defines board text's flags on fs and returns what it parses
+// into, so the registry's parity test finds exactly one installer per verb.
+func boardTextFlagSet(fs *flag.FlagSet) *boardTextFlagValues {
+	v := &boardTextFlagValues{}
+	v.asJSON = fs.Bool("json", false, "print the text elements as a JSON document")
+	return v
+}
+
+// boardAnnotateFlagValues holds the pointers board annotate parses into.
+type boardAnnotateFlagValues struct {
+	text *string
+	x    *float64
+	y    *float64
+}
+
+// boardAnnotateFlagSet defines board annotate's flags on fs and returns what it
+// parses into.
+func boardAnnotateFlagSet(fs *flag.FlagSet) *boardAnnotateFlagValues {
+	v := &boardAnnotateFlagValues{}
+	v.text = fs.String("text", "", "the text to append")
+	v.x = fs.Float64("x", 0, "the appended element's x coordinate")
+	v.y = fs.Float64("y", 0, "the appended element's y coordinate")
+	return v
+}
+
+// boardDeps gathers the cmd-owned values the board verbs read: the effects
+// and helpers that stay in cmd/relevo because other commands use them, and
+// the board package's own default effects.
+func boardDeps() board.Deps {
+	return board.Deps{
+		Listen:           board.Listen,
+		Open:             board.Open,
+		ProcStart:        procStartUnix,
+		RepoRoot:         board.RepoRoot,
+		GitConfig:        board.GitConfig,
+		ThemeSets:        boardThemeSetsOf,
+		Now:              time.Now,
+		LiveRoot:         board.LiveRoot,
+		DialOwner:        dialOwnerAdHoc,
+		OpenDB:           openReadOnlyDB,
+		DialBudget:       verbDialBudget,
+		OwnerSocket:      ownerSocket,
+		MastermindLookup: mastermindLookup,
+	}
+}
+
+// boardThemeSetsOf adapts the staying stored-set read to the dependency the
+// board package takes: the repository's board theme name and the palette set.
+func boardThemeSetsOf(cwd string) (string, map[string]board.Theme, error) {
+	repo, stored, err := boardThemeSets(cwd)
+	if err != nil {
+		return "", nil, err
+	}
+	return repo.BoardTheme, stored, nil
+}
+
+// cmdBoard parses the verb and runs the foreground server. The subverbs
+// dispatch first.
 func cmdBoard(args []string) error {
 	var sub string
 	if len(args) > 0 {
@@ -250,159 +209,73 @@ func cmdBoard(args []string) error {
 	if len(fs.Args()) == 1 {
 		arg = fs.Args()[0]
 	}
-
-	// The theme is resolved before anything else so an unknown --theme is a
-	// usage refusal naming the stored palettes regardless of which format the path
-	// selects. Only the Excalidraw flow consumes it: a single-file board brings
-	// its own colours.
-	theme, err := boardResolveTheme(cwd, *v.theme)
-	if err != nil {
-		return boardRefusal(err)
-	}
-
-	// An explicit Excalidraw path is the old flow, unchanged: the scene keeps
-	// its own verbs and its own server.
-	if strings.HasSuffix(arg, board.SceneExt()) {
-		return runExcalidrawBoard(cwd, arg, v, theme)
-	}
-	return runSingleFileBoard(cwd, arg, v)
+	return boardRefusal(board.Run(boardDeps(), cwd, *v.mastermind, *v.theme, *v.board, arg, *v.noOpen, nil))
 }
 
-// runExcalidrawBoard is the legacy flow: an explicit .excalidraw path resolved
-// and served by the Excalidraw server, with the theme.
-func runExcalidrawBoard(cwd, arg string, v *boardFlagValues, theme *board.Theme) error {
-	res, err := resolveBoard(cwd, *v.mastermind, *v.board, arg)
-	if err != nil {
+// cmdBoardURL prints the live board's URL for a shell copy when the statusline
+// is not at hand (S9).
+func cmdBoardURL(args []string) error {
+	fs := flag.NewFlagSet("relevo board url", flag.ContinueOnError)
+	v := boardURLFlagSet(fs)
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	opts := boardOptions{
-		scene:   res.Path,
-		slug:    res.Scene,
-		scope:   res.Scope,
-		theme:   theme,
-		noOpen:  *v.noOpen,
-		liveDir: liveDirOf(res),
-		owner:   res.Owner,
+	if len(fs.Args()) > 0 {
+		return fail(codeUsage, "relevo board url takes no scene path, got %q", fs.Args()[0])
 	}
-	return runBoard(opts)
+	return boardRefusal(board.URL(boardDeps(), *v.mastermind, *v.board))
 }
 
-// runSingleFileBoard is the default flow: a live <id>/<slug>/board.html, a repo
-// <slug>/board.html under the git top level, or a new board that does not exist
-// yet. The pointer is written for a live board that was not read from the pointer
-// and never for a repo board, so the pointer always names the board the user is
-// looking at.
-func runSingleFileBoard(cwd, arg string, v *boardFlagValues) error {
-	res, err := resolveBoardHTML(cwd, *v.mastermind, *v.board, arg)
-	if err != nil {
+// cmdBoardComments prints every comment in the resolved scene in scene order.
+func cmdBoardComments(args []string) error {
+	fs := flag.NewFlagSet("relevo board comments", flag.ContinueOnError)
+	v := boardCommentsFlagSet(fs)
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if res.Scope == board.ScopeLive && !res.FromPointer {
-		if err := board.WritePointer(res.LiveDir, res.Scene); err != nil {
-			return fail(codeInternal, "%v", err)
-		}
+	if len(fs.Args()) > 1 {
+		return fail(codeUsage, "relevo board comments takes at most one scene path, got %d", len(fs.Args()))
 	}
-	opts := boardOptions{
-		scene:   res.Path,
-		slug:    res.Scene,
-		scope:   res.Scope,
-		noOpen:  *v.noOpen,
-		liveDir: liveDirOf(res),
-		owner:   res.Owner,
-	}
-	return runBoardHTML(opts, nil)
-}
 
-// liveDirOf is the live directory a resolved board writes its advertisement and
-// pointer into, empty for the repo scope.
-func liveDirOf(res board.Resolved) string {
-	if res.Scope != board.ScopeLive {
-		return ""
-	}
-	return res.LiveDir
-}
-
-// boardRefusal maps a board package refusal to the catalog code it earns: a
-// usage error exits 2 with the usage hint, a missing or invalid scene is a
-// refused error with no next command, a conflict the stored-set read
-// classified (a held file whose owner did not answer) keeps its code, and
-// anything else is internal.
-func boardRefusal(err error) error {
-	var ce *cliError
-	switch {
-	case errors.Is(err, board.ErrUsage):
-		return fail(codeUsage, "%s", err)
-	case errors.Is(err, theme.ErrUsage):
-		// The palette refusals live beside the stored sets; the board carries
-		// them out with the same usage code.
-		return fail(codeUsage, "%s", err)
-	case errors.Is(err, board.ErrNotFound):
-		return fail(codeRefused, "%s", err)
-	case errors.Is(err, board.ErrInvalid):
-		return fail(codeRefused, "%s", boardInvalidText(err))
-	case errors.As(err, &ce) && ce.code == codeConflict:
-		// The stored-set read raises the registry's conflict refusal when the
-		// machine file is held and no owner answers; it reaches the user with
-		// that code, not as an internal failure.
-		return ce
-	default:
-		return fail(codeInternal, "%s", err)
-	}
-}
-
-// boardInvalidText is the board.ErrInvalid message without its sentinel word,
-// so the refusal names the scene's fault rather than the sentinel.
-func boardInvalidText(err error) string {
-	return strings.TrimPrefix(err.Error(), board.ErrInvalid.Error()+": ")
-}
-
-// boardTextFlagValues holds the pointers board text parses into.
-type boardTextFlagValues struct {
-	asJSON *bool
-}
-
-// boardTextFlagSet defines board text's flags on fs and returns what it parses
-// into, so the registry's parity test finds exactly one installer per verb.
-func boardTextFlagSet(fs *flag.FlagSet) *boardTextFlagValues {
-	v := &boardTextFlagValues{}
-	v.asJSON = fs.Bool("json", false, "print the text elements as a JSON document")
-	return v
-}
-
-// boardAnnotateFlagValues holds the pointers board annotate parses into.
-type boardAnnotateFlagValues struct {
-	text *string
-	x    *float64
-	y    *float64
-}
-
-// boardAnnotateFlagSet defines board annotate's flags on fs and returns what it
-// parses into.
-func boardAnnotateFlagSet(fs *flag.FlagSet) *boardAnnotateFlagValues {
-	v := &boardAnnotateFlagValues{}
-	v.text = fs.String("text", "", "the text to append")
-	v.x = fs.Float64("x", 0, "the appended element's x coordinate")
-	v.y = fs.Float64("y", 0, "the appended element's y coordinate")
-	return v
-}
-
-// boardAgentPath resolves a subverb's scene path: the working directory, the
-// repository root and the confined scene path. A path outside a repository is
-// usage.
-func boardAgentPath(arg string) (string, string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return "", "", fail(codeInternal, "%v", err)
+		return fail(codeInternal, "%v", err)
 	}
-	root, err := boardRepoRootFn(cwd)
+	arg := ""
+	if len(fs.Args()) == 1 {
+		arg = fs.Args()[0]
+	}
+	return boardRefusal(board.Comments(boardDeps(), cwd, "", *v.board, arg, *v.json))
+}
+
+// cmdBoardComment appends one comment to the resolved scene and prints
+// comment: <id>  <path>.
+func cmdBoardComment(args []string) error {
+	fs := flag.NewFlagSet("relevo board comment", flag.ContinueOnError)
+	v := boardCommentFlagSet(fs)
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if len(fs.Args()) > 1 {
+		return fail(codeUsage, "relevo board comment takes at most one scene path, got %d", len(fs.Args()))
+	}
+
+	cwd, err := os.Getwd()
 	if err != nil {
-		return "", "", fail(codeUsage, "not inside a git repository: %v", err)
+		return fail(codeInternal, "%v", err)
 	}
-	path, err := board.Resolve(root, cwd, arg)
-	if err != nil {
-		return "", "", boardRefusal(err)
+	arg := ""
+	if len(fs.Args()) == 1 {
+		arg = fs.Args()[0]
 	}
-	return cwd, path, nil
+	in := board.CommentInput{Text: *v.text, By: *v.by, BoardName: *v.board, Arg: arg}
+	if flagGiven(fs, "x") {
+		in.X = v.x
+	}
+	if flagGiven(fs, "y") {
+		in.Y = v.y
+	}
+	return boardRefusal(board.WriteComment(boardDeps(), cwd, in))
 }
 
 // cmdBoardText lists a scene's text elements: one JSON document under --json,
@@ -418,29 +291,16 @@ func cmdBoardText(args []string) error {
 	if len(positional) != 1 {
 		return fail(codeUsage, "relevo board text needs one scene path")
 	}
-	_, path, err := boardAgentPath(positional[0])
+	cwd, err := os.Getwd()
 	if err != nil {
-		return err
+		return fail(codeInternal, "%v", err)
 	}
-	elements, err := board.TextElements(path)
-	if err != nil {
-		return boardRefusal(err)
-	}
-	if *v.asJSON {
-		return json.NewEncoder(os.Stdout).Encode(elements)
-	}
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	for _, e := range elements {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.ID,
-			strconv.FormatFloat(e.X, 'f', -1, 64),
-			strconv.FormatFloat(e.Y, 'f', -1, 64),
-			e.Text)
-	}
-	return tw.Flush()
+	return boardRefusal(board.Text(boardDeps(), cwd, positional[0], *v.asJSON))
 }
 
-// cmdBoardAnnotate appends one text element to a scene and prints its id. Every
-// usage check runs before any repository, theme or file work.
+// cmdBoardAnnotate appends one text element to a scene and prints its id. The
+// presence of --text/--x/--y is read here, where the flags live; the values
+// are checked in the board package before any repository, theme or file work.
 func cmdBoardAnnotate(args []string) error {
 	fs := flag.NewFlagSet("relevo board annotate", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -464,123 +324,157 @@ func cmdBoardAnnotate(args []string) error {
 			ySet = true
 		}
 	})
-	if !textSet {
-		return fail(codeUsage, "--text is required")
-	}
-	if *v.text == "" {
-		return fail(codeUsage, "--text must not be empty")
-	}
-	if xSet != ySet {
-		return fail(codeUsage, "--x and --y come together")
-	}
-	if xSet && (math.IsNaN(*v.x) || math.IsInf(*v.x, 0)) {
-		return fail(codeUsage, "--x must be a finite number")
-	}
-	if ySet && (math.IsNaN(*v.y) || math.IsInf(*v.y, 0)) {
-		return fail(codeUsage, "--y must be a finite number")
-	}
 
-	cwd, path, err := boardAgentPath(positional[0])
+	cwd, err := os.Getwd()
 	if err != nil {
+		return fail(codeInternal, "%v", err)
+	}
+	req := board.AnnotateRequest{Text: *v.text, HasText: textSet, HasX: xSet, HasY: ySet, X: *v.x, Y: *v.y}
+	return boardRefusal(board.AnnotateScene(boardDeps(), cwd, positional[0], req))
+}
+
+// cmdBoardPromote copies a live board into the repo.
+func cmdBoardPromote(args []string) error {
+	fs := flag.NewFlagSet("relevo board promote", flag.ContinueOnError)
+	v := boardPromoteFlagSet(fs)
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	theme, err := boardResolveTheme(cwd, "")
-	if err != nil {
-		return boardRefusal(err)
+	if len(fs.Args()) > 0 {
+		return fail(codeUsage, "relevo board promote takes no scene path, got %q", fs.Args()[0])
 	}
-	el, err := board.Annotate(path, board.AnnotateOptions{
-		Text: *v.text, X: *v.x, Y: *v.y, HasX: xSet, HasY: ySet, Theme: theme,
-	})
+
+	cwd, err := os.Getwd()
 	if err != nil {
-		return boardRefusal(err)
+		return fail(codeInternal, "%v", err)
 	}
-	fmt.Printf("board: annotated %s (id %s)\n", path, el.ID)
-	return nil
+	return boardRefusal(board.PromoteToRepo(boardDeps(), cwd, *v.mastermind, *v.board, *v.to, *v.force))
 }
 
-// boardURL is the printed board URL: the loopback host, the owner segment when
-// there is one (a live board), and the per-run token in the fragment, so the
-// token never rides a request line. The server serves the page under that one
-// owner segment.
-func boardURL(host, owner, token string) string {
-	path := "/"
-	if owner != "" {
-		path = "/" + neturl.PathEscape(owner) + "/"
-	}
-	return "http://" + host + path + "#t=" + token
-}
-
-// runBoard serves the Excalidraw scene on a loopback listener.
-func runBoard(opts boardOptions) error {
-	return serveBoard(opts, func(host, token string) http.Handler {
-		srv := &board.Server{Token: token, ScenePath: opts.scene, Theme: opts.theme, Host: host}
-		return srv.Handler()
-	})
-}
-
-// serveBoard is the lifecycle both formats share: bind, advertise, print, open
-// the browser, then serve until a signal and drain. newHandler is called once
-// the listener has bound, because the bound host and the per-run token are both
-// part of what a handler needs; passing a ready handler instead would mean
-// binding the listener twice. The scene name in server.json is the resolved
-// slug, never a name derived from the file, which is what lets a live HTML board
-// be found by the statusline and by `board url`.
-func serveBoard(opts boardOptions, newHandler func(host, token string) http.Handler) error {
-	token, err := board.Token()
-	if err != nil {
-		return fail(codeInternal, "board token: %v", err)
-	}
-	ln, err := boardListen()
-	if err != nil {
-		return fail(codeInternal, "board listen: %v", err)
-	}
-	defer func() { _ = ln.Close() }()
-
-	host := ln.Addr().String()
-	httpSrv := &http.Server{Handler: newHandler(host, token), ReadHeaderTimeout: 10 * time.Second}
-
-	url := boardURL(host, opts.owner, token)
-
-	// S6/S7: a live board writes server.json after the listener binds and
-	// removes it on shutdown only when the file still carries our pid and start
-	// time. A start-time measurement failure writes 0, which readers treat as
-	// not live; the server still runs.
-	if opts.liveDir != "" {
-		pid := os.Getpid()
-		startedAt, perr := boardProcStart(pid)
-		if perr != nil {
-			startedAt = 0
-		}
-		info := boardServerInfo(opts.slug, url, pid, startedAt, opts.liveDir)
-		if err := board.WriteServerInfo(opts.liveDir, *info); err != nil {
-			return fail(codeInternal, "board: write server.json: %v", err)
-		}
-		defer func() { _ = board.RemoveServerInfo(opts.liveDir, *info) }()
-	}
-
-	fmt.Printf("board: %s  (Ctrl-C to stop)\n", url)
-	if !opts.noOpen {
-		if err := boardOpen(url); err != nil {
-			fmt.Fprintf(os.Stderr, "relevo: board: open %s: %v\n", url, err)
-		}
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	errCh := make(chan error, 1)
-	go func() { errCh <- httpSrv.Serve(ln) }()
-
-	select {
-	case <-ctx.Done():
-		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = httpSrv.Shutdown(shutCtx)
+// boardRefusal maps a board package refusal to the catalog code it earns: a
+// usage error exits 2 with the usage hint, a missing or invalid scene is a
+// refused error with no next command, a held file whose owner did not answer
+// keeps its conflict code, and anything else is internal. An error the staying
+// helpers already classified (a cliError from the registry lookup or the
+// stored-set read) reaches the user as it is.
+func boardRefusal(err error) error {
+	var ce *cliError
+	var he *board.HeldError
+	switch {
+	case err == nil:
 		return nil
-	case serveErr := <-errCh:
-		if errors.Is(serveErr, http.ErrServerClosed) {
-			return nil
-		}
-		return fail(codeInternal, "board serve: %v", serveErr)
+	case errors.As(err, &ce):
+		return ce
+	case errors.Is(err, board.ErrUsage):
+		return fail(codeUsage, "%s", err)
+	case errors.Is(err, theme.ErrUsage):
+		// The palette refusals live beside the stored sets; the board carries
+		// them out with the same usage code.
+		return fail(codeUsage, "%s", err)
+	case errors.Is(err, board.ErrNotFound):
+		return fail(codeRefused, "%s", err)
+	case errors.Is(err, board.ErrInvalid):
+		return fail(codeRefused, "%s", boardInvalidText(err))
+	case errors.As(err, &he):
+		return failWrap(codeConflict, err, "%s", err)
+	case errors.Is(err, board.ErrNotAvailable):
+		return fail(codeNotAvailable, "%s", err)
+	case errors.Is(err, db.ErrNotConverted):
+		return failWrap(codeRefused, err, "%s", err)
+	default:
+		return fail(codeInternal, "%s", err)
 	}
+}
+
+// boardInvalidText is the board.ErrInvalid message without its sentinel word,
+// so the refusal names the scene's fault rather than the sentinel.
+func boardInvalidText(err error) string {
+	return strings.TrimPrefix(err.Error(), board.ErrInvalid.Error()+": ")
+}
+
+// boardThemeSets is where the theme resolution reads this machine's stored
+// sets: the repository's settings (its board_theme) through the repository
+// identity, and the palettes of the `themes` section. It reads the machine's
+// own database when one exists and never writes: a board verb keeps creating
+// nothing. A held database (a daemon has the file) is read through the owner
+// an ad-hoc dial reaches; the owner is never started, and when it does not
+// answer the read refuses with the registry's conflict rather than resolving
+// against the seed. The seed file is read only where the resolution keeps a
+// fallback: no database exists yet, or the section was never seeded.
+func boardThemeSets(cwd string) (relevo.RepoSettings, map[string]board.Theme, error) {
+	repo := relevo.RepoSettings{}
+	root, err := store.DefaultRoot()
+	if err != nil {
+		return repo, nil, err
+	}
+	path := filepath.Join(root, "relevo.db")
+	if !fileExists(path) {
+		return repo, theme.Seed(), nil
+	}
+	d, err := openReadOnlyDB(path, db.Options{})
+	if errors.Is(err, db.ErrNotConverted) {
+		return repo, nil, failWrap(codeRefused, err, "open %s", path)
+	}
+	if errors.Is(err, db.ErrLocked) {
+		// The daemon holds the file, so the section and the repository's
+		// settings live behind the owner: read through an ad-hoc dial, which
+		// never starts the owner. A dial that gets no answer refuses with the
+		// registry's conflict rather than substituting the seed, which would
+		// paint a section that exists wrong.
+		d, err = dialOwnerAdHoc(context.Background(), root, verbDialBudget)
+		if err != nil {
+			return repo, nil, boardHeldRefusal(root, err)
+		}
+	} else if err != nil {
+		return repo, nil, failWrap(codeInternal, err, "open %s", path)
+	}
+	defer func() { _ = d.Close() }()
+
+	rt := relevo.Runtime{
+		Git:    git.NewClient("git", 10*time.Second, git.DefaultMaxPatchBytes),
+		Config: config.Open(d),
+	}
+	repo, err = relevo.RepoSettingsFor(context.Background(), rt, cwd)
+	if err != nil {
+		return repo, nil, err
+	}
+	stored, err := boardThemeStored(rt)
+	if err != nil {
+		return repo, nil, err
+	}
+	return repo, stored, nil
+}
+
+// boardHeldRefusal is the refusal a stored-set read raises when the machine
+// file is held and no owner answers, carrying the registry's own refusal out:
+// the held file and the unanswered socket, classified conflict, with the lock
+// error as its cause so a caller probing db.ErrLocked still finds it. The
+// stored sets are never resolved against the seed here, so a held database
+// with a section the owner serves paints that section or refuses, never the
+// seed.
+func boardHeldRefusal(root string, lockErr error) error {
+	path := filepath.Join(root, "relevo.db")
+	sock, sockErr := ownerSocket(root)
+	if sockErr != nil {
+		return failWrap(codeConflict, lockErr, "relevo.db is locked (%s) and no owner socket is available: %v", path+".lock", sockErr)
+	}
+	return failWrap(codeConflict, lockErr, "relevo.db is locked (%s) and the owner socket at %s did not answer", path+".lock", sock)
+}
+
+// boardThemeStored is the palette set a lookup resolves against: the seeded
+// `themes` section when the database carries one, else the embedded seed
+// file, which is the only fallback a board verb reads. A runtime with no
+// database -- or one that has never been seeded -- resolves against the seed
+// file the same way.
+func boardThemeStored(rt relevo.Runtime) (map[string]board.Theme, error) {
+	if rt.Config != nil {
+		body, present, err := rt.Config.Body(config.Themes)
+		if err != nil {
+			return nil, err
+		}
+		if present && len(bytes.TrimSpace(body)) > 0 {
+			return config.ParseThemes(body)
+		}
+	}
+	return theme.Seed(), nil
 }

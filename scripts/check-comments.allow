@@ -10,9 +10,6 @@ cmd/relevo/config_log.go
 cmd/relevo/config_server.go
 cmd/relevo/daemon.go
 cmd/relevo/daemon_notice.go
-cmd/relevo/doctor.go
-cmd/relevo/doctor_checks.go
-cmd/relevo/doctor_test.go
 cmd/relevo/done.go
 cmd/relevo/edge.go
 cmd/relevo/gate.go
