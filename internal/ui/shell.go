@@ -322,7 +322,7 @@ func (m Model) finishAction(msg actionMsg) (tea.Model, tea.Cmd) {
 		body = msg.res.Err.Error()
 		isErr = true
 	} else {
-		m.notice = text.FirstLine(msg.res.Text)
+		m.notice = text.FirstRaw(msg.res.Text)
 	}
 	m.actionLog = append(m.actionLog, actionEntry{
 		At:   m.now(),

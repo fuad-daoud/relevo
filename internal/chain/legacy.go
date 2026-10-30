@@ -11,7 +11,6 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
-	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // Status is where a chain is. Halted, stopped and done are terminal: a close
@@ -195,11 +194,20 @@ func BuilderHaltReason(tail reporttail.Tail, note, outcome string) string {
 		{"note", note},
 		{"not_done", firstOrEmpty(tail.NotDone)},
 	} {
-		if v := text.FirstLine(src.value); v != "" {
+		if v := chainFirstLine(src.value); v != "" {
 			return src.label + ": " + sanitize.Text(v)
 		}
 	}
 	return "status: " + outcome
+}
+
+// chainFirstLine is value cut at its first newline and trimmed, or "" when
+// nothing but whitespace is left.
+func chainFirstLine(value string) string {
+	if idx := strings.IndexByte(value, '\n'); idx != -1 {
+		value = value[:idx]
+	}
+	return strings.TrimSpace(value)
 }
 
 // firstOrEmpty is the first element of a list, or "" for a list with none.
