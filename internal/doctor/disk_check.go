@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
 
@@ -39,20 +40,20 @@ var DiskRun = execRun
 func diskChecks(ctx context.Context, in diskInputs) []Check {
 	var out []Check
 	if in.TmpRoot != "" {
-		u := relevo.TmpUsageOf(in.TmpRoot, diskWalkBudget, diskWalkMaxEntries)
+		u := housekeep.TmpUsageOf(in.TmpRoot, diskWalkBudget, diskWalkMaxEntries)
 		out = append(out, TmpRootCheck(u.Rounds, u.Checks, u.Loose, u.Truncated, DefaultTmpWarnBytes))
 	}
-	dir, err := relevo.GoCacheDir(ctx, in.Run)
+	dir, err := housekeep.GoCacheDir(ctx, in.Run)
 	if err != nil {
 		dir = ""
 	}
 	var size int64
 	var truncated bool
 	if dir != "" {
-		size, truncated = relevo.GoCacheUsage(dir, diskWalkBudget, diskWalkMaxEntries)
+		size, truncated = housekeep.GoCacheUsage(dir, diskWalkBudget, diskWalkMaxEntries)
 	}
 	out = append(out, GoCacheCheck(dir, size, truncated, DefaultGoCacheWarnBytes))
-	if in.WorkDir != "" && relevo.IsGoTree(in.WorkDir) {
+	if in.WorkDir != "" && housekeep.IsGoTree(in.WorkDir) {
 		out = append(out, TrimpathCheck(in.Settings.TrimpathOn()))
 	}
 	return out

@@ -22,6 +22,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/dbtest"
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/release"
 	"github.com/fuad-daoud/relevo/internal/relevo"
@@ -1674,7 +1675,7 @@ func TestGCScope(t *testing.T) {
 		if err != nil {
 			t.Fatalf("gcScope: %v", err)
 		}
-		if got != (relevo.GCOptions{MasterMindID: "pl_aaa"}) {
+		if got != (housekeep.GCOptions{MasterMindID: "pl_aaa"}) {
 			t.Fatalf("gcScope = %+v, want {MasterMindID: pl_aaa}", got)
 		}
 	})
@@ -1690,7 +1691,7 @@ func TestGCScope(t *testing.T) {
 		if err != nil {
 			t.Fatalf("gcScope: %v", err)
 		}
-		if got != (relevo.GCOptions{MasterMindID: "pl_bbb"}) {
+		if got != (housekeep.GCOptions{MasterMindID: "pl_bbb"}) {
 			t.Fatalf("gcScope = %+v, want {MasterMindID: pl_bbb}", got)
 		}
 	})
@@ -1704,7 +1705,7 @@ func TestGCScope(t *testing.T) {
 		if err != nil {
 			t.Fatalf("gcScope: %v", err)
 		}
-		if got != (relevo.GCOptions{AllMasterMinds: true}) {
+		if got != (housekeep.GCOptions{AllMasterMinds: true}) {
 			t.Fatalf("gcScope = %+v, want {AllMasterMinds: true}", got)
 		}
 	})

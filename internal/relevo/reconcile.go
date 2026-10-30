@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -783,7 +784,7 @@ func queueReport(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	removeReaderScratch(ctx, rt, b, b.Round)
 	// The round's private temp dir goes with it, and no close route escapes
 	// this funnel: every one of them queues its report through here.
-	removeRoundTmp(rt, b, b.Round)
+	housekeep.RemoveRoundTmp(HousekeepDeps(rt), b, b.Round)
 
 	now := rt.Now().UTC()
 	roundStart := b.RoundStartedAt

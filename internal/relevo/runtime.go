@@ -81,7 +81,7 @@ type Git interface {
 	// such regular file.
 	BlobAt(ctx context.Context, dir, ref, path string) (oid string, ok bool, err error)
 	// ShowPrefix reports dir's path relative to its repository's root, as
-	// `rev-parse --show-prefix`; empty at the root. resolveSubdir's one call
+	// `rev-parse --show-prefix`; empty at the root. housekeep.ResolveSubdir's one call
 	// site: it is what a bind started below the root tells its round apart
 	// with.
 	ShowPrefix(ctx context.Context, dir string) (string, error)
@@ -338,7 +338,7 @@ type Runtime struct {
 
 	// HeldCPUs returns the cores held by live rounds other than the binding
 	// named self, in every store that shares this host's pool (#314). Nil
-	// means localHeldCPUs, which reads only the caller's tx. The server sets
+	// means the local census, which reads only the caller's tx. The server sets
 	// it to a closure over its owner root, so internal/relevo stays unaware of
 	// owners.
 	HeldCPUs func(tx *store.Tx, self string) ([]int, error)

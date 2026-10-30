@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/fuad-daoud/relevo/internal/doctor"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -41,13 +42,13 @@ func restartCheck(rt relevo.Runtime) doctor.Check {
 			bindings = bs
 		}
 	}
-	return doctor.RestartSafety(toRunningProcs(relevo.RunningProcs(bindings)), readCgroup)
+	return doctor.RestartSafety(toRunningProcs(housekeep.RunningProcs(bindings)), readCgroup)
 }
 
 // toRunningProcs converts the collector's relevo-agnostic tuples to the doctor's
 // type, which is why internal/relevo and internal/doctor need not import each
 // other (#370 §4.8).
-func toRunningProcs(refs []relevo.RunningProcRef) []doctor.RunningProc {
+func toRunningProcs(refs []housekeep.RunningProcRef) []doctor.RunningProc {
 	out := make([]doctor.RunningProc, 0, len(refs))
 	for _, r := range refs {
 		out = append(out, doctor.RunningProc{Binding: r.Binding, Kind: r.Kind, PID: r.PID})

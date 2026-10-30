@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -31,7 +32,7 @@ func sampleSignals(ctx context.Context, rt Runtime, b store.Binding) signals {
 	var s signals
 
 	if rt.Git != nil && b.CWD != "" {
-		if fp, err := rt.Git.TreeFingerprint(ctx, roundTree(rt, b)); err == nil {
+		if fp, err := rt.Git.TreeFingerprint(ctx, housekeep.RoundTree(HousekeepDeps(rt), b)); err == nil {
 			s.tree = fp
 		}
 	}

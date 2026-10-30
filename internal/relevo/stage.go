@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 )
 
 // stagePlan writes a round's plan to path, creating it when it is absent and
@@ -19,11 +21,11 @@ func stagePlan(path string, data []byte) error {
 		if !fi.Mode().IsRegular() {
 			return fmt.Errorf("%s is not a regular file", path)
 		}
-		return writeStagedPlan(path, os.O_WRONLY|os.O_TRUNC|oNoFollow, data)
+		return writeStagedPlan(path, os.O_WRONLY|os.O_TRUNC|housekeep.NoFollow, data)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	return writeStagedPlan(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|oNoFollow, data)
+	return writeStagedPlan(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|housekeep.NoFollow, data)
 }
 
 // writeStagedPlan is stagePlan's write half: open, write, close. A close error
@@ -53,5 +55,5 @@ func openAppend(path string) (*os.File, error) {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
-	return os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|oNoFollow, 0o644)
+	return os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|housekeep.NoFollow, 0o644)
 }

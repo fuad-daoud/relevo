@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/hooks"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -172,7 +173,7 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 		// A reader binding's throwaway worktree goes with it: done is the
 		// human's "this binding is finished", so nothing of it is left behind.
 		removeReaderScratch(ctx, rt, b, b.Round)
-		removeRoundTmp(rt, b, b.Round)
+		housekeep.RemoveRoundTmp(HousekeepDeps(rt), b, b.Round)
 
 		// The stop is recorded in the ledger, in the same shape relevo stop
 		// uses (closeStopped): the log marker it used to write is gone, and

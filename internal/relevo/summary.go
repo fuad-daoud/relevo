@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -272,7 +273,7 @@ func chainReaderPart(rt Runtime, name string) bool {
 // O_NOFOLLOW are the race backstop behind them, so a link swapped in after the
 // check cannot be followed either.
 func writeReaderOutput(root *os.Root, name, text string) error {
-	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|oNoFollow, 0o644)
+	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|housekeep.NoFollow, 0o644)
 	if err != nil {
 		return err
 	}
@@ -298,7 +299,7 @@ func replaceReaderOutput(root *os.Root, name string, data []byte) error {
 	if !fi.Mode().IsRegular() {
 		return fmt.Errorf("reader output %s is not a regular file", filepath.Join(root.Name(), name))
 	}
-	f, err := root.OpenFile(name, os.O_WRONLY|os.O_TRUNC|oNoFollow, 0o644)
+	f, err := root.OpenFile(name, os.O_WRONLY|os.O_TRUNC|housekeep.NoFollow, 0o644)
 	if err != nil {
 		return err
 	}
@@ -327,7 +328,7 @@ func removeReaderScratch(ctx context.Context, rt Runtime, b store.Binding, round
 	if b.Shape != store.ShapeReader || rt.Git == nil {
 		return
 	}
-	if err := RemoveScratch(ctx, rt, b, round); err != nil {
+	if err := housekeep.RemoveScratch(ctx, HousekeepDeps(rt), b, round); err != nil {
 		slog.Warn("scratch worktree not removed", "binding", b.Name, "round", round, "err", err)
 	}
 }

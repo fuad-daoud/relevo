@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
@@ -120,7 +121,7 @@ func chainRemotePreflight(ctx context.Context, rt Runtime, opts ChainOptions, pl
 	// The prefix needs a server that stores it, exactly as a lone bind does:
 	// a server that silently dropped it would run the chain's rounds at the
 	// bare repo's root, not the subdirectory the mastermind's shell was in.
-	subdir := resolveSubdir(ctx, rt, repo)
+	subdir := housekeep.ResolveSubdir(ctx, rt.Git, repo)
 	if subdir != "" && !hasFeature(who, remote.FeatureSubdir) {
 		return nil, refuse("server %s does not carry binding subdirectories (pre-subdir server); upgrade it or start the chain at the repository root", server)
 	}

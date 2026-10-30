@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -38,7 +39,7 @@ func formBundlePart(r *http.Request) (io.Reader, func()) {
 // the wire value must normalize, so any prefix that could move the served
 // round outside the owner's worktree is refused at this one boundary.
 func validSubdir(raw string) string {
-	if _, err := relevo.NormalizeSubdir(raw); err != nil {
+	if _, err := housekeep.NormalizeSubdir(raw); err != nil {
 		return err.Error()
 	}
 	return ""

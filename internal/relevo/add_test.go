@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -707,7 +708,7 @@ func TestUnbindExistingBranchNeverDeletes(t *testing.T) {
 		if _, err := Done(ctx, rt, "api-auth"); err != nil {
 			t.Fatalf("Done: %v", err)
 		}
-		if _, err := GC(ctx, rt, GCOptions{AllMasterMinds: true}); err != nil {
+		if _, err := housekeep.GC(ctx, HousekeepDeps(rt), housekeep.GCOptions{AllMasterMinds: true}); err != nil {
 			t.Fatalf("GC: %v", err)
 		}
 		if len(fg.deleteBranchCalls) != 0 {

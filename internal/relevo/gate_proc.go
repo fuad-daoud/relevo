@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -86,7 +87,7 @@ func advanceGateProc(ctx context.Context, rt Runtime, run store.GateRun, spec ga
 			// landed: nothing advances it again, so its temp dir goes now.
 			removeCheckTmp(rt, spec.UnitName)
 			rec = &store.GateRecord{Command: run.Command, Result: "timeout", DurationMS: elapsed.Milliseconds(), LogPath: spec.LogPath}
-			nameDiskFull(rec)
+			housekeep.NameDiskFull(rec)
 			return nil, true, rec, nil
 		}
 		return nil, false, nil, nil
@@ -120,7 +121,7 @@ func advanceGateProc(ctx context.Context, rt Runtime, run store.GateRun, spec ga
 	// Every path that reaches here ends the run -- pass, fail, or the error
 	// of a process that left no trailer -- so the check's temp dir goes with
 	// it. A re-run does not: it keeps the directory for the new process.
-	nameDiskFull(rec)
+	housekeep.NameDiskFull(rec)
 	removeCheckTmp(rt, spec.UnitName)
 	return nil, true, rec, nil
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/consult"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
@@ -190,7 +191,7 @@ func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if rt.Runner == nil {
 		return b, spawn.ErrRunnerUnavailable
 	}
-	b = assignRoundCPU(rt, tx, b)
+	b = housekeep.AssignRoundCPU(HousekeepDeps(rt), tx, b)
 	ref, err := candidate.ParseRef(b.BuilderCandidate)
 	if err != nil {
 		return b, fmt.Errorf("binding %q builder candidate: %w", b.Name, err)
@@ -211,7 +212,7 @@ func startRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding, 
 	if err != nil {
 		return b, err
 	}
-	argv, err := candidate.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, roundTree(rt, b), rt.Store.OutDir(b.Name), rt.Store.PromptPath(b.Name, b.Round), chainReadDir(rt, tx, b.Name))
+	argv, err := candidate.HeadlessLaunch(c, role, tier, roundBudget(b), prompt, housekeep.RoundTree(HousekeepDeps(rt), b), rt.Store.OutDir(b.Name), rt.Store.PromptPath(b.Name, b.Round), chainReadDir(rt, tx, b.Name))
 	if err != nil {
 		return b, err
 	}
@@ -321,8 +322,8 @@ func startProcessResuming(ctx context.Context, rt Runtime, tx *store.Tx, b store
 	// missing scratch fails the round rather than running in the binding's
 	// tree, and never falls back to b.CWD.
 	if b.Shape == store.ShapeReader {
-		if _, err := os.Stat(roundTree(rt, b)); err != nil {
-			if _, err := CreateScratchFrom(ctx, rt, b, b.Round, b.RoundBaselineHead, b.RoundBaselineTree); err != nil {
+		if _, err := os.Stat(housekeep.RoundTree(HousekeepDeps(rt), b)); err != nil {
+			if _, err := housekeep.CreateScratchFrom(ctx, HousekeepDeps(rt), b, b.Round, b.RoundBaselineHead, b.RoundBaselineTree); err != nil {
 				return b, err
 			}
 		}
@@ -333,19 +334,19 @@ func startProcessResuming(ctx context.Context, rt Runtime, tx *store.Tx, b store
 	// ledger record -- so a failed mkdir gates nothing and spends no
 	// relaunch attempt.
 	tmpDir, prepEnv, cleanupProc, err := prepareProc(ctx, rt, procRequest{
-		kind: procKindRound, key: b.Name, tree: roundTree(rt, b), binding: &b,
+		kind: procKindRound, key: b.Name, tree: housekeep.RoundTree(HousekeepDeps(rt), b), binding: &b,
 	})
 	if err != nil {
 		return b, err
 	}
 	spec := spawn.ProcSpec{
-		Dir: roundTree(rt, b), Argv: argv,
+		Dir: housekeep.RoundTree(HousekeepDeps(rt), b), Argv: argv,
 		Env:        append(append(roundEnvFor(b, accountFor(rt, c)), shimEnv...), prepEnv...),
 		TmpDir:     tmpDir,
 		LogPath:    logPath,
 		StreamPath: rt.Store.StreamPath(b.Name, b.Round),
 	}
-	spec.Scope = scopeFor(rt, scopeRound, scopeUnitName(b), cpuPinText(b))
+	spec.Scope = scopeFor(rt, scopeRound, scopeUnitName(b), housekeep.CPUPinText(b))
 	// Scopes-off hosts keep today's behaviour: with no template there is no
 	// scope to require. A fresh send never requires one either, so a failed
 	// probe still runs it unscoped exactly as before.
@@ -441,7 +442,7 @@ func resumeRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	if err != nil {
 		return b, err
 	}
-	sel, err := h.ResumeBuild(sessionID, l, prompt, roundBudget(b), roundTree(rt, b), rt.Store.OutDir(b.Name), rt.Store.PromptPath(b.Name, b.Round), chainReadDir(rt, tx, b.Name), definition)
+	sel, err := h.ResumeBuild(sessionID, l, prompt, roundBudget(b), housekeep.RoundTree(HousekeepDeps(rt), b), rt.Store.OutDir(b.Name), rt.Store.PromptPath(b.Name, b.Round), chainReadDir(rt, tx, b.Name), definition)
 	if err != nil {
 		return b, err
 	}
@@ -786,7 +787,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 					b = abandonSession(b)
 					// Belt for the close hook this stray's round already ran:
 					// no kill route leaves a round's temp dir behind.
-					removeRoundTmp(rt, b, b.Round)
+					housekeep.RemoveRoundTmp(HousekeepDeps(rt), b, b.Round)
 				}
 			}
 			b.Builder = clearProcess(b.Builder)
@@ -1020,9 +1021,9 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	var oomPeak int64
 	oom := false
 	if codeText == "unknown" || codeText == "137" {
-		if peak, killed := oomKilled(ctx, rt, b); killed {
+		if peak, killed := housekeep.OOMKilled(ctx, HousekeepDeps(rt), b); killed {
 			oom, oomPeak = true, peak
-			suffix += "; " + oomWords(peak)
+			suffix += "; " + housekeep.OOMWords(peak)
 		}
 	}
 
@@ -1053,7 +1054,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	// An oom kill is not the candidate's failure, so re-queue on the same
 	// candidate with no switch and no exclusion.
 	if oom {
-		return requeueOOM(ctx, rt, tx, b, oomPeak, now)
+		return housekeep.RequeueOOM(ctx, HousekeepDeps(rt), tx, b, oomPeak, now)
 	}
 
 	// A cgroup/group kill of the daemon (systemd restart, kill -9 of the
@@ -1075,7 +1076,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	b.Builder.PID, b.Builder.StartedAt = 0, 0 // LogPath stays: status and the entry point at it
 	b.StalledSince = time.Time{}              // the process is gone: not stalled any more
 
-	if next, halted, herr := haltOnDiskFullExit(ctx, rt, tx, b, tail); halted || herr != nil {
+	if next, halted, herr := housekeep.HaltOnDiskFullExit(ctx, HousekeepDeps(rt), tx, b, tail); halted || herr != nil {
 		return next, herr
 	}
 	if lost && switchable {
@@ -1449,7 +1450,7 @@ func markerClose(ctx context.Context, rt Runtime, tx *store.Tx, b store.Binding,
 	// Only a done round may buy a repair: a chain member that reported halted,
 	// blocked or unstructured halts the chain instead, whatever its gate says
 	// (the gate runs on the done marker, not on the report).
-	if halted, ok, herr := haltOnEnvironmentGate(ctx, rt, tx, next, rec, closedRound); ok || herr != nil {
+	if halted, ok, herr := housekeep.HaltOnEnvironmentGate(ctx, HousekeepDeps(rt), tx, next, rec, closedRound); ok || herr != nil {
 		return halted, true, false, herr
 	}
 	if rec != nil && rec.Result == "fail" && next.Regate > 0 && next.State != store.StateNeedsYou {
@@ -1533,7 +1534,7 @@ func stopProcess(ctx context.Context, rt Runtime, b store.Binding, why string) (
 	// The kill took the round's process, so its temp dir goes with it: a
 	// later start recreates it under the same name, which is what makes
 	// removing on a kill safe for a round that resumes.
-	removeRoundTmp(rt, b, b.Round)
+	housekeep.RemoveRoundTmp(HousekeepDeps(rt), b, b.Round)
 	return b.Builder.PID, nil
 }
 

@@ -74,8 +74,6 @@ internal/relevo/capture_test.go
 internal/relevo/configedit.go
 internal/relevo/consult.go
 internal/relevo/consult_test.go
-internal/relevo/cpus.go
-internal/relevo/cpus_test.go
 internal/relevo/daemon_consult_test.go
 internal/relevo/daemon.go
 internal/relevo/daemon_run_test.go
@@ -101,8 +99,6 @@ internal/relevo/fork_test.go
 internal/relevo/gate.go
 internal/relevo/gatekv_test.go
 internal/relevo/gate_test.go
-internal/relevo/gc.go
-internal/relevo/gc_test.go
 internal/relevo/giveuplog.go
 internal/relevo/headless.go
 internal/relevo/headless_test.go
@@ -134,8 +130,6 @@ internal/relevo/queue_test.go
 internal/relevo/reconcile.go
 internal/relevo/reconcile_hooks_test.go
 internal/relevo/reconcile_test.go
-internal/relevo/refclean.go
-internal/relevo/refclean_test.go
 internal/relevo/reload.go
 internal/relevo/reload_test.go
 internal/relevo/remote.go
@@ -156,11 +150,7 @@ internal/relevo/roles_list.go
 internal/relevo/roles_list_test.go
 internal/relevo/roles_runtime_test.go
 internal/relevo/roles_views_test.go
-internal/relevo/runningprocs.go
-internal/relevo/runningprocs_test.go
 internal/relevo/runtime.go
-internal/relevo/scan.go
-internal/relevo/scratch.go
 internal/relevo/seal_test.go
 internal/relevo/send.go
 internal/relevo/send_test.go

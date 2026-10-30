@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
@@ -123,7 +124,7 @@ func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (cha
 	}
 	plan.repo = repo
 	// From the same repository value, not a second working-directory probe.
-	plan.subdir = resolveSubdir(ctx, rt, repo)
+	plan.subdir = housekeep.ResolveSubdir(ctx, rt.Git, repo)
 	plan.trimpath = repoSet.Trimpath
 	isCustom := origin != "shipped"
 	if isCustom {

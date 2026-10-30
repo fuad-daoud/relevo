@@ -13,10 +13,10 @@ import (
 
 // scopeOOM is the journal answer for an oom-killed round: the incident's
 // result and the 8178532352 bytes (7.6 GiB) its MEMORY_PEAK carried.
-var scopeOOM = spawn.ScopeResult{Result: scopeResultOOM, PeakBytes: 8178532352}
+var scopeOOM = spawn.ScopeResult{Result: "oom-kill", PeakBytes: 8178532352}
 
-// oomRT adds scopes and a scripted scope result to rt so oomKilled returns the
-// expected value. It is a test-local helper: no caller may replace rt.Runner.
+// oomRT adds scopes and a scripted scope result to rt so the oom probe returns
+// the expected value. It is a test-local helper: no caller may replace rt.Runner.
 func oomRT(rt Runtime, fr *fakeRunner, b store.Binding, result spawn.ScopeResult) Runtime {
 	rt.Scope = &spawn.ScopeSpec{Unit: "test", Slice: "relevo.slice", CPUWeight: 100}
 	unit := scopeUnitName(b)
@@ -196,14 +196,14 @@ func TestOOMKilledServedRoundIsQueued(t *testing.T) {
 	}
 }
 
-// TestOOMKilledThirdKillHalts pins that the oomMaxKills-th oom kill in a round
+// TestOOMKilledThirdKillHalts pins that the third oom kill in a round
 // halts with NEEDS YOU instead of re-queuing.
 func TestOOMKilledThirdKillHalts(t *testing.T) {
 	t.Parallel()
 
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
-	b.RoundOOMKills = oomMaxKills - 1 // one kill away from the limit
+	b.RoundOOMKills = 2 // one kill away from the three-kill limit
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestOOMKilledThirdKillHalts(t *testing.T) {
 	}
 
 	if got.State != store.StateNeedsYou {
-		t.Errorf("state = %s, want needs_you on the %d-th oom kill", got.State, oomMaxKills)
+		t.Errorf("state = %s, want needs_you on the third oom kill", got.State)
 	}
 	if !strings.Contains(got.Halt, "out of memory") {
 		t.Errorf("Halt = %q, want it to mention out of memory", got.Halt)
@@ -256,7 +256,7 @@ func TestOOMKilledStopRequestedAtWins(t *testing.T) {
 // "success" still takes today's path (switch to next candidate), not the oom
 // branch.
 //
-// Mutation check (step 7): make oomKilled always return true and this test
+// Mutation check: make the oom probe always return true and this test
 // fails on the binding not switching (becoming queued instead).
 func TestOOMKilledSuccessResultTakesNormalPath(t *testing.T) {
 	t.Parallel()
@@ -286,7 +286,7 @@ func TestOOMKilledSuccessResultTakesNormalPath(t *testing.T) {
 }
 
 // TestAdmitOOMQueuedRoundPutsNoteInPrompt pins that Admit of an oom-queued
-// round injects oomNote text in the spawned prompt and clears OOMRequeue.
+// round injects the oom note text in the spawned prompt and clears OOMRequeue.
 func TestAdmitOOMQueuedRoundPutsNoteInPrompt(t *testing.T) {
 	t.Parallel()
 
@@ -369,7 +369,7 @@ func TestTickAdmitsOOMQueuedPastCooldown(t *testing.T) {
 	}
 
 	// Before cooldown: Tick must not admit.
-	preCooldown := at(rt, oomCooldown-time.Second)
+	preCooldown := at(rt, 60*time.Second-time.Second)
 	if err := NewDaemon(preCooldown, time.Second).Tick(context.Background()); err != nil {
 		t.Fatalf("Tick (pre-cooldown): %v", err)
 	}
@@ -379,7 +379,7 @@ func TestTickAdmitsOOMQueuedPastCooldown(t *testing.T) {
 	}
 
 	// After cooldown: Tick must admit (running=0 < Running=1).
-	postCooldown := at(rt, oomCooldown+time.Second)
+	postCooldown := at(rt, 60*time.Second+time.Second)
 	if err := NewDaemon(postCooldown, time.Second).Tick(context.Background()); err != nil {
 		t.Fatalf("Tick (post-cooldown): %v", err)
 	}
@@ -516,14 +516,14 @@ func TestOOMKilledRequeueNoteNamesThePeak(t *testing.T) {
 	}
 }
 
-// TestOOMKilledThirdKillHaltNamesThePeak pins that the oomMaxKills halt carries
+// TestOOMKilledThirdKillHaltNamesThePeak pins that the third-kill halt carries
 // the human peak the journal reported.
 func TestOOMKilledThirdKillHaltNamesThePeak(t *testing.T) {
 	t.Parallel()
 
 	fr := newFakeRunner()
 	rt, b := sentHeadless(t, fr)
-	b.RoundOOMKills = oomMaxKills - 1 // one kill away from the limit
+	b.RoundOOMKills = 2 // one kill away from the three-kill limit
 	if err := rt.Store.Save(b); err != nil {
 		t.Fatal(err)
 	}
@@ -535,7 +535,7 @@ func TestOOMKilledThirdKillHaltNamesThePeak(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	if got.State != store.StateNeedsYou {
-		t.Fatalf("state = %s, want needs_you on the %d-th oom kill", got.State, oomMaxKills)
+		t.Fatalf("state = %s, want needs_you on the third oom kill", got.State)
 	}
 	if !strings.Contains(got.Halt, "peak 7.6 GiB") {
 		t.Errorf("Halt = %q, want it to name the 7.6 GiB peak", got.Halt)

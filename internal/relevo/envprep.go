@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/diskfree"
+	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -56,11 +57,11 @@ func goFlagsEnv(ctx context.Context, rt Runtime, tree string, binding *store.Bin
 	}
 	var parent []string
 	if v := os.Getenv("GOFLAGS"); v != "" {
-		parent = []string{goFlagsKey + v}
+		parent = []string{housekeep.GoFlagsKey + v}
 	}
-	out := goFlagsEntry(parent, tree, on)
+	out := housekeep.GoFlagsEntry(parent, tree, on)
 	for _, e := range out {
-		if strings.HasPrefix(e, goFlagsKey) && (len(parent) == 0 || e != parent[0]) {
+		if strings.HasPrefix(e, housekeep.GoFlagsKey) && (len(parent) == 0 || e != parent[0]) {
 			return []string{e}, nil
 		}
 	}
