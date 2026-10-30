@@ -28,11 +28,8 @@ func Rangef(format string, args ...any) error {
 	return &roundOutOfRange{msg: fmt.Sprintf(format, args...)}
 }
 
-// RoundOutOfRange is the exported constructor for an out-of-range round, for
-// callers outside this package that bound the round themselves (cmd/relevo's
-// printDiff upper bound). It names the binding and the round, and the --drift
-// marker when the caller was asking for drift, so the reason stays as legible
-// as the artifact error it replaces while carrying the round_not_found class.
+// RoundOutOfRange names the binding, the round asked for and the rounds it
+// has, with the --drift marker when drift was asked for.
 func RoundOutOfRange(name string, round, rounds int, drift bool) error {
 	if drift {
 		return Rangef("binding %q: round %d is out of range (--drift); binding has %d rounds", name, round, rounds)
