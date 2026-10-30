@@ -87,7 +87,8 @@ func shimRun(t *testing.T, shim string, pathDirs []string, stdin string, args ..
 		return cmd
 	}, (*exec.Cmd).Run)
 	code := 0
-	if ee, ok := err.(*exec.ExitError); ok {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
 		code = ee.ExitCode()
 	} else if err != nil {
 		t.Fatalf("run shim: %v", err)
@@ -122,8 +123,8 @@ func TestRetryShimETXTBSYRetriesOnlyETXTBSY(t *testing.T) {
 	}
 
 	_, exitErr := exec.Command("sh", "-c", "exit 7").Output()
-	ee, ok := exitErr.(*exec.ExitError)
-	if !ok {
+	var ee *exec.ExitError
+	if !errors.As(exitErr, &ee) {
 		t.Fatalf("sh -c 'exit 7' gave %v, want a real *exec.ExitError to pin against", exitErr)
 	}
 	attempts = 0
