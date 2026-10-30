@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/refusal"
 )
 
 func TestChainStartRefusesActorWithoutDeclaredOutputs(t *testing.T) {
@@ -24,8 +26,8 @@ func TestChainStartRefusesActorWithoutDeclaredOutputs(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected refusal for planner without plan artifact, got nil")
 		}
-		if !errors.Is(err, ErrRefused) {
-			t.Errorf("err = %v, want ErrRefused", err)
+		if !errors.Is(err, refusal.ErrRefused) {
+			t.Errorf("err = %v, want refusal.ErrRefused", err)
 		}
 		if !strings.Contains(err.Error(), "correct.plan") && !strings.Contains(err.Error(), "rule 4") {
 			t.Errorf("expected error to name missing plan artifact or rule 4, got %v", err)
@@ -49,8 +51,8 @@ func TestChainStartRefusesActorWithoutDeclaredOutputs(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected refusal for security without findings count, got nil")
 		}
-		if !errors.Is(err, ErrRefused) {
-			t.Errorf("err = %v, want ErrRefused", err)
+		if !errors.Is(err, refusal.ErrRefused) {
+			t.Errorf("err = %v, want refusal.ErrRefused", err)
 		}
 		if !strings.Contains(err.Error(), "findings") && !strings.Contains(err.Error(), "rule 3") {
 			t.Errorf("expected error to name missing findings outcome or rule 3, got %v", err)
@@ -70,8 +72,8 @@ func TestChainStartRefusesActorWithoutDeclaredOutputs(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected refusal for resume with planner without plan artifact, got nil")
 		}
-		if !errors.Is(err, ErrRefused) {
-			t.Errorf("err = %v, want ErrRefused", err)
+		if !errors.Is(err, refusal.ErrRefused) {
+			t.Errorf("err = %v, want refusal.ErrRefused", err)
 		}
 	})
 }

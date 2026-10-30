@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -16,7 +17,7 @@ import (
 // local repo nor the origin cache, bind fetches exactly that one ref and
 // adopts it if it arrives, rather than refusing outright. Both refusals that
 // remain -- a fetch that failed, and a fetch that left the branch absent --
-// are refusals (ErrRefused), not internal errors, so the CLI renders
+// are refusals (refusal.ErrRefused), not internal errors, so the CLI renders
 // `refused` and exits 2 instead of reporting a crash for a caller mistake.
 
 // TestAddBranchFetchesMissingBranch pins case 3 on the local path: one
@@ -122,8 +123,8 @@ func TestAddBranchFetchFailureRefuses(t *testing.T) {
 	if err == nil {
 		t.Fatal("Add --branch: got nil, want a refusal after a failed fetch")
 	}
-	if !errors.Is(err, ErrRefused) {
-		t.Errorf("err = %v, want ErrRefused so the CLI renders `refused`", err)
+	if !errors.Is(err, refusal.ErrRefused) {
+		t.Errorf("err = %v, want refusal.ErrRefused so the CLI renders `refused`", err)
 	}
 	if !strings.Contains(err.Error(), "not found locally or on origin") {
 		t.Errorf("err = %q, want the existing 'not found locally or on origin' wording kept", err)
@@ -160,8 +161,8 @@ func TestAddBranchFetchedButStillAbsentRefuses(t *testing.T) {
 	if err == nil {
 		t.Fatal("Add --branch: got nil, want a refusal when the fetch brings no branch")
 	}
-	if !errors.Is(err, ErrRefused) {
-		t.Errorf("err = %v, want ErrRefused so the CLI renders `refused`", err)
+	if !errors.Is(err, refusal.ErrRefused) {
+		t.Errorf("err = %v, want refusal.ErrRefused so the CLI renders `refused`", err)
 	}
 	if !strings.Contains(err.Error(), "not found locally or on origin") {
 		t.Errorf("err = %q, want the existing wording kept", err)
@@ -248,8 +249,8 @@ func TestAddRemoteBranchFetchFailureRefuses(t *testing.T) {
 			if err == nil {
 				t.Fatal("Add --server --branch: got nil, want a refusal")
 			}
-			if !errors.Is(err, ErrRefused) {
-				t.Errorf("err = %v, want ErrRefused so the CLI renders `refused`", err)
+			if !errors.Is(err, refusal.ErrRefused) {
+				t.Errorf("err = %v, want refusal.ErrRefused so the CLI renders `refused`", err)
 			}
 			if !strings.Contains(err.Error(), "not found locally or on origin") {
 				t.Errorf("err = %q, want the existing wording kept", err)
@@ -286,7 +287,7 @@ func TestAdoptionRemotePrefersOriginThenTheOnlyRemote(t *testing.T) {
 				}
 				return
 			}
-			if !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), tt.refuse) {
+			if !errors.Is(err, refusal.ErrRefused) || !strings.Contains(err.Error(), tt.refuse) {
 				t.Fatalf("err = %v, want a refusal containing %q", err, tt.refuse)
 			}
 		})

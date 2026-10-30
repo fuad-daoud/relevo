@@ -13,6 +13,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -255,8 +256,8 @@ func writeError(err error) error {
 	var candOpen *relevo.CandidateRoundOpenError
 	var envErr *relevo.EnvironmentError
 	switch {
-	// The busy family is checked before the bare ErrRefused case, because
-	// each of these sentinels also unwraps to ErrRefused: they are refusals
+	// The busy family is checked before the bare refusal.ErrRefused case, because
+	// each of these sentinels also unwraps to refusal.ErrRefused: they are refusals
 	// first and a named reason second, and only the reason picks the next
 	// hint the caller should follow.
 	case errors.Is(err, relevo.ErrBuilderBusy):
@@ -265,7 +266,7 @@ func writeError(err error) error {
 		return failNext(codeRefused, "relevo wait", "%v", err)
 	case errors.Is(err, relevo.ErrScopeActive):
 		return failNext(codeRefused, "relevo stop", "%v", err)
-	case errors.Is(err, relevo.ErrRefused):
+	case errors.Is(err, refusal.ErrRefused):
 		return fail(codeRefused, "%v", err)
 	case errors.Is(err, store.ErrInvalidName):
 		// A binding name is the caller's own argument: a corrected --name is
@@ -274,11 +275,11 @@ func writeError(err error) error {
 	case errors.Is(err, store.ErrInvalidFeature), errors.Is(err, store.ErrInvalidTicket):
 		// Same shape as a bad name: the flag value itself is what is wrong.
 		return fail(codeUsage, "%v", err)
-	case errors.Is(err, relevo.ErrBadInput):
+	case errors.Is(err, refusal.ErrBadInput):
 		// A flag pair that cannot both hold, a flag the shape does not
 		// honour, a name already taken: usage, not an internal failure.
 		return fail(codeUsage, "%v", err)
-	case errors.Is(err, relevo.ErrRoundNotFound):
+	case errors.Is(err, refusal.ErrRoundNotFound):
 		return fail(codeRoundNotFound, "%v", err)
 	case errors.Is(err, store.ErrHandedOver), errors.Is(err, db.ErrWriterMoved):
 		return fail(codeRefused, "%v", err)

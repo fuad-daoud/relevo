@@ -3,6 +3,8 @@ package relevo
 import (
 	"errors"
 	"fmt"
+
+	"github.com/fuad-daoud/relevo/internal/refusal"
 )
 
 // The answer a stop gives a chain that has halted with no open member round.
@@ -47,4 +49,4 @@ func haltedChainStop(name string) error {
 // constructor the library's own refusals use. It is exported so a caller
 // outside this package can assert on the class a refusal is classified under
 // without reaching for an unexported helper or a hand-rolled stand-in.
-func Refused(format string, args ...any) error { return refuse(format, args...) }
+func Refused(format string, args ...any) error { return refusal.New(format, args...) }

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/fuad-daoud/relevo/internal/housekeep"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -17,7 +18,7 @@ import (
 // definition came from.
 func ResolveWorkflow(rt Runtime, nameOrPath string) (workflow.Definition, string, error) {
 	if nameOrPath == "" {
-		return workflow.Definition{}, "", refuse("workflow: no name or path given")
+		return workflow.Definition{}, "", refusal.New("workflow: no name or path given")
 	}
 	if info, err := os.Stat(nameOrPath); err == nil && !info.IsDir() {
 		def, err := loadWorkflowFile(nameOrPath)
@@ -29,7 +30,7 @@ func ResolveWorkflow(rt Runtime, nameOrPath string) (workflow.Definition, string
 	if rt.Config != nil {
 		L, err := rt.Config.Load()
 		if err != nil {
-			return workflow.Definition{}, "", refuse("%v", err)
+			return workflow.Definition{}, "", refusal.New("%v", err)
 		}
 		if w, ok := L.Workflows[nameOrPath]; ok {
 			return w.Definition, "saved", nil
@@ -38,7 +39,7 @@ func ResolveWorkflow(rt Runtime, nameOrPath string) (workflow.Definition, string
 	if nameOrPath == workflow.Default().Name {
 		return workflow.Default(), "shipped", nil
 	}
-	return workflow.Definition{}, "", refuse("workflow: %q is not a file, a saved workflow or a shipped workflow", nameOrPath)
+	return workflow.Definition{}, "", refusal.New("workflow: %q is not a file, a saved workflow or a shipped workflow", nameOrPath)
 }
 
 // loadWorkflowFile reads one workflow file and embeds its file: seeds relative
@@ -46,15 +47,15 @@ func ResolveWorkflow(rt Runtime, nameOrPath string) (workflow.Definition, string
 func loadWorkflowFile(path string) (workflow.Definition, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return workflow.Definition{}, refuse("%v", err)
+		return workflow.Definition{}, refusal.New("%v", err)
 	}
 	def, err := workflow.Parse(data)
 	if err != nil {
-		return workflow.Definition{}, refuse("%v", err)
+		return workflow.Definition{}, refusal.New("%v", err)
 	}
 	def, err = EmbedFileSeeds(def, filepath.Dir(path))
 	if err != nil {
-		return workflow.Definition{}, refuse("%v", err)
+		return workflow.Definition{}, refusal.New("%v", err)
 	}
 	return def, nil
 }
@@ -88,15 +89,15 @@ func EmbedFileSeeds(def workflow.Definition, dir string) (workflow.Definition, e
 // DiskRegularFile rule, because a workflow file is human-supplied input.
 func readSeedFile(dir, rel string) (string, error) {
 	if rel == "" {
-		return "", refuse("seed file: names no path")
+		return "", refusal.New("seed file: names no path")
 	}
 	if filepath.IsAbs(rel) {
-		return "", refuse("seed file %q is absolute", rel)
+		return "", refusal.New("seed file %q is absolute", rel)
 	}
 	full := filepath.Join(dir, rel)
 	within, err := filepath.Rel(dir, full)
 	if err != nil || within == ".." || strings.HasPrefix(within, ".."+string(filepath.Separator)) {
-		return "", refuse("seed file %q escapes the workflow's directory", rel)
+		return "", refusal.New("seed file %q escapes the workflow's directory", rel)
 	}
 	if err := refuseSymlinkedDir(dir, filepath.Dir(full), rel); err != nil {
 		return "", err
@@ -106,7 +107,7 @@ func readSeedFile(dir, rel string) (string, error) {
 		return "", err
 	}
 	if !fi.Mode().IsRegular() {
-		return "", refuse("seed file %q is not a regular file", rel)
+		return "", refusal.New("seed file %q is not a regular file", rel)
 	}
 	f, err := os.OpenFile(full, os.O_RDONLY|housekeep.NoFollow, 0)
 	if err != nil {
@@ -126,7 +127,7 @@ func readSeedFile(dir, rel string) (string, error) {
 func refuseSymlinkedDir(dir, parent, rel string) error {
 	resolvedDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return refuse("seed file %q: %v", rel, err)
+		return refusal.New("seed file %q: %v", rel, err)
 	}
 	resolvedParent, err := filepath.EvalSymlinks(parent)
 	if err != nil {
@@ -134,7 +135,7 @@ func refuseSymlinkedDir(dir, parent, rel string) error {
 	}
 	within, err := filepath.Rel(resolvedDir, resolvedParent)
 	if err != nil || within == ".." || strings.HasPrefix(within, ".."+string(filepath.Separator)) {
-		return refuse("seed file %q resolves outside the workflow's directory", rel)
+		return refusal.New("seed file %q resolves outside the workflow's directory", rel)
 	}
 	return nil
 }

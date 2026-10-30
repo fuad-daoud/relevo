@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -264,8 +265,8 @@ func TestResumeWithoutAGateChangeStaysHaltedAndRefused(t *testing.T) {
 	if err == nil {
 		t.Fatal("ChainResume with no gate change = nil, want the halt refusal")
 	}
-	if !errors.Is(err, ErrRefused) {
-		t.Errorf("ChainResume = %v, want ErrRefused: a plain error is coded internal by the CLI", err)
+	if !errors.Is(err, refusal.ErrRefused) {
+		t.Errorf("ChainResume = %v, want refusal.ErrRefused: a plain error is coded internal by the CLI", err)
 	}
 	if !strings.Contains(err.Error(), "no budget left") {
 		t.Errorf("refusal %q does not carry the halt reason", err)
@@ -305,8 +306,8 @@ steps:
 	if err == nil {
 		t.Fatal("ChainResume = nil, want the ambiguous-predecessor refusal")
 	}
-	if !errors.Is(err, ErrRefused) {
-		t.Errorf("ChainResume = %v, want ErrRefused", err)
+	if !errors.Is(err, refusal.ErrRefused) {
+		t.Errorf("ChainResume = %v, want refusal.ErrRefused", err)
 	}
 	for _, want := range []string{"gate-a", "gate-b"} {
 		if !strings.Contains(err.Error(), want) {

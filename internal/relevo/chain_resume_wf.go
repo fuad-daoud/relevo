@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -82,7 +83,7 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	}
 	if len(merged) > 0 {
 		if def, err = workflow.WithParams(def, merged); err != nil {
-			return ChainResult{}, refuse("%v", err)
+			return ChainResult{}, refusal.New("%v", err)
 		}
 		given := workflow.Given{Plans: len(before.Iter["plans"].Items) > 0}
 		if err := chainValidateWorkflow(rt, def, given); err != nil {
@@ -122,7 +123,7 @@ func chainResumeWorkflow(ctx context.Context, rt Runtime, c db.ChainRow, opts Re
 	// CLI reads a refusal as exit 2 with the reason to act on, and an internal
 	// as "send this to bugreport" on a row the human can read and fix.
 	if out.Chain.Status == string(workflow.StatusHalted) {
-		return out, refuse("chain %s is still halted: %s", out.Chain.Name, out.Chain.Reason)
+		return out, refusal.New("chain %s is still halted: %s", out.Chain.Name, out.Chain.Reason)
 	}
 	// The resume itself has committed and nothing refused it, so the gate change
 	// a placed writer's server is owed can go out now. Any later abort of this
@@ -193,7 +194,7 @@ func chainResumeLocked(ctx context.Context, rt Runtime, tx *store.Tx, opts Resum
 	}
 	resumed, acts, err := workflow.Resume(def, before, workflow.ResumeOpts{From: from, Closed: closed, SameRound: sameRound})
 	if err != nil {
-		return ChainResult{}, refuse("%v", err)
+		return ChainResult{}, refusal.New("%v", err)
 	}
 	if len(merged) > 0 {
 		if row, err = chainResumeAddMembers(ctx, rt, tx, row, def, snap); err != nil {
@@ -251,7 +252,7 @@ func chainResumeFlagParams(def workflow.Definition, rt Runtime, opts ResumeOptio
 	out := map[string]string{}
 	add := func(flag, param, value string) error {
 		if !hasChainParam(def, param) {
-			return refuse("%s: workflow %q has no param %q", flag, def.Name, param)
+			return refusal.New("%s: workflow %q has no param %q", flag, def.Name, param)
 		}
 		out[param] = value
 		return nil

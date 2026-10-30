@@ -19,6 +19,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/serviceunit"
 	"github.com/fuad-daoud/relevo/internal/setup"
@@ -351,7 +352,7 @@ func TestSmokeLimitFailureNamesTheResetAndTheFix(t *testing.T) {
 // an unclassified failure crosses raw and still exits internal.
 func TestSetupClassifiedTransportKeepsItsExit(t *testing.T) {
 	busy := fmt.Errorf("builder is busy\nsecond line: %w", relevo.ErrBuilderBusy)
-	missing := fmt.Errorf("no such round\nsecond line: %w", relevo.ErrRoundNotFound)
+	missing := fmt.Errorf("no such round\nsecond line: %w", refusal.ErrRoundNotFound)
 	raw := errors.New("boom\nsecond line")
 
 	rows := []struct {

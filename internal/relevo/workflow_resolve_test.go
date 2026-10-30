@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -91,8 +92,8 @@ func TestResolveWorkflowOrder(t *testing.T) {
 		t.Errorf("shipped resolution = (%q, %q), want (%q, shipped)", def.Name, origin, workflow.Default().Name)
 	}
 
-	if _, _, err := ResolveWorkflow(rt, "no-such-workflow"); !errors.Is(err, ErrRefused) {
-		t.Errorf("unknown workflow error = %v, want ErrRefused", err)
+	if _, _, err := ResolveWorkflow(rt, "no-such-workflow"); !errors.Is(err, refusal.ErrRefused) {
+		t.Errorf("unknown workflow error = %v, want refusal.ErrRefused", err)
 	}
 }
 
@@ -125,8 +126,8 @@ func TestEmbedFileSeedsRefusesEscape(t *testing.T) {
 			t.Errorf("EmbedFileSeeds(%q) = %+v, want a refusal", seed, got)
 			continue
 		}
-		if !errors.Is(err, ErrRefused) {
-			t.Errorf("EmbedFileSeeds(%q) error = %v, want ErrRefused", seed, err)
+		if !errors.Is(err, refusal.ErrRefused) {
+			t.Errorf("EmbedFileSeeds(%q) error = %v, want refusal.ErrRefused", seed, err)
 		}
 	}
 }
@@ -156,8 +157,8 @@ func TestEmbedFileSeedsRefusesASymlink(t *testing.T) {
 			t.Errorf("EmbedFileSeeds(%q) = %+v, want a refusal", seed, got)
 			continue
 		}
-		if !errors.Is(err, ErrRefused) {
-			t.Errorf("EmbedFileSeeds(%q) error = %v, want ErrRefused", seed, err)
+		if !errors.Is(err, refusal.ErrRefused) {
+			t.Errorf("EmbedFileSeeds(%q) error = %v, want refusal.ErrRefused", seed, err)
 		}
 	}
 }

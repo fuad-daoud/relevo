@@ -16,6 +16,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -677,8 +678,8 @@ func TestServerChainOldServerRefusesTakenMemberName(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `"shop-rev" already exists`) {
 		t.Fatalf("err = %v, want a taken-name refusal", err)
 	}
-	if !errors.Is(err, ErrRefused) {
-		t.Errorf("err = %v, want errors.Is(err, ErrRefused): a taken name is refused, not internal", err)
+	if !errors.Is(err, refusal.ErrRefused) {
+		t.Errorf("err = %v, want errors.Is(err, refusal.ErrRefused): a taken name is refused, not internal", err)
 	}
 	for _, c := range fr.calls {
 		if strings.HasPrefix(c, "CreateChain") {

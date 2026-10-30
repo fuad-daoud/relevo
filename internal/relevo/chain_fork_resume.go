@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -61,10 +62,10 @@ func chainForkParentRefusal(parent, child db.ChainRow) error {
 	case chain.StatusRunning:
 		return nil
 	case chain.StatusStopped:
-		return refuse("chain %s cannot resume: its parent %s is stopped; `relevo chain --resume --name %s` continues it",
+		return refusal.New("chain %s cannot resume: its parent %s is stopped; `relevo chain --resume --name %s` continues it",
 			child.Name, parent.Name, parent.Name)
 	case chain.StatusDone:
-		return refuse("chain %s cannot resume: its parent %s is done", child.Name, parent.Name)
+		return refusal.New("chain %s cannot resume: its parent %s is done", child.Name, parent.Name)
 	}
 	st, err := chainWorkflowState(parent)
 	if err != nil {
@@ -73,7 +74,7 @@ func chainForkParentRefusal(parent, child db.ChainRow) error {
 	if _, ok := workflow.ReopenFork(st, key); ok {
 		return nil
 	}
-	return refuse("chain %s cannot resume: its parent %s is halted at step %q for a reason this child does not answer; `relevo chain --resume --name %s` continues it",
+	return refusal.New("chain %s cannot resume: its parent %s is halted at step %q for a reason this child does not answer; `relevo chain --resume --name %s` continues it",
 		child.Name, parent.Name, flowTerminalStep(st), parent.Name)
 }
 
@@ -218,6 +219,6 @@ func chainForkWaitRefusal(c db.ChainRow, before workflow.State, waiting []string
 		}
 		parts = append(parts, fmt.Sprintf("%s (%s)", chainForkChildName(c.Name, key), status))
 	}
-	return refuse("chain %s is halted at fork %q and cannot be resumed: %s; `relevo chain --resume --name %s` continues it",
+	return refusal.New("chain %s is halted at fork %q and cannot be resumed: %s; `relevo chain --resume --name %s` continues it",
 		c.Name, before.Awaiting.Step, strings.Join(parts, ", "), chainForkChildName(c.Name, waiting[0]))
 }

@@ -4,6 +4,7 @@ import (
 	"slices"
 
 	"github.com/fuad-daoud/relevo/internal/chain"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -27,7 +28,7 @@ func chainMemberNames(name string, def workflow.Definition, actors map[string]wo
 	used := workflow.UsedActors(def)
 	for _, actor := range used {
 		if _, ok := actors[actor]; !ok {
-			return nil, refuse("workflow %s runs actor %q, which is not configured", def.Name, actor)
+			return nil, refusal.New("workflow %s runs actor %q, which is not configured", def.Name, actor)
 		}
 	}
 	keeper := chainWriterKeeper(def, used, actors)

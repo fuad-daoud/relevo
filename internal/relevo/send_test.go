@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -1984,11 +1985,11 @@ func TestSendRefusesStoredTierAboveMaxWithoutAllowYolo(t *testing.T) {
 
 // TestAMissingPlanFileIsAUsageError pins that a --file the caller named which
 // does not exist is refused as the caller's own argument: the class is
-// ErrBadInput, which the CLI maps to usage with `relevo help`, and the message
+// refusal.ErrBadInput, which the CLI maps to usage with `relevo help`, and the message
 // names the path so the reader can see which one was read. Reported as an
 // internal failure it sent a mistyped path to `relevo bugreport`.
 //
-// Wrapping the read in badInputf instead kills this (the error unwraps to
+// Wrapping the read in refusal.BadInputf instead kills this (the error unwraps to
 // nothing the CLI knows and the message no longer leads with --file).
 func TestAMissingPlanFileIsAUsageError(t *testing.T) {
 	t.Parallel()
@@ -1998,8 +1999,8 @@ func TestAMissingPlanFileIsAUsageError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("readPromptFile(%q) = nil, want a refusal", missing)
 	}
-	if !errors.Is(err, ErrBadInput) {
-		t.Fatalf("err = %v, want it to unwrap to ErrBadInput", err)
+	if !errors.Is(err, refusal.ErrBadInput) {
+		t.Fatalf("err = %v, want it to unwrap to refusal.ErrBadInput", err)
 	}
 	if !strings.Contains(err.Error(), missing) {
 		t.Errorf("message %q must name the path it could not read", err.Error())
@@ -2032,11 +2033,11 @@ func TestSendRefusesAMissingPlanFileAsUsage(t *testing.T) {
 	rt, _ := seedBound(t)
 	missing := filepath.Join(t.TempDir(), "no-such-plan.md")
 
-	if _, err := Send(context.Background(), rt, "webshop", missing, SendOptions{Defer: true}); !errors.Is(err, ErrBadInput) {
-		t.Errorf("Send(missing) = %v, want ErrBadInput", err)
+	if _, err := Send(context.Background(), rt, "webshop", missing, SendOptions{Defer: true}); !errors.Is(err, refusal.ErrBadInput) {
+		t.Errorf("Send(missing) = %v, want refusal.ErrBadInput", err)
 	}
-	if _, err := SendDryRun(context.Background(), rt, "webshop", missing, SendOptions{}); !errors.Is(err, ErrBadInput) {
-		t.Errorf("SendDryRun(missing) = %v, want ErrBadInput", err)
+	if _, err := SendDryRun(context.Background(), rt, "webshop", missing, SendOptions{}); !errors.Is(err, refusal.ErrBadInput) {
+		t.Errorf("SendDryRun(missing) = %v, want refusal.ErrBadInput", err)
 	}
 }
 

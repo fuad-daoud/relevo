@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -84,7 +85,7 @@ func ChainDryRun(ctx context.Context, rt Runtime, opts ChainOptions) (DryRunDoc,
 	}
 	applied, err := workflow.WithParams(def, values)
 	if err != nil {
-		return DryRunDoc{}, refuse("%v", err)
+		return DryRunDoc{}, refusal.New("%v", err)
 	}
 
 	actors := rt.RoleRegistry().WorkflowActors()

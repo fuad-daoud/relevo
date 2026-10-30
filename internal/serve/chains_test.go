@@ -20,6 +20,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
@@ -945,8 +946,8 @@ func TestServedResumeRefusesAGateChangeOnAPlacedWriter(t *testing.T) {
 	}
 	if _, err := relevo.ChainResume(context.Background(), rt, opts); err == nil {
 		t.Fatal("ChainResume with a wire gate on a placed writer = nil, want the refusal")
-	} else if !errors.Is(err, relevo.ErrRefused) {
-		t.Errorf("ChainResume = %v, want relevo.ErrRefused", err)
+	} else if !errors.Is(err, refusal.ErrRefused) {
+		t.Errorf("ChainResume = %v, want refusal.ErrRefused", err)
 	}
 }
 
