@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -58,49 +59,31 @@ func (s RepoSettings) TrimpathOn() bool {
 	return s.Trimpath != "off"
 }
 
-// The words that name the tier a resolved gate came from: the printed gate and
-// check lines carry one in parentheses, so a human can tell a flag's own
-// command from the repository's or the policy's.
-const (
-	GateSourceFlag    = "--gate"
-	GateSourceRepo    = "repo setting"
-	GateSourcePolicy  = "policy.gate.default"
-	GateSourceBinding = "binding"
-)
-
-// GateResolution is the gate command a bind, an add or a chain start resolved,
-// and the tier that supplied it. The zero value means no gate: a bind with no
-// command to run prints "gate: none" whatever tier the absence came from.
-type GateResolution struct {
-	Command string
-	Source  string
-}
-
-// resolveGateFor applies the gate resolution rule (#132, #382): --no-gate wins
+// resolveGateFor applies the gate resolution rule: --no-gate wins
 // over everything, an explicit --gate is used as given, an unset flag takes the
 // repository's own gate, then policy.json's gate.default, and a role whose
 // check flag is off takes no gate. The repository tier sits exactly where the
 // policy tier sat, behind the role rule: the role rule decides whether any
 // check runs at all, not which tier supplies it, so a reader round still takes
 // no gate even when its repository sets one.
-func resolveGateFor(gate string, noGate bool, pol policy.Policy, roleChecks bool, repo RepoSettings) GateResolution {
+func resolveGateFor(gate string, noGate bool, pol policy.Policy, roleChecks bool, repo RepoSettings) resolve.GateResolution {
 	if noGate {
-		return GateResolution{}
+		return resolve.GateResolution{}
 	}
 	if gate != "" {
-		return GateResolution{Command: gate, Source: GateSourceFlag}
+		return resolve.GateResolution{Command: gate, Source: resolve.GateSourceFlag}
 	}
 	if !roleChecks {
-		return GateResolution{}
+		return resolve.GateResolution{}
 	}
 	if repo.Gate != "" {
-		return GateResolution{Command: repo.Gate, Source: GateSourceRepo}
+		return resolve.GateResolution{Command: repo.Gate, Source: resolve.GateSourceRepo}
 	}
 	cmd := pol.GateDefault()
 	if cmd == "" {
-		return GateResolution{}
+		return resolve.GateResolution{}
 	}
-	return GateResolution{Command: cmd, Source: GateSourcePolicy}
+	return resolve.GateResolution{Command: cmd, Source: resolve.GateSourcePolicy}
 }
 
 // RepoKey returns dir's repository identity: remote.RepoID over the root

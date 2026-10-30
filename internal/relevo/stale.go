@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -30,7 +31,7 @@ func windowConfigured(rt Runtime, b store.Binding) bool {
 	if rt.Candidates == nil {
 		return false
 	}
-	for _, e := range rankedRole(rt.RoleRegistry(), rt.Candidates, bindingRole(b)) {
+	for _, e := range resolve.RankedRole(rt.RoleRegistry(), rt.Candidates, bindingRole(b)) {
 		if e.Candidate.Windows != nil {
 			return true
 		}
@@ -43,17 +44,17 @@ func windowConfigured(rt Runtime, b store.Binding) bool {
 // b.CWD, then applyBuilder. It does
 // so when b's token is stale, or, when the round names no candidate (named) and
 // b is not pinned, when a window is configured and the pick now differs. It
-// returns b unchanged, a nil *Resolution and "" otherwise; the string is the
+// returns b unchanged, a nil *resolve.Resolution and "" otherwise; the string is the
 // reason, repickStaleToken or repickWindow. A window re-pick that cannot resolve
 // leaves b where it is.
-func repickForRound(rt Runtime, b store.Binding, named, allowYolo bool) (store.Binding, *Resolution, string, error) {
+func repickForRound(rt Runtime, b store.Binding, named, allowYolo bool) (store.Binding, *resolve.Resolution, string, error) {
 	old := b.BuilderCandidate
 	stale := staleBuilder(rt, b)
 	if !stale && (named || b.BuilderPinned || old == "" || b.Builder.Remote() || !windowConfigured(rt, b)) {
 		return b, nil, "", nil
 	}
 
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), b.CWD, nil), "", bindingRole(b), pickFor(rt))
+	res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), b.CWD, nil), "", bindingRole(b), resolve.PickFor(ResolveDeps(rt)))
 	if err == nil && !stale && res.Token() == old {
 		return b, nil, "", nil
 	}
@@ -78,8 +79,8 @@ func repickForRound(rt Runtime, b store.Binding, named, allowYolo bool) (store.B
 }
 
 // repickLine is the printed reason for a re-pick that left from.
-func repickLine(rt Runtime, from, why string, res Resolution) string {
-	pick := PickText("builder", res, rt.Candidates)
+func repickLine(rt Runtime, from, why string, res resolve.Resolution) string {
+	pick := resolve.PickText("builder", res, rt.Candidates)
 	if why == repickStaleToken {
 		return "note: builder " + from + " is no longer configured; " + pick
 	}

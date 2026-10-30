@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -91,8 +92,8 @@ func TestBindResolvedReturnsTheResolution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BindResolved: %v", err)
 	}
-	if res.How != HowOrder {
-		t.Errorf("How = %q, want HowOrder", res.How)
+	if res.How != resolve.HowOrder {
+		t.Errorf("How = %q, want resolve.HowOrder", res.How)
 	}
 	if res.Position != 2 {
 		t.Errorf("Position = %d, want 2", res.Position)
@@ -117,8 +118,8 @@ func TestBindRefusesWhenEveryCandidateIsGated(t *testing.T) {
 	_, err := Bind(context.Background(), rt, BindOptions{
 		Name: "webshop", Candidate: "", MasterMindID: testMasterMindName, CWD: "/repo",
 	})
-	if !errors.Is(err, ErrAllGated) {
-		t.Fatalf("err = %v, want ErrAllGated", err)
+	if !errors.Is(err, resolve.ErrAllGated) {
+		t.Fatalf("err = %v, want resolve.ErrAllGated", err)
 	}
 	if _, err := rt.Store.Load("webshop"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("Load err = %v, want store.ErrNotFound", err)
@@ -200,7 +201,7 @@ func TestAddLogsPick(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	if res.Resolution.How != HowOrder {
+	if res.Resolution.How != resolve.HowOrder {
 		t.Errorf("Resolution.How = %q, want HowOrder", res.Resolution.How)
 	}
 

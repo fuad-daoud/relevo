@@ -6,6 +6,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -18,14 +19,14 @@ var ErrBadBuilder = errors.New("send --candidate")
 
 // ResolveSendBuilder is ResolveSendBuilderFor with the built-in builder's
 // role, so the callers and tests that predate roles stay unchanged.
-func ResolveSendBuilder(rt Runtime, current, token string) (*Resolution, error) {
+func ResolveSendBuilder(rt Runtime, current, token string) (*resolve.Resolution, error) {
 	return ResolveSendBuilderFor(rt, "builder", current, token)
 }
 
 // ResolveSendBuilderFor turns --candidate's token into the resolution to apply
 // for a binding whose writer role is role, or nil for a no-op. An explicit
 // token is resolved exactly as `relevo bind --worktree --candidate` resolves one, so a gated
-// candidate still resolves (its gates are recorded on the Resolution) and only
+// candidate still resolves (its gates are recorded on the resolve.Resolution) and only
 // roles_missing refuses (#238).
 //
 // It returns nil, nil when the token canonicalises to the binding's current
@@ -33,15 +34,15 @@ func ResolveSendBuilder(rt Runtime, current, token string) (*Resolution, error) 
 // error is wrapped with ErrBadBuilder, naming the token.
 //
 // Precondition: token != "". It is a pure read of the ledger and candidates.
-func ResolveSendBuilderFor(rt Runtime, role, current, token string) (*Resolution, error) {
+func ResolveSendBuilderFor(rt Runtime, role, current, token string) (*resolve.Resolution, error) {
 	return resolveSendBuilder(rt, role, current, token, "")
 }
 
 // resolveSendBuilder is ResolveSendBuilderFor judging skills in dir; an empty
 // dir judges none.
-func resolveSendBuilder(rt Runtime, role, current, token, dir string) (*Resolution, error) {
+func resolveSendBuilder(rt Runtime, role, current, token, dir string) (*resolve.Resolution, error) {
 	gates := withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), dir, nil)
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, gates, token, role, pickFor(rt))
+	res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, gates, token, role, resolve.PickFor(ResolveDeps(rt)))
 	if err != nil {
 		return nil, fmt.Errorf("%w %s: %w", ErrBadBuilder, token, err)
 	}
@@ -59,14 +60,14 @@ func resolveSendBuilder(rt Runtime, role, current, token, dir string) (*Resoluti
 // It leaves Builder.Mode, AgentName and Server as they are. A candidate whose
 // re-derived tier is above max_tier without allowYolo is refused with
 // ErrBadBuilder, leaving the binding unchanged. Pure.
-func applyBuilder(b store.Binding, res Resolution, reg *roles.Registry, pol policy.Policy, allowYolo bool) (store.Binding, error) {
-	tier := resolveRoleTier("", res.Candidate, reg, bindingRole(b))
-	if err := checkTierCap(tier, pol, allowYolo); err != nil {
+func applyBuilder(b store.Binding, res resolve.Resolution, reg *roles.Registry, pol policy.Policy, allowYolo bool) (store.Binding, error) {
+	tier := resolve.ResolveTier("", res.Candidate, reg, bindingRole(b))
+	if err := resolve.CheckTierCap(tier, pol, allowYolo); err != nil {
 		return b, fmt.Errorf("%w %s: %w", ErrBadBuilder, res.Token(), err)
 	}
 	b.BuilderCandidate = res.Token()
 	b.BuilderAccount = res.Account
-	b.BuilderPinned = res.How == HowExplicit
+	b.BuilderPinned = res.How == resolve.HowExplicit
 	b.Builder.Kind = res.Candidate.Harness
 	b.Tier = string(tier)
 	b.RoundExcluded = nil

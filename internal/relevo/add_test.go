@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -210,8 +211,8 @@ func TestAddRefusesAnAmbiguousCandidateBeforeCuttingAWorktree(t *testing.T) {
 	_, err := Add(context.Background(), rt, AddOptions{
 		Name: "frontend", Candidate: "", MasterMindID: testMasterMindName, Repo: addRepo(t),
 	})
-	if !errors.Is(err, ErrAmbiguousCandidate) {
-		t.Fatalf("want ErrAmbiguousCandidate, got %v", err)
+	if !errors.Is(err, resolve.ErrAmbiguousCandidate) {
+		t.Fatalf("want resolve.ErrAmbiguousCandidate, got %v", err)
 	}
 	if len(fg.addWorktreeCalls) != 0 {
 		t.Errorf("expected 0 addWorktreeCalls, got %d", len(fg.addWorktreeCalls))

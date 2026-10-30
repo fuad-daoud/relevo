@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -238,7 +239,7 @@ func chainServerResume(ctx context.Context, rt Runtime, c db.ChainRow, opts Resu
 		if remoteCode(err, 409, remote.CodeRoundOpen) {
 			return ChainResult{}, roundOpenFromWire(err)
 		}
-		if typed := chainServerCreateError(err); errors.Is(typed, ErrUnknownRole) {
+		if typed := chainServerCreateError(err); errors.Is(typed, resolve.ErrUnknownRole) {
 			return ChainResult{}, fmt.Errorf("server %s: %w", c.Server, typed)
 		}
 		return ChainResult{}, err

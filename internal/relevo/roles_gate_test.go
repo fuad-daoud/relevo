@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -83,9 +84,9 @@ func TestRolesGateCustomBuilderGatesOnlyItsKindAndRole(t *testing.T) {
 
 	// The builder walk skips claude (and names claude's custom definition),
 	// and picks opencode.
-	res, err := resolveRole(rt.Registry, set, gates, "", "builder")
+	res, err := resolve.ResolveRole(rt.Registry, set, gates, "", "builder")
 	if err != nil {
-		t.Fatalf("resolveRole(builder): %v", err)
+		t.Fatalf("resolve.ResolveRole(builder): %v", err)
 	}
 	if res.Token() != testOpencodeRef {
 		t.Errorf("builder pick = %q, want %q", res.Token(), testOpencodeRef)
@@ -95,9 +96,9 @@ func TestRolesGateCustomBuilderGatesOnlyItsKindAndRole(t *testing.T) {
 	}
 
 	// The builder-only gate does not apply to the reviewer pick of claude.
-	res, err = resolveRole(rt.Registry, set, gates, "", "reviewer")
+	res, err = resolve.ResolveRole(rt.Registry, set, gates, "", "reviewer")
 	if err != nil {
-		t.Fatalf("resolveRole(reviewer): %v", err)
+		t.Fatalf("resolve.ResolveRole(reviewer): %v", err)
 	}
 	if res.Token() != testClaudeRef {
 		t.Errorf("reviewer pick = %q, want %q", res.Token(), testClaudeRef)
@@ -125,7 +126,7 @@ func TestRolesGateExplicitPickRefusedOnlyForItsRole(t *testing.T) {
 	}}
 	gates := availability.Gates(AvailabilityDeps(rt))
 
-	_, err := resolveRole(rt.Registry, set, gates, testClaudeRef, "builder")
+	_, err := resolve.ResolveRole(rt.Registry, set, gates, testClaudeRef, "builder")
 	if err == nil {
 		t.Fatal("explicit claude builder pick succeeded, want a refusal")
 	}
@@ -133,7 +134,7 @@ func TestRolesGateExplicitPickRefusedOnlyForItsRole(t *testing.T) {
 		t.Errorf("err = %q, want it to say agent definitions missing", err.Error())
 	}
 
-	res, err := resolveRole(rt.Registry, set, gates, testClaudeRef, "reviewer")
+	res, err := resolve.ResolveRole(rt.Registry, set, gates, testClaudeRef, "reviewer")
 	if err != nil {
 		t.Fatalf("explicit claude reviewer pick: %v", err)
 	}
@@ -198,7 +199,7 @@ func TestRolesGateLegacyChecksEachRole(t *testing.T) {
 	}
 
 	// The builder pick of claude is not blocked by the reviewer's gate.
-	res, err := resolveCandidate(rt.Candidates, rt.Policy, gates, testClaudeRef, "builder")
+	res, err := resolve.Resolve(rt.Candidates, rt.Policy, gates, testClaudeRef, "builder")
 	if err != nil {
 		t.Fatalf("explicit claude builder pick: %v", err)
 	}

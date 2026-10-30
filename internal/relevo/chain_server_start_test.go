@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -198,7 +199,7 @@ func TestChainStartServerRefusesAServerWithoutTheFeature(t *testing.T) {
 }
 
 // TestChainStartServerRetypesAnUnknownActor pins the create refusal's class: a
-// server's 400 unknown_actor is rebuilt as ErrUnknownRole, so a bad actor is
+// server's 400 unknown_actor is rebuilt as resolve.ErrUnknownRole, so a bad actor is
 // the same policy refusal a local start gives -- never an internal failure.
 func TestChainStartServerRetypesAnUnknownActor(t *testing.T) {
 	t.Parallel()
@@ -217,8 +218,8 @@ func TestChainStartServerRetypesAnUnknownActor(t *testing.T) {
 	if err == nil {
 		t.Fatal("ChainStart --server = nil, want the unknown-actor refusal")
 	}
-	if !errors.Is(err, ErrUnknownRole) {
-		t.Errorf("err = %v, want errors.Is(err, ErrUnknownRole)", err)
+	if !errors.Is(err, resolve.ErrUnknownRole) {
+		t.Errorf("err = %v, want errors.Is(err, resolve.ErrUnknownRole)", err)
 	}
 	if !strings.Contains(err.Error(), `unknown actor "ghost"`) {
 		t.Errorf("err = %q, want the server's own message kept", err)

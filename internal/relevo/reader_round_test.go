@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -270,7 +271,7 @@ func TestReaderTierAtLeastEdit(t *testing.T) {
 		Name: "reader-oc2", Role: "reviewer", Candidate: testOpencodeRef,
 		MasterMindID: testMasterMindName, CWD: "/reader-oc2",
 	})
-	if !errors.Is(err, ErrTierAboveMax) {
-		t.Errorf("opencode reader without --allow-yolo err = %v, want ErrTierAboveMax", err)
+	if !errors.Is(err, resolve.ErrTierAboveMax) {
+		t.Errorf("opencode reader without --allow-yolo err = %v, want resolve.ErrTierAboveMax", err)
 	}
 }

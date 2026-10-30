@@ -1,4 +1,4 @@
-package relevo
+package resolve
 
 import (
 	"errors"
@@ -16,12 +16,12 @@ var (
 	ErrTierAboveMax = errors.New("tier exceeds max_tier")
 )
 
-// resolveRoleTier is the chain: explicit, the registry's tier for the role,
+// ResolveTier is the chain: explicit, the registry's tier for the role,
 // harness. explicit and candidate values are already validated by their
 // parsers; an unparseable stored value is treated as harness. In legacy mode
 // reg.TierFor is candidate.Tier then policy.TierFor(role), so the chain is
-// unchanged; in file mode it is the role's row tier (#374 §4.4).
-func resolveRoleTier(explicit string, c candidate.Candidate, reg *roles.Registry, role string) harness.Tier {
+// unchanged; in file mode it is the role's row tier.
+func ResolveTier(explicit string, c candidate.Candidate, reg *roles.Registry, role string) harness.Tier {
 	if explicit != "" {
 		if t, err := harness.ParseTier(explicit); err == nil {
 			return t
@@ -33,17 +33,16 @@ func resolveRoleTier(explicit string, c candidate.Candidate, reg *roles.Registry
 	return harness.TierHarness
 }
 
-// resolveTier is resolveRoleTier over the legacy registry derived from pol,
-// which is what every pre-roles.json caller meant. It stays for tests
-// (#374 §4.4).
+// resolveTier is ResolveTier over the legacy registry derived from pol,
+// which is what every caller without a registry means.
 func resolveTier(explicit string, c candidate.Candidate, pol policy.Policy, role string) harness.Tier {
-	return resolveRoleTier(explicit, c, legacyRegistry(nil, pol), role)
+	return ResolveTier(explicit, c, legacyRegistry(nil, pol), role)
 }
 
-// checkTierCap refuses tier when tier.Above(pol.MaxTierOrDefault()) and
+// CheckTierCap refuses tier when tier.Above(pol.MaxTierOrDefault()) and
 // !allowYolo: `tier %s exceeds max_tier %s; pass --allow-yolo or raise
 // max_tier in ~/.config/relevo/policy.json`. harness never refuses.
-func checkTierCap(tier harness.Tier, pol policy.Policy, allowYolo bool) error {
+func CheckTierCap(tier harness.Tier, pol policy.Policy, allowYolo bool) error {
 	maxTier := pol.MaxTierOrDefault()
 	if tier.Above(maxTier) && !allowYolo {
 		return fmt.Errorf("%w: tier %s exceeds max_tier %s; pass --allow-yolo or raise max_tier in config policy", ErrTierAboveMax, tier, maxTier)
@@ -51,25 +50,25 @@ func checkTierCap(tier harness.Tier, pol policy.Policy, allowYolo bool) error {
 	return nil
 }
 
-// launchTier derives the tier a launch will use and refuses it when the stored
+// LaunchTier derives the tier a launch will use and refuses it when the stored
 // tier is above max_tier without the explicit allowance. It is the one place
 // that states the rule: a launch re-checks the stored tier every time, so an
 // over-cap record never starts without a caller that carries the allowance.
-func launchTier(b store.Binding, pol policy.Policy, allowYolo bool) (harness.Tier, error) {
-	tier := effectiveTier(b)
-	if err := checkTierCap(tier, pol, allowYolo); err != nil {
+func LaunchTier(b store.Binding, pol policy.Policy, allowYolo bool) (harness.Tier, error) {
+	tier := EffectiveTier(b)
+	if err := CheckTierCap(tier, pol, allowYolo); err != nil {
 		return tier, err
 	}
 	return tier, nil
 }
 
-// readerTier floors a reader's permission tier at edit (A5 §4): a reader must
+// ReaderTier floors a reader's permission tier at edit: a reader must
 // be able to write its artifact directory, and shape does not change the tools
-// an agent gets (cockpit spec §3.2). A resolved harness or read tier becomes
+// an agent gets. A resolved harness or read tier becomes
 // edit. When the harness refuses edit, the lowest tier it does allow that can
 // write is used instead (opencode allows only yolo). A policy max_tier below
 // edit refuses the bind.
-func readerTier(tier harness.Tier, kind string, pol policy.Policy) (harness.Tier, error) {
+func ReaderTier(tier harness.Tier, kind string, pol policy.Policy) (harness.Tier, error) {
 	if tier == harness.TierHarness || tier == harness.TierRead {
 		tier = harness.TierEdit
 	}
@@ -89,23 +88,23 @@ func readerTier(tier harness.Tier, kind string, pol policy.Policy) (harness.Tier
 	return tier, nil
 }
 
-// tierUnsupportedMessage reports whether a wire refusal's message carries a
+// TierUnsupportedMessage reports whether a wire refusal's message carries a
 // harness-tier refusal: the server answers one 422 invalid with the
 // ErrTierUnsupported text a local bind produces, on the same code other
 // create and send refusals share, so the message is what tells them apart.
-func tierUnsupportedMessage(msg string) bool {
+func TierUnsupportedMessage(msg string) bool {
 	return strings.Contains(msg, harness.ErrTierUnsupported.Error())
 }
 
-// tierUnsupportedFromWire rebuilds the harness refusal from a server's answer.
+// TierUnsupportedFromWire rebuilds the harness refusal from a server's answer.
 // The server's message already opens with the sentinel's text, so it is cut
 // once here rather than printed twice.
-func tierUnsupportedFromWire(msg string) error {
+func TierUnsupportedFromWire(msg string) error {
 	return fmt.Errorf("%w: %s", harness.ErrTierUnsupported, strings.TrimPrefix(msg, harness.ErrTierUnsupported.Error()+": "))
 }
 
-// effectiveTier is RoundTier if set, else Tier, else harness.
-func effectiveTier(b store.Binding) harness.Tier {
+// EffectiveTier is RoundTier if set, else Tier, else harness.
+func EffectiveTier(b store.Binding) harness.Tier {
 	if b.RoundTier != "" {
 		if t, err := harness.ParseTier(b.RoundTier); err == nil {
 			return t

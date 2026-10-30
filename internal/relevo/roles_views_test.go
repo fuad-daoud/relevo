@@ -16,6 +16,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -291,7 +292,7 @@ func TestRolesViewsMergedGateTexts(t *testing.T) {
 
 // TestRolesViewsResolveRoleFileModeNothingServes pins §3.4: in file mode a role
 // whose row lists nothing gives the roles.json wording, and the error still
-// matches ErrRoleNotServed.
+// matches resolve.ErrRoleNotServed.
 func TestRolesViewsResolveRoleFileModeNothingServes(t *testing.T) {
 	t.Parallel()
 
@@ -300,15 +301,15 @@ func TestRolesViewsResolveRoleFileModeNothingServes(t *testing.T) {
 		"builder": {Candidates: []string{}},
 	})
 
-	_, err := resolveRole(reg, set, nil, "", "builder")
+	_, err := resolve.ResolveRole(reg, set, nil, "", "builder")
 	if err == nil {
 		t.Fatal("resolveRole with an empty config actors builder.candidates = nil, want an error")
 	}
 	if !strings.Contains(err.Error(), "config actors builder.candidates") {
 		t.Errorf("err = %q, want it to name config actors builder.candidates", err)
 	}
-	if !errors.Is(err, ErrRoleNotServed) {
-		t.Errorf("err = %q, want errors.Is(err, ErrRoleNotServed)", err)
+	if !errors.Is(err, resolve.ErrRoleNotServed) {
+		t.Errorf("err = %q, want errors.Is(err, resolve.ErrRoleNotServed)", err)
 	}
 }
 

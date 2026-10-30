@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 )
 
 // The per-repository settings: the identity the section keys on, the gate rule
@@ -76,10 +77,10 @@ func TestResolveGatePrefersRepoOverPolicy(t *testing.T) {
 		hasPolicy  bool
 		cmd, built string
 	}{
-		{"the flag wins over the repo", "--gate", false, RepoSettings{Gate: "make check"}, true, "--gate", GateSourceFlag},
+		{"the flag wins over the repo", "--gate", false, RepoSettings{Gate: "make check"}, true, "--gate", resolve.GateSourceFlag},
 		{"no-gate beats the repo", "x", true, RepoSettings{Gate: "make check"}, true, "", ""},
-		{"the repo beats the policy", "", false, RepoSettings{Gate: "make check"}, true, "make check", GateSourceRepo},
-		{"the policy tier when the repo sets nothing", "", false, RepoSettings{}, true, "go vet ./...", GateSourcePolicy},
+		{"the repo beats the policy", "", false, RepoSettings{Gate: "make check"}, true, "make check", resolve.GateSourceRepo},
+		{"the policy tier when the repo sets nothing", "", false, RepoSettings{}, true, "go vet ./...", resolve.GateSourcePolicy},
 		{"none when the repo and the policy are both empty", "", false, RepoSettings{}, false, "", ""},
 	}
 	for _, tc := range cases {
@@ -296,7 +297,7 @@ func TestAddStoresTheRepoGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	if got := res.Resolution.Gate; got.Command != "make check" || got.Source != GateSourceRepo {
+	if got := res.Resolution.Gate; got.Command != "make check" || got.Source != resolve.GateSourceRepo {
 		t.Errorf("resolution gate = %+v, want make check from the repo setting", got)
 	}
 	if res.Binding.Gate != "make check" {
@@ -334,7 +335,7 @@ func TestRemoteAddSendsTheRepoGate(t *testing.T) {
 	if fr.createBindingReq.Gate != "make check" {
 		t.Errorf("create Gate = %q, want the repository's own make check", fr.createBindingReq.Gate)
 	}
-	if got := res.Resolution.Gate; got.Command != "make check" || got.Source != GateSourceRepo {
+	if got := res.Resolution.Gate; got.Command != "make check" || got.Source != resolve.GateSourceRepo {
 		t.Errorf("mirror resolution gate = %+v, want make check from the repo setting", got)
 	}
 }
@@ -365,7 +366,7 @@ func TestChainStartTakesTheRepoGate(t *testing.T) {
 	if fr.createBindingReq.Gate != "make check" {
 		t.Errorf("create Gate = %q, want the repository's own make check", fr.createBindingReq.Gate)
 	}
-	if res.Check != "make check" || res.CheckSource != GateSourceRepo {
+	if res.Check != "make check" || res.CheckSource != resolve.GateSourceRepo {
 		t.Errorf("result check = %q (%q), want make check named from the repo setting", res.Check, res.CheckSource)
 	}
 	if got := storedSettings(t, res.Chain).Gate; got != "make check" {
@@ -410,11 +411,11 @@ func TestGateLineNamesTheSource(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct{ cmd, source, want string }{
-		{"make check", GateSourceFlag, "gate: make check (--gate)"},
-		{"make check", GateSourceRepo, "gate: make check (repo setting)"},
-		{"make check", GateSourcePolicy, "gate: make check (policy.gate.default)"},
-		{"make check", GateSourceBinding, "gate: make check (binding)"},
-		{"", GateSourcePolicy, "gate: none"},
+		{"make check", resolve.GateSourceFlag, "gate: make check (--gate)"},
+		{"make check", resolve.GateSourceRepo, "gate: make check (repo setting)"},
+		{"make check", resolve.GateSourcePolicy, "gate: make check (policy.gate.default)"},
+		{"make check", resolve.GateSourceBinding, "gate: make check (binding)"},
+		{"", resolve.GateSourcePolicy, "gate: none"},
 		{"make check", "", "gate: make check"},
 	}
 	for _, tc := range cases {
@@ -422,7 +423,7 @@ func TestGateLineNamesTheSource(t *testing.T) {
 			t.Errorf("GateLine(%q, %q) = %q, want %q", tc.cmd, tc.source, got, tc.want)
 		}
 	}
-	if got := CheckLine("make check", GateSourceRepo); got != "check: make check (repo setting)" {
+	if got := CheckLine("make check", resolve.GateSourceRepo); got != "check: make check (repo setting)" {
 		t.Errorf("CheckLine = %q, want check: make check (repo setting)", got)
 	}
 }

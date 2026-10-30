@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -296,8 +297,8 @@ func TestBindRefusesACandidateThatDoesNotServeBuilder(t *testing.T) {
 		Name: "webshop", Candidate: testClaudeRef, MasterMindID: testMasterMindName, CWD: "/repo",
 	})
 
-	if !errors.Is(err, ErrRoleNotServed) {
-		t.Fatalf("want ErrRoleNotServed, got %v", err)
+	if !errors.Is(err, resolve.ErrRoleNotServed) {
+		t.Fatalf("want resolve.ErrRoleNotServed, got %v", err)
 	}
 	if got := len(runnerOf(t, rt).specs); got != 0 {
 		t.Errorf("a refused bind must spawn nothing, got %d processes", got)
@@ -357,8 +358,8 @@ func TestBindRefusesAnAmbiguousCandidate(t *testing.T) {
 	_, err := Bind(context.Background(), rt, BindOptions{
 		Name: "webshop", Candidate: "", MasterMindID: testMasterMindName, CWD: "/repo",
 	})
-	if !errors.Is(err, ErrAmbiguousCandidate) {
-		t.Fatalf("want ErrAmbiguousCandidate, got %v", err)
+	if !errors.Is(err, resolve.ErrAmbiguousCandidate) {
+		t.Fatalf("want resolve.ErrAmbiguousCandidate, got %v", err)
 	}
 	if got := len(runnerOf(t, rt).specs); got != 0 {
 		t.Errorf("a refused bind must spawn nothing, got %d processes", got)
@@ -374,8 +375,8 @@ func TestBindWithNoCandidatesSaysSo(t *testing.T) {
 	_, err := Bind(context.Background(), rt, BindOptions{
 		Name: "webshop", Candidate: "", MasterMindID: testMasterMindName, CWD: "/repo",
 	})
-	if !errors.Is(err, ErrNoCandidates) {
-		t.Fatalf("want ErrNoCandidates, got %v", err)
+	if !errors.Is(err, resolve.ErrNoCandidates) {
+		t.Fatalf("want resolve.ErrNoCandidates, got %v", err)
 	}
 }
 
@@ -1580,7 +1581,7 @@ func TestResumeRebindResolvesThroughTheOrder(t *testing.T) {
 		t.Fatalf("rebind: %v", err)
 	}
 
-	if res.How != HowOrder || res.Position != 1 {
+	if res.How != resolve.HowOrder || res.Position != 1 {
 		t.Errorf("resolution = %+v, want order #1", res)
 	}
 	if got.BuilderCandidate != testAgyRef {
@@ -1596,12 +1597,12 @@ func TestResumeRebindResolvesThroughTheOrder(t *testing.T) {
 	}
 	var picks int
 	for _, e := range entries {
-		if e.Kind == store.KindPick && e.Round == 3 && e.Note == ExplainResolution("builder", res) {
+		if e.Kind == store.KindPick && e.Round == 3 && e.Note == resolve.ExplainResolution("builder", res) {
 			picks++
 		}
 	}
 	if picks != 1 {
-		t.Errorf("want exactly one pick entry for round 3 reading %q, got entries %+v", ExplainResolution("builder", res), entries)
+		t.Errorf("want exactly one pick entry for round 3 reading %q, got entries %+v", resolve.ExplainResolution("builder", res), entries)
 	}
 }
 
@@ -1688,7 +1689,7 @@ func TestBindResumeRebindKeepsAHeadlessBindingHeadless(t *testing.T) {
 	if ep.PaneID != "" || ep.SessionID != "" || ep.PID != 0 || ep.LogPath != "" || ep.StartedAt != 0 {
 		t.Errorf("rebound endpoint must be a fresh headless endpoint with nothing running: %+v", ep)
 	}
-	if got.BuilderCandidate != testAgyRef || res.How != HowOrder {
+	if got.BuilderCandidate != testAgyRef || res.How != resolve.HowOrder {
 		t.Errorf("candidate = %q (%+v), want the order's first, %s", got.BuilderCandidate, res, testAgyRef)
 	}
 	if got.State != store.StateActive || got.Round != 4 {
@@ -1795,8 +1796,8 @@ func TestBindWithTierYoloWithoutAllowYoloRefused(t *testing.T) {
 		CWD:          "/repo",
 		Tier:         "yolo",
 	})
-	if !errors.Is(err, ErrTierAboveMax) {
-		t.Fatalf("err = %v, want ErrTierAboveMax", err)
+	if !errors.Is(err, resolve.ErrTierAboveMax) {
+		t.Fatalf("err = %v, want resolve.ErrTierAboveMax", err)
 	}
 	if got := len(runnerOf(t, rt).specs); got != 0 {
 		t.Errorf("a refused tier must start no process, got %d", got)

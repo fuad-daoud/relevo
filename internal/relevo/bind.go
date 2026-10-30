@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -220,17 +221,17 @@ func parseTicket(raw string, ref *store.RepoRef) (string, error) {
 // BindResolved ties the calling mastermind to a builder over one working tree.
 // The second return is how the builder was chosen, zero when a pane was
 // adopted.
-func BindResolved(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, Resolution, error) {
+func BindResolved(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, resolve.Resolution, error) {
 	rec, haveRec, err := resolveVerbMasterMind(rt, opts.MasterMindID)
 	if err != nil {
-		return store.Binding{}, Resolution{}, err
+		return store.Binding{}, resolve.Resolution{}, err
 	}
 	if opts.CWD == "" {
-		return store.Binding{}, Resolution{}, badInputf("no working directory")
+		return store.Binding{}, resolve.Resolution{}, badInputf("no working directory")
 	}
 
 	if !haveRec {
-		return store.Binding{}, Resolution{}, ErrNoMasterMindSession
+		return store.Binding{}, resolve.Resolution{}, ErrNoMasterMindSession
 	}
 	opts.MasterMindID = rec.ID
 	mastermindEP := recordEndpoint(rec)
@@ -243,13 +244,13 @@ func BindResolved(ctx context.Context, rt Runtime, opts BindOptions) (store.Bind
 	// explicit --local is taken as given, and otherwise the actor's own list
 	// decides. A remote result is created through add's own path, so the wire
 	// and the client's record keep one implementation.
-	placement, perr := createPlacement(ctx, rt,
+	placement, perr := resolve.CreatePlacement(ctx, ResolveDeps(rt),
 		bindingRole(store.Binding{Role: normRole(opts.Role)}), opts.Candidate, "", opts.Local,
-		placementFlags{Tier: opts.Tier, Feature: opts.Feature, Ticket: opts.Ticket})
+		resolve.PlacementFlags{Tier: opts.Tier, Feature: opts.Feature, Ticket: opts.Ticket})
 	if perr != nil {
-		return store.Binding{}, Resolution{}, perr
+		return store.Binding{}, resolve.Resolution{}, perr
 	}
-	if !placement.local() {
+	if !placement.Local() {
 		name := opts.Name
 		if name == "" {
 			name = SanitizeName(baseName(opts.CWD))
@@ -267,7 +268,7 @@ func BindResolved(ctx context.Context, rt Runtime, opts BindOptions) (store.Bind
 			Placement:    placement,
 		})
 		if aerr != nil {
-			return store.Binding{}, Resolution{}, aerr
+			return store.Binding{}, resolve.Resolution{}, aerr
 		}
 		return added.Binding, added.Resolution, nil
 	}
@@ -309,16 +310,16 @@ func Bind(ctx context.Context, rt Runtime, opts BindOptions) (store.Binding, err
 //
 // Errors: store.ErrNotFound; ErrBuilderAlive; ErrRunnerUnavailable; a wrapped
 // git or remote error.
-func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint) (store.Binding, Resolution, error) {
+func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint) (store.Binding, resolve.Resolution, error) {
 	b, err := resumeLoad(rt, opts.Name)
 	if err != nil {
-		return store.Binding{}, Resolution{}, err
+		return store.Binding{}, resolve.Resolution{}, err
 	}
 	if mine, err := handedToMe(rt, opts.Name); err != nil {
-		return store.Binding{}, Resolution{}, err
+		return store.Binding{}, resolve.Resolution{}, err
 	} else if mine && carriesOldPaths(rt, b) {
 		if b, err = resumeHandedOver(ctx, rt, opts, b); err != nil {
-			return store.Binding{}, Resolution{}, err
+			return store.Binding{}, resolve.Resolution{}, err
 		}
 	}
 
@@ -333,18 +334,18 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	// repository hint is the binding's own recorded origin.
 	if opts.Feature != "" {
 		if err := store.ValidFeature(opts.Feature); err != nil {
-			return store.Binding{}, Resolution{}, err
+			return store.Binding{}, resolve.Resolution{}, err
 		}
 	}
 	ticket := ""
 	if opts.Ticket != "" {
 		ticket, err = parseTicket(opts.Ticket, b.RepoRef)
 		if err != nil {
-			return store.Binding{}, Resolution{}, err
+			return store.Binding{}, resolve.Resolution{}, err
 		}
 	}
 
-	var res Resolution
+	var res resolve.Resolution
 	restore := false
 	if b.Worktree != "" {
 		if _, err := os.Stat(b.Worktree); errors.Is(err, os.ErrNotExist) {
@@ -354,10 +355,10 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 
 	if restore {
 		if b.Branch == "" {
-			return store.Binding{}, Resolution{}, fmt.Errorf("binding %q: worktree %s is gone and no branch is recorded; relevo bind --worktree to start fresh", opts.Name, b.Worktree)
+			return store.Binding{}, resolve.Resolution{}, fmt.Errorf("binding %q: worktree %s is gone and no branch is recorded; relevo bind --worktree to start fresh", opts.Name, b.Worktree)
 		}
 		if rt.Git == nil {
-			return store.Binding{}, Resolution{}, errors.New("git unavailable; cannot restore worktree")
+			return store.Binding{}, resolve.Resolution{}, errors.New("git unavailable; cannot restore worktree")
 		}
 		// An add binding's CWD is the worktree itself (add.go), which is the
 		// directory that is gone; the repository it was cut from is not
@@ -365,16 +366,16 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		// once the branch is confirmed to live in it.
 		exists, err := rt.Git.BranchExists(ctx, opts.CWD, b.Branch)
 		if err != nil {
-			return store.Binding{}, Resolution{}, fmt.Errorf("restore worktree: %w", err)
+			return store.Binding{}, resolve.Resolution{}, fmt.Errorf("restore worktree: %w", err)
 		}
 		if !exists {
-			return store.Binding{}, Resolution{}, fmt.Errorf("binding %q: branch %s is not in %s; run resume from the repository the worktree was cut from", opts.Name, b.Branch, opts.CWD)
+			return store.Binding{}, resolve.Resolution{}, fmt.Errorf("binding %q: branch %s is not in %s; run resume from the repository the worktree was cut from", opts.Name, b.Branch, opts.CWD)
 		}
 		if err := rt.Git.CheckoutWorktree(ctx, opts.CWD, b.Worktree, b.Branch); err != nil {
 			if errors.Is(err, git.ErrBranchCheckedOut) {
-				return store.Binding{}, Resolution{}, fmt.Errorf("binding %q: branch %s is checked out in another worktree (git worktree list); free it, then resume", opts.Name, b.Branch)
+				return store.Binding{}, resolve.Resolution{}, fmt.Errorf("binding %q: branch %s is checked out in another worktree (git worktree list); free it, then resume", opts.Name, b.Branch)
 			}
-			return store.Binding{}, Resolution{}, fmt.Errorf("restore worktree: %w", err)
+			return store.Binding{}, resolve.Resolution{}, fmt.Errorf("restore worktree: %w", err)
 		}
 		res.RestoredWorktree = b.Worktree
 		res.RestoredBranch = b.Branch
@@ -393,47 +394,47 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	)
 	if rebinding {
 		if b.State == store.StateDone && !restore {
-			return store.Binding{}, Resolution{}, fmt.Errorf("binding %q is done: `relevo bind` to start fresh", opts.Name)
+			return store.Binding{}, resolve.Resolution{}, fmt.Errorf("binding %q is done: `relevo bind` to start fresh", opts.Name)
 		}
 		// A binding's mode is fixed at creation (#119). A local builder is a
 		// process, so ask the Runner whether its PID is still alive: a PID
 		// has no "moved pane" ambiguity.
 		if rt.Runner == nil {
-			return store.Binding{}, Resolution{}, spawn.ErrRunnerUnavailable
+			return store.Binding{}, resolve.Resolution{}, spawn.ErrRunnerUnavailable
 		}
 		if b.Builder.PID != 0 {
 			alive, err := rt.Runner.Alive(ctx, handleOf(b.Builder))
 			if err != nil {
-				return store.Binding{}, Resolution{}, fmt.Errorf("check builder process: %w", err)
+				return store.Binding{}, resolve.Resolution{}, fmt.Errorf("check builder process: %w", err)
 			}
 			if alive {
-				return store.Binding{}, Resolution{}, ErrBuilderAlive
+				return store.Binding{}, resolve.Resolution{}, ErrBuilderAlive
 			}
 		}
 		opts.Headless = true
 		// A resume re-points the binding at a builder; it keeps its stored
 		// writer role (#382 §2), so BindOptions.Role is ignored here.
 		opts.Role = b.Role
-		resCandidate, err := resolveRole(rt.RoleRegistry(), rt.Candidates, withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), b.CWD, nil), opts.Candidate, bindingRole(b))
+		resCandidate, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), b.CWD, nil), opts.Candidate, bindingRole(b))
 		if err != nil {
-			return store.Binding{}, Resolution{}, err
+			return store.Binding{}, resolve.Resolution{}, err
 		}
 		if opts.Tier != "" {
-			tier := resolveRoleTier(opts.Tier, resCandidate.Candidate, rt.RoleRegistry(), bindingRole(b))
-			if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
-				return store.Binding{}, Resolution{}, err
+			tier := resolve.ResolveTier(opts.Tier, resCandidate.Candidate, rt.RoleRegistry(), bindingRole(b))
+			if err := resolve.CheckTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
+				return store.Binding{}, resolve.Resolution{}, err
 			}
 			opts.Tier = string(tier)
 			b.Tier = string(tier)
 		} else if b.Tier != "" {
 			opts.Tier = b.Tier
 		}
-		var res2 Resolution
+		var res2 resolve.Resolution
 		pick := opts
 		pick.CWD = b.CWD
 		builder, res2, err = resolveBuilder(ctx, rt, nil, pick, opts.Name)
 		if err != nil {
-			return store.Binding{}, Resolution{}, err
+			return store.Binding{}, resolve.Resolution{}, err
 		}
 		res2.RestoredWorktree = res.RestoredWorktree
 		res2.RestoredBranch = res.RestoredBranch
@@ -499,7 +500,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 			}
 			b.BuilderCandidate = res.Token() // "" when adopting a pane
 			b.BuilderAccount = res.Account
-			b.BuilderPinned = res.How == HowExplicit
+			b.BuilderPinned = res.How == resolve.HowExplicit
 			b = clearHaltFields(b)
 			// The owed notification goes with the halt: the replacement builder
 			// is a fresh attempt, and an entry the replaced round still owed
@@ -518,7 +519,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		}
 
 		if rebinding && res.How != "" {
-			if err := tx.AppendLog(opts.Name, pickEntry(rt.Now(), b.Round, "builder", res)); err != nil {
+			if err := tx.AppendLog(opts.Name, resolve.PickEntry(rt.Now(), b.Round, "builder", res)); err != nil {
 				return err
 			}
 		}
@@ -541,7 +542,7 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		return nil
 	})
 	if err != nil {
-		return store.Binding{}, Resolution{}, err
+		return store.Binding{}, resolve.Resolution{}, err
 	}
 
 	return out, res, nil
@@ -559,39 +560,39 @@ func resume(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 // mirror-only change would recreate the laptop/server disagreement #637
 // removes; ErrRemoteUnavailable; a wrapped server error; a wrapped git
 // error; or a message naming the binding when its branch is gone.
-func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint, b store.Binding) (store.Binding, Resolution, error) {
+func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint, b store.Binding) (store.Binding, resolve.Resolution, error) {
 	if opts.Rebind || opts.Candidate != "" || opts.Headless {
-		return store.Binding{}, Resolution{}, badInputf("cannot change a remote builder; unbind and add")
+		return store.Binding{}, resolve.Resolution{}, badInputf("cannot change a remote builder; unbind and add")
 	}
 	// #637: --feature/--no-feature/--ticket have no server endpoint to reach,
 	// so a remote resume refuses them rather than changing only the mirror.
 	if opts.Feature != "" || opts.NoFeature || opts.Ticket != "" {
-		return store.Binding{}, Resolution{}, badInputf("cannot change a remote binding's feature or ticket; unbind and add")
+		return store.Binding{}, resolve.Resolution{}, badInputf("cannot change a remote binding's feature or ticket; unbind and add")
 	}
 	if rt.Remote == nil {
-		return store.Binding{}, Resolution{}, ErrRemoteUnavailable
+		return store.Binding{}, resolve.Resolution{}, ErrRemoteUnavailable
 	}
 
 	if _, rerr := rt.Remote.Resume(ctx, b.Builder.Server, b.Name); rerr != nil {
 		var httpErr *client.HTTPError
 		if errors.As(rerr, &httpErr) {
-			return store.Binding{}, Resolution{}, fmt.Errorf("%s: %s", b.Builder.Server, httpErr.Body.Message)
+			return store.Binding{}, resolve.Resolution{}, fmt.Errorf("%s: %s", b.Builder.Server, httpErr.Body.Message)
 		}
 		if errors.Is(rerr, client.ErrUnreachable) {
-			return store.Binding{}, Resolution{}, fmt.Errorf("%s unreachable: %w", b.Builder.Server, rerr)
+			return store.Binding{}, resolve.Resolution{}, fmt.Errorf("%s unreachable: %w", b.Builder.Server, rerr)
 		}
-		return store.Binding{}, Resolution{}, fmt.Errorf("%s: %w", b.Builder.Server, rerr)
+		return store.Binding{}, resolve.Resolution{}, fmt.Errorf("%s: %w", b.Builder.Server, rerr)
 	}
 
 	if rt.Git == nil {
-		return store.Binding{}, Resolution{}, errors.New("git unavailable; cannot verify the branch")
+		return store.Binding{}, resolve.Resolution{}, errors.New("git unavailable; cannot verify the branch")
 	}
 	exists, berr := rt.Git.BranchExists(ctx, opts.CWD, b.Branch)
 	if berr != nil {
-		return store.Binding{}, Resolution{}, fmt.Errorf("check branch %s: %w", b.Branch, berr)
+		return store.Binding{}, resolve.Resolution{}, fmt.Errorf("check branch %s: %w", b.Branch, berr)
 	}
 	if !exists {
-		return store.Binding{}, Resolution{}, fmt.Errorf("binding %q: branch %s is gone; relevo unbind, then relevo bind --server to start fresh", opts.Name, b.Branch)
+		return store.Binding{}, resolve.Resolution{}, fmt.Errorf("binding %q: branch %s is gone; relevo unbind, then relevo bind --server to start fresh", opts.Name, b.Branch)
 	}
 
 	var out store.Binding
@@ -613,10 +614,10 @@ func resumeRemote(ctx context.Context, rt Runtime, opts BindOptions, mastermindE
 		return nil
 	})
 	if err != nil {
-		return store.Binding{}, Resolution{}, err
+		return store.Binding{}, resolve.Resolution{}, err
 	}
 
-	return out, Resolution{}, nil
+	return out, resolve.Resolution{}, nil
 }
 
 // ResolveRegate applies the repair-round rule (#132 part 2): an explicit
@@ -629,26 +630,26 @@ func ResolveRegate(regate *int, pol policy.Policy) int {
 	return pol.GateRegate()
 }
 
-func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint, placement PlacementResolution) (store.Binding, Resolution, error) {
+func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP store.Endpoint, placement resolve.PlacementResolution) (store.Binding, resolve.Resolution, error) {
 	// The repository's own settings are read before anything is resolved: the
 	// gate tier reads them, and a directory that is not a repository reads as
 	// "no settings" rather than a failure.
 	repoSet, err := RepoSettingsFor(ctx, rt, opts.CWD)
 	if err != nil {
-		return store.Binding{}, Resolution{}, err
+		return store.Binding{}, resolve.Resolution{}, err
 	}
 	shape, err := actorShape(rt.RoleRegistry(), opts.Role)
 	if err != nil {
-		return store.Binding{}, Resolution{}, err
+		return store.Binding{}, resolve.Resolution{}, err
 	}
 	// A reader round has no check, so the writer-only knobs are refused at
 	// bind, naming the flag (A5 §2).
 	if shape == store.ShapeReader {
 		if opts.Gate != "" {
-			return store.Binding{}, Resolution{}, badInputf("--gate: a reader round has no check")
+			return store.Binding{}, resolve.Resolution{}, badInputf("--gate: a reader round has no check")
 		}
 		if opts.Regate != nil {
-			return store.Binding{}, Resolution{}, badInputf("--regate: a reader round has no check")
+			return store.Binding{}, resolve.Resolution{}, badInputf("--regate: a reader round has no check")
 		}
 	}
 	name := opts.Name
@@ -656,11 +657,11 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		name = SanitizeName(baseName(opts.CWD))
 	}
 	if err := store.ValidName(name); err != nil {
-		return store.Binding{}, Resolution{}, err
+		return store.Binding{}, resolve.Resolution{}, err
 	}
 	if opts.Feature != "" {
 		if err := store.ValidFeature(opts.Feature); err != nil {
-			return store.Binding{}, Resolution{}, err
+			return store.Binding{}, resolve.Resolution{}, err
 		}
 	}
 
@@ -670,11 +671,11 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	// session's round 1 and Reconcile would read that old report entry as
 	// "already handled" -- silently, with no error and no notification.
 	if _, err := rt.Store.Load(name); err == nil {
-		return store.Binding{}, Resolution{}, badInputf(
+		return store.Binding{}, resolve.Resolution{}, badInputf(
 			"binding %q already exists: `relevo unbind %s` to start fresh, or `relevo bind --resume --name %s` to adopt it",
 			name, name, name)
 	} else if !errors.Is(err, store.ErrNotFound) {
-		return store.Binding{}, Resolution{}, err
+		return store.Binding{}, resolve.Resolution{}, err
 	}
 
 	// Check the working tree before spawning anything. Save re-checks under the
@@ -686,35 +687,35 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	if shape == store.ShapeWriter {
 		other, found, err := rt.Store.FindByCWD(opts.CWD)
 		if err != nil && !errors.Is(err, store.ErrAmbiguousCWD) {
-			return store.Binding{}, Resolution{}, err
+			return store.Binding{}, resolve.Resolution{}, err
 		}
 		if found && other.Name != name && other.State != store.StateDone && other.Shape == store.ShapeWriter && !rt.Store.SameChain(name, other.Name) {
-			return store.Binding{}, Resolution{}, fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
+			return store.Binding{}, resolve.Resolution{}, fmt.Errorf("%s is driven by binding %q (builder %s, round %d): %w",
 				opts.CWD, other.Name, other.BuilderCandidate, other.Round, store.ErrCWDTaken)
 		}
 	}
 
 	var tier harness.Tier
 	roleName := bindingRole(store.Binding{Role: normRole(opts.Role)})
-	resCandidate, err := resolveRole(rt.RoleRegistry(), rt.Candidates, withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), opts.CWD, nil), opts.Candidate, roleName)
+	resCandidate, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), opts.CWD, nil), opts.Candidate, roleName)
 	if err != nil {
-		return store.Binding{}, Resolution{}, err
+		return store.Binding{}, resolve.Resolution{}, err
 	}
-	tier = resolveRoleTier(opts.Tier, resCandidate.Candidate, rt.RoleRegistry(), roleName)
+	tier = resolve.ResolveTier(opts.Tier, resCandidate.Candidate, rt.RoleRegistry(), roleName)
 	if shape == store.ShapeReader {
-		tier, err = readerTier(tier, resCandidate.Candidate.Harness, rt.Policy)
+		tier, err = resolve.ReaderTier(tier, resCandidate.Candidate.Harness, rt.Policy)
 		if err != nil {
-			return store.Binding{}, Resolution{}, err
+			return store.Binding{}, resolve.Resolution{}, err
 		}
 	}
-	if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
-		return store.Binding{}, Resolution{}, err
+	if err := resolve.CheckTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
+		return store.Binding{}, resolve.Resolution{}, err
 	}
 	opts.Tier = string(tier)
 
 	builder, res, err := resolveBuilder(ctx, rt, nil, opts, name)
 	if err != nil {
-		return store.Binding{}, Resolution{}, err
+		return store.Binding{}, resolve.Resolution{}, err
 	}
 	// The placement rides on the resolution so the pick note says where the
 	// binding landed and what it passed over.
@@ -729,7 +730,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	repoRef := captureRepo(ctx, rt, opts.CWD)
 	ticket, err := parseTicket(opts.Ticket, repoRef)
 	if err != nil {
-		return store.Binding{}, Resolution{}, err
+		return store.Binding{}, resolve.Resolution{}, err
 	}
 
 	b := store.Binding{
@@ -740,7 +741,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		Builder:          builder,
 		BuilderCandidate: res.Token(),
 		BuilderAccount:   res.Account,
-		BuilderPinned:    res.How == HowExplicit,
+		BuilderPinned:    res.How == resolve.HowExplicit,
 		Round:            1,
 		State:            store.StateActive,
 		Tier:             string(tier),
@@ -763,10 +764,10 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 		if res.How == "" {
 			return nil
 		}
-		return tx.AppendLog(name, pickEntry(rt.Now(), 1, "builder", res))
+		return tx.AppendLog(name, resolve.PickEntry(rt.Now(), 1, "builder", res))
 	})
 	if err != nil {
-		return store.Binding{}, Resolution{}, fmt.Errorf("bind failed: %w", err)
+		return store.Binding{}, resolve.Resolution{}, fmt.Errorf("bind failed: %w", err)
 	}
 
 	// Save fills in the defaults it owns -- round cap, round budget -- on its
@@ -774,7 +775,7 @@ func create(ctx context.Context, rt Runtime, opts BindOptions, mastermindEP stor
 	// the pre-Save value and letting the two drift.
 	stored, err := rt.Store.Load(b.Name)
 	if err != nil {
-		return store.Binding{}, Resolution{}, err
+		return store.Binding{}, resolve.Resolution{}, err
 	}
 
 	return stored, res, nil
@@ -805,29 +806,29 @@ func builderAgentName(name string) (string, error) {
 // perform.
 //
 // The second return is the resolution, for the pick line.
-func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOptions, name string) (store.Endpoint, Resolution, error) {
+func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOptions, name string) (store.Endpoint, resolve.Resolution, error) {
 	roleName := bindingRole(store.Binding{Role: opts.Role})
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), opts.CWD, nil), opts.Candidate, roleName, pickFor(rt))
+	res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, withSkillGates(rt, availability.Gates(AvailabilityDeps(rt)), opts.CWD, nil), opts.Candidate, roleName, resolve.PickFor(ResolveDeps(rt)))
 	if err != nil {
-		return store.Endpoint{}, Resolution{}, err
+		return store.Endpoint{}, resolve.Resolution{}, err
 	}
 	c := res.Candidate
 	agentName, err := builderAgentName(name)
 	if err != nil {
-		return store.Endpoint{}, Resolution{}, err
+		return store.Endpoint{}, resolve.Resolution{}, err
 	}
 
 	var role harness.RoleSpec
 	role, err = rt.RoleRegistry().Spec(roleName, c.Harness)
 	if err != nil {
-		return store.Endpoint{}, Resolution{}, fmt.Errorf("binding %q builder: %w", name, err)
+		return store.Endpoint{}, resolve.Resolution{}, fmt.Errorf("binding %q builder: %w", name, err)
 	}
 	tier := harness.Tier(opts.Tier)
 	if tier == "" {
 		tier = harness.TierHarness
 	}
 	if _, err := candidate.HeadlessLaunch(c, role, tier, 0, "", opts.CWD, rt.Store.OutDir(name), "", ""); err != nil {
-		return store.Endpoint{}, Resolution{}, err
+		return store.Endpoint{}, resolve.Resolution{}, err
 	}
 
 	return store.Endpoint{AgentName: agentName, Kind: c.Harness, Mode: store.ModeHeadless}, res, nil

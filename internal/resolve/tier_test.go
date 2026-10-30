@@ -1,4 +1,4 @@
-package relevo
+package resolve
 
 import (
 	"errors"
@@ -49,27 +49,27 @@ func TestCheckTierCap(t *testing.T) {
 	yoloPol := policy.Policy{MaxTier: "yolo"}
 
 	// yolo vs default -> ErrTierAboveMax
-	if err := checkTierCap(harness.TierYolo, defaultPol, false); !errors.Is(err, ErrTierAboveMax) {
+	if err := CheckTierCap(harness.TierYolo, defaultPol, false); !errors.Is(err, ErrTierAboveMax) {
 		t.Errorf("yolo vs default without allowYolo: err = %v, want ErrTierAboveMax", err)
 	}
 
 	// yolo vs default with allowYolo -> nil
-	if err := checkTierCap(harness.TierYolo, defaultPol, true); err != nil {
+	if err := CheckTierCap(harness.TierYolo, defaultPol, true); err != nil {
 		t.Errorf("yolo vs default with allowYolo: unexpected err: %v", err)
 	}
 
 	// edit vs default -> nil
-	if err := checkTierCap(harness.TierEdit, defaultPol, false); err != nil {
+	if err := CheckTierCap(harness.TierEdit, defaultPol, false); err != nil {
 		t.Errorf("edit vs default: unexpected err: %v", err)
 	}
 
 	// harness -> nil always
-	if err := checkTierCap(harness.TierHarness, defaultPol, false); err != nil {
+	if err := CheckTierCap(harness.TierHarness, defaultPol, false); err != nil {
 		t.Errorf("harness vs default: unexpected err: %v", err)
 	}
 
 	// yolo vs max_tier: yolo -> nil
-	if err := checkTierCap(harness.TierYolo, yoloPol, false); err != nil {
+	if err := CheckTierCap(harness.TierYolo, yoloPol, false); err != nil {
 		t.Errorf("yolo vs max_tier yolo: unexpected err: %v", err)
 	}
 }
@@ -82,17 +82,17 @@ func TestEffectiveTier(t *testing.T) {
 		Tier:      "read",
 		RoundTier: "yolo",
 	}
-	if got := effectiveTier(b); got != harness.TierYolo {
+	if got := EffectiveTier(b); got != harness.TierYolo {
 		t.Errorf("RoundTier yolo over Tier read: got %v, want yolo", got)
 	}
 
 	b.RoundTier = ""
-	if got := effectiveTier(b); got != harness.TierRead {
+	if got := EffectiveTier(b); got != harness.TierRead {
 		t.Errorf("Tier read over harness: got %v, want read", got)
 	}
 
 	b.Tier = ""
-	if got := effectiveTier(b); got != harness.TierHarness {
+	if got := EffectiveTier(b); got != harness.TierHarness {
 		t.Errorf("all empty: got %v, want harness", got)
 	}
 }
@@ -102,11 +102,11 @@ func TestReaderTierAgyFallsToYolo(t *testing.T) {
 
 	pol := policy.Policy{}
 	for _, in := range []harness.Tier{harness.TierHarness, harness.TierEdit} {
-		if got, err := readerTier(in, "agy", pol); err != nil || got != harness.TierYolo {
-			t.Errorf("readerTier(%s, agy) = %v, %v; want yolo", in, got, err)
+		if got, err := ReaderTier(in, "agy", pol); err != nil || got != harness.TierYolo {
+			t.Errorf("ReaderTier(%s, agy) = %v, %v; want yolo", in, got, err)
 		}
-		if got, err := readerTier(in, "claude", pol); err != nil || got != harness.TierEdit {
-			t.Errorf("readerTier(%s, claude) = %v, %v; want edit", in, got, err)
+		if got, err := ReaderTier(in, "claude", pol); err != nil || got != harness.TierEdit {
+			t.Errorf("ReaderTier(%s, claude) = %v, %v; want edit", in, got, err)
 		}
 	}
 }

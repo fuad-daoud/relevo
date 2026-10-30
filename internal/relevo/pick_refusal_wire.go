@@ -7,6 +7,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 )
 
 // pickRefusalFromWire rebuilds the typed refusal a server's pick answered a
@@ -21,7 +22,7 @@ func pickRefusalFromWire(err error) error {
 		return err
 	}
 	msg := httpErr.Body.Message
-	for _, sentinel := range []error{ErrAllGated, ErrRoleNotServed} {
+	for _, sentinel := range []error{resolve.ErrAllGated, resolve.ErrRoleNotServed} {
 		if strings.Contains(msg, sentinel.Error()) {
 			return classed(sentinel, msg)
 		}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -42,11 +43,11 @@ func NormRole(role string) string {
 
 // actorShape returns store.ShapeWriter or store.ShapeReader for role (after
 // normRole; "" means builder) in reg. A name no role has is an error wrapping
-// ErrUnknownRole.
+// resolve.ErrUnknownRole.
 func actorShape(reg *roles.Registry, role string) (string, error) {
 	r, ok := reg.Role(bindingRole(store.Binding{Role: normRole(role)}))
 	if !ok {
-		return "", fmt.Errorf("unknown actor %q (known: %v): %w", role, reg.Names(), ErrUnknownRole)
+		return "", fmt.Errorf("unknown actor %q (known: %v): %w", role, reg.Names(), resolve.ErrUnknownRole)
 	}
 	if r.Shape == harness.ShapeBuilder {
 		return store.ShapeWriter, nil
@@ -74,11 +75,11 @@ func roleChecks(reg *roles.Registry, role string) bool {
 
 // bindingSpec is the launch spec for a stored binding's round: the binding's
 // role's definition for kind. A role that roles.json no longer defines is an
-// error wrapping ErrUnknownRole -- never a fallback to builder (#382 §5.4).
+// error wrapping resolve.ErrUnknownRole -- never a fallback to builder (#382 §5.4).
 func bindingSpec(rt Runtime, b store.Binding, kind string) (harness.RoleSpec, error) {
 	role := bindingRole(b)
 	if _, ok := rt.RoleRegistry().Role(role); !ok {
-		return harness.RoleSpec{}, fmt.Errorf("binding %s runs actor %q, which config actors no longer defines: %w", b.Name, role, ErrUnknownRole)
+		return harness.RoleSpec{}, fmt.Errorf("binding %s runs actor %q, which config actors no longer defines: %w", b.Name, role, resolve.ErrUnknownRole)
 	}
 	return rt.RoleRegistry().Spec(role, kind)
 }

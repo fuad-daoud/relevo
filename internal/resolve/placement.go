@@ -1,4 +1,4 @@
-package relevo
+package resolve
 
 import (
 	"context"
@@ -15,15 +15,15 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 )
 
-// localPlacement is the reserved placement entry that names this machine. It
+// LocalPlacement is the reserved placement entry that names this machine. It
 // is also what an actor that names no placement at all gets.
-const localPlacement = "local"
+const LocalPlacement = "local"
 
 // The How words a PlacementResolution carries: explicit when a flag named the
 // placement, actor when the actor's own list did.
 const (
-	placementHowExplicit = "explicit"
-	placementHowActor    = "actor"
+	PlacementExplicit = "explicit"
+	PlacementActor    = "actor"
 )
 
 // PlacementSkip is one placement the resolver passed over, and why. The reason
@@ -41,17 +41,17 @@ type PlacementResolution struct {
 	Skipped []PlacementSkip
 }
 
-// local reports whether this placement runs here. The zero resolution does:
+// Local reports whether this placement runs here. The zero resolution does:
 // an actor that names nothing keeps today's local path.
-func (p PlacementResolution) local() bool {
-	return p.Name == "" || p.Name == localPlacement
+func (p PlacementResolution) Local() bool {
+	return p.Name == "" || p.Name == LocalPlacement
 }
 
-// placementFlags are the invocation's flags a probe must honour. A server that
+// PlacementFlags are the invocation's flags a probe must honour. A server that
 // cannot carry one of them cannot serve this binding, so the placement is
 // skipped and the next entry is tried -- instead of failing loudly at the
 // create, after the client has committed to a server.
-type placementFlags struct {
+type PlacementFlags struct {
 	Tier    string
 	Feature string
 	Ticket  string
@@ -69,18 +69,18 @@ type placementFlags struct {
 // over, unprobed.
 const chainReaderSkip = "a chain reader reads the builder's artifacts on this machine"
 
-// createPlacement is the placement a fresh create runs under. An explicit
+// CreatePlacement is the placement a fresh create runs under. An explicit
 // --server or --local wins and is taken as given, with no probe and no
 // fallback; otherwise the actor's list decides, and an absent or empty list
 // keeps the local path with no probe at all.
-func createPlacement(ctx context.Context, rt Runtime, role, pinned, server string, local bool, flags placementFlags) (PlacementResolution, error) {
+func CreatePlacement(ctx context.Context, d Deps, role, pinned, server string, local bool, flags PlacementFlags) (PlacementResolution, error) {
 	switch {
 	case server != "":
-		return PlacementResolution{Name: server, How: placementHowExplicit}, nil
+		return PlacementResolution{Name: server, How: PlacementExplicit}, nil
 	case local:
-		return PlacementResolution{Name: localPlacement, How: placementHowExplicit}, nil
+		return PlacementResolution{Name: LocalPlacement, How: PlacementExplicit}, nil
 	}
-	return choosePlacement(ctx, rt, role, pinned, flags)
+	return choosePlacement(ctx, d, role, pinned, flags)
 }
 
 // choosePlacement reads the actor's placement list and returns the first entry
@@ -92,21 +92,21 @@ func createPlacement(ctx context.Context, rt Runtime, role, pinned, server strin
 // a changed certificate, or an answer this client does not understand -- is an
 // error, because silently binding elsewhere after one of those would hide a
 // security event behind a preference order.
-func choosePlacement(ctx context.Context, rt Runtime, role, pinned string, flags placementFlags) (PlacementResolution, error) {
-	info, ok := rt.RoleRegistry().Role(role)
+func choosePlacement(ctx context.Context, d Deps, role, pinned string, flags PlacementFlags) (PlacementResolution, error) {
+	info, ok := d.RoleRegistry().Role(role)
 	if !ok || len(info.Placement) == 0 {
 		return PlacementResolution{}, nil
 	}
-	gates := availability.Gates(AvailabilityDeps(rt))
+	gates := availability.Gates(d.Deps)
 
 	var skipped []PlacementSkip
 	for _, name := range info.Placement {
-		if name == localPlacement {
-			if _, err := resolveRole(rt.RoleRegistry(), rt.Candidates, gates, pinned, role); err != nil {
+		if name == LocalPlacement {
+			if _, err := ResolveRole(d.RoleRegistry(), d.Candidates, gates, pinned, role); err != nil {
 				skipped = append(skipped, PlacementSkip{Name: name, Reason: err.Error()})
 				continue
 			}
-			return PlacementResolution{Name: name, How: placementHowActor, Skipped: skipped}, nil
+			return PlacementResolution{Name: name, How: PlacementActor, Skipped: skipped}, nil
 		}
 		// A chain reader never lands on a server: its seed names paths in the
 		// builder's tree, which exist only where the builder ran. The entry is
@@ -115,7 +115,7 @@ func choosePlacement(ctx context.Context, rt Runtime, role, pinned string, flags
 			skipped = append(skipped, PlacementSkip{Name: name, Reason: chainReaderSkip})
 			continue
 		}
-		reason, err := probePlacement(ctx, rt, name, role, pinned, flags)
+		reason, err := probePlacement(ctx, d, name, role, pinned, flags)
 		if err != nil {
 			return PlacementResolution{}, err
 		}
@@ -123,7 +123,7 @@ func choosePlacement(ctx context.Context, rt Runtime, role, pinned string, flags
 			skipped = append(skipped, PlacementSkip{Name: name, Reason: reason})
 			continue
 		}
-		return PlacementResolution{Name: name, How: placementHowActor, Skipped: skipped}, nil
+		return PlacementResolution{Name: name, How: PlacementActor, Skipped: skipped}, nil
 	}
 	return PlacementResolution{}, placementError(role, skipped)
 }
@@ -132,15 +132,15 @@ func choosePlacement(ctx context.Context, rt Runtime, role, pinned string, flags
 // "" when the placement is viable and a one-line reason when it is not; the
 // error it also returns is reserved for the failures that must not be swallowed
 // by falling through to another placement.
-func probePlacement(ctx context.Context, rt Runtime, server, role, pinned string, flags placementFlags) (string, error) {
-	if rt.Remote == nil {
+func probePlacement(ctx context.Context, d Deps, server, role, pinned string, flags PlacementFlags) (string, error) {
+	if d.Remote == nil {
 		return "no client key", nil
 	}
-	who, err := rt.Remote.WhoAmI(ctx, server)
+	who, err := d.Remote.WhoAmI(ctx, server)
 	if err != nil {
 		return classifyProbeError(err)
 	}
-	if reason := unsupportedFeature(rt.RoleRegistry(), role, who, flags); reason != "" {
+	if reason := unsupportedFeature(d.RoleRegistry(), role, who, flags); reason != "" {
 		return reason, nil
 	}
 	if reason := tierAboveMax(flags.Tier, who); reason != "" {
@@ -153,14 +153,14 @@ func probePlacement(ctx context.Context, rt Runtime, server, role, pinned string
 		// falling through.
 		return "", nil
 	}
-	view, err := rt.Remote.Actor(ctx, server, role, pinned)
+	view, err := d.Remote.Actor(ctx, server, role, pinned)
 	if err != nil {
 		// The actor route answers 404 only for an actor no role defines: it is
 		// the server's ErrUnknownRole, re-typed so a bad actor classifies like
 		// its local twin instead of an internal failure.
 		var httpErr *client.HTTPError
 		if errors.As(err, &httpErr) && httpErr.Status == http.StatusNotFound {
-			return "", classed(ErrUnknownRole, httpErr.Body.Message)
+			return "", &wireError{msg: httpErr.Body.Message, class: ErrUnknownRole}
 		}
 		return classifyProbeError(err)
 	}
@@ -177,7 +177,7 @@ func probePlacement(ctx context.Context, rt Runtime, server, role, pinned string
 // unsupportedFeature names the first feature this invocation needs and the
 // server does not advertise, or "" when it carries them all. Every reason
 // names the upgrade, because the fix is the server's, not the flag's.
-func unsupportedFeature(reg *roles.Registry, role string, who remote.WhoAmI, flags placementFlags) string {
+func unsupportedFeature(reg *roles.Registry, role string, who remote.WhoAmI, flags PlacementFlags) string {
 	if isReaderRole(reg, role) && !slices.Contains(who.Features, remote.FeatureReaders) {
 		return "reader rounds unsupported; upgrade the server"
 	}
@@ -248,6 +248,19 @@ func placementError(role string, skipped []PlacementSkip) error {
 	}
 	return &noViablePlacementError{text: fmt.Sprintf("no viable placement for actor %q: %s", role, strings.Join(texts, "; "))}
 }
+
+// wireError re-types a server refusal's own message under a local sentinel:
+// Error keeps the server's wording alone, and errors.Is finds the sentinel,
+// so a bad actor classifies like its local twin instead of an internal
+// failure.
+type wireError struct {
+	msg   string
+	class error
+}
+
+func (e *wireError) Error() string { return e.msg }
+
+func (e *wireError) Unwrap() error { return e.class }
 
 // ErrNoViablePlacement is what placementError unwraps to, so a caller
 // classifies the refusal without reading its text.

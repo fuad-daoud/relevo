@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 )
 
 func TestPolicyWarningsNoneWhenConsistent(t *testing.T) {
@@ -358,9 +359,9 @@ func TestAllGatedErrorNamesEachGateOnce(t *testing.T) {
 		{Token: testAgyRef, Kind: availability.RateLimited},
 	}
 
-	_, err := resolveCandidate(set, policy.Policy{}, gates, "", "builder")
-	if !errors.Is(err, ErrAllGated) {
-		t.Fatalf("got %v, want ErrAllGated", err)
+	_, err := resolve.Resolve(set, policy.Policy{}, gates, "", "builder")
+	if !errors.Is(err, resolve.ErrAllGated) {
+		t.Fatalf("got %v, want resolve.ErrAllGated", err)
 	}
 	if n := strings.Count(err.Error(), "rate-limited until cleared"); n != 1 {
 		t.Errorf("gate text appears %d times in %q, want 1", n, err.Error())

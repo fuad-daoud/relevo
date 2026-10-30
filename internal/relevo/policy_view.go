@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 )
@@ -108,14 +109,14 @@ func refWidth(set *candidate.Set) int {
 type policyRoleView struct {
 	role    string
 	header  string
-	rows    []rankedEntry
+	rows    []resolve.RankedEntry
 	serving []candidate.Candidate
 	// sole forces the "sole" tag on the single row. FormatPolicy means "one
 	// serving candidate"; FormatPolicyFor means "one row".
 	sole bool
 	// noRows is the line printed when there are no rows at all.
 	noRows string
-	res    Resolution
+	res    resolve.Resolution
 	err    error
 }
 
@@ -134,7 +135,7 @@ func formatPolicyRole(sb *strings.Builder, v policyRoleView, set *candidate.Set,
 		return
 	}
 
-	roleGates := gatesForRole(gates, v.role)
+	roleGates := resolve.GatesForRole(gates, v.role)
 	byToken := make(map[string][]availability.Gate)
 	for _, g := range roleGates {
 		byToken[g.Token] = append(byToken[g.Token], g)
@@ -155,7 +156,7 @@ func formatPolicyRole(sb *strings.Builder, v policyRoleView, set *candidate.Set,
 		for _, g := range byToken[tok] {
 			gateTexts = append(gateTexts, availability.GateText(g.Kind, g.Until, g.Note))
 		}
-		tailParts = append(tailParts, uniqStrings(gateTexts)...)
+		tailParts = append(tailParts, resolve.UniqStrings(gateTexts)...)
 		tail := strings.Join(tailParts, "; ")
 
 		// This combination cannot occur: a gated or off row is never picked.
@@ -214,13 +215,13 @@ func FormatPolicy(set *candidate.Set, pol policy.Policy, gates []availability.Ga
 		}
 		if len(serving) > 0 {
 			if ordered {
-				v.rows = rankedList(set, pol, role, gates...)
+				v.rows = resolve.RankedList(set, pol, role, gates...)
 			} else {
 				for _, c := range serving {
-					v.rows = append(v.rows, rankedEntry{Candidate: c})
+					v.rows = append(v.rows, resolve.RankedEntry{Candidate: c})
 				}
 			}
-			v.res, v.err = resolveCandidate(set, pol, gates, "", role)
+			v.res, v.err = resolve.Resolve(set, pol, gates, "", role)
 		}
 		formatPolicyRole(&sb, v, set, width, gates, hist, now, loc)
 	}
@@ -260,7 +261,7 @@ func FormatPolicyFor(reg *roles.Registry, accounts account.Set, set *candidate.S
 
 	var sb strings.Builder
 	for _, role := range reg.Names() {
-		rows := rankedRoleFor(reg, set, role, gates)
+		rows := resolve.RankedRoleFor(reg, set, role, gates)
 		serving := make([]candidate.Candidate, 0, len(rows))
 		for _, r := range rows {
 			serving = append(serving, r.Candidate)
@@ -268,14 +269,14 @@ func FormatPolicyFor(reg *roles.Registry, accounts account.Set, set *candidate.S
 
 		v := policyRoleView{
 			role:    role,
-			header:  role + "  (" + roleSectionText(reg) + ")",
+			header:  role + "  (" + resolve.RoleSectionText(reg) + ")",
 			rows:    rows,
 			serving: serving,
 			sole:    len(rows) == 1,
-			noRows:  fmt.Sprintf("  no candidate listed in %s %s.candidates", roleSectionText(reg), role),
+			noRows:  fmt.Sprintf("  no candidate listed in %s %s.candidates", resolve.RoleSectionText(reg), role),
 		}
 		if len(rows) > 0 {
-			v.res, v.err = resolveRole(reg, set, gates, "", role)
+			v.res, v.err = resolve.ResolveRole(reg, set, gates, "", role)
 		}
 		formatPolicyRole(&sb, v, set, width, gates, hist, now, loc)
 	}
@@ -324,7 +325,7 @@ func PolicyWarningsFor(reg *roles.Registry, set *candidate.Set, pol policy.Polic
 					Role:  role,
 					Index: i,
 					Token: entry,
-					Text:  fmt.Sprintf("%s %s.candidates[%d] %q is not a configured candidate", roleSectionText(reg), role, i, entry),
+					Text:  fmt.Sprintf("%s %s.candidates[%d] %q is not a configured candidate", resolve.RoleSectionText(reg), role, i, entry),
 				})
 				continue
 			}
@@ -333,7 +334,7 @@ func PolicyWarningsFor(reg *roles.Registry, set *candidate.Set, pol policy.Polic
 					Role:  role,
 					Index: i,
 					Token: entry,
-					Text:  fmt.Sprintf("%s %s.candidates[%d] %q: %s has no definition for %s", roleSectionText(reg), role, i, c.Name, role, c.Ref().Harness),
+					Text:  fmt.Sprintf("%s %s.candidates[%d] %q: %s has no definition for %s", resolve.RoleSectionText(reg), role, i, c.Name, role, c.Ref().Harness),
 				})
 			}
 		}
@@ -355,7 +356,7 @@ func RoleRefusalsFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy,
 
 	var out []RoleRefusal
 	for _, role := range reg.Names() {
-		ranked := rankedRoleFor(reg, set, role, gates)
+		ranked := resolve.RankedRoleFor(reg, set, role, gates)
 		if len(ranked) == 0 {
 			continue
 		}
@@ -363,8 +364,8 @@ func RoleRefusalsFor(reg *roles.Registry, set *candidate.Set, pol policy.Policy,
 		for _, r := range ranked {
 			serving = append(serving, r.Candidate)
 		}
-		_, err := resolveRole(reg, set, gates, "", role)
-		if r, ok := refusalFromErr(role, serving, gatesForRole(gates, role), err); ok {
+		_, err := resolve.ResolveRole(reg, set, gates, "", role)
+		if r, ok := refusalFromErr(role, serving, resolve.GatesForRole(gates, role), err); ok {
 			out = append(out, r)
 		}
 	}

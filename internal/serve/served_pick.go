@@ -8,6 +8,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -22,7 +23,7 @@ func pickServedTier(w http.ResponseWriter, rt relevo.Runtime, roleName, candidat
 	}
 	resolved, err := relevo.ResolveServedTierFor(rt, roleName, token, explicit)
 	if err != nil {
-		if errors.Is(err, relevo.ErrTierAboveMax) {
+		if errors.Is(err, resolve.ErrTierAboveMax) {
 			offending := explicit
 			format := "tier %s exceeds this server's max_tier %s; raise max_tier in the server's config policy"
 			if offending == "" {

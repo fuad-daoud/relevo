@@ -18,6 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -30,7 +31,7 @@ type chainServerPlan struct {
 	settings chain.Settings
 	// gateRes is the gate resolution the settings were built from, so the
 	// start's ChainResult can name the tier that supplied the check.
-	gateRes      GateResolution
+	gateRes      resolve.GateResolution
 	repo         string
 	ticket       string
 	bodies       [][]byte
@@ -305,12 +306,12 @@ func chainMirrorStored(rt Runtime, members []store.Binding) ([]store.Binding, er
 
 // chainServerCreateError rebuilds the typed actor refusal from the create's own
 // answer: the wire names unknown_actor for the actor the server cannot resolve,
-// and the CLI classifies that sentinel like the local ErrUnknownRole. Anything
+// and the CLI classifies that sentinel like the local resolve.ErrUnknownRole. Anything
 // else is returned as it came.
 func chainServerCreateError(err error) error {
 	var httpErr *client.HTTPError
 	if errors.As(err, &httpErr) && httpErr.Status == http.StatusBadRequest && httpErr.Body.Code == remote.CodeUnknownActor {
-		return classed(ErrUnknownRole, httpErr.Body.Message)
+		return classed(resolve.ErrUnknownRole, httpErr.Body.Message)
 	}
 	return pickRefusalFromWire(err)
 }

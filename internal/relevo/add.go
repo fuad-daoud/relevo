@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -48,7 +49,7 @@ type AddOptions struct {
 	// Placement is a choice the caller already made, so Add does not probe
 	// again. The zero value means "resolve it here": an explicit Server or
 	// Local decides without a probe, and otherwise the actor's own list does.
-	Placement PlacementResolution
+	Placement resolve.PlacementResolution
 
 	// Base commit or ref to branch from; defaults to HEAD.
 	Base string
@@ -98,7 +99,7 @@ type AddResult struct {
 	Base     string // commit the worktree was cut from; "" when --cwd was used
 
 	// Resolution is how the builder was chosen, for the pick line.
-	Resolution Resolution
+	Resolution resolve.Resolution
 }
 
 // requireRemoteReaders refuses a reader bind against a server that does not
@@ -182,7 +183,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		// here) passes its choice in; only a bare --server is explicitly
 		// chosen here.
 		if opts.Placement.How == "" {
-			opts.Placement = PlacementResolution{Name: opts.Server, How: placementHowExplicit}
+			opts.Placement = resolve.PlacementResolution{Name: opts.Server, How: resolve.PlacementExplicit}
 		}
 		return addRemote(ctx, rt, opts, rec, haveRec)
 	}
@@ -191,15 +192,15 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	// actor's own list is probed in order. A caller that already resolved
 	// passes its choice in, so nothing is probed twice.
 	if opts.Placement.How == "" {
-		placement, perr := createPlacement(ctx, rt,
+		placement, perr := resolve.CreatePlacement(ctx, ResolveDeps(rt),
 			bindingRole(store.Binding{Role: normRole(opts.Role)}), opts.Candidate, "", opts.Local,
-			placementFlags{Tier: opts.Tier, Feature: opts.Feature, Ticket: opts.Ticket})
+			resolve.PlacementFlags{Tier: opts.Tier, Feature: opts.Feature, Ticket: opts.Ticket})
 		if perr != nil {
 			return AddResult{}, perr
 		}
 		opts.Placement = placement
 	}
-	if !opts.Placement.local() {
+	if !opts.Placement.Local() {
 		opts.Server = opts.Placement.Name
 		if shape, rerr := actorShape(rt.RoleRegistry(), opts.Role); rerr == nil && shape == store.ShapeReader {
 			if err := requireRemoteReaders(ctx, rt, opts.Server); err != nil {
@@ -254,7 +255,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	if err != nil {
 		return AddResult{}, err
 	}
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, addSkillGates(ctx, rt, opts), opts.Candidate, roleName, pickFor(rt))
+	res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, addSkillGates(ctx, rt, opts), opts.Candidate, roleName, resolve.PickFor(ResolveDeps(rt)))
 	if err != nil {
 		return AddResult{}, err
 	}
@@ -266,15 +267,15 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	res.Gate = resolveGateFor(opts.Gate, opts.NoGate, rt.Policy, roleChecks(rt.RoleRegistry(), roleName), repoSet)
 	c := res.Candidate
 
-	tier := resolveRoleTier(opts.Tier, c, rt.RoleRegistry(), roleName)
+	tier := resolve.ResolveTier(opts.Tier, c, rt.RoleRegistry(), roleName)
 	if shape == store.ShapeReader {
 		var tierErr error
-		tier, tierErr = readerTier(tier, c.Harness, rt.Policy)
+		tier, tierErr = resolve.ReaderTier(tier, c.Harness, rt.Policy)
 		if tierErr != nil {
 			return AddResult{}, tierErr
 		}
 	}
-	if err := checkTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
+	if err := resolve.CheckTierCap(tier, rt.Policy, opts.AllowYolo); err != nil {
 		return AddResult{}, err
 	}
 
@@ -417,7 +418,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 	}
 	// Discard resolveBuilder's own resolution: bindOpts.Candidate is already
 	// pinned to c (explicit), so resolveBuilder's internal resolveCandidate
-	// call would report HowExplicit and lose the real How/Position/Skipped
+	// call would report resolve.HowExplicit and lose the real How/Position/Skipped
 	// this function resolved above -- res, from the pre-worktree resolution,
 	// is what the pick entry and AddResult.Resolution must carry.
 	builder, _, err := resolveBuilder(ctx, rt, nil, bindOpts, opts.Name)
@@ -438,7 +439,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 		Builder:          builder,
 		BuilderCandidate: c.Ref().String(),
 		BuilderAccount:   res.Account,
-		BuilderPinned:    res.How == HowExplicit,
+		BuilderPinned:    res.How == resolve.HowExplicit,
 		Round:            1,
 		State:            store.StateActive,
 		Worktree:         worktree,
@@ -468,7 +469,7 @@ func Add(ctx context.Context, rt Runtime, opts AddOptions) (AddResult, error) {
 			return err
 		}
 		if res.How != "" {
-			return tx.AppendLog(b.Name, pickEntry(rt.Now(), 1, "builder", res))
+			return tx.AppendLog(b.Name, resolve.PickEntry(rt.Now(), 1, "builder", res))
 		}
 		return nil
 	}); err != nil {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -17,11 +18,11 @@ import (
 // an explicit token (the mastermind already knows) and for adoption
 // (nothing was chosen); the gated note, if any, is printed separately.
 // A1 §4.4: the line names the candidate by its short name.
-func notePick(rt relevo.Runtime, role string, res relevo.Resolution) {
-	if res.How == "" || res.How == relevo.HowExplicit {
+func notePick(rt relevo.Runtime, role string, res resolve.Resolution) {
+	if res.How == "" || res.How == resolve.HowExplicit {
 		return
 	}
-	fmt.Fprintln(os.Stderr, relevo.PickText(role, res, rt.Candidates))
+	fmt.Fprintln(os.Stderr, resolve.PickText(role, res, rt.Candidates))
 }
 
 // roleOrBuilder is the role name a flag value means: "builder" for "", else

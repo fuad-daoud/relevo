@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -126,7 +127,7 @@ func TestServedChainPreflightRefusesBeforeAnythingExists(t *testing.T) {
 
 // TestServedChainPreflightRefusesAnAllGatedMemberPick pins the refuse-vs-queue
 // decision of this round: a served chain whose member role has every serving
-// candidate gated refuses the whole preflight with the ErrAllGated refusal --
+// candidate gated refuses the whole preflight with the resolve.ErrAllGated refusal --
 // exactly what the local chain start does. chainResolveActors (chain_start.go)
 // resolves every member's pick read-only before anything is created and
 // returns the resolution error as the start's refusal; the served preflight's
@@ -149,8 +150,8 @@ func TestServedChainPreflightRefusesAnAllGatedMemberPick(t *testing.T) {
 	}
 
 	_, err := ServedChainPreflight(rt, servedChainRequest("shop"))
-	if !errors.Is(err, ErrAllGated) {
-		t.Fatalf("err = %v, want the ErrAllGated refusal", err)
+	if !errors.Is(err, resolve.ErrAllGated) {
+		t.Fatalf("err = %v, want the resolve.ErrAllGated refusal", err)
 	}
 	assertServedChainAbsent(t, rt, "shop")
 }

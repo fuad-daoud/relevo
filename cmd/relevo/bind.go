@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -214,7 +215,7 @@ func refuseFlag(err error) error {
 // actor's own placement list chose that server; an explicit --server and a local
 // builder read as they always did. It is pure, so the wording is pinned without
 // a live server.
-func boundLine(b store.Binding, mastermind, candidate string, placement relevo.PlacementResolution) string {
+func boundLine(b store.Binding, mastermind, candidate string, placement resolve.PlacementResolution) string {
 	if b.Builder.Remote() {
 		return fmt.Sprintf("bound %s: mastermind %s -> builder %s on %s, round %d%s",
 			b.Name, mastermind, candidate, b.Builder.Server, b.Round, relevo.PlacementText(placement))
@@ -283,7 +284,7 @@ func runBind(f bindFlags) error {
 				specRole = relevo.BindingRole(existing)
 			}
 		}
-		kind = relevo.CandidateKindFor(rt, opts.Candidate, specRole)
+		kind = resolve.CandidateKindFor(relevo.ResolveDeps(rt), opts.Candidate, specRole)
 	case adopted:
 		if f.name != "" {
 			if existing, err := rt.Store.Load(f.name); err == nil {
@@ -292,7 +293,7 @@ func runBind(f bindFlags) error {
 			}
 		}
 	default:
-		kind = relevo.CandidateKindFor(rt, opts.Candidate, roleName)
+		kind = resolve.CandidateKindFor(relevo.ResolveDeps(rt), opts.Candidate, roleName)
 	}
 
 	// Preflight is advisory only: it never blocks the bind, and any probe
@@ -327,7 +328,7 @@ func runBind(f bindFlags) error {
 	// carries no fresh resolution to name a tier from.
 	gateCmd, gateSource := res.Gate.Command, res.Gate.Source
 	if f.resume {
-		gateCmd, gateSource = b.Gate, relevo.GateSourceBinding
+		gateCmd, gateSource = b.Gate, resolve.GateSourceBinding
 	}
 	gateText := relevo.GateLine(gateCmd, gateSource)
 	if t := relevo.RestoreText(res); t != "" {

@@ -8,6 +8,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 )
 
 // RoleRefusal is one role for which an omitted candidate would be refused
@@ -44,7 +45,7 @@ func clearable(kind availability.Kind) bool {
 func refusalCause(serving []candidate.Candidate, gates []availability.Gate) RefusalCause {
 	cause, seen := CauseCap, false
 	for _, c := range serving {
-		for _, sk := range skipsFor(skipGates(gates), c.Ref().String()) {
+		for _, sk := range resolve.SkipsFor(resolve.SkipGates(gates), c.Ref().String()) {
 			switch sk.Kind {
 			case availability.Scheduled:
 				cause = CauseWindow
@@ -75,10 +76,10 @@ func RoleRefusals(set *candidate.Set, pol policy.Policy, gates []availability.Ga
 		if len(serving) == 0 {
 			continue
 		}
-		_, err := resolveCandidate(set, pol, gates, "", role)
+		_, err := resolve.Resolve(set, pol, gates, "", role)
 		// A roles-missing gate scoped to another role must not make this
 		// role's refusal name a provider it never uses.
-		if r, ok := refusalFromErr(role, serving, gatesForRole(gates, role), err); ok {
+		if r, ok := refusalFromErr(role, serving, resolve.GatesForRole(gates, role), err); ok {
 			out = append(out, r)
 		}
 	}
@@ -94,17 +95,17 @@ func refusalFromErr(role string, serving []candidate.Candidate, gates []availabi
 		tokens = append(tokens, c.Ref().String())
 	}
 	switch {
-	case errors.Is(err, ErrAmbiguousCandidate):
+	case errors.Is(err, resolve.ErrAmbiguousCandidate):
 		return RoleRefusal{
 			Role:    role,
 			Text:    fmt.Sprintf("%d candidates serve %s and no order is set", len(serving), role),
 			NoOrder: true,
 			Serving: tokens,
 		}, true
-	case errors.Is(err, ErrAllGated):
+	case errors.Is(err, resolve.ErrAllGated):
 		var providers []string
 		for _, c := range serving {
-			for _, sk := range skipsFor(skipGates(gates), c.Ref().String()) {
+			for _, sk := range resolve.SkipsFor(resolve.SkipGates(gates), c.Ref().String()) {
 				if clearable(sk.Kind) {
 					providers = append(providers, c.Ref().Provider)
 				}
@@ -114,7 +115,7 @@ func refusalFromErr(role string, serving []candidate.Candidate, gates []availabi
 			Role:    role,
 			Text:    fmt.Sprintf("every candidate serving %s is gated", role),
 			Serving: tokens,
-			Gated:   uniqStrings(providers),
+			Gated:   resolve.UniqStrings(providers),
 			Cause:   refusalCause(serving, gates),
 		}, true
 	}

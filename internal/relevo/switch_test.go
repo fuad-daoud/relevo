@@ -437,7 +437,7 @@ func TestAllGatedHalts(t *testing.T) {
 		t.Errorf("kills = %+v, want none -- the halt precedes the close", runnerOf(t, rt).kills)
 	}
 	if !strings.Contains(got.Halt, `every candidate serving "builder" is gated`) {
-		t.Fatalf("Halt = %q, want it to contain the ErrAllGated text", got.Halt)
+		t.Fatalf("Halt = %q, want it to contain the resolve.ErrAllGated text", got.Halt)
 	}
 }
 
@@ -511,7 +511,7 @@ func TestServedSwitchAllGatedHaltsWithoutConsumingASwitch(t *testing.T) {
 		t.Errorf("RoundSwitches = %d, want 0: an all-gated switch halts rather than burning a switch", got.RoundSwitches)
 	}
 	if !strings.Contains(got.Halt, `every candidate serving "builder" is gated`) {
-		t.Fatalf("Halt = %q, want the ErrAllGated refusal text", got.Halt)
+		t.Fatalf("Halt = %q, want the resolve.ErrAllGated refusal text", got.Halt)
 	}
 }
 

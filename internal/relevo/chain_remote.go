@@ -14,6 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/installation"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -21,14 +22,14 @@ import (
 // own placement list was walked: the same pickEntry a local bind writes, with
 // the placement and every skip. A member whose actor named no placement writes
 // none, so its log stays exactly as it was before placement existed.
-func chainAppendPickNotes(tx *store.Tx, rt Runtime, members []chainMember, resolutions map[string]Resolution) error {
+func chainAppendPickNotes(tx *store.Tx, rt Runtime, members []chainMember, resolutions map[string]resolve.Resolution) error {
 	for _, m := range members {
 		res := resolutions[m.part]
 		if res.How == "" || res.Placement.How == "" {
 			continue
 		}
 		role := bindingRole(store.Binding{Role: normRole(m.actor)})
-		if err := tx.AppendLog(m.name, pickEntry(rt.Now(), 1, role, res)); err != nil {
+		if err := tx.AppendLog(m.name, resolve.PickEntry(rt.Now(), 1, role, res)); err != nil {
 			return err
 		}
 	}
@@ -60,14 +61,14 @@ type chainRemotePlan struct {
 // reader member's list is walked with every server entry skipped unprobed; a
 // list with no local entry refuses the start with placementError's one line.
 // The builder is resolved first, so a refusal names it before any reader.
-func chainResolvePlacements(ctx context.Context, rt Runtime, opts ChainOptions, plan chainStartPlan) (map[string]PlacementResolution, error) {
-	out := make(map[string]PlacementResolution, len(plan.members))
+func chainResolvePlacements(ctx context.Context, rt Runtime, opts ChainOptions, plan chainStartPlan) (map[string]resolve.PlacementResolution, error) {
+	out := make(map[string]resolve.PlacementResolution, len(plan.members))
 	for _, m := range plan.members {
-		flags := placementFlags{ChainReader: true}
+		flags := resolve.PlacementFlags{ChainReader: true}
 		if m.writer {
-			flags = placementFlags{ChainMember: true, Feature: opts.Feature, Ticket: plan.ticket}
+			flags = resolve.PlacementFlags{ChainMember: true, Feature: opts.Feature, Ticket: plan.ticket}
 		}
-		p, err := createPlacement(ctx, rt, m.actor, "", "", false, flags)
+		p, err := resolve.CreatePlacement(ctx, ResolveDeps(rt), m.actor, "", "", false, flags)
 		if err != nil {
 			return nil, err
 		}
@@ -81,7 +82,7 @@ func chainResolvePlacements(ctx context.Context, rt Runtime, opts ChainOptions, 
 // server's candidate token. It runs before anything is created, so every
 // refusal -- a missing identity, a candidate the server does not list, a tier
 // above the client's cap -- fires with nothing on the server and nothing local.
-func chainRemotePreflight(ctx context.Context, rt Runtime, opts ChainOptions, plan chainStartPlan, p PlacementResolution) (*chainRemotePlan, error) {
+func chainRemotePreflight(ctx context.Context, rt Runtime, opts ChainOptions, plan chainStartPlan, p resolve.PlacementResolution) (*chainRemotePlan, error) {
 	if rt.Remote == nil {
 		return nil, ErrRemoteUnavailable
 	}
@@ -98,8 +99,8 @@ func chainRemotePreflight(ctx context.Context, rt Runtime, opts ChainOptions, pl
 
 	res := plan.resolutions[chain.MemberBuilder]
 	role := normRole(chainActorOrBuilder(opts.BuilderActor))
-	tier := resolveRoleTier("", res.Candidate, rt.RoleRegistry(), bindingRole(store.Binding{Role: role}))
-	if err := checkTierCap(tier, rt.Policy, false); err != nil {
+	tier := resolve.ResolveTier("", res.Candidate, rt.RoleRegistry(), bindingRole(store.Binding{Role: role}))
+	if err := resolve.CheckTierCap(tier, rt.Policy, false); err != nil {
 		return nil, err
 	}
 
@@ -241,10 +242,10 @@ func chainBuildRemoteBuilder(ctx context.Context, rt Runtime, opts ChainOptions,
 			return store.Binding{}, nil, fmt.Errorf("binding %s already exists on %s for this client but not here; relevo serve unbind --owner <your label> %s on the server, or choose another name", name, server, name)
 		}
 		if errors.As(err, &httpErr) && httpErr.Status == 422 && httpErr.Body.Code == remote.CodeTierAboveMax {
-			return store.Binding{}, nil, fmt.Errorf("%w: %s", ErrTierAboveMax, httpErr.Body.Message)
+			return store.Binding{}, nil, fmt.Errorf("%w: %s", resolve.ErrTierAboveMax, httpErr.Body.Message)
 		}
-		if errors.As(err, &httpErr) && httpErr.Status == 422 && httpErr.Body.Code == remote.CodeInvalid && tierUnsupportedMessage(httpErr.Body.Message) {
-			return store.Binding{}, nil, tierUnsupportedFromWire(httpErr.Body.Message)
+		if errors.As(err, &httpErr) && httpErr.Status == 422 && httpErr.Body.Code == remote.CodeInvalid && resolve.TierUnsupportedMessage(httpErr.Body.Message) {
+			return store.Binding{}, nil, resolve.TierUnsupportedFromWire(httpErr.Body.Message)
 		}
 		return store.Binding{}, nil, pickRefusalFromWire(err)
 	}

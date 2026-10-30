@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
@@ -22,15 +23,15 @@ type chainWFStart struct {
 	settings chain.Settings
 	// gateRes is the gate resolution the settings were built from, so the
 	// start's ChainResult can name the tier that supplied the check.
-	gateRes      GateResolution
+	gateRes      resolve.GateResolution
 	repo         string
 	ticket       string
 	bodies       [][]byte
 	in           workflow.StartInputs
 	planned      []plannedMember
 	members      []chainMember
-	resolutions  map[string]Resolution
-	placements   map[string]PlacementResolution
+	resolutions  map[string]resolve.Resolution
+	placements   map[string]resolve.PlacementResolution
 	remote       *chainRemotePlan
 	mastermind   store.Endpoint
 	mastermindID string
@@ -155,7 +156,7 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 	}
 	plan.in = workflow.StartInputs{Plans: items, Task: opts.Task}
 
-	if !plan.placements[chain.MemberBuilder].local() {
+	if !plan.placements[chain.MemberBuilder].Local() {
 		ropts := opts
 		ropts.BuilderActor = plan.keeper
 		synth.repo = repo
@@ -197,7 +198,7 @@ func chainRefuseForkPlacedWriter(opts ChainOptions, def workflow.Definition, pla
 	}
 	for _, m := range plan.members {
 		if m.writer {
-			if p := plan.placements[m.part]; !p.local() {
+			if p := plan.placements[m.part]; !p.Local() {
 				return refuse("workflow %s has a fork step: forks on placed writer %s are not supported yet (W4)", def.Name, m.name)
 			}
 		}
@@ -259,7 +260,7 @@ func chainValidateWorkflow(rt Runtime, def workflow.Definition, given workflow.G
 	if len(problems) > 0 {
 		p := problems[0]
 		if p.Rule == workflow.RuleKind && strings.Contains(p.Detail, "unknown actor") {
-			return classed(ErrUnknownRole, p.String())
+			return classed(resolve.ErrUnknownRole, p.String())
 		}
 		return refuse("%s", p)
 	}
@@ -340,7 +341,7 @@ type chainPreparedWorkflow struct {
 
 // chainBuildStartMembers builds member bindings and worktree/branch for a workflow start.
 func chainBuildStartMembers(ctx context.Context, rt Runtime, opts ChainOptions, plan chainWFStart) ([]store.Binding, chainBase, func(), bool, error) {
-	remote := len(plan.placements) > 0 && !plan.placements[chain.MemberBuilder].local()
+	remote := len(plan.placements) > 0 && !plan.placements[chain.MemberBuilder].Local()
 	if remote {
 		synth := chainStartPlan{
 			settings: plan.settings, repo: plan.repo, ticket: plan.ticket,

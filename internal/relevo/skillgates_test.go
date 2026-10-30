@@ -10,6 +10,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -82,7 +83,7 @@ func TestSkillGateUserPathSatisfies(t *testing.T) {
 func TestSkillGateIgnoresActorWithoutSkills(t *testing.T) {
 	t.Parallel()
 	rt := skillRuntime(t)
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, skillGatesFor(rt, skillTestDir), "", "builder")
+	res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, skillGatesFor(rt, skillTestDir), "", "builder")
 	if err != nil || res.Token() != testClaudeRef {
 		t.Fatalf("builder pick = %v, %v; want %s", res.Token(), err, testClaudeRef)
 	}
@@ -113,24 +114,24 @@ func TestSkillPickSkipsAndRefuses(t *testing.T) {
 		"designer": designerRow(),
 	})
 	gates := skillGatesFor(rt, skillTestDir)
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, gates, "", "designer")
+	res, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, gates, "", "designer")
 	if err != nil || res.Token() != testOpencodeRef {
 		t.Fatalf("pick = %q, %v; want %s", res.Token(), err, testOpencodeRef)
 	}
-	line := ExplainResolution("designer", res)
+	line := resolve.ExplainResolution("designer", res)
 	if !strings.Contains(line, "skipped ") || !strings.Contains(line, "(skill design-runbooks not found for designer on claude: looked at /repo/.claude/skills/design-runbooks/SKILL.md") {
 		t.Errorf("pick line = %q", line)
 	}
 	t.Log(line)
 
-	if _, err := resolveRole(rt.RoleRegistry(), rt.Candidates, gates, testClaudeRef, "designer"); !errors.Is(err, ErrCandidateCannotRun) || !strings.Contains(err.Error(), "skill design-runbooks not found") {
-		t.Errorf("explicit pick err = %v, want ErrCandidateCannotRun with the skill note", err)
+	if _, err := resolve.ResolveRole(rt.RoleRegistry(), rt.Candidates, gates, testClaudeRef, "designer"); !errors.Is(err, resolve.ErrCandidateCannotRun) || !strings.Contains(err.Error(), "skill design-runbooks not found") {
+		t.Errorf("explicit pick err = %v, want resolve.ErrCandidateCannotRun with the skill note", err)
 	}
 
 	none := skillRuntime(t)
-	_, err = resolveRole(none.RoleRegistry(), none.Candidates, skillGatesFor(none, skillTestDir), "", "designer")
-	if !errors.Is(err, ErrAllGated) || !strings.Contains(err.Error(), "skill design-runbooks not found") {
-		t.Errorf("all-skipped err = %v, want ErrAllGated with the reason", err)
+	_, err = resolve.ResolveRole(none.RoleRegistry(), none.Candidates, skillGatesFor(none, skillTestDir), "", "designer")
+	if !errors.Is(err, resolve.ErrAllGated) || !strings.Contains(err.Error(), "skill design-runbooks not found") {
+		t.Errorf("all-skipped err = %v, want resolve.ErrAllGated with the reason", err)
 	}
 	if msg := err.Error(); !strings.Contains(msg, "install the missing skill where relevo doctor says") || strings.Contains(msg, "--candidate") || strings.Contains(msg, "gate --clear") {
 		t.Errorf("all-skipped err = %q, want only the install hint", msg)
@@ -153,7 +154,7 @@ func TestBindDesignerSkipsSkillBlindCandidate(t *testing.T) {
 	if b.BuilderCandidate != testOpencodeRef || res.Token() != testOpencodeRef {
 		t.Errorf("builder = %q, pick = %q; want %s", b.BuilderCandidate, res.Token(), testOpencodeRef)
 	}
-	line := ExplainResolution("designer", res)
+	line := resolve.ExplainResolution("designer", res)
 	if !strings.Contains(line, "skipped ") || !strings.Contains(line, "("+skillBlindNote+": looked at") {
 		t.Errorf("pick line = %q", line)
 	}
@@ -200,7 +201,7 @@ func TestResumeDesignerRepicksOverSkillGates(t *testing.T) {
 	if b.BuilderCandidate != testOpencodeRef {
 		t.Errorf("builder = %q, want %s", b.BuilderCandidate, testOpencodeRef)
 	}
-	if line := ExplainResolution("designer", res); !strings.Contains(line, "("+skillBlindNote+": looked at") {
+	if line := resolve.ExplainResolution("designer", res); !strings.Contains(line, "("+skillBlindNote+": looked at") {
 		t.Errorf("pick line = %q", line)
 	}
 }

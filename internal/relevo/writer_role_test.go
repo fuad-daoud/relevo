@@ -11,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
@@ -56,7 +57,7 @@ func TestBindingRole(t *testing.T) {
 
 // TestActorShape pins A5 §2: a writer role (or the builder default) reads as
 // a writer, a reader as a reader, and an unknown name is refused with
-// ErrUnknownRole.
+// resolve.ErrUnknownRole.
 func TestActorShape(t *testing.T) {
 	t.Parallel()
 
@@ -85,8 +86,8 @@ func TestActorShape(t *testing.T) {
 		t.Errorf("actorShape(reviewer) = %q, want reader", shape)
 	}
 
-	if _, err := actorShape(reg, "nope"); !errors.Is(err, ErrUnknownRole) {
-		t.Fatalf("actorShape(nope) err = %v, want ErrUnknownRole", err)
+	if _, err := actorShape(reg, "nope"); !errors.Is(err, resolve.ErrUnknownRole) {
+		t.Fatalf("actorShape(nope) err = %v, want resolve.ErrUnknownRole", err)
 	}
 }
 
@@ -417,7 +418,7 @@ func TestSwitchPicksFromRoleList(t *testing.T) {
 }
 
 // TestVanishedRoleFailsRoundStart pins #382 §5.4: a binding whose role
-// roles.json no longer defines fails at round start with ErrUnknownRole, and
+// roles.json no longer defines fails at round start with resolve.ErrUnknownRole, and
 // no process is started -- there is no fallback to builder.
 func TestVanishedRoleFailsRoundStart(t *testing.T) {
 	t.Parallel()
@@ -442,8 +443,8 @@ func TestVanishedRoleFailsRoundStart(t *testing.T) {
 	if err == nil {
 		t.Fatal("startRound on a vanished role = nil, want an error")
 	}
-	if !errors.Is(err, ErrUnknownRole) {
-		t.Errorf("err = %v, want ErrUnknownRole", err)
+	if !errors.Is(err, resolve.ErrUnknownRole) {
+		t.Errorf("err = %v, want resolve.ErrUnknownRole", err)
 	}
 	if !strings.Contains(err.Error(), "which config actors no longer defines") {
 		t.Errorf("err = %q, want it to name the vanished role", err.Error())

@@ -1,4 +1,4 @@
-package relevo
+package resolve
 
 import (
 	"errors"
@@ -56,7 +56,7 @@ const (
 )
 
 // Skip is one reason a resolution passed over a candidate: a gate, or an off
-// entry the pick must not take (A2 §4.3).
+// entry the pick must not take.
 type Skip struct {
 	Token string
 	Kind  availability.Kind
@@ -67,7 +67,7 @@ type Skip struct {
 	Off bool
 }
 
-// Resolution is what resolveCandidate picked and why. T3 records it in the
+// Resolution is what Resolve picked and why. T3 records it in the
 // binding's log; T4 renders it in `relevo config`.
 type Resolution struct {
 	Candidate candidate.Candidate
@@ -98,7 +98,7 @@ type Resolution struct {
 	// RestoredBranch is the branch it was checked out from; set with RestoredWorktree.
 	RestoredBranch string
 	// WasPaused is true when this resume took a PAUSED binding back to
-	// ACTIVE (#137): the worktree was released by `relevo pause`, so the
+	// ACTIVE: the worktree was released by `relevo pause`, so the
 	// restore path ran and --rebind is implied.
 	WasPaused bool
 
@@ -123,8 +123,8 @@ func (r Resolution) Token() string {
 	return r.Candidate.Ref().String()
 }
 
-// skipsFor is one Skip per gate whose Token == token, in gates order.
-func skipsFor(gates []availability.Gate, token string) []Skip {
+// SkipsFor is one Skip per gate whose Token == token, in gates order.
+func SkipsFor(gates []availability.Gate, token string) []Skip {
 	var out []Skip
 	for _, g := range gates {
 		if g.Token != token {
@@ -135,11 +135,11 @@ func skipsFor(gates []availability.Gate, token string) []Skip {
 	return out
 }
 
-// gatesForRole keeps every gate that applies to role: an unscoped gate
+// GatesForRole keeps every gate that applies to role: an unscoped gate
 // (Role == "") and the ones scoped to role itself. A roles-missing gate for
-// another role must neither refuse nor skip this role's picks (#374 §5). It is
+// another role must neither refuse nor skip this role's picks. It is
 // pure and returns a new slice.
-func gatesForRole(gates []availability.Gate, role string) []availability.Gate {
+func GatesForRole(gates []availability.Gate, role string) []availability.Gate {
 	out := make([]availability.Gate, 0, len(gates))
 	for _, g := range gates {
 		if g.Role == "" || g.Role == role {
@@ -151,7 +151,7 @@ func gatesForRole(gates []availability.Gate, role string) []availability.Gate {
 
 // skipText renders one Skip as "<token> (<kind> <until>)". An off skip renders
 // as "<token> (off)". name maps every token before it is printed: identity for
-// the stored pick note, Set.NameOf for the line a human reads (A1 §4.4).
+// the stored pick note, Set.NameOf for the line a human reads.
 func skipText(s Skip, name func(string) string) string {
 	if s.Off {
 		return name(s.Token) + " (off)"
@@ -159,11 +159,11 @@ func skipText(s Skip, name func(string) string) string {
 	return fmt.Sprintf("%s (%s)", name(s.Token), availability.GateText(s.Kind, s.Until, s.Note))
 }
 
-// uniqStrings drops later duplicates, keeping first occurrences in order.
-// Gate texts are de-duplicated at render time only (#93): the ledger keeps
-// every `relevo gate <token>` entry and resolveCandidate yields one Skip per
+// UniqStrings drops later duplicates, keeping first occurrences in order.
+// Gate texts are de-duplicated at render time only: the ledger keeps
+// every `relevo gate <token>` entry and Resolve yields one Skip per
 // gate, but a row or a pick line says each distinct text once.
-func uniqStrings(in []string) []string {
+func UniqStrings(in []string) []string {
 	if len(in) == 0 {
 		return in
 	}
@@ -179,19 +179,27 @@ func uniqStrings(in []string) []string {
 	return out
 }
 
-// resolveCandidate is the one rule for an omitted candidate token, shared by
+// Resolve is the one rule for an omitted candidate token, shared by
 // bind, add, fork and ask: a named token is looked up and must serve the
 // role, and gates never refuse it -- they are only recorded. With no token,
 // it is the first ungated candidate in order[role], then the unlisted ones;
 // it refuses only when everything serving the role is gated, or when
-// nothing is ordered and several serve (the seam #61 step 3 fills). It is
-// pure and deterministic: it takes gates as a value and never opens the
-// ledger itself.
+// nothing is ordered and several serve. It is pure and deterministic: it
+// takes gates as a value and never opens the ledger itself.
 //
-// It is the legacy registry's resolver: resolveRole over the derivation of
-// set and pol. It stays for tests and policy_view.go (#374 §4.3).
-func resolveCandidate(set *candidate.Set, pol policy.Policy, gates []availability.Gate, token, role string, picks ...AccountPick) (Resolution, error) {
-	return resolveRole(legacyRegistry(set, pol), set, gates, token, role, picks...)
+// It is the legacy registry's resolver: ResolveRole over the derivation of
+// set and pol.
+func Resolve(set *candidate.Set, pol policy.Policy, gates []availability.Gate, token, role string, picks ...AccountPick) (Resolution, error) {
+	return ResolveRole(legacyRegistry(set, pol), set, gates, token, role, picks...)
+}
+
+// legacyRegistry is the registry derived from candidates.json and
+// policy.json, the behaviour every path had before roles.json. It is
+// roles.Build with no file, which never errors in legacy mode, so the error
+// is discarded.
+func legacyRegistry(set *candidate.Set, pol policy.Policy) *roles.Registry {
+	reg, _ := roles.Build(nil, set, pol)
+	return reg
 }
 
 // AccountPick is the login pool a pick draws from: the configured set, the
@@ -204,24 +212,24 @@ type AccountPick struct {
 	Mode  account.Mode
 }
 
-// pickFor is the AccountPick a pick at rt draws from. It reads the live gate
+// PickFor is the AccountPick a pick at d draws from. It reads the live gate
 // keys, so a pool that still holds a free login is not skipped; a ledger this
 // cannot read reads as no gates, the same rule Gates follows.
-func pickFor(rt Runtime) AccountPick {
-	if len(rt.Accounts) == 0 {
+func PickFor(d Deps) AccountPick {
+	if len(d.Accounts) == 0 {
 		return AccountPick{}
 	}
 	var keys []string
-	if rt.Gates != nil {
-		if l, err := availability.LoadLedger(rt.Gates); err == nil {
-			now := rt.Now
+	if d.Gates != nil {
+		if l, err := availability.LoadLedger(d.Gates); err == nil {
+			now := d.Now
 			if now == nil {
 				now = time.Now
 			}
 			keys = availability.LiveGateKeys(l, now())
 		}
 	}
-	return AccountPick{Set: rt.Accounts, Gates: keys, Mode: account.Mode(rt.Policy.AccountsRotation())}
+	return AccountPick{Set: d.Accounts, Gates: keys, Mode: account.Mode(d.Policy.AccountsRotation())}
 }
 
 // withAccount fills the resolution's account: the first login of the chosen
@@ -249,13 +257,12 @@ func withAccount(res Resolution, picks ...AccountPick) Resolution {
 	return res
 }
 
-// resolveRole is resolveCandidate's rule with the role's ranked candidates,
-// order and tier read from the registry -- roles.json when one is loaded, the
-// legacy derivation otherwise (#374 §4.3) -- and then the account of the
-// chosen candidate's pool filled in. Every error text is the legacy one
-// except where a candidate is refused for not being in the file's list, which
-// the registry can only know in file mode.
-func resolveRole(reg *roles.Registry, set *candidate.Set, gates []availability.Gate, token, role string, picks ...AccountPick) (Resolution, error) {
+// ResolveRole is Resolve's rule with the role's ranked candidates, order and
+// tier read from the registry, and then the account of the chosen
+// candidate's pool filled in. Every error text is the legacy one except
+// where a candidate is refused for not being in the file's list, which the
+// registry can only know in file mode.
+func ResolveRole(reg *roles.Registry, set *candidate.Set, gates []availability.Gate, token, role string, picks ...AccountPick) (Resolution, error) {
 	res, err := resolveRoleBase(reg, set, gates, token, role)
 	if err != nil {
 		return res, err
@@ -263,43 +270,52 @@ func resolveRole(reg *roles.Registry, set *candidate.Set, gates []availability.G
 	return withAccount(res, picks...), nil
 }
 
-// resolveRoleBase is resolveRole without the account dimension.
+// resolveRoleBase is ResolveRole without the account dimension.
 func resolveRoleBase(reg *roles.Registry, set *candidate.Set, gates []availability.Gate, token, role string) (Resolution, error) {
-	gates = gatesForRole(gates, role)
+	gates = GatesForRole(gates, role)
 	if token != "" {
-		// The argument may be a candidate name or a canonical token (A1
-		// §4.2): Resolve accepts both. From here on tok is the canonical
-		// token, and every refusal names the candidate by its short name.
-		c, err := set.Resolve(token)
-		if err != nil {
-			return Resolution{}, err
-		}
-		tok := c.Ref().String()
-		if !reg.Serves(role, c.Ref()) {
-			if reg.FileMode() {
-				return Resolution{}, fmt.Errorf("candidate %q does not serve actor %q (not in %s, or no definition for %s): %w", c.Name, role, reg.ListText(role), c.Harness, ErrRoleNotServed)
-			}
-			return Resolution{}, fmt.Errorf("candidate %q does not serve actor %q (its roles: %v): %w", c.Name, role, c.Roles, ErrRoleNotServed)
-		}
-		// Unlike every other gate, roles_missing is refused even for an
-		// explicit pick: a candidate whose harness role files are not
-		// installed cannot succeed, so recording-and-proceeding (what
-		// every other explicit-pick gate does) would only spawn it to die
-		// within seconds (#238).
-		for _, g := range gates {
-			if g.Token == tok && (g.Kind == availability.RolesMissing || g.Kind == availability.SkillMissing) {
-				return Resolution{}, fmt.Errorf("%s: %s: %w", c.Name, g.Note, ErrCandidateCannotRun)
-			}
-		}
-		// An off entry is served when named explicitly (A2 §4.3): the pick
-		// proceeds, and the resolution records the advisory note.
-		res := Resolution{Candidate: c, How: HowExplicit, Gates: skipsFor(gates, tok)}
-		if roleOff(reg, role, tok) {
-			res.OffNote = fmt.Sprintf("note: %s is off for %s; running it because you named it", c.Name, role)
-		}
-		return res, nil
+		return explicitRole(reg, set, gates, token, role)
 	}
+	return orderedRole(reg, set, gates, role)
+}
 
+// explicitRole resolves a named candidate: the token is looked up and must
+// serve the role, and gates never refuse it -- they are only recorded. A
+// candidate whose harness role files are missing is the one exception: it
+// cannot succeed, so it is refused instead of spawned to die within seconds.
+func explicitRole(reg *roles.Registry, set *candidate.Set, gates []availability.Gate, token, role string) (Resolution, error) {
+	// The argument may be a candidate name or a canonical token: Resolve
+	// accepts both. From here on tok is the canonical token, and every
+	// refusal names the candidate by its short name.
+	c, err := set.Resolve(token)
+	if err != nil {
+		return Resolution{}, err
+	}
+	tok := c.Ref().String()
+	if !reg.Serves(role, c.Ref()) {
+		if reg.FileMode() {
+			return Resolution{}, fmt.Errorf("candidate %q does not serve actor %q (not in %s, or no definition for %s): %w", c.Name, role, reg.ListText(role), c.Harness, ErrRoleNotServed)
+		}
+		return Resolution{}, fmt.Errorf("candidate %q does not serve actor %q (its roles: %v): %w", c.Name, role, c.Roles, ErrRoleNotServed)
+	}
+	for _, g := range gates {
+		if g.Token == tok && (g.Kind == availability.RolesMissing || g.Kind == availability.SkillMissing) {
+			return Resolution{}, fmt.Errorf("%s: %s: %w", c.Name, g.Note, ErrCandidateCannotRun)
+		}
+	}
+	// An off entry is served when named explicitly: the pick proceeds, and
+	// the resolution records the advisory note.
+	res := Resolution{Candidate: c, How: HowExplicit, Gates: SkipsFor(gates, tok)}
+	if roleOff(reg, role, tok) {
+		res.OffNote = fmt.Sprintf("note: %s is off for %s; running it because you named it", c.Name, role)
+	}
+	return res, nil
+}
+
+// orderedRole resolves an omitted token: the first ungated candidate in
+// order[role], then the unlisted ones. It refuses only when everything
+// serving the role is gated, or when nothing is ordered and several serve.
+func orderedRole(reg *roles.Registry, set *candidate.Set, gates []availability.Gate, role string) (Resolution, error) {
 	if set.Len() == 0 {
 		return Resolution{}, fmt.Errorf("%w; set one with relevo config set candidates (see README \"Candidates\")", ErrNoCandidates)
 	}
@@ -307,20 +323,20 @@ func resolveRoleBase(reg *roles.Registry, set *candidate.Set, gates []availabili
 	info, ok := reg.Role(role)
 	if !ok {
 		if reg.FileMode() {
-			return Resolution{}, fmt.Errorf("no candidate in %s %s.candidates can run it (configured candidates: %v): %w", roleSectionText(reg), role, set.Refs(), ErrRoleNotServed)
+			return Resolution{}, fmt.Errorf("no candidate in %s %s.candidates can run it (configured candidates: %v): %w", RoleSectionText(reg), role, set.Refs(), ErrRoleNotServed)
 		}
 		return Resolution{}, fmt.Errorf("no configured candidate serves actor %q (configured: %v): %w", role, set.Refs(), ErrRoleNotServed)
 	}
 
-	ranked := rankedRoleFor(reg, set, role, gates)
-	gates = skipGates(gates)
+	ranked := RankedRoleFor(reg, set, role, gates)
+	gates = SkipGates(gates)
 	serving := make([]candidate.Candidate, 0, len(ranked))
 	for _, r := range ranked {
 		serving = append(serving, r.Candidate)
 	}
 	if len(serving) == 0 {
 		if reg.FileMode() {
-			return Resolution{}, fmt.Errorf("no candidate in %s %s.candidates can run it (configured candidates: %v): %w", roleSectionText(reg), role, set.Refs(), ErrRoleNotServed)
+			return Resolution{}, fmt.Errorf("no candidate in %s %s.candidates can run it (configured candidates: %v): %w", RoleSectionText(reg), role, set.Refs(), ErrRoleNotServed)
 		}
 		return Resolution{}, fmt.Errorf("no configured candidate serves actor %q (configured: %v): %w", role, set.Refs(), ErrRoleNotServed)
 	}
@@ -329,7 +345,7 @@ func resolveRoleBase(reg *roles.Registry, set *candidate.Set, gates []availabili
 		if ranked[0].Off {
 			skipped = append(skipped, offSkip(serving[0].Ref().String()))
 		}
-		skipped = append(skipped, skipsFor(gates, serving[0].Ref().String())...)
+		skipped = append(skipped, SkipsFor(gates, serving[0].Ref().String())...)
 		if len(skipped) > 0 {
 			return allGated(role, skipped)
 		}
@@ -348,11 +364,11 @@ func resolveRoleBase(reg *roles.Registry, set *candidate.Set, gates []availabili
 	for _, r := range ranked {
 		if r.Off {
 			// An off entry is skipped exactly as a gated one is, but with
-			// the reason "off" (A2 §4.3).
+			// the reason "off".
 			skipped = append(skipped, offSkip(r.Candidate.Ref().String()))
 			continue
 		}
-		s := skipsFor(gates, r.Candidate.Ref().String())
+		s := SkipsFor(gates, r.Candidate.Ref().String())
 		if len(s) == 0 {
 			return Resolution{Candidate: r.Candidate, How: r.How, Position: r.Position, Skipped: skipped}, nil
 		}
@@ -364,12 +380,10 @@ func resolveRoleBase(reg *roles.Registry, set *candidate.Set, gates []availabili
 // offSkip is the skip recorded for an off entry: it renders as "<token> (off)".
 func offSkip(token string) Skip { return Skip{Token: token, Off: true} }
 
-// roleSectionText names the config section a file-mode role's candidates live
-// in, for error and view texts. A4-1a renamed the section to "config actors",
-// so both sources print that: a `roles` file is only ever the input of the A2
-// migration now. Legacy mode never reaches it; its texts name the order
-// directly.
-func roleSectionText(reg *roles.Registry) string {
+// RoleSectionText names the config section a file-mode role's candidates live
+// in, for error and view texts: "config actors". Legacy mode never reaches
+// it; its texts name the order directly.
+func RoleSectionText(reg *roles.Registry) string {
 	return "config actors"
 }
 
@@ -406,7 +420,7 @@ func allGated(role string, skipped []Skip) (Resolution, error) {
 			real = true
 		}
 	}
-	return Resolution{}, fmt.Errorf("every candidate serving %q is gated: %s; %s: %w", role, strings.Join(uniqStrings(texts), ", "), allGatedNext(waits, real, missing), ErrAllGated)
+	return Resolution{}, fmt.Errorf("every candidate serving %q is gated: %s; %s: %w", role, strings.Join(UniqStrings(texts), ", "), allGatedNext(waits, real, missing), ErrAllGated)
 }
 
 // allGatedNext is the way out of an all-gated pick. A missing skill is neither
@@ -429,8 +443,8 @@ func allGatedNext(waits, real, missing bool) string {
 }
 
 // identityName leaves every token as it is. It is what ExplainResolution
-// passes, so the stored KindPick note is byte-identical to its pre-A1 text
-// even though the rendering now takes a name mapping (A1 §4.4).
+// passes, so the stored KindPick note keeps every candidate token while the
+// rendering takes a name mapping.
 func identityName(token string) string {
 	return token
 }
@@ -465,7 +479,7 @@ func explainResolution(role string, res Resolution, name func(string) string) st
 		for _, s := range res.Skipped {
 			texts = append(texts, skipText(s, name))
 		}
-		out += "; skipped " + strings.Join(uniqStrings(texts), ", ")
+		out += "; skipped " + strings.Join(UniqStrings(texts), ", ")
 	}
 
 	if res.How == HowExplicit && len(res.Gates) > 0 {
@@ -473,11 +487,11 @@ func explainResolution(role string, res Resolution, name func(string) string) st
 		for _, g := range res.Gates {
 			texts = append(texts, availability.GateText(g.Kind, g.Until, g.Note))
 		}
-		out += "; gated: " + strings.Join(uniqStrings(texts), ", ")
+		out += "; gated: " + strings.Join(UniqStrings(texts), ", ")
 	}
 
-	// An explicitly named candidate that is off runs anyway; the note says so
-	// (A2 §4.3), printed with the gated candidate's own note.
+	// An explicitly named candidate that is off runs anyway; the note says so,
+	// printed with the gated candidate's own note.
 	if res.OffNote != "" {
 		out += "; " + res.OffNote
 	}
@@ -490,15 +504,15 @@ func explainResolution(role string, res Resolution, name func(string) string) st
 		out += "; account " + res.Account
 	}
 
-	return out + placementClause(res.Placement)
+	return out + PlacementClause(res.Placement)
 }
 
-// placementClause renders the placement and every skip as the clauses the pick
+// PlacementClause renders the placement and every skip as the clauses the pick
 // note and the bind line append: one "; placement <name> (<how>)" and one
 // "; skipped <name> (<reason>)" per entry passed over. A zero Placement renders
 // nothing, so a note written for an actor that names no placement is
 // byte-identical to its pre-placement text.
-func placementClause(p PlacementResolution) string {
+func PlacementClause(p PlacementResolution) string {
 	if p.How == "" {
 		return ""
 	}
@@ -513,25 +527,25 @@ func placementClause(p PlacementResolution) string {
 // ExplainResolution is the one line that says what was picked and why.
 // The pick log entry, the stderr line after a spawn, and `relevo config`
 // all render from it, so a pick the mastermind reads in `relevo log` is
-// word-for-word what bind printed (spec §1 principle 1). It names every
+// word-for-word what bind printed (spec 1 principle 1). It names every
 // candidate by its token: stored notes and their parsers are unchanged by A1.
 func ExplainResolution(role string, res Resolution) string {
 	return explainResolution(role, res, identityName)
 }
 
 // PickText is ExplainResolution for a line a human reads: every candidate is
-// named by its short name, or by its token when the set no longer holds it
-// (A1 §4.4). The stored KindPick note keeps ExplainResolution, so
+// named by its short name, or by its token when the set does not hold it.
+// The stored KindPick note keeps ExplainResolution, so
 // `relevo log` and the outcome and stats parsers read today's words.
 func PickText(role string, res Resolution, set *candidate.Set) string {
 	return explainResolution(role, res, set.NameOf)
 }
 
-// pickEntry is the log record of one resolution. Confirmed and bound for
+// PickEntry is the log record of one resolution. Confirmed and bound for
 // the mastermind so it is never mistaken for an undelivered payload; the
 // note is ExplainResolution, so `relevo log` reads exactly what bind
-// printed (spec §3.2, §4.4).
-func pickEntry(now time.Time, round int, role string, res Resolution) store.LogEntry {
+// printed (spec 3.2, 4.4).
+func PickEntry(now time.Time, round int, role string, res Resolution) store.LogEntry {
 	return store.LogEntry{
 		TS: now.UTC(), Round: round, Direction: store.DirToMasterMind,
 		Kind: store.KindPick, Confirmed: true, Note: ExplainResolution(role, res),
@@ -540,16 +554,16 @@ func pickEntry(now time.Time, round int, role string, res Resolution) store.LogE
 
 // CandidateKind is CandidateKindFor with the built-in builder's role, so its
 // existing callers and tests stay unchanged.
-func CandidateKind(rt Runtime, token string) string {
-	return CandidateKindFor(rt, token, "builder")
+func CandidateKind(d Deps, token string) string {
+	return CandidateKindFor(d, token, "builder")
 }
 
 // CandidateKindFor returns the harness kind a bind with this token would start
 // for a binding whose writer role is role, for advisory preflight only; every
 // error is reported as "" because the real resolution happens inside Bind and
 // says why.
-func CandidateKindFor(rt Runtime, token, role string) string {
-	res, err := resolveRole(rt.RoleRegistry(), rt.Candidates, availability.Gates(AvailabilityDeps(rt)), token, role)
+func CandidateKindFor(d Deps, token, role string) string {
+	res, err := ResolveRole(d.RoleRegistry(), d.Candidates, availability.Gates(d.Deps), token, role)
 	if err != nil {
 		return ""
 	}

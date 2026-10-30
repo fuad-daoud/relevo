@@ -1185,7 +1185,7 @@ func TestStatusLastPayloadSkipsBookkeepingKinds(t *testing.T) {
 	// NOTE (deviation from the plan text): the plan says this binding's Last
 	// should also be nil. It is not: seedBound's Bind call passes an explicit
 	// Candidate, and create() (bind.go) unconditionally logs a KindPick entry
-	// for HowExplicit resolutions, regardless of Send. That logging is
+	// for resolve.HowExplicit resolutions, regardless of Send. That logging is
 	// existing, out-of-scope behaviour this plan does not touch. LastPayload
 	// is unaffected -- KindPick is not a payload kind -- so the assertion
 	// that matters to this plan (LastPayload nil on an unsent binding) still
