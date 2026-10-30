@@ -12,16 +12,16 @@ func kindGate(token string, kind availability.Kind) availability.Gate {
 	return availability.Gate{Token: token, Kind: kind, Until: baseTime.Add(10 * time.Minute)}
 }
 
-func TestRoleRefusalsCause(t *testing.T) {
-	t.Parallel()
+type refusalCauseCase struct {
+	name      string
+	pol       policy.Policy
+	gates     []availability.Gate
+	wantCause RefusalCause
+}
 
+func refusalCauseCases() []refusalCauseCase {
 	order := orderOf("builder", testOpencodeRef, testClaudeRef, testAgyRef)
-	tests := []struct {
-		name      string
-		pol       policy.Policy
-		gates     []availability.Gate
-		wantCause RefusalCause
-	}{
+	return []refusalCauseCase{
 		{
 			name: "window on every serving token is a window",
 			pol:  order,
@@ -89,7 +89,12 @@ func TestRoleRefusalsCause(t *testing.T) {
 			wantCause: CauseGate,
 		},
 	}
-	for _, tt := range tests {
+}
+
+func TestRoleRefusalsCause(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range refusalCauseCases() {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			set := candidateSet(t, testCandidatesJSON)
