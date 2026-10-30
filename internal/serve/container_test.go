@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -128,16 +129,16 @@ func TestServedRunnerRunsInContainer(t *testing.T) {
 			t.Errorf("%s Credential = %+v, want nil", shapes[i].name, got.Credential)
 		}
 		for _, mount := range []string{root + ":" + root, repoMount} {
-			if !containsString(got.Argv, mount) {
+			if !slices.Contains(got.Argv, mount) {
 				t.Errorf("%s Argv = %v, want volume %q", shapes[i].name, got.Argv, mount)
 			}
 		}
 		if shapes[i].name == "round" {
-			if !containsString(got.Argv, "/homes/work:/homes/work") {
+			if !slices.Contains(got.Argv, "/homes/work:/homes/work") {
 				t.Errorf("%s Argv = %v, want volume %q", shapes[i].name, got.Argv, "/homes/work:/homes/work")
 			}
 		} else {
-			if containsString(got.Argv, "/homes/work:/homes/work") {
+			if slices.Contains(got.Argv, "/homes/work:/homes/work") {
 				t.Errorf("%s Argv = %v, want no harness home volume", shapes[i].name, got.Argv)
 			}
 		}

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -30,7 +31,7 @@ func TestReadAppendOnlyFromZero(t *testing.T) {
 	if startSeq != 0 {
 		t.Errorf("startSeq = %d, want 0", startSeq)
 	}
-	if got := linesToStrings(lines); !equalStrings(got, []string{"a", "b", "c"}) {
+	if got := linesToStrings(lines); !slices.Equal(got, []string{"a", "b", "c"}) {
 		t.Errorf("lines = %v, want [a b c]", got)
 	}
 	if cur.ByteOffset != int64(len("a\nb\nc\n")) {
@@ -70,7 +71,7 @@ func TestReadAppendOnlyResumes(t *testing.T) {
 	if startSeq != 3 {
 		t.Errorf("startSeq = %d, want 3", startSeq)
 	}
-	if got := linesToStrings(lines); !equalStrings(got, []string{"d", "e"}) {
+	if got := linesToStrings(lines); !slices.Equal(got, []string{"d", "e"}) {
 		t.Errorf("lines = %v, want [d e]", got)
 	}
 	if cur2.ByteOffset != int64(len("a\nb\nc\nd\ne\n")) {
@@ -88,7 +89,7 @@ func TestReadAppendOnlyLeavesPartialLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readAppendOnly: %v", err)
 	}
-	if got := linesToStrings(lines); !equalStrings(got, []string{"a", "b"}) {
+	if got := linesToStrings(lines); !slices.Equal(got, []string{"a", "b"}) {
 		t.Errorf("lines = %v, want [a b], the partial trailing line must wait", got)
 	}
 	if cur.ByteOffset != int64(len("a\nb\n")) {
@@ -136,7 +137,7 @@ func TestIngestCursorReset(t *testing.T) {
 	if startSeq != 0 {
 		t.Errorf("startSeq = %d, want 0 after a reset", startSeq)
 	}
-	if got := linesToStrings(lines); !equalStrings(got, []string{"x", "y", "z"}) {
+	if got := linesToStrings(lines); !slices.Equal(got, []string{"x", "y", "z"}) {
 		t.Errorf("lines = %v, want every line of the rewritten file", got)
 	}
 }

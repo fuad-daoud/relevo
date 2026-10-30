@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -48,7 +49,7 @@ func TestServedContainerRoundMountsTheOwnersGitShim(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	got := specAt(t, env.runner, 0)
-	if want := shim + ":" + shim + ":ro"; !containsString(got.Argv, want) {
+	if want := shim + ":" + shim + ":ro"; !slices.Contains(got.Argv, want) {
 		t.Errorf("Argv = %v, want volume %q", got.Argv, want)
 	}
 }

@@ -2,6 +2,8 @@ package ingest
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -673,7 +675,8 @@ func TestUpsertAnswerIfChanged(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("Artifact(answer) = (ok %v, err %v)", ok, err)
 	}
-	if a.Text != "second" || a.Bytes != int64(len("second")) || a.SHA256 != sha256Hex([]byte("second")) {
+	secondSum := sha256.Sum256([]byte("second"))
+	if a.Text != "second" || a.Bytes != int64(len("second")) || a.SHA256 != hex.EncodeToString(secondSum[:]) {
 		t.Errorf("answer artifact = %+v, want the last text with its size and hash", a)
 	}
 }

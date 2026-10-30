@@ -1,5 +1,7 @@
 package workflow
 
+import "slices"
+
 // ShippedOutputs returns the default outputs for a shipped agent, returning a
 // fresh map each call, and whether the agent is known.
 func ShippedOutputs(agent string) (Outputs, bool) {
@@ -54,7 +56,7 @@ func SuggestOutputs(name, value string, count bool) (Outputs, bool) {
 				return outs, true
 			}
 		}
-		if !count && out.Kind == OutputOneOf && containsStr(out.Values, value) {
+		if !count && out.Kind == OutputOneOf && slices.Contains(out.Values, value) {
 			return outs, true
 		}
 	}

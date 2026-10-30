@@ -2,6 +2,8 @@ package harness
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -270,7 +272,10 @@ func installBytes(env InstallEnv, opts InstallOptions, res InstallResult, homeRe
 // $HOME install does while recording its own manifest entry.
 func installAt(env InstallEnv, opts InstallOptions, res InstallResult, full, manifestKey string, shipped []byte, manifest map[string]string, shippedBeforeKey string) (InstallResult, bool, error) {
 	existing, rerr := env.ReadFile(full)
-	existingSHA := docSHA(existing)
+	existingSum := sha256.Sum256(existing)
+	existingSHA := hex.EncodeToString(existingSum[:])
+	shippedSum := sha256.Sum256(shipped)
+	shippedSHA := hex.EncodeToString(shippedSum[:])
 	switch {
 	case errors.Is(rerr, fs.ErrNotExist):
 		if opts.DryRun {
@@ -281,7 +286,7 @@ func installAt(env InstallEnv, opts InstallOptions, res InstallResult, full, man
 		if res.Outcome != OutcomeWrote {
 			return res, false, nil
 		}
-		return res, record(manifest, manifestKey, docSHA(shipped)), nil
+		return res, record(manifest, manifestKey, shippedSHA), nil
 	case rerr == nil && DocEqual(shipped, existing):
 		res.Outcome = OutcomeKeptIdentical
 		return res, record(manifest, manifestKey, existingSHA), nil
@@ -297,12 +302,12 @@ func installAt(env InstallEnv, opts InstallOptions, res InstallResult, full, man
 		if res.Outcome != OutcomeUpdated {
 			return res, false, nil
 		}
-		return res, record(manifest, manifestKey, docSHA(shipped)), nil
+		return res, record(manifest, manifestKey, shippedSHA), nil
 	default:
 		// The manifest holds what relevo last wrote here. A record that is not
 		// the definition relevo ships now means the user's edit sits on an
 		// older copy, which a reset replaces with the newer one.
-		res.NewerShipped = manifest[manifestKey] != "" && manifest[manifestKey] != docSHA(shipped)
+		res.NewerShipped = manifest[manifestKey] != "" && manifest[manifestKey] != shippedSHA
 		if !opts.Force {
 			res.Outcome = OutcomeKeptDiffers
 			return res, false, nil
@@ -315,7 +320,7 @@ func installAt(env InstallEnv, opts InstallOptions, res InstallResult, full, man
 		if res.Outcome != OutcomeOverwrote {
 			return res, false, nil
 		}
-		return res, record(manifest, manifestKey, docSHA(shipped)), nil
+		return res, record(manifest, manifestKey, shippedSHA), nil
 	}
 }
 

@@ -1,6 +1,8 @@
 package board
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -101,8 +103,10 @@ func TestHTMLBoardServesBytes(t *testing.T) {
 	if doc.IsNew || doc.Html != body {
 		t.Errorf("doc = %+v, want the bytes and not isNew", doc)
 	}
-	if doc.Etag != Etag([]byte(body)) {
-		t.Errorf("etag = %q, want %q", doc.Etag, Etag([]byte(body)))
+	sum := sha256.Sum256([]byte(body))
+	want := hex.EncodeToString(sum[:])
+	if doc.Etag != want {
+		t.Errorf("etag = %q, want %q", doc.Etag, want)
 	}
 	if len(doc.External) != 0 {
 		t.Errorf("external = %v, want none", doc.External)

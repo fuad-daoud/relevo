@@ -1,8 +1,6 @@
 package harness
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,13 +11,6 @@ import (
 
 // manifestKey is the kv row the role manifest lives in.
 const manifestKey = "agents-manifest"
-
-// docSHA is the manifest value for one definition: the sha256 of the raw bytes,
-// never of the DocEqual-normalised form, so it records what is on disk.
-func docSHA(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
 
 // ReadManifest loads the role manifest from kv. An absent row is an empty map
 // and no error; malformed JSON is an error, and the caller decides what to do

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -71,7 +72,7 @@ func sortedNames(names []string) []string {
 }
 
 func sameNames(got, want []string) bool {
-	return equalStrings(sortedNames(got), sortedNames(want))
+	return slices.Equal(sortedNames(got), sortedNames(want))
 }
 
 func statuslineNames(rep view.Report, now time.Time) []string {

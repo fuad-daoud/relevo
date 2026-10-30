@@ -5,7 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
@@ -128,7 +129,7 @@ func (e *Exporter) docEntries(doc SharedDoc, items map[string]json.RawMessage, s
 	clock := NewHybridClock(e.db.LocalOrSelf())
 	var entries []Entry
 	var writes []db.DocExportWrite
-	for _, key := range sortedKeys(items) {
+	for _, key := range slices.Sorted(maps.Keys(items)) {
 		digest, err := ItemDigest(items[key])
 		if err != nil {
 			return nil, nil, err
@@ -148,7 +149,7 @@ func (e *Exporter) docEntries(doc SharedDoc, items map[string]json.RawMessage, s
 		entries = append(entries, entry)
 		writes = append(writes, db.DocExportWrite{Key: key, Origin: e.origin, Stamp: stamp.String(), Digest: digest})
 	}
-	for _, key := range sortedKeys(state) {
+	for _, key := range slices.Sorted(maps.Keys(state)) {
 		if _, held := items[key]; held {
 			continue
 		}
@@ -216,13 +217,4 @@ func (e *Exporter) firstStamp(clock *HybridClock, doc SharedDoc, key string) (St
 		}
 	}
 	return clock.Now()
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }

@@ -1,6 +1,8 @@
 package harness
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 )
@@ -40,7 +42,8 @@ func TestShippedBeforeCoversEveryWorkingTreeDefinition(t *testing.T) {
 				t.Fatalf("AgentDoc(%s, %s): %v", r.Name, h.Kind, err)
 			}
 			base := agentDocBase(r, h.Kind)
-			if !ShippedBefore(base, docSHA(doc)) {
+			docSum := sha256.Sum256(doc)
+			if !ShippedBefore(base, hex.EncodeToString(docSum[:])) {
 				t.Errorf("ShippedBefore(%s, sha of the shipped %s/%s definition) = false, want true",
 					base, h.Kind, r.Name)
 			}

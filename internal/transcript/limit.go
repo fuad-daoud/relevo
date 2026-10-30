@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 )
 
@@ -129,7 +130,7 @@ func TransportLines(kind string, line []byte) []string {
 func claudeLimitLines(obj map[string]any) []string {
 	switch str(obj["type"]) {
 	case "error":
-		return nonEmptyLine(firstNonEmpty(str(obj["message"]), str(asMap(obj["error"])["message"])))
+		return nonEmptyLine(cmp.Or(str(obj["message"]), str(asMap(obj["error"])["message"])))
 	case "result":
 		if isErr, _ := obj["is_error"].(bool); isErr {
 			if r := str(obj["result"]); r != "" {

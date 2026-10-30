@@ -3,6 +3,8 @@ package blobstore
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -79,7 +81,8 @@ func (s *S3Store) Put(ctx context.Context, key string, body io.Reader, size int6
 	if err != nil {
 		return fmt.Errorf("blobstore: s3 put %s: %w", key, err)
 	}
-	sum := sha256Hex(buf)
+	bufSum := sha256.Sum256(buf)
+	sum := hex.EncodeToString(bufSum[:])
 	req, err := s.newRequest(ctx, http.MethodPut, key, nil)
 	if err != nil {
 		return err

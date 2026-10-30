@@ -2,6 +2,8 @@ package ingest
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -236,18 +238,6 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 // mapGitFacts answers RepoFacts per directory, erroring for any dir it was not
 // told about -- standing in for a gc'd worktree.
 type mapGitFacts map[string]struct{ originURL, commonDir string }
@@ -345,13 +335,14 @@ func seedRecordAt(t *testing.T, d *db.DB, name, builderKind string, at time.Time
 
 func putArtifact(t *testing.T, d *db.DB, roundID, kind, text string) db.Artifact {
 	t.Helper()
+	textSum := sha256.Sum256([]byte(text))
 	a := db.Artifact{
 		ID:         db.NewID(),
 		RoundID:    roundID,
 		Kind:       kind,
 		Text:       text,
 		Bytes:      int64(len(text)),
-		SHA256:     sha256Hex([]byte(text)),
+		SHA256:     hex.EncodeToString(textSum[:]),
 		CapturedAt: time.Now(),
 	}
 	if err := d.UpsertArtifact(a); err != nil {

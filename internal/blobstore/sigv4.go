@@ -113,7 +113,8 @@ func signRequest(req *http.Request, keyID, secret, region, service, payloadHash 
 	names := signedHeaders(req)
 	canonical := canonicalRequest(req, payloadHash, names)
 	scope := date + "/" + region + "/" + service + "/aws4_request"
-	stringToSign := sigV4Algorithm + "\n" + stamp + "\n" + scope + "\n" + sha256Hex([]byte(canonical))
+	canonicalSum := sha256.Sum256([]byte(canonical))
+	stringToSign := sigV4Algorithm + "\n" + stamp + "\n" + scope + "\n" + hex.EncodeToString(canonicalSum[:])
 
 	key := signingKey(secret, date, region, service)
 	signature := hex.EncodeToString(hmacSHA256(key, []byte(stringToSign)))
@@ -138,11 +139,6 @@ func hmacSHA256(key, msg []byte) []byte {
 	h := hmac.New(sha256.New, key)
 	h.Write(msg)
 	return h.Sum(nil)
-}
-
-func sha256Hex(b []byte) string {
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
 }
 
 // uriEscape escapes everything outside the unreserved set, which is what SigV4

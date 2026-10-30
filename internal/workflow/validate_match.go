@@ -1,11 +1,15 @@
 package workflow
 
-import "strings"
+import (
+	"maps"
+	"slices"
+	"strings"
+)
 
 // checkMatches is rule 3: every match comes from the step's kind, and every
 // declared value is covered, or there is an else.
 func (v *validator) checkMatches() {
-	for _, id := range sortedKeys(v.def.Steps) {
+	for _, id := range slices.Sorted(maps.Keys(v.def.Steps)) {
 		step := v.def.Steps[id]
 		if len(step.Kinds()) != 1 {
 			continue
@@ -34,7 +38,7 @@ func (v *validator) checkRunMatches(id string, step Step) {
 	}
 	actorName := RenderParams(v.def, step.Run)
 	seen := make(map[string]bool)
-	for _, key := range sortedKeys(step.On) {
+	for _, key := range slices.Sorted(maps.Keys(step.On)) {
 		v.checkRunMatch(id, key, actorName, actor.Outputs, seen)
 	}
 	v.checkRunCoverage(id, step, actor.Outputs)
@@ -72,7 +76,7 @@ func (v *validator) checkOutcomeMatch(id, key, name, value, actorName string, de
 		v.addOutcomeHint(id, actorName, name, value, false, seen)
 	case out.Kind == OutputArtifact:
 		v.add(id, RuleMatch, "match %q branches on artifact %q", key, name)
-	case out.Kind == OutputOneOf && !containsStr(out.Values, value):
+	case out.Kind == OutputOneOf && !slices.Contains(out.Values, value):
 		v.add(id, RuleMatch, "match %q is not a declared value of %q", key, name)
 	case out.Kind == OutputCount && value != "0":
 		v.add(id, RuleMatch, "count match %q is only =0 or >0", key)
@@ -156,7 +160,7 @@ func (v *validator) checkEnumMatches(id string, step Step, resultKind, a, b stri
 		valid[resultKind+"="+a] = true
 		valid[resultKind+"="+b] = true
 	}
-	for _, key := range sortedKeys(on) {
+	for _, key := range slices.Sorted(maps.Keys(on)) {
 		if !valid[key] {
 			v.add(id, RuleMatch, "match %q is not valid for this step", key)
 		}
@@ -198,7 +202,7 @@ func (v *validator) checkForkMatches(id string, step Step) {
 		"result=halted":   true,
 		"else":            true,
 	}
-	for _, key := range sortedKeys(on) {
+	for _, key := range slices.Sorted(maps.Keys(on)) {
 		if !valid[key] {
 			v.add(id, RuleMatch, "match %q is not valid for this step", key)
 		}

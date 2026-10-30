@@ -1,6 +1,8 @@
 package workflow
 
 import (
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -62,7 +64,7 @@ func (a Awaiting) matchesChild(e Event) bool {
 	if a.Step != e.Step || a.Merging {
 		return false
 	}
-	if !containsStr(a.Children, e.Child) {
+	if !slices.Contains(a.Children, e.Child) {
 		return false
 	}
 	if a.Ended != nil {
@@ -141,7 +143,7 @@ func (s State) redCheckGate(def Definition, e Event, edge string) (string, bool)
 // phase's check, or by nothing.
 func gatingRedCheck(def Definition, s State, at string) (string, bool) {
 	edges := stepEdges(def)
-	for _, id := range sortedKeys(def.Steps) {
+	for _, id := range slices.Sorted(maps.Keys(def.Steps)) {
 		if def.Steps[id].Check == "" {
 			continue
 		}
@@ -227,7 +229,7 @@ func doneUnmatchedReason(e Event) string {
 // outcomesText renders a close's outcomes as sorted key=value pairs.
 func outcomesText(outcomes map[string]string) string {
 	pairs := make([]string, 0, len(outcomes))
-	for _, key := range sortedKeys(outcomes) {
+	for _, key := range slices.Sorted(maps.Keys(outcomes)) {
 		pairs = append(pairs, key+"="+outcomes[key])
 	}
 	return strings.Join(pairs, ", ")
@@ -269,7 +271,7 @@ func edgeName(key string, ok bool) string {
 // matchValue returns the first sorted edge name=value whose value the close
 // carries. An =0 edge is a count arm and is left to matchCount.
 func matchValue(on map[string]Target, outcomes map[string]string) (string, Target, bool) {
-	for _, key := range sortedKeys(on) {
+	for _, key := range slices.Sorted(maps.Keys(on)) {
 		name, value, ok := cutEq(key)
 		if !ok || name == "status" || value == "0" {
 			continue
@@ -284,7 +286,7 @@ func matchValue(on map[string]Target, outcomes map[string]string) (string, Targe
 // matchCount returns the count arm a close's outcome takes: name>0 for a
 // positive count, or name=0 for a zero one.
 func matchCount(on map[string]Target, outcomes map[string]string) (string, Target, bool) {
-	for _, key := range sortedKeys(on) {
+	for _, key := range slices.Sorted(maps.Keys(on)) {
 		if name, ok := strings.CutSuffix(key, ">0"); ok {
 			if n, err := strconv.Atoi(outcomes[name]); err == nil && n > 0 {
 				return key, on[key], true

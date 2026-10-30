@@ -1,6 +1,10 @@
 package workflow
 
-import "testing"
+import (
+	"maps"
+	"slices"
+	"testing"
+)
 
 func TestReachableFollowsOnAndBudgetThen(t *testing.T) {
 	def := mustParse(t, `
@@ -15,11 +19,11 @@ steps:
 	reach := reachable(def, "a")
 	for _, id := range []string{"a", "b", "c"} {
 		if !reach[id] {
-			t.Fatalf("reachable = %v, want %q", sortedKeys(reach), id)
+			t.Fatalf("reachable = %v, want %q", slices.Sorted(maps.Keys(reach)), id)
 		}
 	}
 	if reach["d"] {
-		t.Fatalf("reachable = %v, want d excluded", sortedKeys(reach))
+		t.Fatalf("reachable = %v, want d excluded", slices.Sorted(maps.Keys(reach)))
 	}
 }
 

@@ -1,6 +1,8 @@
 package board
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -215,8 +217,10 @@ func TestLoadHTMLReturnsBytesAndEtag(t *testing.T) {
 	if err != nil || isNew {
 		t.Fatalf("LoadHTML = %v, %v; want no error, not new", isNew, err)
 	}
-	if string(data) != string(body) || etag != Etag(body) {
-		t.Errorf("LoadHTML = %q/%q, want %q/%q", data, etag, body, Etag(body))
+	sum := sha256.Sum256(body)
+	want := hex.EncodeToString(sum[:])
+	if string(data) != string(body) || etag != want {
+		t.Errorf("LoadHTML = %q/%q, want %q/%q", data, etag, body, want)
 	}
 }
 

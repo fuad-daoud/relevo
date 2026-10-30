@@ -2,6 +2,8 @@ package board
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -124,7 +126,8 @@ func TestPutReturnsNewEtag(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode etag: %v", err)
 	}
-	if want := Etag([]byte(newScene)); out.Etag != want {
+	sum := sha256.Sum256([]byte(newScene))
+	if want := hex.EncodeToString(sum[:]); out.Etag != want {
 		t.Errorf("etag = %q, want %q", out.Etag, want)
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(scene), "board.svg")); err != nil {

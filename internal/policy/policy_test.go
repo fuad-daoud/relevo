@@ -770,7 +770,7 @@ func TestMaxBuildersOrDefault(t *testing.T) {
 		want    int
 		wantErr bool
 	}{
-		{name: "absent defaults to max(1, NumCPU-1)", body: `{}`, want: maxInt(1, runtime.NumCPU()-1)},
+		{name: "absent defaults to max(1, NumCPU-1)", body: `{}`, want: max(1, runtime.NumCPU()-1)},
 		{name: "one is ok", body: `{"serve":{"max_builders":1}}`, want: 1},
 		{name: "zero is an error", body: `{"serve":{"max_builders":0}}`, wantErr: true},
 		{name: "negative is an error", body: `{"serve":{"max_builders":-1}}`, wantErr: true},
@@ -800,16 +800,9 @@ func TestMaxBuildersOrDefault(t *testing.T) {
 		})
 	}
 
-	if got := (Policy{}).MaxBuildersOrDefault(); got != maxInt(1, runtime.NumCPU()-1) {
-		t.Fatalf("Policy{}.MaxBuildersOrDefault() = %d, want %d", got, maxInt(1, runtime.NumCPU()-1))
+	if got := (Policy{}).MaxBuildersOrDefault(); got != max(1, runtime.NumCPU()-1) {
+		t.Fatalf("Policy{}.MaxBuildersOrDefault() = %d, want %d", got, max(1, runtime.NumCPU()-1))
 	}
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // TestServeIsolationValidation pins the two serve isolation keys: a known mode

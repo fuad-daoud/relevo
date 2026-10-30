@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -143,19 +144,10 @@ func TestServedRunnerRunsAsTenant(t *testing.T) {
 		}
 	}
 	for _, name := range append(append([]string(nil), isolate.InheritedHomeVars...), "HOME", "USER", "LOGNAME") {
-		if !containsString(got.DenyEnv, name) {
+		if !slices.Contains(got.DenyEnv, name) {
 			t.Errorf("DenyEnv = %v, want it to deny %s", got.DenyEnv, name)
 		}
 	}
-}
-
-func containsString(s []string, want string) bool {
-	for _, e := range s {
-		if e == want {
-			return true
-		}
-	}
-	return false
 }
 
 // TestUserModeOwnerGitRunsAsTenant pins that runtimeAt gives the owner its own

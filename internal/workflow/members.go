@@ -1,6 +1,10 @@
 package workflow
 
-import "sort"
+import (
+	"maps"
+	"slices"
+	"sort"
+)
 
 // UsedActors returns the actors a workflow's run steps name, deduped and
 // sorted. It walks the graph from start and, at a when step, follows only the
@@ -52,7 +56,7 @@ func nextSteps(def Definition, step Step) []string {
 		return stepTarget(t)
 	}
 	var out []string
-	for _, key := range sortedKeys(step.On) {
+	for _, key := range slices.Sorted(maps.Keys(step.On)) {
 		out = append(out, stepTarget(step.On[key])...)
 	}
 	if step.Budget != nil {

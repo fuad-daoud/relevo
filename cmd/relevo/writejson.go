@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/delivery"
@@ -126,7 +127,7 @@ func doneDocOf(name string, r relevo.DoneResult) DoneDoc {
 	return DoneDoc{
 		Name:       name,
 		Released:   r.WorktreeRemoved != "",
-		Worktree:   firstNonEmpty(r.WorktreeRemoved, r.WorktreeKept, r.WorktreeGone),
+		Worktree:   cmp.Or(r.WorktreeRemoved, r.WorktreeKept, r.WorktreeGone),
 		Branch:     r.Branch,
 		KeptReason: r.KeptReason,
 	}
@@ -158,7 +159,7 @@ func unbindDocOf(name string, res relevo.UnbindResult) UnbindDoc {
 		Name:           name,
 		Released:       res.WorktreeRemoved != "",
 		Archived:       res.Archived,
-		Worktree:       firstNonEmpty(res.WorktreeRemoved, res.WorktreeKept, res.WorktreeGone),
+		Worktree:       cmp.Or(res.WorktreeRemoved, res.WorktreeKept, res.WorktreeGone),
 		KeptReason:     res.KeptReason,
 		ProcessStopped: res.ProcessStopped,
 	}
@@ -266,16 +267,6 @@ func tierOrHarness(tier string) string {
 		return "harness"
 	}
 	return tier
-}
-
-// firstNonEmpty returns the first non-empty string, or "" when every one is.
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 // ServiceDoc is `relevo service install|uninstall --json`: which verb ran, the

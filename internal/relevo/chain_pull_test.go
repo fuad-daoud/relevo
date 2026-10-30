@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -725,22 +726,12 @@ func TestChainPullAddedMemberGetsAMemberRow(t *testing.T) {
 	}
 
 	row := chainStoredRow(t, rt, "shop")
-	if got := chainReadMembers(rt.Store, row); !containsString(got, "shop-sec") {
+	if got := chainReadMembers(rt.Store, row); !slices.Contains(got, "shop-sec") {
 		t.Errorf("chainReadMembers = %v, want shop-sec", got)
 	}
-	if got := chainEndMembers(rt.Store, row); !containsString(got, "shop-sec") {
+	if got := chainEndMembers(rt.Store, row); !slices.Contains(got, "shop-sec") {
 		t.Errorf("chainEndMembers = %v, want shop-sec", got)
 	}
-}
-
-// containsString reports whether a string list holds want.
-func containsString(list []string, want string) bool {
-	for _, s := range list {
-		if s == want {
-			return true
-		}
-	}
-	return false
 }
 
 // TestChainPullHaltsAChainGoneFromTheServer pins the missing chain: the mirror
