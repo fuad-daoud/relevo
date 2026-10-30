@@ -98,7 +98,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 				return AddResult{}, fmt.Errorf("head commit: %w", err)
 			}
 		}
-		if !is40Hex(base) {
+		if !remote.Is40Hex(base) {
 			sha, ok, err := rt.Git.RefSHA(ctx, opts.Repo, base)
 			if err != nil {
 				return AddResult{}, fmt.Errorf("resolve base %s: %w", base, err)
@@ -129,7 +129,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		return AddResult{}, fmt.Errorf("git identity for %s: %w", opts.Repo, err)
 	}
 	if authorName == "" || authorEmail == "" {
-		return AddResult{}, fmt.Errorf("%w for %s: a remote builder commits as you; set git config user.name and git config user.email (in the repo or --global)", ErrNoGitIdentity, opts.Repo)
+		return AddResult{}, fmt.Errorf("%w for %s: a remote builder commits as you; set git config user.name and git config user.email (in the repo or --global)", remote.ErrNoGitIdentity, opts.Repo)
 	}
 
 	// 4. candidate := opts.Candidate; if non-empty, rt.Remote.Candidates(server) must list it, by canonical
@@ -381,7 +381,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		// The server's copy of this binding: its installation and its record
 		// id, as the create view reported them. A server that does not
 		// advertise FeatureOrigin sends neither, and the link is then nil.
-		Link: remoteLink(view),
+		Link: remote.Link(view),
 		// RecordID is the id minted above: the server was told the same id, so
 		// the client copy the server recorded is this row.
 		RecordID: clientBindingID,
@@ -417,16 +417,6 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		Base:       base,
 		Resolution: res,
 	}, nil
-}
-
-// remoteLink is the client row's link to the server's copy, from a create
-// view: nil when the view carries no installation and no record id, which is
-// what a server that does not advertise FeatureOrigin sends.
-func remoteLink(view remote.BindingView) *store.RemoteLink {
-	if view.Installation == "" && view.ID == "" {
-		return nil
-	}
-	return &store.RemoteLink{Installation: view.Installation, ID: view.ID}
 }
 
 // remotePickEntry is addRemote's and sendRemote's pick log entry: the same

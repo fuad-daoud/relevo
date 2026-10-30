@@ -396,7 +396,7 @@ func fetchCatchUpReport(ctx context.Context, rt Runtime, b store.Binding, view r
 	server, name, n := b.Builder.Server, b.Name, view.ClosedRound
 	rc, err := rt.Remote.RoundFile(ctx, server, name, n, "report")
 	switch {
-	case is404(err):
+	case remote.Is404(err):
 		cf.ReportMissing = true
 		return view.Stopped != ""
 	case err != nil:
@@ -423,7 +423,7 @@ func fetchCatchUpDiff(ctx context.Context, rt Runtime, b store.Binding, view rem
 	server, name, n := b.Builder.Server, b.Name, view.ClosedRound
 	rc, err := rt.Remote.RoundFile(ctx, server, name, n, "diff")
 	switch {
-	case is404(err):
+	case remote.Is404(err):
 		return true
 	case err != nil:
 		slog.Warn("fetch diff failed", "server", server, "name", name, "round", n, "err", err)
@@ -454,7 +454,7 @@ func fetchCatchUpLog(ctx context.Context, rt Runtime, b store.Binding, view remo
 	server, name, n := b.Builder.Server, b.Name, view.ClosedRound
 	rc, err := rt.Remote.RoundFile(ctx, server, name, n, "log")
 	switch {
-	case is404(err):
+	case remote.Is404(err):
 		return true
 	case err != nil:
 		slog.Warn("fetch log failed", "server", server, "name", name, "round", n, "err", err)
@@ -486,7 +486,7 @@ func fetchCatchUpStream(ctx context.Context, rt Runtime, b store.Binding, view r
 	server, name, n := b.Builder.Server, b.Name, view.ClosedRound
 	rc, err := rt.Remote.RoundFile(ctx, server, name, n, "stream")
 	switch {
-	case is404(err):
+	case remote.Is404(err):
 		return true
 	case err != nil:
 		slog.Warn("fetch stream failed", "server", server, "name", name, "round", n, "err", err)
@@ -516,7 +516,7 @@ func fetchCatchUpGate(ctx context.Context, rt Runtime, b store.Binding, view rem
 	server, name, n := b.Builder.Server, b.Name, view.ClosedRound
 	rc, err := rt.Remote.RoundFile(ctx, server, name, n, "gate")
 	switch {
-	case is404(err):
+	case remote.Is404(err):
 		return true
 	case err != nil:
 		slog.Warn("fetch gate failed", "server", server, "name", name, "round", n, "err", err)

@@ -2,7 +2,6 @@ package relevo
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -11,17 +10,9 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
-
-// is404 reports whether err is the server's answer that a round file does not
-// exist, which every read in the catch-up takes as "nothing to fetch".
-func is404(err error) bool {
-	var httpErr *client.HTTPError
-	return errors.As(err, &httpErr) && httpErr.Status == 404
-}
 
 // downloadTemp writes r into a new temp file beside final and returns its
 // path, leaving the rename into place to the apply half. A discarded fetch
@@ -60,7 +51,7 @@ func validArtifactRel(rel string) bool {
 	if rel == "" || strings.HasPrefix(rel, "/") || filepath.IsAbs(rel) || strings.Contains(rel, "\\") {
 		return false
 	}
-	return !containsDotDotRel(rel)
+	return !remote.ContainsDotDotRel(rel)
 }
 
 // firstBadArtifactRel returns the index of the first rel the client refuses,
