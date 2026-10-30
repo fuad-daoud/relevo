@@ -143,7 +143,7 @@ func startRepairRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bin
 
 	text := repairPlan(b, failedRound, rt.Store.PromptPath(b.Name, failedRound), rec.LogPath, tailLines(rt.Store.ReadFile, rec.LogPath, repairTailLines))
 	planPath := rt.Store.PromptPath(b.Name, b.Round)
-	if err := stagePlan(planPath, []byte(text)); err != nil {
+	if err := StagePlan(planPath, []byte(text)); err != nil {
 		return haltAndSettle(ctx, rt, tx, b, fmt.Sprintf("%s: repair round %d could not stage its plan: %v", b.Name, b.Round, err))
 	}
 

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -89,13 +90,13 @@ func chainPullPromptEntry(rt Runtime, tx *store.Tx, b store.Binding, r int, body
 		return nil
 	}
 	path := rt.Store.PromptPath(b.Name, r)
-	if err := stagePlan(path, body); err != nil {
+	if err := StagePlan(path, body); err != nil {
 		return fmt.Errorf("%s: stage prompt at %s: %w", b.Name, path, err)
 	}
 	return tx.AppendLog(b.Name, store.LogEntry{
 		TS: chainPullStart(rt, startedAt), Round: r, Direction: store.DirToBuilder,
 		Kind: store.KindPrompt, Path: path, Confirmed: true,
-		Note: chainStepNote(tx, b.Name),
+		Note: chain.StepNote(tx, b.Name),
 	})
 }
 

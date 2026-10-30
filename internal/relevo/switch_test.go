@@ -833,7 +833,7 @@ func staleHaltedBinding(t *testing.T, rt Runtime, b store.Binding) store.Binding
 // revives the binding, halts it again in the same round, and requires exactly
 // one NEW halt entry with the new reason.
 //
-// Mutation check: delete any of the three clearHaltFields calls and that
+// Mutation check: delete any of the three ClearHaltFields calls and that
 // subcase sees zero new entries and the stale Halt.
 func TestRevivePathsClearAStaleHalt(t *testing.T) {
 	t.Parallel()

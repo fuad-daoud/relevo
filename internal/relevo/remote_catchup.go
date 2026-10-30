@@ -212,7 +212,7 @@ func clearAbsorbHalt(b store.Binding) store.Binding {
 	}
 	b.RemoteAbsorbFailures = 0
 	b.RemoteBundleFailures = 0
-	b = clearHaltFields(b)
+	b = ClearHaltFields(b)
 	b.State = store.StateActive
 	return b
 }

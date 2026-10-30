@@ -102,7 +102,7 @@ func clearUnreachableHalt(state remote.RoundState, b store.Binding) store.Bindin
 	}
 	slog.Info("remote halt cleared: the server's view answers the episode",
 		"binding", b.Name, "round", b.Round, "kind", b.RemoteHaltKind, "reason", b.Halt)
-	b = clearHaltFields(b)
+	b = ClearHaltFields(b)
 	b.State = store.StateActive
 	return b
 }

@@ -43,6 +43,7 @@ func TestAPlacedChainBuilderCarriesTheSubdirectoryAndItsLocalReadersDoNot(t *tes
 
 	fr := chainSubdirFake()
 	rt, fg, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	fg.showPrefixResult = "src/api/"
 	res := startedChain(t, rt, ChainOptions{})
 

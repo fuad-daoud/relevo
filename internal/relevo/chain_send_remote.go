@@ -41,7 +41,7 @@ func chainSendMember(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bind
 // the stage failure the resume's halt names.
 func chainStageRemote(ctx context.Context, rt Runtime, b store.Binding, text string) (store.Binding, error) {
 	path := rt.Store.PromptPath(b.Name, b.Round)
-	if err := stagePlan(path, []byte(text)); err != nil {
+	if err := StagePlan(path, []byte(text)); err != nil {
 		return b, fmt.Errorf("%s: stage plan at %s: %w", b.Name, path, err)
 	}
 	head, err := chainBranchHead(ctx, rt, b)
@@ -80,8 +80,8 @@ func chainBranchHead(ctx context.Context, rt Runtime, b store.Binding) (string, 
 // staged for a remote member: plan 1, every later plan, corrections and
 // repairs alike. It walks the running chains and, for one whose awaiting
 // member is remote, has no prompt entry for that round and has a staged prompt
-// file, ships the file in one remoteShip and then records the member's round
-// under a short lock.
+// file, ships the file through the Ship hook and then records the member's
+// round under a short lock.
 //
 // A member in NEEDS YOU, a missing staged file and a non-remote member are
 // skipped silently. A second concurrent or repeated run is a no-op (the entry
@@ -139,13 +139,13 @@ func chainSendPending(ctx context.Context, rt Runtime) error {
 	return nil
 }
 
-// chainRemoteSend ships one staged round to a chain's remote member: remoteShip
-// outside any lock, then the chain-aware record half under a short lock that
-// re-checks the state (the chain is still running and still awaiting this
+// chainRemoteSend ships one staged round to a chain's remote member: the Ship
+// half outside any lock, then the chain-aware record half under a short lock
+// that re-checks the state (the chain is still running and still awaiting this
 // round, and no prompt entry exists yet). A re-check that fails is a no-op.
 func chainRemoteSend(ctx context.Context, rt Runtime, b store.Binding, round int, body []byte) error {
 	verify := false
-	ship, err := remoteShip(ctx, rt, b, body, "", "", false, &verify)
+	view, outRef, heads, err := rt.RemoteSend.Ship(ctx, rt, b, body, "", "", false, &verify)
 	if err != nil {
 		return err
 	}
@@ -171,7 +171,7 @@ func chainRemoteSend(ctx context.Context, rt Runtime, b store.Binding, round int
 		if HasPromptEntry(entries, round) {
 			return nil
 		}
-		_, _, err = remoteRecord(rt, tx, b, ship, body, "", true)
+		_, _, err = rt.RemoteSend.Record(rt, tx, b, view, outRef, heads, body, "", true)
 		return err
 	})
 }

@@ -352,6 +352,7 @@ func TestChainStartTakesTheRepoGate(t *testing.T) {
 
 	fr := chainCheckFake()
 	rt, _, _ := chainRemoteRuntime(t, fr)
+	stubRemoteSend(&rt)
 	id, err := remote.RepoID(reposRootCommit)
 	if err != nil {
 		t.Fatalf("remote.RepoID: %v", err)

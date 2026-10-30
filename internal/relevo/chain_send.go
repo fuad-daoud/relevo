@@ -76,7 +76,7 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 	planPath := rt.Store.PromptPath(name, cur.Round)
 	reportPath := rt.Store.ReportPath(name, cur.Round)
 	donePath := rt.Store.DonePath(name, cur.Round)
-	if err := stagePlan(planPath, []byte(text)); err != nil {
+	if err := StagePlan(planPath, []byte(text)); err != nil {
 		return b, fmt.Errorf("%s: stage plan at %s: %w", name, planPath, err)
 	}
 
@@ -128,7 +128,7 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		Direction: store.DirToBuilder, Kind: store.KindPrompt,
 		Path: planPath, Confirmed: true,
 		Tier: string(resolve.EffectiveTier(cur)),
-		Note: chainStepNote(tx, name),
+		Note: chain.StepNote(tx, name),
 	})
 
 	cur.RoundBaselineTree = baseline
@@ -149,19 +149,6 @@ func sendChainRound(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bindi
 		return b, fmt.Errorf("%s: %w", name, err)
 	}
 	return cur, nil
-}
-
-// chainStepNote names the chain step a member round runs, for its prompt
-// entry's note: the part the member fills. A binding that is not a chain
-// member reads as the plain word.
-func chainStepNote(tx *store.Tx, name string) string {
-	c, err := tx.ChainByMember(name)
-	if err == nil {
-		if part := chain.PartOf(c, name); part != "" {
-			return "chain " + part
-		}
-	}
-	return "chain"
 }
 
 // chainMemberBlock is the block a chain member's final message must end with

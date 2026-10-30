@@ -31,6 +31,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/setup"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
+	"github.com/fuad-daoud/relevo/internal/uplink"
 )
 
 // hooksRunLog is the hook run log over d's machine-local file: the kv row every
@@ -459,6 +460,13 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		rt.MasterMinds = reg
 	}
 	rt.CloseServedRound = serve.CloseServedRound
+	// The remote send runs above the engine: one wiring point here covers the
+	// CLI and the daemon, which share buildRuntime.
+	rt.RemoteSend = relevo.RemoteSendDeps{
+		Send:   uplink.SendRemote,
+		Ship:   uplink.Ship,
+		Record: uplink.Record,
+	}
 	return rt, nil
 }
 
