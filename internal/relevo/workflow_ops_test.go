@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/config"
+	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/workflow"
 )
 
@@ -39,6 +40,18 @@ func writeOpsWorkflow(t *testing.T, body string) string {
 		t.Fatalf("write workflow: %v", err)
 	}
 	return path
+}
+
+// workflowStore is a config store over a fresh database, so a workflow-ops
+// test runs the real section bookkeeping without a harness or a real config.
+func workflowStore(t *testing.T) *config.Store {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return config.Open(d)
 }
 
 func opsRuntime(t *testing.T) Runtime {

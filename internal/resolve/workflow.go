@@ -1,4 +1,4 @@
-package relevo
+package resolve
 
 import (
 	"fmt"
@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
 	"github.com/fuad-daoud/relevo/internal/refusal"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -16,7 +17,7 @@ import (
 // first, with its file: seeds embedded; then a saved workflow; then the shipped
 // default. origin is "file", "saved" or "shipped", so a caller can say where the
 // definition came from.
-func ResolveWorkflow(rt Runtime, nameOrPath string) (workflow.Definition, string, error) {
+func ResolveWorkflow(cfg *config.Store, nameOrPath string) (workflow.Definition, string, error) {
 	if nameOrPath == "" {
 		return workflow.Definition{}, "", refusal.New("workflow: no name or path given")
 	}
@@ -27,8 +28,8 @@ func ResolveWorkflow(rt Runtime, nameOrPath string) (workflow.Definition, string
 		}
 		return def, "file", nil
 	}
-	if rt.Config != nil {
-		L, err := rt.Config.Load()
+	if cfg != nil {
+		L, err := cfg.Load()
 		if err != nil {
 			return workflow.Definition{}, "", refusal.New("%v", err)
 		}
@@ -113,7 +114,7 @@ func readSeedFile(dir, rel string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(f)
 	if err != nil {
 		return "", err
