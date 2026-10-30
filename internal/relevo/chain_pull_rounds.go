@@ -58,7 +58,7 @@ func chainRoundEntry(mv remote.ChainMemberView, r int) (remote.ClosedRoundView, 
 func chainPullPrompt(ctx context.Context, rt Runtime, b store.Binding, r int) ([]byte, bool) {
 	rc, err := rt.Remote.RoundFile(ctx, b.Builder.Server, b.Name, r, "plan")
 	if err != nil {
-		if !is404(err) {
+		if !remote.Is404(err) {
 			slog.Warn("chain prompt fetch failed", "server", b.Builder.Server, "name", b.Name, "round", r, "err", err)
 		}
 		return nil, false
