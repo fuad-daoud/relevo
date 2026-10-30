@@ -1,4 +1,4 @@
-package main
+package setup
 
 import (
 	"bytes"
@@ -43,22 +43,22 @@ func TestUnconfiguredHintOnStderrOnly(t *testing.T) {
 
 	setupHintStream = buf
 	t.Cleanup(func() { setupHintDue = false })
-	noteUnconfigured("status", false)
-	flushSetupHint()
+	NoteUnconfigured("status", false)
+	FlushHint()
 	if got := buf.String(); got != setupHint+"\n" {
 		t.Errorf("hint = %q, want the exact line", got)
 	}
 
 	buf.Reset()
-	noteUnconfigured("status", true)
-	flushSetupHint()
+	NoteUnconfigured("status", true)
+	FlushHint()
 	if buf.Len() != 0 {
 		t.Errorf("a configured verb printed %q", buf.String())
 	}
 
 	buf.Reset()
-	noteUnconfigured("doctor", false)
-	flushSetupHint()
+	NoteUnconfigured("doctor", false)
+	FlushHint()
 	if buf.Len() != 0 {
 		t.Errorf("doctor printed %q", buf.String())
 	}

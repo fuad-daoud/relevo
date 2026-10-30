@@ -1,9 +1,9 @@
-package main
+package setup
 
-// cmd/relevo/setup_apply.go owns the apply side: one revision for the
-// configuration, the agent definitions for each logged-in harness, then the
-// plugin and service installs, each tracked by a step the result document
-// carries. The smoke round runs last, in setup_smoke.go.
+// apply.go owns the apply side: one revision for the configuration, the
+// agent definitions for each logged-in harness, then the plugin and service
+// installs, each tracked by a step the result document carries. The smoke
+// round runs last, in smoke.go.
 
 import (
 	"bytes"
@@ -20,7 +20,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/doctor"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/setup"
 )
 
 // setupMarketplaceRef and setupPluginToken are the marketplace and the
@@ -63,13 +62,9 @@ func (setupOSRunner) Run(ctx context.Context, name string, args ...string) ([]by
 
 var setupPluginRunner = func() setupCommandRunner { return setupOSRunner{} }
 
-func refreshSetupRuntime() (relevo.Runtime, error) {
-	return newRuntime()
-}
-
 // setupStepsFor lists the steps the answers ask for, in apply order: config
 // and agents always, the optional installs and the smoke round only on yes.
-func setupStepsFor(answers setup.Answers) []string {
+func setupStepsFor(answers Answers) []string {
 	steps := []string{"config", "agents"}
 	for _, opt := range []string{"plugin", "muse-plugin", "service", "smoke"} {
 		if setupStepYes(answers, opt) {
@@ -82,7 +77,7 @@ func setupStepsFor(answers setup.Answers) []string {
 // setupStepYes reports a yes on a yes/no question: both the parsed values
 // and the TTY's y/n abbreviations canonicalize, but the y/n light reads
 // either way.
-func setupStepYes(answers setup.Answers, id string) bool {
+func setupStepYes(answers Answers, id string) bool {
 	for _, v := range answers[id] {
 		if v == "yes" || v == "y" {
 			return true
@@ -93,14 +88,14 @@ func setupStepYes(answers setup.Answers, id string) bool {
 
 // setupApply runs the steps' bodies in order and stops at the first failure.
 // The steps before it stay applied, the printed rows and the document name
-// the one that failed, and its coded error decides the exit.
-func setupApply(ctx context.Context, refresh func() (relevo.Runtime, error), env setup.SetupEnv, rt relevo.Runtime, inv setup.Inventory, answers setup.Answers, asJSON bool) error {
-	w := noticeWriter(asJSON)
+// the one that failed, and the shaped error it returns decides the exit.
+func setupApply(ctx context.Context, deps Deps, rt relevo.Runtime, inv Inventory, answers Answers, asJSON bool) error {
+	w := deps.Notices
 	want := setupStepsFor(answers)
 
 	var steps []SetupStepDoc
 	var err error
-	var files setup.Files
+	var files Files
 	run := func(step string, do func() (SetupStepDoc, error)) bool {
 		if start := setupStepStarts[step]; start != "" {
 			fmt.Fprintf(w, "%s: %s...\n", step, start)
@@ -116,16 +111,16 @@ func setupApply(ctx context.Context, refresh func() (relevo.Runtime, error), env
 	}
 
 	goOn := run("config", func() (SetupStepDoc, error) {
-		f, summary, cerr := runSetupConfig(rt, inv, answers)
+		f, summary, cerr := runSetupConfig(rt, deps, inv, answers)
 		files = f
 		return SetupStepDoc{Step: "config", OK: true, Detail: summary}, cerr
 	})
 	if goOn {
 		goOn = run("agents", func() (SetupStepDoc, error) {
-			if _, rerr := refresh(); rerr != nil {
-				return SetupStepDoc{}, failNext(codeInternal, "relevo doctor", "reload the configuration after the setup write: %v", rerr)
+			if _, rerr := deps.Refresh(); rerr != nil {
+				return SetupStepDoc{}, &StepError{Message: fmt.Sprintf("reload the configuration after the setup write: %v", rerr), Next: "relevo doctor"}
 			}
-			return SetupStepDoc{Step: "agents", OK: true}, runSetupAgents(env, files, w)
+			return SetupStepDoc{Step: "agents", OK: true}, runSetupAgents(deps.Env, files, w, deps.InSandbox)
 		})
 	}
 	if goOn && slices.Contains(want, "plugin") {
@@ -139,11 +134,13 @@ func setupApply(ctx context.Context, refresh func() (relevo.Runtime, error), env
 		})
 	}
 	if goOn && slices.Contains(want, "service") {
-		goOn = run("service", runSetupService)
+		goOn = run("service", func() (SetupStepDoc, error) {
+			return runSetupService(deps.InstallService)
+		})
 	}
 	if goOn && slices.Contains(want, "smoke") {
 		goOn = run("smoke", func() (SetupStepDoc, error) {
-			return runSetupSmoke(ctx, refresh, firstToken(answers["builder"]))
+			return runSetupSmoke(ctx, deps, firstToken(answers["builder"]))
 		})
 	}
 
@@ -152,9 +149,31 @@ func setupApply(ctx context.Context, refresh func() (relevo.Runtime, error), env
 		fmt.Fprintln(w, "next: "+setupOpenHint(want))
 	}
 	if asJSON {
-		_ = printDoc(setupResultDocOf(steps))
+		_ = deps.PrintDoc(setupResultDocOf(steps))
 	}
-	return setupExitOf(err)
+	return silenceStep(err)
+}
+
+// silenceStep shapes a step failure for the caller: StepError, LimitError
+// and NotAvailableError already carry their row; anything else failed after
+// its row printed, so it becomes a StepError with the row's own detail.
+func silenceStep(err error) error {
+	if err == nil {
+		return nil
+	}
+	var se *StepError
+	if errors.As(err, &se) {
+		return err
+	}
+	var le *LimitError
+	if errors.As(err, &le) {
+		return err
+	}
+	var na *NotAvailableError
+	if errors.As(err, &na) {
+		return err
+	}
+	return &StepError{Message: firstLine(err.Error())}
 }
 
 // setupOpenHint is the closing hint: open the MasterMind harness the plugin
@@ -169,20 +188,6 @@ func setupOpenHint(want []string) string {
 		harness = "muse"
 	}
 	return "open " + harness + " in a repository and ask it to plan something"
-}
-
-// setupExitOf is the exit a failed apply takes without a second print: the
-// failed step's row (or the result document) already said what failed and
-// what fixes it.
-func setupExitOf(err error) error {
-	if err == nil {
-		return nil
-	}
-	var ce *cliError
-	if errors.As(err, &ce) {
-		return exitCodeErr{code: catalogExit(ce.code)}
-	}
-	return exitCodeErr{code: catalogExit(codeInternal)}
 }
 
 // setupStepStarts are the lines a step prints before it starts, so a step
@@ -222,21 +227,21 @@ func firstToken(vals []string) string {
 
 // runSetupConfig writes Build's three sections as one revision, like init
 // does, and names the actors its summary line carries.
-func runSetupConfig(rt relevo.Runtime, inv setup.Inventory, answers setup.Answers) (setup.Files, string, error) {
-	files, err := setup.Build(inv, answers)
+func runSetupConfig(rt relevo.Runtime, deps Deps, inv Inventory, answers Answers) (Files, string, error) {
+	files, err := Build(inv, answers)
 	if err != nil {
-		return setup.Files{}, "", setupBuildError(err)
+		return Files{}, "", err
 	}
 	if err := putSetupSections(rt, files); err != nil {
-		return setup.Files{}, "", err
+		return Files{}, "", err
 	}
-	summary, err := actorSummary(files.Actors, files.ActorOrder)
+	summary, err := deps.ActorSummary(files.Actors, files.ActorOrder)
 	return files, summary, err
 }
 
 // putSetupSections is the config write: candidates, policy and actors land
 // together as one named revision, so the revision history can roll it back.
-func putSetupSections(rt relevo.Runtime, files setup.Files) error {
+func putSetupSections(rt relevo.Runtime, files Files) error {
 	doc := map[config.Section]json.RawMessage{
 		config.Candidates: files.Candidates,
 		config.Policy:     files.Policy,
@@ -246,22 +251,13 @@ func putSetupSections(rt relevo.Runtime, files setup.Files) error {
 	return err
 }
 
-func setupBuildError(err error) error {
-	if isNotAvailable(err) {
-		var na *setup.NotAvailableError
-		_ = errors.As(err, &na)
-		return failNext(codeNotAvailable, "relevo setup", "%s", na.Message)
-	}
-	return fail(codeInternal, "%v", err)
-}
-
 // runSetupAgents installs the agent definitions for each harness the
 // configuration names as logged in, one result line to the notice writer, a
 // per-file error failing the step the way init does.
-func runSetupAgents(env setup.SetupEnv, files setup.Files, w io.Writer) error {
+func runSetupAgents(env SetupEnv, files Files, w io.Writer, inSandbox bool) error {
 	// Agent definitions install under the real HOME, not the sandbox's, so a
 	// sandbox run would rewrite the developer's own files.
-	if inEnvSandbox() {
+	if inSandbox {
 		fmt.Fprintln(w, sandboxAgentsNote)
 		return nil
 	}
@@ -273,7 +269,7 @@ func runSetupAgents(env setup.SetupEnv, files setup.Files, w io.Writer) error {
 		for _, r := range results {
 			fmt.Fprintln(w, r.Line())
 			if r.Outcome == harness.OutcomeError {
-				return fail(codeInternal, "agent definitions for %s failed to install", kind)
+				return fmt.Errorf("agent definitions for %s failed to install", kind)
 			}
 		}
 	}
@@ -290,7 +286,7 @@ func runSetupPlugin(ctx context.Context) (SetupStepDoc, error) {
 	listOut, listExit, _ := r.Run(ctx, "claude", "plugin", "marketplace", "list")
 	if !setupMarketplaceAdded(listOut, listExit) {
 		if _, exit, rerr := r.Run(ctx, "claude", "plugin", "marketplace", "add", setupMarketplaceRef); rerr != nil || exit != 0 {
-			return SetupStepDoc{}, failNext(codeInternal, doctor.PluginInstallCommand, "the marketplace add failed")
+			return SetupStepDoc{}, &StepError{Message: "the marketplace add failed", Next: doctor.PluginInstallCommand}
 		}
 	}
 	out, exit, rerr := r.Run(ctx, "claude", "plugin", "install", setupPluginToken)
@@ -299,7 +295,7 @@ func runSetupPlugin(ctx context.Context) (SetupStepDoc, error) {
 		if line := strings.TrimSpace(string(out)); line != "" {
 			detail = firstLine(line)
 		}
-		return SetupStepDoc{}, failNext(codeInternal, doctor.PluginInstallCommand, "%s", detail)
+		return SetupStepDoc{}, &StepError{Message: detail, Next: doctor.PluginInstallCommand}
 	}
 	return SetupStepDoc{Step: "plugin", OK: true}, nil
 }
@@ -323,7 +319,7 @@ func runSetupMusePlugin(ctx context.Context) (SetupStepDoc, error) {
 	listOut, listExit, _ := r.Run(ctx, "muse", "plugins", "marketplace", "list")
 	if !setupMarketplaceAdded(listOut, listExit) {
 		if _, exit, rerr := r.Run(ctx, "muse", "plugins", "marketplace", "add", setupMuseName, setupMuseMarketplaceURL); rerr != nil || exit != 0 {
-			return SetupStepDoc{}, failNext(codeInternal, setupMusePluginCommand, "the marketplace add failed")
+			return SetupStepDoc{}, &StepError{Message: "the marketplace add failed", Next: setupMusePluginCommand}
 		}
 	}
 	out, exit, rerr := r.Run(ctx, "muse", "plugins", "install", setupPluginToken)
@@ -332,7 +328,7 @@ func runSetupMusePlugin(ctx context.Context) (SetupStepDoc, error) {
 		if line := strings.TrimSpace(string(out)); line != "" {
 			detail = firstLine(line)
 		}
-		return SetupStepDoc{}, failNext(codeInternal, setupMusePluginCommand, "%s", detail)
+		return SetupStepDoc{}, &StepError{Message: detail, Next: setupMusePluginCommand}
 	}
 	appOut, appExit, appErr := r.Run(ctx, "muse", "plugins", "approve", setupMuseName)
 	if appErr != nil || appExit != 0 {
@@ -340,20 +336,16 @@ func runSetupMusePlugin(ctx context.Context) (SetupStepDoc, error) {
 		if line := strings.TrimSpace(string(appOut)); line != "" {
 			detail = firstLine(line)
 		}
-		return SetupStepDoc{}, failNext(codeInternal, setupMusePluginCommand, "%s", detail)
+		return SetupStepDoc{}, &StepError{Message: detail, Next: setupMusePluginCommand}
 	}
 	return SetupStepDoc{Step: "muse-plugin", OK: true}, nil
 }
 
 // runSetupService does what `relevo service install` does: write the unit
-// unless it was edited by hand (conflict), then enable and restart it.
-func runSetupService() (SetupStepDoc, error) {
-	u, err := osUnitSpec()
-	if err != nil {
-		return SetupStepDoc{}, fail(codeInternal, "%v", err)
-	}
-	_, err = installServiceUnit(u, newServiceRunner(), false)
-	if err != nil {
+// unless it was edited by hand (conflict), then enable and restart it. The
+// install itself lives in the caller, already shaped as a StepError.
+func runSetupService(install func() error) (SetupStepDoc, error) {
+	if err := install(); err != nil {
 		return SetupStepDoc{}, err
 	}
 	return SetupStepDoc{Step: "service", OK: true}, nil

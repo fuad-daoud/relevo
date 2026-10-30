@@ -1,8 +1,8 @@
-package main
+package setup
 
-// cmd/relevo/setup_docs.go holds the setup documents (the questions contract
-// and the result contract) and the numbered TTY prompts. Both are pure over
-// the engine's facts, so a test pins their shape without a harness.
+// docs.go holds the setup documents (the questions contract and the result
+// contract) and the numbered TTY prompts. Both are pure over the engine's
+// facts, so a test pins their shape without a harness.
 
 import (
 	"bufio"
@@ -11,8 +11,6 @@ import (
 	"io"
 	"strconv"
 	"strings"
-
-	"github.com/fuad-daoud/relevo/internal/setup"
 )
 
 // SetupQuestionsDoc is the machine shape of "questions are still open": the
@@ -75,7 +73,7 @@ type SetupStepDoc struct {
 	Next   string `json:"next,omitempty"`
 }
 
-func setupQuestionsDocOf(inv setup.Inventory, questions []setup.Question) SetupQuestionsDoc {
+func setupQuestionsDocOf(inv Inventory, questions []Question) SetupQuestionsDoc {
 	entries := make([]SetupInventoryEntry, 0, len(inv.Harnesses))
 	for _, s := range inv.Harnesses {
 		login := s.Login
@@ -107,7 +105,7 @@ func setupQuestionsDocOf(inv setup.Inventory, questions []setup.Question) SetupQ
 	}
 }
 
-func setupQuestionDocs(qs []setup.Question) []SetupQuestionDoc {
+func setupQuestionDocs(qs []Question) []SetupQuestionDoc {
 	docs := make([]SetupQuestionDoc, 0, len(qs))
 	for _, q := range qs {
 		choices := make([]SetupChoiceDoc, 0, len(q.Choices))
@@ -128,7 +126,7 @@ func setupQuestionDocs(qs []setup.Question) []SetupQuestionDoc {
 
 // setupQuestionsNext names the answers still owed; a role question may be
 // left out, so it is not named.
-func setupQuestionsNext(qs []setup.Question) string {
+func setupQuestionsNext(qs []Question) string {
 	parts := make([]string, 0, len(qs))
 	for _, q := range qs {
 		if q.Optional {
@@ -141,7 +139,7 @@ func setupQuestionsNext(qs []setup.Question) string {
 
 // setupQuestionPlaceholder is the value placeholder a yes/no question's
 // answer spells with both picks, the ordered questions' with the general one.
-func setupQuestionPlaceholder(q setup.Question) string {
+func setupQuestionPlaceholder(q Question) string {
 	if len(q.Choices) == 2 && q.Choices[0].Value == "yes" && q.Choices[1].Value == "no" {
 		return "<yes|no>"
 	}
@@ -153,24 +151,41 @@ func setupResultDocOf(steps []SetupStepDoc) SetupResultDoc {
 }
 
 // setupPrintQuestions prints the questions document and returns the exit
-// report already handles silently: the document itself sits on stdout.
-func setupPrintQuestions(doc SetupQuestionsDoc) error {
+// the caller takes silently: the document itself sits on stdout.
+func setupPrintQuestions(printDoc func(v any) error, doc SetupQuestionsDoc) error {
 	if err := printDoc(doc); err != nil {
 		return err
 	}
-	return exitCodeErr{code: setupQuestionsCode}
+	return ErrQuestionsOpen
 }
 
-// setupStepDocOf turns a coded failure into its result row: the code's own
-// message and the next it carries.
+// setupStepDocOf turns a shaped failure into its result row: the step's own
+// message and the next it carried, or the failure's first line when it never
+// reached a step shape.
 func setupStepDocOf(step string, err error) SetupStepDoc {
-	doc := SetupStepDoc{Step: step, OK: false, Detail: firstLine(err.Error())}
-	var ce *cliError
-	if errors.As(err, &ce) {
-		doc.Detail = ce.message
-		doc.Next = ce.next
+	var se *StepError
+	if errors.As(err, &se) {
+		return SetupStepDoc{Step: step, OK: false, Detail: se.Message, Next: se.Next}
 	}
-	return doc
+	var le *LimitError
+	if errors.As(err, &le) {
+		return SetupStepDoc{Step: step, OK: false, Detail: le.Message, Next: le.Next}
+	}
+	var na *NotAvailableError
+	if errors.As(err, &na) {
+		return SetupStepDoc{Step: step, OK: false, Detail: na.Message, Next: "relevo setup"}
+	}
+	return SetupStepDoc{Step: step, OK: false, Detail: firstLine(err.Error())}
+}
+
+// firstLine is the first non-empty line of s, for a step failure's detail.
+// It mirrors the CLI's own helper so rows read the same.
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return s
 }
 
 // askSetupQuestions walks the open questions in order, reading one answer
@@ -180,11 +195,11 @@ func setupStepDocOf(step string, err error) SetupStepDoc {
 // carries the answers flags already gave, which those roles follow too.
 // rebuild, when set, is how the questions after opencode's are asked again
 // once its answer narrows the models they offer.
-func askSetupQuestions(w io.Writer, r io.Reader, qs []setup.Question, given setup.Answers, rebuild func(setup.Answers) []setup.Question) (setup.Answers, error) {
+func askSetupQuestions(w io.Writer, r io.Reader, qs []Question, given Answers, rebuild func(Answers) []Question) (Answers, error) {
 	sc := bufio.NewScanner(r)
-	out := make(setup.Answers, len(qs))
-	known := func() setup.Answers {
-		all := make(setup.Answers, len(given)+len(out))
+	out := make(Answers, len(qs))
+	known := func() Answers {
+		all := make(Answers, len(given)+len(out))
 		for id, v := range given {
 			all[id] = v
 		}
@@ -219,7 +234,7 @@ func askSetupQuestions(w io.Writer, r io.Reader, qs []setup.Question, given setu
 			if !customize {
 				continue
 			}
-			q.Recommended = setup.DerivedRoles(qs, known())[q.ID]
+			q.Recommended = DerivedRoles(qs, known())[q.ID]
 		}
 		vals, err := askSetupAnswer(w, sc, q)
 		if err != nil {
@@ -232,8 +247,8 @@ func askSetupQuestions(w io.Writer, r io.Reader, qs []setup.Question, given setu
 
 // refreshedQuestions are the questions still to ask, each replaced by its
 // rebuilt shape.
-func refreshedQuestions(rest, rebuilt []setup.Question) []setup.Question {
-	out := make([]setup.Question, len(rest))
+func refreshedQuestions(rest, rebuilt []Question) []Question {
+	out := make([]Question, len(rest))
 	for i, q := range rest {
 		out[i] = q
 		for _, nq := range rebuilt {
@@ -247,7 +262,7 @@ func refreshedQuestions(rest, rebuilt []setup.Question) []setup.Question {
 
 // askSetupAnswer asks one question and its effort follow-ups, then echoes
 // the result.
-func askSetupAnswer(w io.Writer, sc *bufio.Scanner, q setup.Question) ([]string, error) {
+func askSetupAnswer(w io.Writer, sc *bufio.Scanner, q Question) ([]string, error) {
 	vals, spelled, err := askOneSetupQuestion(w, sc, q)
 	if err != nil {
 		return nil, err
@@ -261,29 +276,29 @@ func askSetupAnswer(w io.Writer, sc *bufio.Scanner, q setup.Question) ([]string,
 	return vals, nil
 }
 
-func describeSetupAnswer(q setup.Question, vals []string) string {
+func describeSetupAnswer(q Question, vals []string) string {
 	parts := make([]string, 0, len(vals))
 	for _, v := range vals {
-		parts = append(parts, setup.Describe(q, v))
+		parts = append(parts, Describe(q, v))
 	}
 	return strings.Join(parts, ", ")
 }
 
 // askSetupRoles shows what the other roles get from the answers so far and
 // asks whether to keep that or pick each role.
-func askSetupRoles(w io.Writer, sc *bufio.Scanner, qs []setup.Question, answers setup.Answers) (bool, error) {
-	derived := setup.DerivedRoles(qs, answers)
+func askSetupRoles(w io.Writer, sc *bufio.Scanner, qs []Question, answers Answers) (bool, error) {
+	derived := DerivedRoles(qs, answers)
 	var lines []string
 	for _, q := range qs {
 		if q.Optional && len(derived[q.ID]) > 0 {
-			lines = append(lines, fmt.Sprintf("  %s (%s): %s", q.ID, setup.RoleWhat[q.ID], describeSetupAnswer(q, derived[q.ID])))
+			lines = append(lines, fmt.Sprintf("  %s (%s): %s", q.ID, RoleWhat[q.ID], describeSetupAnswer(q, derived[q.ID])))
 		}
 	}
-	gate := setup.Question{
+	gate := Question{
 		ID:          "roles",
 		Prompt:      "The other roles, from your picks:\n" + strings.Join(lines, "\n") + "\nKeep these?",
 		Recommended: []string{"keep"},
-		Choices: []setup.Choice{
+		Choices: []Choice{
 			{Value: "keep", Why: "use them as shown"},
 			{Value: "customize", Why: "pick a model for each role"},
 		},
@@ -298,10 +313,10 @@ func askSetupRoles(w io.Writer, sc *bufio.Scanner, qs []setup.Question, answers 
 
 // askSetupEfforts asks each picked model's effort, in pick order. A model
 // with one effort or none is kept as picked.
-func askSetupEfforts(w io.Writer, sc *bufio.Scanner, q setup.Question, vals []string) ([]string, error) {
+func askSetupEfforts(w io.Writer, sc *bufio.Scanner, q Question, vals []string) ([]string, error) {
 	out := make([]string, 0, len(vals))
 	for _, v := range vals {
-		eq, ok := setup.EffortQuestion(q, v)
+		eq, ok := EffortQuestion(q, v)
 		if !ok {
 			out = append(out, v)
 			continue
@@ -310,7 +325,7 @@ func askSetupEfforts(w io.Writer, sc *bufio.Scanner, q setup.Question, vals []st
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, setup.WithEffort(q, v, effort[0]))
+		out = append(out, WithEffort(q, v, effort[0]))
 	}
 	return out, nil
 }
@@ -319,7 +334,7 @@ func askSetupEfforts(w io.Writer, sc *bufio.Scanner, q setup.Question, vals []st
 // to three times when a line is unusable; an empty line takes the
 // recommendation. spelled reports an answer typed out as values rather than
 // picked by number or Enter: it already says its effort, so none is asked.
-func askOneSetupQuestion(w io.Writer, sc *bufio.Scanner, q setup.Question) (vals []string, spelled bool, err error) {
+func askOneSetupQuestion(w io.Writer, sc *bufio.Scanner, q Question) (vals []string, spelled bool, err error) {
 	for tries := 0; tries < 3; tries++ {
 		writeSetupPrompt(w, q)
 		if !sc.Scan() {
@@ -341,7 +356,7 @@ func askOneSetupQuestion(w io.Writer, sc *bufio.Scanner, q setup.Question) (vals
 // writeSetupPrompt renders one question: the prompt, every choice with the
 // recommended ones marked -- numbered by order on a multi, where order is
 // the answer -- then the answer line.
-func writeSetupPrompt(w io.Writer, q setup.Question) {
+func writeSetupPrompt(w io.Writer, q Question) {
 	fmt.Fprintf(w, "\n%s\n", q.Prompt)
 	for i, c := range q.Choices {
 		why := ""
@@ -356,9 +371,9 @@ func writeSetupPrompt(w io.Writer, q setup.Question) {
 	fmt.Fprint(w, "> ")
 }
 
-func recommendedMark(q setup.Question, c setup.Choice) string {
+func recommendedMark(q Question, c Choice) string {
 	for i, r := range q.Recommended {
-		if picked, ok := setup.ChoiceFor(q, r); !ok || picked.Value != c.Value {
+		if picked, ok := ChoiceFor(q, r); !ok || picked.Value != c.Value {
 			continue
 		}
 		if q.Multi && len(q.Recommended) > 1 {
@@ -371,7 +386,7 @@ func recommendedMark(q setup.Question, c setup.Choice) string {
 
 // setupChoiceText carries a choice's label beside its value when the label
 // differs; the wizard's yes/nos carry none.
-func setupChoiceText(c setup.Choice) string {
+func setupChoiceText(c Choice) string {
 	if c.Label != "" && c.Label != c.Value {
 		return c.Label + " (" + c.Value + ")"
 	}
@@ -381,7 +396,7 @@ func setupChoiceText(c setup.Choice) string {
 // promptAnswerLine turns one typed line into an answer: a comma list of
 // numbers picks choices in the order typed, and anything else is parsed as
 // the flag rule would and reports itself spelled.
-func promptAnswerLine(q setup.Question, line string) ([]string, bool, error) {
+func promptAnswerLine(q Question, line string) ([]string, bool, error) {
 	tokens := strings.Split(line, ",")
 	if order, ok := numericTokens(tokens); ok {
 		vals := make([]string, 0, len(tokens))
@@ -390,11 +405,11 @@ func promptAnswerLine(q setup.Question, line string) ([]string, bool, error) {
 			if n < 0 || n >= len(q.Choices) {
 				return nil, false, fmt.Errorf("%s: pick between 1 and %d", q.ID, len(q.Choices))
 			}
-			vals = append(vals, setup.WithEffort(q, q.Choices[n].Value, ""))
+			vals = append(vals, WithEffort(q, q.Choices[n].Value, ""))
 		}
 		return vals, false, nil
 	}
-	vals, err := setup.ParseAnswer(q, line)
+	vals, err := ParseAnswer(q, line)
 	return vals, true, err
 }
 

@@ -1,4 +1,4 @@
-package main
+package setup
 
 import (
 	"fmt"
@@ -10,13 +10,6 @@ import (
 // before it continues: the command the user ran fails on its own refusal
 // anyway, so the line only misdirects when candidates exist.
 const setupHint = "relevo is not set up yet: run relevo setup"
-
-// activeVerb is the subcommand this invocation dispatched, read beside the
-// runtime construction; empty under --json, whose stderr carries only the
-// error document. The exempt verbs never build a runtime, so a verb
-// that reaches one already needs config; the table below is the closed list
-// of what never reaches one.
-var activeVerb string
 
 // setupHintStream is the hint's writer, swappable so a test can read it; nil
 // is os.Stderr as it stands at print time.
@@ -42,15 +35,17 @@ func needsSetupHint(verb string, hasCandidates bool) bool {
 // the first thing on stderr.
 var setupHintDue bool
 
-// noteUnconfigured marks the hint due when the rule says so.
-func noteUnconfigured(verb string, hasCandidates bool) {
+// NoteUnconfigured marks the hint due when the rule says so. The caller owns
+// the dispatched verb name and the candidate count; the hint package owns
+// only the rule and the due flag.
+func NoteUnconfigured(verb string, hasCandidates bool) {
 	if needsSetupHint(verb, hasCandidates) {
 		setupHintDue = true
 	}
 }
 
-// flushSetupHint prints the hint once if it is due.
-func flushSetupHint() {
+// FlushHint prints the hint once if it is due.
+func FlushHint() {
 	if !setupHintDue {
 		return
 	}

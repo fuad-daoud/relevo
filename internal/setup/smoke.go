@@ -1,9 +1,9 @@
-package main
+package setup
 
-// cmd/relevo/setup_smoke.go owns the smoke round: a throwaway git repository
-// under the state root, one real builder round bound to it with the current
-// MasterMind, and proof from HELLO.md before the pass cleans up. A failure
-// keeps everything in place for the transcript.
+// smoke.go owns the smoke round: a throwaway git repository under the state
+// root, one real builder round bound to it with the current MasterMind, and
+// proof from HELLO.md before the pass cleans up. A failure keeps everything
+// in place for the transcript.
 
 import (
 	"context"
@@ -21,9 +21,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// smokeName is the binding and the repo name the smoke round uses: one
+// SmokeName is the binding and the repo name the smoke round uses: one
 // run's state, reusable by name for the next run.
-const smokeName = "setup-smoke"
+const SmokeName = "setup-smoke"
 
 // smokeBudget bounds the wait: a healthy machine closes the round in about a
 // minute, so ten of them means a builder that is stuck, not slow.
@@ -42,32 +42,32 @@ func smokePlanText() string {
 // runSetupSmoke drives one round on a throwaway tree. Errors before the
 // round was sent name the doctor; errors after it was sent name the
 // transcript, and everything stays on disk.
-func runSetupSmoke(ctx context.Context, refresh func() (relevo.Runtime, error), builderToken string) (SetupStepDoc, error) {
+func runSetupSmoke(ctx context.Context, deps Deps, builderToken string) (SetupStepDoc, error) {
 	started := time.Now()
-	rt, err := refresh()
+	rt, err := deps.Refresh()
 	if err != nil {
-		return SetupStepDoc{}, failNext(codeInternal, "relevo doctor", "%v", err)
+		return SetupStepDoc{}, &StepError{Message: err.Error(), Next: "relevo doctor"}
 	}
 	smokeDir, err := setupSmokePrepare(ctx, rt)
 	if err != nil {
-		return SetupStepDoc{}, smokeStepDocOf(err)
+		return SetupStepDoc{}, smokeStepDoc(err)
 	}
-	round, b, err := setupSmokeRound(ctx, rt, smokeDir, builderToken)
+	round, b, err := setupSmokeRound(ctx, deps, rt, smokeDir, builderToken)
 	if err != nil {
-		return SetupStepDoc{}, smokeStepDocOf(err)
+		return SetupStepDoc{}, smokeStepDoc(err)
 	}
-	return setupSmokeFinish(ctx, rt, b, round, started, smokeDir)
+	return setupSmokeFinish(ctx, deps, rt, b, round, started, smokeDir)
 }
 
-// smokeStepDocOf renders a smoke failure that happened before or during the
-// round: a roundless tree is what `relevo doctor` inspects, so that is the
-// next the row names. The failure's own code survives when it was coded.
-func smokeStepDocOf(err error) error {
-	var ce *cliError
-	if errors.As(err, &ce) {
-		return failNext(ce.code, "relevo doctor", "%s", ce.message)
+// smokeStepDoc renders a smoke failure that happened before or during the
+// round as its step row: a roundless tree is what `relevo doctor` inspects,
+// so that is the next the row names.
+func smokeStepDoc(err error) *StepError {
+	var se *StepError
+	if errors.As(err, &se) {
+		return se
 	}
-	return failNext(codeInternal, "relevo doctor", "%s", firstLine(err.Error()))
+	return &StepError{Message: firstLine(err.Error()), Next: "relevo doctor"}
 }
 
 // setupSmokePrepare frees a leftover smoke binding, then rebuilds the
@@ -77,9 +77,9 @@ func setupSmokePrepare(ctx context.Context, rt relevo.Runtime) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	smokeDir := filepath.Join(root, smokeName)
-	if _, err := rt.Store.Load(smokeName); err == nil {
-		if _, uerr := relevo.Unbind(ctx, rt, smokeName, false); uerr != nil {
+	smokeDir := filepath.Join(root, SmokeName)
+	if _, err := rt.Store.Load(SmokeName); err == nil {
+		if _, uerr := relevo.Unbind(ctx, rt, SmokeName, false); uerr != nil {
 			return "", uerr
 		}
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -128,9 +128,9 @@ func smokeGit(dir string, args ...string) error {
 
 // setupSmokeRound binds the throwaway tree to the first builder candidate,
 // hands it the plan, and returns the round it opened.
-func setupSmokeRound(ctx context.Context, rt relevo.Runtime, smokeDir, builderToken string) (int, store.Binding, error) {
+func setupSmokeRound(ctx context.Context, deps Deps, rt relevo.Runtime, smokeDir, builderToken string) (int, store.Binding, error) {
 	repo := filepath.Join(smokeDir, "repo")
-	b, err := setupSmokeBind(ctx, rt, repo, builderToken)
+	b, err := setupSmokeBind(ctx, deps, rt, repo, builderToken)
 	if err != nil {
 		return 0, store.Binding{}, err
 	}
@@ -138,33 +138,33 @@ func setupSmokeRound(ctx context.Context, rt relevo.Runtime, smokeDir, builderTo
 	if err := os.WriteFile(plan, []byte(smokePlanText()), 0o644); err != nil {
 		return 0, store.Binding{}, err
 	}
-	res, err := relevo.Send(ctx, rt, smokeName, plan, relevo.SendOptions{})
+	res, err := relevo.Send(ctx, rt, SmokeName, plan, relevo.SendOptions{})
 	if err != nil {
-		return 0, store.Binding{}, writeError(err)
+		return 0, store.Binding{}, err
 	}
 	return res.Round, b, nil
 }
 
 // setupSmokeBind is one bind without a feature flag; when no MasterMind
 // resolves for this process, setup registers its own named setup first.
-func setupSmokeBind(ctx context.Context, rt relevo.Runtime, repo, builderToken string) (store.Binding, error) {
+func setupSmokeBind(ctx context.Context, deps Deps, rt relevo.Runtime, repo, builderToken string) (store.Binding, error) {
 	opts := relevo.BindOptions{
-		Name:      smokeName,
+		Name:      SmokeName,
 		Candidate: builderToken,
 		CWD:       repo,
 		NoFeature: true,
 	}
 	b, _, err := relevo.BindResolved(ctx, rt, opts)
 	if errors.Is(err, relevo.ErrNoMasterMindSession) {
-		rec, rerr := setupRegisterMasterMind(rt)
+		rec, rerr := setupRegisterMasterMind(deps, rt)
 		if rerr != nil {
-			return store.Binding{}, writeError(rerr)
+			return store.Binding{}, rerr
 		}
 		opts.MasterMindID = rec.ID
 		b, _, err = relevo.BindResolved(ctx, rt, opts)
 	}
 	if err != nil {
-		return store.Binding{}, writeError(err)
+		return store.Binding{}, err
 	}
 	return b, nil
 }
@@ -173,8 +173,8 @@ func setupSmokeBind(ctx context.Context, rt relevo.Runtime, repo, builderToken s
 // no record resolves: the wizard runs from a shell, not from a session to
 // detect, so it names an explicit kind and session the way `mastermind init
 // --kind --session` does.
-func setupRegisterMasterMind(rt relevo.Runtime) (mastermind.Record, error) {
-	reg, err := mastermindRegistry(rt)
+func setupRegisterMasterMind(deps Deps, rt relevo.Runtime) (mastermind.Record, error) {
+	reg, err := deps.MastermindRegistry(rt)
 	if err != nil {
 		return mastermind.Record{}, err
 	}
@@ -190,46 +190,46 @@ func setupRegisterMasterMind(rt relevo.Runtime) (mastermind.Record, error) {
 // artifact: HELLO.md holding the line. A pass shows the file and the commit
 // the builder made, then cleans the whole throwaway state up; a failure
 // keeps it for the transcript command the row names.
-func setupSmokeFinish(ctx context.Context, rt relevo.Runtime, b store.Binding, round int, started time.Time, smokeDir string) (SetupStepDoc, error) {
-	stopFeed := startSmokeFeed(rt, smokeName, smokeDir)
+func setupSmokeFinish(ctx context.Context, deps Deps, rt relevo.Runtime, b store.Binding, round int, started time.Time, smokeDir string) (SetupStepDoc, error) {
+	stopFeed := startSmokeFeed(rt, SmokeName, smokeDir)
 	name, res, err := relevo.Wait(ctx, rt, relevo.WaitOptions{
-		Names:    []string{smokeName},
+		Names:    []string{SmokeName},
 		Round:    round,
 		Timeout:  smokeBudget,
 		Interval: time.Second,
 	})
 	stopFeed()
-	next := fmt.Sprintf("relevo show %s --round %d --transcript", smokeName, round)
+	next := fmt.Sprintf("relevo show %s --round %d --transcript", SmokeName, round)
 	if err != nil {
-		return SetupStepDoc{}, failNext(codeInternal, next, "%v", err)
+		return SetupStepDoc{}, &StepError{Message: fmt.Sprintf("%v", err), Next: next}
 	}
 	if res.Code != 0 {
-		if lerr := smokeLimitFailure(ctx, rt, smokeDir); lerr != nil {
+		if lerr := SmokeLimitFailure(ctx, rt, smokeDir); lerr != nil {
 			return SetupStepDoc{}, lerr
 		}
-		return SetupStepDoc{}, failNext(codeInternal, next, "%s", firstLine(res.Line))
+		return SetupStepDoc{}, &StepError{Message: firstLine(res.Line), Next: next}
 	}
 	if herr := smokeHelloOkay(b.CWD); herr != nil {
-		return SetupStepDoc{}, failNext(codeInternal, next, "%s", herr)
+		return SetupStepDoc{}, &StepError{Message: fmt.Sprintf("%s", herr), Next: next}
 	}
 	detail := smokePassDetail(rt, b, time.Since(started)) + smokeProof(b.CWD)
 
 	if _, uerr := relevo.Unbind(ctx, rt, name, false); uerr != nil {
-		return SetupStepDoc{}, failNext(codeInternal, "relevo doctor", "unbind the smoke binding: %v", uerr)
+		return SetupStepDoc{}, &StepError{Message: fmt.Sprintf("unbind the smoke binding: %v", uerr), Next: "relevo doctor"}
 	}
 	if rerr := os.RemoveAll(smokeDir); rerr != nil {
-		return SetupStepDoc{}, failNext(codeInternal, "relevo doctor", "remove the smoke repository: %v", rerr)
+		return SetupStepDoc{}, &StepError{Message: fmt.Sprintf("remove the smoke repository: %v", rerr), Next: "relevo doctor"}
 	}
 	return SetupStepDoc{Step: "smoke", OK: true, Detail: detail}, nil
 }
 
-// smokeLimitFailure is the failure a round gets when its last builder hit a
+// SmokeLimitFailure is the failure a round gets when its last builder hit a
 // usage limit with nobody left to take over: the account's problem, not
 // relevo's, so the row says when it resets and how to add a fallback. The
 // throwaway state goes, because its transcript only repeats the limit.
 // nil when the round failed some other way.
-func smokeLimitFailure(ctx context.Context, rt relevo.Runtime, smokeDir string) error {
-	b, err := rt.Store.Load(smokeName)
+func SmokeLimitFailure(ctx context.Context, rt relevo.Runtime, smokeDir string) error {
+	b, err := rt.Store.Load(SmokeName)
 	if err != nil || b.BuilderCandidate == "" {
 		return nil
 	}
@@ -241,11 +241,13 @@ func smokeLimitFailure(ctx context.Context, rt relevo.Runtime, smokeDir string) 
 		if !g.Until.IsZero() {
 			until = " (resets " + availability.GateTimeText(g.Until) + ")"
 		}
-		_, _ = relevo.Unbind(ctx, rt, smokeName, false)
+		_, _ = relevo.Unbind(ctx, rt, SmokeName, false)
 		_ = os.RemoveAll(smokeDir)
-		return failNext(codeGateActive, "relevo setup",
-			"%s hit its usage limit%s and no other builder could take over; run relevo setup again and pick a second builder as a fallback, or wait for the reset",
-			rt.Candidates.NameOf(b.BuilderCandidate), until)
+		return &LimitError{
+			Message: fmt.Sprintf("%s hit its usage limit%s and no other builder could take over; run relevo setup again and pick a second builder as a fallback, or wait for the reset",
+				rt.Candidates.NameOf(b.BuilderCandidate), until),
+			Next: "relevo setup",
+		}
 	}
 	return nil
 }

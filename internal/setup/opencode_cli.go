@@ -1,9 +1,9 @@
-package main
+package setup
 
-// cmd/relevo/setup_opencode.go asks the opencode question on a terminal: a
-// catalog runs to hundreds of models, so the reader picks providers first,
-// then models -- a short provider's whole list, a long one's recommended
-// shortlist and a name search.
+// opencode_cli.go asks the opencode question on a terminal: a catalog runs
+// to hundreds of models, so the reader picks providers first, then models
+// -- a short provider's whole list, a long one's recommended shortlist and
+// a name search.
 
 import (
 	"bufio"
@@ -11,31 +11,29 @@ import (
 	"io"
 	"slices"
 	"strings"
-
-	"github.com/fuad-daoud/relevo/internal/setup"
 )
 
 // opencodeListMax is the longest model list shown whole; a longer provider
 // gets its shortlist and a search instead.
 const opencodeListMax = 30
 
-// opencodeProvider is one provider's models, in catalog order, by the
+// opencodeProviderModels is one provider's models, in catalog order, by the
 // model's id under the provider.
-type opencodeProvider struct {
+type opencodeProviderModels struct {
 	name   string
 	models []string
 }
 
-func opencodeProviders(q setup.Question) []opencodeProvider {
-	var out []opencodeProvider
+func opencodeProviders(q Question) []opencodeProviderModels {
+	var out []opencodeProviderModels
 	at := map[string]int{}
-	for _, c := range setup.OpencodeCatalog(q) {
+	for _, c := range OpencodeCatalog(q) {
 		name, model, _ := strings.Cut(c.Label, "/")
 		i, ok := at[name]
 		if !ok {
 			i = len(out)
 			at[name] = i
-			out = append(out, opencodeProvider{name: name})
+			out = append(out, opencodeProviderModels{name: name})
 		}
 		out[i].models = append(out[i].models, model)
 	}
@@ -49,9 +47,9 @@ func opencodeValue(provider, model string) string {
 
 // askOpencodeModels walks the providers and returns the picked models as
 // opencode answer values, or none.
-func askOpencodeModels(w io.Writer, sc *bufio.Scanner, q setup.Question) ([]string, error) {
+func askOpencodeModels(w io.Writer, sc *bufio.Scanner, q Question) ([]string, error) {
 	providers := opencodeProviders(q)
-	pq := setup.Question{
+	pq := Question{
 		ID:     "opencode",
 		Prompt: "opencode can run models from these providers. Which should relevo use models from? Pick one or more, comma-separated; Enter skips opencode",
 		Multi:  true,
@@ -61,9 +59,9 @@ func askOpencodeModels(w io.Writer, sc *bufio.Scanner, q setup.Question) ([]stri
 		if p.name == "opencode" {
 			why += ", free"
 		}
-		pq.Choices = append(pq.Choices, setup.Choice{Value: p.name, Why: why})
+		pq.Choices = append(pq.Choices, Choice{Value: p.name, Why: why})
 	}
-	pq.Choices = append(pq.Choices, setup.Choice{Value: setup.OpencodeNone, Why: "use no opencode model; relevo config set candidates adds one later"})
+	pq.Choices = append(pq.Choices, Choice{Value: OpencodeNone, Why: "use no opencode model; relevo config set candidates adds one later"})
 	names, _, err := askOneSetupQuestion(w, sc, pq)
 	if err != nil {
 		return nil, err
@@ -81,7 +79,7 @@ func askOpencodeModels(w io.Writer, sc *bufio.Scanner, q setup.Question) ([]stri
 	}
 	if len(picks) == 0 {
 		fmt.Fprintln(w, "  -> no opencode model")
-		return []string{setup.OpencodeNone}, nil
+		return []string{OpencodeNone}, nil
 	}
 	fmt.Fprintf(w, "  -> %s\n", strings.Join(trimOpencode(picks), ", "))
 	return picks, nil
@@ -89,10 +87,10 @@ func askOpencodeModels(w io.Writer, sc *bufio.Scanner, q setup.Question) ([]stri
 
 // shortlistValues are the lineup models the opencode question lists: the
 // starting list a long provider offers once the reader picked it.
-func shortlistValues(q setup.Question) []string {
+func shortlistValues(q Question) []string {
 	var out []string
 	for _, c := range q.Choices {
-		if c.Value != setup.OpencodeNone {
+		if c.Value != OpencodeNone {
 			out = append(out, c.Value)
 		}
 	}
@@ -110,7 +108,7 @@ func trimOpencode(values []string) []string {
 // askProviderModels picks one provider's models: the whole list when it is
 // short, else a few lineup models to start from, then a search. Nothing is
 // pre-picked: Enter adds none.
-func askProviderModels(w io.Writer, sc *bufio.Scanner, p opencodeProvider, lineup []string) ([]string, error) {
+func askProviderModels(w io.Writer, sc *bufio.Scanner, p opencodeProviderModels, lineup []string) ([]string, error) {
 	var shortlist []string
 	for _, m := range p.models {
 		if slices.Contains(lineup, opencodeValue(p.name, m)) {
@@ -123,13 +121,13 @@ func askProviderModels(w io.Writer, sc *bufio.Scanner, p opencodeProvider, lineu
 	}
 	var picked []string
 	if len(list) > 0 {
-		mq := setup.Question{ID: p.name, Multi: true,
+		mq := Question{ID: p.name, Multi: true,
 			Prompt: fmt.Sprintf("Which %s models? Pick one or more, comma-separated; Enter adds none", p.name)}
 		if len(p.models) > opencodeListMax {
 			mq.Prompt = fmt.Sprintf("%s has %d models; here are a few to start from. Which of them? Enter adds none", p.name, len(p.models))
 		}
 		for _, m := range list {
-			mq.Choices = append(mq.Choices, setup.Choice{Value: m})
+			mq.Choices = append(mq.Choices, Choice{Value: m})
 		}
 		got, _, err := askOneSetupQuestion(w, sc, mq)
 		if err != nil {
@@ -154,7 +152,7 @@ func askProviderModels(w io.Writer, sc *bufio.Scanner, p opencodeProvider, lineu
 // searchProviderModels adds models from a long provider by name: a typed
 // word lists the models holding it to pick from, a typed full id is taken
 // as it is, and an empty line ends the search.
-func searchProviderModels(w io.Writer, sc *bufio.Scanner, p opencodeProvider, have []string) ([]string, error) {
+func searchProviderModels(w io.Writer, sc *bufio.Scanner, p opencodeProviderModels, have []string) ([]string, error) {
 	var added []string
 	for {
 		fmt.Fprintf(w, "\nAdd more %s models: type part of a name (e.g. qwen) to search, or press Enter to finish\n> ", p.name)
@@ -177,14 +175,14 @@ func searchProviderModels(w io.Writer, sc *bufio.Scanner, p opencodeProvider, ha
 			fmt.Fprintf(w, "  no %s model holds %q\n", p.name, word)
 			continue
 		}
-		mq := setup.Question{ID: p.name + "-search", Multi: true,
+		mq := Question{ID: p.name + "-search", Multi: true,
 			Prompt: fmt.Sprintf("%d %s models hold %q. Which? Enter adds none", len(matches), p.name, word)}
 		if len(matches) > opencodeListMax {
 			mq.Prompt = fmt.Sprintf("%d %s models hold %q; the first %d are listed, type more of the name to narrow. Which? Enter adds none", len(matches), p.name, word, opencodeListMax)
 			matches = matches[:opencodeListMax]
 		}
 		for _, m := range matches {
-			mq.Choices = append(mq.Choices, setup.Choice{Value: m})
+			mq.Choices = append(mq.Choices, Choice{Value: m})
 		}
 		got, _, err := askOneSetupQuestion(w, sc, mq)
 		if err != nil {
@@ -213,7 +211,7 @@ func matchingModels(models []string, word string) []string {
 // opencodeInventoryText is opencode's part of the probe line: each provider
 // with its model count, since opencode is never asked for a login and the
 // list is what it can run.
-func opencodeInventoryText(s setup.HarnessStatus) string {
+func opencodeInventoryText(s HarnessStatus) string {
 	counts := map[string]int{}
 	var order []string
 	for _, m := range s.Catalog {

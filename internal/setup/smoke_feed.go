@@ -1,8 +1,8 @@
-package main
+package setup
 
-// cmd/relevo/setup_smoke_feed.go shows the smoke round while it runs: which
-// builder holds it, a switch when one gives way to the next, and each tool
-// call the builder makes, read from the round's stream as it grows.
+// smoke_feed.go shows the smoke round while it runs: which builder holds it,
+// a switch when one gives way to the next, and each tool call the builder
+// makes, read from the round's stream as it grows.
 
 import (
 	"bytes"

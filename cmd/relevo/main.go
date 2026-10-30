@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/pick"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
+	"github.com/fuad-daoud/relevo/internal/setup"
 	"github.com/fuad-daoud/relevo/internal/ui"
 )
 
@@ -130,6 +131,12 @@ var (
 	errUsagePrinted = errors.New("usage printed")
 )
 
+// activeVerb is the subcommand this invocation dispatched, read beside the
+// runtime construction; empty under --json, whose stderr carries only the
+// error document. The exempt verbs never build a runtime, so a verb that
+// reaches one already needs config.
+var activeVerb string
+
 func main() {
 	// Every remote request carries this as Relevo-Client-Version, so a server's
 	// journal shows which client build asked (#373 §4.4). Set before any
@@ -144,7 +151,7 @@ func main() {
 	err := run(args)
 	recordInternal(args, err)
 	code := report(os.Stderr, err, jsonRequested(args))
-	flushSetupHint()
+	setup.FlushHint()
 	os.Exit(code)
 }
 

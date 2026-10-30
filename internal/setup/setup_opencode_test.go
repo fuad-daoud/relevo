@@ -1,4 +1,4 @@
-package main
+package setup
 
 import (
 	"bufio"
@@ -7,13 +7,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/fuad-daoud/relevo/internal/setup"
 )
 
 // opencodeTestQuestion is the opencode question over a catalog with one
 // long provider (openrouter, holding the lineup) and one short one.
-func opencodeTestQuestion(t *testing.T) setup.Question {
+func opencodeTestQuestion(t *testing.T) Question {
 	t.Helper()
 	catalog := []string{"cline-pass/cline-pass/glm-5.3-flash", "cline-pass/cline-pass/kimi-k3"}
 	for i := 0; i < 40; i++ {
@@ -21,14 +19,14 @@ func opencodeTestQuestion(t *testing.T) setup.Question {
 	}
 	catalog = append(catalog, "openrouter/qwen/qwen3.8-coder", "openrouter/qwen/qwen3.8-max",
 		"openrouter/z-ai/glm-5.3-flash", "openrouter/deepseek/deepseek-v4.1-flash")
-	inv := setup.Inventory{Harnesses: []setup.HarnessStatus{{Harness: "opencode", OnPath: true, LoggedIn: true, Catalog: catalog}}}
-	for _, q := range setup.Questions(inv, nil) {
+	inv := Inventory{Harnesses: []HarnessStatus{{Harness: "opencode", OnPath: true, LoggedIn: true, Catalog: catalog}}}
+	for _, q := range Questions(inv, nil) {
 		if q.ID == "opencode" {
 			return q
 		}
 	}
 	t.Fatal("no opencode question")
-	return setup.Question{}
+	return Question{}
 }
 
 // TestOpencodeWalkPicksByProvider pins the terminal walk: providers first,
@@ -71,7 +69,7 @@ func TestOpencodeWalkPicksByProvider(t *testing.T) {
 func TestOpencodeWalkNonePicksNothing(t *testing.T) {
 	q := opencodeTestQuestion(t)
 	got, err := askOpencodeModels(new(bytes.Buffer), bufio.NewScanner(strings.NewReader("none\n")), q)
-	if err != nil || !slices.Equal(got, []string{setup.OpencodeNone}) {
+	if err != nil || !slices.Equal(got, []string{OpencodeNone}) {
 		t.Fatalf("none = %v, %v", got, err)
 	}
 }
@@ -80,8 +78,8 @@ func TestOpencodeWalkNonePicksNothing(t *testing.T) {
 // naming an opencode model only the opencode answer picked is valid.
 func TestSetupFlagsReadOpencodeFirst(t *testing.T) {
 	q := opencodeTestQuestion(t)
-	inv := setup.Inventory{Harnesses: []setup.HarnessStatus{{Harness: "opencode", OnPath: true, LoggedIn: true, Catalog: catalogOf(q)}}}
-	questionsFor := func(a setup.Answers) []setup.Question { return setup.Questions(inv, withOpencodeAnswer(nil, a)) }
+	inv := Inventory{Harnesses: []HarnessStatus{{Harness: "opencode", OnPath: true, LoggedIn: true, Catalog: catalogOf(q)}}}
+	questionsFor := func(a Answers) []Question { return Questions(inv, withOpencodeAnswer(nil, a)) }
 	raw := []string{"builder=opencode/openrouter/qwen/qwen3.8-max", "opencode=opencode/openrouter/qwen/qwen3.8-max"}
 	qs, err := setupQuestionsFor(raw, questionsFor)
 	if err != nil {
@@ -95,9 +93,9 @@ func TestSetupFlagsReadOpencodeFirst(t *testing.T) {
 	}
 }
 
-func catalogOf(q setup.Question) []string {
+func catalogOf(q Question) []string {
 	var out []string
-	for _, c := range setup.OpencodeCatalog(q) {
+	for _, c := range OpencodeCatalog(q) {
 		out = append(out, c.Label)
 	}
 	return out
