@@ -1,4 +1,4 @@
-package spawn
+package candidate
 
 import (
 	"fmt"
@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
@@ -20,7 +19,7 @@ import (
 // call and skips the read. An unknown kind is an error, not a panic: the
 // configured set was validated on load, but a binding written by a future
 // relevo could name a kind this one does not know.
-func HeadlessLaunch(c candidate.Candidate, role harness.RoleSpec, tier harness.Tier, budget time.Duration, prompt, dir, writableRoot, promptFile, chainDir string) ([]string, error) {
+func HeadlessLaunch(c Candidate, role harness.RoleSpec, tier harness.Tier, budget time.Duration, prompt, dir, writableRoot, promptFile, chainDir string) ([]string, error) {
 	h, ok := harness.Lookup(c.Harness)
 	if !ok {
 		return nil, fmt.Errorf("unknown harness kind %q", c.Harness)

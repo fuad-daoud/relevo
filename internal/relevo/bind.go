@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/availability"
+	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/mastermind"
@@ -825,7 +826,7 @@ func resolveBuilder(ctx context.Context, rt Runtime, tx *store.Tx, opts BindOpti
 	if tier == "" {
 		tier = harness.TierHarness
 	}
-	if _, err := spawn.HeadlessLaunch(c, role, tier, 0, "", opts.CWD, rt.Store.OutDir(name), "", ""); err != nil {
+	if _, err := candidate.HeadlessLaunch(c, role, tier, 0, "", opts.CWD, rt.Store.OutDir(name), "", ""); err != nil {
 		return store.Endpoint{}, Resolution{}, err
 	}
 

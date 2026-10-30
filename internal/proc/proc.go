@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/spawn"
+	"github.com/fuad-daoud/relevo/internal/trail"
 )
 
 // DefaultKillGrace is how long Kill waits after SIGTERM before SIGKILL.
@@ -395,10 +396,10 @@ func (r *Runner) ExitCode(_ context.Context, h spawn.ProcHandle, logPath string)
 	if !ok {
 		return 0, false
 	}
-	if !strings.HasPrefix(line, spawn.ExitTrailer) {
+	if !strings.HasPrefix(line, trail.ExitTrailer) {
 		return 0, false
 	}
-	code, err := strconv.Atoi(strings.TrimPrefix(line, spawn.ExitTrailer))
+	code, err := strconv.Atoi(strings.TrimPrefix(line, trail.ExitTrailer))
 	if err != nil {
 		return 0, false
 	}
@@ -452,7 +453,7 @@ func (r *Runner) Rusage(_ context.Context, _ spawn.ProcHandle, streamPath string
 		return spawn.ProcRusage{}, false
 	}
 	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.HasPrefix(lines[i], spawn.RusageTrailerPrefix) {
+		if strings.HasPrefix(lines[i], trail.RusageTrailerPrefix) {
 			return ParseRusageTrailer(lines[i])
 		}
 	}

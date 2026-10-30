@@ -121,15 +121,6 @@ func GoMaxProcsFor(s ScopeSpec) (int, bool) {
 	return n, have
 }
 
-// RusageTrailerPrefix is the prefix of the rusage line the supervisor appends
-// inside a scoped spawn, right before the exit trailer. A payload tail skips
-// lines carrying this prefix.
-const RusageTrailerPrefix = "relevo-rusage:"
-
-// ExitTrailer prefixes the last line of a builder's stream: the code the
-// supervisor left follows it.
-const ExitTrailer = "relevo-exit:"
-
 // ProcRusage is what the supervisor measured for the round's cgroup.
 type ProcRusage struct {
 	CPUMS        int64

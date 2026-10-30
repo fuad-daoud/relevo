@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/spawn"
+	"github.com/fuad-daoud/relevo/internal/trail"
 )
 
 func TestParseKillRecord(t *testing.T) {
@@ -57,7 +58,7 @@ func TestKilledProcessReadsUnknownEvenWhenTheStreamEndsInATrailer(t *testing.T) 
 	t.Cleanup(func() { _ = syscall.Kill(-h.PID, syscall.SIGKILL) })
 
 	// Simulate what a racing shell leaves: partial content plus a trailer.
-	if err := os.WriteFile(stream, []byte("partial\n"+spawn.ExitTrailer+"143\n"), 0o644); err != nil {
+	if err := os.WriteFile(stream, []byte("partial\n"+trail.ExitTrailer+"143\n"), 0o644); err != nil {
 		t.Fatalf("write stream: %v", err)
 	}
 	if err := r.Kill(context.Background(), h, stream); err != nil {

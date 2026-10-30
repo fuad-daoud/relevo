@@ -6317,9 +6317,9 @@ func TestCatchUpRecordsPriorTokens(t *testing.T) {
 	if *reportEntry.PriorTokens != prior {
 		t.Errorf("report entry PriorTokens = %+v, want %+v", *reportEntry.PriorTokens, prior)
 	}
-	clientPrior := view.PriorTokensOf(entries, 1)
+	clientPrior := store.PriorTokensOf(entries, 1)
 	if clientPrior != prior {
-		t.Errorf("view.PriorTokensOf(entries, 1) = %+v, want %+v", clientPrior, prior)
+		t.Errorf("store.PriorTokensOf(entries, 1) = %+v, want %+v", clientPrior, prior)
 	}
 }
 

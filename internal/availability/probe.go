@@ -9,7 +9,6 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/text"
 	"github.com/fuad-daoud/relevo/internal/tmpdir"
@@ -133,7 +132,7 @@ func ProbeCandidate(ctx context.Context, d Deps, x LineExec, c candidate.Candida
 		return probeFailure(d, ref, c, host, err.Error())
 	}
 
-	argv, err := spawn.HeadlessLaunch(c, role, tier, probeBudget, probePrompt, dir, dir, "", "")
+	argv, err := candidate.HeadlessLaunch(c, role, tier, probeBudget, probePrompt, dir, dir, "", "")
 	if err != nil {
 		return probeFailure(d, ref, c, host, err.Error())
 	}
