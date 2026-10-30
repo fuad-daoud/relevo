@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/harness"
+	"github.com/fuad-daoud/relevo/internal/pathscope"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/spawn"
@@ -595,7 +596,7 @@ func TestSendHeadlessTierYoloOverrideAndRoundClose(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		next, err := queueReport(context.Background(), rt, tx, cur, entries, "/dev/null", "done", "test", nil, nil, nil, nil, "", false, "", scopeVerdict{})
+		next, err := queueReport(context.Background(), rt, tx, cur, entries, "/dev/null", "done", "test", nil, nil, nil, nil, "", false, "", pathscope.Verdict{})
 		if err != nil {
 			return err
 		}
