@@ -2,6 +2,8 @@ package roles
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
 	"github.com/fuad-daoud/relevo/internal/harness"
@@ -17,7 +19,7 @@ func FromActors(agents map[string]AgentEntry, actors map[string]Actor) (*File, [
 	rows := make(map[string]Row, len(actors))
 	used := make(map[string]bool, len(agents))
 
-	for _, name := range sortedKeys(actors) {
+	for _, name := range slices.Sorted(maps.Keys(actors)) {
 		row, err := rowFor(name, actors[name], agents)
 		if err != nil {
 			return nil, nil, err
@@ -27,7 +29,7 @@ func FromActors(agents map[string]AgentEntry, actors map[string]Actor) (*File, [
 	}
 
 	var warnings []string
-	for _, name := range sortedKeys(agents) {
+	for _, name := range slices.Sorted(maps.Keys(agents)) {
 		if !used[name] {
 			warnings = append(warnings, fmt.Sprintf("agent %s is not used by any actor", name))
 		}

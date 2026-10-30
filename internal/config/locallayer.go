@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -134,21 +135,12 @@ func mergePatch(base, patch json.RawMessage) (json.RawMessage, error) {
 // out of the shared body and the local row that supplies it again are one
 // change, and neither is right on its own.
 func writeLocalPatches(t *db.Tx, patches map[string]json.RawMessage, now time.Time) error {
-	for _, key := range sortedKeys(patches) {
+	for _, key := range slices.Sorted(maps.Keys(patches)) {
 		if err := t.ConfigLocalPut(key, patches[key], now); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func sortedKeys(patches map[string]json.RawMessage) []string {
-	keys := make([]string, 0, len(patches))
-	for key := range patches {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // mergedDoc overlays every section's overrides on the shared document, which is

@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -336,7 +338,7 @@ func graphEdgeText(def workflow.Definition, id string) string {
 		return ""
 	}
 	var parts []string
-	for _, key := range sortedStepKeys(step.On) {
+	for _, key := range slices.Sorted(maps.Keys(step.On)) {
 		parts = append(parts, "on "+key+" → "+targetText(step.On[key]))
 	}
 	if step.Budget != nil {
@@ -356,16 +358,6 @@ func targetText(t workflow.Target) string {
 	default:
 		return "done"
 	}
-}
-
-// sortedStepKeys is a step's on keys in the order the edges are listed.
-func sortedStepKeys(on map[string]workflow.Target) []string {
-	keys := make([]string, 0, len(on))
-	for k := range on {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // checkWorkflowName refuses a name that is shipped, or already saved, unless the

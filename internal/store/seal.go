@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/spawn"
+	"github.com/fuad-daoud/relevo/internal/trail"
 )
 
 // roundBaseRe matches the basename of a round file: the NNN- prefix every file
@@ -164,7 +164,7 @@ func (s *Store) StreamDrained(b Binding, round int) bool {
 	if err != nil {
 		return false
 	}
-	if !bytes.Contains(tail, []byte("\n"+spawn.ExitTrailer)) {
+	if !bytes.Contains(tail, []byte("\n"+trail.ExitTrailer)) {
 		return false
 	}
 	off := b.Builder.StreamOffset
@@ -210,8 +210,8 @@ func trailerLinesOnly(s string) bool {
 		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(line, spawn.ExitTrailer) ||
-			strings.HasPrefix(line, spawn.RusageTrailerPrefix) {
+		if strings.HasPrefix(line, trail.ExitTrailer) ||
+			strings.HasPrefix(line, trail.RusageTrailerPrefix) {
 			continue
 		}
 		return false

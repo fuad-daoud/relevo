@@ -2,6 +2,8 @@ package harness
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io/fs"
 	"os"
@@ -9,6 +11,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/fuad-daoud/relevo/internal/shipped"
 )
 
 const (
@@ -416,7 +420,8 @@ If any answer is "no," revise before presenting the plan.
 
 func TestInstallRecognizesOlderShippedBlob(t *testing.T) {
 	const full = "/home/u/.claude/agents/architect.md"
-	if !ShippedBefore("architect.claude.md", docSHA([]byte(olderArchitectDoc))) {
+	olderSum := sha256.Sum256([]byte(olderArchitectDoc))
+	if !shipped.Before("architect.claude.md", hex.EncodeToString(olderSum[:])) {
 		t.Fatal("the fixture sha is not in agents/shipped.sha256; regenerate the fixture")
 	}
 	shipped, err := AgentDoc("architect", "claude")
@@ -436,7 +441,8 @@ func TestInstallRecognizesOlderShippedBlob(t *testing.T) {
 	if !bytes.Equal(env.files[full], shipped) {
 		t.Error("the older shipped copy was not refreshed with the shipped definition")
 	}
-	if got := env.manifest[".claude/agents/architect.md"]; got != docSHA(shipped) {
+	shippedSum := sha256.Sum256(shipped)
+	if got := env.manifest[".claude/agents/architect.md"]; got != hex.EncodeToString(shippedSum[:]) {
 		t.Errorf("manifest sha = %q, want the shipped sha", got)
 	}
 	if env.saves != 1 {
@@ -473,6 +479,13 @@ var (
 	manifestOlder           = []byte("---\nmodel: haiku\n---\nan older relevo copy\n")
 	manifestEdited          = []byte("---\nmodel: sonnet\n---\nthe user's own copy\n")
 	manifestIdentical       = append(append([]byte(nil), researcherClaudeShipped...), []byte("\n\n")...)
+
+	researcherClaudeSum  = sha256.Sum256(researcherClaudeShipped)
+	researcherClaudeSHA  = hex.EncodeToString(researcherClaudeSum[:])
+	manifestOlderSum     = sha256.Sum256(manifestOlder)
+	manifestOlderSHA     = hex.EncodeToString(manifestOlderSum[:])
+	manifestIdenticalSum = sha256.Sum256(manifestIdentical)
+	manifestIdenticalSHA = hex.EncodeToString(manifestIdenticalSum[:])
 )
 
 func mustAgentDoc(name, kind string) []byte {
@@ -490,7 +503,7 @@ var manifestDecisionRows = []manifestRow{
 	{
 		name:         "missing file is written and recorded",
 		wantOutcome:  OutcomeWrote,
-		wantManifest: map[string]string{researcherClaudePath: docSHA(researcherClaudeShipped)},
+		wantManifest: map[string]string{researcherClaudePath: researcherClaudeSHA},
 		wantWrote:    true,
 	},
 	{
@@ -503,37 +516,37 @@ var manifestDecisionRows = []manifestRow{
 		name:         "identical records the bytes on disk",
 		existing:     manifestIdentical,
 		wantOutcome:  OutcomeKeptIdentical,
-		wantManifest: map[string]string{researcherClaudePath: docSHA(manifestIdentical)},
+		wantManifest: map[string]string{researcherClaudePath: manifestIdenticalSHA},
 	},
 	{
 		name:         "identical under Force is still kept",
 		existing:     manifestIdentical,
 		force:        true,
 		wantOutcome:  OutcomeKeptIdentical,
-		wantManifest: map[string]string{researcherClaudePath: docSHA(manifestIdentical)},
+		wantManifest: map[string]string{researcherClaudePath: manifestIdenticalSHA},
 	},
 	{
 		name:         "differing but unchanged since relevo wrote it is updated",
 		existing:     manifestOlder,
-		manifest:     map[string]string{researcherClaudePath: docSHA(manifestOlder)},
+		manifest:     map[string]string{researcherClaudePath: manifestOlderSHA},
 		wantOutcome:  OutcomeUpdated,
-		wantManifest: map[string]string{researcherClaudePath: docSHA(researcherClaudeShipped)},
+		wantManifest: map[string]string{researcherClaudePath: researcherClaudeSHA},
 		wantWrote:    true,
 	},
 	{
 		name:         "differing but unchanged since relevo wrote it under DryRun only reports",
 		existing:     manifestOlder,
-		manifest:     map[string]string{researcherClaudePath: docSHA(manifestOlder)},
+		manifest:     map[string]string{researcherClaudePath: manifestOlderSHA},
 		dryRun:       true,
 		wantOutcome:  OutcomeWouldUpdate,
-		wantManifest: map[string]string{researcherClaudePath: docSHA(manifestOlder)},
+		wantManifest: map[string]string{researcherClaudePath: manifestOlderSHA},
 	},
 	{
 		name:         "edited by the user is kept",
 		existing:     manifestEdited,
-		manifest:     map[string]string{researcherClaudePath: docSHA(manifestOlder)},
+		manifest:     map[string]string{researcherClaudePath: manifestOlderSHA},
 		wantOutcome:  OutcomeKeptDiffers,
-		wantManifest: map[string]string{researcherClaudePath: docSHA(manifestOlder)},
+		wantManifest: map[string]string{researcherClaudePath: manifestOlderSHA},
 	},
 	{
 		name:         "a path not in the manifest is kept",
@@ -544,10 +557,10 @@ var manifestDecisionRows = []manifestRow{
 	{
 		name:         "edited by the user with Force is overwritten and recorded",
 		existing:     manifestEdited,
-		manifest:     map[string]string{researcherClaudePath: docSHA(manifestOlder)},
+		manifest:     map[string]string{researcherClaudePath: manifestOlderSHA},
 		force:        true,
 		wantOutcome:  OutcomeOverwrote,
-		wantManifest: map[string]string{researcherClaudePath: docSHA(researcherClaudeShipped)},
+		wantManifest: map[string]string{researcherClaudePath: researcherClaudeSHA},
 		wantWrote:    true,
 	},
 	{
@@ -555,17 +568,17 @@ var manifestDecisionRows = []manifestRow{
 		existing:     manifestEdited,
 		force:        true,
 		wantOutcome:  OutcomeOverwrote,
-		wantManifest: map[string]string{researcherClaudePath: docSHA(researcherClaudeShipped)},
+		wantManifest: map[string]string{researcherClaudePath: researcherClaudeSHA},
 		wantWrote:    true,
 	},
 	{
 		name:         "edited by the user with Force under DryRun only reports",
 		existing:     manifestEdited,
-		manifest:     map[string]string{researcherClaudePath: docSHA(manifestOlder)},
+		manifest:     map[string]string{researcherClaudePath: manifestOlderSHA},
 		force:        true,
 		dryRun:       true,
 		wantOutcome:  OutcomeWouldOverwrite,
-		wantManifest: map[string]string{researcherClaudePath: docSHA(manifestOlder)},
+		wantManifest: map[string]string{researcherClaudePath: manifestOlderSHA},
 	},
 }
 
@@ -636,7 +649,8 @@ func TestInstallSavesManifestOnce(t *testing.T) {
 		if err != nil {
 			t.Fatalf("AgentDoc(%s): %v", r.Role, err)
 		}
-		if got := env.manifest[r.Path]; got != docSHA(shipped) {
+		shippedSum := sha256.Sum256(shipped)
+		if got := env.manifest[r.Path]; got != hex.EncodeToString(shippedSum[:]) {
 			t.Errorf("manifest[%s] = %q, want the shipped sha", r.Path, got)
 		}
 	}
@@ -926,7 +940,8 @@ func TestInstallPluginFilesOptInWritesTheShippedFiles(t *testing.T) {
 		if got := env.files["/home/u/"+f.Path]; !bytes.Equal(got, want) {
 			t.Errorf("%s on disk = %d bytes, want the embedded bytes", f.Path, len(got))
 		}
-		if got := env.manifest[f.Path]; got != docSHA(want) {
+		wantSum := sha256.Sum256(want)
+		if got := env.manifest[f.Path]; got != hex.EncodeToString(wantSum[:]) {
 			t.Errorf("manifest[%s] = %q, want the shipped sha", f.Path, got)
 		}
 	}
@@ -1005,7 +1020,8 @@ func TestInstallPluginFilesFollowDefinitionRules(t *testing.T) {
 		env := freshEnv()
 		older := []byte("{\n  \"name\": \"relevo\",\n  \"version\": \"0.0.0-old\"\n}\n")
 		env.files[pkgFull] = older
-		env.manifest[pkgPath] = docSHA(older)
+		olderSum := sha256.Sum256(older)
+		env.manifest[pkgPath] = hex.EncodeToString(olderSum[:])
 
 		results, err := Install(env, InstallOptions{Kind: "opencode"})
 		if err != nil {
@@ -1018,7 +1034,8 @@ func TestInstallPluginFilesFollowDefinitionRules(t *testing.T) {
 		if !bytes.Equal(env.files[pkgFull], shipped) {
 			t.Error("the older plugin copy was not refreshed with the shipped one")
 		}
-		if got := env.manifest[pkgPath]; got != docSHA(shipped) {
+		shippedSum := sha256.Sum256(shipped)
+		if got := env.manifest[pkgPath]; got != hex.EncodeToString(shippedSum[:]) {
 			t.Errorf("manifest[%s] = %q, want the shipped sha", pkgPath, got)
 		}
 	})

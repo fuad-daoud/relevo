@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/fuad-daoud/relevo/internal/policy"
 )
 
 // ProcSpec is one process a headless builder round runs.
@@ -72,7 +70,7 @@ type ScopeSpec struct {
 // the number of CPUs that scope may run on. ok false means the scope limits
 // nothing, and the caller sets nothing.
 //
-// It counts AllowedCPUs with policy.ParseCPUList (a pinned round's pool is one
+// It counts AllowedCPUs with ParseCPUList (a pinned round's pool is one
 // core) and CPUQuota as ceil(percent/100) with a minimum of 1; with both it is
 // the smaller of the two. It reads nothing else: GateCPUQuota is template-only
 // and is always zeroed on a launched spec. A malformed AllowedCPUs or CPUQuota
@@ -93,7 +91,7 @@ func GoMaxProcsFor(s ScopeSpec) (int, bool) {
 		have bool
 	)
 	if s.AllowedCPUs != "" {
-		if cpus, err := policy.ParseCPUList(s.AllowedCPUs); err == nil && len(cpus) > 0 {
+		if cpus, err := ParseCPUList(s.AllowedCPUs); err == nil && len(cpus) > 0 {
 			n, have = len(cpus), true
 		}
 	}
@@ -122,15 +120,6 @@ func GoMaxProcsFor(s ScopeSpec) (int, bool) {
 	}
 	return n, have
 }
-
-// RusageTrailerPrefix is the prefix of the rusage line the supervisor appends
-// inside a scoped spawn, right before the exit trailer. A payload tail skips
-// lines carrying this prefix.
-const RusageTrailerPrefix = "relevo-rusage:"
-
-// ExitTrailer prefixes the last line of a builder's stream: the code the
-// supervisor left follows it.
-const ExitTrailer = "relevo-exit:"
 
 // ProcRusage is what the supervisor measured for the round's cgroup.
 type ProcRusage struct {

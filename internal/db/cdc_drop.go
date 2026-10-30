@@ -1,6 +1,7 @@
 package db
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -139,16 +140,9 @@ func backupAndDrop(files []*DB, backupDir string, now time.Time, stats tursoCdcS
 			return stats, fmt.Errorf("turso cdc drop: drop in %s: %w", f.path, mapBusy(err))
 		}
 		fin := finishCompress(f, CompressStats{}, "change-capture table drop")
-		stats.CheckpointErr = firstNonEmpty(stats.CheckpointErr, fin.CheckpointErr)
-		stats.VacuumErr = firstNonEmpty(stats.VacuumErr, fin.VacuumErr)
+		stats.CheckpointErr = cmp.Or(stats.CheckpointErr, fin.CheckpointErr)
+		stats.VacuumErr = cmp.Or(stats.VacuumErr, fin.VacuumErr)
 	}
 	stats.BackupPath = strings.Join(paths, ", ")
 	return stats, nil
-}
-
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }

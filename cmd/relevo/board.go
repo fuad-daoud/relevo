@@ -19,7 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/git"
 	"github.com/fuad-daoud/relevo/internal/relevo"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // boardFlagValues holds the pointers board parses into.
@@ -403,7 +403,7 @@ func boardInvalidText(err error) string {
 // fallback: no database exists yet, or the section was never seeded.
 func boardThemeSets(cwd string) (relevo.RepoSettings, map[string]board.Theme, error) {
 	repo := relevo.RepoSettings{}
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return repo, nil, err
 	}

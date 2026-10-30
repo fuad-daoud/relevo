@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/spawn"
+	"github.com/fuad-daoud/relevo/internal/trail"
 )
 
 func TestStartCapturesBothStreamsAndTheExitTrailer(t *testing.T) {
@@ -35,7 +36,7 @@ func TestStartCapturesBothStreamsAndTheExitTrailer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read stream: %v", err)
 	}
-	if got, want := string(data), "out\n\n"+spawn.ExitTrailer+"3\n"; got != want {
+	if got, want := string(data), "out\n\n"+trail.ExitTrailer+"3\n"; got != want {
 		t.Errorf("stream = %q, want stdout, a blank line, then the trailer %q", got, want)
 	}
 	data, err = os.ReadFile(log)
@@ -62,7 +63,7 @@ func TestTrailerIsOnItsOwnLineAfterAPartialWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(data), "no newline\n"+spawn.ExitTrailer+"0\n"; got != want {
+	if got, want := string(data), "no newline\n"+trail.ExitTrailer+"0\n"; got != want {
 		t.Errorf("stream = %q, want %q", got, want)
 	}
 	if code, ok := r.ExitCode(context.Background(), h, stream); !ok || code != 0 {
@@ -96,7 +97,7 @@ func TestStartRunsInDirWithExtraEnv(t *testing.T) {
 	if lines[1] != "yes" {
 		t.Errorf("env line = %q, want yes", lines[1])
 	}
-	if lines[3] != spawn.ExitTrailer+"0" {
+	if lines[3] != trail.ExitTrailer+"0" {
 		t.Errorf("trailer = %q", lines[3])
 	}
 }
@@ -113,7 +114,7 @@ func TestStartedProcessInheritsRaisedOOMScore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read stream: %v", err)
 	}
-	if got, want := string(data), "500\n\n"+spawn.ExitTrailer+"0\n"; got != want {
+	if got, want := string(data), "500\n\n"+trail.ExitTrailer+"0\n"; got != want {
 		t.Errorf("stream = %q, want %q (builder must see oom_score_adj 500)", got, want)
 	}
 }
@@ -415,11 +416,11 @@ func TestExitCodeReadsOnlyATrailingTrailer(t *testing.T) {
 		code int
 		ok   bool
 	}{
-		"trailer":            {"noise\n" + spawn.ExitTrailer + "7\n", 7, true},
-		"trailer no newline": {spawn.ExitTrailer + "0", 0, true},
+		"trailer":            {"noise\n" + trail.ExitTrailer + "7\n", 7, true},
+		"trailer no newline": {trail.ExitTrailer + "0", 0, true},
 		"no trailer":         {"hello\nworld\n", 0, false},
-		"trailer not last":   {spawn.ExitTrailer + "1\nmore output\n", 0, false},
-		"garbage code":       {spawn.ExitTrailer + "x\n", 0, false},
+		"trailer not last":   {trail.ExitTrailer + "1\nmore output\n", 0, false},
+		"garbage code":       {trail.ExitTrailer + "x\n", 0, false},
 		"empty":              {"", 0, false},
 	}
 	for name, c := range cases {
@@ -448,7 +449,7 @@ func TestSupervisorEmitsRusageOnlyInScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read stream: %v", err)
 	}
-	if strings.Contains(string(data), spawn.RusageTrailerPrefix) {
+	if strings.Contains(string(data), trail.RusageTrailerPrefix) {
 		t.Errorf("stream = %q; a plain spawn outside a relevo-round-*.scope must print no rusage line", data)
 	}
 	if code, ok := r.ExitCode(context.Background(), h, stream); !ok || code != 0 {
@@ -485,11 +486,11 @@ func TestSupervisorEmitsRusageWhenUnitMatches(t *testing.T) {
 		t.Fatalf("run supervisorScript: %v", err)
 	}
 	stream := string(out)
-	if !strings.Contains(stream, "\n"+spawn.RusageTrailerPrefix+"cpu_usec=") {
-		t.Errorf("stream = %q; want a %scpu_usec= line", stream, spawn.RusageTrailerPrefix)
+	if !strings.Contains(stream, "\n"+trail.RusageTrailerPrefix+"cpu_usec=") {
+		t.Errorf("stream = %q; want a %scpu_usec= line", stream, trail.RusageTrailerPrefix)
 	}
-	if !strings.HasSuffix(stream, spawn.ExitTrailer+"0\n") {
-		t.Errorf("stream = %q; want it to end with %s0", stream, spawn.ExitTrailer)
+	if !strings.HasSuffix(stream, trail.ExitTrailer+"0\n") {
+		t.Errorf("stream = %q; want it to end with %s0", stream, trail.ExitTrailer)
 	}
 }
 
@@ -771,8 +772,8 @@ func TestStartFallsBackWhenProbeRefused(t *testing.T) {
 			if !strings.Contains(got, tc.wantOutput) {
 				t.Errorf("stream = %q; want the builder's own output, so the fallback really ran it", got)
 			}
-			if !strings.Contains(got, "\n"+spawn.ExitTrailer+"0\n") {
-				t.Errorf("stream = %q; want the normal %s0 trailer", got, spawn.ExitTrailer)
+			if !strings.Contains(got, "\n"+trail.ExitTrailer+"0\n") {
+				t.Errorf("stream = %q; want the normal %s0 trailer", got, trail.ExitTrailer)
 			}
 			if code, ok := r.ExitCode(context.Background(), h, stream); !ok || code != 0 {
 				t.Errorf("ExitCode = %d, %v; want 0, true", code, ok)
@@ -1210,7 +1211,7 @@ func TestSupervisorScriptReapsInsideTheWantBranch(t *testing.T) {
 	if !strings.HasPrefix(supervisorScript, ReapFragment) {
 		t.Error("supervisorScript does not start with ReapFragment: the fragment must be defined before the script calls it")
 	}
-	const trailer = `printf '\n` + spawn.ExitTrailer + `%s\n' "$rc"`
+	const trailer = `printf '\n` + trail.ExitTrailer + `%s\n' "$rc"`
 	if !strings.HasSuffix(supervisorScript, trailer) {
 		t.Errorf("supervisorScript does not end with %q: the trailer must stay the stream's last line", trailer)
 	}
@@ -1219,7 +1220,7 @@ func TestSupervisorScriptReapsInsideTheWantBranch(t *testing.T) {
 	}
 
 	caseAt := strings.Index(supervisorScript, `case "$cg" in */"$want")`)
-	rusageAt := strings.Index(supervisorScript, `printf '\n`+spawn.RusageTrailerPrefix)
+	rusageAt := strings.Index(supervisorScript, `printf '\n`+trail.RusageTrailerPrefix)
 	readAt := strings.Index(supervisorScript, "read -r self _ </proc/self/stat")
 	reapAt := strings.Index(supervisorScript, reapCall)
 	esacAt := strings.Index(supervisorScript, "esac")
@@ -1346,7 +1347,7 @@ func TestStartDisablesFsmonitorForGit(t *testing.T) {
 	}
 	var printed []string
 	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
-		if line != "" && !strings.HasPrefix(line, spawn.ExitTrailer) {
+		if line != "" && !strings.HasPrefix(line, trail.ExitTrailer) {
 			printed = append(printed, line)
 		}
 	}

@@ -1,7 +1,6 @@
 package relevo
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -12,6 +11,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/config"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/roles"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // This file is the cockpit's audit seam: a stored revision's changes in human
@@ -227,23 +227,11 @@ func changeValue(raw json.RawMessage, ms bool) string {
 	if len(raw) == 0 {
 		return ""
 	}
-	v, ok := decodeJSONValue(raw)
+	v, ok := config.DecodeValue(raw)
 	if !ok {
 		return cutAudit(string(raw))
 	}
 	return cutAudit(valueText(v, ms))
-}
-
-// decodeJSONValue decodes one JSON value, keeping numbers as their literal
-// text so 2 and 2.0 are not conflated.
-func decodeJSONValue(raw json.RawMessage) (any, bool) {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	var v any
-	if err := dec.Decode(&v); err != nil {
-		return nil, false
-	}
-	return v, true
 }
 
 // valueText is one decoded JSON value in words: a string unquoted, a
@@ -413,7 +401,7 @@ func RollbackPreview(s *config.Store, rev int64) ([]ChangeLine, error) {
 		return nil, err
 	}
 	if e := CheckDoc(snap); e != nil {
-		return nil, &RollbackRefused{Rev: rev, Reason: firstLine(e.Error())}
+		return nil, &RollbackRefused{Rev: rev, Reason: text.FirstRaw(e.Error())}
 	}
 
 	out := make([]ChangeLine, 0, len(changes))
@@ -421,12 +409,4 @@ func RollbackPreview(s *config.Store, rev int64) ([]ChangeLine, error) {
 		out = append(out, DescribeChange(c, cur, snap))
 	}
 	return out, nil
-}
-
-// firstLine is s up to its first newline.
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
-	}
-	return s
 }

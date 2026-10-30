@@ -194,11 +194,20 @@ func BuilderHaltReason(tail reporttail.Tail, note, outcome string) string {
 		{"note", note},
 		{"not_done", firstOrEmpty(tail.NotDone)},
 	} {
-		if v := firstLine(src.value); v != "" {
+		if v := chainFirstLine(src.value); v != "" {
 			return src.label + ": " + sanitize.Text(v)
 		}
 	}
 	return "status: " + outcome
+}
+
+// chainFirstLine is value cut at its first newline and trimmed, or "" when
+// nothing but whitespace is left.
+func chainFirstLine(value string) string {
+	if idx := strings.IndexByte(value, '\n'); idx != -1 {
+		value = value[:idx]
+	}
+	return strings.TrimSpace(value)
 }
 
 // firstOrEmpty is the first element of a list, or "" for a list with none.
@@ -207,15 +216,6 @@ func firstOrEmpty(list []string) string {
 		return ""
 	}
 	return list[0]
-}
-
-// firstLine is value cut at its first newline and trimmed, or "" when nothing
-// but whitespace is left.
-func firstLine(value string) string {
-	if idx := strings.IndexByte(value, '\n'); idx != -1 {
-		value = value[:idx]
-	}
-	return strings.TrimSpace(value)
 }
 
 // Encode writes the event as the one document DecodeEvent reads back. Marshal

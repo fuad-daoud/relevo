@@ -1,11 +1,16 @@
 package workflow
 
+import (
+	"maps"
+	"slices"
+)
+
 // checkForks is rule 7: each fork child resolves and validates under the same
 // rules with its own inputs, each source is valid, and the workflow has a
 // writer run step.
 func (v *validator) checkForks() {
 	hasWriter := v.hasWriterRunStep()
-	for _, id := range sortedKeys(v.def.Steps) {
+	for _, id := range slices.Sorted(maps.Keys(v.def.Steps)) {
 		step := v.def.Steps[id]
 		if step.Fork == nil || len(step.Kinds()) != 1 {
 			continue

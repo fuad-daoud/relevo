@@ -1,6 +1,10 @@
 package workflow
 
-import "strings"
+import (
+	"maps"
+	"slices"
+	"strings"
+)
 
 // stepTemplate is one string field of a step that may carry a reference, with
 // the name a problem names it by.
@@ -27,7 +31,7 @@ func (v *validator) templates(id string) []stepTemplate {
 		add("budget.max", step.Budget.Max.Ref)
 		add("budget.then", step.Budget.Then.Reason)
 	}
-	for _, key := range sortedKeys(step.On) {
+	for _, key := range slices.Sorted(maps.Keys(step.On)) {
 		add("on "+key, step.On[key].Reason)
 	}
 	if step.Fork != nil {
@@ -40,7 +44,7 @@ func (v *validator) templates(id string) []stepTemplate {
 // names a step that strictly dominates the referencing step. A halt reason
 // reads params only.
 func (v *validator) checkReferences() {
-	for _, id := range sortedKeys(v.def.Steps) {
+	for _, id := range slices.Sorted(maps.Keys(v.def.Steps)) {
 		for _, f := range v.templates(id) {
 			refs, err := Refs(f.text)
 			if err != nil {

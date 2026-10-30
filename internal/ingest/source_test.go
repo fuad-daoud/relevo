@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/store"
@@ -35,7 +36,7 @@ func TestDirSourceListsAndOpens(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 	want := []string{"001-plan.md", "bind.json", "log.jsonl"}
-	if !equalStrings(names, want) {
+	if !slices.Equal(names, want) {
 		t.Errorf("List() = %v, want %v", names, want)
 	}
 
@@ -116,7 +117,7 @@ func TestArchivedSourceReadsMembersWithoutExtracting(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 	want := []string{"001-plan.md", "bind.json", "log.jsonl"}
-	if !equalStrings(names, want) {
+	if !slices.Equal(names, want) {
 		t.Errorf("List() = %v, want %v", names, want)
 	}
 

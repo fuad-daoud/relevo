@@ -3,7 +3,6 @@ package dash
 import (
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -114,7 +113,7 @@ func (m Model) Summary() Summary {
 			durations = append(durations, *r.DurationMS)
 		}
 	}
-	s.MedianMS = median(durations)
+	s.MedianMS = stats.Median(durations)
 	return s
 }
 
@@ -868,19 +867,6 @@ func plural(n int, unit string) string {
 		return fmt.Sprintf("1 %s", unit)
 	}
 	return fmt.Sprintf("%d %ss", n, unit)
-}
-
-func median(xs []int64) int64 {
-	if len(xs) == 0 {
-		return 0
-	}
-	sorted := append([]int64(nil), xs...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	n := len(sorted)
-	if n%2 == 1 {
-		return sorted[n/2]
-	}
-	return (sorted[n/2-1] + sorted[n/2]) / 2
 }
 
 func shortTokens(n int64) string {

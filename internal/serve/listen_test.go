@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/remote/client"
 )
 
 func waitForAddr(s *Server) (net.Addr, error) {
@@ -37,7 +38,7 @@ func pinnedClient(wantFP string) *http.Client {
 					if len(rawCerts) == 0 {
 						return errors.New("no peer certificates presented")
 					}
-					if gotFP := FingerprintOf(rawCerts[0]); gotFP != wantFP {
+					if gotFP := client.FingerprintOf(rawCerts[0]); gotFP != wantFP {
 						return fmt.Errorf("fingerprint mismatch: got %s, want %s", gotFP, wantFP)
 					}
 					return nil

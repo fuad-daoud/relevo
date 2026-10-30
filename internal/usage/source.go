@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/harness"
-	"github.com/fuad-daoud/relevo/internal/spawn"
+	"github.com/fuad-daoud/relevo/internal/trail"
 )
 
 type Mode string
@@ -96,7 +96,7 @@ func streamClosed(path string) bool {
 	}
 	lines := strings.Split(strings.TrimRight(string(buf), "\n"), "\n")
 	last := lines[len(lines)-1]
-	return strings.HasPrefix(last, spawn.ExitTrailer)
+	return strings.HasPrefix(last, trail.ExitTrailer)
 }
 
 // waitClosed blocks until the stream is closed or ctx is done.

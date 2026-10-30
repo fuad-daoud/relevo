@@ -456,7 +456,7 @@ func (r *DBRegistry) writeIn(kv db.KVTx, rec Record) error {
 	if rec.Format > MasterMindFormat {
 		return &store.ErrNewerFormat{Kind: "mastermind record", Name: rec.Name, Have: rec.Format, Know: MasterMindFormat}
 	}
-	rec.Format = storedFormat(MasterMindFormat)
+	rec.Format = store.StoredFormat(MasterMindFormat)
 
 	raw, err := json.Marshal(rec)
 	if err != nil {

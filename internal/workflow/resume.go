@@ -2,6 +2,8 @@ package workflow
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -94,7 +96,7 @@ func unknownStepError(def Definition, target string) error {
 
 // ResumeTargets returns every step a resume could name, sorted.
 func ResumeTargets(def Definition) []string {
-	return sortedKeys(def.Steps)
+	return slices.Sorted(maps.Keys(def.Steps))
 }
 
 // Current returns the item a for-each step is on, with its 1-based position and

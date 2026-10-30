@@ -28,7 +28,7 @@ func SHA256Hex(b []byte) string {
 
 // DecideUnitAction compares an installed unit with the shipped bytes. before
 // reports whether a sha is an older shipped version of the unit named doc
-// (ShippedUnitBefore in production). For a plist, installed must already be
+// (shipped.UnitBefore in production). For a plist, installed must already be
 // canonicalised with CanonicalPlist.
 func DecideUnitAction(doc string, installed []byte, present bool, current []byte, before func(doc, sha string) bool) Action {
 	if !present {

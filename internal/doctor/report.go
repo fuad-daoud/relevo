@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // bindPreflightTimeout bounds the bind-time preflight. The hot path must not be
@@ -261,7 +262,7 @@ func RunReport(rt relevo.Runtime, L config.Loaded, deps Deps) (Report, error) {
 	// allowlist against the state root relevo stages plans and reports under.
 	// There is no root accessor on rt.Store, so resolve the default root
 	// directly. A failure here just leaves the check off.
-	stateRoot, _ := store.DefaultRoot()
+	stateRoot, _ := tmpdir.DefaultRoot()
 
 	extraChecks := append(probeChecks, runDiskChecks(rt)...)
 

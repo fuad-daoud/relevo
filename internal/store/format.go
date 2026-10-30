@@ -61,9 +61,9 @@ func recordFormat(b Binding) int {
 	return BindingFormat
 }
 
-// storedFormat is the number written for a known format: 1 becomes 0 so the
+// StoredFormat is the number written for a known format: 1 becomes 0 so the
 // "format" key is omitted, and every other format is written as itself.
-func storedFormat(n int) int {
+func StoredFormat(n int) int {
 	if n == 1 {
 		return 0
 	}

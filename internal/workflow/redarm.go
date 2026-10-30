@@ -1,5 +1,10 @@
 package workflow
 
+import (
+	"maps"
+	"slices"
+)
+
 // The repair arms a definition's red edges name: the steps a failed check would
 // spend a budget on. They are read here, once, so the halt that buys no round
 // and the resume that buys one look at the same edges.
@@ -11,7 +16,7 @@ package workflow
 // question the halt does without entering the step.
 func RedArmChecks(def Definition, id string) []string {
 	var out []string
-	for _, name := range sortedKeys(def.Steps) {
+	for _, name := range slices.Sorted(maps.Keys(def.Steps)) {
 		if redEdgeNames(def.Steps[name], id) {
 			out = append(out, name)
 		}

@@ -191,12 +191,6 @@ func insertSampleRows(shared *db.DB, origin string, h LatencyHistory) (int, erro
 	return len(samples), nil
 }
 
-// crockford is the Crockford base32 alphabet ULIDs are written in: no I, L, O
-// or U. db holds the same alphabet for NewID; it is spelled out again here
-// because encodeULID is not exported and this package must not reach into db
-// for one identifier.
-const crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-
 // migratedRowID is the identity one migrated row is written under: a ULID whose
 // 48-bit time part is the row's own at_ms, and whose remaining 80 bits are the
 // head of the sha256 over the origin, the table name, and the entry's canonical
@@ -229,40 +223,5 @@ func migratedRowID(origin, table string, atMS int64, entry any) (string, error) 
 	id[5] = byte(ms)
 	copy(id[6:], sum[:10])
 
-	return encodeMigratedULID(id), nil
-}
-
-// encodeMigratedULID writes the 16 bytes as the 26 characters a ULID is, the
-// same layout db.NewID's encoder uses.
-func encodeMigratedULID(id [16]byte) string {
-	var out [26]byte
-
-	out[0] = crockford[(id[0]&224)>>5]
-	out[1] = crockford[id[0]&31]
-	out[2] = crockford[(id[1]&248)>>3]
-	out[3] = crockford[((id[1]&7)<<2)|((id[2]&192)>>6)]
-	out[4] = crockford[(id[2]&62)>>1]
-	out[5] = crockford[((id[2]&1)<<4)|((id[3]&240)>>4)]
-	out[6] = crockford[((id[3]&15)<<1)|((id[4]&128)>>7)]
-	out[7] = crockford[(id[4]&124)>>2]
-	out[8] = crockford[((id[4]&3)<<3)|((id[5]&224)>>5)]
-	out[9] = crockford[id[5]&31]
-	out[10] = crockford[(id[6]&248)>>3]
-	out[11] = crockford[((id[6]&7)<<2)|((id[7]&192)>>6)]
-	out[12] = crockford[(id[7]&62)>>1]
-	out[13] = crockford[((id[7]&1)<<4)|((id[8]&240)>>4)]
-	out[14] = crockford[((id[8]&15)<<1)|((id[9]&128)>>7)]
-	out[15] = crockford[(id[9]&124)>>2]
-	out[16] = crockford[((id[9]&3)<<3)|((id[10]&224)>>5)]
-	out[17] = crockford[id[10]&31]
-	out[18] = crockford[(id[11]&248)>>3]
-	out[19] = crockford[((id[11]&7)<<2)|((id[12]&192)>>6)]
-	out[20] = crockford[(id[12]&62)>>1]
-	out[21] = crockford[((id[12]&1)<<4)|((id[13]&240)>>4)]
-	out[22] = crockford[((id[13]&15)<<1)|((id[14]&128)>>7)]
-	out[23] = crockford[(id[14]&124)>>2]
-	out[24] = crockford[((id[14]&3)<<3)|((id[15]&224)>>5)]
-	out[25] = crockford[id[15]&31]
-
-	return string(out[:])
+	return db.EncodeULID(id), nil
 }

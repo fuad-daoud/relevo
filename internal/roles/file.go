@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -322,23 +324,23 @@ func rolesUnknownKeyWarnings(path string, raw []byte) []string {
 	defKeys := jsonshape.Keys(reflect.TypeOf(DefRow{}))
 
 	var paths []string
-	for _, role := range sortedObjectKeys(data) {
+	for _, role := range slices.Sorted(maps.Keys(data)) {
 		row, ok := data[role].(map[string]any)
 		if !ok {
 			continue
 		}
-		for _, key := range sortedObjectKeys(row) {
+		for _, key := range slices.Sorted(maps.Keys(row)) {
 			if key == "definitions" {
 				defs, ok := row[key].(map[string]any)
 				if !ok {
 					continue
 				}
-				for _, kind := range sortedObjectKeys(defs) {
+				for _, kind := range slices.Sorted(maps.Keys(defs)) {
 					def, ok := defs[kind].(map[string]any)
 					if !ok {
 						continue
 					}
-					for _, defKey := range sortedObjectKeys(def) {
+					for _, defKey := range slices.Sorted(maps.Keys(def)) {
 						if !hasShapeKey(defKeys, defKey) {
 							paths = append(paths, role+".definitions."+kind+"."+defKey)
 						}
@@ -360,16 +362,6 @@ func rolesUnknownKeyWarnings(path string, raw []byte) []string {
 		warnings = append(warnings, fmt.Sprintf("%s: unknown key %q (a typo, or a key a newer relevo reads)", base, p))
 	}
 	return warnings
-}
-
-// sortedObjectKeys returns a decoded JSON object's keys, sorted.
-func sortedObjectKeys(m map[string]any) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // hasShapeKey reports whether k is declared by a jsonshape leaf set: as a leaf

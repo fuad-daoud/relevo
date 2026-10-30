@@ -12,6 +12,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // seedChainTrace writes one chain and its trace into the default state root:
@@ -20,7 +21,7 @@ import (
 func seedChainTrace(t *testing.T, name string) {
 	t.Helper()
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -102,7 +103,7 @@ func TestShowTraceJSONIsOneDocument(t *testing.T) {
 // chain for is a usage error, not an empty trace.
 func TestShowTraceOnANonChainRefuses(t *testing.T) {
 	const name = "showtraceplain"
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}

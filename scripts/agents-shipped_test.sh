@@ -15,8 +15,9 @@ agents=$here/../internal/harness/agents
 # internal/harness/agents/ with the definitions and the committed index. The
 # temp root is not a git repository, which also proves --check reads no history.
 root=$work/repo
-mkdir -p "$root/internal/harness/agents"
-cp "$agents"/*.md "$agents"/*.toml "$agents"/shipped.sha256 "$root/internal/harness/agents/"
+mkdir -p "$root/internal/harness/agents" "$root/internal/shipped"
+cp "$agents"/*.md "$agents"/*.toml "$root/internal/harness/agents/"
+cp "$here/../internal/shipped/agents.sha256" "$root/internal/shipped/"
 
 fail=0
 check() { # description, expected-exit, root
@@ -48,7 +49,7 @@ check "appended whitespace fails" 1 "$root"
 
 # A missing index is a failure, not a silent pass.
 cp "$agents/architect.claude.md" "$root/internal/harness/agents/architect.claude.md"
-rm "$root/internal/harness/agents/shipped.sha256"
+rm "$root/internal/shipped/agents.sha256"
 check "a missing index fails" 1 "$root"
 
 # No mode is a usage error.

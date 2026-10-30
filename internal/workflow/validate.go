@@ -2,7 +2,9 @@ package workflow
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -163,7 +165,7 @@ func (v *validator) checkFormat() {
 	if err := ValidName(v.def.Name); err != nil {
 		v.add("", RuleFormat, "name %q is not a valid name", v.def.Name)
 	}
-	for _, id := range sortedKeys(v.def.Steps) {
+	for _, id := range slices.Sorted(maps.Keys(v.def.Steps)) {
 		if err := ValidName(id); err != nil {
 			v.add(id, RuleFormat, "step id %q is not a valid name", id)
 		}
@@ -171,19 +173,19 @@ func (v *validator) checkFormat() {
 			v.add(id, RuleFormat, "step id %q is reserved", id)
 		}
 	}
-	for _, key := range sortedKeys(v.def.Params) {
+	for _, key := range slices.Sorted(maps.Keys(v.def.Params)) {
 		if !paramNamePattern.MatchString(key) {
 			v.add("", RuleFormat, "param name %q is not a valid name", key)
 		}
 	}
-	for _, actor := range sortedKeys(v.env.Actors) {
-		for _, key := range sortedKeys(v.env.Actors[actor].Outputs) {
+	for _, actor := range slices.Sorted(maps.Keys(v.env.Actors)) {
+		for _, key := range slices.Sorted(maps.Keys(v.env.Actors[actor].Outputs)) {
 			if err := ValidName(key); err != nil {
 				v.add("", RuleFormat, "actor %s: output key %q is not a valid name", actor, key)
 			}
 		}
 	}
-	for _, id := range sortedKeys(v.def.Steps) {
+	for _, id := range slices.Sorted(maps.Keys(v.def.Steps)) {
 		v.checkSeed(id)
 		for _, f := range v.templates(id) {
 			if _, err := Refs(f.text); err != nil {
@@ -217,7 +219,7 @@ func (v *validator) checkSeed(id string) {
 		}
 	case strings.HasPrefix(seed, "shipped:"):
 		name := strings.TrimPrefix(seed, "shipped:")
-		if !containsStr(v.env.Seeds, name) {
+		if !slices.Contains(v.env.Seeds, name) {
 			v.add(id, RuleFormat, "seed shipped:%s is not a shipped seed", name)
 		}
 	}
@@ -229,9 +231,9 @@ func (v *validator) checkStart() {
 	if _, ok := v.def.Steps[v.def.Start]; !ok {
 		v.add("", RuleStart, "start %q is not a step", v.def.Start)
 	}
-	for _, id := range sortedKeys(v.def.Steps) {
+	for _, id := range slices.Sorted(maps.Keys(v.def.Steps)) {
 		step := v.def.Steps[id]
-		for _, key := range sortedKeys(step.On) {
+		for _, key := range slices.Sorted(maps.Keys(step.On)) {
 			if t := step.On[key]; t.Kind == TargetStep {
 				if _, ok := v.def.Steps[t.Step]; !ok {
 					v.add(id, RuleStart, "on %s targets unknown step %q", key, t.Step)
@@ -248,7 +250,7 @@ func (v *validator) checkStart() {
 		return
 	}
 	reach := reachable(v.def, v.def.Start)
-	for _, id := range sortedKeys(v.def.Steps) {
+	for _, id := range slices.Sorted(maps.Keys(v.def.Steps)) {
 		if !reach[id] {
 			v.add(id, RuleStart, "unreachable from start")
 		}
@@ -258,7 +260,7 @@ func (v *validator) checkStart() {
 // checkKinds is rule 2: exactly one kind, a run names a known actor, a for-each
 // names a list, and run, check, when and budget.max read params only.
 func (v *validator) checkKinds() {
-	for _, id := range sortedKeys(v.def.Steps) {
+	for _, id := range slices.Sorted(maps.Keys(v.def.Steps)) {
 		step := v.def.Steps[id]
 		switch kinds := step.Kinds(); len(kinds) {
 		case 1:
@@ -332,7 +334,7 @@ func (v *validator) checkParamsOnly(id string, step Step) {
 // checkBudgets is rule 5: the budget fields are sound, and no cycle is
 // unbounded.
 func (v *validator) checkBudgets() {
-	for _, id := range sortedKeys(v.def.Steps) {
+	for _, id := range slices.Sorted(maps.Keys(v.def.Steps)) {
 		budget := v.def.Steps[id].Budget
 		if budget == nil {
 			continue
@@ -389,7 +391,7 @@ func (v *validator) checkInput(name string, mode InputMode, given bool) {
 
 // checkWhens is rule 8: a when is exactly one reference to a bool param.
 func (v *validator) checkWhens() {
-	for _, id := range sortedKeys(v.def.Steps) {
+	for _, id := range slices.Sorted(maps.Keys(v.def.Steps)) {
 		step := v.def.Steps[id]
 		if kindOf(step) != "when" {
 			continue
@@ -426,14 +428,4 @@ func cut(s, sep string) (string, string) {
 		return s, ""
 	}
 	return s[:i], s[i+len(sep):]
-}
-
-// containsStr reports whether a list carries a string.
-func containsStr(list []string, want string) bool {
-	for _, s := range list {
-		if s == want {
-			return true
-		}
-	}
-	return false
 }

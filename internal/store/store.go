@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 var ErrNotFound = errors.New("binding not found")
@@ -32,10 +33,6 @@ const (
 	// the parent of a reader's throwaway worktree. It is tenant-owned in user
 	// mode, so it is owner-only.
 	scratchDirMode = 0o700
-	// StateRootMode is the state root's own mode: owner-only, because the root
-	// holds the database and every binding's files. MkdirAll never chmods, so a
-	// root that already exists keeps whatever mode it has.
-	StateRootMode = 0o700
 	// DefaultRoundCap is the cap a binding gets when it names none. An
 	// ordinary binding runs this many rounds; a chain's writer member is
 	// built with a cap scaled to its chain and floored here.
@@ -153,21 +150,6 @@ func (s *Store) maxLog() int {
 	return maxLogEntries
 }
 
-// DefaultRoot resolves $XDG_STATE_HOME/relevo, falling back to
-// ~/.local/state/relevo.
-func DefaultRoot() (string, error) {
-	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
-		return filepath.Join(xdg, "relevo"), nil
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
-	}
-
-	return filepath.Join(home, ".local", "state", "relevo"), nil
-}
-
 // ErrInvalidName is ValidName's class: a name that does not satisfy the
 // binding-name rule. A name is the caller's own input, so every error carrying
 // it is a usage failure, not an internal one. ValidName wraps this rather than
@@ -196,43 +178,6 @@ func invalidOf(class error, format string, args ...any) error {
 // Root returns the store's root directory.
 func (s *Store) Root() string { return s.root }
 
-// TempDir returns <root>/tmp, created StateRootMode (0700). If root is empty, DefaultRoot is used.
-func TempDir(root string) (string, error) {
-	if root == "" {
-		var err error
-		root, err = DefaultRoot()
-		if err != nil {
-			return "", err
-		}
-	}
-	dir := filepath.Join(root, "tmp")
-	if err := os.MkdirAll(dir, StateRootMode); err != nil {
-		return "", fmt.Errorf("create state tmp dir: %w", err)
-	}
-	if err := os.Chmod(dir, StateRootMode); err != nil {
-		return "", fmt.Errorf("chmod state tmp dir: %w", err)
-	}
-	return dir, nil
-}
-
-// CreateTemp creates a new temporary file in <root>/tmp. If root is empty, DefaultRoot is used.
-func CreateTemp(root, pattern string) (*os.File, error) {
-	dir, err := TempDir(root)
-	if err != nil {
-		return nil, err
-	}
-	return os.CreateTemp(dir, pattern)
-}
-
-// MkdirTemp creates a new temporary directory in <root>/tmp. If root is empty, DefaultRoot is used.
-func MkdirTemp(root, pattern string) (string, error) {
-	dir, err := TempDir(root)
-	if err != nil {
-		return "", err
-	}
-	return os.MkdirTemp(dir, pattern)
-}
-
 // StoreRoot returns s.Root() or an empty string when s is nil.
 func StoreRoot(s *Store) string {
 	if s == nil {
@@ -244,7 +189,7 @@ func StoreRoot(s *Store) string {
 // WriteTemp creates a temporary file in <root>/tmp, writes data to it, and closes it.
 // On failure, any created file is removed.
 func WriteTemp(root, pattern string, data []byte) (string, error) {
-	f, err := CreateTemp(root, pattern)
+	f, err := tmpdir.CreateTemp(root, pattern)
 	if err != nil {
 		return "", err
 	}
@@ -314,7 +259,7 @@ func (s *Store) WithLock(fn func(tx *Tx) error) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := os.MkdirAll(s.root, StateRootMode); err != nil {
+	if err := os.MkdirAll(s.root, tmpdir.StateRootMode); err != nil {
 		return fmt.Errorf("create state root: %w", err)
 	}
 

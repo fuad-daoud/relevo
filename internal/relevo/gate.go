@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/policy"
-	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/trail"
 )
 
 // gateTailLines is how much of the gate's log a failing result carries in
@@ -143,7 +143,7 @@ func tailLines(read func(string) ([]byte, error), path string, n int) []string {
 	}
 	var nonEmpty []string
 	for _, l := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(l) == "" || strings.HasPrefix(l, spawn.RusageTrailerPrefix) || strings.HasPrefix(l, spawn.ExitTrailer) {
+		if strings.TrimSpace(l) == "" || strings.HasPrefix(l, trail.RusageTrailerPrefix) || strings.HasPrefix(l, trail.ExitTrailer) {
 			continue
 		}
 		nonEmpty = append(nonEmpty, l)

@@ -15,6 +15,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // encodeDoc renders one document exactly as printDoc would: one indented JSON
@@ -134,7 +135,7 @@ func TestContractWriteShape(t *testing.T) {
 // network (the round's CI rule).
 func seedWriteBinding(t *testing.T, name string, b store.Binding) {
 	t.Helper()
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}

@@ -11,7 +11,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/harness"
 	"github.com/fuad-daoud/relevo/internal/remote"
-	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -244,10 +243,10 @@ func servedRoundFacts(entries []store.LogEntry, n int) remote.ClosedRoundView {
 			f.Switches = append(f.Switches, e.Note)
 		}
 	}
-	// priorTokens is the round's own earlier segments: the sum view.PriorTokensOf
+	// priorTokens is the round's own earlier segments: the sum store.PriorTokensOf
 	// walks for n. Nil when the round used none, so a client keys each round's
 	// figure off that round rather than off the newest closed one.
-	if pt := view.PriorTokensOf(entries, n); pt.Total() > 0 {
+	if pt := store.PriorTokensOf(entries, n); pt.Total() > 0 {
 		f.PriorTokens = &pt
 	}
 	// stopped is how the round was stopped: the newest KindStop entry for n
@@ -340,7 +339,7 @@ func RenderServedTier(rt Runtime, role, token, kind string, tier harness.Tier) (
 	if err != nil {
 		return tier, nil
 	}
-	if _, err := spawn.HeadlessLaunch(c, spec, tier, 0, "", "", "", "", ""); err != nil {
+	if _, err := candidate.HeadlessLaunch(c, spec, tier, 0, "", "", "", "", ""); err != nil {
 		return tier, err
 	}
 	return tier, nil

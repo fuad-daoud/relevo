@@ -180,11 +180,11 @@ func TestGoldenDecision(t *testing.T) {
 }
 
 func TestStoredFormat(t *testing.T) {
-	if got := storedFormat(1); got != 0 {
-		t.Errorf("storedFormat(1) = %d, want 0: format 1 is absent on disk", got)
+	if got := StoredFormat(1); got != 0 {
+		t.Errorf("StoredFormat(1) = %d, want 0: format 1 is absent on disk", got)
 	}
-	if got := storedFormat(2); got != 2 {
-		t.Errorf("storedFormat(2) = %d, want 2", got)
+	if got := StoredFormat(2); got != 2 {
+		t.Errorf("StoredFormat(2) = %d, want 2", got)
 	}
 }
 

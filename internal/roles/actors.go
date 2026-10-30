@@ -8,8 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
-	"sort"
+	"slices"
 
 	"github.com/fuad-daoud/relevo/internal/agentsrc"
 	"github.com/fuad-daoud/relevo/internal/candidate"
@@ -120,7 +121,7 @@ func ParseAgents(body []byte) (map[string]AgentEntry, []string, error) {
 		// section's top level must be an object.
 		return nil, nil, fmt.Errorf("agents: top-level value must be an object: %w", ErrBadActors)
 	}
-	for _, name := range sortedKeys(entries) {
+	for _, name := range slices.Sorted(maps.Keys(entries)) {
 		if err := validateAgent(name, entries[name]); err != nil {
 			return nil, nil, err
 		}
@@ -160,7 +161,7 @@ func validateAgent(name string, e AgentEntry) error {
 		if e.Shape != "writer" && e.Shape != "reader" {
 			return fmt.Errorf("agents: %s: native needs shape writer or reader: %w", name, ErrBadActors)
 		}
-		for _, kind := range sortedKeys(e.Native) {
+		for _, kind := range slices.Sorted(maps.Keys(e.Native)) {
 			def := e.Native[kind]
 			if _, ok := harness.Lookup(kind); !ok {
 				return fmt.Errorf("agents: %s: native.%s: unknown harness kind: %w", name, kind, ErrBadActors)
@@ -188,7 +189,7 @@ func ParseActors(body []byte) (map[string]Actor, []string, error) {
 	if actors == nil {
 		return nil, nil, fmt.Errorf("actors: top-level value must be an object: %w", ErrBadActors)
 	}
-	for _, name := range sortedKeys(actors) {
+	for _, name := range slices.Sorted(maps.Keys(actors)) {
 		if err := validateActor(name, actors[name]); err != nil {
 			return nil, nil, err
 		}
@@ -236,7 +237,7 @@ func validateActor(name string, a Actor) error {
 			return fmt.Errorf("actors: %s.tier: %v: %w", name, err, ErrBadActors)
 		}
 	}
-	for _, key := range sortedKeys(a.Outputs) {
+	for _, key := range slices.Sorted(maps.Keys(a.Outputs)) {
 		if err := workflow.ValidName(key); err != nil {
 			return fmt.Errorf("actors: %s.outputs: %w: %w", name, err, ErrBadActors)
 		}
@@ -271,30 +272,19 @@ func validateSkills(skills []string) error {
 // EncodeAgents renders the agents section: keys sorted, two-space indent, a
 // trailing newline (encoding/json sorts map keys already).
 func EncodeAgents(agents map[string]AgentEntry) ([]byte, error) {
-	return encode(agents)
+	return Encode(agents)
 }
 
 // EncodeActors renders the actors section with the same rules as EncodeAgents.
 func EncodeActors(actors map[string]Actor) ([]byte, error) {
-	return encode(actors)
+	return Encode(actors)
 }
 
-// encode is the one encoder both EncodeAgents and EncodeActors call.
-func encode(v any) ([]byte, error) {
+// Encode is the one encoder both EncodeAgents and EncodeActors call.
+func Encode(v any) ([]byte, error) {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return nil, err
 	}
 	return append(data, '\n'), nil
-}
-
-// sortedKeys returns a string-keyed map's keys, sorted, so validation and
-// encoding are deterministic.
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }

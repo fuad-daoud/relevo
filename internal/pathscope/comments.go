@@ -1,6 +1,9 @@
 package pathscope
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // The code-line rule for a table language: two sources differ only in
 // comments when every comment is removed and the remaining lines match one
@@ -25,7 +28,7 @@ func judgeComments(l *lang, oldSrc, newSrc []byte) (ok bool, reason string) {
 	if !codeLinesEqual(oldSrc, o.spans, newSrc, n.spans) {
 		return false, ReasonCodeChange
 	}
-	if !equalStrings(o.directives, n.directives) {
+	if !slices.Equal(o.directives, n.directives) {
 		return false, ReasonDirectiveComment
 	}
 	return true, ""

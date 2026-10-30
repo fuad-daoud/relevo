@@ -13,8 +13,9 @@ units=$here/../internal/serviceunit/units
 # A temp copy of the layout --check reads. The temp root is not a git
 # repository, which also proves --check reads no history.
 root=$work/repo
-mkdir -p "$root/internal/serviceunit/units"
-cp "$units"/relevo.service "$units"/com.github.fuad-daoud.relevo.plist.in "$units"/shipped.sha256 "$root/internal/serviceunit/units/"
+mkdir -p "$root/internal/serviceunit/units" "$root/internal/shipped"
+cp "$units"/relevo.service "$units"/com.github.fuad-daoud.relevo.plist.in "$root/internal/serviceunit/units/"
+cp "$here/../internal/shipped/units.sha256" "$root/internal/shipped/"
 
 fail=0
 check() { # description, expected-exit, root
@@ -45,7 +46,7 @@ check "an edited plist template fails" 1 "$root"
 
 # A missing index is a failure, not a silent pass.
 cp "$units/com.github.fuad-daoud.relevo.plist.in" "$root/internal/serviceunit/units/com.github.fuad-daoud.relevo.plist.in"
-rm "$root/internal/serviceunit/units/shipped.sha256"
+rm "$root/internal/shipped/units.sha256"
 check "a missing index fails" 1 "$root"
 
 # No mode is a usage error.

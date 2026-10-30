@@ -17,7 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/roles"
 	"github.com/fuad-daoud/relevo/internal/serve"
 	"github.com/fuad-daoud/relevo/internal/spawn"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 func TestServeUsageOnNoArgs(t *testing.T) {
@@ -430,7 +430,7 @@ func runServeInit(t *testing.T, args ...string) (string, error) {
 // because that is where the serve verbs read it: the local file after the split.
 func serveSecret(t *testing.T, name string) []byte {
 	t.Helper()
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}
@@ -588,7 +588,7 @@ func TestServeInitRootFailureIsAnError(t *testing.T) {
 			t.Errorf("stdout = %q, want no success line", stdout)
 		}
 
-		root, err := store.DefaultRoot()
+		root, err := tmpdir.DefaultRoot()
 		if err != nil {
 			t.Fatalf("DefaultRoot: %v", err)
 		}

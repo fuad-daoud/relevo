@@ -6,7 +6,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/usage"
-	"github.com/fuad-daoud/relevo/internal/view"
 )
 
 // roundFacts derives round n's plain facts from its events. The caller sets ID,
@@ -17,7 +16,7 @@ func roundFacts(events []store.LogEntry, n int) db.Round {
 	var haveEarliest, havePlanTS bool
 	// The round's earlier segments, computed once: what the report entry's
 	// own usage must be folded with.
-	prior := view.PriorUsageOf(events, n)
+	prior := store.PriorUsageOf(events, n)
 
 	for _, e := range events {
 		if e.Round != n {

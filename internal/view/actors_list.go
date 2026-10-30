@@ -2,6 +2,8 @@ package view
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -36,14 +38,14 @@ func FormatActors(L config.Loaded, reg *roles.Registry) string {
 	}
 
 	var sb strings.Builder
-	for _, name := range sortedStringKeys(L.Actors) {
+	for _, name := range slices.Sorted(maps.Keys(L.Actors)) {
 		sb.WriteString(formatActor(L, reg, name, L.Actors[name]))
 		sb.WriteString("\n")
 	}
 
 	if len(L.Agents) > 0 {
 		sb.WriteString("\nagents\n")
-		for _, name := range sortedStringKeys(L.Agents) {
+		for _, name := range slices.Sorted(maps.Keys(L.Agents)) {
 			sb.WriteString(formatActorAgent(name, L.Agents[name]))
 			sb.WriteString("\n")
 		}
@@ -146,15 +148,4 @@ func formatActorAgent(name string, entry roles.AgentEntry) string {
 	}
 	sort.Strings(kinds)
 	return fmt.Sprintf("  %s  %s  native  kinds %s", name, entry.Shape, strings.Join(kinds, ", "))
-}
-
-// sortedStringKeys returns a string-keyed map's keys, sorted, so the listing
-// never moves between runs.
-func sortedStringKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }

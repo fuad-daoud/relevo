@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/spawn"
+	"github.com/fuad-daoud/relevo/internal/trail"
 )
 
 // ScopeUnitFileName returns the systemd unit file name for a scope unit, built
@@ -311,11 +312,11 @@ func ParseScopeResult(lines []byte, since time.Time) spawn.ScopeResult {
 // unknown keys and malformed numbers are ignored, and a line not matching the
 // prefix is not ok.
 func ParseRusageTrailer(line string) (spawn.ProcRusage, bool) {
-	if !strings.HasPrefix(line, spawn.RusageTrailerPrefix) {
+	if !strings.HasPrefix(line, trail.RusageTrailerPrefix) {
 		return spawn.ProcRusage{}, false
 	}
 	var r spawn.ProcRusage
-	rest := strings.TrimPrefix(line, spawn.RusageTrailerPrefix)
+	rest := strings.TrimPrefix(line, trail.RusageTrailerPrefix)
 	for _, field := range strings.Fields(rest) {
 		key, value, ok := strings.Cut(field, "=")
 		if !ok {

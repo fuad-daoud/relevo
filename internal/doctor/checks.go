@@ -17,6 +17,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/policy"
 	"github.com/fuad-daoud/relevo/internal/relevo"
+	"github.com/fuad-daoud/relevo/internal/spawn"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
@@ -512,7 +513,7 @@ func enabledScope(sc *policy.ScopePolicy) *policy.ScopePolicy {
 // policy.ParseCPUList so internal/doctor never imports policy.
 func scopeBlock(key string, sc *policy.ScopePolicy) ScopeBlock {
 	b := ScopeBlock{Key: key, AllowedCPUs: sc.AllowedCPUs}
-	if cpus, err := policy.ParseCPUList(sc.AllowedCPUs); err == nil && len(cpus) > 0 {
+	if cpus, err := spawn.ParseCPUList(sc.AllowedCPUs); err == nil && len(cpus) > 0 {
 		b.MaxCPU = cpus[len(cpus)-1]
 	}
 	return b

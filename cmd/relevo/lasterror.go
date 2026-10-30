@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/bugreport"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // recordInternal leaves the error loop's record behind: the fact of one coded
@@ -28,7 +28,7 @@ func recordInternal(args []string, err error) {
 	if len(args) > 0 && args[0] == "bugreport" {
 		return
 	}
-	root, rootErr := store.DefaultRoot()
+	root, rootErr := tmpdir.DefaultRoot()
 	if rootErr != nil {
 		return
 	}

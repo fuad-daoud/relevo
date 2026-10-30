@@ -8,14 +8,14 @@ import (
 	"testing"
 
 	"github.com/fuad-daoud/relevo/internal/bugreport"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // lastErrorSlot resolves the record the loop writes for a test's environment.
 func lastErrorSlot(t *testing.T) string {
 	t.Helper()
 
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		t.Fatalf("DefaultRoot: %v", err)
 	}

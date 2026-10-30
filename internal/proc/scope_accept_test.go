@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/spawn"
+	"github.com/fuad-daoud/relevo/internal/trail"
 )
 
 // TestScopeAcceptReapsItsScope leaves a detached process in a scope of its own
@@ -77,9 +78,9 @@ func TestScopeAcceptReapsItsScope(t *testing.T) {
 	}
 	if !ok || code != 0 {
 		data, _ := os.ReadFile(stream)
-		t.Fatalf("stream after 5s = %q (code %d, ok %v); want it to end with %s0", data, code, ok, spawn.ExitTrailer)
+		t.Fatalf("stream after 5s = %q (code %d, ok %v); want it to end with %s0", data, code, ok, trail.ExitTrailer)
 	}
-	t.Logf("stream ended with %s%d %s after the harness exit", spawn.ExitTrailer, code, time.Since(started).Round(time.Millisecond))
+	t.Logf("stream ended with %s%d %s after the harness exit", trail.ExitTrailer, code, time.Since(started).Round(time.Millisecond))
 
 	// 2. The scope is no longer active within 5 s: it emptied, so --collect
 	// removed it.

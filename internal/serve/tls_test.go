@@ -7,6 +7,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/fuad-daoud/relevo/internal/remote/client"
 )
 
 func testSecretStore(t *testing.T) SecretStore {
@@ -90,7 +92,7 @@ func TestInitTLSAndLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fingerprint: %v", err)
 	}
-	leafFP := FingerprintOf(cert.Leaf.Raw)
+	leafFP := client.FingerprintOf(cert.Leaf.Raw)
 	if certFP != leafFP {
 		t.Errorf("Fingerprint = %q, FingerprintOf(leaf.Raw) = %q", certFP, leafFP)
 	}

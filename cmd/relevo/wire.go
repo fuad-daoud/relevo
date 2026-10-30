@@ -29,6 +29,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/setup"
 	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // hooksRunLog is the hook run log over d's machine-local file: the kv row every
@@ -98,7 +99,7 @@ func captureAgyEnv() {
 	if !delivery.AgyEnvPresent(os.Getenv) {
 		return
 	}
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return
 	}
@@ -158,7 +159,7 @@ func newDeliverers(st *store.Store) map[string]delivery.MasterMindDeliverer {
 // carries opens its own dialled handle on first use. The daemon instead hands
 // its one shared handle to newRuntimeOn.
 func newRuntime() (relevo.Runtime, error) {
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
@@ -284,7 +285,7 @@ func openDBDirect(path string) (*db.DB, error) {
 // config files when any is present, else the database read-only when one
 // exists, else nothing at all (#4.6).
 func newRuntimePeek() (relevo.Runtime, error) {
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return relevo.Runtime{}, err
 	}
@@ -394,7 +395,7 @@ func buildRuntime(root string, L config.Loaded, st *store.Store, openGates bool)
 		opencodeSessionDir = finder.Directory
 	}
 
-	tmpDir, err := store.TempDir(root)
+	tmpDir, err := tmpdir.TempDir(root)
 	if err != nil {
 		return relevo.Runtime{}, err
 	}

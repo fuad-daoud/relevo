@@ -1,6 +1,8 @@
 package ingest
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -406,7 +408,8 @@ func upsertAnswerIfChanged(tx *db.Tx, roundID, text string, now time.Time) (bool
 	if found && existing.Text == text {
 		return false, nil
 	}
-	sha := sha256Hex([]byte(text))
+	textSum := sha256.Sum256([]byte(text))
+	sha := hex.EncodeToString(textSum[:])
 	if err := tx.UpsertArtifact(db.Artifact{
 		RoundID:    roundID,
 		Kind:       db.ArtifactAnswer,

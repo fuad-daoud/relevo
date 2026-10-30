@@ -7,6 +7,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/availability"
 	"github.com/fuad-daoud/relevo/internal/chatlabel"
 	"github.com/fuad-daoud/relevo/internal/reporttail"
+	"github.com/fuad-daoud/relevo/internal/sanitize"
 	"github.com/fuad-daoud/relevo/internal/usage"
 )
 
@@ -32,7 +33,7 @@ func handedOverBlock(rows []HandedOverRow) string {
 		if row.Kind == "takeover" {
 			verb = "taken over by"
 		}
-		fmt.Fprintf(&sb, "%s · %s %s", sanitizeText(row.Name), verb, sanitizeText(row.To))
+		fmt.Fprintf(&sb, "%s · %s %s", sanitize.StripControls(row.Name), verb, sanitize.StripControls(row.To))
 		if row.NotExported {
 			sb.WriteString(" (not yet exported: relevo db sync)")
 		}
@@ -108,10 +109,10 @@ func writeChainRow(sb *strings.Builder, b BindingStatus) {
 	}
 	fmt.Fprintf(sb, "%-8s %-40s chain  %s  %s", indentName(b), cwd, b.Chain.Status, ChainSegment(*b.Chain))
 	if pending := ChainPendingSegment(*b.Chain); pending != "" {
-		fmt.Fprintf(sb, "  %s", sanitizeText(pending))
+		fmt.Fprintf(sb, "  %s", sanitize.StripControls(pending))
 	}
 	if b.Detail != "" {
-		fmt.Fprintf(sb, "\n  reason   %s", sanitizeText(b.Detail))
+		fmt.Fprintf(sb, "\n  reason   %s", sanitize.StripControls(b.Detail))
 	}
 	fmt.Fprint(sb, "\n")
 }

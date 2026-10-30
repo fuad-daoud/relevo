@@ -2,6 +2,8 @@ package workflow
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 )
 
@@ -20,7 +22,7 @@ func Start(def Definition, in StartInputs) (State, []Action) {
 // seedPlans gives every for-each and fork over the plans input its items, with
 // the index before the first one.
 func seedPlans(def Definition, s State, in StartInputs) State {
-	for _, id := range sortedKeys(def.Steps) {
+	for _, id := range slices.Sorted(maps.Keys(def.Steps)) {
 		step := def.Steps[id]
 		if step.ForEach == "plans" {
 			s.Iter[id] = Iter{Index: -1, Items: append([]string(nil), in.Plans...)}
@@ -93,7 +95,7 @@ func ensureMaps(s State) State {
 // resets. A for-each resets only when it advances: its empty edge leaves the
 // counts as they were, so the last scope's count survives the walk's end.
 func resetVisits(def Definition, s State, id string) State {
-	for _, b := range sortedKeys(def.Steps) {
+	for _, b := range slices.Sorted(maps.Keys(def.Steps)) {
 		budget := def.Steps[b].Budget
 		if budget == nil || !budget.Per.names(id) {
 			continue
@@ -106,7 +108,7 @@ func resetVisits(def Definition, s State, id string) State {
 // names reports whether a per resets on the named step. per: chain never
 // resets, so only a plain step list can name one.
 func (p Per) names(id string) bool {
-	return !p.Chain && containsStr(p.Steps, id)
+	return !p.Chain && slices.Contains(p.Steps, id)
 }
 
 // applyBudget counts a step's visit and returns its then target once the count

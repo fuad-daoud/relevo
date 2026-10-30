@@ -18,7 +18,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/mastermind"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/sanitize"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
@@ -328,7 +328,7 @@ func runStatusline(asJSON bool, mastermindRef string) error {
 		// failure to read them: the line is the mastermind's identity, not a
 		// binding row.
 		fmt.Print(view.RenderMasterMindLine(rec.Name, columns))
-		if root, rerr := store.DefaultRoot(); rerr == nil {
+		if root, rerr := tmpdir.DefaultRoot(); rerr == nil {
 			fmt.Print(view.RenderBoardLine(boardBlockFor(root, sc.MasterMindID, procStartUnix), rec.Name, columns))
 		}
 		if relevo.PushLive(rt, sc.MasterMindID) {
@@ -346,7 +346,7 @@ func runStatusline(asJSON bool, mastermindRef string) error {
 	doc := view.StatusLineDoc{Now: time.Now().UTC(), Rows: []view.StatusLineRow{}}
 	doc.PushLive = relevo.PushLive(rt, sc.MasterMindID)
 	doc.MasterMind = &view.StatusLineMasterMind{ID: sc.MasterMindID, Name: rec.Name}
-	if root, rerr := store.DefaultRoot(); rerr == nil {
+	if root, rerr := tmpdir.DefaultRoot(); rerr == nil {
 		doc.Board = boardBlockFor(root, sc.MasterMindID, procStartUnix)
 	}
 	if rep, err := relevo.MasterMindStatus(context.Background(), rt, sc.MasterMindID); err == nil {

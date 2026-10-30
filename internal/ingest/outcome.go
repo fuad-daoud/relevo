@@ -100,7 +100,7 @@ func candidateForRound(events []store.LogEntry, n int, b store.Binding) (candida
 		return "", candidate.Ref{}, false
 	}
 
-	if r, err := candidate.ParseRef(stripEffortHash(tok)); err == nil {
+	if r, err := candidate.ParseRef(candidate.StripEffort(tok)); err == nil {
 		ref = r
 	}
 	return tok, ref, true
@@ -194,13 +194,4 @@ func parseSwitchNote(note string) string {
 	tok := strings.TrimSpace(note[i+2:])
 	tok = strings.TrimSuffix(tok, ")")
 	return strings.TrimSpace(tok)
-}
-
-// stripEffortHash removes a trailing "#..." suffix; a ":effort" suffix belongs to
-// the model part and is left alone.
-func stripEffortHash(tok string) string {
-	if i := strings.IndexByte(tok, '#'); i >= 0 {
-		return tok[:i]
-	}
-	return tok
 }

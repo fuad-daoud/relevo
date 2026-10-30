@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db/wire/client"
-	"github.com/fuad-daoud/relevo/internal/store"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // freshenBudget bounds the hint's dial. The hint is a courtesy to the read that
@@ -33,7 +33,7 @@ func hintFreshen(line bool, err error) {
 // socket itself rather than through the helpers that start a daemon: no daemon
 // running means nobody to hint, and a read must never bring one up.
 func sendFreshenToDaemon() {
-	root, err := store.DefaultRoot()
+	root, err := tmpdir.DefaultRoot()
 	if err != nil {
 		return
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/candidate"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/remote"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // handleGetActor answers what a create naming this actor would: the same pick,
@@ -23,7 +24,7 @@ func (s *Server) handleGetActor(w http.ResponseWriter, r *http.Request) {
 	}
 
 	role := relevo.NormRole(r.PathValue("actor"))
-	roleName := orText(role, "builder")
+	roleName := text.OrText(role, "builder")
 	shape, err := relevo.ActorShape(rt, role)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, remote.CodeNotFound, err.Error())

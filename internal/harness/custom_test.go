@@ -2,6 +2,8 @@ package harness
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 )
@@ -35,7 +37,8 @@ func TestInstallCustomWritesTheRenderedFileAtTheConventionPath(t *testing.T) {
 	if !bytes.Equal(env.files[customClaudeFull], body) {
 		t.Errorf("file on disk = %q, want the rendered bytes", env.files[customClaudeFull])
 	}
-	if got := env.manifest[customClaudePath]; got != docSHA(body) {
+	bodySum := sha256.Sum256(body)
+	if got := env.manifest[customClaudePath]; got != hex.EncodeToString(bodySum[:]) {
 		t.Errorf("manifest[%s] = %q, want the rendered sha", customClaudePath, got)
 	}
 }
@@ -70,7 +73,8 @@ func TestInstallCustomKeepsIdenticalAndUpdatesItsOwnOlderCopy(t *testing.T) {
 	if !bytes.Equal(env.files[customClaudeFull], newer) {
 		t.Errorf("file on disk = %q, want the newer bytes", env.files[customClaudeFull])
 	}
-	if got := env.manifest[customClaudePath]; got != docSHA(newer) {
+	newerSum := sha256.Sum256(newer)
+	if got := env.manifest[customClaudePath]; got != hex.EncodeToString(newerSum[:]) {
 		t.Errorf("manifest[%s] = %q, want the newer sha", customClaudePath, got)
 	}
 }

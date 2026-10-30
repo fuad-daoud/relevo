@@ -8,6 +8,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/installation"
+	"github.com/fuad-daoud/relevo/internal/tmpdir"
 )
 
 // dbForWrite returns the store's database handle, opening it -- and applying
@@ -49,7 +50,7 @@ func (s *Store) dbForWrite() (*db.DB, error) {
 				return
 			}
 		}
-		if err := os.MkdirAll(s.root, StateRootMode); err != nil {
+		if err := os.MkdirAll(s.root, tmpdir.StateRootMode); err != nil {
 			s.dbErr = fmt.Errorf("open store db %s: %w", s.DBPath(), err)
 			return
 		}
