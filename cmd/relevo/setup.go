@@ -62,6 +62,7 @@ func cmdSetup(args []string) error {
 		ActorSummary:       actorSummary,
 		InstallService:     setupServiceInstall,
 		MastermindRegistry: mastermindRegistry,
+		ClassifyTransport:  classifySetupTransport,
 		InSandbox:          inEnvSandbox(),
 		UnitPresent:        setupUnitPresent(),
 		Stdin:              os.Stdin,
@@ -99,9 +100,25 @@ func setupExitOf(err error) error {
 	if errors.As(err, &le) {
 		return exitCodeErr{code: catalogExit(codeGateActive)}
 	}
+	var cse *setup.CodedStepError
+	if errors.As(err, &cse) {
+		return exitCodeErr{code: cse.Code}
+	}
 	var se *setup.StepError
 	if errors.As(err, &se) {
 		return exitCodeErr{code: catalogExit(codeInternal)}
+	}
+	return err
+}
+
+// classifySetupTransport shapes a smoke-transport failure writeError
+// classified: its row carries the full message with the doctor fix, and it
+// exits with its own code. Anything writeError leaves internal crosses raw,
+// whose row truncates and exits internal as before.
+func classifySetupTransport(err error) error {
+	var ce *cliError
+	if coded := writeError(err); errors.As(coded, &ce) && ce.code != codeInternal {
+		return &setup.CodedStepError{Message: ce.message, Next: "relevo doctor", Code: catalogExit(ce.code)}
 	}
 	return err
 }

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -342,4 +343,62 @@ func TestSmokeLimitFailureNamesTheResetAndTheFix(t *testing.T) {
 	if _, err := rt.Store.Load(setup.SmokeName); err == nil {
 		t.Error("the smoke binding outlived a limit failure")
 	}
+}
+
+// TestSetupClassifiedTransportKeepsItsExit pins the smoke-transport hook: a
+// failure writeError classified (the builder-busy family, refused) crosses
+// as the shaped value with its own exit, and setupExitOf exits it silently;
+// an unclassified failure crosses raw and still exits internal.
+func TestSetupClassifiedTransportKeepsItsExit(t *testing.T) {
+	busy := fmt.Errorf("builder is busy\nsecond line: %w", relevo.ErrBuilderBusy)
+	missing := fmt.Errorf("no such round\nsecond line: %w", relevo.ErrRoundNotFound)
+	raw := errors.New("boom\nsecond line")
+
+	rows := []struct {
+		name        string
+		in          error
+		wantMessage string
+		wantCode    int
+	}{
+		{"refused family exits 2", busy, busy.Error(), catalogExit(codeRefused)},
+		{"other classified classes keep their exit", missing, missing.Error(), catalogExit(codeRoundNotFound)},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			got := classifySetupTransport(row.in)
+			var cse *setup.CodedStepError
+			if !errors.As(got, &cse) {
+				t.Fatalf("hook = %v (%T), want the shaped transport error", got, got)
+			}
+			if cse.Message != row.wantMessage {
+				t.Errorf("message = %q, want the full classified text", cse.Message)
+			}
+			if cse.Next != "relevo doctor" {
+				t.Errorf("next = %q, want the doctor fix", cse.Next)
+			}
+			if cse.Code != row.wantCode {
+				t.Errorf("code = %d, want %d", cse.Code, row.wantCode)
+			}
+			out := setupExitOf(got)
+			var ec exitCodeErr
+			if !errors.As(out, &ec) || ec.code != row.wantCode {
+				t.Fatalf("setupExitOf = %v, want the silent exit %d", out, row.wantCode)
+			}
+			var ce *cliError
+			if errors.As(out, &ce) {
+				t.Fatalf("setupExitOf = %v, a cliError main would print a second time", out)
+			}
+		})
+	}
+
+	t.Run("unclassified crosses raw and exits internal", func(t *testing.T) {
+		if got := classifySetupTransport(raw); got != raw {
+			t.Fatalf("hook = %v, want the raw error back", got)
+		}
+		out := setupExitOf(&setup.StepError{Message: "boom", Next: "relevo doctor"})
+		var ec exitCodeErr
+		if !errors.As(out, &ec) || ec.code != catalogExit(codeInternal) {
+			t.Fatalf("setupExitOf = %v, want the silent internal exit", out)
+		}
+	})
 }

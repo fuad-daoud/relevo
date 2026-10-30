@@ -167,6 +167,10 @@ func setupStepDocOf(step string, err error) SetupStepDoc {
 	if errors.As(err, &se) {
 		return SetupStepDoc{Step: step, OK: false, Detail: se.Message, Next: se.Next}
 	}
+	var ce *CodedStepError
+	if errors.As(err, &ce) {
+		return SetupStepDoc{Step: step, OK: false, Detail: ce.Message, Next: ce.Next}
+	}
 	var le *LimitError
 	if errors.As(err, &le) {
 		return SetupStepDoc{Step: step, OK: false, Detail: le.Message, Next: le.Next}

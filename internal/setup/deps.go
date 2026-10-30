@@ -59,6 +59,18 @@ type LimitError struct {
 
 func (e *LimitError) Error() string { return e.Message }
 
+// CodedStepError is a step failure that already carries its exit: a smoke
+// transport error the caller classified (the builder-busy family, refused
+// instead of internal). The row prints Message with Next; the caller exits
+// Code silently.
+type CodedStepError struct {
+	Message string
+	Next    string
+	Code    int
+}
+
+func (e *CodedStepError) Error() string { return e.Message }
+
 // Deps carries the cmd-owned values the setup run reads: the install
 // environment and helpers that stay in cmd/relevo because other commands use
 // them, and the stdio the run prints through. Every field is a value or a
@@ -75,6 +87,9 @@ type Deps struct {
 	InstallService func() error
 	// MastermindRegistry is the registry the smoke round binds through.
 	MastermindRegistry func(rt relevo.Runtime) (*mastermind.DBRegistry, error)
+	// ClassifyTransport shapes a smoke-transport failure before it becomes a
+	// row. Nil keeps the raw error, whose row truncates and exits internal.
+	ClassifyTransport func(error) error
 	// InSandbox is the env sandbox the run skips the host-owned installs in.
 	InSandbox bool
 	// UnitPresent is the installed service unit a rerun keeps.

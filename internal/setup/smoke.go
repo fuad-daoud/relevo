@@ -61,13 +61,27 @@ func runSetupSmoke(ctx context.Context, deps Deps, builderToken string) (SetupSt
 
 // smokeStepDoc renders a smoke failure that happened before or during the
 // round as its step row: a roundless tree is what `relevo doctor` inspects,
-// so that is the next the row names.
-func smokeStepDoc(err error) *StepError {
+// so that is the next the row names. A failure the caller already shaped
+// passes through like a StepError, keeping its own message and exit.
+func smokeStepDoc(err error) error {
 	var se *StepError
 	if errors.As(err, &se) {
-		return se
+		return err
+	}
+	var ce *CodedStepError
+	if errors.As(err, &ce) {
+		return err
 	}
 	return &StepError{Message: firstLine(err.Error()), Next: "relevo doctor"}
+}
+
+// classifyTransport shapes a smoke-transport failure through the Deps hook;
+// a nil hook keeps the raw error, whose row truncates and exits internal.
+func classifyTransport(deps Deps, err error) error {
+	if deps.ClassifyTransport != nil {
+		return deps.ClassifyTransport(err)
+	}
+	return err
 }
 
 // setupSmokePrepare frees a leftover smoke binding, then rebuilds the
@@ -140,7 +154,7 @@ func setupSmokeRound(ctx context.Context, deps Deps, rt relevo.Runtime, smokeDir
 	}
 	res, err := relevo.Send(ctx, rt, SmokeName, plan, relevo.SendOptions{})
 	if err != nil {
-		return 0, store.Binding{}, err
+		return 0, store.Binding{}, classifyTransport(deps, err)
 	}
 	return res.Round, b, nil
 }
@@ -158,13 +172,13 @@ func setupSmokeBind(ctx context.Context, deps Deps, rt relevo.Runtime, repo, bui
 	if errors.Is(err, relevo.ErrNoMasterMindSession) {
 		rec, rerr := setupRegisterMasterMind(deps, rt)
 		if rerr != nil {
-			return store.Binding{}, rerr
+			return store.Binding{}, classifyTransport(deps, rerr)
 		}
 		opts.MasterMindID = rec.ID
 		b, _, err = relevo.BindResolved(ctx, rt, opts)
 	}
 	if err != nil {
-		return store.Binding{}, err
+		return store.Binding{}, classifyTransport(deps, err)
 	}
 	return b, nil
 }

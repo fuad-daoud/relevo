@@ -165,6 +165,10 @@ func silenceStep(err error) error {
 	if errors.As(err, &se) {
 		return err
 	}
+	var ce *CodedStepError
+	if errors.As(err, &ce) {
+		return err
+	}
 	var le *LimitError
 	if errors.As(err, &le) {
 		return err

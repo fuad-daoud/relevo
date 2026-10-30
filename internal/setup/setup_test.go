@@ -572,3 +572,38 @@ func TestMergeSetupAnswersLeavesRolesToDerive(t *testing.T) {
 		t.Errorf("merged librarian = %v, want the given y", got["librarian"])
 	}
 }
+
+// TestSetupCodedStepErrorKeepsItsRowAndExit pins the classified-transport
+// shape: its row carries the full message and next verbatim, and silenceStep
+// passes it through so the caller still sees its own exit.
+func TestSetupCodedStepErrorKeepsItsRowAndExit(t *testing.T) {
+	rows := []struct {
+		name string
+		in   *CodedStepError
+	}{
+		{"refused exits 2", &CodedStepError{Message: "builder is busy", Next: "relevo doctor", Code: 2}},
+		{"other classes keep their exit", &CodedStepError{Message: "no such round", Next: "relevo doctor", Code: 1}},
+		{"multiline message is kept whole", &CodedStepError{Message: "busy\nsecond line", Next: "relevo doctor", Code: 2}},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			doc := setupStepDocOf("smoke", row.in)
+			if doc.Step != "smoke" || doc.OK {
+				t.Fatalf("doc = %+v, want a failed smoke row", doc)
+			}
+			if doc.Detail != row.in.Message {
+				t.Errorf("detail = %q, want the full message %q", doc.Detail, row.in.Message)
+			}
+			if doc.Next != row.in.Next {
+				t.Errorf("next = %q, want %q", doc.Next, row.in.Next)
+			}
+			in := error(row.in)
+			var ce *CodedStepError
+			if out := silenceStep(in); out != in {
+				t.Errorf("silenceStep = %v, want the shaped error back unwrapped", out)
+			} else if !errors.As(out, &ce) || ce.Code != row.in.Code {
+				t.Errorf("silenceStep = %v, want the exit %d preserved", out, row.in.Code)
+			}
+		})
+	}
+}
