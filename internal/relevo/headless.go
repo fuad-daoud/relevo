@@ -891,7 +891,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 		// stream-only rule: the tree and the stream are both signals, and a
 		// stall is quiet on both. The read is gated on the interval (#135
 		// follow-up): a tick inside it samples nothing.
-		if progressDue(next, now, rt.Policy.ProgressInterval()) {
+		if view.ProgressDue(next, now, rt.Policy.ProgressInterval()) {
 			next = progressStep(rt, next, now, sampleSignals(ctx, rt, next))
 			if err := noteResumedIdle(tx, b, next, now); err != nil {
 				return next, err
@@ -1591,7 +1591,7 @@ func headlessStatus(ctx context.Context, rt Runtime, b store.Binding, detail boo
 	}
 	// #252's label is now one of #135's progress labels, so a live
 	// headless builder can also read "exploring <age>".
-	working, _ := labelsOf(b, rt.Now())
+	working, _ := view.LabelsOf(b, rt.Now())
 	if working = silenceLabel(rt, b, rt.Now(), working); working != "" {
 		return working, info
 	}
