@@ -27,9 +27,8 @@ func addRepo(t *testing.T) string {
 	return dir
 }
 
-// refusedAdd asserts a refusal cut no worktree and started no process: #303
-// replaced the old "no tab, no start" pane assertions with the runner's own
-// process list, since a local builder is a process relevo runs.
+// refusedAdd asserts a refusal cut no worktree and started no process, via
+// the runner's own process list: a local builder is a process relevo runs.
 func refusedAdd(t *testing.T, rt Runtime, fg *fakeGit) {
 	t.Helper()
 	if len(fg.addWorktreeCalls) != 0 {
@@ -40,7 +39,7 @@ func refusedAdd(t *testing.T, rt Runtime, fg *fakeGit) {
 	}
 }
 
-// TestAddRecordsBaseRef pins #136: a peer cut from a checkout records the
+// TestAddRecordsBaseRef pins that a peer cut from a checkout records the
 // branch that checkout had checked out, asked of the source repo -- not of
 // the fresh worktree -- so `relevo land` knows what to rebase onto.
 func TestAddRecordsBaseRef(t *testing.T) {
@@ -100,7 +99,7 @@ func TestAddRecordsNoBaseRefWithoutBranch(t *testing.T) {
 	}
 }
 
-// TestAddRecordsRepoFromCWDNotWorktree pins #172: the peer's RepoRef is
+// TestAddRecordsRepoFromCWDNotWorktree pins that the peer's RepoRef is
 // captured from opts.Repo, the parent checkout the worktree is cut from --
 // not from the fresh worktree directory (which, before AddWorktree runs,
 // is nothing to capture facts about at all, and afterwards would merely
@@ -194,7 +193,7 @@ func TestAddCreatesAWorktreeBindingAtRoundOne(t *testing.T) {
 	}
 
 	// The round log holds nothing relayed yet, only the pick entry recording
-	// why relevo chose the builder it spawned (#61 step 2).
+	// why relevo chose the builder it spawned.
 	entries, err := rt.Store.ReadLog("frontend")
 	if err != nil {
 		t.Fatalf("ReadLog: %v", err)
@@ -260,7 +259,7 @@ func TestAddRefusesADuplicateName(t *testing.T) {
 	}
 }
 
-// TestAddRefusesALongNameBeforeCuttingAWorktree pins #64: a 25-character name
+// TestAddRefusesALongNameBeforeCuttingAWorktree pins that a 25-character name
 // builds a 33-character builder agent name, and Add must refuse it before the
 // worktree is cut -- a refused name leaves nothing behind.
 func TestAddRefusesALongNameBeforeCuttingAWorktree(t *testing.T) {
@@ -278,8 +277,7 @@ func TestAddRefusesALongNameBeforeCuttingAWorktree(t *testing.T) {
 		t.Errorf("a refused name must not cut a worktree, calls = %+v", fg.addWorktreeCalls)
 	}
 	refusedAdd(t, rt, fg)
-	// #303 deleted the pane client's ErrInvalidAgentName with it; the same
-	// refusal is now store.ValidName's own text, wrapped by builderAgentName
+	// The refusal is store.ValidName's own text, wrapped by builderAgentName
 	// with the length budget in it.
 	if err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("Add err = %v, want the agent-name length refusal", err)
@@ -343,7 +341,7 @@ func TestAddRefusesATreeAnotherBindingDrives(t *testing.T) {
 	}
 }
 
-// TestAddRollbackDeletesTheBranchItCreated pins #437: when Add cut a worktree
+// TestAddRollbackDeletesTheBranchItCreated pins that when Add cut a worktree
 // and created relevo/<name>, a later refusal rolls both back, so a retry does
 // not fail with "branch already exists".
 func TestAddRollbackDeletesTheBranchItCreated(t *testing.T) {
@@ -497,9 +495,8 @@ func TestAddBranchOriginOnlyTracksFirst(t *testing.T) {
 
 // TestAddBranchMissingRefuses pins that a branch on neither the local repo nor
 // origin -- and not brought by the fetch -- is a refusal before any git write.
-// The error class is part of the pin: an unclassified error here is what made
-// the CLI answer `internal` for a plain caller mistake (#893), so errors.Is
-// refusal.ErrRefused is asserted alongside the wording.
+// The error class is part of the pin: the error must stay classified, so
+// errors.Is refusal.ErrRefused is asserted alongside the wording.
 func TestAddBranchMissingRefuses(t *testing.T) {
 	t.Parallel()
 
@@ -718,8 +715,8 @@ func TestUnbindExistingBranchNeverDeletes(t *testing.T) {
 	})
 }
 
-// TestAddRefusesUnsupportedTierBeforeWorktree pins the early tier refusal
-// (#303 §1): Add renders the candidate's headless launch through
+// TestAddRefusesUnsupportedTierBeforeWorktree pins the early tier refusal:
+// Add renders the candidate's headless launch through
 // resolveBuilder's headlessLaunch before the round can start, so a harness
 // that cannot honour the tier is refused and the worktree Add just cut is
 // rolled back -- no binding, no kept tree.
@@ -747,8 +744,8 @@ func TestAddRefusesUnsupportedTierBeforeWorktree(t *testing.T) {
 	}
 }
 
-// TestAddStoresTicketWithRepoHint pins #637's local add half: Add parses
-// --ticket once against opts.Repo, so the binding carries the canonical form.
+// TestAddStoresTicketWithRepoHint pins that Add parses --ticket once against
+// opts.Repo, so the binding carries the canonical form.
 func TestAddStoresTicketWithRepoHint(t *testing.T) {
 	t.Parallel()
 
