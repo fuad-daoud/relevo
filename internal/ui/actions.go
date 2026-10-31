@@ -19,6 +19,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
+	"github.com/fuad-daoud/relevo/internal/uplink"
 )
 
 // mastermindActions is the real Actions: a thin adapter over internal/relevo.
@@ -140,7 +141,7 @@ func (a *mastermindActions) Gate(ctx context.Context, subject string, forDur tim
 			lines = append(lines, "the daemon will switch: "+strings.Join(names, ", "))
 		}
 	}
-	lines = append(lines, relevo.ForwardUnavailable(ctx, rt, subject, reason, until)...)
+	lines = append(lines, uplink.ForwardUnavailable(ctx, rt, subject, reason, until)...)
 
 	return widget.Result{Text: strings.Join(lines, "\n"), Refresh: true}
 }
@@ -165,7 +166,7 @@ func (a *mastermindActions) Ungate(ctx context.Context, subject string) widget.R
 	} else {
 		lines = append(lines, fmt.Sprintf("cleared %s (%d entries)", provider, removed))
 	}
-	lines = append(lines, relevo.ForwardAvailable(ctx, rt, subject)...)
+	lines = append(lines, uplink.ForwardAvailable(ctx, rt, subject)...)
 
 	return widget.Result{Text: strings.Join(lines, "\n"), Refresh: true}
 }

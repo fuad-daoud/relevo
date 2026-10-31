@@ -16,6 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db/wire"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 	"github.com/fuad-daoud/relevo/internal/serve"
+	"github.com/fuad-daoud/relevo/internal/uplink"
 )
 
 // parseFor turns --for into an absolute expiry. Empty means "until cleared"
@@ -185,7 +186,7 @@ func gateUnavailable(token, forFlag, reason string, asJSON bool) error {
 		}
 	}
 
-	for _, line := range relevo.ForwardUnavailable(context.Background(), rt, canonical, reason, until) {
+	for _, line := range uplink.ForwardUnavailable(context.Background(), rt, canonical, reason, until) {
 		fmt.Fprintln(os.Stderr, line)
 	}
 
@@ -292,7 +293,7 @@ func gateClear(subject string, asJSON bool) error {
 	// The local clear is done either way; every server the bindings name is
 	// asked, and each answer is printed -- these are answers, not warnings.
 	ctx := context.Background()
-	for _, line := range relevo.ForwardAvailable(ctx, rt, subject) {
+	for _, line := range uplink.ForwardAvailable(ctx, rt, subject) {
 		fmt.Fprintln(notices, line)
 	}
 
