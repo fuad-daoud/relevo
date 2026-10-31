@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/db"
 	"github.com/fuad-daoud/relevo/internal/histq"
 	"github.com/fuad-daoud/relevo/internal/stats"
+	"github.com/fuad-daoud/relevo/internal/text"
 )
 
 // ShortRepo trims prefixes, suffixes, and returns the last two segments
@@ -310,7 +311,7 @@ func (m Model) dayRuleLine(d dayRule) string {
 		cw = 0
 	}
 	label := d.label
-	rightText := " " + plural(d.rounds, "round") + " · " + shortTokens(d.tokens)
+	rightText := " " + text.Plural(d.rounds, "round") + " · " + shortTokens(d.tokens)
 	leftWidth := lipgloss.Width(label) + 1
 	rightWidth := lipgloss.Width(rightText)
 	fill := cw - leftWidth - rightWidth
@@ -408,13 +409,6 @@ func DayLabel(t, now time.Time, loc *time.Location) string {
 
 func (m Model) dayLabel(t time.Time) string {
 	return DayLabel(t, m.now(), m.loc)
-}
-
-func plural(n int, unit string) string {
-	if n == 1 {
-		return fmt.Sprintf("1 %s", unit)
-	}
-	return fmt.Sprintf("%d %ss", n, unit)
 }
 
 func shortTokens(n int64) string {

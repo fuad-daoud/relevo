@@ -418,10 +418,3 @@ func appendActionEntries(out []logEntry, actions []widget.ActionEntry, since tim
 	}
 	return out
 }
-
-func pluralEvent(n int, unit string) string {
-	if n == 1 {
-		return fmt.Sprintf("1 %s", unit)
-	}
-	return fmt.Sprintf("%d %ss", n, unit)
-}
