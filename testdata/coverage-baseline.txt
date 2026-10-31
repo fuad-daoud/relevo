@@ -60,6 +60,7 @@ github.com/fuad-daoud/relevo/internal/sync/verb 58.9
 github.com/fuad-daoud/relevo/internal/synclog 94.0
 github.com/fuad-daoud/relevo/internal/syncpipe 90.9
 github.com/fuad-daoud/relevo/internal/syncworker 92.2
+github.com/fuad-daoud/relevo/internal/text 71.0
 github.com/fuad-daoud/relevo/internal/tmpdir 76.0
 github.com/fuad-daoud/relevo/internal/transcript 94.4
 github.com/fuad-daoud/relevo/internal/ui 78.7
@@ -67,6 +68,7 @@ github.com/fuad-daoud/relevo/internal/ui/dash 85.3
 github.com/fuad-daoud/relevo/internal/ui/stats 83.6
 github.com/fuad-daoud/relevo/internal/ui/widget 0.0
 github.com/fuad-daoud/relevo/internal/upgrade 64.6
+github.com/fuad-daoud/relevo/internal/uplink 87.5
 github.com/fuad-daoud/relevo/internal/usage 93.8
 github.com/fuad-daoud/relevo/internal/view 91.1
 github.com/fuad-daoud/relevo/internal/workflow 97.2
