@@ -50,7 +50,7 @@ import (
 //     runtimeAt runtimes, internal/serve/daemon.go -> gateOnLimit/gateOnOutage
 //     AppendEntryLocked, internal/relevo/switch.go): row "serve.ledger" --
 //     the same row served picks and switches read.
-//  4. A client's ForwardUnavailable (internal/relevo/remote_gates.go POSTs
+//  4. A client's ForwardUnavailable (internal/uplink/forward_unavailable.go POSTs
 //     /v1/unavailable, internal/serve/routes.go) lands on the server in
 //     handleUnavailable (internal/serve/unavailable.go) on a runtimeAt
 //     runtime: row "serve.ledger".
