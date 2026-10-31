@@ -88,8 +88,8 @@ func TestDimLinesStripsStyle(t *testing.T) {
 }
 
 // TestModalInteriorHasNoBackground: in true colour, a modal whose rows are
-// styled paints no row on the old #161a21 panel background; the interior is
-// the terminal background (§2.1, §5).
+// styled paints no row on a panel background; the interior is
+// the terminal background.
 func TestModalInteriorHasNoBackground(t *testing.T) {
 	orig := lipgloss.ColorProfile()
 	defer lipgloss.SetColorProfile(orig)
@@ -109,7 +109,7 @@ func TestModalInteriorHasNoBackground(t *testing.T) {
 
 // TestModalRowBandCoversRow: in true colour, a selected modalRow over a styled
 // name and desc is one plain run under exactly one background-setting SGR and
-// one trailing reset, so the band covers every cell (§2.2, §5).
+// one trailing reset, so the band covers every cell.
 func TestModalRowBandCoversRow(t *testing.T) {
 	orig := lipgloss.ColorProfile()
 	defer lipgloss.SetColorProfile(orig)
@@ -141,7 +141,7 @@ func TestModalRowBandCoversRow(t *testing.T) {
 
 // TestListBoxBandCoversRow: in true colour, a selected listBox row is one plain
 // run under exactly one background-setting SGR, and its plain width equals
-// innerW, so the band covers every cell (§2.2, §5).
+// innerW, so the band covers every cell.
 func TestListBoxBandCoversRow(t *testing.T) {
 	orig := lipgloss.ColorProfile()
 	defer lipgloss.SetColorProfile(orig)

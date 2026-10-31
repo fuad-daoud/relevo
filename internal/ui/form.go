@@ -16,7 +16,7 @@ type formField struct {
 	validate func(string) error // nil = anything goes
 }
 
-// formBox is a multi-field form overlay (§3.3): one field per row, tab moves
+// formBox is a multi-field form overlay: one field per row, tab moves
 // focus, enter validates every field and submits, esc cancels.
 type formBox struct {
 	kind     string // box title
@@ -29,7 +29,7 @@ type formBox struct {
 	onSubmit func(values []string) tea.Cmd
 }
 
-// keys is the form's footer: enter submits, tab moves, esc cancels (§3.3).
+// keys is the form's footer: enter submits, tab moves, esc cancels.
 func (f formBox) keys() []widget.KeyHelp {
 	submit := f.submit
 	if submit == "" {
@@ -78,7 +78,7 @@ func (f formBox) setFocus(i int) formBox {
 
 // submitForm validates every field in order; the first error keeps the box
 // open with that field focused. With every field valid it closes and returns
-// onSubmit(values) (§3.3).
+// onSubmit(values).
 func (f formBox) submitForm() (overlay, tea.Cmd, bool) {
 	for i, field := range f.fields {
 		if field.validate == nil {
@@ -105,7 +105,7 @@ func (f formBox) view(width int) []string {
 	return rows
 }
 
-// modal renders the form box (§3.3): the header, then per field its label
+// modal renders the form box: the header, then per field its label
 // padded to 10 (accent when focused, faint otherwise), the input (focused on
 // the selection band), its hint, then the note, the error and the buttons.
 func (f formBox) modal(width int) (string, []string, int, bool) {

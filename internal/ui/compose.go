@@ -74,7 +74,7 @@ func modalInnerW(want, width int) int {
 // renderModal draws the D2 box: innerW = min(want, width-6) (floor 20); a top
 // border "╭─ " + title + " " + "─"… + "╮"; one line per row, "│ " + row padded
 // to innerW + " │"; "╰─…─╯". No background is painted: the box interior is the
-// terminal background (§2.1). The border and title use widget.DangerStyle when
+// terminal background. The border and title use widget.DangerStyle when
 // danger, else widget.AccentStyle; the title is bold.
 func renderModal(title string, rows []string, want, width int, danger bool) []string {
 	innerW := modalInnerW(want, width)
@@ -113,7 +113,7 @@ func renderModal(title string, rows []string, want, width int, danger bool) []st
 // modalRow renders one list row inside a modal: marker "▸ " (accent) when
 // selected else "  ", name, desc, and an optional right-aligned note. A
 // selected row is rebuilt as plain text and rendered once with widget.SelBandStyle,
-// so the band covers the whole row (§2.2). Unselected rows are unchanged.
+// so the band covers the whole row. Unselected rows are unchanged.
 func modalRow(selected bool, name, desc, note string, innerW int, nameStyle, descStyle lipgloss.Style) string {
 	if selected {
 		line := "▸ " + name

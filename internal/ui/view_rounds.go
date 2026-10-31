@@ -14,16 +14,15 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui/widget"
 )
 
-// roundOpenMsg asks the rounds view to push a round detail. Exactly one of
-// key (a live row's Key()) and hist (an archived row) is set.
+// Exactly one of key (a live row's Key()) and hist (an archived row) is set.
 type roundOpenMsg struct {
 	key   string
 	hist  *relevo.HistoryBinding
 	round int
 }
 
-// dashStyles is the dashboard's slice of the ui's palette, so the screen
-// never duplicates a colour (§5). Moved here from model.go:549 (R2.5).
+// The dashboard's slice of the ui's palette, so the screen never duplicates
+// a colour.
 func dashStyles() dash.Styles {
 	return dash.Styles{
 		Fg:        widget.TextStyle,
@@ -45,7 +44,6 @@ func dashStyles() dash.Styles {
 	}
 }
 
-// runningRounds builds a lookup for rounds currently running in the working group.
 func runningRounds(env widget.Env) func(string, int) bool {
 	m := make(map[string]int)
 	for _, b := range env.Report.Bindings {
@@ -59,8 +57,6 @@ func runningRounds(env widget.Env) func(string, int) bool {
 	}
 }
 
-// newRoundsView hosts the dashboard as a view (§4.5). It refuses without a
-// database, exactly as enterDash does today (model.go:551-570).
 func newRoundsView(env widget.Env, query, sortKey string) (widget.View, tea.Cmd, error) {
 	if env.Src.Base().DB == nil {
 		return nil, nil, relevo.ErrNoDatabase
@@ -74,7 +70,6 @@ func newRoundsView(env widget.Env, query, sortKey string) (widget.View, tea.Cmd,
 	return roundsView{dash: d}, d.Init(), nil
 }
 
-// roundsView is ':rounds': today's dashboard grid, hosted (§4.5).
 type roundsView struct {
 	dash dash.Model
 }
@@ -85,7 +80,6 @@ func (r roundsView) Capturing() bool { return r.dash.Editing() }
 
 func clip(s string, width int) string { return clipName(s, width) }
 
-// Context names the summary line or problem, and the regroup axis or sort key (§5.5).
 func (r roundsView) Context(env widget.Env) (string, string) {
 	r.dash.Running = runningRounds(env)
 	var right string
@@ -170,16 +164,13 @@ func (r roundsView) Update(msg tea.Msg, env widget.Env) (widget.View, tea.Cmd) {
 	return r, tea.Batch(cmds...)
 }
 
-// Body is the dashboard grid, sized to the shell's body box.
 func (r roundsView) Body(env widget.Env, width, height int) string {
 	r.dash.Running = runningRounds(env)
 	r.dash.SetSize(width, height)
 	return r.dash.View()
 }
 
-// openRound resolves a dashboard jump to the round it names: a live row
-// first, then the database, then a notice (§5.4). Asynchronous, because the
-// database read can block.
+// Asynchronous, because the database read can block.
 func openRound(env widget.Env, msg dash.JumpMsg) tea.Cmd {
 	return func() tea.Msg {
 		for i := range env.Report.Bindings {
@@ -206,8 +197,6 @@ func openRound(env widget.Env, msg dash.JumpMsg) tea.Cmd {
 	}
 }
 
-// execLine runs one command line against env, as the ':' command line does
-// and the shell does for Options.Start (§6).
 func execLine(line string, env widget.Env, p prefs) tea.Cmd {
 	fields := strings.Fields(line)
 	if len(fields) == 0 {

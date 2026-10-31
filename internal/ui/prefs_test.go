@@ -12,7 +12,7 @@ import (
 )
 
 // testPrefsStore is a real t.TempDir() database, so a preference round trip
-// exercises the kv row (P3b plan §4.4, §7).
+// exercises the kv row.
 func testPrefsStore(t *testing.T) PrefsStore {
 	t.Helper()
 	d, err := db.Open(filepath.Join(t.TempDir(), "relevo.db"))
@@ -44,7 +44,7 @@ func TestPrefsRoundTrip(t *testing.T) {
 	}
 }
 
-// TestPrefsOldDocumentStillLoads pins §4.6: an old prefs JSON carrying the
+// TestPrefsOldDocumentStillLoads pins the old document: an old prefs JSON carrying the
 // dropped keys (compact, rail_cols, scope) still decodes, because
 // encoding/json ignores unknown fields.
 func TestPrefsOldDocumentStillLoads(t *testing.T) {

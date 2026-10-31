@@ -15,7 +15,7 @@ import (
 const maxStderrLine = 1 << 20
 
 // captureStderr redirects os.Stderr and the default slog logger into send,
-// one stderrMsg per line, so no internal write can corrupt the screen (§4.4).
+// one stderrMsg per line, so no internal write can corrupt the screen.
 //
 // It returns the restore function: it closes the writer, waits for the
 // scanner goroutine, and puts os.Stderr and the default logger back exactly

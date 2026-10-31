@@ -18,7 +18,7 @@ import (
 )
 
 // candidateForm is the one overlay the `:candidates` view uses to add and to
-// edit a candidate (§3, round 3): a harness chip row, a provider row (chips on
+// edit a candidate (round 3): a harness chip row, a provider row (chips on
 // a harness with a provider list, a text field with suggestions on one
 // without), a model field and a read-only name row. It validates on every
 // render: modal rebuilds the edit with relevo.AddCandidate/EditCandidate over
@@ -42,7 +42,7 @@ type candidateForm struct {
 	sugg    int  // position in the provider suggestion cycle; -1 = none
 }
 
-// newCandidateForm builds the add/edit candidate overlay (§4). harnessKind seeds
+// newCandidateForm builds the add/edit candidate overlay. harnessKind seeds
 // an add's harness: the cursor row's kind, or the first kind when "".
 func newCandidateForm(env widget.Env, doc relevo.ConfigDoc, editing, slots, harnessKind string) candidateForm {
 	all := harness.All()
@@ -197,7 +197,7 @@ func (f candidateForm) gateFor(provider string) (availability.Gate, bool) {
 	return availability.Gate{}, false
 }
 
-// modelPlaceholder is the model field's hint when it is empty (§1).
+// modelPlaceholder is the model field's hint when it is empty.
 func (f candidateForm) modelPlaceholder() string {
 	if f.kinds[f.hsel] == "opencode" && f.input().Provider != "" {
 		return "the model id after " + f.input().Provider + "/"
@@ -205,7 +205,7 @@ func (f candidateForm) modelPlaceholder() string {
 	return "the model id"
 }
 
-// keys are the form's own keys, shown in the footer through overlayKeyer (§1).
+// keys are the form's own keys, shown in the footer through overlayKeyer.
 func (f candidateForm) keys() []widget.KeyHelp {
 	submit := "add"
 	if f.editing != "" {
@@ -214,7 +214,7 @@ func (f candidateForm) keys() []widget.KeyHelp {
 	return []widget.KeyHelp{{Key: "enter", Help: submit}, {Key: "tab", Help: "next field"}, {Key: "esc", Help: "cancel"}}
 }
 
-// update handles one key (§4): esc closes, tab moves focus, the harness row
+// update handles one key: esc closes, tab moves focus, the harness row
 // takes left/right, the provider row takes left/right (listed) or up/down and
 // typing (open), the model row takes every key, and enter submits.
 func (f candidateForm) update(k tea.KeyMsg) (overlay, tea.Cmd, bool) {
@@ -380,8 +380,8 @@ func (f candidateForm) view(width int) []string {
 	return rows
 }
 
-// modal draws the form box (§1, §4): title `add candidate` or `edit <name>`,
-// want 90, rows in the order §4 lists.
+// modal draws the form box: title `add candidate` or `edit <name>`,
+// want 90, rows in the listed order.
 func (f candidateForm) modal(width int) (string, []string, int, bool) {
 	const want = 90
 	kind := "add candidate"
@@ -444,7 +444,7 @@ func (f candidateForm) modal(width int) (string, []string, int, bool) {
 	return kind, rows, want, false
 }
 
-// providerNote is the row under the provider field (§4 row 6): on a listed
+// providerNote is the row under the provider field (row 6): on a listed
 // harness the provider error, else the suggestion chips (or `new provider` in
 // accent when the typed value matches none of them).
 func (f candidateForm) providerNote(fe *relevo.FieldError, showErr bool) string {
@@ -469,7 +469,7 @@ func (f candidateForm) providerNote(fe *relevo.FieldError, showErr bool) string 
 	return formSubRow(formChips(s, sel, false))
 }
 
-// nameRow is the read-only name row (§1): the name the model would give, the
+// nameRow is the read-only name row: the name the model would give, the
 // `was <old> · still <slots>` note when an edit changes it, and
 // `follows the model` while an add has no model yet.
 func (f candidateForm) nameRow() string {
@@ -494,7 +494,7 @@ func (f candidateForm) nameRow() string {
 	return row
 }
 
-// infoLines are the muted notes under the name (§1): a gate on the provider,
+// infoLines are the muted notes under the name: a gate on the provider,
 // the note that an edit keeping a gated provider stays gated, and the note that
 // nothing picks a candidate until an actor lists it.
 func (f candidateForm) infoLines() []string {
