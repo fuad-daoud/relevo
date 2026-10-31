@@ -404,14 +404,6 @@ type Runtime struct {
 	RemoteSend RemoteSendDeps
 }
 
-// legacyRegistry is the registry derived from candidates.json and
-// policy.json. It is roles.Build with no file, and that never errors in
-// legacy mode, so the error is discarded.
-func legacyRegistry(set *candidate.Set, pol policy.Policy) *roles.Registry {
-	reg, _ := roles.Build(nil, set, pol)
-	return reg
-}
-
 // RoleRegistry returns the runtime's roles registry: the one loaded from
 // roles.json when it was set, else the legacy derivation of Candidates and
 // Policy, built on demand. It never returns nil.
@@ -419,7 +411,7 @@ func (rt Runtime) RoleRegistry() *roles.Registry {
 	if rt.Registry != nil {
 		return rt.Registry
 	}
-	return legacyRegistry(rt.Candidates, rt.Policy)
+	return resolve.LegacyRegistry(rt.Candidates, rt.Policy)
 }
 
 // IngestDeps builds internal/ingest's Deps from rt: Git carries through

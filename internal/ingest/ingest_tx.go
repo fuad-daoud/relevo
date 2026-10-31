@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
@@ -280,7 +281,7 @@ func (r *ingestRun) upsertRound(tx *db.Tx, bindingID string, n int, all []store.
 	rd.Outcome = deriveOutcome(all, n, r.b, r.members)
 	rd.Switches = switchesForRound(all, n)
 
-	rd.Actor = actorOf(r.b)
+	rd.Actor = resolve.BindingRole(r.b)
 	rd.Account = nonEmptyPtr(r.b.BuilderAccount)
 	if cand, ref, ok := candidateForRound(all, n, r.b); ok {
 		candTok := cand
