@@ -79,11 +79,10 @@ func TestServeUnbindWithoutOwnerExits2(t *testing.T) {
 	}
 }
 
-// TestShowStateWithoutOwnerExits2 is TestServeLogWithoutOwnerExits2's port
-// to the new form (§8): `--state` names the serve root, so `show` refuses it
-// without `--owner`, naming --owner, exit 2. The refusal is the frame's coded
-// usage error, so the mention is asserted on the code's message rather than on
-// a stderr dump.
+// TestShowStateWithoutOwnerExits2 pins that `--state` names the serve root,
+// so `show` refuses it without `--owner`, naming --owner, exit 2. The refusal
+// is the frame's coded usage error, so the mention is asserted on the code's
+// message rather than on a stderr dump.
 func TestShowStateWithoutOwnerExits2(t *testing.T) {
 	stdout, stderr, runErr := captureOutput(t, func() error {
 		return run([]string{"show", "some-binding", "--state", t.TempDir()})
@@ -132,7 +131,7 @@ func TestServeFlagDefaults(t *testing.T) {
 	}
 }
 
-// TestServeFlagMaxBuilders pins #285's flag: --max-builders parses into
+// TestServeFlagMaxBuilders pins the --max-builders flag: it parses into
 // serveFlags.maxBuilders, which cmdServeRun assigns straight to
 // serve.Config.MaxBuilders. This only exercises flag parsing -- no server
 // starts, no harness, no systemd (this package's TestMain isolates HOME,
@@ -149,8 +148,8 @@ func TestServeFlagMaxBuilders(t *testing.T) {
 	}
 }
 
-// TestScopeFromPolicy pins scopeFromPolicy's defaults and overrides (#244,
-// #216, #295): scopes are on unless the resolved block explicitly turns them
+// TestScopeFromPolicy pins scopeFromPolicy's defaults and overrides: scopes
+// are on unless the resolved block explicitly turns them
 // off, a zero CPUWeight defaults to 100, and every other field -- the CPU
 // quota included -- passes through.
 func TestScopeFromPolicy(t *testing.T) {
@@ -201,7 +200,7 @@ func TestScopeFromPolicy(t *testing.T) {
 }
 
 // TestScopeStatusText pins what the startup line says about the resolved
-// scope (#285, #295) and the gate quota suffix (#313).
+// scope and the gate quota suffix.
 func TestScopeStatusText(t *testing.T) {
 	cases := map[string]struct {
 		sc   *spawn.ScopeSpec
@@ -227,8 +226,8 @@ func TestScopeStatusText(t *testing.T) {
 	}
 }
 
-// TestServeTierRuntimeHasClock pins the #226 regression: cmdServeRun's
-// startup runtime is only used to log the builder tier, but that chain
+// TestServeTierRuntimeHasClock pins the clock on cmdServeRun's startup
+// runtime: it is only used to log the builder tier, but that chain
 // (PickServedCandidate -> Gates) calls rt.Now(), so a runtime without a
 // clock panics before relevo serve ever listens. It must build the runtime
 // the way cmdServeRun does and call relevo.ServedBuilderTier on it -- no
@@ -355,7 +354,7 @@ func TestGateServeRefusesUninitialisedRoot(t *testing.T) {
 	}
 }
 
-// TestServeGateSubverbsWereRemoved pins D1: `serve gates`, `serve available`
+// TestServeGateSubverbsWereRemoved pins that `serve gates`, `serve available`
 // and `serve unavailable` return the usage-coded refusal naming `relevo gate
 // --serve`, and exit 2.
 func TestServeGateSubverbsWereRemoved(t *testing.T) {
@@ -374,7 +373,7 @@ func TestServeGateSubverbsWereRemoved(t *testing.T) {
 	}
 }
 
-// TestServeReadSubverbsWereRemoved pins §4.3: `serve log`, `serve show` and
+// TestServeReadSubverbsWereRemoved pins that `serve log`, `serve show` and
 // `serve tab` return the usage-coded refusal that names the form replacing
 // them, and exit 2.
 func TestServeReadSubverbsWereRemoved(t *testing.T) {
@@ -427,7 +426,7 @@ func runServeInit(t *testing.T, args ...string) (string, error) {
 
 // serveSecret reads a secret from the machine database the serve verbs use. The
 // read goes through the secret store rather than the handle's own accessor,
-// because that is where the serve verbs read it: the local file after the split.
+// because that is where the serve verbs read it.
 func serveSecret(t *testing.T, name string) []byte {
 	t.Helper()
 	root, err := tmpdir.DefaultRoot()
@@ -450,8 +449,8 @@ func serveSecret(t *testing.T, name string) []byte {
 	return val
 }
 
-// TestServeInitFreshLeavesARoot pins case 1 of the plan: a fresh run (no TLS
-// secrets, no root) creates <state>/serve/bindings before the secrets and
+// TestServeInitFreshLeavesARoot pins a fresh run (no TLS secrets, no root):
+// it creates <state>/serve/bindings before the secrets and
 // prints the fingerprint line, exit 0. Fixture-only: local key generation,
 // no harness, no network, no server.
 func TestServeInitFreshLeavesARoot(t *testing.T) {
@@ -482,8 +481,8 @@ func TestServeInitFreshLeavesARoot(t *testing.T) {
 	}
 }
 
-// TestServeInitRepairsAMissingRoot pins case 2 of the plan (the laptop's
-// case): with the TLS identity present and the root removed, the next run
+// TestServeInitRepairsAMissingRoot pins a repair run: with the TLS identity
+// present and the root removed, the next run
 // leaves the identity untouched, recreates <root>/bindings, and prints
 // `already initialised; fingerprint <fp1>`.
 func TestServeInitRepairsAMissingRoot(t *testing.T) {
@@ -525,8 +524,8 @@ func TestServeInitRepairsAMissingRoot(t *testing.T) {
 	}
 }
 
-// TestServeInitSecondRunChangesNothing pins case 3 of the plan: with the root
-// present, the second run exits 0 with the same line, and a sentinel inside
+// TestServeInitSecondRunChangesNothing pins an idempotent second run: with
+// the root present, it exits 0 with the same line, and a sentinel inside
 // bindings and the key/cert bytes are unchanged.
 func TestServeInitSecondRunChangesNothing(t *testing.T) {
 	state := t.TempDir()
@@ -567,8 +566,8 @@ func TestServeInitSecondRunChangesNothing(t *testing.T) {
 	}
 }
 
-// TestServeInitRootFailureIsAnError pins case 4 of the plan: a root that
-// cannot be created makes cmdServeInit return before InitTLS, with no success
+// TestServeInitRootFailureIsAnError pins that a root that cannot be created
+// makes cmdServeInit return before InitTLS, with no success
 // line and -- on the fresh path -- no secrets written.
 func TestServeInitRootFailureIsAnError(t *testing.T) {
 	t.Run("fresh", func(t *testing.T) {
@@ -630,8 +629,8 @@ func TestServeInitRootFailureIsAnError(t *testing.T) {
 	})
 }
 
-// TestServeEnrollRefusesUnknownUser pins step 6's refusal: `serve enroll
-// --user <name>` with a name that is not on this host is refused with the
+// TestServeEnrollRefusesUnknownUser pins the unknown-user refusal: `serve
+// enroll --user <name>` with a name that is not on this host is refused with the
 // useradd sentence, before anything is written. The name cannot exist, so only
 // /etc/passwd is read: no harness, no network.
 func TestServeEnrollRefusesUnknownUser(t *testing.T) {
@@ -646,7 +645,7 @@ func TestServeEnrollRefusesUnknownUser(t *testing.T) {
 	}
 }
 
-// TestServeRunRefusesUnavailableIsolation pins slice A's one rule at the
+// TestServeRunRefusesUnavailableIsolation pins the isolation refusal at the
 // command: a configured serve.isolation=user is refused at startup with
 // not_available naming the mode, before any side effect. The wait is bounded:
 // if the refusal regresses the command would start a daemon and never return,
@@ -684,8 +683,8 @@ func TestServeRunRefusesUnavailableIsolation(t *testing.T) {
 	}
 }
 
-// TestServeRunRefusesUserModeWithoutRoot pins step 8's rule at the command: a
-// configured serve.isolation=user with a non-root euid is refused with
+// TestServeRunRefusesUserModeWithoutRoot pins the user-mode refusal at the
+// command: a configured serve.isolation=user with a non-root euid is refused with
 // not_available naming root, before any side effect. Skipped when the test runs
 // as root, where user mode is permitted and the daemon would start.
 func TestServeRunRefusesUserModeWithoutRoot(t *testing.T) {

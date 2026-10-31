@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -108,11 +107,24 @@ func ownerConns(t *testing.T, sock string) int {
 	return info.Conns
 }
 
+// ownerConnsWait bounds waitOwnerConns: a discard finishes within the owner's
+// own two-second cleanup timeouts, so a count still wrong after this is a
+// failure to report, not a reason to poll until the binary's deadline.
+const ownerConnsWait = 30 * time.Second
+
 // waitOwnerConns blocks until the owner's live count falls back to want, so a
 // caller can observe that a finished statement's connection was discarded.
 func waitOwnerConns(t *testing.T, sock string, want int) {
 	t.Helper()
-	pollUntil(t, func() bool {
-		return ownerConns(t, sock) == want
-	}, fmt.Sprintf("owner live connections did not fall back to %d", want))
+	deadline := time.Now().Add(ownerConnsWait)
+	for {
+		n := ownerConns(t, sock)
+		if n == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("owner live connections = %d after %s, want them back to %d", n, ownerConnsWait, want)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }

@@ -16,14 +16,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/ui"
 )
 
-// serveClientsFlagValues holds the pointer `serve clients` parses into. state
-// is read back off the FlagSet, so it has no pointer of its own.
 type serveClientsFlagValues struct {
 	asJSON *bool
 }
 
-// serveClientsFlagSet defines those flags on fs and returns what they parse
-// into.
+// The state flag has no pointer of its own: it is read back off the FlagSet.
 func serveClientsFlagSet(fs *flag.FlagSet) *serveClientsFlagValues {
 	v := &serveClientsFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the enrolled clients as JSON")
@@ -62,14 +59,11 @@ func cmdServeClients(args []string) error {
 	return nil
 }
 
-// serveFingerprintFlagValues holds the pointer `serve fingerprint` parses
-// into. state is read back off the FlagSet, so it has no pointer of its own.
 type serveFingerprintFlagValues struct {
 	asJSON *bool
 }
 
-// serveFingerprintFlagSet defines those flags on fs and returns what they
-// parse into.
+// The state flag has no pointer of its own: it is read back off the FlagSet.
 func serveFingerprintFlagSet(fs *flag.FlagSet) *serveFingerprintFlagValues {
 	v := &serveFingerprintFlagValues{}
 	v.asJSON = fs.Bool("json", false, "print the fingerprint as a JSON document")
@@ -104,8 +98,7 @@ func cmdServeFingerprint(args []string) error {
 	return nil
 }
 
-// serveStatusFlagSet declares `serve status`'s flags: --state and --json,
-// both read back off the FlagSet (the verb always prints JSON).
+// Both flags are read back off the FlagSet; the verb always prints JSON.
 func serveStatusFlagSet(fs *flag.FlagSet) {
 	_ = fs.String("state", "", "state directory")
 	_ = fs.Bool("json", false, "print the census as JSON")
@@ -144,13 +137,11 @@ func cmdServeStatus(args []string) error {
 	return enc.Encode(serve.StatusDocument(owners, builders))
 }
 
-// serveUIFlagValues holds the pointer `serve ui` parses into. state is read
-// back off the FlagSet, so it has no pointer of its own.
 type serveUIFlagValues struct {
 	interval *time.Duration
 }
 
-// serveUIFlagSet defines those flags on fs and returns what they parse into.
+// The state flag has no pointer of its own: it is read back off the FlagSet.
 func serveUIFlagSet(fs *flag.FlagSet) *serveUIFlagValues {
 	v := &serveUIFlagValues{}
 	_ = fs.String("state", "", "state directory")
@@ -194,9 +185,8 @@ func cmdServeUI(args []string) error {
 	})
 }
 
-// serveGateList lists the gates on the server-wide ledger: `relevo serve
-// gates` was the answer to `relevo gate` printing "nothing was gating" on a
-// box whose gates live on the serve root's ledger, not the caller's (§4.3).
+// serveGateList lists the gates on the server-wide ledger, the serve root's
+// ledger rather than the caller's.
 func serveGateList(fs *flag.FlagSet, asJSON bool) error {
 	root, d, err := adminRoot(fs)
 	if err != nil {
@@ -222,7 +212,7 @@ func serveGateList(fs *flag.FlagSet, asJSON bool) error {
 }
 
 // serveGateClear lifts the server-side gate on a provider, in place, with
-// no forwarding: the verb for the box that runs the daemon (§4.3).
+// no forwarding: the verb for the box that runs the daemon.
 func serveGateClear(fs *flag.FlagSet, subject string, asJSON bool) error {
 	root, d, err := adminRoot(fs)
 	if err != nil {
@@ -259,8 +249,8 @@ func serveGateClear(fs *flag.FlagSet, subject string, asJSON bool) error {
 }
 
 // serveGateUnavailable records a server-side gate: the server ledger's
-// counterpart to gateUnavailable, with no daemon-switch line and no forwarding
-// (the gate is already on the ledger the daemon reads) (§4.3).
+// counterpart to gateUnavailable, with no daemon-switch line and no
+// forwarding (the gate is already on the ledger the daemon reads).
 func serveGateUnavailable(fs *flag.FlagSet, token, forFlag, reason string, asJSON bool) error {
 	root, d, err := adminRoot(fs)
 	if err != nil {

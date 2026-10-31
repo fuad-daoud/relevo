@@ -353,7 +353,6 @@ func (s *Server) handle(nc net.Conn) {
 		_ = nc.Close()
 		return
 	}
-	defer s.removeConn(c)
 	_ = c.serve()
 	c.cleanup()
 }

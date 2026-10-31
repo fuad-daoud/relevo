@@ -9,8 +9,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestMCPNotice pins §4.10's rule: the notice appears only when the daemon
-// runs a different version and refused nothing. "Different" is the spec's
+// TestMCPNotice pins the rule: the notice appears only when the daemon runs
+// a different version and refused nothing. "Different" means
 // `info.Version != own`, in either direction.
 func TestMCPNotice(t *testing.T) {
 	refused := store.DaemonInfo{

@@ -13,12 +13,12 @@ import (
 )
 
 // ErrAmbiguousTier reports candidates of one role carrying different tiers, so
-// no single tier can be written for the role (#374 §3.1). It stops `relevo
+// no single tier can be written for the role. It stops `relevo
 // config init` before anything is written.
 var ErrAmbiguousTier = errors.New("candidates of one role carry different tiers")
 
 // FromLegacy translates today's candidates.json roles/tier and policy.json
-// order/tier into a File (#374 §3.1): the second return is the notes, human
+// order/tier into a File: the second return is the notes, human
 // lines for the CLI to print, in harness.RoleNames() order.
 //
 // For every ordered role, the file it produces makes the registry pick exactly
@@ -57,8 +57,8 @@ func FromLegacy(set *candidate.Set, pol policy.Policy) (*File, []string, error) 
 	return &File{Rows: rows}, notes, nil
 }
 
-// legacyTier picks the tier FromLegacy writes for one role, first match wins
-// (#374 §3.1): policy's tier for the role; else the candidates' own tier when
+// legacyTier picks the tier FromLegacy writes for one role, first match wins:
+// policy's tier for the role; else the candidates' own tier when
 // every one of them carries the same non-empty tier; else nil when none does;
 // else ErrAmbiguousTier naming each candidate token beside its tier, "none"
 // for the ones that set none.
@@ -124,7 +124,7 @@ func unlistedCount(ranked []Ranked) int {
 	return n
 }
 
-// Encode renders f as roles.json (#374 §3.1): JSON, two-space indent, a
+// Encode renders f as roles.json: JSON, two-space indent, a
 // trailing newline, and only the fields each row sets -- an omitted field keeps
 // what the role already had, so writing one would change the file's meaning.
 // Rows are keyed by role name; encoding/json's sorted map-key order is fine.

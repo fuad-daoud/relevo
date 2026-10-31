@@ -74,14 +74,12 @@ func runDoneChain(rt relevo.Runtime, name string, asJSON bool) error {
 	return nil
 }
 
-// doneFlagValues holds the pointers done parses into.
 type doneFlagValues struct {
 	name   *string
 	pick   *bool
 	asJSON *bool
 }
 
-// doneFlagSet defines those flags on fs and returns what they parse into.
 func doneFlagSet(fs *flag.FlagSet) *doneFlagValues {
 	v := &doneFlagValues{}
 	v.name = fs.String("name", "", "binding to mark done")
@@ -142,17 +140,15 @@ func cmdDone(args []string) error {
 	return nil
 }
 
-// cmdStop ends a binding's open round on purpose (#138): a headless builder
+// cmdStop ends a binding's open round on purpose: a headless builder
 // is killed now and the round closes without a report unless one is already
 // on disk. It takes the binding from --name or a positional and never from
 // the current directory -- a stop ends a round, so it must not guess.
-// stopFlagValues holds the pointer stop parses into.
 type stopFlagValues struct {
 	name   *string
 	asJSON *bool
 }
 
-// stopFlagSet defines that flag on fs and returns what it parses into.
 func stopFlagSet(fs *flag.FlagSet) *stopFlagValues {
 	v := &stopFlagValues{}
 	v.name = fs.String("name", "", "binding whose open round to stop")

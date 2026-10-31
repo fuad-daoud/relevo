@@ -8,7 +8,7 @@ import (
 )
 
 // resultModel is the last screen: what the verb said (or the error), held
-// until a key so a popup pane does not vanish before it is read (spec §5).
+// until a key so a popup pane does not vanish before it is read.
 type resultModel struct {
 	pending bool   // the verb is running; keys other than ctrl+c are ignored
 	text    string // success text, or the empty-list line

@@ -8,7 +8,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/harness"
 )
 
-// TestShippedTableMatchesHarness pins §3.3: the shipped agent table agrees
+// TestShippedTableMatchesHarness pins that the shipped agent table agrees
 // with harness.RoleByName's Definitions for the four roles the role table
 // defines, and every shipped agent is a definition on every known kind.
 func TestShippedTableMatchesHarness(t *testing.T) {
@@ -40,7 +40,7 @@ func TestShippedTableMatchesHarness(t *testing.T) {
 	}
 
 	// Every shipped agent is a definition on every known kind, and its output
-	// label is the one §3.3's table names.
+	// label is the one the shipped table names.
 	wantOutput := map[string]string{
 		"plan-executor":     "report",
 		"librarian":         "report",

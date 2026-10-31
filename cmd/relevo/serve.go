@@ -54,8 +54,6 @@ type serveFlags struct {
 	publicHosts    hostSlice
 }
 
-// installServeFlags defines the server's own flags on fs, in the usage text's
-// order, and returns what they parse into.
 func installServeFlags(fs *flag.FlagSet) *serveFlags {
 	sf := &serveFlags{}
 	fs.StringVar(&sf.listen, "listen", ":7777", "listen address")
@@ -68,15 +66,13 @@ func installServeFlags(fs *flag.FlagSet) *serveFlags {
 	return sf
 }
 
-// serveFlagSet builds the FlagSet `relevo serve` parses and the values it
-// parses into.
 func serveFlagSet() (*flag.FlagSet, *serveFlags) {
 	fs := flag.NewFlagSet("relevo serve", flag.ContinueOnError)
 	return fs, installServeFlags(fs)
 }
 
-// serveRunFlagSet is the registry's installer for `serve`. The registry only
-// walks a flag set, so it discards the parsed values.
+// The registry only walks a flag set, so serveRunFlagSet discards the parsed
+// values.
 func serveRunFlagSet(fs *flag.FlagSet) { installServeFlags(fs) }
 
 func serveRoot(fs *flag.FlagSet) (string, error) {
@@ -111,10 +107,9 @@ func pidAlive(pid int) bool {
 	return p.Signal(syscall.Signal(0)) == nil
 }
 
-// openMachineDB opens the machine database (tmpdir.DefaultRoot()/relevo.db),
-// which every serve verb reads clients, TLS, the daemon pointer and config
-// from (P5 §4.3). The caller closes it. It returns the state root too, because
-// the hook run log is keyed on it.
+// openMachineDB opens the machine database every serve verb reads clients,
+// TLS, the daemon pointer and config from. The caller closes it. It returns
+// the state root too, because the hook run log is keyed on it.
 func openMachineDB() (*db.DB, string, error) {
 	root, err := tmpdir.DefaultRoot()
 	if err != nil {
@@ -251,9 +246,9 @@ func serveTierRuntime(candidates *candidate.Set, pol policy.Policy, reg *roles.R
 
 // scopeStatusText is the startup line's scopes word for a resolved spec:
 // "on (slice relevo.slice, 200%)", "on (200%)", "on (slice relevo.slice)",
-// "on", or "off" for nil (#285, #295). A spec carrying a gate quota (#313)
-// gains ", gate <quota>" inside the parentheses: "on (slice relevo.slice,
-// 200%, gate 300%)". A spec carrying an allowed_cpus pool (#314) gains
+// "on", or "off" for nil. A spec carrying a gate quota gains
+// ", gate <quota>" inside the parentheses: "on (slice relevo.slice,
+// 200%, gate 300%)". A spec carrying an allowed_cpus pool gains
 // ", cpus <pool>, one per round": "on (cpus 0-2, one per round)".
 func scopeStatusText(sc *spawn.ScopeSpec) string {
 	if sc == nil {
@@ -301,14 +296,14 @@ func loadConfig(d *db.DB) (config.Loaded, error) {
 		if _, err := cs.As("import", "imported "+dir).ImportFiles(dir, time.Now().UTC()); err != nil {
 			return config.Loaded{}, err
 		}
-		// A1's migration: write a name for every stored candidate. Names are
-		// derived in memory by candidate.Parse either way, so a failure here
-		// is a warning, never a refusal to serve.
+		// Write a name for every stored candidate. Names are derived in
+		// memory by candidate.Parse either way, so a failure here is a
+		// warning, never a refusal to serve.
 		if _, err := cs.EnsureCandidateNames(); err != nil {
 			slog.Warn("candidate names not written to config", "err", err)
 		}
-		// A2 round 2's one-time migration: a pre-actors config becomes actors
-		// plus agents. An error is a warning; the old config keeps working.
+		// A pre-actors config becomes actors plus agents. An error is a
+		// warning; the old config keeps working.
 		if migrated, err := cs.MigrateToActors(); err != nil {
 			slog.Warn("config: roles not migrated to actors", "err", err)
 		} else if migrated {
@@ -352,9 +347,6 @@ func serveAdminConfigFrom(root string, d *db.DB, L config.Loaded) serve.Config {
 	return cfg
 }
 
-// serveAdminConfigWithPolicy is serveAdminConfigFrom with the config loaded
-// here.
-//
 // Unlike serveAdminConfigWithCandidates, an empty candidates set is not an
 // error: the census is meaningful with no candidates.
 func serveAdminConfigWithPolicy(root string, d *db.DB) (serve.Config, error) {
@@ -372,8 +364,7 @@ func serveAdminConfigWithPolicy(root string, d *db.DB) (serve.Config, error) {
 //
 // Unlike cmdServeRun, an empty candidates set is an error here: with no
 // candidate set to project onto, a ledger full of gates would render as
-// "no gates", which reads as "nothing is gated" -- the same false negative
-// this round exists to remove.
+// "no gates", which reads as "nothing is gated".
 func serveAdminConfigWithCandidates(root string, d *db.DB) (serve.Config, error) {
 	L, err := loadConfig(d)
 	if err != nil {
@@ -441,9 +432,9 @@ func cmdServeRun(args []string) error {
 		slog.Info("builder tier", "tier", builderTier)
 	}
 
-	// Log each candidate harness's role-file coverage once at startup
-	// (#238): a candidate whose kind is missing role files is gated on
-	// every pick, silently until now.
+	// Log each candidate harness's role-file coverage once at startup: a
+	// candidate whose kind is missing role files is gated on every pick,
+	// and this line is the only notice.
 	roles := harness.OSRoleChecker()
 	seenKinds := map[string]bool{}
 	for _, ref := range candidates.Refs() {
@@ -453,7 +444,7 @@ func cmdServeRun(args []string) error {
 		}
 		seenKinds[r.Harness] = true
 		// The gate checks the builder's resolved definitions: in roles.json
-		// mode a custom name may be what the row launches (#374 §5).
+		// mode a custom name may be what the row launches.
 		spec, err := reg.Spec("builder", r.Harness)
 		if err != nil {
 			continue
@@ -468,8 +459,8 @@ func cmdServeRun(args []string) error {
 	reader, prices := newUsageReader(L.Prices)
 
 	// The hooks dispatcher runs on the machine database's run log, the same
-	// kv `hooks.log` the daemon writes (P5 §4.3), so a served round's hook
-	// runs are visible beside the local ones.
+	// kv `hooks.log` the daemon writes, so a served round's hook runs are
+	// visible beside the local ones.
 	hooksCfg, err := resolveHooksConfig(L.Hooks, hooks.NewKVLog(db.TxKV{DB: d}))
 	if err != nil {
 		return err
@@ -477,8 +468,8 @@ func cmdServeRun(args []string) error {
 	dispatcher := newHooksDispatcher(hooksCfg, pol)
 
 	// Scopes are enabled by policy (default on) and confirmed by a startup
-	// probe (#244, #216); if systemd-run is missing or the user manager
-	// refuses, scopes are off for the daemon's lifetime with one log line.
+	// probe; if systemd-run is missing or the user manager refuses, scopes
+	// are off for the daemon's lifetime with one log line.
 	scopesStatus := "off"
 	scope := scopeFromPolicy(pol.ScopeFor(true))
 	if userMode {

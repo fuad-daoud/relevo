@@ -6,7 +6,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/doctor"
 )
 
-// TestRestartNotice is #370 §4.8's pure rule: the notice appears only on the
+// TestRestartNotice pins the pure rule: the notice appears only on the
 // restart row's Warn, and its count comes from Check.Unsafe.
 func TestRestartNotice(t *testing.T) {
 	cases := []struct {
@@ -29,8 +29,8 @@ func TestRestartNotice(t *testing.T) {
 	}
 }
 
-// TestInsertRestartRow pins the row position the plan asks for: directly after
-// the daemon row, before the first per-kind row.
+// TestInsertRestartRow pins the row position: directly after the daemon
+// row, before the first per-kind row.
 func TestInsertRestartRow(t *testing.T) {
 	checks := []doctor.Check{
 		{Group: "", Name: "release"},
