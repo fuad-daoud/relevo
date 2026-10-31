@@ -19,7 +19,7 @@ import (
 func configServerFlagSet(*flag.FlagSet) {}
 
 // configServer is the server half of `relevo config`: this machine's
-// remote-builder identity and its configured servers (§4.1).
+// remote-builder identity and its configured servers.
 func configServer(args []string) error {
 	const usage = `usage: relevo config server add <name> <url> (--fingerprint sha256:<hex> | --ca system | --insecure)
        relevo config server rm <name>
@@ -48,15 +48,11 @@ func configServer(args []string) error {
 	}
 }
 
-// configServerKeyFlagValues holds the pointers `config server key` parses
-// into.
 type configServerKeyFlagValues struct {
 	enrollOnly *bool
 	asJSON     *bool
 }
 
-// configServerKeyFlagSet defines those flags on fs and returns what they parse
-// into.
 func configServerKeyFlagSet(fs *flag.FlagSet) *configServerKeyFlagValues {
 	v := &configServerKeyFlagValues{}
 	// The provider parses this line; its format is remote.MarshalPublic's.
@@ -66,7 +62,7 @@ func configServerKeyFlagSet(fs *flag.FlagSet) *configServerKeyFlagValues {
 }
 
 // configServerKey prints the client id and the enrolment line, generating the
-// key when it is absent. This is what `client init` printed.
+// key when it is absent.
 func configServerKey(args []string) error {
 	fs := flag.NewFlagSet("relevo config server key", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -97,11 +93,9 @@ func configServerKey(args []string) error {
 	return printClientKey(os.Stdout, pem, *enrollOnly)
 }
 
-// configSecretFlagSet declares the bare `config secret` dispatcher's flags:
-// none today.
 func configSecretFlagSet(*flag.FlagSet) {}
 
-// configSecret is the secrets half of `relevo config` (§4.1). A list prints
+// configSecret is the secrets half of `relevo config`. A list prints
 // names only, never values.
 func configSecret(args []string) error {
 	const usage = `usage: relevo config secret set <typesafe|client.key>
@@ -139,7 +133,6 @@ func checkSecretName(name string) error {
 	return nil
 }
 
-// configSecretSetFlagValues holds the pointer `config secret set` parses into.
 type configSecretSetFlagValues struct {
 	asJSON *bool
 }
@@ -195,7 +188,6 @@ func configSecretSetRun(args []string) error {
 	return nil
 }
 
-// configSecretRmFlagValues holds the pointer `config secret rm` parses into.
 type configSecretRmFlagValues struct {
 	asJSON *bool
 }
@@ -208,7 +200,6 @@ func configSecretRmFlagSet(fs *flag.FlagSet) *configSecretRmFlagValues {
 	return v
 }
 
-// configSecretRm removes a stored secret.
 func configSecretRm(args []string) error {
 	return outcomeError(configSecretRmRun(args))
 }
@@ -244,8 +235,6 @@ func configSecretRmRun(args []string) error {
 	return nil
 }
 
-// configSecretListFlagValues holds the pointer `config secret list` parses
-// into.
 type configSecretListFlagValues struct {
 	asJSON *bool
 }

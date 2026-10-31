@@ -1,13 +1,4 @@
-cmd/relevo/agent.go
-cmd/relevo/args.go
 cmd/relevo/bind.go
-cmd/relevo/candidates.go
-cmd/relevo/client.go
-cmd/relevo/config.go
-cmd/relevo/config_edit.go
-cmd/relevo/config_io.go
-cmd/relevo/config_log.go
-cmd/relevo/config_server.go
 cmd/relevo/daemon.go
 cmd/relevo/daemon_notice.go
 cmd/relevo/done.go

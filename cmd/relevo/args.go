@@ -25,7 +25,7 @@ import (
 // explicitBinding takes the binding from --name or a single positional, and
 // never from the current directory. done is destructive and not undoable
 // except through `relevo bind --resume`, so a bare invocation must fail rather
-// than guess -- guessing has already ended one live loop by accident.
+// than guess.
 func explicitBinding(nameFlag string, positional []string) (string, bool) {
 	switch {
 	case nameFlag != "" && len(positional) == 0:
@@ -106,10 +106,8 @@ func bindingArg(nameFlag string, positional []string) (string, error) {
 // --name or as a positional, else the binding that owns the current directory,
 // so the mastermind rarely has to name it at all.
 //
-// The positional form is not decoration. Before #50 these commands read --name
-// only and dropped a positional on the floor, which from a bound directory sent
-// `relevo send frontend --file p.md` to the CWD's builder instead of frontend's,
-// with no error and a round log that recorded it as legitimate.
+// The positional form is not decoration: a dropped positional would act on the
+// current directory's binding instead of the named one.
 func resolveBinding(rt relevo.Runtime, nameFlag string, positional []string) (string, error) {
 	name, err := bindingArg(nameFlag, positional)
 	if err != nil {
@@ -137,7 +135,7 @@ func resolveBinding(rt relevo.Runtime, nameFlag string, positional []string) (st
 }
 
 // warnWaitingOnYou prints one stderr line per other binding that is waiting
-// on a human, per spec §4.9. except is the binding the verb just acted on.
+// on a human. except is the binding the verb just acted on.
 // It never changes the caller's return value or exit code: a WaitingOnYou
 // error is itself only a stderr warning.
 func warnWaitingOnYou(rt relevo.Runtime, except string) {
@@ -155,8 +153,8 @@ func warnWaitingOnYou(rt relevo.Runtime, except string) {
 // the flag package has already printed usage, so the caller just returns.
 //
 // It parses iteratively rather than once, because flag.Parse stops at the first
-// non-flag argument -- which meant `relevo bind --from webshop --round 2` silently
-// dropped --round, the exact form the README documents (#48). Each pass takes
+// non-flag argument -- a flag after a positional would otherwise be silently
+// dropped. Each pass takes
 // one leftover word as a positional and re-parses the remainder, so flags are
 // found wherever they appear. Letting Parse do the work is what keeps this
 // correct without knowing any flag's arity: Parse has already consumed a
@@ -199,8 +197,8 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 	return nil
 }
 
-// regateFlag turns --regate into the *int the relevo package takes (#132 part
-// 2). The flag's default is -1, meaning "not given", which becomes nil so the
+// regateFlag turns --regate into the *int the relevo package takes. The flag's
+// default is -1, meaning "not given", which becomes nil so the
 // policy default or the existing binding value stands; any value the human
 // actually typed must be >= 0, and a bad one exits 2 -- before any runtime is
 // built, so nothing touches the state directory or launches a harness.
@@ -221,7 +219,7 @@ func regateFlag(fs *flag.FlagSet, regate *int) (*int, error) {
 }
 
 // noteRegateNoGate says when a repair budget landed on a binding that has no
-// gate to fail (#132 part 2): accepted and inert, because a binding with no
+// gate to fail: accepted and inert, because a binding with no
 // gate never produces gate=fail, but not worth leaving unexplained. w is the
 // mode's notice writer: stdout for the human default, stderr under --json.
 func noteRegateNoGate(w io.Writer, b store.Binding) {
@@ -232,7 +230,7 @@ func noteRegateNoGate(w io.Writer, b store.Binding) {
 
 // noticeWriter is where a write verb's supplementary lines go: stdout for the
 // human default, unchanged; stderr under --json, where stdout carries the
-// result document and nothing else (§2.1, §2.8).
+// result document and nothing else.
 func noticeWriter(jsonMode bool) io.Writer {
 	if jsonMode {
 		return os.Stderr
@@ -241,7 +239,7 @@ func noticeWriter(jsonMode bool) io.Writer {
 }
 
 // writeError classifies a failure out of one of the relevo write paths into
-// the frame's catalog code (§2.5). It is the one place the write verbs decide
+// the frame's catalog code. It is the one place the write verbs decide
 // a failure class, and it never invents a code: the sentinels relevo and store
 // export are the only distinctions the library makes, and anything else is
 // internal. An error that is already coded passes through untouched.
@@ -366,8 +364,8 @@ func isTerminal(f *os.File) bool {
 }
 
 // bareArgs is what a bare `relevo` runs: `ui` when stdin and stdout are both
-// terminals, nil otherwise (round 3, step 3.1). Pure, so a test covers all
-// four combinations without a terminal.
+// terminals, nil otherwise. Pure, so a test covers all four combinations
+// without a terminal.
 func bareArgs(stdinTTY, stdoutTTY bool) []string {
 	if stdinTTY && stdoutTTY {
 		return []string{"ui"}

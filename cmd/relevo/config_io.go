@@ -26,7 +26,7 @@ func configExportFlagSet(fs *flag.FlagSet) *configExportFlagValues {
 	return v
 }
 
-// configExport writes the whole-config document (§3) to stdout, indented, with
+// configExport writes the whole-config document to stdout, indented, with
 // one key per section present in config.Sections order.
 func configExport(args []string) error {
 	fs := flag.NewFlagSet("relevo config export", flag.ContinueOnError)
@@ -53,7 +53,6 @@ func configExport(args []string) error {
 
 // configImport reads a document from a file (or stdin for "-"), stores it via
 // PutDoc, and prints any warnings to stderr.
-// configImportFlagValues holds the pointer `config import` parses into.
 type configImportFlagValues struct {
 	asJSON *bool
 	force  *bool
@@ -169,7 +168,6 @@ func importSections(doc map[config.Section]json.RawMessage) []string {
 	return out
 }
 
-// exportDoc renders every stored section as the whole-config document (§3).
 func exportDoc(rt relevo.Runtime) ([]byte, error) {
 	doc := make(map[config.Section]json.RawMessage)
 	for _, sec := range config.Sections {
@@ -226,7 +224,6 @@ func validateDoc(doc map[config.Section]json.RawMessage) error {
 // internal/pick/pick.go:27 use, with no new dependency.
 var stdinStat = os.Stdin.Stat
 
-// stdinIsTerminal reports whether os.Stdin is a character device.
 func stdinIsTerminal() bool {
 	info, err := stdinStat()
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
