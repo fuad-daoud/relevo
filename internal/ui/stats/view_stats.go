@@ -588,9 +588,6 @@ func (v statsView) openRounds(env widget.Env, q string) (widget.View, tea.Cmd) {
 	return v, push(rv, init)
 }
 
-// Body is the whole board: a blank line under the context row, then the
-// active tab's body, or a state line before the first report. When the body is
-// taller than the room, that head line carries the page hint.
 // statsOverviewWide is the width at or above which the overview lays its tiles
 // in four columns and its two tables side by side. Below it the
 // tiles are 2x2 and the tables stack.
