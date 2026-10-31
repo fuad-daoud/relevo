@@ -164,8 +164,6 @@ internal/relevo/statusline.go
 internal/relevo/statusline_test.go
 internal/relevo/status_route_test.go
 internal/relevo/status_test.go
-internal/relevo/stop.go
-internal/relevo/stop_test.go
 internal/relevo/switch.go
 internal/relevo/switch_test.go
 internal/relevo/tab.go
