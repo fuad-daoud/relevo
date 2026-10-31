@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 
+	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/pick"
 	"github.com/fuad-daoud/relevo/internal/relevo"
 )
@@ -22,7 +23,7 @@ func runStopChain(rt relevo.Runtime, name string, asJSON bool) error {
 	// A halted chain carries its own wording, so it is classified rather than
 	// printed here: the human line and the --json envelope both come out of the
 	// coded refusal, and neither invents bytes the other does not have.
-	if errors.Is(err, relevo.ErrChainHalted) {
+	if errors.Is(err, chain.ErrChainHalted) {
 		return writeError(err)
 	}
 	if errors.Is(err, relevo.ErrNothingToStop) {

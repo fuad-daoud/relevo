@@ -117,7 +117,7 @@ func chainStopHaltedMember(ctx context.Context, rt Runtime, c db.ChainRow) (Stop
 // and every other ended chain keeps ErrNothingToStop.
 func chainStoppedNothing(c db.ChainRow) error {
 	if chain.Status(c.Status) == chain.StatusHalted {
-		return haltedChainStop(c.Name)
+		return chain.HaltedStop(c.Name)
 	}
 	return ErrNothingToStop
 }

@@ -403,7 +403,7 @@ func chainPrepareWorkflow(ctx context.Context, rt Runtime, opts ChainOptions, pl
 	}
 	gate := ""
 	if remote {
-		gate = chainSingleCheckCommand(plan.def)
+		gate = chain.SingleCheckCommand(plan.def)
 	}
 	for i := range built {
 		if chainMemberWriter(plan.members, built[i].Name) {
@@ -494,7 +494,7 @@ func chainPersistAndStartWorkflow(ctx context.Context, rt Runtime, tx *store.Tx,
 	if current, cerr := tx.Chain(prep.opts.Name); cerr == nil {
 		row = current
 	}
-	check, source := chainCheckReport(prep.plan.def, prep.plan.gateRes, prep.opts.Params)
+	check, source := chain.CheckReport(prep.plan.def, prep.plan.gateRes, prep.opts.Params)
 	return ChainResult{Chain: row, Members: stored, Plans: len(prep.plan.bodies), Check: check, CheckSource: source}, nil
 }
 
