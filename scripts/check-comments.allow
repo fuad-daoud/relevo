@@ -120,8 +120,6 @@ internal/relevo/opencode_session_test.go
 internal/relevo/origin.go
 internal/relevo/probe.go
 internal/relevo/probe_test.go
-internal/relevo/progress.go
-internal/relevo/progress_test.go
 internal/relevo/push.go
 internal/relevo/queue.go
 internal/relevo/queue_test.go
