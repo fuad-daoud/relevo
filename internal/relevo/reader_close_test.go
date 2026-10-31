@@ -660,7 +660,7 @@ func TestReaderRoundDoesNotCloseOnAMarkerItDidNotSee(t *testing.T) {
 	rt, b := bindReader(t, repo)
 
 	// A done marker as a round_file row only: StatFile resolves it, os.Stat
-	// does not, exactly the disagreement that used to close the round.
+	// does not, exactly the disagreement that would close the round.
 	if err := rt.Store.WithLock(func(tx *store.Tx) error {
 		return tx.PutRoundFile("reader-bind", 1, rt.Store.DonePath("reader-bind", 1), nil)
 	}); err != nil {

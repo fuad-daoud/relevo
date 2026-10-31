@@ -11,7 +11,7 @@ import (
 
 // roundExitStream writes the round's stream with the parenthetical events a
 // harness puts there, so a round's end is decided by the stream's own words
-// rather than by the absence its fixtures used to fall back to.
+// rather than by the absence of an event.
 func roundExitStream(t *testing.T, rt Runtime, b store.Binding, lines ...string) {
 	t.Helper()
 	body := strings.Join(lines, "\n") + "\n"

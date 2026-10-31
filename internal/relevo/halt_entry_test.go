@@ -205,8 +205,8 @@ func TestHaltEntryIsNotAReport(t *testing.T) {
 // resolves itself. The two must use the same test or the two halves disagree.
 //
 // Switchable needs a live process, not only a candidate and a started round:
-// that is the case the last subtest covers, and it is the one that used to go
-// silent.
+// that is the case the last subtest covers: counting it switchable is how
+// the halt goes silent.
 func TestBrokenHaltsQueueOnlyWhenNotSwitchable(t *testing.T) {
 	t.Parallel()
 
@@ -305,15 +305,15 @@ func TestBrokenHaltsQueueOnlyWhenNotSwitchable(t *testing.T) {
 	})
 }
 
-// TestMidRoundSwitchSpawnFailureHaltsAndWaits is the regression for the broken
-// switch, end to end through switchBuilder: a mid-round switch whose
+// TestMidRoundSwitchSpawnFailureHaltsAndWaits covers the broken switch end
+// to end through switchBuilder: a mid-round switch whose
 // replacement cannot be resolved leaves StateBroken with no process, and that
 // binding owes its MasterMind one halt entry -- which wait then pulls, so the
 // wait answers needs-you instead of running out its clock.
 //
-// Before the predicate learned about the PID the round was "switchable"
-// (candidate set, RoundStartedAt stamped, nothing running) and nothing was
-// queued: no entry, no delivery, and only a timeout left.
+// Were the predicate to ignore the PID, a round with a candidate set and a
+// stamped RoundStartedAt but nothing running would read "switchable" and
+// queue nothing: no entry, no delivery, and only a timeout left.
 //
 // The switch is made to fail on a tier refusal, which is a resolveBuilder
 // error with a live replacement still reachable in the order: claude carries
@@ -467,9 +467,9 @@ func TestSwitchFailureLeavesASwitchableBindingsReasonAlone(t *testing.T) {
 	}
 }
 
-// TestWaitPullsTheHaltTextOnce is case (a), the point of the whole change: a
-// halt with no push route used to be silent, and now the first wait carries
-// the text. The second wait must NOT, or a mastermind polling in a loop would
+// TestWaitPullsTheHaltTextOnce is case (a), the point of the pull: a halt
+// with no push route stays silent unless the first wait carries the text,
+// which it does. The second wait must NOT, or a mastermind polling in a loop
 // re-read the same halt forever -- and the binding still reads as needs-you
 // either way, because the halt is not cleared by being delivered.
 func TestWaitPullsTheHaltTextOnce(t *testing.T) {
