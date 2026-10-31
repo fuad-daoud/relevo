@@ -348,8 +348,8 @@ func chainRepeatSameItem(rt Runtime, c db.ChainRow, before workflow.State, step 
 // the next check step inherit it, and its tick then asked the server for a
 // check run that was never created.
 func chainFlowPullCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.ChainRow, def workflow.Definition, before workflow.State, next *workflow.State, ev workflow.Event, act workflow.Action, member string) error {
-	round := memberNewestClosedRound(tx, member)
-	rec, err := chainRoundGate(tx, member, round)
+	round := chain.NewestClosedRound(tx, member)
+	rec, err := chain.RoundGate(tx, member, round)
 	if err != nil {
 		return err
 	}
@@ -371,7 +371,7 @@ func chainFlowPullCheck(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chai
 	}
 	return chainAdvance(ctx, rt, tx, saved, workflow.Event{
 		Kind: workflow.EventCheckClosed, Step: act.Step, Run: 0,
-		Result: chainGateResult(rec), Log: rec.LogPath,
+		Result: chain.GateResult(rec), Log: rec.LogPath,
 		RepeatRed: chainRepeatRedCheck(rt, c, *next, act.Step, rec.LogPath),
 	})
 }

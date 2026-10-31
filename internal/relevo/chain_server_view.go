@@ -366,7 +366,7 @@ func chainResultFromMirror(ctx context.Context, rt Runtime, name string) (ChainR
 	}
 	return ChainResult{
 		Chain: row, Members: members, Plans: row.Plans,
-		Check: chainBuilderCheck(members, row.Builder),
+		Check: chain.BuilderCheck(members, row.Builder),
 	}, nil
 }
 

@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +11,6 @@ import (
 	"github.com/fuad-daoud/relevo/internal/capture"
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
-	"github.com/fuad-daoud/relevo/internal/reporttail"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/transcript"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -111,37 +108,6 @@ func chainParseOutcomes(rt Runtime, b store.Binding, round int, body []byte, out
 	return workflow.ParseOutcomes(outputs, chainOutcomeBodies(rt, b, round, body)...)
 }
 
-// chainReaderStatus reads the relevo status a reader's own block carries, from
-// the same block its outcomes were parsed from: the newest body whose block
-// names a declared outcome. A block that carries outcomes but no status line
-// reads done; a status the tail contract does not admit reads done too.
-func chainReaderStatus(bodies [][]byte, outputs workflow.Outputs) string {
-	for _, body := range bodies {
-		if !blockCarriesOutcome(body, outputs) {
-			continue
-		}
-		if s, ok := reporttail.BlockValue(body, "status"); ok {
-			switch s {
-			case reporttail.OutcomeDone, reporttail.OutcomeHalted, reporttail.OutcomeBlocked, reporttail.OutcomeDeferred:
-				return s
-			}
-		}
-		return reporttail.OutcomeDone
-	}
-	return reporttail.OutcomeDone
-}
-
-// blockCarriesOutcome reports whether a body's relevo block names any declared
-// outcome key.
-func blockCarriesOutcome(body []byte, outputs workflow.Outputs) bool {
-	for _, key := range outputs.Outcomes() {
-		if _, ok := reporttail.BlockValue(body, key); ok {
-			return true
-		}
-	}
-	return false
-}
-
 // chainBuilderPlanView is the plan view the reviewer and correction seeds carry:
 // which kind the closing builder round is when it is not the plan's first, the
 // round it sits on top of, every builder round of the plan with its openable
@@ -152,7 +118,7 @@ func blockCarriesOutcome(body []byte, outputs workflow.Outputs) bool {
 // and a human round carry other bytes. A closing round that is the plan's first
 // (or a chain whose copy cannot be read) gets no kind and no list.
 func chainBuilderPlanView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State, act chain.Action, builder string, builderRound int) (kind string, on int, rounds []workflow.SeedRound, diffFrom string) {
-	diffFrom = chainPlanDiffFrom(c, s)
+	diffFrom = chain.PlanDiffFrom(c, s)
 	paths, err := chainPlanPaths(c)
 	if err != nil || s.Plan < 1 || s.Plan > len(paths) {
 		return "", 0, nil, diffFrom
@@ -185,20 +151,6 @@ func chainBuilderPlanView(rt Runtime, tx *store.Tx, c db.ChainRow, s chain.State
 		})
 	}
 	return kind, on, rounds, diffFrom
-}
-
-// chainPlanDiffFrom is the commit a reviewer diffs the plan from when no
-// cumulative diff was captured: the recorded plan-start commit, else the
-// chain's base for plan 1, else none. A chain started before the plan-start
-// commit was recorded names none on a later plan, and the seed says so.
-func chainPlanDiffFrom(c db.ChainRow, s chain.State) string {
-	if c.PlanStartCommit != "" {
-		return c.PlanStartCommit
-	}
-	if s.Plan == 1 {
-		return c.Base
-	}
-	return ""
 }
 
 // chainBuilderRoundKind names the closing builder round: a repair round when
@@ -243,11 +195,11 @@ func chainBuilderRoundIsRepair(rt Runtime, tx *store.Tx, builder string, round i
 // the round is the planner's newest closed plan: a correction or fix-plan send
 // hands the builder the planner's own text, so its bytes match.
 func chainBuilderRanThePlannerPlan(rt Runtime, tx *store.Tx, c db.ChainRow, builder string, builderRound int) bool {
-	planRound := memberNewestClosedRound(tx, c.Planner)
+	planRound := chain.NewestClosedRound(tx, c.Planner)
 	if planRound == 0 {
 		return false
 	}
-	path, err := memberReportPath(tx, c.Planner, planRound)
+	path, err := chain.MemberReportPath(tx, c.Planner, planRound)
 	if err != nil {
 		return false
 	}
@@ -276,23 +228,6 @@ func chainRoundPromptPath(rt Runtime, planPath, builder string, builderRound int
 	return ""
 }
 
-// memberReportPath is the path the planning member's report entry for round
-// carries: the correction or fix plan artifact the planner wrote, which is what
-// a builder round on that plan must be handed. A planner with no such entry, or
-// one with no path, is a failure of the send rather than a silent plan copy.
-func memberReportPath(tx *store.Tx, planner string, round int) (string, error) {
-	entries, err := tx.ReadLog(planner)
-	if err != nil {
-		return "", err
-	}
-	for _, e := range entries {
-		if e.Direction == store.DirToMasterMind && e.Kind == store.KindReport && e.Round == round && e.Path != "" {
-			return e.Path, nil
-		}
-	}
-	return "", fmt.Errorf("chain planner %s has no plan for round %d", planner, round)
-}
-
 // chainSeedInput is the one path a seed may name for one input. An empty path
 // stays empty. A binding round file is always copied under the chain's own
 // directory and the copy is named, whether it is a reserved key, a sealed row or
@@ -301,7 +236,7 @@ func memberReportPath(tx *store.Tx, planner string, round int) (string, error) {
 // opening it. Any other regular file the store reads as itself, such as the
 // chain's own plan copy, is named as it is.
 //
-// A read, a key or a write that fails yields chainSeedMissing's one path-free
+// A read, a key or a write that fails yields chain.SeedMissing's one path-free
 // clause, so a seed never names a path a runner cannot open.
 func chainSeedInput(rt Runtime, c db.ChainRow, path string) string {
 	if path == "" {
@@ -313,31 +248,16 @@ func chainSeedInput(rt Runtime, c db.ChainRow, path string) string {
 	}
 	body, err := rt.Store.ReadFile(path)
 	if err != nil {
-		return chainSeedMissing(err)
+		return chain.SeedMissing(err)
 	}
 	if !roundFile {
-		return chainSeedMissing(errors.New("not a binding round file"))
+		return chain.SeedMissing(errors.New("not a binding round file"))
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return chainSeedMissing(err)
+		return chain.SeedMissing(err)
 	}
 	if err := os.WriteFile(dest, body, 0o644); err != nil {
-		return chainSeedMissing(err)
+		return chain.SeedMissing(err)
 	}
 	return dest
-}
-
-// chainSeedMissing renders an input the seed cannot name as one path-free
-// clause: "not available: " plus the reason. A *fs.PathError keeps only its
-// underlying reason; any other error keeps its first line. The input's own path
-// is never repeated, so nothing in the seed reads as an openable path.
-func chainSeedMissing(err error) string {
-	reason := err.Error()
-	var perr *fs.PathError
-	if errors.As(err, &perr) {
-		reason = perr.Err.Error()
-	} else if i := strings.IndexByte(reason, '\n'); i >= 0 {
-		reason = reason[:i]
-	}
-	return "not available: " + reason
 }

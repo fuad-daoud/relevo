@@ -315,7 +315,7 @@ func chainResumeClosed(ctx context.Context, rt Runtime, tx *store.Tx, c db.Chain
 	if err != nil {
 		return nil, err
 	}
-	newest := memberNewestClosedRound(tx, member)
+	newest := chain.NewestClosedRound(tx, member)
 	if newest <= st.Awaiting.Round {
 		return nil, nil
 	}

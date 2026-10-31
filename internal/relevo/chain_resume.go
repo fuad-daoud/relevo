@@ -245,23 +245,3 @@ func resumeOpenRoundRefusal(tx *store.Tx, c db.ChainRow, memberName string) erro
 	}
 	return nil
 }
-
-// memberNewestClosedRound is a member's newest closed round: the highest round
-// its log holds a report entry for, or 0 when the record is gone or no round
-// has closed. It is the round a resume's seed points its artifacts at.
-func memberNewestClosedRound(tx *store.Tx, name string) int {
-	if name == "" {
-		return 0
-	}
-	entries, err := tx.ReadLog(name)
-	if err != nil {
-		return 0
-	}
-	newest := 0
-	for _, e := range entries {
-		if e.Direction == store.DirToMasterMind && e.Kind == store.KindReport && e.Round > newest {
-			newest = e.Round
-		}
-	}
-	return newest
-}
