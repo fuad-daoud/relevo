@@ -33,7 +33,7 @@ func TestRunRefusesWithoutATerminal(t *testing.T) {
 }
 
 // TestRunResult pins the exit mapping without starting a terminal program:
-// a cancelled context is ErrCancelled (exit 1, spec §9), any other program
+// a cancelled context is ErrCancelled (exit 1), any other program
 // error passes through, and a clean exit returns the model's outcome.
 func TestRunResult(t *testing.T) {
 	cancelled, cancel := context.WithCancel(context.Background())

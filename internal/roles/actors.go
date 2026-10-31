@@ -1,7 +1,6 @@
-// Package roles parses the cockpit's agents and actors config sections and
-// converts them into today's File, so every consumer of
-// *Registry keeps working unchanged (cockpit spec §3.2, §3.3; A2 round
-// 1). Round 1 is additive: nothing is removed and nothing is migrated.
+// Package roles parses the agents and actors config sections and converts
+// them into today's File, so every consumer of *Registry keeps working
+// unchanged.
 package roles
 
 import (
@@ -24,9 +23,9 @@ import (
 // handles them exactly as it treats a bad roles file.
 var ErrBadActors = errors.New("bad actors")
 
-// agentKeyPattern is the shape of an agent name (cockpit spec §3.2): it
-// becomes a file name, so it admits only what a file name needs. It is
-// roles.json's agentNamePattern.
+// agentKeyPattern is the shape of an agent name: it becomes a file name,
+// so it admits only what a file name needs. It is roles.json's
+// agentNamePattern.
 var agentKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 // actorNamePattern is the shape of an actor name: today's role-name pattern
@@ -61,7 +60,7 @@ type Actor struct {
 	// Check is the writer's gate: run the project's check after the round.
 	// nil means true for a writer; it is refused on a reader.
 	Check *bool `json:"check,omitempty"`
-	// Scope is the writer's declared scope (#801): the paths its rounds may
+	// Scope is the writer's declared scope: the paths its rounds may
 	// change, and whether a Go comment-only edit is allowed. nil means
 	// unscoped. It is refused on a reader.
 	Scope *pathscope.Scope `json:"scope,omitempty"`
@@ -110,7 +109,7 @@ func (e *Entry) UnmarshalJSON(data []byte) error {
 }
 
 // ParseAgents reads and validates the `agents` section. The returned map is
-// keyed by agent name; the warnings are unused in round 1 and always nil.
+// keyed by agent name; the warnings are always nil.
 func ParseAgents(body []byte) (map[string]AgentEntry, []string, error) {
 	var entries map[string]AgentEntry
 	if err := json.Unmarshal(body, &entries); err != nil {
@@ -129,7 +128,7 @@ func ParseAgents(body []byte) (map[string]AgentEntry, []string, error) {
 	return entries, nil, nil
 }
 
-// validateAgent applies §3.1's rules to one agents entry.
+// validateAgent applies the validation rules to one agents entry.
 func validateAgent(name string, e AgentEntry) error {
 	if !agentKeyPattern.MatchString(name) {
 		return fmt.Errorf("agents: %s: bad agent name: %w", name, ErrBadActors)
@@ -180,7 +179,7 @@ func validateAgent(name string, e AgentEntry) error {
 }
 
 // ParseActors reads and validates the `actors` section. The returned map is
-// keyed by actor name; the warnings are unused in round 1 and always nil.
+// keyed by actor name; the warnings are always nil.
 func ParseActors(body []byte) (map[string]Actor, []string, error) {
 	var actors map[string]Actor
 	if err := json.Unmarshal(body, &actors); err != nil {
@@ -197,8 +196,8 @@ func ParseActors(body []byte) (map[string]Actor, []string, error) {
 	return actors, nil, nil
 }
 
-// validateActor applies §3.2's rules to one actors entry. The agent's shape is
-// not known here, so the reader/check rule lives in FromActors.
+// validateActor checks one actors entry. The agent's shape is not known
+// here, so the reader/check rule lives in FromActors.
 func validateActor(name string, a Actor) error {
 	if !actorNamePattern.MatchString(name) {
 		return fmt.Errorf("actors: %s: bad actor name: %w", name, ErrBadActors)

@@ -7,12 +7,11 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// TestRowsForFiltersPerVerb pins the spec §4 table.
+// TestRowsForFiltersPerVerb pins what each verb can act on.
 func TestRowsForFiltersPerVerb(t *testing.T) {
 	// State is what HideDone keys on; Display is derived from it in a real
 	// report. A row with Display "DONE" and no State cannot occur, so the
-	// fixture sets both -- round 1 set only Display and the test could not
-	// pass against the real HideDone.
+	// fixture sets both.
 	rep := view.Report{Bindings: []view.BindingStatus{
 		{Name: "active", State: string(store.StateActive), Display: "ACTIVE", BuilderStatus: "working"},
 		{Name: "blocked", State: string(store.StateNeedsYou), Display: "NEEDS YOU", BuilderStatus: "blocked"},
