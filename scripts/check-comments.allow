@@ -132,7 +132,6 @@ internal/relevo/reconcile_hooks_test.go
 internal/relevo/reconcile_test.go
 internal/relevo/reload.go
 internal/relevo/reload_test.go
-internal/relevo/remote_add.go
 internal/relevo/remote_gates.go
 internal/relevo/remote_sync.go
 internal/relevo/remote_test.go
