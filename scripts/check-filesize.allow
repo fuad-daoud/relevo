@@ -5,7 +5,6 @@ internal/relevo/daemon.go
 internal/relevo/headless.go
 internal/relevo/reconcile.go
 internal/relevo/send.go
-internal/relevo/status.go
 internal/ui/confirm.go
 internal/ui/dash/render.go
 internal/ui/fetch.go
