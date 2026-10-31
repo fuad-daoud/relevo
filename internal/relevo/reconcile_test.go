@@ -32,7 +32,7 @@ func closeOnMarkerUnderLock(t *testing.T, rt Runtime, b store.Binding) (store.Bi
 }
 
 // closeOnMarkerUnderLockGating is closeOnMarkerUnderLock plus the gating
-// return, for the gate lifecycle tests (#132).
+// return, for the gate lifecycle tests.
 func closeOnMarkerUnderLockGating(t *testing.T, rt Runtime, b store.Binding) (store.Binding, bool, bool) {
 	t.Helper()
 	var out store.Binding
@@ -61,19 +61,18 @@ func touch(t *testing.T, path string) {
 	}
 }
 
-// TestReconcileDrainsPaneSessionRecord pins Reconcile's pane path (#184):
+// TestReconcileDrainsPaneSessionRecord pins Reconcile's pane path:
 // once refreshEndpoint has run, drainSession renders whatever the builder's
 // own session record holds since the last tick into the round's log, the
 // way reconcileHeadless drains a headless stream.
-// TestReconcileWaitsOutNudgeGraceBeforeScraping is the regression test for a
-// scrape that raced the builder: relevo nudged on one tick and scraped on the
+// TestReconcileWaitsOutNudgeGraceBeforeScraping pins the scrape that raced
+// the builder: relevo nudged on one tick and scraped on the
 // next, two seconds later, then advanced the round -- so the builder's real
 // report was written to an abandoned round's path and never relayed.
 // TestReconcileSkipsPausedPausedBinding, TestReconcileUnbreaksWhenPaneAndKindMatchWithoutSession
-// and TestBindRacesSessionLookupAndReconcileRecovers are gone with the pane
-// builder itself (#303; closed-list items 1 and 6): there is no builder pane,
-// no session cursor to drain and no agent list to compare a session against.
-// Their headless equivalents live in headless_test.go.
+// and TestBindRacesSessionLookupAndReconcileRecovers have their headless
+// equivalents in headless_test.go: there is no builder pane, no session
+// cursor to drain and no agent list to compare a session against.
 func TestReconcileQueuesReportWhenBuilderIdleAndMarkerExists(t *testing.T) {
 	t.Parallel()
 
@@ -147,9 +146,9 @@ func TestReconcileQueuesReportInsideStartGrace(t *testing.T) {
 }
 
 // TestReconcileIgnoresWorkingBuilder asserted the round against a pane's
-// builder status. There is no status to consult (#303; closed-list item 6);
-// the headless equivalent -- a live process with no marker is left alone --
-// is TestReconcileHeadlessAliveWaits in headless_test.go.
+// builder status. There is no status to consult; the headless
+// equivalent -- a live process with no marker is left alone -- is
+// TestReconcileHeadlessAliveWaits in headless_test.go.
 
 // TestReconcileSkipsPaused: Reconcile returns immediately for a PAUSED
 // binding, exactly as it does for DONE.
@@ -204,7 +203,7 @@ func (d *doneReadBackDeliverer) ConfirmOnce(context.Context, store.Endpoint, str
 
 func (d *doneReadBackDeliverer) AdmitHorizon() time.Duration { return 0 }
 
-// TestReconcileDoneConfirmsAnAdmittedPayload pins the delivery gap (#830): a
+// TestReconcileDoneConfirmsAnAdmittedPayload pins the delivery gap: a
 // done binding skips the reconciler's own delivery step, but an entry a push
 // route admitted before the state changed must still be settled by a
 // read-back. Nothing else can take an admitted entry, so without this the
@@ -551,13 +550,12 @@ func TestQueueReportRecordsCommitFacts(t *testing.T) {
 	})
 }
 
-// TestReconcileRefreshesMasterMindEndpoint refreshed a mastermind pane id from
-// the agent list. Both halves are gone (#303; closed-list items 6 and 8):
+// TestReconcileRefreshesMasterMindEndpoint has no pane path left to pin:
 // there is no agent list and MasterMind.PaneID is written by nothing.
 
 // TestQueueReportRecordsRusage: a headless round's report entry gets
 // Rusage from rt.Runner.Rusage when the runner has one, and stays nil
-// when it does not (#244, #216).
+// when it does not.
 func TestQueueReportRecordsRusage(t *testing.T) {
 	t.Parallel()
 
@@ -737,8 +735,8 @@ func TestQueueReport_RoundClosedTree(t *testing.T) {
 }
 
 // TestEffectiveStatus mapped a live pane agent's status through the
-// binding's recorded session (#303; closed-list item 6): both the agent list
-// and the session cursor are gone.
+// binding's recorded session: both the agent list and the session cursor
+// are gone.
 
 func TestCloseOnMarkerWithReportClosesNormally(t *testing.T) {
 	t.Parallel()
@@ -773,7 +771,7 @@ func TestCloseOnMarkerWithReportClosesNormally(t *testing.T) {
 	}
 }
 
-// TestCloseOnMarkerWithoutReportIsNoreport pins §4.1: the builder said it was
+// TestCloseOnMarkerWithoutReportIsNoreport pins the noreport close: the builder said it was
 // done, so relevo closes on that and says the report is missing, instead of
 // waiting for idle and scraping a worse artefact. Mutation: fall through to
 // scrapeReport -> the note is "scraped".
@@ -828,7 +826,7 @@ func TestCloseOnMarkerAbsentDoesNothing(t *testing.T) {
 	}
 }
 
-// TestReconcileClosesOnMarkerWhileBuilderStillWorking pins §4.2: the marker
+// TestReconcileClosesOnMarkerWhileBuilderStillWorking pins that the marker
 // is checked every tick, before the builder is consulted at all. Mutation:
 // move the closeOnMarker call behind a live-process check -> this fails
 // because the process below is alive (an unscripted pid is alive forever).
@@ -854,7 +852,7 @@ func TestReconcileClosesOnMarkerWhileBuilderStillWorking(t *testing.T) {
 	}
 }
 
-// TestReconcileReportWithoutMarkerIsNotAClose pins §4.3: a report on disk is
+// TestReconcileReportWithoutMarkerIsNotAClose pins that a report on disk is
 // not evidence the builder is finished. Mutation: gate on the report instead
 // of the marker -> the round advances on the first tick.
 func TestReconcileReportWithoutMarkerIsNotAClose(t *testing.T) {
@@ -880,9 +878,8 @@ func TestReconcileReportWithoutMarkerIsNotAClose(t *testing.T) {
 // TestReconcileQuiescentWithReportClosesUnmarked, TestReconcileQuiescentWithoutReportStillScrapes,
 // TestReconcileScrapedBodyIsNeverTailParsed, TestReconcileQuiescentOnLimitSwitchesInsteadOfScraping
 // and TestReconcileQuiescentWithReportOnLimitGatesAndClosesUnmarked all drove
-// the pane quiescence / scrape path (#303; closed-list items 1 and 2): relevo
-// scrapes no terminal any more, so the report on disk is the only artefact,
-// and the headless equivalents live in headless_test.go
+// the quiescence path: relevo scrapes no terminal, so the report on disk is
+// the only artefact, and the headless equivalents live in headless_test.go
 // (TestReconcileHeadlessExitedWithReportButNoMarkerClosesUnmarked and
 // TestReconcileHeadlessMarkerClosesAndClearsTheHandle).
 func TestReconcileReportTailAndOrigin(t *testing.T) {
@@ -1532,9 +1529,8 @@ func gates(t *testing.T, rt Runtime) []store.LogEntry {
 	return out
 }
 
-// TestGateNotConfiguredIsUnchanged pins #132: a binding with no gate closes
-// exactly as it did before the gate existed -- no process is started and the
-// payload is unchanged.
+// TestGateNotConfiguredIsUnchanged pins that a binding with no gate closes
+// with no process started and the payload unchanged.
 func TestGateNotConfiguredIsUnchanged(t *testing.T) {
 	t.Parallel()
 
@@ -1572,7 +1568,7 @@ func TestGateNotConfiguredIsUnchanged(t *testing.T) {
 	}
 }
 
-// TestGateStartsOnMarkerAndHoldsTheRound pins #132's state machine: a
+// TestGateStartsOnMarkerAndHoldsTheRound pins the state machine: a
 // configured gate starts on the marker tick and holds the round across
 // ticks -- no exit/switch handling, no second process -- until it finishes.
 //
@@ -1666,7 +1662,7 @@ func TestGateStartsOnMarkerAndHoldsTheRound(t *testing.T) {
 	}
 }
 
-// TestGatePassClosesWithAnnotation pins #132: a gate that exits 0 closes the
+// TestGatePassClosesWithAnnotation pins that a gate that exits 0 closes the
 // round with a gate=pass annotation, a Gate record on the entry, and the
 // gate's payload line.
 func TestGatePassClosesWithAnnotation(t *testing.T) {
@@ -1722,7 +1718,7 @@ func TestGatePassClosesWithAnnotation(t *testing.T) {
 	}
 }
 
-// TestGateFailAddsTail pins #132: a gate that exits non-zero closes the
+// TestGateFailAddsTail pins that a gate that exits non-zero closes the
 // round with gate=fail, and the payload carries the log's last
 // gateTailLines non-empty lines, not the first.
 func TestGateFailAddsTail(t *testing.T) {
@@ -1785,7 +1781,7 @@ func TestGateFailAddsTail(t *testing.T) {
 	}
 }
 
-// TestGateTimeoutKills pins #132: a gate that outlives its timeout is
+// TestGateTimeoutKills pins that a gate that outlives its timeout is
 // killed and the round closes with gate=timeout.
 func TestGateTimeoutKills(t *testing.T) {
 	t.Parallel()
@@ -1851,7 +1847,7 @@ func TestGateTimeoutKills(t *testing.T) {
 	}
 }
 
-// TestGateNoRunnerIsErrorNotHang pins #132: a gate configured on a runtime
+// TestGateNoRunnerIsErrorNotHang pins that a gate configured on a runtime
 // with no Runner cannot hang the round -- it closes this tick with a
 // gate=error annotation instead.
 func TestGateNoRunnerIsErrorNotHang(t *testing.T) {
@@ -1948,7 +1944,7 @@ func failRoundWithGate(t *testing.T, rt Runtime, b store.Binding, fr *fakeRunner
 	return got, rec
 }
 
-// TestRegateFailOpensRepairRound pins #132 part 2: a failing gate with a
+// TestRegateFailOpensRepairRound pins the repair path: a failing gate with a
 // budget stages round N+1 as a repair plan, hands it to the builder exactly as
 // Send would, and logs `repair k/M` on the new round's plan entry.
 func TestRegateFailOpensRepairRound(t *testing.T) {
@@ -2070,7 +2066,7 @@ func TestRepairRoundRefusesASymlinkedPlanFile(t *testing.T) {
 	}
 }
 
-// TestRegateBoundHaltsNeedsYou pins the count bound (#132 part 2): once the
+// TestRegateBoundHaltsNeedsYou pins the count bound: once the
 // budget is spent, the next failing gate ends the loop with NEEDS YOU instead
 // of another repair round.
 func TestRegateBoundHaltsNeedsYou(t *testing.T) {
@@ -2111,7 +2107,7 @@ func TestRegateBoundHaltsNeedsYou(t *testing.T) {
 	}
 }
 
-// TestRegateIdenticalSignatureHaltsEarly pins the stall bound (#132 part 2):
+// TestRegateIdenticalSignatureHaltsEarly pins the stall bound:
 // a second identical failure -- same content modulo the clock -- means the
 // repair changed nothing that mattered, so the loop ends early.
 func TestRegateIdenticalSignatureHaltsEarly(t *testing.T) {
@@ -2146,7 +2142,7 @@ func TestRegateIdenticalSignatureHaltsEarly(t *testing.T) {
 	}
 }
 
-// TestRegatePassResetsCount pins #132 part 2's reset: a passing gate clears
+// TestRegatePassResetsCount pins the reset: a passing gate clears
 // the repair bookkeeping, so the next failing gate gets a fresh budget.
 func TestRegatePassResetsCount(t *testing.T) {
 	t.Parallel()
@@ -2204,8 +2200,8 @@ func TestRegatePassResetsCount(t *testing.T) {
 	}
 }
 
-// TestNoRegateUnchanged pins the off switch (#132 part 2): Regate 0 is
-// exactly today's behaviour -- the failure is reported, nothing is re-sent.
+// TestNoRegateUnchanged pins the off switch: Regate 0 reports the failure
+// and re-sends nothing.
 func TestNoRegateUnchanged(t *testing.T) {
 	t.Parallel()
 
@@ -2244,7 +2240,7 @@ func TestNoRegateUnchanged(t *testing.T) {
 	}
 }
 
-// TestSendResetsRepairBookkeeping pins #132 part 2: a human send is a fresh
+// TestSendResetsRepairBookkeeping pins that a human send is a fresh
 // start -- it clears the repair bookkeeping and, when --regate is given, sets
 // the binding's budget.
 func TestSendResetsRepairBookkeeping(t *testing.T) {
@@ -2285,17 +2281,15 @@ func TestSendResetsRepairBookkeeping(t *testing.T) {
 }
 
 // TestReportEntryCarriesPaneSession and TestReportEntryNoSessionIsNil named
-// the session the pane client reported for a pane builder (#303; closed-list items 6
-// and 8). The headless equivalent -- the report entry of a closed headless
-// round names the stream's session -- is TestReportEntryCarriesHeadlessSession
-// in headless_test.go.
+// the session the pane client reported for a pane builder. The headless
+// equivalent -- the report entry of a closed headless round names the
+// stream's session -- is TestReportEntryCarriesHeadlessSession in
+// headless_test.go.
 
-// TestReconcileNeedsYouGoesStale pins #135's stale path: a binding that has
+// TestReconcileNeedsYouGoesStale pins the stale path: a binding that has
 // been NEEDS YOU past stale_after_ms is stamped from its halt time and fires
-// one binding_stale event; a second tick adds neither. The notification
-// beside the event is gone (#303, closed-list item 4), so the event itself is
-// what this test now pins. A human Send clears the stamp and the notification
-// bookkeeping.
+// one binding_stale event; a second tick adds neither. A human Send clears
+// the stamp and the notification bookkeeping.
 func TestReconcileNeedsYouGoesStale(t *testing.T) {
 	t.Parallel()
 
@@ -2360,8 +2354,8 @@ func TestReconcileNeedsYouGoesStale(t *testing.T) {
 	}
 }
 
-// TestVerifyRoundStartsAReviewerInAThrowawayWorktree pins #144's close path:
-// a round sent with --verify closes exactly as before, and the close then
+// TestVerifyRoundStartsAReviewerInAThrowawayWorktree pins the verify close:
+// a round sent with --verify closes normally, and the close then
 // creates a detached worktree at the builder's HEAD and launches one read-only
 // headless reviewer in it -- with a question carried in the reviewer's prompt
 // and recorded at the ask path, that asks the reviewer to verify round 1 with
@@ -2459,7 +2453,7 @@ func TestVerifyRoundStartsAReviewerInAThrowawayWorktree(t *testing.T) {
 	}
 
 	// The report was queued for the mastermind: with no live claim it waits for
-	// `relevo wait`, which is the whole delivery route since #303.
+	// `relevo wait`, which is the whole delivery route.
 	if pending, found, err := rt.Store.PendingForMasterMind("webshop"); err != nil {
 		t.Fatal(err)
 	} else if !found {
@@ -2469,7 +2463,7 @@ func TestVerifyRoundStartsAReviewerInAThrowawayWorktree(t *testing.T) {
 	}
 }
 
-// TestVerifyGateLogIsPassed pins #144's gate handoff: the reviewer is told
+// TestVerifyGateLogIsPassed pins the gate handoff: the reviewer is told
 // where the closed round's gate log is, because seeing the gate's own output
 // is the point of running verify after the gate.
 func TestVerifyGateLogIsPassed(t *testing.T) {
@@ -2528,7 +2522,7 @@ const candidateSetWithoutReviewerJSON = `[
   {"harness":"agy","provider":"test","model":"m","roles":["builder"]}
 ]`
 
-// TestVerifySkippedWhenNoReviewerCandidate pins #144's error handling: a
+// TestVerifySkippedWhenNoReviewerCandidate pins the error handling: a
 // round with no reviewer candidate closes normally, logs one "verify skipped:"
 // note, starts nothing, and leaves no throwaway worktree behind.
 func TestVerifySkippedWhenNoReviewerCandidate(t *testing.T) {
@@ -2607,7 +2601,7 @@ func roundReportEntry(t *testing.T, rt Runtime, round int) store.LogEntry {
 	return store.LogEntry{}
 }
 
-// TestReconcileLeavesAnUnknownStateAlone pins #372 R1's unknown-state rule: a
+// TestReconcileLeavesAnUnknownStateAlone pins the unknown-state rule: a
 // state this relevo does not define was written by a newer relevo, so Reconcile
 // returns the binding unchanged and drives nothing -- even a written report
 // and done marker are left for the newer relevo.

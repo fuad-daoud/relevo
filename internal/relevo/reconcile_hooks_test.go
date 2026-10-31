@@ -17,7 +17,7 @@ type recordDispatcher struct {
 	events []hooks.Event
 	// probe, when set, runs inside the same lock as the append: it reads the
 	// store at dispatch time, which is how a test tells an event that
-	// announced committed state from one that announced a proposal (#909).
+	// announced committed state from one that announced a proposal.
 	probe func(hooks.Event)
 }
 
@@ -39,7 +39,7 @@ func (r *recordDispatcher) getEvents() []hooks.Event {
 }
 
 // tickCommit runs one daemon tick over b and returns the binding as it stands
-// on disk afterwards. Hook events belong to that commit (#909), so a hook test
+// on disk afterwards. Hook events belong to that commit, so a hook test
 // drives this rather than Reconcile: Reconcile persists nothing, and a listener
 // must never be told about a transition the store has not taken.
 func tickCommit(t *testing.T, rt Runtime, b store.Binding) store.Binding {
@@ -60,7 +60,7 @@ func TestReconcile_EmitsRoundStartedOnReport(t *testing.T) {
 	rt, b := sentBinding(t)
 	disp := &recordDispatcher{}
 	// Read the binding back at dispatch time: an event fired before the save
-	// would still see round 1, and that is the regression this pins.
+	// would still see the pre-save round, and that ordering is what this pins.
 	var atDispatch []int
 	disp.probe = func(hooks.Event) {
 		cur, err := rt.Store.Load(b.Name)
@@ -118,10 +118,10 @@ func TestReconcile_NoEventsWhenUnchanged(t *testing.T) {
 	}
 }
 
-// TestReconcile_SaveFailureEmitsNothingAndTheRetryEmitsOnce pins #909's
-// headline case: a reconcile whose commit was refused announces nothing at all,
-// the stored state is untouched, and the retry that commits the same
-// transition announces it exactly once.
+// TestReconcile_SaveFailureEmitsNothingAndTheRetryEmitsOnce pins that a
+// reconcile whose commit was refused announces nothing at all, the stored
+// state is untouched, and the retry that commits the same transition
+// announces it exactly once.
 //
 // The provocation is the binding's own directory: replacing it with a regular
 // file makes the save at the end of the tick refuse ("create binding dir: ...
@@ -185,11 +185,7 @@ func TestReconcile_SaveFailureEmitsNothingAndTheRetryEmitsOnce(t *testing.T) {
 	}
 }
 
-// TestBuilderStalledHookFiresOncePerEpisode pins #252's hook contract: the
-// builder_stalled event fires exactly once when a stall is first stamped,
-// never again while it persists, and never when it clears.
-
-// TestBuilderStalledHookFiresOncePerEpisode pins #252's hook contract: the
+// TestBuilderStalledHookFiresOncePerEpisode pins the hook contract: the
 // builder_stalled event fires exactly once when a stall is first stamped,
 // never again while it persists, and never when it clears.
 func TestBuilderStalledHookFiresOncePerEpisode(t *testing.T) {
@@ -246,9 +242,9 @@ func TestBuilderStalledHookFiresOncePerEpisode(t *testing.T) {
 	}
 }
 
-// TestSettleCatchUpAnnouncesAfterItsSave pins the second emit-before-save site
-// (#909): the remote catch-up settle collects a closed round in its own lock
-// and saves it there, and its round_started event is announced only once that
+// TestSettleCatchUpAnnouncesAfterItsSave pins the ordering hazard in the
+// remote catch-up settle: it collects a closed round in its own lock and
+// saves it there, and its round_started event is announced only once that
 // save committed -- the same rule tickOne follows.
 func TestSettleCatchUpAnnouncesAfterItsSave(t *testing.T) {
 	t.Parallel()

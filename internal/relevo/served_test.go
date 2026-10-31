@@ -224,7 +224,7 @@ func TestPickServedCandidateSkipsAProviderGatedOnTheServer(t *testing.T) {
 // TestPickServedCandidateRefusesWhenEveryCandidateIsGated pins the create-time
 // refusal: with every candidate serving the role gated, the served pick
 // answers with the resolve.ErrAllGated refusal a local bind answers with, not with
-// the empty candidate that used to create a member with nothing to spawn.
+// an empty candidate, which would create a member with nothing to spawn.
 func TestPickServedCandidateRefusesWhenEveryCandidateIsGated(t *testing.T) {
 	t.Parallel()
 
@@ -290,7 +290,7 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	// otherwise spawns `git maintenance run --auto --quiet --detach`, which
 	// outlives the command and writes under .git/objects while t.TempDir()'s
 	// RemoveAll is removing the tree -- and that cleanup failure fails the
-	// test, not just the teardown (#304). Repo-local config, so every later
+	// test, not just the teardown. Repo-local config, so every later
 	// git command on it inherits it, including ones the code under test runs.
 	if len(args) > 0 && args[0] == "init" {
 		runGit(t, dir, "config", "maintenance.auto", "false")
@@ -445,7 +445,7 @@ func TestServedViewDiffFacts(t *testing.T) {
 	}
 }
 
-// TestServedViewStopped pins #344: the view names how the closed round was
+// TestServedViewStopped pins that the view names how the closed round was
 // stopped, read from the KindStop entry closeStopped writes for that round,
 // and leaves the field empty when the only stop entry names an earlier round.
 func TestServedViewStopped(t *testing.T) {
@@ -478,7 +478,7 @@ func TestServedViewStopped(t *testing.T) {
 }
 
 // TestServedViewCarriesClosedRoundUsage checks that the view ships the
-// closed round's usage the way it ships ReportOutcome (#216): from the
+// closed round's usage the way it ships ReportOutcome: from the
 // newest KindReport entry for Serve.ClosedRound, and only from it.
 func TestServedViewCarriesClosedRoundUsage(t *testing.T) {
 	t.Parallel()
@@ -534,8 +534,7 @@ func TestServedViewCarriesClosedRoundUsage(t *testing.T) {
 }
 
 // TestServedViewCarriesRusage pins the closed round's cgroup measurement on
-// the wire, the same way TestServedViewCarriesClosedRoundUsage pins Usage
-// (#244, #216).
+// the wire, the same way TestServedViewCarriesClosedRoundUsage pins Usage.
 func TestServedViewCarriesRusage(t *testing.T) {
 	t.Parallel()
 
@@ -572,7 +571,7 @@ func TestServedViewCarriesRusage(t *testing.T) {
 	}
 }
 
-// TestServedViewCarriesStalledSince pins #252's wire field: a stalled binding
+// TestServedViewCarriesStalledSince pins the wire field: a stalled binding
 // ships its stamp to the client, and an unstalled one ships the zero time.
 func TestServedViewCarriesStalledSince(t *testing.T) {
 	t.Parallel()

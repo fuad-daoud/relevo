@@ -1,6 +1,5 @@
 internal/relevo/add.go
 internal/relevo/add_test.go
-internal/relevo/archive_mirror_test.go
 internal/relevo/authgrace.go
 internal/relevo/authgrace_test.go
 internal/relevo/bind.go
@@ -8,11 +7,6 @@ internal/relevo/bind_test.go
 internal/relevo/builder_change.go
 internal/relevo/builder_change_test.go
 internal/relevo/configedit.go
-internal/relevo/consult_test.go
-internal/relevo/daemon_consult_test.go
-internal/relevo/daemon.go
-internal/relevo/daemon_run_test.go
-internal/relevo/daemon_test.go
 internal/relevo/escape.go
 internal/relevo/escape_test.go
 internal/relevo/fake_test.go
@@ -33,11 +27,6 @@ internal/relevo/progress.go
 internal/relevo/progress_test.go
 internal/relevo/queue.go
 internal/relevo/queue_test.go
-internal/relevo/reconcile.go
-internal/relevo/reconcile_hooks_test.go
-internal/relevo/reconcile_test.go
-internal/relevo/reload.go
-internal/relevo/reload_test.go
 internal/relevo/remote.go
 internal/relevo/remote_add.go
 internal/relevo/remote_sync.go
@@ -51,11 +40,8 @@ internal/relevo/roles_gate_test.go
 internal/relevo/roles_runtime_test.go
 internal/relevo/roles_views_test.go
 internal/relevo/runtime.go
-internal/relevo/seal_test.go
 internal/relevo/send.go
 internal/relevo/send_test.go
-internal/relevo/served.go
-internal/relevo/served_test.go
 internal/relevo/servers.go
 internal/relevo/session.go
 internal/relevo/show.go

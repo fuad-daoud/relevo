@@ -20,14 +20,13 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestClosedRoundSealsOnceTheNextRoundCloses is the P3c seal's end-to-end
-// contract (§4.3, §4.4): the tick that closes round 1 leaves its files alone,
-// and they stay on disk while round 1 is the binding's latest closed round --
-// the mastermind and a repair round still read them (D2/A1). Once the round after
-// it closes, the following tick moves them into the store's database and
-// deletes them -- and every reader that used to open them still returns the
-// same content: Show, ReadDiff, Pull's PushText, ingest's StoreSource, and a
-// fork cut through the round.
+// TestClosedRoundSealsOnceTheNextRoundCloses pins the seal contract: the
+// tick that closes round 1 leaves its files alone, and they stay on disk
+// while round 1 is the binding's latest closed round -- the mastermind and
+// a repair round still read them (D2/A1). Once the round after it closes,
+// the following tick moves them into the store's database and deletes them
+// -- and every reader still returns the same content: Show, ReadDiff,
+// Pull's PushText, ingest's StoreSource, and a fork cut through the round.
 func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 	t.Parallel()
 
@@ -123,7 +122,7 @@ func TestClosedRoundSealsOnceTheNextRoundCloses(t *testing.T) {
 	}
 
 	// Peek: this read only checks the sealed section; it must not claim the
-	// pending payload the pullPending assertion below expects to find (#673).
+	// pending payload the pullPending assertion below expects to find.
 	res, err := Show(context.Background(), rt, ShowOptions{Name: "webshop", Round: 1, Section: ShowReport, Peek: true})
 	if err != nil {
 		t.Fatalf("Show: %v", err)

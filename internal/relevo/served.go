@@ -14,7 +14,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// ServedView is the wire view of an owned binding (spec §3.1). recordID is the
+// ServedView is the wire view of an owned binding. recordID is the
 // server's binding_record id and installation the server's own installation id;
 // both are what a client records to link its row to this server's copy, and
 // both are "" for a caller that holds neither.
@@ -31,10 +31,6 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 		resultCommit = b.Serve.ResultCommit
 		dirtyCommit = b.Serve.DirtyCommit
 	}
-	// facts is the closed round's per-round facts: round ClosedRound's report
-	// outcome, usage and rusage, its gate result, its diff note and tree, and
-	// how it was stopped. A binding whose round has not closed leaves the zero
-	// value.
 	var facts remote.ClosedRoundView
 	if b.Serve != nil && b.Serve.ClosedRound > 0 {
 		facts = servedRoundFacts(entries, b.Serve.ClosedRound)
@@ -53,32 +49,28 @@ func ServedView(b store.Binding, entries []store.LogEntry, recordID, installatio
 		closedRound = b.Serve.ClosedRound
 	}
 	return remote.BindingView{
-		ID:            recordID,
-		Installation:  installation,
-		Name:          b.Name,
-		State:         string(b.State),
-		Round:         b.Round,
-		RoundState:    rState,
-		ClosedRound:   closedRound,
-		Halt:          halt,
-		ResultCommit:  resultCommit,
-		DirtyCommit:   dirtyCommit,
-		ReportOutcome: facts.ReportOutcome,
-		GateResult:    facts.GateResult,
-		Stopped:       facts.Stopped,
-		ReportNote:    facts.ReportNote,
-		Switches:      facts.Switches,
-		Shape:         b.Shape,
-		DiffNote:      facts.DiffNote,
-		DiffCommits:   facts.DiffCommits,
-		DiffTree:      facts.DiffTree,
-		AckedRound:    ackedRound,
-		Candidate:     b.BuilderCandidate,
-		Account:       b.BuilderAccount,
-		// The closed round's own start when the round is closed, and the live
-		// round's otherwise: the binding's stamp answers only for the round it
-		// is on now, and a client reading one view wants the round the view is
-		// about.
+		ID:             recordID,
+		Installation:   installation,
+		Name:           b.Name,
+		State:          string(b.State),
+		Round:          b.Round,
+		RoundState:     rState,
+		ClosedRound:    closedRound,
+		Halt:           halt,
+		ResultCommit:   resultCommit,
+		DirtyCommit:    dirtyCommit,
+		ReportOutcome:  facts.ReportOutcome,
+		GateResult:     facts.GateResult,
+		Stopped:        facts.Stopped,
+		ReportNote:     facts.ReportNote,
+		Switches:       facts.Switches,
+		Shape:          b.Shape,
+		DiffNote:       facts.DiffNote,
+		DiffCommits:    facts.DiffCommits,
+		DiffTree:       facts.DiffTree,
+		AckedRound:     ackedRound,
+		Candidate:      b.BuilderCandidate,
+		Account:        b.BuilderAccount,
 		RoundStartedAt: chainServedRoundStart(b, facts.RoundStartedAt),
 		RoundCap:       b.RoundCap,
 		RoundTimeoutMS: b.RoundTimeoutMS,
@@ -103,12 +95,8 @@ func chainServedRoundStart(b store.Binding, closedStart time.Time) time.Time {
 	return b.RoundStartedAt
 }
 
-// servedRoundFacts is the per-round scan ServedView used to run for its
-// ClosedRound: round n's report outcome, note, usage and rusage; its gate
-// result; its diff note, commit count and tree; its switch history; its own
-// prior tokens; and how it was stopped. n <= 0 yields the zero value. Every
-// field names the newest entry for round n of its kind, the order the original
-// scans walked.
+// servedRoundFacts is the per-round scan for round n. Every field names the
+// newest entry for round n of its kind. n <= 0 yields the zero value.
 func servedRoundFacts(entries []store.LogEntry, n int) remote.ClosedRoundView {
 	var f remote.ClosedRoundView
 	if n <= 0 {
@@ -124,8 +112,6 @@ func servedRoundFacts(entries []store.LogEntry, n int) remote.ClosedRoundView {
 			break
 		}
 	}
-	// gateResult is the round's gate result: the newest KindReport entry for n
-	// that carries a gate record, and only that round's.
 	for i := len(entries) - 1; i >= 0; i-- {
 		if entries[i].Round == n && entries[i].Kind == store.KindReport && entries[i].Gate != nil {
 			f.GateResult = entries[i].Gate.Result
@@ -318,7 +304,7 @@ func liveViewOf(row view.BindingStatus, b store.Binding, at time.Time) *remote.L
 	return v
 }
 
-// ServedLive returns the live view of an owned binding's running round (spec §3.1).
+// ServedLive returns the live view of an owned binding's running round.
 // It is the one single-row surface a client reads, and every figure it carries
 // (usage, tail, diff) is a detail figure, so the row is built with them on.
 func ServedLive(ctx context.Context, rt Runtime, b store.Binding) (*remote.LiveView, error) {
