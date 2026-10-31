@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// confirmView is the #103 screen between Enter and a destructive verb:
+// confirmView is the screen between Enter and a destructive verb:
 //
 //	mark webshop done?  it is ACTIVE in round 5
 //

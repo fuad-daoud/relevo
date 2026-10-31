@@ -10,8 +10,8 @@ import (
 )
 
 // FromActors converts the agents and actors sections into today's File,
-// one row per actor (A2 §4.1). It is the bridge round 1 uses to keep every
-// consumer of *Registry working unchanged.
+// one row per actor, so every consumer of *Registry keeps working
+// unchanged.
 //
 // Errors wrap ErrBadRoles, so config.Load handles them exactly as it
 // treats a bad roles file. The warnings name every agents entry no actor uses.

@@ -93,13 +93,13 @@ func TestHeadlessE2E(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
 	// The hook, relevo mcp and every mastermind verb detect a Claude Code session
-	// from the environment (§1.1); this process plays that session.
+	// from the environment; this process plays that session.
 	t.Setenv("CLAUDECODE", "1")
 
 	// The whole round runs over a /tmp socket: the owner switch installed here
 	// routes every db.Open/OpenWith this process makes -- the store, the gates,
 	// the claims, the mastermind registry -- through an in-process owner. It is
-	// 0b's transparency switch (db.SetOwnerHop) with no env gate.
+	// the transparency switch (db.SetOwnerHop) with no env gate.
 	ownerCleanup, err := dbtest.InstallOwner()
 	if err != nil {
 		t.Fatalf("install the in-process owner: %v", err)
@@ -123,7 +123,7 @@ func TestHeadlessE2E(t *testing.T) {
 	if got := readFile(t, envFile); !strings.Contains(got, "export RELEVO_MASTERMIND="+first.ID) {
 		t.Fatalf("$CLAUDE_ENV_FILE after the startup hook = %q, want it to carry %q", got, "export RELEVO_MASTERMIND="+first.ID)
 	}
-	// §3.4: that export is how every later verb in the session finds its
+	// That export is how every later verb in the session finds its
 	// mastermind, so the rest of the scenario runs with it set.
 	t.Setenv("RELEVO_MASTERMIND", first.ID)
 
@@ -214,7 +214,7 @@ func TestHeadlessE2E(t *testing.T) {
 		t.Fatalf("mastermind %s sessions = %+v, want the startup session %q kept", first.ID, moved.Sessions, sessionStartup)
 	}
 
-	// -- 8. Tools mode (revised D6) -----------------------------------------
+	// -- 8. Tools mode ------------------------------------------------------
 	// A second relevo mcp, in tools mode, for a second mastermind session -- what
 	// a second `relevo mcp` in a second session is. The push holder for
 	// the first mastermind stays live, which is what makes 8.4's "nothing was
@@ -253,7 +253,7 @@ func TestHeadlessE2E(t *testing.T) {
 	// 8.3: the daemon closes round two, then the test drives the round's close
 	// through the wait-tool path -- the in-process equivalent of the wait
 	// tool's verb, with the name and budget parsed out of the result itself.
-	// The wait delivers the report itself (§4.1), so there is no second read.
+	// The wait delivers the report itself, so there is no second read.
 	tickUntilRoundCloses(t, ctx, daemon, rt, toolsBinding)
 
 	waitName, waitBudget := parseWaitPointer(t, text)
@@ -279,7 +279,7 @@ func TestHeadlessE2E(t *testing.T) {
 	// 8.4: the output names the fake report -- relevo wait prints the entry's
 	// payload and the report's text (PushText), so the mastermind needs no
 	// second read; the payload names the `relevo show` command that prints
-	// the round's report (§4.2) -- and the report's own text is on disk at
+	// the round's report -- and the report's own text is on disk at
 	// the path that command reads.
 	reportPath := rt.Store.ReportPath(toolsBinding, 1)
 	if want := "relevo show " + toolsBinding + " --round 1 --report"; !strings.Contains(output, want) {
@@ -601,9 +601,8 @@ func newHeadlessRuntime(t *testing.T, root, configDir string) (relevo.Runtime, *
 	st := store.New(root)
 	gitClient := git.NewClient("git", 10*time.Second, 0)
 
-	// Gates live in the store root's database, as buildRuntime wires them
-	// (P3b plan §4.5); the mastermind records and the push claims live in the
-	// same database (P3b round 2 §4.1, §4.2).
+	// Gates live in the store root's database, as buildRuntime wires them;
+	// the mastermind records and the push claims live in the same database.
 	mdb, err := st.DB()
 	if err != nil {
 		t.Fatalf("open store db: %v", err)
@@ -638,7 +637,7 @@ func procStartUnix(pid int) (int64, error) {
 	return started.Unix(), nil
 }
 
-// hookPayload is one canned Claude Code SessionStart payload (§3.4).
+// hookPayload is one canned Claude Code SessionStart payload.
 func hookPayload(t *testing.T, source, session, cwd string) string {
 	t.Helper()
 	raw, err := json.Marshal(map[string]string{
@@ -656,7 +655,7 @@ func hookPayload(t *testing.T, source, session, cwd string) string {
 
 // runMasterMindHook runs the hook's work in-process: it parses the SessionStart
 // payload, calls mastermind.Init with this process as the host (the hook's parent
-// IS the Claude Code process, §1.1), and appends the export line to
+// is the Claude Code process), and appends the export line to
 // $CLAUDE_ENV_FILE exactly as cmd/relevo's mastermindInitHook does. cmd/relevo's
 // command function itself is package main and cannot be called from here; this
 // is the same sequence through the same mastermind package.
@@ -960,7 +959,7 @@ func (c *mcpClient) callSend(t *testing.T, name, file string) string {
 
 // waitPointerRE pulls the wait tool's arguments out of a send result:
 // wait(name: "<n>", timeout: "<budget>"). The wait prints the report itself,
-// so there is no second half (§4.1).
+// so there is no second half.
 var waitPointerRE = regexp.MustCompile(`wait\(name: "([^"]+)", timeout: "([^"]+)"\)`)
 
 // parseWaitPointer reads the wait tool's name and budget out of a send result,
@@ -1268,7 +1267,7 @@ func runCeilingRoundWithMirror(t *testing.T, ctx context.Context, rt relevo.Runt
 
 	// The daemon's mirror: with the machine database wired, every tick that
 	// changes a binding's revision runs the ingest pass, exactly as it does
-	// on a synced machine -- the pass whose mastermind stamp PLAN 1 stilled.
+	// on a synced machine.
 	mdb, err := rt.Store.DB()
 	if err != nil {
 		t.Fatalf("machine db: %v", err)
@@ -1297,8 +1296,8 @@ func runCeilingRoundWithMirror(t *testing.T, ctx context.Context, rt relevo.Runt
 	}
 
 	// One tick over the just-added binding lets the mirror see it first: the
-	// mastermind row's one insert is a new sighting, not the re-stamp PLAN 1
-	// stills, and the counted window measures the running round's cost.
+	// mastermind row's one insert is a new sighting, not a re-stamp, and the
+	// counted window measures the running round's cost.
 	if err := daemon.Tick(ctx); err != nil {
 		t.Fatalf("mirror-prime Tick: %v", err)
 	}
@@ -1323,7 +1322,7 @@ func runCeilingRoundWithMirror(t *testing.T, ctx context.Context, rt relevo.Runt
 		return ok && e.Route == "push"
 	}, "the push holder's confirm of %s round 1 (route=push)", name)
 
-	// The measured window shape (scratch-instrumented enumeration, reported):
+	// The measured window shape:
 	// the send save queues row 1, the first progress observation row 2, the
 	// close row 3; the push ack confirm moves only the event row; Done
 	// queues row 4. The pinned total proves the ticks queue nothing: any

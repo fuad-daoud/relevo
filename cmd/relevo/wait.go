@@ -40,7 +40,6 @@ func waitDocOf(name string, res relevo.WaitResult) WaitDoc {
 
 // cmdWait blocks until a round closes or needs a human. It reads relevo's own
 // state only: it launches nothing.
-// waitFlagValues holds the pointers wait parses into.
 type waitFlagValues struct {
 	name    *string
 	any     *bool
@@ -50,7 +49,6 @@ type waitFlagValues struct {
 	asJSON  *bool
 }
 
-// waitFlagSet defines those flags on fs and returns what they parse into.
 func waitFlagSet(fs *flag.FlagSet) *waitFlagValues {
 	v := &waitFlagValues{}
 	v.name = fs.String("name", "", "binding name (default: the binding for this cwd)")
@@ -137,10 +135,10 @@ func cmdWait(args []string) error {
 		if res.Line != "" {
 			fmt.Println(res.Line)
 		}
-		// §4.1: after the outcome line, a blank line and the pending payload --
-		// the same text `pull` printed -- for every exit but the timeout and a
+		// After the outcome line, a blank line and the pending payload --
+		// the same text `pull` prints -- for every exit but the timeout and a
 		// gone binding. A delivery failure is printed and never changes the exit
-		// code (§6).
+		// code.
 		if res.DeliverErr != nil {
 			fmt.Fprintf(os.Stderr, "relevo wait: round %d not delivered, it stays pending (the next relevo wait prints it): %v\n", res.Round, res.DeliverErr)
 		}

@@ -16,7 +16,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/sanitize"
 )
 
-// revisionJSON is the --json shape of one revision (§6.4). Snapshot is present
+// revisionJSON is the --json shape of one revision. Snapshot is present
 // only for `--rev`, where it is the raw snapshot object.
 type revisionJSON struct {
 	Rev      int64           `json:"rev"`
@@ -88,14 +88,12 @@ func printRevisionText(r db.RevisionRow) error {
 
 // cmdConfigLog lists revisions newest first, or shows one with --rev. The list
 // is a header line per revision; --rev adds the message and every change.
-// configLogFlagValues holds the pointers `config log` parses into.
 type configLogFlagValues struct {
 	n      *int
 	rev    *int64
 	asJSON *bool
 }
 
-// configLogFlagSet defines those flags on fs and returns what they parse into.
 func configLogFlagSet(fs *flag.FlagSet) *configLogFlagValues {
 	v := &configLogFlagValues{}
 	v.n = fs.Int("n", 20, "how many revisions to list")
@@ -178,14 +176,11 @@ func sourceWidth(rows []db.RevisionRow) int {
 
 // cmdConfigRollback prints what rolling back to rev would change, confirms
 // with the user unless --yes, then writes the rollback as one new revision.
-// configRollbackFlagValues holds the pointers `config rollback` parses into.
 type configRollbackFlagValues struct {
 	yes *bool
 	msg *string
 }
 
-// configRollbackFlagSet defines those flags on fs and returns what they parse
-// into.
 func configRollbackFlagSet(fs *flag.FlagSet) *configRollbackFlagValues {
 	v := &configRollbackFlagValues{}
 	v.yes = fs.Bool("yes", false, "skip the confirmation prompt")

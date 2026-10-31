@@ -36,9 +36,9 @@ import (
 // TestMain points the whole package at a fresh temp root: HOME,
 // XDG_CONFIG_HOME, XDG_STATE_HOME and XDG_DATA_HOME all move here, and the
 // harness-identity and override variables are unset, so no test in cmd/relevo
-// reads the user's real config, state or data, nor sees the calling harness
-// (#235, #463). Tests that t.Setenv the same variables keep working: t.Setenv
-// restores to these values.
+// reads the user's real config, state or data, nor sees the calling harness.
+// Tests that t.Setenv the same variables keep working: t.Setenv restores to
+// these values.
 //
 // It also clears the mastermind identity a harness injects into the shell that
 // runs the tests (a Claude Code session, an agy conversation, an OpenCode shell
@@ -81,14 +81,13 @@ func TestMain(m *testing.M) {
 }
 
 // isolateTestEnv makes the package start from CI's environment whatever
-// harness runs `go test` (#463). It points HOME, XDG_CONFIG_HOME,
-// XDG_STATE_HOME and XDG_DATA_HOME at root, a temp directory, so no test reads
-// the user's real config, state or data (#235). It then unsets the
-// harness-identity and override variables, so a test never detects the calling
-// harness or picks up the caller's overrides; it unsets a variable when its
-// name is CLAUDECODE or TYPESAFE_API_KEY, or starts with CLAUDE_, RELEVO_,
-// ANTIGRAVITY_ or MUSE_. It never fails: it ignores os.Setenv and os.Unsetenv errors,
-// as TestMain did before.
+// harness runs `go test`. It points HOME, XDG_CONFIG_HOME, XDG_STATE_HOME
+// and XDG_DATA_HOME at root, a temp directory, so no test reads the user's
+// real config, state or data. It then unsets the harness-identity and
+// override variables, so a test never detects the calling harness or picks up
+// the caller's overrides; it unsets a variable when its name is CLAUDECODE or
+// TYPESAFE_API_KEY, or starts with CLAUDE_, RELEVO_, ANTIGRAVITY_ or MUSE_.
+// It never fails: it ignores os.Setenv and os.Unsetenv errors.
 func isolateTestEnv(root string) {
 	for _, entry := range os.Environ() {
 		name, _, _ := strings.Cut(entry, "=")
@@ -175,7 +174,7 @@ func TestIsolateTestEnv(t *testing.T) {
 
 // TestHelpListsServeVerbs pins that the top-level usage names the server
 // administration verbs and the gate verb that replaced `serve gates`,
-// `serve available` and `serve unavailable` (§4.3). `relevo help` only prints
+// `serve available` and `serve unavailable`. `relevo help` only prints
 // a constant string, so this reaches no harness and touches no state.
 func TestHelpListsServeVerbs(t *testing.T) {
 	stdout, _, runErr := captureOutput(t, func() error {
@@ -262,7 +261,7 @@ func TestAskIsGone(t *testing.T) {
 	}
 }
 
-// TestSendRegateNegativeIsRejected pins #132 part 2's flag validation. The
+// TestSendRegateNegativeIsRejected pins the flag validation. The
 // flag's -1 default means "not given", so a negative value the human typed is
 // a bad value, not an omission: it exits 2, and the check runs before any
 // runtime is built, so this touches neither the state directory nor a harness.
@@ -284,7 +283,7 @@ func TestSendRegateNegativeIsRejected(t *testing.T) {
 	}
 }
 
-// TestSendVerifyAndNoVerifyAreExclusive pins #144's flag pair: like add's
+// TestSendVerifyAndNoVerifyAreExclusive pins the flag pair: like add's
 // --branch/--cwd, the refusal happens in validation, before newRuntime, so it
 // reaches neither the state directory nor a harness.
 func TestSendVerifyAndNoVerifyAreExclusive(t *testing.T) {
@@ -312,7 +311,7 @@ func TestStopRefusesToGuessTheBinding(t *testing.T) {
 	}
 }
 
-// TestStopGraceMustBePositive pins #138's flag validation: --grace <= 0 is a
+// TestStopGraceMustBePositive pins the flag validation: --grace <= 0 is a
 // bad value, not an omission, so it exits 2. The check runs before any runtime
 // is built, so this touches neither the state directory nor a harness.
 func TestExplicitBindingNeverGuesses(t *testing.T) {
@@ -439,7 +438,7 @@ func TestDiffCommand(t *testing.T) {
 		t.Fatalf("git apply --check failed: %v\nOutput: %s", err, string(applyOut))
 	}
 
-	// #143: a successful `diff` stamps the binding's viewed mark.
+	// A successful `diff` stamps the binding's viewed mark.
 	// Store-only -- reaches no harness.
 	if _, ok := s.ViewedAt("webshop"); !ok {
 		t.Fatal("diff must stamp .viewed on a successful print")
@@ -641,7 +640,7 @@ func TestDiffDriftCommand(t *testing.T) {
 	}
 }
 
-// TestCandidatesConfigHome pins #42: relevo config is composed through
+// TestCandidatesConfigHome pins that relevo config is composed through
 // userConfigRoot(), so XDG_CONFIG_HOME decides where candidates.json is read.
 func TestCandidatesConfigHome(t *testing.T) {
 	tempHome := t.TempDir()
@@ -668,13 +667,12 @@ func TestCandidatesConfigHome(t *testing.T) {
 	}
 }
 
-// TestDiffHonoursConfigHome pins #235: cmdDiff's newRuntime() reads
+// TestDiffHonoursConfigHome pins that cmdDiff's newRuntime() reads
 // candidates.json through userConfigRoot(), so XDG_CONFIG_HOME decides which
 // file it reads. A candidates file the branch rejects must make `relevo show --diff`
-// fail with that rejection, exactly the way the two diff tests used to fail
-// when they picked the file up from the real home. (An unknown harness no
-// longer rejects the load: #372 skips it with a warning, so this uses a bad
-// tree instead.)
+// fail with that rejection, the way the two diff tests fail when they pick
+// the file up from the real home. (An unknown harness is skipped with a
+// warning instead of rejecting the load, so this uses a bad tree instead.)
 func TestDiffHonoursConfigHome(t *testing.T) {
 	tempHome := t.TempDir()
 	t.Setenv("HOME", tempHome)
@@ -700,7 +698,7 @@ func TestDiffHonoursConfigHome(t *testing.T) {
 	}
 }
 
-// TestDaemonCheckLeavesNoDB pins #372 §4.5: the plugin's `relevo daemon --check`
+// TestDaemonCheckLeavesNoDB pins that the plugin's `relevo daemon --check`
 // probe runs before the daemon opens (and migrates) the database, so it leaves
 // no relevo.db in a fresh state root. cmdDaemon returns exitCodeErr{1} instead
 // of calling os.Exit, which main maps to the same silent exit status.
@@ -722,7 +720,7 @@ func TestDaemonCheckLeavesNoDB(t *testing.T) {
 	}
 }
 
-// TestDaemonSecondStartLeavesNoDB pins the lock-first start (#701): a daemon
+// TestDaemonSecondStartLeavesNoDB pins the lock-first start: a daemon
 // that loses AcquireDaemonLock exits before newRuntime, so it mints no
 // installation.json and opens no relevo.db (nor its -wal/-shm), leaving only
 // the .daemon.lock its own acquisition touched. The test holds the lock first,
@@ -755,7 +753,7 @@ func TestDaemonSecondStartLeavesNoDB(t *testing.T) {
 }
 
 // TestDefaultServeRoot pins the root `relevo gate --clear` reads the serve
-// pointer from (#372 §4.6): the serve root under the state root, not the
+// pointer from: the serve root under the state root, not the
 // client root's daemon.json.
 func TestDefaultServeRoot(t *testing.T) {
 	stateHome := t.TempDir()
@@ -855,8 +853,8 @@ func TestParseFlagsAcceptsFlagsAfterPositionals(t *testing.T) {
 	dry := fs.Bool("dry", false, "")
 
 	// This is the README's documented shape: the binding name first, its flags
-	// after. Go's flag package stops at the first bare word, so before #48 both
-	// flags below were silently dropped.
+	// after. Go's flag package stops at the first bare word, so both flags
+	// below would otherwise be silently dropped.
 	if err := parseFlags(fs, []string{"webshop", "--round", "2", "--dry"}); err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
@@ -894,7 +892,8 @@ func TestParseFlagsStillRejectsUnknownFlags(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
-	// Before #48 this was swallowed with the rest of the tail.
+	// An unknown flag after a positional is still rejected, not swallowed with
+	// the rest of the tail.
 	if err := parseFlags(fs, []string{"webshop", "--bogus"}); err == nil {
 		t.Fatal("an unknown flag after a positional must still be rejected")
 	}
@@ -958,8 +957,8 @@ func TestBindingArgTakesEitherForm(t *testing.T) {
 func TestResolveBindingAcceptsAPositionalName(t *testing.T) {
 	rt := relevo.Runtime{Store: store.New(t.TempDir())}
 
-	// The whole point of #50: a named binding must be used, not discarded in
-	// favour of whatever owns the cwd.
+	// A named binding must be used, not discarded in favour of whatever owns
+	// the cwd.
 	got, err := resolveBinding(rt, "", []string{"webshop"})
 	if err != nil {
 		t.Fatalf("resolveBinding: %v", err)
@@ -1068,8 +1067,8 @@ func TestParseFor(t *testing.T) {
 	}
 }
 
-// TestBindRejectsTabFlag pins #79: placement is not a per-bind decision any
-// more, so the old --tab spelling must be an unknown flag, not a silent no-op.
+// TestBindRejectsTabFlag pins that placement is not a per-bind decision, so
+// the old --tab spelling must be an unknown flag, not a silent no-op.
 // It fails in parseFlags, before newRuntime, so it never reaches a harness.
 func TestBindRejectsTabFlag(t *testing.T) {
 	for _, args := range [][]string{
@@ -1084,7 +1083,7 @@ func TestBindRejectsTabFlag(t *testing.T) {
 	}
 }
 
-// TestBindRebindNeedsResume pins #92: --rebind only means something on a
+// TestBindRebindNeedsResume pins that --rebind only means something on a
 // resume. It is refused before newRuntime, so no harness is reached.
 func TestBindRebindNeedsResume(t *testing.T) {
 	err := run([]string{"bind", "--rebind", "--no-feature", "--name", "x"})
@@ -1093,7 +1092,7 @@ func TestBindRebindNeedsResume(t *testing.T) {
 	}
 }
 
-// TestBindActorWithResumeRefused pins #382 §4: a resume keeps the binding's
+// TestBindActorWithResumeRefused pins that a resume keeps the binding's
 // stored actor, so --actor is refused. The check runs before newRuntime, so no
 // harness is reached and nothing is spawned.
 func TestBindActorWithResumeRefused(t *testing.T) {
@@ -1106,8 +1105,8 @@ func TestBindActorWithResumeRefused(t *testing.T) {
 	}
 }
 
-// TestBindFlagsHaveActorNotRole pins A2 round 3 S1: bind's writer flag is
-// --actor, and the old --role is removed rather than aliased.
+// TestBindFlagsHaveActorNotRole pins that bind's writer flag is --actor, and
+// the old --role is removed rather than aliased.
 func TestBindFlagsHaveActorNotRole(t *testing.T) {
 	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
 	bindFlagSet(fs)
@@ -1119,8 +1118,8 @@ func TestBindFlagsHaveActorNotRole(t *testing.T) {
 	}
 }
 
-// TestBindFlagSetDefinesLabels pins #637: a fresh bind needs --no-feature as
-// the alternative to --feature, and --ticket is the new optional issue flag.
+// TestBindFlagSetDefinesLabels pins that a fresh bind needs --no-feature as
+// the alternative to --feature, and --ticket is the optional issue flag.
 func TestBindFlagSetDefinesLabels(t *testing.T) {
 	fs := flag.NewFlagSet("bind", flag.ContinueOnError)
 	bindFlagSet(fs)
@@ -1160,7 +1159,7 @@ func TestBindRejectsServerWithLocal(t *testing.T) {
 	}
 }
 
-// TestBindRequiresAFeatureChoice pins #637's exactly-one rule on the CLI: a
+// TestBindRequiresAFeatureChoice pins the exactly-one rule on the CLI: a
 // fresh bind with neither flag, on either route, exits 2 with one stderr line
 // naming both flags, before any runtime is built.
 func TestBindRequiresAFeatureChoice(t *testing.T) {
@@ -1201,9 +1200,8 @@ func TestBindRejectsBothFeatureFlags(t *testing.T) {
 	}
 }
 
-// TestBindRejectsABadFeatureStillExits2 pins the shared pre-route check the
-// two route-local store.ValidFeature blocks became: a malformed --feature is
-// still one line and exit 2.
+// TestBindRejectsABadFeatureStillExits2 pins the shared pre-route check: a
+// malformed --feature is one line and exit 2.
 func TestBindRejectsABadFeatureStillExits2(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
 		return run([]string{"bind", "--feature", "a/b", "--name", "x"})
@@ -1218,7 +1216,7 @@ func TestBindRejectsABadFeatureStillExits2(t *testing.T) {
 	}
 }
 
-// TestBindRejectsABadTicketExits2 pins #637: a malformed --ticket is refused
+// TestBindRejectsABadTicketExits2 pins that a malformed --ticket is refused
 // on the same one-line exit 2, before any runtime.
 func TestBindRejectsABadTicketExits2(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
@@ -1234,7 +1232,7 @@ func TestBindRejectsABadTicketExits2(t *testing.T) {
 	}
 }
 
-// TestRemovedFlagsAreUnknown pins D1's clean break: every flag A4 renamed is
+// TestRemovedFlagsAreUnknown pins the clean break: every renamed flag is
 // removed, not aliased, so parsing it fails with the flag package's own
 // "flag provided but not defined" error. It parses through the verbs' flag
 // sets only -- no verb runs, so nothing touches the state directory and no
@@ -1260,7 +1258,7 @@ func TestRemovedFlagsAreUnknown(t *testing.T) {
 	}
 }
 
-// TestPickRejectsAName pins spec §3: --pick chooses the binding, so naming
+// TestPickRejectsAName pins that --pick chooses the binding, so naming
 // one as well is a usage error. Each case fails before newRuntime, so no
 // a harness is reached.
 func TestPickRejectsAName(t *testing.T) {
@@ -1279,7 +1277,7 @@ func TestPickRejectsAName(t *testing.T) {
 
 // TestPickRejectsAnswerFlags: the answer comes from the screen, so --keys,
 // --choice and --text have nothing to apply to. Fails before newRuntime.
-// TestBindHeadlessConflictsFailBeforeNewRuntime pins headless spec §6: the
+// TestBindHeadlessConflictsFailBeforeNewRuntime pins that the headless
 // two flag conflicts are usage errors, refused before relevo talks to a harness.
 // CI runners have no harness binary, so reaching newRuntime would be a
 // different failure with a different message.
@@ -1292,7 +1290,7 @@ func TestBuilderWhere(t *testing.T) {
 	}
 }
 
-// TestStatusNotice is §4.6: exactly one line when the cached check proves
+// TestStatusNotice pins exactly one line when the cached check proves
 // relevo is behind, and "" for every row the doctor's release table reports as
 // SevOK. It is the pure function only -- no subcommand runs, because CI
 // runners launch no harness.
@@ -1448,7 +1446,7 @@ func TestWithEnv(t *testing.T) {
 	}
 }
 
-// TestDaemonPreflightOpensNothing covers §4.4: --preflight validates config and
+// TestDaemonPreflightOpensNothing covers that --preflight validates config and
 // returns before the lock, the DB (which would migrate) or any process. The
 // state root must be left with neither relevo.db nor daemon.lock.
 func TestDaemonPreflightOpensNothing(t *testing.T) {
@@ -1475,7 +1473,7 @@ func TestDaemonPreflightOpensNothing(t *testing.T) {
 	}
 }
 
-// TestDaemonPreflightFailsOnBadConfig covers §4.4's failure half: a config
+// TestDaemonPreflightFailsOnBadConfig covers the failure half: a config
 // error goes to stderr and comes back as a non-nil error (exit 1 at the CLI),
 // and still opens nothing.
 func TestDaemonPreflightFailsOnBadConfig(t *testing.T) {
@@ -1497,11 +1495,11 @@ func TestDaemonPreflightFailsOnBadConfig(t *testing.T) {
 	}
 }
 
-// TestDaemonPreflightAcceptsAStoredLegacyClientKey covers the upgrade this
-// round repairs: a database whose client.key still carries the pre-rename PEM
-// label must pass --preflight. The read-only peek parses the stored key, so it
-// needs no migration; and because preflight cannot write, the stored bytes must
-// come back exactly as they were.
+// TestDaemonPreflightAcceptsAStoredLegacyClientKey covers the legacy-key
+// upgrade: a database whose client.key still carries the old PEM label must
+// pass --preflight. The read-only peek parses the stored key, so it needs no
+// migration; and because preflight cannot write, the stored bytes must come
+// back exactly as they were.
 func TestDaemonPreflightAcceptsAStoredLegacyClientKey(t *testing.T) {
 	configHome := t.TempDir()
 	stateHome := t.TempDir()
@@ -1571,7 +1569,7 @@ func TestDaemonPreflightAcceptsAStoredLegacyClientKey(t *testing.T) {
 	}
 }
 
-// TestBindRoutesAndRefusals pins §4.1: the flag combinations choose the path,
+// TestBindRoutesAndRefusals pins that the flag combinations choose the path,
 // and the forbidden pairs exit 2 before any runtime is built. bindRouteFor is
 // a pure function, so the valid half needs no state; the invalid half goes
 // through run so the exit code and the one-line refusal are pinned too.
@@ -1625,7 +1623,7 @@ func TestBindRoutesAndRefusals(t *testing.T) {
 	}
 }
 
-// TestUnbindDoneTakesNoBinding pins §4.3: --done clears every DONE binding, so
+// TestUnbindDoneTakesNoBinding pins that --done clears every DONE binding, so
 // naming one or asking to pick one is refused with exit 2 before a runtime is
 // built.
 func TestUnbindDoneTakesNoBinding(t *testing.T) {
@@ -1642,7 +1640,7 @@ func TestUnbindDoneTakesNoBinding(t *testing.T) {
 	}
 }
 
-// TestUnbindMasterMindFlags pins #482: --mastermind and --all-masterminds only make
+// TestUnbindMasterMindFlags pins that --mastermind and --all-masterminds only make
 // sense with --done, and combining them exits 2 before a runtime is built
 // (except the --mastermind+--all-masterminds combo, which gcScope checks after
 // newRuntime and is pinned by TestGCScope instead).
@@ -1661,7 +1659,7 @@ func TestUnbindMasterMindFlags(t *testing.T) {
 	}
 }
 
-// TestGCScope pins #482: gcScope turns --mastermind/--all-masterminds into a GC
+// TestGCScope pins that gcScope turns --mastermind/--all-masterminds into a GC
 // scope with no fallback to "everything" when the mastermind fails to resolve.
 func TestGCScope(t *testing.T) {
 	t.Run("empty flag resolves via resolve", func(t *testing.T) {
@@ -1737,7 +1735,7 @@ func TestGCScope(t *testing.T) {
 	})
 }
 
-// TestUnbindSweepTakesNoBinding pins §4.5: --sweep takes no binding and no other
+// TestUnbindSweepTakesNoBinding pins that --sweep takes no binding and no other
 // flag except --dry-run, so invalid combinations exit 2 before a runtime is built.
 func TestUnbindSweepTakesNoBinding(t *testing.T) {
 	for _, args := range [][]string{
@@ -1761,7 +1759,7 @@ func TestUnbindSweepTakesNoBinding(t *testing.T) {
 	}
 }
 
-// TestRemovedVerbsNameTheirReplacement pins §4.6 and §4.1/§4.3: each removed
+// TestRemovedVerbsNameTheirReplacement pins that each removed
 // name returns the usage-coded refusal whose next command is the form that
 // replaces it, and exits 2 through the code bridge.
 func TestRemovedVerbsNameTheirReplacement(t *testing.T) {

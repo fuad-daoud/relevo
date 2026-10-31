@@ -18,9 +18,9 @@ const Version = 1
 // ContentTypeGitBundle is the MIME content type for git bundles.
 const ContentTypeGitBundle = "application/x-git-bundle"
 
-// HeaderClientVersion is the request header a client sets to its buildVersion
-// (#373). It is informational -- the server logs it and never rejects a
-// request on it, and it is never part of the signature.
+// HeaderClientVersion is the request header a client sets to its buildVersion.
+// It is informational -- the server logs it and never rejects a request on
+// it, and it is never part of the signature.
 const HeaderClientVersion = "Relevo-Client-Version"
 
 // HeaderFileSize is the file's total byte length on the server.
@@ -65,7 +65,7 @@ const (
 	RoundClosed   RoundState = "closed"
 	RoundNeedsYou RoundState = "needs_you"
 	// RoundQueued is a round accepted by the server with no builder process
-	// yet: staged, waiting for a slot under serve.max_builders (#285).
+	// yet: staged, waiting for a slot under serve.max_builders.
 	RoundQueued RoundState = "queued"
 	// RoundBroken is a round whose builder is gone: the server holds the round
 	// but has no process for it. Additive on the wire -- a client predating the
@@ -80,16 +80,15 @@ type WhoAmI struct {
 	ServerVersion int      `json:"server_version"`
 	Transports    []string `json:"transports"` // ["git-bundle"]
 
-	// Features, BuilderTier and MaxTier are additive (#141 remote half): a
-	// pre-tier server omits them, so a client can tell the two apart before
-	// creating anything.
-	Features    []string `json:"features,omitempty"`     // ["tier"] on a server with this change
+	// Features, BuilderTier and MaxTier are additive: a pre-tier server omits
+	// them, so a client can tell the two apart before creating anything.
+	Features    []string `json:"features,omitempty"`     // ["tier"] when the server supports tiers
 	BuilderTier string   `json:"default_tier,omitempty"` // ServedBuilderTier(rt): the tier a headless builder
 	// launches at when the client sends none
 	MaxTier string `json:"max_tier,omitempty"` // policy.MaxTierOrDefault()
 
-	// Builders is the server's builder census (#285); nil from a pre-queue
-	// server.
+	// Builders is the server's builder census; nil from a server without
+	// queuing.
 	Builders *BuildersView `json:"runners,omitempty"`
 
 	// Installation and InstallationLabel name the server's own installation,
@@ -100,7 +99,7 @@ type WhoAmI struct {
 	InstallationLabel string `json:"installation_label,omitempty"`
 }
 
-// GitIdentity is a client's git identity (#335): the name and email its own
+// GitIdentity is a client's git identity: the name and email its own
 // commits would use, which the server runs a binding's builders as. Both
 // values are required when the struct is present, 1-256 bytes with no
 // newline, carriage return, NUL, < or >.
@@ -119,7 +118,7 @@ type CreateBindingRequest struct {
 	RoundTimeoutMS int    `json:"round_timeout_ms,omitempty"`
 	Tier           string `json:"tier,omitempty"`  // "" = server's choice; else harness|read|edit|yolo
 	Role           string `json:"actor,omitempty"` // the actor the runner plays; resolved against the server's own actors
-	// Feature and Ticket are the client binding's labels (#637). Both are
+	// Feature and Ticket are the client binding's labels. Both are
 	// additive: an old server ignores them, and a client setting either
 	// refuses a server that does not advertise remote.FeatureLabels.
 	Feature string `json:"feature,omitempty"`
@@ -149,7 +148,7 @@ type CreateBindingRequest struct {
 	Regate *int `json:"regate,omitempty"`
 
 	// Author is the client's git identity; the server runs this binding's
-	// builders as it (#335). nil means an old client that sent none.
+	// builders as it. nil means an old client that sent none.
 	Author *GitIdentity `json:"author,omitempty"`
 
 	// ClientInstallation and ClientBindingID are the client's own installation
@@ -161,7 +160,7 @@ type CreateBindingRequest struct {
 }
 
 // TagRef is one tag a client ships beside a round's bundle, so a server
-// worktree can `git describe --tags` (#242). The wire field is the multipart
+// worktree can `git describe --tags`. The wire field is the multipart
 // form value "tags" on POST /v1/bindings/{name}/rounds: a JSON array of
 // TagRef sorted by Name. Absent or empty = no tags.
 type TagRef struct {
@@ -237,7 +236,7 @@ type BindingView struct {
 	RoundCap       int       `json:"round_cap"`
 	RoundTimeoutMS int       `json:"round_timeout_ms"`
 	Tier           string    `json:"tier,omitempty"` // effectiveTier(b) on the server; "" from a pre-tier server
-	// Feature and Ticket are the binding's labels (#637), echoed from the
+	// Feature and Ticket are the binding's labels, echoed from the
 	// create request; "" from a pre-labels server or an unlabelled binding.
 	Feature string `json:"feature,omitempty"`
 	Ticket  string `json:"ticket,omitempty"`
@@ -249,8 +248,8 @@ type BindingView struct {
 	Usage *usage.Usage `json:"usage,omitempty"`
 
 	// Rusage is the closed round's cgroup measurement as the server
-	// recorded it on its report entry (#244, #216). Nil from a pre-scope
-	// server, a round that was not a scope, or when the closed round has
+	// recorded it on its report entry. Nil from a server without scopes,
+	// a round that was not a scope, or when the closed round has
 	// no report entry.
 	Rusage *store.Rusage `json:"rusage,omitempty"`
 
@@ -259,11 +258,11 @@ type BindingView struct {
 	PriorTokens *usage.Tokens `json:"prior_tokens,omitempty"`
 
 	// StalledSince is the server's stall stamp for a live-but-quiet headless
-	// round (#252), copied onto the client binding for a running round. Zero
+	// round, copied onto the client binding for a running round. Zero
 	// from a pre-stall server, and zero when the round is not stalled.
 	StalledSince time.Time `json:"stalled_since,omitempty"`
 
-	// Queue is this round's place in the server's builder queue (#285);
+	// Queue is this round's place in the server's builder queue;
 	// non-nil iff RoundState == RoundQueued.
 	Queue *QueueView `json:"queue,omitempty"`
 
@@ -282,7 +281,7 @@ type BindingView struct {
 	KeptReason   string `json:"kept_reason,omitempty"`
 }
 
-// QueueView is a queued round's place in the server's queue (#285).
+// QueueView is a queued round's place in the server's queue.
 type QueueView struct {
 	Position int       `json:"position"` // 1-based
 	Ahead    int       `json:"ahead"`    // Position-1
@@ -314,13 +313,13 @@ type LiveView struct {
 	GatingSince    time.Time    `json:"gating_since,omitzero"`
 }
 
-// BuildersView is the server's builder census (#285).
+// BuildersView is the server's builder census.
 type BuildersView struct {
 	Running int    `json:"running"`
 	Queued  int    `json:"queued"`
 	Cap     int    `json:"cap"`
-	Scopes  bool   `json:"scopes"`          // part 3 sets it; false here
-	Slice   string `json:"slice,omitempty"` // part 3 sets it; "" here
+	Scopes  bool   `json:"scopes"`          // the server sets it; false here
+	Slice   string `json:"slice,omitempty"` // the server sets it; "" here
 	Quota   string `json:"quota,omitempty"` // "" = no CPU quota; else e.g. "200%"
 	// Isolation is the tenant-isolation mode in force: "none", "user" or
 	// "container". "" from a server that predates isolation.
@@ -415,15 +414,15 @@ const (
 )
 
 // FeatureTier is the WhoAmI.Features token a server with the permission-tier
-// wire fields advertises (#141 remote half).
+// wire fields advertises.
 const FeatureTier = "tier"
 
 // FeatureQueue is the WhoAmI.Features token a server with the builder
-// cap/queue advertises (#285).
+// cap/queue advertises.
 const FeatureQueue = "queue"
 
 // FeatureStop is the WhoAmI.Features token a server with
-// POST /v1/bindings/{name}/stop advertises (#344).
+// POST /v1/bindings/{name}/stop advertises.
 const FeatureStop = "stop"
 
 // FeatureBuilder is the WhoAmI.Features token a server that accepts the
@@ -440,17 +439,17 @@ const FeatureRoles = "actors"
 
 // FeatureIdempotentSend is the WhoAmI.Features token a server that answers a
 // repeated identical start-round request for the open round with 200 and the
-// current view -- no re-Send, no QueuedAt reset, no new log entry -- advertises
-// (#373). The client round (R2) retries StartRound only when it sees this.
+// current view -- no re-Send, no QueuedAt reset, no new log entry -- advertises.
+// The client retries StartRound only when it sees this.
 const FeatureIdempotentSend = "idempotent_send"
 
 // FeatureAuthor is the WhoAmI.Features token a server that honours
-// CreateBindingRequest.Author advertises (#335, #373). A client whose server
-// lacks it logs a Warn once per server and continues.
+// CreateBindingRequest.Author advertises. A client whose server lacks it
+// logs a Warn once per server and continues.
 const FeatureAuthor = "author"
 
 // FeatureLabels is the WhoAmI.Features token a server that honours
-// CreateBindingRequest.Feature and .Ticket advertises (#637). A client setting
+// CreateBindingRequest.Feature and .Ticket advertises. A client setting
 // either refuses a server without it: silently dropping the label on the
 // server is the laptop/server disagreement the labels exist to remove.
 const FeatureLabels = "labels"
@@ -476,7 +475,7 @@ const FeatureSubdir = "subdir"
 const FeatureOrigin = "origin"
 
 // FeatureForce is the WhoAmI.Features token a server that honours the round
-// request's Force field advertises (#702). A client force-sending refuses a
+// request's Force field advertises. A client force-sending refuses a
 // server without it: an old server would re-apply the seed cap and answer with
 // the "pass --force" sentence for a flag that was already passed.
 const FeatureForce = "force"
