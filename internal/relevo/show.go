@@ -58,14 +58,14 @@ type ShowOptions struct {
 	Round   int
 	Section ShowSection
 	JSON    bool
-	// Peek suppresses the pending-payload claim a non-peek live read makes
-	// (#673): `show --peek` is the `wait --peek` contract, a read that leaves
-	// the payload for the route that pushes it. `show --owner` sets it too,
-	// so the admin's read of another owner's binding stays read-only.
+	// Peek suppresses the pending-payload claim a non-peek live read makes:
+	// `show --peek` is the `wait --peek` contract, a read that leaves the
+	// payload for the route that pushes it. `show --owner` sets it too, so
+	// the admin's read of another owner's binding stays read-only.
 	Peek bool
 	// ArchivedOnly skips a live binding of the same name: history rows show closed rounds.
 	ArchivedOnly bool
-	// FindingsID is the consult whose findings --findings names (§4.2). It is
+	// FindingsID is the consult whose findings --findings names. It is
 	// meaningful only with Section == ShowFindings.
 	FindingsID string
 	// ArtifactRel is `--artifact`'s file. With Section == ShowArtifacts it
@@ -99,12 +99,12 @@ type ShowResult struct {
 	Trace *ChainTraceDoc `json:"trace,omitempty"`
 }
 
-// Show resolves opts against a live binding's files; then, for a name that is
-// not live, against the newest archived record of that name and its sealed
-// round files and log; and finally against rt.DB, for a binding the live
-// store never held. It
-// returns store.ErrNotFound, wrapped, when opts.Name is none of the three --
-// including a live name whose database row was never archived.
+// Show resolves opts against a live binding's files; then, for a name that
+// is not live, against the newest archived record of that name and its
+// sealed round files and log; and finally against rt.DB, for a binding the
+// live store never held. It returns store.ErrNotFound, wrapped, when
+// opts.Name is none of the three -- including a live name whose database
+// row was never archived.
 func Show(ctx context.Context, rt Runtime, opts ShowOptions) (ShowResult, error) {
 	if opts.Name == "" {
 		return ShowResult{}, fmt.Errorf("show: a binding name is required")
@@ -216,8 +216,7 @@ func archivedFindingsRound(rt Runtime, ab store.ArchivedBinding, rounds int, opt
 	return view.FindingsRoundFor(opts.Round, ab.Binding.Round, rounds, ab.Binding.Name, opts.FindingsID, present)
 }
 
-// showLive resolves opts against b's files, as `relevo show` reads a live
-// binding today.
+// showLive resolves opts against b's files.
 func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error) {
 	entries, err := rt.Store.ReadLog(b.Name)
 	if err != nil {
@@ -291,17 +290,11 @@ func showLive(rt Runtime, b store.Binding, opts ShowOptions) (ShowResult, error)
 }
 
 // showSections resolves opts.Section into res for one round of name: the
-// section switch showLive and showArchived share. actor and shape name the
-// binding's actor and shape, which a reader's report and its artifact
-// sections need (the artifact directory is NNN-<actor>/); output is the
-// reader's resolved output rel (OutputFile), which its report and output
-// sections read.
-// entries is the binding's whole log, which ShowLog filters by round; read
-// yields one round file's bytes, reporting missing rather than an error when
-// the file is absent. live is the round's endpoint, which ShowTranscript needs
-// to render the stream with the endpoint's own segments and kind; readBytes is
-// read's contract for RoundTranscript. list lists the binding's round-file
-// names, which the gate section falls back on.
+// section switch showLive and showArchived share. actor and shape locate a
+// reader's artifact directory, output is its resolved output rel, entries
+// is the binding's log for ShowLog, read reports a missing file rather
+// than an error, live renders the transcript with the endpoint's own
+// segments and kind, and list backs the gate section's fallback.
 func showSections(rt Runtime, name string, round int, actor, shape, output string, entries []store.LogEntry, live store.Endpoint, read func(path string) (text string, missing bool, err error), readBytes func(path string) ([]byte, bool, error), list func() ([]string, error), opts ShowOptions, res *ShowResult) error {
 	var err error
 	switch opts.Section {
@@ -345,7 +338,7 @@ func showSections(rt Runtime, name string, round int, actor, shape, output strin
 		}
 	case ShowTranscript:
 		// The round's transcript: its NNN-builder.log when one exists, and
-		// otherwise its stream rendered per segment (§4.5).
+		// otherwise its stream rendered per segment.
 		var text []byte
 		var found bool
 		text, _, found, err = RoundTranscript(rt.Store, name, round, live, readBytes)
@@ -355,8 +348,7 @@ func showSections(rt Runtime, name string, round int, actor, shape, output strin
 	case ShowGate:
 		// The round's gate log. Live, it is read through rt.Store.ReadFile,
 		// so a sealed round's log is found in the database exactly as a
-		// present one is (P4a round 2 §4.2); archived, it is the record's
-		// own sealed bytes.
+		// present one is; archived, it is the record's own sealed bytes.
 		res.Text, res.Missing, err = read(rt.Store.GateLogPath(name, round))
 		if err == nil && res.Missing {
 			err = showChainCheckGate(rt, name, round, read, list, res)
@@ -376,10 +368,10 @@ func showSections(rt Runtime, name string, round int, actor, shape, output strin
 	return nil
 }
 
-// showArchived resolves opts against one archived record, answering every
-// section the way showLive answers a live binding: the record's events are the
-// log, and every round file is read from the record's sealed bytes. Gate and
-// findings come from the record too, where the mirror had no row for them.
+// showArchived resolves opts against one archived record: the record's
+// events are the log and every round file comes from its sealed bytes.
+// Gate and findings come from the record too, where the mirror had no
+// row for them.
 func showArchived(rt Runtime, ab store.ArchivedBinding, opts ShowOptions) (ShowResult, error) {
 	entries, err := rt.Store.ArchivedLog(ab.RecordID)
 	if err != nil {
@@ -453,7 +445,7 @@ func showArchived(rt Runtime, ab store.ArchivedBinding, opts ShowOptions) (ShowR
 
 // showDB resolves opts against binding's rows in rt.DB, the fallback for a
 // binding that is neither live nor archived in the store: one with mirror
-// rows but no record, adopted by name only after the fact (in tests).
+// rows but no record, adopted by name only.
 func showDB(rt Runtime, binding db.BindingRow, opts ShowOptions) (ShowResult, error) {
 	allRounds, err := rt.DB.Rounds(binding.ID)
 	if err != nil {

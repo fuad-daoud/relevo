@@ -42,9 +42,8 @@ func TestTickReconcilesAndPersists(t *testing.T) {
 	if b.Round != 2 {
 		t.Errorf("tick must persist the advanced round, got %d", b.Round)
 	}
-	// #303 deleted the pane injection; the report is queued for the mastermind
-	// and, with no live channel claim and no deliverer, stays pending for
-	// `relevo wait`.
+	// The report is queued for the mastermind and, with no live channel claim
+	// and no deliverer, stays pending for `relevo wait`.
 	pending, found, err := rt.Store.PendingForMasterMind("webshop")
 	if err != nil || !found {
 		t.Fatalf("the closed round's report must be queued for the mastermind: found=%v err=%v", found, err)
@@ -91,15 +90,14 @@ func TestTickSkipsDoneBindings(t *testing.T) {
 	}
 }
 
-// TestDaemonBackfillsMasterMindID is the plan's required case for §5.6 (last
-// paragraph): a tick back-fills MasterMindID from (MasterMind.Kind,
-// MasterMind.SessionID) when the registry knows that session, and leaves it
-// empty when it does not.
+// TestDaemonBackfillsMasterMindID pins that a tick back-fills MasterMindID
+// from (MasterMind.Kind, MasterMind.SessionID) when the registry knows that
+// session, and leaves it empty when it does not.
 func TestDaemonBackfillsMasterMindID(t *testing.T) {
 	t.Parallel()
 
-	// A binding written before MasterMindID existed: its mastermind endpoint names
-	// the session, and MasterMindID is empty.
+	// One binding names the session through its mastermind endpoint while
+	// MasterMindID is empty.
 	legacy := func(t *testing.T, rt Runtime, session string) store.Binding {
 		t.Helper()
 		b := store.Binding{
@@ -142,11 +140,9 @@ func TestDaemonBackfillsMasterMindID(t *testing.T) {
 	}
 }
 
-// TestTickSurfacesListAgentsFailure guarded the resilience contract at the
-// boundary where the daemon actually talked to a pane; #303 deleted that
-// boundary (closed-list item 6: the pane client and its agent list). The
-// daemon's one list call is now the store's, so the same contract is pinned
-// there: a tick whose binding list fails is visible to the caller.
+// TestTickSurfacesListAgentsFailure guards the resilience contract at the
+// daemon's one list call, the store's: a tick whose binding list fails is
+// visible to the caller.
 func TestTickSurfacesListAgentsFailure(t *testing.T) {
 	t.Parallel()
 
@@ -170,9 +166,9 @@ func TestTickSurfacesListAgentsFailure(t *testing.T) {
 // TestRunSurvivesFailingTick below.
 // TestRunSurvivesFailingTick guards Run's half of resilience: a tick that
 // keeps failing must not stop the loop or bubble the tick error out of Run.
-// Guarded by a timeout so a regression that makes Run return the tick error
-// (or hang) fails the test loudly instead of wedging the suite, the same
-// shape as store.TestNestedAccessDoesNotDeadlock.
+// Guarded by a timeout so a Run that returns the tick error (or hangs)
+// fails the test loudly instead of wedging the suite, the same shape as
+// store.TestNestedAccessDoesNotDeadlock.
 func TestRunSurvivesFailingTick(t *testing.T) {
 	t.Parallel()
 
@@ -223,10 +219,8 @@ func TestNewDaemonFloorsInterval(t *testing.T) {
 
 // TestTickIgnoresBindingUnboundMidTick covers the window between Tick's
 // binding list and its per-binding load: a `relevo unbind` landing in it is
-// normal use, not a failure, and must not be logged as one. #303 deleted
-// the old fake's onList hook, which is what used to interpose the unbind inside
-// the tick, so the test drives tickOne -- the exact function holding the
-// guard -- directly.
+// normal use, not a failure, and must not be logged as one. The test drives
+// tickOne -- the exact function holding the guard -- directly.
 func TestTickIgnoresBindingUnboundMidTick(t *testing.T) {
 	rt, _ := sentBinding(t)
 	if err := rt.Store.Delete("webshop"); err != nil {
@@ -249,9 +243,9 @@ func TestTickIgnoresBindingUnboundMidTick(t *testing.T) {
 func TestTickDoesNotRestampAnUnchangedBinding(t *testing.T) {
 	t.Parallel()
 
-	// The next == fresh short-circuit this replaces was never tested. save()
-	// stamps UpdatedAt unconditionally, so without the short-circuit every tick
-	// rewrites every bind.json and UpdatedAt stops meaning "last change".
+	// save() stamps UpdatedAt unconditionally, so without the short-circuit
+	// every tick rewrites every bind.json and UpdatedAt stops meaning
+	// "last change".
 	rt, b := seedBound(t)
 
 	before, err := rt.Store.Load(b.Name)
@@ -303,9 +297,8 @@ func TestTickRefreshesRuntimeBeforeReconcile(t *testing.T) {
 }
 
 // TestTickWithoutRefreshIsUnchanged confirms a Daemon with no WithRefresh
-// call behaves exactly as before #209 -- the same fixture and assertions as
-// TestTickReconcilesAndPersists, the test this one relies on to prove the
-// nil-refresh path is untouched.
+// call uses the same fixture and assertions as TestTickReconcilesAndPersists,
+// the test this one relies on to prove the nil-refresh path is untouched.
 func TestTickWithoutRefreshIsUnchanged(t *testing.T) {
 	t.Parallel()
 
@@ -332,7 +325,7 @@ func TestTickWithoutRefreshIsUnchanged(t *testing.T) {
 }
 
 // TestTickSyncsMetadataAndFinishedAfterReconcile checks that Tick calls both
-// syncPaneMetadata and notifyFinished after the binding loop (#129, #182).
+// syncPaneMetadata and notifyFinished after the binding loop.
 // The finished-toast decision itself is covered by finished_test.go; here
 // only that Tick wires both into the pass, using a binding with a closed
 // round, no pending payload, and an idle mastermind so the toast fires within
@@ -376,8 +369,7 @@ func TestTickIngestsLiveBindings(t *testing.T) {
 // (here, the ingest hook) must treat Runtime.DB == nil exactly like a
 // machine with no database -- no panic, and nothing written into the ingest
 // mirror. relevo.db itself is the store's own record file, which the
-// fixture's Bind/Save creates, so the assertion is on the mirror's rows
-// (P3a round 3, B3).
+// fixture's Bind/Save creates, so the assertion is on the mirror's rows.
 func TestTickWithoutDBIsUnchanged(t *testing.T) {
 	t.Parallel()
 
@@ -392,10 +384,8 @@ func TestTickWithoutDBIsUnchanged(t *testing.T) {
 
 // assertIngestMirrorEmpty asserts that the database at path holds no ingest
 // mirror rows: binding, event and round are all empty. A database that does
-// not exist passes too, which is what makes this a port of the old "Tick with
-// DB == nil must leave no relevo.db behind" stat: relevo.db is now the store's
-// own record file, and a nil Runtime.DB must still ingest nothing into the
-// mirror (P3a round 3, B3).
+// not exist passes too. relevo.db is the store's own record file, and a nil
+// Runtime.DB must still ingest nothing into the mirror.
 func assertIngestMirrorEmpty(t *testing.T, path string) {
 	t.Helper()
 
@@ -475,8 +465,7 @@ func TestTickRefreshesOncePastTTL(t *testing.T) {
 			rt.Now = func() time.Time { return now }
 
 			// The cache lives in the machine database's kv row, reached through
-			// the runtime's own store -- for the daemon the one shared handle
-			// (P3b plan §4.5).
+			// the runtime's own store -- for the daemon the one shared handle.
 			mdb, err := rt.Store.DB()
 			if err != nil {
 				t.Fatalf("open store db: %v", err)
@@ -521,9 +510,9 @@ func TestTickRefreshesOncePastTTL(t *testing.T) {
 	}
 }
 
-// TestTickSurvivesFetchError pins §4.4's failure rule: a fetch error is
-// swallowed, Tick still returns nil, and the cache is not written -- so an
-// offline machine retries next tick instead of recording a wrong answer.
+// TestTickSurvivesFetchError pins that a fetch error is swallowed, Tick
+// still returns nil, and the cache is not written -- so an offline machine
+// retries next tick instead of recording a wrong answer.
 func TestTickSurvivesFetchError(t *testing.T) {
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 
@@ -584,8 +573,7 @@ func TestTickSurvivesFetchError(t *testing.T) {
 }
 
 // panickingRunner is the fake Runner with one pid whose Alive panics, so a
-// test can prove the daemon contains a panic raised under one binding
-// (#370, spec §4.6).
+// test can prove the daemon contains a panic raised under one binding.
 type panickingRunner struct {
 	*fakeRunner
 	panicPID int
@@ -598,9 +586,9 @@ func (p *panickingRunner) Alive(ctx context.Context, h spawn.ProcHandle) (bool, 
 	return p.fakeRunner.Alive(ctx, h)
 }
 
-// TestTickSurvivesAPanickingReconcile pins #370, spec §4.6: a panic raised
-// anywhere under one binding is recovered in tickOne, logged, and returned as
-// an error, so the tick still reconciles every other binding and returns nil.
+// TestTickSurvivesAPanickingReconcile pins that a panic raised anywhere
+// under one binding is recovered in tickOne, logged, and returned as an
+// error, so the tick still reconciles every other binding and returns nil.
 //
 // Mutation check: remove the recover from tickOne and this test crashes the
 // test binary instead of passing.
@@ -652,7 +640,7 @@ func TestTickSurvivesAPanickingReconcile(t *testing.T) {
 	}
 }
 
-// TestTickBacksOffAfterAFailedReleaseFetch pins §4.10's backoff: one failed
+// TestTickBacksOffAfterAFailedReleaseFetch pins the backoff: one failed
 // fetch stops the daemon asking again for an hour, and once the hour has
 // passed it asks again.
 //
@@ -691,7 +679,7 @@ func TestTickBacksOffAfterAFailedReleaseFetch(t *testing.T) {
 	}
 }
 
-// TestRefreshReleaseSuccessClearsTheBackoff pins the other half of §4.10's
+// TestRefreshReleaseSuccessClearsTheBackoff pins the other half of the
 // contract: a successful save clears the retry deadline, so the next failure
 // backs off from its own moment.
 func TestRefreshReleaseSuccessClearsTheBackoff(t *testing.T) {
@@ -735,8 +723,8 @@ func TestRefreshReleaseSuccessClearsTheBackoff(t *testing.T) {
 
 // TestRefreshReleaseOpensTheDatabaseOnce pins the D1 postcondition: across any
 // number of refreshRelease calls on one Daemon, only one connection to the
-// runtime's relevo.db is open. Before the fix each tick made a fresh store.New,
-// opened a connection and never closed it.
+// runtime's relevo.db is open: a fresh store.New per call opens a connection
+// and never closes it.
 //
 // Mutation: open a store.New(root).DB() inside refreshRelease again and the
 // count grows by one per call.
@@ -824,9 +812,8 @@ func TestBackfillLeavesDoneBindingsAlone(t *testing.T) {
 
 // TestBackfillLeavesMasterMindlessBindingsAlone pins the MasterMind.SessionID guard
 // in backfillMasterMindID: a non-DONE binding with no id and an empty
-// MasterMind.SessionID -- the shape a remote binding written before the add
-// fix has -- names no session for the registry to look up, so a tick leaves it
-// exactly as it was. relevo never guesses a mastermind for it.
+// MasterMind.SessionID names no session for the registry to look up, so a
+// tick leaves it exactly as it was. relevo never guesses a mastermind for it.
 func TestBackfillLeavesMasterMindlessBindingsAlone(t *testing.T) {
 	t.Parallel()
 
@@ -844,13 +831,12 @@ func TestBackfillLeavesMasterMindlessBindingsAlone(t *testing.T) {
 	}
 }
 
-// TestTickSkipsANewerFormatBinding pins #372 R1's rule under the DB-backed
-// store: a binding written by a newer relevo is left to that relevo. The
-// import refuses it with ErrNewerFormat and the file is not touched, so no
-// field this binary cannot understand is ever rewritten.
+// TestTickSkipsANewerFormatBinding pins that under the DB-backed store a
+// binding written by a newer relevo is left to that relevo. The import
+// refuses it with ErrNewerFormat and the file is not touched, so no field
+// this binary cannot understand is ever rewritten.
 //
-// (Before the database the daemon skipped the binding after loading it; now
-// the load itself refuses it, so a tick over such a root fails its listing.)
+// The load itself refuses it, so a tick over such a root fails its listing.
 // TestTickSkipsANewerFormatBinding: a newer-format record fails the load, and
 // the record row is left untouched.
 func TestTickSkipsANewerFormatBinding(t *testing.T) {
@@ -889,7 +875,7 @@ func TestTickSkipsANewerFormatBinding(t *testing.T) {
 	}
 }
 
-// TestMasterMindPruneDue pins §4.4's once-an-hour decision, pure so it needs no
+// TestMasterMindPruneDue pins the once-an-hour decision, pure so it needs no
 // daemon.
 func TestMasterMindPruneDue(t *testing.T) {
 	t.Parallel()
@@ -917,7 +903,7 @@ func TestMasterMindPruneDue(t *testing.T) {
 	}
 }
 
-// TestPruneMasterMindsForgetsAndStamps pins the daemon's own prune (§4.4): a gone
+// TestPruneMasterMindsForgetsAndStamps pins the daemon's own prune: a gone
 // record no binding names is forgotten, a live one survives, and the run is
 // stamped in the store database's kv row planner.pruned_at.
 func TestPruneMasterMindsForgetsAndStamps(t *testing.T) {

@@ -74,8 +74,8 @@ func TestProgressNothingIsStalled(t *testing.T) {
 
 // TestProgressBlockedNeverStalls pins the dialog case: a builder blocked on a
 // human is waiting, not hung, so the stall clock never fires for it.
-// TestProgressHeadlessStreamMtimeStillCounts pins #252's signal under the new
-// clock: a headless stream whose mtime keeps advancing is not stalled, and a
+// TestProgressHeadlessStreamMtimeStillCounts pins the headless-stream signal:
+// a headless stream whose mtime keeps advancing is not stalled, and a
 // tree that has not moved for explore_after_ms while the stream moves is
 // exploring.
 func TestProgressHeadlessStreamMtimeStillCounts(t *testing.T) {
@@ -101,7 +101,7 @@ func TestProgressHeadlessStreamMtimeStillCounts(t *testing.T) {
 }
 
 // TestProgressNoSignalsNoLabel pins the empty case: no git, no pane and no
-// stream is no evidence at all, so no label is ever set (#135 §6).
+// stream is no evidence at all, so no label is ever set.
 func TestProgressNoSignalsNoLabel(t *testing.T) {
 	t.Parallel()
 
@@ -149,13 +149,8 @@ func TestProgressSampleCadence(t *testing.T) {
 }
 
 // TestProgressSamplingIsGatedByInterval pins the read the progress clock must
-// NOT make (#135 follow-up): a tick inside policy.json's progress_interval_ms
-// samples nothing, so neither the tree nor the screen is read. The pane fixture
-// is TestReconcilePaneStampsStall's, with a Working builder and nothing else
-// that reads a screen, so every recent-unwrapped read counted here is a
-// progress sample: ticks at t, t+10s and t+20s fall inside one 30s interval and
-// cost one read and one TreeFingerprint; the tick at t+30s is the second of
-// each.
+// NOT make: a tick inside policy.json's progress_interval_ms samples nothing,
+// so neither the tree nor the screen is read.
 //
 // Mutation check: without the progressDue gate the sampler runs on every tick,
 // so the first three ticks already cost three reads and the test fails.
