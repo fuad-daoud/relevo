@@ -3,7 +3,6 @@ internal/relevo/configedit.go
 internal/relevo/daemon.go
 internal/relevo/headless.go
 internal/relevo/reconcile.go
-internal/relevo/send.go
 internal/relevo/status.go
 internal/ui/stats/view_stats.go
 scripts/testdata/check-filesize/big.go
