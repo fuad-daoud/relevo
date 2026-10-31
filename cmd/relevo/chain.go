@@ -239,7 +239,7 @@ func chainOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ChainOptions, er
 	}
 	// --security/--no-security are exclusive (refused above), so an explicit
 	// value is whichever flag was given; neither leaves the policy's own.
-	if chainFlagGiven(fs, "security") || chainFlagGiven(fs, "no-security") {
+	if flagGiven(fs, "security") || flagGiven(fs, "no-security") {
 		opts.Security = v.security
 	}
 	if opts.DryRun {
@@ -324,7 +324,7 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 	// effect, so each is refused by name -- before any runtime is built (round
 	// 6's review; --mastermind is the same dead flag the sweep found).
 	for _, name := range []string{"plan", "base", "ticket", "feature", "no-feature", "mastermind", "workflow", "task", "task-file", "dry-run"} {
-		if chainFlagGiven(fs, name) {
+		if flagGiven(fs, name) {
 			return relevo.ResumeOptions{}, fail(codeUsage, "relevo chain --resume does not take --%s: a resume continues the chain it names, which already holds its plans, label, workflow and mastermind", name)
 		}
 	}
@@ -355,7 +355,7 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 	}
 	// --security/--no-security are exclusive (refused above), so an explicit
 	// value is whichever flag was given; neither leaves the stored setting.
-	if chainFlagGiven(fs, "security") || chainFlagGiven(fs, "no-security") {
+	if flagGiven(fs, "security") || flagGiven(fs, "no-security") {
 		opts.Security = v.security
 	}
 	return opts, nil
@@ -365,24 +365,13 @@ func chainResumeOptions(fs *flag.FlagSet, v *chainFlagValues) (relevo.ResumeOpti
 // -1 default means "not given", which becomes nil so the policy stands; any
 // value the human typed must be >= 0.
 func chainIntFlag(fs *flag.FlagSet, name string, value int) (*int, error) {
-	if !chainFlagGiven(fs, name) {
+	if !flagGiven(fs, name) {
 		return nil, nil
 	}
 	if value < 0 {
 		return nil, fail(codeUsage, "--%s must be >= 0, got %d", name, value)
 	}
 	return &value, nil
-}
-
-// chainFlagGiven reports whether the named flag was set on the command line.
-func chainFlagGiven(fs *flag.FlagSet, name string) bool {
-	given := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == name {
-			given = true
-		}
-	})
-	return given
 }
 
 // chainDocOf is chain's document.

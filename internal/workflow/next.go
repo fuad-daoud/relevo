@@ -312,24 +312,11 @@ func cutEq(key string) (string, string, bool) {
 // checkClosed records a check's result and log, then routes on the result.
 func (s State) checkClosed(def Definition, e Event) (State, []Action) {
 	s.recordCheck(e)
-	t, ok := matchCheck(def.Steps[e.Step].On, e.Result)
+	t, ok := matchFork(def.Steps[e.Step].On, e.Result)
 	if !ok {
 		return halt(s, e.Step, e.Step+" "+e.Result+": no edge matches")
 	}
 	return route(def, s, e.Step, t, 0)
-}
-
-// matchCheck returns the edge a check result takes: result=<v>, then the bare
-// <v>, then else.
-func matchCheck(on map[string]Target, result string) (Target, bool) {
-	if t, ok := on["result="+result]; ok {
-		return t, true
-	}
-	if t, ok := on[result]; ok {
-		return t, true
-	}
-	t, ok := on["else"]
-	return t, ok
 }
 
 // recordStep stores a run step's latest close, its override included, so the
