@@ -11,10 +11,8 @@ cmd/relevo/config_server.go
 cmd/relevo/daemon.go
 cmd/relevo/daemon_notice.go
 cmd/relevo/done.go
-cmd/relevo/edge.go
 cmd/relevo/gate.go
 cmd/relevo/history.go
-cmd/relevo/history_tab_test.go
 cmd/relevo/history_test.go
 cmd/relevo/init_test.go
 cmd/relevo/main.go
