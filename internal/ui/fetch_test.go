@@ -221,7 +221,7 @@ func TestFetchReportEmptyLogReturnsRoundOneInFlight(t *testing.T) {
 	}
 }
 
-// TestFetchReportTakesRound pins #183: fetchReport now reads round's own
+// TestFetchReportTakesRound pins round-scoped report reads: fetchReport reads round's own
 // report entry, not the newest one logged -- stepping back to an earlier
 // round must show that round's report, not a later round's.
 func TestFetchReportTakesRound(t *testing.T) {
@@ -257,7 +257,7 @@ func TestFetchReportTakesRound(t *testing.T) {
 	}
 }
 
-// TestFetchTerminalNonCurrentPaneRoundIsEmptyProse pins #183: a plain pane
+// TestFetchTerminalNonCurrentPaneRoundIsEmptyProse pins past-round empty prose: a plain pane
 // builder's terminal only ever shows the binding's live screen, which
 // only ever belongs to its current round; a past round it never captured
 // a log for reads as prose, not as an error, and must never reach a pane.
@@ -357,7 +357,7 @@ func TestFetchLogTwoEntriesByteIdentical(t *testing.T) {
 	}
 }
 
-// TestFetchLogFiltersRound pins #183: fetchLog now scopes to round rather
+// TestFetchLogFiltersRound pins round-scoped log reads: fetchLog scopes to round rather
 // than dumping the whole binding log.
 func TestFetchLogFiltersRound(t *testing.T) {
 	st := store.New(t.TempDir())
@@ -434,8 +434,8 @@ func TestFetchTerminalHeadlessReadsTheLogNotThePane(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	// The lines argument is a pane-builder concern (#180's Task 2): the
-	// headless branch now always returns the whole log, capped only by
+	// The lines argument is a pane-builder concern: the
+	// headless branch always returns the whole log, capped only by
 	// headlessLogLines, so a request for 3 lines still gets all of it.
 	msg := fetchTerminal(context.Background(), mastermindSource{rt}, "webshop", 2, 3)()
 	tMsg, ok := msg.(tabMsg)
@@ -521,7 +521,7 @@ func TestFetchTerminalHeadlessBetweenRoundsShowsTheLastRoundsLog(t *testing.T) {
 	b := newTestBinding("webshop")
 	b.Round = 3 // round 2 closed; nothing sent yet
 	// Between rounds: no process, LogPath cleared, but the cursor still
-	// names round 2 (transcript spec §3.4).
+	// names round 2.
 	b.Builder = store.Endpoint{AgentName: "webshop-builder", Kind: "agy", Mode: store.ModeHeadless, StreamRound: 2, StreamOffset: 100}
 	if err := st.Save(b); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -543,7 +543,7 @@ func TestFetchTerminalHeadlessBetweenRoundsShowsTheLastRoundsLog(t *testing.T) {
 	}
 }
 
-// TestFetchTerminalRemoteBuilder pins the #303 remote branch: a remote
+// TestFetchTerminalRemoteBuilder pins the remote branch: a remote
 // builder shows the round's local builder log when relevo has one, and
 // otherwise a single line naming the server.
 func TestFetchTerminalRemoteBuilder(t *testing.T) {

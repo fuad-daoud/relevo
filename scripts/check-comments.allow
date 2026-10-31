@@ -214,8 +214,6 @@ internal/ui/compose.go
 internal/ui/compose_test.go
 internal/ui/dash_host_test.go
 internal/ui/detail.go
-internal/ui/fetch.go
-internal/ui/fetch_test.go
 internal/ui/form.go
 internal/ui/form_rows.go
 internal/ui/frame.go
