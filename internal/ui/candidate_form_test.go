@@ -169,7 +169,7 @@ func TestCandidateFormHarnessChangeSelectsProvider(t *testing.T) {
 
 // Adding on a claude row starts on its only provider: psel is 0, the provider
 // is anthropic, and enter raises no provider error even after it is tried
-// (§1, round 7).
+// (round 7).
 func TestCandidateFormAddClaudePicksSoleProvider(t *testing.T) {
 	fa := &fakeActions{doc: formDoc(t)}
 	f := newCandidateForm(formEnv(fa), fa.doc, "", "", "claude")
@@ -196,7 +196,7 @@ func TestCandidateFormAddClaudePicksSoleProvider(t *testing.T) {
 }
 
 // Switching to claude from opencode auto-picks anthropic: claude lists exactly
-// one provider, so there is nothing else to pick (§1, round 7).
+// one provider, so there is nothing else to pick (round 7).
 func TestCandidateFormHarnessChangePicksSoleProvider(t *testing.T) {
 	fa := &fakeActions{doc: formDoc(t)}
 

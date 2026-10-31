@@ -184,7 +184,7 @@ func TestOptionsStartRoundsWithoutDBNotices(t *testing.T) {
 	}
 }
 
-// TestColonInsideRoundsFilterIsForwarded pins §5.2 rule 4 over rule 5: while
+// TestColonInsideRoundsFilterIsForwarded pins rule 4 over rule 5: while
 // the rounds filter (the dashboard's / editor) is open, the view captures
 // every key, so ':' must reach the filter and must not open the command
 // line. This is the test the R2.13 mutation swaps rules for.
