@@ -18,10 +18,10 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestServedBuilderLaunchesAtPolicyTier is Part A's proof that a served
-// binding's tier actually reaches the harness's argv: a server whose
-// policy.json sets tier.builder above harness renders the corresponding
-// permission flag into the headless builder's ProcSpec (#141 remote half).
+// TestServedBuilderLaunchesAtPolicyTier pins that a served binding's tier
+// reaches the harness's argv: a server whose policy.json sets tier.builder
+// above harness renders the corresponding permission flag into the headless
+// builder's ProcSpec.
 func TestServedBuilderLaunchesAtPolicyTier(t *testing.T) {
 	ctx := context.Background()
 
@@ -77,9 +77,9 @@ func TestServedBuilderLaunchesAtPolicyTier(t *testing.T) {
 	}
 }
 
-// TestServedBuilderDefaultsToHarness is the same round with no policy tier
+// TestServedBuilderDefaultsToHarness pins the same round with no policy tier
 // configured: the served builder launches at tier harness, so relevo adds no
-// permission flag at all (#141 remote half).
+// permission flag at all.
 func TestServedBuilderDefaultsToHarness(t *testing.T) {
 	ctx := context.Background()
 
@@ -131,11 +131,10 @@ func TestServedBuilderDefaultsToHarness(t *testing.T) {
 	}
 }
 
-// TestRemoteTierOverWire is Part B's round trip: WhoAmI advertises the
-// feature, --tier on Add reaches the server and is echoed back, a one-round
-// Tier override on Send reaches the harness's argv, and the next round falls
-// back to the binding's own persisted Tier once RoundTier clears (#141
-// remote half).
+// TestRemoteTierOverWire pins the round trip: WhoAmI advertises the feature,
+// --tier on Add reaches the server and is echoed back, a one-round Tier
+// override on Send reaches the harness's argv, and the next round falls back
+// to the binding's own persisted Tier once RoundTier clears.
 func TestRemoteTierOverWire(t *testing.T) {
 	ctx := context.Background()
 
@@ -269,7 +268,7 @@ func TestRemoteTierOverWire(t *testing.T) {
 // TestRemoteTierAboveServerMax pins the server-side refusal: a --tier the
 // client's own policy allows (with --allow-yolo) but the server's max_tier
 // forbids leaves no trace anywhere -- no server binding, no local binding,
-// no local branch (#141 remote half).
+// no local branch.
 func TestRemoteTierAboveServerMax(t *testing.T) {
 	ctx := context.Background()
 

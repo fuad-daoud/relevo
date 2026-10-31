@@ -20,8 +20,7 @@ var ErrNoDefinition = errors.New("role has no definition for this harness kind")
 const (
 	// SourceFile is a registry built from roles.json.
 	SourceFile = "roles.json"
-	// SourceActors is a registry built from the actors and agents sections
-	// (A2 round 2).
+	// SourceActors is a registry built from the actors and agents sections.
 	SourceActors = "actors"
 	// SourceLegacy is a registry derived from candidates.json and policy.json.
 	SourceLegacy = "legacy"
@@ -48,7 +47,7 @@ type Ranked struct {
 	Position int
 	// Off is true when the entry is off: it keeps its position and Resolved
 	// still includes it, so an explicit `--candidate <off one>` is served; only
-	// the pick with no explicit token skips it (A2 §3.4).
+	// the pick with no explicit token skips it.
 	Off bool
 }
 
@@ -68,7 +67,7 @@ type Role struct {
 	Candidates []string
 	// Ranked is Candidates filtered to what this machine can run, in order.
 	Ranked []Ranked
-	// OffCount is how many of Ranked are off, for views (A2 §2).
+	// OffCount is how many of Ranked are off, for views.
 	OffCount int
 	// Resolved is Ranked's canonical tokens, in order: what Serves compares
 	// a reference against in file mode.
@@ -80,7 +79,7 @@ type Role struct {
 	// means no preference, which is the local path. The config build copies
 	// it from the row; the client-side resolver reads it.
 	Placement []string
-	// Scope is the writer's declared scope (#801), copied from the row: the
+	// Scope is the writer's declared scope, copied from the row: the
 	// paths its rounds may change, and whether a Go comment-only edit is
 	// allowed. nil means unscoped. The round close resolves it here.
 	Scope *pathscope.Scope
@@ -118,7 +117,7 @@ type Registry struct {
 func Build(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error) {
 	if set == nil {
 		// A nil set is a machine with no candidates.json: treated as empty,
-		// not as a precondition failure (#374 §4.1). Lookup then misses and
+		// not as a precondition failure. Lookup then misses and
 		// ForRole yields nothing.
 		set = &candidate.Set{}
 	}
@@ -129,7 +128,7 @@ func Build(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error) {
 }
 
 // buildLegacy derives the roles from policy.json's order and candidates.json's
-// roles, reproducing relevo's rankedList and tier chain exactly (#374 §5.2).
+// roles, reproducing relevo's rankedList and tier chain exactly.
 // An order entry may be a candidate name or a canonical token: both go through
 // Set.Resolve, and Ranked keeps the canonical token.
 func buildLegacy(set *candidate.Set, pol policy.Policy) *Registry {
@@ -182,7 +181,7 @@ func buildLegacy(set *candidate.Set, pol policy.Policy) *Registry {
 // buildFile merges the file's rows into the built-ins, then ranks every role's
 // candidates. In file mode roles.json is the only place candidates are
 // assigned: a built-in row the file omits has no candidates and an empty
-// Ranked (#374 §5.3). An entry may be a candidate name or a canonical token:
+// Ranked. An entry may be a candidate name or a canonical token:
 // both go through Set.Resolve, and Ranked keeps the canonical token. Two
 // entries that resolve to the same token keep the first.
 func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error) {
@@ -196,7 +195,7 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 		row := f.Rows[name]
 		base, ok := byName[name]
 		if !ok {
-			// #382 §4: a new row's shape comes from the file. A writer
+			// A new row's shape comes from the file. A writer
 			// defaults its gate to on -- a writer changes the tree, so the
 			// project's own check applies, exactly as for the built-in
 			// builder -- and a reader has no gate.
@@ -281,7 +280,7 @@ func buildFile(f *File, set *candidate.Set, pol policy.Policy) (*Registry, error
 		for i, tok := range role.Candidates {
 			c, err := set.Resolve(tok)
 			if err != nil {
-				// Tolerated here; round 3's `relevo config` warns about it.
+				// Tolerated here; `relevo config` warns about it.
 				continue
 			}
 			key := c.Ref().String()
@@ -416,8 +415,8 @@ func (r *Registry) Serves(name string, ref candidate.Ref) bool {
 	return c.Serves(name)
 }
 
-// TierFor returns name's tier, implementing spec §4.1 without the explicit
-// flag, which stays at the call site:
+// TierFor returns name's tier, without the explicit flag, which stays at the
+// call site:
 //   - in file mode, the role's parsed tier, when the file set one;
 //   - in legacy mode, exactly the middle of today's chain: the candidate's
 //     tier when set and valid, else policy's tier for the role, else false.
@@ -435,7 +434,7 @@ func (r *Registry) TierFor(name string, c candidate.Candidate) (harness.Tier, bo
 }
 
 // RoleTier returns name's own tier, without a candidate: the file tier in file
-// mode, and policy's tier for the role in legacy mode (#374 §3.2). ok is false
+// mode, and policy's tier for the role in legacy mode. ok is false
 // when neither sets one.
 func (r *Registry) RoleTier(name string) (harness.Tier, bool) {
 	if r.FileMode() {
@@ -445,7 +444,7 @@ func (r *Registry) RoleTier(name string) (harness.Tier, bool) {
 	return r.pol.TierFor(name)
 }
 
-// NameOf returns the short name (A1 §4.4) of the candidate whose canonical
+// NameOf returns the short name of the candidate whose canonical
 // token is token, delegating to the registry's own set. It returns token
 // unchanged when the registry has no set or holds no such candidate, and
 // never errors. Display only: everything that decides stays on the token.
@@ -465,12 +464,12 @@ func (r *Registry) Source() string {
 // FileMode reports whether the registry's roles were given in full by a file
 // or the actors section, rather than derived from the legacy candidates and
 // policy fields. Every source test goes through it, so a new file-like source
-// needs no caller changed (A2 round 2 R2).
+// needs no caller changed.
 func (r *Registry) FileMode() bool { return r.source != SourceLegacy }
 
 // ListText names where role's candidates are listed, for embedding in error
 // texts: the file mode's `roles.json <role>.candidates`, the actors mode's
-// `actors <role>.candidates`, and legacy's `order.<role>` (A2 round 2 R2).
+// `actors <role>.candidates`, and legacy's `order.<role>`.
 func (r *Registry) ListText(role string) string {
 	switch r.source {
 	case SourceActors:

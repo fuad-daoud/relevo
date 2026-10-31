@@ -40,7 +40,7 @@ func TestShowSectionFlagsConflict(t *testing.T) {
 }
 
 // TestShowRetiredFlagsAreUnknown pins that a retired section spelling is the
-// flag package's own error, before any runtime is built: --plan is no longer
+// flag package's own error, before any runtime is built: --plan is not
 // registered. It fails at the parse, so no harness is reached.
 func TestShowRetiredFlagsAreUnknown(t *testing.T) {
 	_, _, err := captureOutput(t, func() error {
@@ -94,7 +94,7 @@ func seedShowDiffStore(t *testing.T, name string) (*store.Store, relevo.Runtime)
 	return s, relevo.Runtime{Store: s, Now: time.Now}
 }
 
-// TestShowAbsorbsDiffAndLog pins §4.2: `show --diff --stat` and `show --log`
+// TestShowAbsorbsDiffAndLog pins that `show --diff --stat` and `show --log`
 // route to the same diff and log helpers the removed verbs used, so the
 // subcommand's stdout is byte-identical to the helper's.
 func TestShowAbsorbsDiffAndLog(t *testing.T) {
@@ -126,7 +126,8 @@ func TestShowAbsorbsDiffAndLog(t *testing.T) {
 	}
 }
 
-// TestShowAbsorbedFlagCombinations pins §4.2's refusals: --stat/--anchors need
+// TestShowAbsorbedFlagCombinations pins the absorbed-flag refusals:
+// --stat/--anchors need
 // --diff/--drift, and --follow/--after need --log. Each exits 2 before any
 // runtime is built.
 func TestShowAbsorbedFlagCombinations(t *testing.T) {
@@ -145,9 +146,9 @@ func TestShowAbsorbedFlagCombinations(t *testing.T) {
 	}
 }
 
-// TestShowSectionFlagsGateAndFindings pins §4.2's two new sections in the pure
-// resolver: --gate is a section, a non-empty --findings id is another, and
-// either with --report is a usage error.
+// TestShowSectionFlagsGateAndFindings pins the gate and findings sections in
+// the pure resolver: --gate is a section, a non-empty --findings id is
+// another, and either with --report is a usage error.
 func TestShowSectionFlagsGateAndFindings(t *testing.T) {
 	section, err := showSectionFlags(showSectionArgs{gate: true})
 	if err != nil || section != relevo.ShowGate {
@@ -164,8 +165,8 @@ func TestShowSectionFlagsGateAndFindings(t *testing.T) {
 	}
 }
 
-// TestShowSectionFlagsSummaryAndArtifacts pins §2's two new sections in the
-// pure resolver: --output and --artifacts each name one, a non-empty
+// TestShowSectionFlagsSummaryAndArtifacts pins the output and artifacts
+// sections in the pure resolver: --output and --artifacts each name one, a non-empty
 // --artifact rel names the artifacts section too, and either with --report is
 // a usage error.
 func TestShowSectionFlagsSummaryAndArtifacts(t *testing.T) {
@@ -192,7 +193,7 @@ func TestShowSectionFlagsSummaryAndArtifacts(t *testing.T) {
 	}
 }
 
-// TestShowGateAndFindings pins §4.2: `show --gate` prints the round's gate log
+// TestShowGateAndFindings pins that `show --gate` prints the round's gate log
 // and `show --findings ID` prints a consult's findings, both read through
 // rt.Store.ReadFile. It is store-only -- no harness and no network.
 func TestShowGateAndFindings(t *testing.T) {
@@ -240,7 +241,7 @@ func TestShowGateAndFindings(t *testing.T) {
 	}
 }
 
-// TestShowOutputArtifactsCLI pins §2's new output: --output prints the
+// TestShowOutputArtifactsCLI pins the output-file reads: --output prints the
 // round's output file, --artifacts one line per file (the output first),
 // --artifact <rel> the file's raw bytes with nothing added, --json the
 // rel/size/mtime fields, and a writer round answers Missing. It is store-only
@@ -365,8 +366,6 @@ func seedShowPendingStore(t *testing.T, name string) *store.Store {
 	return s
 }
 
-// claimedRoute returns the route of name's confirmed mastermind-bound entry and
-// whether one exists.
 func claimedRoute(t *testing.T, s *store.Store, name string) (string, bool) {
 	t.Helper()
 	entries, err := s.ReadLog(name)

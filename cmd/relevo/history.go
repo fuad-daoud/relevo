@@ -16,8 +16,8 @@ import (
 )
 
 // historyJSONRow is one `relevo history --json` row: db.RoundRow's fields
-// plus the candidate's short name beside the token (A1 §4.4). The embedded
-// struct keeps every token field where it always was.
+// plus the candidate's short name beside the token. The embedded struct keeps
+// every token field where it always was.
 type historyJSONRow struct {
 	db.RoundRow
 	BuilderName string `json:"BuilderName,omitempty"`
@@ -42,8 +42,8 @@ const historyUsage = `usage: relevo history [--here] [--binding <name>] [--featu
                      [--mastermind <session>] [--since <window>] [--limit <n>] [--by <axis>]
                      [-q "<query>"] [--json] [--rows]`
 
-// groupJSON shapes the groups `--json --by` prints: their Rows are blanked
-// unless --rows asked for them. A nil list encodes as [], not null.
+// groupJSON blanks each group's Rows unless --rows asked for them. A nil
+// list encodes as [], not null.
 func groupJSON(groups []histq.GroupRow, withRows bool) []histq.GroupRow {
 	if groups == nil {
 		groups = []histq.GroupRow{}
@@ -59,7 +59,6 @@ func groupJSON(groups []histq.GroupRow, withRows bool) []histq.GroupRow {
 	return out
 }
 
-// historyFlagValues holds the pointers history parses into.
 type historyFlagValues struct {
 	here       *bool
 	binding    *string
@@ -73,9 +72,8 @@ type historyFlagValues struct {
 	withRows   *bool
 }
 
-// historyFlagSet defines those flags on fs, in the usage text's order, and
-// returns what they parse into. json is accepted and ignored -- history always
-// prints JSON -- so it has no pointer.
+// json is accepted and ignored -- history always prints JSON -- so it has no
+// pointer.
 func historyFlagSet(fs *flag.FlagSet) *historyFlagValues {
 	v := &historyFlagValues{}
 	v.here = fs.Bool("here", false, "filter to the repo the current directory belongs to")
