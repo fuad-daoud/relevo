@@ -156,8 +156,6 @@ internal/relevo/sort.go
 internal/relevo/sort_test.go
 internal/relevo/statsinputs.go
 internal/relevo/statsinputs_test.go
-internal/relevo/status.go
-internal/relevo/statusline.go
 internal/relevo/statusline_test.go
 internal/relevo/status_route_test.go
 internal/relevo/status_test.go
