@@ -186,8 +186,8 @@ func newClient(t *testing.T, url, fingerprint string) (relevo.Runtime, remote.Ke
 	stRoot := t.TempDir()
 	st := store.New(stRoot)
 
-	// The machine database: the mastermind records live in it (P3b round 2
-	// §4.1), so it is opened before the record is created below.
+	// The machine database holds the mastermind records, so it is opened
+	// before the record is created below.
 	mdb, err := st.DB()
 	if err != nil {
 		t.Fatalf("open store db: %v", err)
@@ -691,7 +691,7 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 
 // TestRemoteRoundTicksWithoutEscapeWarning checks that a running served round
 // does not trigger "escape check skipped" / "must be run in a work tree" on
-// server ticks (#192).
+// server ticks.
 func TestRemoteRoundTicksWithoutEscapeWarning(t *testing.T) {
 	logs := captureLogs(t)
 	ctx := context.Background()
@@ -720,7 +720,7 @@ func TestRemoteRoundTicksWithoutEscapeWarning(t *testing.T) {
 		t.Fatalf("relevo.Send: %v", err)
 	}
 
-	// tick the server twice -- this is where the warning fired before the fix
+	// tick the server twice, which covers the path where the warning appears
 	if err := srv.Tick(ctx); err != nil {
 		t.Fatalf("srv.Tick 1: %v", err)
 	}
@@ -752,9 +752,8 @@ func TestRemoteRoundTicksWithoutEscapeWarning(t *testing.T) {
 }
 
 // pendingReports counts a binding's unconfirmed mastermind-bound report entries
-// -- the mailbox no route has taken yet (#303 §5.4) -- and returns the newest
-// one's payload. The pane prompt these tests used to assert on is gone: a
-// report now waits as a pending entry for the channel, a deliverer or
+// -- the mailbox no route has taken yet -- and returns the newest one's
+// payload. A report waits as a pending entry for the channel, a deliverer or
 // `relevo wait`.
 func pendingReports(t *testing.T, rt relevo.Runtime, name string) (int, string) {
 	t.Helper()
