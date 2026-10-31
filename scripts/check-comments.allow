@@ -39,7 +39,6 @@ cmd/relevo/unbind.go
 cmd/relevo/update.go
 cmd/relevo/wait.go
 cmd/relevo/wire.go
-internal/e2e/headless_test.go
 internal/relevo/add.go
 internal/relevo/add_test.go
 internal/relevo/agy_creds.go
