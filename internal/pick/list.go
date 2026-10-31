@@ -9,7 +9,7 @@ import (
 )
 
 // The picker's own styles. internal/ui has near-identical ones; they are
-// not shared because pick must not import ui (spec §8).
+// not shared because pick must not import ui.
 var (
 	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
 	hintStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
@@ -61,7 +61,7 @@ func styleDisplay(display string) string {
 	}
 }
 
-// renderRow is one binding line (spec §4):
+// renderRow is one binding line:
 //
 //	> webshop        NEEDS YOU  r3  builder agy blocked
 func renderRow(b view.BindingStatus, selected bool) string {

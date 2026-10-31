@@ -115,7 +115,7 @@ func TestParseActorsPlacement(t *testing.T) {
 	}
 }
 
-// TestParseActorsErrors gives one case per §3.2 rule; every case wraps
+// TestParseActorsErrors gives one case per validation rule; every case wraps
 // ErrBadActors.
 func TestParseActorsErrors(t *testing.T) {
 	tests := []struct {
@@ -186,8 +186,8 @@ func TestParseActorsErrors(t *testing.T) {
 	}
 }
 
-// TestParseAgents gives one case per §3.1 rule. The good cases pin both entry
-// forms; the bad ones wrap ErrBadActors.
+// TestParseAgents gives one case per validation rule. The good cases pin
+// both entry forms; the bad ones wrap ErrBadActors.
 func TestParseAgents(t *testing.T) {
 	good := []struct {
 		name string

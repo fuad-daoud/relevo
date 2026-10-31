@@ -14,9 +14,9 @@ type ShippedAgent struct {
 	Skills []string
 }
 
-// shippedAgents is relevo's shipped agent table (cockpit spec §3.2). It must
-// agree with harness.RoleByName's Definitions for the four roles the role
-// table defines; TestShippedTableMatchesHarness pins that. architect is the
+// shippedAgents is relevo's shipped agent table. It must agree with
+// harness.RoleByName's Definitions for the four roles the role table
+// defines; TestShippedTableMatchesHarness pins that. architect is the
 // mastermind's own definition: shipped, but not a roleTable entry.
 var shippedAgents = []ShippedAgent{
 	{Name: "plan-executor", Shape: agentsrc.ShapeWriter, Output: "report", Requires: []string{"researcher"}},
