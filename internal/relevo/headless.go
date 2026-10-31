@@ -1015,7 +1015,7 @@ func reconcileHeadless(ctx context.Context, rt Runtime, tx *store.Tx, b store.Bi
 	c := builderCandidateOf(rt, b)
 	tail := currentBuilderTail(rt, b, availability.LimitScanLines)
 	denialLine, isDenial := matchDenial(tail, denialPatterns(c, h))
-	suffix := denialSuffix(denialLine, isDenial)
+	suffix := text.DenialSuffix(denialLine, isDenial)
 
 	// Detect the oom kill before the exit entry, so the entry says it. A
 	// requested stop still wins and is checked below. The kernel reports a
