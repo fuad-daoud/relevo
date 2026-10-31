@@ -121,7 +121,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	}
 
 	// 3.5. name, email := rt.Git.Identity(opts.Repo): the identity the remote
-	// builder commits as (#335). Resolved here, before the candidate check
+	// builder commits as. Resolved here, before the candidate check
 	// and before anything that touches the server, so a missing identity
 	// refuses with no binding on the server, no local binding and no branch.
 	authorName, authorEmail, err := rt.Git.Identity(ctx, opts.Repo)
@@ -193,7 +193,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	if opts.Tier != "" && !slices.Contains(who.Features, remote.FeatureTier) {
 		return AddResult{}, fmt.Errorf("%w: server %s does not carry a permission tier (pre-tier server); upgrade it or drop --tier", ErrServerPreTier, opts.Server)
 	}
-	// #637: a server that does not advertise labels would save the binding
+	// A server that does not advertise labels would save the binding
 	// without them, so a client that sets one refuses -- before any branch,
 	// worktree or create call.
 	if (opts.Feature != "" || opts.Ticket != "") && !slices.Contains(who.Features, remote.FeatureLabels) {
@@ -206,7 +206,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	if subdir != "" && !slices.Contains(who.Features, remote.FeatureSubdir) {
 		return AddResult{}, fmt.Errorf("%w: server %s does not carry binding subdirectories (pre-subdir server); upgrade it or bind at the repository root", ErrServerPreTier, opts.Server)
 	}
-	// The client's actors never travel (§5.3): the server resolves the
+	// The client's actors never travel: the server resolves the
 	// actor against its own. A server too old to do that would ignore the
 	// field and run the default actor, so it is refused here -- before any
 	// branch, worktree or create call.
@@ -285,10 +285,10 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 	// later failure (branch exists, CreateBranch error, Save error including
 	// store.ErrCWDTaken, log append error) unbinds it on the server
 	// best-effort before returning the original error, so a client-side
-	// refusal never leaves an orphaned server binding behind (#100). Once
+	// refusal never leaves an orphaned server binding behind. Once
 	// CreateBranch itself has succeeded, the same failure also removes the
 	// local branch relevo just cut -- server first, since that binding is the
-	// one another client could see (#100 round 4).
+	// one another client could see.
 	created := true
 	branchCreated := false
 	defer func() {
@@ -365,7 +365,7 @@ func addRemote(ctx context.Context, rt Runtime, opts AddOptions, rec mastermind.
 		Regate: regate,
 		// The actor travels as the client asked it: the server resolved it
 		// against its own actors, and the mirror records it so
-		// `relevo status` shows it (#382 §5.3).
+		// `relevo status` shows it.
 		Role: wireRole,
 		// The server's Shape decides how the round runs: "reader" for a
 		// reader binding, and "" from a server that predates the field, i.e.

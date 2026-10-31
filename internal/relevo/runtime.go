@@ -43,34 +43,33 @@ type Git interface {
 	MaterializeTree(ctx context.Context, dir, tree string) error
 	DiffTrees(ctx context.Context, dir, from, to string) (git.Diff, error)
 	// ChangedFiles lists the paths that differ between two trees with their
-	// status, modes and blob ids, for the scope check (#801).
+	// status, modes and blob ids, for the scope check.
 	ChangedFiles(ctx context.Context, dir, from, to string) ([]pathscope.Change, error)
 	// ReadBlob reads one blob's contents by object id, for the scope check's
-	// comment judge (#801).
+	// comment judge.
 	ReadBlob(ctx context.Context, dir, oid string) ([]byte, error)
 	// DiffWorktreeStat compares tree against dir's current working tree and
-	// returns just the stat, no patch (#143): the live "+N/-M in F" a status
+	// returns just the stat, no patch: the live "+N/-M in F" a status
 	// row shows while a round is open, cheaper than DiffTrees because it
 	// never reads the patch body.
 	DiffWorktreeStat(ctx context.Context, dir, tree string) (git.Stat, error)
 	HeadCommit(ctx context.Context, dir string) (string, error)
 	// TreeFingerprint hashes dir's HEAD and porcelain status into one short
-	// string that changes when the tree does (#135). It never reads a diff or
+	// string that changes when the tree does. It never reads a diff or
 	// writes a snapshot, so a binding's progress sample is cheap.
 	TreeFingerprint(ctx context.Context, dir string) (string, error)
 	RevListCount(ctx context.Context, dir, from, to string) (int, error)
 	BranchExists(ctx context.Context, dir, branch string) (bool, error)
 	CreateBranch(ctx context.Context, dir, branch, commit string) error
-	// CreateTrackingBranch creates branch in dir tracking upstream, the
-	// existing-branch form of creation: add --branch uses it when only
-	// origin/<name> exists, before CheckoutWorktree.
+	// CreateTrackingBranch is the existing-branch form of creation: add --branch
+	// uses it when only origin/<name> exists, before CheckoutWorktree.
 	CreateTrackingBranch(ctx context.Context, dir, branch, upstream string) error
 	Remotes(ctx context.Context, dir string) ([]string, error)
 	RemoteURL(ctx context.Context, dir, remote string) (string, error)
 	DeleteBranch(ctx context.Context, dir, branch string) error
 	AddWorktree(ctx context.Context, dir, path, branch, commit string) error
 	// AddDetachedWorktree is AddWorktree without a branch: a throwaway tree
-	// at commit with a detached HEAD (#144).
+	// at commit with a detached HEAD.
 	AddDetachedWorktree(ctx context.Context, dir, path, commit string) error
 	// CheckoutWorktree is the existing-branch form of git worktree add; AddWorktree creates the branch, this one checks it out.
 	CheckoutWorktree(ctx context.Context, dir, path, branch string) error
@@ -104,25 +103,25 @@ type Git interface {
 	// owner's bare repo through the owner's credentialed git client.
 	InitBare(ctx context.Context, path string) error // CommitAll stages the whole working tree (git add -A) and commits it
 	// with relevo's fixed identity, returning the new HEAD sha, or ("", nil)
-	// when there was nothing to commit (#137).
+	// when there was nothing to commit.
 	CommitAll(ctx context.Context, dir, message string) (string, error)
 	MergeFF(ctx context.Context, dir, ref string) error
 	RootCommit(ctx context.Context, dir string) (string, error)
 	// ListTags maps each of dir's tags (short name) to the commit it points
-	// at, annotated tags peeled (#242).
+	// at, annotated tags peeled.
 	ListTags(ctx context.Context, dir string) (map[string]string, error)
 	// RepoFacts reports dir's repository identity -- origin remote URL
 	// (raw, unnormalised) and the main worktree's absolute .git directory --
-	// for the coming history database (#172; captureRepo is the caller).
+	// for captureRepo, the caller.
 	RepoFacts(ctx context.Context, dir string) (originURL, commonDir string, err error)
 	// Identity reports dir's effective git identity -- the user.name and
 	// user.email `git config --get` resolves, global and system config
-	// included -- so a remote builder can commit as the client (#335). An
+	// included -- so a remote builder can commit as the client. An
 	// unset key is ("", nil), not an error.
 	Identity(ctx context.Context, dir string) (name, email string, err error)
 	// CurrentBranch names the branch dir has checked out, or "" when HEAD
 	// is detached. add/fork record it as a binding's BaseRef, the branch
-	// `relevo land` rebases onto (#136).
+	// `relevo land` rebases onto.
 	CurrentBranch(ctx context.Context, dir string) (string, error)
 	// Fetch fetches ref from remote, so origin/<ref> resolves afterwards.
 	Fetch(ctx context.Context, dir, remote, ref string) error
@@ -151,7 +150,7 @@ type Runtime struct {
 	Git Git
 	// SkillExists reports whether a skill file is on disk; nil means os.Stat.
 	SkillExists func(string) bool
-	// Runner starts and stops headless builder processes (#99). cmd/relevo
+	// Runner starts and stops headless builder processes. cmd/relevo
 	// wires proc.New(); tests wire fakeRunner. Nil means no headless path
 	// can run, and reports ErrRunnerUnavailable.
 	Runner spawn.Runner
@@ -172,8 +171,7 @@ type Runtime struct {
 	DiskFree func(path string) (uint64, error)
 
 	// Accounts is the configured login pool: the logins a pick may draw a
-	// round from. Empty on every host with no accounts, where a pick records
-	// no account and every other path is byte-identical to before.
+	// round from. Empty means a pick records no account and nothing else changes.
 	Accounts account.Set
 
 	// OpencodeAuth is the install-global opencode credential row: reading
@@ -183,7 +181,7 @@ type Runtime struct {
 	OpencodeAuth OpencodeAuth
 
 	// Gates is where the availability ledger and the availability history live
-	// (P3b plan §4.5): the store root's database. A nil Gates means no gates
+	// the store root's database. A nil Gates means no gates
 	// store is configured -- gates read as empty, and every write is dropped
 	// with an error.
 	//
@@ -213,8 +211,8 @@ type Runtime struct {
 
 	// SyncNow asks for a sync attempt now rather than at the end of the export
 	// debounce, which is what a gate a person just recorded is worth. The daemon
-	// installs its own; nil on a CLI one-shot with no daemon to ask, on a
-	// runtime built before the daemon existed, and in every test, and then the
+	// installs its own; nil on a CLI one-shot with no daemon to ask, and in
+	// every test, and then the
 	// next ordinary trigger exports the gate.
 	SyncNow func()
 
@@ -224,9 +222,8 @@ type Runtime struct {
 	InFlight func(except string) map[string]int
 
 	// DB is relevo's sqlite database.
-	// Nil means no database: this round opens it only in `relevo db *`, never
-	// in the shared runtime constructor, so nothing else reads it yet and
-	// every call site that will (later rounds) must treat nil the same as a
+	// Nil means no database: only `relevo db *` opens one, never the shared
+	// runtime constructor, so every call site must treat nil the same as a
 	// machine with no db.
 	DB *db.DB
 
@@ -251,31 +248,31 @@ type Runtime struct {
 	Config *config.Store
 
 	// Policy is ~/.config/relevo/policy.json: the mastermind's candidate order
-	// per role (#61 step 2). The zero value means nothing is ordered, so
+	// per role. The zero value means nothing is ordered, so
 	// tests that do not set it behave as a machine with no policy file.
 	Policy policy.Policy
 
 	// Registry is the roles registry: roles.json merged over the built-ins,
 	// or the legacy derivation. nil means "derive the legacy registry from
-	// Candidates and Policy on demand" (#374), which is what every existing
+	// Candidates and Policy on demand", which is what every existing
 	// test gets, since tests don't set it.
 	Registry *roles.Registry
 
 	// ConfigWarnings collects the unknown-key and skipped-candidate warnings
 	// the last config load produced (candidates.json then policy.json). They
 	// never fail a command: `relevo doctor` renders them in a `config` row and
-	// the daemon logs each once (#372 §4.4). newRuntime fills it without
+	// the daemon logs each once. newRuntime fills it without
 	// printing; the daemon's ConfigWatcher refills it on reload.
 	ConfigWarnings []string
 
-	// Usage reads what a round consumed from the harness's own record
-	// (#142). Nil means every round records Basis unknown, note
+	// Usage reads what a round consumed from the harness's own record.
+	// Nil means every round records Basis unknown, note
 	// "no reader"; tests that do not set it behave as a machine with no
-	// reader, and rounds close exactly as before.
+	// reader.
 	Usage usage.Reader
 
 	// Classify judges report and dialog paragraphs for instruction-shaped
-	// content beside the regex scan (#211). Nil means no classifier is
+	// content beside the regex scan. Nil means no classifier is
 	// configured and the regex result stands alone; cmd/relevo wires
 	// classify.Resolve, tests wire *classify.Fake.
 	Classify classify.Classifier
@@ -285,9 +282,9 @@ type Runtime struct {
 	Prices usage.Prices
 
 	// Fetcher reads the newest published release tag for the day-cached
-	// staleness check (#293). Nil means no check runs at all: a served
-	// daemon, an air-gapped build and every test that does not set it tick
-	// exactly as before. cmd/relevo wires release.NewHTTPFetcher.
+	// staleness check. Nil means no check runs at all: a served
+	// daemon, an air-gapped build and every test that does not set it skip
+	// the check. cmd/relevo wires release.NewHTTPFetcher.
 	Fetcher release.Fetcher
 
 	Now       func() time.Time
@@ -308,36 +305,35 @@ type Runtime struct {
 
 	// StartedAt is when this daemon process started; zero means unknown
 	// (CLI one-shots, tests), which disables the daemon-restart-relaunch
-	// check (#244): a builder can never be "lost to a daemon restart" if
+	// check: a builder can never be "lost to a daemon restart" if
 	// the daemon does not know when it itself started.
 	StartedAt time.Time
 
 	// Watched is the daemon's in-memory record of the processes it has seen
-	// alive (#370). Only `relevo daemon` sets one (relevo.NewWatched); a nil
-	// *Watched has seen nothing, which is exactly the #244 rule, so every
-	// CLI one-shot keeps its old behaviour.
+	// alive. Only `relevo daemon` sets one (relevo.NewWatched); a nil
+	// *Watched has seen nothing, so CLI one-shots never report a pid as seen.
 	Watched *Watched
 
 	// AuthGrace is the daemon's in-memory record of when each binding's server
-	// first answered a transient auth error (#373 §3). Only `relevo daemon`
-	// sets one (relevo.NewAuthGrace); a nil *AuthGrace never expires, so every
-	// CLI one-shot keeps its old behaviour and never halts on a transient 401.
+	// first answered a transient auth error. Only `relevo daemon`
+	// sets one (relevo.NewAuthGrace); a nil *AuthGrace never expires, so
+	// CLI one-shots never halt on a transient 401.
 	AuthGrace *AuthGrace
 
 	// Roles checks whether a harness kind's shipped role files are present
 	// on disk, so a candidate whose harness has none installed is gated
-	// before it is picked (#238). Nil means no check, so tests that do not
-	// set it behave as before; cmd/relevo wires harness.OSRoleChecker().
+	// before it is picked. Nil means no check; cmd/relevo wires
+	// harness.OSRoleChecker().
 	Roles harness.RoleChecker
 
 	// Scope is the template a served headless round's ProcSpec.Scope is
-	// filled from (#244, #216); its Unit is always empty here, since
+	// filled from; its Unit is always empty here, since
 	// startRound fills in the per-round unit name. Nil means no scopes
 	// (the local daemon, CI, or a server whose scope probe failed).
 	Scope *spawn.ScopeSpec
 
 	// HeldCPUs returns the cores held by live rounds other than the binding
-	// named self, in every store that shares this host's pool (#314). Nil
+	// named self, in every store that shares this host's pool. Nil
 	// means the local census, which reads only the caller's tx. The server sets
 	// it to a closure over its owner root, so internal/relevo stays unaware of
 	// owners.
@@ -358,10 +354,10 @@ type Runtime struct {
 	// still escalates. cmd/relevo wires delivery.KVWaitClaims.
 	Waits delivery.WaitClaimStore
 
-	// MasterMinds is the mastermind registry (#303 step 1a). bind, add, fork and
+	// MasterMinds is the mastermind registry. bind, add, fork and
 	// ask resolve their mastermind through it, and the daemon back-fills a
-	// binding written before MasterMindID existed. Nil means no registry is
-	// configured -- tests, and any embedded caller that predates it -- and
+	// binding with no MasterMindID set. Nil means no registry is
+	// configured -- tests, and embedded callers with none -- and
 	// resolution then fails with ErrNoMasterMind.
 	MasterMinds mastermind.Registry
 
@@ -376,7 +372,7 @@ type Runtime struct {
 	// /proc reader.
 	MuseHost func(ppid int) (pid int, ok bool)
 
-	// OpencodeSession finds an opencode session id for the working directory (#393).
+	// OpencodeSession finds an opencode session id for the working directory.
 	// Nil when sqlite3 is not on PATH or not configured.
 	OpencodeSession func(cwd string, now time.Time) (string, error)
 
@@ -409,9 +405,8 @@ type Runtime struct {
 }
 
 // legacyRegistry is the registry derived from candidates.json and
-// policy.json, the behaviour every runtime path had before roles.json (#374).
-// It is roles.Build with no file, and that never errors in legacy mode, so
-// the error is discarded.
+// policy.json. It is roles.Build with no file, and that never errors in
+// legacy mode, so the error is discarded.
 func legacyRegistry(set *candidate.Set, pol policy.Policy) *roles.Registry {
 	reg, _ := roles.Build(nil, set, pol)
 	return reg
@@ -419,7 +414,7 @@ func legacyRegistry(set *candidate.Set, pol policy.Policy) *roles.Registry {
 
 // RoleRegistry returns the runtime's roles registry: the one loaded from
 // roles.json when it was set, else the legacy derivation of Candidates and
-// Policy, built on demand (#374). It never returns nil.
+// Policy, built on demand. It never returns nil.
 func (rt Runtime) RoleRegistry() *roles.Registry {
 	if rt.Registry != nil {
 		return rt.Registry
@@ -551,21 +546,20 @@ func deliveryDeps(rt Runtime) delivery.Deps {
 // ErrRemoteUnavailable is returned when a remote operation is attempted without a configured remote client.
 var ErrRemoteUnavailable = errors.New("no remote client configured; run relevo config server key and relevo config server add")
 
-// RemoteClient is the client for communicating with remote relevo servers.
 type RemoteClient interface {
 	WhoAmI(ctx context.Context, server string) (remote.WhoAmI, error)
 	// Actor reads a server's answer for one actor, the same answer a create
 	// naming it would get, so a placement probe can decide before anything is
-	// created. A server that predates the placement feature answers 404.
+	// created. A server without the placement feature answers 404.
 	Actor(ctx context.Context, server, actor, candidate string) (remote.ActorView, error)
 	Candidates(ctx context.Context, server string) (remote.CandidatesResponse, error)
 	CreateBinding(ctx context.Context, server string, req remote.CreateBindingRequest) (remote.BindingView, error)
 	GetBinding(ctx context.Context, server, name string) (remote.BindingView, error)
 	// StartRound's retryOnUnreachable is the caller's answer to whether the
 	// server advertised remote.FeatureIdempotentSend: only a server that
-	// dedupes a repeated send may be sent the same round twice (#373 §4.4).
+	// dedupes a repeated send may be sent the same round twice.
 	// force carries SendOptions.Force to the server's own seed-cap check, and
-	// is gated on remote.FeatureForce before the call (#702).
+	// is gated on remote.FeatureForce before the call.
 	StartRound(ctx context.Context, server, name string, round int, plan []byte, bundle io.Reader, tier, candidate string, force bool, tags []remote.TagRef, retryOnUnreachable bool, verify *bool) (remote.BindingView, error)
 	RoundFile(ctx context.Context, server, name string, round int, kind string) (io.ReadCloser, error)
 	RoundFileFrom(ctx context.Context, server, name string, round int, kind string, from int64) (io.ReadCloser, remote.FileRange, error)

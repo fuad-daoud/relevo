@@ -1,8 +1,7 @@
 package relevo
 
-// The roles-gate tests for #374 §5: the #238 gate checks each role's resolved
-// definitions, custom ones included, and a role-scoped gate applies only to
-// that role.
+// The roles-gate tests: the gate checks each role's resolved definitions,
+// custom ones included, and a role-scoped gate applies only to that role.
 
 import (
 	"encoding/json"
@@ -47,9 +46,10 @@ func (c *defsRoleChecker) Missing(kind string, definitions []string) []string {
 	return c.missing[defsKey(kind, definitions)]
 }
 
-// TestRolesGateCustomBuilderGatesOnlyItsKindAndRole pins §5 flow: a custom
-// builder definition missing on claude gates claude for builder only, so the
-// builder walk picks opencode while the reviewer pick of claude proceeds.
+// TestRolesGateCustomBuilderGatesOnlyItsKindAndRole pins the role-scoped gate
+// flow: a custom builder definition missing on claude gates claude for builder
+// only, so the builder walk picks opencode while the reviewer pick of claude
+// proceeds.
 //
 // Mutation check: delete the gatesForRole call at the top of resolveRole and
 // the reviewer half fails -- claude is sole reviewer, and the builder-scoped
@@ -105,9 +105,9 @@ func TestRolesGateCustomBuilderGatesOnlyItsKindAndRole(t *testing.T) {
 	}
 }
 
-// TestRolesGateExplicitPickRefusedOnlyForItsRole pins §4.3's explicit-pick
-// half: an explicit claude builder pick is refused by claude's builder gate,
-// while the same explicit pick for reviewer succeeds.
+// TestRolesGateExplicitPickRefusedOnlyForItsRole pins the explicit-pick half:
+// an explicit claude builder pick is refused by claude's builder gate, while
+// the same explicit pick for reviewer succeeds.
 func TestRolesGateExplicitPickRefusedOnlyForItsRole(t *testing.T) {
 	t.Parallel()
 
@@ -143,9 +143,9 @@ func TestRolesGateExplicitPickRefusedOnlyForItsRole(t *testing.T) {
 	}
 }
 
-// TestRolesGateChecksEachDefinitionListOnce pins §4.2's cache: three
-// candidates of one kind serving one role share a definition list, so the
-// checker is asked once, not three times.
+// TestRolesGateChecksEachDefinitionListOnce pins the definition-check cache:
+// three candidates of one kind serving one role share a definition list, so
+// the checker is asked once, not three times.
 func TestRolesGateChecksEachDefinitionListOnce(t *testing.T) {
 	t.Parallel()
 
@@ -170,9 +170,9 @@ func TestRolesGateChecksEachDefinitionListOnce(t *testing.T) {
 	}
 }
 
-// TestRolesGateLegacyChecksEachRole pins behaviour change 1: in legacy mode a
-// candidate serving reviewer is gated for that role when the reviewer's file is
-// missing, and the builder pick of that same candidate is not blocked.
+// TestRolesGateLegacyChecksEachRole pins that in legacy mode a candidate
+// serving reviewer is gated for that role when the reviewer's file is missing,
+// and the builder pick of that same candidate is not blocked.
 func TestRolesGateLegacyChecksEachRole(t *testing.T) {
 	t.Parallel()
 
@@ -208,7 +208,7 @@ func TestRolesGateLegacyChecksEachRole(t *testing.T) {
 	}
 }
 
-// TestGateRoleJSON pins §3: Role carries `json:"Role,omitempty"`, so an
+// TestGateRoleJSON pins that Role carries `json:"Role,omitempty"`, so an
 // unscoped gate keeps every existing status document byte-identical and a
 // role-scoped one is visible.
 func TestGateRoleJSON(t *testing.T) {

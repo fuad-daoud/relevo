@@ -1,3 +1,2 @@
-internal/relevo/configedit.go
 internal/relevo/headless.go
 scripts/testdata/check-filesize/big.go
