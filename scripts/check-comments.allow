@@ -100,7 +100,6 @@ internal/relevo/gate.go
 internal/relevo/gatekv_test.go
 internal/relevo/gate_test.go
 internal/relevo/giveuplog.go
-internal/relevo/headless.go
 internal/relevo/headless_test.go
 internal/relevo/history.go
 internal/relevo/history_test.go
