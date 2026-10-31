@@ -16,10 +16,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// bindFlags is the union of the flags today's bind and add each accept.
+// bindFlags is the union of the flags bind and add each accept.
 // bindRouteFor chooses which of the two bodies runs; keeping the flag set in
-// one place is what lets each old flag keep its name, default and help text
-// (§4.1).
+// one place is what lets each flag keep its name, default and help text.
 type bindFlags struct {
 	name       string
 	candidate  string
@@ -50,11 +49,11 @@ type bindFlags struct {
 	local bool
 
 	// asJSON selects the result document instead of the human lines; stdout
-	// then carries the document alone and the notices move to stderr (§2.1).
+	// then carries the document alone and the notices move to stderr.
 	asJSON bool
 }
 
-// bindRoute names which of the three merged paths cmdBind runs.
+// bindRoute names which of the two paths cmdBind runs.
 type bindRoute int
 
 const (
@@ -63,7 +62,7 @@ const (
 )
 
 // bindRouteFor chooses the path from the parsed flags and refuses the
-// combinations §4.1 forbids. It is a pure function, so the rules are table
+// forbidden combinations. It is a pure function, so the rules are table
 // tested without a runtime, a state directory or a harness.
 func bindRouteFor(f bindFlags) (bindRoute, error) {
 	placement := f.worktree || f.cwd != "" || f.branch != "" || f.server != "" || f.base != ""
@@ -85,14 +84,12 @@ func bindRouteFor(f bindFlags) (bindRoute, error) {
 	}
 }
 
-// cmdBind binds a mastermind to a builder. It is the one entry point the old
-// bind and add merged into (§4.1): the flags choose which of the two
+// cmdBind binds a mastermind to a builder: the flags choose which of the two
 // bodies runs, and each body stays an unexported helper so none of its logic
 // is duplicated.
 // bindFlagValues holds the pointers bind's flags parse into. bindFlagSet
 // defines them on fs; cmdBind and TestBindFlagsHaveActorNotRole read the same
-// surface, so the flag names can never drift from what a test pins (A2 round 3
-// S1).
+// surface, so the flag names can never drift from what a test pins.
 type bindFlagValues struct {
 	name           *string
 	candidate      *string
@@ -120,7 +117,7 @@ type bindFlagValues struct {
 
 // bindFlagSet defines bind's flags on fs and returns the values they parse
 // into. It is separate from cmdBind so a test can inspect the flag surface
-// without running a bind (A2 round 3 S1).
+// without running a bind.
 func bindFlagSet(fs *flag.FlagSet) *bindFlagValues {
 	v := &bindFlagValues{}
 	v.name = fs.String("name", "", "binding name (default: sanitized cwd basename)")
@@ -156,9 +153,9 @@ func cmdBind(args []string) error {
 		return err
 	}
 
-	// #637: the label rules are CLI rules, and they are refused on one line
-	// with exit 2 before any runtime, state, worktree or network work -- the
-	// same shape as the route refusal below.
+	// The label rules are CLI rules, refused on one line with exit 2 before
+	// any runtime, state, worktree or network work -- the same shape as the
+	// route refusal below.
 	if err := relevo.RequireFeatureChoice(*v.feature, *v.noFeature, *v.resume); err != nil {
 		return refuseFlag(err)
 	}
@@ -191,7 +188,7 @@ func cmdBind(args []string) error {
 
 	route, rerr := bindRouteFor(f)
 	if rerr != nil {
-		// One line, exit 2, before any runtime is built (§4.1).
+		// One line, exit 2, before any runtime is built.
 		return refuseFlag(rerr)
 	}
 
@@ -212,9 +209,8 @@ func refuseFlag(err error) error {
 }
 
 // boundLine is the one line a successful bind prints. A remote builder names the
-// server it runs on, mirroring the add line, and appends the clause when the
-// actor's own placement list chose that server; an explicit --server and a local
-// builder read as they always did. It is pure, so the wording is pinned without
+// server it runs on, appending the placement clause only when the actor's own
+// placement list chose that server. It is pure, so the wording is pinned without
 // a live server.
 func boundLine(b store.Binding, mastermind, candidate string, placement resolve.PlacementResolution) string {
 	if b.Builder.Remote() {
@@ -226,7 +222,7 @@ func boundLine(b store.Binding, mastermind, candidate string, placement resolve.
 }
 
 // runBind is bind's own body after parsing: bind the current tree, or resume
-// or rebind an existing binding (the old cmdBind).
+// or rebind an existing binding.
 func runBind(f bindFlags) error {
 	// --resume takes the name from --name, so a positional one is dropped on
 	// the floor and the binding lookup then fails on the empty name.
@@ -278,8 +274,8 @@ func runBind(f bindFlags) error {
 	case f.rebind:
 		// A rebind replaces the builder of an existing binding, so the
 		// definitions come from the stored binding's actor -- --actor is
-		// refused with --resume, so roleName is "builder" here (#382 round 3).
-		// If the load fails, today's behaviour (roleName) stands.
+		// refused with --resume, so roleName is "builder" here.
+		// If the load fails, roleName stands as the fallback.
 		if f.name != "" {
 			if existing, err := rt.Store.Load(f.name); err == nil {
 				specRole = resolve.BindingRole(existing)
@@ -302,8 +298,8 @@ func runBind(f bindFlags) error {
 	if kind != "" {
 		env := doctor.NewEnv(rt.Store)
 		// The binding's role's definitions for this kind come from the
-		// registry, so a config roles that names a custom builder executor
-		// preflights that file (#374 §3.4). A Spec error is data: defs stays
+		// registry, so a config roles entry naming a custom builder executor
+		// preflights that file. A Spec error is data: defs stays
 		// nil and the preflight falls back to the shipped builder definitions.
 		var defs []string
 		if spec, err := rt.RoleRegistry().Spec(specRole, kind); err == nil {
@@ -321,7 +317,7 @@ func runBind(f bindFlags) error {
 	// A resume keeps the binding's stored role, so the pick note names it.
 	roleName = resolve.BindingRole(b)
 	// Every supplementary line goes to the human default's stdout, or to
-	// stderr under --json, where stdout must carry the document alone (§2.1).
+	// stderr under --json, where stdout must carry the document alone.
 	notices := noticeWriter(f.asJSON)
 	// The gate line names the command the binding resolved and the tier that
 	// supplied it: the flag, the repository's own setting or the policy
@@ -376,8 +372,8 @@ func runBind(f bindFlags) error {
 	return nil
 }
 
-// runAdd is add's body after parsing (the old cmdAdd), reached through
-// `bind --worktree` or one of the placement flags (§4.1).
+// runAdd is add's body after parsing, reached through `bind --worktree`
+// or one of the placement flags.
 func runAdd(f bindFlags) error {
 	name := f.name
 	branch := f.branch

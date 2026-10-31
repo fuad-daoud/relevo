@@ -1,12 +1,3 @@
-cmd/relevo/bind.go
-cmd/relevo/owner_reads_test.go
-cmd/relevo/read_verbs_test.go
-cmd/relevo/restart_notice.go
-cmd/relevo/restart_notice_test.go
-cmd/relevo/unbind.go
-cmd/relevo/update.go
-cmd/relevo/wait.go
-cmd/relevo/wire.go
 internal/e2e/fakes_test.go
 internal/e2e/headless_test.go
 internal/e2e/remote_test.go

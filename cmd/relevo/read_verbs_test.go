@@ -49,10 +49,9 @@ func seedReadVerbStore(t *testing.T) (*store.Store, relevo.Runtime, []store.LogE
 
 // assertIngestMirrorEmpty asserts that the database at path holds no ingest
 // mirror rows: binding, event and round are all empty. A database that does
-// not exist passes too, which is what makes this a port of the old "must not
-// create a database" stat: relevo.db is now the store's own record file, which
-// the fixture's Save creates, and these read verbs must still write nothing
-// into the ingest mirror (P3a round 3, B3).
+// not exist passes too, since these verbs must not create one. relevo.db is
+// the store's own record file, which the fixture's Save creates, and these
+// read verbs must still write nothing into the ingest mirror.
 func assertIngestMirrorEmpty(t *testing.T, path string) {
 	t.Helper()
 
@@ -79,11 +78,11 @@ func assertIngestMirrorEmpty(t *testing.T, path string) {
 	}
 }
 
-// TestPrintLogAndPrintShowWriteNothing is `relevo serve log`/`show`'s
-// read-only contract (#216) at the helper level: with markViewed=false the
-// same text a client verb prints comes out, no viewed mark appears, and
-// printShow with allowDB=false creates no database. markViewed=true is the
-// control that proves the assertion can fail.
+// TestPrintLogAndPrintShowWriteNothing pins the read-only contract at the
+// helper level: with markViewed=false the same text a client verb prints
+// comes out, no viewed mark appears, and printShow with allowDB=false
+// creates no database. markViewed=true is the control that proves the
+// assertion can fail.
 func TestPrintLogAndPrintShowWriteNothing(t *testing.T) {
 	s, rt, log := seedReadVerbStore(t)
 
