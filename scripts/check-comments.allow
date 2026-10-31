@@ -72,7 +72,6 @@ internal/relevo/capture.go
 internal/relevo/capture_test.go
 internal/relevo/configedit.go
 internal/relevo/consult.go
-internal/relevo/daemon_test.go
 internal/relevo/deliver_agy.go
 internal/relevo/deliver_agy_test.go
 internal/relevo/deliverer.go
@@ -122,7 +121,6 @@ internal/relevo/progress_test.go
 internal/relevo/push.go
 internal/relevo/queue.go
 internal/relevo/queue_test.go
-internal/relevo/reconcile_hooks_test.go
 internal/relevo/reconcile_test.go
 internal/relevo/remote.go
 internal/relevo/remote_add.go
@@ -142,7 +140,6 @@ internal/relevo/roles_list_test.go
 internal/relevo/roles_runtime_test.go
 internal/relevo/roles_views_test.go
 internal/relevo/runtime.go
-internal/relevo/seal_test.go
 internal/relevo/send.go
 internal/relevo/send_test.go
 internal/relevo/servers.go
