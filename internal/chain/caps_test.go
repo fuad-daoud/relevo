@@ -19,6 +19,7 @@ func TestNameCapFromLongestMemberSuffix(t *testing.T) {
 		{"the default's -plan sets 27", "shop", []PlannedMember{{Name: "shop"}, {Name: "shop-rev"}, {Name: "shop-plan"}, {Name: "shop-sec"}}, 27},
 		{"lite-planner sets 19", "shop", []PlannedMember{{Name: "shop"}, {Name: "shop-lite-planner"}, {Name: "shop-reviewer"}}, 19},
 		{"dotted child name with reviewer suffix sets 23", "shop.1", []PlannedMember{{Name: "shop.1"}, {Name: "shop.1-reviewer"}}, 23},
+		{"a member shorter than the chain name adds no suffix", "shopping", []PlannedMember{{Name: "shopping"}, {Name: "shop"}, {Name: "shopping-rev"}}, 28},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := NameCap(tc.chainName, tc.members); got != tc.want {
