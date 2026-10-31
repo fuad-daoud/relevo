@@ -156,20 +156,20 @@ func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (cha
 	if err != nil {
 		return chainServerPlan{}, err
 	}
-	if missing := missingChainFeatures(who); len(missing) > 0 {
+	if missing := remote.MissingChainFeatures(who); len(missing) > 0 {
 		return chainServerPlan{}, fmt.Errorf("server %s cannot run a chain (missing the %s); upgrade it, or start the chain without --server",
-			opts.Server, chainFeatureList(missing))
+			opts.Server, remote.ChainFeatureList(missing))
 	}
 	// The same negative applies to a prefix: the server must store the
 	// subdirectory it is to join into every member's rounds, and a server
 	// without the feature would drop it silently.
-	if plan.subdir != "" && !hasFeature(who, remote.FeatureSubdir) {
+	if plan.subdir != "" && !remote.HasFeature(who, remote.FeatureSubdir) {
 		return chainServerPlan{}, fmt.Errorf("server %s does not carry binding subdirectories (pre-subdir server); upgrade it or start the chain at the repository root", opts.Server)
 	}
-	hasWorkflow := hasFeature(who, remote.FeatureWorkflow)
+	hasWorkflow := remote.HasFeature(who, remote.FeatureWorkflow)
 	if isCustom && !hasWorkflow {
 		return chainServerPlan{}, fmt.Errorf("server %s cannot run workflow %s (missing the %s)",
-			opts.Server, opts.Workflow, chainFeatureList([]string{remote.FeatureWorkflow}))
+			opts.Server, opts.Workflow, remote.ChainFeatureList([]string{remote.FeatureWorkflow}))
 	}
 	plan.hasWorkflow = hasWorkflow
 	if len(opts.Params) > 0 && !hasWorkflow {
@@ -181,7 +181,7 @@ func chainServerResolve(ctx context.Context, rt Runtime, opts ChainOptions) (cha
 			return chainServerPlan{}, err
 		}
 	}
-	plan.origin = hasFeature(who, remote.FeatureOrigin)
+	plan.origin = remote.HasFeature(who, remote.FeatureOrigin)
 	if plan.base, plan.repoID, plan.authorName, plan.authorEmail, err = chainRemoteFacts(ctx, rt, repo, opts.Base); err != nil {
 		return chainServerPlan{}, err
 	}
@@ -533,7 +533,7 @@ func chainMirrorMember(opts ChainOptions, plan chainServerPlan, v remote.ChainMe
 		RepoRef:          repoRef,
 		Feature:          opts.Feature,
 		Ticket:           plan.ticket,
-		Link:             remoteLink(bv),
+		Link:             remote.Link(bv),
 		RecordID:         id,
 	}
 	if writer {

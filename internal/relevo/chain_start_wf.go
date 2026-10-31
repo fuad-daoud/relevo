@@ -165,7 +165,7 @@ func chainResolveWorkflowStart(ctx context.Context, rt Runtime, opts ChainOption
 		if plan.remote, err = chainRemotePreflight(ctx, rt, ropts, synth, plan.placements[chain.MemberBuilder]); err != nil {
 			return chainWFStart{}, err
 		}
-		if chainHasCheckStep(def) && !hasFeature(plan.remote.who, remote.FeatureCheck) {
+		if chainHasCheckStep(def) && !remote.HasFeature(plan.remote.who, remote.FeatureCheck) {
 			return chainWFStart{}, refusal.New("chain %s places a writer on server %s, which lacks the %q feature", plan.planned[0].Name, plan.remote.server, remote.FeatureCheck)
 		}
 	}

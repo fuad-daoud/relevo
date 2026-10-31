@@ -9,6 +9,7 @@ import (
 
 	"github.com/fuad-daoud/relevo/internal/chain"
 	"github.com/fuad-daoud/relevo/internal/db"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/store"
 	"github.com/fuad-daoud/relevo/internal/view"
 	"github.com/fuad-daoud/relevo/internal/workflow"
@@ -114,10 +115,10 @@ func chainDocEntry(ctx context.Context, rt Runtime, c db.ChainRow, now time.Time
 	if chain.OnServer(c) && rt.Remote != nil {
 		if v, err := chainGetView(ctx, rt, c); err != nil {
 			switch {
-			case is404(err) && chainTerminalStatus(c.Status):
+			case remote.Is404(err) && chainTerminalStatus(c.Status):
 				// Released and already over: the stored row is the answer, and
 				// a server that no longer holds it is not stale.
-			case is404(err):
+			case remote.Is404(err):
 				c.Status = string(chain.StatusGone)
 				c.Reason = chain.GoneReason(c.Name, c.Server)
 			default:

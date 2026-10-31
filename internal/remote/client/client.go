@@ -59,6 +59,11 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("http %d: %s", e.Status, e.Body.Code)
 }
 
+// HTTPStatus is the response status the error carries.
+func (e *HTTPError) HTTPStatus() int {
+	return e.Status
+}
+
 type Client struct {
 	servers remote.Servers
 	key     remote.Keypair

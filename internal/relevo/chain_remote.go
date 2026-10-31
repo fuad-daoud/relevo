@@ -123,7 +123,7 @@ func chainRemotePreflight(ctx context.Context, rt Runtime, opts ChainOptions, pl
 	// a server that silently dropped it would run the chain's rounds at the
 	// bare repo's root, not the subdirectory the mastermind's shell was in.
 	subdir := housekeep.ResolveSubdir(ctx, rt.Git, repo)
-	if subdir != "" && !hasFeature(who, remote.FeatureSubdir) {
+	if subdir != "" && !remote.HasFeature(who, remote.FeatureSubdir) {
 		return nil, refusal.New("server %s does not carry binding subdirectories (pre-subdir server); upgrade it or start the chain at the repository root", server)
 	}
 
@@ -151,7 +151,7 @@ func chainRemoteFacts(ctx context.Context, rt Runtime, repo, base string) (resol
 			return "", "", "", "", fmt.Errorf("head commit: %w", err)
 		}
 	}
-	if !is40Hex(resolved) {
+	if !remote.Is40Hex(resolved) {
 		sha, ok, rerr := rt.Git.RefSHA(ctx, repo, resolved)
 		if rerr != nil {
 			return "", "", "", "", fmt.Errorf("resolve base %s: %w", resolved, rerr)
@@ -179,7 +179,7 @@ func chainRemoteFacts(ctx context.Context, rt Runtime, repo, base string) (resol
 		return "", "", "", "", fmt.Errorf("git identity for %s: %w", repo, err)
 	}
 	if authorName == "" || authorEmail == "" {
-		return "", "", "", "", fmt.Errorf("%w for %s: a remote builder commits as you; set git config user.name and git config user.email (in the repo or --global)", ErrNoGitIdentity, repo)
+		return "", "", "", "", fmt.Errorf("%w for %s: a remote builder commits as you; set git config user.name and git config user.email (in the repo or --global)", remote.ErrNoGitIdentity, repo)
 	}
 	return resolved, repoID, authorName, authorEmail, nil
 }
@@ -311,7 +311,7 @@ func chainBuildRemoteBuilder(ctx context.Context, rt Runtime, opts ChainOptions,
 		RepoRef:          captureRepo(ctx, rt, plan.repo),
 		Feature:          opts.Feature,
 		Ticket:           plan.ticket,
-		Link:             remoteLink(view),
+		Link:             remote.Link(view),
 		RecordID:         clientBindingID,
 		Gate:             plan.settings.Gate,
 		Regate:           plan.settings.Regate,

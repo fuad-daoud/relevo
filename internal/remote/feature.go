@@ -1,28 +1,26 @@
-package relevo
+package remote
 
 import (
 	"strconv"
 	"strings"
-
-	"github.com/fuad-daoud/relevo/internal/remote"
 )
 
-// missingChainFeatures is the features a server must advertise to run a whole
+// MissingChainFeatures is the features a server must advertise to run a whole
 // chain for a client, in the order the refusal names them: it drives the chain
 // itself, and it runs reader members. Both are absent from a pre-chain server.
-func missingChainFeatures(who remote.WhoAmI) []string {
+func MissingChainFeatures(who WhoAmI) []string {
 	var missing []string
-	if !hasFeature(who, remote.FeatureChain) {
-		missing = append(missing, remote.FeatureChain)
+	if !HasFeature(who, FeatureChain) {
+		missing = append(missing, FeatureChain)
 	}
-	if !hasFeature(who, remote.FeatureReaders) {
-		missing = append(missing, remote.FeatureReaders)
+	if !HasFeature(who, FeatureReaders) {
+		missing = append(missing, FeatureReaders)
 	}
 	return missing
 }
 
-// hasFeature reports whether the server advertises token.
-func hasFeature(who remote.WhoAmI, token string) bool {
+// HasFeature reports whether the server advertises token.
+func HasFeature(who WhoAmI, token string) bool {
 	for _, f := range who.Features {
 		if f == token {
 			return true
@@ -31,9 +29,9 @@ func hasFeature(who remote.WhoAmI, token string) bool {
 	return false
 }
 
-// chainFeatureList renders the missing features for the refusal's parenthetical:
+// ChainFeatureList renders the missing features for the refusal's parenthetical:
 // one is a singular "feature", two or more a plural list.
-func chainFeatureList(missing []string) string {
+func ChainFeatureList(missing []string) string {
 	quoted := make([]string, len(missing))
 	for i, f := range missing {
 		quoted[i] = strconv.Quote(f)

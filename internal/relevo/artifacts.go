@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/resolve"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -67,7 +68,7 @@ func roundArtifacts(st *store.Store, name string, round int, actor, output strin
 // lists for the same round and actor. A ".." element is never listed and is
 // refused, as is any rel no listing holds: ErrNoArtifact either way.
 func ReadArtifact(rt Runtime, name string, round int, actor, rel string) ([]byte, error) {
-	if rel == "" || containsDotDotRel(rel) {
+	if rel == "" || remote.ContainsDotDotRel(rel) {
 		return nil, fmt.Errorf("artifact %q: %w", rel, ErrNoArtifact)
 	}
 	files, err := RoundArtifacts(rt, name, round, actor, "")
@@ -188,19 +189,6 @@ func sortArtifacts(files []ArtifactFile, output string) {
 		}
 		return files[i].Rel < files[j].Rel
 	})
-}
-
-// containsDotDotRel reports whether any element of rel is "..", before any
-// cleaning: it is how a rel that escapes the artifact directory is refused.
-func containsDotDotRel(rel string) bool {
-	for _, part := range strings.FieldsFunc(rel, func(r rune) bool {
-		return r == '/' || r == '\\' || r == filepath.Separator
-	}) {
-		if part == ".." {
-			return true
-		}
-	}
-	return false
 }
 
 // artifactDirSize returns the total size in bytes of round's artifact files

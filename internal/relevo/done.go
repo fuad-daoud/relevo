@@ -10,6 +10,7 @@ import (
 	"github.com/fuad-daoud/relevo/internal/delivery"
 	"github.com/fuad-daoud/relevo/internal/hooks"
 	"github.com/fuad-daoud/relevo/internal/housekeep"
+	"github.com/fuad-daoud/relevo/internal/remote"
 	"github.com/fuad-daoud/relevo/internal/remote/client"
 	"github.com/fuad-daoud/relevo/internal/store"
 )
@@ -101,7 +102,7 @@ func Done(ctx context.Context, rt Runtime, name string) (DoneResult, error) {
 				// tradeoff is accepted there: a 404 raised by a foreign owner
 				// reading another tenant's binding is indistinguishable from
 				// "gone", and marks the local record done too.
-				if !is404(derr) {
+				if !remote.Is404(derr) {
 					return fmt.Errorf("%s: %w", b.Builder.Server, derr)
 				}
 			} else {
