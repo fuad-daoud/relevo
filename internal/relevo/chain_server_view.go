@@ -164,7 +164,7 @@ func chainServerWait(ctx context.Context, rt Runtime, name string, timeout, inte
 // is closed only by `relevo done`, so it answers with the halted refusal.
 func chainServerStop(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult, error) {
 	if chain.GoneMirror(c) {
-		return StopResult{}, haltedChainStop(c.Name)
+		return StopResult{}, chain.HaltedStop(c.Name)
 	}
 	if rt.Remote == nil {
 		return StopResult{}, ErrRemoteUnavailable
@@ -175,13 +175,13 @@ func chainServerStop(ctx context.Context, rt Runtime, c db.ChainRow) (StopResult
 		case remoteCode(err, 409, remote.CodeNothingToStop):
 			return StopResult{}, chainStoppedNothing(c)
 		case remoteCode(err, 409, remote.CodeChainHalted):
-			return StopResult{}, haltedChainStop(c.Name)
+			return StopResult{}, chain.HaltedStop(c.Name)
 		case remote.Is404(err):
 			// A mirror that already ended keeps the answer an ended chain
 			// gives; a running one is halted in all but its row, which the
 			// next pull writes.
 			if c.Status == string(chain.StatusRunning) {
-				return StopResult{}, haltedChainStop(c.Name)
+				return StopResult{}, chain.HaltedStop(c.Name)
 			}
 			return StopResult{}, chainStoppedNothing(c)
 		}
