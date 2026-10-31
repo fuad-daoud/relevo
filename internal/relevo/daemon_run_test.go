@@ -9,9 +9,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestRunReturnsErrReexecAfterOneTick pins §4.5: a hook that returns true ends
-// Run with ErrReexec, and the hook is consulted exactly once -- there is no
-// second tick after the decision.
+// The upgrade hook is consulted exactly once: there is no second tick after
+// it returns true to end Run with ErrReexec.
 func TestRunReturnsErrReexecAfterOneTick(t *testing.T) {
 	t.Parallel()
 
@@ -31,10 +30,9 @@ func TestRunReturnsErrReexecAfterOneTick(t *testing.T) {
 	}
 }
 
-// TestRunDrainsInFlightTickOnCancel pins §4.5's drain. A tick already running
-// when ctx is cancelled finishes under a context that is not itself cancelled,
-// Run then returns nil, and the upgrade hook is never consulted after
-// cancellation.
+// A tick already running when ctx is cancelled finishes under a context that
+// is not itself cancelled, Run then returns nil, and the upgrade hook is never
+// consulted after cancellation.
 func TestRunDrainsInFlightTickOnCancel(t *testing.T) {
 	rt, _ := sentBinding(t)
 	fetch := &ctxRecordingFetcher{}

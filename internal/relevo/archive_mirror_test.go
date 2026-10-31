@@ -10,9 +10,8 @@ import (
 	"github.com/fuad-daoud/relevo/internal/store"
 )
 
-// TestMirrorArchivedFeedsOnce pins P3d §4.5: the one-time archived feed
-// ingests each archived record into the mirror, keyed by kv
-// "ingested.archive.<recordID>", and a second pass changes nothing.
+// The one-time archived feed ingests each archived record into the mirror,
+// keyed by kv "ingested.archive.<recordID>", and a second pass changes nothing.
 func TestMirrorArchivedFeedsOnce(t *testing.T) {
 	t.Parallel()
 

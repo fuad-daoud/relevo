@@ -55,7 +55,6 @@ internal/relevo/add.go
 internal/relevo/add_test.go
 internal/relevo/agy_creds.go
 internal/relevo/agy_creds_test.go
-internal/relevo/archive_mirror_test.go
 internal/relevo/ask.go
 internal/relevo/ask_test.go
 internal/relevo/authgrace.go
@@ -73,9 +72,6 @@ internal/relevo/capture.go
 internal/relevo/capture_test.go
 internal/relevo/configedit.go
 internal/relevo/consult.go
-internal/relevo/consult_test.go
-internal/relevo/daemon_consult_test.go
-internal/relevo/daemon_run_test.go
 internal/relevo/daemon_test.go
 internal/relevo/deliver_agy.go
 internal/relevo/deliver_agy_test.go
