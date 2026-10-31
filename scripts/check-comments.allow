@@ -203,10 +203,6 @@ internal/roles/init_test.go
 internal/roles/off_test.go
 internal/roles/registry.go
 internal/roles/registry_test.go
-internal/ui/golden_test.go
-internal/ui/hist_test.go
-internal/ui/model_test.go
-internal/ui/overlays_test.go
 internal/ui/view_actor.go
 internal/ui/view_actors.go
 internal/ui/view_actors_test.go

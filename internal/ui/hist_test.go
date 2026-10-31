@@ -102,9 +102,9 @@ func seedArchivedHistBinding(t *testing.T) (relevo.Runtime, relevo.HistoryBindin
 	return rt, rows[0]
 }
 
-// TestPointAtArchivedRowLoadsPlanFromDB pins the hist branch (#183, §5.8):
-// pointing at a hist row sets live false, round the newest (every round
-// closed), and the plan tab's fetch reads the database, not a file.
+// TestPointAtArchivedRowLoadsPlanFromDB pins the hist branch: pointing at a
+// hist row sets live false, round the newest (every round closed), and the
+// plan tab's fetch reads the database, not a file.
 func TestPointAtArchivedRowLoadsPlanFromDB(t *testing.T) {
 	rt, h := seedArchivedHistBinding(t)
 
@@ -175,8 +175,8 @@ func TestArchivedTerminalTabShowsTranscriptRows(t *testing.T) {
 	}
 }
 
-// TestArchivedMissingDiffIsEmptyProse pins §6: a missing artifact renders
-// as tabContent.empty prose, not as an error.
+// TestArchivedMissingDiffIsEmptyProse pins missing-artifact prose: a missing
+// artifact renders as tabContent.empty prose, not as an error.
 func TestArchivedMissingDiffIsEmptyProse(t *testing.T) {
 	rt, h := seedArchivedHistBinding(t)
 	rv := newTestHistRound(t, rt, h, 0)
@@ -208,7 +208,7 @@ func TestDetailHeaderArchived(t *testing.T) {
 	}
 }
 
-// TestArchivedStepRoundRefetches pins round stepping for a hist row (#183).
+// TestArchivedStepRoundRefetches pins round stepping for a hist row.
 func TestArchivedStepRoundRefetches(t *testing.T) {
 	rt, h := seedArchivedHistBinding(t)
 	rv := newTestHistRound(t, rt, h, 0)
@@ -240,12 +240,13 @@ func TestArchivedStepRoundRefetches(t *testing.T) {
 	}
 }
 
-// TestHistRowReportLeavesSameNameLiveBindingPending pins #967: a history row
-// whose name is live again after a rebind reads the archive, and its read
-// claims nothing of the live binding's. Before the fix the row went through
-// Show's live branch, showed the live report and claimPrinted consumed the
-// live pending payload for the very round it printed -- so that report was
-// never delivered to the MasterMind (#902 held for live tabs, not this path).
+// TestHistRowReportLeavesSameNameLiveBindingPending pins the live-name rule: a
+// history row whose name is live again after a rebind reads the archive, and
+// its read claims nothing of the live binding's. The row must not go through
+// Show's live branch, which would show the live report and let claimPrinted
+// consume the live pending payload for the very round it printed -- so that
+// report would never reach the MasterMind. Only a live tab consumes a live
+// pending payload; a history row leaves it pending.
 func TestHistRowReportLeavesSameNameLiveBindingPending(t *testing.T) {
 	rt, h := seedArchivedHistBinding(t)
 
@@ -334,10 +335,9 @@ func mirrorLines(body []byte) [][]byte {
 	return bytes.Split(body[:end], []byte{'\n'})
 }
 
-// mirrorTranscriptRecords builds round n's builder transcript rows exactly as
-// ingest built them before D3b: the builder stream (NNN-builder.jsonl) when
-// the fixture has one, else the builder log (NNN-builder.log) (D3b plan §3
-// fence item 3).
+// mirrorTranscriptRecords builds round n's builder transcript rows from the
+// fixture's own files: the builder stream (NNN-builder.jsonl) when the
+// fixture has one, else the builder log (NNN-builder.log).
 func mirrorTranscriptRecords(t *testing.T, dir string, n int, builderKind string) []db.TranscriptRecord {
 	t.Helper()
 
@@ -377,13 +377,12 @@ func mirrorTranscriptRecords(t *testing.T, dir string, n int, builderKind string
 	return recs
 }
 
-// seedRoundMirror inserts, directly, the round mirror rows ingest wrote
-// before D3b and no longer writes: the plain round-file artifacts (plan,
-// report, diff, drift) and each round's builder transcript, read from the
-// fixture's own files exactly as ingest built them (D3b plan §3 fence items
-// 1 and 3). relevo.Show's database fallback (showDB) still reads those rows
-// for a binding with no live files and no archived record in the runtime's
-// store, so seedArchivedHistBinding seeds them by hand after ingest.Ingest.
+// seedRoundMirror inserts, directly, the round mirror rows: the plain
+// round-file artifacts (plan, report, diff, drift) and each round's builder
+// transcript, read from the fixture's own files. relevo.Show's database
+// fallback (showDB) still reads those rows for a binding with no live files
+// and no archived record in the runtime's store, so seedArchivedHistBinding
+// seeds them by hand after ingest.Ingest.
 func seedRoundMirror(t *testing.T, d *db.DB, dir string) {
 	t.Helper()
 

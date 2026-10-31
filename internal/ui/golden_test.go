@@ -96,7 +96,7 @@ func allStatesRows() []view.BindingStatus {
 }
 
 // reportReadyRows is the fleet fixture for the report-ready golden: every
-// state row, plus a binding whose human mastermind is owed a report (§4.5). Its
+// state row, plus a binding whose human mastermind is owed a report. Its
 // display word is ACTIVE, so the header's count can only include it through
 // the report-ready rule.
 func reportReadyRows() []view.BindingStatus {
@@ -127,7 +127,7 @@ func gatedGates() []availability.Gate {
 	}
 }
 
-// realFleetReport builds the realistic fleet report specified in §8 / §2.3.
+// realFleetReport builds the realistic fleet report.
 func realFleetReport() view.Report {
 	// 27 DONE rows: 3 today (newest done-01 at now-38m), others on previous days.
 	doneRows := make([]view.BindingStatus, 27)
@@ -412,7 +412,7 @@ func seedPlanFixture(t *testing.T, st *store.Store, name string, round int, ts t
 	}
 }
 
-// realRoundModel pushes the round view for spool-db with realistic data (§8).
+// realRoundModel pushes the round view for spool-db with realistic data.
 func realRoundModel(t *testing.T, width, height int) Model {
 	t.Helper()
 	rep := realFleetReport()
@@ -453,7 +453,7 @@ func realRoundModel(t *testing.T, width, height int) Model {
 	return drain(t, res.(Model), cmd)
 }
 
-// realRoundNeedsYouModel pushes the round view for fix-433 in NEEDS YOU state (§8).
+// realRoundNeedsYouModel pushes the round view for fix-433 in NEEDS YOU state.
 func realRoundNeedsYouModel(t *testing.T, width, height int) Model {
 	t.Helper()
 	rep := realFleetReport()
@@ -635,7 +635,7 @@ func goldenStatsModel(t *testing.T, width, height int, rep stats.Report) Model {
 }
 
 // overviewRows is the stats-overview golden's synthetic rounds, shaped like the
-// user's data (§5): three candidates, a deepseek-like lane with a 99% cache
+// user's data: three candidates, a deepseek-like lane with a 99% cache
 // share and a gemini-like one with 88%, tokens on four of the last seven days,
 // three repos, and one row with no token field at all.
 func overviewRows() []db.RoundRow {
@@ -709,7 +709,7 @@ func overviewRows() []db.RoundRow {
 
 // statsOverviewReport is the stats-overview-132 golden's report: stats.Build
 // over the synthetic rows, 30 days wide so the window matches the chart's
-// `30 days` heading (§7), with one active gate on the gemini-like lane so the
+// `30 days` heading, with one active gate on the gemini-like lane so the
 // candidates golden's STATUS column has a gated row.
 func statsOverviewReport() stats.Report {
 	return stats.Build(stats.Inputs{
@@ -1167,8 +1167,8 @@ func goldenActorViewModel(t *testing.T, width, height int) Model {
 }
 
 // agentFileFixtures is the fake widget.Actions' per-agent file states for the agents
-// goldens (§8): every shipped agent installed and up to date on all four
-// kinds, with the pins the plan fixes. The paths are built under the real home
+// goldens: every shipped agent installed and up to date on all four
+// kinds, with the pinned models. The paths are built under the real home
 // so the views' `~` form is what the golden shows; the test only reads $HOME,
 // it never writes there, and the substitution keeps the golden identical on
 // every machine.
@@ -1224,7 +1224,7 @@ func goldenSettingsModel(t *testing.T, width, height int, fa *fakeActions) Model
 	return drain(t, m, execLine("settings", m.env(), m.prefs))
 }
 
-// auditFixtureRevs is this machine's five revisions (§8): the newest today, the
+// auditFixtureRevs is this machine's five revisions: the newest today, the
 // one before it yesterday, and the first three together on an earlier day, with
 // the stored change counts 1, 1, 2, 7 and 0.
 func auditFixtureRevs() []db.RevisionRow {
@@ -1274,10 +1274,10 @@ func auditChangesJSON(n int) []byte {
 	return []byte(b.String())
 }
 
-// auditFixtureChanges is what ConfigChanges answers for those revisions (§8):
-// #4 is the claude-sonnet-4-6 provider line, #5 the added planner actor, #3 a
-// roles-to-actors migration, #2 the seven derived names, and #1 the baseline
-// with none.
+// auditFixtureChanges is what ConfigChanges answers for those revisions:
+// revision 4 is the claude-sonnet-4-6 provider line, revision 5 the added
+// planner actor, revision 3 a roles-to-actors migration, revision 2 the seven
+// derived names, and revision 1 the baseline with none.
 func auditFixtureChanges() map[int64][]relevo.ChangeLine {
 	return map[int64][]relevo.ChangeLine{
 		5: {{Op: "+", Subject: "actor planner", After: "agent architect"}},
@@ -1848,7 +1848,7 @@ func TestGoldenViews(t *testing.T) {
 		{
 			name: "audit-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
-				// The cursor on #4: the list opens on #5, so one down.
+				// The cursor on revision 4: the list opens on revision 5, so one down.
 				return candKeys(t, goldenAuditModel(t, 132, 34, auditFixtureFake()), tea.KeyMsg{Type: tea.KeyDown})
 			},
 		},
@@ -1870,7 +1870,7 @@ func TestGoldenViews(t *testing.T) {
 		{
 			name: "audit-rev-132", width: 132, height: 34,
 			build: func(t *testing.T) Model {
-				m := candDown(t, goldenAuditModel(t, 132, 34, auditFixtureFake()), 3) // #5, #4, #3, #2
+				m := candDown(t, goldenAuditModel(t, 132, 34, auditFixtureFake()), 3) // revisions 5, 4, 3, 2
 				return candKeys(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 			},
 		},
