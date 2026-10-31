@@ -10,10 +10,9 @@ import (
 	"github.com/fuad-daoud/relevo/internal/view"
 )
 
-// The result lines of the three pick-able verbs live here, not in cmd/relevo,
-// because the picker's result screen (internal/pick) prints the same text the
-// terminal does. Each returns the exact bytes cmd/relevo printed, without a
-// trailing newline; the caller adds one.
+// The pick-able verbs' result lines live here, not in cmd/relevo: the
+// picker's result screen prints the same text the terminal does, so each
+// returns the exact bytes cmd/relevo printed, without a trailing newline.
 
 // DoneText is what `relevo done` says on success: one line for the binding,
 // then at most one for its worktree.
@@ -47,9 +46,9 @@ func RestoreText(res resolve.Resolution) string {
 
 // PlacementText is the clause a fresh create's line appends when the actor's own
 // placement list chose the server: exactly the bytes the pick note already
-// appends. A placement a flag named, and one nothing named, render nothing, so
-// an explicit --server reads as it always did. placementClause stays unexported
-// and unedited, which is what keeps the pick note byte-identical.
+// appends. A placement a flag named, and one nothing named, render nothing.
+// placementClause stays unexported and unedited, which is what keeps the pick
+// note byte-identical.
 func PlacementText(p resolve.PlacementResolution) string {
 	if p.How != resolve.PlacementActor {
 		return ""

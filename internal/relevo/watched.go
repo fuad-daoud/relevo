@@ -5,24 +5,23 @@ import (
 	"time"
 )
 
-// watchKey names one process this daemon has seen alive (#370): the pid
-// alone is not enough, because a reused pid is a different process.
-// startedAt is Unix seconds, exactly as store.Endpoint.StartedAt and
+// watchKey names one process this daemon has seen alive: the pid alone is
+// not enough, because a reused pid is a different process. startedAt is
+// Unix seconds, exactly as store.Endpoint.StartedAt and
 // store.GateRun.StartedAt record it.
 type watchKey struct {
 	pid       int
 	startedAt int64
 }
 
-// Watched is the daemon's in-memory set of the processes it has seen alive
-// (#370, spec §3, §4.2). It answers the one question lostToRestart needs:
-// was this process already known to be running to the daemon that is
-// judging it?
+// Watched is the daemon's in-memory set of the processes it has seen alive.
+// It answers the one question lostToRestart needs: was this process already
+// known to be running to the daemon that is judging it?
 //
 // A nil *Watched is valid and has seen nothing, so a CLI one-shot, which
-// never creates one, answers exactly as the #244 rule did. It is
-// deliberately never persisted: a daemon that has just started has, by
-// definition, seen nothing.
+// never creates one, is judged as having seen nothing. It is deliberately
+// never persisted: a daemon that has just started has, by definition, seen
+// nothing.
 type Watched struct {
 	mu   sync.Mutex
 	seen map[watchKey]struct{}
@@ -64,14 +63,12 @@ func (w *Watched) Seen(pid int, startedAt int64) bool {
 
 // lostToRestart is the one predicate for "this daemon never saw it alive,
 // and it started before this daemon did, so this daemon's own restart must
-// have taken it down" (#370, spec §4.2; #244). It is true only when every
-// clause holds:
+// have taken it down". It is true only when every clause holds:
 //   - rt.StartedAt is non-zero, so only the daemon ever answers true and a
 //     CLI one-shot never does;
 //   - startedAt was recorded;
 //   - the process started before this daemon;
-//   - Watched has not seen it. A nil Watched has seen nothing, which is
-//     exactly the #244 rule, so the #244 tests stay valid.
+//   - Watched has not seen it. A nil Watched has seen nothing.
 func lostToRestart(rt Runtime, pid int, startedAt int64) bool {
 	if rt.StartedAt.IsZero() || startedAt == 0 {
 		return false

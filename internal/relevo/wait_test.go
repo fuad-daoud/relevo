@@ -100,7 +100,7 @@ func TestWaitOutcome(t *testing.T) {
 	})
 
 	t.Run("a stopped report is WaitUnmarked (2), not WaitClosed", func(t *testing.T) {
-		// #964: a stopped round never wrote its done marker, so the report on
+		// A stopped round never wrote its done marker, so the report on
 		// disk is unconfirmed and possibly partial. Exit 0 would certify a
 		// final report nothing confirmed.
 		b := store.Binding{Round: 1}
@@ -555,7 +555,7 @@ func TestWaitTimesOut(t *testing.T) {
 	if name != "" || res.Code != WaitTimeout || !res.Done {
 		t.Errorf("Wait = (%q, %+v), want (\"\", {%d ... true})", name, res, WaitTimeout)
 	}
-	// §4.1: a timeout prints nothing extra and delivers nothing.
+	// A timeout prints nothing extra and delivers nothing.
 	if res.Payload != "" || res.DeliverErr != nil {
 		t.Errorf("Wait payload = %q (err %v), want nothing delivered on a timeout", res.Payload, res.DeliverErr)
 	}
@@ -666,9 +666,9 @@ func TestWaitDefaultRoundIsTheNewestPlanned(t *testing.T) {
 	}
 }
 
-// TestWaitDeliversThePendingReport pins §4.1's core case: a seeded binding
-// with a queued report. Wait prints the outcome and then the report text, and
-// marks it delivered with route "wait".
+// TestWaitDeliversThePendingReport pins the core delivery case: a seeded
+// binding with a queued report. Wait prints the outcome and then the report
+// text, and marks it delivered with route "wait".
 func TestWaitDeliversThePendingReport(t *testing.T) {
 	t.Parallel()
 
@@ -704,7 +704,7 @@ func TestWaitDeliversThePendingReport(t *testing.T) {
 }
 
 // TestWaitPeekLeavesTheReportPending: --peek reports the outcome only and
-// leaves the entry pending (§4.1).
+// leaves the entry pending.
 func TestWaitPeekLeavesTheReportPending(t *testing.T) {
 	t.Parallel()
 
@@ -729,8 +729,7 @@ func TestWaitPeekLeavesTheReportPending(t *testing.T) {
 }
 
 // seedTwoRounds seeds an active binding with an undelivered round-1 report, a
-// sent round 2 and its report. It is the fixture #433 is about: round 1's
-// delivery failed, so it is still pending when round 2 closes.
+// sent round 2 and its report: round 1 is still pending when round 2 closes.
 func seedTwoRounds(t *testing.T, rt Runtime) (round1Path, round2Path string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -769,10 +768,10 @@ func seedTwoRounds(t *testing.T, rt Runtime) (round1Path, round2Path string) {
 	return round1Path, round2Path
 }
 
-// TestWaitDeliversTheWaitedRoundAfterAFailedOne is #433's regression: round 1's
-// report was never delivered, round 2 then closed. Wait must print round 2's
-// outcome line and round 2's report text last, carry round 1's under its own
-// header, name round 2 in Round, and leave nothing pending.
+// TestWaitDeliversTheWaitedRoundAfterAFailedOne covers the fixture where
+// round 1's report is still pending when round 2 closes: Wait must print round
+// 2's outcome line and round 2's report text last, carry round 1's under its
+// own header, name round 2 in Round, and leave nothing pending.
 func TestWaitDeliversTheWaitedRoundAfterAFailedOne(t *testing.T) {
 	t.Parallel()
 
